@@ -1,5 +1,5 @@
 use schronu::adapter::gateway::yaml::yaml_to_task;
-use schronu::entity::task::extract_leaves;
+use schronu::application::show_leaf_tasks::show_leaf_tasks;
 use schronu::entity::task::Task;
 use yaml_rust::{Yaml, YamlLoader};
 
@@ -20,7 +20,7 @@ project:
     // println!("{:?}", project_yaml);
 
     let project: Task = yaml_to_task(project_yaml);
-    let leaves = extract_leaves(&project);
+    let projects = vec![project];
 
-    println!("{:?}", leaves);
+    show_leaf_tasks(&projects);
 }

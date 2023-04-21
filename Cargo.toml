@@ -13,5 +13,5 @@ name = "schronu"
 path = "src/adapter/controller/schronu.rs"
 
 [[bin]]
-name = "show_leaves"
-path = "src/adapter/controller/show_leaves.rs"
+name = "show_leaf_tasks"
+path = "src/adapter/controller/show_leaf_tasks.rs"

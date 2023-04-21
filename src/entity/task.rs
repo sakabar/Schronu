@@ -27,9 +27,9 @@ impl Task {
 }
 
 #[test]
-fn test_extract_leaves__タスクのchildrenが空配列の場合() {
+fn test_extract_leaf_tasks_from_project__タスクのchildrenが空配列の場合() {
     let task = Task::new("タスク".to_string(), vec![]);
-    let actual = extract_leaves(&task);
+    let actual = extract_leaf_tasks_from_project(&task);
 
     let t = Task::new("タスク".to_string(), vec![]);
 
@@ -38,20 +38,21 @@ fn test_extract_leaves__タスクのchildrenが空配列の場合() {
 }
 
 #[test]
-fn test_extract_leaves__タスクのchildrenが空配列ではない場合は再帰して結果を返す() {
+fn test_extract_leaf_tasks_from_project__タスクのchildrenが空配列ではない場合は再帰して結果を返す()
+{
     let grand_child_task_1 = Task::new("孫タスク1".to_string(), vec![]);
     let child_task_1 = Task::new("子タスク1".to_string(), vec![grand_child_task_1]);
     let child_task_2 = Task::new("子タスク2".to_string(), vec![]);
     let parent_task_1 = Task::new("親タスク1".to_string(), vec![child_task_1, child_task_2]);
 
-    let actual = extract_leaves(&parent_task_1);
+    let actual = extract_leaf_tasks_from_project(&parent_task_1);
     let t1 = Task::new("孫タスク1".to_string(), vec![]);
     let t2 = Task::new("子タスク2".to_string(), vec![]);
     let expected = vec![&t1, &t2];
     assert_eq!(actual, expected);
 }
 
-pub fn extract_leaves(task: &Task) -> Vec<&Task> {
+pub fn extract_leaf_tasks_from_project(task: &Task) -> Vec<&Task> {
     if task.get_children().is_empty() {
         return vec![task];
     }
@@ -60,7 +61,7 @@ pub fn extract_leaves(task: &Task) -> Vec<&Task> {
 
     // 深さ優先
     for child in task.get_children() {
-        let mut leaves = extract_leaves(child);
+        let mut leaves = extract_leaf_tasks_from_project(child);
         ans.append(&mut leaves);
     }
 
