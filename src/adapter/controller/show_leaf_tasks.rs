@@ -27,11 +27,17 @@ fn main() {
             let mut text = String::new();
             file.read_to_string(&mut text).unwrap();
 
-            let docs = YamlLoader::load_from_str(text.as_str()).unwrap();
-            let project_yaml: &Yaml = &docs[0]["project"];
-            let project: Task = yaml_to_task(project_yaml);
+            match YamlLoader::load_from_str(text.as_str()) {
+                Err(_) => {
+                    panic!("Error occured in {:?}", entry.path());
+                }
+                Ok(docs) => {
+                    let project_yaml: &Yaml = &docs[0]["project"];
+                    let project: Task = yaml_to_task(project_yaml);
 
-            projects.push(project);
+                    projects.push(project);
+                }
+            }
         }
     }
 
