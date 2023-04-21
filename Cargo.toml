@@ -1,0 +1,17 @@
+[package]
+name = "schronu"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+yaml-rust = "0.4.5"
+
+[[bin]]
+name = "schronu"
+path = "src/adapter/controller/schronu.rs"
+
+[[bin]]
+name = "show_leaves"
+path = "src/adapter/controller/show_leaves.rs"
