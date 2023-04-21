@@ -21,6 +21,10 @@ impl Task {
         }
     }
 
+    pub fn get_name(&self) -> &str {
+        return &self.name;
+    }
+
     pub fn get_children(&self) -> &Vec<Task> {
         return &self.children;
     }
