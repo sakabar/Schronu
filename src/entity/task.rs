@@ -1,5 +1,8 @@
 use chrono::{DateTime, Local};
 
+#[cfg(test)]
+use chrono::TimeZone;
+
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub enum Status {
     // 初期状態
@@ -300,13 +303,38 @@ fn test_extract_leaf_tasks_from_project_子が全てdoneのタスクは葉とし
     assert_eq!(actual, expected);
 }
 
+#[test]
+fn test_extract_leaf_tasks_from_project_子が全てdoneのタスクで親がpendingの時は空配列を返すこと() {
+    /*
+     parent_task_1 (pending)
+       - child_task_1 (done)
+    */
+
+    let child_task_1 =
+        Task::new_with_name_status_children("子タスク1".to_string(), Status::Done, vec![]);
+
+    let pending_until = Local.with_ymd_and_hms(2037, 12, 31, 0, 0, 0).unwrap();
+    let parent_task_1 = Task::new(
+        "親タスク1".to_string(),
+        Status::Pending,
+        pending_until,
+        vec![child_task_1],
+    );
+
+    let actual = extract_leaf_tasks_from_project(&parent_task_1);
+    let expected: Vec<&Task> = vec![];
+    assert_eq!(actual, expected);
+}
+
 pub fn extract_leaf_tasks_from_project(task: &Task) -> Vec<&Task> {
     let children_are_all_done = task
         .get_children()
         .iter()
         .all(|task| task.status == Status::Done);
 
-    if task.get_children().is_empty() || children_are_all_done {
+    if task.get_status() == &Status::Todo
+        && (task.get_children().is_empty() || children_are_all_done)
+    {
         return vec![task];
     }
 
