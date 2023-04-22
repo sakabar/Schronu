@@ -114,15 +114,51 @@ fn test_extract_leaf_tasks_from_project_タスクのchildrenが空配列の場�
 
 #[test]
 fn test_extract_leaf_tasks_from_project_タスクのchildrenが空配列ではない場合は再帰して結果を返す() {
-    let grand_child_task_1 = Task::new("孫タスク1".to_string(), vec![]);
-    let child_task_1 = Task::new("子タスク1".to_string(), vec![grand_child_task_1]);
-    let child_task_2 = Task::new("子タスク2".to_string(), vec![]);
-    let parent_task_1 = Task::new("親タスク1".to_string(), vec![child_task_1, child_task_2]);
+    /*
+     parent_task_1
+       - child_task_1
+         - grand_child_task (葉)
+       - child_task_2 (葉)
+    */
+
+    let grand_child_task_1 = Task::new_with_name("孫タスク1".to_string());
+    let child_task_1 =
+        Task::new_with_name_children("子タスク1".to_string(), vec![grand_child_task_1]);
+    let child_task_2 = Task::new_with_name("子タスク2".to_string());
+    let parent_task_1 =
+        Task::new_with_name_children("親タスク1".to_string(), vec![child_task_1, child_task_2]);
 
     let actual = extract_leaf_tasks_from_project(&parent_task_1);
-    let t1 = Task::new("孫タスク1".to_string(), vec![]);
-    let t2 = Task::new("子タスク2".to_string(), vec![]);
+    let t1 = Task::new_with_name("孫タスク1".to_string());
+    let t2 = Task::new_with_name("子タスク2".to_string());
     let expected = vec![&t1, &t2];
+    assert_eq!(actual, expected);
+}
+
+#[test]
+fn test_extract_leaf_tasks_from_project_done状態のタスクとその子孫は全て無視されること() {
+    /*
+     parent_task_1
+       - child_task_1 (Done)
+         - grand_child_task (todo, だが親がdoneなので無視される)
+       - child_task_2
+    */
+
+    let grand_child_task_1 = Task::new_with_name("孫タスク1".to_string());
+    let child_task_1 = Task::new(
+        "子タスク1".to_string(),
+        Status::Done,
+        vec![grand_child_task_1],
+    );
+
+    let child_task_2 = Task::new_with_name("子タスク2".to_string());
+
+    let parent_task_1 =
+        Task::new_with_name_children("親タスク1".to_string(), vec![child_task_1, child_task_2]);
+
+    let actual = extract_leaf_tasks_from_project(&parent_task_1);
+    let expected_child_task_2 = Task::new_with_name("子タスク2".to_string());
+    let expected = vec![&expected_child_task_2];
     assert_eq!(actual, expected);
 }
 
@@ -135,8 +171,10 @@ pub fn extract_leaf_tasks_from_project(task: &Task) -> Vec<&Task> {
 
     // 深さ優先
     for child in task.get_children() {
-        let mut leaves = extract_leaf_tasks_from_project(child);
-        ans.append(&mut leaves);
+        if child.get_status() != &Status::Done {
+            let mut leaves = extract_leaf_tasks_from_project(child);
+            ans.append(&mut leaves);
+        }
     }
 
     return ans;
