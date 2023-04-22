@@ -1,7 +1,6 @@
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub enum Status {
     Todo,
-    Doing,
     Done,
 }
 
@@ -10,8 +9,6 @@ pub fn read_status(s: &str) -> Option<Status> {
 
     if lc == "todo" {
         return Some(Status::Todo);
-    } else if lc == "doing" {
-        return Some(Status::Doing);
     } else if lc == "done" {
         return Some(Status::Done);
     }
@@ -39,13 +36,6 @@ fn test_read_status_todoの文字列を変換する() {
     let s = "todo";
     let actual = read_status(s);
     assert_eq!(actual, Some(Status::Todo));
-}
-
-#[test]
-fn test_read_status_doingの文字列を変換する() {
-    let s = "doing";
-    let actual = read_status(s);
-    assert_eq!(actual, Some(Status::Doing));
 }
 
 #[test]
