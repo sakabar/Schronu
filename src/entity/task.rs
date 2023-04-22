@@ -64,7 +64,23 @@ pub struct Task {
 }
 
 impl Task {
-    pub fn new(name: String, children: Vec<Task>) -> Self {
+    pub fn new(name: String, status: Status, children: Vec<Task>) -> Self {
+        Self {
+            name,
+            status,
+            children,
+        }
+    }
+
+    pub fn new_with_name(name: String) -> Self {
+        Self {
+            name,
+            status: Status::Todo,
+            children: vec![],
+        }
+    }
+
+    pub fn new_with_name_children(name: String, children: Vec<Task>) -> Self {
         Self {
             name,
             status: Status::Todo,
@@ -76,6 +92,10 @@ impl Task {
         return &self.name;
     }
 
+    pub fn get_status(&self) -> &Status {
+        return &self.status;
+    }
+
     pub fn get_children(&self) -> &Vec<Task> {
         return &self.children;
     }
@@ -83,10 +103,10 @@ impl Task {
 
 #[test]
 fn test_extract_leaf_tasks_from_project_タスクのchildrenが空配列の場合() {
-    let task = Task::new("タスク".to_string(), vec![]);
+    let task = Task::new_with_name("タスク".to_string());
     let actual = extract_leaf_tasks_from_project(&task);
 
-    let t = Task::new("タスク".to_string(), vec![]);
+    let t = Task::new_with_name("タスク".to_string());
 
     let expected = vec![&t];
     assert_eq!(actual, expected);
