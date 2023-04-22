@@ -31,7 +31,7 @@ impl Task {
 }
 
 #[test]
-fn test_extract_leaf_tasks_from_project__タスクのchildrenが空配列の場合() {
+fn test_extract_leaf_tasks_from_project_タスクのchildrenが空配列の場合() {
     let task = Task::new("タスク".to_string(), vec![]);
     let actual = extract_leaf_tasks_from_project(&task);
 
@@ -42,8 +42,7 @@ fn test_extract_leaf_tasks_from_project__タスクのchildrenが空配列の場�
 }
 
 #[test]
-fn test_extract_leaf_tasks_from_project__タスクのchildrenが空配列ではない場合は再帰して結果を返す()
-{
+fn test_extract_leaf_tasks_from_project_タスクのchildrenが空配列ではない場合は再帰して結果を返す() {
     let grand_child_task_1 = Task::new("孫タスク1".to_string(), vec![]);
     let child_task_1 = Task::new("子タスク1".to_string(), vec![grand_child_task_1]);
     let child_task_2 = Task::new("子タスク2".to_string(), vec![]);
