@@ -266,8 +266,47 @@ fn test_extract_leaf_tasks_from_project_途中にpending状態のタスクがあ
     assert_eq!(actual, expected);
 }
 
+#[test]
+fn test_extract_leaf_tasks_from_project_子が全てdoneのタスクは葉として扱われること() {
+    /*
+     parent_task_1
+       - child_task_1 (子が全てdoneなので葉として返る)
+         - grand_child_task_1 (done)
+         - grand_child_task_2 (done)
+       - child_task_2 (返る)
+    */
+
+    let grand_child_task_1 =
+        Task::new_with_name_status_children("孫タスク1".to_string(), Status::Done, vec![]);
+    let grand_child_task_2 =
+        Task::new_with_name_status_children("孫タスク2".to_string(), Status::Done, vec![]);
+
+    let child_task_1 = Task::new_with_name_status_children(
+        "子タスク1".to_string(),
+        Status::Todo,
+        vec![grand_child_task_1, grand_child_task_2],
+    );
+
+    let expected_child_task_1 = child_task_1.clone();
+
+    let child_task_2 = Task::new_with_name("子タスク2".to_string());
+
+    let parent_task_1 =
+        Task::new_with_name_children("親タスク1".to_string(), vec![child_task_1, child_task_2]);
+
+    let actual = extract_leaf_tasks_from_project(&parent_task_1);
+    let expected_child_task_2 = Task::new_with_name("子タスク2".to_string());
+    let expected = vec![&expected_child_task_1, &expected_child_task_2];
+    assert_eq!(actual, expected);
+}
+
 pub fn extract_leaf_tasks_from_project(task: &Task) -> Vec<&Task> {
-    if task.get_children().is_empty() {
+    let children_are_all_done = task
+        .get_children()
+        .iter()
+        .all(|task| task.status == Status::Done);
+
+    if task.get_children().is_empty() || children_are_all_done {
         return vec![task];
     }
 
