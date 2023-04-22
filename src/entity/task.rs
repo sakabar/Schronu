@@ -5,6 +5,57 @@ pub enum Status {
     Done,
 }
 
+pub fn read_status(s: &str) -> Option<Status> {
+    let lc = s.to_lowercase();
+
+    if lc == "todo" {
+        return Some(Status::Todo);
+    } else if lc == "doing" {
+        return Some(Status::Doing);
+    } else if lc == "done" {
+        return Some(Status::Done);
+    }
+
+    return None;
+}
+
+#[test]
+fn test_read_status_doneの文字列を変換する() {
+    let s = "done";
+    let actual = read_status(s);
+    assert_eq!(actual, Some(Status::Done));
+}
+
+#[test]
+#[allow(non_snake_case)]
+fn test_read_status_大文字のDoneの文字列を変換する() {
+    let s = "done";
+    let actual = read_status(s);
+    assert_eq!(actual, Some(Status::Done));
+}
+
+#[test]
+fn test_read_status_todoの文字列を変換する() {
+    let s = "todo";
+    let actual = read_status(s);
+    assert_eq!(actual, Some(Status::Todo));
+}
+
+#[test]
+fn test_read_status_doingの文字列を変換する() {
+    let s = "doing";
+    let actual = read_status(s);
+    assert_eq!(actual, Some(Status::Doing));
+}
+
+#[test]
+#[allow(non_snake_case)]
+fn test_read_status_パーズできなかったときはNoneを返す() {
+    let s = "invalid_status";
+    let actual = read_status(s);
+    assert_eq!(actual, None);
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct Task {
     name: String,
