@@ -13,7 +13,7 @@ pub fn show_leaf_tasks(projects: &Vec<Task>) {
 
     for (root_task_name, leaf_tasks) in all_leaf_tasks.iter() {
         for leaf_task in leaf_tasks.iter() {
-            println!("{},{:?}", root_task_name, leaf_task);
+            println!("{}\t{}", root_task_name, leaf_task.get_name());
         }
     }
 }
