@@ -68,20 +68,24 @@ fn test_read_status_パーズできなかったときはNoneを返す() {
 }
 
 #[derive(Clone, Debug, PartialEq)]
-pub struct Task {
+pub struct ImmutableTask {
     name: String,
     status: Status,
     pending_until: DateTime<Local>,
-    children: Vec<Task>,
+    children: Vec<ImmutableTask>,
 }
 
 #[test]
 #[allow(non_snake_case)]
 pub fn test_new_with_current_time_現在時刻がpending_until以前でPending状態であること() {
     let pending_until = DateTime::<Local>::MAX_UTC.into();
-    let actual =
-        Task::new_with_current_time("タスク".to_string(), Status::Pending, pending_until, vec![]);
-    let expected = Task::new("タスク".to_string(), Status::Pending, pending_until, vec![]);
+    let actual = ImmutableTask::new_with_current_time(
+        "タスク".to_string(),
+        Status::Pending,
+        pending_until,
+        vec![],
+    );
+    let expected = ImmutableTask::new("タスク".to_string(), Status::Pending, pending_until, vec![]);
 
     assert_eq!(actual, expected);
 }
@@ -90,19 +94,23 @@ pub fn test_new_with_current_time_現在時刻がpending_until以前でPending�
 #[allow(non_snake_case)]
 pub fn test_new_with_current_time_現在時刻がpending_until以降の場合Todo状態となること() {
     let pending_until = DateTime::<Local>::MIN_UTC.into();
-    let actual =
-        Task::new_with_current_time("タスク".to_string(), Status::Pending, pending_until, vec![]);
-    let expected = Task::new("タスク".to_string(), Status::Todo, pending_until, vec![]);
+    let actual = ImmutableTask::new_with_current_time(
+        "タスク".to_string(),
+        Status::Pending,
+        pending_until,
+        vec![],
+    );
+    let expected = ImmutableTask::new("タスク".to_string(), Status::Todo, pending_until, vec![]);
 
     assert_eq!(actual, expected);
 }
 
-impl Task {
+impl ImmutableTask {
     pub fn new(
         name: String,
         status: Status,
         pending_until: DateTime<Local>,
-        children: Vec<Task>,
+        children: Vec<ImmutableTask>,
     ) -> Self {
         Self {
             name,
@@ -117,7 +125,7 @@ impl Task {
         name: String,
         status: Status,
         pending_until: DateTime<Local>,
-        children: Vec<Task>,
+        children: Vec<ImmutableTask>,
     ) -> Self {
         let new_status = if status == Status::Pending && Local::now() > pending_until {
             Status::Todo
@@ -145,7 +153,7 @@ impl Task {
     pub fn new_with_name_status_children(
         name: String,
         status: Status,
-        children: Vec<Task>,
+        children: Vec<ImmutableTask>,
     ) -> Self {
         // 期限なしPendingはタスクやり忘れの元なので、自動的に1970とする
         // ちょっと迷い中。2037の方がよいのか?
@@ -157,7 +165,7 @@ impl Task {
         }
     }
 
-    pub fn new_with_name_children(name: String, children: Vec<Task>) -> Self {
+    pub fn new_with_name_children(name: String, children: Vec<ImmutableTask>) -> Self {
         Self {
             name,
             status: Status::Todo,
@@ -174,17 +182,17 @@ impl Task {
         return &self.status;
     }
 
-    pub fn get_children(&self) -> &Vec<Task> {
+    pub fn get_children(&self) -> &Vec<ImmutableTask> {
         return &self.children;
     }
 }
 
 #[test]
 fn test_extract_leaf_tasks_from_project_タスクのchildrenが空配列の場合() {
-    let task = Task::new_with_name("タスク".to_string());
+    let task = ImmutableTask::new_with_name("タスク".to_string());
     let actual = extract_leaf_tasks_from_project(&task);
 
-    let t = Task::new_with_name("タスク".to_string());
+    let t = ImmutableTask::new_with_name("タスク".to_string());
 
     let expected = vec![&t];
     assert_eq!(actual, expected);
@@ -199,16 +207,18 @@ fn test_extract_leaf_tasks_from_project_タスクのchildrenが空配列では�
        - child_task_2 (葉)
     */
 
-    let grand_child_task_1 = Task::new_with_name("孫タスク1".to_string());
+    let grand_child_task_1 = ImmutableTask::new_with_name("孫タスク1".to_string());
     let child_task_1 =
-        Task::new_with_name_children("子タスク1".to_string(), vec![grand_child_task_1]);
-    let child_task_2 = Task::new_with_name("子タスク2".to_string());
-    let parent_task_1 =
-        Task::new_with_name_children("親タスク1".to_string(), vec![child_task_1, child_task_2]);
+        ImmutableTask::new_with_name_children("子タスク1".to_string(), vec![grand_child_task_1]);
+    let child_task_2 = ImmutableTask::new_with_name("子タスク2".to_string());
+    let parent_task_1 = ImmutableTask::new_with_name_children(
+        "親タスク1".to_string(),
+        vec![child_task_1, child_task_2],
+    );
 
     let actual = extract_leaf_tasks_from_project(&parent_task_1);
-    let t1 = Task::new_with_name("孫タスク1".to_string());
-    let t2 = Task::new_with_name("子タスク2".to_string());
+    let t1 = ImmutableTask::new_with_name("孫タスク1".to_string());
+    let t2 = ImmutableTask::new_with_name("子タスク2".to_string());
     let expected = vec![&t1, &t2];
     assert_eq!(actual, expected);
 }
@@ -222,20 +232,22 @@ fn test_extract_leaf_tasks_from_project_done状態のタスクとその子孫は
        - child_task_2
     */
 
-    let grand_child_task_1 = Task::new_with_name("孫タスク1".to_string());
-    let child_task_1 = Task::new_with_name_status_children(
+    let grand_child_task_1 = ImmutableTask::new_with_name("孫タスク1".to_string());
+    let child_task_1 = ImmutableTask::new_with_name_status_children(
         "子タスク1".to_string(),
         Status::Done,
         vec![grand_child_task_1],
     );
 
-    let child_task_2 = Task::new_with_name("子タスク2".to_string());
+    let child_task_2 = ImmutableTask::new_with_name("子タスク2".to_string());
 
-    let parent_task_1 =
-        Task::new_with_name_children("親タスク1".to_string(), vec![child_task_1, child_task_2]);
+    let parent_task_1 = ImmutableTask::new_with_name_children(
+        "親タスク1".to_string(),
+        vec![child_task_1, child_task_2],
+    );
 
     let actual = extract_leaf_tasks_from_project(&parent_task_1);
-    let expected_child_task_2 = Task::new_with_name("子タスク2".to_string());
+    let expected_child_task_2 = ImmutableTask::new_with_name("子タスク2".to_string());
     let expected = vec![&expected_child_task_2];
     assert_eq!(actual, expected);
 }
@@ -250,21 +262,26 @@ fn test_extract_leaf_tasks_from_project_途中にpending状態のタスクがあ
        - child_task_2 (Pendingの葉なので結果に入らない)
     */
 
-    let grand_child_task_1 = Task::new_with_name("孫タスク1".to_string());
-    let child_task_1 = Task::new_with_name_status_children(
+    let grand_child_task_1 = ImmutableTask::new_with_name("孫タスク1".to_string());
+    let child_task_1 = ImmutableTask::new_with_name_status_children(
         "子タスク1".to_string(),
         Status::Pending,
         vec![grand_child_task_1],
     );
 
-    let child_task_2 =
-        Task::new_with_name_status_children("子タスク2".to_string(), Status::Pending, vec![]);
+    let child_task_2 = ImmutableTask::new_with_name_status_children(
+        "子タスク2".to_string(),
+        Status::Pending,
+        vec![],
+    );
 
-    let parent_task_1 =
-        Task::new_with_name_children("親タスク1".to_string(), vec![child_task_1, child_task_2]);
+    let parent_task_1 = ImmutableTask::new_with_name_children(
+        "親タスク1".to_string(),
+        vec![child_task_1, child_task_2],
+    );
 
     let actual = extract_leaf_tasks_from_project(&parent_task_1);
-    let expected_grand_child_task_1 = Task::new_with_name("孫タスク1".to_string());
+    let expected_grand_child_task_1 = ImmutableTask::new_with_name("孫タスク1".to_string());
     let expected = vec![&expected_grand_child_task_1];
     assert_eq!(actual, expected);
 }
@@ -280,11 +297,11 @@ fn test_extract_leaf_tasks_from_project_子が全てdoneのタスクは葉とし
     */
 
     let grand_child_task_1 =
-        Task::new_with_name_status_children("孫タスク1".to_string(), Status::Done, vec![]);
+        ImmutableTask::new_with_name_status_children("孫タスク1".to_string(), Status::Done, vec![]);
     let grand_child_task_2 =
-        Task::new_with_name_status_children("孫タスク2".to_string(), Status::Done, vec![]);
+        ImmutableTask::new_with_name_status_children("孫タスク2".to_string(), Status::Done, vec![]);
 
-    let child_task_1 = Task::new_with_name_status_children(
+    let child_task_1 = ImmutableTask::new_with_name_status_children(
         "子タスク1".to_string(),
         Status::Todo,
         vec![grand_child_task_1, grand_child_task_2],
@@ -292,13 +309,15 @@ fn test_extract_leaf_tasks_from_project_子が全てdoneのタスクは葉とし
 
     let expected_child_task_1 = child_task_1.clone();
 
-    let child_task_2 = Task::new_with_name("子タスク2".to_string());
+    let child_task_2 = ImmutableTask::new_with_name("子タスク2".to_string());
 
-    let parent_task_1 =
-        Task::new_with_name_children("親タスク1".to_string(), vec![child_task_1, child_task_2]);
+    let parent_task_1 = ImmutableTask::new_with_name_children(
+        "親タスク1".to_string(),
+        vec![child_task_1, child_task_2],
+    );
 
     let actual = extract_leaf_tasks_from_project(&parent_task_1);
-    let expected_child_task_2 = Task::new_with_name("子タスク2".to_string());
+    let expected_child_task_2 = ImmutableTask::new_with_name("子タスク2".to_string());
     let expected = vec![&expected_child_task_1, &expected_child_task_2];
     assert_eq!(actual, expected);
 }
@@ -311,10 +330,10 @@ fn test_extract_leaf_tasks_from_project_子が全てdoneのタスクで親がpen
     */
 
     let child_task_1 =
-        Task::new_with_name_status_children("子タスク1".to_string(), Status::Done, vec![]);
+        ImmutableTask::new_with_name_status_children("子タスク1".to_string(), Status::Done, vec![]);
 
     let pending_until = Local.with_ymd_and_hms(2037, 12, 31, 0, 0, 0).unwrap();
-    let parent_task_1 = Task::new(
+    let parent_task_1 = ImmutableTask::new(
         "親タスク1".to_string(),
         Status::Pending,
         pending_until,
@@ -322,11 +341,11 @@ fn test_extract_leaf_tasks_from_project_子が全てdoneのタスクで親がpen
     );
 
     let actual = extract_leaf_tasks_from_project(&parent_task_1);
-    let expected: Vec<&Task> = vec![];
+    let expected: Vec<&ImmutableTask> = vec![];
     assert_eq!(actual, expected);
 }
 
-pub fn extract_leaf_tasks_from_project(task: &Task) -> Vec<&Task> {
+pub fn extract_leaf_tasks_from_project(task: &ImmutableTask) -> Vec<&ImmutableTask> {
     let children_are_all_done = task
         .get_children()
         .iter()
@@ -338,13 +357,13 @@ pub fn extract_leaf_tasks_from_project(task: &Task) -> Vec<&Task> {
         return vec![task];
     }
 
-    let mut ans: Vec<&Task> = vec![];
+    let mut ans: Vec<&ImmutableTask> = vec![];
 
     // 深さ優先
     for child in task.get_children() {
         if child.get_status() != &Status::Done {
-            let leaves_with_pending: Vec<&Task> = extract_leaf_tasks_from_project(child);
-            let mut leaves: Vec<&Task> = leaves_with_pending
+            let leaves_with_pending: Vec<&ImmutableTask> = extract_leaf_tasks_from_project(child);
+            let mut leaves: Vec<&ImmutableTask> = leaves_with_pending
                 .iter()
                 .filter(|&leaf| leaf.get_status() != &Status::Pending)
                 .map(|&leaf| leaf)

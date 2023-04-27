@@ -1,7 +1,7 @@
 use crate::entity::task::extract_leaf_tasks_from_project;
-use crate::entity::task::Task;
+use crate::entity::task::ImmutableTask;
 
-pub fn show_leaf_tasks(projects: &Vec<Task>) {
+pub fn show_leaf_tasks(projects: &Vec<ImmutableTask>) {
     let mut all_leaf_tasks = vec![];
 
     for project in projects.iter() {

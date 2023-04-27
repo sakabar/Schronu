@@ -1,6 +1,6 @@
-use schronu::adapter::gateway::yaml::yaml_to_task;
+use schronu::adapter::gateway::yaml::yaml_to_immutable_task;
 use schronu::application::show_leaf_tasks::show_leaf_tasks;
-use schronu::entity::task::Task;
+use schronu::entity::task::ImmutableTask;
 use std::env;
 use std::fs::File;
 use std::io::prelude::*;
@@ -33,7 +33,7 @@ fn main() {
                 }
                 Ok(docs) => {
                     let project_yaml: &Yaml = &docs[0]["project"];
-                    let project: Task = yaml_to_task(project_yaml);
+                    let project: ImmutableTask = yaml_to_immutable_task(project_yaml);
 
                     projects.push(project);
                 }
