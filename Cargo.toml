@@ -7,12 +7,17 @@ edition = "2021"
 
 [dependencies]
 chrono = "0.4.24"
+dendron = "0.1.5"
 walkdir = "2.3.3"
 yaml-rust = "0.4.5"
 
 [[bin]]
 name = "schronu"
 path = "src/adapter/controller/schronu.rs"
+
+[[bin]]
+name = "show_leaf_immutable_tasks"
+path = "src/adapter/controller/show_leaf_immutable_tasks.rs"
 
 [[bin]]
 name = "show_leaf_tasks"
