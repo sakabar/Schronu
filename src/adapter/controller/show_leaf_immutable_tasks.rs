@@ -1,5 +1,5 @@
 use schronu::adapter::gateway::yaml::yaml_to_immutable_task;
-use schronu::application::show_leaf_tasks::show_leaf_tasks;
+use schronu::application::show_leaf_immutable_tasks::show_leaf_immutable_tasks;
 use schronu::entity::task::ImmutableTask;
 use std::env;
 use std::fs::File;
@@ -41,5 +41,5 @@ fn main() {
         }
     }
 
-    show_leaf_tasks(&projects);
+    show_leaf_immutable_tasks(&projects);
 }

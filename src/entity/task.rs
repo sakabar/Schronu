@@ -193,9 +193,9 @@ impl ImmutableTask {
 }
 
 #[test]
-fn test_extract_leaf_tasks_from_project_タスクのchildrenが空配列の場合() {
+fn test_extract_leaf_immutable_tasks_from_project_タスクのchildrenが空配列の場合() {
     let task = ImmutableTask::new_with_name("タスク".to_string());
-    let actual = extract_leaf_tasks_from_project(&task);
+    let actual = extract_leaf_immutable_tasks_from_project(&task);
 
     let t = ImmutableTask::new_with_name("タスク".to_string());
 
@@ -204,7 +204,7 @@ fn test_extract_leaf_tasks_from_project_タスクのchildrenが空配列の場�
 }
 
 #[test]
-fn test_extract_leaf_tasks_from_project_タスクのchildrenが空配列ではない場合は再帰して結果を返す() {
+fn test_extract_leaf_immutable_tasks_from_project_タスクのchildrenが空配列ではない場合は再帰して結果を返す() {
     /*
      parent_task_1
        - child_task_1
@@ -221,7 +221,7 @@ fn test_extract_leaf_tasks_from_project_タスクのchildrenが空配列では�
         vec![child_task_1, child_task_2],
     );
 
-    let actual = extract_leaf_tasks_from_project(&parent_task_1);
+    let actual = extract_leaf_immutable_tasks_from_project(&parent_task_1);
     let t1 = ImmutableTask::new_with_name("孫タスク1".to_string());
     let t2 = ImmutableTask::new_with_name("子タスク2".to_string());
     let expected = vec![&t1, &t2];
@@ -229,7 +229,7 @@ fn test_extract_leaf_tasks_from_project_タスクのchildrenが空配列では�
 }
 
 #[test]
-fn test_extract_leaf_tasks_from_project_done状態のタスクとその子孫は全て無視されること() {
+fn test_extract_leaf_immutable_tasks_from_project_done状態のタスクとその子孫は全て無視されること() {
     /*
      parent_task_1
        - child_task_1 (Done)
@@ -251,14 +251,14 @@ fn test_extract_leaf_tasks_from_project_done状態のタスクとその子孫は
         vec![child_task_1, child_task_2],
     );
 
-    let actual = extract_leaf_tasks_from_project(&parent_task_1);
+    let actual = extract_leaf_immutable_tasks_from_project(&parent_task_1);
     let expected_child_task_2 = ImmutableTask::new_with_name("子タスク2".to_string());
     let expected = vec![&expected_child_task_2];
     assert_eq!(actual, expected);
 }
 
 #[test]
-fn test_extract_leaf_tasks_from_project_途中にpending状態のタスクがあった場合は子孫を辿るが_葉がpending状態の場合は結果に入らないこと(
+fn test_extract_leaf_immutable_tasks_from_project_途中にpending状態のタスクがあった場合は子孫を辿るが_葉がpending状態の場合は結果に入らないこと(
 ) {
     /*
      parent_task_1
@@ -285,14 +285,14 @@ fn test_extract_leaf_tasks_from_project_途中にpending状態のタスクがあ
         vec![child_task_1, child_task_2],
     );
 
-    let actual = extract_leaf_tasks_from_project(&parent_task_1);
+    let actual = extract_leaf_immutable_tasks_from_project(&parent_task_1);
     let expected_grand_child_task_1 = ImmutableTask::new_with_name("孫タスク1".to_string());
     let expected = vec![&expected_grand_child_task_1];
     assert_eq!(actual, expected);
 }
 
 #[test]
-fn test_extract_leaf_tasks_from_project_子が全てdoneのタスクは葉として扱われること() {
+fn test_extract_leaf_immutable_tasks_from_project_子が全てdoneのタスクは葉として扱われること() {
     /*
      parent_task_1
        - child_task_1 (子が全てdoneなので葉として返る)
@@ -321,14 +321,14 @@ fn test_extract_leaf_tasks_from_project_子が全てdoneのタスクは葉とし
         vec![child_task_1, child_task_2],
     );
 
-    let actual = extract_leaf_tasks_from_project(&parent_task_1);
+    let actual = extract_leaf_immutable_tasks_from_project(&parent_task_1);
     let expected_child_task_2 = ImmutableTask::new_with_name("子タスク2".to_string());
     let expected = vec![&expected_child_task_1, &expected_child_task_2];
     assert_eq!(actual, expected);
 }
 
 #[test]
-fn test_extract_leaf_tasks_from_project_子が全てdoneのタスクで親がpendingの時は空配列を返すこと() {
+fn test_extract_leaf_immutable_tasks_from_project_子が全てdoneのタスクで親がpendingの時は空配列を返すこと() {
     /*
      parent_task_1 (pending)
        - child_task_1 (done)
@@ -345,12 +345,12 @@ fn test_extract_leaf_tasks_from_project_子が全てdoneのタスクで親がpen
         vec![child_task_1],
     );
 
-    let actual = extract_leaf_tasks_from_project(&parent_task_1);
+    let actual = extract_leaf_immutable_tasks_from_project(&parent_task_1);
     let expected: Vec<&ImmutableTask> = vec![];
     assert_eq!(actual, expected);
 }
 
-pub fn extract_leaf_tasks_from_project(task: &ImmutableTask) -> Vec<&ImmutableTask> {
+pub fn extract_leaf_immutable_tasks_from_project(task: &ImmutableTask) -> Vec<&ImmutableTask> {
     let children_are_all_done = task
         .get_children()
         .iter()
@@ -367,7 +367,7 @@ pub fn extract_leaf_tasks_from_project(task: &ImmutableTask) -> Vec<&ImmutableTa
     // 深さ優先
     for child in task.get_children() {
         if child.get_status() != &Status::Done {
-            let leaves_with_pending: Vec<&ImmutableTask> = extract_leaf_tasks_from_project(child);
+            let leaves_with_pending: Vec<&ImmutableTask> = extract_leaf_immutable_tasks_from_project(child);
             let mut leaves: Vec<&ImmutableTask> = leaves_with_pending
                 .iter()
                 .filter(|&leaf| leaf.get_status() != &Status::Pending)
