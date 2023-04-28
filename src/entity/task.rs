@@ -1,7 +1,12 @@
 use chrono::{DateTime, Local};
+use core::cell::BorrowError;
+use dendron::{HotNode, InsertAs, Node};
 
 #[cfg(test)]
 use chrono::TimeZone;
+
+#[cfg(test)]
+use dendron::{tree, Tree};
 
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub enum Status {
@@ -373,4 +378,219 @@ pub fn extract_leaf_tasks_from_project(task: &ImmutableTask) -> Vec<&ImmutableTa
     }
 
     return ans;
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct TaskAttr {
+    name: String,
+    status: Status,
+    pending_until: DateTime<Local>,
+}
+
+impl TaskAttr {
+    pub fn new(name: &str) -> Self {
+        Self {
+            name: name.to_string(),
+            status: Status::Todo,
+            pending_until: DateTime::<Local>::MIN_UTC.into(),
+        }
+    }
+
+    pub fn set_status(&mut self, status: Status) {
+        self.status = status;
+    }
+
+    pub fn get_status(&self) -> &Status {
+        &self.status
+    }
+
+    pub fn set_pending_until(&mut self, pending_until: DateTime<Local>) {
+        self.pending_until = pending_until;
+    }
+
+    pub fn get_pending_until(&self) -> &DateTime<Local> {
+        &self.pending_until
+    }
+}
+
+#[test]
+fn test_task_attr_set_status() {
+    let mut attr = TaskAttr::new("タスク");
+    attr.set_status(Status::Done);
+    let actual = attr.get_status();
+    assert_eq!(actual, &Status::Done);
+}
+
+#[test]
+fn test_task_attr_set_pending_until() {
+    let mut attr = TaskAttr::new("タスク");
+    let pending_until = Local.with_ymd_and_hms(2000, 1, 1, 0, 0, 0).unwrap();
+    attr.set_pending_until(pending_until);
+    let actual = attr.get_pending_until();
+    assert_eq!(actual, &pending_until);
+}
+
+#[derive(Debug, PartialEq)]
+pub struct Task {
+    // task_attr: TaskAttr,
+    node: Node<TaskAttr>,
+}
+
+impl Task {
+    pub fn new(name: &str) -> Self {
+        let task_attr = TaskAttr::new(name);
+        let node = Node::new_tree(task_attr);
+
+        Self { node }
+    }
+
+    pub fn set_status(&self, status: Status) {
+        self.node.borrow_data_mut().set_status(status);
+    }
+
+    pub fn set_pending_until(&self, pending_until: DateTime<Local>) {
+        self.node.borrow_data_mut().set_pending_until(pending_until);
+    }
+
+    pub fn parent(&self) -> Option<Self> {
+        match self.node.parent() {
+            Some(node) => Some(Task { node }),
+            None => None,
+        }
+    }
+
+    // pub fn try_eq_subtree(&self, task: &Task) -> Result<bool, BorrowError> {
+    //     self.node.try_eq(&task.node)
+    // }
+
+    pub fn tree_debug_pretty_print(&self) -> String {
+        format!("{:?}", &self.node.tree().debug_pretty_print())
+    }
+
+    pub fn try_eq_tree(&self, task: &Task) -> Result<bool, BorrowError> {
+        self.node.tree().try_eq(&task.node.tree())
+    }
+
+    // pub fn insert_as_last_child(&self, task: Task) {
+    pub fn detach_insert_as_last_child_of(&mut self, parent_task: Task) {
+        // taskのsubtreeをコピーしてselfを親から切り離して、parent_taskに結合する
+        // という挙動を期待しているが、ライブラリの不具合により実現できていない
+        // let self_grant = &self.node.tree().grant_hierarchy_edit().expect("self grant");
+
+        let parent_task_hot: HotNode<TaskAttr> = parent_task
+            .node
+            .bundle_new_hierarchy_edit_grant()
+            .expect("parent hot node");
+
+        // let parent_task_grant = &parent_task.node.tree().grant_hierarchy_edit().expect("parent grant");
+
+        // let parent_task_hot: HotNode<TaskAttr> = parent_task
+        //     .node
+        //     .bundle_hierarchy_edit_grant(&parent_task_grant);
+
+        // self.node
+        //     .try_detach_insert_subtree(&self_grant, InsertAs::LastChildOf(&parent_task_hot))
+        //     .expect("creating valid hierarchy");
+
+        self.node = self
+            .node
+            .try_clone_insert_subtree(InsertAs::LastChildOf(&parent_task_hot))
+            .expect("creating valid hierarchy")
+            .plain();
+    }
+
+    pub fn create_as_last_child(&self, task_attr: TaskAttr) -> Self {
+        let self_grant = &self.node.tree().grant_hierarchy_edit().expect("self grant");
+
+        let child_node = self.node.create_as_last_child(&self_grant, task_attr);
+        Self { node: child_node }
+    }
+}
+
+#[test]
+fn test_new_detach_insert_as_last_child_of_正常系1() {
+    let parent_task = Task::new("親タスク");
+    let mut child_task = Task::new("子タスク");
+
+    child_task.detach_insert_as_last_child_of(parent_task);
+    assert_eq!(*child_task.node.borrow_data(), TaskAttr::new("子タスク"));
+    assert_eq!(
+        *child_task.node.root().borrow_data(),
+        TaskAttr::new("親タスク")
+    );
+}
+
+#[test]
+fn test_new_detach_insert_as_last_child_of_正常系2() {
+    let parent_task = Task::new("親タスク");
+    let mut child_task = Task::new("子タスク");
+    child_task.create_as_last_child(TaskAttr::new("孫タスク"));
+
+    child_task.detach_insert_as_last_child_of(parent_task);
+
+    let expected_tree = tree! {
+        TaskAttr::new("親タスク"), [
+        /(TaskAttr::new("子タスク"), [
+            TaskAttr::new("孫タスク")
+        ]),
+    ]};
+
+    assert_task_and_tree(&child_task, &expected_tree)
+}
+
+#[test]
+fn test_create_as_last_child_正常系1() {
+    let actual_task = Task::new("親タスク");
+    actual_task.create_as_last_child(TaskAttr::new("子タスク"));
+
+    let expected_tree = tree! {
+    TaskAttr::new("親タスク"), [
+        TaskAttr::new("子タスク")
+    ]};
+
+    assert_task_and_tree(&actual_task, &expected_tree);
+}
+
+#[cfg(test)]
+fn get_tree_for_assert_debug(task1: &Task, task2: &Task) -> String {
+    format!(
+        "actual and expected are not equal:\n\n=== [actual] ===\n{}\n\n=== [expected] ===\n{}\n\n",
+        &task1.tree_debug_pretty_print(),
+        &task2.tree_debug_pretty_print(),
+    )
+}
+
+#[cfg(test)]
+pub fn assert_task(task1: &Task, task2: &Task) {
+    let str_for_debug_string: String = get_tree_for_assert_debug(&task1, &task2);
+
+    assert!(
+        &task1.try_eq_tree(&task2).expect("data are not borrowed"),
+        "{}",
+        str_for_debug_string.as_str()
+    );
+}
+
+#[cfg(test)]
+fn get_task_tree_for_assert_debug(task1: &Task, tree: &Tree<TaskAttr>) -> String {
+    format!(
+        "actual and expected are not equal:\n\n=== [actual] ===\n{}\n\n=== [expected] ===\n{:?}\n\n",
+        &task1.tree_debug_pretty_print(),
+        &tree.debug_pretty_print(),
+    )
+}
+
+#[cfg(test)]
+pub fn assert_task_and_tree(task1: &Task, tree: &Tree<TaskAttr>) {
+    let str_for_debug_string: String = get_task_tree_for_assert_debug(&task1, &tree);
+
+    assert!(
+        &task1
+            .node
+            .tree()
+            .try_eq(&tree)
+            .expect("data are not borrowed"),
+        "{}",
+        str_for_debug_string.as_str()
+    );
 }

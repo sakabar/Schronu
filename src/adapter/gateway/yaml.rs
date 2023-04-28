@@ -1,12 +1,18 @@
 use crate::entity::task::read_status;
-use crate::entity::task::ImmutableTask;
 use crate::entity::task::Status;
+use crate::entity::task::{ImmutableTask, Task};
 use chrono::TimeZone;
 use chrono::{DateTime, Local};
 use yaml_rust::Yaml;
 
 #[cfg(test)]
 use yaml_rust::YamlLoader;
+
+#[cfg(test)]
+use crate::entity::task::TaskAttr;
+
+#[cfg(test)]
+use crate::entity::task::assert_task;
 
 #[test]
 fn test_yaml_to_immutable_task_childrenキーが存在しない場合は空配列として登録されること() {
@@ -239,4 +245,212 @@ pub fn yaml_to_immutable_task(yaml: &Yaml) -> ImmutableTask {
     }
 
     return ImmutableTask::new_with_current_time(name, status, pending_until, children);
+}
+
+fn transform_from_pending_until_str(pending_until_str: &str) -> DateTime<Local> {
+    let mut pending_until: DateTime<Local> = DateTime::<Local>::MIN_UTC.into();
+
+    match Local.datetime_from_str(&pending_until_str, "%Y/%m/%d %H:%M:%S") {
+        Ok(pu) => {
+            pending_until = pu;
+        }
+        Err(_) => {}
+    }
+
+    match Local.datetime_from_str(&pending_until_str, "%Y/%m/%d %H:%M") {
+        Ok(pu) => {
+            pending_until = pu;
+        }
+        Err(_) => {}
+    }
+
+    match Local.datetime_from_str(
+        format!("{} 00:00", &pending_until_str).as_str(),
+        "%Y/%m/%d %H:%M",
+    ) {
+        Ok(pu) => {
+            pending_until = pu;
+        }
+        Err(_) => {}
+    }
+
+    pending_until
+}
+
+pub fn yaml_to_task(yaml: &Yaml) -> Task {
+    let name: &str = yaml["name"].as_str().unwrap_or("");
+
+    let status_str: &str = yaml["status"].as_str().unwrap_or("");
+    let status: Status = read_status(&status_str).unwrap_or(Status::Todo);
+
+    let pending_until_str: &str = yaml["pending_until"].as_str().unwrap_or("");
+    let pending_until = transform_from_pending_until_str(pending_until_str);
+
+    let mut parent_task: Task = Task::new(name);
+    parent_task.set_status(status);
+    parent_task.set_pending_until(pending_until);
+
+    for child_yaml in yaml["children"].as_vec().unwrap_or(&vec![]) {
+        let mut child_task = yaml_to_task(&child_yaml);
+        child_task.detach_insert_as_last_child_of(parent_task);
+
+        parent_task = child_task.parent().unwrap();
+    }
+
+    println!("[[return value parent_task]]");
+    println!("{}", &parent_task.tree_debug_pretty_print());
+
+    return parent_task;
+}
+
+#[test]
+fn test_yaml_to_task_childrenキーが存在しない場合は空配列として登録されること() {
+    let s = "
+name: 'タスク1'
+status: 'todo'
+";
+
+    let docs = YamlLoader::load_from_str(s).unwrap();
+    let project_yaml: &Yaml = &docs[0];
+
+    let actual = yaml_to_task(project_yaml);
+    let expected = Task::new("タスク1");
+    assert!(
+        &actual
+            .try_eq_tree(&expected)
+            .expect("data are not borrowed"),
+        "actual and expected are not equal"
+    );
+}
+
+#[test]
+fn test_yaml_to_task_childrenキーが存在して空配列の場合() {
+    let s = "
+name: 'タスク1'
+children: []
+";
+
+    let docs = YamlLoader::load_from_str(s).unwrap();
+    let project_yaml: &Yaml = &docs[0];
+
+    let actual = yaml_to_task(project_yaml);
+    let expected = Task::new("タスク1");
+    assert!(
+        &actual
+            .try_eq_tree(&expected)
+            .expect("data are not borrowed"),
+        "actual and expected are not equal"
+    );
+}
+
+#[test]
+#[allow(non_snake_case)]
+fn test_yaml_to_task_statusキーが存在しない場合はTodoとして登録されること() {
+    let s = "
+name: 'タスク1'
+children: []
+";
+
+    let docs = YamlLoader::load_from_str(s).unwrap();
+    let project_yaml: &Yaml = &docs[0];
+
+    let actual = yaml_to_task(project_yaml);
+    let expected = Task::new("タスク1");
+    assert!(
+        &actual
+            .try_eq_tree(&expected)
+            .expect("data are not borrowed"),
+        "actual and expected are not equal"
+    );
+}
+
+#[test]
+#[allow(non_snake_case)]
+fn test_yaml_to_task_statusキーの値が不正な時はTodoとして登録されること() {
+    let s = "
+name: 'タスク1'
+status: 'invalid_status'
+children: []
+";
+
+    let docs = YamlLoader::load_from_str(s).unwrap();
+    let project_yaml: &Yaml = &docs[0];
+
+    let actual = yaml_to_task(project_yaml);
+    let expected = Task::new("タスク1");
+    expected.set_status(Status::Todo);
+    assert!(
+        actual
+            .try_eq_tree(&expected)
+            .expect("data are not borrowed"),
+        "actual and expected are not equal"
+    );
+}
+
+#[test]
+fn test_yaml_to_task_childrenキーが存在してnullの場合() {
+    let s = "
+name: 'タスク1'
+status: 'done'
+children:
+";
+    let docs = YamlLoader::load_from_str(s).unwrap();
+    let project_yaml: &Yaml = &docs[0];
+
+    let actual = yaml_to_task(project_yaml);
+    let expected = Task::new("タスク1");
+    expected.set_status(Status::Done);
+    assert!(
+        actual
+            .try_eq_tree(&expected)
+            .expect("data are not borrowed"),
+        "actual and expected are not equal"
+    );
+}
+
+#[test]
+fn test_yaml_to_task_再帰的にパーズできること_親子() {
+    let s = "
+name: '親タスク'
+children:
+  - name: '子タスク'
+";
+    let docs = YamlLoader::load_from_str(s).unwrap();
+    let project_yaml: &Yaml = &docs[0];
+
+    let actual = yaml_to_task(project_yaml);
+
+    let parent_task = Task::new("親タスク");
+    parent_task.create_as_last_child(TaskAttr::new("子タスク"));
+
+    assert!(
+        &actual
+            .try_eq_tree(&parent_task)
+            .expect("data are not borrowed"),
+        "actual and expected are not equal"
+    );
+}
+
+#[test]
+fn test_yaml_to_task_再帰的にパーズできること_親子孫() {
+    let s = "
+name: '親タスク'
+children:
+  - name: '子タスク1'
+    children:
+      - name: '孫タスク'
+  - name: '子タスク2'
+";
+    let docs = YamlLoader::load_from_str(s).unwrap();
+    let project_yaml: &Yaml = &docs[0];
+
+    let actual_task = yaml_to_task(project_yaml);
+
+    let parent_task = Task::new("親タスク");
+    let child_task_1 = parent_task.create_as_last_child(TaskAttr::new("子タスク1"));
+    let grand_child_task = child_task_1.create_as_last_child(TaskAttr::new("孫タスク"));
+
+    let _child_task_2 = parent_task.create_as_last_child(TaskAttr::new("子タスク2"));
+
+    assert_task(&actual_task, &grand_child_task);
 }
