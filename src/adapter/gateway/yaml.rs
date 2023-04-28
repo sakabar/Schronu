@@ -297,9 +297,6 @@ pub fn yaml_to_task(yaml: &Yaml) -> Task {
         parent_task = child_task.parent().unwrap();
     }
 
-    println!("[[return value parent_task]]");
-    println!("{}", &parent_task.tree_debug_pretty_print());
-
     return parent_task;
 }
 
