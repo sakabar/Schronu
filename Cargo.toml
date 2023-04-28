@@ -25,3 +25,7 @@ path = "src/adapter/controller/show_leaf_immutable_tasks.rs"
 [[bin]]
 name = "show_leaf_tasks"
 path = "src/adapter/controller/show_leaf_tasks.rs"
+
+[[bin]]
+name = "update_task_sample"
+path = "src/adapter/controller/update_task_sample.rs"

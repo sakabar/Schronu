@@ -625,6 +625,9 @@ pub struct TaskAttr {
     status: Status, // 評価後のステータス。pendingはpending_untilを加味して評価され、Todo扱いとなる
     pending_until: DateTime<Local>,
     last_synced_time: DateTime<Local>,
+
+    // 優先度。大きいほど高い
+    priority: i64,
 }
 
 impl TaskAttr {
@@ -635,6 +638,7 @@ impl TaskAttr {
             status: Status::Todo,
             pending_until: DateTime::<Local>::MIN_UTC.into(),
             last_synced_time: DateTime::<Local>::MIN_UTC.into(),
+            priority: 0,
         }
     }
 
@@ -677,6 +681,14 @@ impl TaskAttr {
 
     pub fn get_pending_until(&self) -> &DateTime<Local> {
         &self.pending_until
+    }
+
+    pub fn set_priority(&mut self, priority: i64) {
+        self.priority = priority;
+    }
+
+    pub fn get_priority(&self) -> i64 {
+        self.priority
     }
 }
 
@@ -738,6 +750,10 @@ impl Task {
 
     pub fn get_last_synced_time(&self) -> DateTime<Local> {
         *self.node.borrow_data().get_last_synced_time()
+    }
+
+    pub fn set_priority(&self, priority: i64) {
+        self.node.borrow_data_mut().set_priority(priority);
     }
 
     pub fn parent(&self) -> Option<Self> {

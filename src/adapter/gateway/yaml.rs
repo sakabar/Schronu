@@ -286,9 +286,12 @@ pub fn yaml_to_task(yaml: &Yaml, now: DateTime<Local>) -> Task {
     let pending_until_str: &str = yaml["pending_until"].as_str().unwrap_or("");
     let pending_until = transform_from_pending_until_str(pending_until_str);
 
+    let priority: i64 = yaml["priority"].as_i64().unwrap_or(0);
+
     let mut parent_task: Task = Task::new(name);
     parent_task.set_orig_status(status);
     parent_task.set_pending_until(pending_until);
+    parent_task.set_priority(priority);
 
     parent_task.sync_clock(now);
 
@@ -418,6 +421,51 @@ children:
 }
 
 #[test]
+fn test_yaml_to_task_priorityキー_正常系() {
+    let s = "
+name: 'タスク1'
+status: 'todo'
+priority: 5
+";
+
+    let docs = YamlLoader::load_from_str(s).unwrap();
+    let project_yaml: &Yaml = &docs[0];
+
+    let now = Local::now();
+    let actual = yaml_to_task(project_yaml, now);
+    let expected = Task::new("タスク1");
+    expected.set_priority(5);
+    expected.sync_clock(now);
+
+    assert_task(&actual, &expected);
+}
+
+#[test]
+fn test_yaml_to_task_priorityキー_異常の値の場合はデフォルト値となること() {
+    let s = "
+name: 'タスク1'
+status: 'todo'
+priority: 'invalid'
+";
+
+    let docs = YamlLoader::load_from_str(s).unwrap();
+    let project_yaml: &Yaml = &docs[0];
+
+    let now = Local::now();
+    let actual = yaml_to_task(project_yaml, now);
+    let expected = Task::new("タスク1");
+    expected.set_priority(0);
+    expected.sync_clock(now);
+
+    assert!(
+        &actual
+            .try_eq_tree(&expected)
+            .expect("data are not borrowed"),
+        "actual and expected are not equal"
+    );
+}
+
+#[test]
 fn test_yaml_to_task_再帰的にパーズできること_親子() {
     let s = "
 name: '親タスク'
@@ -473,4 +521,9 @@ children:
     _child_task_2.sync_clock(now);
 
     assert_task(&actual_task, &grand_child_task);
+}
+
+pub fn task_to_yaml(task: &Task) -> Yaml {
+    // TODO
+    Yaml::from_str("-123")
 }
