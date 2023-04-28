@@ -8,6 +8,7 @@ edition = "2021"
 [dependencies]
 chrono = "0.4.24"
 dendron = "0.1.5"
+linked-hash-map = "0.5.6"
 regex = "1.8.1"
 termion = "2.0.1"
 unicode-width = "0.1.10"

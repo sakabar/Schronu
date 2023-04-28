@@ -1,6 +1,9 @@
 use chrono::{DateTime, Local};
 use core::cell::BorrowError;
 use dendron::{HotNode, InsertAs, Node};
+use linked_hash_map::LinkedHashMap;
+use std::fmt;
+use yaml_rust::Yaml;
 
 #[cfg(test)]
 use chrono::TimeZone;
@@ -19,6 +22,22 @@ pub enum Status {
 
     // 完了
     Done,
+}
+
+impl fmt::Display for Status {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match self {
+            Status::Todo => {
+                write!(f, "todo")
+            }
+            Status::Pending => {
+                write!(f, "pending")
+            }
+            Status::Done => {
+                write!(f, "done")
+            }
+        }
+    }
 }
 
 pub fn read_status(s: &str) -> Option<Status> {
@@ -736,12 +755,20 @@ impl Task {
         *self.node.borrow_data().get_status()
     }
 
+    pub fn get_orig_status(&self) -> Status {
+        *self.node.borrow_data().get_orig_status()
+    }
+
     pub fn set_orig_status(&self, orig_status: Status) {
         self.node.borrow_data_mut().set_orig_status(orig_status);
     }
 
     pub fn set_pending_until(&self, pending_until: DateTime<Local>) {
         self.node.borrow_data_mut().set_pending_until(pending_until);
+    }
+
+    pub fn get_pending_until(&self) -> DateTime<Local> {
+        *self.node.borrow_data().get_pending_until()
     }
 
     pub fn sync_clock(&self, now: DateTime<Local>) {
@@ -754,6 +781,10 @@ impl Task {
 
     pub fn set_priority(&self, priority: i64) {
         self.node.borrow_data_mut().set_priority(priority);
+    }
+
+    pub fn get_priority(&self) -> i64 {
+        self.node.borrow_data().get_priority()
     }
 
     pub fn parent(&self) -> Option<Self> {
@@ -919,4 +950,108 @@ pub fn assert_task_and_tree(task1: &Task, tree: &Tree<TaskAttr>) {
         "{}",
         str_for_debug_string.as_str()
     );
+}
+
+// 詳細な構造を知っていたほうが構築しやすいので、gatewayではなくtaskの中で定義する
+pub fn task_to_yaml(task: &Task) -> Yaml {
+    let default_attr = TaskAttr::new("デフォルト用");
+
+    let mut task_hash = LinkedHashMap::new();
+
+    task_hash.insert(
+        Yaml::String(String::from("name")),
+        Yaml::String(String::from(task.get_name())),
+    );
+
+    let orig_status = task.get_orig_status();
+    if orig_status != *default_attr.get_orig_status() {
+        task_hash.insert(
+            Yaml::String(String::from("status")),
+            Yaml::String(String::from(orig_status.to_string())),
+        );
+    }
+
+    let pending_until = task.get_pending_until();
+    if pending_until != *default_attr.get_pending_until() {
+        let pending_until_string = pending_until.format("%Y/%m/%d %H:%M:%S").to_string();
+        task_hash.insert(
+            Yaml::String(String::from("pending_until")),
+            Yaml::String(pending_until_string),
+        );
+    }
+
+    let priority = task.get_priority();
+    if priority != default_attr.get_priority() {
+        task_hash.insert(
+            Yaml::String(String::from("priority")),
+            Yaml::Integer(priority),
+        );
+    }
+
+    let mut children = vec![];
+    for child_node in task.node.children() {
+        let child_task = Task::new_with_node(child_node);
+        let child_yaml = task_to_yaml(&child_task);
+        children.push(child_yaml);
+    }
+
+    if !children.is_empty() {
+        task_hash.insert(
+            Yaml::String(String::from("children")),
+            Yaml::Array(children),
+        );
+    }
+
+    Yaml::Hash(task_hash)
+}
+
+#[test]
+fn test_task_to_yaml_正常系1_デフォルトの値と同じ場合は出力しない() {
+    let task = Task::new("タスク1");
+    let actual = task_to_yaml(&task);
+
+    let s = "
+name: 'タスク1'
+";
+    let docs = YamlLoader::load_from_str(s).unwrap();
+    let expected_yaml: &Yaml = &docs[0];
+
+    assert_eq!(&actual, expected_yaml);
+}
+
+#[test]
+fn test_task_to_yaml_正常系2_再帰() {
+    let task = Task::new("親タスク1");
+    task.set_orig_status(Status::Pending);
+    task.set_pending_until(Local.with_ymd_and_hms(2023, 4, 1, 12, 0, 0).unwrap());
+
+    let mut task_attr_child_1 = TaskAttr::new("子タスク1");
+    task_attr_child_1.set_orig_status(Status::Pending);
+    task_attr_child_1.set_pending_until(Local.with_ymd_and_hms(2023, 4, 1, 12, 0, 0).unwrap());
+
+    let mut task_attr_child_2 = TaskAttr::new("子タスク2");
+    task_attr_child_2.set_orig_status(Status::Pending);
+    task_attr_child_2.set_pending_until(Local.with_ymd_and_hms(2023, 4, 1, 12, 0, 0).unwrap());
+
+    task.create_as_last_child(task_attr_child_1);
+    task.create_as_last_child(task_attr_child_2);
+
+    let actual = task_to_yaml(&task);
+
+    let s = "
+name: '親タスク1'
+status: pending
+pending_until: '2023/04/01 12:00:00'
+children:
+  - name: '子タスク1'
+    status: pending
+    pending_until: '2023/04/01 12:00:00'
+  - name: '子タスク2'
+    status: pending
+    pending_until: '2023/04/01 12:00:00'
+";
+    let docs = YamlLoader::load_from_str(s).unwrap();
+    let expected_yaml: &Yaml = &docs[0];
+
+    assert_eq!(&actual, expected_yaml);
 }

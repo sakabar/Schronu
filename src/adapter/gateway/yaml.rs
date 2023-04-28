@@ -522,8 +522,3 @@ children:
 
     assert_task(&actual_task, &grand_child_task);
 }
-
-pub fn task_to_yaml(task: &Task) -> Yaml {
-    // TODO
-    Yaml::from_str("-123")
-}

@@ -6,5 +6,5 @@ pub trait TaskRepositoryTrait {
     fn load(&mut self);
     fn save(&self);
     fn sync_clock(&mut self, now: DateTime<Local>);
-    fn get_highest_priority_project(&self) -> Option<&Task>;
+    fn get_highest_priority_project(&mut self) -> Option<&Task>;
 }

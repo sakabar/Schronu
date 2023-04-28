@@ -1,11 +1,10 @@
-use crate::adapter::gateway::yaml::{task_to_yaml, yaml_to_task};
+use crate::adapter::gateway::yaml::yaml_to_task;
 use crate::application::interface::TaskRepositoryTrait;
-use crate::entity::task::Task;
+use crate::entity::task::{task_to_yaml, Task};
 use chrono::{DateTime, Local};
-use std::env;
+use linked_hash_map::LinkedHashMap;
 use std::fs::File;
 use std::io::prelude::*;
-use std::path::PathBuf;
 use walkdir::WalkDir;
 use yaml_rust::{Yaml, YamlEmitter, YamlLoader};
 
@@ -17,16 +16,23 @@ pub struct TaskRepository {
 
 struct Project {
     root_task: Task,
-    project_dir_name: String,
+    _project_dir_name: String,
     project_yaml_file_path: String,
+    priority: i64,
 }
 
 impl Project {
-    fn new(root_task: Task, project_dir_name: String, project_yaml_file_path: String) -> Self {
+    fn new(
+        root_task: Task,
+        _project_dir_name: String,
+        project_yaml_file_path: String,
+        priority: i64,
+    ) -> Self {
         Self {
             root_task,
-            project_dir_name,
+            _project_dir_name,
             project_yaml_file_path,
+            priority,
         }
     }
 }
@@ -73,9 +79,13 @@ impl TaskRepositoryTrait for TaskRepository {
                     Ok(docs) => {
                         let project_yaml: &Yaml = &docs[0]["project"];
                         let root_task: Task = yaml_to_task(project_yaml, self.last_synced_time);
-
-                        let project =
-                            Project::new(root_task, project_dir_name, project_yaml_file_path);
+                        let priority = root_task.get_priority();
+                        let project = Project::new(
+                            root_task,
+                            project_dir_name,
+                            project_yaml_file_path,
+                            priority,
+                        );
                         self.projects.push(project);
                     }
                 }
@@ -84,17 +94,23 @@ impl TaskRepositoryTrait for TaskRepository {
     }
 
     fn save(&self) {
-        // for project in self.projects.iter() {
-        //     let root_task = &project.root_task;
-        //     let doc = task_to_yaml(root_task);
+        for project in self.projects.iter() {
+            let root_task = &project.root_task;
+            let task_yaml = task_to_yaml(root_task);
 
-        //     let mut out_str = String::new();
-        //     let mut emitter = YamlEmitter::new(&mut out_str);
-        //     emitter.dump(&doc).unwrap();
+            let mut project_hash = LinkedHashMap::new();
+            project_hash.insert(Yaml::String(String::from("project")), task_yaml);
+            let doc = Yaml::Hash(project_hash);
 
-        //     let mut file = File::create(project.project_yaml_file_path.as_str()).unwrap();
-        //     file.write_all(out_str.as_bytes()).unwrap();
-        // }
+            let mut out_str = String::new();
+            let mut emitter = YamlEmitter::new(&mut out_str);
+            emitter.dump(&doc).unwrap();
+
+            out_str += "\n";
+
+            let mut file = File::create(project.project_yaml_file_path.as_str()).unwrap();
+            file.write_all(out_str.as_bytes()).unwrap();
+        }
     }
 
     fn sync_clock(&mut self, now: DateTime<Local>) {
@@ -104,9 +120,10 @@ impl TaskRepositoryTrait for TaskRepository {
         // これ、本来はprojectsの中に伝搬させていくべきだ。
     }
 
-    fn get_highest_priority_project(&self) -> Option<&Task> {
-        // TODO
-        // ちゃんと返す
+    fn get_highest_priority_project(&mut self) -> Option<&Task> {
+        // 副作用として、projectsを優先度の高い順に破壊的にソートする
+        self.projects.sort_by(|a, b| b.priority.cmp(&a.priority));
+
         self.projects
             .first()
             .and_then(|project| Some(&project.root_task))
