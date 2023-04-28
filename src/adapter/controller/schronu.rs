@@ -185,6 +185,7 @@ fn execute(untrimmed_line: &str) {
         "葉" | "leaves" | "leaf" | "lf" => {}
         "見" | "focus" | "fc" => {}
         "外" | "unfocus" | "ufc" => {}
+        "親" | "parent" => {}
         "上" | "nextup" | "nu" => {}
         "下" | "breakdown" | "bd" => {
             println!("The command is 'breakdown'");

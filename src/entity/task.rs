@@ -464,61 +464,77 @@ fn test_extract_leaf_tasks_from_project_タスクのchildrenが空配列の場�
     assert_eq!(actual, expected);
 }
 
-// #[test]
-// fn test_extract_leaf_immutable_tasks_from_project_タスクのchildrenが空配列ではない場合は再帰して結果を返す(
-// ) {
-//     /*
-//      parent_task_1
-//        - child_task_1
-//          - grand_child_task (葉)
-//        - child_task_2 (葉)
-//     */
-//     let grand_child_task_1 = ImmutableTask::new_with_name("孫タスク1".to_string());
-//     let child_task_1 =
-//         ImmutableTask::new_with_name_children("子タスク1".to_string(), vec![grand_child_task_1]);
-//     let child_task_2 = ImmutableTask::new_with_name("子タスク2".to_string());
-//     let parent_task_1 = ImmutableTask::new_with_name_children(
-//         "親タスク1".to_string(),
-//         vec![child_task_1, child_task_2],
-//     );
+#[test]
+fn test_extract_leaf_tasks_from_project_タスクのchildrenが空配列ではない場合は再帰して結果を返す() {
+    /*
+     parent_task_1
+       - child_task_1
+         - grand_child_task (葉)
+       - child_task_2 (葉)
+    */
+    let mut grand_child_task_1 = Task::new("孫タスク1");
+    let child_task_1 = Task::new("子タスク1");
+    grand_child_task_1.detach_insert_as_last_child_of(child_task_1);
 
-//     let actual = extract_leaf_immutable_tasks_from_project(&parent_task_1);
-//     let t1 = ImmutableTask::new_with_name("孫タスク1".to_string());
-//     let t2 = ImmutableTask::new_with_name("子タスク2".to_string());
-//     let expected = vec![&t1, &t2];
-//     assert_eq!(actual, expected);
-// }
+    let mut child_task_1_again = grand_child_task_1.root();
+
+    let mut child_task_2 = Task::new("子タスク2");
+    let parent_task_1 = Task::new("親タスク1");
+
+    child_task_1_again.detach_insert_as_last_child_of(parent_task_1);
+    let parent_task_again = child_task_1_again.root();
+    child_task_2.detach_insert_as_last_child_of(parent_task_again);
+
+    let parent_task_again_again = child_task_2.root();
+
+    let actual = extract_leaf_tasks_from_project(&parent_task_again_again);
+    let t1 = Task::new("孫タスク1");
+    let t2 = Task::new("子タスク2");
+    let expected = vec![t1, t2];
+    assert_eq!(&actual, &expected);
+
+    // actualの2つのノードに親子関係の情報が残っており、それらの親が同一であること
+    assert_eq!(actual.len(), 2);
+    let actual1 = actual.first().unwrap();
+    let actual2 = actual.last().unwrap();
+
+    assert_ne!(actual1, actual2);
+    assert_eq!(actual1.node.root().borrow_data().get_name(), "親タスク1");
+    assert_eq!(actual2.node.root().borrow_data().get_name(), "親タスク1");
+}
+
+////////////////// ここから要テスト
 
 // #[test]
-// fn test_extract_leaf_immutable_tasks_from_project_done状態のタスクとその子孫は全て無視されること() {
+// fn test_extract_leaf_tasks_from_project_done状態のタスクとその子孫は全て無視されること() {
 //     /*
 //      parent_task_1
 //        - child_task_1 (Done)
 //          - grand_child_task (todo, だが親がdoneなので無視される)
 //        - child_task_2
 //     */
-//     let grand_child_task_1 = ImmutableTask::new_with_name("孫タスク1".to_string());
-//     let child_task_1 = ImmutableTask::new_with_name_status_children(
+//     let grand_child_task_1 = Task::new_with_name("孫タスク1".to_string());
+//     let child_task_1 = Task::new_with_name_status_children(
 //         "子タスク1".to_string(),
 //         Status::Done,
 //         vec![grand_child_task_1],
 //     );
 
-//     let child_task_2 = ImmutableTask::new_with_name("子タスク2".to_string());
+//     let child_task_2 = Task::new_with_name("子タスク2".to_string());
 
-//     let parent_task_1 = ImmutableTask::new_with_name_children(
+//     let parent_task_1 = Task::new_with_name_children(
 //         "親タスク1".to_string(),
 //         vec![child_task_1, child_task_2],
 //     );
 
-//     let actual = extract_leaf_immutable_tasks_from_project(&parent_task_1);
-//     let expected_child_task_2 = ImmutableTask::new_with_name("子タスク2".to_string());
+//     let actual = extract_leaf_tasks_from_project(&parent_task_1);
+//     let expected_child_task_2 = Task::new_with_name("子タスク2".to_string());
 //     let expected = vec![&expected_child_task_2];
 //     assert_eq!(actual, expected);
 // }
 
 // #[test]
-// fn test_extract_leaf_immutable_tasks_from_project_途中にpending状態のタスクがあった場合は子孫を辿るが_葉がpending状態の場合は結果に入らないこと(
+// fn test_extract_leaf_tasks_from_project_途中にpending状態のタスクがあった場合は子孫を辿るが_葉がpending状態の場合は結果に入らないこと(
 // ) {
 //     /*
 //      parent_task_1
@@ -526,87 +542,81 @@ fn test_extract_leaf_tasks_from_project_タスクのchildrenが空配列の場�
 //          - grand_child_task (todo、親がPendingだがそれは関係なく結果として返る)
 //        - child_task_2 (Pendingの葉なので結果に入らない)
 //     */
-//     let grand_child_task_1 = ImmutableTask::new_with_name("孫タスク1".to_string());
-//     let child_task_1 = ImmutableTask::new_with_name_status_children(
+//     let grand_child_task_1 = Task::new_with_name("孫タスク1".to_string());
+//     let child_task_1 = Task::new_with_name_status_children(
 //         "子タスク1".to_string(),
 //         Status::Pending,
 //         vec![grand_child_task_1],
 //     );
 
-//     let child_task_2 = ImmutableTask::new_with_name_status_children(
+//     let child_task_2 = Task::new_with_name_status_children(
 //         "子タスク2".to_string(),
 //         Status::Pending,
 //         vec![],
 //     );
 
-//     let parent_task_1 = ImmutableTask::new_with_name_children(
+//     let parent_task_1 = Task::new_with_name_children(
 //         "親タスク1".to_string(),
 //         vec![child_task_1, child_task_2],
 //     );
 
-//     let actual = extract_leaf_immutable_tasks_from_project(&parent_task_1);
-//     let expected_grand_child_task_1 = ImmutableTask::new_with_name("孫タスク1".to_string());
+//     let actual = extract_leaf_tasks_from_project(&parent_task_1);
+//     let expected_grand_child_task_1 = Task::new_with_name("孫タスク1".to_string());
 //     let expected = vec![&expected_grand_child_task_1];
 //     assert_eq!(actual, expected);
 // }
 
-// #[test]
-// fn test_extract_leaf_immutable_tasks_from_project_子が全てdoneのタスクは葉として扱われること() {
-//     /*
-//      parent_task_1
-//        - child_task_1 (子が全てdoneなので葉として返る)
-//          - grand_child_task_1 (done)
-//          - grand_child_task_2 (done)
-//        - child_task_2 (返る)
-//     */
-//     let grand_child_task_1 =
-//         ImmutableTask::new_with_name_status_children("孫タスク1".to_string(), Status::Done, vec![]);
-//     let grand_child_task_2 =
-//         ImmutableTask::new_with_name_status_children("孫タスク2".to_string(), Status::Done, vec![]);
+#[test]
+fn test_extract_leaf_tasks_from_project_子が全てdoneのタスクは葉として扱われること() {
+    /*
+     parent_task_1
+       - child_task_1 (子が全てdoneなので葉として返る)
+         - grand_child_task_1 (done)
+         - grand_child_task_2 (done)
+       - child_task_2 (返る)
+    */
+    let mut grand_child_task_1 = Task::new("孫タスク1");
+    grand_child_task_1.set_orig_status(Status::Done);
 
-//     let child_task_1 = ImmutableTask::new_with_name_status_children(
-//         "子タスク1".to_string(),
-//         Status::Todo,
-//         vec![grand_child_task_1, grand_child_task_2],
-//     );
+    let mut grand_child_task_2 = Task::new("孫タスク2");
+    grand_child_task_2.set_orig_status(Status::Done);
 
-//     let expected_child_task_1 = child_task_1.clone();
+    let child_task_1 = Task::new("子タスク1");
 
-//     let child_task_2 = ImmutableTask::new_with_name("子タスク2".to_string());
+    grand_child_task_1.detach_insert_as_last_child_of(child_task_1);
+    let child_task_1_again = grand_child_task_1.parent().unwrap();
+    grand_child_task_2.detach_insert_as_last_child_of(child_task_1_again);
 
-//     let parent_task_1 = ImmutableTask::new_with_name_children(
-//         "親タスク1".to_string(),
-//         vec![child_task_1, child_task_2],
-//     );
+    let parent_task = grand_child_task_2.root();
 
-//     let actual = extract_leaf_immutable_tasks_from_project(&parent_task_1);
-//     let expected_child_task_2 = ImmutableTask::new_with_name("子タスク2".to_string());
-//     let expected = vec![&expected_child_task_1, &expected_child_task_2];
-//     assert_eq!(actual, expected);
-// }
+    let expected_child_task_1 = Task::new_with_node(parent_task.node.first_child().unwrap());
 
-// #[test]
-// fn test_extract_leaf_immutable_tasks_from_project_子が全てdoneのタスクで親がpendingの時は空配列を返すこと(
-// ) {
-//     /*
-//      parent_task_1 (pending)
-//        - child_task_1 (done)
-//     */
-//     let child_task_1 =
-//         ImmutableTask::new_with_name_status_children("子タスク1".to_string(), Status::Done, vec![]);
+    let actual = extract_leaf_tasks_from_project(&parent_task);
 
-//     let pending_until = Local.with_ymd_and_hms(2037, 12, 31, 0, 0, 0).unwrap();
-//     let parent_task_1 = ImmutableTask::new(
-//         "親タスク1".to_string(),
-//         Status::Pending,
-//         pending_until,
-//         vec![child_task_1],
-//     );
+    assert_eq!(actual.len(), 1);
+    assert_task(&actual.first().unwrap(), &expected_child_task_1);
+}
 
-//     let actual = extract_leaf_immutable_tasks_from_project(&parent_task_1);
-//     let expected: Vec<&ImmutableTask> = vec![];
-//     assert_eq!(actual, expected);
-// }
+#[test]
+fn test_extract_leaf_tasks_from_project_子が全てdoneのタスクで親がpendingの時は空配列を返すこと() {
+    /*
+     parent_task_1 (pending)
+       - child_task_1 (done)
+    */
+    let mut child_task_1 = Task::new("子タスク1");
+    child_task_1.set_orig_status(Status::Done);
+
+    let pending_until = Local.with_ymd_and_hms(2037, 12, 31, 0, 0, 0).unwrap();
+    let parent_task_1 = Task::new("親タスク1");
+    parent_task_1.set_orig_status(Status::Pending);
+    parent_task_1.set_pending_until(pending_until);
+    child_task_1.detach_insert_as_last_child_of(parent_task_1);
+
+    let root_task = &child_task_1.root();
+    let actual = extract_leaf_tasks_from_project(root_task);
+    let expected: Vec<Task> = vec![];
+    assert_eq!(actual, expected);
+}
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct TaskAttr {
@@ -701,6 +711,11 @@ impl Task {
         Self { node }
     }
 
+    // 内部実装であるNodeを外部から触られたくないので、外部には公開しない
+    fn new_with_node(node: Node<TaskAttr>) -> Self {
+        Self { node }
+    }
+
     pub fn get_name(&self) -> String {
         self.node.borrow_data().get_name().to_string()
     }
@@ -729,6 +744,12 @@ impl Task {
         match self.node.parent() {
             Some(node) => Some(Task { node }),
             None => None,
+        }
+    }
+
+    pub fn root(&self) -> Self {
+        Task {
+            node: self.node.root(),
         }
     }
 
@@ -778,6 +799,22 @@ impl Task {
         let child_node = self.node.create_as_last_child(&self_grant, task_attr);
         Self { node: child_node }
     }
+}
+
+#[test]
+fn test_new_with_node_タスク化したnodeの親子関係が維持されること() {
+    let parent_task = Task::new("親タスク");
+    let mut child_task = Task::new("子タスク");
+    child_task.create_as_last_child(TaskAttr::new("孫タスク"));
+
+    child_task.detach_insert_as_last_child_of(parent_task);
+
+    let grand_children_task_node = child_task.node.first_child().unwrap();
+    let new_grand_children_task = Task::new_with_node(grand_children_task_node);
+    assert_eq!(
+        new_grand_children_task.node.root().borrow_data().get_name(),
+        "親タスク"
+    );
 }
 
 #[test]
