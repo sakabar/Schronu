@@ -277,7 +277,7 @@ fn transform_from_pending_until_str(pending_until_str: &str) -> DateTime<Local> 
     pending_until
 }
 
-pub fn yaml_to_task(yaml: &Yaml) -> Task {
+pub fn yaml_to_task(yaml: &Yaml, now: DateTime<Local>) -> Task {
     let name: &str = yaml["name"].as_str().unwrap_or("");
 
     let status_str: &str = yaml["status"].as_str().unwrap_or("");
@@ -287,11 +287,13 @@ pub fn yaml_to_task(yaml: &Yaml) -> Task {
     let pending_until = transform_from_pending_until_str(pending_until_str);
 
     let mut parent_task: Task = Task::new(name);
-    parent_task.set_status(status);
+    parent_task.set_orig_status(status);
     parent_task.set_pending_until(pending_until);
 
+    parent_task.sync_clock(now);
+
     for child_yaml in yaml["children"].as_vec().unwrap_or(&vec![]) {
-        let mut child_task = yaml_to_task(&child_yaml);
+        let mut child_task = yaml_to_task(&child_yaml, now);
         child_task.detach_insert_as_last_child_of(parent_task);
 
         parent_task = child_task.parent().unwrap();
@@ -310,8 +312,11 @@ status: 'todo'
     let docs = YamlLoader::load_from_str(s).unwrap();
     let project_yaml: &Yaml = &docs[0];
 
-    let actual = yaml_to_task(project_yaml);
+    let now = Local::now();
+    let actual = yaml_to_task(project_yaml, now);
     let expected = Task::new("タスク1");
+    expected.sync_clock(now);
+
     assert!(
         &actual
             .try_eq_tree(&expected)
@@ -330,8 +335,11 @@ children: []
     let docs = YamlLoader::load_from_str(s).unwrap();
     let project_yaml: &Yaml = &docs[0];
 
-    let actual = yaml_to_task(project_yaml);
+    let now = Local::now();
+    let actual = yaml_to_task(project_yaml, now);
     let expected = Task::new("タスク1");
+    expected.sync_clock(now);
+
     assert!(
         &actual
             .try_eq_tree(&expected)
@@ -351,8 +359,11 @@ children: []
     let docs = YamlLoader::load_from_str(s).unwrap();
     let project_yaml: &Yaml = &docs[0];
 
-    let actual = yaml_to_task(project_yaml);
+    let now = Local::now();
+    let actual = yaml_to_task(project_yaml, now);
     let expected = Task::new("タスク1");
+    expected.sync_clock(now);
+
     assert!(
         &actual
             .try_eq_tree(&expected)
@@ -373,9 +384,12 @@ children: []
     let docs = YamlLoader::load_from_str(s).unwrap();
     let project_yaml: &Yaml = &docs[0];
 
-    let actual = yaml_to_task(project_yaml);
+    let now = Local::now();
+    let actual = yaml_to_task(project_yaml, now);
     let expected = Task::new("タスク1");
-    expected.set_status(Status::Todo);
+    expected.sync_clock(now);
+    expected.set_orig_status(Status::Todo);
+
     assert!(
         actual
             .try_eq_tree(&expected)
@@ -394,15 +408,13 @@ children:
     let docs = YamlLoader::load_from_str(s).unwrap();
     let project_yaml: &Yaml = &docs[0];
 
-    let actual = yaml_to_task(project_yaml);
+    let now = Local::now();
+    let actual = yaml_to_task(project_yaml, now);
     let expected = Task::new("タスク1");
-    expected.set_status(Status::Done);
-    assert!(
-        actual
-            .try_eq_tree(&expected)
-            .expect("data are not borrowed"),
-        "actual and expected are not equal"
-    );
+    expected.sync_clock(now);
+
+    expected.set_orig_status(Status::Done);
+    assert_task(&actual, &expected);
 }
 
 #[test]
@@ -415,10 +427,14 @@ children:
     let docs = YamlLoader::load_from_str(s).unwrap();
     let project_yaml: &Yaml = &docs[0];
 
-    let actual = yaml_to_task(project_yaml);
+    let now = Local::now();
+    let actual = yaml_to_task(project_yaml, now);
 
     let parent_task = Task::new("親タスク");
-    parent_task.create_as_last_child(TaskAttr::new("子タスク"));
+    parent_task.sync_clock(now);
+    let mut task_attr = TaskAttr::new("子タスク");
+    task_attr.sync_clock(now);
+    parent_task.create_as_last_child(task_attr);
 
     assert!(
         &actual
@@ -441,13 +457,20 @@ children:
     let docs = YamlLoader::load_from_str(s).unwrap();
     let project_yaml: &Yaml = &docs[0];
 
-    let actual_task = yaml_to_task(project_yaml);
+    let now = Local::now();
+    let actual_task = yaml_to_task(project_yaml, now);
 
     let parent_task = Task::new("親タスク");
+    parent_task.sync_clock(now);
+
     let child_task_1 = parent_task.create_as_last_child(TaskAttr::new("子タスク1"));
+    child_task_1.sync_clock(now);
+
     let grand_child_task = child_task_1.create_as_last_child(TaskAttr::new("孫タスク"));
+    grand_child_task.sync_clock(now);
 
     let _child_task_2 = parent_task.create_as_last_child(TaskAttr::new("子タスク2"));
+    _child_task_2.sync_clock(now);
 
     assert_task(&actual_task, &grand_child_task);
 }
