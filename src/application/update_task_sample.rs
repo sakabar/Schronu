@@ -8,6 +8,7 @@ pub fn update_task_sample(task_repository: &mut dyn TaskRepositoryTrait) {
     task_repository.load();
     // let mut env_pokemon_repository = EnvPokemonRepository::new();
 
+    #[allow(unused_assignments)]
     let mut focused_task_opt: Option<&Task> = None;
 
     // 優先度の最も高いPJを一つ選ぶ

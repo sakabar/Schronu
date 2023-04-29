@@ -181,16 +181,16 @@ fn execute(untrimmed_line: &str) {
     match tokens[0] {
         "新" | "new" => {}
         "木" | "tree" => {}
-        "根" | "roots" => {}
+        "根" | "root" => {}
         "葉" | "leaves" | "leaf" | "lf" => {}
         "見" | "focus" | "fc" => {}
         "外" | "unfocus" | "ufc" => {}
         "親" | "parent" => {}
+        "子" | "children" | "ch" => {}
         "上" | "nextup" | "nu" => {}
         "下" | "breakdown" | "bd" => {
             println!("The command is 'breakdown'");
         }
-        "分" | "children" | "ch" => {}
         // "詳" | "description" | "desc" => {}
         "後" | "defer" => {}
         "終" | "finish" | "fin" => {}
