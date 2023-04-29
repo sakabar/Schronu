@@ -22,7 +22,7 @@ pub fn update_task_sample(task_repository: &mut dyn TaskRepositoryTrait) {
             // 木を操作する
             match focused_task_opt {
                 Some(focused_task) => {
-                    focused_task.create_as_last_child(TaskAttr::new("新タスク with Schronu job"));
+                    // focused_task.create_as_last_child(TaskAttr::new("新タスク with Schronu job"));
                 }
                 None => {}
             }

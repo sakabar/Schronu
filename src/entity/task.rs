@@ -3,6 +3,7 @@ use core::cell::BorrowError;
 use dendron::{HotNode, InsertAs, Node};
 use linked_hash_map::LinkedHashMap;
 use std::fmt;
+use uuid::{uuid, Uuid};
 use yaml_rust::Yaml;
 
 #[cfg(test)]
@@ -10,6 +11,9 @@ use chrono::TimeZone;
 
 #[cfg(test)]
 use dendron::{tree, Tree};
+
+#[cfg(test)]
+use yaml_rust::YamlLoader;
 
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub enum Status {
@@ -637,8 +641,9 @@ fn test_extract_leaf_tasks_from_project_子が全てdoneのタスクで親がpen
     assert_eq!(actual, expected);
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug)]
 pub struct TaskAttr {
+    id: Uuid,
     name: String,
     orig_status: Status, // 元々のステータス。orig_status=Pendingの時、時刻によらずPendingのまま。
     status: Status, // 評価後のステータス。pendingはpending_untilを加味して評価され、Todo扱いとなる
@@ -649,9 +654,22 @@ pub struct TaskAttr {
     priority: i64,
 }
 
+// idはあくまで検索用に使い、等価性判定には用いない
+impl PartialEq for TaskAttr {
+    fn eq(&self, other: &Self) -> bool {
+        self.name == other.name
+            && self.orig_status == other.orig_status
+            && self.status == other.status
+            && self.pending_until == other.pending_until
+            && self.last_synced_time == other.last_synced_time
+            && self.priority == other.priority
+    }
+}
+
 impl TaskAttr {
     pub fn new(name: &str) -> Self {
         Self {
+            id: Uuid::new_v4(),
             name: name.to_string(),
             orig_status: Status::Todo,
             status: Status::Todo,
@@ -659,6 +677,14 @@ impl TaskAttr {
             last_synced_time: DateTime::<Local>::MIN_UTC.into(),
             priority: 0,
         }
+    }
+
+    pub fn get_id(&self) -> &Uuid {
+        &self.id
+    }
+
+    pub fn set_id(&mut self, id: Uuid) {
+        self.id = id;
     }
 
     pub fn get_name(&self) -> &str {
@@ -745,6 +771,14 @@ impl Task {
     // 内部実装であるNodeを外部から触られたくないので、外部には公開しない
     fn new_with_node(node: Node<TaskAttr>) -> Self {
         Self { node }
+    }
+
+    pub fn get_id(&self) -> Uuid {
+        *self.node.borrow_data().get_id()
+    }
+
+    pub fn set_id(&mut self, id: Uuid) {
+        self.node.borrow_data_mut().set_id(id);
     }
 
     pub fn get_name(&self) -> String {
@@ -959,6 +993,11 @@ pub fn task_to_yaml(task: &Task) -> Yaml {
     let mut task_hash = LinkedHashMap::new();
 
     task_hash.insert(
+        Yaml::String(String::from("id")),
+        Yaml::String(task.get_id().to_string()),
+    );
+
+    task_hash.insert(
         Yaml::String(String::from("name")),
         Yaml::String(String::from(task.get_name())),
     );
@@ -1007,12 +1046,16 @@ pub fn task_to_yaml(task: &Task) -> Yaml {
 
 #[test]
 fn test_task_to_yaml_正常系1_デフォルトの値と同じ場合は出力しない() {
-    let task = Task::new("タスク1");
+    let mut task = Task::new("タスク1");
+    let id: Uuid = uuid!("67e55044-10b1-426f-9247-bb680e5fe0c8");
+    task.set_id(id);
     let actual = task_to_yaml(&task);
 
     let s = "
+id: 67e55044-10b1-426f-9247-bb680e5fe0c8
 name: 'タスク1'
 ";
+
     let docs = YamlLoader::load_from_str(s).unwrap();
     let expected_yaml: &Yaml = &docs[0];
 
@@ -1021,17 +1064,23 @@ name: 'タスク1'
 
 #[test]
 fn test_task_to_yaml_正常系2_再帰() {
-    let task = Task::new("親タスク1");
+    let mut task = Task::new("親タスク1");
     task.set_orig_status(Status::Pending);
     task.set_pending_until(Local.with_ymd_and_hms(2023, 4, 1, 12, 0, 0).unwrap());
+    let id: Uuid = uuid!("67e55044-10b1-426f-9247-bb680e5fe0c8");
+    task.set_id(id);
 
     let mut task_attr_child_1 = TaskAttr::new("子タスク1");
     task_attr_child_1.set_orig_status(Status::Pending);
     task_attr_child_1.set_pending_until(Local.with_ymd_and_hms(2023, 4, 1, 12, 0, 0).unwrap());
+    let id_child_1: Uuid = uuid!("0aaee735-3e22-4216-8b59-d56d5caf29ee");
+    task_attr_child_1.set_id(id_child_1);
 
     let mut task_attr_child_2 = TaskAttr::new("子タスク2");
     task_attr_child_2.set_orig_status(Status::Pending);
     task_attr_child_2.set_pending_until(Local.with_ymd_and_hms(2023, 4, 1, 12, 0, 0).unwrap());
+    let id_child_2: Uuid = uuid!("7ffcba2f-80e0-4a44-aee9-d68e0d2d1256");
+    task_attr_child_2.set_id(id_child_2);
 
     task.create_as_last_child(task_attr_child_1);
     task.create_as_last_child(task_attr_child_2);
@@ -1039,16 +1088,36 @@ fn test_task_to_yaml_正常系2_再帰() {
     let actual = task_to_yaml(&task);
 
     let s = "
+id: 67e55044-10b1-426f-9247-bb680e5fe0c8
 name: '親タスク1'
 status: pending
 pending_until: '2023/04/01 12:00:00'
 children:
-  - name: '子タスク1'
+  - id: 0aaee735-3e22-4216-8b59-d56d5caf29ee
+    name: '子タスク1'
     status: pending
     pending_until: '2023/04/01 12:00:00'
-  - name: '子タスク2'
+  - id: 7ffcba2f-80e0-4a44-aee9-d68e0d2d1256
+    name: '子タスク2'
     status: pending
     pending_until: '2023/04/01 12:00:00'
+";
+    let docs = YamlLoader::load_from_str(s).unwrap();
+    let expected_yaml: &Yaml = &docs[0];
+
+    assert_eq!(&actual, expected_yaml);
+}
+
+#[test]
+fn test_task_to_yaml_ユニークキー() {
+    let mut task = Task::new("タスク1");
+    let id: Uuid = uuid!("67e55044-10b1-426f-9247-bb680e5fe0c8");
+    task.set_id(id);
+    let actual = task_to_yaml(&task);
+
+    let s = "
+id: 67e55044-10b1-426f-9247-bb680e5fe0c8
+name: 'タスク1'
 ";
     let docs = YamlLoader::load_from_str(s).unwrap();
     let expected_yaml: &Yaml = &docs[0];

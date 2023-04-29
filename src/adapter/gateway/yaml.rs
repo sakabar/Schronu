@@ -3,6 +3,7 @@ use crate::entity::task::Status;
 use crate::entity::task::{ImmutableTask, Task};
 use chrono::TimeZone;
 use chrono::{DateTime, Local};
+use uuid::{uuid, Uuid};
 use yaml_rust::Yaml;
 
 #[cfg(test)]
@@ -289,6 +290,15 @@ pub fn yaml_to_task(yaml: &Yaml, now: DateTime<Local>) -> Task {
     let priority: i64 = yaml["priority"].as_i64().unwrap_or(0);
 
     let mut parent_task: Task = Task::new(name);
+
+    let id_str: &str = yaml["id"].as_str().unwrap_or("");
+    match Uuid::parse_str(id_str) {
+        Ok(id) => {
+            parent_task.set_id(id);
+        }
+        Err(_) => {}
+    }
+
     parent_task.set_orig_status(status);
     parent_task.set_pending_until(pending_until);
     parent_task.set_priority(priority);
@@ -463,6 +473,34 @@ priority: 'invalid'
             .expect("data are not borrowed"),
         "actual and expected are not equal"
     );
+}
+
+#[test]
+fn test_yaml_to_task_idキー_正常系() {
+    let s = "
+id: 67e55044-10b1-426f-9247-bb680e5fe0c8
+name: 'タスク1'
+status: 'todo'
+";
+
+    let docs = YamlLoader::load_from_str(s).unwrap();
+    let project_yaml: &Yaml = &docs[0];
+
+    let now = Local::now();
+    let actual = yaml_to_task(project_yaml, now);
+    let mut expected = Task::new("タスク1");
+    let id: Uuid = uuid!("67e55044-10b1-426f-9247-bb680e5fe0c8");
+    expected.set_id(id);
+    expected.sync_clock(now);
+
+    assert!(
+        &actual
+            .try_eq_tree(&expected)
+            .expect("data are not borrowed"),
+        "actual and expected are not equal"
+    );
+
+    assert_eq!(&actual.get_id(), &expected.get_id());
 }
 
 #[test]
