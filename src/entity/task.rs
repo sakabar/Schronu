@@ -993,13 +993,13 @@ pub fn task_to_yaml(task: &Task) -> Yaml {
     let mut task_hash = LinkedHashMap::new();
 
     task_hash.insert(
-        Yaml::String(String::from("id")),
-        Yaml::String(task.get_id().to_string()),
+        Yaml::String(String::from("name")),
+        Yaml::String(String::from(task.get_name())),
     );
 
     task_hash.insert(
-        Yaml::String(String::from("name")),
-        Yaml::String(String::from(task.get_name())),
+        Yaml::String(String::from("id")),
+        Yaml::String(task.get_id().to_string()),
     );
 
     let orig_status = task.get_orig_status();
@@ -1052,8 +1052,8 @@ fn test_task_to_yaml_正常系1_デフォルトの値と同じ場合は出力し
     let actual = task_to_yaml(&task);
 
     let s = "
-id: 67e55044-10b1-426f-9247-bb680e5fe0c8
 name: 'タスク1'
+id: 67e55044-10b1-426f-9247-bb680e5fe0c8
 ";
 
     let docs = YamlLoader::load_from_str(s).unwrap();
@@ -1088,17 +1088,17 @@ fn test_task_to_yaml_正常系2_再帰() {
     let actual = task_to_yaml(&task);
 
     let s = "
-id: 67e55044-10b1-426f-9247-bb680e5fe0c8
 name: '親タスク1'
+id: 67e55044-10b1-426f-9247-bb680e5fe0c8
 status: pending
 pending_until: '2023/04/01 12:00:00'
 children:
-  - id: 0aaee735-3e22-4216-8b59-d56d5caf29ee
-    name: '子タスク1'
+  - name: '子タスク1'
+    id: 0aaee735-3e22-4216-8b59-d56d5caf29ee
     status: pending
     pending_until: '2023/04/01 12:00:00'
-  - id: 7ffcba2f-80e0-4a44-aee9-d68e0d2d1256
-    name: '子タスク2'
+  - name: '子タスク2'
+    id: 7ffcba2f-80e0-4a44-aee9-d68e0d2d1256
     status: pending
     pending_until: '2023/04/01 12:00:00'
 ";
@@ -1116,8 +1116,8 @@ fn test_task_to_yaml_ユニークキー() {
     let actual = task_to_yaml(&task);
 
     let s = "
-id: 67e55044-10b1-426f-9247-bb680e5fe0c8
 name: 'タスク1'
+id: 67e55044-10b1-426f-9247-bb680e5fe0c8
 ";
     let docs = YamlLoader::load_from_str(s).unwrap();
     let expected_yaml: &Yaml = &docs[0];
