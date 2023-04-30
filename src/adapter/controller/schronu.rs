@@ -270,6 +270,26 @@ fn execute_defer(
     *focused_task_id_opt = None;
 }
 
+fn execute_finish(focused_task_id_opt: &mut Option<Uuid>, focused_task_opt: &Option<Task>) {
+    focused_task_opt.as_ref().and_then(|focused_task| {
+        focused_task.set_orig_status(Status::Done);
+
+        // 兄弟ノードが無い場合は、フォーカスを親タスクに移す。
+        // そうでない場合は、フォーカスを外す。
+        // 兄弟ノードがある場合に、本来はそちらの葉のdone状況を確認してからOKであれば親タスクにフォーカスを移すべきだが、難しいので今は対象としない
+        *focused_task_id_opt = focused_task.parent().and_then(|parent| {
+            if parent.num_children() == 1 {
+                Some(parent.get_id())
+            } else {
+                None
+            }
+        });
+
+        // dummy
+        None::<i32>
+    });
+}
+
 fn execute(
     stdout: &mut RawTerminal<Stdout>,
     task_repository: &mut dyn TaskRepositoryTrait,
@@ -333,7 +353,9 @@ fn execute(
             }
         }
         // (1)
-        "終" | "finish" | "fin" => {}
+        "終" | "finish" | "fin" => {
+            execute_finish(focused_task_id_opt, &focused_task_opt);
+        }
         &_ => {}
     }
 
