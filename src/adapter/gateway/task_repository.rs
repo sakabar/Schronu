@@ -1,5 +1,6 @@
 use crate::adapter::gateway::yaml::yaml_to_task;
 use crate::application::interface::TaskRepositoryTrait;
+use crate::entity::task::extract_leaf_tasks_from_project;
 use crate::entity::task::{task_to_yaml, Task};
 use chrono::{DateTime, Local};
 use linked_hash_map::LinkedHashMap;
@@ -128,6 +129,24 @@ impl TaskRepositoryTrait for TaskRepository {
         self.projects
             .first()
             .and_then(|project| Some(&project.root_task))
+    }
+
+    fn get_highest_priority_leaf_task_id(&mut self) -> Option<Uuid> {
+        // 副作用として、projectsを優先度の高い順に破壊的にソートする
+        self.projects.sort_by(|a, b| b.priority.cmp(&a.priority));
+
+        // 優先度が高いPJ順に見て、葉タスクがあればそれを採用する
+        for project in &self.projects {
+            let root_task = &project.root_task;
+
+            let leaf_tasks: Vec<Task> = extract_leaf_tasks_from_project(&root_task);
+
+            if !leaf_tasks.is_empty() {
+                return leaf_tasks.first().map(|task| task.get_id());
+            }
+        }
+
+        None
     }
 
     fn get_by_id(&self, id: Uuid) -> Option<Task> {

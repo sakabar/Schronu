@@ -2,7 +2,7 @@ use chrono::{Duration, Local};
 use regex::Regex;
 use schronu::adapter::gateway::task_repository::TaskRepository;
 use schronu::application::interface::TaskRepositoryTrait;
-use schronu::entity::task::{extract_leaf_tasks_from_project, Task, TaskAttr};
+use schronu::entity::task::{Status, Task, TaskAttr};
 use std::io::Stdout;
 use std::io::{stdout, Write};
 use termion::event::Key;
@@ -15,6 +15,10 @@ use unicode_width::UnicodeWidthStr;
 use uuid::Uuid;
 
 const MAX_COL: u16 = 999;
+
+fn writeln_newline(stdout: &mut RawTerminal<Stdout>, message: &str) -> Result<(), std::io::Error> {
+    writeln!(stdout, "{}{}", termion::cursor::Left(MAX_COL), message)
+}
 
 fn backward_width(line: &str, cursor_x: usize) -> u16 {
     if line.chars().count() == 0 || cursor_x == 0 {
@@ -184,7 +188,7 @@ fn execute_tree(stdout: &mut RawTerminal<Stdout>, focused_task_opt: &Option<Task
         let s: String = focused_task.tree_debug_pretty_print();
         let lines: Vec<_> = s.split('\n').collect();
         for line in lines.iter() {
-            writeln!(stdout, "{}{}", termion::cursor::Left(MAX_COL), line).unwrap();
+            writeln_newline(stdout, line).unwrap()
         }
     });
     writeln!(stdout, "").unwrap();
@@ -257,6 +261,7 @@ fn execute_defer(
 
     focused_task_opt.as_ref().and_then(|focused_task| {
         focused_task.set_pending_until(Local::now() + duration);
+        focused_task.set_orig_status(Status::Pending);
 
         // dummy
         None::<i32>
@@ -284,10 +289,6 @@ fn execute(
         Some(id) => task_repository.get_by_id(*id),
     };
 
-    println!("{}focused task is:", termion::cursor::Left(MAX_COL));
-    println!("{}{:?}", termion::cursor::Left(MAX_COL), focused_task_opt);
-    stdout.flush().unwrap();
-
     let tokens: Vec<&str> = line.split(' ').collect();
 
     if tokens.is_empty() {
@@ -305,6 +306,7 @@ fn execute(
         "外" | "unfocus" | "ufc" => {}
         "親" | "parent" => {}
         "子" | "children" | "ch" => {}
+        // (2)
         "上" | "nextup" | "nu" => {}
         "下" | "breakdown" | "bd" => {
             if tokens.len() >= 2 {
@@ -330,6 +332,7 @@ fn execute(
                 }
             }
         }
+        // (1)
         "終" | "finish" | "fin" => {}
         &_ => {}
     }
@@ -391,17 +394,7 @@ fn application(task_repository: &mut dyn TaskRepositoryTrait) {
 
     // 優先度の最も高いPJを一つ選ぶ
     // 一番下のタスクにフォーカスが自動的に当たる
-    let highest_pj_opt = task_repository.get_highest_priority_project();
-    let mut focused_task_id_opt: Option<Uuid> = match highest_pj_opt {
-        Some(highest_pj) => {
-            let leaf_tasks: Vec<Task> = extract_leaf_tasks_from_project(highest_pj);
-            let last_opt = leaf_tasks.last();
-            let id = last_opt.and_then(|task| Some(task.get_id()));
-
-            id
-        }
-        None => None,
-    };
+    let mut focused_task_id_opt: Option<Uuid> = task_repository.get_highest_priority_leaf_task_id();
 
     // この処理、よく使いそう
     match focused_task_id_opt {
@@ -559,6 +552,16 @@ fn application(task_repository: &mut dyn TaskRepositoryTrait) {
                     &line,
                 );
 
+                //////////////////////////////
+
+                // もしfocused_task_id_optがNoneの時は最も優先度が高いタスクの選出をやり直す
+
+                if focused_task_id_opt.is_none() {
+                    focused_task_id_opt = task_repository.get_highest_priority_leaf_task_id();
+                }
+
+                //////////////////////////////
+
                 match focused_task_id_opt {
                     Some(focused_task_id) => {
                         let focused_task_opt = task_repository.get_by_id(focused_task_id);
@@ -575,6 +578,8 @@ fn application(task_repository: &mut dyn TaskRepositoryTrait) {
                     }
                     None => {}
                 }
+
+                //////////////////////////////
 
                 // 初期化
                 cursor_x = 0;
