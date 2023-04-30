@@ -3,7 +3,7 @@ use core::cell::BorrowError;
 use dendron::{HotNode, InsertAs, Node};
 use linked_hash_map::LinkedHashMap;
 use std::fmt;
-use uuid::{uuid, Uuid};
+use uuid::Uuid;
 use yaml_rust::Yaml;
 
 #[cfg(test)]
@@ -14,6 +14,9 @@ use dendron::{tree, Tree};
 
 #[cfg(test)]
 use yaml_rust::YamlLoader;
+
+#[cfg(test)]
+use uuid::uuid;
 
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub enum Status {
@@ -496,17 +499,25 @@ fn test_extract_leaf_tasks_from_project_タスクのchildrenが空配列では�
        - child_task_2 (葉)
     */
     let mut grand_child_task_1 = Task::new("孫タスク1");
+    let ptr_to_grand_child_task_1_node = grand_child_task_1.node.clone();
+
     let child_task_1 = Task::new("子タスク1");
-    grand_child_task_1.detach_insert_as_last_child_of(child_task_1);
+    grand_child_task_1
+        .detach_insert_as_last_child_of(child_task_1)
+        .unwrap();
 
     let mut child_task_1_again = grand_child_task_1.root();
 
     let mut child_task_2 = Task::new("子タスク2");
     let parent_task_1 = Task::new("親タスク1");
 
-    child_task_1_again.detach_insert_as_last_child_of(parent_task_1);
+    child_task_1_again
+        .detach_insert_as_last_child_of(parent_task_1)
+        .unwrap();
     let parent_task_again = child_task_1_again.root();
-    child_task_2.detach_insert_as_last_child_of(parent_task_again);
+    child_task_2
+        .detach_insert_as_last_child_of(parent_task_again)
+        .unwrap();
 
     let parent_task_again_again = child_task_2.root();
 
@@ -522,8 +533,14 @@ fn test_extract_leaf_tasks_from_project_タスクのchildrenが空配列では�
     let actual2 = actual.last().unwrap();
 
     assert_ne!(actual1, actual2);
-    assert_eq!(actual1.node.root().borrow_data().get_name(), "親タスク1");
-    assert_eq!(actual2.node.root().borrow_data().get_name(), "親タスク1");
+    assert_eq!(actual1.root().node.borrow_data().get_name(), "親タスク1");
+    assert_eq!(actual2.root().node.borrow_data().get_name(), "親タスク1");
+    assert!(actual1
+        .node
+        .belongs_to_same_tree(&ptr_to_grand_child_task_1_node));
+    assert!(actual2
+        .node
+        .belongs_to_same_tree(&ptr_to_grand_child_task_1_node));
 }
 
 ////////////////// ここから要テスト
@@ -606,13 +623,19 @@ fn test_extract_leaf_tasks_from_project_子が全てdoneのタスクは葉とし
 
     let child_task_1 = Task::new("子タスク1");
 
-    grand_child_task_1.detach_insert_as_last_child_of(child_task_1);
+    grand_child_task_1
+        .detach_insert_as_last_child_of(child_task_1)
+        .unwrap();
     let child_task_1_again = grand_child_task_1.parent().unwrap();
-    grand_child_task_2.detach_insert_as_last_child_of(child_task_1_again);
+    grand_child_task_2
+        .detach_insert_as_last_child_of(child_task_1_again)
+        .unwrap();
 
     let parent_task = grand_child_task_2.root();
 
-    let expected_child_task_1 = Task::new_with_node(parent_task.node.first_child().unwrap());
+    let expected_child_task_1 = Task {
+        node: parent_task.node.first_child().unwrap(),
+    };
 
     let actual = extract_leaf_tasks_from_project(&parent_task);
 
@@ -633,7 +656,9 @@ fn test_extract_leaf_tasks_from_project_子が全てdoneのタスクで親がpen
     let parent_task_1 = Task::new("親タスク1");
     parent_task_1.set_orig_status(Status::Pending);
     parent_task_1.set_pending_until(pending_until);
-    child_task_1.detach_insert_as_last_child_of(parent_task_1);
+    child_task_1
+        .detach_insert_as_last_child_of(parent_task_1)
+        .unwrap();
 
     let root_task = &child_task_1.root();
     let actual = extract_leaf_tasks_from_project(root_task);
@@ -756,21 +781,31 @@ fn test_task_attr_set_pending_until() {
 
 #[derive(Debug, PartialEq)]
 pub struct Task {
-    // task_attr: TaskAttr,
     node: Node<TaskAttr>,
 }
 
 impl Task {
+    // dendron::Node::try_detach_insert_subtree()は木そのものを消滅させることができない仕様のようなので、
+    // ダミーのルートノードを用意することで、使いたいノードが全て子ノードになるようにする
     pub fn new(name: &str) -> Self {
+        let dummy_attr = TaskAttr::new(format!("dummy-for-{}", &name).as_str());
+        let dummy_root = Node::new_tree(dummy_attr);
+
+        let grant = dummy_root
+            .tree()
+            .grant_hierarchy_edit()
+            .expect("tree grant");
         let task_attr = TaskAttr::new(name);
-        let node = Node::new_tree(task_attr);
+        dummy_root.create_as_last_child(&grant, task_attr);
+
+        let node = dummy_root.first_child().expect("has a child");
 
         Self { node }
     }
 
-    // 内部実装であるNodeを外部から触られたくないので、外部には公開しない
-    fn new_with_node(node: Node<TaskAttr>) -> Self {
-        Self { node }
+    pub fn get_attr(&self) -> TaskAttr {
+        // cloneして大丈夫か?
+        self.node.borrow_data().clone()
     }
 
     pub fn get_id(&self) -> Uuid {
@@ -828,9 +863,14 @@ impl Task {
         }
     }
 
+    // 外から見て、ダミーノードのことは考慮させないように、ダミーノードの子を返す
     pub fn root(&self) -> Self {
         Task {
-            node: self.node.root(),
+            node: self
+                .node
+                .root()
+                .first_child()
+                .expect("dummy_root has one child"),
         }
     }
 
@@ -847,31 +887,29 @@ impl Task {
     }
 
     // pub fn insert_as_last_child(&self, task: Task) {
-    pub fn detach_insert_as_last_child_of(&mut self, parent_task: Task) {
+    pub fn detach_insert_as_last_child_of(&mut self, parent_task: Task) -> Result<(), String> {
         // taskのsubtreeをコピーしてselfを親から切り離して、parent_taskに結合する
-        // という挙動を期待しているが、ライブラリの不具合により実現できていない
-        // let self_grant = &self.node.tree().grant_hierarchy_edit().expect("self grant");
+        // という挙動を期待しているが、木を丸ごとくっつけるのはライブラリの仕様(?)により実現できていない。
+        // https://gitlab.com/nop_thread/dendron/-/issues/3
+        // 仕方がないので、Taskは必ずダミーのrootノードを持つという仕様にして対応している。
+
+        // ダミーのrootノードで行おうとしている場合はエラーとする
+        if self.node.is_root() {
+            return Err(String::from("cannot use detach_insert for a root node"));
+        }
+
+        let self_grant = &self.node.tree().grant_hierarchy_edit().expect("self grant");
 
         let parent_task_hot: HotNode<TaskAttr> = parent_task
             .node
             .bundle_new_hierarchy_edit_grant()
             .expect("parent hot node");
 
-        // let parent_task_grant = &parent_task.node.tree().grant_hierarchy_edit().expect("parent grant");
+        self.node
+            .try_detach_insert_subtree(&self_grant, InsertAs::LastChildOf(&parent_task_hot))
+            .expect("creating valid hierarchy");
 
-        // let parent_task_hot: HotNode<TaskAttr> = parent_task
-        //     .node
-        //     .bundle_hierarchy_edit_grant(&parent_task_grant);
-
-        // self.node
-        //     .try_detach_insert_subtree(&self_grant, InsertAs::LastChildOf(&parent_task_hot))
-        //     .expect("creating valid hierarchy");
-
-        self.node = self
-            .node
-            .try_clone_insert_subtree(InsertAs::LastChildOf(&parent_task_hot))
-            .expect("creating valid hierarchy")
-            .plain();
+        Ok(())
     }
 
     pub fn create_as_last_child(&self, task_attr: TaskAttr) -> Self {
@@ -880,53 +918,91 @@ impl Task {
         let child_node = self.node.create_as_last_child(&self_grant, task_attr);
         Self { node: child_node }
     }
+
+    pub fn get_by_id(&self, id: Uuid) -> Option<Task> {
+        let node_opt = self.get_by_id_private(&self.node, id);
+
+        match node_opt {
+            Some(node) => Some(Self { node }),
+            None => None,
+        }
+    }
+
+    // fn get_by_id_private(&self, id: Uuid) -> Option<&Task>> {
+    fn get_by_id_private(&self, node: &Node<TaskAttr>, id: Uuid) -> Option<Node<TaskAttr>> {
+        // ベースケース
+        if node.borrow_data().get_id() == &id {
+            return Some(node.clone());
+        }
+
+        // 子あり
+        for child_node in node.children() {
+            // let child_task = Task { node: child_node };
+
+            // let child_task_found_opt =  child_task.get_by_id(id);
+            // if  child_task_found_opt.is_some()   {
+            //     return  child_task_found_opt;
+            // }
+
+            let child_task_found_opt = self.get_by_id_private(&child_node, id);
+            if child_task_found_opt.is_some() {
+                return child_task_found_opt;
+            }
+        }
+
+        None
+    }
+}
+
+#[test]
+fn test_task_new_タスクを初期化した時に見ているノードはダミーrootノードではないこと() {
+    let task = Task::new("親タスク");
+    assert_eq!(task.node.borrow_data().get_name(), "親タスク");
+    assert!(!task.node.is_root());
 }
 
 #[test]
 fn test_new_with_node_タスク化したnodeの親子関係が維持されること() {
     let parent_task = Task::new("親タスク");
+    let parent_task_node_ptr = parent_task.node.clone();
+
     let mut child_task = Task::new("子タスク");
     child_task.create_as_last_child(TaskAttr::new("孫タスク"));
 
-    child_task.detach_insert_as_last_child_of(parent_task);
+    child_task
+        .detach_insert_as_last_child_of(parent_task)
+        .unwrap();
 
     let grand_children_task_node = child_task.node.first_child().unwrap();
-    let new_grand_children_task = Task::new_with_node(grand_children_task_node);
+    let new_grand_children_task = Task {
+        node: grand_children_task_node.clone(),
+    };
     assert_eq!(
-        new_grand_children_task.node.root().borrow_data().get_name(),
+        new_grand_children_task.root().node.borrow_data().get_name(),
         "親タスク"
     );
+
+    assert!(&parent_task_node_ptr.belongs_to_same_tree(&grand_children_task_node));
 }
 
 #[test]
 fn test_new_detach_insert_as_last_child_of_正常系1() {
     let parent_task = Task::new("親タスク");
     let mut child_task = Task::new("子タスク");
+    let parent_task_ptr = parent_task.node.clone();
+    let child_task_ptr = child_task.node.clone();
 
-    child_task.detach_insert_as_last_child_of(parent_task);
+    child_task
+        .detach_insert_as_last_child_of(parent_task)
+        .unwrap();
     assert_eq!(*child_task.node.borrow_data(), TaskAttr::new("子タスク"));
     assert_eq!(
-        *child_task.node.root().borrow_data(),
+        *child_task.root().node.borrow_data(),
         TaskAttr::new("親タスク")
     );
-}
 
-#[test]
-fn test_new_detach_insert_as_last_child_of_正常系2() {
-    let parent_task = Task::new("親タスク");
-    let mut child_task = Task::new("子タスク");
-    child_task.create_as_last_child(TaskAttr::new("孫タスク"));
-
-    child_task.detach_insert_as_last_child_of(parent_task);
-
-    let expected_tree = tree! {
-        TaskAttr::new("親タスク"), [
-        /(TaskAttr::new("子タスク"), [
-            TaskAttr::new("孫タスク")
-        ]),
-    ]};
-
-    assert_task_and_tree(&child_task, &expected_tree)
+    assert!(child_task.node.belongs_to_same_tree(&parent_task_ptr));
+    assert!(child_task.node.belongs_to_same_tree(&child_task_ptr));
 }
 
 #[test]
@@ -935,9 +1011,12 @@ fn test_create_as_last_child_正常系1() {
     actual_task.create_as_last_child(TaskAttr::new("子タスク"));
 
     let expected_tree = tree! {
-    TaskAttr::new("親タスク"), [
-        TaskAttr::new("子タスク")
-    ]};
+    TaskAttr::new("dummy-for-親タスク"), [
+        /(TaskAttr::new("親タスク"), [
+            TaskAttr::new("子タスク")
+        ])
+    ]
+    };
 
     assert_task_and_tree(&actual_task, &expected_tree);
 }
@@ -1029,7 +1108,7 @@ pub fn task_to_yaml(task: &Task) -> Yaml {
 
     let mut children = vec![];
     for child_node in task.node.children() {
-        let child_task = Task::new_with_node(child_node);
+        let child_task = Task { node: child_node };
         let child_yaml = task_to_yaml(&child_task);
         children.push(child_yaml);
     }
@@ -1123,4 +1202,105 @@ id: 67e55044-10b1-426f-9247-bb680e5fe0c8
     let expected_yaml: &Yaml = &docs[0];
 
     assert_eq!(&actual, expected_yaml);
+}
+
+#[test]
+fn test_get_by_id_ベースケース() {
+    let mut task = Task::new("親タスク1");
+    task.set_orig_status(Status::Pending);
+    task.set_pending_until(Local.with_ymd_and_hms(2023, 4, 1, 12, 0, 0).unwrap());
+    let id: Uuid = uuid!("67e55044-10b1-426f-9247-bb680e5fe0c8");
+    task.set_id(id);
+
+    let task_ptr = &task.node;
+
+    let actual_opt = task.get_by_id(id);
+    match actual_opt {
+        Some(actual) => {
+            assert_eq!(&actual, &task);
+            assert!(&actual.node.ptr_eq(&task_ptr));
+        }
+        None => {
+            assert!(false);
+        }
+    }
+}
+
+#[test]
+fn test_get_by_id_子なしタスクでヒットしなかった場合() {
+    let mut task = Task::new("親タスク1");
+    task.set_orig_status(Status::Pending);
+    task.set_pending_until(Local.with_ymd_and_hms(2023, 4, 1, 12, 0, 0).unwrap());
+    let id: Uuid = uuid!("67e55044-10b1-426f-9247-bb680e5fe0c8");
+    task.set_id(id);
+
+    let actual = task.get_by_id(uuid!("ccdadeab-f60a-4bec-93f8-3d7e003b980f"));
+
+    assert_eq!(actual, None);
+}
+
+#[test]
+fn test_get_by_id_再帰でヒットする場合() {
+    let mut task = Task::new("親タスク1");
+    task.set_orig_status(Status::Pending);
+    task.set_pending_until(Local.with_ymd_and_hms(2023, 4, 1, 12, 0, 0).unwrap());
+    let id_parent: Uuid = uuid!("67e55044-10b1-426f-9247-bb680e5fe0c8");
+    task.set_id(id_parent);
+
+    let mut task_attr_child_1 = TaskAttr::new("子タスク1");
+    task_attr_child_1.set_orig_status(Status::Pending);
+    task_attr_child_1.set_pending_until(Local.with_ymd_and_hms(2023, 4, 1, 12, 0, 0).unwrap());
+    let id_child_1: Uuid = uuid!("0aaee735-3e22-4216-8b59-d56d5caf29ee");
+    task_attr_child_1.set_id(id_child_1);
+
+    let mut task_attr_child_2 = TaskAttr::new("子タスク2");
+    task_attr_child_2.set_orig_status(Status::Pending);
+    task_attr_child_2.set_pending_until(Local.with_ymd_and_hms(2023, 4, 1, 12, 0, 0).unwrap());
+    let id_child_2: Uuid = uuid!("7ffcba2f-80e0-4a44-aee9-d68e0d2d1256");
+    task_attr_child_2.set_id(id_child_2);
+
+    let expected_attr = task_attr_child_1.clone();
+
+    task.create_as_last_child(task_attr_child_1);
+    task.create_as_last_child(task_attr_child_2);
+
+    let actual_opt = task.get_by_id(id_child_1);
+    match actual_opt {
+        None => {
+            panic!("assert some");
+        }
+        Some(actual) => {
+            assert_eq!(&actual.get_attr(), &expected_attr);
+
+            // 親をたどることができること
+            assert_eq!(&actual.root(), &task);
+        }
+    }
+}
+
+#[test]
+fn test_get_by_id_再帰でヒットしない場合() {
+    let mut task = Task::new("親タスク1");
+    task.set_orig_status(Status::Pending);
+    task.set_pending_until(Local.with_ymd_and_hms(2023, 4, 1, 12, 0, 0).unwrap());
+    let id_parent: Uuid = uuid!("67e55044-10b1-426f-9247-bb680e5fe0c8");
+    task.set_id(id_parent);
+
+    let mut task_attr_child_1 = TaskAttr::new("子タスク1");
+    task_attr_child_1.set_orig_status(Status::Pending);
+    task_attr_child_1.set_pending_until(Local.with_ymd_and_hms(2023, 4, 1, 12, 0, 0).unwrap());
+    let id_child_1: Uuid = uuid!("0aaee735-3e22-4216-8b59-d56d5caf29ee");
+    task_attr_child_1.set_id(id_child_1);
+
+    let mut task_attr_child_2 = TaskAttr::new("子タスク2");
+    task_attr_child_2.set_orig_status(Status::Pending);
+    task_attr_child_2.set_pending_until(Local.with_ymd_and_hms(2023, 4, 1, 12, 0, 0).unwrap());
+    let id_child_2: Uuid = uuid!("7ffcba2f-80e0-4a44-aee9-d68e0d2d1256");
+    task_attr_child_2.set_id(id_child_2);
+
+    task.create_as_last_child(task_attr_child_1);
+    task.create_as_last_child(task_attr_child_2);
+
+    let actual = task.get_by_id(uuid!("3aa89504-917d-4f20-a1e3-4eb196190c6f"));
+    assert_eq!(actual, None);
 }

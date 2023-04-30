@@ -5,6 +5,7 @@ use chrono::{DateTime, Local};
 use linked_hash_map::LinkedHashMap;
 use std::fs::File;
 use std::io::prelude::*;
+use uuid::Uuid;
 use walkdir::WalkDir;
 use yaml_rust::{Yaml, YamlEmitter, YamlLoader};
 
@@ -127,5 +128,16 @@ impl TaskRepositoryTrait for TaskRepository {
         self.projects
             .first()
             .and_then(|project| Some(&project.root_task))
+    }
+
+    fn get_by_id(&self, id: Uuid) -> Option<Task> {
+        for project in self.projects.iter() {
+            let tmp = project.root_task.get_by_id(id);
+            if tmp.is_some() {
+                return tmp;
+            }
+        }
+
+        None
     }
 }

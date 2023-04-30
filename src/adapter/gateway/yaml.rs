@@ -3,7 +3,7 @@ use crate::entity::task::Status;
 use crate::entity::task::{ImmutableTask, Task};
 use chrono::TimeZone;
 use chrono::{DateTime, Local};
-use uuid::{uuid, Uuid};
+use uuid::Uuid;
 use yaml_rust::Yaml;
 
 #[cfg(test)]
@@ -14,6 +14,9 @@ use crate::entity::task::TaskAttr;
 
 #[cfg(test)]
 use crate::entity::task::assert_task;
+
+#[cfg(test)]
+use uuid::uuid;
 
 #[test]
 fn test_yaml_to_immutable_task_childrenキーが存在しない場合は空配列として登録されること() {
@@ -278,6 +281,7 @@ fn transform_from_pending_until_str(pending_until_str: &str) -> DateTime<Local> 
     pending_until
 }
 
+// Todo Result型を返すようにする
 pub fn yaml_to_task(yaml: &Yaml, now: DateTime<Local>) -> Task {
     let name: &str = yaml["name"].as_str().unwrap_or("");
 
@@ -307,7 +311,9 @@ pub fn yaml_to_task(yaml: &Yaml, now: DateTime<Local>) -> Task {
 
     for child_yaml in yaml["children"].as_vec().unwrap_or(&vec![]) {
         let mut child_task = yaml_to_task(&child_yaml, now);
-        child_task.detach_insert_as_last_child_of(parent_task);
+        child_task
+            .detach_insert_as_last_child_of(parent_task)
+            .unwrap();
 
         parent_task = child_task.parent().unwrap();
     }
@@ -522,12 +528,7 @@ children:
     task_attr.sync_clock(now);
     parent_task.create_as_last_child(task_attr);
 
-    assert!(
-        &actual
-            .try_eq_tree(&parent_task)
-            .expect("data are not borrowed"),
-        "actual and expected are not equal"
-    );
+    assert_task(&actual, &parent_task);
 }
 
 #[test]
