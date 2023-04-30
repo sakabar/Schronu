@@ -422,7 +422,7 @@ fn application(task_repository: &mut dyn TaskRepositoryTrait) {
 
     ///////////////////////
 
-    let header: &str = "schronu>";
+    let header: &str = "schronu> ";
     let mut line = String::from("");
 
     // 画面に表示されている「文字」単位でのカーソル。
