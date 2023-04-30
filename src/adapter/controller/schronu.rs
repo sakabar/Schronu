@@ -175,6 +175,41 @@ fn test_get_forward_width_正常系1() {
     assert_eq!(actual, expected);
 }
 
+fn execute_tree(stdout: &mut RawTerminal<Stdout>, focused_task_opt: &Option<Task>) {
+    // as_ref()の必要性が分かっていないので後で調べる
+    // これが無いと:
+    // cannot move out of `*focused_task_opt` which is behind a shared reference
+    writeln!(stdout, "").unwrap();
+    focused_task_opt.as_ref().map(|focused_task| {
+        let s: String = focused_task.tree_debug_pretty_print();
+        let lines: Vec<_> = s.split('\n').collect();
+        for line in lines.iter() {
+            writeln!(stdout, "{}{}", termion::cursor::Left(MAX_COL), line).unwrap();
+        }
+    });
+    writeln!(stdout, "").unwrap();
+}
+
+fn execute_breakdown(
+    focused_task_id_opt: &mut Option<Uuid>,
+    focused_task_opt: &Option<Task>,
+    new_task_name: &str,
+) {
+    // as_ref()の必要性が分かっていないので後で調べる
+    // これが無いと:
+    // cannot move out of `*focused_task_opt` which is behind a shared reference
+    focused_task_opt.as_ref().and_then(|focused_task| {
+        let new_task_attr = TaskAttr::new(new_task_name);
+        let new_task = focused_task.create_as_last_child(new_task_attr);
+
+        // 新しい子タスクにフォーカス(id)を移す
+        *focused_task_id_opt = Some(new_task.get_id());
+
+        // dummy
+        None::<i32>
+    });
+}
+
 fn execute(
     stdout: &mut RawTerminal<Stdout>,
     task_repository: &mut dyn TaskRepositoryTrait,
@@ -194,13 +229,21 @@ fn execute(
         Some(id) => task_repository.get_by_id(*id),
     };
 
-    println!("{:?}", focused_task_opt);
+    println!("{}focused task is:", termion::cursor::Left(MAX_COL));
+    println!("{}{:?}", termion::cursor::Left(MAX_COL), focused_task_opt);
     stdout.flush().unwrap();
 
     let tokens: Vec<&str> = line.split(' ').collect();
+
+    if tokens.is_empty() {
+        return;
+    }
+
     match tokens[0] {
         "新" | "new" => {}
-        "木" | "tree" => {}
+        "木" | "tree" => {
+            execute_tree(stdout, &focused_task_opt);
+        }
         "根" | "root" => {}
         "葉" | "leaves" | "leaf" | "lf" => {}
         "見" | "focus" | "fc" => {}
@@ -209,18 +252,9 @@ fn execute(
         "子" | "children" | "ch" => {}
         "上" | "nextup" | "nu" => {}
         "下" | "breakdown" | "bd" => {
-            match focused_task_opt {
-                Some(focused_task) => {
-                    if tokens.len() >= 2 {
-                        let new_task_name = &tokens[1];
-                        let new_task_attr = TaskAttr::new(new_task_name);
-
-                        // 新しい子タスクにフォーカス(id)を移す
-                        *focused_task_id_opt =
-                            Some(focused_task.create_as_last_child(new_task_attr).get_id());
-                    }
-                }
-                None => {}
+            if tokens.len() >= 2 {
+                let new_task_name = &tokens[1];
+                execute_breakdown(focused_task_id_opt, &focused_task_opt, new_task_name);
             }
         }
         // "詳" | "description" | "desc" => {}
@@ -228,6 +262,8 @@ fn execute(
         "終" | "finish" | "fin" => {}
         &_ => {}
     }
+
+    stdout.flush().unwrap();
 }
 
 // 削除できない時はNoneを返す。例えば、文字列が空の時
@@ -303,7 +339,8 @@ fn application(task_repository: &mut dyn TaskRepositoryTrait) {
 
             match focused_task_opt {
                 Some(focused_task) => {
-                    println!("{:?}", focused_task);
+                    println!("{}focused task is:", termion::cursor::Left(MAX_COL));
+                    println!("{}{:?}", termion::cursor::Left(MAX_COL), focused_task);
                     stdout.flush().unwrap();
                 }
                 None => {}
@@ -320,8 +357,7 @@ fn application(task_repository: &mut dyn TaskRepositoryTrait) {
     // 画面に表示されている「文字」単位でのカーソル。
     let mut cursor_x: usize = 0;
 
-    // write!(stdout, "{}", termion::cursor::Left(999)).unwrap();
-    write!(stdout, "{}", header).unwrap();
+    write!(stdout, "{}{}", termion::cursor::Left(MAX_COL), header).unwrap();
     stdout.flush().unwrap();
 
     // キー入力を受け付ける
@@ -458,7 +494,9 @@ fn application(task_repository: &mut dyn TaskRepositoryTrait) {
 
                         match focused_task_opt {
                             Some(focused_task) => {
-                                println!("{:?}", focused_task);
+                                println!("{}focused task is:", termion::cursor::Left(MAX_COL));
+                                println!("{}{:?}", termion::cursor::Left(MAX_COL), focused_task);
+                                println!("{}", termion::cursor::Left(MAX_COL));
                                 stdout.flush().unwrap();
                             }
                             None => {}
