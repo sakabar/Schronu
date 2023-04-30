@@ -1,11 +1,18 @@
+use chrono::Local;
 use regex::Regex;
+use schronu::adapter::gateway::task_repository::TaskRepository;
+use schronu::application::interface::TaskRepositoryTrait;
+use schronu::entity::task::{extract_leaf_tasks_from_project, Task, TaskAttr};
+use std::io::Stdout;
 use std::io::{stdout, Write};
 use termion::event::Key;
 use termion::input::TermRead;
 use termion::raw::IntoRawMode;
+use termion::raw::RawTerminal;
 use termion::style;
 use unicode_width::UnicodeWidthChar;
 use unicode_width::UnicodeWidthStr;
+use uuid::Uuid;
 
 const MAX_COL: u16 = 999;
 
@@ -168,7 +175,12 @@ fn test_get_forward_width_正常系1() {
     assert_eq!(actual, expected);
 }
 
-fn execute(untrimmed_line: &str) {
+fn execute(
+    stdout: &mut RawTerminal<Stdout>,
+    task_repository: &mut dyn TaskRepositoryTrait,
+    focused_task_id_opt: &mut Option<Uuid>,
+    untrimmed_line: &str,
+) {
     // 整形
     let re = Regex::new(r"\s+").unwrap();
     let line: String = re
@@ -176,6 +188,14 @@ fn execute(untrimmed_line: &str) {
         .to_string()
         .trim()
         .to_string();
+
+    let focused_task_opt = match focused_task_id_opt {
+        None => None,
+        Some(id) => task_repository.get_by_id(*id),
+    };
+
+    println!("{:?}", focused_task_opt);
+    stdout.flush().unwrap();
 
     let tokens: Vec<&str> = line.split(' ').collect();
     match tokens[0] {
@@ -189,7 +209,19 @@ fn execute(untrimmed_line: &str) {
         "子" | "children" | "ch" => {}
         "上" | "nextup" | "nu" => {}
         "下" | "breakdown" | "bd" => {
-            println!("The command is 'breakdown'");
+            match focused_task_opt {
+                Some(focused_task) => {
+                    if tokens.len() >= 2 {
+                        let new_task_name = &tokens[1];
+                        let new_task_attr = TaskAttr::new(new_task_name);
+
+                        // 新しい子タスクにフォーカス(id)を移す
+                        *focused_task_id_opt =
+                            Some(focused_task.create_as_last_child(new_task_attr).get_id());
+                    }
+                }
+                None => {}
+            }
         }
         // "詳" | "description" | "desc" => {}
         "後" | "defer" => {}
@@ -230,12 +262,57 @@ fn get_byte_offset_for_deletion_正常系() {
 }
 
 fn main() {
+    let mut task_repository = TaskRepository::new("../Schronu-alpha/tasks/");
+
+    // controllerで実体を見るのを避けるために、1つ関数を切る
+    application(&mut task_repository);
+}
+
+fn application(task_repository: &mut dyn TaskRepositoryTrait) {
+    // 初期化
+    task_repository.sync_clock(Local::now());
+    task_repository.load();
+
     // RawModeを有効にする
     let mut stdout = stdout().into_raw_mode().unwrap();
 
     write!(stdout, "{}", termion::clear::All).unwrap();
     write!(stdout, "{}", termion::cursor::BlinkingBar).unwrap();
     stdout.flush().unwrap();
+
+    ///////////////////////
+
+    // 優先度の最も高いPJを一つ選ぶ
+    // 一番下のタスクにフォーカスが自動的に当たる
+    let highest_pj_opt = task_repository.get_highest_priority_project();
+    let mut focused_task_id_opt: Option<Uuid> = match highest_pj_opt {
+        Some(highest_pj) => {
+            let leaf_tasks: Vec<Task> = extract_leaf_tasks_from_project(highest_pj);
+            let last_opt = leaf_tasks.last();
+            let id = last_opt.and_then(|task| Some(task.get_id()));
+
+            id
+        }
+        None => None,
+    };
+
+    // この処理、よく使いそう
+    match focused_task_id_opt {
+        Some(focused_task_id) => {
+            let focused_task_opt = task_repository.get_by_id(focused_task_id);
+
+            match focused_task_opt {
+                Some(focused_task) => {
+                    println!("{:?}", focused_task);
+                    stdout.flush().unwrap();
+                }
+                None => {}
+            }
+        }
+        None => {}
+    }
+
+    ///////////////////////
 
     let header: &str = "schronu>";
     let mut line = String::from("");
@@ -250,7 +327,11 @@ fn main() {
     // キー入力を受け付ける
     for c in std::io::stdin().keys() {
         match c.unwrap() {
-            Key::Char('q') | Key::Ctrl('d') => break,
+            Key::Char('q') | Key::Ctrl('d') => {
+                if line.is_empty() {
+                    break;
+                }
+            }
             // Key::Up => write!(stdout, "{}", termion::cursor::Up(1)).unwrap(),
             // Key::Down => write!(stdout, "{}", termion::cursor::Down(1)).unwrap(),
             Key::Left | Key::Ctrl('b') => {
@@ -293,6 +374,7 @@ fn main() {
                 .unwrap();
                 stdout.flush().unwrap();
             }
+            // バグあり。Ctrl-Eがうまく動かない
             Key::Ctrl('e') => {
                 let s: String = String::from(format!("{}{}", header, line));
                 let width = UnicodeWidthStr::width(s.as_str()) as u16;
@@ -363,7 +445,27 @@ fn main() {
                 println!("{}{}{}", style::Bold, line, style::Reset);
                 stdout.flush().unwrap();
 
-                execute(&line);
+                execute(
+                    &mut stdout,
+                    task_repository,
+                    &mut focused_task_id_opt,
+                    &line,
+                );
+
+                match focused_task_id_opt {
+                    Some(focused_task_id) => {
+                        let focused_task_opt = task_repository.get_by_id(focused_task_id);
+
+                        match focused_task_opt {
+                            Some(focused_task) => {
+                                println!("{:?}", focused_task);
+                                stdout.flush().unwrap();
+                            }
+                            None => {}
+                        }
+                    }
+                    None => {}
+                }
 
                 // 初期化
                 cursor_x = 0;
@@ -430,6 +532,9 @@ fn main() {
 
     write!(stdout, "{}", termion::clear::CurrentLine).unwrap();
     println!("{}{}{}", style::Bold, line, style::Reset);
+
+    // 保存して終わり
+    task_repository.save();
 
     // BlinkingBlockに戻す
     writeln!(stdout, "{}", termion::cursor::BlinkingBlock).unwrap();
