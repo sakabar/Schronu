@@ -666,7 +666,7 @@ fn test_extract_leaf_tasks_from_project_子が全てdoneのタスクで親がpen
     assert_eq!(actual, expected);
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct TaskAttr {
     id: Uuid,
     name: String,
@@ -688,6 +688,30 @@ impl PartialEq for TaskAttr {
             && self.pending_until == other.pending_until
             && self.last_synced_time == other.last_synced_time
             && self.priority == other.priority
+    }
+}
+
+// ツリーを出力した際に複数行にまたがると見映えが悪くなるため、情報を落としている
+impl fmt::Debug for TaskAttr {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let status_checkbox: &str = match self.status {
+            Status::Todo => "[ ]",
+            Status::Pending => "[-]",
+            Status::Done => "[+]",
+        };
+
+        f.debug_struct("")
+            .field(
+                "name",
+                &format!("{} {}", status_checkbox, &self.name).as_str(),
+            )
+            .field("id", &self.id)
+            // .field("orig_status", &self.orig_status)
+            // .field("status", &self.status)
+            // .field("pending_until", &self.pending_until)
+            // .field("last_synced_time", &self.last_synced_time)
+            // .field("priority", &self.priority)
+            .finish()
     }
 }
 
