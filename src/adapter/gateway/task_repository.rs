@@ -123,30 +123,36 @@ impl TaskRepositoryTrait for TaskRepository {
     }
 
     fn get_highest_priority_project(&mut self) -> Option<&Task> {
-        // 副作用として、projectsを優先度の高い順に破壊的にソートする
-        self.projects.sort_by(|a, b| b.priority.cmp(&a.priority));
+        // 副作用として、projectsを優先度の低い順に破壊的にソートする
+        // 葉ノードを出力する際に優先度が高いものが下となり優先度が低いものが画面外(上)になるように、projectsは低い順に保持する
+        // 最も優先度が高いprojectsが必要な場合はlast()で取得する
+        self.projects.sort_by(|a, b| a.priority.cmp(&b.priority));
 
         self.projects
-            .first()
+            .last()
             .and_then(|project| Some(&project.root_task))
     }
 
     fn get_highest_priority_leaf_task_id(&mut self) -> Option<Uuid> {
-        // 副作用として、projectsを優先度の高い順に破壊的にソートする
-        self.projects.sort_by(|a, b| b.priority.cmp(&a.priority));
+        // 副作用として、projectsを優先度の低い順に破壊的にソートする
+        // 葉ノードを出力する際に優先度が高いものが下となり優先度が低いものが画面外(上)になるように、projectsは低い順に保持する
+        // 最も優先度が高いprojectsが必要な場合はlast()で取得する
+        self.projects.sort_by(|a, b| a.priority.cmp(&b.priority));
 
-        // 優先度が高いPJ順に見て、葉タスクがあればそれを採用する
+        // 優先度が低いPJ順に見て、返すべき葉タスクのid値を更新していく
+        let mut ans = None;
+
         for project in &self.projects {
             let root_task = &project.root_task;
 
             let leaf_tasks: Vec<Task> = extract_leaf_tasks_from_project(&root_task);
 
             if !leaf_tasks.is_empty() {
-                return leaf_tasks.first().map(|task| task.get_id());
+                ans = leaf_tasks.first().map(|task| task.get_id());
             }
         }
 
-        None
+        ans
     }
 
     fn get_by_id(&self, id: Uuid) -> Option<Task> {

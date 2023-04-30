@@ -2,7 +2,7 @@ use chrono::{Duration, Local};
 use regex::Regex;
 use schronu::adapter::gateway::task_repository::TaskRepository;
 use schronu::application::interface::TaskRepositoryTrait;
-use schronu::entity::task::{Status, Task, TaskAttr};
+use schronu::entity::task::{extract_leaf_tasks_from_project, Status, Task, TaskAttr};
 use std::io::Stdout;
 use std::io::{stdout, Write};
 use termion::event::Key;
@@ -179,7 +179,7 @@ fn test_get_forward_width_正常系1() {
     assert_eq!(actual, expected);
 }
 
-fn execute_tree(stdout: &mut RawTerminal<Stdout>, focused_task_opt: &Option<Task>) {
+fn execute_show_tree(stdout: &mut RawTerminal<Stdout>, focused_task_opt: &Option<Task>) {
     // as_ref()の必要性が分かっていないので後で調べる
     // これが無いと:
     // cannot move out of `*focused_task_opt` which is behind a shared reference
@@ -192,6 +192,22 @@ fn execute_tree(stdout: &mut RawTerminal<Stdout>, focused_task_opt: &Option<Task
         }
     });
     writeln!(stdout, "").unwrap();
+}
+
+fn execute_show_leaf_tasks(
+    stdout: &mut RawTerminal<Stdout>,
+    task_repository: &mut dyn TaskRepositoryTrait,
+) {
+    let mut task_cnt = 1;
+    for project_root_task in task_repository.get_all_projects().iter() {
+        let project_name = project_root_task.get_name();
+
+        for leaf_task in extract_leaf_tasks_from_project(&project_root_task).iter() {
+            let message = format!("{}\t{}\t{:?}", task_cnt, project_name, leaf_task.get_attr());
+            writeln_newline(stdout, &message).unwrap();
+            task_cnt += 1;
+        }
+    }
 }
 
 fn execute_breakdown(
@@ -318,15 +334,18 @@ fn execute(
     match tokens[0] {
         "新" | "new" => {}
         "木" | "tree" => {
-            execute_tree(stdout, &focused_task_opt);
+            execute_show_tree(stdout, &focused_task_opt);
         }
         "根" | "root" => {}
-        "葉" | "leaves" | "leaf" | "lf" => {}
+        "葉" | "leaves" | "leaf" | "lf" => {
+            execute_show_leaf_tasks(stdout, task_repository);
+        }
+        // (1)
         "見" | "focus" | "fc" => {}
+        // (2)
         "外" | "unfocus" | "ufc" => {}
         "親" | "parent" => {}
         "子" | "children" | "ch" => {}
-        // (2)
         "上" | "nextup" | "nu" => {}
         "下" | "breakdown" | "bd" => {
             if tokens.len() >= 2 {
@@ -352,7 +371,6 @@ fn execute(
                 }
             }
         }
-        // (1)
         "終" | "finish" | "fin" => {
             execute_finish(focused_task_id_opt, &focused_task_opt);
         }
