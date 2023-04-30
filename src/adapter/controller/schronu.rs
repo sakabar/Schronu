@@ -208,6 +208,7 @@ fn execute_show_leaf_tasks(
             task_cnt += 1;
         }
     }
+    writeln_newline(stdout, "").unwrap();
 }
 
 fn execute_focus(focused_task_id_opt: &mut Option<Uuid>, new_task_id_str: &str) {
@@ -601,6 +602,7 @@ fn application(task_repository: &mut dyn TaskRepositoryTrait) {
                 write!(stdout, "{}", termion::cursor::Left(MAX_COL),).unwrap();
 
                 println!("{}{}{}", style::Bold, line, style::Reset);
+                writeln_newline(&mut stdout, "").unwrap();
                 stdout.flush().unwrap();
 
                 execute(
