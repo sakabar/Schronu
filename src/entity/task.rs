@@ -880,6 +880,10 @@ impl Task {
         self.node.borrow_data().get_priority()
     }
 
+    pub fn num_children(&self) -> usize {
+        self.node.num_children()
+    }
+
     pub fn parent(&self) -> Option<Self> {
         match self.node.parent() {
             Some(node) => Some(Task { node }),
