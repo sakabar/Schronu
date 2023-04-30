@@ -210,6 +210,17 @@ fn execute_show_leaf_tasks(
     }
 }
 
+fn execute_focus(focused_task_id_opt: &mut Option<Uuid>, new_task_id_str: &str) {
+    match Uuid::parse_str(new_task_id_str) {
+        Ok(id) => *focused_task_id_opt = Some(id),
+        Err(_) => {}
+    }
+}
+
+fn execute_unfocus(focused_task_id_opt: &mut Option<Uuid>) {
+    *focused_task_id_opt = None;
+}
+
 fn execute_breakdown(
     focused_task_id_opt: &mut Option<Uuid>,
     focused_task_opt: &Option<Task>,
@@ -340,10 +351,15 @@ fn execute(
         "葉" | "leaves" | "leaf" | "lf" => {
             execute_show_leaf_tasks(stdout, task_repository);
         }
-        // (1)
-        "見" | "focus" | "fc" => {}
-        // (2)
-        "外" | "unfocus" | "ufc" => {}
+        "見" | "focus" | "fc" => {
+            if tokens.len() >= 2 {
+                let new_task_id_str = &tokens[1];
+                execute_focus(focused_task_id_opt, new_task_id_str);
+            }
+        }
+        "外" | "unfocus" | "ufc" => {
+            execute_unfocus(focused_task_id_opt);
+        }
         "親" | "parent" => {}
         "子" | "children" | "ch" => {}
         "上" | "nextup" | "nu" => {}
