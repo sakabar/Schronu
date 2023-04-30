@@ -1,4 +1,4 @@
-use chrono::Local;
+use chrono::{Duration, Local};
 use regex::Regex;
 use schronu::adapter::gateway::task_repository::TaskRepository;
 use schronu::application::interface::TaskRepositoryTrait;
@@ -210,6 +210,61 @@ fn execute_breakdown(
     });
 }
 
+fn split_amount_and_unit(input: &str) -> Vec<String> {
+    let mut result = Vec::new();
+    let mut buffer = String::new();
+
+    for c in input.chars() {
+        if c.is_numeric() {
+            buffer.push(c);
+        } else {
+            break;
+        }
+    }
+
+    result.push(buffer);
+    result.push(input[result[0].len()..].to_string());
+
+    result
+}
+
+#[test]
+
+fn test_split_amount_and_unit() {
+    let input = "6543abc123def456gh789";
+    let actual = split_amount_and_unit(input);
+
+    assert_eq!(
+        actual,
+        vec!["6543".to_string(), "abc123def456gh789".to_string()]
+    );
+}
+
+fn execute_defer(
+    focused_task_id_opt: &mut Option<Uuid>,
+    focused_task_opt: &Option<Task>,
+    amount_str: &str,
+    unit_str: &str,
+) {
+    let amount: i64 = amount_str.parse().unwrap();
+    let duration = match unit_str.chars().nth(0) {
+        Some('日') | Some('d') => Duration::days(amount),
+        Some('時') | Some('h') => Duration::hours(amount),
+        Some('分') | Some('m') => Duration::minutes(amount),
+        // 誤入力した時に傷が浅いように、デフォルトは秒としておく
+        Some('秒') | Some('s') | _ => Duration::seconds(amount),
+    };
+
+    focused_task_opt.as_ref().and_then(|focused_task| {
+        focused_task.set_pending_until(Local::now() + duration);
+
+        // dummy
+        None::<i32>
+    });
+
+    *focused_task_id_opt = None;
+}
+
 fn execute(
     stdout: &mut RawTerminal<Stdout>,
     task_repository: &mut dyn TaskRepositoryTrait,
@@ -258,7 +313,23 @@ fn execute(
             }
         }
         // "詳" | "description" | "desc" => {}
-        "後" | "defer" => {}
+        "後" | "defer" => {
+            if tokens.len() >= 3 {
+                let amount_str = &tokens[1];
+                let unit_str = &tokens[2].to_lowercase();
+
+                execute_defer(focused_task_id_opt, &focused_task_opt, amount_str, unit_str);
+            } else if tokens.len() == 2 {
+                // "defer 5days" のように引数が1つしか与えられなかった場合は、数字部分とそれ以降に分割する
+                let splitted = split_amount_and_unit(tokens[1]);
+                if splitted.len() == 2 {
+                    let amount_str = &splitted[0];
+                    let unit_str = &splitted[1].to_lowercase();
+
+                    execute_defer(focused_task_id_opt, &focused_task_opt, amount_str, unit_str);
+                }
+            }
+        }
         "終" | "finish" | "fin" => {}
         &_ => {}
     }
