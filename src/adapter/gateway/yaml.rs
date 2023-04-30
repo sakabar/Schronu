@@ -3,6 +3,7 @@ use crate::entity::task::Status;
 use crate::entity::task::{ImmutableTask, Task};
 use chrono::TimeZone;
 use chrono::{DateTime, Local};
+use uuid::Uuid;
 use yaml_rust::Yaml;
 
 #[cfg(test)]
@@ -13,6 +14,9 @@ use crate::entity::task::TaskAttr;
 
 #[cfg(test)]
 use crate::entity::task::assert_task;
+
+#[cfg(test)]
+use uuid::uuid;
 
 #[test]
 fn test_yaml_to_immutable_task_childrenキーが存在しない場合は空配列として登録されること() {
@@ -277,6 +281,7 @@ fn transform_from_pending_until_str(pending_until_str: &str) -> DateTime<Local> 
     pending_until
 }
 
+// Todo Result型を返すようにする
 pub fn yaml_to_task(yaml: &Yaml, now: DateTime<Local>) -> Task {
     let name: &str = yaml["name"].as_str().unwrap_or("");
 
@@ -286,15 +291,29 @@ pub fn yaml_to_task(yaml: &Yaml, now: DateTime<Local>) -> Task {
     let pending_until_str: &str = yaml["pending_until"].as_str().unwrap_or("");
     let pending_until = transform_from_pending_until_str(pending_until_str);
 
+    let priority: i64 = yaml["priority"].as_i64().unwrap_or(0);
+
     let mut parent_task: Task = Task::new(name);
+
+    let id_str: &str = yaml["id"].as_str().unwrap_or("");
+    match Uuid::parse_str(id_str) {
+        Ok(id) => {
+            parent_task.set_id(id);
+        }
+        Err(_) => {}
+    }
+
     parent_task.set_orig_status(status);
     parent_task.set_pending_until(pending_until);
+    parent_task.set_priority(priority);
 
     parent_task.sync_clock(now);
 
     for child_yaml in yaml["children"].as_vec().unwrap_or(&vec![]) {
         let mut child_task = yaml_to_task(&child_yaml, now);
-        child_task.detach_insert_as_last_child_of(parent_task);
+        child_task
+            .detach_insert_as_last_child_of(parent_task)
+            .unwrap();
 
         parent_task = child_task.parent().unwrap();
     }
@@ -418,6 +437,79 @@ children:
 }
 
 #[test]
+fn test_yaml_to_task_priorityキー_正常系() {
+    let s = "
+name: 'タスク1'
+status: 'todo'
+priority: 5
+";
+
+    let docs = YamlLoader::load_from_str(s).unwrap();
+    let project_yaml: &Yaml = &docs[0];
+
+    let now = Local::now();
+    let actual = yaml_to_task(project_yaml, now);
+    let expected = Task::new("タスク1");
+    expected.set_priority(5);
+    expected.sync_clock(now);
+
+    assert_task(&actual, &expected);
+}
+
+#[test]
+fn test_yaml_to_task_priorityキー_異常の値の場合はデフォルト値となること() {
+    let s = "
+name: 'タスク1'
+status: 'todo'
+priority: 'invalid'
+";
+
+    let docs = YamlLoader::load_from_str(s).unwrap();
+    let project_yaml: &Yaml = &docs[0];
+
+    let now = Local::now();
+    let actual = yaml_to_task(project_yaml, now);
+    let expected = Task::new("タスク1");
+    expected.set_priority(0);
+    expected.sync_clock(now);
+
+    assert!(
+        &actual
+            .try_eq_tree(&expected)
+            .expect("data are not borrowed"),
+        "actual and expected are not equal"
+    );
+}
+
+#[test]
+fn test_yaml_to_task_idキー_正常系() {
+    let s = "
+id: 67e55044-10b1-426f-9247-bb680e5fe0c8
+name: 'タスク1'
+status: 'todo'
+";
+
+    let docs = YamlLoader::load_from_str(s).unwrap();
+    let project_yaml: &Yaml = &docs[0];
+
+    let now = Local::now();
+    let actual = yaml_to_task(project_yaml, now);
+    let mut expected = Task::new("タスク1");
+    let id: Uuid = uuid!("67e55044-10b1-426f-9247-bb680e5fe0c8");
+    expected.set_id(id);
+    expected.sync_clock(now);
+
+    assert!(
+        &actual
+            .try_eq_tree(&expected)
+            .expect("data are not borrowed"),
+        "actual and expected are not equal"
+    );
+
+    assert_eq!(&actual.get_id(), &expected.get_id());
+}
+
+#[test]
 fn test_yaml_to_task_再帰的にパーズできること_親子() {
     let s = "
 name: '親タスク'
@@ -436,12 +528,7 @@ children:
     task_attr.sync_clock(now);
     parent_task.create_as_last_child(task_attr);
 
-    assert!(
-        &actual
-            .try_eq_tree(&parent_task)
-            .expect("data are not borrowed"),
-        "actual and expected are not equal"
-    );
+    assert_task(&actual, &parent_task);
 }
 
 #[test]
