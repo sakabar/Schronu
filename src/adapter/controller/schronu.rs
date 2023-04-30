@@ -224,17 +224,19 @@ fn execute_unfocus(focused_task_id_opt: &mut Option<Uuid>) {
 fn execute_breakdown(
     focused_task_id_opt: &mut Option<Uuid>,
     focused_task_opt: &Option<Task>,
-    new_task_name: &str,
+    new_task_names: &[&str],
 ) {
     // as_ref()の必要性が分かっていないので後で調べる
     // これが無いと:
     // cannot move out of `*focused_task_opt` which is behind a shared reference
     focused_task_opt.as_ref().and_then(|focused_task| {
-        let new_task_attr = TaskAttr::new(new_task_name);
-        let new_task = focused_task.create_as_last_child(new_task_attr);
+        for new_task_name in new_task_names {
+            let new_task_attr = TaskAttr::new(new_task_name);
+            let new_task = focused_task.create_as_last_child(new_task_attr);
 
-        // 新しい子タスクにフォーカス(id)を移す
-        *focused_task_id_opt = Some(new_task.get_id());
+            // 新しい子タスクにフォーカス(id)を移す
+            *focused_task_id_opt = Some(new_task.get_id());
+        }
 
         // dummy
         None::<i32>
@@ -365,8 +367,8 @@ fn execute(
         "上" | "nextup" | "nu" => {}
         "下" | "breakdown" | "bd" => {
             if tokens.len() >= 2 {
-                let new_task_name = &tokens[1];
-                execute_breakdown(focused_task_id_opt, &focused_task_opt, new_task_name);
+                let new_task_names = &tokens[1..];
+                execute_breakdown(focused_task_id_opt, &focused_task_opt, new_task_names);
             }
         }
         // "詳" | "description" | "desc" => {}
