@@ -222,6 +222,47 @@ fn execute_unfocus(focused_task_id_opt: &mut Option<Uuid>) {
     *focused_task_id_opt = None;
 }
 
+fn execute_impluse(
+    task_repository: &mut dyn TaskRepositoryTrait,
+    focused_task_id_opt: &mut Option<Uuid>,
+    new_task_names: &[&str],
+) {
+    // 今フォーカスしているIDを退避する
+    let stashed_focused_task_id_opt = focused_task_id_opt.clone();
+
+    // TODO: ここ、コンフィグで雑務idを読み書きする
+    let impulse_task_id_string = String::from("6d19cdb2-1dbb-41bd-899f-551a83bf4800");
+    execute_focus(focused_task_id_opt, &impulse_task_id_string);
+    let focused_task_opt = focused_task_id_opt.and_then(|id| task_repository.get_by_id(id));
+
+    // 次回の午前6時
+    let now: DateTime<Local> = Local::now();
+    let pending_until = if now.hour() >= 6 {
+        // 翌日の午前6時
+        let dt = now + Duration::days(1);
+        let datetime_str = format!("{}/{}/{} 06:00", dt.year(), dt.month(), dt.day());
+        Local
+            .datetime_from_str(&datetime_str, "%Y/%m/%d %H:%M")
+            .unwrap()
+    } else {
+        // 今日の午前6時
+        let datetime_str = format!("{}/{}/{} 06:00", now.year(), now.month(), now.day());
+        Local
+            .datetime_from_str(&datetime_str, "%Y/%m/%d %H:%M")
+            .unwrap()
+    };
+
+    execute_breakdown(
+        focused_task_id_opt,
+        &focused_task_opt,
+        new_task_names,
+        &Some(pending_until),
+    );
+
+    // フォーカスを元のタスクに戻す
+    *focused_task_id_opt = stashed_focused_task_id_opt;
+}
+
 fn execute_breakdown(
     focused_task_id_opt: &mut Option<Uuid>,
     focused_task_opt: &Option<Task>,
@@ -344,7 +385,7 @@ fn execute(
         .trim()
         .to_string();
 
-    let mut focused_task_opt: Option<Task> =
+    let focused_task_opt: Option<Task> =
         focused_task_id_opt.and_then(|id| task_repository.get_by_id(id));
 
     let tokens: Vec<&str> = line.split(' ').collect();
@@ -407,45 +448,11 @@ fn execute(
             execute_finish(focused_task_id_opt, &focused_task_opt);
         }
         "衝" | "impulse" | "imp" => {
-            // 今フォーカスしているIDを退避する
-            let stashed_focused_task_id_opt = focused_task_id_opt.clone();
-
-            // TODO: ここ、コンフィグで雑務idを読み書きする
-            let impulse_task_id_string = String::from("6d19cdb2-1dbb-41bd-899f-551a83bf4800");
-            execute_focus(focused_task_id_opt, &impulse_task_id_string);
-            focused_task_opt = focused_task_id_opt.and_then(|id| task_repository.get_by_id(id));
-
             if tokens.len() >= 2 {
                 let new_task_names = &tokens[1..];
 
-                // 次回の午前6時
-                let now: DateTime<Local> = Local::now();
-                let pending_until = if now.hour() >= 6 {
-                    // 翌日の午前6時
-                    let dt = now + Duration::days(1);
-                    let datetime_str = format!("{}/{}/{} 06:00", dt.year(), dt.month(), dt.day());
-                    Local
-                        .datetime_from_str(&datetime_str, "%Y/%m/%d %H:%M")
-                        .unwrap()
-                } else {
-                    // 今日の午前6時
-                    let datetime_str =
-                        format!("{}/{}/{} 06:00", now.year(), now.month(), now.day());
-                    Local
-                        .datetime_from_str(&datetime_str, "%Y/%m/%d %H:%M")
-                        .unwrap()
-                };
-
-                execute_breakdown(
-                    focused_task_id_opt,
-                    &focused_task_opt,
-                    new_task_names,
-                    &Some(pending_until),
-                );
+                execute_impluse(task_repository, focused_task_id_opt, new_task_names);
             }
-
-            // フォーカスを元のタスクに戻す
-            *focused_task_id_opt = stashed_focused_task_id_opt.clone();
         }
         &_ => {}
     }
