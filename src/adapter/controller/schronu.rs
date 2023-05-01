@@ -1,4 +1,4 @@
-use chrono::{Duration, Local};
+use chrono::{DateTime, Datelike, Duration, Local, TimeZone, Timelike};
 use regex::Regex;
 use schronu::adapter::gateway::task_repository::TaskRepository;
 use schronu::application::interface::TaskRepositoryTrait;
@@ -222,17 +222,68 @@ fn execute_unfocus(focused_task_id_opt: &mut Option<Uuid>) {
     *focused_task_id_opt = None;
 }
 
+fn execute_impluse(
+    task_repository: &mut dyn TaskRepositoryTrait,
+    focused_task_id_opt: &mut Option<Uuid>,
+    new_task_names: &[&str],
+) {
+    // 今フォーカスしているIDを退避する
+    let stashed_focused_task_id_opt = focused_task_id_opt.clone();
+
+    // TODO: ここ、コンフィグで雑務idを読み書きする
+    let impulse_task_id_string = String::from("6d19cdb2-1dbb-41bd-899f-551a83bf4800");
+    execute_focus(focused_task_id_opt, &impulse_task_id_string);
+    let focused_task_opt = focused_task_id_opt.and_then(|id| task_repository.get_by_id(id));
+
+    // 次回の午前6時
+    let now: DateTime<Local> = Local::now();
+    let pending_until = if now.hour() >= 6 {
+        // 翌日の午前6時
+        let dt = now + Duration::days(1);
+        let datetime_str = format!("{}/{}/{} 06:00", dt.year(), dt.month(), dt.day());
+        Local
+            .datetime_from_str(&datetime_str, "%Y/%m/%d %H:%M")
+            .unwrap()
+    } else {
+        // 今日の午前6時
+        let datetime_str = format!("{}/{}/{} 06:00", now.year(), now.month(), now.day());
+        Local
+            .datetime_from_str(&datetime_str, "%Y/%m/%d %H:%M")
+            .unwrap()
+    };
+
+    execute_breakdown(
+        focused_task_id_opt,
+        &focused_task_opt,
+        new_task_names,
+        &Some(pending_until),
+    );
+
+    // フォーカスを元のタスクに戻す
+    *focused_task_id_opt = stashed_focused_task_id_opt;
+}
+
 fn execute_breakdown(
     focused_task_id_opt: &mut Option<Uuid>,
     focused_task_opt: &Option<Task>,
     new_task_names: &[&str],
+    pending_until_opt: &Option<DateTime<Local>>,
 ) {
     // as_ref()の必要性が分かっていないので後で調べる
     // これが無いと:
     // cannot move out of `*focused_task_opt` which is behind a shared reference
     focused_task_opt.as_ref().and_then(|focused_task| {
         for new_task_name in new_task_names {
-            let new_task_attr = TaskAttr::new(new_task_name);
+            let mut new_task_attr = TaskAttr::new(new_task_name);
+
+            match pending_until_opt {
+                Some(pending_until) => {
+                    new_task_attr.set_orig_status(Status::Pending);
+                    new_task_attr.set_pending_until(*pending_until);
+                }
+                None => {}
+            }
+
             let new_task = focused_task.create_as_last_child(new_task_attr);
 
             // 新しい子タスクにフォーカス(id)を移す
@@ -334,10 +385,8 @@ fn execute(
         .trim()
         .to_string();
 
-    let focused_task_opt = match focused_task_id_opt {
-        None => None,
-        Some(id) => task_repository.get_by_id(*id),
-    };
+    let focused_task_opt: Option<Task> =
+        focused_task_id_opt.and_then(|id| task_repository.get_by_id(id));
 
     let tokens: Vec<&str> = line.split(' ').collect();
 
@@ -369,7 +418,12 @@ fn execute(
         "下" | "breakdown" | "bd" => {
             if tokens.len() >= 2 {
                 let new_task_names = &tokens[1..];
-                execute_breakdown(focused_task_id_opt, &focused_task_opt, new_task_names);
+                execute_breakdown(
+                    focused_task_id_opt,
+                    &focused_task_opt,
+                    new_task_names,
+                    &None,
+                );
             }
         }
         // "詳" | "description" | "desc" => {}
@@ -392,6 +446,13 @@ fn execute(
         }
         "終" | "finish" | "fin" => {
             execute_finish(focused_task_id_opt, &focused_task_opt);
+        }
+        "衝" | "impulse" | "imp" => {
+            if tokens.len() >= 2 {
+                let new_task_names = &tokens[1..];
+
+                execute_impluse(task_repository, focused_task_id_opt, new_task_names);
+            }
         }
         &_ => {}
     }
