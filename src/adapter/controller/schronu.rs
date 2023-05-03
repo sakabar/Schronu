@@ -188,7 +188,11 @@ fn execute_show_tree(stdout: &mut RawTerminal<Stdout>, focused_task_opt: &Option
         let s: String = focused_task.tree_debug_pretty_print();
         let lines: Vec<_> = s.split('\n').collect();
         for line in lines.iter() {
-            writeln_newline(stdout, line).unwrap()
+            // Done([+])のタスクは表示しない
+            // 恒久的には、tree_debug_pretty_print()に似た関数を自分で実装してカスタマイズする
+            if line.contains("[ ]") || line.contains("[-]") {
+                writeln_newline(stdout, line).unwrap()
+            }
         }
     });
     writeln!(stdout, "").unwrap();
