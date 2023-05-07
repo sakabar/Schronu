@@ -673,12 +673,36 @@ fn application(task_repository: &mut dyn TaskRepositoryTrait) {
                 writeln_newline(&mut stdout, "").unwrap();
                 stdout.flush().unwrap();
 
-                execute(
-                    &mut stdout,
-                    task_repository,
-                    &mut focused_task_id_opt,
-                    &line,
-                );
+                if line == "t" {
+                    // do it "t"oday
+                    let s = "後 1秒".to_string();
+
+                    execute(&mut stdout, task_repository, &mut focused_task_id_opt, &s);
+                } else if line == "d" {
+                    // skip "d"aily
+                    let now: DateTime<Local> = Local::now();
+                    let next_morning = get_next_morning_datetime(now);
+                    let sec = (next_morning - now).num_seconds();
+                    let s = format!("後 {}秒", sec).to_string();
+
+                    execute(&mut stdout, task_repository, &mut focused_task_id_opt, &s);
+                } else if line == "w" {
+                    // skip "w"eekly
+                    let now: DateTime<Local> = Local::now();
+                    let next_morning = get_next_morning_datetime(now);
+                    let sec = (next_morning - now).num_seconds() + 86400 * 4;
+
+                    let s = format!("後 {}秒", sec).to_string();
+
+                    execute(&mut stdout, task_repository, &mut focused_task_id_opt, &s);
+                } else {
+                    execute(
+                        &mut stdout,
+                        task_repository,
+                        &mut focused_task_id_opt,
+                        &line,
+                    );
+                }
 
                 //////////////////////////////
 
