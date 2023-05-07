@@ -507,7 +507,11 @@ fn main() {
 
 fn application(task_repository: &mut dyn TaskRepositoryTrait) {
     // 初期化
-    task_repository.sync_clock(Local::now());
+    let now = Local::now();
+    task_repository.sync_clock(now);
+
+    // let next_morning = get_next_morning_datetime(now);
+    // task_repository.sync_clock(next_morning + Duration::hours(1));
     task_repository.load();
 
     // RawModeを有効にする
