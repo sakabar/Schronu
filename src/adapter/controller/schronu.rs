@@ -243,6 +243,22 @@ fn get_next_morning_datetime(now: DateTime<Local>) -> DateTime<Local> {
     }
 }
 
+#[test]
+fn test_get_next_morning_datetime_6時以降の場合() {
+    let dt = Local.with_ymd_and_hms(2023, 4, 1, 12, 0, 0).unwrap();
+    let actual = get_next_morning_datetime(dt);
+
+    assert_eq!(actual, Local.with_ymd_and_hms(2023, 4, 2, 6, 0, 0).unwrap());
+}
+
+#[test]
+fn test_get_next_morning_datetime_6時以前の場合() {
+    let dt = Local.with_ymd_and_hms(2023, 4, 1, 1, 0, 0).unwrap();
+    let actual = get_next_morning_datetime(dt);
+
+    assert_eq!(actual, Local.with_ymd_and_hms(2023, 4, 1, 6, 0, 0).unwrap());
+}
+
 fn execute_impluse(
     task_repository: &mut dyn TaskRepositoryTrait,
     focused_task_id_opt: &mut Option<Uuid>,
