@@ -226,6 +226,39 @@ fn execute_unfocus(focused_task_id_opt: &mut Option<Uuid>) {
     *focused_task_id_opt = None;
 }
 
+fn get_next_morning_datetime(now: DateTime<Local>) -> DateTime<Local> {
+    if now.hour() >= 6 {
+        // 翌日の午前6時
+        let dt = now + Duration::days(1);
+        let datetime_str = format!("{}/{}/{} 06:00", dt.year(), dt.month(), dt.day());
+        Local
+            .datetime_from_str(&datetime_str, "%Y/%m/%d %H:%M")
+            .unwrap()
+    } else {
+        // 今日の午前6時
+        let datetime_str = format!("{}/{}/{} 06:00", now.year(), now.month(), now.day());
+        Local
+            .datetime_from_str(&datetime_str, "%Y/%m/%d %H:%M")
+            .unwrap()
+    }
+}
+
+#[test]
+fn test_get_next_morning_datetime_6時以降の場合() {
+    let dt = Local.with_ymd_and_hms(2023, 4, 1, 12, 0, 0).unwrap();
+    let actual = get_next_morning_datetime(dt);
+
+    assert_eq!(actual, Local.with_ymd_and_hms(2023, 4, 2, 6, 0, 0).unwrap());
+}
+
+#[test]
+fn test_get_next_morning_datetime_6時以前の場合() {
+    let dt = Local.with_ymd_and_hms(2023, 4, 1, 1, 0, 0).unwrap();
+    let actual = get_next_morning_datetime(dt);
+
+    assert_eq!(actual, Local.with_ymd_and_hms(2023, 4, 1, 6, 0, 0).unwrap());
+}
+
 fn execute_impluse(
     task_repository: &mut dyn TaskRepositoryTrait,
     focused_task_id_opt: &mut Option<Uuid>,
@@ -241,20 +274,7 @@ fn execute_impluse(
 
     // 次回の午前6時
     let now: DateTime<Local> = Local::now();
-    let pending_until = if now.hour() >= 6 {
-        // 翌日の午前6時
-        let dt = now + Duration::days(1);
-        let datetime_str = format!("{}/{}/{} 06:00", dt.year(), dt.month(), dt.day());
-        Local
-            .datetime_from_str(&datetime_str, "%Y/%m/%d %H:%M")
-            .unwrap()
-    } else {
-        // 今日の午前6時
-        let datetime_str = format!("{}/{}/{} 06:00", now.year(), now.month(), now.day());
-        Local
-            .datetime_from_str(&datetime_str, "%Y/%m/%d %H:%M")
-            .unwrap()
-    };
+    let pending_until = get_next_morning_datetime(now);
 
     execute_breakdown(
         focused_task_id_opt,
@@ -318,7 +338,6 @@ fn split_amount_and_unit(input: &str) -> Vec<String> {
 }
 
 #[test]
-
 fn test_split_amount_and_unit() {
     let input = "6543abc123def456gh789";
     let actual = split_amount_and_unit(input);
@@ -504,7 +523,11 @@ fn main() {
 
 fn application(task_repository: &mut dyn TaskRepositoryTrait) {
     // 初期化
-    task_repository.sync_clock(Local::now());
+    let now = Local::now();
+    task_repository.sync_clock(now);
+
+    // let next_morning = get_next_morning_datetime(now);
+    // task_repository.sync_clock(next_morning + Duration::hours(1));
     task_repository.load();
 
     // RawModeを有効にする
@@ -670,12 +693,36 @@ fn application(task_repository: &mut dyn TaskRepositoryTrait) {
                 writeln_newline(&mut stdout, "").unwrap();
                 stdout.flush().unwrap();
 
-                execute(
-                    &mut stdout,
-                    task_repository,
-                    &mut focused_task_id_opt,
-                    &line,
-                );
+                if line == "t" {
+                    // do it "t"oday
+                    let s = "後 1秒".to_string();
+
+                    execute(&mut stdout, task_repository, &mut focused_task_id_opt, &s);
+                } else if line == "d" {
+                    // skip "d"aily
+                    let now: DateTime<Local> = Local::now();
+                    let next_morning = get_next_morning_datetime(now);
+                    let sec = (next_morning - now).num_seconds();
+                    let s = format!("後 {}秒", sec).to_string();
+
+                    execute(&mut stdout, task_repository, &mut focused_task_id_opt, &s);
+                } else if line == "w" {
+                    // skip "w"eekly
+                    let now: DateTime<Local> = Local::now();
+                    let next_morning = get_next_morning_datetime(now);
+                    let sec = (next_morning - now).num_seconds() + 86400 * 4;
+
+                    let s = format!("後 {}秒", sec).to_string();
+
+                    execute(&mut stdout, task_repository, &mut focused_task_id_opt, &s);
+                } else {
+                    execute(
+                        &mut stdout,
+                        task_repository,
+                        &mut focused_task_id_opt,
+                        &line,
+                    );
+                }
 
                 //////////////////////////////
 
