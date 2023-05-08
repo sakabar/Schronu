@@ -574,7 +574,7 @@ fn application(task_repository: &mut dyn TaskRepositoryTrait) {
     // キー入力を受け付ける
     for c in std::io::stdin().keys() {
         match c.unwrap() {
-            Key::Char('q') | Key::Ctrl('d') => {
+            Key::Ctrl('d') => {
                 if line.is_empty() {
                     break;
                 }
