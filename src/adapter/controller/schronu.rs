@@ -5,6 +5,7 @@ use schronu::application::interface::TaskRepositoryTrait;
 use schronu::entity::task::{extract_leaf_tasks_from_project, Status, Task, TaskAttr};
 use std::io::Stdout;
 use std::io::{stdout, Write};
+use std::process;
 use termion::event::Key;
 use termion::input::TermRead;
 use termion::raw::IntoRawMode;
@@ -578,6 +579,10 @@ fn application(task_repository: &mut dyn TaskRepositoryTrait) {
                 if line.is_empty() {
                     break;
                 }
+            }
+            Key::Ctrl('c') => {
+                // 保存などせずに強制終了する
+                process::exit(1);
             }
             // Key::Up => write!(stdout, "{}", termion::cursor::Up(1)).unwrap(),
             // Key::Down => write!(stdout, "{}", termion::cursor::Down(1)).unwrap(),
