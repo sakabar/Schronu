@@ -297,6 +297,10 @@ fn execute_breakdown(
     // as_ref()の必要性が分かっていないので後で調べる
     // これが無いと:
     // cannot move out of `*focused_task_opt` which is behind a shared reference
+
+    // 複数の子タスクを作成した場合は、作成した最初の子タスクにフォーカスを当てる
+    let mut focus_is_moved = false;
+
     focused_task_opt.as_ref().and_then(|focused_task| {
         for new_task_name in new_task_names {
             let mut new_task_attr = TaskAttr::new(new_task_name);
@@ -310,9 +314,11 @@ fn execute_breakdown(
             }
 
             let new_task = focused_task.create_as_last_child(new_task_attr);
-
-            // 新しい子タスクにフォーカス(id)を移す
-            *focused_task_id_opt = Some(new_task.get_id());
+            if !focus_is_moved {
+                // 新しい子タスクにフォーカス(id)を移す
+                *focused_task_id_opt = Some(new_task.get_id());
+                focus_is_moved = true;
+            }
         }
 
         // dummy
