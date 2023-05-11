@@ -671,7 +671,6 @@ fn application(task_repository: &mut dyn TaskRepositoryTrait) {
                 .unwrap();
                 stdout.flush().unwrap();
             }
-            // バグあり。Ctrl-Eがうまく動かない
             Key::Ctrl('e') => {
                 let s: String = String::from(format!("{}{}", header, line));
                 let width = UnicodeWidthStr::width(s.as_str()) as u16;
@@ -679,6 +678,9 @@ fn application(task_repository: &mut dyn TaskRepositoryTrait) {
 
                 write!(stdout, "{}", termion::cursor::Right(width)).unwrap();
                 stdout.flush().unwrap();
+
+                // headerとlineの末尾に移動
+                cursor_x = s.chars().count() - 1;
             }
             Key::Ctrl('u') => {
                 cursor_x = 0;
