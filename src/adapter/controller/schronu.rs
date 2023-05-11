@@ -260,7 +260,8 @@ fn test_get_next_morning_datetime_6時以前の場合() {
     assert_eq!(actual, Local.with_ymd_and_hms(2023, 4, 1, 6, 0, 0).unwrap());
 }
 
-fn execute_impluse(
+fn execute_impulse(
+    stdout: &mut RawTerminal<Stdout>,
     task_repository: &mut dyn TaskRepositoryTrait,
     focused_task_id_opt: &mut Option<Uuid>,
     new_task_names: &[&str],
@@ -278,6 +279,7 @@ fn execute_impluse(
     let pending_until = get_next_morning_datetime(now);
 
     execute_breakdown(
+        stdout,
         focused_task_id_opt,
         &focused_task_opt,
         new_task_names,
@@ -289,6 +291,7 @@ fn execute_impluse(
 }
 
 fn execute_interrupt(
+    stdout: &mut RawTerminal<Stdout>,
     task_repository: &mut dyn TaskRepositoryTrait,
     focused_task_id_opt: &mut Option<Uuid>,
     new_task_names: &[&str],
@@ -302,6 +305,7 @@ fn execute_interrupt(
     let focused_task_opt = focused_task_id_opt.and_then(|id| task_repository.get_by_id(id));
 
     execute_breakdown(
+        stdout,
         focused_task_id_opt,
         &focused_task_opt,
         new_task_names,
@@ -313,6 +317,7 @@ fn execute_interrupt(
 }
 
 fn execute_breakdown(
+    stdout: &mut RawTerminal<Stdout>,
     focused_task_id_opt: &mut Option<Uuid>,
     focused_task_opt: &Option<Task>,
     new_task_names: &[&str],
@@ -338,6 +343,8 @@ fn execute_breakdown(
             }
 
             let new_task = focused_task.create_as_last_child(new_task_attr);
+            let msg: String = format!("{} {}", new_task.get_id(), &new_task_name);
+            writeln_newline(stdout, msg.as_str()).unwrap();
             if !focus_is_moved {
                 // 新しい子タスクにフォーカス(id)を移す
                 *focused_task_id_opt = Some(new_task.get_id());
@@ -473,6 +480,7 @@ fn execute(
             if tokens.len() >= 2 {
                 let new_task_names = &tokens[1..];
                 execute_breakdown(
+                    stdout,
                     focused_task_id_opt,
                     &focused_task_opt,
                     new_task_names,
@@ -505,14 +513,14 @@ fn execute(
             if tokens.len() >= 2 {
                 let new_task_names = &tokens[1..];
 
-                execute_impluse(task_repository, focused_task_id_opt, new_task_names);
+                execute_impulse(stdout, task_repository, focused_task_id_opt, new_task_names);
             }
         }
         "突" | "interrupt" => {
             if tokens.len() >= 2 {
                 let new_task_names = &tokens[1..];
 
-                execute_interrupt(task_repository, focused_task_id_opt, new_task_names);
+                execute_interrupt(stdout, task_repository, focused_task_id_opt, new_task_names);
             }
         }
         &_ => {}
