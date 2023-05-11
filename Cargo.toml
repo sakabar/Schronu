@@ -19,11 +19,3 @@ yaml-rust = "0.4.5"
 [[bin]]
 name = "schronu"
 path = "src/adapter/controller/schronu.rs"
-
-[[bin]]
-name = "show_leaf_immutable_tasks"
-path = "src/adapter/controller/show_leaf_immutable_tasks.rs"
-
-[[bin]]
-name = "show_leaf_tasks"
-path = "src/adapter/controller/show_leaf_tasks.rs"
