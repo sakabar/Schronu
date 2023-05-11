@@ -288,6 +288,30 @@ fn execute_impluse(
     *focused_task_id_opt = stashed_focused_task_id_opt;
 }
 
+fn execute_interrupt(
+    task_repository: &mut dyn TaskRepositoryTrait,
+    focused_task_id_opt: &mut Option<Uuid>,
+    new_task_names: &[&str],
+) {
+    // 今フォーカスしているIDを退避する
+    let stashed_focused_task_id_opt = focused_task_id_opt.clone();
+
+    // TODO: ここ、コンフィグで雑務idを読み書きする
+    let impulse_task_id_string = String::from("6d19cdb2-1dbb-41bd-899f-551a83bf4800");
+    execute_focus(focused_task_id_opt, &impulse_task_id_string);
+    let focused_task_opt = focused_task_id_opt.and_then(|id| task_repository.get_by_id(id));
+
+    execute_breakdown(
+        focused_task_id_opt,
+        &focused_task_opt,
+        new_task_names,
+        &None,
+    );
+
+    // フォーカスを元のタスクに戻す
+    *focused_task_id_opt = stashed_focused_task_id_opt;
+}
+
 fn execute_breakdown(
     focused_task_id_opt: &mut Option<Uuid>,
     focused_task_opt: &Option<Task>,
@@ -482,6 +506,13 @@ fn execute(
                 let new_task_names = &tokens[1..];
 
                 execute_impluse(task_repository, focused_task_id_opt, new_task_names);
+            }
+        }
+        "突" | "interrupt" => {
+            if tokens.len() >= 2 {
+                let new_task_names = &tokens[1..];
+
+                execute_interrupt(task_repository, focused_task_id_opt, new_task_names);
             }
         }
         &_ => {}
