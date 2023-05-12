@@ -672,15 +672,16 @@ fn application(task_repository: &mut dyn TaskRepositoryTrait) {
                 stdout.flush().unwrap();
             }
             Key::Ctrl('e') => {
-                let s: String = String::from(format!("{}{}", header, line));
-                let width = UnicodeWidthStr::width(s.as_str()) as u16;
-                write!(stdout, "{}", termion::cursor::Left(MAX_COL)).unwrap();
+                loop {
+                    let width = get_forward_width(&line, cursor_x);
 
-                write!(stdout, "{}", termion::cursor::Right(width)).unwrap();
+                    if width == 0 {
+                        break;
+                    }
+                    cursor_x += 1;
+                    write!(stdout, "{}", termion::cursor::Right(width)).unwrap();
+                }
                 stdout.flush().unwrap();
-
-                // headerとlineの末尾に移動
-                cursor_x = s.chars().count() - 1;
             }
             Key::Ctrl('u') => {
                 cursor_x = 0;
