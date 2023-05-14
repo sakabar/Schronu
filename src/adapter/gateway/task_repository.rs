@@ -122,6 +122,10 @@ impl TaskRepositoryTrait for TaskRepository {
         // これ、本来はprojectsの中に伝搬させていくべきだ。
     }
 
+    fn get_last_synced_time(&self) -> DateTime<Local> {
+        self.last_synced_time
+    }
+
     fn get_highest_priority_project(&mut self) -> Option<&Task> {
         // 副作用として、projectsを優先度の低い順に破壊的にソートする
         // 葉ノードを出力する際に優先度が高いものが下となり優先度が低いものが画面外(上)になるように、projectsは低い順に保持する
