@@ -207,7 +207,11 @@ fn execute_show_leaf_tasks(
     for project_root_task in task_repository.get_all_projects().iter() {
         let project_name = project_root_task.get_name();
 
-        for leaf_task in extract_leaf_tasks_from_project(&project_root_task).iter() {
+        // 優先度が高いタスクほど下に表示されるようにし、フォーカスが当たるタスクは末尾に表示されるようにする。
+        let mut leaf_tasks = extract_leaf_tasks_from_project(&project_root_task);
+        leaf_tasks.reverse();
+
+        for leaf_task in leaf_tasks.iter() {
             let message = format!("{}\t{}\t{:?}", task_cnt, project_name, leaf_task.get_attr());
             writeln_newline(stdout, &message).unwrap();
             task_cnt += 1;
