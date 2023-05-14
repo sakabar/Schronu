@@ -214,6 +214,12 @@ fn execute_show_leaf_tasks(
         }
     }
     writeln_newline(stdout, "").unwrap();
+
+    // コストを正確に算出できるようになるまでのつなぎとして、概算を表示する
+    const RHO: f64 = 0.5;
+    let hours = (task_cnt as f64 * 0.25 / RHO).ceil();
+    let s = format!("あと{}時間かかります", hours);
+    writeln_newline(stdout, &s).unwrap();
 }
 
 fn execute_focus(focused_task_id_opt: &mut Option<Uuid>, new_task_id_str: &str) {
