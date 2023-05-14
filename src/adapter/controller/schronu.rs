@@ -221,8 +221,12 @@ fn execute_show_leaf_tasks(
 
     // コストを正確に算出できるようになるまでのつなぎとして、概算を表示する
     const RHO: f64 = 0.5;
-    let hours = (task_cnt as f64 * 0.25 / RHO).ceil();
-    let s = format!("あと{}時間かかります", hours);
+    let minutes = (15.0 * task_cnt as f64 / RHO).ceil() as i64;
+    let last_synced_time = task_repository.get_last_synced_time();
+    let dt = last_synced_time + Duration::minutes(minutes);
+
+    let hours = minutes / 60;
+    let s = format!("完了見込み日時は{}時間後の{}です", hours, dt);
     writeln_newline(stdout, &s).unwrap();
 }
 
