@@ -200,25 +200,40 @@ fn execute_show_ancestor(stdout: &mut RawTerminal<Stdout>, focused_task_opt: &Op
     writeln!(stdout, "").unwrap();
 
     let mut t_opt: Option<Task> = focused_task_opt.clone();
-    let mut level = 0;
+
+    // まずは葉タスクから根に向かいながら後ろに追加していき、
+    // 最後に逆順にして表示する
+    let mut ancestors: Vec<Task> = vec![];
 
     loop {
         match &t_opt {
             Some(t) => {
-                let indent = ' '.to_string().repeat(4 * level);
-                let id = t.get_id();
-                let name = t.get_name();
-                let msg = format!("{}`-- {}\t{}", &indent, &id, &name);
-                writeln_newline(stdout, &msg).unwrap();
-
+                ancestors.push(t.clone());
                 t_opt = t.parent();
-                level += 1;
             }
             None => {
                 break;
             }
         }
     }
+
+    ancestors.reverse();
+
+    for (level, task) in ancestors.iter().enumerate() {
+        let header = if level == 0 {
+            String::from("")
+        } else {
+            let indent = ' '.to_string().repeat(4 * (level - 1));
+            format!("{}`-- ", &indent)
+        };
+
+        let id = task.get_id();
+        let name = task.get_name();
+        let msg = format!("{}{}\t{}", &header, &id, &name);
+        writeln_newline(stdout, &msg).unwrap();
+    }
+
+    writeln_newline(stdout, "").unwrap();
 }
 
 fn execute_show_leaf_tasks(
@@ -492,7 +507,7 @@ fn execute(
         "木" | "tree" => {
             execute_show_tree(stdout, &focused_task_opt);
         }
-        "祖" | "ancestor" | "anc" => {
+        "条" | "祖" | "ancestor" | "anc" => {
             execute_show_ancestor(stdout, &focused_task_opt);
         }
         "根" | "root" => {}
