@@ -980,6 +980,19 @@ impl Task {
 
         None
     }
+
+    pub fn all_sibling_tasks_are_all_done(&self) -> bool {
+        let mut ans = true;
+
+        for sibling_node in self.node.siblings() {
+            if sibling_node.borrow_data().get_status() != &Status::Done {
+                ans = false;
+                break;
+            }
+        }
+
+        ans
+    }
 }
 
 #[test]
@@ -1331,4 +1344,48 @@ fn test_get_by_id_再帰でヒットしない場合() {
 
     let actual = task.get_by_id(uuid!("3aa89504-917d-4f20-a1e3-4eb196190c6f"));
     assert_eq!(actual, None);
+}
+
+#[test]
+fn test_all_sibling_tasks_are_all_done_全ての兄弟タスクが完了していたらtrueとなる() {
+    /*
+     parent_task_1
+       - child_task_1 (完了)
+       - child_task_2 (完了)
+    */
+
+    let parent_task = Task::new("親タスク");
+
+    let mut task_attr_child_1 = TaskAttr::new("子タスク1");
+    task_attr_child_1.set_orig_status(Status::Done);
+
+    let mut task_attr_child_2 = TaskAttr::new("子タスク2");
+    task_attr_child_2.set_orig_status(Status::Done);
+
+    let child_task_1 = parent_task.create_as_last_child(task_attr_child_1);
+    parent_task.create_as_last_child(task_attr_child_2);
+
+    assert!(child_task_1.all_sibling_tasks_are_all_done());
+}
+
+#[test]
+fn test_all_sibling_tasks_are_all_done_一部の兄弟タスクが完了でない場合はfalseとなる() {
+    /*
+     parent_task_1
+       - child_task_1 (完了)
+       - child_task_2 (Todo)
+    */
+
+    let parent_task = Task::new("親タスク");
+
+    let mut task_attr_child_1 = TaskAttr::new("子タスク1");
+    task_attr_child_1.set_orig_status(Status::Done);
+
+    let mut task_attr_child_2 = TaskAttr::new("子タスク2");
+    task_attr_child_2.set_orig_status(Status::Todo);
+
+    let child_task_1 = parent_task.create_as_last_child(task_attr_child_1);
+    parent_task.create_as_last_child(task_attr_child_2);
+
+    assert!(!child_task_1.all_sibling_tasks_are_all_done());
 }

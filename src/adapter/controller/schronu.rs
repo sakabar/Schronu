@@ -434,13 +434,12 @@ fn execute_finish(focused_task_id_opt: &mut Option<Uuid>, focused_task_opt: &Opt
         // 兄弟ノードが無い場合は、フォーカスを親タスクに移す。
         // そうでない場合は、フォーカスを外す。
         // 兄弟ノードがある場合に、本来はそちらの葉のdone状況を確認してからOKであれば親タスクにフォーカスを移すべきだが、難しいので今は対象としない
-        *focused_task_id_opt = focused_task.parent().and_then(|parent| {
-            if parent.num_children() == 1 {
-                Some(parent.get_id())
-            } else {
-                None
-            }
-        });
+
+        *focused_task_id_opt = if focused_task.all_sibling_tasks_are_all_done() {
+            focused_task.parent().map(|t| t.get_id())
+        } else {
+            None
+        };
 
         // dummy
         None::<i32>
