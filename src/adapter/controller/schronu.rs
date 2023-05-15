@@ -181,9 +181,6 @@ fn test_get_forward_width_正常系1() {
 }
 
 fn execute_show_tree(stdout: &mut RawTerminal<Stdout>, focused_task_opt: &Option<Task>) {
-    // as_ref()の必要性が分かっていないので後で調べる
-    // これが無いと:
-    // cannot move out of `*focused_task_opt` which is behind a shared reference
     writeln!(stdout, "").unwrap();
     focused_task_opt.as_ref().map(|focused_task| {
         let s: String = focused_task.tree_debug_pretty_print();
@@ -197,6 +194,46 @@ fn execute_show_tree(stdout: &mut RawTerminal<Stdout>, focused_task_opt: &Option
         }
     });
     writeln!(stdout, "").unwrap();
+}
+
+fn execute_show_ancestor(stdout: &mut RawTerminal<Stdout>, focused_task_opt: &Option<Task>) {
+    writeln!(stdout, "").unwrap();
+
+    let mut t_opt: Option<Task> = focused_task_opt.clone();
+
+    // まずは葉タスクから根に向かいながら後ろに追加していき、
+    // 最後に逆順にして表示する
+    let mut ancestors: Vec<Task> = vec![];
+
+    loop {
+        match &t_opt {
+            Some(t) => {
+                ancestors.push(t.clone());
+                t_opt = t.parent();
+            }
+            None => {
+                break;
+            }
+        }
+    }
+
+    ancestors.reverse();
+
+    for (level, task) in ancestors.iter().enumerate() {
+        let header = if level == 0 {
+            String::from("")
+        } else {
+            let indent = ' '.to_string().repeat(4 * (level - 1));
+            format!("{}`-- ", &indent)
+        };
+
+        let id = task.get_id();
+        let name = task.get_name();
+        let msg = format!("{}{}\t{}", &header, &id, &name);
+        writeln_newline(stdout, &msg).unwrap();
+    }
+
+    writeln_newline(stdout, "").unwrap();
 }
 
 fn execute_show_leaf_tasks(
@@ -338,10 +375,6 @@ fn execute_breakdown(
     new_task_names: &[&str],
     pending_until_opt: &Option<DateTime<Local>>,
 ) {
-    // as_ref()の必要性が分かっていないので後で調べる
-    // これが無いと:
-    // cannot move out of `*focused_task_opt` which is behind a shared reference
-
     // 複数の子タスクを作成した場合は、作成した最初の子タスクにフォーカスを当てる
     let mut focus_is_moved = false;
 
@@ -473,6 +506,9 @@ fn execute(
         "新" | "new" => {}
         "木" | "tree" => {
             execute_show_tree(stdout, &focused_task_opt);
+        }
+        "条" | "祖" | "ancestor" | "anc" => {
+            execute_show_ancestor(stdout, &focused_task_opt);
         }
         "根" | "root" => {}
         "葉" | "leaves" | "leaf" | "lf" => {

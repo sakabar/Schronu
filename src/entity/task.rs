@@ -803,7 +803,7 @@ fn test_task_attr_set_pending_until() {
     assert_eq!(actual, &pending_until);
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct Task {
     node: Node<TaskAttr>,
 }
@@ -1425,4 +1425,12 @@ fn test_parent_親タスクがある場合() {
             assert!(false);
         }
     }
+}
+
+#[test]
+fn test_taskをcloneした場合はnodeは同じ木を指すポインタであること() {
+    let task_orig = Task::new("タスク");
+    let task_cloned = task_orig.clone();
+
+    assert!(&task_orig.node.ptr_eq(&task_cloned.node));
 }
