@@ -884,7 +884,12 @@ impl Task {
         self.node.num_children()
     }
 
+    // 外から見て、ダミーノードのことは考慮させないように、ダミーの子の場合はNoneを返す
     pub fn parent(&self) -> Option<Self> {
+        if self.node.parent() == Some(self.node.root()) {
+            return None;
+        }
+
         match self.node.parent() {
             Some(node) => Some(Task { node }),
             None => None,
@@ -1388,4 +1393,36 @@ fn test_all_sibling_tasks_are_all_done_一部の兄弟タスクが完了でな�
     parent_task.create_as_last_child(task_attr_child_2);
 
     assert!(!child_task_1.all_sibling_tasks_are_all_done());
+}
+
+#[test]
+fn test_parent_ルートタスクの場合() {
+    /*
+     parent_task_1
+    */
+
+    let parent_task = Task::new("親タスク");
+    assert_eq!(parent_task.parent(), None);
+}
+
+#[test]
+fn test_parent_親タスクがある場合() {
+    /*
+     parent_task_1
+       - child_task_1
+    */
+
+    let parent_task = Task::new("親タスク");
+
+    let task_attr_child_1 = TaskAttr::new("子タスク1");
+    let child_task_1 = parent_task.create_as_last_child(task_attr_child_1);
+
+    match child_task_1.parent() {
+        Some(actual_task) => {
+            assert_task(&actual_task, &parent_task);
+        }
+        None => {
+            assert!(false);
+        }
+    }
 }
