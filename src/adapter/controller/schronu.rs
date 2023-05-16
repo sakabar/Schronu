@@ -269,6 +269,11 @@ fn execute_show_leaf_tasks(
     let hours = minutes / 60;
     let s = format!("完了見込み日時は{}時間後の{}です", hours, dt);
     writeln_newline(stdout, &s).unwrap();
+
+    let lq = (RHO / (1.0 - RHO)).ceil() as i64;
+    let s2 = format!("rho = {}, Lq = {}", RHO, lq);
+    writeln_newline(stdout, &s2).unwrap();
+    writeln_newline(stdout, "").unwrap();
 }
 
 fn execute_focus(focused_task_id_opt: &mut Option<Uuid>, new_task_id_str: &str) {
