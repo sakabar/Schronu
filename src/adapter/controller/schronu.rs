@@ -992,6 +992,7 @@ fn application(
     // 保存して終わり
     task_repository.save();
 
-    // BlinkingBlockに戻す
-    writeln!(stdout, "{}", termion::cursor::BlinkingBlock).unwrap();
+    // SteadyBlockに戻す
+    // Todo: 本当は、元々の状態を保存しておいてそれに戻したい。
+    writeln!(stdout, "{}", termion::cursor::SteadyBlock).unwrap();
 }
