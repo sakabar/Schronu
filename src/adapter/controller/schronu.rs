@@ -256,16 +256,24 @@ fn execute_show_leaf_tasks(
     }
     writeln_newline(stdout, "").unwrap();
 
+    // タスクができない時間の長さ
+    let unavailable_minutes = 0;
+
     // コストを正確に算出できるようになるまでのつなぎとして、概算を表示する
     // task_cntは「次に表示されるタスク番号」なので、マイナス1する
     const RHO: f64 = 0.5;
-    let minutes = (15.0 * (task_cnt - 1) as f64 / RHO).ceil() as i64;
+    let minutes = (15.0 * (task_cnt - 1) as f64 / RHO).ceil() as i64 + unavailable_minutes;
     let last_synced_time = task_repository.get_last_synced_time();
     let dt = last_synced_time + Duration::minutes(minutes);
 
     let hours = minutes / 60;
     let s = format!("完了見込み日時は{}時間後の{}です", hours, dt);
     writeln_newline(stdout, &s).unwrap();
+
+    let lq = (RHO / (1.0 - RHO)).ceil() as i64;
+    let s2 = format!("rho = {}, Lq = {}", RHO, lq);
+    writeln_newline(stdout, &s2).unwrap();
+    writeln_newline(stdout, "").unwrap();
 }
 
 fn execute_focus(focused_task_id_opt: &mut Option<Uuid>, new_task_id_str: &str) {
