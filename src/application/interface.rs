@@ -12,3 +12,9 @@ pub trait TaskRepositoryTrait {
     fn get_highest_priority_leaf_task_id(&mut self) -> Option<Uuid>;
     fn get_by_id(&self, id: Uuid) -> Option<Task>;
 }
+
+pub trait FreeTimeManagerTrait {
+    fn get_free_minutes(&mut self, start: &DateTime<Local>, end: &DateTime<Local>) -> i64;
+    fn get_busy_minutes(&mut self, start: &DateTime<Local>, end: &DateTime<Local>) -> i64;
+    fn register_busy_time_slot(&mut self, start: &DateTime<Local>, end: &DateTime<Local>);
+}
