@@ -256,10 +256,13 @@ fn execute_show_leaf_tasks(
     }
     writeln_newline(stdout, "").unwrap();
 
+    // タスクができない時間の長さ
+    let unavailable_minutes = 0;
+
     // コストを正確に算出できるようになるまでのつなぎとして、概算を表示する
     // task_cntは「次に表示されるタスク番号」なので、マイナス1する
     const RHO: f64 = 0.5;
-    let minutes = (15.0 * (task_cnt - 1) as f64 / RHO).ceil() as i64;
+    let minutes = (15.0 * (task_cnt - 1) as f64 / RHO).ceil() as i64 + unavailable_minutes;
     let last_synced_time = task_repository.get_last_synced_time();
     let dt = last_synced_time + Duration::minutes(minutes);
 
