@@ -1,6 +1,8 @@
 use chrono::{DateTime, Datelike, Duration, Local, TimeZone, Timelike};
 use regex::Regex;
+use schronu::adapter::gateway::free_time_manager::FreeTimeManager;
 use schronu::adapter::gateway::task_repository::TaskRepository;
+use schronu::application::interface::FreeTimeManagerTrait;
 use schronu::application::interface::TaskRepositoryTrait;
 use schronu::entity::task::{extract_leaf_tasks_from_project, Status, Task, TaskAttr};
 use std::io::Stdout;
@@ -239,6 +241,7 @@ fn execute_show_ancestor(stdout: &mut RawTerminal<Stdout>, focused_task_opt: &Op
 fn execute_show_leaf_tasks(
     stdout: &mut RawTerminal<Stdout>,
     task_repository: &mut dyn TaskRepositoryTrait,
+    free_time_manager: &mut dyn FreeTimeManagerTrait,
 ) {
     let mut task_cnt = 1;
     for project_root_task in task_repository.get_all_projects().iter() {
@@ -256,14 +259,34 @@ fn execute_show_leaf_tasks(
     }
     writeln_newline(stdout, "").unwrap();
 
-    // タスクができない時間の長さ
-    let unavailable_minutes = 0;
+    let last_synced_time = task_repository.get_last_synced_time();
+
+    // タスクができない時間を決め打ちで登録する
+    free_time_manager.register_busy_time_slot(
+        &last_synced_time
+            .with_hour(23)
+            .expect("invalid hour")
+            .with_minute(0)
+            .expect("invalid minute"),
+        &last_synced_time
+            .with_hour(23)
+            .expect("invalid hour")
+            .with_minute(30)
+            .expect("invalid minute"),
+    );
+
+    let eod = last_synced_time
+        .with_hour(23)
+        .expect("invalid hour")
+        .with_minute(59)
+        .expect("invalid minute");
+    let busy_minutes = free_time_manager.get_busy_minutes(&last_synced_time, &eod);
 
     // コストを正確に算出できるようになるまでのつなぎとして、概算を表示する
     // task_cntは「次に表示されるタスク番号」なので、マイナス1する
     const RHO: f64 = 0.5;
-    let minutes = (15.0 * (task_cnt - 1) as f64 / RHO).ceil() as i64 + unavailable_minutes;
-    let last_synced_time = task_repository.get_last_synced_time();
+    let minutes = (15.0 * (task_cnt - 1) as f64 / RHO).ceil() as i64 + busy_minutes;
+
     let dt = last_synced_time + Duration::minutes(minutes);
 
     let hours = minutes / 60;
@@ -335,8 +358,8 @@ fn execute_impulse(
     let focused_task_opt = focused_task_id_opt.and_then(|id| task_repository.get_by_id(id));
 
     // 次回の午前6時
-    let now: DateTime<Local> = Local::now();
-    let pending_until = get_next_morning_datetime(now);
+    let last_synced_time: DateTime<Local> = task_repository.get_last_synced_time();
+    let pending_until = get_next_morning_datetime(last_synced_time);
 
     execute_breakdown(
         stdout,
@@ -490,6 +513,7 @@ fn execute_finish(focused_task_id_opt: &mut Option<Uuid>, focused_task_opt: &Opt
 fn execute(
     stdout: &mut RawTerminal<Stdout>,
     task_repository: &mut dyn TaskRepositoryTrait,
+    free_time_manager: &mut dyn FreeTimeManagerTrait,
     focused_task_id_opt: &mut Option<Uuid>,
     untrimmed_line: &str,
 ) {
@@ -520,7 +544,7 @@ fn execute(
         }
         "根" | "root" => {}
         "葉" | "leaves" | "leaf" | "lf" => {
-            execute_show_leaf_tasks(stdout, task_repository);
+            execute_show_leaf_tasks(stdout, task_repository, free_time_manager);
         }
         "見" | "focus" | "fc" => {
             if tokens.len() >= 2 {
@@ -620,12 +644,16 @@ fn get_byte_offset_for_deletion_正常系() {
 
 fn main() {
     let mut task_repository = TaskRepository::new("../Schronu-alpha/tasks/");
+    let mut free_time_manager = FreeTimeManager::new();
 
     // controllerで実体を見るのを避けるために、1つ関数を切る
-    application(&mut task_repository);
+    application(&mut task_repository, &mut free_time_manager);
 }
 
-fn application(task_repository: &mut dyn TaskRepositoryTrait) {
+fn application(
+    task_repository: &mut dyn TaskRepositoryTrait,
+    free_time_manager: &mut dyn FreeTimeManagerTrait,
+) {
     // 初期化
     let now = Local::now();
     task_repository.sync_clock(now);
@@ -808,7 +836,13 @@ fn application(task_repository: &mut dyn TaskRepositoryTrait) {
                     // do it "t"oday
                     let s = "後 1秒".to_string();
 
-                    execute(&mut stdout, task_repository, &mut focused_task_id_opt, &s);
+                    execute(
+                        &mut stdout,
+                        task_repository,
+                        free_time_manager,
+                        &mut focused_task_id_opt,
+                        &s,
+                    );
                 } else if line == "d" {
                     // skip "d"aily
                     let now: DateTime<Local> = Local::now();
@@ -816,7 +850,13 @@ fn application(task_repository: &mut dyn TaskRepositoryTrait) {
                     let sec = (next_morning - now).num_seconds();
                     let s = format!("後 {}秒", sec).to_string();
 
-                    execute(&mut stdout, task_repository, &mut focused_task_id_opt, &s);
+                    execute(
+                        &mut stdout,
+                        task_repository,
+                        free_time_manager,
+                        &mut focused_task_id_opt,
+                        &s,
+                    );
                 } else if line == "w" {
                     // skip "w"eekly
                     let now: DateTime<Local> = Local::now();
@@ -825,11 +865,18 @@ fn application(task_repository: &mut dyn TaskRepositoryTrait) {
 
                     let s = format!("後 {}秒", sec).to_string();
 
-                    execute(&mut stdout, task_repository, &mut focused_task_id_opt, &s);
+                    execute(
+                        &mut stdout,
+                        task_repository,
+                        free_time_manager,
+                        &mut focused_task_id_opt,
+                        &s,
+                    );
                 } else {
                     execute(
                         &mut stdout,
                         task_repository,
+                        free_time_manager,
                         &mut focused_task_id_opt,
                         &line,
                     );
