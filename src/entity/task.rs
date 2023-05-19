@@ -676,11 +676,19 @@ pub struct TaskAttr {
     pending_until: DateTime<Local>,
     last_synced_time: DateTime<Local>,
 
-    // 優先度。大きいほど高い
-    priority: i64,
+    priority: i64, // 優先度。大きいほど高い
+
+    create_time: DateTime<Local>,               // タスクが生成された日時
+    start_time: DateTime<Local>,                // タスクが着手可能になった日時
+    end_time_opt: Option<DateTime<Local>>,      // タスクが完了した日時
+    deadline_time_opt: Option<DateTime<Local>>, // タスクの〆切
+
+    estimated_work_seconds: i64, // 見積もられた作業時間 (秒)
+    actual_work_seconds: i64,    // 実際の作業時間 (秒)
 }
 
-// idはあくまで検索用に使い、等価性判定には用いない
+// 生成するタイミングで結果が変わってしまうid, create_time, start_timeは
+// 等価性判定には用いない
 impl PartialEq for TaskAttr {
     fn eq(&self, other: &Self) -> bool {
         self.name == other.name
@@ -690,6 +698,12 @@ impl PartialEq for TaskAttr {
             && self.pending_until == other.pending_until
             && self.last_synced_time == other.last_synced_time
             && self.priority == other.priority
+            // && self.create_time == other.create_time
+            // && self.start_time == other.start_time
+            && self.end_time_opt == other.end_time_opt
+            && self.deadline_time_opt == other.deadline_time_opt
+            && self.estimated_work_seconds == other.estimated_work_seconds
+            && self.actual_work_seconds == other.actual_work_seconds
     }
 }
 
@@ -719,6 +733,9 @@ impl fmt::Debug for TaskAttr {
 
 impl TaskAttr {
     pub fn new(name: &str) -> Self {
+        // 本当はnow()で副作用を持たせたくなかったが、毎回手入力するわけにもいかないので渋々使用
+        let now = Local::now();
+
         Self {
             id: Uuid::new_v4(),
             name: name.to_string(),
@@ -728,6 +745,12 @@ impl TaskAttr {
             pending_until: DateTime::<Local>::MIN_UTC.into(),
             last_synced_time: DateTime::<Local>::MIN_UTC.into(),
             priority: 0,
+            create_time: now,
+            start_time: now,
+            end_time_opt: None,
+            deadline_time_opt: None,
+            estimated_work_seconds: 0,
+            actual_work_seconds: 0,
         }
     }
 
@@ -794,6 +817,54 @@ impl TaskAttr {
 
     pub fn get_priority(&self) -> i64 {
         self.priority
+    }
+
+    pub fn set_create_time(&mut self, create_time: DateTime<Local>) {
+        self.create_time = create_time;
+    }
+
+    pub fn get_create_time(&self) -> &DateTime<Local> {
+        &self.create_time
+    }
+
+    pub fn set_start_time(&mut self, start_time: DateTime<Local>) {
+        self.start_time = start_time;
+    }
+
+    pub fn get_start_time(&self) -> &DateTime<Local> {
+        &self.start_time
+    }
+
+    pub fn set_end_time_opt(&mut self, end_time_opt: Option<DateTime<Local>>) {
+        self.end_time_opt = end_time_opt;
+    }
+
+    pub fn get_end_time_opt(&self) -> &Option<DateTime<Local>> {
+        &self.end_time_opt
+    }
+
+    pub fn set_deadline_time_opt(&mut self, deadline_time_opt: Option<DateTime<Local>>) {
+        self.deadline_time_opt = deadline_time_opt;
+    }
+
+    pub fn get_deadline_time_opt(&self) -> &Option<DateTime<Local>> {
+        &self.deadline_time_opt
+    }
+
+    pub fn set_estimated_work_seconds(&mut self, estimated_work_seconds: i64) {
+        self.estimated_work_seconds = estimated_work_seconds;
+    }
+
+    pub fn get_estimated_work_seconds(&self) -> i64 {
+        self.estimated_work_seconds
+    }
+
+    pub fn set_actual_work_seconds(&mut self, actual_work_seconds: i64) {
+        self.actual_work_seconds = actual_work_seconds;
+    }
+
+    pub fn get_actual_work_seconds(&self) -> i64 {
+        self.actual_work_seconds
     }
 }
 
@@ -899,6 +970,60 @@ impl Task {
 
     pub fn get_priority(&self) -> i64 {
         self.node.borrow_data().get_priority()
+    }
+
+    pub fn set_create_time(&self, create_time: DateTime<Local>) {
+        self.node.borrow_data_mut().set_create_time(create_time);
+    }
+
+    pub fn get_create_time(&self) -> DateTime<Local> {
+        *self.node.borrow_data().get_create_time()
+    }
+
+    pub fn set_start_time(&self, start_time: DateTime<Local>) {
+        self.node.borrow_data_mut().set_start_time(start_time);
+    }
+
+    pub fn get_start_time(&self) -> DateTime<Local> {
+        *self.node.borrow_data().get_start_time()
+    }
+
+    pub fn set_end_time_opt(&self, end_time_opt: Option<DateTime<Local>>) {
+        self.node.borrow_data_mut().set_end_time_opt(end_time_opt);
+    }
+
+    pub fn get_end_time_opt(&self) -> Option<DateTime<Local>> {
+        *self.node.borrow_data().get_end_time_opt()
+    }
+
+    pub fn set_deadline_time_opt(&self, deadline_time_opt: Option<DateTime<Local>>) {
+        self.node
+            .borrow_data_mut()
+            .set_deadline_time_opt(deadline_time_opt);
+    }
+
+    pub fn get_deadline_time_opt(&self) -> Option<DateTime<Local>> {
+        *self.node.borrow_data().get_deadline_time_opt()
+    }
+
+    pub fn set_estimated_work_seconds(&self, estimated_work_seconds: i64) {
+        self.node
+            .borrow_data_mut()
+            .set_estimated_work_seconds(estimated_work_seconds);
+    }
+
+    pub fn get_estimated_work_seconds(&self) -> i64 {
+        self.node.borrow_data().get_estimated_work_seconds()
+    }
+
+    pub fn set_actual_work_seconds(&self, actual_work_seconds: i64) {
+        self.node
+            .borrow_data_mut()
+            .set_actual_work_seconds(actual_work_seconds);
+    }
+
+    pub fn get_actual_work_seconds(&self) -> i64 {
+        self.node.borrow_data().get_actual_work_seconds()
     }
 
     pub fn num_children(&self) -> usize {
@@ -1181,6 +1306,60 @@ pub fn task_to_yaml(task: &Task) -> Yaml {
         );
     }
 
+    let create_time = task.get_create_time();
+    let create_time_string = create_time.format("%Y/%m/%d %H:%M:%S").to_string();
+    task_hash.insert(
+        Yaml::String(String::from("create_time")),
+        Yaml::String(create_time_string),
+    );
+
+    let start_time = task.get_start_time();
+    let start_time_string = start_time.format("%Y/%m/%d %H:%M:%S").to_string();
+    task_hash.insert(
+        Yaml::String(String::from("start_time")),
+        Yaml::String(start_time_string),
+    );
+
+    let end_time_opt = task.get_end_time_opt();
+    match end_time_opt {
+        Some(end_time) => {
+            let end_time_string = end_time.format("%Y/%m/%d %H:%M:%S").to_string();
+            task_hash.insert(
+                Yaml::String(String::from("end_time")),
+                Yaml::String(end_time_string),
+            );
+        }
+        None => {}
+    }
+
+    let deadline_time_opt = task.get_deadline_time_opt();
+    match deadline_time_opt {
+        Some(deadline_time) => {
+            let deadline_time_string = deadline_time.format("%Y/%m/%d %H:%M:%S").to_string();
+            task_hash.insert(
+                Yaml::String(String::from("deadline_time")),
+                Yaml::String(deadline_time_string),
+            );
+        }
+        None => {}
+    }
+
+    let estimated_work_seconds = task.get_estimated_work_seconds();
+    if estimated_work_seconds != default_attr.get_estimated_work_seconds() {
+        task_hash.insert(
+            Yaml::String(String::from("estimated_work_seconds")),
+            Yaml::Integer(estimated_work_seconds),
+        );
+    }
+
+    let actual_work_seconds = task.get_actual_work_seconds();
+    if actual_work_seconds != default_attr.get_actual_work_seconds() {
+        task_hash.insert(
+            Yaml::String(String::from("actual_work_seconds")),
+            Yaml::Integer(actual_work_seconds),
+        );
+    }
+
     let mut children = vec![];
     for child_node in task.node.children() {
         let child_task = Task { node: child_node };
@@ -1203,11 +1382,16 @@ fn test_task_to_yaml_正常系1_デフォルトの値と同じ場合は出力し
     let mut task = Task::new("タスク1");
     let id: Uuid = uuid!("67e55044-10b1-426f-9247-bb680e5fe0c8");
     task.set_id(id);
+    let now = Local.with_ymd_and_hms(2023, 5, 19, 01, 23, 45).unwrap();
+    task.set_create_time(now);
+    task.set_start_time(now);
     let actual = task_to_yaml(&task);
 
     let s = "
 name: 'タスク1'
 id: 67e55044-10b1-426f-9247-bb680e5fe0c8
+create_time: '2023/05/19 01:23:45'
+start_time: '2023/05/19 01:23:45'
 ";
 
     let docs = YamlLoader::load_from_str(s).unwrap();
@@ -1218,21 +1402,28 @@ id: 67e55044-10b1-426f-9247-bb680e5fe0c8
 
 #[test]
 fn test_task_to_yaml_正常系2_再帰() {
+    let now = Local.with_ymd_and_hms(2023, 5, 19, 01, 23, 45).unwrap();
     let mut task = Task::new("親タスク1");
     task.set_orig_status(Status::Pending);
     task.set_pending_until(Local.with_ymd_and_hms(2023, 4, 1, 12, 0, 0).unwrap());
+    task.set_create_time(now);
+    task.set_start_time(now);
     let id: Uuid = uuid!("67e55044-10b1-426f-9247-bb680e5fe0c8");
     task.set_id(id);
 
     let mut task_attr_child_1 = TaskAttr::new("子タスク1");
     task_attr_child_1.set_orig_status(Status::Pending);
     task_attr_child_1.set_pending_until(Local.with_ymd_and_hms(2023, 4, 1, 12, 0, 0).unwrap());
+    task_attr_child_1.set_create_time(now);
+    task_attr_child_1.set_start_time(now);
     let id_child_1: Uuid = uuid!("0aaee735-3e22-4216-8b59-d56d5caf29ee");
     task_attr_child_1.set_id(id_child_1);
 
     let mut task_attr_child_2 = TaskAttr::new("子タスク2");
     task_attr_child_2.set_orig_status(Status::Pending);
     task_attr_child_2.set_pending_until(Local.with_ymd_and_hms(2023, 4, 1, 12, 0, 0).unwrap());
+    task_attr_child_2.set_create_time(now);
+    task_attr_child_2.set_start_time(now);
     let id_child_2: Uuid = uuid!("7ffcba2f-80e0-4a44-aee9-d68e0d2d1256");
     task_attr_child_2.set_id(id_child_2);
 
@@ -1246,15 +1437,21 @@ name: '親タスク1'
 id: 67e55044-10b1-426f-9247-bb680e5fe0c8
 status: pending
 pending_until: '2023/04/01 12:00:00'
+create_time: '2023/05/19 01:23:45'
+start_time: '2023/05/19 01:23:45'
 children:
   - name: '子タスク1'
     id: 0aaee735-3e22-4216-8b59-d56d5caf29ee
     status: pending
     pending_until: '2023/04/01 12:00:00'
+    create_time: '2023/05/19 01:23:45'
+    start_time: '2023/05/19 01:23:45'
   - name: '子タスク2'
     id: 7ffcba2f-80e0-4a44-aee9-d68e0d2d1256
     status: pending
     pending_until: '2023/04/01 12:00:00'
+    create_time: '2023/05/19 01:23:45'
+    start_time: '2023/05/19 01:23:45'
 ";
     let docs = YamlLoader::load_from_str(s).unwrap();
     let expected_yaml: &Yaml = &docs[0];
@@ -1267,11 +1464,16 @@ fn test_task_to_yaml_ユニークキー() {
     let mut task = Task::new("タスク1");
     let id: Uuid = uuid!("67e55044-10b1-426f-9247-bb680e5fe0c8");
     task.set_id(id);
+    let now = Local.with_ymd_and_hms(2023, 5, 19, 01, 23, 45).unwrap();
+    task.set_create_time(now);
+    task.set_start_time(now);
     let actual = task_to_yaml(&task);
 
     let s = "
 name: 'タスク1'
 id: 67e55044-10b1-426f-9247-bb680e5fe0c8
+create_time: '2023/05/19 01:23:45'
+start_time: '2023/05/19 01:23:45'
 ";
     let docs = YamlLoader::load_from_str(s).unwrap();
     let expected_yaml: &Yaml = &docs[0];
@@ -1285,12 +1487,121 @@ fn test_task_to_yaml_is_on_other_side() {
     let id: Uuid = uuid!("67e55044-10b1-426f-9247-bb680e5fe0c8");
     task.set_id(id);
     task.set_is_on_other_side(true);
+    let now = Local.with_ymd_and_hms(2023, 5, 19, 01, 23, 45).unwrap();
+    task.set_create_time(now);
+    task.set_start_time(now);
     let actual = task_to_yaml(&task);
 
     let s = "
 name: 'タスク1'
 id: 67e55044-10b1-426f-9247-bb680e5fe0c8
 is_on_other_side: true
+create_time: '2023/05/19 01:23:45'
+start_time: '2023/05/19 01:23:45'
+";
+    let docs = YamlLoader::load_from_str(s).unwrap();
+    let expected_yaml: &Yaml = &docs[0];
+
+    assert_eq!(&actual, expected_yaml);
+}
+
+#[test]
+fn test_task_to_yaml_end_time_opt() {
+    let mut task = Task::new("タスク1");
+    let id: Uuid = uuid!("67e55044-10b1-426f-9247-bb680e5fe0c8");
+    task.set_id(id);
+    task.set_is_on_other_side(true);
+    task.set_create_time(Local.with_ymd_and_hms(2023, 5, 19, 01, 23, 45).unwrap());
+    task.set_start_time(Local.with_ymd_and_hms(2023, 5, 19, 02, 34, 56).unwrap());
+    task.set_end_time_opt(Some(
+        Local.with_ymd_and_hms(2023, 5, 19, 03, 45, 6).unwrap(),
+    ));
+    let actual = task_to_yaml(&task);
+
+    let s = "
+name: 'タスク1'
+id: 67e55044-10b1-426f-9247-bb680e5fe0c8
+is_on_other_side: true
+create_time: '2023/05/19 01:23:45'
+start_time: '2023/05/19 02:34:56'
+end_time: '2023/05/19 03:45:06'
+";
+    let docs = YamlLoader::load_from_str(s).unwrap();
+    let expected_yaml: &Yaml = &docs[0];
+
+    assert_eq!(&actual, expected_yaml);
+}
+
+#[test]
+fn test_task_to_yaml_deadline_time_opt() {
+    let mut task = Task::new("タスク1");
+    let id: Uuid = uuid!("67e55044-10b1-426f-9247-bb680e5fe0c8");
+    task.set_id(id);
+    task.set_is_on_other_side(true);
+    task.set_create_time(Local.with_ymd_and_hms(2023, 5, 19, 01, 23, 45).unwrap());
+    task.set_start_time(Local.with_ymd_and_hms(2023, 5, 19, 02, 34, 56).unwrap());
+    task.set_deadline_time_opt(Some(
+        Local.with_ymd_and_hms(2023, 5, 19, 03, 45, 6).unwrap(),
+    ));
+    let actual = task_to_yaml(&task);
+
+    let s = "
+name: 'タスク1'
+id: 67e55044-10b1-426f-9247-bb680e5fe0c8
+is_on_other_side: true
+create_time: '2023/05/19 01:23:45'
+start_time: '2023/05/19 02:34:56'
+deadline_time: '2023/05/19 03:45:06'
+";
+    let docs = YamlLoader::load_from_str(s).unwrap();
+    let expected_yaml: &Yaml = &docs[0];
+
+    assert_eq!(&actual, expected_yaml);
+}
+
+#[test]
+fn test_task_to_yaml_estimated_work_seconds() {
+    let mut task = Task::new("タスク1");
+    let id: Uuid = uuid!("67e55044-10b1-426f-9247-bb680e5fe0c8");
+    task.set_id(id);
+    task.set_is_on_other_side(true);
+    task.set_create_time(Local.with_ymd_and_hms(2023, 5, 19, 01, 23, 45).unwrap());
+    task.set_start_time(Local.with_ymd_and_hms(2023, 5, 19, 02, 34, 56).unwrap());
+    task.set_estimated_work_seconds(1);
+    let actual = task_to_yaml(&task);
+
+    let s = "
+name: 'タスク1'
+id: 67e55044-10b1-426f-9247-bb680e5fe0c8
+is_on_other_side: true
+create_time: '2023/05/19 01:23:45'
+start_time: '2023/05/19 02:34:56'
+estimated_work_seconds: 1
+";
+    let docs = YamlLoader::load_from_str(s).unwrap();
+    let expected_yaml: &Yaml = &docs[0];
+
+    assert_eq!(&actual, expected_yaml);
+}
+
+#[test]
+fn test_task_to_yaml_actual_work_seconds() {
+    let mut task = Task::new("タスク1");
+    let id: Uuid = uuid!("67e55044-10b1-426f-9247-bb680e5fe0c8");
+    task.set_id(id);
+    task.set_is_on_other_side(true);
+    task.set_create_time(Local.with_ymd_and_hms(2023, 5, 19, 01, 23, 45).unwrap());
+    task.set_start_time(Local.with_ymd_and_hms(2023, 5, 19, 02, 34, 56).unwrap());
+    task.set_actual_work_seconds(1);
+    let actual = task_to_yaml(&task);
+
+    let s = "
+name: 'タスク1'
+id: 67e55044-10b1-426f-9247-bb680e5fe0c8
+is_on_other_side: true
+create_time: '2023/05/19 01:23:45'
+start_time: '2023/05/19 02:34:56'
+actual_work_seconds: 1
 ";
     let docs = YamlLoader::load_from_str(s).unwrap();
     let expected_yaml: &Yaml = &docs[0];
