@@ -327,7 +327,8 @@ fn extract_url(s: &str) -> Option<String> {
         // "http"から始まる部分文字列を取得する
         let (_, http_str) = s.split_at(start);
 
-        let chars: Vec<char> = http_str.chars().collect();
+        // 末尾の文字を必ずNGにするために、番兵として日本語の文字を置く
+        let chars: Vec<char> = (http_str.to_owned() + "あ").chars().collect();
 
         // その中で二分探索する
         let mut ok: usize = 0;
