@@ -387,6 +387,16 @@ fn test_extract_url_正常系_2つのURLがスペース区切り() {
     assert_eq!(actual, expected);
 }
 
+#[test]
+#[allow(non_snake_case)]
+fn test_extract_url_正常系_正しいURLのまま文字列が終わるケース() {
+    let input = "正しいURLのまま文字列が終わるケースhttps://example.com/hoge";
+    let actual = extract_url(input);
+    let expected = Some(String::from("https://example.com/hoge"));
+
+    assert_eq!(actual, expected);
+}
+
 //親に辿っていって見つかった最初のリンクを開く
 fn execute_open_link(focused_task_opt: &Option<Task>) {
     let mut t_opt: Option<Task> = focused_task_opt.clone();
