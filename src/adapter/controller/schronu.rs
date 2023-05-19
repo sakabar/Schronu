@@ -469,6 +469,12 @@ fn test_split_amount_and_unit() {
     );
 }
 
+fn execute_wait_for_others(focused_task_opt: &Option<Task>) {
+    focused_task_opt
+        .as_ref()
+        .map(|focused_task| focused_task.set_is_on_other_side(true));
+}
+
 fn execute_defer(
     focused_task_id_opt: &mut Option<Uuid>,
     focused_task_opt: &Option<Task>,
@@ -587,6 +593,10 @@ fn execute(
             }
         }
         // "詳" | "description" | "desc" => {}
+        "待" | "wait" => {
+            // フラグを立てるだけか、deferコマンドを自動実行するかは迷う。
+            execute_wait_for_others(&focused_task_opt);
+        }
         "後" | "defer" => {
             if tokens.len() >= 3 {
                 let amount_str = &tokens[1];
