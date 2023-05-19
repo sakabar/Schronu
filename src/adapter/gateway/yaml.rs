@@ -301,6 +301,7 @@ pub fn yaml_to_task(yaml: &Yaml, now: DateTime<Local>) -> Task {
     let deadline_time_str: &str = yaml["deadline_time"].as_str().unwrap_or("");
 
     let estimated_work_seconds: i64 = yaml["estimated_work_seconds"].as_i64().unwrap_or(0);
+    let actual_work_seconds: i64 = yaml["actual_work_seconds"].as_i64().unwrap_or(0);
 
     let mut parent_task: Task = Task::new(name);
 
@@ -338,6 +339,7 @@ pub fn yaml_to_task(yaml: &Yaml, now: DateTime<Local>) -> Task {
     }
 
     parent_task.set_estimated_work_seconds(estimated_work_seconds);
+    parent_task.set_actual_work_seconds(actual_work_seconds);
 
     parent_task.sync_clock(now);
 
@@ -703,6 +705,26 @@ estimated_work_seconds: 5
     let actual = yaml_to_task(project_yaml, now);
     let expected = Task::new("タスク1");
     expected.set_estimated_work_seconds(5);
+    expected.sync_clock(now);
+
+    assert_task(&actual, &expected);
+}
+
+#[test]
+fn test_yaml_to_task_actual_work_secondsキー_正常系() {
+    let s = "
+name: 'タスク1'
+status: 'todo'
+actual_work_seconds: 5
+";
+
+    let docs = YamlLoader::load_from_str(s).unwrap();
+    let project_yaml: &Yaml = &docs[0];
+
+    let now = Local::now();
+    let actual = yaml_to_task(project_yaml, now);
+    let expected = Task::new("タスク1");
+    expected.set_actual_work_seconds(5);
     expected.sync_clock(now);
 
     assert_task(&actual, &expected);
