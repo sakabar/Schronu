@@ -300,6 +300,8 @@ pub fn yaml_to_task(yaml: &Yaml, now: DateTime<Local>) -> Task {
     let end_time_str: &str = yaml["end_time"].as_str().unwrap_or("");
     let deadline_time_str: &str = yaml["deadline_time"].as_str().unwrap_or("");
 
+    let estimated_work_seconds: i64 = yaml["estimated_work_seconds"].as_i64().unwrap_or(0);
+
     let mut parent_task: Task = Task::new(name);
 
     let id_str: &str = yaml["id"].as_str().unwrap_or("");
@@ -334,6 +336,8 @@ pub fn yaml_to_task(yaml: &Yaml, now: DateTime<Local>) -> Task {
         Ok(deadline_time) => parent_task.set_deadline_time_opt(Some(deadline_time)),
         Err(_) => {}
     }
+
+    parent_task.set_estimated_work_seconds(estimated_work_seconds);
 
     parent_task.sync_clock(now);
 
@@ -682,6 +686,26 @@ deadline_time: '2023/05/19 01:23:45'
     );
 
     assert_eq!(&actual.get_id(), &expected.get_id());
+}
+
+#[test]
+fn test_yaml_to_task_estimated_work_secondsキー_正常系() {
+    let s = "
+name: 'タスク1'
+status: 'todo'
+estimated_work_seconds: 5
+";
+
+    let docs = YamlLoader::load_from_str(s).unwrap();
+    let project_yaml: &Yaml = &docs[0];
+
+    let now = Local::now();
+    let actual = yaml_to_task(project_yaml, now);
+    let expected = Task::new("タスク1");
+    expected.set_estimated_work_seconds(5);
+    expected.sync_clock(now);
+
+    assert_task(&actual, &expected);
 }
 
 #[test]

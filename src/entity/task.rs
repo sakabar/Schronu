@@ -850,6 +850,14 @@ impl TaskAttr {
     pub fn get_deadline_time_opt(&self) -> &Option<DateTime<Local>> {
         &self.deadline_time_opt
     }
+
+    pub fn set_estimated_work_seconds(&mut self, estimated_work_seconds: i64) {
+        self.estimated_work_seconds = estimated_work_seconds;
+    }
+
+    pub fn get_estimated_work_seconds(&self) -> i64 {
+        self.estimated_work_seconds
+    }
 }
 
 #[test]
@@ -988,6 +996,16 @@ impl Task {
 
     pub fn get_deadline_time_opt(&self) -> Option<DateTime<Local>> {
         *self.node.borrow_data().get_deadline_time_opt()
+    }
+
+    pub fn set_estimated_work_seconds(&self, estimated_work_seconds: i64) {
+        self.node
+            .borrow_data_mut()
+            .set_estimated_work_seconds(estimated_work_seconds);
+    }
+
+    pub fn get_estimated_work_seconds(&self) -> i64 {
+        self.node.borrow_data().get_estimated_work_seconds()
     }
 
     pub fn num_children(&self) -> usize {
@@ -1308,6 +1326,14 @@ pub fn task_to_yaml(task: &Task) -> Yaml {
         None => {}
     }
 
+    let estimated_work_seconds = task.get_estimated_work_seconds();
+    if estimated_work_seconds != default_attr.get_estimated_work_seconds() {
+        task_hash.insert(
+            Yaml::String(String::from("estimated_work_seconds")),
+            Yaml::Integer(estimated_work_seconds),
+        );
+    }
+
     let mut children = vec![];
     for child_node in task.node.children() {
         let child_task = Task { node: child_node };
@@ -1500,6 +1526,31 @@ is_on_other_side: true
 create_time: '2023/05/19 01:23:45'
 start_time: '2023/05/19 02:34:56'
 deadline_time: '2023/05/19 03:45:06'
+";
+    let docs = YamlLoader::load_from_str(s).unwrap();
+    let expected_yaml: &Yaml = &docs[0];
+
+    assert_eq!(&actual, expected_yaml);
+}
+
+#[test]
+fn test_task_to_yaml_estimated_work_seconds() {
+    let mut task = Task::new("タスク1");
+    let id: Uuid = uuid!("67e55044-10b1-426f-9247-bb680e5fe0c8");
+    task.set_id(id);
+    task.set_is_on_other_side(true);
+    task.set_create_time(Local.with_ymd_and_hms(2023, 5, 19, 01, 23, 45).unwrap());
+    task.set_start_time(Local.with_ymd_and_hms(2023, 5, 19, 02, 34, 56).unwrap());
+    task.set_estimated_work_seconds(1);
+    let actual = task_to_yaml(&task);
+
+    let s = "
+name: 'タスク1'
+id: 67e55044-10b1-426f-9247-bb680e5fe0c8
+is_on_other_side: true
+create_time: '2023/05/19 01:23:45'
+start_time: '2023/05/19 02:34:56'
+estimated_work_seconds: 1
 ";
     let docs = YamlLoader::load_from_str(s).unwrap();
     let expected_yaml: &Yaml = &docs[0];
