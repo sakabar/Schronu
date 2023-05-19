@@ -331,7 +331,7 @@ fn extract_url(s: &str) -> Option<String> {
 
         // その中で二分探索する
         let mut ok: usize = 0;
-        let mut ng: usize = chars.len() - 1;
+        let mut ng: usize = chars.len();
 
         let mut mid = (ok + ng) / 2;
 
