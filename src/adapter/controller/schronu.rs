@@ -327,11 +327,12 @@ fn extract_url(s: &str) -> Option<String> {
         // "http"から始まる部分文字列を取得する
         let (_, http_str) = s.split_at(start);
 
-        let chars: Vec<char> = http_str.chars().collect();
+        // 末尾の文字を必ずNGにするために、番兵として日本語の文字を置く
+        let chars: Vec<char> = (http_str.to_owned() + "あ").chars().collect();
 
         // その中で二分探索する
         let mut ok: usize = 0;
-        let mut ng: usize = chars.len() - 1;
+        let mut ng: usize = chars.len();
 
         let mut mid = (ok + ng) / 2;
 
@@ -383,6 +384,16 @@ fn test_extract_url_正常系_2つのURLがスペース区切り() {
     let input = "これはhttps://example.com?param1=hoge&param2=bar https://example.com";
     let actual = extract_url(input);
     let expected = Some(String::from("https://example.com?param1=hoge&param2=bar"));
+
+    assert_eq!(actual, expected);
+}
+
+#[test]
+#[allow(non_snake_case)]
+fn test_extract_url_正常系_正しいURLのまま文字列が終わるケース() {
+    let input = "正しいURLのまま文字列が終わるケースhttps://example.com/hoge";
+    let actual = extract_url(input);
+    let expected = Some(String::from("https://example.com/hoge"));
 
     assert_eq!(actual, expected);
 }
