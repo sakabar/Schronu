@@ -834,6 +834,14 @@ impl TaskAttr {
     pub fn get_start_time(&self) -> &DateTime<Local> {
         &self.start_time
     }
+
+    pub fn set_end_time_opt(&mut self, end_time_opt: Option<DateTime<Local>>) {
+        self.end_time_opt = end_time_opt;
+    }
+
+    pub fn get_end_time_opt(&self) -> &Option<DateTime<Local>> {
+        &self.end_time_opt
+    }
 }
 
 #[test]
@@ -954,6 +962,14 @@ impl Task {
 
     pub fn get_start_time(&self) -> DateTime<Local> {
         *self.node.borrow_data().get_start_time()
+    }
+
+    pub fn set_end_time_opt(&self, end_time_opt: Option<DateTime<Local>>) {
+        self.node.borrow_data_mut().set_end_time_opt(end_time_opt);
+    }
+
+    pub fn get_end_time_opt(&self) -> Option<DateTime<Local>> {
+        *self.node.borrow_data().get_end_time_opt()
     }
 
     pub fn num_children(&self) -> usize {
@@ -1250,6 +1266,26 @@ pub fn task_to_yaml(task: &Task) -> Yaml {
         Yaml::String(start_time_string),
     );
 
+    let end_time_opt = task.get_end_time_opt();
+    match end_time_opt {
+        Some(end_time) => {
+            let end_time_string = end_time.format("%Y/%m/%d %H:%M:%S").to_string();
+            task_hash.insert(
+                Yaml::String(String::from("end_time")),
+                Yaml::String(end_time_string),
+            );
+        }
+        None => {}
+    }
+
+    let priority = task.get_priority();
+    if priority != default_attr.get_priority() {
+        task_hash.insert(
+            Yaml::String(String::from("priority")),
+            Yaml::Integer(priority),
+        );
+    }
+
     let mut children = vec![];
     for child_node in task.node.children() {
         let child_task = Task { node: child_node };
@@ -1388,6 +1424,33 @@ id: 67e55044-10b1-426f-9247-bb680e5fe0c8
 is_on_other_side: true
 create_time: '2023/05/19 01:23:45'
 start_time: '2023/05/19 01:23:45'
+";
+    let docs = YamlLoader::load_from_str(s).unwrap();
+    let expected_yaml: &Yaml = &docs[0];
+
+    assert_eq!(&actual, expected_yaml);
+}
+
+#[test]
+fn test_task_to_yaml_end_time_opt() {
+    let mut task = Task::new("タスク1");
+    let id: Uuid = uuid!("67e55044-10b1-426f-9247-bb680e5fe0c8");
+    task.set_id(id);
+    task.set_is_on_other_side(true);
+    task.set_create_time(Local.with_ymd_and_hms(2023, 5, 19, 01, 23, 45).unwrap());
+    task.set_start_time(Local.with_ymd_and_hms(2023, 5, 19, 02, 34, 56).unwrap());
+    task.set_end_time_opt(Some(
+        Local.with_ymd_and_hms(2023, 5, 19, 03, 45, 6).unwrap(),
+    ));
+    let actual = task_to_yaml(&task);
+
+    let s = "
+name: 'タスク1'
+id: 67e55044-10b1-426f-9247-bb680e5fe0c8
+is_on_other_side: true
+create_time: '2023/05/19 01:23:45'
+start_time: '2023/05/19 02:34:56'
+end_time: '2023/05/19 03:45:06'
 ";
     let docs = YamlLoader::load_from_str(s).unwrap();
     let expected_yaml: &Yaml = &docs[0];
