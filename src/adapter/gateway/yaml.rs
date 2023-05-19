@@ -295,6 +295,8 @@ pub fn yaml_to_task(yaml: &Yaml, now: DateTime<Local>) -> Task {
 
     let priority: i64 = yaml["priority"].as_i64().unwrap_or(0);
 
+    let create_time_str: &str = yaml["create_time"].as_str().unwrap_or("");
+
     let mut parent_task: Task = Task::new(name);
 
     let id_str: &str = yaml["id"].as_str().unwrap_or("");
@@ -309,6 +311,11 @@ pub fn yaml_to_task(yaml: &Yaml, now: DateTime<Local>) -> Task {
     parent_task.set_is_on_other_side(is_on_other_side);
     parent_task.set_pending_until(pending_until);
     parent_task.set_priority(priority);
+
+    match Local.datetime_from_str(&create_time_str, "%Y/%m/%d %H:%M:%S") {
+        Ok(create_time) => parent_task.set_create_time(create_time),
+        Err(_) => {}
+    }
 
     parent_task.sync_clock(now);
 
@@ -539,6 +546,36 @@ is_on_other_side: true
     );
 
     assert_eq!(&actual.get_id(), &expected.get_id());
+}
+
+#[test]
+fn test_yaml_to_task_create_time_正常系() {
+    let s = "
+id: 67e55044-10b1-426f-9247-bb680e5fe0c8
+name: 'タスク1'
+create_time: '2023/05/19 01:23:45'
+";
+
+    let docs = YamlLoader::load_from_str(s).unwrap();
+    let project_yaml: &Yaml = &docs[0];
+
+    let now = Local.with_ymd_and_hms(2023, 5, 19, 01, 23, 45).unwrap();
+    let actual = yaml_to_task(project_yaml, now);
+    let mut expected = Task::new("タスク1");
+    let id: Uuid = uuid!("67e55044-10b1-426f-9247-bb680e5fe0c8");
+    expected.set_id(id);
+    expected.set_create_time(now);
+    expected.sync_clock(now);
+
+    assert!(
+        &actual
+            .try_eq_tree(&expected)
+            .expect("data are not borrowed"),
+        "actual and expected are not equal"
+    );
+
+    assert_eq!(&actual.get_id(), &expected.get_id());
+    assert_eq!(&actual.get_create_time(), &expected.get_create_time());
 }
 
 #[test]
