@@ -616,6 +616,7 @@ fn execute_defer(
 fn execute_finish(focused_task_id_opt: &mut Option<Uuid>, focused_task_opt: &Option<Task>) {
     focused_task_opt.as_ref().and_then(|focused_task| {
         focused_task.set_orig_status(Status::Done);
+        focused_task.set_end_time_opt(Some(Local::now()));
 
         // もし親タスクがTodoでないならば、フォーカスを外す
         match focused_task.parent().map(|t| t.get_status()) {
