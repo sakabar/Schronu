@@ -298,6 +298,7 @@ pub fn yaml_to_task(yaml: &Yaml, now: DateTime<Local>) -> Task {
     let create_time_str: &str = yaml["create_time"].as_str().unwrap_or("");
     let start_time_str: &str = yaml["start_time"].as_str().unwrap_or("");
     let end_time_str: &str = yaml["end_time"].as_str().unwrap_or("");
+    let deadline_time_str: &str = yaml["deadline_time"].as_str().unwrap_or("");
 
     let mut parent_task: Task = Task::new(name);
 
@@ -326,6 +327,11 @@ pub fn yaml_to_task(yaml: &Yaml, now: DateTime<Local>) -> Task {
 
     match Local.datetime_from_str(&end_time_str, "%Y/%m/%d %H:%M:%S") {
         Ok(end_time) => parent_task.set_end_time_opt(Some(end_time)),
+        Err(_) => {}
+    }
+
+    match Local.datetime_from_str(&deadline_time_str, "%Y/%m/%d %H:%M:%S") {
+        Ok(deadline_time) => parent_task.set_deadline_time_opt(Some(deadline_time)),
         Err(_) => {}
     }
 
@@ -637,6 +643,35 @@ end_time: '2023/05/19 01:23:45'
     let id: Uuid = uuid!("67e55044-10b1-426f-9247-bb680e5fe0c8");
     expected.set_id(id);
     expected.set_end_time_opt(Some(now));
+    expected.sync_clock(now);
+
+    assert!(
+        &actual
+            .try_eq_tree(&expected)
+            .expect("data are not borrowed"),
+        "actual and expected are not equal"
+    );
+
+    assert_eq!(&actual.get_id(), &expected.get_id());
+}
+
+#[test]
+fn test_yaml_to_task_deadline_time_opt_正常系() {
+    let s = "
+id: 67e55044-10b1-426f-9247-bb680e5fe0c8
+name: 'タスク1'
+deadline_time: '2023/05/19 01:23:45'
+";
+
+    let docs = YamlLoader::load_from_str(s).unwrap();
+    let project_yaml: &Yaml = &docs[0];
+
+    let now = Local.with_ymd_and_hms(2023, 5, 19, 01, 23, 45).unwrap();
+    let actual = yaml_to_task(project_yaml, now);
+    let mut expected = Task::new("タスク1");
+    let id: Uuid = uuid!("67e55044-10b1-426f-9247-bb680e5fe0c8");
+    expected.set_id(id);
+    expected.set_deadline_time_opt(Some(now));
     expected.sync_clock(now);
 
     assert!(
