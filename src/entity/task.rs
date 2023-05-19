@@ -1308,14 +1308,6 @@ pub fn task_to_yaml(task: &Task) -> Yaml {
         None => {}
     }
 
-    let priority = task.get_priority();
-    if priority != default_attr.get_priority() {
-        task_hash.insert(
-            Yaml::String(String::from("priority")),
-            Yaml::Integer(priority),
-        );
-    }
-
     let mut children = vec![];
     for child_node in task.node.children() {
         let child_task = Task { node: child_node };
