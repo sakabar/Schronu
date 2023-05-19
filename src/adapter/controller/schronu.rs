@@ -696,6 +696,8 @@ fn application(
         Some(focused_task_id) => {
             let focused_task_opt = task_repository.get_by_id(focused_task_id);
 
+            execute_show_ancestor(&mut stdout, &focused_task_opt);
+
             match focused_task_opt {
                 Some(focused_task) => {
                     println!("{}focused task is:", termion::cursor::Left(MAX_COL));
@@ -911,6 +913,8 @@ fn application(
                 match focused_task_id_opt {
                     Some(focused_task_id) => {
                         let focused_task_opt = task_repository.get_by_id(focused_task_id);
+
+                        execute_show_ancestor(&mut stdout, &focused_task_opt);
 
                         match focused_task_opt {
                             Some(focused_task) => {
