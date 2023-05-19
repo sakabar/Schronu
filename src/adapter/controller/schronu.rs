@@ -1,4 +1,5 @@
 use chrono::{DateTime, Datelike, Duration, Local, TimeZone, Timelike};
+use percent_encoding::{percent_encode, AsciiSet, CONTROLS};
 use regex::Regex;
 use schronu::adapter::gateway::free_time_manager::FreeTimeManager;
 use schronu::adapter::gateway::task_repository::TaskRepository;
@@ -15,9 +16,14 @@ use termion::raw::RawTerminal;
 use termion::style;
 use unicode_width::UnicodeWidthChar;
 use unicode_width::UnicodeWidthStr;
+use url::Url;
 use uuid::Uuid;
+use webbrowser;
 
 const MAX_COL: u16 = 999;
+
+// パーセントエンコーディングする対象にスペースを追加する
+const MY_ASCII_SET: &AsciiSet = &CONTROLS.add(b' ');
 
 fn writeln_newline(stdout: &mut RawTerminal<Stdout>, message: &str) -> Result<(), std::io::Error> {
     writeln!(stdout, "{}{}", termion::cursor::Left(MAX_COL), message)
@@ -314,6 +320,101 @@ fn execute_unfocus(focused_task_id_opt: &mut Option<Uuid>) {
     *focused_task_id_opt = None;
 }
 
+// 文字列の中からhttpから始まる部分文字列でURLとして解釈できる一番長い文字列を抽出する
+fn extract_url(s: &str) -> Option<String> {
+    // "http"が始まるインデックスを探す
+    if let Some(start) = s.find("http") {
+        // "http"から始まる部分文字列を取得する
+        let (_, http_str) = s.split_at(start);
+
+        let chars: Vec<char> = http_str.chars().collect();
+
+        // その中で二分探索する
+        let mut ok: usize = 0;
+        let mut ng: usize = chars.len() - 1;
+
+        let mut mid = (ok + ng) / 2;
+
+        while ng - ok > 1 {
+            let cand_str: String = chars[0..mid].iter().collect();
+            let encoded_cand_str: String =
+                percent_encode(cand_str.as_bytes(), MY_ASCII_SET).to_string();
+
+            // Url::parse()は未パーセントエンコーディングの文字列(日本語)も受け付けてしまう。
+            // もし cand_str == encoded_cand_str なら、日本語が混ざっていないということ
+            if Url::parse(&cand_str).is_ok() && cand_str == encoded_cand_str {
+                ok = mid;
+            } else {
+                ng = mid;
+            }
+
+            mid = (ok + ng) / 2;
+        }
+
+        let ans: String = chars[0..ok].iter().collect();
+        return Some(ans);
+    } else {
+        return None;
+    }
+}
+
+#[test]
+fn test_extract_url_正常系() {
+    let input = "これはhttps://example.com?param1=hoge&param2=barというURLです。";
+    let actual = extract_url(input);
+    let expected = Some(String::from("https://example.com?param1=hoge&param2=bar"));
+
+    assert_eq!(actual, expected);
+}
+
+#[test]
+#[allow(non_snake_case)]
+fn test_extract_url_正常系_URLが2つ() {
+    let input = "これはhttps://example.com?param1=hoge&param2=barとhttps://example.com";
+    let actual = extract_url(input);
+    let expected = Some(String::from("https://example.com?param1=hoge&param2=bar"));
+
+    assert_eq!(actual, expected);
+}
+
+#[test]
+#[allow(non_snake_case)]
+fn test_extract_url_正常系_2つのURLがスペース区切り() {
+    let input = "これはhttps://example.com?param1=hoge&param2=bar https://example.com";
+    let actual = extract_url(input);
+    let expected = Some(String::from("https://example.com?param1=hoge&param2=bar"));
+
+    assert_eq!(actual, expected);
+}
+
+//親に辿っていって見つかった最初のリンクを開く
+fn execute_open_link(focused_task_opt: &Option<Task>) {
+    let mut t_opt: Option<Task> = focused_task_opt.clone();
+
+    // Todo: while-letとかで書ける?
+    loop {
+        match &t_opt {
+            Some(t) => {
+                match extract_url(&t.get_name()) {
+                    Some(url) => {
+                        match webbrowser::open(&url) {
+                            // エラーは無視する
+                            _ => {}
+                        }
+                        return;
+                    }
+                    None => {}
+                }
+
+                t_opt = t.parent();
+            }
+            None => {
+                break;
+            }
+        }
+    }
+}
+
 fn get_next_morning_datetime(now: DateTime<Local>) -> DateTime<Local> {
     if now.hour() >= 6 {
         // 翌日の午前6時
@@ -573,6 +674,9 @@ fn execute(
                 let new_task_id_str = &tokens[1];
                 execute_focus(focused_task_id_opt, new_task_id_str);
             }
+        }
+        "開" | "open" | "op" => {
+            execute_open_link(&focused_task_opt);
         }
         "外" | "unfocus" | "ufc" => {
             execute_unfocus(focused_task_id_opt);
