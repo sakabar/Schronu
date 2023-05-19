@@ -672,6 +672,7 @@ pub struct TaskAttr {
     name: String,
     orig_status: Status, // 元々のステータス。orig_status=Pendingの時、時刻によらずPendingのまま。
     status: Status, // 評価後のステータス。pendingはpending_untilを加味して評価され、Todo扱いとなる
+    is_on_other_side: bool, // 相手ボールか?
     pending_until: DateTime<Local>,
     last_synced_time: DateTime<Local>,
 
@@ -685,6 +686,7 @@ impl PartialEq for TaskAttr {
         self.name == other.name
             && self.orig_status == other.orig_status
             && self.status == other.status
+            && self.is_on_other_side == other.is_on_other_side
             && self.pending_until == other.pending_until
             && self.last_synced_time == other.last_synced_time
             && self.priority == other.priority
@@ -722,6 +724,7 @@ impl TaskAttr {
             name: name.to_string(),
             orig_status: Status::Todo,
             status: Status::Todo,
+            is_on_other_side: false,
             pending_until: DateTime::<Local>::MIN_UTC.into(),
             last_synced_time: DateTime::<Local>::MIN_UTC.into(),
             priority: 0,
@@ -757,6 +760,14 @@ impl TaskAttr {
 
     pub fn get_orig_status(&self) -> &Status {
         &self.orig_status
+    }
+
+    pub fn get_is_on_other_side(&self) -> &bool {
+        &self.is_on_other_side
+    }
+
+    pub fn set_is_on_other_side(&mut self, is_on_other_side: bool) {
+        self.is_on_other_side = is_on_other_side;
     }
 
     // 時刻を入力し、その時刻を用いてpending判定を行う。
@@ -854,6 +865,16 @@ impl Task {
 
     pub fn set_orig_status(&self, orig_status: Status) {
         self.node.borrow_data_mut().set_orig_status(orig_status);
+    }
+
+    pub fn get_is_on_other_side(&self) -> bool {
+        *self.node.borrow_data().get_is_on_other_side()
+    }
+
+    pub fn set_is_on_other_side(&self, is_on_other_side: bool) {
+        self.node
+            .borrow_data_mut()
+            .set_is_on_other_side(is_on_other_side);
     }
 
     pub fn set_pending_until(&self, pending_until: DateTime<Local>) {
@@ -1135,6 +1156,14 @@ pub fn task_to_yaml(task: &Task) -> Yaml {
         );
     }
 
+    let is_on_other_side = task.get_is_on_other_side();
+    if is_on_other_side != *default_attr.get_is_on_other_side() {
+        task_hash.insert(
+            Yaml::String(String::from("is_on_other_side")),
+            Yaml::Boolean(is_on_other_side),
+        );
+    }
+
     let pending_until = task.get_pending_until();
     if pending_until != *default_attr.get_pending_until() {
         let pending_until_string = pending_until.format("%Y/%m/%d %H:%M:%S").to_string();
@@ -1243,6 +1272,25 @@ fn test_task_to_yaml_ユニークキー() {
     let s = "
 name: 'タスク1'
 id: 67e55044-10b1-426f-9247-bb680e5fe0c8
+";
+    let docs = YamlLoader::load_from_str(s).unwrap();
+    let expected_yaml: &Yaml = &docs[0];
+
+    assert_eq!(&actual, expected_yaml);
+}
+
+#[test]
+fn test_task_to_yaml_is_on_other_side() {
+    let mut task = Task::new("タスク1");
+    let id: Uuid = uuid!("67e55044-10b1-426f-9247-bb680e5fe0c8");
+    task.set_id(id);
+    task.set_is_on_other_side(true);
+    let actual = task_to_yaml(&task);
+
+    let s = "
+name: 'タスク1'
+id: 67e55044-10b1-426f-9247-bb680e5fe0c8
+is_on_other_side: true
 ";
     let docs = YamlLoader::load_from_str(s).unwrap();
     let expected_yaml: &Yaml = &docs[0];
