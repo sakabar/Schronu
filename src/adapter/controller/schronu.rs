@@ -712,6 +712,9 @@ fn execute(
             // フラグを立てるだけか、deferコマンドを自動実行するかは迷う。
             execute_wait_for_others(&focused_task_opt);
         }
+        // "〆" | "締"| "deadline" => {
+        //     execute_set_deadline(&focused_task_opt);
+        // }
         "後" | "defer" => {
             if tokens.len() >= 3 {
                 let amount_str = &tokens[1];

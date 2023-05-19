@@ -676,8 +676,15 @@ pub struct TaskAttr {
     pending_until: DateTime<Local>,
     last_synced_time: DateTime<Local>,
 
-    // 優先度。大きいほど高い
-    priority: i64,
+    priority: i64, // 優先度。大きいほど高い
+
+    create_time: DateTime<Local>,   // タスクが生成された日時
+    start_time: DateTime<Local>,    // タスクが着手可能になった日時
+    end_time: DateTime<Local>,      // タスクが完了した日時
+    deadline_time: DateTime<Local>, // タスクの〆切
+
+    estimated_work_seconds : i64 , // 見積もられた作業時間 (秒)
+    actual_work_seconds : i64 , // 実際の作業時間 (秒)
 }
 
 // idはあくまで検索用に使い、等価性判定には用いない
