@@ -262,18 +262,22 @@ fn execute_show_leaf_tasks(
     let last_synced_time = task_repository.get_last_synced_time();
 
     // タスクができない時間を決め打ちで登録する
-    free_time_manager.register_busy_time_slot(
-        &last_synced_time
-            .with_hour(23)
-            .expect("invalid hour")
-            .with_minute(0)
-            .expect("invalid minute"),
-        &last_synced_time
-            .with_hour(23)
-            .expect("invalid hour")
-            .with_minute(30)
-            .expect("invalid minute"),
-    );
+    let busy_time_slots = [((0, 0), (21, 0))];
+
+    for ((start_hour, start_minute), (end_hour, end_minute)) in busy_time_slots.iter() {
+        free_time_manager.register_busy_time_slot(
+            &last_synced_time
+                .with_hour(*start_hour)
+                .expect("invalid hour")
+                .with_minute(*start_minute)
+                .expect("invalid minute"),
+            &last_synced_time
+                .with_hour(*end_hour)
+                .expect("invalid hour")
+                .with_minute(*end_minute)
+                .expect("invalid minute"),
+        );
+    }
 
     let eod = last_synced_time
         .with_hour(23)
