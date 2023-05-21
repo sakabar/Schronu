@@ -7,7 +7,7 @@ use uuid::Uuid;
 use yaml_rust::Yaml;
 
 #[cfg(test)]
-use chrono::TimeZone;
+use chrono::{Duration, TimeZone};
 
 #[cfg(test)]
 use dendron::{tree, Tree};
@@ -409,13 +409,30 @@ pub fn extract_leaf_immutable_tasks_from_project(task: &ImmutableTask) -> Vec<&I
     return ans;
 }
 
+// Todoの葉タスクを抽出する
 pub fn extract_leaf_tasks_from_project(task: &Task) -> Vec<Task> {
+    let target_status: Vec<Status> = vec![Status::Todo];
+    extract_leaf_tasks_from_project_boyoyo(task, &target_status)
+}
+
+// TodoもしくはPendingの葉タスクを抽出する
+pub fn extract_leaf_tasks_from_project_with_pending(task: &Task) -> Vec<Task> {
+    let target_status: Vec<Status> = vec![Status::Todo, Status::Pending];
+    extract_leaf_tasks_from_project_boyoyo(task, &target_status)
+}
+
+fn extract_leaf_tasks_from_project_boyoyo(
+    task: &Task,
+    target_status_arr: &Vec<Status>,
+) -> Vec<Task> {
     let children_are_all_done = task
         .node
         .children()
         .all(|child_node| child_node.borrow_data().get_status() == &Status::Done);
 
-    if task.get_status() == Status::Todo && (!task.node.has_children() || children_are_all_done) {
+    if target_status_arr.contains(&task.get_status())
+        && (!task.node.has_children() || children_are_all_done)
+    {
         let new_task = Task {
             node: task.node.clone(),
         };
@@ -429,11 +446,12 @@ pub fn extract_leaf_tasks_from_project(task: &Task) -> Vec<Task> {
         if child_node.borrow_data().get_status() != &Status::Done {
             let child_task = Task { node: child_node };
 
-            let leaves_with_pending: Vec<Task> = extract_leaf_tasks_from_project(&child_task);
+            let leaves_with_pending: Vec<Task> =
+                extract_leaf_tasks_from_project_boyoyo(&child_task, &target_status_arr);
 
             let mut leaves: Vec<Task> = leaves_with_pending
                 .iter()
-                .filter(|&leaf| leaf.get_status() != Status::Pending)
+                .filter(|&leaf| target_status_arr.contains(&leaf.get_status()))
                 .map(|leaf| Task {
                     node: leaf.node.clone(),
                 })
@@ -1053,6 +1071,12 @@ impl Task {
         }
     }
 
+    // 外から見て、ダミーノードのことは考慮させないように、ダミーノードの子で評価
+    // fn is_root(&self) -> bool {
+    //     let root = self.root();
+    //     self.node.ptr_eq(&root.node)
+    // }
+
     // pub fn try_eq_subtree(&self, task: &Task) -> Result<bool, BorrowError> {
     //     self.node.try_eq(&task.node)
     // }
@@ -1139,6 +1163,49 @@ impl Task {
             if sibling_node.borrow_data().get_status() != &Status::Done {
                 ans = false;
                 break;
+            }
+        }
+
+        ans
+    }
+
+    fn first_available_time(&self) -> DateTime<Local> {
+        let dt_cand = if self.get_orig_status() == Status::Pending {
+            vec![self.get_start_time(), self.get_pending_until()]
+        } else {
+            vec![self.get_start_time()]
+        };
+
+        // 1要素以上ありNoneになり得ないのでunwrap()してよい
+        *dt_cand.iter().max().unwrap()
+    }
+
+    // 親を辿って、Todoのタスクを全て返す
+    // タプルの1つ目は最速でTodo化するタイミング
+    pub fn list_all_parent_tasks_with_first_available_time(&self) -> Vec<(DateTime<Local>, Task)> {
+        let mut ans: Vec<(DateTime<Local>, Task)> = vec![];
+        let mut child_task_first_available_time: DateTime<Local> =
+            DateTime::<Local>::MIN_UTC.into();
+
+        let mut task_opt = Some(self.clone());
+        loop {
+            match task_opt {
+                Some(task) => {
+                    let first_available_time = task.first_available_time();
+                    let dt_cand = vec![child_task_first_available_time, first_available_time];
+
+                    // 2要素なのでNoneになることはない
+                    child_task_first_available_time = *dt_cand.iter().max().unwrap();
+
+                    let tpl = (child_task_first_available_time, task.clone());
+                    ans.push(tpl);
+
+                    // 再代入
+                    task_opt = task.parent();
+                }
+                None => {
+                    break;
+                }
             }
         }
 
@@ -1792,4 +1859,140 @@ fn test_taskをcloneした場合はnodeは同じ木を指すポインタであ�
     let task_cloned = task_orig.clone();
 
     assert!(&task_orig.node.ptr_eq(&task_cloned.node));
+}
+
+#[test]
+fn test_first_available_time_pending状態の時はpending_untilとstart_timeの大きい方が採用されること_pending_untilの方が大きい場合(
+) {
+    let dt = Local.with_ymd_and_hms(2023, 5, 19, 01, 23, 45).unwrap();
+    let parent_task = Task::new("親タスク");
+    parent_task.set_create_time(dt);
+    parent_task.set_start_time(dt);
+    parent_task.set_orig_status(Status::Pending);
+    parent_task.set_pending_until(dt + Duration::hours(1));
+    parent_task.sync_clock(dt);
+
+    let actual = parent_task.first_available_time();
+    let expected = dt + Duration::hours(1);
+
+    assert_eq!(actual, expected);
+}
+
+#[test]
+fn test_list_all_parent_tasks_with_first_available_time_タスク1個でpending状態の時はpending_untilとstart_timeの大きい方が採用されること_pending_untilの方が大きい場合(
+) {
+    let dt = Local.with_ymd_and_hms(2023, 5, 19, 01, 23, 45).unwrap();
+    let parent_task = Task::new("親タスク");
+    parent_task.set_create_time(dt);
+    parent_task.set_start_time(dt);
+    parent_task.set_orig_status(Status::Pending);
+    parent_task.set_pending_until(dt + Duration::hours(1));
+    parent_task.sync_clock(dt);
+
+    let actual = parent_task.list_all_parent_tasks_with_first_available_time();
+    let expected = [(dt + Duration::hours(1), parent_task)];
+
+    assert_eq!(actual, expected);
+}
+
+#[test]
+fn test_first_available_time_pending状態の時はpending_untilとstart_timeの大きい方が採用されること_start_timeの方が大きい場合(
+) {
+    let dt = Local.with_ymd_and_hms(2023, 5, 19, 01, 23, 45).unwrap();
+    let parent_task = Task::new("親タスク");
+    parent_task.set_create_time(dt);
+    parent_task.set_start_time(dt + Duration::hours(2));
+    parent_task.set_orig_status(Status::Pending);
+    parent_task.set_pending_until(dt + Duration::hours(1));
+    parent_task.sync_clock(dt);
+
+    let actual = parent_task.first_available_time();
+    let expected = dt + Duration::hours(2);
+
+    assert_eq!(actual, expected);
+}
+
+#[test]
+fn test_list_all_parent_tasks_with_first_available_time_タスク1個でpending状態の時はpending_untilとstart_timeの大きい方が採用されること_start_timeの方が大きい場合(
+) {
+    let dt = Local.with_ymd_and_hms(2023, 5, 19, 01, 23, 45).unwrap();
+    let parent_task = Task::new("親タスク");
+    parent_task.set_create_time(dt);
+    parent_task.set_start_time(dt + Duration::hours(2));
+    parent_task.set_orig_status(Status::Pending);
+    parent_task.set_pending_until(dt + Duration::hours(1));
+    parent_task.sync_clock(dt);
+
+    let actual = parent_task.list_all_parent_tasks_with_first_available_time();
+    let expected = [(dt + Duration::hours(2), parent_task)];
+
+    assert_eq!(actual, expected);
+}
+
+#[test]
+fn test_list_all_parent_tasks_with_first_available_time_タスク1個でpending状態ではない時はstart_timeが採用されること(
+) {
+    let dt = Local.with_ymd_and_hms(2023, 5, 19, 01, 23, 45).unwrap();
+    let parent_task = Task::new("親タスク");
+    parent_task.set_create_time(dt);
+    parent_task.set_start_time(dt + Duration::hours(1));
+    parent_task.set_orig_status(Status::Todo);
+    parent_task.set_pending_until(dt + Duration::hours(2));
+    parent_task.sync_clock(dt);
+
+    let actual = parent_task.list_all_parent_tasks_with_first_available_time();
+    let expected = [(dt + Duration::hours(1), parent_task)];
+
+    assert_eq!(actual, expected);
+}
+
+#[test]
+fn test_first_available_time_pending状態ではない時はstart_timeが採用されること() {
+    let dt = Local.with_ymd_and_hms(2023, 5, 19, 01, 23, 45).unwrap();
+    let parent_task = Task::new("親タスク");
+    parent_task.set_create_time(dt);
+    parent_task.set_start_time(dt + Duration::hours(1));
+    parent_task.set_orig_status(Status::Todo);
+    parent_task.set_pending_until(dt + Duration::hours(2));
+    parent_task.sync_clock(dt);
+
+    let actual = parent_task.first_available_time();
+    let expected = dt + Duration::hours(1);
+
+    assert_eq!(actual, expected);
+}
+
+#[test]
+fn test_list_all_parent_tasks_with_first_available_time_正常系() {
+    /*
+     parent_task_1
+       - child_task_1
+         - grand_child_task (葉)
+    */
+    let dt = Local.with_ymd_and_hms(2023, 5, 19, 01, 23, 45).unwrap();
+    let parent_task = Task::new("親タスク");
+    parent_task.set_create_time(dt);
+    parent_task.set_start_time(dt);
+
+    let mut child_task = Task::new("子タスク");
+    child_task.set_create_time(dt);
+    child_task.set_start_time(dt);
+
+    let grand_child_task = child_task.create_as_last_child(TaskAttr::new("孫タスク"));
+    grand_child_task.set_create_time(dt);
+    grand_child_task.set_start_time(dt);
+
+    let expected = vec![
+        (dt, grand_child_task.clone()),
+        (dt, child_task.clone()),
+        (dt, parent_task.clone()),
+    ];
+
+    child_task
+        .detach_insert_as_last_child_of(parent_task)
+        .unwrap();
+
+    let actual = grand_child_task.list_all_parent_tasks_with_first_available_time();
+
+    assert_eq!(actual, expected);
 }
