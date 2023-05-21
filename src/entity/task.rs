@@ -787,12 +787,19 @@ impl TaskAttr {
     pub fn set_orig_status(&mut self, orig_status: Status) {
         self.orig_status = orig_status;
 
-        self.status =
-            if self.orig_status == Status::Pending && self.last_synced_time > self.pending_until {
-                Status::Todo
-            } else {
-                self.orig_status
-            };
+        // 変わりうるのは、
+        // Pending -> Todo (pending_until, start_time起因)
+        // Todo -> Pending (start_time起因)
+        self.status = if self.orig_status == Status::Pending
+            && self.last_synced_time > self.pending_until
+            && self.last_synced_time > self.start_time
+        {
+            Status::Todo
+        } else if self.orig_status == Status::Todo && self.start_time > self.last_synced_time {
+            Status::Pending
+        } else {
+            self.orig_status
+        };
     }
 
     pub fn get_status(&self) -> &Status {
@@ -823,6 +830,7 @@ impl TaskAttr {
 
     pub fn set_pending_until(&mut self, pending_until: DateTime<Local>) {
         self.pending_until = pending_until;
+        self.set_orig_status(*self.get_orig_status());
     }
 
     pub fn get_pending_until(&self) -> &DateTime<Local> {
@@ -847,6 +855,7 @@ impl TaskAttr {
 
     pub fn set_start_time(&mut self, start_time: DateTime<Local>) {
         self.start_time = start_time;
+        self.set_orig_status(*self.get_orig_status());
     }
 
     pub fn get_start_time(&self) -> &DateTime<Local> {
