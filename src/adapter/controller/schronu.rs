@@ -816,6 +816,8 @@ fn application(
 
     ///////////////////////
 
+    execute_show_leaf_tasks(&mut stdout, task_repository, free_time_manager);
+
     // 優先度の最も高いPJを一つ選ぶ
     // 一番下のタスクにフォーカスが自動的に当たる
     let mut focused_task_id_opt: Option<Uuid> = task_repository.get_highest_priority_leaf_task_id();
@@ -1038,6 +1040,8 @@ fn application(
                 }
 
                 //////////////////////////////
+
+                execute_show_leaf_tasks(&mut stdout, task_repository, free_time_manager);
 
                 match focused_task_id_opt {
                     Some(focused_task_id) => {
