@@ -1,11 +1,15 @@
-use chrono::{DateTime, Datelike, Duration, Local, TimeZone, Timelike};
+use chrono::{DateTime, Datelike, Duration, Local, NaiveDate, TimeZone, Timelike};
 use percent_encoding::{percent_encode, AsciiSet, CONTROLS};
 use regex::Regex;
 use schronu::adapter::gateway::free_time_manager::FreeTimeManager;
 use schronu::adapter::gateway::task_repository::TaskRepository;
 use schronu::application::interface::FreeTimeManagerTrait;
 use schronu::application::interface::TaskRepositoryTrait;
-use schronu::entity::task::{extract_leaf_tasks_from_project, Status, Task, TaskAttr};
+use schronu::entity::task::{
+    extract_leaf_tasks_from_project, extract_leaf_tasks_from_project_with_pending, Status, Task,
+    TaskAttr,
+};
+use std::collections::{HashMap, HashSet};
 use std::io::Stdout;
 use std::io::{stdout, Write};
 use std::process;
@@ -306,6 +310,73 @@ fn execute_show_leaf_tasks(
     let lq = (RHO / (1.0 - RHO)).ceil() as i64;
     let s2 = format!("rho = {}, Lq = {}", RHO, lq);
     writeln_newline(stdout, &s2).unwrap();
+    writeln_newline(stdout, "").unwrap();
+}
+
+fn execute_show_all_tasks(
+    stdout: &mut RawTerminal<Stdout>,
+    task_repository: &mut dyn TaskRepositoryTrait,
+) {
+    // Hash化できる要素しか入れられないので、いったんidだけ入れる
+    let mut dt_id_tpl_set: HashSet<(DateTime<Local>, Uuid)> = HashSet::new();
+
+    for project_root_task in task_repository.get_all_projects().iter() {
+        let leaf_tasks = extract_leaf_tasks_from_project_with_pending(&project_root_task);
+
+        for leaf_task in leaf_tasks.iter() {
+            let all_parent_tasks = leaf_task.list_all_parent_tasks_with_first_available_time();
+            for (dt, task) in all_parent_tasks.iter() {
+                let id = task.get_id();
+                let tpl = (*dt, id);
+                dt_id_tpl_set.insert(tpl);
+            }
+        }
+    }
+
+    let mut dt_id_tpl_arr: Vec<(DateTime<Local>, Uuid)> = dt_id_tpl_set.into_iter().collect();
+
+    // dtで小さい順にソート。後で逆順に変える
+    dt_id_tpl_arr.sort_by(|a, b| a.0.cmp(&b.0));
+
+    // 日付ごとのタスク数を集計する
+    let mut counter: HashMap<NaiveDate, usize> = HashMap::new();
+
+    let mut msgs_with_dt: Vec<(DateTime<Local>, String)> = vec![];
+
+    for (ind, (dt, id)) in dt_id_tpl_arr.iter().enumerate() {
+        let task_opt = task_repository.get_by_id(*id);
+        match task_opt {
+            Some(task) => {
+                counter
+                    .entry(dt.date_naive())
+                    .and_modify(|cnt| *cnt += 1)
+                    .or_insert(1);
+
+                let name = task.get_name();
+                let msg: String = format!("{}\t{}\t{}\t{}", ind, dt, id, name);
+                msgs_with_dt.push((*dt, msg));
+            }
+            None => {}
+        }
+    }
+
+    // 逆順にする: dtの大きい順となる
+    msgs_with_dt.reverse();
+
+    // 日付の大きい順にソートする
+    let mut counter_arr: Vec<(&NaiveDate, &usize)> = counter.iter().collect();
+    counter_arr.sort_by(|a, b| b.0.cmp(&a.0));
+
+    for (_, msg) in msgs_with_dt.iter() {
+        writeln_newline(stdout, &msg).unwrap();
+    }
+
+    writeln_newline(stdout, "").unwrap();
+
+    for (date, cnt) in &counter_arr {
+        let s = format!("{}\t{}", date, cnt);
+        writeln_newline(stdout, &s).unwrap();
+    }
     writeln_newline(stdout, "").unwrap();
 }
 
@@ -680,6 +751,9 @@ fn execute(
         "根" | "root" => {}
         "葉" | "leaves" | "leaf" | "lf" => {
             execute_show_leaf_tasks(stdout, task_repository, free_time_manager);
+        }
+        "全" | "all" => {
+            execute_show_all_tasks(stdout, task_repository);
         }
         "見" | "focus" | "fc" => {
             if tokens.len() >= 2 {
