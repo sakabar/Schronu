@@ -9,7 +9,7 @@ use schronu::entity::task::{
     extract_leaf_tasks_from_project, extract_leaf_tasks_from_project_with_pending, Status, Task,
     TaskAttr,
 };
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::io::Stdout;
 use std::io::{stdout, Write};
 use std::process;
@@ -318,8 +318,9 @@ fn execute_show_all_tasks(
     task_repository: &mut dyn TaskRepositoryTrait,
 ) {
     // Hash化できる要素しか入れられないので、いったんidだけ入れる
-    let mut dt_id_tpl_set: HashSet<(DateTime<Local>, Uuid)> = HashSet::new();
+    let mut id_to_dt_map: HashMap<Uuid, DateTime<Local>> = HashMap::new();
 
+    // 複数の子タスクがある場合に、親タスクのdtは子の着手可能時期の中で最大の値となるようにする。
     for project_root_task in task_repository.get_all_projects().iter() {
         let leaf_tasks = extract_leaf_tasks_from_project_with_pending(&project_root_task);
 
@@ -327,13 +328,24 @@ fn execute_show_all_tasks(
             let all_parent_tasks = leaf_task.list_all_parent_tasks_with_first_available_time();
             for (dt, task) in all_parent_tasks.iter() {
                 let id = task.get_id();
-                let tpl = (*dt, id);
-                dt_id_tpl_set.insert(tpl);
+
+                id_to_dt_map
+                    .entry(id)
+                    .and_modify(|dt_val| {
+                        if dt > dt_val {
+                            *dt_val = *dt
+                        }
+                    })
+                    .or_insert(*dt);
             }
         }
     }
 
-    let mut dt_id_tpl_arr: Vec<(DateTime<Local>, Uuid)> = dt_id_tpl_set.into_iter().collect();
+    let mut dt_id_tpl_arr: Vec<(DateTime<Local>, Uuid)> = vec![];
+    for (id, dt) in &id_to_dt_map {
+        let tpl = (*dt, *id);
+        dt_id_tpl_arr.push(tpl);
+    }
 
     // dtで小さい順にソート。後で逆順に変える
     dt_id_tpl_arr.sort_by(|a, b| a.0.cmp(&b.0));
