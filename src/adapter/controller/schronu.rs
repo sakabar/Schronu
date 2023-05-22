@@ -318,8 +318,11 @@ fn execute_show_all_tasks(
     task_repository: &mut dyn TaskRepositoryTrait,
 ) {
     // Hash化できる要素しか入れられないので、いったんidだけ入れる
-    // DateTime<Local>, usize (rank)
-    let mut id_to_dt_map: HashMap<Uuid, (DateTime<Local>, usize)> = HashMap::new();
+    // pending_until: DateTime<Local>,
+    // rank: usize,
+    // deadline_time_opt: Option<DateTime<Local>>,
+    let mut id_to_dt_map: HashMap<Uuid, (DateTime<Local>, usize, Option<DateTime<Local>>)> =
+        HashMap::new();
 
     // 複数の子タスクがある場合に、親タスクのdtは子の着手可能時期の中で最大の値となるようにする。
     // タプルの第2要素はrankで、葉(0)からの距離の大きい方
@@ -330,10 +333,11 @@ fn execute_show_all_tasks(
             let all_parent_tasks = leaf_task.list_all_parent_tasks_with_first_available_time();
             for (rank, (dt, task)) in all_parent_tasks.iter().enumerate() {
                 let id = task.get_id();
+                let deadline_time_opt = task.get_deadline_time_opt();
 
                 id_to_dt_map
                     .entry(id)
-                    .and_modify(|(dt_val, rank_val)| {
+                    .and_modify(|(dt_val, rank_val, _deadline_time_opt)| {
                         if dt > dt_val {
                             *dt_val = *dt
                         }
@@ -342,26 +346,26 @@ fn execute_show_all_tasks(
                             *rank_val = rank
                         }
                     })
-                    .or_insert((*dt, rank));
+                    .or_insert((*dt, rank, deadline_time_opt));
             }
         }
     }
 
-    let mut dt_id_tpl_arr: Vec<(DateTime<Local>, usize, Uuid)> = vec![];
-    for (id, (dt, rank)) in &id_to_dt_map {
-        let tpl = (*dt, *rank, *id);
+    let mut dt_id_tpl_arr: Vec<(DateTime<Local>, usize, Option<DateTime<Local>>, Uuid)> = vec![];
+    for (id, (dt, rank, deadline_time_opt)) in &id_to_dt_map {
+        let tpl = (*dt, *rank, *deadline_time_opt, *id);
         dt_id_tpl_arr.push(tpl);
     }
 
-    // dtで小さい順にソート。後で逆順に変える
-    dt_id_tpl_arr.sort_by(|a, b| (a.0, a.1).cmp(&(b.0, b.1)));
+    // dt,rank等、タプルの各要素の小さい順にソート。後で逆順に変える
+    dt_id_tpl_arr.sort();
 
     // 日付ごとのタスク数を集計する
     let mut counter: HashMap<NaiveDate, usize> = HashMap::new();
 
     let mut msgs_with_dt: Vec<(DateTime<Local>, usize, String)> = vec![];
 
-    for (ind, (dt, rank, id)) in dt_id_tpl_arr.iter().enumerate() {
+    for (ind, (dt, rank, deadline_time_opt, id)) in dt_id_tpl_arr.iter().enumerate() {
         let task_opt = task_repository.get_by_id(*id);
         match task_opt {
             Some(task) => {
@@ -371,7 +375,27 @@ fn execute_show_all_tasks(
                     .or_insert(1);
 
                 let name = task.get_name();
-                let msg: String = format!("{}\t{}\t{}\t{}\t{}", ind, dt, rank, id, name);
+                let chars_vec: Vec<char> = name.chars().collect();
+                let max_len: usize = 19;
+                let shorten_name: String = if chars_vec.len() >= max_len {
+                    format!("{}...", chars_vec.iter().take(max_len).collect::<String>())
+                } else {
+                    name.to_string()
+                };
+
+                let deadline_string = match deadline_time_opt {
+                    Some(d) => d.format("%Y/%m/%d").to_string(),
+                    None => "____/__/__".to_string(),
+                };
+                let msg: String = format!(
+                    "{}  {}  {}  {}  {}  {}",
+                    format!("{:04}", ind),
+                    dt.format("%Y/%m/%d %H:%M"),
+                    rank,
+                    deadline_string,
+                    id,
+                    shorten_name
+                );
                 msgs_with_dt.push((*dt, *rank, msg));
             }
             None => {}
