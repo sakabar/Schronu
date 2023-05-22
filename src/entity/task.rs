@@ -1023,10 +1023,59 @@ impl Task {
         *self.node.borrow_data().get_end_time_opt()
     }
 
+    // 親タスクと子タスクの〆切のうち、早いほうが子タスクの〆切となる
+    // 〆切を設定する時には、子タスクに伝搬させていく
+    // Noneの扱いが難しい。Noneを子に伝搬させても子の値に勝てないので、意味ないのでは?
+    // 「親が〆切を持っている時は、子も必ず〆切を持っており、それは親より早いか等しい」という制約を維持させたい
+    // Todo: 単体テスト
     pub fn set_deadline_time_opt(&self, deadline_time_opt: Option<DateTime<Local>>) {
-        self.node
-            .borrow_data_mut()
-            .set_deadline_time_opt(deadline_time_opt);
+        // Statusが既にdoneの時は何もしない。再帰もしないので止まる
+        if self.get_status() == Status::Done {
+            return;
+        }
+
+        // 引数で渡された(親タスクから伝搬してきた)値か、元々の値のうち早いほうを採用する
+        let original_deadline_time_opt = self.get_deadline_time_opt();
+
+        match deadline_time_opt {
+            None => {
+                // 何も起こらない。元々Noneなら変化なし、元々がNone以外なら早いほう採用でやはり変化なし。
+            }
+            Some(deadline_time) => {
+                match original_deadline_time_opt {
+                    None => {
+                        // 引数で渡ってきたほうが勝つ
+                        self.node
+                            .borrow_data_mut()
+                            .set_deadline_time_opt(Some(deadline_time));
+
+                        // 子に伝搬させる
+                        for child_node in self.node.children() {
+                            let child_task = Self { node: child_node };
+                            child_task.set_deadline_time_opt(Some(deadline_time));
+                        }
+                    }
+                    Some(original_deadline_time) => {
+                        // 早いほうを採用
+                        let earlier_deadline_time = if original_deadline_time < deadline_time {
+                            original_deadline_time
+                        } else {
+                            deadline_time
+                        };
+
+                        self.node
+                            .borrow_data_mut()
+                            .set_deadline_time_opt(Some(earlier_deadline_time));
+
+                        // 子に伝搬させる
+                        for child_node in self.node.children() {
+                            let child_task = Self { node: child_node };
+                            child_task.set_deadline_time_opt(Some(earlier_deadline_time));
+                        }
+                    }
+                }
+            }
+        }
     }
 
     pub fn get_deadline_time_opt(&self) -> Option<DateTime<Local>> {

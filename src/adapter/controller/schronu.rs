@@ -734,6 +734,17 @@ fn execute_finish(focused_task_id_opt: &mut Option<Uuid>, focused_task_opt: &Opt
     });
 }
 
+fn execute_set_deadline(focused_task_opt: &Option<Task>, deadline_date_str: &str) {
+    let deadline_time_str = format!("{} 23:59:59", deadline_date_str);
+    let deadline_time = Local
+        .datetime_from_str(&deadline_time_str, "%Y/%m/%d %H:%M:%S")
+        .unwrap();
+
+    focused_task_opt
+        .as_ref()
+        .map(|focused_task| focused_task.set_deadline_time_opt(Some(deadline_time)));
+}
+
 fn execute(
     stdout: &mut RawTerminal<Stdout>,
     task_repository: &mut dyn TaskRepositoryTrait,
@@ -805,9 +816,14 @@ fn execute(
             // フラグを立てるだけか、deferコマンドを自動実行するかは迷う。
             execute_wait_for_others(&focused_task_opt);
         }
-        // "〆" | "締"| "deadline" => {
-        //     execute_set_deadline(&focused_task_opt);
-        // }
+        "〆" | "締" | "deadline" => {
+            if tokens.len() >= 2 {
+                // "2023/05/23"とか。簡単のため、時刻は指定不要とし、自動的に23:59を〆切と設定する
+                let deadline_date_str = &tokens[1];
+
+                execute_set_deadline(&focused_task_opt, deadline_date_str);
+            }
+        }
         "後" | "defer" => {
             if tokens.len() >= 3 {
                 let amount_str = &tokens[1];
