@@ -296,9 +296,13 @@ fn execute_show_leaf_tasks(
         .expect("invalid minute");
     let busy_minutes = free_time_manager.get_busy_minutes(&last_synced_time, &eod);
 
+    // 単位時間は「1日」
+    const LAMBDA: f64 = 4.0;
+    const MU: f64 = 5.0;
+    const RHO: f64 = if LAMBDA <= MU { LAMBDA / MU } else { 1.0 };
+
     // コストを正確に算出できるようになるまでのつなぎとして、概算を表示する
     // task_cntは「次に表示されるタスク番号」なので、マイナス1する
-    const RHO: f64 = 0.5;
     let minutes = (15.0 * (task_cnt - 1) as f64 / RHO).ceil() as i64 + busy_minutes;
 
     let dt = last_synced_time + Duration::minutes(minutes);
@@ -307,8 +311,8 @@ fn execute_show_leaf_tasks(
     let s = format!("完了見込み日時は{}時間後の{}です", hours, dt);
     writeln_newline(stdout, &s).unwrap();
 
-    let lq = (RHO / (1.0 - RHO)).ceil() as i64;
-    let s2 = format!("rho = {}, Lq = {}", RHO, lq);
+    let lq = LAMBDA / (MU - LAMBDA);
+    let s2 = format!("rho = {}, Lq = {:.1}", RHO, lq);
     writeln_newline(stdout, &s2).unwrap();
     writeln_newline(stdout, "").unwrap();
 }
