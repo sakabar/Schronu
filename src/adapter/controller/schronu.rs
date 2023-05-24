@@ -834,7 +834,14 @@ fn execute(
         "条" | "祖" | "ancestor" | "anc" => {
             execute_show_ancestor(stdout, &focused_task_opt);
         }
-        "根" | "root" => {}
+        "根" | "root" => match focused_task_opt {
+            Some(focused_task) => {
+                let root_task = focused_task.root();
+                let root_task_id = root_task.get_id();
+                execute_focus(focused_task_id_opt, &root_task_id.hyphenated().to_string());
+            }
+            None => {}
+        },
         "葉" | "leaves" | "leaf" | "lf" => {
             execute_show_leaf_tasks(stdout, task_repository, free_time_manager);
         }
