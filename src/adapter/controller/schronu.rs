@@ -974,9 +974,8 @@ fn application(
     task_repository: &mut dyn TaskRepositoryTrait,
     free_time_manager: &mut dyn FreeTimeManagerTrait,
 ) {
-    // 初期化
-    let now = Local::now();
-    task_repository.sync_clock(now);
+    // 時計を合わせる
+    task_repository.sync_clock(Local::now());
 
     // let next_morning = get_next_morning_datetime(now);
     // task_repository.sync_clock(next_morning + Duration::hours(1));
@@ -1209,6 +1208,9 @@ fn application(
                         &line,
                     );
                 }
+
+                // 時計を合わせる
+                task_repository.sync_clock(Local::now());
 
                 //////////////////////////////
 
