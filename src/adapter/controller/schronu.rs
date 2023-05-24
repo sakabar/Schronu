@@ -369,6 +369,7 @@ fn execute_show_all_tasks(
 
     let mut msgs_with_dt: Vec<(DateTime<Local>, usize, String)> = vec![];
 
+    let mut accumulated_estimated_work_minute_with_default: i64 = 0;
     for (ind, (dt, rank, deadline_time_opt, id)) in dt_id_tpl_arr.iter().enumerate() {
         let task_opt = task_repository.get_by_id(*id);
         match task_opt {
@@ -380,24 +381,37 @@ fn execute_show_all_tasks(
 
                 let name = task.get_name();
                 let chars_vec: Vec<char> = name.chars().collect();
-                let max_len: usize = 19;
+                let max_len: usize = 21;
                 let shorten_name: String = if chars_vec.len() >= max_len {
                     format!("{}...", chars_vec.iter().take(max_len).collect::<String>())
                 } else {
                     name.to_string()
                 };
+                let estimated_work_minutes =
+                    (task.get_estimated_work_seconds() as f64 / 60.0).ceil() as i64;
+                let estimated_work_minutes_with_default = if estimated_work_minutes == 0 {
+                    15
+                } else {
+                    estimated_work_minutes
+                };
+                accumulated_estimated_work_minute_with_default +=
+                    estimated_work_minutes_with_default;
+                let accumulated_estimated_work_hours_with_default =
+                    (accumulated_estimated_work_minute_with_default as f64 / 60.0).ceil() as i64;
 
                 let deadline_string = match deadline_time_opt {
                     Some(d) => d.format("%Y/%m/%d").to_string(),
                     None => "____/__/__".to_string(),
                 };
                 let msg: String = format!(
-                    "{}  {}  {}  {}  {}  {}",
-                    format!("{:04}", ind),
-                    dt.format("%Y/%m/%d %H:%M"),
+                    "{:04} {} {} {} {} {:02} {:02} {}",
+                    ind,
+                    dt.format("%m/%d-%H:%M"),
                     rank,
                     deadline_string,
                     id,
+                    estimated_work_minutes_with_default,
+                    accumulated_estimated_work_hours_with_default,
                     shorten_name
                 );
                 msgs_with_dt.push((*dt, *rank, msg));
