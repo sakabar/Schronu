@@ -853,7 +853,19 @@ fn execute(
         "外" | "unfocus" | "ufc" => {
             execute_unfocus(focused_task_id_opt);
         }
-        "親" | "parent" => {}
+        "親" | "parent" => match focused_task_opt {
+            Some(focused_task) => match focused_task.parent() {
+                Some(parent_task) => {
+                    let parent_task_id = parent_task.get_id();
+                    execute_focus(
+                        focused_task_id_opt,
+                        &parent_task_id.hyphenated().to_string(),
+                    );
+                }
+                None => {}
+            },
+            None => {}
+        },
         "子" | "children" | "ch" => {}
         "上" | "nextup" | "nu" => {}
         "下" | "breakdown" | "bd" => {
