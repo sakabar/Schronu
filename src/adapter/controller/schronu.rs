@@ -25,6 +25,7 @@ use uuid::Uuid;
 use webbrowser;
 
 const MAX_COL: u16 = 999;
+const DEFAULT_ESTIMATED_WORK_SECONDS: i64 = 900;
 
 // パーセントエンコーディングする対象にスペースを追加する
 const MY_ASCII_SET: &AsciiSet = &CONTROLS.add(b' ');
@@ -254,6 +255,7 @@ fn execute_show_leaf_tasks(
     free_time_manager: &mut dyn FreeTimeManagerTrait,
 ) {
     let mut task_cnt = 1;
+    let mut accumulated_estimated_work_seconds = 0;
     for project_root_task in task_repository.get_all_projects().iter() {
         let project_name = project_root_task.get_name();
 
@@ -265,6 +267,14 @@ fn execute_show_leaf_tasks(
             let message = format!("{}\t{}\t{:?}", task_cnt, project_name, leaf_task.get_attr());
             writeln_newline(stdout, &message).unwrap();
             task_cnt += 1;
+
+            let estimated_work_seconds = leaf_task.get_estimated_work_seconds();
+            let estimated_work_seconds_with_default = if estimated_work_seconds == 0 {
+                DEFAULT_ESTIMATED_WORK_SECONDS
+            } else {
+                estimated_work_seconds
+            };
+            accumulated_estimated_work_seconds += estimated_work_seconds_with_default;
         }
     }
     writeln_newline(stdout, "").unwrap();
@@ -303,7 +313,8 @@ fn execute_show_leaf_tasks(
 
     // コストを正確に算出できるようになるまでのつなぎとして、概算を表示する
     // task_cntは「次に表示されるタスク番号」なので、マイナス1する
-    let minutes = (15.0 * (task_cnt - 1) as f64 / RHO).ceil() as i64 + busy_minutes;
+    let minutes =
+        (accumulated_estimated_work_seconds as f64 / 60.0 / RHO).ceil() as i64 + busy_minutes;
 
     let dt = last_synced_time + Duration::minutes(minutes);
 
@@ -381,7 +392,7 @@ fn execute_show_all_tasks(
 
                 let name = task.get_name();
                 let chars_vec: Vec<char> = name.chars().collect();
-                let max_len: usize = 21;
+                let max_len: usize = 19;
                 let shorten_name: String = if chars_vec.len() >= max_len {
                     format!("{}...", chars_vec.iter().take(max_len).collect::<String>())
                 } else {
@@ -390,7 +401,7 @@ fn execute_show_all_tasks(
                 let estimated_work_minutes =
                     (task.get_estimated_work_seconds() as f64 / 60.0).ceil() as i64;
                 let estimated_work_minutes_with_default = if estimated_work_minutes == 0 {
-                    15
+                    DEFAULT_ESTIMATED_WORK_SECONDS / 60
                 } else {
                     estimated_work_minutes
                 };
@@ -404,7 +415,7 @@ fn execute_show_all_tasks(
                     None => "____/__/__".to_string(),
                 };
                 let msg: String = format!(
-                    "{:04} {} {} {} {} {:02} {:02} {}",
+                    "{:04} {} {} {} {} e{:02} a{:02} {}",
                     ind,
                     dt.format("%m/%d-%H:%M"),
                     rank,
