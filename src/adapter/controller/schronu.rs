@@ -25,7 +25,6 @@ use uuid::Uuid;
 use webbrowser;
 
 const MAX_COL: u16 = 999;
-const DEFAULT_ESTIMATED_WORK_SECONDS: i64 = 900;
 
 // パーセントエンコーディングする対象にスペースを追加する
 const MY_ASCII_SET: &AsciiSet = &CONTROLS.add(b' ');
@@ -269,12 +268,7 @@ fn execute_show_leaf_tasks(
             task_cnt += 1;
 
             let estimated_work_seconds = leaf_task.get_estimated_work_seconds();
-            let estimated_work_seconds_with_default = if estimated_work_seconds == 0 {
-                DEFAULT_ESTIMATED_WORK_SECONDS
-            } else {
-                estimated_work_seconds
-            };
-            total_estimated_work_seconds += estimated_work_seconds_with_default;
+            total_estimated_work_seconds += estimated_work_seconds;
         }
     }
     writeln_newline(stdout, "").unwrap();
@@ -379,7 +373,7 @@ fn execute_show_all_tasks(
 
     let mut msgs_with_dt: Vec<(DateTime<Local>, usize, String)> = vec![];
 
-    let mut total_estimated_work_minute_with_default: i64 = 0;
+    let mut total_estimated_work_minutes: i64 = 0;
     for (ind, (dt, rank, deadline_time_opt, id)) in dt_id_tpl_arr.iter().enumerate() {
         let task_opt = task_repository.get_by_id(*id);
         match task_opt {
@@ -399,14 +393,9 @@ fn execute_show_all_tasks(
                 };
                 let estimated_work_minutes =
                     (task.get_estimated_work_seconds() as f64 / 60.0).ceil() as i64;
-                let estimated_work_minutes_with_default = if estimated_work_minutes == 0 {
-                    DEFAULT_ESTIMATED_WORK_SECONDS / 60
-                } else {
-                    estimated_work_minutes
-                };
-                total_estimated_work_minute_with_default += estimated_work_minutes_with_default;
-                let total_estimated_work_hours_with_default =
-                    (total_estimated_work_minute_with_default as f64 / 60.0).ceil() as i64;
+                total_estimated_work_minutes += estimated_work_minutes;
+                let total_estimated_work_hours =
+                    (total_estimated_work_minutes as f64 / 60.0).ceil() as i64;
 
                 let deadline_string = match deadline_time_opt {
                     Some(d) => d.format("%Y/%m/%d").to_string(),
@@ -419,8 +408,8 @@ fn execute_show_all_tasks(
                     rank,
                     deadline_string,
                     id,
-                    estimated_work_minutes_with_default,
-                    total_estimated_work_hours_with_default,
+                    estimated_work_minutes,
+                    total_estimated_work_hours,
                     shorten_name
                 );
                 msgs_with_dt.push((*dt, *rank, msg));
