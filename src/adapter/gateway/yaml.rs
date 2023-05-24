@@ -1,6 +1,6 @@
 use crate::entity::task::read_status;
 use crate::entity::task::Status;
-use crate::entity::task::{ImmutableTask, Task};
+use crate::entity::task::{ImmutableTask, Task, TaskAttr};
 use chrono::TimeZone;
 use chrono::{DateTime, Local};
 use uuid::Uuid;
@@ -8,9 +8,6 @@ use yaml_rust::Yaml;
 
 #[cfg(test)]
 use yaml_rust::YamlLoader;
-
-#[cfg(test)]
-use crate::entity::task::TaskAttr;
 
 #[cfg(test)]
 use crate::entity::task::assert_task;
@@ -283,25 +280,34 @@ fn transform_from_pending_until_str(pending_until_str: &str) -> DateTime<Local> 
 
 // Todo Result型を返すようにする
 pub fn yaml_to_task(yaml: &Yaml, now: DateTime<Local>) -> Task {
+    let default_attr = TaskAttr::new("デフォルト用");
     let name: &str = yaml["name"].as_str().unwrap_or("");
 
     let status_str: &str = yaml["status"].as_str().unwrap_or("");
-    let status: Status = read_status(&status_str).unwrap_or(Status::Todo);
+    let status: Status = read_status(&status_str).unwrap_or(*default_attr.get_status());
 
-    let is_on_other_side: bool = yaml["is_on_other_side"].as_bool().unwrap_or(false);
+    let is_on_other_side: bool = yaml["is_on_other_side"]
+        .as_bool()
+        .unwrap_or(*default_attr.get_is_on_other_side());
 
     let pending_until_str: &str = yaml["pending_until"].as_str().unwrap_or("");
     let pending_until = transform_from_pending_until_str(pending_until_str);
 
-    let priority: i64 = yaml["priority"].as_i64().unwrap_or(0);
+    let priority: i64 = yaml["priority"]
+        .as_i64()
+        .unwrap_or(default_attr.get_priority());
 
     let create_time_str: &str = yaml["create_time"].as_str().unwrap_or("");
     let start_time_str: &str = yaml["start_time"].as_str().unwrap_or("");
     let end_time_str: &str = yaml["end_time"].as_str().unwrap_or("");
     let deadline_time_str: &str = yaml["deadline_time"].as_str().unwrap_or("");
 
-    let estimated_work_seconds: i64 = yaml["estimated_work_seconds"].as_i64().unwrap_or(0);
-    let actual_work_seconds: i64 = yaml["actual_work_seconds"].as_i64().unwrap_or(0);
+    let estimated_work_seconds: i64 = yaml["estimated_work_seconds"]
+        .as_i64()
+        .unwrap_or(default_attr.get_estimated_work_seconds());
+    let actual_work_seconds: i64 = yaml["actual_work_seconds"]
+        .as_i64()
+        .unwrap_or(default_attr.get_actual_work_seconds());
 
     let mut parent_task: Task = Task::new(name);
 
