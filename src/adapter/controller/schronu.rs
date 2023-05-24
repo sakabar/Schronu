@@ -255,7 +255,7 @@ fn execute_show_leaf_tasks(
     free_time_manager: &mut dyn FreeTimeManagerTrait,
 ) {
     let mut task_cnt = 1;
-    let mut accumulated_estimated_work_seconds = 0;
+    let mut total_estimated_work_seconds = 0;
     for project_root_task in task_repository.get_all_projects().iter() {
         let project_name = project_root_task.get_name();
 
@@ -274,7 +274,7 @@ fn execute_show_leaf_tasks(
             } else {
                 estimated_work_seconds
             };
-            accumulated_estimated_work_seconds += estimated_work_seconds_with_default;
+            total_estimated_work_seconds += estimated_work_seconds_with_default;
         }
     }
     writeln_newline(stdout, "").unwrap();
@@ -313,8 +313,7 @@ fn execute_show_leaf_tasks(
 
     // コストを正確に算出できるようになるまでのつなぎとして、概算を表示する
     // task_cntは「次に表示されるタスク番号」なので、マイナス1する
-    let minutes =
-        (accumulated_estimated_work_seconds as f64 / 60.0 / RHO).ceil() as i64 + busy_minutes;
+    let minutes = (total_estimated_work_seconds as f64 / 60.0 / RHO).ceil() as i64 + busy_minutes;
 
     let dt = last_synced_time + Duration::minutes(minutes);
 
@@ -380,7 +379,7 @@ fn execute_show_all_tasks(
 
     let mut msgs_with_dt: Vec<(DateTime<Local>, usize, String)> = vec![];
 
-    let mut accumulated_estimated_work_minute_with_default: i64 = 0;
+    let mut total_estimated_work_minute_with_default: i64 = 0;
     for (ind, (dt, rank, deadline_time_opt, id)) in dt_id_tpl_arr.iter().enumerate() {
         let task_opt = task_repository.get_by_id(*id);
         match task_opt {
@@ -405,24 +404,23 @@ fn execute_show_all_tasks(
                 } else {
                     estimated_work_minutes
                 };
-                accumulated_estimated_work_minute_with_default +=
-                    estimated_work_minutes_with_default;
-                let accumulated_estimated_work_hours_with_default =
-                    (accumulated_estimated_work_minute_with_default as f64 / 60.0).ceil() as i64;
+                total_estimated_work_minute_with_default += estimated_work_minutes_with_default;
+                let total_estimated_work_hours_with_default =
+                    (total_estimated_work_minute_with_default as f64 / 60.0).ceil() as i64;
 
                 let deadline_string = match deadline_time_opt {
                     Some(d) => d.format("%Y/%m/%d").to_string(),
                     None => "____/__/__".to_string(),
                 };
                 let msg: String = format!(
-                    "{:04} {} {} {} {} e{:02} a{:02} {}",
+                    "{:04} {} {} {} {} e{:02} t{:02} {}",
                     ind,
                     dt.format("%m/%d-%H:%M"),
                     rank,
                     deadline_string,
                     id,
                     estimated_work_minutes_with_default,
-                    accumulated_estimated_work_hours_with_default,
+                    total_estimated_work_hours_with_default,
                     shorten_name
                 );
                 msgs_with_dt.push((*dt, *rank, msg));
@@ -1020,7 +1018,11 @@ fn application(
             match focused_task_opt {
                 Some(focused_task) => {
                     println!("{}focused task is:", termion::cursor::Left(MAX_COL));
-                    println!("{}{:?}", termion::cursor::Left(MAX_COL), focused_task);
+                    println!(
+                        "{}{:?}",
+                        termion::cursor::Left(MAX_COL),
+                        focused_task.get_attr()
+                    );
                     stdout.flush().unwrap();
                 }
                 None => {}

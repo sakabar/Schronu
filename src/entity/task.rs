@@ -737,7 +737,13 @@ impl fmt::Debug for TaskAttr {
         f.debug_struct("")
             .field(
                 "name",
-                &format!("{} {}", status_checkbox, &self.name).as_str(),
+                &format!(
+                    "{} {:02}m {}",
+                    status_checkbox,
+                    self.get_estimated_work_seconds() / 60,
+                    &self.name
+                )
+                .as_str(),
             )
             .field("id", &self.id)
             // .field("orig_status", &self.orig_status)
