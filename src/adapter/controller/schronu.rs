@@ -241,7 +241,9 @@ fn execute_show_ancestor(stdout: &mut RawTerminal<Stdout>, focused_task_opt: &Op
 
         let id = task.get_id();
         let name = task.get_name();
-        let msg = format!("{}{}\t{}", &header, &id, &name);
+        let estimated_work_minutes =
+            (task.get_estimated_work_seconds() as f64 / 60.0).ceil() as i64;
+        let msg = format!("{}{}\t{}m {}", &header, &id, &estimated_work_minutes, &name);
         writeln_newline(stdout, &msg).unwrap();
     }
 
