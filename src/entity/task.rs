@@ -773,7 +773,7 @@ impl TaskAttr {
             start_time: now,
             end_time_opt: None,
             deadline_time_opt: None,
-            estimated_work_seconds: 0,
+            estimated_work_seconds: 900,
             actual_work_seconds: 0,
         }
     }
