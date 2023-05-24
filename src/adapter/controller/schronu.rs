@@ -372,6 +372,8 @@ fn execute_show_all_tasks(
 
     // 日付ごとのタスク数を集計する
     let mut counter: HashMap<NaiveDate, usize> = HashMap::new();
+    let mut total_estimated_work_minutes_of_the_date_counter: HashMap<NaiveDate, i64> =
+        HashMap::new();
 
     let mut msgs_with_dt: Vec<(DateTime<Local>, usize, String)> = vec![];
 
@@ -395,6 +397,14 @@ fn execute_show_all_tasks(
                 };
                 let estimated_work_minutes =
                     (task.get_estimated_work_seconds() as f64 / 60.0).ceil() as i64;
+
+                total_estimated_work_minutes_of_the_date_counter
+                    .entry(dt.date_naive())
+                    .and_modify(|estimated_work_minutes_val| {
+                        *estimated_work_minutes_val += estimated_work_minutes
+                    })
+                    .or_insert(estimated_work_minutes);
+
                 total_estimated_work_minutes += estimated_work_minutes;
                 let total_estimated_work_hours =
                     (total_estimated_work_minutes as f64 / 60.0).ceil() as i64;
@@ -434,7 +444,16 @@ fn execute_show_all_tasks(
     writeln_newline(stdout, "").unwrap();
 
     for (date, cnt) in &counter_arr {
-        let s = format!("{}\t{}", date, cnt);
+        let total_estimated_work_minutes_of_the_date: i64 =
+            *total_estimated_work_minutes_of_the_date_counter
+                .get(date)
+                .unwrap_or(&0);
+        let total_estimated_work_hours_of_the_date =
+            (total_estimated_work_minutes_of_the_date as f64 / 60.0).ceil() as i64;
+        let s = format!(
+            "{}\t{:02}タスク\t{:02}時間",
+            date, cnt, total_estimated_work_hours_of_the_date
+        );
         writeln_newline(stdout, &s).unwrap();
     }
     writeln_newline(stdout, "").unwrap();
