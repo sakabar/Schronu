@@ -334,6 +334,10 @@ fn execute_show_all_tasks(
     let mut id_to_dt_map: HashMap<Uuid, (DateTime<Local>, usize, Option<DateTime<Local>>)> =
         HashMap::new();
 
+    let mut leaf_counter: HashMap<NaiveDate, usize> = HashMap::new();
+    let mut total_leaf_estimated_work_minutes_of_the_date_counter: HashMap<NaiveDate, i64> =
+        HashMap::new();
+
     // 複数の子タスクがある場合に、親タスクのdtは子の着手可能時期の中で最大の値となるようにする。
     // タプルの第2要素はrankで、葉(0)からの距離の大きい方
     for project_root_task in task_repository.get_all_projects().iter() {
@@ -344,6 +348,23 @@ fn execute_show_all_tasks(
             for (rank, (dt, task)) in all_parent_tasks.iter().enumerate() {
                 let id = task.get_id();
                 let deadline_time_opt = task.get_deadline_time_opt();
+
+                if rank == 0 {
+                    leaf_counter
+                        .entry(dt.date_naive())
+                        .and_modify(|cnt| *cnt += 1)
+                        .or_insert(1);
+
+                    let estimated_work_minutes =
+                        (task.get_estimated_work_seconds() as f64 / 60.0).ceil() as i64;
+
+                    total_leaf_estimated_work_minutes_of_the_date_counter
+                        .entry(dt.date_naive())
+                        .and_modify(|estimated_work_minutes_val| {
+                            *estimated_work_minutes_val += estimated_work_minutes
+                        })
+                        .or_insert(estimated_work_minutes);
+                }
 
                 id_to_dt_map
                     .entry(id)
@@ -450,9 +471,23 @@ fn execute_show_all_tasks(
                 .unwrap_or(&0);
         let total_estimated_work_hours_of_the_date =
             (total_estimated_work_minutes_of_the_date as f64 / 60.0).ceil() as i64;
+
+        let total_leaf_estimated_work_minutes_of_the_date: i64 =
+            *total_leaf_estimated_work_minutes_of_the_date_counter
+                .get(date)
+                .unwrap_or(&0);
+        let total_leaf_estimated_work_hours_of_the_date =
+            (total_leaf_estimated_work_minutes_of_the_date as f64 / 60.0).ceil() as i64;
+
+        let leaf_cnt_of_the_date = *leaf_counter.get(date).unwrap_or(&0);
+
         let s = format!(
-            "{}\t{:02}タスク\t{:02}時間",
-            date, cnt, total_estimated_work_hours_of_the_date
+            "{}\t{:02}/{:02}タスク\t{:02}/{:02}時間",
+            date,
+            leaf_cnt_of_the_date,
+            cnt,
+            total_leaf_estimated_work_hours_of_the_date,
+            total_estimated_work_hours_of_the_date
         );
         writeln_newline(stdout, &s).unwrap();
     }
