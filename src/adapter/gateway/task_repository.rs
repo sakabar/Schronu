@@ -4,8 +4,11 @@ use crate::entity::task::extract_leaf_tasks_from_project;
 use crate::entity::task::{task_to_yaml, Task};
 use chrono::{DateTime, Local};
 use linked_hash_map::LinkedHashMap;
+use regex::Regex;
+use std::fs;
 use std::fs::File;
 use std::io::prelude::*;
+use std::path::Path;
 use uuid::Uuid;
 use walkdir::WalkDir;
 use yaml_rust::{Yaml, YamlEmitter, YamlLoader};
@@ -18,7 +21,7 @@ pub struct TaskRepository {
 
 struct Project {
     root_task: Task,
-    _project_dir_name: String,
+    _project_dir_path: String,
     project_yaml_file_path: String,
     priority: i64,
 }
@@ -26,13 +29,13 @@ struct Project {
 impl Project {
     fn new(
         root_task: Task,
-        _project_dir_name: String,
+        _project_dir_path: String,
         project_yaml_file_path: String,
         priority: i64,
     ) -> Self {
         Self {
             root_task,
-            _project_dir_name,
+            _project_dir_path,
             project_yaml_file_path,
             priority,
         }
@@ -65,7 +68,7 @@ impl TaskRepositoryTrait for TaskRepository {
             if entry.file_name() == "project.yaml" {
                 let project_yaml_file_path: String =
                     entry.path().to_str().map(|s| s.to_string()).unwrap();
-                let project_dir_name: String = entry
+                let project_dir_path: String = entry
                     .path()
                     .parent()
                     .and_then(|name| name.to_str().map(|s| s.to_string()))
@@ -84,7 +87,7 @@ impl TaskRepositoryTrait for TaskRepository {
                         let priority = root_task.get_priority();
                         let project = Project::new(
                             root_task,
-                            project_dir_name,
+                            project_dir_path,
                             project_yaml_file_path,
                             priority,
                         );
@@ -168,5 +171,53 @@ impl TaskRepositoryTrait for TaskRepository {
         }
 
         None
+    }
+
+    fn start_new_project(&mut self, root_task: Task) {
+        let project_name = root_task.get_name();
+
+        let yyyymmdd = self.last_synced_time.format("%Y%m%d").to_string();
+
+        // ディレクトリ名からはURLを除く (ディレクトリの区切りに使われうる "/" が入らないようにするため)
+        let http_pattern = Regex::new(r"http.*").unwrap();
+        let project_name_for_dir = http_pattern.replace(&project_name, "").replace("/", "-");
+
+        let dir_name = format!("{}-{}", yyyymmdd, project_name_for_dir);
+        let project_dir_path = Path::new(&self.project_storage_dir_name).join(dir_name);
+
+        // project_dirを実際に生成する
+        match fs::create_dir_all(&project_dir_path) {
+            Ok(()) => {}
+            Err(_) => {
+                return;
+            }
+        }
+
+        let markdown_dir_path = &project_dir_path.join("markdown");
+        match fs::create_dir_all(&markdown_dir_path) {
+            Ok(()) => {}
+            Err(err) => {
+                println!("{}", err);
+                return;
+            }
+        }
+
+        let project_yaml_file_path = project_dir_path.join("project.yaml");
+
+        let priority = root_task.get_priority();
+
+        match (project_dir_path.to_str(), project_yaml_file_path.to_str()) {
+            (Some(project_dir_path_str), Some(project_yaml_file_path_str)) => {
+                let project = Project::new(
+                    root_task,
+                    project_dir_path_str.to_string(),
+                    project_yaml_file_path_str.to_string(),
+                    priority,
+                );
+
+                self.projects.push(project);
+            }
+            _ => {}
+        }
     }
 }
