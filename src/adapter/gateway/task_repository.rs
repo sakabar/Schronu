@@ -1,10 +1,10 @@
 use crate::adapter::gateway::yaml::yaml_to_task;
 use crate::application::interface::TaskRepositoryTrait;
-use crate::entity::datetime::get_next_morning_datetime;
 use crate::entity::task::extract_leaf_tasks_from_project;
-use crate::entity::task::{task_to_yaml, Status, Task};
+use crate::entity::task::{task_to_yaml, Task};
 use chrono::{DateTime, Local};
 use linked_hash_map::LinkedHashMap;
+use regex::Regex;
 use std::fs;
 use std::fs::File;
 use std::io::prelude::*;
@@ -173,18 +173,16 @@ impl TaskRepositoryTrait for TaskRepository {
         None
     }
 
-    fn start_new_project(&mut self, project_name: &str, is_deferred: bool) {
-        let root_task = Task::new(project_name);
-
-        if is_deferred {
-            // 次回の午前6時
-            let pending_until = get_next_morning_datetime(self.last_synced_time);
-            root_task.set_pending_until(pending_until);
-            root_task.set_orig_status(Status::Pending);
-        }
+    fn start_new_project(&mut self, root_task: Task) {
+        let project_name = root_task.get_name();
 
         let yyyymmdd = self.last_synced_time.format("%Y%m%d").to_string();
-        let dir_name = format!("{}-{}", yyyymmdd, project_name.replace("/", "-"));
+
+        // ディレクトリ名からはURLを除く (ディレクトリの区切りに使われうる "/" が入らないようにするため)
+        let http_pattern = Regex::new(r"http.*").unwrap();
+        let project_name_for_dir = http_pattern.replace(&project_name, "").replace("/", "-");
+
+        let dir_name = format!("{}-{}", yyyymmdd, project_name_for_dir);
         let project_dir_path = Path::new(&self.project_storage_dir_name).join(dir_name);
 
         // project_dirを実際に生成する

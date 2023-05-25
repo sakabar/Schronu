@@ -210,11 +210,28 @@ fn execute_show_tree(stdout: &mut RawTerminal<Stdout>, focused_task_opt: &Option
 }
 
 fn execute_start_new_project(
+    stdout: &mut RawTerminal<Stdout>,
     task_repository: &mut dyn TaskRepositoryTrait,
     new_project_name_str: &str,
     is_deferred: bool,
 ) {
-    task_repository.start_new_project(new_project_name_str, is_deferred);
+    let root_task = Task::new(new_project_name_str);
+
+    let message = format!(
+        "{}\t{}",
+        root_task.get_id().hyphenated().to_string(),
+        root_task.get_name()
+    );
+    writeln_newline(stdout, &message).unwrap();
+
+    if is_deferred {
+        // 次回の午前6時
+        let pending_until = get_next_morning_datetime(task_repository.get_last_synced_time());
+        root_task.set_pending_until(pending_until);
+        root_task.set_orig_status(Status::Pending);
+    }
+
+    task_repository.start_new_project(root_task);
 }
 
 fn execute_show_ancestor(stdout: &mut RawTerminal<Stdout>, focused_task_opt: &Option<Task>) {
@@ -811,7 +828,12 @@ fn execute(
 
                 for new_project_name_str in new_project_names {
                     let is_deferred = true;
-                    execute_start_new_project(task_repository, new_project_name_str, is_deferred);
+                    execute_start_new_project(
+                        stdout,
+                        task_repository,
+                        new_project_name_str,
+                        is_deferred,
+                    );
                 }
             }
         }
@@ -821,7 +843,12 @@ fn execute(
 
                 for new_project_name_str in new_project_names {
                     let is_deferred = false;
-                    execute_start_new_project(task_repository, new_project_name_str, is_deferred);
+                    execute_start_new_project(
+                        stdout,
+                        task_repository,
+                        new_project_name_str,
+                        is_deferred,
+                    );
                 }
             }
         }
