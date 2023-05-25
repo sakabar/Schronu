@@ -18,7 +18,7 @@ pub struct TaskRepository {
 
 struct Project {
     root_task: Task,
-    _project_dir_name: String,
+    _project_dir_path: String,
     project_yaml_file_path: String,
     priority: i64,
 }
@@ -26,13 +26,13 @@ struct Project {
 impl Project {
     fn new(
         root_task: Task,
-        _project_dir_name: String,
+        _project_dir_path: String,
         project_yaml_file_path: String,
         priority: i64,
     ) -> Self {
         Self {
             root_task,
-            _project_dir_name,
+            _project_dir_path,
             project_yaml_file_path,
             priority,
         }
@@ -65,7 +65,7 @@ impl TaskRepositoryTrait for TaskRepository {
             if entry.file_name() == "project.yaml" {
                 let project_yaml_file_path: String =
                     entry.path().to_str().map(|s| s.to_string()).unwrap();
-                let project_dir_name: String = entry
+                let project_dir_path: String = entry
                     .path()
                     .parent()
                     .and_then(|name| name.to_str().map(|s| s.to_string()))
@@ -84,7 +84,7 @@ impl TaskRepositoryTrait for TaskRepository {
                         let priority = root_task.get_priority();
                         let project = Project::new(
                             root_task,
-                            project_dir_name,
+                            project_dir_path,
                             project_yaml_file_path,
                             priority,
                         );
