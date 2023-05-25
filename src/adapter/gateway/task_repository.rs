@@ -1,11 +1,14 @@
 use crate::adapter::gateway::yaml::yaml_to_task;
 use crate::application::interface::TaskRepositoryTrait;
+use crate::entity::datetime::get_next_morning_datetime;
 use crate::entity::task::extract_leaf_tasks_from_project;
-use crate::entity::task::{task_to_yaml, Task};
+use crate::entity::task::{task_to_yaml, Status, Task};
 use chrono::{DateTime, Local};
 use linked_hash_map::LinkedHashMap;
+use std::fs;
 use std::fs::File;
 use std::io::prelude::*;
+use std::path::Path;
 use uuid::Uuid;
 use walkdir::WalkDir;
 use yaml_rust::{Yaml, YamlEmitter, YamlLoader};
@@ -168,5 +171,55 @@ impl TaskRepositoryTrait for TaskRepository {
         }
 
         None
+    }
+
+    fn start_new_project(&mut self, project_name: &str, is_deferred: bool) {
+        let root_task = Task::new(project_name);
+
+        if is_deferred {
+            // 次回の午前6時
+            let pending_until = get_next_morning_datetime(self.last_synced_time);
+            root_task.set_pending_until(pending_until);
+            root_task.set_orig_status(Status::Pending);
+        }
+
+        let yyyymmdd = self.last_synced_time.format("%Y%m%d").to_string();
+        let dir_name = format!("{}-{}", yyyymmdd, project_name.replace("/", "-"));
+        let project_dir_path = Path::new(&self.project_storage_dir_name).join(dir_name);
+
+        // project_dirを実際に生成する
+        match fs::create_dir_all(&project_dir_path) {
+            Ok(()) => {}
+            Err(_) => {
+                return;
+            }
+        }
+
+        let markdown_dir_path = &project_dir_path.join("markdown");
+        match fs::create_dir_all(&markdown_dir_path) {
+            Ok(()) => {}
+            Err(err) => {
+                println!("{}", err);
+                return;
+            }
+        }
+
+        let project_yaml_file_path = project_dir_path.join("project.yaml");
+
+        let priority = root_task.get_priority();
+
+        match (project_dir_path.to_str(), project_yaml_file_path.to_str()) {
+            (Some(project_dir_path_str), Some(project_yaml_file_path_str)) => {
+                let project = Project::new(
+                    root_task,
+                    project_dir_path_str.to_string(),
+                    project_yaml_file_path_str.to_string(),
+                    priority,
+                );
+
+                self.projects.push(project);
+            }
+            _ => {}
+        }
     }
 }

@@ -1,10 +1,11 @@
-use chrono::{DateTime, Datelike, Duration, Local, NaiveDate, TimeZone, Timelike};
+use chrono::{DateTime, Duration, Local, NaiveDate, TimeZone, Timelike};
 use percent_encoding::{percent_encode, AsciiSet, CONTROLS};
 use regex::Regex;
 use schronu::adapter::gateway::free_time_manager::FreeTimeManager;
 use schronu::adapter::gateway::task_repository::TaskRepository;
 use schronu::application::interface::FreeTimeManagerTrait;
 use schronu::application::interface::TaskRepositoryTrait;
+use schronu::entity::datetime::get_next_morning_datetime;
 use schronu::entity::task::{
     extract_leaf_tasks_from_project, extract_leaf_tasks_from_project_with_pending, Status, Task,
     TaskAttr,
@@ -206,6 +207,14 @@ fn execute_show_tree(stdout: &mut RawTerminal<Stdout>, focused_task_opt: &Option
         }
     });
     writeln!(stdout, "").unwrap();
+}
+
+fn execute_start_new_project(
+    task_repository: &mut dyn TaskRepositoryTrait,
+    new_project_name_str: &str,
+    is_deferred: bool,
+) {
+    task_repository.start_new_project(new_project_name_str, is_deferred);
 }
 
 fn execute_show_ancestor(stdout: &mut RawTerminal<Stdout>, focused_task_opt: &Option<Task>) {
@@ -615,95 +624,6 @@ fn execute_open_link(focused_task_opt: &Option<Task>) {
     }
 }
 
-fn get_next_morning_datetime(now: DateTime<Local>) -> DateTime<Local> {
-    if now.hour() >= 6 {
-        // 翌日の午前6時
-        let dt = now + Duration::days(1);
-        let datetime_str = format!("{}/{}/{} 06:00", dt.year(), dt.month(), dt.day());
-        Local
-            .datetime_from_str(&datetime_str, "%Y/%m/%d %H:%M")
-            .unwrap()
-    } else {
-        // 今日の午前6時
-        let datetime_str = format!("{}/{}/{} 06:00", now.year(), now.month(), now.day());
-        Local
-            .datetime_from_str(&datetime_str, "%Y/%m/%d %H:%M")
-            .unwrap()
-    }
-}
-
-#[test]
-fn test_get_next_morning_datetime_6時以降の場合() {
-    let dt = Local.with_ymd_and_hms(2023, 4, 1, 12, 0, 0).unwrap();
-    let actual = get_next_morning_datetime(dt);
-
-    assert_eq!(actual, Local.with_ymd_and_hms(2023, 4, 2, 6, 0, 0).unwrap());
-}
-
-#[test]
-fn test_get_next_morning_datetime_6時以前の場合() {
-    let dt = Local.with_ymd_and_hms(2023, 4, 1, 1, 0, 0).unwrap();
-    let actual = get_next_morning_datetime(dt);
-
-    assert_eq!(actual, Local.with_ymd_and_hms(2023, 4, 1, 6, 0, 0).unwrap());
-}
-
-fn execute_impulse(
-    stdout: &mut RawTerminal<Stdout>,
-    task_repository: &mut dyn TaskRepositoryTrait,
-    focused_task_id_opt: &mut Option<Uuid>,
-    new_task_names: &[&str],
-) {
-    // 今フォーカスしているIDを退避する
-    let stashed_focused_task_id_opt = focused_task_id_opt.clone();
-
-    // TODO: ここ、コンフィグで雑務idを読み書きする
-    let impulse_task_id_string = String::from("6d19cdb2-1dbb-41bd-899f-551a83bf4800");
-    execute_focus(focused_task_id_opt, &impulse_task_id_string);
-    let focused_task_opt = focused_task_id_opt.and_then(|id| task_repository.get_by_id(id));
-
-    // 次回の午前6時
-    let last_synced_time: DateTime<Local> = task_repository.get_last_synced_time();
-    let pending_until = get_next_morning_datetime(last_synced_time);
-
-    execute_breakdown(
-        stdout,
-        focused_task_id_opt,
-        &focused_task_opt,
-        new_task_names,
-        &Some(pending_until),
-    );
-
-    // フォーカスを元のタスクに戻す
-    *focused_task_id_opt = stashed_focused_task_id_opt;
-}
-
-fn execute_interrupt(
-    stdout: &mut RawTerminal<Stdout>,
-    task_repository: &mut dyn TaskRepositoryTrait,
-    focused_task_id_opt: &mut Option<Uuid>,
-    new_task_names: &[&str],
-) {
-    // 今フォーカスしているIDを退避する
-    let stashed_focused_task_id_opt = focused_task_id_opt.clone();
-
-    // TODO: ここ、コンフィグで雑務idを読み書きする
-    let impulse_task_id_string = String::from("6d19cdb2-1dbb-41bd-899f-551a83bf4800");
-    execute_focus(focused_task_id_opt, &impulse_task_id_string);
-    let focused_task_opt = focused_task_id_opt.and_then(|id| task_repository.get_by_id(id));
-
-    execute_breakdown(
-        stdout,
-        focused_task_id_opt,
-        &focused_task_opt,
-        new_task_names,
-        &None,
-    );
-
-    // フォーカスを元のタスクに戻す
-    *focused_task_id_opt = stashed_focused_task_id_opt;
-}
-
 fn execute_breakdown(
     stdout: &mut RawTerminal<Stdout>,
     focused_task_id_opt: &mut Option<Uuid>,
@@ -885,7 +805,26 @@ fn execute(
     }
 
     match tokens[0] {
-        "新" | "new" => {}
+        "新" | "new" => {
+            if tokens.len() >= 2 {
+                let new_project_names = &tokens[1..];
+
+                for new_project_name_str in new_project_names {
+                    let is_deferred = true;
+                    execute_start_new_project(task_repository, new_project_name_str, is_deferred);
+                }
+            }
+        }
+        "突" | "interrupt" => {
+            if tokens.len() >= 2 {
+                let new_project_names = &tokens[1..];
+
+                for new_project_name_str in new_project_names {
+                    let is_deferred = false;
+                    execute_start_new_project(task_repository, new_project_name_str, is_deferred);
+                }
+            }
+        }
         "木" | "tree" => {
             execute_show_tree(stdout, &focused_task_opt);
         }
@@ -989,20 +928,6 @@ fn execute(
         }
         "終" | "finish" | "fin" => {
             execute_finish(focused_task_id_opt, &focused_task_opt);
-        }
-        "衝" | "impulse" | "imp" => {
-            if tokens.len() >= 2 {
-                let new_task_names = &tokens[1..];
-
-                execute_impulse(stdout, task_repository, focused_task_id_opt, new_task_names);
-            }
-        }
-        "突" | "interrupt" => {
-            if tokens.len() >= 2 {
-                let new_task_names = &tokens[1..];
-
-                execute_interrupt(stdout, task_repository, focused_task_id_opt, new_task_names);
-            }
         }
         &_ => {}
     }
