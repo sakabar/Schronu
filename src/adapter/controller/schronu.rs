@@ -1065,6 +1065,10 @@ fn application(
 
     ///////////////////////
 
+    execute_show_all_tasks(&mut stdout, task_repository);
+
+    ///////////////////////
+
     execute_show_leaf_tasks(&mut stdout, task_repository, free_time_manager);
 
     // 優先度の最も高いPJを一つ選ぶ
