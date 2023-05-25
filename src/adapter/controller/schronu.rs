@@ -214,6 +214,7 @@ fn execute_start_new_project(
     task_repository: &mut dyn TaskRepositoryTrait,
     new_project_name_str: &str,
     is_deferred: bool,
+    estimated_work_minutes_opt: Option<i64>,
 ) {
     let root_task = Task::new(new_project_name_str);
 
@@ -231,6 +232,12 @@ fn execute_start_new_project(
         root_task.set_orig_status(Status::Pending);
     }
 
+    match estimated_work_minutes_opt {
+        Some(estimated_work_minutes) => {
+            root_task.set_estimated_work_seconds(estimated_work_minutes * 60);
+        }
+        None => {}
+    }
     task_repository.start_new_project(root_task);
 }
 
@@ -824,32 +831,48 @@ fn execute(
     match tokens[0] {
         "新" | "new" => {
             if tokens.len() >= 2 {
-                let new_project_names = &tokens[1..];
+                let new_project_name_str = &tokens[1];
 
-                for new_project_name_str in new_project_names {
-                    let is_deferred = true;
-                    execute_start_new_project(
-                        stdout,
-                        task_repository,
-                        new_project_name_str,
-                        is_deferred,
-                    );
-                }
+                let estimated_work_minutes_opt: Option<i64> = if tokens.len() >= 3 {
+                    match tokens[2].parse() {
+                        Ok(m) => Some(m),
+                        Err(_) => None,
+                    }
+                } else {
+                    None
+                };
+
+                let is_deferred = true;
+                execute_start_new_project(
+                    stdout,
+                    task_repository,
+                    new_project_name_str,
+                    is_deferred,
+                    estimated_work_minutes_opt,
+                );
             }
         }
         "突" | "interrupt" => {
             if tokens.len() >= 2 {
-                let new_project_names = &tokens[1..];
+                let new_project_name_str = &tokens[1];
 
-                for new_project_name_str in new_project_names {
-                    let is_deferred = false;
-                    execute_start_new_project(
-                        stdout,
-                        task_repository,
-                        new_project_name_str,
-                        is_deferred,
-                    );
-                }
+                let estimated_work_minutes_opt: Option<i64> = if tokens.len() >= 3 {
+                    match tokens[2].parse() {
+                        Ok(m) => Some(m),
+                        Err(_) => None,
+                    }
+                } else {
+                    None
+                };
+
+                let is_deferred = false;
+                execute_start_new_project(
+                    stdout,
+                    task_repository,
+                    new_project_name_str,
+                    is_deferred,
+                    estimated_work_minutes_opt,
+                );
             }
         }
         "木" | "tree" => {
