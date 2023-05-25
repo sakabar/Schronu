@@ -313,7 +313,11 @@ fn execute_show_leaf_tasks(
 
     let dt = last_synced_time + Duration::minutes(minutes);
 
-    let hours = minutes / 60;
+    let busy_hours = (busy_minutes as f64 / 60.0).ceil() as i64;
+    let busy_s = format!("残り拘束時間は{}時間です", busy_hours);
+    writeln_newline(stdout, &busy_s).unwrap();
+
+    let hours = (minutes as f64 / 60.0).ceil() as i64;
     let s = format!("完了見込み日時は{}時間後の{}です", hours, dt);
     writeln_newline(stdout, &s).unwrap();
 
