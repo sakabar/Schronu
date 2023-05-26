@@ -350,6 +350,15 @@ pub fn yaml_to_task(yaml: &Yaml, now: DateTime<Local>) -> Task {
     parent_task.set_actual_work_seconds(actual_work_seconds);
     parent_task.set_repetition_interval_days_opt(repetition_interval_days_opt);
 
+    // repetition_interval_daysを持つタスクがtodoのままだと、
+    // show_all_tasks()する際にestimated_work_secondsを二重に数えてしまうことになるので
+    // 便宜的に2037/12/31までpendingする
+    if repetition_interval_days_opt.is_some() {
+        let distant_future = Local.with_ymd_and_hms(2037, 12, 31, 23, 59, 59).unwrap();
+        parent_task.set_pending_until(distant_future);
+        parent_task.set_orig_status(Status::Pending);
+    }
+
     parent_task.sync_clock(now);
 
     for child_yaml in yaml["children"].as_vec().unwrap_or(&vec![]) {
@@ -754,6 +763,12 @@ repetition_interval_days: 7
     let actual = yaml_to_task(project_yaml, now);
     let expected = Task::new("タスク1");
     expected.set_repetition_interval_days_opt(Some(7));
+
+    // 2037/12/31までpendingになる
+    let distant_future = Local.with_ymd_and_hms(2037, 12, 31, 23, 59, 59).unwrap();
+    expected.set_orig_status(Status::Pending);
+    expected.set_pending_until(distant_future);
+
     expected.sync_clock(now);
 
     assert_task(&actual, &expected);
