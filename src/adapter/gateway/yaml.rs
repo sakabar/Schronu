@@ -309,6 +309,8 @@ pub fn yaml_to_task(yaml: &Yaml, now: DateTime<Local>) -> Task {
         .as_i64()
         .unwrap_or(default_attr.get_actual_work_seconds());
 
+    let repetition_interval_days_opt: Option<i64> = yaml["repetition_interval_days"].as_i64();
+
     let mut parent_task: Task = Task::new(name);
 
     let id_str: &str = yaml["id"].as_str().unwrap_or("");
@@ -346,6 +348,7 @@ pub fn yaml_to_task(yaml: &Yaml, now: DateTime<Local>) -> Task {
 
     parent_task.set_estimated_work_seconds(estimated_work_seconds);
     parent_task.set_actual_work_seconds(actual_work_seconds);
+    parent_task.set_repetition_interval_days_opt(repetition_interval_days_opt);
 
     parent_task.sync_clock(now);
 
@@ -731,6 +734,26 @@ actual_work_seconds: 5
     let actual = yaml_to_task(project_yaml, now);
     let expected = Task::new("タスク1");
     expected.set_actual_work_seconds(5);
+    expected.sync_clock(now);
+
+    assert_task(&actual, &expected);
+}
+
+#[test]
+fn test_yaml_to_task_repetition_interval_daysキー_正常系() {
+    let s = "
+name: 'タスク1'
+status: 'todo'
+repetition_interval_days: 7
+";
+
+    let docs = YamlLoader::load_from_str(s).unwrap();
+    let project_yaml: &Yaml = &docs[0];
+
+    let now = Local::now();
+    let actual = yaml_to_task(project_yaml, now);
+    let expected = Task::new("タスク1");
+    expected.set_repetition_interval_days_opt(Some(7));
     expected.sync_clock(now);
 
     assert_task(&actual, &expected);
