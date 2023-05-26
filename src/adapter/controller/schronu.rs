@@ -1,4 +1,4 @@
-use chrono::{DateTime, Duration, Local, NaiveDate, TimeZone, Timelike};
+use chrono::{DateTime, Datelike, Duration, Local, NaiveDate, TimeZone, Timelike, Weekday};
 use percent_encoding::{percent_encode, AsciiSet, CONTROLS};
 use regex::Regex;
 use schronu::adapter::gateway::free_time_manager::FreeTimeManager;
@@ -518,9 +518,20 @@ fn execute_show_all_tasks(
 
         let leaf_cnt_of_the_date = *leaf_counter.get(date).unwrap_or(&0);
 
+        let weekday_jp = match date.weekday() {
+            Weekday::Mon => "月",
+            Weekday::Tue => "火",
+            Weekday::Wed => "水",
+            Weekday::Thu => "木",
+            Weekday::Fri => "金",
+            Weekday::Sat => "土",
+            Weekday::Sun => "日",
+        };
+
         let s = format!(
-            "{}\t{:02}/{:02}タスク\t{:02}/{:02}時間",
+            "{}({})\t{:02}/{:02}タスク\t{:02}/{:02}時間",
             date,
+            weekday_jp,
             leaf_cnt_of_the_date,
             cnt,
             total_leaf_estimated_work_hours_of_the_date,
