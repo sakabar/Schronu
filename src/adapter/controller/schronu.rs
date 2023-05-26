@@ -1291,8 +1291,11 @@ fn application(
                         match focused_task_opt {
                             Some(focused_task) => {
                                 println!("{}focused task is:", termion::cursor::Left(MAX_COL));
-                                println!("{}{:?}", termion::cursor::Left(MAX_COL), focused_task);
-                                println!("{}", termion::cursor::Left(MAX_COL));
+                                println!(
+                                    "{}{:?}",
+                                    termion::cursor::Left(MAX_COL),
+                                    focused_task.get_attr()
+                                );
                                 stdout.flush().unwrap();
                             }
                             None => {}
