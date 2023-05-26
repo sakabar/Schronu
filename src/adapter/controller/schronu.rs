@@ -751,6 +751,33 @@ fn execute_finish(focused_task_id_opt: &mut Option<Uuid>, focused_task_opt: &Opt
         focused_task.set_orig_status(Status::Done);
         focused_task.set_end_time_opt(Some(Local::now()));
 
+        // 親タスクがrepetition_interval_daysを持っているなら、
+        // その値に従って兄弟ノードを生成する
+        // start_timeは(repetition_interval_days-1)日後の次の朝6時
+        // タスク名は「親タスク名(日付)」
+        // estimated_work_secondsは親タスクを引き継ぐ
+        match focused_task.parent() {
+            Some(parent_task) => match parent_task.get_repetition_interval_days_opt() {
+                Some(repetition_interval_days) => {
+                    let parent_task_name = parent_task.get_name();
+                    let new_start_time = get_next_morning_datetime(
+                        Local::now() + Duration::days(repetition_interval_days - 1),
+                    );
+                    let new_task_name =
+                        format!("{}({})", parent_task_name, new_start_time.format("%m/%d"));
+
+                    let estimated_work_seconds = parent_task.get_estimated_work_seconds();
+
+                    let mut new_task_attr = TaskAttr::new(&new_task_name);
+                    new_task_attr.set_start_time(new_start_time);
+                    new_task_attr.set_estimated_work_seconds(estimated_work_seconds);
+                    parent_task.create_as_last_child(new_task_attr);
+                }
+                None => {}
+            },
+            None => {}
+        }
+
         // もし親タスクがTodoでないならば、フォーカスを外す
         match focused_task.parent().map(|t| t.get_status()) {
             Some(Status::Todo) => {
@@ -1291,8 +1318,11 @@ fn application(
                         match focused_task_opt {
                             Some(focused_task) => {
                                 println!("{}focused task is:", termion::cursor::Left(MAX_COL));
-                                println!("{}{:?}", termion::cursor::Left(MAX_COL), focused_task);
-                                println!("{}", termion::cursor::Left(MAX_COL));
+                                println!(
+                                    "{}{:?}",
+                                    termion::cursor::Left(MAX_COL),
+                                    focused_task.get_attr()
+                                );
                                 stdout.flush().unwrap();
                             }
                             None => {}

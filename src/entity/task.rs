@@ -703,6 +703,8 @@ pub struct TaskAttr {
 
     estimated_work_seconds: i64, // 見積もられた作業時間 (秒)
     actual_work_seconds: i64,    // 実際の作業時間 (秒)
+
+    repetition_interval_days_opt: Option<i64>,
 }
 
 // 生成するタイミングで結果が変わってしまうid, create_time, start_timeは
@@ -722,6 +724,7 @@ impl PartialEq for TaskAttr {
             && self.deadline_time_opt == other.deadline_time_opt
             && self.estimated_work_seconds == other.estimated_work_seconds
             && self.actual_work_seconds == other.actual_work_seconds
+            && self.repetition_interval_days_opt == other.repetition_interval_days_opt
     }
 }
 
@@ -775,6 +778,7 @@ impl TaskAttr {
             deadline_time_opt: None,
             estimated_work_seconds: 900,
             actual_work_seconds: 0,
+            repetition_interval_days_opt: None,
         }
     }
 
@@ -898,6 +902,14 @@ impl TaskAttr {
 
     pub fn get_actual_work_seconds(&self) -> i64 {
         self.actual_work_seconds
+    }
+
+    pub fn set_repetition_interval_days_opt(&mut self, repetition_interval_days_opt: Option<i64>) {
+        self.repetition_interval_days_opt = repetition_interval_days_opt;
+    }
+
+    pub fn get_repetition_interval_days_opt(&self) -> Option<i64> {
+        self.repetition_interval_days_opt
     }
 }
 
@@ -1102,6 +1114,16 @@ impl Task {
         self.node
             .borrow_data_mut()
             .set_actual_work_seconds(actual_work_seconds);
+    }
+
+    pub fn get_repetition_interval_days_opt(&self) -> Option<i64> {
+        self.node.borrow_data().get_repetition_interval_days_opt()
+    }
+
+    pub fn set_repetition_interval_days_opt(&self, repetition_interval_days_opt: Option<i64>) {
+        self.node
+            .borrow_data_mut()
+            .set_repetition_interval_days_opt(repetition_interval_days_opt);
     }
 
     pub fn get_actual_work_seconds(&self) -> i64 {
@@ -1491,6 +1513,17 @@ pub fn task_to_yaml(task: &Task) -> Yaml {
         );
     }
 
+    let repetition_interval_days_opt = task.get_repetition_interval_days_opt();
+    match repetition_interval_days_opt {
+        Some(repetition_interval_days) => {
+            task_hash.insert(
+                Yaml::String(String::from("repetition_interval_days")),
+                Yaml::Integer(repetition_interval_days),
+            );
+        }
+        None => {}
+    }
+
     let mut children = vec![];
     for child_node in task.node.children() {
         let child_task = Task { node: child_node };
@@ -1733,6 +1766,30 @@ is_on_other_side: true
 create_time: '2023/05/19 01:23:45'
 start_time: '2023/05/19 02:34:56'
 actual_work_seconds: 1
+";
+    let docs = YamlLoader::load_from_str(s).unwrap();
+    let expected_yaml: &Yaml = &docs[0];
+
+    assert_eq!(&actual, expected_yaml);
+}
+
+#[test]
+fn test_task_to_yaml_repetition_interval() {
+    let mut task = Task::new("タスク1");
+    let id: Uuid = uuid!("67e55044-10b1-426f-9247-bb680e5fe0c8");
+    task.set_id(id);
+    task.set_repetition_interval_days_opt(Some(7));
+    let now = Local.with_ymd_and_hms(2023, 5, 19, 01, 23, 45).unwrap();
+    task.set_create_time(now);
+    task.set_start_time(now);
+    let actual = task_to_yaml(&task);
+
+    let s = "
+name: 'タスク1'
+id: 67e55044-10b1-426f-9247-bb680e5fe0c8
+create_time: '2023/05/19 01:23:45'
+start_time: '2023/05/19 01:23:45'
+repetition_interval_days: 7
 ";
     let docs = YamlLoader::load_from_str(s).unwrap();
     let expected_yaml: &Yaml = &docs[0];
