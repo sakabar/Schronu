@@ -454,7 +454,7 @@ fn execute_show_all_tasks(
                     name.to_string()
                 };
                 let estimated_work_minutes =
-                    (task.get_estimated_work_seconds() as f64 / 60.0).ceil() as i64;
+                    (task.get_estimated_work_seconds() as f64 / 60.0 / RHO).ceil() as i64;
 
                 total_estimated_work_minutes_of_the_date_counter
                     .entry(dt.date_naive())
