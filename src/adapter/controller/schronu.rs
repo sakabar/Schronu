@@ -556,6 +556,24 @@ fn execute_focus(focused_task_id_opt: &mut Option<Uuid>, new_task_id_str: &str) 
     }
 }
 
+fn execute_pick(
+    task_repository: &mut dyn TaskRepositoryTrait,
+    focused_task_id_opt: &mut Option<Uuid>,
+    new_task_id_str: &str,
+) {
+    match Uuid::parse_str(new_task_id_str) {
+        Ok(id) => {
+            *focused_task_id_opt = Some(id);
+
+            // Statusをtodoに戻す
+            task_repository.get_by_id(id).map(|task| {
+                task.set_orig_status(Status::Todo);
+            });
+        }
+        Err(_) => {}
+    }
+}
+
 fn execute_unfocus(focused_task_id_opt: &mut Option<Uuid>) {
     *focused_task_id_opt = None;
 }
@@ -944,6 +962,12 @@ fn execute(
             if tokens.len() >= 2 {
                 let new_task_id_str = &tokens[1];
                 execute_focus(focused_task_id_opt, new_task_id_str);
+            }
+        }
+        "選" | "pick" => {
+            if tokens.len() >= 2 {
+                let new_task_id_str = &tokens[1];
+                execute_pick(task_repository, focused_task_id_opt, new_task_id_str);
             }
         }
         "開" | "open" | "op" => {
