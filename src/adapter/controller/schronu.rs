@@ -30,6 +30,11 @@ const MAX_COL: u16 = 999;
 // パーセントエンコーディングする対象にスペースを追加する
 const MY_ASCII_SET: &AsciiSet = &CONTROLS.add(b' ');
 
+// 単位時間は「1日」
+const LAMBDA: f64 = 4.0;
+const MU: f64 = 5.0;
+const RHO: f64 = if LAMBDA <= MU { LAMBDA / MU } else { 1.0 };
+
 fn writeln_newline(stdout: &mut RawTerminal<Stdout>, message: &str) -> Result<(), std::io::Error> {
     writeln!(stdout, "{}{}", termion::cursor::Left(MAX_COL), message)
 }
@@ -335,11 +340,6 @@ fn execute_show_leaf_tasks(
         .expect("invalid minute");
     let busy_minutes = free_time_manager.get_busy_minutes(&last_synced_time, &eod);
 
-    // 単位時間は「1日」
-    const LAMBDA: f64 = 4.0;
-    const MU: f64 = 5.0;
-    const RHO: f64 = if LAMBDA <= MU { LAMBDA / MU } else { 1.0 };
-
     // コストを正確に算出できるようになるまでのつなぎとして、概算を表示する
     // task_cntは「次に表示されるタスク番号」なので、マイナス1する
     let minutes = (total_estimated_work_seconds as f64 / 60.0 / RHO).ceil() as i64 + busy_minutes;
@@ -393,7 +393,7 @@ fn execute_show_all_tasks(
                         .or_insert(1);
 
                     let estimated_work_minutes =
-                        (task.get_estimated_work_seconds() as f64 / 60.0).ceil() as i64;
+                        (task.get_estimated_work_seconds() as f64 / 60.0 / RHO).ceil() as i64;
 
                     total_leaf_estimated_work_minutes_of_the_date_counter
                         .entry(dt.date_naive())
