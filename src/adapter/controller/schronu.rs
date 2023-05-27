@@ -501,7 +501,14 @@ fn execute_show_all_tasks(
 
     writeln_newline(stdout, "").unwrap();
 
-    for (date, cnt) in &counter_arr {
+    // 未来のサマリは見ても仕方ないので、直近の8日ぶん(配列の末尾)に絞る
+    let start_ind = if counter_arr.len() >= 8 {
+        counter_arr.len() - 8
+    } else {
+        0
+    };
+
+    for (date, cnt) in &counter_arr[start_ind..] {
         let total_estimated_work_minutes_of_the_date: i64 =
             *total_estimated_work_minutes_of_the_date_counter
                 .get(date)
