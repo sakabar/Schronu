@@ -915,7 +915,7 @@ fn execute(
                 );
             }
         }
-        "突" | "interrupt" => {
+        "突" | "unplanned" => {
             if tokens.len() >= 2 {
                 let new_project_name_str = &tokens[1];
 
@@ -1369,28 +1369,33 @@ fn application(
 
                 //////////////////////////////
 
-                execute_show_leaf_tasks(&mut stdout, task_repository, free_time_manager);
+                // スクロールするのが面倒なので、新や突のコマンドで新しくタスクを作った後は表示しない
+                // Todo: "new" や  "unplanned" の場合にも対応する
+                let fst_char_opt = line.chars().nth(0);
+                if fst_char_opt != Some('新') && fst_char_opt != Some('突') {
+                    execute_show_leaf_tasks(&mut stdout, task_repository, free_time_manager);
 
-                match focused_task_id_opt {
-                    Some(focused_task_id) => {
-                        let focused_task_opt = task_repository.get_by_id(focused_task_id);
+                    match focused_task_id_opt {
+                        Some(focused_task_id) => {
+                            let focused_task_opt = task_repository.get_by_id(focused_task_id);
 
-                        execute_show_ancestor(&mut stdout, &focused_task_opt);
+                            execute_show_ancestor(&mut stdout, &focused_task_opt);
 
-                        match focused_task_opt {
-                            Some(focused_task) => {
-                                println!("{}focused task is:", termion::cursor::Left(MAX_COL));
-                                println!(
-                                    "{}{:?}",
-                                    termion::cursor::Left(MAX_COL),
-                                    focused_task.get_attr()
-                                );
-                                stdout.flush().unwrap();
+                            match focused_task_opt {
+                                Some(focused_task) => {
+                                    println!("{}focused task is:", termion::cursor::Left(MAX_COL));
+                                    println!(
+                                        "{}{:?}",
+                                        termion::cursor::Left(MAX_COL),
+                                        focused_task.get_attr()
+                                    );
+                                    stdout.flush().unwrap();
+                                }
+                                None => {}
                             }
-                            None => {}
                         }
+                        None => {}
                     }
-                    None => {}
                 }
 
                 //////////////////////////////
