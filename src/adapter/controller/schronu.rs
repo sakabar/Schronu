@@ -1247,7 +1247,27 @@ fn application(
                 stdout.flush().unwrap();
             }
             Key::Ctrl('k') => {
-                // todo!("未実装です");
+                // カーソルの位置を変えずに後ろをカットする
+                line = line.chars().take(cursor_x).collect();
+
+                write!(
+                    stdout,
+                    "{}{}",
+                    termion::cursor::Left(MAX_COL),
+                    termion::clear::CurrentLine,
+                )
+                .unwrap();
+
+                let width = get_width_for_rerender(&header, &line, cursor_x);
+                write!(stdout, "{}{}", header, line).unwrap();
+                write!(
+                    stdout,
+                    "{}{}",
+                    termion::cursor::Left(MAX_COL),
+                    termion::cursor::Right(width)
+                )
+                .unwrap();
+                stdout.flush().unwrap();
             }
             Key::Backspace | Key::Ctrl('h') => {
                 let byte_offset_opt = get_byte_offset_for_deletion(&line, cursor_x);
