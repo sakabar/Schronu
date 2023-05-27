@@ -363,6 +363,7 @@ fn execute_show_leaf_tasks(
 fn execute_show_all_tasks(
     stdout: &mut RawTerminal<Stdout>,
     task_repository: &mut dyn TaskRepositoryTrait,
+    pattern_opt: &Option<String>,
 ) {
     // Hash化できる要素しか入れられないので、いったんidだけ入れる
     // pending_until: DateTime<Local>,
@@ -482,7 +483,17 @@ fn execute_show_all_tasks(
                     total_estimated_work_hours,
                     shorten_name
                 );
-                msgs_with_dt.push((*dt, *rank, msg));
+
+                match pattern_opt {
+                    Some(pattern) => {
+                        if name.contains(pattern) {
+                            msgs_with_dt.push((*dt, *rank, msg));
+                        }
+                    }
+                    None => {
+                        msgs_with_dt.push((*dt, *rank, msg));
+                    }
+                }
             }
             None => {}
         }
@@ -956,7 +967,13 @@ fn execute(
             execute_show_leaf_tasks(stdout, task_repository, free_time_manager);
         }
         "全" | "all" => {
-            execute_show_all_tasks(stdout, task_repository);
+            let pattern_opt = if tokens.len() >= 2 {
+                Some(tokens[1].to_string())
+            } else {
+                None
+            };
+
+            execute_show_all_tasks(stdout, task_repository, &pattern_opt);
         }
         "見" | "focus" | "fc" => {
             if tokens.len() >= 2 {
@@ -1113,7 +1130,7 @@ fn application(
 
     ///////////////////////
 
-    execute_show_all_tasks(&mut stdout, task_repository);
+    execute_show_all_tasks(&mut stdout, task_repository, &None);
 
     ///////////////////////
 
