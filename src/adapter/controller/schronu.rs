@@ -586,7 +586,17 @@ fn execute_pick(
                 task.set_orig_status(Status::Todo);
             });
         }
-        Err(_) => {}
+        Err(_) => {
+            // 今フォーカスが当たっているタスクをtodoに戻す
+            match focused_task_id_opt {
+                Some(focused_task_id) => {
+                    task_repository.get_by_id(*focused_task_id).map(|task| {
+                        task.set_orig_status(Status::Todo);
+                    });
+                }
+                None => {}
+            }
+        }
     }
 }
 
@@ -987,10 +997,8 @@ fn execute(
             }
         }
         "選" | "pick" => {
-            if tokens.len() >= 2 {
-                let new_task_id_str = &tokens[1];
-                execute_pick(task_repository, focused_task_id_opt, new_task_id_str);
-            }
+            let new_task_id_str = if tokens.len() >= 2 { &tokens[1] } else { "" };
+            execute_pick(task_repository, focused_task_id_opt, new_task_id_str);
         }
         "開" | "open" | "op" => {
             execute_open_link(&focused_task_opt);
