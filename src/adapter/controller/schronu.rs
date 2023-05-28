@@ -1376,6 +1376,21 @@ fn application(
                         &mut focused_task_id_opt,
                         &s,
                     );
+                } else if line == "y" {
+                    // skip "y"early
+                    let now: DateTime<Local> = Local::now();
+                    let next_morning = get_next_morning_datetime(now);
+                    let sec = (next_morning - now).num_seconds() + 86400 * 365 * 5;
+
+                    let s = format!("後 {}秒", sec).to_string();
+
+                    execute(
+                        &mut stdout,
+                        task_repository,
+                        free_time_manager,
+                        &mut focused_task_id_opt,
+                        &s,
+                    );
                 } else {
                     execute(
                         &mut stdout,
