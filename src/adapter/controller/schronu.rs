@@ -1391,28 +1391,29 @@ fn application(
                 let fst_char_opt = line.chars().nth(0);
                 if fst_char_opt != Some('新') && fst_char_opt != Some('突') {
                     execute_show_leaf_tasks(&mut stdout, task_repository, free_time_manager);
+                }
 
-                    match focused_task_id_opt {
-                        Some(focused_task_id) => {
-                            let focused_task_opt = task_repository.get_by_id(focused_task_id);
+                match focused_task_id_opt {
+                    Some(focused_task_id) => {
+                        let focused_task_opt = task_repository.get_by_id(focused_task_id);
 
-                            execute_show_ancestor(&mut stdout, &focused_task_opt);
+                        execute_show_ancestor(&mut stdout, &focused_task_opt);
 
-                            match focused_task_opt {
-                                Some(focused_task) => {
-                                    println!("{}focused task is:", termion::cursor::Left(MAX_COL));
-                                    println!(
-                                        "{}{:?}",
-                                        termion::cursor::Left(MAX_COL),
-                                        focused_task.get_attr()
-                                    );
-                                    stdout.flush().unwrap();
-                                }
-                                None => {}
+                        // フォーカスしているタスクを表示
+                        match focused_task_opt {
+                            Some(focused_task) => {
+                                println!("{}focused task is:", termion::cursor::Left(MAX_COL));
+                                println!(
+                                    "{}{:?}",
+                                    termion::cursor::Left(MAX_COL),
+                                    focused_task.get_attr()
+                                );
+                                stdout.flush().unwrap();
                             }
+                            None => {}
                         }
-                        None => {}
                     }
+                    None => {}
                 }
 
                 //////////////////////////////
