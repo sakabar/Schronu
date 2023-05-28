@@ -491,7 +491,7 @@ fn execute_show_all_tasks(
                             if rank == &0 {
                                 msgs_with_dt.push((*dt, *rank, msg));
                             }
-                        } else if name.contains(pattern) {
+                        } else if name.to_lowercase().contains(&pattern.to_lowercase()) {
                             msgs_with_dt.push((*dt, *rank, msg));
                         }
                     }
