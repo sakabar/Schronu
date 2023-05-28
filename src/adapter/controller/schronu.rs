@@ -1347,6 +1347,17 @@ fn application(
                         &mut focused_task_id_opt,
                         &s,
                     );
+                } else if line == "h" {
+                    // skip an "h"our
+                    let s = "後 1時間".to_string();
+
+                    execute(
+                        &mut stdout,
+                        task_repository,
+                        free_time_manager,
+                        &mut focused_task_id_opt,
+                        &s,
+                    );
                 } else if line == "d" {
                     // skip "d"aily
                     let now: DateTime<Local> = Local::now();
