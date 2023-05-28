@@ -486,7 +486,12 @@ fn execute_show_all_tasks(
 
                 match pattern_opt {
                     Some(pattern) => {
-                        if name.contains(pattern) {
+                        // Todo: 文字列マッチの絞り込み機能とその他の属性による絞り込みを機能を分ける
+                        if pattern == "葉" {
+                            if rank == &0 {
+                                msgs_with_dt.push((*dt, *rank, msg));
+                            }
+                        } else if name.contains(pattern) {
                             msgs_with_dt.push((*dt, *rank, msg));
                         }
                     }
