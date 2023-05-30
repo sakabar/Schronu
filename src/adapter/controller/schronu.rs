@@ -1425,10 +1425,14 @@ fn application(
 
                 //////////////////////////////
 
-                // スクロールするのが面倒なので、新や突のコマンドで新しくタスクを作った後は表示しない
+                // スクロールするのが面倒なので、新や突のように付加情報を表示するコマンドの直後は葉を表示しない
                 // Todo: "new" や  "unplanned" の場合にも対応する
                 let fst_char_opt = line.chars().nth(0);
-                if fst_char_opt != Some('新') && fst_char_opt != Some('突') {
+                if fst_char_opt != Some('新')
+                    && fst_char_opt != Some('突')
+                    && fst_char_opt != Some('全')
+                    && fst_char_opt != Some('葉')
+                {
                     execute_show_leaf_tasks(&mut stdout, task_repository, free_time_manager);
                 }
 
