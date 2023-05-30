@@ -552,13 +552,15 @@ fn execute_show_all_tasks(
         };
 
         let s = format!(
-            "{}({})\t{:02}/{:02}タスク\t{:02}/{:02}時間",
+            "{}({})\t{:02}/{:02}[時間]\t{:02}/{:02}[タスク]\t{:02}/{:02}[分/タスク]",
             date,
             weekday_jp,
+            total_leaf_estimated_work_hours_of_the_date,
+            total_estimated_work_hours_of_the_date,
             leaf_cnt_of_the_date,
             cnt,
-            total_leaf_estimated_work_hours_of_the_date,
-            total_estimated_work_hours_of_the_date
+            total_leaf_estimated_work_minutes_of_the_date / (leaf_cnt_of_the_date as i64),
+            total_estimated_work_minutes_of_the_date / (**cnt as i64),
         );
         writeln_newline(stdout, &s).unwrap();
     }
