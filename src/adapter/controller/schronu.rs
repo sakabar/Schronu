@@ -1376,7 +1376,7 @@ fn application(
                     // skip "w"eekly
                     let now: DateTime<Local> = Local::now();
                     let next_morning = get_next_morning_datetime(now);
-                    let sec = (next_morning - now).num_seconds() + 86400 * 4;
+                    let sec = (next_morning - now).num_seconds() + 86400 * 6;
 
                     let s = format!("後 {}秒", sec).to_string();
 
