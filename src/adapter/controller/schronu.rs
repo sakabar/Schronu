@@ -1446,6 +1446,7 @@ fn application(
                     && fst_char_opt != Some('突')
                     && fst_char_opt != Some('全')
                     && fst_char_opt != Some('葉')
+                    && fst_char_opt != Some('木')
                 {
                     execute_show_leaf_tasks(&mut stdout, task_repository, free_time_manager);
                 }
