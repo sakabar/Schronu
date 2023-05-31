@@ -223,6 +223,9 @@ fn execute_start_new_project(
 ) {
     let root_task = Task::new(new_project_name_str);
 
+    // 本来的には、TaskAttrのデフォルト値の方を5にすべきかも
+    root_task.set_priority(5);
+
     let message = format!(
         "{}\t{}",
         root_task.get_id().hyphenated().to_string(),
