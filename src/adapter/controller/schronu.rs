@@ -562,8 +562,17 @@ fn execute_show_all_tasks(
             total_estimated_work_hours_of_the_date,
             leaf_cnt_of_the_date,
             cnt,
-            total_leaf_estimated_work_minutes_of_the_date / (leaf_cnt_of_the_date as i64),
-            total_estimated_work_minutes_of_the_date / (**cnt as i64),
+            if leaf_cnt_of_the_date > 0 {
+                (total_leaf_estimated_work_minutes_of_the_date as f64 / leaf_cnt_of_the_date as f64)
+                    .ceil() as i64
+            } else {
+                0
+            },
+            if **cnt > 0 {
+                (total_estimated_work_minutes_of_the_date as f64 / **cnt as f64).ceil() as i64
+            } else {
+                0
+            },
         );
         writeln_newline(stdout, &s).unwrap();
     }
