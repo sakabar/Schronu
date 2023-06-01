@@ -215,7 +215,7 @@ fn execute_show_tree(stdout: &mut RawTerminal<Stdout>, focused_task_opt: &Option
 }
 
 fn execute_start_new_project(
-    stdout: &mut RawTerminal<Stdout>,
+    _stdout: &mut RawTerminal<Stdout>,
     focused_task_id_opt: &mut Option<Uuid>,
     task_repository: &mut dyn TaskRepositoryTrait,
     new_project_name_str: &str,
@@ -226,13 +226,6 @@ fn execute_start_new_project(
 
     // 本来的には、TaskAttrのデフォルト値の方を5にすべきかも
     root_task.set_priority(5);
-
-    let message = format!(
-        "{}\t{}",
-        root_task.get_id().hyphenated().to_string(),
-        root_task.get_name()
-    );
-    writeln_newline(stdout, &message).unwrap();
 
     if is_deferred {
         // 次回の午前6時
