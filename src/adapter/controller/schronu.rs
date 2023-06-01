@@ -829,16 +829,25 @@ fn execute_finish(focused_task_id_opt: &mut Option<Uuid>, focused_task_opt: &Opt
 
         // 親タスクがrepetition_interval_daysを持っているなら、
         // その値に従って兄弟ノードを生成する
-        // start_timeは(repetition_interval_days-1)日後の次の朝6時
+        // start_timeは日付は(repetition_interval_days-1)日後で、時刻は親タスクのstart_timeを引き継ぐ
         // タスク名は「親タスク名(日付)」
         // estimated_work_secondsは親タスクを引き継ぐ
         match focused_task.parent() {
             Some(parent_task) => match parent_task.get_repetition_interval_days_opt() {
                 Some(repetition_interval_days) => {
                     let parent_task_name = parent_task.get_name();
+                    let parent_task_start_time = parent_task.get_start_time();
                     let new_start_time = get_next_morning_datetime(
                         Local::now() + Duration::days(repetition_interval_days - 1),
-                    );
+                    )
+                    .with_hour(parent_task_start_time.hour())
+                    .unwrap()
+                    .with_minute(parent_task_start_time.minute())
+                    .unwrap()
+                    .with_second(parent_task_start_time.second())
+                    .unwrap()
+                    .with_nanosecond(0)
+                    .unwrap();
                     let new_task_month = new_start_time.month();
                     let new_task_day = new_start_time.day();
                     let new_task_name =
