@@ -32,7 +32,7 @@ const MY_ASCII_SET: &AsciiSet = &CONTROLS.add(b' ');
 
 // 単位時間は「1日」
 const LAMBDA: f64 = 4.0;
-const MU: f64 = 5.0;
+const MU: f64 = 4.0;
 const RHO: f64 = if LAMBDA <= MU { LAMBDA / MU } else { 1.0 };
 
 fn writeln_newline(stdout: &mut RawTerminal<Stdout>, message: &str) -> Result<(), std::io::Error> {
@@ -1132,7 +1132,7 @@ fn get_byte_offset_for_deletion_正常系() {
 }
 
 fn main() {
-    let mut task_repository = TaskRepository::new("../Schronu-alpha/tasks/");
+    let mut task_repository = TaskRepository::new("../Schronu-private/tasks/");
     let mut free_time_manager = FreeTimeManager::new();
 
     // controllerで実体を見るのを避けるために、1つ関数を切る
