@@ -292,10 +292,10 @@ fn execute_show_ancestor(stdout: &mut RawTerminal<Stdout>, focused_task_opt: &Op
 fn execute_show_leaf_tasks(
     stdout: &mut RawTerminal<Stdout>,
     task_repository: &mut dyn TaskRepositoryTrait,
-    free_time_manager: &mut dyn FreeTimeManagerTrait,
+    _free_time_manager: &mut dyn FreeTimeManagerTrait,
 ) {
     let mut task_cnt = 1;
-    let mut total_estimated_work_seconds = 0;
+    let mut _total_estimated_work_seconds = 0;
     for project_root_task in task_repository.get_all_projects().iter() {
         let project_name = project_root_task.get_name();
 
@@ -309,56 +309,57 @@ fn execute_show_leaf_tasks(
             task_cnt += 1;
 
             let estimated_work_seconds = leaf_task.get_estimated_work_seconds();
-            total_estimated_work_seconds += estimated_work_seconds;
+            _total_estimated_work_seconds += estimated_work_seconds;
         }
     }
     writeln_newline(stdout, "").unwrap();
 
-    let last_synced_time = task_repository.get_last_synced_time();
+    // rhoや見込み完了時間を計算する処理はshow_all_tasks()に移したのでコメントアウト
+    // let last_synced_time = task_repository.get_last_synced_time();
 
-    // タスクができない時間を決め打ちで登録する
-    let busy_time_slots = [((0, 0), (21, 0))];
+    // // タスクができない時間を決め打ちで登録する
+    // let busy_time_slots = [((0, 0), (21, 0))];
 
-    for ((start_hour, start_minute), (end_hour, end_minute)) in busy_time_slots.iter() {
-        free_time_manager.register_busy_time_slot(
-            &last_synced_time
-                .with_hour(*start_hour)
-                .expect("invalid hour")
-                .with_minute(*start_minute)
-                .expect("invalid minute"),
-            &last_synced_time
-                .with_hour(*end_hour)
-                .expect("invalid hour")
-                .with_minute(*end_minute)
-                .expect("invalid minute"),
-        );
-    }
+    // for ((start_hour, start_minute), (end_hour, end_minute)) in busy_time_slots.iter() {
+    //     free_time_manager.register_busy_time_slot(
+    //         &last_synced_time
+    //             .with_hour(*start_hour)
+    //             .expect("invalid hour")
+    //             .with_minute(*start_minute)
+    //             .expect("invalid minute"),
+    //         &last_synced_time
+    //             .with_hour(*end_hour)
+    //             .expect("invalid hour")
+    //             .with_minute(*end_minute)
+    //             .expect("invalid minute"),
+    //     );
+    // }
 
-    let eod = last_synced_time
-        .with_hour(23)
-        .expect("invalid hour")
-        .with_minute(59)
-        .expect("invalid minute");
-    let busy_minutes = free_time_manager.get_busy_minutes(&last_synced_time, &eod);
+    // let eod = last_synced_time
+    //     .with_hour(23)
+    //     .expect("invalid hour")
+    //     .with_minute(59)
+    //     .expect("invalid minute");
+    // let busy_minutes = free_time_manager.get_busy_minutes(&last_synced_time, &eod);
 
-    // コストを正確に算出できるようになるまでのつなぎとして、概算を表示する
-    // task_cntは「次に表示されるタスク番号」なので、マイナス1する
-    let minutes = (total_estimated_work_seconds as f64 / 60.0 / RHO).ceil() as i64 + busy_minutes;
+    // // コストを正確に算出できるようになるまでのつなぎとして、概算を表示する
+    // // task_cntは「次に表示されるタスク番号」なので、マイナス1する
+    // let minutes = (total_estimated_work_seconds as f64 / 60.0 / RHO).ceil() as i64 + busy_minutes;
 
-    let dt = last_synced_time + Duration::minutes(minutes);
+    // let dt = last_synced_time + Duration::minutes(minutes);
 
-    let busy_hours = (busy_minutes as f64 / 60.0).ceil() as i64;
-    let busy_s = format!("残り拘束時間は{}時間です", busy_hours);
-    writeln_newline(stdout, &busy_s).unwrap();
+    // let busy_hours = (busy_minutes as f64 / 60.0).ceil() as i64;
+    // let busy_s = format!("残り拘束時間は{}時間です", busy_hours);
+    // writeln_newline(stdout, &busy_s).unwrap();
 
-    let hours = (minutes as f64 / 60.0).ceil() as i64;
-    let s = format!("完了見込み日時は{}時間後の{}です", hours, dt);
-    writeln_newline(stdout, &s).unwrap();
+    // let hours = (minutes as f64 / 60.0).ceil() as i64;
+    // let s = format!("完了見込み日時は{}時間後の{}です", hours, dt);
+    // writeln_newline(stdout, &s).unwrap();
 
-    let lq = LAMBDA / (MU - LAMBDA);
-    let s2 = format!("rho = {}, Lq = {:.1}", RHO, lq);
-    writeln_newline(stdout, &s2).unwrap();
-    writeln_newline(stdout, "").unwrap();
+    // let lq = LAMBDA / (MU - LAMBDA);
+    // let s2 = format!("rho = {}, Lq = {:.1}", RHO, lq);
+    // writeln_newline(stdout, &s2).unwrap();
+    // writeln_newline(stdout, "").unwrap();
 }
 
 fn execute_show_all_tasks(
