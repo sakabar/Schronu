@@ -216,6 +216,7 @@ fn execute_show_tree(stdout: &mut RawTerminal<Stdout>, focused_task_opt: &Option
 
 fn execute_start_new_project(
     stdout: &mut RawTerminal<Stdout>,
+    focused_task_id_opt: &mut Option<Uuid>,
     task_repository: &mut dyn TaskRepositoryTrait,
     new_project_name_str: &str,
     is_deferred: bool,
@@ -246,6 +247,10 @@ fn execute_start_new_project(
         }
         None => {}
     }
+
+    // フォーカスを移す
+    *focused_task_id_opt = Some(root_task.get_id());
+
     task_repository.start_new_project(root_task);
 }
 
@@ -959,6 +964,7 @@ fn execute(
                 let is_deferred = true;
                 execute_start_new_project(
                     stdout,
+                    focused_task_id_opt,
                     task_repository,
                     new_project_name_str,
                     is_deferred,
@@ -982,6 +988,7 @@ fn execute(
                 let is_deferred = false;
                 execute_start_new_project(
                     stdout,
+                    focused_task_id_opt,
                     task_repository,
                     new_project_name_str,
                     is_deferred,
