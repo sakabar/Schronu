@@ -839,8 +839,10 @@ fn execute_finish(focused_task_id_opt: &mut Option<Uuid>, focused_task_opt: &Opt
                     let new_start_time = get_next_morning_datetime(
                         Local::now() + Duration::days(repetition_interval_days - 1),
                     );
+                    let new_task_month = new_start_time.month();
+                    let new_task_day = new_start_time.day();
                     let new_task_name =
-                        format!("{}({})", parent_task_name, new_start_time.format("%m/%d"));
+                        format!("{}({}/{})", parent_task_name, new_task_month, new_task_day);
 
                     let estimated_work_seconds = parent_task.get_estimated_work_seconds();
 
