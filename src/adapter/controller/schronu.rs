@@ -364,6 +364,7 @@ fn execute_show_leaf_tasks(
 fn execute_show_all_tasks(
     stdout: &mut RawTerminal<Stdout>,
     task_repository: &mut dyn TaskRepositoryTrait,
+    free_time_manager: &mut dyn FreeTimeManagerTrait,
     pattern_opt: &Option<String>,
 ) {
     // Hash化できる要素しか入れられないので、いったんidだけ入れる
@@ -437,6 +438,23 @@ fn execute_show_all_tasks(
 
     let mut msgs_with_dt: Vec<(DateTime<Local>, usize, String)> = vec![];
 
+    // ここからρ計算用
+    let last_synced_time = task_repository.get_last_synced_time();
+    // let eod = last_synced_time
+    //     .with_hour(23)
+    //     .expect("invalid hour")
+    //     .with_minute(59)
+    //     .expect("invalid minute");
+    let eod = (get_next_morning_datetime(last_synced_time) + Duration::days(1))
+        .with_hour(1)
+        .expect("invalid hour")
+        .with_minute(30)
+        .expect("invalid minute");
+
+    // 今日着手可能な葉タスクまたは今日までが〆切のタスクの合計
+    let mut total_deadline_estimated_work_seconds = 0;
+    // ここまでρ計算用
+
     let mut total_estimated_work_minutes: i64 = 0;
     for (ind, (dt, rank, deadline_time_opt, id)) in dt_id_tpl_arr.iter().enumerate() {
         let task_opt = task_repository.get_by_id(*id);
@@ -457,6 +475,16 @@ fn execute_show_all_tasks(
                 };
                 let estimated_work_minutes =
                     (task.get_estimated_work_seconds() as f64 / 60.0 / RHO).ceil() as i64;
+
+                // ここからρ計算用
+                if (rank == &0 && dt < &eod)
+                    || (task.get_deadline_time_opt().is_some()
+                        && task.get_deadline_time_opt().unwrap()
+                            < last_synced_time + Duration::days(1))
+                {
+                    total_deadline_estimated_work_seconds += task.get_estimated_work_seconds();
+                }
+                // ここまでρ計算用
 
                 total_estimated_work_minutes_of_the_date_counter
                     .entry(dt.date_naive())
@@ -574,6 +602,67 @@ fn execute_show_all_tasks(
         );
         writeln_newline(stdout, &s).unwrap();
     }
+    writeln_newline(stdout, "").unwrap();
+
+    // タスクができない時間を決め打ちで登録する
+    let busy_time_slots = [];
+
+    for ((start_hour, start_minute), (end_hour, end_minute)) in busy_time_slots.iter() {
+        free_time_manager.register_busy_time_slot(
+            &last_synced_time
+                .with_hour(*start_hour)
+                .expect("invalid hour")
+                .with_minute(*start_minute)
+                .expect("invalid minute"),
+            &last_synced_time
+                .with_hour(*end_hour)
+                .expect("invalid hour")
+                .with_minute(*end_minute)
+                .expect("invalid minute"),
+        );
+    }
+
+    // 1日の残りの時間から稼働率ρを計算する
+    let busy_seconds = free_time_manager.get_busy_minutes(&last_synced_time, &eod) * 60;
+    let lambda_seconds = total_deadline_estimated_work_seconds + busy_seconds;
+
+    let estimated_finish_dt = last_synced_time + Duration::seconds(lambda_seconds);
+
+    let busy_hours = (busy_seconds as f64 / 60.0 / 60.0).ceil() as i64;
+    let busy_s = format!("残り拘束時間は{}時間です", busy_hours);
+    writeln_newline(stdout, &busy_s).unwrap();
+
+    let hours = (lambda_seconds as f64 / 60.0 / 60.0).ceil() as i64;
+    let s = format!(
+        "完了見込み日時は{}時間後の{}です",
+        hours, estimated_finish_dt
+    );
+    writeln_newline(stdout, &s).unwrap();
+
+    let mu_seconds = (eod - last_synced_time).num_seconds();
+    let lambda_hours = lambda_seconds as f64 / 3600.0;
+    let mu_hours = mu_seconds as f64 / 3600.0;
+    let rho = lambda_seconds as f64 / mu_seconds as f64;
+    let lq_opt = if rho < 1.0 {
+        Some(rho / (1.0 - rho))
+    } else {
+        None
+    };
+    let s2 = match lq_opt {
+        Some(lq) => {
+            format!(
+                "rho = {:.1} / {:.1} = {:.2}, Lq = {:.1}",
+                lambda_hours, mu_hours, rho, lq
+            )
+        }
+        None => {
+            format!(
+                "rho = {:.1} / {:.1} = {:.2}, Lq = inf",
+                lambda_hours, mu_hours, rho
+            )
+        }
+    };
+    writeln_newline(stdout, &s2).unwrap();
     writeln_newline(stdout, "").unwrap();
 }
 
@@ -1013,7 +1102,7 @@ fn execute(
                 None
             };
 
-            execute_show_all_tasks(stdout, task_repository, &pattern_opt);
+            execute_show_all_tasks(stdout, task_repository, free_time_manager, &pattern_opt);
         }
         "見" | "focus" | "fc" => {
             if tokens.len() >= 2 {
@@ -1168,7 +1257,7 @@ fn application(
 
     ///////////////////////
 
-    execute_show_all_tasks(&mut stdout, task_repository, &None);
+    execute_show_all_tasks(&mut stdout, task_repository, free_time_manager, &None);
 
     ///////////////////////
 

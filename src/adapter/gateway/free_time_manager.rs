@@ -21,13 +21,17 @@ impl FreeTimeManager {
 }
 
 impl FreeTimeManagerTrait for FreeTimeManager {
-    // 簡単のため、日を跨いだ取得はされない制約とする
-    // [start, end)
-    // その仕様から、取得できるのは23:59まで。
-    // TODO: エラー処理
+    // 簡単のため、日を跨いだ後は全て自由な時間であるとする
     fn get_free_minutes(&mut self, start: &DateTime<Local>, end: &DateTime<Local>) -> i64 {
+        let eod = start
+            .with_hour(23)
+            .expect("invalid hour")
+            .with_minute(59)
+            .expect("invalid minute");
+
         if start.date_naive() != end.date_naive() {
-            panic!("different date between start and end.");
+            return end.signed_duration_since(eod).num_minutes()
+                + self.get_free_minutes(start, &eod);
         }
 
         let date = start.date_naive();
