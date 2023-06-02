@@ -1320,7 +1320,8 @@ fn application(
 
     ///////////////////////
 
-    execute_show_leaf_tasks(&mut stdout, task_repository, free_time_manager);
+    // 起動直後はrhoの値を見たいので葉は出力しない
+    // execute_show_leaf_tasks(&mut stdout, task_repository, free_time_manager);
 
     // 優先度の最も高いPJを一つ選ぶ
     // 一番下のタスクにフォーカスが自動的に当たる
