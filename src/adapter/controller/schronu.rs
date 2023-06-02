@@ -645,13 +645,41 @@ fn execute_show_all_tasks(
         total_deadline_estimated_work_seconds as f64 / 60.0 / 60.0;
     let mu_seconds = (eod - last_synced_time).num_seconds();
     let mu_hours = mu_seconds as f64 / 3600.0;
+
+    let rho1 = total_deadline_estimated_work_seconds as f64 / (mu_seconds - busy_seconds) as f64;
+    let lq1_opt = if rho1 < 1.0 {
+        Some(rho1 / (1.0 - rho1))
+    } else {
+        None
+    };
+    let s_for_rho1 = match lq1_opt {
+        Some(lq1) => {
+            format!(
+                "ρ_1 = ({:.1} + 0.0) / ({:.1} + 0.0) = {:.2}, Lq = {:.1}",
+                total_deadline_estimated_work_hours,
+                mu_hours - busy_hours,
+                rho1,
+                lq1
+            )
+        }
+        None => {
+            format!(
+                "ρ_1 = ({:.1} + 0.0) / ({:.1} + 0.0) = {:.2}, Lq = inf",
+                total_deadline_estimated_work_hours,
+                mu_hours - busy_hours,
+                rho1
+            )
+        }
+    };
+    writeln_newline(stdout, &s_for_rho1).unwrap();
+
     let rho2 = lambda_seconds as f64 / mu_seconds as f64;
     let lq2_opt = if rho2 < 1.0 {
         Some(rho2 / (1.0 - rho2))
     } else {
         None
     };
-    let s2 = match lq2_opt {
+    let s_for_rho2 = match lq2_opt {
         Some(lq2) => {
             format!(
                 "ρ_2 = ({:.1} + {:.1})/ ({:.1} + {:.1}) = {:.2}, Lq = {:.1}",
@@ -674,7 +702,7 @@ fn execute_show_all_tasks(
             )
         }
     };
-    writeln_newline(stdout, &s2).unwrap();
+    writeln_newline(stdout, &s_for_rho2).unwrap();
 
     writeln_newline(stdout, "").unwrap();
 }
