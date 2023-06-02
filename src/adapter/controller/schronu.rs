@@ -700,7 +700,7 @@ fn execute_show_all_tasks(
     let s_for_rho2 = match lq2_opt {
         Some(lq2) => {
             format!(
-                "ρ_2 = ({:.1} + {:.1})/ ({:.1} + {:.1}) = {:.2}, Lq = {:.1}",
+                "ρ_2 = ({:.1} + {:.1}) / ({:.1} + {:.1}) = {:.2}, Lq = {:.1}",
                 total_deadline_estimated_work_hours,
                 busy_hours,
                 mu_hours - busy_hours,
@@ -711,7 +711,7 @@ fn execute_show_all_tasks(
         }
         None => {
             format!(
-                "ρ_2 = ({:.1} + {:.1})/ ({:.1} + {:.1}) = {:.2}, Lq = inf",
+                "ρ_2 = ({:.1} + {:.1}) / ({:.1} + {:.1}) = {:.2}, Lq = inf",
                 total_deadline_estimated_work_hours,
                 busy_hours,
                 mu_hours - busy_hours,
