@@ -446,7 +446,7 @@ fn execute_show_all_tasks(
     //     .expect("invalid hour")
     //     .with_minute(59)
     //     .expect("invalid minute");
-    let eod = (get_next_morning_datetime(last_synced_time) + Duration::days(1))
+    let eod = (get_next_morning_datetime(last_synced_time) + Duration::days(0))
         .with_hour(1)
         .expect("invalid hour")
         .with_minute(30)
@@ -629,41 +629,81 @@ fn execute_show_all_tasks(
 
     let estimated_finish_dt = last_synced_time + Duration::seconds(lambda_seconds);
 
-    let busy_hours = (busy_seconds as f64 / 60.0 / 60.0).ceil() as i64;
-    let busy_s = format!("残り拘束時間は{}時間です", busy_hours);
+    let busy_hours = busy_seconds as f64 / 60.0 / 60.0;
+    let busy_s = format!("残り拘束時間は{:.1}時間です", busy_hours);
     writeln_newline(stdout, &busy_s).unwrap();
 
-    let hours = (lambda_seconds as f64 / 60.0 / 60.0).ceil() as i64;
+    let lambda_hours = lambda_seconds as f64 / 60.0 / 60.0;
     let s = format!(
-        "完了見込み日時は{}時間後の{}です",
-        hours, estimated_finish_dt
+        "完了見込み日時は{:.1}時間後の{}です",
+        lambda_hours,
+        estimated_finish_dt.format("%Y/%m/%d %H:%M:%S")
     );
     writeln_newline(stdout, &s).unwrap();
 
+    let total_deadline_estimated_work_hours =
+        total_deadline_estimated_work_seconds as f64 / 60.0 / 60.0;
     let mu_seconds = (eod - last_synced_time).num_seconds();
-    let lambda_hours = lambda_seconds as f64 / 3600.0;
     let mu_hours = mu_seconds as f64 / 3600.0;
-    let rho = lambda_seconds as f64 / mu_seconds as f64;
-    let lq_opt = if rho < 1.0 {
-        Some(rho / (1.0 - rho))
+
+    let rho1 = total_deadline_estimated_work_seconds as f64 / (mu_seconds - busy_seconds) as f64;
+    let lq1_opt = if rho1 < 1.0 {
+        Some(rho1 / (1.0 - rho1))
     } else {
         None
     };
-    let s2 = match lq_opt {
-        Some(lq) => {
+    let s_for_rho1 = match lq1_opt {
+        Some(lq1) => {
             format!(
-                "rho = {:.1} / {:.1} = {:.2}, Lq = {:.1}",
-                lambda_hours, mu_hours, rho, lq
+                "ρ_1 = ({:.1} + 0.0) / ({:.1} + 0.0) = {:.2}, Lq = {:.1}",
+                total_deadline_estimated_work_hours,
+                mu_hours - busy_hours,
+                rho1,
+                lq1
             )
         }
         None => {
             format!(
-                "rho = {:.1} / {:.1} = {:.2}, Lq = inf",
-                lambda_hours, mu_hours, rho
+                "ρ_1 = ({:.1} + 0.0) / ({:.1} + 0.0) = {:.2}, Lq = inf",
+                total_deadline_estimated_work_hours,
+                mu_hours - busy_hours,
+                rho1
             )
         }
     };
-    writeln_newline(stdout, &s2).unwrap();
+    writeln_newline(stdout, &s_for_rho1).unwrap();
+
+    let rho2 = lambda_seconds as f64 / mu_seconds as f64;
+    let lq2_opt = if rho2 < 1.0 {
+        Some(rho2 / (1.0 - rho2))
+    } else {
+        None
+    };
+    let s_for_rho2 = match lq2_opt {
+        Some(lq2) => {
+            format!(
+                "ρ_2 = ({:.1} + {:.1})/ ({:.1} + {:.1}) = {:.2}, Lq = {:.1}",
+                total_deadline_estimated_work_hours,
+                busy_hours,
+                mu_hours - busy_hours,
+                busy_hours,
+                rho2,
+                lq2
+            )
+        }
+        None => {
+            format!(
+                "ρ_2 = ({:.1} + {:.1})/ ({:.1} + {:.1}) = {:.2}, Lq = inf",
+                total_deadline_estimated_work_hours,
+                busy_hours,
+                mu_hours - busy_hours,
+                busy_hours,
+                rho2
+            )
+        }
+    };
+    writeln_newline(stdout, &s_for_rho2).unwrap();
+
     writeln_newline(stdout, "").unwrap();
 }
 
