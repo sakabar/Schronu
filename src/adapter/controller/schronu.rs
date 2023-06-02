@@ -578,14 +578,14 @@ fn execute_show_all_tasks(
                 .get(date)
                 .unwrap_or(&0);
         let total_estimated_work_hours_of_the_date =
-            (total_estimated_work_minutes_of_the_date as f64 / 60.0).ceil() as i64;
+            total_estimated_work_minutes_of_the_date as f64 / 60.0;
 
         let total_leaf_estimated_work_minutes_of_the_date: i64 =
             *total_leaf_estimated_work_minutes_of_the_date_counter
                 .get(date)
                 .unwrap_or(&0);
         let total_leaf_estimated_work_hours_of_the_date =
-            (total_leaf_estimated_work_minutes_of_the_date as f64 / 60.0).ceil() as i64;
+            total_leaf_estimated_work_minutes_of_the_date as f64 / 60.0;
 
         let leaf_cnt_of_the_date = *leaf_counter.get(date).unwrap_or(&0);
 
@@ -600,7 +600,7 @@ fn execute_show_all_tasks(
         };
 
         let s = format!(
-            "{}({})\t{:02}/{:02}[時間]\t{:02}/{:02}[タスク]\t{:02}/{:02}[分/タスク]",
+            "{}({})\t{:02.1}/{:02.1}[時間]\t{:02}/{:02}[タスク]\t{:02}/{:02}[分/タスク]",
             date,
             weekday_jp,
             total_leaf_estimated_work_hours_of_the_date,
