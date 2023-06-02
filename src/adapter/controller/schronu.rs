@@ -943,6 +943,7 @@ fn execute_wait_for_others(focused_task_opt: &Option<Task>) {
 }
 
 fn execute_defer(
+    task_repository: &mut dyn TaskRepositoryTrait,
     focused_task_id_opt: &mut Option<Uuid>,
     focused_task_opt: &Option<Task>,
     amount_str: &str,
@@ -958,7 +959,7 @@ fn execute_defer(
     };
 
     focused_task_opt.as_ref().and_then(|focused_task| {
-        focused_task.set_pending_until(Local::now() + duration);
+        focused_task.set_pending_until(task_repository.get_last_synced_time() + duration);
         focused_task.set_orig_status(Status::Pending);
 
         // dummy
@@ -1236,7 +1237,13 @@ fn execute(
                 let amount_str = &tokens[1];
                 let unit_str = &tokens[2].to_lowercase();
 
-                execute_defer(focused_task_id_opt, &focused_task_opt, amount_str, unit_str);
+                execute_defer(
+                    task_repository,
+                    focused_task_id_opt,
+                    &focused_task_opt,
+                    amount_str,
+                    unit_str,
+                );
             } else if tokens.len() == 2 {
                 // "defer 5days" のように引数が1つしか与えられなかった場合は、数字部分とそれ以降に分割する
                 let splitted = split_amount_and_unit(tokens[1]);
@@ -1244,7 +1251,13 @@ fn execute(
                     let amount_str = &splitted[0];
                     let unit_str = &splitted[1].to_lowercase();
 
-                    execute_defer(focused_task_id_opt, &focused_task_opt, amount_str, unit_str);
+                    execute_defer(
+                        task_repository,
+                        focused_task_id_opt,
+                        &focused_task_opt,
+                        amount_str,
+                        unit_str,
+                    );
                 }
             }
         }
@@ -1301,10 +1314,12 @@ fn application(
     free_time_manager: &mut dyn FreeTimeManagerTrait,
 ) {
     // 時計を合わせる
-    task_repository.sync_clock(Local::now());
+    let now = Local::now();
+    task_repository.sync_clock(now);
 
     // let next_morning = get_next_morning_datetime(now);
-    // task_repository.sync_clock(next_morning + Duration::hours(1));
+    // task_repository.sync_clock(next_morning + Duration::seconds(1));
+
     task_repository.load();
 
     // RawModeを有効にする
