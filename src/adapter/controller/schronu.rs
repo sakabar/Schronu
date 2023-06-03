@@ -408,6 +408,28 @@ fn execute_show_all_tasks(
                         .or_insert(estimated_work_minutes);
                 }
 
+                // 葉タスクではないが〆切が決まっているものについては、便宜的に〆切の日の葉タスクとして扱って時間をカウントすることにする
+                // Todo: 通常のタスクとしてのカウントと葉タスクとしてのカウントが重複するのをうまく解決する
+                // (例) 12.9/11.3[時間] の、/の左右両方でカウント
+                if rank != 0 && task.get_deadline_time_opt().is_some() {
+                    let deadline_time = task.get_deadline_time_opt().unwrap();
+
+                    leaf_counter
+                        .entry(deadline_time.date_naive())
+                        .and_modify(|cnt| *cnt += 1)
+                        .or_insert(1);
+
+                    let estimated_work_minutes =
+                        (task.get_estimated_work_seconds() as f64 / 60.0 / RHO).ceil() as i64;
+
+                    total_leaf_estimated_work_minutes_of_the_date_counter
+                        .entry(deadline_time.date_naive())
+                        .and_modify(|estimated_work_minutes_val| {
+                            *estimated_work_minutes_val += estimated_work_minutes
+                        })
+                        .or_insert(estimated_work_minutes);
+                }
+
                 id_to_dt_map
                     .entry(id)
                     .and_modify(|(dt_val, rank_val, _deadline_time_opt)| {
