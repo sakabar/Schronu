@@ -219,7 +219,7 @@ fn execute_start_new_project(
     focused_task_id_opt: &mut Option<Uuid>,
     task_repository: &mut dyn TaskRepositoryTrait,
     new_project_name_str: &str,
-    is_deferred: bool,
+    defer_days_opt: Option<i64>,
     estimated_work_minutes_opt: Option<i64>,
 ) {
     let root_task = Task::new(new_project_name_str);
@@ -227,12 +227,13 @@ fn execute_start_new_project(
     // 本来的には、TaskAttrのデフォルト値の方を5にすべきかも
     root_task.set_priority(5);
 
-    if is_deferred {
+    defer_days_opt.map(|defer_days| {
         // 次回の午前6時
-        let pending_until = get_next_morning_datetime(task_repository.get_last_synced_time());
+        let pending_until = get_next_morning_datetime(task_repository.get_last_synced_time())
+            + Duration::days(defer_days - 1);
         root_task.set_pending_until(pending_until);
         root_task.set_orig_status(Status::Pending);
-    }
+    });
 
     match estimated_work_minutes_opt {
         Some(estimated_work_minutes) => {
@@ -1090,7 +1091,7 @@ fn execute(
     }
 
     match tokens[0] {
-        "新" | "new" => {
+        "新" | "遊" | "new" | "hobby" => {
             if tokens.len() >= 2 {
                 let new_project_name_str = &tokens[1];
 
@@ -1103,13 +1104,17 @@ fn execute(
                     None
                 };
 
-                let is_deferred = true;
+                let defer_days_opt = if tokens[0] == "新" || tokens[0] == "new" {
+                    Some(1)
+                } else {
+                    Some(1400)
+                };
                 execute_start_new_project(
                     stdout,
                     focused_task_id_opt,
                     task_repository,
                     new_project_name_str,
-                    is_deferred,
+                    defer_days_opt,
                     estimated_work_minutes_opt,
                 );
             }
@@ -1127,13 +1132,13 @@ fn execute(
                     None
                 };
 
-                let is_deferred = false;
+                let defer_days_opt = None;
                 execute_start_new_project(
                     stdout,
                     focused_task_id_opt,
                     task_repository,
                     new_project_name_str,
-                    is_deferred,
+                    defer_days_opt,
                     estimated_work_minutes_opt,
                 );
             }
