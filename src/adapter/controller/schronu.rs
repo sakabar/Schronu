@@ -391,12 +391,11 @@ fn execute_show_all_tasks(
                 let id = task.get_id();
                 let deadline_time_opt = task.get_deadline_time_opt();
 
+                // 素直に書くならif-else if-elseだが、rank != 0で〆切がないタスクはNoneとなるので、else if節は不要
                 let leaf_key_dt_opt = if rank == 0 {
                     Some(*dt)
-                } else if task.get_deadline_time_opt().is_some() {
-                    task.get_deadline_time_opt()
                 } else {
-                    None
+                    task.get_deadline_time_opt()
                 };
 
                 // 葉タスク、あるいは葉タスクではないが〆切が決まっているものについては、便宜的に〆切の日の葉タスクとして扱って、その日のタスク見積もり時間の合計をカウントすることにする
