@@ -1531,10 +1531,15 @@ fn application(
                 stdout.flush().unwrap();
             }
             Key::Char('\n') | Key::Ctrl('m') => {
-                writeln!(stdout, "").unwrap();
-                write!(stdout, "{}", termion::cursor::Left(MAX_COL),).unwrap();
+                writeln_newline(&mut stdout, "").unwrap();
 
-                println!("{}{}{}", style::Bold, line, style::Reset);
+                println!(
+                    "{}{}> {}{}",
+                    style::Bold,
+                    &Local::now().format("%Y/%m/%d %H:%M:%S").to_string(),
+                    line,
+                    style::Reset
+                );
                 writeln_newline(&mut stdout, "").unwrap();
                 stdout.flush().unwrap();
 
