@@ -512,14 +512,15 @@ fn execute_show_all_tasks(
                     None => "____/__/__".to_string(),
                 };
 
+                let deadline_icon: String = "!".to_string();
+                let today_leaf_icon: String = "/".to_string();
                 // Todo: この判定が分散しているので、後で関数化したほうがよいかも
                 let icon = if task.get_deadline_time_opt().is_some()
                     && task.get_deadline_time_opt().unwrap() < last_synced_time + Duration::days(1)
                 {
-                    "!"
+                    &deadline_icon
                 } else if rank == &0 && dt < &eod {
-                    // "|"
-                    "/"
+                    &today_leaf_icon
                 } else {
                     "-"
                 };
@@ -541,14 +542,14 @@ fn execute_show_all_tasks(
                     Some(pattern) => {
                         // Todo: 文字列マッチの絞り込み機能とその他の属性による絞り込みを機能を分ける
                         if pattern == "葉" {
-                            if rank == &0
-                                || task.get_deadline_time_opt().is_some()
-                                    && task.get_deadline_time_opt().unwrap()
-                                        < last_synced_time + Duration::days(1)
+                            if msg.contains(&format!(" {} ", &deadline_icon))
+                                || msg.contains(&format!(" {} ", &today_leaf_icon))
                             {
                                 msgs_with_dt.push((*dt, *rank, msg));
                             }
-                        } else if name.to_lowercase().contains(&pattern.to_lowercase()) {
+                        } else if name.to_lowercase().contains(&pattern.to_lowercase())
+                            || msg.contains(pattern)
+                        {
                             msgs_with_dt.push((*dt, *rank, msg));
                         }
                     }
