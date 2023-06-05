@@ -1330,8 +1330,12 @@ fn application(
     let now = Local::now();
     task_repository.sync_clock(now);
 
-    // let next_morning = get_next_morning_datetime(now);
-    // task_repository.sync_clock(next_morning + Duration::seconds(1));
+    // let next_morning = get_next_morning_datetime(now)
+    //     .with_hour(6)
+    //     .expect("invalid hour")
+    //     .with_minute(0)
+    //     .expect("invalid minute");
+    // task_repository.sync_clock(next_morning);
 
     task_repository.load();
 
@@ -1567,7 +1571,7 @@ fn application(
                     );
                 } else if line == "d" {
                     // skip "d"aily
-                    let now: DateTime<Local> = Local::now();
+                    let now: DateTime<Local> = task_repository.get_last_synced_time();
                     let next_morning = get_next_morning_datetime(now);
                     let sec = (next_morning - now).num_seconds();
                     let s = format!("後 {}秒", sec).to_string();
@@ -1581,7 +1585,7 @@ fn application(
                     );
                 } else if line == "w" {
                     // skip "w"eekly
-                    let now: DateTime<Local> = Local::now();
+                    let now: DateTime<Local> = task_repository.get_last_synced_time();
                     let next_morning = get_next_morning_datetime(now);
                     let sec = (next_morning - now).num_seconds() + 86400 * 6;
 
@@ -1596,7 +1600,7 @@ fn application(
                     );
                 } else if line == "y" {
                     // skip "y"early
-                    let now: DateTime<Local> = Local::now();
+                    let now: DateTime<Local> = task_repository.get_last_synced_time();
                     let next_morning = get_next_morning_datetime(now);
                     let sec = (next_morning - now).num_seconds() + 86400 * 365 * 5;
 
