@@ -1096,6 +1096,10 @@ impl Task {
         }
     }
 
+    pub fn unset_deadline_time_opt(&self) {
+        self.node.borrow_data_mut().set_deadline_time_opt(None);
+    }
+
     pub fn get_deadline_time_opt(&self) -> Option<DateTime<Local>> {
         *self.node.borrow_data().get_deadline_time_opt()
     }

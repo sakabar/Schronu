@@ -1000,6 +1000,7 @@ fn execute_finish(focused_task_id_opt: &mut Option<Uuid>, focused_task_opt: &Opt
         // その値に従って兄弟ノードを生成する
         // start_timeは日付は(repetition_interval_days-1)日後で、時刻は親タスクのstart_timeを引き継ぐ
         // タスク名は「親タスク名(日付)」
+        // deadline_timeはその日付の23:59とする
         // estimated_work_secondsは親タスクを引き継ぐ
         match focused_task.parent() {
             Some(parent_task) => match parent_task.get_repetition_interval_days_opt() {
@@ -1021,11 +1022,18 @@ fn execute_finish(focused_task_id_opt: &mut Option<Uuid>, focused_task_opt: &Opt
                     let new_task_day = new_start_time.day();
                     let new_task_name =
                         format!("{}({}/{})", parent_task_name, new_task_month, new_task_day);
-
+                    let new_deadline_time = new_start_time
+                        .with_hour(23)
+                        .unwrap()
+                        .with_minute(59)
+                        .unwrap()
+                        .with_second(59)
+                        .unwrap();
                     let estimated_work_seconds = parent_task.get_estimated_work_seconds();
 
                     let mut new_task_attr = TaskAttr::new(&new_task_name);
                     new_task_attr.set_start_time(new_start_time);
+                    new_task_attr.set_deadline_time_opt(Some(new_deadline_time));
                     new_task_attr.set_estimated_work_seconds(estimated_work_seconds);
                     parent_task.create_as_last_child(new_task_attr);
                 }
@@ -1062,14 +1070,23 @@ fn execute_finish(focused_task_id_opt: &mut Option<Uuid>, focused_task_opt: &Opt
 }
 
 fn execute_set_deadline(focused_task_opt: &Option<Task>, deadline_date_str: &str) {
-    let deadline_time_str = format!("{} 23:59:59", deadline_date_str);
-    let deadline_time = Local
-        .datetime_from_str(&deadline_time_str, "%Y/%m/%d %H:%M:%S")
-        .unwrap();
+    if deadline_date_str == "消" {
+        focused_task_opt
+            .as_ref()
+            .map(|focused_task| focused_task.unset_deadline_time_opt());
+        return;
+    }
 
-    focused_task_opt
-        .as_ref()
-        .map(|focused_task| focused_task.set_deadline_time_opt(Some(deadline_time)));
+    let deadline_time_str = format!("{} 23:59:59", deadline_date_str);
+    let deadline_time_opt = Local
+        .datetime_from_str(&deadline_time_str, "%Y/%m/%d %H:%M:%S")
+        .ok();
+
+    if deadline_time_opt.is_some() {
+        focused_task_opt
+            .as_ref()
+            .map(|focused_task| focused_task.set_deadline_time_opt(deadline_time_opt));
+    }
 }
 
 #[allow(unused_must_use)]
