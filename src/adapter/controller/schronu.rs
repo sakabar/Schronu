@@ -450,16 +450,16 @@ fn execute_show_all_tasks(
 
     // ここからρ計算用
     let last_synced_time = task_repository.get_last_synced_time();
-    // let eod = last_synced_time
-    //     .with_hour(23)
-    //     .expect("invalid hour")
-    //     .with_minute(59)
-    //     .expect("invalid minute");
-    let eod = (get_next_morning_datetime(last_synced_time) + Duration::days(0))
-        .with_hour(1)
+    let eod = last_synced_time
+        .with_hour(23)
         .expect("invalid hour")
-        .with_minute(30)
+        .with_minute(59)
         .expect("invalid minute");
+    // let eod = (get_next_morning_datetime(last_synced_time) + Duration::days(0))
+    //     .with_hour(0)
+    //     .expect("invalid hour")
+    //     .with_minute(45)
+    //     .expect("invalid minute");
 
     // 今日着手可能な葉タスクまたは今日までが〆切のタスクの合計
     let mut total_deadline_estimated_work_seconds = 0;
@@ -644,24 +644,6 @@ fn execute_show_all_tasks(
         writeln_newline(stdout, &s).unwrap();
     }
     writeln_newline(stdout, "").unwrap();
-
-    // タスクができない時間を決め打ちで登録する
-    let busy_time_slots = [];
-
-    for ((start_hour, start_minute), (end_hour, end_minute)) in busy_time_slots.iter() {
-        free_time_manager.register_busy_time_slot(
-            &last_synced_time
-                .with_hour(*start_hour)
-                .expect("invalid hour")
-                .with_minute(*start_minute)
-                .expect("invalid minute"),
-            &last_synced_time
-                .with_hour(*end_hour)
-                .expect("invalid hour")
-                .with_minute(*end_minute)
-                .expect("invalid minute"),
-        );
-    }
 
     // 1日の残りの時間から稼働率ρを計算する
     let busy_seconds = free_time_manager.get_busy_minutes(&last_synced_time, &eod) * 60;
@@ -1368,6 +1350,9 @@ fn application(
     // task_repository.sync_clock(next_morning);
 
     task_repository.load();
+
+    free_time_manager
+        .load_busy_time_slots_from_file("../Schronu-private/busy_time_slots.yaml", &now);
 
     // RawModeを有効にする
     let mut stdout = stdout().into_raw_mode().unwrap();
