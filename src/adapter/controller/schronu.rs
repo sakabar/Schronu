@@ -621,22 +621,41 @@ fn execute_show_all_tasks(
             Weekday::Sun => "日",
         };
 
+        let free_time_minutes = if date == &&last_synced_time.date_naive() {
+            free_time_manager.get_free_minutes(&last_synced_time, &eod)
+        } else {
+            let local_tz = Local::now().timezone();
+
+            let start = local_tz
+                .from_local_datetime(&date.and_hms_opt(0, 0, 0).unwrap())
+                .unwrap();
+            // Todo: 23:59:59ではなくeodの設定を見るようにする
+            let end = local_tz
+                .from_local_datetime(&date.and_hms_opt(23, 59, 59).unwrap())
+                .unwrap();
+            free_time_manager.get_free_minutes(&start, &end)
+        };
+
+        let free_time_hours = free_time_minutes as f64 / 60.0;
+        let rho_in_date = total_leaf_estimated_work_hours_of_the_date / free_time_hours;
+        let lq_in_date = if rho_in_date < 1.0 {
+            rho_in_date / (1.0 - rho_in_date)
+        } else {
+            std::f64::INFINITY
+        };
+
         let s = format!(
-            "{}({})\t{:02.1}/{:02.1}[時間]\t{:02}/{:02}[タスク]\t{:02}/{:02}[分/タスク]",
+            "{}({})\t{:02.1}/{:02.1}[時間]\trho_1={:.1}\tLq={:.1}\t{:02}[タスク]\t{:02}[分/タスク]",
             date,
             weekday_jp,
             total_leaf_estimated_work_hours_of_the_date,
-            total_estimated_work_hours_of_the_date,
+            free_time_hours,
+            rho_in_date,
+            lq_in_date,
             leaf_cnt_of_the_date,
-            cnt,
             if leaf_cnt_of_the_date > 0 {
                 (total_leaf_estimated_work_minutes_of_the_date as f64 / leaf_cnt_of_the_date as f64)
                     .ceil() as i64
-            } else {
-                0
-            },
-            if **cnt > 0 {
-                (total_estimated_work_minutes_of_the_date as f64 / **cnt as f64).ceil() as i64
             } else {
                 0
             },
