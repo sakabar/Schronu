@@ -626,8 +626,9 @@ fn execute_show_all_tasks(
         } else {
             let local_tz = Local::now().timezone();
 
+            // Todo: 1日の始まりの時間を定義できるようにする
             let start = local_tz
-                .from_local_datetime(&date.and_hms_opt(0, 0, 0).unwrap())
+                .from_local_datetime(&date.and_hms_opt(6, 0, 0).unwrap())
                 .unwrap();
             // Todo: 23:59:59ではなくeodの設定を見るようにする
             let end = local_tz
