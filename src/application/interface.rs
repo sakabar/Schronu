@@ -18,4 +18,9 @@ pub trait FreeTimeManagerTrait {
     fn get_free_minutes(&mut self, start: &DateTime<Local>, end: &DateTime<Local>) -> i64;
     fn get_busy_minutes(&mut self, start: &DateTime<Local>, end: &DateTime<Local>) -> i64;
     fn register_busy_time_slot(&mut self, start: &DateTime<Local>, end: &DateTime<Local>);
+    fn load_busy_time_slots_from_file(
+        &mut self,
+        busy_time_slots_file_path: &str,
+        now: &DateTime<Local>,
+    );
 }

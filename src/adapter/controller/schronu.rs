@@ -645,50 +645,6 @@ fn execute_show_all_tasks(
     }
     writeln_newline(stdout, "").unwrap();
 
-    // タスクができない時間を決め打ちで登録する
-    // let busy_time_slots = [
-    //     // 睡眠
-    //     ((1, 30), (10, 0)),
-    //     // 仕事1
-    //     ((10, 0), (18, 30)),
-    //     // 食事
-    //     ((18, 30), (19, 30)),
-    //     // 仕事2
-    //     ((19, 30), (21, 30)),
-    // ];
-
-    // ここを直す
-    let busy_time_slots = [
-        // 睡眠
-        ((0, 00), (10, 0)),
-        // ピアノ
-        // ((10, 45), (11, 45)),
-
-        // 食事
-        ((12, 00), (13, 0)),
-        // IBJ面談
-        ((16, 30), (17, 0)),
-        // 食事
-        ((18, 30), (19, 30)),
-        // 新規事業
-        ((20, 00), (22, 00)),
-    ];
-
-    for ((start_hour, start_minute), (end_hour, end_minute)) in busy_time_slots.iter() {
-        free_time_manager.register_busy_time_slot(
-            &last_synced_time
-                .with_hour(*start_hour)
-                .expect("invalid hour")
-                .with_minute(*start_minute)
-                .expect("invalid minute"),
-            &last_synced_time
-                .with_hour(*end_hour)
-                .expect("invalid hour")
-                .with_minute(*end_minute)
-                .expect("invalid minute"),
-        );
-    }
-
     // 1日の残りの時間から稼働率ρを計算する
     let busy_seconds = free_time_manager.get_busy_minutes(&last_synced_time, &eod) * 60;
     let lambda_seconds = total_deadline_estimated_work_seconds + busy_seconds;
@@ -1394,6 +1350,9 @@ fn application(
     // task_repository.sync_clock(next_morning);
 
     task_repository.load();
+
+    free_time_manager
+        .load_busy_time_slots_from_file("../Schronu-private/busy_time_slots.yaml", &now);
 
     // RawModeを有効にする
     let mut stdout = stdout().into_raw_mode().unwrap();

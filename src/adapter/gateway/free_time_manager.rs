@@ -23,7 +23,7 @@ impl FreeTimeManager {
         }
     }
 
-    pub fn load_busy_time_slots_from_file(
+    fn load_busy_time_slots_from_file(
         &mut self,
         busy_time_slots_file_path: &str,
         now: &DateTime<Local>,
@@ -195,6 +195,14 @@ impl FreeTimeManagerTrait for FreeTimeManager {
         for ind in start_index..end_index {
             free_time_slot[ind as usize] = 0;
         }
+    }
+
+    fn load_busy_time_slots_from_file(
+        &mut self,
+        busy_time_slots_file_path: &str,
+        now: &DateTime<Local>,
+    ) {
+        self.load_busy_time_slots_from_file(busy_time_slots_file_path, now);
     }
 }
 
