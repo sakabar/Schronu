@@ -450,16 +450,16 @@ fn execute_show_all_tasks(
 
     // ここからρ計算用
     let last_synced_time = task_repository.get_last_synced_time();
-    // let eod = last_synced_time
-    //     .with_hour(23)
-    //     .expect("invalid hour")
-    //     .with_minute(59)
-    //     .expect("invalid minute");
-    let eod = (get_next_morning_datetime(last_synced_time) + Duration::days(0))
-        .with_hour(1)
+    let eod = last_synced_time
+        .with_hour(23)
         .expect("invalid hour")
-        .with_minute(30)
+        .with_minute(59)
         .expect("invalid minute");
+    // let eod = (get_next_morning_datetime(last_synced_time) + Duration::days(0))
+    //     .with_hour(0)
+    //     .expect("invalid hour")
+    //     .with_minute(45)
+    //     .expect("invalid minute");
 
     // 今日着手可能な葉タスクまたは今日までが〆切のタスクの合計
     let mut total_deadline_estimated_work_seconds = 0;
@@ -646,7 +646,33 @@ fn execute_show_all_tasks(
     writeln_newline(stdout, "").unwrap();
 
     // タスクができない時間を決め打ちで登録する
-    let busy_time_slots = [];
+    // let busy_time_slots = [
+    //     // 睡眠
+    //     ((1, 30), (10, 0)),
+    //     // 仕事1
+    //     ((10, 0), (18, 30)),
+    //     // 食事
+    //     ((18, 30), (19, 30)),
+    //     // 仕事2
+    //     ((19, 30), (21, 30)),
+    // ];
+
+    // ここを直す
+    let busy_time_slots = [
+        // 睡眠
+        ((0, 00), (10, 0)),
+        // ピアノ
+        // ((10, 45), (11, 45)),
+
+        // 食事
+        ((12, 00), (13, 0)),
+        // IBJ面談
+        ((16, 30), (17, 0)),
+        // 食事
+        ((18, 30), (19, 30)),
+        // 新規事業
+        ((20, 00), (22, 00)),
+    ];
 
     for ((start_hour, start_minute), (end_hour, end_minute)) in busy_time_slots.iter() {
         free_time_manager.register_busy_time_slot(
