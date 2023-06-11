@@ -594,12 +594,12 @@ fn execute_show_all_tasks(
         0
     };
 
-    for (date, cnt) in &counter_arr[start_ind..] {
+    for (date, _cnt) in &counter_arr[start_ind..] {
         let total_estimated_work_minutes_of_the_date: i64 =
             *total_estimated_work_minutes_of_the_date_counter
                 .get(date)
                 .unwrap_or(&0);
-        let total_estimated_work_hours_of_the_date =
+        let _total_estimated_work_hours_of_the_date =
             total_estimated_work_minutes_of_the_date as f64 / 60.0;
 
         let total_leaf_estimated_work_minutes_of_the_date: i64 =
@@ -626,8 +626,9 @@ fn execute_show_all_tasks(
         } else {
             let local_tz = Local::now().timezone();
 
+            // Todo: 1日の始まりの時間を定義できるようにする
             let start = local_tz
-                .from_local_datetime(&date.and_hms_opt(0, 0, 0).unwrap())
+                .from_local_datetime(&date.and_hms_opt(6, 0, 0).unwrap())
                 .unwrap();
             // Todo: 23:59:59ではなくeodの設定を見るようにする
             let end = local_tz
@@ -645,7 +646,7 @@ fn execute_show_all_tasks(
         };
 
         let s = format!(
-            "{}({})\t{:02.1}/{:02.1}[時間]\trho_1={:.1}\tLq={:.1}\t{:02}[タスク]\t{:02}[分/タスク]",
+            "{}({})\t{:02.1}/{:02.1}[時間]\trho_1={:.2}\tLq={:.1}\t{:02}[タスク]\t{:02}[分/タスク]",
             date,
             weekday_jp,
             total_leaf_estimated_work_hours_of_the_date,

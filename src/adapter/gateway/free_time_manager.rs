@@ -33,7 +33,7 @@ impl FreeTimeManager {
         file.read_to_string(&mut text).unwrap();
 
         let day_of_week_map: HashMap<Weekday, DayOfWeekBusyTimeSlots> =
-            self.load_busy_time_slots_from_str(&text, now);
+            self.load_busy_time_slots_from_str(&text);
 
         for d in 0..7 {
             let dt = *now + Duration::days(d);
@@ -63,7 +63,6 @@ impl FreeTimeManager {
     fn load_busy_time_slots_from_str(
         &self,
         yaml_str: &str,
-        now: &DateTime<Local>,
     ) -> HashMap<Weekday, DayOfWeekBusyTimeSlots> {
         let mut day_of_week_map: HashMap<Weekday, DayOfWeekBusyTimeSlots> = HashMap::new();
 
