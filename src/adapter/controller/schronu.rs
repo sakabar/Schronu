@@ -594,12 +594,12 @@ fn execute_show_all_tasks(
         0
     };
 
-    for (date, cnt) in &counter_arr[start_ind..] {
+    for (date, _cnt) in &counter_arr[start_ind..] {
         let total_estimated_work_minutes_of_the_date: i64 =
             *total_estimated_work_minutes_of_the_date_counter
                 .get(date)
                 .unwrap_or(&0);
-        let total_estimated_work_hours_of_the_date =
+        let _total_estimated_work_hours_of_the_date =
             total_estimated_work_minutes_of_the_date as f64 / 60.0;
 
         let total_leaf_estimated_work_minutes_of_the_date: i64 =
