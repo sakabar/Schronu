@@ -646,7 +646,7 @@ fn execute_show_all_tasks(
         };
 
         let s = format!(
-            "{}({})\t{:02.1}/{:02.1}[時間]\trho_1={:.1}\tLq={:.1}\t{:02}[タスク]\t{:02}[分/タスク]",
+            "{}({})\t{:02.1}/{:02.1}[時間]\trho_1={:.2}\tLq={:.1}\t{:02}[タスク]\t{:02}[分/タスク]",
             date,
             weekday_jp,
             total_leaf_estimated_work_hours_of_the_date,
