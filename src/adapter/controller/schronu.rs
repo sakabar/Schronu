@@ -1608,7 +1608,7 @@ fn application(
                     // skip "d"aily
                     let now: DateTime<Local> = task_repository.get_last_synced_time();
                     let next_morning = get_next_morning_datetime(now);
-                    let sec = (next_morning - now).num_seconds();
+                    let sec = (next_morning - now).num_seconds() + 1;
                     let s = format!("後 {}秒", sec).to_string();
 
                     execute(
@@ -1622,7 +1622,7 @@ fn application(
                     // skip "w"eekly
                     let now: DateTime<Local> = task_repository.get_last_synced_time();
                     let next_morning = get_next_morning_datetime(now);
-                    let sec = (next_morning - now).num_seconds() + 86400 * 6;
+                    let sec = (next_morning - now).num_seconds() + 86400 * 6 + 1;
 
                     let s = format!("後 {}秒", sec).to_string();
 
@@ -1637,7 +1637,7 @@ fn application(
                     // skip "y"early
                     let now: DateTime<Local> = task_repository.get_last_synced_time();
                     let next_morning = get_next_morning_datetime(now);
-                    let sec = (next_morning - now).num_seconds() + 86400 * 365 * 5;
+                    let sec = (next_morning - now).num_seconds() + 86400 * 365 * 5 + 1;
 
                     let s = format!("後 {}秒", sec).to_string();
 
