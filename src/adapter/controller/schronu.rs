@@ -637,7 +637,8 @@ fn execute_show_all_tasks(
             free_time_manager.get_free_minutes(&start, &end)
         };
 
-        let free_time_hours = free_time_minutes as f64 / 60.0;
+        // Todo: yamlのend-of-dayが24時以降であればそのぶんを足す。仮置きで午前1時
+        let free_time_hours = free_time_minutes as f64 / 60.0 + 1.0;
         let rho_in_date = total_leaf_estimated_work_hours_of_the_date / free_time_hours;
         let lq_in_date = if rho_in_date < 1.0 {
             rho_in_date / (1.0 - rho_in_date)
