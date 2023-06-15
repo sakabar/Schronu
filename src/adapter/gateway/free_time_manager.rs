@@ -35,7 +35,7 @@ impl FreeTimeManager {
         let day_of_week_map: HashMap<Weekday, DayOfWeekBusyTimeSlots> =
             self.load_busy_time_slots_from_str(&text);
 
-        for d in 0..7 {
+        for d in 0..14 {
             let dt = *now + Duration::days(d);
             let day_of_week = dt.weekday();
             let day_of_week_busy_time_slots = day_of_week_map.get(&day_of_week).unwrap();
