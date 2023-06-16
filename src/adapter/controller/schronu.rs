@@ -976,7 +976,16 @@ fn execute_defer(
 ) {
     let amount: i64 = amount_str.parse().unwrap();
     let duration = match unit_str.chars().nth(0) {
-        Some('日') | Some('d') => Duration::days(amount),
+        // 24時間単位ではなく、next_monring単位とする
+        Some('日') | Some('d') => {
+            let mut dt = task_repository.get_last_synced_time();
+
+            for _ in 0..amount {
+                dt = get_next_morning_datetime(dt);
+            }
+
+            dt - task_repository.get_last_synced_time()
+        }
         Some('時') | Some('h') => Duration::hours(amount),
         Some('分') | Some('m') => Duration::minutes(amount),
         // 誤入力した時に傷が浅いように、デフォルトは秒としておく
