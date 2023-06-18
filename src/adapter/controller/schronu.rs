@@ -646,13 +646,23 @@ fn execute_show_all_tasks(
             std::f64::INFINITY
         };
 
+        const RHO_GOAL: f64 = 0.7;
+
+        let diff_to_goal = total_leaf_estimated_work_hours_of_the_date - free_time_hours * RHO_GOAL;
+        let diff_to_goal_sign: char = if diff_to_goal >= 0.0 { '+' } else { '-' };
+        let diff_to_goal_hour = diff_to_goal.abs().floor();
+        let diff_to_goal_minute = (diff_to_goal.abs() - diff_to_goal_hour) * 60.0;
+
         let s = format!(
-            "{}({})\t{:02.1}/{:02.1}[時間]\trho_1={:.2}\tLq={:.1}\t{:02}[タスク]\t{:02}[分/タスク]",
+            "{}({})\t{:02.1}/{:02.1}[時間]\trho_1={:.2}\t{}{:.0}時間{:02.0}分\tLq={:.1}\t{:02}[タスク]\t{:02}[分/タスク]",
             date,
             weekday_jp,
             total_leaf_estimated_work_hours_of_the_date,
             free_time_hours,
             rho_in_date,
+            diff_to_goal_sign,
+            diff_to_goal_hour,
+            diff_to_goal_minute,
             lq_in_date,
             leaf_cnt_of_the_date,
             if leaf_cnt_of_the_date > 0 {
