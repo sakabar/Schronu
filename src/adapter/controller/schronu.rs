@@ -526,7 +526,7 @@ fn execute_show_all_tasks(
                 };
 
                 let msg: String = format!(
-                    "{:04} {} {} {} {} {} e{:02} t{:02} {}",
+                    "{:04} {} {} {} {} {} {:02} {:02} {}",
                     ind,
                     icon,
                     dt.format("%m/%d-%H:%M"),
