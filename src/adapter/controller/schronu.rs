@@ -588,8 +588,9 @@ fn execute_show_all_tasks(
     writeln_newline(stdout, "").unwrap();
 
     // 未来のサマリは見ても仕方ないので、直近の8日ぶん(配列の末尾)に絞る
-    let start_ind = if counter_arr.len() >= 8 {
-        counter_arr.len() - 8
+    const SUMMARY_DAYS: usize = 8;
+    let start_ind = if counter_arr.len() >= SUMMARY_DAYS {
+        counter_arr.len() - SUMMARY_DAYS
     } else {
         0
     };
