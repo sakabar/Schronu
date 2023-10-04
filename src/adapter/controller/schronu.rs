@@ -10,6 +10,7 @@ use schronu::entity::task::{
     extract_leaf_tasks_from_project, extract_leaf_tasks_from_project_with_pending, Status, Task,
     TaskAttr,
 };
+use std::cmp::min;
 use std::collections::HashMap;
 use std::io::Stdout;
 use std::io::{stdout, Write};
@@ -943,6 +944,43 @@ fn execute_breakdown(
     });
 }
 
+fn execute_split(
+    stdout: &mut RawTerminal<Stdout>,
+    focused_task_id_opt: &mut Option<Uuid>,
+    focused_task_opt: &Option<Task>,
+    new_task_name: &str,
+    splitted_work_minutes_str: &str,
+) {
+    match focused_task_opt {
+        None => {}
+        Some(focused_task) => {
+            // 今のタスクの予時間をn減らす
+            // 下 <new_task_name>
+            // 予 n
+
+            let focused_estimated_work_seconds = focused_task.get_estimated_work_seconds();
+            let splitted_work_seconds: i64 = min(
+                splitted_work_minutes_str.parse::<i64>().unwrap() * 60,
+                focused_estimated_work_seconds,
+            );
+
+            focused_task
+                .set_estimated_work_seconds(focused_estimated_work_seconds - splitted_work_seconds);
+
+            let mut new_task_attr = TaskAttr::new(new_task_name);
+            new_task_attr.set_estimated_work_seconds(splitted_work_seconds);
+
+            let new_task = focused_task.create_as_last_child(new_task_attr);
+
+            let msg: String = format!("{} {}", new_task.get_id(), &new_task_name);
+            writeln_newline(stdout, msg.as_str()).unwrap();
+
+            // 新しい子タスクにフォーカス(id)を移す
+            *focused_task_id_opt = Some(new_task.get_id());
+        }
+    }
+}
+
 fn split_amount_and_unit(input: &str) -> Vec<String> {
     let mut result = Vec::new();
     let mut buffer = String::new();
@@ -1270,6 +1308,20 @@ fn execute(
                     &focused_task_opt,
                     new_task_names,
                     &None,
+                );
+            }
+        }
+        "割" | "split" | "sp" => {
+            if tokens.len() == 3 {
+                let new_task_name = &tokens[1];
+                let splitted_work_minutes_str = &tokens[2];
+
+                execute_split(
+                    stdout,
+                    focused_task_id_opt,
+                    &focused_task_opt,
+                    new_task_name,
+                    splitted_work_minutes_str,
                 );
             }
         }
