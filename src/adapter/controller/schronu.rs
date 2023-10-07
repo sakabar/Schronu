@@ -1313,8 +1313,8 @@ fn execute(
         }
         "割" | "split" | "sp" => {
             if tokens.len() == 3 {
-                let new_task_name = &tokens[1];
-                let splitted_work_minutes_str = &tokens[2];
+                let splitted_work_minutes_str = &tokens[1];
+                let new_task_name = &tokens[2];
 
                 execute_split(
                     stdout,
