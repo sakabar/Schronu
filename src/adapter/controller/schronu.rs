@@ -451,16 +451,15 @@ fn execute_show_all_tasks(
 
     // ここからρ計算用
     let last_synced_time = task_repository.get_last_synced_time();
-    let eod = last_synced_time
-        .with_hour(23)
+
+    // FIXME 外部設定ファイルで設定できるようにする
+    let eod_duration = Duration::hours(0) + Duration::minutes(30);
+    let eod = (get_next_morning_datetime(last_synced_time) + Duration::days(0))
+        .with_hour(0)
         .expect("invalid hour")
-        .with_minute(59)
-        .expect("invalid minute");
-    // let eod = (get_next_morning_datetime(last_synced_time) + Duration::days(0))
-    //     .with_hour(0)
-    //     .expect("invalid hour")
-    //     .with_minute(45)
-    //     .expect("invalid minute");
+        .with_minute(0)
+        .expect("invalid minute")
+        + eod_duration;
 
     // 今日着手可能な葉タスクまたは今日までが〆切のタスクの合計
     let mut total_deadline_estimated_work_seconds = 0;
@@ -635,12 +634,12 @@ fn execute_show_all_tasks(
             // Todo: 23:59:59ではなくeodの設定を見るようにする
             let end = local_tz
                 .from_local_datetime(&date.and_hms_opt(23, 59, 59).unwrap())
-                .unwrap();
+                .unwrap()
+                + eod_duration;
             free_time_manager.get_free_minutes(&start, &end)
         };
 
-        // Todo: yamlのend-of-dayが24時以降であればそのぶんを足す。仮置きで午前1時
-        let free_time_hours = free_time_minutes as f64 / 60.0 + 1.0;
+        let free_time_hours = free_time_minutes as f64 / 60.0;
         let rho_in_date = total_leaf_estimated_work_hours_of_the_date / free_time_hours;
         let lq_in_date = if rho_in_date < 1.0 {
             rho_in_date / (1.0 - rho_in_date)
