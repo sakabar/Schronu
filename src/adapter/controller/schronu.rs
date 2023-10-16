@@ -1320,7 +1320,20 @@ fn execute(
                 // "2023/05/23"とか。簡単のため、時刻は指定不要とし、自動的に23:59を〆切と設定する
                 let deadline_date_str = &tokens[1];
 
-                execute_set_deadline(&focused_task_opt, deadline_date_str);
+                let now: DateTime<Local> = task_repository.get_last_synced_time();
+                if tokens[1].starts_with('今') {
+                    let s = (get_next_morning_datetime(now) - Duration::days(1))
+                        .format("%Y/%m/%d")
+                        .to_string();
+                    execute_set_deadline(&focused_task_opt, &s);
+                } else if tokens[1].starts_with('明') {
+                    let s = get_next_morning_datetime(now)
+                        .format("%Y/%m/%d")
+                        .to_string();
+                    execute_set_deadline(&focused_task_opt, &s);
+                } else {
+                    execute_set_deadline(&focused_task_opt, deadline_date_str);
+                }
             }
         }
         "予" | "estimate" | "es" => {
