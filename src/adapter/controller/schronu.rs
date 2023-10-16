@@ -1348,19 +1348,46 @@ fn execute(
                     unit_str,
                 );
             } else if tokens.len() == 2 {
-                // "defer 5days" のように引数が1つしか与えられなかった場合は、数字部分とそれ以降に分割する
-                let splitted = split_amount_and_unit(tokens[1]);
-                if splitted.len() == 2 {
-                    let amount_str = &splitted[0];
-                    let unit_str = &splitted[1].to_lowercase();
+                let yyyymmdd_reg = Regex::new(r"^\d{4}/\d{2}/\d{2}$").unwrap();
 
-                    execute_defer(
-                        task_repository,
-                        focused_task_id_opt,
-                        &focused_task_opt,
-                        amount_str,
-                        unit_str,
-                    );
+                // 日付が指定された時はその日の 6:00 (マジックナンバー、FIXME) まで送る
+                if yyyymmdd_reg.is_match(tokens[1]) {
+                    let defer_dst_str = format!("{} 06:00:00", tokens[1]);
+                    let defer_dst_time_result =
+                        Local.datetime_from_str(&defer_dst_str, "%Y/%m/%d %H:%M:%S");
+
+                    match defer_dst_time_result {
+                        Ok(defer_dst_time) => {
+                            let now: DateTime<Local> = task_repository.get_last_synced_time();
+                            let seconds = (defer_dst_time - now).num_seconds() + 1;
+
+                            execute_defer(
+                                task_repository,
+                                focused_task_id_opt,
+                                &focused_task_opt,
+                                &format!("{}", seconds),
+                                "秒",
+                            );
+                        }
+                        Err(_) => {
+                            // pass
+                        }
+                    }
+                } else {
+                    // "defer 5days" のように引数が1つしか与えられなかった場合は、数字部分とそれ以降に分割する
+                    let splitted = split_amount_and_unit(tokens[1]);
+                    if splitted.len() == 2 {
+                        let amount_str = &splitted[0];
+                        let unit_str = &splitted[1].to_lowercase();
+
+                        execute_defer(
+                            task_repository,
+                            focused_task_id_opt,
+                            &focused_task_opt,
+                            amount_str,
+                            unit_str,
+                        );
+                    }
                 }
             }
         }
