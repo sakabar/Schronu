@@ -978,6 +978,14 @@ fn execute_split(
             let mut new_task_attr = TaskAttr::new(new_task_name);
             new_task_attr.set_estimated_work_seconds(splitted_work_seconds);
 
+            // 親タスクに〆切がある場合には、それを引き継ぐ
+            match focused_task.get_deadline_time_opt() {
+                Some(deadline_time) => new_task_attr.set_deadline_time_opt(Some(deadline_time)),
+                None => {
+                    // pass
+                }
+            }
+
             let new_task = focused_task.create_as_last_child(new_task_attr);
 
             let msg: String = format!("{} {}", new_task.get_id(), &new_task_name);
