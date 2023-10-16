@@ -929,6 +929,15 @@ fn execute_breakdown(
             }
 
             let new_task = focused_task.create_as_last_child(new_task_attr);
+
+            // 親タスクに〆切がある場合には、それを引き継ぐ
+            match focused_task.get_deadline_time_opt() {
+                Some(deadline_time) => new_task.set_deadline_time_opt(Some(deadline_time)),
+                None => {
+                    // pass
+                }
+            }
+
             let msg: String = format!("{} {}", new_task.get_id(), &new_task_name);
             writeln_newline(stdout, msg.as_str()).unwrap();
             if !focus_is_moved {
