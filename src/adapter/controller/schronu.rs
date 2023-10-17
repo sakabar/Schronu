@@ -1379,15 +1379,18 @@ fn execute(
                 );
             } else if tokens.len() == 2 {
                 let yyyymmdd_reg = Regex::new(r"^\d{4}/\d{2}/\d{2}$").unwrap();
+                let hhmm_reg = Regex::new(r"^(\d{2}):(\d{2})$").unwrap();
 
-                // 日付が指定された時はその日の 6:00 (マジックナンバー、FIXME) まで送る
                 if yyyymmdd_reg.is_match(tokens[1]) {
-                    let defer_dst_str = format!("{} 06:00:00", tokens[1]);
-                    let defer_dst_time_result =
+                    let defer_dst_str = format!("{} 12:00:00", tokens[1]);
+                    let defer_dst_date_result =
                         Local.datetime_from_str(&defer_dst_str, "%Y/%m/%d %H:%M:%S");
 
-                    match defer_dst_time_result {
-                        Ok(defer_dst_time) => {
+                    match defer_dst_date_result {
+                        Ok(defer_dst_date) => {
+                            let defer_dst_time =
+                                get_next_morning_datetime(defer_dst_date) - Duration::days(1);
+
                             let now: DateTime<Local> = task_repository.get_last_synced_time();
                             let seconds = (defer_dst_time - now).num_seconds() + 1;
 
@@ -1402,6 +1405,31 @@ fn execute(
                         Err(_) => {
                             // pass
                         }
+                    }
+                } else if hhmm_reg.is_match(tokens[1]) {
+                    // 時刻が指定された時は今日のその時刻まで送る
+                    let now: DateTime<Local> = task_repository.get_last_synced_time();
+
+                    let caps = hhmm_reg.captures(tokens[1]).unwrap();
+                    let hh: u32 = caps[1].parse().unwrap();
+                    let mm: u32 = caps[2].parse().unwrap();
+
+                    let defer_dst_time = now
+                        .with_hour(hh)
+                        .expect("invalid hour")
+                        .with_minute(mm)
+                        .expect("invalid minute");
+
+                    let seconds = (defer_dst_time - now).num_seconds() + 1;
+
+                    if seconds > 0 {
+                        execute_defer(
+                            task_repository,
+                            focused_task_id_opt,
+                            &focused_task_opt,
+                            &format!("{}", seconds),
+                            "秒",
+                        );
                     }
                 } else {
                     // "defer 5days" のように引数が1つしか与えられなかった場合は、数字部分とそれ以降に分割する
