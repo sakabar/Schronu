@@ -1382,13 +1382,15 @@ fn execute(
                 let hhmm_reg = Regex::new(r"^(\d{2}):(\d{2})$").unwrap();
 
                 if yyyymmdd_reg.is_match(tokens[1]) {
-                    // 日付が指定された時はその日の 6:00 (マジックナンバー、FIXME) まで送る
-                    let defer_dst_str = format!("{} 06:00:00", tokens[1]);
-                    let defer_dst_time_result =
+                    let defer_dst_str = format!("{} 12:00:00", tokens[1]);
+                    let defer_dst_date_result =
                         Local.datetime_from_str(&defer_dst_str, "%Y/%m/%d %H:%M:%S");
 
-                    match defer_dst_time_result {
-                        Ok(defer_dst_time) => {
+                    match defer_dst_date_result {
+                        Ok(defer_dst_date) => {
+                            let defer_dst_time =
+                                get_next_morning_datetime(defer_dst_date) - Duration::days(1);
+
                             let now: DateTime<Local> = task_repository.get_last_synced_time();
                             let seconds = (defer_dst_time - now).num_seconds() + 1;
 
