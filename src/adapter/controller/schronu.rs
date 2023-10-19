@@ -549,6 +549,10 @@ fn execute_show_all_tasks(
                             {
                                 msgs_with_dt.push((*dt, *rank, msg));
                             }
+                        } else if pattern == "枝" {
+                            if rank > &0 {
+                                msgs_with_dt.push((*dt, *rank, msg));
+                            }
                         } else if pattern == "印" {
                             if msg.contains(&format!(" {} ", &deadline_icon))
                                 || msg.contains(&format!(" {} ", &today_leaf_icon))
