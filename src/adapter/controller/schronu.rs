@@ -1530,7 +1530,16 @@ fn application(
 
     ///////////////////////
 
-    execute_show_all_tasks(&mut stdout, task_repository, free_time_manager, &None);
+    // さすがに長くなってきたので全部は表示しない
+    // execute_show_all_tasks(&mut stdout, task_repository, free_time_manager, &None);
+
+    // 今日やるタスクだけ表示する
+    execute_show_all_tasks(
+        &mut stdout,
+        task_repository,
+        free_time_manager,
+        &Some("印".to_string()),
+    );
 
     ///////////////////////
 
