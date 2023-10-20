@@ -479,7 +479,7 @@ fn execute_show_all_tasks(
                 if (rank == &0 && dt < &eod)
                     || (task.get_deadline_time_opt().is_some()
                         && task.get_deadline_time_opt().unwrap()
-                            < last_synced_time + Duration::days(1))
+                            < get_next_morning_datetime(last_synced_time))
                 {
                     total_deadline_estimated_work_seconds += task.get_estimated_work_seconds();
                 }
@@ -505,7 +505,8 @@ fn execute_show_all_tasks(
                 let today_leaf_icon: String = "/".to_string();
                 // Todo: この判定が分散しているので、後で関数化したほうがよいかも
                 let icon = if task.get_deadline_time_opt().is_some()
-                    && task.get_deadline_time_opt().unwrap() < last_synced_time + Duration::days(1)
+                    && task.get_deadline_time_opt().unwrap()
+                        < get_next_morning_datetime(last_synced_time)
                 {
                     &deadline_icon
                 } else if rank == &0 && dt < &eod {
@@ -536,7 +537,7 @@ fn execute_show_all_tasks(
                             if rank == &0
                                 || task.get_deadline_time_opt().is_some()
                                     && task.get_deadline_time_opt().unwrap()
-                                        < last_synced_time + Duration::days(1)
+                                        < get_next_morning_datetime(last_synced_time)
                             {
                                 msgs_with_dt.push((*dt, *rank, msg));
                             }
