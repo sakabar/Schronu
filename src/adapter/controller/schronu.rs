@@ -603,6 +603,9 @@ fn execute_show_all_tasks(
 
     let mut daily_stat_msgs: Vec<String> = vec![];
 
+    // 「それぞれの日の rho (0.7) との差」の累積和
+    let mut accumurate_duration_diff_to_goal_rho = Duration::minutes(0);
+
     for (date, _cnt) in &counter_arr[0..SUMMARY_DAYS] {
         let total_estimated_work_minutes_of_the_date: i64 =
             *total_estimated_work_minutes_of_the_date_counter
@@ -662,8 +665,12 @@ fn execute_show_all_tasks(
         let diff_to_goal_hour = diff_to_goal.abs().floor();
         let diff_to_goal_minute = (diff_to_goal.abs() - diff_to_goal_hour) * 60.0;
 
+        accumurate_duration_diff_to_goal_rho = accumurate_duration_diff_to_goal_rho
+            + Duration::hours(diff_to_goal_hour as i64)
+            + Duration::minutes(diff_to_goal_minute as i64);
+
         let s = format!(
-            "{}({})\t{:02.1}/{:02.1}[時間]\trho_1={:.2}\t{}{:.0}時間{:02.0}分\tLq={:.1}\t{:02}[タスク]\t{:02}[分/タスク]",
+            "{}({})\t{:02.1}/{:02.1}[時間]\trho_1={:.2}\t{}{:.0}時間{:02.0}分\t{}時間{}分\tLq={:.1}\t{:02}[タスク]\t{:02}[分/タスク]",
             date,
             weekday_jp,
             total_leaf_estimated_work_hours_of_the_date,
@@ -672,6 +679,8 @@ fn execute_show_all_tasks(
             diff_to_goal_sign,
             diff_to_goal_hour,
             diff_to_goal_minute,
+            accumurate_duration_diff_to_goal_rho.num_hours(),
+            accumurate_duration_diff_to_goal_rho.num_minutes() % 60,
             lq_in_date,
             leaf_cnt_of_the_date,
             if leaf_cnt_of_the_date > 0 {
