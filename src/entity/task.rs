@@ -2150,3 +2150,39 @@ fn test_list_all_parent_tasks_with_first_available_time_正常系() {
 
     assert_eq!(actual, expected);
 }
+
+#[test]
+fn test_list_all_parent_tasks_with_first_available_time_葉に〆切がある場合() {
+    /*
+     parent_task_1
+       - child_task_1
+         - grand_child_task (葉)
+    */
+    let dt = Local.with_ymd_and_hms(2023, 5, 19, 01, 23, 45).unwrap();
+    let parent_task = Task::new("親タスク");
+    parent_task.set_create_time(dt);
+    parent_task.set_start_time(dt);
+
+    let mut child_task = Task::new("子タスク");
+    child_task.set_create_time(dt);
+    child_task.set_start_time(dt);
+
+    let grand_child_task = child_task.create_as_last_child(TaskAttr::new("孫タスク"));
+    grand_child_task.set_create_time(dt);
+    grand_child_task.set_start_time(dt);
+    grand_child_task.set_deadline_time_opt(Some(dt - Duration::hours(1)));
+
+    let expected = vec![
+        (dt - Duration::hours(1), grand_child_task.clone()),
+        (dt, child_task.clone()),
+        (dt, parent_task.clone()),
+    ];
+
+    child_task
+        .detach_insert_as_last_child_of(parent_task)
+        .unwrap();
+
+    let actual = grand_child_task.list_all_parent_tasks_with_first_available_time();
+
+    assert_eq!(actual, expected);
+}
