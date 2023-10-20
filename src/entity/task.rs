@@ -1290,7 +1290,7 @@ impl Task {
                     child_task_first_available_time = *dt_cand.iter().max().unwrap();
 
                     // 〆切優先
-                    match self.get_deadline_time_opt() {
+                    match task.get_deadline_time_opt() {
                         Some(deadline_time) => {
                             child_task_first_available_time =
                                 min(child_task_first_available_time, deadline_time);
