@@ -664,11 +664,11 @@ fn execute_show_all_tasks(
         const RHO_GOAL: f64 = 0.7;
 
         let diff_to_goal = total_leaf_estimated_work_hours_of_the_date - free_time_hours * RHO_GOAL;
-        let diff_to_goal_sign: char = if diff_to_goal >= 0.0 { '+' } else { '-' };
+        let diff_to_goal_sign: char = if diff_to_goal >= 0.0 { ' ' } else { '-' };
         let diff_to_goal_hour = diff_to_goal.abs().floor();
         let diff_to_goal_minute = (diff_to_goal.abs() - diff_to_goal_hour) * 60.0;
 
-        accumurate_duration_diff_to_goal_rho = if diff_to_goal_sign == '+' {
+        accumurate_duration_diff_to_goal_rho = if diff_to_goal >= 0.0 {
             accumurate_duration_diff_to_goal_rho
                 + Duration::hours(diff_to_goal_hour as i64)
                 + Duration::minutes(diff_to_goal_minute as i64)
@@ -680,7 +680,7 @@ fn execute_show_all_tasks(
 
         let acc_diff_to_goal_sign: char =
             if accumurate_duration_diff_to_goal_rho >= Duration::minutes(0) {
-                '+'
+                ' '
             } else {
                 '-'
             };
@@ -701,7 +701,7 @@ fn execute_show_all_tasks(
 
         let diff_to_limit_sign: char = if accumurate_duration_diff_to_limit >= Duration::minutes(0)
         {
-            '+'
+            ' '
         } else {
             '-'
         };
