@@ -660,9 +660,16 @@ fn execute_show_all_tasks(
         let diff_to_goal_hour = diff_to_goal.abs().floor();
         let diff_to_goal_minute = (diff_to_goal.abs() - diff_to_goal_hour) * 60.0;
 
-        accumurate_duration_diff_to_goal_rho = accumurate_duration_diff_to_goal_rho
-            + Duration::hours(diff_to_goal_hour as i64)
-            + Duration::minutes(diff_to_goal_minute as i64);
+        accumurate_duration_diff_to_goal_rho = if diff_to_goal_sign == '+' {
+            accumurate_duration_diff_to_goal_rho
+                + Duration::hours(diff_to_goal_hour as i64)
+                + Duration::minutes(diff_to_goal_minute as i64)
+        } else {
+            accumurate_duration_diff_to_goal_rho
+                - Duration::hours(diff_to_goal_hour as i64)
+                - Duration::minutes(diff_to_goal_minute as i64)
+        };
+
         let acc_diff_to_goal_sign: char =
             if accumurate_duration_diff_to_goal_rho >= Duration::minutes(0) {
                 '+'
