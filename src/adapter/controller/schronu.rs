@@ -663,9 +663,15 @@ fn execute_show_all_tasks(
         accumurate_duration_diff_to_goal_rho = accumurate_duration_diff_to_goal_rho
             + Duration::hours(diff_to_goal_hour as i64)
             + Duration::minutes(diff_to_goal_minute as i64);
+        let acc_diff_to_goal_sign: char =
+            if accumurate_duration_diff_to_goal_rho >= Duration::minutes(0) {
+                '+'
+            } else {
+                '-'
+            };
 
         let s = format!(
-            "{}({})\t{:02.1}/{:02.1}[時間]\trho_1={:.2}\t{}{:.0}時間{:02.0}分\t{}時間{}分\t{:02}[タスク]",
+            "{}({})\t{:02.1}/{:02.1}[時間]\trho_1={:.2}\t{}{:.0}時間{:02.0}分\t{}{:02}時間{:02}分\t{:02}[タスク]",
             date,
             weekday_jp,
             total_leaf_estimated_work_hours_of_the_date,
@@ -674,8 +680,9 @@ fn execute_show_all_tasks(
             diff_to_goal_sign,
             diff_to_goal_hour,
             diff_to_goal_minute,
-            accumurate_duration_diff_to_goal_rho.num_hours(),
-            accumurate_duration_diff_to_goal_rho.num_minutes() % 60,
+            acc_diff_to_goal_sign,
+            accumurate_duration_diff_to_goal_rho.num_hours().abs(),
+            accumurate_duration_diff_to_goal_rho.num_minutes().abs() % 60,
             leaf_cnt_of_the_date
         );
         daily_stat_msgs.push(s);
