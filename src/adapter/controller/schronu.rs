@@ -606,6 +606,9 @@ fn execute_show_all_tasks(
     // 「それぞれの日の rho (0.7) との差」の累積和
     let mut accumurate_duration_diff_to_goal_rho = Duration::minutes(0);
 
+    // 「それぞれの日の自由時間との差」の累積和
+    let mut accumurate_duration_diff_to_limit = Duration::minutes(0);
+
     for (date, _cnt) in &counter_arr[0..SUMMARY_DAYS] {
         let total_estimated_work_minutes_of_the_date: i64 =
             *total_estimated_work_minutes_of_the_date_counter
@@ -677,19 +680,46 @@ fn execute_show_all_tasks(
                 '-'
             };
 
+        let over_time_hours_f = total_leaf_estimated_work_hours_of_the_date - free_time_hours;
+        let over_time_hours = over_time_hours_f.abs().floor() as i64;
+        let over_time_minutes = (over_time_hours_f.abs() * 60.0) as i64 % 60;
+
+        accumurate_duration_diff_to_limit = if over_time_hours_f > 0.0 {
+            accumurate_duration_diff_to_limit
+                + Duration::hours(over_time_hours)
+                + Duration::minutes(over_time_minutes)
+        } else {
+            accumurate_duration_diff_to_limit
+                - Duration::hours(over_time_hours)
+                - Duration::minutes(over_time_minutes)
+        };
+
+        let diff_to_limit_sign: char = if accumurate_duration_diff_to_limit >= Duration::minutes(0)
+        {
+            '+'
+        } else {
+            '-'
+        };
+
         let s = format!(
-            "{}({})\t{:02.1}/{:02.1}[時間]\trho_1={:.2}\t{}{:.0}時間{:02.0}分\t{}{:02}時間{:02}分\t{:02}[タスク]",
+            "{}({})\t{:02.1}/{:02.1}[時間]\trho_1={:.2}\t{}{:.0}時間{:02.0}分\t{}{:02}時間{:02}分\t{}{:02}時間{:02}分\t{:02}[タスク]",
             date,
             weekday_jp,
             total_leaf_estimated_work_hours_of_the_date,
             free_time_hours,
             rho_in_date,
+
             diff_to_goal_sign,
             diff_to_goal_hour,
             diff_to_goal_minute,
+
             acc_diff_to_goal_sign,
             accumurate_duration_diff_to_goal_rho.num_hours().abs(),
             accumurate_duration_diff_to_goal_rho.num_minutes().abs() % 60,
+
+            diff_to_limit_sign,
+            accumurate_duration_diff_to_limit.num_hours().abs(),
+            accumurate_duration_diff_to_limit.num_minutes().abs() % 60,
             leaf_cnt_of_the_date
         );
         daily_stat_msgs.push(s);
