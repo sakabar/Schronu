@@ -652,11 +652,6 @@ fn execute_show_all_tasks(
 
         let free_time_hours = free_time_minutes as f64 / 60.0;
         let rho_in_date = total_leaf_estimated_work_hours_of_the_date / free_time_hours;
-        let lq_in_date = if rho_in_date < 1.0 {
-            rho_in_date / (1.0 - rho_in_date)
-        } else {
-            std::f64::INFINITY
-        };
 
         const RHO_GOAL: f64 = 0.7;
 
@@ -670,7 +665,7 @@ fn execute_show_all_tasks(
             + Duration::minutes(diff_to_goal_minute as i64);
 
         let s = format!(
-            "{}({})\t{:02.1}/{:02.1}[時間]\trho_1={:.2}\t{}{:.0}時間{:02.0}分\t{}時間{}分\tLq={:.1}\t{:02}[タスク]\t{:02}[分/タスク]",
+            "{}({})\t{:02.1}/{:02.1}[時間]\trho_1={:.2}\t{}{:.0}時間{:02.0}分\t{}時間{}分\t{:02}[タスク]",
             date,
             weekday_jp,
             total_leaf_estimated_work_hours_of_the_date,
@@ -681,14 +676,7 @@ fn execute_show_all_tasks(
             diff_to_goal_minute,
             accumurate_duration_diff_to_goal_rho.num_hours(),
             accumurate_duration_diff_to_goal_rho.num_minutes() % 60,
-            lq_in_date,
-            leaf_cnt_of_the_date,
-            if leaf_cnt_of_the_date > 0 {
-                (total_leaf_estimated_work_minutes_of_the_date as f64 / leaf_cnt_of_the_date as f64)
-                    .ceil() as i64
-            } else {
-                0
-            },
+            leaf_cnt_of_the_date
         );
         daily_stat_msgs.push(s);
     }
