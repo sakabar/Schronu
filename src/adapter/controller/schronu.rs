@@ -538,6 +538,8 @@ fn execute_show_all_tasks(
                     shorten_name
                 );
 
+                let yyyymmdd_reg = Regex::new(r"^\d{4}/\d{2}/\d{2}$").unwrap();
+
                 match pattern_opt {
                     Some(pattern) => {
                         // Todo: 文字列マッチの絞り込み機能とその他の属性による絞り込みを機能を分ける
@@ -561,6 +563,11 @@ fn execute_show_all_tasks(
                             }
                         } else if pattern == "〆" {
                             if msg.contains(&format!(" {} ", &deadline_icon)) {
+                                msgs_with_dt.push((*dt, *rank, msg));
+                            }
+                        } else if yyyymmdd_reg.is_match(pattern) {
+                            let dt_yyyymmdd = dt.format("%Y/%m/%d").to_string();
+                            if &dt_yyyymmdd == pattern {
                                 msgs_with_dt.push((*dt, *rank, msg));
                             }
                         } else if name.to_lowercase().contains(&pattern.to_lowercase())
