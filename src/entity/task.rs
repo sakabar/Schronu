@@ -2,6 +2,7 @@ use chrono::{DateTime, Local};
 use core::cell::BorrowError;
 use dendron::{HotNode, InsertAs, Node};
 use linked_hash_map::LinkedHashMap;
+use std::cmp::min;
 use std::fmt;
 use uuid::Uuid;
 use yaml_rust::Yaml;
@@ -1272,6 +1273,7 @@ impl Task {
 
     // 親を辿って、Todoのタスクを全て返す
     // タプルの1つ目は最速でTodo化するタイミング
+    // 〆切を守れるように、pending_untilよりも〆切を優先する
     pub fn list_all_parent_tasks_with_first_available_time(&self) -> Vec<(DateTime<Local>, Task)> {
         let mut ans: Vec<(DateTime<Local>, Task)> = vec![];
         let mut child_task_first_available_time: DateTime<Local> =
@@ -1286,6 +1288,15 @@ impl Task {
 
                     // 2要素なのでNoneになることはない
                     child_task_first_available_time = *dt_cand.iter().max().unwrap();
+
+                    // 〆切優先
+                    match self.get_deadline_time_opt() {
+                        Some(deadline_time) => {
+                            child_task_first_available_time =
+                                min(child_task_first_available_time, deadline_time);
+                        }
+                        None => {}
+                    };
 
                     let tpl = (child_task_first_available_time, task.clone());
                     ans.push(tpl);
@@ -2016,6 +2027,24 @@ fn test_list_all_parent_tasks_with_first_available_time_タスク1個でpending�
 
     let actual = parent_task.list_all_parent_tasks_with_first_available_time();
     let expected = [(dt + Duration::hours(1), parent_task)];
+
+    assert_eq!(actual, expected);
+}
+
+#[test]
+fn test_list_all_parent_tasks_with_first_available_time_タスク1個でpending状態の時はpending_untilとstart_timeの大きい方が採用されること_deadline_timeのほうが小さい場合(
+) {
+    let dt = Local.with_ymd_and_hms(2023, 5, 19, 01, 23, 45).unwrap();
+    let parent_task = Task::new("親タスク");
+    parent_task.set_create_time(dt);
+    parent_task.set_start_time(dt);
+    parent_task.set_orig_status(Status::Pending);
+    parent_task.set_pending_until(dt + Duration::hours(1));
+    parent_task.set_deadline_time_opt(Some(dt - Duration::hours(1)));
+    parent_task.sync_clock(dt);
+
+    let actual = parent_task.list_all_parent_tasks_with_first_available_time();
+    let expected = [(dt - Duration::hours(1), parent_task)];
 
     assert_eq!(actual, expected);
 }

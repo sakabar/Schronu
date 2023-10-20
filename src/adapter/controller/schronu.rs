@@ -390,32 +390,21 @@ fn execute_show_all_tasks(
             let all_parent_tasks = leaf_task.list_all_parent_tasks_with_first_available_time();
             for (rank, (dt, task)) in all_parent_tasks.iter().enumerate() {
                 let id = task.get_id();
-                let deadline_time_opt = task.get_deadline_time_opt();
 
-                // 素直に書くならif-else if-elseだが、rank != 0で〆切がないタスクはNoneとなるので、else if節は不要
-                let leaf_key_dt_opt = if rank == 0 {
-                    Some(*dt)
-                } else {
-                    task.get_deadline_time_opt()
-                };
+                leaf_counter
+                    .entry(dt.date_naive())
+                    .and_modify(|cnt| *cnt += 1)
+                    .or_insert(1);
 
-                // 葉タスク、あるいは葉タスクではないが〆切が決まっているものについては、便宜的に〆切の日の葉タスクとして扱って、その日のタスク見積もり時間の合計をカウントすることにする
-                leaf_key_dt_opt.map(|leaf_key_dt| {
-                    leaf_counter
-                        .entry(leaf_key_dt.date_naive())
-                        .and_modify(|cnt| *cnt += 1)
-                        .or_insert(1);
+                let estimated_work_minutes =
+                    (task.get_estimated_work_seconds() as f64 / 60.0 / RHO).ceil() as i64;
 
-                    let estimated_work_minutes =
-                        (task.get_estimated_work_seconds() as f64 / 60.0 / RHO).ceil() as i64;
-
-                    total_leaf_estimated_work_minutes_of_the_date_counter
-                        .entry(leaf_key_dt.date_naive())
-                        .and_modify(|estimated_work_minutes_val| {
-                            *estimated_work_minutes_val += estimated_work_minutes
-                        })
-                        .or_insert(estimated_work_minutes);
-                });
+                total_leaf_estimated_work_minutes_of_the_date_counter
+                    .entry(dt.date_naive())
+                    .and_modify(|estimated_work_minutes_val| {
+                        *estimated_work_minutes_val += estimated_work_minutes
+                    })
+                    .or_insert(estimated_work_minutes);
 
                 id_to_dt_map
                     .entry(id)
@@ -428,7 +417,7 @@ fn execute_show_all_tasks(
                             *rank_val = rank
                         }
                     })
-                    .or_insert((*dt, rank, deadline_time_opt));
+                    .or_insert((*dt, rank, task.get_deadline_time_opt()));
             }
         }
     }
@@ -636,8 +625,23 @@ fn execute_show_all_tasks(
             Weekday::Sun => "日",
         };
 
-        let free_time_minutes = if date == &&last_synced_time.date_naive() {
-            free_time_manager.get_free_minutes(&last_synced_time, &eod)
+        let local_datetime_base = get_next_morning_datetime(
+            Local::now()
+                .timezone()
+                .from_local_datetime(&date.and_hms_opt(0, 0, 0).unwrap())
+                .unwrap(),
+        );
+
+        let free_time_minutes = if last_synced_time.hour()
+            < get_next_morning_datetime(last_synced_time).hour()
+            && local_datetime_base < last_synced_time
+            && last_synced_time < get_next_morning_datetime(local_datetime_base)
+        {
+            if last_synced_time < eod {
+                (eod - last_synced_time).num_minutes()
+            } else {
+                0
+            }
         } else {
             let local_tz = Local::now().timezone();
 
