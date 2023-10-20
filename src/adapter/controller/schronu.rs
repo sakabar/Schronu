@@ -10,6 +10,7 @@ use schronu::entity::task::{
     extract_leaf_tasks_from_project, extract_leaf_tasks_from_project_with_pending, Status, Task,
     TaskAttr,
 };
+use std::cmp::max;
 use std::cmp::min;
 use std::collections::HashMap;
 use std::io::Stdout;
@@ -739,7 +740,10 @@ fn execute_show_all_tasks(
     writeln_newline(stdout, "").unwrap();
 
     // 1日の残りの時間から稼働率ρを計算する
-    let busy_seconds = free_time_manager.get_busy_minutes(&last_synced_time, &eod) * 60;
+    let busy_seconds = max(
+        0,
+        free_time_manager.get_busy_minutes(&last_synced_time, &eod) * 60,
+    );
     let lambda_seconds = total_deadline_estimated_work_seconds + busy_seconds;
 
     let estimated_finish_dt = last_synced_time + Duration::seconds(lambda_seconds);
@@ -758,7 +762,7 @@ fn execute_show_all_tasks(
 
     let total_deadline_estimated_work_hours =
         total_deadline_estimated_work_seconds as f64 / 60.0 / 60.0;
-    let mu_seconds = (eod - last_synced_time).num_seconds();
+    let mu_seconds = max(0, (eod - last_synced_time).num_seconds());
     let mu_hours = mu_seconds as f64 / 3600.0;
 
     let rho1 = total_deadline_estimated_work_seconds as f64 / (mu_seconds - busy_seconds) as f64;
