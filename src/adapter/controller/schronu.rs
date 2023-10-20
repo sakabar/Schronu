@@ -588,9 +588,9 @@ fn execute_show_all_tasks(
     // 逆順にする: dtの大きい順となる
     msgs_with_dt.reverse();
 
-    // 日付の大きい順にソートする
+    // 日付の小さい順にソートする
     let mut counter_arr: Vec<(&NaiveDate, &usize)> = counter.iter().collect();
-    counter_arr.sort_by(|a, b| b.0.cmp(&a.0));
+    counter_arr.sort_by(|a, b| a.0.cmp(&b.0));
 
     for (_, _, msg) in msgs_with_dt.iter() {
         writeln_newline(stdout, &msg).unwrap();
@@ -600,13 +600,13 @@ fn execute_show_all_tasks(
 
     // 未来のサマリは見ても仕方ないので、直近の8日ぶん(配列の末尾)に絞る
     const SUMMARY_DAYS: usize = 8;
-    let start_ind = if counter_arr.len() >= SUMMARY_DAYS {
-        counter_arr.len() - SUMMARY_DAYS
-    } else {
-        0
-    };
 
-    for (date, _cnt) in &counter_arr[start_ind..] {
+    let mut daily_stat_msgs: Vec<String> = vec![];
+
+    // 「それぞれの日の rho (0.7) との差」の累積和
+    let mut accumurate_duration_diff_to_goal_rho = Duration::minutes(0);
+
+    for (date, _cnt) in &counter_arr[0..SUMMARY_DAYS] {
         let total_estimated_work_minutes_of_the_date: i64 =
             *total_estimated_work_minutes_of_the_date_counter
                 .get(date)
@@ -652,11 +652,6 @@ fn execute_show_all_tasks(
 
         let free_time_hours = free_time_minutes as f64 / 60.0;
         let rho_in_date = total_leaf_estimated_work_hours_of_the_date / free_time_hours;
-        let lq_in_date = if rho_in_date < 1.0 {
-            rho_in_date / (1.0 - rho_in_date)
-        } else {
-            std::f64::INFINITY
-        };
 
         const RHO_GOAL: f64 = 0.7;
 
@@ -665,8 +660,18 @@ fn execute_show_all_tasks(
         let diff_to_goal_hour = diff_to_goal.abs().floor();
         let diff_to_goal_minute = (diff_to_goal.abs() - diff_to_goal_hour) * 60.0;
 
+        accumurate_duration_diff_to_goal_rho = accumurate_duration_diff_to_goal_rho
+            + Duration::hours(diff_to_goal_hour as i64)
+            + Duration::minutes(diff_to_goal_minute as i64);
+        let acc_diff_to_goal_sign: char =
+            if accumurate_duration_diff_to_goal_rho >= Duration::minutes(0) {
+                '+'
+            } else {
+                '-'
+            };
+
         let s = format!(
-            "{}({})\t{:02.1}/{:02.1}[時間]\trho_1={:.2}\t{}{:.0}時間{:02.0}分\tLq={:.1}\t{:02}[タスク]\t{:02}[分/タスク]",
+            "{}({})\t{:02.1}/{:02.1}[時間]\trho_1={:.2}\t{}{:.0}時間{:02.0}分\t{}{:02}時間{:02}分\t{:02}[タスク]",
             date,
             weekday_jp,
             total_leaf_estimated_work_hours_of_the_date,
@@ -675,15 +680,18 @@ fn execute_show_all_tasks(
             diff_to_goal_sign,
             diff_to_goal_hour,
             diff_to_goal_minute,
-            lq_in_date,
-            leaf_cnt_of_the_date,
-            if leaf_cnt_of_the_date > 0 {
-                (total_leaf_estimated_work_minutes_of_the_date as f64 / leaf_cnt_of_the_date as f64)
-                    .ceil() as i64
-            } else {
-                0
-            },
+            acc_diff_to_goal_sign,
+            accumurate_duration_diff_to_goal_rho.num_hours().abs(),
+            accumurate_duration_diff_to_goal_rho.num_minutes().abs() % 60,
+            leaf_cnt_of_the_date
         );
+        daily_stat_msgs.push(s);
+    }
+
+    // 逆順にして、下側に直近の日付があるようにする
+    daily_stat_msgs.reverse();
+
+    for s in daily_stat_msgs.iter() {
         writeln_newline(stdout, &s).unwrap();
     }
     writeln_newline(stdout, "").unwrap();
