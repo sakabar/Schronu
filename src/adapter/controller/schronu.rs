@@ -625,8 +625,23 @@ fn execute_show_all_tasks(
             Weekday::Sun => "日",
         };
 
-        let free_time_minutes = if date == &&last_synced_time.date_naive() {
-            free_time_manager.get_free_minutes(&last_synced_time, &eod)
+        let local_datetime_base = get_next_morning_datetime(
+            Local::now()
+                .timezone()
+                .from_local_datetime(&date.and_hms_opt(0, 0, 0).unwrap())
+                .unwrap(),
+        );
+
+        let free_time_minutes = if last_synced_time.hour()
+            < get_next_morning_datetime(last_synced_time).hour()
+            && local_datetime_base < last_synced_time
+            && last_synced_time < get_next_morning_datetime(local_datetime_base)
+        {
+            if last_synced_time < eod {
+                (eod - last_synced_time).num_minutes()
+            } else {
+                0
+            }
         } else {
             let local_tz = Local::now().timezone();
 
