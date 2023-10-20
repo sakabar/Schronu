@@ -390,32 +390,21 @@ fn execute_show_all_tasks(
             let all_parent_tasks = leaf_task.list_all_parent_tasks_with_first_available_time();
             for (rank, (dt, task)) in all_parent_tasks.iter().enumerate() {
                 let id = task.get_id();
-                let deadline_time_opt = task.get_deadline_time_opt();
 
-                // 素直に書くならif-else if-elseだが、rank != 0で〆切がないタスクはNoneとなるので、else if節は不要
-                let leaf_key_dt_opt = if rank == 0 {
-                    Some(*dt)
-                } else {
-                    task.get_deadline_time_opt()
-                };
+                leaf_counter
+                    .entry(dt.date_naive())
+                    .and_modify(|cnt| *cnt += 1)
+                    .or_insert(1);
 
-                // 葉タスク、あるいは葉タスクではないが〆切が決まっているものについては、便宜的に〆切の日の葉タスクとして扱って、その日のタスク見積もり時間の合計をカウントすることにする
-                leaf_key_dt_opt.map(|leaf_key_dt| {
-                    leaf_counter
-                        .entry(leaf_key_dt.date_naive())
-                        .and_modify(|cnt| *cnt += 1)
-                        .or_insert(1);
+                let estimated_work_minutes =
+                    (task.get_estimated_work_seconds() as f64 / 60.0 / RHO).ceil() as i64;
 
-                    let estimated_work_minutes =
-                        (task.get_estimated_work_seconds() as f64 / 60.0 / RHO).ceil() as i64;
-
-                    total_leaf_estimated_work_minutes_of_the_date_counter
-                        .entry(leaf_key_dt.date_naive())
-                        .and_modify(|estimated_work_minutes_val| {
-                            *estimated_work_minutes_val += estimated_work_minutes
-                        })
-                        .or_insert(estimated_work_minutes);
-                });
+                total_leaf_estimated_work_minutes_of_the_date_counter
+                    .entry(dt.date_naive())
+                    .and_modify(|estimated_work_minutes_val| {
+                        *estimated_work_minutes_val += estimated_work_minutes
+                    })
+                    .or_insert(estimated_work_minutes);
 
                 id_to_dt_map
                     .entry(id)
@@ -428,7 +417,7 @@ fn execute_show_all_tasks(
                             *rank_val = rank
                         }
                     })
-                    .or_insert((*dt, rank, deadline_time_opt));
+                    .or_insert((*dt, rank, task.get_deadline_time_opt()));
             }
         }
     }
