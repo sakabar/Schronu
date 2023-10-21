@@ -455,6 +455,10 @@ fn execute_show_all_tasks(
     let mut total_deadline_estimated_work_seconds = 0;
     // ここまでρ計算用
 
+    let is_calendar_func = pattern_opt.as_ref().map_or(false, |pattern| {
+        pattern == "暦" || pattern == "calendar" || pattern == "cal"
+    });
+
     let mut total_estimated_work_minutes: i64 = 0;
     for (ind, (dt, rank, deadline_time_opt, id)) in dt_id_tpl_arr.iter().enumerate() {
         let task_opt = task_repository.get_by_id(*id);
@@ -556,6 +560,8 @@ fn execute_show_all_tasks(
                             if msg.contains(&format!(" {} ", &deadline_icon)) {
                                 msgs_with_dt.push((*dt, *rank, msg));
                             }
+                        } else if is_calendar_func {
+                            // カレンダー表示機能を使う時には、タスク一覧は表示しない。
                         } else if yyyymmdd_reg.is_match(pattern) {
                             let dt_yyyymmdd = dt.format("%Y/%m/%d").to_string();
                             if &dt_yyyymmdd == pattern {
@@ -579,15 +585,17 @@ fn execute_show_all_tasks(
     // 逆順にする: dtの大きい順となる
     msgs_with_dt.reverse();
 
+    if !is_calendar_func {
+        for (_, _, msg) in msgs_with_dt.iter() {
+            writeln_newline(stdout, &msg).unwrap();
+        }
+
+        writeln_newline(stdout, "").unwrap();
+    }
+
     // 日付の小さい順にソートする
     let mut counter_arr: Vec<(&NaiveDate, &usize)> = counter.iter().collect();
     counter_arr.sort_by(|a, b| a.0.cmp(&b.0));
-
-    for (_, _, msg) in msgs_with_dt.iter() {
-        writeln_newline(stdout, &msg).unwrap();
-    }
-
-    writeln_newline(stdout, "").unwrap();
 
     // 未来のサマリは見ても仕方ないので、直近の8日ぶん(配列の末尾)に絞る
     const SUMMARY_DAYS: usize = 8;
@@ -728,16 +736,19 @@ fn execute_show_all_tasks(
             accumurate_duration_diff_to_limit.num_minutes().abs() % 60,
             leaf_cnt_of_the_date
         );
+
         daily_stat_msgs.push(s);
     }
 
     // 逆順にして、下側に直近の日付があるようにする
     daily_stat_msgs.reverse();
 
-    for s in daily_stat_msgs.iter() {
-        writeln_newline(stdout, &s).unwrap();
+    if is_calendar_func {
+        for s in daily_stat_msgs.iter() {
+            writeln_newline(stdout, &s).unwrap();
+        }
+        writeln_newline(stdout, "").unwrap();
     }
-    writeln_newline(stdout, "").unwrap();
 
     // 1日の残りの時間から稼働率ρを計算する
     let busy_seconds = max(
