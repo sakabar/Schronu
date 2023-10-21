@@ -488,6 +488,26 @@ fn execute_show_all_tasks(
                             }
                         } else if is_calendar_func {
                             // カレンダー表示機能を使う時には、タスク一覧は表示しない。
+                        } else if pattern == "今" {
+                            let dt_yyyymmdd = dt.format("%Y/%m/%d").to_string();
+                            if &dt_yyyymmdd
+                                == (get_next_morning_datetime(last_synced_time) - Duration::days(1))
+                                    .format("%Y/%m/%d")
+                                    .to_string()
+                                    .as_str()
+                            {
+                                msgs_with_dt.push((*dt, *rank, msg));
+                            }
+                        } else if pattern == "明" {
+                            let dt_yyyymmdd = dt.format("%Y/%m/%d").to_string();
+                            if &dt_yyyymmdd
+                                == (get_next_morning_datetime(last_synced_time))
+                                    .format("%Y/%m/%d")
+                                    .to_string()
+                                    .as_str()
+                            {
+                                msgs_with_dt.push((*dt, *rank, msg));
+                            }
                         } else if yyyymmdd_reg.is_match(pattern) {
                             let dt_yyyymmdd = dt.format("%Y/%m/%d").to_string();
                             if &dt_yyyymmdd == pattern {
