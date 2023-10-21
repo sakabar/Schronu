@@ -347,14 +347,17 @@ fn execute_show_all_tasks(
                 // 今日以前に実施可能だったタスクについては、今日のタスクと見なす
                 let dt = max(dt_raw, &last_synced_time);
 
+                // 日付としては、日付が変わった直後のタスクは前日のタスクと見なす
+                let naive_dt = (get_next_morning_datetime(*dt) - Duration::days(1)).date_naive();
+
                 counter
-                    .entry(dt.date_naive())
+                    .entry(naive_dt)
                     .and_modify(|cnt| *cnt += 1)
                     .or_insert(1);
 
                 let estimated_work_seconds = task.get_estimated_work_seconds();
                 total_estimated_work_seconds_of_the_date_counter
-                    .entry(dt.date_naive())
+                    .entry(naive_dt)
                     .and_modify(|estimated_work_seconds_val| {
                         *estimated_work_seconds_val += estimated_work_seconds
                     })
@@ -704,9 +707,11 @@ fn execute_show_all_tasks(
     let busy_s = format!("残り拘束時間は{:.1}時間です", busy_hours);
     writeln_newline(stdout, &busy_s).unwrap();
 
+    let naive_dt_today =
+        (get_next_morning_datetime(last_synced_time) - Duration::days(1)).date_naive();
     let today_total_deadline_estimated_work_seconds =
         *total_estimated_work_seconds_of_the_date_counter
-            .get(&last_synced_time.date_naive())
+            .get(&naive_dt_today)
             .unwrap_or(&0);
     let today_total_deadline_estimated_work_minutes =
         (today_total_deadline_estimated_work_seconds as f64 / 60.0).ceil() as i64;
