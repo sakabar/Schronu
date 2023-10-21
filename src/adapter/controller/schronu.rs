@@ -333,13 +333,17 @@ fn execute_show_all_tasks(
 
     // 複数の子タスクがある場合に、親タスクのdtは子の着手可能時期の中で最大の値となるようにする。
     // タプルの第2要素はrankで、葉(0)からの距離の大きい方
+    let last_synced_time = task_repository.get_last_synced_time();
     for project_root_task in task_repository.get_all_projects().iter() {
         let leaf_tasks = extract_leaf_tasks_from_project_with_pending(&project_root_task);
 
         for leaf_task in leaf_tasks.iter() {
             let all_parent_tasks = leaf_task.list_all_parent_tasks_with_first_available_time();
-            for (rank, (dt, task)) in all_parent_tasks.iter().enumerate() {
+            for (rank, (dt_raw, task)) in all_parent_tasks.iter().enumerate() {
                 let id = task.get_id();
+
+                // 今日以前に実施可能だったタスクについては、今日のタスクと見なす
+                let dt = max(dt_raw, &last_synced_time);
 
                 counter
                     .entry(dt.date_naive())
