@@ -1,4 +1,5 @@
 use chrono::{DateTime, Datelike, Duration, Local, NaiveDate, TimeZone, Timelike, Weekday};
+use fs2::FileExt;
 use percent_encoding::{percent_encode, AsciiSet, CONTROLS};
 use regex::Regex;
 use schronu::adapter::gateway::free_time_manager::FreeTimeManager;
@@ -13,6 +14,7 @@ use schronu::entity::task::{
 use std::cmp::max;
 use std::cmp::min;
 use std::collections::HashMap;
+use std::fs::File;
 use std::io::Stdout;
 use std::io::{stdout, Write};
 use std::process;
@@ -1518,8 +1520,28 @@ fn main() {
     let mut task_repository = TaskRepository::new("../Schronu-private/tasks/");
     let mut free_time_manager = FreeTimeManager::new();
 
-    // controllerで実体を見るのを避けるために、1つ関数を切る
-    application(&mut task_repository, &mut free_time_manager);
+    // 複数プロセスで同時に実行すると片方の操作がもう片方の操作により上書かれてしまうので、
+    // ロックファイルを置いて制御する
+    let lock_path: &str = &format!("{}/.lock", task_repository.get_project_storage_dir_name());
+
+    // ロックファイルを開く。なければ作成する。
+    let file = File::create(lock_path).expect("Unable to create lock file");
+
+    // 排他ロックを試みる。
+    match file.try_lock_exclusive() {
+        Ok(_) => {
+            // ロック取得成功。アプリケーションのメインロジックを実行。
+
+            // controllerで実体を見るのを避けるために、1つ関数を切る
+            application(&mut task_repository, &mut free_time_manager);
+
+            // 終了時にロックは自動的に解放される。
+        }
+        Err(_) => {
+            // ロック取得失敗。すでに別のインスタンスが実行中。
+            eprintln!("[Error] Another instance of the application is already running.");
+        }
+    }
 }
 
 fn application(
