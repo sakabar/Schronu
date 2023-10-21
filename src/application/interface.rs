@@ -3,6 +3,7 @@ use chrono::{DateTime, Local};
 use uuid::Uuid;
 
 pub trait TaskRepositoryTrait {
+    fn get_project_storage_dir_name(&self) -> &str;
     fn get_all_projects(&self) -> Vec<&Task>;
     fn load(&mut self);
     fn save(&self);

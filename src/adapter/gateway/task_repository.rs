@@ -53,6 +53,10 @@ impl TaskRepository {
 }
 
 impl TaskRepositoryTrait for TaskRepository {
+    fn get_project_storage_dir_name(&self) -> &str {
+        &self.project_storage_dir_name
+    }
+
     fn get_all_projects(&self) -> Vec<&Task> {
         self.projects
             .iter()
