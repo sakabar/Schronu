@@ -642,17 +642,20 @@ fn execute_show_all_tasks(
                 .unwrap(),
         );
 
-        let free_time_minutes = if last_synced_time.hour()
-            < get_next_morning_datetime(last_synced_time).hour()
-            && local_datetime_base < last_synced_time
+        let free_time_minutes = if local_datetime_base < last_synced_time
             && last_synced_time < get_next_morning_datetime(local_datetime_base)
         {
-            if last_synced_time < eod {
-                (eod - last_synced_time).num_minutes()
+            if last_synced_time.hour() < get_next_morning_datetime(last_synced_time).hour() {
+                if last_synced_time < eod {
+                    (eod - last_synced_time).num_minutes()
+                } else {
+                    0
+                }
             } else {
-                0
+                free_time_manager.get_free_minutes(&last_synced_time, &eod)
             }
         } else {
+            // 明日以降
             let local_tz = Local::now().timezone();
 
             // Todo: 1日の始まりの時間を定義できるようにする
