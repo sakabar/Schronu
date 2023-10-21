@@ -32,11 +32,6 @@ const MAX_COL: u16 = 999;
 // パーセントエンコーディングする対象にスペースを追加する
 const MY_ASCII_SET: &AsciiSet = &CONTROLS.add(b' ');
 
-// 単位時間は「1日」
-const LAMBDA: f64 = 4.0;
-const MU: f64 = 4.0;
-const RHO: f64 = if LAMBDA <= MU { LAMBDA / MU } else { 1.0 };
-
 fn writeln_newline(stdout: &mut RawTerminal<Stdout>, message: &str) -> Result<(), std::io::Error> {
     writeln!(stdout, "{}{}", termion::cursor::Left(MAX_COL), message)
 }
@@ -316,53 +311,6 @@ fn execute_show_leaf_tasks(
         }
     }
     writeln_newline(stdout, "").unwrap();
-
-    // rhoや見込み完了時間を計算する処理はshow_all_tasks()に移したのでコメントアウト
-    // let last_synced_time = task_repository.get_last_synced_time();
-
-    // // タスクができない時間を決め打ちで登録する
-    // let busy_time_slots = [((0, 0), (21, 0))];
-
-    // for ((start_hour, start_minute), (end_hour, end_minute)) in busy_time_slots.iter() {
-    //     free_time_manager.register_busy_time_slot(
-    //         &last_synced_time
-    //             .with_hour(*start_hour)
-    //             .expect("invalid hour")
-    //             .with_minute(*start_minute)
-    //             .expect("invalid minute"),
-    //         &last_synced_time
-    //             .with_hour(*end_hour)
-    //             .expect("invalid hour")
-    //             .with_minute(*end_minute)
-    //             .expect("invalid minute"),
-    //     );
-    // }
-
-    // let eod = last_synced_time
-    //     .with_hour(23)
-    //     .expect("invalid hour")
-    //     .with_minute(59)
-    //     .expect("invalid minute");
-    // let busy_minutes = free_time_manager.get_busy_minutes(&last_synced_time, &eod);
-
-    // // コストを正確に算出できるようになるまでのつなぎとして、概算を表示する
-    // // task_cntは「次に表示されるタスク番号」なので、マイナス1する
-    // let minutes = (total_estimated_work_seconds as f64 / 60.0 / RHO).ceil() as i64 + busy_minutes;
-
-    // let dt = last_synced_time + Duration::minutes(minutes);
-
-    // let busy_hours = (busy_minutes as f64 / 60.0).ceil() as i64;
-    // let busy_s = format!("残り拘束時間は{}時間です", busy_hours);
-    // writeln_newline(stdout, &busy_s).unwrap();
-
-    // let hours = (minutes as f64 / 60.0).ceil() as i64;
-    // let s = format!("完了見込み日時は{}時間後の{}です", hours, dt);
-    // writeln_newline(stdout, &s).unwrap();
-
-    // let lq = LAMBDA / (MU - LAMBDA);
-    // let s2 = format!("rho = {}, Lq = {:.1}", RHO, lq);
-    // writeln_newline(stdout, &s2).unwrap();
-    // writeln_newline(stdout, "").unwrap();
 }
 
 fn execute_show_all_tasks(
@@ -378,8 +326,9 @@ fn execute_show_all_tasks(
     let mut id_to_dt_map: HashMap<Uuid, (DateTime<Local>, usize, Option<DateTime<Local>>)> =
         HashMap::new();
 
-    let mut leaf_counter: HashMap<NaiveDate, usize> = HashMap::new();
-    let mut total_leaf_estimated_work_minutes_of_the_date_counter: HashMap<NaiveDate, i64> =
+    // 日付ごとのタスク数を集計する
+    let mut counter: HashMap<NaiveDate, usize> = HashMap::new();
+    let mut total_estimated_work_seconds_of_the_date_counter: HashMap<NaiveDate, i64> =
         HashMap::new();
 
     // 複数の子タスクがある場合に、親タスクのdtは子の着手可能時期の中で最大の値となるようにする。
@@ -392,20 +341,18 @@ fn execute_show_all_tasks(
             for (rank, (dt, task)) in all_parent_tasks.iter().enumerate() {
                 let id = task.get_id();
 
-                leaf_counter
+                counter
                     .entry(dt.date_naive())
                     .and_modify(|cnt| *cnt += 1)
                     .or_insert(1);
 
-                let estimated_work_minutes =
-                    (task.get_estimated_work_seconds() as f64 / 60.0 / RHO).ceil() as i64;
-
-                total_leaf_estimated_work_minutes_of_the_date_counter
+                let estimated_work_seconds = task.get_estimated_work_seconds();
+                total_estimated_work_seconds_of_the_date_counter
                     .entry(dt.date_naive())
-                    .and_modify(|estimated_work_minutes_val| {
-                        *estimated_work_minutes_val += estimated_work_minutes
+                    .and_modify(|estimated_work_seconds_val| {
+                        *estimated_work_seconds_val += estimated_work_seconds
                     })
-                    .or_insert(estimated_work_minutes);
+                    .or_insert(estimated_work_seconds);
 
                 id_to_dt_map
                     .entry(id)
@@ -432,11 +379,6 @@ fn execute_show_all_tasks(
     // dt,rank等、タプルの各要素の小さい順にソート。後で逆順に変える
     dt_id_tpl_arr.sort();
 
-    // 日付ごとのタスク数を集計する
-    let mut counter: HashMap<NaiveDate, usize> = HashMap::new();
-    let mut total_estimated_work_minutes_of_the_date_counter: HashMap<NaiveDate, i64> =
-        HashMap::new();
-
     let mut msgs_with_dt: Vec<(DateTime<Local>, usize, String)> = vec![];
 
     // ここからρ計算用
@@ -450,16 +392,13 @@ fn execute_show_all_tasks(
         .with_minute(0)
         .expect("invalid minute")
         + eod_duration;
-
-    // 今日着手可能な葉タスクまたは今日までが〆切のタスクの合計
-    let mut total_deadline_estimated_work_seconds = 0;
     // ここまでρ計算用
 
     let is_calendar_func = pattern_opt.as_ref().map_or(false, |pattern| {
         pattern == "暦" || pattern == "calendar" || pattern == "cal"
     });
 
-    let mut total_estimated_work_minutes: i64 = 0;
+    let mut total_estimated_work_seconds: i64 = 0;
     for (ind, (dt, rank, deadline_time_opt, id)) in dt_id_tpl_arr.iter().enumerate() {
         let task_opt = task_repository.get_by_id(*id);
         match task_opt {
@@ -477,29 +416,12 @@ fn execute_show_all_tasks(
                 } else {
                     name.to_string()
                 };
-                let estimated_work_minutes =
-                    (task.get_estimated_work_seconds() as f64 / 60.0 / RHO).ceil() as i64;
 
-                // ここからρ計算用
-                if (rank == &0 && dt < &eod)
-                    || (task.get_deadline_time_opt().is_some()
-                        && task.get_deadline_time_opt().unwrap()
-                            < get_next_morning_datetime(last_synced_time))
-                {
-                    total_deadline_estimated_work_seconds += task.get_estimated_work_seconds();
-                }
-                // ここまでρ計算用
+                let estimated_work_seconds = task.get_estimated_work_seconds();
+                total_estimated_work_seconds += estimated_work_seconds;
 
-                total_estimated_work_minutes_of_the_date_counter
-                    .entry(dt.date_naive())
-                    .and_modify(|estimated_work_minutes_val| {
-                        *estimated_work_minutes_val += estimated_work_minutes
-                    })
-                    .or_insert(estimated_work_minutes);
-
-                total_estimated_work_minutes += estimated_work_minutes;
                 let total_estimated_work_hours =
-                    (total_estimated_work_minutes as f64 / 60.0).ceil() as i64;
+                    (total_estimated_work_seconds as f64 / 3600.0).ceil() as i64;
 
                 let deadline_string = match deadline_time_opt {
                     Some(d) => d.format("%Y/%m/%d").to_string(),
@@ -528,7 +450,7 @@ fn execute_show_all_tasks(
                     rank,
                     deadline_string,
                     id,
-                    estimated_work_minutes,
+                    estimated_work_seconds as f64 / 60.0,
                     total_estimated_work_hours,
                     shorten_name
                 );
@@ -609,21 +531,14 @@ fn execute_show_all_tasks(
     let mut accumurate_duration_diff_to_limit = Duration::minutes(0);
 
     for (date, _cnt) in &counter_arr[0..SUMMARY_DAYS] {
-        let total_estimated_work_minutes_of_the_date: i64 =
-            *total_estimated_work_minutes_of_the_date_counter
+        let total_estimated_work_seconds_of_the_date: i64 =
+            *total_estimated_work_seconds_of_the_date_counter
                 .get(date)
                 .unwrap_or(&0);
-        let _total_estimated_work_hours_of_the_date =
-            total_estimated_work_minutes_of_the_date as f64 / 60.0;
+        let total_estimated_work_hours_of_the_date =
+            total_estimated_work_seconds_of_the_date as f64 / 3600.0;
 
-        let total_leaf_estimated_work_minutes_of_the_date: i64 =
-            *total_leaf_estimated_work_minutes_of_the_date_counter
-                .get(date)
-                .unwrap_or(&0);
-        let total_leaf_estimated_work_hours_of_the_date =
-            total_leaf_estimated_work_minutes_of_the_date as f64 / 60.0;
-
-        let leaf_cnt_of_the_date = *leaf_counter.get(date).unwrap_or(&0);
+        let cnt_of_the_date = *counter.get(date).unwrap_or(&0);
 
         let weekday_jp = match date.weekday() {
             Weekday::Mon => "月",
@@ -672,11 +587,11 @@ fn execute_show_all_tasks(
         };
 
         let free_time_hours = free_time_minutes as f64 / 60.0;
-        let rho_in_date = total_leaf_estimated_work_hours_of_the_date / free_time_hours;
+        let rho_in_date = total_estimated_work_hours_of_the_date / free_time_hours;
 
         const RHO_GOAL: f64 = 0.7;
 
-        let diff_to_goal = total_leaf_estimated_work_hours_of_the_date - free_time_hours * RHO_GOAL;
+        let diff_to_goal = total_estimated_work_hours_of_the_date - free_time_hours * RHO_GOAL;
         let diff_to_goal_sign: char = if diff_to_goal >= 0.0 { ' ' } else { '-' };
         let diff_to_goal_hour = diff_to_goal.abs().floor();
         let diff_to_goal_minute = (diff_to_goal.abs() - diff_to_goal_hour) * 60.0;
@@ -698,7 +613,7 @@ fn execute_show_all_tasks(
                 '-'
             };
 
-        let over_time_hours_f = total_leaf_estimated_work_hours_of_the_date - free_time_hours;
+        let over_time_hours_f = total_estimated_work_hours_of_the_date - free_time_hours;
         let over_time_hours = over_time_hours_f.abs().floor() as i64;
         let over_time_minutes = (over_time_hours_f.abs() * 60.0) as i64 % 60;
 
@@ -723,7 +638,7 @@ fn execute_show_all_tasks(
             "{}({})\t{:02.1}/{:02.1}[時間]\trho_1={:.2}\t{}{:.0}時間{:02.0}分\t{}{:02}時間{:02}分\t{}{:02}時間{:02}分\t{:02}[タスク]",
             date,
             weekday_jp,
-            total_leaf_estimated_work_hours_of_the_date,
+            total_estimated_work_hours_of_the_date,
             free_time_hours,
             rho_in_date,
 
@@ -738,7 +653,7 @@ fn execute_show_all_tasks(
             diff_to_limit_sign,
             accumurate_duration_diff_to_limit.num_hours().abs(),
             accumurate_duration_diff_to_limit.num_minutes().abs() % 60,
-            leaf_cnt_of_the_date
+            cnt_of_the_date
         );
 
         daily_stat_msgs.push(s);
@@ -755,19 +670,24 @@ fn execute_show_all_tasks(
     }
 
     // 1日の残りの時間から稼働率ρを計算する
-    let busy_seconds = max(
+    let busy_minutes = max(
         0,
-        free_time_manager.get_busy_minutes(&last_synced_time, &eod) * 60,
+        free_time_manager.get_busy_minutes(&last_synced_time, &eod),
     );
-    let lambda_seconds = total_deadline_estimated_work_seconds + busy_seconds;
-
-    let estimated_finish_dt = last_synced_time + Duration::seconds(lambda_seconds);
-
-    let busy_hours = busy_seconds as f64 / 60.0 / 60.0;
+    let busy_hours = busy_minutes as f64 / 60.0;
     let busy_s = format!("残り拘束時間は{:.1}時間です", busy_hours);
     writeln_newline(stdout, &busy_s).unwrap();
 
-    let lambda_hours = lambda_seconds as f64 / 60.0 / 60.0;
+    let today_total_deadline_estimated_work_seconds =
+        *total_estimated_work_seconds_of_the_date_counter
+            .get(&last_synced_time.date_naive())
+            .unwrap_or(&0);
+    let today_total_deadline_estimated_work_minutes =
+        (today_total_deadline_estimated_work_seconds as f64 / 60.0).ceil() as i64;
+    let lambda_minutes = today_total_deadline_estimated_work_minutes + busy_minutes;
+    let lambda_hours = lambda_minutes as f64 / 60.0;
+
+    let estimated_finish_dt = last_synced_time + Duration::minutes(lambda_minutes);
     let s = format!(
         "完了見込み日時は{:.1}時間後の{}です",
         lambda_hours,
@@ -775,12 +695,13 @@ fn execute_show_all_tasks(
     );
     writeln_newline(stdout, &s).unwrap();
 
-    let total_deadline_estimated_work_hours =
-        total_deadline_estimated_work_seconds as f64 / 60.0 / 60.0;
-    let mu_seconds = max(0, (eod - last_synced_time).num_seconds());
-    let mu_hours = mu_seconds as f64 / 3600.0;
+    let today_total_deadline_estimated_work_hours =
+        today_total_deadline_estimated_work_minutes as f64 / 60.0;
+    let mu_minutes = max(0, (eod - last_synced_time).num_minutes());
+    let mu_hours = mu_minutes as f64 / 60.0;
 
-    let rho1 = total_deadline_estimated_work_seconds as f64 / (mu_seconds - busy_seconds) as f64;
+    let rho1 =
+        today_total_deadline_estimated_work_minutes as f64 / (mu_minutes - busy_minutes) as f64;
     let lq1_opt = if rho1 < 1.0 {
         Some(rho1 / (1.0 - rho1))
     } else {
@@ -790,7 +711,7 @@ fn execute_show_all_tasks(
         Some(lq1) => {
             format!(
                 "ρ_1 = ({:.1} + 0.0) / ({:.1} + 0.0) = {:.2}, Lq = {:.1}",
-                total_deadline_estimated_work_hours,
+                today_total_deadline_estimated_work_hours,
                 mu_hours - busy_hours,
                 rho1,
                 lq1
@@ -799,7 +720,7 @@ fn execute_show_all_tasks(
         None => {
             format!(
                 "ρ_1 = ({:.1} + 0.0) / ({:.1} + 0.0) = {:.2}, Lq = inf",
-                total_deadline_estimated_work_hours,
+                today_total_deadline_estimated_work_hours,
                 mu_hours - busy_hours,
                 rho1
             )
@@ -807,7 +728,7 @@ fn execute_show_all_tasks(
     };
     writeln_newline(stdout, &s_for_rho1).unwrap();
 
-    let rho2 = lambda_seconds as f64 / mu_seconds as f64;
+    let rho2 = lambda_minutes as f64 / mu_minutes as f64;
     let lq2_opt = if rho2 < 1.0 {
         Some(rho2 / (1.0 - rho2))
     } else {
@@ -817,7 +738,7 @@ fn execute_show_all_tasks(
         Some(lq2) => {
             format!(
                 "ρ_2 = ({:.1} + {:.1}) / ({:.1} + {:.1}) = {:.2}, Lq = {:.1}",
-                total_deadline_estimated_work_hours,
+                today_total_deadline_estimated_work_hours,
                 busy_hours,
                 mu_hours - busy_hours,
                 busy_hours,
@@ -828,7 +749,7 @@ fn execute_show_all_tasks(
         None => {
             format!(
                 "ρ_2 = ({:.1} + {:.1}) / ({:.1} + {:.1}) = {:.2}, Lq = inf",
-                total_deadline_estimated_work_hours,
+                today_total_deadline_estimated_work_hours,
                 busy_hours,
                 mu_hours - busy_hours,
                 busy_hours,
