@@ -412,11 +412,6 @@ fn execute_show_all_tasks(
         let task_opt = task_repository.get_by_id(*id);
         match task_opt {
             Some(task) => {
-                counter
-                    .entry(dt.date_naive())
-                    .and_modify(|cnt| *cnt += 1)
-                    .or_insert(1);
-
                 let name = task.get_name();
                 let chars_vec: Vec<char> = name.chars().collect();
                 let max_len: usize = 19;
