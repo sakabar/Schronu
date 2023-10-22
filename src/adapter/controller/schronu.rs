@@ -999,10 +999,21 @@ fn execute_split(
             // 予 n
 
             let focused_estimated_work_seconds = focused_task.get_estimated_work_seconds();
-            let splitted_work_seconds: i64 = min(
-                splitted_work_minutes_str.parse::<i64>().unwrap() * 60,
-                focused_estimated_work_seconds,
-            );
+
+            // もしsplitted_work_minutes_strがマイナスの場合は、親タスクにその値だけ残すようにする
+            // 割 -30 <新タスク> なら、(親タスク-30)を見積もりとして<新タスク>を作るよ、という意味合い
+            let splitted_work_minutes: i64 = splitted_work_minutes_str.parse::<i64>().unwrap();
+
+            let splitted_work_seconds: i64 = if splitted_work_minutes > 0 {
+                min(splitted_work_minutes * 60, focused_estimated_work_seconds)
+            } else {
+                // このif分岐では負の場合splitted_work_minutesは負だが、
+                // 分かりやすいようにabs()して引き算している
+                max(
+                    0,
+                    focused_estimated_work_seconds - splitted_work_minutes.abs() * 60,
+                )
+            };
 
             focused_task
                 .set_estimated_work_seconds(focused_estimated_work_seconds - splitted_work_seconds);
