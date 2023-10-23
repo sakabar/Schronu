@@ -1308,6 +1308,10 @@ fn execute(
 
             execute_show_all_tasks(stdout, task_repository, free_time_manager, &pattern_opt);
         }
+        "暦" | "cal" => {
+            let pattern_opt = Some("暦".to_string());
+            execute_show_all_tasks(stdout, task_repository, free_time_manager, &pattern_opt);
+        }
         "見" | "focus" | "fc" => {
             if tokens.len() >= 2 {
                 let new_task_id_str = &tokens[1];
@@ -1912,6 +1916,7 @@ fn application(
                 if fst_char_opt != Some('新')
                     && fst_char_opt != Some('突')
                     && fst_char_opt != Some('全')
+                    && fst_char_opt != Some('暦')
                     && fst_char_opt != Some('葉')
                     && fst_char_opt != Some('木')
                 {
