@@ -459,7 +459,7 @@ fn execute_show_all_tasks(
                     shorten_name
                 );
 
-                let yyyymmdd_reg = Regex::new(r"^\d{4}/\d{2}/\d{2}$").unwrap();
+                let yyyymmdd_reg = Regex::new(r"^(\d{4})/(\d{2})/(\d{2})$").unwrap();
 
                 match pattern_opt {
                     Some(pattern) => {
@@ -489,28 +489,28 @@ fn execute_show_all_tasks(
                         } else if is_calendar_func {
                             // カレンダー表示機能を使う時には、タスク一覧は表示しない。
                         } else if pattern == "今" {
-                            let dt_yyyymmdd = dt.format("%Y/%m/%d").to_string();
-                            if &dt_yyyymmdd
-                                == (get_next_morning_datetime(last_synced_time) - Duration::days(1))
-                                    .format("%Y/%m/%d")
-                                    .to_string()
-                                    .as_str()
+                            if get_next_morning_datetime(*dt)
+                                == get_next_morning_datetime(last_synced_time)
                             {
                                 msgs_with_dt.push((*dt, *rank, msg));
                             }
                         } else if pattern == "明" {
-                            let dt_yyyymmdd = dt.format("%Y/%m/%d").to_string();
-                            if &dt_yyyymmdd
-                                == (get_next_morning_datetime(last_synced_time))
-                                    .format("%Y/%m/%d")
-                                    .to_string()
-                                    .as_str()
+                            if get_next_morning_datetime(*dt)
+                                == get_next_morning_datetime(last_synced_time) + Duration::days(1)
                             {
                                 msgs_with_dt.push((*dt, *rank, msg));
                             }
                         } else if yyyymmdd_reg.is_match(pattern) {
-                            let dt_yyyymmdd = dt.format("%Y/%m/%d").to_string();
-                            if &dt_yyyymmdd == pattern {
+                            let caps = yyyymmdd_reg.captures(pattern).unwrap();
+                            let yyyy: i32 = caps[1].parse().unwrap();
+                            let mm: u32 = caps[2].parse().unwrap();
+                            let dd: u32 = caps[3].parse().unwrap();
+
+                            let yyyymmdd = Local.with_ymd_and_hms(yyyy, mm, dd, 0, 0, 0).unwrap();
+
+                            if get_next_morning_datetime(*dt) - Duration::days(1)
+                                == get_next_morning_datetime(yyyymmdd)
+                            {
                                 msgs_with_dt.push((*dt, *rank, msg));
                             }
                         } else if name.to_lowercase().contains(&pattern.to_lowercase())
