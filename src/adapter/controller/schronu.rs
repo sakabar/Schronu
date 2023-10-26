@@ -1833,6 +1833,18 @@ fn application(
                         &mut focused_task_id_opt,
                         &s,
                     );
+                } else if line == "D" {
+                    // skip "D"aily (24h)
+                    let sec = 24 * 60 * 60;
+                    let s = format!("後 {}秒", sec).to_string();
+
+                    execute(
+                        &mut stdout,
+                        task_repository,
+                        free_time_manager,
+                        &mut focused_task_id_opt,
+                        &s,
+                    );
                 } else if line == "w" {
                     // skip "w"eekly
                     let now: DateTime<Local> = task_repository.get_last_synced_time();
