@@ -350,19 +350,24 @@ fn execute_show_all_tasks(
                 // 日付としては、日付が変わった直後のタスクは前日のタスクと見なす
                 let naive_dt = (get_next_morning_datetime(*dt) - Duration::days(1)).date_naive();
 
-                counter
-                    .entry(naive_dt)
-                    .and_modify(|cnt| *cnt += 1)
-                    .or_insert(1);
+                // 1つのタスクが複数の葉ノードを持っている時に重複しないように条件分岐を入れつつ
+                // 情報を更新していく
+                if !id_to_dt_map.contains_key(&id) {
+                    counter
+                        .entry(naive_dt)
+                        .and_modify(|cnt| *cnt += 1)
+                        .or_insert(1);
 
-                let estimated_work_seconds = task.get_estimated_work_seconds();
-                total_estimated_work_seconds_of_the_date_counter
-                    .entry(naive_dt)
-                    .and_modify(|estimated_work_seconds_val| {
-                        *estimated_work_seconds_val += estimated_work_seconds
-                    })
-                    .or_insert(estimated_work_seconds);
+                    let estimated_work_seconds = task.get_estimated_work_seconds();
+                    total_estimated_work_seconds_of_the_date_counter
+                        .entry(naive_dt)
+                        .and_modify(|estimated_work_seconds_val| {
+                            *estimated_work_seconds_val += estimated_work_seconds
+                        })
+                        .or_insert(estimated_work_seconds);
+                }
 
+                // 上記の更新があってもなくても、id_to_dt_mapはここでupsertされる
                 id_to_dt_map
                     .entry(id)
                     .and_modify(|(dt_val, rank_val, _deadline_time_opt)| {
