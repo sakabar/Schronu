@@ -250,27 +250,17 @@ fn execute_start_new_project(
 fn execute_show_ancestor(stdout: &mut RawTerminal<Stdout>, focused_task_opt: &Option<Task>) {
     writeln!(stdout, "").unwrap();
 
-    let mut t_opt: Option<Task> = focused_task_opt.clone();
-
     // まずは葉タスクから根に向かいながら後ろに追加していき、
     // 最後に逆順にして表示する
-    let mut ancestors: Vec<Task> = vec![];
+    let mut ancestors: Vec<(DateTime<Local>, Task)> = vec![];
 
-    loop {
-        match &t_opt {
-            Some(t) => {
-                ancestors.push(t.clone());
-                t_opt = t.parent();
-            }
-            None => {
-                break;
-            }
-        }
+    if let Some(task) = focused_task_opt {
+        ancestors = task.list_all_parent_tasks_with_first_available_time();
     }
 
     ancestors.reverse();
 
-    for (level, task) in ancestors.iter().enumerate() {
+    for (level, (first_available_datetime, task)) in ancestors.iter().enumerate() {
         let header = if level == 0 {
             String::from("")
         } else {
@@ -282,7 +272,12 @@ fn execute_show_ancestor(stdout: &mut RawTerminal<Stdout>, focused_task_opt: &Op
         let name = task.get_name();
         let estimated_work_minutes =
             (task.get_estimated_work_seconds() as f64 / 60.0).ceil() as i64;
-        let msg = format!("{}{}\t{}m {}", &header, &id, &estimated_work_minutes, &name);
+        let first_available_date_str = first_available_datetime.format("%Y/%m/%d").to_string();
+
+        let msg = format!(
+            "{}{} [{}] {}m {}",
+            &header, &id, &first_available_date_str, &estimated_work_minutes, &name
+        );
         writeln_newline(stdout, &msg).unwrap();
     }
 
