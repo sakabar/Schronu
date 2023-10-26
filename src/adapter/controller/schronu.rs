@@ -328,11 +328,6 @@ fn execute_show_all_tasks(
     let mut id_to_dt_map: HashMap<Uuid, (DateTime<Local>, usize, Option<DateTime<Local>>)> =
         HashMap::new();
 
-    // 日付ごとのタスク数を集計する
-    let mut counter: HashMap<NaiveDate, usize> = HashMap::new();
-    let mut total_estimated_work_seconds_of_the_date_counter: HashMap<NaiveDate, i64> =
-        HashMap::new();
-
     // 複数の子タスクがある場合に、親タスクのdtは子の着手可能時期の中で最大の値となるようにする。
     // タプルの第2要素はrankで、葉(0)からの距離の大きい方
     let last_synced_time = task_repository.get_last_synced_time();
@@ -347,27 +342,9 @@ fn execute_show_all_tasks(
                 // 今日以前に実施可能だったタスクについては、今日のタスクと見なす
                 let dt = max(dt_raw, &last_synced_time);
 
-                // 日付としては、日付が変わった直後のタスクは前日のタスクと見なす
-                let naive_dt = (get_next_morning_datetime(*dt) - Duration::days(1)).date_naive();
-
-                // 1つのタスクが複数の葉ノードを持っている時に重複しないように条件分岐を入れつつ
-                // 情報を更新していく
-                if !id_to_dt_map.contains_key(&id) {
-                    counter
-                        .entry(naive_dt)
-                        .and_modify(|cnt| *cnt += 1)
-                        .or_insert(1);
-
-                    let estimated_work_seconds = task.get_estimated_work_seconds();
-                    total_estimated_work_seconds_of_the_date_counter
-                        .entry(naive_dt)
-                        .and_modify(|estimated_work_seconds_val| {
-                            *estimated_work_seconds_val += estimated_work_seconds
-                        })
-                        .or_insert(estimated_work_seconds);
-                }
-
-                // 上記の更新があってもなくても、id_to_dt_mapはここでupsertされる
+                // 親タスクのdtキーは別の葉ノードがあるかどうかで後で変化しうるので、
+                // counterやtotal_estimated_work_seconds_of_the_date_counterの更新は
+                // id_to_dt_mapが確定してからにする
                 id_to_dt_map
                     .entry(id)
                     .and_modify(|(dt_val, rank_val, _deadline_time_opt)| {
@@ -412,8 +389,20 @@ fn execute_show_all_tasks(
         pattern == "暦" || pattern == "calendar" || pattern == "cal"
     });
 
+    // 日付ごとのタスク数を集計する
+    let mut counter: HashMap<NaiveDate, usize> = HashMap::new();
+    let mut total_estimated_work_seconds_of_the_date_counter: HashMap<NaiveDate, i64> =
+        HashMap::new();
     let mut total_estimated_work_seconds: i64 = 0;
+
     for (ind, (dt, rank, deadline_time_opt, id)) in dt_id_tpl_arr.iter().enumerate() {
+        let subjective_naive_date =
+            (get_next_morning_datetime(*dt) - Duration::days(1)).date_naive();
+        counter
+            .entry(subjective_naive_date)
+            .and_modify(|cnt| *cnt += 1)
+            .or_insert(1);
+
         let task_opt = task_repository.get_by_id(*id);
         match task_opt {
             Some(task) => {
@@ -428,6 +417,13 @@ fn execute_show_all_tasks(
 
                 let estimated_work_seconds = task.get_estimated_work_seconds();
                 total_estimated_work_seconds += estimated_work_seconds;
+
+                total_estimated_work_seconds_of_the_date_counter
+                    .entry(subjective_naive_date)
+                    .and_modify(|estimated_work_seconds_val| {
+                        *estimated_work_seconds_val += estimated_work_seconds
+                    })
+                    .or_insert(estimated_work_seconds);
 
                 let total_estimated_work_hours =
                     (total_estimated_work_seconds as f64 / 3600.0).ceil() as i64;
