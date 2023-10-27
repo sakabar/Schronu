@@ -1445,18 +1445,21 @@ fn execute(
                         }
                     }
                 } else if hhmm_reg.is_match(tokens[1]) {
-                    // 時刻が指定された時は今日のその時刻まで送る
+                    // 時刻が指定された時は今日のその時刻まで送る。25:00のような指定も可能
                     let now: DateTime<Local> = task_repository.get_last_synced_time();
 
                     let caps = hhmm_reg.captures(tokens[1]).unwrap();
-                    let hh: u32 = caps[1].parse().unwrap();
+                    let hh_i64: i64 = caps[1].parse().unwrap();
                     let mm: u32 = caps[2].parse().unwrap();
 
+                    let hh = (hh_i64 % 24) as u32;
+
                     let defer_dst_time = now
-                        .with_hour(hh)
+                        .with_hour(hh % 24)
                         .expect("invalid hour")
                         .with_minute(mm)
-                        .expect("invalid minute");
+                        .expect("invalid minute")
+                        + Duration::days(hh_i64 / 24);
 
                     let seconds = (defer_dst_time - now).num_seconds() + 1;
 
