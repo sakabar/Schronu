@@ -38,12 +38,12 @@ impl FreeTimeManager {
         // 直近1週間は、週次の繰り返しタスクが入っているので正確。そのまま反映する
         // 1週間より先は週次の繰り返しタスクがまだ入っていないため、予定が無いように見えてしまう。
         // ひとまず、平日は予定が全て埋まっている扱いとし、土日はbusy_time_slot通りとしておく。
-        for d in 0..35 {
+        for d in 0..70 {
             let dt = *now + Duration::days(d);
             let day_of_week = dt.weekday();
             let day_of_week_busy_time_slots = day_of_week_map.get(&day_of_week).unwrap();
 
-            if d <= 7 || vec![Weekday::Sat, Weekday::Sun].contains(&day_of_week) {
+            if d < 7 || vec![Weekday::Sat, Weekday::Sun].contains(&day_of_week) {
                 for busy_time_slot in day_of_week_busy_time_slots.get_busy_time_slots().iter() {
                     let hour = busy_time_slot.get_start_time_hour();
                     let minute = busy_time_slot.get_start_time_minute();
