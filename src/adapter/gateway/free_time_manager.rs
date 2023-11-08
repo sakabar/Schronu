@@ -36,47 +36,26 @@ impl FreeTimeManager {
             self.load_busy_time_slots_from_str(&text);
 
         // 直近1週間は、週次の繰り返しタスクが入っているので正確。そのまま反映する
-        // 1週間より先は週次の繰り返しタスクがまだ入っていないため、予定が無いように見えてしまう。
-        // ひとまず、平日は予定が全て埋まっている扱いとし、土日はbusy_time_slot通りとしておく。
+        // それ以降は、ダミータスクを入れることで繰り返しタスクのぶんの時間を表現する
         for d in 0..70 {
             let dt = *now + Duration::days(d);
             let day_of_week = dt.weekday();
             let day_of_week_busy_time_slots = day_of_week_map.get(&day_of_week).unwrap();
 
-            if d < 7 || vec![Weekday::Sat, Weekday::Sun].contains(&day_of_week) {
-                for busy_time_slot in day_of_week_busy_time_slots.get_busy_time_slots().iter() {
-                    let hour = busy_time_slot.get_start_time_hour();
-                    let minute = busy_time_slot.get_start_time_minute();
+            for busy_time_slot in day_of_week_busy_time_slots.get_busy_time_slots().iter() {
+                let hour = busy_time_slot.get_start_time_hour();
+                let minute = busy_time_slot.get_start_time_minute();
 
-                    let start = dt
-                        .with_hour(hour)
-                        .expect("invalid hour")
-                        .with_minute(minute)
-                        .expect("invalid minute")
-                        .with_second(0)
-                        .expect("invalid second");
-
-                    let duration_minutes = &busy_time_slot.get_duration_minutes();
-                    let end = start + Duration::minutes(*duration_minutes);
-
-                    self.register_busy_time_slot(&start, &end);
-                }
-            } else {
                 let start = dt
-                    .with_hour(0)
+                    .with_hour(hour)
                     .expect("invalid hour")
-                    .with_minute(0)
+                    .with_minute(minute)
                     .expect("invalid minute")
                     .with_second(0)
                     .expect("invalid second");
 
-                let end = dt
-                    .with_hour(23)
-                    .expect("invalid hour")
-                    .with_minute(59)
-                    .expect("invalid minute")
-                    .with_second(59)
-                    .expect("invalid second");
+                let duration_minutes = &busy_time_slot.get_duration_minutes();
+                let end = start + Duration::minutes(*duration_minutes);
 
                 self.register_busy_time_slot(&start, &end);
             }
