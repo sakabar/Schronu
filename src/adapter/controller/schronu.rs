@@ -685,6 +685,10 @@ fn execute_show_all_tasks(
     if is_calendar_func {
         for s in daily_stat_msgs.iter() {
             writeln_newline(stdout, &s).unwrap();
+
+            if s.contains("(月)") {
+                writeln_newline(stdout, "").unwrap();
+            }
         }
         writeln_newline(stdout, "").unwrap();
     }
