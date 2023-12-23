@@ -1807,6 +1807,8 @@ fn application(
                 stdout.flush().unwrap();
             }
             Key::Char('\n') | Key::Ctrl('m') => {
+                line = line.trim().to_string();
+
                 writeln_newline(&mut stdout, "").unwrap();
 
                 println!(
