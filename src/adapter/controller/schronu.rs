@@ -544,7 +544,14 @@ fn execute_show_all_tasks(
 
     let mut daily_stat_msgs: Vec<String> = vec![];
 
-    // 「それぞれの日の rho (0.7) との差」の累積和
+    // 「それぞれの日の rho (0.7) との差」の累積和。
+    // どれくらい突発を吸収できるかの指標となる。
+    // 元々は単に0.7との差で計算していたが、それだと0.7<rho<1.0でその日のタスクがなんとかなっているのに
+    // 0.7との差の累積和が肥大化して使いものにならなかったため、以下の定義で計算するようにした。
+    // ただし、特定の日にタスクを寄せて無理矢理rho<0.7の日を作るほうが良く見えてしまうので注意が必要。
+    // rho < 0.7 : 累積和はそのぶん減る
+    // 0.7<= rho <=1.0 : ノーカウント。その日のうちに吸収できる
+    // 1.0 < rho : 累積和はそのぶん増える
     let mut accumurate_duration_diff_to_goal_rho = Duration::minutes(0);
 
     // 「それぞれの日の自由時間との差」の累積和
@@ -616,23 +623,6 @@ fn execute_show_all_tasks(
         let diff_to_goal_hour = diff_to_goal.abs().floor();
         let diff_to_goal_minute = (diff_to_goal.abs() - diff_to_goal_hour) * 60.0;
 
-        accumurate_duration_diff_to_goal_rho = if diff_to_goal >= 0.0 {
-            accumurate_duration_diff_to_goal_rho
-                + Duration::hours(diff_to_goal_hour as i64)
-                + Duration::minutes(diff_to_goal_minute as i64)
-        } else {
-            accumurate_duration_diff_to_goal_rho
-                - Duration::hours(diff_to_goal_hour as i64)
-                - Duration::minutes(diff_to_goal_minute as i64)
-        };
-
-        let acc_diff_to_goal_sign: char =
-            if accumurate_duration_diff_to_goal_rho >= Duration::minutes(0) {
-                ' '
-            } else {
-                '-'
-            };
-
         let over_time_hours_f = total_estimated_work_hours_of_the_date - free_time_hours;
         let over_time_hours = over_time_hours_f.abs().floor() as i64;
         let over_time_minutes = (over_time_hours_f.abs() * 60.0) as i64 % 60;
@@ -653,6 +643,25 @@ fn execute_show_all_tasks(
         } else {
             '-'
         };
+
+        accumurate_duration_diff_to_goal_rho = if diff_to_goal >= 0.0 && rho_in_date >= 1.0 {
+            accumurate_duration_diff_to_goal_rho
+                + Duration::hours(over_time_hours)
+                + Duration::minutes(over_time_minutes)
+        } else if rho_in_date < RHO_GOAL {
+            accumurate_duration_diff_to_goal_rho
+                - Duration::hours(diff_to_goal_hour as i64)
+                - Duration::minutes(diff_to_goal_minute as i64)
+        } else {
+            accumurate_duration_diff_to_goal_rho
+        };
+
+        let acc_diff_to_goal_sign: char =
+            if accumurate_duration_diff_to_goal_rho >= Duration::minutes(0) {
+                ' '
+            } else {
+                '-'
+            };
 
         let s = format!(
             "{}({})\t{:02.1}/{:02.1}[時間]\trho_1={:.2}\t{}{:.0}時間{:02.0}分\t{}{:02}時間{:02}分\t{}{:02}時間{:02}分\t{:02}[タスク]",
