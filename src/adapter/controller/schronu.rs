@@ -1659,6 +1659,17 @@ fn application(
         match c.unwrap() {
             Key::Ctrl('d') => {
                 if line.is_empty() {
+                    // 最後に、今後の忙しさ具合を表示する
+                    let now = Local::now();
+                    task_repository.sync_clock(now);
+
+                    execute_show_all_tasks(
+                        &mut stdout,
+                        task_repository,
+                        free_time_manager,
+                        &Some("暦".to_string()),
+                    );
+
                     break;
                 }
             }
