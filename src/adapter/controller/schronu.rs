@@ -1430,7 +1430,8 @@ fn execute(
                 );
             } else if tokens.len() == 2 {
                 let yyyymmdd_reg = Regex::new(r"^\d{4}/\d{2}/\d{2}$").unwrap();
-                let hhmm_reg = Regex::new(r"^(\d{2}):(\d{2})$").unwrap();
+                let mmdd_reg = Regex::new(r"^(\d{1,2})/(\d{1,2})$").unwrap();
+                let hhmm_reg = Regex::new(r"^(\d{1,2}):(\d{1,2})$").unwrap();
 
                 if yyyymmdd_reg.is_match(tokens[1]) {
                     let defer_dst_str = format!("{} 12:00:00", tokens[1]);
@@ -1456,6 +1457,41 @@ fn execute(
                         Err(_) => {
                             // pass
                         }
+                    }
+                } else if mmdd_reg.is_match(tokens[1]) {
+                    // 年なしの日付が指定された場合は未来方向でその日付に合致する日付に送る
+                    let now: DateTime<Local> = task_repository.get_last_synced_time();
+
+                    let caps = mmdd_reg.captures(tokens[1]).unwrap();
+                    println!("{}", &caps[1]);
+                    let mm: u32 = caps[1].parse().unwrap();
+                    let dd: u32 = caps[2].parse().unwrap();
+
+                    let defer_dst_date = Local
+                        .with_ymd_and_hms(now.year(), mm, dd, 12, 0, 0)
+                        .unwrap();
+
+                    let mut defer_dst_time =
+                        get_next_morning_datetime(defer_dst_date) - Duration::days(1);
+
+                    if defer_dst_time < now {
+                        defer_dst_time = get_next_morning_datetime(
+                            Local
+                                .with_ymd_and_hms(now.year() + 1, mm, dd, 12, 0, 0)
+                                .unwrap(),
+                        ) - Duration::days(1);
+                    }
+
+                    let seconds = (defer_dst_time - now).num_seconds() + 1;
+
+                    if seconds > 0 {
+                        execute_defer(
+                            task_repository,
+                            focused_task_id_opt,
+                            &focused_task_opt,
+                            &format!("{}", seconds),
+                            "秒",
+                        );
                     }
                 } else if hhmm_reg.is_match(tokens[1]) {
                     // 時刻が指定された時は今日のその時刻まで送る。25:00のような指定も可能
