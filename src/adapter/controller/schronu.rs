@@ -942,6 +942,31 @@ fn execute_open_link(focused_task_opt: &Option<Task>) {
     }
 }
 
+#[allow(unused_must_use)]
+fn execute_next_up(
+    _stdout: &mut RawTerminal<Stdout>,
+    focused_task_id_opt: &mut Option<Uuid>,
+    focused_task_opt: &Option<Task>,
+    new_task_name_str: &str,
+    estimated_work_minutes_opt: &Option<i64>,
+) {
+    focused_task_opt.clone().and_then(|mut focused_task| {
+        let mut new_task_attr = TaskAttr::new(new_task_name_str);
+
+        if let Some(estimated_work_minutes) = estimated_work_minutes_opt {
+            new_task_attr.set_estimated_work_seconds(estimated_work_minutes * 60);
+        }
+
+        let new_task_id = new_task_attr.get_id().clone();
+
+        focused_task.create_as_parent(new_task_attr);
+        *focused_task_id_opt = Some(new_task_id);
+
+        // dummy
+        None::<i32>
+    });
+}
+
 fn execute_breakdown(
     stdout: &mut RawTerminal<Stdout>,
     focused_task_id_opt: &mut Option<Uuid>,
@@ -1351,7 +1376,28 @@ fn execute(
             None => {}
         },
         "子" | "children" | "ch" => {}
-        "上" | "nextup" | "nu" => {}
+        "上" | "nextup" | "nu" => {
+            if tokens.len() >= 2 {
+                let new_task_name_str = &tokens[1];
+
+                let estimated_work_minutes_opt: Option<i64> = if tokens.len() >= 3 {
+                    match tokens[2].parse() {
+                        Ok(m) => Some(m),
+                        Err(_) => None,
+                    }
+                } else {
+                    None
+                };
+
+                execute_next_up(
+                    stdout,
+                    focused_task_id_opt,
+                    &focused_task_opt,
+                    new_task_name_str,
+                    &estimated_work_minutes_opt,
+                );
+            }
+        }
         "下" | "breakdown" | "bd" => {
             if tokens.len() >= 2 {
                 let new_task_names = &tokens[1..];
