@@ -1213,6 +1213,22 @@ impl Task {
         Self { node: child_node }
     }
 
+    // 親タスクとしてタスクを新規作成する
+    #[allow(unused_must_use)]
+    pub fn create_as_parent(&mut self, task_attr: TaskAttr) -> Result<(), String> {
+        // ダミーのrootノードで行おうとしている場合はエラーとする
+        match self.parent() {
+            Some(original_parent_task) => {
+                let new_task = original_parent_task.create_as_last_child(task_attr);
+                self.detach_insert_as_last_child_of(new_task);
+                Ok(())
+            }
+            None => {
+                return Err(String::from("cannot use create_as_parent for a root node"));
+            }
+        }
+    }
+
     pub fn get_by_id(&self, id: Uuid) -> Option<Task> {
         let node_opt = self.get_by_id_private(&self.node, id);
 
@@ -1374,6 +1390,25 @@ fn test_create_as_last_child_正常系1() {
     TaskAttr::new("dummy-for-親タスク"), [
         /(TaskAttr::new("親タスク"), [
             TaskAttr::new("子タスク")
+        ])
+    ]
+    };
+
+    assert_task_and_tree(&actual_task, &expected_tree);
+}
+
+#[test]
+fn test_create_as_parent_正常系1() {
+    let actual_task = Task::new("親タスク");
+    let mut child_task = actual_task.create_as_last_child(TaskAttr::new("子タスク"));
+    child_task.create_as_parent(TaskAttr::new("中タスク"));
+
+    let expected_tree = tree! {
+    TaskAttr::new("dummy-for-親タスク"), [
+        /(TaskAttr::new("親タスク"), [
+            /(TaskAttr::new("中タスク"), [
+                TaskAttr::new("子タスク")
+            ])
         ])
     ]
     };
