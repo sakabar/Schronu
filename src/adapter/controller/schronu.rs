@@ -312,6 +312,7 @@ fn execute_show_leaf_tasks(
 
 fn execute_show_all_tasks(
     stdout: &mut RawTerminal<Stdout>,
+    focused_task_id_opt: &mut Option<Uuid>,
     task_repository: &mut dyn TaskRepositoryTrait,
     free_time_manager: &mut dyn FreeTimeManagerTrait,
     pattern_opt: &Option<String>,
@@ -365,7 +366,7 @@ fn execute_show_all_tasks(
     // dt,rank等、タプルの各要素の小さい順にソート。後で逆順に変える
     dt_id_tpl_arr.sort();
 
-    let mut msgs_with_dt: Vec<(DateTime<Local>, usize, String)> = vec![];
+    let mut msgs_with_dt: Vec<(DateTime<Local>, usize, Uuid, String)> = vec![];
 
     // ここからρ計算用
     let last_synced_time = task_repository.get_last_synced_time();
@@ -466,21 +467,21 @@ fn execute_show_all_tasks(
                                     && task.get_deadline_time_opt().unwrap()
                                         < get_next_morning_datetime(last_synced_time)
                             {
-                                msgs_with_dt.push((*dt, *rank, msg));
+                                msgs_with_dt.push((*dt, *rank, *id, msg));
                             }
                         } else if pattern == "枝" {
                             if rank > &0 {
-                                msgs_with_dt.push((*dt, *rank, msg));
+                                msgs_with_dt.push((*dt, *rank, *id, msg));
                             }
                         } else if pattern == "印" {
                             if msg.contains(&format!(" {} ", &deadline_icon))
                                 || msg.contains(&format!(" {} ", &today_leaf_icon))
                             {
-                                msgs_with_dt.push((*dt, *rank, msg));
+                                msgs_with_dt.push((*dt, *rank, *id, msg));
                             }
                         } else if pattern == "〆" {
                             if msg.contains(&format!(" {} ", &deadline_icon)) {
-                                msgs_with_dt.push((*dt, *rank, msg));
+                                msgs_with_dt.push((*dt, *rank, *id, msg));
                             }
                         } else if is_calendar_func {
                             // カレンダー表示機能を使う時には、タスク一覧は表示しない。
@@ -488,13 +489,13 @@ fn execute_show_all_tasks(
                             if get_next_morning_datetime(*dt)
                                 == get_next_morning_datetime(last_synced_time)
                             {
-                                msgs_with_dt.push((*dt, *rank, msg));
+                                msgs_with_dt.push((*dt, *rank, *id, msg));
                             }
                         } else if pattern == "明" {
                             if get_next_morning_datetime(*dt)
                                 == get_next_morning_datetime(last_synced_time) + Duration::days(1)
                             {
-                                msgs_with_dt.push((*dt, *rank, msg));
+                                msgs_with_dt.push((*dt, *rank, *id, msg));
                             }
                         } else if yyyymmdd_reg.is_match(pattern) {
                             let caps = yyyymmdd_reg.captures(pattern).unwrap();
@@ -507,16 +508,16 @@ fn execute_show_all_tasks(
                             if get_next_morning_datetime(*dt) - Duration::days(1)
                                 == get_next_morning_datetime(yyyymmdd)
                             {
-                                msgs_with_dt.push((*dt, *rank, msg));
+                                msgs_with_dt.push((*dt, *rank, *id, msg));
                             }
                         } else if name.to_lowercase().contains(&pattern.to_lowercase())
                             || msg.contains(pattern)
                         {
-                            msgs_with_dt.push((*dt, *rank, msg));
+                            msgs_with_dt.push((*dt, *rank, *id, msg));
                         }
                     }
                     None => {
-                        msgs_with_dt.push((*dt, *rank, msg));
+                        msgs_with_dt.push((*dt, *rank, *id, msg));
                     }
                 }
             }
@@ -528,7 +529,8 @@ fn execute_show_all_tasks(
     msgs_with_dt.reverse();
 
     if !is_calendar_func {
-        for (_, _, msg) in msgs_with_dt.iter() {
+        for (_, _, id, msg) in msgs_with_dt.iter() {
+            *focused_task_id_opt = Some(*id);
             writeln_newline(stdout, &msg).unwrap();
         }
 
@@ -1340,11 +1342,23 @@ fn execute(
                 None
             };
 
-            execute_show_all_tasks(stdout, task_repository, free_time_manager, &pattern_opt);
+            execute_show_all_tasks(
+                stdout,
+                focused_task_id_opt,
+                task_repository,
+                free_time_manager,
+                &pattern_opt,
+            );
         }
         "暦" | "cal" => {
             let pattern_opt = Some("暦".to_string());
-            execute_show_all_tasks(stdout, task_repository, free_time_manager, &pattern_opt);
+            execute_show_all_tasks(
+                stdout,
+                focused_task_id_opt,
+                task_repository,
+                free_time_manager,
+                &pattern_opt,
+            );
         }
         "見" | "focus" | "fc" => {
             if tokens.len() >= 2 {
@@ -1680,27 +1694,25 @@ fn application(
     write!(stdout, "{}", termion::cursor::BlinkingBar).unwrap();
     stdout.flush().unwrap();
 
-    ///////////////////////
-
-    // さすがに長くなってきたので全部は表示しない
-    // execute_show_all_tasks(&mut stdout, task_repository, free_time_manager, &None);
-
-    // 最初に、今後の忙しさ具合を表示する
-    execute_show_all_tasks(
-        &mut stdout,
-        task_repository,
-        free_time_manager,
-        &Some("暦".to_string()),
-    );
-
-    ///////////////////////
-
     // 起動直後はrhoの値を見たいので葉は出力しない
     // execute_show_leaf_tasks(&mut stdout, task_repository, free_time_manager);
 
     // 優先度の最も高いPJを一つ選ぶ
     // 一番下のタスクにフォーカスが自動的に当たる
     let mut focused_task_id_opt: Option<Uuid> = task_repository.get_highest_priority_leaf_task_id();
+
+    ///////////////////////
+
+    // 最初に、今後の忙しさ具合を表示する
+    execute_show_all_tasks(
+        &mut stdout,
+        &mut focused_task_id_opt,
+        task_repository,
+        free_time_manager,
+        &Some("暦".to_string()),
+    );
+
+    ///////////////////////
 
     // この処理、よく使いそう
     match focused_task_id_opt {
@@ -1747,6 +1759,7 @@ fn application(
 
                     execute_show_all_tasks(
                         &mut stdout,
+                        &mut focused_task_id_opt,
                         task_repository,
                         free_time_manager,
                         &Some("暦".to_string()),
