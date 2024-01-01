@@ -1404,7 +1404,7 @@ fn test_create_as_last_child_正常系1() {
 fn test_create_as_parent_正常系1() {
     let actual_task = Task::new("親タスク");
     let mut child_task = actual_task.create_as_last_child(TaskAttr::new("子タスク"));
-    child_task.create_as_parent(TaskAttr::new("中タスク"));
+    child_task.create_as_parent(TaskAttr::new("中タスク")).ok();
 
     let expected_tree = tree! {
     TaskAttr::new("dummy-for-親タスク"), [
