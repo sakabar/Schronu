@@ -742,8 +742,9 @@ impl fmt::Debug for TaskAttr {
             .field(
                 "name",
                 &format!(
-                    "{} {:02}m {}",
+                    "{} {:02}m/{:02}m {}",
                     status_checkbox,
+                    self.get_actual_work_seconds() / 60,
                     self.get_estimated_work_seconds() / 60,
                     &self.name
                 )
