@@ -1,4 +1,4 @@
-use chrono::{DateTime, Local};
+use chrono::{DateTime, Duration, Local};
 use core::cell::BorrowError;
 use dendron::{HotNode, InsertAs, Node};
 use linked_hash_map::LinkedHashMap;
@@ -8,7 +8,7 @@ use uuid::Uuid;
 use yaml_rust::Yaml;
 
 #[cfg(test)]
-use chrono::{Duration, TimeZone};
+use chrono::TimeZone;
 
 #[cfg(test)]
 use dendron::{tree, Tree};
@@ -1305,11 +1305,14 @@ impl Task {
                     // 2要素なのでNoneになることはない
                     child_task_first_available_time = *dt_cand.iter().max().unwrap();
 
-                    // 〆切優先
+                    // 〆切優先。(〆切 - 見積もり時間)
                     match task.get_deadline_time_opt() {
                         Some(deadline_time) => {
-                            child_task_first_available_time =
-                                min(child_task_first_available_time, deadline_time);
+                            child_task_first_available_time = min(
+                                child_task_first_available_time,
+                                deadline_time
+                                    - Duration::seconds(task.get_estimated_work_seconds()),
+                            );
                         }
                         None => {}
                     };
@@ -2073,13 +2076,17 @@ fn test_list_all_parent_tasks_with_first_available_time_タスク1個でpending�
     let parent_task = Task::new("親タスク");
     parent_task.set_create_time(dt);
     parent_task.set_start_time(dt);
+    parent_task.set_estimated_work_seconds(3600);
     parent_task.set_orig_status(Status::Pending);
     parent_task.set_pending_until(dt + Duration::hours(1));
     parent_task.set_deadline_time_opt(Some(dt - Duration::hours(1)));
     parent_task.sync_clock(dt);
 
     let actual = parent_task.list_all_parent_tasks_with_first_available_time();
-    let expected = [(dt - Duration::hours(1), parent_task)];
+    let expected = [(
+        dt - Duration::hours(1) - Duration::seconds(3600),
+        parent_task,
+    )];
 
     assert_eq!(actual, expected);
 }
@@ -2205,10 +2212,14 @@ fn test_list_all_parent_tasks_with_first_available_time_葉に〆切がある場
     let grand_child_task = child_task.create_as_last_child(TaskAttr::new("孫タスク"));
     grand_child_task.set_create_time(dt);
     grand_child_task.set_start_time(dt);
+    grand_child_task.set_estimated_work_seconds(3600);
     grand_child_task.set_deadline_time_opt(Some(dt - Duration::hours(1)));
 
     let expected = vec![
-        (dt - Duration::hours(1), grand_child_task.clone()),
+        (
+            dt - Duration::hours(1) - Duration::seconds(3600),
+            grand_child_task.clone(),
+        ),
         (dt, child_task.clone()),
         (dt, parent_task.clone()),
     ];
