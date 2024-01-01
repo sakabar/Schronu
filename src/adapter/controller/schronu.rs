@@ -1168,6 +1168,29 @@ fn execute_defer(
     *focused_task_id_opt = None;
 }
 
+// 指定の日付から、step_days間隔でdeferしていく
+fn execute_extrude(
+    _focused_task_id_opt: &mut Option<Uuid>,
+    focused_task_opt: &Option<Task>,
+    first_datetime: &DateTime<Local>,
+    step_days: u16,
+) {
+    if let Some(focused_task) = focused_task_opt {
+        for (index, (_, task)) in focused_task
+            .list_all_parent_tasks_with_first_available_time()
+            .iter()
+            .enumerate()
+        {
+            if focused_task.get_status() != Status::Done {
+                task.set_orig_status(Status::Pending);
+                task.set_pending_until(
+                    *first_datetime + Duration::days(step_days as i64 * index as i64),
+                );
+            }
+        }
+    }
+}
+
 fn execute_finish(focused_task_id_opt: &mut Option<Uuid>, focused_task_opt: &Option<Task>) {
     focused_task_opt.as_ref().and_then(|focused_task| {
         focused_task.set_orig_status(Status::Done);
@@ -1691,6 +1714,22 @@ fn execute(
                             unit_str,
                         );
                     }
+                }
+            }
+        }
+        "押" | "extrude" => {
+            if tokens.len() >= 2 {
+                if let Some(ref focused_task) = focused_task_opt {
+                    let first_datetime =
+                        focused_task.list_all_parent_tasks_with_first_available_time()[0].0;
+                    let step_days: u16 = tokens[1].parse().unwrap_or(1);
+
+                    execute_extrude(
+                        focused_task_id_opt,
+                        &focused_task_opt,
+                        &first_datetime,
+                        step_days,
+                    );
                 }
             }
         }
