@@ -982,7 +982,17 @@ fn execute_next_up(
         let mut new_task_attr = TaskAttr::new(new_task_name_str);
 
         if let Some(estimated_work_minutes) = estimated_work_minutes_opt {
-            new_task_attr.set_estimated_work_seconds(estimated_work_minutes * 60);
+            let new_task_estimated_work_seconds = estimated_work_minutes * 60;
+            new_task_attr.set_estimated_work_seconds(new_task_estimated_work_seconds);
+
+            // 親タスクの見積もりをそのぶん減らす
+            if let Some(parent_task) = focused_task.parent() {
+                let parent_task_estimated_work_seconds = parent_task.get_estimated_work_seconds();
+                parent_task.set_estimated_work_seconds(max(
+                    0,
+                    parent_task_estimated_work_seconds - new_task_estimated_work_seconds,
+                ));
+            }
         }
 
         let new_task_id = new_task_attr.get_id().clone();
