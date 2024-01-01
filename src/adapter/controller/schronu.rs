@@ -247,6 +247,32 @@ fn execute_start_new_project(
     task_repository.start_new_project(root_task);
 }
 
+fn execute_make_appointment(
+    _stdout: &mut RawTerminal<Stdout>,
+    focused_task_id_opt: &mut Option<Uuid>,
+    task_repository: &mut dyn TaskRepositoryTrait,
+    start_time: DateTime<Local>,
+    estimated_work_minutes: i64,
+    new_project_name_str: &str,
+) {
+    let root_task = Task::new(new_project_name_str);
+
+    // マジックナンバーではある
+    // 1,2,3,5...のフィボナッチ数列にて、充分大きな値55。アポを最優先として行動しなければならない
+    root_task.set_priority(55);
+
+    let deadline_time = start_time + Duration::minutes(estimated_work_minutes);
+    root_task.set_deadline_time_opt(Some(deadline_time));
+
+    root_task.set_start_time(start_time);
+    root_task.set_estimated_work_seconds(estimated_work_minutes * 60);
+
+    // フォーカスを移す
+    *focused_task_id_opt = Some(root_task.get_id());
+
+    task_repository.start_new_project(root_task);
+}
+
 fn execute_show_ancestor(stdout: &mut RawTerminal<Stdout>, focused_task_opt: &Option<Task>) {
     writeln!(stdout, "").unwrap();
 
@@ -1318,6 +1344,76 @@ fn execute(
                 );
             }
         }
+        "約" | "appointment" => {
+            if tokens.len() >= 5 {
+                let start_date_str = &tokens[1];
+                let start_hhmm_str = &tokens[2];
+                let estimated_work_minutes_str = &tokens[3];
+                let new_project_name_str = &tokens[4];
+
+                let hhmm_reg = Regex::new(r"^(\d{1,2}):(\d{1,2})$").unwrap();
+                let (hh, mm) = if hhmm_reg.is_match(start_hhmm_str) {
+                    let caps = hhmm_reg.captures(start_hhmm_str).unwrap();
+                    let hh: u32 = caps[1].parse().unwrap();
+                    let mm: u32 = caps[2].parse().unwrap();
+
+                    (hh, mm)
+                } else {
+                    (12, 00)
+                };
+
+                let yyyymmdd_reg = Regex::new(r"^(\d{2,4})/(\d{1,2})/(\d{1,2})$").unwrap();
+                let mmdd_reg = Regex::new(r"^(\d{1,2})/(\d{1,2})$").unwrap();
+
+                let start_time = if yyyymmdd_reg.is_match(start_date_str) {
+                    let caps = yyyymmdd_reg.captures(start_date_str).unwrap();
+                    let tmp_yyyy: i32 = caps[1].parse().unwrap();
+                    let yyyy = if tmp_yyyy < 100 {
+                        tmp_yyyy + 2000
+                    } else {
+                        tmp_yyyy
+                    };
+                    let mm_month: u32 = caps[2].parse().unwrap();
+                    let dd: u32 = caps[3].parse().unwrap();
+
+                    Local
+                        .with_ymd_and_hms(yyyy, mm_month, dd, hh, mm, 0)
+                        .unwrap()
+                } else if mmdd_reg.is_match(start_date_str) {
+                    // 年なしの日付が指定された場合は未来方向でその日付に合致する日付に送る
+                    let now: DateTime<Local> = task_repository.get_last_synced_time();
+
+                    let caps = mmdd_reg.captures(start_date_str).unwrap();
+                    let mm_month: u32 = caps[1].parse().unwrap();
+                    let dd: u32 = caps[2].parse().unwrap();
+
+                    let mut ans_datetime = Local
+                        .with_ymd_and_hms(now.year(), mm_month, dd, hh, mm, 0)
+                        .unwrap();
+
+                    if ans_datetime < now {
+                        ans_datetime = Local
+                            .with_ymd_and_hms(now.year() + 1, mm_month, dd, hh, mm, 0)
+                            .unwrap()
+                    }
+
+                    ans_datetime
+                } else {
+                    task_repository.get_last_synced_time()
+                };
+
+                let estimated_work_minutes: i64 = estimated_work_minutes_str.parse().unwrap_or(0);
+
+                execute_make_appointment(
+                    stdout,
+                    focused_task_id_opt,
+                    task_repository,
+                    start_time,
+                    estimated_work_minutes,
+                    new_project_name_str,
+                );
+            }
+        }
         "木" | "tree" => {
             execute_show_tree(stdout, &focused_task_opt);
         }
@@ -1523,7 +1619,6 @@ fn execute(
                     let now: DateTime<Local> = task_repository.get_last_synced_time();
 
                     let caps = mmdd_reg.captures(tokens[1]).unwrap();
-                    println!("{}", &caps[1]);
                     let mm: u32 = caps[1].parse().unwrap();
                     let dd: u32 = caps[2].parse().unwrap();
 
