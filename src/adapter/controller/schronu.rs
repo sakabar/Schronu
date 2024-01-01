@@ -1857,6 +1857,9 @@ fn application(
     // 一番下のタスクにフォーカスが自動的に当たる
     let mut focused_task_id_opt: Option<Uuid> = task_repository.get_highest_priority_leaf_task_id();
 
+    let mut last_focused_task_id_opt: Option<Uuid> = None;
+    let mut focus_started_datetime: DateTime<Local> = now;
+
     ///////////////////////
 
     // 最初に、今後の忙しさ具合を表示する
@@ -1875,6 +1878,12 @@ fn application(
         Some(focused_task_id) => {
             let focused_task_opt = task_repository.get_by_id(focused_task_id);
 
+            // 以前とフォーカスしているタスクが変わった場合には、タスクの実作業時間の記録をリセットする
+            if focused_task_id_opt != last_focused_task_id_opt {
+                focus_started_datetime = Local::now();
+                last_focused_task_id_opt = focused_task_id_opt;
+            }
+
             execute_show_ancestor(&mut stdout, &focused_task_opt);
 
             match focused_task_opt {
@@ -1886,6 +1895,12 @@ fn application(
                         focused_task.get_attr()
                     );
                     stdout.flush().unwrap();
+                    let msg = format!(
+                        "for {} minutes (since {})",
+                        (Local::now() - focus_started_datetime).num_minutes() + 1,
+                        focus_started_datetime
+                    );
+                    writeln_newline(&mut stdout, &msg).unwrap();
                 }
                 None => {}
             }
@@ -2215,6 +2230,12 @@ fn application(
                     Some(focused_task_id) => {
                         let focused_task_opt = task_repository.get_by_id(focused_task_id);
 
+                        // 以前とフォーカスしているタスクが変わった場合には、タスクの実作業時間の記録をリセットする
+                        if focused_task_id_opt != last_focused_task_id_opt {
+                            focus_started_datetime = Local::now();
+                            last_focused_task_id_opt = focused_task_id_opt;
+                        }
+
                         execute_show_ancestor(&mut stdout, &focused_task_opt);
 
                         // フォーカスしているタスクを表示
@@ -2227,6 +2248,12 @@ fn application(
                                     focused_task.get_attr()
                                 );
                                 stdout.flush().unwrap();
+                                let msg = format!(
+                                    "for {} minutes (since {})",
+                                    (Local::now() - focus_started_datetime).num_minutes() + 1,
+                                    focus_started_datetime
+                                );
+                                writeln_newline(&mut stdout, &msg).unwrap();
                             }
                             None => {}
                         }
