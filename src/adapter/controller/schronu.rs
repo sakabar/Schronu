@@ -1300,6 +1300,18 @@ fn execute_set_estimated_work_minutes(
     });
 }
 
+#[allow(unused_must_use)]
+fn execute_set_actual_work_minutes(focused_task_opt: &Option<Task>, actual_work_minutes_str: &str) {
+    let actual_minutes_result = actual_work_minutes_str.parse::<i64>();
+
+    actual_minutes_result.map(|actual_work_minutes| {
+        let actual_work_seconds = actual_work_minutes * 60;
+        focused_task_opt
+            .as_ref()
+            .map(|focused_task| focused_task.set_actual_work_seconds(actual_work_seconds));
+    });
+}
+
 fn execute(
     stdout: &mut RawTerminal<Stdout>,
     task_repository: &mut dyn TaskRepositoryTrait,
@@ -1599,12 +1611,12 @@ fn execute(
                 execute_set_estimated_work_minutes(&focused_task_opt, estimated_work_minutes_str);
             }
         }
-        // "実" | "actual" | "ac" => {
-        //     if tokens.len() >= 2 {
-        //         let actual_work_minutes_str = &tokens[1];
-        //         execute_set_actual_work_minutes(&focused_task_opt, actual_work_minutes_str);
-        //     }
-        // }
+        "実" | "actual" | "ac" => {
+            if tokens.len() >= 2 {
+                let actual_work_minutes_str = &tokens[1];
+                execute_set_actual_work_minutes(&focused_task_opt, actual_work_minutes_str);
+            }
+        }
         "後" | "defer" => {
             if tokens.len() >= 3 {
                 let amount_str = &tokens[1];
