@@ -1523,7 +1523,6 @@ fn execute(
                     let now: DateTime<Local> = task_repository.get_last_synced_time();
 
                     let caps = mmdd_reg.captures(tokens[1]).unwrap();
-                    println!("{}", &caps[1]);
                     let mm: u32 = caps[1].parse().unwrap();
                     let dd: u32 = caps[2].parse().unwrap();
 
