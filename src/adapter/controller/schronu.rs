@@ -1186,16 +1186,28 @@ fn execute_extrude(
     step_days: u16,
 ) {
     if let Some(focused_task) = focused_task_opt {
-        for (index, (_, task)) in focused_task
+        let mut pending_until_datetime = *first_datetime;
+
+        for (_, task) in focused_task
             .list_all_parent_tasks_with_first_available_time()
             .iter()
-            .enumerate()
         {
             if focused_task.get_status() != Status::Done {
                 task.set_orig_status(Status::Pending);
-                task.set_pending_until(
-                    *first_datetime + Duration::days(step_days as i64 * index as i64),
-                );
+                task.set_pending_until(pending_until_datetime);
+
+                pending_until_datetime = pending_until_datetime + Duration::days(step_days as i64);
+
+                // 平日の仕事用: 土日にはextrudeせずにスキップする
+                // match pending_until_datetime.weekday() {
+                //     Weekday::Sat => {
+                //         pending_until_datetime = pending_until_datetime + Duration::days(2);
+                //     }
+                //     Weekday::Sun => {
+                //         pending_until_datetime = pending_until_datetime + Duration::days(1);
+                //     }
+                //     _ => {}
+                // }
             }
         }
     }
