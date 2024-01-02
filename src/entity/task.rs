@@ -800,17 +800,28 @@ impl TaskAttr {
         self.orig_status = orig_status;
 
         // 〆切の何秒前から強制的にTodo扱いにするか
-        let deadline_buffer_seconds = 3600;
+        let deadline_buffer_seconds_after_start_time = 3600;
+        let deadline_buffer_seconds_before_start_time = 300;
 
         // 変わりうるのは、
         // not Done -> Todo (deadlineが近い)
         // Pending -> Todo (pending_until後 かつ start_time後)
         // Todo -> Pending (start_time起因)
         self.status = if self.orig_status != Status::Done
+            && self.last_synced_time > self.start_time
             && self.deadline_time_opt.is_some()
             && self.deadline_time_opt.unwrap()
                 - Duration::seconds(self.estimated_work_seconds)
-                - Duration::seconds(deadline_buffer_seconds)
+                - Duration::seconds(deadline_buffer_seconds_after_start_time)
+                < self.last_synced_time
+        {
+            Status::Todo
+        } else if self.orig_status != Status::Done
+            && self.last_synced_time < self.start_time
+            && self.deadline_time_opt.is_some()
+            && self.deadline_time_opt.unwrap()
+                - Duration::seconds(self.estimated_work_seconds)
+                - Duration::seconds(deadline_buffer_seconds_before_start_time)
                 < self.last_synced_time
         {
             Status::Todo
