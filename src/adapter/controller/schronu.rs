@@ -981,6 +981,11 @@ fn execute_next_up(
     focused_task_opt.clone().and_then(|mut focused_task| {
         let mut new_task_attr = TaskAttr::new(new_task_name_str);
 
+        // 親タスクの〆切を引き継ぐ
+        if let Some(parent_task) = focused_task.parent() {
+            new_task_attr.set_deadline_time_opt(parent_task.get_deadline_time_opt());
+        }
+
         if let Some(estimated_work_minutes) = estimated_work_minutes_opt {
             let new_task_estimated_work_seconds = estimated_work_minutes * 60;
             new_task_attr.set_estimated_work_seconds(new_task_estimated_work_seconds);
