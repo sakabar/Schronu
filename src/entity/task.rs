@@ -1159,6 +1159,19 @@ impl Task {
         self.node.borrow_data().get_actual_work_seconds()
     }
 
+    pub fn make_appointment(&self, appointment_start_time: DateTime<Local>) {
+        // マジックナンバーではある
+        // 1,2,3,5...のフィボナッチ数列にて、充分大きな値55。アポを最優先として行動しなければならない
+        self.root().set_priority(55);
+
+        let mut attr = self.node.borrow_data_mut();
+
+        let deadline_time =
+            appointment_start_time + Duration::seconds(attr.get_estimated_work_seconds());
+        attr.set_deadline_time_opt(Some(deadline_time));
+        attr.set_start_time(appointment_start_time);
+    }
+
     pub fn num_children(&self) -> usize {
         self.node.num_children()
     }
@@ -1420,6 +1433,28 @@ fn test_new_with_node_タスク化したnodeの親子関係が維持されるこ
     );
 
     assert!(&parent_task_node_ptr.belongs_to_same_tree(&grand_children_task_node));
+}
+
+#[test]
+fn test_make_appointment_正常系1() {
+    let root_task = Task::new("MTGが完了した状態");
+    let task = root_task.create_as_last_child(TaskAttr::new("MTG"));
+
+    task.set_estimated_work_seconds(3600);
+    let appointment_start_time = Local.with_ymd_and_hms(2023, 5, 19, 01, 23, 45).unwrap();
+
+    task.make_appointment(appointment_start_time);
+
+    assert_eq!(&root_task.get_priority(), &55);
+
+    assert_eq!(
+        &task.get_start_time(),
+        &Local.with_ymd_and_hms(2023, 5, 19, 01, 23, 45).unwrap()
+    );
+    assert_eq!(
+        &task.get_deadline_time_opt(),
+        &Some(Local.with_ymd_and_hms(2023, 5, 19, 02, 23, 45).unwrap())
+    );
 }
 
 #[test]
