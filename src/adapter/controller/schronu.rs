@@ -1056,6 +1056,32 @@ fn execute_breakdown(
     });
 }
 
+fn execute_breakdown_sequentially(
+    _stdout: &mut RawTerminal<Stdout>,
+    focused_task_id_opt: &mut Option<Uuid>,
+    focused_task_opt: &Option<Task>,
+    new_task_name_str: &str,
+    estimated_work_minutes: i64,
+    begin_index: u64,
+    end_index: u64,
+    new_task_name_suffix_str: &str,
+) {
+    if let Some(focused_task) = focused_task_opt {
+        let grand_child_task_result = focused_task.create_sequential_children(
+            new_task_name_str,
+            estimated_work_minutes * 60,
+            begin_index,
+            end_index,
+            new_task_name_suffix_str,
+        );
+
+        if let Ok(grand_child_task) = grand_child_task_result {
+            // フォーカスを移す
+            *focused_task_id_opt = Some(grand_child_task.get_id());
+        }
+    }
+}
+
 fn execute_split(
     stdout: &mut RawTerminal<Stdout>,
     focused_task_id_opt: &mut Option<Uuid>,
@@ -1404,6 +1430,34 @@ fn execute(
                     defer_days_opt,
                     estimated_work_minutes_opt,
                 );
+            }
+        }
+        "連" | "sequential" | "seq" => {
+            if tokens.len() >= 5 {
+                let new_task_name_str = &tokens[1];
+                let estimated_work_minutes_result = &tokens[2].parse();
+                let begin_index_result = &tokens[3].parse();
+                let end_index_result = &tokens[4].parse();
+                let new_task_name_suffix_str = if tokens.len() >= 6 { &tokens[5] } else { "" };
+
+                if let Ok(estimated_work_minutes) = estimated_work_minutes_result {
+                    if let Ok(begin_index) = begin_index_result {
+                        if let Ok(end_index) = end_index_result {
+                            if begin_index <= end_index {
+                                execute_breakdown_sequentially(
+                                    stdout,
+                                    focused_task_id_opt,
+                                    &focused_task_opt,
+                                    new_task_name_str,
+                                    *estimated_work_minutes,
+                                    *begin_index,
+                                    *end_index,
+                                    new_task_name_suffix_str,
+                                );
+                            }
+                        }
+                    }
+                }
             }
         }
         "約" | "appointment" => {
