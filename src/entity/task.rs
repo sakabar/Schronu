@@ -1253,6 +1253,40 @@ impl Task {
         }
     }
 
+    // 連番の子タスクを生成する
+    pub fn create_sequential_children(
+        &self,
+        task_name: &str,
+        estimated_work_seconds: i64,
+        begin_index: u64,
+        end_index: u64,
+        task_name_suffix: &str,
+    ) -> Result<Task, String> {
+        let tree_grant = &self.node.tree().grant_hierarchy_edit().expect("tree grant");
+        let mut current_node_opt: Option<Node<TaskAttr>> = None;
+
+        for index in (begin_index..=end_index).rev() {
+            let task_name = format!("{} {}{}", task_name, index, task_name_suffix);
+            let mut task_attr = TaskAttr::new(&task_name);
+            task_attr.set_estimated_work_seconds(estimated_work_seconds);
+
+            match current_node_opt {
+                Some(current_node) => {
+                    current_node_opt =
+                        Some(current_node.create_as_last_child(&tree_grant, task_attr));
+                }
+                None => {
+                    current_node_opt = Some(self.node.create_as_last_child(&tree_grant, task_attr));
+                }
+            }
+        }
+
+        match current_node_opt {
+            Some(current_node) => Ok(Self { node: current_node }),
+            None => Err(String::from("cannot create sequentially")),
+        }
+    }
+
     pub fn get_by_id(&self, id: Uuid) -> Option<Task> {
         let node_opt = self.get_by_id_private(&self.node, id);
 
@@ -1441,6 +1475,54 @@ fn test_create_as_parent_正常系1() {
     };
 
     assert_task_and_tree(&actual_task, &expected_tree);
+}
+
+#[test]
+fn test_create_sequential_children_正常系1() {
+    let task = Task::new("親タスク");
+    let grand_child_task_result = task.create_sequential_children("鎖タスク", 600, 1, 2, "話");
+
+    let mut child_attr = TaskAttr::new("鎖タスク 2話");
+    child_attr.set_estimated_work_seconds(600);
+
+    let mut grand_child_attr = TaskAttr::new("鎖タスク 1話");
+    grand_child_attr.set_estimated_work_seconds(600);
+
+    let expected_tree = tree! {
+        TaskAttr::new("dummy-for-親タスク"), [
+            /(TaskAttr::new("親タスク"), [
+                /(child_attr, [
+                    /(grand_child_attr, [])
+                ])
+            ])
+        ]
+    };
+
+    match grand_child_task_result {
+        Ok(grand_child_task) => {
+            assert_task_and_tree(&grand_child_task, &expected_tree);
+        }
+        _ => {
+            assert!(false);
+        }
+    }
+}
+
+#[test]
+#[allow(non_snake_case)]
+fn test_create_sequential_children_異常系1_begin_indexのほうが大きい場合はエラー() {
+    let task = Task::new("親タスク");
+    let grand_child_task_result = task.create_sequential_children("鎖タスク", 600, 10, 1, "話");
+
+    match grand_child_task_result {
+        Ok(_) => {
+            assert!(false);
+        }
+        _ => {
+            // この分岐に入ることを意図している
+            assert!(true);
+        }
+    }
 }
 
 #[cfg(test)]
