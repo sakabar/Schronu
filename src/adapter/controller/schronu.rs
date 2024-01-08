@@ -247,30 +247,10 @@ fn execute_start_new_project(
     task_repository.start_new_project(root_task);
 }
 
-fn execute_make_appointment(
-    _stdout: &mut RawTerminal<Stdout>,
-    focused_task_id_opt: &mut Option<Uuid>,
-    task_repository: &mut dyn TaskRepositoryTrait,
-    start_time: DateTime<Local>,
-    estimated_work_minutes: i64,
-    new_project_name_str: &str,
-) {
-    let root_task = Task::new(new_project_name_str);
-
-    // マジックナンバーではある
-    // 1,2,3,5...のフィボナッチ数列にて、充分大きな値55。アポを最優先として行動しなければならない
-    root_task.set_priority(55);
-
-    let deadline_time = start_time + Duration::minutes(estimated_work_minutes);
-    root_task.set_deadline_time_opt(Some(deadline_time));
-
-    root_task.set_start_time(start_time);
-    root_task.set_estimated_work_seconds(estimated_work_minutes * 60);
-
-    // フォーカスを移す
-    *focused_task_id_opt = Some(root_task.get_id());
-
-    task_repository.start_new_project(root_task);
+fn execute_make_appointment(focused_task_opt: &Option<Task>, start_time: DateTime<Local>) {
+    if let Some(task) = focused_task_opt {
+        task.make_appointment(start_time);
+    }
 }
 
 fn execute_show_ancestor(stdout: &mut RawTerminal<Stdout>, focused_task_opt: &Option<Task>) {
@@ -1461,11 +1441,9 @@ fn execute(
             }
         }
         "約" | "appointment" => {
-            if tokens.len() >= 5 {
+            if tokens.len() >= 3 {
                 let start_date_str = &tokens[1];
                 let start_hhmm_str = &tokens[2];
-                let estimated_work_minutes_str = &tokens[3];
-                let new_project_name_str = &tokens[4];
 
                 let hhmm_reg = Regex::new(r"^(\d{1,2}):(\d{1,2})$").unwrap();
                 let (hh, mm) = if hhmm_reg.is_match(start_hhmm_str) {
@@ -1518,16 +1496,7 @@ fn execute(
                     task_repository.get_last_synced_time()
                 };
 
-                let estimated_work_minutes: i64 = estimated_work_minutes_str.parse().unwrap_or(0);
-
-                execute_make_appointment(
-                    stdout,
-                    focused_task_id_opt,
-                    task_repository,
-                    start_time,
-                    estimated_work_minutes,
-                    new_project_name_str,
-                );
+                execute_make_appointment(&focused_task_opt, start_time);
             }
         }
         "木" | "tree" => {
