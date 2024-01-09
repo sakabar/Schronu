@@ -1441,9 +1441,15 @@ fn execute(
             }
         }
         "約" | "appointment" => {
-            if tokens.len() >= 3 {
-                let start_date_str = &tokens[1];
-                let start_hhmm_str = &tokens[2];
+            if tokens.len() >= 2 {
+                let start_hhmm_str = &tokens[1];
+
+                // 日付はオプショナル引数。入力されなかった場合は今日の日付とする。
+                let start_date_str = if tokens.len() >= 3 {
+                    &tokens[2]
+                } else {
+                    "dummy"
+                };
 
                 let hhmm_reg = Regex::new(r"^(\d{1,2}):(\d{1,2})$").unwrap();
                 let (hh, mm) = if hhmm_reg.is_match(start_hhmm_str) {
@@ -1493,7 +1499,10 @@ fn execute(
 
                     ans_datetime
                 } else {
-                    task_repository.get_last_synced_time()
+                    let now = task_repository.get_last_synced_time();
+                    Local
+                        .with_ymd_and_hms(now.year(), now.month(), now.day(), hh, mm, 0)
+                        .unwrap()
                 };
 
                 execute_make_appointment(&focused_task_opt, start_time);
