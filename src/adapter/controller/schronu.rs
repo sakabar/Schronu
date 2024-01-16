@@ -818,7 +818,7 @@ fn execute_show_all_tasks(
                 writeln_newline(stdout, &format!("src_date: {:?}", src_date)).unwrap();
 
                 // dt_dictを未来から見ていき、〆切に違反しない範囲で、翌日に飛ばしていく
-                for (_ind, (dt, _rank, deadline_time_opt, id)) in
+                for (_ind, (dt, rank, deadline_time_opt, id)) in
                     dt_id_tpl_arr.iter().enumerate().rev()
                 {
                     let days_until_deadline = match deadline_time_opt {
@@ -841,16 +841,16 @@ fn execute_show_all_tasks(
                                 writeln_newline(
                                     stdout,
                                     &format!(
-                                        "{}\t{}\t{}\t{}\t{}",
-                                        dt,
-                                        dst_dt,
+                                        "{}\t{}\t{}\t{}",
+                                        // dt,
+                                        // dst_dt,
+                                        rank,
                                         task.get_id(),
                                         task.get_estimated_work_seconds(),
                                         task.get_name(),
                                     ),
                                 )
                                 .unwrap();
-                                writeln_newline(stdout, "").unwrap();
 
                                 any_was_flattened = true;
                             }
@@ -1861,7 +1861,7 @@ fn execute(
             }
         }
         "平" | "flatten" | "flat" => {
-            for _ in 0..2 {
+            for _ in 0..7 {
                 let pattern_opt = Some("平".to_string());
                 execute_show_all_tasks(
                     stdout,
