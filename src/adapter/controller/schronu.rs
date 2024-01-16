@@ -671,12 +671,12 @@ fn execute_show_all_tasks(
             };
 
         let s = format!(
-            "{}({})\t{:02.1}/{:02.1}[時間]\trho_1={:.2}\t{}{:.0}時間{:02.0}分\t{}{:02}時間{:02}分\t{}{:02}時間{:02}分\t{:02}[タスク]",
+            "{}({})\t{:02.1}/{:02.1}[時間]\t{:5.2}\t{}{:.0}時間{:02.0}分\t{}{:02}時間{:02}分\t{}{:02}時間{:02}分\t{:02}[タスク]",
             date,
             weekday_jp,
             total_estimated_work_hours_of_the_date,
             free_time_hours,
-            rho_in_date,
+            rho_in_date - 1.0,
 
             diff_to_goal_sign,
             diff_to_goal_hour,
