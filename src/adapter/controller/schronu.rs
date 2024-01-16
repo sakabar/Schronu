@@ -2212,7 +2212,7 @@ fn application(
                         &s,
                     );
                 } else if line == "W" {
-                    // ignore deadline and skip "w"eekly
+                    // defer deadline and skip "w"eekly
                     let s1 = "〆 消".to_string();
 
                     execute(
@@ -2226,6 +2226,17 @@ fn application(
                     let now: DateTime<Local> = task_repository.get_last_synced_time();
                     let next_morning = get_next_morning_datetime(now);
                     let sec = (next_morning - now).num_seconds() + 86400 * 6 + 1;
+
+                    let new_deadline_yyyymmdd = (now + Duration::seconds(sec)).format("%Y/%m/%d");
+                    let s3 = format!("〆 {}", new_deadline_yyyymmdd).to_string();
+
+                    execute(
+                        &mut stdout,
+                        task_repository,
+                        free_time_manager,
+                        &mut focused_task_id_opt,
+                        &s3,
+                    );
 
                     let s2 = format!("後 {}秒", sec).to_string();
 
