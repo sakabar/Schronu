@@ -391,6 +391,10 @@ fn execute_show_all_tasks(
         pattern == "暦" || pattern == "calendar" || pattern == "cal"
     });
 
+    let is_flatten_func = pattern_opt.as_ref().map_or(false, |pattern| {
+        pattern == "平" || pattern == "flatten" || pattern == "flat"
+    });
+
     // 日付ごとのタスク数を集計する
     let mut counter: HashMap<NaiveDate, usize> = HashMap::new();
     let mut total_estimated_work_seconds_of_the_date_counter: HashMap<NaiveDate, i64> =
@@ -489,7 +493,7 @@ fn execute_show_all_tasks(
                             if msg.contains(&format!(" {} ", &deadline_icon)) {
                                 msgs_with_dt.push((*dt, *rank, *id, msg));
                             }
-                        } else if is_calendar_func {
+                        } else if is_calendar_func || is_flatten_func {
                             // カレンダー表示機能を使う時には、タスク一覧は表示しない。
                         } else if pattern == "今" {
                             if get_next_morning_datetime(*dt)
@@ -534,7 +538,7 @@ fn execute_show_all_tasks(
     // 逆順にする: dtの大きい順となる
     msgs_with_dt.reverse();
 
-    if !is_calendar_func {
+    if !is_calendar_func && !is_flatten_func {
         for (_, _, id, msg) in msgs_with_dt.iter() {
             *focused_task_id_opt = Some(*id);
             writeln_newline(stdout, &msg).unwrap();
@@ -564,6 +568,11 @@ fn execute_show_all_tasks(
 
     // 「それぞれの日の自由時間との差」の累積和
     let mut accumurate_duration_diff_to_limit = Duration::minutes(0);
+
+    // 平坦化可能ポイント
+    let mut flattenable_date_opt: Option<NaiveDate> = None;
+    let mut overload_day_is_found = false;
+    let mut flattenable_duration = Duration::seconds(0);
 
     for (date, _cnt) in &counter_arr[0..SUMMARY_DAYS] {
         let total_estimated_work_seconds_of_the_date: i64 =
@@ -645,6 +654,21 @@ fn execute_show_all_tasks(
                 - Duration::minutes(over_time_minutes)
         };
 
+        if !overload_day_is_found && accumurate_duration_diff_to_limit > Duration::seconds(0) {
+            overload_day_is_found = true;
+        } else if accumurate_duration_diff_to_limit <= Duration::seconds(300) {
+            let flattenable_duration_cand = Duration::seconds(
+                free_time_minutes * 60 - total_estimated_work_seconds_of_the_date,
+            );
+            if flattenable_date_opt == None
+                && overload_day_is_found
+                && flattenable_duration_cand >= Duration::seconds(900)
+            {
+                flattenable_date_opt = Some(**date);
+                flattenable_duration = flattenable_duration_cand;
+            }
+        }
+
         let diff_to_limit_sign: char = if accumurate_duration_diff_to_limit > Duration::minutes(0) {
             ' '
         } else {
@@ -698,7 +722,7 @@ fn execute_show_all_tasks(
     // 逆順にして、下側に直近の日付があるようにする
     daily_stat_msgs.reverse();
 
-    if is_calendar_func {
+    if is_calendar_func && !is_flatten_func {
         for s in daily_stat_msgs.iter() {
             writeln_newline(stdout, &s).unwrap();
 
@@ -716,7 +740,6 @@ fn execute_show_all_tasks(
     );
     let busy_hours = busy_minutes as f64 / 60.0;
     let busy_s = format!("残り拘束時間は{:.1}時間です", busy_hours);
-    writeln_newline(stdout, &busy_s).unwrap();
 
     let naive_dt_today =
         (get_next_morning_datetime(last_synced_time) - Duration::days(1)).date_naive();
@@ -735,7 +758,6 @@ fn execute_show_all_tasks(
         lambda_hours,
         estimated_finish_dt.format("%Y/%m/%d %H:%M:%S")
     );
-    writeln_newline(stdout, &s).unwrap();
 
     let today_total_deadline_estimated_work_hours =
         today_total_deadline_estimated_work_minutes as f64 / 60.0;
@@ -768,40 +790,78 @@ fn execute_show_all_tasks(
             )
         }
     };
-    writeln_newline(stdout, &s_for_rho1).unwrap();
 
-    let rho2 = lambda_minutes as f64 / mu_minutes as f64;
-    let lq2_opt = if rho2 < 1.0 {
-        Some(rho2 / (1.0 - rho2))
-    } else {
-        None
-    };
-    let s_for_rho2 = match lq2_opt {
-        Some(lq2) => {
-            format!(
-                "ρ_2 = ({:.1} + {:.1}) / ({:.1} + {:.1}) = {:.2}, Lq = {:.1}",
-                today_total_deadline_estimated_work_hours,
-                busy_hours,
-                mu_hours - busy_hours,
-                busy_hours,
-                rho2,
-                lq2
-            )
-        }
-        None => {
-            format!(
-                "ρ_2 = ({:.1} + {:.1}) / ({:.1} + {:.1}) = {:.2}, Lq = inf",
-                today_total_deadline_estimated_work_hours,
-                busy_hours,
-                mu_hours - busy_hours,
-                busy_hours,
-                rho2
-            )
-        }
-    };
-    writeln_newline(stdout, &s_for_rho2).unwrap();
+    if !is_flatten_func {
+        writeln_newline(stdout, &busy_s).unwrap();
+        writeln_newline(stdout, &s).unwrap();
+        writeln_newline(stdout, &s_for_rho1).unwrap();
+    }
 
     writeln_newline(stdout, "").unwrap();
+
+    // flatten
+    if pattern_opt == &Some("平".to_string()) {
+        writeln_newline(
+            stdout,
+            &format!(
+                "flatten dst date : {:?} for {:?}",
+                flattenable_date_opt, flattenable_duration
+            ),
+        )
+        .unwrap();
+
+        if let Some(flattenable_date) = flattenable_date_opt {
+            let mut any_was_flattened = false;
+            let mut src_date = flattenable_date - Duration::days(1);
+
+            while !any_was_flattened && src_date > naive_dt_today {
+                writeln_newline(stdout, &format!("src_date: {:?}", src_date)).unwrap();
+
+                // dt_dictを未来から見ていき、〆切に違反しない範囲で、翌日に飛ばしていく
+                for (_ind, (dt, _rank, deadline_time_opt, id)) in
+                    dt_id_tpl_arr.iter().enumerate().rev()
+                {
+                    let days_until_deadline = match deadline_time_opt {
+                        Some(deadline_time) => (*deadline_time - *dt).num_days(),
+                        None => 100,
+                    };
+
+                    if dt.date_naive() == src_date && days_until_deadline > 0 {
+                        if let Some(task) = task_repository.get_by_id(*id) {
+                            if task.get_estimated_work_seconds() > 0
+                                && flattenable_duration.num_seconds()
+                                    > task.get_estimated_work_seconds()
+                            {
+                                flattenable_duration = flattenable_duration
+                                    - Duration::seconds(task.get_estimated_work_seconds());
+                                let dst_dt = get_next_morning_datetime(*dt);
+                                task.set_pending_until(dst_dt);
+                                task.set_orig_status(Status::Pending);
+
+                                writeln_newline(
+                                    stdout,
+                                    &format!(
+                                        "{}\t{}\t{}\t{}\t{}",
+                                        dt,
+                                        dst_dt,
+                                        task.get_id(),
+                                        task.get_estimated_work_seconds(),
+                                        task.get_name(),
+                                    ),
+                                )
+                                .unwrap();
+                                writeln_newline(stdout, "").unwrap();
+
+                                any_was_flattened = true;
+                            }
+                        }
+                    }
+                }
+
+                src_date = src_date - Duration::days(1);
+            }
+        }
+    }
 }
 
 fn execute_focus(focused_task_id_opt: &mut Option<Uuid>, new_task_id_str: &str) {
@@ -1800,6 +1860,18 @@ fn execute(
                 }
             }
         }
+        "平" | "flatten" | "flat" => {
+            for _ in 0..2 {
+                let pattern_opt = Some("平".to_string());
+                execute_show_all_tasks(
+                    stdout,
+                    focused_task_id_opt,
+                    task_repository,
+                    free_time_manager,
+                    &pattern_opt,
+                );
+            }
+        }
         "押" | "extrude" => {
             if tokens.len() >= 2 {
                 if let Some(ref focused_task) = focused_task_opt {
@@ -2292,6 +2364,7 @@ fn application(
                     && fst_char_opt != Some('突')
                     && fst_char_opt != Some('全')
                     && fst_char_opt != Some('暦')
+                    && fst_char_opt != Some('平')
                     && fst_char_opt != Some('葉')
                     && fst_char_opt != Some('木')
                 {
