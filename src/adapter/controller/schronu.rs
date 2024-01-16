@@ -2030,9 +2030,16 @@ fn application(
                     );
                     stdout.flush().unwrap();
                     let msg = format!(
-                        "for {} minutes (since {})",
+                        "for {} minutes (since {} until {})",
                         (Local::now() - focus_started_datetime).num_minutes() + 1,
-                        focus_started_datetime
+                        focus_started_datetime.format("%H:%M:%S"),
+                        (focus_started_datetime
+                            + Duration::seconds(max(
+                                0,
+                                focused_task.get_estimated_work_seconds()
+                                    - focused_task.get_actual_work_seconds()
+                            )))
+                        .format("%H:%M:%S")
                     );
                     writeln_newline(&mut stdout, &msg).unwrap();
                 }
@@ -2395,9 +2402,16 @@ fn application(
                                 );
                                 stdout.flush().unwrap();
                                 let msg = format!(
-                                    "for {} minutes (since {})",
+                                    "for {} minutes (since {} until {})",
                                     (Local::now() - focus_started_datetime).num_minutes() + 1,
-                                    focus_started_datetime
+                                    focus_started_datetime.format("%H:%M:%S"),
+                                    (focus_started_datetime
+                                        + Duration::seconds(max(
+                                            0,
+                                            focused_task.get_estimated_work_seconds()
+                                                - focused_task.get_actual_work_seconds()
+                                        )))
+                                    .format("%H:%M:%S")
                                 );
                                 writeln_newline(&mut stdout, &msg).unwrap();
                             }
