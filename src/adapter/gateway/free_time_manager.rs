@@ -142,6 +142,8 @@ impl FreeTimeManager {
 impl FreeTimeManagerTrait for FreeTimeManager {
     // 簡単のため、日を跨いだ後は全て自由な時間であるとする
     fn get_free_minutes(&mut self, start: &DateTime<Local>, end: &DateTime<Local>) -> i64 {
+        const CAP_RATE: f64 = 1.0;
+
         let eod = start
             .with_hour(23)
             .expect("invalid hour")
@@ -149,7 +151,7 @@ impl FreeTimeManagerTrait for FreeTimeManager {
             .expect("invalid minute");
 
         if start.date_naive() != end.date_naive() {
-            return end.signed_duration_since(eod).num_minutes()
+            return (end.signed_duration_since(eod).num_minutes() as f64 * CAP_RATE) as i64
                 + self.get_free_minutes(start, &eod);
         }
 
@@ -166,7 +168,8 @@ impl FreeTimeManagerTrait for FreeTimeManager {
         for ind in start_index..end_index {
             ans += free_time_slot[ind as usize];
         }
-        ans
+
+        (ans as f64 * CAP_RATE) as i64
     }
 
     fn get_busy_minutes(&mut self, start: &DateTime<Local>, end: &DateTime<Local>) -> i64 {
