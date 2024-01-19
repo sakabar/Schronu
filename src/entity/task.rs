@@ -1040,11 +1040,11 @@ impl Task {
     }
 
     pub fn set_priority(&self, priority: i64) {
-        self.node.borrow_data_mut().set_priority(priority);
+        self.root().node.borrow_data_mut().set_priority(priority);
     }
 
     pub fn get_priority(&self) -> i64 {
-        self.node.borrow_data().get_priority()
+        self.root().node.borrow_data().get_priority()
     }
 
     pub fn set_create_time(&self, create_time: DateTime<Local>) {
@@ -1167,7 +1167,7 @@ impl Task {
     pub fn make_appointment(&self, appointment_start_time: DateTime<Local>) {
         // マジックナンバーではある
         // 1,2,3,5...のフィボナッチ数列にて、充分大きな値55。アポを最優先として行動しなければならない
-        self.root().set_priority(55);
+        self.set_priority(55);
 
         let mut attr = self.node.borrow_data_mut();
 
@@ -1205,10 +1205,10 @@ impl Task {
     }
 
     // 外から見て、ダミーノードのことは考慮させないように、ダミーノードの子で評価
-    // fn is_root(&self) -> bool {
-    //     let root = self.root();
-    //     self.node.ptr_eq(&root.node)
-    // }
+    fn is_root(&self) -> bool {
+        let root = self.root();
+        self.node.ptr_eq(&root.node)
+    }
 
     // pub fn try_eq_subtree(&self, task: &Task) -> Result<bool, BorrowError> {
     //     self.node.try_eq(&task.node)
@@ -1651,7 +1651,7 @@ pub fn task_to_yaml(task: &Task) -> Yaml {
     }
 
     let priority = task.get_priority();
-    if priority != default_attr.get_priority() {
+    if task.is_root() && priority != default_attr.get_priority() {
         task_hash.insert(
             Yaml::String(String::from("priority")),
             Yaml::Integer(priority),
