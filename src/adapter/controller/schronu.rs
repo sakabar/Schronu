@@ -401,6 +401,9 @@ fn execute_show_all_tasks(
         HashMap::new();
     let mut total_estimated_work_seconds: i64 = 0;
 
+    // タスク一覧で、どのタスクをいつやる見込みかを表示するために、「現在時刻」をズラして見ていく
+    let mut current_datetime_cursor = task_repository.get_last_synced_time();
+
     for (ind, (dt, rank, deadline_time_opt, id)) in dt_id_tpl_arr.iter().enumerate() {
         let subjective_naive_date =
             (get_next_morning_datetime(*dt) - Duration::days(1)).date_naive();
@@ -414,7 +417,7 @@ fn execute_show_all_tasks(
             Some(task) => {
                 let name = task.get_name();
                 let chars_vec: Vec<char> = name.chars().collect();
-                let max_len: usize = 19;
+                let max_len: usize = 13;
                 let shorten_name: String = if chars_vec.len() >= max_len {
                     format!("{}...", chars_vec.iter().take(max_len).collect::<String>())
                 } else {
@@ -423,6 +426,12 @@ fn execute_show_all_tasks(
 
                 let estimated_work_seconds = task.get_estimated_work_seconds();
                 total_estimated_work_seconds += estimated_work_seconds;
+
+                // 着手時間は、現在時刻か、最速着手可能時間のうち遅い方
+                let current_datetime_cursor_clone = &current_datetime_cursor.clone();
+                let start_datetime = max(dt, current_datetime_cursor_clone);
+                let end_datetime = *start_datetime + Duration::seconds(estimated_work_seconds);
+                current_datetime_cursor = end_datetime.clone();
 
                 total_estimated_work_seconds_of_the_date_counter
                     .entry(subjective_naive_date)
@@ -457,7 +466,11 @@ fn execute_show_all_tasks(
                     "{:04} {} {} {} {} {} {:02} {:02} {}",
                     ind,
                     icon,
-                    dt.format("%m/%d-%H:%M"),
+                    format!(
+                        "{}~{}",
+                        start_datetime.format("%m/%d-%H:%M"),
+                        end_datetime.format("%H:%M")
+                    ),
                     rank,
                     deadline_string,
                     id,
