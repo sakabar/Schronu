@@ -1861,6 +1861,26 @@ fn execute(
                 }
             }
         }
+        "逃" | "escape" | "esc" => {
+            // 先延ばしにしてしまう時。要求している見積もりが小さすぎる可能性があるので、2倍にする
+            if let Some(focused_task) = focused_task_opt {
+                let estimated_work_seconds = focused_task.get_estimated_work_seconds();
+                focused_task.set_estimated_work_seconds(estimated_work_seconds * 2);
+
+                // 引数が与えられた時はそのままdeferする
+                if tokens.len() >= 2 {
+                    let s = format!("後 {}", tokens[1..].join(" "));
+
+                    execute(
+                        stdout,
+                        task_repository,
+                        free_time_manager,
+                        focused_task_id_opt,
+                        &s,
+                    );
+                }
+            }
+        }
         "平" | "flatten" | "flat" => {
             for _ in 0..7 {
                 let pattern_opt = Some("平".to_string());
