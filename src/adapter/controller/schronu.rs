@@ -1740,6 +1740,7 @@ fn execute(
                         original_actual_work_minutes + additional_actual_work_minutes
                     );
                     execute_set_actual_work_minutes(&focused_task_opt, &actual_work_minutes_str);
+                    *focused_task_id_opt = None;
                 }
             }
         }
@@ -2385,6 +2386,7 @@ fn application(
 
                 if focused_task_id_opt.is_none() {
                     focused_task_id_opt = task_repository.get_highest_priority_leaf_task_id();
+                    last_focused_task_id_opt = None;
                 }
 
                 //////////////////////////////
