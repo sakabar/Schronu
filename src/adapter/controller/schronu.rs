@@ -327,7 +327,7 @@ fn execute_show_all_tasks(
     // pending_until: DateTime<Local>,
     // rank: usize,
     // deadline_time_opt: Option<DateTime<Local>>,
-    let mut id_to_dt_map: HashMap<Uuid, (DateTime<Local>, usize, Option<DateTime<Local>>)> =
+    let mut id_to_dt_map: HashMap<Uuid, (DateTime<Local>, i64, usize, Option<DateTime<Local>>)> =
         HashMap::new();
 
     // 複数の子タスクがある場合に、親タスクのdtは子の着手可能時期の中で最大の値となるようにする。
@@ -340,6 +340,7 @@ fn execute_show_all_tasks(
             let all_parent_tasks = leaf_task.list_all_parent_tasks_with_first_available_time();
             for (rank, (dt_raw, task)) in all_parent_tasks.iter().enumerate() {
                 let id = task.get_id();
+                let neg_priority = -task.get_priority();
 
                 // 今日以前に実施可能だったタスクについては、今日のタスクと見なす
                 let dt = max(dt_raw, &last_synced_time);
@@ -349,7 +350,7 @@ fn execute_show_all_tasks(
                 // id_to_dt_mapが確定してからにする
                 id_to_dt_map
                     .entry(id)
-                    .and_modify(|(dt_val, rank_val, _deadline_time_opt)| {
+                    .and_modify(|(dt_val, _neg_priority, rank_val, _deadline_time_opt)| {
                         if dt > dt_val {
                             *dt_val = *dt
                         }
@@ -358,14 +359,15 @@ fn execute_show_all_tasks(
                             *rank_val = rank
                         }
                     })
-                    .or_insert((*dt, rank, task.get_deadline_time_opt()));
+                    .or_insert((*dt, neg_priority, rank, task.get_deadline_time_opt()));
             }
         }
     }
 
-    let mut dt_id_tpl_arr: Vec<(DateTime<Local>, usize, Option<DateTime<Local>>, Uuid)> = vec![];
-    for (id, (dt, rank, deadline_time_opt)) in &id_to_dt_map {
-        let tpl = (*dt, *rank, *deadline_time_opt, *id);
+    let mut dt_id_tpl_arr: Vec<(DateTime<Local>, i64, usize, Option<DateTime<Local>>, Uuid)> =
+        vec![];
+    for (id, (dt, neg_priority, rank, deadline_time_opt)) in &id_to_dt_map {
+        let tpl = (*dt, *neg_priority, *rank, *deadline_time_opt, *id);
         dt_id_tpl_arr.push(tpl);
     }
 
@@ -401,7 +403,11 @@ fn execute_show_all_tasks(
         HashMap::new();
     let mut total_estimated_work_seconds: i64 = 0;
 
-    for (ind, (dt, rank, deadline_time_opt, id)) in dt_id_tpl_arr.iter().enumerate() {
+    // タスク一覧で、どのタスクをいつやる見込みかを表示するために、「現在時刻」をズラして見ていく
+    let mut current_datetime_cursor = task_repository.get_last_synced_time();
+
+    for (ind, (dt, _neg_priority, rank, deadline_time_opt, id)) in dt_id_tpl_arr.iter().enumerate()
+    {
         let subjective_naive_date =
             (get_next_morning_datetime(*dt) - Duration::days(1)).date_naive();
         counter
@@ -414,7 +420,7 @@ fn execute_show_all_tasks(
             Some(task) => {
                 let name = task.get_name();
                 let chars_vec: Vec<char> = name.chars().collect();
-                let max_len: usize = 19;
+                let max_len: usize = 13;
                 let shorten_name: String = if chars_vec.len() >= max_len {
                     format!("{}...", chars_vec.iter().take(max_len).collect::<String>())
                 } else {
@@ -423,6 +429,12 @@ fn execute_show_all_tasks(
 
                 let estimated_work_seconds = task.get_estimated_work_seconds();
                 total_estimated_work_seconds += estimated_work_seconds;
+
+                // 着手時間は、現在時刻か、最速着手可能時間のうち遅い方
+                let current_datetime_cursor_clone = &current_datetime_cursor.clone();
+                let start_datetime = max(dt, current_datetime_cursor_clone);
+                let end_datetime = *start_datetime + Duration::seconds(estimated_work_seconds);
+                current_datetime_cursor = end_datetime.clone();
 
                 total_estimated_work_seconds_of_the_date_counter
                     .entry(subjective_naive_date)
@@ -457,7 +469,11 @@ fn execute_show_all_tasks(
                     "{:04} {} {} {} {} {} {:02} {:02} {}",
                     ind,
                     icon,
-                    dt.format("%m/%d-%H:%M"),
+                    format!(
+                        "{}~{}",
+                        start_datetime.format("%m/%d-%H:%M"),
+                        end_datetime.format("%H:%M")
+                    ),
                     rank,
                     deadline_string,
                     id,
@@ -818,7 +834,7 @@ fn execute_show_all_tasks(
                 writeln_newline(stdout, &format!("src_date: {:?}", src_date)).unwrap();
 
                 // dt_dictを未来から見ていき、〆切に違反しない範囲で、翌日に飛ばしていく
-                for (_ind, (dt, rank, deadline_time_opt, id)) in
+                for (_ind, (dt, _neg_priority, rank, deadline_time_opt, id)) in
                     dt_id_tpl_arr.iter().enumerate().rev()
                 {
                     let days_until_deadline = match deadline_time_opt {
