@@ -1665,13 +1665,17 @@ fn execute(
         "下" | "breakdown" | "bd" => {
             if tokens.len() >= 2 {
                 let new_task_names = &tokens[1..];
-                execute_breakdown(
-                    stdout,
-                    focused_task_id_opt,
-                    &focused_task_opt,
-                    new_task_names,
-                    &None,
-                );
+
+                // 「割」コマンドと間違えて数値を引数に取った場合は何もしない
+                if !tokens.iter().any(|token| token.parse::<i64>().is_ok()) {
+                    execute_breakdown(
+                        stdout,
+                        focused_task_id_opt,
+                        &focused_task_opt,
+                        new_task_names,
+                        &None,
+                    );
+                }
             }
         }
         "割" | "split" | "sp" => {
