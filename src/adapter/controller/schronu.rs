@@ -468,15 +468,15 @@ fn execute_show_all_tasks(
                 let msg: String = format!(
                     "{:04} {} {} {} {} {} {:02} {:02} {}",
                     ind,
+                    id,
                     icon,
+                    deadline_string,
                     format!(
                         "{}~{}",
                         start_datetime.format("%m/%d-%H:%M"),
                         end_datetime.format("%H:%M")
                     ),
                     rank,
-                    deadline_string,
-                    id,
                     estimated_work_seconds as f64 / 60.0,
                     total_estimated_work_hours,
                     shorten_name
