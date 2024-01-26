@@ -1937,13 +1937,11 @@ fn execute(
             if let Some(ref focused_task) = focused_task_opt {
                 let past_actual_work_seconds = focused_task.get_actual_work_seconds();
 
-                let now_focus_duration_minutes = (task_repository.get_last_synced_time()
+                let now_focus_duration_seconds = (task_repository.get_last_synced_time()
                     - *focus_started_datetime)
-                    .num_minutes()
-                    + 1;
-                focused_task.set_actual_work_seconds(
-                    past_actual_work_seconds + now_focus_duration_minutes * 60,
-                );
+                    .num_seconds();
+                focused_task
+                    .set_actual_work_seconds(past_actual_work_seconds + now_focus_duration_seconds);
             }
 
             // 完了操作
