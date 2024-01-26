@@ -1314,6 +1314,25 @@ fn execute_finish(focused_task_id_opt: &mut Option<Uuid>, focused_task_opt: &Opt
         match focused_task.parent() {
             Some(parent_task) => match parent_task.get_repetition_interval_days_opt() {
                 Some(repetition_interval_days) => {
+                    // まず、親タスクの見積もり時間を実作業時間に応じて調整する
+                    // 子タスクの実作業時間が 0(不明) の時は調整しない
+                    if focused_task.get_actual_work_seconds() > 0 {
+                        let orig_estimated_sec = parent_task.get_estimated_work_seconds();
+
+                        let diff = focused_task.get_actual_work_seconds() - orig_estimated_sec;
+
+                        // 2分以内のズレは誤差の範囲とする
+                        if diff >= 120 {
+                            // ブレがあることを踏まえて、その値そのものにはしないようにする。2分探索の気分で、2で割る
+                            let new_estimated_work_seconds = orig_estimated_sec + diff / 2;
+                            parent_task.set_estimated_work_seconds(new_estimated_work_seconds);
+                        } else if diff <= -120 {
+                            // 見積もりは最短でも1分になるようにする
+                            let new_estimated_work_seconds = max(60, orig_estimated_sec + diff / 2);
+                            parent_task.set_estimated_work_seconds(new_estimated_work_seconds);
+                        }
+                    }
+
                     let parent_task_name = parent_task.get_name();
                     let parent_task_start_time = parent_task.get_start_time();
                     let new_start_time = get_next_morning_datetime(
@@ -1934,20 +1953,23 @@ fn execute(
         }
         "終" | "finish" | "fin" => {
             // 現在のフォーカス時間を実作業時間に追加する
-            if let Some(ref focused_task) = focused_task_opt {
-                let past_actual_work_seconds = focused_task.get_actual_work_seconds();
+            // 基本的にはそれを自動で行うが、もし引数を追加した時には発動させないようにする
+            if tokens.len() == 1 {
+                if let Some(ref focused_task) = focused_task_opt {
+                    let past_actual_work_seconds = focused_task.get_actual_work_seconds();
 
-                let now_focus_duration_seconds = (task_repository.get_last_synced_time()
-                    - *focus_started_datetime)
-                    .num_seconds();
-                focused_task.set_actual_work_seconds(
-                    past_actual_work_seconds
-                        + if now_focus_duration_seconds >= 60 {
-                            now_focus_duration_seconds
-                        } else {
-                            0
-                        },
-                );
+                    let now_focus_duration_seconds = (task_repository.get_last_synced_time()
+                        - *focus_started_datetime)
+                        .num_seconds();
+                    focused_task.set_actual_work_seconds(
+                        past_actual_work_seconds
+                            + if now_focus_duration_seconds >= 60 {
+                                now_focus_duration_seconds
+                            } else {
+                                0
+                            },
+                    );
+                }
             }
 
             // 完了操作
