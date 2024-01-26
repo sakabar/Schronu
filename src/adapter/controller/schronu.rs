@@ -1940,8 +1940,14 @@ fn execute(
                 let now_focus_duration_seconds = (task_repository.get_last_synced_time()
                     - *focus_started_datetime)
                     .num_seconds();
-                focused_task
-                    .set_actual_work_seconds(past_actual_work_seconds + now_focus_duration_seconds);
+                focused_task.set_actual_work_seconds(
+                    past_actual_work_seconds
+                        + if now_focus_duration_seconds >= 60 {
+                            now_focus_duration_seconds
+                        } else {
+                            0
+                        },
+                );
             }
 
             // 完了操作
