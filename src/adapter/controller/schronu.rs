@@ -1416,6 +1416,7 @@ fn execute(
     task_repository: &mut dyn TaskRepositoryTrait,
     free_time_manager: &mut dyn FreeTimeManagerTrait,
     focused_task_id_opt: &mut Option<Uuid>,
+    focus_started_datetime: &DateTime<Local>,
     untrimmed_line: &str,
 ) {
     // 整形
@@ -1897,6 +1898,7 @@ fn execute(
                         task_repository,
                         free_time_manager,
                         focused_task_id_opt,
+                        &focus_started_datetime,
                         &s,
                     );
                 }
@@ -1931,6 +1933,20 @@ fn execute(
             }
         }
         "終" | "finish" | "fin" => {
+            // 現在のフォーカス時間を実作業時間に追加する
+            if let Some(ref focused_task) = focused_task_opt {
+                let past_actual_work_seconds = focused_task.get_actual_work_seconds();
+
+                let now_focus_duration_minutes = (task_repository.get_last_synced_time()
+                    - *focus_started_datetime)
+                    .num_minutes()
+                    + 1;
+                focused_task.set_actual_work_seconds(
+                    past_actual_work_seconds + now_focus_duration_minutes * 60,
+                );
+            }
+
+            // 完了操作
             execute_finish(focused_task_id_opt, &focused_task_opt);
         }
         &_ => {}
@@ -2255,6 +2271,9 @@ fn application(
                 stdout.flush().unwrap();
             }
             Key::Char('\n') | Key::Ctrl('m') => {
+                // 時計を合わせる
+                task_repository.sync_clock(Local::now());
+
                 line = line.trim().to_string();
 
                 writeln_newline(&mut stdout, "").unwrap();
@@ -2278,6 +2297,7 @@ fn application(
                         task_repository,
                         free_time_manager,
                         &mut focused_task_id_opt,
+                        &focus_started_datetime,
                         &s,
                     );
                 } else if line == "h" {
@@ -2289,6 +2309,7 @@ fn application(
                         task_repository,
                         free_time_manager,
                         &mut focused_task_id_opt,
+                        &focus_started_datetime,
                         &s,
                     );
                 } else if line == "d" {
@@ -2303,6 +2324,7 @@ fn application(
                         task_repository,
                         free_time_manager,
                         &mut focused_task_id_opt,
+                        &focus_started_datetime,
                         &s,
                     );
                 } else if line == "D" {
@@ -2315,6 +2337,7 @@ fn application(
                         task_repository,
                         free_time_manager,
                         &mut focused_task_id_opt,
+                        &focus_started_datetime,
                         &s,
                     );
                 } else if line == "w" {
@@ -2330,6 +2353,7 @@ fn application(
                         task_repository,
                         free_time_manager,
                         &mut focused_task_id_opt,
+                        &focus_started_datetime,
                         &s,
                     );
                 } else if line == "W" {
@@ -2341,6 +2365,7 @@ fn application(
                         task_repository,
                         free_time_manager,
                         &mut focused_task_id_opt,
+                        &focus_started_datetime,
                         &s1,
                     );
 
@@ -2356,6 +2381,7 @@ fn application(
                         task_repository,
                         free_time_manager,
                         &mut focused_task_id_opt,
+                        &focus_started_datetime,
                         &s3,
                     );
 
@@ -2366,6 +2392,7 @@ fn application(
                         task_repository,
                         free_time_manager,
                         &mut focused_task_id_opt,
+                        &focus_started_datetime,
                         &s2,
                     );
                 } else if line == "y" {
@@ -2381,6 +2408,7 @@ fn application(
                         task_repository,
                         free_time_manager,
                         &mut focused_task_id_opt,
+                        &focus_started_datetime,
                         &s,
                     );
                 } else {
@@ -2389,6 +2417,7 @@ fn application(
                         task_repository,
                         free_time_manager,
                         &mut focused_task_id_opt,
+                        &focus_started_datetime,
                         &line,
                     );
                 }
