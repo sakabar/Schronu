@@ -466,7 +466,7 @@ fn execute_show_all_tasks(
                 };
 
                 let msg: String = format!(
-                    "{:04} {} {} {} {} {} {:02} {:02} {}",
+                    "{:04} {} {} {} {} {} {:02.0} {:02.0} {}",
                     ind,
                     id,
                     icon,
