@@ -1974,6 +1974,55 @@ fn execute(
                 }
             }
         }
+        "空" | "clear" | "埋" | "fill" => {
+            // 空 13:00
+            // 今着手可能なタスクについてactiveなものを、指定したタイミングまでpendingする
+
+            // 集 13:00
+            // 指定したタイミングまでに着手する予定のタスクを全てTodoに直す
+            let hhmm_reg = Regex::new(r"^(\d{1,2}):(\d{1,2})$").unwrap();
+            if tokens.len() >= 2 && hhmm_reg.is_match(tokens[1]) {
+                let cmd_str = tokens[0];
+                let hhmm_str = tokens[1];
+
+                let now: DateTime<Local> = task_repository.get_last_synced_time();
+
+                let caps = hhmm_reg.captures(hhmm_str).unwrap();
+                let hh: u32 = caps[1].parse().unwrap();
+                let mm: u32 = caps[2].parse().unwrap();
+
+                for project_root_task in task_repository.get_all_projects().iter() {
+                    let leaf_tasks =
+                        extract_leaf_tasks_from_project_with_pending(&project_root_task);
+                    let defer_to_datetime = Local
+                        .with_ymd_and_hms(now.year(), now.month(), now.day(), hh, mm, 0)
+                        .unwrap();
+                    for leaf_task in leaf_tasks.iter() {
+                        match cmd_str {
+                            "空" | "clear" => {
+                                if leaf_task.get_status() == Status::Todo
+                                    || (leaf_task.get_status() == Status::Pending
+                                        && leaf_task.get_pending_until() < defer_to_datetime)
+                                {
+                                    leaf_task.set_orig_status(Status::Pending);
+                                    leaf_task.set_pending_until(defer_to_datetime);
+                                }
+                            }
+                            "集" | "gather" => {
+                                if leaf_task.get_status() == Status::Pending
+                                    && leaf_task.get_pending_until() < defer_to_datetime
+                                {
+                                    leaf_task.set_orig_status(Status::Todo);
+                                }
+                            }
+                            _ => {
+                                // Skip
+                            }
+                        }
+                    }
+                }
+            }
+        }
         "終" | "finish" | "fin" => {
             // 現在のフォーカス時間を実作業時間に追加する
             // 基本的にはそれを自動で行うが、もし引数を追加した時には発動させないようにする
