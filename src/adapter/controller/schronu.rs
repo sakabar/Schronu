@@ -711,13 +711,12 @@ fn execute_show_all_tasks(
             };
 
         let s = format!(
-            "{}({})\t{:4.1}={:04.1}-{:04.1}[時間]\t{:5.2}\t{}{:.0}時間{:02.0}分\t{}{:02}時間{:02}分\t{}{:02}時間{:02}分\t{:02}[タスク]",
+            "{}({})\t{:4.1}時間\t{:4.1}時間\t{:5.2}\t{}{:.0}時間{:02.0}分\t{}{:02}時間{:02}分\t{}{:02}時間{:02}分\t{:02}[タスク]",
             date,
             weekday_jp,
 
-            total_estimated_work_hours_of_the_date-free_time_hours,
-            total_estimated_work_hours_of_the_date,
             free_time_hours,
+            total_estimated_work_hours_of_the_date-free_time_hours,
 
             rho_in_date - 1.0,
 
