@@ -710,14 +710,32 @@ fn execute_show_all_tasks(
                 '-'
             };
 
+        let diff_to_limit_in_day_sign: char =
+            if total_estimated_work_hours_of_the_date > free_time_hours {
+                ' '
+            } else {
+                '-'
+            };
+        let diff_to_limit_hours_in_day: i64 = (total_estimated_work_hours_of_the_date
+            - free_time_hours)
+            .abs()
+            .floor() as i64;
+        let diff_to_limit_minutes_in_day: i64 =
+            (((total_estimated_work_hours_of_the_date - free_time_hours).abs()
+                - diff_to_limit_hours_in_day as f64)
+                * 60.0)
+                .floor() as i64;
+
         let s = format!(
-            "{}({})\t{:4.1}={:04.1}-{:04.1}[時間]\t{:5.2}\t{}{:.0}時間{:02.0}分\t{}{:02}時間{:02}分\t{}{:02}時間{:02}分\t{:02}[タスク]",
+            "{}({})\t{:4.1}時間\t{}{:.0}時間{:02.0}分\t{:5.2}\t{}{:.0}時間{:02.0}分\t{}{:02}時間{:02}分\t{}{:02}時間{:02}分\t{:02}[タスク]",
             date,
             weekday_jp,
 
-            total_estimated_work_hours_of_the_date-free_time_hours,
-            total_estimated_work_hours_of_the_date,
             free_time_hours,
+
+            diff_to_limit_in_day_sign,
+            diff_to_limit_hours_in_day,
+            diff_to_limit_minutes_in_day,
 
             rho_in_date - 1.0,
 
