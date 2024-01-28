@@ -866,6 +866,7 @@ fn execute_show_all_tasks(
                     if dt.date_naive() == src_date && days_until_deadline > 0 {
                         if let Some(task) = task_repository.get_by_id(*id) {
                             if !task.get_is_on_other_side()
+                                && rank != &0
                                 && task.get_estimated_work_seconds() > 0
                                 && flattenable_duration.num_seconds()
                                     > task.get_estimated_work_seconds()
