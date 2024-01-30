@@ -427,7 +427,15 @@ fn execute_show_all_tasks(
                     name.to_string()
                 };
 
-                let estimated_work_seconds = task.get_estimated_work_seconds();
+                // 元々見積もり時間から作業済時間を引いたのが残りの見積もり時間
+                // ただし、作業時間が元々の見積もり時間をオーバーしている時には既に想定外の事態になっているため、
+                // 残りの見積もりを0とはせず、安全に倒して元々の見積もりをそのまま使用する
+                let estimated_work_seconds =
+                    if task.get_estimated_work_seconds() >= task.get_actual_work_seconds() {
+                        task.get_estimated_work_seconds() - task.get_actual_work_seconds()
+                    } else {
+                        task.get_estimated_work_seconds()
+                    };
                 total_estimated_work_seconds += estimated_work_seconds;
 
                 // 着手時間は、現在時刻か、最速着手可能時間のうち遅い方
