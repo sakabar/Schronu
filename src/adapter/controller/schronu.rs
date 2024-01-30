@@ -505,6 +505,7 @@ fn execute_show_all_tasks(
                 );
 
                 let yyyymmdd_reg = Regex::new(r"^(\d{4})/(\d{2})/(\d{2})$").unwrap();
+                let days_of_week = vec!["月", "火", "水", "木", "金", "土", "日"];
 
                 match pattern_opt {
                     Some(pattern) => {
@@ -542,6 +543,30 @@ fn execute_show_all_tasks(
                         } else if pattern == "明" {
                             if get_next_morning_datetime(*dt)
                                 == get_next_morning_datetime(last_synced_time) + Duration::days(1)
+                            {
+                                msgs_with_dt.push((*dt, *rank, *id, msg));
+                            }
+                        } else if days_of_week.contains(&pattern.as_str()) {
+                            // 月 火 水 木 金 土 日 が指定された時は、明日以降で、直近のその曜日のタスクを表示する
+                            let todays_morning_datetime =
+                                get_next_morning_datetime(last_synced_time) - Duration::days(1);
+                            let dn = todays_morning_datetime.date_naive();
+                            let now_weekday_jp = get_weekday_jp(&dn);
+
+                            let now_days_of_week_ind = days_of_week
+                                .iter()
+                                .position(|&x| &x == &now_weekday_jp)
+                                .unwrap();
+                            let target_days_of_week_ind =
+                                days_of_week.iter().position(|&x| x == pattern).unwrap();
+
+                            let ind_diff = (7 + target_days_of_week_ind - now_days_of_week_ind) % 7;
+
+                            // 今日のデータについては「全 今」で表示できるので、その代わりに、1週間後の同じ曜日の情報を表示するようにする
+                            let days: i64 = if ind_diff == 0 { 7 } else { ind_diff as i64 };
+
+                            if get_next_morning_datetime(last_synced_time) + Duration::days(days)
+                                == get_next_morning_datetime(*dt)
                             {
                                 msgs_with_dt.push((*dt, *rank, *id, msg));
                             }
