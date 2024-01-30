@@ -52,6 +52,18 @@ fn backward_width(line: &str, cursor_x: usize) -> u16 {
     return width;
 }
 
+fn get_weekday_jp(date: &NaiveDate) -> &str {
+    match date.weekday() {
+        Weekday::Mon => "月",
+        Weekday::Tue => "火",
+        Weekday::Wed => "水",
+        Weekday::Thu => "木",
+        Weekday::Fri => "金",
+        Weekday::Sat => "土",
+        Weekday::Sun => "日",
+    }
+}
+
 #[test]
 fn test_backward_width_正常系1() {
     let s = String::from("あ");
@@ -480,8 +492,10 @@ fn execute_show_all_tasks(
                     icon,
                     deadline_string,
                     format!(
-                        "{}~{}",
-                        start_datetime.format("%m/%d-%H:%M"),
+                        "{}({})-{}~{}",
+                        start_datetime.format("%m/%d"),
+                        get_weekday_jp(&start_datetime.date_naive()),
+                        start_datetime.format("%H:%M"),
                         end_datetime.format("%H:%M")
                     ),
                     rank,
@@ -608,15 +622,7 @@ fn execute_show_all_tasks(
 
         let cnt_of_the_date = *counter.get(date).unwrap_or(&0);
 
-        let weekday_jp = match date.weekday() {
-            Weekday::Mon => "月",
-            Weekday::Tue => "火",
-            Weekday::Wed => "水",
-            Weekday::Thu => "木",
-            Weekday::Fri => "金",
-            Weekday::Sat => "土",
-            Weekday::Sun => "日",
-        };
+        let weekday_jp = get_weekday_jp(&date);
 
         let local_datetime_base = get_next_morning_datetime(
             Local::now()
