@@ -1887,7 +1887,7 @@ fn execute(
             let additional_actual_work_minutes: i64 = if tokens.len() >= 2 {
                 tokens[1].parse().unwrap()
             } else {
-                (Local::now() - *focus_started_datetime).num_minutes()
+                (Local::now() - *focus_started_datetime).num_minutes() + 1
             };
 
             if let Some(ref focused_task) = focused_task_opt {
