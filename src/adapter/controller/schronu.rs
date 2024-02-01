@@ -803,8 +803,16 @@ fn execute_show_all_tasks(
             deadline_rest_duration_seconds as f64 / (free_time_hours * 60.0 * 60.0),
         );
 
+        let indicator_about_diff_to_limit = format!(
+            "{}{:02}時間{:02}分\t{:5.2}",
+            diff_to_limit_sign,
+            accumurate_duration_diff_to_limit.num_hours().abs(),
+            accumurate_duration_diff_to_limit.num_minutes().abs() % 60,
+            accumulated_rho_diff,
+        );
+
         let s = format!(
-            "{}({})\t{:4.1}時間\t{}{:.0}時間{:02.0}分\t{:5.2}\t{}{:.0}時間{:02.0}分\t{}{:02}時間{:02}分\t{}{:02}時間{:02}分\t{:5.2}\t{:02}[タスク]\t{}",
+            "{}({})\t{:4.1}時間\t{}{:.0}時間{:02.0}分\t{:5.2}\t{}{:.0}時間{:02.0}分\t{}{:02}時間{:02}分\t{}\t{}\t{:02}[タスク]",
             date,
             weekday_jp,
 
@@ -824,15 +832,10 @@ fn execute_show_all_tasks(
             accumurate_duration_diff_to_goal_rho.num_hours().abs(),
             accumurate_duration_diff_to_goal_rho.num_minutes().abs() % 60,
 
-            diff_to_limit_sign,
-            accumurate_duration_diff_to_limit.num_hours().abs(),
-            accumurate_duration_diff_to_limit.num_minutes().abs() % 60,
-
-            accumulated_rho_diff,
+            indicator_about_deadline,
+            indicator_about_diff_to_limit,
 
             cnt_of_the_date,
-
-            indicator_about_deadline,
         );
 
         daily_stat_msgs.push(s);
