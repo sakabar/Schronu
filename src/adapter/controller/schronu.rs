@@ -1321,6 +1321,14 @@ fn split_amount_and_unit(input: &str) -> Vec<String> {
 
 #[test]
 fn test_split_amount_and_unit() {
+    let input = "暦";
+    let actual = split_amount_and_unit(input);
+
+    assert_eq!(actual, vec!["".to_string(), "暦".to_string()]);
+}
+
+#[test]
+fn test_split_amount_and_unit_err() {
     let input = "6543abc123def456gh789";
     let actual = split_amount_and_unit(input);
 
@@ -1996,7 +2004,7 @@ fn execute(
                 } else {
                     // "defer 5days" のように引数が1つしか与えられなかった場合は、数字部分とそれ以降に分割する
                     let splitted = split_amount_and_unit(tokens[1]);
-                    if splitted.len() == 2 {
+                    if splitted.len() == 2 && splitted[0] != "" {
                         let amount_str = &splitted[0];
                         let unit_str = &splitted[1].to_lowercase();
 
