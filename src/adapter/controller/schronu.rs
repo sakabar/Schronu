@@ -414,6 +414,7 @@ fn execute_show_all_tasks(
     let mut total_estimated_work_seconds_of_the_date_counter: HashMap<NaiveDate, i64> =
         HashMap::new();
     let mut total_estimated_work_seconds: i64 = 0;
+    let mut deadline_estimated_work_seconds_map: HashMap<NaiveDate, i64> = HashMap::new();
 
     // タスク一覧で、どのタスクをいつやる見込みかを表示するために、「現在時刻」をズラして見ていく
     let mut current_datetime_cursor = task_repository.get_last_synced_time();
@@ -449,6 +450,20 @@ fn execute_show_all_tasks(
                         task.get_estimated_work_seconds()
                     };
                 total_estimated_work_seconds += estimated_work_seconds;
+
+                if let Some(deadline_time) = deadline_time_opt {
+                    if subjective_naive_date
+                        == (get_next_morning_datetime(*deadline_time) - Duration::days(1))
+                            .date_naive()
+                    {
+                        deadline_estimated_work_seconds_map
+                            .entry(subjective_naive_date)
+                            .and_modify(|deadline_estimated_work_seconds| {
+                                *deadline_estimated_work_seconds += estimated_work_seconds
+                            })
+                            .or_insert(estimated_work_seconds);
+                    }
+                }
 
                 // 着手時間は、現在時刻か、最速着手可能時間のうち遅い方
                 let current_datetime_cursor_clone = &current_datetime_cursor.clone();
@@ -765,8 +780,31 @@ fn execute_show_all_tasks(
                 * 60.0)
                 .floor() as i64;
 
+        let accumulated_rho_diff =
+            accumurate_duration_diff_to_limit.num_minutes() as f64 / 60.0 / free_time_hours;
+
+        let deadline_rest_duration_seconds: i64 =
+            deadline_estimated_work_seconds_map.get(&date).unwrap_or(&0)
+                - (free_time_hours * 3600.0).floor() as i64;
+        let deadline_rest_hours = deadline_rest_duration_seconds.abs() / 3600;
+        let deadline_rest_minutes =
+            deadline_rest_duration_seconds.abs() / 60 - deadline_rest_hours * 60;
+        let deadline_rest_sign: char = if deadline_rest_duration_seconds > 0 {
+            ' '
+        } else {
+            '-'
+        };
+
+        let indicator_about_deadline = format!(
+            "{}{:.0}時間{:02.0}分\t{:5.2}",
+            deadline_rest_sign,
+            deadline_rest_hours,
+            deadline_rest_minutes,
+            deadline_rest_duration_seconds as f64 / (free_time_hours * 60.0 * 60.0),
+        );
+
         let s = format!(
-            "{}({})\t{:4.1}時間\t{}{:.0}時間{:02.0}分\t{:5.2}\t{}{:.0}時間{:02.0}分\t{}{:02}時間{:02}分\t{}{:02}時間{:02}分\t{:02}[タスク]",
+            "{}({})\t{:4.1}時間\t{}{:.0}時間{:02.0}分\t{:5.2}\t{}{:.0}時間{:02.0}分\t{}{:02}時間{:02}分\t{}{:02}時間{:02}分\t{:5.2}\t{:02}[タスク]\t{}",
             date,
             weekday_jp,
 
@@ -789,7 +827,12 @@ fn execute_show_all_tasks(
             diff_to_limit_sign,
             accumurate_duration_diff_to_limit.num_hours().abs(),
             accumurate_duration_diff_to_limit.num_minutes().abs() % 60,
-            cnt_of_the_date
+
+            accumulated_rho_diff,
+
+            cnt_of_the_date,
+
+            indicator_about_deadline,
         );
 
         daily_stat_msgs.push(s);
