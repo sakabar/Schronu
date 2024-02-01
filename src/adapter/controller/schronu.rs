@@ -1884,17 +1884,20 @@ fn execute(
             }
         }
         "働" | "work" | "wk" => {
-            if tokens.len() >= 2 {
-                let additional_actual_work_minutes: i64 = tokens[1].parse().unwrap();
-                if let Some(ref focused_task) = focused_task_opt {
-                    let original_actual_work_minutes = focused_task.get_actual_work_seconds() / 60;
-                    let actual_work_minutes_str = format!(
-                        "{}",
-                        original_actual_work_minutes + additional_actual_work_minutes
-                    );
-                    execute_set_actual_work_minutes(&focused_task_opt, &actual_work_minutes_str);
-                    *focused_task_id_opt = None;
-                }
+            let additional_actual_work_minutes: i64 = if tokens.len() >= 2 {
+                tokens[1].parse().unwrap()
+            } else {
+                (Local::now() - *focus_started_datetime).num_minutes()
+            };
+
+            if let Some(ref focused_task) = focused_task_opt {
+                let original_actual_work_minutes = focused_task.get_actual_work_seconds() / 60;
+                let actual_work_minutes_str = format!(
+                    "{}",
+                    original_actual_work_minutes + additional_actual_work_minutes
+                );
+                execute_set_actual_work_minutes(&focused_task_opt, &actual_work_minutes_str);
+                *focused_task_id_opt = None;
             }
         }
         "後" | "defer" => {
