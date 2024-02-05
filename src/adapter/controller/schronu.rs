@@ -634,6 +634,13 @@ fn execute_show_all_tasks(
 
     let mut daily_stat_msgs: Vec<String> = vec![];
 
+    // 順調フラグ
+    let mut has_today_deadline_leeway = true;
+    let mut has_today_freetime_leeway = true;
+    let mut has_tomorrow_deadline_leeway = true;
+    let mut has_tomorrow_freetime_leeway = true;
+    let mut has_weekly_freetime_leeway = true;
+
     // 「それぞれの日の rho (0.7) との差」の累積和。
     // どれくらい突発を吸収できるかの指標となる。
     // 元々は単に0.7との差で計算していたが、それだと0.7<rho<1.0でその日のタスクがなんとかなっているのに
@@ -811,6 +818,22 @@ fn execute_show_all_tasks(
             accumulated_rho_diff,
         );
 
+        // 順調フラグ確認
+        if daily_stat_msgs.len() == 0 {
+            has_today_deadline_leeway = deadline_rest_sign == '-';
+            has_today_freetime_leeway = diff_to_limit_in_day_sign == '-';
+        }
+
+        if daily_stat_msgs.len() == 1 {
+            has_tomorrow_deadline_leeway = deadline_rest_sign == '-';
+            has_tomorrow_freetime_leeway = diff_to_limit_in_day_sign == '-';
+        }
+
+        // 一度フラグが折れていたら復活させない
+        if daily_stat_msgs.len() < 7 && has_weekly_freetime_leeway {
+            has_weekly_freetime_leeway = diff_to_limit_sign == '-';
+        }
+
         let s = format!(
             "{}({})\t{:4.1}時間\t{}{:.0}時間{:02.0}分\t{:5.2}\t{}{:.0}時間{:02.0}分\t{}{:02}時間{:02}分\t{}\t{}\t{:02}[タスク]",
             date,
@@ -868,6 +891,29 @@ fn execute_show_all_tasks(
         ]
         .join("\t");
         writeln_newline(stdout, &footer).unwrap();
+        writeln_newline(stdout, "").unwrap();
+
+        // 順調フラグが折れている時にアラート表示
+        if !has_today_deadline_leeway {
+            writeln_newline(stdout, "[Crit] 【今日の】〆切に間に合いません。【ただちに】〆切をリスケする調整をしてください。").unwrap();
+        }
+
+        if !has_today_freetime_leeway {
+            writeln_newline(stdout, "[Crit] 【今日の】終了予定時刻に間に合いません。【ただちに】どれかの予定を諦めて明日以降に延期してください。").unwrap();
+        }
+
+        if !has_tomorrow_deadline_leeway {
+            writeln_newline(stdout, "[Warn] 【明日の】〆切に間に合いません。〆切をあさって以降にリスケする調整を【今日中に】してください。").unwrap();
+        }
+
+        if !has_tomorrow_freetime_leeway {
+            writeln_newline(stdout, "[Warn] 【明日の】終了予定時刻に間に合いません。【今日中に】どれかの予定を諦めてあさって以降に延期してください。").unwrap();
+        }
+
+        if !has_weekly_freetime_leeway {
+            writeln_newline(stdout, "[Info] 【1週間以内の】終了予定時刻に間に合いません。【近々】どれかの予定を諦めて来週以降に延期してください。").unwrap();
+        }
+
         writeln_newline(stdout, "").unwrap();
     }
 
