@@ -637,6 +637,7 @@ fn execute_show_all_tasks(
     // 順調フラグ
     let mut has_today_deadline_leeway = true;
     let mut has_today_freetime_leeway = true;
+    let mut has_today_new_task_leeway = true;
     let mut has_tomorrow_deadline_leeway = true;
     let mut has_tomorrow_freetime_leeway = true;
     let mut has_weekly_freetime_leeway = true;
@@ -822,6 +823,7 @@ fn execute_show_all_tasks(
         if daily_stat_msgs.len() == 0 {
             has_today_deadline_leeway = deadline_rest_sign == '-';
             has_today_freetime_leeway = diff_to_limit_in_day_sign == '-';
+            has_today_new_task_leeway = diff_to_goal_sign == '-';
         }
 
         if daily_stat_msgs.len() == 1 {
@@ -906,6 +908,11 @@ fn execute_show_all_tasks(
             is_all_favorable = false;
         }
 
+        if !has_today_new_task_leeway {
+            writeln_newline(stdout, "[Warn] 脇道に逸れずに予定の遂行をしてください。見積もりを間違えたり突発タスクが発生したりした場合に終了予定時刻に間に合わなくなる可能性があります。").unwrap();
+            is_all_favorable = false;
+        }
+
         if !has_tomorrow_deadline_leeway {
             writeln_newline(stdout, "[Warn] 【明日の】〆切に間に合いません。〆切をあさって以降にリスケする調整を【今日中に】してください。").unwrap();
             is_all_favorable = false;
@@ -917,14 +924,14 @@ fn execute_show_all_tasks(
         }
 
         if !has_weekly_freetime_leeway {
-            writeln_newline(stdout, "[Info] 【1週間以内の】終了予定時刻に間に合いません。【近々】どれかの予定を諦めて来週以降に延期してください。").unwrap();
+            writeln_newline(stdout, "[Warn] 【1週間以内の】終了予定時刻に間に合いません。【近々】どれかの予定を諦めて来週以降に延期してください。").unwrap();
             is_all_favorable = false;
         }
 
         if is_all_favorable {
             writeln_newline(
                 stdout,
-                "[Info] 順調です。予定の調整ではなく、予定の遂行をしてください。",
+                "[Info] 順調です。突発タスクに対応したり1日の終わり際にタスクを新しく積んだりする余裕があります。ひとまずは脇道に逸れずに予定の遂行をしてください。",
             )
             .unwrap();
         }
