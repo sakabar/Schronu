@@ -845,13 +845,29 @@ fn execute_show_all_tasks(
     daily_stat_msgs.reverse();
 
     if is_calendar_func && !is_flatten_func {
-        for s in daily_stat_msgs.iter() {
+        for (cal_ind, s) in daily_stat_msgs.iter().enumerate() {
             writeln_newline(stdout, &s).unwrap();
 
-            if s.contains("(月)") {
+            if s.contains("(月)") && cal_ind != daily_stat_msgs.len() - 1 {
                 writeln_newline(stdout, "").unwrap();
             }
         }
+        // フッター
+        let footer: String = vec![
+            "日          ",
+            "空          ",
+            "空差      ",
+            "空差比",
+            "余差    ",
+            "余差累    ",
+            "〆差      ",
+            "〆差比",
+            "空差累 ",
+            "空差累比",
+            "タスク数",
+        ]
+        .join("\t");
+        writeln_newline(stdout, &footer).unwrap();
         writeln_newline(stdout, "").unwrap();
     }
 
