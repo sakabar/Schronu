@@ -903,13 +903,13 @@ fn execute_show_all_tasks(
             is_all_favorable = false;
         }
 
-        if !has_today_freetime_leeway {
+        if has_today_freetime_leeway {
+            if !has_today_new_task_leeway {
+                writeln_newline(stdout, "[Warn] 脇道に逸れずに予定の遂行をしてください。見積もりを間違えたり突発タスクが発生したりした場合に終了予定時刻に間に合わなくなる可能性があります。").unwrap();
+                is_all_favorable = false;
+            }
+        } else {
             writeln_newline(stdout, "[Crit] 【今日の】終了予定時刻に間に合いません。【ただちに】どれかの予定を諦めて明日以降に延期してください。").unwrap();
-            is_all_favorable = false;
-        }
-
-        if !has_today_new_task_leeway {
-            writeln_newline(stdout, "[Warn] 脇道に逸れずに予定の遂行をしてください。見積もりを間違えたり突発タスクが発生したりした場合に終了予定時刻に間に合わなくなる可能性があります。").unwrap();
             is_all_favorable = false;
         }
 
