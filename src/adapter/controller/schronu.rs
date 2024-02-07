@@ -464,9 +464,36 @@ fn execute_show_all_tasks(
             Some(task) => {
                 let name = task.get_name();
                 let chars_vec: Vec<char> = name.chars().collect();
-                let max_len: usize = 13;
-                let shorten_name: String = if chars_vec.len() >= max_len {
-                    format!("{}...", chars_vec.iter().take(max_len).collect::<String>())
+                let max_len: usize = 70;
+
+                let chars_width_acc: Vec<usize> = chars_vec
+                    .iter()
+                    .map(|&ch| UnicodeWidthChar::width(ch).unwrap_or(0))
+                    .scan(0, |acc, x| {
+                        *acc += x;
+                        Some(*acc)
+                    })
+                    .collect();
+
+                let latest_index_opt =
+                    chars_width_acc
+                        .iter()
+                        .enumerate()
+                        .find_map(
+                            |(index, &value)| {
+                                if value > max_len {
+                                    Some(index)
+                                } else {
+                                    None
+                                }
+                            },
+                        );
+
+                let shorten_name: String = if let Some(latest_index) = latest_index_opt {
+                    format!(
+                        "{}...",
+                        chars_vec.iter().take(latest_index + 1).collect::<String>()
+                    )
                 } else {
                     name.to_string()
                 };
