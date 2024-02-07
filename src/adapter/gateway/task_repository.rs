@@ -158,12 +158,26 @@ impl TaskRepositoryTrait for TaskRepository {
 
             let leaf_tasks: Vec<Task> = extract_leaf_tasks_from_project(&root_task);
 
-            if !leaf_tasks.is_empty() {
-                ans = leaf_tasks.first().map(|task| task.get_id());
+            for leaf_task in leaf_tasks.iter() {
+                let deadline_time_opt = leaf_task.get_deadline_time_opt();
+                let neg_priority = -leaf_task.get_priority();
+                let id = leaf_task.get_id();
+
+                let tpl = (
+                    deadline_time_opt.is_none(),
+                    neg_priority,
+                    deadline_time_opt,
+                    id,
+                );
+
+                if ans.is_none() || tpl < ans.unwrap() {
+                    ans = Some(tpl);
+                }
             }
         }
 
-        ans
+        let ans_id = ans.map(|tpl| tpl.3);
+        ans_id
     }
 
     fn get_by_id(&self, id: Uuid) -> Option<Task> {
