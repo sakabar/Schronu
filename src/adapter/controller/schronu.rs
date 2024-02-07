@@ -1568,7 +1568,7 @@ fn execute_finish(focused_task_id_opt: &mut Option<Uuid>, focused_task_opt: &Opt
         // その値に従って兄弟ノードを生成する
         // start_timeは日付は(repetition_interval_days-1)日後で、時刻は親タスクのstart_timeを引き継ぐ
         // タスク名は「親タスク名(日付)」
-        // deadline_timeはその日付の23:59とする
+        // deadline_timeの時刻は親タスクのdeadline_timeを引き継ぐ (無ければ23:59)
         // estimated_work_secondsは親タスクを引き継ぐ
         match focused_task.parent() {
             Some(parent_task) => match parent_task.get_repetition_interval_days_opt() {
@@ -1611,13 +1611,24 @@ fn execute_finish(focused_task_id_opt: &mut Option<Uuid>, focused_task_opt: &Opt
                     let new_task_day = new_start_time.day();
                     let new_task_name =
                         format!("{}({}/{})", parent_task_name, new_task_month, new_task_day);
-                    let new_deadline_time = new_start_time
-                        .with_hour(23)
-                        .unwrap()
-                        .with_minute(59)
-                        .unwrap()
-                        .with_second(59)
-                        .unwrap();
+
+                    let new_deadline_time = match parent_task.get_deadline_time_opt() {
+                        Some(parent_task_deadline_time) => new_start_time
+                            .with_hour(parent_task_deadline_time.hour())
+                            .unwrap()
+                            .with_minute(parent_task_deadline_time.minute())
+                            .unwrap()
+                            .with_nanosecond(0)
+                            .unwrap(),
+                        None => new_start_time
+                            .with_hour(23)
+                            .unwrap()
+                            .with_minute(59)
+                            .unwrap()
+                            .with_second(59)
+                            .unwrap(),
+                    };
+
                     let estimated_work_seconds = parent_task.get_estimated_work_seconds();
 
                     let mut new_task_attr = TaskAttr::new(&new_task_name);
