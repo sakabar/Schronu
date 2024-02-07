@@ -1520,13 +1520,13 @@ fn execute_finish(focused_task_id_opt: &mut Option<Uuid>, focused_task_opt: &Opt
 
                         let diff = focused_task.get_actual_work_seconds() - orig_estimated_sec;
 
-                        // 2分以内のズレは誤差の範囲とする
-                        if diff >= 120 {
+                        if diff > 0 {
                             // ブレがあることを踏まえて、その値そのものにはしないようにする。
                             // 2分探索の気分で、2で割るのを基本としたかったが、人は見積もりを過小評価しがちなので、大きくする方向については75%採用する
                             let new_estimated_work_seconds = orig_estimated_sec + diff * 3 / 4;
                             parent_task.set_estimated_work_seconds(new_estimated_work_seconds);
                         } else if diff <= -120 {
+                            // 予定より2分以内早いというズレは誤差の範囲とする
                             // 見積もりは最短でも1分になるようにする
                             // 人は見積もりを過小評価しがちなので、見積もりをさらに小さくする方向については慎重に。25%採用する
                             let new_estimated_work_seconds = max(60, orig_estimated_sec + diff / 4);
