@@ -307,23 +307,37 @@ fn execute_show_leaf_tasks(
     task_repository: &mut dyn TaskRepositoryTrait,
     _free_time_manager: &mut dyn FreeTimeManagerTrait,
 ) {
-    let mut task_cnt = 1;
-    let mut _total_estimated_work_seconds = 0;
+    let mut ans_tpls = vec![];
+
     for project_root_task in task_repository.get_all_projects().iter() {
         let project_name = project_root_task.get_name();
 
         // 優先度が高いタスクほど下に表示されるようにし、フォーカスが当たるタスクは末尾に表示されるようにする。
-        let mut leaf_tasks = extract_leaf_tasks_from_project(&project_root_task);
-        leaf_tasks.reverse();
-
+        let leaf_tasks = extract_leaf_tasks_from_project(&project_root_task);
         for leaf_task in leaf_tasks.iter() {
-            let message = format!("{}\t{}\t{:?}", task_cnt, project_name, leaf_task.get_attr());
-            writeln_newline(stdout, &message).unwrap();
-            task_cnt += 1;
+            let deadline_time_opt = leaf_task.get_deadline_time_opt();
+            let neg_priority = -leaf_task.get_priority();
+            let id = leaf_task.get_id();
+            let message = format!("{}\t{:?}", project_name, leaf_task.get_attr());
 
-            let estimated_work_seconds = leaf_task.get_estimated_work_seconds();
-            _total_estimated_work_seconds += estimated_work_seconds;
+            let tpl = (
+                deadline_time_opt.is_none(),
+                neg_priority,
+                deadline_time_opt,
+                id,
+                message,
+            );
+            ans_tpls.push(tpl);
         }
+    }
+
+    ans_tpls.sort();
+    ans_tpls.reverse();
+
+    for (ind, ans_tpl) in ans_tpls.iter().enumerate() {
+        let task_cnt = ans_tpls.len() - ind;
+        let message = format!("{}\t{}", task_cnt, ans_tpl.4);
+        writeln_newline(stdout, &message).unwrap();
     }
     writeln_newline(stdout, "").unwrap();
 }
@@ -376,10 +390,26 @@ fn execute_show_all_tasks(
         }
     }
 
-    let mut dt_id_tpl_arr: Vec<(DateTime<Local>, i64, usize, Option<DateTime<Local>>, Uuid)> =
-        vec![];
+    let mut dt_id_tpl_arr: Vec<(
+        NaiveDate,
+        bool,
+        DateTime<Local>,
+        i64,
+        usize,
+        Option<DateTime<Local>>,
+        Uuid,
+    )> = vec![];
     for (id, (dt, neg_priority, rank, deadline_time_opt)) in &id_to_dt_map {
-        let tpl = (*dt, *neg_priority, *rank, *deadline_time_opt, *id);
+        let naive_date = (get_next_morning_datetime(*dt) - Duration::days(1)).date_naive();
+        let tpl = (
+            naive_date,
+            deadline_time_opt.is_none(),
+            *dt,
+            *neg_priority,
+            *rank,
+            *deadline_time_opt,
+            *id,
+        );
         dt_id_tpl_arr.push(tpl);
     }
 
@@ -419,7 +449,8 @@ fn execute_show_all_tasks(
     // タスク一覧で、どのタスクをいつやる見込みかを表示するために、「現在時刻」をズラして見ていく
     let mut current_datetime_cursor = task_repository.get_last_synced_time();
 
-    for (ind, (dt, _neg_priority, rank, deadline_time_opt, id)) in dt_id_tpl_arr.iter().enumerate()
+    for (ind, (_naive_date, _has_no_deadline, dt, _neg_priority, rank, deadline_time_opt, id)) in
+        dt_id_tpl_arr.iter().enumerate()
     {
         let subjective_naive_date =
             (get_next_morning_datetime(*dt) - Duration::days(1)).date_naive();
@@ -1024,8 +1055,10 @@ fn execute_show_all_tasks(
                 writeln_newline(stdout, &format!("src_date: {:?}", src_date)).unwrap();
 
                 // dt_dictを未来から見ていき、〆切に違反しない範囲で、翌日に飛ばしていく
-                for (_ind, (dt, _neg_priority, rank, deadline_time_opt, id)) in
-                    dt_id_tpl_arr.iter().enumerate().rev()
+                for (
+                    _ind,
+                    (_naive_date, _has_no_deadline, dt, _neg_priority, rank, deadline_time_opt, id),
+                ) in dt_id_tpl_arr.iter().enumerate().rev()
                 {
                     let days_until_deadline = match deadline_time_opt {
                         Some(deadline_time) => (*deadline_time - *dt).num_days(),
