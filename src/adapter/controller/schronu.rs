@@ -860,7 +860,7 @@ fn execute_show_all_tasks(
 
         let accumulated_rho_diff =
             accumulate_duration_diff_to_limit.num_minutes() as f64 / 60.0 / free_time_hours;
-        if accumulated_rho_diff > max_accumulated_rho_diff {
+        if accumulated_rho_diff.is_finite() && accumulated_rho_diff > max_accumulated_rho_diff {
             max_accumulated_rho_diff = accumulated_rho_diff;
             max_accumulated_rho_diff_date = **date;
         }
