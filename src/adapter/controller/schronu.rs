@@ -718,6 +718,13 @@ fn execute_show_all_tasks(
     let mut overload_day_is_found = false;
     let mut flattenable_duration = Duration::seconds(0);
 
+    let mut max_accumurate_duration_diff_to_limit = Duration::seconds(0);
+    let mut max_accumurate_duration_diff_to_limit_date =
+        NaiveDate::from_ymd_opt(1900, 1, 1).unwrap();
+
+    let mut max_accumulated_rho_diff: f64 = -1.0;
+    let mut max_accumulated_rho_diff_date = NaiveDate::from_ymd_opt(1900, 1, 1).unwrap();
+
     for (date, _cnt) in &counter_arr[0..SUMMARY_DAYS] {
         let total_estimated_work_seconds_of_the_date: i64 =
             *total_estimated_work_seconds_of_the_date_counter
@@ -790,6 +797,11 @@ fn execute_show_all_tasks(
                 - Duration::minutes(over_time_minutes)
         };
 
+        if accumurate_duration_diff_to_limit > max_accumurate_duration_diff_to_limit {
+            max_accumurate_duration_diff_to_limit = accumurate_duration_diff_to_limit;
+            max_accumurate_duration_diff_to_limit_date = **date;
+        }
+
         if !overload_day_is_found && accumurate_duration_diff_to_limit > Duration::seconds(0) {
             overload_day_is_found = true;
         } else if accumurate_duration_diff_to_limit <= Duration::seconds(300) {
@@ -848,6 +860,10 @@ fn execute_show_all_tasks(
 
         let accumulated_rho_diff =
             accumurate_duration_diff_to_limit.num_minutes() as f64 / 60.0 / free_time_hours;
+        if accumulated_rho_diff > max_accumulated_rho_diff {
+            max_accumulated_rho_diff = accumulated_rho_diff;
+            max_accumulated_rho_diff_date = **date;
+        }
 
         let deadline_rest_duration_seconds: i64 =
             deadline_estimated_work_seconds_map.get(&date).unwrap_or(&0)
@@ -951,6 +967,25 @@ fn execute_show_all_tasks(
         ]
         .join("\t");
         writeln_newline(stdout, &footer).unwrap();
+        writeln_newline(stdout, "").unwrap();
+
+        let max_hours_sign = if max_accumurate_duration_diff_to_limit >= Duration::seconds(0) {
+            ' '
+        } else {
+            '-'
+        };
+        let max_hours = max_accumurate_duration_diff_to_limit.num_hours().abs();
+        let max_minutes = max_accumurate_duration_diff_to_limit.num_minutes().abs() % 60;
+        let max_info = format!(
+            "最大の累積時間: {}{:02}時間{:02}分 ({}), 最大のrhoの差: {:.2} ({})",
+            max_hours_sign,
+            max_hours,
+            max_minutes,
+            max_accumurate_duration_diff_to_limit_date,
+            max_accumulated_rho_diff,
+            max_accumulated_rho_diff_date
+        );
+        writeln_newline(stdout, &max_info).unwrap();
         writeln_newline(stdout, "").unwrap();
 
         let mut is_all_favorable = true;
