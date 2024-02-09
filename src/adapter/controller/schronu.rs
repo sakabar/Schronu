@@ -708,18 +708,18 @@ fn execute_show_all_tasks(
     // rho < 0.7 : 累積和はそのぶん減る
     // 0.7<= rho <=1.0 : ノーカウント。その日のうちに吸収できる
     // 1.0 < rho : 累積和はそのぶん増える
-    let mut accumurate_duration_diff_to_goal_rho = Duration::minutes(0);
+    let mut accumulate_duration_diff_to_goal_rho = Duration::minutes(0);
 
     // 「それぞれの日の自由時間との差」の累積和
-    let mut accumurate_duration_diff_to_limit = Duration::minutes(0);
+    let mut accumulate_duration_diff_to_limit = Duration::minutes(0);
 
     // 平坦化可能ポイント
     let mut flattenable_date_opt: Option<NaiveDate> = None;
     let mut overload_day_is_found = false;
     let mut flattenable_duration = Duration::seconds(0);
 
-    let mut max_accumurate_duration_diff_to_limit = Duration::seconds(0);
-    let mut max_accumurate_duration_diff_to_limit_date =
+    let mut max_accumulate_duration_diff_to_limit = Duration::seconds(0);
+    let mut max_accumulate_duration_diff_to_limit_date =
         NaiveDate::from_ymd_opt(1900, 1, 1).unwrap();
 
     let mut max_accumulated_rho_diff: f64 = -1.0;
@@ -787,24 +787,24 @@ fn execute_show_all_tasks(
         let over_time_hours = over_time_hours_f.abs().floor() as i64;
         let over_time_minutes = (over_time_hours_f.abs() * 60.0) as i64 % 60;
 
-        accumurate_duration_diff_to_limit = if over_time_hours_f > 0.0 {
-            accumurate_duration_diff_to_limit
+        accumulate_duration_diff_to_limit = if over_time_hours_f > 0.0 {
+            accumulate_duration_diff_to_limit
                 + Duration::hours(over_time_hours)
                 + Duration::minutes(over_time_minutes)
         } else {
-            accumurate_duration_diff_to_limit
+            accumulate_duration_diff_to_limit
                 - Duration::hours(over_time_hours)
                 - Duration::minutes(over_time_minutes)
         };
 
-        if accumurate_duration_diff_to_limit > max_accumurate_duration_diff_to_limit {
-            max_accumurate_duration_diff_to_limit = accumurate_duration_diff_to_limit;
-            max_accumurate_duration_diff_to_limit_date = **date;
+        if accumulate_duration_diff_to_limit > max_accumulate_duration_diff_to_limit {
+            max_accumulate_duration_diff_to_limit = accumulate_duration_diff_to_limit;
+            max_accumulate_duration_diff_to_limit_date = **date;
         }
 
-        if !overload_day_is_found && accumurate_duration_diff_to_limit > Duration::seconds(0) {
+        if !overload_day_is_found && accumulate_duration_diff_to_limit > Duration::seconds(0) {
             overload_day_is_found = true;
-        } else if accumurate_duration_diff_to_limit <= Duration::seconds(300) {
+        } else if accumulate_duration_diff_to_limit <= Duration::seconds(300) {
             let flattenable_duration_cand = Duration::seconds(
                 free_time_minutes * 60 - total_estimated_work_seconds_of_the_date,
             );
@@ -817,26 +817,26 @@ fn execute_show_all_tasks(
             }
         }
 
-        let diff_to_limit_sign: char = if accumurate_duration_diff_to_limit > Duration::minutes(0) {
+        let diff_to_limit_sign: char = if accumulate_duration_diff_to_limit > Duration::minutes(0) {
             ' '
         } else {
             '-'
         };
 
-        accumurate_duration_diff_to_goal_rho = if diff_to_goal >= 0.0 && rho_in_date >= 1.0 {
-            accumurate_duration_diff_to_goal_rho
+        accumulate_duration_diff_to_goal_rho = if diff_to_goal >= 0.0 && rho_in_date >= 1.0 {
+            accumulate_duration_diff_to_goal_rho
                 + Duration::hours(over_time_hours)
                 + Duration::minutes(over_time_minutes)
         } else if rho_in_date < RHO_GOAL {
-            accumurate_duration_diff_to_goal_rho
+            accumulate_duration_diff_to_goal_rho
                 - Duration::hours(diff_to_goal_hour as i64)
                 - Duration::minutes(diff_to_goal_minute as i64)
         } else {
-            accumurate_duration_diff_to_goal_rho
+            accumulate_duration_diff_to_goal_rho
         };
 
         let acc_diff_to_goal_sign: char =
-            if accumurate_duration_diff_to_goal_rho > Duration::minutes(0) {
+            if accumulate_duration_diff_to_goal_rho > Duration::minutes(0) {
                 ' '
             } else {
                 '-'
@@ -859,7 +859,7 @@ fn execute_show_all_tasks(
                 .floor() as i64;
 
         let accumulated_rho_diff =
-            accumurate_duration_diff_to_limit.num_minutes() as f64 / 60.0 / free_time_hours;
+            accumulate_duration_diff_to_limit.num_minutes() as f64 / 60.0 / free_time_hours;
         if accumulated_rho_diff > max_accumulated_rho_diff {
             max_accumulated_rho_diff = accumulated_rho_diff;
             max_accumulated_rho_diff_date = **date;
@@ -888,8 +888,8 @@ fn execute_show_all_tasks(
         let indicator_about_diff_to_limit = format!(
             "{}{:02}時間{:02}分\t{:5.2}",
             diff_to_limit_sign,
-            accumurate_duration_diff_to_limit.num_hours().abs(),
-            accumurate_duration_diff_to_limit.num_minutes().abs() % 60,
+            accumulate_duration_diff_to_limit.num_hours().abs(),
+            accumulate_duration_diff_to_limit.num_minutes().abs() % 60,
             accumulated_rho_diff,
         );
 
@@ -928,8 +928,8 @@ fn execute_show_all_tasks(
             diff_to_goal_minute,
 
             acc_diff_to_goal_sign,
-            accumurate_duration_diff_to_goal_rho.num_hours().abs(),
-            accumurate_duration_diff_to_goal_rho.num_minutes().abs() % 60,
+            accumulate_duration_diff_to_goal_rho.num_hours().abs(),
+            accumulate_duration_diff_to_goal_rho.num_minutes().abs() % 60,
 
             indicator_about_deadline,
             indicator_about_diff_to_limit,
@@ -969,19 +969,19 @@ fn execute_show_all_tasks(
         writeln_newline(stdout, &footer).unwrap();
         writeln_newline(stdout, "").unwrap();
 
-        let max_hours_sign = if max_accumurate_duration_diff_to_limit >= Duration::seconds(0) {
+        let max_hours_sign = if max_accumulate_duration_diff_to_limit >= Duration::seconds(0) {
             ' '
         } else {
             '-'
         };
-        let max_hours = max_accumurate_duration_diff_to_limit.num_hours().abs();
-        let max_minutes = max_accumurate_duration_diff_to_limit.num_minutes().abs() % 60;
+        let max_hours = max_accumulate_duration_diff_to_limit.num_hours().abs();
+        let max_minutes = max_accumulate_duration_diff_to_limit.num_minutes().abs() % 60;
         let max_info = format!(
             "最大の累積時間: {}{:02}時間{:02}分 ({}), 最大のrhoの差: {:.2} ({})",
             max_hours_sign,
             max_hours,
             max_minutes,
-            max_accumurate_duration_diff_to_limit_date,
+            max_accumulate_duration_diff_to_limit_date,
             max_accumulated_rho_diff,
             max_accumulated_rho_diff_date
         );
