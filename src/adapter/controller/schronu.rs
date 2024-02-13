@@ -721,6 +721,8 @@ fn execute_show_all_tasks(
     let mut overload_day_is_found = false;
     let mut flattenable_duration = Duration::seconds(0);
 
+    let mut first_caught_up_date = NaiveDate::from_ymd_opt(2037, 12, 31).unwrap();
+
     let mut max_accumulate_duration_diff_to_limit = Duration::seconds(0);
     let mut max_accumulate_duration_diff_to_limit_date =
         NaiveDate::from_ymd_opt(1900, 1, 1).unwrap();
@@ -800,9 +802,18 @@ fn execute_show_all_tasks(
                 - Duration::minutes(over_time_minutes)
         };
 
-        if accumulate_duration_diff_to_limit > max_accumulate_duration_diff_to_limit {
+        if daily_stat_msgs.len() > 0
+            && accumulate_duration_diff_to_limit > max_accumulate_duration_diff_to_limit
+        {
             max_accumulate_duration_diff_to_limit = accumulate_duration_diff_to_limit;
             max_accumulate_duration_diff_to_limit_date = **date;
+        }
+
+        if daily_stat_msgs.len() > 0
+            && accumulate_duration_diff_to_limit < Duration::seconds(0)
+            && **date < first_caught_up_date
+        {
+            first_caught_up_date = **date;
         }
 
         if !overload_day_is_found && accumulate_duration_diff_to_limit > Duration::seconds(0) {
@@ -863,7 +874,10 @@ fn execute_show_all_tasks(
 
         let accumulated_rho_diff =
             accumulate_duration_diff_to_limit.num_minutes() as f64 / 60.0 / free_time_hours;
-        if accumulated_rho_diff.is_finite() && accumulated_rho_diff > max_accumulated_rho_diff {
+        if daily_stat_msgs.len() > 0
+            && accumulated_rho_diff.is_finite()
+            && accumulated_rho_diff > max_accumulated_rho_diff
+        {
             max_accumulated_rho_diff = accumulated_rho_diff;
             max_accumulated_rho_diff_date = **date;
         }
@@ -972,6 +986,8 @@ fn execute_show_all_tasks(
         writeln_newline(stdout, &footer).unwrap();
         writeln_newline(stdout, "").unwrap();
 
+        let clear_date_info = format!("今のタスクが片付く日付: {}", first_caught_up_date);
+
         let max_hours_sign = if max_accumulate_duration_diff_to_limit >= Duration::seconds(0) {
             ' '
         } else {
@@ -988,6 +1004,8 @@ fn execute_show_all_tasks(
             max_accumulated_rho_diff,
             max_accumulated_rho_diff_date
         );
+
+        writeln_newline(stdout, &clear_date_info).unwrap();
         writeln_newline(stdout, &max_info).unwrap();
         writeln_newline(stdout, "").unwrap();
 
