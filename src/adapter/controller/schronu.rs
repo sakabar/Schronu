@@ -1131,7 +1131,7 @@ fn execute_show_all_tasks(
             let mut any_was_flattened = false;
             let mut src_date = flattenable_date - Duration::days(1);
 
-            while !any_was_flattened && src_date > naive_dt_today {
+            while !any_was_flattened && src_date >= naive_dt_today {
                 writeln_newline(stdout, &format!("src_date: {:?}", src_date)).unwrap();
 
                 // dt_dictを未来から見ていき、〆切に違反しない範囲で、翌日に飛ばしていく
@@ -1148,10 +1148,10 @@ fn execute_show_all_tasks(
                     if dt.date_naive() == src_date && days_until_deadline > 0 {
                         if let Some(task) = task_repository.get_by_id(*id) {
                             if !task.get_is_on_other_side()
-                                && rank != &0
                                 && task.get_estimated_work_seconds() > 0
                                 && flattenable_duration.num_seconds()
                                     > task.get_estimated_work_seconds()
+                            // && rank != &0
                             {
                                 flattenable_duration = flattenable_duration
                                     - Duration::seconds(task.get_estimated_work_seconds());
