@@ -801,9 +801,7 @@ fn execute_show_all_tasks(
                 - Duration::minutes(over_time_minutes)
         };
 
-        if daily_stat_msgs.len() > 0
-            && accumulate_duration_diff_to_limit > max_accumulate_duration_diff_to_limit
-        {
+        if accumulate_duration_diff_to_limit > max_accumulate_duration_diff_to_limit {
             max_accumulate_duration_diff_to_limit = accumulate_duration_diff_to_limit;
             max_accumulate_duration_diff_to_limit_date = **date;
         }
