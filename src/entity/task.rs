@@ -1172,6 +1172,7 @@ impl Task {
         // 〆切については、子タスク全体に掛かるようにする
         let deadline_time =
             appointment_start_time + Duration::seconds(self.get_estimated_work_seconds());
+        self.unset_deadline_time_opt();
         self.set_deadline_time_opt(Some(deadline_time));
 
         let mut attr = self.node.borrow_data_mut();
