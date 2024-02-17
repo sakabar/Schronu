@@ -1169,11 +1169,12 @@ impl Task {
         // 1,2,3,5...のフィボナッチ数列にて、充分大きな値55。アポを最優先として行動しなければならない
         self.set_priority(55);
 
-        let mut attr = self.node.borrow_data_mut();
-
+        // 〆切については、子タスク全体に掛かるようにする
         let deadline_time =
-            appointment_start_time + Duration::seconds(attr.get_estimated_work_seconds());
-        attr.set_deadline_time_opt(Some(deadline_time));
+            appointment_start_time + Duration::seconds(self.get_estimated_work_seconds());
+        self.set_deadline_time_opt(Some(deadline_time));
+
+        let mut attr = self.node.borrow_data_mut();
         attr.set_start_time(appointment_start_time);
     }
 
