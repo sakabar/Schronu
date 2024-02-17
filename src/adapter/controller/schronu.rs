@@ -513,17 +513,16 @@ fn execute_show_all_tasks(
                 total_estimated_work_seconds += estimated_work_seconds;
 
                 if let Some(deadline_time) = deadline_time_opt {
-                    if subjective_naive_date
-                        == (get_next_morning_datetime(*deadline_time) - Duration::days(1))
-                            .date_naive()
-                    {
-                        deadline_estimated_work_seconds_map
-                            .entry(subjective_naive_date)
-                            .and_modify(|deadline_estimated_work_seconds| {
-                                *deadline_estimated_work_seconds += estimated_work_seconds
-                            })
-                            .or_insert(estimated_work_seconds);
-                    }
+                    let deadline_naive_date = (get_next_morning_datetime(*deadline_time)
+                        - Duration::days(1))
+                    .date_naive();
+
+                    deadline_estimated_work_seconds_map
+                        .entry(deadline_naive_date)
+                        .and_modify(|deadline_estimated_work_seconds| {
+                            *deadline_estimated_work_seconds += estimated_work_seconds
+                        })
+                        .or_insert(estimated_work_seconds);
                 }
 
                 // 着手時間は、現在時刻か、最速着手可能時間のうち遅い方
