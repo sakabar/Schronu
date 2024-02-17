@@ -722,7 +722,7 @@ fn execute_show_all_tasks(
 
     let mut first_caught_up_date = NaiveDate::from_ymd_opt(2037, 12, 31).unwrap();
 
-    let mut max_accumulate_duration_diff_to_limit = Duration::seconds(0);
+    let mut max_accumulate_duration_diff_to_limit = -Duration::hours(24);
     let mut max_accumulate_duration_diff_to_limit_date =
         NaiveDate::from_ymd_opt(1900, 1, 1).unwrap();
 
