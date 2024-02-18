@@ -462,7 +462,18 @@ fn execute_show_all_tasks(
         let task_opt = task_repository.get_by_id(*id);
         match task_opt {
             Some(task) => {
-                let name = task.get_name();
+                let repetition_prefix_name = if let Some(parent) = task.parent() {
+                    if let Some(_repetition_interval_days) =
+                        parent.get_repetition_interval_days_opt()
+                    {
+                        "【繰】"
+                    } else {
+                        ""
+                    }
+                } else {
+                    ""
+                };
+                let name = format!("{}{}", repetition_prefix_name, task.get_name());
                 let chars_vec: Vec<char> = name.chars().collect();
                 let max_len: usize = 70;
 
