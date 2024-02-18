@@ -733,6 +733,9 @@ fn execute_show_all_tasks(
 
     let mut first_caught_up_date = NaiveDate::from_ymd_opt(2037, 12, 31).unwrap();
 
+    let mut first_leeway_date = NaiveDate::from_ymd_opt(2037, 12, 31).unwrap();
+    let mut first_leeway_duration = Duration::seconds(0);
+
     let mut max_accumulate_duration_diff_to_limit = -Duration::hours(24);
     let mut max_accumulate_duration_diff_to_limit_date =
         NaiveDate::from_ymd_opt(1900, 1, 1).unwrap();
@@ -856,6 +859,12 @@ fn execute_show_all_tasks(
         } else {
             accumulate_duration_diff_to_goal_rho
         };
+
+        if accumulate_duration_diff_to_goal_rho < Duration::minutes(0) && **date < first_leeway_date
+        {
+            first_leeway_date = **date;
+            first_leeway_duration = accumulate_duration_diff_to_goal_rho;
+        }
 
         let acc_diff_to_goal_sign: char =
             if accumulate_duration_diff_to_goal_rho > Duration::minutes(0) {
@@ -996,6 +1005,13 @@ fn execute_show_all_tasks(
 
         let clear_date_info = format!("今のタスクが片付く日付: {}", first_caught_up_date);
 
+        let first_leeway_date_info = format!(
+            "次にタスクを積める日付: {} (-{}時間{}分)",
+            first_leeway_date,
+            first_leeway_duration.num_hours().abs(),
+            first_leeway_duration.num_minutes().abs() % 60,
+        );
+
         let max_hours_sign = if max_accumulate_duration_diff_to_limit >= Duration::seconds(0) {
             ' '
         } else {
@@ -1004,13 +1020,14 @@ fn execute_show_all_tasks(
         let max_hours = max_accumulate_duration_diff_to_limit.num_hours().abs();
         let max_minutes = max_accumulate_duration_diff_to_limit.num_minutes().abs() % 60;
         let max_info = format!(
-            "最大の累積時間: {}{:02}時間{:02}分 ({}), 最大のrhoの差: {:.2} ({})",
+            "最大の累積時間: {}{:02}時間{:02}分 ({}), 最大のrhoの差: {:.2} ({}), {}",
             max_hours_sign,
             max_hours,
             max_minutes,
             max_accumulate_duration_diff_to_limit_date,
             max_accumulated_rho_diff,
-            max_accumulated_rho_diff_date
+            max_accumulated_rho_diff_date,
+            first_leeway_date_info,
         );
 
         writeln_newline(stdout, &clear_date_info).unwrap();
