@@ -848,16 +848,24 @@ fn execute_show_all_tasks(
             '-'
         };
 
-        accumulate_duration_diff_to_goal_rho = if diff_to_goal >= 0.0 && rho_in_date >= 1.0 {
-            accumulate_duration_diff_to_goal_rho
-                + Duration::hours(over_time_hours)
-                + Duration::minutes(over_time_minutes)
-        } else if rho_in_date < RHO_GOAL {
+        let accumulated_rho_diff =
+            accumulate_duration_diff_to_limit.num_minutes() as f64 / 60.0 / free_time_hours;
+
+        accumulate_duration_diff_to_goal_rho = if accumulated_rho_diff >= 0.0 {
+            // タスクが捌けていない場合はそれがそのまま積み残される
+            accumulate_duration_diff_to_limit
+        } else if accumulated_rho_diff < RHO_GOAL - 1.0 && rho_in_date < RHO_GOAL {
+            // タスクが捌けてかなり余裕がある場合
             accumulate_duration_diff_to_goal_rho
                 - Duration::hours(diff_to_goal_hour as i64)
                 - Duration::minutes(diff_to_goal_minute as i64)
         } else {
-            accumulate_duration_diff_to_goal_rho
+            if accumulated_rho_diff < 0.0 {
+                // なんとかその日のうちに捌けている状態。積む余裕は無い
+                Duration::minutes(0)
+            } else {
+                accumulate_duration_diff_to_goal_rho
+            }
         };
 
         if accumulate_duration_diff_to_goal_rho < Duration::minutes(0) && **date < first_leeway_date
@@ -889,8 +897,6 @@ fn execute_show_all_tasks(
                 * 60.0)
                 .floor() as i64;
 
-        let accumulated_rho_diff =
-            accumulate_duration_diff_to_limit.num_minutes() as f64 / 60.0 / free_time_hours;
         if daily_stat_msgs.len() > 0
             && accumulated_rho_diff.is_finite()
             && accumulated_rho_diff > max_accumulated_rho_diff
@@ -1006,7 +1012,7 @@ fn execute_show_all_tasks(
         let clear_date_info = format!("今のタスクが片付く日付: {}", first_caught_up_date);
 
         let first_leeway_date_info = format!(
-            "次にタスクを積める日付: {} (-{}時間{}分)",
+            "次にタスクを積める日付: {} (-{}時間{:02}分)",
             first_leeway_date,
             first_leeway_duration.num_hours().abs(),
             first_leeway_duration.num_minutes().abs() % 60,
