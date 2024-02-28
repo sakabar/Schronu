@@ -946,7 +946,8 @@ fn execute_show_all_tasks(
         }
 
         // 一度フラグが折れていたら復活させない
-        if daily_stat_msgs.len() < 7 && has_weekly_freetime_leeway {
+        // 今日と明日については個別にアラートを出すので、判定はそれ以降について行う。
+        if 2 <= daily_stat_msgs.len() && daily_stat_msgs.len() < 7 && has_weekly_freetime_leeway {
             has_weekly_freetime_leeway = diff_to_limit_sign == '-';
         }
 
