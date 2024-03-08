@@ -464,6 +464,10 @@ fn extract_leaf_tasks_from_project_boyoyo(
     return ans;
 }
 
+pub fn round_up_sec_as_minute(seconds: i64) -> i64 {
+    seconds / 60 + if seconds % 60 == 0 { 0 } else { 1 }
+}
+
 // pub fn extract_leaf_tasks_from_project_ref(task: &Task) -> Vec<&TaskAttr> {
 //     extract_leaf_tasks_from_project_ref_private(&task.node)
 // }
@@ -744,8 +748,8 @@ impl fmt::Debug for TaskAttr {
                 &format!(
                     "{} {:02}m/{:02}m {}{}",
                     status_checkbox,
-                    self.get_actual_work_seconds() / 60,
-                    self.get_estimated_work_seconds() / 60,
+                    round_up_sec_as_minute(self.get_actual_work_seconds()),
+                    round_up_sec_as_minute(self.get_estimated_work_seconds()),
                     if self.is_on_other_side {
                         "[待ち]"
                     } else {
