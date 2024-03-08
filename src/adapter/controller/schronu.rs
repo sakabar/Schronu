@@ -8,8 +8,8 @@ use schronu::application::interface::FreeTimeManagerTrait;
 use schronu::application::interface::TaskRepositoryTrait;
 use schronu::entity::datetime::get_next_morning_datetime;
 use schronu::entity::task::{
-    extract_leaf_tasks_from_project, extract_leaf_tasks_from_project_with_pending, Status, Task,
-    TaskAttr,
+    extract_leaf_tasks_from_project, extract_leaf_tasks_from_project_with_pending,
+    round_up_sec_as_minute, Status, Task, TaskAttr,
 };
 use std::cmp::max;
 use std::cmp::min;
@@ -585,7 +585,7 @@ fn execute_show_all_tasks(
                         end_datetime.format("%H:%M")
                     ),
                     rank,
-                    estimated_work_seconds as f64 / 60.0,
+                    round_up_sec_as_minute(estimated_work_seconds),
                     total_estimated_work_hours,
                     shorten_name
                 );
