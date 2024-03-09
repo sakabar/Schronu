@@ -2452,6 +2452,34 @@ fn main() {
     }
 }
 
+fn make_message_about_focus(
+    focused_task: &Task,
+    focus_started_datetime: &DateTime<Local>,
+    now: &DateTime<Local>,
+) -> String {
+    let estimated_finish_datetime = *focus_started_datetime
+        + Duration::seconds(max(
+            0,
+            focused_task.get_estimated_work_seconds() - focused_task.get_actual_work_seconds(),
+        ));
+
+    let left_duration = estimated_finish_datetime - *now;
+    let msg = format!(
+        "{} (since {} until {})",
+        if left_duration >= Duration::minutes(1) {
+            format!("{} minutes left", left_duration.num_minutes())
+        } else if left_duration >= Duration::seconds(0) {
+            format!("{} seconds left", left_duration.num_seconds())
+        } else {
+            format!("{} minutes over", -left_duration.num_minutes() + 1)
+        },
+        focus_started_datetime.format("%H:%M:%S"),
+        estimated_finish_datetime.format("%H:%M:%S")
+    );
+
+    msg
+}
+
 fn application(
     task_repository: &mut dyn TaskRepositoryTrait,
     free_time_manager: &mut dyn FreeTimeManagerTrait,
@@ -2524,17 +2552,11 @@ fn application(
                         focused_task.get_attr()
                     );
                     stdout.flush().unwrap();
-                    let msg = format!(
-                        "for {} minutes (since {} until {})",
-                        (Local::now() - focus_started_datetime).num_minutes() + 1,
-                        focus_started_datetime.format("%H:%M:%S"),
-                        (focus_started_datetime
-                            + Duration::seconds(max(
-                                0,
-                                focused_task.get_estimated_work_seconds()
-                                    - focused_task.get_actual_work_seconds()
-                            )))
-                        .format("%H:%M:%S")
+
+                    let msg = make_message_about_focus(
+                        &focused_task,
+                        &focus_started_datetime,
+                        &Local::now(),
                     );
                     writeln_newline(&mut stdout, &msg).unwrap();
                 }
@@ -2910,17 +2932,10 @@ fn application(
                                     focused_task.get_attr()
                                 );
                                 stdout.flush().unwrap();
-                                let msg = format!(
-                                    "for {} minutes (since {} until {})",
-                                    (Local::now() - focus_started_datetime).num_minutes() + 1,
-                                    focus_started_datetime.format("%H:%M:%S"),
-                                    (focus_started_datetime
-                                        + Duration::seconds(max(
-                                            0,
-                                            focused_task.get_estimated_work_seconds()
-                                                - focused_task.get_actual_work_seconds()
-                                        )))
-                                    .format("%H:%M:%S")
+                                let msg = make_message_about_focus(
+                                    &focused_task,
+                                    &focus_started_datetime,
+                                    &Local::now(),
                                 );
                                 writeln_newline(&mut stdout, &msg).unwrap();
                             }
