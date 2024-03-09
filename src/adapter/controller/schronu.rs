@@ -2471,7 +2471,14 @@ fn make_message_about_focus(
         } else if left_duration >= Duration::seconds(0) {
             format!("{} seconds left", left_duration.num_seconds())
         } else {
-            format!("{} minutes over", -left_duration.num_minutes() + 1)
+            format!(
+                "{} minutes over",
+                round_up_sec_as_minute(
+                    focused_task.get_actual_work_seconds()
+                        - focused_task.get_estimated_work_seconds()
+                ) - left_duration.num_minutes()
+                    + 1
+            )
         },
         focus_started_datetime.format("%H:%M:%S"),
         estimated_finish_datetime.format("%H:%M:%S")
