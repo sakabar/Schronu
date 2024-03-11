@@ -467,6 +467,8 @@ fn execute_show_all_tasks(
                         parent.get_repetition_interval_days_opt()
                     {
                         "【繰】"
+                    } else if task.get_is_on_other_side() {
+                        "【待ち】"
                     } else {
                         ""
                     }
