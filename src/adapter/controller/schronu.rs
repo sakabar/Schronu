@@ -2465,8 +2465,10 @@ fn make_message_about_focus(
         );
 
     let left_duration = estimated_finish_datetime - *now;
+    let for_duration = *now - *focus_started_datetime;
+
     let msg = format!(
-        "{} (since {} until {})",
+        "{} (since {} until {}) focusing for {} minutes",
         if left_duration >= Duration::minutes(1) {
             format!("{} minutes left", left_duration.num_minutes())
         } else if left_duration >= Duration::seconds(0) {
@@ -2475,7 +2477,8 @@ fn make_message_about_focus(
             format!("{} minutes over", -left_duration.num_minutes() + 1)
         },
         focus_started_datetime.format("%H:%M:%S"),
-        estimated_finish_datetime.format("%H:%M:%S")
+        estimated_finish_datetime.format("%H:%M:%S"),
+        for_duration.num_minutes() + 1,
     );
 
     msg
