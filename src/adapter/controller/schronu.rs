@@ -1125,25 +1125,19 @@ fn execute_show_all_tasks(
     } else {
         None
     };
-    let s_for_rho1 = match lq1_opt {
-        Some(lq1) => {
-            format!(
-                "ρ_1 = ({:.1} + 0.0) / ({:.1} + 0.0) = {:.2}, Lq = {:.1}",
-                today_total_deadline_estimated_work_hours,
-                mu_hours - busy_hours,
-                rho1,
-                lq1
-            )
-        }
-        None => {
-            format!(
-                "ρ_1 = ({:.1} + 0.0) / ({:.1} + 0.0) = {:.2}, Lq = inf",
-                today_total_deadline_estimated_work_hours,
-                mu_hours - busy_hours,
-                rho1
-            )
-        }
+
+    let rho1_msg = format!(
+        "ρ_1 = ({:.1} + 0.0) / ({:.1} + 0.0) = {:.2}",
+        today_total_deadline_estimated_work_hours,
+        mu_hours - busy_hours,
+        rho1,
+    );
+    let lq_msg = match lq1_opt {
+        Some(lq1) => format!("Lq = {:.1}", lq1),
+        None => "Lq = inf".to_string(),
     };
+
+    let s_for_rho1 = format!("{}, {}", rho1_msg, lq_msg);
 
     if !is_flatten_func {
         writeln_newline(stdout, &busy_s).unwrap();
