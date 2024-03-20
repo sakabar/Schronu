@@ -1127,7 +1127,7 @@ fn execute_show_all_tasks(
     };
 
     let rho1_msg = format!(
-        "ρ_1 = ({:.1} + 0.0) / ({:.1} + 0.0) = {:.2}",
+        "ρ_1 = ({:.2} + 0.0) / ({:.2} + 0.0) = {:.2}",
         today_total_deadline_estimated_work_hours,
         mu_hours - busy_hours,
         rho1,
