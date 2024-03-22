@@ -658,6 +658,14 @@ fn execute_show_all_tasks(
                             {
                                 msgs_with_dt.push((*dt, *rank, *id, msg));
                             }
+                        } else if pattern == "週" {
+                            // 今日を含む直近1週間のタスクを表示する
+                            if get_next_morning_datetime(*dt)
+                                - get_next_morning_datetime(last_synced_time)
+                                < Duration::days(7)
+                            {
+                                msgs_with_dt.push((*dt, *rank, *id, msg));
+                            }
                         } else if yyyymmdd_reg.is_match(pattern) {
                             let caps = yyyymmdd_reg.captures(pattern).unwrap();
                             let yyyy: i32 = caps[1].parse().unwrap();
