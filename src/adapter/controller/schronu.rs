@@ -689,6 +689,30 @@ fn execute_show_all_tasks(
                             {
                                 msgs_with_dt.push((*dt, *rank, *id, msg));
                             }
+                        } else if pattern == "翌" {
+                            // 翌週末までのタスクを表示する
+                            let todays_morning_datetime =
+                                get_next_morning_datetime(last_synced_time) - Duration::days(1);
+                            let dn = todays_morning_datetime.date_naive();
+                            let now_weekday_jp = get_weekday_jp(&dn);
+
+                            let now_days_of_week_ind = days_of_week
+                                .iter()
+                                .position(|&x| &x == &now_weekday_jp)
+                                .unwrap();
+                            let target_days_of_week_ind =
+                                days_of_week.iter().position(|&x| x == "日").unwrap();
+
+                            let days_diff =
+                                ((7 + target_days_of_week_ind - now_days_of_week_ind) % 7) as i64;
+
+                            let diff = get_next_morning_datetime(*dt)
+                                - get_next_morning_datetime(last_synced_time);
+                            if Duration::days(days_diff) < diff
+                                && diff <= Duration::days(days_diff + 7)
+                            {
+                                msgs_with_dt.push((*dt, *rank, *id, msg));
+                            }
                         } else if yyyymmdd_reg.is_match(pattern) {
                             let caps = yyyymmdd_reg.captures(pattern).unwrap();
                             let yyyy: i32 = caps[1].parse().unwrap();
