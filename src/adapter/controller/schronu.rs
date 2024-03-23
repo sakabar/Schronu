@@ -768,6 +768,7 @@ fn execute_show_all_tasks(
     let mut has_today_new_task_leeway = true;
     let mut has_tomorrow_deadline_leeway = true;
     let mut has_tomorrow_freetime_leeway = true;
+    let mut has_weekly_deadline_leeway = true;
     let mut has_weekly_freetime_leeway = true;
 
     // 「それぞれの日の rho (0.7) との差」の累積和。
@@ -1004,6 +1005,10 @@ fn execute_show_all_tasks(
 
         // 一度フラグが折れていたら復活させない
         // 今日と明日については個別にアラートを出すので、判定はそれ以降について行う。
+        if 2 <= daily_stat_msgs.len() && daily_stat_msgs.len() < 7 && has_weekly_deadline_leeway {
+            has_weekly_deadline_leeway = deadline_rest_sign == '-';
+        }
+
         if 2 <= daily_stat_msgs.len() && daily_stat_msgs.len() < 7 && has_weekly_freetime_leeway {
             has_weekly_freetime_leeway = diff_to_limit_sign == '-';
         }
@@ -1123,6 +1128,11 @@ fn execute_show_all_tasks(
 
         if !has_tomorrow_freetime_leeway {
             writeln_newline(stdout, "[Warn] 【明日の】終了予定時刻に間に合いません。【今日中に】どれかの予定を諦めてあさって以降に延期してください。").unwrap();
+            is_all_favorable = false;
+        }
+
+        if !has_weekly_deadline_leeway {
+            writeln_newline(stdout, "[Warn] 【1週間以内の】〆切に間に合いません。【近々】どれかの予定を諦めて来週以降に延期してください。").unwrap();
             is_all_favorable = false;
         }
 
