@@ -463,17 +463,17 @@ fn execute_show_all_tasks(
         match task_opt {
             Some(task) => {
                 let repetition_prefix_name = if let Some(parent) = task.parent() {
-                    if let Some(_repetition_interval_days) =
+                    if let Some(repetition_interval_days) =
                         parent.get_repetition_interval_days_opt()
                     {
-                        "【繰】"
+                        format!("【繰】({})", repetition_interval_days)
                     } else if task.get_is_on_other_side() {
-                        "【待ち】"
+                        "【待ち】".to_string()
                     } else {
-                        ""
+                        "".to_string()
                     }
                 } else {
-                    ""
+                    "".to_string()
                 };
                 let name = format!("{}{}", repetition_prefix_name, task.get_name());
                 let chars_vec: Vec<char> = name.chars().collect();
