@@ -2,7 +2,7 @@ use chrono::{DateTime, Duration, Local};
 use core::cell::BorrowError;
 use dendron::{HotNode, InsertAs, Node};
 use linked_hash_map::LinkedHashMap;
-use std::cmp::min;
+use std::cmp::{max, min};
 use std::fmt;
 use uuid::Uuid;
 use yaml_rust::Yaml;
@@ -820,7 +820,10 @@ impl TaskAttr {
             && self.last_synced_time > self.start_time
             && self.deadline_time_opt.is_some()
             && self.deadline_time_opt.unwrap()
-                - Duration::seconds(self.estimated_work_seconds)
+                - Duration::seconds(max(
+                    0,
+                    self.estimated_work_seconds - self.actual_work_seconds,
+                ))
                 - Duration::seconds(deadline_buffer_seconds_after_start_time)
                 < self.last_synced_time
         {
