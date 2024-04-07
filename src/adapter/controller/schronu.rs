@@ -2389,21 +2389,33 @@ fn execute(
                 let now: DateTime<Local> = task_repository.get_last_synced_time();
 
                 let caps = hhmm_reg.captures(hhmm_str).unwrap();
-                let hh: u32 = caps[1].parse().unwrap();
+                let hh_orig: u32 = caps[1].parse().unwrap();
+                let hh = hh_orig % 24;
                 let mm: u32 = caps[2].parse().unwrap();
+                let days: i64 = hh_orig as i64 / 24;
 
                 for project_root_task in task_repository.get_all_projects().iter() {
                     let leaf_tasks =
                         extract_leaf_tasks_from_project_with_pending(&project_root_task);
+                    let todays_start = get_next_morning_datetime(now) - Duration::days(1);
                     let defer_to_datetime = Local
-                        .with_ymd_and_hms(now.year(), now.month(), now.day(), hh, mm, 0)
-                        .unwrap();
+                        .with_ymd_and_hms(
+                            todays_start.year(),
+                            todays_start.month(),
+                            todays_start.day(),
+                            hh,
+                            mm,
+                            0,
+                        )
+                        .unwrap()
+                        + Duration::days(days);
                     for leaf_task in leaf_tasks.iter() {
                         match cmd_str {
                             "空" | "clear" => {
-                                if leaf_task.get_status() == Status::Todo
-                                    || (leaf_task.get_status() == Status::Pending
-                                        && leaf_task.get_pending_until() < defer_to_datetime)
+                                if leaf_task.get_start_time() < defer_to_datetime
+                                    && (leaf_task.get_orig_status() == Status::Todo
+                                        || (leaf_task.get_orig_status() == Status::Pending
+                                            && leaf_task.get_pending_until() < defer_to_datetime))
                                 {
                                     leaf_task.set_orig_status(Status::Pending);
                                     leaf_task.set_pending_until(defer_to_datetime);
@@ -2411,6 +2423,7 @@ fn execute(
                             }
                             "集" | "gather" => {
                                 if leaf_task.get_status() == Status::Pending
+                                    && leaf_task.get_start_time() < defer_to_datetime
                                     && leaf_task.get_pending_until() < defer_to_datetime
                                 {
                                     leaf_task.set_orig_status(Status::Todo);
