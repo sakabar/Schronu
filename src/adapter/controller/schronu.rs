@@ -2893,44 +2893,30 @@ fn application(
                         &s,
                     );
                 } else if line == "W" {
-                    // defer deadline and skip "w"eekly
-                    let s1 = "〆 消".to_string();
+                    // 〆切をrepetition_interval_daysのぶん伸ばし、pendingにする
+                    if let Some(focused_task_id) = focused_task_id_opt {
+                        if let Some(ref focused_task) = task_repository.get_by_id(focused_task_id) {
+                            if let Some(orig_deadline_time) = focused_task.get_deadline_time_opt() {
+                                if let Some(parent_task) = focused_task.parent() {
+                                    if let Some(repetition_interval_days) =
+                                        parent_task.get_repetition_interval_days_opt()
+                                    {
+                                        let new_deadline_time = orig_deadline_time
+                                            + Duration::days(repetition_interval_days);
 
-                    execute(
-                        &mut stdout,
-                        task_repository,
-                        free_time_manager,
-                        &mut focused_task_id_opt,
-                        &focus_started_datetime,
-                        &s1,
-                    );
+                                        focused_task.unset_deadline_time_opt();
+                                        focused_task.set_deadline_time_opt(Some(new_deadline_time));
 
-                    let now: DateTime<Local> = task_repository.get_last_synced_time();
-                    let next_morning = get_next_morning_datetime(now);
-                    let sec = (next_morning - now).num_seconds() + 86400 * 6 + 1;
+                                        let p = get_next_morning_datetime(new_deadline_time)
+                                            - Duration::days(1);
+                                        focused_task.set_pending_until(p);
 
-                    let new_deadline_yyyymmdd = (now + Duration::seconds(sec)).format("%Y/%m/%d");
-                    let s3 = format!("〆 {}", new_deadline_yyyymmdd).to_string();
-
-                    execute(
-                        &mut stdout,
-                        task_repository,
-                        free_time_manager,
-                        &mut focused_task_id_opt,
-                        &focus_started_datetime,
-                        &s3,
-                    );
-
-                    let s2 = format!("後 {}秒", sec).to_string();
-
-                    execute(
-                        &mut stdout,
-                        task_repository,
-                        free_time_manager,
-                        &mut focused_task_id_opt,
-                        &focus_started_datetime,
-                        &s2,
-                    );
+                                        focused_task_id_opt = None;
+                                    }
+                                }
+                            }
+                        }
+                    }
                 } else if line == "y" {
                     // skip "y"early
                     let now: DateTime<Local> = task_repository.get_last_synced_time();
