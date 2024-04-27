@@ -2894,6 +2894,7 @@ fn application(
                     );
                 } else if line == "W" {
                     // 〆切をrepetition_interval_daysのぶん伸ばし、pendingにする
+                    // start_timeも伸ばすが、時刻は元のstart_timeを維持する
                     if let Some(focused_task_id) = focused_task_id_opt {
                         if let Some(ref focused_task) = task_repository.get_by_id(focused_task_id) {
                             if let Some(orig_deadline_time) = focused_task.get_deadline_time_opt() {
@@ -2910,6 +2911,11 @@ fn application(
                                         let p = get_next_morning_datetime(new_deadline_time)
                                             - Duration::days(1);
                                         focused_task.set_pending_until(p);
+                                        focused_task.set_orig_status(Status::Pending);
+
+                                        let new_start_time = focused_task.get_start_time()
+                                            + Duration::days(repetition_interval_days);
+                                        focused_task.set_start_time(new_start_time);
 
                                         focused_task_id_opt = None;
                                     }
