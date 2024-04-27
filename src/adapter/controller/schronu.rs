@@ -446,6 +446,10 @@ fn execute_show_all_tasks(
     let mut total_estimated_work_seconds: i64 = 0;
     let mut deadline_estimated_work_seconds_map: HashMap<NaiveDate, i64> = HashMap::new();
 
+    // 日ごとの、前倒し可能なタスクの見積もりの和
+    // 前倒し可能という決め方だと、何日まで前倒しできるのか曖昧性が発生する?
+    let mut adjustable_estimated_work_seconds_map: HashMap<NaiveDate, i64> = HashMap::new();
+
     // タスク一覧で、どのタスクをいつやる見込みかを表示するために、「現在時刻」をズラして見ていく
     let mut current_datetime_cursor = task_repository.get_last_synced_time();
 
@@ -454,6 +458,7 @@ fn execute_show_all_tasks(
     {
         let subjective_naive_date =
             (get_next_morning_datetime(*dt) - Duration::days(1)).date_naive();
+
         counter
             .entry(subjective_naive_date)
             .and_modify(|cnt| *cnt += 1)
@@ -462,7 +467,7 @@ fn execute_show_all_tasks(
         let task_opt = task_repository.get_by_id(*id);
         match task_opt {
             Some(task) => {
-                let repetition_prefix_name = if let Some(parent) = task.parent() {
+                let repetition_prefix_label = if let Some(parent) = task.parent() {
                     if let Some(repetition_interval_days) =
                         parent.get_repetition_interval_days_opt()
                     {
@@ -475,7 +480,32 @@ fn execute_show_all_tasks(
                 } else {
                     "".to_string()
                 };
-                let name = format!("{}{}", repetition_prefix_name, task.get_name());
+
+                // 前倒し可能なタスクの見積もり時間をカウントする
+                let mut adjustable_prefix_label = "".to_string();
+
+                // 【繰】タスクの中にもアニメのように前倒しできるものはあるが、今はWコマンドのミスによりstart_timeの値が過去の日付のまま更新されず残っているので便宜的に【繰】の場合は前倒しできないとする
+                if repetition_prefix_label == ""
+                    && rank == &0
+                    && !task.get_is_on_other_side()
+                    && task.get_start_time() < get_next_morning_datetime(*dt) - Duration::days(1)
+                {
+                    adjustable_estimated_work_seconds_map
+                        .entry(subjective_naive_date)
+                        .and_modify(|estimated_work_seconds_val| {
+                            *estimated_work_seconds_val += task.get_estimated_work_seconds()
+                        })
+                        .or_insert(task.get_estimated_work_seconds());
+
+                    adjustable_prefix_label = "【前】".to_string();
+                }
+
+                let name = format!(
+                    "{}{}{}",
+                    adjustable_prefix_label,
+                    repetition_prefix_label,
+                    task.get_name()
+                );
                 let chars_vec: Vec<char> = name.chars().collect();
                 let max_len: usize = 70;
 
@@ -863,15 +893,23 @@ fn execute_show_all_tasks(
         let over_time_hours = over_time_hours_f.abs().floor() as i64;
         let over_time_minutes = (over_time_hours_f.abs() * 60.0) as i64 % 60;
 
-        accumulate_duration_diff_to_limit = if over_time_hours_f > 0.0 {
-            accumulate_duration_diff_to_limit
-                + Duration::hours(over_time_hours)
-                + Duration::minutes(over_time_minutes)
+        let adjustable_estimated_work_seconds: i64 = *adjustable_estimated_work_seconds_map
+            .get(&date)
+            .unwrap_or(&0);
+        let adjustable_estimated_work_duration =
+            Duration::seconds(adjustable_estimated_work_seconds);
+
+        // これまでにどれだけ累積でマイナス(余裕)だったとしても、前倒しできるタスクの量でキャップされる
+        if accumulate_duration_diff_to_limit < -adjustable_estimated_work_duration {
+            accumulate_duration_diff_to_limit = -adjustable_estimated_work_duration
+        }
+
+        let over_time_duration = if over_time_hours_f > 0.0 {
+            Duration::hours(over_time_hours) + Duration::minutes(over_time_minutes)
         } else {
-            accumulate_duration_diff_to_limit
-                - Duration::hours(over_time_hours)
-                - Duration::minutes(over_time_minutes)
+            -Duration::hours(over_time_hours) - Duration::minutes(over_time_minutes)
         };
+        accumulate_duration_diff_to_limit = accumulate_duration_diff_to_limit + over_time_duration;
 
         if accumulate_duration_diff_to_limit > max_accumulate_duration_diff_to_limit {
             max_accumulate_duration_diff_to_limit = accumulate_duration_diff_to_limit;
@@ -1013,8 +1051,23 @@ fn execute_show_all_tasks(
             has_weekly_freetime_leeway = diff_to_limit_sign == '-';
         }
 
+        // 今日より前には前倒せないため
+        let adjustable_estimated_work_hours = if daily_stat_msgs.len() == 0 {
+            0.0
+        } else {
+            *adjustable_estimated_work_seconds_map
+                .get(&date)
+                .unwrap_or(&0) as f64
+                / 3600.0
+        };
+        let adjustable_estimated_work_hours_str = if adjustable_estimated_work_hours == 0.0 {
+            "".to_string()
+        } else {
+            format!("({:3.1})", adjustable_estimated_work_hours)
+        };
+
         let s = format!(
-            "{}({})\t{:4.1}時間\t{}{:.0}時間{:02.0}分\t{:5.2}\t{}{:.0}時間{:02.0}分\t{}{:02}時間{:02}分\t{}\t{}\t{:02}[タスク]",
+            "{}({})\t{:4.1}時間\t{}{:.0}時間{:02.0}分{}\t{:5.2}\t{}{:.0}時間{:02.0}分\t{}{:02}時間{:02}分\t{}\t{}\t{:02}[タスク]",
             date,
             weekday_jp,
 
@@ -1023,6 +1076,7 @@ fn execute_show_all_tasks(
             diff_to_limit_in_day_sign,
             diff_to_limit_hours_in_day,
             diff_to_limit_minutes_in_day,
+            adjustable_estimated_work_hours_str,
 
             rho_in_date - 1.0,
 
