@@ -2981,7 +2981,7 @@ fn application(
                     // skip "y"early
                     let now: DateTime<Local> = task_repository.get_last_synced_time();
                     let next_morning = get_next_morning_datetime(now);
-                    let sec = (next_morning - now).num_seconds() + 86400 * 365 * 5 + 1;
+                    let sec = (next_morning - now).num_seconds() + 86400 * (7 * 52 * 5 - 1) + 1;
 
                     let s = format!("後 {}秒", sec).to_string();
 
