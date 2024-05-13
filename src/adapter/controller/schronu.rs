@@ -484,9 +484,7 @@ fn execute_show_all_tasks(
                 // 前倒し可能なタスクの見積もり時間をカウントする
                 let mut adjustable_prefix_label = "".to_string();
 
-                // 【繰】タスクの中にもアニメのように前倒しできるものはあるが、今はWコマンドのミスによりstart_timeの値が過去の日付のまま更新されず残っているので便宜的に【繰】の場合は前倒しできないとする
-                if repetition_prefix_label == ""
-                    && rank == &0
+                if rank == &0
                     && !task.get_is_on_other_side()
                     && task.get_start_time() < get_next_morning_datetime(*dt) - Duration::days(1)
                 {
@@ -2967,8 +2965,13 @@ fn application(
                                         focused_task.set_pending_until(p);
                                         focused_task.set_orig_status(Status::Pending);
 
+                                        // 〆切の日に合わせる
                                         let new_start_time = focused_task.get_start_time()
-                                            + Duration::days(repetition_interval_days);
+                                            + Duration::days(
+                                                (new_deadline_time - focused_task.get_start_time())
+                                                    .num_days(),
+                                            );
+
                                         focused_task.set_start_time(new_start_time);
 
                                         focused_task_id_opt = None;
