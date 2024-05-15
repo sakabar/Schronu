@@ -1059,7 +1059,8 @@ fn execute_show_all_tasks(
                 / 3600.0
         };
         let adjustable_estimated_work_hours_str = if adjustable_estimated_work_hours == 0.0 {
-            "".to_string()
+            // "({:3.1})"と同じ幅になるようにする
+            "     ".to_string()
         } else {
             format!("({:3.1})", adjustable_estimated_work_hours)
         };
