@@ -426,7 +426,7 @@ fn execute_show_all_tasks(
     let last_synced_time = task_repository.get_last_synced_time();
 
     // FIXME 外部設定ファイルで設定できるようにする
-    let eod_duration = Duration::hours(0) + Duration::minutes(30);
+    let eod_duration = Duration::hours(0) + Duration::minutes(40);
     let eod = (get_next_morning_datetime(last_synced_time) + Duration::days(0))
         .with_hour(0)
         .expect("invalid hour")
@@ -1534,7 +1534,7 @@ fn execute_show_all_tasks(
                                 && task.get_estimated_work_seconds() > 0
                                 && flattenable_duration.num_seconds()
                                     > task.get_estimated_work_seconds()
-                            // && rank != &0
+                                && rank != &0
                             {
                                 flattenable_duration = flattenable_duration
                                     - Duration::seconds(task.get_estimated_work_seconds());
