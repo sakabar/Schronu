@@ -426,7 +426,7 @@ fn execute_show_all_tasks(
     let last_synced_time = task_repository.get_last_synced_time();
 
     // FIXME 外部設定ファイルで設定できるようにする
-    let eod_duration = Duration::hours(0) + Duration::minutes(30);
+    let eod_duration = Duration::hours(0) + Duration::minutes(40);
     let eod = (get_next_morning_datetime(last_synced_time) + Duration::days(0))
         .with_hour(0)
         .expect("invalid hour")
@@ -821,7 +821,7 @@ fn execute_show_all_tasks(
     counter_arr.sort_by(|a, b| a.0.cmp(&b.0));
 
     // 未来のサマリは見ても仕方ないので、直近の8日ぶん(配列の末尾)に絞る
-    const SUMMARY_DAYS: usize = 8;
+    const SUMMARY_DAYS: usize = 28;
 
     let mut daily_stat_msgs: Vec<String> = vec![];
 
@@ -1340,7 +1340,7 @@ fn execute_show_all_tasks(
                                 && task.get_estimated_work_seconds() > 0
                                 && flattenable_duration.num_seconds()
                                     > task.get_estimated_work_seconds()
-                            // && rank != &0
+                                && rank != &0
                             {
                                 flattenable_duration = flattenable_duration
                                     - Duration::seconds(task.get_estimated_work_seconds());
