@@ -1892,6 +1892,28 @@ fn execute_set_estimated_work_minutes(
     });
 }
 
+fn execute_set_arrange_children_work_minutes(
+    focused_task_opt: &Option<Task>,
+    estimated_work_minutes_str: &str,
+) {
+    let estimated_minutes_result = estimated_work_minutes_str.parse::<i64>();
+
+    // 繰り返しタスクについて、その子タスクでDoneでないものの時間を一律変更する。
+    if let Ok(estimated_minutes) = estimated_minutes_result {
+        if let Some(focused_task) = focused_task_opt {
+            if focused_task.get_repetition_interval_days_opt().is_some() {
+                print!("{:?}", focused_task.get_repetition_interval_days_opt());
+                let children = focused_task.get_children();
+                for child_task in children.iter() {
+                    if child_task.get_status() != Status::Done {
+                        child_task.set_estimated_work_seconds(estimated_minutes * 60);
+                    }
+                }
+            }
+        }
+    }
+}
+
 #[allow(unused_must_use)]
 fn execute_set_actual_work_minutes(focused_task_opt: &Option<Task>, actual_work_minutes_str: &str) {
     let actual_minutes_result = actual_work_minutes_str.parse::<i64>();
@@ -2232,6 +2254,15 @@ fn execute(
             if tokens.len() >= 2 {
                 let estimated_work_minutes_str = &tokens[1];
                 execute_set_estimated_work_minutes(&focused_task_opt, estimated_work_minutes_str);
+            }
+        }
+        "揃" | "arrange" | "arr" => {
+            if tokens.len() >= 2 {
+                let estimated_work_minutes_str = &tokens[1];
+                execute_set_arrange_children_work_minutes(
+                    &focused_task_opt,
+                    estimated_work_minutes_str,
+                );
             }
         }
         "実" | "actual" | "ac" => {
