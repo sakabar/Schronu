@@ -1171,6 +1171,17 @@ impl Task {
         self.node.borrow_data().get_actual_work_seconds()
     }
 
+    // TODO FIXME テスト
+    pub fn get_children(&self) -> Vec<Task> {
+        let children = self
+            .node
+            .children()
+            .map(|node| Self { node })
+            .collect::<Vec<_>>();
+
+        children
+    }
+
     pub fn make_appointment(&self, appointment_start_time: DateTime<Local>) {
         // マジックナンバーではある
         // 1,2,3,5...のフィボナッチ数列にて、充分大きな値55。アポを最優先として行動しなければならない
