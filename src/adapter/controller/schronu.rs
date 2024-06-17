@@ -31,7 +31,7 @@ use webbrowser;
 
 const MAX_COL: u16 = 999;
 
-const IS_LOW_PRIORITY_MODE: boolean = false;
+const IS_LOW_PRIORITY_MODE: bool = false;
 
 // パーセントエンコーディングする対象にスペースを追加する
 const MY_ASCII_SET: &AsciiSet = &CONTROLS.add(b' ');
