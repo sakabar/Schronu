@@ -2673,6 +2673,7 @@ fn application(
     // 優先度の最も高いPJを一つ選ぶ
     // 一番下のタスクにフォーカスが自動的に当たる
     let mut focused_task_id_opt: Option<Uuid> = task_repository.get_highest_priority_leaf_task_id();
+    // let mut focused_task_id_opt: Option<Uuid> = task_repository.get_lowest_priority_leaf_task_id();
 
     let mut last_focused_task_id_opt: Option<Uuid> = None;
     let mut focus_started_datetime: DateTime<Local> = now;
@@ -3048,6 +3049,7 @@ fn application(
 
                 if focused_task_id_opt.is_none() {
                     focused_task_id_opt = task_repository.get_highest_priority_leaf_task_id();
+                    // focused_task_id_opt = task_repository.get_lowest_priority_leaf_task_id();
                     last_focused_task_id_opt = None;
                 }
 

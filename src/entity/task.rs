@@ -1372,7 +1372,7 @@ impl Task {
         ans
     }
 
-    fn first_available_time(&self) -> DateTime<Local> {
+    pub fn first_available_time(&self) -> DateTime<Local> {
         let dt_cand = if self.get_orig_status() == Status::Pending {
             vec![self.get_start_time(), self.get_pending_until()]
         } else {
