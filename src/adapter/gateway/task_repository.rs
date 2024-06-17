@@ -1,7 +1,9 @@
 use crate::adapter::gateway::yaml::yaml_to_task;
 use crate::application::interface::TaskRepositoryTrait;
 use crate::entity::task::extract_leaf_tasks_from_project;
+use crate::entity::task::extract_leaf_tasks_from_project_with_pending;
 use crate::entity::task::{task_to_yaml, Task};
+use chrono::Duration;
 use chrono::{DateTime, Local};
 use linked_hash_map::LinkedHashMap;
 use regex::Regex;
@@ -177,6 +179,46 @@ impl TaskRepositoryTrait for TaskRepository {
         }
 
         let ans_id = ans.map(|tpl| tpl.3);
+        ans_id
+    }
+
+    // 優先度の低いタスクを未来に飛ばす用
+    fn get_lowest_priority_leaf_task_id(&mut self) -> Option<Uuid> {
+        // 副作用として、projectsを優先度の低い順に破壊的にソートする
+        self.projects.sort_by(|a, b| a.priority.cmp(&b.priority));
+
+        // 優先度が低いPJ順に見て、返すべき葉タスクのid値を更新していく
+        let mut ans = None;
+
+        for project in &self.projects {
+            let root_task = &project.root_task;
+
+            let leaf_tasks: Vec<Task> = extract_leaf_tasks_from_project_with_pending(&root_task);
+
+            for leaf_task in leaf_tasks.iter() {
+                let deadline_time_opt = leaf_task.get_deadline_time_opt();
+                let first_available_time = leaf_task.first_available_time();
+                let is_recent = first_available_time <= self.last_synced_time + Duration::days(10);
+                let neg_priority = -leaf_task.get_priority();
+                let id = leaf_task.get_id();
+
+                // 優先度が低いほど大さい値になる
+                let tpl = (
+                    deadline_time_opt.is_none(),
+                    is_recent,
+                    neg_priority,
+                    deadline_time_opt,
+                    first_available_time,
+                    id,
+                );
+
+                if ans.is_none() || tpl > ans.unwrap() {
+                    ans = Some(tpl);
+                }
+            }
+        }
+
+        let ans_id = ans.map(|tpl| tpl.5);
         ans_id
     }
 

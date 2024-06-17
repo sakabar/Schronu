@@ -11,6 +11,7 @@ pub trait TaskRepositoryTrait {
     fn get_last_synced_time(&self) -> DateTime<Local>;
     fn get_highest_priority_project(&mut self) -> Option<&Task>;
     fn get_highest_priority_leaf_task_id(&mut self) -> Option<Uuid>;
+    fn get_lowest_priority_leaf_task_id(&mut self) -> Option<Uuid>;
     fn get_by_id(&self, id: Uuid) -> Option<Task>;
     fn start_new_project(&mut self, root_task: Task);
 }
