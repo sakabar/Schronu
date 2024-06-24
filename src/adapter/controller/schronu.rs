@@ -2173,6 +2173,9 @@ fn execute(
             None => {}
         },
         "子" | "children" | "ch" => {
+            // 今見ているノードの子タスクが1つだけの時、その子に移動する
+            // 2つ以上ある時には、「木」コマンドを実行してツリーの様子を表示する
+
             if let Some(ref focused_task) = focused_task_opt {
                 let children = focused_task.get_children();
                 match children.len() {
@@ -2184,6 +2187,36 @@ fn execute(
                     }
                     _ => {
                         execute_show_tree(stdout, &focused_task_opt);
+                    }
+                }
+            }
+        }
+        "深" | "deep" | "deepest" => {
+            // 今見ているノードの子タスクが1つだけである限り、その子に移動して同じことを繰り返す
+            // 2つ以上ある時には、「木」コマンドを実行してツリーの様子を表示する
+
+            if let Some(ref focused_task) = focused_task_opt {
+                let mut tmp_focused_task_opt: Option<Task> = Some(focused_task.clone());
+
+                loop {
+                    if let Some(ref tmp_focused_task) = tmp_focused_task_opt {
+                        let children = tmp_focused_task.get_children();
+
+                        if children.len() != 1 {
+                            break;
+                        }
+
+                        tmp_focused_task_opt = Some(children[0].clone());
+                    } else {
+                        break;
+                    }
+                }
+
+                if let Some(ref tmp_focused_task) = tmp_focused_task_opt {
+                    *focused_task_id_opt = Some(tmp_focused_task.get_id());
+
+                    if tmp_focused_task.get_children().len() > 1 {
+                        execute_show_tree(stdout, &tmp_focused_task_opt);
                     }
                 }
             }
