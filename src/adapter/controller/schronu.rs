@@ -2172,7 +2172,22 @@ fn execute(
             },
             None => {}
         },
-        "子" | "children" | "ch" => {}
+        "子" | "children" | "ch" => {
+            if let Some(ref focused_task) = focused_task_opt {
+                let children = focused_task.get_children();
+                match children.len() {
+                    0 => {
+                        // Do nothing
+                    }
+                    1 => {
+                        *focused_task_id_opt = Some(children[0].get_id());
+                    }
+                    _ => {
+                        execute_show_tree(stdout, &focused_task_opt);
+                    }
+                }
+            }
+        }
         "上" | "nextup" | "nu" => {
             if tokens.len() >= 2 {
                 let new_task_name_str = &tokens[1];
