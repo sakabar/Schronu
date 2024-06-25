@@ -2177,7 +2177,12 @@ fn execute(
             // 2つ以上ある時には、「木」コマンドを実行してツリーの様子を表示する
 
             if let Some(ref focused_task) = focused_task_opt {
-                let children = focused_task.get_children();
+                let tmp_children = focused_task.get_children();
+                let children: Vec<_> = tmp_children
+                    .iter()
+                    .filter(|child| child.get_status() != Status::Done)
+                    .collect();
+
                 match children.len() {
                     0 => {
                         // Do nothing
@@ -2200,7 +2205,11 @@ fn execute(
 
                 loop {
                     if let Some(ref tmp_focused_task) = tmp_focused_task_opt {
-                        let children = tmp_focused_task.get_children();
+                        let tmp_children = tmp_focused_task.get_children();
+                        let children: Vec<_> = tmp_children
+                            .iter()
+                            .filter(|child| child.get_status() != Status::Done)
+                            .collect();
 
                         if children.len() != 1 {
                             break;
