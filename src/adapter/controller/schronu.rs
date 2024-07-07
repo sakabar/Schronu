@@ -1127,7 +1127,11 @@ fn execute_show_all_tasks(
         writeln_newline(stdout, &footer).unwrap();
         writeln_newline(stdout, "").unwrap();
 
-        let clear_date_info = format!("今のタスクが片付く日付: {}", first_caught_up_date);
+        let clear_date_info = format!(
+            "今のタスクが片付く日付: {}日後の{}",
+            (first_caught_up_date - last_synced_time.date_naive()).num_days(),
+            first_caught_up_date
+        );
 
         let first_leeway_date_info = format!(
             "次にタスクを積める日付: {}日後の{} (-{}時間{:02}分)",
