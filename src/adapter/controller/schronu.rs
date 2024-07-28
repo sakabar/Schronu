@@ -2150,30 +2150,14 @@ fn execute(
             }
         }
         "始" | "start" => {
-            if tokens.len() >= 1 {
-                let hhmm_reg = Regex::new(r"^(\d{1,2}):(\d{1,2})$").unwrap();
+            let now: DateTime<Local> = task_repository.get_last_synced_time();
+            let start_dst_time_opt = decide_time(&tokens, &now);
 
-                if hhmm_reg.is_match(tokens[1]) {
-                    let now: DateTime<Local> = task_repository.get_last_synced_time();
-
-                    let caps = hhmm_reg.captures(tokens[1]).unwrap();
-                    let hh_i64: i64 = caps[1].parse().unwrap();
-                    let mm: u32 = caps[2].parse().unwrap();
-
-                    let hh = (hh_i64 % 24) as u32;
-
-                    let start_dst_time = now
-                        .with_hour(hh % 24)
-                        .expect("invalid hour")
-                        .with_minute(mm)
-                        .expect("invalid minute")
-                        + Duration::days(hh_i64 / 24);
-
-                    if let Some(focused_task) =
-                        focused_task_id_opt.and_then(|id| task_repository.get_by_id(id))
-                    {
-                        focused_task.set_start_time(start_dst_time);
-                    }
+            if let Some(start_dst_time) = start_dst_time_opt {
+                if let Some(focused_task) =
+                    focused_task_id_opt.and_then(|id| task_repository.get_by_id(id))
+                {
+                    focused_task.set_start_time(start_dst_time);
                 }
             }
         }
