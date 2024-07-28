@@ -1965,6 +1965,76 @@ fn execute_set_actual_work_minutes(focused_task_opt: &Option<Task>, actual_work_
     });
 }
 
+fn decide_time(tokens: &Vec<&str>, now: &DateTime<Local>) -> Option<DateTime<Local>> {
+    let mut start_time = None;
+
+    if tokens.len() >= 2 {
+        let start_hhmm_str = &tokens[1];
+
+        // 日付はオプショナル引数。入力されなかった場合は今日の日付とする。
+        let start_date_str = if tokens.len() >= 3 {
+            &tokens[2]
+        } else {
+            "dummy"
+        };
+
+        let hhmm_reg = Regex::new(r"^(\d{1,2}):(\d{1,2})$").unwrap();
+        let (hh, mm) = if hhmm_reg.is_match(start_hhmm_str) {
+            let caps = hhmm_reg.captures(start_hhmm_str).unwrap();
+            let hh: u32 = caps[1].parse().unwrap();
+            let mm: u32 = caps[2].parse().unwrap();
+
+            (hh, mm)
+        } else {
+            (12, 00)
+        };
+
+        let yyyymmdd_reg = Regex::new(r"^(\d{2,4})/(\d{1,2})/(\d{1,2})$").unwrap();
+        let mmdd_reg = Regex::new(r"^(\d{1,2})/(\d{1,2})$").unwrap();
+
+        let start_time_tmp = if yyyymmdd_reg.is_match(start_date_str) {
+            let caps = yyyymmdd_reg.captures(start_date_str).unwrap();
+            let tmp_yyyy: i32 = caps[1].parse().unwrap();
+            let yyyy = if tmp_yyyy < 100 {
+                tmp_yyyy + 2000
+            } else {
+                tmp_yyyy
+            };
+            let mm_month: u32 = caps[2].parse().unwrap();
+            let dd: u32 = caps[3].parse().unwrap();
+
+            Local
+                .with_ymd_and_hms(yyyy, mm_month, dd, hh, mm, 0)
+                .unwrap()
+        } else if mmdd_reg.is_match(start_date_str) {
+            // 年なしの日付が指定された場合は未来方向でその日付に合致する日付に送る
+            let caps = mmdd_reg.captures(start_date_str).unwrap();
+            let mm_month: u32 = caps[1].parse().unwrap();
+            let dd: u32 = caps[2].parse().unwrap();
+
+            let mut ans_datetime = Local
+                .with_ymd_and_hms(now.year(), mm_month, dd, hh, mm, 0)
+                .unwrap();
+
+            if ans_datetime < *now {
+                ans_datetime = Local
+                    .with_ymd_and_hms(now.year() + 1, mm_month, dd, hh, mm, 0)
+                    .unwrap()
+            }
+
+            ans_datetime
+        } else {
+            Local
+                .with_ymd_and_hms(now.year(), now.month(), now.day(), hh, mm, 0)
+                .unwrap()
+        };
+
+        start_time = Some(start_time_tmp);
+    }
+
+    start_time
+}
+
 fn execute(
     stdout: &mut RawTerminal<Stdout>,
     task_repository: &mut dyn TaskRepositoryTrait,
@@ -2072,70 +2142,10 @@ fn execute(
             }
         }
         "約" | "appointment" => {
-            if tokens.len() >= 2 {
-                let start_hhmm_str = &tokens[1];
+            let now = task_repository.get_last_synced_time();
+            let start_time_opt = decide_time(&tokens, &now);
 
-                // 日付はオプショナル引数。入力されなかった場合は今日の日付とする。
-                let start_date_str = if tokens.len() >= 3 {
-                    &tokens[2]
-                } else {
-                    "dummy"
-                };
-
-                let hhmm_reg = Regex::new(r"^(\d{1,2}):(\d{1,2})$").unwrap();
-                let (hh, mm) = if hhmm_reg.is_match(start_hhmm_str) {
-                    let caps = hhmm_reg.captures(start_hhmm_str).unwrap();
-                    let hh: u32 = caps[1].parse().unwrap();
-                    let mm: u32 = caps[2].parse().unwrap();
-
-                    (hh, mm)
-                } else {
-                    (12, 00)
-                };
-
-                let yyyymmdd_reg = Regex::new(r"^(\d{2,4})/(\d{1,2})/(\d{1,2})$").unwrap();
-                let mmdd_reg = Regex::new(r"^(\d{1,2})/(\d{1,2})$").unwrap();
-
-                let start_time = if yyyymmdd_reg.is_match(start_date_str) {
-                    let caps = yyyymmdd_reg.captures(start_date_str).unwrap();
-                    let tmp_yyyy: i32 = caps[1].parse().unwrap();
-                    let yyyy = if tmp_yyyy < 100 {
-                        tmp_yyyy + 2000
-                    } else {
-                        tmp_yyyy
-                    };
-                    let mm_month: u32 = caps[2].parse().unwrap();
-                    let dd: u32 = caps[3].parse().unwrap();
-
-                    Local
-                        .with_ymd_and_hms(yyyy, mm_month, dd, hh, mm, 0)
-                        .unwrap()
-                } else if mmdd_reg.is_match(start_date_str) {
-                    // 年なしの日付が指定された場合は未来方向でその日付に合致する日付に送る
-                    let now: DateTime<Local> = task_repository.get_last_synced_time();
-
-                    let caps = mmdd_reg.captures(start_date_str).unwrap();
-                    let mm_month: u32 = caps[1].parse().unwrap();
-                    let dd: u32 = caps[2].parse().unwrap();
-
-                    let mut ans_datetime = Local
-                        .with_ymd_and_hms(now.year(), mm_month, dd, hh, mm, 0)
-                        .unwrap();
-
-                    if ans_datetime < now {
-                        ans_datetime = Local
-                            .with_ymd_and_hms(now.year() + 1, mm_month, dd, hh, mm, 0)
-                            .unwrap()
-                    }
-
-                    ans_datetime
-                } else {
-                    let now = task_repository.get_last_synced_time();
-                    Local
-                        .with_ymd_and_hms(now.year(), now.month(), now.day(), hh, mm, 0)
-                        .unwrap()
-                };
-
+            if let Some(start_time) = start_time_opt {
                 execute_make_appointment(&focused_task_opt, start_time);
             }
         }
