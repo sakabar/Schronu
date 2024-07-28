@@ -419,6 +419,8 @@ fn execute_show_all_tasks(
     dt_id_tpl_arr.sort();
 
     let mut msgs_with_dt: Vec<(DateTime<Local>, usize, Uuid, String)> = vec![];
+    let mut available_biggest_msgs_with_dt_opt = None;
+    let mut available_biggest_task_estimate_work_seconds = 0;
 
     // ここからρ計算用
     let last_synced_time = task_repository.get_last_synced_time();
@@ -625,6 +627,9 @@ fn execute_show_all_tasks(
                 let yyyymmdd_reg = Regex::new(r"^(\d{4})/(\d{2})/(\d{2})$").unwrap();
                 let days_of_week = vec!["月", "火", "水", "木", "金", "土", "日"];
 
+                // 指定した時間(分)以下で達成完了な最大のタスクを抽出する
+                let integer_reg = Regex::new(r"^\d+$").unwrap();
+
                 match pattern_opt {
                     Some(pattern) => {
                         // Todo: 文字列マッチの絞り込み機能とその他の属性による絞り込みを機能を分ける
@@ -756,6 +761,29 @@ fn execute_show_all_tasks(
                             {
                                 msgs_with_dt.push((*dt, *rank, *id, msg));
                             }
+                        } else if integer_reg.is_match(pattern) {
+                            let caps = integer_reg.captures(pattern).unwrap();
+                            let input_minute: i64 = caps[0].parse().unwrap();
+                            let target_free_time_seconds = input_minute * 60;
+
+                            if *start_datetime > get_next_morning_datetime(last_synced_time)
+                                || last_synced_time < task.get_start_time()
+                            {
+                                continue;
+                            }
+
+                            // 【待ち】がマジックナンバーなのがちょっとよくない
+                            if *rank == 0
+                                && !msg.contains("【待ち】")
+                                && estimated_work_seconds < target_free_time_seconds
+                                && estimated_work_seconds
+                                    > available_biggest_task_estimate_work_seconds
+                            {
+                                available_biggest_task_estimate_work_seconds =
+                                    estimated_work_seconds;
+
+                                available_biggest_msgs_with_dt_opt = Some((*dt, *rank, *id, msg));
+                            }
                         } else if name.to_lowercase().contains(&pattern.to_lowercase())
                             || msg.contains(pattern)
                         {
@@ -769,6 +797,11 @@ fn execute_show_all_tasks(
             }
             None => {}
         }
+    }
+
+    // 着手可能な最大のタスクを実施するモード
+    if let Some((dt, rank, id, msg)) = available_biggest_msgs_with_dt_opt {
+        msgs_with_dt.push((dt, rank, id, msg));
     }
 
     // 逆順にする: dtの大きい順となる
