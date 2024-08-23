@@ -1093,11 +1093,14 @@ fn execute_show_all_tasks(
                 .unwrap_or(&0) as f64
                 / 3600.0
         };
+
+        let adjustable_estimated_work_rate = adjustable_estimated_work_hours / free_time_hours;
+
         let adjustable_estimated_work_hours_str = if adjustable_estimated_work_hours == 0.0 {
-            // "({:3.1})"と同じ幅になるようにする
+            // "({:02.0}%)"と同じ幅になるようにする
             "     ".to_string()
         } else {
-            format!("({:3.1})", adjustable_estimated_work_hours)
+            format!("({:02.0}%)", adjustable_estimated_work_rate * 100.0)
         };
 
         let s = format!(
