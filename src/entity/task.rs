@@ -710,6 +710,7 @@ pub struct TaskAttr {
     actual_work_seconds: i64,    // 実際の作業時間 (秒)
 
     repetition_interval_days_opt: Option<i64>,
+    days_in_advance: i64, // 繰り返しタスクについて、何日前から着手開始可能とするか
 }
 
 // 生成するタイミングで結果が変わってしまうid, create_time, start_timeは
@@ -730,6 +731,7 @@ impl PartialEq for TaskAttr {
             && self.estimated_work_seconds == other.estimated_work_seconds
             && self.actual_work_seconds == other.actual_work_seconds
             && self.repetition_interval_days_opt == other.repetition_interval_days_opt
+            && self.days_in_advance == other.days_in_advance
     }
 }
 
@@ -790,6 +792,7 @@ impl TaskAttr {
             estimated_work_seconds: 900,
             actual_work_seconds: 0,
             repetition_interval_days_opt: None,
+            days_in_advance: 0,
         }
     }
 
@@ -947,6 +950,14 @@ impl TaskAttr {
 
     pub fn get_repetition_interval_days_opt(&self) -> Option<i64> {
         self.repetition_interval_days_opt
+    }
+
+    pub fn set_days_in_advance(&mut self, days_in_advance: i64) {
+        self.days_in_advance = days_in_advance;
+    }
+
+    pub fn get_days_in_advance(&self) -> i64 {
+        self.days_in_advance
     }
 }
 
@@ -1165,6 +1176,16 @@ impl Task {
         self.node
             .borrow_data_mut()
             .set_repetition_interval_days_opt(repetition_interval_days_opt);
+    }
+
+    pub fn get_days_in_advance(&self) -> i64 {
+        self.node.borrow_data().get_days_in_advance()
+    }
+
+    pub fn set_get_days_in_advance(&self, days_in_advance: i64) {
+        self.node
+            .borrow_data_mut()
+            .set_days_in_advance(days_in_advance);
     }
 
     pub fn get_actual_work_seconds(&self) -> i64 {
