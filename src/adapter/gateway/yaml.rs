@@ -310,6 +310,9 @@ pub fn yaml_to_task(yaml: &Yaml, now: DateTime<Local>) -> Task {
         .unwrap_or(default_attr.get_actual_work_seconds());
 
     let repetition_interval_days_opt: Option<i64> = yaml["repetition_interval_days"].as_i64();
+    let days_in_advance: i64 = yaml["days_in_advance"]
+        .as_i64()
+        .unwrap_or(default_attr.get_days_in_advance());
 
     let mut parent_task: Task = Task::new(name);
 
@@ -349,6 +352,7 @@ pub fn yaml_to_task(yaml: &Yaml, now: DateTime<Local>) -> Task {
     parent_task.set_estimated_work_seconds(estimated_work_seconds);
     parent_task.set_actual_work_seconds(actual_work_seconds);
     parent_task.set_repetition_interval_days_opt(repetition_interval_days_opt);
+    parent_task.set_days_in_advance(days_in_advance);
 
     // repetition_interval_daysを持つタスクがtodoのままだと、
     // show_all_tasks()する際にestimated_work_secondsを二重に数えてしまうことになるので
@@ -769,6 +773,26 @@ repetition_interval_days: 7
     expected.set_orig_status(Status::Pending);
     expected.set_pending_until(distant_future);
 
+    expected.sync_clock(now);
+
+    assert_task(&actual, &expected);
+}
+
+#[test]
+fn test_yaml_to_task_days_in_advanceキー_正常系() {
+    let s = "
+name: 'タスク1'
+status: 'todo'
+days_in_advance: 1
+";
+
+    let docs = YamlLoader::load_from_str(s).unwrap();
+    let project_yaml: &Yaml = &docs[0];
+
+    let now = Local::now();
+    let actual = yaml_to_task(project_yaml, now);
+    let expected = Task::new("タスク1");
+    expected.set_days_in_advance(1);
     expected.sync_clock(now);
 
     assert_task(&actual, &expected);

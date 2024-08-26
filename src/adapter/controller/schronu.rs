@@ -1840,6 +1840,7 @@ fn execute_finish(focused_task_id_opt: &mut Option<Uuid>, focused_task_opt: &Opt
 
                     let parent_task_name = parent_task.get_name();
                     let parent_task_start_time = parent_task.get_start_time();
+                    let days_in_advance = parent_task.get_days_in_advance();
                     let new_start_time = get_next_morning_datetime(
                         Local::now() + Duration::days(repetition_interval_days - 1),
                     )
@@ -1876,7 +1877,8 @@ fn execute_finish(focused_task_id_opt: &mut Option<Uuid>, focused_task_opt: &Opt
                     let estimated_work_seconds = parent_task.get_estimated_work_seconds();
 
                     let mut new_task_attr = TaskAttr::new(&new_task_name);
-                    new_task_attr.set_start_time(new_start_time);
+                    // deadlineの決定などに影響を与えたくないので、最後にdays_in_advanceを引く
+                    new_task_attr.set_start_time(new_start_time - Duration::days(days_in_advance));
                     new_task_attr.set_deadline_time_opt(Some(new_deadline_time));
                     new_task_attr.set_estimated_work_seconds(estimated_work_seconds);
                     parent_task.create_as_last_child(new_task_attr);
