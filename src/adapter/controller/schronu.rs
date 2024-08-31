@@ -450,6 +450,8 @@ fn execute_show_all_tasks(
     let mut total_estimated_work_seconds: i64 = 0;
     let mut deadline_estimated_work_seconds_map: HashMap<NaiveDate, i64> = HashMap::new();
 
+    let mut repetitive_task_estimated_work_seconds_map: HashMap<NaiveDate, i64> = HashMap::new();
+
     // 日ごとの、前倒し可能なタスクの見積もりの和
     // 前倒し可能という決め方だと、何日まで前倒しできるのか曖昧性が発生する?
     let mut adjustable_estimated_work_seconds_map: HashMap<NaiveDate, i64> = HashMap::new();
@@ -568,6 +570,19 @@ fn execute_show_all_tasks(
                             *deadline_estimated_work_seconds += estimated_work_seconds
                         })
                         .or_insert(estimated_work_seconds);
+                }
+
+                if let Some(parent) = task.parent() {
+                    if let Some(_repetition_interval_days) =
+                        parent.get_repetition_interval_days_opt()
+                    {
+                        repetitive_task_estimated_work_seconds_map
+                            .entry(subjective_naive_date)
+                            .and_modify(|repetitive_task_estimated_work_seconds| {
+                                *repetitive_task_estimated_work_seconds += estimated_work_seconds
+                            })
+                            .or_insert(estimated_work_seconds);
+                    }
                 }
 
                 // 着手時間は、現在時刻か、最速着手可能時間のうち遅い方
@@ -872,6 +887,13 @@ fn execute_show_all_tasks(
         let total_estimated_work_hours_of_the_date =
             total_estimated_work_seconds_of_the_date as f64 / 3600.0;
 
+        let total_repetitive_task_work_seconds_of_the_date =
+            *repetitive_task_estimated_work_seconds_map
+                .get(date)
+                .unwrap_or(&0);
+        let total_repetitive_task_work_hours_of_the_date =
+            total_repetitive_task_work_seconds_of_the_date as f64 / 3600.0;
+
         let cnt_of_the_date = *counter.get(date).unwrap_or(&0);
 
         let weekday_jp = get_weekday_jp(&date);
@@ -914,10 +936,23 @@ fn execute_show_all_tasks(
 
         let free_time_hours = free_time_minutes as f64 / 60.0;
         let rho_in_date = total_estimated_work_hours_of_the_date / free_time_hours;
+        let non_repetitive_rho_in_date =
+            if free_time_hours - total_repetitive_task_work_hours_of_the_date > 0.0 {
+                (total_estimated_work_hours_of_the_date
+                    - total_repetitive_task_work_hours_of_the_date)
+                    / (free_time_hours - total_repetitive_task_work_hours_of_the_date)
+            } else {
+                f64::INFINITY
+            };
 
         const RHO_GOAL: f64 = 0.7;
 
-        let diff_to_goal = total_estimated_work_hours_of_the_date - free_time_hours * RHO_GOAL;
+        let diff_to_goal = if free_time_hours - total_repetitive_task_work_hours_of_the_date > 0.0 {
+            (total_estimated_work_hours_of_the_date - total_repetitive_task_work_hours_of_the_date)
+                - (free_time_hours - total_repetitive_task_work_hours_of_the_date) * RHO_GOAL
+        } else {
+            0.0
+        };
         let diff_to_goal_sign: char = if diff_to_goal > 0.0 { ' ' } else { '-' };
         let diff_to_goal_hour = diff_to_goal.abs().floor();
         let diff_to_goal_minute = (diff_to_goal.abs() - diff_to_goal_hour) * 60.0;
@@ -977,13 +1012,24 @@ fn execute_show_all_tasks(
             '-'
         };
 
-        let accumulated_rho_diff =
-            accumulate_duration_diff_to_limit.num_minutes() as f64 / 60.0 / free_time_hours;
+        let repetitive_task_estimated_work_seconds = *repetitive_task_estimated_work_seconds_map
+            .get(&date)
+            .unwrap_or(&0);
+        let repetitive_task_estimated_work_hours =
+            repetitive_task_estimated_work_seconds as f64 / 3600.0;
+
+        let accumulated_rho_diff = if free_time_hours - repetitive_task_estimated_work_hours > 0.0 {
+            accumulate_duration_diff_to_limit.num_minutes() as f64
+                / 60.0
+                / (free_time_hours - repetitive_task_estimated_work_hours)
+        } else {
+            f64::INFINITY
+        };
 
         accumulate_duration_diff_to_goal_rho = if accumulated_rho_diff >= 0.0 {
             // タスクが捌けていない場合はそれがそのまま積み残される
             accumulate_duration_diff_to_limit
-        } else if accumulated_rho_diff < RHO_GOAL - 1.0 && rho_in_date < RHO_GOAL {
+        } else if accumulated_rho_diff < RHO_GOAL - 1.0 && non_repetitive_rho_in_date < RHO_GOAL {
             // タスクが捌けてかなり余裕がある場合
             accumulate_duration_diff_to_goal_rho
                 - Duration::hours(diff_to_goal_hour as i64)
