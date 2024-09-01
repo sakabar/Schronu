@@ -1333,12 +1333,43 @@ fn execute_show_all_tasks(
         None
     };
 
+    let today_total_repetitive_estimated_work_seconds = *repetitive_task_estimated_work_seconds_map
+        .get(&naive_dt_today)
+        .unwrap_or(&0);
+    let today_total_repetitive_estimated_work_hours =
+        today_total_repetitive_estimated_work_seconds as f64 / 3600.0;
+
+    let non_repetitive_rho = (today_total_deadline_estimated_work_minutes as f64
+        - today_total_repetitive_estimated_work_seconds as f64 / 60.0)
+        / (mu_minutes - busy_minutes - today_total_repetitive_estimated_work_seconds / 60) as f64;
+    let non_repetitive_lq_opt = if non_repetitive_rho < 1.0 {
+        Some(non_repetitive_rho / (1.0 - non_repetitive_rho))
+    } else {
+        None
+    };
+
+    let non_repetitive_rho_msg = format!(
+        "one ρ = ({:.2} + 0.00) / ({:.2} + 0.00) = {:.2}",
+        today_total_deadline_estimated_work_hours - today_total_repetitive_estimated_work_hours,
+        mu_hours - busy_hours - today_total_repetitive_estimated_work_hours,
+        non_repetitive_rho,
+    );
+    let non_repetitive_lq_msg = match non_repetitive_lq_opt {
+        Some(non_repetitive_lq) => format!("Lq = {:.1}", non_repetitive_lq),
+        None => "Lq = inf".to_string(),
+    };
+
+    let s_for_non_repetitive_rho = format!("{}, {}", non_repetitive_rho_msg, non_repetitive_lq_msg);
+
     let rho1_msg = format!(
-        "ρ_1 = ({:.2} + 0.0) / ({:.2} + 0.0) = {:.2}",
-        today_total_deadline_estimated_work_hours,
-        mu_hours - busy_hours,
+        "rep ρ = ({:.2} + {:.2}) / ({:.2} + {:.2}) = {:.2}",
+        today_total_deadline_estimated_work_hours - today_total_repetitive_estimated_work_hours,
+        today_total_repetitive_estimated_work_hours,
+        mu_hours - busy_hours - today_total_repetitive_estimated_work_hours,
+        today_total_repetitive_estimated_work_hours,
         rho1,
     );
+
     let lq_msg = match lq1_opt {
         Some(lq1) => format!("Lq = {:.1}", lq1),
         None => "Lq = inf".to_string(),
@@ -1350,6 +1381,7 @@ fn execute_show_all_tasks(
         writeln_newline(stdout, &busy_s).unwrap();
         writeln_newline(stdout, &s).unwrap();
         writeln_newline(stdout, &s_for_rho1).unwrap();
+        writeln_newline(stdout, &s_for_non_repetitive_rho).unwrap();
     }
 
     writeln_newline(stdout, "").unwrap();
