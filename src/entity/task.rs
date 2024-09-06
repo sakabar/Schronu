@@ -815,6 +815,17 @@ impl TaskAttr {
         let deadline_buffer_seconds_after_start_time = 3600;
         let deadline_buffer_seconds_before_start_time = 300;
 
+        // pending_untilが〆切よりも後ろになってしまっている場合はpending_untilを調整する
+        if self.orig_status == Status::Pending && self.deadline_time_opt.is_some() {
+            let pending_time_before_deadline = self.deadline_time_opt.unwrap()
+                - Duration::seconds(self.estimated_work_seconds)
+                - Duration::seconds(deadline_buffer_seconds_before_start_time);
+
+            if pending_time_before_deadline < self.pending_until {
+                self.pending_until = pending_time_before_deadline;
+            }
+        }
+
         // 変わりうるのは、
         // not Done -> Todo (deadlineが近い)
         // Pending -> Todo (pending_until後 かつ start_time後)
