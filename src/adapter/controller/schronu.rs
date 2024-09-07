@@ -601,11 +601,6 @@ fn execute_show_all_tasks(
                 let total_estimated_work_hours =
                     (total_estimated_work_seconds as f64 / 3600.0).ceil() as i64;
 
-                let deadline_string = match deadline_time_opt {
-                    Some(d) => d.format("%Y/%m/%d").to_string(),
-                    None => "____/__/__".to_string(),
-                };
-
                 // ! : 今日中が締切。締切注意の意
                 let deadline_icon: String = "!".to_string();
 
@@ -629,6 +624,29 @@ fn execute_show_all_tasks(
                 } else {
                     // - : 特に無しだが、空白にすると列数が乱れるので目立たない記号を入れる
                     "-"
+                };
+
+                let deadline_string = if let Some(deadline_time) = deadline_time_opt {
+                    if *deadline_time < get_next_morning_datetime(last_synced_time) {
+                        if *deadline_time < last_synced_time {
+                            "[ASAP]/____".to_string()
+                        } else {
+                            let breaking_minutes =
+                                (end_datetime - deadline_time).num_minutes().abs();
+                            let breaking_hh = breaking_minutes / 60;
+                            let breaking_mm = breaking_minutes % 60;
+
+                            if *deadline_time < end_datetime {
+                                format!("+{:02}:{:02}/____", breaking_hh, breaking_mm)
+                            } else {
+                                format!("____/-{:02}:{:02}", breaking_hh, breaking_mm)
+                            }
+                        }
+                    } else {
+                        deadline_time.format("%Y/%m/%d").to_string()
+                    }
+                } else {
+                    "____/__/__".to_string()
                 };
 
                 let msg: String = format!(
