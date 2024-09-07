@@ -2013,7 +2013,11 @@ fn execute_finish(focused_task_id_opt: &mut Option<Uuid>, focused_task_opt: &Opt
     });
 }
 
-fn execute_set_deadline(focused_task_opt: &Option<Task>, deadline_date_str: &str) {
+fn execute_set_deadline(
+    task_repository: &mut dyn TaskRepositoryTrait,
+    focused_task_opt: &Option<Task>,
+    deadline_date_str: &str,
+) {
     if deadline_date_str == "消" {
         focused_task_opt
             .as_ref()
@@ -2021,15 +2025,30 @@ fn execute_set_deadline(focused_task_opt: &Option<Task>, deadline_date_str: &str
         return;
     }
 
-    let deadline_time_str = format!("{} 23:59:59", deadline_date_str);
-    let deadline_time_opt = Local
-        .datetime_from_str(&deadline_time_str, "%Y/%m/%d %H:%M:%S")
-        .ok();
+    let mut deadline_time_str = format!("{} 23:59:59", deadline_date_str);
+    let hhmm_reg = Regex::new(r"^(\d{1,2}):(\d{1,2})$").unwrap();
 
-    if deadline_time_opt.is_some() {
+    // 時刻のみを指定した場合は、日付は今日にする
+    if hhmm_reg.is_match(deadline_date_str) {
+        let caps = hhmm_reg.captures(deadline_date_str).unwrap();
+        let hh: u32 = caps[1].parse().unwrap();
+        let mm: u32 = caps[2].parse().unwrap();
+
+        let now = task_repository.get_last_synced_time();
+        deadline_time_str = format!(
+            "{} {:02}:{:02}:00",
+            now.format("%Y/%m/%d").to_string(),
+            hh,
+            mm
+        );
+    }
+
+    let deadline_time_opt_result = Local.datetime_from_str(&deadline_time_str, "%Y/%m/%d %H:%M:%S");
+
+    if let Ok(deadline_time) = deadline_time_opt_result {
         focused_task_opt
             .as_ref()
-            .map(|focused_task| focused_task.set_deadline_time_opt(deadline_time_opt));
+            .map(|focused_task| focused_task.set_deadline_time_opt(Some(deadline_time)));
     }
 }
 
@@ -2474,14 +2493,14 @@ fn execute(
                     let s = (get_next_morning_datetime(now) - Duration::days(1))
                         .format("%Y/%m/%d")
                         .to_string();
-                    execute_set_deadline(&focused_task_opt, &s);
+                    execute_set_deadline(task_repository, &focused_task_opt, &s);
                 } else if tokens[1].starts_with('明') {
                     let s = get_next_morning_datetime(now)
                         .format("%Y/%m/%d")
                         .to_string();
-                    execute_set_deadline(&focused_task_opt, &s);
+                    execute_set_deadline(task_repository, &focused_task_opt, &s);
                 } else {
-                    execute_set_deadline(&focused_task_opt, deadline_date_str);
+                    execute_set_deadline(task_repository, &focused_task_opt, deadline_date_str);
                 }
             }
         }
