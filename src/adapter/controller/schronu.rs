@@ -606,9 +606,15 @@ fn execute_show_all_tasks(
                     None => "____/__/__".to_string(),
                 };
 
+                // ! : 今日中が締切。締切注意の意
                 let deadline_icon: String = "!".to_string();
+
+                // v : もっと着手を手前(下)にせよの意
                 let breaking_deadline_icon: String = "v".to_string();
+
+                // / : 今日着手する予定の葉タスク。/という記号自体に強い意味合いはない。
                 let today_leaf_icon: String = "/".to_string();
+
                 let icon = if task.get_deadline_time_opt().is_some()
                     && task.get_deadline_time_opt().unwrap() < end_datetime
                 {
@@ -621,6 +627,7 @@ fn execute_show_all_tasks(
                 } else if rank == &0 && dt < &eod {
                     &today_leaf_icon
                 } else {
+                    // - : 特に無しだが、空白にすると列数が乱れるので目立たない記号を入れる
                     "-"
                 };
 
