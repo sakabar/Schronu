@@ -631,7 +631,7 @@ fn execute_show_all_tasks(
                 let deadline_string = if let Some(deadline_time) = deadline_time_opt {
                     if *deadline_time < get_next_morning_datetime(last_synced_time) {
                         if *deadline_time < last_synced_time {
-                            "[ASAP]/____".to_string()
+                            "[ASAP]____".to_string()
                         } else {
                             let breaking_minutes =
                                 (end_datetime - deadline_time).num_minutes().abs();
