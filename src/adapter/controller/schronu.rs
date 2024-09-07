@@ -1373,9 +1373,15 @@ fn execute_show_all_tasks(
     let today_total_repetitive_estimated_work_hours =
         today_total_repetitive_estimated_work_seconds as f64 / 3600.0;
 
-    let non_repetitive_rho = (today_total_deadline_estimated_work_minutes as f64
-        - today_total_repetitive_estimated_work_seconds as f64 / 60.0)
-        / (mu_minutes - busy_minutes - today_total_repetitive_estimated_work_seconds / 60) as f64;
+    let non_repetitive_rho =
+        if (mu_minutes - busy_minutes - today_total_repetitive_estimated_work_seconds / 60) > 0 {
+            (today_total_deadline_estimated_work_minutes as f64
+                - today_total_repetitive_estimated_work_seconds as f64 / 60.0)
+                / (mu_minutes - busy_minutes - today_total_repetitive_estimated_work_seconds / 60)
+                    as f64
+        } else {
+            f64::INFINITY
+        };
     let non_repetitive_lq_opt = if non_repetitive_rho < 1.0 {
         Some(non_repetitive_rho / (1.0 - non_repetitive_rho))
     } else {
@@ -1383,7 +1389,7 @@ fn execute_show_all_tasks(
     };
 
     let non_repetitive_rho_msg = format!(
-        "one ρ = ({:.2} + 0.00) / ({:.2} + 0.00) = {:.2}",
+        "one ρ = ({:.2} + 0.00) / ({:.2} + 0.00) = {:4.2}",
         today_total_deadline_estimated_work_hours - today_total_repetitive_estimated_work_hours,
         mu_hours - busy_hours - today_total_repetitive_estimated_work_hours,
         non_repetitive_rho,
