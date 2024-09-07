@@ -611,6 +611,8 @@ fn execute_show_all_tasks(
                 let today_leaf_icon: String = "/".to_string();
 
                 let icon = if task.get_deadline_time_opt().is_some()
+                    && task.get_deadline_time_opt().unwrap()
+                        < get_next_morning_datetime(last_synced_time)
                     && task.get_deadline_time_opt().unwrap() < end_datetime
                 {
                     &breaking_deadline_icon
@@ -637,9 +639,9 @@ fn execute_show_all_tasks(
                             let breaking_mm = breaking_minutes % 60;
 
                             if *deadline_time < end_datetime {
-                                format!("+{:02}:{:02}/____", breaking_hh, breaking_mm)
+                                format!("+{:02}:{:02}____", breaking_hh, breaking_mm)
                             } else {
-                                format!("____/-{:02}:{:02}", breaking_hh, breaking_mm)
+                                format!("____-{:02}:{:02}", breaking_hh, breaking_mm)
                             }
                         }
                     } else {
@@ -691,12 +693,15 @@ fn execute_show_all_tasks(
                             }
                         } else if pattern == "印" {
                             if msg.contains(&format!(" {} ", &deadline_icon))
+                                || msg.contains(&format!(" {} ", &breaking_deadline_icon))
                                 || msg.contains(&format!(" {} ", &today_leaf_icon))
                             {
                                 msgs_with_dt.push((*dt, *rank, *id, msg));
                             }
                         } else if pattern == "〆" {
-                            if msg.contains(&format!(" {} ", &deadline_icon)) {
+                            if msg.contains(&format!(" {} ", &deadline_icon))
+                                || msg.contains(&format!(" {} ", &breaking_deadline_icon))
+                            {
                                 msgs_with_dt.push((*dt, *rank, *id, msg));
                             }
                         } else if is_calendar_func || is_flatten_func {
