@@ -607,9 +607,13 @@ fn execute_show_all_tasks(
                 };
 
                 let deadline_icon: String = "!".to_string();
+                let breaking_deadline_icon: String = "v".to_string();
                 let today_leaf_icon: String = "/".to_string();
-                // Todo: この判定が分散しているので、後で関数化したほうがよいかも
                 let icon = if task.get_deadline_time_opt().is_some()
+                    && task.get_deadline_time_opt().unwrap() < end_datetime
+                {
+                    &breaking_deadline_icon
+                } else if task.get_deadline_time_opt().is_some()
                     && task.get_deadline_time_opt().unwrap()
                         < get_next_morning_datetime(last_synced_time)
                 {
