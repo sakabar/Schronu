@@ -630,14 +630,13 @@ fn execute_show_all_tasks(
 
                 let deadline_string = if let Some(deadline_time) = deadline_time_opt {
                     if *deadline_time < get_next_morning_datetime(last_synced_time) {
-                        if *deadline_time < last_synced_time {
-                            "[ASAP]____".to_string()
-                        } else {
-                            let breaking_minutes =
-                                (end_datetime - deadline_time).num_minutes().abs();
-                            let breaking_hh = breaking_minutes / 60;
-                            let breaking_mm = breaking_minutes % 60;
+                        let breaking_minutes = (end_datetime - deadline_time).num_minutes().abs();
+                        let breaking_hh = breaking_minutes / 60;
+                        let breaking_mm = breaking_minutes % 60;
 
+                        if *deadline_time < last_synced_time {
+                            format!("+{:02}:{:02}ASAP", breaking_hh, breaking_mm)
+                        } else {
                             if *deadline_time < end_datetime {
                                 format!("+{:02}:{:02}____", breaking_hh, breaking_mm)
                             } else {
@@ -1402,7 +1401,7 @@ fn execute_show_all_tasks(
     let s_for_non_repetitive_rho = format!("{}, {}", non_repetitive_rho_msg, non_repetitive_lq_msg);
 
     let rho1_msg = format!(
-        "rep ρ = ({:.2} + {:.2}) / ({:.2} + {:.2}) = {:.2}",
+        "rep ρ = ({:.2} + {:.2}) / ({:.2} + {:.2}) = {:4.2}",
         today_total_deadline_estimated_work_hours - today_total_repetitive_estimated_work_hours,
         today_total_repetitive_estimated_work_hours,
         mu_hours - busy_hours - today_total_repetitive_estimated_work_hours,
