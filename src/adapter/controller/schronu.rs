@@ -2334,6 +2334,16 @@ fn execute(
                 &pattern_opt,
             );
         }
+        "今" | "today" => {
+            let pattern_opt = Some("今".to_string());
+            execute_show_all_tasks(
+                stdout,
+                focused_task_id_opt,
+                task_repository,
+                free_time_manager,
+                &pattern_opt,
+            );
+        }
         "暦" | "cal" => {
             let pattern_opt = Some("暦".to_string());
             execute_show_all_tasks(
