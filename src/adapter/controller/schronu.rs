@@ -2720,6 +2720,45 @@ fn execute(
                             "秒",
                         );
                     }
+                } else if vec!["月", "火", "水", "木", "金", "土", "日"].contains(&tokens[1])
+                {
+                    // 月 火 水 木 金 土 日 が指定された時は、明日以降で、直近のその曜日の06:00にpendingする
+                    // (show_all_tasksとロジック重複...)
+
+                    let now: DateTime<Local> = task_repository.get_last_synced_time();
+                    let days_of_week = vec!["月", "火", "水", "木", "金", "土", "日"];
+
+                    let todays_morning_datetime =
+                        get_next_morning_datetime(now) - Duration::days(1);
+
+                    let dn = todays_morning_datetime.date_naive();
+                    let now_weekday_jp = get_weekday_jp(&dn);
+
+                    let now_days_of_week_ind = days_of_week
+                        .iter()
+                        .position(|&x| &x == &now_weekday_jp)
+                        .unwrap();
+                    let target_days_of_week_ind =
+                        days_of_week.iter().position(|&x| x == tokens[1]).unwrap();
+
+                    let ind_diff = (7 + target_days_of_week_ind - now_days_of_week_ind) % 7;
+
+                    // 今日の6:00にdeferする味意はないので、その代わりに、1週間後の同じ曜日にdeferできるようにする
+                    let days: i64 = if ind_diff == 0 { 7 } else { ind_diff as i64 };
+
+                    let seconds = (get_next_morning_datetime(now) + Duration::days(days - 1) - now)
+                        .num_seconds()
+                        + 1;
+
+                    if seconds > 0 {
+                        execute_defer(
+                            task_repository,
+                            focused_task_id_opt,
+                            &focused_task_opt,
+                            &format!("{}", seconds),
+                            "秒",
+                        );
+                    }
                 } else {
                     // "defer 5days" のように引数が1つしか与えられなかった場合は、数字部分とそれ以降に分割する
                     let splitted = split_amount_and_unit(tokens[1]);
