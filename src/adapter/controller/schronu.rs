@@ -2501,9 +2501,15 @@ fn execute(
         "〆" | "締" | "deadline" => {
             if tokens.len() >= 2 {
                 // "2023/05/23"とか。簡単のため、時刻は指定不要とし、自動的に23:59を〆切と設定する
+                // 5/23のようにhh/mmで指定した場合は、年の情報を補完してその日の23:59を〆切と設定する
+                // 月~日と指定した場合、明日以降で直近のその曜日の23:59を〆切と設定する
+
                 let deadline_date_str = &tokens[1];
 
                 let now: DateTime<Local> = task_repository.get_last_synced_time();
+
+                let mmdd_reg = Regex::new(r"^(\d{1,2})/(\d{1,2})$").unwrap();
+
                 if tokens[1].starts_with('今') {
                     let s = (get_next_morning_datetime(now) - Duration::days(1))
                         .format("%Y/%m/%d")
@@ -2542,6 +2548,29 @@ fn execute(
                     let s = (get_next_morning_datetime(now) + Duration::days(days - 1))
                         .format("%Y/%m/%d")
                         .to_string();
+
+                    execute_set_deadline(task_repository, &focused_task_opt, &s);
+                } else if mmdd_reg.is_match(&tokens[1]) {
+                    // FIXME 「後」コマンドとロジック重複
+
+                    let caps = mmdd_reg.captures(tokens[1]).unwrap();
+                    let mm: u32 = caps[1].parse().unwrap();
+                    let dd: u32 = caps[2].parse().unwrap();
+
+                    // この時点では12:00にしているが、後で時刻を無視するので問題ない
+                    let mut deadline_dst_time = Local
+                        .with_ymd_and_hms(now.year(), mm, dd, 12, 0, 0)
+                        .unwrap();
+
+                    if deadline_dst_time < now {
+                        deadline_dst_time = get_next_morning_datetime(
+                            Local
+                                .with_ymd_and_hms(now.year() + 1, mm, dd, 12, 0, 0)
+                                .unwrap(),
+                        ) - Duration::days(1);
+                    }
+
+                    let s = deadline_dst_time.format("%Y/%m/%d").to_string();
 
                     execute_set_deadline(task_repository, &focused_task_opt, &s);
                 } else {
