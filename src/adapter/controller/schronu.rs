@@ -2514,6 +2514,36 @@ fn execute(
                         .format("%Y/%m/%d")
                         .to_string();
                     execute_set_deadline(task_repository, &focused_task_opt, &s);
+                } else if vec!["月", "火", "水", "木", "金", "土", "日"].contains(&tokens[1])
+                {
+                    // 月 火 水 木 金 土 日 が指定された時は、明日以降で、直近のその曜日の23:59を〆切とする
+                    // (show_all_tasksとロジック重複...)
+
+                    let days_of_week = vec!["月", "火", "水", "木", "金", "土", "日"];
+
+                    let todays_morning_datetime =
+                        get_next_morning_datetime(now) - Duration::days(1);
+
+                    let dn = todays_morning_datetime.date_naive();
+                    let now_weekday_jp = get_weekday_jp(&dn);
+
+                    let now_days_of_week_ind = days_of_week
+                        .iter()
+                        .position(|&x| &x == &now_weekday_jp)
+                        .unwrap();
+                    let target_days_of_week_ind =
+                        days_of_week.iter().position(|&x| x == tokens[1]).unwrap();
+
+                    let ind_diff = (7 + target_days_of_week_ind - now_days_of_week_ind) % 7;
+
+                    // 今日の〆切については「〆 今」で設定できるので、その代わりに、1週間後の同じ曜日の情報を設定するようにする
+                    let days: i64 = if ind_diff == 0 { 7 } else { ind_diff as i64 };
+
+                    let s = (get_next_morning_datetime(now) + Duration::days(days - 1))
+                        .format("%Y/%m/%d")
+                        .to_string();
+
+                    execute_set_deadline(task_repository, &focused_task_opt, &s);
                 } else {
                     execute_set_deadline(task_repository, &focused_task_opt, deadline_date_str);
                 }
