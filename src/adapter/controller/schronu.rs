@@ -2912,7 +2912,21 @@ fn execute(
             // 完了操作
             execute_finish(focused_task_id_opt, &focused_task_opt);
         }
-        &_ => {}
+        "" => {}
+        &_ => {
+            // 何も該当するコマンドが無い場合には「全」コマンドとして実行する
+
+            let cmd_of_show_all = String::from("全 ") + untrimmed_line;
+
+            execute(
+                stdout,
+                task_repository,
+                free_time_manager,
+                focused_task_id_opt,
+                focus_started_datetime,
+                &cmd_of_show_all,
+            );
+        }
     }
 
     stdout.flush().unwrap();
