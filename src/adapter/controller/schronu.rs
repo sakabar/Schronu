@@ -2915,17 +2915,24 @@ fn execute(
         "" => {}
         &_ => {
             // 何も該当するコマンドが無い場合には「全」コマンドとして実行する
+            // ただし、最初が数字の0から始まる場合は無視する
+            // show_all_commandの結果をコピーしたものを誤って貼り付けた場合に迅速に停止させるため。
+            // 精緻に書こうと思えば条件を変えられる。
 
-            let cmd_of_show_all = String::from("全 ") + untrimmed_line;
+            if let Some(first_char) = untrimmed_line.chars().next() {
+                if first_char != '0' {
+                    let cmd_of_show_all = String::from("全 ") + untrimmed_line;
 
-            execute(
-                stdout,
-                task_repository,
-                free_time_manager,
-                focused_task_id_opt,
-                focus_started_datetime,
-                &cmd_of_show_all,
-            );
+                    execute(
+                        stdout,
+                        task_repository,
+                        free_time_manager,
+                        focused_task_id_opt,
+                        focus_started_datetime,
+                        &cmd_of_show_all,
+                    );
+                }
+            }
         }
     }
 
