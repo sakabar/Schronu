@@ -2302,7 +2302,8 @@ fn execute(
                 }
             }
         }
-        "木" | "tree" => {
+        // 最初は「木」コマンドだったが、曜日だけを指定して直近のその曜日について「全」コマンドを動かすコマンドとコンフリクトしてしまったためリネームした。
+        "樹" | "tree" => {
             execute_show_tree(stdout, &focused_task_opt);
         }
         "条" | "祖" | "ancestor" | "anc" => {
@@ -3459,7 +3460,7 @@ fn application(
                     && fst_char_opt != Some('暦')
                     && fst_char_opt != Some('平')
                     && fst_char_opt != Some('葉')
-                    && fst_char_opt != Some('木')
+                    && fst_char_opt != Some('樹')
                 {
                     execute_show_leaf_tasks(&mut stdout, task_repository, free_time_manager);
                 }
