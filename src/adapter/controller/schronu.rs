@@ -474,15 +474,19 @@ fn execute_show_all_tasks(
         match task_opt {
             Some(task) => {
                 let repetition_prefix_label = if let Some(parent) = task.parent() {
+                    let mut ans = "".to_string();
+
                     if let Some(repetition_interval_days) =
                         parent.get_repetition_interval_days_opt()
                     {
-                        format!("【繰】({})", repetition_interval_days)
-                    } else if task.get_is_on_other_side() {
-                        "【待ち】".to_string()
-                    } else {
-                        "".to_string()
+                        ans = format!("{}【繰】({})", ans, repetition_interval_days);
                     }
+
+                    if task.get_is_on_other_side() {
+                        ans = format!("{}【待ち】", ans);
+                    }
+
+                    ans
                 } else {
                     "".to_string()
                 };
