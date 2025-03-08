@@ -592,6 +592,41 @@ fn execute_show_all_tasks(
                 // 着手時間は、現在時刻か、最速着手可能時間のうち遅い方
                 let current_datetime_cursor_clone = &current_datetime_cursor.clone();
                 let start_datetime = max(dt, current_datetime_cursor_clone);
+
+                // 「今」か「明」の時のみ、日時カーソルが飛んだ場合には、その間の時間を表示する
+                if dt > current_datetime_cursor_clone {
+                    let blank_duration = *dt - current_datetime_cursor_clone;
+                    let tmp_id = Uuid::new_v4();
+
+                    let skip_msg = format!(
+                        "---- ------------------------------------ - ---------- --------------------- - -- -- {}分間の空き時間",
+                        blank_duration.num_minutes()
+                    );
+
+                    if let Some(pattern) = pattern_opt {
+                        if (pattern == "今"
+                            && *dt
+                                < get_next_morning_datetime(task_repository.get_last_synced_time()))
+                            || (pattern == "明"
+                                && *current_datetime_cursor_clone
+                                    >= get_next_morning_datetime(
+                                        task_repository.get_last_synced_time(),
+                                    )
+                                && *dt
+                                    < get_next_morning_datetime(
+                                        task_repository.get_last_synced_time(),
+                                    ) + Duration::days(1))
+                        {
+                            msgs_with_dt.push((
+                                *current_datetime_cursor_clone,
+                                0,
+                                tmp_id,
+                                skip_msg,
+                            ));
+                        }
+                    }
+                }
+
                 let end_datetime = *start_datetime + Duration::seconds(estimated_work_seconds);
                 current_datetime_cursor = end_datetime.clone();
 
