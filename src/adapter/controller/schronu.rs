@@ -2168,6 +2168,42 @@ fn decide_time(tokens: &Vec<&str>, now: &DateTime<Local>) -> Option<DateTime<Loc
             }
 
             ans_datetime
+        } else if tokens.len() >= 3
+            && vec!["月", "火", "水", "木", "金", "土", "日"].contains(&tokens[2])
+        {
+            // 月 火 水 木 金 土 日 が指定された時は、明日以降で、直近のその曜日とする。
+            // (show_all_tasksとロジック重複...)
+            let days_of_week = vec!["月", "火", "水", "木", "金", "土", "日"];
+
+            let todays_morning_datetime = get_next_morning_datetime(*now) - Duration::days(1);
+
+            let dn = todays_morning_datetime.date_naive();
+            let now_weekday_jp = get_weekday_jp(&dn);
+
+            let now_days_of_week_ind = days_of_week
+                .iter()
+                .position(|&x| &x == &now_weekday_jp)
+                .unwrap();
+            let target_days_of_week_ind =
+                days_of_week.iter().position(|&x| x == tokens[2]).unwrap();
+
+            let ind_diff = (7 + target_days_of_week_ind - now_days_of_week_ind) % 7;
+
+            // 今日の6:00にdeferする味意はないので、その代わりに、1週間後の同じ曜日にdeferできるようにする
+            let days: i64 = if ind_diff == 0 { 7 } else { ind_diff as i64 };
+            let n_days_after_datetime = get_next_morning_datetime(*now) + Duration::days(days - 1);
+            let ans_datetime = Local
+                .with_ymd_and_hms(
+                    n_days_after_datetime.year(),
+                    n_days_after_datetime.month(),
+                    n_days_after_datetime.day(),
+                    hh,
+                    mm,
+                    0,
+                )
+                .unwrap();
+
+            ans_datetime
         } else {
             Local
                 .with_ymd_and_hms(now.year(), now.month(), now.day(), hh, mm, 0)
