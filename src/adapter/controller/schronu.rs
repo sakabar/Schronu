@@ -594,7 +594,7 @@ fn execute_show_all_tasks(
                 let start_datetime = max(dt, current_datetime_cursor_clone);
 
                 // 「今」か「明」の時のみ、日時カーソルが飛んだ場合には、その間の時間を表示する
-                if dt > current_datetime_cursor_clone {
+                if (*dt - current_datetime_cursor_clone).num_minutes() > 0 {
                     let blank_duration = *dt - current_datetime_cursor_clone;
                     let tmp_id = Uuid::new_v4();
 

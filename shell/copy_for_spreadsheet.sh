@@ -3,7 +3,7 @@
 set -ue
 
 cell_row_num=2
-cat - | tr ' ' '\t' | tac | awk 'NF >= 9' | while read line_many_col; do
+cat - | grep -v -- '^----' | tr ' ' '\t' | tac | awk 'NF >= 9' | while read line_many_col; do
     line=$(echo ${line_many_col} | cut -f1-9)
     prev_cell_row_num=$[$cell_row_num - 1]
 
