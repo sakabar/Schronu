@@ -456,6 +456,9 @@ fn execute_show_all_tasks(
     // 前倒し可能という決め方だと、何日まで前倒しできるのか曖昧性が発生する?
     let mut adjustable_estimated_work_seconds_map: HashMap<NaiveDate, i64> = HashMap::new();
 
+    // 「暦」コマンドで、未来のサマリは見ても仕方ないので、直近の28日ぶん(配列の末尾)に絞る
+    const SUMMARY_DAYS: usize = 28;
+
     // タスク一覧で、どのタスクをいつやる見込みかを表示するために、「現在時刻」をズラして見ていく
     let mut current_datetime_cursor = task_repository.get_last_synced_time();
 
@@ -467,11 +470,13 @@ fn execute_show_all_tasks(
 
         // 「今」「明」コマンドの場合は未来の情報には興味がないので、スキップする
         if let Some(pattern) = pattern_opt {
-            if pattern == "今" || pattern == "明" {
+            if pattern == "今" || pattern == "明" || pattern == "暦" {
                 let valid_days = if pattern == "今" {
                     0
                 } else if pattern == "明" {
                     1
+                } else if pattern == "暦" {
+                    SUMMARY_DAYS as i64
                 } else {
                     // 事前にif文で囲ってあるので、通常はこのケースに入ることはない
                     9999
@@ -927,9 +932,6 @@ fn execute_show_all_tasks(
     // 日付の小さい順にソートする
     let mut counter_arr: Vec<(&NaiveDate, &usize)> = counter.iter().collect();
     counter_arr.sort_by(|a, b| a.0.cmp(&b.0));
-
-    // 未来のサマリは見ても仕方ないので、直近の8日ぶん(配列の末尾)に絞る
-    const SUMMARY_DAYS: usize = 8;
 
     let mut daily_stat_msgs: Vec<String> = vec![];
 
