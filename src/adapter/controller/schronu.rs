@@ -465,6 +465,27 @@ fn execute_show_all_tasks(
         let subjective_naive_date =
             (get_next_morning_datetime(*dt) - Duration::days(1)).date_naive();
 
+        // 「今」「明」コマンドの場合は未来の情報には興味がないので、スキップする
+        if let Some(pattern) = pattern_opt {
+            if pattern == "今" || pattern == "明" {
+                let valid_days = if pattern == "今" {
+                    0
+                } else if pattern == "明" {
+                    1
+                } else {
+                    // 事前にif文で囲ってあるので、通常はこのケースに入ることはない
+                    9999
+                };
+
+                if (get_next_morning_datetime(*dt)
+                    - get_next_morning_datetime(task_repository.get_last_synced_time()))
+                    > Duration::days(valid_days)
+                {
+                    break;
+                }
+            }
+        }
+
         counter
             .entry(subjective_naive_date)
             .and_modify(|cnt| *cnt += 1)
@@ -951,7 +972,9 @@ fn execute_show_all_tasks(
     let mut max_accumulated_rho_diff: f64 = -1.0;
     let mut max_accumulated_rho_diff_date = NaiveDate::from_ymd_opt(1900, 1, 1).unwrap();
 
-    for (date, _cnt) in &counter_arr[0..SUMMARY_DAYS] {
+    let max_counter_days = min(counter_arr.len(), SUMMARY_DAYS);
+
+    for (date, _cnt) in &counter_arr[0..max_counter_days] {
         let total_estimated_work_seconds_of_the_date: i64 =
             *total_estimated_work_seconds_of_the_date_counter
                 .get(date)
