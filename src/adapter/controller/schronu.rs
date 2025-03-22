@@ -3370,7 +3370,7 @@ fn application(
                 println!(
                     "{}{}> {}{}",
                     style::Bold,
-                    &Local::now().format("%Y/%m/%d %H:%M:%S").to_string(),
+                    &Local::now().format("%Y/%m/%d %H:%M:%S.%f").to_string(),
                     line,
                     style::Reset
                 );
