@@ -3504,8 +3504,7 @@ fn application(
                                         // 〆切の日に合わせる
                                         let new_start_time = focused_task.get_start_time()
                                             + Duration::days(
-                                                (new_deadline_time - focused_task.get_start_time())
-                                                    .num_days(),
+                                                (new_deadline_time - orig_deadline_time).num_days(),
                                             );
 
                                         focused_task.set_start_time(new_start_time);
