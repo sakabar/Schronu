@@ -3499,10 +3499,7 @@ fn application(
                                         focused_task.unset_deadline_time_opt();
                                         focused_task.set_deadline_time_opt(Some(new_deadline_time));
 
-                                        let p = get_next_morning_datetime(new_deadline_time)
-                                            - Duration::days(1);
-                                        focused_task.set_pending_until(p);
-                                        focused_task.set_orig_status(Status::Pending);
+                                        focused_task.set_orig_status(Status::Todo);
 
                                         // 〆切の日に合わせる
                                         let new_start_time = focused_task.get_start_time()
