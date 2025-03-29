@@ -3480,8 +3480,21 @@ fn application(
                                     if let Some(repetition_interval_days) =
                                         parent_task.get_repetition_interval_days_opt()
                                     {
-                                        let new_deadline_time = orig_deadline_time
-                                            + Duration::days(repetition_interval_days);
+                                        let new_deadline_time = if let Some(parent_deadline_time) =
+                                            parent_task.get_deadline_time_opt()
+                                        {
+                                            (get_next_morning_datetime(orig_deadline_time)
+                                                + Duration::days(repetition_interval_days - 1))
+                                            .with_hour(parent_deadline_time.hour())
+                                            .expect("invalid hour")
+                                            .with_minute(parent_deadline_time.minute())
+                                            .expect("invalid minute")
+                                            .with_second(parent_deadline_time.second())
+                                            .expect("invalid second")
+                                        } else {
+                                            orig_deadline_time
+                                                + Duration::days(repetition_interval_days)
+                                        };
 
                                         focused_task.unset_deadline_time_opt();
                                         focused_task.set_deadline_time_opt(Some(new_deadline_time));
