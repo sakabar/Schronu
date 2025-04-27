@@ -1293,7 +1293,11 @@ fn execute_show_all_tasks(
         for (cal_ind, s) in daily_stat_msgs.iter().enumerate() {
             writeln_newline(stdout, &s).unwrap();
 
-            if s.contains("(月)") && cal_ind != daily_stat_msgs.len() - 1 {
+            if s.contains("2025-04-28") || s.contains("2025-05-05") {
+                // skip
+            } else if (s.contains("2025-05-07") || s.contains("(月)"))
+                && cal_ind != daily_stat_msgs.len() - 1
+            {
                 writeln_newline(stdout, "").unwrap();
             }
         }
