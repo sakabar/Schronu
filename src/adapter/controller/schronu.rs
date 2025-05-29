@@ -1115,10 +1115,11 @@ fn execute_show_all_tasks(
         let repetitive_task_estimated_work_hours =
             repetitive_task_estimated_work_seconds as f64 / 3600.0;
 
+        let non_repetitive_free_time_hours = free_time_hours - repetitive_task_estimated_work_hours;
         let accumulated_rho_diff = if free_time_hours - repetitive_task_estimated_work_hours > 0.0 {
             accumulate_duration_diff_to_limit.num_minutes() as f64
                 / 60.0
-                / (free_time_hours - repetitive_task_estimated_work_hours)
+                / non_repetitive_free_time_hours
         } else {
             f64::INFINITY
         };
@@ -1197,11 +1198,19 @@ fn execute_show_all_tasks(
             deadline_rest_duration_seconds as f64 / (free_time_hours * 60.0 * 60.0),
         );
 
+        let non_repetitive_free_time_sign = if non_repetitive_free_time_hours >= 0.0 {
+            ' '
+        } else {
+            '-'
+        };
         let indicator_about_diff_to_limit = format!(
-            "{}{:02}時間{:02}分\t{:5.2}",
+            "{}{:02}時間{:02}分\t{}{:02}時間{:02}分\t{:5.2}",
             diff_to_limit_sign,
             accumulate_duration_diff_to_limit.num_hours().abs(),
             accumulate_duration_diff_to_limit.num_minutes().abs() % 60,
+            non_repetitive_free_time_sign,
+            non_repetitive_free_time_hours.abs().floor(),
+            (non_repetitive_free_time_hours.abs() * 60.0) as i64 % 60,
             accumulated_rho_diff,
         );
 
@@ -1298,7 +1307,8 @@ fn execute_show_all_tasks(
             "余差累    ",
             "〆差      ",
             "〆差比",
-            "空差累 ",
+            "空差累    ",
+            "単発余暇",
             "空差累比",
             "タスク数",
         ]
