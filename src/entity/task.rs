@@ -1453,8 +1453,6 @@ impl Task {
         }
 
         // ここからPhase2: 〆切に対してオーバーしている時間を計算し、逆に親→子の順に時間を修正する
-        // ansには子→親の順に結果が格納されているので、これを後ろから辿ればよい
-        let mut bring_forward_duration = Duration::seconds(0);
 
         // 親のfirst_available_timeは〆切を考慮済みなので、それを子でも考慮するために一時保存する
         // 別のメソッドでset_deadline_time()する際に各タスクの見積もりまで考慮して設定するのは、見積もりを変えるたびにdeadline_timeを設定し直さなければいけないため複雑になる
@@ -1462,24 +1460,25 @@ impl Task {
         let mut parent_required_start_time_for_deadline = DateTime::<Local>::MAX_UTC.into();
 
         for (rough_first_available_time, task) in ans.iter_mut().rev() {
-            // まず、親から引き継いできた早める時間ぶん前に倒す
-            *rough_first_available_time = *rough_first_available_time - bring_forward_duration;
-
+            // 親から引き継いだ〆切か、自分の〆切のうち早いほう
+            let mut required_start_time_for_deadline = parent_required_start_time_for_deadline;
             if let Some(deadline_time) = task.get_deadline_time_opt() {
-                let lateness_duration = *rough_first_available_time
-                    + Duration::seconds(max(
-                        0,
-                        task.get_estimated_work_seconds() - task.get_actual_work_seconds(),
-                    ))
-                    - min(deadline_time, parent_required_start_time_for_deadline);
-
-                if lateness_duration > Duration::seconds(0) {
-                    *rough_first_available_time = *rough_first_available_time - lateness_duration;
-                    bring_forward_duration = bring_forward_duration + lateness_duration;
+                if deadline_time < required_start_time_for_deadline {
+                    required_start_time_for_deadline = deadline_time;
                 }
             }
 
-            parent_required_start_time_for_deadline = *rough_first_available_time;
+            let lateness_duration = *rough_first_available_time
+                + Duration::seconds(max(
+                    0,
+                    task.get_estimated_work_seconds() - task.get_actual_work_seconds(),
+                ))
+                - required_start_time_for_deadline;
+
+            if lateness_duration >= Duration::seconds(0) {
+                *rough_first_available_time = *rough_first_available_time - lateness_duration;
+                parent_required_start_time_for_deadline = *rough_first_available_time;
+            }
         }
 
         ans
