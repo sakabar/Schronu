@@ -2462,3 +2462,58 @@ fn test_list_all_parent_tasks_with_first_available_time_葉に〆切がある場
 
     assert_eq!(actual, expected);
 }
+
+#[test]
+fn test_list_all_parent_tasks_with_first_available_time_単に計算すると〆切をオーバーする場合は〆切優先とする(
+) {
+    /*
+     parent_task_1 (見積もり1h)
+       - child_task_1 (見積もり3h)
+         - grand_child_task (葉) (見積もり1h)
+    */
+    let dt = Local.with_ymd_and_hms(2023, 5, 19, 0, 0, 0).unwrap();
+    let parent_task = Task::new("親タスク");
+    parent_task.set_create_time(dt);
+    parent_task.set_start_time(dt);
+    parent_task.set_estimated_work_seconds(7200);
+    parent_task.set_deadline_time_opt(Some(dt + Duration::hours(24)));
+
+    let mut child_task = Task::new("子タスク");
+    child_task.set_create_time(dt);
+    child_task.set_start_time(dt);
+    child_task.set_estimated_work_seconds(10800);
+    child_task.set_deadline_time_opt(Some(dt + Duration::hours(24)));
+
+    let grand_child_task = child_task.create_as_last_child(TaskAttr::new("孫タスク"));
+    grand_child_task.set_create_time(dt);
+    grand_child_task.set_start_time(dt);
+    grand_child_task.set_estimated_work_seconds(3600);
+    grand_child_task.set_deadline_time_opt(Some(dt + Duration::hours(24)));
+    grand_child_task.set_pending_until(dt + Duration::hours(22));
+    grand_child_task.set_orig_status(Status::Pending);
+
+    let expected = vec![
+        (
+            // grand_child_task自体のpending_untilは22時、見積もりは1hだが、
+            // 親タスクの〆切を逆算すると19時に作業開始する必要がある
+            dt + Duration::hours(24) - Duration::hours(2 + 3 + 1),
+            grand_child_task.clone(),
+        ),
+        (
+            dt + Duration::hours(24) - Duration::hours(2 + 3),
+            child_task.clone(),
+        ),
+        (
+            dt + Duration::hours(24) - Duration::hours(2),
+            parent_task.clone(),
+        ),
+    ];
+
+    child_task
+        .detach_insert_as_last_child_of(parent_task)
+        .unwrap();
+
+    let actual = grand_child_task.list_all_parent_tasks_with_first_available_time();
+
+    assert_eq!(actual, expected);
+}
