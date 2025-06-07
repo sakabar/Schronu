@@ -1459,7 +1459,7 @@ impl Task {
         // 親のfirst_available_timeは〆切を考慮済みなので、それを子でも考慮するために一時保存する
         // 別のメソッドでset_deadline_time()する際に各タスクの見積もりまで考慮して設定するのは、見積もりを変えるたびにdeadline_timeを設定し直さなければいけないため複雑になる
         // そのため、このメソッド内で行う
-        let mut parent_first_available_time = DateTime::<Local>::MAX_UTC.into();
+        let mut parent_required_start_time_for_deadline = DateTime::<Local>::MAX_UTC.into();
 
         for (rough_first_available_time, task) in ans.iter_mut().rev() {
             // まず、親から引き継いできた早める時間ぶん前に倒す
@@ -1471,7 +1471,7 @@ impl Task {
                         0,
                         task.get_estimated_work_seconds() - task.get_actual_work_seconds(),
                     ))
-                    - min(deadline_time, parent_first_available_time);
+                    - min(deadline_time, parent_required_start_time_for_deadline);
 
                 if lateness_duration > Duration::seconds(0) {
                     *rough_first_available_time = *rough_first_available_time - lateness_duration;
@@ -1479,7 +1479,7 @@ impl Task {
                 }
             }
 
-            parent_first_available_time = *rough_first_available_time;
+            parent_required_start_time_for_deadline = *rough_first_available_time;
         }
 
         ans
