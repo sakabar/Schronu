@@ -1404,6 +1404,7 @@ impl Task {
         ans
     }
 
+    // 親のタスクを考慮せずに、そのタスク単体で見た時に最速で着手できる時刻
     pub fn first_available_time(&self) -> DateTime<Local> {
         let dt_cand = if self.get_orig_status() == Status::Pending {
             vec![self.get_start_time(), self.get_pending_until()]
@@ -1417,12 +1418,18 @@ impl Task {
 
     // 親を辿って、Todoのタスクを全て返す
     // タプルの1つ目は最速でTodo化するタイミング
-    // 〆切を守れるように、pending_untilよりも〆切を優先する
+    // ただし、〆切を守れるように、pending_untilよりも〆切を優先する
     pub fn list_all_parent_tasks_with_first_available_time(&self) -> Vec<(DateTime<Local>, Task)> {
         let mut ans: Vec<(DateTime<Local>, Task)> = vec![];
         let mut child_task_first_available_time: DateTime<Local> =
             DateTime::<Local>::MIN_UTC.into();
 
+        // Phase1 子→親に辿って仮のfirst_available_timeを決定する
+        //   max(子の最速着手時間 + 子の見積もり時間, 親のstart_time) = 親の最速着手時間
+
+        // Phase2 〆切に対してオーバーしている時間を計算し、逆に親→子の順に時間を修正する
+
+        // ここからPhase1: 子→親に辿って仮のfirst_available_timeを決定する
         let mut task_opt = Some(self.clone());
         loop {
             match task_opt {
@@ -1432,18 +1439,6 @@ impl Task {
 
                     // 2要素なのでNoneになることはない
                     child_task_first_available_time = *dt_cand.iter().max().unwrap();
-
-                    // 〆切優先。(〆切 - 見積もり時間)
-                    match task.get_deadline_time_opt() {
-                        Some(deadline_time) => {
-                            child_task_first_available_time = min(
-                                child_task_first_available_time,
-                                deadline_time
-                                    - Duration::seconds(task.get_estimated_work_seconds()),
-                            );
-                        }
-                        None => {}
-                    };
 
                     let tpl = (child_task_first_available_time, task.clone());
                     ans.push(tpl);
@@ -1455,6 +1450,36 @@ impl Task {
                     break;
                 }
             }
+        }
+
+        // ここからPhase2: 〆切に対してオーバーしている時間を計算し、逆に親→子の順に時間を修正する
+        // ansには子→親の順に結果が格納されているので、これを後ろから辿ればよい
+        let mut bring_forward_duration = Duration::seconds(0);
+
+        // 親のfirst_available_timeは〆切を考慮済みなので、それを子でも考慮するために一時保存する
+        // 別のメソッドでset_deadline_time()する際に各タスクの見積もりまで考慮して設定するのは、見積もりを変えるたびにdeadline_timeを設定し直さなければいけないため複雑になる
+        // そのため、このメソッド内で行う
+        let mut parent_first_available_time = DateTime::<Local>::MAX_UTC.into();
+
+        for (rough_first_available_time, task) in ans.iter_mut().rev() {
+            // まず、親から引き継いできた早める時間ぶん前に倒す
+            *rough_first_available_time = *rough_first_available_time - bring_forward_duration;
+
+            if let Some(deadline_time) = task.get_deadline_time_opt() {
+                let lateness_duration = *rough_first_available_time
+                    + Duration::seconds(max(
+                        0,
+                        task.get_estimated_work_seconds() - task.get_actual_work_seconds(),
+                    ))
+                    - min(deadline_time, parent_first_available_time);
+
+                if lateness_duration > Duration::seconds(0) {
+                    *rough_first_available_time = *rough_first_available_time - lateness_duration;
+                    bring_forward_duration = bring_forward_duration + lateness_duration;
+                }
+            }
+
+            parent_first_available_time = *rough_first_available_time;
         }
 
         ans
