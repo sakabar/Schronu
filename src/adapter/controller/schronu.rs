@@ -1825,6 +1825,64 @@ fn execute_breakdown_sequentially(
     }
 }
 
+fn execute_create_repetition_task(
+    _stdout: &mut RawTerminal<Stdout>,
+    task_repository: &mut dyn TaskRepositoryTrait,
+    focused_task_id_opt: &mut Option<Uuid>,
+    focused_task_opt: &Option<Task>,
+    new_task_name_str: &str,
+    exec_day_str: &str,
+    estimated_work_minutes: i64,
+    start_time_str: &str,
+    deadline_time_str: &str,
+) {
+    // まず繰り返しタスクの親タスクを作る。
+    execute_breakdown(
+        _stdout,
+        focused_task_id_opt,
+        focused_task_opt,
+        &[new_task_name_str],
+        &None,
+    );
+    let repetition_parent_task_opt =
+        focused_task_id_opt.and_then(|id| task_repository.get_by_id(id));
+    execute_set_estimated_work_minutes(
+        &repetition_parent_task_opt,
+        &format!("{}", estimated_work_minutes),
+    );
+
+    let task_num = if exec_day_str == "毎" { 7 } else { 4 };
+
+    if let Some(focused_task_id) = focused_task_id_opt {
+        let repetition_parent_task_id = focused_task_id.clone();
+        let focused_task_opt = focused_task_id_opt.and_then(|id| task_repository.get_by_id(id));
+
+        // ループを回して子タスクを作る
+        for _ in 0..task_num {
+            execute_breakdown(
+                _stdout,
+                focused_task_id_opt,
+                &focused_task_opt,
+                &[new_task_name_str],
+                &None,
+            );
+            let child_task_opt = focused_task_id_opt.and_then(|id| task_repository.get_by_id(id));
+            execute_set_estimated_work_minutes(
+                &child_task_opt,
+                &format!("{}", estimated_work_minutes),
+            );
+
+            // 次ここから作業再開する。start_timeを作るために、「毎」か「月~日」でそれぞれ日付をループさせたい
+            focused_task.set_start_time(start_dst_time);
+
+            execute_focus(
+                focused_task_id_opt,
+                &repetition_parent_task_id.hyphenated().to_string(),
+            );
+        }
+    }
+}
+
 fn execute_split(
     stdout: &mut RawTerminal<Stdout>,
     focused_task_id_opt: &mut Option<Uuid>,
@@ -2389,6 +2447,29 @@ fn execute(
                             }
                         }
                     }
+                }
+            }
+        }
+        "繰" | "repeat" => {
+            if tokens.len() == 6 {
+                let new_task_name_str = &tokens[1];
+                let estimated_work_minutes_result = &tokens[2].parse();
+                let day = &tokens[3];
+                let start_time_str = &tokens[4];
+                let deadline_time_str = &tokens[5];
+
+                if let Ok(estimated_work_minutes) = estimated_work_minutes_result {
+                    execute_create_repetition_task(
+                        stdout,
+                        task_repository,
+                        focused_task_id_opt,
+                        &focused_task_opt,
+                        new_task_name_str,
+                        day,
+                        *estimated_work_minutes,
+                        start_time_str,
+                        deadline_time_str,
+                    )
                 }
             }
         }
