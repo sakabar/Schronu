@@ -2100,6 +2100,61 @@ fn execute_defer_routine(
     }
 }
 
+// 何日もSchronuを開いていなくてあまりにもTODOがたまってしまった場合に、repetition_intervalが7日以内のルーチンタスクを自動的に先送りする
+// 7日よりも大きい場合は、1年に1回のような重要なタスクである可能性があるため、何もしない
+fn execute_defer_all_frequent_routines(
+    task_repository: &mut dyn TaskRepositoryTrait,
+    focused_task_id_opt: &mut Option<Uuid>,
+    focused_task_opt: &Option<Task>,
+) {
+    const MAX_REPETITION_INTERVAL_DAYS: i64 = 7;
+    // let mut cnt = 0;
+
+    loop {
+        let mut any_is_changed = false;
+
+        // まず対象のタスクIDを収集して所有権のあるベクタに保持し、
+        // その後でmut借用が必要な処理を行う (借用の競合を避ける)
+        let candidate_task_ids: Vec<Uuid> = {
+            let mut ids = Vec::new();
+            for project_root_task in task_repository.get_all_projects().iter() {
+                let leaf_tasks = extract_leaf_tasks_from_project(&project_root_task);
+                for leaf_task in leaf_tasks.iter() {
+                    if let Some(parent_task) = leaf_task.parent() {
+                        if let Some(repetition_interval_days) =
+                            parent_task.get_repetition_interval_days_opt()
+                        {
+                            if repetition_interval_days <= MAX_REPETITION_INTERVAL_DAYS {
+                                ids.push(leaf_task.get_id());
+                            }
+                        }
+                    }
+                }
+            }
+            ids
+        };
+
+        // TODOの葉タスクについて、条件を満たす限りexecute_defer_routine()を適用し続ける
+        for task_id in candidate_task_ids.into_iter() {
+            *focused_task_id_opt = Some(task_id);
+            let orig_focused_task_id_opt = focused_task_id_opt.clone();
+            execute_defer_routine(task_repository, focused_task_id_opt);
+
+            // deferが成功してフォーカスが移ったら記録しておく
+            if orig_focused_task_id_opt != *focused_task_id_opt {
+                any_is_changed = true;
+                // cnt +=  1;
+            }
+        }
+
+        if !any_is_changed {
+            break;
+        }
+    }
+
+    // println!("{:?}", cnt );
+}
+
 fn execute_finish(focused_task_id_opt: &mut Option<Uuid>, focused_task_opt: &Option<Task>) {
     focused_task_opt.as_ref().and_then(|focused_task| {
         focused_task.set_orig_status(Status::Done);
@@ -3016,6 +3071,13 @@ fn execute(
                 }
             }
         }
+        "清" | "defer_all_frequent_routines" => {
+            execute_defer_all_frequent_routines(
+                task_repository,
+                focused_task_id_opt,
+                &focused_task_opt,
+            );
+        }
         "逃" | "escape" | "esc" => {
             // 先延ばしにしてしまう時。要求している見積もりが小さすぎる可能性があるので、2倍にする
             if let Some(focused_task) = focused_task_opt {
@@ -3679,6 +3741,7 @@ fn application(
                     && fst_char_opt != Some('平')
                     && fst_char_opt != Some('葉')
                     && fst_char_opt != Some('樹')
+                    && fst_char_opt != Some('清')
                 {
                     execute_show_leaf_tasks(&mut stdout, task_repository, free_time_manager);
                 }
