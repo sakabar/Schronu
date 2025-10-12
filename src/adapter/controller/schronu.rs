@@ -1873,7 +1873,7 @@ fn execute_create_repetition_task(
             );
 
             // 次ここから作業再開する。start_timeを作るために、「毎」か「月~日」でそれぞれ日付をループさせたい
-            focused_task.set_start_time(start_dst_time);
+            // focused_task.set_start_time(start_dst_time);
 
             execute_focus(
                 focused_task_id_opt,
@@ -2051,6 +2051,108 @@ fn execute_extrude(
             }
         }
     }
+}
+
+// 〆切をrepetition_interval_daysのぶん伸ばし、pendingにする
+// start_timeも伸ばすが、時刻は元のstart_timeを維持する
+fn execute_defer_routine(
+    task_repository: &mut dyn TaskRepositoryTrait,
+    focused_task_id_opt: &mut Option<Uuid>,
+) {
+    if let Some(focused_task_id) = focused_task_id_opt {
+        if let Some(ref focused_task) = task_repository.get_by_id(*focused_task_id) {
+            if let Some(orig_deadline_time) = focused_task.get_deadline_time_opt() {
+                if let Some(parent_task) = focused_task.parent() {
+                    if let Some(repetition_interval_days) =
+                        parent_task.get_repetition_interval_days_opt()
+                    {
+                        let new_deadline_time = if let Some(parent_deadline_time) =
+                            parent_task.get_deadline_time_opt()
+                        {
+                            (get_next_morning_datetime(orig_deadline_time)
+                                + Duration::days(repetition_interval_days - 1))
+                            .with_hour(parent_deadline_time.hour())
+                            .expect("invalid hour")
+                            .with_minute(parent_deadline_time.minute())
+                            .expect("invalid minute")
+                            .with_second(parent_deadline_time.second())
+                            .expect("invalid second")
+                        } else {
+                            orig_deadline_time + Duration::days(repetition_interval_days)
+                        };
+
+                        focused_task.unset_deadline_time_opt();
+                        focused_task.set_deadline_time_opt(Some(new_deadline_time));
+
+                        focused_task.set_orig_status(Status::Todo);
+
+                        // 〆切の日に合わせる
+                        let new_start_time = focused_task.get_start_time()
+                            + Duration::days((new_deadline_time - orig_deadline_time).num_days());
+
+                        focused_task.set_start_time(new_start_time);
+
+                        *focused_task_id_opt = None;
+                    }
+                }
+            }
+        }
+    }
+}
+
+// 何日もSchronuを開いていなくてあまりにもTODOがたまってしまった場合に、repetition_intervalが7日以内のルーチンタスクを自動的に先送りする
+// 7日よりも大きい場合は、1年に1回のような重要なタスクである可能性があるため、何もしない
+fn execute_defer_all_frequent_routines(
+    task_repository: &mut dyn TaskRepositoryTrait,
+    focused_task_id_opt: &mut Option<Uuid>,
+    focused_task_opt: &Option<Task>,
+) {
+    const MAX_REPETITION_INTERVAL_DAYS: i64 = 7;
+    // let mut cnt = 0;
+
+    loop {
+        let mut any_is_changed = false;
+
+        // まず対象のタスクIDを収集して所有権のあるベクタに保持し、
+        // その後でmut借用が必要な処理を行う (借用の競合を避ける)
+        let candidate_task_ids: Vec<Uuid> = {
+            let mut ids = Vec::new();
+            for project_root_task in task_repository.get_all_projects().iter() {
+                let leaf_tasks = extract_leaf_tasks_from_project(&project_root_task);
+                for leaf_task in leaf_tasks.iter() {
+                    if let Some(parent_task) = leaf_task.parent() {
+                        if let Some(repetition_interval_days) =
+                            parent_task.get_repetition_interval_days_opt()
+                        {
+                            if repetition_interval_days <= MAX_REPETITION_INTERVAL_DAYS {
+                                ids.push(leaf_task.get_id());
+                            }
+                        }
+                    }
+                }
+            }
+            ids
+        };
+
+        // TODOの葉タスクについて、条件を満たす限りexecute_defer_routine()を適用し続ける
+        for task_id in candidate_task_ids.into_iter() {
+            *focused_task_id_opt = Some(task_id);
+            let orig_focused_task_id_opt = focused_task_id_opt.clone();
+            execute_defer_routine(task_repository, focused_task_id_opt);
+
+            // deferが成功してフォーカスが移ったら記録しておく
+            if orig_focused_task_id_opt != *focused_task_id_opt {
+                any_is_changed = true;
+                // cnt +=  1;
+            }
+        }
+
+        if !any_is_changed {
+            break;
+        }
+    }
+
+    // println!("{:?}", cnt );
 }
 
 fn execute_finish(focused_task_id_opt: &mut Option<Uuid>, focused_task_opt: &Option<Task>) {
@@ -2969,6 +3071,13 @@ fn execute(
                 }
             }
         }
+        "清" | "defer_all_frequent_routines" => {
+            execute_defer_all_frequent_routines(
+                task_repository,
+                focused_task_id_opt,
+                &focused_task_opt,
+            );
+        }
         "逃" | "escape" | "esc" => {
             // 先延ばしにしてしまう時。要求している見積もりが小さすぎる可能性があるので、2倍にする
             if let Some(focused_task) = focused_task_opt {
@@ -3022,12 +3131,21 @@ fn execute(
             // 空 13:00
             // 今着手可能なタスクについてactiveなものを、指定したタイミングまでpendingする
 
+            // 空 13:00 10:00
+            // 10:00以降に着手可能なタスクについてactiveなものを、指定したタイミングまでpendingする
+            // 第3引数を任意とするので、順番が to → from の順になっているのはちょっと気になる
+
             // 集 13:00
             // 指定したタイミングまでに着手する予定のタスクを全てTodoに直す
             let hhmm_reg = Regex::new(r"^(\d{1,2}):(\d{1,2})$").unwrap();
             if tokens.len() >= 2 && hhmm_reg.is_match(tokens[1]) {
                 let cmd_str = tokens[0];
                 let hhmm_str = tokens[1];
+                let from_hhmm_str = if tokens.len() >= 3 {
+                    Some(tokens[2])
+                } else {
+                    None
+                };
 
                 let now: DateTime<Local> = task_repository.get_last_synced_time();
 
@@ -3562,50 +3680,7 @@ fn application(
                         &s,
                     );
                 } else if line == "W" {
-                    // 〆切をrepetition_interval_daysのぶん伸ばし、pendingにする
-                    // start_timeも伸ばすが、時刻は元のstart_timeを維持する
-                    if let Some(focused_task_id) = focused_task_id_opt {
-                        if let Some(ref focused_task) = task_repository.get_by_id(focused_task_id) {
-                            if let Some(orig_deadline_time) = focused_task.get_deadline_time_opt() {
-                                if let Some(parent_task) = focused_task.parent() {
-                                    if let Some(repetition_interval_days) =
-                                        parent_task.get_repetition_interval_days_opt()
-                                    {
-                                        let new_deadline_time = if let Some(parent_deadline_time) =
-                                            parent_task.get_deadline_time_opt()
-                                        {
-                                            (get_next_morning_datetime(orig_deadline_time)
-                                                + Duration::days(repetition_interval_days - 1))
-                                            .with_hour(parent_deadline_time.hour())
-                                            .expect("invalid hour")
-                                            .with_minute(parent_deadline_time.minute())
-                                            .expect("invalid minute")
-                                            .with_second(parent_deadline_time.second())
-                                            .expect("invalid second")
-                                        } else {
-                                            orig_deadline_time
-                                                + Duration::days(repetition_interval_days)
-                                        };
-
-                                        focused_task.unset_deadline_time_opt();
-                                        focused_task.set_deadline_time_opt(Some(new_deadline_time));
-
-                                        focused_task.set_orig_status(Status::Todo);
-
-                                        // 〆切の日に合わせる
-                                        let new_start_time = focused_task.get_start_time()
-                                            + Duration::days(
-                                                (new_deadline_time - orig_deadline_time).num_days(),
-                                            );
-
-                                        focused_task.set_start_time(new_start_time);
-
-                                        focused_task_id_opt = None;
-                                    }
-                                }
-                            }
-                        }
-                    }
+                    execute_defer_routine(task_repository, &mut focused_task_id_opt);
                 } else if line == "y" {
                     // skip "y"early
                     let now: DateTime<Local> = task_repository.get_last_synced_time();
@@ -3666,6 +3741,7 @@ fn application(
                     && fst_char_opt != Some('平')
                     && fst_char_opt != Some('葉')
                     && fst_char_opt != Some('樹')
+                    && fst_char_opt != Some('清')
                 {
                     execute_show_leaf_tasks(&mut stdout, task_repository, free_time_manager);
                 }
