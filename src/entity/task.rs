@@ -413,19 +413,16 @@ pub fn extract_leaf_immutable_tasks_from_project(task: &ImmutableTask) -> Vec<&I
 // Todoの葉タスクを抽出する
 pub fn extract_leaf_tasks_from_project(task: &Task) -> Vec<Task> {
     let target_status: Vec<Status> = vec![Status::Todo];
-    extract_leaf_tasks_from_project_boyoyo(task, &target_status)
+    extract_leaf_tasks_from_project_rec(task, &target_status)
 }
 
 // TodoもしくはPendingの葉タスクを抽出する
 pub fn extract_leaf_tasks_from_project_with_pending(task: &Task) -> Vec<Task> {
     let target_status: Vec<Status> = vec![Status::Todo, Status::Pending];
-    extract_leaf_tasks_from_project_boyoyo(task, &target_status)
+    extract_leaf_tasks_from_project_rec(task, &target_status)
 }
 
-fn extract_leaf_tasks_from_project_boyoyo(
-    task: &Task,
-    target_status_arr: &Vec<Status>,
-) -> Vec<Task> {
+fn extract_leaf_tasks_from_project_rec(task: &Task, target_status_arr: &Vec<Status>) -> Vec<Task> {
     let children_are_all_done = task
         .node
         .children()
@@ -448,7 +445,7 @@ fn extract_leaf_tasks_from_project_boyoyo(
             let child_task = Task { node: child_node };
 
             let leaves_with_pending: Vec<Task> =
-                extract_leaf_tasks_from_project_boyoyo(&child_task, &target_status_arr);
+                extract_leaf_tasks_from_project_rec(&child_task, &target_status_arr);
 
             let mut leaves: Vec<Task> = leaves_with_pending
                 .iter()
