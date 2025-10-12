@@ -1873,7 +1873,7 @@ fn execute_create_repetition_task(
             );
 
             // 次ここから作業再開する。start_timeを作るために、「毎」か「月~日」でそれぞれ日付をループさせたい
-            focused_task.set_start_time(start_dst_time);
+            // focused_task.set_start_time(start_dst_time);
 
             execute_focus(
                 focused_task_id_opt,
@@ -3022,12 +3022,21 @@ fn execute(
             // 空 13:00
             // 今着手可能なタスクについてactiveなものを、指定したタイミングまでpendingする
 
+            // 空 13:00 10:00
+            // 10:00以降に着手可能なタスクについてactiveなものを、指定したタイミングまでpendingする
+            // 第3引数を任意とするので、順番が to → from の順になっているのはちょっと気になる
+
             // 集 13:00
             // 指定したタイミングまでに着手する予定のタスクを全てTodoに直す
             let hhmm_reg = Regex::new(r"^(\d{1,2}):(\d{1,2})$").unwrap();
             if tokens.len() >= 2 && hhmm_reg.is_match(tokens[1]) {
                 let cmd_str = tokens[0];
                 let hhmm_str = tokens[1];
+                let from_hhmm_str = if tokens.len() >= 3 {
+                    Some(tokens[2])
+                } else {
+                    None
+                };
 
                 let now: DateTime<Local> = task_repository.get_last_synced_time();
 

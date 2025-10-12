@@ -59,6 +59,8 @@ schronu> tree
 schronu> all
 ```
 
+タスクの一覧を以下のように表示します。
+
 (例)
 
 ```
