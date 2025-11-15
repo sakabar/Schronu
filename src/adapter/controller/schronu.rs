@@ -2108,6 +2108,8 @@ fn execute_defer_all_frequent_routines(
     focused_task_opt: &Option<Task>,
 ) {
     const MAX_REPETITION_INTERVAL_DAYS: i64 = 7;
+    const MIN_OVERDUE_HOURS: i64 = 24;
+    let now = task_repository.get_last_synced_time();
     // let mut cnt = 0;
 
     loop {
@@ -2124,8 +2126,12 @@ fn execute_defer_all_frequent_routines(
                         if let Some(repetition_interval_days) =
                             parent_task.get_repetition_interval_days_opt()
                         {
-                            if repetition_interval_days <= MAX_REPETITION_INTERVAL_DAYS {
-                                ids.push(leaf_task.get_id());
+                            if let Some(deadline_time) = leaf_task.get_deadline_time_opt() {
+                                if repetition_interval_days <= MAX_REPETITION_INTERVAL_DAYS
+                                    && now - deadline_time >= Duration::hours(MIN_OVERDUE_HOURS)
+                                {
+                                    ids.push(leaf_task.get_id());
+                                }
                             }
                         }
                     }
