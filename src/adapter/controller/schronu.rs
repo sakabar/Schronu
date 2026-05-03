@@ -3222,28 +3222,34 @@ fn execute(
             }
         }
         "終" | "finish" | "fin" => {
-            // 現在のフォーカス時間を実作業時間に追加する
-            // 基本的にはそれを自動で行うが、もし引数を追加した時には発動させないようにする
-            if tokens.len() == 1 {
-                if let Some(ref focused_task) = focused_task_opt {
-                    let past_actual_work_seconds = focused_task.get_actual_work_seconds();
+            if let Some(ref focused_task) = focused_task_opt {
+                // まだ完了していない子ノードがある場合には完了できないようにガードする
+                if focused_task.has_undone_children() {
+                    // まだ完了していないタスクがあることを示すために「樹」コマンドを実施
+                    execute_show_tree(stdout, &focused_task_opt);
+                } else {
+                    // 現在のフォーカス時間を実作業時間に追加する
+                    // 基本的にはそれを自動で行うが、もし引数を追加した時には発動させないようにする
+                    if tokens.len() == 1 {
+                        let past_actual_work_seconds = focused_task.get_actual_work_seconds();
 
-                    let now_focus_duration_seconds = (task_repository.get_last_synced_time()
-                        - *focus_started_datetime)
-                        .num_seconds();
-                    focused_task.set_actual_work_seconds(
-                        past_actual_work_seconds
-                            + if now_focus_duration_seconds >= 60 {
-                                now_focus_duration_seconds
-                            } else {
-                                0
-                            },
-                    );
+                        let now_focus_duration_seconds = (task_repository.get_last_synced_time()
+                            - *focus_started_datetime)
+                            .num_seconds();
+                        focused_task.set_actual_work_seconds(
+                            past_actual_work_seconds
+                                + if now_focus_duration_seconds >= 60 {
+                                    now_focus_duration_seconds
+                                } else {
+                                    0
+                                },
+                        );
+                    }
+
+                    // 完了操作
+                    execute_finish(focused_task_id_opt, &focused_task_opt);
                 }
             }
-
-            // 完了操作
-            execute_finish(focused_task_id_opt, &focused_task_opt);
         }
         "" => {}
         &_ => {
