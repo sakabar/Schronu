@@ -505,6 +505,7 @@ fn execute_show_all_tasks(
                     if let Some(repetition_interval_days) =
                         parent.get_repetition_interval_days_opt()
                     {
+                        // TODO 【繰】というマジックナンバーが2ヶ所に登場していて危ない
                         ans = format!("{}【繰】({})", ans, repetition_interval_days);
                     }
 
@@ -780,6 +781,12 @@ fn execute_show_all_tasks(
                             if get_next_morning_datetime(*dt)
                                 == get_next_morning_datetime(last_synced_time) + Duration::days(1)
                             {
+                                msgs_with_dt.push((*dt, *rank, *id, msg));
+                            }
+                        } else if pattern == "単" {
+                            // non_repetitive (単発) のタスクのみを表示する
+                            // TODO 【繰】が2ヶ所に登場していて危ない
+                            if !msg.contains("【繰】") {
                                 msgs_with_dt.push((*dt, *rank, *id, msg));
                             }
                         } else if days_of_week.contains(&pattern.as_str()) {
@@ -2636,6 +2643,16 @@ fn execute(
         }
         "今" | "today" => {
             let pattern_opt = Some("今".to_string());
+            execute_show_all_tasks(
+                stdout,
+                focused_task_id_opt,
+                task_repository,
+                free_time_manager,
+                &pattern_opt,
+            );
+        }
+        "単" | "non_repetitive" => {
+            let pattern_opt = Some("単".to_string());
             execute_show_all_tasks(
                 stdout,
                 focused_task_id_opt,
