@@ -470,10 +470,10 @@ fn execute_show_all_tasks(
 
         // 「今」「明」コマンドの場合は未来の情報には興味がないので、スキップする
         if let Some(pattern) = pattern_opt {
-            if pattern == "今" || pattern == "明" || pattern == "暦" {
+            if pattern == "今" || pattern == "明" || pattern == "近" || pattern == "暦" {
                 let valid_days = if pattern == "今" {
                     0
-                } else if pattern == "明" {
+                } else if pattern == "明" || pattern == "近" {
                     1
                 } else if pattern == "暦" {
                     SUMMARY_DAYS as i64
@@ -620,7 +620,7 @@ fn execute_show_all_tasks(
                 let current_datetime_cursor_clone = &current_datetime_cursor.clone();
                 let start_datetime = max(dt, current_datetime_cursor_clone);
 
-                // 「今」か「明」の時のみ、日時カーソルが飛んだ場合には、その間の時間を表示する
+                // 「今」か「明」か「近」の時のみ、日時カーソルが飛んだ場合には、その間の時間を表示する
                 if (*dt - current_datetime_cursor_clone).num_minutes() > 0 {
                     let blank_duration = *dt - current_datetime_cursor_clone;
                     let tmp_id = Uuid::new_v4();
@@ -639,6 +639,11 @@ fn execute_show_all_tasks(
                                     >= get_next_morning_datetime(
                                         task_repository.get_last_synced_time(),
                                     )
+                                && *dt
+                                    < get_next_morning_datetime(
+                                        task_repository.get_last_synced_time(),
+                                    ) + Duration::days(1))
+                            || (pattern == "近"
                                 && *dt
                                     < get_next_morning_datetime(
                                         task_repository.get_last_synced_time(),
@@ -780,6 +785,15 @@ fn execute_show_all_tasks(
                         } else if pattern == "明" {
                             if get_next_morning_datetime(*dt)
                                 == get_next_morning_datetime(last_synced_time) + Duration::days(1)
+                            {
+                                msgs_with_dt.push((*dt, *rank, *id, msg));
+                            }
+                        } else if pattern == "近" {
+                            if get_next_morning_datetime(*dt)
+                                == get_next_morning_datetime(last_synced_time)
+                                || get_next_morning_datetime(*dt)
+                                    == get_next_morning_datetime(last_synced_time)
+                                        + Duration::days(1)
                             {
                                 msgs_with_dt.push((*dt, *rank, *id, msg));
                             }
@@ -3763,6 +3777,7 @@ fn application(
                     && fst_char_opt != Some('全')
                     && fst_char_opt != Some('今')
                     && fst_char_opt != Some('明')
+                    && fst_char_opt != Some('近')
                     && fst_char_opt != Some('週')
                     && fst_char_opt != Some('末')
                     && fst_char_opt != Some('翌')
