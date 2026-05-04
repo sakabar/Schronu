@@ -2360,7 +2360,6 @@ fn execute_set_arrange_children_work_minutes(
     if let Ok(estimated_minutes) = estimated_minutes_result {
         if let Some(focused_task) = focused_task_opt {
             if focused_task.get_repetition_interval_days_opt().is_some() {
-                print!("{:?}", focused_task.get_repetition_interval_days_opt());
                 let children = focused_task.get_children();
                 for child_task in children.iter() {
                     if child_task.get_status() != Status::Done {
