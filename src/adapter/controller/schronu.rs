@@ -1482,10 +1482,14 @@ fn execute_show_all_tasks(
         None
     };
 
+    let today_non_repetitive_deadline_estimated_work_hours =
+        today_total_deadline_estimated_work_hours - today_total_repetitive_estimated_work_hours;
+
     let non_repetitive_rho_msg = format!(
-        "one ρ = ({:.2} + 0.00) / ({:.2} + 0.00) = {:4.2}",
-        today_total_deadline_estimated_work_hours - today_total_repetitive_estimated_work_hours,
-        mu_hours - busy_hours - today_total_repetitive_estimated_work_hours,
+        "one ρ = ({:.2} + 0.00) / ({:.2} + 0.00 + {:.2}) = {:4.2}",
+        today_non_repetitive_deadline_estimated_work_hours,
+        today_non_repetitive_deadline_estimated_work_hours,
+        mu_hours - busy_hours - today_total_deadline_estimated_work_hours,
         non_repetitive_rho,
     );
     let non_repetitive_lq_msg = match non_repetitive_lq_opt {
@@ -1496,11 +1500,12 @@ fn execute_show_all_tasks(
     let s_for_non_repetitive_rho = format!("{}, {}", non_repetitive_rho_msg, non_repetitive_lq_msg);
 
     let rho1_msg = format!(
-        "rep ρ = ({:.2} + {:.2}) / ({:.2} + {:.2}) = {:4.2}",
-        today_total_deadline_estimated_work_hours - today_total_repetitive_estimated_work_hours,
+        "rep ρ = ({:.2} + {:.2}) / ({:.2} + {:.2} + {:.2}) = {:4.2}",
+        today_non_repetitive_deadline_estimated_work_hours,
         today_total_repetitive_estimated_work_hours,
-        mu_hours - busy_hours - today_total_repetitive_estimated_work_hours,
+        today_non_repetitive_deadline_estimated_work_hours,
         today_total_repetitive_estimated_work_hours,
+        mu_hours - busy_hours - today_total_deadline_estimated_work_hours,
         rho1,
     );
 
