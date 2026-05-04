@@ -1485,11 +1485,20 @@ fn execute_show_all_tasks(
     let today_non_repetitive_deadline_estimated_work_hours =
         today_total_deadline_estimated_work_hours - today_total_repetitive_estimated_work_hours;
 
+    let free_hours = mu_hours - busy_hours - today_total_deadline_estimated_work_hours;
+    let free_hours_sign = if free_hours >= 0.0 { '+' } else { '-' };
+    let free_hours_hour: i64 = free_hours.abs().floor() as i64;
+    let free_hours_minute: i64 =
+        ((free_hours - free_hours_hour as f64).abs() * 60.0).floor() as i64;
+
     let non_repetitive_rho_msg = format!(
-        "one ρ = ({:.2} + 0.00) / ({:.2} + 0.00 + {:.2}) = {:4.2}",
+        "one ρ = ({:.2} + 0.00) / ({:.2} + 0.00 {} {} {} {}/60) = {:4.2}",
         today_non_repetitive_deadline_estimated_work_hours,
         today_non_repetitive_deadline_estimated_work_hours,
-        mu_hours - busy_hours - today_total_deadline_estimated_work_hours,
+        free_hours_sign,
+        free_hours_hour,
+        free_hours_sign,
+        free_hours_minute,
         non_repetitive_rho,
     );
     let non_repetitive_lq_msg = match non_repetitive_lq_opt {
@@ -1500,12 +1509,15 @@ fn execute_show_all_tasks(
     let s_for_non_repetitive_rho = format!("{}, {}", non_repetitive_rho_msg, non_repetitive_lq_msg);
 
     let rho1_msg = format!(
-        "rep ρ = ({:.2} + {:.2}) / ({:.2} + {:.2} + {:.2}) = {:4.2}",
+        "rep ρ = ({:.2} + {:.2}) / ({:.2} + {:.2} {} {} {} {}/60) = {:4.2}",
         today_non_repetitive_deadline_estimated_work_hours,
         today_total_repetitive_estimated_work_hours,
         today_non_repetitive_deadline_estimated_work_hours,
         today_total_repetitive_estimated_work_hours,
-        mu_hours - busy_hours - today_total_deadline_estimated_work_hours,
+        free_hours_sign,
+        free_hours_hour,
+        free_hours_sign,
+        free_hours_minute,
         rho1,
     );
 
