@@ -66,6 +66,59 @@ fn get_weekday_jp(date: &NaiveDate) -> &str {
     }
 }
 
+struct RhoMetrics {
+    total_work_hours: f64,
+    repetitive_work_hours: f64,
+    non_repetitive_work_hours: f64,
+    available_hours: f64,
+    free_hours: f64,
+    rho: f64,
+    non_repetitive_rho: f64,
+}
+
+fn calculate_rho_metrics(
+    total_work_seconds: i64,
+    repetitive_work_seconds: i64,
+    available_minutes: i64,
+) -> RhoMetrics {
+    let total_work_hours = total_work_seconds as f64 / 3600.0;
+    let repetitive_work_hours = repetitive_work_seconds as f64 / 3600.0;
+    let non_repetitive_work_hours = (total_work_seconds - repetitive_work_seconds) as f64 / 3600.0;
+    let available_hours = available_minutes as f64 / 60.0;
+    let free_hours = available_hours - total_work_hours;
+
+    let rho = if available_minutes > 0 {
+        total_work_seconds as f64 / (available_minutes * 60) as f64
+    } else {
+        f64::INFINITY
+    };
+
+    let non_repetitive_available_hours = available_hours - repetitive_work_hours;
+    let non_repetitive_rho = if non_repetitive_available_hours > 0.0 {
+        non_repetitive_work_hours / non_repetitive_available_hours
+    } else {
+        f64::INFINITY
+    };
+
+    RhoMetrics {
+        total_work_hours,
+        repetitive_work_hours,
+        non_repetitive_work_hours,
+        available_hours,
+        free_hours,
+        rho,
+        non_repetitive_rho,
+    }
+}
+
+fn calculate_lq_opt(rho: f64) -> Option<f64> {
+    if rho < 1.0 {
+        Some(rho / (1.0 - rho))
+    } else {
+        None
+    }
+}
+
 #[test]
 fn test_backward_width_正常系1() {
     let s = String::from("あ");
@@ -91,6 +144,33 @@ fn test_backward_width_異常系2() {
     let actual = backward_width(&s, cursor_x);
     let expected = 0;
     assert_eq!(actual, expected);
+}
+
+#[test]
+fn test_calculate_rho_metrics_単発作業量に端数が漏れないこと() {
+    let actual = calculate_rho_metrics(61, 61, 120);
+
+    assert_eq!(actual.non_repetitive_work_hours, 0.0);
+    assert_eq!(actual.non_repetitive_rho, 0.0);
+}
+
+#[test]
+fn test_calculate_rho_metrics_混在ケースでも整合すること() {
+    let actual = calculate_rho_metrics(5400, 1800, 120);
+
+    assert!((actual.total_work_hours - 1.5).abs() < 1e-9);
+    assert!((actual.repetitive_work_hours - 0.5).abs() < 1e-9);
+    assert!((actual.non_repetitive_work_hours - 1.0).abs() < 1e-9);
+    assert!((actual.available_hours - 2.0).abs() < 1e-9);
+    assert!((actual.free_hours - 0.5).abs() < 1e-9);
+    assert!((actual.rho - 0.75).abs() < 1e-9);
+    assert!((actual.non_repetitive_rho - (1.0 / 1.5)).abs() < 1e-9);
+}
+
+#[test]
+fn test_calculate_lq_opt_負荷率が1以上ならinf扱いになること() {
+    assert_eq!(calculate_lq_opt(1.0), None);
+    assert_eq!(calculate_lq_opt(f64::INFINITY), None);
 }
 
 fn get_byte_offset_for_insert(line: &str, cursor_x: usize) -> usize {
@@ -1448,44 +1528,20 @@ fn execute_show_all_tasks(
         estimated_finish_dt.format("%Y/%m/%d %H:%M:%S")
     );
 
-    let today_total_deadline_estimated_work_hours =
-        today_total_deadline_estimated_work_minutes as f64 / 60.0;
     let mu_minutes = max(0, (eod - last_synced_time).num_minutes());
-    let mu_hours = mu_minutes as f64 / 60.0;
-
-    let rho1 =
-        today_total_deadline_estimated_work_minutes as f64 / (mu_minutes - busy_minutes) as f64;
-    let lq1_opt = if rho1 < 1.0 {
-        Some(rho1 / (1.0 - rho1))
-    } else {
-        None
-    };
-
     let today_total_repetitive_estimated_work_seconds = *repetitive_task_estimated_work_seconds_map
         .get(&naive_dt_today)
         .unwrap_or(&0);
-    let today_total_repetitive_estimated_work_hours =
-        today_total_repetitive_estimated_work_seconds as f64 / 3600.0;
+    let available_minutes = mu_minutes - busy_minutes;
+    let rho_metrics = calculate_rho_metrics(
+        today_total_deadline_estimated_work_seconds,
+        today_total_repetitive_estimated_work_seconds,
+        available_minutes,
+    );
+    let lq1_opt = calculate_lq_opt(rho_metrics.rho);
+    let non_repetitive_lq_opt = calculate_lq_opt(rho_metrics.non_repetitive_rho);
 
-    let non_repetitive_rho =
-        if (mu_minutes - busy_minutes - today_total_repetitive_estimated_work_seconds / 60) > 0 {
-            (today_total_deadline_estimated_work_minutes as f64
-                - today_total_repetitive_estimated_work_seconds as f64 / 60.0)
-                / (mu_minutes - busy_minutes - today_total_repetitive_estimated_work_seconds / 60)
-                    as f64
-        } else {
-            f64::INFINITY
-        };
-    let non_repetitive_lq_opt = if non_repetitive_rho < 1.0 {
-        Some(non_repetitive_rho / (1.0 - non_repetitive_rho))
-    } else {
-        None
-    };
-
-    let today_non_repetitive_deadline_estimated_work_hours =
-        today_total_deadline_estimated_work_hours - today_total_repetitive_estimated_work_hours;
-
-    let free_hours = mu_hours - busy_hours - today_total_deadline_estimated_work_hours;
+    let free_hours = rho_metrics.free_hours;
     let free_hours_sign = if free_hours >= 0.0 { '+' } else { '-' };
     let free_hours_hour: i64 = free_hours.abs().floor() as i64;
     let free_hours_minute: i64 =
@@ -1493,13 +1549,13 @@ fn execute_show_all_tasks(
 
     let non_repetitive_rho_msg = format!(
         "one ρ = ({:.2} + 0.00) / ({:.2} + 0.00 {} {} {} {}/60) = {:4.2}",
-        today_non_repetitive_deadline_estimated_work_hours,
-        today_non_repetitive_deadline_estimated_work_hours,
+        rho_metrics.non_repetitive_work_hours,
+        rho_metrics.non_repetitive_work_hours,
         free_hours_sign,
         free_hours_hour,
         free_hours_sign,
         free_hours_minute,
-        non_repetitive_rho,
+        rho_metrics.non_repetitive_rho,
     );
     let non_repetitive_lq_msg = match non_repetitive_lq_opt {
         Some(non_repetitive_lq) => format!("Lq = {:.1}", non_repetitive_lq),
@@ -1510,15 +1566,15 @@ fn execute_show_all_tasks(
 
     let rho1_msg = format!(
         "rep ρ = ({:.2} + {:.2}) / ({:.2} + {:.2} {} {} {} {}/60) = {:4.2}",
-        today_non_repetitive_deadline_estimated_work_hours,
-        today_total_repetitive_estimated_work_hours,
-        today_non_repetitive_deadline_estimated_work_hours,
-        today_total_repetitive_estimated_work_hours,
+        rho_metrics.non_repetitive_work_hours,
+        rho_metrics.repetitive_work_hours,
+        rho_metrics.non_repetitive_work_hours,
+        rho_metrics.repetitive_work_hours,
         free_hours_sign,
         free_hours_hour,
         free_hours_sign,
         free_hours_minute,
-        rho1,
+        rho_metrics.rho,
     );
 
     let lq_msg = match lq1_opt {
