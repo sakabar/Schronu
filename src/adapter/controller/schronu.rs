@@ -66,14 +66,20 @@ fn get_weekday_jp(date: &NaiveDate) -> &str {
     }
 }
 
-fn get_adjustable_prefix_label(task: &Task, dt: DateTime<Local>, rank: usize) -> String {
+fn get_adjustable_prefix_label(
+    task: &Task,
+    dt: DateTime<Local>,
+    rank: usize,
+    last_synced_time: DateTime<Local>,
+) -> String {
     if rank != 0 || task.get_is_on_other_side() {
         return "".to_string();
     }
 
     let planned_date = (get_next_morning_datetime(dt) - Duration::days(1)).date_naive();
+    let available_datetime = max(task.get_start_time(), last_synced_time);
     let available_date =
-        (get_next_morning_datetime(task.get_start_time()) - Duration::days(1)).date_naive();
+        (get_next_morning_datetime(available_datetime) - Duration::days(1)).date_naive();
     let advance_days = (planned_date - available_date).num_days();
 
     if advance_days > 0 {
@@ -92,8 +98,21 @@ mod tests {
         let task = Task::new("タスク");
         task.set_start_time(Local.with_ymd_and_hms(2026, 5, 7, 12, 0, 0).unwrap());
         let dt = Local.with_ymd_and_hms(2026, 5, 10, 12, 0, 0).unwrap();
+        let last_synced_time = Local.with_ymd_and_hms(2026, 5, 7, 12, 0, 0).unwrap();
 
-        let actual = get_adjustable_prefix_label(&task, dt, 0);
+        let actual = get_adjustable_prefix_label(&task, dt, 0, last_synced_time);
+
+        assert_eq!(actual, "【前3】");
+    }
+
+    #[test]
+    fn test_get_adjustable_prefix_label_今日より前には戻さない() {
+        let task = Task::new("タスク");
+        task.set_start_time(Local.with_ymd_and_hms(2026, 5, 1, 12, 0, 0).unwrap());
+        let dt = Local.with_ymd_and_hms(2026, 5, 10, 12, 0, 0).unwrap();
+        let last_synced_time = Local.with_ymd_and_hms(2026, 5, 7, 12, 0, 0).unwrap();
+
+        let actual = get_adjustable_prefix_label(&task, dt, 0, last_synced_time);
 
         assert_eq!(actual, "【前3】");
     }
@@ -103,8 +122,21 @@ mod tests {
         let task = Task::new("タスク");
         task.set_start_time(Local.with_ymd_and_hms(2026, 5, 10, 12, 0, 0).unwrap());
         let dt = Local.with_ymd_and_hms(2026, 5, 10, 18, 0, 0).unwrap();
+        let last_synced_time = Local.with_ymd_and_hms(2026, 5, 7, 12, 0, 0).unwrap();
 
-        let actual = get_adjustable_prefix_label(&task, dt, 0);
+        let actual = get_adjustable_prefix_label(&task, dt, 0, last_synced_time);
+
+        assert_eq!(actual, "");
+    }
+
+    #[test]
+    fn test_get_adjustable_prefix_label_今日と予定日が同じなら過去の着手可能日は表示しない() {
+        let task = Task::new("タスク");
+        task.set_start_time(Local.with_ymd_and_hms(2026, 5, 1, 12, 0, 0).unwrap());
+        let dt = Local.with_ymd_and_hms(2026, 5, 7, 18, 0, 0).unwrap();
+        let last_synced_time = Local.with_ymd_and_hms(2026, 5, 7, 12, 0, 0).unwrap();
+
+        let actual = get_adjustable_prefix_label(&task, dt, 0, last_synced_time);
 
         assert_eq!(actual, "");
     }
@@ -115,8 +147,9 @@ mod tests {
         task.set_start_time(Local.with_ymd_and_hms(2026, 5, 7, 12, 0, 0).unwrap());
         task.set_is_on_other_side(true);
         let dt = Local.with_ymd_and_hms(2026, 5, 10, 12, 0, 0).unwrap();
+        let last_synced_time = Local.with_ymd_and_hms(2026, 5, 7, 12, 0, 0).unwrap();
 
-        let actual = get_adjustable_prefix_label(&task, dt, 0);
+        let actual = get_adjustable_prefix_label(&task, dt, 0, last_synced_time);
 
         assert_eq!(actual, "");
     }
@@ -126,8 +159,9 @@ mod tests {
         let task = Task::new("タスク");
         task.set_start_time(Local.with_ymd_and_hms(2026, 5, 7, 12, 0, 0).unwrap());
         let dt = Local.with_ymd_and_hms(2026, 5, 10, 12, 0, 0).unwrap();
+        let last_synced_time = Local.with_ymd_and_hms(2026, 5, 7, 12, 0, 0).unwrap();
 
-        let actual = get_adjustable_prefix_label(&task, dt, 1);
+        let actual = get_adjustable_prefix_label(&task, dt, 1, last_synced_time);
 
         assert_eq!(actual, "");
     }
@@ -666,7 +700,8 @@ fn execute_show_all_tasks(
                 };
 
                 // 前倒し可能なタスクの見積もり時間をカウントする
-                let adjustable_prefix_label = get_adjustable_prefix_label(&task, *dt, *rank);
+                let adjustable_prefix_label =
+                    get_adjustable_prefix_label(&task, *dt, *rank, last_synced_time);
 
                 if !adjustable_prefix_label.is_empty() {
                     adjustable_estimated_work_seconds_map
