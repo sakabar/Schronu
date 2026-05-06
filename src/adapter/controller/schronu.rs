@@ -795,7 +795,17 @@ fn execute_show_all_tasks(
                             }
                         }
                     } else {
-                        deadline_time.format("%Y/%m/%d").to_string()
+                        let deadline_leeway_days = (*deadline_time - end_datetime).num_days().abs();
+
+                        if deadline_leeway_days == 0 {
+                            format!("________0D")
+                        } else {
+                            if *deadline_time > end_datetime {
+                                format!("_____-{:03}D", deadline_leeway_days)
+                            } else {
+                                format!("_____+{:03}D", deadline_leeway_days)
+                            }
+                        }
                     }
                 } else {
                     "____/__/__".to_string()
