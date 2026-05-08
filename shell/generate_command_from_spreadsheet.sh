@@ -11,6 +11,16 @@ function trim(str) {
     return str
 }
 
+function to_minutes(time_str, parts) {
+    if (time_str !~ /^[0-9]+:[0-9][0-9]:[0-9][0-9]$/) {
+        printf("line %d: O列の形式が不正です: %s\n", NR, time_str) > "/dev/stderr"
+        exit 1
+    }
+
+    split(time_str, parts, ":")
+    return (parts[1] * 60) + parts[2]
+}
+
 {
     task_id = trim($2)
     task_name = trim($9)
@@ -32,13 +42,17 @@ function trim(str) {
         exit 1
     }
 
+    work_minutes = to_minutes(actual_work_minutes)
+
     printf("# %s\n", task_name)
     printf("見 %s\n", task_id)
-    printf("働 %s\n", actual_work_minutes)
+    printf("働 %s\n", work_minutes)
 
     if (finish_flag != "F") {
         printf("見 %s\n", task_id)
         printf("終\n")
     }
+
+    printf("\n")
 }
 '
