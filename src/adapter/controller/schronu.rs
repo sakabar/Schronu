@@ -89,6 +89,43 @@ fn get_adjustable_prefix_label(
     }
 }
 
+fn parse_clear_or_gather_defer_to_datetime(
+    cmd_str: &str,
+    arg: &str,
+    now: DateTime<Local>,
+) -> Option<DateTime<Local>> {
+    let hhmm_reg = Regex::new(r"^(\d{1,2}):(\d{1,2})$").unwrap();
+    if let Some(caps) = hhmm_reg.captures(arg) {
+        let hh_orig: u32 = caps[1].parse().unwrap();
+        let hh = hh_orig % 24;
+        let mm: u32 = caps[2].parse().unwrap();
+        let days: i64 = hh_orig as i64 / 24;
+        let todays_start = get_next_morning_datetime(now) - Duration::days(1);
+
+        return Some(
+            Local
+                .with_ymd_and_hms(
+                    todays_start.year(),
+                    todays_start.month(),
+                    todays_start.day(),
+                    hh,
+                    mm,
+                    0,
+                )
+                .unwrap()
+                + Duration::days(days),
+        );
+    }
+
+    let integer_reg = Regex::new(r"^\d+$").unwrap();
+    if matches!(cmd_str, "空" | "clear" | "集" | "gather") && integer_reg.is_match(arg) {
+        let minutes: i64 = arg.parse().unwrap();
+        return Some(now + Duration::minutes(minutes));
+    }
+
+    None
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -164,6 +201,36 @@ mod tests {
         let actual = get_adjustable_prefix_label(&task, dt, 1, last_synced_time);
 
         assert_eq!(actual, "");
+    }
+
+    #[test]
+    fn test_parse_clear_or_gather_defer_to_datetime_空の分指定は現在時刻からの分として解釈する() {
+        let now = Local.with_ymd_and_hms(2026, 5, 7, 12, 34, 56).unwrap();
+
+        let actual = parse_clear_or_gather_defer_to_datetime("空", "120", now);
+
+        assert_eq!(actual, Some(now + Duration::minutes(120)));
+    }
+
+    #[test]
+    fn test_parse_clear_or_gather_defer_to_datetime_hhmm指定は従来通り当日の時刻として解釈する() {
+        let now = Local.with_ymd_and_hms(2026, 5, 7, 12, 34, 56).unwrap();
+
+        let actual = parse_clear_or_gather_defer_to_datetime("空", "10:00", now);
+
+        assert_eq!(
+            actual,
+            Some(Local.with_ymd_and_hms(2026, 5, 7, 10, 0, 0).unwrap())
+        );
+    }
+
+    #[test]
+    fn test_parse_clear_or_gather_defer_to_datetime_集の分指定は現在時刻からの分として解釈する() {
+        let now = Local.with_ymd_and_hms(2026, 5, 7, 12, 34, 56).unwrap();
+
+        let actual = parse_clear_or_gather_defer_to_datetime("集", "120", now);
+
+        assert_eq!(actual, Some(now + Duration::minutes(120)));
     }
 }
 
@@ -3352,61 +3419,42 @@ fn execute(
 
             // 集 13:00
             // 指定したタイミングまでに着手する予定のタスクを全てTodoに直す
-            let hhmm_reg = Regex::new(r"^(\d{1,2}):(\d{1,2})$").unwrap();
-            if tokens.len() >= 2 && hhmm_reg.is_match(tokens[1]) {
+            if tokens.len() >= 2 {
                 let cmd_str = tokens[0];
-                let hhmm_str = tokens[1];
-                let from_hhmm_str = if tokens.len() >= 3 {
-                    Some(tokens[2])
-                } else {
-                    None
-                };
+                let defer_to_datetime_opt = parse_clear_or_gather_defer_to_datetime(
+                    cmd_str,
+                    tokens[1],
+                    task_repository.get_last_synced_time(),
+                );
 
-                let now: DateTime<Local> = task_repository.get_last_synced_time();
-
-                let caps = hhmm_reg.captures(hhmm_str).unwrap();
-                let hh_orig: u32 = caps[1].parse().unwrap();
-                let hh = hh_orig % 24;
-                let mm: u32 = caps[2].parse().unwrap();
-                let days: i64 = hh_orig as i64 / 24;
-
-                for project_root_task in task_repository.get_all_projects().iter() {
-                    let leaf_tasks =
-                        extract_leaf_tasks_from_project_with_pending(&project_root_task);
-                    let todays_start = get_next_morning_datetime(now) - Duration::days(1);
-                    let defer_to_datetime = Local
-                        .with_ymd_and_hms(
-                            todays_start.year(),
-                            todays_start.month(),
-                            todays_start.day(),
-                            hh,
-                            mm,
-                            0,
-                        )
-                        .unwrap()
-                        + Duration::days(days);
-                    for leaf_task in leaf_tasks.iter() {
-                        match cmd_str {
-                            "空" | "clear" => {
-                                if leaf_task.get_start_time() < defer_to_datetime
-                                    && (leaf_task.get_orig_status() == Status::Todo
-                                        || (leaf_task.get_orig_status() == Status::Pending
-                                            && leaf_task.get_pending_until() < defer_to_datetime))
-                                {
-                                    leaf_task.set_orig_status(Status::Pending);
-                                    leaf_task.set_pending_until(defer_to_datetime);
+                if let Some(defer_to_datetime) = defer_to_datetime_opt {
+                    for project_root_task in task_repository.get_all_projects().iter() {
+                        let leaf_tasks =
+                            extract_leaf_tasks_from_project_with_pending(&project_root_task);
+                        for leaf_task in leaf_tasks.iter() {
+                            match cmd_str {
+                                "空" | "clear" => {
+                                    if leaf_task.get_start_time() < defer_to_datetime
+                                        && (leaf_task.get_orig_status() == Status::Todo
+                                            || (leaf_task.get_orig_status() == Status::Pending
+                                                && leaf_task.get_pending_until()
+                                                    < defer_to_datetime))
+                                    {
+                                        leaf_task.set_orig_status(Status::Pending);
+                                        leaf_task.set_pending_until(defer_to_datetime);
+                                    }
                                 }
-                            }
-                            "集" | "gather" => {
-                                if leaf_task.get_status() == Status::Pending
-                                    && leaf_task.get_start_time() < defer_to_datetime
-                                    && leaf_task.get_pending_until() < defer_to_datetime
-                                {
-                                    leaf_task.set_orig_status(Status::Todo);
+                                "集" | "gather" => {
+                                    if leaf_task.get_status() == Status::Pending
+                                        && leaf_task.get_start_time() < defer_to_datetime
+                                        && leaf_task.get_pending_until() < defer_to_datetime
+                                    {
+                                        leaf_task.set_orig_status(Status::Todo);
+                                    }
                                 }
-                            }
-                            _ => {
-                                // Skip
+                                _ => {
+                                    // Skip
+                                }
                             }
                         }
                     }
