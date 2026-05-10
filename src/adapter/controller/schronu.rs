@@ -232,6 +232,34 @@ mod tests {
 
         assert_eq!(actual, Some(now + Duration::minutes(120)));
     }
+
+    #[test]
+    fn test_execute_set_priority_優先度を変更する() {
+        let task = Task::new("タスク");
+        let focused_task_opt = Some(task.clone());
+
+        execute_set_priority(&focused_task_opt, "8");
+
+        assert_eq!(task.get_priority(), 8);
+    }
+
+    #[test]
+    fn test_execute_set_priority_不正値なら変更しない() {
+        let task = Task::new("タスク");
+        task.set_priority(5);
+        let focused_task_opt = Some(task.clone());
+
+        execute_set_priority(&focused_task_opt, "invalid");
+
+        assert_eq!(task.get_priority(), 5);
+    }
+
+    #[test]
+    fn test_execute_set_priority_フォーカスなしなら何もしない() {
+        let focused_task_opt = None;
+
+        execute_set_priority(&focused_task_opt, "8");
+    }
 }
 
 struct RhoMetrics {
@@ -695,7 +723,6 @@ fn execute_show_all_tasks(
     let mut counter: HashMap<NaiveDate, usize> = HashMap::new();
     let mut total_estimated_work_seconds_of_the_date_counter: HashMap<NaiveDate, i64> =
         HashMap::new();
-    let mut total_estimated_work_seconds: i64 = 0;
     let mut deadline_estimated_work_seconds_map: HashMap<NaiveDate, i64> = HashMap::new();
 
     let mut repetitive_task_estimated_work_seconds_map: HashMap<NaiveDate, i64> = HashMap::new();
@@ -832,8 +859,6 @@ fn execute_show_all_tasks(
                             task.get_estimated_work_seconds() * 2 - task.get_actual_work_seconds(),
                         )
                     };
-                total_estimated_work_seconds += estimated_work_seconds;
-
                 if let Some(deadline_time) = deadline_time_opt {
                     let deadline_naive_date = (get_next_morning_datetime(*deadline_time)
                         - Duration::days(1))
@@ -913,9 +938,6 @@ fn execute_show_all_tasks(
                     })
                     .or_insert(estimated_work_seconds);
 
-                let total_estimated_work_hours =
-                    (total_estimated_work_seconds as f64 / 3600.0).ceil() as i64;
-
                 // ! : 今日中が締切。締切注意の意
                 let deadline_icon: String = "!".to_string();
 
@@ -976,7 +998,7 @@ fn execute_show_all_tasks(
                 };
 
                 let msg: String = format!(
-                    "{:04} {} {} {} {} {} {:02.0} {:02.0} {}",
+                    "{:04} {} {} {} {} {} {:02.0} {:02} {}",
                     ind,
                     id,
                     icon,
@@ -990,7 +1012,7 @@ fn execute_show_all_tasks(
                     ),
                     rank,
                     round_up_sec_as_minute(estimated_work_seconds),
-                    total_estimated_work_hours,
+                    task.get_priority(),
                     shorten_name
                 );
 
@@ -2612,6 +2634,17 @@ fn execute_set_actual_work_minutes(focused_task_opt: &Option<Task>, actual_work_
     });
 }
 
+#[allow(unused_must_use)]
+fn execute_set_priority(focused_task_opt: &Option<Task>, priority_str: &str) {
+    let priority_result = priority_str.parse::<i64>();
+
+    priority_result.map(|priority| {
+        focused_task_opt
+            .as_ref()
+            .map(|focused_task| focused_task.set_priority(priority));
+    });
+}
+
 fn decide_time(tokens: &Vec<&str>, now: &DateTime<Local>) -> Option<DateTime<Local>> {
     let mut start_time = None;
 
@@ -3173,6 +3206,12 @@ fn execute(
             if tokens.len() >= 2 {
                 let actual_work_minutes_str = &tokens[1];
                 execute_set_actual_work_minutes(&focused_task_opt, actual_work_minutes_str);
+            }
+        }
+        "重" | "priority" | "pr" => {
+            if tokens.len() >= 2 {
+                let priority_str = &tokens[1];
+                execute_set_priority(&focused_task_opt, priority_str);
             }
         }
         "働" | "work" | "wk" => {
