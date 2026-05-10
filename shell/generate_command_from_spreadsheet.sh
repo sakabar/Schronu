@@ -44,15 +44,34 @@ function to_minutes(time_str, parts) {
 
     work_minutes = to_minutes(actual_work_minutes)
 
-    printf("# %s\n", task_name)
-    printf("見 %s\n", task_id)
-    printf("働 %s\n", work_minutes)
-
-    if (finish_flag != "F") {
-        printf("見 %s\n", task_id)
-        printf("終\n")
+    if (!(task_id in total_work_minutes_by_id)) {
+        task_ids[++task_id_count] = task_id
+        task_name_by_id[task_id] = task_name
+        total_work_minutes_by_id[task_id] = 0
+        should_finish_by_id[task_id] = 0
     }
 
-    printf("\n")
+    total_work_minutes_by_id[task_id] += work_minutes
+
+    if (finish_flag != "F") {
+        should_finish_by_id[task_id] = 1
+    }
+}
+
+END {
+    for (i = 1; i <= task_id_count; i++) {
+        task_id = task_ids[i]
+
+        printf("# %s\n", task_name_by_id[task_id])
+        printf("見 %s\n", task_id)
+        printf("働 %s\n", total_work_minutes_by_id[task_id])
+
+        if (should_finish_by_id[task_id]) {
+            printf("見 %s\n", task_id)
+            printf("終\n")
+        }
+
+        printf("\n")
+    }
 }
 '
