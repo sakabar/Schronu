@@ -282,7 +282,8 @@ mod tests {
     }
 
     #[test]
-    fn test_schedule_tasks_by_priority_低優先度の長いタスクが未来の高優先度タスクを押し出さない() {
+    fn test_schedule_tasks_by_priority_低優先度の長いタスクは未来の高優先度タスクを押し出さず前後に分割される(
+    ) {
         let last_synced_time = Local.with_ymd_and_hms(2026, 5, 10, 12, 0, 0).unwrap();
         let high_priority_id = Uuid::new_v4();
         let low_priority_id = Uuid::new_v4();
@@ -312,18 +313,38 @@ mod tests {
             .iter()
             .find(|scheduled_task| scheduled_task.id == high_priority_id)
             .unwrap();
-        let low_priority_task = actual
+        let low_priority_tasks = actual
             .iter()
-            .find(|scheduled_task| scheduled_task.id == low_priority_id)
-            .unwrap();
+            .filter(|scheduled_task| scheduled_task.id == low_priority_id)
+            .collect::<Vec<_>>();
 
         assert_eq!(
             high_priority_task.scheduled_start,
             Local.with_ymd_and_hms(2026, 5, 10, 18, 0, 0).unwrap()
         );
+        assert_eq!(low_priority_tasks.len(), 2);
         assert_eq!(
-            low_priority_task.scheduled_start,
+            low_priority_tasks[0].scheduled_start,
+            Local.with_ymd_and_hms(2026, 5, 10, 13, 0, 0).unwrap()
+        );
+        assert_eq!(
+            low_priority_tasks[0].scheduled_end,
+            Local.with_ymd_and_hms(2026, 5, 10, 18, 0, 0).unwrap()
+        );
+        assert_eq!(
+            low_priority_tasks[1].scheduled_start,
             Local.with_ymd_and_hms(2026, 5, 10, 19, 0, 0).unwrap()
+        );
+        assert_eq!(
+            low_priority_tasks[1].scheduled_end,
+            Local.with_ymd_and_hms(2026, 5, 11, 0, 0, 0).unwrap()
+        );
+        assert_eq!(
+            low_priority_tasks
+                .iter()
+                .map(|scheduled_task| scheduled_task.scheduled_work_seconds)
+                .sum::<i64>(),
+            10 * 3600
         );
     }
 
@@ -523,6 +544,8 @@ struct ScheduledTask {
     first_available_time: DateTime<Local>,
     scheduled_start: DateTime<Local>,
     scheduled_end: DateTime<Local>,
+    scheduled_work_seconds: i64,
+    total_work_seconds: i64,
     neg_priority: i64,
     rank: usize,
     deadline_time_opt: Option<DateTime<Local>>,
@@ -572,6 +595,16 @@ fn find_earliest_non_overlapping_start(
     }
 }
 
+fn find_next_occupied_slot(
+    start: DateTime<Local>,
+    occupied_slots: &[(DateTime<Local>, DateTime<Local>)],
+) -> Option<(DateTime<Local>, DateTime<Local>)> {
+    occupied_slots
+        .iter()
+        .find(|(occupied_start, occupied_end)| start < *occupied_end && start <= *occupied_start)
+        .copied()
+}
+
 fn schedule_tasks_by_priority(
     candidates: &[TaskScheduleCandidate],
     last_synced_time: DateTime<Local>,
@@ -619,31 +652,77 @@ fn schedule_tasks_by_priority(
             .max()
             .copied()
             .unwrap_or(last_synced_time);
-        let start = find_earliest_non_overlapping_start(
+        let mut segment_start = find_earliest_non_overlapping_start(
             max(
                 max(candidate.first_available_time, last_synced_time),
                 dependency_end,
             ),
-            candidate.remaining_seconds,
+            0,
             &occupied_slots,
         );
-        let end = start + Duration::seconds(candidate.remaining_seconds);
+        let mut remaining_seconds = candidate.remaining_seconds;
+        let total_work_seconds = candidate.remaining_seconds;
+        let mut candidate_scheduled_end = segment_start;
 
-        if candidate.remaining_seconds > 0 {
-            occupied_slots.push((start, end));
-            occupied_slots.sort();
+        if remaining_seconds == 0 {
+            scheduled_tasks.push(ScheduledTask {
+                id: candidate.id,
+                first_available_time: candidate.first_available_time,
+                scheduled_start: segment_start,
+                scheduled_end: segment_start,
+                scheduled_work_seconds: 0,
+                total_work_seconds,
+                neg_priority: candidate.neg_priority,
+                rank: candidate.rank,
+                deadline_time_opt: candidate.deadline_time_opt,
+            });
+        } else {
+            while remaining_seconds > 0 {
+                segment_start =
+                    find_earliest_non_overlapping_start(segment_start, 0, &occupied_slots);
+                let scheduled_end_without_interruption =
+                    segment_start + Duration::seconds(remaining_seconds);
+                let segment_end = match find_next_occupied_slot(segment_start, &occupied_slots) {
+                    Some((occupied_start, _occupied_end))
+                        if occupied_start < scheduled_end_without_interruption =>
+                    {
+                        occupied_start
+                    }
+                    _ => scheduled_end_without_interruption,
+                };
+                let segment_work_seconds = (segment_end - segment_start).num_seconds();
+
+                if segment_work_seconds <= 0 {
+                    segment_start = occupied_slots
+                        .iter()
+                        .find(|(occupied_start, occupied_end)| {
+                            segment_start >= *occupied_start && segment_start < *occupied_end
+                        })
+                        .map(|(_occupied_start, occupied_end)| *occupied_end)
+                        .unwrap_or(segment_start + Duration::seconds(1));
+                    continue;
+                }
+
+                scheduled_tasks.push(ScheduledTask {
+                    id: candidate.id,
+                    first_available_time: candidate.first_available_time,
+                    scheduled_start: segment_start,
+                    scheduled_end: segment_end,
+                    scheduled_work_seconds: segment_work_seconds,
+                    total_work_seconds,
+                    neg_priority: candidate.neg_priority,
+                    rank: candidate.rank,
+                    deadline_time_opt: candidate.deadline_time_opt,
+                });
+
+                occupied_slots.push((segment_start, segment_end));
+                occupied_slots.sort();
+                remaining_seconds -= segment_work_seconds;
+                candidate_scheduled_end = segment_end;
+                segment_start = segment_end;
+            }
         }
-
-        scheduled_tasks.push(ScheduledTask {
-            id: candidate.id,
-            first_available_time: candidate.first_available_time,
-            scheduled_start: start,
-            scheduled_end: end,
-            neg_priority: candidate.neg_priority,
-            rank: candidate.rank,
-            deadline_time_opt: candidate.deadline_time_opt,
-        });
-        scheduled_end_by_id.insert(candidate.id, end);
+        scheduled_end_by_id.insert(candidate.id, candidate_scheduled_end);
     }
 
     scheduled_tasks.sort_by(|a, b| {
@@ -1171,6 +1250,8 @@ fn execute_show_all_tasks(
         let dt = &scheduled_task.first_available_time;
         let scheduled_start = &scheduled_task.scheduled_start;
         let scheduled_end = &scheduled_task.scheduled_end;
+        let scheduled_work_seconds = scheduled_task.scheduled_work_seconds;
+        let total_work_seconds = scheduled_task.total_work_seconds;
         let rank = &scheduled_task.rank;
         let deadline_time_opt = &scheduled_task.deadline_time_opt;
         let id = &scheduled_task.id;
@@ -1272,7 +1353,7 @@ fn execute_show_all_tasks(
                             },
                         );
 
-                let shorten_name: String = if let Some(latest_index) = latest_index_opt {
+                let mut shorten_name: String = if let Some(latest_index) = latest_index_opt {
                     format!(
                         "{}...",
                         chars_vec.iter().take(latest_index + 1).collect::<String>()
@@ -1280,11 +1361,19 @@ fn execute_show_all_tasks(
                 } else {
                     name.to_string()
                 };
+                if total_work_seconds > scheduled_work_seconds {
+                    shorten_name = format!(
+                        "<{}/{}>{}",
+                        round_up_sec_as_minute(scheduled_work_seconds),
+                        round_up_sec_as_minute(total_work_seconds),
+                        shorten_name
+                    );
+                }
 
                 // 元々見積もり時間から作業済時間を引いたのが残りの見積もり時間
                 // ただし、作業時間が元々の見積もり時間をオーバーしている時には既に想定外の事態になっているため、
                 // 残りの見積もりを0とはせず、安全に倒して元々の見積もりの2倍として扱う
-                let estimated_work_seconds = calculate_remaining_work_seconds(&task);
+                let estimated_work_seconds = scheduled_work_seconds;
                 if let Some(deadline_time) = deadline_time_opt {
                     let deadline_naive_date = (get_next_morning_datetime(*deadline_time)
                         - Duration::days(1))
