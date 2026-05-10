@@ -1213,8 +1213,8 @@ impl Task {
 
     pub fn make_appointment(&self, appointment_start_time: DateTime<Local>) {
         // マジックナンバーではある
-        // 1,2,3,5...のフィボナッチ数列にて、充分大きな値55。アポを最優先として行動しなければならない
-        self.set_priority(55);
+        // 1,2,3,5...のフィボナッチ数列にて、充分大きな値。アポを最優先として行動しなければならない
+        self.set_priority(144);
 
         // 〆切については、子タスク全体に掛かるようにする
         let deadline_time =
@@ -1529,7 +1529,7 @@ fn test_make_appointment_正常系1() {
 
     task.make_appointment(appointment_start_time);
 
-    assert_eq!(&root_task.get_priority(), &55);
+    assert_eq!(&root_task.get_priority(), &144);
 
     assert_eq!(
         &task.get_start_time(),
