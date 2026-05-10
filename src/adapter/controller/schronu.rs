@@ -232,6 +232,34 @@ mod tests {
 
         assert_eq!(actual, Some(now + Duration::minutes(120)));
     }
+
+    #[test]
+    fn test_execute_set_priority_優先度を変更する() {
+        let task = Task::new("タスク");
+        let focused_task_opt = Some(task.clone());
+
+        execute_set_priority(&focused_task_opt, "8");
+
+        assert_eq!(task.get_priority(), 8);
+    }
+
+    #[test]
+    fn test_execute_set_priority_不正値なら変更しない() {
+        let task = Task::new("タスク");
+        task.set_priority(5);
+        let focused_task_opt = Some(task.clone());
+
+        execute_set_priority(&focused_task_opt, "invalid");
+
+        assert_eq!(task.get_priority(), 5);
+    }
+
+    #[test]
+    fn test_execute_set_priority_フォーカスなしなら何もしない() {
+        let focused_task_opt = None;
+
+        execute_set_priority(&focused_task_opt, "8");
+    }
 }
 
 struct RhoMetrics {
@@ -2606,6 +2634,17 @@ fn execute_set_actual_work_minutes(focused_task_opt: &Option<Task>, actual_work_
     });
 }
 
+#[allow(unused_must_use)]
+fn execute_set_priority(focused_task_opt: &Option<Task>, priority_str: &str) {
+    let priority_result = priority_str.parse::<i64>();
+
+    priority_result.map(|priority| {
+        focused_task_opt
+            .as_ref()
+            .map(|focused_task| focused_task.set_priority(priority));
+    });
+}
+
 fn decide_time(tokens: &Vec<&str>, now: &DateTime<Local>) -> Option<DateTime<Local>> {
     let mut start_time = None;
 
@@ -3167,6 +3206,12 @@ fn execute(
             if tokens.len() >= 2 {
                 let actual_work_minutes_str = &tokens[1];
                 execute_set_actual_work_minutes(&focused_task_opt, actual_work_minutes_str);
+            }
+        }
+        "重" | "priority" | "pr" => {
+            if tokens.len() >= 2 {
+                let priority_str = &tokens[1];
+                execute_set_priority(&focused_task_opt, priority_str);
             }
         }
         "働" | "work" | "wk" => {
