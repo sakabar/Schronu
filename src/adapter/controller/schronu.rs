@@ -260,6 +260,261 @@ mod tests {
 
         execute_set_priority(&focused_task_opt, "8");
     }
+
+    #[test]
+    fn test_advance_display_datetime_cursor_過去の終了時刻では巻き戻さない() {
+        let current_datetime_cursor = Local.with_ymd_and_hms(2026, 5, 10, 14, 54, 0).unwrap();
+        let end_datetime = Local.with_ymd_and_hms(2026, 5, 10, 14, 2, 0).unwrap();
+
+        let actual = advance_display_datetime_cursor(current_datetime_cursor, end_datetime);
+
+        assert_eq!(actual, current_datetime_cursor);
+    }
+
+    #[test]
+    fn test_advance_display_datetime_cursor_未来の終了時刻には進める() {
+        let current_datetime_cursor = Local.with_ymd_and_hms(2026, 5, 10, 14, 2, 0).unwrap();
+        let end_datetime = Local.with_ymd_and_hms(2026, 5, 10, 14, 54, 0).unwrap();
+
+        let actual = advance_display_datetime_cursor(current_datetime_cursor, end_datetime);
+
+        assert_eq!(actual, end_datetime);
+    }
+
+    #[test]
+    fn test_schedule_tasks_by_priority_低優先度の長いタスクは未来の高優先度タスクを押し出さず前後に分割される(
+    ) {
+        let last_synced_time = Local.with_ymd_and_hms(2026, 5, 10, 12, 0, 0).unwrap();
+        let high_priority_id = Uuid::new_v4();
+        let low_priority_id = Uuid::new_v4();
+        let candidates = vec![
+            TaskScheduleCandidate {
+                id: low_priority_id,
+                first_available_time: Local.with_ymd_and_hms(2026, 5, 10, 13, 0, 0).unwrap(),
+                neg_priority: -88,
+                rank: 0,
+                deadline_time_opt: None,
+                remaining_seconds: 10 * 3600,
+                dependency_ids: vec![],
+            },
+            TaskScheduleCandidate {
+                id: high_priority_id,
+                first_available_time: Local.with_ymd_and_hms(2026, 5, 10, 18, 0, 0).unwrap(),
+                neg_priority: -89,
+                rank: 0,
+                deadline_time_opt: None,
+                remaining_seconds: 3600,
+                dependency_ids: vec![],
+            },
+        ];
+
+        let actual = schedule_tasks_by_priority(&candidates, last_synced_time);
+        let high_priority_task = actual
+            .iter()
+            .find(|scheduled_task| scheduled_task.id == high_priority_id)
+            .unwrap();
+        let low_priority_tasks = actual
+            .iter()
+            .filter(|scheduled_task| scheduled_task.id == low_priority_id)
+            .collect::<Vec<_>>();
+
+        assert_eq!(
+            high_priority_task.scheduled_start,
+            Local.with_ymd_and_hms(2026, 5, 10, 18, 0, 0).unwrap()
+        );
+        assert_eq!(low_priority_tasks.len(), 2);
+        assert_eq!(
+            low_priority_tasks[0].scheduled_start,
+            Local.with_ymd_and_hms(2026, 5, 10, 13, 0, 0).unwrap()
+        );
+        assert_eq!(
+            low_priority_tasks[0].scheduled_end,
+            Local.with_ymd_and_hms(2026, 5, 10, 18, 0, 0).unwrap()
+        );
+        assert_eq!(
+            low_priority_tasks[1].scheduled_start,
+            Local.with_ymd_and_hms(2026, 5, 10, 19, 0, 0).unwrap()
+        );
+        assert_eq!(
+            low_priority_tasks[1].scheduled_end,
+            Local.with_ymd_and_hms(2026, 5, 11, 0, 0, 0).unwrap()
+        );
+        assert_eq!(
+            low_priority_tasks
+                .iter()
+                .map(|scheduled_task| scheduled_task.scheduled_work_seconds)
+                .sum::<i64>(),
+            10 * 3600
+        );
+    }
+
+    #[test]
+    fn test_schedule_tasks_by_priority_締切ありを締切なしより先に配置する() {
+        let last_synced_time = Local.with_ymd_and_hms(2026, 5, 10, 12, 0, 0).unwrap();
+        let deadline_id = Uuid::new_v4();
+        let no_deadline_id = Uuid::new_v4();
+        let candidates = vec![
+            TaskScheduleCandidate {
+                id: no_deadline_id,
+                first_available_time: last_synced_time,
+                neg_priority: -99,
+                rank: 0,
+                deadline_time_opt: None,
+                remaining_seconds: 3600,
+                dependency_ids: vec![],
+            },
+            TaskScheduleCandidate {
+                id: deadline_id,
+                first_available_time: last_synced_time,
+                neg_priority: -1,
+                rank: 0,
+                deadline_time_opt: Some(Local.with_ymd_and_hms(2026, 5, 10, 20, 0, 0).unwrap()),
+                remaining_seconds: 3600,
+                dependency_ids: vec![],
+            },
+        ];
+
+        let actual = schedule_tasks_by_priority(&candidates, last_synced_time);
+        let deadline_task = actual
+            .iter()
+            .find(|scheduled_task| scheduled_task.id == deadline_id)
+            .unwrap();
+        let no_deadline_task = actual
+            .iter()
+            .find(|scheduled_task| scheduled_task.id == no_deadline_id)
+            .unwrap();
+
+        assert_eq!(deadline_task.scheduled_start, last_synced_time);
+        assert_eq!(
+            no_deadline_task.scheduled_start,
+            Local.with_ymd_and_hms(2026, 5, 10, 13, 0, 0).unwrap()
+        );
+    }
+
+    #[test]
+    fn test_schedule_tasks_by_priority_高優先度タスク間の隙間を優先度順に埋める() {
+        let last_synced_time = Local.with_ymd_and_hms(2026, 5, 10, 12, 0, 0).unwrap();
+        let lunch_cooking_id = Uuid::new_v4();
+        let dinner_cooking_id = Uuid::new_v4();
+        let priority_88_id = Uuid::new_v4();
+        let priority_87_id = Uuid::new_v4();
+        let candidates = vec![
+            TaskScheduleCandidate {
+                id: priority_87_id,
+                first_available_time: Local.with_ymd_and_hms(2026, 5, 10, 13, 0, 0).unwrap(),
+                neg_priority: -87,
+                rank: 0,
+                deadline_time_opt: None,
+                remaining_seconds: 3600,
+                dependency_ids: vec![],
+            },
+            TaskScheduleCandidate {
+                id: dinner_cooking_id,
+                first_available_time: Local.with_ymd_and_hms(2026, 5, 10, 18, 0, 0).unwrap(),
+                neg_priority: -89,
+                rank: 0,
+                deadline_time_opt: None,
+                remaining_seconds: 3600,
+                dependency_ids: vec![],
+            },
+            TaskScheduleCandidate {
+                id: priority_88_id,
+                first_available_time: Local.with_ymd_and_hms(2026, 5, 10, 13, 0, 0).unwrap(),
+                neg_priority: -88,
+                rank: 0,
+                deadline_time_opt: None,
+                remaining_seconds: 4 * 3600,
+                dependency_ids: vec![],
+            },
+            TaskScheduleCandidate {
+                id: lunch_cooking_id,
+                first_available_time: Local.with_ymd_and_hms(2026, 5, 10, 12, 0, 0).unwrap(),
+                neg_priority: -89,
+                rank: 0,
+                deadline_time_opt: None,
+                remaining_seconds: 3600,
+                dependency_ids: vec![],
+            },
+        ];
+
+        let actual = schedule_tasks_by_priority(&candidates, last_synced_time);
+        let scheduled_start_by_id = |id: Uuid| {
+            actual
+                .iter()
+                .find(|scheduled_task| scheduled_task.id == id)
+                .unwrap()
+                .scheduled_start
+        };
+
+        assert_eq!(scheduled_start_by_id(lunch_cooking_id), last_synced_time);
+        assert_eq!(
+            scheduled_start_by_id(priority_88_id),
+            Local.with_ymd_and_hms(2026, 5, 10, 13, 0, 0).unwrap()
+        );
+        assert_eq!(
+            scheduled_start_by_id(priority_87_id),
+            Local.with_ymd_and_hms(2026, 5, 10, 17, 0, 0).unwrap()
+        );
+        assert_eq!(
+            scheduled_start_by_id(dinner_cooking_id),
+            Local.with_ymd_and_hms(2026, 5, 10, 18, 0, 0).unwrap()
+        );
+    }
+
+    #[test]
+    fn test_schedule_tasks_by_priority_親は子の実スケジュール終了後に配置する() {
+        let last_synced_time = Local.with_ymd_and_hms(2026, 5, 10, 14, 0, 0).unwrap();
+        let child_id = Uuid::new_v4();
+        let parent_id = Uuid::new_v4();
+        let blocking_task_id = Uuid::new_v4();
+        let candidates = vec![
+            TaskScheduleCandidate {
+                id: parent_id,
+                first_available_time: last_synced_time,
+                neg_priority: -99,
+                rank: 1,
+                deadline_time_opt: None,
+                remaining_seconds: 0,
+                dependency_ids: vec![child_id],
+            },
+            TaskScheduleCandidate {
+                id: blocking_task_id,
+                first_available_time: last_synced_time,
+                neg_priority: -90,
+                rank: 0,
+                deadline_time_opt: None,
+                remaining_seconds: 3600,
+                dependency_ids: vec![],
+            },
+            TaskScheduleCandidate {
+                id: child_id,
+                first_available_time: last_synced_time,
+                neg_priority: -1,
+                rank: 0,
+                deadline_time_opt: None,
+                remaining_seconds: 60,
+                dependency_ids: vec![],
+            },
+        ];
+
+        let actual = schedule_tasks_by_priority(&candidates, last_synced_time);
+        let scheduled_start_by_id = |id: Uuid| {
+            actual
+                .iter()
+                .find(|scheduled_task| scheduled_task.id == id)
+                .unwrap()
+                .scheduled_start
+        };
+
+        assert_eq!(
+            scheduled_start_by_id(child_id),
+            Local.with_ymd_and_hms(2026, 5, 10, 15, 0, 0).unwrap()
+        );
+        assert_eq!(
+            scheduled_start_by_id(parent_id),
+            Local.with_ymd_and_hms(2026, 5, 10, 15, 1, 0).unwrap()
+        );
+    }
 }
 
 struct RhoMetrics {
@@ -270,6 +525,224 @@ struct RhoMetrics {
     free_hours: f64,
     rho: f64,
     non_repetitive_rho: f64,
+}
+
+#[derive(Clone)]
+struct TaskScheduleCandidate {
+    id: Uuid,
+    first_available_time: DateTime<Local>,
+    neg_priority: i64,
+    rank: usize,
+    deadline_time_opt: Option<DateTime<Local>>,
+    remaining_seconds: i64,
+    dependency_ids: Vec<Uuid>,
+}
+
+#[derive(Clone)]
+struct ScheduledTask {
+    id: Uuid,
+    first_available_time: DateTime<Local>,
+    scheduled_start: DateTime<Local>,
+    scheduled_end: DateTime<Local>,
+    scheduled_work_seconds: i64,
+    total_work_seconds: i64,
+    neg_priority: i64,
+    rank: usize,
+    deadline_time_opt: Option<DateTime<Local>>,
+}
+
+fn calculate_remaining_work_seconds(task: &Task) -> i64 {
+    if task.get_estimated_work_seconds() >= task.get_actual_work_seconds() {
+        task.get_estimated_work_seconds() - task.get_actual_work_seconds()
+    } else {
+        max(
+            0,
+            task.get_estimated_work_seconds() * 2 - task.get_actual_work_seconds(),
+        )
+    }
+}
+
+fn advance_display_datetime_cursor(
+    current_datetime_cursor: DateTime<Local>,
+    end_datetime: DateTime<Local>,
+) -> DateTime<Local> {
+    max(current_datetime_cursor, end_datetime)
+}
+
+fn find_earliest_non_overlapping_start(
+    first_available_time: DateTime<Local>,
+    remaining_seconds: i64,
+    occupied_slots: &[(DateTime<Local>, DateTime<Local>)],
+) -> DateTime<Local> {
+    let duration = Duration::seconds(remaining_seconds);
+    let mut start = first_available_time;
+
+    loop {
+        let end = start + duration;
+        let mut shifted = false;
+
+        for (occupied_start, occupied_end) in occupied_slots {
+            if start < *occupied_end && *occupied_start < end {
+                start = *occupied_end;
+                shifted = true;
+                break;
+            }
+        }
+
+        if !shifted {
+            return start;
+        }
+    }
+}
+
+fn find_next_occupied_slot(
+    start: DateTime<Local>,
+    occupied_slots: &[(DateTime<Local>, DateTime<Local>)],
+) -> Option<(DateTime<Local>, DateTime<Local>)> {
+    occupied_slots
+        .iter()
+        .find(|(occupied_start, occupied_end)| start < *occupied_end && start <= *occupied_start)
+        .copied()
+}
+
+fn schedule_tasks_by_priority(
+    candidates: &[TaskScheduleCandidate],
+    last_synced_time: DateTime<Local>,
+) -> Vec<ScheduledTask> {
+    let mut pending_candidates = candidates.to_vec();
+
+    pending_candidates.sort_by(|a, b| {
+        (
+            a.deadline_time_opt.is_none(),
+            a.deadline_time_opt,
+            a.neg_priority,
+            a.first_available_time,
+            a.rank,
+            a.id,
+        )
+            .cmp(&(
+                b.deadline_time_opt.is_none(),
+                b.deadline_time_opt,
+                b.neg_priority,
+                b.first_available_time,
+                b.rank,
+                b.id,
+            ))
+    });
+
+    let mut occupied_slots: Vec<(DateTime<Local>, DateTime<Local>)> = vec![];
+    let mut scheduled_tasks: Vec<ScheduledTask> = vec![];
+    let mut scheduled_end_by_id: HashMap<Uuid, DateTime<Local>> = HashMap::new();
+
+    while !pending_candidates.is_empty() {
+        let schedulable_candidate_index = pending_candidates
+            .iter()
+            .position(|candidate| {
+                candidate
+                    .dependency_ids
+                    .iter()
+                    .all(|dependency_id| scheduled_end_by_id.contains_key(dependency_id))
+            })
+            .unwrap_or(0);
+        let candidate = pending_candidates.remove(schedulable_candidate_index);
+        let dependency_end = candidate
+            .dependency_ids
+            .iter()
+            .filter_map(|dependency_id| scheduled_end_by_id.get(dependency_id))
+            .max()
+            .copied()
+            .unwrap_or(last_synced_time);
+        let mut segment_start = find_earliest_non_overlapping_start(
+            max(
+                max(candidate.first_available_time, last_synced_time),
+                dependency_end,
+            ),
+            0,
+            &occupied_slots,
+        );
+        let mut remaining_seconds = candidate.remaining_seconds;
+        let total_work_seconds = candidate.remaining_seconds;
+        let mut candidate_scheduled_end = segment_start;
+
+        if remaining_seconds == 0 {
+            scheduled_tasks.push(ScheduledTask {
+                id: candidate.id,
+                first_available_time: candidate.first_available_time,
+                scheduled_start: segment_start,
+                scheduled_end: segment_start,
+                scheduled_work_seconds: 0,
+                total_work_seconds,
+                neg_priority: candidate.neg_priority,
+                rank: candidate.rank,
+                deadline_time_opt: candidate.deadline_time_opt,
+            });
+        } else {
+            while remaining_seconds > 0 {
+                segment_start =
+                    find_earliest_non_overlapping_start(segment_start, 0, &occupied_slots);
+                let scheduled_end_without_interruption =
+                    segment_start + Duration::seconds(remaining_seconds);
+                let segment_end = match find_next_occupied_slot(segment_start, &occupied_slots) {
+                    Some((occupied_start, _occupied_end))
+                        if occupied_start < scheduled_end_without_interruption =>
+                    {
+                        occupied_start
+                    }
+                    _ => scheduled_end_without_interruption,
+                };
+                let segment_work_seconds = (segment_end - segment_start).num_seconds();
+
+                if segment_work_seconds <= 0 {
+                    segment_start = occupied_slots
+                        .iter()
+                        .find(|(occupied_start, occupied_end)| {
+                            segment_start >= *occupied_start && segment_start < *occupied_end
+                        })
+                        .map(|(_occupied_start, occupied_end)| *occupied_end)
+                        .unwrap_or(segment_start + Duration::seconds(1));
+                    continue;
+                }
+
+                scheduled_tasks.push(ScheduledTask {
+                    id: candidate.id,
+                    first_available_time: candidate.first_available_time,
+                    scheduled_start: segment_start,
+                    scheduled_end: segment_end,
+                    scheduled_work_seconds: segment_work_seconds,
+                    total_work_seconds,
+                    neg_priority: candidate.neg_priority,
+                    rank: candidate.rank,
+                    deadline_time_opt: candidate.deadline_time_opt,
+                });
+
+                occupied_slots.push((segment_start, segment_end));
+                occupied_slots.sort();
+                remaining_seconds -= segment_work_seconds;
+                candidate_scheduled_end = segment_end;
+                segment_start = segment_end;
+            }
+        }
+        scheduled_end_by_id.insert(candidate.id, candidate_scheduled_end);
+    }
+
+    scheduled_tasks.sort_by(|a, b| {
+        (
+            a.scheduled_start,
+            a.deadline_time_opt.is_none(),
+            a.neg_priority,
+            a.rank,
+            a.id,
+        )
+            .cmp(&(
+                b.scheduled_start,
+                b.deadline_time_opt.is_none(),
+                b.neg_priority,
+                b.rank,
+                b.id,
+            ))
+    });
+
+    scheduled_tasks
 }
 
 fn calculate_rho_metrics(
@@ -633,6 +1106,7 @@ fn execute_show_all_tasks(
     // deadline_time_opt: Option<DateTime<Local>>,
     let mut id_to_dt_map: HashMap<Uuid, (DateTime<Local>, i64, usize, Option<DateTime<Local>>)> =
         HashMap::new();
+    let mut parent_id_to_child_ids_map: HashMap<Uuid, Vec<Uuid>> = HashMap::new();
 
     // 複数の子タスクがある場合に、親タスクのdtは子の着手可能時期の中で最大の値となるようにする。
     // タプルの第2要素はrankで、葉(0)からの距離の大きい方
@@ -642,6 +1116,19 @@ fn execute_show_all_tasks(
 
         for leaf_task in leaf_tasks.iter() {
             let all_parent_tasks = leaf_task.list_all_parent_tasks_with_first_available_time();
+            for ancestor_pair in all_parent_tasks.windows(2) {
+                let child_id = ancestor_pair[0].1.get_id();
+                let parent_id = ancestor_pair[1].1.get_id();
+                parent_id_to_child_ids_map
+                    .entry(parent_id)
+                    .and_modify(|child_ids| {
+                        if !child_ids.contains(&child_id) {
+                            child_ids.push(child_id);
+                        }
+                    })
+                    .or_insert(vec![child_id]);
+            }
+
             for (rank, (dt_raw, task)) in all_parent_tasks.iter().enumerate() {
                 let id = task.get_id();
                 let neg_priority = -task.get_priority();
@@ -694,6 +1181,28 @@ fn execute_show_all_tasks(
     // dt,rank等、タプルの各要素の小さい順にソート。後で逆順に変える
     dt_id_tpl_arr.sort();
 
+    let mut schedule_candidates: Vec<TaskScheduleCandidate> = vec![];
+    for (_naive_date, _has_no_deadline, dt, neg_priority, rank, deadline_time_opt, id) in
+        dt_id_tpl_arr.iter()
+    {
+        if let Some(task) = task_repository.get_by_id(*id) {
+            schedule_candidates.push(TaskScheduleCandidate {
+                id: *id,
+                first_available_time: *dt,
+                neg_priority: *neg_priority,
+                rank: *rank,
+                deadline_time_opt: *deadline_time_opt,
+                remaining_seconds: calculate_remaining_work_seconds(&task),
+                dependency_ids: parent_id_to_child_ids_map
+                    .get(id)
+                    .cloned()
+                    .unwrap_or_default(),
+            });
+        }
+    }
+    let scheduled_tasks =
+        schedule_tasks_by_priority(&schedule_candidates, task_repository.get_last_synced_time());
+
     let mut msgs_with_dt: Vec<(DateTime<Local>, usize, Uuid, String)> = vec![];
     let mut available_biggest_msgs_with_dt_opt = None;
     let mut available_biggest_task_estimate_work_seconds = 0;
@@ -737,11 +1246,17 @@ fn execute_show_all_tasks(
     // タスク一覧で、どのタスクをいつやる見込みかを表示するために、「現在時刻」をズラして見ていく
     let mut current_datetime_cursor = task_repository.get_last_synced_time();
 
-    for (ind, (_naive_date, _has_no_deadline, dt, _neg_priority, rank, deadline_time_opt, id)) in
-        dt_id_tpl_arr.iter().enumerate()
-    {
+    for (ind, scheduled_task) in scheduled_tasks.iter().enumerate() {
+        let dt = &scheduled_task.first_available_time;
+        let scheduled_start = &scheduled_task.scheduled_start;
+        let scheduled_end = &scheduled_task.scheduled_end;
+        let scheduled_work_seconds = scheduled_task.scheduled_work_seconds;
+        let total_work_seconds = scheduled_task.total_work_seconds;
+        let rank = &scheduled_task.rank;
+        let deadline_time_opt = &scheduled_task.deadline_time_opt;
+        let id = &scheduled_task.id;
         let subjective_naive_date =
-            (get_next_morning_datetime(*dt) - Duration::days(1)).date_naive();
+            (get_next_morning_datetime(*scheduled_start) - Duration::days(1)).date_naive();
 
         // 「今」「明」コマンドの場合は未来の情報には興味がないので、スキップする
         if let Some(pattern) = pattern_opt {
@@ -757,7 +1272,7 @@ fn execute_show_all_tasks(
                     9999
                 };
 
-                if (get_next_morning_datetime(*dt)
+                if (get_next_morning_datetime(*scheduled_start)
                     - get_next_morning_datetime(task_repository.get_last_synced_time()))
                     > Duration::days(valid_days)
                 {
@@ -838,7 +1353,7 @@ fn execute_show_all_tasks(
                             },
                         );
 
-                let shorten_name: String = if let Some(latest_index) = latest_index_opt {
+                let mut shorten_name: String = if let Some(latest_index) = latest_index_opt {
                     format!(
                         "{}...",
                         chars_vec.iter().take(latest_index + 1).collect::<String>()
@@ -846,19 +1361,19 @@ fn execute_show_all_tasks(
                 } else {
                     name.to_string()
                 };
+                if total_work_seconds > scheduled_work_seconds {
+                    shorten_name = format!(
+                        "<{}/{}>{}",
+                        round_up_sec_as_minute(scheduled_work_seconds),
+                        round_up_sec_as_minute(total_work_seconds),
+                        shorten_name
+                    );
+                }
 
                 // 元々見積もり時間から作業済時間を引いたのが残りの見積もり時間
                 // ただし、作業時間が元々の見積もり時間をオーバーしている時には既に想定外の事態になっているため、
                 // 残りの見積もりを0とはせず、安全に倒して元々の見積もりの2倍として扱う
-                let estimated_work_seconds =
-                    if task.get_estimated_work_seconds() >= task.get_actual_work_seconds() {
-                        task.get_estimated_work_seconds() - task.get_actual_work_seconds()
-                    } else {
-                        max(
-                            0,
-                            task.get_estimated_work_seconds() * 2 - task.get_actual_work_seconds(),
-                        )
-                    };
+                let estimated_work_seconds = scheduled_work_seconds;
                 if let Some(deadline_time) = deadline_time_opt {
                     let deadline_naive_date = (get_next_morning_datetime(*deadline_time)
                         - Duration::days(1))
@@ -885,13 +1400,12 @@ fn execute_show_all_tasks(
                     }
                 }
 
-                // 着手時間は、現在時刻か、最速着手可能時間のうち遅い方
                 let current_datetime_cursor_clone = &current_datetime_cursor.clone();
-                let start_datetime = max(dt, current_datetime_cursor_clone);
+                let start_datetime = scheduled_start;
 
                 // 「今」か「明」か「近」の時のみ、日時カーソルが飛んだ場合には、その間の時間を表示する
-                if (*dt - current_datetime_cursor_clone).num_minutes() > 0 {
-                    let blank_duration = *dt - current_datetime_cursor_clone;
+                if (*scheduled_start - current_datetime_cursor_clone).num_minutes() > 0 {
+                    let blank_duration = *scheduled_start - current_datetime_cursor_clone;
                     let tmp_id = Uuid::new_v4();
 
                     let skip_msg = format!(
@@ -901,19 +1415,19 @@ fn execute_show_all_tasks(
 
                     if let Some(pattern) = pattern_opt {
                         if (pattern == "今"
-                            && *dt
+                            && *scheduled_start
                                 < get_next_morning_datetime(task_repository.get_last_synced_time()))
                             || (pattern == "明"
                                 && *current_datetime_cursor_clone
                                     >= get_next_morning_datetime(
                                         task_repository.get_last_synced_time(),
                                     )
-                                && *dt
+                                && *scheduled_start
                                     < get_next_morning_datetime(
                                         task_repository.get_last_synced_time(),
                                     ) + Duration::days(1))
                             || (pattern == "近"
-                                && *dt
+                                && *scheduled_start
                                     < get_next_morning_datetime(
                                         task_repository.get_last_synced_time(),
                                     ) + Duration::days(1))
@@ -928,8 +1442,9 @@ fn execute_show_all_tasks(
                     }
                 }
 
-                let end_datetime = *start_datetime + Duration::seconds(estimated_work_seconds);
-                current_datetime_cursor = end_datetime.clone();
+                let end_datetime = *scheduled_end;
+                current_datetime_cursor =
+                    advance_display_datetime_cursor(current_datetime_cursor, end_datetime);
 
                 total_estimated_work_seconds_of_the_date_counter
                     .entry(subjective_naive_date)
@@ -958,7 +1473,7 @@ fn execute_show_all_tasks(
                         < get_next_morning_datetime(last_synced_time)
                 {
                     &deadline_icon
-                } else if rank == &0 && dt < &eod {
+                } else if rank == &0 && scheduled_start < &eod {
                     &today_leaf_icon
                 } else {
                     // - : 特に無しだが、空白にすると列数が乱れるので目立たない記号を入れる
@@ -1031,53 +1546,53 @@ fn execute_show_all_tasks(
                                     && task.get_deadline_time_opt().unwrap()
                                         < get_next_morning_datetime(last_synced_time)
                             {
-                                msgs_with_dt.push((*dt, *rank, *id, msg));
+                                msgs_with_dt.push((*scheduled_start, *rank, *id, msg));
                             }
                         } else if pattern == "枝" {
                             if rank > &0 {
-                                msgs_with_dt.push((*dt, *rank, *id, msg));
+                                msgs_with_dt.push((*scheduled_start, *rank, *id, msg));
                             }
                         } else if pattern == "印" {
                             if msg.contains(&format!(" {} ", &deadline_icon))
                                 || msg.contains(&format!(" {} ", &breaking_deadline_icon))
                                 || msg.contains(&format!(" {} ", &today_leaf_icon))
                             {
-                                msgs_with_dt.push((*dt, *rank, *id, msg));
+                                msgs_with_dt.push((*scheduled_start, *rank, *id, msg));
                             }
                         } else if pattern == "〆" {
                             if msg.contains(&format!(" {} ", &deadline_icon))
                                 || msg.contains(&format!(" {} ", &breaking_deadline_icon))
                             {
-                                msgs_with_dt.push((*dt, *rank, *id, msg));
+                                msgs_with_dt.push((*scheduled_start, *rank, *id, msg));
                             }
                         } else if is_calendar_func || is_flatten_func {
                             // カレンダー表示機能を使う時には、タスク一覧は表示しない。
                         } else if pattern == "今" {
-                            if get_next_morning_datetime(*dt)
+                            if get_next_morning_datetime(*scheduled_start)
                                 == get_next_morning_datetime(last_synced_time)
                             {
-                                msgs_with_dt.push((*dt, *rank, *id, msg));
+                                msgs_with_dt.push((*scheduled_start, *rank, *id, msg));
                             }
                         } else if pattern == "明" {
-                            if get_next_morning_datetime(*dt)
+                            if get_next_morning_datetime(*scheduled_start)
                                 == get_next_morning_datetime(last_synced_time) + Duration::days(1)
                             {
-                                msgs_with_dt.push((*dt, *rank, *id, msg));
+                                msgs_with_dt.push((*scheduled_start, *rank, *id, msg));
                             }
                         } else if pattern == "近" {
-                            if get_next_morning_datetime(*dt)
+                            if get_next_morning_datetime(*scheduled_start)
                                 == get_next_morning_datetime(last_synced_time)
-                                || get_next_morning_datetime(*dt)
+                                || get_next_morning_datetime(*scheduled_start)
                                     == get_next_morning_datetime(last_synced_time)
                                         + Duration::days(1)
                             {
-                                msgs_with_dt.push((*dt, *rank, *id, msg));
+                                msgs_with_dt.push((*scheduled_start, *rank, *id, msg));
                             }
                         } else if pattern == "単" {
                             // non_repetitive (単発) のタスクのみを表示する
                             // TODO 【繰】が2ヶ所に登場していて危ない
                             if !msg.contains("【繰】") {
-                                msgs_with_dt.push((*dt, *rank, *id, msg));
+                                msgs_with_dt.push((*scheduled_start, *rank, *id, msg));
                             }
                         } else if days_of_week.contains(&pattern.as_str()) {
                             // 月 火 水 木 金 土 日 が指定された時は、明日以降で、直近のその曜日のタスクを表示する
@@ -1099,17 +1614,17 @@ fn execute_show_all_tasks(
                             let days: i64 = if ind_diff == 0 { 7 } else { ind_diff as i64 };
 
                             if get_next_morning_datetime(last_synced_time) + Duration::days(days)
-                                == get_next_morning_datetime(*dt)
+                                == get_next_morning_datetime(*scheduled_start)
                             {
-                                msgs_with_dt.push((*dt, *rank, *id, msg));
+                                msgs_with_dt.push((*scheduled_start, *rank, *id, msg));
                             }
                         } else if pattern == "週" {
                             // 今日を含む直近1週間のタスクを表示する
-                            if get_next_morning_datetime(*dt)
+                            if get_next_morning_datetime(*scheduled_start)
                                 - get_next_morning_datetime(last_synced_time)
                                 < Duration::days(7)
                             {
-                                msgs_with_dt.push((*dt, *rank, *id, msg));
+                                msgs_with_dt.push((*scheduled_start, *rank, *id, msg));
                             }
                         } else if pattern == "末" {
                             // 週末までのタスクを表示する
@@ -1128,11 +1643,11 @@ fn execute_show_all_tasks(
                             let days_diff =
                                 (7 + target_days_of_week_ind - now_days_of_week_ind) % 7;
 
-                            if get_next_morning_datetime(*dt)
+                            if get_next_morning_datetime(*scheduled_start)
                                 - get_next_morning_datetime(last_synced_time)
                                 <= Duration::days(days_diff as i64)
                             {
-                                msgs_with_dt.push((*dt, *rank, *id, msg));
+                                msgs_with_dt.push((*scheduled_start, *rank, *id, msg));
                             }
                         } else if pattern == "翌" {
                             // 翌週末までのタスクを表示する
@@ -1151,12 +1666,12 @@ fn execute_show_all_tasks(
                             let days_diff =
                                 ((7 + target_days_of_week_ind - now_days_of_week_ind) % 7) as i64;
 
-                            let diff = get_next_morning_datetime(*dt)
+                            let diff = get_next_morning_datetime(*scheduled_start)
                                 - get_next_morning_datetime(last_synced_time);
                             if Duration::days(days_diff) < diff
                                 && diff <= Duration::days(days_diff + 7)
                             {
-                                msgs_with_dt.push((*dt, *rank, *id, msg));
+                                msgs_with_dt.push((*scheduled_start, *rank, *id, msg));
                             }
                         } else if yyyymmdd_reg.is_match(pattern) {
                             let caps = yyyymmdd_reg.captures(pattern).unwrap();
@@ -1166,17 +1681,17 @@ fn execute_show_all_tasks(
 
                             let yyyymmdd = Local.with_ymd_and_hms(yyyy, mm, dd, 0, 0, 0).unwrap();
 
-                            if get_next_morning_datetime(*dt) - Duration::days(1)
+                            if get_next_morning_datetime(*scheduled_start) - Duration::days(1)
                                 == get_next_morning_datetime(yyyymmdd)
                             {
-                                msgs_with_dt.push((*dt, *rank, *id, msg));
+                                msgs_with_dt.push((*scheduled_start, *rank, *id, msg));
                             }
                         } else if integer_reg.is_match(pattern) {
                             let caps = integer_reg.captures(pattern).unwrap();
                             let input_minute: i64 = caps[0].parse().unwrap();
                             let target_free_time_seconds = input_minute * 60;
 
-                            if *start_datetime > get_next_morning_datetime(last_synced_time)
+                            if *scheduled_start > get_next_morning_datetime(last_synced_time)
                                 || last_synced_time < task.get_start_time()
                             {
                                 continue;
@@ -1192,16 +1707,17 @@ fn execute_show_all_tasks(
                                 available_biggest_task_estimate_work_seconds =
                                     estimated_work_seconds;
 
-                                available_biggest_msgs_with_dt_opt = Some((*dt, *rank, *id, msg));
+                                available_biggest_msgs_with_dt_opt =
+                                    Some((*scheduled_start, *rank, *id, msg));
                             }
                         } else if name.to_lowercase().contains(&pattern.to_lowercase())
                             || msg.contains(pattern)
                         {
-                            msgs_with_dt.push((*dt, *rank, *id, msg));
+                            msgs_with_dt.push((*scheduled_start, *rank, *id, msg));
                         }
                     }
                     None => {
-                        msgs_with_dt.push((*dt, *rank, *id, msg));
+                        msgs_with_dt.push((*scheduled_start, *rank, *id, msg));
                     }
                 }
             }

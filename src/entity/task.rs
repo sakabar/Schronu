@@ -1434,12 +1434,16 @@ impl Task {
             match task_opt {
                 Some(task) => {
                     let first_available_time = task.first_available_time();
-                    let dt_cand = vec![child_task_first_available_time, first_available_time];
+                    let task_first_available_time =
+                        max(child_task_first_available_time, first_available_time);
 
-                    // 2要素なのでNoneになることはない
-                    child_task_first_available_time = *dt_cand.iter().max().unwrap();
+                    child_task_first_available_time = task_first_available_time
+                        + Duration::seconds(max(
+                            0,
+                            task.get_estimated_work_seconds() - task.get_actual_work_seconds(),
+                        ));
 
-                    let tpl = (child_task_first_available_time, task.clone());
+                    let tpl = (task_first_available_time, task.clone());
                     ans.push(tpl);
 
                     // 再代入
@@ -1478,6 +1482,17 @@ impl Task {
                 *rough_first_available_time = *rough_first_available_time - lateness_duration;
                 parent_required_start_time_for_deadline = *rough_first_available_time;
             }
+        }
+
+        let mut child_task_finish_time: DateTime<Local> = DateTime::<Local>::MIN_UTC.into();
+        for (first_available_time, task) in ans.iter_mut() {
+            let earliest_time_for_task = min(*first_available_time, task.first_available_time());
+            *first_available_time = max(earliest_time_for_task, child_task_finish_time);
+            child_task_finish_time = *first_available_time
+                + Duration::seconds(max(
+                    0,
+                    task.get_estimated_work_seconds() - task.get_actual_work_seconds(),
+                ));
         }
 
         ans
@@ -2470,8 +2485,46 @@ fn test_list_all_parent_tasks_with_first_available_time_正常系() {
 
     let expected = vec![
         (dt, grand_child_task.clone()),
-        (dt, child_task.clone()),
-        (dt, parent_task.clone()),
+        (dt + Duration::minutes(15), child_task.clone()),
+        (dt + Duration::minutes(30), parent_task.clone()),
+    ];
+
+    child_task
+        .detach_insert_as_last_child_of(parent_task)
+        .unwrap();
+
+    let actual = grand_child_task.list_all_parent_tasks_with_first_available_time();
+
+    assert_eq!(actual, expected);
+}
+
+#[test]
+fn test_list_all_parent_tasks_with_first_available_time_親は子の残作業後に着手可能になる() {
+    /*
+     parent_task_1 (見積もり0m)
+       - child_task_1 (見積もり15m)
+         - grand_child_task (葉) (見積もり1m)
+    */
+    let dt = Local.with_ymd_and_hms(2026, 5, 10, 14, 5, 0).unwrap();
+    let parent_task = Task::new("親タスク");
+    parent_task.set_create_time(dt);
+    parent_task.set_start_time(dt);
+    parent_task.set_estimated_work_seconds(0);
+
+    let mut child_task = Task::new("子タスク");
+    child_task.set_create_time(dt);
+    child_task.set_start_time(dt);
+    child_task.set_estimated_work_seconds(15 * 60);
+
+    let grand_child_task = child_task.create_as_last_child(TaskAttr::new("孫タスク"));
+    grand_child_task.set_create_time(dt);
+    grand_child_task.set_start_time(dt);
+    grand_child_task.set_estimated_work_seconds(60);
+
+    let expected = vec![
+        (dt, grand_child_task.clone()),
+        (dt + Duration::minutes(1), child_task.clone()),
+        (dt + Duration::minutes(16), parent_task.clone()),
     ];
 
     child_task
@@ -2511,7 +2564,7 @@ fn test_list_all_parent_tasks_with_first_available_time_葉に〆切がある場
             grand_child_task.clone(),
         ),
         (dt, child_task.clone()),
-        (dt, parent_task.clone()),
+        (dt + Duration::minutes(15), parent_task.clone()),
     ];
 
     child_task
@@ -2632,7 +2685,7 @@ fn test_list_all_parent_tasks_with_first_available_time_繰り返しタスクの
         (
             // (繰り返しタスクだが)論理的にはgrand_child_taskが終わった時間から着手できる
             // dt + Duration::hours(12 + 8),
-            Local.with_ymd_and_hms(2038, 1, 1, 0, 0, 0).unwrap(),
+            Local.with_ymd_and_hms(2037, 12, 31, 20, 0, 0).unwrap(),
             parent_task.clone(),
         ),
     ];
