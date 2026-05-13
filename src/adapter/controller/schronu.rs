@@ -32,6 +32,7 @@ use webbrowser;
 const MAX_COL: u16 = 999;
 
 const IS_LOW_PRIORITY_MODE: bool = false;
+const MIN_SPLIT_SEGMENT_SECONDS: i64 = 5 * 60;
 
 // パーセントエンコーディングする対象にスペースを追加する
 const MY_ASCII_SET: &AsciiSet = &CONTROLS.add(b' ');
@@ -346,6 +347,170 @@ mod tests {
                 .sum::<i64>(),
             10 * 3600
         );
+    }
+
+    #[test]
+    fn test_schedule_tasks_by_priority_5分以下の空き時間には分割しない() {
+        let last_synced_time = Local.with_ymd_and_hms(2026, 5, 10, 12, 0, 0).unwrap();
+        let high_priority_id = Uuid::new_v4();
+        let low_priority_id = Uuid::new_v4();
+        let candidates = vec![
+            TaskScheduleCandidate {
+                id: low_priority_id,
+                first_available_time: Local.with_ymd_and_hms(2026, 5, 10, 13, 0, 0).unwrap(),
+                neg_priority: -88,
+                rank: 0,
+                deadline_time_opt: None,
+                remaining_seconds: 20 * 60,
+                dependency_ids: vec![],
+            },
+            TaskScheduleCandidate {
+                id: high_priority_id,
+                first_available_time: Local.with_ymd_and_hms(2026, 5, 10, 13, 5, 0).unwrap(),
+                neg_priority: -89,
+                rank: 0,
+                deadline_time_opt: None,
+                remaining_seconds: 60 * 60,
+                dependency_ids: vec![],
+            },
+        ];
+
+        let actual = schedule_tasks_by_priority(&candidates, last_synced_time);
+        let low_priority_tasks = actual
+            .iter()
+            .filter(|scheduled_task| scheduled_task.id == low_priority_id)
+            .collect::<Vec<_>>();
+
+        assert_eq!(low_priority_tasks.len(), 1);
+        assert_eq!(
+            low_priority_tasks[0].scheduled_start,
+            Local.with_ymd_and_hms(2026, 5, 10, 14, 5, 0).unwrap()
+        );
+        assert_eq!(low_priority_tasks[0].scheduled_work_seconds, 20 * 60);
+    }
+
+    #[test]
+    fn test_schedule_tasks_by_priority_6分の空き時間には分割する() {
+        let last_synced_time = Local.with_ymd_and_hms(2026, 5, 10, 12, 0, 0).unwrap();
+        let high_priority_id = Uuid::new_v4();
+        let low_priority_id = Uuid::new_v4();
+        let candidates = vec![
+            TaskScheduleCandidate {
+                id: low_priority_id,
+                first_available_time: Local.with_ymd_and_hms(2026, 5, 10, 13, 0, 0).unwrap(),
+                neg_priority: -88,
+                rank: 0,
+                deadline_time_opt: None,
+                remaining_seconds: 20 * 60,
+                dependency_ids: vec![],
+            },
+            TaskScheduleCandidate {
+                id: high_priority_id,
+                first_available_time: Local.with_ymd_and_hms(2026, 5, 10, 13, 6, 0).unwrap(),
+                neg_priority: -89,
+                rank: 0,
+                deadline_time_opt: None,
+                remaining_seconds: 60 * 60,
+                dependency_ids: vec![],
+            },
+        ];
+
+        let actual = schedule_tasks_by_priority(&candidates, last_synced_time);
+        let low_priority_tasks = actual
+            .iter()
+            .filter(|scheduled_task| scheduled_task.id == low_priority_id)
+            .collect::<Vec<_>>();
+
+        assert_eq!(low_priority_tasks.len(), 2);
+        assert_eq!(
+            low_priority_tasks[0].scheduled_start,
+            Local.with_ymd_and_hms(2026, 5, 10, 13, 0, 0).unwrap()
+        );
+        assert_eq!(low_priority_tasks[0].scheduled_work_seconds, 6 * 60);
+        assert_eq!(
+            low_priority_tasks[1].scheduled_start,
+            Local.with_ymd_and_hms(2026, 5, 10, 14, 6, 0).unwrap()
+        );
+        assert_eq!(low_priority_tasks[1].scheduled_work_seconds, 14 * 60);
+    }
+
+    #[test]
+    fn test_schedule_tasks_by_priority_後半が5分以下になる分割はしない() {
+        let last_synced_time = Local.with_ymd_and_hms(2026, 5, 10, 12, 0, 0).unwrap();
+        let high_priority_id = Uuid::new_v4();
+        let low_priority_id = Uuid::new_v4();
+        let candidates = vec![
+            TaskScheduleCandidate {
+                id: low_priority_id,
+                first_available_time: Local.with_ymd_and_hms(2026, 5, 10, 13, 0, 0).unwrap(),
+                neg_priority: -88,
+                rank: 0,
+                deadline_time_opt: None,
+                remaining_seconds: 20 * 60,
+                dependency_ids: vec![],
+            },
+            TaskScheduleCandidate {
+                id: high_priority_id,
+                first_available_time: Local.with_ymd_and_hms(2026, 5, 10, 13, 15, 0).unwrap(),
+                neg_priority: -89,
+                rank: 0,
+                deadline_time_opt: None,
+                remaining_seconds: 60 * 60,
+                dependency_ids: vec![],
+            },
+        ];
+
+        let actual = schedule_tasks_by_priority(&candidates, last_synced_time);
+        let low_priority_tasks = actual
+            .iter()
+            .filter(|scheduled_task| scheduled_task.id == low_priority_id)
+            .collect::<Vec<_>>();
+
+        assert_eq!(low_priority_tasks.len(), 1);
+        assert_eq!(
+            low_priority_tasks[0].scheduled_start,
+            Local.with_ymd_and_hms(2026, 5, 10, 14, 15, 0).unwrap()
+        );
+        assert_eq!(low_priority_tasks[0].scheduled_work_seconds, 20 * 60);
+    }
+
+    #[test]
+    fn test_schedule_tasks_by_priority_残り5分以下のタスク自体は配置する() {
+        let last_synced_time = Local.with_ymd_and_hms(2026, 5, 10, 12, 0, 0).unwrap();
+        let task_id = Uuid::new_v4();
+        let blocker_id = Uuid::new_v4();
+        let candidates = vec![
+            TaskScheduleCandidate {
+                id: blocker_id,
+                first_available_time: Local.with_ymd_and_hms(2026, 5, 10, 12, 0, 0).unwrap(),
+                neg_priority: -89,
+                rank: 0,
+                deadline_time_opt: None,
+                remaining_seconds: 60 * 60,
+                dependency_ids: vec![],
+            },
+            TaskScheduleCandidate {
+                id: task_id,
+                first_available_time: Local.with_ymd_and_hms(2026, 5, 10, 12, 55, 0).unwrap(),
+                neg_priority: -88,
+                rank: 0,
+                deadline_time_opt: None,
+                remaining_seconds: 5 * 60,
+                dependency_ids: vec![],
+            },
+        ];
+
+        let actual = schedule_tasks_by_priority(&candidates, last_synced_time);
+        let task = actual
+            .iter()
+            .find(|scheduled_task| scheduled_task.id == task_id)
+            .unwrap();
+
+        assert_eq!(
+            task.scheduled_start,
+            Local.with_ymd_and_hms(2026, 5, 10, 13, 0, 0).unwrap()
+        );
+        assert_eq!(task.scheduled_work_seconds, 5 * 60);
     }
 
     #[test]
@@ -700,6 +865,20 @@ fn schedule_tasks_by_priority(
                         })
                         .map(|(_occupied_start, occupied_end)| *occupied_end)
                         .unwrap_or(segment_start + Duration::seconds(1));
+                    continue;
+                }
+
+                let remaining_seconds_after_split = remaining_seconds - segment_work_seconds;
+
+                if segment_end < scheduled_end_without_interruption
+                    && (segment_work_seconds <= MIN_SPLIT_SEGMENT_SECONDS
+                        || remaining_seconds_after_split <= MIN_SPLIT_SEGMENT_SECONDS)
+                {
+                    segment_start = occupied_slots
+                        .iter()
+                        .find(|(occupied_start, _occupied_end)| *occupied_start == segment_end)
+                        .map(|(_occupied_start, occupied_end)| *occupied_end)
+                        .unwrap_or(segment_end);
                     continue;
                 }
 
