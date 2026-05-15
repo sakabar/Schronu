@@ -7,6 +7,8 @@ use chrono::Duration;
 use chrono::{DateTime, Local};
 use linked_hash_map::LinkedHashMap;
 use regex::Regex;
+use std::cell::RefCell;
+use std::collections::HashMap;
 use std::fs;
 use std::fs::File;
 use std::io::prelude::*;
@@ -19,6 +21,7 @@ pub struct TaskRepository {
     projects: Vec<Project>,
     project_storage_dir_name: String,
     last_synced_time: DateTime<Local>,
+    id_to_task_map: RefCell<HashMap<Uuid, Task>>,
 }
 
 struct Project {
@@ -50,6 +53,17 @@ impl TaskRepository {
             projects: vec![],
             project_storage_dir_name: project_storage_dir_name.to_string(),
             last_synced_time: DateTime::<Local>::MIN_UTC.into(),
+            id_to_task_map: RefCell::new(HashMap::new()),
+        }
+    }
+
+    fn cache_task_and_descendants(&self, task: &Task) {
+        self.id_to_task_map
+            .borrow_mut()
+            .insert(task.get_id(), task.clone());
+
+        for child_task in task.get_children() {
+            self.cache_task_and_descendants(&child_task);
         }
     }
 }
@@ -90,6 +104,7 @@ impl TaskRepositoryTrait for TaskRepository {
                     Ok(docs) => {
                         let project_yaml: &Yaml = &docs[0]["project"];
                         let root_task: Task = yaml_to_task(project_yaml, self.last_synced_time);
+                        self.cache_task_and_descendants(&root_task);
                         let priority = root_task.get_priority();
                         let project = Project::new(
                             root_task,
@@ -223,10 +238,15 @@ impl TaskRepositoryTrait for TaskRepository {
     }
 
     fn get_by_id(&self, id: Uuid) -> Option<Task> {
+        if let Some(task) = self.id_to_task_map.borrow().get(&id).cloned() {
+            return Some(task);
+        }
+
         for project in self.projects.iter() {
             let tmp = project.root_task.get_by_id(id);
-            if tmp.is_some() {
-                return tmp;
+            if let Some(task) = tmp {
+                self.id_to_task_map.borrow_mut().insert(id, task.clone());
+                return Some(task);
             }
         }
 
@@ -275,9 +295,66 @@ impl TaskRepositoryTrait for TaskRepository {
                     priority,
                 );
 
+                self.cache_task_and_descendants(&project.root_task);
                 self.projects.push(project);
             }
             _ => {}
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::entity::task::TaskAttr;
+
+    #[test]
+    fn test_get_by_id_キャッシュから取得する() {
+        let mut task_repository = TaskRepository::new("");
+        let root_task = Task::new("親タスク");
+        let child_task = root_task.create_as_last_child(TaskAttr::new("子タスク"));
+        let child_task_id = child_task.get_id();
+
+        task_repository.cache_task_and_descendants(&root_task);
+        task_repository
+            .projects
+            .push(Project::new(root_task, "".to_string(), "".to_string(), 5));
+
+        let actual = task_repository.get_by_id(child_task_id).unwrap();
+
+        assert_eq!(actual.get_name(), "子タスク");
+        assert!(task_repository
+            .id_to_task_map
+            .borrow()
+            .contains_key(&child_task_id));
+    }
+
+    #[test]
+    fn test_get_by_id_実行中に追加された子タスクを検索してキャッシュする() {
+        let mut task_repository = TaskRepository::new("");
+        let root_task = Task::new("親タスク");
+
+        task_repository.cache_task_and_descendants(&root_task);
+        task_repository.projects.push(Project::new(
+            root_task.clone(),
+            "".to_string(),
+            "".to_string(),
+            5,
+        ));
+
+        let child_task = root_task.create_as_last_child(TaskAttr::new("子タスク"));
+        let child_task_id = child_task.get_id();
+        assert!(!task_repository
+            .id_to_task_map
+            .borrow()
+            .contains_key(&child_task_id));
+
+        let actual = task_repository.get_by_id(child_task_id).unwrap();
+
+        assert_eq!(actual.get_name(), "子タスク");
+        assert!(task_repository
+            .id_to_task_map
+            .borrow()
+            .contains_key(&child_task_id));
     }
 }

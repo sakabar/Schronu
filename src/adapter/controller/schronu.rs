@@ -1424,6 +1424,9 @@ fn execute_show_all_tasks(
 
     // タスク一覧で、どのタスクをいつやる見込みかを表示するために、「現在時刻」をズラして見ていく
     let mut current_datetime_cursor = task_repository.get_last_synced_time();
+    let yyyymmdd_reg = Regex::new(r"^(\d{4})/(\d{2})/(\d{2})$").unwrap();
+    let integer_reg = Regex::new(r"^\d+$").unwrap();
+    let days_of_week = ["月", "火", "水", "木", "金", "土", "日"];
 
     for (ind, scheduled_task) in scheduled_tasks.iter().enumerate() {
         let dt = &scheduled_task.first_available_time;
@@ -1710,12 +1713,6 @@ fn execute_show_all_tasks(
                     shorten_name
                 );
 
-                let yyyymmdd_reg = Regex::new(r"^(\d{4})/(\d{2})/(\d{2})$").unwrap();
-                let days_of_week = vec!["月", "火", "水", "木", "金", "土", "日"];
-
-                // 指定した時間(分)以下で達成完了な最大のタスクを抽出する
-                let integer_reg = Regex::new(r"^\d+$").unwrap();
-
                 match pattern_opt {
                     Some(pattern) => {
                         // Todo: 文字列マッチの絞り込み機能とその他の属性による絞り込みを機能を分ける
@@ -1784,8 +1781,10 @@ fn execute_show_all_tasks(
                                 .iter()
                                 .position(|&x| &x == &now_weekday_jp)
                                 .unwrap();
-                            let target_days_of_week_ind =
-                                days_of_week.iter().position(|&x| x == pattern).unwrap();
+                            let target_days_of_week_ind = days_of_week
+                                .iter()
+                                .position(|&x| x == pattern.as_str())
+                                .unwrap();
 
                             let ind_diff = (7 + target_days_of_week_ind - now_days_of_week_ind) % 7;
 
