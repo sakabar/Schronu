@@ -1,4 +1,6 @@
-use chrono::{DateTime, Datelike, Duration, Local, NaiveDate, TimeZone, Timelike, Weekday};
+use chrono::{
+    DateTime, Datelike, Duration, Local, LocalResult, NaiveDate, TimeZone, Timelike, Weekday,
+};
 use fs2::FileExt;
 use percent_encoding::{percent_encode, AsciiSet, CONTROLS};
 use regex::Regex;
@@ -6,7 +8,7 @@ use schronu::adapter::gateway::free_time_manager::FreeTimeManager;
 use schronu::adapter::gateway::task_repository::TaskRepository;
 use schronu::application::interface::FreeTimeManagerTrait;
 use schronu::application::interface::TaskRepositoryTrait;
-use schronu::entity::datetime::get_next_morning_datetime;
+use schronu::entity::datetime::{get_next_morning_datetime, parse_local_datetime};
 use schronu::entity::task::{
     extract_leaf_tasks_from_project, extract_leaf_tasks_from_project_with_pending,
     round_up_sec_as_minute, Status, Task, TaskAttr,
@@ -683,10 +685,10 @@ mod tests {
 }
 
 struct RhoMetrics {
-    total_work_hours: f64,
+    _total_work_hours: f64,
     repetitive_work_hours: f64,
     non_repetitive_work_hours: f64,
-    available_hours: f64,
+    _available_hours: f64,
     free_hours: f64,
     rho: f64,
     non_repetitive_rho: f64,
@@ -949,10 +951,10 @@ fn calculate_rho_metrics(
     };
 
     RhoMetrics {
-        total_work_hours,
+        _total_work_hours: total_work_hours,
         repetitive_work_hours,
         non_repetitive_work_hours,
-        available_hours,
+        _available_hours: available_hours,
         free_hours,
         rho,
         non_repetitive_rho,
@@ -1006,10 +1008,10 @@ fn test_calculate_rho_metrics_単発作業量に端数が漏れないこと() {
 fn test_calculate_rho_metrics_混在ケースでも整合すること() {
     let actual = calculate_rho_metrics(5400, 1800, 120);
 
-    assert!((actual.total_work_hours - 1.5).abs() < 1e-9);
+    assert!((actual._total_work_hours - 1.5).abs() < 1e-9);
     assert!((actual.repetitive_work_hours - 0.5).abs() < 1e-9);
     assert!((actual.non_repetitive_work_hours - 1.0).abs() < 1e-9);
-    assert!((actual.available_hours - 2.0).abs() < 1e-9);
+    assert!((actual._available_hours - 2.0).abs() < 1e-9);
     assert!((actual.free_hours - 0.5).abs() < 1e-9);
     assert!((actual.rho - 0.75).abs() < 1e-9);
     assert!((actual.non_repetitive_rho - (1.0 / 1.5)).abs() < 1e-9);
@@ -2809,8 +2811,8 @@ fn execute_create_repetition_task(
     new_task_name_str: &str,
     exec_day_str: &str,
     estimated_work_minutes: i64,
-    start_time_str: &str,
-    deadline_time_str: &str,
+    _start_time_str: &str,
+    _deadline_time_str: &str,
 ) {
     // まず繰り返しタスクの親タスクを作る。
     execute_breakdown(
@@ -3081,7 +3083,7 @@ fn execute_defer_routine(
 fn execute_defer_all_frequent_routines(
     task_repository: &mut dyn TaskRepositoryTrait,
     focused_task_id_opt: &mut Option<Uuid>,
-    focused_task_opt: &Option<Task>,
+    _focused_task_opt: &Option<Task>,
 ) {
     const MAX_REPETITION_INTERVAL_DAYS: i64 = 7;
     const MIN_OVERDUE_HOURS: i64 = 24;
@@ -3264,9 +3266,9 @@ fn execute_set_deadline(
         );
     }
 
-    let deadline_time_opt_result = Local.datetime_from_str(&deadline_time_str, "%Y/%m/%d %H:%M:%S");
+    let deadline_time_opt_result = parse_local_datetime(&deadline_time_str, "%Y/%m/%d %H:%M:%S");
 
-    if let Ok(deadline_time) = deadline_time_opt_result {
+    if let Ok(LocalResult::Single(deadline_time)) = deadline_time_opt_result {
         focused_task_opt
             .as_ref()
             .map(|focused_task| focused_task.set_deadline_time_opt(Some(deadline_time)));
@@ -3938,10 +3940,10 @@ fn execute(
                 if yyyymmdd_reg.is_match(tokens[1]) {
                     let defer_dst_str = format!("{} 12:00:00", tokens[1]);
                     let defer_dst_date_result =
-                        Local.datetime_from_str(&defer_dst_str, "%Y/%m/%d %H:%M:%S");
+                        parse_local_datetime(&defer_dst_str, "%Y/%m/%d %H:%M:%S");
 
                     match defer_dst_date_result {
-                        Ok(defer_dst_date) => {
+                        Ok(LocalResult::Single(defer_dst_date)) => {
                             let defer_dst_time =
                                 get_next_morning_datetime(defer_dst_date) - Duration::days(1);
 
@@ -3956,7 +3958,7 @@ fn execute(
                                 "秒",
                             );
                         }
-                        Err(_) => {
+                        _ => {
                             // pass
                         }
                     }

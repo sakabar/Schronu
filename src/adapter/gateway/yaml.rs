@@ -1,6 +1,8 @@
+use crate::entity::datetime::parse_local_datetime;
 use crate::entity::task::read_status;
 use crate::entity::task::Status;
 use crate::entity::task::{ImmutableTask, Task, TaskAttr};
+use chrono::LocalResult;
 use chrono::TimeZone;
 use chrono::{DateTime, Local};
 use uuid::Uuid;
@@ -214,28 +216,22 @@ pub fn yaml_to_immutable_task(yaml: &Yaml) -> ImmutableTask {
     let pending_until_str: String = yaml["pending_until"].as_str().unwrap_or("").to_string();
     let mut pending_until: DateTime<Local> = DateTime::<Local>::MIN_UTC.into();
 
-    match Local.datetime_from_str(&pending_until_str, "%Y/%m/%d %H:%M:%S") {
-        Ok(pu) => {
-            pending_until = pu;
-        }
-        Err(_) => {}
+    if let Ok(LocalResult::Single(pu)) =
+        parse_local_datetime(&pending_until_str, "%Y/%m/%d %H:%M:%S")
+    {
+        pending_until = pu;
     }
 
-    match Local.datetime_from_str(&pending_until_str, "%Y/%m/%d %H:%M") {
-        Ok(pu) => {
-            pending_until = pu;
-        }
-        Err(_) => {}
+    if let Ok(LocalResult::Single(pu)) = parse_local_datetime(&pending_until_str, "%Y/%m/%d %H:%M")
+    {
+        pending_until = pu;
     }
 
-    match Local.datetime_from_str(
+    if let Ok(LocalResult::Single(pu)) = parse_local_datetime(
         format!("{} 00:00", &pending_until_str).as_str(),
         "%Y/%m/%d %H:%M",
     ) {
-        Ok(pu) => {
-            pending_until = pu;
-        }
-        Err(_) => {}
+        pending_until = pu;
     }
 
     let mut children = vec![];
@@ -251,28 +247,22 @@ pub fn yaml_to_immutable_task(yaml: &Yaml) -> ImmutableTask {
 fn transform_from_pending_until_str(pending_until_str: &str) -> DateTime<Local> {
     let mut pending_until: DateTime<Local> = DateTime::<Local>::MIN_UTC.into();
 
-    match Local.datetime_from_str(&pending_until_str, "%Y/%m/%d %H:%M:%S") {
-        Ok(pu) => {
-            pending_until = pu;
-        }
-        Err(_) => {}
+    if let Ok(LocalResult::Single(pu)) =
+        parse_local_datetime(&pending_until_str, "%Y/%m/%d %H:%M:%S")
+    {
+        pending_until = pu;
     }
 
-    match Local.datetime_from_str(&pending_until_str, "%Y/%m/%d %H:%M") {
-        Ok(pu) => {
-            pending_until = pu;
-        }
-        Err(_) => {}
+    if let Ok(LocalResult::Single(pu)) = parse_local_datetime(&pending_until_str, "%Y/%m/%d %H:%M")
+    {
+        pending_until = pu;
     }
 
-    match Local.datetime_from_str(
+    if let Ok(LocalResult::Single(pu)) = parse_local_datetime(
         format!("{} 00:00", &pending_until_str).as_str(),
         "%Y/%m/%d %H:%M",
     ) {
-        Ok(pu) => {
-            pending_until = pu;
-        }
-        Err(_) => {}
+        pending_until = pu;
     }
 
     pending_until
@@ -329,24 +319,28 @@ pub fn yaml_to_task(yaml: &Yaml, now: DateTime<Local>) -> Task {
     parent_task.set_pending_until(pending_until);
     parent_task.set_priority(priority);
 
-    match Local.datetime_from_str(&create_time_str, "%Y/%m/%d %H:%M:%S") {
-        Ok(create_time) => parent_task.set_create_time(create_time),
-        Err(_) => {}
+    if let Ok(LocalResult::Single(create_time)) =
+        parse_local_datetime(&create_time_str, "%Y/%m/%d %H:%M:%S")
+    {
+        parent_task.set_create_time(create_time);
     }
 
-    match Local.datetime_from_str(&start_time_str, "%Y/%m/%d %H:%M:%S") {
-        Ok(start_time) => parent_task.set_start_time(start_time),
-        Err(_) => {}
+    if let Ok(LocalResult::Single(start_time)) =
+        parse_local_datetime(&start_time_str, "%Y/%m/%d %H:%M:%S")
+    {
+        parent_task.set_start_time(start_time);
     }
 
-    match Local.datetime_from_str(&end_time_str, "%Y/%m/%d %H:%M:%S") {
-        Ok(end_time) => parent_task.set_end_time_opt(Some(end_time)),
-        Err(_) => {}
+    if let Ok(LocalResult::Single(end_time)) =
+        parse_local_datetime(&end_time_str, "%Y/%m/%d %H:%M:%S")
+    {
+        parent_task.set_end_time_opt(Some(end_time));
     }
 
-    match Local.datetime_from_str(&deadline_time_str, "%Y/%m/%d %H:%M:%S") {
-        Ok(deadline_time) => parent_task.set_deadline_time_opt(Some(deadline_time)),
-        Err(_) => {}
+    if let Ok(LocalResult::Single(deadline_time)) =
+        parse_local_datetime(&deadline_time_str, "%Y/%m/%d %H:%M:%S")
+    {
+        parent_task.set_deadline_time_opt(Some(deadline_time));
     }
 
     parent_task.set_estimated_work_seconds(estimated_work_seconds);

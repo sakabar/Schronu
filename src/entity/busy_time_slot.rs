@@ -4,7 +4,7 @@ pub struct BusyTimeSlot {
     start_time_hour: u32,
     start_time_minute: u32,
     duration_minutes: i64,
-    name: String,
+    _name: String,
 }
 
 impl BusyTimeSlot {
@@ -18,7 +18,7 @@ impl BusyTimeSlot {
             start_time_hour,
             start_time_minute,
             duration_minutes,
-            name,
+            _name: name,
         }
     }
 
@@ -36,9 +36,9 @@ impl BusyTimeSlot {
 }
 
 pub struct DayOfWeekBusyTimeSlots {
-    day_of_week: Weekday,
-    end_of_day_hour: i64,
-    end_of_day_minute: i64,
+    _day_of_week: Weekday,
+    _end_of_day_hour: i64,
+    _end_of_day_minute: i64,
     busy_time_slots: Vec<BusyTimeSlot>,
 }
 
@@ -50,9 +50,9 @@ impl DayOfWeekBusyTimeSlots {
         busy_time_slots: Vec<BusyTimeSlot>,
     ) -> Self {
         Self {
-            day_of_week,
-            end_of_day_hour,
-            end_of_day_minute,
+            _day_of_week: day_of_week,
+            _end_of_day_hour: end_of_day_hour,
+            _end_of_day_minute: end_of_day_minute,
             busy_time_slots,
         }
     }
