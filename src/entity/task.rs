@@ -1180,6 +1180,20 @@ impl Task {
         self.node.borrow_data().get_repetition_interval_days_opt()
     }
 
+    pub fn get_inherited_repetition_interval_days_opt(&self) -> Option<i64> {
+        let mut current_parent_opt = self.parent();
+
+        while let Some(parent) = current_parent_opt {
+            if let Some(repetition_interval_days) = parent.get_repetition_interval_days_opt() {
+                return Some(repetition_interval_days);
+            }
+
+            current_parent_opt = parent.parent();
+        }
+
+        None
+    }
+
     pub fn set_repetition_interval_days_opt(&self, repetition_interval_days_opt: Option<i64>) {
         self.node
             .borrow_data_mut()
@@ -1603,6 +1617,69 @@ fn test_create_as_parent_正常系1() {
     };
 
     assert_task_and_tree(&actual_task, &expected_tree);
+}
+
+#[test]
+fn test_get_inherited_repetition_interval_days_opt_直接の親の値を返す() {
+    let parent_task = Task::new("親タスク");
+    parent_task.set_repetition_interval_days_opt(Some(7));
+    let child_task = parent_task.create_as_last_child(TaskAttr::new("子タスク"));
+
+    assert_eq!(
+        child_task.get_inherited_repetition_interval_days_opt(),
+        Some(7)
+    );
+}
+
+#[test]
+fn test_get_inherited_repetition_interval_days_opt_祖父の値を返す() {
+    let parent_task = Task::new("親タスク");
+    parent_task.set_repetition_interval_days_opt(Some(7));
+    let child_task = parent_task.create_as_last_child(TaskAttr::new("子タスク"));
+    let grand_child_task = child_task.create_as_last_child(TaskAttr::new("孫タスク"));
+
+    assert_eq!(
+        grand_child_task.get_inherited_repetition_interval_days_opt(),
+        Some(7)
+    );
+}
+
+#[test]
+fn test_get_inherited_repetition_interval_days_opt_祖先に値がなければ_noneを返す() {
+    let parent_task = Task::new("親タスク");
+    let child_task = parent_task.create_as_last_child(TaskAttr::new("子タスク"));
+    let grand_child_task = child_task.create_as_last_child(TaskAttr::new("孫タスク"));
+
+    assert_eq!(
+        grand_child_task.get_inherited_repetition_interval_days_opt(),
+        None
+    );
+}
+
+#[test]
+fn test_get_inherited_repetition_interval_days_opt_自分自身の値は見ない() {
+    let parent_task = Task::new("親タスク");
+    let child_task = parent_task.create_as_last_child(TaskAttr::new("子タスク"));
+    child_task.set_repetition_interval_days_opt(Some(7));
+
+    assert_eq!(
+        child_task.get_inherited_repetition_interval_days_opt(),
+        None
+    );
+}
+
+#[test]
+fn test_get_inherited_repetition_interval_days_opt_最も近い祖先の値を返す() {
+    let parent_task = Task::new("親タスク");
+    parent_task.set_repetition_interval_days_opt(Some(30));
+    let child_task = parent_task.create_as_last_child(TaskAttr::new("子タスク"));
+    child_task.set_repetition_interval_days_opt(Some(7));
+    let grand_child_task = child_task.create_as_last_child(TaskAttr::new("孫タスク"));
+
+    assert_eq!(
+        grand_child_task.get_inherited_repetition_interval_days_opt(),
+        Some(7)
+    );
 }
 
 #[test]

@@ -1471,24 +1471,21 @@ fn execute_show_all_tasks(
         let task_opt = task_repository.get_by_id(*id);
         match task_opt {
             Some(task) => {
-                let repetition_prefix_label = if let Some(parent) = task.parent() {
-                    let mut ans = "".to_string();
+                let inherited_repetition_interval_days_opt =
+                    task.get_inherited_repetition_interval_days_opt();
+                let mut repetition_prefix_label = "".to_string();
 
-                    if let Some(repetition_interval_days) =
-                        parent.get_repetition_interval_days_opt()
-                    {
-                        // TODO 【繰】というマジックナンバーが2ヶ所に登場していて危ない
-                        ans = format!("{}【繰】({})", ans, repetition_interval_days);
-                    }
+                if let Some(repetition_interval_days) = inherited_repetition_interval_days_opt {
+                    // FIXME 【繰】というマジックナンバーが2ヶ所に登場していて危ない
+                    repetition_prefix_label = format!(
+                        "{}【繰】({})",
+                        repetition_prefix_label, repetition_interval_days
+                    );
+                }
 
-                    if task.get_is_on_other_side() {
-                        ans = format!("{}【待ち】", ans);
-                    }
-
-                    ans
-                } else {
-                    "".to_string()
-                };
+                if task.get_is_on_other_side() {
+                    repetition_prefix_label = format!("{}【待ち】", repetition_prefix_label);
+                }
 
                 // 前倒し可能なタスクの見積もり時間をカウントする
                 let adjustable_prefix_label =
@@ -1569,17 +1566,13 @@ fn execute_show_all_tasks(
                         .or_insert(estimated_work_seconds);
                 }
 
-                if let Some(parent) = task.parent() {
-                    if let Some(_repetition_interval_days) =
-                        parent.get_repetition_interval_days_opt()
-                    {
-                        repetitive_task_estimated_work_seconds_map
-                            .entry(subjective_naive_date)
-                            .and_modify(|repetitive_task_estimated_work_seconds| {
-                                *repetitive_task_estimated_work_seconds += estimated_work_seconds
-                            })
-                            .or_insert(estimated_work_seconds);
-                    }
+                if inherited_repetition_interval_days_opt.is_some() {
+                    repetitive_task_estimated_work_seconds_map
+                        .entry(subjective_naive_date)
+                        .and_modify(|repetitive_task_estimated_work_seconds| {
+                            *repetitive_task_estimated_work_seconds += estimated_work_seconds
+                        })
+                        .or_insert(estimated_work_seconds);
                 }
 
                 let current_datetime_cursor_clone = &current_datetime_cursor.clone();
