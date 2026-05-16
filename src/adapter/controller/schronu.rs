@@ -1,4 +1,6 @@
-use chrono::{DateTime, Datelike, Duration, Local, NaiveDate, TimeZone, Timelike, Weekday};
+use chrono::{
+    DateTime, Datelike, Duration, Local, LocalResult, NaiveDate, TimeZone, Timelike, Weekday,
+};
 use fs2::FileExt;
 use percent_encoding::{percent_encode, AsciiSet, CONTROLS};
 use regex::Regex;
@@ -6,7 +8,7 @@ use schronu::adapter::gateway::free_time_manager::FreeTimeManager;
 use schronu::adapter::gateway::task_repository::TaskRepository;
 use schronu::application::interface::FreeTimeManagerTrait;
 use schronu::application::interface::TaskRepositoryTrait;
-use schronu::entity::datetime::get_next_morning_datetime;
+use schronu::entity::datetime::{get_next_morning_datetime, parse_local_datetime};
 use schronu::entity::task::{
     extract_leaf_tasks_from_project, extract_leaf_tasks_from_project_with_pending,
     round_up_sec_as_minute, Status, Task, TaskAttr,
@@ -3264,9 +3266,9 @@ fn execute_set_deadline(
         );
     }
 
-    let deadline_time_opt_result = Local.datetime_from_str(&deadline_time_str, "%Y/%m/%d %H:%M:%S");
+    let deadline_time_opt_result = parse_local_datetime(&deadline_time_str, "%Y/%m/%d %H:%M:%S");
 
-    if let Ok(deadline_time) = deadline_time_opt_result {
+    if let Ok(LocalResult::Single(deadline_time)) = deadline_time_opt_result {
         focused_task_opt
             .as_ref()
             .map(|focused_task| focused_task.set_deadline_time_opt(Some(deadline_time)));
@@ -3938,10 +3940,10 @@ fn execute(
                 if yyyymmdd_reg.is_match(tokens[1]) {
                     let defer_dst_str = format!("{} 12:00:00", tokens[1]);
                     let defer_dst_date_result =
-                        Local.datetime_from_str(&defer_dst_str, "%Y/%m/%d %H:%M:%S");
+                        parse_local_datetime(&defer_dst_str, "%Y/%m/%d %H:%M:%S");
 
                     match defer_dst_date_result {
-                        Ok(defer_dst_date) => {
+                        Ok(LocalResult::Single(defer_dst_date)) => {
                             let defer_dst_time =
                                 get_next_morning_datetime(defer_dst_date) - Duration::days(1);
 
@@ -3956,7 +3958,7 @@ fn execute(
                                 "秒",
                             );
                         }
-                        Err(_) => {
+                        _ => {
                             // pass
                         }
                     }
