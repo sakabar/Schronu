@@ -32,6 +32,13 @@ function to_minutes(time_str, parts) {
         next
     }
 
+    if (task_id == "" && task_name != "") {
+        printf("新 %s\n", task_name)
+        printf("下 スプレッドシートで仮登録したタスクを見積もる\n")
+        printf("予 3\n\n")
+        next
+    }
+
     if (task_id == "") {
         printf("line %d: B列が空です\n", NR) > "/dev/stderr"
         exit 1
