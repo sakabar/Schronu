@@ -3514,6 +3514,18 @@ fn decide_time(tokens: &Vec<&str>, now: &DateTime<Local>) -> Option<DateTime<Loc
             }
 
             ans_datetime
+        } else if start_date_str.starts_with('明') {
+            let next_schronu_day = get_next_morning_datetime(*now);
+            Local
+                .with_ymd_and_hms(
+                    next_schronu_day.year(),
+                    next_schronu_day.month(),
+                    next_schronu_day.day(),
+                    hh,
+                    mm,
+                    0,
+                )
+                .unwrap()
         } else if tokens.len() >= 3
             && vec!["月", "火", "水", "木", "金", "土", "日"].contains(&tokens[2])
         {
@@ -3560,6 +3572,28 @@ fn decide_time(tokens: &Vec<&str>, now: &DateTime<Local>) -> Option<DateTime<Loc
     }
 
     start_time
+}
+
+#[test]
+fn test_decide_time_明_6時以降は次のschronu日付にする() {
+    let now = Local.with_ymd_and_hms(2026, 5, 17, 12, 15, 0).unwrap();
+    let tokens = vec!["始", "7:00", "明"];
+
+    let actual = decide_time(&tokens, &now);
+    let expected = Some(Local.with_ymd_and_hms(2026, 5, 18, 7, 0, 0).unwrap());
+
+    assert_eq!(actual, expected);
+}
+
+#[test]
+fn test_decide_time_明_24時過ぎは直近6時を使う() {
+    let now = Local.with_ymd_and_hms(2026, 5, 18, 0, 15, 0).unwrap();
+    let tokens = vec!["始", "7:00", "明"];
+
+    let actual = decide_time(&tokens, &now);
+    let expected = Some(Local.with_ymd_and_hms(2026, 5, 18, 7, 0, 0).unwrap());
+
+    assert_eq!(actual, expected);
 }
 
 fn execute(
