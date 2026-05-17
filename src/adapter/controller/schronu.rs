@@ -11,7 +11,7 @@ use schronu::application::interface::TaskRepositoryTrait;
 use schronu::entity::datetime::{get_next_morning_datetime, parse_local_datetime};
 use schronu::entity::task::{
     extract_leaf_tasks_from_project, extract_leaf_tasks_from_project_with_pending,
-    round_up_sec_as_minute, Status, Task, TaskAttr,
+    round_up_sec_as_minute, RepetitionAnchor, Status, Task, TaskAttr,
 };
 use std::cmp::max;
 use std::cmp::min;
@@ -133,6 +133,37 @@ fn parse_clear_or_gather_defer_to_datetime(
 mod tests {
     use super::*;
 
+    fn next_child_after_finish(
+        repetition_anchor: RepetitionAnchor,
+        days_in_advance: i64,
+        focused_start_time: DateTime<Local>,
+        focused_deadline_time_opt: Option<DateTime<Local>>,
+        finished_at: DateTime<Local>,
+    ) -> Task {
+        let parent_task = Task::new("ルーチン");
+        parent_task.set_repetition_interval_days_opt(Some(7));
+        parent_task.set_repetition_anchor(repetition_anchor);
+        parent_task.set_days_in_advance(days_in_advance);
+        parent_task.set_start_time(Local.with_ymd_and_hms(2026, 5, 10, 9, 30, 15).unwrap());
+        parent_task.set_deadline_time_opt(Some(
+            Local.with_ymd_and_hms(2026, 5, 10, 23, 59, 59).unwrap(),
+        ));
+
+        let mut child_task_attr = TaskAttr::new("ルーチン(5/16)");
+        child_task_attr.set_start_time(focused_start_time);
+        child_task_attr.set_deadline_time_opt(focused_deadline_time_opt);
+        let child_task = parent_task.create_as_last_child(child_task_attr);
+
+        let mut focused_task_id_opt = Some(child_task.get_id());
+        execute_finish(&mut focused_task_id_opt, &Some(child_task), finished_at);
+
+        parent_task
+            .get_children()
+            .into_iter()
+            .find(|task| task.get_status() != Status::Done)
+            .expect("next repetition child")
+    }
+
     #[test]
     fn test_get_adjustable_prefix_label_前倒し可能日数を表示する() {
         let task = Task::new("タスク");
@@ -234,6 +265,74 @@ mod tests {
         let actual = parse_clear_or_gather_defer_to_datetime("集", "120", now);
 
         assert_eq!(actual, Some(now + Duration::minutes(120)));
+    }
+
+    #[test]
+    fn test_execute_finish_repetition_anchor_deadlineは元の期限サイクルを維持する() {
+        let next_child = next_child_after_finish(
+            RepetitionAnchor::Deadline,
+            0,
+            Local.with_ymd_and_hms(2026, 5, 16, 9, 30, 15).unwrap(),
+            Some(Local.with_ymd_and_hms(2026, 5, 16, 23, 59, 59).unwrap()),
+            Local.with_ymd_and_hms(2026, 5, 17, 12, 0, 0).unwrap(),
+        );
+
+        assert_eq!(
+            next_child.get_deadline_time_opt(),
+            Some(Local.with_ymd_and_hms(2026, 5, 23, 23, 59, 59).unwrap())
+        );
+    }
+
+    #[test]
+    fn test_execute_finish_repetition_anchor_completionは完了日から次回期限を決める() {
+        let next_child = next_child_after_finish(
+            RepetitionAnchor::Completion,
+            0,
+            Local.with_ymd_and_hms(2026, 5, 16, 9, 30, 15).unwrap(),
+            Some(Local.with_ymd_and_hms(2026, 5, 16, 23, 59, 59).unwrap()),
+            Local.with_ymd_and_hms(2026, 5, 17, 12, 0, 0).unwrap(),
+        );
+
+        assert_eq!(
+            next_child.get_deadline_time_opt(),
+            Some(Local.with_ymd_and_hms(2026, 5, 24, 23, 59, 59).unwrap())
+        );
+    }
+
+    #[test]
+    fn test_execute_finish_days_in_advanceはstart_timeだけ前倒しする() {
+        let next_child = next_child_after_finish(
+            RepetitionAnchor::Deadline,
+            2,
+            Local.with_ymd_and_hms(2026, 5, 16, 9, 30, 15).unwrap(),
+            Some(Local.with_ymd_and_hms(2026, 5, 16, 23, 59, 59).unwrap()),
+            Local.with_ymd_and_hms(2026, 5, 17, 12, 0, 0).unwrap(),
+        );
+
+        assert_eq!(
+            next_child.get_start_time(),
+            Local.with_ymd_and_hms(2026, 5, 21, 9, 30, 15).unwrap()
+        );
+        assert_eq!(
+            next_child.get_deadline_time_opt(),
+            Some(Local.with_ymd_and_hms(2026, 5, 23, 23, 59, 59).unwrap())
+        );
+    }
+
+    #[test]
+    fn test_execute_finish_deadlineがない場合はcompletionにfallbackする() {
+        let next_child = next_child_after_finish(
+            RepetitionAnchor::Deadline,
+            0,
+            Local.with_ymd_and_hms(2026, 5, 16, 9, 30, 15).unwrap(),
+            None,
+            Local.with_ymd_and_hms(2026, 5, 17, 12, 0, 0).unwrap(),
+        );
+
+        assert_eq!(
+            next_child.get_deadline_time_opt(),
+            Some(Local.with_ymd_and_hms(2026, 5, 24, 23, 59, 59).unwrap())
+        );
     }
 
     #[test]
@@ -3139,16 +3238,76 @@ fn execute_defer_all_frequent_routines(
     // println!("{:?}", cnt );
 }
 
-fn execute_finish(focused_task_id_opt: &mut Option<Uuid>, focused_task_opt: &Option<Task>) {
+fn apply_time_template(
+    base_datetime: DateTime<Local>,
+    time_template: DateTime<Local>,
+) -> DateTime<Local> {
+    base_datetime
+        .with_hour(time_template.hour())
+        .expect("invalid hour")
+        .with_minute(time_template.minute())
+        .expect("invalid minute")
+        .with_second(time_template.second())
+        .expect("invalid second")
+        .with_nanosecond(0)
+        .expect("invalid nanosecond")
+}
+
+fn build_next_repetition_task_attr(
+    focused_task: &Task,
+    parent_task: &Task,
+    repetition_interval_days: i64,
+    finished_at: DateTime<Local>,
+) -> TaskAttr {
+    let occurrence_anchor = match parent_task.get_repetition_anchor() {
+        RepetitionAnchor::Deadline => focused_task.get_deadline_time_opt().unwrap_or(finished_at),
+        RepetitionAnchor::Completion => finished_at,
+    };
+    let next_occurrence_day =
+        get_next_morning_datetime(occurrence_anchor) + Duration::days(repetition_interval_days - 1);
+    let parent_task_start_time = parent_task.get_start_time();
+    let new_start_time = apply_time_template(next_occurrence_day, parent_task_start_time);
+    let new_deadline_time = match parent_task.get_deadline_time_opt() {
+        Some(parent_task_deadline_time) => {
+            apply_time_template(next_occurrence_day, parent_task_deadline_time)
+        }
+        None => new_start_time
+            .with_hour(23)
+            .expect("invalid hour")
+            .with_minute(59)
+            .expect("invalid minute")
+            .with_second(59)
+            .expect("invalid second")
+            .with_nanosecond(0)
+            .expect("invalid nanosecond"),
+    };
+    let new_task_name = format!(
+        "{}({}/{})",
+        parent_task.get_name(),
+        new_start_time.month(),
+        new_start_time.day()
+    );
+
+    let mut new_task_attr = TaskAttr::new(&new_task_name);
+    new_task_attr
+        .set_start_time(new_start_time - Duration::days(parent_task.get_days_in_advance()));
+    new_task_attr.set_deadline_time_opt(Some(new_deadline_time));
+    new_task_attr.set_estimated_work_seconds(parent_task.get_estimated_work_seconds());
+    new_task_attr
+}
+
+fn execute_finish(
+    focused_task_id_opt: &mut Option<Uuid>,
+    focused_task_opt: &Option<Task>,
+    finished_at: DateTime<Local>,
+) {
     focused_task_opt.as_ref().and_then(|focused_task| {
         focused_task.set_orig_status(Status::Done);
-        focused_task.set_end_time_opt(Some(Local::now()));
+        focused_task.set_end_time_opt(Some(finished_at));
 
         // 親タスクがrepetition_interval_daysを持っているなら、
         // その値に従って兄弟ノードを生成する
-        // start_timeは日付は(repetition_interval_days-1)日後で、時刻は親タスクのstart_timeを引き継ぐ
         // タスク名は「親タスク名(日付)」
-        // deadline_timeの時刻は親タスクのdeadline_timeを引き継ぐ (無ければ23:59)
         // estimated_work_secondsは親タスクを引き継ぐ
         match focused_task.parent() {
             Some(parent_task) => match parent_task.get_repetition_interval_days_opt() {
@@ -3173,49 +3332,12 @@ fn execute_finish(focused_task_id_opt: &mut Option<Uuid>, focused_task_opt: &Opt
                         }
                     }
 
-                    let parent_task_name = parent_task.get_name();
-                    let parent_task_start_time = parent_task.get_start_time();
-                    let days_in_advance = parent_task.get_days_in_advance();
-                    let new_start_time = get_next_morning_datetime(
-                        Local::now() + Duration::days(repetition_interval_days - 1),
-                    )
-                    .with_hour(parent_task_start_time.hour())
-                    .unwrap()
-                    .with_minute(parent_task_start_time.minute())
-                    .unwrap()
-                    .with_second(parent_task_start_time.second())
-                    .unwrap()
-                    .with_nanosecond(0)
-                    .unwrap();
-                    let new_task_month = new_start_time.month();
-                    let new_task_day = new_start_time.day();
-                    let new_task_name =
-                        format!("{}({}/{})", parent_task_name, new_task_month, new_task_day);
-
-                    let new_deadline_time = match parent_task.get_deadline_time_opt() {
-                        Some(parent_task_deadline_time) => new_start_time
-                            .with_hour(parent_task_deadline_time.hour())
-                            .unwrap()
-                            .with_minute(parent_task_deadline_time.minute())
-                            .unwrap()
-                            .with_nanosecond(0)
-                            .unwrap(),
-                        None => new_start_time
-                            .with_hour(23)
-                            .unwrap()
-                            .with_minute(59)
-                            .unwrap()
-                            .with_second(59)
-                            .unwrap(),
-                    };
-
-                    let estimated_work_seconds = parent_task.get_estimated_work_seconds();
-
-                    let mut new_task_attr = TaskAttr::new(&new_task_name);
-                    // deadlineの決定などに影響を与えたくないので、最後にdays_in_advanceを引く
-                    new_task_attr.set_start_time(new_start_time - Duration::days(days_in_advance));
-                    new_task_attr.set_deadline_time_opt(Some(new_deadline_time));
-                    new_task_attr.set_estimated_work_seconds(estimated_work_seconds);
+                    let new_task_attr = build_next_repetition_task_attr(
+                        focused_task,
+                        &parent_task,
+                        repetition_interval_days,
+                        finished_at,
+                    );
                     parent_task.create_as_last_child(new_task_attr);
                 }
                 None => {}
@@ -4215,7 +4337,11 @@ fn execute(
                     }
 
                     // 完了操作
-                    execute_finish(focused_task_id_opt, &focused_task_opt);
+                    execute_finish(
+                        focused_task_id_opt,
+                        &focused_task_opt,
+                        task_repository.get_last_synced_time(),
+                    );
                 }
             }
         }

@@ -62,6 +62,28 @@ pub fn read_status(s: &str) -> Option<Status> {
     return None;
 }
 
+#[derive(Copy, Clone, Debug, PartialEq)]
+pub enum RepetitionAnchor {
+    Deadline,
+    Completion,
+}
+
+impl fmt::Display for RepetitionAnchor {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match self {
+            RepetitionAnchor::Deadline => write!(f, "deadline"),
+            RepetitionAnchor::Completion => write!(f, "completion"),
+        }
+    }
+}
+
+pub fn read_repetition_anchor(s: &str) -> RepetitionAnchor {
+    match s.to_lowercase().as_str() {
+        "completion" => RepetitionAnchor::Completion,
+        _ => RepetitionAnchor::Deadline,
+    }
+}
+
 #[test]
 fn test_read_status_doneの文字列を変換する() {
     let s = "done";
@@ -97,6 +119,24 @@ fn test_read_status_パーズできなかったときはNoneを返す() {
     let s = "invalid_status";
     let actual = read_status(s);
     assert_eq!(actual, None);
+}
+
+#[test]
+fn test_read_repetition_anchor_deadlineの文字列を変換する() {
+    let actual = read_repetition_anchor("deadline");
+    assert_eq!(actual, RepetitionAnchor::Deadline);
+}
+
+#[test]
+fn test_read_repetition_anchor_completionの文字列を変換する() {
+    let actual = read_repetition_anchor("completion");
+    assert_eq!(actual, RepetitionAnchor::Completion);
+}
+
+#[test]
+fn test_read_repetition_anchor_不正値ならdeadlineを返す() {
+    let actual = read_repetition_anchor("invalid");
+    assert_eq!(actual, RepetitionAnchor::Deadline);
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -707,6 +747,7 @@ pub struct TaskAttr {
     actual_work_seconds: i64,    // 実際の作業時間 (秒)
 
     repetition_interval_days_opt: Option<i64>,
+    repetition_anchor: RepetitionAnchor,
     days_in_advance: i64, // 繰り返しタスクについて、何日前から着手開始可能とするか
 }
 
@@ -728,6 +769,7 @@ impl PartialEq for TaskAttr {
             && self.estimated_work_seconds == other.estimated_work_seconds
             && self.actual_work_seconds == other.actual_work_seconds
             && self.repetition_interval_days_opt == other.repetition_interval_days_opt
+            && self.repetition_anchor == other.repetition_anchor
             && self.days_in_advance == other.days_in_advance
     }
 }
@@ -789,6 +831,7 @@ impl TaskAttr {
             estimated_work_seconds: 900,
             actual_work_seconds: 0,
             repetition_interval_days_opt: None,
+            repetition_anchor: RepetitionAnchor::Deadline,
             days_in_advance: 0,
         }
     }
@@ -958,6 +1001,14 @@ impl TaskAttr {
 
     pub fn get_repetition_interval_days_opt(&self) -> Option<i64> {
         self.repetition_interval_days_opt
+    }
+
+    pub fn set_repetition_anchor(&mut self, repetition_anchor: RepetitionAnchor) {
+        self.repetition_anchor = repetition_anchor;
+    }
+
+    pub fn get_repetition_anchor(&self) -> RepetitionAnchor {
+        self.repetition_anchor
     }
 
     pub fn set_days_in_advance(&mut self, days_in_advance: i64) {
@@ -1198,6 +1249,16 @@ impl Task {
         self.node
             .borrow_data_mut()
             .set_repetition_interval_days_opt(repetition_interval_days_opt);
+    }
+
+    pub fn get_repetition_anchor(&self) -> RepetitionAnchor {
+        self.node.borrow_data().get_repetition_anchor()
+    }
+
+    pub fn set_repetition_anchor(&self, repetition_anchor: RepetitionAnchor) {
+        self.node
+            .borrow_data_mut()
+            .set_repetition_anchor(repetition_anchor);
     }
 
     pub fn get_days_in_advance(&self) -> i64 {
@@ -1888,6 +1949,14 @@ pub fn task_to_yaml(task: &Task) -> Yaml {
         None => {}
     }
 
+    let repetition_anchor = task.get_repetition_anchor();
+    if repetition_anchor != default_attr.get_repetition_anchor() {
+        task_hash.insert(
+            Yaml::String(String::from("repetition_anchor")),
+            Yaml::String(repetition_anchor.to_string()),
+        );
+    }
+
     let days_in_advance = task.get_days_in_advance();
     if days_in_advance != default_attr.get_days_in_advance() {
         task_hash.insert(
@@ -2162,6 +2231,53 @@ id: 67e55044-10b1-426f-9247-bb680e5fe0c8
 create_time: '2023/05/19 01:23:45'
 start_time: '2023/05/19 01:23:45'
 repetition_interval_days: 7
+";
+    let docs = YamlLoader::load_from_str(s).unwrap();
+    let expected_yaml: &Yaml = &docs[0];
+
+    assert_eq!(&actual, expected_yaml);
+}
+
+#[test]
+fn test_task_to_yaml_repetition_anchor_completion() {
+    let mut task = Task::new("タスク1");
+    let id: Uuid = uuid!("67e55044-10b1-426f-9247-bb680e5fe0c8");
+    task.set_id(id);
+    task.set_repetition_anchor(RepetitionAnchor::Completion);
+    let now = Local.with_ymd_and_hms(2023, 5, 19, 01, 23, 45).unwrap();
+    task.set_create_time(now);
+    task.set_start_time(now);
+    let actual = task_to_yaml(&task);
+
+    let s = "
+name: 'タスク1'
+id: 67e55044-10b1-426f-9247-bb680e5fe0c8
+create_time: '2023/05/19 01:23:45'
+start_time: '2023/05/19 01:23:45'
+repetition_anchor: completion
+";
+    let docs = YamlLoader::load_from_str(s).unwrap();
+    let expected_yaml: &Yaml = &docs[0];
+
+    assert_eq!(&actual, expected_yaml);
+}
+
+#[test]
+fn test_task_to_yaml_repetition_anchor_deadlineは出力しない() {
+    let mut task = Task::new("タスク1");
+    let id: Uuid = uuid!("67e55044-10b1-426f-9247-bb680e5fe0c8");
+    task.set_id(id);
+    task.set_repetition_anchor(RepetitionAnchor::Deadline);
+    let now = Local.with_ymd_and_hms(2023, 5, 19, 01, 23, 45).unwrap();
+    task.set_create_time(now);
+    task.set_start_time(now);
+    let actual = task_to_yaml(&task);
+
+    let s = "
+name: 'タスク1'
+id: 67e55044-10b1-426f-9247-bb680e5fe0c8
+create_time: '2023/05/19 01:23:45'
+start_time: '2023/05/19 01:23:45'
 ";
     let docs = YamlLoader::load_from_str(s).unwrap();
     let expected_yaml: &Yaml = &docs[0];
