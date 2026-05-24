@@ -2877,10 +2877,31 @@ fn make_obsidian_root_task_search_url(focused_task: &Task) -> String {
     make_obsidian_search_url(&root_task_id.hyphenated().to_string())
 }
 
+fn open_obsidian_url(url: &str) -> Result<(), String> {
+    #[cfg(target_os = "macos")]
+    {
+        let status = process::Command::new("open")
+            .arg(url)
+            .status()
+            .map_err(|err| err.to_string())?;
+
+        if status.success() {
+            Ok(())
+        } else {
+            Err(format!("open exited with status {}", status))
+        }
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    {
+        webbrowser::open(url).map_err(|err| err.to_string())
+    }
+}
+
 fn execute_open_obsidian_root_task_search(focused_task_opt: &Option<Task>) {
     if let Some(focused_task) = focused_task_opt {
         let url = make_obsidian_root_task_search_url(focused_task);
-        match webbrowser::open(&url) {
+        match open_obsidian_url(&url) {
             // エラーは無視する
             _ => {}
         }
