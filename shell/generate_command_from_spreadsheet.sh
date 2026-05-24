@@ -24,7 +24,7 @@ function to_minutes(time_str, parts) {
 {
     task_id = trim($2)
     task_name = trim($9)
-    finish_flag = trim($13)
+    finish_flag = trim($12)
     should_extract = trim($14)
     actual_work_minutes = trim($15)
 

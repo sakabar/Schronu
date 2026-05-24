@@ -14,9 +14,9 @@ cat - | grep -v -- '^----' | tr ' ' '\t' | tac | awk 'NF >= 9' | while read line
     manu_cell="=NOT(ISFORMULA(K${cell_row_num}))"
     k_cell="=MAX(TIME(${hour}, ${minute}, 0), Q${prev_cell_row_num}, ${now_time})"
 
-    l_cell='='"K${cell_row_num}"'+time(0, '"G${cell_row_num}"', 0)'
+    l_cell=''
+    m_cell='='"K${cell_row_num}"'+time(0, '"G${cell_row_num}"', 0)'
 
-    m_cell=''
     echo ${line}"\t${manu_cell}\t${k_cell}\t${l_cell}\t${m_cell}"
 
     cell_row_num=$[$cell_row_num + 1]
