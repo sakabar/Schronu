@@ -2865,6 +2865,73 @@ fn execute_open_link(focused_task_opt: &Option<Task>) {
     }
 }
 
+fn make_obsidian_search_url(query: &str) -> String {
+    format!(
+        "obsidian://search?vault=Obsidian-Moica&query={}",
+        percent_encode(query.as_bytes(), MY_ASCII_SET)
+    )
+}
+
+fn make_obsidian_root_task_search_url(focused_task: &Task) -> String {
+    let root_task_id = focused_task.root().get_id();
+    make_obsidian_search_url(&root_task_id.hyphenated().to_string())
+}
+
+fn open_obsidian_url(url: &str) -> Result<(), String> {
+    #[cfg(target_os = "macos")]
+    {
+        let status = process::Command::new("open")
+            .arg(url)
+            .status()
+            .map_err(|err| err.to_string())?;
+
+        if status.success() {
+            Ok(())
+        } else {
+            Err(format!("open exited with status {}", status))
+        }
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    {
+        webbrowser::open(url).map_err(|err| err.to_string())
+    }
+}
+
+fn execute_open_obsidian_root_task_search(focused_task_opt: &Option<Task>) {
+    if let Some(focused_task) = focused_task_opt {
+        let url = make_obsidian_root_task_search_url(focused_task);
+        match open_obsidian_url(&url) {
+            // エラーは無視する
+            _ => {}
+        }
+    }
+}
+
+#[test]
+fn test_make_obsidian_search_url_task_idをqueryにする() {
+    let query = "11111111-1111-1111-1111-111111111111";
+    let actual = make_obsidian_search_url(query);
+    let expected =
+        "obsidian://search?vault=Obsidian-Moica&query=11111111-1111-1111-1111-111111111111";
+
+    assert_eq!(actual, expected);
+}
+
+#[test]
+fn test_make_obsidian_root_task_search_url_子タスクからrootのtask_idをqueryにする() {
+    let mut root_task = Task::new("root");
+    let root_task_id = Uuid::parse_str("11111111-1111-1111-1111-111111111111").unwrap();
+    root_task.set_id(root_task_id);
+    let child_task = root_task.create_as_last_child(TaskAttr::new("child"));
+
+    let actual = make_obsidian_root_task_search_url(&child_task);
+    let expected =
+        "obsidian://search?vault=Obsidian-Moica&query=11111111-1111-1111-1111-111111111111";
+
+    assert_eq!(actual, expected);
+}
+
 #[allow(unused_must_use)]
 fn execute_next_up(
     _stdout: &mut RawTerminal<Stdout>,
@@ -3895,6 +3962,9 @@ fn execute(
         }
         "開" | "open" | "op" => {
             execute_open_link(&focused_task_opt);
+        }
+        "黒" | "obs" => {
+            execute_open_obsidian_root_task_search(&focused_task_opt);
         }
         "外" | "unfocus" | "ufc" => {
             execute_unfocus(focused_task_id_opt);
