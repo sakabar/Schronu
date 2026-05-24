@@ -45,6 +45,19 @@ schronu> defer 5 minutes
 
 今フォーカスが当たっているタスクを指定した期間Pending状態とします。
 
+### 低優先度タスクを連続して先送りにする
+
+``` shell
+schronu> 低
+schronu> defer 7 days
+schronu> defer 7 days
+schronu> 高
+```
+
+起動中に `低` または `low` を入力すると、フォーカスの自動選択を低優先度モードに切り替えます。
+`defer` 後も低優先度モードが維持されるため、低優先度タスクを順に後ろ倒しできます。
+`高` または `high` で通常の高優先度モードに戻ります。
+
 ### タスクツリーを表示する
 ``` shell
 schronu> tree

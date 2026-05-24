@@ -33,11 +33,25 @@ use webbrowser;
 
 const MAX_COL: u16 = 999;
 
-const IS_LOW_PRIORITY_MODE: bool = false;
 const MIN_SPLIT_SEGMENT_SECONDS: i64 = 5 * 60;
 
 // パーセントエンコーディングする対象にスペースを追加する
 const MY_ASCII_SET: &AsciiSet = &CONTROLS.add(b' ');
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum FocusSelectionMode {
+    HighestPriority,
+    LowestPriority,
+}
+
+impl FocusSelectionMode {
+    fn label(&self) -> &str {
+        match self {
+            FocusSelectionMode::HighestPriority => "高",
+            FocusSelectionMode::LowestPriority => "低",
+        }
+    }
+}
 
 fn writeln_newline(stdout: &mut RawTerminal<Stdout>, message: &str) -> Result<(), std::io::Error> {
     writeln!(stdout, "{}{}", termion::cursor::Left(MAX_COL), message)
@@ -127,6 +141,26 @@ fn parse_clear_or_gather_defer_to_datetime(
     }
 
     None
+}
+
+fn parse_focus_selection_mode_command(line: &str) -> Option<FocusSelectionMode> {
+    let command = line.split_whitespace().collect::<Vec<&str>>().join(" ");
+
+    match command.as_str() {
+        "低" | "low" | "lo" | "lowest" => Some(FocusSelectionMode::LowestPriority),
+        "高" | "high" | "hi" | "highest" => Some(FocusSelectionMode::HighestPriority),
+        _ => None,
+    }
+}
+
+fn select_focus_task_id(
+    task_repository: &mut dyn TaskRepositoryTrait,
+    focus_selection_mode: FocusSelectionMode,
+) -> Option<Uuid> {
+    match focus_selection_mode {
+        FocusSelectionMode::HighestPriority => task_repository.get_highest_priority_leaf_task_id(),
+        FocusSelectionMode::LowestPriority => task_repository.get_lowest_priority_leaf_task_id(),
+    }
 }
 
 #[cfg(test)]
@@ -265,6 +299,47 @@ mod tests {
         let actual = parse_clear_or_gather_defer_to_datetime("集", "120", now);
 
         assert_eq!(actual, Some(now + Duration::minutes(120)));
+    }
+
+    #[test]
+    fn test_parse_focus_selection_mode_command_low() {
+        assert_eq!(
+            parse_focus_selection_mode_command("低"),
+            Some(FocusSelectionMode::LowestPriority)
+        );
+        assert_eq!(
+            parse_focus_selection_mode_command("low"),
+            Some(FocusSelectionMode::LowestPriority)
+        );
+    }
+
+    #[test]
+    fn test_parse_focus_selection_mode_command_high() {
+        assert_eq!(
+            parse_focus_selection_mode_command("高"),
+            Some(FocusSelectionMode::HighestPriority)
+        );
+        assert_eq!(
+            parse_focus_selection_mode_command("high"),
+            Some(FocusSelectionMode::HighestPriority)
+        );
+    }
+
+    #[test]
+    fn test_parse_focus_selection_mode_command_trims_spaces() {
+        assert_eq!(
+            parse_focus_selection_mode_command("  low  "),
+            Some(FocusSelectionMode::LowestPriority)
+        );
+        assert_eq!(
+            parse_focus_selection_mode_command("  高  "),
+            Some(FocusSelectionMode::HighestPriority)
+        );
+    }
+
+    #[test]
+    fn test_parse_focus_selection_mode_command_unknown() {
+        assert_eq!(parse_focus_selection_mode_command("後 7日"), None);
     }
 
     #[test]
@@ -4528,11 +4603,9 @@ fn application(
     // 優先度の最も高いPJを一つ選ぶ
     // 一番下のタスクにフォーカスが自動的に当たる
 
-    let mut focused_task_id_opt: Option<Uuid> = if IS_LOW_PRIORITY_MODE {
-        task_repository.get_lowest_priority_leaf_task_id()
-    } else {
-        task_repository.get_highest_priority_leaf_task_id()
-    };
+    let mut focus_selection_mode = FocusSelectionMode::HighestPriority;
+    let mut focused_task_id_opt: Option<Uuid> =
+        select_focus_task_id(task_repository, focus_selection_mode);
 
     let mut last_focused_task_id_opt: Option<Uuid> = None;
     let mut focus_started_datetime: DateTime<Local> = now;
@@ -4768,7 +4841,15 @@ fn application(
                 writeln_newline(&mut stdout, "").unwrap();
                 stdout.flush().unwrap();
 
-                if line == "t" {
+                if let Some(new_focus_selection_mode) = parse_focus_selection_mode_command(&line) {
+                    focus_selection_mode = new_focus_selection_mode;
+                    focused_task_id_opt = None;
+                    writeln_newline(
+                        &mut stdout,
+                        &format!("フォーカス選択モード: {}", focus_selection_mode.label()),
+                    )
+                    .unwrap();
+                } else if line == "t" {
                     // do it "t"oday
                     let s = "後 1秒".to_string();
 
@@ -4873,11 +4954,8 @@ fn application(
                 // もしfocused_task_id_optがNoneの時は最も優先度が高いタスクの選出をやり直す
 
                 if focused_task_id_opt.is_none() {
-                    focused_task_id_opt = if IS_LOW_PRIORITY_MODE {
-                        task_repository.get_lowest_priority_leaf_task_id()
-                    } else {
-                        task_repository.get_highest_priority_leaf_task_id()
-                    };
+                    focused_task_id_opt =
+                        select_focus_task_id(task_repository, focus_selection_mode);
                     last_focused_task_id_opt = None;
                 }
 
