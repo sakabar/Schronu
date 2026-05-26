@@ -283,6 +283,9 @@ pub fn yaml_to_task(yaml: &Yaml, now: DateTime<Local>) -> Task {
     let is_on_other_side: bool = yaml["is_on_other_side"]
         .as_bool()
         .unwrap_or(*default_attr.get_is_on_other_side());
+    let atomic: bool = yaml["atomic"]
+        .as_bool()
+        .unwrap_or(default_attr.get_atomic());
 
     let pending_until_str: &str = yaml["pending_until"].as_str().unwrap_or("");
     let pending_until = transform_from_pending_until_str(pending_until_str);
@@ -322,6 +325,7 @@ pub fn yaml_to_task(yaml: &Yaml, now: DateTime<Local>) -> Task {
 
     parent_task.set_orig_status(status);
     parent_task.set_is_on_other_side(is_on_other_side);
+    parent_task.set_atomic(atomic);
     parent_task.set_pending_until(pending_until);
     parent_task.set_priority(priority);
 
@@ -593,6 +597,51 @@ is_on_other_side: true
     );
 
     assert_eq!(&actual.get_id(), &expected.get_id());
+}
+
+#[test]
+fn test_yaml_to_task_atomic_正常系() {
+    let s = "
+id: 67e55044-10b1-426f-9247-bb680e5fe0c8
+name: 'タスク1'
+atomic: true
+";
+
+    let docs = YamlLoader::load_from_str(s).unwrap();
+    let project_yaml: &Yaml = &docs[0];
+
+    let now = Local::now();
+    let actual = yaml_to_task(project_yaml, now);
+    let mut expected = Task::new("タスク1");
+    let id: Uuid = uuid!("67e55044-10b1-426f-9247-bb680e5fe0c8");
+    expected.set_id(id);
+    expected.set_atomic(true);
+    expected.sync_clock(now);
+
+    assert!(
+        &actual
+            .try_eq_tree(&expected)
+            .expect("data are not borrowed"),
+        "actual and expected are not equal"
+    );
+
+    assert_eq!(&actual.get_id(), &expected.get_id());
+}
+
+#[test]
+fn test_yaml_to_task_atomic未指定ならfalse() {
+    let s = "
+id: 67e55044-10b1-426f-9247-bb680e5fe0c8
+name: 'タスク1'
+";
+
+    let docs = YamlLoader::load_from_str(s).unwrap();
+    let project_yaml: &Yaml = &docs[0];
+
+    let now = Local::now();
+    let actual = yaml_to_task(project_yaml, now);
+
+    assert!(!actual.get_atomic());
 }
 
 #[test]

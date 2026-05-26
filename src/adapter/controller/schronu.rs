@@ -411,6 +411,36 @@ mod tests {
     }
 
     #[test]
+    fn test_execute_finish_繰り返し親のatomicを次回子タスクに引き継ぐ() {
+        let parent_task = Task::new("通勤");
+        parent_task.set_repetition_interval_days_opt(Some(7));
+        parent_task.set_atomic(true);
+        parent_task.set_start_time(Local.with_ymd_and_hms(2026, 5, 10, 9, 0, 0).unwrap());
+        parent_task
+            .set_deadline_time_opt(Some(Local.with_ymd_and_hms(2026, 5, 10, 10, 0, 0).unwrap()));
+
+        let mut child_task_attr = TaskAttr::new("通勤(5/16)");
+        child_task_attr.set_start_time(Local.with_ymd_and_hms(2026, 5, 16, 9, 0, 0).unwrap());
+        child_task_attr
+            .set_deadline_time_opt(Some(Local.with_ymd_and_hms(2026, 5, 16, 10, 0, 0).unwrap()));
+        let child_task = parent_task.create_as_last_child(child_task_attr);
+
+        let mut focused_task_id_opt = Some(child_task.get_id());
+        execute_finish(
+            &mut focused_task_id_opt,
+            &Some(child_task),
+            Local.with_ymd_and_hms(2026, 5, 16, 10, 0, 0).unwrap(),
+        );
+
+        let next_child = parent_task
+            .get_children()
+            .into_iter()
+            .find(|task| task.get_status() != Status::Done)
+            .expect("next repetition child");
+        assert!(next_child.get_atomic());
+    }
+
+    #[test]
     fn test_execute_set_priority_優先度を変更する() {
         let task = Task::new("タスク");
         let focused_task_opt = Some(task.clone());
@@ -473,6 +503,7 @@ mod tests {
                 deadline_time_opt: None,
                 remaining_seconds: 10 * 3600,
                 dependency_ids: vec![],
+                atomic: false,
             },
             TaskScheduleCandidate {
                 id: high_priority_id,
@@ -482,6 +513,7 @@ mod tests {
                 deadline_time_opt: None,
                 remaining_seconds: 3600,
                 dependency_ids: vec![],
+                atomic: false,
             },
         ];
 
@@ -526,6 +558,107 @@ mod tests {
     }
 
     #[test]
+    fn test_schedule_tasks_by_priority_atomicタスクは分割されない() {
+        let last_synced_time = Local.with_ymd_and_hms(2026, 5, 10, 12, 0, 0).unwrap();
+        let high_priority_id = Uuid::new_v4();
+        let atomic_task_id = Uuid::new_v4();
+        let candidates = vec![
+            TaskScheduleCandidate {
+                id: atomic_task_id,
+                first_available_time: Local.with_ymd_and_hms(2026, 5, 10, 13, 0, 0).unwrap(),
+                neg_priority: -88,
+                rank: 0,
+                deadline_time_opt: None,
+                remaining_seconds: 10 * 3600,
+                dependency_ids: vec![],
+                atomic: true,
+            },
+            TaskScheduleCandidate {
+                id: high_priority_id,
+                first_available_time: Local.with_ymd_and_hms(2026, 5, 10, 18, 0, 0).unwrap(),
+                neg_priority: -89,
+                rank: 0,
+                deadline_time_opt: None,
+                remaining_seconds: 3600,
+                dependency_ids: vec![],
+                atomic: false,
+            },
+        ];
+
+        let actual = schedule_tasks_by_priority(&candidates, last_synced_time);
+        let atomic_tasks = actual
+            .iter()
+            .filter(|scheduled_task| scheduled_task.id == atomic_task_id)
+            .collect::<Vec<_>>();
+
+        assert_eq!(atomic_tasks.len(), 1);
+        assert_eq!(
+            atomic_tasks[0].scheduled_start,
+            Local.with_ymd_and_hms(2026, 5, 10, 19, 0, 0).unwrap()
+        );
+        assert_eq!(
+            atomic_tasks[0].scheduled_end,
+            Local.with_ymd_and_hms(2026, 5, 11, 5, 0, 0).unwrap()
+        );
+        assert_eq!(atomic_tasks[0].scheduled_work_seconds, 10 * 3600);
+    }
+
+    #[test]
+    fn test_schedule_tasks_by_priority_atomicタスクは依存終了後の連続枠に配置される() {
+        let last_synced_time = Local.with_ymd_and_hms(2026, 5, 10, 12, 0, 0).unwrap();
+        let child_id = Uuid::new_v4();
+        let blocker_id = Uuid::new_v4();
+        let atomic_parent_id = Uuid::new_v4();
+        let candidates = vec![
+            TaskScheduleCandidate {
+                id: atomic_parent_id,
+                first_available_time: last_synced_time,
+                neg_priority: -90,
+                rank: 1,
+                deadline_time_opt: None,
+                remaining_seconds: 2 * 3600,
+                dependency_ids: vec![child_id],
+                atomic: true,
+            },
+            TaskScheduleCandidate {
+                id: blocker_id,
+                first_available_time: Local.with_ymd_and_hms(2026, 5, 10, 13, 30, 0).unwrap(),
+                neg_priority: -98,
+                rank: 0,
+                deadline_time_opt: None,
+                remaining_seconds: 3600,
+                dependency_ids: vec![],
+                atomic: false,
+            },
+            TaskScheduleCandidate {
+                id: child_id,
+                first_available_time: last_synced_time,
+                neg_priority: -99,
+                rank: 0,
+                deadline_time_opt: None,
+                remaining_seconds: 3600,
+                dependency_ids: vec![],
+                atomic: false,
+            },
+        ];
+
+        let actual = schedule_tasks_by_priority(&candidates, last_synced_time);
+        let atomic_parent_task = actual
+            .iter()
+            .find(|scheduled_task| scheduled_task.id == atomic_parent_id)
+            .unwrap();
+
+        assert_eq!(
+            atomic_parent_task.scheduled_start,
+            Local.with_ymd_and_hms(2026, 5, 10, 14, 30, 0).unwrap()
+        );
+        assert_eq!(
+            atomic_parent_task.scheduled_end,
+            Local.with_ymd_and_hms(2026, 5, 10, 16, 30, 0).unwrap()
+        );
+    }
+
+    #[test]
     fn test_schedule_tasks_by_priority_5分以下の空き時間には分割しない() {
         let last_synced_time = Local.with_ymd_and_hms(2026, 5, 10, 12, 0, 0).unwrap();
         let high_priority_id = Uuid::new_v4();
@@ -539,6 +672,7 @@ mod tests {
                 deadline_time_opt: None,
                 remaining_seconds: 20 * 60,
                 dependency_ids: vec![],
+                atomic: false,
             },
             TaskScheduleCandidate {
                 id: high_priority_id,
@@ -548,6 +682,7 @@ mod tests {
                 deadline_time_opt: None,
                 remaining_seconds: 60 * 60,
                 dependency_ids: vec![],
+                atomic: false,
             },
         ];
 
@@ -579,6 +714,7 @@ mod tests {
                 deadline_time_opt: None,
                 remaining_seconds: 20 * 60,
                 dependency_ids: vec![],
+                atomic: false,
             },
             TaskScheduleCandidate {
                 id: high_priority_id,
@@ -588,6 +724,7 @@ mod tests {
                 deadline_time_opt: None,
                 remaining_seconds: 60 * 60,
                 dependency_ids: vec![],
+                atomic: false,
             },
         ];
 
@@ -624,6 +761,7 @@ mod tests {
                 deadline_time_opt: None,
                 remaining_seconds: 20 * 60,
                 dependency_ids: vec![],
+                atomic: false,
             },
             TaskScheduleCandidate {
                 id: high_priority_id,
@@ -633,6 +771,7 @@ mod tests {
                 deadline_time_opt: None,
                 remaining_seconds: 60 * 60,
                 dependency_ids: vec![],
+                atomic: false,
             },
         ];
 
@@ -664,6 +803,7 @@ mod tests {
                 deadline_time_opt: None,
                 remaining_seconds: 60 * 60,
                 dependency_ids: vec![],
+                atomic: false,
             },
             TaskScheduleCandidate {
                 id: task_id,
@@ -673,6 +813,7 @@ mod tests {
                 deadline_time_opt: None,
                 remaining_seconds: 5 * 60,
                 dependency_ids: vec![],
+                atomic: false,
             },
         ];
 
@@ -703,6 +844,7 @@ mod tests {
                 deadline_time_opt: None,
                 remaining_seconds: 3600,
                 dependency_ids: vec![],
+                atomic: false,
             },
             TaskScheduleCandidate {
                 id: deadline_id,
@@ -712,6 +854,7 @@ mod tests {
                 deadline_time_opt: Some(Local.with_ymd_and_hms(2026, 5, 10, 20, 0, 0).unwrap()),
                 remaining_seconds: 3600,
                 dependency_ids: vec![],
+                atomic: false,
             },
         ];
 
@@ -748,6 +891,7 @@ mod tests {
                 deadline_time_opt: None,
                 remaining_seconds: 3600,
                 dependency_ids: vec![],
+                atomic: false,
             },
             TaskScheduleCandidate {
                 id: dinner_cooking_id,
@@ -757,6 +901,7 @@ mod tests {
                 deadline_time_opt: None,
                 remaining_seconds: 3600,
                 dependency_ids: vec![],
+                atomic: false,
             },
             TaskScheduleCandidate {
                 id: priority_88_id,
@@ -766,6 +911,7 @@ mod tests {
                 deadline_time_opt: None,
                 remaining_seconds: 4 * 3600,
                 dependency_ids: vec![],
+                atomic: false,
             },
             TaskScheduleCandidate {
                 id: lunch_cooking_id,
@@ -775,6 +921,7 @@ mod tests {
                 deadline_time_opt: None,
                 remaining_seconds: 3600,
                 dependency_ids: vec![],
+                atomic: false,
             },
         ];
 
@@ -817,6 +964,7 @@ mod tests {
                 deadline_time_opt: None,
                 remaining_seconds: 0,
                 dependency_ids: vec![child_id],
+                atomic: false,
             },
             TaskScheduleCandidate {
                 id: blocking_task_id,
@@ -826,6 +974,7 @@ mod tests {
                 deadline_time_opt: None,
                 remaining_seconds: 3600,
                 dependency_ids: vec![],
+                atomic: false,
             },
             TaskScheduleCandidate {
                 id: child_id,
@@ -835,6 +984,7 @@ mod tests {
                 deadline_time_opt: None,
                 remaining_seconds: 60,
                 dependency_ids: vec![],
+                atomic: false,
             },
         ];
 
@@ -877,6 +1027,7 @@ struct TaskScheduleCandidate {
     deadline_time_opt: Option<DateTime<Local>>,
     remaining_seconds: i64,
     dependency_ids: Vec<Uuid>,
+    atomic: bool,
 }
 
 #[derive(Clone)]
@@ -1017,6 +1168,27 @@ fn schedule_tasks_by_priority(
                 rank: candidate.rank,
                 deadline_time_opt: candidate.deadline_time_opt,
             });
+        } else if candidate.atomic {
+            let scheduled_start = find_earliest_non_overlapping_start(
+                segment_start,
+                remaining_seconds,
+                &occupied_slots,
+            );
+            let scheduled_end = scheduled_start + Duration::seconds(remaining_seconds);
+            scheduled_tasks.push(ScheduledTask {
+                id: candidate.id,
+                first_available_time: candidate.first_available_time,
+                scheduled_start,
+                scheduled_end,
+                scheduled_work_seconds: remaining_seconds,
+                total_work_seconds,
+                neg_priority: candidate.neg_priority,
+                rank: candidate.rank,
+                deadline_time_opt: candidate.deadline_time_opt,
+            });
+            occupied_slots.push((scheduled_start, scheduled_end));
+            occupied_slots.sort();
+            candidate_scheduled_end = scheduled_end;
         } else {
             while remaining_seconds > 0 {
                 segment_start =
@@ -1552,6 +1724,7 @@ fn execute_show_all_tasks(
                     .get(id)
                     .cloned()
                     .unwrap_or_default(),
+                atomic: task.get_atomic(),
             });
         }
     }
@@ -3435,6 +3608,7 @@ fn build_next_repetition_task_attr(
         .set_start_time(new_start_time - Duration::days(parent_task.get_days_in_advance()));
     new_task_attr.set_deadline_time_opt(Some(new_deadline_time));
     new_task_attr.set_estimated_work_seconds(parent_task.get_estimated_work_seconds());
+    new_task_attr.set_atomic(parent_task.get_atomic());
     new_task_attr
 }
 

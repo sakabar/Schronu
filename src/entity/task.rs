@@ -733,6 +733,7 @@ pub struct TaskAttr {
     orig_status: Status, // 元々のステータス。orig_status=Pendingの時、時刻によらずPendingのまま。
     status: Status, // 評価後のステータス。pendingはpending_untilを加味して評価され、Todo扱いとなる
     is_on_other_side: bool, // 相手ボールか?
+    atomic: bool,   // 分割できないタスクか?
     pending_until: DateTime<Local>,
     last_synced_time: DateTime<Local>,
 
@@ -759,6 +760,7 @@ impl PartialEq for TaskAttr {
             && self.orig_status == other.orig_status
             && self.status == other.status
             && self.is_on_other_side == other.is_on_other_side
+            && self.atomic == other.atomic
             && self.pending_until == other.pending_until
             && self.last_synced_time == other.last_synced_time
             && self.priority == other.priority
@@ -821,6 +823,7 @@ impl TaskAttr {
             orig_status: Status::Todo,
             status: Status::Todo,
             is_on_other_side: false,
+            atomic: false,
             pending_until: DateTime::<Local>::MIN_UTC.into(),
             last_synced_time: DateTime::<Local>::MIN_UTC.into(),
             priority: 0,
@@ -917,6 +920,14 @@ impl TaskAttr {
 
     pub fn set_is_on_other_side(&mut self, is_on_other_side: bool) {
         self.is_on_other_side = is_on_other_side;
+    }
+
+    pub fn get_atomic(&self) -> bool {
+        self.atomic
+    }
+
+    pub fn set_atomic(&mut self, atomic: bool) {
+        self.atomic = atomic;
     }
 
     // 時刻を入力し、その時刻を用いてpending判定を行う。
@@ -1029,6 +1040,12 @@ fn test_task_attr_set_status() {
 }
 
 #[test]
+fn test_task_attr_new_atomicはfalse() {
+    let attr = TaskAttr::new("タスク");
+    assert!(!attr.get_atomic());
+}
+
+#[test]
 fn test_task_attr_set_pending_until() {
     let mut attr = TaskAttr::new("タスク");
     let pending_until = Local.with_ymd_and_hms(2000, 1, 1, 0, 0, 0).unwrap();
@@ -1098,6 +1115,14 @@ impl Task {
         self.node
             .borrow_data_mut()
             .set_is_on_other_side(is_on_other_side);
+    }
+
+    pub fn get_atomic(&self) -> bool {
+        self.node.borrow_data().get_atomic()
+    }
+
+    pub fn set_atomic(&self, atomic: bool) {
+        self.node.borrow_data_mut().set_atomic(atomic);
     }
 
     pub fn set_pending_until(&self, pending_until: DateTime<Local>) {
@@ -1867,6 +1892,11 @@ pub fn task_to_yaml(task: &Task) -> Yaml {
         );
     }
 
+    let atomic = task.get_atomic();
+    if atomic != default_attr.get_atomic() {
+        task_hash.insert(Yaml::String(String::from("atomic")), Yaml::Boolean(atomic));
+    }
+
     let pending_until = task.get_pending_until();
     if pending_until != *default_attr.get_pending_until() {
         let pending_until_string = pending_until.format("%Y/%m/%d %H:%M:%S").to_string();
@@ -2101,6 +2131,30 @@ fn test_task_to_yaml_is_on_other_side() {
 name: 'タスク1'
 id: 67e55044-10b1-426f-9247-bb680e5fe0c8
 is_on_other_side: true
+create_time: '2023/05/19 01:23:45'
+start_time: '2023/05/19 01:23:45'
+";
+    let docs = YamlLoader::load_from_str(s).unwrap();
+    let expected_yaml: &Yaml = &docs[0];
+
+    assert_eq!(&actual, expected_yaml);
+}
+
+#[test]
+fn test_task_to_yaml_atomic() {
+    let mut task = Task::new("タスク1");
+    let id: Uuid = uuid!("67e55044-10b1-426f-9247-bb680e5fe0c8");
+    task.set_id(id);
+    task.set_atomic(true);
+    let now = Local.with_ymd_and_hms(2023, 5, 19, 01, 23, 45).unwrap();
+    task.set_create_time(now);
+    task.set_start_time(now);
+    let actual = task_to_yaml(&task);
+
+    let s = "
+name: 'タスク1'
+id: 67e55044-10b1-426f-9247-bb680e5fe0c8
+atomic: true
 create_time: '2023/05/19 01:23:45'
 start_time: '2023/05/19 01:23:45'
 ";
