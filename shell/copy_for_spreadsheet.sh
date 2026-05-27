@@ -9,10 +9,10 @@ cat - | grep -v -- '^----' | tr ' ' '\t' | tac | awk 'NF >= 9' | while read line
 
     hour="LEFT(MID(E${cell_row_num}, 10, 5), 2)"
     minute="RIGHT(MID(E${cell_row_num}, 10, 5), 2)"
-    now_time='TIME(HOUR($R$2),MINUTE($R$2),SECOND($R$2))'
+    now_time='TIME(HOUR($S$2),MINUTE($S$2),SECOND($S$2))'
 
     manu_cell="=NOT(ISFORMULA(K${cell_row_num}))"
-    k_cell="=MAX(TIME(${hour}, ${minute}, 0), Q${prev_cell_row_num}, ${now_time})"
+    k_cell="=MAX(TIME(${hour}, ${minute}, 0), R${prev_cell_row_num}, ${now_time})"
 
     l_cell=''
     m_cell='='"K${cell_row_num}"'+time(0, '"G${cell_row_num}"', 0)'

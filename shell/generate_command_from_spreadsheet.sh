@@ -2,7 +2,7 @@
 set -ue
 set -o pipefail
 
-# AからO列まであるスプレッドシートをクリップボードにコピーしてあるとする
+# AからP列まであるスプレッドシートをクリップボードにコピーしてあるとする
 
 pbpaste | tr -d '\r' | awk -F '\t' '
 function trim(str) {
