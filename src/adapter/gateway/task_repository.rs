@@ -1,5 +1,6 @@
 use crate::adapter::gateway::yaml::yaml_to_task;
 use crate::application::interface::TaskRepositoryTrait;
+use crate::entity::datetime::get_next_morning_datetime;
 use crate::entity::task::extract_leaf_tasks_from_project;
 use crate::entity::task::extract_leaf_tasks_from_project_with_pending;
 use crate::entity::task::{task_to_yaml, Task};
@@ -198,12 +199,14 @@ impl TaskRepositoryTrait for TaskRepository {
     }
 
     // 優先度の低いタスクを未来に飛ばす用
-    fn get_lowest_priority_leaf_task_id(&mut self) -> Option<Uuid> {
+    fn get_lowest_priority_leaf_task_id(&mut self, recent_days: i64) -> Option<Uuid> {
         // 副作用として、projectsを優先度の低い順に破壊的にソートする
         self.projects.sort_by(|a, b| a.priority.cmp(&b.priority));
 
         // 優先度が低いPJ順に見て、返すべき葉タスクのid値を更新していく
         let mut ans = None;
+        let recent_threshold =
+            get_next_morning_datetime(self.last_synced_time) + Duration::days(recent_days);
 
         for project in &self.projects {
             let root_task = &project.root_task;
@@ -213,7 +216,7 @@ impl TaskRepositoryTrait for TaskRepository {
             for leaf_task in leaf_tasks.iter() {
                 let deadline_time_opt = leaf_task.get_deadline_time_opt();
                 let first_available_time = leaf_task.first_available_time();
-                let is_recent = first_available_time <= self.last_synced_time + Duration::days(10);
+                let is_recent = first_available_time < recent_threshold;
                 let neg_priority = -leaf_task.get_priority();
                 let id = leaf_task.get_id();
 
@@ -307,6 +310,20 @@ impl TaskRepositoryTrait for TaskRepository {
 mod tests {
     use super::*;
     use crate::entity::task::TaskAttr;
+    use chrono::TimeZone;
+
+    fn task_with_start_time(name: &str, start_time: DateTime<Local>) -> Task {
+        let task = Task::new(name);
+        task.set_start_time(start_time);
+        task.set_priority(5);
+        task
+    }
+
+    fn add_project(task_repository: &mut TaskRepository, root_task: Task) {
+        task_repository
+            .projects
+            .push(Project::new(root_task, "".to_string(), "".to_string(), 5));
+    }
 
     #[test]
     fn test_get_by_id_キャッシュから取得する() {
@@ -356,5 +373,49 @@ mod tests {
             .id_to_task_map
             .borrow()
             .contains_key(&child_task_id));
+    }
+
+    #[test]
+    fn test_get_lowest_priority_leaf_task_id_0日指定は次の朝より前だけrecent扱いする() {
+        let mut task_repository = TaskRepository::new("");
+        task_repository.sync_clock(Local.with_ymd_and_hms(2026, 5, 10, 12, 0, 0).unwrap());
+        let recent_task = task_with_start_time(
+            "閾値より前",
+            Local.with_ymd_and_hms(2026, 5, 11, 5, 59, 59).unwrap(),
+        );
+        let boundary_task = task_with_start_time(
+            "閾値ちょうど",
+            Local.with_ymd_and_hms(2026, 5, 11, 6, 0, 0).unwrap(),
+        );
+        let recent_task_id = recent_task.get_id();
+
+        add_project(&mut task_repository, boundary_task);
+        add_project(&mut task_repository, recent_task);
+
+        let actual = task_repository.get_lowest_priority_leaf_task_id(0);
+
+        assert_eq!(actual, Some(recent_task_id));
+    }
+
+    #[test]
+    fn test_get_lowest_priority_leaf_task_id_10日指定は次の朝から10日後を閾値にする() {
+        let mut task_repository = TaskRepository::new("");
+        task_repository.sync_clock(Local.with_ymd_and_hms(2026, 5, 10, 12, 0, 0).unwrap());
+        let recent_task = task_with_start_time(
+            "10日指定でrecent",
+            Local.with_ymd_and_hms(2026, 5, 21, 5, 59, 59).unwrap(),
+        );
+        let boundary_task = task_with_start_time(
+            "10日指定の閾値ちょうど",
+            Local.with_ymd_and_hms(2026, 5, 21, 6, 0, 0).unwrap(),
+        );
+        let recent_task_id = recent_task.get_id();
+
+        add_project(&mut task_repository, boundary_task);
+        add_project(&mut task_repository, recent_task);
+
+        let actual = task_repository.get_lowest_priority_leaf_task_id(10);
+
+        assert_eq!(actual, Some(recent_task_id));
     }
 }

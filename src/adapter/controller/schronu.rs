@@ -34,6 +34,7 @@ use webbrowser;
 const MAX_COL: u16 = 999;
 
 const MIN_SPLIT_SEGMENT_SECONDS: i64 = 5 * 60;
+const DEFAULT_LOWEST_PRIORITY_RECENT_DAYS: i64 = 9;
 
 // パーセントエンコーディングする対象にスペースを追加する
 const MY_ASCII_SET: &AsciiSet = &CONTROLS.add(b' ');
@@ -41,14 +42,20 @@ const MY_ASCII_SET: &AsciiSet = &CONTROLS.add(b' ');
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum FocusSelectionMode {
     HighestPriority,
-    LowestPriority,
+    LowestPriority { recent_days: i64 },
 }
 
 impl FocusSelectionMode {
-    fn label(&self) -> &str {
+    fn label(&self) -> String {
         match self {
-            FocusSelectionMode::HighestPriority => "高",
-            FocusSelectionMode::LowestPriority => "低",
+            FocusSelectionMode::HighestPriority => "高".to_string(),
+            FocusSelectionMode::LowestPriority { recent_days } => {
+                if *recent_days == DEFAULT_LOWEST_PRIORITY_RECENT_DAYS {
+                    "低".to_string()
+                } else {
+                    format!("低 {}", recent_days)
+                }
+            }
         }
     }
 }
@@ -144,11 +151,21 @@ fn parse_clear_or_gather_defer_to_datetime(
 }
 
 fn parse_focus_selection_mode_command(line: &str) -> Option<FocusSelectionMode> {
-    let command = line.split_whitespace().collect::<Vec<&str>>().join(" ");
+    let tokens = line.split_whitespace().collect::<Vec<&str>>();
 
-    match command.as_str() {
-        "低" | "low" | "lo" | "lowest" => Some(FocusSelectionMode::LowestPriority),
-        "高" | "high" | "hi" | "highest" => Some(FocusSelectionMode::HighestPriority),
+    match tokens.as_slice() {
+        ["低" | "low" | "lo" | "lowest"] => Some(FocusSelectionMode::LowestPriority {
+            recent_days: DEFAULT_LOWEST_PRIORITY_RECENT_DAYS,
+        }),
+        ["低" | "low" | "lo" | "lowest", recent_days_str]
+            if recent_days_str.chars().all(|ch| ch.is_ascii_digit()) =>
+        {
+            match recent_days_str.parse::<i64>() {
+                Ok(recent_days) => Some(FocusSelectionMode::LowestPriority { recent_days }),
+                Err(_) => None,
+            }
+        }
+        ["高" | "high" | "hi" | "highest"] => Some(FocusSelectionMode::HighestPriority),
         _ => None,
     }
 }
@@ -159,7 +176,9 @@ fn select_focus_task_id(
 ) -> Option<Uuid> {
     match focus_selection_mode {
         FocusSelectionMode::HighestPriority => task_repository.get_highest_priority_leaf_task_id(),
-        FocusSelectionMode::LowestPriority => task_repository.get_lowest_priority_leaf_task_id(),
+        FocusSelectionMode::LowestPriority { recent_days } => {
+            task_repository.get_lowest_priority_leaf_task_id(recent_days)
+        }
     }
 }
 
@@ -305,11 +324,35 @@ mod tests {
     fn test_parse_focus_selection_mode_command_low() {
         assert_eq!(
             parse_focus_selection_mode_command("低"),
-            Some(FocusSelectionMode::LowestPriority)
+            Some(FocusSelectionMode::LowestPriority {
+                recent_days: DEFAULT_LOWEST_PRIORITY_RECENT_DAYS
+            })
         );
         assert_eq!(
             parse_focus_selection_mode_command("low"),
-            Some(FocusSelectionMode::LowestPriority)
+            Some(FocusSelectionMode::LowestPriority {
+                recent_days: DEFAULT_LOWEST_PRIORITY_RECENT_DAYS
+            })
+        );
+    }
+
+    #[test]
+    fn test_parse_focus_selection_mode_command_low_with_recent_days() {
+        assert_eq!(
+            parse_focus_selection_mode_command("低 0"),
+            Some(FocusSelectionMode::LowestPriority { recent_days: 0 })
+        );
+        assert_eq!(
+            parse_focus_selection_mode_command("low 0"),
+            Some(FocusSelectionMode::LowestPriority { recent_days: 0 })
+        );
+        assert_eq!(
+            parse_focus_selection_mode_command("lo 3"),
+            Some(FocusSelectionMode::LowestPriority { recent_days: 3 })
+        );
+        assert_eq!(
+            parse_focus_selection_mode_command("lowest 12"),
+            Some(FocusSelectionMode::LowestPriority { recent_days: 12 })
         );
     }
 
@@ -329,7 +372,9 @@ mod tests {
     fn test_parse_focus_selection_mode_command_trims_spaces() {
         assert_eq!(
             parse_focus_selection_mode_command("  low  "),
-            Some(FocusSelectionMode::LowestPriority)
+            Some(FocusSelectionMode::LowestPriority {
+                recent_days: DEFAULT_LOWEST_PRIORITY_RECENT_DAYS
+            })
         );
         assert_eq!(
             parse_focus_selection_mode_command("  高  "),
@@ -340,6 +385,9 @@ mod tests {
     #[test]
     fn test_parse_focus_selection_mode_command_unknown() {
         assert_eq!(parse_focus_selection_mode_command("後 7日"), None);
+        assert_eq!(parse_focus_selection_mode_command("低 abc"), None);
+        assert_eq!(parse_focus_selection_mode_command("低 -1"), None);
+        assert_eq!(parse_focus_selection_mode_command("低 1 2"), None);
     }
 
     #[test]
