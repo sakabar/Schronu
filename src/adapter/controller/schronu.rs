@@ -34,7 +34,7 @@ use webbrowser;
 const MAX_COL: u16 = 999;
 
 const MIN_SPLIT_SEGMENT_SECONDS: i64 = 5 * 60;
-const DEFAULT_LOWEST_PRIORITY_RECENT_DAYS: i64 = 9;
+const DEFAULT_LOWEST_PRIORITY_RECENT_DAYS: i64 = 0;
 
 // パーセントエンコーディングする対象にスペースを追加する
 const MY_ASCII_SET: &AsciiSet = &CONTROLS.add(b' ');
