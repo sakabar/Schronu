@@ -3,7 +3,7 @@ use crate::application::interface::TaskRepositoryTrait;
 use crate::entity::datetime::get_next_morning_datetime;
 use crate::entity::task::extract_leaf_tasks_from_project;
 use crate::entity::task::extract_leaf_tasks_from_project_with_pending;
-use crate::entity::task::{task_to_yaml, Task};
+use crate::entity::task::{task_to_yaml, Status, Task};
 use chrono::Duration;
 use chrono::{DateTime, Local};
 use linked_hash_map::LinkedHashMap;
@@ -214,6 +214,13 @@ impl TaskRepositoryTrait for TaskRepository {
             let leaf_tasks: Vec<Task> = extract_leaf_tasks_from_project_with_pending(&root_task);
 
             for leaf_task in leaf_tasks.iter() {
+                if leaf_task.get_start_time() >= recent_threshold
+                    || (leaf_task.get_orig_status() == Status::Pending
+                        && leaf_task.get_pending_until() >= recent_threshold)
+                {
+                    continue;
+                }
+
                 let deadline_time_opt = leaf_task.get_deadline_time_opt();
                 let first_available_time = leaf_task.first_available_time();
                 let is_recent = first_available_time < recent_threshold;
@@ -319,6 +326,15 @@ mod tests {
         task
     }
 
+    fn pending_task_with_until(name: &str, pending_until: DateTime<Local>) -> Task {
+        let task = Task::new(name);
+        task.set_start_time(DateTime::<Local>::MIN_UTC.into());
+        task.set_pending_until(pending_until);
+        task.set_orig_status(Status::Pending);
+        task.set_priority(5);
+        task
+    }
+
     fn add_project(task_repository: &mut TaskRepository, root_task: Task) {
         task_repository
             .projects
@@ -417,5 +433,117 @@ mod tests {
         let actual = task_repository.get_lowest_priority_leaf_task_id(10);
 
         assert_eq!(actual, Some(recent_task_id));
+    }
+
+    #[test]
+    fn test_get_lowest_priority_leaf_task_id_対象範囲外までpending済みのタスクは候補から除外する() {
+        let mut task_repository = TaskRepository::new("");
+        task_repository.sync_clock(Local.with_ymd_and_hms(2026, 5, 10, 12, 0, 0).unwrap());
+        let pending_task = pending_task_with_until(
+            "100日後までpending済み",
+            Local.with_ymd_and_hms(2026, 8, 18, 6, 0, 0).unwrap(),
+        );
+        let todo_task = task_with_start_time(
+            "通常のTodo",
+            Local.with_ymd_and_hms(2026, 5, 10, 12, 0, 0).unwrap(),
+        );
+        let todo_task_id = todo_task.get_id();
+
+        add_project(&mut task_repository, pending_task);
+        add_project(&mut task_repository, todo_task);
+
+        let actual = task_repository.get_lowest_priority_leaf_task_id(0);
+
+        assert_eq!(actual, Some(todo_task_id));
+    }
+
+    #[test]
+    fn test_get_lowest_priority_leaf_task_id_対象範囲外のstart_timeを持つタスクは候補から除外する()
+    {
+        let mut task_repository = TaskRepository::new("");
+        task_repository.sync_clock(Local.with_ymd_and_hms(2026, 5, 10, 12, 0, 0).unwrap());
+        let future_task = task_with_start_time(
+            "遠い未来に開始するTodo",
+            Local.with_ymd_and_hms(2026, 12, 19, 6, 0, 0).unwrap(),
+        );
+        let todo_task = task_with_start_time(
+            "通常のTodo",
+            Local.with_ymd_and_hms(2026, 5, 10, 12, 0, 0).unwrap(),
+        );
+        let todo_task_id = todo_task.get_id();
+
+        add_project(&mut task_repository, future_task);
+        add_project(&mut task_repository, todo_task);
+
+        let actual = task_repository.get_lowest_priority_leaf_task_id(0);
+
+        assert_eq!(actual, Some(todo_task_id));
+    }
+
+    #[test]
+    fn test_get_lowest_priority_leaf_task_id_対象範囲外までpending済みのタスクしかなければnoneを返す(
+    ) {
+        let mut task_repository = TaskRepository::new("");
+        task_repository.sync_clock(Local.with_ymd_and_hms(2026, 5, 10, 12, 0, 0).unwrap());
+        let pending_task = pending_task_with_until(
+            "100日後までpending済み",
+            Local.with_ymd_and_hms(2026, 8, 18, 6, 0, 0).unwrap(),
+        );
+
+        add_project(&mut task_repository, pending_task);
+
+        let actual = task_repository.get_lowest_priority_leaf_task_id(0);
+
+        assert_eq!(actual, None);
+    }
+
+    #[test]
+    fn test_get_lowest_priority_leaf_task_id_対象範囲外のstart_timeを持つタスクしかなければnoneを返す(
+    ) {
+        let mut task_repository = TaskRepository::new("");
+        task_repository.sync_clock(Local.with_ymd_and_hms(2026, 5, 10, 12, 0, 0).unwrap());
+        let future_task = task_with_start_time(
+            "遠い未来に開始するTodo",
+            Local.with_ymd_and_hms(2026, 12, 19, 6, 0, 0).unwrap(),
+        );
+
+        add_project(&mut task_repository, future_task);
+
+        let actual = task_repository.get_lowest_priority_leaf_task_id(0);
+
+        assert_eq!(actual, None);
+    }
+
+    #[test]
+    fn test_get_lowest_priority_leaf_task_id_pending_untilが閾値より前なら候補に残す() {
+        let mut task_repository = TaskRepository::new("");
+        task_repository.sync_clock(Local.with_ymd_and_hms(2026, 5, 10, 12, 0, 0).unwrap());
+        let pending_task = pending_task_with_until(
+            "閾値より前までpending",
+            Local.with_ymd_and_hms(2026, 5, 11, 5, 59, 59).unwrap(),
+        );
+        let pending_task_id = pending_task.get_id();
+
+        add_project(&mut task_repository, pending_task);
+
+        let actual = task_repository.get_lowest_priority_leaf_task_id(0);
+
+        assert_eq!(actual, Some(pending_task_id));
+    }
+
+    #[test]
+    fn test_get_lowest_priority_leaf_task_id_pending_untilが閾値ちょうどなら候補から除外する() {
+        let mut task_repository = TaskRepository::new("");
+        task_repository.sync_clock(Local.with_ymd_and_hms(2026, 5, 10, 12, 0, 0).unwrap());
+        let pending_task = pending_task_with_until(
+            "閾値ちょうどまでpending",
+            Local.with_ymd_and_hms(2026, 5, 11, 6, 0, 0).unwrap(),
+        );
+
+        add_project(&mut task_repository, pending_task);
+
+        let actual = task_repository.get_lowest_priority_leaf_task_id(0);
+
+        assert_eq!(actual, None);
     }
 }
