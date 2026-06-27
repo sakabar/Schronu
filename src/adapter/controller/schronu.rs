@@ -1054,6 +1054,93 @@ mod tests {
             Local.with_ymd_and_hms(2026, 5, 10, 15, 1, 0).unwrap()
         );
     }
+
+    #[test]
+    fn test_sort_task_list_display_rows_通常表示は予定時刻の逆順にする() {
+        let early_id = Uuid::new_v4();
+        let late_id = Uuid::new_v4();
+        let mut rows = vec![
+            TaskListDisplayRow {
+                scheduled_start: Local.with_ymd_and_hms(2026, 5, 10, 12, 0, 0).unwrap(),
+                rank: 0,
+                id: early_id,
+                priority: 10,
+                message: "early".to_string(),
+            },
+            TaskListDisplayRow {
+                scheduled_start: Local.with_ymd_and_hms(2026, 5, 10, 13, 0, 0).unwrap(),
+                rank: 0,
+                id: late_id,
+                priority: 1,
+                message: "late".to_string(),
+            },
+        ];
+
+        sort_task_list_display_rows(&mut rows, TaskListDisplayOrder::ScheduledStartDesc);
+
+        assert_eq!(
+            rows.iter().map(|row| row.id).collect::<Vec<_>>(),
+            vec![late_id, early_id]
+        );
+    }
+
+    #[test]
+    fn test_sort_task_list_display_rows_尾表示は低優先度を下側にする() {
+        let high_priority_id = Uuid::new_v4();
+        let low_priority_id = Uuid::new_v4();
+        let mut rows = vec![
+            TaskListDisplayRow {
+                scheduled_start: Local.with_ymd_and_hms(2026, 5, 10, 13, 0, 0).unwrap(),
+                rank: 0,
+                id: high_priority_id,
+                priority: 10,
+                message: "high".to_string(),
+            },
+            TaskListDisplayRow {
+                scheduled_start: Local.with_ymd_and_hms(2026, 5, 10, 12, 0, 0).unwrap(),
+                rank: 0,
+                id: low_priority_id,
+                priority: 1,
+                message: "low".to_string(),
+            },
+        ];
+
+        sort_task_list_display_rows(&mut rows, TaskListDisplayOrder::LowPriorityTail);
+
+        assert_eq!(
+            rows.iter().map(|row| row.id).collect::<Vec<_>>(),
+            vec![high_priority_id, low_priority_id]
+        );
+    }
+
+    #[test]
+    fn test_sort_task_list_display_rows_尾表示で同じ優先度なら予定時刻が遅いものを下側にする() {
+        let early_id = Uuid::new_v4();
+        let late_id = Uuid::new_v4();
+        let mut rows = vec![
+            TaskListDisplayRow {
+                scheduled_start: Local.with_ymd_and_hms(2026, 5, 10, 12, 0, 0).unwrap(),
+                rank: 0,
+                id: early_id,
+                priority: 1,
+                message: "early".to_string(),
+            },
+            TaskListDisplayRow {
+                scheduled_start: Local.with_ymd_and_hms(2026, 5, 10, 13, 0, 0).unwrap(),
+                rank: 0,
+                id: late_id,
+                priority: 1,
+                message: "late".to_string(),
+            },
+        ];
+
+        sort_task_list_display_rows(&mut rows, TaskListDisplayOrder::LowPriorityTail);
+
+        assert_eq!(
+            rows.iter().map(|row| row.id).collect::<Vec<_>>(),
+            vec![early_id, late_id]
+        );
+    }
 }
 
 struct RhoMetrics {
@@ -1089,6 +1176,21 @@ struct ScheduledTask {
     neg_priority: i64,
     rank: usize,
     deadline_time_opt: Option<DateTime<Local>>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum TaskListDisplayOrder {
+    ScheduledStartDesc,
+    LowPriorityTail,
+}
+
+#[derive(Clone)]
+struct TaskListDisplayRow {
+    scheduled_start: DateTime<Local>,
+    rank: usize,
+    id: Uuid,
+    priority: i64,
+    message: String,
 }
 
 fn calculate_remaining_work_seconds(task: &Task) -> i64 {
@@ -1318,6 +1420,26 @@ fn schedule_tasks_by_priority(
     });
 
     scheduled_tasks
+}
+
+fn sort_task_list_display_rows(
+    rows: &mut [TaskListDisplayRow],
+    display_order: TaskListDisplayOrder,
+) {
+    match display_order {
+        TaskListDisplayOrder::ScheduledStartDesc => {
+            rows.reverse();
+        }
+        TaskListDisplayOrder::LowPriorityTail => {
+            rows.sort_by(|a, b| {
+                b.priority
+                    .cmp(&a.priority)
+                    .then_with(|| a.scheduled_start.cmp(&b.scheduled_start))
+                    .then_with(|| a.rank.cmp(&b.rank))
+                    .then_with(|| a.id.cmp(&b.id))
+            });
+        }
+    }
 }
 
 fn calculate_rho_metrics(
@@ -1674,6 +1796,7 @@ fn execute_show_all_tasks(
     task_repository: &mut dyn TaskRepositoryTrait,
     free_time_manager: &mut dyn FreeTimeManagerTrait,
     pattern_opt: &Option<String>,
+    display_order: TaskListDisplayOrder,
 ) {
     // Hash化できる要素しか入れられないので、いったんidだけ入れる
     // pending_until: DateTime<Local>,
@@ -1779,7 +1902,7 @@ fn execute_show_all_tasks(
     let scheduled_tasks =
         schedule_tasks_by_priority(&schedule_candidates, task_repository.get_last_synced_time());
 
-    let mut msgs_with_dt: Vec<(DateTime<Local>, usize, Uuid, String)> = vec![];
+    let mut task_list_display_rows: Vec<TaskListDisplayRow> = vec![];
     let mut available_biggest_msgs_with_dt_opt = None;
     let mut available_biggest_task_estimate_work_seconds = 0;
 
@@ -2004,12 +2127,13 @@ fn execute_show_all_tasks(
                                         task_repository.get_last_synced_time(),
                                     ) + Duration::days(1))
                         {
-                            msgs_with_dt.push((
-                                *current_datetime_cursor_clone,
-                                0,
-                                tmp_id,
-                                skip_msg,
-                            ));
+                            task_list_display_rows.push(TaskListDisplayRow {
+                                scheduled_start: *current_datetime_cursor_clone,
+                                rank: 0,
+                                id: tmp_id,
+                                priority: 0,
+                                message: skip_msg,
+                            });
                         }
                     }
                 }
@@ -2112,24 +2236,48 @@ fn execute_show_all_tasks(
                                     && task.get_deadline_time_opt().unwrap()
                                         < get_next_morning_datetime(last_synced_time)
                             {
-                                msgs_with_dt.push((*scheduled_start, *rank, *id, msg));
+                                task_list_display_rows.push(TaskListDisplayRow {
+                                    scheduled_start: *scheduled_start,
+                                    rank: *rank,
+                                    id: *id,
+                                    priority: task.get_priority(),
+                                    message: msg,
+                                });
                             }
                         } else if pattern == "枝" {
                             if rank > &0 {
-                                msgs_with_dt.push((*scheduled_start, *rank, *id, msg));
+                                task_list_display_rows.push(TaskListDisplayRow {
+                                    scheduled_start: *scheduled_start,
+                                    rank: *rank,
+                                    id: *id,
+                                    priority: task.get_priority(),
+                                    message: msg,
+                                });
                             }
                         } else if pattern == "印" {
                             if msg.contains(&format!(" {} ", &deadline_icon))
                                 || msg.contains(&format!(" {} ", &breaking_deadline_icon))
                                 || msg.contains(&format!(" {} ", &today_leaf_icon))
                             {
-                                msgs_with_dt.push((*scheduled_start, *rank, *id, msg));
+                                task_list_display_rows.push(TaskListDisplayRow {
+                                    scheduled_start: *scheduled_start,
+                                    rank: *rank,
+                                    id: *id,
+                                    priority: task.get_priority(),
+                                    message: msg,
+                                });
                             }
                         } else if pattern == "〆" {
                             if msg.contains(&format!(" {} ", &deadline_icon))
                                 || msg.contains(&format!(" {} ", &breaking_deadline_icon))
                             {
-                                msgs_with_dt.push((*scheduled_start, *rank, *id, msg));
+                                task_list_display_rows.push(TaskListDisplayRow {
+                                    scheduled_start: *scheduled_start,
+                                    rank: *rank,
+                                    id: *id,
+                                    priority: task.get_priority(),
+                                    message: msg,
+                                });
                             }
                         } else if is_calendar_func || is_flatten_func {
                             // カレンダー表示機能を使う時には、タスク一覧は表示しない。
@@ -2137,13 +2285,25 @@ fn execute_show_all_tasks(
                             if get_next_morning_datetime(*scheduled_start)
                                 == get_next_morning_datetime(last_synced_time)
                             {
-                                msgs_with_dt.push((*scheduled_start, *rank, *id, msg));
+                                task_list_display_rows.push(TaskListDisplayRow {
+                                    scheduled_start: *scheduled_start,
+                                    rank: *rank,
+                                    id: *id,
+                                    priority: task.get_priority(),
+                                    message: msg,
+                                });
                             }
                         } else if pattern == "明" {
                             if get_next_morning_datetime(*scheduled_start)
                                 == get_next_morning_datetime(last_synced_time) + Duration::days(1)
                             {
-                                msgs_with_dt.push((*scheduled_start, *rank, *id, msg));
+                                task_list_display_rows.push(TaskListDisplayRow {
+                                    scheduled_start: *scheduled_start,
+                                    rank: *rank,
+                                    id: *id,
+                                    priority: task.get_priority(),
+                                    message: msg,
+                                });
                             }
                         } else if pattern == "近" {
                             if get_next_morning_datetime(*scheduled_start)
@@ -2152,13 +2312,25 @@ fn execute_show_all_tasks(
                                     == get_next_morning_datetime(last_synced_time)
                                         + Duration::days(1)
                             {
-                                msgs_with_dt.push((*scheduled_start, *rank, *id, msg));
+                                task_list_display_rows.push(TaskListDisplayRow {
+                                    scheduled_start: *scheduled_start,
+                                    rank: *rank,
+                                    id: *id,
+                                    priority: task.get_priority(),
+                                    message: msg,
+                                });
                             }
                         } else if pattern == "単" {
                             // non_repetitive (単発) のタスクのみを表示する
                             // TODO 【繰】が2ヶ所に登場していて危ない
                             if !msg.contains("【繰】") {
-                                msgs_with_dt.push((*scheduled_start, *rank, *id, msg));
+                                task_list_display_rows.push(TaskListDisplayRow {
+                                    scheduled_start: *scheduled_start,
+                                    rank: *rank,
+                                    id: *id,
+                                    priority: task.get_priority(),
+                                    message: msg,
+                                });
                             }
                         } else if days_of_week.contains(&pattern.as_str()) {
                             // 月 火 水 木 金 土 日 が指定された時は、明日以降で、直近のその曜日のタスクを表示する
@@ -2184,7 +2356,13 @@ fn execute_show_all_tasks(
                             if get_next_morning_datetime(last_synced_time) + Duration::days(days)
                                 == get_next_morning_datetime(*scheduled_start)
                             {
-                                msgs_with_dt.push((*scheduled_start, *rank, *id, msg));
+                                task_list_display_rows.push(TaskListDisplayRow {
+                                    scheduled_start: *scheduled_start,
+                                    rank: *rank,
+                                    id: *id,
+                                    priority: task.get_priority(),
+                                    message: msg,
+                                });
                             }
                         } else if pattern == "週" {
                             // 今日を含む直近1週間のタスクを表示する
@@ -2192,7 +2370,13 @@ fn execute_show_all_tasks(
                                 - get_next_morning_datetime(last_synced_time)
                                 < Duration::days(7)
                             {
-                                msgs_with_dt.push((*scheduled_start, *rank, *id, msg));
+                                task_list_display_rows.push(TaskListDisplayRow {
+                                    scheduled_start: *scheduled_start,
+                                    rank: *rank,
+                                    id: *id,
+                                    priority: task.get_priority(),
+                                    message: msg,
+                                });
                             }
                         } else if pattern == "末" {
                             // 週末までのタスクを表示する
@@ -2215,7 +2399,13 @@ fn execute_show_all_tasks(
                                 - get_next_morning_datetime(last_synced_time)
                                 <= Duration::days(days_diff as i64)
                             {
-                                msgs_with_dt.push((*scheduled_start, *rank, *id, msg));
+                                task_list_display_rows.push(TaskListDisplayRow {
+                                    scheduled_start: *scheduled_start,
+                                    rank: *rank,
+                                    id: *id,
+                                    priority: task.get_priority(),
+                                    message: msg,
+                                });
                             }
                         } else if pattern == "翌" {
                             // 翌週末までのタスクを表示する
@@ -2239,7 +2429,13 @@ fn execute_show_all_tasks(
                             if Duration::days(days_diff) < diff
                                 && diff <= Duration::days(days_diff + 7)
                             {
-                                msgs_with_dt.push((*scheduled_start, *rank, *id, msg));
+                                task_list_display_rows.push(TaskListDisplayRow {
+                                    scheduled_start: *scheduled_start,
+                                    rank: *rank,
+                                    id: *id,
+                                    priority: task.get_priority(),
+                                    message: msg,
+                                });
                             }
                         } else if yyyymmdd_reg.is_match(pattern) {
                             let caps = yyyymmdd_reg.captures(pattern).unwrap();
@@ -2252,7 +2448,13 @@ fn execute_show_all_tasks(
                             if get_next_morning_datetime(*scheduled_start) - Duration::days(1)
                                 == get_next_morning_datetime(yyyymmdd)
                             {
-                                msgs_with_dt.push((*scheduled_start, *rank, *id, msg));
+                                task_list_display_rows.push(TaskListDisplayRow {
+                                    scheduled_start: *scheduled_start,
+                                    rank: *rank,
+                                    id: *id,
+                                    priority: task.get_priority(),
+                                    message: msg,
+                                });
                             }
                         } else if integer_reg.is_match(pattern) {
                             let caps = integer_reg.captures(pattern).unwrap();
@@ -2281,11 +2483,23 @@ fn execute_show_all_tasks(
                         } else if name.to_lowercase().contains(&pattern.to_lowercase())
                             || msg.contains(pattern)
                         {
-                            msgs_with_dt.push((*scheduled_start, *rank, *id, msg));
+                            task_list_display_rows.push(TaskListDisplayRow {
+                                scheduled_start: *scheduled_start,
+                                rank: *rank,
+                                id: *id,
+                                priority: task.get_priority(),
+                                message: msg,
+                            });
                         }
                     }
                     None => {
-                        msgs_with_dt.push((*scheduled_start, *rank, *id, msg));
+                        task_list_display_rows.push(TaskListDisplayRow {
+                            scheduled_start: *scheduled_start,
+                            rank: *rank,
+                            id: *id,
+                            priority: task.get_priority(),
+                            message: msg,
+                        });
                     }
                 }
             }
@@ -2295,16 +2509,21 @@ fn execute_show_all_tasks(
 
     // 着手可能な最大のタスクを実施するモード
     if let Some((dt, rank, id, msg)) = available_biggest_msgs_with_dt_opt {
-        msgs_with_dt.push((dt, rank, id, msg));
+        task_list_display_rows.push(TaskListDisplayRow {
+            scheduled_start: dt,
+            rank,
+            id,
+            priority: 0,
+            message: msg,
+        });
     }
 
-    // 逆順にする: dtの大きい順となる
-    msgs_with_dt.reverse();
+    sort_task_list_display_rows(&mut task_list_display_rows, display_order);
 
     if !is_calendar_func && !is_flatten_func {
-        for (_, _, id, msg) in msgs_with_dt.iter() {
-            *focused_task_id_opt = Some(*id);
-            writeln_newline(stdout, &msg).unwrap();
+        for row in task_list_display_rows.iter() {
+            *focused_task_id_opt = Some(row.id);
+            writeln_newline(stdout, &row.message).unwrap();
         }
 
         writeln_newline(stdout, "").unwrap();
@@ -4140,6 +4359,23 @@ fn execute(
                 task_repository,
                 free_time_manager,
                 &pattern_opt,
+                TaskListDisplayOrder::ScheduledStartDesc,
+            );
+        }
+        "尾" => {
+            let pattern_opt = if tokens.len() >= 2 {
+                Some(tokens[1].to_string())
+            } else {
+                Some("今".to_string())
+            };
+
+            execute_show_all_tasks(
+                stdout,
+                focused_task_id_opt,
+                task_repository,
+                free_time_manager,
+                &pattern_opt,
+                TaskListDisplayOrder::LowPriorityTail,
             );
         }
         "今" | "today" => {
@@ -4150,6 +4386,7 @@ fn execute(
                 task_repository,
                 free_time_manager,
                 &pattern_opt,
+                TaskListDisplayOrder::ScheduledStartDesc,
             );
         }
         "単" | "non_repetitive" => {
@@ -4160,6 +4397,7 @@ fn execute(
                 task_repository,
                 free_time_manager,
                 &pattern_opt,
+                TaskListDisplayOrder::ScheduledStartDesc,
             );
         }
         "暦" | "cal" => {
@@ -4170,6 +4408,7 @@ fn execute(
                 task_repository,
                 free_time_manager,
                 &pattern_opt,
+                TaskListDisplayOrder::ScheduledStartDesc,
             );
         }
         "見" | "focus" | "fc" => {
@@ -4641,6 +4880,7 @@ fn execute(
                     task_repository,
                     free_time_manager,
                     &pattern_opt,
+                    TaskListDisplayOrder::ScheduledStartDesc,
                 );
             }
         }
@@ -4911,6 +5151,7 @@ fn application(
         task_repository,
         free_time_manager,
         &Some("暦".to_string()),
+        TaskListDisplayOrder::ScheduledStartDesc,
     );
 
     ///////////////////////
@@ -4977,6 +5218,7 @@ fn application(
                         task_repository,
                         free_time_manager,
                         &Some("暦".to_string()),
+                        TaskListDisplayOrder::ScheduledStartDesc,
                     );
 
                     break;
@@ -5259,6 +5501,7 @@ fn application(
                 if fst_char_opt != Some('新')
                     && fst_char_opt != Some('突')
                     && fst_char_opt != Some('全')
+                    && fst_char_opt != Some('尾')
                     && fst_char_opt != Some('今')
                     && fst_char_opt != Some('明')
                     && fst_char_opt != Some('近')
