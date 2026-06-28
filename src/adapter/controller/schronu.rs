@@ -1275,7 +1275,7 @@ mod tests {
             .find(|row| row.id == nineteen_min_id)
             .unwrap()
             .render_message();
-        assert!(rendered.contains(" V "));
+        assert!(rendered.contains(" A "));
         assert!(rendered.ends_with("<19/60>レビュー"));
         assert!(
             !rows
@@ -1371,11 +1371,11 @@ mod tests {
     fn test_replace_task_list_icon_アイコン列だけを置き換える() {
         let message_prefix = "0028 task-id / ____/__/__ 06/28(日)-23:11~23:30 0 19 05 ".to_string();
 
-        let actual = replace_task_list_icon(&message_prefix, "V");
+        let actual = replace_task_list_icon(&message_prefix, "A");
 
         assert_eq!(
             actual,
-            "0028 task-id V ____/__/__ 06/28(日)-23:11~23:30 0 19 05 "
+            "0028 task-id A ____/__/__ 06/28(日)-23:11~23:30 0 19 05 "
         );
     }
 }
@@ -1487,7 +1487,8 @@ impl TaskListDisplayRow {
     fn render_message(&self) -> String {
         if self.is_real_task {
             let message_prefix = if self.give_up_candidate {
-                replace_task_list_icon(&self.message_prefix, "V")
+                // A means Abandon candidate.
+                replace_task_list_icon(&self.message_prefix, "A")
             } else {
                 self.message_prefix.clone()
             };
