@@ -1368,6 +1368,93 @@ mod tests {
     }
 
     #[test]
+    fn test_mark_give_up_candidate_rows_by_date_未来日にも空差累に応じて印を付ける() {
+        let today = NaiveDate::from_ymd_opt(2026, 5, 10).unwrap();
+        let tomorrow = NaiveDate::from_ymd_opt(2026, 5, 11).unwrap();
+        let today_id = Uuid::new_v4();
+        let tomorrow_high_id = Uuid::new_v4();
+        let tomorrow_low_late_id = Uuid::new_v4();
+        let tomorrow_low_early_id = Uuid::new_v4();
+        let mut rows = vec![
+            TaskListDisplayRow::new_task(
+                Local.with_ymd_and_hms(2026, 5, 10, 12, 0, 0).unwrap(),
+                today,
+                0,
+                today_id,
+                1,
+                60 * 60,
+                "prefix ".to_string(),
+                "today".to_string(),
+            ),
+            TaskListDisplayRow::new_task(
+                Local.with_ymd_and_hms(2026, 5, 11, 10, 0, 0).unwrap(),
+                tomorrow,
+                0,
+                tomorrow_high_id,
+                10,
+                60 * 60,
+                "prefix ".to_string(),
+                "tomorrow high".to_string(),
+            ),
+            TaskListDisplayRow::new_task(
+                Local.with_ymd_and_hms(2026, 5, 11, 18, 0, 0).unwrap(),
+                tomorrow,
+                0,
+                tomorrow_low_late_id,
+                1,
+                45 * 60,
+                "prefix ".to_string(),
+                "tomorrow low late".to_string(),
+            ),
+            TaskListDisplayRow::new_task(
+                Local.with_ymd_and_hms(2026, 5, 11, 13, 0, 0).unwrap(),
+                tomorrow,
+                0,
+                tomorrow_low_early_id,
+                1,
+                30 * 60,
+                "prefix ".to_string(),
+                "tomorrow low early".to_string(),
+            ),
+        ];
+        let mut shortage_duration_by_date = HashMap::new();
+        shortage_duration_by_date.insert(today, Duration::seconds(0));
+        shortage_duration_by_date.insert(tomorrow, Duration::minutes(50));
+
+        mark_give_up_candidate_rows_by_date(&mut rows, &shortage_duration_by_date);
+
+        let give_up_ids = rows
+            .iter()
+            .filter_map(|row| {
+                if row.give_up_candidate {
+                    Some(row.id)
+                } else {
+                    None
+                }
+            })
+            .collect::<Vec<_>>();
+
+        assert_eq!(
+            give_up_ids,
+            vec![tomorrow_low_late_id, tomorrow_low_early_id]
+        );
+        assert!(
+            !rows
+                .iter()
+                .find(|row| row.id == today_id)
+                .unwrap()
+                .give_up_candidate
+        );
+        assert!(
+            !rows
+                .iter()
+                .find(|row| row.id == tomorrow_high_id)
+                .unwrap()
+                .give_up_candidate
+        );
+    }
+
+    #[test]
     fn test_replace_task_list_icon_アイコン列だけを置き換える() {
         let message_prefix = "0028 task-id / ____/__/__ 06/28(日)-23:11~23:30 0 19 05 ".to_string();
 
@@ -1803,6 +1890,28 @@ fn mark_give_up_candidate_rows(
         if accumulated_seconds >= shortage_seconds {
             break;
         }
+    }
+}
+
+fn mark_give_up_candidate_rows_by_date(
+    rows: &mut [TaskListDisplayRow],
+    shortage_duration_by_date: &HashMap<NaiveDate, Duration>,
+) {
+    let mut dates_and_shortages = shortage_duration_by_date
+        .iter()
+        .filter_map(|(date, shortage_duration)| {
+            if *shortage_duration > Duration::seconds(0) {
+                Some((*date, shortage_duration.num_seconds()))
+            } else {
+                None
+            }
+        })
+        .collect::<Vec<_>>();
+
+    dates_and_shortages.sort_by(|a, b| a.0.cmp(&b.0));
+
+    for (date, shortage_seconds) in dates_and_shortages {
+        mark_give_up_candidate_rows(rows, shortage_seconds, date);
     }
 }
 
@@ -2876,31 +2985,12 @@ fn execute_show_all_tasks(
 
     let s_for_rho1 = format!("{}, {}", rho1_msg, lq_msg);
 
-    if free_hours < 0.0 {
-        let shortage_seconds = (-free_hours * 3600.0).ceil() as i64;
-        mark_give_up_candidate_rows(
-            &mut task_list_display_rows,
-            shortage_seconds,
-            naive_dt_today,
-        );
-    }
-
-    sort_task_list_display_rows(&mut task_list_display_rows, display_order);
-
-    if !is_calendar_func && !is_flatten_func {
-        for row in task_list_display_rows.iter() {
-            *focused_task_id_opt = Some(row.id);
-            writeln_newline(stdout, &row.render_message()).unwrap();
-        }
-
-        writeln_newline(stdout, "").unwrap();
-    }
-
     // 日付の小さい順にソートする
     let mut counter_arr: Vec<(&NaiveDate, &usize)> = counter.iter().collect();
     counter_arr.sort_by(|a, b| a.0.cmp(&b.0));
 
     let mut daily_stat_msgs: Vec<String> = vec![];
+    let mut shortage_duration_by_date: HashMap<NaiveDate, Duration> = HashMap::new();
 
     // 順調フラグ
     let mut has_today_deadline_leeway = true;
@@ -3047,6 +3137,7 @@ fn execute_show_all_tasks(
             max_accumulate_duration_diff_to_limit = accumulate_duration_diff_to_limit;
             max_accumulate_duration_diff_to_limit_date = **date;
         }
+        shortage_duration_by_date.insert(**date, accumulate_duration_diff_to_limit);
 
         if daily_stat_msgs.len() > 0
             && accumulate_duration_diff_to_limit < Duration::seconds(0)
@@ -3251,6 +3342,24 @@ fn execute_show_all_tasks(
         );
 
         daily_stat_msgs.push(s);
+    }
+
+    if !is_calendar_func && !is_flatten_func {
+        mark_give_up_candidate_rows_by_date(
+            &mut task_list_display_rows,
+            &shortage_duration_by_date,
+        );
+    }
+
+    sort_task_list_display_rows(&mut task_list_display_rows, display_order);
+
+    if !is_calendar_func && !is_flatten_func {
+        for row in task_list_display_rows.iter() {
+            *focused_task_id_opt = Some(row.id);
+            writeln_newline(stdout, &row.render_message()).unwrap();
+        }
+
+        writeln_newline(stdout, "").unwrap();
     }
 
     // 逆順にして、下側に直近の日付があるようにする
