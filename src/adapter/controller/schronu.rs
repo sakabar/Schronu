@@ -16,6 +16,7 @@ use schronu::entity::task::{
 use std::cmp::max;
 use std::cmp::min;
 use std::collections::HashMap;
+use std::env;
 use std::fs::File;
 use std::io::Stdout;
 use std::io::{stdout, Write};
@@ -60,8 +61,24 @@ impl FocusSelectionMode {
     }
 }
 
-fn writeln_newline(stdout: &mut RawTerminal<Stdout>, message: &str) -> Result<(), std::io::Error> {
-    writeln!(stdout, "{}{}", termion::cursor::Left(MAX_COL), message)
+trait SchronuWriter: Write {
+    fn writeln_newline(&mut self, message: &str) -> Result<(), std::io::Error>;
+}
+
+impl SchronuWriter for RawTerminal<Stdout> {
+    fn writeln_newline(&mut self, message: &str) -> Result<(), std::io::Error> {
+        writeln!(self, "{}{}", termion::cursor::Left(MAX_COL), message)
+    }
+}
+
+impl SchronuWriter for Stdout {
+    fn writeln_newline(&mut self, message: &str) -> Result<(), std::io::Error> {
+        writeln!(self, "{}", message)
+    }
+}
+
+fn writeln_newline(stdout: &mut dyn SchronuWriter, message: &str) -> Result<(), std::io::Error> {
+    stdout.writeln_newline(message)
 }
 
 fn backward_width(line: &str, cursor_x: usize) -> u16 {
@@ -2130,7 +2147,7 @@ fn test_get_forward_width_正常系1() {
     assert_eq!(actual, expected);
 }
 
-fn execute_show_tree(stdout: &mut RawTerminal<Stdout>, focused_task_opt: &Option<Task>) {
+fn execute_show_tree(stdout: &mut dyn SchronuWriter, focused_task_opt: &Option<Task>) {
     writeln!(stdout, "").unwrap();
     focused_task_opt.as_ref().map(|focused_task| {
         let s: String = focused_task.tree_debug_pretty_print();
@@ -2147,7 +2164,7 @@ fn execute_show_tree(stdout: &mut RawTerminal<Stdout>, focused_task_opt: &Option
 }
 
 fn execute_start_new_project(
-    _stdout: &mut RawTerminal<Stdout>,
+    _stdout: &mut dyn SchronuWriter,
     focused_task_id_opt: &mut Option<Uuid>,
     task_repository: &mut dyn TaskRepositoryTrait,
     new_project_name_str: &str,
@@ -2186,7 +2203,7 @@ fn execute_make_appointment(focused_task_opt: &Option<Task>, start_time: DateTim
     }
 }
 
-fn execute_show_ancestor(stdout: &mut RawTerminal<Stdout>, focused_task_opt: &Option<Task>) {
+fn execute_show_ancestor(stdout: &mut dyn SchronuWriter, focused_task_opt: &Option<Task>) {
     writeln!(stdout, "").unwrap();
 
     // まずは葉タスクから根に向かいながら後ろに追加していき、
@@ -2224,7 +2241,7 @@ fn execute_show_ancestor(stdout: &mut RawTerminal<Stdout>, focused_task_opt: &Op
 }
 
 fn execute_show_leaf_tasks(
-    stdout: &mut RawTerminal<Stdout>,
+    stdout: &mut dyn SchronuWriter,
     task_repository: &mut dyn TaskRepositoryTrait,
     _free_time_manager: &mut dyn FreeTimeManagerTrait,
 ) {
@@ -2264,7 +2281,7 @@ fn execute_show_leaf_tasks(
 }
 
 fn execute_show_all_tasks(
-    stdout: &mut RawTerminal<Stdout>,
+    stdout: &mut dyn SchronuWriter,
     focused_task_id_opt: &mut Option<Uuid>,
     task_repository: &mut dyn TaskRepositoryTrait,
     free_time_manager: &mut dyn FreeTimeManagerTrait,
@@ -3769,7 +3786,7 @@ fn test_make_obsidian_root_task_search_url_子タスクからrootのtask_idをqu
 
 #[allow(unused_must_use)]
 fn execute_next_up(
-    _stdout: &mut RawTerminal<Stdout>,
+    _stdout: &mut dyn SchronuWriter,
     focused_task_id_opt: &mut Option<Uuid>,
     focused_task_opt: &Option<Task>,
     new_task_name_str: &str,
@@ -3808,7 +3825,7 @@ fn execute_next_up(
 }
 
 fn execute_breakdown(
-    stdout: &mut RawTerminal<Stdout>,
+    stdout: &mut dyn SchronuWriter,
     focused_task_id_opt: &mut Option<Uuid>,
     focused_task_opt: &Option<Task>,
     new_task_names: &[&str],
@@ -3854,7 +3871,7 @@ fn execute_breakdown(
 }
 
 fn execute_breakdown_sequentially(
-    _stdout: &mut RawTerminal<Stdout>,
+    _stdout: &mut dyn SchronuWriter,
     focused_task_id_opt: &mut Option<Uuid>,
     focused_task_opt: &Option<Task>,
     new_task_name_str: &str,
@@ -3880,7 +3897,7 @@ fn execute_breakdown_sequentially(
 }
 
 fn execute_create_repetition_task(
-    _stdout: &mut RawTerminal<Stdout>,
+    _stdout: &mut dyn SchronuWriter,
     task_repository: &mut dyn TaskRepositoryTrait,
     focused_task_id_opt: &mut Option<Uuid>,
     focused_task_opt: &Option<Task>,
@@ -3938,7 +3955,7 @@ fn execute_create_repetition_task(
 }
 
 fn execute_split(
-    stdout: &mut RawTerminal<Stdout>,
+    stdout: &mut dyn SchronuWriter,
     focused_task_id_opt: &mut Option<Uuid>,
     focused_task_opt: &Option<Task>,
     new_task_name: &str,
@@ -4575,7 +4592,7 @@ fn test_decide_time_明_24時過ぎは直近6時を使う() {
 }
 
 fn execute(
-    stdout: &mut RawTerminal<Stdout>,
+    stdout: &mut dyn SchronuWriter,
     task_repository: &mut dyn TaskRepositoryTrait,
     free_time_manager: &mut dyn FreeTimeManagerTrait,
     focused_task_id_opt: &mut Option<Uuid>,
@@ -5440,6 +5457,7 @@ fn get_byte_offset_for_deletion_正常系() {
 }
 
 fn main() {
+    let command_opt = parse_non_interactive_command(env::args().skip(1).collect());
     let mut task_repository = TaskRepository::new("../Schronu-private/tasks/");
     let mut free_time_manager = FreeTimeManager::new();
 
@@ -5456,7 +5474,18 @@ fn main() {
             // ロック取得成功。アプリケーションのメインロジックを実行。
 
             // controllerで実体を見るのを避けるために、1つ関数を切る
-            application(&mut task_repository, &mut free_time_manager);
+            match command_opt {
+                Some(command) => {
+                    execute_non_interactive_command(
+                        &mut task_repository,
+                        &mut free_time_manager,
+                        &command,
+                    );
+                }
+                None => {
+                    application(&mut task_repository, &mut free_time_manager);
+                }
+            }
 
             // 終了時にロックは自動的に解放される。
         }
@@ -5465,6 +5494,64 @@ fn main() {
             eprintln!("[Error] Another instance of the application is already running.");
         }
     }
+}
+
+fn parse_non_interactive_command(args: Vec<String>) -> Option<String> {
+    if args.is_empty() {
+        return None;
+    }
+
+    Some(args.join(" "))
+}
+
+#[test]
+fn test_parse_non_interactive_command_引数なしは_none() {
+    let actual = parse_non_interactive_command(vec![]);
+    let expected = None;
+
+    assert_eq!(actual, expected);
+}
+
+#[test]
+fn test_parse_non_interactive_command_単一引数をコマンドにする() {
+    let actual = parse_non_interactive_command(vec!["今".to_string()]);
+    let expected = Some("今".to_string());
+
+    assert_eq!(actual, expected);
+}
+
+#[test]
+fn test_parse_non_interactive_command_複数引数を1コマンドにする() {
+    let actual = parse_non_interactive_command(vec!["尾".to_string(), "週".to_string()]);
+    let expected = Some("尾 週".to_string());
+
+    assert_eq!(actual, expected);
+}
+
+fn execute_non_interactive_command(
+    task_repository: &mut dyn TaskRepositoryTrait,
+    free_time_manager: &mut dyn FreeTimeManagerTrait,
+    command: &str,
+) {
+    let now = Local::now();
+    task_repository.sync_clock(now);
+    task_repository.load();
+    free_time_manager
+        .load_busy_time_slots_from_file("../Schronu-private/busy_time_slots.yaml", &now);
+
+    let mut focused_task_id_opt: Option<Uuid> =
+        select_focus_task_id(task_repository, FocusSelectionMode::HighestPriority);
+    let focus_started_datetime: DateTime<Local> = now;
+    let mut stdout = stdout();
+
+    execute(
+        &mut stdout,
+        task_repository,
+        free_time_manager,
+        &mut focused_task_id_opt,
+        &focus_started_datetime,
+        command,
+    );
 }
 
 fn make_message_about_focus(
