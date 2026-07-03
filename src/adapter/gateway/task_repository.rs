@@ -183,8 +183,8 @@ impl TaskRepositoryTrait for TaskRepository {
 
                 let tpl = (
                     deadline_time_opt.is_none(),
-                    neg_priority,
                     deadline_time_opt,
+                    neg_priority,
                     id,
                 );
 
@@ -389,6 +389,28 @@ mod tests {
             .id_to_task_map
             .borrow()
             .contains_key(&child_task_id));
+    }
+
+    #[test]
+    fn test_get_highest_priority_leaf_task_id_締切あり同士では優先度より締切日時を先に見る() {
+        let mut task_repository = TaskRepository::new("");
+        let high_priority_late_deadline_task = Task::new("高優先度だが締切が遅いタスク");
+        high_priority_late_deadline_task.set_priority(99);
+        high_priority_late_deadline_task
+            .set_deadline_time_opt(Some(Local.with_ymd_and_hms(2026, 5, 11, 20, 0, 0).unwrap()));
+
+        let low_priority_early_deadline_task = Task::new("低優先度だが締切が早いタスク");
+        low_priority_early_deadline_task.set_priority(1);
+        low_priority_early_deadline_task
+            .set_deadline_time_opt(Some(Local.with_ymd_and_hms(2026, 5, 10, 20, 0, 0).unwrap()));
+        let low_priority_early_deadline_task_id = low_priority_early_deadline_task.get_id();
+
+        add_project(&mut task_repository, high_priority_late_deadline_task);
+        add_project(&mut task_repository, low_priority_early_deadline_task);
+
+        let actual = task_repository.get_highest_priority_leaf_task_id();
+
+        assert_eq!(actual, Some(low_priority_early_deadline_task_id));
     }
 
     #[test]
