@@ -177,7 +177,7 @@ fn select_focus_task_id(
     match focus_selection_mode {
         FocusSelectionMode::HighestPriority => task_repository.get_highest_priority_leaf_task_id(),
         FocusSelectionMode::LowestPriority { recent_days } => {
-            task_repository.get_lowest_priority_leaf_task_id(recent_days)
+            task_repository.get_defer_candidate_leaf_task_id(recent_days)
         }
     }
 }
