@@ -5854,6 +5854,7 @@ fn main() {
         Err(_) => {
             // ロック取得失敗。すでに別のインスタンスが実行中。
             eprintln!("[Error] Another instance of the application is already running.");
+            process::exit(1);
         }
     }
 }
