@@ -19,7 +19,10 @@ function applyTimeFormat() {
   const spreadsheet = SpreadsheetApp.getActiveSpreadsheet();
   const missingSheetNames = [];
 
-  for (const sheetName of SCHRONU_CONFIG.sheetNames) {
+  // 「実ログ」シートは generate_command_from_spreadsheet.sh で時刻だけでなく日付も渡せるようにするために、hh:mmには変えない
+  const sheetNames = [ '優先度低い順', ];
+
+  for (const sheetName of sheetNames) {
     const sheet = spreadsheet.getSheetByName(sheetName);
 
     if (!sheet) {

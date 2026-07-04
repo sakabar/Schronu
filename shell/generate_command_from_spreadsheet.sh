@@ -20,6 +20,38 @@ function to_minutes(time_str, parts) {
     return (parts[1] * 60) + parts[2]
 }
 
+function set_invalid(task_id, line_no, message) {
+    if (!(task_id in invalid_line_by_id)) {
+        invalid_line_by_id[task_id] = line_no
+        invalid_message_by_id[task_id] = message
+    }
+}
+
+function parse_finish_datetime(datetime_str, parts, date_parts, time_parts, yyyy, month, day, hour, minute, second) {
+    if (datetime_str !~ /^[0-9][0-9][0-9][0-9]\/[0-9]{1,2}\/[0-9]{1,2}[[:space:]]+[0-9]{1,2}:[0-9][0-9]:[0-9][0-9]$/) {
+        return 0
+    }
+
+    split(datetime_str, parts, /[[:space:]]+/)
+    split(parts[1], date_parts, "/")
+    split(parts[2], time_parts, ":")
+
+    yyyy = date_parts[1] + 0
+    month = date_parts[2] + 0
+    day = date_parts[3] + 0
+    hour = time_parts[1] + 0
+    minute = time_parts[2] + 0
+    second = time_parts[3] + 0
+
+    if (month < 1 || month > 12 || day < 1 || day > 31 || hour > 23 || minute > 59 || second > 59) {
+        return 0
+    }
+
+    parsed_finish_sort_key = sprintf("%04d%02d%02d%02d%02d%02d", yyyy, month, day, hour, minute, second)
+    parsed_finish_command = sprintf("%d:%02d:%02d %04d/%02d/%02d", hour, minute, second, yyyy, month, day)
+    return 1
+}
+
 function initialize_task(task_id, task_name) {
     if (!(task_id in total_work_minutes_by_id)) {
         task_ids[++task_id_count] = task_id
@@ -34,9 +66,14 @@ function initialize_task(task_id, task_name) {
     task_id = trim($2)
     task_name = trim($9)
     finish_flag = trim($12)
+    finish_datetime = trim($13)
     should_skip = trim($14)
     should_extract = trim($15)
     actual_work_minutes = trim($16)
+
+    if (task_id == "" && task_name == "") {
+        next
+    }
 
     if (should_extract != "TRUE" && should_skip != "T") {
         next
@@ -69,27 +106,35 @@ function initialize_task(task_id, task_name) {
     }
 
     if (actual_work_minutes == "") {
-        if (!(task_id in invalid_actual_line_by_id)) {
-            invalid_actual_line_by_id[task_id] = NR
-            invalid_actual_message_by_id[task_id] = "P列が空です"
-        }
+        set_invalid(task_id, NR, "P列が空です")
         next
     }
 
     work_minutes = to_minutes(actual_work_minutes)
 
     if (work_minutes < 0) {
-        if (!(task_id in invalid_actual_line_by_id)) {
-            invalid_actual_line_by_id[task_id] = NR
-            invalid_actual_message_by_id[task_id] = "P列の形式が不正です: " actual_work_minutes
-        }
+        set_invalid(task_id, NR, "P列の形式が不正です: " actual_work_minutes)
         next
     }
 
     total_work_minutes_by_id[task_id] += work_minutes
 
     if (finish_flag != "F") {
+        if (finish_datetime == "") {
+            set_invalid(task_id, NR, "M列が空です")
+            next
+        }
+
+        if (!parse_finish_datetime(finish_datetime)) {
+            set_invalid(task_id, NR, "M列の形式が不正です: " finish_datetime)
+            next
+        }
+
         should_finish_by_id[task_id] = 1
+        if (!(task_id in finish_sort_key_by_id) || parsed_finish_sort_key > finish_sort_key_by_id[task_id]) {
+            finish_sort_key_by_id[task_id] = parsed_finish_sort_key
+            finish_command_by_id[task_id] = parsed_finish_command
+        }
     }
 }
 
@@ -97,8 +142,8 @@ END {
     for (i = 1; i <= task_id_count; i++) {
         task_id = task_ids[i]
 
-        if (!should_skip_by_id[task_id] && task_id in invalid_actual_line_by_id) {
-            printf("line %d: %s\n", invalid_actual_line_by_id[task_id], invalid_actual_message_by_id[task_id]) > "/dev/stderr"
+        if (!should_skip_by_id[task_id] && task_id in invalid_line_by_id) {
+            printf("line %d: %s\n", invalid_line_by_id[task_id], invalid_message_by_id[task_id]) > "/dev/stderr"
             exit 1
         }
 
@@ -112,7 +157,7 @@ END {
 
             if (should_finish_by_id[task_id]) {
                 printf("見 %s\n", task_id)
-                printf("終\n")
+                printf("終 %s\n", finish_command_by_id[task_id])
             }
         }
 
