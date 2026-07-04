@@ -4570,23 +4570,46 @@ fn decide_time(tokens: &Vec<&str>, now: &DateTime<Local>) -> Option<DateTime<Loc
 }
 
 fn decide_finish_time(tokens: &Vec<&str>, now: &DateTime<Local>) -> Option<DateTime<Local>> {
-    let hhmm_reg = Regex::new(r"^\d{1,2}:\d{1,2}$").unwrap();
+    let hhmmss_reg = Regex::new(r"^(\d{1,2}):(\d{1,2})(?::(\d{1,2}))?$").unwrap();
     let yyyymmdd_reg = Regex::new(r"^\d{2,4}/\d{1,2}/\d{1,2}$").unwrap();
     let mmdd_reg = Regex::new(r"^\d{1,2}/\d{1,2}$").unwrap();
     let days_of_week = vec!["月", "火", "水", "木", "金", "土", "日"];
 
+    let build_finish_time = |hhmmss: &str| -> Option<DateTime<Local>> {
+        let caps = hhmmss_reg.captures(hhmmss)?;
+        let hh: u32 = caps[1].parse().ok()?;
+        let mm: u32 = caps[2].parse().ok()?;
+        let ss: u32 = caps
+            .get(3)
+            .map(|sec| sec.as_str().parse().ok())
+            .unwrap_or(Some(0))?;
+
+        if hh > 23 || mm > 59 || ss > 59 {
+            return None;
+        }
+
+        let hhmm = format!("{}:{}", hh, mm);
+        let finish_time = match tokens.as_slice() {
+            [cmd, _] => decide_time(&vec![*cmd, hhmm.as_str()], now),
+            [cmd, _, date] => decide_time(&vec![*cmd, hhmm.as_str(), *date], now),
+            _ => None,
+        }?;
+
+        finish_time.with_second(ss)
+    };
+
     match tokens.as_slice() {
         [_] => Some(*now),
         [_, "今"] | [_, "now"] => Some(*now),
-        [_, hhmm] if hhmm_reg.is_match(hhmm) => decide_time(tokens, now),
-        [_, hhmm, date]
-            if hhmm_reg.is_match(hhmm)
+        [_, hhmmss] if hhmmss_reg.is_match(hhmmss) => build_finish_time(hhmmss),
+        [_, hhmmss, date]
+            if hhmmss_reg.is_match(hhmmss)
                 && (yyyymmdd_reg.is_match(date)
                     || mmdd_reg.is_match(date)
                     || date.starts_with('明')
                     || days_of_week.contains(date)) =>
         {
-            decide_time(tokens, now)
+            build_finish_time(hhmmss)
         }
         _ => None,
     }
@@ -4636,9 +4659,30 @@ fn test_decide_finish_time_時刻指定はdecide_timeと同じ形式で解釈す
 }
 
 #[test]
+fn test_decide_finish_time_秒つき時刻を解釈する() {
+    let now = Local.with_ymd_and_hms(2026, 5, 17, 12, 15, 0).unwrap();
+    let tokens = vec!["終", "9:23:45", "2026/7/4"];
+
+    let actual = decide_finish_time(&tokens, &now);
+    let expected = Some(Local.with_ymd_and_hms(2026, 7, 4, 9, 23, 45).unwrap());
+
+    assert_eq!(actual, expected);
+}
+
+#[test]
 fn test_decide_finish_time_不正な時刻は完了時刻にしない() {
     let now = Local.with_ymd_and_hms(2026, 5, 17, 12, 15, 0).unwrap();
     let tokens = vec!["終", "xxx"];
+
+    let actual = decide_finish_time(&tokens, &now);
+
+    assert_eq!(actual, None);
+}
+
+#[test]
+fn test_decide_finish_time_不正な秒は完了時刻にしない() {
+    let now = Local.with_ymd_and_hms(2026, 5, 17, 12, 15, 0).unwrap();
+    let tokens = vec!["終", "9:23:60", "2026/7/4"];
 
     let actual = decide_finish_time(&tokens, &now);
 
@@ -4849,6 +4893,36 @@ fn test_execute_finish_時刻指定は実作業時間を自動加算せず指定
     assert_eq!(
         actual.get_end_time_opt(),
         Some(Local.with_ymd_and_hms(2026, 5, 17, 14, 30, 0).unwrap())
+    );
+}
+
+#[test]
+fn test_execute_finish_秒つき時刻指定は指定秒で完了する() {
+    let now = Local.with_ymd_and_hms(2026, 5, 17, 12, 5, 0).unwrap();
+    let focus_started_datetime = Local.with_ymd_and_hms(2026, 5, 17, 12, 0, 0).unwrap();
+    let task = Task::new("タスク");
+    task.set_actual_work_seconds(60);
+    let task_id = task.get_id();
+    let mut task_repository = TestTaskRepository::new(task.clone(), now);
+    let mut free_time_manager = TestFreeTimeManager;
+    let mut focused_task_id_opt = Some(task_id);
+    let mut stdout = TestWriter::new();
+
+    execute(
+        &mut stdout,
+        &mut task_repository,
+        &mut free_time_manager,
+        &mut focused_task_id_opt,
+        &focus_started_datetime,
+        "終 9:23:45 2026/7/4",
+    );
+
+    let actual = task_repository.get_by_id(task_id).unwrap();
+    assert_eq!(actual.get_status(), Status::Done);
+    assert_eq!(actual.get_actual_work_seconds(), 60);
+    assert_eq!(
+        actual.get_end_time_opt(),
+        Some(Local.with_ymd_and_hms(2026, 7, 4, 9, 23, 45).unwrap())
     );
 }
 
