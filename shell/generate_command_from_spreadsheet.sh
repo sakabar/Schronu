@@ -71,6 +71,10 @@ function initialize_task(task_id, task_name) {
     should_extract = trim($15)
     actual_work_minutes = trim($16)
 
+    if (task_id == "" && task_name == "") {
+        next
+    }
+
     if (should_extract != "TRUE" && should_skip != "T") {
         next
     }
