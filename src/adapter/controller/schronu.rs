@@ -4569,6 +4569,29 @@ fn decide_time(tokens: &Vec<&str>, now: &DateTime<Local>) -> Option<DateTime<Loc
     start_time
 }
 
+fn decide_finish_time(tokens: &Vec<&str>, now: &DateTime<Local>) -> Option<DateTime<Local>> {
+    let hhmm_reg = Regex::new(r"^\d{1,2}:\d{1,2}$").unwrap();
+    let yyyymmdd_reg = Regex::new(r"^\d{2,4}/\d{1,2}/\d{1,2}$").unwrap();
+    let mmdd_reg = Regex::new(r"^\d{1,2}/\d{1,2}$").unwrap();
+    let days_of_week = vec!["月", "火", "水", "木", "金", "土", "日"];
+
+    match tokens.as_slice() {
+        [_] => Some(*now),
+        [_, "今"] | [_, "now"] => Some(*now),
+        [_, hhmm] if hhmm_reg.is_match(hhmm) => decide_time(tokens, now),
+        [_, hhmm, date]
+            if hhmm_reg.is_match(hhmm)
+                && (yyyymmdd_reg.is_match(date)
+                    || mmdd_reg.is_match(date)
+                    || date.starts_with('明')
+                    || days_of_week.contains(date)) =>
+        {
+            decide_time(tokens, now)
+        }
+        _ => None,
+    }
+}
+
 #[test]
 fn test_decide_time_明_6時以降は次のschronu日付にする() {
     let now = Local.with_ymd_and_hms(2026, 5, 17, 12, 15, 0).unwrap();
@@ -4589,6 +4612,271 @@ fn test_decide_time_明_24時過ぎは直近6時を使う() {
     let expected = Some(Local.with_ymd_and_hms(2026, 5, 18, 7, 0, 0).unwrap());
 
     assert_eq!(actual, expected);
+}
+
+#[test]
+fn test_decide_finish_time_今は現在時刻を返す() {
+    let now = Local.with_ymd_and_hms(2026, 5, 17, 12, 15, 0).unwrap();
+    let tokens = vec!["終", "今"];
+
+    let actual = decide_finish_time(&tokens, &now);
+
+    assert_eq!(actual, Some(now));
+}
+
+#[test]
+fn test_decide_finish_time_時刻指定はdecide_timeと同じ形式で解釈する() {
+    let now = Local.with_ymd_and_hms(2026, 5, 17, 12, 15, 0).unwrap();
+    let tokens = vec!["終", "7:00", "明"];
+
+    let actual = decide_finish_time(&tokens, &now);
+    let expected = Some(Local.with_ymd_and_hms(2026, 5, 18, 7, 0, 0).unwrap());
+
+    assert_eq!(actual, expected);
+}
+
+#[test]
+fn test_decide_finish_time_不正な時刻は完了時刻にしない() {
+    let now = Local.with_ymd_and_hms(2026, 5, 17, 12, 15, 0).unwrap();
+    let tokens = vec!["終", "xxx"];
+
+    let actual = decide_finish_time(&tokens, &now);
+
+    assert_eq!(actual, None);
+}
+
+#[test]
+fn test_decide_finish_time_不正な日付は完了時刻にしない() {
+    let now = Local.with_ymd_and_hms(2026, 5, 17, 12, 15, 0).unwrap();
+    let tokens = vec!["終", "14:30", "xxx"];
+
+    let actual = decide_finish_time(&tokens, &now);
+
+    assert_eq!(actual, None);
+}
+
+#[cfg(test)]
+struct TestWriter {
+    buffer: Vec<u8>,
+}
+
+#[cfg(test)]
+impl TestWriter {
+    fn new() -> Self {
+        Self { buffer: vec![] }
+    }
+}
+
+#[cfg(test)]
+impl Write for TestWriter {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        self.buffer.extend_from_slice(buf);
+        Ok(buf.len())
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+impl SchronuWriter for TestWriter {
+    fn writeln_newline(&mut self, message: &str) -> Result<(), std::io::Error> {
+        writeln!(self, "{}", message)
+    }
+}
+
+#[cfg(test)]
+struct TestTaskRepository {
+    task: Task,
+    last_synced_time: DateTime<Local>,
+}
+
+#[cfg(test)]
+impl TestTaskRepository {
+    fn new(task: Task, last_synced_time: DateTime<Local>) -> Self {
+        Self {
+            task,
+            last_synced_time,
+        }
+    }
+}
+
+#[cfg(test)]
+impl TaskRepositoryTrait for TestTaskRepository {
+    fn get_project_storage_dir_name(&self) -> &str {
+        ""
+    }
+
+    fn get_all_projects(&self) -> Vec<&Task> {
+        vec![&self.task]
+    }
+
+    fn load(&mut self) {}
+
+    fn save(&self) {}
+
+    fn sync_clock(&mut self, now: DateTime<Local>) {
+        self.last_synced_time = now;
+    }
+
+    fn get_last_synced_time(&self) -> DateTime<Local> {
+        self.last_synced_time
+    }
+
+    fn get_highest_priority_project(&mut self) -> Option<&Task> {
+        Some(&self.task)
+    }
+
+    fn get_highest_priority_leaf_task_id(&mut self) -> Option<Uuid> {
+        Some(self.task.get_id())
+    }
+
+    fn get_defer_candidate_leaf_task_id(&mut self, _recent_days: i64) -> Option<Uuid> {
+        Some(self.task.get_id())
+    }
+
+    fn get_by_id(&self, id: Uuid) -> Option<Task> {
+        self.task.get_by_id(id)
+    }
+
+    fn start_new_project(&mut self, root_task: Task) {
+        self.task = root_task;
+    }
+}
+
+#[cfg(test)]
+struct TestFreeTimeManager;
+
+#[cfg(test)]
+impl FreeTimeManagerTrait for TestFreeTimeManager {
+    fn get_free_minutes(&mut self, _start: &DateTime<Local>, _end: &DateTime<Local>) -> i64 {
+        0
+    }
+
+    fn get_busy_minutes(&mut self, _start: &DateTime<Local>, _end: &DateTime<Local>) -> i64 {
+        0
+    }
+
+    fn register_busy_time_slot(&mut self, _start: &DateTime<Local>, _end: &DateTime<Local>) {}
+
+    fn load_busy_time_slots_from_file(
+        &mut self,
+        _busy_time_slots_file_path: &str,
+        _now: &DateTime<Local>,
+    ) {
+    }
+}
+
+#[test]
+fn test_execute_finish_引数なしは実作業時間を自動加算して現在時刻で完了する() {
+    let now = Local.with_ymd_and_hms(2026, 5, 17, 12, 5, 0).unwrap();
+    let focus_started_datetime = Local.with_ymd_and_hms(2026, 5, 17, 12, 0, 0).unwrap();
+    let task = Task::new("タスク");
+    task.set_actual_work_seconds(60);
+    let task_id = task.get_id();
+    let mut task_repository = TestTaskRepository::new(task.clone(), now);
+    let mut free_time_manager = TestFreeTimeManager;
+    let mut focused_task_id_opt = Some(task_id);
+    let mut stdout = TestWriter::new();
+
+    execute(
+        &mut stdout,
+        &mut task_repository,
+        &mut free_time_manager,
+        &mut focused_task_id_opt,
+        &focus_started_datetime,
+        "終",
+    );
+
+    let actual = task_repository.get_by_id(task_id).unwrap();
+    assert_eq!(actual.get_status(), Status::Done);
+    assert_eq!(actual.get_actual_work_seconds(), 360);
+    assert_eq!(actual.get_end_time_opt(), Some(now));
+}
+
+#[test]
+fn test_execute_finish_今は実作業時間を自動加算せず現在時刻で完了する() {
+    let now = Local.with_ymd_and_hms(2026, 5, 17, 12, 5, 0).unwrap();
+    let focus_started_datetime = Local.with_ymd_and_hms(2026, 5, 17, 12, 0, 0).unwrap();
+    let task = Task::new("タスク");
+    task.set_actual_work_seconds(60);
+    let task_id = task.get_id();
+    let mut task_repository = TestTaskRepository::new(task.clone(), now);
+    let mut free_time_manager = TestFreeTimeManager;
+    let mut focused_task_id_opt = Some(task_id);
+    let mut stdout = TestWriter::new();
+
+    execute(
+        &mut stdout,
+        &mut task_repository,
+        &mut free_time_manager,
+        &mut focused_task_id_opt,
+        &focus_started_datetime,
+        "終 今",
+    );
+
+    let actual = task_repository.get_by_id(task_id).unwrap();
+    assert_eq!(actual.get_status(), Status::Done);
+    assert_eq!(actual.get_actual_work_seconds(), 60);
+    assert_eq!(actual.get_end_time_opt(), Some(now));
+}
+
+#[test]
+fn test_execute_finish_時刻指定は実作業時間を自動加算せず指定時刻で完了する() {
+    let now = Local.with_ymd_and_hms(2026, 5, 17, 12, 5, 0).unwrap();
+    let focus_started_datetime = Local.with_ymd_and_hms(2026, 5, 17, 12, 0, 0).unwrap();
+    let task = Task::new("タスク");
+    task.set_actual_work_seconds(60);
+    let task_id = task.get_id();
+    let mut task_repository = TestTaskRepository::new(task.clone(), now);
+    let mut free_time_manager = TestFreeTimeManager;
+    let mut focused_task_id_opt = Some(task_id);
+    let mut stdout = TestWriter::new();
+
+    execute(
+        &mut stdout,
+        &mut task_repository,
+        &mut free_time_manager,
+        &mut focused_task_id_opt,
+        &focus_started_datetime,
+        "終 14:30",
+    );
+
+    let actual = task_repository.get_by_id(task_id).unwrap();
+    assert_eq!(actual.get_status(), Status::Done);
+    assert_eq!(actual.get_actual_work_seconds(), 60);
+    assert_eq!(
+        actual.get_end_time_opt(),
+        Some(Local.with_ymd_and_hms(2026, 5, 17, 14, 30, 0).unwrap())
+    );
+}
+
+#[test]
+fn test_execute_finish_不正な引数では完了しない() {
+    let now = Local.with_ymd_and_hms(2026, 5, 17, 12, 5, 0).unwrap();
+    let focus_started_datetime = Local.with_ymd_and_hms(2026, 5, 17, 12, 0, 0).unwrap();
+    let task = Task::new("タスク");
+    task.set_actual_work_seconds(60);
+    let task_id = task.get_id();
+    let mut task_repository = TestTaskRepository::new(task.clone(), now);
+    let mut free_time_manager = TestFreeTimeManager;
+    let mut focused_task_id_opt = Some(task_id);
+    let mut stdout = TestWriter::new();
+
+    execute(
+        &mut stdout,
+        &mut task_repository,
+        &mut free_time_manager,
+        &mut focused_task_id_opt,
+        &focus_started_datetime,
+        "終 xxx",
+    );
+
+    let actual = task_repository.get_by_id(task_id).unwrap();
+    assert_eq!(actual.get_status(), Status::Todo);
+    assert_eq!(actual.get_actual_work_seconds(), 60);
+    assert_eq!(actual.get_end_time_opt(), None);
 }
 
 fn execute(
@@ -5371,14 +5659,16 @@ fn execute(
                     // まだ完了していないタスクがあることを示すために「樹」コマンドを実施
                     execute_show_tree(stdout, &focused_task_opt);
                 } else {
+                    let now = task_repository.get_last_synced_time();
+                    let finished_at_opt = decide_finish_time(&tokens, &now);
+
                     // 現在のフォーカス時間を実作業時間に追加する
                     // 基本的にはそれを自動で行うが、もし引数を追加した時には発動させないようにする
-                    if tokens.len() == 1 {
+                    if finished_at_opt.is_some() && tokens.len() == 1 {
                         let past_actual_work_seconds = focused_task.get_actual_work_seconds();
 
-                        let now_focus_duration_seconds = (task_repository.get_last_synced_time()
-                            - *focus_started_datetime)
-                            .num_seconds();
+                        let now_focus_duration_seconds =
+                            (now - *focus_started_datetime).num_seconds();
                         focused_task.set_actual_work_seconds(
                             past_actual_work_seconds
                                 + if now_focus_duration_seconds >= 60 {
@@ -5389,12 +5679,10 @@ fn execute(
                         );
                     }
 
-                    // 完了操作
-                    execute_finish(
-                        focused_task_id_opt,
-                        &focused_task_opt,
-                        task_repository.get_last_synced_time(),
-                    );
+                    if let Some(finished_at) = finished_at_opt {
+                        // 完了操作
+                        execute_finish(focused_task_id_opt, &focused_task_opt, finished_at);
+                    }
                 }
             }
         }
