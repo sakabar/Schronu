@@ -2,7 +2,7 @@
 set -ue
 set -o pipefail
 
-# AからQ列まであるスプレッドシートをクリップボードにコピーしてあるとする
+# AからS列まであるスプレッドシートをクリップボードにコピーしてあるとする
 
 pbpaste | tr -d '\r' | awk -F '\t' '
 function trim(str) {
@@ -69,7 +69,7 @@ function initialize_task(task_id, task_name) {
     finish_datetime = trim($13)
     should_skip = trim($14)
     should_extract = trim($15)
-    actual_work_minutes = trim($16)
+    actual_work_minutes = trim($17)
 
     if (task_id == "" && task_name == "") {
         next
@@ -106,14 +106,14 @@ function initialize_task(task_id, task_name) {
     }
 
     if (actual_work_minutes == "") {
-        set_invalid(task_id, NR, "P列が空です")
+        set_invalid(task_id, NR, "Q列が空です")
         next
     }
 
     work_minutes = to_minutes(actual_work_minutes)
 
     if (work_minutes < 0) {
-        set_invalid(task_id, NR, "P列の形式が不正です: " actual_work_minutes)
+        set_invalid(task_id, NR, "Q列の形式が不正です: " actual_work_minutes)
         next
     }
 
