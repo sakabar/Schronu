@@ -130,7 +130,7 @@ schronu 尾 | ~/projects/sakabar/Schronu/shell/copy_for_spreadsheet.sh | pbcopy
 ~/projects/sakabar/Schronu/shell/generate_command_from_spreadsheet.sh
 ```
 
-完了対象の行では、M列に `2026/07/04 9:23:45` のような完了時刻、P列に `0:23:45` のような実作業時間を入れてください。生成される `終` コマンドにはM列の完了時刻が渡されます。
+完了対象の行では、O列に `2026/07/04 9:23:45` のような完了時刻、R列に `0:23:45` のような実作業時間を入れてください。生成される `終` コマンドにはO列の完了時刻が渡されます。
 
 (例)
 
