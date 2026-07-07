@@ -1493,14 +1493,40 @@ mod tests {
 
     #[test]
     fn test_replace_task_list_icon_アイコン列だけを置き換える() {
-        let message_prefix = "0028 task-id / ____/__/__ 06/28(日)-23:11~23:30 0 19 05 ".to_string();
+        let message_prefix =
+            "0028 task-id / ____/__/__ 06/28(日)-23:11~23:30 0 19 05 資 ".to_string();
 
         let actual = replace_task_list_icon(&message_prefix, "A");
 
         assert_eq!(
             actual,
-            "0028 task-id A ____/__/__ 06/28(日)-23:11~23:30 0 19 05 "
+            "0028 task-id A ____/__/__ 06/28(日)-23:11~23:30 0 19 05 資 "
         );
+    }
+
+    #[test]
+    fn test_project_category_symbol_カテゴリ表示記号を返す() {
+        assert_eq!(
+            project_category_symbol(Some(ProjectCategory::Earning)),
+            "獲"
+        );
+        assert_eq!(
+            project_category_symbol(Some(ProjectCategory::Sustaining)),
+            "維"
+        );
+        assert_eq!(
+            project_category_symbol(Some(ProjectCategory::Recovery)),
+            "回"
+        );
+        assert_eq!(
+            project_category_symbol(Some(ProjectCategory::Investment)),
+            "資"
+        );
+        assert_eq!(
+            project_category_symbol(Some(ProjectCategory::Consumption)),
+            "消"
+        );
+        assert_eq!(project_category_symbol(None), "_");
     }
 
     #[test]
@@ -1710,13 +1736,21 @@ fn replace_task_list_icon(message_prefix: &str, icon: &str) -> String {
     }
 
     parts[2] = icon;
-    format!(
-        "{} {} {} {} {} {} {} {} ",
-        parts[0], parts[1], parts[2], parts[3], parts[4], parts[5], parts[6], parts[7]
-    )
+    format!("{} ", parts.join(" "))
 }
 
 const PROJECT_CATEGORY_SUMMARY_LEN: usize = 6;
+
+fn project_category_symbol(project_category_opt: Option<ProjectCategory>) -> &'static str {
+    match project_category_opt {
+        Some(ProjectCategory::Earning) => "獲",
+        Some(ProjectCategory::Sustaining) => "維",
+        Some(ProjectCategory::Recovery) => "回",
+        Some(ProjectCategory::Investment) => "資",
+        Some(ProjectCategory::Consumption) => "消",
+        None => "_",
+    }
+}
 
 fn project_category_summary_index(project_category_opt: Option<ProjectCategory>) -> usize {
     match project_category_opt {
@@ -2860,7 +2894,7 @@ fn execute_show_all_tasks(
                 };
 
                 let message_prefix: String = format!(
-                    "{:04} {} {} {} {} {} {:02.0} {:02} ",
+                    "{:04} {} {} {} {} {} {:02.0} {:02} {} ",
                     ind,
                     id,
                     icon,
@@ -2874,7 +2908,8 @@ fn execute_show_all_tasks(
                     ),
                     rank,
                     round_up_sec_as_minute(estimated_work_seconds),
-                    task.get_priority()
+                    task.get_priority(),
+                    project_category_symbol(task.get_project_category_opt())
                 );
                 let msg = format!("{}{}", message_prefix, shorten_name);
                 let task_list_display_row = TaskListDisplayRow::new_task(
@@ -5147,6 +5182,7 @@ fn test_execute_today_カテゴリ別の予定時間集計を表示する() {
     );
 
     let actual = String::from_utf8(stdout.buffer).unwrap();
+    assert!(actual.contains(" 00 資 投資タスク"));
     assert!(actual.contains(
         "予定カテゴリ: 獲得 0.0時間(0%) / 維持 0.0時間(0%) / 回復 0.0時間(0%) / 投資 1.0時間(100%) / 消費 0.0時間(0%) / 未分類 0.0時間(0%)"
     ));
