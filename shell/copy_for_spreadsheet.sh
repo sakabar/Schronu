@@ -17,10 +17,11 @@ cat - | grep '^0' | grep -v -- '^----' | tr ' ' '\t' | tac | awk 'NF >= 9' | whi
     l_cell="=K${cell_row_num}"
     m_cell=''
     n_cell="=O${cell_row_num}"
-    o_cell='=IF(P'"${cell_row_num}"'="T", K'"${cell_row_num}"', K'"${cell_row_num}"'+TIME(0, G'"${cell_row_num}"', 0))'
-    p_cell=''
+    o_cell='=IF(Q'"${cell_row_num}"'="T", K'"${cell_row_num}"', K'"${cell_row_num}"'+TIME(0, G'"${cell_row_num}"', 0))'
+    p_cell="=NOT(ISFORMULA(O${cell_row_num}))"
+    q_cell=''
 
-    echo ${line}"\t${manu_cell}\t${k_cell}\t${l_cell}\t${m_cell}\t${n_cell}\t${o_cell}\t${p_cell}"
+    echo ${line}"\t${manu_cell}\t${k_cell}\t${l_cell}\t${m_cell}\t${n_cell}\t${o_cell}\t${p_cell}\t${q_cell}"
 
     cell_row_num=$[$cell_row_num + 1]
 done

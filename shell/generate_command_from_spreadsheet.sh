@@ -67,8 +67,8 @@ function initialize_task(task_id, task_name) {
     task_name = trim($9)
     finish_flag = trim($13)
     finish_datetime = trim($15)
-    should_skip = trim($16)
-    should_extract = trim($17)
+    should_extract = trim($16)
+    should_skip = trim($17)
     actual_work_minutes = trim($18)
 
     if (task_id == "" && task_name == "") {
