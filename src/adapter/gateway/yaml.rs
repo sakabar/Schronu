@@ -1,4 +1,5 @@
 use crate::entity::datetime::parse_local_datetime;
+use crate::entity::task::read_project_category;
 use crate::entity::task::read_repetition_anchor;
 use crate::entity::task::read_status;
 use crate::entity::task::Status;
@@ -17,6 +18,9 @@ use crate::entity::task::assert_task;
 
 #[cfg(test)]
 use crate::entity::task::RepetitionAnchor;
+
+#[cfg(test)]
+use crate::entity::task::ProjectCategory;
 
 #[cfg(test)]
 use uuid::uuid;
@@ -293,6 +297,7 @@ pub fn yaml_to_task(yaml: &Yaml, now: DateTime<Local>) -> Task {
     let priority: i64 = yaml["priority"]
         .as_i64()
         .unwrap_or(default_attr.get_priority());
+    let project_category_opt = yaml["category"].as_str().and_then(read_project_category);
 
     let create_time_str: &str = yaml["create_time"].as_str().unwrap_or("");
     let start_time_str: &str = yaml["start_time"].as_str().unwrap_or("");
@@ -328,6 +333,7 @@ pub fn yaml_to_task(yaml: &Yaml, now: DateTime<Local>) -> Task {
     parent_task.set_atomic(atomic);
     parent_task.set_pending_until(pending_until);
     parent_task.set_priority(priority);
+    parent_task.set_project_category_opt(project_category_opt);
 
     if let Ok(LocalResult::Single(create_time)) =
         parse_local_datetime(&create_time_str, "%Y/%m/%d %H:%M:%S")
@@ -540,6 +546,59 @@ priority: 'invalid'
             .expect("data are not borrowed"),
         "actual and expected are not equal"
     );
+}
+
+#[test]
+fn test_yaml_to_task_categoryキー_正常系() {
+    let s = "
+name: 'タスク1'
+status: 'todo'
+category: sustaining
+";
+
+    let docs = YamlLoader::load_from_str(s).unwrap();
+    let project_yaml: &Yaml = &docs[0];
+
+    let now = Local::now();
+    let actual = yaml_to_task(project_yaml, now);
+    let expected = Task::new("タスク1");
+    expected.set_project_category_opt(Some(ProjectCategory::Sustaining));
+    expected.sync_clock(now);
+
+    assert_task(&actual, &expected);
+}
+
+#[test]
+fn test_yaml_to_task_categoryキーがnullの場合はnone() {
+    let s = "
+name: 'タスク1'
+status: 'todo'
+category:
+";
+
+    let docs = YamlLoader::load_from_str(s).unwrap();
+    let project_yaml: &Yaml = &docs[0];
+
+    let now = Local::now();
+    let actual = yaml_to_task(project_yaml, now);
+
+    assert_eq!(actual.get_project_category_opt(), None);
+}
+
+#[test]
+fn test_yaml_to_task_categoryキーが存在しない場合はnone() {
+    let s = "
+name: 'タスク1'
+status: 'todo'
+";
+
+    let docs = YamlLoader::load_from_str(s).unwrap();
+    let project_yaml: &Yaml = &docs[0];
+
+    let now = Local::now();
+    let actual = yaml_to_task(project_yaml, now);
+
+    assert_eq!(actual.get_project_category_opt(), None);
 }
 
 #[test]
