@@ -1,7 +1,7 @@
 const SCHRONU_CONFIG = {
   sheetNames: ['実ログ', '優先度低い順'],
   taskIdCol: 2,
-  syncCols: [11, 13, 15, 16],
+  syncCols: [11, 13, 15, 17],
   dataStartRow: 3,
   timeFormatRanges: ['K3:L500', 'N3:O500'],
 };
