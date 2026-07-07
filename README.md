@@ -45,6 +45,19 @@ schronu> defer 5 minutes
 
 今フォーカスが当たっているタスクを指定した期間Pending状態とします。
 
+### 今フォーカスしているプロジェクトのカテゴリを設定する
+
+``` shell
+schronu> 類 資
+schronu> 類 _
+```
+
+今フォーカスが当たっているタスクが属するプロジェクトにカテゴリを設定します。
+
+`獲`、`維`、`回`、`資`、`消`、または `earning`、`sustaining`、`recovery`、`investment`、`consumption` を指定できます。
+
+`_`、`none`、`clear` を指定すると未分類に戻します。
+
 ### 今フォーカスしているタスクを完了する
 
 ``` shell

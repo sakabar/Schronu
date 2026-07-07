@@ -11,7 +11,8 @@ use schronu::application::interface::TaskRepositoryTrait;
 use schronu::entity::datetime::{get_next_morning_datetime, parse_local_datetime};
 use schronu::entity::task::{
     extract_leaf_tasks_from_project, extract_leaf_tasks_from_project_with_pending,
-    round_up_sec_as_minute, ProjectCategory, RepetitionAnchor, Status, Task, TaskAttr,
+    read_project_category, round_up_sec_as_minute, ProjectCategory, RepetitionAnchor, Status, Task,
+    TaskAttr,
 };
 use std::cmp::max;
 use std::cmp::min;
@@ -4656,6 +4657,21 @@ fn execute_set_priority(focused_task_opt: &Option<Task>, priority_str: &str) {
     });
 }
 
+fn read_project_category_command_arg(s: &str) -> Option<Option<ProjectCategory>> {
+    match s.to_lowercase().as_str() {
+        "_" | "none" | "clear" => Some(None),
+        _ => read_project_category(s).map(Some),
+    }
+}
+
+fn execute_set_project_category(focused_task_opt: &Option<Task>, project_category_str: &str) {
+    if let Some(project_category_opt) = read_project_category_command_arg(project_category_str) {
+        focused_task_opt
+            .as_ref()
+            .map(|focused_task| focused_task.set_project_category_opt(project_category_opt));
+    }
+}
+
 fn decide_time(tokens: &Vec<&str>, now: &DateTime<Local>) -> Option<DateTime<Local>> {
     let mut start_time = None;
 
@@ -5188,6 +5204,132 @@ fn test_execute_today_カテゴリ別の予定時間集計を表示する() {
     ));
 }
 
+#[test]
+fn test_execute_set_project_category_表示記号でカテゴリを設定する() {
+    let now = Local.with_ymd_and_hms(2026, 5, 17, 12, 0, 0).unwrap();
+    let focus_started_datetime = now;
+    let task = Task::new("タスク");
+    let task_id = task.get_id();
+    let mut task_repository = TestTaskRepository::new(task.clone(), now);
+    let mut free_time_manager = TestFreeTimeManager;
+    let mut focused_task_id_opt = Some(task_id);
+    let mut stdout = TestWriter::new();
+
+    execute(
+        &mut stdout,
+        &mut task_repository,
+        &mut free_time_manager,
+        &mut focused_task_id_opt,
+        &focus_started_datetime,
+        "類 資",
+    );
+
+    let actual = task_repository.get_by_id(task_id).unwrap();
+    assert_eq!(
+        actual.get_project_category_opt(),
+        Some(ProjectCategory::Investment)
+    );
+}
+
+#[test]
+fn test_execute_set_project_category_英語aliasでカテゴリを設定する() {
+    let now = Local.with_ymd_and_hms(2026, 5, 17, 12, 0, 0).unwrap();
+    let focus_started_datetime = now;
+    let task = Task::new("タスク");
+    let task_id = task.get_id();
+    let mut task_repository = TestTaskRepository::new(task.clone(), now);
+    let mut free_time_manager = TestFreeTimeManager;
+    let mut focused_task_id_opt = Some(task_id);
+    let mut stdout = TestWriter::new();
+
+    execute(
+        &mut stdout,
+        &mut task_repository,
+        &mut free_time_manager,
+        &mut focused_task_id_opt,
+        &focus_started_datetime,
+        "category earning",
+    );
+
+    let actual = task_repository.get_by_id(task_id).unwrap();
+    assert_eq!(
+        actual.get_project_category_opt(),
+        Some(ProjectCategory::Earning)
+    );
+
+    execute(
+        &mut stdout,
+        &mut task_repository,
+        &mut free_time_manager,
+        &mut focused_task_id_opt,
+        &focus_started_datetime,
+        "cat 消",
+    );
+
+    let actual = task_repository.get_by_id(task_id).unwrap();
+    assert_eq!(
+        actual.get_project_category_opt(),
+        Some(ProjectCategory::Consumption)
+    );
+}
+
+#[test]
+fn test_execute_set_project_category_未分類に戻す() {
+    let now = Local.with_ymd_and_hms(2026, 5, 17, 12, 0, 0).unwrap();
+    let focus_started_datetime = now;
+    let task = Task::new("タスク");
+    task.set_project_category_opt(Some(ProjectCategory::Investment));
+    let task_id = task.get_id();
+    let mut task_repository = TestTaskRepository::new(task.clone(), now);
+    let mut free_time_manager = TestFreeTimeManager;
+    let mut focused_task_id_opt = Some(task_id);
+    let mut stdout = TestWriter::new();
+
+    for cmd in ["類 _", "類 none", "類 clear"] {
+        task.set_project_category_opt(Some(ProjectCategory::Investment));
+
+        execute(
+            &mut stdout,
+            &mut task_repository,
+            &mut free_time_manager,
+            &mut focused_task_id_opt,
+            &focus_started_datetime,
+            cmd,
+        );
+
+        let actual = task_repository.get_by_id(task_id).unwrap();
+        assert_eq!(actual.get_project_category_opt(), None);
+    }
+}
+
+#[test]
+fn test_execute_set_project_category_不正カテゴリでは変更しない() {
+    let now = Local.with_ymd_and_hms(2026, 5, 17, 12, 0, 0).unwrap();
+    let focus_started_datetime = now;
+    let task = Task::new("タスク");
+    task.set_project_category_opt(Some(ProjectCategory::Investment));
+    let task_id = task.get_id();
+    let mut task_repository = TestTaskRepository::new(task.clone(), now);
+    let mut free_time_manager = TestFreeTimeManager;
+    let mut focused_task_id_opt = Some(task_id);
+    let mut stdout = TestWriter::new();
+
+    execute(
+        &mut stdout,
+        &mut task_repository,
+        &mut free_time_manager,
+        &mut focused_task_id_opt,
+        &focus_started_datetime,
+        "類 invalid",
+    );
+
+    let actual = task_repository.get_by_id(task_id).unwrap();
+    assert_eq!(
+        actual.get_project_category_opt(),
+        Some(ProjectCategory::Investment)
+    );
+}
+
 fn execute(
     stdout: &mut dyn SchronuWriter,
     task_repository: &mut dyn TaskRepositoryTrait,
@@ -5672,6 +5814,12 @@ fn execute(
             if tokens.len() >= 2 {
                 let priority_str = &tokens[1];
                 execute_set_priority(&focused_task_opt, priority_str);
+            }
+        }
+        "類" | "category" | "cat" => {
+            if tokens.len() >= 2 {
+                let project_category_str = &tokens[1];
+                execute_set_project_category(&focused_task_opt, project_category_str);
             }
         }
         "働" | "work" | "wk" => {

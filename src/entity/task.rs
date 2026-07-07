@@ -107,11 +107,11 @@ impl fmt::Display for ProjectCategory {
 
 pub fn read_project_category(s: &str) -> Option<ProjectCategory> {
     match s.to_lowercase().as_str() {
-        "earning" => Some(ProjectCategory::Earning),
-        "sustaining" => Some(ProjectCategory::Sustaining),
-        "recovery" => Some(ProjectCategory::Recovery),
-        "investment" => Some(ProjectCategory::Investment),
-        "consumption" => Some(ProjectCategory::Consumption),
+        "earning" | "獲" => Some(ProjectCategory::Earning),
+        "sustaining" | "維" => Some(ProjectCategory::Sustaining),
+        "recovery" | "回" => Some(ProjectCategory::Recovery),
+        "investment" | "資" => Some(ProjectCategory::Investment),
+        "consumption" | "消" => Some(ProjectCategory::Consumption),
         _ => None,
     }
 }
@@ -191,6 +191,24 @@ fn test_read_project_category_文字列を変換する() {
     );
     assert_eq!(
         read_project_category("consumption"),
+        Some(ProjectCategory::Consumption)
+    );
+}
+
+#[test]
+fn test_read_project_category_表示記号を変換する() {
+    assert_eq!(read_project_category("獲"), Some(ProjectCategory::Earning));
+    assert_eq!(
+        read_project_category("維"),
+        Some(ProjectCategory::Sustaining)
+    );
+    assert_eq!(read_project_category("回"), Some(ProjectCategory::Recovery));
+    assert_eq!(
+        read_project_category("資"),
+        Some(ProjectCategory::Investment)
+    );
+    assert_eq!(
+        read_project_category("消"),
         Some(ProjectCategory::Consumption)
     );
 }
