@@ -84,7 +84,7 @@ pub fn read_repetition_anchor(s: &str) -> RepetitionAnchor {
     }
 }
 
-#[derive(Copy, Clone, Debug, PartialEq)]
+#[derive(Copy, Clone, Debug, Eq, Hash, PartialEq)]
 pub enum ProjectCategory {
     Earning,
     Sustaining,
