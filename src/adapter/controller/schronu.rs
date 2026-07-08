@@ -1531,6 +1531,18 @@ mod tests {
     }
 
     #[test]
+    fn test_format_focused_task_header_project_categoryを表示する() {
+        assert_eq!(
+            format_focused_task_header(Some(ProjectCategory::Investment)),
+            "focused task is: project_category=資"
+        );
+        assert_eq!(
+            format_focused_task_header(None),
+            "focused task is: project_category=_"
+        );
+    }
+
+    #[test]
     fn test_summarize_scheduled_work_seconds_by_project_category_実タスクだけをカテゴリ別に集計する(
     ) {
         let target_date = NaiveDate::from_ymd_opt(2026, 5, 10).unwrap();
@@ -1751,6 +1763,13 @@ fn project_category_symbol(project_category_opt: Option<ProjectCategory>) -> &'s
         Some(ProjectCategory::Consumption) => "消",
         None => "_",
     }
+}
+
+fn format_focused_task_header(project_category_opt: Option<ProjectCategory>) -> String {
+    format!(
+        "focused task is: project_category={}",
+        project_category_symbol(project_category_opt)
+    )
 }
 
 fn project_category_summary_index(project_category_opt: Option<ProjectCategory>) -> usize {
@@ -6399,7 +6418,11 @@ fn application(
 
             match focused_task_opt {
                 Some(focused_task) => {
-                    println!("{}focused task is:", termion::cursor::Left(MAX_COL));
+                    println!(
+                        "{}{}",
+                        termion::cursor::Left(MAX_COL),
+                        format_focused_task_header(focused_task.get_project_category_opt())
+                    );
                     println!(
                         "{}{:?}",
                         termion::cursor::Left(MAX_COL),
@@ -6760,7 +6783,13 @@ fn application(
                         // フォーカスしているタスクを表示
                         match focused_task_opt {
                             Some(focused_task) => {
-                                println!("{}focused task is:", termion::cursor::Left(MAX_COL));
+                                println!(
+                                    "{}{}",
+                                    termion::cursor::Left(MAX_COL),
+                                    format_focused_task_header(
+                                        focused_task.get_project_category_opt()
+                                    )
+                                );
                                 println!(
                                     "{}{:?}",
                                     termion::cursor::Left(MAX_COL),
