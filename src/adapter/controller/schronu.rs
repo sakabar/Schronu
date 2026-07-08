@@ -1604,7 +1604,7 @@ mod tests {
 
         assert_eq!(
             actual,
-            "予定カテゴリ: 獲得 1.0時間(50%) / 維持 0.0時間(0%) / 回復 0.0時間(0%) / 投資 0.5時間(25%) / 消費 0.0時間(0%) / 未分類 0.5時間(25%)"
+            "予定カテゴリ: 獲得 1.0時間(50% | 50%) / 維持 0.0時間(0% | 50%) / 回復 0.0時間(0% | 50%) / 投資 0.5時間(25% | 75%) / 消費 0.0時間(0% | 75%) / 未分類 0.5時間(25% | 100%)"
         );
     }
 
@@ -1816,15 +1816,18 @@ fn format_scheduled_work_seconds_by_project_category(
         return "予定カテゴリ: 予定なし".to_string();
     }
 
+    let mut cumulative_seconds = 0;
     let parts = summary
         .iter()
         .enumerate()
         .map(|(index, seconds)| {
+            cumulative_seconds += seconds;
             format!(
-                "{} {:.1}時間({:.0}%)",
+                "{} {:.1}時間({:.0}% | {:.0}%)",
                 project_category_summary_label(index),
                 *seconds as f64 / 3600.0,
-                *seconds as f64 / total_seconds as f64 * 100.0
+                *seconds as f64 / total_seconds as f64 * 100.0,
+                cumulative_seconds as f64 / total_seconds as f64 * 100.0
             )
         })
         .collect::<Vec<_>>();
@@ -5219,7 +5222,7 @@ fn test_execute_today_カテゴリ別の予定時間集計を表示する() {
     let actual = String::from_utf8(stdout.buffer).unwrap();
     assert!(actual.contains(" 00 資 投資タスク"));
     assert!(actual.contains(
-        "予定カテゴリ: 獲得 0.0時間(0%) / 維持 0.0時間(0%) / 回復 0.0時間(0%) / 投資 1.0時間(100%) / 消費 0.0時間(0%) / 未分類 0.0時間(0%)"
+        "予定カテゴリ: 獲得 0.0時間(0% | 0%) / 維持 0.0時間(0% | 0%) / 回復 0.0時間(0% | 0%) / 投資 1.0時間(100% | 100%) / 消費 0.0時間(0% | 100%) / 未分類 0.0時間(0% | 100%)"
     ));
 }
 
