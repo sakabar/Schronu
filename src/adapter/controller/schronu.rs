@@ -1600,7 +1600,7 @@ mod tests {
     fn test_format_scheduled_work_seconds_by_project_category_比率を表示する() {
         let summary = [60 * 60, 0, 0, 30 * 60, 0, 30 * 60];
 
-        let actual = format_scheduled_work_seconds_by_project_category(&summary);
+        let actual = format_scheduled_work_seconds_by_project_category(&summary, 2 * 60 * 60);
 
         assert_eq!(
             actual,
@@ -1609,10 +1609,34 @@ mod tests {
     }
 
     #[test]
+    fn test_format_scheduled_work_seconds_by_project_category_空き時間超過を表示する() {
+        let summary = [60 * 60, 0, 0, 30 * 60, 0, 30 * 60];
+
+        let actual = format_scheduled_work_seconds_by_project_category(&summary, 60 * 60);
+
+        assert_eq!(
+            actual,
+            "予定カテゴリ: 獲得 1.0時間(100% | 100%) / 維持 0.0時間(0% | 100%) / 回復 0.0時間(0% | 100%) / 投資 0.5時間(50% | 150%) / 消費 0.0時間(0% | 150%) / 未分類 0.5時間(50% | 200%)"
+        );
+    }
+
+    #[test]
+    fn test_format_scheduled_work_seconds_by_project_category_空き時間なし() {
+        let summary = [60 * 60, 0, 0, 0, 0, 0];
+
+        let actual = format_scheduled_work_seconds_by_project_category(&summary, 0);
+
+        assert_eq!(
+            actual,
+            "予定カテゴリ: 獲得 1.0時間(inf% | inf%) / 維持 0.0時間(0% | inf%) / 回復 0.0時間(0% | inf%) / 投資 0.0時間(0% | inf%) / 消費 0.0時間(0% | inf%) / 未分類 0.0時間(0% | inf%)"
+        );
+    }
+
+    #[test]
     fn test_format_scheduled_work_seconds_by_project_category_予定なし() {
         let summary = [0; PROJECT_CATEGORY_SUMMARY_LEN];
 
-        let actual = format_scheduled_work_seconds_by_project_category(&summary);
+        let actual = format_scheduled_work_seconds_by_project_category(&summary, 0);
 
         assert_eq!(actual, "予定カテゴリ: 予定なし");
     }
@@ -1809,6 +1833,7 @@ fn summarize_scheduled_work_seconds_by_project_category(
 
 fn format_scheduled_work_seconds_by_project_category(
     summary: &[i64; PROJECT_CATEGORY_SUMMARY_LEN],
+    denominator_seconds: i64,
 ) -> String {
     let total_seconds: i64 = summary.iter().sum();
 
@@ -1823,16 +1848,99 @@ fn format_scheduled_work_seconds_by_project_category(
         .map(|(index, seconds)| {
             cumulative_seconds += seconds;
             format!(
-                "{} {:.1}時間({:.0}% | {:.0}%)",
+                "{} {:.1}時間({} | {})",
                 project_category_summary_label(index),
                 *seconds as f64 / 3600.0,
-                *seconds as f64 / total_seconds as f64 * 100.0,
-                cumulative_seconds as f64 / total_seconds as f64 * 100.0
+                format_project_category_percentage(*seconds, denominator_seconds),
+                format_project_category_percentage(cumulative_seconds, denominator_seconds)
             )
         })
         .collect::<Vec<_>>();
 
     format!("予定カテゴリ: {}", parts.join(" / "))
+}
+
+fn format_project_category_percentage(seconds: i64, denominator_seconds: i64) -> String {
+    if denominator_seconds > 0 {
+        format!(
+            "{:.0}%",
+            seconds as f64 / denominator_seconds as f64 * 100.0
+        )
+    } else if seconds > 0 {
+        "inf%".to_string()
+    } else {
+        "0%".to_string()
+    }
+}
+
+fn calculate_free_time_minutes_for_subjective_date(
+    date: &NaiveDate,
+    last_synced_time: DateTime<Local>,
+    eod: DateTime<Local>,
+    eod_duration: Duration,
+    free_time_manager: &mut dyn FreeTimeManagerTrait,
+) -> i64 {
+    let local_datetime_base = get_next_morning_datetime(
+        Local::now()
+            .timezone()
+            .from_local_datetime(&date.and_hms_opt(0, 0, 0).unwrap())
+            .unwrap(),
+    );
+
+    if local_datetime_base < last_synced_time
+        && last_synced_time < get_next_morning_datetime(local_datetime_base)
+    {
+        if last_synced_time.hour() < get_next_morning_datetime(last_synced_time).hour() {
+            if last_synced_time < eod {
+                (eod - last_synced_time).num_minutes()
+            } else {
+                0
+            }
+        } else {
+            free_time_manager.get_free_minutes(&last_synced_time, &eod)
+        }
+    } else {
+        let local_tz = Local::now().timezone();
+        let start = get_next_morning_datetime(
+            local_tz
+                .from_local_datetime(&date.and_hms_opt(0, 0, 0).unwrap())
+                .unwrap(),
+        );
+        let end = local_tz
+            .from_local_datetime(&date.and_hms_opt(23, 59, 59).unwrap())
+            .unwrap()
+            + eod_duration;
+        free_time_manager.get_free_minutes(&start, &end)
+    }
+}
+
+fn calculate_project_category_denominator_seconds(
+    rows: &[TaskListDisplayRow],
+    last_synced_time: DateTime<Local>,
+    eod: DateTime<Local>,
+    eod_duration: Duration,
+    free_time_manager: &mut dyn FreeTimeManagerTrait,
+) -> i64 {
+    let mut dates = rows
+        .iter()
+        .filter(|row| row.is_real_task)
+        .filter_map(|row| row.subjective_naive_date_opt)
+        .collect::<Vec<_>>();
+    dates.sort();
+    dates.dedup();
+
+    dates
+        .iter()
+        .map(|date| {
+            calculate_free_time_minutes_for_subjective_date(
+                date,
+                last_synced_time,
+                eod,
+                eod_duration,
+                free_time_manager,
+            ) * 60
+        })
+        .sum()
 }
 
 fn calculate_remaining_work_seconds(task: &Task) -> i64 {
@@ -3289,41 +3397,13 @@ fn execute_show_all_tasks(
 
         let weekday_jp = get_weekday_jp(&date);
 
-        let local_datetime_base = get_next_morning_datetime(
-            Local::now()
-                .timezone()
-                .from_local_datetime(&date.and_hms_opt(0, 0, 0).unwrap())
-                .unwrap(),
+        let free_time_minutes = calculate_free_time_minutes_for_subjective_date(
+            date,
+            last_synced_time,
+            eod,
+            eod_duration,
+            free_time_manager,
         );
-
-        let free_time_minutes = if local_datetime_base < last_synced_time
-            && last_synced_time < get_next_morning_datetime(local_datetime_base)
-        {
-            if last_synced_time.hour() < get_next_morning_datetime(last_synced_time).hour() {
-                if last_synced_time < eod {
-                    (eod - last_synced_time).num_minutes()
-                } else {
-                    0
-                }
-            } else {
-                free_time_manager.get_free_minutes(&last_synced_time, &eod)
-            }
-        } else {
-            // 明日以降
-            let local_tz = Local::now().timezone();
-
-            let start = get_next_morning_datetime(
-                local_tz
-                    .from_local_datetime(&date.and_hms_opt(0, 0, 0).unwrap())
-                    .unwrap(),
-            );
-
-            let end = local_tz
-                .from_local_datetime(&date.and_hms_opt(23, 59, 59).unwrap())
-                .unwrap()
-                + eod_duration;
-            free_time_manager.get_free_minutes(&start, &end)
-        };
 
         let free_time_hours = free_time_minutes as f64 / 60.0;
         let rho_in_date = total_estimated_work_hours_of_the_date / free_time_hours;
@@ -3599,9 +3679,19 @@ fn execute_show_all_tasks(
         writeln_newline(stdout, "").unwrap();
         let project_category_summary =
             summarize_scheduled_work_seconds_by_project_category(&task_list_display_rows);
+        let project_category_denominator_seconds = calculate_project_category_denominator_seconds(
+            &task_list_display_rows,
+            last_synced_time,
+            eod,
+            eod_duration,
+            free_time_manager,
+        );
         writeln_newline(
             stdout,
-            &format_scheduled_work_seconds_by_project_category(&project_category_summary),
+            &format_scheduled_work_seconds_by_project_category(
+                &project_category_summary,
+                project_category_denominator_seconds,
+            ),
         )
         .unwrap();
         writeln_newline(stdout, "").unwrap();
@@ -5055,6 +5145,31 @@ impl FreeTimeManagerTrait for TestFreeTimeManager {
     }
 }
 
+#[cfg(test)]
+struct TestFreeTimeManagerWithFreeMinutes {
+    free_minutes: i64,
+}
+
+#[cfg(test)]
+impl FreeTimeManagerTrait for TestFreeTimeManagerWithFreeMinutes {
+    fn get_free_minutes(&mut self, _start: &DateTime<Local>, _end: &DateTime<Local>) -> i64 {
+        self.free_minutes
+    }
+
+    fn get_busy_minutes(&mut self, _start: &DateTime<Local>, _end: &DateTime<Local>) -> i64 {
+        0
+    }
+
+    fn register_busy_time_slot(&mut self, _start: &DateTime<Local>, _end: &DateTime<Local>) {}
+
+    fn load_busy_time_slots_from_file(
+        &mut self,
+        _busy_time_slots_file_path: &str,
+        _now: &DateTime<Local>,
+    ) {
+    }
+}
+
 #[test]
 fn test_execute_finish_引数なしは実作業時間を自動加算して現在時刻で完了する() {
     let now = Local.with_ymd_and_hms(2026, 5, 17, 12, 5, 0).unwrap();
@@ -5206,7 +5321,7 @@ fn test_execute_today_カテゴリ別の予定時間集計を表示する() {
     task.set_start_time(now);
     let task_id = task.get_id();
     let mut task_repository = TestTaskRepository::new(task.clone(), now);
-    let mut free_time_manager = TestFreeTimeManager;
+    let mut free_time_manager = TestFreeTimeManagerWithFreeMinutes { free_minutes: 30 };
     let mut focused_task_id_opt = Some(task_id);
     let mut stdout = TestWriter::new();
 
@@ -5222,7 +5337,7 @@ fn test_execute_today_カテゴリ別の予定時間集計を表示する() {
     let actual = String::from_utf8(stdout.buffer).unwrap();
     assert!(actual.contains(" 00 資 投資タスク"));
     assert!(actual.contains(
-        "予定カテゴリ: 獲得 0.0時間(0% | 0%) / 維持 0.0時間(0% | 0%) / 回復 0.0時間(0% | 0%) / 投資 1.0時間(100% | 100%) / 消費 0.0時間(0% | 100%) / 未分類 0.0時間(0% | 100%)"
+        "予定カテゴリ: 獲得 0.0時間(0% | 0%) / 維持 0.0時間(0% | 0%) / 回復 0.0時間(0% | 0%) / 投資 1.0時間(200% | 200%) / 消費 0.0時間(0% | 200%) / 未分類 0.0時間(0% | 200%)"
     ));
 }
 
