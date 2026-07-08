@@ -2,7 +2,7 @@
 set -ue
 set -o pipefail
 
-# AからS列まであるスプレッドシートをクリップボードにコピーしてあるとする
+# AからT列まであるスプレッドシートをクリップボードにコピーしてあるとする
 
 pbpaste | tr -d '\r' | awk -F '\t' '
 function trim(str) {
@@ -64,12 +64,12 @@ function initialize_task(task_id, task_name) {
 
 {
     task_id = trim($2)
-    task_name = trim($9)
-    finish_flag = trim($13)
-    finish_datetime = trim($15)
-    should_extract = trim($16)
-    should_skip = trim($17)
-    actual_work_minutes = trim($18)
+    task_name = trim($10)
+    finish_flag = trim($14)
+    finish_datetime = trim($16)
+    should_extract = trim($17)
+    should_skip = trim($18)
+    actual_work_minutes = trim($19)
 
     if (task_id == "" && task_name == "") {
         next
@@ -106,14 +106,14 @@ function initialize_task(task_id, task_name) {
     }
 
     if (actual_work_minutes == "") {
-        set_invalid(task_id, NR, "R列が空です")
+        set_invalid(task_id, NR, "S列が空です")
         next
     }
 
     work_minutes = to_minutes(actual_work_minutes)
 
     if (work_minutes < 0) {
-        set_invalid(task_id, NR, "R列の形式が不正です: " actual_work_minutes)
+        set_invalid(task_id, NR, "S列の形式が不正です: " actual_work_minutes)
         next
     }
 
@@ -121,12 +121,12 @@ function initialize_task(task_id, task_name) {
 
     if (finish_flag != "F") {
         if (finish_datetime == "") {
-            set_invalid(task_id, NR, "O列が空です")
+            set_invalid(task_id, NR, "P列が空です")
             next
         }
 
         if (!parse_finish_datetime(finish_datetime)) {
-            set_invalid(task_id, NR, "O列の形式が不正です: " finish_datetime)
+            set_invalid(task_id, NR, "P列の形式が不正です: " finish_datetime)
             next
         }
 

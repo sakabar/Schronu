@@ -11,7 +11,8 @@ use schronu::application::interface::TaskRepositoryTrait;
 use schronu::entity::datetime::{get_next_morning_datetime, parse_local_datetime};
 use schronu::entity::task::{
     extract_leaf_tasks_from_project, extract_leaf_tasks_from_project_with_pending,
-    round_up_sec_as_minute, RepetitionAnchor, Status, Task, TaskAttr,
+    read_project_category, round_up_sec_as_minute, ProjectCategory, RepetitionAnchor, Status, Task,
+    TaskAttr,
 };
 use std::cmp::max;
 use std::cmp::min;
@@ -1085,6 +1086,7 @@ mod tests {
                 early_id,
                 10,
                 60,
+                None,
                 "".to_string(),
                 "early".to_string(),
             ),
@@ -1095,6 +1097,7 @@ mod tests {
                 late_id,
                 1,
                 60,
+                None,
                 "".to_string(),
                 "late".to_string(),
             ),
@@ -1121,6 +1124,7 @@ mod tests {
                 high_priority_id,
                 10,
                 60,
+                None,
                 "".to_string(),
                 "high".to_string(),
             ),
@@ -1131,6 +1135,7 @@ mod tests {
                 low_priority_id,
                 1,
                 60,
+                None,
                 "".to_string(),
                 "low".to_string(),
             ),
@@ -1157,6 +1162,7 @@ mod tests {
                 early_id,
                 1,
                 60,
+                None,
                 "".to_string(),
                 "early".to_string(),
             ),
@@ -1167,6 +1173,7 @@ mod tests {
                 late_id,
                 1,
                 60,
+                None,
                 "".to_string(),
                 "late".to_string(),
             ),
@@ -1198,6 +1205,7 @@ mod tests {
                 high_id,
                 89,
                 120 * 60,
+                None,
                 "prefix ".to_string(),
                 "high".to_string(),
             ),
@@ -1208,6 +1216,7 @@ mod tests {
                 nineteen_min_id,
                 5,
                 19 * 60,
+                None,
                 "0001 00000000-0000-0000-0000-000000000000 / ____/__/__ 05/10(日)-23:11~23:30 0 19 05 ".to_string(),
                 "<19/60>レビュー".to_string(),
             ),
@@ -1218,6 +1227,7 @@ mod tests {
                 twenty_min_id,
                 5,
                 20 * 60,
+                None,
                 "prefix ".to_string(),
                 "回収する".to_string(),
             ),
@@ -1228,6 +1238,7 @@ mod tests {
                 fifteen_min_id,
                 5,
                 15 * 60,
+                None,
                 "prefix ".to_string(),
                 "心当たりがある店に電話して確認".to_string(),
             ),
@@ -1238,6 +1249,7 @@ mod tests {
                 six_min_id,
                 5,
                 6 * 60,
+                None,
                 "prefix ".to_string(),
                 "日から土までの実績を確認する".to_string(),
             ),
@@ -1248,6 +1260,7 @@ mod tests {
                 thirteen_min_id,
                 5,
                 13 * 60,
+                None,
                 "prefix ".to_string(),
                 "<13/30>一次レビュー".to_string(),
             ),
@@ -1258,6 +1271,7 @@ mod tests {
                 eighteen_min_id,
                 5,
                 18 * 60,
+                None,
                 "prefix ".to_string(),
                 "<18/30>一次レビュー".to_string(),
             ),
@@ -1325,6 +1339,7 @@ mod tests {
                 other_date_id,
                 1,
                 60 * 60,
+                None,
                 "".to_string(),
                 "tomorrow".to_string(),
             ),
@@ -1335,6 +1350,7 @@ mod tests {
                 target_id,
                 10,
                 30 * 60,
+                None,
                 "".to_string(),
                 "today".to_string(),
             ),
@@ -1375,6 +1391,7 @@ mod tests {
             id,
             1,
             60 * 60,
+            None,
             "".to_string(),
             "task".to_string(),
         )];
@@ -1400,6 +1417,7 @@ mod tests {
                 today_id,
                 1,
                 60 * 60,
+                None,
                 "prefix ".to_string(),
                 "today".to_string(),
             ),
@@ -1410,6 +1428,7 @@ mod tests {
                 tomorrow_high_id,
                 10,
                 60 * 60,
+                None,
                 "prefix ".to_string(),
                 "tomorrow high".to_string(),
             ),
@@ -1420,6 +1439,7 @@ mod tests {
                 tomorrow_low_late_id,
                 1,
                 45 * 60,
+                None,
                 "prefix ".to_string(),
                 "tomorrow low late".to_string(),
             ),
@@ -1430,6 +1450,7 @@ mod tests {
                 tomorrow_low_early_id,
                 1,
                 30 * 60,
+                None,
                 "prefix ".to_string(),
                 "tomorrow low early".to_string(),
             ),
@@ -1473,14 +1494,127 @@ mod tests {
 
     #[test]
     fn test_replace_task_list_icon_アイコン列だけを置き換える() {
-        let message_prefix = "0028 task-id / ____/__/__ 06/28(日)-23:11~23:30 0 19 05 ".to_string();
+        let message_prefix =
+            "0028 task-id / ____/__/__ 06/28(日)-23:11~23:30 0 19 05 資 ".to_string();
 
         let actual = replace_task_list_icon(&message_prefix, "A");
 
         assert_eq!(
             actual,
-            "0028 task-id A ____/__/__ 06/28(日)-23:11~23:30 0 19 05 "
+            "0028 task-id A ____/__/__ 06/28(日)-23:11~23:30 0 19 05 資 "
         );
+    }
+
+    #[test]
+    fn test_project_category_symbol_カテゴリ表示記号を返す() {
+        assert_eq!(
+            project_category_symbol(Some(ProjectCategory::Earning)),
+            "獲"
+        );
+        assert_eq!(
+            project_category_symbol(Some(ProjectCategory::Sustaining)),
+            "維"
+        );
+        assert_eq!(
+            project_category_symbol(Some(ProjectCategory::Recovery)),
+            "回"
+        );
+        assert_eq!(
+            project_category_symbol(Some(ProjectCategory::Investment)),
+            "資"
+        );
+        assert_eq!(
+            project_category_symbol(Some(ProjectCategory::Consumption)),
+            "消"
+        );
+        assert_eq!(project_category_symbol(None), "_");
+    }
+
+    #[test]
+    fn test_format_focused_task_header_project_categoryを表示する() {
+        assert_eq!(
+            format_focused_task_header(Some(ProjectCategory::Investment)),
+            "focused task is: project_category=資"
+        );
+        assert_eq!(
+            format_focused_task_header(None),
+            "focused task is: project_category=_"
+        );
+    }
+
+    #[test]
+    fn test_summarize_scheduled_work_seconds_by_project_category_実タスクだけをカテゴリ別に集計する(
+    ) {
+        let target_date = NaiveDate::from_ymd_opt(2026, 5, 10).unwrap();
+        let rows = vec![
+            TaskListDisplayRow::new_task(
+                Local.with_ymd_and_hms(2026, 5, 10, 12, 0, 0).unwrap(),
+                target_date,
+                0,
+                Uuid::new_v4(),
+                1,
+                60 * 60,
+                Some(ProjectCategory::Earning),
+                "".to_string(),
+                "earning".to_string(),
+            ),
+            TaskListDisplayRow::new_task(
+                Local.with_ymd_and_hms(2026, 5, 10, 13, 0, 0).unwrap(),
+                target_date,
+                0,
+                Uuid::new_v4(),
+                1,
+                30 * 60,
+                Some(ProjectCategory::Investment),
+                "".to_string(),
+                "investment".to_string(),
+            ),
+            TaskListDisplayRow::new_task(
+                Local.with_ymd_and_hms(2026, 5, 10, 14, 0, 0).unwrap(),
+                target_date,
+                0,
+                Uuid::new_v4(),
+                1,
+                30 * 60,
+                None,
+                "".to_string(),
+                "uncategorized".to_string(),
+            ),
+            TaskListDisplayRow::new_message(
+                Local.with_ymd_and_hms(2026, 5, 10, 15, 0, 0).unwrap(),
+                0,
+                Uuid::new_v4(),
+                1,
+                "message".to_string(),
+            ),
+        ];
+
+        let summary = summarize_scheduled_work_seconds_by_project_category(&rows);
+
+        assert_eq!(summary[0], 60 * 60);
+        assert_eq!(summary[3], 30 * 60);
+        assert_eq!(summary[5], 30 * 60);
+    }
+
+    #[test]
+    fn test_format_scheduled_work_seconds_by_project_category_比率を表示する() {
+        let summary = [60 * 60, 0, 0, 30 * 60, 0, 30 * 60];
+
+        let actual = format_scheduled_work_seconds_by_project_category(&summary);
+
+        assert_eq!(
+            actual,
+            "予定カテゴリ: 獲得 1.0時間(50%) / 維持 0.0時間(0%) / 回復 0.0時間(0%) / 投資 0.5時間(25%) / 消費 0.0時間(0%) / 未分類 0.5時間(25%)"
+        );
+    }
+
+    #[test]
+    fn test_format_scheduled_work_seconds_by_project_category_予定なし() {
+        let summary = [0; PROJECT_CATEGORY_SUMMARY_LEN];
+
+        let actual = format_scheduled_work_seconds_by_project_category(&summary);
+
+        assert_eq!(actual, "予定カテゴリ: 予定なし");
     }
 }
 
@@ -1533,6 +1667,7 @@ struct TaskListDisplayRow {
     id: Uuid,
     priority: i64,
     work_seconds: i64,
+    project_category_opt: Option<ProjectCategory>,
     is_real_task: bool,
     give_up_candidate: bool,
     message_prefix: String,
@@ -1548,6 +1683,7 @@ impl TaskListDisplayRow {
         id: Uuid,
         priority: i64,
         work_seconds: i64,
+        project_category_opt: Option<ProjectCategory>,
         message_prefix: String,
         task_name: String,
     ) -> Self {
@@ -1558,6 +1694,7 @@ impl TaskListDisplayRow {
             id,
             priority,
             work_seconds,
+            project_category_opt,
             is_real_task: true,
             give_up_candidate: false,
             message_prefix,
@@ -1580,6 +1717,7 @@ impl TaskListDisplayRow {
             id,
             priority,
             work_seconds: 0,
+            project_category_opt: None,
             is_real_task: false,
             give_up_candidate: false,
             message_prefix: String::new(),
@@ -1611,10 +1749,87 @@ fn replace_task_list_icon(message_prefix: &str, icon: &str) -> String {
     }
 
     parts[2] = icon;
+    format!("{} ", parts.join(" "))
+}
+
+const PROJECT_CATEGORY_SUMMARY_LEN: usize = 6;
+
+fn project_category_symbol(project_category_opt: Option<ProjectCategory>) -> &'static str {
+    match project_category_opt {
+        Some(ProjectCategory::Earning) => "獲",
+        Some(ProjectCategory::Sustaining) => "維",
+        Some(ProjectCategory::Recovery) => "回",
+        Some(ProjectCategory::Investment) => "資",
+        Some(ProjectCategory::Consumption) => "消",
+        None => "_",
+    }
+}
+
+fn format_focused_task_header(project_category_opt: Option<ProjectCategory>) -> String {
     format!(
-        "{} {} {} {} {} {} {} {} ",
-        parts[0], parts[1], parts[2], parts[3], parts[4], parts[5], parts[6], parts[7]
+        "focused task is: project_category={}",
+        project_category_symbol(project_category_opt)
     )
+}
+
+fn project_category_summary_index(project_category_opt: Option<ProjectCategory>) -> usize {
+    match project_category_opt {
+        Some(ProjectCategory::Earning) => 0,
+        Some(ProjectCategory::Sustaining) => 1,
+        Some(ProjectCategory::Recovery) => 2,
+        Some(ProjectCategory::Investment) => 3,
+        Some(ProjectCategory::Consumption) => 4,
+        None => 5,
+    }
+}
+
+fn project_category_summary_label(index: usize) -> &'static str {
+    match index {
+        0 => "獲得",
+        1 => "維持",
+        2 => "回復",
+        3 => "投資",
+        4 => "消費",
+        _ => "未分類",
+    }
+}
+
+fn summarize_scheduled_work_seconds_by_project_category(
+    rows: &[TaskListDisplayRow],
+) -> [i64; PROJECT_CATEGORY_SUMMARY_LEN] {
+    let mut summary = [0; PROJECT_CATEGORY_SUMMARY_LEN];
+
+    for row in rows.iter().filter(|row| row.is_real_task) {
+        let index = project_category_summary_index(row.project_category_opt);
+        summary[index] += row.work_seconds;
+    }
+
+    summary
+}
+
+fn format_scheduled_work_seconds_by_project_category(
+    summary: &[i64; PROJECT_CATEGORY_SUMMARY_LEN],
+) -> String {
+    let total_seconds: i64 = summary.iter().sum();
+
+    if total_seconds == 0 {
+        return "予定カテゴリ: 予定なし".to_string();
+    }
+
+    let parts = summary
+        .iter()
+        .enumerate()
+        .map(|(index, seconds)| {
+            format!(
+                "{} {:.1}時間({:.0}%)",
+                project_category_summary_label(index),
+                *seconds as f64 / 3600.0,
+                *seconds as f64 / total_seconds as f64 * 100.0
+            )
+        })
+        .collect::<Vec<_>>();
+
+    format!("予定カテゴリ: {}", parts.join(" / "))
 }
 
 fn calculate_remaining_work_seconds(task: &Task) -> i64 {
@@ -2699,7 +2914,7 @@ fn execute_show_all_tasks(
                 };
 
                 let message_prefix: String = format!(
-                    "{:04} {} {} {} {} {} {:02.0} {:02} ",
+                    "{:04} {} {} {} {} {} {:02.0} {:02} {} ",
                     ind,
                     id,
                     icon,
@@ -2713,7 +2928,8 @@ fn execute_show_all_tasks(
                     ),
                     rank,
                     round_up_sec_as_minute(estimated_work_seconds),
-                    task.get_priority()
+                    task.get_priority(),
+                    project_category_symbol(task.get_project_category_opt())
                 );
                 let msg = format!("{}{}", message_prefix, shorten_name);
                 let task_list_display_row = TaskListDisplayRow::new_task(
@@ -2723,6 +2939,7 @@ fn execute_show_all_tasks(
                     *id,
                     task.get_priority(),
                     estimated_work_seconds,
+                    task.get_project_category_opt(),
                     message_prefix,
                     shorten_name,
                 );
@@ -3376,6 +3593,14 @@ fn execute_show_all_tasks(
             writeln_newline(stdout, &row.render_message()).unwrap();
         }
 
+        writeln_newline(stdout, "").unwrap();
+        let project_category_summary =
+            summarize_scheduled_work_seconds_by_project_category(&task_list_display_rows);
+        writeln_newline(
+            stdout,
+            &format_scheduled_work_seconds_by_project_category(&project_category_summary),
+        )
+        .unwrap();
         writeln_newline(stdout, "").unwrap();
     }
 
@@ -4451,6 +4676,21 @@ fn execute_set_priority(focused_task_opt: &Option<Task>, priority_str: &str) {
     });
 }
 
+fn read_project_category_command_arg(s: &str) -> Option<Option<ProjectCategory>> {
+    match s.to_lowercase().as_str() {
+        "_" | "none" | "clear" => Some(None),
+        _ => read_project_category(s).map(Some),
+    }
+}
+
+fn execute_set_project_category(focused_task_opt: &Option<Task>, project_category_str: &str) {
+    if let Some(project_category_opt) = read_project_category_command_arg(project_category_str) {
+        focused_task_opt
+            .as_ref()
+            .map(|focused_task| focused_task.set_project_category_opt(project_category_opt));
+    }
+}
+
 fn decide_time(tokens: &Vec<&str>, now: &DateTime<Local>) -> Option<DateTime<Local>> {
     let mut start_time = None;
 
@@ -4953,6 +5193,162 @@ fn test_execute_finish_不正な引数では完了しない() {
     assert_eq!(actual.get_end_time_opt(), None);
 }
 
+#[test]
+fn test_execute_today_カテゴリ別の予定時間集計を表示する() {
+    let now = Local.with_ymd_and_hms(2026, 5, 17, 12, 0, 0).unwrap();
+    let focus_started_datetime = now;
+    let task = Task::new("投資タスク");
+    task.set_project_category_opt(Some(ProjectCategory::Investment));
+    task.set_estimated_work_seconds(60 * 60);
+    task.set_start_time(now);
+    let task_id = task.get_id();
+    let mut task_repository = TestTaskRepository::new(task.clone(), now);
+    let mut free_time_manager = TestFreeTimeManager;
+    let mut focused_task_id_opt = Some(task_id);
+    let mut stdout = TestWriter::new();
+
+    execute(
+        &mut stdout,
+        &mut task_repository,
+        &mut free_time_manager,
+        &mut focused_task_id_opt,
+        &focus_started_datetime,
+        "今",
+    );
+
+    let actual = String::from_utf8(stdout.buffer).unwrap();
+    assert!(actual.contains(" 00 資 投資タスク"));
+    assert!(actual.contains(
+        "予定カテゴリ: 獲得 0.0時間(0%) / 維持 0.0時間(0%) / 回復 0.0時間(0%) / 投資 1.0時間(100%) / 消費 0.0時間(0%) / 未分類 0.0時間(0%)"
+    ));
+}
+
+#[test]
+fn test_execute_set_project_category_表示記号でカテゴリを設定する() {
+    let now = Local.with_ymd_and_hms(2026, 5, 17, 12, 0, 0).unwrap();
+    let focus_started_datetime = now;
+    let task = Task::new("タスク");
+    let task_id = task.get_id();
+    let mut task_repository = TestTaskRepository::new(task.clone(), now);
+    let mut free_time_manager = TestFreeTimeManager;
+    let mut focused_task_id_opt = Some(task_id);
+    let mut stdout = TestWriter::new();
+
+    execute(
+        &mut stdout,
+        &mut task_repository,
+        &mut free_time_manager,
+        &mut focused_task_id_opt,
+        &focus_started_datetime,
+        "類 資",
+    );
+
+    let actual = task_repository.get_by_id(task_id).unwrap();
+    assert_eq!(
+        actual.get_project_category_opt(),
+        Some(ProjectCategory::Investment)
+    );
+}
+
+#[test]
+fn test_execute_set_project_category_英語aliasでカテゴリを設定する() {
+    let now = Local.with_ymd_and_hms(2026, 5, 17, 12, 0, 0).unwrap();
+    let focus_started_datetime = now;
+    let task = Task::new("タスク");
+    let task_id = task.get_id();
+    let mut task_repository = TestTaskRepository::new(task.clone(), now);
+    let mut free_time_manager = TestFreeTimeManager;
+    let mut focused_task_id_opt = Some(task_id);
+    let mut stdout = TestWriter::new();
+
+    execute(
+        &mut stdout,
+        &mut task_repository,
+        &mut free_time_manager,
+        &mut focused_task_id_opt,
+        &focus_started_datetime,
+        "category earning",
+    );
+
+    let actual = task_repository.get_by_id(task_id).unwrap();
+    assert_eq!(
+        actual.get_project_category_opt(),
+        Some(ProjectCategory::Earning)
+    );
+
+    execute(
+        &mut stdout,
+        &mut task_repository,
+        &mut free_time_manager,
+        &mut focused_task_id_opt,
+        &focus_started_datetime,
+        "cat 消",
+    );
+
+    let actual = task_repository.get_by_id(task_id).unwrap();
+    assert_eq!(
+        actual.get_project_category_opt(),
+        Some(ProjectCategory::Consumption)
+    );
+}
+
+#[test]
+fn test_execute_set_project_category_未分類に戻す() {
+    let now = Local.with_ymd_and_hms(2026, 5, 17, 12, 0, 0).unwrap();
+    let focus_started_datetime = now;
+    let task = Task::new("タスク");
+    task.set_project_category_opt(Some(ProjectCategory::Investment));
+    let task_id = task.get_id();
+    let mut task_repository = TestTaskRepository::new(task.clone(), now);
+    let mut free_time_manager = TestFreeTimeManager;
+    let mut focused_task_id_opt = Some(task_id);
+    let mut stdout = TestWriter::new();
+
+    for cmd in ["類 _", "類 none", "類 clear"] {
+        task.set_project_category_opt(Some(ProjectCategory::Investment));
+
+        execute(
+            &mut stdout,
+            &mut task_repository,
+            &mut free_time_manager,
+            &mut focused_task_id_opt,
+            &focus_started_datetime,
+            cmd,
+        );
+
+        let actual = task_repository.get_by_id(task_id).unwrap();
+        assert_eq!(actual.get_project_category_opt(), None);
+    }
+}
+
+#[test]
+fn test_execute_set_project_category_不正カテゴリでは変更しない() {
+    let now = Local.with_ymd_and_hms(2026, 5, 17, 12, 0, 0).unwrap();
+    let focus_started_datetime = now;
+    let task = Task::new("タスク");
+    task.set_project_category_opt(Some(ProjectCategory::Investment));
+    let task_id = task.get_id();
+    let mut task_repository = TestTaskRepository::new(task.clone(), now);
+    let mut free_time_manager = TestFreeTimeManager;
+    let mut focused_task_id_opt = Some(task_id);
+    let mut stdout = TestWriter::new();
+
+    execute(
+        &mut stdout,
+        &mut task_repository,
+        &mut free_time_manager,
+        &mut focused_task_id_opt,
+        &focus_started_datetime,
+        "類 invalid",
+    );
+
+    let actual = task_repository.get_by_id(task_id).unwrap();
+    assert_eq!(
+        actual.get_project_category_opt(),
+        Some(ProjectCategory::Investment)
+    );
+}
+
 fn execute(
     stdout: &mut dyn SchronuWriter,
     task_repository: &mut dyn TaskRepositoryTrait,
@@ -5437,6 +5833,12 @@ fn execute(
             if tokens.len() >= 2 {
                 let priority_str = &tokens[1];
                 execute_set_priority(&focused_task_opt, priority_str);
+            }
+        }
+        "類" | "category" | "cat" => {
+            if tokens.len() >= 2 {
+                let project_category_str = &tokens[1];
+                execute_set_project_category(&focused_task_opt, project_category_str);
             }
         }
         "働" | "work" | "wk" => {
@@ -6016,7 +6418,11 @@ fn application(
 
             match focused_task_opt {
                 Some(focused_task) => {
-                    println!("{}focused task is:", termion::cursor::Left(MAX_COL));
+                    println!(
+                        "{}{}",
+                        termion::cursor::Left(MAX_COL),
+                        format_focused_task_header(focused_task.get_project_category_opt())
+                    );
                     println!(
                         "{}{:?}",
                         termion::cursor::Left(MAX_COL),
@@ -6377,7 +6783,13 @@ fn application(
                         // フォーカスしているタスクを表示
                         match focused_task_opt {
                             Some(focused_task) => {
-                                println!("{}focused task is:", termion::cursor::Left(MAX_COL));
+                                println!(
+                                    "{}{}",
+                                    termion::cursor::Left(MAX_COL),
+                                    format_focused_task_header(
+                                        focused_task.get_project_category_opt()
+                                    )
+                                );
                                 println!(
                                     "{}{:?}",
                                     termion::cursor::Left(MAX_COL),

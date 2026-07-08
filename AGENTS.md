@@ -47,3 +47,4 @@
 - deprecated API の置換では、戻り値の情報量を落とさないでください。`Result` を `Option` に潰すなど、エラー理由や分岐情報を失う変更は避け、呼び出し側で無視する場合も型として情報を保持してください。
 - 標準ライブラリや利用中のクレートの型で意味を表せる場合は、自前の wrapper 型を増やさないでください。例: chrono のローカル時刻変換では `LocalResult` を使い、`Single` のみ採用するなど呼び出し側で明示してください。
 - 未使用 warning に対応するときは、値を保持する意図や将来使う意図があるものを安易に削除しないでください。意図的に未使用である場合は、仮引数や private field を `_` 始まりの名前にして明示してください。
+- `全` コマンドのタスク行や Spreadsheet 連携の列構成を変更する場合は、連動して `src/adapter/controller/schronu.rs` の出力フォーマット、`shell/copy_for_spreadsheet.sh` の取り込み列数と計算列、`shell/generate_command_from_spreadsheet.sh` の読み取り列番号と列名付きエラー、`apps_script/main.js` の `syncCols` と `timeFormatRanges`、`apps_script/README.md` と `README.md` の説明を確認してください。現在の `全` 出力は Spreadsheet のA-J列相当で、I列が `category`、J列が `task_name` です。Spreadsheet 側の主要列はP列が完了時刻、Q列が抽出対象、S列が実作業時間、L/N/P/R列が同期対象です。

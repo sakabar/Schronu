@@ -84,6 +84,38 @@ pub fn read_repetition_anchor(s: &str) -> RepetitionAnchor {
     }
 }
 
+#[derive(Copy, Clone, Debug, Eq, Hash, PartialEq)]
+pub enum ProjectCategory {
+    Earning,
+    Sustaining,
+    Recovery,
+    Investment,
+    Consumption,
+}
+
+impl fmt::Display for ProjectCategory {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match self {
+            ProjectCategory::Earning => write!(f, "earning"),
+            ProjectCategory::Sustaining => write!(f, "sustaining"),
+            ProjectCategory::Recovery => write!(f, "recovery"),
+            ProjectCategory::Investment => write!(f, "investment"),
+            ProjectCategory::Consumption => write!(f, "consumption"),
+        }
+    }
+}
+
+pub fn read_project_category(s: &str) -> Option<ProjectCategory> {
+    match s.to_lowercase().as_str() {
+        "earning" | "獲" => Some(ProjectCategory::Earning),
+        "sustaining" | "維" => Some(ProjectCategory::Sustaining),
+        "recovery" | "回" => Some(ProjectCategory::Recovery),
+        "investment" | "資" => Some(ProjectCategory::Investment),
+        "consumption" | "消" => Some(ProjectCategory::Consumption),
+        _ => None,
+    }
+}
+
 #[test]
 fn test_read_status_doneの文字列を変換する() {
     let s = "done";
@@ -137,6 +169,54 @@ fn test_read_repetition_anchor_completionの文字列を変換する() {
 fn test_read_repetition_anchor_不正値ならdeadlineを返す() {
     let actual = read_repetition_anchor("invalid");
     assert_eq!(actual, RepetitionAnchor::Deadline);
+}
+
+#[test]
+fn test_read_project_category_文字列を変換する() {
+    assert_eq!(
+        read_project_category("earning"),
+        Some(ProjectCategory::Earning)
+    );
+    assert_eq!(
+        read_project_category("sustaining"),
+        Some(ProjectCategory::Sustaining)
+    );
+    assert_eq!(
+        read_project_category("recovery"),
+        Some(ProjectCategory::Recovery)
+    );
+    assert_eq!(
+        read_project_category("investment"),
+        Some(ProjectCategory::Investment)
+    );
+    assert_eq!(
+        read_project_category("consumption"),
+        Some(ProjectCategory::Consumption)
+    );
+}
+
+#[test]
+fn test_read_project_category_表示記号を変換する() {
+    assert_eq!(read_project_category("獲"), Some(ProjectCategory::Earning));
+    assert_eq!(
+        read_project_category("維"),
+        Some(ProjectCategory::Sustaining)
+    );
+    assert_eq!(read_project_category("回"), Some(ProjectCategory::Recovery));
+    assert_eq!(
+        read_project_category("資"),
+        Some(ProjectCategory::Investment)
+    );
+    assert_eq!(
+        read_project_category("消"),
+        Some(ProjectCategory::Consumption)
+    );
+}
+
+#[test]
+fn test_read_project_category_空文字と不正値はnoneを返す() {
+    assert_eq!(read_project_category(""), None);
+    assert_eq!(read_project_category("invalid"), None);
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -750,6 +830,7 @@ pub struct TaskAttr {
     repetition_interval_days_opt: Option<i64>,
     repetition_anchor: RepetitionAnchor,
     days_in_advance: i64, // 繰り返しタスクについて、何日前から着手開始可能とするか
+    project_category_opt: Option<ProjectCategory>,
 }
 
 // 生成するタイミングで結果が変わってしまうid, create_time, start_timeは
@@ -773,6 +854,7 @@ impl PartialEq for TaskAttr {
             && self.repetition_interval_days_opt == other.repetition_interval_days_opt
             && self.repetition_anchor == other.repetition_anchor
             && self.days_in_advance == other.days_in_advance
+            && self.project_category_opt == other.project_category_opt
     }
 }
 
@@ -836,6 +918,7 @@ impl TaskAttr {
             repetition_interval_days_opt: None,
             repetition_anchor: RepetitionAnchor::Deadline,
             days_in_advance: 0,
+            project_category_opt: None,
         }
     }
 
@@ -1028,6 +1111,14 @@ impl TaskAttr {
 
     pub fn get_days_in_advance(&self) -> i64 {
         self.days_in_advance
+    }
+
+    pub fn set_project_category_opt(&mut self, project_category_opt: Option<ProjectCategory>) {
+        self.project_category_opt = project_category_opt;
+    }
+
+    pub fn get_project_category_opt(&self) -> Option<ProjectCategory> {
+        self.project_category_opt
     }
 }
 
@@ -1294,6 +1385,17 @@ impl Task {
         self.node
             .borrow_data_mut()
             .set_days_in_advance(days_in_advance);
+    }
+
+    pub fn get_project_category_opt(&self) -> Option<ProjectCategory> {
+        self.root().node.borrow_data().get_project_category_opt()
+    }
+
+    pub fn set_project_category_opt(&self, project_category_opt: Option<ProjectCategory>) {
+        self.root()
+            .node
+            .borrow_data_mut()
+            .set_project_category_opt(project_category_opt);
     }
 
     pub fn get_actual_work_seconds(&self) -> i64 {
@@ -1914,6 +2016,15 @@ pub fn task_to_yaml(task: &Task) -> Yaml {
         );
     }
 
+    if task.is_root() {
+        if let Some(project_category) = task.get_project_category_opt() {
+            task_hash.insert(
+                Yaml::String(String::from("category")),
+                Yaml::String(project_category.to_string()),
+            );
+        }
+    }
+
     let create_time = task.get_create_time();
     let create_time_string = create_time.format("%Y/%m/%d %H:%M:%S").to_string();
     task_hash.insert(
@@ -2109,6 +2220,65 @@ name: 'タスク1'
 id: 67e55044-10b1-426f-9247-bb680e5fe0c8
 create_time: '2023/05/19 01:23:45'
 start_time: '2023/05/19 01:23:45'
+";
+    let docs = YamlLoader::load_from_str(s).unwrap();
+    let expected_yaml: &Yaml = &docs[0];
+
+    assert_eq!(&actual, expected_yaml);
+}
+
+#[test]
+fn test_task_to_yaml_project_category() {
+    let mut task = Task::new("タスク1");
+    let id: Uuid = uuid!("67e55044-10b1-426f-9247-bb680e5fe0c8");
+    task.set_id(id);
+    task.set_project_category_opt(Some(ProjectCategory::Sustaining));
+    let now = Local.with_ymd_and_hms(2023, 5, 19, 01, 23, 45).unwrap();
+    task.set_create_time(now);
+    task.set_start_time(now);
+    let actual = task_to_yaml(&task);
+
+    let s = "
+name: 'タスク1'
+id: 67e55044-10b1-426f-9247-bb680e5fe0c8
+category: sustaining
+create_time: '2023/05/19 01:23:45'
+start_time: '2023/05/19 01:23:45'
+";
+    let docs = YamlLoader::load_from_str(s).unwrap();
+    let expected_yaml: &Yaml = &docs[0];
+
+    assert_eq!(&actual, expected_yaml);
+}
+
+#[test]
+fn test_task_to_yaml_project_categoryは子タスクには出力しない() {
+    let now = Local.with_ymd_and_hms(2023, 5, 19, 01, 23, 45).unwrap();
+    let mut task = Task::new("親タスク");
+    task.set_id(uuid!("67e55044-10b1-426f-9247-bb680e5fe0c8"));
+    task.set_create_time(now);
+    task.set_start_time(now);
+
+    let mut task_attr_child = TaskAttr::new("子タスク");
+    task_attr_child.set_id(uuid!("0aaee735-3e22-4216-8b59-d56d5caf29ee"));
+    task_attr_child.set_create_time(now);
+    task_attr_child.set_start_time(now);
+    task_attr_child.set_project_category_opt(Some(ProjectCategory::Sustaining));
+
+    task.create_as_last_child(task_attr_child);
+
+    let actual = task_to_yaml(&task);
+
+    let s = "
+name: '親タスク'
+id: 67e55044-10b1-426f-9247-bb680e5fe0c8
+create_time: '2023/05/19 01:23:45'
+start_time: '2023/05/19 01:23:45'
+children:
+  - name: '子タスク'
+    id: 0aaee735-3e22-4216-8b59-d56d5caf29ee
+    create_time: '2023/05/19 01:23:45'
+    start_time: '2023/05/19 01:23:45'
 ";
     let docs = YamlLoader::load_from_str(s).unwrap();
     let expected_yaml: &Yaml = &docs[0];
