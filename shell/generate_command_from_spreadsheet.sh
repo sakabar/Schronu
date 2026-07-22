@@ -75,18 +75,14 @@ function initialize_task(task_id, task_name) {
         next
     }
 
-    if (should_extract != "TRUE" && should_skip != "T") {
-        next
-    }
-
     if (task_id == "" && task_name != "") {
-        if (should_skip == "T") {
-            next
-        }
-
         printf("新 %s\n", task_name)
         printf("下 スプレッドシートで仮登録したタスクを見積もる\n")
         printf("予 3\n\n")
+        next
+    }
+
+    if (should_extract != "TRUE" && should_skip != "T") {
         next
     }
 
