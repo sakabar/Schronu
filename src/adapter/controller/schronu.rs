@@ -37,6 +37,7 @@ const MAX_COL: u16 = 999;
 
 const MIN_SPLIT_SEGMENT_SECONDS: i64 = 5 * 60;
 const DEFAULT_LOWEST_PRIORITY_RECENT_DAYS: i64 = 0;
+const FOCUS_PROGRESS_BAR_SEGMENTS: usize = 100;
 
 // パーセントエンコーディングする対象にスペースを追加する
 const MY_ASCII_SET: &AsciiSet = &CONTROLS.add(b' ');
@@ -6437,11 +6438,11 @@ fn execute_non_interactive_command(
     );
 }
 
-fn make_message_about_focus(
+fn make_messages_about_focus(
     focused_task: &Task,
     focus_started_datetime: &DateTime<Local>,
     now: &DateTime<Local>,
-) -> String {
+) -> [String; 2] {
     let estimated_finish_datetime = *focus_started_datetime
         + Duration::seconds(
             focused_task.get_estimated_work_seconds() - focused_task.get_actual_work_seconds(),
@@ -6449,8 +6450,14 @@ fn make_message_about_focus(
 
     let left_duration = estimated_finish_datetime - *now;
     let for_duration = *now - *focus_started_datetime;
+    let focusing_minutes = for_duration.num_minutes() + 1;
+    let progress = format_focus_progress(
+        focused_task.get_estimated_work_seconds(),
+        focused_task.get_actual_work_seconds(),
+        for_duration.num_seconds(),
+    );
 
-    let msg = format!(
+    let summary = format!(
         "{} (since {} until {}) focusing for {} minutes",
         if left_duration >= Duration::minutes(1) {
             format!("{} minutes left", left_duration.num_minutes())
@@ -6461,10 +6468,137 @@ fn make_message_about_focus(
         },
         focus_started_datetime.format("%H:%M:%S"),
         estimated_finish_datetime.format("%H:%M:%S"),
-        for_duration.num_minutes() + 1,
+        focusing_minutes,
     );
 
-    msg
+    [summary, progress]
+}
+
+fn format_focus_progress(
+    estimated_work_seconds: i64,
+    actual_work_seconds: i64,
+    focusing_seconds: i64,
+) -> String {
+    if estimated_work_seconds <= 0 {
+        return format!("[{}] --%", "-".repeat(FOCUS_PROGRESS_BAR_SEGMENTS));
+    }
+
+    let total_work_seconds =
+        (i128::from(actual_work_seconds) + i128::from(focusing_seconds)).max(0);
+    let percentage = total_work_seconds * 100 / i128::from(estimated_work_seconds);
+    let filled_segments = percentage.min(FOCUS_PROGRESS_BAR_SEGMENTS as i128) as usize;
+
+    format!(
+        "[{}{}] {}%",
+        // U+2588 FULL BLOCK
+        "█".repeat(filled_segments),
+        // U+2591 LIGHT SHADE
+        "░".repeat(FOCUS_PROGRESS_BAR_SEGMENTS - filled_segments),
+        percentage
+    )
+}
+
+#[test]
+fn test_format_focus_progress_100パーセントで全区画を塗る() {
+    let actual = format_focus_progress(60 * 60, 59 * 60, 60);
+
+    assert_eq!(actual, format!("[{}] 100%", "█".repeat(100)));
+}
+
+#[test]
+fn test_format_focus_progress_開始直後は実経過0秒として扱う() {
+    let actual = format_focus_progress(100 * 60, 0, 0);
+
+    assert_eq!(actual, format!("[{}] 0%", "░".repeat(100)));
+}
+
+#[test]
+fn test_format_focus_progress_見積と作業時間を秒数基準で計算する() {
+    let actual = format_focus_progress(4 * 60 + 33, 0, 2 * 60);
+
+    assert_eq!(
+        actual,
+        format!("[{}{}] 43%", "█".repeat(43), "░".repeat(57))
+    );
+}
+
+#[test]
+fn test_format_focus_progress_表示が2分でも実経過秒数を使う() {
+    let actual = format_focus_progress(4 * 60 + 33, 0, 60);
+
+    assert_eq!(
+        actual,
+        format!("[{}{}] 21%", "█".repeat(21), "░".repeat(79))
+    );
+}
+
+#[test]
+fn test_format_focus_progress_99パーセントでは1区画を未達として残す() {
+    let actual = format_focus_progress(100, 99, 0);
+
+    assert_eq!(actual, format!("[{}░] 99%", "█".repeat(99)));
+}
+
+#[test]
+fn test_make_messages_about_focus_既存実績と表示中の作業時間から進捗を表示する() {
+    let focus_started_datetime = Local.with_ymd_and_hms(2026, 7, 25, 12, 0, 0).unwrap();
+    let now = Local.with_ymd_and_hms(2026, 7, 25, 12, 19, 0).unwrap();
+    let task = Task::new("タスク");
+    task.set_estimated_work_seconds(60 * 60);
+    task.set_actual_work_seconds(10 * 60);
+
+    let actual = make_messages_about_focus(&task, &focus_started_datetime, &now);
+
+    assert!(actual[0].ends_with("focusing for 20 minutes"));
+    assert_eq!(
+        actual[1],
+        format!("[{}{}] 48%", "█".repeat(48), "░".repeat(52))
+    );
+}
+
+#[test]
+fn test_make_messages_about_focus_バーを1パーセント単位で表示する() {
+    let focus_started_datetime = Local.with_ymd_and_hms(2026, 7, 25, 12, 0, 0).unwrap();
+    let now = Local.with_ymd_and_hms(2026, 7, 25, 12, 19, 0).unwrap();
+    let task = Task::new("タスク");
+    task.set_estimated_work_seconds(100 * 60);
+    task.set_actual_work_seconds(39 * 60);
+
+    let actual = make_messages_about_focus(&task, &focus_started_datetime, &now);
+
+    assert!(actual[0].ends_with("focusing for 20 minutes"));
+    assert_eq!(
+        actual[1],
+        format!("[{}{}] 58%", "█".repeat(58), "░".repeat(42))
+    );
+}
+
+#[test]
+fn test_make_messages_about_focus_見積時間超過時はバーだけ100パーセントを上限にする() {
+    let focus_started_datetime = Local.with_ymd_and_hms(2026, 7, 25, 12, 0, 0).unwrap();
+    let now = Local.with_ymd_and_hms(2026, 7, 25, 12, 59, 0).unwrap();
+    let task = Task::new("タスク");
+    task.set_estimated_work_seconds(100 * 60);
+    task.set_actual_work_seconds(57 * 60);
+
+    let actual = make_messages_about_focus(&task, &focus_started_datetime, &now);
+
+    assert!(actual[0].ends_with("focusing for 60 minutes"));
+    assert_eq!(actual[1], format!("[{}] 116%", "█".repeat(100)));
+}
+
+#[test]
+fn test_make_messages_about_focus_見積時間が0なら進捗を未算定として表示する() {
+    let focus_started_datetime = Local.with_ymd_and_hms(2026, 7, 25, 12, 0, 0).unwrap();
+    let now = Local.with_ymd_and_hms(2026, 7, 25, 12, 19, 0).unwrap();
+    let task = Task::new("タスク");
+    task.set_estimated_work_seconds(0);
+    task.set_actual_work_seconds(10 * 60);
+
+    let actual = make_messages_about_focus(&task, &focus_started_datetime, &now);
+
+    assert!(actual[0].ends_with("focusing for 20 minutes"));
+    assert_eq!(actual[1], format!("[{}] --%", "-".repeat(100)));
 }
 
 fn application(
@@ -6548,12 +6682,14 @@ fn application(
                     );
                     stdout.flush().unwrap();
 
-                    let msg = make_message_about_focus(
+                    let messages = make_messages_about_focus(
                         &focused_task,
                         &focus_started_datetime,
                         &Local::now(),
                     );
-                    writeln_newline(&mut stdout, &msg).unwrap();
+                    for message in messages {
+                        writeln_newline(&mut stdout, &message).unwrap();
+                    }
                 }
                 None => {}
             }
@@ -6914,12 +7050,14 @@ fn application(
                                     focused_task.get_attr()
                                 );
                                 stdout.flush().unwrap();
-                                let msg = make_message_about_focus(
+                                let messages = make_messages_about_focus(
                                     &focused_task,
                                     &focus_started_datetime,
                                     &Local::now(),
                                 );
-                                writeln_newline(&mut stdout, &msg).unwrap();
+                                for message in messages {
+                                    writeln_newline(&mut stdout, &message).unwrap();
+                                }
                             }
                             None => {}
                         }
