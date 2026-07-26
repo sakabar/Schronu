@@ -14,6 +14,12 @@ pub struct FreeTimeManager {
     free_time_slots_map: HashMap<NaiveDate, Vec<i64>>,
 }
 
+impl Default for FreeTimeManager {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl FreeTimeManager {
     pub fn new() -> Self {
         let free_time_slots_map = HashMap::new();

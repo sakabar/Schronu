@@ -59,7 +59,7 @@ pub fn read_status(s: &str) -> Option<Status> {
         return Some(Status::Done);
     }
 
-    return None;
+    None
 }
 
 #[derive(Copy, Clone, Debug, PartialEq)]
@@ -327,15 +327,15 @@ impl ImmutableTask {
     }
 
     pub fn get_name(&self) -> &str {
-        return &self.name;
+        &self.name
     }
 
     pub fn get_status(&self) -> &Status {
-        return &self.status;
+        &self.status
     }
 
     pub fn get_children(&self) -> &Vec<ImmutableTask> {
-        return &self.children;
+        &self.children
     }
 }
 
@@ -521,13 +521,13 @@ pub fn extract_leaf_immutable_tasks_from_project(task: &ImmutableTask) -> Vec<&I
             let mut leaves: Vec<&ImmutableTask> = leaves_with_pending
                 .iter()
                 .filter(|&leaf| leaf.get_status() != &Status::Pending)
-                .map(|&leaf| leaf)
+                .copied()
                 .collect::<Vec<_>>();
             ans.append(&mut leaves);
         }
     }
 
-    return ans;
+    ans
 }
 
 // Todoの葉タスクを抽出する
@@ -565,7 +565,7 @@ fn extract_leaf_tasks_from_project_rec(task: &Task, target_status_arr: &Vec<Stat
             let child_task = Task { node: child_node };
 
             let leaves_with_pending: Vec<Task> =
-                extract_leaf_tasks_from_project_rec(&child_task, &target_status_arr);
+                extract_leaf_tasks_from_project_rec(&child_task, target_status_arr);
 
             let mut leaves: Vec<Task> = leaves_with_pending
                 .iter()
@@ -578,7 +578,7 @@ fn extract_leaf_tasks_from_project_rec(task: &Task, target_status_arr: &Vec<Stat
         }
     }
 
-    return ans;
+    ans
 }
 
 pub fn round_up_sec_as_minute(seconds: i64) -> i64 {
@@ -956,7 +956,7 @@ impl TaskAttr {
         // not Done -> Todo (deadlineが近い)
         // Pending -> Todo (pending_until後 かつ start_time後)
         // Todo -> Pending (start_time起因)
-        self.status = if self.orig_status != Status::Done
+        let should_be_todo = (self.orig_status != Status::Done
             && self.last_synced_time > self.start_time
             && self.deadline_time_opt.is_some()
             && self.deadline_time_opt.unwrap()
@@ -965,22 +965,19 @@ impl TaskAttr {
                     self.estimated_work_seconds - self.actual_work_seconds,
                 ))
                 - Duration::seconds(deadline_buffer_seconds_after_start_time)
-                < self.last_synced_time
-        {
-            Status::Todo
-        } else if self.orig_status != Status::Done
-            && self.last_synced_time < self.start_time
-            && self.deadline_time_opt.is_some()
-            && self.deadline_time_opt.unwrap()
-                - Duration::seconds(self.estimated_work_seconds)
-                - Duration::seconds(deadline_buffer_seconds_before_start_time)
-                < self.last_synced_time
-        {
-            Status::Todo
-        } else if self.orig_status == Status::Pending
-            && self.last_synced_time > self.pending_until
-            && self.last_synced_time > self.start_time
-        {
+                < self.last_synced_time)
+            || (self.orig_status != Status::Done
+                && self.last_synced_time < self.start_time
+                && self.deadline_time_opt.is_some()
+                && self.deadline_time_opt.unwrap()
+                    - Duration::seconds(self.estimated_work_seconds)
+                    - Duration::seconds(deadline_buffer_seconds_before_start_time)
+                    < self.last_synced_time)
+            || (self.orig_status == Status::Pending
+                && self.last_synced_time > self.pending_until
+                && self.last_synced_time > self.start_time);
+
+        self.status = if should_be_todo {
             Status::Todo
         } else if self.orig_status == Status::Todo && self.start_time > self.last_synced_time {
             Status::Pending
@@ -1404,13 +1401,10 @@ impl Task {
 
     // TODO FIXME テスト
     pub fn get_children(&self) -> Vec<Task> {
-        let children = self
-            .node
+        self.node
             .children()
             .map(|node| Self { node })
-            .collect::<Vec<_>>();
-
-        children
+            .collect::<Vec<_>>()
     }
 
     pub fn make_appointment(&self, appointment_start_time: DateTime<Local>) {
@@ -1440,10 +1434,7 @@ impl Task {
             return None;
         }
 
-        match self.node.parent() {
-            Some(node) => Some(Task { node }),
-            None => None,
-        }
+        self.node.parent().map(|node| Task { node })
     }
 
     // 外から見て、ダミーノードのことは考慮させないように、ダミーノードの子を返す
@@ -1495,7 +1486,7 @@ impl Task {
             .expect("parent hot node");
 
         self.node
-            .try_detach_insert_subtree(&self_grant, InsertAs::LastChildOf(&parent_task_hot))
+            .try_detach_insert_subtree(self_grant, InsertAs::LastChildOf(&parent_task_hot))
             .expect("creating valid hierarchy");
 
         Ok(())
@@ -1504,7 +1495,7 @@ impl Task {
     pub fn create_as_last_child(&self, task_attr: TaskAttr) -> Self {
         let self_grant = &self.node.tree().grant_hierarchy_edit().expect("self grant");
 
-        let child_node = self.node.create_as_last_child(&self_grant, task_attr);
+        let child_node = self.node.create_as_last_child(self_grant, task_attr);
         Self { node: child_node }
     }
 
@@ -1518,9 +1509,7 @@ impl Task {
                 self.detach_insert_as_last_child_of(new_task);
                 Ok(())
             }
-            None => {
-                return Err(String::from("cannot use create_as_parent for a root node"));
-            }
+            None => Err(String::from("cannot use create_as_parent for a root node")),
         }
     }
 
@@ -1544,10 +1533,10 @@ impl Task {
             match current_node_opt {
                 Some(current_node) => {
                     current_node_opt =
-                        Some(current_node.create_as_last_child(&tree_grant, task_attr));
+                        Some(current_node.create_as_last_child(tree_grant, task_attr));
                 }
                 None => {
-                    current_node_opt = Some(self.node.create_as_last_child(&tree_grant, task_attr));
+                    current_node_opt = Some(self.node.create_as_last_child(tree_grant, task_attr));
                 }
             }
         }
@@ -1559,16 +1548,13 @@ impl Task {
     }
 
     pub fn get_by_id(&self, id: Uuid) -> Option<Task> {
-        let node_opt = self.get_by_id_private(&self.node, id);
+        let node_opt = Self::get_by_id_private(&self.node, id);
 
-        match node_opt {
-            Some(node) => Some(Self { node }),
-            None => None,
-        }
+        node_opt.map(|node| Self { node })
     }
 
     // fn get_by_id_private(&self, id: Uuid) -> Option<&Task>> {
-    fn get_by_id_private(&self, node: &Node<TaskAttr>, id: Uuid) -> Option<Node<TaskAttr>> {
+    fn get_by_id_private(node: &Node<TaskAttr>, id: Uuid) -> Option<Node<TaskAttr>> {
         // ベースケース
         if node.borrow_data().get_id() == &id {
             return Some(node.clone());
@@ -1583,7 +1569,7 @@ impl Task {
             //     return  child_task_found_opt;
             // }
 
-            let child_task_found_opt = self.get_by_id_private(&child_node, id);
+            let child_task_found_opt = Self::get_by_id_private(&child_node, id);
             if child_task_found_opt.is_some() {
                 return child_task_found_opt;
             }
@@ -1632,29 +1618,22 @@ impl Task {
 
         // ここからPhase1: 子→親に辿って仮のfirst_available_timeを決定する
         let mut task_opt = Some(self.clone());
-        loop {
-            match task_opt {
-                Some(task) => {
-                    let first_available_time = task.first_available_time();
-                    let task_first_available_time =
-                        max(child_task_first_available_time, first_available_time);
+        while let Some(task) = task_opt {
+            let first_available_time = task.first_available_time();
+            let task_first_available_time =
+                max(child_task_first_available_time, first_available_time);
 
-                    child_task_first_available_time = task_first_available_time
-                        + Duration::seconds(max(
-                            0,
-                            task.get_estimated_work_seconds() - task.get_actual_work_seconds(),
-                        ));
+            child_task_first_available_time = task_first_available_time
+                + Duration::seconds(max(
+                    0,
+                    task.get_estimated_work_seconds() - task.get_actual_work_seconds(),
+                ));
 
-                    let tpl = (task_first_available_time, task.clone());
-                    ans.push(tpl);
+            let tpl = (task_first_available_time, task.clone());
+            ans.push(tpl);
 
-                    // 再代入
-                    task_opt = task.parent();
-                }
-                None => {
-                    break;
-                }
-            }
+            // 再代入
+            task_opt = task.parent();
         }
 
         // ここからPhase2: 〆切に対してオーバーしている時間を計算し、逆に親→子の順に時間を修正する
@@ -1681,7 +1660,7 @@ impl Task {
                 - required_start_time_for_deadline;
 
             if lateness_duration >= Duration::seconds(0) {
-                *rough_first_available_time = *rough_first_available_time - lateness_duration;
+                *rough_first_available_time -= lateness_duration;
                 parent_required_start_time_for_deadline = *rough_first_available_time;
             }
         }
@@ -1970,7 +1949,7 @@ pub fn task_to_yaml(task: &Task) -> Yaml {
 
     task_hash.insert(
         Yaml::String(String::from("name")),
-        Yaml::String(String::from(task.get_name())),
+        Yaml::String(task.get_name()),
     );
 
     task_hash.insert(
@@ -1982,7 +1961,7 @@ pub fn task_to_yaml(task: &Task) -> Yaml {
     if orig_status != *default_attr.get_orig_status() {
         task_hash.insert(
             Yaml::String(String::from("status")),
-            Yaml::String(String::from(orig_status.to_string())),
+            Yaml::String(orig_status.to_string()),
         );
     }
 
@@ -2040,27 +2019,21 @@ pub fn task_to_yaml(task: &Task) -> Yaml {
     );
 
     let end_time_opt = task.get_end_time_opt();
-    match end_time_opt {
-        Some(end_time) => {
-            let end_time_string = end_time.format("%Y/%m/%d %H:%M:%S").to_string();
-            task_hash.insert(
-                Yaml::String(String::from("end_time")),
-                Yaml::String(end_time_string),
-            );
-        }
-        None => {}
+    if let Some(end_time) = end_time_opt {
+        let end_time_string = end_time.format("%Y/%m/%d %H:%M:%S").to_string();
+        task_hash.insert(
+            Yaml::String(String::from("end_time")),
+            Yaml::String(end_time_string),
+        );
     }
 
     let deadline_time_opt = task.get_deadline_time_opt();
-    match deadline_time_opt {
-        Some(deadline_time) => {
-            let deadline_time_string = deadline_time.format("%Y/%m/%d %H:%M:%S").to_string();
-            task_hash.insert(
-                Yaml::String(String::from("deadline_time")),
-                Yaml::String(deadline_time_string),
-            );
-        }
-        None => {}
+    if let Some(deadline_time) = deadline_time_opt {
+        let deadline_time_string = deadline_time.format("%Y/%m/%d %H:%M:%S").to_string();
+        task_hash.insert(
+            Yaml::String(String::from("deadline_time")),
+            Yaml::String(deadline_time_string),
+        );
     }
 
     let estimated_work_seconds = task.get_estimated_work_seconds();
@@ -2080,14 +2053,11 @@ pub fn task_to_yaml(task: &Task) -> Yaml {
     }
 
     let repetition_interval_days_opt = task.get_repetition_interval_days_opt();
-    match repetition_interval_days_opt {
-        Some(repetition_interval_days) => {
-            task_hash.insert(
-                Yaml::String(String::from("repetition_interval_days")),
-                Yaml::Integer(repetition_interval_days),
-            );
-        }
-        None => {}
+    if let Some(repetition_interval_days) = repetition_interval_days_opt {
+        task_hash.insert(
+            Yaml::String(String::from("repetition_interval_days")),
+            Yaml::Integer(repetition_interval_days),
+        );
     }
 
     let repetition_anchor = task.get_repetition_anchor();
@@ -2972,7 +2942,7 @@ fn test_list_all_parent_tasks_with_first_available_time_葉に〆切がある場
     let grand_child_task = child_task.create_as_last_child(TaskAttr::new("孫タスク"));
     grand_child_task.set_create_time(dt);
     grand_child_task.set_start_time(dt);
-    grand_child_task.set_estimated_work_seconds(3600);
+    grand_child_task.set_estimated_work_seconds(3600 * 1);
     grand_child_task.set_deadline_time_opt(Some(dt - Duration::hours(1)));
 
     let expected = vec![
@@ -3017,7 +2987,7 @@ fn test_list_all_parent_tasks_with_first_available_time_単に計算すると〆
     let grand_child_task = child_task.create_as_last_child(TaskAttr::new("孫タスク"));
     grand_child_task.set_create_time(dt);
     grand_child_task.set_start_time(dt);
-    grand_child_task.set_estimated_work_seconds(3600 * 1);
+    grand_child_task.set_estimated_work_seconds(3600);
     grand_child_task.set_pending_until(dt + Duration::hours(22));
     grand_child_task.set_orig_status(Status::Pending);
     // 先に締切を設定してしまうと、pending_untilを設定する時にその〆切からバッファを考慮して前倒ししてしまう
