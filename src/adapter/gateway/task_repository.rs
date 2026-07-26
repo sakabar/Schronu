@@ -157,9 +157,7 @@ impl TaskRepositoryTrait for TaskRepository {
         // 最も優先度が高いprojectsが必要な場合はlast()で取得する
         self.projects.sort_by(|a, b| a.priority.cmp(&b.priority));
 
-        self.projects
-            .last()
-            .and_then(|project| Some(&project.root_task))
+        self.projects.last().map(|project| &project.root_task)
     }
 
     fn get_highest_priority_leaf_task_id(&mut self) -> Option<Uuid> {
@@ -174,7 +172,7 @@ impl TaskRepositoryTrait for TaskRepository {
         for project in &self.projects {
             let root_task = &project.root_task;
 
-            let leaf_tasks: Vec<Task> = extract_leaf_tasks_from_project(&root_task);
+            let leaf_tasks: Vec<Task> = extract_leaf_tasks_from_project(root_task);
 
             for leaf_task in leaf_tasks.iter() {
                 let deadline_time_opt = leaf_task.get_deadline_time_opt();
@@ -194,8 +192,7 @@ impl TaskRepositoryTrait for TaskRepository {
             }
         }
 
-        let ans_id = ans.map(|tpl| tpl.3);
-        ans_id
+        ans.map(|tpl| tpl.3)
     }
 
     // 優先度の低いタスクを未来に飛ばすための先送り候補選択用
@@ -211,7 +208,7 @@ impl TaskRepositoryTrait for TaskRepository {
         for project in &self.projects {
             let root_task = &project.root_task;
 
-            let leaf_tasks: Vec<Task> = extract_leaf_tasks_from_project_with_pending(&root_task);
+            let leaf_tasks: Vec<Task> = extract_leaf_tasks_from_project_with_pending(root_task);
 
             for leaf_task in leaf_tasks.iter() {
                 if leaf_task.get_start_time() >= recent_threshold
@@ -243,8 +240,7 @@ impl TaskRepositoryTrait for TaskRepository {
             }
         }
 
-        let ans_id = ans.map(|tpl| tpl.5);
-        ans_id
+        ans.map(|tpl| tpl.5)
     }
 
     fn get_by_id(&self, id: Uuid) -> Option<Task> {
@@ -284,7 +280,7 @@ impl TaskRepositoryTrait for TaskRepository {
         }
 
         let markdown_dir_path = &project_dir_path.join("markdown");
-        match fs::create_dir_all(&markdown_dir_path) {
+        match fs::create_dir_all(markdown_dir_path) {
             Ok(()) => {}
             Err(err) => {
                 println!("{}", err);
@@ -296,19 +292,18 @@ impl TaskRepositoryTrait for TaskRepository {
 
         let priority = root_task.get_priority();
 
-        match (project_dir_path.to_str(), project_yaml_file_path.to_str()) {
-            (Some(project_dir_path_str), Some(project_yaml_file_path_str)) => {
-                let project = Project::new(
-                    root_task,
-                    project_dir_path_str.to_string(),
-                    project_yaml_file_path_str.to_string(),
-                    priority,
-                );
+        if let (Some(project_dir_path_str), Some(project_yaml_file_path_str)) =
+            (project_dir_path.to_str(), project_yaml_file_path.to_str())
+        {
+            let project = Project::new(
+                root_task,
+                project_dir_path_str.to_string(),
+                project_yaml_file_path_str.to_string(),
+                priority,
+            );
 
-                self.cache_task_and_descendants(&project.root_task);
-                self.projects.push(project);
-            }
-            _ => {}
+            self.cache_task_and_descendants(&project.root_task);
+            self.projects.push(project);
         }
     }
 }

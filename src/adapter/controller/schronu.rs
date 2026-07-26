@@ -14,8 +14,7 @@ use schronu::entity::task::{
     read_project_category, round_up_sec_as_minute, ProjectCategory, RepetitionAnchor, Status, Task,
     TaskAttr,
 };
-use std::cmp::max;
-use std::cmp::min;
+use std::cmp::{max, min, Ordering};
 use std::collections::HashMap;
 use std::env;
 use std::fs::File;
@@ -34,7 +33,6 @@ use unicode_width::UnicodeWidthChar;
 use unicode_width::UnicodeWidthStr;
 use url::Url;
 use uuid::Uuid;
-use webbrowser;
 
 const MAX_COL: u16 = 999;
 
@@ -93,12 +91,11 @@ fn backward_width(line: &str, cursor_x: usize) -> u16 {
     }
 
     let ch_opt = line.chars().nth(cursor_x - 1);
-    let width = match ch_opt {
+
+    (match ch_opt {
         Some(ch) => UnicodeWidthChar::width(ch).unwrap_or(0),
         None => 0,
-    } as u16;
-
-    return width;
+    }) as u16
 }
 
 fn get_weekday_jp(date: &NaiveDate) -> &str {
@@ -1705,6 +1702,8 @@ struct TaskListDisplayRow {
 }
 
 impl TaskListDisplayRow {
+    // 表示行の全属性を呼び出し側で確定させるため、引数を個別に受け取る。
+    #[allow(clippy::too_many_arguments)]
     fn new_task(
         scheduled_start: DateTime<Local>,
         subjective_naive_date: NaiveDate,
@@ -2362,13 +2361,12 @@ fn test_calculate_lq_opt_負荷率が1以上ならinf扱いになること() {
 
 fn get_byte_offset_for_insert(line: &str, cursor_x: usize) -> usize {
     let char_indices_vec = line.char_indices().collect::<Vec<_>>();
-    let byte_offset = if !line.is_empty() && cursor_x <= char_indices_vec.len() - 1 {
+
+    if !line.is_empty() && cursor_x < char_indices_vec.len() {
         char_indices_vec[cursor_x].0
     } else {
         line.len()
-    };
-
-    return byte_offset;
+    }
 }
 
 #[test]
@@ -2418,7 +2416,7 @@ fn get_width_for_rerender(header: &str, line: &str, cursor_x: usize) -> u16 {
         width += UnicodeWidthChar::width(ch).unwrap_or(0);
     }
 
-    return width as u16;
+    width as u16
 }
 
 #[test]
@@ -2455,7 +2453,7 @@ fn test_get_width_for_rerender_正常系_多バイト2() {
 }
 
 fn get_forward_width(line: &str, cursor_x: usize) -> u16 {
-    if !line.is_empty() && cursor_x <= line.chars().count() - 1 {
+    if !line.is_empty() && cursor_x < line.chars().count() {
         let ch_opt = line.chars().nth(cursor_x);
         let n = match ch_opt {
             Some(ch) => UnicodeWidthChar::width(ch).unwrap_or(0),
@@ -2465,7 +2463,7 @@ fn get_forward_width(line: &str, cursor_x: usize) -> u16 {
         return n;
     }
 
-    return 0;
+    0
 }
 
 #[test]
@@ -2479,8 +2477,8 @@ fn test_get_forward_width_正常系1() {
 }
 
 fn execute_show_tree(stdout: &mut dyn SchronuWriter, focused_task_opt: &Option<Task>) {
-    writeln!(stdout, "").unwrap();
-    focused_task_opt.as_ref().map(|focused_task| {
+    writeln!(stdout).unwrap();
+    if let Some(focused_task) = focused_task_opt.as_ref() {
         let s: String = focused_task.tree_debug_pretty_print();
         let lines: Vec<_> = s.split('\n').collect();
         for line in lines.iter() {
@@ -2490,8 +2488,8 @@ fn execute_show_tree(stdout: &mut dyn SchronuWriter, focused_task_opt: &Option<T
                 writeln_newline(stdout, line).unwrap()
             }
         }
-    });
-    writeln!(stdout, "").unwrap();
+    }
+    writeln!(stdout).unwrap();
 }
 
 fn execute_start_new_project(
@@ -2507,19 +2505,16 @@ fn execute_start_new_project(
     // 本来的には、TaskAttrのデフォルト値の方を5にすべきかも
     root_task.set_priority(5);
 
-    defer_days_opt.map(|defer_days| {
+    if let Some(defer_days) = defer_days_opt {
         // 次回の午前6時
         let pending_until = get_next_morning_datetime(task_repository.get_last_synced_time())
             + Duration::days(defer_days - 1);
         root_task.set_pending_until(pending_until);
         root_task.set_orig_status(Status::Pending);
-    });
+    }
 
-    match estimated_work_minutes_opt {
-        Some(estimated_work_minutes) => {
-            root_task.set_estimated_work_seconds(estimated_work_minutes * 60);
-        }
-        None => {}
+    if let Some(estimated_work_minutes) = estimated_work_minutes_opt {
+        root_task.set_estimated_work_seconds(estimated_work_minutes * 60);
     }
 
     // フォーカスを移す
@@ -2535,7 +2530,7 @@ fn execute_make_appointment(focused_task_opt: &Option<Task>, start_time: DateTim
 }
 
 fn execute_show_ancestor(stdout: &mut dyn SchronuWriter, focused_task_opt: &Option<Task>) {
-    writeln!(stdout, "").unwrap();
+    writeln!(stdout).unwrap();
 
     // まずは葉タスクから根に向かいながら後ろに追加していき、
     // 最後に逆順にして表示する
@@ -2582,7 +2577,7 @@ fn execute_show_leaf_tasks(
         let project_name = project_root_task.get_name();
 
         // 優先度が高いタスクほど下に表示されるようにし、フォーカスが当たるタスクは末尾に表示されるようにする。
-        let leaf_tasks = extract_leaf_tasks_from_project(&project_root_task);
+        let leaf_tasks = extract_leaf_tasks_from_project(project_root_task);
         for leaf_task in leaf_tasks.iter() {
             let deadline_time_opt = leaf_task.get_deadline_time_opt();
             let neg_priority = -leaf_task.get_priority();
@@ -2611,6 +2606,8 @@ fn execute_show_leaf_tasks(
     writeln_newline(stdout, "").unwrap();
 }
 
+// 集計用タプルはこの関数内だけで使用し、意味を持つ公開型を増やさない。
+#[allow(clippy::type_complexity)]
 fn execute_show_all_tasks(
     stdout: &mut dyn SchronuWriter,
     focused_task_id_opt: &mut Option<Uuid>,
@@ -2631,7 +2628,7 @@ fn execute_show_all_tasks(
     // タプルの第2要素はrankで、葉(0)からの距離の大きい方
     let last_synced_time = task_repository.get_last_synced_time();
     for project_root_task in task_repository.get_all_projects().iter() {
-        let leaf_tasks = extract_leaf_tasks_from_project_with_pending(&project_root_task);
+        let leaf_tasks = extract_leaf_tasks_from_project_with_pending(project_root_task);
 
         for leaf_task in leaf_tasks.iter() {
             let all_parent_tasks = leaf_task.list_all_parent_tasks_with_first_available_time();
@@ -2810,442 +2807,424 @@ fn execute_show_all_tasks(
             .or_insert(1);
 
         let task_opt = task_repository.get_by_id(*id);
-        match task_opt {
-            Some(task) => {
-                let inherited_repetition_interval_days_opt =
-                    task.get_inherited_repetition_interval_days_opt();
-                let mut repetition_prefix_label = "".to_string();
+        if let Some(task) = task_opt {
+            let inherited_repetition_interval_days_opt =
+                task.get_inherited_repetition_interval_days_opt();
+            let mut repetition_prefix_label = "".to_string();
 
-                if let Some(repetition_interval_days) = inherited_repetition_interval_days_opt {
-                    // FIXME 【繰】というマジックナンバーが2ヶ所に登場していて危ない
-                    repetition_prefix_label = format!(
-                        "{}【繰】({})",
-                        repetition_prefix_label, repetition_interval_days
-                    );
-                }
-
-                if task.get_is_on_other_side() {
-                    repetition_prefix_label = format!("{}【待ち】", repetition_prefix_label);
-                }
-
-                // 前倒し可能なタスクの見積もり時間をカウントする
-                let adjustable_prefix_label =
-                    get_adjustable_prefix_label(&task, *dt, *rank, last_synced_time);
-
-                if !adjustable_prefix_label.is_empty() {
-                    adjustable_estimated_work_seconds_map
-                        .entry(subjective_naive_date)
-                        .and_modify(|estimated_work_seconds_val| {
-                            *estimated_work_seconds_val += task.get_estimated_work_seconds()
-                        })
-                        .or_insert(task.get_estimated_work_seconds());
-                }
-
-                let name = format!(
-                    "{}{}{}",
-                    adjustable_prefix_label,
-                    repetition_prefix_label,
-                    task.get_name()
+            if let Some(repetition_interval_days) = inherited_repetition_interval_days_opt {
+                // FIXME 【繰】というマジックナンバーが2ヶ所に登場していて危ない
+                repetition_prefix_label = format!(
+                    "{}【繰】({})",
+                    repetition_prefix_label, repetition_interval_days
                 );
-                let chars_vec: Vec<char> = name.chars().collect();
-                let max_len: usize = 70;
+            }
 
-                let chars_width_acc: Vec<usize> = chars_vec
-                    .iter()
-                    .map(|&ch| UnicodeWidthChar::width(ch).unwrap_or(0))
-                    .scan(0, |acc, x| {
-                        *acc += x;
-                        Some(*acc)
-                    })
-                    .collect();
+            if task.get_is_on_other_side() {
+                repetition_prefix_label = format!("{}【待ち】", repetition_prefix_label);
+            }
 
-                let latest_index_opt =
-                    chars_width_acc
-                        .iter()
-                        .enumerate()
-                        .find_map(
-                            |(index, &value)| {
-                                if value > max_len {
-                                    Some(index)
-                                } else {
-                                    None
-                                }
-                            },
-                        );
+            // 前倒し可能なタスクの見積もり時間をカウントする
+            let adjustable_prefix_label =
+                get_adjustable_prefix_label(&task, *dt, *rank, last_synced_time);
 
-                let mut shorten_name: String = if let Some(latest_index) = latest_index_opt {
-                    format!(
-                        "{}...",
-                        chars_vec.iter().take(latest_index + 1).collect::<String>()
-                    )
-                } else {
-                    name.to_string()
-                };
-                if total_work_seconds > scheduled_work_seconds {
-                    shorten_name = format!(
-                        "<{}/{}>{}",
-                        round_up_sec_as_minute(scheduled_work_seconds),
-                        round_up_sec_as_minute(total_work_seconds),
-                        shorten_name
-                    );
-                }
-
-                // 元々見積もり時間から作業済時間を引いたのが残りの見積もり時間
-                // ただし、作業時間が元々の見積もり時間をオーバーしている時には既に想定外の事態になっているため、
-                // 残りの見積もりを0とはせず、安全に倒して元々の見積もりの2倍として扱う
-                let estimated_work_seconds = scheduled_work_seconds;
-                if let Some(deadline_time) = deadline_time_opt {
-                    let deadline_naive_date = (get_next_morning_datetime(*deadline_time)
-                        - Duration::days(1))
-                    .date_naive();
-
-                    deadline_estimated_work_seconds_map
-                        .entry(deadline_naive_date)
-                        .and_modify(|deadline_estimated_work_seconds| {
-                            *deadline_estimated_work_seconds += estimated_work_seconds
-                        })
-                        .or_insert(estimated_work_seconds);
-                }
-
-                if inherited_repetition_interval_days_opt.is_some() {
-                    repetitive_task_estimated_work_seconds_map
-                        .entry(subjective_naive_date)
-                        .and_modify(|repetitive_task_estimated_work_seconds| {
-                            *repetitive_task_estimated_work_seconds += estimated_work_seconds
-                        })
-                        .or_insert(estimated_work_seconds);
-                }
-
-                let current_datetime_cursor_clone = &current_datetime_cursor.clone();
-                let start_datetime = scheduled_start;
-
-                // 「今」か「明」か「近」の時のみ、日時カーソルが飛んだ場合には、その間の時間を表示する
-                if (*scheduled_start - current_datetime_cursor_clone).num_minutes() > 0 {
-                    let blank_duration = *scheduled_start - current_datetime_cursor_clone;
-                    let tmp_id = Uuid::new_v4();
-
-                    let skip_msg = format!(
-                        "---- ------------------------------------ - ---------- --------------------- - -- -- {}分間の空き時間",
-                        blank_duration.num_minutes()
-                    );
-
-                    if let Some(pattern) = pattern_opt {
-                        if (pattern == "今"
-                            && *scheduled_start
-                                < get_next_morning_datetime(task_repository.get_last_synced_time()))
-                            || (pattern == "明"
-                                && *current_datetime_cursor_clone
-                                    >= get_next_morning_datetime(
-                                        task_repository.get_last_synced_time(),
-                                    )
-                                && *scheduled_start
-                                    < get_next_morning_datetime(
-                                        task_repository.get_last_synced_time(),
-                                    ) + Duration::days(1))
-                            || (pattern == "近"
-                                && *scheduled_start
-                                    < get_next_morning_datetime(
-                                        task_repository.get_last_synced_time(),
-                                    ) + Duration::days(1))
-                        {
-                            task_list_display_rows.push(TaskListDisplayRow::new_message(
-                                *current_datetime_cursor_clone,
-                                0,
-                                tmp_id,
-                                0,
-                                skip_msg,
-                            ));
-                        }
-                    }
-                }
-
-                let end_datetime = *scheduled_end;
-                current_datetime_cursor =
-                    advance_display_datetime_cursor(current_datetime_cursor, end_datetime);
-
-                total_estimated_work_seconds_of_the_date_counter
+            if !adjustable_prefix_label.is_empty() {
+                adjustable_estimated_work_seconds_map
                     .entry(subjective_naive_date)
                     .and_modify(|estimated_work_seconds_val| {
-                        *estimated_work_seconds_val += estimated_work_seconds
+                        *estimated_work_seconds_val += task.get_estimated_work_seconds()
+                    })
+                    .or_insert(task.get_estimated_work_seconds());
+            }
+
+            let name = format!(
+                "{}{}{}",
+                adjustable_prefix_label,
+                repetition_prefix_label,
+                task.get_name()
+            );
+            let chars_vec: Vec<char> = name.chars().collect();
+            let max_len: usize = 70;
+
+            let chars_width_acc: Vec<usize> = chars_vec
+                .iter()
+                .map(|&ch| UnicodeWidthChar::width(ch).unwrap_or(0))
+                .scan(0, |acc, x| {
+                    *acc += x;
+                    Some(*acc)
+                })
+                .collect();
+
+            let latest_index_opt =
+                chars_width_acc
+                    .iter()
+                    .enumerate()
+                    .find_map(
+                        |(index, &value)| {
+                            if value > max_len {
+                                Some(index)
+                            } else {
+                                None
+                            }
+                        },
+                    );
+
+            let mut shorten_name: String = if let Some(latest_index) = latest_index_opt {
+                format!(
+                    "{}...",
+                    chars_vec.iter().take(latest_index + 1).collect::<String>()
+                )
+            } else {
+                name.to_string()
+            };
+            if total_work_seconds > scheduled_work_seconds {
+                shorten_name = format!(
+                    "<{}/{}>{}",
+                    round_up_sec_as_minute(scheduled_work_seconds),
+                    round_up_sec_as_minute(total_work_seconds),
+                    shorten_name
+                );
+            }
+
+            // 元々見積もり時間から作業済時間を引いたのが残りの見積もり時間
+            // ただし、作業時間が元々の見積もり時間をオーバーしている時には既に想定外の事態になっているため、
+            // 残りの見積もりを0とはせず、安全に倒して元々の見積もりの2倍として扱う
+            let estimated_work_seconds = scheduled_work_seconds;
+            if let Some(deadline_time) = deadline_time_opt {
+                let deadline_naive_date =
+                    (get_next_morning_datetime(*deadline_time) - Duration::days(1)).date_naive();
+
+                deadline_estimated_work_seconds_map
+                    .entry(deadline_naive_date)
+                    .and_modify(|deadline_estimated_work_seconds| {
+                        *deadline_estimated_work_seconds += estimated_work_seconds
                     })
                     .or_insert(estimated_work_seconds);
+            }
 
-                // ! : 今日中が締切。締切注意の意
-                let deadline_icon: String = "!".to_string();
+            if inherited_repetition_interval_days_opt.is_some() {
+                repetitive_task_estimated_work_seconds_map
+                    .entry(subjective_naive_date)
+                    .and_modify(|repetitive_task_estimated_work_seconds| {
+                        *repetitive_task_estimated_work_seconds += estimated_work_seconds
+                    })
+                    .or_insert(estimated_work_seconds);
+            }
 
-                // v : もっと着手を手前(下)にせよの意
-                let breaking_deadline_icon: String = "v".to_string();
+            let current_datetime_cursor_clone = &current_datetime_cursor.clone();
+            let start_datetime = scheduled_start;
 
-                // / : 今日着手する予定の葉タスク。/という記号自体に強い意味合いはない。
-                let today_leaf_icon: String = "/".to_string();
+            // 「今」か「明」か「近」の時のみ、日時カーソルが飛んだ場合には、その間の時間を表示する
+            if (*scheduled_start - current_datetime_cursor_clone).num_minutes() > 0 {
+                let blank_duration = *scheduled_start - current_datetime_cursor_clone;
+                let tmp_id = Uuid::new_v4();
 
-                let icon = if task.get_deadline_time_opt().is_some()
-                    && task.get_deadline_time_opt().unwrap()
-                        < get_next_morning_datetime(last_synced_time)
-                    && task.get_deadline_time_opt().unwrap() < end_datetime
-                {
-                    &breaking_deadline_icon
-                } else if task.get_deadline_time_opt().is_some()
-                    && task.get_deadline_time_opt().unwrap()
-                        < get_next_morning_datetime(last_synced_time)
-                {
-                    &deadline_icon
-                } else if rank == &0 && scheduled_start < &eod {
-                    &today_leaf_icon
-                } else {
-                    // - : 特に無しだが、空白にすると列数が乱れるので目立たない記号を入れる
-                    "-"
-                };
-
-                let deadline_string = if let Some(deadline_time) = deadline_time_opt {
-                    if *deadline_time < get_next_morning_datetime(last_synced_time) {
-                        let breaking_minutes = (end_datetime - deadline_time).num_minutes().abs();
-                        let breaking_hh = breaking_minutes / 60;
-                        let breaking_mm = breaking_minutes % 60;
-
-                        if *deadline_time < last_synced_time {
-                            format!("+{:02}:{:02}ASAP", breaking_hh, breaking_mm)
-                        } else {
-                            if *deadline_time < end_datetime {
-                                format!("+{:02}:{:02}____", breaking_hh, breaking_mm)
-                            } else {
-                                format!("____-{:02}:{:02}", breaking_hh, breaking_mm)
-                            }
-                        }
-                    } else {
-                        let deadline_leeway_days = (*deadline_time - end_datetime).num_days().abs();
-
-                        if deadline_leeway_days == 0 {
-                            format!("________0D")
-                        } else {
-                            if *deadline_time > end_datetime {
-                                format!("_____-{:03}D", deadline_leeway_days)
-                            } else {
-                                format!("_____+{:03}D", deadline_leeway_days)
-                            }
-                        }
-                    }
-                } else {
-                    "____/__/__".to_string()
-                };
-
-                let message_prefix: String = format!(
-                    "{:04} {} {} {} {} {} {:02.0} {:02} {} ",
-                    ind,
-                    id,
-                    icon,
-                    deadline_string,
-                    format!(
-                        "{}({})-{}~{}",
-                        start_datetime.format("%m/%d"),
-                        get_weekday_jp(&start_datetime.date_naive()),
-                        start_datetime.format("%H:%M"),
-                        end_datetime.format("%H:%M")
-                    ),
-                    rank,
-                    round_up_sec_as_minute(estimated_work_seconds),
-                    task.get_priority(),
-                    project_category_symbol(task.get_project_category_opt())
-                );
-                let msg = format!("{}{}", message_prefix, shorten_name);
-                let task_list_display_row = TaskListDisplayRow::new_task(
-                    *scheduled_start,
-                    subjective_naive_date,
-                    *rank,
-                    *id,
-                    task.get_priority(),
-                    estimated_work_seconds,
-                    task.get_project_category_opt(),
-                    message_prefix,
-                    shorten_name,
+                let skip_msg = format!(
+                    "---- ------------------------------------ - ---------- --------------------- - -- -- {}分間の空き時間",
+                    blank_duration.num_minutes()
                 );
 
-                match pattern_opt {
-                    Some(pattern) => {
-                        // FIXME 文字列マッチの絞り込み機能とその他の属性による絞り込みを機能を分ける
-                        if pattern == "葉" {
-                            if rank == &0
-                                || task.get_deadline_time_opt().is_some()
-                                    && task.get_deadline_time_opt().unwrap()
-                                        < get_next_morning_datetime(last_synced_time)
-                            {
-                                task_list_display_rows.push(task_list_display_row.clone());
-                            }
-                        } else if pattern == "枝" {
-                            if rank > &0 {
-                                task_list_display_rows.push(task_list_display_row.clone());
-                            }
-                        } else if pattern == "印" {
-                            if msg.contains(&format!(" {} ", &deadline_icon))
-                                || msg.contains(&format!(" {} ", &breaking_deadline_icon))
-                                || msg.contains(&format!(" {} ", &today_leaf_icon))
-                            {
-                                task_list_display_rows.push(task_list_display_row.clone());
-                            }
-                        } else if pattern == "〆" {
-                            if msg.contains(&format!(" {} ", &deadline_icon))
-                                || msg.contains(&format!(" {} ", &breaking_deadline_icon))
-                            {
-                                task_list_display_rows.push(task_list_display_row.clone());
-                            }
-                        } else if is_calendar_func || is_flatten_func {
-                            // カレンダー表示機能を使う時には、タスク一覧は表示しない。
-                        } else if pattern == "今" {
-                            if get_next_morning_datetime(*scheduled_start)
-                                == get_next_morning_datetime(last_synced_time)
-                            {
-                                task_list_display_rows.push(task_list_display_row.clone());
-                            }
-                        } else if pattern == "明" {
-                            if get_next_morning_datetime(*scheduled_start)
-                                == get_next_morning_datetime(last_synced_time) + Duration::days(1)
-                            {
-                                task_list_display_rows.push(task_list_display_row.clone());
-                            }
-                        } else if pattern == "近" {
-                            if get_next_morning_datetime(*scheduled_start)
-                                == get_next_morning_datetime(last_synced_time)
-                                || get_next_morning_datetime(*scheduled_start)
-                                    == get_next_morning_datetime(last_synced_time)
-                                        + Duration::days(1)
-                            {
-                                task_list_display_rows.push(task_list_display_row.clone());
-                            }
-                        } else if pattern == "単" {
-                            // non_repetitive (単発) のタスクのみを表示する
-                            // FIXME 【繰】が2ヶ所に登場していて危ない
-                            if !msg.contains("【繰】") {
-                                task_list_display_rows.push(task_list_display_row.clone());
-                            }
-                        } else if days_of_week.contains(&pattern.as_str()) {
-                            // 月 火 水 木 金 土 日 が指定された時は、明日以降で、直近のその曜日のタスクを表示する
-                            let todays_morning_datetime =
-                                get_next_morning_datetime(last_synced_time) - Duration::days(1);
-                            let dn = todays_morning_datetime.date_naive();
-                            let now_weekday_jp = get_weekday_jp(&dn);
-
-                            let now_days_of_week_ind = days_of_week
-                                .iter()
-                                .position(|&x| &x == &now_weekday_jp)
-                                .unwrap();
-                            let target_days_of_week_ind = days_of_week
-                                .iter()
-                                .position(|&x| x == pattern.as_str())
-                                .unwrap();
-
-                            let ind_diff = (7 + target_days_of_week_ind - now_days_of_week_ind) % 7;
-
-                            // 今日のデータについては「全 今」で表示できるので、その代わりに、1週間後の同じ曜日の情報を表示するようにする
-                            let days: i64 = if ind_diff == 0 { 7 } else { ind_diff as i64 };
-
-                            if get_next_morning_datetime(last_synced_time) + Duration::days(days)
-                                == get_next_morning_datetime(*scheduled_start)
-                            {
-                                task_list_display_rows.push(task_list_display_row.clone());
-                            }
-                        } else if pattern == "週" {
-                            // 今日を含む直近1週間のタスクを表示する
-                            if get_next_morning_datetime(*scheduled_start)
-                                - get_next_morning_datetime(last_synced_time)
-                                < Duration::days(7)
-                            {
-                                task_list_display_rows.push(task_list_display_row.clone());
-                            }
-                        } else if pattern == "末" {
-                            // 週末までのタスクを表示する
-                            let todays_morning_datetime =
-                                get_next_morning_datetime(last_synced_time) - Duration::days(1);
-                            let dn = todays_morning_datetime.date_naive();
-                            let now_weekday_jp = get_weekday_jp(&dn);
-
-                            let now_days_of_week_ind = days_of_week
-                                .iter()
-                                .position(|&x| &x == &now_weekday_jp)
-                                .unwrap();
-                            let target_days_of_week_ind =
-                                days_of_week.iter().position(|&x| x == "日").unwrap();
-
-                            let days_diff =
-                                (7 + target_days_of_week_ind - now_days_of_week_ind) % 7;
-
-                            if get_next_morning_datetime(*scheduled_start)
-                                - get_next_morning_datetime(last_synced_time)
-                                <= Duration::days(days_diff as i64)
-                            {
-                                task_list_display_rows.push(task_list_display_row.clone());
-                            }
-                        } else if pattern == "翌" {
-                            // 翌週末までのタスクを表示する
-                            let todays_morning_datetime =
-                                get_next_morning_datetime(last_synced_time) - Duration::days(1);
-                            let dn = todays_morning_datetime.date_naive();
-                            let now_weekday_jp = get_weekday_jp(&dn);
-
-                            let now_days_of_week_ind = days_of_week
-                                .iter()
-                                .position(|&x| &x == &now_weekday_jp)
-                                .unwrap();
-                            let target_days_of_week_ind =
-                                days_of_week.iter().position(|&x| x == "日").unwrap();
-
-                            let days_diff =
-                                ((7 + target_days_of_week_ind - now_days_of_week_ind) % 7) as i64;
-
-                            let diff = get_next_morning_datetime(*scheduled_start)
-                                - get_next_morning_datetime(last_synced_time);
-                            if Duration::days(days_diff) < diff
-                                && diff <= Duration::days(days_diff + 7)
-                            {
-                                task_list_display_rows.push(task_list_display_row.clone());
-                            }
-                        } else if yyyymmdd_reg.is_match(pattern) {
-                            let caps = yyyymmdd_reg.captures(pattern).unwrap();
-                            let yyyy: i32 = caps[1].parse().unwrap();
-                            let mm: u32 = caps[2].parse().unwrap();
-                            let dd: u32 = caps[3].parse().unwrap();
-
-                            let yyyymmdd = Local.with_ymd_and_hms(yyyy, mm, dd, 0, 0, 0).unwrap();
-
-                            if get_next_morning_datetime(*scheduled_start) - Duration::days(1)
-                                == get_next_morning_datetime(yyyymmdd)
-                            {
-                                task_list_display_rows.push(task_list_display_row.clone());
-                            }
-                        } else if integer_reg.is_match(pattern) {
-                            let caps = integer_reg.captures(pattern).unwrap();
-                            let input_minute: i64 = caps[0].parse().unwrap();
-                            let target_free_time_seconds = input_minute * 60;
-
-                            if *scheduled_start > get_next_morning_datetime(last_synced_time)
-                                || last_synced_time < task.get_start_time()
-                            {
-                                continue;
-                            }
-
-                            // 【待ち】がマジックナンバーなのがちょっとよくない
-                            if *rank == 0
-                                && !msg.contains("【待ち】")
-                                && estimated_work_seconds < target_free_time_seconds
-                                && estimated_work_seconds
-                                    > available_biggest_task_estimate_work_seconds
-                            {
-                                available_biggest_task_estimate_work_seconds =
-                                    estimated_work_seconds;
-
-                                available_biggest_row_opt = Some(task_list_display_row.clone());
-                            }
-                        } else if name.to_lowercase().contains(&pattern.to_lowercase())
-                            || msg.contains(pattern)
-                        {
-                            task_list_display_rows.push(task_list_display_row.clone());
-                        }
-                    }
-                    None => {
-                        task_list_display_rows.push(task_list_display_row.clone());
+                if let Some(pattern) = pattern_opt {
+                    if (pattern == "今"
+                        && *scheduled_start
+                            < get_next_morning_datetime(task_repository.get_last_synced_time()))
+                        || (pattern == "明"
+                            && *current_datetime_cursor_clone
+                                >= get_next_morning_datetime(
+                                    task_repository.get_last_synced_time(),
+                                )
+                            && *scheduled_start
+                                < get_next_morning_datetime(task_repository.get_last_synced_time())
+                                    + Duration::days(1))
+                        || (pattern == "近"
+                            && *scheduled_start
+                                < get_next_morning_datetime(task_repository.get_last_synced_time())
+                                    + Duration::days(1))
+                    {
+                        task_list_display_rows.push(TaskListDisplayRow::new_message(
+                            *current_datetime_cursor_clone,
+                            0,
+                            tmp_id,
+                            0,
+                            skip_msg,
+                        ));
                     }
                 }
             }
-            None => {}
+
+            let end_datetime = *scheduled_end;
+            current_datetime_cursor =
+                advance_display_datetime_cursor(current_datetime_cursor, end_datetime);
+
+            total_estimated_work_seconds_of_the_date_counter
+                .entry(subjective_naive_date)
+                .and_modify(|estimated_work_seconds_val| {
+                    *estimated_work_seconds_val += estimated_work_seconds
+                })
+                .or_insert(estimated_work_seconds);
+
+            // ! : 今日中が締切。締切注意の意
+            let deadline_icon: String = "!".to_string();
+
+            // v : もっと着手を手前(下)にせよの意
+            let breaking_deadline_icon: String = "v".to_string();
+
+            // / : 今日着手する予定の葉タスク。/という記号自体に強い意味合いはない。
+            let today_leaf_icon: String = "/".to_string();
+
+            let icon = if task.get_deadline_time_opt().is_some()
+                && task.get_deadline_time_opt().unwrap()
+                    < get_next_morning_datetime(last_synced_time)
+                && task.get_deadline_time_opt().unwrap() < end_datetime
+            {
+                &breaking_deadline_icon
+            } else if task.get_deadline_time_opt().is_some()
+                && task.get_deadline_time_opt().unwrap()
+                    < get_next_morning_datetime(last_synced_time)
+            {
+                &deadline_icon
+            } else if rank == &0 && scheduled_start < &eod {
+                &today_leaf_icon
+            } else {
+                // - : 特に無しだが、空白にすると列数が乱れるので目立たない記号を入れる
+                "-"
+            };
+
+            let deadline_string = if let Some(deadline_time) = deadline_time_opt {
+                if *deadline_time < get_next_morning_datetime(last_synced_time) {
+                    let breaking_minutes = (end_datetime - deadline_time).num_minutes().abs();
+                    let breaking_hh = breaking_minutes / 60;
+                    let breaking_mm = breaking_minutes % 60;
+
+                    if *deadline_time < last_synced_time {
+                        format!("+{:02}:{:02}ASAP", breaking_hh, breaking_mm)
+                    } else if *deadline_time < end_datetime {
+                        format!("+{:02}:{:02}____", breaking_hh, breaking_mm)
+                    } else {
+                        format!("____-{:02}:{:02}", breaking_hh, breaking_mm)
+                    }
+                } else {
+                    let deadline_leeway_days = (*deadline_time - end_datetime).num_days().abs();
+
+                    if deadline_leeway_days == 0 {
+                        "________0D".to_string()
+                    } else if *deadline_time > end_datetime {
+                        format!("_____-{:03}D", deadline_leeway_days)
+                    } else {
+                        format!("_____+{:03}D", deadline_leeway_days)
+                    }
+                }
+            } else {
+                "____/__/__".to_string()
+            };
+
+            let message_prefix: String = format!(
+                "{:04} {} {} {} {}({})-{}~{} {} {:02.0} {:02} {} ",
+                ind,
+                id,
+                icon,
+                deadline_string,
+                start_datetime.format("%m/%d"),
+                get_weekday_jp(&start_datetime.date_naive()),
+                start_datetime.format("%H:%M"),
+                end_datetime.format("%H:%M"),
+                rank,
+                round_up_sec_as_minute(estimated_work_seconds),
+                task.get_priority(),
+                project_category_symbol(task.get_project_category_opt())
+            );
+            let msg = format!("{}{}", message_prefix, shorten_name);
+            let task_list_display_row = TaskListDisplayRow::new_task(
+                *scheduled_start,
+                subjective_naive_date,
+                *rank,
+                *id,
+                task.get_priority(),
+                estimated_work_seconds,
+                task.get_project_category_opt(),
+                message_prefix,
+                shorten_name,
+            );
+
+            match pattern_opt {
+                Some(pattern) => {
+                    // FIXME 文字列マッチの絞り込み機能とその他の属性による絞り込みを機能を分ける
+                    if pattern == "葉" {
+                        if rank == &0
+                            || task.get_deadline_time_opt().is_some()
+                                && task.get_deadline_time_opt().unwrap()
+                                    < get_next_morning_datetime(last_synced_time)
+                        {
+                            task_list_display_rows.push(task_list_display_row.clone());
+                        }
+                    } else if pattern == "枝" {
+                        if rank > &0 {
+                            task_list_display_rows.push(task_list_display_row.clone());
+                        }
+                    } else if pattern == "印" {
+                        if msg.contains(&format!(" {} ", &deadline_icon))
+                            || msg.contains(&format!(" {} ", &breaking_deadline_icon))
+                            || msg.contains(&format!(" {} ", &today_leaf_icon))
+                        {
+                            task_list_display_rows.push(task_list_display_row.clone());
+                        }
+                    } else if pattern == "〆" {
+                        if msg.contains(&format!(" {} ", &deadline_icon))
+                            || msg.contains(&format!(" {} ", &breaking_deadline_icon))
+                        {
+                            task_list_display_rows.push(task_list_display_row.clone());
+                        }
+                    } else if is_calendar_func || is_flatten_func {
+                        // カレンダー表示機能を使う時には、タスク一覧は表示しない。
+                    } else if pattern == "今" {
+                        if get_next_morning_datetime(*scheduled_start)
+                            == get_next_morning_datetime(last_synced_time)
+                        {
+                            task_list_display_rows.push(task_list_display_row.clone());
+                        }
+                    } else if pattern == "明" {
+                        if get_next_morning_datetime(*scheduled_start)
+                            == get_next_morning_datetime(last_synced_time) + Duration::days(1)
+                        {
+                            task_list_display_rows.push(task_list_display_row.clone());
+                        }
+                    } else if pattern == "近" {
+                        if get_next_morning_datetime(*scheduled_start)
+                            == get_next_morning_datetime(last_synced_time)
+                            || get_next_morning_datetime(*scheduled_start)
+                                == get_next_morning_datetime(last_synced_time) + Duration::days(1)
+                        {
+                            task_list_display_rows.push(task_list_display_row.clone());
+                        }
+                    } else if pattern == "単" {
+                        // non_repetitive (単発) のタスクのみを表示する
+                        // FIXME 【繰】が2ヶ所に登場していて危ない
+                        if !msg.contains("【繰】") {
+                            task_list_display_rows.push(task_list_display_row.clone());
+                        }
+                    } else if days_of_week.contains(&pattern.as_str()) {
+                        // 月 火 水 木 金 土 日 が指定された時は、明日以降で、直近のその曜日のタスクを表示する
+                        let todays_morning_datetime =
+                            get_next_morning_datetime(last_synced_time) - Duration::days(1);
+                        let dn = todays_morning_datetime.date_naive();
+                        let now_weekday_jp = get_weekday_jp(&dn);
+
+                        let now_days_of_week_ind = days_of_week
+                            .iter()
+                            .position(|&x| x == now_weekday_jp)
+                            .unwrap();
+                        let target_days_of_week_ind = days_of_week
+                            .iter()
+                            .position(|&x| x == pattern.as_str())
+                            .unwrap();
+
+                        let ind_diff = (7 + target_days_of_week_ind - now_days_of_week_ind) % 7;
+
+                        // 今日のデータについては「全 今」で表示できるので、その代わりに、1週間後の同じ曜日の情報を表示するようにする
+                        let days: i64 = if ind_diff == 0 { 7 } else { ind_diff as i64 };
+
+                        if get_next_morning_datetime(last_synced_time) + Duration::days(days)
+                            == get_next_morning_datetime(*scheduled_start)
+                        {
+                            task_list_display_rows.push(task_list_display_row.clone());
+                        }
+                    } else if pattern == "週" {
+                        // 今日を含む直近1週間のタスクを表示する
+                        if get_next_morning_datetime(*scheduled_start)
+                            - get_next_morning_datetime(last_synced_time)
+                            < Duration::days(7)
+                        {
+                            task_list_display_rows.push(task_list_display_row.clone());
+                        }
+                    } else if pattern == "末" {
+                        // 週末までのタスクを表示する
+                        let todays_morning_datetime =
+                            get_next_morning_datetime(last_synced_time) - Duration::days(1);
+                        let dn = todays_morning_datetime.date_naive();
+                        let now_weekday_jp = get_weekday_jp(&dn);
+
+                        let now_days_of_week_ind = days_of_week
+                            .iter()
+                            .position(|&x| x == now_weekday_jp)
+                            .unwrap();
+                        let target_days_of_week_ind =
+                            days_of_week.iter().position(|&x| x == "日").unwrap();
+
+                        let days_diff = (7 + target_days_of_week_ind - now_days_of_week_ind) % 7;
+
+                        if get_next_morning_datetime(*scheduled_start)
+                            - get_next_morning_datetime(last_synced_time)
+                            <= Duration::days(days_diff as i64)
+                        {
+                            task_list_display_rows.push(task_list_display_row.clone());
+                        }
+                    } else if pattern == "翌" {
+                        // 翌週末までのタスクを表示する
+                        let todays_morning_datetime =
+                            get_next_morning_datetime(last_synced_time) - Duration::days(1);
+                        let dn = todays_morning_datetime.date_naive();
+                        let now_weekday_jp = get_weekday_jp(&dn);
+
+                        let now_days_of_week_ind = days_of_week
+                            .iter()
+                            .position(|&x| x == now_weekday_jp)
+                            .unwrap();
+                        let target_days_of_week_ind =
+                            days_of_week.iter().position(|&x| x == "日").unwrap();
+
+                        let days_diff =
+                            ((7 + target_days_of_week_ind - now_days_of_week_ind) % 7) as i64;
+
+                        let diff = get_next_morning_datetime(*scheduled_start)
+                            - get_next_morning_datetime(last_synced_time);
+                        if Duration::days(days_diff) < diff && diff <= Duration::days(days_diff + 7)
+                        {
+                            task_list_display_rows.push(task_list_display_row.clone());
+                        }
+                    } else if yyyymmdd_reg.is_match(pattern) {
+                        let caps = yyyymmdd_reg.captures(pattern).unwrap();
+                        let yyyy: i32 = caps[1].parse().unwrap();
+                        let mm: u32 = caps[2].parse().unwrap();
+                        let dd: u32 = caps[3].parse().unwrap();
+
+                        let yyyymmdd = Local.with_ymd_and_hms(yyyy, mm, dd, 0, 0, 0).unwrap();
+
+                        if get_next_morning_datetime(*scheduled_start) - Duration::days(1)
+                            == get_next_morning_datetime(yyyymmdd)
+                        {
+                            task_list_display_rows.push(task_list_display_row.clone());
+                        }
+                    } else if integer_reg.is_match(pattern) {
+                        let caps = integer_reg.captures(pattern).unwrap();
+                        let input_minute: i64 = caps[0].parse().unwrap();
+                        let target_free_time_seconds = input_minute * 60;
+
+                        if *scheduled_start > get_next_morning_datetime(last_synced_time)
+                            || last_synced_time < task.get_start_time()
+                        {
+                            continue;
+                        }
+
+                        // 【待ち】がマジックナンバーなのがちょっとよくない
+                        if *rank == 0
+                            && !msg.contains("【待ち】")
+                            && estimated_work_seconds < target_free_time_seconds
+                            && estimated_work_seconds > available_biggest_task_estimate_work_seconds
+                        {
+                            available_biggest_task_estimate_work_seconds = estimated_work_seconds;
+
+                            available_biggest_row_opt = Some(task_list_display_row.clone());
+                        }
+                    } else if name.to_lowercase().contains(&pattern.to_lowercase())
+                        || msg.contains(pattern)
+                    {
+                        task_list_display_rows.push(task_list_display_row.clone());
+                    }
+                }
+                None => {
+                    task_list_display_rows.push(task_list_display_row.clone());
+                }
+            }
         }
     }
 
@@ -3337,7 +3316,7 @@ fn execute_show_all_tasks(
 
     // 日付の小さい順にソートする
     let mut counter_arr: Vec<(&NaiveDate, &usize)> = counter.iter().collect();
-    counter_arr.sort_by(|a, b| a.0.cmp(&b.0));
+    counter_arr.sort_by(|a, b| a.0.cmp(b.0));
 
     let mut daily_stat_msgs: Vec<String> = vec![];
     let mut shortage_duration_by_date: HashMap<NaiveDate, Duration> = HashMap::new();
@@ -3400,7 +3379,7 @@ fn execute_show_all_tasks(
 
         let cnt_of_the_date = *counter.get(date).unwrap_or(&0);
 
-        let weekday_jp = get_weekday_jp(&date);
+        let weekday_jp = get_weekday_jp(date);
 
         let free_time_minutes = calculate_free_time_minutes_for_subjective_date(
             date,
@@ -3438,7 +3417,7 @@ fn execute_show_all_tasks(
         let over_time_minutes = (over_time_hours_f.abs() * 60.0) as i64 % 60;
 
         let adjustable_estimated_work_seconds: i64 = *adjustable_estimated_work_seconds_map
-            .get(&date)
+            .get(date)
             .unwrap_or(&0);
         let adjustable_estimated_work_duration =
             Duration::seconds(adjustable_estimated_work_seconds);
@@ -3453,7 +3432,7 @@ fn execute_show_all_tasks(
         } else {
             -Duration::hours(over_time_hours) - Duration::minutes(over_time_minutes)
         };
-        accumulate_duration_diff_to_limit = accumulate_duration_diff_to_limit + over_time_duration;
+        accumulate_duration_diff_to_limit += over_time_duration;
 
         if accumulate_duration_diff_to_limit > max_accumulate_duration_diff_to_limit {
             max_accumulate_duration_diff_to_limit = accumulate_duration_diff_to_limit;
@@ -3461,7 +3440,7 @@ fn execute_show_all_tasks(
         }
         shortage_duration_by_date.insert(**date, accumulate_duration_diff_to_limit);
 
-        if daily_stat_msgs.len() > 0
+        if !daily_stat_msgs.is_empty()
             && accumulate_duration_diff_to_limit < Duration::seconds(0)
             && **date < first_caught_up_date
         {
@@ -3474,7 +3453,7 @@ fn execute_show_all_tasks(
             let flattenable_duration_cand = Duration::seconds(
                 free_time_minutes * 60 - total_estimated_work_seconds_of_the_date,
             );
-            if flattenable_date_opt == None
+            if flattenable_date_opt.is_none()
                 && overload_day_is_found
                 && flattenable_duration_cand >= Duration::seconds(900)
             {
@@ -3490,7 +3469,7 @@ fn execute_show_all_tasks(
         };
 
         let repetitive_task_estimated_work_seconds = *repetitive_task_estimated_work_seconds_map
-            .get(&date)
+            .get(date)
             .unwrap_or(&0);
         let repetitive_task_estimated_work_hours =
             repetitive_task_estimated_work_seconds as f64 / 3600.0;
@@ -3512,13 +3491,11 @@ fn execute_show_all_tasks(
             accumulate_duration_diff_to_goal_rho
                 - Duration::hours(diff_to_goal_hour as i64)
                 - Duration::minutes(diff_to_goal_minute as i64)
+        } else if accumulated_rho_diff < 0.0 {
+            // なんとかその日のうちに捌けている状態。積む余裕は無い
+            Duration::minutes(0)
         } else {
-            if accumulated_rho_diff < 0.0 {
-                // なんとかその日のうちに捌けている状態。積む余裕は無い
-                Duration::minutes(0)
-            } else {
-                accumulate_duration_diff_to_goal_rho
-            }
+            accumulate_duration_diff_to_goal_rho
         };
 
         if accumulate_duration_diff_to_goal_rho < Duration::minutes(0) && **date < first_leeway_date
@@ -3550,7 +3527,7 @@ fn execute_show_all_tasks(
                 * 60.0)
                 .floor() as i64;
 
-        if daily_stat_msgs.len() > 0
+        if !daily_stat_msgs.is_empty()
             && accumulated_rho_diff.is_finite()
             && accumulated_rho_diff > max_accumulated_rho_diff
         {
@@ -3559,7 +3536,7 @@ fn execute_show_all_tasks(
         }
 
         let deadline_rest_duration_seconds: i64 =
-            deadline_estimated_work_seconds_map.get(&date).unwrap_or(&0)
+            deadline_estimated_work_seconds_map.get(date).unwrap_or(&0)
                 - (free_time_hours * 3600.0).floor() as i64;
         let deadline_rest_hours = deadline_rest_duration_seconds.abs() / 3600;
         let deadline_rest_minutes =
@@ -3595,7 +3572,7 @@ fn execute_show_all_tasks(
         );
 
         // 順調フラグ確認
-        if daily_stat_msgs.len() == 0 {
+        if daily_stat_msgs.is_empty() {
             has_today_deadline_leeway = deadline_rest_sign == '-';
             has_today_freetime_leeway = diff_to_limit_in_day_sign == '-';
             has_today_new_task_leeway = diff_to_goal_sign == '-';
@@ -3617,11 +3594,11 @@ fn execute_show_all_tasks(
         }
 
         // 今日より前には前倒せないため
-        let adjustable_estimated_work_hours = if daily_stat_msgs.len() == 0 {
+        let adjustable_estimated_work_hours = if daily_stat_msgs.is_empty() {
             0.0
         } else {
             *adjustable_estimated_work_seconds_map
-                .get(&date)
+                .get(date)
                 .unwrap_or(&0) as f64
                 / 3600.0
         };
@@ -3707,14 +3684,14 @@ fn execute_show_all_tasks(
 
     if is_calendar_func && !is_flatten_func {
         for (cal_ind, s) in daily_stat_msgs.iter().enumerate() {
-            writeln_newline(stdout, &s).unwrap();
+            writeln_newline(stdout, s).unwrap();
 
             if s.contains("(月)") && cal_ind != daily_stat_msgs.len() - 1 {
                 writeln_newline(stdout, "").unwrap();
             }
         }
         // フッター
-        let footer: String = vec![
+        let footer: String = [
             "日          ",
             "空          ",
             "空差      ",
@@ -3863,8 +3840,8 @@ fn execute_show_all_tasks(
                                     > task.get_estimated_work_seconds()
                             // && rank != &0
                             {
-                                flattenable_duration = flattenable_duration
-                                    - Duration::seconds(task.get_estimated_work_seconds());
+                                flattenable_duration -=
+                                    Duration::seconds(task.get_estimated_work_seconds());
                                 let dst_dt = get_next_morning_datetime(*dt);
                                 task.set_pending_until(dst_dt);
                                 task.set_orig_status(Status::Pending);
@@ -3889,16 +3866,15 @@ fn execute_show_all_tasks(
                     }
                 }
 
-                src_date = src_date - Duration::days(1);
+                src_date -= Duration::days(1);
             }
         }
     }
 }
 
 fn execute_focus(focused_task_id_opt: &mut Option<Uuid>, new_task_id_str: &str) {
-    match Uuid::parse_str(new_task_id_str) {
-        Ok(id) => *focused_task_id_opt = Some(id),
-        Err(_) => {}
+    if let Ok(id) = Uuid::parse_str(new_task_id_str) {
+        *focused_task_id_opt = Some(id)
     }
 }
 
@@ -3912,17 +3888,17 @@ fn execute_pick(
             *focused_task_id_opt = Some(id);
 
             // Statusをtodoに戻す
-            task_repository.get_by_id(id).map(|task| {
+            if let Some(task) = task_repository.get_by_id(id) {
                 task.set_orig_status(Status::Todo);
-            });
+            }
         }
         Err(_) => {
             // 今フォーカスが当たっているタスクをtodoに戻す
             match focused_task_id_opt {
                 Some(focused_task_id) => {
-                    task_repository.get_by_id(*focused_task_id).map(|task| {
+                    if let Some(task) = task_repository.get_by_id(*focused_task_id) {
                         task.set_orig_status(Status::Todo);
-                    });
+                    }
                 }
                 None => {}
             }
@@ -3967,9 +3943,9 @@ fn extract_url(s: &str) -> Option<String> {
         }
 
         let ans: String = chars[0..ok].iter().collect();
-        return Some(ans);
+        Some(ans)
     } else {
-        return None;
+        None
     }
 }
 
@@ -4016,27 +3992,14 @@ fn test_extract_url_正常系_正しいURLのまま文字列が終わるケー�
 fn execute_open_link(focused_task_opt: &Option<Task>) {
     let mut t_opt: Option<Task> = focused_task_opt.clone();
 
-    // Todo: while-letとかで書ける?
-    loop {
-        match &t_opt {
-            Some(t) => {
-                match extract_url(&t.get_name()) {
-                    Some(url) => {
-                        match webbrowser::open(&url) {
-                            // エラーは無視する
-                            _ => {}
-                        }
-                        return;
-                    }
-                    None => {}
-                }
-
-                t_opt = t.parent();
-            }
-            None => {
-                break;
-            }
+    while let Some(t) = &t_opt {
+        if let Some(url) = extract_url(&t.get_name()) {
+            // エラーは無視する
+            let _ = webbrowser::open(&url);
+            return;
         }
+
+        t_opt = t.parent();
     }
 }
 
@@ -4076,10 +4039,8 @@ fn open_obsidian_url(url: &str) -> Result<(), String> {
 fn execute_open_obsidian_root_task_search(focused_task_opt: &Option<Task>) {
     if let Some(focused_task) = focused_task_opt {
         let url = make_obsidian_root_task_search_url(focused_task);
-        match open_obsidian_url(&url) {
-            // エラーは無視する
-            _ => {}
-        }
+        // エラーは無視する
+        let _ = open_obsidian_url(&url);
     }
 }
 
@@ -4137,7 +4098,7 @@ fn execute_next_up(
             }
         }
 
-        let new_task_id = new_task_attr.get_id().clone();
+        let new_task_id = *new_task_attr.get_id();
 
         focused_task.create_as_parent(new_task_attr);
         *focused_task_id_opt = Some(new_task_id);
@@ -4193,6 +4154,8 @@ fn execute_breakdown(
     });
 }
 
+// コマンド引数を変換せず、そのままドメイン操作へ渡す境界関数である。
+#[allow(clippy::too_many_arguments)]
 fn execute_breakdown_sequentially(
     _stdout: &mut dyn SchronuWriter,
     focused_task_id_opt: &mut Option<Uuid>,
@@ -4219,6 +4182,8 @@ fn execute_breakdown_sequentially(
     }
 }
 
+// 繰り返しタスク作成コマンドの全入力を明示的に受け取る境界関数である。
+#[allow(clippy::too_many_arguments)]
 fn execute_create_repetition_task(
     _stdout: &mut dyn SchronuWriter,
     task_repository: &mut dyn TaskRepositoryTrait,
@@ -4248,7 +4213,7 @@ fn execute_create_repetition_task(
     let task_num = if exec_day_str == "毎" { 7 } else { 4 };
 
     if let Some(focused_task_id) = focused_task_id_opt {
-        let repetition_parent_task_id = focused_task_id.clone();
+        let repetition_parent_task_id = *focused_task_id;
         let focused_task_opt = focused_task_id_opt.and_then(|id| task_repository.get_by_id(id));
 
         // ループを回して子タスクを作る
@@ -4371,9 +4336,9 @@ fn test_split_amount_and_unit_err() {
 }
 
 fn execute_wait_for_others(focused_task_opt: &Option<Task>) {
-    focused_task_opt
-        .as_ref()
-        .map(|focused_task| focused_task.set_is_on_other_side(true));
+    if let Some(focused_task) = focused_task_opt.as_ref() {
+        focused_task.set_is_on_other_side(true)
+    }
 }
 
 fn execute_defer(
@@ -4384,7 +4349,7 @@ fn execute_defer(
     unit_str: &str,
 ) {
     let amount: i64 = amount_str.parse().unwrap();
-    let duration = match unit_str.chars().nth(0) {
+    let duration = match unit_str.chars().next() {
         // 24時間単位ではなく、next_monring単位とする
         Some('日') | Some('d') => {
             let mut dt = task_repository.get_last_synced_time();
@@ -4398,7 +4363,7 @@ fn execute_defer(
         Some('時') | Some('h') => Duration::hours(amount),
         Some('分') | Some('m') => Duration::minutes(amount),
         // 誤入力した時に傷が浅いように、デフォルトは秒としておく
-        Some('秒') | Some('s') | _ => Duration::seconds(amount),
+        _ => Duration::seconds(amount),
     };
 
     focused_task_opt.as_ref().and_then(|focused_task| {
@@ -4430,7 +4395,7 @@ fn execute_extrude(
                 task.set_orig_status(Status::Pending);
                 task.set_pending_until(pending_until_datetime);
 
-                pending_until_datetime = pending_until_datetime + Duration::days(step_days as i64);
+                pending_until_datetime += Duration::days(step_days as i64);
 
                 // 平日の仕事用: 土日にはextrudeせずにスキップする
                 // match pending_until_datetime.weekday() {
@@ -4514,7 +4479,7 @@ fn execute_defer_all_frequent_routines(
         let candidate_task_ids: Vec<Uuid> = {
             let mut ids = Vec::new();
             for project_root_task in task_repository.get_all_projects().iter() {
-                let leaf_tasks = extract_leaf_tasks_from_project(&project_root_task);
+                let leaf_tasks = extract_leaf_tasks_from_project(project_root_task);
                 for leaf_task in leaf_tasks.iter() {
                     if let Some(parent_task) = leaf_task.parent() {
                         if let Some(repetition_interval_days) =
@@ -4537,7 +4502,7 @@ fn execute_defer_all_frequent_routines(
         // TODOの葉タスクについて、条件を満たす限りexecute_defer_routine()を適用し続ける
         for task_id in candidate_task_ids.into_iter() {
             *focused_task_id_opt = Some(task_id);
-            let orig_focused_task_id_opt = focused_task_id_opt.clone();
+            let orig_focused_task_id_opt = *focused_task_id_opt;
             execute_defer_routine(task_repository, focused_task_id_opt);
 
             // deferが成功してフォーカスが移ったら記録しておく
@@ -4627,40 +4592,40 @@ fn execute_finish(
         // その値に従って兄弟ノードを生成する
         // タスク名は「親タスク名(日付)」
         // estimated_work_secondsは親タスクを引き継ぐ
-        match focused_task.parent() {
-            Some(parent_task) => match parent_task.get_repetition_interval_days_opt() {
-                Some(repetition_interval_days) => {
-                    // まず、親タスクの見積もり時間を実作業時間に応じて調整する
-                    // 子タスクの実作業時間が 0(不明) の時は調整しない
-                    if focused_task.get_actual_work_seconds() > 0 {
-                        let orig_estimated_sec = parent_task.get_estimated_work_seconds();
+        if let Some(parent_task) = focused_task.parent() {
+            if let Some(repetition_interval_days) = parent_task.get_repetition_interval_days_opt() {
+                // まず、親タスクの見積もり時間を実作業時間に応じて調整する
+                // 子タスクの実作業時間が 0(不明) の時は調整しない
+                if focused_task.get_actual_work_seconds() > 0 {
+                    let orig_estimated_sec = parent_task.get_estimated_work_seconds();
 
-                        let diff = focused_task.get_actual_work_seconds() - orig_estimated_sec;
+                    let diff = focused_task.get_actual_work_seconds() - orig_estimated_sec;
 
-                        if diff > 0 {
+                    match diff.cmp(&0) {
+                        Ordering::Greater => {
                             // ブレがあることを踏まえて、その値そのものにはしないようにする。
                             // 2分探索の気分で、2で割るのを基本としたかったが、人は見積もりを過小評価しがちなので、大きくする方向については75%採用する
                             let new_estimated_work_seconds = orig_estimated_sec + diff * 3 / 4;
                             parent_task.set_estimated_work_seconds(new_estimated_work_seconds);
-                        } else if diff < 0 {
+                        }
+                        Ordering::Less => {
                             // 見積もりは最短でも1分になるようにする
                             // 人は見積もりを過小評価しがちなので、見積もりをさらに小さくする方向については慎重に。25%採用する
                             let new_estimated_work_seconds = max(60, orig_estimated_sec + diff / 4);
                             parent_task.set_estimated_work_seconds(new_estimated_work_seconds);
                         }
+                        Ordering::Equal => {}
                     }
-
-                    let new_task_attr = build_next_repetition_task_attr(
-                        focused_task,
-                        &parent_task,
-                        repetition_interval_days,
-                        finished_at,
-                    );
-                    parent_task.create_as_last_child(new_task_attr);
                 }
-                None => {}
-            },
-            None => {}
+
+                let new_task_attr = build_next_repetition_task_attr(
+                    focused_task,
+                    &parent_task,
+                    repetition_interval_days,
+                    finished_at,
+                );
+                parent_task.create_as_last_child(new_task_attr);
+            }
         }
 
         // 兄弟タスクが全て完了している場合は、フォーカスを親タスクに移す。
@@ -4682,9 +4647,9 @@ fn execute_set_deadline(
     deadline_date_str: &str,
 ) {
     if deadline_date_str == "消" {
-        focused_task_opt
-            .as_ref()
-            .map(|focused_task| focused_task.unset_deadline_time_opt());
+        if let Some(focused_task) = focused_task_opt.as_ref() {
+            focused_task.unset_deadline_time_opt()
+        }
         return;
     }
 
@@ -4698,20 +4663,15 @@ fn execute_set_deadline(
         let mm: u32 = caps[2].parse().unwrap();
 
         let now = task_repository.get_last_synced_time();
-        deadline_time_str = format!(
-            "{} {:02}:{:02}:00",
-            now.format("%Y/%m/%d").to_string(),
-            hh,
-            mm
-        );
+        deadline_time_str = format!("{} {:02}:{:02}:00", now.format("%Y/%m/%d"), hh, mm);
     }
 
     let deadline_time_opt_result = parse_local_datetime(&deadline_time_str, "%Y/%m/%d %H:%M:%S");
 
     if let Ok(LocalResult::Single(deadline_time)) = deadline_time_opt_result {
-        focused_task_opt
-            .as_ref()
-            .map(|focused_task| focused_task.set_deadline_time_opt(Some(deadline_time)));
+        if let Some(focused_task) = focused_task_opt.as_ref() {
+            focused_task.set_deadline_time_opt(Some(deadline_time))
+        }
     }
 }
 
@@ -4722,12 +4682,12 @@ fn execute_set_estimated_work_minutes(
 ) {
     let estimated_minutes_result = estimated_work_minutes_str.parse::<i64>();
 
-    estimated_minutes_result.map(|estimated_work_minutes| {
+    if let Ok(estimated_work_minutes) = estimated_minutes_result {
         let estimated_work_seconds = estimated_work_minutes * 60;
-        focused_task_opt
-            .as_ref()
-            .map(|focused_task| focused_task.set_estimated_work_seconds(estimated_work_seconds));
-    });
+        if let Some(focused_task) = focused_task_opt.as_ref() {
+            focused_task.set_estimated_work_seconds(estimated_work_seconds)
+        }
+    }
 }
 
 fn execute_set_arrange_children_work_minutes(
@@ -4755,23 +4715,23 @@ fn execute_set_arrange_children_work_minutes(
 fn execute_set_actual_work_minutes(focused_task_opt: &Option<Task>, actual_work_minutes_str: &str) {
     let actual_minutes_result = actual_work_minutes_str.parse::<i64>();
 
-    actual_minutes_result.map(|actual_work_minutes| {
+    if let Ok(actual_work_minutes) = actual_minutes_result {
         let actual_work_seconds = actual_work_minutes * 60;
-        focused_task_opt
-            .as_ref()
-            .map(|focused_task| focused_task.set_actual_work_seconds(actual_work_seconds));
-    });
+        if let Some(focused_task) = focused_task_opt.as_ref() {
+            focused_task.set_actual_work_seconds(actual_work_seconds)
+        }
+    }
 }
 
 #[allow(unused_must_use)]
 fn execute_set_priority(focused_task_opt: &Option<Task>, priority_str: &str) {
     let priority_result = priority_str.parse::<i64>();
 
-    priority_result.map(|priority| {
-        focused_task_opt
-            .as_ref()
-            .map(|focused_task| focused_task.set_priority(priority));
-    });
+    if let Ok(priority) = priority_result {
+        if let Some(focused_task) = focused_task_opt.as_ref() {
+            focused_task.set_priority(priority)
+        }
+    }
 }
 
 fn read_project_category_command_arg(s: &str) -> Option<Option<ProjectCategory>> {
@@ -4783,13 +4743,13 @@ fn read_project_category_command_arg(s: &str) -> Option<Option<ProjectCategory>>
 
 fn execute_set_project_category(focused_task_opt: &Option<Task>, project_category_str: &str) {
     if let Some(project_category_opt) = read_project_category_command_arg(project_category_str) {
-        focused_task_opt
-            .as_ref()
-            .map(|focused_task| focused_task.set_project_category_opt(project_category_opt));
+        if let Some(focused_task) = focused_task_opt.as_ref() {
+            focused_task.set_project_category_opt(project_category_opt)
+        }
     }
 }
 
-fn decide_time(tokens: &Vec<&str>, now: &DateTime<Local>) -> Option<DateTime<Local>> {
+fn decide_time(tokens: &[&str], now: &DateTime<Local>) -> Option<DateTime<Local>> {
     let mut start_time = None;
 
     if tokens.len() >= 2 {
@@ -4797,7 +4757,7 @@ fn decide_time(tokens: &Vec<&str>, now: &DateTime<Local>) -> Option<DateTime<Loc
 
         // 日付はオプショナル引数。入力されなかった場合は今日の日付とする。
         let start_date_str = if tokens.len() >= 3 {
-            &tokens[2]
+            tokens[2]
         } else {
             "dummy"
         };
@@ -4860,11 +4820,11 @@ fn decide_time(tokens: &Vec<&str>, now: &DateTime<Local>) -> Option<DateTime<Loc
                 )
                 .unwrap()
         } else if tokens.len() >= 3
-            && vec!["月", "火", "水", "木", "金", "土", "日"].contains(&tokens[2])
+            && ["月", "火", "水", "木", "金", "土", "日"].contains(&tokens[2])
         {
             // 月 火 水 木 金 土 日 が指定された時は、明日以降で、直近のその曜日とする。
             // (show_all_tasksとロジック重複...)
-            let days_of_week = vec!["月", "火", "水", "木", "金", "土", "日"];
+            let days_of_week = ["月", "火", "水", "木", "金", "土", "日"];
 
             let todays_morning_datetime = get_next_morning_datetime(*now) - Duration::days(1);
 
@@ -4873,7 +4833,7 @@ fn decide_time(tokens: &Vec<&str>, now: &DateTime<Local>) -> Option<DateTime<Loc
 
             let now_days_of_week_ind = days_of_week
                 .iter()
-                .position(|&x| &x == &now_weekday_jp)
+                .position(|&x| x == now_weekday_jp)
                 .unwrap();
             let target_days_of_week_ind =
                 days_of_week.iter().position(|&x| x == tokens[2]).unwrap();
@@ -4883,7 +4843,8 @@ fn decide_time(tokens: &Vec<&str>, now: &DateTime<Local>) -> Option<DateTime<Loc
             // 今日の6:00にdeferする味意はないので、その代わりに、1週間後の同じ曜日にdeferできるようにする
             let days: i64 = if ind_diff == 0 { 7 } else { ind_diff as i64 };
             let n_days_after_datetime = get_next_morning_datetime(*now) + Duration::days(days - 1);
-            let ans_datetime = Local
+
+            Local
                 .with_ymd_and_hms(
                     n_days_after_datetime.year(),
                     n_days_after_datetime.month(),
@@ -4892,9 +4853,7 @@ fn decide_time(tokens: &Vec<&str>, now: &DateTime<Local>) -> Option<DateTime<Loc
                     mm,
                     0,
                 )
-                .unwrap();
-
-            ans_datetime
+                .unwrap()
         } else {
             Local
                 .with_ymd_and_hms(now.year(), now.month(), now.day(), hh, mm, 0)
@@ -4911,7 +4870,7 @@ fn decide_finish_time(tokens: &Vec<&str>, now: &DateTime<Local>) -> Option<DateT
     let hhmmss_reg = Regex::new(r"^(\d{1,2}):(\d{1,2})(?::(\d{1,2}))?$").unwrap();
     let yyyymmdd_reg = Regex::new(r"^\d{2,4}/\d{1,2}/\d{1,2}$").unwrap();
     let mmdd_reg = Regex::new(r"^\d{1,2}/\d{1,2}$").unwrap();
-    let days_of_week = vec!["月", "火", "水", "木", "金", "土", "日"];
+    let days_of_week = ["月", "火", "水", "木", "金", "土", "日"];
 
     let build_finish_time = |hhmmss: &str| -> Option<DateTime<Local>> {
         let caps = hhmmss_reg.captures(hhmmss)?;
@@ -4928,8 +4887,8 @@ fn decide_finish_time(tokens: &Vec<&str>, now: &DateTime<Local>) -> Option<DateT
 
         let hhmm = format!("{}:{}", hh, mm);
         let finish_time = match tokens.as_slice() {
-            [cmd, _] => decide_time(&vec![*cmd, hhmm.as_str()], now),
-            [cmd, _, date] => decide_time(&vec![*cmd, hhmm.as_str(), *date], now),
+            [cmd, _] => decide_time(&[*cmd, hhmm.as_str()], now),
+            [cmd, _, date] => decide_time(&[*cmd, hhmm.as_str(), *date], now),
             _ => None,
         }?;
 
@@ -5556,7 +5515,7 @@ fn execute(
                 let estimated_work_minutes_result = &tokens[2].parse();
                 let begin_index_result = &tokens[3].parse();
                 let end_index_result = &tokens[4].parse();
-                let new_task_name_suffix_str = if tokens.len() >= 6 { &tokens[5] } else { "" };
+                let new_task_name_suffix_str = if tokens.len() >= 6 { tokens[5] } else { "" };
 
                 if let Ok(estimated_work_minutes) = estimated_work_minutes_result {
                     if let Ok(begin_index) = begin_index_result {
@@ -5628,14 +5587,13 @@ fn execute(
         "条" | "祖" | "ancestor" | "anc" => {
             execute_show_ancestor(stdout, &focused_task_opt);
         }
-        "根" | "root" => match focused_task_opt {
-            Some(focused_task) => {
+        "根" | "root" => {
+            if let Some(focused_task) = focused_task_opt {
                 let root_task = focused_task.root();
                 let root_task_id = root_task.get_id();
                 execute_focus(focused_task_id_opt, &root_task_id.hyphenated().to_string());
             }
-            None => {}
-        },
+        }
         "葉" | "leaves" | "leaf" | "lf" => {
             execute_show_leaf_tasks(stdout, task_repository, free_time_manager);
         }
@@ -5711,7 +5669,7 @@ fn execute(
             }
         }
         "選" | "pick" => {
-            let new_task_id_str = if tokens.len() >= 2 { &tokens[1] } else { "" };
+            let new_task_id_str = if tokens.len() >= 2 { tokens[1] } else { "" };
             execute_pick(task_repository, focused_task_id_opt, new_task_id_str);
         }
         "開" | "open" | "op" => {
@@ -5723,19 +5681,17 @@ fn execute(
         "外" | "unfocus" | "ufc" => {
             execute_unfocus(focused_task_id_opt);
         }
-        "親" | "parent" => match focused_task_opt {
-            Some(focused_task) => match focused_task.parent() {
-                Some(parent_task) => {
+        "親" | "parent" => {
+            if let Some(focused_task) = focused_task_opt {
+                if let Some(parent_task) = focused_task.parent() {
                     let parent_task_id = parent_task.get_id();
                     execute_focus(
                         focused_task_id_opt,
                         &parent_task_id.hyphenated().to_string(),
                     );
                 }
-                None => {}
-            },
-            None => {}
-        },
+            }
+        }
         "子" | "children" | "ch" => {
             // 今見ているノードの子タスクが1つだけの時、その子に移動する
             // 2つ以上ある時には、「木」コマンドを実行してツリーの様子を表示する
@@ -5767,22 +5723,18 @@ fn execute(
             if let Some(ref focused_task) = focused_task_opt {
                 let mut tmp_focused_task_opt: Option<Task> = Some(focused_task.clone());
 
-                loop {
-                    if let Some(ref tmp_focused_task) = tmp_focused_task_opt {
-                        let tmp_children = tmp_focused_task.get_children();
-                        let children: Vec<_> = tmp_children
-                            .iter()
-                            .filter(|child| child.get_status() != Status::Done)
-                            .collect();
+                while let Some(ref tmp_focused_task) = tmp_focused_task_opt {
+                    let tmp_children = tmp_focused_task.get_children();
+                    let children: Vec<_> = tmp_children
+                        .iter()
+                        .filter(|child| child.get_status() != Status::Done)
+                        .collect();
 
-                        if children.len() != 1 {
-                            break;
-                        }
-
-                        tmp_focused_task_opt = Some(children[0].clone());
-                    } else {
+                    if children.len() != 1 {
                         break;
                     }
+
+                    tmp_focused_task_opt = Some(children[0].clone());
                 }
 
                 if let Some(ref tmp_focused_task) = tmp_focused_task_opt {
@@ -5873,12 +5825,11 @@ fn execute(
                         .format("%Y/%m/%d")
                         .to_string();
                     execute_set_deadline(task_repository, &focused_task_opt, &s);
-                } else if vec!["月", "火", "水", "木", "金", "土", "日"].contains(&tokens[1])
-                {
+                } else if ["月", "火", "水", "木", "金", "土", "日"].contains(&tokens[1]) {
                     // 月 火 水 木 金 土 日 が指定された時は、明日以降で、直近のその曜日の23:59を〆切とする
                     // (show_all_tasksとロジック重複...)
 
-                    let days_of_week = vec!["月", "火", "水", "木", "金", "土", "日"];
+                    let days_of_week = ["月", "火", "水", "木", "金", "土", "日"];
 
                     let todays_morning_datetime =
                         get_next_morning_datetime(now) - Duration::days(1);
@@ -5888,7 +5839,7 @@ fn execute(
 
                     let now_days_of_week_ind = days_of_week
                         .iter()
-                        .position(|&x| &x == &now_weekday_jp)
+                        .position(|&x| x == now_weekday_jp)
                         .unwrap();
                     let target_days_of_week_ind =
                         days_of_week.iter().position(|&x| x == tokens[1]).unwrap();
@@ -5903,7 +5854,7 @@ fn execute(
                         .to_string();
 
                     execute_set_deadline(task_repository, &focused_task_opt, &s);
-                } else if mmdd_reg.is_match(&tokens[1]) {
+                } else if mmdd_reg.is_match(tokens[1]) {
                     // FIXME 「後」コマンドとロジック重複
 
                     let caps = mmdd_reg.captures(tokens[1]).unwrap();
@@ -6085,13 +6036,12 @@ fn execute(
                             "秒",
                         );
                     }
-                } else if vec!["月", "火", "水", "木", "金", "土", "日"].contains(&tokens[1])
-                {
+                } else if ["月", "火", "水", "木", "金", "土", "日"].contains(&tokens[1]) {
                     // 月 火 水 木 金 土 日 が指定された時は、明日以降で、直近のその曜日の06:00にpendingする
                     // (show_all_tasksとロジック重複...)
 
                     let now: DateTime<Local> = task_repository.get_last_synced_time();
-                    let days_of_week = vec!["月", "火", "水", "木", "金", "土", "日"];
+                    let days_of_week = ["月", "火", "水", "木", "金", "土", "日"];
 
                     let todays_morning_datetime =
                         get_next_morning_datetime(now) - Duration::days(1);
@@ -6101,7 +6051,7 @@ fn execute(
 
                     let now_days_of_week_ind = days_of_week
                         .iter()
-                        .position(|&x| &x == &now_weekday_jp)
+                        .position(|&x| x == now_weekday_jp)
                         .unwrap();
                     let target_days_of_week_ind =
                         days_of_week.iter().position(|&x| x == tokens[1]).unwrap();
@@ -6127,7 +6077,7 @@ fn execute(
                 } else {
                     // "defer 5days" のように引数が1つしか与えられなかった場合は、数字部分とそれ以降に分割する
                     let splitted = split_amount_and_unit(tokens[1]);
-                    if splitted.len() == 2 && splitted[0] != "" {
+                    if splitted.len() == 2 && !splitted[0].is_empty() {
                         let amount_str = &splitted[0];
                         let unit_str = &splitted[1].to_lowercase();
 
@@ -6164,7 +6114,7 @@ fn execute(
                         task_repository,
                         free_time_manager,
                         focused_task_id_opt,
-                        &focus_started_datetime,
+                        focus_started_datetime,
                         &s,
                     );
                 }
@@ -6220,7 +6170,7 @@ fn execute(
                 if let Some(defer_to_datetime) = defer_to_datetime_opt {
                     for project_root_task in task_repository.get_all_projects().iter() {
                         let leaf_tasks =
-                            extract_leaf_tasks_from_project_with_pending(&project_root_task);
+                            extract_leaf_tasks_from_project_with_pending(project_root_task);
                         for leaf_task in leaf_tasks.iter() {
                             match cmd_str {
                                 "空" | "clear" => {
@@ -6322,7 +6272,7 @@ fn get_byte_offset_for_deletion(line: &str, cursor_x: usize) -> Option<usize> {
         Some(char_indices_vec[cursor_x - 1].0)
     };
 
-    return byte_offset_opt;
+    byte_offset_opt
 }
 
 #[test]
@@ -6953,7 +6903,7 @@ fn application(
                 )
                 .unwrap();
 
-                let width = get_width_for_rerender(&header, &line, cursor_x);
+                let width = get_width_for_rerender(header, &line, cursor_x);
                 write!(stdout, "{}{}", header, line).unwrap();
                 write!(
                     stdout,
@@ -6988,7 +6938,7 @@ fn application(
                 )
                 .unwrap();
 
-                let width = get_width_for_rerender(&header, &line, cursor_x);
+                let width = get_width_for_rerender(header, &line, cursor_x);
                 write!(stdout, "{}{}", header, line).unwrap();
                 write!(
                     stdout,
@@ -7011,7 +6961,7 @@ fn application(
                 )
                 .unwrap();
 
-                let width = get_width_for_rerender(&header, &line, cursor_x);
+                let width = get_width_for_rerender(header, &line, cursor_x);
                 write!(stdout, "{}{}", header, line).unwrap();
                 write!(
                     stdout,
@@ -7024,12 +6974,9 @@ fn application(
             }
             Key::Backspace | Key::Ctrl('h') => {
                 let byte_offset_opt = get_byte_offset_for_deletion(&line, cursor_x);
-                match byte_offset_opt {
-                    Some(byte_offset) => {
-                        line.remove(byte_offset);
-                        cursor_x -= 1;
-                    }
-                    None => {}
+                if let Some(byte_offset) = byte_offset_opt {
+                    line.remove(byte_offset);
+                    cursor_x -= 1;
                 }
 
                 write!(
@@ -7040,7 +6987,7 @@ fn application(
                 )
                 .unwrap();
 
-                let width = get_width_for_rerender(&header, &line, cursor_x);
+                let width = get_width_for_rerender(header, &line, cursor_x);
                 write!(stdout, "{}{}", header, line).unwrap();
                 write!(
                     stdout,
@@ -7191,7 +7138,7 @@ fn application(
 
                 // スクロールするのが面倒なので、新や突のように付加情報を表示するコマンドの直後は葉を表示しない
                 // Todo: "new" や  "unplanned" の場合にも対応する
-                let fst_char_opt = line.chars().nth(0);
+                let fst_char_opt = line.chars().next();
                 if fst_char_opt != Some('新')
                     && fst_char_opt != Some('突')
                     && fst_char_opt != Some('全')
@@ -7242,7 +7189,7 @@ fn application(
                 )
                 .unwrap();
 
-                let width = get_width_for_rerender(&header, &line, cursor_x);
+                let width = get_width_for_rerender(header, &line, cursor_x);
                 write!(stdout, "{}{}", header, line).unwrap();
                 write!(
                     stdout,

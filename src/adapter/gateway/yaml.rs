@@ -245,24 +245,23 @@ pub fn yaml_to_immutable_task(yaml: &Yaml) -> ImmutableTask {
     let mut children = vec![];
 
     for child_yaml in yaml["children"].as_vec().unwrap_or(&vec![]) {
-        let child = yaml_to_immutable_task(&child_yaml);
+        let child = yaml_to_immutable_task(child_yaml);
         children.push(child);
     }
 
-    return ImmutableTask::new_with_current_time(name, status, pending_until, children);
+    ImmutableTask::new_with_current_time(name, status, pending_until, children)
 }
 
 fn transform_from_pending_until_str(pending_until_str: &str) -> DateTime<Local> {
     let mut pending_until: DateTime<Local> = DateTime::<Local>::MIN_UTC.into();
 
     if let Ok(LocalResult::Single(pu)) =
-        parse_local_datetime(&pending_until_str, "%Y/%m/%d %H:%M:%S")
+        parse_local_datetime(pending_until_str, "%Y/%m/%d %H:%M:%S")
     {
         pending_until = pu;
     }
 
-    if let Ok(LocalResult::Single(pu)) = parse_local_datetime(&pending_until_str, "%Y/%m/%d %H:%M")
-    {
+    if let Ok(LocalResult::Single(pu)) = parse_local_datetime(pending_until_str, "%Y/%m/%d %H:%M") {
         pending_until = pu;
     }
 
@@ -282,7 +281,7 @@ pub fn yaml_to_task(yaml: &Yaml, now: DateTime<Local>) -> Task {
     let name: &str = yaml["name"].as_str().unwrap_or("");
 
     let status_str: &str = yaml["status"].as_str().unwrap_or("");
-    let status: Status = read_status(&status_str).unwrap_or(*default_attr.get_status());
+    let status: Status = read_status(status_str).unwrap_or(*default_attr.get_status());
 
     let is_on_other_side: bool = yaml["is_on_other_side"]
         .as_bool()
@@ -321,11 +320,8 @@ pub fn yaml_to_task(yaml: &Yaml, now: DateTime<Local>) -> Task {
     let mut parent_task: Task = Task::new(name);
 
     let id_str: &str = yaml["id"].as_str().unwrap_or("");
-    match Uuid::parse_str(id_str) {
-        Ok(id) => {
-            parent_task.set_id(id);
-        }
-        Err(_) => {}
+    if let Ok(id) = Uuid::parse_str(id_str) {
+        parent_task.set_id(id);
     }
 
     parent_task.set_orig_status(status);
@@ -336,25 +332,25 @@ pub fn yaml_to_task(yaml: &Yaml, now: DateTime<Local>) -> Task {
     parent_task.set_project_category_opt(project_category_opt);
 
     if let Ok(LocalResult::Single(create_time)) =
-        parse_local_datetime(&create_time_str, "%Y/%m/%d %H:%M:%S")
+        parse_local_datetime(create_time_str, "%Y/%m/%d %H:%M:%S")
     {
         parent_task.set_create_time(create_time);
     }
 
     if let Ok(LocalResult::Single(start_time)) =
-        parse_local_datetime(&start_time_str, "%Y/%m/%d %H:%M:%S")
+        parse_local_datetime(start_time_str, "%Y/%m/%d %H:%M:%S")
     {
         parent_task.set_start_time(start_time);
     }
 
     if let Ok(LocalResult::Single(end_time)) =
-        parse_local_datetime(&end_time_str, "%Y/%m/%d %H:%M:%S")
+        parse_local_datetime(end_time_str, "%Y/%m/%d %H:%M:%S")
     {
         parent_task.set_end_time_opt(Some(end_time));
     }
 
     if let Ok(LocalResult::Single(deadline_time)) =
-        parse_local_datetime(&deadline_time_str, "%Y/%m/%d %H:%M:%S")
+        parse_local_datetime(deadline_time_str, "%Y/%m/%d %H:%M:%S")
     {
         parent_task.set_deadline_time_opt(Some(deadline_time));
     }
@@ -377,7 +373,7 @@ pub fn yaml_to_task(yaml: &Yaml, now: DateTime<Local>) -> Task {
     parent_task.sync_clock(now);
 
     for child_yaml in yaml["children"].as_vec().unwrap_or(&vec![]) {
-        let mut child_task = yaml_to_task(&child_yaml, now);
+        let mut child_task = yaml_to_task(child_yaml, now);
         child_task
             .detach_insert_as_last_child_of(parent_task)
             .unwrap();
@@ -385,7 +381,7 @@ pub fn yaml_to_task(yaml: &Yaml, now: DateTime<Local>) -> Task {
         parent_task = child_task.parent().unwrap();
     }
 
-    return parent_task;
+    parent_task
 }
 
 #[test]
