@@ -5134,6 +5134,56 @@ impl FreeTimeManagerTrait for TestFreeTimeManagerWithFreeMinutes {
     }
 }
 
+#[cfg(test)]
+fn execute_sequential_command(command: &str) -> (Task, Option<Uuid>) {
+    let now = Local.with_ymd_and_hms(2026, 7, 26, 12, 0, 0).unwrap();
+    let task = Task::new("親タスク");
+    let task_id = task.get_id();
+    let mut task_repository = TestTaskRepository::new(task.clone(), now);
+    let mut free_time_manager = TestFreeTimeManager;
+    let mut focused_task_id_opt = Some(task_id);
+    let mut stdout = TestWriter::new();
+
+    execute(
+        &mut stdout,
+        &mut task_repository,
+        &mut free_time_manager,
+        &mut focused_task_id_opt,
+        &now,
+        command,
+    );
+
+    (task, focused_task_id_opt)
+}
+
+#[test]
+fn test_execute_sequential_接尾辞の前にハイフンを付ける() {
+    let (task, focused_task_id_opt) = execute_sequential_command("連 鎖タスク 10 1 2 話");
+
+    let children = task.get_children();
+    assert_eq!(children.len(), 1);
+    assert_eq!(children[0].get_name(), "鎖タスク 2-話");
+
+    let grand_children = children[0].get_children();
+    assert_eq!(grand_children.len(), 1);
+    assert_eq!(grand_children[0].get_name(), "鎖タスク 1-話");
+    assert_eq!(focused_task_id_opt, Some(grand_children[0].get_id()));
+}
+
+#[test]
+fn test_execute_sequential_接尾辞なしではハイフンを付けない() {
+    let (task, focused_task_id_opt) = execute_sequential_command("連 鎖タスク 10 1 2");
+
+    let children = task.get_children();
+    assert_eq!(children.len(), 1);
+    assert_eq!(children[0].get_name(), "鎖タスク 2");
+
+    let grand_children = children[0].get_children();
+    assert_eq!(grand_children.len(), 1);
+    assert_eq!(grand_children[0].get_name(), "鎖タスク 1");
+    assert_eq!(focused_task_id_opt, Some(grand_children[0].get_id()));
+}
+
 #[test]
 fn test_execute_finish_引数なしは実作業時間を自動加算して現在時刻で完了する() {
     let now = Local.with_ymd_and_hms(2026, 5, 17, 12, 5, 0).unwrap();
@@ -5515,7 +5565,9 @@ fn execute(
                 let estimated_work_minutes_result = &tokens[2].parse();
                 let begin_index_result = &tokens[3].parse();
                 let end_index_result = &tokens[4].parse();
-                let new_task_name_suffix_str = if tokens.len() >= 6 { tokens[5] } else { "" };
+                let new_task_name_suffix = tokens
+                    .get(5)
+                    .map_or_else(String::new, |suffix| format!("-{suffix}"));
 
                 if let Ok(estimated_work_minutes) = estimated_work_minutes_result {
                     if let Ok(begin_index) = begin_index_result {
@@ -5529,7 +5581,7 @@ fn execute(
                                     *estimated_work_minutes,
                                     *begin_index,
                                     *end_index,
-                                    new_task_name_suffix_str,
+                                    &new_task_name_suffix,
                                 );
                             }
                         }
