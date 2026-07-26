@@ -22,6 +22,9 @@ use std::fs::File;
 use std::io::Stdout;
 use std::io::{stdout, Write};
 use std::process;
+use std::sync::mpsc::{self, RecvTimeoutError};
+use std::thread;
+use std::time::{Duration as StdDuration, Instant};
 use termion::event::Key;
 use termion::input::TermRead;
 use termion::raw::IntoRawMode;
@@ -38,6 +41,7 @@ const MAX_COL: u16 = 999;
 const MIN_SPLIT_SEGMENT_SECONDS: i64 = 5 * 60;
 const DEFAULT_LOWEST_PRIORITY_RECENT_DAYS: i64 = 0;
 const FOCUS_PROGRESS_BAR_SEGMENTS: usize = 100;
+const IDLE_REFRESH_INTERVAL: StdDuration = StdDuration::from_secs(15);
 
 // パーセントエンコーディングする対象にスペースを追加する
 const MY_ASCII_SET: &AsciiSet = &CONTROLS.add(b' ');
@@ -6601,6 +6605,174 @@ fn test_make_messages_about_focus_見積時間が0なら進捗を未算定とし
     assert_eq!(actual[1], format!("[{}] --%", "-".repeat(100)));
 }
 
+fn idle_refresh_deadline(now: Instant) -> Instant {
+    now + IDLE_REFRESH_INTERVAL
+}
+
+fn idle_wait_duration(deadline: Instant, now: Instant) -> StdDuration {
+    deadline.saturating_duration_since(now)
+}
+
+fn render_prompt(stdout: &mut dyn SchronuWriter, header: &str, line: &str, cursor_x: usize) {
+    write!(
+        stdout,
+        "{}{}",
+        termion::cursor::Left(MAX_COL),
+        termion::clear::CurrentLine,
+    )
+    .unwrap();
+
+    let width = get_width_for_rerender(header, line, cursor_x);
+    write!(stdout, "{}{}", header, line).unwrap();
+    write!(
+        stdout,
+        "{}{}",
+        termion::cursor::Left(MAX_COL),
+        termion::cursor::Right(width)
+    )
+    .unwrap();
+    stdout.flush().unwrap();
+}
+
+fn render_focused_task(
+    stdout: &mut dyn SchronuWriter,
+    task_repository: &dyn TaskRepositoryTrait,
+    focused_task_id_opt: Option<Uuid>,
+    last_focused_task_id_opt: &mut Option<Uuid>,
+    focus_started_datetime: &mut DateTime<Local>,
+    now: DateTime<Local>,
+) {
+    let Some(focused_task_id) = focused_task_id_opt else {
+        return;
+    };
+    let focused_task_opt = task_repository.get_by_id(focused_task_id);
+
+    if focused_task_id_opt != *last_focused_task_id_opt {
+        *focus_started_datetime = now;
+        *last_focused_task_id_opt = focused_task_id_opt;
+    }
+
+    execute_show_ancestor(stdout, &focused_task_opt);
+
+    if let Some(focused_task) = focused_task_opt {
+        writeln_newline(
+            stdout,
+            &format_focused_task_header(focused_task.get_project_category_opt()),
+        )
+        .unwrap();
+        writeln_newline(stdout, &format!("{:?}", focused_task.get_attr())).unwrap();
+
+        let messages = make_messages_about_focus(&focused_task, focus_started_datetime, &now);
+        for message in messages {
+            writeln_newline(stdout, &message).unwrap();
+        }
+        stdout.flush().unwrap();
+    }
+}
+
+struct FocusRenderState<'a> {
+    focused_task_id_opt: &'a mut Option<Uuid>,
+    last_focused_task_id_opt: &'a mut Option<Uuid>,
+    focus_started_datetime: &'a mut DateTime<Local>,
+}
+
+struct PromptRenderState<'a> {
+    header: &'a str,
+    line: &'a str,
+    cursor_x: usize,
+}
+
+fn render_interactive_screen(
+    stdout: &mut dyn SchronuWriter,
+    task_repository: &mut dyn TaskRepositoryTrait,
+    free_time_manager: &mut dyn FreeTimeManagerTrait,
+    focus_state: FocusRenderState,
+    prompt_state: PromptRenderState,
+    now: DateTime<Local>,
+) {
+    task_repository.sync_clock(now);
+
+    write!(
+        stdout,
+        "{}{}",
+        termion::clear::All,
+        termion::cursor::Goto(1, 1)
+    )
+    .unwrap();
+
+    execute_show_all_tasks(
+        stdout,
+        focus_state.focused_task_id_opt,
+        task_repository,
+        free_time_manager,
+        &Some("暦".to_string()),
+        TaskListDisplayOrder::ScheduledStartDesc,
+    );
+    render_focused_task(
+        stdout,
+        task_repository,
+        *focus_state.focused_task_id_opt,
+        focus_state.last_focused_task_id_opt,
+        focus_state.focus_started_datetime,
+        now,
+    );
+    render_prompt(
+        stdout,
+        prompt_state.header,
+        prompt_state.line,
+        prompt_state.cursor_x,
+    );
+}
+
+#[test]
+fn test_idle_refresh_deadline_現在時刻の15秒後を返す() {
+    let now = Instant::now();
+
+    assert_eq!(
+        idle_refresh_deadline(now).duration_since(now),
+        StdDuration::from_secs(15)
+    );
+}
+
+#[test]
+fn test_idle_wait_duration_期限までの残り時間を返す() {
+    let now = Instant::now();
+    let deadline = now + StdDuration::from_secs(15);
+
+    assert_eq!(
+        idle_wait_duration(deadline, now + StdDuration::from_secs(5)),
+        StdDuration::from_secs(10)
+    );
+}
+
+#[test]
+fn test_idle_wait_duration_期限を過ぎていれば0秒を返す() {
+    let now = Instant::now();
+    let deadline = now + StdDuration::from_secs(15);
+
+    assert_eq!(
+        idle_wait_duration(deadline, now + StdDuration::from_secs(16)),
+        StdDuration::ZERO
+    );
+}
+
+#[test]
+fn test_render_prompt_日本語入力中のカーソル位置を復元する() {
+    let mut stdout = TestWriter::new();
+
+    render_prompt(&mut stdout, "schronu> ", "あいう", 1);
+
+    let actual = String::from_utf8(stdout.buffer).unwrap();
+    let expected = format!(
+        "{}{}schronu> あいう{}{}",
+        termion::cursor::Left(MAX_COL),
+        termion::clear::CurrentLine,
+        termion::cursor::Left(MAX_COL),
+        termion::cursor::Right(11),
+    );
+    assert_eq!(actual, expected);
+}
+
 fn application(
     task_repository: &mut dyn TaskRepositoryTrait,
     free_time_manager: &mut dyn FreeTimeManagerTrait,
@@ -6624,7 +6796,6 @@ fn application(
     // RawModeを有効にする
     let mut stdout = stdout().into_raw_mode().unwrap();
 
-    write!(stdout, "{}", termion::clear::All).unwrap();
     write!(stdout, "{}", termion::cursor::BlinkingBar).unwrap();
     stdout.flush().unwrap();
 
@@ -6641,76 +6812,72 @@ fn application(
     let mut last_focused_task_id_opt: Option<Uuid> = None;
     let mut focus_started_datetime: DateTime<Local> = now;
 
-    ///////////////////////
-
-    // 最初に、今後の忙しさ具合を表示する
-    execute_show_all_tasks(
-        &mut stdout,
-        &mut focused_task_id_opt,
-        task_repository,
-        free_time_manager,
-        &Some("暦".to_string()),
-        TaskListDisplayOrder::ScheduledStartDesc,
-    );
-
-    ///////////////////////
-
-    // この処理、よく使いそう
-    match focused_task_id_opt {
-        Some(focused_task_id) => {
-            let focused_task_opt = task_repository.get_by_id(focused_task_id);
-
-            // 以前とフォーカスしているタスクが変わった場合には、タスクの実作業時間の記録をリセットする
-            if focused_task_id_opt != last_focused_task_id_opt {
-                focus_started_datetime = Local::now();
-                last_focused_task_id_opt = focused_task_id_opt;
-            }
-
-            execute_show_ancestor(&mut stdout, &focused_task_opt);
-
-            match focused_task_opt {
-                Some(focused_task) => {
-                    println!(
-                        "{}{}",
-                        termion::cursor::Left(MAX_COL),
-                        format_focused_task_header(focused_task.get_project_category_opt())
-                    );
-                    println!(
-                        "{}{:?}",
-                        termion::cursor::Left(MAX_COL),
-                        focused_task.get_attr()
-                    );
-                    stdout.flush().unwrap();
-
-                    let messages = make_messages_about_focus(
-                        &focused_task,
-                        &focus_started_datetime,
-                        &Local::now(),
-                    );
-                    for message in messages {
-                        writeln_newline(&mut stdout, &message).unwrap();
-                    }
-                }
-                None => {}
-            }
-        }
-        None => {}
-    }
-
-    ///////////////////////
-
     let header: &str = "schronu> ";
     let mut line = String::from("");
 
     // 画面に表示されている「文字」単位でのカーソル。
     let mut cursor_x: usize = 0;
 
-    write!(stdout, "{}{}", termion::cursor::Left(MAX_COL), header).unwrap();
-    stdout.flush().unwrap();
+    render_interactive_screen(
+        &mut stdout,
+        task_repository,
+        free_time_manager,
+        FocusRenderState {
+            focused_task_id_opt: &mut focused_task_id_opt,
+            last_focused_task_id_opt: &mut last_focused_task_id_opt,
+            focus_started_datetime: &mut focus_started_datetime,
+        },
+        PromptRenderState {
+            header,
+            line: &line,
+            cursor_x,
+        },
+        now,
+    );
 
-    // キー入力を受け付ける
-    for c in std::io::stdin().keys() {
-        match c.unwrap() {
+    let (key_sender, key_receiver) = mpsc::channel();
+    thread::spawn(move || {
+        for key_result in std::io::stdin().keys() {
+            if key_sender.send(key_result).is_err() {
+                break;
+            }
+        }
+    });
+
+    let mut next_refresh_at = idle_refresh_deadline(Instant::now());
+
+    // キー入力を受け付け、無操作が15秒続いたら画面を再描画する
+    loop {
+        let wait_duration = idle_wait_duration(next_refresh_at, Instant::now());
+        let key = match key_receiver.recv_timeout(wait_duration) {
+            Ok(key_result) => {
+                next_refresh_at = idle_refresh_deadline(Instant::now());
+                key_result.unwrap()
+            }
+            Err(RecvTimeoutError::Timeout) => {
+                render_interactive_screen(
+                    &mut stdout,
+                    task_repository,
+                    free_time_manager,
+                    FocusRenderState {
+                        focused_task_id_opt: &mut focused_task_id_opt,
+                        last_focused_task_id_opt: &mut last_focused_task_id_opt,
+                        focus_started_datetime: &mut focus_started_datetime,
+                    },
+                    PromptRenderState {
+                        header,
+                        line: &line,
+                        cursor_x,
+                    },
+                    Local::now(),
+                );
+                next_refresh_at = idle_refresh_deadline(Instant::now());
+                continue;
+            }
+            Err(RecvTimeoutError::Disconnected) => break,
+        };
+
+        match key {
             Key::Ctrl('d') => {
                 if line.is_empty() {
                     // 最後に、今後の忙しさ具合を表示する
@@ -7022,73 +7189,21 @@ fn application(
                     execute_show_leaf_tasks(&mut stdout, task_repository, free_time_manager);
                 }
 
-                match focused_task_id_opt {
-                    Some(focused_task_id) => {
-                        let focused_task_opt = task_repository.get_by_id(focused_task_id);
-
-                        // 以前とフォーカスしているタスクが変わった場合には、タスクの実作業時間の記録をリセットする
-                        if focused_task_id_opt != last_focused_task_id_opt {
-                            focus_started_datetime = Local::now();
-                            last_focused_task_id_opt = focused_task_id_opt;
-                        }
-
-                        execute_show_ancestor(&mut stdout, &focused_task_opt);
-
-                        // フォーカスしているタスクを表示
-                        match focused_task_opt {
-                            Some(focused_task) => {
-                                println!(
-                                    "{}{}",
-                                    termion::cursor::Left(MAX_COL),
-                                    format_focused_task_header(
-                                        focused_task.get_project_category_opt()
-                                    )
-                                );
-                                println!(
-                                    "{}{:?}",
-                                    termion::cursor::Left(MAX_COL),
-                                    focused_task.get_attr()
-                                );
-                                stdout.flush().unwrap();
-                                let messages = make_messages_about_focus(
-                                    &focused_task,
-                                    &focus_started_datetime,
-                                    &Local::now(),
-                                );
-                                for message in messages {
-                                    writeln_newline(&mut stdout, &message).unwrap();
-                                }
-                            }
-                            None => {}
-                        }
-                    }
-                    None => {}
-                }
+                render_focused_task(
+                    &mut stdout,
+                    task_repository,
+                    focused_task_id_opt,
+                    &mut last_focused_task_id_opt,
+                    &mut focus_started_datetime,
+                    Local::now(),
+                );
 
                 //////////////////////////////
 
                 // 初期化
                 cursor_x = 0;
                 line.clear();
-
-                write!(
-                    stdout,
-                    "{}{}",
-                    termion::cursor::Left(MAX_COL),
-                    termion::clear::CurrentLine,
-                )
-                .unwrap();
-
-                let width = get_width_for_rerender(&header, &line, cursor_x);
-                write!(stdout, "{}{}", header, line).unwrap();
-                write!(
-                    stdout,
-                    "{}{}",
-                    termion::cursor::Left(MAX_COL),
-                    termion::cursor::Right(width)
-                )
-                .unwrap();
-                stdout.flush().unwrap();
+                render_prompt(&mut stdout, header, &line, cursor_x);
             }
             Key::Char(c) => {
                 // 多バイト文字の挿入位置を知る
