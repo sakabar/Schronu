@@ -6487,13 +6487,15 @@ fn format_focus_progress(
         (i128::from(actual_work_seconds) + i128::from(focusing_seconds)).max(0);
     let percentage = total_work_seconds * 100 / i128::from(estimated_work_seconds);
     let filled_segments = percentage.min(FOCUS_PROGRESS_BAR_SEGMENTS as i128) as usize;
+    let overflow_segments = (percentage - 100).max(0) as usize;
 
     format!(
-        "[{}{}] {}%",
+        "[{}{}]{} {}%",
         // U+2588 FULL BLOCK
         "█".repeat(filled_segments),
         // U+2591 LIGHT SHADE
         "░".repeat(FOCUS_PROGRESS_BAR_SEGMENTS - filled_segments),
+        ">".repeat(overflow_segments),
         percentage
     )
 }
@@ -6503,6 +6505,23 @@ fn test_format_focus_progress_100パーセントで全区画を塗る() {
     let actual = format_focus_progress(60 * 60, 59 * 60, 60);
 
     assert_eq!(actual, format!("[{}] 100%", "█".repeat(100)));
+}
+
+#[test]
+fn test_format_focus_progress_101パーセントで超過記号を表示する() {
+    let actual = format_focus_progress(100, 101, 0);
+
+    assert_eq!(actual, format!("[{}]> 101%", "█".repeat(100)));
+}
+
+#[test]
+fn test_format_focus_progress_114パーセントで超過分の記号を表示する() {
+    let actual = format_focus_progress(100, 114, 0);
+
+    assert_eq!(
+        actual,
+        format!("[{}]{} 114%", "█".repeat(100), ">".repeat(14))
+    );
 }
 
 #[test]
@@ -6584,7 +6603,10 @@ fn test_make_messages_about_focus_見積時間超過時はバーだけ100パー�
     let actual = make_messages_about_focus(&task, &focus_started_datetime, &now);
 
     assert!(actual[0].ends_with("focusing for 60 minutes"));
-    assert_eq!(actual[1], format!("[{}] 116%", "█".repeat(100)));
+    assert_eq!(
+        actual[1],
+        format!("[{}]{} 116%", "█".repeat(100), ">".repeat(16))
+    );
 }
 
 #[test]
