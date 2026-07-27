@@ -58,7 +58,7 @@ function initialize_task(task_id, task_name) {
         task_name_by_id[task_id] = task_name
         total_work_minutes_by_id[task_id] = 0
         should_finish_by_id[task_id] = 0
-        should_skip_by_id[task_id] = 0
+        defer_command_by_id[task_id] = ""
     }
 }
 
@@ -68,8 +68,9 @@ function initialize_task(task_id, task_name) {
     finish_flag = trim($14)
     finish_datetime = trim($16)
     should_extract = trim($17)
-    should_skip = trim($18)
+    defer_command = trim($18)
     actual_work_minutes = trim($19)
+    is_defer_command = defer_command == "W" || defer_command == "d"
 
     if (task_id == "" && task_name == "") {
         next
@@ -82,7 +83,7 @@ function initialize_task(task_id, task_name) {
         next
     }
 
-    if (should_extract != "TRUE" && should_skip != "T") {
+    if (should_extract != "TRUE" && !is_defer_command) {
         next
     }
 
@@ -93,8 +94,13 @@ function initialize_task(task_id, task_name) {
 
     initialize_task(task_id, task_name)
 
-    if (should_skip == "T") {
-        should_skip_by_id[task_id] = 1
+    if (is_defer_command) {
+        if (defer_command_by_id[task_id] != "" && defer_command_by_id[task_id] != defer_command) {
+            printf("line %d: R列の延期コマンドが競合しています: %s (%s, %s)\n", NR, task_id, defer_command_by_id[task_id], defer_command) > "/dev/stderr"
+            exit 1
+        }
+
+        defer_command_by_id[task_id] = defer_command
     }
 
     if (should_extract != "TRUE") {
@@ -138,7 +144,7 @@ END {
     for (i = 1; i <= task_id_count; i++) {
         task_id = task_ids[i]
 
-        if (!should_skip_by_id[task_id] && task_id in invalid_line_by_id) {
+        if (defer_command_by_id[task_id] == "" && task_id in invalid_line_by_id) {
             printf("line %d: %s\n", invalid_line_by_id[task_id], invalid_message_by_id[task_id]) > "/dev/stderr"
             exit 1
         }
@@ -146,8 +152,8 @@ END {
         printf("# %s\n", task_name_by_id[task_id])
         printf("見 %s\n", task_id)
 
-        if (should_skip_by_id[task_id]) {
-            printf("W\n")
+        if (defer_command_by_id[task_id] != "") {
+            printf("%s\n", defer_command_by_id[task_id])
         } else {
             printf("働 %s\n", total_work_minutes_by_id[task_id])
 
