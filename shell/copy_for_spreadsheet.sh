@@ -17,7 +17,7 @@ cat - | grep '^0' | grep -v -- '^----' | tr ' ' '\t' | tac | awk 'NF >= 10' | wh
     l_cell="=L${cell_row_num}"
     m_cell=''
     n_cell="=P${cell_row_num}"
-    o_cell='=IF(R'"${cell_row_num}"'="T", L'"${cell_row_num}"', L'"${cell_row_num}"'+TIME(0, G'"${cell_row_num}"', 0))'
+    o_cell='=IF(OR(R'"${cell_row_num}"'="W", R'"${cell_row_num}"'="d"), L'"${cell_row_num}"', L'"${cell_row_num}"'+TIME(0, G'"${cell_row_num}"', 0))'
     p_cell="=NOT(ISFORMULA(P${cell_row_num}))"
     q_cell=''
 
