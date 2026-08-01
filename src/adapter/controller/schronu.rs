@@ -39,7 +39,7 @@ const MAX_COL: u16 = 999;
 const MIN_SPLIT_SEGMENT_SECONDS: i64 = 5 * 60;
 const DEFAULT_LOWEST_PRIORITY_RECENT_DAYS: i64 = 0;
 const FOCUS_PROGRESS_BAR_SEGMENTS: usize = 100;
-const IDLE_REFRESH_INTERVAL: StdDuration = StdDuration::from_secs(15);
+const IDLE_REFRESH_INTERVAL: StdDuration = StdDuration::from_secs(60);
 
 // パーセントエンコーディングする対象にスペースを追加する
 const MY_ASCII_SET: &AsciiSet = &CONTROLS.add(b' ');
@@ -6749,12 +6749,12 @@ fn render_interactive_screen(
 }
 
 #[test]
-fn test_idle_refresh_deadline_現在時刻の15秒後を返す() {
+fn test_idle_refresh_deadline_現在時刻の60秒後を返す() {
     let now = Instant::now();
 
     assert_eq!(
         idle_refresh_deadline(now).duration_since(now),
-        StdDuration::from_secs(15)
+        StdDuration::from_secs(60)
     );
 }
 
@@ -6870,7 +6870,7 @@ fn application(
 
     let mut next_refresh_at = idle_refresh_deadline(Instant::now());
 
-    // キー入力を受け付け、無操作が15秒続いたら画面を再描画する
+    // キー入力を受け付け、無操作が60秒続いたら画面を再描画する
     loop {
         let wait_duration = idle_wait_duration(next_refresh_at, Instant::now());
         let key = match key_receiver.recv_timeout(wait_duration) {
