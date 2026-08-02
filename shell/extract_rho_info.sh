@@ -4,6 +4,7 @@
 # grep 'Lq'| grep -o '([^ ]*' | tr -d '(' | tr '\n' '\t' | cut -f1-2 | sed -e 's/\n$//'
 
 # rep rho
+printf '%s\t' "$(date '+%Y/%m/%d %H:%M:%S')"
 grep 'Lq'| grep 'rep' | grep -o '([^)]\+)' | while read exp; do
     echo $exp | bc -l
 done | awk '{ printf("%.2f\n", $0) }' | tr '\n' '\t' | cut -f1-2 | sed -e 's/\n$//'
