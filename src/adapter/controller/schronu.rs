@@ -37,6 +37,7 @@ use uuid::Uuid;
 const MAX_COL: u16 = 999;
 
 const MIN_SPLIT_SEGMENT_SECONDS: i64 = 5 * 60;
+const MAX_ARRANGE_ESTIMATED_WORK_MINUTES: i64 = 1439;
 const DEFAULT_LOWEST_PRIORITY_RECENT_DAYS: i64 = 0;
 const FOCUS_PROGRESS_BAR_SEGMENTS: usize = 100;
 const IDLE_REFRESH_INTERVAL: StdDuration = StdDuration::from_secs(60);
@@ -4693,16 +4694,23 @@ fn execute_set_estimated_work_minutes(
 fn execute_set_arrange_children_work_minutes(
     focused_task_opt: &Option<Task>,
     estimated_work_minutes_str: &str,
+    includes_zero_estimate: bool,
 ) {
     let estimated_minutes_result = estimated_work_minutes_str.parse::<i64>();
 
     // 繰り返しタスクについて、その子タスクでDoneでないものの時間を一律変更する。
     if let Ok(estimated_minutes) = estimated_minutes_result {
+        if !(0..=MAX_ARRANGE_ESTIMATED_WORK_MINUTES).contains(&estimated_minutes) {
+            return;
+        }
+
         if let Some(focused_task) = focused_task_opt {
             if focused_task.get_repetition_interval_days_opt().is_some() {
                 let children = focused_task.get_children();
                 for child_task in children.iter() {
-                    if child_task.get_status() != Status::Done {
+                    if child_task.get_status() != Status::Done
+                        && (includes_zero_estimate || child_task.get_estimated_work_seconds() != 0)
+                    {
                         child_task.set_estimated_work_seconds(estimated_minutes * 60);
                     }
                 }
@@ -5154,6 +5162,123 @@ fn execute_sequential_command(command: &str) -> (Task, Option<Uuid>) {
     );
 
     (task, focused_task_id_opt)
+}
+
+#[cfg(test)]
+fn execute_arrange_command(command: &str) -> Task {
+    let now = Local.with_ymd_and_hms(2026, 8, 3, 12, 0, 0).unwrap();
+    let task = Task::new("ルーチン");
+    task.set_repetition_interval_days_opt(Some(7));
+
+    let mut estimated_child_attr = TaskAttr::new("見積もりあり");
+    estimated_child_attr.set_estimated_work_seconds(5 * 60);
+    task.create_as_last_child(estimated_child_attr);
+
+    let mut zero_estimate_child_attr = TaskAttr::new("見積もり0");
+    zero_estimate_child_attr.set_estimated_work_seconds(0);
+    task.create_as_last_child(zero_estimate_child_attr);
+
+    let mut done_child_attr = TaskAttr::new("完了済み");
+    done_child_attr.set_estimated_work_seconds(10 * 60);
+    done_child_attr.set_orig_status(Status::Done);
+    task.create_as_last_child(done_child_attr);
+
+    let task_id = task.get_id();
+    let mut task_repository = TestTaskRepository::new(task.clone(), now);
+    let mut free_time_manager = TestFreeTimeManager;
+    let mut focused_task_id_opt = Some(task_id);
+    let mut stdout = TestWriter::new();
+
+    execute(
+        &mut stdout,
+        &mut task_repository,
+        &mut free_time_manager,
+        &mut focused_task_id_opt,
+        &now,
+        command,
+    );
+
+    task
+}
+
+#[test]
+fn test_execute_arrange_デフォルトで見積もり0と完了済みを維持する() {
+    let task = execute_arrange_command("揃 15");
+    let children = task.get_children();
+
+    assert_eq!(children[0].get_estimated_work_seconds(), 15 * 60);
+    assert_eq!(children[1].get_estimated_work_seconds(), 0);
+    assert_eq!(children[2].get_estimated_work_seconds(), 10 * 60);
+}
+
+#[test]
+fn test_execute_arrange_全指定で見積もり0も変更し完了済みは維持する() {
+    let task = execute_arrange_command("揃 15 全");
+    let children = task.get_children();
+
+    assert_eq!(children[0].get_estimated_work_seconds(), 15 * 60);
+    assert_eq!(children[1].get_estimated_work_seconds(), 15 * 60);
+    assert_eq!(children[2].get_estimated_work_seconds(), 10 * 60);
+}
+
+#[test]
+fn test_execute_arrange_all指定は全指定と同じ挙動になる() {
+    let task = execute_arrange_command("arr 15 all");
+    let children = task.get_children();
+
+    assert_eq!(children[0].get_estimated_work_seconds(), 15 * 60);
+    assert_eq!(children[1].get_estimated_work_seconds(), 15 * 60);
+    assert_eq!(children[2].get_estimated_work_seconds(), 10 * 60);
+}
+
+#[test]
+fn test_execute_arrange_未知の第3引数で見積もり0を維持する() {
+    let task = execute_arrange_command("揃 15 unknown");
+    let children = task.get_children();
+
+    assert_eq!(children[0].get_estimated_work_seconds(), 15 * 60);
+    assert_eq!(children[1].get_estimated_work_seconds(), 0);
+    assert_eq!(children[2].get_estimated_work_seconds(), 10 * 60);
+}
+
+#[test]
+fn test_execute_arrange_見積もり0分を受理する() {
+    let task = execute_arrange_command("揃 0");
+    let children = task.get_children();
+
+    assert_eq!(children[0].get_estimated_work_seconds(), 0);
+    assert_eq!(children[1].get_estimated_work_seconds(), 0);
+    assert_eq!(children[2].get_estimated_work_seconds(), 10 * 60);
+}
+
+#[test]
+fn test_execute_arrange_見積もり1439分を受理する() {
+    let task = execute_arrange_command("揃 1439");
+    let children = task.get_children();
+
+    assert_eq!(children[0].get_estimated_work_seconds(), 1439 * 60);
+    assert_eq!(children[1].get_estimated_work_seconds(), 0);
+    assert_eq!(children[2].get_estimated_work_seconds(), 10 * 60);
+}
+
+#[test]
+fn test_execute_arrange_見積もり1440分では変更しない() {
+    let task = execute_arrange_command("揃 1440");
+    let children = task.get_children();
+
+    assert_eq!(children[0].get_estimated_work_seconds(), 5 * 60);
+    assert_eq!(children[1].get_estimated_work_seconds(), 0);
+    assert_eq!(children[2].get_estimated_work_seconds(), 10 * 60);
+}
+
+#[test]
+fn test_execute_arrange_負の見積もりでは変更しない() {
+    let task = execute_arrange_command("揃 -1");
+    let children = task.get_children();
+
+    assert_eq!(children[0].get_estimated_work_seconds(), 5 * 60);
+    assert_eq!(children[1].get_estimated_work_seconds(), 0);
+    assert_eq!(children[2].get_estimated_work_seconds(), 10 * 60);
 }
 
 #[test]
@@ -5943,9 +6068,13 @@ fn execute(
         "揃" | "arrange" | "arr" => {
             if tokens.len() >= 2 {
                 let estimated_work_minutes_str = &tokens[1];
+                let includes_zero_estimate = tokens
+                    .get(2)
+                    .is_some_and(|token| matches!(*token, "全" | "all"));
                 execute_set_arrange_children_work_minutes(
                     &focused_task_opt,
                     estimated_work_minutes_str,
+                    includes_zero_estimate,
                 );
             }
         }
