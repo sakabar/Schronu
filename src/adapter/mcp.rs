@@ -669,7 +669,9 @@ fn category_schema() -> Value {
 mod tests {
     use super::McpServer;
     use crate::adapter::gateway::task_repository::TaskRepository;
-    use crate::application::interface::{TaskRepositoryError, TaskRepositoryTrait};
+    use crate::application::interface::{
+        TaskRepositoryError, TaskRepositoryOperation, TaskRepositoryTrait,
+    };
     use crate::entity::task::{ProjectCategory, RepetitionAnchor, Status, Task, TaskAttr};
     use chrono::{DateTime, Duration, Local, TimeZone};
     use serde_json::json;
@@ -681,6 +683,7 @@ mod tests {
         projects: Vec<Task>,
         now: DateTime<Local>,
         focus_task_id: Option<Uuid>,
+        fail_save: bool,
         save_count: Rc<Cell<usize>>,
         mutation_count: Rc<Cell<usize>>,
     }
@@ -691,6 +694,7 @@ mod tests {
                 projects,
                 now: fixed_now(),
                 focus_task_id: None,
+                fail_save: false,
                 save_count: Rc::new(Cell::new(0)),
                 mutation_count: Rc::new(Cell::new(0)),
             }
@@ -698,6 +702,11 @@ mod tests {
 
         fn with_focus_task_id(mut self, task_id: Uuid) -> Self {
             self.focus_task_id = Some(task_id);
+            self
+        }
+
+        fn with_save_failure(mut self) -> Self {
+            self.fail_save = true;
             self
         }
     }
@@ -718,7 +727,14 @@ mod tests {
 
         fn save(&self) -> Result<(), TaskRepositoryError> {
             self.save_count.set(self.save_count.get() + 1);
-            Ok(())
+            if self.fail_save {
+                Err(TaskRepositoryError::new(
+                    TaskRepositoryOperation::Save,
+                    std::io::Error::other("test save failure"),
+                ))
+            } else {
+                Ok(())
+            }
         }
 
         fn sync_clock(&mut self, now: DateTime<Local>) {
@@ -1727,6 +1743,172 @@ mod tests {
             assert_eq!(save_count.get(), 0);
             assert_eq!(mutation_count.get(), 0);
         }
+    }
+
+    #[test]
+    fn create_task_作成して成功時に1回saveする() {
+        let pending_until = fixed_now() + Duration::hours(18);
+        let repository = RecordingRepository::new(vec![]);
+        let save_count = Rc::clone(&repository.save_count);
+        let mutation_count = Rc::clone(&repository.mutation_count);
+        let mut server = initialized_server(repository);
+
+        let response = server
+            .handle_request(tool_call_request(
+                "create-task",
+                "create_task",
+                json!({
+                    "name": "created by MCP",
+                    "estimated_work_minutes": 30,
+                    "pending_until": pending_until.to_rfc3339()
+                }),
+            ))
+            .unwrap();
+
+        assert_eq!(response["jsonrpc"], "2.0");
+        assert_eq!(response["id"], "create-task");
+        assert_eq!(response["result"]["isError"], false);
+        assert_tool_result_content_matches_structured(&response);
+        let task_id = response["result"]["structuredContent"]["task_id"]
+            .as_str()
+            .unwrap();
+        assert!(Uuid::parse_str(task_id).is_ok());
+        assert_eq!(save_count.get(), 1);
+        assert_eq!(mutation_count.get(), 1);
+
+        let created = server
+            .handle_request(tool_call_request(
+                "created-task",
+                "get_task",
+                json!({"task_id": task_id}),
+            ))
+            .unwrap();
+        let task = &created["result"]["structuredContent"]["task"];
+        assert_eq!(task["name"], "created by MCP");
+        assert_eq!(task["estimated_work_seconds"], 30 * 60);
+        assert_eq!(task["original_status"], "pending");
+        assert_eq!(task["pending_until"], pending_until.to_rfc3339());
+        assert_eq!(save_count.get(), 1);
+        assert_eq!(mutation_count.get(), 1);
+    }
+
+    #[test]
+    fn create_task_schema違反ではrepositoryへ到達しない() {
+        let cases = [
+            ("missing-name", json!({}), "name"),
+            ("name-type", json!({"name": 1}), "name"),
+            (
+                "negative-estimate",
+                json!({"name": "task", "estimated_work_minutes": -1}),
+                "estimated_work_minutes",
+            ),
+            (
+                "extra",
+                json!({"name": "task", "extra": true}),
+                "arguments.extra",
+            ),
+        ];
+
+        for (id, arguments, field) in cases {
+            let repository = RecordingRepository::new(vec![]);
+            let save_count = Rc::clone(&repository.save_count);
+            let mutation_count = Rc::clone(&repository.mutation_count);
+            let mut server = initialized_server(repository);
+            let response = server
+                .handle_request(tool_call_request(id, "create_task", arguments))
+                .unwrap();
+
+            assert_eq!(response["jsonrpc"], "2.0");
+            assert_eq!(response["id"], id);
+            assert_eq!(response["error"]["code"], -32602);
+            assert_eq!(response["error"]["message"], "Invalid params");
+            assert_eq!(response["error"]["data"]["code"], "invalid_input");
+            assert_eq!(response["error"]["data"]["field"], field);
+            assert_eq!(save_count.get(), 0);
+            assert_eq!(mutation_count.get(), 0);
+        }
+    }
+
+    #[test]
+    fn create_task_意味的不正では作成もsaveもしない() {
+        let cases = [
+            ("empty-name", json!({"name": "  "}), "name"),
+            (
+                "invalid-pending",
+                json!({"name": "task", "pending_until": "not-a-date"}),
+                "pending_until",
+            ),
+            (
+                "estimate-overflow",
+                json!({"name": "task", "estimated_work_minutes": i64::MAX}),
+                "estimated_work_minutes",
+            ),
+            (
+                "estimate-out-of-range",
+                json!({"name": "task", "estimated_work_minutes": u64::MAX}),
+                "estimated_work_minutes",
+            ),
+        ];
+
+        for (id, arguments, field) in cases {
+            let repository = RecordingRepository::new(vec![]);
+            let save_count = Rc::clone(&repository.save_count);
+            let mutation_count = Rc::clone(&repository.mutation_count);
+            let mut server = initialized_server(repository);
+            let response = server
+                .handle_request(tool_call_request(id, "create_task", arguments))
+                .unwrap();
+
+            assert_eq!(response["jsonrpc"], "2.0");
+            assert_eq!(response["id"], id);
+            assert_eq!(response["result"]["isError"], true);
+            assert_tool_result_content_matches_structured(&response);
+            assert_eq!(
+                response["result"]["structuredContent"]["error"]["code"],
+                "invalid_input"
+            );
+            assert_eq!(
+                response["result"]["structuredContent"]["error"]["field"],
+                field
+            );
+            assert!(!response["result"]["structuredContent"]["error"]["message"]
+                .as_str()
+                .unwrap()
+                .is_empty());
+            assert_eq!(save_count.get(), 0);
+            assert_eq!(mutation_count.get(), 0);
+        }
+    }
+
+    #[test]
+    fn create_task_save失敗を成功扱いしない() {
+        let repository = RecordingRepository::new(vec![]).with_save_failure();
+        let save_count = Rc::clone(&repository.save_count);
+        let mutation_count = Rc::clone(&repository.mutation_count);
+        let mut server = initialized_server(repository);
+
+        let response = server
+            .handle_request(tool_call_request(
+                "save-failure",
+                "create_task",
+                json!({"name": "not persisted"}),
+            ))
+            .unwrap();
+
+        assert_eq!(response["jsonrpc"], "2.0");
+        assert_eq!(response["id"], "save-failure");
+        assert_eq!(response["result"]["isError"], true);
+        assert_tool_result_content_matches_structured(&response);
+        assert_eq!(
+            response["result"]["structuredContent"]["error"]["code"],
+            "repository_save_failed"
+        );
+        assert!(!response["result"]["structuredContent"]["error"]["message"]
+            .as_str()
+            .unwrap()
+            .is_empty());
+        assert_eq!(save_count.get(), 1);
+        assert_eq!(mutation_count.get(), 1);
     }
 
     fn initialize_request() -> serde_json::Value {
