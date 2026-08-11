@@ -84,6 +84,43 @@ fn mcp_stdio_initializeとtools_listをprotocol専用stdoutへ返す() {
 }
 
 #[test]
+fn mcp_stdio_壊れたjsonへparse_errorを返して次のrequestを処理する() {
+    let storage = TestStorageDirectory::new();
+    let mut child = spawn_mcp(storage.path());
+    let initialize = json!({
+        "jsonrpc": "2.0",
+        "id": "initialize-after-parse-error",
+        "method": "initialize",
+        "params": {
+            "protocolVersion": "2025-06-18",
+            "capabilities": {},
+            "clientInfo": {"name": "integration-test", "version": "1.0"}
+        }
+    });
+    let input = format!("not-json\n{initialize}\n");
+    {
+        let stdin = child.stdin.as_mut().unwrap();
+        stdin.write_all(input.as_bytes()).unwrap();
+    }
+    drop(child.stdin.take());
+
+    let output = wait_with_output(child);
+    assert_process_succeeded(&output);
+    let responses = String::from_utf8(output.stdout)
+        .unwrap()
+        .lines()
+        .map(|line| serde_json::from_str::<Value>(line).unwrap())
+        .collect::<Vec<_>>();
+    assert_eq!(responses.len(), 2);
+    assert_eq!(responses[0]["jsonrpc"], "2.0");
+    assert_eq!(responses[0]["id"], serde_json::Value::Null);
+    assert_eq!(responses[0]["error"]["code"], -32700);
+    assert_eq!(responses[0]["error"]["message"], "Parse error");
+    assert_eq!(responses[1]["id"], "initialize-after-parse-error");
+    assert_eq!(responses[1]["result"]["protocolVersion"], "2025-06-18");
+}
+
+#[test]
 fn mcp_stdio_process中はlockを保持し終了後に解放する() {
     let storage = TestStorageDirectory::new();
     let child = spawn_mcp(storage.path());
