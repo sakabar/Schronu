@@ -387,6 +387,56 @@ mod tests {
     }
 
     #[test]
+    fn test_get_by_id_未知のidならnoneを返す() {
+        let mut task_repository = TaskRepository::new("");
+        let root_task = Task::new("親タスク");
+        task_repository.cache_task_and_descendants(&root_task);
+        add_project(&mut task_repository, root_task);
+
+        let actual = task_repository.get_by_id(Uuid::new_v4());
+
+        assert_eq!(actual, None);
+    }
+
+    #[test]
+    fn test_get_highest_priority_leaf_task_id_締切なし同士では優先度が高いタスクを選ぶ() {
+        let mut task_repository = TaskRepository::new("");
+        let low_priority_task = Task::new("低優先度タスク");
+        low_priority_task.set_priority(1);
+        let high_priority_task = Task::new("高優先度タスク");
+        high_priority_task.set_priority(9);
+        let high_priority_task_id = high_priority_task.get_id();
+
+        add_project(&mut task_repository, high_priority_task);
+        add_project(&mut task_repository, low_priority_task);
+
+        let actual = task_repository.get_highest_priority_leaf_task_id();
+
+        assert_eq!(actual, Some(high_priority_task_id));
+    }
+
+    #[test]
+    fn test_get_highest_priority_leaf_task_id_pending中のタスクは選ばない() {
+        let now = Local.with_ymd_and_hms(2026, 8, 11, 12, 0, 0).unwrap();
+        let mut task_repository = TaskRepository::new("");
+        task_repository.sync_clock(now);
+
+        let active_task = Task::new("着手可能タスク");
+        active_task.set_priority(1);
+        let active_task_id = active_task.get_id();
+
+        let pending_task = pending_task_with_until("Pendingタスク", now + Duration::days(1));
+        pending_task.set_priority(99);
+
+        add_project(&mut task_repository, active_task);
+        add_project(&mut task_repository, pending_task);
+
+        let actual = task_repository.get_highest_priority_leaf_task_id();
+
+        assert_eq!(actual, Some(active_task_id));
+    }
+
+    #[test]
     fn test_get_highest_priority_leaf_task_id_締切あり同士では優先度より締切日時を先に見る() {
         let mut task_repository = TaskRepository::new("");
         let high_priority_late_deadline_task = Task::new("高優先度だが締切が遅いタスク");
