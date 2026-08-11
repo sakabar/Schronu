@@ -3,8 +3,9 @@ use crate::application::schedule_use_case::{get_schedule, ScheduledTaskView};
 use crate::application::task_use_case::{
     breakdown_task as breakdown_task_use_case, complete_task as complete_task_use_case,
     create_task as create_task_use_case, defer_task as defer_task_use_case, get_focus, get_task,
-    list_tasks, ApplicationError, BreakdownTaskInput, CompleteTaskInput, CreateTaskInput,
-    ListTasksFilter, TaskPeriodField, TaskPeriodFilter, TaskView,
+    list_tasks, set_category, set_deadline, set_estimate, ApplicationError, BreakdownTaskInput,
+    CompleteTaskInput, CreateTaskInput, ListTasksFilter, TaskPeriodField, TaskPeriodFilter,
+    TaskView,
 };
 use crate::entity::task::{ProjectCategory, Status};
 use chrono::{DateTime, Local};
@@ -91,6 +92,7 @@ impl<R: TaskRepositoryTrait> McpServer<R> {
             Some("breakdown_task") => self.call_breakdown_task(id, &params["arguments"]),
             Some("defer_task") => self.call_defer_task(id, &params["arguments"]),
             Some("complete_task") => self.call_complete_task(id, &params["arguments"]),
+            Some("update_task") => self.call_update_task(id, &params["arguments"]),
             _ => error_response(id, -32602, "Unknown tool"),
         }
     }
@@ -282,6 +284,41 @@ impl<R: TaskRepositoryTrait> McpServer<R> {
             Err(error) => repository_save_error_response(id, &error.to_string()),
         }
     }
+
+    fn call_update_task(&mut self, id: Value, arguments: &Value) -> Value {
+        let input = match update_task_input(arguments) {
+            Ok(input) => input,
+            Err(ToolInputError::Schema(error)) => return invalid_params_response(id, error),
+            Err(ToolInputError::Semantic { field, message }) => {
+                return invalid_input_response(id, field, message)
+            }
+        };
+
+        if let Some(estimated_work_minutes) = input.estimated_work_minutes {
+            if let Err(error) =
+                set_estimate(&mut self.repository, input.task_id, estimated_work_minutes)
+            {
+                return update_task_application_error_response(id, error);
+            }
+        }
+        if let Some(deadline_time) = input.deadline_time {
+            if let Err(error) = set_deadline(&mut self.repository, input.task_id, deadline_time) {
+                return update_task_application_error_response(id, error);
+            }
+        }
+        if let Some(category) = input.category {
+            if let Err(error) = set_category(&mut self.repository, input.task_id, category) {
+                return update_task_application_error_response(id, error);
+            }
+        }
+
+        match self.repository.save() {
+            Ok(()) => {
+                tool_result_response(id, json!({"task_id": input.task_id.to_string()}), false)
+            }
+            Err(error) => repository_save_error_response(id, &error.to_string()),
+        }
+    }
 }
 
 fn error_response(id: Value, code: i64, message: &str) -> Value {
@@ -336,6 +373,18 @@ fn has_undone_children_response(id: Value, task_id: Uuid) -> Value {
     )
 }
 
+fn update_task_application_error_response(id: Value, error: ApplicationError) -> Value {
+    match error {
+        ApplicationError::TaskNotFound(task_id) => {
+            task_not_found_response(id, task_id, Some("task_id"))
+        }
+        ApplicationError::InvalidInput { field, reason } => {
+            invalid_input_response(id, field, reason)
+        }
+        error => internal_error_response(id, &error.to_string()),
+    }
+}
+
 fn repository_save_error_response(id: Value, message: &str) -> Value {
     tool_result_response(
         id,
@@ -374,6 +423,13 @@ enum ToolInputError {
         field: &'static str,
         message: &'static str,
     },
+}
+
+struct UpdateTaskInput {
+    task_id: Uuid,
+    estimated_work_minutes: Option<i64>,
+    deadline_time: Option<Option<DateTime<Local>>>,
+    category: Option<Option<ProjectCategory>>,
 }
 
 fn uuid_argument(
@@ -448,6 +504,99 @@ fn optional_non_negative_i64_argument(
             }))
         })
         .transpose()
+}
+
+fn update_task_input(arguments: &Value) -> Result<UpdateTaskInput, ToolInputError> {
+    let arguments = validate_argument_object(
+        arguments,
+        &[
+            "task_id",
+            "estimated_work_minutes",
+            "deadline_time",
+            "category",
+        ],
+        &["task_id"],
+    )
+    .map_err(ToolInputError::Schema)?;
+    if !["estimated_work_minutes", "deadline_time", "category"]
+        .iter()
+        .any(|field| arguments.contains_key(*field))
+    {
+        return Err(ToolInputError::Schema(InvalidParams {
+            field: "arguments".to_string(),
+            reason: "must include at least one field to update",
+        }));
+    }
+
+    let task_id = uuid_argument(arguments, "task_id")?;
+    let estimated_work_minutes =
+        optional_non_negative_i64_argument(arguments, "estimated_work_minutes")?;
+    let deadline_time = nullable_datetime_argument(arguments, "deadline_time")?;
+    let category = nullable_category_argument(arguments, "category")?;
+
+    Ok(UpdateTaskInput {
+        task_id,
+        estimated_work_minutes,
+        deadline_time,
+        category,
+    })
+}
+
+fn nullable_datetime_argument(
+    arguments: &Map<String, Value>,
+    field: &'static str,
+) -> Result<Option<Option<DateTime<Local>>>, ToolInputError> {
+    match arguments.get(field) {
+        None => Ok(None),
+        Some(Value::Null) => Ok(Some(None)),
+        Some(value) => {
+            let value = value.as_str().ok_or_else(|| {
+                ToolInputError::Schema(InvalidParams {
+                    field: field.to_string(),
+                    reason: "must be a string or null",
+                })
+            })?;
+            parse_local_datetime(value)
+                .map(|value| Some(Some(value)))
+                .map_err(|_| ToolInputError::Semantic {
+                    field,
+                    message: "must be a valid RFC 3339 date-time",
+                })
+        }
+    }
+}
+
+fn nullable_category_argument(
+    arguments: &Map<String, Value>,
+    field: &'static str,
+) -> Result<Option<Option<ProjectCategory>>, ToolInputError> {
+    match arguments.get(field) {
+        None => Ok(None),
+        Some(Value::Null) => Ok(Some(None)),
+        Some(Value::String(value)) => parse_mcp_category(value)
+            .map(|category| Some(Some(category)))
+            .ok_or_else(|| {
+                ToolInputError::Schema(InvalidParams {
+                    field: field.to_string(),
+                    reason: "must be a supported category or null",
+                })
+            }),
+        Some(_) => Err(ToolInputError::Schema(InvalidParams {
+            field: field.to_string(),
+            reason: "must be a supported category or null",
+        })),
+    }
+}
+
+fn parse_mcp_category(value: &str) -> Option<ProjectCategory> {
+    match value {
+        "earning" => Some(ProjectCategory::Earning),
+        "sustaining" => Some(ProjectCategory::Sustaining),
+        "recovery" => Some(ProjectCategory::Recovery),
+        "investment" => Some(ProjectCategory::Investment),
+        "consumption" => Some(ProjectCategory::Consumption),
+        _ => None,
+    }
 }
 
 fn complete_task_input(arguments: &Value) -> Result<CompleteTaskInput, ToolInputError> {
@@ -692,13 +841,14 @@ fn parse_category_filters(
     values
         .iter()
         .enumerate()
-        .map(|(index, value)| match value.as_str() {
-            None if value.is_null() => Ok(None),
-            Some("earning") => Ok(Some(ProjectCategory::Earning)),
-            Some("sustaining") => Ok(Some(ProjectCategory::Sustaining)),
-            Some("recovery") => Ok(Some(ProjectCategory::Recovery)),
-            Some("investment") => Ok(Some(ProjectCategory::Investment)),
-            Some("consumption") => Ok(Some(ProjectCategory::Consumption)),
+        .map(|(index, value)| match value {
+            Value::Null => Ok(None),
+            Value::String(value) => parse_mcp_category(value).map(Some).ok_or_else(|| {
+                ToolInputError::Schema(InvalidParams {
+                    field: format!("categories[{index}]"),
+                    reason: "must be a supported category or null",
+                })
+            }),
             _ => Err(ToolInputError::Schema(InvalidParams {
                 field: format!("categories[{index}]"),
                 reason: "must be a supported category or null",
