@@ -2,7 +2,7 @@ use chrono::{DateTime, Local};
 use fs2::FileExt;
 use std::error::Error;
 use std::fmt;
-use std::fs::{File, OpenOptions};
+use std::fs::File;
 use std::io::{Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 
@@ -106,13 +106,7 @@ pub struct StorageLock {
 impl StorageLock {
     pub fn acquire(storage_directory: &Path, mode: LockMode) -> Result<Self, StorageLockError> {
         let path = storage_directory.join(".lock");
-        let mut file = OpenOptions::new()
-            .create(true)
-            .truncate(false)
-            .read(true)
-            .write(true)
-            .open(&path)
-            .map_err(|error| StorageLockError::io(&path, error))?;
+        let mut file = open_lock_file(&path).map_err(|error| StorageLockError::io(&path, error))?;
 
         file.try_lock_exclusive()
             .map_err(|error| classify_lock_attempt_error(&path, error))?;
@@ -128,6 +122,34 @@ impl StorageLock {
     pub fn path(&self) -> &Path {
         &self.path
     }
+}
+
+#[cfg(unix)]
+fn open_lock_file(path: &Path) -> std::io::Result<File> {
+    use std::os::unix::fs::OpenOptionsExt;
+
+    let file = std::fs::OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .read(true)
+        .write(true)
+        .custom_flags(libc::O_NOFOLLOW)
+        .open(path)?;
+    if !file.metadata()?.file_type().is_file() {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            "storage lock path is not a regular file",
+        ));
+    }
+    Ok(file)
+}
+
+#[cfg(not(unix))]
+fn open_lock_file(_path: &Path) -> std::io::Result<File> {
+    Err(std::io::Error::new(
+        std::io::ErrorKind::Unsupported,
+        "storage locking is supported only on Unix platforms",
+    ))
 }
 
 fn classify_lock_attempt_error(path: &Path, source: std::io::Error) -> StorageLockError {

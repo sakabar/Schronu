@@ -22,6 +22,9 @@ webbrowser = { version = "0.8.9", features = ["hardened"] }
 yaml-rust = "0.4.5"
 fs2 = "0.4"
 
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
 [[bin]]
 name = "schronu"
 path = "src/adapter/controller/schronu.rs"
