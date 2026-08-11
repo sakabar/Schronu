@@ -120,6 +120,7 @@ function initialize_task(task_id, task_name) {
     }
 
     total_work_minutes_by_id[task_id] += work_minutes
+    last_work_line_by_id[task_id] = NR
 
     if (finish_flag != "F") {
         if (finish_datetime == "") {
@@ -143,6 +144,10 @@ function initialize_task(task_id, task_name) {
 END {
     for (i = 1; i <= task_id_count; i++) {
         task_id = task_ids[i]
+
+        if (total_work_minutes_by_id[task_id] > 1380) {
+            set_invalid(task_id, last_work_line_by_id[task_id], sprintf("働の分数が1380(23時間)を超えています: %s (%d分)", task_id, total_work_minutes_by_id[task_id]))
+        }
 
         if (defer_command_by_id[task_id] == "" && task_id in invalid_line_by_id) {
             printf("line %d: %s\n", invalid_line_by_id[task_id], invalid_message_by_id[task_id]) > "/dev/stderr"
