@@ -106,9 +106,11 @@ write toolの保存に失敗すると、memory上のrepositoryとfileの状態�
 
 ### CLIとの排他lock
 
-CLIとMCP serverは保存先直下の`.lock`へ同じOS advisory lockを取得します。CLIは起動中ずっとlockを保持します。MCP serverは`tools/call`ごとにlockを取得し、現在時刻への同期、repository load、tool実行、必要ならsave、response構築まで保持してから解放します。複数のMCP processはidle中に共存でき、storage操作だけがcall単位で直列化されます。`.lock`には`pid`、`started_at`、`mode`(`cli`または`mcp`)が記録され、MCPの`started_at`はそのcallがlockを取得した時刻です。
+CLIとMCP serverは保存先直下の`.lock`へ同じOS advisory lockを取得します。CLIは起動時のload、60秒ごとの再読込、command実行時だけlockを取得します。command実行時は現在時刻への同期、repository load、command実行、saveまで保持してから解放し、成功したcommandは即時保存します。MCP serverは`tools/call`ごとにlockを取得し、現在時刻への同期、repository load、tool実行、必要ならsave、response構築まで保持してから解放します。CLIと複数のMCP processはidle中に共存でき、storage操作だけが直列化されます。`.lock`には`pid`、`started_at`、`mode`(`cli`または`mcp`)が記録され、`started_at`はそのstorage操作がlockを取得した時刻です。
 
-CLIが稼働中のMCP call、または別のMCP callと競合したMCP callは、待機せず`repository_lock_contended`と`recovery: "retry"`を返します。CLIを終了した後、または競合中のcallが終わった後に再試行してください。`.lock` fileはprocess終了後も残りますが、fileの存在だけではlock中を意味しません。OS lockを取得できるかどうかで、実際のlock状態を判定します。取得成功時にmetadataは上書きされます。
+CLIはlock競合時に最大1秒、10ms間隔で取得を再試行します。timeoutしたcommandは実行も保存もせず、入力を保持するため、競合解消後にEnterで再試行できます。MCP callは競合時に待機せず`repository_lock_contended`と`recovery: "retry"`を返します。競合中のstorage操作が終わった後に再試行してください。`.lock` fileはprocess終了後も残りますが、fileの存在だけではlock中を意味しません。OS lockを取得できるかどうかで、実際のlock状態を判定します。取得成功時にmetadataは上書きされます。
+
+CLIのCtrl-Cは未送信の入力だけを破棄します。既に成功したcommandは保存済みであり、session全体をrollbackしません。CLI commandのsaveに失敗した場合は、memoryとfileの状態が一致している保証がないためCLIを終了します。保存先を確認・修復してからCLIを再起動してください。
 
 稼働中のprocessがある状態で`.lock`を削除すると、別inodeに新しいlockを作れて排他が破れる可能性があります。競合回避のために手動削除しないでください。異常終了後も、まず通常どおり再起動してOS lockが解放済みか確認してください。
 
