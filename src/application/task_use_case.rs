@@ -68,10 +68,6 @@ pub enum ApplicationError {
         reason: &'static str,
     },
     HasUndoneChildren(Uuid),
-    Repository {
-        operation: &'static str,
-        reason: String,
-    },
 }
 
 impl fmt::Display for ApplicationError {
@@ -83,9 +79,6 @@ impl fmt::Display for ApplicationError {
             }
             Self::HasUndoneChildren(task_id) => {
                 write!(formatter, "task has undone children: {task_id}")
-            }
-            Self::Repository { operation, reason } => {
-                write!(formatter, "repository {operation} failed: {reason}")
             }
         }
     }
@@ -154,12 +147,7 @@ pub fn create_task(
     }
 
     let task_id = root_task.get_id();
-    repository
-        .start_new_project(root_task)
-        .map_err(|error| ApplicationError::Repository {
-            operation: "start_new_project",
-            reason: error.reason,
-        })?;
+    repository.start_new_project(root_task);
     Ok(task_id)
 }
 
@@ -404,7 +392,6 @@ mod tests {
         now: DateTime<Local>,
         highest_priority_leaf_task_id: Option<Uuid>,
         save_count: Cell<usize>,
-        accepts_new_projects: bool,
     }
 
     impl TestTaskRepository {
@@ -414,7 +401,6 @@ mod tests {
                 now,
                 highest_priority_leaf_task_id: None,
                 save_count: Cell::new(0),
-                accepts_new_projects: true,
             }
         }
     }
@@ -430,8 +416,9 @@ mod tests {
 
         fn load(&mut self) {}
 
-        fn save(&self) {
+        fn save(&self) -> Result<(), crate::application::interface::TaskRepositoryError> {
             self.save_count.set(self.save_count.get() + 1);
+            Ok(())
         }
 
         fn sync_clock(&mut self, now: DateTime<Local>) {
@@ -458,18 +445,8 @@ mod tests {
             self.projects.iter().find_map(|task| task.get_by_id(id))
         }
 
-        fn start_new_project(
-            &mut self,
-            root_task: Task,
-        ) -> Result<(), crate::application::interface::TaskRepositoryError> {
-            if self.accepts_new_projects {
-                self.projects.push(root_task);
-                Ok(())
-            } else {
-                Err(crate::application::interface::TaskRepositoryError {
-                    reason: "test repository rejected project".to_string(),
-                })
-            }
+        fn start_new_project(&mut self, root_task: Task) {
+            self.projects.push(root_task);
         }
     }
 
@@ -549,24 +526,6 @@ mod tests {
         assert_eq!(task.get_orig_status(), Status::Pending);
         assert_eq!(task.get_pending_until(), pending_until);
         assert_eq!(repository.save_count.get(), 0);
-    }
-
-    #[test]
-    fn create_task_repositoryに追加できなければerrorを返す() {
-        let mut repository = TestTaskRepository::new(vec![], fixed_now());
-        repository.accepts_new_projects = false;
-
-        let actual = create_task(
-            &mut repository,
-            CreateTaskInput {
-                name: "追加失敗".to_string(),
-                estimated_work_minutes: Some(30),
-                pending_until: None,
-            },
-        );
-
-        assert!(actual.is_err());
-        assert!(repository.projects.is_empty());
     }
 
     #[test]

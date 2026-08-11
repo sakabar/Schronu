@@ -1,5 +1,7 @@
 use crate::adapter::gateway::yaml::yaml_to_task;
-use crate::application::interface::{TaskRepositoryError, TaskRepositoryTrait};
+use crate::application::interface::{
+    TaskRepositoryError, TaskRepositoryOperation, TaskRepositoryTrait,
+};
 use crate::entity::datetime::get_next_morning_datetime;
 use crate::entity::task::extract_leaf_tasks_from_project;
 use crate::entity::task::extract_leaf_tasks_from_project_with_pending;
@@ -13,7 +15,7 @@ use std::collections::HashMap;
 use std::fs;
 use std::fs::File;
 use std::io::prelude::*;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use uuid::Uuid;
 use walkdir::WalkDir;
 use yaml_rust::{Yaml, YamlEmitter, YamlLoader};
@@ -27,22 +29,22 @@ pub struct TaskRepository {
 
 struct Project {
     root_task: Task,
-    _project_dir_path: String,
-    project_yaml_file_path: String,
+    project_dir_path: PathBuf,
+    project_yaml_file_path: PathBuf,
     priority: i64,
 }
 
 impl Project {
     fn new(
         root_task: Task,
-        _project_dir_path: String,
-        project_yaml_file_path: String,
+        project_dir_path: impl Into<PathBuf>,
+        project_yaml_file_path: impl Into<PathBuf>,
         priority: i64,
     ) -> Self {
         Self {
             root_task,
-            _project_dir_path,
-            project_yaml_file_path,
+            project_dir_path: project_dir_path.into(),
+            project_yaml_file_path: project_yaml_file_path.into(),
             priority,
         }
     }
@@ -87,13 +89,12 @@ impl TaskRepositoryTrait for TaskRepository {
             .filter_map(|e| e.ok())
         {
             if entry.file_name() == "project.yaml" {
-                let project_yaml_file_path: String =
-                    entry.path().to_str().map(|s| s.to_string()).unwrap();
-                let project_dir_path: String = entry
+                let project_yaml_file_path = entry.path().to_path_buf();
+                let project_dir_path = entry
                     .path()
                     .parent()
-                    .and_then(|name| name.to_str().map(|s| s.to_string()))
-                    .unwrap();
+                    .expect("project.yaml must have a parent directory")
+                    .to_path_buf();
                 let mut file = File::open(entry.path()).unwrap();
                 let mut text = String::new();
                 file.read_to_string(&mut text).unwrap();
@@ -120,8 +121,24 @@ impl TaskRepositoryTrait for TaskRepository {
         }
     }
 
-    fn save(&self) {
+    fn save(&self) -> Result<(), TaskRepositoryError> {
         for project in self.projects.iter() {
+            fs::create_dir_all(&project.project_dir_path).map_err(|error| {
+                TaskRepositoryError::new(
+                    TaskRepositoryOperation::CreateDirectory,
+                    &project.project_dir_path,
+                    error,
+                )
+            })?;
+            let markdown_dir_path = project.project_dir_path.join("markdown");
+            fs::create_dir_all(&markdown_dir_path).map_err(|error| {
+                TaskRepositoryError::new(
+                    TaskRepositoryOperation::CreateDirectory,
+                    &markdown_dir_path,
+                    error,
+                )
+            })?;
+
             let root_task = &project.root_task;
             let task_yaml = task_to_yaml(root_task);
 
@@ -131,13 +148,32 @@ impl TaskRepositoryTrait for TaskRepository {
 
             let mut out_str = String::new();
             let mut emitter = YamlEmitter::new(&mut out_str);
-            emitter.dump(&doc).unwrap();
+            emitter.dump(&doc).map_err(|error| {
+                TaskRepositoryError::new(
+                    TaskRepositoryOperation::SerializeProject,
+                    &project.project_yaml_file_path,
+                    std::io::Error::new(std::io::ErrorKind::InvalidData, error),
+                )
+            })?;
 
             out_str += "\n";
 
-            let mut file = File::create(project.project_yaml_file_path.as_str()).unwrap();
-            file.write_all(out_str.as_bytes()).unwrap();
+            let mut file = File::create(&project.project_yaml_file_path).map_err(|error| {
+                TaskRepositoryError::new(
+                    TaskRepositoryOperation::CreateFile,
+                    &project.project_yaml_file_path,
+                    error,
+                )
+            })?;
+            file.write_all(out_str.as_bytes()).map_err(|error| {
+                TaskRepositoryError::new(
+                    TaskRepositoryOperation::WriteFile,
+                    &project.project_yaml_file_path,
+                    error,
+                )
+            })?;
         }
+        Ok(())
     }
 
     fn sync_clock(&mut self, now: DateTime<Local>) {
@@ -259,7 +295,7 @@ impl TaskRepositoryTrait for TaskRepository {
         None
     }
 
-    fn start_new_project(&mut self, root_task: Task) -> Result<(), TaskRepositoryError> {
+    fn start_new_project(&mut self, root_task: Task) {
         let project_name = root_task.get_name();
 
         let yyyymmdd = self.last_synced_time.format("%Y%m%d").to_string();
@@ -271,42 +307,18 @@ impl TaskRepositoryTrait for TaskRepository {
         let dir_name = format!("{}-{}", yyyymmdd, project_name_for_dir);
         let project_dir_path = Path::new(&self.project_storage_dir_name).join(dir_name);
 
-        // project_dirを実際に生成する
-        fs::create_dir_all(&project_dir_path).map_err(|error| TaskRepositoryError {
-            reason: error.to_string(),
-        })?;
-
-        let markdown_dir_path = &project_dir_path.join("markdown");
-        fs::create_dir_all(markdown_dir_path).map_err(|error| TaskRepositoryError {
-            reason: error.to_string(),
-        })?;
-
         let project_yaml_file_path = project_dir_path.join("project.yaml");
 
         let priority = root_task.get_priority();
-
-        let project_dir_path_str =
-            project_dir_path
-                .to_str()
-                .ok_or_else(|| TaskRepositoryError {
-                    reason: "project directory path is not valid UTF-8".to_string(),
-                })?;
-        let project_yaml_file_path_str =
-            project_yaml_file_path
-                .to_str()
-                .ok_or_else(|| TaskRepositoryError {
-                    reason: "project YAML path is not valid UTF-8".to_string(),
-                })?;
         let project = Project::new(
             root_task,
-            project_dir_path_str.to_string(),
-            project_yaml_file_path_str.to_string(),
+            project_dir_path,
+            project_yaml_file_path,
             priority,
         );
 
         self.cache_task_and_descendants(&project.root_task);
         self.projects.push(project);
-        Ok(())
     }
 }
 
@@ -331,12 +343,18 @@ mod tests {
         fn path_str(&self) -> &str {
             self.path.to_str().expect("test path must be valid UTF-8")
         }
+
+        fn project_dir_path(&self, date: &str, project_name: &str) -> PathBuf {
+            self.path.join(format!("{date}-{project_name}"))
+        }
     }
 
     impl Drop for TestStorageDir {
         fn drop(&mut self) {
-            if self.path.exists() {
+            if self.path.is_dir() {
                 fs::remove_dir_all(&self.path).expect("failed to remove test storage directory");
+            } else if self.path.exists() {
+                fs::remove_file(&self.path).expect("failed to remove test storage file");
             }
         }
     }
@@ -372,7 +390,7 @@ mod tests {
         let root_task = Task::new("メモリ登録対象");
         let root_task_id = root_task.get_id();
 
-        task_repository.start_new_project(root_task).unwrap();
+        task_repository.start_new_project(root_task);
 
         assert_eq!(
             task_repository.get_by_id(root_task_id).unwrap().get_name(),
@@ -387,11 +405,53 @@ mod tests {
         let mut task_repository = TaskRepository::new(storage_dir.path_str());
         task_repository.sync_clock(now);
 
-        task_repository
-            .start_new_project(Task::new("filesystem非変更対象"))
-            .unwrap();
+        task_repository.start_new_project(Task::new("filesystem非変更対象"));
 
         assert!(!storage_dir.path.exists());
+    }
+
+    #[test]
+    fn test_save_新規projectのdirectoryとyamlを作る() {
+        let storage_dir = TestStorageDir::new();
+        let now = Local.with_ymd_and_hms(2026, 8, 11, 12, 0, 0).unwrap();
+        let mut task_repository = TaskRepository::new(storage_dir.path_str());
+        task_repository.sync_clock(now);
+        let root_task = Task::new("保存対象");
+        let root_task_id = root_task.get_id();
+        task_repository.start_new_project(root_task);
+        let project_dir_path = storage_dir.project_dir_path("20260811", "保存対象");
+        let markdown_dir_path = project_dir_path.join("markdown");
+        let project_yaml_file_path = project_dir_path.join("project.yaml");
+
+        assert!(!storage_dir.path.exists());
+        task_repository.save().unwrap();
+
+        assert!(project_dir_path.is_dir());
+        assert!(markdown_dir_path.is_dir());
+        assert!(project_yaml_file_path.is_file());
+
+        let mut loaded_repository = TaskRepository::new(storage_dir.path_str());
+        loaded_repository.sync_clock(now);
+        loaded_repository.load();
+        let loaded_task = loaded_repository.get_by_id(root_task_id).unwrap();
+        assert_eq!(loaded_task.get_name(), "保存対象");
+    }
+
+    #[test]
+    fn test_save_directory作成失敗を型付きerrorで返す() {
+        let storage_dir = TestStorageDir::new();
+        fs::write(&storage_dir.path, b"not a directory").unwrap();
+        let now = Local.with_ymd_and_hms(2026, 8, 11, 12, 0, 0).unwrap();
+        let mut task_repository = TaskRepository::new(storage_dir.path_str());
+        task_repository.sync_clock(now);
+        task_repository.start_new_project(Task::new("保存失敗対象"));
+        let expected_project_dir = storage_dir.project_dir_path("20260811", "保存失敗対象");
+
+        let actual = task_repository.save().unwrap_err();
+
+        assert_eq!(actual.operation(), TaskRepositoryOperation::CreateDirectory);
+        assert_eq!(actual.path(), expected_project_dir.as_path());
+        assert!(actual.io_error().raw_os_error().is_some());
     }
 
     #[test]

@@ -8,6 +8,8 @@ use schronu::adapter::gateway::free_time_manager::FreeTimeManager;
 use schronu::adapter::gateway::task_repository::TaskRepository;
 use schronu::application::interface::FreeTimeManagerTrait;
 use schronu::application::interface::TaskRepositoryTrait;
+#[cfg(test)]
+use schronu::application::interface::{TaskRepositoryError, TaskRepositoryOperation};
 use schronu::application::task_use_case::{
     breakdown_task, complete_task, create_task, defer_task, get_focus, set_category, set_deadline,
     set_estimate, ApplicationError, BreakdownTaskInput, CompleteTaskInput, CreateTaskInput,
@@ -5013,6 +5015,7 @@ struct TestTaskRepository {
     highest_priority_leaf_task_id_opt: Option<Uuid>,
     defer_candidate_leaf_task_id_opt: Option<Uuid>,
     last_defer_candidate_recent_days_opt: Option<i64>,
+    save_should_fail: bool,
 }
 
 #[cfg(test)]
@@ -5060,6 +5063,7 @@ impl TestTaskRepository {
             highest_priority_leaf_task_id_opt: Some(task_id),
             defer_candidate_leaf_task_id_opt: Some(task_id),
             last_defer_candidate_recent_days_opt: None,
+            save_should_fail: false,
         }
     }
 }
@@ -5076,7 +5080,17 @@ impl TaskRepositoryTrait for TestTaskRepository {
 
     fn load(&mut self) {}
 
-    fn save(&self) {}
+    fn save(&self) -> Result<(), schronu::application::interface::TaskRepositoryError> {
+        if self.save_should_fail {
+            Err(TaskRepositoryError::new(
+                TaskRepositoryOperation::WriteFile,
+                "/test/project.yaml",
+                std::io::Error::new(std::io::ErrorKind::PermissionDenied, "test save failure"),
+            ))
+        } else {
+            Ok(())
+        }
+    }
 
     fn sync_clock(&mut self, now: DateTime<Local>) {
         self.last_synced_time = now;
@@ -5103,12 +5117,8 @@ impl TaskRepositoryTrait for TestTaskRepository {
         self.task.get_by_id(id)
     }
 
-    fn start_new_project(
-        &mut self,
-        root_task: Task,
-    ) -> Result<(), schronu::application::interface::TaskRepositoryError> {
+    fn start_new_project(&mut self, root_task: Task) {
         self.task = root_task;
-        Ok(())
     }
 }
 
@@ -7213,6 +7223,20 @@ fn render_prompt(stdout: &mut dyn SchronuWriter, header: &str, line: &str, curso
     stdout.flush().unwrap();
 }
 
+fn try_save_before_exit(
+    stdout: &mut dyn SchronuWriter,
+    task_repository: &dyn TaskRepositoryTrait,
+) -> bool {
+    match task_repository.save() {
+        Ok(()) => true,
+        Err(error) => {
+            writeln_newline(stdout, &format!("[Error] {error}")).unwrap();
+            stdout.flush().unwrap();
+            false
+        }
+    }
+}
+
 fn render_focused_task(
     stdout: &mut dyn SchronuWriter,
     task_repository: &dyn TaskRepositoryTrait,
@@ -7352,6 +7376,41 @@ fn test_render_prompt_日本語入力中のカーソル位置を復元する() {
     assert_eq!(actual, expected);
 }
 
+#[test]
+fn test_try_save_before_exit_保存成功なら終了可能にする() {
+    let now = Local.with_ymd_and_hms(2026, 8, 11, 12, 0, 0).unwrap();
+    let task_repository = TestTaskRepository::new(Task::new("保存対象"), now);
+    let mut stdout = TestWriter::new();
+
+    let actual = try_save_before_exit(&mut stdout, &task_repository);
+
+    assert!(actual);
+    assert_eq!(stdout.into_string(), "");
+}
+
+#[test]
+fn test_try_save_before_exit_保存失敗ならerrorを表示して終了を止める() {
+    let now = Local.with_ymd_and_hms(2026, 8, 11, 12, 0, 0).unwrap();
+    let task = Task::new("memoryに残すtask");
+    let task_id = task.get_id();
+    let mut task_repository = TestTaskRepository::new(task, now);
+    task_repository.save_should_fail = true;
+    let mut stdout = TestWriter::new();
+
+    let actual = try_save_before_exit(&mut stdout, &task_repository);
+
+    assert!(!actual);
+    assert_eq!(
+        task_repository.get_by_id(task_id).unwrap().get_name(),
+        "memoryに残すtask"
+    );
+    let output = stdout.into_string();
+    assert!(output.contains("[Error]"));
+    assert!(output.contains("WriteFile"));
+    assert!(output.contains("/test/project.yaml"));
+    assert!(output.contains("test save failure"));
+}
+
 fn application(
     task_repository: &mut dyn TaskRepositoryTrait,
     free_time_manager: &mut dyn FreeTimeManagerTrait,
@@ -7453,12 +7512,20 @@ fn application(
                 next_refresh_at = idle_refresh_deadline(Instant::now());
                 continue;
             }
-            Err(RecvTimeoutError::Disconnected) => break,
+            Err(RecvTimeoutError::Disconnected) => {
+                let _ = try_save_before_exit(&mut stdout, task_repository);
+                break;
+            }
         };
 
         match key {
             Key::Ctrl('d') => {
                 if line.is_empty() {
+                    if !try_save_before_exit(&mut stdout, task_repository) {
+                        render_prompt(&mut stdout, header, &line, cursor_x);
+                        continue;
+                    }
+
                     // 最後に、今後の忙しさ具合を表示する
                     let now = Local::now();
                     task_repository.sync_clock(now);
@@ -7823,9 +7890,6 @@ fn application(
 
     write!(stdout, "{}", termion::clear::CurrentLine).unwrap();
     println!("{}{}{}", style::Bold, line, style::Reset);
-
-    // 保存して終わり
-    task_repository.save();
 
     // SteadyBlockに戻す
     // Todo: 本当は、元々の状態を保存しておいてそれに戻したい。
