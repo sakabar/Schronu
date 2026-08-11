@@ -1171,6 +1171,81 @@ enum TaskListDisplayOrder {
     LowPriorityTail,
 }
 
+const DAILY_BAND_SECONDS_PER_SEGMENT: i64 = 15 * 60;
+const DAILY_BAND_SEGMENTS: usize = 24 * 4;
+const SECONDS_PER_DAY: i64 = 24 * 60 * 60;
+
+struct DailySummaryRow {
+    date: NaiveDate,
+    calendar_message: String,
+    band_message: String,
+}
+
+struct DailyBandDurations {
+    fixed_seconds: i64,
+    elapsed_seconds: i64,
+    repetitive_seconds: i64,
+    non_repetitive_seconds: i64,
+    rho_leeway_seconds: i64,
+}
+
+fn calculate_daily_band_durations(
+    is_today: bool,
+    full_day_free_minutes: i64,
+    remaining_free_minutes: i64,
+    total_work_seconds: i64,
+    repetitive_work_seconds: i64,
+    diff_to_goal_hours: f64,
+) -> DailyBandDurations {
+    DailyBandDurations {
+        fixed_seconds: (SECONDS_PER_DAY - full_day_free_minutes.max(0) * 60).max(0),
+        elapsed_seconds: if is_today {
+            (full_day_free_minutes - remaining_free_minutes).max(0) * 60
+        } else {
+            0
+        },
+        repetitive_seconds: repetitive_work_seconds.max(0),
+        non_repetitive_seconds: (total_work_seconds - repetitive_work_seconds).max(0),
+        rho_leeway_seconds: (-diff_to_goal_hours * 3600.0).max(0.0).round() as i64,
+    }
+}
+
+fn round_daily_band_segment_count(seconds: i64) -> usize {
+    let non_negative_seconds = seconds.max(0);
+    ((non_negative_seconds.saturating_add(DAILY_BAND_SECONDS_PER_SEGMENT / 2))
+        / DAILY_BAND_SECONDS_PER_SEGMENT) as usize
+}
+
+fn format_daily_band(date: NaiveDate, weekday_jp: &str, durations: &DailyBandDurations) -> String {
+    let categories = [
+        ('#', durations.fixed_seconds.max(0)),
+        ('x', durations.elapsed_seconds.max(0)),
+        ('=', durations.repetitive_seconds.max(0)),
+        ('-', durations.non_repetitive_seconds.max(0)),
+        (':', durations.rho_leeway_seconds.max(0)),
+    ];
+    let used_seconds = categories
+        .iter()
+        .fold(0_i64, |sum, (_, seconds)| sum.saturating_add(*seconds));
+    let empty_seconds = SECONDS_PER_DAY.saturating_sub(used_seconds);
+    let overflow_seconds = used_seconds.saturating_sub(SECONDS_PER_DAY);
+
+    let mut bar = String::with_capacity(DAILY_BAND_SEGMENTS);
+    let mut cumulative_seconds = 0_i64;
+    let mut previous_boundary = 0_usize;
+
+    for (symbol, seconds) in categories.into_iter().chain([('.', empty_seconds)]) {
+        cumulative_seconds = cumulative_seconds.saturating_add(seconds);
+        let boundary = round_daily_band_segment_count(cumulative_seconds.min(SECONDS_PER_DAY))
+            .min(DAILY_BAND_SEGMENTS);
+        bar.extend(std::iter::repeat(symbol).take(boundary - previous_boundary));
+        previous_boundary = boundary;
+    }
+
+    let overflow = ">".repeat(round_daily_band_segment_count(overflow_seconds));
+    format!("{}({}) [{}]{}", date, weekday_jp, bar, overflow)
+}
+
 #[derive(Clone)]
 struct TaskListDisplayRow {
     scheduled_start: DateTime<Local>,
@@ -1390,18 +1465,30 @@ fn calculate_free_time_minutes_for_subjective_date(
             free_time_manager.get_free_minutes(&last_synced_time, &eod)
         }
     } else {
-        let local_tz = Local::now().timezone();
-        let start = get_next_morning_datetime(
-            local_tz
-                .from_local_datetime(&date.and_hms_opt(0, 0, 0).unwrap())
-                .unwrap(),
-        );
-        let end = local_tz
-            .from_local_datetime(&date.and_hms_opt(23, 59, 59).unwrap())
-            .unwrap()
-            + eod_duration;
-        free_time_manager.get_free_minutes(&start, &end)
+        calculate_full_day_free_time_minutes_for_subjective_date(
+            date,
+            eod_duration,
+            free_time_manager,
+        )
     }
+}
+
+fn calculate_full_day_free_time_minutes_for_subjective_date(
+    date: &NaiveDate,
+    eod_duration: Duration,
+    free_time_manager: &mut dyn FreeTimeManagerTrait,
+) -> i64 {
+    let local_tz = Local::now().timezone();
+    let start = get_next_morning_datetime(
+        local_tz
+            .from_local_datetime(&date.and_hms_opt(0, 0, 0).unwrap())
+            .unwrap(),
+    );
+    let end = local_tz
+        .from_local_datetime(&date.and_hms_opt(23, 59, 59).unwrap())
+        .unwrap()
+        + eod_duration;
+    free_time_manager.get_free_minutes(&start, &end)
 }
 
 fn calculate_project_category_denominator_seconds(
@@ -1914,6 +2001,12 @@ fn execute_show_all_tasks(
         pattern == "暦" || pattern == "calendar" || pattern == "cal"
     });
 
+    let is_band_func = pattern_opt
+        .as_ref()
+        .map_or(false, |pattern| pattern == "帯" || pattern == "band");
+
+    let is_daily_summary_func = is_calendar_func || is_band_func;
+
     let is_flatten_func = pattern_opt.as_ref().map_or(false, |pattern| {
         pattern == "平" || pattern == "flatten" || pattern == "flat"
     });
@@ -1953,12 +2046,17 @@ fn execute_show_all_tasks(
 
         // 「今」「明」コマンドの場合は未来の情報には興味がないので、スキップする
         if let Some(pattern) = pattern_opt {
-            if pattern == "今" || pattern == "明" || pattern == "近" || pattern == "暦" {
+            if pattern == "今"
+                || pattern == "明"
+                || pattern == "近"
+                || pattern == "暦"
+                || pattern == "帯"
+            {
                 let valid_days = if pattern == "今" {
                     0
                 } else if pattern == "明" || pattern == "近" {
                     1
-                } else if pattern == "暦" {
+                } else if pattern == "暦" || pattern == "帯" {
                     SUMMARY_DAYS as i64
                 } else {
                     // 事前にif文で囲ってあるので、通常はこのケースに入ることはない
@@ -2247,7 +2345,7 @@ fn execute_show_all_tasks(
                         {
                             task_list_display_rows.push(task_list_display_row.clone());
                         }
-                    } else if is_calendar_func || is_flatten_func {
+                    } else if is_daily_summary_func || is_flatten_func {
                         // カレンダー表示機能を使う時には、タスク一覧は表示しない。
                     } else if pattern == "今" {
                         if get_next_morning_datetime(*scheduled_start)
@@ -2491,7 +2589,7 @@ fn execute_show_all_tasks(
     let mut counter_arr: Vec<(&NaiveDate, &usize)> = counter.iter().collect();
     counter_arr.sort_by(|a, b| a.0.cmp(b.0));
 
-    let mut daily_stat_msgs: Vec<String> = vec![];
+    let mut daily_summary_rows: Vec<DailySummaryRow> = vec![];
     let mut shortage_duration_by_date: HashMap<NaiveDate, Duration> = HashMap::new();
 
     // 順調フラグ
@@ -2561,6 +2659,15 @@ fn execute_show_all_tasks(
             eod_duration,
             free_time_manager,
         );
+        let full_day_free_time_minutes_opt = if is_band_func {
+            Some(calculate_full_day_free_time_minutes_for_subjective_date(
+                date,
+                eod_duration,
+                free_time_manager,
+            ))
+        } else {
+            None
+        };
 
         let free_time_hours = free_time_minutes as f64 / 60.0;
         let rho_in_date = total_estimated_work_hours_of_the_date / free_time_hours;
@@ -2613,7 +2720,7 @@ fn execute_show_all_tasks(
         }
         shortage_duration_by_date.insert(**date, accumulate_duration_diff_to_limit);
 
-        if !daily_stat_msgs.is_empty()
+        if !daily_summary_rows.is_empty()
             && accumulate_duration_diff_to_limit < Duration::seconds(0)
             && **date < first_caught_up_date
         {
@@ -2700,7 +2807,7 @@ fn execute_show_all_tasks(
                 * 60.0)
                 .floor() as i64;
 
-        if !daily_stat_msgs.is_empty()
+        if !daily_summary_rows.is_empty()
             && accumulated_rho_diff.is_finite()
             && accumulated_rho_diff > max_accumulated_rho_diff
         {
@@ -2745,29 +2852,35 @@ fn execute_show_all_tasks(
         );
 
         // 順調フラグ確認
-        if daily_stat_msgs.is_empty() {
+        if daily_summary_rows.is_empty() {
             has_today_deadline_leeway = deadline_rest_sign == '-';
             has_today_freetime_leeway = diff_to_limit_in_day_sign == '-';
             has_today_new_task_leeway = diff_to_goal_sign == '-';
         }
 
-        if daily_stat_msgs.len() == 1 {
+        if daily_summary_rows.len() == 1 {
             has_tomorrow_deadline_leeway = deadline_rest_sign == '-';
             has_tomorrow_freetime_leeway = diff_to_limit_in_day_sign == '-';
         }
 
         // 一度フラグが折れていたら復活させない
         // 今日と明日については個別にアラートを出すので、判定はそれ以降について行う。
-        if 2 <= daily_stat_msgs.len() && daily_stat_msgs.len() < 7 && has_weekly_deadline_leeway {
+        if 2 <= daily_summary_rows.len()
+            && daily_summary_rows.len() < 7
+            && has_weekly_deadline_leeway
+        {
             has_weekly_deadline_leeway = deadline_rest_sign == '-';
         }
 
-        if 2 <= daily_stat_msgs.len() && daily_stat_msgs.len() < 7 && has_weekly_freetime_leeway {
+        if 2 <= daily_summary_rows.len()
+            && daily_summary_rows.len() < 7
+            && has_weekly_freetime_leeway
+        {
             has_weekly_freetime_leeway = diff_to_limit_sign == '-';
         }
 
         // 今日より前には前倒せないため
-        let adjustable_estimated_work_hours = if daily_stat_msgs.is_empty() {
+        let adjustable_estimated_work_hours = if daily_summary_rows.is_empty() {
             0.0
         } else {
             *adjustable_estimated_work_seconds_map
@@ -2813,10 +2926,30 @@ fn execute_show_all_tasks(
             cnt_of_the_date,
         );
 
-        daily_stat_msgs.push(s);
+        let band_message =
+            full_day_free_time_minutes_opt.map_or_else(String::new, |full_minutes| {
+                format_daily_band(
+                    **date,
+                    weekday_jp,
+                    &calculate_daily_band_durations(
+                        **date == naive_dt_today,
+                        full_minutes,
+                        free_time_minutes,
+                        total_estimated_work_seconds_of_the_date,
+                        total_repetitive_task_work_seconds_of_the_date,
+                        diff_to_goal,
+                    ),
+                )
+            });
+
+        daily_summary_rows.push(DailySummaryRow {
+            date: **date,
+            calendar_message: s,
+            band_message,
+        });
     }
 
-    if !is_calendar_func && !is_flatten_func {
+    if !is_daily_summary_func && !is_flatten_func {
         mark_give_up_candidate_rows_by_date(
             &mut task_list_display_rows,
             &shortage_duration_by_date,
@@ -2825,7 +2958,7 @@ fn execute_show_all_tasks(
 
     sort_task_list_display_rows(&mut task_list_display_rows, display_order);
 
-    if !is_calendar_func && !is_flatten_func {
+    if !is_daily_summary_func && !is_flatten_func {
         for row in task_list_display_rows.iter() {
             *focused_task_id_opt = Some(row.id);
             writeln_newline(stdout, &row.render_message()).unwrap();
@@ -2853,13 +2986,13 @@ fn execute_show_all_tasks(
     }
 
     // 逆順にして、下側に直近の日付があるようにする
-    daily_stat_msgs.reverse();
+    daily_summary_rows.reverse();
 
     if is_calendar_func && !is_flatten_func {
-        for (cal_ind, s) in daily_stat_msgs.iter().enumerate() {
-            writeln_newline(stdout, s).unwrap();
+        for (cal_ind, row) in daily_summary_rows.iter().enumerate() {
+            writeln_newline(stdout, &row.calendar_message).unwrap();
 
-            if s.contains("(月)") && cal_ind != daily_stat_msgs.len() - 1 {
+            if row.calendar_message.contains("(月)") && cal_ind != daily_summary_rows.len() - 1 {
                 writeln_newline(stdout, "").unwrap();
             }
         }
@@ -2965,9 +3098,23 @@ fn execute_show_all_tasks(
         }
 
         writeln_newline(stdout, "").unwrap();
+    } else if is_band_func && !is_flatten_func {
+        writeln_newline(
+            stdout,
+            "凡例: # 固定  x 経過済み  = 繰返  - 単発  : 余差  . 空き  > 超過  (1文字=15分)",
+        )
+        .unwrap();
+
+        for (band_ind, row) in daily_summary_rows.iter().enumerate() {
+            writeln_newline(stdout, &row.band_message).unwrap();
+
+            if row.date.weekday() == Weekday::Mon && band_ind != daily_summary_rows.len() - 1 {
+                writeln_newline(stdout, "").unwrap();
+            }
+        }
     }
 
-    if !is_flatten_func {
+    if !is_flatten_func && !is_band_func {
         writeln_newline(stdout, &busy_s).unwrap();
         writeln_newline(stdout, &s).unwrap();
         writeln_newline(stdout, &s_for_rho1).unwrap();
@@ -5493,6 +5640,17 @@ fn execute(
                 TaskListDisplayOrder::ScheduledStartDesc,
             );
         }
+        "帯" | "band" => {
+            let pattern_opt = Some("帯".to_string());
+            execute_show_all_tasks(
+                stdout,
+                focused_task_id_opt,
+                task_repository,
+                free_time_manager,
+                &pattern_opt,
+                TaskListDisplayOrder::ScheduledStartDesc,
+            );
+        }
         "見" | "focus" | "fc" => {
             if tokens.len() >= 2 {
                 let new_task_id_str = &tokens[1];
@@ -6145,6 +6303,107 @@ fn test_execute_calendar_現行出力を固定する() {
 }
 
 #[test]
+fn test_format_daily_band_累積境界で端数を丸めて96文字にする() {
+    let date = NaiveDate::from_ymd_opt(2026, 8, 15).unwrap();
+    let actual = format_daily_band(
+        date,
+        "土",
+        &DailyBandDurations {
+            fixed_seconds: 450 * 60,
+            elapsed_seconds: 0,
+            repetitive_seconds: 855 * 60,
+            non_repetitive_seconds: 71 * 60,
+            rho_leeway_seconds: 24 * 60,
+        },
+    );
+    let expected = format!(
+        "2026-08-15(土) [{}{}{}{}{}]",
+        "#".repeat(30),
+        "=".repeat(57),
+        "-".repeat(5),
+        ":",
+        ".".repeat(3),
+    );
+
+    assert_eq!(actual, expected);
+}
+
+#[test]
+fn test_calculate_daily_band_durations_経過した空き時間を当日だけ計上する() {
+    let today = calculate_daily_band_durations(true, 990, 190, 60 * 60, 40 * 60, -1.0);
+    let future = calculate_daily_band_durations(false, 990, 990, 60 * 60, 40 * 60, -1.0);
+
+    assert_eq!(today.fixed_seconds, 450 * 60);
+    assert_eq!(today.elapsed_seconds, 800 * 60);
+    assert_eq!(today.repetitive_seconds, 40 * 60);
+    assert_eq!(today.non_repetitive_seconds, 20 * 60);
+    assert_eq!(today.rho_leeway_seconds, 60 * 60);
+    assert_eq!(future.elapsed_seconds, 0);
+}
+
+#[test]
+fn test_format_daily_band_当日経過と24時間超過を表示する() {
+    let date = NaiveDate::from_ymd_opt(2026, 8, 11).unwrap();
+    let actual = format_daily_band(
+        date,
+        "火",
+        &DailyBandDurations {
+            fixed_seconds: 450 * 60,
+            elapsed_seconds: 800 * 60,
+            repetitive_seconds: 476 * 60,
+            non_repetitive_seconds: 40 * 60,
+            rho_leeway_seconds: 0,
+        },
+    );
+    let expected = format!(
+        "2026-08-11(火) [{}{}{}]{}",
+        "#".repeat(30),
+        "x".repeat(53),
+        "=".repeat(13),
+        ">".repeat(22),
+    );
+
+    assert_eq!(actual, expected);
+}
+
+#[test]
+fn test_execute_band_日本語と英語で凡例と棒だけを表示する() {
+    let now = Local.with_ymd_and_hms(2026, 8, 11, 12, 0, 0).unwrap();
+    let task = Task::new("帯出力固定用タスク");
+    task.set_estimated_work_seconds(60 * 60);
+    task.set_start_time(now);
+    task.set_pending_until(now);
+    task.set_orig_status(Status::Pending);
+
+    let japanese = execute_calendar_command_for_test("帯", now, task.clone(), 10 * 60);
+    let english = execute_calendar_command_for_test("band", now, task, 10 * 60);
+    let expected = format!(
+        concat!(
+            "凡例: # 固定  x 経過済み  = 繰返  - 単発  : 余差  . 空き  > 超過  (1文字=15分)\n",
+            "2026-08-11(火) [{}{}{}{}]\n",
+            "\n",
+        ),
+        "#".repeat(56),
+        "-".repeat(4),
+        ":".repeat(24),
+        ".".repeat(12),
+    );
+
+    assert_eq!(japanese, expected);
+    assert_eq!(english, expected);
+    assert!(!japanese.contains("日          "));
+    assert!(!japanese.contains("残り拘束時間"));
+    assert!(!japanese.contains("帯出力固定用タスク"));
+}
+
+#[test]
+fn test_should_suppress_leaf_tasks_after_command_帯とbandでは葉を追加表示しない() {
+    assert!(should_suppress_leaf_tasks_after_command("帯"));
+    assert!(should_suppress_leaf_tasks_after_command("band"));
+    assert!(!should_suppress_leaf_tasks_after_command("見"));
+}
+
+#[test]
 fn test_execute_show_all_年なし日付は完全日付と同じ予定を表示する() {
     let now = Local.with_ymd_and_hms(2026, 8, 11, 12, 0, 0).unwrap();
     let scheduled_start = Local.with_ymd_and_hms(2026, 9, 26, 6, 0, 0).unwrap();
@@ -6786,6 +7045,28 @@ fn render_interactive_screen(
     );
 }
 
+fn should_suppress_leaf_tasks_after_command(line: &str) -> bool {
+    matches!(
+        line.chars().next(),
+        Some('新')
+            | Some('突')
+            | Some('全')
+            | Some('尾')
+            | Some('今')
+            | Some('明')
+            | Some('近')
+            | Some('週')
+            | Some('末')
+            | Some('翌')
+            | Some('暦')
+            | Some('帯')
+            | Some('平')
+            | Some('葉')
+            | Some('樹')
+            | Some('清')
+    ) || line.split_whitespace().next() == Some("band")
+}
+
 #[test]
 fn test_idle_refresh_deadline_現在時刻の60秒後を返す() {
     let now = Instant::now();
@@ -7367,23 +7648,7 @@ fn application(
 
                 // スクロールするのが面倒なので、新や突のように付加情報を表示するコマンドの直後は葉を表示しない
                 // Todo: "new" や  "unplanned" の場合にも対応する
-                let fst_char_opt = line.chars().next();
-                if fst_char_opt != Some('新')
-                    && fst_char_opt != Some('突')
-                    && fst_char_opt != Some('全')
-                    && fst_char_opt != Some('尾')
-                    && fst_char_opt != Some('今')
-                    && fst_char_opt != Some('明')
-                    && fst_char_opt != Some('近')
-                    && fst_char_opt != Some('週')
-                    && fst_char_opt != Some('末')
-                    && fst_char_opt != Some('翌')
-                    && fst_char_opt != Some('暦')
-                    && fst_char_opt != Some('平')
-                    && fst_char_opt != Some('葉')
-                    && fst_char_opt != Some('樹')
-                    && fst_char_opt != Some('清')
-                {
+                if !should_suppress_leaf_tasks_after_command(&line) {
                     execute_show_leaf_tasks(&mut stdout, task_repository, free_time_manager);
                 }
 
