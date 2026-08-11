@@ -188,6 +188,7 @@ mod tests {
         }
     }
 
+    #[cfg(unix)]
     #[test]
     fn storage_lock_最初の取得が成功しmetadataを記録する() {
         let directory = TestDir::new();
@@ -200,6 +201,7 @@ mod tests {
         assert!(metadata.contains("started_at="));
     }
 
+    #[cfg(unix)]
     #[test]
     fn storage_lock_同じ保存先の二重取得を拒否する() {
         let directory = TestDir::new();
@@ -211,6 +213,7 @@ mod tests {
         assert!(error.holder_metadata().unwrap().contains("mode=cli"));
     }
 
+    #[cfg(unix)]
     #[test]
     fn storage_lock_guard_drop後に再取得できる() {
         let directory = TestDir::new();
@@ -222,6 +225,55 @@ mod tests {
         assert!(second.is_ok());
     }
 
+    #[cfg(unix)]
+    #[test]
+    fn storage_lock_symlinkの参照先を変更せずio_errorで拒否する() {
+        use std::os::unix::fs::{symlink, PermissionsExt};
+
+        let directory = TestDir::new();
+        let sentinel = directory.path().join("project.yaml");
+        let lock_path = directory.path().join(".lock");
+        let sentinel_content = b"task: unchanged\n";
+        fs::write(&sentinel, sentinel_content).unwrap();
+        fs::set_permissions(&sentinel, fs::Permissions::from_mode(0o640)).unwrap();
+        let original_metadata = fs::metadata(&sentinel).unwrap();
+        symlink(&sentinel, &lock_path).unwrap();
+
+        let result = StorageLock::acquire(directory.path(), LockMode::Mcp);
+
+        assert!(result.is_err(), "symlinkのlock fileは拒否する");
+        let error = result.unwrap_err();
+        assert_eq!(error.kind(), StorageLockErrorKind::Io);
+        assert_eq!(error.path(), lock_path);
+        assert!(std::error::Error::source(&error).is_some());
+        assert_eq!(fs::read(&sentinel).unwrap(), sentinel_content);
+        let current_metadata = fs::metadata(&sentinel).unwrap();
+        assert_eq!(current_metadata.len(), original_metadata.len());
+        assert_eq!(
+            current_metadata.permissions().mode(),
+            original_metadata.permissions().mode()
+        );
+        assert!(fs::symlink_metadata(&lock_path)
+            .unwrap()
+            .file_type()
+            .is_symlink());
+        assert_eq!(fs::read_link(lock_path).unwrap(), sentinel);
+    }
+
+    #[cfg(not(unix))]
+    #[test]
+    fn storage_lock_unix以外ではunsupportedのio_errorで拒否する() {
+        let directory = TestDir::new();
+        let lock_path = directory.path().join(".lock");
+
+        let error = StorageLock::acquire(directory.path(), LockMode::Cli).unwrap_err();
+
+        assert_eq!(error.kind(), StorageLockErrorKind::Io);
+        assert_eq!(error.path(), lock_path);
+        assert_eq!(source_kind(&error), ErrorKind::Unsupported);
+    }
+
+    #[cfg(unix)]
     #[test]
     fn storage_lock_競合時に保存先の実データを変更しない() {
         let directory = TestDir::new();

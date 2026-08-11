@@ -1,3 +1,5 @@
+#![cfg(unix)]
+
 use chrono::{Local, Timelike};
 use schronu::adapter::gateway::storage_lock::{LockMode, StorageLock, StorageLockErrorKind};
 use serde_json::{json, Value};
