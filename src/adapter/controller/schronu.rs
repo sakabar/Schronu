@@ -111,6 +111,93 @@ fn get_weekday_jp(date: &NaiveDate) -> &str {
     }
 }
 
+fn resolve_upcoming_mmdd(mmdd: &str, now: DateTime<Local>) -> Option<LocalResult<DateTime<Local>>> {
+    let mmdd_reg = Regex::new(r"^(\d{1,2})/(\d{1,2})$").unwrap();
+    let caps = mmdd_reg.captures(mmdd)?;
+    let month: u32 = caps[1].parse().ok()?;
+    let day: u32 = caps[2].parse().ok()?;
+
+    let schronu_day_start = |year| match Local.with_ymd_and_hms(year, month, day, 12, 0, 0) {
+        LocalResult::Single(datetime) => {
+            LocalResult::Single(get_next_morning_datetime(datetime) - Duration::days(1))
+        }
+        LocalResult::Ambiguous(earliest, latest) => LocalResult::Ambiguous(
+            get_next_morning_datetime(earliest) - Duration::days(1),
+            get_next_morning_datetime(latest) - Duration::days(1),
+        ),
+        LocalResult::None => LocalResult::None,
+    };
+
+    Some(match schronu_day_start(now.year()) {
+        LocalResult::Single(datetime) if datetime < now => schronu_day_start(now.year() + 1),
+        result => result,
+    })
+}
+
+fn resolve_show_all_pattern(pattern: &str, now: DateTime<Local>) -> String {
+    match resolve_upcoming_mmdd(pattern, now) {
+        Some(LocalResult::Single(datetime)) => datetime.format("%Y/%m/%d").to_string(),
+        _ => pattern.to_string(),
+    }
+}
+
+#[test]
+fn test_resolve_upcoming_mmdd_未来の日付は現在年を使う() {
+    let now = Local.with_ymd_and_hms(2026, 8, 11, 12, 0, 0).unwrap();
+    let target_date = Local.with_ymd_and_hms(2026, 9, 26, 12, 0, 0).unwrap();
+    let expected = get_next_morning_datetime(target_date) - Duration::days(1);
+
+    assert_eq!(
+        resolve_upcoming_mmdd("9/26", now),
+        Some(LocalResult::Single(expected))
+    );
+}
+
+#[test]
+fn test_resolve_upcoming_mmdd_過去の日付は翌年を使う() {
+    let now = Local.with_ymd_and_hms(2026, 10, 1, 12, 0, 0).unwrap();
+    let target_date = Local.with_ymd_and_hms(2027, 9, 26, 12, 0, 0).unwrap();
+    let expected = get_next_morning_datetime(target_date) - Duration::days(1);
+
+    assert_eq!(
+        resolve_upcoming_mmdd("09/26", now),
+        Some(LocalResult::Single(expected))
+    );
+}
+
+#[test]
+fn test_resolve_upcoming_mmdd_当日の境界時刻は現在年を使う() {
+    let target_date = Local.with_ymd_and_hms(2026, 9, 26, 12, 0, 0).unwrap();
+    let now = get_next_morning_datetime(target_date) - Duration::days(1);
+
+    assert_eq!(
+        resolve_upcoming_mmdd("9/26", now),
+        Some(LocalResult::Single(now))
+    );
+}
+
+#[test]
+fn test_resolve_show_all_pattern_年なし日付を完全日付へ変換する() {
+    let now = Local.with_ymd_and_hms(2026, 8, 11, 12, 0, 0).unwrap();
+
+    assert_eq!(resolve_show_all_pattern("9/26", now), "2026/09/26");
+}
+
+#[test]
+fn test_resolve_show_all_pattern_過ぎた日付は翌年へ変換する() {
+    let now = Local.with_ymd_and_hms(2026, 10, 1, 12, 0, 0).unwrap();
+
+    assert_eq!(resolve_show_all_pattern("9/26", now), "2027/09/26");
+}
+
+#[test]
+fn test_resolve_show_all_pattern_完全日付と検索語は変更しない() {
+    let now = Local.with_ymd_and_hms(2026, 8, 11, 12, 0, 0).unwrap();
+
+    assert_eq!(resolve_show_all_pattern("2026/09/26", now), "2026/09/26");
+    assert_eq!(resolve_show_all_pattern("タスク", now), "タスク");
+}
+
 fn get_adjustable_prefix_label(
     task: &Task,
     dt: DateTime<Local>,
@@ -5776,7 +5863,10 @@ fn execute(
         }
         "全" | "all" => {
             let pattern_opt = if tokens.len() >= 2 {
-                Some(tokens[1].to_string())
+                Some(resolve_show_all_pattern(
+                    tokens[1],
+                    task_repository.get_last_synced_time(),
+                ))
             } else {
                 None
             };
@@ -6127,7 +6217,6 @@ fn execute(
                 );
             } else if tokens.len() == 2 {
                 let yyyymmdd_reg = Regex::new(r"^\d{4}/\d{2}/\d{2}$").unwrap();
-                let mmdd_reg = Regex::new(r"^(\d{1,2})/(\d{1,2})$").unwrap();
                 let hhmm_reg = Regex::new(r"^(\d{1,2}):(\d{1,2})$").unwrap();
 
                 if yyyymmdd_reg.is_match(tokens[1]) {
@@ -6155,29 +6244,10 @@ fn execute(
                             // pass
                         }
                     }
-                } else if mmdd_reg.is_match(tokens[1]) {
-                    // 年なしの日付が指定された場合は未来方向でその日付に合致する日付に送る
+                } else if let Some(LocalResult::Single(defer_dst_time)) =
+                    resolve_upcoming_mmdd(tokens[1], task_repository.get_last_synced_time())
+                {
                     let now: DateTime<Local> = task_repository.get_last_synced_time();
-
-                    let caps = mmdd_reg.captures(tokens[1]).unwrap();
-                    let mm: u32 = caps[1].parse().unwrap();
-                    let dd: u32 = caps[2].parse().unwrap();
-
-                    let defer_dst_date = Local
-                        .with_ymd_and_hms(now.year(), mm, dd, 12, 0, 0)
-                        .unwrap();
-
-                    let mut defer_dst_time =
-                        get_next_morning_datetime(defer_dst_date) - Duration::days(1);
-
-                    if defer_dst_time < now {
-                        defer_dst_time = get_next_morning_datetime(
-                            Local
-                                .with_ymd_and_hms(now.year() + 1, mm, dd, 12, 0, 0)
-                                .unwrap(),
-                        ) - Duration::days(1);
-                    }
-
                     let seconds = (defer_dst_time - now).num_seconds() + 1;
 
                     if seconds > 0 {
@@ -6441,6 +6511,59 @@ fn execute(
     }
 
     stdout.flush().unwrap();
+}
+
+#[cfg(test)]
+fn execute_show_all_command_for_test(command: &str, now: DateTime<Local>, task: Task) -> String {
+    let mut task_repository = TestTaskRepository::new(task, now);
+    let mut free_time_manager = TestFreeTimeManager;
+    let mut focused_task_id_opt = None;
+    let mut stdout = TestWriter::new();
+
+    execute(
+        &mut stdout,
+        &mut task_repository,
+        &mut free_time_manager,
+        &mut focused_task_id_opt,
+        &now,
+        command,
+    );
+
+    String::from_utf8(stdout.buffer).unwrap()
+}
+
+#[test]
+fn test_execute_show_all_年なし日付は完全日付と同じ予定を表示する() {
+    let now = Local.with_ymd_and_hms(2026, 8, 11, 12, 0, 0).unwrap();
+    let scheduled_start = Local.with_ymd_and_hms(2026, 9, 26, 6, 0, 0).unwrap();
+    let task = Task::new("TARGET_DATE_TASK");
+    task.set_start_time(scheduled_start);
+    task.set_pending_until(scheduled_start);
+    task.set_orig_status(Status::Pending);
+
+    let abbreviated = execute_show_all_command_for_test("全 9/26", now, task.clone());
+    let full = execute_show_all_command_for_test("全 2026/09/26", now, task.clone());
+    let other_date = execute_show_all_command_for_test("全 9/27", now, task);
+
+    assert_eq!(abbreviated, full);
+    assert!(abbreviated.contains("TARGET_DATE_TASK"));
+    assert!(!other_date.contains("TARGET_DATE_TASK"));
+}
+
+#[test]
+fn test_execute_show_all_過ぎた年なし日付は翌年の予定を表示する() {
+    let now = Local.with_ymd_and_hms(2026, 10, 1, 12, 0, 0).unwrap();
+    let scheduled_start = Local.with_ymd_and_hms(2027, 9, 26, 6, 0, 0).unwrap();
+    let task = Task::new("TARGET_DATE_TASK");
+    task.set_start_time(scheduled_start);
+    task.set_pending_until(scheduled_start);
+    task.set_orig_status(Status::Pending);
+
+    let abbreviated = execute_show_all_command_for_test("all 9/26", now, task.clone());
+    let full = execute_show_all_command_for_test("all 2027/09/26", now, task);
+
+    assert_eq!(abbreviated, full);
+    assert!(abbreviated.contains("TARGET_DATE_TASK"));
 }
 
 // 削除できない時はNoneを返す。例えば、文字列が空の時
