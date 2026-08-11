@@ -3449,7 +3449,7 @@ mod tests {
     }
 
     #[test]
-    fn create_task_schema違反ではrepositoryへ到達しない() {
+    fn create_task_schema違反ではtaskを作成せずsaveもしない() {
         let cases = [
             ("missing-name", json!({}), "name"),
             ("name-type", json!({"name": 1}), "name"),
