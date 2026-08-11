@@ -77,9 +77,7 @@ function initialize_task(task_id, task_name) {
     }
 
     if (task_id == "" && task_name != "") {
-        printf("新 %s\n", task_name)
-        printf("下 スプレッドシートで仮登録したタスクを見積もる\n")
-        printf("予 3\n\n")
+        new_task_names[++new_task_count] = task_name
         next
     }
 
@@ -89,6 +87,7 @@ function initialize_task(task_id, task_name) {
 
     if (task_id == "") {
         printf("line %d: B列が空です\n", NR) > "/dev/stderr"
+        has_input_error = 1
         exit 1
     }
 
@@ -97,6 +96,7 @@ function initialize_task(task_id, task_name) {
     if (is_defer_command) {
         if (defer_command_by_id[task_id] != "" && defer_command_by_id[task_id] != defer_command) {
             printf("line %d: R列の延期コマンドが競合しています: %s (%s, %s)\n", NR, task_id, defer_command_by_id[task_id], defer_command) > "/dev/stderr"
+            has_input_error = 1
             exit 1
         }
 
@@ -120,6 +120,7 @@ function initialize_task(task_id, task_name) {
     }
 
     total_work_minutes_by_id[task_id] += work_minutes
+    last_work_line_by_id[task_id] = NR
 
     if (finish_flag != "F") {
         if (finish_datetime == "") {
@@ -141,6 +142,18 @@ function initialize_task(task_id, task_name) {
 }
 
 END {
+    if (has_input_error) {
+        exit 1
+    }
+
+    for (i = 1; i <= task_id_count; i++) {
+        task_id = task_ids[i]
+
+        if (total_work_minutes_by_id[task_id] > 1380) {
+            set_invalid(task_id, last_work_line_by_id[task_id], sprintf("働の分数が1380(23時間)を超えています: %s (%d分)", task_id, total_work_minutes_by_id[task_id]))
+        }
+    }
+
     for (i = 1; i <= task_id_count; i++) {
         task_id = task_ids[i]
 
@@ -148,6 +161,16 @@ END {
             printf("line %d: %s\n", invalid_line_by_id[task_id], invalid_message_by_id[task_id]) > "/dev/stderr"
             exit 1
         }
+    }
+
+    for (i = 1; i <= new_task_count; i++) {
+        printf("新 %s\n", new_task_names[i])
+        printf("下 スプレッドシートで仮登録したタスクを見積もる\n")
+        printf("予 3\n\n")
+    }
+
+    for (i = 1; i <= task_id_count; i++) {
+        task_id = task_ids[i]
 
         printf("# %s\n", task_name_by_id[task_id])
         printf("見 %s\n", task_id)
