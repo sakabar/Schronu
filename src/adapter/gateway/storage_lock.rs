@@ -183,6 +183,7 @@ mod tests {
     use std::fs;
     use std::io::ErrorKind;
     use std::path::{Path, PathBuf};
+    use std::time::Duration;
     use uuid::Uuid;
 
     struct TestDir {
@@ -245,6 +246,68 @@ mod tests {
         let second = StorageLock::acquire(directory.path(), LockMode::Mcp);
 
         assert!(second.is_ok());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn storage_lock_timeout内に競合が解消すれば取得できる() {
+        let directory = TestDir::new();
+        let first = StorageLock::acquire(directory.path(), LockMode::Cli).unwrap();
+        let release_thread = std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(30));
+            drop(first);
+        });
+
+        let second = StorageLock::acquire_with_timeout(
+            directory.path(),
+            LockMode::Mcp,
+            Duration::from_millis(500),
+        );
+
+        release_thread.join().unwrap();
+        assert!(second.is_ok());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn storage_lock_timeoutまで競合が続けばcontendedを返す() {
+        let directory = TestDir::new();
+        let _first = StorageLock::acquire(directory.path(), LockMode::Cli).unwrap();
+
+        let error = StorageLock::acquire_with_timeout(
+            directory.path(),
+            LockMode::Mcp,
+            Duration::from_millis(30),
+        )
+        .unwrap_err();
+
+        assert_eq!(error.kind(), StorageLockErrorKind::Contended);
+        assert_eq!(source_kind(&error), ErrorKind::WouldBlock);
+        assert!(error.holder_metadata().unwrap().contains("mode=cli"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn storage_lock_timeout付き取得は競合以外のio_errorをそのまま返す() {
+        use std::os::unix::fs::symlink;
+
+        let directory = TestDir::new();
+        let sentinel = directory.path().join("project.yaml");
+        let lock_path = directory.path().join(".lock");
+        fs::write(&sentinel, "unchanged").unwrap();
+        symlink(&sentinel, &lock_path).unwrap();
+
+        let error = StorageLock::acquire_with_timeout(
+            directory.path(),
+            LockMode::Mcp,
+            Duration::from_secs(1),
+        )
+        .unwrap_err();
+
+        assert_eq!(error.kind(), StorageLockErrorKind::Io);
+        assert_eq!(error.path(), lock_path);
+        assert_ne!(source_kind(&error), ErrorKind::WouldBlock);
+        assert_eq!(fs::read_to_string(sentinel).unwrap(), "unchanged");
     }
 
     #[cfg(unix)]
