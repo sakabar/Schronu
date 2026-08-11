@@ -1,13 +1,17 @@
 #![cfg(unix)]
 
 use chrono::{Local, Timelike};
-use schronu::adapter::gateway::storage_lock::{LockMode, StorageLock, StorageLockErrorKind};
+use schronu::adapter::gateway::storage_lock::{LockMode, StorageLock};
+use schronu::adapter::gateway::task_repository::TaskRepository;
+use schronu::application::interface::TaskRepositoryTrait;
+use schronu::entity::task::{Status, Task};
 use serde_json::{json, Value};
 use std::fs;
-use std::io::Write;
+use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Output, Stdio};
-use std::thread;
+use std::sync::{mpsc, Arc, Mutex};
+use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 use uuid::Uuid;
 
@@ -215,38 +219,131 @@ fn mcp_stdio_不正なinitialize_request後も同一processで正常に初期化
 }
 
 #[test]
-fn mcp_stdio_serverは稼働中にlockを保持し終了後に解放する() {
+fn mcp_stdio_initialized後のidle中はcliがlockを取得できる() {
     let storage = TestStorageDirectory::new();
-    let child = spawn_mcp(storage.path());
-    let lock_path = storage.path().join(".lock");
+    let mut mcp = McpSession::spawn(storage.path());
 
-    let (mut child, metadata) = wait_for_lock_metadata(child, &lock_path);
-    assert!(metadata.contains("mode=mcp"));
-    let error = StorageLock::acquire(storage.path(), LockMode::Cli).unwrap_err();
-    assert_eq!(error.kind(), StorageLockErrorKind::Contended);
+    mcp.initialize("idle");
+    let lock = StorageLock::acquire(storage.path(), LockMode::Cli).unwrap();
+    assert!(fs::read_to_string(lock.path())
+        .unwrap()
+        .contains("mode=cli"));
+    drop(lock);
 
-    drop(child.stdin.take());
-    let output = wait_with_output(child);
-    assert_process_succeeded(&output);
-    let _cli_lock = StorageLock::acquire(storage.path(), LockMode::Cli).unwrap();
+    assert_process_succeeded(&mcp.finish());
 }
 
 #[test]
-fn mcp_stdio_lock取得後のrepository_load失敗をstderrへ出力する() {
+fn mcp_stdio_lock競合時はload前にerrorを返し修復後に同一sessionで再試行できる() {
+    let storage = TestStorageDirectory::new();
+    let project_directory = storage.path().join("broken");
+    fs::create_dir(&project_directory).unwrap();
+    let project_yaml = project_directory.join("project.yaml");
+    fs::write(&project_yaml, "project: [").unwrap();
+    let mut mcp = McpSession::spawn(storage.path());
+    mcp.initialize("lock-contention");
+
+    let cli_lock = StorageLock::acquire(storage.path(), LockMode::Cli).unwrap();
+    let contended = mcp.call_tool(
+        "contended",
+        "create_task",
+        json!({"name": "must not be created while contended"}),
+    );
+    assert_structured_tool_error(
+        &contended,
+        "contended",
+        "repository_lock_contended",
+        "retry",
+    );
+    let holder_metadata = contended["result"]["structuredContent"]["error"]["holder_metadata"]
+        .as_str()
+        .unwrap();
+    assert!(holder_metadata.contains("mode=cli"));
+    assert_eq!(fs::read_to_string(&project_yaml).unwrap(), "project: [");
+
+    drop(cli_lock);
+    fs::remove_dir_all(&project_directory).unwrap();
+    let retried = mcp.call_tool("retry-list", "list_tasks", json!({}));
+    assert_eq!(retried["jsonrpc"], "2.0");
+    assert_eq!(retried["id"], "retry-list");
+    assert_eq!(retried["result"]["isError"], false);
+    assert_eq!(
+        retried["result"]["structuredContent"]["tasks"]
+            .as_array()
+            .unwrap()
+            .len(),
+        0
+    );
+    let created = mcp.call_tool(
+        "retry-create",
+        "create_task",
+        json!({"name": "created after lock release"}),
+    );
+    assert_eq!(created["result"]["isError"], false);
+
+    assert_process_succeeded(&mcp.finish());
+}
+
+#[test]
+fn mcp_stdio_壊れたrepositoryはcallでerrorとなり修復後に同一sessionで再試行できる() {
     let storage = TestStorageDirectory::new();
     let project_directory = storage.path().join("broken");
     fs::create_dir(&project_directory).unwrap();
     fs::write(project_directory.join("project.yaml"), "project: [").unwrap();
-    let mut child = spawn_mcp(storage.path());
-    drop(child.stdin.take());
+    let mut mcp = McpSession::spawn(storage.path());
+    mcp.initialize("broken-repository");
 
-    let output = wait_with_output(child);
-    assert_process_failed(&output);
-    assert_eq!(String::from_utf8_lossy(&output.stdout), "");
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(stderr.contains("repository Load failed"), "{stderr}");
-    let metadata = fs::read_to_string(storage.path().join(".lock")).unwrap();
-    assert!(metadata.contains("mode=mcp"));
+    let failed = mcp.call_tool("load-failure", "list_tasks", json!({}));
+    assert_structured_tool_error(
+        &failed,
+        "load-failure",
+        "repository_load_failed",
+        "repair_repository",
+    );
+
+    fs::remove_dir_all(&project_directory).unwrap();
+    let retried = mcp.call_tool("load-retry", "list_tasks", json!({}));
+    assert_eq!(retried["jsonrpc"], "2.0");
+    assert_eq!(retried["id"], "load-retry");
+    assert_eq!(retried["result"]["isError"], false);
+
+    assert_process_succeeded(&mcp.finish());
+}
+
+#[test]
+fn mcp_stdio_lock_symlinkはcallでstructured_errorとなり参照先を変更しない() {
+    use std::os::unix::fs::symlink;
+
+    let storage = TestStorageDirectory::new();
+    let sentinel = storage.path().join("sentinel");
+    let sentinel_content = "sentinel must not change\n";
+    fs::write(&sentinel, sentinel_content).unwrap();
+    let lock_path = storage.path().join(".lock");
+    symlink(&sentinel, &lock_path).unwrap();
+    let mut mcp = McpSession::spawn(storage.path());
+    mcp.initialize("lock-symlink");
+
+    let failed = mcp.call_tool("lock-symlink", "list_tasks", json!({}));
+    assert_structured_tool_error(
+        &failed,
+        "lock-symlink",
+        "repository_lock_failed",
+        "inspect_storage",
+    );
+    assert_eq!(fs::read_to_string(&sentinel).unwrap(), sentinel_content);
+    assert!(fs::symlink_metadata(&lock_path)
+        .unwrap()
+        .file_type()
+        .is_symlink());
+    assert_eq!(fs::read_link(&lock_path).unwrap(), sentinel);
+
+    fs::remove_file(&lock_path).unwrap();
+    let retried = mcp.call_tool("lock-symlink-retry", "list_tasks", json!({}));
+    assert_eq!(retried["jsonrpc"], "2.0");
+    assert_eq!(retried["id"], "lock-symlink-retry");
+    assert_eq!(retried["result"]["isError"], false);
+    assert_eq!(fs::read_to_string(&sentinel).unwrap(), sentinel_content);
+    assert_process_succeeded(&mcp.finish());
 }
 
 #[test]
@@ -382,30 +479,39 @@ fn mcp_stdio_9つのtoolをfilesystem上のrepositoryで実行し再起動後も
 }
 
 #[test]
-fn mcp_stdio_起動時にload前の現在時刻を同期して期限切れpendingをtodoとして読む() {
+fn mcp_stdio_tools_call直前の現在時刻同期で期限切れpendingをtodoとして読む() {
     let storage = TestStorageDirectory::new();
-    let pending_until = (Local::now() - chrono::Duration::hours(1))
-        .with_nanosecond(0)
-        .unwrap();
-    let create = call_tool(
-        storage.path(),
-        "create-expired-pending",
-        "create_task",
-        Some(json!({
-            "name": "expired pending",
-            "pending_until": pending_until.to_rfc3339()
-        })),
-    );
-    assert_eq!(create["result"]["isError"], false);
-    let task_id = create["result"]["structuredContent"]["task_id"]
-        .as_str()
-        .unwrap();
+    let pending_until = Local::now() + chrono::Duration::seconds(3);
+    let mut repository = TaskRepository::new(storage.path().to_str().unwrap());
+    repository.sync_clock(Local::now());
+    let task = Task::new("pending across MCP idle time");
+    let task_id = task.get_id().to_owned();
+    task.set_start_time(Local::now() - chrono::Duration::hours(1));
+    task.set_pending_until(pending_until);
+    task.set_orig_status(Status::Pending);
+    repository.start_new_project(task);
+    repository.save().unwrap();
 
-    let reloaded = call_tool(
-        storage.path(),
+    let mut mcp = McpSession::spawn(storage.path());
+    mcp.initialize("clock-before-call");
+    let initialized_at = Local::now();
+    assert!(
+        initialized_at < pending_until,
+        "MCP初期化完了時点でpending_untilを過ぎています: initialized_at={initialized_at}, pending_until={pending_until}"
+    );
+    let remaining = (pending_until - initialized_at)
+        .to_std()
+        .expect("pending_untilはMCP初期化完了時刻より後であるべきです");
+    thread::sleep(remaining + Duration::from_millis(50));
+    let call_started_at = Local::now();
+    assert!(
+        call_started_at > pending_until,
+        "tools/call開始前にpending_untilを過ぎていません: call_started_at={call_started_at}, pending_until={pending_until}"
+    );
+    let reloaded = mcp.call_tool(
         "get-expired-pending",
         "get_task",
-        Some(json!({"task_id": task_id})),
+        json!({"task_id": task_id.to_string()}),
     );
 
     assert_eq!(
@@ -416,33 +522,35 @@ fn mcp_stdio_起動時にload前の現在時刻を同期して期限切れpendin
         reloaded["result"]["structuredContent"]["task"]["status"],
         "todo"
     );
+    assert_process_succeeded(&mcp.finish());
 }
 
 #[test]
-fn mcp_stdio稼働中は同じ保存先を使うcli_processの起動を拒否する() {
+fn mcp_stdio複数processはcallごとの再読込で互いのwriteを保持する() {
     let storage = TestStorageDirectory::new();
-    let child = spawn_mcp(storage.path());
-    let (mut mcp, _) = wait_for_lock_metadata(child, &storage.path().join(".lock"));
-    let cli_executable = option_env!("CARGO_BIN_EXE_schronu")
-        .expect("schronu binary must be built for integration tests");
-    let cli = Command::new(cli_executable)
-        .env("SCHRONU_STORAGE_DIR", storage.path())
-        .arg("全")
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .unwrap();
+    let mut mcp_a = McpSession::spawn(storage.path());
+    let mut mcp_b = McpSession::spawn(storage.path());
+    mcp_a.initialize("freshness-a");
+    mcp_b.initialize("freshness-b");
 
-    let cli_output = wait_with_output(cli);
-    assert_process_failed(&cli_output);
-    assert_eq!(String::from_utf8_lossy(&cli_output.stdout), "");
-    let stderr = String::from_utf8_lossy(&cli_output.stderr);
-    assert!(stderr.contains("storage lock is already held"), "{stderr}");
-    assert!(stderr.contains("mode=mcp"), "{stderr}");
+    let created_a = mcp_a.call_tool("create-a", "create_task", json!({"name": "created by A"}));
+    assert_eq!(created_a["result"]["isError"], false);
+    let created_b = mcp_b.call_tool("create-b", "create_task", json!({"name": "created by B"}));
+    assert_eq!(created_b["result"]["isError"], false);
 
-    drop(mcp.stdin.take());
-    assert_process_succeeded(&wait_with_output(mcp));
+    let listed = mcp_a.call_tool("list-after-b", "list_tasks", json!({}));
+    let names = listed["result"]["structuredContent"]["tasks"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|task| task["name"].as_str().unwrap())
+        .collect::<Vec<_>>();
+    assert_eq!(names.len(), 2);
+    assert!(names.contains(&"created by A"));
+    assert!(names.contains(&"created by B"));
+
+    assert_process_succeeded(&mcp_a.finish());
+    assert_process_succeeded(&mcp_b.finish());
 }
 
 #[test]
@@ -529,8 +637,10 @@ fn mcp_stdio_filesystemへのsave失敗後は後続tool_callを拒否する() {
     use std::os::unix::fs::PermissionsExt;
 
     let storage = TestStorageDirectory::new();
-    let child = spawn_mcp(storage.path());
-    let (mut child, _) = wait_for_lock_metadata(child, &storage.path().join(".lock"));
+    let mut mcp = McpSession::spawn(storage.path());
+    mcp.initialize("save-failure");
+    let lock_file_initializer = StorageLock::acquire(storage.path(), LockMode::Cli).unwrap();
+    drop(lock_file_initializer);
     let original_mode = fs::metadata(storage.path()).unwrap().permissions().mode();
     let permission_guard = PermissionRestoreGuard::set_mode(storage.path(), 0o500);
     let probe_path = storage.path().join("permission-probe");
@@ -541,93 +651,35 @@ fn mcp_stdio_filesystemへのsave失敗後は後続tool_callを拒否する() {
             panic!("test requires directory write permission to be denied");
         }
     }
-    let requests = [
-        json!({
-            "jsonrpc": "2.0",
-            "id": "initialize-save-failure",
-            "method": "initialize",
-            "params": {
-                "protocolVersion": "2025-06-18",
-                "capabilities": {},
-                "clientInfo": {"name": "integration-test", "version": "1.0"}
-            }
-        }),
-        json!({"jsonrpc": "2.0", "method": "notifications/initialized"}),
-        json!({
-            "jsonrpc": "2.0",
-            "id": "save-failure",
-            "method": "tools/call",
-            "params": {
-                "name": "create_task",
-                "arguments": {"name": "cannot save"}
-            }
-        }),
-        json!({
-            "jsonrpc": "2.0",
-            "id": "read-after-save-failure",
-            "method": "tools/call",
-            "params": {
-                "name": "list_tasks",
-                "arguments": {}
-            }
-        }),
-        json!({
-            "jsonrpc": "2.0",
-            "id": "write-after-save-failure",
-            "method": "tools/call",
-            "params": {
-                "name": "create_task",
-                "arguments": {"name": "must not be created"}
-            }
-        }),
-    ];
-    {
-        let stdin = child.stdin.as_mut().unwrap();
-        for request in requests {
-            writeln!(stdin, "{request}").unwrap();
-        }
-    }
-    drop(child.stdin.take());
-    let output = wait_with_output(child);
+    let save_failed = mcp.call_tool(
+        "save-failure",
+        "create_task",
+        json!({"name": "cannot save"}),
+    );
     drop(permission_guard);
     assert_eq!(
         fs::metadata(storage.path()).unwrap().permissions().mode(),
         original_mode
     );
 
-    assert_process_succeeded(&output);
-    let responses = String::from_utf8(output.stdout)
-        .unwrap()
-        .lines()
-        .map(|line| serde_json::from_str::<Value>(line).unwrap())
-        .collect::<Vec<_>>();
-    assert_eq!(responses.len(), 4);
-    assert_eq!(responses[1]["id"], "save-failure");
-    assert_eq!(responses[1]["result"]["isError"], true);
+    assert_eq!(save_failed["id"], "save-failure");
+    assert_eq!(save_failed["result"]["isError"], true);
     assert_eq!(
-        responses[1]["result"]["structuredContent"]["error"]["code"],
+        save_failed["result"]["structuredContent"]["error"]["code"],
         "repository_save_failed"
     );
-    for (response, expected_id) in [
-        (&responses[2], "read-after-save-failure"),
-        (&responses[3], "write-after-save-failure"),
-    ] {
-        assert_eq!(response["jsonrpc"], "2.0");
-        assert_eq!(response["id"], expected_id);
-        assert_eq!(response["result"]["isError"], true);
-        let structured = &response["result"]["structuredContent"];
-        let content = response["result"]["content"][0]["text"].as_str().unwrap();
-        assert_eq!(serde_json::from_str::<Value>(content).unwrap(), *structured);
-        let error = &structured["error"];
-        assert_eq!(error["code"], "repository_state_uncertain");
-        assert_eq!(error["recovery"], "restart_server");
-        let message = error["message"].as_str().unwrap();
-        assert!(!message.is_empty());
-        assert!(
-            message.to_ascii_lowercase().contains("restart"),
-            "{message}"
-        );
-    }
+
+    let cli_lock = StorageLock::acquire(storage.path(), LockMode::Cli).unwrap();
+    let poisoned = mcp.call_tool("read-after-save-failure", "list_tasks", json!({}));
+    assert_structured_tool_error(
+        &poisoned,
+        "read-after-save-failure",
+        "repository_state_uncertain",
+        "restart_server",
+    );
+    drop(cli_lock);
+
+    assert_process_succeeded(&mcp.finish());
 }
 
 fn call_tool(storage_directory: &Path, id: &str, name: &str, arguments: Option<Value>) -> Value {
@@ -674,6 +726,192 @@ fn call_tool(storage_directory: &Path, id: &str, name: &str, arguments: Option<V
     responses.into_iter().nth(1).unwrap()
 }
 
+struct McpSession {
+    child: Option<Child>,
+    responses: mpsc::Receiver<Result<String, std::io::Error>>,
+    stdout_log: Arc<Mutex<Vec<String>>>,
+    stdout_reader: Option<JoinHandle<()>>,
+    stderr_log: Arc<Mutex<Vec<String>>>,
+    stderr_reader: Option<JoinHandle<()>>,
+}
+
+impl McpSession {
+    fn spawn(storage_directory: &Path) -> Self {
+        let mut child = spawn_mcp(storage_directory);
+        let stdout = child.stdout.take().unwrap();
+        let (sender, responses) = mpsc::channel();
+        let stdout_log = Arc::new(Mutex::new(Vec::new()));
+        let stdout_log_for_reader = Arc::clone(&stdout_log);
+        let stdout_reader = thread::spawn(move || {
+            for line in BufReader::new(stdout).lines() {
+                if let Ok(line) = &line {
+                    stdout_log_for_reader.lock().unwrap().push(line.clone());
+                }
+                if sender.send(line).is_err() {
+                    break;
+                }
+            }
+        });
+        let stderr = child.stderr.take().unwrap();
+        let stderr_log = Arc::new(Mutex::new(Vec::new()));
+        let stderr_log_for_reader = Arc::clone(&stderr_log);
+        let stderr_reader = thread::spawn(move || {
+            for line in BufReader::new(stderr).lines() {
+                match line {
+                    Ok(line) => stderr_log_for_reader.lock().unwrap().push(line),
+                    Err(error) => {
+                        stderr_log_for_reader
+                            .lock()
+                            .unwrap()
+                            .push(format!("stderr read failed: {error}"));
+                        break;
+                    }
+                }
+            }
+        });
+        Self {
+            child: Some(child),
+            responses,
+            stdout_log,
+            stdout_reader: Some(stdout_reader),
+            stderr_log,
+            stderr_reader: Some(stderr_reader),
+        }
+    }
+
+    fn initialize(&mut self, id_suffix: &str) {
+        self.send(json!({
+            "jsonrpc": "2.0",
+            "id": format!("initialize-{id_suffix}"),
+            "method": "initialize",
+            "params": {
+                "protocolVersion": "2025-06-18",
+                "capabilities": {},
+                "clientInfo": {"name": "integration-test", "version": "1.0"}
+            }
+        }));
+        let response = self.read_response();
+        assert_eq!(response["jsonrpc"], "2.0");
+        assert_eq!(response["id"], format!("initialize-{id_suffix}"));
+        assert_eq!(response["result"]["protocolVersion"], "2025-06-18");
+        self.send(json!({"jsonrpc": "2.0", "method": "notifications/initialized"}));
+        self.send(json!({
+            "jsonrpc": "2.0",
+            "id": format!("tools-list-after-initialize-{id_suffix}"),
+            "method": "tools/list"
+        }));
+        let tools_list = self.read_response();
+        assert_eq!(tools_list["jsonrpc"], "2.0");
+        assert_eq!(
+            tools_list["id"],
+            format!("tools-list-after-initialize-{id_suffix}")
+        );
+        assert!(tools_list["result"]["tools"].is_array());
+    }
+
+    fn call_tool(&mut self, id: &str, name: &str, arguments: Value) -> Value {
+        self.send(json!({
+            "jsonrpc": "2.0",
+            "id": id,
+            "method": "tools/call",
+            "params": {"name": name, "arguments": arguments}
+        }));
+        self.read_response()
+    }
+
+    fn send(&mut self, request: Value) {
+        let result = writeln!(
+            self.child.as_mut().unwrap().stdin.as_mut().unwrap(),
+            "{request}"
+        );
+        if let Err(error) = result {
+            self.response_failure(&format!("stdin write failed: {error}"));
+        }
+    }
+
+    fn read_response(&self) -> Value {
+        let line = match self.responses.recv_timeout(Duration::from_secs(5)) {
+            Ok(Ok(line)) => line,
+            Ok(Err(error)) => self.response_failure(&format!("stdout read failed: {error}")),
+            Err(mpsc::RecvTimeoutError::Timeout) => {
+                self.response_failure("did not return a response within 5 seconds")
+            }
+            Err(mpsc::RecvTimeoutError::Disconnected) => {
+                self.response_failure("exited before returning a response")
+            }
+        };
+        serde_json::from_str(&line).unwrap()
+    }
+
+    fn response_failure(&self, reason: &str) -> ! {
+        panic!(
+            "schronu-mcp {reason}\nstdout so far:\n{}\nstderr so far:\n{}",
+            self.stdout_log.lock().unwrap().join("\n"),
+            self.stderr_log.lock().unwrap().join("\n")
+        )
+    }
+
+    fn finish(mut self) -> Output {
+        drop(self.child.as_mut().unwrap().stdin.take());
+        let (status, timed_out) = wait_for_child(self.child.as_mut().unwrap());
+        self.stdout_reader.take().unwrap().join().unwrap();
+        self.stderr_reader.take().unwrap().join().unwrap();
+        let output = Output {
+            status,
+            stdout: self.stdout_log.lock().unwrap().join("\n").into_bytes(),
+            stderr: self.stderr_log.lock().unwrap().join("\n").into_bytes(),
+        };
+        self.child.take();
+        if timed_out {
+            panic!(
+                "schronu-mcp timed out\nstdout:\n{}\nstderr:\n{}",
+                String::from_utf8_lossy(&output.stdout),
+                String::from_utf8_lossy(&output.stderr)
+            );
+        }
+        output
+    }
+}
+
+impl Drop for McpSession {
+    fn drop(&mut self) {
+        let Some(mut child) = self.child.take() else {
+            return;
+        };
+        drop(child.stdin.take());
+        if child.try_wait().ok().flatten().is_none() {
+            let _ = child.kill();
+        }
+        let _ = child.wait();
+        if let Some(stdout_reader) = self.stdout_reader.take() {
+            let _ = stdout_reader.join();
+        }
+        if let Some(stderr_reader) = self.stderr_reader.take() {
+            let _ = stderr_reader.join();
+        }
+    }
+}
+
+fn assert_structured_tool_error(
+    response: &Value,
+    expected_id: &str,
+    expected_code: &str,
+    expected_recovery: &str,
+) {
+    assert_eq!(response["jsonrpc"], "2.0");
+    assert_eq!(response["id"], expected_id);
+    assert_eq!(response["result"]["isError"], true);
+    let structured = &response["result"]["structuredContent"];
+    let content = response["result"]["content"][0]["text"].as_str().unwrap();
+    assert_eq!(serde_json::from_str::<Value>(content).unwrap(), *structured);
+    let error = &structured["error"];
+    assert_eq!(error["code"], expected_code);
+    assert_eq!(error["recovery"], expected_recovery);
+    assert!(error["message"]
+        .as_str()
+        .is_some_and(|message| !message.is_empty()));
+}
+
 fn spawn_mcp(storage_directory: &Path) -> Child {
     let executable = option_env!("CARGO_BIN_EXE_schronu-mcp")
         .expect("schronu-mcp binary must be built for integration tests");
@@ -686,38 +924,6 @@ fn spawn_mcp(storage_directory: &Path) -> Child {
         .unwrap()
 }
 
-fn wait_for_lock_metadata(mut child: Child, lock_path: &Path) -> (Child, String) {
-    let deadline = Instant::now() + Duration::from_secs(5);
-    let mut last_metadata = None;
-    loop {
-        if let Ok(metadata) = fs::read_to_string(lock_path) {
-            if metadata.contains("mode=mcp") {
-                return (child, metadata);
-            }
-            last_metadata = Some(metadata);
-        }
-        if let Some(status) = child.try_wait().unwrap() {
-            let output = child.wait_with_output().unwrap();
-            panic!(
-                "schronu-mcp exited with {status} before acquiring lock\nstdout:\n{}\nstderr:\n{}",
-                String::from_utf8_lossy(&output.stdout),
-                String::from_utf8_lossy(&output.stderr)
-            );
-        }
-        if Instant::now() >= deadline {
-            let _ = child.kill();
-            let output = child.wait_with_output().unwrap();
-            panic!(
-                "schronu-mcp did not acquire lock\nlast metadata:\n{}\nstdout:\n{}\nstderr:\n{}",
-                last_metadata.as_deref().unwrap_or("<unreadable>"),
-                String::from_utf8_lossy(&output.stdout),
-                String::from_utf8_lossy(&output.stderr)
-            );
-        }
-        thread::sleep(Duration::from_millis(10));
-    }
-}
-
 fn assert_process_succeeded(output: &Output) {
     assert!(
         output.status.success(),
@@ -728,17 +934,8 @@ fn assert_process_succeeded(output: &Output) {
     );
 }
 
-fn assert_process_failed(output: &Output) {
-    assert!(
-        !output.status.success(),
-        "schronu-mcp unexpectedly succeeded with {}\nstdout:\n{}\nstderr:\n{}",
-        output.status,
-        String::from_utf8_lossy(&output.stdout),
-        String::from_utf8_lossy(&output.stderr)
-    );
-}
-
-fn wait_with_output(mut child: Child) -> Output {
+fn wait_with_output(child: Child) -> Output {
+    let mut child = child;
     let deadline = Instant::now() + Duration::from_secs(5);
     loop {
         if child.try_wait().unwrap().is_some() {
@@ -752,6 +949,20 @@ fn wait_with_output(mut child: Child) -> Output {
                 String::from_utf8_lossy(&output.stdout),
                 String::from_utf8_lossy(&output.stderr)
             );
+        }
+        thread::sleep(Duration::from_millis(10));
+    }
+}
+
+fn wait_for_child(child: &mut Child) -> (std::process::ExitStatus, bool) {
+    let deadline = Instant::now() + Duration::from_secs(5);
+    loop {
+        if let Some(status) = child.try_wait().unwrap() {
+            return (status, false);
+        }
+        if Instant::now() >= deadline {
+            let _ = child.kill();
+            return (child.wait().unwrap(), true);
         }
         thread::sleep(Duration::from_millis(10));
     }
