@@ -2366,6 +2366,208 @@ mod tests {
         );
     }
 
+    #[test]
+    fn defer_task_絶対時刻まで延期して1回saveする() {
+        let pending_until = fixed_now() + Duration::hours(18);
+        let task = Task::new("deferred task");
+        let task_id = task.get_id();
+        let repository = RecordingRepository::new(vec![task]);
+        let save_count = Rc::clone(&repository.save_count);
+        let mut server = initialized_server(repository);
+
+        let response = server
+            .handle_request(tool_call_request(
+                "defer-task",
+                "defer_task",
+                json!({
+                    "task_id": task_id.to_string(),
+                    "pending_until": pending_until.to_rfc3339()
+                }),
+            ))
+            .unwrap();
+
+        assert_eq!(response["jsonrpc"], "2.0");
+        assert_eq!(response["id"], "defer-task");
+        assert_eq!(response["result"]["isError"], false);
+        assert_tool_result_content_matches_structured(&response);
+        assert_eq!(
+            response["result"]["structuredContent"],
+            json!({"task_id": task_id.to_string()})
+        );
+        assert_eq!(save_count.get(), 1);
+
+        let task_response = server
+            .handle_request(tool_call_request(
+                "deferred-task",
+                "get_task",
+                json!({"task_id": task_id.to_string()}),
+            ))
+            .unwrap();
+        let deferred = &task_response["result"]["structuredContent"]["task"];
+        assert_eq!(deferred["original_status"], "pending");
+        assert_eq!(deferred["pending_until"], pending_until.to_rfc3339());
+        assert_eq!(save_count.get(), 1);
+    }
+
+    #[test]
+    fn defer_task_入力不正と未知taskでは変更もsaveもしない() {
+        let task = Task::new("unchanged task");
+        let task_id = task.get_id();
+        let cases = [
+            (
+                "missing-task-id",
+                json!({"pending_until": fixed_now().to_rfc3339()}),
+                Some(-32602),
+                "invalid_input",
+                "task_id",
+            ),
+            (
+                "missing-pending",
+                json!({"task_id": task_id.to_string()}),
+                Some(-32602),
+                "invalid_input",
+                "pending_until",
+            ),
+            (
+                "task-id-type",
+                json!({"task_id": 1, "pending_until": fixed_now().to_rfc3339()}),
+                Some(-32602),
+                "invalid_input",
+                "task_id",
+            ),
+            (
+                "pending-type",
+                json!({"task_id": task_id.to_string(), "pending_until": 1}),
+                Some(-32602),
+                "invalid_input",
+                "pending_until",
+            ),
+            (
+                "extra",
+                json!({
+                    "task_id": task_id.to_string(),
+                    "pending_until": fixed_now().to_rfc3339(),
+                    "extra": true
+                }),
+                Some(-32602),
+                "invalid_input",
+                "arguments.extra",
+            ),
+            (
+                "invalid-task-id",
+                json!({"task_id": "invalid", "pending_until": fixed_now().to_rfc3339()}),
+                None,
+                "invalid_input",
+                "task_id",
+            ),
+            (
+                "invalid-pending",
+                json!({"task_id": task_id.to_string(), "pending_until": "invalid"}),
+                None,
+                "invalid_input",
+                "pending_until",
+            ),
+            (
+                "missing-task",
+                json!({"task_id": Uuid::new_v4().to_string(), "pending_until": fixed_now().to_rfc3339()}),
+                None,
+                "task_not_found",
+                "task_id",
+            ),
+        ];
+
+        for (id, arguments, protocol_code, tool_code, field) in cases {
+            let repository = RecordingRepository::new(vec![task.clone()]);
+            let save_count = Rc::clone(&repository.save_count);
+            let mut server = initialized_server(repository);
+            let response = server
+                .handle_request(tool_call_request(id, "defer_task", arguments))
+                .unwrap();
+
+            assert_eq!(response["jsonrpc"], "2.0");
+            assert_eq!(response["id"], id);
+            if let Some(protocol_code) = protocol_code {
+                assert_eq!(response["error"]["code"], protocol_code);
+                assert_eq!(response["error"]["message"], "Invalid params");
+                assert_eq!(response["error"]["data"]["code"], tool_code);
+                assert_eq!(response["error"]["data"]["field"], field);
+            } else {
+                assert_eq!(response["result"]["isError"], true);
+                assert_tool_result_content_matches_structured(&response);
+                assert_eq!(
+                    response["result"]["structuredContent"]["error"]["code"],
+                    tool_code
+                );
+                assert_eq!(
+                    response["result"]["structuredContent"]["error"]["field"],
+                    field
+                );
+                assert!(!response["result"]["structuredContent"]["error"]["message"]
+                    .as_str()
+                    .unwrap()
+                    .is_empty());
+            }
+            assert_eq!(save_count.get(), 0);
+
+            let task_response = server
+                .handle_request(tool_call_request(
+                    "task-after-defer-error",
+                    "get_task",
+                    json!({"task_id": task_id.to_string()}),
+                ))
+                .unwrap();
+            let unchanged = &task_response["result"]["structuredContent"]["task"];
+            assert_eq!(unchanged["original_status"], "todo");
+            assert_eq!(unchanged["pending_until"], serde_json::Value::Null);
+        }
+    }
+
+    #[test]
+    fn defer_task_save失敗を成功扱いしない() {
+        let pending_until = fixed_now() + Duration::hours(18);
+        let task = Task::new("deferred task");
+        let task_id = task.get_id();
+        let repository = RecordingRepository::new(vec![task]).with_save_failure();
+        let save_count = Rc::clone(&repository.save_count);
+        let mut server = initialized_server(repository);
+
+        let response = server
+            .handle_request(tool_call_request(
+                "defer-save-failure",
+                "defer_task",
+                json!({
+                    "task_id": task_id.to_string(),
+                    "pending_until": pending_until.to_rfc3339()
+                }),
+            ))
+            .unwrap();
+
+        assert_eq!(response["jsonrpc"], "2.0");
+        assert_eq!(response["id"], "defer-save-failure");
+        assert_eq!(response["result"]["isError"], true);
+        assert_tool_result_content_matches_structured(&response);
+        assert_eq!(
+            response["result"]["structuredContent"]["error"]["code"],
+            "repository_save_failed"
+        );
+        assert!(!response["result"]["structuredContent"]["error"]["message"]
+            .as_str()
+            .unwrap()
+            .is_empty());
+        assert_eq!(save_count.get(), 1);
+
+        let task_response = server
+            .handle_request(tool_call_request(
+                "deferred-after-save-failure",
+                "get_task",
+                json!({"task_id": task_id.to_string()}),
+            ))
+            .unwrap();
+        let deferred = &task_response["result"]["structuredContent"]["task"];
+        assert_eq!(deferred["original_status"], "pending");
+        assert_eq!(deferred["pending_until"], pending_until.to_rfc3339());
+    }
+
     fn initialize_request() -> serde_json::Value {
         json!({
             "jsonrpc": "2.0",
