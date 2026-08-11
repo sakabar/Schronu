@@ -102,6 +102,8 @@ clientごとの設定形式に合わせて、commandと環境変数を次のよ�
 
 入力schema違反はJSON-RPC `-32602`、実行時の入力error・task不明・未完了child・保存失敗は`isError: true`のstructured tool resultとして返ります。repository load失敗やlock取得失敗ではserverは起動せず、stderrへ理由を出してnon-zero終了します。
 
+write toolの保存に失敗すると、memory上のrepositoryとfileの状態が一致していると信頼できません。失敗したrequestには`repository_save_failed`、同一sessionの後続`tools/call`には`repository_state_uncertain`と`recovery: "restart_server"`を返します。そのsessionを継続利用せず、MCP serverを再起動してrepositoryをfileから読み直してください。
+
 ### CLIとの排他lock
 
 CLIとMCP serverは同時利用できません。両方とも保存先直下の`.lock`へ同じOS advisory lockを取得し、lock取得後にrepositoryをloadします。`.lock`には`pid`、`started_at`、`mode`(`cli`または`mcp`)が記録されます。

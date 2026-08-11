@@ -25,6 +25,7 @@ enum LifecycleState {
 pub struct McpServer<R> {
     repository: R,
     lifecycle_state: LifecycleState,
+    repository_state_uncertain: bool,
 }
 
 impl<R: TaskRepositoryTrait> McpServer<R> {
@@ -32,6 +33,7 @@ impl<R: TaskRepositoryTrait> McpServer<R> {
         Self {
             repository,
             lifecycle_state: LifecycleState::Uninitialized,
+            repository_state_uncertain: false,
         }
     }
 
@@ -75,6 +77,9 @@ impl<R: TaskRepositoryTrait> McpServer<R> {
             })),
             Some("tools/call") if self.lifecycle_state != LifecycleState::Initialized => {
                 Some(error_response(id, -32002, "Server not initialized"))
+            }
+            Some("tools/call") if self.repository_state_uncertain => {
+                Some(repository_state_uncertain_response(id))
             }
             Some("tools/call") => {
                 self.repository.sync_clock(Local::now());
@@ -189,10 +194,7 @@ impl<R: TaskRepositoryTrait> McpServer<R> {
             Err(error) => return internal_error_response(id, &error.to_string()),
         };
 
-        match self.repository.save() {
-            Ok(()) => tool_result_response(id, json!({"task_id": task_id.to_string()}), false),
-            Err(error) => repository_save_error_response(id, &error.to_string()),
-        }
+        self.save_after_mutation(id, json!({"task_id": task_id.to_string()}))
     }
 
     fn call_breakdown_task(&mut self, id: Value, arguments: &Value) -> Value {
@@ -214,16 +216,12 @@ impl<R: TaskRepositoryTrait> McpServer<R> {
             Err(error) => return internal_error_response(id, &error.to_string()),
         };
 
-        match self.repository.save() {
-            Ok(()) => tool_result_response(
-                id,
-                json!({
-                    "child_ids": child_ids.iter().map(Uuid::to_string).collect::<Vec<_>>()
-                }),
-                false,
-            ),
-            Err(error) => repository_save_error_response(id, &error.to_string()),
-        }
+        self.save_after_mutation(
+            id,
+            json!({
+                "child_ids": child_ids.iter().map(Uuid::to_string).collect::<Vec<_>>()
+            }),
+        )
     }
 
     fn call_defer_task(&mut self, id: Value, arguments: &Value) -> Value {
@@ -246,10 +244,7 @@ impl<R: TaskRepositoryTrait> McpServer<R> {
             Err(error) => return internal_error_response(id, &error.to_string()),
         }
 
-        match self.repository.save() {
-            Ok(()) => tool_result_response(id, json!({"task_id": task_id.to_string()}), false),
-            Err(error) => repository_save_error_response(id, &error.to_string()),
-        }
+        self.save_after_mutation(id, json!({"task_id": task_id.to_string()}))
     }
 
     fn call_complete_task(&mut self, id: Value, arguments: &Value) -> Value {
@@ -274,18 +269,14 @@ impl<R: TaskRepositoryTrait> McpServer<R> {
             }
         };
 
-        match self.repository.save() {
-            Ok(()) => tool_result_response(
-                id,
-                json!({
-                    "task_id": task_id.to_string(),
-                    "next_focus_task_id": output.next_focus_task_id.map(|task_id| task_id.to_string()),
-                    "next_repetition_task_id": output.next_repetition_task_id.map(|task_id| task_id.to_string())
-                }),
-                false,
-            ),
-            Err(error) => repository_save_error_response(id, &error.to_string()),
-        }
+        self.save_after_mutation(
+            id,
+            json!({
+                "task_id": task_id.to_string(),
+                "next_focus_task_id": output.next_focus_task_id.map(|task_id| task_id.to_string()),
+                "next_repetition_task_id": output.next_repetition_task_id.map(|task_id| task_id.to_string())
+            }),
+        )
     }
 
     fn call_update_task(&mut self, id: Value, arguments: &Value) -> Value {
@@ -315,11 +306,16 @@ impl<R: TaskRepositoryTrait> McpServer<R> {
             }
         }
 
+        self.save_after_mutation(id, json!({"task_id": input.task_id.to_string()}))
+    }
+
+    fn save_after_mutation(&mut self, id: Value, success_content: Value) -> Value {
         match self.repository.save() {
-            Ok(()) => {
-                tool_result_response(id, json!({"task_id": input.task_id.to_string()}), false)
+            Ok(()) => tool_result_response(id, success_content, false),
+            Err(error) => {
+                self.repository_state_uncertain = true;
+                repository_save_error_response(id, &error.to_string())
             }
-            Err(error) => repository_save_error_response(id, &error.to_string()),
         }
     }
 }
@@ -395,6 +391,20 @@ fn repository_save_error_response(id: Value, message: &str) -> Value {
             "error": {
                 "code": "repository_save_failed",
                 "message": message
+            }
+        }),
+        true,
+    )
+}
+
+fn repository_state_uncertain_response(id: Value) -> Value {
+    tool_result_response(
+        id,
+        json!({
+            "error": {
+                "code": "repository_state_uncertain",
+                "message": "Repository state is uncertain after a save failure; restart the server before making another tool call",
+                "recovery": "restart_server"
             }
         }),
         true,
