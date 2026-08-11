@@ -4471,6 +4471,33 @@ impl FreeTimeManagerTrait for TestFreeTimeManagerWithFreeMinutes {
 }
 
 #[cfg(test)]
+struct TestFreeTimeManagerForBand;
+
+#[cfg(test)]
+impl FreeTimeManagerTrait for TestFreeTimeManagerForBand {
+    fn get_free_minutes(&mut self, start: &DateTime<Local>, _end: &DateTime<Local>) -> i64 {
+        if start.hour() == 6 {
+            990
+        } else {
+            190
+        }
+    }
+
+    fn get_busy_minutes(&mut self, _start: &DateTime<Local>, _end: &DateTime<Local>) -> i64 {
+        0
+    }
+
+    fn register_busy_time_slot(&mut self, _start: &DateTime<Local>, _end: &DateTime<Local>) {}
+
+    fn load_busy_time_slots_from_file(
+        &mut self,
+        _busy_time_slots_file_path: &str,
+        _now: &DateTime<Local>,
+    ) {
+    }
+}
+
+#[cfg(test)]
 fn execute_sequential_command(command: &str) -> (Task, Option<Uuid>) {
     let now = Local.with_ymd_and_hms(2026, 7, 26, 12, 0, 0).unwrap();
     let task = Task::new("親タスク");
@@ -6271,6 +6298,44 @@ fn execute_calendar_command_for_test(
     String::from_utf8(stdout.buffer).unwrap()
 }
 
+#[cfg(test)]
+fn execute_band_command_with_elapsed_for_test(
+    command: &str,
+    now: DateTime<Local>,
+    task: Task,
+) -> String {
+    let mut task_repository = TestTaskRepository::new(task, now);
+    let mut free_time_manager = TestFreeTimeManagerForBand;
+    let mut focused_task_id_opt = None;
+    let mut stdout = TestWriter::new();
+
+    execute(
+        &mut stdout,
+        &mut task_repository,
+        &mut free_time_manager,
+        &mut focused_task_id_opt,
+        &now,
+        command,
+    );
+
+    String::from_utf8(stdout.buffer).unwrap()
+}
+
+#[cfg(test)]
+fn add_scheduled_child_for_test(
+    root: &Task,
+    name: &str,
+    start_time: DateTime<Local>,
+    estimated_work_minutes: i64,
+) -> Task {
+    let child = root.create_as_last_child(TaskAttr::new(name));
+    child.set_estimated_work_seconds(estimated_work_minutes * 60);
+    child.set_start_time(start_time);
+    child.set_pending_until(start_time);
+    child.set_orig_status(Status::Pending);
+    child
+}
+
 #[test]
 fn test_execute_calendar_現行出力を固定する() {
     let now = Local.with_ymd_and_hms(2026, 8, 11, 12, 0, 0).unwrap();
@@ -6301,6 +6366,52 @@ fn test_execute_calendar_現行出力を固定する() {
 
     let english_alias = execute_calendar_command_for_test("cal", now, task, 10 * 60);
     assert_eq!(english_alias, expected);
+}
+
+#[test]
+fn test_execute_calendar_日付逆順と週区切りと28日境界を固定する() {
+    let now = Local.with_ymd_and_hms(2026, 8, 11, 12, 0, 0).unwrap();
+    let root = Task::new("暦複数日fixture");
+    root.set_estimated_work_seconds(0);
+    add_scheduled_child_for_test(&root, "当日", now, 15);
+    add_scheduled_child_for_test(
+        &root,
+        "月曜日",
+        Local.with_ymd_and_hms(2026, 8, 17, 12, 0, 0).unwrap(),
+        15,
+    );
+    add_scheduled_child_for_test(
+        &root,
+        "28日境界",
+        Local.with_ymd_and_hms(2026, 9, 8, 12, 0, 0).unwrap(),
+        15,
+    );
+    add_scheduled_child_for_test(
+        &root,
+        "29日目",
+        Local.with_ymd_and_hms(2026, 9, 9, 12, 0, 0).unwrap(),
+        15,
+    );
+
+    let actual = execute_calendar_command_for_test("暦", now, root, 10 * 60);
+    let lines = actual.lines().collect::<Vec<_>>();
+    let boundary_index = lines
+        .iter()
+        .position(|line| line.starts_with("2026-09-08(火)"))
+        .unwrap();
+    let monday_index = lines
+        .iter()
+        .position(|line| line.starts_with("2026-08-17(月)"))
+        .unwrap();
+    let today_index = lines
+        .iter()
+        .position(|line| line.starts_with("2026-08-11(火)"))
+        .unwrap();
+
+    assert!(boundary_index < monday_index);
+    assert!(monday_index < today_index);
+    assert_eq!(lines[monday_index + 1], "");
+    assert!(!actual.contains("2026-09-09(水)"));
 }
 
 #[test]
@@ -6396,6 +6507,29 @@ fn test_execute_band_日本語と英語で凡例と棒だけを表示する() {
     assert!(!japanese.contains("日          "));
     assert!(!japanese.contains("残り拘束時間"));
     assert!(!japanese.contains("帯出力固定用タスク"));
+}
+
+#[test]
+fn test_execute_band_全日空き差分と繰り返し判定を帯へ反映する() {
+    let now = Local.with_ymd_and_hms(2026, 8, 11, 12, 0, 0).unwrap();
+    let root = Task::new("帯データフローfixture");
+    root.set_estimated_work_seconds(0);
+    let repetitive_group = root.create_as_last_child(TaskAttr::new("繰り返しグループ"));
+    repetitive_group.set_estimated_work_seconds(0);
+    repetitive_group.set_repetition_interval_days_opt(Some(7));
+    add_scheduled_child_for_test(&repetitive_group, "繰り返しタスク", now, 40);
+
+    let actual = execute_band_command_with_elapsed_for_test("帯", now, root);
+    let expected_row = format!(
+        "2026-08-11(火) [{}{}{}{}{}]",
+        "#".repeat(30),
+        "x".repeat(53),
+        "=".repeat(3),
+        ":".repeat(7),
+        ".".repeat(3),
+    );
+
+    assert!(actual.contains(&expected_row), "{actual}");
 }
 
 #[test]
