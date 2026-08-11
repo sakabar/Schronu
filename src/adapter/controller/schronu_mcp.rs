@@ -1,3 +1,4 @@
+use schronu::adapter::gateway::storage_lock::{LockMode, StorageLock};
 use schronu::adapter::gateway::task_repository::TaskRepository;
 use schronu::adapter::mcp::McpServer;
 use schronu::application::interface::TaskRepositoryTrait;
@@ -19,10 +20,12 @@ fn run() -> Result<(), Box<dyn Error>> {
     let storage_directory = std::env::var_os("SCHRONU_STORAGE_DIR")
         .map(PathBuf::from)
         .unwrap_or_else(|| PathBuf::from(DEFAULT_STORAGE_DIRECTORY));
+    let _storage_lock = StorageLock::acquire(&storage_directory, LockMode::Mcp)?;
     let storage_directory_text = storage_directory
         .to_str()
         .ok_or("storage directory path must be valid UTF-8")?;
-    let repository = TaskRepository::new(storage_directory_text);
+    let mut repository = TaskRepository::new(storage_directory_text);
+    repository.load()?;
     serve_stdio(
         McpServer::new(repository),
         io::stdin().lock(),
