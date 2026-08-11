@@ -1,8 +1,8 @@
 use crate::application::interface::TaskRepositoryTrait;
 use crate::application::schedule_use_case::{get_schedule, ScheduledTaskView};
 use crate::application::task_use_case::{
-    get_focus, get_task, list_tasks, ApplicationError, ListTasksFilter, TaskPeriodField,
-    TaskPeriodFilter, TaskView,
+    create_task as create_task_use_case, get_focus, get_task, list_tasks, ApplicationError,
+    CreateTaskInput, ListTasksFilter, TaskPeriodField, TaskPeriodFilter, TaskView,
 };
 use crate::entity::task::{ProjectCategory, Status};
 use chrono::{DateTime, Local};
@@ -85,6 +85,7 @@ impl<R: TaskRepositoryTrait> McpServer<R> {
             Some("get_task") => self.call_get_task(id, &params["arguments"]),
             Some("list_tasks") => self.call_list_tasks(id, params.get("arguments")),
             Some("get_schedule") => self.call_get_schedule(id, params.get("arguments")),
+            Some("create_task") => self.call_create_task(id, &params["arguments"]),
             _ => error_response(id, -32602, "Unknown tool"),
         }
     }
@@ -153,16 +154,7 @@ impl<R: TaskRepositoryTrait> McpServer<R> {
             Err(ApplicationError::InvalidInput { field, reason }) => {
                 invalid_input_response(id, field, reason)
             }
-            Err(error) => tool_result_response(
-                id,
-                json!({
-                    "error": {
-                        "code": "internal_error",
-                        "message": error.to_string()
-                    }
-                }),
-                true,
-            ),
+            Err(error) => internal_error_response(id, &error.to_string()),
         }
     }
 
@@ -178,6 +170,29 @@ impl<R: TaskRepositoryTrait> McpServer<R> {
             .map(scheduled_task_view_json)
             .collect::<Vec<_>>();
         tool_result_response(id, json!({"schedule": schedule}), false)
+    }
+
+    fn call_create_task(&mut self, id: Value, arguments: &Value) -> Value {
+        let input = match create_task_input(arguments) {
+            Ok(input) => input,
+            Err(CreateTaskInputError::Schema(error)) => return invalid_params_response(id, error),
+            Err(CreateTaskInputError::Semantic { field, message }) => {
+                return invalid_input_response(id, field, message)
+            }
+        };
+
+        let task_id = match create_task_use_case(&mut self.repository, input) {
+            Ok(task_id) => task_id,
+            Err(ApplicationError::InvalidInput { field, reason }) => {
+                return invalid_input_response(id, field, reason)
+            }
+            Err(error) => return internal_error_response(id, &error.to_string()),
+        };
+
+        match self.repository.save() {
+            Ok(()) => tool_result_response(id, json!({"task_id": task_id.to_string()}), false),
+            Err(error) => repository_save_error_response(id, &error.to_string()),
+        }
     }
 }
 
@@ -206,6 +221,32 @@ fn invalid_input_response(id: Value, field: &str, message: &str) -> Value {
     )
 }
 
+fn repository_save_error_response(id: Value, message: &str) -> Value {
+    tool_result_response(
+        id,
+        json!({
+            "error": {
+                "code": "repository_save_failed",
+                "message": message
+            }
+        }),
+        true,
+    )
+}
+
+fn internal_error_response(id: Value, message: &str) -> Value {
+    tool_result_response(
+        id,
+        json!({
+            "error": {
+                "code": "internal_error",
+                "message": message
+            }
+        }),
+        true,
+    )
+}
+
 #[derive(Debug)]
 struct InvalidParams {
     field: String,
@@ -218,6 +259,79 @@ enum ListTasksInputError {
         field: &'static str,
         message: &'static str,
     },
+}
+
+enum CreateTaskInputError {
+    Schema(InvalidParams),
+    Semantic {
+        field: &'static str,
+        message: &'static str,
+    },
+}
+
+fn create_task_input(arguments: &Value) -> Result<CreateTaskInput, CreateTaskInputError> {
+    let arguments = validate_argument_object(
+        arguments,
+        &["name", "estimated_work_minutes", "pending_until"],
+        &["name"],
+    )
+    .map_err(CreateTaskInputError::Schema)?;
+    let name = string_argument(arguments, "name").map_err(CreateTaskInputError::Schema)?;
+    if name.is_empty() {
+        return Err(CreateTaskInputError::Schema(InvalidParams {
+            field: "name".to_string(),
+            reason: "must not be empty",
+        }));
+    }
+
+    let estimated_work_minutes = arguments
+        .get("estimated_work_minutes")
+        .map(|value| {
+            if let Some(minutes) = value.as_i64() {
+                return if minutes >= 0 {
+                    Ok(minutes)
+                } else {
+                    Err(CreateTaskInputError::Schema(InvalidParams {
+                        field: "estimated_work_minutes".to_string(),
+                        reason: "must be a non-negative integer",
+                    }))
+                };
+            }
+            if value.as_u64().is_some() {
+                return Err(CreateTaskInputError::Semantic {
+                    field: "estimated_work_minutes",
+                    message: "is outside the supported integer range",
+                });
+            }
+            Err(CreateTaskInputError::Schema(InvalidParams {
+                field: "estimated_work_minutes".to_string(),
+                reason: "must be a non-negative integer",
+            }))
+        })
+        .transpose()?;
+    let pending_until = arguments
+        .get("pending_until")
+        .map(|value| {
+            let value = value.as_str().ok_or_else(|| {
+                CreateTaskInputError::Schema(InvalidParams {
+                    field: "pending_until".to_string(),
+                    reason: "must be a string",
+                })
+            })?;
+            DateTime::parse_from_rfc3339(value)
+                .map(|time| time.with_timezone(&Local))
+                .map_err(|_| CreateTaskInputError::Semantic {
+                    field: "pending_until",
+                    message: "must be a valid RFC 3339 date-time",
+                })
+        })
+        .transpose()?;
+
+    Ok(CreateTaskInput {
+        name: name.to_string(),
+        estimated_work_minutes,
+        pending_until,
+    })
 }
 
 fn list_tasks_filter(arguments: Option<&Value>) -> Result<ListTasksFilter, ListTasksInputError> {
