@@ -1,3 +1,152 @@
+use chrono::{DateTime, Local};
+use fs2::FileExt;
+use std::error::Error;
+use std::fmt;
+use std::fs::{File, OpenOptions};
+use std::io::{Seek, SeekFrom, Write};
+use std::path::{Path, PathBuf};
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum LockMode {
+    Cli,
+    Mcp,
+}
+
+impl fmt::Display for LockMode {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Cli => write!(formatter, "cli"),
+            Self::Mcp => write!(formatter, "mcp"),
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum StorageLockErrorKind {
+    Contended,
+    Io,
+}
+
+#[derive(Debug)]
+pub struct StorageLockError {
+    kind: StorageLockErrorKind,
+    path: PathBuf,
+    holder_metadata: Option<String>,
+    source: std::io::Error,
+}
+
+impl StorageLockError {
+    fn io(path: &Path, source: std::io::Error) -> Self {
+        Self {
+            kind: StorageLockErrorKind::Io,
+            path: path.to_path_buf(),
+            holder_metadata: None,
+            source,
+        }
+    }
+
+    fn contended(path: &Path, source: std::io::Error) -> Self {
+        Self {
+            kind: StorageLockErrorKind::Contended,
+            path: path.to_path_buf(),
+            holder_metadata: std::fs::read_to_string(path).ok(),
+            source,
+        }
+    }
+
+    pub fn kind(&self) -> StorageLockErrorKind {
+        self.kind
+    }
+
+    pub fn path(&self) -> &Path {
+        &self.path
+    }
+
+    pub fn holder_metadata(&self) -> Option<&str> {
+        self.holder_metadata.as_deref()
+    }
+}
+
+impl fmt::Display for StorageLockError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match (&self.kind, &self.holder_metadata) {
+            (StorageLockErrorKind::Contended, Some(metadata)) => write!(
+                formatter,
+                "storage lock is already held at {} ({})",
+                self.path.display(),
+                metadata.trim().replace('\n', ", ")
+            ),
+            (StorageLockErrorKind::Contended, None) => write!(
+                formatter,
+                "storage lock is already held at {}",
+                self.path.display()
+            ),
+            (StorageLockErrorKind::Io, _) => write!(
+                formatter,
+                "storage lock operation failed at {}: {}",
+                self.path.display(),
+                self.source
+            ),
+        }
+    }
+}
+
+impl Error for StorageLockError {
+    fn source(&self) -> Option<&(dyn Error + 'static)> {
+        Some(&self.source)
+    }
+}
+
+#[derive(Debug)]
+pub struct StorageLock {
+    _file: File,
+    path: PathBuf,
+}
+
+impl StorageLock {
+    pub fn acquire(storage_directory: &Path, mode: LockMode) -> Result<Self, StorageLockError> {
+        let path = storage_directory.join(".lock");
+        let mut file = OpenOptions::new()
+            .create(true)
+            .truncate(false)
+            .read(true)
+            .write(true)
+            .open(&path)
+            .map_err(|error| StorageLockError::io(&path, error))?;
+
+        file.try_lock_exclusive()
+            .map_err(|error| StorageLockError::contended(&path, error))?;
+
+        write_metadata(&mut file, mode, Local::now()).map_err(|error| {
+            let _ = FileExt::unlock(&file);
+            StorageLockError::io(&path, error)
+        })?;
+
+        Ok(Self { _file: file, path })
+    }
+
+    pub fn path(&self) -> &Path {
+        &self.path
+    }
+}
+
+fn write_metadata(
+    file: &mut File,
+    mode: LockMode,
+    started_at: DateTime<Local>,
+) -> std::io::Result<()> {
+    file.set_len(0)?;
+    file.seek(SeekFrom::Start(0))?;
+    write!(
+        file,
+        "pid={}\nstarted_at={}\nmode={}\n",
+        std::process::id(),
+        started_at.to_rfc3339(),
+        mode
+    )?;
+    file.sync_data()
+}
+
 #[cfg(test)]
 mod tests {
     use super::{LockMode, StorageLock, StorageLockErrorKind};

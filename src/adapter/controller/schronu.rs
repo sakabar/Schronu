@@ -1,10 +1,10 @@
 use chrono::{
     DateTime, Datelike, Duration, Local, LocalResult, NaiveDate, TimeZone, Timelike, Weekday,
 };
-use fs2::FileExt;
 use percent_encoding::{percent_encode, AsciiSet, CONTROLS};
 use regex::Regex;
 use schronu::adapter::gateway::free_time_manager::FreeTimeManager;
+use schronu::adapter::gateway::storage_lock::{LockMode, StorageLock};
 use schronu::adapter::gateway::task_repository::TaskRepository;
 use schronu::application::interface::FreeTimeManagerTrait;
 #[cfg(test)]
@@ -26,7 +26,6 @@ use std::cell::Cell;
 use std::cmp::{max, min};
 use std::collections::HashMap;
 use std::env;
-use std::fs::File;
 use std::io::Stdout;
 use std::io::{stdout, Write};
 #[cfg(test)]
@@ -6157,39 +6156,26 @@ fn main() {
     let command_opt = parse_non_interactive_command(env::args().skip(1).collect());
     let mut task_repository = TaskRepository::new("../Schronu-private/tasks/");
     let mut free_time_manager = FreeTimeManager::new();
-
-    // 複数プロセスで同時に実行すると片方の操作がもう片方の操作により上書かれてしまうので、
-    // ロックファイルを置いて制御する
-    let lock_path: &str = &format!("{}/.lock", task_repository.get_project_storage_dir_name());
-
-    // ロックファイルを開く。なければ作成する。
-    let file = File::create(lock_path).expect("Unable to create lock file");
-
-    // 排他ロックを試みる。
-    match file.try_lock_exclusive() {
-        Ok(_) => {
-            // ロック取得成功。アプリケーションのメインロジックを実行。
-
-            // controllerで実体を見るのを避けるために、1つ関数を切る
-            let result = match command_opt {
-                Some(command) => execute_non_interactive_command(
-                    &mut task_repository,
-                    &mut free_time_manager,
-                    &command,
-                ),
-                None => application(&mut task_repository, &mut free_time_manager),
-            };
-            if !report_run_result(&mut std::io::stderr(), result) {
-                process::exit(1);
-            }
-
-            // 終了時にロックは自動的に解放される。
-        }
-        Err(_) => {
-            // ロック取得失敗。すでに別のインスタンスが実行中。
-            eprintln!("[Error] Another instance of the application is already running.");
+    let _storage_lock = match StorageLock::acquire(
+        task_repository.get_project_storage_dir_name().as_ref(),
+        LockMode::Cli,
+    ) {
+        Ok(storage_lock) => storage_lock,
+        Err(error) => {
+            eprintln!("[Error] {error}");
             process::exit(1);
         }
+    };
+
+    // controllerで実体を見るのを避けるために、1つ関数を切る
+    let result = match command_opt {
+        Some(command) => {
+            execute_non_interactive_command(&mut task_repository, &mut free_time_manager, &command)
+        }
+        None => application(&mut task_repository, &mut free_time_manager),
+    };
+    if !report_run_result(&mut std::io::stderr(), result) {
+        process::exit(1);
     }
 }
 
