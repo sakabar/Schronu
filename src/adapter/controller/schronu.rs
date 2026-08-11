@@ -7364,6 +7364,89 @@ fn test_interactive_input切断はreload後に保存してfatal終了する() {
     assert!(StorageLock::acquire(&storage_dir.path, LockMode::Mcp).is_ok());
 }
 
+#[test]
+fn test_interactive_ctrl_dは製品event経路でreload後に保存して終了する() {
+    let storage_dir = TestStorageDir::new();
+    std::fs::create_dir_all(&storage_dir.path).unwrap();
+    let now = Local.with_ymd_and_hms(2026, 8, 12, 12, 0, 0).unwrap();
+    let task = Task::new("保存対象");
+    let task_id = task.get_id();
+    let mut repository =
+        TestTaskRepository::new(task, now).with_storage_directory(&storage_dir.path);
+    let mut free_time_manager = TestFreeTimeManager;
+    let mut stdout = TestWriter::new();
+    let mut focused_task_id_opt = Some(task_id);
+    let mut last_focused_task_id_opt = Some(task_id);
+    let mut focus_started_datetime = now;
+    let mut focus_selection_mode = FocusSelectionMode::HighestPriority;
+
+    let outcome = handle_interactive_repository_event(
+        &mut stdout,
+        &mut repository,
+        &mut free_time_manager,
+        InteractiveRepositoryState {
+            focused_task_id_opt: &mut focused_task_id_opt,
+            last_focused_task_id_opt: &mut last_focused_task_id_opt,
+            focus_started_datetime: &mut focus_started_datetime,
+            focus_selection_mode: &mut focus_selection_mode,
+        },
+        InteractiveRepositoryEvent::Exit {
+            header: "schronu> ",
+            line: "",
+            cursor_x: 0,
+        },
+    );
+
+    assert!(matches!(outcome, InteractiveRepositoryEventOutcome::Exit));
+    assert_eq!(repository.load_attempt_count.get(), 1);
+    assert_eq!(repository.save_attempt_count.get(), 1);
+    assert!(StorageLock::acquire(&storage_dir.path, LockMode::Mcp).is_ok());
+}
+
+#[test]
+fn test_interactive_input読込errorは製品event経路でreload後に保存してfatal終了する() {
+    let storage_dir = TestStorageDir::new();
+    std::fs::create_dir_all(&storage_dir.path).unwrap();
+    let now = Local.with_ymd_and_hms(2026, 8, 12, 12, 0, 0).unwrap();
+    let task = Task::new("保存対象");
+    let task_id = task.get_id();
+    let mut repository =
+        TestTaskRepository::new(task, now).with_storage_directory(&storage_dir.path);
+    let mut free_time_manager = TestFreeTimeManager;
+    let mut stdout = TestWriter::new();
+    let mut focused_task_id_opt = Some(task_id);
+    let mut last_focused_task_id_opt = Some(task_id);
+    let mut focus_started_datetime = now;
+    let mut focus_selection_mode = FocusSelectionMode::HighestPriority;
+
+    let outcome = handle_interactive_repository_event(
+        &mut stdout,
+        &mut repository,
+        &mut free_time_manager,
+        InteractiveRepositoryState {
+            focused_task_id_opt: &mut focused_task_id_opt,
+            last_focused_task_id_opt: &mut last_focused_task_id_opt,
+            focus_started_datetime: &mut focus_started_datetime,
+            focus_selection_mode: &mut focus_selection_mode,
+        },
+        InteractiveRepositoryEvent::InputRead(std::io::Error::new(
+            std::io::ErrorKind::BrokenPipe,
+            "stdin read failure",
+        )),
+    );
+
+    assert!(matches!(
+        outcome,
+        InteractiveRepositoryEventOutcome::Fatal(RunError::InputRead {
+            input_error,
+            save_error_opt: None,
+        }) if input_error.kind() == std::io::ErrorKind::BrokenPipe
+    ));
+    assert_eq!(repository.load_attempt_count.get(), 1);
+    assert_eq!(repository.save_attempt_count.get(), 1);
+    assert!(StorageLock::acquire(&storage_dir.path, LockMode::Mcp).is_ok());
+}
+
 fn make_messages_about_focus(
     focused_task: &Task,
     focus_started_datetime: &DateTime<Local>,
