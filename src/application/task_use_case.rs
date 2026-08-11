@@ -1,65 +1,14 @@
 use crate::application::interface::TaskRepositoryTrait;
+use crate::application::schedule_use_case::get_schedule;
+pub use crate::application::task_view::TaskView;
 use crate::entity::datetime::get_next_morning_datetime;
 use crate::entity::task::{ProjectCategory, RepetitionAnchor, Status, Task, TaskAttr};
 use chrono::{DateTime, Datelike, Duration, Local, Timelike};
 use std::cmp::{max, Ordering};
+use std::collections::HashSet;
 use std::error::Error;
 use std::fmt;
 use uuid::Uuid;
-
-#[derive(Clone, Debug, PartialEq)]
-pub struct TaskView {
-    pub id: Uuid,
-    pub root_id: Uuid,
-    pub parent_id: Option<Uuid>,
-    pub child_ids: Vec<Uuid>,
-    pub name: String,
-    pub status: Status,
-    pub original_status: Status,
-    pub is_on_other_side: bool,
-    pub atomic: bool,
-    pub pending_until: Option<DateTime<Local>>,
-    pub priority: i64,
-    pub create_time: DateTime<Local>,
-    pub start_time: DateTime<Local>,
-    pub end_time: Option<DateTime<Local>>,
-    pub deadline_time: Option<DateTime<Local>>,
-    pub estimated_work_seconds: i64,
-    pub actual_work_seconds: i64,
-    pub repetition_interval_days: Option<i64>,
-    pub repetition_anchor: RepetitionAnchor,
-    pub days_in_advance: i64,
-    pub project_category: Option<ProjectCategory>,
-}
-
-impl From<&Task> for TaskView {
-    fn from(task: &Task) -> Self {
-        Self {
-            id: task.get_id(),
-            root_id: task.root().get_id(),
-            parent_id: task.parent().map(|parent| parent.get_id()),
-            child_ids: task.get_children().iter().map(Task::get_id).collect(),
-            name: task.get_name(),
-            status: task.get_status(),
-            original_status: task.get_orig_status(),
-            is_on_other_side: task.get_is_on_other_side(),
-            atomic: task.get_atomic(),
-            pending_until: (task.get_orig_status() == Status::Pending)
-                .then(|| task.get_pending_until()),
-            priority: task.get_priority(),
-            create_time: task.get_create_time(),
-            start_time: task.get_start_time(),
-            end_time: task.get_end_time_opt(),
-            deadline_time: task.get_deadline_time_opt(),
-            estimated_work_seconds: task.get_estimated_work_seconds(),
-            actual_work_seconds: task.get_actual_work_seconds(),
-            repetition_interval_days: task.get_repetition_interval_days_opt(),
-            repetition_anchor: task.get_repetition_anchor(),
-            days_in_advance: task.get_days_in_advance(),
-            project_category: task.get_project_category_opt(),
-        }
-    }
-}
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum ApplicationError {
@@ -114,6 +63,28 @@ pub struct CompleteTaskOutput {
     pub next_repetition_task_id: Option<Uuid>,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum TaskPeriodField {
+    ScheduledStart,
+    CreatedAt,
+    Deadline,
+    CompletedAt,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct TaskPeriodFilter {
+    pub field: TaskPeriodField,
+    pub from: DateTime<Local>,
+    pub until: DateTime<Local>,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct ListTasksFilter {
+    pub period: Option<TaskPeriodFilter>,
+    pub statuses: Vec<Status>,
+    pub categories: Vec<Option<ProjectCategory>>,
+}
+
 pub fn get_focus(repository: &mut dyn TaskRepositoryTrait) -> Option<TaskView> {
     repository
         .get_highest_priority_leaf_task_id()
@@ -122,6 +93,80 @@ pub fn get_focus(repository: &mut dyn TaskRepositoryTrait) -> Option<TaskView> {
 
 pub fn get_task(repository: &dyn TaskRepositoryTrait, task_id: Uuid) -> Option<TaskView> {
     repository.get_by_id(task_id).as_ref().map(TaskView::from)
+}
+
+pub fn list_tasks(
+    repository: &dyn TaskRepositoryTrait,
+    filter: ListTasksFilter,
+) -> Result<Vec<TaskView>, ApplicationError> {
+    if filter
+        .period
+        .as_ref()
+        .is_some_and(|period| period.from >= period.until)
+    {
+        return Err(ApplicationError::InvalidInput {
+            field: "period",
+            reason: "from must be earlier than until",
+        });
+    }
+
+    let scheduled_task_ids = filter
+        .period
+        .as_ref()
+        .filter(|period| period.field == TaskPeriodField::ScheduledStart)
+        .map(|period| {
+            get_schedule(repository)
+                .into_iter()
+                .filter(|entry| {
+                    period.from <= entry.scheduled_start && entry.scheduled_start < period.until
+                })
+                .map(|entry| entry.task.id)
+                .collect::<HashSet<_>>()
+        });
+
+    let mut tasks = Vec::new();
+    for root in repository.get_all_projects() {
+        collect_tasks_pre_order(root, &mut tasks);
+    }
+
+    Ok(tasks
+        .into_iter()
+        .map(|task| TaskView::from(&task))
+        .filter(|task| filter.statuses.is_empty() || filter.statuses.contains(&task.status))
+        .filter(|task| {
+            filter.categories.is_empty() || filter.categories.contains(&task.project_category)
+        })
+        .filter(|task| {
+            filter
+                .period
+                .as_ref()
+                .map_or(true, |period| match period.field {
+                    TaskPeriodField::ScheduledStart => scheduled_task_ids
+                        .as_ref()
+                        .is_some_and(|task_ids| task_ids.contains(&task.id)),
+                    TaskPeriodField::CreatedAt => {
+                        is_in_period(task.create_time, period.from, period.until)
+                    }
+                    TaskPeriodField::Deadline => task
+                        .deadline_time
+                        .is_some_and(|time| is_in_period(time, period.from, period.until)),
+                    TaskPeriodField::CompletedAt => task
+                        .end_time
+                        .is_some_and(|time| is_in_period(time, period.from, period.until)),
+                })
+        })
+        .collect())
+}
+
+fn collect_tasks_pre_order(task: &Task, tasks: &mut Vec<Task>) {
+    tasks.push(task.clone());
+    for child in task.get_children() {
+        collect_tasks_pre_order(&child, tasks);
+    }
+}
+
+fn is_in_period(time: DateTime<Local>, from: DateTime<Local>, until: DateTime<Local>) -> bool {
+    from <= time && time < until
 }
 
 pub fn create_task(
