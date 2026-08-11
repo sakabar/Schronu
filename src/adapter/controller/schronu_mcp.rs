@@ -140,7 +140,7 @@ mod tests {
     }
 
     #[test]
-    fn prepare_repositoryは指定時刻を同期してからloadする() {
+    fn prepare_repositoryは指定時刻をrepositoryへ同期してからloadする() {
         let calls = Rc::new(RefCell::new(Vec::new()));
         let mut repository = RecordingRepository::new(Rc::clone(&calls));
         let now = Local.with_ymd_and_hms(2026, 8, 11, 12, 0, 0).unwrap();

@@ -64,7 +64,7 @@ impl Drop for PermissionRestoreGuard {
 }
 
 #[test]
-fn mcp_stdio_initializeとtools_listをprotocol専用stdoutへ返す() {
+fn mcp_stdio_stdoutにinitializeとtools_listのjson_rpc応答だけを出力する() {
     let storage = TestStorageDirectory::new();
     let mut child = spawn_mcp(storage.path());
 
@@ -114,7 +114,7 @@ fn mcp_stdio_initializeとtools_listをprotocol専用stdoutへ返す() {
 }
 
 #[test]
-fn mcp_stdio_壊れたjsonへparse_errorを返して次のrequestを処理する() {
+fn mcp_stdio_壊れたjsonにparse_errorを返し次のrequestも処理する() {
     let storage = TestStorageDirectory::new();
     let mut child = spawn_mcp(storage.path());
     let initialize = json!({
@@ -151,7 +151,7 @@ fn mcp_stdio_壊れたjsonへparse_errorを返して次のrequestを処理する
 }
 
 #[test]
-fn mcp_stdio_不正initialize後も同一processで正常に初期化できる() {
+fn mcp_stdio_不正なinitialize_request後も同一processで正常に初期化できる() {
     let storage = TestStorageDirectory::new();
     let mut child = spawn_mcp(storage.path());
     let requests = [
@@ -215,7 +215,7 @@ fn mcp_stdio_不正initialize後も同一processで正常に初期化できる()
 }
 
 #[test]
-fn mcp_stdio_process中はlockを保持し終了後に解放する() {
+fn mcp_stdio_serverは稼働中にlockを保持し終了後に解放する() {
     let storage = TestStorageDirectory::new();
     let child = spawn_mcp(storage.path());
     let lock_path = storage.path().join(".lock");
@@ -232,7 +232,7 @@ fn mcp_stdio_process中はlockを保持し終了後に解放する() {
 }
 
 #[test]
-fn mcp_stdio_lock取得後のrepository_load失敗をstderrへ返す() {
+fn mcp_stdio_lock取得後のrepository_load失敗をstderrへ出力する() {
     let storage = TestStorageDirectory::new();
     let project_directory = storage.path().join("broken");
     fs::create_dir(&project_directory).unwrap();
@@ -250,7 +250,7 @@ fn mcp_stdio_lock取得後のrepository_load失敗をstderrへ返す() {
 }
 
 #[test]
-fn mcp_stdio_9toolを実repositoryで実行し再起動後も保存内容を読む() {
+fn mcp_stdio_9つのtoolをfilesystem上のrepositoryで実行し再起動後も保存内容を読む() {
     let storage = TestStorageDirectory::new();
     let create = call_tool(
         storage.path(),
@@ -419,7 +419,7 @@ fn mcp_stdio_起動時にload前の現在時刻を同期して期限切れpendin
 }
 
 #[test]
-fn mcp_stdio稼働中は同じ保存先の実cli起動を拒否する() {
+fn mcp_stdio稼働中は同じ保存先を使うcli_processの起動を拒否する() {
     let storage = TestStorageDirectory::new();
     let child = spawn_mcp(storage.path());
     let (mut mcp, _) = wait_for_lock_metadata(child, &storage.path().join(".lock"));
@@ -446,7 +446,7 @@ fn mcp_stdio稼働中は同じ保存先の実cli起動を拒否する() {
 }
 
 #[test]
-fn mcp_stdio_主要なtool_errorを区別する() {
+fn mcp_stdio_task不明と入力不正と未完了childのerror_codeを区別する() {
     let storage = TestStorageDirectory::new();
     let missing_id = Uuid::new_v4().to_string();
     let missing = call_tool(
@@ -525,7 +525,7 @@ fn mcp_stdio_主要なtool_errorを区別する() {
 
 #[cfg(unix)]
 #[test]
-fn mcp_stdio_実repositoryのsave失敗をtool_errorにする() {
+fn mcp_stdio_filesystemへのsave失敗後は後続tool_callを拒否する() {
     use std::os::unix::fs::PermissionsExt;
 
     let storage = TestStorageDirectory::new();

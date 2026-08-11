@@ -20,7 +20,7 @@ mod tests {
     use std::path::PathBuf;
 
     #[test]
-    fn 設定値と既定値を区別する() {
+    fn storage_directoryは環境変数の設定値と既定値を区別する() {
         assert_eq!(
             resolve_project_storage_directory(Some(OsString::from("configured/tasks"))).unwrap(),
             PathBuf::from("configured/tasks")
@@ -33,7 +33,7 @@ mod tests {
 
     #[cfg(unix)]
     #[test]
-    fn 非utf8設定値を理由付きerrorにする() {
+    fn storage_directoryは非utf8の環境変数を理由付きerrorにする() {
         use std::os::unix::ffi::OsStringExt;
 
         let error =

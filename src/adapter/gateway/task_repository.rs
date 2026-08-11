@@ -713,7 +713,7 @@ mod tests {
     }
 
     #[test]
-    fn test_sync_clock_全projectのrootと全descendantへ同じ時刻を伝搬する() {
+    fn sync_clockは全projectのrootと全descendantへ同じ時刻を伝搬する() {
         let storage_dir = TestStorageDir::new();
         let now = Local.with_ymd_and_hms(2026, 8, 11, 12, 0, 0).unwrap();
         let pending_until = now - Duration::hours(1);

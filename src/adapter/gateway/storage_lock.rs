@@ -237,7 +237,7 @@ mod tests {
 
     #[cfg(unix)]
     #[test]
-    fn storage_lock_guard_drop後に再取得できる() {
+    fn storage_lock_guardのdrop後に再取得できる() {
         let directory = TestDir::new();
         let first = StorageLock::acquire(directory.path(), LockMode::Cli).unwrap();
         drop(first);
@@ -249,7 +249,7 @@ mod tests {
 
     #[cfg(unix)]
     #[test]
-    fn storage_lock_symlinkの参照先を変更せずio_errorで拒否する() {
+    fn storage_lockはsymlinkをio_errorで拒否し参照先を変更しない() {
         use std::os::unix::fs::{symlink, PermissionsExt};
 
         let directory = TestDir::new();
@@ -263,7 +263,7 @@ mod tests {
 
         let result = StorageLock::acquire(directory.path(), LockMode::Mcp);
 
-        assert!(result.is_err(), "symlinkのlock fileは拒否する");
+        assert!(result.is_err(), ".lock fileがsymlinkの場合は拒否されるべき");
         let error = result.unwrap_err();
         assert_eq!(error.kind(), StorageLockErrorKind::Io);
         assert_eq!(error.path(), lock_path);
@@ -284,7 +284,7 @@ mod tests {
 
     #[cfg(not(unix))]
     #[test]
-    fn storage_lock_unix以外ではunsupportedのio_errorで拒否する() {
+    fn storage_lockは非unix環境でunsupportedのio_errorを返す() {
         let directory = TestDir::new();
         let lock_path = directory.path().join(".lock");
 

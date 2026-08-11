@@ -1461,7 +1461,7 @@ mod tests {
     }
 
     #[test]
-    fn initialize_server情報とtool能力を返す() {
+    fn initializeはserver情報とtools能力を返す() {
         let mut server = McpServer::new(TaskRepository::new(""));
         let request = json!({
             "jsonrpc": "2.0",
@@ -1491,7 +1491,7 @@ mod tests {
     }
 
     #[test]
-    fn initialize_非対応version要求にはserver対応versionを返す() {
+    fn initializeは非対応version要求にserver対応versionを返す() {
         let mut server = McpServer::new(TaskRepository::new(""));
         let request = json!({
             "jsonrpc": "2.0",
@@ -1533,7 +1533,9 @@ mod tests {
     }
 
     #[test]
-    fn 初期化前のtools_callは両lifecycle_stateで拒否してrepository_clockを同期しない() {
+    #[allow(non_snake_case)]
+    fn 初期化完了前のtools_callはUninitializedとInitializeRespondedの両方で拒否しrepository_clockを同期しない(
+    ) {
         let repository = RecordingRepository::new(vec![]);
         let sync_clock_times = Rc::clone(&repository.sync_clock_times);
         let mut server = McpServer::new(repository);
@@ -1584,7 +1586,7 @@ mod tests {
     }
 
     #[test]
-    fn request_未知methodにはmethod_not_foundを返す() {
+    fn json_rpc_requestは未知methodにmethod_not_foundを返す() {
         let mut server = McpServer::new(TaskRepository::new(""));
         let request = json!({
             "jsonrpc": "2.0",
@@ -1601,7 +1603,7 @@ mod tests {
     }
 
     #[test]
-    fn json_rpc_requestの不正なenvelopeをinvalid_requestとしてidを可能な限り相関する() {
+    fn json_rpc_requestのenvelope不正時も有効なidをerror応答へ引き継ぐ() {
         let cases = [
             ("non-object", json!([]), json!(null)),
             (
@@ -1995,7 +1997,7 @@ mod tests {
     }
 
     #[test]
-    fn initializeのmetaをobjectに限定する() {
+    fn initialize_paramsの_metaをobjectに限定する() {
         let repository = RecordingRepository::new(vec![]);
         let sync_clock_times = Rc::clone(&repository.sync_clock_times);
         let mutation_count = Rc::clone(&repository.mutation_count);
@@ -2047,7 +2049,8 @@ mod tests {
     }
 
     #[test]
-    fn initializeのprogress_tokenをstringまたはnumberに限定する() {
+    #[allow(non_snake_case)]
+    fn initialize_paramsの_meta内progressTokenをstringまたはnumberに限定する() {
         let invalid_cases = [
             ("boolean", json!(false)),
             ("null", json!(null)),
@@ -2148,7 +2151,7 @@ mod tests {
     }
 
     #[test]
-    fn initialized通知のmetaをobjectに限定する() {
+    fn initialized通知はparamsの_metaをobjectに限定する() {
         let repository = RecordingRepository::new(vec![]);
         let sync_clock_times = Rc::clone(&repository.sync_clock_times);
         let mutation_count = Rc::clone(&repository.mutation_count);
@@ -2198,7 +2201,8 @@ mod tests {
     }
 
     #[test]
-    fn initialized通知ではmetaのprogress_tokenを汎用値として許容する() {
+    #[allow(non_snake_case)]
+    fn initialized通知の_meta内progressTokenはbooleanも許容する() {
         let mut server = McpServer::new(TaskRepository::new(""));
         server.handle_request(initialize_request()).unwrap();
 
@@ -2281,7 +2285,8 @@ mod tests {
     }
 
     #[test]
-    fn initializeはclient情報とcapabilitiesの拡張fieldを許容する() {
+    #[allow(non_snake_case)]
+    fn initializeはclientInfoとcapabilitiesの拡張fieldを許容する() {
         let mut server = McpServer::new(TaskRepository::new(""));
 
         let response = server
@@ -2359,7 +2364,7 @@ mod tests {
     }
 
     #[test]
-    fn tools_list_initialized通知後に9toolのschemaを返す() {
+    fn tools_list_initialized通知後に9つのtoolのschemaを返す() {
         let mut server = McpServer::new(TaskRepository::new(""));
         server.handle_request(initialize_request()).unwrap();
         assert_eq!(
@@ -2559,7 +2564,8 @@ mod tests {
     }
 
     #[test]
-    fn get_task_task_viewをstructured_contentで返してsaveしない() {
+    #[allow(non_snake_case)]
+    fn get_taskはTaskViewをstructured_contentで返してsaveしない() {
         let pending_until = Local.with_ymd_and_hms(2026, 8, 12, 6, 0, 0).unwrap();
         let create_time = Local.with_ymd_and_hms(2026, 8, 1, 9, 0, 0).unwrap();
         let start_time = Local.with_ymd_and_hms(2026, 8, 10, 10, 0, 0).unwrap();
@@ -3113,7 +3119,8 @@ mod tests {
     }
 
     #[test]
-    fn get_schedule_typed予定を返してrepositoryを変更しない() {
+    #[allow(non_snake_case)]
+    fn get_scheduleは予定をScheduledTaskViewの全field付きで返しrepositoryを変更しない() {
         let task = Task::new("scheduled task");
         let task_id = task.get_id();
         task.set_start_time(fixed_now());
