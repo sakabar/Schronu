@@ -27,7 +27,96 @@ Schronu (スロン) : タスクの抵抗感を減らして前に進んでいく�
   * ネットワークによる通信は[crates.io](https://crates.io/)からRustのライブラリをダウンロードしてくることのみ
   * その他は一切ネットワークを通した送受信を行わないため、セキュリティ的に安全
 
-## 使い方
+## MCP server
+
+Schronuは、ローカルのMCP clientから9個のtask toolを利用できるstdio serverを提供します。初版は1人・1processでの利用を前提とし、network transportや認証機能は持ちません。
+
+### buildと起動
+
+```shell
+cargo build --release --bin schronu-mcp
+SCHRONU_STORAGE_DIR=/absolute/path/to/tasks ./target/release/schronu-mcp
+```
+
+`schronu-mcp`はstdinからnewline区切りのJSON-RPC messageを読み、stdoutにはMCP protocol responseだけを出力します。起動時のlock取得・repository load失敗などの診断はstderrへ出します。通常はterminalから直接操作せず、MCP clientからprocessを起動してください。
+
+保存先は`SCHRONU_STORAGE_DIR`で指定します。未指定時は起動時のworking directoryから見た`../Schronu-private/tasks/`です。相対pathの解釈違いを避けるため、MCP clientでは絶対pathを推奨します。同じ環境変数はCLIの`schronu`にも適用されます。
+
+### MCP client設定例
+
+clientごとの設定形式に合わせて、commandと環境変数を次のように指定します。
+
+```json
+{
+  "mcpServers": {
+    "schronu": {
+      "command": "/absolute/path/to/Schronu/target/release/schronu-mcp",
+      "env": {
+        "SCHRONU_STORAGE_DIR": "/absolute/path/to/Schronu-private/tasks"
+      }
+    }
+  }
+}
+```
+
+### 利用可能なtool
+
+日時はRFC 3339、task IDはUUIDで指定します。categoryは`earning`、`sustaining`、`recovery`、`investment`、`consumption`のいずれかです。
+
+| tool | 主な入力 | 動作 |
+| --- | --- | --- |
+| `get_focus` | なし | 現在着手すべきtaskを返す。候補がなければ`task: null` |
+| `get_task` | `task_id` | task詳細を返す |
+| `list_tasks` | optional: `period`、`statuses`、`categories` | taskを絞り込んでpre-orderで返す |
+| `get_schedule` | なし | Schronuの予定計算結果を返す |
+| `create_task` | `name`、optional: `estimated_work_minutes`、`pending_until` | 新規projectを作成する |
+| `breakdown_task` | `parent_id`、`names`、optional: `pending_until` | 入力順に子taskを追加する |
+| `defer_task` | `task_id`、`pending_until` | 絶対時刻までtaskを延期する |
+| `complete_task` | `task_id`、optional: `finished_at`、`additional_actual_work_seconds` | taskを完了する |
+| `update_task` | `task_id`と、`estimated_work_minutes`、`deadline_time`、`category`のうち1つ以上 | 見積もり・締切・categoryを更新する |
+
+`deadline_time`と`category`は`null`で解除できます。`list_tasks.period.field`は`scheduled_start`、`created_at`、`deadline`、`completed_at`のいずれかで、`from`以上`until`未満の半開区間です。`statuses`は`todo`、`pending`、`done`、`categories`は上記categoryまたは`null`を配列で指定します。同じ`statuses`内と同じ`categories`内はOR、period・status・categoryの間はANDです。statusは現在時刻を反映した実効statusで判定します。配列の省略または空配列は、その項目で絞り込みません。
+
+例:
+
+```json
+{
+  "name": "create_task",
+  "arguments": {
+    "name": "MCPから作成したtask",
+    "estimated_work_minutes": 30,
+    "pending_until": "2026-08-12T09:00:00+09:00"
+  }
+}
+```
+
+```json
+{
+  "name": "list_tasks",
+  "arguments": {
+    "statuses": ["todo", "pending"],
+    "categories": ["recovery", null]
+  }
+}
+```
+
+入力schema違反はJSON-RPC `-32602`、実行時の入力error・task不明・未完了child・保存失敗は`isError: true`のstructured tool resultとして返ります。repository load失敗やlock取得失敗ではserverは起動せず、stderrへ理由を出してnon-zero終了します。
+
+### CLIとの排他lock
+
+CLIとMCP serverは同時利用できません。両方とも保存先直下の`.lock`へ同じOS advisory lockを取得し、lock取得後にrepositoryをloadします。`.lock`には`pid`、`started_at`、`mode`(`cli`または`mcp`)が記録されます。
+
+lock競合時は、先に動いているCLIまたはMCP clientを正常終了させてから再実行してください。`.lock` fileはprocess終了後も残りますが、fileの存在だけではlock中を意味しません。OS lockを取得できるかどうかが正です。取得成功時にmetadataは上書きされます。
+
+稼働中のprocessがある状態で`.lock`を削除すると、別inodeに新しいlockを作れて排他が破れる可能性があります。競合回避のために手動削除しないでください。異常終了後も、まず通常どおり再起動してOS lockが解放済みか確認してください。
+
+### backupと安全上の注意
+
+一貫したbackupを取る場合はCLIとMCP serverを両方停止し、`.lock`を除く保存先directoryの内容をdirectory構造ごとcopyしてください。`.lock`はtask dataではないためbackup・restore対象外です。復元もCLI/MCP停止中に行ってください。
+
+stdio接続を許可したMCP clientはtaskの作成・変更・完了とfile保存を実行できます。信頼できるローカルclientだけに設定し、保存先のfilesystem permissionとbackupを管理してください。初版の対象外は、CLI/MCPの同時利用、複数MCP serverの同時利用、team共有、端末間同期、network transport、複数projectをまたぐatomic transactionです。
+
+## CLI
 
 ``` shell
 schronu
