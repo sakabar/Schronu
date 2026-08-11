@@ -188,14 +188,36 @@ fn write_file_atomically_with_temporary_path(
     replace_file_atomically(target_file_path, temporary_file_path, file, bytes)
 }
 
-fn write_file_atomically(target_file_path: &Path, bytes: &[u8]) -> Result<(), FileRepositoryError> {
+fn write_file_atomically_if_changed_with_temporary_path(
+    target_file_path: &Path,
+    temporary_file_path: &Path,
+    bytes: &[u8],
+) -> Result<bool, FileRepositoryError> {
+    match fs::read(target_file_path) {
+        Ok(existing_bytes) if existing_bytes == bytes => return Ok(false),
+        Ok(_) => {}
+        Err(_) => {}
+    }
+
+    write_file_atomically_with_temporary_path(target_file_path, temporary_file_path, bytes)?;
+    Ok(true)
+}
+
+fn write_file_atomically(
+    target_file_path: &Path,
+    bytes: &[u8],
+) -> Result<bool, FileRepositoryError> {
     let file_name = target_file_path
         .file_name()
         .and_then(|name| name.to_str())
         .unwrap_or("project.yaml");
     let temporary_file_path = target_file_path
         .with_file_name(format!(".{file_name}.{}.tmp", Uuid::new_v4().hyphenated()));
-    write_file_atomically_with_temporary_path(target_file_path, &temporary_file_path, bytes)
+    write_file_atomically_if_changed_with_temporary_path(
+        target_file_path,
+        &temporary_file_path,
+        bytes,
+    )
 }
 
 impl Project {
@@ -741,6 +763,28 @@ mod tests {
         assert!(source.source.raw_os_error().is_some());
     }
 
+    #[cfg(unix)]
+    #[test]
+    fn test_save_project_yaml_read失敗でもatomic_writeを試す() {
+        let storage_dir = TestStorageDir::new();
+        let now = Local.with_ymd_and_hms(2026, 8, 11, 12, 0, 0).unwrap();
+        let mut task_repository = TaskRepository::new(storage_dir.path_str());
+        task_repository.sync_clock(now);
+        task_repository.start_new_project(Task::new("read失敗対象"));
+        let project_yaml_path = storage_dir
+            .project_dir_path("20260811", "read失敗対象")
+            .join("project.yaml");
+        fs::create_dir_all(&project_yaml_path).unwrap();
+
+        let actual = task_repository.save().unwrap_err();
+
+        assert_eq!(actual.operation(), ApplicationRepositoryOperation::Save);
+        let source = file_repository_error(&actual);
+        assert_eq!(source.operation, FileRepositoryOperation::RenameFile);
+        assert_eq!(source.path, project_yaml_path);
+        assert!(source.path.is_dir());
+    }
+
     #[test]
     fn test_write_file_atomically_既存fileを置換してtemporary_fileを残さない() {
         let storage_dir = TestStorageDir::new();
@@ -753,6 +797,94 @@ mod tests {
             .unwrap();
 
         assert_eq!(fs::read(&target_file_path).unwrap(), b"new");
+        assert!(!temporary_file_path.exists());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_write_file_atomically_if_changed_同一内容なら置換しない() {
+        use std::os::unix::fs::MetadataExt;
+
+        let storage_dir = TestStorageDir::new();
+        fs::create_dir_all(&storage_dir.path).unwrap();
+        let target_file_path = storage_dir.path.join("project.yaml");
+        let temporary_file_path = storage_dir.path.join("project.yaml.test.tmp");
+        fs::write(&target_file_path, b"same").unwrap();
+        let original_inode = fs::metadata(&target_file_path).unwrap().ino();
+
+        let replaced = write_file_atomically_if_changed_with_temporary_path(
+            &target_file_path,
+            &temporary_file_path,
+            b"same",
+        )
+        .unwrap();
+
+        assert!(!replaced);
+        assert_eq!(
+            fs::metadata(&target_file_path).unwrap().ino(),
+            original_inode
+        );
+        assert!(!temporary_file_path.exists());
+    }
+
+    #[test]
+    fn test_write_file_atomically_if_changed_変更内容なら置換する() {
+        let storage_dir = TestStorageDir::new();
+        fs::create_dir_all(&storage_dir.path).unwrap();
+        let target_file_path = storage_dir.path.join("project.yaml");
+        let temporary_file_path = storage_dir.path.join("project.yaml.test.tmp");
+        fs::write(&target_file_path, b"old").unwrap();
+
+        let replaced = write_file_atomically_if_changed_with_temporary_path(
+            &target_file_path,
+            &temporary_file_path,
+            b"new",
+        )
+        .unwrap();
+
+        assert!(replaced);
+        assert_eq!(fs::read(&target_file_path).unwrap(), b"new");
+        assert!(!temporary_file_path.exists());
+    }
+
+    #[test]
+    fn test_write_file_atomically_if_changed_新規fileを作成する() {
+        let storage_dir = TestStorageDir::new();
+        fs::create_dir_all(&storage_dir.path).unwrap();
+        let target_file_path = storage_dir.path.join("project.yaml");
+        let temporary_file_path = storage_dir.path.join("project.yaml.test.tmp");
+
+        let replaced = write_file_atomically_if_changed_with_temporary_path(
+            &target_file_path,
+            &temporary_file_path,
+            b"new",
+        )
+        .unwrap();
+
+        assert!(replaced);
+        assert_eq!(fs::read(&target_file_path).unwrap(), b"new");
+        assert!(!temporary_file_path.exists());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_write_file_atomically_if_changed_read失敗でもatomic_writeを試す() {
+        let storage_dir = TestStorageDir::new();
+        fs::create_dir_all(&storage_dir.path).unwrap();
+        let target_file_path = storage_dir.path.join("project.yaml");
+        let temporary_file_path = storage_dir.path.join("project.yaml.test.tmp");
+        fs::create_dir(&target_file_path).unwrap();
+
+        let actual = write_file_atomically_if_changed_with_temporary_path(
+            &target_file_path,
+            &temporary_file_path,
+            b"new",
+        )
+        .unwrap_err();
+
+        assert_eq!(actual.operation, FileRepositoryOperation::RenameFile);
+        assert_eq!(actual.path, target_file_path);
+        assert!(target_file_path.is_dir());
         assert!(!temporary_file_path.exists());
     }
 
@@ -972,6 +1104,94 @@ mod tests {
         assert!(repository.get_by_id(memory_task_id).is_some());
         assert!(repository.get_by_id(stored_task_id).is_none());
         assert_eq!(repository.get_all_projects().len(), 1);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_save_変更したprojectだけを置換する() {
+        use std::os::unix::fs::MetadataExt;
+
+        let storage_dir = TestStorageDir::new();
+        let now = Local.with_ymd_and_hms(2026, 8, 11, 12, 0, 0).unwrap();
+        let mut repository = TaskRepository::new(storage_dir.path_str());
+        repository.sync_clock(now);
+        let changed_task = Task::new("変更対象");
+        let unchanged_task = Task::new("未変更対象");
+        repository.start_new_project(changed_task.clone());
+        repository.start_new_project(unchanged_task);
+        repository.save().unwrap();
+
+        let changed_yaml_path = storage_dir
+            .project_dir_path("20260811", "変更対象")
+            .join("project.yaml");
+        let unchanged_yaml_path = storage_dir
+            .project_dir_path("20260811", "未変更対象")
+            .join("project.yaml");
+        let changed_inode = fs::metadata(&changed_yaml_path).unwrap().ino();
+        let unchanged_inode = fs::metadata(&unchanged_yaml_path).unwrap().ino();
+
+        changed_task.set_estimated_work_seconds(30 * 60);
+        repository.save().unwrap();
+
+        assert_ne!(
+            fs::metadata(&changed_yaml_path).unwrap().ino(),
+            changed_inode
+        );
+        assert_eq!(
+            fs::metadata(&unchanged_yaml_path).unwrap().ino(),
+            unchanged_inode
+        );
+        let mut loaded_repository = TaskRepository::new(storage_dir.path_str());
+        loaded_repository.sync_clock(now);
+        loaded_repository.load().unwrap();
+        assert_eq!(
+            loaded_repository
+                .get_by_id(changed_task.get_id())
+                .unwrap()
+                .get_estimated_work_seconds(),
+            30 * 60
+        );
+    }
+
+    #[test]
+    #[ignore = "manual save performance measurement"]
+    fn benchmark_save_2172project中1件変更を2秒未満で処理する() {
+        use std::time::{Duration as StdDuration, Instant};
+
+        let source_storage_dir = std::env::var("SCHRONU_BENCHMARK_STORAGE")
+            .expect("SCHRONU_BENCHMARK_STORAGE must point to a task storage copy source");
+        let storage_dir = TestStorageDir::new();
+        let source_storage_path = Path::new(&source_storage_dir);
+        for entry in WalkDir::new(source_storage_path) {
+            let entry = entry.unwrap();
+            if entry.file_name() != "project.yaml" {
+                continue;
+            }
+            let relative_path = entry.path().strip_prefix(source_storage_path).unwrap();
+            let copied_path = storage_dir.path.join(relative_path);
+            fs::create_dir_all(copied_path.parent().unwrap()).unwrap();
+            fs::create_dir_all(copied_path.parent().unwrap().join("markdown")).unwrap();
+            fs::copy(entry.path(), copied_path).unwrap();
+        }
+
+        let now = Local::now();
+        let mut repository = TaskRepository::new(storage_dir.path_str());
+        repository.sync_clock(now);
+        repository.load().unwrap();
+        assert_eq!(repository.get_all_projects().len(), 2_172);
+        let changed_task = (*repository
+            .get_all_projects()
+            .first()
+            .expect("benchmark storage must contain a project"))
+        .clone();
+        changed_task.set_priority(changed_task.get_priority() + 1);
+
+        let started_at = Instant::now();
+        repository.save().unwrap();
+        let elapsed = started_at.elapsed();
+
+        eprintln!("save benchmark elapsed: {elapsed:?}");
+        assert!(elapsed < StdDuration::from_secs(2));
     }
 
     #[test]
