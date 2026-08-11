@@ -643,7 +643,7 @@ mod tests {
     use crate::adapter::gateway::task_repository::TaskRepository;
     use crate::application::interface::{TaskRepositoryError, TaskRepositoryTrait};
     use crate::entity::task::{ProjectCategory, RepetitionAnchor, Status, Task, TaskAttr};
-    use chrono::{DateTime, Local, TimeZone};
+    use chrono::{DateTime, Duration, Local, TimeZone};
     use serde_json::json;
     use std::cell::Cell;
     use std::rc::Rc;
@@ -1584,6 +1584,118 @@ mod tests {
                 .as_str()
                 .unwrap()
                 .is_empty());
+            assert_eq!(save_count.get(), 0);
+            assert_eq!(mutation_count.get(), 0);
+        }
+    }
+
+    #[test]
+    fn get_schedule_typed予定を返してrepositoryを変更しない() {
+        let task = Task::new("scheduled task");
+        let task_id = task.get_id();
+        task.set_start_time(fixed_now());
+        task.set_estimated_work_seconds(15 * 60);
+        task.set_priority(5);
+        task.sync_clock(fixed_now());
+        let repository = RecordingRepository::new(vec![task]);
+        let save_count = Rc::clone(&repository.save_count);
+        let mutation_count = Rc::clone(&repository.mutation_count);
+        let mut server = initialized_server(repository);
+
+        let response = server
+            .handle_request(json!({
+                "jsonrpc": "2.0",
+                "id": "get-schedule",
+                "method": "tools/call",
+                "params": {"name": "get_schedule"}
+            }))
+            .unwrap();
+
+        assert_eq!(response["jsonrpc"], "2.0");
+        assert_eq!(response["id"], "get-schedule");
+        assert_eq!(response["result"]["isError"], false);
+        assert_tool_result_content_matches_structured(&response);
+        let schedule = response["result"]["structuredContent"]["schedule"]
+            .as_array()
+            .unwrap();
+        assert_eq!(schedule.len(), 1);
+        assert_eq!(
+            sorted_object_keys(&schedule[0]),
+            vec![
+                "first_available_time",
+                "rank",
+                "scheduled_end",
+                "scheduled_start",
+                "scheduled_work_seconds",
+                "task",
+                "total_work_seconds"
+            ]
+        );
+        assert_eq!(schedule[0]["task"]["id"], task_id.to_string());
+        assert_eq!(schedule[0]["task"]["name"], "scheduled task");
+        assert_eq!(
+            schedule[0]["first_available_time"],
+            fixed_now().to_rfc3339()
+        );
+        assert_eq!(schedule[0]["scheduled_start"], fixed_now().to_rfc3339());
+        assert_eq!(
+            schedule[0]["scheduled_end"],
+            (fixed_now() + Duration::minutes(15)).to_rfc3339()
+        );
+        assert_eq!(schedule[0]["scheduled_work_seconds"], 15 * 60);
+        assert_eq!(schedule[0]["total_work_seconds"], 15 * 60);
+        assert_eq!(schedule[0]["rank"], 0);
+        assert_eq!(save_count.get(), 0);
+        assert_eq!(mutation_count.get(), 0);
+    }
+
+    #[test]
+    fn get_schedule_予定なしを空配列で返す() {
+        let repository = RecordingRepository::new(vec![]);
+        let save_count = Rc::clone(&repository.save_count);
+        let mutation_count = Rc::clone(&repository.mutation_count);
+        let mut server = initialized_server(repository);
+
+        let response = server
+            .handle_request(tool_call_request(
+                "empty-schedule",
+                "get_schedule",
+                json!({}),
+            ))
+            .unwrap();
+
+        assert_eq!(response["result"]["isError"], false);
+        assert_tool_result_content_matches_structured(&response);
+        assert_eq!(
+            response["result"]["structuredContent"]["schedule"],
+            json!([])
+        );
+        assert_eq!(save_count.get(), 0);
+        assert_eq!(mutation_count.get(), 0);
+    }
+
+    #[test]
+    fn get_schedule_schema違反をinvalid_paramsで返す() {
+        let cases = [
+            ("extra", json!({"extra": true}), "arguments.extra"),
+            ("null", serde_json::Value::Null, "arguments"),
+        ];
+
+        for (id, arguments, field) in cases {
+            let repository = RecordingRepository::new(vec![]);
+            let save_count = Rc::clone(&repository.save_count);
+            let mutation_count = Rc::clone(&repository.mutation_count);
+            let mut server = initialized_server(repository);
+            let response = server
+                .handle_request(tool_call_request(id, "get_schedule", arguments))
+                .unwrap();
+
+            assert_eq!(response["jsonrpc"], "2.0");
+            assert_eq!(response["id"], id);
+            assert_eq!(response["error"]["code"], -32602);
+            assert_eq!(response["error"]["message"], "Invalid params");
+            assert_eq!(response["error"]["data"]["code"], "invalid_input");
+            assert_eq!(response["error"]["data"]["field"], field);
             assert_eq!(save_count.get(), 0);
             assert_eq!(mutation_count.get(), 0);
         }
