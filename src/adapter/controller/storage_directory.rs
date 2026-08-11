@@ -1,3 +1,18 @@
+use std::ffi::OsString;
+use std::path::PathBuf;
+
+const DEFAULT_STORAGE_DIRECTORY: &str = "../Schronu-private/tasks/";
+
+pub fn resolve_project_storage_directory(configured: Option<OsString>) -> Result<PathBuf, String> {
+    let path = configured
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from(DEFAULT_STORAGE_DIRECTORY));
+    if path.to_str().is_none() {
+        return Err("storage directory path must be valid UTF-8".to_string());
+    }
+    Ok(path)
+}
+
 #[cfg(test)]
 mod tests {
     use super::resolve_project_storage_directory;

@@ -34,9 +34,9 @@ use std::process;
 use std::sync::mpsc::{self, RecvTimeoutError};
 use std::thread;
 
-#[cfg(test)]
 mod storage_directory;
 use std::time::{Duration as StdDuration, Instant};
+use storage_directory::resolve_project_storage_directory;
 use termion::event::Key;
 use termion::input::TermRead;
 use termion::raw::IntoRawMode;
@@ -6157,7 +6157,19 @@ fn get_byte_offset_for_deletion_正常系() {
 
 fn main() {
     let command_opt = parse_non_interactive_command(env::args().skip(1).collect());
-    let mut task_repository = TaskRepository::new("../Schronu-private/tasks/");
+    let project_storage_directory =
+        match resolve_project_storage_directory(env::var_os("SCHRONU_STORAGE_DIR")) {
+            Ok(directory) => directory,
+            Err(error) => {
+                eprintln!("[Error] {error}");
+                process::exit(1);
+            }
+        };
+    let mut task_repository = TaskRepository::new(
+        project_storage_directory
+            .to_str()
+            .expect("storage path was validated"),
+    );
     let mut free_time_manager = FreeTimeManager::new();
     let _storage_lock = match StorageLock::acquire(
         task_repository.get_project_storage_dir_name().as_ref(),

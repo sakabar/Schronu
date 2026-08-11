@@ -4,10 +4,10 @@ use schronu::adapter::mcp::McpServer;
 use schronu::application::interface::TaskRepositoryTrait;
 use std::error::Error;
 use std::io::{self, BufRead, Write};
-use std::path::PathBuf;
 use std::process;
 
-const DEFAULT_STORAGE_DIRECTORY: &str = "../Schronu-private/tasks/";
+mod storage_directory;
+use storage_directory::resolve_project_storage_directory;
 
 fn main() {
     if let Err(error) = run() {
@@ -17,9 +17,8 @@ fn main() {
 }
 
 fn run() -> Result<(), Box<dyn Error>> {
-    let storage_directory = std::env::var_os("SCHRONU_STORAGE_DIR")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from(DEFAULT_STORAGE_DIRECTORY));
+    let storage_directory =
+        resolve_project_storage_directory(std::env::var_os("SCHRONU_STORAGE_DIR"))?;
     let _storage_lock = StorageLock::acquire(&storage_directory, LockMode::Mcp)?;
     let storage_directory_text = storage_directory
         .to_str()
