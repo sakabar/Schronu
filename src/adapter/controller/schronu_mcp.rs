@@ -2,6 +2,7 @@ use schronu::adapter::gateway::storage_lock::{LockMode, StorageLock};
 use schronu::adapter::gateway::task_repository::TaskRepository;
 use schronu::adapter::mcp::McpServer;
 use schronu::application::interface::TaskRepositoryTrait;
+use serde_json::json;
 use std::error::Error;
 use std::io::{self, BufRead, Write};
 use std::process;
@@ -39,8 +40,18 @@ fn serve_stdio<R: TaskRepositoryTrait>(
 ) -> Result<(), Box<dyn Error>> {
     for line in input.lines() {
         let line = line?;
-        let request = serde_json::from_str(&line)?;
-        if let Some(response) = server.handle_request(request) {
+        let response = match serde_json::from_str(&line) {
+            Ok(request) => server.handle_request(request),
+            Err(_) => Some(json!({
+                "jsonrpc": "2.0",
+                "id": null,
+                "error": {
+                    "code": -32700,
+                    "message": "Parse error"
+                }
+            })),
+        };
+        if let Some(response) = response {
             serde_json::to_writer(&mut output, &response)?;
             writeln!(output)?;
             output.flush()?;
