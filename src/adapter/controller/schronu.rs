@@ -5597,6 +5597,25 @@ fn test_execute_finish_未完了の子があれば完了しない() {
 }
 
 #[test]
+fn test_execute_finish_未完了の子があれば不正引数でもtreeを表示する() {
+    let now = Local.with_ymd_and_hms(2026, 8, 11, 12, 0, 0).unwrap();
+    let parent_task = Task::new("親タスク");
+    parent_task.create_as_last_child(TaskAttr::new("未完了の子"));
+
+    let result = execute_command_for_test(
+        parent_task.clone(),
+        now,
+        Some(parent_task.get_id()),
+        "終 invalid",
+    );
+
+    assert_ne!(result.task.get_status(), Status::Done);
+    assert_eq!(result.task.get_end_time_opt(), None);
+    assert_eq!(result.focused_task_id_opt, Some(parent_task.get_id()));
+    assert!(result.output.contains("未完了の子"));
+}
+
+#[test]
 fn test_execute_finish_唯一の子を完了すると親へfocusする() {
     let now = Local.with_ymd_and_hms(2026, 8, 11, 12, 0, 0).unwrap();
     let parent_task = Task::new("親タスク");
@@ -5631,6 +5650,37 @@ fn test_execute_finish_繰り返しtaskの見積もりを実績との差に応�
             expected_estimated_work_seconds
         );
     }
+}
+
+#[test]
+fn test_execute_repetition_数値名でも元taskを変更せず親子を作る() {
+    let now = Local.with_ymd_and_hms(2026, 8, 11, 12, 0, 0).unwrap();
+    let task = Task::new("既存タスク");
+    task.set_estimated_work_seconds(45 * 60);
+
+    let result = execute_command_for_test(
+        task.clone(),
+        now,
+        Some(task.get_id()),
+        "繰 123 10 毎 09:00 10:00",
+    );
+
+    assert_eq!(result.task.get_estimated_work_seconds(), 45 * 60);
+
+    let repetition_parents = result.task.get_children();
+    assert_eq!(repetition_parents.len(), 1);
+    assert_eq!(repetition_parents[0].get_name(), "123");
+    assert_eq!(repetition_parents[0].get_estimated_work_seconds(), 10 * 60);
+
+    let repetition_children = repetition_parents[0].get_children();
+    assert_eq!(repetition_children.len(), 7);
+    assert!(repetition_children
+        .iter()
+        .all(|child| child.get_name() == "123"));
+    assert_eq!(
+        result.focused_task_id_opt,
+        Some(repetition_parents[0].get_id())
+    );
 }
 
 #[test]
