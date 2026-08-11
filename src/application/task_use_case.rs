@@ -356,12 +356,14 @@ mod tests {
     use super::*;
     use chrono::TimeZone;
     use std::cell::Cell;
+    use std::panic::{catch_unwind, AssertUnwindSafe};
 
     struct TestTaskRepository {
         projects: Vec<Task>,
         now: DateTime<Local>,
         highest_priority_leaf_task_id: Option<Uuid>,
         save_count: Cell<usize>,
+        accepts_new_projects: bool,
     }
 
     impl TestTaskRepository {
@@ -371,6 +373,7 @@ mod tests {
                 now,
                 highest_priority_leaf_task_id: None,
                 save_count: Cell::new(0),
+                accepts_new_projects: true,
             }
         }
     }
@@ -415,7 +418,9 @@ mod tests {
         }
 
         fn start_new_project(&mut self, root_task: Task) {
-            self.projects.push(root_task);
+            if self.accepts_new_projects {
+                self.projects.push(root_task);
+            }
         }
     }
 
@@ -459,6 +464,21 @@ mod tests {
     }
 
     #[test]
+    fn get_focus_候補がなければnoneを返す() {
+        let mut repository = TestTaskRepository::new(vec![], fixed_now());
+
+        assert_eq!(get_focus(&mut repository), None);
+    }
+
+    #[test]
+    fn get_focus_選択されたtaskが取得できなければnoneを返す() {
+        let mut repository = TestTaskRepository::new(vec![], fixed_now());
+        repository.highest_priority_leaf_task_id = Some(Uuid::new_v4());
+
+        assert_eq!(get_focus(&mut repository), None);
+    }
+
+    #[test]
     fn create_task_属性を設定してsaveしない() {
         let pending_until = Local.with_ymd_and_hms(2026, 8, 12, 6, 0, 0).unwrap();
         let mut repository = TestTaskRepository::new(vec![], fixed_now());
@@ -480,6 +500,92 @@ mod tests {
         assert_eq!(task.get_orig_status(), Status::Pending);
         assert_eq!(task.get_pending_until(), pending_until);
         assert_eq!(repository.save_count.get(), 0);
+    }
+
+    #[test]
+    fn create_task_repositoryに追加できなければerrorを返す() {
+        let mut repository = TestTaskRepository::new(vec![], fixed_now());
+        repository.accepts_new_projects = false;
+
+        let actual = create_task(
+            &mut repository,
+            CreateTaskInput {
+                name: "追加失敗".to_string(),
+                estimated_work_minutes: Some(30),
+                pending_until: None,
+            },
+        );
+
+        assert!(actual.is_err());
+        assert!(repository.projects.is_empty());
+    }
+
+    #[test]
+    fn create_task_空の名前を拒否して変更しない() {
+        let mut repository = TestTaskRepository::new(vec![], fixed_now());
+
+        let actual = create_task(
+            &mut repository,
+            CreateTaskInput {
+                name: String::new(),
+                estimated_work_minutes: None,
+                pending_until: None,
+            },
+        );
+
+        assert!(matches!(
+            actual,
+            Err(ApplicationError::InvalidInput { field: "name", .. })
+        ));
+        assert!(repository.projects.is_empty());
+    }
+
+    #[test]
+    fn create_task_負の見積もりを拒否して変更しない() {
+        let mut repository = TestTaskRepository::new(vec![], fixed_now());
+
+        let actual = create_task(
+            &mut repository,
+            CreateTaskInput {
+                name: "負の見積もり".to_string(),
+                estimated_work_minutes: Some(-1),
+                pending_until: None,
+            },
+        );
+
+        assert!(matches!(
+            actual,
+            Err(ApplicationError::InvalidInput {
+                field: "estimated_work_minutes",
+                ..
+            })
+        ));
+        assert!(repository.projects.is_empty());
+    }
+
+    #[test]
+    fn create_task_秒変換がoverflowする見積もりをerrorにする() {
+        let mut repository = TestTaskRepository::new(vec![], fixed_now());
+
+        let actual = catch_unwind(AssertUnwindSafe(|| {
+            create_task(
+                &mut repository,
+                CreateTaskInput {
+                    name: "巨大な見積もり".to_string(),
+                    estimated_work_minutes: Some(i64::MAX),
+                    pending_until: None,
+                },
+            )
+        }));
+
+        assert!(matches!(
+            actual,
+            Ok(Err(ApplicationError::InvalidInput {
+                field: "estimated_work_minutes",
+                ..
+            }))
+        ));
+        assert!(repository.projects.is_empty());
     }
 
     #[test]
@@ -529,6 +635,27 @@ mod tests {
         );
 
         assert!(matches!(actual, Err(ApplicationError::InvalidInput { .. })));
+        assert!(parent.get_children().is_empty());
+    }
+
+    #[test]
+    fn breakdown_task_空の名前一覧を拒否して変更しない() {
+        let parent = Task::new("親");
+        let repository = TestTaskRepository::new(vec![parent.clone()], fixed_now());
+
+        let actual = breakdown_task(
+            &repository,
+            BreakdownTaskInput {
+                parent_id: parent.get_id(),
+                names: vec![],
+                pending_until: None,
+            },
+        );
+
+        assert!(matches!(
+            actual,
+            Err(ApplicationError::InvalidInput { field: "names", .. })
+        ));
         assert!(parent.get_children().is_empty());
     }
 
@@ -619,6 +746,66 @@ mod tests {
     }
 
     #[test]
+    fn complete_task_負の追加実績を拒否して変更しない() {
+        let task = Task::new("完了対象");
+        task.set_actual_work_seconds(120);
+        let task_id = task.get_id();
+        let repository = TestTaskRepository::new(vec![task], fixed_now());
+
+        let actual = complete_task(
+            &repository,
+            CompleteTaskInput {
+                task_id,
+                finished_at: fixed_now(),
+                additional_actual_work_seconds: -1,
+            },
+        );
+
+        assert!(matches!(
+            actual,
+            Err(ApplicationError::InvalidInput {
+                field: "additional_actual_work_seconds",
+                ..
+            })
+        ));
+        let task = repository.get_by_id(task_id).unwrap();
+        assert_eq!(task.get_status(), Status::Todo);
+        assert_eq!(task.get_actual_work_seconds(), 120);
+        assert_eq!(task.get_end_time_opt(), None);
+    }
+
+    #[test]
+    fn complete_task_実績加算がoverflowする場合はerrorにして変更しない() {
+        let task = Task::new("完了対象");
+        task.set_actual_work_seconds(i64::MAX);
+        let task_id = task.get_id();
+        let repository = TestTaskRepository::new(vec![task], fixed_now());
+
+        let actual = catch_unwind(AssertUnwindSafe(|| {
+            complete_task(
+                &repository,
+                CompleteTaskInput {
+                    task_id,
+                    finished_at: fixed_now(),
+                    additional_actual_work_seconds: 1,
+                },
+            )
+        }));
+
+        assert!(matches!(
+            actual,
+            Ok(Err(ApplicationError::InvalidInput {
+                field: "additional_actual_work_seconds",
+                ..
+            }))
+        ));
+        let task = repository.get_by_id(task_id).unwrap();
+        assert_eq!(task.get_status(), Status::Todo);
+        assert_eq!(task.get_actual_work_seconds(), i64::MAX);
+        assert_eq!(task.get_end_time_opt(), None);
+    }
+
+    #[test]
     fn update_use_cases_見積もり締切カテゴリを設定して解除する() {
         let task = Task::new("更新");
         let task_id = task.get_id();
@@ -652,5 +839,131 @@ mod tests {
             set_estimate(&repository, task_id, 10),
             Err(ApplicationError::TaskNotFound(task_id))
         );
+        assert_eq!(
+            breakdown_task(
+                &repository,
+                BreakdownTaskInput {
+                    parent_id: task_id,
+                    names: vec!["子".to_string()],
+                    pending_until: None,
+                }
+            ),
+            Err(ApplicationError::TaskNotFound(task_id))
+        );
+        assert_eq!(
+            defer_task(&repository, task_id, fixed_now()),
+            Err(ApplicationError::TaskNotFound(task_id))
+        );
+        assert_eq!(
+            complete_task(
+                &repository,
+                CompleteTaskInput {
+                    task_id,
+                    finished_at: fixed_now(),
+                    additional_actual_work_seconds: 0,
+                }
+            ),
+            Err(ApplicationError::TaskNotFound(task_id))
+        );
+        assert_eq!(
+            set_deadline(&repository, task_id, None),
+            Err(ApplicationError::TaskNotFound(task_id))
+        );
+        assert_eq!(
+            set_category(&repository, task_id, None),
+            Err(ApplicationError::TaskNotFound(task_id))
+        );
+    }
+
+    #[test]
+    fn set_estimate_負数を拒否して変更しない() {
+        let task = Task::new("更新対象");
+        task.set_estimated_work_seconds(30 * 60);
+        let task_id = task.get_id();
+        let repository = TestTaskRepository::new(vec![task], fixed_now());
+
+        let negative = set_estimate(&repository, task_id, -1);
+        assert!(matches!(
+            negative,
+            Err(ApplicationError::InvalidInput {
+                field: "estimated_work_minutes",
+                ..
+            })
+        ));
+        assert_eq!(
+            repository
+                .get_by_id(task_id)
+                .unwrap()
+                .get_estimated_work_seconds(),
+            30 * 60
+        );
+    }
+
+    #[test]
+    fn set_estimate_秒変換がoverflowする場合はerrorにして変更しない() {
+        let task = Task::new("更新対象");
+        task.set_estimated_work_seconds(30 * 60);
+        let task_id = task.get_id();
+        let repository = TestTaskRepository::new(vec![task], fixed_now());
+
+        let overflow = catch_unwind(AssertUnwindSafe(|| {
+            set_estimate(&repository, task_id, i64::MAX)
+        }));
+        assert!(matches!(
+            overflow,
+            Ok(Err(ApplicationError::InvalidInput {
+                field: "estimated_work_minutes",
+                ..
+            }))
+        ));
+        assert_eq!(
+            repository
+                .get_by_id(task_id)
+                .unwrap()
+                .get_estimated_work_seconds(),
+            30 * 60
+        );
+    }
+
+    #[test]
+    fn write_use_cases_repositoryをsaveしない() {
+        let root = Task::new("親");
+        let root_id = root.get_id();
+        let mut repository = TestTaskRepository::new(vec![root], fixed_now());
+
+        let created_id = create_task(
+            &mut repository,
+            CreateTaskInput {
+                name: "新規".to_string(),
+                estimated_work_minutes: None,
+                pending_until: None,
+            },
+        )
+        .unwrap();
+        let child_id = breakdown_task(
+            &repository,
+            BreakdownTaskInput {
+                parent_id: root_id,
+                names: vec!["子".to_string()],
+                pending_until: None,
+            },
+        )
+        .unwrap()[0];
+        defer_task(&repository, child_id, fixed_now()).unwrap();
+        set_estimate(&repository, child_id, 10).unwrap();
+        set_deadline(&repository, child_id, Some(fixed_now())).unwrap();
+        set_category(&repository, child_id, Some(ProjectCategory::Investment)).unwrap();
+        complete_task(
+            &repository,
+            CompleteTaskInput {
+                task_id: child_id,
+                finished_at: fixed_now(),
+                additional_actual_work_seconds: 0,
+            },
+        )
+        .unwrap();
+
+        assert!(repository.get_by_id(created_id).is_some());
+        assert_eq!(repository.save_count.get(), 0);
     }
 }
