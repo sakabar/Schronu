@@ -1,7 +1,8 @@
+use chrono::{DateTime, Local};
 use schronu::adapter::gateway::storage_lock::{LockMode, StorageLock};
 use schronu::adapter::gateway::task_repository::TaskRepository;
 use schronu::adapter::mcp::McpServer;
-use schronu::application::interface::TaskRepositoryTrait;
+use schronu::application::interface::{TaskRepositoryError, TaskRepositoryTrait};
 use serde_json::json;
 use std::error::Error;
 use std::io::{self, BufRead, Write};
@@ -25,12 +26,20 @@ fn run() -> Result<(), Box<dyn Error>> {
         .to_str()
         .ok_or("storage directory path must be valid UTF-8")?;
     let mut repository = TaskRepository::new(storage_directory_text);
-    repository.load()?;
+    prepare_repository(&mut repository, Local::now())?;
     serve_stdio(
         McpServer::new(repository),
         io::stdin().lock(),
         io::stdout().lock(),
     )
+}
+
+fn prepare_repository<R: TaskRepositoryTrait>(
+    repository: &mut R,
+    now: DateTime<Local>,
+) -> Result<(), TaskRepositoryError> {
+    repository.sync_clock(now);
+    repository.load()
 }
 
 fn serve_stdio<R: TaskRepositoryTrait>(

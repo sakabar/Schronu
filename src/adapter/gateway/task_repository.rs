@@ -255,6 +255,13 @@ impl TaskRepository {
             self.cache_task_and_descendants(&child_task);
         }
     }
+
+    fn sync_task_and_descendants(task: &Task, now: DateTime<Local>) {
+        task.sync_clock(now);
+        for child_task in task.get_children() {
+            Self::sync_task_and_descendants(&child_task, now);
+        }
+    }
 }
 
 impl TaskRepositoryTrait for TaskRepository {
@@ -443,9 +450,9 @@ impl TaskRepositoryTrait for TaskRepository {
 
     fn sync_clock(&mut self, now: DateTime<Local>) {
         self.last_synced_time = now;
-
-        // TODO
-        // これ、本来はprojectsの中に伝搬させていくべきだ。
+        for project in &self.projects {
+            Self::sync_task_and_descendants(&project.root_task, now);
+        }
     }
 
     fn get_last_synced_time(&self) -> DateTime<Local> {

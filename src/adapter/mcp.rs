@@ -76,7 +76,10 @@ impl<R: TaskRepositoryTrait> McpServer<R> {
             Some("tools/call") if self.lifecycle_state != LifecycleState::Initialized => {
                 Some(error_response(id, -32002, "Server not initialized"))
             }
-            Some("tools/call") => Some(self.call_tool(id, &request)),
+            Some("tools/call") => {
+                self.repository.sync_clock(Local::now());
+                Some(self.call_tool(id, &request))
+            }
             _ => Some(error_response(id, -32601, "Method not found")),
         }
     }
@@ -2204,6 +2207,7 @@ mod tests {
         let repository = RecordingRepository::new(vec![task]);
         let save_count = Rc::clone(&repository.save_count);
         let mutation_count = Rc::clone(&repository.mutation_count);
+        let sync_clock_times = Rc::clone(&repository.sync_clock_times);
         let mut server = initialized_server(repository);
 
         let response = server
@@ -2237,14 +2241,12 @@ mod tests {
         );
         assert_eq!(schedule[0]["task"]["id"], task_id.to_string());
         assert_eq!(schedule[0]["task"]["name"], "scheduled task");
-        assert_eq!(
-            schedule[0]["first_available_time"],
-            fixed_now().to_rfc3339()
-        );
-        assert_eq!(schedule[0]["scheduled_start"], fixed_now().to_rfc3339());
+        let synced_now = sync_clock_times.borrow()[0];
+        assert_eq!(schedule[0]["first_available_time"], synced_now.to_rfc3339());
+        assert_eq!(schedule[0]["scheduled_start"], synced_now.to_rfc3339());
         assert_eq!(
             schedule[0]["scheduled_end"],
-            (fixed_now() + Duration::minutes(15)).to_rfc3339()
+            (synced_now + Duration::minutes(15)).to_rfc3339()
         );
         assert_eq!(schedule[0]["scheduled_work_seconds"], 15 * 60);
         assert_eq!(schedule[0]["total_work_seconds"], 15 * 60);
