@@ -34,6 +34,110 @@ struct Project {
     priority: i64,
 }
 
+trait AtomicSaveFile {
+    fn write_all(&mut self, bytes: &[u8]) -> std::io::Result<()>;
+    fn sync_all(&self) -> std::io::Result<()>;
+}
+
+impl AtomicSaveFile for File {
+    fn write_all(&mut self, bytes: &[u8]) -> std::io::Result<()> {
+        Write::write_all(self, bytes)
+    }
+
+    fn sync_all(&self) -> std::io::Result<()> {
+        File::sync_all(self)
+    }
+}
+
+fn write_and_sync_temporary_file(
+    file: &mut dyn AtomicSaveFile,
+    temporary_file_path: &Path,
+    bytes: &[u8],
+) -> Result<(), TaskRepositoryError> {
+    file.write_all(bytes).map_err(|error| {
+        TaskRepositoryError::new(
+            TaskRepositoryOperation::WriteFile,
+            temporary_file_path,
+            error,
+        )
+    })?;
+    file.sync_all().map_err(|error| {
+        TaskRepositoryError::new(
+            TaskRepositoryOperation::SyncFile,
+            temporary_file_path,
+            error,
+        )
+    })
+}
+
+fn replace_file_atomically<F: AtomicSaveFile>(
+    target_file_path: &Path,
+    temporary_file_path: &Path,
+    mut file: F,
+    bytes: &[u8],
+) -> Result<(), TaskRepositoryError> {
+    let write_result = write_and_sync_temporary_file(&mut file, temporary_file_path, bytes);
+    drop(file);
+
+    let result = write_result.and_then(|()| {
+        fs::rename(temporary_file_path, target_file_path).map_err(|error| {
+            TaskRepositoryError::new(TaskRepositoryOperation::RenameFile, target_file_path, error)
+        })
+    });
+
+    if result.is_err() {
+        let _ = fs::remove_file(temporary_file_path);
+    }
+    result
+}
+
+fn write_file_atomically_with_temporary_path(
+    target_file_path: &Path,
+    temporary_file_path: &Path,
+    bytes: &[u8],
+) -> Result<(), TaskRepositoryError> {
+    let existing_permissions = match fs::metadata(target_file_path) {
+        Ok(metadata) => Some(metadata.permissions()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
+        Err(error) => {
+            return Err(TaskRepositoryError::new(
+                TaskRepositoryOperation::ReadMetadata,
+                target_file_path,
+                error,
+            ));
+        }
+    };
+    let file = File::create(temporary_file_path).map_err(|error| {
+        TaskRepositoryError::new(
+            TaskRepositoryOperation::CreateFile,
+            temporary_file_path,
+            error,
+        )
+    })?;
+    if let Some(permissions) = existing_permissions {
+        if let Err(error) = file.set_permissions(permissions) {
+            drop(file);
+            let _ = fs::remove_file(temporary_file_path);
+            return Err(TaskRepositoryError::new(
+                TaskRepositoryOperation::SetPermissions,
+                temporary_file_path,
+                error,
+            ));
+        }
+    }
+    replace_file_atomically(target_file_path, temporary_file_path, file, bytes)
+}
+
+fn write_file_atomically(target_file_path: &Path, bytes: &[u8]) -> Result<(), TaskRepositoryError> {
+    let file_name = target_file_path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or("project.yaml");
+    let temporary_file_path = target_file_path
+        .with_file_name(format!(".{file_name}.{}.tmp", Uuid::new_v4().hyphenated()));
+    write_file_atomically_with_temporary_path(target_file_path, &temporary_file_path, bytes)
+}
+
 impl Project {
     fn new(
         root_task: Task,
@@ -83,42 +187,91 @@ impl TaskRepositoryTrait for TaskRepository {
             .collect()
     }
 
-    fn load(&mut self) {
-        for entry in WalkDir::new(self.project_storage_dir_name.as_str())
-            .into_iter()
-            .filter_map(|e| e.ok())
+    fn load(&mut self) -> Result<(), TaskRepositoryError> {
+        let mut loaded_projects = Vec::new();
+        for entry_result in WalkDir::new(self.project_storage_dir_name.as_str()).sort_by_file_name()
         {
+            let entry = entry_result.map_err(|error| {
+                let path = error
+                    .path()
+                    .map(Path::to_path_buf)
+                    .unwrap_or_else(|| PathBuf::from(&self.project_storage_dir_name));
+                let reason = error.to_string();
+                let io_error = error
+                    .into_io_error()
+                    .unwrap_or_else(|| std::io::Error::other(reason));
+                TaskRepositoryError::new(TaskRepositoryOperation::TraverseDirectory, path, io_error)
+            })?;
             if entry.file_name() == "project.yaml" {
                 let project_yaml_file_path = entry.path().to_path_buf();
                 let project_dir_path = entry
                     .path()
                     .parent()
-                    .expect("project.yaml must have a parent directory")
+                    .ok_or_else(|| {
+                        TaskRepositoryError::new(
+                            TaskRepositoryOperation::ParseProject,
+                            &project_yaml_file_path,
+                            std::io::Error::new(
+                                std::io::ErrorKind::InvalidData,
+                                "project.yaml must have a parent directory",
+                            ),
+                        )
+                    })?
                     .to_path_buf();
-                let mut file = File::open(entry.path()).unwrap();
+                let mut file = File::open(entry.path()).map_err(|error| {
+                    TaskRepositoryError::new(
+                        TaskRepositoryOperation::OpenFile,
+                        &project_yaml_file_path,
+                        error,
+                    )
+                })?;
                 let mut text = String::new();
-                file.read_to_string(&mut text).unwrap();
+                file.read_to_string(&mut text).map_err(|error| {
+                    TaskRepositoryError::new(
+                        TaskRepositoryOperation::ReadFile,
+                        &project_yaml_file_path,
+                        error,
+                    )
+                })?;
 
-                match YamlLoader::load_from_str(text.as_str()) {
-                    Err(_) => {
-                        panic!("Error occured in {:?}", entry.path());
-                    }
-                    Ok(docs) => {
-                        let project_yaml: &Yaml = &docs[0]["project"];
-                        let root_task: Task = yaml_to_task(project_yaml, self.last_synced_time);
-                        self.cache_task_and_descendants(&root_task);
-                        let priority = root_task.get_priority();
-                        let project = Project::new(
-                            root_task,
-                            project_dir_path,
-                            project_yaml_file_path,
-                            priority,
-                        );
-                        self.projects.push(project);
-                    }
-                }
+                let docs = YamlLoader::load_from_str(&text).map_err(|error| {
+                    TaskRepositoryError::new(
+                        TaskRepositoryOperation::ParseProject,
+                        &project_yaml_file_path,
+                        std::io::Error::new(std::io::ErrorKind::InvalidData, error),
+                    )
+                })?;
+                let project_yaml = docs
+                    .first()
+                    .map(|doc| &doc["project"])
+                    .filter(|yaml| yaml.as_hash().is_some())
+                    .ok_or_else(|| {
+                        TaskRepositoryError::new(
+                            TaskRepositoryOperation::ParseProject,
+                            &project_yaml_file_path,
+                            std::io::Error::new(
+                                std::io::ErrorKind::InvalidData,
+                                "project document must contain a project mapping",
+                            ),
+                        )
+                    })?;
+                let root_task = yaml_to_task(project_yaml, self.last_synced_time);
+                let priority = root_task.get_priority();
+                loaded_projects.push(Project::new(
+                    root_task,
+                    project_dir_path,
+                    project_yaml_file_path,
+                    priority,
+                ));
             }
         }
+
+        self.projects = loaded_projects;
+        self.id_to_task_map.borrow_mut().clear();
+        for project in &self.projects {
+            self.cache_task_and_descendants(&project.root_task);
+        }
+        Ok(())
     }
 
     fn save(&self) -> Result<(), TaskRepositoryError> {
@@ -158,20 +311,7 @@ impl TaskRepositoryTrait for TaskRepository {
 
             out_str += "\n";
 
-            let mut file = File::create(&project.project_yaml_file_path).map_err(|error| {
-                TaskRepositoryError::new(
-                    TaskRepositoryOperation::CreateFile,
-                    &project.project_yaml_file_path,
-                    error,
-                )
-            })?;
-            file.write_all(out_str.as_bytes()).map_err(|error| {
-                TaskRepositoryError::new(
-                    TaskRepositoryOperation::WriteFile,
-                    &project.project_yaml_file_path,
-                    error,
-                )
-            })?;
+            write_file_atomically(&project.project_yaml_file_path, out_str.as_bytes())?;
         }
         Ok(())
     }
@@ -329,6 +469,29 @@ mod tests {
     use chrono::TimeZone;
     use std::path::PathBuf;
 
+    struct FailingAtomicSaveFile {
+        write_error: bool,
+        sync_error: bool,
+    }
+
+    impl AtomicSaveFile for FailingAtomicSaveFile {
+        fn write_all(&mut self, _bytes: &[u8]) -> std::io::Result<()> {
+            if self.write_error {
+                Err(std::io::Error::other("test write failure"))
+            } else {
+                Ok(())
+            }
+        }
+
+        fn sync_all(&self) -> std::io::Result<()> {
+            if self.sync_error {
+                Err(std::io::Error::other("test sync failure"))
+            } else {
+                Ok(())
+            }
+        }
+    }
+
     struct TestStorageDir {
         path: PathBuf,
     }
@@ -357,6 +520,18 @@ mod tests {
                 fs::remove_file(&self.path).expect("failed to remove test storage file");
             }
         }
+    }
+
+    fn write_project_yaml(
+        storage_dir: &TestStorageDir,
+        directory_name: &str,
+        contents: &str,
+    ) -> PathBuf {
+        let project_dir_path = storage_dir.path.join(directory_name);
+        fs::create_dir_all(&project_dir_path).unwrap();
+        let project_yaml_file_path = project_dir_path.join("project.yaml");
+        fs::write(&project_yaml_file_path, contents).unwrap();
+        project_yaml_file_path
     }
 
     fn task_with_start_time(name: &str, start_time: DateTime<Local>) -> Task {
@@ -432,7 +607,7 @@ mod tests {
 
         let mut loaded_repository = TaskRepository::new(storage_dir.path_str());
         loaded_repository.sync_clock(now);
-        loaded_repository.load();
+        loaded_repository.load().unwrap();
         let loaded_task = loaded_repository.get_by_id(root_task_id).unwrap();
         assert_eq!(loaded_task.get_name(), "保存対象");
     }
@@ -452,6 +627,207 @@ mod tests {
         assert_eq!(actual.operation(), TaskRepositoryOperation::CreateDirectory);
         assert_eq!(actual.path(), expected_project_dir.as_path());
         assert!(actual.io_error().raw_os_error().is_some());
+    }
+
+    #[test]
+    fn test_write_file_atomically_既存fileを置換してtemporary_fileを残さない() {
+        let storage_dir = TestStorageDir::new();
+        fs::create_dir_all(&storage_dir.path).unwrap();
+        let target_file_path = storage_dir.path.join("project.yaml");
+        let temporary_file_path = storage_dir.path.join("project.yaml.test.tmp");
+        fs::write(&target_file_path, b"old").unwrap();
+
+        write_file_atomically_with_temporary_path(&target_file_path, &temporary_file_path, b"new")
+            .unwrap();
+
+        assert_eq!(fs::read(&target_file_path).unwrap(), b"new");
+        assert!(!temporary_file_path.exists());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_write_file_atomically_既存fileのpermissionを維持する() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let storage_dir = TestStorageDir::new();
+        fs::create_dir_all(&storage_dir.path).unwrap();
+        let target_file_path = storage_dir.path.join("project.yaml");
+        let temporary_file_path = storage_dir.path.join("project.yaml.test.tmp");
+        fs::write(&target_file_path, b"old").unwrap();
+        fs::set_permissions(&target_file_path, fs::Permissions::from_mode(0o600)).unwrap();
+
+        write_file_atomically_with_temporary_path(&target_file_path, &temporary_file_path, b"new")
+            .unwrap();
+
+        let mode = fs::metadata(&target_file_path)
+            .unwrap()
+            .permissions()
+            .mode()
+            & 0o777;
+        assert_eq!(mode, 0o600);
+    }
+
+    #[test]
+    fn test_write_file_atomically_temporary_file作成失敗時に既存fileを維持する() {
+        let storage_dir = TestStorageDir::new();
+        fs::create_dir_all(&storage_dir.path).unwrap();
+        let target_file_path = storage_dir.path.join("project.yaml");
+        let temporary_file_path = storage_dir.path.join("project.yaml.test.tmp");
+        fs::write(&target_file_path, b"old").unwrap();
+        fs::create_dir(&temporary_file_path).unwrap();
+
+        let actual = write_file_atomically_with_temporary_path(
+            &target_file_path,
+            &temporary_file_path,
+            b"new",
+        )
+        .unwrap_err();
+
+        assert_eq!(actual.operation(), TaskRepositoryOperation::CreateFile);
+        assert_eq!(actual.path(), temporary_file_path.as_path());
+        assert_eq!(fs::read(&target_file_path).unwrap(), b"old");
+    }
+
+    #[test]
+    fn test_replace_file_atomically_write失敗とsync失敗時に既存fileを維持する() {
+        for (write_error, sync_error, expected_operation) in [
+            (true, false, TaskRepositoryOperation::WriteFile),
+            (false, true, TaskRepositoryOperation::SyncFile),
+        ] {
+            let storage_dir = TestStorageDir::new();
+            fs::create_dir_all(&storage_dir.path).unwrap();
+            let target_file_path = storage_dir.path.join("project.yaml");
+            let temporary_file_path = storage_dir.path.join("project.yaml.test.tmp");
+            fs::write(&target_file_path, b"old").unwrap();
+            fs::write(&temporary_file_path, b"temporary").unwrap();
+            let file = FailingAtomicSaveFile {
+                write_error,
+                sync_error,
+            };
+
+            let actual =
+                replace_file_atomically(&target_file_path, &temporary_file_path, file, b"new")
+                    .unwrap_err();
+
+            assert_eq!(actual.operation(), expected_operation);
+            assert_eq!(actual.path(), temporary_file_path.as_path());
+            assert_eq!(fs::read(&target_file_path).unwrap(), b"old");
+            assert!(!temporary_file_path.exists());
+        }
+    }
+
+    #[test]
+    fn test_write_file_atomically_rename失敗時にtemporary_fileを削除する() {
+        let storage_dir = TestStorageDir::new();
+        fs::create_dir_all(&storage_dir.path).unwrap();
+        let target_file_path = storage_dir.path.join("project.yaml");
+        let temporary_file_path = storage_dir.path.join("project.yaml.test.tmp");
+        fs::create_dir(&target_file_path).unwrap();
+
+        let actual = write_file_atomically_with_temporary_path(
+            &target_file_path,
+            &temporary_file_path,
+            b"new",
+        )
+        .unwrap_err();
+
+        assert_eq!(actual.operation(), TaskRepositoryOperation::RenameFile);
+        assert_eq!(actual.path(), target_file_path.as_path());
+        assert!(target_file_path.is_dir());
+        assert!(!temporary_file_path.exists());
+    }
+
+    #[test]
+    fn test_load_存在しない保存先はtraverse_errorを返す() {
+        let storage_dir = TestStorageDir::new();
+        let mut repository = TaskRepository::new(storage_dir.path_str());
+
+        let actual = repository.load().unwrap_err();
+
+        assert_eq!(
+            actual.operation(),
+            TaskRepositoryOperation::TraverseDirectory
+        );
+        assert_eq!(actual.path(), storage_dir.path.as_path());
+    }
+
+    #[test]
+    fn test_load_壊れたyamlと不完全なdocumentをparse_errorにする() {
+        for (directory_name, contents) in [
+            ("broken", "project: ["),
+            ("empty", ""),
+            ("missing-project", "other: {}"),
+        ] {
+            let storage_dir = TestStorageDir::new();
+            let project_yaml_file_path = write_project_yaml(&storage_dir, directory_name, contents);
+            let mut repository = TaskRepository::new(storage_dir.path_str());
+
+            let actual = repository.load().unwrap_err();
+
+            assert_eq!(actual.operation(), TaskRepositoryOperation::ParseProject);
+            assert_eq!(actual.path(), project_yaml_file_path.as_path());
+            assert_eq!(actual.io_error().kind(), std::io::ErrorKind::InvalidData);
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_load_read失敗を型付きerrorにする() {
+        let storage_dir = TestStorageDir::new();
+        let project_yaml_file_path = storage_dir.path.join("unreadable/project.yaml");
+        fs::create_dir_all(&project_yaml_file_path).unwrap();
+        let mut repository = TaskRepository::new(storage_dir.path_str());
+
+        let actual = repository.load().unwrap_err();
+
+        assert_eq!(actual.operation(), TaskRepositoryOperation::ReadFile);
+        assert_eq!(actual.path(), project_yaml_file_path.as_path());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_load_open失敗を型付きerrorにする() {
+        use std::os::unix::fs::symlink;
+
+        let storage_dir = TestStorageDir::new();
+        let project_dir_path = storage_dir.path.join("unopenable");
+        fs::create_dir_all(&project_dir_path).unwrap();
+        let project_yaml_file_path = project_dir_path.join("project.yaml");
+        symlink(
+            project_dir_path.join("missing.yaml"),
+            &project_yaml_file_path,
+        )
+        .unwrap();
+        let mut repository = TaskRepository::new(storage_dir.path_str());
+
+        let actual = repository.load().unwrap_err();
+
+        assert_eq!(actual.operation(), TaskRepositoryOperation::OpenFile);
+        assert_eq!(actual.path(), project_yaml_file_path.as_path());
+    }
+
+    #[test]
+    fn test_load_途中失敗ではmemoryを部分更新しない() {
+        let storage_dir = TestStorageDir::new();
+        let now = Local.with_ymd_and_hms(2026, 8, 11, 12, 0, 0).unwrap();
+        let mut source_repository = TaskRepository::new(storage_dir.path_str());
+        source_repository.sync_clock(now);
+        let stored_task = Task::new("保存済みtask");
+        let stored_task_id = stored_task.get_id();
+        source_repository.start_new_project(stored_task);
+        source_repository.save().unwrap();
+        write_project_yaml(&storage_dir, "zz-broken", "project: [");
+
+        let mut repository = TaskRepository::new(storage_dir.path_str());
+        repository.sync_clock(now);
+        let memory_task = Task::new("memory task");
+        let memory_task_id = memory_task.get_id();
+        repository.start_new_project(memory_task);
+
+        assert!(repository.load().is_err());
+        assert!(repository.get_by_id(memory_task_id).is_some());
+        assert!(repository.get_by_id(stored_task_id).is_none());
+        assert_eq!(repository.get_all_projects().len(), 1);
     }
 
     #[test]

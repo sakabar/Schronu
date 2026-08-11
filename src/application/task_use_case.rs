@@ -127,12 +127,7 @@ pub fn create_task(
     repository: &mut dyn TaskRepositoryTrait,
     input: CreateTaskInput,
 ) -> Result<Uuid, ApplicationError> {
-    if input.name.is_empty() {
-        return Err(ApplicationError::InvalidInput {
-            field: "name",
-            reason: "must not be empty",
-        });
-    }
+    validate_task_name(&input.name, "name")?;
 
     let root_task = Task::new(&input.name);
     root_task.set_priority(5);
@@ -143,7 +138,9 @@ pub fn create_task(
     }
 
     if let Some(estimated_work_minutes) = input.estimated_work_minutes {
-        root_task.set_estimated_work_seconds(minutes_to_seconds(estimated_work_minutes)?);
+        root_task.set_estimated_work_seconds(estimated_work_seconds_from_minutes(
+            estimated_work_minutes,
+        )?);
     }
 
     let task_id = root_task.get_id();
@@ -161,11 +158,8 @@ pub fn breakdown_task(
             reason: "must not be empty",
         });
     }
-    if input.names.iter().any(|name| name.parse::<i64>().is_ok()) {
-        return Err(ApplicationError::InvalidInput {
-            field: "names",
-            reason: "must not contain an integer-only name",
-        });
+    for name in &input.names {
+        validate_task_name(name, "names")?;
     }
 
     let parent_task = find_task(repository, input.parent_id)?;
@@ -244,7 +238,7 @@ pub fn set_estimate(
     task_id: Uuid,
     estimated_work_minutes: i64,
 ) -> Result<(), ApplicationError> {
-    let estimated_work_seconds = minutes_to_seconds(estimated_work_minutes)?;
+    let estimated_work_seconds = estimated_work_seconds_from_minutes(estimated_work_minutes)?;
     let task = find_task(repository, task_id)?;
     task.set_estimated_work_seconds(estimated_work_seconds);
     Ok(())
@@ -282,7 +276,32 @@ fn find_task(
         .ok_or(ApplicationError::TaskNotFound(task_id))
 }
 
-fn minutes_to_seconds(minutes: i64) -> Result<i64, ApplicationError> {
+fn validate_task_name(name: &str, field: &'static str) -> Result<(), ApplicationError> {
+    let trimmed_name = name.trim();
+    if trimmed_name.is_empty() {
+        return Err(ApplicationError::InvalidInput {
+            field,
+            reason: "must not be blank",
+        });
+    }
+    if is_integer_only_name(trimmed_name) {
+        return Err(ApplicationError::InvalidInput {
+            field,
+            reason: "must not be an integer-only name",
+        });
+    }
+    Ok(())
+}
+
+fn is_integer_only_name(name: &str) -> bool {
+    let digits = name
+        .strip_prefix('+')
+        .or_else(|| name.strip_prefix('-'))
+        .unwrap_or(name);
+    !digits.is_empty() && digits.chars().all(|character| character.is_ascii_digit())
+}
+
+pub fn estimated_work_seconds_from_minutes(minutes: i64) -> Result<i64, ApplicationError> {
     if minutes < 0 {
         return Err(ApplicationError::InvalidInput {
             field: "estimated_work_minutes",
@@ -414,7 +433,9 @@ mod tests {
             self.projects.iter().collect()
         }
 
-        fn load(&mut self) {}
+        fn load(&mut self) -> Result<(), crate::application::interface::TaskRepositoryError> {
+            Ok(())
+        }
 
         fn save(&self) -> Result<(), crate::application::interface::TaskRepositoryError> {
             self.save_count.set(self.save_count.get() + 1);
@@ -471,6 +492,59 @@ mod tests {
         assert_eq!(actual.name, "子");
         assert_eq!(actual.priority, 5);
         assert_eq!(actual.project_category, Some(ProjectCategory::Investment));
+    }
+
+    #[test]
+    fn get_task_task_viewの全属性を返す() {
+        let now = fixed_now();
+        let pending_until = Local.with_ymd_and_hms(2026, 8, 12, 6, 0, 0).unwrap();
+        let create_time = Local.with_ymd_and_hms(2026, 8, 1, 9, 0, 0).unwrap();
+        let start_time = Local.with_ymd_and_hms(2026, 8, 10, 10, 0, 0).unwrap();
+        let end_time = Local.with_ymd_and_hms(2026, 8, 11, 11, 0, 0).unwrap();
+        let deadline_time = Local.with_ymd_and_hms(2026, 8, 20, 23, 59, 59).unwrap();
+        let root = Task::new("全属性");
+        root.set_orig_status(Status::Pending);
+        root.set_pending_until(pending_until);
+        root.set_priority(7);
+        root.set_create_time(create_time);
+        root.set_start_time(start_time);
+        root.set_end_time_opt(Some(end_time));
+        root.set_deadline_time_opt(Some(deadline_time));
+        root.set_estimated_work_seconds(1_800);
+        root.set_actual_work_seconds(900);
+        root.set_atomic(true);
+        root.set_is_on_other_side(true);
+        root.set_repetition_interval_days_opt(Some(7));
+        root.set_repetition_anchor(RepetitionAnchor::Completion);
+        root.set_days_in_advance(2);
+        root.set_project_category_opt(Some(ProjectCategory::Recovery));
+        root.sync_clock(now);
+        let child = root.create_as_last_child(TaskAttr::new("子"));
+        let repository = TestTaskRepository::new(vec![root.clone()], now);
+
+        let actual = get_task(&repository, root.get_id()).unwrap();
+
+        assert_eq!(actual.id, root.get_id());
+        assert_eq!(actual.root_id, root.get_id());
+        assert_eq!(actual.parent_id, None);
+        assert_eq!(actual.child_ids, vec![child.get_id()]);
+        assert_eq!(actual.name, "全属性");
+        assert_eq!(actual.status, Status::Pending);
+        assert_eq!(actual.original_status, Status::Pending);
+        assert!(actual.is_on_other_side);
+        assert!(actual.atomic);
+        assert_eq!(actual.pending_until, pending_until);
+        assert_eq!(actual.priority, 7);
+        assert_eq!(actual.create_time, create_time);
+        assert_eq!(actual.start_time, start_time);
+        assert_eq!(actual.end_time, Some(end_time));
+        assert_eq!(actual.deadline_time, Some(deadline_time));
+        assert_eq!(actual.estimated_work_seconds, 1_800);
+        assert_eq!(actual.actual_work_seconds, 900);
+        assert_eq!(actual.repetition_interval_days, Some(7));
+        assert_eq!(actual.repetition_anchor, RepetitionAnchor::Completion);
+        assert_eq!(actual.days_in_advance, 2);
+        assert_eq!(actual.project_category, Some(ProjectCategory::Recovery));
     }
 
     #[test]
@@ -546,6 +620,34 @@ mod tests {
             Err(ApplicationError::InvalidInput { field: "name", .. })
         ));
         assert!(repository.projects.is_empty());
+    }
+
+    #[test]
+    fn create_task_空白名と整数名を拒否して変更しない() {
+        for name in [
+            "   ",
+            "123",
+            "  -123  ",
+            "+123",
+            "999999999999999999999999999999999999999999",
+        ] {
+            let mut repository = TestTaskRepository::new(vec![], fixed_now());
+
+            let actual = create_task(
+                &mut repository,
+                CreateTaskInput {
+                    name: name.to_string(),
+                    estimated_work_minutes: None,
+                    pending_until: None,
+                },
+            );
+
+            assert!(matches!(
+                actual,
+                Err(ApplicationError::InvalidInput { field: "name", .. })
+            ));
+            assert!(repository.projects.is_empty());
+        }
     }
 
     #[test]
@@ -664,6 +766,24 @@ mod tests {
             actual,
             Err(ApplicationError::InvalidInput { field: "names", .. })
         ));
+        assert!(parent.get_children().is_empty());
+    }
+
+    #[test]
+    fn breakdown_task_空白名を含む場合は変更しない() {
+        let parent = Task::new("親");
+        let mut repository = TestTaskRepository::new(vec![parent.clone()], fixed_now());
+
+        let actual = breakdown_task(
+            &mut repository,
+            BreakdownTaskInput {
+                parent_id: parent.get_id(),
+                names: vec!["子".to_string(), "   ".to_string()],
+                pending_until: None,
+            },
+        );
+
+        assert!(matches!(actual, Err(ApplicationError::InvalidInput { .. })));
         assert!(parent.get_children().is_empty());
     }
 

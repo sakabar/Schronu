@@ -7,12 +7,13 @@ use regex::Regex;
 use schronu::adapter::gateway::free_time_manager::FreeTimeManager;
 use schronu::adapter::gateway::task_repository::TaskRepository;
 use schronu::application::interface::FreeTimeManagerTrait;
-use schronu::application::interface::TaskRepositoryTrait;
 #[cfg(test)]
-use schronu::application::interface::{TaskRepositoryError, TaskRepositoryOperation};
+use schronu::application::interface::TaskRepositoryOperation;
+use schronu::application::interface::{TaskRepositoryError, TaskRepositoryTrait};
 use schronu::application::task_use_case::{
-    breakdown_task, complete_task, create_task, defer_task, get_focus, set_category, set_deadline,
-    set_estimate, ApplicationError, BreakdownTaskInput, CompleteTaskInput, CreateTaskInput,
+    breakdown_task, complete_task, create_task, defer_task, estimated_work_seconds_from_minutes,
+    get_focus, set_category, set_deadline, set_estimate, ApplicationError, BreakdownTaskInput,
+    CompleteTaskInput, CreateTaskInput,
 };
 use schronu::entity::datetime::{get_next_morning_datetime, parse_local_datetime};
 #[cfg(test)]
@@ -4279,6 +4280,8 @@ fn execute_create_repetition_task(
     _start_time_str: &str,
     _deadline_time_str: &str,
 ) -> Result<Option<Uuid>, ApplicationError> {
+    estimated_work_seconds_from_minutes(estimated_work_minutes)?;
+
     // まず繰り返しタスクの親タスクを作る。
     let Some(_) = execute_breakdown(
         _stdout,
@@ -5017,6 +5020,7 @@ struct TestTaskRepository {
     highest_priority_leaf_task_id_opt: Option<Uuid>,
     defer_candidate_leaf_task_id_opt: Option<Uuid>,
     last_defer_candidate_recent_days_opt: Option<i64>,
+    load_should_fail: bool,
     save_failures_remaining: Cell<usize>,
     save_attempt_count: Cell<usize>,
 }
@@ -5066,6 +5070,7 @@ impl TestTaskRepository {
             highest_priority_leaf_task_id_opt: Some(task_id),
             defer_candidate_leaf_task_id_opt: Some(task_id),
             last_defer_candidate_recent_days_opt: None,
+            load_should_fail: false,
             save_failures_remaining: Cell::new(0),
             save_attempt_count: Cell::new(0),
         }
@@ -5082,7 +5087,17 @@ impl TaskRepositoryTrait for TestTaskRepository {
         vec![&self.task]
     }
 
-    fn load(&mut self) {}
+    fn load(&mut self) -> Result<(), schronu::application::interface::TaskRepositoryError> {
+        if self.load_should_fail {
+            Err(TaskRepositoryError::new(
+                TaskRepositoryOperation::ParseProject,
+                "/test/project.yaml",
+                std::io::Error::new(std::io::ErrorKind::InvalidData, "test load failure"),
+            ))
+        } else {
+            Ok(())
+        }
+    }
 
     fn save(&self) -> Result<(), schronu::application::interface::TaskRepositoryError> {
         self.save_attempt_count
@@ -5570,6 +5585,35 @@ fn test_execute_repetition_数値だけの名前は拒否して元taskを変更�
     assert_eq!(result.task.get_estimated_work_seconds(), 45 * 60);
     assert!(result.task.get_children().is_empty());
     assert_eq!(result.focused_task_id_opt, Some(task.get_id()));
+}
+
+#[test]
+fn test_execute_new_数値だけの名前は拒否して元taskを変更しない() {
+    let now = Local.with_ymd_and_hms(2026, 8, 11, 12, 0, 0).unwrap();
+    let task = Task::new("既存タスク");
+
+    let result = execute_command_for_test(task.clone(), now, Some(task.get_id()), "新 123 10");
+
+    assert_eq!(result.task.get_id(), task.get_id());
+    assert_eq!(result.task.get_name(), "既存タスク");
+    assert_eq!(result.focused_task_id_opt, Some(task.get_id()));
+}
+
+#[test]
+fn test_execute_repetition_不正な見積もりでは元taskを変更しない() {
+    let now = Local.with_ymd_and_hms(2026, 8, 11, 12, 0, 0).unwrap();
+
+    for estimated_work_minutes in ["-1", "9223372036854775807"] {
+        let task = Task::new("既存タスク");
+        task.set_estimated_work_seconds(45 * 60);
+        let command = format!("繰 反復 {estimated_work_minutes} 毎 09:00 10:00");
+
+        let result = execute_command_for_test(task.clone(), now, Some(task.get_id()), &command);
+
+        assert_eq!(result.task.get_estimated_work_seconds(), 45 * 60);
+        assert!(result.task.get_children().is_empty());
+        assert_eq!(result.focused_task_id_opt, Some(task.get_id()));
+    }
 }
 
 #[test]
@@ -6936,17 +6980,16 @@ fn main() {
             // ロック取得成功。アプリケーションのメインロジックを実行。
 
             // controllerで実体を見るのを避けるために、1つ関数を切る
-            match command_opt {
-                Some(command) => {
-                    execute_non_interactive_command(
-                        &mut task_repository,
-                        &mut free_time_manager,
-                        &command,
-                    );
-                }
-                None => {
-                    application(&mut task_repository, &mut free_time_manager);
-                }
+            let result = match command_opt {
+                Some(command) => execute_non_interactive_command(
+                    &mut task_repository,
+                    &mut free_time_manager,
+                    &command,
+                ),
+                None => application(&mut task_repository, &mut free_time_manager),
+            };
+            if !report_repository_result(&mut std::io::stderr(), result) {
+                process::exit(1);
             }
 
             // 終了時にロックは自動的に解放される。
@@ -6957,6 +7000,38 @@ fn main() {
             process::exit(1);
         }
     }
+}
+
+fn report_repository_result(
+    stderr: &mut dyn Write,
+    result: Result<(), TaskRepositoryError>,
+) -> bool {
+    match result {
+        Ok(()) => true,
+        Err(error) => {
+            writeln!(stderr, "[Error] {error}").unwrap();
+            false
+        }
+    }
+}
+
+#[test]
+fn test_report_repository_result_load_errorを表示して失敗を返す() {
+    let mut stderr = Vec::new();
+    let error = TaskRepositoryError::new(
+        TaskRepositoryOperation::ParseProject,
+        "/test/project.yaml",
+        std::io::Error::new(std::io::ErrorKind::InvalidData, "broken YAML"),
+    );
+
+    let actual = report_repository_result(&mut stderr, Err(error));
+
+    assert!(!actual);
+    let output = String::from_utf8(stderr).unwrap();
+    assert!(output.contains("[Error]"));
+    assert!(output.contains("ParseProject"));
+    assert!(output.contains("/test/project.yaml"));
+    assert!(output.contains("broken YAML"));
 }
 
 fn parse_non_interactive_command(args: Vec<String>) -> Option<String> {
@@ -6995,10 +7070,10 @@ fn execute_non_interactive_command(
     task_repository: &mut dyn TaskRepositoryTrait,
     free_time_manager: &mut dyn FreeTimeManagerTrait,
     command: &str,
-) {
+) -> Result<(), TaskRepositoryError> {
     let now = Local::now();
     task_repository.sync_clock(now);
-    task_repository.load();
+    task_repository.load()?;
     free_time_manager
         .load_busy_time_slots_from_file("../Schronu-private/busy_time_slots.yaml", &now);
 
@@ -7014,6 +7089,33 @@ fn execute_non_interactive_command(
         &mut focused_task_id_opt,
         &focus_started_datetime,
         command,
+    );
+    Ok(())
+}
+
+#[test]
+fn test_execute_non_interactive_command_load失敗時はcommandを実行しない() {
+    let now = Local.with_ymd_and_hms(2026, 8, 11, 12, 0, 0).unwrap();
+    let task = Task::new("変更しないtask");
+    let task_id = task.get_id();
+    let original_estimated_work_seconds = task.get_estimated_work_seconds();
+    let mut task_repository = TestTaskRepository::new(task, now);
+    task_repository.load_should_fail = true;
+    let mut free_time_manager = TestFreeTimeManager;
+
+    let actual =
+        execute_non_interactive_command(&mut task_repository, &mut free_time_manager, "予 45");
+
+    assert!(matches!(
+        actual,
+        Err(ref error) if error.operation() == TaskRepositoryOperation::ParseProject
+    ));
+    assert_eq!(
+        task_repository
+            .get_by_id(task_id)
+            .unwrap()
+            .get_estimated_work_seconds(),
+        original_estimated_work_seconds
     );
 }
 
@@ -7495,7 +7597,7 @@ fn test_interactive_loop_保存失敗後にctrl_dで再試行して成功終了�
 fn application(
     task_repository: &mut dyn TaskRepositoryTrait,
     free_time_manager: &mut dyn FreeTimeManagerTrait,
-) {
+) -> Result<(), TaskRepositoryError> {
     // 時計を合わせる
     let now = Local::now();
     task_repository.sync_clock(now);
@@ -7507,7 +7609,7 @@ fn application(
     //     .expect("invalid minute");
     // task_repository.sync_clock(next_morning);
 
-    task_repository.load();
+    task_repository.load()?;
 
     free_time_manager
         .load_busy_time_slots_from_file("../Schronu-private/busy_time_slots.yaml", &now);
@@ -7966,4 +8068,5 @@ fn application(
     // SteadyBlockに戻す
     // Todo: 本当は、元々の状態を保存しておいてそれに戻したい。
     writeln!(stdout, "{}", termion::cursor::SteadyBlock).unwrap();
+    Ok(())
 }

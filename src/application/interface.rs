@@ -8,10 +8,18 @@ use uuid::Uuid;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum TaskRepositoryOperation {
+    TraverseDirectory,
+    ReadMetadata,
+    OpenFile,
+    ReadFile,
+    ParseProject,
     SerializeProject,
     CreateDirectory,
     CreateFile,
     WriteFile,
+    SyncFile,
+    SetPermissions,
+    RenameFile,
 }
 
 #[derive(Debug)]
@@ -68,7 +76,7 @@ impl Error for TaskRepositoryError {
 pub trait TaskRepositoryTrait {
     fn get_project_storage_dir_name(&self) -> &str;
     fn get_all_projects(&self) -> Vec<&Task>;
-    fn load(&mut self);
+    fn load(&mut self) -> Result<(), TaskRepositoryError>;
     fn save(&self) -> Result<(), TaskRepositoryError>;
     fn sync_clock(&mut self, now: DateTime<Local>);
     fn get_last_synced_time(&self) -> DateTime<Local>;
