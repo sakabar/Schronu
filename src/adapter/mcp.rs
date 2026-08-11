@@ -1,9 +1,10 @@
 use crate::application::interface::TaskRepositoryTrait;
 use crate::application::schedule_use_case::{get_schedule, ScheduledTaskView};
 use crate::application::task_use_case::{
-    breakdown_task as breakdown_task_use_case, create_task as create_task_use_case, get_focus,
-    get_task, list_tasks, ApplicationError, BreakdownTaskInput, CreateTaskInput, ListTasksFilter,
-    TaskPeriodField, TaskPeriodFilter, TaskView,
+    breakdown_task as breakdown_task_use_case, create_task as create_task_use_case,
+    defer_task as defer_task_use_case, get_focus, get_task, list_tasks, ApplicationError,
+    BreakdownTaskInput, CreateTaskInput, ListTasksFilter, TaskPeriodField, TaskPeriodFilter,
+    TaskView,
 };
 use crate::entity::task::{ProjectCategory, Status};
 use chrono::{DateTime, Local};
@@ -88,6 +89,7 @@ impl<R: TaskRepositoryTrait> McpServer<R> {
             Some("get_schedule") => self.call_get_schedule(id, params.get("arguments")),
             Some("create_task") => self.call_create_task(id, &params["arguments"]),
             Some("breakdown_task") => self.call_breakdown_task(id, &params["arguments"]),
+            Some("defer_task") => self.call_defer_task(id, &params["arguments"]),
             _ => error_response(id, -32602, "Unknown tool"),
         }
     }
@@ -129,8 +131,8 @@ impl<R: TaskRepositoryTrait> McpServer<R> {
     fn call_list_tasks(&self, id: Value, arguments: Option<&Value>) -> Value {
         let filter = match list_tasks_filter(arguments) {
             Ok(filter) => filter,
-            Err(ListTasksInputError::Schema(error)) => return invalid_params_response(id, error),
-            Err(ListTasksInputError::Semantic { field, message }) => {
+            Err(ToolInputError::Schema(error)) => return invalid_params_response(id, error),
+            Err(ToolInputError::Semantic { field, message }) => {
                 return invalid_input_response(id, field, message)
             }
         };
@@ -167,8 +169,8 @@ impl<R: TaskRepositoryTrait> McpServer<R> {
     fn call_create_task(&mut self, id: Value, arguments: &Value) -> Value {
         let input = match create_task_input(arguments) {
             Ok(input) => input,
-            Err(CreateTaskInputError::Schema(error)) => return invalid_params_response(id, error),
-            Err(CreateTaskInputError::Semantic { field, message }) => {
+            Err(ToolInputError::Schema(error)) => return invalid_params_response(id, error),
+            Err(ToolInputError::Semantic { field, message }) => {
                 return invalid_input_response(id, field, message)
             }
         };
@@ -190,10 +192,8 @@ impl<R: TaskRepositoryTrait> McpServer<R> {
     fn call_breakdown_task(&mut self, id: Value, arguments: &Value) -> Value {
         let input = match breakdown_task_input(arguments) {
             Ok(input) => input,
-            Err(BreakdownTaskInputError::Schema(error)) => {
-                return invalid_params_response(id, error)
-            }
-            Err(BreakdownTaskInputError::Semantic { field, message }) => {
+            Err(ToolInputError::Schema(error)) => return invalid_params_response(id, error),
+            Err(ToolInputError::Semantic { field, message }) => {
                 return invalid_input_response(id, field, message)
             }
         };
@@ -216,6 +216,32 @@ impl<R: TaskRepositoryTrait> McpServer<R> {
                 }),
                 false,
             ),
+            Err(error) => repository_save_error_response(id, &error.to_string()),
+        }
+    }
+
+    fn call_defer_task(&mut self, id: Value, arguments: &Value) -> Value {
+        let (task_id, pending_until) = match defer_task_input(arguments) {
+            Ok(input) => input,
+            Err(ToolInputError::Schema(error)) => return invalid_params_response(id, error),
+            Err(ToolInputError::Semantic { field, message }) => {
+                return invalid_input_response(id, field, message)
+            }
+        };
+
+        match defer_task_use_case(&mut self.repository, task_id, pending_until) {
+            Ok(()) => {}
+            Err(ApplicationError::TaskNotFound(task_id)) => {
+                return task_not_found_response(id, task_id, Some("task_id"))
+            }
+            Err(ApplicationError::InvalidInput { field, reason }) => {
+                return invalid_input_response(id, field, reason)
+            }
+            Err(error) => return internal_error_response(id, &error.to_string()),
+        }
+
+        match self.repository.save() {
+            Ok(()) => tool_result_response(id, json!({"task_id": task_id.to_string()}), false),
             Err(error) => repository_save_error_response(id, &error.to_string()),
         }
     }
@@ -290,7 +316,7 @@ struct InvalidParams {
     reason: &'static str,
 }
 
-enum ListTasksInputError {
+enum ToolInputError {
     Schema(InvalidParams),
     Semantic {
         field: &'static str,
@@ -298,33 +324,43 @@ enum ListTasksInputError {
     },
 }
 
-enum CreateTaskInputError {
-    Schema(InvalidParams),
-    Semantic {
-        field: &'static str,
-        message: &'static str,
-    },
+fn defer_task_input(arguments: &Value) -> Result<(Uuid, DateTime<Local>), ToolInputError> {
+    let arguments = validate_argument_object(
+        arguments,
+        &["task_id", "pending_until"],
+        &["task_id", "pending_until"],
+    )
+    .map_err(ToolInputError::Schema)?;
+    let task_id = string_argument(arguments, "task_id")
+        .map_err(ToolInputError::Schema)
+        .and_then(|value| {
+            Uuid::parse_str(value).map_err(|_| ToolInputError::Semantic {
+                field: "task_id",
+                message: "must be a valid UUID",
+            })
+        })?;
+    let pending_until = string_argument(arguments, "pending_until")
+        .map_err(ToolInputError::Schema)
+        .and_then(|value| {
+            parse_local_datetime(value).map_err(|_| ToolInputError::Semantic {
+                field: "pending_until",
+                message: "must be a valid RFC 3339 date-time",
+            })
+        })?;
+    Ok((task_id, pending_until))
 }
 
-enum BreakdownTaskInputError {
-    Schema(InvalidParams),
-    Semantic {
-        field: &'static str,
-        message: &'static str,
-    },
-}
-
-fn breakdown_task_input(arguments: &Value) -> Result<BreakdownTaskInput, BreakdownTaskInputError> {
+fn breakdown_task_input(arguments: &Value) -> Result<BreakdownTaskInput, ToolInputError> {
     let arguments = validate_argument_object(
         arguments,
         &["parent_id", "names", "pending_until"],
         &["parent_id", "names"],
     )
-    .map_err(BreakdownTaskInputError::Schema)?;
+    .map_err(ToolInputError::Schema)?;
     let parent_id = string_argument(arguments, "parent_id")
-        .map_err(BreakdownTaskInputError::Schema)
+        .map_err(ToolInputError::Schema)
         .and_then(|value| {
-            Uuid::parse_str(value).map_err(|_| BreakdownTaskInputError::Semantic {
+            Uuid::parse_str(value).map_err(|_| ToolInputError::Semantic {
                 field: "parent_id",
                 message: "must be a valid UUID",
             })
@@ -333,13 +369,13 @@ fn breakdown_task_input(arguments: &Value) -> Result<BreakdownTaskInput, Breakdo
         .get("names")
         .and_then(Value::as_array)
         .ok_or_else(|| {
-            BreakdownTaskInputError::Schema(InvalidParams {
+            ToolInputError::Schema(InvalidParams {
                 field: "names".to_string(),
                 reason: "must be an array",
             })
         })?;
     if names.is_empty() {
-        return Err(BreakdownTaskInputError::Schema(InvalidParams {
+        return Err(ToolInputError::Schema(InvalidParams {
             field: "names".to_string(),
             reason: "must contain at least one item",
         }));
@@ -348,12 +384,12 @@ fn breakdown_task_input(arguments: &Value) -> Result<BreakdownTaskInput, Breakdo
         .iter()
         .enumerate()
         .map(|(index, value)| match value.as_str() {
-            Some("") => Err(BreakdownTaskInputError::Schema(InvalidParams {
+            Some("") => Err(ToolInputError::Schema(InvalidParams {
                 field: format!("names[{index}]"),
                 reason: "must not be empty",
             })),
             Some(value) => Ok(value.to_string()),
-            None => Err(BreakdownTaskInputError::Schema(InvalidParams {
+            None => Err(ToolInputError::Schema(InvalidParams {
                 field: format!("names[{index}]"),
                 reason: "must be a string",
             })),
@@ -363,12 +399,12 @@ fn breakdown_task_input(arguments: &Value) -> Result<BreakdownTaskInput, Breakdo
         .get("pending_until")
         .map(|value| {
             let value = value.as_str().ok_or_else(|| {
-                BreakdownTaskInputError::Schema(InvalidParams {
+                ToolInputError::Schema(InvalidParams {
                     field: "pending_until".to_string(),
                     reason: "must be a string",
                 })
             })?;
-            parse_local_datetime(value).map_err(|_| BreakdownTaskInputError::Semantic {
+            parse_local_datetime(value).map_err(|_| ToolInputError::Semantic {
                 field: "pending_until",
                 message: "must be a valid RFC 3339 date-time",
             })
@@ -382,16 +418,16 @@ fn breakdown_task_input(arguments: &Value) -> Result<BreakdownTaskInput, Breakdo
     })
 }
 
-fn create_task_input(arguments: &Value) -> Result<CreateTaskInput, CreateTaskInputError> {
+fn create_task_input(arguments: &Value) -> Result<CreateTaskInput, ToolInputError> {
     let arguments = validate_argument_object(
         arguments,
         &["name", "estimated_work_minutes", "pending_until"],
         &["name"],
     )
-    .map_err(CreateTaskInputError::Schema)?;
-    let name = string_argument(arguments, "name").map_err(CreateTaskInputError::Schema)?;
+    .map_err(ToolInputError::Schema)?;
+    let name = string_argument(arguments, "name").map_err(ToolInputError::Schema)?;
     if name.is_empty() {
-        return Err(CreateTaskInputError::Schema(InvalidParams {
+        return Err(ToolInputError::Schema(InvalidParams {
             field: "name".to_string(),
             reason: "must not be empty",
         }));
@@ -404,19 +440,19 @@ fn create_task_input(arguments: &Value) -> Result<CreateTaskInput, CreateTaskInp
                 return if minutes >= 0 {
                     Ok(minutes)
                 } else {
-                    Err(CreateTaskInputError::Schema(InvalidParams {
+                    Err(ToolInputError::Schema(InvalidParams {
                         field: "estimated_work_minutes".to_string(),
                         reason: "must be a non-negative integer",
                     }))
                 };
             }
             if value.as_u64().is_some() {
-                return Err(CreateTaskInputError::Semantic {
+                return Err(ToolInputError::Semantic {
                     field: "estimated_work_minutes",
                     message: "is outside the supported integer range",
                 });
             }
-            Err(CreateTaskInputError::Schema(InvalidParams {
+            Err(ToolInputError::Schema(InvalidParams {
                 field: "estimated_work_minutes".to_string(),
                 reason: "must be a non-negative integer",
             }))
@@ -426,12 +462,12 @@ fn create_task_input(arguments: &Value) -> Result<CreateTaskInput, CreateTaskInp
         .get("pending_until")
         .map(|value| {
             let value = value.as_str().ok_or_else(|| {
-                CreateTaskInputError::Schema(InvalidParams {
+                ToolInputError::Schema(InvalidParams {
                     field: "pending_until".to_string(),
                     reason: "must be a string",
                 })
             })?;
-            parse_local_datetime(value).map_err(|_| CreateTaskInputError::Semantic {
+            parse_local_datetime(value).map_err(|_| ToolInputError::Semantic {
                 field: "pending_until",
                 message: "must be a valid RFC 3339 date-time",
             })
@@ -445,7 +481,7 @@ fn create_task_input(arguments: &Value) -> Result<CreateTaskInput, CreateTaskInp
     })
 }
 
-fn list_tasks_filter(arguments: Option<&Value>) -> Result<ListTasksFilter, ListTasksInputError> {
+fn list_tasks_filter(arguments: Option<&Value>) -> Result<ListTasksFilter, ToolInputError> {
     let Some(arguments) = arguments else {
         return Ok(ListTasksFilter {
             period: None,
@@ -454,7 +490,7 @@ fn list_tasks_filter(arguments: Option<&Value>) -> Result<ListTasksFilter, ListT
         });
     };
     let arguments = validate_argument_object(arguments, &["period", "statuses", "categories"], &[])
-        .map_err(ListTasksInputError::Schema)?;
+        .map_err(ToolInputError::Schema)?;
 
     Ok(ListTasksFilter {
         period: arguments
@@ -466,9 +502,9 @@ fn list_tasks_filter(arguments: Option<&Value>) -> Result<ListTasksFilter, ListT
     })
 }
 
-fn parse_period_filter(value: &Value) -> Result<TaskPeriodFilter, ListTasksInputError> {
+fn parse_period_filter(value: &Value) -> Result<TaskPeriodFilter, ToolInputError> {
     let period = value.as_object().ok_or_else(|| {
-        ListTasksInputError::Schema(InvalidParams {
+        ToolInputError::Schema(InvalidParams {
             field: "period".to_string(),
             reason: "must be an object",
         })
@@ -477,14 +513,14 @@ fn parse_period_filter(value: &Value) -> Result<TaskPeriodFilter, ListTasksInput
         .keys()
         .find(|field| !["field", "from", "until"].contains(&field.as_str()))
     {
-        return Err(ListTasksInputError::Schema(InvalidParams {
+        return Err(ToolInputError::Schema(InvalidParams {
             field: format!("period.{field}"),
             reason: "additional property is not allowed",
         }));
     }
     for field in ["field", "from", "until"] {
         if !period.contains_key(field) {
-            return Err(ListTasksInputError::Schema(InvalidParams {
+            return Err(ToolInputError::Schema(InvalidParams {
                 field: format!("period.{field}"),
                 reason: "field is required",
             }));
@@ -497,7 +533,7 @@ fn parse_period_filter(value: &Value) -> Result<TaskPeriodFilter, ListTasksInput
         "deadline" => TaskPeriodField::Deadline,
         "completed_at" => TaskPeriodField::CompletedAt,
         _ => {
-            return Err(ListTasksInputError::Schema(InvalidParams {
+            return Err(ToolInputError::Schema(InvalidParams {
                 field: "period.field".to_string(),
                 reason: "must be a supported period field",
             }))
@@ -519,20 +555,17 @@ fn required_nested_string<'a>(
     object: &'a Map<String, Value>,
     object_name: &str,
     field: &str,
-) -> Result<&'a str, ListTasksInputError> {
+) -> Result<&'a str, ToolInputError> {
     object.get(field).and_then(Value::as_str).ok_or_else(|| {
-        ListTasksInputError::Schema(InvalidParams {
+        ToolInputError::Schema(InvalidParams {
             field: format!("{object_name}.{field}"),
             reason: "must be a string",
         })
     })
 }
 
-fn parse_datetime(
-    value: &str,
-    field: &'static str,
-) -> Result<DateTime<Local>, ListTasksInputError> {
-    parse_local_datetime(value).map_err(|_| ListTasksInputError::Semantic {
+fn parse_datetime(value: &str, field: &'static str) -> Result<DateTime<Local>, ToolInputError> {
+    parse_local_datetime(value).map_err(|_| ToolInputError::Semantic {
         field,
         message: "must be a valid RFC 3339 date-time",
     })
@@ -542,12 +575,12 @@ fn parse_local_datetime(value: &str) -> Result<DateTime<Local>, chrono::ParseErr
     DateTime::parse_from_rfc3339(value).map(|time| time.with_timezone(&Local))
 }
 
-fn parse_status_filters(value: Option<&Value>) -> Result<Vec<Status>, ListTasksInputError> {
+fn parse_status_filters(value: Option<&Value>) -> Result<Vec<Status>, ToolInputError> {
     let Some(value) = value else {
         return Ok(vec![]);
     };
     let values = value.as_array().ok_or_else(|| {
-        ListTasksInputError::Schema(InvalidParams {
+        ToolInputError::Schema(InvalidParams {
             field: "statuses".to_string(),
             reason: "must be an array",
         })
@@ -560,7 +593,7 @@ fn parse_status_filters(value: Option<&Value>) -> Result<Vec<Status>, ListTasksI
             Some("todo") => Ok(Status::Todo),
             Some("pending") => Ok(Status::Pending),
             Some("done") => Ok(Status::Done),
-            _ => Err(ListTasksInputError::Schema(InvalidParams {
+            _ => Err(ToolInputError::Schema(InvalidParams {
                 field: format!("statuses[{index}]"),
                 reason: "must be todo, pending, or done",
             })),
@@ -570,12 +603,12 @@ fn parse_status_filters(value: Option<&Value>) -> Result<Vec<Status>, ListTasksI
 
 fn parse_category_filters(
     value: Option<&Value>,
-) -> Result<Vec<Option<ProjectCategory>>, ListTasksInputError> {
+) -> Result<Vec<Option<ProjectCategory>>, ToolInputError> {
     let Some(value) = value else {
         return Ok(vec![]);
     };
     let values = value.as_array().ok_or_else(|| {
-        ListTasksInputError::Schema(InvalidParams {
+        ToolInputError::Schema(InvalidParams {
             field: "categories".to_string(),
             reason: "must be an array",
         })
@@ -591,7 +624,7 @@ fn parse_category_filters(
             Some("recovery") => Ok(Some(ProjectCategory::Recovery)),
             Some("investment") => Ok(Some(ProjectCategory::Investment)),
             Some("consumption") => Ok(Some(ProjectCategory::Consumption)),
-            _ => Err(ListTasksInputError::Schema(InvalidParams {
+            _ => Err(ToolInputError::Schema(InvalidParams {
                 field: format!("categories[{index}]"),
                 reason: "must be a supported category or null",
             })),
