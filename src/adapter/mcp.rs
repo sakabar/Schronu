@@ -1,3 +1,6 @@
+use crate::adapter::gateway::storage_lock::{
+    LockMode, StorageLock, StorageLockError, StorageLockErrorKind,
+};
 use crate::application::interface::TaskRepositoryTrait;
 use crate::application::schedule_use_case::{get_schedule, ScheduledTaskView};
 use crate::application::task_use_case::{
@@ -11,6 +14,7 @@ use crate::entity::task::{ProjectCategory, Status};
 use chrono::{DateTime, Local};
 use serde_json::Map;
 use serde_json::{json, Value};
+use std::path::PathBuf;
 use uuid::Uuid;
 
 const MCP_PROTOCOL_VERSION: &str = "2025-06-18";
@@ -24,14 +28,26 @@ enum LifecycleState {
 
 pub struct McpServer<R> {
     repository: R,
+    storage_directory: Option<PathBuf>,
     lifecycle_state: LifecycleState,
     repository_state_uncertain: bool,
 }
 
 impl<R: TaskRepositoryTrait> McpServer<R> {
-    pub fn new(repository: R) -> Self {
+    pub fn with_storage_directory(repository: R, storage_directory: impl Into<PathBuf>) -> Self {
         Self {
             repository,
+            storage_directory: Some(storage_directory.into()),
+            lifecycle_state: LifecycleState::Uninitialized,
+            repository_state_uncertain: false,
+        }
+    }
+
+    #[cfg(test)]
+    fn new(repository: R) -> Self {
+        Self {
+            repository,
+            storage_directory: None,
             lifecycle_state: LifecycleState::Uninitialized,
             repository_state_uncertain: false,
         }
@@ -89,13 +105,26 @@ impl<R: TaskRepositoryTrait> McpServer<R> {
                 Some(repository_state_uncertain_response(id))
             }
             "tools/call" => {
-                self.repository.sync_clock(Local::now());
-                match self.repository.load() {
-                    Ok(()) => Some(self.call_tool(id, &request)),
-                    Err(error) => Some(repository_load_error_response(id, &error.to_string())),
-                }
+                let _storage_lock = match &self.storage_directory {
+                    Some(storage_directory) => {
+                        match StorageLock::acquire(storage_directory, LockMode::Mcp) {
+                            Ok(storage_lock) => storage_lock,
+                            Err(error) => return Some(repository_lock_error_response(id, &error)),
+                        }
+                    }
+                    None => return Some(self.reload_and_call(id, &request)),
+                };
+                Some(self.reload_and_call(id, &request))
             }
             _ => Some(error_response(id, -32601, "Method not found")),
+        }
+    }
+
+    fn reload_and_call(&mut self, id: Value, request: &Value) -> Value {
+        self.repository.sync_clock(Local::now());
+        match self.repository.load() {
+            Ok(()) => self.call_tool(id, request),
+            Err(error) => repository_load_error_response(id, &error.to_string()),
         }
     }
 
@@ -604,6 +633,22 @@ fn repository_load_error_response(id: Value, message: &str) -> Value {
         }),
         true,
     )
+}
+
+fn repository_lock_error_response(id: Value, error: &StorageLockError) -> Value {
+    let (code, recovery) = match error.kind() {
+        StorageLockErrorKind::Contended => ("repository_lock_contended", "retry"),
+        StorageLockErrorKind::Io => ("repository_lock_failed", "inspect_storage"),
+    };
+    let mut structured_error = json!({
+        "code": code,
+        "message": error.to_string(),
+        "recovery": recovery,
+    });
+    if let Some(holder_metadata) = error.holder_metadata() {
+        structured_error["holder_metadata"] = Value::String(holder_metadata.to_string());
+    }
+    tool_result_response(id, json!({"error": structured_error}), true)
 }
 
 fn repository_state_uncertain_response(id: Value) -> Value {

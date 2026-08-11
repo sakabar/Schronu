@@ -29,7 +29,7 @@ Schronu (スロン) : タスクの抵抗感を減らして前に進んでいく�
 
 ## MCP server
 
-Schronuは、ローカルのMCP clientから9個のtask toolを利用できるstdio serverを提供します。初版は1人・1processでの利用を前提とし、network transportや認証機能は持ちません。
+Schronuは、ローカルのMCP clientから9個のtask toolを利用できるstdio serverを提供します。network transportや認証機能は持ちません。
 
 ### buildと起動
 
@@ -38,7 +38,7 @@ cargo build --release --bin schronu-mcp
 SCHRONU_STORAGE_DIR=/absolute/path/to/tasks ./target/release/schronu-mcp
 ```
 
-`schronu-mcp`はstdinからnewline区切りのJSON-RPC messageを読み、stdoutにはMCP protocol responseだけを出力します。起動時のlock取得・repository load失敗などの診断はstderrへ出します。通常はterminalから直接操作せず、MCP clientからprocessを起動してください。
+`schronu-mcp`はstdinからnewline区切りのJSON-RPC messageを読み、stdoutにはMCP protocol responseだけを出力します。起動時は保存先pathの検証だけを行い、lock取得やrepository loadは行いません。通常はterminalから直接操作せず、MCP clientからprocessを起動してください。
 
 保存先は`SCHRONU_STORAGE_DIR`で指定します。未指定時は起動時のworking directoryから見た`../Schronu-private/tasks/`です。相対pathの解釈違いを避けるため、MCP clientでは絶対pathを推奨します。同じ環境変数はCLIの`schronu`にも適用されます。
 
@@ -100,23 +100,23 @@ clientごとの設定形式に合わせて、commandと環境変数を次のよ�
 }
 ```
 
-入力schema違反はJSON-RPC `-32602`、実行時の入力error・task不明・未完了child・保存失敗は`isError: true`のstructured tool resultとして返ります。repository load失敗やlock取得失敗ではserverは起動せず、stderrへ理由を出してnon-zero終了します。
+入力schema違反はJSON-RPC `-32602`、実行時の入力error・task不明・未完了child・保存失敗は`isError: true`のstructured tool resultとして返ります。`tools/call`中のrepository load失敗は`repository_load_failed`、lock競合は`repository_lock_contended`、その他のlock取得失敗は`repository_lock_failed`として返ります。これらの失敗はsessionをpoisonせず、修復または競合解消後に同じsessionから再試行できます。
 
 write toolの保存に失敗すると、memory上のrepositoryとfileの状態が一致している保証がありません。失敗したrequestには`repository_save_failed`、同一sessionの後続`tools/call`には`repository_state_uncertain`と`recovery: "restart_server"`を返します。そのsessionを継続利用せず、MCP serverを再起動してrepositoryをfileから読み直してください。
 
 ### CLIとの排他lock
 
-CLIとMCP serverは同時利用できません。両方とも保存先直下の`.lock`へ同じOS advisory lockを取得し、lock取得後にrepositoryをloadします。`.lock`には`pid`、`started_at`、`mode`(`cli`または`mcp`)が記録されます。
+CLIとMCP serverは保存先直下の`.lock`へ同じOS advisory lockを取得します。CLIは起動中ずっとlockを保持します。MCP serverは`tools/call`ごとにlockを取得し、現在時刻への同期、repository load、tool実行、必要ならsave、response構築まで保持してから解放します。複数のMCP processはidle中に共存でき、storage操作だけがcall単位で直列化されます。`.lock`には`pid`、`started_at`、`mode`(`cli`または`mcp`)が記録され、MCPの`started_at`はそのcallがlockを取得した時刻です。
 
-lock競合時は、先に動いているCLIまたはMCP clientを正常終了させてから再実行してください。`.lock` fileはprocess終了後も残りますが、fileの存在だけではlock中を意味しません。OS lockを取得できるかどうかで、実際のlock状態を判定します。取得成功時にmetadataは上書きされます。
+CLIが稼働中のMCP call、または別のMCP callと競合したMCP callは、待機せず`repository_lock_contended`と`recovery: "retry"`を返します。CLIを終了した後、または競合中のcallが終わった後に再試行してください。`.lock` fileはprocess終了後も残りますが、fileの存在だけではlock中を意味しません。OS lockを取得できるかどうかで、実際のlock状態を判定します。取得成功時にmetadataは上書きされます。
 
 稼働中のprocessがある状態で`.lock`を削除すると、別inodeに新しいlockを作れて排他が破れる可能性があります。競合回避のために手動削除しないでください。異常終了後も、まず通常どおり再起動してOS lockが解放済みか確認してください。
 
 ### backupと安全上の注意
 
-一貫したbackupを取る場合はCLIとMCP serverを両方停止し、`.lock`を除く保存先directoryの内容をdirectory構造ごとcopyしてください。`.lock`はtask dataではないためbackup・restore対象外です。復元もCLI/MCP停止中に行ってください。
+一貫したbackupを取る場合はCLIを終了し、全MCP sessionからのcallが実行されていない状態で、`.lock`を除く保存先directoryの内容をdirectory構造ごとcopyしてください。`.lock`はtask dataではないためbackup・restore対象外です。復元もCLI停止中かつMCP call停止中に行ってください。
 
-stdio接続を許可したMCP clientはtaskの作成・変更・完了とfile保存を実行できます。信頼できるローカルclientだけに設定し、保存先のfilesystem permissionとbackupを管理してください。初版の対象外は、CLI/MCPの同時利用、複数MCP serverの同時利用、team共有、端末間同期、network transport、複数projectをまたぐatomic transactionです。
+stdio接続を許可したMCP clientはtaskの作成・変更・完了とfile保存を実行できます。信頼できるローカルclientだけに設定し、保存先のfilesystem permissionとbackupを管理してください。初版の対象外は、team共有、端末間同期、network transport、複数projectをまたぐatomic transactionです。
 
 ## CLI
 
