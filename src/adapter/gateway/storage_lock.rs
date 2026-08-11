@@ -5,6 +5,9 @@ use std::fmt;
 use std::fs::File;
 use std::io::{Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
+use std::time::{Duration, Instant};
+
+const LOCK_RETRY_INTERVAL: Duration = Duration::from_millis(10);
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum LockMode {
@@ -117,6 +120,27 @@ impl StorageLock {
         })?;
 
         Ok(Self { _file: file, path })
+    }
+
+    pub fn acquire_with_timeout(
+        storage_directory: &Path,
+        mode: LockMode,
+        timeout: Duration,
+    ) -> Result<Self, StorageLockError> {
+        let started_at = Instant::now();
+        loop {
+            match Self::acquire(storage_directory, mode) {
+                Ok(storage_lock) => return Ok(storage_lock),
+                Err(error) if error.kind() == StorageLockErrorKind::Contended => {
+                    let elapsed = started_at.elapsed();
+                    if elapsed >= timeout {
+                        return Err(error);
+                    }
+                    std::thread::sleep(LOCK_RETRY_INTERVAL.min(timeout - elapsed));
+                }
+                Err(error) => return Err(error),
+            }
+        }
     }
 
     pub fn path(&self) -> &Path {
