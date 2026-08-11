@@ -25,3 +25,7 @@ fs2 = "0.4"
 [[bin]]
 name = "schronu"
 path = "src/adapter/controller/schronu.rs"
+
+[[bin]]
+name = "schronu-mcp"
+path = "src/adapter/controller/schronu_mcp.rs"
