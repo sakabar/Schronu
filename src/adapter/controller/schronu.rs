@@ -4320,6 +4320,7 @@ impl SchronuWriter for TestWriter {
 #[cfg(test)]
 struct TestTaskRepository {
     task: Task,
+    storage_directory: String,
     last_synced_time: DateTime<Local>,
     highest_priority_leaf_task_id_opt: Option<Uuid>,
     defer_candidate_leaf_task_id_opt: Option<Uuid>,
@@ -4370,6 +4371,7 @@ impl TestTaskRepository {
         let task_id = task.get_id();
         Self {
             task,
+            storage_directory: String::new(),
             last_synced_time,
             highest_priority_leaf_task_id_opt: Some(task_id),
             defer_candidate_leaf_task_id_opt: Some(task_id),
@@ -4379,12 +4381,17 @@ impl TestTaskRepository {
             save_attempt_count: Cell::new(0),
         }
     }
+
+    fn with_storage_directory(mut self, storage_directory: &std::path::Path) -> Self {
+        self.storage_directory = storage_directory.to_str().unwrap().to_string();
+        self
+    }
 }
 
 #[cfg(test)]
 impl TaskRepositoryTrait for TestTaskRepository {
     fn get_project_storage_dir_name(&self) -> &str {
-        ""
+        &self.storage_directory
     }
 
     fn get_all_projects(&self) -> Vec<&Task> {
@@ -6859,6 +6866,133 @@ fn test_execute_non_interactive_command_gatewayの変換errorをstderrへ表示�
     assert!(output.contains("repository Load failed"));
     assert!(output.contains(project_yaml_path.to_str().unwrap()));
     assert!(output.contains("children must be an array or null"));
+}
+
+#[test]
+fn test_cli_repository初期load後はmcpがlockを取得できる() {
+    let storage_dir = TestStorageDir::new();
+    std::fs::create_dir_all(&storage_dir.path).unwrap();
+    let now = Local.with_ymd_and_hms(2026, 8, 12, 12, 0, 0).unwrap();
+    let mut repository = TaskRepository::new(storage_dir.path.to_str().unwrap());
+
+    let storage_lock = reload_repository_for_cli(&mut repository, now).unwrap();
+    drop(storage_lock);
+
+    let mcp_lock = StorageLock::acquire(&storage_dir.path, LockMode::Mcp);
+    assert!(mcp_lock.is_ok());
+}
+
+#[test]
+fn test_cli_repository_transactionは外部更新を再読込してcommandを即時保存する() {
+    let storage_dir = TestStorageDir::new();
+    std::fs::create_dir_all(&storage_dir.path).unwrap();
+    let now = Local.with_ymd_and_hms(2026, 8, 12, 12, 0, 0).unwrap();
+    let mut cli_repository = TaskRepository::new(storage_dir.path.to_str().unwrap());
+    drop(reload_repository_for_cli(&mut cli_repository, now).unwrap());
+
+    {
+        let _mcp_lock = StorageLock::acquire(&storage_dir.path, LockMode::Mcp).unwrap();
+        let mut mcp_repository = TaskRepository::new(storage_dir.path.to_str().unwrap());
+        mcp_repository.sync_clock(now);
+        mcp_repository.load().unwrap();
+        mcp_repository.start_new_project(Task::new("MCP更新"));
+        mcp_repository.save().unwrap();
+    }
+
+    run_cli_repository_transaction(&mut cli_repository, now, |repository| {
+        repository.start_new_project(Task::new("CLI更新"));
+    })
+    .unwrap();
+
+    let _mcp_lock = StorageLock::acquire(&storage_dir.path, LockMode::Mcp).unwrap();
+    let mut reloaded = TaskRepository::new(storage_dir.path.to_str().unwrap());
+    reloaded.sync_clock(now);
+    reloaded.load().unwrap();
+    let names = reloaded
+        .get_all_projects()
+        .iter()
+        .map(|task| task.get_name())
+        .collect::<Vec<_>>();
+    assert_eq!(names.len(), 2);
+    assert!(names.contains(&"MCP更新".to_string()));
+    assert!(names.contains(&"CLI更新".to_string()));
+}
+
+#[test]
+fn test_cli_repository_transactionはload失敗時にcommandもsaveも実行しない() {
+    let storage_dir = TestStorageDir::new();
+    std::fs::create_dir_all(&storage_dir.path).unwrap();
+    let now = Local.with_ymd_and_hms(2026, 8, 12, 12, 0, 0).unwrap();
+    let mut repository =
+        TestTaskRepository::new(Task::new("変更前"), now).with_storage_directory(&storage_dir.path);
+    repository.load_should_fail = true;
+    let command_executed = Cell::new(false);
+
+    let result = run_cli_repository_transaction(&mut repository, now, |_| {
+        command_executed.set(true);
+    });
+
+    assert!(matches!(
+        result,
+        Err(CliRepositoryTransactionError::Load(_))
+    ));
+    assert!(!command_executed.get());
+    assert_eq!(repository.save_attempt_count.get(), 0);
+    assert!(StorageLock::acquire(&storage_dir.path, LockMode::Mcp).is_ok());
+}
+
+#[test]
+fn test_cli_repository_transactionはsave失敗をfatalなphase付きerrorにする() {
+    let storage_dir = TestStorageDir::new();
+    std::fs::create_dir_all(&storage_dir.path).unwrap();
+    let now = Local.with_ymd_and_hms(2026, 8, 12, 12, 0, 0).unwrap();
+    let task = Task::new("変更前");
+    let task_id = task.get_id();
+    let mut repository =
+        TestTaskRepository::new(task, now).with_storage_directory(&storage_dir.path);
+    repository.save_failures_remaining.set(1);
+
+    let result = run_cli_repository_transaction(&mut repository, now, |repository| {
+        repository
+            .get_by_id(task_id)
+            .unwrap()
+            .set_estimated_work_seconds(45 * 60);
+    });
+
+    assert!(matches!(
+        result,
+        Err(CliRepositoryTransactionError::Save(_))
+    ));
+    assert_eq!(repository.save_attempt_count.get(), 1);
+    assert_eq!(
+        repository
+            .get_by_id(task_id)
+            .unwrap()
+            .get_estimated_work_seconds(),
+        45 * 60
+    );
+    assert!(StorageLock::acquire(&storage_dir.path, LockMode::Mcp).is_ok());
+}
+
+#[test]
+fn test_reload後にfocus中taskがdoneなら次候補を選び直す() {
+    let now = Local.with_ymd_and_hms(2026, 8, 12, 12, 0, 0).unwrap();
+    let root = Task::new("root");
+    let done = root.create_as_last_child(TaskAttr::new("完了済みfocus"));
+    done.set_orig_status(Status::Done);
+    let next = root.create_as_last_child(TaskAttr::new("次候補"));
+    let mut repository = TestTaskRepository::new(root, now);
+    repository.highest_priority_leaf_task_id_opt = Some(next.get_id());
+    let mut focused_task_id_opt = Some(done.get_id());
+
+    let changed = reconcile_focus_after_reload(
+        &mut repository,
+        &mut focused_task_id_opt,
+        FocusSelectionMode::HighestPriority,
+    );
+
+    assert!(changed);
+    assert_eq!(focused_task_id_opt, Some(next.get_id()));
 }
 
 fn make_messages_about_focus(
