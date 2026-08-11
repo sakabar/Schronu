@@ -149,6 +149,70 @@ fn mcp_stdio_壊れたjsonへparse_errorを返して次のrequestを処理する
 }
 
 #[test]
+fn mcp_stdio_不正initialize後も同一processで正常に初期化できる() {
+    let storage = TestStorageDirectory::new();
+    let mut child = spawn_mcp(storage.path());
+    let requests = [
+        json!({
+            "jsonrpc": "2.0",
+            "id": "invalid-initialize",
+            "method": "initialize",
+            "params": {
+                "protocolVersion": "2025-06-18",
+                "capabilities": {},
+                "clientInfo": {"name": "integration-test"}
+            }
+        }),
+        json!({"jsonrpc": "2.0", "method": "notifications/initialized"}),
+        json!({
+            "jsonrpc": "2.0",
+            "id": "valid-initialize",
+            "method": "initialize",
+            "params": {
+                "protocolVersion": "2025-06-18",
+                "capabilities": {},
+                "clientInfo": {"name": "integration-test", "version": "1.0"}
+            }
+        }),
+        json!({"jsonrpc": "2.0", "method": "notifications/initialized"}),
+        json!({
+            "jsonrpc": "2.0",
+            "id": "tools-after-valid-initialize",
+            "method": "tools/list"
+        }),
+    ];
+    {
+        let stdin = child.stdin.as_mut().unwrap();
+        for request in requests {
+            writeln!(stdin, "{request}").unwrap();
+        }
+    }
+    drop(child.stdin.take());
+
+    let output = wait_with_output(child);
+    assert_process_succeeded(&output);
+    let responses = String::from_utf8(output.stdout)
+        .unwrap()
+        .lines()
+        .map(|line| serde_json::from_str::<Value>(line).unwrap())
+        .collect::<Vec<_>>();
+    assert_eq!(responses.len(), 3);
+    assert_eq!(responses[0]["id"], "invalid-initialize");
+    assert_eq!(responses[0]["error"]["code"], -32602);
+    assert_eq!(responses[0]["error"]["message"], "Invalid params");
+    assert!(responses[0]["error"]["data"]["field"]
+        .as_str()
+        .is_some_and(|field| !field.is_empty()));
+    assert!(responses[0]["error"]["data"]["reason"]
+        .as_str()
+        .is_some_and(|reason| !reason.is_empty()));
+    assert_eq!(responses[1]["id"], "valid-initialize");
+    assert_eq!(responses[1]["result"]["protocolVersion"], "2025-06-18");
+    assert_eq!(responses[2]["id"], "tools-after-valid-initialize");
+    assert_eq!(responses[2]["result"]["tools"].as_array().unwrap().len(), 9);
+}
+
+#[test]
 fn mcp_stdio_process中はlockを保持し終了後に解放する() {
     let storage = TestStorageDirectory::new();
     let child = spawn_mcp(storage.path());

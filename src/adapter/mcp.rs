@@ -1409,6 +1409,720 @@ mod tests {
     }
 
     #[test]
+    fn json_rpc_requestの不正なenvelopeをinvalid_requestとしてidを可能な限り相関する() {
+        let cases = [
+            ("non-object", json!([]), json!(null)),
+            (
+                "missing-jsonrpc-without-id",
+                json!({"method": "initialize", "params": {}}),
+                json!(null),
+            ),
+            (
+                "initialize-without-id",
+                json!({
+                    "jsonrpc": "2.0",
+                    "method": "initialize",
+                    "params": {
+                        "protocolVersion": "2025-06-18",
+                        "capabilities": {},
+                        "clientInfo": {"name": "test-client", "version": "1.0"}
+                    }
+                }),
+                json!(null),
+            ),
+            (
+                "missing-jsonrpc",
+                json!({"id": "missing-jsonrpc", "method": "initialize", "params": {}}),
+                json!("missing-jsonrpc"),
+            ),
+            (
+                "wrong-jsonrpc",
+                json!({"jsonrpc": "1.0", "id": 1, "method": "initialize", "params": {}}),
+                json!(1),
+            ),
+            (
+                "non-string-jsonrpc",
+                json!({"jsonrpc": 2, "id": 2, "method": "initialize", "params": {}}),
+                json!(2),
+            ),
+            (
+                "missing-method",
+                json!({"jsonrpc": "2.0", "id": 3}),
+                json!(3),
+            ),
+            (
+                "non-string-method",
+                json!({"jsonrpc": "2.0", "id": 4, "method": false}),
+                json!(4),
+            ),
+            (
+                "null-id",
+                json!({"jsonrpc": "2.0", "id": null, "method": "initialize", "params": {}}),
+                json!(null),
+            ),
+            (
+                "boolean-id",
+                json!({"jsonrpc": "2.0", "id": true, "method": "initialize", "params": {}}),
+                json!(null),
+            ),
+            (
+                "object-id",
+                json!({"jsonrpc": "2.0", "id": {"invalid": true}, "method": "initialize", "params": {}}),
+                json!(null),
+            ),
+        ];
+
+        for (label, request, expected_id) in cases {
+            let repository = RecordingRepository::new(vec![]);
+            let sync_clock_times = Rc::clone(&repository.sync_clock_times);
+            let mutation_count = Rc::clone(&repository.mutation_count);
+            let save_count = Rc::clone(&repository.save_count);
+            let mut server = McpServer::new(repository);
+
+            let response = server
+                .handle_request(request)
+                .unwrap_or_else(|| panic!("case {label} must receive an Invalid Request response"));
+
+            assert_eq!(response["jsonrpc"], "2.0", "case: {label}");
+            assert_eq!(response["id"], expected_id, "case: {label}");
+            assert_eq!(response["error"]["code"], -32600, "case: {label}");
+            assert_eq!(
+                response["error"]["message"], "Invalid Request",
+                "case: {label}"
+            );
+            assert!(sync_clock_times.borrow().is_empty(), "case: {label}");
+            assert_eq!(mutation_count.get(), 0, "case: {label}");
+            assert_eq!(save_count.get(), 0, "case: {label}");
+
+            let valid_initialize = server
+                .handle_request(json!({
+                    "jsonrpc": "2.0",
+                    "id": format!("valid-after-{label}"),
+                    "method": "initialize",
+                    "params": {
+                        "protocolVersion": "2025-06-18",
+                        "capabilities": {},
+                        "clientInfo": {"name": "test-client", "version": "1.0"}
+                    }
+                }))
+                .unwrap();
+            assert_eq!(
+                valid_initialize["result"]["protocolVersion"], "2025-06-18",
+                "case: {label}"
+            );
+            assert!(sync_clock_times.borrow().is_empty(), "case: {label}");
+            assert_eq!(mutation_count.get(), 0, "case: {label}");
+            assert_eq!(save_count.get(), 0, "case: {label}");
+        }
+    }
+
+    #[test]
+    fn initializeの不正paramsをinvalid_paramsとして拒否しlifecycleを進めない() {
+        let cases = [
+            ("missing-params", None, "params", "required"),
+            ("null-params", Some(json!(null)), "params", "object"),
+            ("array-params", Some(json!([])), "params", "object"),
+            (
+                "missing-protocol-version",
+                Some(json!({
+                    "capabilities": {},
+                    "clientInfo": {"name": "test-client", "version": "1.0"}
+                })),
+                "params.protocolVersion",
+                "required",
+            ),
+            (
+                "wrong-protocol-version-type",
+                Some(json!({
+                    "protocolVersion": 1,
+                    "capabilities": {},
+                    "clientInfo": {"name": "test-client", "version": "1.0"}
+                })),
+                "params.protocolVersion",
+                "string",
+            ),
+            (
+                "missing-capabilities",
+                Some(json!({
+                    "protocolVersion": "2025-06-18",
+                    "clientInfo": {"name": "test-client", "version": "1.0"}
+                })),
+                "params.capabilities",
+                "required",
+            ),
+            (
+                "wrong-capabilities-type",
+                Some(json!({
+                    "protocolVersion": "2025-06-18",
+                    "capabilities": [],
+                    "clientInfo": {"name": "test-client", "version": "1.0"}
+                })),
+                "params.capabilities",
+                "object",
+            ),
+            (
+                "missing-client-info",
+                Some(json!({"protocolVersion": "2025-06-18", "capabilities": {}})),
+                "params.clientInfo",
+                "required",
+            ),
+            (
+                "wrong-client-info-type",
+                Some(json!({
+                    "protocolVersion": "2025-06-18",
+                    "capabilities": {},
+                    "clientInfo": []
+                })),
+                "params.clientInfo",
+                "object",
+            ),
+            (
+                "missing-client-name",
+                Some(json!({
+                    "protocolVersion": "2025-06-18",
+                    "capabilities": {},
+                    "clientInfo": {"version": "1.0"}
+                })),
+                "params.clientInfo.name",
+                "required",
+            ),
+            (
+                "wrong-client-name-type",
+                Some(json!({
+                    "protocolVersion": "2025-06-18",
+                    "capabilities": {},
+                    "clientInfo": {"name": false, "version": "1.0"}
+                })),
+                "params.clientInfo.name",
+                "string",
+            ),
+            (
+                "missing-client-version",
+                Some(json!({
+                    "protocolVersion": "2025-06-18",
+                    "capabilities": {},
+                    "clientInfo": {"name": "test-client"}
+                })),
+                "params.clientInfo.version",
+                "required",
+            ),
+            (
+                "wrong-client-version-type",
+                Some(json!({
+                    "protocolVersion": "2025-06-18",
+                    "capabilities": {},
+                    "clientInfo": {"name": "test-client", "version": 1}
+                })),
+                "params.clientInfo.version",
+                "string",
+            ),
+            (
+                "wrong-client-title-type",
+                Some(json!({
+                    "protocolVersion": "2025-06-18",
+                    "capabilities": {},
+                    "clientInfo": {"name": "test-client", "version": "1.0", "title": 1}
+                })),
+                "params.clientInfo.title",
+                "string",
+            ),
+        ];
+
+        for (label, params, expected_field, expected_reason_token) in cases {
+            let repository = RecordingRepository::new(vec![]);
+            let sync_clock_times = Rc::clone(&repository.sync_clock_times);
+            let mutation_count = Rc::clone(&repository.mutation_count);
+            let save_count = Rc::clone(&repository.save_count);
+            let mut server = McpServer::new(repository);
+            let mut request = json!({
+                "jsonrpc": "2.0",
+                "id": label,
+                "method": "initialize"
+            });
+            if let Some(params) = params {
+                request["params"] = params;
+            }
+
+            let response = server.handle_request(request).unwrap();
+
+            assert_eq!(response["jsonrpc"], "2.0", "case: {label}");
+            assert_eq!(response["id"], label, "case: {label}");
+            assert_eq!(response["error"]["code"], -32602, "case: {label}");
+            assert_eq!(
+                response["error"]["message"], "Invalid params",
+                "case: {label}"
+            );
+            assert_eq!(
+                response["error"]["data"]["field"], expected_field,
+                "case: {label}"
+            );
+            let reason = response["error"]["data"]["reason"]
+                .as_str()
+                .unwrap_or_else(|| panic!("case {label} must include a reason"));
+            assert!(
+                reason.to_ascii_lowercase().contains(expected_reason_token),
+                "case: {label}, reason: {reason}"
+            );
+            assert!(sync_clock_times.borrow().is_empty(), "case: {label}");
+            assert_eq!(mutation_count.get(), 0, "case: {label}");
+            assert_eq!(save_count.get(), 0, "case: {label}");
+
+            assert_eq!(
+                server.handle_request(json!({
+                    "jsonrpc": "2.0",
+                    "method": "notifications/initialized"
+                })),
+                None,
+                "case: {label}"
+            );
+            let before_valid_initialize = server
+                .handle_request(json!({
+                    "jsonrpc": "2.0",
+                    "id": format!("valid-after-{label}"),
+                    "method": "initialize",
+                    "params": {
+                        "protocolVersion": "2025-06-18",
+                        "capabilities": {},
+                        "clientInfo": {"name": "test-client", "version": "1.0"}
+                    }
+                }))
+                .unwrap();
+            assert_eq!(
+                before_valid_initialize["result"]["protocolVersion"], "2025-06-18",
+                "case: {label}"
+            );
+            assert!(sync_clock_times.borrow().is_empty(), "case: {label}");
+            assert_eq!(mutation_count.get(), 0, "case: {label}");
+            assert_eq!(save_count.get(), 0, "case: {label}");
+        }
+    }
+
+    #[test]
+    fn initializeの既知client_capabilityをschemaどおり検証する() {
+        let cases = [
+            (
+                "wrong-roots-type",
+                json!({"roots": []}),
+                "params.capabilities.roots",
+                "object",
+            ),
+            (
+                "wrong-roots-list-changed-type",
+                json!({"roots": {"listChanged": "yes"}}),
+                "params.capabilities.roots.listChanged",
+                "boolean",
+            ),
+            (
+                "wrong-sampling-type",
+                json!({"sampling": false}),
+                "params.capabilities.sampling",
+                "object",
+            ),
+            (
+                "wrong-elicitation-type",
+                json!({"elicitation": []}),
+                "params.capabilities.elicitation",
+                "object",
+            ),
+            (
+                "wrong-experimental-type",
+                json!({"experimental": []}),
+                "params.capabilities.experimental",
+                "object",
+            ),
+            (
+                "wrong-experimental-capability-type",
+                json!({"experimental": {"feature": true}}),
+                "params.capabilities.experimental.feature",
+                "object",
+            ),
+        ];
+
+        for (label, capabilities, expected_field, expected_reason_token) in cases {
+            let repository = RecordingRepository::new(vec![]);
+            let sync_clock_times = Rc::clone(&repository.sync_clock_times);
+            let mutation_count = Rc::clone(&repository.mutation_count);
+            let save_count = Rc::clone(&repository.save_count);
+            let mut server = McpServer::new(repository);
+
+            let response = server
+                .handle_request(json!({
+                    "jsonrpc": "2.0",
+                    "id": label,
+                    "method": "initialize",
+                    "params": {
+                        "protocolVersion": "2025-06-18",
+                        "capabilities": capabilities,
+                        "clientInfo": {"name": "test-client", "version": "1.0"}
+                    }
+                }))
+                .unwrap();
+
+            assert_eq!(response["jsonrpc"], "2.0", "case: {label}");
+            assert_eq!(response["id"], label, "case: {label}");
+            assert_eq!(response["error"]["code"], -32602, "case: {label}");
+            assert_eq!(
+                response["error"]["message"], "Invalid params",
+                "case: {label}"
+            );
+            assert_eq!(
+                response["error"]["data"]["field"], expected_field,
+                "case: {label}"
+            );
+            let reason = response["error"]["data"]["reason"]
+                .as_str()
+                .unwrap_or_else(|| panic!("case {label} must include a reason"));
+            assert!(
+                reason.to_ascii_lowercase().contains(expected_reason_token),
+                "case: {label}, reason: {reason}"
+            );
+            assert!(sync_clock_times.borrow().is_empty(), "case: {label}");
+            assert_eq!(mutation_count.get(), 0, "case: {label}");
+            assert_eq!(save_count.get(), 0, "case: {label}");
+
+            let valid_initialize = server
+                .handle_request(json!({
+                    "jsonrpc": "2.0",
+                    "id": format!("valid-after-{label}"),
+                    "method": "initialize",
+                    "params": {
+                        "protocolVersion": "2025-06-18",
+                        "capabilities": {},
+                        "clientInfo": {"name": "test-client", "version": "1.0"}
+                    }
+                }))
+                .unwrap();
+            assert_eq!(
+                valid_initialize["result"]["protocolVersion"], "2025-06-18",
+                "case: {label}"
+            );
+            assert!(sync_clock_times.borrow().is_empty(), "case: {label}");
+            assert_eq!(mutation_count.get(), 0, "case: {label}");
+            assert_eq!(save_count.get(), 0, "case: {label}");
+        }
+    }
+
+    #[test]
+    fn initializeのmetaをobjectに限定する() {
+        let repository = RecordingRepository::new(vec![]);
+        let sync_clock_times = Rc::clone(&repository.sync_clock_times);
+        let mutation_count = Rc::clone(&repository.mutation_count);
+        let save_count = Rc::clone(&repository.save_count);
+        let mut server = McpServer::new(repository);
+
+        let invalid_initialize = server
+            .handle_request(json!({
+                "jsonrpc": "2.0",
+                "id": "invalid-initialize-meta",
+                "method": "initialize",
+                "params": {
+                    "protocolVersion": "2025-06-18",
+                    "capabilities": {},
+                    "clientInfo": {"name": "test-client", "version": "1.0"},
+                    "_meta": false
+                }
+            }))
+            .unwrap();
+        assert_eq!(invalid_initialize["id"], "invalid-initialize-meta");
+        assert_eq!(invalid_initialize["error"]["code"], -32602);
+        assert_eq!(invalid_initialize["error"]["message"], "Invalid params");
+        assert_eq!(invalid_initialize["error"]["data"]["field"], "params._meta");
+        assert!(invalid_initialize["error"]["data"]["reason"]
+            .as_str()
+            .is_some_and(|reason| reason.to_ascii_lowercase().contains("object")));
+        assert!(sync_clock_times.borrow().is_empty());
+        assert_eq!(mutation_count.get(), 0);
+        assert_eq!(save_count.get(), 0);
+
+        let valid_initialize = server
+            .handle_request(json!({
+                "jsonrpc": "2.0",
+                "id": "valid-initialize-meta",
+                "method": "initialize",
+                "params": {
+                    "protocolVersion": "2025-06-18",
+                    "capabilities": {},
+                    "clientInfo": {"name": "test-client", "version": "1.0"},
+                    "_meta": {"trace": "test"},
+                    "vendorExtension": true
+                }
+            }))
+            .unwrap();
+        assert_eq!(valid_initialize["result"]["protocolVersion"], "2025-06-18");
+        assert!(sync_clock_times.borrow().is_empty());
+        assert_eq!(mutation_count.get(), 0);
+        assert_eq!(save_count.get(), 0);
+    }
+
+    #[test]
+    fn initializeのprogress_tokenをstringまたはnumberに限定する() {
+        let invalid_cases = [
+            ("boolean", json!(false)),
+            ("null", json!(null)),
+            ("object", json!({})),
+            ("array", json!([])),
+        ];
+
+        for (label, progress_token) in invalid_cases {
+            let repository = RecordingRepository::new(vec![]);
+            let sync_clock_times = Rc::clone(&repository.sync_clock_times);
+            let mutation_count = Rc::clone(&repository.mutation_count);
+            let save_count = Rc::clone(&repository.save_count);
+            let mut server = McpServer::new(repository);
+
+            let response = server
+                .handle_request(json!({
+                    "jsonrpc": "2.0",
+                    "id": format!("invalid-progress-token-{label}"),
+                    "method": "initialize",
+                    "params": {
+                        "protocolVersion": "2025-06-18",
+                        "capabilities": {},
+                        "clientInfo": {"name": "test-client", "version": "1.0"},
+                        "_meta": {"progressToken": progress_token}
+                    }
+                }))
+                .unwrap();
+
+            assert_eq!(
+                response["id"],
+                format!("invalid-progress-token-{label}"),
+                "case: {label}"
+            );
+            assert_eq!(response["error"]["code"], -32602, "case: {label}");
+            assert_eq!(
+                response["error"]["message"], "Invalid params",
+                "case: {label}"
+            );
+            assert_eq!(
+                response["error"]["data"]["field"], "params._meta.progressToken",
+                "case: {label}"
+            );
+            let reason = response["error"]["data"]["reason"]
+                .as_str()
+                .unwrap_or_else(|| panic!("case {label} must include a reason"))
+                .to_ascii_lowercase();
+            assert!(reason.contains("string"), "case: {label}, reason: {reason}");
+            assert!(reason.contains("number"), "case: {label}, reason: {reason}");
+            assert!(sync_clock_times.borrow().is_empty(), "case: {label}");
+            assert_eq!(mutation_count.get(), 0, "case: {label}");
+            assert_eq!(save_count.get(), 0, "case: {label}");
+
+            let recovered = server
+                .handle_request(json!({
+                    "jsonrpc": "2.0",
+                    "id": format!("valid-after-progress-token-{label}"),
+                    "method": "initialize",
+                    "params": {
+                        "protocolVersion": "2025-06-18",
+                        "capabilities": {},
+                        "clientInfo": {"name": "test-client", "version": "1.0"},
+                        "_meta": {"progressToken": "recovered", "vendorExtension": true}
+                    }
+                }))
+                .unwrap();
+            assert_eq!(
+                recovered["result"]["protocolVersion"], "2025-06-18",
+                "case: {label}"
+            );
+            assert!(sync_clock_times.borrow().is_empty(), "case: {label}");
+            assert_eq!(mutation_count.get(), 0, "case: {label}");
+            assert_eq!(save_count.get(), 0, "case: {label}");
+        }
+
+        for (label, progress_token) in [("string", json!("token")), ("number", json!(1.5))] {
+            let mut server = McpServer::new(TaskRepository::new(""));
+            let response = server
+                .handle_request(json!({
+                    "jsonrpc": "2.0",
+                    "id": format!("valid-progress-token-{label}"),
+                    "method": "initialize",
+                    "params": {
+                        "protocolVersion": "2025-06-18",
+                        "capabilities": {},
+                        "clientInfo": {"name": "test-client", "version": "1.0"},
+                        "_meta": {
+                            "progressToken": progress_token,
+                            "vendorExtension": {"enabled": true}
+                        }
+                    }
+                }))
+                .unwrap();
+            assert_eq!(
+                response["result"]["protocolVersion"], "2025-06-18",
+                "case: {label}"
+            );
+        }
+    }
+
+    #[test]
+    fn initialized通知のmetaをobjectに限定する() {
+        let repository = RecordingRepository::new(vec![]);
+        let sync_clock_times = Rc::clone(&repository.sync_clock_times);
+        let mutation_count = Rc::clone(&repository.mutation_count);
+        let save_count = Rc::clone(&repository.save_count);
+        let mut server = McpServer::new(repository);
+        server.handle_request(initialize_request()).unwrap();
+
+        assert_eq!(
+            server.handle_request(json!({
+                "jsonrpc": "2.0",
+                "method": "notifications/initialized",
+                "params": {"_meta": false}
+            })),
+            None
+        );
+        let before_valid_notification = server
+            .handle_request(json!({
+                "jsonrpc": "2.0",
+                "id": "before-valid-meta-notification",
+                "method": "tools/list"
+            }))
+            .unwrap();
+        assert_eq!(before_valid_notification["error"]["code"], -32002);
+
+        assert_eq!(
+            server.handle_request(json!({
+                "jsonrpc": "2.0",
+                "method": "notifications/initialized",
+                "params": {
+                    "_meta": {"trace": "test"},
+                    "vendorExtension": true
+                }
+            })),
+            None
+        );
+        let after_valid_notification = server
+            .handle_request(json!({
+                "jsonrpc": "2.0",
+                "id": "after-valid-meta-notification",
+                "method": "tools/list"
+            }))
+            .unwrap();
+        assert!(after_valid_notification["result"]["tools"].is_array());
+        assert!(sync_clock_times.borrow().is_empty());
+        assert_eq!(mutation_count.get(), 0);
+        assert_eq!(save_count.get(), 0);
+    }
+
+    #[test]
+    fn initialized通知ではmetaのprogress_tokenを汎用値として許容する() {
+        let mut server = McpServer::new(TaskRepository::new(""));
+        server.handle_request(initialize_request()).unwrap();
+
+        assert_eq!(
+            server.handle_request(json!({
+                "jsonrpc": "2.0",
+                "method": "notifications/initialized",
+                "params": {
+                    "_meta": {
+                        "progressToken": false,
+                        "vendorExtension": [1, 2, 3]
+                    },
+                    "vendorExtension": true
+                }
+            })),
+            None
+        );
+        let tools = server
+            .handle_request(json!({
+                "jsonrpc": "2.0",
+                "id": "tools-after-generic-notification-meta",
+                "method": "tools/list"
+            }))
+            .unwrap();
+        assert!(tools["result"]["tools"].is_array());
+    }
+
+    #[test]
+    fn 不正なinitialized通知ではlifecycleを進めない() {
+        let mut server = McpServer::new(TaskRepository::new(""));
+        server.handle_request(initialize_request()).unwrap();
+
+        let malformed_notification = server
+            .handle_request(json!({"method": "notifications/initialized"}))
+            .expect("malformed notification must receive Invalid Request");
+        assert_eq!(malformed_notification["jsonrpc"], "2.0");
+        assert_eq!(malformed_notification["id"], serde_json::Value::Null);
+        assert_eq!(malformed_notification["error"]["code"], -32600);
+        assert_eq!(
+            malformed_notification["error"]["message"],
+            "Invalid Request"
+        );
+
+        assert_eq!(
+            server.handle_request(json!({
+                "jsonrpc": "2.0",
+                "method": "notifications/initialized",
+                "params": []
+            })),
+            None
+        );
+        let before_valid_notification = server
+            .handle_request(json!({
+                "jsonrpc": "2.0",
+                "id": "before-valid-notification",
+                "method": "tools/list"
+            }))
+            .unwrap();
+        assert_eq!(before_valid_notification["error"]["code"], -32002);
+
+        assert_eq!(
+            server.handle_request(json!({
+                "jsonrpc": "2.0",
+                "method": "notifications/initialized",
+                "params": {
+                    "_meta": {"trace": "test"},
+                    "vendorExtension": true
+                }
+            })),
+            None
+        );
+        let after_valid_notification = server
+            .handle_request(json!({
+                "jsonrpc": "2.0",
+                "id": "after-valid-notification",
+                "method": "tools/list"
+            }))
+            .unwrap();
+        assert!(after_valid_notification["result"]["tools"].is_array());
+    }
+
+    #[test]
+    fn initializeはclient情報とcapabilitiesの拡張fieldを許容する() {
+        let mut server = McpServer::new(TaskRepository::new(""));
+
+        let response = server
+            .handle_request(json!({
+                "jsonrpc": "2.0",
+                "id": "initialize-with-extensions",
+                "method": "initialize",
+                "params": {
+                    "protocolVersion": "2025-06-18",
+                    "capabilities": {
+                        "roots": {"listChanged": true, "vendorOption": true},
+                        "sampling": {"vendorOption": true},
+                        "elicitation": {"vendorOption": true},
+                        "experimental": {"feature": {"enabled": true}},
+                        "vendorCapability": true
+                    },
+                    "clientInfo": {
+                        "name": "test-client",
+                        "title": "Test Client",
+                        "version": "1.0",
+                        "vendorExtension": true
+                    },
+                    "_meta": {"trace": "test"},
+                    "vendorExtension": true
+                }
+            }))
+            .unwrap();
+
+        assert_eq!(response["id"], "initialize-with-extensions");
+        assert_eq!(response["result"]["protocolVersion"], "2025-06-18");
+    }
+
+    #[test]
     fn notification_未知methodには応答しない() {
         let mut server = McpServer::new(TaskRepository::new(""));
         let notification = json!({
