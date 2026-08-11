@@ -7,6 +7,8 @@ on:
 jobs:
   test-and-fmt:
     runs-on: ubuntu-latest
+    env:
+      TZ: Asia/Tokyo
 
     steps:
       - name: Checkout

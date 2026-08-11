@@ -255,6 +255,13 @@ impl TaskRepository {
             self.cache_task_and_descendants(&child_task);
         }
     }
+
+    fn sync_task_and_descendants(task: &Task, now: DateTime<Local>) {
+        task.sync_clock(now);
+        for child_task in task.get_children() {
+            Self::sync_task_and_descendants(&child_task, now);
+        }
+    }
 }
 
 impl TaskRepositoryTrait for TaskRepository {
@@ -443,9 +450,9 @@ impl TaskRepositoryTrait for TaskRepository {
 
     fn sync_clock(&mut self, now: DateTime<Local>) {
         self.last_synced_time = now;
-
-        // TODO
-        // これ、本来はprojectsの中に伝搬させていくべきだ。
+        for project in &self.projects {
+            Self::sync_task_and_descendants(&project.root_task, now);
+        }
     }
 
     fn get_last_synced_time(&self) -> DateTime<Local> {
@@ -703,6 +710,34 @@ mod tests {
             task_repository.get_by_id(root_task_id).unwrap().get_name(),
             "メモリ登録対象"
         );
+    }
+
+    #[test]
+    fn sync_clockは全projectのrootと全descendantへ同じ時刻を伝搬する() {
+        let storage_dir = TestStorageDir::new();
+        let now = Local.with_ymd_and_hms(2026, 8, 11, 12, 0, 0).unwrap();
+        let pending_until = now - Duration::hours(1);
+        let root_task = pending_task_with_until("root", pending_until);
+        let child_task = root_task.create_as_last_child(TaskAttr::new("child"));
+        child_task.set_start_time(DateTime::<Local>::MIN_UTC.into());
+        child_task.set_orig_status(Status::Pending);
+        child_task.set_pending_until(pending_until);
+        let grandchild_task = child_task.create_as_last_child(TaskAttr::new("grandchild"));
+        grandchild_task.set_start_time(DateTime::<Local>::MIN_UTC.into());
+        grandchild_task.set_orig_status(Status::Pending);
+        grandchild_task.set_pending_until(pending_until);
+        let second_root_task = pending_task_with_until("second root", pending_until);
+        let mut task_repository = TaskRepository::new(storage_dir.path_str());
+        add_project(&mut task_repository, root_task.clone());
+        add_project(&mut task_repository, second_root_task.clone());
+
+        task_repository.sync_clock(now);
+
+        for task in [root_task, child_task, grandchild_task, second_root_task] {
+            assert_eq!(task.get_last_synced_time(), now);
+            assert_eq!(task.get_status(), Status::Todo);
+        }
+        assert_eq!(task_repository.get_last_synced_time(), now);
     }
 
     #[test]
