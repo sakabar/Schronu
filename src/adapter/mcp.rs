@@ -259,7 +259,81 @@ fn category_schema() -> Value {
 mod tests {
     use super::McpServer;
     use crate::adapter::gateway::task_repository::TaskRepository;
+    use crate::application::interface::{TaskRepositoryError, TaskRepositoryTrait};
+    use crate::entity::task::{ProjectCategory, RepetitionAnchor, Status, Task, TaskAttr};
+    use chrono::{DateTime, Local, TimeZone};
     use serde_json::json;
+    use std::cell::Cell;
+    use std::rc::Rc;
+    use uuid::Uuid;
+
+    struct RecordingRepository {
+        projects: Vec<Task>,
+        now: DateTime<Local>,
+        save_count: Rc<Cell<usize>>,
+        mutation_count: Rc<Cell<usize>>,
+    }
+
+    impl RecordingRepository {
+        fn new(projects: Vec<Task>) -> Self {
+            Self {
+                projects,
+                now: fixed_now(),
+                save_count: Rc::new(Cell::new(0)),
+                mutation_count: Rc::new(Cell::new(0)),
+            }
+        }
+    }
+
+    impl TaskRepositoryTrait for RecordingRepository {
+        fn get_project_storage_dir_name(&self) -> &str {
+            "unused"
+        }
+
+        fn get_all_projects(&self) -> Vec<&Task> {
+            self.projects.iter().collect()
+        }
+
+        fn load(&mut self) -> Result<(), TaskRepositoryError> {
+            self.mutation_count.set(self.mutation_count.get() + 1);
+            Ok(())
+        }
+
+        fn save(&self) -> Result<(), TaskRepositoryError> {
+            self.save_count.set(self.save_count.get() + 1);
+            Ok(())
+        }
+
+        fn sync_clock(&mut self, now: DateTime<Local>) {
+            self.mutation_count.set(self.mutation_count.get() + 1);
+            self.now = now;
+        }
+
+        fn get_last_synced_time(&self) -> DateTime<Local> {
+            self.now
+        }
+
+        fn get_highest_priority_project(&mut self) -> Option<&Task> {
+            self.projects.first()
+        }
+
+        fn get_highest_priority_leaf_task_id(&mut self) -> Option<Uuid> {
+            None
+        }
+
+        fn get_defer_candidate_leaf_task_id(&mut self, _recent_days: i64) -> Option<Uuid> {
+            None
+        }
+
+        fn get_by_id(&self, id: Uuid) -> Option<Task> {
+            self.projects.iter().find_map(|task| task.get_by_id(id))
+        }
+
+        fn start_new_project(&mut self, root_task: Task) {
+            self.mutation_count.set(self.mutation_count.get() + 1);
+            self.projects.push(root_task);
+        }
+    }
 
     #[test]
     fn initialize_server情報とtool能力を返す() {
@@ -572,6 +646,230 @@ mod tests {
         assert!(tools_list["result"]["tools"].is_array());
     }
 
+    #[test]
+    fn get_task_task_viewをstructured_contentで返してsaveしない() {
+        let pending_until = Local.with_ymd_and_hms(2026, 8, 12, 6, 0, 0).unwrap();
+        let create_time = Local.with_ymd_and_hms(2026, 8, 1, 9, 0, 0).unwrap();
+        let start_time = Local.with_ymd_and_hms(2026, 8, 10, 10, 0, 0).unwrap();
+        let deadline_time = Local.with_ymd_and_hms(2026, 8, 20, 23, 59, 59).unwrap();
+        let root = Task::new("MCP task");
+        root.set_orig_status(Status::Pending);
+        root.set_pending_until(pending_until);
+        root.set_priority(7);
+        root.set_create_time(create_time);
+        root.set_start_time(start_time);
+        root.set_deadline_time_opt(Some(deadline_time));
+        root.set_estimated_work_seconds(1_800);
+        root.set_actual_work_seconds(900);
+        root.set_atomic(true);
+        root.set_is_on_other_side(true);
+        root.set_repetition_interval_days_opt(Some(7));
+        root.set_repetition_anchor(RepetitionAnchor::Completion);
+        root.set_days_in_advance(2);
+        root.set_project_category_opt(Some(ProjectCategory::Recovery));
+        root.sync_clock(fixed_now());
+        let child = root.create_as_last_child(TaskAttr::new("child"));
+        let task_id = root.get_id();
+        let child_id = child.get_id();
+        let repository = RecordingRepository::new(vec![root]);
+        let save_count = Rc::clone(&repository.save_count);
+        let mutation_count = Rc::clone(&repository.mutation_count);
+        let mut server = initialized_server(repository);
+
+        let response = server
+            .handle_request(tool_call_request(
+                "get-task",
+                "get_task",
+                json!({"task_id": task_id.to_string()}),
+            ))
+            .unwrap();
+
+        assert_eq!(response["jsonrpc"], "2.0");
+        assert_eq!(response["id"], "get-task");
+        assert_eq!(response["result"]["isError"], false);
+        assert_tool_result_content_matches_structured(&response);
+        let task = &response["result"]["structuredContent"]["task"];
+        assert_eq!(
+            sorted_object_keys(task),
+            vec![
+                "actual_work_seconds",
+                "atomic",
+                "child_ids",
+                "create_time",
+                "days_in_advance",
+                "deadline_time",
+                "end_time",
+                "estimated_work_seconds",
+                "id",
+                "is_on_other_side",
+                "name",
+                "original_status",
+                "parent_id",
+                "pending_until",
+                "priority",
+                "project_category",
+                "repetition_anchor",
+                "repetition_interval_days",
+                "root_id",
+                "start_time",
+                "status"
+            ]
+        );
+        assert_eq!(task["id"], task_id.to_string());
+        assert_eq!(task["root_id"], task_id.to_string());
+        assert_eq!(task["parent_id"], serde_json::Value::Null);
+        assert_eq!(task["child_ids"], json!([child_id.to_string()]));
+        assert_eq!(task["name"], "MCP task");
+        assert_eq!(task["status"], "pending");
+        assert_eq!(task["original_status"], "pending");
+        assert_eq!(task["is_on_other_side"], true);
+        assert_eq!(task["atomic"], true);
+        assert_eq!(task["pending_until"], pending_until.to_rfc3339());
+        assert_eq!(task["priority"], 7);
+        assert_eq!(task["create_time"], create_time.to_rfc3339());
+        assert_eq!(task["start_time"], start_time.to_rfc3339());
+        assert_eq!(task["end_time"], serde_json::Value::Null);
+        assert_eq!(task["deadline_time"], deadline_time.to_rfc3339());
+        assert_eq!(task["estimated_work_seconds"], 1_800);
+        assert_eq!(task["actual_work_seconds"], 900);
+        assert_eq!(task["repetition_interval_days"], 7);
+        assert_eq!(task["repetition_anchor"], "completion");
+        assert_eq!(task["days_in_advance"], 2);
+        assert_eq!(task["project_category"], "recovery");
+
+        let child_response = server
+            .handle_request(tool_call_request(
+                "get-child-task",
+                "get_task",
+                json!({"task_id": child_id.to_string()}),
+            ))
+            .unwrap();
+        assert_eq!(child_response["jsonrpc"], "2.0");
+        assert_eq!(child_response["id"], "get-child-task");
+        assert_tool_result_content_matches_structured(&child_response);
+        let child_task = &child_response["result"]["structuredContent"]["task"];
+        assert_eq!(child_task["id"], child_id.to_string());
+        assert_eq!(child_task["root_id"], task_id.to_string());
+        assert_eq!(child_task["parent_id"], task_id.to_string());
+        assert_eq!(child_task["child_ids"], json!([]));
+        assert_eq!(child_task["pending_until"], serde_json::Value::Null);
+        assert_eq!(child_task["end_time"], serde_json::Value::Null);
+        assert_eq!(child_task["deadline_time"], serde_json::Value::Null);
+        assert_eq!(
+            child_task["repetition_interval_days"],
+            serde_json::Value::Null
+        );
+        assert_eq!(child_task["project_category"], "recovery");
+        assert_eq!(save_count.get(), 0);
+        assert_eq!(mutation_count.get(), 0);
+    }
+
+    #[test]
+    fn get_task_不正uuidをstructured_errorで返す() {
+        let repository = RecordingRepository::new(vec![]);
+        let save_count = Rc::clone(&repository.save_count);
+        let mutation_count = Rc::clone(&repository.mutation_count);
+        let mut server = initialized_server(repository);
+
+        let response = server
+            .handle_request(tool_call_request(
+                "invalid-task-id",
+                "get_task",
+                json!({"task_id": "not-a-uuid"}),
+            ))
+            .unwrap();
+
+        assert_eq!(response["jsonrpc"], "2.0");
+        assert_eq!(response["id"], "invalid-task-id");
+        assert_eq!(response["result"]["isError"], true);
+        assert_tool_result_content_matches_structured(&response);
+        assert_eq!(
+            response["result"]["structuredContent"]["error"]["code"],
+            "invalid_input"
+        );
+        assert_eq!(
+            response["result"]["structuredContent"]["error"]["field"],
+            "task_id"
+        );
+        assert!(!response["result"]["structuredContent"]["error"]["message"]
+            .as_str()
+            .unwrap()
+            .is_empty());
+        assert_eq!(save_count.get(), 0);
+        assert_eq!(mutation_count.get(), 0);
+    }
+
+    #[test]
+    fn get_task_schema違反をinvalid_paramsで返す() {
+        let task_id = Uuid::new_v4().to_string();
+        let cases = [
+            (
+                "extra-field",
+                json!({"task_id": task_id, "extra": 1}),
+                "arguments.extra",
+            ),
+            ("missing-task-id", json!({}), "task_id"),
+            ("wrong-task-id-type", json!({"task_id": 1}), "task_id"),
+            ("non-object-arguments", serde_json::Value::Null, "arguments"),
+        ];
+
+        for (id, arguments, expected_field) in cases {
+            let repository = RecordingRepository::new(vec![]);
+            let save_count = Rc::clone(&repository.save_count);
+            let mutation_count = Rc::clone(&repository.mutation_count);
+            let mut server = initialized_server(repository);
+
+            let response = server
+                .handle_request(tool_call_request(id, "get_task", arguments))
+                .unwrap();
+
+            assert_eq!(response["jsonrpc"], "2.0");
+            assert_eq!(response["id"], id);
+            assert_eq!(response["error"]["code"], -32602);
+            assert_eq!(response["error"]["message"], "Invalid params");
+            assert_eq!(response["error"]["data"]["code"], "invalid_input");
+            assert_eq!(response["error"]["data"]["field"], expected_field);
+            assert!(!response["error"]["data"]["reason"]
+                .as_str()
+                .unwrap()
+                .is_empty());
+            assert_eq!(save_count.get(), 0);
+            assert_eq!(mutation_count.get(), 0);
+        }
+    }
+
+    #[test]
+    fn get_task_未知uuidをstructured_errorで返す() {
+        let task_id = Uuid::new_v4();
+        let repository = RecordingRepository::new(vec![]);
+        let save_count = Rc::clone(&repository.save_count);
+        let mutation_count = Rc::clone(&repository.mutation_count);
+        let mut server = initialized_server(repository);
+
+        let response = server
+            .handle_request(tool_call_request(
+                "missing-task",
+                "get_task",
+                json!({"task_id": task_id.to_string()}),
+            ))
+            .unwrap();
+
+        assert_eq!(response["jsonrpc"], "2.0");
+        assert_eq!(response["id"], "missing-task");
+        assert_eq!(response["result"]["isError"], true);
+        assert_tool_result_content_matches_structured(&response);
+        assert_eq!(
+            response["result"]["structuredContent"]["error"]["code"],
+            "task_not_found"
+        );
+        assert_eq!(
+            response["result"]["structuredContent"]["error"]["task_id"],
+            task_id.to_string()
+        );
+        assert_eq!(save_count.get(), 0);
+        assert_eq!(mutation_count.get(), 0);
+    }
+
     fn initialize_request() -> serde_json::Value {
         json!({
             "jsonrpc": "2.0",
@@ -583,6 +881,50 @@ mod tests {
                 "clientInfo": {"name": "test-client", "version": "1.0"}
             }
         })
+    }
+
+    fn initialized_server<R: TaskRepositoryTrait>(repository: R) -> McpServer<R> {
+        let mut server = McpServer::new(repository);
+        server.handle_request(initialize_request()).unwrap();
+        server.handle_request(json!({
+            "jsonrpc": "2.0",
+            "method": "notifications/initialized"
+        }));
+        server
+    }
+
+    fn tool_call_request(id: &str, name: &str, arguments: serde_json::Value) -> serde_json::Value {
+        json!({
+            "jsonrpc": "2.0",
+            "id": id,
+            "method": "tools/call",
+            "params": {"name": name, "arguments": arguments}
+        })
+    }
+
+    fn fixed_now() -> DateTime<Local> {
+        Local.with_ymd_and_hms(2026, 8, 11, 12, 0, 0).unwrap()
+    }
+
+    fn sorted_object_keys(value: &serde_json::Value) -> Vec<&str> {
+        let mut keys = value
+            .as_object()
+            .unwrap()
+            .keys()
+            .map(String::as_str)
+            .collect::<Vec<_>>();
+        keys.sort_unstable();
+        keys
+    }
+
+    fn assert_tool_result_content_matches_structured(response: &serde_json::Value) {
+        assert_eq!(response["result"]["content"][0]["type"], "text");
+        let content = response["result"]["content"][0]["text"].as_str().unwrap();
+        assert!(!content.is_empty());
+        assert_eq!(
+            serde_json::from_str::<serde_json::Value>(content).unwrap(),
+            response["result"]["structuredContent"]
+        );
     }
 
     fn tool<'a>(tools: &'a [serde_json::Value], name: &str) -> &'a serde_json::Value {
