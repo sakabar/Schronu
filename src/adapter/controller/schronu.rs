@@ -5130,6 +5130,9 @@ impl SchronuWriter for TestWriter {
 struct TestTaskRepository {
     task: Task,
     last_synced_time: DateTime<Local>,
+    highest_priority_leaf_task_id_opt: Option<Uuid>,
+    defer_candidate_leaf_task_id_opt: Option<Uuid>,
+    last_defer_candidate_recent_days_opt: Option<i64>,
 }
 
 #[cfg(test)]
@@ -5170,9 +5173,13 @@ fn execute_command_for_test(
 #[cfg(test)]
 impl TestTaskRepository {
     fn new(task: Task, last_synced_time: DateTime<Local>) -> Self {
+        let task_id = task.get_id();
         Self {
             task,
             last_synced_time,
+            highest_priority_leaf_task_id_opt: Some(task_id),
+            defer_candidate_leaf_task_id_opt: Some(task_id),
+            last_defer_candidate_recent_days_opt: None,
         }
     }
 }
@@ -5204,11 +5211,12 @@ impl TaskRepositoryTrait for TestTaskRepository {
     }
 
     fn get_highest_priority_leaf_task_id(&mut self) -> Option<Uuid> {
-        Some(self.task.get_id())
+        self.highest_priority_leaf_task_id_opt
     }
 
-    fn get_defer_candidate_leaf_task_id(&mut self, _recent_days: i64) -> Option<Uuid> {
-        Some(self.task.get_id())
+    fn get_defer_candidate_leaf_task_id(&mut self, recent_days: i64) -> Option<Uuid> {
+        self.last_defer_candidate_recent_days_opt = Some(recent_days);
+        self.defer_candidate_leaf_task_id_opt
     }
 
     fn get_by_id(&self, id: Uuid) -> Option<Task> {
@@ -5328,6 +5336,39 @@ fn execute_arrange_command(command: &str) -> Task {
 }
 
 #[test]
+fn test_select_focus_task_id_高優先度modeでは最優先leafを返す() {
+    let now = Local.with_ymd_and_hms(2026, 8, 11, 12, 0, 0).unwrap();
+    let task = Task::new("タスク");
+    let expected_id = Uuid::new_v4();
+    let mut task_repository = TestTaskRepository::new(task, now);
+    task_repository.highest_priority_leaf_task_id_opt = Some(expected_id);
+
+    let actual = select_focus_task_id(&mut task_repository, FocusSelectionMode::HighestPriority);
+
+    assert_eq!(actual, Some(expected_id));
+}
+
+#[test]
+fn test_select_focus_task_id_低優先度modeでは指定日数の延期候補を返す() {
+    let now = Local.with_ymd_and_hms(2026, 8, 11, 12, 0, 0).unwrap();
+    let task = Task::new("タスク");
+    let expected_id = Uuid::new_v4();
+    let mut task_repository = TestTaskRepository::new(task, now);
+    task_repository.defer_candidate_leaf_task_id_opt = Some(expected_id);
+
+    let actual = select_focus_task_id(
+        &mut task_repository,
+        FocusSelectionMode::LowestPriority { recent_days: 3 },
+    );
+
+    assert_eq!(actual, Some(expected_id));
+    assert_eq!(
+        task_repository.last_defer_candidate_recent_days_opt,
+        Some(3)
+    );
+}
+
+#[test]
 fn test_execute_all_pendingタスクを予定時刻に含め_doneタスクを除外する() {
     let now = Local.with_ymd_and_hms(2026, 8, 11, 12, 0, 0).unwrap();
 
@@ -5433,6 +5474,23 @@ fn test_execute_new_新規projectを翌朝までpendingで作成する() {
 }
 
 #[test]
+fn test_execute_unplanned_延期と見積もりを省略して即時着手可能で作成する() {
+    let now = Local.with_ymd_and_hms(2026, 8, 11, 12, 0, 0).unwrap();
+    let original_task = Task::new("既存タスク");
+    let result = execute_command_for_test(
+        original_task.clone(),
+        now,
+        Some(original_task.get_id()),
+        "突 割り込みproject",
+    );
+
+    assert_eq!(result.task.get_name(), "割り込みproject");
+    assert_eq!(result.task.get_orig_status(), Status::Todo);
+    assert_eq!(result.task.get_estimated_work_seconds(), 15 * 60);
+    assert_eq!(result.focused_task_id_opt, Some(result.task.get_id()));
+}
+
+#[test]
 fn test_execute_breakdown_子を順に作り締切を継承して最初の子へfocusする() {
     let now = Local.with_ymd_and_hms(2026, 8, 11, 12, 0, 0).unwrap();
     let deadline = Local.with_ymd_and_hms(2026, 8, 20, 23, 59, 59).unwrap();
@@ -5476,6 +5534,23 @@ fn test_execute_breakdown_数値を含む引数では子を作らない() {
 }
 
 #[test]
+fn test_execute_breakdown_親に締切がなければ子も締切なしで作る() {
+    let now = Local.with_ymd_and_hms(2026, 8, 11, 12, 0, 0).unwrap();
+    let parent_task = Task::new("親タスク");
+
+    let result = execute_command_for_test(
+        parent_task.clone(),
+        now,
+        Some(parent_task.get_id()),
+        "下 子タスク",
+    );
+    let children = result.task.get_children();
+
+    assert_eq!(children.len(), 1);
+    assert_eq!(children[0].get_deadline_time_opt(), None);
+}
+
+#[test]
 fn test_execute_defer_指定時間までpendingにしてfocusを外す() {
     let now = Local.with_ymd_and_hms(2026, 8, 11, 12, 0, 0).unwrap();
     let task = Task::new("延期対象");
@@ -5484,6 +5559,21 @@ fn test_execute_defer_指定時間までpendingにしてfocusを外す() {
 
     assert_eq!(result.task.get_orig_status(), Status::Pending);
     assert_eq!(result.task.get_pending_until(), now + Duration::minutes(5));
+    assert_eq!(result.focused_task_id_opt, None);
+}
+
+#[test]
+fn test_execute_defer_日付指定はその日の朝までpendingにする() {
+    let now = Local.with_ymd_and_hms(2026, 8, 11, 12, 0, 0).unwrap();
+    let task = Task::new("延期対象");
+
+    let result = execute_command_for_test(task.clone(), now, Some(task.get_id()), "後 2026/08/13");
+
+    assert_eq!(result.task.get_orig_status(), Status::Pending);
+    assert_eq!(
+        result.task.get_pending_until(),
+        Local.with_ymd_and_hms(2026, 8, 13, 6, 0, 1).unwrap()
+    );
     assert_eq!(result.focused_task_id_opt, None);
 }
 
@@ -5504,6 +5594,43 @@ fn test_execute_finish_未完了の子があれば完了しない() {
     assert_eq!(result.task.get_end_time_opt(), None);
     assert_eq!(result.focused_task_id_opt, Some(parent_task.get_id()));
     assert!(result.output.contains("未完了の子"));
+}
+
+#[test]
+fn test_execute_finish_唯一の子を完了すると親へfocusする() {
+    let now = Local.with_ymd_and_hms(2026, 8, 11, 12, 0, 0).unwrap();
+    let parent_task = Task::new("親タスク");
+    let child_task = parent_task.create_as_last_child(TaskAttr::new("子タスク"));
+
+    let result =
+        execute_command_for_test(parent_task.clone(), now, Some(child_task.get_id()), "終 今");
+    let finished_child = result.task.get_by_id(child_task.get_id()).unwrap();
+
+    assert_eq!(finished_child.get_status(), Status::Done);
+    assert_eq!(finished_child.get_end_time_opt(), Some(now));
+    assert_eq!(result.focused_task_id_opt, Some(parent_task.get_id()));
+}
+
+#[test]
+fn test_execute_finish_繰り返しtaskの見積もりを実績との差に応じて補正する() {
+    let now = Local.with_ymd_and_hms(2026, 8, 11, 12, 0, 0).unwrap();
+    let cases = [(1_000, 900), (200, 500), (600, 600)];
+
+    for (actual_work_seconds, expected_estimated_work_seconds) in cases {
+        let parent_task = Task::new("繰り返しtask");
+        parent_task.set_repetition_interval_days_opt(Some(7));
+        parent_task.set_estimated_work_seconds(600);
+        let mut child_attr = TaskAttr::new("今回分");
+        child_attr.set_actual_work_seconds(actual_work_seconds);
+        let child_task = parent_task.create_as_last_child(child_attr);
+
+        let result = execute_command_for_test(parent_task, now, Some(child_task.get_id()), "終 今");
+
+        assert_eq!(
+            result.task.get_estimated_work_seconds(),
+            expected_estimated_work_seconds
+        );
+    }
 }
 
 #[test]
@@ -5533,6 +5660,18 @@ fn test_execute_deadline_締切を設定して解除する() {
 
     let cleared = execute_command_for_test(updated.task, now, Some(task_id), "〆 消");
     assert_eq!(cleared.task.get_deadline_time_opt(), None);
+
+    let time_updated = execute_command_for_test(cleared.task, now, Some(task_id), "〆 14:30");
+    assert_eq!(
+        time_updated.task.get_deadline_time_opt(),
+        Some(Local.with_ymd_and_hms(2026, 8, 11, 14, 30, 0).unwrap())
+    );
+
+    let invalid = execute_command_for_test(time_updated.task, now, Some(task_id), "〆 invalid");
+    assert_eq!(
+        invalid.task.get_deadline_time_opt(),
+        Some(Local.with_ymd_and_hms(2026, 8, 11, 14, 30, 0).unwrap())
+    );
 }
 
 #[test]
