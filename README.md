@@ -68,14 +68,14 @@ clientごとの設定形式に合わせて、commandと環境変数を次のよ�
 | `get_focus` | なし | 現在着手すべきtaskを返す。候補がなければ`task: null` |
 | `get_task` | `task_id` | task詳細を返す |
 | `list_tasks` | optional: `period`、`statuses`、`categories` | taskを絞り込んでpre-orderで返す |
-| `get_schedule` | なし | Schronuの予定計算結果を返す |
+| `get_schedule` | optional: `from`、`until` | 日付範囲でSchronuの予定計算結果を返す |
 | `create_task` | `name`、optional: `estimated_work_minutes`、`pending_until` | 新規projectを作成する |
 | `breakdown_task` | `parent_id`、`names`、optional: `pending_until` | 入力順に子taskを追加する |
 | `defer_task` | `task_id`、`pending_until` | 絶対時刻までtaskを延期する |
 | `complete_task` | `task_id`、optional: `finished_at`、`additional_actual_work_seconds` | taskを完了する |
 | `update_task` | `task_id`と、`estimated_work_minutes`、`deadline_time`、`category`のうち1つ以上 | 見積もり・締切・categoryを更新する |
 
-`deadline_time`と`category`は`null`で解除できます。`list_tasks.period.field`は`scheduled_start`、`created_at`、`deadline`、`completed_at`のいずれかで、`from`以上`until`未満の半開区間です。`statuses`は`todo`、`pending`、`done`、`categories`は上記categoryまたは`null`を配列で指定します。同じ`statuses`内と同じ`categories`内はOR、period・status・categoryの間はANDです。statusは現在時刻を反映した実効statusで判定します。配列の省略または空配列は、その項目で絞り込みません。
+`deadline_time`と`category`は`null`で解除できます。`list_tasks.period.field`は`scheduled_start`、`created_at`、`deadline`、`completed_at`のいずれかで、`from`以上`until`未満の半開区間です。`statuses`は`todo`、`pending`、`done`、`categories`は上記categoryまたは`null`を配列で指定します。同じ`statuses`内と同じ`categories`内はOR、period・status・categoryの間はANDです。statusは現在時刻を反映した実効statusで判定します。配列の省略または空配列は、その項目で絞り込みません。`get_schedule.from`と`get_schedule.until`は`YYYY-MM-DD`の日付で、`from`以上`until`未満の範囲を指定します。`from`のみはその日、`until`のみは現在から指定日までです。両方省略時は、現在からSchronuの次の業務日境界までを返します。
 
 例:
 

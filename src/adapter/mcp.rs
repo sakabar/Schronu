@@ -10,8 +10,9 @@ use crate::application::task_use_case::{
     CompleteTaskInput, CreateTaskInput, ListTasksFilter, TaskPeriodField, TaskPeriodFilter,
     TaskView,
 };
+use crate::entity::datetime::get_next_morning_datetime;
 use crate::entity::task::{ProjectCategory, Status};
-use chrono::{DateTime, Local};
+use chrono::{DateTime, Duration, Local, LocalResult, NaiveDate};
 use serde_json::Map;
 use serde_json::{json, Value};
 use std::path::PathBuf;
@@ -203,14 +204,18 @@ impl<R: TaskRepositoryTrait> McpServer<R> {
     }
 
     fn call_get_schedule(&self, id: Value, arguments: Option<&Value>) -> Value {
-        if let Some(arguments) = arguments {
-            if let Err(error) = validate_argument_object(arguments, &[], &[]) {
-                return invalid_params_response(id, error);
+        let (from, until) = match schedule_period(arguments, self.repository.get_last_synced_time())
+        {
+            Ok(period) => period,
+            Err(ToolInputError::Schema(error)) => return invalid_params_response(id, error),
+            Err(ToolInputError::Semantic { field, message }) => {
+                return invalid_input_response(id, field, message)
             }
-        }
+        };
 
         let schedule = get_schedule(&self.repository)
             .iter()
+            .filter(|scheduled| scheduled.scheduled_start < until && scheduled.scheduled_end > from)
             .map(scheduled_task_view_json)
             .collect::<Vec<_>>();
         tool_result_response(id, json!({"schedule": schedule}), false)
@@ -993,6 +998,72 @@ fn list_tasks_filter(arguments: Option<&Value>) -> Result<ListTasksFilter, ToolI
     })
 }
 
+fn schedule_period(
+    arguments: Option<&Value>,
+    now: DateTime<Local>,
+) -> Result<(DateTime<Local>, DateTime<Local>), ToolInputError> {
+    let Some(arguments) = arguments else {
+        return Ok((now, get_next_morning_datetime(now)));
+    };
+    let arguments = validate_argument_object(arguments, &["from", "until"], &[])
+        .map_err(ToolInputError::Schema)?;
+    let from = arguments
+        .get("from")
+        .map(|value| schedule_day_start(value, "from"))
+        .transpose()?;
+    let until = arguments
+        .get("until")
+        .map(|value| schedule_day_start(value, "until"))
+        .transpose()?;
+
+    let (from, until) = match (from, until) {
+        (Some(from), Some(until)) => (from, until),
+        (Some(from), None) => (from, get_next_morning_datetime(from)),
+        (None, Some(until)) => (now, until),
+        (None, None) => (now, get_next_morning_datetime(now)),
+    };
+    if from >= until {
+        return Err(ToolInputError::Semantic {
+            field: "until",
+            message: "must be later than from",
+        });
+    }
+
+    Ok((from, until))
+}
+
+fn schedule_day_start(
+    value: &Value,
+    field: &'static str,
+) -> Result<DateTime<Local>, ToolInputError> {
+    let value = value.as_str().ok_or_else(|| {
+        ToolInputError::Schema(InvalidParams {
+            field: field.to_string(),
+            reason: "must be a date string",
+        })
+    })?;
+    let date =
+        NaiveDate::parse_from_str(value, "%Y-%m-%d").map_err(|_| ToolInputError::Semantic {
+            field,
+            message: "must be a valid ISO 8601 date",
+        })?;
+    let local_noon = date.and_hms_opt(12, 0, 0).ok_or(ToolInputError::Semantic {
+        field,
+        message: "must be a valid ISO 8601 date",
+    })?;
+    let local_noon = match local_noon.and_local_timezone(Local) {
+        LocalResult::Single(datetime) => datetime,
+        _ => {
+            return Err(ToolInputError::Semantic {
+                field,
+                message: "must resolve to a local date-time",
+            })
+        }
+    };
+
+    Ok(get_next_morning_datetime(local_noon) - Duration::days(1))
+}
+
 fn parse_period_filter(value: &Value) -> Result<TaskPeriodFilter, ToolInputError> {
     let period = value.as_object().ok_or_else(|| {
         ToolInputError::Schema(InvalidParams {
@@ -1302,10 +1373,13 @@ fn tool_definitions() -> Vec<Value> {
         }),
         json!({
             "name": "get_schedule",
-            "description": "Get Schronu's calculated task schedule.",
+            "description": "Get Schronu's calculated task schedule for a date range.",
             "inputSchema": {
                 "type": "object",
-                "properties": {},
+                "properties": {
+                    "from": {"type": "string", "format": "date"},
+                    "until": {"type": "string", "format": "date"}
+                },
                 "required": [],
                 "additionalProperties": false
             }
@@ -1424,6 +1498,7 @@ mod tests {
     use crate::application::interface::{
         TaskRepositoryError, TaskRepositoryOperation, TaskRepositoryTrait,
     };
+    use crate::entity::datetime::get_next_morning_datetime;
     use crate::entity::task::{ProjectCategory, RepetitionAnchor, Status, Task, TaskAttr};
     use chrono::{DateTime, Duration, Local, TimeZone};
     use serde_json::json;
@@ -2591,7 +2666,7 @@ mod tests {
             property_names(tools, "list_tasks"),
             vec!["categories", "period", "statuses"]
         );
-        assert_eq!(property_names(tools, "get_schedule"), Vec::<&str>::new());
+        assert_eq!(property_names(tools, "get_schedule"), vec!["from", "until"]);
         assert_eq!(
             property_names(tools, "create_task"),
             vec!["estimated_work_minutes", "name", "pending_until"]
@@ -2635,6 +2710,8 @@ mod tests {
         assert_eq!(required_fields(tools, "update_task"), vec!["task_id"]);
 
         assert_string_property(tools, "get_task", "task_id", Some("uuid"));
+        assert_string_property(tools, "get_schedule", "from", Some("date"));
+        assert_string_property(tools, "get_schedule", "until", Some("date"));
         assert_string_property(tools, "create_task", "name", None);
         assert_eq!(property(tools, "create_task", "name")["minLength"], 1);
         assert_non_negative_integer_property(tools, "create_task", "estimated_work_minutes");
@@ -3350,6 +3427,85 @@ mod tests {
     }
 
     #[test]
+    fn get_scheduleは引数なしで現在から次の業務日境界までの予定だけを返す() {
+        let now = Local::now();
+        let current_task = Task::new("current task");
+        current_task.set_start_time(now);
+        current_task.set_estimated_work_seconds(15 * 60);
+
+        let future_task = Task::new("future task");
+        future_task.set_start_time(get_next_morning_datetime(now) + Duration::hours(1));
+        future_task.set_estimated_work_seconds(15 * 60);
+
+        let repository = RecordingRepository::new(vec![current_task, future_task]);
+        let mut server = initialized_server(repository);
+
+        let response = server
+            .handle_request(tool_call_request(
+                "default-range",
+                "get_schedule",
+                json!({}),
+            ))
+            .unwrap();
+
+        let schedule = response["result"]["structuredContent"]["schedule"]
+            .as_array()
+            .unwrap();
+        assert_eq!(schedule.len(), 1);
+        assert_eq!(schedule[0]["task"]["name"], "current task");
+    }
+
+    #[test]
+    fn get_scheduleは日付範囲と片方の日付指定で重なる予定を返す() {
+        let now = Local::now();
+        let from_boundary = get_next_morning_datetime(now);
+        let until_boundary = get_next_morning_datetime(from_boundary);
+
+        let crossing_task = Task::new("crossing task");
+        crossing_task.set_start_time(from_boundary - Duration::minutes(30));
+        crossing_task.set_estimated_work_seconds(2 * 60 * 60);
+
+        let inside_task = Task::new("inside task");
+        inside_task.set_start_time(from_boundary + Duration::hours(3));
+        inside_task.set_estimated_work_seconds(15 * 60);
+
+        let later_task = Task::new("later task");
+        later_task.set_start_time(until_boundary + Duration::hours(1));
+        later_task.set_estimated_work_seconds(15 * 60);
+
+        let repository = RecordingRepository::new(vec![crossing_task, inside_task, later_task]);
+        let mut server = initialized_server(repository);
+        let from = from_boundary.format("%F").to_string();
+        let until = until_boundary.format("%F").to_string();
+
+        for (id, arguments) in [
+            (
+                "range",
+                json!({"from": from.clone(), "until": until.clone()}),
+            ),
+            ("from-only", json!({"from": from.clone()})),
+            ("until-only", json!({"until": until.clone()})),
+        ] {
+            let response = server
+                .handle_request(tool_call_request(id, "get_schedule", arguments))
+                .unwrap();
+            let schedule = response["result"]["structuredContent"]["schedule"]
+                .as_array()
+                .unwrap();
+            let names = schedule
+                .iter()
+                .map(|scheduled| scheduled["task"]["name"].as_str().unwrap())
+                .collect::<Vec<_>>();
+
+            assert_eq!(names, vec!["crossing task", "inside task"]);
+            assert_eq!(
+                schedule[0]["scheduled_start"],
+                (from_boundary - Duration::minutes(30)).to_rfc3339()
+            );
+        }
+    }
+
+    #[test]
     fn get_schedule_予定なしを空配列で返す() {
         let repository = RecordingRepository::new(vec![]);
         let save_count = Rc::clone(&repository.save_count);
@@ -3379,6 +3535,7 @@ mod tests {
         let cases = [
             ("extra", json!({"extra": true}), "arguments.extra"),
             ("null", serde_json::Value::Null, "arguments"),
+            ("invalid-from-type", json!({"from": true}), "from"),
         ];
 
         for (id, arguments, field) in cases {
@@ -3398,6 +3555,36 @@ mod tests {
             assert_eq!(response["error"]["data"]["field"], field);
             assert_eq!(save_count.get(), 0);
             assert_eq!(mutation_count.get(), 0);
+        }
+    }
+
+    #[test]
+    fn get_scheduleは不正な日付範囲をinvalid_inputで返す() {
+        let cases = [
+            ("invalid-date", json!({"from": "2026-02-30"}), "from"),
+            (
+                "reversed-range",
+                json!({"from": "2026-08-13", "until": "2026-08-12"}),
+                "until",
+            ),
+        ];
+
+        for (id, arguments, field) in cases {
+            let repository = RecordingRepository::new(vec![]);
+            let mut server = initialized_server(repository);
+            let response = server
+                .handle_request(tool_call_request(id, "get_schedule", arguments))
+                .unwrap();
+
+            assert_eq!(response["result"]["isError"], true);
+            assert_eq!(
+                response["result"]["structuredContent"]["error"]["code"],
+                "invalid_input"
+            );
+            assert_eq!(
+                response["result"]["structuredContent"]["error"]["field"],
+                field
+            );
         }
     }
 
