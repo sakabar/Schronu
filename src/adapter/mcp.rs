@@ -438,6 +438,7 @@ mod tests {
     struct RecordingRepository {
         projects: Vec<Task>,
         now: DateTime<Local>,
+        focus_task_id: Option<Uuid>,
         save_count: Rc<Cell<usize>>,
         mutation_count: Rc<Cell<usize>>,
     }
@@ -447,9 +448,15 @@ mod tests {
             Self {
                 projects,
                 now: fixed_now(),
+                focus_task_id: None,
                 save_count: Rc::new(Cell::new(0)),
                 mutation_count: Rc::new(Cell::new(0)),
             }
+        }
+
+        fn with_focus_task_id(mut self, task_id: Uuid) -> Self {
+            self.focus_task_id = Some(task_id);
+            self
         }
     }
 
@@ -486,7 +493,7 @@ mod tests {
         }
 
         fn get_highest_priority_leaf_task_id(&mut self) -> Option<Uuid> {
-            None
+            self.focus_task_id
         }
 
         fn get_defer_candidate_leaf_task_id(&mut self, _recent_days: i64) -> Option<Uuid> {
@@ -1034,6 +1041,90 @@ mod tests {
             response["result"]["structuredContent"]["error"]["task_id"],
             task_id.to_string()
         );
+        assert_eq!(save_count.get(), 0);
+        assert_eq!(mutation_count.get(), 0);
+    }
+
+    #[test]
+    fn get_focus_選択taskを返してrepositoryを変更しない() {
+        let non_focused_task = Task::new("not focused");
+        let focused_task = Task::new("focused task");
+        let task_id = focused_task.get_id();
+        let repository = RecordingRepository::new(vec![non_focused_task, focused_task])
+            .with_focus_task_id(task_id);
+        let save_count = Rc::clone(&repository.save_count);
+        let mutation_count = Rc::clone(&repository.mutation_count);
+        let mut server = initialized_server(repository);
+
+        let response = server
+            .handle_request(tool_call_request("get-focus", "get_focus", json!({})))
+            .unwrap();
+
+        assert_eq!(response["jsonrpc"], "2.0");
+        assert_eq!(response["id"], "get-focus");
+        assert_eq!(response["result"]["isError"], false);
+        assert_tool_result_content_matches_structured(&response);
+        assert_eq!(
+            response["result"]["structuredContent"]["task"]["id"],
+            task_id.to_string()
+        );
+        assert_eq!(
+            response["result"]["structuredContent"]["task"]["name"],
+            "focused task"
+        );
+        assert_eq!(save_count.get(), 0);
+        assert_eq!(mutation_count.get(), 0);
+    }
+
+    #[test]
+    fn get_focus_候補なしをtask_nullで返す() {
+        let repository = RecordingRepository::new(vec![]);
+        let save_count = Rc::clone(&repository.save_count);
+        let mutation_count = Rc::clone(&repository.mutation_count);
+        let mut server = initialized_server(repository);
+
+        let response = server
+            .handle_request(json!({
+                "jsonrpc": "2.0",
+                "id": "no-focus",
+                "method": "tools/call",
+                "params": {"name": "get_focus"}
+            }))
+            .unwrap();
+
+        assert_eq!(response["jsonrpc"], "2.0");
+        assert_eq!(response["id"], "no-focus");
+        assert_eq!(response["result"]["isError"], false);
+        assert_tool_result_content_matches_structured(&response);
+        assert_eq!(
+            response["result"]["structuredContent"]["task"],
+            serde_json::Value::Null
+        );
+        assert_eq!(save_count.get(), 0);
+        assert_eq!(mutation_count.get(), 0);
+    }
+
+    #[test]
+    fn get_focus_extra_fieldをinvalid_paramsで返す() {
+        let repository = RecordingRepository::new(vec![]);
+        let save_count = Rc::clone(&repository.save_count);
+        let mutation_count = Rc::clone(&repository.mutation_count);
+        let mut server = initialized_server(repository);
+
+        let response = server
+            .handle_request(tool_call_request(
+                "get-focus-extra",
+                "get_focus",
+                json!({"extra": true}),
+            ))
+            .unwrap();
+
+        assert_eq!(response["jsonrpc"], "2.0");
+        assert_eq!(response["id"], "get-focus-extra");
+        assert_eq!(response["error"]["code"], -32602);
+        assert_eq!(response["error"]["message"], "Invalid params");
+        assert_eq!(response["error"]["data"]["code"], "invalid_input");
+        assert_eq!(response["error"]["data"]["field"], "arguments.extra");
         assert_eq!(save_count.get(), 0);
         assert_eq!(mutation_count.get(), 0);
     }
