@@ -1,5 +1,10 @@
 use crate::application::interface::TaskRepositoryTrait;
-use crate::application::task_use_case::{get_focus, get_task, TaskView};
+use crate::application::task_use_case::{
+    get_focus, get_task, list_tasks, ApplicationError, ListTasksFilter, TaskPeriodField,
+    TaskPeriodFilter, TaskView,
+};
+use crate::entity::task::{ProjectCategory, Status};
+use chrono::{DateTime, Local};
 use serde_json::Map;
 use serde_json::{json, Value};
 use uuid::Uuid;
@@ -77,6 +82,7 @@ impl<R: TaskRepositoryTrait> McpServer<R> {
         match params["name"].as_str() {
             Some("get_focus") => self.call_get_focus(id, params.get("arguments")),
             Some("get_task") => self.call_get_task(id, &params["arguments"]),
+            Some("list_tasks") => self.call_list_tasks(id, params.get("arguments")),
             _ => error_response(id, -32602, "Unknown tool"),
         }
     }
@@ -124,6 +130,39 @@ impl<R: TaskRepositoryTrait> McpServer<R> {
             ),
         }
     }
+
+    fn call_list_tasks(&self, id: Value, arguments: Option<&Value>) -> Value {
+        let filter = match list_tasks_filter(arguments) {
+            Ok(filter) => filter,
+            Err(ListTasksInputError::Schema(error)) => return invalid_params_response(id, error),
+            Err(ListTasksInputError::Semantic { field, message }) => {
+                return invalid_input_response(id, field, message)
+            }
+        };
+
+        match list_tasks(&self.repository, filter) {
+            Ok(tasks) => tool_result_response(
+                id,
+                json!({
+                    "tasks": tasks.iter().map(task_view_json).collect::<Vec<_>>()
+                }),
+                false,
+            ),
+            Err(ApplicationError::InvalidInput { field, reason }) => {
+                invalid_input_response(id, field, reason)
+            }
+            Err(error) => tool_result_response(
+                id,
+                json!({
+                    "error": {
+                        "code": "internal_error",
+                        "message": error.to_string()
+                    }
+                }),
+                true,
+            ),
+        }
+    }
 }
 
 fn error_response(id: Value, code: i64, message: &str) -> Value {
@@ -155,6 +194,166 @@ fn invalid_input_response(id: Value, field: &str, message: &str) -> Value {
 struct InvalidParams {
     field: String,
     reason: &'static str,
+}
+
+enum ListTasksInputError {
+    Schema(InvalidParams),
+    Semantic {
+        field: &'static str,
+        message: &'static str,
+    },
+}
+
+fn list_tasks_filter(arguments: Option<&Value>) -> Result<ListTasksFilter, ListTasksInputError> {
+    let Some(arguments) = arguments else {
+        return Ok(ListTasksFilter {
+            period: None,
+            statuses: vec![],
+            categories: vec![],
+        });
+    };
+    let arguments = validate_argument_object(arguments, &["period", "statuses", "categories"], &[])
+        .map_err(ListTasksInputError::Schema)?;
+
+    Ok(ListTasksFilter {
+        period: arguments
+            .get("period")
+            .map(parse_period_filter)
+            .transpose()?,
+        statuses: parse_status_filters(arguments.get("statuses"))?,
+        categories: parse_category_filters(arguments.get("categories"))?,
+    })
+}
+
+fn parse_period_filter(value: &Value) -> Result<TaskPeriodFilter, ListTasksInputError> {
+    let period = value.as_object().ok_or_else(|| {
+        ListTasksInputError::Schema(InvalidParams {
+            field: "period".to_string(),
+            reason: "must be an object",
+        })
+    })?;
+    if let Some(field) = period
+        .keys()
+        .find(|field| !["field", "from", "until"].contains(&field.as_str()))
+    {
+        return Err(ListTasksInputError::Schema(InvalidParams {
+            field: format!("period.{field}"),
+            reason: "additional property is not allowed",
+        }));
+    }
+    for field in ["field", "from", "until"] {
+        if !period.contains_key(field) {
+            return Err(ListTasksInputError::Schema(InvalidParams {
+                field: format!("period.{field}"),
+                reason: "field is required",
+            }));
+        }
+    }
+
+    let field = match required_nested_string(period, "period", "field")? {
+        "scheduled_start" => TaskPeriodField::ScheduledStart,
+        "created_at" => TaskPeriodField::CreatedAt,
+        "deadline" => TaskPeriodField::Deadline,
+        "completed_at" => TaskPeriodField::CompletedAt,
+        _ => {
+            return Err(ListTasksInputError::Schema(InvalidParams {
+                field: "period.field".to_string(),
+                reason: "must be a supported period field",
+            }))
+        }
+    };
+    let from = parse_datetime(
+        required_nested_string(period, "period", "from")?,
+        "period.from",
+    )?;
+    let until = parse_datetime(
+        required_nested_string(period, "period", "until")?,
+        "period.until",
+    )?;
+
+    Ok(TaskPeriodFilter { field, from, until })
+}
+
+fn required_nested_string<'a>(
+    object: &'a Map<String, Value>,
+    object_name: &str,
+    field: &str,
+) -> Result<&'a str, ListTasksInputError> {
+    object.get(field).and_then(Value::as_str).ok_or_else(|| {
+        ListTasksInputError::Schema(InvalidParams {
+            field: format!("{object_name}.{field}"),
+            reason: "must be a string",
+        })
+    })
+}
+
+fn parse_datetime(
+    value: &str,
+    field: &'static str,
+) -> Result<DateTime<Local>, ListTasksInputError> {
+    DateTime::parse_from_rfc3339(value)
+        .map(|time| time.with_timezone(&Local))
+        .map_err(|_| ListTasksInputError::Semantic {
+            field,
+            message: "must be a valid RFC 3339 date-time",
+        })
+}
+
+fn parse_status_filters(value: Option<&Value>) -> Result<Vec<Status>, ListTasksInputError> {
+    let Some(value) = value else {
+        return Ok(vec![]);
+    };
+    let values = value.as_array().ok_or_else(|| {
+        ListTasksInputError::Schema(InvalidParams {
+            field: "statuses".to_string(),
+            reason: "must be an array",
+        })
+    })?;
+
+    values
+        .iter()
+        .enumerate()
+        .map(|(index, value)| match value.as_str() {
+            Some("todo") => Ok(Status::Todo),
+            Some("pending") => Ok(Status::Pending),
+            Some("done") => Ok(Status::Done),
+            _ => Err(ListTasksInputError::Schema(InvalidParams {
+                field: format!("statuses[{index}]"),
+                reason: "must be todo, pending, or done",
+            })),
+        })
+        .collect()
+}
+
+fn parse_category_filters(
+    value: Option<&Value>,
+) -> Result<Vec<Option<ProjectCategory>>, ListTasksInputError> {
+    let Some(value) = value else {
+        return Ok(vec![]);
+    };
+    let values = value.as_array().ok_or_else(|| {
+        ListTasksInputError::Schema(InvalidParams {
+            field: "categories".to_string(),
+            reason: "must be an array",
+        })
+    })?;
+
+    values
+        .iter()
+        .enumerate()
+        .map(|(index, value)| match value.as_str() {
+            None if value.is_null() => Ok(None),
+            Some("earning") => Ok(Some(ProjectCategory::Earning)),
+            Some("sustaining") => Ok(Some(ProjectCategory::Sustaining)),
+            Some("recovery") => Ok(Some(ProjectCategory::Recovery)),
+            Some("investment") => Ok(Some(ProjectCategory::Investment)),
+            Some("consumption") => Ok(Some(ProjectCategory::Consumption)),
+            _ => Err(ListTasksInputError::Schema(InvalidParams {
+                field: format!("categories[{index}]"),
+                reason: "must be a supported category or null",
+            })),
+        })
+        .collect()
 }
 
 fn validate_argument_object<'a>(
