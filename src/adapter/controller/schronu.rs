@@ -5526,7 +5526,7 @@ fn test_execute_finish_繰り返しtaskの見積もりを実績との差に応�
 }
 
 #[test]
-fn test_execute_repetition_数値名でも元taskを変更せず親子を作る() {
+fn test_execute_repetition_数値だけの名前は拒否して元taskを変更しない() {
     let now = Local.with_ymd_and_hms(2026, 8, 11, 12, 0, 0).unwrap();
     let task = Task::new("既存タスク");
     task.set_estimated_work_seconds(45 * 60);
@@ -5539,21 +5539,8 @@ fn test_execute_repetition_数値名でも元taskを変更せず親子を作る(
     );
 
     assert_eq!(result.task.get_estimated_work_seconds(), 45 * 60);
-
-    let repetition_parents = result.task.get_children();
-    assert_eq!(repetition_parents.len(), 1);
-    assert_eq!(repetition_parents[0].get_name(), "123");
-    assert_eq!(repetition_parents[0].get_estimated_work_seconds(), 10 * 60);
-
-    let repetition_children = repetition_parents[0].get_children();
-    assert_eq!(repetition_children.len(), 7);
-    assert!(repetition_children
-        .iter()
-        .all(|child| child.get_name() == "123"));
-    assert_eq!(
-        result.focused_task_id_opt,
-        Some(repetition_parents[0].get_id())
-    );
+    assert!(result.task.get_children().is_empty());
+    assert_eq!(result.focused_task_id_opt, Some(task.get_id()));
 }
 
 #[test]
