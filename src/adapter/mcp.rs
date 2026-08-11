@@ -2601,6 +2601,333 @@ mod tests {
         assert_eq!(deferred["pending_until"], pending_until.to_rfc3339());
     }
 
+    #[test]
+    fn complete_task_完了と実績を反映して1回saveする() {
+        let finished_at = fixed_now() + Duration::hours(1);
+        let task = Task::new("completed task");
+        task.set_actual_work_seconds(60);
+        let task_id = task.get_id();
+        let repository = RecordingRepository::new(vec![task]);
+        let save_count = Rc::clone(&repository.save_count);
+        let mut server = initialized_server(repository);
+
+        let response = server
+            .handle_request(tool_call_request(
+                "complete-task",
+                "complete_task",
+                json!({
+                    "task_id": task_id.to_string(),
+                    "finished_at": finished_at.to_rfc3339(),
+                    "additional_actual_work_seconds": 120
+                }),
+            ))
+            .unwrap();
+
+        assert_eq!(response["jsonrpc"], "2.0");
+        assert_eq!(response["id"], "complete-task");
+        assert_eq!(response["result"]["isError"], false);
+        assert_tool_result_content_matches_structured(&response);
+        assert_eq!(
+            response["result"]["structuredContent"],
+            json!({
+                "task_id": task_id.to_string(),
+                "next_focus_task_id": null,
+                "next_repetition_task_id": null
+            })
+        );
+        assert_eq!(save_count.get(), 1);
+
+        let task_response = server
+            .handle_request(tool_call_request(
+                "completed-task",
+                "get_task",
+                json!({"task_id": task_id.to_string()}),
+            ))
+            .unwrap();
+        let completed = &task_response["result"]["structuredContent"]["task"];
+        assert_eq!(completed["original_status"], "done");
+        assert_eq!(completed["end_time"], finished_at.to_rfc3339());
+        assert_eq!(completed["actual_work_seconds"], 180);
+        assert_eq!(save_count.get(), 1);
+    }
+
+    #[test]
+    fn complete_task_optional省略時は現在時刻と追加実績0を使う() {
+        let task = Task::new("completed with defaults");
+        task.set_actual_work_seconds(60);
+        let task_id = task.get_id();
+        let repository = RecordingRepository::new(vec![task]);
+        let save_count = Rc::clone(&repository.save_count);
+        let mut server = initialized_server(repository);
+        let before = Local::now();
+
+        let response = server
+            .handle_request(tool_call_request(
+                "complete-defaults",
+                "complete_task",
+                json!({"task_id": task_id.to_string()}),
+            ))
+            .unwrap();
+        let after = Local::now();
+
+        assert_eq!(response["result"]["isError"], false);
+        assert_eq!(save_count.get(), 1);
+        let task_response = server
+            .handle_request(tool_call_request(
+                "completed-default-task",
+                "get_task",
+                json!({"task_id": task_id.to_string()}),
+            ))
+            .unwrap();
+        let completed = &task_response["result"]["structuredContent"]["task"];
+        let end_time = DateTime::parse_from_rfc3339(completed["end_time"].as_str().unwrap())
+            .unwrap()
+            .with_timezone(&Local);
+        assert!(before <= end_time && end_time <= after);
+        assert_eq!(completed["actual_work_seconds"], 60);
+    }
+
+    #[test]
+    fn complete_task_next_focusとnext_repetitionのuuidを返す() {
+        let parent = Task::new("parent");
+        let child = parent.create_as_last_child(TaskAttr::new("only child"));
+        let parent_id = parent.get_id();
+        let child_id = child.get_id();
+        let mut focus_server = initialized_server(RecordingRepository::new(vec![parent]));
+
+        let focus_response = focus_server
+            .handle_request(tool_call_request(
+                "complete-for-focus",
+                "complete_task",
+                json!({"task_id": child_id.to_string(), "finished_at": fixed_now().to_rfc3339()}),
+            ))
+            .unwrap();
+
+        assert_eq!(
+            focus_response["result"]["structuredContent"]["next_focus_task_id"],
+            parent_id.to_string()
+        );
+        assert_eq!(
+            focus_response["result"]["structuredContent"]["next_repetition_task_id"],
+            serde_json::Value::Null
+        );
+
+        let repetition_parent = Task::new("weekly");
+        repetition_parent.set_repetition_interval_days_opt(Some(7));
+        let repetition_child =
+            repetition_parent.create_as_last_child(TaskAttr::new("weekly occurrence"));
+        let repetition_parent_id = repetition_parent.get_id();
+        let repetition_child_id = repetition_child.get_id();
+        let mut repetition_server =
+            initialized_server(RecordingRepository::new(vec![repetition_parent]));
+
+        let repetition_response = repetition_server
+            .handle_request(tool_call_request(
+                "complete-for-repetition",
+                "complete_task",
+                json!({
+                    "task_id": repetition_child_id.to_string(),
+                    "finished_at": fixed_now().to_rfc3339()
+                }),
+            ))
+            .unwrap();
+
+        let next_repetition_id = repetition_response["result"]["structuredContent"]
+            ["next_repetition_task_id"]
+            .as_str()
+            .unwrap();
+        assert!(Uuid::parse_str(next_repetition_id).is_ok());
+        let parent_response = repetition_server
+            .handle_request(tool_call_request(
+                "repetition-parent",
+                "get_task",
+                json!({"task_id": repetition_parent_id.to_string()}),
+            ))
+            .unwrap();
+        assert!(
+            parent_response["result"]["structuredContent"]["task"]["child_ids"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|id| id == next_repetition_id)
+        );
+    }
+
+    #[test]
+    fn complete_task_未完了childと未知taskを区別してsaveしない() {
+        let parent = Task::new("parent");
+        parent.create_as_last_child(TaskAttr::new("undone child"));
+        let parent_id = parent.get_id();
+        let cases = [
+            ("undone-child", parent_id, "has_undone_children", "task_id"),
+            ("missing-task", Uuid::new_v4(), "task_not_found", "task_id"),
+        ];
+
+        for (id, task_id, code, field) in cases {
+            let repository = RecordingRepository::new(vec![parent.clone()]);
+            let save_count = Rc::clone(&repository.save_count);
+            let mut server = initialized_server(repository);
+            let response = server
+                .handle_request(tool_call_request(
+                    id,
+                    "complete_task",
+                    json!({
+                        "task_id": task_id.to_string(),
+                        "finished_at": fixed_now().to_rfc3339()
+                    }),
+                ))
+                .unwrap();
+
+            assert_eq!(response["jsonrpc"], "2.0");
+            assert_eq!(response["id"], id);
+            assert_eq!(response["result"]["isError"], true);
+            assert_tool_result_content_matches_structured(&response);
+            assert_eq!(
+                response["result"]["structuredContent"]["error"]["code"],
+                code
+            );
+            assert_eq!(
+                response["result"]["structuredContent"]["error"]["field"],
+                field
+            );
+            assert_eq!(
+                response["result"]["structuredContent"]["error"]["task_id"],
+                task_id.to_string()
+            );
+            assert!(!response["result"]["structuredContent"]["error"]["message"]
+                .as_str()
+                .unwrap()
+                .is_empty());
+            assert_eq!(save_count.get(), 0);
+        }
+    }
+
+    #[test]
+    fn complete_task_入力不正では変更もsaveもしない() {
+        let task = Task::new("unchanged task");
+        let task_id = task.get_id();
+        let cases = [
+            ("missing-task-id", json!({}), Some(-32602), "task_id"),
+            (
+                "negative-work",
+                json!({"task_id": task_id.to_string(), "additional_actual_work_seconds": -1}),
+                Some(-32602),
+                "additional_actual_work_seconds",
+            ),
+            (
+                "invalid-task-id",
+                json!({"task_id": "invalid"}),
+                None,
+                "task_id",
+            ),
+            (
+                "invalid-finished-at",
+                json!({"task_id": task_id.to_string(), "finished_at": "invalid"}),
+                None,
+                "finished_at",
+            ),
+            (
+                "work-out-of-range",
+                json!({"task_id": task_id.to_string(), "additional_actual_work_seconds": u64::MAX}),
+                None,
+                "additional_actual_work_seconds",
+            ),
+            (
+                "extra",
+                json!({"task_id": task_id.to_string(), "extra": true}),
+                Some(-32602),
+                "arguments.extra",
+            ),
+        ];
+
+        for (id, arguments, protocol_code, field) in cases {
+            let repository = RecordingRepository::new(vec![task.clone()]);
+            let save_count = Rc::clone(&repository.save_count);
+            let mut server = initialized_server(repository);
+            let response = server
+                .handle_request(tool_call_request(id, "complete_task", arguments))
+                .unwrap();
+
+            assert_eq!(response["jsonrpc"], "2.0");
+            assert_eq!(response["id"], id);
+            if let Some(protocol_code) = protocol_code {
+                assert_eq!(response["error"]["code"], protocol_code);
+                assert_eq!(response["error"]["message"], "Invalid params");
+                assert_eq!(response["error"]["data"]["code"], "invalid_input");
+                assert_eq!(response["error"]["data"]["field"], field);
+            } else {
+                assert_eq!(response["result"]["isError"], true);
+                assert_tool_result_content_matches_structured(&response);
+                assert_eq!(
+                    response["result"]["structuredContent"]["error"]["code"],
+                    "invalid_input"
+                );
+                assert_eq!(
+                    response["result"]["structuredContent"]["error"]["field"],
+                    field
+                );
+                assert!(!response["result"]["structuredContent"]["error"]["message"]
+                    .as_str()
+                    .unwrap()
+                    .is_empty());
+            }
+            assert_eq!(save_count.get(), 0);
+            let task_response = server
+                .handle_request(tool_call_request(
+                    &format!("{id}-unchanged"),
+                    "get_task",
+                    json!({"task_id": task_id.to_string()}),
+                ))
+                .unwrap();
+            let unchanged = &task_response["result"]["structuredContent"]["task"];
+            assert_eq!(unchanged["original_status"], "todo");
+            assert_eq!(unchanged["end_time"], serde_json::Value::Null);
+            assert_eq!(unchanged["actual_work_seconds"], 0);
+        }
+    }
+
+    #[test]
+    fn complete_task_save失敗を成功扱いしない() {
+        let task = Task::new("completed task");
+        let task_id = task.get_id();
+        let repository = RecordingRepository::new(vec![task]).with_save_failure();
+        let save_count = Rc::clone(&repository.save_count);
+        let mut server = initialized_server(repository);
+
+        let response = server
+            .handle_request(tool_call_request(
+                "complete-save-failure",
+                "complete_task",
+                json!({"task_id": task_id.to_string(), "finished_at": fixed_now().to_rfc3339()}),
+            ))
+            .unwrap();
+
+        assert_eq!(response["jsonrpc"], "2.0");
+        assert_eq!(response["id"], "complete-save-failure");
+        assert_eq!(response["result"]["isError"], true);
+        assert_tool_result_content_matches_structured(&response);
+        assert_eq!(
+            response["result"]["structuredContent"]["error"]["code"],
+            "repository_save_failed"
+        );
+        assert!(!response["result"]["structuredContent"]["error"]["message"]
+            .as_str()
+            .unwrap()
+            .is_empty());
+        assert_eq!(save_count.get(), 1);
+        let task_response = server
+            .handle_request(tool_call_request(
+                "completed-after-save-failure",
+                "get_task",
+                json!({"task_id": task_id.to_string()}),
+            ))
+            .unwrap();
+        assert_eq!(
+            task_response["result"]["structuredContent"]["task"]["original_status"],
+            "done"
+        );
+    }
+
     fn initialize_request() -> serde_json::Value {
         json!({
             "jsonrpc": "2.0",
