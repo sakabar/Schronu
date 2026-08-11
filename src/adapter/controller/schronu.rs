@@ -33,6 +33,9 @@ use std::path::PathBuf;
 use std::process;
 use std::sync::mpsc::{self, RecvTimeoutError};
 use std::thread;
+
+#[cfg(test)]
+mod storage_directory;
 use std::time::{Duration as StdDuration, Instant};
 use termion::event::Key;
 use termion::input::TermRead;
