@@ -1,5 +1,5 @@
 use crate::application::interface::TaskRepositoryTrait;
-use crate::application::task_use_case::{get_task, TaskView};
+use crate::application::task_use_case::{get_focus, get_task, TaskView};
 use serde_json::Map;
 use serde_json::{json, Value};
 use uuid::Uuid;
@@ -72,12 +72,27 @@ impl<R: TaskRepositoryTrait> McpServer<R> {
         }
     }
 
-    fn call_tool(&self, id: Value, request: &Value) -> Value {
+    fn call_tool(&mut self, id: Value, request: &Value) -> Value {
         let params = &request["params"];
         match params["name"].as_str() {
+            Some("get_focus") => self.call_get_focus(id, params.get("arguments")),
             Some("get_task") => self.call_get_task(id, &params["arguments"]),
             _ => error_response(id, -32602, "Unknown tool"),
         }
+    }
+
+    fn call_get_focus(&mut self, id: Value, arguments: Option<&Value>) -> Value {
+        if let Some(arguments) = arguments {
+            if let Err(error) = validate_argument_object(arguments, &[], &[]) {
+                return invalid_params_response(id, error);
+            }
+        }
+
+        let task = get_focus(&mut self.repository)
+            .as_ref()
+            .map(task_view_json)
+            .unwrap_or(Value::Null);
+        tool_result_response(id, json!({"task": task}), false)
     }
 
     fn call_get_task(&self, id: Value, arguments: &Value) -> Value {
