@@ -115,7 +115,7 @@ impl StorageLock {
             .map_err(|error| StorageLockError::io(&path, error))?;
 
         file.try_lock_exclusive()
-            .map_err(|error| StorageLockError::contended(&path, error))?;
+            .map_err(|error| classify_lock_attempt_error(&path, error))?;
 
         write_metadata(&mut file, mode, Local::now()).map_err(|error| {
             let _ = FileExt::unlock(&file);
@@ -127,6 +127,14 @@ impl StorageLock {
 
     pub fn path(&self) -> &Path {
         &self.path
+    }
+}
+
+fn classify_lock_attempt_error(path: &Path, source: std::io::Error) -> StorageLockError {
+    if source.kind() == std::io::ErrorKind::WouldBlock {
+        StorageLockError::contended(path, source)
+    } else {
+        StorageLockError::io(path, source)
     }
 }
 
