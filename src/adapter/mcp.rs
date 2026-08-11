@@ -1373,21 +1373,30 @@ mod tests {
         projects: Vec<Task>,
         now: DateTime<Local>,
         focus_task_id: Option<Uuid>,
+        fail_load_once: bool,
         fail_save: bool,
+        load_count: Rc<Cell<usize>>,
+        project_count: Rc<Cell<usize>>,
         save_count: Rc<Cell<usize>>,
         mutation_count: Rc<Cell<usize>>,
+        operation_order: Rc<RefCell<Vec<&'static str>>>,
         sync_clock_times: Rc<RefCell<Vec<DateTime<Local>>>>,
     }
 
     impl RecordingRepository {
         fn new(projects: Vec<Task>) -> Self {
+            let project_count = projects.len();
             Self {
                 projects,
                 now: fixed_now(),
                 focus_task_id: None,
+                fail_load_once: false,
                 fail_save: false,
+                load_count: Rc::new(Cell::new(0)),
+                project_count: Rc::new(Cell::new(project_count)),
                 save_count: Rc::new(Cell::new(0)),
                 mutation_count: Rc::new(Cell::new(0)),
+                operation_order: Rc::new(RefCell::new(Vec::new())),
                 sync_clock_times: Rc::new(RefCell::new(Vec::new())),
             }
         }
@@ -1399,6 +1408,11 @@ mod tests {
 
         fn with_save_failure(mut self) -> Self {
             self.fail_save = true;
+            self
+        }
+
+        fn with_load_failure_once(mut self) -> Self {
+            self.fail_load_once = true;
             self
         }
     }
@@ -1413,12 +1427,21 @@ mod tests {
         }
 
         fn load(&mut self) -> Result<(), TaskRepositoryError> {
-            self.mutation_count.set(self.mutation_count.get() + 1);
+            self.load_count.set(self.load_count.get() + 1);
+            self.operation_order.borrow_mut().push("load");
+            if self.fail_load_once {
+                self.fail_load_once = false;
+                return Err(TaskRepositoryError::new(
+                    TaskRepositoryOperation::Load,
+                    std::io::Error::other("test load failure"),
+                ));
+            }
             Ok(())
         }
 
         fn save(&self) -> Result<(), TaskRepositoryError> {
             self.save_count.set(self.save_count.get() + 1);
+            self.operation_order.borrow_mut().push("save");
             if self.fail_save {
                 Err(TaskRepositoryError::new(
                     TaskRepositoryOperation::Save,
@@ -1431,6 +1454,7 @@ mod tests {
 
         fn sync_clock(&mut self, now: DateTime<Local>) {
             self.sync_clock_times.borrow_mut().push(now);
+            self.operation_order.borrow_mut().push("sync_clock");
             self.now = now;
         }
 
@@ -1456,7 +1480,9 @@ mod tests {
 
         fn start_new_project(&mut self, root_task: Task) {
             self.mutation_count.set(self.mutation_count.get() + 1);
+            self.operation_order.borrow_mut().push("mutation");
             self.projects.push(root_task);
+            self.project_count.set(self.projects.len());
         }
     }
 
@@ -1511,8 +1537,9 @@ mod tests {
     }
 
     #[test]
-    fn initializeとtools_listではrepository_clockを同期しない() {
+    fn initializeとtools_listではrepository_clockを同期もloadもしない() {
         let repository = RecordingRepository::new(vec![]);
+        let load_count = Rc::clone(&repository.load_count);
         let sync_clock_times = Rc::clone(&repository.sync_clock_times);
         let mut server = McpServer::new(repository);
 
@@ -1530,13 +1557,15 @@ mod tests {
             .unwrap();
 
         assert!(sync_clock_times.borrow().is_empty());
+        assert_eq!(load_count.get(), 0);
     }
 
     #[test]
     #[allow(non_snake_case)]
-    fn 初期化完了前のtools_callはUninitializedとInitializeRespondedの両方で拒否しrepository_clockを同期しない(
+    fn 初期化完了前のtools_callはUninitializedとInitializeRespondedの両方で拒否しrepository_clockを同期もloadもしない(
     ) {
         let repository = RecordingRepository::new(vec![]);
+        let load_count = Rc::clone(&repository.load_count);
         let sync_clock_times = Rc::clone(&repository.sync_clock_times);
         let mut server = McpServer::new(repository);
         let request = tool_call_request("before-initialized", "list_tasks", json!({}));
@@ -1545,6 +1574,7 @@ mod tests {
         assert_eq!(uninitialized["error"]["code"], -32002);
         assert_eq!(uninitialized["error"]["message"], "Server not initialized");
         assert!(sync_clock_times.borrow().is_empty());
+        assert_eq!(load_count.get(), 0);
 
         server.handle_request(initialize_request()).unwrap();
         let initialize_responded = server.handle_request(request).unwrap();
@@ -1554,10 +1584,11 @@ mod tests {
             "Server not initialized"
         );
         assert!(sync_clock_times.borrow().is_empty());
+        assert_eq!(load_count.get(), 0);
     }
 
     #[test]
-    fn 初期化済みtools_callは検証結果によらず直前にrepository_clockを1回同期する() {
+    fn 初期化済みtools_callは検証結果によらずdispatch直前にrepository_clockを同期してloadする() {
         let cases = [
             ("valid", "list_tasks", json!({})),
             ("invalid-arguments", "get_task", json!({})),
@@ -1566,6 +1597,8 @@ mod tests {
 
         for (id, tool_name, arguments) in cases {
             let repository = RecordingRepository::new(vec![]);
+            let load_count = Rc::clone(&repository.load_count);
+            let operation_order = Rc::clone(&repository.operation_order);
             let sync_clock_times = Rc::clone(&repository.sync_clock_times);
             let mut server = initialized_server(repository);
             let before = Local::now();
@@ -1577,12 +1610,83 @@ mod tests {
             let after = Local::now();
             let sync_clock_times = sync_clock_times.borrow();
             assert_eq!(sync_clock_times.len(), 1, "case: {id}");
+            assert_eq!(load_count.get(), 1, "case: {id}");
+            assert_eq!(
+                *operation_order.borrow(),
+                vec!["sync_clock", "load"],
+                "case: {id}"
+            );
             assert!(
                 before <= sync_clock_times[0] && sync_clock_times[0] <= after,
                 "case: {id}, actual: {}",
                 sync_clock_times[0]
             );
         }
+    }
+
+    #[test]
+    fn repository_load失敗はtaskを作成せずstructured_errorを返し同一sessionの次回callで再試行する()
+    {
+        let repository = RecordingRepository::new(vec![]).with_load_failure_once();
+        let load_count = Rc::clone(&repository.load_count);
+        let mutation_count = Rc::clone(&repository.mutation_count);
+        let operation_order = Rc::clone(&repository.operation_order);
+        let project_count = Rc::clone(&repository.project_count);
+        let save_count = Rc::clone(&repository.save_count);
+        let sync_clock_times = Rc::clone(&repository.sync_clock_times);
+        let mut server = initialized_server(repository);
+
+        let failed = server
+            .handle_request(tool_call_request(
+                "load-failure",
+                "create_task",
+                json!({"name": "must not be created before load"}),
+            ))
+            .unwrap();
+
+        assert_eq!(failed["jsonrpc"], "2.0");
+        assert_eq!(failed["id"], "load-failure");
+        assert_eq!(failed["result"]["isError"], true);
+        assert_tool_result_content_matches_structured(&failed);
+        let error = &failed["result"]["structuredContent"]["error"];
+        assert_eq!(error["code"], "repository_load_failed");
+        assert_eq!(error["recovery"], "repair_repository");
+        assert!(!error["message"].as_str().unwrap().is_empty());
+        assert_eq!(sync_clock_times.borrow().len(), 1);
+        assert_eq!(load_count.get(), 1);
+        assert_eq!(mutation_count.get(), 0);
+        assert_eq!(project_count.get(), 0);
+        assert_eq!(save_count.get(), 0);
+        assert_eq!(*operation_order.borrow(), vec!["sync_clock", "load"]);
+
+        let retried = server
+            .handle_request(tool_call_request(
+                "load-retry",
+                "create_task",
+                json!({"name": "created after successful retry"}),
+            ))
+            .unwrap();
+
+        assert_eq!(retried["jsonrpc"], "2.0");
+        assert_eq!(retried["id"], "load-retry");
+        assert_eq!(retried["result"]["isError"], false);
+        assert_tool_result_content_matches_structured(&retried);
+        assert_eq!(sync_clock_times.borrow().len(), 2);
+        assert_eq!(load_count.get(), 2);
+        assert_eq!(mutation_count.get(), 1);
+        assert_eq!(project_count.get(), 1);
+        assert_eq!(save_count.get(), 1);
+        assert_eq!(
+            *operation_order.borrow(),
+            vec![
+                "sync_clock",
+                "load",
+                "sync_clock",
+                "load",
+                "mutation",
+                "save"
+            ]
+        );
     }
 
     #[test]
@@ -2320,14 +2424,19 @@ mod tests {
     }
 
     #[test]
-    fn notification_未知methodには応答しない() {
-        let mut server = McpServer::new(TaskRepository::new(""));
+    fn notification_未知methodには応答せずrepository_clockを同期もloadもしない() {
+        let repository = RecordingRepository::new(vec![]);
+        let load_count = Rc::clone(&repository.load_count);
+        let sync_clock_times = Rc::clone(&repository.sync_clock_times);
+        let mut server = McpServer::new(repository);
         let notification = json!({
             "jsonrpc": "2.0",
             "method": "notifications/unknown"
         });
 
         assert_eq!(server.handle_request(notification), None);
+        assert!(sync_clock_times.borrow().is_empty());
+        assert_eq!(load_count.get(), 0);
     }
 
     #[test]
@@ -3368,6 +3477,7 @@ mod tests {
     #[test]
     fn create_task_save失敗を成功扱いしない() {
         let repository = RecordingRepository::new(vec![]).with_save_failure();
+        let load_count = Rc::clone(&repository.load_count);
         let save_count = Rc::clone(&repository.save_count);
         let mutation_count = Rc::clone(&repository.mutation_count);
         let sync_clock_times = Rc::clone(&repository.sync_clock_times);
@@ -3396,6 +3506,7 @@ mod tests {
         assert_eq!(save_count.get(), 1);
         assert_eq!(mutation_count.get(), 1);
         assert_eq!(sync_clock_times.borrow().len(), 1);
+        assert_eq!(load_count.get(), 1);
 
         let poisoned_calls = [
             tool_call_request("read-after-save-failure", "list_tasks", json!({})),
@@ -3416,6 +3527,7 @@ mod tests {
         assert_eq!(save_count.get(), 1);
         assert_eq!(mutation_count.get(), 1);
         assert_eq!(sync_clock_times.borrow().len(), 1);
+        assert_eq!(load_count.get(), 1);
     }
 
     #[test]
