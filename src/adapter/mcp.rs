@@ -3003,6 +3003,337 @@ mod tests {
         );
     }
 
+    #[test]
+    fn update_task_指定fieldをまとめて更新して1回saveする() {
+        let deadline = fixed_now() + Duration::days(10);
+        let task = Task::new("updated task");
+        let task_id = task.get_id();
+        let repository = RecordingRepository::new(vec![task]);
+        let save_count = Rc::clone(&repository.save_count);
+        let mut server = initialized_server(repository);
+
+        let response = server
+            .handle_request(tool_call_request(
+                "update-all-fields",
+                "update_task",
+                json!({
+                    "task_id": task_id.to_string(),
+                    "estimated_work_minutes": 45,
+                    "deadline_time": deadline.to_rfc3339(),
+                    "category": "recovery"
+                }),
+            ))
+            .unwrap();
+
+        assert_eq!(response["jsonrpc"], "2.0");
+        assert_eq!(response["id"], "update-all-fields");
+        assert_eq!(response["result"]["isError"], false);
+        assert_tool_result_content_matches_structured(&response);
+        assert_eq!(
+            response["result"]["structuredContent"],
+            json!({"task_id": task_id.to_string()})
+        );
+        assert_eq!(save_count.get(), 1);
+
+        let task_response = server
+            .handle_request(tool_call_request(
+                "updated-task",
+                "get_task",
+                json!({"task_id": task_id.to_string()}),
+            ))
+            .unwrap();
+        let updated = &task_response["result"]["structuredContent"]["task"];
+        assert_eq!(updated["estimated_work_seconds"], 45 * 60);
+        assert_eq!(updated["deadline_time"], deadline.to_rfc3339());
+        assert_eq!(updated["project_category"], "recovery");
+        assert_eq!(save_count.get(), 1);
+    }
+
+    #[test]
+    fn update_task_nullでdeadlineとcategoryを解除する() {
+        let task = Task::new("cleared task");
+        task.set_deadline_time_opt(Some(fixed_now() + Duration::days(10)));
+        task.set_project_category_opt(Some(ProjectCategory::Investment));
+        let task_id = task.get_id();
+        let repository = RecordingRepository::new(vec![task]);
+        let save_count = Rc::clone(&repository.save_count);
+        let mut server = initialized_server(repository);
+
+        let response = server
+            .handle_request(tool_call_request(
+                "clear-fields",
+                "update_task",
+                json!({
+                    "task_id": task_id.to_string(),
+                    "deadline_time": null,
+                    "category": null
+                }),
+            ))
+            .unwrap();
+
+        assert_eq!(response["result"]["isError"], false);
+        assert_eq!(save_count.get(), 1);
+        let task_response = server
+            .handle_request(tool_call_request(
+                "cleared-task",
+                "get_task",
+                json!({"task_id": task_id.to_string()}),
+            ))
+            .unwrap();
+        let cleared = &task_response["result"]["structuredContent"]["task"];
+        assert_eq!(cleared["deadline_time"], serde_json::Value::Null);
+        assert_eq!(cleared["project_category"], serde_json::Value::Null);
+    }
+
+    #[test]
+    fn update_task_schemaで公開した全categoryを設定できる() {
+        for category in [
+            "recovery",
+            "investment",
+            "consumption",
+            "earning",
+            "sustaining",
+        ] {
+            let task = Task::new("categorized task");
+            let task_id = task.get_id();
+            let mut server = initialized_server(RecordingRepository::new(vec![task]));
+
+            let response = server
+                .handle_request(tool_call_request(
+                    &format!("set-{category}"),
+                    "update_task",
+                    json!({"task_id": task_id.to_string(), "category": category}),
+                ))
+                .unwrap();
+
+            assert_eq!(response["result"]["isError"], false);
+            let task_response = server
+                .handle_request(tool_call_request(
+                    &format!("get-{category}"),
+                    "get_task",
+                    json!({"task_id": task_id.to_string()}),
+                ))
+                .unwrap();
+            assert_eq!(
+                task_response["result"]["structuredContent"]["task"]["project_category"],
+                category
+            );
+        }
+    }
+
+    #[test]
+    fn update_task_入力不正では変更もsaveもしない() {
+        let deadline = fixed_now() + Duration::days(10);
+        let task = Task::new("unchanged update task");
+        task.set_estimated_work_seconds(30 * 60);
+        task.set_deadline_time_opt(Some(deadline));
+        task.set_project_category_opt(Some(ProjectCategory::Consumption));
+        let task_id = task.get_id();
+        let cases = [
+            (
+                "no-update-field",
+                json!({"task_id": task_id.to_string()}),
+                Some(-32602),
+                "arguments",
+            ),
+            (
+                "missing-task-id",
+                json!({"category": null}),
+                Some(-32602),
+                "task_id",
+            ),
+            (
+                "negative-estimate",
+                json!({"task_id": task_id.to_string(), "estimated_work_minutes": -1}),
+                Some(-32602),
+                "estimated_work_minutes",
+            ),
+            (
+                "invalid-category",
+                json!({"task_id": task_id.to_string(), "category": "unknown"}),
+                Some(-32602),
+                "category",
+            ),
+            (
+                "extra",
+                json!({"task_id": task_id.to_string(), "category": null, "extra": true}),
+                Some(-32602),
+                "arguments.extra",
+            ),
+            (
+                "invalid-task-id",
+                json!({"task_id": "invalid", "category": null}),
+                None,
+                "task_id",
+            ),
+            (
+                "invalid-deadline",
+                json!({"task_id": task_id.to_string(), "deadline_time": "invalid"}),
+                None,
+                "deadline_time",
+            ),
+            (
+                "estimate-out-of-range",
+                json!({"task_id": task_id.to_string(), "estimated_work_minutes": u64::MAX}),
+                None,
+                "estimated_work_minutes",
+            ),
+        ];
+
+        for (id, arguments, protocol_code, field) in cases {
+            let repository = RecordingRepository::new(vec![task.clone()]);
+            let save_count = Rc::clone(&repository.save_count);
+            let mut server = initialized_server(repository);
+            let response = server
+                .handle_request(tool_call_request(id, "update_task", arguments))
+                .unwrap();
+
+            assert_eq!(response["jsonrpc"], "2.0");
+            assert_eq!(response["id"], id);
+            if let Some(protocol_code) = protocol_code {
+                assert_eq!(response["error"]["code"], protocol_code);
+                assert_eq!(response["error"]["message"], "Invalid params");
+                assert_eq!(response["error"]["data"]["code"], "invalid_input");
+                assert_eq!(response["error"]["data"]["field"], field);
+            } else {
+                assert_eq!(response["result"]["isError"], true);
+                assert_tool_result_content_matches_structured(&response);
+                assert_eq!(
+                    response["result"]["structuredContent"]["error"]["code"],
+                    "invalid_input"
+                );
+                assert_eq!(
+                    response["result"]["structuredContent"]["error"]["field"],
+                    field
+                );
+                assert!(!response["result"]["structuredContent"]["error"]["message"]
+                    .as_str()
+                    .unwrap()
+                    .is_empty());
+            }
+            assert_eq!(save_count.get(), 0);
+            let task_response = server
+                .handle_request(tool_call_request(
+                    &format!("{id}-unchanged"),
+                    "get_task",
+                    json!({"task_id": task_id.to_string()}),
+                ))
+                .unwrap();
+            let unchanged = &task_response["result"]["structuredContent"]["task"];
+            assert_eq!(unchanged["estimated_work_seconds"], 30 * 60);
+            assert_eq!(unchanged["deadline_time"], deadline.to_rfc3339());
+            assert_eq!(unchanged["project_category"], "consumption");
+        }
+    }
+
+    #[test]
+    fn update_task_application_errorと未知taskでは変更もsaveもしない() {
+        let original_deadline = fixed_now() + Duration::days(10);
+        let requested_deadline = fixed_now() + Duration::days(20);
+        let task = Task::new("unchanged application task");
+        task.set_estimated_work_seconds(30 * 60);
+        task.set_deadline_time_opt(Some(original_deadline));
+        task.set_project_category_opt(Some(ProjectCategory::Consumption));
+        let task_id = task.get_id();
+        let missing_task_id = Uuid::new_v4();
+        let cases = [
+            (
+                "estimate-overflow",
+                task_id,
+                json!({
+                    "task_id": task_id.to_string(),
+                    "estimated_work_minutes": i64::MAX,
+                    "deadline_time": requested_deadline.to_rfc3339(),
+                    "category": "investment"
+                }),
+                "invalid_input",
+                "estimated_work_minutes",
+            ),
+            (
+                "missing-task",
+                missing_task_id,
+                json!({"task_id": missing_task_id.to_string(), "category": "investment"}),
+                "task_not_found",
+                "task_id",
+            ),
+        ];
+
+        for (id, requested_task_id, arguments, code, field) in cases {
+            let repository = RecordingRepository::new(vec![task.clone()]);
+            let save_count = Rc::clone(&repository.save_count);
+            let mut server = initialized_server(repository);
+            let response = server
+                .handle_request(tool_call_request(id, "update_task", arguments))
+                .unwrap();
+
+            assert_eq!(response["jsonrpc"], "2.0");
+            assert_eq!(response["id"], id);
+            assert_eq!(response["result"]["isError"], true);
+            assert_tool_result_content_matches_structured(&response);
+            let error = &response["result"]["structuredContent"]["error"];
+            assert_eq!(error["code"], code);
+            assert_eq!(error["field"], field);
+            assert!(!error["message"].as_str().unwrap().is_empty());
+            if code == "task_not_found" {
+                assert_eq!(error["task_id"], requested_task_id.to_string());
+            }
+            assert_eq!(save_count.get(), 0);
+            let task_response = server
+                .handle_request(tool_call_request(
+                    &format!("{id}-unchanged"),
+                    "get_task",
+                    json!({"task_id": task_id.to_string()}),
+                ))
+                .unwrap();
+            let unchanged = &task_response["result"]["structuredContent"]["task"];
+            assert_eq!(unchanged["estimated_work_seconds"], 30 * 60);
+            assert_eq!(unchanged["deadline_time"], original_deadline.to_rfc3339());
+            assert_eq!(unchanged["project_category"], "consumption");
+        }
+    }
+
+    #[test]
+    fn update_task_save失敗を成功扱いしない() {
+        let task = Task::new("updated before save failure");
+        let task_id = task.get_id();
+        let repository = RecordingRepository::new(vec![task]).with_save_failure();
+        let save_count = Rc::clone(&repository.save_count);
+        let mut server = initialized_server(repository);
+
+        let response = server
+            .handle_request(tool_call_request(
+                "update-save-failure",
+                "update_task",
+                json!({"task_id": task_id.to_string(), "estimated_work_minutes": 20}),
+            ))
+            .unwrap();
+
+        assert_eq!(response["jsonrpc"], "2.0");
+        assert_eq!(response["id"], "update-save-failure");
+        assert_eq!(response["result"]["isError"], true);
+        assert_tool_result_content_matches_structured(&response);
+        assert_eq!(
+            response["result"]["structuredContent"]["error"]["code"],
+            "repository_save_failed"
+        );
+        assert!(!response["result"]["structuredContent"]["error"]["message"]
+            .as_str()
+            .unwrap()
+            .is_empty());
+        assert_eq!(save_count.get(), 1);
+        let task_response = server
+            .handle_request(tool_call_request(
+                "updated-after-save-failure",
+                "get_task",
+                json!({"task_id": task_id.to_string()}),
+            ))
+            .unwrap();
+        assert_eq!(
+            task_response["result"]["structuredContent"]["task"]["estimated_work_seconds"],
+            20 * 60
+        );
+    }
+
     fn initialize_request() -> serde_json::Value {
         json!({
             "jsonrpc": "2.0",
