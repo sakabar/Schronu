@@ -18,7 +18,7 @@ pub struct TaskView {
     pub original_status: Status,
     pub is_on_other_side: bool,
     pub atomic: bool,
-    pub pending_until: DateTime<Local>,
+    pub pending_until: Option<DateTime<Local>>,
     pub priority: i64,
     pub create_time: DateTime<Local>,
     pub start_time: DateTime<Local>,
@@ -44,7 +44,8 @@ impl From<&Task> for TaskView {
             original_status: task.get_orig_status(),
             is_on_other_side: task.get_is_on_other_side(),
             atomic: task.get_atomic(),
-            pending_until: task.get_pending_until(),
+            pending_until: (task.get_orig_status() == Status::Pending)
+                .then(|| task.get_pending_until()),
             priority: task.get_priority(),
             create_time: task.get_create_time(),
             start_time: task.get_start_time(),
@@ -276,7 +277,7 @@ fn find_task(
         .ok_or(ApplicationError::TaskNotFound(task_id))
 }
 
-fn validate_task_name(name: &str, field: &'static str) -> Result<(), ApplicationError> {
+pub fn validate_task_name(name: &str, field: &'static str) -> Result<(), ApplicationError> {
     let trimmed_name = name.trim();
     if trimmed_name.is_empty() {
         return Err(ApplicationError::InvalidInput {
@@ -475,6 +476,45 @@ mod tests {
         Local.with_ymd_and_hms(2026, 8, 11, 12, 0, 0).unwrap()
     }
 
+    fn next_child_after_finish(
+        repetition_anchor: RepetitionAnchor,
+        days_in_advance: i64,
+        focused_start_time: DateTime<Local>,
+        focused_deadline_time_opt: Option<DateTime<Local>>,
+        finished_at: DateTime<Local>,
+    ) -> Task {
+        let parent_task = Task::new("ルーチン");
+        parent_task.set_repetition_interval_days_opt(Some(7));
+        parent_task.set_repetition_anchor(repetition_anchor);
+        parent_task.set_days_in_advance(days_in_advance);
+        parent_task.set_start_time(Local.with_ymd_and_hms(2026, 5, 10, 9, 30, 15).unwrap());
+        parent_task.set_deadline_time_opt(Some(
+            Local.with_ymd_and_hms(2026, 5, 10, 23, 59, 59).unwrap(),
+        ));
+
+        let mut child_task_attr = TaskAttr::new("ルーチン(5/16)");
+        child_task_attr.set_start_time(focused_start_time);
+        child_task_attr.set_deadline_time_opt(focused_deadline_time_opt);
+        let child_task = parent_task.create_as_last_child(child_task_attr);
+
+        let mut repository = TestTaskRepository::new(vec![parent_task.clone()], finished_at);
+        complete_task(
+            &mut repository,
+            CompleteTaskInput {
+                task_id: child_task.get_id(),
+                finished_at,
+                additional_actual_work_seconds: 0,
+            },
+        )
+        .unwrap();
+
+        parent_task
+            .get_children()
+            .into_iter()
+            .find(|task| task.get_status() != Status::Done)
+            .expect("next repetition child")
+    }
+
     #[test]
     fn get_task_親子関係を含むviewを返す() {
         let root = Task::new("親");
@@ -533,7 +573,7 @@ mod tests {
         assert_eq!(actual.original_status, Status::Pending);
         assert!(actual.is_on_other_side);
         assert!(actual.atomic);
-        assert_eq!(actual.pending_until, pending_until);
+        assert_eq!(actual.pending_until, Some(pending_until));
         assert_eq!(actual.priority, 7);
         assert_eq!(actual.create_time, create_time);
         assert_eq!(actual.start_time, start_time);
@@ -551,6 +591,17 @@ mod tests {
     fn get_task_未知uuidはnoneを返す() {
         let repository = TestTaskRepository::new(vec![], fixed_now());
         assert_eq!(get_task(&repository, Uuid::new_v4()), None);
+    }
+
+    #[test]
+    fn get_task_pendingでなければpending_untilはnoneを返す() {
+        let task = Task::new("未延期");
+        let repository = TestTaskRepository::new(vec![task.clone()], fixed_now());
+
+        let actual = get_task(&repository, task.get_id()).unwrap();
+
+        assert_eq!(actual.original_status, Status::Todo);
+        assert_eq!(actual.pending_until, None);
     }
 
     #[test]
@@ -731,6 +782,36 @@ mod tests {
     }
 
     #[test]
+    fn breakdown_task_全ての子を指定時刻までpendingにする() {
+        let parent = Task::new("親");
+        let pending_until = Local.with_ymd_and_hms(2026, 8, 13, 6, 0, 0).unwrap();
+        let mut repository = TestTaskRepository::new(vec![parent.clone()], fixed_now());
+
+        let child_ids = breakdown_task(
+            &mut repository,
+            BreakdownTaskInput {
+                parent_id: parent.get_id(),
+                names: vec!["一".to_string(), "二".to_string()],
+                pending_until: Some(pending_until),
+            },
+        )
+        .unwrap();
+
+        assert_eq!(
+            parent
+                .get_children()
+                .iter()
+                .map(Task::get_name)
+                .collect::<Vec<_>>(),
+            vec!["一", "二"]
+        );
+        assert_eq!(child_ids.len(), 2);
+        assert!(parent.get_children().iter().all(|child| {
+            child.get_orig_status() == Status::Pending && child.get_pending_until() == pending_until
+        }));
+    }
+
+    #[test]
     fn breakdown_task_数値名を含む場合は変更しない() {
         let parent = Task::new("親");
         let mut repository = TestTaskRepository::new(vec![parent.clone()], fixed_now());
@@ -871,6 +952,109 @@ mod tests {
         assert_eq!(parent.get_estimated_work_seconds(), 900);
         assert!(output.next_repetition_task_id.is_some());
         assert_eq!(parent.get_children().len(), 2);
+    }
+
+    #[test]
+    fn complete_task_repetition_anchor_deadlineは元の期限サイクルを維持する() {
+        let next_child = next_child_after_finish(
+            RepetitionAnchor::Deadline,
+            0,
+            Local.with_ymd_and_hms(2026, 5, 16, 9, 30, 15).unwrap(),
+            Some(Local.with_ymd_and_hms(2026, 5, 16, 23, 59, 59).unwrap()),
+            Local.with_ymd_and_hms(2026, 5, 17, 12, 0, 0).unwrap(),
+        );
+
+        assert_eq!(
+            next_child.get_deadline_time_opt(),
+            Some(Local.with_ymd_and_hms(2026, 5, 23, 23, 59, 59).unwrap())
+        );
+    }
+
+    #[test]
+    fn complete_task_repetition_anchor_completionは完了日から次回期限を決める() {
+        let next_child = next_child_after_finish(
+            RepetitionAnchor::Completion,
+            0,
+            Local.with_ymd_and_hms(2026, 5, 16, 9, 30, 15).unwrap(),
+            Some(Local.with_ymd_and_hms(2026, 5, 16, 23, 59, 59).unwrap()),
+            Local.with_ymd_and_hms(2026, 5, 17, 12, 0, 0).unwrap(),
+        );
+
+        assert_eq!(
+            next_child.get_deadline_time_opt(),
+            Some(Local.with_ymd_and_hms(2026, 5, 24, 23, 59, 59).unwrap())
+        );
+    }
+
+    #[test]
+    fn complete_task_days_in_advanceはstart_timeだけ前倒しする() {
+        let next_child = next_child_after_finish(
+            RepetitionAnchor::Deadline,
+            2,
+            Local.with_ymd_and_hms(2026, 5, 16, 9, 30, 15).unwrap(),
+            Some(Local.with_ymd_and_hms(2026, 5, 16, 23, 59, 59).unwrap()),
+            Local.with_ymd_and_hms(2026, 5, 17, 12, 0, 0).unwrap(),
+        );
+
+        assert_eq!(
+            next_child.get_start_time(),
+            Local.with_ymd_and_hms(2026, 5, 21, 9, 30, 15).unwrap()
+        );
+        assert_eq!(
+            next_child.get_deadline_time_opt(),
+            Some(Local.with_ymd_and_hms(2026, 5, 23, 23, 59, 59).unwrap())
+        );
+    }
+
+    #[test]
+    fn complete_task_deadlineがない場合はcompletionにfallbackする() {
+        let next_child = next_child_after_finish(
+            RepetitionAnchor::Deadline,
+            0,
+            Local.with_ymd_and_hms(2026, 5, 16, 9, 30, 15).unwrap(),
+            None,
+            Local.with_ymd_and_hms(2026, 5, 17, 12, 0, 0).unwrap(),
+        );
+
+        assert_eq!(
+            next_child.get_deadline_time_opt(),
+            Some(Local.with_ymd_and_hms(2026, 5, 24, 23, 59, 59).unwrap())
+        );
+    }
+
+    #[test]
+    fn complete_task_繰り返し親のatomicを次回子タスクに引き継ぐ() {
+        let parent_task = Task::new("通勤");
+        parent_task.set_repetition_interval_days_opt(Some(7));
+        parent_task.set_atomic(true);
+        parent_task.set_start_time(Local.with_ymd_and_hms(2026, 5, 10, 9, 0, 0).unwrap());
+        parent_task
+            .set_deadline_time_opt(Some(Local.with_ymd_and_hms(2026, 5, 10, 10, 0, 0).unwrap()));
+
+        let mut child_task_attr = TaskAttr::new("通勤(5/16)");
+        child_task_attr.set_start_time(Local.with_ymd_and_hms(2026, 5, 16, 9, 0, 0).unwrap());
+        child_task_attr
+            .set_deadline_time_opt(Some(Local.with_ymd_and_hms(2026, 5, 16, 10, 0, 0).unwrap()));
+        let child_task = parent_task.create_as_last_child(child_task_attr);
+
+        let finished_at = Local.with_ymd_and_hms(2026, 5, 16, 10, 0, 0).unwrap();
+        let mut repository = TestTaskRepository::new(vec![parent_task.clone()], finished_at);
+        complete_task(
+            &mut repository,
+            CompleteTaskInput {
+                task_id: child_task.get_id(),
+                finished_at,
+                additional_actual_work_seconds: 0,
+            },
+        )
+        .unwrap();
+
+        let next_child = parent_task
+            .get_children()
+            .into_iter()
+            .find(|task| task.get_status() != Status::Done)
+            .expect("next repetition child");
+        assert!(next_child.get_atomic());
     }
 
     #[test]

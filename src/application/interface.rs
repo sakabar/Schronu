@@ -2,56 +2,33 @@ use crate::entity::task::Task;
 use chrono::{DateTime, Local};
 use std::error::Error;
 use std::fmt;
-use std::io;
-use std::path::{Path, PathBuf};
 use uuid::Uuid;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum TaskRepositoryOperation {
-    TraverseDirectory,
-    ReadMetadata,
-    OpenFile,
-    ReadFile,
-    ParseProject,
-    SerializeProject,
-    CreateDirectory,
-    CreateFile,
-    WriteFile,
-    SyncFile,
-    SetPermissions,
-    RenameFile,
+    Load,
+    Save,
 }
 
 #[derive(Debug)]
 pub struct TaskRepositoryError {
     operation: TaskRepositoryOperation,
-    path: PathBuf,
-    source: io::Error,
+    source: Box<dyn Error + Send + Sync>,
 }
 
 impl TaskRepositoryError {
-    pub fn new(
-        operation: TaskRepositoryOperation,
-        path: impl Into<PathBuf>,
-        source: io::Error,
-    ) -> Self {
+    pub fn new<E>(operation: TaskRepositoryOperation, source: E) -> Self
+    where
+        E: Error + Send + Sync + 'static,
+    {
         Self {
             operation,
-            path: path.into(),
-            source,
+            source: Box::new(source),
         }
     }
 
     pub fn operation(&self) -> TaskRepositoryOperation {
         self.operation
-    }
-
-    pub fn path(&self) -> &Path {
-        &self.path
-    }
-
-    pub fn io_error(&self) -> &io::Error {
-        &self.source
     }
 }
 
@@ -59,17 +36,15 @@ impl fmt::Display for TaskRepositoryError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(
             formatter,
-            "repository {:?} failed for {}: {}",
-            self.operation,
-            self.path.display(),
-            self.source
+            "repository {:?} failed: {}",
+            self.operation, self.source
         )
     }
 }
 
 impl Error for TaskRepositoryError {
     fn source(&self) -> Option<&(dyn Error + 'static)> {
-        Some(&self.source)
+        Some(self.source.as_ref())
     }
 }
 

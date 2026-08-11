@@ -7,6 +7,8 @@ use crate::entity::task::{ImmutableTask, Task, TaskAttr};
 use chrono::LocalResult;
 use chrono::TimeZone;
 use chrono::{DateTime, Local};
+use std::error::Error;
+use std::fmt;
 use uuid::Uuid;
 use yaml_rust::Yaml;
 
@@ -275,8 +277,46 @@ fn transform_from_pending_until_str(pending_until_str: &str) -> DateTime<Local> 
     pending_until
 }
 
-// Todo Result型を返すようにする
-pub fn yaml_to_task(yaml: &Yaml, now: DateTime<Local>) -> Task {
+#[derive(Debug, Eq, PartialEq)]
+pub(crate) struct YamlConversionError {
+    reason: String,
+}
+
+impl YamlConversionError {
+    fn new(reason: impl Into<String>) -> Self {
+        Self {
+            reason: reason.into(),
+        }
+    }
+}
+
+impl fmt::Display for YamlConversionError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            formatter,
+            "cannot convert project YAML to task: {}",
+            self.reason
+        )
+    }
+}
+
+impl Error for YamlConversionError {}
+
+fn task_children_yaml(yaml: &Yaml) -> Result<&[Yaml], YamlConversionError> {
+    match &yaml["children"] {
+        Yaml::BadValue | Yaml::Null => Ok(&[]),
+        Yaml::Array(children) => Ok(children),
+        _ => Err(YamlConversionError::new(
+            "children must be an array or null",
+        )),
+    }
+}
+
+pub(crate) fn yaml_to_task(yaml: &Yaml, now: DateTime<Local>) -> Result<Task, YamlConversionError> {
+    if yaml.as_hash().is_none() {
+        return Err(YamlConversionError::new("task node must be a mapping"));
+    }
+
     let default_attr = TaskAttr::new("デフォルト用");
     let name: &str = yaml["name"].as_str().unwrap_or("");
 
@@ -372,16 +412,56 @@ pub fn yaml_to_task(yaml: &Yaml, now: DateTime<Local>) -> Task {
 
     parent_task.sync_clock(now);
 
-    for child_yaml in yaml["children"].as_vec().unwrap_or(&vec![]) {
-        let mut child_task = yaml_to_task(child_yaml, now);
+    for child_yaml in task_children_yaml(yaml)? {
+        let mut child_task = yaml_to_task(child_yaml, now)?;
         child_task
             .detach_insert_as_last_child_of(parent_task)
-            .unwrap();
+            .map_err(YamlConversionError::new)?;
 
-        parent_task = child_task.parent().unwrap();
+        parent_task = child_task
+            .parent()
+            .ok_or_else(|| YamlConversionError::new("inserted child has no parent"))?;
     }
 
-    parent_task
+    Ok(parent_task)
+}
+
+#[test]
+fn test_yaml_to_task_childrenが配列でなければerrorを返す() {
+    let docs = YamlLoader::load_from_str(
+        "
+name: '親タスク'
+children: '子タスクではない文字列'
+",
+    )
+    .unwrap();
+
+    let actual = yaml_to_task(&docs[0], Local::now());
+
+    assert!(matches!(
+        actual,
+        Err(YamlConversionError { ref reason })
+            if reason == "children must be an array or null"
+    ));
+}
+
+#[test]
+fn test_yaml_to_task_childがmappingでなければerrorを返す() {
+    let docs = YamlLoader::load_from_str(
+        "
+name: '親タスク'
+children:
+  - 42
+",
+    )
+    .unwrap();
+
+    let actual = yaml_to_task(&docs[0], Local::now());
+
+    assert!(matches!(
+        actual,
+        Err(YamlConversionError { ref reason }) if reason == "task node must be a mapping"
+    ));
 }
 
 #[test]
@@ -395,7 +475,7 @@ status: 'todo'
     let project_yaml: &Yaml = &docs[0];
 
     let now = Local::now();
-    let actual = yaml_to_task(project_yaml, now);
+    let actual = yaml_to_task(project_yaml, now).unwrap();
     let expected = Task::new("タスク1");
     expected.sync_clock(now);
 
@@ -418,7 +498,7 @@ children: []
     let project_yaml: &Yaml = &docs[0];
 
     let now = Local::now();
-    let actual = yaml_to_task(project_yaml, now);
+    let actual = yaml_to_task(project_yaml, now).unwrap();
     let expected = Task::new("タスク1");
     expected.sync_clock(now);
 
@@ -442,7 +522,7 @@ children: []
     let project_yaml: &Yaml = &docs[0];
 
     let now = Local::now();
-    let actual = yaml_to_task(project_yaml, now);
+    let actual = yaml_to_task(project_yaml, now).unwrap();
     let expected = Task::new("タスク1");
     expected.sync_clock(now);
 
@@ -467,7 +547,7 @@ children: []
     let project_yaml: &Yaml = &docs[0];
 
     let now = Local::now();
-    let actual = yaml_to_task(project_yaml, now);
+    let actual = yaml_to_task(project_yaml, now).unwrap();
     let expected = Task::new("タスク1");
     expected.sync_clock(now);
     expected.set_orig_status(Status::Todo);
@@ -491,7 +571,7 @@ children:
     let project_yaml: &Yaml = &docs[0];
 
     let now = Local::now();
-    let actual = yaml_to_task(project_yaml, now);
+    let actual = yaml_to_task(project_yaml, now).unwrap();
     let expected = Task::new("タスク1");
     expected.sync_clock(now);
 
@@ -511,7 +591,7 @@ priority: 5
     let project_yaml: &Yaml = &docs[0];
 
     let now = Local::now();
-    let actual = yaml_to_task(project_yaml, now);
+    let actual = yaml_to_task(project_yaml, now).unwrap();
     let expected = Task::new("タスク1");
     expected.set_priority(5);
     expected.sync_clock(now);
@@ -531,7 +611,7 @@ priority: 'invalid'
     let project_yaml: &Yaml = &docs[0];
 
     let now = Local::now();
-    let actual = yaml_to_task(project_yaml, now);
+    let actual = yaml_to_task(project_yaml, now).unwrap();
     let expected = Task::new("タスク1");
     expected.set_priority(0);
     expected.sync_clock(now);
@@ -556,7 +636,7 @@ category: sustaining
     let project_yaml: &Yaml = &docs[0];
 
     let now = Local::now();
-    let actual = yaml_to_task(project_yaml, now);
+    let actual = yaml_to_task(project_yaml, now).unwrap();
     let expected = Task::new("タスク1");
     expected.set_project_category_opt(Some(ProjectCategory::Sustaining));
     expected.sync_clock(now);
@@ -576,7 +656,7 @@ category:
     let project_yaml: &Yaml = &docs[0];
 
     let now = Local::now();
-    let actual = yaml_to_task(project_yaml, now);
+    let actual = yaml_to_task(project_yaml, now).unwrap();
 
     assert_eq!(actual.get_project_category_opt(), None);
 }
@@ -592,7 +672,7 @@ status: 'todo'
     let project_yaml: &Yaml = &docs[0];
 
     let now = Local::now();
-    let actual = yaml_to_task(project_yaml, now);
+    let actual = yaml_to_task(project_yaml, now).unwrap();
 
     assert_eq!(actual.get_project_category_opt(), None);
 }
@@ -609,7 +689,7 @@ status: 'todo'
     let project_yaml: &Yaml = &docs[0];
 
     let now = Local::now();
-    let actual = yaml_to_task(project_yaml, now);
+    let actual = yaml_to_task(project_yaml, now).unwrap();
     let mut expected = Task::new("タスク1");
     let id: Uuid = uuid!("67e55044-10b1-426f-9247-bb680e5fe0c8");
     expected.set_id(id);
@@ -637,7 +717,7 @@ is_on_other_side: true
     let project_yaml: &Yaml = &docs[0];
 
     let now = Local::now();
-    let actual = yaml_to_task(project_yaml, now);
+    let actual = yaml_to_task(project_yaml, now).unwrap();
     let mut expected = Task::new("タスク1");
     let id: Uuid = uuid!("67e55044-10b1-426f-9247-bb680e5fe0c8");
     expected.set_id(id);
@@ -666,7 +746,7 @@ atomic: true
     let project_yaml: &Yaml = &docs[0];
 
     let now = Local::now();
-    let actual = yaml_to_task(project_yaml, now);
+    let actual = yaml_to_task(project_yaml, now).unwrap();
     let mut expected = Task::new("タスク1");
     let id: Uuid = uuid!("67e55044-10b1-426f-9247-bb680e5fe0c8");
     expected.set_id(id);
@@ -694,7 +774,7 @@ name: 'タスク1'
     let project_yaml: &Yaml = &docs[0];
 
     let now = Local::now();
-    let actual = yaml_to_task(project_yaml, now);
+    let actual = yaml_to_task(project_yaml, now).unwrap();
 
     assert!(!actual.get_atomic());
 }
@@ -711,7 +791,7 @@ create_time: '2023/05/19 01:23:45'
     let project_yaml: &Yaml = &docs[0];
 
     let now = Local.with_ymd_and_hms(2023, 5, 19, 01, 23, 45).unwrap();
-    let actual = yaml_to_task(project_yaml, now);
+    let actual = yaml_to_task(project_yaml, now).unwrap();
     let mut expected = Task::new("タスク1");
     let id: Uuid = uuid!("67e55044-10b1-426f-9247-bb680e5fe0c8");
     expected.set_id(id);
@@ -741,7 +821,7 @@ start_time: '2023/05/19 01:23:45'
     let project_yaml: &Yaml = &docs[0];
 
     let now = Local.with_ymd_and_hms(2023, 5, 19, 01, 23, 45).unwrap();
-    let actual = yaml_to_task(project_yaml, now);
+    let actual = yaml_to_task(project_yaml, now).unwrap();
     let mut expected = Task::new("タスク1");
     let id: Uuid = uuid!("67e55044-10b1-426f-9247-bb680e5fe0c8");
     expected.set_id(id);
@@ -771,7 +851,7 @@ end_time: '2023/05/19 01:23:45'
     let project_yaml: &Yaml = &docs[0];
 
     let now = Local.with_ymd_and_hms(2023, 5, 19, 01, 23, 45).unwrap();
-    let actual = yaml_to_task(project_yaml, now);
+    let actual = yaml_to_task(project_yaml, now).unwrap();
     let mut expected = Task::new("タスク1");
     let id: Uuid = uuid!("67e55044-10b1-426f-9247-bb680e5fe0c8");
     expected.set_id(id);
@@ -800,7 +880,7 @@ deadline_time: '2023/05/19 01:23:45'
     let project_yaml: &Yaml = &docs[0];
 
     let now = Local.with_ymd_and_hms(2023, 5, 19, 01, 23, 45).unwrap();
-    let actual = yaml_to_task(project_yaml, now);
+    let actual = yaml_to_task(project_yaml, now).unwrap();
     let mut expected = Task::new("タスク1");
     let id: Uuid = uuid!("67e55044-10b1-426f-9247-bb680e5fe0c8");
     expected.set_id(id);
@@ -829,7 +909,7 @@ estimated_work_seconds: 5
     let project_yaml: &Yaml = &docs[0];
 
     let now = Local::now();
-    let actual = yaml_to_task(project_yaml, now);
+    let actual = yaml_to_task(project_yaml, now).unwrap();
     let expected = Task::new("タスク1");
     expected.set_estimated_work_seconds(5);
     expected.sync_clock(now);
@@ -849,7 +929,7 @@ actual_work_seconds: 5
     let project_yaml: &Yaml = &docs[0];
 
     let now = Local::now();
-    let actual = yaml_to_task(project_yaml, now);
+    let actual = yaml_to_task(project_yaml, now).unwrap();
     let expected = Task::new("タスク1");
     expected.set_actual_work_seconds(5);
     expected.sync_clock(now);
@@ -869,7 +949,7 @@ repetition_interval_days: 7
     let project_yaml: &Yaml = &docs[0];
 
     let now = Local::now();
-    let actual = yaml_to_task(project_yaml, now);
+    let actual = yaml_to_task(project_yaml, now).unwrap();
     let expected = Task::new("タスク1");
     expected.set_repetition_interval_days_opt(Some(7));
 
@@ -895,7 +975,7 @@ repetition_anchor: completion
     let project_yaml: &Yaml = &docs[0];
 
     let now = Local::now();
-    let actual = yaml_to_task(project_yaml, now);
+    let actual = yaml_to_task(project_yaml, now).unwrap();
     let expected = Task::new("タスク1");
     expected.set_repetition_anchor(RepetitionAnchor::Completion);
     expected.sync_clock(now);
@@ -914,7 +994,7 @@ status: 'todo'
     let project_yaml: &Yaml = &docs[0];
 
     let now = Local::now();
-    let actual = yaml_to_task(project_yaml, now);
+    let actual = yaml_to_task(project_yaml, now).unwrap();
     let expected = Task::new("タスク1");
     expected.set_repetition_anchor(RepetitionAnchor::Deadline);
     expected.sync_clock(now);
@@ -934,7 +1014,7 @@ repetition_anchor: invalid
     let project_yaml: &Yaml = &docs[0];
 
     let now = Local::now();
-    let actual = yaml_to_task(project_yaml, now);
+    let actual = yaml_to_task(project_yaml, now).unwrap();
     let expected = Task::new("タスク1");
     expected.set_repetition_anchor(RepetitionAnchor::Deadline);
     expected.sync_clock(now);
@@ -954,7 +1034,7 @@ days_in_advance: 1
     let project_yaml: &Yaml = &docs[0];
 
     let now = Local::now();
-    let actual = yaml_to_task(project_yaml, now);
+    let actual = yaml_to_task(project_yaml, now).unwrap();
     let expected = Task::new("タスク1");
     expected.set_days_in_advance(1);
     expected.sync_clock(now);
@@ -973,7 +1053,7 @@ children:
     let project_yaml: &Yaml = &docs[0];
 
     let now = Local::now();
-    let actual = yaml_to_task(project_yaml, now);
+    let actual = yaml_to_task(project_yaml, now).unwrap();
 
     let parent_task = Task::new("親タスク");
     parent_task.sync_clock(now);
@@ -998,7 +1078,7 @@ children:
     let project_yaml: &Yaml = &docs[0];
 
     let now = Local::now();
-    let actual_task = yaml_to_task(project_yaml, now);
+    let actual_task = yaml_to_task(project_yaml, now).unwrap();
 
     let parent_task = Task::new("親タスク");
     parent_task.sync_clock(now);
