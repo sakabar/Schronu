@@ -127,24 +127,39 @@ impl StorageLock {
         mode: LockMode,
         timeout: Duration,
     ) -> Result<Self, StorageLockError> {
-        let started_at = Instant::now();
-        loop {
-            match Self::acquire(storage_directory, mode) {
-                Ok(storage_lock) => return Ok(storage_lock),
-                Err(error) if error.kind() == StorageLockErrorKind::Contended => {
-                    let elapsed = started_at.elapsed();
-                    if elapsed >= timeout {
-                        return Err(error);
-                    }
-                    std::thread::sleep(LOCK_RETRY_INTERVAL.min(timeout - elapsed));
-                }
-                Err(error) => return Err(error),
-            }
-        }
+        retry_contended_with_timeout(timeout, || Self::acquire(storage_directory, mode))
     }
 
     pub fn path(&self) -> &Path {
         &self.path
+    }
+}
+
+fn retry_contended_with_timeout<T>(
+    timeout: Duration,
+    mut operation: impl FnMut() -> Result<T, StorageLockError>,
+) -> Result<T, StorageLockError> {
+    let started_at = Instant::now();
+    let mut last_contended_error = None;
+    loop {
+        if let Some(error) = last_contended_error.take() {
+            if started_at.elapsed() >= timeout {
+                return Err(error);
+            }
+        }
+        match operation() {
+            Ok(value) => return Ok(value),
+            Err(error) if error.kind() == StorageLockErrorKind::Contended => {
+                let elapsed = started_at.elapsed();
+                if elapsed >= timeout {
+                    return Err(error);
+                }
+                let sleep_duration = LOCK_RETRY_INTERVAL.min(timeout - elapsed);
+                last_contended_error = Some(error);
+                std::thread::sleep(sleep_duration);
+            }
+            Err(error) => return Err(error),
+        }
     }
 }
 
@@ -332,6 +347,32 @@ mod tests {
         assert_eq!(error.path(), lock_path);
         assert_ne!(source_kind(&error), ErrorKind::WouldBlock);
         assert_eq!(fs::read_to_string(sentinel).unwrap(), "unchanged");
+    }
+
+    #[test]
+    fn storage_lock_timeout到達後は再取得しない() {
+        let path = Path::new("tasks/.lock");
+        let mut attempt_count = 0;
+
+        let result: Result<(), _> =
+            super::retry_contended_with_timeout(Duration::from_millis(1), || {
+                attempt_count += 1;
+                if attempt_count == 1 {
+                    Err(super::classify_lock_attempt_error(
+                        path,
+                        std::io::Error::from(ErrorKind::WouldBlock),
+                    ))
+                } else {
+                    Err(super::classify_lock_attempt_error(
+                        path,
+                        std::io::Error::from(ErrorKind::PermissionDenied),
+                    ))
+                }
+            });
+        let error = result.unwrap_err();
+
+        assert_eq!(attempt_count, 1);
+        assert_eq!(error.kind(), StorageLockErrorKind::Contended);
     }
 
     #[cfg(unix)]
