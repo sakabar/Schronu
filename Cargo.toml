@@ -11,6 +11,8 @@ dendron = "0.1.5"
 linked-hash-map = "0.5.6"
 percent-encoding = "2.2.0"
 regex = "1.8.1"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
 termion = "2.0.1"
 unicode-width = "0.1.10"
 url = "2.3.1"
