@@ -2447,6 +2447,7 @@ mod tests {
         let repository = RecordingRepository::new(vec![]).with_save_failure();
         let save_count = Rc::clone(&repository.save_count);
         let mutation_count = Rc::clone(&repository.mutation_count);
+        let sync_clock_times = Rc::clone(&repository.sync_clock_times);
         let mut server = initialized_server(repository);
 
         let response = server
@@ -2471,6 +2472,27 @@ mod tests {
             .is_empty());
         assert_eq!(save_count.get(), 1);
         assert_eq!(mutation_count.get(), 1);
+        assert_eq!(sync_clock_times.borrow().len(), 1);
+
+        let poisoned_calls = [
+            tool_call_request("read-after-save-failure", "list_tasks", json!({})),
+            tool_call_request(
+                "write-after-save-failure",
+                "create_task",
+                json!({"name": "must not be created"}),
+            ),
+            tool_call_request("unknown-after-save-failure", "unknown_tool", json!({})),
+            tool_call_request("invalid-after-save-failure", "get_task", json!({})),
+        ];
+        for request in poisoned_calls {
+            let expected_id = request["id"].clone();
+            let response = server.handle_request(request).unwrap();
+            assert_repository_state_uncertain_response(&response, &expected_id);
+        }
+
+        assert_eq!(save_count.get(), 1);
+        assert_eq!(mutation_count.get(), 1);
+        assert_eq!(sync_clock_times.borrow().len(), 1);
     }
 
     #[test]
@@ -2659,6 +2681,7 @@ mod tests {
     fn breakdown_task_save失敗を成功扱いしない() {
         let parent = Task::new("parent");
         let parent_id = parent.get_id();
+        let parent_observer = parent.clone();
         let repository = RecordingRepository::new(vec![parent]).with_save_failure();
         let save_count = Rc::clone(&repository.save_count);
         let mut server = initialized_server(repository);
@@ -2684,6 +2707,7 @@ mod tests {
             .unwrap()
             .is_empty());
         assert_eq!(save_count.get(), 1);
+        assert_eq!(parent_observer.get_children().len(), 1);
 
         let parent_response = server
             .handle_request(tool_call_request(
@@ -2692,12 +2716,9 @@ mod tests {
                 json!({"task_id": parent_id.to_string()}),
             ))
             .unwrap();
-        assert_eq!(
-            parent_response["result"]["structuredContent"]["task"]["child_ids"]
-                .as_array()
-                .unwrap()
-                .len(),
-            1
+        assert_repository_state_uncertain_response(
+            &parent_response,
+            &json!("parent-after-save-failure"),
         );
     }
 
@@ -2862,6 +2883,7 @@ mod tests {
         let pending_until = fixed_now() + Duration::hours(18);
         let task = Task::new("deferred task");
         let task_id = task.get_id();
+        let task_observer = task.clone();
         let repository = RecordingRepository::new(vec![task]).with_save_failure();
         let save_count = Rc::clone(&repository.save_count);
         let mut server = initialized_server(repository);
@@ -2890,6 +2912,8 @@ mod tests {
             .unwrap()
             .is_empty());
         assert_eq!(save_count.get(), 1);
+        assert_eq!(task_observer.get_orig_status(), Status::Pending);
+        assert_eq!(task_observer.get_pending_until(), pending_until);
 
         let task_response = server
             .handle_request(tool_call_request(
@@ -2898,9 +2922,10 @@ mod tests {
                 json!({"task_id": task_id.to_string()}),
             ))
             .unwrap();
-        let deferred = &task_response["result"]["structuredContent"]["task"];
-        assert_eq!(deferred["original_status"], "pending");
-        assert_eq!(deferred["pending_until"], pending_until.to_rfc3339());
+        assert_repository_state_uncertain_response(
+            &task_response,
+            &json!("deferred-after-save-failure"),
+        );
     }
 
     #[test]
@@ -3192,6 +3217,7 @@ mod tests {
     fn complete_task_save失敗を成功扱いしない() {
         let task = Task::new("completed task");
         let task_id = task.get_id();
+        let task_observer = task.clone();
         let repository = RecordingRepository::new(vec![task]).with_save_failure();
         let save_count = Rc::clone(&repository.save_count);
         let mut server = initialized_server(repository);
@@ -3217,6 +3243,7 @@ mod tests {
             .unwrap()
             .is_empty());
         assert_eq!(save_count.get(), 1);
+        assert_eq!(task_observer.get_orig_status(), Status::Done);
         let task_response = server
             .handle_request(tool_call_request(
                 "completed-after-save-failure",
@@ -3224,9 +3251,9 @@ mod tests {
                 json!({"task_id": task_id.to_string()}),
             ))
             .unwrap();
-        assert_eq!(
-            task_response["result"]["structuredContent"]["task"]["original_status"],
-            "done"
+        assert_repository_state_uncertain_response(
+            &task_response,
+            &json!("completed-after-save-failure"),
         );
     }
 
@@ -3523,6 +3550,7 @@ mod tests {
     fn update_task_save失敗を成功扱いしない() {
         let task = Task::new("updated before save failure");
         let task_id = task.get_id();
+        let task_observer = task.clone();
         let repository = RecordingRepository::new(vec![task]).with_save_failure();
         let save_count = Rc::clone(&repository.save_count);
         let mut server = initialized_server(repository);
@@ -3548,6 +3576,7 @@ mod tests {
             .unwrap()
             .is_empty());
         assert_eq!(save_count.get(), 1);
+        assert_eq!(task_observer.get_estimated_work_seconds(), 20 * 60);
         let task_response = server
             .handle_request(tool_call_request(
                 "updated-after-save-failure",
@@ -3555,9 +3584,9 @@ mod tests {
                 json!({"task_id": task_id.to_string()}),
             ))
             .unwrap();
-        assert_eq!(
-            task_response["result"]["structuredContent"]["task"]["estimated_work_seconds"],
-            20 * 60
+        assert_repository_state_uncertain_response(
+            &task_response,
+            &json!("updated-after-save-failure"),
         );
     }
 
@@ -3633,6 +3662,25 @@ mod tests {
         assert_eq!(
             serde_json::from_str::<serde_json::Value>(content).unwrap(),
             response["result"]["structuredContent"]
+        );
+    }
+
+    fn assert_repository_state_uncertain_response(
+        response: &serde_json::Value,
+        expected_id: &serde_json::Value,
+    ) {
+        assert_eq!(response["jsonrpc"], "2.0");
+        assert_eq!(&response["id"], expected_id);
+        assert_eq!(response["result"]["isError"], true);
+        assert_tool_result_content_matches_structured(response);
+        let error = &response["result"]["structuredContent"]["error"];
+        assert_eq!(error["code"], "repository_state_uncertain");
+        assert_eq!(error["recovery"], "restart_server");
+        let message = error["message"].as_str().unwrap();
+        assert!(!message.is_empty());
+        assert!(
+            message.to_ascii_lowercase().contains("restart"),
+            "{message}"
         );
     }
 

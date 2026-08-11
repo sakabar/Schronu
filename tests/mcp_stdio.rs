@@ -496,6 +496,24 @@ fn mcp_stdio_実repositoryのsave失敗をtool_errorにする() {
                 "arguments": {"name": "cannot save"}
             }
         }),
+        json!({
+            "jsonrpc": "2.0",
+            "id": "read-after-save-failure",
+            "method": "tools/call",
+            "params": {
+                "name": "list_tasks",
+                "arguments": {}
+            }
+        }),
+        json!({
+            "jsonrpc": "2.0",
+            "id": "write-after-save-failure",
+            "method": "tools/call",
+            "params": {
+                "name": "create_task",
+                "arguments": {"name": "must not be created"}
+            }
+        }),
     ];
     {
         let stdin = child.stdin.as_mut().unwrap();
@@ -517,13 +535,33 @@ fn mcp_stdio_実repositoryのsave失敗をtool_errorにする() {
         .lines()
         .map(|line| serde_json::from_str::<Value>(line).unwrap())
         .collect::<Vec<_>>();
-    assert_eq!(responses.len(), 2);
+    assert_eq!(responses.len(), 4);
     assert_eq!(responses[1]["id"], "save-failure");
     assert_eq!(responses[1]["result"]["isError"], true);
     assert_eq!(
         responses[1]["result"]["structuredContent"]["error"]["code"],
         "repository_save_failed"
     );
+    for (response, expected_id) in [
+        (&responses[2], "read-after-save-failure"),
+        (&responses[3], "write-after-save-failure"),
+    ] {
+        assert_eq!(response["jsonrpc"], "2.0");
+        assert_eq!(response["id"], expected_id);
+        assert_eq!(response["result"]["isError"], true);
+        let structured = &response["result"]["structuredContent"];
+        let content = response["result"]["content"][0]["text"].as_str().unwrap();
+        assert_eq!(serde_json::from_str::<Value>(content).unwrap(), *structured);
+        let error = &structured["error"];
+        assert_eq!(error["code"], "repository_state_uncertain");
+        assert_eq!(error["recovery"], "restart_server");
+        let message = error["message"].as_str().unwrap();
+        assert!(!message.is_empty());
+        assert!(
+            message.to_ascii_lowercase().contains("restart"),
+            "{message}"
+        );
+    }
 }
 
 fn call_tool(storage_directory: &Path, id: &str, name: &str, arguments: Option<Value>) -> Value {
