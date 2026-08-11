@@ -6088,6 +6088,62 @@ fn execute_show_all_command_for_test(command: &str, now: DateTime<Local>, task: 
     String::from_utf8(stdout.buffer).unwrap()
 }
 
+#[cfg(test)]
+fn execute_calendar_command_for_test(
+    command: &str,
+    now: DateTime<Local>,
+    task: Task,
+    free_minutes: i64,
+) -> String {
+    let mut task_repository = TestTaskRepository::new(task, now);
+    let mut free_time_manager = TestFreeTimeManagerWithFreeMinutes { free_minutes };
+    let mut focused_task_id_opt = None;
+    let mut stdout = TestWriter::new();
+
+    execute(
+        &mut stdout,
+        &mut task_repository,
+        &mut free_time_manager,
+        &mut focused_task_id_opt,
+        &now,
+        command,
+    );
+
+    String::from_utf8(stdout.buffer).unwrap()
+}
+
+#[test]
+fn test_execute_calendar_現行出力を固定する() {
+    let now = Local.with_ymd_and_hms(2026, 8, 11, 12, 0, 0).unwrap();
+    let task = Task::new("暦出力固定用タスク");
+    task.set_estimated_work_seconds(60 * 60);
+    task.set_start_time(now);
+    task.set_pending_until(now);
+    task.set_orig_status(Status::Pending);
+
+    let actual = execute_calendar_command_for_test("暦", now, task.clone(), 10 * 60);
+    let expected = concat!(
+        "2026-08-11(火)\t10.0時間\t-9時間00分     \t-0.90\t-6時間00分\t-06時間00分\t-10時間00分\t-1.00\t-09時間00分\t 10時間00分\t-0.90\t01[タスク]\n",
+        "日          \t空          \t空差      \t空差比\t余差    \t余差累    \t〆差      \t〆差比\t空差累    \t単発余暇\t空差累比\tタスク数\n",
+        "\n",
+        "今のタスクが片付く日付: 4160日後の2037-12-31\n",
+        "最大の累積時間: -09時間00分 (2026-08-11), 最大のrhoの差: -1.00 (1900-01-01), 次にタスクを積める日付: 0日後の2026-08-11 (-6時間00分)\n",
+        "\n",
+        "[Info] 順調です。突発タスクに対応したり1日の終わり際にタスクを新しく積んだりする余裕があります。ひとまずは脇道に逸れずに予定の遂行をしてください。\n",
+        "\n",
+        "残り拘束時間は0.0時間です\n",
+        "完了見込み日時は1.0時間後の2026/08/11 13:00:00です\n",
+        "rep ρ = (1.00 + 0.00) / (1.00 + 0.00 + 11 + 30/60) = 0.08, Lq = 0.1\n",
+        "one ρ = (1.00 + 0.00) / (1.00 + 0.00 + 11 + 30/60) = 0.08, Lq = 0.1\n",
+        "\n",
+    );
+
+    assert_eq!(actual, expected);
+
+    let english_alias = execute_calendar_command_for_test("cal", now, task, 10 * 60);
+    assert_eq!(english_alias, expected);
+}
+
 #[test]
 fn test_execute_show_all_年なし日付は完全日付と同じ予定を表示する() {
     let now = Local.with_ymd_and_hms(2026, 8, 11, 12, 0, 0).unwrap();
