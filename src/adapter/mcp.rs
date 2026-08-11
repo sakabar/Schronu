@@ -1144,6 +1144,252 @@ mod tests {
         assert_eq!(mutation_count.get(), 0);
     }
 
+    #[test]
+    fn list_tasks_期間status_categoryで絞ってrepositoryを変更しない() {
+        let matching = task_for_list(
+            "matching",
+            Status::Pending,
+            ProjectCategory::Recovery,
+            Local.with_ymd_and_hms(2026, 8, 10, 9, 0, 0).unwrap(),
+        );
+        let matching_id = matching.get_id();
+        let wrong_status = task_for_list(
+            "wrong status",
+            Status::Todo,
+            ProjectCategory::Recovery,
+            Local.with_ymd_and_hms(2026, 8, 10, 10, 0, 0).unwrap(),
+        );
+        let wrong_category = task_for_list(
+            "wrong category",
+            Status::Pending,
+            ProjectCategory::Investment,
+            Local.with_ymd_and_hms(2026, 8, 10, 11, 0, 0).unwrap(),
+        );
+        let outside_period = task_for_list(
+            "outside period",
+            Status::Pending,
+            ProjectCategory::Recovery,
+            Local.with_ymd_and_hms(2026, 8, 9, 23, 59, 59).unwrap(),
+        );
+        let repository =
+            RecordingRepository::new(vec![matching, wrong_status, wrong_category, outside_period]);
+        let save_count = Rc::clone(&repository.save_count);
+        let mutation_count = Rc::clone(&repository.mutation_count);
+        let mut server = initialized_server(repository);
+
+        let response = server
+            .handle_request(tool_call_request(
+                "list-filtered",
+                "list_tasks",
+                json!({
+                    "period": {
+                        "field": "created_at",
+                        "from": "2026-08-10T00:00:00+09:00",
+                        "until": "2026-08-11T00:00:00+09:00"
+                    },
+                    "statuses": ["pending"],
+                    "categories": ["recovery"]
+                }),
+            ))
+            .unwrap();
+
+        assert_eq!(response["jsonrpc"], "2.0");
+        assert_eq!(response["id"], "list-filtered");
+        assert_eq!(response["result"]["isError"], false);
+        assert_tool_result_content_matches_structured(&response);
+        let tasks = response["result"]["structuredContent"]["tasks"]
+            .as_array()
+            .unwrap();
+        assert_eq!(tasks.len(), 1);
+        assert_eq!(tasks[0]["id"], matching_id.to_string());
+        assert_eq!(tasks[0]["name"], "matching");
+        assert_eq!(tasks[0]["status"], "pending");
+        assert_eq!(tasks[0]["project_category"], "recovery");
+        assert_eq!(save_count.get(), 0);
+        assert_eq!(mutation_count.get(), 0);
+    }
+
+    #[test]
+    fn list_tasks_arguments省略で全taskを返す() {
+        let first = Task::new("first");
+        let first_id = first.get_id();
+        let child = first.create_as_last_child(TaskAttr::new("child"));
+        let child_id = child.get_id();
+        let second = Task::new("second");
+        let second_id = second.get_id();
+        let repository = RecordingRepository::new(vec![first, second]);
+        let save_count = Rc::clone(&repository.save_count);
+        let mutation_count = Rc::clone(&repository.mutation_count);
+        let mut server = initialized_server(repository);
+
+        let response = server
+            .handle_request(json!({
+                "jsonrpc": "2.0",
+                "id": "list-all",
+                "method": "tools/call",
+                "params": {"name": "list_tasks"}
+            }))
+            .unwrap();
+
+        assert_eq!(response["result"]["isError"], false);
+        assert_tool_result_content_matches_structured(&response);
+        let ids = response["result"]["structuredContent"]["tasks"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|task| task["id"].as_str().unwrap())
+            .collect::<Vec<_>>();
+        assert_eq!(
+            ids,
+            vec![
+                first_id.to_string(),
+                child_id.to_string(),
+                second_id.to_string()
+            ]
+        );
+        assert_eq!(save_count.get(), 0);
+        assert_eq!(mutation_count.get(), 0);
+    }
+
+    #[test]
+    fn list_tasks_null_categoryで未分類taskを絞る() {
+        let uncategorized = Task::new("uncategorized");
+        let uncategorized_id = uncategorized.get_id();
+        let categorized = Task::new("categorized");
+        categorized.set_project_category_opt(Some(ProjectCategory::Recovery));
+        let repository = RecordingRepository::new(vec![uncategorized, categorized]);
+        let save_count = Rc::clone(&repository.save_count);
+        let mutation_count = Rc::clone(&repository.mutation_count);
+        let mut server = initialized_server(repository);
+
+        let response = server
+            .handle_request(tool_call_request(
+                "list-uncategorized",
+                "list_tasks",
+                json!({"categories": [null]}),
+            ))
+            .unwrap();
+
+        assert_eq!(response["result"]["isError"], false);
+        assert_tool_result_content_matches_structured(&response);
+        let tasks = response["result"]["structuredContent"]["tasks"]
+            .as_array()
+            .unwrap();
+        assert_eq!(tasks.len(), 1);
+        assert_eq!(tasks[0]["id"], uncategorized_id.to_string());
+        assert_eq!(tasks[0]["project_category"], serde_json::Value::Null);
+        assert_eq!(save_count.get(), 0);
+        assert_eq!(mutation_count.get(), 0);
+    }
+
+    #[test]
+    fn list_tasks_schema違反をinvalid_paramsで返す() {
+        let cases = [
+            ("statuses-type", json!({"statuses": "pending"}), "statuses"),
+            (
+                "status-value",
+                json!({"statuses": ["invalid"]}),
+                "statuses[0]",
+            ),
+            (
+                "category-value",
+                json!({"categories": ["invalid"]}),
+                "categories[0]",
+            ),
+            (
+                "period-required",
+                json!({
+                    "period": {
+                        "field": "created_at",
+                        "from": "2026-08-10T00:00:00+09:00"
+                    }
+                }),
+                "period.until",
+            ),
+            ("extra", json!({"extra": true}), "arguments.extra"),
+        ];
+
+        for (id, arguments, field) in cases {
+            let repository = RecordingRepository::new(vec![]);
+            let save_count = Rc::clone(&repository.save_count);
+            let mutation_count = Rc::clone(&repository.mutation_count);
+            let mut server = initialized_server(repository);
+            let response = server
+                .handle_request(tool_call_request(id, "list_tasks", arguments))
+                .unwrap();
+
+            assert_eq!(response["jsonrpc"], "2.0");
+            assert_eq!(response["id"], id);
+            assert_eq!(response["error"]["code"], -32602);
+            assert_eq!(response["error"]["message"], "Invalid params");
+            assert_eq!(response["error"]["data"]["code"], "invalid_input");
+            assert_eq!(response["error"]["data"]["field"], field);
+            assert!(!response["error"]["data"]["reason"]
+                .as_str()
+                .unwrap()
+                .is_empty());
+            assert_eq!(save_count.get(), 0);
+            assert_eq!(mutation_count.get(), 0);
+        }
+    }
+
+    #[test]
+    fn list_tasks_不正日時と逆転期間をstructured_errorで返す() {
+        let cases = [
+            (
+                "invalid-date",
+                json!({
+                    "period": {
+                        "field": "created_at",
+                        "from": "not-a-date",
+                        "until": "2026-08-11T00:00:00+09:00"
+                    }
+                }),
+                "period.from",
+            ),
+            (
+                "reversed-period",
+                json!({
+                    "period": {
+                        "field": "created_at",
+                        "from": "2026-08-11T00:00:00+09:00",
+                        "until": "2026-08-10T00:00:00+09:00"
+                    }
+                }),
+                "period",
+            ),
+        ];
+
+        for (id, arguments, field) in cases {
+            let repository = RecordingRepository::new(vec![]);
+            let save_count = Rc::clone(&repository.save_count);
+            let mutation_count = Rc::clone(&repository.mutation_count);
+            let mut server = initialized_server(repository);
+            let response = server
+                .handle_request(tool_call_request(id, "list_tasks", arguments))
+                .unwrap();
+
+            assert_eq!(response["jsonrpc"], "2.0");
+            assert_eq!(response["id"], id);
+            assert_eq!(response["result"]["isError"], true);
+            assert_tool_result_content_matches_structured(&response);
+            assert_eq!(
+                response["result"]["structuredContent"]["error"]["code"],
+                "invalid_input"
+            );
+            assert_eq!(
+                response["result"]["structuredContent"]["error"]["field"],
+                field
+            );
+            assert!(!response["result"]["structuredContent"]["error"]["message"]
+                .as_str()
+                .unwrap()
+                .is_empty());
+            assert_eq!(save_count.get(), 0);
+            assert_eq!(mutation_count.get(), 0);
+        }
+    }
+
     fn initialize_request() -> serde_json::Value {
         json!({
             "jsonrpc": "2.0",
@@ -1178,6 +1424,24 @@ mod tests {
 
     fn fixed_now() -> DateTime<Local> {
         Local.with_ymd_and_hms(2026, 8, 11, 12, 0, 0).unwrap()
+    }
+
+    fn task_for_list(
+        name: &str,
+        status: Status,
+        category: ProjectCategory,
+        create_time: DateTime<Local>,
+    ) -> Task {
+        let task = Task::new(name);
+        task.set_orig_status(status);
+        if status == Status::Pending {
+            task.set_pending_until(Local.with_ymd_and_hms(2026, 8, 12, 6, 0, 0).unwrap());
+        }
+        task.set_project_category_opt(Some(category));
+        task.set_create_time(create_time);
+        task.set_start_time(create_time);
+        task.sync_clock(fixed_now());
+        task
     }
 
     fn sorted_object_keys(value: &serde_json::Value) -> Vec<&str> {
