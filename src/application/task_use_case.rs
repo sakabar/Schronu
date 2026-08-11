@@ -68,6 +68,10 @@ pub enum ApplicationError {
         reason: &'static str,
     },
     HasUndoneChildren(Uuid),
+    Repository {
+        operation: &'static str,
+        reason: String,
+    },
 }
 
 impl fmt::Display for ApplicationError {
@@ -79,6 +83,9 @@ impl fmt::Display for ApplicationError {
             }
             Self::HasUndoneChildren(task_id) => {
                 write!(formatter, "task has undone children: {task_id}")
+            }
+            Self::Repository { operation, reason } => {
+                write!(formatter, "repository {operation} failed: {reason}")
             }
         }
     }
@@ -143,16 +150,21 @@ pub fn create_task(
     }
 
     if let Some(estimated_work_minutes) = input.estimated_work_minutes {
-        root_task.set_estimated_work_seconds(estimated_work_minutes * 60);
+        root_task.set_estimated_work_seconds(minutes_to_seconds(estimated_work_minutes)?);
     }
 
     let task_id = root_task.get_id();
-    repository.start_new_project(root_task);
+    repository
+        .start_new_project(root_task)
+        .map_err(|error| ApplicationError::Repository {
+            operation: "start_new_project",
+            reason: error.reason,
+        })?;
     Ok(task_id)
 }
 
 pub fn breakdown_task(
-    repository: &dyn TaskRepositoryTrait,
+    repository: &mut dyn TaskRepositoryTrait,
     input: BreakdownTaskInput,
 ) -> Result<Vec<Uuid>, ApplicationError> {
     if input.names.is_empty() {
@@ -189,7 +201,7 @@ pub fn breakdown_task(
 }
 
 pub fn defer_task(
-    repository: &dyn TaskRepositoryTrait,
+    repository: &mut dyn TaskRepositoryTrait,
     task_id: Uuid,
     pending_until: DateTime<Local>,
 ) -> Result<(), ApplicationError> {
@@ -200,7 +212,7 @@ pub fn defer_task(
 }
 
 pub fn complete_task(
-    repository: &dyn TaskRepositoryTrait,
+    repository: &mut dyn TaskRepositoryTrait,
     input: CompleteTaskInput,
 ) -> Result<CompleteTaskOutput, ApplicationError> {
     let task = find_task(repository, input.task_id)?;
@@ -208,9 +220,21 @@ pub fn complete_task(
         return Err(ApplicationError::HasUndoneChildren(input.task_id));
     }
 
-    task.set_actual_work_seconds(
-        task.get_actual_work_seconds() + input.additional_actual_work_seconds,
-    );
+    if input.additional_actual_work_seconds < 0 {
+        return Err(ApplicationError::InvalidInput {
+            field: "additional_actual_work_seconds",
+            reason: "must not be negative",
+        });
+    }
+    let actual_work_seconds = task
+        .get_actual_work_seconds()
+        .checked_add(input.additional_actual_work_seconds)
+        .ok_or(ApplicationError::InvalidInput {
+            field: "additional_actual_work_seconds",
+            reason: "actual work seconds overflow",
+        })?;
+
+    task.set_actual_work_seconds(actual_work_seconds);
     task.set_orig_status(Status::Done);
     task.set_end_time_opt(Some(input.finished_at));
 
@@ -228,17 +252,18 @@ pub fn complete_task(
 }
 
 pub fn set_estimate(
-    repository: &dyn TaskRepositoryTrait,
+    repository: &mut dyn TaskRepositoryTrait,
     task_id: Uuid,
     estimated_work_minutes: i64,
 ) -> Result<(), ApplicationError> {
+    let estimated_work_seconds = minutes_to_seconds(estimated_work_minutes)?;
     let task = find_task(repository, task_id)?;
-    task.set_estimated_work_seconds(estimated_work_minutes * 60);
+    task.set_estimated_work_seconds(estimated_work_seconds);
     Ok(())
 }
 
 pub fn set_deadline(
-    repository: &dyn TaskRepositoryTrait,
+    repository: &mut dyn TaskRepositoryTrait,
     task_id: Uuid,
     deadline_time: Option<DateTime<Local>>,
 ) -> Result<(), ApplicationError> {
@@ -251,7 +276,7 @@ pub fn set_deadline(
 }
 
 pub fn set_category(
-    repository: &dyn TaskRepositoryTrait,
+    repository: &mut dyn TaskRepositoryTrait,
     task_id: Uuid,
     project_category: Option<ProjectCategory>,
 ) -> Result<(), ApplicationError> {
@@ -267,6 +292,22 @@ fn find_task(
     repository
         .get_by_id(task_id)
         .ok_or(ApplicationError::TaskNotFound(task_id))
+}
+
+fn minutes_to_seconds(minutes: i64) -> Result<i64, ApplicationError> {
+    if minutes < 0 {
+        return Err(ApplicationError::InvalidInput {
+            field: "estimated_work_minutes",
+            reason: "must not be negative",
+        });
+    }
+
+    minutes
+        .checked_mul(60)
+        .ok_or(ApplicationError::InvalidInput {
+            field: "estimated_work_minutes",
+            reason: "seconds conversion overflow",
+        })
 }
 
 fn create_next_repetition_task(task: &Task, finished_at: DateTime<Local>) -> Option<Uuid> {
@@ -417,9 +458,17 @@ mod tests {
             self.projects.iter().find_map(|task| task.get_by_id(id))
         }
 
-        fn start_new_project(&mut self, root_task: Task) {
+        fn start_new_project(
+            &mut self,
+            root_task: Task,
+        ) -> Result<(), crate::application::interface::TaskRepositoryError> {
             if self.accepts_new_projects {
                 self.projects.push(root_task);
+                Ok(())
+            } else {
+                Err(crate::application::interface::TaskRepositoryError {
+                    reason: "test repository rejected project".to_string(),
+                })
             }
         }
     }
@@ -593,10 +642,10 @@ mod tests {
         let parent = Task::new("親");
         let deadline = Local.with_ymd_and_hms(2026, 8, 20, 23, 59, 59).unwrap();
         parent.set_deadline_time_opt(Some(deadline));
-        let repository = TestTaskRepository::new(vec![parent.clone()], fixed_now());
+        let mut repository = TestTaskRepository::new(vec![parent.clone()], fixed_now());
 
         let child_ids = breakdown_task(
-            &repository,
+            &mut repository,
             BreakdownTaskInput {
                 parent_id: parent.get_id(),
                 names: vec!["一".to_string(), "二".to_string()],
@@ -623,10 +672,10 @@ mod tests {
     #[test]
     fn breakdown_task_数値名を含む場合は変更しない() {
         let parent = Task::new("親");
-        let repository = TestTaskRepository::new(vec![parent.clone()], fixed_now());
+        let mut repository = TestTaskRepository::new(vec![parent.clone()], fixed_now());
 
         let actual = breakdown_task(
-            &repository,
+            &mut repository,
             BreakdownTaskInput {
                 parent_id: parent.get_id(),
                 names: vec!["子".to_string(), "10".to_string()],
@@ -641,10 +690,10 @@ mod tests {
     #[test]
     fn breakdown_task_空の名前一覧を拒否して変更しない() {
         let parent = Task::new("親");
-        let repository = TestTaskRepository::new(vec![parent.clone()], fixed_now());
+        let mut repository = TestTaskRepository::new(vec![parent.clone()], fixed_now());
 
         let actual = breakdown_task(
-            &repository,
+            &mut repository,
             BreakdownTaskInput {
                 parent_id: parent.get_id(),
                 names: vec![],
@@ -663,10 +712,10 @@ mod tests {
     fn defer_task_絶対時刻までpendingにする() {
         let task = Task::new("延期");
         let task_id = task.get_id();
-        let repository = TestTaskRepository::new(vec![task], fixed_now());
+        let mut repository = TestTaskRepository::new(vec![task], fixed_now());
         let pending_until = Local.with_ymd_and_hms(2026, 8, 13, 6, 0, 1).unwrap();
 
-        defer_task(&repository, task_id, pending_until).unwrap();
+        defer_task(&mut repository, task_id, pending_until).unwrap();
 
         let task = repository.get_by_id(task_id).unwrap();
         assert_eq!(task.get_orig_status(), Status::Pending);
@@ -678,10 +727,10 @@ mod tests {
         let task = Task::new("親");
         task.create_as_last_child(TaskAttr::new("未完了"));
         let task_id = task.get_id();
-        let repository = TestTaskRepository::new(vec![task], fixed_now());
+        let mut repository = TestTaskRepository::new(vec![task], fixed_now());
 
         let actual = complete_task(
-            &repository,
+            &mut repository,
             CompleteTaskInput {
                 task_id,
                 finished_at: fixed_now(),
@@ -700,10 +749,10 @@ mod tests {
         let task = Task::new("完了");
         task.set_actual_work_seconds(60);
         let task_id = task.get_id();
-        let repository = TestTaskRepository::new(vec![task], fixed_now());
+        let mut repository = TestTaskRepository::new(vec![task], fixed_now());
 
         let output = complete_task(
-            &repository,
+            &mut repository,
             CompleteTaskInput {
                 task_id,
                 finished_at: fixed_now(),
@@ -728,10 +777,10 @@ mod tests {
         let child = parent.create_as_last_child(TaskAttr::new("今回"));
         child.set_actual_work_seconds(1000);
         let child_id = child.get_id();
-        let repository = TestTaskRepository::new(vec![parent.clone()], fixed_now());
+        let mut repository = TestTaskRepository::new(vec![parent.clone()], fixed_now());
 
         let output = complete_task(
-            &repository,
+            &mut repository,
             CompleteTaskInput {
                 task_id: child_id,
                 finished_at: fixed_now(),
@@ -750,10 +799,10 @@ mod tests {
         let task = Task::new("完了対象");
         task.set_actual_work_seconds(120);
         let task_id = task.get_id();
-        let repository = TestTaskRepository::new(vec![task], fixed_now());
+        let mut repository = TestTaskRepository::new(vec![task], fixed_now());
 
         let actual = complete_task(
-            &repository,
+            &mut repository,
             CompleteTaskInput {
                 task_id,
                 finished_at: fixed_now(),
@@ -779,11 +828,11 @@ mod tests {
         let task = Task::new("完了対象");
         task.set_actual_work_seconds(i64::MAX);
         let task_id = task.get_id();
-        let repository = TestTaskRepository::new(vec![task], fixed_now());
+        let mut repository = TestTaskRepository::new(vec![task], fixed_now());
 
         let actual = catch_unwind(AssertUnwindSafe(|| {
             complete_task(
-                &repository,
+                &mut repository,
                 CompleteTaskInput {
                     task_id,
                     finished_at: fixed_now(),
@@ -809,12 +858,12 @@ mod tests {
     fn update_use_cases_見積もり締切カテゴリを設定して解除する() {
         let task = Task::new("更新");
         let task_id = task.get_id();
-        let repository = TestTaskRepository::new(vec![task], fixed_now());
+        let mut repository = TestTaskRepository::new(vec![task], fixed_now());
         let deadline = Local.with_ymd_and_hms(2026, 8, 20, 23, 59, 59).unwrap();
 
-        set_estimate(&repository, task_id, 45).unwrap();
-        set_deadline(&repository, task_id, Some(deadline)).unwrap();
-        set_category(&repository, task_id, Some(ProjectCategory::Recovery)).unwrap();
+        set_estimate(&mut repository, task_id, 45).unwrap();
+        set_deadline(&mut repository, task_id, Some(deadline)).unwrap();
+        set_category(&mut repository, task_id, Some(ProjectCategory::Recovery)).unwrap();
 
         let task = repository.get_by_id(task_id).unwrap();
         assert_eq!(task.get_estimated_work_seconds(), 45 * 60);
@@ -824,24 +873,24 @@ mod tests {
             Some(ProjectCategory::Recovery)
         );
 
-        set_deadline(&repository, task_id, None).unwrap();
-        set_category(&repository, task_id, None).unwrap();
+        set_deadline(&mut repository, task_id, None).unwrap();
+        set_category(&mut repository, task_id, None).unwrap();
         assert_eq!(task.get_deadline_time_opt(), None);
         assert_eq!(task.get_project_category_opt(), None);
     }
 
     #[test]
     fn update_use_cases_未知uuidはtask_not_foundを返す() {
-        let repository = TestTaskRepository::new(vec![], fixed_now());
+        let mut repository = TestTaskRepository::new(vec![], fixed_now());
         let task_id = Uuid::new_v4();
 
         assert_eq!(
-            set_estimate(&repository, task_id, 10),
+            set_estimate(&mut repository, task_id, 10),
             Err(ApplicationError::TaskNotFound(task_id))
         );
         assert_eq!(
             breakdown_task(
-                &repository,
+                &mut repository,
                 BreakdownTaskInput {
                     parent_id: task_id,
                     names: vec!["子".to_string()],
@@ -851,12 +900,12 @@ mod tests {
             Err(ApplicationError::TaskNotFound(task_id))
         );
         assert_eq!(
-            defer_task(&repository, task_id, fixed_now()),
+            defer_task(&mut repository, task_id, fixed_now()),
             Err(ApplicationError::TaskNotFound(task_id))
         );
         assert_eq!(
             complete_task(
-                &repository,
+                &mut repository,
                 CompleteTaskInput {
                     task_id,
                     finished_at: fixed_now(),
@@ -866,11 +915,11 @@ mod tests {
             Err(ApplicationError::TaskNotFound(task_id))
         );
         assert_eq!(
-            set_deadline(&repository, task_id, None),
+            set_deadline(&mut repository, task_id, None),
             Err(ApplicationError::TaskNotFound(task_id))
         );
         assert_eq!(
-            set_category(&repository, task_id, None),
+            set_category(&mut repository, task_id, None),
             Err(ApplicationError::TaskNotFound(task_id))
         );
     }
@@ -880,9 +929,9 @@ mod tests {
         let task = Task::new("更新対象");
         task.set_estimated_work_seconds(30 * 60);
         let task_id = task.get_id();
-        let repository = TestTaskRepository::new(vec![task], fixed_now());
+        let mut repository = TestTaskRepository::new(vec![task], fixed_now());
 
-        let negative = set_estimate(&repository, task_id, -1);
+        let negative = set_estimate(&mut repository, task_id, -1);
         assert!(matches!(
             negative,
             Err(ApplicationError::InvalidInput {
@@ -904,10 +953,10 @@ mod tests {
         let task = Task::new("更新対象");
         task.set_estimated_work_seconds(30 * 60);
         let task_id = task.get_id();
-        let repository = TestTaskRepository::new(vec![task], fixed_now());
+        let mut repository = TestTaskRepository::new(vec![task], fixed_now());
 
         let overflow = catch_unwind(AssertUnwindSafe(|| {
-            set_estimate(&repository, task_id, i64::MAX)
+            set_estimate(&mut repository, task_id, i64::MAX)
         }));
         assert!(matches!(
             overflow,
@@ -941,7 +990,7 @@ mod tests {
         )
         .unwrap();
         let child_id = breakdown_task(
-            &repository,
+            &mut repository,
             BreakdownTaskInput {
                 parent_id: root_id,
                 names: vec!["子".to_string()],
@@ -949,12 +998,12 @@ mod tests {
             },
         )
         .unwrap()[0];
-        defer_task(&repository, child_id, fixed_now()).unwrap();
-        set_estimate(&repository, child_id, 10).unwrap();
-        set_deadline(&repository, child_id, Some(fixed_now())).unwrap();
-        set_category(&repository, child_id, Some(ProjectCategory::Investment)).unwrap();
+        defer_task(&mut repository, child_id, fixed_now()).unwrap();
+        set_estimate(&mut repository, child_id, 10).unwrap();
+        set_deadline(&mut repository, child_id, Some(fixed_now())).unwrap();
+        set_category(&mut repository, child_id, Some(ProjectCategory::Investment)).unwrap();
         complete_task(
-            &repository,
+            &mut repository,
             CompleteTaskInput {
                 task_id: child_id,
                 finished_at: fixed_now(),

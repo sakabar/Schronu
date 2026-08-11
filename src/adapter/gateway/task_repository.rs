@@ -1,5 +1,5 @@
 use crate::adapter::gateway::yaml::yaml_to_task;
-use crate::application::interface::TaskRepositoryTrait;
+use crate::application::interface::{TaskRepositoryError, TaskRepositoryTrait};
 use crate::entity::datetime::get_next_morning_datetime;
 use crate::entity::task::extract_leaf_tasks_from_project;
 use crate::entity::task::extract_leaf_tasks_from_project_with_pending;
@@ -259,7 +259,7 @@ impl TaskRepositoryTrait for TaskRepository {
         None
     }
 
-    fn start_new_project(&mut self, root_task: Task) {
+    fn start_new_project(&mut self, root_task: Task) -> Result<(), TaskRepositoryError> {
         let project_name = root_task.get_name();
 
         let yyyymmdd = self.last_synced_time.format("%Y%m%d").to_string();
@@ -272,39 +272,41 @@ impl TaskRepositoryTrait for TaskRepository {
         let project_dir_path = Path::new(&self.project_storage_dir_name).join(dir_name);
 
         // project_dirを実際に生成する
-        match fs::create_dir_all(&project_dir_path) {
-            Ok(()) => {}
-            Err(_) => {
-                return;
-            }
-        }
+        fs::create_dir_all(&project_dir_path).map_err(|error| TaskRepositoryError {
+            reason: error.to_string(),
+        })?;
 
         let markdown_dir_path = &project_dir_path.join("markdown");
-        match fs::create_dir_all(markdown_dir_path) {
-            Ok(()) => {}
-            Err(err) => {
-                println!("{}", err);
-                return;
-            }
-        }
+        fs::create_dir_all(markdown_dir_path).map_err(|error| TaskRepositoryError {
+            reason: error.to_string(),
+        })?;
 
         let project_yaml_file_path = project_dir_path.join("project.yaml");
 
         let priority = root_task.get_priority();
 
-        if let (Some(project_dir_path_str), Some(project_yaml_file_path_str)) =
-            (project_dir_path.to_str(), project_yaml_file_path.to_str())
-        {
-            let project = Project::new(
-                root_task,
-                project_dir_path_str.to_string(),
-                project_yaml_file_path_str.to_string(),
-                priority,
-            );
+        let project_dir_path_str =
+            project_dir_path
+                .to_str()
+                .ok_or_else(|| TaskRepositoryError {
+                    reason: "project directory path is not valid UTF-8".to_string(),
+                })?;
+        let project_yaml_file_path_str =
+            project_yaml_file_path
+                .to_str()
+                .ok_or_else(|| TaskRepositoryError {
+                    reason: "project YAML path is not valid UTF-8".to_string(),
+                })?;
+        let project = Project::new(
+            root_task,
+            project_dir_path_str.to_string(),
+            project_yaml_file_path_str.to_string(),
+            priority,
+        );
 
-            self.cache_task_and_descendants(&project.root_task);
-            self.projects.push(project);
-        }
+        self.cache_task_and_descendants(&project.root_task);
+        self.projects.push(project);
+        Ok(())
     }
 }
 

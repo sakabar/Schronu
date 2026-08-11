@@ -2,6 +2,11 @@ use crate::entity::task::Task;
 use chrono::{DateTime, Local};
 use uuid::Uuid;
 
+#[derive(Clone, Debug, PartialEq)]
+pub struct TaskRepositoryError {
+    pub reason: String,
+}
+
 pub trait TaskRepositoryTrait {
     fn get_project_storage_dir_name(&self) -> &str;
     fn get_all_projects(&self) -> Vec<&Task>;
@@ -13,7 +18,7 @@ pub trait TaskRepositoryTrait {
     fn get_highest_priority_leaf_task_id(&mut self) -> Option<Uuid>;
     fn get_defer_candidate_leaf_task_id(&mut self, recent_days: i64) -> Option<Uuid>;
     fn get_by_id(&self, id: Uuid) -> Option<Task>;
-    fn start_new_project(&mut self, root_task: Task);
+    fn start_new_project(&mut self, root_task: Task) -> Result<(), TaskRepositoryError>;
 }
 
 pub trait FreeTimeManagerTrait {

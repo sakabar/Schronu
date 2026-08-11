@@ -4209,32 +4209,30 @@ fn execute_next_up(
 
 fn execute_breakdown(
     stdout: &mut dyn SchronuWriter,
-    task_repository: &dyn TaskRepositoryTrait,
+    task_repository: &mut dyn TaskRepositoryTrait,
     focused_task_id_opt: &mut Option<Uuid>,
     new_task_names: &[&str],
     pending_until_opt: &Option<DateTime<Local>>,
-) {
+) -> Result<Option<Vec<Uuid>>, ApplicationError> {
     let Some(parent_id) = *focused_task_id_opt else {
-        return;
+        return Ok(None);
     };
     let names = new_task_names
         .iter()
         .map(|name| (*name).to_string())
         .collect::<Vec<_>>();
 
-    if let Ok(child_ids) = breakdown_task(
-        task_repository,
-        BreakdownTaskInput {
-            parent_id,
-            names,
-            pending_until: *pending_until_opt,
-        },
-    ) {
-        for (child_id, child_name) in child_ids.iter().zip(new_task_names.iter()) {
-            writeln_newline(stdout, &format!("{child_id} {child_name}")).unwrap();
-        }
-        *focused_task_id_opt = child_ids.first().copied();
+    let input = BreakdownTaskInput {
+        parent_id,
+        names,
+        pending_until: *pending_until_opt,
+    };
+    let child_ids = breakdown_task(task_repository, input)?;
+    for (child_id, child_name) in child_ids.iter().zip(new_task_names.iter()) {
+        writeln_newline(stdout, &format!("{child_id} {child_name}")).unwrap();
     }
+    *focused_task_id_opt = child_ids.first().copied();
+    Ok(Some(child_ids))
 }
 
 // コマンド引数を変換せず、そのままドメイン操作へ渡す境界関数である。
@@ -4276,15 +4274,18 @@ fn execute_create_repetition_task(
     estimated_work_minutes: i64,
     _start_time_str: &str,
     _deadline_time_str: &str,
-) {
+) -> Result<Option<Uuid>, ApplicationError> {
     // まず繰り返しタスクの親タスクを作る。
-    execute_breakdown(
+    let Some(_) = execute_breakdown(
         _stdout,
         task_repository,
         focused_task_id_opt,
         &[new_task_name_str],
         &None,
-    );
+    )?
+    else {
+        return Ok(None);
+    };
     let repetition_parent_task_opt =
         focused_task_id_opt.and_then(|id| task_repository.get_by_id(id));
     execute_set_estimated_work_minutes(
@@ -4300,13 +4301,16 @@ fn execute_create_repetition_task(
 
         // ループを回して子タスクを作る
         for _ in 0..task_num {
-            execute_breakdown(
+            let Some(_) = execute_breakdown(
                 _stdout,
                 task_repository,
                 focused_task_id_opt,
                 &[new_task_name_str],
                 &None,
-            );
+            )?
+            else {
+                return Ok(None);
+            };
             let child_task_opt = focused_task_id_opt.and_then(|id| task_repository.get_by_id(id));
             execute_set_estimated_work_minutes(
                 task_repository,
@@ -4322,6 +4326,9 @@ fn execute_create_repetition_task(
                 &repetition_parent_task_id.hyphenated().to_string(),
             );
         }
+        Ok(Some(repetition_parent_task_id))
+    } else {
+        Ok(None)
     }
 }
 
@@ -4634,7 +4641,7 @@ fn execute_set_deadline(
 }
 
 fn execute_set_estimated_work_minutes(
-    task_repository: &dyn TaskRepositoryTrait,
+    task_repository: &mut dyn TaskRepositoryTrait,
     focused_task_id_opt: Option<Uuid>,
     estimated_work_minutes_str: &str,
 ) {
@@ -4705,7 +4712,7 @@ fn read_project_category_command_arg(s: &str) -> Option<Option<ProjectCategory>>
 }
 
 fn execute_set_project_category(
-    task_repository: &dyn TaskRepositoryTrait,
+    task_repository: &mut dyn TaskRepositoryTrait,
     focused_task_id_opt: Option<Uuid>,
     project_category_str: &str,
 ) {
@@ -5096,8 +5103,12 @@ impl TaskRepositoryTrait for TestTaskRepository {
         self.task.get_by_id(id)
     }
 
-    fn start_new_project(&mut self, root_task: Task) {
+    fn start_new_project(
+        &mut self,
+        root_task: Task,
+    ) -> Result<(), schronu::application::interface::TaskRepositoryError> {
         self.task = root_task;
+        Ok(())
     }
 }
 
@@ -6106,7 +6117,7 @@ fn execute(
                 let deadline_time_str = &tokens[5];
 
                 if let Ok(estimated_work_minutes) = estimated_work_minutes_result {
-                    execute_create_repetition_task(
+                    let _ = execute_create_repetition_task(
                         stdout,
                         task_repository,
                         focused_task_id_opt,
@@ -6115,7 +6126,7 @@ fn execute(
                         *estimated_work_minutes,
                         start_time_str,
                         deadline_time_str,
-                    )
+                    );
                 }
             }
         }
@@ -6336,7 +6347,7 @@ fn execute(
 
                 // 「割」コマンドと間違えて数値を引数に取った場合は何もしない
                 if !tokens.iter().any(|token| token.parse::<i64>().is_ok()) {
-                    execute_breakdown(
+                    let _ = execute_breakdown(
                         stdout,
                         task_repository,
                         focused_task_id_opt,
@@ -6741,34 +6752,39 @@ fn execute(
         }
         "終" | "finish" | "fin" => {
             if let Some(ref focused_task) = focused_task_opt {
-                let now = task_repository.get_last_synced_time();
-                if let Some(finished_at) = decide_finish_time(&tokens, &now) {
-                    let additional_actual_work_seconds = if tokens.len() == 1 {
-                        let focus_duration_seconds = (now - *focus_started_datetime).num_seconds();
-                        if focus_duration_seconds >= 60 {
-                            focus_duration_seconds
+                if focused_task.has_undone_children() {
+                    execute_show_tree(stdout, &focused_task_opt);
+                } else {
+                    let now = task_repository.get_last_synced_time();
+                    if let Some(finished_at) = decide_finish_time(&tokens, &now) {
+                        let additional_actual_work_seconds = if tokens.len() == 1 {
+                            let focus_duration_seconds =
+                                (now - *focus_started_datetime).num_seconds();
+                            if focus_duration_seconds >= 60 {
+                                focus_duration_seconds
+                            } else {
+                                0
+                            }
                         } else {
                             0
-                        }
-                    } else {
-                        0
-                    };
+                        };
 
-                    match complete_task(
-                        task_repository,
-                        CompleteTaskInput {
-                            task_id: focused_task.get_id(),
-                            finished_at,
-                            additional_actual_work_seconds,
-                        },
-                    ) {
-                        Ok(output) => {
-                            *focused_task_id_opt = output.next_focus_task_id;
+                        match complete_task(
+                            task_repository,
+                            CompleteTaskInput {
+                                task_id: focused_task.get_id(),
+                                finished_at,
+                                additional_actual_work_seconds,
+                            },
+                        ) {
+                            Ok(output) => {
+                                *focused_task_id_opt = output.next_focus_task_id;
+                            }
+                            Err(ApplicationError::HasUndoneChildren(_)) => {
+                                execute_show_tree(stdout, &focused_task_opt);
+                            }
+                            Err(_) => {}
                         }
-                        Err(ApplicationError::HasUndoneChildren(_)) => {
-                            execute_show_tree(stdout, &focused_task_opt);
-                        }
-                        Err(_) => {}
                     }
                 }
             }
