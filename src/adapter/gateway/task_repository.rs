@@ -315,6 +315,31 @@ mod tests {
     use super::*;
     use crate::entity::task::TaskAttr;
     use chrono::TimeZone;
+    use std::path::PathBuf;
+
+    struct TestStorageDir {
+        path: PathBuf,
+    }
+
+    impl TestStorageDir {
+        fn new() -> Self {
+            Self {
+                path: std::env::temp_dir().join(format!("schronu-test-{}", Uuid::new_v4())),
+            }
+        }
+
+        fn path_str(&self) -> &str {
+            self.path.to_str().expect("test path must be valid UTF-8")
+        }
+    }
+
+    impl Drop for TestStorageDir {
+        fn drop(&mut self) {
+            if self.path.exists() {
+                fs::remove_dir_all(&self.path).expect("failed to remove test storage directory");
+            }
+        }
+    }
 
     fn task_with_start_time(name: &str, start_time: DateTime<Local>) -> Task {
         let task = Task::new(name);
@@ -336,6 +361,37 @@ mod tests {
         task_repository
             .projects
             .push(Project::new(root_task, "".to_string(), "".to_string(), 5));
+    }
+
+    #[test]
+    fn test_start_new_project_taskをmemoryに登録する() {
+        let storage_dir = TestStorageDir::new();
+        let now = Local.with_ymd_and_hms(2026, 8, 11, 12, 0, 0).unwrap();
+        let mut task_repository = TaskRepository::new(storage_dir.path_str());
+        task_repository.sync_clock(now);
+        let root_task = Task::new("メモリ登録対象");
+        let root_task_id = root_task.get_id();
+
+        task_repository.start_new_project(root_task).unwrap();
+
+        assert_eq!(
+            task_repository.get_by_id(root_task_id).unwrap().get_name(),
+            "メモリ登録対象"
+        );
+    }
+
+    #[test]
+    fn test_start_new_project_filesystemを変更しない() {
+        let storage_dir = TestStorageDir::new();
+        let now = Local.with_ymd_and_hms(2026, 8, 11, 12, 0, 0).unwrap();
+        let mut task_repository = TaskRepository::new(storage_dir.path_str());
+        task_repository.sync_clock(now);
+
+        task_repository
+            .start_new_project(Task::new("filesystem非変更対象"))
+            .unwrap();
+
+        assert!(!storage_dir.path.exists());
     }
 
     #[test]
