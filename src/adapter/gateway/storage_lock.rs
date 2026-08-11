@@ -151,6 +151,7 @@ fn write_metadata(
 mod tests {
     use super::{LockMode, StorageLock, StorageLockErrorKind};
     use std::fs;
+    use std::io::ErrorKind;
     use std::path::{Path, PathBuf};
     use uuid::Uuid;
 
@@ -226,5 +227,32 @@ mod tests {
             fs::read_to_string(project_file).unwrap(),
             "task: unchanged\n"
         );
+    }
+
+    #[test]
+    fn storage_lock_would_blockだけを競合errorに分類する() {
+        let path = Path::new("tasks/.lock");
+
+        let contended =
+            super::classify_lock_attempt_error(path, std::io::Error::from(ErrorKind::WouldBlock));
+        let io = super::classify_lock_attempt_error(
+            path,
+            std::io::Error::from(ErrorKind::PermissionDenied),
+        );
+
+        assert_eq!(contended.kind(), StorageLockErrorKind::Contended);
+        assert_eq!(contended.path(), path);
+        assert_eq!(source_kind(&contended), ErrorKind::WouldBlock);
+        assert_eq!(io.kind(), StorageLockErrorKind::Io);
+        assert_eq!(io.path(), path);
+        assert_eq!(source_kind(&io), ErrorKind::PermissionDenied);
+    }
+
+    fn source_kind(error: &super::StorageLockError) -> ErrorKind {
+        std::error::Error::source(error)
+            .unwrap()
+            .downcast_ref::<std::io::Error>()
+            .unwrap()
+            .kind()
     }
 }
