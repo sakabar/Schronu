@@ -21,6 +21,8 @@ use schronu::entity::task::{
     extract_leaf_tasks_from_project, extract_leaf_tasks_from_project_with_pending,
     read_project_category, round_up_sec_as_minute, ProjectCategory, Status, Task, TaskAttr,
 };
+#[cfg(test)]
+use std::cell::Cell;
 use std::cmp::{max, min};
 use std::collections::HashMap;
 use std::env;
@@ -5015,7 +5017,8 @@ struct TestTaskRepository {
     highest_priority_leaf_task_id_opt: Option<Uuid>,
     defer_candidate_leaf_task_id_opt: Option<Uuid>,
     last_defer_candidate_recent_days_opt: Option<i64>,
-    save_should_fail: bool,
+    save_failures_remaining: Cell<usize>,
+    save_attempt_count: Cell<usize>,
 }
 
 #[cfg(test)]
@@ -5063,7 +5066,8 @@ impl TestTaskRepository {
             highest_priority_leaf_task_id_opt: Some(task_id),
             defer_candidate_leaf_task_id_opt: Some(task_id),
             last_defer_candidate_recent_days_opt: None,
-            save_should_fail: false,
+            save_failures_remaining: Cell::new(0),
+            save_attempt_count: Cell::new(0),
         }
     }
 }
@@ -5081,7 +5085,11 @@ impl TaskRepositoryTrait for TestTaskRepository {
     fn load(&mut self) {}
 
     fn save(&self) -> Result<(), schronu::application::interface::TaskRepositoryError> {
-        if self.save_should_fail {
+        self.save_attempt_count
+            .set(self.save_attempt_count.get() + 1);
+        let failures_remaining = self.save_failures_remaining.get();
+        if failures_remaining > 0 {
+            self.save_failures_remaining.set(failures_remaining - 1);
             Err(TaskRepositoryError::new(
                 TaskRepositoryOperation::WriteFile,
                 "/test/project.yaml",
@@ -7237,6 +7245,37 @@ fn try_save_before_exit(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
+fn try_exit_interactive(
+    stdout: &mut dyn SchronuWriter,
+    task_repository: &mut dyn TaskRepositoryTrait,
+    free_time_manager: &mut dyn FreeTimeManagerTrait,
+    focused_task_id_opt: &mut Option<Uuid>,
+    header: &str,
+    line: &str,
+    cursor_x: usize,
+    now: DateTime<Local>,
+) -> bool {
+    if !line.is_empty() {
+        return false;
+    }
+    if !try_save_before_exit(stdout, task_repository) {
+        render_prompt(stdout, header, line, cursor_x);
+        return false;
+    }
+
+    task_repository.sync_clock(now);
+    execute_show_all_tasks(
+        stdout,
+        focused_task_id_opt,
+        task_repository,
+        free_time_manager,
+        &Some("暦".to_string()),
+        TaskListDisplayOrder::ScheduledStartDesc,
+    );
+    true
+}
+
 fn render_focused_task(
     stdout: &mut dyn SchronuWriter,
     task_repository: &dyn TaskRepositoryTrait,
@@ -7393,8 +7432,8 @@ fn test_try_save_before_exit_保存失敗ならerrorを表示して終了を止�
     let now = Local.with_ymd_and_hms(2026, 8, 11, 12, 0, 0).unwrap();
     let task = Task::new("memoryに残すtask");
     let task_id = task.get_id();
-    let mut task_repository = TestTaskRepository::new(task, now);
-    task_repository.save_should_fail = true;
+    let task_repository = TestTaskRepository::new(task, now);
+    task_repository.save_failures_remaining.set(1);
     let mut stdout = TestWriter::new();
 
     let actual = try_save_before_exit(&mut stdout, &task_repository);
@@ -7409,6 +7448,48 @@ fn test_try_save_before_exit_保存失敗ならerrorを表示して終了を止�
     assert!(output.contains("WriteFile"));
     assert!(output.contains("/test/project.yaml"));
     assert!(output.contains("test save failure"));
+}
+
+#[test]
+fn test_interactive_loop_保存失敗後にctrl_dで再試行して成功終了する() {
+    let now = Local.with_ymd_and_hms(2026, 8, 11, 12, 0, 0).unwrap();
+    let task = Task::new("再試行中もmemoryに残すtask");
+    let task_id = task.get_id();
+    let mut task_repository = TestTaskRepository::new(task, now);
+    task_repository.save_failures_remaining.set(1);
+    let mut free_time_manager = TestFreeTimeManager;
+    let mut focused_task_id_opt = Some(task_id);
+    let mut stdout = TestWriter::new();
+    let keys = [Key::Ctrl('d'), Key::Ctrl('d')];
+    let mut exited = false;
+
+    for key in keys {
+        if key == Key::Ctrl('d')
+            && try_exit_interactive(
+                &mut stdout,
+                &mut task_repository,
+                &mut free_time_manager,
+                &mut focused_task_id_opt,
+                "schronu> ",
+                "",
+                0,
+                now,
+            )
+        {
+            exited = true;
+            break;
+        }
+    }
+
+    assert!(exited);
+    assert_eq!(task_repository.save_attempt_count.get(), 2);
+    assert_eq!(
+        task_repository.get_by_id(task_id).unwrap().get_name(),
+        "再試行中もmemoryに残すtask"
+    );
+    let output = stdout.into_string();
+    assert_eq!(output.matches("[Error]").count(), 1);
+    assert!(output.contains("schronu> "));
 }
 
 fn application(
@@ -7520,25 +7601,16 @@ fn application(
 
         match key {
             Key::Ctrl('d') => {
-                if line.is_empty() {
-                    if !try_save_before_exit(&mut stdout, task_repository) {
-                        render_prompt(&mut stdout, header, &line, cursor_x);
-                        continue;
-                    }
-
-                    // 最後に、今後の忙しさ具合を表示する
-                    let now = Local::now();
-                    task_repository.sync_clock(now);
-
-                    execute_show_all_tasks(
-                        &mut stdout,
-                        &mut focused_task_id_opt,
-                        task_repository,
-                        free_time_manager,
-                        &Some("暦".to_string()),
-                        TaskListDisplayOrder::ScheduledStartDesc,
-                    );
-
+                if try_exit_interactive(
+                    &mut stdout,
+                    task_repository,
+                    free_time_manager,
+                    &mut focused_task_id_opt,
+                    header,
+                    &line,
+                    cursor_x,
+                    Local::now(),
+                ) {
                     break;
                 }
             }
