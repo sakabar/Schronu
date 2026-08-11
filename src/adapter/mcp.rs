@@ -1160,7 +1160,7 @@ mod tests {
     use crate::entity::task::{ProjectCategory, RepetitionAnchor, Status, Task, TaskAttr};
     use chrono::{DateTime, Duration, Local, TimeZone};
     use serde_json::json;
-    use std::cell::Cell;
+    use std::cell::{Cell, RefCell};
     use std::rc::Rc;
     use uuid::Uuid;
 
@@ -1171,6 +1171,7 @@ mod tests {
         fail_save: bool,
         save_count: Rc<Cell<usize>>,
         mutation_count: Rc<Cell<usize>>,
+        sync_clock_times: Rc<RefCell<Vec<DateTime<Local>>>>,
     }
 
     impl RecordingRepository {
@@ -1182,6 +1183,7 @@ mod tests {
                 fail_save: false,
                 save_count: Rc::new(Cell::new(0)),
                 mutation_count: Rc::new(Cell::new(0)),
+                sync_clock_times: Rc::new(RefCell::new(Vec::new())),
             }
         }
 
@@ -1223,7 +1225,7 @@ mod tests {
         }
 
         fn sync_clock(&mut self, now: DateTime<Local>) {
-            self.mutation_count.set(self.mutation_count.get() + 1);
+            self.sync_clock_times.borrow_mut().push(now);
             self.now = now;
         }
 
@@ -1301,6 +1303,79 @@ mod tests {
 
         assert_eq!(response["id"], "initialize-unsupported-version");
         assert_eq!(response["result"]["protocolVersion"], "2025-06-18");
+    }
+
+    #[test]
+    fn initializeとtools_listではrepository_clockを同期しない() {
+        let repository = RecordingRepository::new(vec![]);
+        let sync_clock_times = Rc::clone(&repository.sync_clock_times);
+        let mut server = McpServer::new(repository);
+
+        server.handle_request(initialize_request()).unwrap();
+        server.handle_request(json!({
+            "jsonrpc": "2.0",
+            "method": "notifications/initialized"
+        }));
+        server
+            .handle_request(json!({
+                "jsonrpc": "2.0",
+                "id": "tools-list",
+                "method": "tools/list"
+            }))
+            .unwrap();
+
+        assert!(sync_clock_times.borrow().is_empty());
+    }
+
+    #[test]
+    fn 初期化前のtools_callは両lifecycle_stateで拒否してrepository_clockを同期しない() {
+        let repository = RecordingRepository::new(vec![]);
+        let sync_clock_times = Rc::clone(&repository.sync_clock_times);
+        let mut server = McpServer::new(repository);
+        let request = tool_call_request("before-initialized", "list_tasks", json!({}));
+
+        let uninitialized = server.handle_request(request.clone()).unwrap();
+        assert_eq!(uninitialized["error"]["code"], -32002);
+        assert_eq!(uninitialized["error"]["message"], "Server not initialized");
+        assert!(sync_clock_times.borrow().is_empty());
+
+        server.handle_request(initialize_request()).unwrap();
+        let initialize_responded = server.handle_request(request).unwrap();
+        assert_eq!(initialize_responded["error"]["code"], -32002);
+        assert_eq!(
+            initialize_responded["error"]["message"],
+            "Server not initialized"
+        );
+        assert!(sync_clock_times.borrow().is_empty());
+    }
+
+    #[test]
+    fn 初期化済みtools_callは検証結果によらず直前にrepository_clockを1回同期する() {
+        let cases = [
+            ("valid", "list_tasks", json!({})),
+            ("invalid-arguments", "get_task", json!({})),
+            ("unknown-tool", "unknown_tool", json!({})),
+        ];
+
+        for (id, tool_name, arguments) in cases {
+            let repository = RecordingRepository::new(vec![]);
+            let sync_clock_times = Rc::clone(&repository.sync_clock_times);
+            let mut server = initialized_server(repository);
+            let before = Local::now();
+
+            server
+                .handle_request(tool_call_request(id, tool_name, arguments))
+                .unwrap();
+
+            let after = Local::now();
+            let sync_clock_times = sync_clock_times.borrow();
+            assert_eq!(sync_clock_times.len(), 1, "case: {id}");
+            assert!(
+                before <= sync_clock_times[0] && sync_clock_times[0] <= after,
+                "case: {id}, actual: {}",
+                sync_clock_times[0]
+            );
+        }
     }
 
     #[test]

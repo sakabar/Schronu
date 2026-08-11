@@ -316,6 +316,43 @@ fn mcp_stdio_9toolを実repositoryで実行し再起動後も保存内容を読�
 }
 
 #[test]
+fn mcp_stdio_起動時にload前の現在時刻を同期して期限切れpendingをtodoとして読む() {
+    let storage = TestStorageDirectory::new();
+    let pending_until = (Local::now() - chrono::Duration::hours(1))
+        .with_nanosecond(0)
+        .unwrap();
+    let create = call_tool(
+        storage.path(),
+        "create-expired-pending",
+        "create_task",
+        Some(json!({
+            "name": "expired pending",
+            "pending_until": pending_until.to_rfc3339()
+        })),
+    );
+    assert_eq!(create["result"]["isError"], false);
+    let task_id = create["result"]["structuredContent"]["task_id"]
+        .as_str()
+        .unwrap();
+
+    let reloaded = call_tool(
+        storage.path(),
+        "get-expired-pending",
+        "get_task",
+        Some(json!({"task_id": task_id})),
+    );
+
+    assert_eq!(
+        reloaded["result"]["structuredContent"]["task"]["original_status"],
+        "pending"
+    );
+    assert_eq!(
+        reloaded["result"]["structuredContent"]["task"]["status"],
+        "todo"
+    );
+}
+
+#[test]
 fn mcp_stdio稼働中は同じ保存先の実cli起動を拒否する() {
     let storage = TestStorageDirectory::new();
     let child = spawn_mcp(storage.path());
