@@ -1,8 +1,9 @@
 use crate::application::interface::TaskRepositoryTrait;
 use crate::application::schedule_use_case::{get_schedule, ScheduledTaskView};
 use crate::application::task_use_case::{
-    create_task as create_task_use_case, get_focus, get_task, list_tasks, ApplicationError,
-    CreateTaskInput, ListTasksFilter, TaskPeriodField, TaskPeriodFilter, TaskView,
+    breakdown_task as breakdown_task_use_case, create_task as create_task_use_case, get_focus,
+    get_task, list_tasks, ApplicationError, BreakdownTaskInput, CreateTaskInput, ListTasksFilter,
+    TaskPeriodField, TaskPeriodFilter, TaskView,
 };
 use crate::entity::task::{ProjectCategory, Status};
 use chrono::{DateTime, Local};
@@ -86,6 +87,7 @@ impl<R: TaskRepositoryTrait> McpServer<R> {
             Some("list_tasks") => self.call_list_tasks(id, params.get("arguments")),
             Some("get_schedule") => self.call_get_schedule(id, params.get("arguments")),
             Some("create_task") => self.call_create_task(id, &params["arguments"]),
+            Some("breakdown_task") => self.call_breakdown_task(id, &params["arguments"]),
             _ => error_response(id, -32602, "Unknown tool"),
         }
     }
@@ -120,17 +122,7 @@ impl<R: TaskRepositoryTrait> McpServer<R> {
 
         match get_task(&self.repository, task_id) {
             Some(task) => tool_result_response(id, json!({"task": task_view_json(&task)}), false),
-            None => tool_result_response(
-                id,
-                json!({
-                    "error": {
-                        "code": "task_not_found",
-                        "message": format!("task not found: {task_id}"),
-                        "task_id": task_id.to_string()
-                    }
-                }),
-                true,
-            ),
+            None => task_not_found_response(id, task_id, None),
         }
     }
 
@@ -194,6 +186,39 @@ impl<R: TaskRepositoryTrait> McpServer<R> {
             Err(error) => repository_save_error_response(id, &error.to_string()),
         }
     }
+
+    fn call_breakdown_task(&mut self, id: Value, arguments: &Value) -> Value {
+        let input = match breakdown_task_input(arguments) {
+            Ok(input) => input,
+            Err(BreakdownTaskInputError::Schema(error)) => {
+                return invalid_params_response(id, error)
+            }
+            Err(BreakdownTaskInputError::Semantic { field, message }) => {
+                return invalid_input_response(id, field, message)
+            }
+        };
+        let child_ids = match breakdown_task_use_case(&mut self.repository, input) {
+            Ok(child_ids) => child_ids,
+            Err(ApplicationError::TaskNotFound(task_id)) => {
+                return task_not_found_response(id, task_id, Some("parent_id"))
+            }
+            Err(ApplicationError::InvalidInput { field, reason }) => {
+                return invalid_input_response(id, field, reason)
+            }
+            Err(error) => return internal_error_response(id, &error.to_string()),
+        };
+
+        match self.repository.save() {
+            Ok(()) => tool_result_response(
+                id,
+                json!({
+                    "child_ids": child_ids.iter().map(Uuid::to_string).collect::<Vec<_>>()
+                }),
+                false,
+            ),
+            Err(error) => repository_save_error_response(id, &error.to_string()),
+        }
+    }
 }
 
 fn error_response(id: Value, code: i64, message: &str) -> Value {
@@ -219,6 +244,18 @@ fn invalid_input_response(id: Value, field: &str, message: &str) -> Value {
         }),
         true,
     )
+}
+
+fn task_not_found_response(id: Value, task_id: Uuid, field: Option<&str>) -> Value {
+    let mut error = json!({
+        "code": "task_not_found",
+        "message": format!("task not found: {task_id}"),
+        "task_id": task_id.to_string()
+    });
+    if let Some(field) = field {
+        error["field"] = Value::String(field.to_string());
+    }
+    tool_result_response(id, json!({"error": error}), true)
 }
 
 fn repository_save_error_response(id: Value, message: &str) -> Value {
@@ -267,6 +304,82 @@ enum CreateTaskInputError {
         field: &'static str,
         message: &'static str,
     },
+}
+
+enum BreakdownTaskInputError {
+    Schema(InvalidParams),
+    Semantic {
+        field: &'static str,
+        message: &'static str,
+    },
+}
+
+fn breakdown_task_input(arguments: &Value) -> Result<BreakdownTaskInput, BreakdownTaskInputError> {
+    let arguments = validate_argument_object(
+        arguments,
+        &["parent_id", "names", "pending_until"],
+        &["parent_id", "names"],
+    )
+    .map_err(BreakdownTaskInputError::Schema)?;
+    let parent_id = string_argument(arguments, "parent_id")
+        .map_err(BreakdownTaskInputError::Schema)
+        .and_then(|value| {
+            Uuid::parse_str(value).map_err(|_| BreakdownTaskInputError::Semantic {
+                field: "parent_id",
+                message: "must be a valid UUID",
+            })
+        })?;
+    let names = arguments
+        .get("names")
+        .and_then(Value::as_array)
+        .ok_or_else(|| {
+            BreakdownTaskInputError::Schema(InvalidParams {
+                field: "names".to_string(),
+                reason: "must be an array",
+            })
+        })?;
+    if names.is_empty() {
+        return Err(BreakdownTaskInputError::Schema(InvalidParams {
+            field: "names".to_string(),
+            reason: "must contain at least one item",
+        }));
+    }
+    let names = names
+        .iter()
+        .enumerate()
+        .map(|(index, value)| match value.as_str() {
+            Some("") => Err(BreakdownTaskInputError::Schema(InvalidParams {
+                field: format!("names[{index}]"),
+                reason: "must not be empty",
+            })),
+            Some(value) => Ok(value.to_string()),
+            None => Err(BreakdownTaskInputError::Schema(InvalidParams {
+                field: format!("names[{index}]"),
+                reason: "must be a string",
+            })),
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    let pending_until = arguments
+        .get("pending_until")
+        .map(|value| {
+            let value = value.as_str().ok_or_else(|| {
+                BreakdownTaskInputError::Schema(InvalidParams {
+                    field: "pending_until".to_string(),
+                    reason: "must be a string",
+                })
+            })?;
+            parse_local_datetime(value).map_err(|_| BreakdownTaskInputError::Semantic {
+                field: "pending_until",
+                message: "must be a valid RFC 3339 date-time",
+            })
+        })
+        .transpose()?;
+
+    Ok(BreakdownTaskInput {
+        parent_id,
+        names,
+        pending_until,
+    })
 }
 
 fn create_task_input(arguments: &Value) -> Result<CreateTaskInput, CreateTaskInputError> {
@@ -318,12 +431,10 @@ fn create_task_input(arguments: &Value) -> Result<CreateTaskInput, CreateTaskInp
                     reason: "must be a string",
                 })
             })?;
-            DateTime::parse_from_rfc3339(value)
-                .map(|time| time.with_timezone(&Local))
-                .map_err(|_| CreateTaskInputError::Semantic {
-                    field: "pending_until",
-                    message: "must be a valid RFC 3339 date-time",
-                })
+            parse_local_datetime(value).map_err(|_| CreateTaskInputError::Semantic {
+                field: "pending_until",
+                message: "must be a valid RFC 3339 date-time",
+            })
         })
         .transpose()?;
 
@@ -421,12 +532,14 @@ fn parse_datetime(
     value: &str,
     field: &'static str,
 ) -> Result<DateTime<Local>, ListTasksInputError> {
-    DateTime::parse_from_rfc3339(value)
-        .map(|time| time.with_timezone(&Local))
-        .map_err(|_| ListTasksInputError::Semantic {
-            field,
-            message: "must be a valid RFC 3339 date-time",
-        })
+    parse_local_datetime(value).map_err(|_| ListTasksInputError::Semantic {
+        field,
+        message: "must be a valid RFC 3339 date-time",
+    })
+}
+
+fn parse_local_datetime(value: &str) -> Result<DateTime<Local>, chrono::ParseError> {
+    DateTime::parse_from_rfc3339(value).map(|time| time.with_timezone(&Local))
 }
 
 fn parse_status_filters(value: Option<&Value>) -> Result<Vec<Status>, ListTasksInputError> {
