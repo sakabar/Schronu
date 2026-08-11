@@ -1,5 +1,6 @@
 use super::interface::{TaskRepositoryError, TaskRepositoryTrait};
 use super::schedule_use_case::get_schedule;
+use super::task_use_case::get_task;
 use crate::entity::task::{Status, Task, TaskAttr};
 use chrono::{DateTime, Duration, Local, TimeZone};
 use std::cell::Cell;
@@ -102,6 +103,11 @@ fn get_schedule_締切を優先しdoneを除外してtask_viewを返す() {
         ],
         now,
     );
+    let views_before = repository
+        .projects
+        .iter()
+        .map(|task| get_task(&repository, task.get_id()).unwrap())
+        .collect::<Vec<_>>();
 
     let actual = get_schedule(&repository);
 
@@ -119,6 +125,14 @@ fn get_schedule_締切を優先しdoneを除外してtask_viewを返す() {
         .iter()
         .any(|entry| entry.task.id == done_task.get_id()));
     assert_eq!(repository.save_count.get(), 0);
+    assert_eq!(
+        repository
+            .projects
+            .iter()
+            .map(|task| get_task(&repository, task.get_id()).unwrap())
+            .collect::<Vec<_>>(),
+        views_before
+    );
 }
 
 #[test]
