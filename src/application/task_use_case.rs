@@ -1,5 +1,6 @@
 use crate::application::interface::TaskRepositoryTrait;
 use crate::application::schedule_use_case::get_schedule;
+pub use crate::application::task_view::TaskView;
 use crate::entity::datetime::get_next_morning_datetime;
 use crate::entity::task::{ProjectCategory, RepetitionAnchor, Status, Task, TaskAttr};
 use chrono::{DateTime, Datelike, Duration, Local, Timelike};
@@ -8,60 +9,6 @@ use std::collections::HashSet;
 use std::error::Error;
 use std::fmt;
 use uuid::Uuid;
-
-#[derive(Clone, Debug, PartialEq)]
-pub struct TaskView {
-    pub id: Uuid,
-    pub root_id: Uuid,
-    pub parent_id: Option<Uuid>,
-    pub child_ids: Vec<Uuid>,
-    pub name: String,
-    pub status: Status,
-    pub original_status: Status,
-    pub is_on_other_side: bool,
-    pub atomic: bool,
-    pub pending_until: Option<DateTime<Local>>,
-    pub priority: i64,
-    pub create_time: DateTime<Local>,
-    pub start_time: DateTime<Local>,
-    pub end_time: Option<DateTime<Local>>,
-    pub deadline_time: Option<DateTime<Local>>,
-    pub estimated_work_seconds: i64,
-    pub actual_work_seconds: i64,
-    pub repetition_interval_days: Option<i64>,
-    pub repetition_anchor: RepetitionAnchor,
-    pub days_in_advance: i64,
-    pub project_category: Option<ProjectCategory>,
-}
-
-impl From<&Task> for TaskView {
-    fn from(task: &Task) -> Self {
-        Self {
-            id: task.get_id(),
-            root_id: task.root().get_id(),
-            parent_id: task.parent().map(|parent| parent.get_id()),
-            child_ids: task.get_children().iter().map(Task::get_id).collect(),
-            name: task.get_name(),
-            status: task.get_status(),
-            original_status: task.get_orig_status(),
-            is_on_other_side: task.get_is_on_other_side(),
-            atomic: task.get_atomic(),
-            pending_until: (task.get_orig_status() == Status::Pending)
-                .then(|| task.get_pending_until()),
-            priority: task.get_priority(),
-            create_time: task.get_create_time(),
-            start_time: task.get_start_time(),
-            end_time: task.get_end_time_opt(),
-            deadline_time: task.get_deadline_time_opt(),
-            estimated_work_seconds: task.get_estimated_work_seconds(),
-            actual_work_seconds: task.get_actual_work_seconds(),
-            repetition_interval_days: task.get_repetition_interval_days_opt(),
-            repetition_anchor: task.get_repetition_anchor(),
-            days_in_advance: task.get_days_in_advance(),
-            project_category: task.get_project_category_opt(),
-        }
-    }
-}
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum ApplicationError {

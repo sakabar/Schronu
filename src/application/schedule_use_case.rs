@@ -1,5 +1,5 @@
 use crate::application::interface::TaskRepositoryTrait;
-use crate::application::task_use_case::TaskView;
+use crate::application::task_view::TaskView;
 use crate::entity::datetime::get_next_morning_datetime;
 use crate::entity::task::{extract_leaf_tasks_from_project_with_pending, Task};
 use chrono::{DateTime, Duration, Local};
