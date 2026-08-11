@@ -1,8 +1,10 @@
 use crate::application::interface::TaskRepositoryTrait;
+use crate::application::schedule_use_case::get_schedule;
 use crate::entity::datetime::get_next_morning_datetime;
 use crate::entity::task::{ProjectCategory, RepetitionAnchor, Status, Task, TaskAttr};
 use chrono::{DateTime, Datelike, Duration, Local, Timelike};
 use std::cmp::{max, Ordering};
+use std::collections::HashSet;
 use std::error::Error;
 use std::fmt;
 use uuid::Uuid;
@@ -114,6 +116,28 @@ pub struct CompleteTaskOutput {
     pub next_repetition_task_id: Option<Uuid>,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum TaskPeriodField {
+    ScheduledStart,
+    CreatedAt,
+    Deadline,
+    CompletedAt,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct TaskPeriodFilter {
+    pub field: TaskPeriodField,
+    pub from: DateTime<Local>,
+    pub until: DateTime<Local>,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct ListTasksFilter {
+    pub period: Option<TaskPeriodFilter>,
+    pub statuses: Vec<Status>,
+    pub categories: Vec<Option<ProjectCategory>>,
+}
+
 pub fn get_focus(repository: &mut dyn TaskRepositoryTrait) -> Option<TaskView> {
     repository
         .get_highest_priority_leaf_task_id()
@@ -122,6 +146,80 @@ pub fn get_focus(repository: &mut dyn TaskRepositoryTrait) -> Option<TaskView> {
 
 pub fn get_task(repository: &dyn TaskRepositoryTrait, task_id: Uuid) -> Option<TaskView> {
     repository.get_by_id(task_id).as_ref().map(TaskView::from)
+}
+
+pub fn list_tasks(
+    repository: &dyn TaskRepositoryTrait,
+    filter: ListTasksFilter,
+) -> Result<Vec<TaskView>, ApplicationError> {
+    if filter
+        .period
+        .as_ref()
+        .is_some_and(|period| period.from >= period.until)
+    {
+        return Err(ApplicationError::InvalidInput {
+            field: "period",
+            reason: "from must be earlier than until",
+        });
+    }
+
+    let scheduled_task_ids = filter
+        .period
+        .as_ref()
+        .filter(|period| period.field == TaskPeriodField::ScheduledStart)
+        .map(|period| {
+            get_schedule(repository)
+                .into_iter()
+                .filter(|entry| {
+                    period.from <= entry.scheduled_start && entry.scheduled_start < period.until
+                })
+                .map(|entry| entry.task.id)
+                .collect::<HashSet<_>>()
+        });
+
+    let mut tasks = Vec::new();
+    for root in repository.get_all_projects() {
+        collect_tasks_pre_order(root, &mut tasks);
+    }
+
+    Ok(tasks
+        .into_iter()
+        .map(|task| TaskView::from(&task))
+        .filter(|task| filter.statuses.is_empty() || filter.statuses.contains(&task.status))
+        .filter(|task| {
+            filter.categories.is_empty() || filter.categories.contains(&task.project_category)
+        })
+        .filter(|task| {
+            filter
+                .period
+                .as_ref()
+                .map_or(true, |period| match period.field {
+                    TaskPeriodField::ScheduledStart => scheduled_task_ids
+                        .as_ref()
+                        .is_some_and(|task_ids| task_ids.contains(&task.id)),
+                    TaskPeriodField::CreatedAt => {
+                        is_in_period(task.create_time, period.from, period.until)
+                    }
+                    TaskPeriodField::Deadline => task
+                        .deadline_time
+                        .is_some_and(|time| is_in_period(time, period.from, period.until)),
+                    TaskPeriodField::CompletedAt => task
+                        .end_time
+                        .is_some_and(|time| is_in_period(time, period.from, period.until)),
+                })
+        })
+        .collect())
+}
+
+fn collect_tasks_pre_order(task: &Task, tasks: &mut Vec<Task>) {
+    tasks.push(task.clone());
+    for child in task.get_children() {
+        collect_tasks_pre_order(&child, tasks);
+    }
+}
+
+fn is_in_period(time: DateTime<Local>, from: DateTime<Local>, until: DateTime<Local>) -> bool {
+    from <= time && time < until
 }
 
 pub fn create_task(
