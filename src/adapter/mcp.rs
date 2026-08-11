@@ -1,4 +1,5 @@
 use crate::application::interface::TaskRepositoryTrait;
+use crate::application::schedule_use_case::{get_schedule, ScheduledTaskView};
 use crate::application::task_use_case::{
     get_focus, get_task, list_tasks, ApplicationError, ListTasksFilter, TaskPeriodField,
     TaskPeriodFilter, TaskView,
@@ -83,6 +84,7 @@ impl<R: TaskRepositoryTrait> McpServer<R> {
             Some("get_focus") => self.call_get_focus(id, params.get("arguments")),
             Some("get_task") => self.call_get_task(id, &params["arguments"]),
             Some("list_tasks") => self.call_list_tasks(id, params.get("arguments")),
+            Some("get_schedule") => self.call_get_schedule(id, params.get("arguments")),
             _ => error_response(id, -32602, "Unknown tool"),
         }
     }
@@ -162,6 +164,20 @@ impl<R: TaskRepositoryTrait> McpServer<R> {
                 true,
             ),
         }
+    }
+
+    fn call_get_schedule(&self, id: Value, arguments: Option<&Value>) -> Value {
+        if let Some(arguments) = arguments {
+            if let Err(error) = validate_argument_object(arguments, &[], &[]) {
+                return invalid_params_response(id, error);
+            }
+        }
+
+        let schedule = get_schedule(&self.repository)
+            .iter()
+            .map(scheduled_task_view_json)
+            .collect::<Vec<_>>();
+        tool_result_response(id, json!({"schedule": schedule}), false)
     }
 }
 
@@ -456,6 +472,18 @@ fn task_view_json(task: &TaskView) -> Value {
         "repetition_anchor": task.repetition_anchor.to_string(),
         "days_in_advance": task.days_in_advance,
         "project_category": task.project_category.map(|category| category.to_string())
+    })
+}
+
+fn scheduled_task_view_json(scheduled: &ScheduledTaskView) -> Value {
+    json!({
+        "task": task_view_json(&scheduled.task),
+        "first_available_time": scheduled.first_available_time.to_rfc3339(),
+        "scheduled_start": scheduled.scheduled_start.to_rfc3339(),
+        "scheduled_end": scheduled.scheduled_end.to_rfc3339(),
+        "scheduled_work_seconds": scheduled.scheduled_work_seconds,
+        "total_work_seconds": scheduled.total_work_seconds,
+        "rank": scheduled.rank
     })
 }
 
