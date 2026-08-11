@@ -2025,6 +2025,234 @@ mod tests {
         assert_eq!(mutation_count.get(), 1);
     }
 
+    #[test]
+    fn breakdown_task_子を入力順に追加して1回saveする() {
+        let pending_until = fixed_now() + Duration::hours(18);
+        let parent = Task::new("parent");
+        let parent_id = parent.get_id();
+        let repository = RecordingRepository::new(vec![parent]);
+        let save_count = Rc::clone(&repository.save_count);
+        let mut server = initialized_server(repository);
+
+        let response = server
+            .handle_request(tool_call_request(
+                "breakdown",
+                "breakdown_task",
+                json!({
+                    "parent_id": parent_id.to_string(),
+                    "names": ["first child", "second child"],
+                    "pending_until": pending_until.to_rfc3339()
+                }),
+            ))
+            .unwrap();
+
+        assert_eq!(response["jsonrpc"], "2.0");
+        assert_eq!(response["id"], "breakdown");
+        assert_eq!(response["result"]["isError"], false);
+        assert_tool_result_content_matches_structured(&response);
+        let child_ids = response["result"]["structuredContent"]["child_ids"]
+            .as_array()
+            .unwrap();
+        assert_eq!(child_ids.len(), 2);
+        assert!(child_ids
+            .iter()
+            .all(|id| Uuid::parse_str(id.as_str().unwrap()).is_ok()));
+        assert_eq!(save_count.get(), 1);
+
+        let parent_response = server
+            .handle_request(tool_call_request(
+                "parent-after-breakdown",
+                "get_task",
+                json!({"task_id": parent_id.to_string()}),
+            ))
+            .unwrap();
+        assert_eq!(
+            parent_response["result"]["structuredContent"]["task"]["child_ids"],
+            serde_json::Value::Array(child_ids.clone())
+        );
+        for (index, expected_name) in ["first child", "second child"].iter().enumerate() {
+            let child_response = server
+                .handle_request(tool_call_request(
+                    "child-after-breakdown",
+                    "get_task",
+                    json!({"task_id": child_ids[index].as_str().unwrap()}),
+                ))
+                .unwrap();
+            let child = &child_response["result"]["structuredContent"]["task"];
+            assert_eq!(child["name"], *expected_name);
+            assert_eq!(child["original_status"], "pending");
+            assert_eq!(child["pending_until"], pending_until.to_rfc3339());
+        }
+        assert_eq!(save_count.get(), 1);
+    }
+
+    #[test]
+    fn breakdown_task_schema違反では親を変更しない() {
+        let cases = [
+            ("missing-parent", json!({"names": ["child"]}), "parent_id"),
+            (
+                "missing-names",
+                json!({"parent_id": Uuid::new_v4().to_string()}),
+                "names",
+            ),
+            (
+                "empty-names",
+                json!({"parent_id": Uuid::new_v4().to_string(), "names": []}),
+                "names",
+            ),
+            (
+                "empty-name",
+                json!({"parent_id": Uuid::new_v4().to_string(), "names": [""]}),
+                "names[0]",
+            ),
+            (
+                "name-type",
+                json!({"parent_id": Uuid::new_v4().to_string(), "names": [1]}),
+                "names[0]",
+            ),
+        ];
+
+        for (id, arguments, field) in cases {
+            let repository = RecordingRepository::new(vec![]);
+            let save_count = Rc::clone(&repository.save_count);
+            let mutation_count = Rc::clone(&repository.mutation_count);
+            let mut server = initialized_server(repository);
+            let response = server
+                .handle_request(tool_call_request(id, "breakdown_task", arguments))
+                .unwrap();
+
+            assert_eq!(response["jsonrpc"], "2.0");
+            assert_eq!(response["id"], id);
+            assert_eq!(response["error"]["code"], -32602);
+            assert_eq!(response["error"]["message"], "Invalid params");
+            assert_eq!(response["error"]["data"]["code"], "invalid_input");
+            assert_eq!(response["error"]["data"]["field"], field);
+            assert_eq!(save_count.get(), 0);
+            assert_eq!(mutation_count.get(), 0);
+        }
+    }
+
+    #[test]
+    fn breakdown_task_意味的不正と未知parentでは変更もsaveもしない() {
+        let parent = Task::new("parent");
+        let parent_id = parent.get_id();
+        let cases = [
+            (
+                "invalid-parent-id",
+                json!({"parent_id": "not-a-uuid", "names": ["child"]}),
+                "invalid_input",
+                "parent_id",
+            ),
+            (
+                "invalid-pending",
+                json!({
+                    "parent_id": parent_id.to_string(),
+                    "names": ["child"],
+                    "pending_until": "not-a-date"
+                }),
+                "invalid_input",
+                "pending_until",
+            ),
+            (
+                "invalid-name",
+                json!({"parent_id": parent_id.to_string(), "names": ["  "]}),
+                "invalid_input",
+                "names",
+            ),
+            (
+                "missing-parent",
+                json!({"parent_id": Uuid::new_v4().to_string(), "names": ["child"]}),
+                "task_not_found",
+                "parent_id",
+            ),
+        ];
+
+        for (id, arguments, code, field) in cases {
+            let repository = RecordingRepository::new(vec![parent.clone()]);
+            let save_count = Rc::clone(&repository.save_count);
+            let mut server = initialized_server(repository);
+            let response = server
+                .handle_request(tool_call_request(id, "breakdown_task", arguments))
+                .unwrap();
+
+            assert_eq!(response["jsonrpc"], "2.0");
+            assert_eq!(response["id"], id);
+            assert_eq!(response["result"]["isError"], true);
+            assert_tool_result_content_matches_structured(&response);
+            assert_eq!(
+                response["result"]["structuredContent"]["error"]["code"],
+                code
+            );
+            assert_eq!(
+                response["result"]["structuredContent"]["error"]["field"],
+                field
+            );
+            assert!(!response["result"]["structuredContent"]["error"]["message"]
+                .as_str()
+                .unwrap()
+                .is_empty());
+            assert_eq!(save_count.get(), 0);
+
+            let parent_response = server
+                .handle_request(tool_call_request(
+                    "parent-after-error",
+                    "get_task",
+                    json!({"task_id": parent_id.to_string()}),
+                ))
+                .unwrap();
+            assert_eq!(
+                parent_response["result"]["structuredContent"]["task"]["child_ids"],
+                json!([])
+            );
+        }
+    }
+
+    #[test]
+    fn breakdown_task_save失敗を成功扱いしない() {
+        let parent = Task::new("parent");
+        let parent_id = parent.get_id();
+        let repository = RecordingRepository::new(vec![parent]).with_save_failure();
+        let save_count = Rc::clone(&repository.save_count);
+        let mut server = initialized_server(repository);
+
+        let response = server
+            .handle_request(tool_call_request(
+                "breakdown-save-failure",
+                "breakdown_task",
+                json!({"parent_id": parent_id.to_string(), "names": ["child"]}),
+            ))
+            .unwrap();
+
+        assert_eq!(response["jsonrpc"], "2.0");
+        assert_eq!(response["id"], "breakdown-save-failure");
+        assert_eq!(response["result"]["isError"], true);
+        assert_tool_result_content_matches_structured(&response);
+        assert_eq!(
+            response["result"]["structuredContent"]["error"]["code"],
+            "repository_save_failed"
+        );
+        assert!(!response["result"]["structuredContent"]["error"]["message"]
+            .as_str()
+            .unwrap()
+            .is_empty());
+        assert_eq!(save_count.get(), 1);
+
+        let parent_response = server
+            .handle_request(tool_call_request(
+                "parent-after-save-failure",
+                "get_task",
+                json!({"task_id": parent_id.to_string()}),
+            ))
+            .unwrap();
+        assert_eq!(
+            parent_response["result"]["structuredContent"]["task"]["child_ids"]
+                .as_array()
+                .unwrap()
+                .len(),
+            1
+        );
+    }
+
     fn initialize_request() -> serde_json::Value {
         json!({
             "jsonrpc": "2.0",
