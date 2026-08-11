@@ -90,7 +90,10 @@ impl<R: TaskRepositoryTrait> McpServer<R> {
             }
             "tools/call" => {
                 self.repository.sync_clock(Local::now());
-                Some(self.call_tool(id, &request))
+                match self.repository.load() {
+                    Ok(()) => Some(self.call_tool(id, &request)),
+                    Err(error) => Some(repository_load_error_response(id, &error.to_string())),
+                }
             }
             _ => Some(error_response(id, -32601, "Method not found")),
         }
@@ -583,6 +586,20 @@ fn repository_save_error_response(id: Value, message: &str) -> Value {
             "error": {
                 "code": "repository_save_failed",
                 "message": message
+            }
+        }),
+        true,
+    )
+}
+
+fn repository_load_error_response(id: Value, message: &str) -> Value {
+    tool_result_response(
+        id,
+        json!({
+            "error": {
+                "code": "repository_load_failed",
+                "message": message,
+                "recovery": "repair_repository"
             }
         }),
         true,
