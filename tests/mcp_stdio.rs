@@ -34,6 +34,33 @@ impl Drop for TestStorageDirectory {
     }
 }
 
+#[cfg(unix)]
+struct PermissionRestoreGuard {
+    path: PathBuf,
+    original: fs::Permissions,
+}
+
+#[cfg(unix)]
+impl PermissionRestoreGuard {
+    fn set_mode(path: &Path, mode: u32) -> Self {
+        use std::os::unix::fs::PermissionsExt;
+
+        let original = fs::metadata(path).unwrap().permissions();
+        fs::set_permissions(path, fs::Permissions::from_mode(mode)).unwrap();
+        Self {
+            path: path.to_path_buf(),
+            original,
+        }
+    }
+}
+
+#[cfg(unix)]
+impl Drop for PermissionRestoreGuard {
+    fn drop(&mut self) {
+        let _ = fs::set_permissions(&self.path, self.original.clone());
+    }
+}
+
 #[test]
 fn mcp_stdio_initializeとtools_listをprotocol専用stdoutへ返す() {
     let storage = TestStorageDirectory::new();
@@ -313,6 +340,153 @@ fn mcp_stdio稼働中は同じ保存先の実cli起動を拒否する() {
 
     drop(mcp.stdin.take());
     assert_process_succeeded(&wait_with_output(mcp));
+}
+
+#[test]
+fn mcp_stdio_主要なtool_errorを区別する() {
+    let storage = TestStorageDirectory::new();
+    let missing_id = Uuid::new_v4().to_string();
+    let missing = call_tool(
+        storage.path(),
+        "missing",
+        "get_task",
+        Some(json!({"task_id": missing_id})),
+    );
+    assert_eq!(
+        missing["result"]["structuredContent"]["error"]["code"],
+        "task_not_found"
+    );
+
+    let invalid_name = call_tool(
+        storage.path(),
+        "invalid-name",
+        "create_task",
+        Some(json!({"name": ""})),
+    );
+    assert_eq!(invalid_name["error"]["code"], -32602);
+    assert_eq!(invalid_name["error"]["data"]["field"], "name");
+    let invalid_number = call_tool(
+        storage.path(),
+        "invalid-number",
+        "create_task",
+        Some(json!({"name": "invalid estimate", "estimated_work_minutes": -1})),
+    );
+    assert_eq!(invalid_number["error"]["code"], -32602);
+    assert_eq!(
+        invalid_number["error"]["data"]["field"],
+        "estimated_work_minutes"
+    );
+    let invalid_datetime = call_tool(
+        storage.path(),
+        "invalid-datetime",
+        "defer_task",
+        Some(json!({"task_id": missing_id, "pending_until": "invalid"})),
+    );
+    assert_eq!(
+        invalid_datetime["result"]["structuredContent"]["error"]["code"],
+        "invalid_input"
+    );
+    assert_eq!(
+        invalid_datetime["result"]["structuredContent"]["error"]["field"],
+        "pending_until"
+    );
+
+    let created = call_tool(
+        storage.path(),
+        "create-parent-with-child",
+        "create_task",
+        Some(json!({"name": "parent with child"})),
+    );
+    let parent_id = created["result"]["structuredContent"]["task_id"]
+        .as_str()
+        .unwrap();
+    let breakdown = call_tool(
+        storage.path(),
+        "add-undone-child",
+        "breakdown_task",
+        Some(json!({"parent_id": parent_id, "names": ["undone child"]})),
+    );
+    assert_eq!(breakdown["result"]["isError"], false);
+    let rejected = call_tool(
+        storage.path(),
+        "reject-parent-completion",
+        "complete_task",
+        Some(json!({"task_id": parent_id})),
+    );
+    assert_eq!(rejected["result"]["isError"], true);
+    assert_eq!(
+        rejected["result"]["structuredContent"]["error"]["code"],
+        "has_undone_children"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn mcp_stdio_実repositoryのsave失敗をtool_errorにする() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let storage = TestStorageDirectory::new();
+    let child = spawn_mcp(storage.path());
+    let (mut child, _) = wait_for_lock_metadata(child, &storage.path().join(".lock"));
+    let original_mode = fs::metadata(storage.path()).unwrap().permissions().mode();
+    let permission_guard = PermissionRestoreGuard::set_mode(storage.path(), 0o500);
+    let probe_path = storage.path().join("permission-probe");
+    match fs::write(&probe_path, b"probe") {
+        Err(error) => assert_eq!(error.kind(), std::io::ErrorKind::PermissionDenied),
+        Ok(()) => {
+            let _ = fs::remove_file(probe_path);
+            panic!("test requires directory write permission to be denied");
+        }
+    }
+    let requests = [
+        json!({
+            "jsonrpc": "2.0",
+            "id": "initialize-save-failure",
+            "method": "initialize",
+            "params": {
+                "protocolVersion": "2025-06-18",
+                "capabilities": {},
+                "clientInfo": {"name": "integration-test", "version": "1.0"}
+            }
+        }),
+        json!({"jsonrpc": "2.0", "method": "notifications/initialized"}),
+        json!({
+            "jsonrpc": "2.0",
+            "id": "save-failure",
+            "method": "tools/call",
+            "params": {
+                "name": "create_task",
+                "arguments": {"name": "cannot save"}
+            }
+        }),
+    ];
+    {
+        let stdin = child.stdin.as_mut().unwrap();
+        for request in requests {
+            writeln!(stdin, "{request}").unwrap();
+        }
+    }
+    drop(child.stdin.take());
+    let output = wait_with_output(child);
+    drop(permission_guard);
+    assert_eq!(
+        fs::metadata(storage.path()).unwrap().permissions().mode(),
+        original_mode
+    );
+
+    assert_process_succeeded(&output);
+    let responses = String::from_utf8(output.stdout)
+        .unwrap()
+        .lines()
+        .map(|line| serde_json::from_str::<Value>(line).unwrap())
+        .collect::<Vec<_>>();
+    assert_eq!(responses.len(), 2);
+    assert_eq!(responses[1]["id"], "save-failure");
+    assert_eq!(responses[1]["result"]["isError"], true);
+    assert_eq!(
+        responses[1]["result"]["structuredContent"]["error"]["code"],
+        "repository_save_failed"
+    );
 }
 
 fn call_tool(storage_directory: &Path, id: &str, name: &str, arguments: Option<Value>) -> Value {
