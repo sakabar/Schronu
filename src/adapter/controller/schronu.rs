@@ -4385,6 +4385,7 @@ struct TestTaskRepository {
     defer_candidate_leaf_task_id_opt: Option<Uuid>,
     last_defer_candidate_recent_days_opt: Option<i64>,
     load_should_fail: bool,
+    load_attempt_count: Cell<usize>,
     save_failures_remaining: Cell<usize>,
     save_attempt_count: Cell<usize>,
 }
@@ -4436,6 +4437,7 @@ impl TestTaskRepository {
             defer_candidate_leaf_task_id_opt: Some(task_id),
             last_defer_candidate_recent_days_opt: None,
             load_should_fail: false,
+            load_attempt_count: Cell::new(0),
             save_failures_remaining: Cell::new(0),
             save_attempt_count: Cell::new(0),
         }
@@ -4458,6 +4460,8 @@ impl TaskRepositoryTrait for TestTaskRepository {
     }
 
     fn load(&mut self) -> Result<(), schronu::application::interface::TaskRepositoryError> {
+        self.load_attempt_count
+            .set(self.load_attempt_count.get() + 1);
         if self.load_should_fail {
             Err(TaskRepositoryError::new(
                 TaskRepositoryOperation::Load,
@@ -7097,6 +7101,227 @@ fn test_reload後にfocus中taskがdoneなら次候補を選び直す() {
     assert_eq!(focused_task_id_opt, Some(next.get_id()));
 }
 
+#[test]
+fn test_interactive_submitは製品event経路でload実行保存する() {
+    let storage_dir = TestStorageDir::new();
+    std::fs::create_dir_all(&storage_dir.path).unwrap();
+    let now = Local.with_ymd_and_hms(2026, 8, 12, 12, 0, 0).unwrap();
+    let task = Task::new("更新対象");
+    let task_id = task.get_id();
+    let mut repository =
+        TestTaskRepository::new(task, now).with_storage_directory(&storage_dir.path);
+    let mut free_time_manager = TestFreeTimeManager;
+    let mut stdout = TestWriter::new();
+    let mut focused_task_id_opt = Some(task_id);
+    let mut last_focused_task_id_opt = Some(task_id);
+    let mut focus_started_datetime = now;
+    let mut focus_selection_mode = FocusSelectionMode::HighestPriority;
+
+    let outcome = handle_interactive_repository_event(
+        &mut stdout,
+        &mut repository,
+        &mut free_time_manager,
+        InteractiveRepositoryState {
+            focused_task_id_opt: &mut focused_task_id_opt,
+            last_focused_task_id_opt: &mut last_focused_task_id_opt,
+            focus_started_datetime: &mut focus_started_datetime,
+            focus_selection_mode: &mut focus_selection_mode,
+        },
+        InteractiveRepositoryEvent::Submit { line: " 予 45 " },
+    );
+
+    assert!(matches!(
+        outcome,
+        InteractiveRepositoryEventOutcome::CommandExecuted(ref command) if command == "予 45"
+    ));
+    assert_eq!(repository.load_attempt_count.get(), 1);
+    assert_eq!(repository.save_attempt_count.get(), 1);
+    assert_eq!(
+        repository
+            .get_by_id(task_id)
+            .unwrap()
+            .get_estimated_work_seconds(),
+        45 * 60
+    );
+    assert!(StorageLock::acquire(&storage_dir.path, LockMode::Mcp).is_ok());
+}
+
+#[test]
+fn test_interactive_submitはload失敗ならretryしsave失敗ならfatalにする() {
+    let storage_dir = TestStorageDir::new();
+    std::fs::create_dir_all(&storage_dir.path).unwrap();
+    let now = Local.with_ymd_and_hms(2026, 8, 12, 12, 0, 0).unwrap();
+
+    for (load_should_fail, save_failures, expected_fatal) in [(true, 0, false), (false, 1, true)] {
+        let task = Task::new("更新対象");
+        let task_id = task.get_id();
+        let mut repository =
+            TestTaskRepository::new(task, now).with_storage_directory(&storage_dir.path);
+        repository.load_should_fail = load_should_fail;
+        repository.save_failures_remaining.set(save_failures);
+        let mut free_time_manager = TestFreeTimeManager;
+        let mut stdout = TestWriter::new();
+        let mut focused_task_id_opt = Some(task_id);
+        let mut last_focused_task_id_opt = Some(task_id);
+        let mut focus_started_datetime = now;
+        let mut focus_selection_mode = FocusSelectionMode::HighestPriority;
+
+        let outcome = handle_interactive_repository_event(
+            &mut stdout,
+            &mut repository,
+            &mut free_time_manager,
+            InteractiveRepositoryState {
+                focused_task_id_opt: &mut focused_task_id_opt,
+                last_focused_task_id_opt: &mut last_focused_task_id_opt,
+                focus_started_datetime: &mut focus_started_datetime,
+                focus_selection_mode: &mut focus_selection_mode,
+            },
+            InteractiveRepositoryEvent::Submit { line: "予 45" },
+        );
+
+        assert_eq!(
+            matches!(outcome, InteractiveRepositoryEventOutcome::Fatal(_)),
+            expected_fatal
+        );
+        assert_eq!(
+            matches!(outcome, InteractiveRepositoryEventOutcome::Retry(_)),
+            !expected_fatal
+        );
+        assert_eq!(
+            repository.save_attempt_count.get(),
+            usize::from(!load_should_fail)
+        );
+    }
+}
+
+#[test]
+fn test_interactive_refreshは再読込後にlockを解放する() {
+    let storage_dir = TestStorageDir::new();
+    std::fs::create_dir_all(&storage_dir.path).unwrap();
+    let now = Local.with_ymd_and_hms(2026, 8, 12, 12, 0, 0).unwrap();
+    let task = Task::new("表示対象");
+    let task_id = task.get_id();
+    let mut repository =
+        TestTaskRepository::new(task, now).with_storage_directory(&storage_dir.path);
+    let mut free_time_manager = TestFreeTimeManager;
+    let mut stdout = TestWriter::new();
+    let mut focused_task_id_opt = Some(task_id);
+    let mut last_focused_task_id_opt = Some(task_id);
+    let mut focus_started_datetime = now;
+    let mut focus_selection_mode = FocusSelectionMode::HighestPriority;
+
+    let outcome = handle_interactive_repository_event(
+        &mut stdout,
+        &mut repository,
+        &mut free_time_manager,
+        InteractiveRepositoryState {
+            focused_task_id_opt: &mut focused_task_id_opt,
+            last_focused_task_id_opt: &mut last_focused_task_id_opt,
+            focus_started_datetime: &mut focus_started_datetime,
+            focus_selection_mode: &mut focus_selection_mode,
+        },
+        InteractiveRepositoryEvent::Refresh,
+    );
+
+    assert!(matches!(
+        outcome,
+        InteractiveRepositoryEventOutcome::Continue
+    ));
+    assert_eq!(repository.load_attempt_count.get(), 1);
+    assert_eq!(repository.save_attempt_count.get(), 0);
+    assert!(StorageLock::acquire(&storage_dir.path, LockMode::Mcp).is_ok());
+}
+
+#[test]
+fn test_interactive_ctrl_cは成功済みcommandを再保存せずfatal終了する() {
+    let storage_dir = TestStorageDir::new();
+    std::fs::create_dir_all(&storage_dir.path).unwrap();
+    let now = Local.with_ymd_and_hms(2026, 8, 12, 12, 0, 0).unwrap();
+    let task = Task::new("更新対象");
+    let task_id = task.get_id();
+    let mut repository =
+        TestTaskRepository::new(task, now).with_storage_directory(&storage_dir.path);
+    let mut free_time_manager = TestFreeTimeManager;
+    let mut stdout = TestWriter::new();
+    let mut focused_task_id_opt = Some(task_id);
+    let mut last_focused_task_id_opt = Some(task_id);
+    let mut focus_started_datetime = now;
+    let mut focus_selection_mode = FocusSelectionMode::HighestPriority;
+
+    let submitted = handle_interactive_repository_event(
+        &mut stdout,
+        &mut repository,
+        &mut free_time_manager,
+        InteractiveRepositoryState {
+            focused_task_id_opt: &mut focused_task_id_opt,
+            last_focused_task_id_opt: &mut last_focused_task_id_opt,
+            focus_started_datetime: &mut focus_started_datetime,
+            focus_selection_mode: &mut focus_selection_mode,
+        },
+        InteractiveRepositoryEvent::Submit { line: "予 45" },
+    );
+    let interrupted = handle_interactive_repository_event(
+        &mut stdout,
+        &mut repository,
+        &mut free_time_manager,
+        InteractiveRepositoryState {
+            focused_task_id_opt: &mut focused_task_id_opt,
+            last_focused_task_id_opt: &mut last_focused_task_id_opt,
+            focus_started_datetime: &mut focus_started_datetime,
+            focus_selection_mode: &mut focus_selection_mode,
+        },
+        InteractiveRepositoryEvent::Interrupted,
+    );
+
+    assert!(matches!(
+        submitted,
+        InteractiveRepositoryEventOutcome::CommandExecuted(_)
+    ));
+    assert!(matches!(
+        interrupted,
+        InteractiveRepositoryEventOutcome::Fatal(RunError::Interrupted)
+    ));
+    assert_eq!(repository.save_attempt_count.get(), 1);
+}
+
+#[test]
+fn test_interactive_input切断はreload後に保存してfatal終了する() {
+    let storage_dir = TestStorageDir::new();
+    std::fs::create_dir_all(&storage_dir.path).unwrap();
+    let now = Local.with_ymd_and_hms(2026, 8, 12, 12, 0, 0).unwrap();
+    let task = Task::new("保存対象");
+    let task_id = task.get_id();
+    let mut repository =
+        TestTaskRepository::new(task, now).with_storage_directory(&storage_dir.path);
+    let mut free_time_manager = TestFreeTimeManager;
+    let mut stdout = TestWriter::new();
+    let mut focused_task_id_opt = Some(task_id);
+    let mut last_focused_task_id_opt = Some(task_id);
+    let mut focus_started_datetime = now;
+    let mut focus_selection_mode = FocusSelectionMode::HighestPriority;
+
+    let outcome = handle_interactive_repository_event(
+        &mut stdout,
+        &mut repository,
+        &mut free_time_manager,
+        InteractiveRepositoryState {
+            focused_task_id_opt: &mut focused_task_id_opt,
+            last_focused_task_id_opt: &mut last_focused_task_id_opt,
+            focus_started_datetime: &mut focus_started_datetime,
+            focus_selection_mode: &mut focus_selection_mode,
+        },
+        InteractiveRepositoryEvent::InputDisconnected,
+    );
+
+    assert!(matches!(
+        outcome,
+        InteractiveRepositoryEventOutcome::Fatal(_)
+    ));
+    assert_eq!(repository.load_attempt_count.get(), 1);
+    assert_eq!(repository.save_attempt_count.get(), 1);
+    assert!(StorageLock::acquire(&storage_dir.path, LockMode::Mcp).is_ok());
+}
+
 fn make_messages_about_focus(
     focused_task: &Task,
     focus_started_datetime: &DateTime<Local>,
@@ -7785,6 +8010,152 @@ fn execute_interactive_command(
     reconcile_focus_after_reload(task_repository, focused_task_id_opt, *focus_selection_mode)
 }
 
+struct InteractiveRepositoryState<'a> {
+    focused_task_id_opt: &'a mut Option<Uuid>,
+    last_focused_task_id_opt: &'a mut Option<Uuid>,
+    focus_started_datetime: &'a mut DateTime<Local>,
+    focus_selection_mode: &'a mut FocusSelectionMode,
+}
+
+enum InteractiveRepositoryEvent<'a> {
+    Submit {
+        line: &'a str,
+    },
+    Refresh,
+    Exit {
+        header: &'a str,
+        line: &'a str,
+        cursor_x: usize,
+    },
+    InputDisconnected,
+    InputRead(std::io::Error),
+    Interrupted,
+}
+
+enum InteractiveRepositoryEventOutcome {
+    Continue,
+    CommandExecuted(String),
+    Retry(CliRepositoryTransactionError),
+    Exit,
+    Fatal(RunError),
+}
+
+fn handle_interactive_repository_event(
+    stdout: &mut dyn SchronuWriter,
+    task_repository: &mut dyn TaskRepositoryTrait,
+    free_time_manager: &mut dyn FreeTimeManagerTrait,
+    state: InteractiveRepositoryState<'_>,
+    event: InteractiveRepositoryEvent<'_>,
+) -> InteractiveRepositoryEventOutcome {
+    match event {
+        InteractiveRepositoryEvent::Submit { line } => {
+            let command = line.trim().to_string();
+            let transaction_result =
+                run_cli_repository_transaction(task_repository, Local::now(), |task_repository| {
+                    if reconcile_focus_after_reload(
+                        task_repository,
+                        state.focused_task_id_opt,
+                        *state.focus_selection_mode,
+                    ) {
+                        *state.last_focused_task_id_opt = None;
+                    }
+                    writeln_newline(stdout, "").unwrap();
+                    println!(
+                        "{}{}> {}{}",
+                        style::Bold,
+                        Local::now().format("%Y/%m/%d %H:%M:%S.%f"),
+                        command,
+                        style::Reset
+                    );
+                    writeln_newline(stdout, "").unwrap();
+                    stdout.flush().unwrap();
+
+                    if execute_interactive_command(
+                        stdout,
+                        task_repository,
+                        free_time_manager,
+                        state.focused_task_id_opt,
+                        state.focus_started_datetime,
+                        state.focus_selection_mode,
+                        &command,
+                    ) {
+                        *state.last_focused_task_id_opt = None;
+                    }
+                });
+            match transaction_result {
+                Ok(()) => InteractiveRepositoryEventOutcome::CommandExecuted(command),
+                Err(error @ CliRepositoryTransactionError::Save(_)) => {
+                    InteractiveRepositoryEventOutcome::Fatal(error.into())
+                }
+                Err(error) => InteractiveRepositoryEventOutcome::Retry(error),
+            }
+        }
+        InteractiveRepositoryEvent::Refresh => {
+            match reload_repository_for_cli(task_repository, Local::now()) {
+                Ok(storage_lock) => {
+                    if reconcile_focus_after_reload(
+                        task_repository,
+                        state.focused_task_id_opt,
+                        *state.focus_selection_mode,
+                    ) {
+                        *state.last_focused_task_id_opt = None;
+                    }
+                    drop(storage_lock);
+                    InteractiveRepositoryEventOutcome::Continue
+                }
+                Err(error) => InteractiveRepositoryEventOutcome::Retry(error),
+            }
+        }
+        InteractiveRepositoryEvent::Exit {
+            header,
+            line,
+            cursor_x,
+        } => {
+            if !line.is_empty() {
+                return InteractiveRepositoryEventOutcome::Continue;
+            }
+            match reload_repository_for_cli(task_repository, Local::now()) {
+                Ok(_storage_lock) => {
+                    if reconcile_focus_after_reload(
+                        task_repository,
+                        state.focused_task_id_opt,
+                        *state.focus_selection_mode,
+                    ) {
+                        *state.last_focused_task_id_opt = None;
+                    }
+                    if try_exit_interactive(
+                        stdout,
+                        task_repository,
+                        free_time_manager,
+                        state.focused_task_id_opt,
+                        header,
+                        line,
+                        cursor_x,
+                        Local::now(),
+                    ) {
+                        InteractiveRepositoryEventOutcome::Exit
+                    } else {
+                        InteractiveRepositoryEventOutcome::Continue
+                    }
+                }
+                Err(error) => InteractiveRepositoryEventOutcome::Retry(error),
+            }
+        }
+        InteractiveRepositoryEvent::InputDisconnected => InteractiveRepositoryEventOutcome::Fatal(
+            handle_input_disconnected_with_reload(task_repository),
+        ),
+        InteractiveRepositoryEvent::InputRead(input_error) => {
+            InteractiveRepositoryEventOutcome::Fatal(handle_input_read_error_with_reload(
+                task_repository,
+                input_error,
+            ))
+        }
+        InteractiveRepositoryEvent::Interrupted => {
+            InteractiveRepositoryEventOutcome::Fatal(RunError::Interrupted)
+        }
+    }
+}
+
 fn application(
     task_repository: &mut dyn TaskRepositoryTrait,
     free_time_manager: &mut dyn FreeTimeManagerTrait,
@@ -7866,31 +8237,49 @@ fn application(
                 key
             }
             Ok(Err(input_error)) => {
-                loop_error_opt = Some(handle_input_read_error_with_reload(
+                let outcome = handle_interactive_repository_event(
+                    &mut stdout,
                     task_repository,
-                    input_error,
-                ));
+                    free_time_manager,
+                    InteractiveRepositoryState {
+                        focused_task_id_opt: &mut focused_task_id_opt,
+                        last_focused_task_id_opt: &mut last_focused_task_id_opt,
+                        focus_started_datetime: &mut focus_started_datetime,
+                        focus_selection_mode: &mut focus_selection_mode,
+                    },
+                    InteractiveRepositoryEvent::InputRead(input_error),
+                );
+                if let InteractiveRepositoryEventOutcome::Fatal(error) = outcome {
+                    loop_error_opt = Some(error);
+                }
                 break;
             }
             Err(RecvTimeoutError::Timeout) => {
-                match reload_repository_for_cli(task_repository, Local::now()) {
-                    Ok(storage_lock) => {
-                        let focus_changed = reconcile_focus_after_reload(
-                            task_repository,
-                            &mut focused_task_id_opt,
-                            focus_selection_mode,
-                        );
-                        drop(storage_lock);
-                        if focus_changed {
-                            last_focused_task_id_opt = None;
-                        }
-                    }
-                    Err(error) => {
+                let outcome = handle_interactive_repository_event(
+                    &mut stdout,
+                    task_repository,
+                    free_time_manager,
+                    InteractiveRepositoryState {
+                        focused_task_id_opt: &mut focused_task_id_opt,
+                        last_focused_task_id_opt: &mut last_focused_task_id_opt,
+                        focus_started_datetime: &mut focus_started_datetime,
+                        focus_selection_mode: &mut focus_selection_mode,
+                    },
+                    InteractiveRepositoryEvent::Refresh,
+                );
+                match outcome {
+                    InteractiveRepositoryEventOutcome::Continue => {}
+                    InteractiveRepositoryEventOutcome::Retry(error) => {
                         writeln_newline(&mut stdout, &format!("[Error] {error}")).unwrap();
                         render_prompt(&mut stdout, header, &line, cursor_x);
                         next_refresh_at = idle_refresh_deadline(Instant::now());
                         continue;
                     }
+                    InteractiveRepositoryEventOutcome::Fatal(error) => {
+                        loop_error_opt = Some(error);
+                        break;
+                    }
+                    _ => unreachable!("refresh event returned an invalid outcome"),
                 }
                 render_interactive_screen(
                     &mut stdout,
@@ -7912,46 +8301,74 @@ fn application(
                 continue;
             }
             Err(RecvTimeoutError::Disconnected) => {
-                loop_error_opt = Some(handle_input_disconnected_with_reload(task_repository));
+                let outcome = handle_interactive_repository_event(
+                    &mut stdout,
+                    task_repository,
+                    free_time_manager,
+                    InteractiveRepositoryState {
+                        focused_task_id_opt: &mut focused_task_id_opt,
+                        last_focused_task_id_opt: &mut last_focused_task_id_opt,
+                        focus_started_datetime: &mut focus_started_datetime,
+                        focus_selection_mode: &mut focus_selection_mode,
+                    },
+                    InteractiveRepositoryEvent::InputDisconnected,
+                );
+                if let InteractiveRepositoryEventOutcome::Fatal(error) = outcome {
+                    loop_error_opt = Some(error);
+                }
                 break;
             }
         };
 
         match key {
             Key::Ctrl('d') => {
-                if line.is_empty() {
-                    match reload_repository_for_cli(task_repository, Local::now()) {
-                        Ok(_storage_lock) => {
-                            if reconcile_focus_after_reload(
-                                task_repository,
-                                &mut focused_task_id_opt,
-                                focus_selection_mode,
-                            ) {
-                                last_focused_task_id_opt = None;
-                            }
-                            if try_exit_interactive(
-                                &mut stdout,
-                                task_repository,
-                                free_time_manager,
-                                &mut focused_task_id_opt,
-                                header,
-                                &line,
-                                cursor_x,
-                                Local::now(),
-                            ) {
-                                break;
-                            }
-                        }
-                        Err(error) => {
-                            writeln_newline(&mut stdout, &format!("[Error] {error}")).unwrap();
-                            render_prompt(&mut stdout, header, &line, cursor_x);
-                        }
+                let outcome = handle_interactive_repository_event(
+                    &mut stdout,
+                    task_repository,
+                    free_time_manager,
+                    InteractiveRepositoryState {
+                        focused_task_id_opt: &mut focused_task_id_opt,
+                        last_focused_task_id_opt: &mut last_focused_task_id_opt,
+                        focus_started_datetime: &mut focus_started_datetime,
+                        focus_selection_mode: &mut focus_selection_mode,
+                    },
+                    InteractiveRepositoryEvent::Exit {
+                        header,
+                        line: &line,
+                        cursor_x,
+                    },
+                );
+                match outcome {
+                    InteractiveRepositoryEventOutcome::Exit => break,
+                    InteractiveRepositoryEventOutcome::Retry(error) => {
+                        writeln_newline(&mut stdout, &format!("[Error] {error}")).unwrap();
+                        render_prompt(&mut stdout, header, &line, cursor_x);
                     }
+                    InteractiveRepositoryEventOutcome::Fatal(error) => {
+                        loop_error_opt = Some(error);
+                        break;
+                    }
+                    InteractiveRepositoryEventOutcome::Continue => {}
+                    _ => unreachable!("exit event returned an invalid outcome"),
                 }
             }
             Key::Ctrl('c') => {
                 // 未送信の入力を破棄し、terminalを後始末してから異常終了する
-                loop_error_opt = Some(RunError::Interrupted);
+                let outcome = handle_interactive_repository_event(
+                    &mut stdout,
+                    task_repository,
+                    free_time_manager,
+                    InteractiveRepositoryState {
+                        focused_task_id_opt: &mut focused_task_id_opt,
+                        last_focused_task_id_opt: &mut last_focused_task_id_opt,
+                        focus_started_datetime: &mut focus_started_datetime,
+                        focus_selection_mode: &mut focus_selection_mode,
+                    },
+                    InteractiveRepositoryEvent::Interrupted,
+                );
+                if let InteractiveRepositoryEventOutcome::Fatal(error) = outcome {
+                    loop_error_opt = Some(error);
+                }
                 break;
             }
             // Key::Up => write!(stdout, "{}", termion::cursor::Up(1)).unwrap(),
@@ -8081,54 +8498,31 @@ fn application(
                 stdout.flush().unwrap();
             }
             Key::Char('\n') | Key::Ctrl('m') => {
-                let command = line.trim().to_string();
-                let transaction_result = run_cli_repository_transaction(
+                let outcome = handle_interactive_repository_event(
+                    &mut stdout,
                     task_repository,
-                    Local::now(),
-                    |task_repository| {
-                        if reconcile_focus_after_reload(
-                            task_repository,
-                            &mut focused_task_id_opt,
-                            focus_selection_mode,
-                        ) {
-                            last_focused_task_id_opt = None;
-                        }
-                        writeln_newline(&mut stdout, "").unwrap();
-                        println!(
-                            "{}{}> {}{}",
-                            style::Bold,
-                            Local::now().format("%Y/%m/%d %H:%M:%S.%f"),
-                            command,
-                            style::Reset
-                        );
-                        writeln_newline(&mut stdout, "").unwrap();
-                        stdout.flush().unwrap();
-
-                        if execute_interactive_command(
-                            &mut stdout,
-                            task_repository,
-                            free_time_manager,
-                            &mut focused_task_id_opt,
-                            &focus_started_datetime,
-                            &mut focus_selection_mode,
-                            &command,
-                        ) {
-                            last_focused_task_id_opt = None;
-                        }
+                    free_time_manager,
+                    InteractiveRepositoryState {
+                        focused_task_id_opt: &mut focused_task_id_opt,
+                        last_focused_task_id_opt: &mut last_focused_task_id_opt,
+                        focus_started_datetime: &mut focus_started_datetime,
+                        focus_selection_mode: &mut focus_selection_mode,
                     },
+                    InteractiveRepositoryEvent::Submit { line: &line },
                 );
-                match transaction_result {
-                    Ok(()) => {}
-                    Err(error @ CliRepositoryTransactionError::Save(_)) => {
-                        loop_error_opt = Some(error.into());
+                let command = match outcome {
+                    InteractiveRepositoryEventOutcome::CommandExecuted(command) => command,
+                    InteractiveRepositoryEventOutcome::Fatal(error) => {
+                        loop_error_opt = Some(error);
                         break;
                     }
-                    Err(error) => {
+                    InteractiveRepositoryEventOutcome::Retry(error) => {
                         writeln_newline(&mut stdout, &format!("[Error] {error}")).unwrap();
                         render_prompt(&mut stdout, header, &line, cursor_x);
                         continue;
                     }
-                }
+                    _ => unreachable!("submit event returned an invalid outcome"),
+                };
 
                 // スクロールするのが面倒なので、新や突のように付加情報を表示するコマンドの直後は葉を表示しない
                 // Todo: "new" や  "unplanned" の場合にも対応する
