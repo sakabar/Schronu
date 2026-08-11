@@ -1,5 +1,8 @@
 use crate::application::interface::TaskRepositoryTrait;
+use crate::application::task_use_case::{get_task, TaskView};
+use serde_json::Map;
 use serde_json::{json, Value};
+use uuid::Uuid;
 
 const MCP_PROTOCOL_VERSION: &str = "2025-06-18";
 
@@ -11,14 +14,14 @@ enum LifecycleState {
 }
 
 pub struct McpServer<R> {
-    _repository: R,
+    repository: R,
     lifecycle_state: LifecycleState,
 }
 
 impl<R: TaskRepositoryTrait> McpServer<R> {
     pub fn new(repository: R) -> Self {
         Self {
-            _repository: repository,
+            repository,
             lifecycle_state: LifecycleState::Uninitialized,
         }
     }
@@ -61,7 +64,49 @@ impl<R: TaskRepositoryTrait> McpServer<R> {
                 "id": id,
                 "result": {"tools": tool_definitions()}
             })),
+            Some("tools/call") if self.lifecycle_state != LifecycleState::Initialized => {
+                Some(error_response(id, -32002, "Server not initialized"))
+            }
+            Some("tools/call") => Some(self.call_tool(id, &request)),
             _ => Some(error_response(id, -32601, "Method not found")),
+        }
+    }
+
+    fn call_tool(&self, id: Value, request: &Value) -> Value {
+        let params = &request["params"];
+        match params["name"].as_str() {
+            Some("get_task") => self.call_get_task(id, &params["arguments"]),
+            _ => error_response(id, -32602, "Unknown tool"),
+        }
+    }
+
+    fn call_get_task(&self, id: Value, arguments: &Value) -> Value {
+        let argument_object = match validate_argument_object(arguments, &["task_id"], &["task_id"])
+        {
+            Ok(argument_object) => argument_object,
+            Err(error) => return invalid_params_response(id, error),
+        };
+        let task_id_text = match string_argument(argument_object, "task_id") {
+            Ok(task_id_text) => task_id_text,
+            Err(error) => return invalid_params_response(id, error),
+        };
+        let Ok(task_id) = Uuid::parse_str(task_id_text) else {
+            return invalid_input_response(id, "task_id", "must be a valid UUID");
+        };
+
+        match get_task(&self.repository, task_id) {
+            Some(task) => tool_result_response(id, json!({"task": task_view_json(&task)}), false),
+            None => tool_result_response(
+                id,
+                json!({
+                    "error": {
+                        "code": "task_not_found",
+                        "message": format!("task not found: {task_id}"),
+                        "task_id": task_id.to_string()
+                    }
+                }),
+                true,
+            ),
         }
     }
 }
@@ -74,6 +119,129 @@ fn error_response(id: Value, code: i64, message: &str) -> Value {
             "code": code,
             "message": message
         }
+    })
+}
+
+fn invalid_input_response(id: Value, field: &str, message: &str) -> Value {
+    tool_result_response(
+        id,
+        json!({
+            "error": {
+                "code": "invalid_input",
+                "message": message,
+                "field": field
+            }
+        }),
+        true,
+    )
+}
+
+#[derive(Debug)]
+struct InvalidParams {
+    field: String,
+    reason: &'static str,
+}
+
+fn validate_argument_object<'a>(
+    arguments: &'a Value,
+    allowed_fields: &[&str],
+    required_fields: &[&str],
+) -> Result<&'a Map<String, Value>, InvalidParams> {
+    let Some(arguments) = arguments.as_object() else {
+        return Err(InvalidParams {
+            field: "arguments".to_string(),
+            reason: "must be an object",
+        });
+    };
+
+    if let Some(field) = arguments
+        .keys()
+        .find(|field| !allowed_fields.contains(&field.as_str()))
+    {
+        return Err(InvalidParams {
+            field: format!("arguments.{field}"),
+            reason: "additional property is not allowed",
+        });
+    }
+
+    if let Some(field) = required_fields
+        .iter()
+        .find(|field| !arguments.contains_key(**field))
+    {
+        return Err(InvalidParams {
+            field: (*field).to_string(),
+            reason: "field is required",
+        });
+    }
+
+    Ok(arguments)
+}
+
+fn string_argument<'a>(
+    arguments: &'a Map<String, Value>,
+    field: &str,
+) -> Result<&'a str, InvalidParams> {
+    arguments
+        .get(field)
+        .and_then(Value::as_str)
+        .ok_or_else(|| InvalidParams {
+            field: field.to_string(),
+            reason: "must be a string",
+        })
+}
+
+fn invalid_params_response(id: Value, error: InvalidParams) -> Value {
+    json!({
+        "jsonrpc": "2.0",
+        "id": id,
+        "error": {
+            "code": -32602,
+            "message": "Invalid params",
+            "data": {
+                "code": "invalid_input",
+                "field": error.field,
+                "reason": error.reason
+            }
+        }
+    })
+}
+
+fn tool_result_response(id: Value, structured_content: Value, is_error: bool) -> Value {
+    let text = structured_content.to_string();
+    json!({
+        "jsonrpc": "2.0",
+        "id": id,
+        "result": {
+            "content": [{"type": "text", "text": text}],
+            "structuredContent": structured_content,
+            "isError": is_error
+        }
+    })
+}
+
+fn task_view_json(task: &TaskView) -> Value {
+    json!({
+        "id": task.id.to_string(),
+        "root_id": task.root_id.to_string(),
+        "parent_id": task.parent_id.map(|id| id.to_string()),
+        "child_ids": task.child_ids.iter().map(Uuid::to_string).collect::<Vec<_>>(),
+        "name": task.name,
+        "status": task.status.to_string(),
+        "original_status": task.original_status.to_string(),
+        "is_on_other_side": task.is_on_other_side,
+        "atomic": task.atomic,
+        "pending_until": task.pending_until.map(|time| time.to_rfc3339()),
+        "priority": task.priority,
+        "create_time": task.create_time.to_rfc3339(),
+        "start_time": task.start_time.to_rfc3339(),
+        "end_time": task.end_time.map(|time| time.to_rfc3339()),
+        "deadline_time": task.deadline_time.map(|time| time.to_rfc3339()),
+        "estimated_work_seconds": task.estimated_work_seconds,
+        "actual_work_seconds": task.actual_work_seconds,
+        "repetition_interval_days": task.repetition_interval_days,
+        "repetition_anchor": task.repetition_anchor.to_string(),
+        "days_in_advance": task.days_in_advance,
+        "project_category": task.project_category.map(|category| category.to_string())
     })
 }
 
