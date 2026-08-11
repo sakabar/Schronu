@@ -1,3 +1,4 @@
+use chrono::{Local, Timelike};
 use schronu::adapter::gateway::storage_lock::{LockMode, StorageLock, StorageLockErrorKind};
 use serde_json::{json, Value};
 use std::fs;
@@ -153,6 +154,209 @@ fn mcp_stdio_lock取得後のrepository_load失敗をstderrへ返す() {
     assert!(stderr.contains("repository Load failed"), "{stderr}");
     let metadata = fs::read_to_string(storage.path().join(".lock")).unwrap();
     assert!(metadata.contains("mode=mcp"));
+}
+
+#[test]
+fn mcp_stdio_9toolを実repositoryで実行し再起動後も保存内容を読む() {
+    let storage = TestStorageDirectory::new();
+    let create = call_tool(
+        storage.path(),
+        "create",
+        "create_task",
+        Some(json!({"name": "integration project", "estimated_work_minutes": 30})),
+    );
+    let parent_id = create["result"]["structuredContent"]["task_id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+
+    let breakdown = call_tool(
+        storage.path(),
+        "breakdown",
+        "breakdown_task",
+        Some(json!({"parent_id": parent_id, "names": ["integration child"]})),
+    );
+    let child_id = breakdown["result"]["structuredContent"]["child_ids"][0]
+        .as_str()
+        .unwrap()
+        .to_string();
+
+    let focus = call_tool(storage.path(), "focus", "get_focus", None);
+    assert_eq!(focus["result"]["isError"], false);
+    assert!(focus["result"]["structuredContent"]
+        .as_object()
+        .unwrap()
+        .contains_key("task"));
+
+    let task = call_tool(
+        storage.path(),
+        "task",
+        "get_task",
+        Some(json!({"task_id": child_id})),
+    );
+    assert_eq!(
+        task["result"]["structuredContent"]["task"]["name"],
+        "integration child"
+    );
+
+    let tasks = call_tool(storage.path(), "tasks", "list_tasks", None);
+    assert_eq!(
+        tasks["result"]["structuredContent"]["tasks"]
+            .as_array()
+            .unwrap()
+            .len(),
+        2
+    );
+    let schedule = call_tool(storage.path(), "schedule", "get_schedule", None);
+    assert!(schedule["result"]["structuredContent"]["schedule"].is_array());
+
+    let pending_until = (Local::now() + chrono::Duration::hours(2))
+        .with_nanosecond(0)
+        .unwrap();
+    let deferred = call_tool(
+        storage.path(),
+        "defer",
+        "defer_task",
+        Some(json!({
+            "task_id": child_id,
+            "pending_until": pending_until.to_rfc3339()
+        })),
+    );
+    assert_eq!(deferred["result"]["isError"], false);
+
+    let deadline = (Local::now() + chrono::Duration::days(10))
+        .with_nanosecond(0)
+        .unwrap();
+    let updated = call_tool(
+        storage.path(),
+        "update",
+        "update_task",
+        Some(json!({
+            "task_id": child_id,
+            "estimated_work_minutes": 10,
+            "deadline_time": deadline.to_rfc3339(),
+            "category": "recovery"
+        })),
+    );
+    assert_eq!(updated["result"]["isError"], false);
+
+    let reloaded_child = call_tool(
+        storage.path(),
+        "reloaded-child",
+        "get_task",
+        Some(json!({"task_id": child_id})),
+    );
+    let reloaded_child = &reloaded_child["result"]["structuredContent"]["task"];
+    assert_eq!(reloaded_child["original_status"], "pending");
+    assert_eq!(
+        chrono::DateTime::parse_from_rfc3339(reloaded_child["pending_until"].as_str().unwrap())
+            .unwrap(),
+        pending_until.fixed_offset()
+    );
+    assert_eq!(reloaded_child["estimated_work_seconds"], 10 * 60);
+    assert_eq!(
+        chrono::DateTime::parse_from_rfc3339(reloaded_child["deadline_time"].as_str().unwrap())
+            .unwrap(),
+        deadline.fixed_offset()
+    );
+    assert_eq!(reloaded_child["project_category"], "recovery");
+
+    let child_completed = call_tool(
+        storage.path(),
+        "complete-child",
+        "complete_task",
+        Some(json!({"task_id": child_id})),
+    );
+    assert_eq!(child_completed["result"]["isError"], false);
+    let parent_completed = call_tool(
+        storage.path(),
+        "complete-parent",
+        "complete_task",
+        Some(json!({"task_id": parent_id})),
+    );
+    assert_eq!(parent_completed["result"]["isError"], false);
+
+    let reloaded = call_tool(
+        storage.path(),
+        "reloaded-parent",
+        "get_task",
+        Some(json!({"task_id": parent_id})),
+    );
+    assert_eq!(
+        reloaded["result"]["structuredContent"]["task"]["original_status"],
+        "done"
+    );
+}
+
+#[test]
+fn mcp_stdio稼働中は同じ保存先の実cli起動を拒否する() {
+    let storage = TestStorageDirectory::new();
+    let child = spawn_mcp(storage.path());
+    let (mut mcp, _) = wait_for_lock_metadata(child, &storage.path().join(".lock"));
+    let cli_executable = option_env!("CARGO_BIN_EXE_schronu")
+        .expect("schronu binary must be built for integration tests");
+    let cli = Command::new(cli_executable)
+        .env("SCHRONU_STORAGE_DIR", storage.path())
+        .arg("全")
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+
+    let cli_output = wait_with_output(cli);
+    assert_process_failed(&cli_output);
+    assert_eq!(String::from_utf8_lossy(&cli_output.stdout), "");
+    let stderr = String::from_utf8_lossy(&cli_output.stderr);
+    assert!(stderr.contains("storage lock is already held"), "{stderr}");
+    assert!(stderr.contains("mode=mcp"), "{stderr}");
+
+    drop(mcp.stdin.take());
+    assert_process_succeeded(&wait_with_output(mcp));
+}
+
+fn call_tool(storage_directory: &Path, id: &str, name: &str, arguments: Option<Value>) -> Value {
+    let mut child = spawn_mcp(storage_directory);
+    let mut tool_params = json!({"name": name});
+    if let Some(arguments) = arguments {
+        tool_params["arguments"] = arguments;
+    }
+    let requests = [
+        json!({
+            "jsonrpc": "2.0",
+            "id": format!("initialize-{id}"),
+            "method": "initialize",
+            "params": {
+                "protocolVersion": "2025-06-18",
+                "capabilities": {},
+                "clientInfo": {"name": "integration-test", "version": "1.0"}
+            }
+        }),
+        json!({"jsonrpc": "2.0", "method": "notifications/initialized"}),
+        json!({
+            "jsonrpc": "2.0",
+            "id": id,
+            "method": "tools/call",
+            "params": tool_params
+        }),
+    ];
+    {
+        let stdin = child.stdin.as_mut().unwrap();
+        for request in requests {
+            writeln!(stdin, "{request}").unwrap();
+        }
+    }
+    drop(child.stdin.take());
+    let output = wait_with_output(child);
+    assert_process_succeeded(&output);
+    let responses = String::from_utf8(output.stdout)
+        .unwrap()
+        .lines()
+        .map(|line| serde_json::from_str::<Value>(line).unwrap())
+        .collect::<Vec<_>>();
+    assert_eq!(responses.len(), 2);
+    assert_eq!(responses[1]["id"], id);
+    responses.into_iter().nth(1).unwrap()
 }
 
 fn spawn_mcp(storage_directory: &Path) -> Child {
