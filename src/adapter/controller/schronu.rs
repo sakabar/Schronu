@@ -1216,7 +1216,28 @@ fn round_daily_band_segment_count(seconds: i64) -> usize {
         / DAILY_BAND_SECONDS_PER_SEGMENT) as usize
 }
 
-fn format_daily_band(date: NaiveDate, weekday_jp: &str, durations: &DailyBandDurations) -> String {
+fn format_signed_hours_minutes(duration: Duration) -> String {
+    let sign = if duration >= Duration::zero() {
+        '+'
+    } else {
+        '-'
+    };
+    let absolute_minutes = duration.num_seconds().unsigned_abs() / 60;
+
+    format!(
+        "{}{:02}:{:02}",
+        sign,
+        absolute_minutes / 60,
+        absolute_minutes % 60
+    )
+}
+
+fn format_daily_band(
+    date: NaiveDate,
+    weekday_jp: &str,
+    accumulated_free_diff: Duration,
+    durations: &DailyBandDurations,
+) -> String {
     let categories = [
         ('#', durations.fixed_seconds.max(0)),
         ('x', durations.elapsed_seconds.max(0)),
@@ -1243,7 +1264,14 @@ fn format_daily_band(date: NaiveDate, weekday_jp: &str, durations: &DailyBandDur
     }
 
     let overflow = ">".repeat(round_daily_band_segment_count(overflow_seconds));
-    format!("{}({}) [{}]{}", date, weekday_jp, bar, overflow)
+    format!(
+        "{}({}) {} [{}]{}",
+        date,
+        weekday_jp,
+        format_signed_hours_minutes(accumulated_free_diff),
+        bar,
+        overflow
+    )
 }
 
 #[derive(Clone)]
@@ -2931,6 +2959,7 @@ fn execute_show_all_tasks(
                 format_daily_band(
                     **date,
                     weekday_jp,
+                    accumulate_duration_diff_to_limit,
                     &calculate_daily_band_durations(
                         **date == naive_dt_today,
                         full_minutes,
@@ -6420,6 +6449,7 @@ fn test_format_daily_band_累積境界で端数を丸めて96文字にする() {
     let actual = format_daily_band(
         date,
         "土",
+        Duration::hours(46) + Duration::minutes(9),
         &DailyBandDurations {
             fixed_seconds: 450 * 60,
             elapsed_seconds: 0,
@@ -6429,7 +6459,7 @@ fn test_format_daily_band_累積境界で端数を丸めて96文字にする() {
         },
     );
     let expected = format!(
-        "2026-08-15(土) [{}{}{}{}{}]",
+        "2026-08-15(土) +46:09 [{}{}{}{}{}]",
         "#".repeat(30),
         "=".repeat(57),
         "-".repeat(5),
@@ -6454,11 +6484,25 @@ fn test_calculate_daily_band_durations_経過した空き時間を当日だけ�
 }
 
 #[test]
+fn test_format_signed_hours_minutes_符号付きで時分を2桁ゼロ埋めする() {
+    assert_eq!(format_signed_hours_minutes(Duration::zero()), "+00:00");
+    assert_eq!(
+        format_signed_hours_minutes(Duration::hours(6) + Duration::minutes(5)),
+        "+06:05"
+    );
+    assert_eq!(
+        format_signed_hours_minutes(-Duration::hours(6) - Duration::minutes(5)),
+        "-06:05"
+    );
+}
+
+#[test]
 fn test_format_daily_band_当日経過と24時間超過を表示する() {
     let date = NaiveDate::from_ymd_opt(2026, 8, 11).unwrap();
     let actual = format_daily_band(
         date,
         "火",
+        -Duration::hours(3) - Duration::minutes(4),
         &DailyBandDurations {
             fixed_seconds: 450 * 60,
             elapsed_seconds: 800 * 60,
@@ -6468,7 +6512,7 @@ fn test_format_daily_band_当日経過と24時間超過を表示する() {
         },
     );
     let expected = format!(
-        "2026-08-11(火) [{}{}{}]{}",
+        "2026-08-11(火) -03:04 [{}{}{}]{}",
         "#".repeat(30),
         "x".repeat(53),
         "=".repeat(13),
@@ -6521,7 +6565,7 @@ fn test_execute_band_全日空き差分と繰り返し判定を帯へ反映す�
 
     let actual = execute_band_command_with_elapsed_for_test("帯", now, root);
     let expected_row = format!(
-        "2026-08-11(火) [{}{}{}{}{}]",
+        "2026-08-11(火) -02:30 [{}{}{}{}{}]",
         "#".repeat(30),
         "x".repeat(53),
         "=".repeat(3),
