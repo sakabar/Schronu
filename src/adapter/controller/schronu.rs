@@ -7147,6 +7147,48 @@ fn test_interactive_submitは製品event経路でload実行保存する() {
 }
 
 #[test]
+fn test_interactive_submitは外部完了によるfocus切替時に開始時刻を更新する() {
+    let storage_dir = TestStorageDir::new();
+    std::fs::create_dir_all(&storage_dir.path).unwrap();
+    let old_focus_started_datetime = Local.with_ymd_and_hms(2020, 8, 12, 12, 0, 0).unwrap();
+    let root = Task::new("root");
+    let done = root.create_as_last_child(TaskAttr::new("外部で完了したfocus"));
+    done.set_orig_status(Status::Done);
+    let next = root.create_as_last_child(TaskAttr::new("次候補"));
+    let done_id = done.get_id();
+    let next_id = next.get_id();
+    let mut repository = TestTaskRepository::new(root, old_focus_started_datetime)
+        .with_storage_directory(&storage_dir.path);
+    repository.highest_priority_leaf_task_id_opt = Some(next_id);
+    let mut free_time_manager = TestFreeTimeManager;
+    let mut stdout = TestWriter::new();
+    let mut focused_task_id_opt = Some(done_id);
+    let mut last_focused_task_id_opt = Some(done_id);
+    let mut focus_started_datetime = old_focus_started_datetime;
+    let mut focus_selection_mode = FocusSelectionMode::HighestPriority;
+
+    let outcome = handle_interactive_repository_event(
+        &mut stdout,
+        &mut repository,
+        &mut free_time_manager,
+        InteractiveRepositoryState {
+            focused_task_id_opt: &mut focused_task_id_opt,
+            last_focused_task_id_opt: &mut last_focused_task_id_opt,
+            focus_started_datetime: &mut focus_started_datetime,
+            focus_selection_mode: &mut focus_selection_mode,
+        },
+        InteractiveRepositoryEvent::Submit { line: "" },
+    );
+
+    assert!(matches!(
+        outcome,
+        InteractiveRepositoryEventOutcome::CommandExecuted(_)
+    ));
+    assert_eq!(focused_task_id_opt, Some(next_id));
+    assert!(focus_started_datetime > old_focus_started_datetime);
+}
+
+#[test]
 fn test_interactive_submitはload失敗ならretryしsave失敗ならfatalにする() {
     let storage_dir = TestStorageDir::new();
     std::fs::create_dir_all(&storage_dir.path).unwrap();
@@ -8040,25 +8082,35 @@ enum InteractiveRepositoryEventOutcome {
     Fatal(RunError),
 }
 
+fn reconcile_interactive_state_after_reload(
+    task_repository: &mut dyn TaskRepositoryTrait,
+    state: &mut InteractiveRepositoryState<'_>,
+    now: DateTime<Local>,
+) {
+    if reconcile_focus_after_reload(
+        task_repository,
+        state.focused_task_id_opt,
+        *state.focus_selection_mode,
+    ) {
+        *state.last_focused_task_id_opt = None;
+        *state.focus_started_datetime = now;
+    }
+}
+
 fn handle_interactive_repository_event(
     stdout: &mut dyn SchronuWriter,
     task_repository: &mut dyn TaskRepositoryTrait,
     free_time_manager: &mut dyn FreeTimeManagerTrait,
-    state: InteractiveRepositoryState<'_>,
+    mut state: InteractiveRepositoryState<'_>,
     event: InteractiveRepositoryEvent<'_>,
 ) -> InteractiveRepositoryEventOutcome {
     match event {
         InteractiveRepositoryEvent::Submit { line } => {
             let command = line.trim().to_string();
+            let now = Local::now();
             let transaction_result =
-                run_cli_repository_transaction(task_repository, Local::now(), |task_repository| {
-                    if reconcile_focus_after_reload(
-                        task_repository,
-                        state.focused_task_id_opt,
-                        *state.focus_selection_mode,
-                    ) {
-                        *state.last_focused_task_id_opt = None;
-                    }
+                run_cli_repository_transaction(task_repository, now, |task_repository| {
+                    reconcile_interactive_state_after_reload(task_repository, &mut state, now);
                     writeln_newline(stdout, "").unwrap();
                     println!(
                         "{}{}> {}{}",
@@ -8091,15 +8143,10 @@ fn handle_interactive_repository_event(
             }
         }
         InteractiveRepositoryEvent::Refresh => {
-            match reload_repository_for_cli(task_repository, Local::now()) {
+            let now = Local::now();
+            match reload_repository_for_cli(task_repository, now) {
                 Ok(storage_lock) => {
-                    if reconcile_focus_after_reload(
-                        task_repository,
-                        state.focused_task_id_opt,
-                        *state.focus_selection_mode,
-                    ) {
-                        *state.last_focused_task_id_opt = None;
-                    }
+                    reconcile_interactive_state_after_reload(task_repository, &mut state, now);
                     drop(storage_lock);
                     InteractiveRepositoryEventOutcome::Continue
                 }
@@ -8114,15 +8161,10 @@ fn handle_interactive_repository_event(
             if !line.is_empty() {
                 return InteractiveRepositoryEventOutcome::Continue;
             }
-            match reload_repository_for_cli(task_repository, Local::now()) {
+            let now = Local::now();
+            match reload_repository_for_cli(task_repository, now) {
                 Ok(_storage_lock) => {
-                    if reconcile_focus_after_reload(
-                        task_repository,
-                        state.focused_task_id_opt,
-                        *state.focus_selection_mode,
-                    ) {
-                        *state.last_focused_task_id_opt = None;
-                    }
+                    reconcile_interactive_state_after_reload(task_repository, &mut state, now);
                     if try_exit_interactive(
                         stdout,
                         task_repository,
@@ -8131,7 +8173,7 @@ fn handle_interactive_repository_event(
                         header,
                         line,
                         cursor_x,
-                        Local::now(),
+                        now,
                     ) {
                         InteractiveRepositoryEventOutcome::Exit
                     } else {
