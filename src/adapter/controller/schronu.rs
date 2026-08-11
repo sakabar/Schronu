@@ -3104,6 +3104,7 @@ fn execute_show_all_tasks(
             "凡例: # 固定  x 経過済み  = 繰返  - 単発  : 余差  . 空き  > 超過  (1文字=15分)",
         )
         .unwrap();
+        writeln_newline(stdout, "").unwrap();
 
         for (band_ind, row) in daily_summary_rows.iter().enumerate() {
             writeln_newline(stdout, &row.band_message).unwrap();
@@ -6380,7 +6381,8 @@ fn test_execute_band_日本語と英語で凡例と棒だけを表示する() {
     let expected = format!(
         concat!(
             "凡例: # 固定  x 経過済み  = 繰返  - 単発  : 余差  . 空き  > 超過  (1文字=15分)\n",
-            "2026-08-11(火) [{}{}{}{}]\n",
+            "\n",
+            "2026-08-11(火) -09:00 [{}{}{}{}]\n",
             "\n",
         ),
         "#".repeat(56),
