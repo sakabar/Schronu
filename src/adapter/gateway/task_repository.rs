@@ -1467,6 +1467,21 @@ mod tests {
             .is_some());
     }
 
+    #[test]
+    fn test_load_revision読込io_errorにpathとsourceを保持する() {
+        let storage_dir = TestStorageDir::new();
+        fs::create_dir_all(storage_dir.path.join(".revision")).unwrap();
+        let mut repository = TaskRepository::new(storage_dir.path_str());
+
+        let actual = repository.load().unwrap_err();
+
+        assert_eq!(actual.operation(), ApplicationRepositoryOperation::Load);
+        let source = file_repository_error(&actual);
+        assert_eq!(source.operation, FileRepositoryOperation::ReadFile);
+        assert_eq!(source.path, storage_dir.path.join(".revision"));
+        assert!(source.source.raw_os_error().is_some());
+    }
+
     #[cfg(unix)]
     #[test]
     fn test_load_revision_symlinkを拒否して参照先を変更しない() {
@@ -1488,6 +1503,36 @@ mod tests {
         assert_eq!(source.operation, FileRepositoryOperation::ReadMetadata);
         assert_eq!(source.path, revision_path);
         assert_eq!(fs::read_to_string(target_path).unwrap(), target_content);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_save_revision_symlinkを拒否して参照先を変更しない() {
+        use std::os::unix::fs::symlink;
+
+        let storage_dir = TestStorageDir::new();
+        fs::create_dir_all(&storage_dir.path).unwrap();
+        let target_path = storage_dir.path.join("outside-revision");
+        let target_content = format!("{}\n", Uuid::new_v4());
+        fs::write(&target_path, &target_content).unwrap();
+        let revision_path = storage_dir.path.join(".revision");
+        symlink(&target_path, &revision_path).unwrap();
+        let now = Local.with_ymd_and_hms(2026, 8, 13, 12, 0, 0).unwrap();
+        let mut repository = TaskRepository::new(storage_dir.path_str());
+        repository.sync_clock(now);
+        repository.start_new_project(Task::new("保存対象"));
+
+        let actual = repository.save().unwrap_err();
+
+        assert_eq!(actual.operation(), ApplicationRepositoryOperation::Save);
+        let source = file_repository_error(&actual);
+        assert_eq!(source.operation, FileRepositoryOperation::ReadMetadata);
+        assert_eq!(source.path, revision_path);
+        assert_eq!(fs::read_to_string(target_path).unwrap(), target_content);
+        assert!(!storage_dir
+            .project_dir_path("20260813", "保存対象")
+            .join("project.yaml")
+            .exists());
     }
 
     #[test]
