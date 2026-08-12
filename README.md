@@ -106,9 +106,11 @@ write toolの保存に失敗すると、memory上のrepositoryとfileの状態�
 
 ### CLIとの排他lock
 
-CLIとMCP serverは保存先直下の`.lock`へ同じOS advisory lockを取得します。CLIは起動時のload、60秒ごとの再読込、command実行時だけlockを取得します。command実行時は現在時刻への同期、repository load、command実行、saveまで保持してから解放し、成功したcommandは即時保存します。MCP serverは`tools/call`ごとにlockを取得し、現在時刻への同期、repository load、tool実行、必要ならsave、response構築まで保持してから解放します。CLIと複数のMCP processはidle中に共存でき、storage操作だけが直列化されます。`.lock`には`pid`、`started_at`、`mode`(`cli`または`mcp`)が記録され、`started_at`はそのstorage操作がlockを取得した時刻です。
+CLIとMCP serverは保存先直下の`.lock`へ同じOS advisory lockを取得します。CLIは起動時、60秒ごとの再描画、command実行時だけlockを取得します。command実行時はrepository cacheの確認、command実行、saveまで保持してから解放し、成功したcommandは即時保存します。MCP serverは`tools/call`ごとにlockを取得し、repository cacheの確認、tool実行、必要ならsave、response構築まで保持してから解放します。CLIと複数のMCP processはidle中に共存でき、storage操作だけが直列化されます。`.lock`には`pid`、`started_at`、`mode`(`cli`または`mcp`)が記録され、`started_at`はそのstorage操作がlockを取得した時刻です。
 
 実際に`project.yaml`を変更する保存では、保存先直下の`.revision`を先にatomic更新してから、変更されたprojectだけを保存します。`.revision`はCLI・MCP間でcacheを無効化するための補助metadataで、task dataや`project.yaml`のschemaではありません。既存storageに`.revision`がない場合もそのまま起動でき、最初の変更保存時に作成されます。
+
+各processは起動後の最初のstorage操作では必ず全projectをloadします。2回目以降は`.revision`が前回値と一致すればmemory上のtask treeを再利用し、現在時刻へのclock同期だけを行います。他processが保存して`.revision`が変わった場合は、次のCLI command、MCP `tools/call`、またはCLIの60秒ごとの再描画で全projectを1回loadし直します。稼働中の`project.yaml`直接編集は`.revision`を更新しないため検出対象外です。
 
 CLIはlock競合時に最大1秒、10ms間隔で取得を再試行します。timeoutしたcommandは実行も保存もせず、入力を保持するため、競合解消後にEnterで再試行できます。MCP callは競合時に待機せず`repository_lock_contended`と`recovery: "retry"`を返します。競合中のstorage操作が終わった後に再試行してください。`.lock` fileはprocess終了後も残りますが、fileの存在だけではlock中を意味しません。OS lockを取得できるかどうかで、実際のlock状態を判定します。取得成功時にmetadataは上書きされます。
 

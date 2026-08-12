@@ -122,9 +122,8 @@ impl<R: TaskRepositoryTrait> McpServer<R> {
     }
 
     fn reload_and_call(&mut self, id: Value, request: &Value) -> Value {
-        self.repository.sync_clock(Local::now());
-        match self.repository.load() {
-            Ok(()) => self.call_tool(id, request),
+        match self.repository.reload_if_changed(Local::now()) {
+            Ok(_) => self.call_tool(id, request),
             Err(error) => repository_load_error_response(id, &error.to_string()),
         }
     }

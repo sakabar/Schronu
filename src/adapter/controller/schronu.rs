@@ -6743,9 +6743,8 @@ fn reload_repository_for_cli(
         CLI_LOCK_TIMEOUT,
     )
     .map_err(CliRepositoryTransactionError::Lock)?;
-    task_repository.sync_clock(now);
     task_repository
-        .load()
+        .reload_if_changed(now)
         .map_err(CliRepositoryTransactionError::Load)?;
     Ok(storage_lock)
 }

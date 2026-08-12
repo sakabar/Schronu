@@ -1,11 +1,9 @@
 use crate::adapter::gateway::yaml::yaml_to_task;
 #[cfg(test)]
 use crate::adapter::gateway::yaml::YamlConversionError;
-#[cfg(test)]
-use crate::application::interface::RepositoryReloadOutcome;
 use crate::application::interface::{
-    TaskRepositoryError, TaskRepositoryOperation as ApplicationRepositoryOperation,
-    TaskRepositoryTrait,
+    RepositoryReloadOutcome, TaskRepositoryError,
+    TaskRepositoryOperation as ApplicationRepositoryOperation, TaskRepositoryTrait,
 };
 use crate::entity::datetime::get_next_morning_datetime;
 use crate::entity::task::extract_leaf_tasks_from_project;
@@ -33,6 +31,7 @@ pub struct TaskRepository {
     last_synced_time: DateTime<Local>,
     id_to_task_map: RefCell<HashMap<Uuid, Task>>,
     storage_revision: Cell<Option<Uuid>>,
+    has_loaded: bool,
 }
 
 struct Project {
@@ -260,6 +259,7 @@ impl TaskRepository {
             last_synced_time: DateTime::<Local>::MIN_UTC.into(),
             id_to_task_map: RefCell::new(HashMap::new()),
             storage_revision: Cell::new(None),
+            has_loaded: false,
         }
     }
 
@@ -477,7 +477,25 @@ impl TaskRepositoryTrait for TaskRepository {
             self.cache_task_and_descendants(&project.root_task);
         }
         self.storage_revision.set(storage_revision);
+        self.has_loaded = true;
         Ok(())
+    }
+
+    fn reload_if_changed(
+        &mut self,
+        now: DateTime<Local>,
+    ) -> Result<RepositoryReloadOutcome, TaskRepositoryError> {
+        let storage_revision = self.read_storage_revision().map_err(|error| {
+            TaskRepositoryError::new(ApplicationRepositoryOperation::Load, error)
+        })?;
+        if self.has_loaded && storage_revision == self.storage_revision.get() {
+            self.sync_clock(now);
+            return Ok(RepositoryReloadOutcome::Cached);
+        }
+
+        self.last_synced_time = now;
+        self.load()?;
+        Ok(RepositoryReloadOutcome::Reloaded)
     }
 
     fn save(&self) -> Result<(), TaskRepositoryError> {

@@ -10,6 +10,12 @@ pub enum TaskRepositoryOperation {
     Save,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum RepositoryReloadOutcome {
+    Reloaded,
+    Cached,
+}
+
 #[derive(Debug)]
 pub struct TaskRepositoryError {
     operation: TaskRepositoryOperation,
@@ -52,6 +58,14 @@ pub trait TaskRepositoryTrait {
     fn get_project_storage_dir_name(&self) -> &str;
     fn get_all_projects(&self) -> Vec<&Task>;
     fn load(&mut self) -> Result<(), TaskRepositoryError>;
+    fn reload_if_changed(
+        &mut self,
+        now: DateTime<Local>,
+    ) -> Result<RepositoryReloadOutcome, TaskRepositoryError> {
+        self.sync_clock(now);
+        self.load()?;
+        Ok(RepositoryReloadOutcome::Reloaded)
+    }
     fn save(&self) -> Result<(), TaskRepositoryError>;
     fn sync_clock(&mut self, now: DateTime<Local>);
     fn get_last_synced_time(&self) -> DateTime<Local>;
