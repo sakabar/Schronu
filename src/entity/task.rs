@@ -1147,6 +1147,76 @@ pub struct Task {
     node: Node<TaskAttr>,
 }
 
+#[test]
+fn test_persistent_mutation_revisionはrootとchildの永続化変更で進む() {
+    let root = Task::new("root");
+    let child = root.create_as_last_child(TaskAttr::new("child"));
+    let initial_revision = root.get_persistent_mutation_revision();
+
+    child.set_estimated_work_seconds(30 * 60);
+
+    assert!(root.get_persistent_mutation_revision() > initial_revision);
+    assert_eq!(
+        child.get_persistent_mutation_revision(),
+        root.get_persistent_mutation_revision()
+    );
+}
+
+#[test]
+fn test_persistent_mutation_revisionは同じ値の設定では進まない() {
+    let task = Task::new("task");
+    let initial_revision = task.get_persistent_mutation_revision();
+
+    task.set_estimated_work_seconds(task.get_estimated_work_seconds());
+    task.set_priority(task.get_priority());
+
+    assert_eq!(task.get_persistent_mutation_revision(), initial_revision);
+}
+
+#[test]
+fn test_persistent_mutation_revisionはtree構造変更で進む() {
+    let mut root = Task::new("root");
+    let initial_revision = root.get_persistent_mutation_revision();
+    let child = root.create_as_last_child(TaskAttr::new("child"));
+    let after_child_revision = root.get_persistent_mutation_revision();
+
+    root.create_sequential_children("step", 60, 1, 2, "")
+        .unwrap();
+    let after_sequential_revision = root.get_persistent_mutation_revision();
+    let mut child = child;
+    child.create_as_parent(TaskAttr::new("parent")).unwrap();
+
+    assert!(after_child_revision > initial_revision);
+    assert!(after_sequential_revision > after_child_revision);
+    assert!(root.get_persistent_mutation_revision() > after_sequential_revision);
+}
+
+#[test]
+fn test_persistent_mutation_revisionはclockの永続化変更だけで進む() {
+    let now = Local.with_ymd_and_hms(2026, 8, 13, 12, 0, 0).unwrap();
+    let unchanged = Task::new("unchanged");
+    let unchanged_revision = unchanged.get_persistent_mutation_revision();
+
+    unchanged.sync_clock(now);
+
+    assert_eq!(
+        unchanged.get_persistent_mutation_revision(),
+        unchanged_revision
+    );
+
+    let adjusted = Task::new("adjusted");
+    adjusted.set_orig_status(Status::Pending);
+    adjusted.set_pending_until(now + Duration::days(10));
+    adjusted.set_deadline_time_opt(Some(now + Duration::hours(2)));
+    let before_sync_revision = adjusted.get_persistent_mutation_revision();
+    let before_sync_pending_until = adjusted.get_pending_until();
+
+    adjusted.sync_clock(now);
+
+    assert!(adjusted.get_pending_until() < before_sync_pending_until);
+    assert!(adjusted.get_persistent_mutation_revision() > before_sync_revision);
+}
+
 impl Task {
     // dendron::Node::try_detach_insert_subtree()は木そのものを消滅させることができない仕様のようなので、
     // ダミーのルートノードを用意することで、使いたいノードが全て子ノードになるようにする

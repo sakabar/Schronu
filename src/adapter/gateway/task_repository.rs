@@ -1189,6 +1189,86 @@ mod tests {
     }
 
     #[test]
+    fn test_save_未変更projectはserialize比較対象にしない() {
+        let storage_dir = TestStorageDir::new();
+        let now = Local.with_ymd_and_hms(2026, 8, 13, 12, 0, 0).unwrap();
+        let mut repository = TaskRepository::new(storage_dir.path_str());
+        repository.sync_clock(now);
+        let changed_task = Task::new("変更対象");
+        let unchanged_task = Task::new("未変更対象");
+        repository.start_new_project(changed_task.clone());
+        repository.start_new_project(unchanged_task);
+        repository.save().unwrap();
+        let unchanged_dir = storage_dir.project_dir_path("20260813", "未変更対象");
+        fs::remove_dir_all(&unchanged_dir).unwrap();
+
+        changed_task.set_estimated_work_seconds(30 * 60);
+        repository.save().unwrap();
+
+        assert!(!unchanged_dir.exists());
+    }
+
+    #[test]
+    fn test_save_load直後のprojectはcleanで新規projectだけを保存する() {
+        let storage_dir = TestStorageDir::new();
+        let now = Local.with_ymd_and_hms(2026, 8, 13, 12, 0, 0).unwrap();
+        let mut source = TaskRepository::new(storage_dir.path_str());
+        source.sync_clock(now);
+        source.start_new_project(Task::new("読込済み"));
+        source.save().unwrap();
+
+        let mut repository = TaskRepository::new(storage_dir.path_str());
+        repository.sync_clock(now);
+        repository.load().unwrap();
+        let loaded_dir = storage_dir.project_dir_path("20260813", "読込済み");
+        fs::remove_dir_all(&loaded_dir).unwrap();
+        repository.start_new_project(Task::new("新規"));
+
+        repository.save().unwrap();
+
+        assert!(!loaded_dir.exists());
+        assert!(storage_dir
+            .project_dir_path("20260813", "新規")
+            .join("project.yaml")
+            .is_file());
+    }
+
+    #[test]
+    fn test_save_失敗後もdirtyを維持して再試行する() {
+        let storage_dir = TestStorageDir::new();
+        let now = Local.with_ymd_and_hms(2026, 8, 13, 12, 0, 0).unwrap();
+        let mut repository = TaskRepository::new(storage_dir.path_str());
+        repository.sync_clock(now);
+        let task = Task::new("再試行対象");
+        let task_id = task.get_id();
+        repository.start_new_project(task.clone());
+        repository.save().unwrap();
+        let project_yaml_path = storage_dir
+            .project_dir_path("20260813", "再試行対象")
+            .join("project.yaml");
+        let old_bytes = fs::read(&project_yaml_path).unwrap();
+        fs::remove_file(&project_yaml_path).unwrap();
+        fs::create_dir(&project_yaml_path).unwrap();
+        task.set_estimated_work_seconds(30 * 60);
+
+        assert!(repository.save().is_err());
+        fs::remove_dir(&project_yaml_path).unwrap();
+        fs::write(&project_yaml_path, old_bytes).unwrap();
+        repository.save().unwrap();
+
+        let mut reloaded = TaskRepository::new(storage_dir.path_str());
+        reloaded.sync_clock(now);
+        reloaded.load().unwrap();
+        assert_eq!(
+            reloaded
+                .get_by_id(task_id)
+                .unwrap()
+                .get_estimated_work_seconds(),
+            30 * 60
+        );
+    }
+
+    #[test]
     #[ignore = "manual save performance measurement"]
     fn benchmark_save_2172project中1件変更を2秒未満で処理する() {
         use std::time::{Duration as StdDuration, Instant};
