@@ -13,7 +13,7 @@ use chrono::Duration;
 use chrono::{DateTime, Local};
 use linked_hash_map::LinkedHashMap;
 use regex::Regex;
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 use std::error::Error;
 use std::fmt;
@@ -37,6 +37,7 @@ struct Project {
     project_dir_path: PathBuf,
     project_yaml_file_path: PathBuf,
     priority: i64,
+    persisted_mutation_revision: Cell<Option<u64>>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -232,7 +233,18 @@ impl Project {
             project_dir_path: project_dir_path.into(),
             project_yaml_file_path: project_yaml_file_path.into(),
             priority,
+            persisted_mutation_revision: Cell::new(None),
         }
+    }
+
+    fn mark_clean(&self) {
+        self.persisted_mutation_revision
+            .set(Some(self.root_task.get_persistent_mutation_revision()));
+    }
+
+    fn needs_save(&self) -> bool {
+        self.persisted_mutation_revision.get()
+            != Some(self.root_task.get_persistent_mutation_revision())
     }
 }
 
@@ -378,12 +390,14 @@ impl TaskRepositoryTrait for TaskRepository {
                         )
                     })?;
                 let priority = root_task.get_priority();
-                loaded_projects.push(Project::new(
+                let project = Project::new(
                     root_task,
                     project_dir_path,
                     project_yaml_file_path,
                     priority,
-                ));
+                );
+                project.mark_clean();
+                loaded_projects.push(project);
             }
         }
 
@@ -396,7 +410,13 @@ impl TaskRepositoryTrait for TaskRepository {
     }
 
     fn save(&self) -> Result<(), TaskRepositoryError> {
-        for project in self.projects.iter() {
+        let projects_to_save = self
+            .projects
+            .iter()
+            .filter(|project| project.needs_save())
+            .collect::<Vec<_>>();
+
+        for project in &projects_to_save {
             fs::create_dir_all(&project.project_dir_path).map_err(|error| {
                 TaskRepositoryError::new(
                     ApplicationRepositoryOperation::Save,
@@ -444,6 +464,10 @@ impl TaskRepositoryTrait for TaskRepository {
             write_file_atomically(&project.project_yaml_file_path, out_str.as_bytes()).map_err(
                 |error| TaskRepositoryError::new(ApplicationRepositoryOperation::Save, error),
             )?;
+        }
+
+        for project in projects_to_save {
+            project.mark_clean();
         }
         Ok(())
     }
