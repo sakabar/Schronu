@@ -259,8 +259,10 @@ fn placement_fits_target_day(
     }
 
     let scheduled = task_segments[0];
-    free_time_manager.get_free_minutes(&scheduled.scheduled_start, &scheduled.scheduled_end) * 60
-        >= work_seconds
+    let required_minutes = (work_seconds + 59) / 60;
+    let free_time_check_end = scheduled.scheduled_start + Duration::minutes(required_minutes);
+    free_time_manager.get_free_minutes(&scheduled.scheduled_start, &free_time_check_end)
+        >= required_minutes
 }
 
 #[cfg(test)]
@@ -678,6 +680,22 @@ mod tests {
             actual.packed_tasks[0].target_date,
             NaiveDate::from_ymd_opt(2026, 8, 12).unwrap()
         );
+    }
+
+    #[test]
+    fn pack_tasks_atomicは残作業に秒端数があっても空き枠へ前倒しする() {
+        let now = fixed_now();
+        let task = pending_task("atomic", now, now + Duration::days(10), 30, 9);
+        task.set_actual_work_seconds(1);
+        task.set_atomic(true);
+        let repository = TestTaskRepository::new(vec![task.clone()], now);
+        let mut free_time_manager = TestFreeTimeManager::new(60);
+
+        let actual = pack_tasks(&repository, &mut free_time_manager);
+
+        assert_eq!(actual.packed_tasks.len(), 1);
+        assert_eq!(actual.packed_tasks[0].work_seconds, 30 * 60 - 1);
+        assert_eq!(task.get_pending_until(), now);
     }
 
     #[test]
