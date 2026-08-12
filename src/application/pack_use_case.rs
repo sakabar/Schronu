@@ -67,10 +67,17 @@ pub fn pack_tasks(
     let mut result = PackResult::default();
     for candidate in candidates {
         let mut packed_task_opt = None;
+        let current_planned_start_opt = get_schedule(repository)
+            .into_iter()
+            .find(|scheduled| scheduled.task.id == candidate.task_id)
+            .map(|scheduled| scheduled.scheduled_start);
+        let Some(current_planned_start) = current_planned_start_opt else {
+            continue;
+        };
         let daily_leeway = calculate_daily_leeway(repository, free_time_manager, &target_dates);
 
         for target_date in &target_dates {
-            if subjective_date(candidate.planned_start) <= *target_date
+            if subjective_date(current_planned_start) <= *target_date
                 || daily_leeway.get(target_date).copied().unwrap_or(0) < candidate.work_seconds
             {
                 continue;
@@ -95,7 +102,7 @@ pub fn pack_tasks(
             );
 
             if let Some(placement_start) =
-                placement_start_opt.filter(|start| *start < candidate.planned_start)
+                placement_start_opt.filter(|start| *start < current_planned_start)
             {
                 task.set_pending_until(placement_start);
                 packed_task_opt = Some(PackedTask {
@@ -547,6 +554,24 @@ mod tests {
         assert_eq!(actual.skipped_tasks.len(), 1);
         assert_eq!(actual.skipped_tasks[0].task_id, third.get_id());
         assert_eq!(third.get_pending_until(), now + Duration::days(1));
+    }
+
+    #[test]
+    fn pack_tasks_先行配置後の最新予定で後続taskの前倒し可否を判定する() {
+        let now = Local.with_ymd_and_hms(2026, 8, 11, 6, 0, 0).unwrap();
+        let first = pending_task("24時間", now, now + Duration::days(1), 24 * 60, 9);
+        let second = pending_task("後続", now, now + Duration::days(1), 30, 8);
+        let original_second_pending_until = second.get_pending_until();
+        let repository = TestTaskRepository::new(vec![first.clone(), second.clone()], now);
+        let mut free_time_manager = TestFreeTimeManager::new(40 * 60);
+
+        let actual = pack_tasks(&repository, &mut free_time_manager);
+
+        assert_eq!(actual.packed_tasks.len(), 1);
+        assert_eq!(actual.packed_tasks[0].task_id, first.get_id());
+        assert_eq!(actual.skipped_tasks.len(), 1);
+        assert_eq!(actual.skipped_tasks[0].task_id, second.get_id());
+        assert_eq!(second.get_pending_until(), original_second_pending_until);
     }
 
     #[test]
