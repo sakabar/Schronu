@@ -616,7 +616,7 @@ impl TaskRepositoryTrait for TaskRepository {
 
             for leaf_task in leaf_tasks.iter() {
                 let deadline_time_opt = leaf_task.get_deadline_time_opt();
-                let neg_priority = leaf_task.get_priority().saturating_neg();
+                let neg_priority = !leaf_task.get_priority();
                 let id = leaf_task.get_id();
 
                 let tpl = (
@@ -661,7 +661,7 @@ impl TaskRepositoryTrait for TaskRepository {
                 let deadline_time_opt = leaf_task.get_deadline_time_opt();
                 let first_available_time = leaf_task.first_available_time();
                 let is_recent = first_available_time < recent_threshold;
-                let neg_priority = leaf_task.get_priority().saturating_neg();
+                let neg_priority = !leaf_task.get_priority();
                 let id = leaf_task.get_id();
 
                 // 優先度が低いほど大さい値になる
