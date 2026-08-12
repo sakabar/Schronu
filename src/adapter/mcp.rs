@@ -1502,8 +1502,28 @@ mod tests {
     use chrono::{DateTime, Duration, Local, TimeZone};
     use serde_json::json;
     use std::cell::{Cell, RefCell};
+    use std::fs;
+    use std::path::PathBuf;
     use std::rc::Rc;
     use uuid::Uuid;
+
+    struct McpCacheTestStorage {
+        path: PathBuf,
+    }
+
+    impl McpCacheTestStorage {
+        fn new() -> Self {
+            let path = std::env::temp_dir().join(format!("schronu-mcp-cache-{}", Uuid::new_v4()));
+            fs::create_dir_all(&path).unwrap();
+            Self { path }
+        }
+    }
+
+    impl Drop for McpCacheTestStorage {
+        fn drop(&mut self) {
+            let _ = fs::remove_dir_all(&self.path);
+        }
+    }
 
     struct RecordingRepository {
         projects: Vec<Task>,
@@ -1789,6 +1809,44 @@ mod tests {
             .unwrap();
 
         assert_eq!(reload_if_changed_count.get(), 2);
+    }
+
+    #[test]
+    fn 同一mcp_processの2回目のread_toolは実repositoryのcacheを使う() {
+        let storage = McpCacheTestStorage::new();
+        let storage_path = storage.path.to_str().unwrap();
+        let now = fixed_now();
+        let mut source = TaskRepository::new(storage_path);
+        source.sync_clock(now);
+        source.start_new_project(Task::new("MCP cache対象"));
+        source.save().unwrap();
+        let project_yaml_path = storage
+            .path
+            .join("20260811-MCP cache対象")
+            .join("project.yaml");
+        let repository = TaskRepository::new(storage_path);
+        let mut server = McpServer::with_storage_directory(repository, &storage.path);
+        server.handle_request(initialize_request()).unwrap();
+        server.handle_request(json!({
+            "jsonrpc": "2.0",
+            "method": "notifications/initialized"
+        }));
+
+        let first = server
+            .handle_request(tool_call_request("first", "list_tasks", json!({})))
+            .unwrap();
+        assert_eq!(first["result"]["isError"], false);
+        fs::write(project_yaml_path, "project: [").unwrap();
+
+        let second = server
+            .handle_request(tool_call_request("second", "list_tasks", json!({})))
+            .unwrap();
+
+        assert_eq!(second["result"]["isError"], false);
+        assert_eq!(
+            second["result"]["structuredContent"]["tasks"][0]["name"],
+            "MCP cache対象"
+        );
     }
 
     #[test]
