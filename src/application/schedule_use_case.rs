@@ -123,7 +123,7 @@ fn build_schedule_candidates(repository: &dyn TaskRepositoryTrait) -> Vec<TaskSc
                     })
                     .or_insert(TaskScheduleAttributes {
                         first_available_time,
-                        neg_priority: -task.get_priority(),
+                        neg_priority: task.get_priority().saturating_neg(),
                         rank,
                         deadline_time: task.get_deadline_time_opt(),
                     });

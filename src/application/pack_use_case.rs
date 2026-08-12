@@ -8,6 +8,7 @@ use super::schedule_use_case::{
 };
 use crate::entity::task::Status;
 use chrono::{DateTime, Duration, Local, NaiveDate};
+use std::cmp::Reverse;
 use std::collections::{HashMap, HashSet};
 use uuid::Uuid;
 
@@ -57,7 +58,7 @@ pub fn pack_tasks(
     let mut candidates = collect_candidates(repository, &target_dates);
     candidates.sort_by_key(|candidate| {
         (
-            -candidate.priority,
+            Reverse(candidate.priority),
             candidate.planned_start,
             candidate.task_id,
         )
@@ -461,6 +462,19 @@ mod tests {
                 .collect::<Vec<_>>(),
             vec![earlier.get_id(), later.get_id()]
         );
+    }
+
+    #[test]
+    fn pack_tasks_優先度がi64最小値でも前倒しする() {
+        let now = fixed_now();
+        let task = pending_task("最小", now, now + Duration::days(10), 30, i64::MIN);
+        let repository = TestTaskRepository::new(vec![task.clone()], now);
+        let mut free_time_manager = TestFreeTimeManager::new(120);
+
+        let actual = pack_tasks(&repository, &mut free_time_manager);
+
+        assert_eq!(actual.packed_tasks.len(), 1);
+        assert_eq!(actual.packed_tasks[0].task_id, task.get_id());
     }
 
     #[test]

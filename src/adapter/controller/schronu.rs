@@ -2024,7 +2024,7 @@ fn execute_show_leaf_tasks(
         let leaf_tasks = extract_leaf_tasks_from_project(project_root_task);
         for leaf_task in leaf_tasks.iter() {
             let deadline_time_opt = leaf_task.get_deadline_time_opt();
-            let neg_priority = -leaf_task.get_priority();
+            let neg_priority = leaf_task.get_priority().saturating_neg();
             let id = leaf_task.get_id();
             let message = format!("{}\t{:?}", project_name, leaf_task.get_attr());
 
@@ -2071,7 +2071,7 @@ fn execute_show_all_tasks(
                     .date_naive(),
                 deadline_time_opt.is_none(),
                 scheduled.first_available_time,
-                -scheduled.task.priority,
+                scheduled.task.priority.saturating_neg(),
                 scheduled.rank,
                 deadline_time_opt,
                 scheduled.task.id,
