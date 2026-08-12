@@ -3,7 +3,9 @@ use super::daily_capacity::{
     subjective_date, subjective_date_start,
 };
 use super::interface::{FreeTimeManagerTrait, TaskRepositoryTrait};
-use super::schedule_use_case::{get_schedule, ScheduledTaskView};
+use super::schedule_use_case::{
+    get_schedule, get_schedule_with_task_first_available_time, ScheduledTaskView,
+};
 use crate::entity::task::Status;
 use chrono::{DateTime, Duration, Local, NaiveDate};
 use std::collections::{HashMap, HashSet};
@@ -81,9 +83,11 @@ pub fn pack_tasks(
                 continue;
             }
 
-            let original_pending_until = task.get_pending_until();
-            task.set_pending_until(target_datetime);
-            let schedule = get_schedule(repository);
+            let schedule = get_schedule_with_task_first_available_time(
+                repository,
+                candidate.task_id,
+                target_datetime,
+            );
             let task_segments = schedule
                 .iter()
                 .filter(|scheduled| scheduled.task.id == candidate.task_id)
@@ -109,8 +113,6 @@ pub fn pack_tasks(
                 });
                 break;
             }
-
-            task.set_pending_until(original_pending_until);
         }
 
         match packed_task_opt {
@@ -445,6 +447,7 @@ mod tests {
         let low = pending_task("低", now, now + Duration::days(10), 30, 1);
         let high = pending_task("高", now, now + Duration::days(10), 60, 9);
         let original_low_pending_until = low.get_pending_until();
+        let original_high_revision = high.get_persistent_mutation_revision();
         let repository = TestTaskRepository::new(vec![low.clone(), high.clone()], now);
         let mut free_time_manager = TestFreeTimeManager::new(60);
 
@@ -453,6 +456,10 @@ mod tests {
         assert!(actual.packed_tasks.is_empty());
         assert_eq!(actual.stopped.unwrap().task_id, high.get_id());
         assert_eq!(low.get_pending_until(), original_low_pending_until);
+        assert_eq!(
+            high.get_persistent_mutation_revision(),
+            original_high_revision
+        );
     }
 
     #[test]

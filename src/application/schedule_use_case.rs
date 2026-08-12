@@ -53,7 +53,34 @@ struct ScheduledTask {
 }
 
 pub fn get_schedule(repository: &dyn TaskRepositoryTrait) -> Vec<ScheduledTaskView> {
-    let candidates = build_schedule_candidates(repository);
+    get_schedule_with_first_available_time_override(repository, None)
+}
+
+pub(crate) fn get_schedule_with_task_first_available_time(
+    repository: &dyn TaskRepositoryTrait,
+    task_id: Uuid,
+    first_available_time: DateTime<Local>,
+) -> Vec<ScheduledTaskView> {
+    get_schedule_with_first_available_time_override(
+        repository,
+        Some((task_id, first_available_time)),
+    )
+}
+
+fn get_schedule_with_first_available_time_override(
+    repository: &dyn TaskRepositoryTrait,
+    first_available_time_override: Option<(Uuid, DateTime<Local>)>,
+) -> Vec<ScheduledTaskView> {
+    let mut candidates = build_schedule_candidates(repository);
+    if let Some((task_id, first_available_time)) = first_available_time_override {
+        if let Some(candidate) = candidates
+            .iter_mut()
+            .find(|candidate| candidate.task.get_id() == task_id)
+        {
+            candidate.first_available_time =
+                max(first_available_time, repository.get_last_synced_time());
+        }
+    }
     schedule_tasks_by_priority(&candidates, repository.get_last_synced_time())
         .into_iter()
         .map(|scheduled| ScheduledTaskView {
