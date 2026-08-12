@@ -4539,11 +4539,7 @@ fn test_execute_詰とpackの両aliasで製品command経路を実行する() {
             command,
         );
 
-        assert!(
-            stdout
-                .into_string()
-                .contains("詰: 1件 00:30 (スキップ0件)")
-        );
+        assert!(stdout.into_string().contains("詰: 1件 00:30 (スキップ0件)"));
         assert!(repository.task.get_pending_until() < now + Duration::days(10));
     }
 }
@@ -5701,29 +5697,30 @@ fn execute_pack(
         .unwrap();
     }
 
-    if let Some(stopped) = &result.stopped {
+    for skipped in &result.skipped_tasks {
         writeln_newline(
             stdout,
             &format!(
-                "[Stop] 優先度{}\t{}\t{}\t必要{}",
-                stopped.priority,
-                stopped.task_id,
-                stopped.name,
-                format_work_seconds_as_hours_minutes(stopped.required_work_seconds),
+                "[Skip] 優先度{}\t{}\t{}\t必要{}",
+                skipped.priority,
+                skipped.task_id,
+                skipped.name,
+                format_work_seconds_as_hours_minutes(skipped.required_work_seconds),
             ),
         )
         .unwrap();
     }
 
-    if result.packed_tasks.is_empty() && result.stopped.is_none() {
+    if result.packed_tasks.is_empty() && result.skipped_tasks.is_empty() {
         writeln_newline(stdout, "[Info] 詰められるタスクはありません。").unwrap();
     } else {
         writeln_newline(
             stdout,
             &format!(
-                "詰: {}件 {}",
+                "詰: {}件 {} (スキップ{}件)",
                 result.packed_tasks.len(),
                 format_work_seconds_as_hours_minutes(total_work_seconds),
+                result.skipped_tasks.len(),
             ),
         )
         .unwrap();

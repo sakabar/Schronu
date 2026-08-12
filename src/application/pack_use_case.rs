@@ -24,7 +24,7 @@ pub struct PackedTask {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct PackStop {
+pub struct SkippedTask {
     pub task_id: Uuid,
     pub name: String,
     pub priority: i64,
@@ -34,7 +34,7 @@ pub struct PackStop {
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct PackResult {
     pub packed_tasks: Vec<PackedTask>,
-    pub stopped: Option<PackStop>,
+    pub skipped_tasks: Vec<SkippedTask>,
 }
 
 #[derive(Clone)]
@@ -112,13 +112,12 @@ pub fn pack_tasks(
         match packed_task_opt {
             Some(packed_task) => result.packed_tasks.push(packed_task),
             None => {
-                result.stopped = Some(PackStop {
+                result.skipped_tasks.push(SkippedTask {
                     task_id: candidate.task_id,
                     name: candidate.name,
                     priority: candidate.priority,
                     required_work_seconds: candidate.work_seconds,
                 });
-                break;
             }
         }
     }
@@ -530,12 +529,7 @@ mod tests {
         let third = pending_task("3", now, now + Duration::days(1), 30, 1);
         let fourth = pending_task("4", now, now + Duration::days(1), 15, 0);
         let repository = TestTaskRepository::new(
-            vec![
-                first.clone(),
-                second.clone(),
-                third.clone(),
-                fourth.clone(),
-            ],
+            vec![first.clone(), second.clone(), third.clone(), fourth.clone()],
             now,
         );
         let mut free_time_manager = TestFreeTimeManager::new(120);
@@ -758,11 +752,8 @@ mod tests {
         atomic.set_atomic(true);
         let next = pending_task("次", now, now + Duration::days(10), 30, 8);
         let repository = TestTaskRepository::new(vec![atomic.clone(), next.clone()], now);
-        let mut free_time_manager = TestFreeTimeManager::with_blocked_interval(
-            180,
-            now,
-            now + Duration::days(7),
-        );
+        let mut free_time_manager =
+            TestFreeTimeManager::with_blocked_interval(180, now, now + Duration::days(7));
 
         let actual = pack_tasks(&repository, &mut free_time_manager);
 
@@ -778,10 +769,8 @@ mod tests {
         let first = pending_task("1", now, now + Duration::days(10), 60, 9);
         let second = pending_task("2", now, now + Duration::days(10), 60, 8);
         let third = pending_task("3", now, now + Duration::days(10), 30, 7);
-        let repository = TestTaskRepository::new(
-            vec![first.clone(), second.clone(), third.clone()],
-            now,
-        );
+        let repository =
+            TestTaskRepository::new(vec![first.clone(), second.clone(), third.clone()], now);
         let mut free_time_manager = TestFreeTimeManager::new(60);
 
         let actual = pack_tasks(&repository, &mut free_time_manager);
