@@ -7874,7 +7874,7 @@ fn try_exit_interactive(
         focused_task_id_opt,
         task_repository,
         free_time_manager,
-        &Some("暦".to_string()),
+        &Some("帯".to_string()),
         TaskListDisplayOrder::ScheduledStartDesc,
     );
     true
