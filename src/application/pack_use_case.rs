@@ -523,19 +523,35 @@ mod tests {
     }
 
     #[test]
-    fn pack_tasks_配置ごとに余差を再計算してrho07を超える前に停止する() {
+    fn pack_tasks_配置ごとに余差を再計算して収まらないtaskをスキップする() {
         let now = fixed_now();
         let first = pending_task("1", now, now + Duration::days(1), 30, 3);
         let second = pending_task("2", now, now + Duration::days(1), 30, 2);
         let third = pending_task("3", now, now + Duration::days(1), 30, 1);
-        let repository =
-            TestTaskRepository::new(vec![first.clone(), second.clone(), third.clone()], now);
+        let fourth = pending_task("4", now, now + Duration::days(1), 15, 0);
+        let repository = TestTaskRepository::new(
+            vec![
+                first.clone(),
+                second.clone(),
+                third.clone(),
+                fourth.clone(),
+            ],
+            now,
+        );
         let mut free_time_manager = TestFreeTimeManager::new(120);
 
         let actual = pack_tasks(&repository, &mut free_time_manager);
 
-        assert_eq!(actual.packed_tasks.len(), 2);
-        assert_eq!(actual.stopped.unwrap().task_id, third.get_id());
+        assert_eq!(
+            actual
+                .packed_tasks
+                .iter()
+                .map(|packed| packed.task_id)
+                .collect::<Vec<_>>(),
+            vec![first.get_id(), second.get_id(), fourth.get_id()]
+        );
+        assert_eq!(actual.skipped_tasks.len(), 1);
+        assert_eq!(actual.skipped_tasks[0].task_id, third.get_id());
         assert_eq!(third.get_pending_until(), now + Duration::days(1));
     }
 
@@ -572,7 +588,7 @@ mod tests {
     }
 
     #[test]
-    fn pack_tasks_最優先候補がどの日にも収まらなければ低優先度候補を詰めず終了する() {
+    fn pack_tasks_最優先候補が収まらなければスキップして低優先度候補を詰める() {
         let now = fixed_now();
         let low = pending_task("低", now, now + Duration::days(10), 30, 1);
         let high = pending_task("高", now, now + Duration::days(10), 60, 9);
@@ -583,9 +599,11 @@ mod tests {
 
         let actual = pack_tasks(&repository, &mut free_time_manager);
 
-        assert!(actual.packed_tasks.is_empty());
-        assert_eq!(actual.stopped.unwrap().task_id, high.get_id());
-        assert_eq!(low.get_pending_until(), original_low_pending_until);
+        assert_eq!(actual.packed_tasks.len(), 1);
+        assert_eq!(actual.packed_tasks[0].task_id, low.get_id());
+        assert_eq!(actual.skipped_tasks.len(), 1);
+        assert_eq!(actual.skipped_tasks[0].task_id, high.get_id());
+        assert!(low.get_pending_until() < original_low_pending_until);
         assert_eq!(
             high.get_persistent_mutation_revision(),
             original_high_revision
@@ -593,7 +611,7 @@ mod tests {
     }
 
     #[test]
-    fn pack_tasks_7日合計には収まっても単一日の余差に収まらなければ終了する() {
+    fn pack_tasks_7日合計には収まっても単一日の余差に収まらなければスキップする() {
         let now = fixed_now();
         let task = pending_task("長い", now, now + Duration::days(10), 60, 9);
         let repository = TestTaskRepository::new(vec![task.clone()], now);
@@ -602,7 +620,8 @@ mod tests {
         let actual = pack_tasks(&repository, &mut free_time_manager);
 
         assert!(actual.packed_tasks.is_empty());
-        assert_eq!(actual.stopped.unwrap().task_id, task.get_id());
+        assert_eq!(actual.skipped_tasks.len(), 1);
+        assert_eq!(actual.skipped_tasks[0].task_id, task.get_id());
     }
 
     #[test]
@@ -633,7 +652,7 @@ mod tests {
         let actual = pack_tasks(&repository, &mut free_time_manager);
 
         assert!(actual.packed_tasks.is_empty());
-        assert!(actual.stopped.is_none());
+        assert!(actual.skipped_tasks.is_empty());
     }
 
     #[test]
@@ -733,6 +752,53 @@ mod tests {
     }
 
     #[test]
+    fn pack_tasks_atomicに連続空き枠がなければスキップして次のtaskを詰める() {
+        let now = fixed_now();
+        let atomic = pending_task("atomic", now, now + Duration::days(10), 60, 9);
+        atomic.set_atomic(true);
+        let next = pending_task("次", now, now + Duration::days(10), 30, 8);
+        let repository = TestTaskRepository::new(vec![atomic.clone(), next.clone()], now);
+        let mut free_time_manager = TestFreeTimeManager::with_blocked_interval(
+            180,
+            now,
+            now + Duration::days(7),
+        );
+
+        let actual = pack_tasks(&repository, &mut free_time_manager);
+
+        assert_eq!(actual.skipped_tasks.len(), 1);
+        assert_eq!(actual.skipped_tasks[0].task_id, atomic.get_id());
+        assert_eq!(actual.packed_tasks.len(), 1);
+        assert_eq!(actual.packed_tasks[0].task_id, next.get_id());
+    }
+
+    #[test]
+    fn pack_tasks_複数taskをスキップして収まる次のtaskを詰める() {
+        let now = fixed_now();
+        let first = pending_task("1", now, now + Duration::days(10), 60, 9);
+        let second = pending_task("2", now, now + Duration::days(10), 60, 8);
+        let third = pending_task("3", now, now + Duration::days(10), 30, 7);
+        let repository = TestTaskRepository::new(
+            vec![first.clone(), second.clone(), third.clone()],
+            now,
+        );
+        let mut free_time_manager = TestFreeTimeManager::new(60);
+
+        let actual = pack_tasks(&repository, &mut free_time_manager);
+
+        assert_eq!(
+            actual
+                .skipped_tasks
+                .iter()
+                .map(|skipped| skipped.task_id)
+                .collect::<Vec<_>>(),
+            vec![first.get_id(), second.get_id()]
+        );
+        assert_eq!(actual.packed_tasks.len(), 1);
+        assert_eq!(actual.packed_tasks[0].task_id, third.get_id());
+    }
+
+    #[test]
     fn pack_tasks_相手待ちや着手可能日が期間外のtaskは候補にしない() {
         let now = fixed_now();
         let waiting = pending_task("待ち", now, now + Duration::days(10), 30, 9);
@@ -745,7 +811,7 @@ mod tests {
         let actual = pack_tasks(&repository, &mut free_time_manager);
 
         assert!(actual.packed_tasks.is_empty());
-        assert!(actual.stopped.is_none());
+        assert!(actual.skipped_tasks.is_empty());
     }
 
     #[test]
@@ -763,6 +829,6 @@ mod tests {
         let actual = pack_tasks(&repository, &mut free_time_manager);
 
         assert!(actual.packed_tasks.is_empty());
-        assert!(actual.stopped.is_none());
+        assert!(actual.skipped_tasks.is_empty());
     }
 }

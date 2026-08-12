@@ -4473,7 +4473,7 @@ fn test_execute_pack_前倒し内容と集計を表示する() {
         "詰\t2026-08-11\t00:30\t優先度9\t{}\t前倒し対象",
         task_id
     )));
-    assert!(output.contains("詰: 1件 00:30"));
+    assert!(output.contains("詰: 1件 00:30 (スキップ0件)"));
 }
 
 #[test]
@@ -4494,7 +4494,7 @@ fn test_execute_pack_候補なしを表示する() {
 }
 
 #[test]
-fn test_execute_pack_収まらない最優先候補を停止理由に表示する() {
+fn test_execute_pack_収まらない候補をスキップとして表示する() {
     let now = Local.with_ymd_and_hms(2026, 8, 11, 12, 0, 0).unwrap();
     let task = Task::new("大きい");
     task.sync_clock(now);
@@ -4511,8 +4511,8 @@ fn test_execute_pack_収まらない最優先候補を停止理由に表示す�
     execute_pack(&mut stdout, &mut repository, &mut free_time_manager);
 
     let output = stdout.into_string();
-    assert!(output.contains(&format!("[Stop] 優先度9\t{}\t大きい\t必要01:00", task_id)));
-    assert!(output.contains("詰: 0件 00:00"));
+    assert!(output.contains(&format!("[Skip] 優先度9\t{}\t大きい\t必要01:00", task_id)));
+    assert!(output.contains("詰: 0件 00:00 (スキップ1件)"));
 }
 
 #[test]
@@ -4539,7 +4539,11 @@ fn test_execute_詰とpackの両aliasで製品command経路を実行する() {
             command,
         );
 
-        assert!(stdout.into_string().contains("詰: 1件 00:30"));
+        assert!(
+            stdout
+                .into_string()
+                .contains("詰: 1件 00:30 (スキップ0件)")
+        );
         assert!(repository.task.get_pending_until() < now + Duration::days(10));
     }
 }
