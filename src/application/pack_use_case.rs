@@ -99,6 +99,7 @@ pub fn pack_tasks(
                 .first()
                 .is_some_and(|scheduled| scheduled.scheduled_start < candidate.planned_start)
             {
+                task.set_pending_until(task_segments[0].scheduled_start);
                 packed_task_opt = Some(PackedTask {
                     task_id: candidate.task_id,
                     name: candidate.name.clone(),
@@ -417,6 +418,25 @@ mod tests {
                 .collect::<Vec<_>>(),
             vec![earlier.get_id(), later.get_id()]
         );
+    }
+
+    #[test]
+    fn pack_tasks_pending_untilを実際の配置開始時刻へ設定する() {
+        let now = fixed_now();
+        let blocker = Task::new("先行");
+        blocker.sync_clock(now);
+        blocker.set_start_time(now);
+        blocker.set_estimated_work_seconds(30 * 60);
+        blocker.set_priority(10);
+        let candidate = pending_task("対象", now, now + Duration::days(10), 30, 9);
+        let repository = TestTaskRepository::new(vec![blocker, candidate.clone()], now);
+        let mut free_time_manager = TestFreeTimeManager::new(180);
+
+        let actual = pack_tasks(&repository, &mut free_time_manager);
+
+        assert_eq!(actual.packed_tasks.len(), 1);
+        assert_eq!(candidate.get_start_time(), now);
+        assert_eq!(candidate.get_pending_until(), now + Duration::minutes(30));
     }
 
     #[test]
