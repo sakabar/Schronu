@@ -4493,6 +4493,57 @@ fn test_execute_pack_候補なしを表示する() {
     );
 }
 
+#[test]
+fn test_execute_pack_収まらない最優先候補を停止理由に表示する() {
+    let now = Local.with_ymd_and_hms(2026, 8, 11, 12, 0, 0).unwrap();
+    let task = Task::new("大きい");
+    task.sync_clock(now);
+    task.set_start_time(now);
+    task.set_estimated_work_seconds(60 * 60);
+    task.set_priority(9);
+    task.set_pending_until(now + Duration::days(10));
+    task.set_orig_status(Status::Pending);
+    let task_id = task.get_id();
+    let mut repository = TestTaskRepository::new(task, now);
+    let mut free_time_manager = TestFreeTimeManagerWithFreeMinutes { free_minutes: 60 };
+    let mut stdout = TestWriter::new();
+
+    execute_pack(&mut stdout, &mut repository, &mut free_time_manager);
+
+    let output = stdout.into_string();
+    assert!(output.contains(&format!("[Stop] 優先度9\t{}\t大きい\t必要01:00", task_id)));
+    assert!(output.contains("詰: 0件 00:00"));
+}
+
+#[test]
+fn test_execute_詰とpackの両aliasで製品command経路を実行する() {
+    for command in ["詰", "pack"] {
+        let now = Local.with_ymd_and_hms(2026, 8, 11, 12, 0, 0).unwrap();
+        let task = Task::new("対象");
+        task.sync_clock(now);
+        task.set_start_time(now);
+        task.set_estimated_work_seconds(30 * 60);
+        task.set_pending_until(now + Duration::days(10));
+        task.set_orig_status(Status::Pending);
+        let mut repository = TestTaskRepository::new(task, now);
+        let mut free_time_manager = TestFreeTimeManagerWithFreeMinutes { free_minutes: 120 };
+        let mut stdout = TestWriter::new();
+        let mut focused_task_id_opt = None;
+
+        execute(
+            &mut stdout,
+            &mut repository,
+            &mut free_time_manager,
+            &mut focused_task_id_opt,
+            &now,
+            command,
+        );
+
+        assert!(stdout.into_string().contains("詰: 1件 00:30"));
+        assert!(repository.task.get_pending_until() < now + Duration::days(10));
+    }
+}
+
 #[cfg(test)]
 impl TestTaskRepository {
     fn new(task: Task, last_synced_time: DateTime<Local>) -> Self {

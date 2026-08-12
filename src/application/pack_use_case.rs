@@ -465,6 +465,45 @@ mod tests {
     }
 
     #[test]
+    fn pack_tasks_優先度と予定日時が同じならuuid昇順に詰める() {
+        let now = fixed_now();
+        let mut larger_id = pending_task("後", now, now + Duration::days(10), 30, 5);
+        larger_id.set_id(Uuid::parse_str("00000000-0000-0000-0000-000000000002").unwrap());
+        let mut smaller_id = pending_task("先", now, now + Duration::days(10), 30, 5);
+        smaller_id.set_id(Uuid::parse_str("00000000-0000-0000-0000-000000000001").unwrap());
+        let repository = TestTaskRepository::new(vec![larger_id.clone(), smaller_id.clone()], now);
+        let mut free_time_manager = TestFreeTimeManager::new(120);
+
+        let actual = pack_tasks(&repository, &mut free_time_manager);
+
+        assert_eq!(
+            actual
+                .packed_tasks
+                .iter()
+                .map(|packed| packed.task_id)
+                .collect::<Vec<_>>(),
+            vec![smaller_id.get_id(), larger_id.get_id()]
+        );
+    }
+
+    #[test]
+    fn pack_tasks_配置ごとに余差を再計算してrho07を超える前に停止する() {
+        let now = fixed_now();
+        let first = pending_task("1", now, now + Duration::days(1), 30, 3);
+        let second = pending_task("2", now, now + Duration::days(1), 30, 2);
+        let third = pending_task("3", now, now + Duration::days(1), 30, 1);
+        let repository =
+            TestTaskRepository::new(vec![first.clone(), second.clone(), third.clone()], now);
+        let mut free_time_manager = TestFreeTimeManager::new(120);
+
+        let actual = pack_tasks(&repository, &mut free_time_manager);
+
+        assert_eq!(actual.packed_tasks.len(), 2);
+        assert_eq!(actual.stopped.unwrap().task_id, third.get_id());
+        assert_eq!(third.get_pending_until(), now + Duration::days(1));
+    }
+
+    #[test]
     fn pack_tasks_優先度がi64最小値でも前倒しする() {
         let now = fixed_now();
         let task = pending_task("最小", now, now + Duration::days(10), 30, i64::MIN);
@@ -545,6 +584,38 @@ mod tests {
             actual.packed_tasks[0].target_date,
             NaiveDate::from_ymd_opt(2026, 8, 17).unwrap()
         );
+    }
+
+    #[test]
+    fn pack_tasks_8日目から着手可能なtaskは対象外にする() {
+        let now = Local.with_ymd_and_hms(2026, 8, 12, 1, 0, 0).unwrap();
+        let task = pending_task("対象外", now, now + Duration::days(10), 30, 9);
+        task.set_start_time(Local.with_ymd_and_hms(2026, 8, 18, 6, 0, 0).unwrap());
+        let repository = TestTaskRepository::new(vec![task], now);
+        let mut free_time_manager = TestFreeTimeManager::new(60);
+
+        let actual = pack_tasks(&repository, &mut free_time_manager);
+
+        assert!(actual.packed_tasks.is_empty());
+        assert!(actual.stopped.is_none());
+    }
+
+    #[test]
+    fn pack_tasks_締切と依存と反復設定を変更しない() {
+        let now = fixed_now();
+        let task = pending_task("対象", now, now + Duration::days(10), 30, 9);
+        let deadline = now + Duration::days(20);
+        task.set_deadline_time_opt(Some(deadline));
+        task.set_repetition_interval_days_opt(Some(7));
+        let repository = TestTaskRepository::new(vec![task.clone()], now);
+        let mut free_time_manager = TestFreeTimeManager::new(120);
+
+        let actual = pack_tasks(&repository, &mut free_time_manager);
+
+        assert_eq!(actual.packed_tasks.len(), 1);
+        assert_eq!(task.get_deadline_time_opt(), Some(deadline));
+        assert_eq!(task.get_repetition_interval_days_opt(), Some(7));
+        assert!(task.get_children().is_empty());
     }
 
     #[test]
