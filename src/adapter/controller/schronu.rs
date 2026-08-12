@@ -27,7 +27,7 @@ use std::cmp::{max, min};
 use std::collections::HashMap;
 use std::env;
 use std::io::Stdout;
-use std::io::{stdout, Write};
+use std::io::{stdout, IsTerminal, Write};
 #[cfg(test)]
 use std::path::PathBuf;
 use std::process;
@@ -82,6 +82,10 @@ impl FocusSelectionMode {
 
 trait SchronuWriter: Write {
     fn writeln_newline(&mut self, message: &str) -> Result<(), std::io::Error>;
+
+    fn supports_ansi_color(&self) -> bool {
+        true
+    }
 }
 
 #[derive(Debug)]
@@ -207,11 +211,19 @@ impl SchronuWriter for RawTerminal<Stdout> {
     fn writeln_newline(&mut self, message: &str) -> Result<(), std::io::Error> {
         writeln!(self, "{}{}", termion::cursor::Left(MAX_COL), message)
     }
+
+    fn supports_ansi_color(&self) -> bool {
+        true
+    }
 }
 
 impl SchronuWriter for Stdout {
     fn writeln_newline(&mut self, message: &str) -> Result<(), std::io::Error> {
         writeln!(self, "{}", message)
+    }
+
+    fn supports_ansi_color(&self) -> bool {
+        self.is_terminal()
     }
 }
 
@@ -1294,9 +1306,12 @@ fn format_signed_hours_minutes(duration: Duration) -> String {
     )
 }
 
-fn format_daily_band_segment(symbol: char, count: usize) -> String {
+fn format_daily_band_segment(symbol: char, count: usize, supports_ansi_color: bool) -> String {
     if count == 0 {
         return String::new();
+    }
+    if !supports_ansi_color {
+        return symbol.to_string().repeat(count);
     }
     let color_value = match symbol {
         '#' => 110,
@@ -1317,16 +1332,16 @@ fn format_daily_band_segment(symbol: char, count: usize) -> String {
     )
 }
 
-fn format_daily_band_legend() -> String {
+fn format_daily_band_legend(supports_ansi_color: bool) -> String {
     format!(
         "凡例: {} 固定  {} 経過済み  {} 繰返  {} 単発  {} 余差  {} 空き  {} 超過  (1文字=15分)",
-        format_daily_band_segment('#', 1),
-        format_daily_band_segment('x', 1),
-        format_daily_band_segment('=', 1),
-        format_daily_band_segment('-', 1),
-        format_daily_band_segment(':', 1),
-        format_daily_band_segment('.', 1),
-        format_daily_band_segment('>', 1),
+        format_daily_band_segment('#', 1, supports_ansi_color),
+        format_daily_band_segment('x', 1, supports_ansi_color),
+        format_daily_band_segment('=', 1, supports_ansi_color),
+        format_daily_band_segment('-', 1, supports_ansi_color),
+        format_daily_band_segment(':', 1, supports_ansi_color),
+        format_daily_band_segment('.', 1, supports_ansi_color),
+        format_daily_band_segment('>', 1, supports_ansi_color),
     )
 }
 
@@ -1336,6 +1351,7 @@ fn format_daily_band(
     accumulated_free_diff: Duration,
     accumulated_rho_diff: Duration,
     durations: &DailyBandDurations,
+    supports_ansi_color: bool,
 ) -> String {
     let categories = [
         ('#', durations.fixed_seconds.max(0)),
@@ -1361,11 +1377,16 @@ fn format_daily_band(
         bar.push_str(&format_daily_band_segment(
             symbol,
             boundary - previous_boundary,
+            supports_ansi_color,
         ));
         previous_boundary = boundary;
     }
 
-    let overflow = format_daily_band_segment('>', round_daily_band_segment_count(overflow_seconds));
+    let overflow = format_daily_band_segment(
+        '>',
+        round_daily_band_segment_count(overflow_seconds),
+        supports_ansi_color,
+    );
     format!(
         "{}({}) {} {} [{}]{}",
         date,
@@ -2091,6 +2112,7 @@ fn execute_show_all_tasks(
     pattern_opt: &Option<String>,
     display_order: TaskListDisplayOrder,
 ) {
+    let supports_ansi_color = stdout.supports_ansi_color();
     let scheduled_tasks = get_schedule(task_repository);
     let mut dt_id_tpl_arr = scheduled_tasks
         .iter()
@@ -3072,6 +3094,7 @@ fn execute_show_all_tasks(
                         total_repetitive_task_work_seconds_of_the_date,
                         diff_to_goal,
                     ),
+                    supports_ansi_color,
                 )
             });
 
@@ -3232,7 +3255,7 @@ fn execute_show_all_tasks(
 
         writeln_newline(stdout, "").unwrap();
     } else if is_band_func && !is_flatten_func {
-        writeln_newline(stdout, &format_daily_band_legend()).unwrap();
+        writeln_newline(stdout, &format_daily_band_legend(supports_ansi_color)).unwrap();
         writeln_newline(stdout, "").unwrap();
 
         for (band_ind, row) in daily_summary_rows.iter().enumerate() {
@@ -4362,6 +4385,7 @@ fn test_decide_finish_time_不正な日付は完了時刻にしない() {
 #[cfg(test)]
 struct TestWriter {
     buffer: Vec<u8>,
+    supports_ansi_color: bool,
 }
 
 #[cfg(test)]
@@ -4388,7 +4412,17 @@ impl Drop for TestStorageDir {
 #[cfg(test)]
 impl TestWriter {
     fn new() -> Self {
-        Self { buffer: vec![] }
+        Self {
+            buffer: vec![],
+            supports_ansi_color: true,
+        }
+    }
+
+    fn new_for_pipe() -> Self {
+        Self {
+            buffer: vec![],
+            supports_ansi_color: false,
+        }
     }
 
     fn into_string(self) -> String {
@@ -4412,6 +4446,10 @@ impl Write for TestWriter {
 impl SchronuWriter for TestWriter {
     fn writeln_newline(&mut self, message: &str) -> Result<(), std::io::Error> {
         writeln!(self, "{}", message)
+    }
+
+    fn supports_ansi_color(&self) -> bool {
+        self.supports_ansi_color
     }
 }
 
@@ -6442,10 +6480,25 @@ fn execute_calendar_command_for_test(
     task: Task,
     free_minutes: i64,
 ) -> String {
+    execute_calendar_command_with_ansi_color_for_test(command, now, task, free_minutes, true)
+}
+
+#[cfg(test)]
+fn execute_calendar_command_with_ansi_color_for_test(
+    command: &str,
+    now: DateTime<Local>,
+    task: Task,
+    free_minutes: i64,
+    supports_ansi_color: bool,
+) -> String {
     let mut task_repository = TestTaskRepository::new(task, now);
     let mut free_time_manager = TestFreeTimeManagerWithFreeMinutes { free_minutes };
     let mut focused_task_id_opt = None;
-    let mut stdout = TestWriter::new();
+    let mut stdout = if supports_ansi_color {
+        TestWriter::new()
+    } else {
+        TestWriter::new_for_pipe()
+    };
 
     execute(
         &mut stdout,
@@ -6590,6 +6643,7 @@ fn test_format_daily_band_累積境界で端数を丸めて96文字にする() {
             non_repetitive_seconds: 71 * 60,
             rho_leeway_seconds: 24 * 60,
         },
+        true,
     );
     let expected = format!(
         "2026-08-15(土) -07:08 +46:09 [{}{}{}{}{}]",
@@ -6644,6 +6698,7 @@ fn test_format_daily_band_当日経過と24時間超過を表示する() {
             non_repetitive_seconds: 40 * 60,
             rho_leeway_seconds: 0,
         },
+        true,
     );
     let expected = format!(
         "2026-08-11(火) +05:06 -03:04 [{}{}{}]{}",
@@ -6720,6 +6775,21 @@ fn test_execute_band_凡例と帯を7色の_ansi前景色で表示する() {
     );
 
     assert_eq!(actual, expected);
+}
+
+#[test]
+fn test_execute_band_パイプ出力では_ansi前景色を含めない() {
+    let now = Local.with_ymd_and_hms(2026, 8, 11, 12, 0, 0).unwrap();
+    let task = Task::new("帯パイプ出力固定用タスク");
+    task.set_estimated_work_seconds(60 * 60);
+    task.set_start_time(now);
+    task.set_pending_until(now);
+    task.set_orig_status(Status::Pending);
+
+    let actual = execute_calendar_command_with_ansi_color_for_test("帯", now, task, 10 * 60, false);
+
+    assert!(!actual.contains("\x1b["));
+    assert!(actual.contains("凡例: # 固定  x 経過済み"));
 }
 
 #[test]
