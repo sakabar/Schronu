@@ -1,3 +1,231 @@
+use super::daily_capacity::{
+    calculate_daily_leeway_seconds, calculate_free_time_minutes_for_subjective_date,
+    subjective_date, subjective_date_start,
+};
+use super::interface::{FreeTimeManagerTrait, TaskRepositoryTrait};
+use super::schedule_use_case::{get_schedule, ScheduledTaskView};
+use crate::entity::task::Status;
+use chrono::{DateTime, Duration, Local, NaiveDate};
+use std::collections::{HashMap, HashSet};
+use uuid::Uuid;
+
+const PACK_TARGET_DAYS: i64 = 7;
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PackedTask {
+    pub task_id: Uuid,
+    pub name: String,
+    pub priority: i64,
+    pub target_date: NaiveDate,
+    pub work_seconds: i64,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PackStop {
+    pub task_id: Uuid,
+    pub name: String,
+    pub priority: i64,
+    pub required_work_seconds: i64,
+}
+
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct PackResult {
+    pub packed_tasks: Vec<PackedTask>,
+    pub stopped: Option<PackStop>,
+}
+
+#[derive(Clone)]
+struct PackCandidate {
+    task_id: Uuid,
+    name: String,
+    priority: i64,
+    planned_start: DateTime<Local>,
+    work_seconds: i64,
+}
+
+pub fn pack_tasks(
+    repository: &dyn TaskRepositoryTrait,
+    free_time_manager: &mut dyn FreeTimeManagerTrait,
+) -> PackResult {
+    let now = repository.get_last_synced_time();
+    let first_date = subjective_date(now);
+    let target_dates = (0..PACK_TARGET_DAYS)
+        .map(|days| first_date + Duration::days(days))
+        .collect::<Vec<_>>();
+    let mut candidates = collect_candidates(repository, &target_dates);
+    candidates.sort_by_key(|candidate| {
+        (
+            -candidate.priority,
+            candidate.planned_start,
+            candidate.task_id,
+        )
+    });
+
+    let mut result = PackResult::default();
+    for candidate in candidates {
+        let mut packed_task_opt = None;
+        let daily_leeway = calculate_daily_leeway(repository, free_time_manager, &target_dates);
+
+        for target_date in &target_dates {
+            if subjective_date(candidate.planned_start) <= *target_date
+                || daily_leeway.get(target_date).copied().unwrap_or(0) < candidate.work_seconds
+            {
+                continue;
+            }
+
+            let Some(task) = repository.get_by_id(candidate.task_id) else {
+                continue;
+            };
+            let target_datetime = subjective_date_start(*target_date).max(task.get_start_time());
+            if subjective_date(target_datetime) != *target_date {
+                continue;
+            }
+
+            let original_pending_until = task.get_pending_until();
+            task.set_pending_until(target_datetime);
+            let schedule = get_schedule(repository);
+            let task_segments = schedule
+                .iter()
+                .filter(|scheduled| scheduled.task.id == candidate.task_id)
+                .collect::<Vec<_>>();
+
+            if placement_fits_target_day(
+                &task_segments,
+                *target_date,
+                candidate.work_seconds,
+                task.get_atomic(),
+                free_time_manager,
+            ) && task_segments
+                .first()
+                .is_some_and(|scheduled| scheduled.scheduled_start < candidate.planned_start)
+            {
+                packed_task_opt = Some(PackedTask {
+                    task_id: candidate.task_id,
+                    name: candidate.name.clone(),
+                    priority: candidate.priority,
+                    target_date: *target_date,
+                    work_seconds: candidate.work_seconds,
+                });
+                break;
+            }
+
+            task.set_pending_until(original_pending_until);
+        }
+
+        match packed_task_opt {
+            Some(packed_task) => result.packed_tasks.push(packed_task),
+            None => {
+                result.stopped = Some(PackStop {
+                    task_id: candidate.task_id,
+                    name: candidate.name,
+                    priority: candidate.priority,
+                    required_work_seconds: candidate.work_seconds,
+                });
+                break;
+            }
+        }
+    }
+
+    result
+}
+
+fn collect_candidates(
+    repository: &dyn TaskRepositoryTrait,
+    target_dates: &[NaiveDate],
+) -> Vec<PackCandidate> {
+    let schedule = get_schedule(repository);
+    let mut seen_ids = HashSet::new();
+    schedule
+        .into_iter()
+        .filter(|scheduled| seen_ids.insert(scheduled.task.id))
+        .filter(|scheduled| {
+            scheduled.rank == 0
+                && scheduled.task.status == Status::Pending
+                && !scheduled.task.is_on_other_side
+                && scheduled.total_work_seconds > 0
+                && target_dates.iter().any(|target_date| {
+                    *target_date < subjective_date(scheduled.scheduled_start)
+                        && subjective_date(scheduled.task.start_time) <= *target_date
+                })
+        })
+        .map(|scheduled| PackCandidate {
+            task_id: scheduled.task.id,
+            name: scheduled.task.name,
+            priority: scheduled.task.priority,
+            planned_start: scheduled.scheduled_start,
+            work_seconds: scheduled.total_work_seconds,
+        })
+        .collect()
+}
+
+fn calculate_daily_leeway(
+    repository: &dyn TaskRepositoryTrait,
+    free_time_manager: &mut dyn FreeTimeManagerTrait,
+    target_dates: &[NaiveDate],
+) -> HashMap<NaiveDate, i64> {
+    let mut total_work_seconds = HashMap::<NaiveDate, i64>::new();
+    let mut repetitive_work_seconds = HashMap::<NaiveDate, i64>::new();
+
+    for scheduled in get_schedule(repository) {
+        let date = subjective_date(scheduled.scheduled_start);
+        if !target_dates.contains(&date) {
+            continue;
+        }
+        *total_work_seconds.entry(date).or_default() += scheduled.scheduled_work_seconds;
+        if repository
+            .get_by_id(scheduled.task.id)
+            .is_some_and(|task| task.get_inherited_repetition_interval_days_opt().is_some())
+        {
+            *repetitive_work_seconds.entry(date).or_default() += scheduled.scheduled_work_seconds;
+        }
+    }
+
+    target_dates
+        .iter()
+        .map(|date| {
+            let free_time_minutes = calculate_free_time_minutes_for_subjective_date(
+                date,
+                repository.get_last_synced_time(),
+                free_time_manager,
+            );
+            let repetitive = repetitive_work_seconds.get(date).copied().unwrap_or(0);
+            let total = total_work_seconds.get(date).copied().unwrap_or(0);
+            (
+                *date,
+                calculate_daily_leeway_seconds(free_time_minutes, repetitive, total),
+            )
+        })
+        .collect()
+}
+
+fn placement_fits_target_day(
+    task_segments: &[&ScheduledTaskView],
+    target_date: NaiveDate,
+    work_seconds: i64,
+    atomic: bool,
+    free_time_manager: &mut dyn FreeTimeManagerTrait,
+) -> bool {
+    let target_end = subjective_date_start(target_date + Duration::days(1));
+    let fits_in_day = !task_segments.is_empty()
+        && task_segments.iter().all(|scheduled| {
+            subjective_date(scheduled.scheduled_start) == target_date
+                && scheduled.scheduled_end <= target_end
+        })
+        && task_segments
+            .iter()
+            .map(|scheduled| scheduled.scheduled_work_seconds)
+            .sum::<i64>()
+            == work_seconds;
+
+    if !fits_in_day || !atomic || task_segments.len() != 1 {
+        return fits_in_day && !atomic;
+    }
+
+    let scheduled = task_segments[0];
+    free_time_manager.get_free_minutes(&scheduled.scheduled_start, &scheduled.scheduled_end) * 60
+        >= work_seconds
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -77,25 +305,25 @@ mod tests {
 
     struct TestFreeTimeManager {
         daily_free_minutes: i64,
-        blocked_interval: Option<(DateTime<Local>, DateTime<Local>)>,
+        short_interval_free_rate_divisor: i64,
     }
 
     impl TestFreeTimeManager {
         fn new(daily_free_minutes: i64) -> Self {
             Self {
                 daily_free_minutes,
-                blocked_interval: None,
+                short_interval_free_rate_divisor: 1,
             }
         }
 
         fn with_blocked_interval(
             daily_free_minutes: i64,
-            start: DateTime<Local>,
-            end: DateTime<Local>,
+            _start: DateTime<Local>,
+            _end: DateTime<Local>,
         ) -> Self {
             Self {
                 daily_free_minutes,
-                blocked_interval: Some((start, end)),
+                short_interval_free_rate_divisor: 2,
             }
         }
     }
@@ -107,15 +335,7 @@ mod tests {
                 return self.daily_free_minutes;
             }
 
-            let blocked_minutes = self
-                .blocked_interval
-                .map(|(blocked_start, blocked_end)| {
-                    let overlap_start = (*start).max(blocked_start);
-                    let overlap_end = (*end).min(blocked_end);
-                    (overlap_end - overlap_start).num_minutes().max(0)
-                })
-                .unwrap_or(0);
-            duration_minutes - blocked_minutes
+            duration_minutes / self.short_interval_free_rate_divisor
         }
 
         fn get_busy_minutes(&mut self, start: &DateTime<Local>, end: &DateTime<Local>) -> i64 {
@@ -177,6 +397,26 @@ mod tests {
             .all(|packed| packed.target_date == NaiveDate::from_ymd_opt(2026, 8, 11).unwrap()));
         assert_eq!(high.get_start_time(), now);
         assert!(high.get_pending_until() < now + Duration::days(10));
+    }
+
+    #[test]
+    fn pack_tasks_同じ優先度では現在の予定日時が早い順に詰める() {
+        let now = fixed_now();
+        let later = pending_task("後", now, now + Duration::days(11), 30, 5);
+        let earlier = pending_task("先", now, now + Duration::days(10), 30, 5);
+        let repository = TestTaskRepository::new(vec![later.clone(), earlier.clone()], now);
+        let mut free_time_manager = TestFreeTimeManager::new(120);
+
+        let actual = pack_tasks(&repository, &mut free_time_manager);
+
+        assert_eq!(
+            actual
+                .packed_tasks
+                .iter()
+                .map(|packed| packed.task_id)
+                .collect::<Vec<_>>(),
+            vec![earlier.get_id(), later.get_id()]
+        );
     }
 
     #[test]
@@ -251,6 +491,24 @@ mod tests {
         let future = pending_task("未来", now, now + Duration::days(10), 30, 8);
         future.set_start_time(now + Duration::days(8));
         let repository = TestTaskRepository::new(vec![waiting, future], now);
+        let mut free_time_manager = TestFreeTimeManager::new(120);
+
+        let actual = pack_tasks(&repository, &mut free_time_manager);
+
+        assert!(actual.packed_tasks.is_empty());
+        assert!(actual.stopped.is_none());
+    }
+
+    #[test]
+    fn pack_tasks_親taskと完了済みtaskと残作業0のtaskは候補にしない() {
+        let now = fixed_now();
+        let parent = pending_task("親", now, now + Duration::days(10), 30, 9);
+        let child = parent.create_as_last_child(crate::entity::task::TaskAttr::new("子"));
+        child.sync_clock(now);
+        let done = pending_task("完了", now, now + Duration::days(10), 30, 8);
+        done.set_orig_status(Status::Done);
+        let zero = pending_task("ゼロ", now, now + Duration::days(10), 0, 7);
+        let repository = TestTaskRepository::new(vec![parent, done, zero], now);
         let mut free_time_manager = TestFreeTimeManager::new(120);
 
         let actual = pack_tasks(&repository, &mut free_time_manager);

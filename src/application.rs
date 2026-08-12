@@ -1,3 +1,4 @@
+pub mod daily_capacity;
 pub mod interface;
 pub mod pack_use_case;
 pub mod schedule_use_case;
