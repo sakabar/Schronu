@@ -8,7 +8,7 @@ use schronu::adapter::gateway::storage_lock::{LockMode, StorageLock, StorageLock
 use schronu::adapter::gateway::task_repository::TaskRepository;
 use schronu::application::interface::FreeTimeManagerTrait;
 #[cfg(test)]
-use schronu::application::interface::TaskRepositoryOperation;
+use schronu::application::interface::{RepositoryReloadOutcome, TaskRepositoryOperation};
 use schronu::application::interface::{TaskRepositoryError, TaskRepositoryTrait};
 use schronu::application::schedule_use_case::get_schedule;
 use schronu::application::task_use_case::{
@@ -4386,6 +4386,7 @@ struct TestTaskRepository {
     last_defer_candidate_recent_days_opt: Option<i64>,
     load_should_fail: bool,
     load_attempt_count: Cell<usize>,
+    reload_if_changed_attempt_count: Cell<usize>,
     save_failures_remaining: Cell<usize>,
     save_attempt_count: Cell<usize>,
 }
@@ -4438,6 +4439,7 @@ impl TestTaskRepository {
             last_defer_candidate_recent_days_opt: None,
             load_should_fail: false,
             load_attempt_count: Cell::new(0),
+            reload_if_changed_attempt_count: Cell::new(0),
             save_failures_remaining: Cell::new(0),
             save_attempt_count: Cell::new(0),
         }
@@ -4473,6 +4475,17 @@ impl TaskRepositoryTrait for TestTaskRepository {
         } else {
             Ok(())
         }
+    }
+
+    fn reload_if_changed(
+        &mut self,
+        now: DateTime<Local>,
+    ) -> Result<RepositoryReloadOutcome, TaskRepositoryError> {
+        self.reload_if_changed_attempt_count
+            .set(self.reload_if_changed_attempt_count.get() + 1);
+        self.sync_clock(now);
+        self.load()?;
+        Ok(RepositoryReloadOutcome::Reloaded)
     }
 
     fn save(&self) -> Result<(), schronu::application::interface::TaskRepositoryError> {
@@ -7025,6 +7038,21 @@ fn test_cli_repository_transactionは外部更新を再読込してcommandを即
 }
 
 #[test]
+fn test_cli_repository_transactionはreload_if_changed経路を使う() {
+    let storage_dir = TestStorageDir::new();
+    std::fs::create_dir_all(&storage_dir.path).unwrap();
+    let now = Local.with_ymd_and_hms(2026, 8, 12, 12, 0, 0).unwrap();
+    let mut repository = TestTaskRepository::new(Task::new("cache経路"), now)
+        .with_storage_directory(&storage_dir.path);
+
+    run_cli_repository_transaction(&mut repository, now, |_| {}).unwrap();
+
+    assert_eq!(repository.reload_if_changed_attempt_count.get(), 1);
+    assert_eq!(repository.load_attempt_count.get(), 1);
+    assert_eq!(repository.save_attempt_count.get(), 1);
+}
+
+#[test]
 fn test_cli_repository_transactionはload失敗時にcommandもsaveも実行しない() {
     let storage_dir = TestStorageDir::new();
     std::fs::create_dir_all(&storage_dir.path).unwrap();
@@ -7378,6 +7406,7 @@ fn test_interactive_refreshは再読込後にlockを解放する() {
         InteractiveRepositoryEventOutcome::Continue
     ));
     assert_eq!(repository.load_attempt_count.get(), 1);
+    assert_eq!(repository.reload_if_changed_attempt_count.get(), 1);
     assert_eq!(repository.save_attempt_count.get(), 0);
     assert!(StorageLock::acquire(&storage_dir.path, LockMode::Mcp).is_ok());
 }

@@ -1496,7 +1496,7 @@ mod tests {
     use super::McpServer;
     use crate::adapter::gateway::task_repository::TaskRepository;
     use crate::application::interface::{
-        TaskRepositoryError, TaskRepositoryOperation, TaskRepositoryTrait,
+        RepositoryReloadOutcome, TaskRepositoryError, TaskRepositoryOperation, TaskRepositoryTrait,
     };
     use crate::entity::datetime::get_next_morning_datetime;
     use crate::entity::task::{ProjectCategory, RepetitionAnchor, Status, Task, TaskAttr};
@@ -1513,6 +1513,7 @@ mod tests {
         fail_load_once: bool,
         fail_save: bool,
         load_count: Rc<Cell<usize>>,
+        reload_if_changed_count: Rc<Cell<usize>>,
         project_count: Rc<Cell<usize>>,
         save_count: Rc<Cell<usize>>,
         mutation_count: Rc<Cell<usize>>,
@@ -1530,6 +1531,7 @@ mod tests {
                 fail_load_once: false,
                 fail_save: false,
                 load_count: Rc::new(Cell::new(0)),
+                reload_if_changed_count: Rc::new(Cell::new(0)),
                 project_count: Rc::new(Cell::new(project_count)),
                 save_count: Rc::new(Cell::new(0)),
                 mutation_count: Rc::new(Cell::new(0)),
@@ -1587,6 +1589,17 @@ mod tests {
             } else {
                 Ok(())
             }
+        }
+
+        fn reload_if_changed(
+            &mut self,
+            now: DateTime<Local>,
+        ) -> Result<RepositoryReloadOutcome, TaskRepositoryError> {
+            self.reload_if_changed_count
+                .set(self.reload_if_changed_count.get() + 1);
+            self.sync_clock(now);
+            self.load()?;
+            Ok(RepositoryReloadOutcome::Reloaded)
         }
 
         fn sync_clock(&mut self, now: DateTime<Local>) {
@@ -1735,6 +1748,7 @@ mod tests {
         for (id, tool_name, arguments) in cases {
             let repository = RecordingRepository::new(vec![]);
             let load_count = Rc::clone(&repository.load_count);
+            let reload_if_changed_count = Rc::clone(&repository.reload_if_changed_count);
             let operation_order = Rc::clone(&repository.operation_order);
             let sync_clock_times = Rc::clone(&repository.sync_clock_times);
             let mut server = initialized_server(repository);
@@ -1748,6 +1762,7 @@ mod tests {
             let sync_clock_times = sync_clock_times.borrow();
             assert_eq!(sync_clock_times.len(), 1, "case: {id}");
             assert_eq!(load_count.get(), 1, "case: {id}");
+            assert_eq!(reload_if_changed_count.get(), 1, "case: {id}");
             assert_eq!(
                 *operation_order.borrow(),
                 vec!["sync_clock", "load"],
@@ -1759,6 +1774,22 @@ mod tests {
                 sync_clock_times[0]
             );
         }
+    }
+
+    #[test]
+    fn 同一mcp_processの連続read_toolはreload_if_changed経路を使う() {
+        let repository = RecordingRepository::new(vec![]);
+        let reload_if_changed_count = Rc::clone(&repository.reload_if_changed_count);
+        let mut server = initialized_server(repository);
+
+        server
+            .handle_request(tool_call_request("first", "list_tasks", json!({})))
+            .unwrap();
+        server
+            .handle_request(tool_call_request("second", "list_tasks", json!({})))
+            .unwrap();
+
+        assert_eq!(reload_if_changed_count.get(), 2);
     }
 
     #[test]

@@ -1,6 +1,8 @@
 use crate::adapter::gateway::yaml::yaml_to_task;
 #[cfg(test)]
 use crate::adapter::gateway::yaml::YamlConversionError;
+#[cfg(test)]
+use crate::application::interface::RepositoryReloadOutcome;
 use crate::application::interface::{
     TaskRepositoryError, TaskRepositoryOperation as ApplicationRepositoryOperation,
     TaskRepositoryTrait,
@@ -1533,6 +1535,133 @@ mod tests {
             .project_dir_path("20260813", "保存対象")
             .join("project.yaml")
             .exists());
+    }
+
+    #[test]
+    fn test_reload_if_changed初回はrevisionなしでも必ずloadする() {
+        let storage_dir = TestStorageDir::new();
+        let now = Local.with_ymd_and_hms(2026, 8, 13, 12, 0, 0).unwrap();
+        let mut source = TaskRepository::new(storage_dir.path_str());
+        source.sync_clock(now);
+        let task = Task::new("初回読込対象");
+        let task_id = task.get_id();
+        source.start_new_project(task);
+        source.save().unwrap();
+        fs::remove_file(storage_dir.path.join(".revision")).unwrap();
+        let mut repository = TaskRepository::new(storage_dir.path_str());
+
+        let outcome = repository.reload_if_changed(now).unwrap();
+
+        assert_eq!(outcome, RepositoryReloadOutcome::Reloaded);
+        assert!(repository.get_by_id(task_id).is_some());
+    }
+
+    #[test]
+    fn test_reload_if_changed_revision一致ならyamlを再読込せずclock同期する() {
+        let storage_dir = TestStorageDir::new();
+        let before = Local.with_ymd_and_hms(2026, 8, 13, 12, 0, 0).unwrap();
+        let after = before + Duration::hours(2);
+        let mut source = TaskRepository::new(storage_dir.path_str());
+        source.sync_clock(before);
+        let task = Task::new("cache対象");
+        task.set_start_time(before - Duration::hours(1));
+        task.set_pending_until(before + Duration::hours(1));
+        task.set_orig_status(Status::Pending);
+        let task_id = task.get_id();
+        source.start_new_project(task);
+        source.save().unwrap();
+        let project_yaml_path = storage_dir
+            .project_dir_path("20260813", "cache対象")
+            .join("project.yaml");
+        let mut repository = TaskRepository::new(storage_dir.path_str());
+        assert_eq!(
+            repository.reload_if_changed(before).unwrap(),
+            RepositoryReloadOutcome::Reloaded
+        );
+        assert_eq!(
+            repository.get_by_id(task_id).unwrap().get_status(),
+            Status::Pending
+        );
+        fs::write(&project_yaml_path, "project: [").unwrap();
+
+        let outcome = repository.reload_if_changed(after).unwrap();
+
+        assert_eq!(outcome, RepositoryReloadOutcome::Cached);
+        assert_eq!(
+            repository.get_by_id(task_id).unwrap().get_status(),
+            Status::Todo
+        );
+    }
+
+    #[test]
+    fn test_reload_if_changed外部save後だけ1回reloadする() {
+        let storage_dir = TestStorageDir::new();
+        let now = Local.with_ymd_and_hms(2026, 8, 13, 12, 0, 0).unwrap();
+        let mut source = TaskRepository::new(storage_dir.path_str());
+        source.sync_clock(now);
+        let task = Task::new("外部更新対象");
+        let task_id = task.get_id();
+        source.start_new_project(task);
+        source.save().unwrap();
+        let mut cached = TaskRepository::new(storage_dir.path_str());
+        cached.reload_if_changed(now).unwrap();
+        let mut external = TaskRepository::new(storage_dir.path_str());
+        external.reload_if_changed(now).unwrap();
+        external
+            .get_by_id(task_id)
+            .unwrap()
+            .set_estimated_work_seconds(45 * 60);
+        external.save().unwrap();
+
+        assert_eq!(
+            cached.reload_if_changed(now).unwrap(),
+            RepositoryReloadOutcome::Reloaded
+        );
+        assert_eq!(
+            cached
+                .get_by_id(task_id)
+                .unwrap()
+                .get_estimated_work_seconds(),
+            45 * 60
+        );
+        assert_eq!(
+            cached.reload_if_changed(now).unwrap(),
+            RepositoryReloadOutcome::Cached
+        );
+    }
+
+    #[test]
+    fn test_reload_if_changed新processはrevision一致でも停止中の直接編集をloadする() {
+        let storage_dir = TestStorageDir::new();
+        let now = Local.with_ymd_and_hms(2026, 8, 13, 12, 0, 0).unwrap();
+        let mut source = TaskRepository::new(storage_dir.path_str());
+        source.sync_clock(now);
+        let task = Task::new("停止中編集対象");
+        let task_id = task.get_id();
+        source.start_new_project(task);
+        source.save().unwrap();
+        let original_revision = fs::read(storage_dir.path.join(".revision")).unwrap();
+        let original_revision_id =
+            Uuid::parse_str(std::str::from_utf8(&original_revision).unwrap().trim_end()).unwrap();
+        source
+            .get_by_id(task_id)
+            .unwrap()
+            .set_estimated_work_seconds(50 * 60);
+        source.save().unwrap();
+        fs::write(storage_dir.path.join(".revision"), original_revision).unwrap();
+        let mut restarted = TaskRepository::new(storage_dir.path_str());
+        restarted.storage_revision.set(Some(original_revision_id));
+
+        let outcome = restarted.reload_if_changed(now).unwrap();
+
+        assert_eq!(outcome, RepositoryReloadOutcome::Reloaded);
+        assert_eq!(
+            restarted
+                .get_by_id(task_id)
+                .unwrap()
+                .get_estimated_work_seconds(),
+            50 * 60
+        );
     }
 
     #[test]
