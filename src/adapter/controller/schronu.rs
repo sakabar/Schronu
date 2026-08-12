@@ -8220,6 +8220,39 @@ fn test_try_exit_interactive_保存失敗後の再試行で成功する() {
     assert!(output.contains("schronu> "));
 }
 
+#[test]
+fn test_try_exit_interactive_ctrl_d終了時は帯を表示する() {
+    let now = Local.with_ymd_and_hms(2026, 8, 11, 12, 0, 0).unwrap();
+    let task = Task::new("Ctrl-D終了表示対象");
+    let task_id = task.get_id();
+    task.set_estimated_work_seconds(60 * 60);
+    task.set_start_time(now);
+    task.set_pending_until(now);
+    task.set_orig_status(Status::Pending);
+    let mut task_repository = TestTaskRepository::new(task, now);
+    let mut free_time_manager = TestFreeTimeManagerForBand;
+    let mut focused_task_id_opt = Some(task_id);
+    let mut stdout = TestWriter::new();
+
+    let exited = try_exit_interactive(
+        &mut stdout,
+        &mut task_repository,
+        &mut free_time_manager,
+        &mut focused_task_id_opt,
+        "schronu> ",
+        "",
+        0,
+        now,
+    );
+
+    assert!(exited);
+    let output = stdout.into_string();
+    assert!(output.contains(
+        "凡例: # 固定  x 経過済み  = 繰返  - 単発  : 余差  . 空き  > 超過  (1文字=15分)"
+    ));
+    assert!(!output.contains("日          \t空          \t空差"));
+}
+
 #[allow(clippy::too_many_arguments)]
 fn execute_interactive_command(
     stdout: &mut dyn SchronuWriter,
