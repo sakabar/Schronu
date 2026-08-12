@@ -139,6 +139,14 @@ fn find_placement_start(
     let mut trial_time = first_available_time.max(repository.get_last_synced_time());
 
     while trial_time + Duration::seconds(work_seconds) <= target_end {
+        if atomic {
+            trial_time = find_next_continuous_free_time(
+                free_time_manager,
+                trial_time,
+                target_end,
+                work_seconds,
+            )?;
+        }
         let schedule = get_schedule_with_task_first_available_time(repository, task_id, trial_time);
         let task_segments = schedule
             .iter()
@@ -160,7 +168,33 @@ fn find_placement_start(
         if !atomic {
             return None;
         }
-        trial_time += Duration::minutes(1);
+        trial_time = task_segments
+            .first()
+            .map_or(trial_time + Duration::minutes(1), |scheduled| {
+                (trial_time + Duration::minutes(1))
+                    .max(scheduled.scheduled_start + Duration::minutes(1))
+            });
+    }
+
+    None
+}
+
+fn find_next_continuous_free_time(
+    free_time_manager: &mut dyn FreeTimeManagerTrait,
+    mut cursor: DateTime<Local>,
+    target_end: DateTime<Local>,
+    work_seconds: i64,
+) -> Option<DateTime<Local>> {
+    let required_minutes = (work_seconds + 59) / 60;
+    let check_duration = Duration::minutes(required_minutes);
+
+    while cursor + check_duration <= target_end {
+        if free_time_manager.get_free_minutes(&cursor, &(cursor + check_duration))
+            >= required_minutes
+        {
+            return Some(cursor);
+        }
+        cursor += Duration::minutes(1);
     }
 
     None
