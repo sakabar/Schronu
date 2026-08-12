@@ -7968,6 +7968,53 @@ fn render_interactive_screen(
     );
 }
 
+#[test]
+fn test_render_interactive_screen_起動時と自動更新時の既定表示は帯() {
+    let now = Local.with_ymd_and_hms(2026, 8, 12, 12, 0, 0).unwrap();
+    let task = Task::new("対話画面表示対象");
+    let task_id = task.get_id();
+    task.set_estimated_work_seconds(60 * 60);
+    task.set_start_time(now);
+    task.set_pending_until(now);
+    task.set_orig_status(Status::Pending);
+    let mut task_repository = TestTaskRepository::new(task, now);
+    let mut free_time_manager = TestFreeTimeManagerForBand;
+    let mut stdout = TestWriter::new();
+    let mut focused_task_id_opt = Some(task_id);
+    let mut last_focused_task_id_opt = None;
+    let mut focus_started_datetime = now;
+
+    render_interactive_screen(
+        &mut stdout,
+        &mut task_repository,
+        &mut free_time_manager,
+        FocusRenderState {
+            focused_task_id_opt: &mut focused_task_id_opt,
+            last_focused_task_id_opt: &mut last_focused_task_id_opt,
+            focus_started_datetime: &mut focus_started_datetime,
+        },
+        PromptRenderState {
+            header: "schronu> ",
+            line: "",
+            cursor_x: 0,
+        },
+        now,
+    );
+
+    let output = stdout.into_string();
+    let band_line = output
+        .lines()
+        .find(|line| line.starts_with("2026-08-12(水) "))
+        .expect("起動時と自動更新時には日次帯を表示する");
+    let band = band_line
+        .split_once('[')
+        .and_then(|(_, rest)| rest.split_once(']'))
+        .map(|(band, _)| band)
+        .expect("日次帯は角括弧内に表示する");
+    assert_eq!(band.chars().count(), DAILY_BAND_SEGMENTS);
+    assert!(!output.contains("日          \t空          \t空差"));
+}
+
 fn should_suppress_leaf_tasks_after_command(line: &str) -> bool {
     matches!(
         line.chars().next(),
