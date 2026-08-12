@@ -37,6 +37,7 @@ use std::thread;
 mod storage_directory;
 use std::time::{Duration as StdDuration, Instant};
 use storage_directory::resolve_project_storage_directory;
+use termion::color;
 use termion::event::Key;
 use termion::input::TermRead;
 use termion::raw::IntoRawMode;
@@ -1293,6 +1294,42 @@ fn format_signed_hours_minutes(duration: Duration) -> String {
     )
 }
 
+fn format_daily_band_segment(symbol: char, count: usize) -> String {
+    if count == 0 {
+        return String::new();
+    }
+    let color_value = match symbol {
+        '#' => 110,
+        'x' => 244,
+        '=' => 33,
+        '-' => 208,
+        ':' => 28,
+        '.' => 34,
+        '>' => 196,
+        _ => return symbol.to_string().repeat(count),
+    };
+    let symbols = symbol.to_string().repeat(count);
+    format!(
+        "{}{}{}",
+        color::Fg(color::AnsiValue(color_value)),
+        symbols,
+        color::Fg(color::Reset)
+    )
+}
+
+fn format_daily_band_legend() -> String {
+    format!(
+        "凡例: {} 固定  {} 経過済み  {} 繰返  {} 単発  {} 余差  {} 空き  {} 超過  (1文字=15分)",
+        format_daily_band_segment('#', 1),
+        format_daily_band_segment('x', 1),
+        format_daily_band_segment('=', 1),
+        format_daily_band_segment('-', 1),
+        format_daily_band_segment(':', 1),
+        format_daily_band_segment('.', 1),
+        format_daily_band_segment('>', 1),
+    )
+}
+
 fn format_daily_band(
     date: NaiveDate,
     weekday_jp: &str,
@@ -1321,11 +1358,14 @@ fn format_daily_band(
         cumulative_seconds = cumulative_seconds.saturating_add(seconds);
         let boundary = round_daily_band_segment_count(cumulative_seconds.min(SECONDS_PER_DAY))
             .min(DAILY_BAND_SEGMENTS);
-        bar.extend(std::iter::repeat(symbol).take(boundary - previous_boundary));
+        bar.push_str(&format_daily_band_segment(
+            symbol,
+            boundary - previous_boundary,
+        ));
         previous_boundary = boundary;
     }
 
-    let overflow = ">".repeat(round_daily_band_segment_count(overflow_seconds));
+    let overflow = format_daily_band_segment('>', round_daily_band_segment_count(overflow_seconds));
     format!(
         "{}({}) {} {} [{}]{}",
         date,
@@ -3192,11 +3232,7 @@ fn execute_show_all_tasks(
 
         writeln_newline(stdout, "").unwrap();
     } else if is_band_func && !is_flatten_func {
-        writeln_newline(
-            stdout,
-            "凡例: # 固定  x 経過済み  = 繰返  - 単発  : 余差  . 空き  > 超過  (1文字=15分)",
-        )
-        .unwrap();
+        writeln_newline(stdout, &format_daily_band_legend()).unwrap();
         writeln_newline(stdout, "").unwrap();
 
         for (band_ind, row) in daily_summary_rows.iter().enumerate() {
@@ -4377,6 +4413,14 @@ impl SchronuWriter for TestWriter {
     fn writeln_newline(&mut self, message: &str) -> Result<(), std::io::Error> {
         writeln!(self, "{}", message)
     }
+}
+
+#[cfg(test)]
+fn strip_ansi_escape_sequences(value: &str) -> String {
+    Regex::new(r"\x1b\[[0-?]*[ -/]*[@-~]")
+        .unwrap()
+        .replace_all(value, "")
+        .into_owned()
 }
 
 #[cfg(test)]
@@ -6556,7 +6600,7 @@ fn test_format_daily_band_累積境界で端数を丸めて96文字にする() {
         ".".repeat(3),
     );
 
-    assert_eq!(actual, expected);
+    assert_eq!(strip_ansi_escape_sequences(&actual), expected);
 }
 
 #[test]
@@ -6609,7 +6653,8 @@ fn test_format_daily_band_当日経過と24時間超過を表示する() {
         ">".repeat(22),
     );
 
-    assert_eq!(actual, expected);
+    assert_eq!(strip_ansi_escape_sequences(&actual), expected);
+    assert!(actual.ends_with(&format!("\x1b[38;5;196m{}\x1b[39m", ">".repeat(22))));
 }
 
 #[test]
@@ -6636,11 +6681,45 @@ fn test_execute_band_日本語と英語で凡例と棒だけを表示する() {
         ".".repeat(12),
     );
 
-    assert_eq!(japanese, expected);
-    assert_eq!(english, expected);
+    assert_eq!(strip_ansi_escape_sequences(&japanese), expected);
+    assert_eq!(strip_ansi_escape_sequences(&english), expected);
     assert!(!japanese.contains("日          "));
     assert!(!japanese.contains("残り拘束時間"));
     assert!(!japanese.contains("帯出力固定用タスク"));
+}
+
+#[test]
+fn test_execute_band_凡例と帯を7色の_ansi前景色で表示する() {
+    let now = Local.with_ymd_and_hms(2026, 8, 11, 12, 0, 0).unwrap();
+    let task = Task::new("帯色出力固定用タスク");
+    task.set_estimated_work_seconds(60 * 60);
+    task.set_start_time(now);
+    task.set_pending_until(now);
+    task.set_orig_status(Status::Pending);
+
+    let actual = execute_calendar_command_for_test("帯", now, task, 10 * 60);
+    let color = |value: u8, symbol: &str| format!("\x1b[38;5;{value}m{symbol}\x1b[39m");
+    let expected = format!(
+        concat!(
+            "凡例: {} 固定  {} 経過済み  {} 繰返  {} 単発  {} 余差  {} 空き  {} 超過  (1文字=15分)\n",
+            "\n",
+            "2026-08-11(火) -06:00 -09:00 [{}{}{}{}]\n",
+            "\n",
+        ),
+        color(110, "#"),
+        color(244, "x"),
+        color(33, "="),
+        color(208, "-"),
+        color(28, ":"),
+        color(34, "."),
+        color(196, ">"),
+        color(110, &"#".repeat(56)),
+        color(208, &"-".repeat(4)),
+        color(28, &":".repeat(24)),
+        color(34, &".".repeat(12)),
+    );
+
+    assert_eq!(actual, expected);
 }
 
 #[test]
@@ -6663,7 +6742,10 @@ fn test_execute_band_全日空き差分と繰り返し判定を帯へ反映す�
         ".".repeat(3),
     );
 
-    assert!(actual.contains(&expected_row), "{actual}");
+    assert!(
+        strip_ansi_escape_sequences(&actual).contains(&expected_row),
+        "{actual}"
+    );
 }
 
 #[test]
@@ -8016,7 +8098,10 @@ fn test_render_interactive_screen_起動時と自動更新時の既定表示は�
         .and_then(|(_, rest)| rest.split_once(']'))
         .map(|(band, _)| band)
         .expect("日次帯は角括弧内に表示する");
-    assert_eq!(band.chars().count(), DAILY_BAND_SEGMENTS);
+    assert_eq!(
+        strip_ansi_escape_sequences(band).chars().count(),
+        DAILY_BAND_SEGMENTS
+    );
     assert!(!output.contains("日          \t空          \t空差"));
 }
 
@@ -8252,7 +8337,7 @@ fn test_try_exit_interactive_ctrl_d終了時は帯を表示する() {
 
     assert!(exited);
     let output = stdout.into_string();
-    assert!(output.contains(
+    assert!(strip_ansi_escape_sequences(&output).contains(
         "凡例: # 固定  x 経過済み  = 繰返  - 単発  : 余差  . 空き  > 超過  (1文字=15分)"
     ));
     assert!(!output.contains("日          \t空          \t空差"));
