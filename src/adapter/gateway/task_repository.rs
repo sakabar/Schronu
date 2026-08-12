@@ -315,10 +315,7 @@ impl TaskRepository {
                 FileRepositoryError::new(
                     FileRepositoryOperation::ParseRevision,
                     revision_path,
-                    std::io::Error::new(
-                        std::io::ErrorKind::InvalidData,
-                        format!("storage revision is not a valid UUID: {error}"),
-                    ),
+                    std::io::Error::new(std::io::ErrorKind::InvalidData, error),
                 )
             })
     }
@@ -1462,7 +1459,12 @@ mod tests {
         let source = file_repository_error(&actual);
         assert_eq!(source.operation, FileRepositoryOperation::ParseRevision);
         assert_eq!(source.path, storage_dir.path.join(".revision"));
-        assert!(actual.to_string().contains("not a valid UUID"));
+        assert!(actual.to_string().contains("invalid character"));
+        assert!(source
+            .source
+            .get_ref()
+            .and_then(|error| error.downcast_ref::<uuid::Error>())
+            .is_some());
     }
 
     #[cfg(unix)]
