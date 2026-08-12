@@ -1297,6 +1297,7 @@ fn format_daily_band(
     date: NaiveDate,
     weekday_jp: &str,
     accumulated_free_diff: Duration,
+    accumulated_rho_diff: Duration,
     durations: &DailyBandDurations,
 ) -> String {
     let categories = [
@@ -1326,9 +1327,10 @@ fn format_daily_band(
 
     let overflow = ">".repeat(round_daily_band_segment_count(overflow_seconds));
     format!(
-        "{}({}) {} [{}]{}",
+        "{}({}) {} {} [{}]{}",
         date,
         weekday_jp,
+        format_signed_hours_minutes(accumulated_rho_diff),
         format_signed_hours_minutes(accumulated_free_diff),
         bar,
         overflow
@@ -3021,6 +3023,7 @@ fn execute_show_all_tasks(
                     **date,
                     weekday_jp,
                     accumulate_duration_diff_to_limit,
+                    accumulate_duration_diff_to_goal_rho,
                     &calculate_daily_band_durations(
                         **date == naive_dt_today,
                         full_minutes,
@@ -6535,6 +6538,7 @@ fn test_format_daily_band_累積境界で端数を丸めて96文字にする() {
         date,
         "土",
         Duration::hours(46) + Duration::minutes(9),
+        -Duration::hours(7) - Duration::minutes(8),
         &DailyBandDurations {
             fixed_seconds: 450 * 60,
             elapsed_seconds: 0,
@@ -6544,7 +6548,7 @@ fn test_format_daily_band_累積境界で端数を丸めて96文字にする() {
         },
     );
     let expected = format!(
-        "2026-08-15(土) +46:09 [{}{}{}{}{}]",
+        "2026-08-15(土) -07:08 +46:09 [{}{}{}{}{}]",
         "#".repeat(30),
         "=".repeat(57),
         "-".repeat(5),
@@ -6588,6 +6592,7 @@ fn test_format_daily_band_当日経過と24時間超過を表示する() {
         date,
         "火",
         -Duration::hours(3) - Duration::minutes(4),
+        Duration::hours(5) + Duration::minutes(6),
         &DailyBandDurations {
             fixed_seconds: 450 * 60,
             elapsed_seconds: 800 * 60,
@@ -6597,7 +6602,7 @@ fn test_format_daily_band_当日経過と24時間超過を表示する() {
         },
     );
     let expected = format!(
-        "2026-08-11(火) -03:04 [{}{}{}]{}",
+        "2026-08-11(火) +05:06 -03:04 [{}{}{}]{}",
         "#".repeat(30),
         "x".repeat(53),
         "=".repeat(13),
@@ -6622,7 +6627,7 @@ fn test_execute_band_日本語と英語で凡例と棒だけを表示する() {
         concat!(
             "凡例: # 固定  x 経過済み  = 繰返  - 単発  : 余差  . 空き  > 超過  (1文字=15分)\n",
             "\n",
-            "2026-08-11(火) -09:00 [{}{}{}{}]\n",
+            "2026-08-11(火) -06:00 -09:00 [{}{}{}{}]\n",
             "\n",
         ),
         "#".repeat(56),
@@ -6650,7 +6655,7 @@ fn test_execute_band_全日空き差分と繰り返し判定を帯へ反映す�
 
     let actual = execute_band_command_with_elapsed_for_test("帯", now, root);
     let expected_row = format!(
-        "2026-08-11(火) -02:30 [{}{}{}{}{}]",
+        "2026-08-11(火) -01:45 -02:30 [{}{}{}{}{}]",
         "#".repeat(30),
         "x".repeat(53),
         "=".repeat(3),
