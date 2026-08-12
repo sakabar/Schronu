@@ -108,15 +108,17 @@ write toolの保存に失敗すると、memory上のrepositoryとfileの状態�
 
 CLIとMCP serverは保存先直下の`.lock`へ同じOS advisory lockを取得します。CLIは起動時のload、60秒ごとの再読込、command実行時だけlockを取得します。command実行時は現在時刻への同期、repository load、command実行、saveまで保持してから解放し、成功したcommandは即時保存します。MCP serverは`tools/call`ごとにlockを取得し、現在時刻への同期、repository load、tool実行、必要ならsave、response構築まで保持してから解放します。CLIと複数のMCP processはidle中に共存でき、storage操作だけが直列化されます。`.lock`には`pid`、`started_at`、`mode`(`cli`または`mcp`)が記録され、`started_at`はそのstorage操作がlockを取得した時刻です。
 
+実際に`project.yaml`を変更する保存では、保存先直下の`.revision`を先にatomic更新してから、変更されたprojectだけを保存します。`.revision`はCLI・MCP間でcacheを無効化するための補助metadataで、task dataや`project.yaml`のschemaではありません。既存storageに`.revision`がない場合もそのまま起動でき、最初の変更保存時に作成されます。
+
 CLIはlock競合時に最大1秒、10ms間隔で取得を再試行します。timeoutしたcommandは実行も保存もせず、入力を保持するため、競合解消後にEnterで再試行できます。MCP callは競合時に待機せず`repository_lock_contended`と`recovery: "retry"`を返します。競合中のstorage操作が終わった後に再試行してください。`.lock` fileはprocess終了後も残りますが、fileの存在だけではlock中を意味しません。OS lockを取得できるかどうかで、実際のlock状態を判定します。取得成功時にmetadataは上書きされます。
 
 CLIのCtrl-Cは未送信の入力だけを破棄します。既に成功したcommandは保存済みであり、session全体をrollbackしません。CLI commandのsaveに失敗した場合は、memoryとfileの状態が一致している保証がないためCLIを終了します。保存先を確認・修復してからCLIを再起動してください。
 
-稼働中のprocessがある状態で`.lock`を削除すると、別inodeに新しいlockを作れて排他が破れる可能性があります。競合回避のために手動削除しないでください。異常終了後も、まず通常どおり再起動してOS lockが解放済みか確認してください。
+稼働中のprocessがある状態で`.lock`や`.revision`を削除・編集すると、排他やcache無効化が破れる可能性があります。どちらも手動変更しないでください。`.revision`が壊れた場合はCLIと全MCP serverを停止し、`.revision`だけを削除してから再起動すると、次の変更保存時に再作成されます。異常終了後は、まず通常どおり再起動してOS lockが解放済みか確認してください。
 
 ### backupと安全上の注意
 
-一貫したbackupを取る場合はCLIを終了し、全MCP sessionからのcallが実行されていない状態で、`.lock`を除く保存先directoryの内容をdirectory構造ごとcopyしてください。`.lock`はtask dataではないためbackup・restore対象外です。復元もCLI停止中かつMCP call停止中に行ってください。
+一貫したbackupを取る場合はCLIを終了し、全MCP serverを停止した状態で、`.lock`を除く保存先directoryの内容をdirectory構造ごとcopyしてください。`.lock`はtask dataではないためbackup・restore対象外です。`project.yaml`の直接編集や復元もCLI・MCP停止中に行い、完了後にprocessを再起動してください。
 
 stdio接続を許可したMCP clientはtaskの作成・変更・完了とfile保存を実行できます。信頼できるローカルclientだけに設定し、保存先のfilesystem permissionとbackupを管理してください。初版の対象外は、team共有、端末間同期、network transport、複数projectをまたぐatomic transactionです。
 

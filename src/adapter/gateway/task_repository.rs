@@ -30,6 +30,7 @@ pub struct TaskRepository {
     project_storage_dir_name: String,
     last_synced_time: DateTime<Local>,
     id_to_task_map: RefCell<HashMap<Uuid, Task>>,
+    storage_revision: Cell<Option<Uuid>>,
 }
 
 struct Project {
@@ -47,6 +48,7 @@ enum FileRepositoryOperation {
     OpenFile,
     ReadFile,
     ParseProject,
+    ParseRevision,
     SerializeProject,
     CreateDirectory,
     CreateFile,
@@ -255,6 +257,7 @@ impl TaskRepository {
             project_storage_dir_name: project_storage_dir_name.to_string(),
             last_synced_time: DateTime::<Local>::MIN_UTC.into(),
             id_to_task_map: RefCell::new(HashMap::new()),
+            storage_revision: Cell::new(None),
         }
     }
 
@@ -274,6 +277,71 @@ impl TaskRepository {
             Self::sync_task_and_descendants(&child_task, now);
         }
     }
+
+    fn storage_revision_path(&self) -> PathBuf {
+        Path::new(&self.project_storage_dir_name).join(".revision")
+    }
+
+    fn read_storage_revision(&self) -> Result<Option<Uuid>, FileRepositoryError> {
+        let revision_path = self.storage_revision_path();
+        match fs::symlink_metadata(&revision_path) {
+            Ok(metadata) if metadata.file_type().is_symlink() => {
+                return Err(FileRepositoryError::new(
+                    FileRepositoryOperation::ReadMetadata,
+                    revision_path,
+                    std::io::Error::new(
+                        std::io::ErrorKind::InvalidData,
+                        "storage revision must not be a symbolic link",
+                    ),
+                ));
+            }
+            Ok(_) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+            Err(error) => {
+                return Err(FileRepositoryError::new(
+                    FileRepositoryOperation::ReadMetadata,
+                    revision_path,
+                    error,
+                ));
+            }
+        }
+
+        let revision_text = fs::read_to_string(&revision_path).map_err(|error| {
+            FileRepositoryError::new(FileRepositoryOperation::ReadFile, &revision_path, error)
+        })?;
+        Uuid::parse_str(revision_text.trim())
+            .map(Some)
+            .map_err(|error| {
+                FileRepositoryError::new(
+                    FileRepositoryOperation::ParseRevision,
+                    revision_path,
+                    std::io::Error::new(
+                        std::io::ErrorKind::InvalidData,
+                        format!("storage revision is not a valid UUID: {error}"),
+                    ),
+                )
+            })
+    }
+
+    fn serialize_project(project: &Project) -> Result<Vec<u8>, TaskRepositoryError> {
+        let task_yaml = task_to_yaml(&project.root_task);
+        let mut project_hash = LinkedHashMap::new();
+        project_hash.insert(Yaml::String(String::from("project")), task_yaml);
+        let doc = Yaml::Hash(project_hash);
+        let mut out = String::new();
+        YamlEmitter::new(&mut out).dump(&doc).map_err(|error| {
+            TaskRepositoryError::new(
+                ApplicationRepositoryOperation::Save,
+                FileRepositoryError::new(
+                    FileRepositoryOperation::SerializeProject,
+                    &project.project_yaml_file_path,
+                    std::io::Error::new(std::io::ErrorKind::InvalidData, error),
+                ),
+            )
+        })?;
+        out.push('\n');
+        Ok(out.into_bytes())
+    }
 }
 
 impl TaskRepositoryTrait for TaskRepository {
@@ -289,6 +357,9 @@ impl TaskRepositoryTrait for TaskRepository {
     }
 
     fn load(&mut self) -> Result<(), TaskRepositoryError> {
+        let storage_revision = self.read_storage_revision().map_err(|error| {
+            TaskRepositoryError::new(ApplicationRepositoryOperation::Load, error)
+        })?;
         let mut loaded_projects = Vec::new();
         for entry_result in WalkDir::new(self.project_storage_dir_name.as_str()).sort_by_file_name()
         {
@@ -406,6 +477,7 @@ impl TaskRepositoryTrait for TaskRepository {
         for project in &self.projects {
             self.cache_task_and_descendants(&project.root_task);
         }
+        self.storage_revision.set(storage_revision);
         Ok(())
     }
 
@@ -416,7 +488,24 @@ impl TaskRepositoryTrait for TaskRepository {
             .filter(|project| project.needs_save())
             .collect::<Vec<_>>();
 
+        let mut prepared_writes = Vec::new();
         for project in &projects_to_save {
+            let bytes = Self::serialize_project(project)?;
+            let unchanged = fs::read(&project.project_yaml_file_path)
+                .is_ok_and(|existing_bytes| existing_bytes == bytes);
+            if !unchanged {
+                prepared_writes.push((*project, bytes));
+            }
+        }
+
+        if prepared_writes.is_empty() {
+            for project in projects_to_save {
+                project.mark_clean();
+            }
+            return Ok(());
+        }
+
+        for (project, _) in &prepared_writes {
             fs::create_dir_all(&project.project_dir_path).map_err(|error| {
                 TaskRepositoryError::new(
                     ApplicationRepositoryOperation::Save,
@@ -438,37 +527,39 @@ impl TaskRepositoryTrait for TaskRepository {
                     ),
                 )
             })?;
-
-            let root_task = &project.root_task;
-            let task_yaml = task_to_yaml(root_task);
-
-            let mut project_hash = LinkedHashMap::new();
-            project_hash.insert(Yaml::String(String::from("project")), task_yaml);
-            let doc = Yaml::Hash(project_hash);
-
-            let mut out_str = String::new();
-            let mut emitter = YamlEmitter::new(&mut out_str);
-            emitter.dump(&doc).map_err(|error| {
-                TaskRepositoryError::new(
-                    ApplicationRepositoryOperation::Save,
-                    FileRepositoryError::new(
-                        FileRepositoryOperation::SerializeProject,
-                        &project.project_yaml_file_path,
-                        std::io::Error::new(std::io::ErrorKind::InvalidData, error),
+        }
+        let revision_path = self.storage_revision_path();
+        if fs::symlink_metadata(&revision_path)
+            .is_ok_and(|metadata| metadata.file_type().is_symlink())
+        {
+            return Err(TaskRepositoryError::new(
+                ApplicationRepositoryOperation::Save,
+                FileRepositoryError::new(
+                    FileRepositoryOperation::ReadMetadata,
+                    revision_path,
+                    std::io::Error::new(
+                        std::io::ErrorKind::InvalidData,
+                        "storage revision must not be a symbolic link",
                     ),
-                )
+                ),
+            ));
+        }
+        let new_storage_revision = Uuid::new_v4();
+        let revision_text = format!("{new_storage_revision}\n");
+        write_file_atomically(&revision_path, revision_text.as_bytes()).map_err(|error| {
+            TaskRepositoryError::new(ApplicationRepositoryOperation::Save, error)
+        })?;
+
+        for (project, bytes) in prepared_writes {
+            write_file_atomically(&project.project_yaml_file_path, &bytes).map_err(|error| {
+                TaskRepositoryError::new(ApplicationRepositoryOperation::Save, error)
             })?;
-
-            out_str += "\n";
-
-            write_file_atomically(&project.project_yaml_file_path, out_str.as_bytes()).map_err(
-                |error| TaskRepositoryError::new(ApplicationRepositoryOperation::Save, error),
-            )?;
         }
 
         for project in projects_to_save {
             project.mark_clean();
         }
+        self.storage_revision.set(Some(new_storage_revision));
         Ok(())
     }
 
