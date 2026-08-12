@@ -83,27 +83,20 @@ pub fn pack_tasks(
                 continue;
             }
 
-            let schedule = get_schedule_with_task_first_available_time(
+            let placement_start_opt = find_placement_start(
                 repository,
+                free_time_manager,
                 candidate.task_id,
                 target_datetime,
-            );
-            let task_segments = schedule
-                .iter()
-                .filter(|scheduled| scheduled.task.id == candidate.task_id)
-                .collect::<Vec<_>>();
-
-            if placement_fits_target_day(
-                &task_segments,
                 *target_date,
                 candidate.work_seconds,
                 task.get_atomic(),
-                free_time_manager,
-            ) && task_segments
-                .first()
-                .is_some_and(|scheduled| scheduled.scheduled_start < candidate.planned_start)
+            );
+
+            if let Some(placement_start) =
+                placement_start_opt.filter(|start| *start < candidate.planned_start)
             {
-                task.set_pending_until(task_segments[0].scheduled_start);
+                task.set_pending_until(placement_start);
                 packed_task_opt = Some(PackedTask {
                     task_id: candidate.task_id,
                     name: candidate.name.clone(),
@@ -130,6 +123,46 @@ pub fn pack_tasks(
     }
 
     result
+}
+
+fn find_placement_start(
+    repository: &dyn TaskRepositoryTrait,
+    free_time_manager: &mut dyn FreeTimeManagerTrait,
+    task_id: Uuid,
+    first_available_time: DateTime<Local>,
+    target_date: NaiveDate,
+    work_seconds: i64,
+    atomic: bool,
+) -> Option<DateTime<Local>> {
+    let target_end = subjective_date_start(target_date + Duration::days(1));
+    let mut trial_time = first_available_time.max(repository.get_last_synced_time());
+
+    while trial_time + Duration::seconds(work_seconds) <= target_end {
+        let schedule = get_schedule_with_task_first_available_time(repository, task_id, trial_time);
+        let task_segments = schedule
+            .iter()
+            .filter(|scheduled| scheduled.task.id == task_id)
+            .collect::<Vec<_>>();
+
+        if placement_fits_target_day(
+            &task_segments,
+            target_date,
+            work_seconds,
+            atomic,
+            free_time_manager,
+        ) {
+            return task_segments
+                .first()
+                .map(|scheduled| scheduled.scheduled_start);
+        }
+
+        if !atomic {
+            return None;
+        }
+        trial_time += Duration::minutes(1);
+    }
+
+    None
 }
 
 fn collect_candidates(
@@ -308,25 +341,25 @@ mod tests {
 
     struct TestFreeTimeManager {
         daily_free_minutes: i64,
-        short_interval_free_rate_divisor: i64,
+        blocked_interval: Option<(DateTime<Local>, DateTime<Local>)>,
     }
 
     impl TestFreeTimeManager {
         fn new(daily_free_minutes: i64) -> Self {
             Self {
                 daily_free_minutes,
-                short_interval_free_rate_divisor: 1,
+                blocked_interval: None,
             }
         }
 
         fn with_blocked_interval(
             daily_free_minutes: i64,
-            _start: DateTime<Local>,
-            _end: DateTime<Local>,
+            start: DateTime<Local>,
+            end: DateTime<Local>,
         ) -> Self {
             Self {
                 daily_free_minutes,
-                short_interval_free_rate_divisor: 2,
+                blocked_interval: Some((start, end)),
             }
         }
     }
@@ -338,7 +371,15 @@ mod tests {
                 return self.daily_free_minutes;
             }
 
-            duration_minutes / self.short_interval_free_rate_divisor
+            let blocked_minutes = self
+                .blocked_interval
+                .map(|(blocked_start, blocked_end)| {
+                    let overlap_start = (*start).max(blocked_start);
+                    let overlap_end = (*end).min(blocked_end);
+                    (overlap_end - overlap_start).num_minutes().max(0)
+                })
+                .unwrap_or(0);
+            duration_minutes - blocked_minutes
         }
 
         fn get_busy_minutes(&mut self, start: &DateTime<Local>, end: &DateTime<Local>) -> i64 {
@@ -493,7 +534,7 @@ mod tests {
     }
 
     #[test]
-    fn pack_tasks_atomicは予定枠に行動不能時間が重なる場合は前倒ししない() {
+    fn pack_tasks_atomicは初期予定枠に行動不能時間が重なれば同日後刻へ前倒しする() {
         let now = fixed_now();
         let task = pending_task("atomic", now, now + Duration::days(10), 60, 9);
         task.set_atomic(true);
@@ -506,8 +547,52 @@ mod tests {
 
         let actual = pack_tasks(&repository, &mut free_time_manager);
 
-        assert!(actual.packed_tasks.is_empty());
-        assert_eq!(actual.stopped.unwrap().task_id, task.get_id());
+        assert_eq!(actual.packed_tasks.len(), 1);
+        assert_eq!(
+            actual.packed_tasks[0].target_date,
+            NaiveDate::from_ymd_opt(2026, 8, 11).unwrap()
+        );
+        assert_eq!(task.get_pending_until(), now + Duration::minutes(90));
+    }
+
+    #[test]
+    fn pack_tasks_atomicは同日後刻の連続空き枠へ前倒しする() {
+        let now = fixed_now();
+        let task = pending_task("atomic", now, now + Duration::days(10), 60, 9);
+        task.set_atomic(true);
+        let repository = TestTaskRepository::new(vec![task.clone()], now);
+        let mut free_time_manager =
+            TestFreeTimeManager::with_blocked_interval(180, now, now + Duration::hours(1));
+
+        let actual = pack_tasks(&repository, &mut free_time_manager);
+
+        assert_eq!(actual.packed_tasks.len(), 1);
+        assert_eq!(
+            actual.packed_tasks[0].target_date,
+            NaiveDate::from_ymd_opt(2026, 8, 11).unwrap()
+        );
+        assert_eq!(task.get_pending_until(), now + Duration::hours(1));
+    }
+
+    #[test]
+    fn pack_tasks_atomicは初日に連続空き枠がなければ翌日へ前倒しする() {
+        let now = fixed_now();
+        let task = pending_task("atomic", now, now + Duration::days(10), 60, 9);
+        task.set_atomic(true);
+        let repository = TestTaskRepository::new(vec![task.clone()], now);
+        let mut free_time_manager = TestFreeTimeManager::with_blocked_interval(
+            180,
+            now,
+            Local.with_ymd_and_hms(2026, 8, 12, 6, 0, 0).unwrap(),
+        );
+
+        let actual = pack_tasks(&repository, &mut free_time_manager);
+
+        assert_eq!(actual.packed_tasks.len(), 1);
+        assert_eq!(
+            actual.packed_tasks[0].target_date,
+            NaiveDate::from_ymd_opt(2026, 8, 12).unwrap()
+        );
     }
 
     #[test]
