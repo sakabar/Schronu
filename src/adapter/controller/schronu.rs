@@ -7949,7 +7949,7 @@ fn render_interactive_screen(
         focus_state.focused_task_id_opt,
         task_repository,
         free_time_manager,
-        &Some("暦".to_string()),
+        &Some("帯".to_string()),
         TaskListDisplayOrder::ScheduledStartDesc,
     );
     render_focused_task(
