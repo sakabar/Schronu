@@ -1293,6 +1293,111 @@ mod tests {
     }
 
     #[test]
+    fn test_load_revisionなしの既存storageを読める() {
+        let storage_dir = TestStorageDir::new();
+        let now = Local.with_ymd_and_hms(2026, 8, 13, 12, 0, 0).unwrap();
+        let mut source = TaskRepository::new(storage_dir.path_str());
+        source.sync_clock(now);
+        source.start_new_project(Task::new("既存project"));
+        source.save().unwrap();
+        let revision_path = storage_dir.path.join(".revision");
+        fs::remove_file(&revision_path).unwrap();
+
+        let mut repository = TaskRepository::new(storage_dir.path_str());
+        repository.sync_clock(now);
+        repository.load().unwrap();
+
+        assert_eq!(repository.get_all_projects().len(), 1);
+        assert_eq!(repository.storage_revision.get(), None);
+    }
+
+    #[test]
+    fn test_save_actual_writeだけがrevisionを更新する() {
+        let storage_dir = TestStorageDir::new();
+        let now = Local.with_ymd_and_hms(2026, 8, 13, 12, 0, 0).unwrap();
+        let revision_path = storage_dir.path.join(".revision");
+        let mut repository = TaskRepository::new(storage_dir.path_str());
+        repository.sync_clock(now);
+        repository.start_new_project(Task::new("保存対象"));
+
+        repository.save().unwrap();
+
+        let first_text = fs::read_to_string(&revision_path).unwrap();
+        let first_revision = Uuid::parse_str(first_text.trim()).unwrap();
+        assert_eq!(repository.storage_revision.get(), Some(first_revision));
+
+        repository.save().unwrap();
+
+        assert_eq!(fs::read_to_string(&revision_path).unwrap(), first_text);
+        assert_eq!(repository.storage_revision.get(), Some(first_revision));
+    }
+
+    #[test]
+    fn test_save_project失敗時はdisk_revisionだけを先に進める() {
+        let storage_dir = TestStorageDir::new();
+        let now = Local.with_ymd_and_hms(2026, 8, 13, 12, 0, 0).unwrap();
+        let revision_path = storage_dir.path.join(".revision");
+        let mut repository = TaskRepository::new(storage_dir.path_str());
+        repository.sync_clock(now);
+        let task = Task::new("失敗対象");
+        repository.start_new_project(task.clone());
+        repository.save().unwrap();
+        let previous_revision = repository.storage_revision.get().unwrap();
+        let project_yaml_path = storage_dir
+            .project_dir_path("20260813", "失敗対象")
+            .join("project.yaml");
+        fs::remove_file(&project_yaml_path).unwrap();
+        fs::create_dir(&project_yaml_path).unwrap();
+        task.set_estimated_work_seconds(30 * 60);
+
+        assert!(repository.save().is_err());
+
+        let disk_revision =
+            Uuid::parse_str(fs::read_to_string(&revision_path).unwrap().trim()).unwrap();
+        assert_ne!(disk_revision, previous_revision);
+        assert_eq!(repository.storage_revision.get(), Some(previous_revision));
+    }
+
+    #[test]
+    fn test_load_malformed_revisionをphase付きerrorにする() {
+        let storage_dir = TestStorageDir::new();
+        fs::create_dir_all(&storage_dir.path).unwrap();
+        fs::write(storage_dir.path.join(".revision"), "not-a-uuid\n").unwrap();
+        let mut repository = TaskRepository::new(storage_dir.path_str());
+
+        let actual = repository.load().unwrap_err();
+
+        assert_eq!(actual.operation(), ApplicationRepositoryOperation::Load);
+        let source = file_repository_error(&actual);
+        assert_eq!(source.operation, FileRepositoryOperation::ParseRevision);
+        assert_eq!(source.path, storage_dir.path.join(".revision"));
+        assert!(actual.to_string().contains("not a valid UUID"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_load_revision_symlinkを拒否して参照先を変更しない() {
+        use std::os::unix::fs::symlink;
+
+        let storage_dir = TestStorageDir::new();
+        fs::create_dir_all(&storage_dir.path).unwrap();
+        let target_path = storage_dir.path.join("outside-revision");
+        let target_content = format!("{}\n", Uuid::new_v4());
+        fs::write(&target_path, &target_content).unwrap();
+        let revision_path = storage_dir.path.join(".revision");
+        symlink(&target_path, &revision_path).unwrap();
+        let mut repository = TaskRepository::new(storage_dir.path_str());
+
+        let actual = repository.load().unwrap_err();
+
+        assert_eq!(actual.operation(), ApplicationRepositoryOperation::Load);
+        let source = file_repository_error(&actual);
+        assert_eq!(source.operation, FileRepositoryOperation::ReadMetadata);
+        assert_eq!(source.path, revision_path);
+        assert_eq!(fs::read_to_string(target_path).unwrap(), target_content);
+    }
+
+    #[test]
     #[ignore = "manual save performance measurement"]
     fn benchmark_save_2172project中1件変更を2秒未満で処理する() {
         use std::time::{Duration as StdDuration, Instant};
