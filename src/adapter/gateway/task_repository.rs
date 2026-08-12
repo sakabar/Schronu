@@ -2,8 +2,8 @@ use crate::adapter::gateway::yaml::yaml_to_task;
 #[cfg(test)]
 use crate::adapter::gateway::yaml::YamlConversionError;
 use crate::application::interface::{
-    TaskRepositoryError, TaskRepositoryOperation as ApplicationRepositoryOperation,
-    TaskRepositoryTrait,
+    RepositoryReloadOutcome, TaskRepositoryError,
+    TaskRepositoryOperation as ApplicationRepositoryOperation, TaskRepositoryTrait,
 };
 use crate::entity::datetime::get_next_morning_datetime;
 use crate::entity::task::extract_leaf_tasks_from_project;
@@ -13,7 +13,7 @@ use chrono::Duration;
 use chrono::{DateTime, Local};
 use linked_hash_map::LinkedHashMap;
 use regex::Regex;
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 use std::error::Error;
 use std::fmt;
@@ -30,6 +30,8 @@ pub struct TaskRepository {
     project_storage_dir_name: String,
     last_synced_time: DateTime<Local>,
     id_to_task_map: RefCell<HashMap<Uuid, Task>>,
+    storage_revision: Cell<Option<Uuid>>,
+    has_loaded: bool,
 }
 
 struct Project {
@@ -37,6 +39,7 @@ struct Project {
     project_dir_path: PathBuf,
     project_yaml_file_path: PathBuf,
     priority: i64,
+    persisted_mutation_revision: Cell<Option<u64>>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -46,6 +49,7 @@ enum FileRepositoryOperation {
     OpenFile,
     ReadFile,
     ParseProject,
+    ParseRevision,
     SerializeProject,
     CreateDirectory,
     CreateFile,
@@ -232,7 +236,18 @@ impl Project {
             project_dir_path: project_dir_path.into(),
             project_yaml_file_path: project_yaml_file_path.into(),
             priority,
+            persisted_mutation_revision: Cell::new(None),
         }
+    }
+
+    fn mark_clean(&self) {
+        self.persisted_mutation_revision
+            .set(Some(self.root_task.get_persistent_mutation_revision()));
+    }
+
+    fn needs_save(&self) -> bool {
+        self.persisted_mutation_revision.get()
+            != Some(self.root_task.get_persistent_mutation_revision())
     }
 }
 
@@ -243,6 +258,8 @@ impl TaskRepository {
             project_storage_dir_name: project_storage_dir_name.to_string(),
             last_synced_time: DateTime::<Local>::MIN_UTC.into(),
             id_to_task_map: RefCell::new(HashMap::new()),
+            storage_revision: Cell::new(None),
+            has_loaded: false,
         }
     }
 
@@ -262,6 +279,68 @@ impl TaskRepository {
             Self::sync_task_and_descendants(&child_task, now);
         }
     }
+
+    fn storage_revision_path(&self) -> PathBuf {
+        Path::new(&self.project_storage_dir_name).join(".revision")
+    }
+
+    fn read_storage_revision(&self) -> Result<Option<Uuid>, FileRepositoryError> {
+        let revision_path = self.storage_revision_path();
+        match fs::symlink_metadata(&revision_path) {
+            Ok(metadata) if metadata.file_type().is_symlink() => {
+                return Err(FileRepositoryError::new(
+                    FileRepositoryOperation::ReadMetadata,
+                    revision_path,
+                    std::io::Error::new(
+                        std::io::ErrorKind::InvalidData,
+                        "storage revision must not be a symbolic link",
+                    ),
+                ));
+            }
+            Ok(_) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+            Err(error) => {
+                return Err(FileRepositoryError::new(
+                    FileRepositoryOperation::ReadMetadata,
+                    revision_path,
+                    error,
+                ));
+            }
+        }
+
+        let revision_text = fs::read_to_string(&revision_path).map_err(|error| {
+            FileRepositoryError::new(FileRepositoryOperation::ReadFile, &revision_path, error)
+        })?;
+        Uuid::parse_str(revision_text.trim())
+            .map(Some)
+            .map_err(|error| {
+                FileRepositoryError::new(
+                    FileRepositoryOperation::ParseRevision,
+                    revision_path,
+                    std::io::Error::new(std::io::ErrorKind::InvalidData, error),
+                )
+            })
+    }
+
+    fn serialize_project(project: &Project) -> Result<Vec<u8>, TaskRepositoryError> {
+        let task_yaml = task_to_yaml(&project.root_task);
+        let mut project_hash = LinkedHashMap::new();
+        project_hash.insert(Yaml::String(String::from("project")), task_yaml);
+        let doc = Yaml::Hash(project_hash);
+        let mut out = String::new();
+        YamlEmitter::new(&mut out).dump(&doc).map_err(|error| {
+            TaskRepositoryError::new(
+                ApplicationRepositoryOperation::Save,
+                FileRepositoryError::new(
+                    FileRepositoryOperation::SerializeProject,
+                    &project.project_yaml_file_path,
+                    std::io::Error::new(std::io::ErrorKind::InvalidData, error),
+                ),
+            )
+        })?;
+        out.push('\n');
+        Ok(out.into_bytes())
+    }
 }
 
 impl TaskRepositoryTrait for TaskRepository {
@@ -277,6 +356,9 @@ impl TaskRepositoryTrait for TaskRepository {
     }
 
     fn load(&mut self) -> Result<(), TaskRepositoryError> {
+        let storage_revision = self.read_storage_revision().map_err(|error| {
+            TaskRepositoryError::new(ApplicationRepositoryOperation::Load, error)
+        })?;
         let mut loaded_projects = Vec::new();
         for entry_result in WalkDir::new(self.project_storage_dir_name.as_str()).sort_by_file_name()
         {
@@ -378,12 +460,14 @@ impl TaskRepositoryTrait for TaskRepository {
                         )
                     })?;
                 let priority = root_task.get_priority();
-                loaded_projects.push(Project::new(
+                let project = Project::new(
                     root_task,
                     project_dir_path,
                     project_yaml_file_path,
                     priority,
-                ));
+                );
+                project.mark_clean();
+                loaded_projects.push(project);
             }
         }
 
@@ -392,11 +476,53 @@ impl TaskRepositoryTrait for TaskRepository {
         for project in &self.projects {
             self.cache_task_and_descendants(&project.root_task);
         }
+        self.storage_revision.set(storage_revision);
+        self.has_loaded = true;
         Ok(())
     }
 
+    fn reload_if_changed(
+        &mut self,
+        now: DateTime<Local>,
+    ) -> Result<RepositoryReloadOutcome, TaskRepositoryError> {
+        let storage_revision = self.read_storage_revision().map_err(|error| {
+            TaskRepositoryError::new(ApplicationRepositoryOperation::Load, error)
+        })?;
+        if self.has_loaded && storage_revision == self.storage_revision.get() {
+            self.sync_clock(now);
+            return Ok(RepositoryReloadOutcome::Cached);
+        }
+
+        self.last_synced_time = now;
+        self.load()?;
+        Ok(RepositoryReloadOutcome::Reloaded)
+    }
+
     fn save(&self) -> Result<(), TaskRepositoryError> {
-        for project in self.projects.iter() {
+        let projects_to_save = self
+            .projects
+            .iter()
+            .filter(|project| project.needs_save())
+            .collect::<Vec<_>>();
+
+        let mut prepared_writes = Vec::new();
+        for project in &projects_to_save {
+            let bytes = Self::serialize_project(project)?;
+            let unchanged = fs::read(&project.project_yaml_file_path)
+                .is_ok_and(|existing_bytes| existing_bytes == bytes);
+            if !unchanged {
+                prepared_writes.push((*project, bytes));
+            }
+        }
+
+        if prepared_writes.is_empty() {
+            for project in projects_to_save {
+                project.mark_clean();
+            }
+            return Ok(());
+        }
+
+        for (project, _) in &prepared_writes {
             fs::create_dir_all(&project.project_dir_path).map_err(|error| {
                 TaskRepositoryError::new(
                     ApplicationRepositoryOperation::Save,
@@ -418,33 +544,39 @@ impl TaskRepositoryTrait for TaskRepository {
                     ),
                 )
             })?;
-
-            let root_task = &project.root_task;
-            let task_yaml = task_to_yaml(root_task);
-
-            let mut project_hash = LinkedHashMap::new();
-            project_hash.insert(Yaml::String(String::from("project")), task_yaml);
-            let doc = Yaml::Hash(project_hash);
-
-            let mut out_str = String::new();
-            let mut emitter = YamlEmitter::new(&mut out_str);
-            emitter.dump(&doc).map_err(|error| {
-                TaskRepositoryError::new(
-                    ApplicationRepositoryOperation::Save,
-                    FileRepositoryError::new(
-                        FileRepositoryOperation::SerializeProject,
-                        &project.project_yaml_file_path,
-                        std::io::Error::new(std::io::ErrorKind::InvalidData, error),
-                    ),
-                )
-            })?;
-
-            out_str += "\n";
-
-            write_file_atomically(&project.project_yaml_file_path, out_str.as_bytes()).map_err(
-                |error| TaskRepositoryError::new(ApplicationRepositoryOperation::Save, error),
-            )?;
         }
+        let revision_path = self.storage_revision_path();
+        if fs::symlink_metadata(&revision_path)
+            .is_ok_and(|metadata| metadata.file_type().is_symlink())
+        {
+            return Err(TaskRepositoryError::new(
+                ApplicationRepositoryOperation::Save,
+                FileRepositoryError::new(
+                    FileRepositoryOperation::ReadMetadata,
+                    revision_path,
+                    std::io::Error::new(
+                        std::io::ErrorKind::InvalidData,
+                        "storage revision must not be a symbolic link",
+                    ),
+                ),
+            ));
+        }
+        let new_storage_revision = Uuid::new_v4();
+        let revision_text = format!("{new_storage_revision}\n");
+        write_file_atomically(&revision_path, revision_text.as_bytes()).map_err(|error| {
+            TaskRepositoryError::new(ApplicationRepositoryOperation::Save, error)
+        })?;
+
+        for (project, bytes) in prepared_writes {
+            write_file_atomically(&project.project_yaml_file_path, &bytes).map_err(|error| {
+                TaskRepositoryError::new(ApplicationRepositoryOperation::Save, error)
+            })?;
+        }
+
+        for project in projects_to_save {
+            project.mark_clean();
+        }
+        self.storage_revision.set(Some(new_storage_revision));
         Ok(())
     }
 
@@ -1185,6 +1317,368 @@ mod tests {
                 .unwrap()
                 .get_estimated_work_seconds(),
             30 * 60
+        );
+    }
+
+    #[test]
+    fn test_save_未変更projectはserialize比較対象にしない() {
+        let storage_dir = TestStorageDir::new();
+        let now = Local.with_ymd_and_hms(2026, 8, 13, 12, 0, 0).unwrap();
+        let mut repository = TaskRepository::new(storage_dir.path_str());
+        repository.sync_clock(now);
+        let changed_task = Task::new("変更対象");
+        let unchanged_task = Task::new("未変更対象");
+        repository.start_new_project(changed_task.clone());
+        repository.start_new_project(unchanged_task);
+        repository.save().unwrap();
+        let unchanged_dir = storage_dir.project_dir_path("20260813", "未変更対象");
+        fs::remove_dir_all(&unchanged_dir).unwrap();
+
+        changed_task.set_estimated_work_seconds(30 * 60);
+        repository.save().unwrap();
+
+        assert!(!unchanged_dir.exists());
+    }
+
+    #[test]
+    fn test_save_load直後のprojectはcleanで新規projectだけを保存する() {
+        let storage_dir = TestStorageDir::new();
+        let now = Local.with_ymd_and_hms(2026, 8, 13, 12, 0, 0).unwrap();
+        let mut source = TaskRepository::new(storage_dir.path_str());
+        source.sync_clock(now);
+        source.start_new_project(Task::new("読込済み"));
+        source.save().unwrap();
+
+        let mut repository = TaskRepository::new(storage_dir.path_str());
+        repository.sync_clock(now);
+        repository.load().unwrap();
+        let loaded_dir = storage_dir.project_dir_path("20260813", "読込済み");
+        fs::remove_dir_all(&loaded_dir).unwrap();
+        repository.start_new_project(Task::new("新規"));
+
+        repository.save().unwrap();
+
+        assert!(!loaded_dir.exists());
+        assert!(storage_dir
+            .project_dir_path("20260813", "新規")
+            .join("project.yaml")
+            .is_file());
+    }
+
+    #[test]
+    fn test_save_失敗後もdirtyを維持して再試行する() {
+        let storage_dir = TestStorageDir::new();
+        let now = Local.with_ymd_and_hms(2026, 8, 13, 12, 0, 0).unwrap();
+        let mut repository = TaskRepository::new(storage_dir.path_str());
+        repository.sync_clock(now);
+        let task = Task::new("再試行対象");
+        let task_id = task.get_id();
+        repository.start_new_project(task.clone());
+        repository.save().unwrap();
+        let project_yaml_path = storage_dir
+            .project_dir_path("20260813", "再試行対象")
+            .join("project.yaml");
+        let old_bytes = fs::read(&project_yaml_path).unwrap();
+        fs::remove_file(&project_yaml_path).unwrap();
+        fs::create_dir(&project_yaml_path).unwrap();
+        task.set_estimated_work_seconds(30 * 60);
+
+        assert!(repository.save().is_err());
+        fs::remove_dir(&project_yaml_path).unwrap();
+        fs::write(&project_yaml_path, old_bytes).unwrap();
+        repository.save().unwrap();
+
+        let mut reloaded = TaskRepository::new(storage_dir.path_str());
+        reloaded.sync_clock(now);
+        reloaded.load().unwrap();
+        assert_eq!(
+            reloaded
+                .get_by_id(task_id)
+                .unwrap()
+                .get_estimated_work_seconds(),
+            30 * 60
+        );
+    }
+
+    #[test]
+    fn test_load_revisionなしの既存storageを読める() {
+        let storage_dir = TestStorageDir::new();
+        let now = Local.with_ymd_and_hms(2026, 8, 13, 12, 0, 0).unwrap();
+        let mut source = TaskRepository::new(storage_dir.path_str());
+        source.sync_clock(now);
+        source.start_new_project(Task::new("既存project"));
+        source.save().unwrap();
+        let revision_path = storage_dir.path.join(".revision");
+        fs::remove_file(&revision_path).unwrap();
+
+        let mut repository = TaskRepository::new(storage_dir.path_str());
+        repository.sync_clock(now);
+        repository.load().unwrap();
+
+        assert_eq!(repository.get_all_projects().len(), 1);
+        assert_eq!(repository.storage_revision.get(), None);
+    }
+
+    #[test]
+    fn test_save_actual_writeだけがrevisionを更新する() {
+        let storage_dir = TestStorageDir::new();
+        let now = Local.with_ymd_and_hms(2026, 8, 13, 12, 0, 0).unwrap();
+        let revision_path = storage_dir.path.join(".revision");
+        let mut repository = TaskRepository::new(storage_dir.path_str());
+        repository.sync_clock(now);
+        repository.start_new_project(Task::new("保存対象"));
+
+        repository.save().unwrap();
+
+        let first_text = fs::read_to_string(&revision_path).unwrap();
+        let first_revision = Uuid::parse_str(first_text.trim()).unwrap();
+        assert_eq!(repository.storage_revision.get(), Some(first_revision));
+
+        repository.save().unwrap();
+
+        assert_eq!(fs::read_to_string(&revision_path).unwrap(), first_text);
+        assert_eq!(repository.storage_revision.get(), Some(first_revision));
+    }
+
+    #[test]
+    fn test_save_project失敗時はdisk_revisionだけを先に進める() {
+        let storage_dir = TestStorageDir::new();
+        let now = Local.with_ymd_and_hms(2026, 8, 13, 12, 0, 0).unwrap();
+        let revision_path = storage_dir.path.join(".revision");
+        let mut repository = TaskRepository::new(storage_dir.path_str());
+        repository.sync_clock(now);
+        let task = Task::new("失敗対象");
+        repository.start_new_project(task.clone());
+        repository.save().unwrap();
+        let previous_revision = repository.storage_revision.get().unwrap();
+        let project_yaml_path = storage_dir
+            .project_dir_path("20260813", "失敗対象")
+            .join("project.yaml");
+        fs::remove_file(&project_yaml_path).unwrap();
+        fs::create_dir(&project_yaml_path).unwrap();
+        task.set_estimated_work_seconds(30 * 60);
+
+        assert!(repository.save().is_err());
+
+        let disk_revision =
+            Uuid::parse_str(fs::read_to_string(&revision_path).unwrap().trim()).unwrap();
+        assert_ne!(disk_revision, previous_revision);
+        assert_eq!(repository.storage_revision.get(), Some(previous_revision));
+    }
+
+    #[test]
+    fn test_load_malformed_revisionをphase付きerrorにする() {
+        let storage_dir = TestStorageDir::new();
+        fs::create_dir_all(&storage_dir.path).unwrap();
+        fs::write(storage_dir.path.join(".revision"), "not-a-uuid\n").unwrap();
+        let mut repository = TaskRepository::new(storage_dir.path_str());
+
+        let actual = repository.load().unwrap_err();
+
+        assert_eq!(actual.operation(), ApplicationRepositoryOperation::Load);
+        let source = file_repository_error(&actual);
+        assert_eq!(source.operation, FileRepositoryOperation::ParseRevision);
+        assert_eq!(source.path, storage_dir.path.join(".revision"));
+        assert!(actual.to_string().contains("invalid character"));
+        assert!(source
+            .source
+            .get_ref()
+            .and_then(|error| error.downcast_ref::<uuid::Error>())
+            .is_some());
+    }
+
+    #[test]
+    fn test_load_revision読込io_errorにpathとsourceを保持する() {
+        let storage_dir = TestStorageDir::new();
+        fs::create_dir_all(storage_dir.path.join(".revision")).unwrap();
+        let mut repository = TaskRepository::new(storage_dir.path_str());
+
+        let actual = repository.load().unwrap_err();
+
+        assert_eq!(actual.operation(), ApplicationRepositoryOperation::Load);
+        let source = file_repository_error(&actual);
+        assert_eq!(source.operation, FileRepositoryOperation::ReadFile);
+        assert_eq!(source.path, storage_dir.path.join(".revision"));
+        assert!(source.source.raw_os_error().is_some());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_load_revision_symlinkを拒否して参照先を変更しない() {
+        use std::os::unix::fs::symlink;
+
+        let storage_dir = TestStorageDir::new();
+        fs::create_dir_all(&storage_dir.path).unwrap();
+        let target_path = storage_dir.path.join("outside-revision");
+        let target_content = format!("{}\n", Uuid::new_v4());
+        fs::write(&target_path, &target_content).unwrap();
+        let revision_path = storage_dir.path.join(".revision");
+        symlink(&target_path, &revision_path).unwrap();
+        let mut repository = TaskRepository::new(storage_dir.path_str());
+
+        let actual = repository.load().unwrap_err();
+
+        assert_eq!(actual.operation(), ApplicationRepositoryOperation::Load);
+        let source = file_repository_error(&actual);
+        assert_eq!(source.operation, FileRepositoryOperation::ReadMetadata);
+        assert_eq!(source.path, revision_path);
+        assert_eq!(fs::read_to_string(target_path).unwrap(), target_content);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_save_revision_symlinkを拒否して参照先を変更しない() {
+        use std::os::unix::fs::symlink;
+
+        let storage_dir = TestStorageDir::new();
+        fs::create_dir_all(&storage_dir.path).unwrap();
+        let target_path = storage_dir.path.join("outside-revision");
+        let target_content = format!("{}\n", Uuid::new_v4());
+        fs::write(&target_path, &target_content).unwrap();
+        let revision_path = storage_dir.path.join(".revision");
+        symlink(&target_path, &revision_path).unwrap();
+        let now = Local.with_ymd_and_hms(2026, 8, 13, 12, 0, 0).unwrap();
+        let mut repository = TaskRepository::new(storage_dir.path_str());
+        repository.sync_clock(now);
+        repository.start_new_project(Task::new("保存対象"));
+
+        let actual = repository.save().unwrap_err();
+
+        assert_eq!(actual.operation(), ApplicationRepositoryOperation::Save);
+        let source = file_repository_error(&actual);
+        assert_eq!(source.operation, FileRepositoryOperation::ReadMetadata);
+        assert_eq!(source.path, revision_path);
+        assert_eq!(fs::read_to_string(target_path).unwrap(), target_content);
+        assert!(!storage_dir
+            .project_dir_path("20260813", "保存対象")
+            .join("project.yaml")
+            .exists());
+    }
+
+    #[test]
+    fn test_reload_if_changed初回はrevisionなしでも必ずloadする() {
+        let storage_dir = TestStorageDir::new();
+        let now = Local.with_ymd_and_hms(2026, 8, 13, 12, 0, 0).unwrap();
+        let mut source = TaskRepository::new(storage_dir.path_str());
+        source.sync_clock(now);
+        let task = Task::new("初回読込対象");
+        let task_id = task.get_id();
+        source.start_new_project(task);
+        source.save().unwrap();
+        fs::remove_file(storage_dir.path.join(".revision")).unwrap();
+        let mut repository = TaskRepository::new(storage_dir.path_str());
+
+        let outcome = repository.reload_if_changed(now).unwrap();
+
+        assert_eq!(outcome, RepositoryReloadOutcome::Reloaded);
+        assert!(repository.get_by_id(task_id).is_some());
+    }
+
+    #[test]
+    fn test_reload_if_changed_revision一致ならyamlを再読込せずclock同期する() {
+        let storage_dir = TestStorageDir::new();
+        let before = Local.with_ymd_and_hms(2026, 8, 13, 12, 0, 0).unwrap();
+        let after = before + Duration::hours(2);
+        let mut source = TaskRepository::new(storage_dir.path_str());
+        source.sync_clock(before);
+        let task = Task::new("cache対象");
+        task.set_start_time(before - Duration::hours(1));
+        task.set_pending_until(before + Duration::hours(1));
+        task.set_orig_status(Status::Pending);
+        let task_id = task.get_id();
+        source.start_new_project(task);
+        source.save().unwrap();
+        let project_yaml_path = storage_dir
+            .project_dir_path("20260813", "cache対象")
+            .join("project.yaml");
+        let mut repository = TaskRepository::new(storage_dir.path_str());
+        assert_eq!(
+            repository.reload_if_changed(before).unwrap(),
+            RepositoryReloadOutcome::Reloaded
+        );
+        assert_eq!(
+            repository.get_by_id(task_id).unwrap().get_status(),
+            Status::Pending
+        );
+        fs::write(&project_yaml_path, "project: [").unwrap();
+
+        let outcome = repository.reload_if_changed(after).unwrap();
+
+        assert_eq!(outcome, RepositoryReloadOutcome::Cached);
+        assert_eq!(
+            repository.get_by_id(task_id).unwrap().get_status(),
+            Status::Todo
+        );
+    }
+
+    #[test]
+    fn test_reload_if_changed外部save後だけ1回reloadする() {
+        let storage_dir = TestStorageDir::new();
+        let now = Local.with_ymd_and_hms(2026, 8, 13, 12, 0, 0).unwrap();
+        let mut source = TaskRepository::new(storage_dir.path_str());
+        source.sync_clock(now);
+        let task = Task::new("外部更新対象");
+        let task_id = task.get_id();
+        source.start_new_project(task);
+        source.save().unwrap();
+        let mut cached = TaskRepository::new(storage_dir.path_str());
+        cached.reload_if_changed(now).unwrap();
+        let mut external = TaskRepository::new(storage_dir.path_str());
+        external.reload_if_changed(now).unwrap();
+        external
+            .get_by_id(task_id)
+            .unwrap()
+            .set_estimated_work_seconds(45 * 60);
+        external.save().unwrap();
+
+        assert_eq!(
+            cached.reload_if_changed(now).unwrap(),
+            RepositoryReloadOutcome::Reloaded
+        );
+        assert_eq!(
+            cached
+                .get_by_id(task_id)
+                .unwrap()
+                .get_estimated_work_seconds(),
+            45 * 60
+        );
+        assert_eq!(
+            cached.reload_if_changed(now).unwrap(),
+            RepositoryReloadOutcome::Cached
+        );
+    }
+
+    #[test]
+    fn test_reload_if_changed新processはrevision一致でも停止中の直接編集をloadする() {
+        let storage_dir = TestStorageDir::new();
+        let now = Local.with_ymd_and_hms(2026, 8, 13, 12, 0, 0).unwrap();
+        let mut source = TaskRepository::new(storage_dir.path_str());
+        source.sync_clock(now);
+        let task = Task::new("停止中編集対象");
+        let task_id = task.get_id();
+        source.start_new_project(task);
+        source.save().unwrap();
+        let original_revision = fs::read(storage_dir.path.join(".revision")).unwrap();
+        let original_revision_id =
+            Uuid::parse_str(std::str::from_utf8(&original_revision).unwrap().trim_end()).unwrap();
+        source
+            .get_by_id(task_id)
+            .unwrap()
+            .set_estimated_work_seconds(50 * 60);
+        source.save().unwrap();
+        fs::write(storage_dir.path.join(".revision"), original_revision).unwrap();
+        let mut restarted = TaskRepository::new(storage_dir.path_str());
+        restarted.storage_revision.set(Some(original_revision_id));
+
+        let outcome = restarted.reload_if_changed(now).unwrap();
+
+        assert_eq!(outcome, RepositoryReloadOutcome::Reloaded);
+        assert_eq!(
+            restarted
+                .get_by_id(task_id)
+                .unwrap()
+                .get_estimated_work_seconds(),
+            50 * 60
         );
     }
 

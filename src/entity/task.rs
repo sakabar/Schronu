@@ -831,6 +831,7 @@ pub struct TaskAttr {
     repetition_anchor: RepetitionAnchor,
     days_in_advance: i64, // 繰り返しタスクについて、何日前から着手開始可能とするか
     project_category_opt: Option<ProjectCategory>,
+    persistent_mutation_revision: u64,
 }
 
 // 生成するタイミングで結果が変わってしまうid, create_time, start_timeは
@@ -919,6 +920,7 @@ impl TaskAttr {
             repetition_anchor: RepetitionAnchor::Deadline,
             days_in_advance: 0,
             project_category_opt: None,
+            persistent_mutation_revision: 0,
         }
     }
 
@@ -1147,6 +1149,76 @@ pub struct Task {
     node: Node<TaskAttr>,
 }
 
+#[test]
+fn test_persistent_mutation_revisionはrootとchildの永続化変更で進む() {
+    let root = Task::new("root");
+    let child = root.create_as_last_child(TaskAttr::new("child"));
+    let initial_revision = root.get_persistent_mutation_revision();
+
+    child.set_estimated_work_seconds(30 * 60);
+
+    assert!(root.get_persistent_mutation_revision() > initial_revision);
+    assert_eq!(
+        child.get_persistent_mutation_revision(),
+        root.get_persistent_mutation_revision()
+    );
+}
+
+#[test]
+fn test_persistent_mutation_revisionは同じ値の設定では進まない() {
+    let task = Task::new("task");
+    let initial_revision = task.get_persistent_mutation_revision();
+
+    task.set_estimated_work_seconds(task.get_estimated_work_seconds());
+    task.set_priority(task.get_priority());
+
+    assert_eq!(task.get_persistent_mutation_revision(), initial_revision);
+}
+
+#[test]
+fn test_persistent_mutation_revisionはtree構造変更で進む() {
+    let root = Task::new("root");
+    let initial_revision = root.get_persistent_mutation_revision();
+    let child = root.create_as_last_child(TaskAttr::new("child"));
+    let after_child_revision = root.get_persistent_mutation_revision();
+
+    root.create_sequential_children("step", 60, 1, 2, "")
+        .unwrap();
+    let after_sequential_revision = root.get_persistent_mutation_revision();
+    let mut child = child;
+    child.create_as_parent(TaskAttr::new("parent")).unwrap();
+
+    assert!(after_child_revision > initial_revision);
+    assert!(after_sequential_revision > after_child_revision);
+    assert!(root.get_persistent_mutation_revision() > after_sequential_revision);
+}
+
+#[test]
+fn test_persistent_mutation_revisionはclockの永続化変更だけで進む() {
+    let now = Local.with_ymd_and_hms(2026, 8, 13, 12, 0, 0).unwrap();
+    let unchanged = Task::new("unchanged");
+    let unchanged_revision = unchanged.get_persistent_mutation_revision();
+
+    unchanged.sync_clock(now);
+
+    assert_eq!(
+        unchanged.get_persistent_mutation_revision(),
+        unchanged_revision
+    );
+
+    let adjusted = Task::new("adjusted");
+    adjusted.set_orig_status(Status::Pending);
+    adjusted.set_pending_until(now + Duration::days(10));
+    adjusted.set_deadline_time_opt(Some(now + Duration::hours(2)));
+    let before_sync_revision = adjusted.get_persistent_mutation_revision();
+    let before_sync_pending_until = adjusted.get_pending_until();
+
+    adjusted.sync_clock(now);
+
+    assert!(adjusted.get_pending_until() < before_sync_pending_until);
+    assert!(adjusted.get_persistent_mutation_revision() > before_sync_revision);
+}
+
 impl Task {
     // dendron::Node::try_detach_insert_subtree()は木そのものを消滅させることができない仕様のようなので、
     // ダミーのルートノードを用意することで、使いたいノードが全て子ノードになるようにする
@@ -1176,7 +1248,21 @@ impl Task {
     }
 
     pub fn set_id(&mut self, id: Uuid) {
+        if self.get_id() == id {
+            return;
+        }
         self.node.borrow_data_mut().set_id(id);
+        self.mark_persistent_mutation();
+    }
+
+    pub(crate) fn get_persistent_mutation_revision(&self) -> u64 {
+        self.root().node.borrow_data().persistent_mutation_revision
+    }
+
+    fn mark_persistent_mutation(&self) {
+        let root = self.root();
+        let revision = root.node.borrow_data().persistent_mutation_revision;
+        root.node.borrow_data_mut().persistent_mutation_revision = revision.wrapping_add(1);
     }
 
     pub fn get_name(&self) -> String {
@@ -1192,7 +1278,12 @@ impl Task {
     }
 
     pub fn set_orig_status(&self, orig_status: Status) {
+        let before = (self.get_orig_status(), self.get_pending_until());
         self.node.borrow_data_mut().set_orig_status(orig_status);
+        let after = (self.get_orig_status(), self.get_pending_until());
+        if before != after {
+            self.mark_persistent_mutation();
+        }
     }
 
     pub fn get_is_on_other_side(&self) -> bool {
@@ -1200,9 +1291,13 @@ impl Task {
     }
 
     pub fn set_is_on_other_side(&self, is_on_other_side: bool) {
+        if self.get_is_on_other_side() == is_on_other_side {
+            return;
+        }
         self.node
             .borrow_data_mut()
             .set_is_on_other_side(is_on_other_side);
+        self.mark_persistent_mutation();
     }
 
     pub fn get_atomic(&self) -> bool {
@@ -1210,11 +1305,19 @@ impl Task {
     }
 
     pub fn set_atomic(&self, atomic: bool) {
+        if self.get_atomic() == atomic {
+            return;
+        }
         self.node.borrow_data_mut().set_atomic(atomic);
+        self.mark_persistent_mutation();
     }
 
     pub fn set_pending_until(&self, pending_until: DateTime<Local>) {
+        let before = self.get_pending_until();
         self.node.borrow_data_mut().set_pending_until(pending_until);
+        if self.get_pending_until() != before {
+            self.mark_persistent_mutation();
+        }
     }
 
     pub fn get_pending_until(&self) -> DateTime<Local> {
@@ -1222,7 +1325,11 @@ impl Task {
     }
 
     pub fn sync_clock(&self, now: DateTime<Local>) {
+        let before = self.get_pending_until();
         self.node.borrow_data_mut().sync_clock(now);
+        if self.get_pending_until() != before {
+            self.mark_persistent_mutation();
+        }
     }
 
     pub fn get_last_synced_time(&self) -> DateTime<Local> {
@@ -1230,7 +1337,12 @@ impl Task {
     }
 
     pub fn set_priority(&self, priority: i64) {
-        self.root().node.borrow_data_mut().set_priority(priority);
+        let root = self.root();
+        if root.node.borrow_data().get_priority() == priority {
+            return;
+        }
+        root.node.borrow_data_mut().set_priority(priority);
+        root.mark_persistent_mutation();
     }
 
     pub fn get_priority(&self) -> i64 {
@@ -1238,7 +1350,11 @@ impl Task {
     }
 
     pub fn set_create_time(&self, create_time: DateTime<Local>) {
+        if self.get_create_time() == create_time {
+            return;
+        }
         self.node.borrow_data_mut().set_create_time(create_time);
+        self.mark_persistent_mutation();
     }
 
     pub fn get_create_time(&self) -> DateTime<Local> {
@@ -1246,7 +1362,12 @@ impl Task {
     }
 
     pub fn set_start_time(&self, start_time: DateTime<Local>) {
+        let before = (self.get_start_time(), self.get_pending_until());
         self.node.borrow_data_mut().set_start_time(start_time);
+        let after = (self.get_start_time(), self.get_pending_until());
+        if before != after {
+            self.mark_persistent_mutation();
+        }
     }
 
     pub fn get_start_time(&self) -> DateTime<Local> {
@@ -1254,7 +1375,11 @@ impl Task {
     }
 
     pub fn set_end_time_opt(&self, end_time_opt: Option<DateTime<Local>>) {
+        if self.get_end_time_opt() == end_time_opt {
+            return;
+        }
         self.node.borrow_data_mut().set_end_time_opt(end_time_opt);
+        self.mark_persistent_mutation();
     }
 
     pub fn get_end_time_opt(&self) -> Option<DateTime<Local>> {
@@ -1286,6 +1411,7 @@ impl Task {
                         self.node
                             .borrow_data_mut()
                             .set_deadline_time_opt(Some(deadline_time));
+                        self.mark_persistent_mutation();
 
                         // 子に伝搬させる
                         for child_node in self.node.children() {
@@ -1301,9 +1427,12 @@ impl Task {
                             deadline_time
                         };
 
-                        self.node
-                            .borrow_data_mut()
-                            .set_deadline_time_opt(Some(earlier_deadline_time));
+                        if Some(earlier_deadline_time) != original_deadline_time_opt {
+                            self.node
+                                .borrow_data_mut()
+                                .set_deadline_time_opt(Some(earlier_deadline_time));
+                            self.mark_persistent_mutation();
+                        }
 
                         // 子に伝搬させる
                         for child_node in self.node.children() {
@@ -1317,7 +1446,11 @@ impl Task {
     }
 
     pub fn unset_deadline_time_opt(&self) {
+        if self.get_deadline_time_opt().is_none() {
+            return;
+        }
         self.node.borrow_data_mut().set_deadline_time_opt(None);
+        self.mark_persistent_mutation();
     }
 
     pub fn get_deadline_time_opt(&self) -> Option<DateTime<Local>> {
@@ -1325,9 +1458,13 @@ impl Task {
     }
 
     pub fn set_estimated_work_seconds(&self, estimated_work_seconds: i64) {
+        if self.get_estimated_work_seconds() == estimated_work_seconds {
+            return;
+        }
         self.node
             .borrow_data_mut()
             .set_estimated_work_seconds(estimated_work_seconds);
+        self.mark_persistent_mutation();
     }
 
     pub fn get_estimated_work_seconds(&self) -> i64 {
@@ -1335,9 +1472,13 @@ impl Task {
     }
 
     pub fn set_actual_work_seconds(&self, actual_work_seconds: i64) {
+        if self.get_actual_work_seconds() == actual_work_seconds {
+            return;
+        }
         self.node
             .borrow_data_mut()
             .set_actual_work_seconds(actual_work_seconds);
+        self.mark_persistent_mutation();
     }
 
     pub fn get_repetition_interval_days_opt(&self) -> Option<i64> {
@@ -1359,9 +1500,13 @@ impl Task {
     }
 
     pub fn set_repetition_interval_days_opt(&self, repetition_interval_days_opt: Option<i64>) {
+        if self.get_repetition_interval_days_opt() == repetition_interval_days_opt {
+            return;
+        }
         self.node
             .borrow_data_mut()
             .set_repetition_interval_days_opt(repetition_interval_days_opt);
+        self.mark_persistent_mutation();
     }
 
     pub fn get_repetition_anchor(&self) -> RepetitionAnchor {
@@ -1369,9 +1514,13 @@ impl Task {
     }
 
     pub fn set_repetition_anchor(&self, repetition_anchor: RepetitionAnchor) {
+        if self.get_repetition_anchor() == repetition_anchor {
+            return;
+        }
         self.node
             .borrow_data_mut()
             .set_repetition_anchor(repetition_anchor);
+        self.mark_persistent_mutation();
     }
 
     pub fn get_days_in_advance(&self) -> i64 {
@@ -1379,9 +1528,13 @@ impl Task {
     }
 
     pub fn set_days_in_advance(&self, days_in_advance: i64) {
+        if self.get_days_in_advance() == days_in_advance {
+            return;
+        }
         self.node
             .borrow_data_mut()
             .set_days_in_advance(days_in_advance);
+        self.mark_persistent_mutation();
     }
 
     pub fn get_project_category_opt(&self) -> Option<ProjectCategory> {
@@ -1389,10 +1542,14 @@ impl Task {
     }
 
     pub fn set_project_category_opt(&self, project_category_opt: Option<ProjectCategory>) {
-        self.root()
-            .node
+        let root = self.root();
+        if root.node.borrow_data().get_project_category_opt() == project_category_opt {
+            return;
+        }
+        root.node
             .borrow_data_mut()
             .set_project_category_opt(project_category_opt);
+        root.mark_persistent_mutation();
     }
 
     pub fn get_actual_work_seconds(&self) -> i64 {
@@ -1414,8 +1571,7 @@ impl Task {
         self.unset_deadline_time_opt();
         self.set_deadline_time_opt(Some(deadline_time));
 
-        let mut attr = self.node.borrow_data_mut();
-        attr.set_start_time(appointment_start_time);
+        self.set_start_time(appointment_start_time);
     }
 
     pub fn num_children(&self) -> usize {
@@ -1478,6 +1634,8 @@ impl Task {
             return Err(String::from("cannot use detach_insert for a root node"));
         }
 
+        let source_root = self.root();
+        let destination_root = parent_task.root();
         let self_grant = &self.node.tree().grant_hierarchy_edit().expect("self grant");
 
         let parent_task_hot: HotNode<TaskAttr> = parent_task
@@ -1489,6 +1647,9 @@ impl Task {
             .try_detach_insert_subtree(self_grant, InsertAs::LastChildOf(&parent_task_hot))
             .expect("creating valid hierarchy");
 
+        source_root.mark_persistent_mutation();
+        destination_root.mark_persistent_mutation();
+
         Ok(())
     }
 
@@ -1496,6 +1657,7 @@ impl Task {
         let self_grant = &self.node.tree().grant_hierarchy_edit().expect("self grant");
 
         let child_node = self.node.create_as_last_child(self_grant, task_attr);
+        self.mark_persistent_mutation();
         Self { node: child_node }
     }
 
@@ -1542,7 +1704,10 @@ impl Task {
         }
 
         match current_node_opt {
-            Some(current_node) => Ok(Self { node: current_node }),
+            Some(current_node) => {
+                self.mark_persistent_mutation();
+                Ok(Self { node: current_node })
+            }
             None => Err(String::from("cannot create sequentially")),
         }
     }
