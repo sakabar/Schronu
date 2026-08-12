@@ -1297,6 +1297,7 @@ fn format_daily_band(
     date: NaiveDate,
     weekday_jp: &str,
     accumulated_free_diff: Duration,
+    accumulated_rho_diff: Duration,
     durations: &DailyBandDurations,
 ) -> String {
     let categories = [
@@ -1326,9 +1327,10 @@ fn format_daily_band(
 
     let overflow = ">".repeat(round_daily_band_segment_count(overflow_seconds));
     format!(
-        "{}({}) {} [{}]{}",
+        "{}({}) {} {} [{}]{}",
         date,
         weekday_jp,
+        format_signed_hours_minutes(accumulated_rho_diff),
         format_signed_hours_minutes(accumulated_free_diff),
         bar,
         overflow
@@ -3021,6 +3023,7 @@ fn execute_show_all_tasks(
                     **date,
                     weekday_jp,
                     accumulate_duration_diff_to_limit,
+                    accumulate_duration_diff_to_goal_rho,
                     &calculate_daily_band_durations(
                         **date == naive_dt_today,
                         full_minutes,
