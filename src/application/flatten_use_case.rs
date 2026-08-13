@@ -4,8 +4,8 @@ use super::daily_capacity::{
 use super::interface::{FreeTimeManagerTrait, TaskRepositoryTrait};
 use super::schedule_use_case::get_schedule;
 use crate::entity::task::Status;
-use chrono::{Duration, NaiveDate};
-use std::cmp::Reverse;
+use chrono::{DateTime, Duration, Local, NaiveDate};
+use std::cmp::{min, Reverse};
 use std::collections::{HashMap, HashSet};
 use uuid::Uuid;
 
@@ -79,9 +79,11 @@ fn find_next_flattened_task(
     let schedule = get_schedule(repository);
     let mut scheduled_work_seconds_by_date = HashMap::<NaiveDate, i64>::new();
     for scheduled in &schedule {
-        let date = subjective_date(scheduled.scheduled_start);
-        *scheduled_work_seconds_by_date.entry(date).or_default() +=
-            scheduled.scheduled_work_seconds;
+        add_scheduled_work_seconds_by_date(
+            &mut scheduled_work_seconds_by_date,
+            scheduled.scheduled_start,
+            scheduled.scheduled_end,
+        );
     }
 
     let mut seen_task_ids = HashSet::new();
@@ -151,4 +153,20 @@ fn find_next_flattened_task(
     }
 
     None
+}
+
+fn add_scheduled_work_seconds_by_date(
+    scheduled_work_seconds_by_date: &mut HashMap<NaiveDate, i64>,
+    scheduled_start: DateTime<Local>,
+    scheduled_end: DateTime<Local>,
+) {
+    let mut cursor = scheduled_start;
+    while cursor < scheduled_end {
+        let date = subjective_date(cursor);
+        let next_date_start = subjective_date_start(date + Duration::days(1));
+        let segment_end = min(scheduled_end, next_date_start);
+        *scheduled_work_seconds_by_date.entry(date).or_default() +=
+            (segment_end - cursor).num_seconds();
+        cursor = segment_end;
+    }
 }

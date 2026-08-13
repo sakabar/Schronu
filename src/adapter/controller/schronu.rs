@@ -6815,6 +6815,37 @@ fn test_execute_flatten_29日後の空きは使わず状態を変更しない() 
 }
 
 #[test]
+fn test_execute_flatten_業務日境界をまたぐ予定を翌日の使用時間にも計上する() {
+    let now = Local.with_ymd_and_hms(2026, 8, 13, 12, 0, 0).unwrap();
+    let target_date = NaiveDate::from_ymd_opt(2026, 8, 15).unwrap();
+    let root = Task::new("平テスト");
+    root.set_estimated_work_seconds(0);
+    let target = add_scheduled_child_for_test(&root, "移動させない", now, 30);
+    add_scheduled_child_for_test(
+        &root,
+        "翌日へまたぐ予定",
+        Local.with_ymd_and_hms(2026, 8, 14, 6, 0, 0).unwrap(),
+        25 * 60,
+    );
+
+    let result =
+        execute_flatten_command_for_test("平", now, root, HashMap::from([(target_date, 30)]));
+
+    assert_eq!(
+        result
+            .task
+            .get_by_id(target.get_id())
+            .unwrap()
+            .get_pending_until(),
+        now
+    );
+    assert_eq!(
+        result.output,
+        "[Info] 28日以内に延期可能な空きとタスクの組み合わせはありません。\n"
+    );
+}
+
+#[test]
 fn test_execute_calendar_現行出力を固定する() {
     let now = Local.with_ymd_and_hms(2026, 8, 11, 12, 0, 0).unwrap();
     let task = Task::new("暦出力固定用タスク");
