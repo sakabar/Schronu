@@ -6,10 +6,15 @@ use regex::Regex;
 use schronu::adapter::gateway::free_time_manager::FreeTimeManager;
 use schronu::adapter::gateway::storage_lock::{LockMode, StorageLock, StorageLockError};
 use schronu::adapter::gateway::task_repository::TaskRepository;
+use schronu::application::daily_capacity::{
+    calculate_daily_rho_diff_hours, calculate_free_time_minutes_for_subjective_date,
+    calculate_full_day_free_time_minutes_for_subjective_date, RHO_GOAL,
+};
 use schronu::application::interface::FreeTimeManagerTrait;
 #[cfg(test)]
 use schronu::application::interface::{RepositoryReloadOutcome, TaskRepositoryOperation};
 use schronu::application::interface::{TaskRepositoryError, TaskRepositoryTrait};
+use schronu::application::pack_use_case::pack_tasks;
 use schronu::application::schedule_use_case::get_schedule;
 use schronu::application::task_use_case::{
     breakdown_task, complete_task, create_task, defer_task, estimated_work_seconds_from_minutes,
@@ -1590,64 +1595,9 @@ fn format_project_category_percentage(seconds: i64, denominator_seconds: i64) ->
     }
 }
 
-fn calculate_free_time_minutes_for_subjective_date(
-    date: &NaiveDate,
-    last_synced_time: DateTime<Local>,
-    eod: DateTime<Local>,
-    eod_duration: Duration,
-    free_time_manager: &mut dyn FreeTimeManagerTrait,
-) -> i64 {
-    let local_datetime_base = get_next_morning_datetime(
-        Local::now()
-            .timezone()
-            .from_local_datetime(&date.and_hms_opt(0, 0, 0).unwrap())
-            .unwrap(),
-    );
-
-    if local_datetime_base < last_synced_time
-        && last_synced_time < get_next_morning_datetime(local_datetime_base)
-    {
-        if last_synced_time.hour() < get_next_morning_datetime(last_synced_time).hour() {
-            if last_synced_time < eod {
-                (eod - last_synced_time).num_minutes()
-            } else {
-                0
-            }
-        } else {
-            free_time_manager.get_free_minutes(&last_synced_time, &eod)
-        }
-    } else {
-        calculate_full_day_free_time_minutes_for_subjective_date(
-            date,
-            eod_duration,
-            free_time_manager,
-        )
-    }
-}
-
-fn calculate_full_day_free_time_minutes_for_subjective_date(
-    date: &NaiveDate,
-    eod_duration: Duration,
-    free_time_manager: &mut dyn FreeTimeManagerTrait,
-) -> i64 {
-    let local_tz = Local::now().timezone();
-    let start = get_next_morning_datetime(
-        local_tz
-            .from_local_datetime(&date.and_hms_opt(0, 0, 0).unwrap())
-            .unwrap(),
-    );
-    let end = local_tz
-        .from_local_datetime(&date.and_hms_opt(23, 59, 59).unwrap())
-        .unwrap()
-        + eod_duration;
-    free_time_manager.get_free_minutes(&start, &end)
-}
-
 fn calculate_project_category_denominator_seconds(
     rows: &[TaskListDisplayRow],
     last_synced_time: DateTime<Local>,
-    eod: DateTime<Local>,
-    eod_duration: Duration,
     free_time_manager: &mut dyn FreeTimeManagerTrait,
 ) -> i64 {
     let mut dates = rows
@@ -1664,8 +1614,6 @@ fn calculate_project_category_denominator_seconds(
             calculate_free_time_minutes_for_subjective_date(
                 date,
                 last_synced_time,
-                eod,
-                eod_duration,
                 free_time_manager,
             ) * 60
         })
@@ -2076,7 +2024,7 @@ fn execute_show_leaf_tasks(
         let leaf_tasks = extract_leaf_tasks_from_project(project_root_task);
         for leaf_task in leaf_tasks.iter() {
             let deadline_time_opt = leaf_task.get_deadline_time_opt();
-            let neg_priority = -leaf_task.get_priority();
+            let neg_priority = !leaf_task.get_priority();
             let id = leaf_task.get_id();
             let message = format!("{}\t{:?}", project_name, leaf_task.get_attr());
 
@@ -2123,7 +2071,7 @@ fn execute_show_all_tasks(
                     .date_naive(),
                 deadline_time_opt.is_none(),
                 scheduled.first_available_time,
-                -scheduled.task.priority,
+                !scheduled.task.priority,
                 scheduled.rank,
                 deadline_time_opt,
                 scheduled.task.id,
@@ -2808,14 +2756,11 @@ fn execute_show_all_tasks(
         let free_time_minutes = calculate_free_time_minutes_for_subjective_date(
             date,
             last_synced_time,
-            eod,
-            eod_duration,
             free_time_manager,
         );
         let full_day_free_time_minutes_opt = if is_band_func {
             Some(calculate_full_day_free_time_minutes_for_subjective_date(
                 date,
-                eod_duration,
                 free_time_manager,
             ))
         } else {
@@ -2833,14 +2778,11 @@ fn execute_show_all_tasks(
                 f64::INFINITY
             };
 
-        const RHO_GOAL: f64 = 0.7;
-
-        let diff_to_goal = if free_time_hours - total_repetitive_task_work_hours_of_the_date > 0.0 {
-            (total_estimated_work_hours_of_the_date - total_repetitive_task_work_hours_of_the_date)
-                - (free_time_hours - total_repetitive_task_work_hours_of_the_date) * RHO_GOAL
-        } else {
-            0.0
-        };
+        let diff_to_goal = calculate_daily_rho_diff_hours(
+            free_time_minutes,
+            total_repetitive_task_work_seconds_of_the_date,
+            total_estimated_work_seconds_of_the_date,
+        );
         let diff_to_goal_sign: char = if diff_to_goal > 0.0 { ' ' } else { '-' };
         let diff_to_goal_hour = diff_to_goal.abs().floor();
         let diff_to_goal_minute = (diff_to_goal.abs() - diff_to_goal_hour) * 60.0;
@@ -3126,8 +3068,6 @@ fn execute_show_all_tasks(
         let project_category_denominator_seconds = calculate_project_category_denominator_seconds(
             &task_list_display_rows,
             last_synced_time,
-            eod,
-            eod_duration,
             free_time_manager,
         );
         writeln_newline(
@@ -4511,6 +4451,99 @@ fn execute_command_for_test(
     }
 }
 
+#[test]
+fn test_execute_pack_前倒し内容と集計を表示する() {
+    let now = Local.with_ymd_and_hms(2026, 8, 11, 12, 0, 0).unwrap();
+    let task = Task::new("前倒し対象");
+    task.sync_clock(now);
+    task.set_start_time(now);
+    task.set_estimated_work_seconds(30 * 60);
+    task.set_priority(9);
+    task.set_pending_until(now + Duration::days(10));
+    task.set_orig_status(Status::Pending);
+    let task_id = task.get_id();
+    let mut repository = TestTaskRepository::new(task, now);
+    let mut free_time_manager = TestFreeTimeManagerWithFreeMinutes { free_minutes: 120 };
+    let mut stdout = TestWriter::new();
+
+    execute_pack(&mut stdout, &mut repository, &mut free_time_manager);
+
+    let output = stdout.into_string();
+    assert!(output.contains(&format!(
+        "詰\t2026-08-21\t2026-08-11\t00:30\t優先度9\t{}\t前倒し対象",
+        task_id
+    )));
+    assert!(output.contains("詰: 1件 00:30 (スキップ0件)"));
+}
+
+#[test]
+fn test_execute_pack_候補なしを表示する() {
+    let now = Local.with_ymd_and_hms(2026, 8, 11, 12, 0, 0).unwrap();
+    let task = Task::new("対象外");
+    task.sync_clock(now);
+    let mut repository = TestTaskRepository::new(task, now);
+    let mut free_time_manager = TestFreeTimeManagerWithFreeMinutes { free_minutes: 120 };
+    let mut stdout = TestWriter::new();
+
+    execute_pack(&mut stdout, &mut repository, &mut free_time_manager);
+
+    assert_eq!(
+        stdout.into_string(),
+        "[Info] 詰められるタスクはありません。\n"
+    );
+}
+
+#[test]
+fn test_execute_pack_収まらない候補はスキップ件数だけを表示する() {
+    let now = Local.with_ymd_and_hms(2026, 8, 11, 12, 0, 0).unwrap();
+    let task = Task::new("大きい");
+    task.sync_clock(now);
+    task.set_start_time(now);
+    task.set_estimated_work_seconds(60 * 60);
+    task.set_priority(9);
+    task.set_pending_until(now + Duration::days(10));
+    task.set_orig_status(Status::Pending);
+    let mut repository = TestTaskRepository::new(task, now);
+    let mut free_time_manager = TestFreeTimeManagerWithFreeMinutes { free_minutes: 60 };
+    let mut stdout = TestWriter::new();
+
+    execute_pack(&mut stdout, &mut repository, &mut free_time_manager);
+
+    let output = stdout.into_string();
+    assert!(!output.contains("[Skip]"));
+    assert!(!output.contains("大きい"));
+    assert!(output.contains("詰: 0件 00:00 (スキップ1件)"));
+}
+
+#[test]
+fn test_execute_詰とpackの両aliasで製品command経路を実行する() {
+    for command in ["詰", "pack"] {
+        let now = Local.with_ymd_and_hms(2026, 8, 11, 12, 0, 0).unwrap();
+        let task = Task::new("対象");
+        task.sync_clock(now);
+        task.set_start_time(now);
+        task.set_estimated_work_seconds(30 * 60);
+        task.set_pending_until(now + Duration::days(10));
+        task.set_orig_status(Status::Pending);
+        let mut repository = TestTaskRepository::new(task, now);
+        let mut free_time_manager = TestFreeTimeManagerWithFreeMinutes { free_minutes: 120 };
+        let mut stdout = TestWriter::new();
+        let mut focused_task_id_opt = None;
+
+        execute(
+            &mut stdout,
+            &mut repository,
+            &mut free_time_manager,
+            &mut focused_task_id_opt,
+            &now,
+            command,
+        );
+
+        assert!(stdout.into_string().contains("詰: 1件 00:30 (スキップ0件)"));
+        assert!(repository.task.get_pending_until() < now + Duration::days(10));
+    }
+}
+
 #[cfg(test)]
 impl TestTaskRepository {
     fn new(task: Task, last_synced_time: DateTime<Local>) -> Self {
@@ -5632,6 +5665,55 @@ fn test_execute_set_project_category_不正カテゴリでは変更しない() {
     );
 }
 
+fn format_work_seconds_as_hours_minutes(work_seconds: i64) -> String {
+    let total_minutes = work_seconds.max(0) / 60;
+    format!("{:02}:{:02}", total_minutes / 60, total_minutes % 60)
+}
+
+fn execute_pack(
+    stdout: &mut dyn SchronuWriter,
+    task_repository: &dyn TaskRepositoryTrait,
+    free_time_manager: &mut dyn FreeTimeManagerTrait,
+) {
+    let result = pack_tasks(task_repository, free_time_manager);
+    let total_work_seconds = result
+        .packed_tasks
+        .iter()
+        .map(|packed| packed.work_seconds)
+        .sum::<i64>();
+
+    for packed in &result.packed_tasks {
+        writeln_newline(
+            stdout,
+            &format!(
+                "詰\t{}\t{}\t{}\t優先度{}\t{}\t{}",
+                packed.source_date,
+                packed.target_date,
+                format_work_seconds_as_hours_minutes(packed.work_seconds),
+                packed.priority,
+                packed.task_id,
+                packed.name,
+            ),
+        )
+        .unwrap();
+    }
+
+    if result.packed_tasks.is_empty() && result.skipped_tasks.is_empty() {
+        writeln_newline(stdout, "[Info] 詰められるタスクはありません。").unwrap();
+    } else {
+        writeln_newline(
+            stdout,
+            &format!(
+                "詰: {}件 {} (スキップ{}件)",
+                result.packed_tasks.len(),
+                format_work_seconds_as_hours_minutes(total_work_seconds),
+                result.skipped_tasks.len(),
+            ),
+        )
+        .unwrap();
+    }
+}
+
 fn execute(
     stdout: &mut dyn SchronuWriter,
     task_repository: &mut dyn TaskRepositoryTrait,
@@ -6319,6 +6401,9 @@ fn execute(
                     TaskListDisplayOrder::ScheduledStartDesc,
                 );
             }
+        }
+        "詰" | "pack" => {
+            execute_pack(stdout, task_repository, free_time_manager);
         }
         "押" | "extrude" => {
             if tokens.len() >= 2 {
@@ -8191,10 +8276,11 @@ fn should_suppress_leaf_tasks_after_command(line: &str) -> bool {
             | Some('暦')
             | Some('帯')
             | Some('平')
+            | Some('詰')
             | Some('葉')
             | Some('樹')
             | Some('清')
-    ) || line.split_whitespace().next() == Some("band")
+    ) || matches!(line.split_whitespace().next(), Some("band" | "pack"))
 }
 
 #[test]

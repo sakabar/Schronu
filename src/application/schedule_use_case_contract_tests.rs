@@ -136,6 +136,19 @@ fn get_schedule_締切を優先しdoneを除外してtask_viewを返す() {
 }
 
 #[test]
+fn get_schedule_i64最小値付近でも優先度の高いtaskを先に配置する() {
+    let now = fixed_now();
+    let lowest = task_with_schedule("最低", now, 15 * 60, i64::MIN);
+    let next = task_with_schedule("次", now, 15 * 60, i64::MIN + 1);
+    let repository = TestTaskRepository::new(vec![lowest.clone(), next.clone()], now);
+
+    let actual = get_schedule(&repository);
+
+    assert_eq!(actual[0].task.id, next.get_id());
+    assert_eq!(actual[1].task.id, lowest.get_id());
+}
+
+#[test]
 fn get_schedule_pending解除後に子を配置し親をその後へ置く() {
     let now = fixed_now();
     let parent = task_with_schedule("親", now, 0, 5);
