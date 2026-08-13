@@ -5641,13 +5641,13 @@ fn write_flatten_result(stdout: &mut dyn SchronuWriter, result: &FlattenResult) 
         writeln_newline(
             stdout,
             &format!(
-                "平\t{}\t{}\t優先度{}\t{}\t{}\t延期元: {}",
+                "平\t{}\t{}\t{}\t優先度{}\t{}\t{}",
+                flattened.source_date,
                 flattened.target_date,
                 format_work_seconds_as_hours_minutes(flattened.work_seconds),
                 flattened.priority,
                 flattened.task_id,
                 flattened.name,
-                flattened.source_date,
             ),
         )
         .unwrap();
