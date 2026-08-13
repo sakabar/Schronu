@@ -8,7 +8,7 @@ use schronu::adapter::gateway::storage_lock::{LockMode, StorageLock, StorageLock
 use schronu::adapter::gateway::task_repository::TaskRepository;
 use schronu::application::daily_capacity::{
     calculate_daily_rho_diff_hours, calculate_free_time_minutes_for_subjective_date,
-    calculate_full_day_free_time_minutes_for_subjective_date, RHO_GOAL,
+    calculate_full_day_free_time_minutes_for_subjective_date, END_OF_DAY_DURATION, RHO_GOAL,
 };
 use schronu::application::interface::FreeTimeManagerTrait;
 #[cfg(test)]
@@ -2088,14 +2088,12 @@ fn execute_show_all_tasks(
     // ここからρ計算用
     let last_synced_time = task_repository.get_last_synced_time();
 
-    // FIXME 外部設定ファイルで設定できるようにする
-    let eod_duration = Duration::hours(0) + Duration::minutes(30);
     let eod = (get_next_morning_datetime(last_synced_time) + Duration::days(0))
         .with_hour(0)
         .expect("invalid hour")
         .with_minute(0)
         .expect("invalid minute")
-        + eod_duration;
+        + END_OF_DAY_DURATION;
     // ここまでρ計算用
 
     let is_calendar_func = pattern_opt.as_ref().map_or(false, |pattern| {
