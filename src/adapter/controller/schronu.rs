@@ -4470,7 +4470,7 @@ fn test_execute_pack_前倒し内容と集計を表示する() {
 
     let output = stdout.into_string();
     assert!(output.contains(&format!(
-        "詰\t2026-08-11\t00:30\t優先度9\t{}\t前倒し対象",
+        "詰\t2026-08-21\t2026-08-11\t00:30\t優先度9\t{}\t前倒し対象",
         task_id
     )));
     assert!(output.contains("詰: 1件 00:30 (スキップ0件)"));
@@ -4494,7 +4494,7 @@ fn test_execute_pack_候補なしを表示する() {
 }
 
 #[test]
-fn test_execute_pack_収まらない候補をスキップとして表示する() {
+fn test_execute_pack_収まらない候補はスキップ件数だけを表示する() {
     let now = Local.with_ymd_and_hms(2026, 8, 11, 12, 0, 0).unwrap();
     let task = Task::new("大きい");
     task.sync_clock(now);
@@ -4503,7 +4503,6 @@ fn test_execute_pack_収まらない候補をスキップとして表示する()
     task.set_priority(9);
     task.set_pending_until(now + Duration::days(10));
     task.set_orig_status(Status::Pending);
-    let task_id = task.get_id();
     let mut repository = TestTaskRepository::new(task, now);
     let mut free_time_manager = TestFreeTimeManagerWithFreeMinutes { free_minutes: 60 };
     let mut stdout = TestWriter::new();
@@ -4511,7 +4510,8 @@ fn test_execute_pack_収まらない候補をスキップとして表示する()
     execute_pack(&mut stdout, &mut repository, &mut free_time_manager);
 
     let output = stdout.into_string();
-    assert!(output.contains(&format!("[Skip] 優先度9\t{}\t大きい\t必要01:00", task_id)));
+    assert!(!output.contains("[Skip]"));
+    assert!(!output.contains("大きい"));
     assert!(output.contains("詰: 0件 00:00 (スキップ1件)"));
 }
 
