@@ -8105,6 +8105,67 @@ fn test_interactive_submitは製品event経路でload実行保存する() {
 }
 
 #[test]
+fn test_interactive_submitの見は完了済みtaskへの明示focusを更新後も保持する() {
+    let storage_dir = TestStorageDir::new();
+    std::fs::create_dir_all(&storage_dir.path).unwrap();
+    let now = Local.with_ymd_and_hms(2026, 8, 12, 12, 0, 0).unwrap();
+    let root = Task::new("root");
+    let done = root.create_as_last_child(TaskAttr::new("完了済みtask"));
+    done.set_orig_status(Status::Done);
+    let next = root.create_as_last_child(TaskAttr::new("次候補"));
+    let done_id = done.get_id();
+    let next_id = next.get_id();
+    let mut repository =
+        TestTaskRepository::new(root, now).with_storage_directory(&storage_dir.path);
+    repository.highest_priority_leaf_task_id_opt = Some(next_id);
+    let mut free_time_manager = TestFreeTimeManager;
+    let mut stdout = TestWriter::new();
+    let mut focused_task_id_opt = Some(next_id);
+    let mut last_focused_task_id_opt = Some(next_id);
+    let mut focus_started_datetime = now;
+    let mut focus_selection_mode = FocusSelectionMode::HighestPriority;
+    let command = format!("見 {done_id}");
+
+    let submit_outcome = handle_interactive_repository_event(
+        &mut stdout,
+        &mut repository,
+        &mut free_time_manager,
+        InteractiveRepositoryState {
+            focused_task_id_opt: &mut focused_task_id_opt,
+            last_focused_task_id_opt: &mut last_focused_task_id_opt,
+            focus_started_datetime: &mut focus_started_datetime,
+            focus_selection_mode: &mut focus_selection_mode,
+        },
+        InteractiveRepositoryEvent::Submit { line: &command },
+    );
+
+    assert!(matches!(
+        submit_outcome,
+        InteractiveRepositoryEventOutcome::CommandExecuted(_)
+    ));
+    assert_eq!(focused_task_id_opt, Some(done_id));
+
+    let refresh_outcome = handle_interactive_repository_event(
+        &mut stdout,
+        &mut repository,
+        &mut free_time_manager,
+        InteractiveRepositoryState {
+            focused_task_id_opt: &mut focused_task_id_opt,
+            last_focused_task_id_opt: &mut last_focused_task_id_opt,
+            focus_started_datetime: &mut focus_started_datetime,
+            focus_selection_mode: &mut focus_selection_mode,
+        },
+        InteractiveRepositoryEvent::Refresh,
+    );
+
+    assert!(matches!(
+        refresh_outcome,
+        InteractiveRepositoryEventOutcome::Continue
+    ));
+    assert_eq!(focused_task_id_opt, Some(done_id));
+}
+
+#[test]
 fn test_interactive_submitは外部完了によるfocus切替時に開始時刻を更新する() {
     let storage_dir = TestStorageDir::new();
     std::fs::create_dir_all(&storage_dir.path).unwrap();
