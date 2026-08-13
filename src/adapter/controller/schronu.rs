@@ -10,6 +10,7 @@ use schronu::application::daily_capacity::{
     calculate_daily_rho_diff_hours, calculate_free_time_minutes_for_subjective_date,
     calculate_full_day_free_time_minutes_for_subjective_date, END_OF_DAY_DURATION, RHO_GOAL,
 };
+use schronu::application::flatten_use_case::{flatten_tasks, FlattenResult};
 use schronu::application::interface::FreeTimeManagerTrait;
 #[cfg(test)]
 use schronu::application::interface::{RepositoryReloadOutcome, TaskRepositoryOperation};
@@ -2062,25 +2063,6 @@ fn execute_show_all_tasks(
 ) {
     let supports_ansi_color = stdout.supports_ansi_color();
     let scheduled_tasks = get_schedule(task_repository);
-    let mut dt_id_tpl_arr = scheduled_tasks
-        .iter()
-        .map(|scheduled| {
-            let deadline_time_opt = scheduled.task.deadline_time;
-            (
-                (get_next_morning_datetime(scheduled.first_available_time) - Duration::days(1))
-                    .date_naive(),
-                deadline_time_opt.is_none(),
-                scheduled.first_available_time,
-                !scheduled.task.priority,
-                scheduled.rank,
-                deadline_time_opt,
-                scheduled.task.id,
-            )
-        })
-        .collect::<Vec<_>>();
-    dt_id_tpl_arr.sort();
-    dt_id_tpl_arr.dedup_by_key(|entry| entry.6);
-
     let mut task_list_display_rows: Vec<TaskListDisplayRow> = vec![];
     let mut available_biggest_row_opt: Option<TaskListDisplayRow> = None;
     let mut available_biggest_task_estimate_work_seconds = 0;
@@ -2105,10 +2087,6 @@ fn execute_show_all_tasks(
         .map_or(false, |pattern| pattern == "帯" || pattern == "band");
 
     let is_daily_summary_func = is_calendar_func || is_band_func;
-
-    let is_flatten_func = pattern_opt.as_ref().map_or(false, |pattern| {
-        pattern == "平" || pattern == "flatten" || pattern == "flat"
-    });
 
     // 日付ごとのタスク数を集計する
     let mut counter: HashMap<NaiveDate, usize> = HashMap::new();
@@ -2444,7 +2422,7 @@ fn execute_show_all_tasks(
                         {
                             task_list_display_rows.push(task_list_display_row.clone());
                         }
-                    } else if is_daily_summary_func || is_flatten_func {
+                    } else if is_daily_summary_func {
                         // カレンダー表示機能を使う時には、タスク一覧は表示しない。
                     } else if pattern == "今" {
                         if get_next_morning_datetime(*scheduled_start)
@@ -2713,11 +2691,6 @@ fn execute_show_all_tasks(
     // 「それぞれの日の自由時間との差」の累積和
     let mut accumulate_duration_diff_to_limit = Duration::minutes(0);
 
-    // 平坦化可能ポイント
-    let mut flattenable_date_opt: Option<NaiveDate> = None;
-    let mut overload_day_is_found = false;
-    let mut flattenable_duration = Duration::seconds(0);
-
     let mut first_caught_up_date = NaiveDate::from_ymd_opt(2037, 12, 31).unwrap();
 
     let mut first_leeway_date = NaiveDate::from_ymd_opt(2037, 12, 31).unwrap();
@@ -2818,21 +2791,6 @@ fn execute_show_all_tasks(
             && **date < first_caught_up_date
         {
             first_caught_up_date = **date;
-        }
-
-        if !overload_day_is_found && accumulate_duration_diff_to_limit > Duration::seconds(0) {
-            overload_day_is_found = true;
-        } else if accumulate_duration_diff_to_limit <= Duration::seconds(300) {
-            let flattenable_duration_cand = Duration::seconds(
-                free_time_minutes * 60 - total_estimated_work_seconds_of_the_date,
-            );
-            if flattenable_date_opt.is_none()
-                && overload_day_is_found
-                && flattenable_duration_cand >= Duration::seconds(900)
-            {
-                flattenable_date_opt = Some(**date);
-                flattenable_duration = flattenable_duration_cand;
-            }
         }
 
         let diff_to_limit_sign: char = if accumulate_duration_diff_to_limit > Duration::minutes(0) {
@@ -3045,7 +3003,7 @@ fn execute_show_all_tasks(
         });
     }
 
-    if !is_daily_summary_func && !is_flatten_func {
+    if !is_daily_summary_func {
         mark_give_up_candidate_rows_by_date(
             &mut task_list_display_rows,
             &shortage_duration_by_date,
@@ -3054,7 +3012,7 @@ fn execute_show_all_tasks(
 
     sort_task_list_display_rows(&mut task_list_display_rows, display_order);
 
-    if !is_daily_summary_func && !is_flatten_func {
+    if !is_daily_summary_func {
         for row in task_list_display_rows.iter() {
             *focused_task_id_opt = Some(row.id);
             writeln_newline(stdout, &row.render_message()).unwrap();
@@ -3082,7 +3040,7 @@ fn execute_show_all_tasks(
     // 逆順にして、下側に直近の日付があるようにする
     daily_summary_rows.reverse();
 
-    if is_calendar_func && !is_flatten_func {
+    if is_calendar_func {
         for (cal_ind, row) in daily_summary_rows.iter().enumerate() {
             writeln_newline(stdout, &row.calendar_message).unwrap();
 
@@ -3192,7 +3150,7 @@ fn execute_show_all_tasks(
         }
 
         writeln_newline(stdout, "").unwrap();
-    } else if is_band_func && !is_flatten_func {
+    } else if is_band_func {
         writeln_newline(stdout, &format_daily_band_legend(supports_ansi_color)).unwrap();
         writeln_newline(stdout, "").unwrap();
 
@@ -3205,7 +3163,7 @@ fn execute_show_all_tasks(
         }
     }
 
-    if !is_flatten_func && !is_band_func {
+    if !is_band_func {
         writeln_newline(stdout, &busy_s).unwrap();
         writeln_newline(stdout, &s).unwrap();
         writeln_newline(stdout, &s_for_rho1).unwrap();
@@ -3213,74 +3171,6 @@ fn execute_show_all_tasks(
     }
 
     writeln_newline(stdout, "").unwrap();
-
-    // flatten
-    if pattern_opt == &Some("平".to_string()) {
-        writeln_newline(
-            stdout,
-            &format!(
-                "flatten dst date : {:?} for {:?}",
-                flattenable_date_opt, flattenable_duration
-            ),
-        )
-        .unwrap();
-
-        if let Some(flattenable_date) = flattenable_date_opt {
-            let mut any_was_flattened = false;
-            let mut src_date = flattenable_date - Duration::days(1);
-
-            while !any_was_flattened && src_date >= naive_dt_today {
-                writeln_newline(stdout, &format!("src_date: {:?}", src_date)).unwrap();
-
-                // dt_dictを未来から見ていき、〆切に違反しない範囲で、翌日に飛ばしていく
-                for (
-                    _ind,
-                    (_naive_date, _has_no_deadline, dt, _neg_priority, rank, deadline_time_opt, id),
-                ) in dt_id_tpl_arr.iter().enumerate().rev()
-                {
-                    let days_until_deadline = match deadline_time_opt {
-                        Some(deadline_time) => (*deadline_time - *dt).num_days(),
-                        None => 100,
-                    };
-
-                    if dt.date_naive() == src_date && days_until_deadline > 0 {
-                        if let Some(task) = task_repository.get_by_id(*id) {
-                            if !task.get_is_on_other_side()
-                                && task.get_estimated_work_seconds() > 0
-                                && flattenable_duration.num_seconds()
-                                    > task.get_estimated_work_seconds()
-                            // && rank != &0
-                            {
-                                flattenable_duration -=
-                                    Duration::seconds(task.get_estimated_work_seconds());
-                                let dst_dt = get_next_morning_datetime(*dt);
-                                task.set_pending_until(dst_dt);
-                                task.set_orig_status(Status::Pending);
-
-                                writeln_newline(
-                                    stdout,
-                                    &format!(
-                                        "{}\t{}\t{}\t{}",
-                                        // dt,
-                                        // dst_dt,
-                                        rank,
-                                        task.get_id(),
-                                        task.get_estimated_work_seconds(),
-                                        task.get_name(),
-                                    ),
-                                )
-                                .unwrap();
-
-                                any_was_flattened = true;
-                            }
-                        }
-                    }
-                }
-
-                src_date -= Duration::days(1);
-            }
-        }
-    }
 }
 
 fn execute_focus(focused_task_id_opt: &mut Option<Uuid>, new_task_id_str: &str) {
@@ -5740,6 +5630,47 @@ fn execute_pack(
     }
 }
 
+fn write_flatten_result(stdout: &mut dyn SchronuWriter, result: &FlattenResult) {
+    let total_work_seconds = result
+        .flattened_tasks
+        .iter()
+        .map(|flattened| flattened.work_seconds)
+        .sum::<i64>();
+
+    for flattened in &result.flattened_tasks {
+        writeln_newline(
+            stdout,
+            &format!(
+                "平\t{}\t{}\t優先度{}\t{}\t{}",
+                flattened.target_date,
+                format_work_seconds_as_hours_minutes(flattened.work_seconds),
+                flattened.priority,
+                flattened.task_id,
+                flattened.name,
+            ),
+        )
+        .unwrap();
+    }
+
+    if result.flattened_tasks.is_empty() {
+        writeln_newline(
+            stdout,
+            "[Info] 28日以内に延期可能な空きとタスクの組み合わせはありません。",
+        )
+        .unwrap();
+    } else {
+        writeln_newline(
+            stdout,
+            &format!(
+                "平: {}件 {}",
+                result.flattened_tasks.len(),
+                format_work_seconds_as_hours_minutes(total_work_seconds),
+            ),
+        )
+        .unwrap();
+    }
+}
+
 fn execute(
     stdout: &mut dyn SchronuWriter,
     task_repository: &mut dyn TaskRepositoryTrait,
@@ -6416,17 +6347,8 @@ fn execute(
             }
         }
         "平" | "flatten" | "flat" => {
-            for _ in 0..7 {
-                let pattern_opt = Some("平".to_string());
-                execute_show_all_tasks(
-                    stdout,
-                    focused_task_id_opt,
-                    task_repository,
-                    free_time_manager,
-                    &pattern_opt,
-                    TaskListDisplayOrder::ScheduledStartDesc,
-                );
-            }
+            let result = flatten_tasks(task_repository, free_time_manager);
+            write_flatten_result(stdout, &result);
         }
         "詰" | "pack" => {
             execute_pack(stdout, task_repository, free_time_manager);
@@ -6861,6 +6783,35 @@ fn test_execute_flatten_期限待機残作業0を除外してaliasでも同じ�
         }
         assert!(result.output.contains("平: 1件 00:15"));
     }
+}
+
+#[test]
+fn test_execute_flatten_29日後の空きは使わず状態を変更しない() {
+    let now = Local.with_ymd_and_hms(2026, 8, 13, 12, 0, 0).unwrap();
+    let outside_target_date = NaiveDate::from_ymd_opt(2026, 9, 11).unwrap();
+    let root = Task::new("平テスト");
+    root.set_estimated_work_seconds(0);
+    let target = add_scheduled_child_for_test(&root, "範囲外", now, 30);
+
+    let result = execute_flatten_command_for_test(
+        "平",
+        now,
+        root,
+        HashMap::from([(outside_target_date, 30)]),
+    );
+
+    assert_eq!(
+        result
+            .task
+            .get_by_id(target.get_id())
+            .unwrap()
+            .get_pending_until(),
+        now
+    );
+    assert_eq!(
+        result.output,
+        "[Info] 28日以内に延期可能な空きとタスクの組み合わせはありません。\n"
+    );
 }
 
 #[test]

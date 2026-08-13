@@ -18,7 +18,6 @@ pub fn calculate_daily_leeway_seconds(
         .floor()
         .max(0.0) as i64
 }
-
 pub fn calculate_daily_rho_diff_hours(
     free_time_minutes: i64,
     repetitive_work_seconds: i64,
@@ -99,6 +98,13 @@ mod tests {
         let actual = calculate_daily_leeway_seconds(10 * 60, 2 * 3600, 6 * 3600);
 
         assert_eq!(actual, 96 * 60);
+    }
+
+    #[test]
+    fn calculate_daily_rho_diff_hours_反復時間を分子と分母から除いて計算する() {
+        let actual = calculate_daily_rho_diff_hours(10 * 60, 2 * 3600, 6 * 3600);
+
+        assert_eq!(actual, -1.6);
     }
 
     #[test]
