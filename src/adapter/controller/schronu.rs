@@ -6636,6 +6636,7 @@ fn test_execute_flatten_累積余差が回復しなくても最初の空き日�
         "平\t2026-08-15\t00:30\t優先度0\t{}\t移動対象",
         target.get_id()
     )));
+    assert!(result.output.contains("\t延期元: 2026-08-13"));
     assert!(result.output.contains("平: 1件 00:30"));
 }
 
