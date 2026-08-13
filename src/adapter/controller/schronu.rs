@@ -6886,8 +6886,15 @@ fn test_execute_flatten_日容量を超えるtaskだけでは解消不能とし�
             .get_pending_until(),
         now
     );
-    assert!(result.output.starts_with("[Stop] 平\t2026-08-13\t"));
-    assert!(result.output.ends_with("変更はありません。\n"));
+    assert!(result.output.starts_with("平: 0件 00:00 (未解消1日)\n"));
+    assert!(result
+        .output
+        .contains("[Warn] 平\t2026-08-13\t未解消 00:30"));
+    assert!(result.output.contains("1日の最大容量を超える: 1件"));
+    assert!(result
+        .output
+        .contains(&format!("{}\t大きすぎる", target.get_id())));
+    assert!(!result.output.contains("[Stop]"));
 }
 
 #[test]
@@ -6913,7 +6920,10 @@ fn test_execute_flatten_業務日境界をまたぐtaskは延期しない() {
             .get_pending_until(),
         now
     );
-    assert!(result.output.contains("変更はありません。"));
+    assert!(result.output.contains("業務日境界をまたぐ: 1件"));
+    assert!(result
+        .output
+        .contains(&format!("{}\t境界をまたぐ", target.get_id())));
 }
 
 #[test]
@@ -6950,7 +6960,7 @@ fn test_execute_flatten_延期対象自身の期限補正で翌日06時を維持
     let today = now.date_naive();
     let root = Task::new("平テスト");
     root.set_estimated_work_seconds(0);
-    let target = add_scheduled_child_for_test(&root, "自身に期限", now, 30);
+    let target = add_scheduled_child_for_test(&root, "平日を表すダミータスク(8/21)", now, 30);
     target.set_deadline_time_opt(Some(
         subjective_date_start(today + Duration::days(1)) + Duration::minutes(30),
     ));
@@ -6970,7 +6980,13 @@ fn test_execute_flatten_延期対象自身の期限補正で翌日06時を維持
             .get_pending_until(),
         now
     );
-    assert!(result.output.contains("変更はありません。"));
+    assert!(result
+        .output
+        .contains("自身の期限により翌日06:00を維持できない: 1件"));
+    assert!(result.output.contains(&format!(
+        "{}\t平日を表すダミータスク(8/21)",
+        target.get_id()
+    )));
 }
 
 #[test]
@@ -7012,7 +7028,7 @@ fn test_execute_flatten_待機taskと残作業0を延期候補から除外する
 }
 
 #[test]
-fn test_execute_flatten_35日後への退避で親の期限を超えるなら全変更を破棄する() {
+fn test_execute_flatten_35日後への退避で親の期限を超えるなら未解消として残す() {
     let now = Local.with_ymd_and_hms(2026, 8, 13, 6, 0, 0).unwrap();
     let today = now.date_naive();
     let boundary_date = today + Duration::days(28);
@@ -7048,7 +7064,99 @@ fn test_execute_flatten_35日後への退避で親の期限を超えるなら全
             .get_pending_until(),
         subjective_date_start(boundary_date)
     );
-    assert!(result.output.contains("変更はありません。"));
+    assert!(result.output.contains("平: 0件 00:00 (未解消1日)"));
+    assert!(result
+        .output
+        .contains("仮延期によって関連taskの期限を超える: 1件"));
+    assert!(!result.output.contains("[Stop]"));
+}
+
+#[test]
+fn test_execute_flatten_延期不能日を飛ばして翌日以降の平坦化を保存する() {
+    let now = Local.with_ymd_and_hms(2026, 8, 13, 6, 0, 0).unwrap();
+    let today = now.date_naive();
+    let root = Task::new("平テスト");
+    root.set_estimated_work_seconds(0);
+    let blocked = add_scheduled_child_for_test(&root, "今日の固定負荷", now, 90);
+    let tomorrow_start = subjective_date_start(today + Duration::days(1));
+    let tomorrow_first = add_scheduled_child_for_test(&root, "翌日の先行", tomorrow_start, 30);
+    let tomorrow_late = add_scheduled_child_for_test(
+        &root,
+        "翌日の延期対象",
+        tomorrow_start + Duration::minutes(30),
+        30,
+    );
+
+    let result = execute_flatten_command_for_test(
+        "平",
+        now,
+        root,
+        HashMap::from([
+            (today, 60),
+            (today + Duration::days(1), 30),
+            (today + Duration::days(2), 30),
+        ]),
+    );
+
+    assert_eq!(
+        result
+            .task
+            .get_by_id(blocked.get_id())
+            .unwrap()
+            .get_pending_until(),
+        now
+    );
+    assert_eq!(
+        result
+            .task
+            .get_by_id(tomorrow_first.get_id())
+            .unwrap()
+            .get_pending_until(),
+        tomorrow_start
+    );
+    assert_eq!(
+        result
+            .task
+            .get_by_id(tomorrow_late.get_id())
+            .unwrap()
+            .get_pending_until(),
+        subjective_date_start(today + Duration::days(2))
+    );
+    assert!(result.output.contains("平: 1件 00:30 (未解消1日)"));
+    assert_eq!(result.output.matches("[Warn] 平\t2026-08-13").count(), 1);
+}
+
+#[test]
+fn test_execute_flatten_未解消理由を固定順で表示して同じtaskを重複計上しない() {
+    let now = Local.with_ymd_and_hms(2026, 8, 13, 6, 0, 0).unwrap();
+    let today = now.date_naive();
+    let root = Task::new("平テスト");
+    root.set_estimated_work_seconds(0);
+    let waiting = add_scheduled_child_for_test(&root, "待機かつ大きすぎる", now, 90);
+    waiting.set_is_on_other_side(true);
+    let own_deadline = add_scheduled_child_for_test(&root, "自身に期限", now, 30);
+    own_deadline.set_deadline_time_opt(Some(
+        subjective_date_start(today + Duration::days(1)) + Duration::minutes(30),
+    ));
+
+    let result = execute_flatten_command_for_test(
+        "平",
+        now,
+        root,
+        HashMap::from([(today, 60), (today + Duration::days(1), 60)]),
+    );
+
+    let waiting_reason = result.output.find("相手待ち: 1件").unwrap();
+    let deadline_reason = result
+        .output
+        .find("自身の期限により翌日06:00を維持できない: 1件")
+        .unwrap();
+    assert!(waiting_reason < deadline_reason);
+    assert_eq!(
+        result.output.matches(&waiting.get_id().to_string()).count(),
+        1
+    );
+    assert!(!result.output.contains("1日の最大容量を超える:"));
 }
 
 #[test]
