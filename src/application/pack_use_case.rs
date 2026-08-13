@@ -19,6 +19,7 @@ pub struct PackedTask {
     pub task_id: Uuid,
     pub name: String,
     pub priority: i64,
+    pub source_date: NaiveDate,
     pub target_date: NaiveDate,
     pub work_seconds: i64,
 }
@@ -109,6 +110,7 @@ pub fn pack_tasks(
                     task_id: candidate.task_id,
                     name: candidate.name.clone(),
                     priority: candidate.priority,
+                    source_date: subjective_date(current_planned_start),
                     target_date: *target_date,
                     work_seconds: candidate.work_seconds,
                 });

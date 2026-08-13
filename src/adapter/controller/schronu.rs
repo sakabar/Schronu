@@ -5686,26 +5686,13 @@ fn execute_pack(
         writeln_newline(
             stdout,
             &format!(
-                "詰\t{}\t{}\t優先度{}\t{}\t{}",
+                "詰\t{}\t{}\t{}\t優先度{}\t{}\t{}",
+                packed.source_date,
                 packed.target_date,
                 format_work_seconds_as_hours_minutes(packed.work_seconds),
                 packed.priority,
                 packed.task_id,
                 packed.name,
-            ),
-        )
-        .unwrap();
-    }
-
-    for skipped in &result.skipped_tasks {
-        writeln_newline(
-            stdout,
-            &format!(
-                "[Skip] 優先度{}\t{}\t{}\t必要{}",
-                skipped.priority,
-                skipped.task_id,
-                skipped.name,
-                format_work_seconds_as_hours_minutes(skipped.required_work_seconds),
             ),
         )
         .unwrap();
