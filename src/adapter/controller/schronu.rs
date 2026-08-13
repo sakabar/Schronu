@@ -6985,8 +6985,8 @@ fn test_execute_flatten_業務日境界をまたぐtaskは延期しない() {
 
 #[test]
 fn test_execute_flatten_業務日境界をまたぐtaskの全作業時間を開始日の業務日に計上する() {
-    let now = Local.with_ymd_and_hms(2026, 8, 13, 6, 0, 0).unwrap();
-    let today = now.date_naive();
+    let now = Local.with_ymd_and_hms(2026, 8, 13, 5, 0, 0).unwrap();
+    let today = (get_next_morning_datetime(now) - Duration::days(1)).date_naive();
     let root = Task::new("平テスト");
     root.set_estimated_work_seconds(0);
     add_scheduled_child_for_test(&root, "日境界をまたぐ", now, 25 * 60);
@@ -6999,10 +6999,9 @@ fn test_execute_flatten_業務日境界をまたぐtaskの全作業時間を開�
     );
 
     assert!(result.output.starts_with("平: 0件 00:00 (未解消1日)\n"));
-    assert!(result.output.contains(&format!(
-        "[Warn] 平\t{}\t未解消 01:00",
-        today
-    )));
+    assert!(result
+        .output
+        .contains(&format!("[Warn] 平\t{}\t未解消 25:00", today)));
     assert!(result.output.contains("業務日境界をまたぐ: 1件"));
 }
 

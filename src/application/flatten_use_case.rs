@@ -7,7 +7,6 @@ use super::schedule_use_case::{
 };
 use crate::entity::task::Status;
 use chrono::{DateTime, Duration, Local, NaiveDate};
-use std::cmp::min;
 use std::collections::{HashMap, HashSet};
 use uuid::Uuid;
 
@@ -427,13 +426,7 @@ fn add_scheduled_work_seconds_by_date(
     scheduled_start: DateTime<Local>,
     scheduled_end: DateTime<Local>,
 ) {
-    let mut cursor = scheduled_start;
-    while cursor < scheduled_end {
-        let date = subjective_date(cursor);
-        let next_date_start = subjective_date_start(date + Duration::days(1));
-        let segment_end = min(scheduled_end, next_date_start);
-        *scheduled_work_seconds_by_date.entry(date).or_default() +=
-            (segment_end - cursor).num_seconds();
-        cursor = segment_end;
-    }
+    let date = subjective_date(scheduled_start);
+    *scheduled_work_seconds_by_date.entry(date).or_default() +=
+        (scheduled_end - scheduled_start).num_seconds();
 }
