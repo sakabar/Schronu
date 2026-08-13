@@ -6945,6 +6945,35 @@ fn test_execute_flatten_終了時刻が期限と等しいtaskは延期できる(
 }
 
 #[test]
+fn test_execute_flatten_延期対象自身の期限補正で翌日06時を維持できなければ延期しない() {
+    let now = Local.with_ymd_and_hms(2026, 8, 13, 6, 0, 0).unwrap();
+    let today = now.date_naive();
+    let root = Task::new("平テスト");
+    root.set_estimated_work_seconds(0);
+    let target = add_scheduled_child_for_test(&root, "自身に期限", now, 30);
+    target.set_deadline_time_opt(Some(
+        subjective_date_start(today + Duration::days(1)) + Duration::minutes(30),
+    ));
+
+    let result = execute_flatten_command_for_test(
+        "平",
+        now,
+        root,
+        HashMap::from([(today, 15), (today + Duration::days(1), 30)]),
+    );
+
+    assert_eq!(
+        result
+            .task
+            .get_by_id(target.get_id())
+            .unwrap()
+            .get_pending_until(),
+        now
+    );
+    assert!(result.output.contains("変更はありません。"));
+}
+
+#[test]
 fn test_execute_flatten_待機taskと残作業0を延期候補から除外する() {
     let now = Local.with_ymd_and_hms(2026, 8, 13, 6, 0, 0).unwrap();
     let today = now.date_naive();

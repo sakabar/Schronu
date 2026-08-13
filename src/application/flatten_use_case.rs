@@ -48,6 +48,7 @@ struct FlattenCandidate {
     deadline_time: Option<DateTime<Local>>,
     rank: usize,
     scheduled_start: DateTime<Local>,
+    estimated_work_seconds: i64,
 }
 
 pub fn flatten_tasks(
@@ -102,8 +103,17 @@ pub fn flatten_tasks(
 
         let mut accepted = None;
         for candidate in candidates {
+            let target_datetime = subjective_date_start(target_date);
+            if effective_pending_until(
+                target_datetime,
+                candidate.deadline_time,
+                candidate.estimated_work_seconds,
+            ) != target_datetime
+            {
+                continue;
+            }
             let mut trial_overrides = overrides.clone();
-            trial_overrides.insert(candidate.task_id, subjective_date_start(target_date));
+            trial_overrides.insert(candidate.task_id, target_datetime);
             let trial_schedule =
                 get_schedule_with_first_available_time_overrides(repository, &trial_overrides);
             if introduces_deadline_violation(&schedule, &trial_schedule) {
@@ -221,9 +231,25 @@ fn collect_candidates(
                     deadline_time: first.task.deadline_time,
                     rank: first.rank,
                     scheduled_start,
+                    estimated_work_seconds: first.task.estimated_work_seconds,
                 })
         })
         .collect()
+}
+
+fn effective_pending_until(
+    requested: DateTime<Local>,
+    deadline_time: Option<DateTime<Local>>,
+    estimated_work_seconds: i64,
+) -> DateTime<Local> {
+    const DEADLINE_BUFFER_SECONDS: i64 = 5 * 60;
+    deadline_time.map_or(requested, |deadline| {
+        requested.min(
+            deadline
+                - Duration::seconds(estimated_work_seconds)
+                - Duration::seconds(DEADLINE_BUFFER_SECONDS),
+        )
+    })
 }
 
 fn sort_candidates_for_deferral(candidates: &mut [FlattenCandidate]) {
