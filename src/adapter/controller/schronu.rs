@@ -5588,6 +5588,12 @@ fn format_work_seconds_as_hours_minutes(work_seconds: i64) -> String {
     format!("{:02}:{:02}", total_minutes / 60, total_minutes % 60)
 }
 
+fn format_work_seconds_as_hours_minutes_rounded_up(work_seconds: i64) -> String {
+    let positive_seconds = work_seconds.max(0);
+    let total_minutes = (positive_seconds + 59) / 60;
+    format!("{:02}:{:02}", total_minutes / 60, total_minutes % 60)
+}
+
 fn execute_pack(
     stdout: &mut dyn SchronuWriter,
     task_repository: &dyn TaskRepositoryTrait,
@@ -5691,7 +5697,9 @@ fn write_flatten_result(stdout: &mut dyn SchronuWriter, result: &FlattenResult) 
                 &format!(
                     "[Warn] 平\t{}\t未解消 {}",
                     unresolved.date,
-                    format_work_seconds_as_hours_minutes(unresolved.excess_work_seconds),
+                    format_work_seconds_as_hours_minutes_rounded_up(
+                        unresolved.excess_work_seconds,
+                    ),
                 ),
             )
             .unwrap();
@@ -6923,6 +6931,27 @@ fn test_execute_flatten_日容量を超えるtaskだけでは解消不能とし�
         .output
         .contains(&format!("{}\t大きすぎる", target.get_id())));
     assert!(!result.output.contains("[Stop]"));
+}
+
+#[test]
+fn test_execute_flatten_未解消の超過が1分未満でも切り上げて表示する() {
+    let now = Local.with_ymd_and_hms(2026, 8, 13, 6, 0, 0).unwrap();
+    let today = now.date_naive();
+    let root = Task::new("平テスト");
+    root.set_estimated_work_seconds(0);
+    let target = add_scheduled_child_for_test(&root, "1秒超過", now, 60);
+    target.set_estimated_work_seconds(60 * 60 + 1);
+
+    let result = execute_flatten_command_for_test(
+        "平",
+        now,
+        root,
+        HashMap::from([(today, 60), (today + Duration::days(1), 60)]),
+    );
+
+    assert!(result
+        .output
+        .contains("[Warn] 平\t2026-08-13\t未解消 00:01"));
 }
 
 #[test]
