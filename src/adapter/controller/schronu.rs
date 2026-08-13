@@ -71,6 +71,7 @@ const MY_ASCII_SET: &AsciiSet = &CONTROLS.add(b' ');
 enum FocusSelectionMode {
     HighestPriority,
     LowestPriority { recent_days: i64 },
+    Explicit,
 }
 
 impl FocusSelectionMode {
@@ -84,6 +85,7 @@ impl FocusSelectionMode {
                     format!("低 {}", recent_days)
                 }
             }
+            FocusSelectionMode::Explicit => "明示".to_string(),
         }
     }
 }
@@ -440,6 +442,7 @@ fn select_focus_task_id(
         FocusSelectionMode::LowestPriority { recent_days } => {
             task_repository.get_defer_candidate_leaf_task_id(recent_days)
         }
+        FocusSelectionMode::Explicit => get_focus(task_repository).map(|task| task.id),
     }
 }
 
@@ -3178,6 +3181,14 @@ fn execute_show_all_tasks(
 fn execute_focus(focused_task_id_opt: &mut Option<Uuid>, new_task_id_str: &str) {
     if let Ok(id) = Uuid::parse_str(new_task_id_str) {
         *focused_task_id_opt = Some(id)
+    }
+}
+
+fn parse_explicit_focus_task_id(command: &str) -> Option<Uuid> {
+    let mut tokens = command.split_whitespace();
+    match (tokens.next(), tokens.next()) {
+        (Some("見" | "focus" | "fc"), Some(task_id)) => Uuid::parse_str(task_id).ok(),
+        _ => None,
     }
 }
 
@@ -7696,11 +7707,14 @@ fn run_cli_repository_transaction<T>(
 fn reconcile_focus_after_reload(
     task_repository: &mut dyn TaskRepositoryTrait,
     focused_task_id_opt: &mut Option<Uuid>,
-    focus_selection_mode: FocusSelectionMode,
+    focus_selection_mode: &mut FocusSelectionMode,
 ) -> bool {
     let should_reselect = match *focused_task_id_opt {
         Some(focused_task_id) => match task_repository.get_by_id(focused_task_id) {
-            Some(focused_task) => focused_task.get_status() == Status::Done,
+            Some(focused_task) => {
+                focused_task.get_status() == Status::Done
+                    && *focus_selection_mode != FocusSelectionMode::Explicit
+            }
             None => true,
         },
         None => true,
@@ -7710,7 +7724,10 @@ fn reconcile_focus_after_reload(
     }
 
     let previous_focus = *focused_task_id_opt;
-    *focused_task_id_opt = select_focus_task_id(task_repository, focus_selection_mode);
+    if *focus_selection_mode == FocusSelectionMode::Explicit {
+        *focus_selection_mode = FocusSelectionMode::HighestPriority;
+    }
+    *focused_task_id_opt = select_focus_task_id(task_repository, *focus_selection_mode);
     previous_focus != *focused_task_id_opt
 }
 
@@ -8048,11 +8065,12 @@ fn test_reload後にfocus中taskがdoneなら次候補を選び直す() {
     let mut repository = TestTaskRepository::new(root, now);
     repository.highest_priority_leaf_task_id_opt = Some(next.get_id());
     let mut focused_task_id_opt = Some(done.get_id());
+    let mut focus_selection_mode = FocusSelectionMode::HighestPriority;
 
     let changed = reconcile_focus_after_reload(
         &mut repository,
         &mut focused_task_id_opt,
-        FocusSelectionMode::HighestPriority,
+        &mut focus_selection_mode,
     );
 
     assert!(changed);
@@ -8102,6 +8120,67 @@ fn test_interactive_submitは製品event経路でload実行保存する() {
         45 * 60
     );
     assert!(StorageLock::acquire(&storage_dir.path, LockMode::Mcp).is_ok());
+}
+
+#[test]
+fn test_interactive_submitの見は完了済みtaskへの明示focusを更新後も保持する() {
+    let storage_dir = TestStorageDir::new();
+    std::fs::create_dir_all(&storage_dir.path).unwrap();
+    let now = Local.with_ymd_and_hms(2026, 8, 12, 12, 0, 0).unwrap();
+    let root = Task::new("root");
+    let done = root.create_as_last_child(TaskAttr::new("完了済みtask"));
+    done.set_orig_status(Status::Done);
+    let next = root.create_as_last_child(TaskAttr::new("次候補"));
+    let done_id = done.get_id();
+    let next_id = next.get_id();
+    let mut repository =
+        TestTaskRepository::new(root, now).with_storage_directory(&storage_dir.path);
+    repository.highest_priority_leaf_task_id_opt = Some(next_id);
+    let mut free_time_manager = TestFreeTimeManager;
+    let mut stdout = TestWriter::new();
+    let mut focused_task_id_opt = Some(next_id);
+    let mut last_focused_task_id_opt = Some(next_id);
+    let mut focus_started_datetime = now;
+    let mut focus_selection_mode = FocusSelectionMode::HighestPriority;
+    let command = format!("見 {done_id}");
+
+    let submit_outcome = handle_interactive_repository_event(
+        &mut stdout,
+        &mut repository,
+        &mut free_time_manager,
+        InteractiveRepositoryState {
+            focused_task_id_opt: &mut focused_task_id_opt,
+            last_focused_task_id_opt: &mut last_focused_task_id_opt,
+            focus_started_datetime: &mut focus_started_datetime,
+            focus_selection_mode: &mut focus_selection_mode,
+        },
+        InteractiveRepositoryEvent::Submit { line: &command },
+    );
+
+    assert!(matches!(
+        submit_outcome,
+        InteractiveRepositoryEventOutcome::CommandExecuted(_)
+    ));
+    assert_eq!(focused_task_id_opt, Some(done_id));
+
+    let refresh_outcome = handle_interactive_repository_event(
+        &mut stdout,
+        &mut repository,
+        &mut free_time_manager,
+        InteractiveRepositoryState {
+            focused_task_id_opt: &mut focused_task_id_opt,
+            last_focused_task_id_opt: &mut last_focused_task_id_opt,
+            focus_started_datetime: &mut focus_started_datetime,
+            focus_selection_mode: &mut focus_selection_mode,
+        },
+        InteractiveRepositoryEvent::Refresh,
+    );
+
+    assert!(matches!(
+        refresh_outcome,
+        InteractiveRepositoryEventOutcome::Continue
+    ));
+    assert_eq!(focused_task_id_opt, Some(done_id));
 }
 
 #[test]
@@ -9272,6 +9351,7 @@ fn execute_interactive_command(
             &format!("後 {seconds}秒"),
         );
     } else {
+        let previous_focused_task_id_opt = *focused_task_id_opt;
         execute(
             stdout,
             task_repository,
@@ -9280,10 +9360,17 @@ fn execute_interactive_command(
             focus_started_datetime,
             command,
         );
+        if parse_explicit_focus_task_id(command)
+            .is_some_and(|task_id| *focused_task_id_opt == Some(task_id))
+        {
+            *focus_selection_mode = FocusSelectionMode::Explicit;
+        } else if previous_focused_task_id_opt != *focused_task_id_opt {
+            *focus_selection_mode = FocusSelectionMode::HighestPriority;
+        }
     }
 
     task_repository.sync_clock(Local::now());
-    reconcile_focus_after_reload(task_repository, focused_task_id_opt, *focus_selection_mode)
+    reconcile_focus_after_reload(task_repository, focused_task_id_opt, focus_selection_mode)
 }
 
 struct InteractiveRepositoryState<'a> {
@@ -9324,7 +9411,7 @@ fn reconcile_interactive_state_after_reload(
     if reconcile_focus_after_reload(
         task_repository,
         state.focused_task_id_opt,
-        *state.focus_selection_mode,
+        state.focus_selection_mode,
     ) {
         *state.last_focused_task_id_opt = None;
         *state.focus_started_datetime = now;
