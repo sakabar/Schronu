@@ -17,6 +17,7 @@ pub struct FlattenedTask {
     pub task_id: Uuid,
     pub name: String,
     pub priority: i64,
+    pub source_date: NaiveDate,
     pub target_date: NaiveDate,
     pub work_seconds: i64,
 }
@@ -146,6 +147,7 @@ fn find_next_flattened_task(
                 task_id: candidate.task_id,
                 name: candidate.name.clone(),
                 priority: candidate.priority,
+                source_date: candidate.source_date,
                 target_date: *target_date,
                 work_seconds: candidate.work_seconds,
             });
