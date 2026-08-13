@@ -24,12 +24,29 @@ pub struct FlattenedTask {
     pub work_seconds: i64,
 }
 
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub enum UnresolvedReason {
+    OnOtherSide,
+    CrossesBusinessDay,
+    ExceedsDailyCapacity,
+    OwnDeadline,
+    RelatedDeadline,
+    Other,
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct FlattenFailure {
+pub struct UnresolvedReasonSummary {
+    pub reason: UnresolvedReason,
+    pub task_count: usize,
+    pub representative_task_id: Option<Uuid>,
+    pub representative_task_name: Option<String>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct UnresolvedOverload {
     pub date: NaiveDate,
-    pub task_id: Option<Uuid>,
-    pub task_name: Option<String>,
-    pub reason: String,
+    pub excess_work_seconds: i64,
+    pub reasons: Vec<UnresolvedReasonSummary>,
 }
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
@@ -38,17 +55,21 @@ pub struct FlattenResult {
     pub overflowed_task_count: usize,
     pub overflowed_work_seconds: i64,
     pub had_overload: bool,
-    pub failure: Option<FlattenFailure>,
+    pub unresolved_overloads: Vec<UnresolvedOverload>,
 }
 
 #[derive(Clone)]
 struct FlattenCandidate {
     task_id: Uuid,
+    name: String,
     priority: i64,
     deadline_time: Option<DateTime<Local>>,
     rank: usize,
     scheduled_start: DateTime<Local>,
     estimated_work_seconds: i64,
+    total_work_seconds: i64,
+    is_on_other_side: bool,
+    all_work_is_on_overload_date: bool,
 }
 
 pub fn flatten_tasks(
@@ -81,12 +102,16 @@ pub fn flatten_tasks(
     let mut overrides = HashMap::<Uuid, DateTime<Local>>::new();
     let mut movement_order = Vec::<Uuid>::new();
     let mut movement_ids = HashSet::<Uuid>::new();
+    let mut blocked_dates = HashSet::<NaiveDate>::new();
+    let mut unresolved_overloads = Vec::<UnresolvedOverload>::new();
     let mut had_overload = false;
 
     loop {
         let usage = calculate_scheduled_work_seconds_by_date(&schedule);
         let overload_date_opt = dates.iter().find(|date| {
-            usage.get(date).copied().unwrap_or(0) > capacities.get(date).copied().unwrap_or(0)
+            !blocked_dates.contains(date)
+                && usage.get(date).copied().unwrap_or(0)
+                    > capacities.get(date).copied().unwrap_or(0)
         });
         let Some(overload_date) = overload_date_opt.copied() else {
             break;
@@ -98,11 +123,16 @@ pub fn flatten_tasks(
         } else {
             overload_date + Duration::days(1)
         };
-        let mut candidates = collect_candidates(&schedule, overload_date, maximum_daily_capacity);
+        let mut candidates = collect_candidates(&schedule, overload_date);
         sort_candidates_for_deferral(&mut candidates);
 
         let mut accepted = None;
+        let mut rejected = Vec::<(FlattenCandidate, UnresolvedReason)>::new();
         for candidate in candidates {
+            if let Some(reason) = candidate_precheck_reason(&candidate, maximum_daily_capacity) {
+                rejected.push((candidate, reason));
+                continue;
+            }
             let target_datetime = subjective_date_start(target_date);
             if effective_pending_until(
                 target_datetime,
@@ -110,6 +140,7 @@ pub fn flatten_tasks(
                 candidate.estimated_work_seconds,
             ) != target_datetime
             {
+                rejected.push((candidate, UnresolvedReason::OwnDeadline));
                 continue;
             }
             let mut trial_overrides = overrides.clone();
@@ -117,6 +148,7 @@ pub fn flatten_tasks(
             let trial_schedule =
                 get_schedule_with_first_available_time_overrides(repository, &trial_overrides);
             if introduces_deadline_violation(&schedule, &trial_schedule) {
+                rejected.push((candidate, UnresolvedReason::RelatedDeadline));
                 continue;
             }
             accepted = Some((candidate, trial_overrides, trial_schedule));
@@ -124,7 +156,15 @@ pub fn flatten_tasks(
         }
 
         let Some((candidate, trial_overrides, trial_schedule)) = accepted else {
-            return failed_result(overload_date, &schedule, had_overload);
+            let excess_work_seconds = usage.get(&overload_date).copied().unwrap_or(0)
+                - capacities.get(&overload_date).copied().unwrap_or(0);
+            unresolved_overloads.push(summarize_unresolved_overload(
+                overload_date,
+                excess_work_seconds,
+                rejected,
+            ));
+            blocked_dates.insert(overload_date);
+            continue;
         };
         if movement_ids.insert(candidate.task_id) {
             movement_order.push(candidate.task_id);
@@ -174,7 +214,7 @@ pub fn flatten_tasks(
             .sum(),
         flattened_tasks,
         had_overload,
-        failure: None,
+        unresolved_overloads,
     }
 }
 
@@ -198,7 +238,6 @@ fn collect_original_task_details(
 fn collect_candidates(
     schedule: &[ScheduledTaskView],
     overload_date: NaiveDate,
-    maximum_daily_capacity: i64,
 ) -> Vec<FlattenCandidate> {
     let mut segments_by_task = HashMap::<Uuid, Vec<&ScheduledTaskView>>::new();
     for scheduled in schedule {
@@ -212,6 +251,13 @@ fn collect_candidates(
         .into_values()
         .filter_map(|segments| {
             let first = segments.first().copied()?;
+            if first.total_work_seconds <= 0
+                || !segments
+                    .iter()
+                    .any(|segment| segment_overlaps_date(segment, overload_date))
+            {
+                return None;
+            }
             let scheduled_start = segments
                 .iter()
                 .map(|segment| segment.scheduled_start)
@@ -221,20 +267,41 @@ fn collect_candidates(
                     && segment.scheduled_end
                         <= subjective_date_start(overload_date + Duration::days(1))
             });
-            (all_work_is_on_overload_date
-                && !first.task.is_on_other_side
-                && first.total_work_seconds > 0
-                && first.total_work_seconds <= maximum_daily_capacity)
-                .then_some(FlattenCandidate {
-                    task_id: first.task.id,
-                    priority: first.task.priority,
-                    deadline_time: first.task.deadline_time,
-                    rank: first.rank,
-                    scheduled_start,
-                    estimated_work_seconds: first.task.estimated_work_seconds,
-                })
+            Some(FlattenCandidate {
+                task_id: first.task.id,
+                name: first.task.name.clone(),
+                priority: first.task.priority,
+                deadline_time: first.task.deadline_time,
+                rank: first.rank,
+                scheduled_start,
+                estimated_work_seconds: first.task.estimated_work_seconds,
+                total_work_seconds: first.total_work_seconds,
+                is_on_other_side: first.task.is_on_other_side,
+                all_work_is_on_overload_date,
+            })
         })
         .collect()
+}
+
+fn segment_overlaps_date(segment: &ScheduledTaskView, date: NaiveDate) -> bool {
+    let date_start = subjective_date_start(date);
+    let next_date_start = subjective_date_start(date + Duration::days(1));
+    segment.scheduled_start < next_date_start && date_start < segment.scheduled_end
+}
+
+fn candidate_precheck_reason(
+    candidate: &FlattenCandidate,
+    maximum_daily_capacity: i64,
+) -> Option<UnresolvedReason> {
+    if candidate.is_on_other_side {
+        Some(UnresolvedReason::OnOtherSide)
+    } else if !candidate.all_work_is_on_overload_date {
+        Some(UnresolvedReason::CrossesBusinessDay)
+    } else if candidate.total_work_seconds > maximum_daily_capacity {
+        Some(UnresolvedReason::ExceedsDailyCapacity)
+    } else {
+        None
+    }
 }
 
 fn effective_pending_until(
@@ -294,23 +361,50 @@ fn scheduled_end_by_task(schedule: &[ScheduledTaskView]) -> HashMap<Uuid, DateTi
     ends
 }
 
-fn failed_result(
+fn summarize_unresolved_overload(
     date: NaiveDate,
-    schedule: &[ScheduledTaskView],
-    had_overload: bool,
-) -> FlattenResult {
-    let blocking = schedule
-        .iter()
-        .find(|scheduled| subjective_date(scheduled.scheduled_start) == date);
-    FlattenResult {
-        had_overload,
-        failure: Some(FlattenFailure {
-            date,
-            task_id: blocking.map(|scheduled| scheduled.task.id),
-            task_name: blocking.map(|scheduled| scheduled.task.name.clone()),
-            reason: "延期可能なタスクがありません".to_string(),
-        }),
-        ..FlattenResult::default()
+    excess_work_seconds: i64,
+    rejected: Vec<(FlattenCandidate, UnresolvedReason)>,
+) -> UnresolvedOverload {
+    let mut summaries = Vec::<UnresolvedReasonSummary>::new();
+    for reason in [
+        UnresolvedReason::OnOtherSide,
+        UnresolvedReason::CrossesBusinessDay,
+        UnresolvedReason::ExceedsDailyCapacity,
+        UnresolvedReason::OwnDeadline,
+        UnresolvedReason::RelatedDeadline,
+        UnresolvedReason::Other,
+    ] {
+        let matching = rejected
+            .iter()
+            .filter(|(_, rejected_reason)| *rejected_reason == reason)
+            .collect::<Vec<_>>();
+        if matching.is_empty() {
+            continue;
+        }
+        summaries.push(UnresolvedReasonSummary {
+            reason,
+            task_count: matching.len(),
+            representative_task_id: matching.first().map(|(candidate, _)| candidate.task_id),
+            representative_task_name: matching
+                .first()
+                .map(|(candidate, _)| candidate.name.clone()),
+        });
+    }
+
+    if summaries.is_empty() {
+        summaries.push(UnresolvedReasonSummary {
+            reason: UnresolvedReason::Other,
+            task_count: 1,
+            representative_task_id: None,
+            representative_task_name: None,
+        });
+    }
+
+    UnresolvedOverload {
+        date,
+        excess_work_seconds,
+        reasons: summaries,
     }
 }
 

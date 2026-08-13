@@ -12,7 +12,7 @@ use schronu::application::daily_capacity::{
     calculate_daily_rho_diff_hours, calculate_free_time_minutes_for_subjective_date,
     calculate_full_day_free_time_minutes_for_subjective_date, END_OF_DAY_DURATION, RHO_GOAL,
 };
-use schronu::application::flatten_use_case::{flatten_tasks, FlattenResult};
+use schronu::application::flatten_use_case::{flatten_tasks, FlattenResult, UnresolvedReason};
 use schronu::application::interface::FreeTimeManagerTrait;
 #[cfg(test)]
 use schronu::application::interface::{RepositoryReloadOutcome, TaskRepositoryOperation};
@@ -5633,23 +5633,6 @@ fn execute_pack(
 }
 
 fn write_flatten_result(stdout: &mut dyn SchronuWriter, result: &FlattenResult) {
-    if let Some(failure) = &result.failure {
-        writeln_newline(
-            stdout,
-            &format!(
-                "[Stop] 平\t{}\t{}\t{}\t{}。変更はありません。",
-                failure.date,
-                failure
-                    .task_id
-                    .map_or_else(|| "-".to_string(), |id| id.to_string()),
-                failure.task_name.as_deref().unwrap_or("-"),
-                failure.reason,
-            ),
-        )
-        .unwrap();
-        return;
-    }
-
     let total_work_seconds = result
         .flattened_tasks
         .iter()
@@ -5678,9 +5661,14 @@ fn write_flatten_result(stdout: &mut dyn SchronuWriter, result: &FlattenResult) 
         writeln_newline(
             stdout,
             &format!(
-                "平: {}件 {}",
+                "平: {}件 {}{}",
                 result.flattened_tasks.len(),
                 format_work_seconds_as_hours_minutes(total_work_seconds),
+                if result.unresolved_overloads.is_empty() {
+                    String::new()
+                } else {
+                    format!(" (未解消{}日)", result.unresolved_overloads.len())
+                },
             ),
         )
         .unwrap();
@@ -5696,6 +5684,46 @@ fn write_flatten_result(stdout: &mut dyn SchronuWriter, result: &FlattenResult) 
             )
             .unwrap();
         }
+
+        for unresolved in &result.unresolved_overloads {
+            writeln_newline(
+                stdout,
+                &format!(
+                    "[Warn] 平\t{}\t未解消 {}",
+                    unresolved.date,
+                    format_work_seconds_as_hours_minutes(unresolved.excess_work_seconds),
+                ),
+            )
+            .unwrap();
+            for summary in &unresolved.reasons {
+                writeln_newline(
+                    stdout,
+                    &format!(
+                        "  {}: {}件",
+                        unresolved_reason_label(summary.reason),
+                        summary.task_count,
+                    ),
+                )
+                .unwrap();
+                if let (Some(task_id), Some(task_name)) = (
+                    summary.representative_task_id,
+                    summary.representative_task_name.as_deref(),
+                ) {
+                    writeln_newline(stdout, &format!("    {task_id}\t{task_name}")).unwrap();
+                }
+            }
+        }
+    }
+}
+
+fn unresolved_reason_label(reason: UnresolvedReason) -> &'static str {
+    match reason {
+        UnresolvedReason::OnOtherSide => "相手待ち",
+        UnresolvedReason::CrossesBusinessDay => "業務日境界をまたぐ",
+        UnresolvedReason::ExceedsDailyCapacity => "1日の最大容量を超える",
+        UnresolvedReason::OwnDeadline => "自身の期限により翌日06:00を維持できない",
+        UnresolvedReason::RelatedDeadline => "仮延期によって関連taskの期限を超える",
+        UnresolvedReason::Other => "その他",
     }
 }
 
@@ -7157,6 +7185,92 @@ fn test_execute_flatten_未解消理由を固定順で表示して同じtaskを�
         1
     );
     assert!(!result.output.contains("1日の最大容量を超える:"));
+}
+
+#[test]
+fn test_execute_flatten_28日目は延期可能分を35日目へ退避して固定負荷を未解消にする() {
+    let now = Local.with_ymd_and_hms(2026, 8, 13, 6, 0, 0).unwrap();
+    let today = now.date_naive();
+    let boundary_date = today + Duration::days(28);
+    let overflow_date = today + Duration::days(35);
+    let boundary_start = subjective_date_start(boundary_date);
+    let root = Task::new("平テスト");
+    root.set_estimated_work_seconds(0);
+    let waiting = add_scheduled_child_for_test(&root, "境界の待機", boundary_start, 30);
+    waiting.set_is_on_other_side(true);
+    let movable = add_scheduled_child_for_test(
+        &root,
+        "35日目へ退避",
+        boundary_start + Duration::minutes(30),
+        30,
+    );
+    let deadline = add_scheduled_child_for_test(
+        &root,
+        "境界期限",
+        boundary_start + Duration::minutes(60),
+        30,
+    );
+    deadline.set_deadline_time_opt(Some(boundary_start + Duration::hours(18)));
+
+    let result =
+        execute_flatten_command_for_test("平", now, root, HashMap::from([(boundary_date, 30)]));
+
+    assert_eq!(
+        result
+            .task
+            .get_by_id(movable.get_id())
+            .unwrap()
+            .get_pending_until(),
+        subjective_date_start(overflow_date)
+    );
+    assert!(result.output.contains("平: 1件 00:30 (未解消1日)"));
+    assert!(result
+        .output
+        .contains("[Warn] 35日後の退避先は日次容量の上限を適用していません: 1件 00:30"));
+    assert!(result
+        .output
+        .contains(&format!("[Warn] 平\t{}\t未解消 00:30", boundary_date)));
+}
+
+#[test]
+fn test_execute_flatten_各aliasで未解消日を飛ばして後続を延期する() {
+    let now = Local.with_ymd_and_hms(2026, 8, 13, 6, 0, 0).unwrap();
+    let today = now.date_naive();
+
+    for command in ["平", "flatten", "flat"] {
+        let root = Task::new("平テスト");
+        root.set_estimated_work_seconds(0);
+        add_scheduled_child_for_test(&root, "固定負荷", now, 90);
+        let tomorrow = subjective_date_start(today + Duration::days(1));
+        add_scheduled_child_for_test(&root, "翌日の先行", tomorrow, 30);
+        let movable = add_scheduled_child_for_test(
+            &root,
+            "翌日の延期対象",
+            tomorrow + Duration::minutes(30),
+            30,
+        );
+
+        let result = execute_flatten_command_for_test(
+            command,
+            now,
+            root,
+            HashMap::from([
+                (today, 60),
+                (today + Duration::days(1), 30),
+                (today + Duration::days(2), 30),
+            ]),
+        );
+
+        assert_eq!(
+            result
+                .task
+                .get_by_id(movable.get_id())
+                .unwrap()
+                .get_pending_until(),
+            subjective_date_start(today + Duration::days(2))
+        );
+        assert!(result.output.contains("平: 1件 00:30 (未解消1日)"));
+    }
 }
 
 #[test]
