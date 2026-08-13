@@ -53,7 +53,7 @@ struct ScheduledTask {
 }
 
 pub fn get_schedule(repository: &dyn TaskRepositoryTrait) -> Vec<ScheduledTaskView> {
-    get_schedule_with_first_available_time_override(repository, None)
+    get_schedule_with_first_available_time_overrides(repository, &HashMap::new())
 }
 
 pub(crate) fn get_schedule_with_task_first_available_time(
@@ -61,24 +61,23 @@ pub(crate) fn get_schedule_with_task_first_available_time(
     task_id: Uuid,
     first_available_time: DateTime<Local>,
 ) -> Vec<ScheduledTaskView> {
-    get_schedule_with_first_available_time_override(
+    get_schedule_with_first_available_time_overrides(
         repository,
-        Some((task_id, first_available_time)),
+        &HashMap::from([(task_id, first_available_time)]),
     )
 }
 
-fn get_schedule_with_first_available_time_override(
+pub(crate) fn get_schedule_with_first_available_time_overrides(
     repository: &dyn TaskRepositoryTrait,
-    first_available_time_override: Option<(Uuid, DateTime<Local>)>,
+    first_available_time_overrides: &HashMap<Uuid, DateTime<Local>>,
 ) -> Vec<ScheduledTaskView> {
     let mut candidates = build_schedule_candidates(repository);
-    if let Some((task_id, first_available_time)) = first_available_time_override {
-        if let Some(candidate) = candidates
-            .iter_mut()
-            .find(|candidate| candidate.task.get_id() == task_id)
+    for candidate in &mut candidates {
+        if let Some(first_available_time) =
+            first_available_time_overrides.get(&candidate.task.get_id())
         {
             candidate.first_available_time =
-                max(first_available_time, repository.get_last_synced_time());
+                max(*first_available_time, repository.get_last_synced_time());
         }
     }
     schedule_tasks_by_priority(&candidates, repository.get_last_synced_time())

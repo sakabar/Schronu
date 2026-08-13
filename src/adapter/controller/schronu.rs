@@ -5633,6 +5633,23 @@ fn execute_pack(
 }
 
 fn write_flatten_result(stdout: &mut dyn SchronuWriter, result: &FlattenResult) {
+    if let Some(failure) = &result.failure {
+        writeln_newline(
+            stdout,
+            &format!(
+                "[Stop] 平\t{}\t{}\t{}\t{}。変更はありません。",
+                failure.date,
+                failure
+                    .task_id
+                    .map_or_else(|| "-".to_string(), |id| id.to_string()),
+                failure.task_name.as_deref().unwrap_or("-"),
+                failure.reason,
+            ),
+        )
+        .unwrap();
+        return;
+    }
+
     let total_work_seconds = result
         .flattened_tasks
         .iter()
@@ -5655,12 +5672,8 @@ fn write_flatten_result(stdout: &mut dyn SchronuWriter, result: &FlattenResult) 
         .unwrap();
     }
 
-    if result.flattened_tasks.is_empty() {
-        writeln_newline(
-            stdout,
-            "[Info] 28日以内に延期可能な空きとタスクの組み合わせはありません。",
-        )
-        .unwrap();
+    if !result.had_overload {
+        writeln_newline(stdout, "[Info] 100%を超過している日はありません。").unwrap();
     } else {
         writeln_newline(
             stdout,
@@ -5671,6 +5684,18 @@ fn write_flatten_result(stdout: &mut dyn SchronuWriter, result: &FlattenResult) 
             ),
         )
         .unwrap();
+
+        if result.overflowed_task_count > 0 {
+            writeln_newline(
+                stdout,
+                &format!(
+                    "[Warn] 35日後の退避先は日次容量の上限を適用していません: {}件 {}",
+                    result.overflowed_task_count,
+                    format_work_seconds_as_hours_minutes(result.overflowed_work_seconds),
+                ),
+            )
+            .unwrap();
+        }
     }
 }
 
