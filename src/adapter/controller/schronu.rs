@@ -6,6 +6,8 @@ use regex::Regex;
 use schronu::adapter::gateway::free_time_manager::FreeTimeManager;
 use schronu::adapter::gateway::storage_lock::{LockMode, StorageLock, StorageLockError};
 use schronu::adapter::gateway::task_repository::TaskRepository;
+#[cfg(test)]
+use schronu::application::daily_capacity::subjective_date_start;
 use schronu::application::daily_capacity::{
     calculate_daily_rho_diff_hours, calculate_free_time_minutes_for_subjective_date,
     calculate_full_day_free_time_minutes_for_subjective_date, END_OF_DAY_DURATION, RHO_GOAL,
@@ -6615,191 +6617,240 @@ fn execute_flatten_command_for_test(
 }
 
 #[test]
-fn test_execute_flatten_累積余差が回復しなくても最初の空き日へ延期する() {
-    let now = Local.with_ymd_and_hms(2026, 8, 13, 12, 0, 0).unwrap();
-    let target_date = NaiveDate::from_ymd_opt(2026, 8, 15).unwrap();
+fn test_execute_flatten_過負荷日では葉より親を先に翌日へ延期する() {
+    let now = Local.with_ymd_and_hms(2026, 8, 13, 6, 0, 0).unwrap();
+    let today = now.date_naive();
     let root = Task::new("平テスト");
-    root.set_estimated_work_seconds(0);
-    let target = add_scheduled_child_for_test(&root, "移動対象", now, 30);
+    root.set_estimated_work_seconds(30 * 60);
+    root.set_start_time(now);
+    root.set_pending_until(now);
+    root.set_orig_status(Status::Pending);
+    let child = add_scheduled_child_for_test(&root, "着手可能な葉", now, 60);
 
-    let result =
-        execute_flatten_command_for_test("平", now, root, HashMap::from([(target_date, 30)]));
-
-    assert_eq!(
-        result
-            .task
-            .get_by_id(target.get_id())
-            .unwrap()
-            .get_pending_until(),
-        Local.with_ymd_and_hms(2026, 8, 15, 6, 0, 0).unwrap()
+    let result = execute_flatten_command_for_test(
+        "平",
+        now,
+        root.clone(),
+        HashMap::from([(today, 60), (today + Duration::days(1), 60)]),
     );
-    assert!(result.output.contains(&format!(
-        "平\t2026-08-13\t2026-08-15\t00:30\t優先度0\t{}\t移動対象",
-        target.get_id()
-    )));
-    assert!(!result.output.contains("延期元:"));
-    assert!(result.output.contains("平: 1件 00:30"));
-}
-
-#[test]
-fn test_execute_flatten_空きに収まらないtaskを飛ばして等しい長さのtaskを延期する() {
-    let now = Local.with_ymd_and_hms(2026, 8, 13, 12, 0, 0).unwrap();
-    let target_date = NaiveDate::from_ymd_opt(2026, 8, 14).unwrap();
-    let root = Task::new("平テスト");
-    root.set_estimated_work_seconds(0);
-    let fitting = add_scheduled_child_for_test(&root, "収まる", now, 30);
-    let too_large = add_scheduled_child_for_test(&root, "大きすぎる", now, 45);
-
-    let result =
-        execute_flatten_command_for_test("平", now, root, HashMap::from([(target_date, 30)]));
 
     assert_eq!(
         result
             .task
-            .get_by_id(fitting.get_id())
+            .get_by_id(root.get_id())
             .unwrap()
             .get_pending_until(),
-        Local.with_ymd_and_hms(2026, 8, 14, 6, 0, 0).unwrap()
+        subjective_date_start(today + Duration::days(1))
     );
     assert_eq!(
         result
             .task
-            .get_by_id(too_large.get_id())
+            .get_by_id(child.get_id())
             .unwrap()
             .get_pending_until(),
         now
     );
+    assert!(result
+        .output
+        .contains(&format!("\t{}\t平テスト", root.get_id())));
+    assert!(result.output.contains("平: 1件 00:30"));
 }
 
 #[test]
-fn test_execute_flatten_予定を再計算して複数の空き日へ件数制限なく延期する() {
-    let now = Local.with_ymd_and_hms(2026, 8, 13, 12, 0, 0).unwrap();
-    let first_target_date = NaiveDate::from_ymd_opt(2026, 8, 14).unwrap();
-    let second_target_date = NaiveDate::from_ymd_opt(2026, 8, 15).unwrap();
+fn test_execute_flatten_多階層ではrankが大きい親から延期する() {
+    let now = Local.with_ymd_and_hms(2026, 8, 13, 6, 0, 0).unwrap();
+    let today = now.date_naive();
     let root = Task::new("平テスト");
-    root.set_estimated_work_seconds(0);
-    let tasks = (0..9)
-        .map(|index| add_scheduled_child_for_test(&root, &format!("移動対象{}", index), now, 10))
-        .collect::<Vec<_>>();
+    root.set_estimated_work_seconds(30 * 60);
+    root.set_start_time(now);
+    root.set_pending_until(now);
+    root.set_orig_status(Status::Pending);
+    let middle = add_scheduled_child_for_test(&root, "中間親", now, 30);
+    add_scheduled_child_for_test(&middle, "葉", now, 60);
 
     let result = execute_flatten_command_for_test(
         "平",
         now,
-        root,
-        HashMap::from([(first_target_date, 30), (second_target_date, 60)]),
-    );
-
-    let first_target = Local.with_ymd_and_hms(2026, 8, 14, 6, 0, 0).unwrap();
-    let second_target = Local.with_ymd_and_hms(2026, 8, 15, 6, 0, 0).unwrap();
-    let pending_until_arr = tasks
-        .iter()
-        .map(|task| {
-            result
-                .task
-                .get_by_id(task.get_id())
-                .unwrap()
-                .get_pending_until()
-        })
-        .collect::<Vec<_>>();
-    assert_eq!(
-        pending_until_arr
-            .iter()
-            .filter(|pending_until| **pending_until == first_target)
-            .count(),
-        3
-    );
-    assert_eq!(
-        pending_until_arr
-            .iter()
-            .filter(|pending_until| **pending_until == second_target)
-            .count(),
-        6
-    );
-    assert!(result.output.contains("平: 9件 01:30"));
-}
-
-#[test]
-fn test_execute_flatten_同じtaskを1回の実行中に再延期しない() {
-    let now = Local.with_ymd_and_hms(2026, 8, 13, 12, 0, 0).unwrap();
-    let first_target_date = NaiveDate::from_ymd_opt(2026, 8, 14).unwrap();
-    let second_target_date = NaiveDate::from_ymd_opt(2026, 8, 15).unwrap();
-    let root = Task::new("平テスト");
-    root.set_estimated_work_seconds(0);
-    let target = add_scheduled_child_for_test(&root, "1回だけ", now, 30);
-
-    let result = execute_flatten_command_for_test(
-        "平",
-        now,
-        root,
-        HashMap::from([(first_target_date, 30), (second_target_date, 30)]),
+        root.clone(),
+        HashMap::from([(today, 60), (today + Duration::days(1), 120)]),
     );
 
     assert_eq!(
         result
             .task
-            .get_by_id(target.get_id())
+            .get_by_id(root.get_id())
             .unwrap()
             .get_pending_until(),
-        Local.with_ymd_and_hms(2026, 8, 14, 6, 0, 0).unwrap()
+        subjective_date_start(today + Duration::days(1))
     );
-    assert!(result.output.contains("平: 1件 00:30"));
+    assert_eq!(
+        result
+            .task
+            .get_by_id(middle.get_id())
+            .unwrap()
+            .get_pending_until(),
+        subjective_date_start(today + Duration::days(1))
+    );
+    let root_position = result.output.find("\t平テスト\n").unwrap();
+    let middle_position = result.output.find("\t中間親\n").unwrap();
+    assert!(root_position < middle_position);
 }
 
 #[test]
-fn test_execute_flatten_期限待機残作業0を除外してaliasでも同じ結果を返す() {
-    let now = Local.with_ymd_and_hms(2026, 8, 13, 12, 0, 0).unwrap();
-    let target_date = NaiveDate::from_ymd_opt(2026, 8, 14).unwrap();
+fn test_execute_flatten_親だけで解消できなければ低優先度の葉も連鎖延期する() {
+    let now = Local.with_ymd_and_hms(2026, 8, 13, 6, 0, 0).unwrap();
+    let today = now.date_naive();
+    let root = Task::new("平テスト");
+    root.set_estimated_work_seconds(30 * 60);
+    root.set_start_time(now);
+    root.set_pending_until(now);
+    root.set_orig_status(Status::Pending);
+    let high = add_scheduled_child_for_test(&root, "先に予定された葉", now, 45);
+    let low =
+        add_scheduled_child_for_test(&root, "後に予定された葉", now + Duration::minutes(45), 45);
+
+    let result = execute_flatten_command_for_test(
+        "平",
+        now,
+        root.clone(),
+        HashMap::from([
+            (today, 60),
+            (today + Duration::days(1), 30),
+            (today + Duration::days(2), 90),
+        ]),
+    );
+
+    assert_eq!(
+        result
+            .task
+            .get_by_id(root.get_id())
+            .unwrap()
+            .get_pending_until(),
+        subjective_date_start(today + Duration::days(2))
+    );
+    assert_eq!(
+        result
+            .task
+            .get_by_id(low.get_id())
+            .unwrap()
+            .get_pending_until(),
+        subjective_date_start(today + Duration::days(2))
+    );
+    assert_eq!(
+        result
+            .task
+            .get_by_id(high.get_id())
+            .unwrap()
+            .get_pending_until(),
+        now
+    );
+    assert_eq!(result.output.matches(&low.get_id().to_string()).count(), 1);
+}
+
+#[test]
+fn test_execute_flatten_余裕日と100percentちょうどの日は変更しない() {
+    let now = Local.with_ymd_and_hms(2026, 8, 13, 6, 0, 0).unwrap();
+    let today = now.date_naive();
 
     for command in ["平", "flatten", "flat"] {
         let root = Task::new("平テスト");
         root.set_estimated_work_seconds(0);
-        let valid = add_scheduled_child_for_test(&root, "有効", now, 15);
-        let deadline = add_scheduled_child_for_test(&root, "期限あり", now, 15);
-        deadline
-            .set_deadline_time_opt(Some(Local.with_ymd_and_hms(2026, 8, 14, 5, 59, 0).unwrap()));
-        let waiting = add_scheduled_child_for_test(&root, "待機", now, 15);
-        waiting.set_is_on_other_side(true);
-        let zero = add_scheduled_child_for_test(&root, "残作業0", now, 0);
+        let target = add_scheduled_child_for_test(&root, "変更しない", now, 60);
 
         let result = execute_flatten_command_for_test(
             command,
             now,
             root,
-            HashMap::from([(target_date, 60)]),
+            HashMap::from([(today, 60), (today + Duration::days(1), 60)]),
         );
 
-        let expected = Local.with_ymd_and_hms(2026, 8, 14, 6, 0, 0).unwrap();
         assert_eq!(
             result
                 .task
-                .get_by_id(valid.get_id())
+                .get_by_id(target.get_id())
                 .unwrap()
                 .get_pending_until(),
-            expected
+            now
         );
-        for excluded in [deadline.get_id(), waiting.get_id(), zero.get_id()] {
-            assert_eq!(
-                result.task.get_by_id(excluded).unwrap().get_pending_until(),
-                now
-            );
-        }
-        assert!(result.output.contains("平: 1件 00:15"));
+        assert_eq!(result.output, "[Info] 100%を超過している日はありません。\n");
     }
 }
 
 #[test]
-fn test_execute_flatten_29日後の空きは使わず状態を変更しない() {
-    let now = Local.with_ymd_and_hms(2026, 8, 13, 12, 0, 0).unwrap();
-    let outside_target_date = NaiveDate::from_ymd_opt(2026, 9, 11).unwrap();
+fn test_execute_flatten_28日境界の超過を29日から34日を飛ばして35日後へ退避する() {
+    let now = Local.with_ymd_and_hms(2026, 8, 13, 6, 0, 0).unwrap();
+    let today = now.date_naive();
+    let boundary_date = today + Duration::days(28);
+    let overflow_date = today + Duration::days(35);
     let root = Task::new("平テスト");
     root.set_estimated_work_seconds(0);
-    let target = add_scheduled_child_for_test(&root, "範囲外", now, 30);
+    let boundary_start = subjective_date_start(boundary_date);
+    let keeper = add_scheduled_child_for_test(&root, "境界に残す", boundary_start, 30);
+    let first = add_scheduled_child_for_test(
+        &root,
+        "退避対象1",
+        boundary_start + Duration::minutes(30),
+        30,
+    );
+    let second = add_scheduled_child_for_test(
+        &root,
+        "退避対象2",
+        boundary_start + Duration::minutes(60),
+        30,
+    );
+
+    let result =
+        execute_flatten_command_for_test("平", now, root, HashMap::from([(boundary_date, 30)]));
+
+    assert_eq!(
+        result
+            .task
+            .get_by_id(keeper.get_id())
+            .unwrap()
+            .get_pending_until(),
+        subjective_date_start(boundary_date)
+    );
+    assert_eq!(
+        result
+            .task
+            .get_by_id(first.get_id())
+            .unwrap()
+            .get_pending_until(),
+        subjective_date_start(overflow_date)
+    );
+    assert_eq!(
+        result
+            .task
+            .get_by_id(second.get_id())
+            .unwrap()
+            .get_pending_until(),
+        subjective_date_start(overflow_date)
+    );
+    assert_eq!(
+        result
+            .output
+            .matches(&format!("平\t{}\t{}\t00:30", boundary_date, overflow_date))
+            .count(),
+        2
+    );
+    assert!(result
+        .output
+        .contains("[Warn] 35日後の退避先は日次容量の上限を適用していません: 2件 01:00"));
+}
+
+#[test]
+fn test_execute_flatten_日容量を超えるtaskだけでは解消不能として状態を変更しない() {
+    let now = Local.with_ymd_and_hms(2026, 8, 13, 6, 0, 0).unwrap();
+    let today = now.date_naive();
+    let root = Task::new("平テスト");
+    root.set_estimated_work_seconds(0);
+    let target = add_scheduled_child_for_test(&root, "大きすぎる", now, 90);
 
     let result = execute_flatten_command_for_test(
         "平",
         now,
         root,
-        HashMap::from([(outside_target_date, 30)]),
+        HashMap::from([(today, 60), (today + Duration::days(1), 60)]),
     );
 
     assert_eq!(
@@ -6810,41 +6861,140 @@ fn test_execute_flatten_29日後の空きは使わず状態を変更しない() 
             .get_pending_until(),
         now
     );
+    assert!(result.output.starts_with("[Stop] 平\t2026-08-13\t"));
+    assert!(result.output.ends_with("変更はありません。\n"));
+}
+
+#[test]
+fn test_execute_flatten_業務日境界をまたぐtaskは延期しない() {
+    let now = Local.with_ymd_and_hms(2026, 8, 13, 6, 0, 0).unwrap();
+    let today = now.date_naive();
+    let root = Task::new("平テスト");
+    root.set_estimated_work_seconds(0);
+    let target = add_scheduled_child_for_test(&root, "境界をまたぐ", now, 25 * 60);
+
+    let result = execute_flatten_command_for_test(
+        "平",
+        now,
+        root,
+        HashMap::from([(today, 60), (today + Duration::days(1), 26 * 60)]),
+    );
+
     assert_eq!(
-        result.output,
-        "[Info] 28日以内に延期可能な空きとタスクの組み合わせはありません。\n"
+        result
+            .task
+            .get_by_id(target.get_id())
+            .unwrap()
+            .get_pending_until(),
+        now
+    );
+    assert!(result.output.contains("変更はありません。"));
+}
+
+#[test]
+fn test_execute_flatten_終了時刻が期限と等しいtaskは延期できる() {
+    let now = Local.with_ymd_and_hms(2026, 8, 13, 6, 0, 0).unwrap();
+    let today = now.date_naive();
+    let root = Task::new("平テスト");
+    root.set_estimated_work_seconds(0);
+    root.set_deadline_time_opt(Some(
+        subjective_date_start(today + Duration::days(1)) + Duration::minutes(30),
+    ));
+    let target = add_scheduled_child_for_test(&root, "期限ちょうど", now, 30);
+
+    let result = execute_flatten_command_for_test(
+        "平",
+        now,
+        root,
+        HashMap::from([(today, 15), (today + Duration::days(1), 30)]),
+    );
+
+    assert_eq!(
+        result
+            .task
+            .get_by_id(target.get_id())
+            .unwrap()
+            .get_pending_until(),
+        subjective_date_start(today + Duration::days(1))
     );
 }
 
 #[test]
-fn test_execute_flatten_業務日境界をまたぐ予定を翌日の使用時間にも計上する() {
-    let now = Local.with_ymd_and_hms(2026, 8, 13, 12, 0, 0).unwrap();
-    let target_date = NaiveDate::from_ymd_opt(2026, 8, 15).unwrap();
+fn test_execute_flatten_待機taskと残作業0を延期候補から除外する() {
+    let now = Local.with_ymd_and_hms(2026, 8, 13, 6, 0, 0).unwrap();
+    let today = now.date_naive();
     let root = Task::new("平テスト");
     root.set_estimated_work_seconds(0);
-    let target = add_scheduled_child_for_test(&root, "移動させない", now, 30);
-    add_scheduled_child_for_test(
-        &root,
-        "翌日へまたぐ予定",
-        Local.with_ymd_and_hms(2026, 8, 14, 6, 0, 0).unwrap(),
-        25 * 60,
-    );
+    let movable = add_scheduled_child_for_test(&root, "移動対象", now, 30);
+    let waiting = add_scheduled_child_for_test(&root, "待機", now, 30);
+    waiting.set_is_on_other_side(true);
+    let zero = add_scheduled_child_for_test(&root, "残作業0", now, 0);
 
-    let result =
-        execute_flatten_command_for_test("平", now, root, HashMap::from([(target_date, 30)]));
+    let result = execute_flatten_command_for_test(
+        "平",
+        now,
+        root,
+        HashMap::from([(today, 30), (today + Duration::days(1), 30)]),
+    );
 
     assert_eq!(
         result
             .task
-            .get_by_id(target.get_id())
+            .get_by_id(movable.get_id())
             .unwrap()
             .get_pending_until(),
-        now
+        subjective_date_start(today + Duration::days(1))
+    );
+    for unchanged in [waiting.get_id(), zero.get_id()] {
+        assert_eq!(
+            result
+                .task
+                .get_by_id(unchanged)
+                .unwrap()
+                .get_pending_until(),
+            now
+        );
+    }
+}
+
+#[test]
+fn test_execute_flatten_35日後への退避で親の期限を超えるなら全変更を破棄する() {
+    let now = Local.with_ymd_and_hms(2026, 8, 13, 6, 0, 0).unwrap();
+    let today = now.date_naive();
+    let boundary_date = today + Duration::days(28);
+    let root = Task::new("期限のある親");
+    root.set_estimated_work_seconds(30 * 60);
+    root.set_start_time(subjective_date_start(boundary_date));
+    root.set_pending_until(subjective_date_start(boundary_date));
+    root.set_orig_status(Status::Pending);
+    root.set_deadline_time_opt(Some(subjective_date_start(today + Duration::days(35))));
+    let child =
+        add_scheduled_child_for_test(&root, "境界の葉", subjective_date_start(boundary_date), 60);
+
+    let result = execute_flatten_command_for_test(
+        "平",
+        now,
+        root.clone(),
+        HashMap::from([(boundary_date, 60)]),
+    );
+
+    assert_eq!(
+        result
+            .task
+            .get_by_id(root.get_id())
+            .unwrap()
+            .get_pending_until(),
+        subjective_date_start(boundary_date)
     );
     assert_eq!(
-        result.output,
-        "[Info] 28日以内に延期可能な空きとタスクの組み合わせはありません。\n"
+        result
+            .task
+            .get_by_id(child.get_id())
+            .unwrap()
+            .get_pending_until(),
+        subjective_date_start(boundary_date)
     );
+    assert!(result.output.contains("変更はありません。"));
 }
 
 #[test]
