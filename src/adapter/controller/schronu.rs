@@ -5000,12 +5000,7 @@ impl FreeTimeManagerTrait for TestFreeTimeManager {
 
     fn register_busy_time_slot(&mut self, _start: &DateTime<Local>, _end: &DateTime<Local>) {}
 
-    fn load_busy_time_slots_from_file(
-        &mut self,
-        _busy_time_slots_file_path: &str,
-        _now: &DateTime<Local>,
-    ) {
-    }
+    fn load_busy_time_slots_from_file(&mut self, _busy_time_slots_file_path: &str) {}
 }
 
 #[cfg(test)]
@@ -5025,12 +5020,7 @@ impl FreeTimeManagerTrait for TestFreeTimeManagerWithFreeMinutes {
 
     fn register_busy_time_slot(&mut self, _start: &DateTime<Local>, _end: &DateTime<Local>) {}
 
-    fn load_busy_time_slots_from_file(
-        &mut self,
-        _busy_time_slots_file_path: &str,
-        _now: &DateTime<Local>,
-    ) {
-    }
+    fn load_busy_time_slots_from_file(&mut self, _busy_time_slots_file_path: &str) {}
 }
 
 #[cfg(test)]
@@ -5052,12 +5042,7 @@ impl FreeTimeManagerTrait for TestFreeTimeManagerForBand {
 
     fn register_busy_time_slot(&mut self, _start: &DateTime<Local>, _end: &DateTime<Local>) {}
 
-    fn load_busy_time_slots_from_file(
-        &mut self,
-        _busy_time_slots_file_path: &str,
-        _now: &DateTime<Local>,
-    ) {
-    }
+    fn load_busy_time_slots_from_file(&mut self, _busy_time_slots_file_path: &str) {}
 }
 
 #[cfg(test)]
@@ -5080,12 +5065,7 @@ impl FreeTimeManagerTrait for TestFreeTimeManagerByDate {
 
     fn register_busy_time_slot(&mut self, _start: &DateTime<Local>, _end: &DateTime<Local>) {}
 
-    fn load_busy_time_slots_from_file(
-        &mut self,
-        _busy_time_slots_file_path: &str,
-        _now: &DateTime<Local>,
-    ) {
-    }
+    fn load_busy_time_slots_from_file(&mut self, _busy_time_slots_file_path: &str) {}
 }
 
 #[cfg(test)]
@@ -8413,7 +8393,6 @@ fn execute_non_interactive_command(
             .busy_time_slots_yaml_path
             .to_str()
             .expect("config path was validated"),
-        &now,
     );
 
     let focus_started_datetime: DateTime<Local> = now;
@@ -10094,7 +10073,6 @@ fn application(
             .busy_time_slots_yaml_path
             .to_str()
             .expect("config path was validated"),
-        &now,
     );
 
     // RawModeを有効にする
