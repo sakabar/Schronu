@@ -66,6 +66,29 @@ mod tests {
     }
 
     #[test]
+    fn configサンプルは有効な全項目設定である() {
+        let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("config/schronu.sample.conf");
+
+        let actual = load_schronu_config(Some(path.clone().into_os_string())).unwrap();
+
+        assert_eq!(actual.obsidian_vault_name, "Obsidian-Moica");
+        assert_eq!(
+            actual.busy_time_slots_yaml_path,
+            path.parent().unwrap().join("busy_time_slots.yaml")
+        );
+        assert_eq!(actual.end_of_day_offset_minutes, -120);
+        assert_eq!(actual.calendar_blank_line_weekday, Weekday::Mon);
+        assert_eq!(
+            actual.extrude_skip_weekdays,
+            vec![Weekday::Sat, Weekday::Sun]
+        );
+        assert_eq!(
+            actual.default_deadline_time,
+            NaiveTime::from_hms_opt(19, 0, 0).unwrap()
+        );
+    }
+
+    #[test]
     fn config未知キーはerrorにする() {
         let directory = test_directory();
         let path = write_config(&directory, "unknown: value\n");
