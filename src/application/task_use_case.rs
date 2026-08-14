@@ -272,7 +272,7 @@ pub fn complete_task(
     task.set_orig_status(Status::Done);
     task.set_end_time_opt(Some(input.finished_at));
 
-    let next_repetition_task_id = create_next_repetition_task(&task, input.finished_at);
+    let next_repetition_task_id = create_next_repetition_task(&task, input.finished_at)?;
     let next_focus_task_id = if task.all_sibling_tasks_are_all_done() {
         task.parent().map(|parent| parent.get_id())
     } else {
@@ -369,14 +369,24 @@ pub fn estimated_work_seconds_from_minutes(minutes: i64) -> Result<i64, Applicat
         })
 }
 
-fn create_next_repetition_task(task: &TaskHandle, finished_at: DateTime<Local>) -> Option<Uuid> {
-    let parent_task = task.parent()?;
-    let repetition_interval_days = parent_task.get_repetition_interval_days_opt()?;
+fn create_next_repetition_task(
+    task: &TaskHandle,
+    finished_at: DateTime<Local>,
+) -> Result<Option<Uuid>, ApplicationError> {
+    let Some(parent_task) = task.parent() else {
+        return Ok(None);
+    };
+    let Some(repetition_interval_days) = parent_task.get_repetition_interval_days_opt() else {
+        return Ok(None);
+    };
 
     adjust_repetition_estimate(&parent_task, task);
     let new_task_attr =
         build_next_repetition_task_attr(task, &parent_task, repetition_interval_days, finished_at);
-    Some(parent_task.try_create_child(new_task_attr).ok()?.get_id())
+    let next_task = parent_task
+        .try_create_child(new_task_attr)
+        .map_err(ApplicationError::TaskTree)?;
+    Ok(Some(next_task.get_id()))
 }
 
 fn adjust_repetition_estimate(parent_task: &TaskHandle, task: &TaskHandle) {
