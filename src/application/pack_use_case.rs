@@ -1,7 +1,7 @@
 use super::daily_capacity::{
     calculate_daily_leeway_seconds,
     calculate_free_time_minutes_for_subjective_date_with_end_of_day_offset_minutes,
-    subjective_date, subjective_date_start, END_OF_DAY_OFFSET_MINUTES,
+    subjective_date, subjective_date_end, subjective_date_start, END_OF_DAY_OFFSET_MINUTES,
 };
 use super::interface::{FreeTimeManagerTrait, TaskRepositoryTrait};
 use super::schedule_use_case::{
@@ -46,6 +46,12 @@ struct PackCandidate {
     priority: i64,
     planned_start: DateTime<Local>,
     work_seconds: i64,
+}
+
+#[derive(Clone, Copy)]
+struct PackTargetDay {
+    date: NaiveDate,
+    end: DateTime<Local>,
 }
 
 pub fn pack_tasks(
@@ -110,12 +116,16 @@ pub fn pack_tasks_with_end_of_day_offset_minutes(
                 continue;
             }
 
+            let target_day = PackTargetDay {
+                date: *target_date,
+                end: subjective_date_end(*target_date, end_of_day_offset_minutes),
+            };
             let placement_start_opt = find_placement_start(
                 repository,
                 free_time_manager,
                 candidate.task_id,
                 target_datetime,
-                *target_date,
+                target_day,
                 candidate.work_seconds,
                 task.get_atomic(),
             );
@@ -157,11 +167,11 @@ fn find_placement_start(
     free_time_manager: &mut dyn FreeTimeManagerTrait,
     task_id: Uuid,
     first_available_time: DateTime<Local>,
-    target_date: NaiveDate,
+    target_day: PackTargetDay,
     work_seconds: i64,
     atomic: bool,
 ) -> Option<DateTime<Local>> {
-    let target_end = subjective_date_start(target_date + Duration::days(1));
+    let target_end = target_day.end;
     let mut trial_time = first_available_time.max(repository.get_last_synced_time());
 
     while trial_time + Duration::seconds(work_seconds) <= target_end {
@@ -181,7 +191,7 @@ fn find_placement_start(
 
         if placement_fits_target_day(
             &task_segments,
-            target_date,
+            target_day,
             work_seconds,
             atomic,
             free_time_manager,
@@ -300,15 +310,15 @@ fn calculate_daily_leeway(
 
 fn placement_fits_target_day(
     task_segments: &[&ScheduledTaskView],
-    target_date: NaiveDate,
+    target_day: PackTargetDay,
     work_seconds: i64,
     atomic: bool,
     free_time_manager: &mut dyn FreeTimeManagerTrait,
 ) -> bool {
-    let target_end = subjective_date_start(target_date + Duration::days(1));
+    let target_end = target_day.end;
     let fits_in_day = !task_segments.is_empty()
         && task_segments.iter().all(|scheduled| {
-            subjective_date(scheduled.scheduled_start) == target_date
+            subjective_date(scheduled.scheduled_start) == target_day.date
                 && scheduled.scheduled_end <= target_end
         })
         && task_segments
@@ -582,7 +592,7 @@ mod tests {
     #[test]
     fn pack_tasks_先行配置後の最新予定で後続taskの前倒し可否を判定する() {
         let now = Local.with_ymd_and_hms(2026, 8, 11, 6, 0, 0).unwrap();
-        let first = pending_task("24時間", now, now + Duration::days(1), 24 * 60, 9);
+        let first = pending_task("18時間20分", now, now + Duration::days(1), 18 * 60 + 20, 9);
         let second = pending_task("後続", now, now + Duration::days(1), 30, 8);
         let original_second_pending_until = second.get_pending_until();
         let repository = TestTaskRepository::new(vec![first.clone(), second.clone()], now);

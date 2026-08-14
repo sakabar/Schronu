@@ -98,12 +98,7 @@ pub fn calculate_full_day_free_time_minutes_for_subjective_date_with_end_of_day_
     end_of_day_offset_minutes: i64,
 ) -> i64 {
     let start = subjective_date_start(*date);
-    let local_tz = Local::now().timezone();
-    let end = local_tz
-        .from_local_datetime(&date.and_hms_opt(23, 59, 59).unwrap())
-        .unwrap()
-        + Duration::seconds(1)
-        + Duration::minutes(end_of_day_offset_minutes);
+    let end = subjective_date_end(*date, end_of_day_offset_minutes);
     free_time_manager.get_free_minutes(&start, &end)
 }
 
@@ -118,6 +113,15 @@ pub fn subjective_date_start(date: NaiveDate) -> DateTime<Local> {
             .from_local_datetime(&date.and_hms_opt(0, 0, 0).unwrap())
             .unwrap(),
     )
+}
+
+pub fn subjective_date_end(date: NaiveDate, end_of_day_offset_minutes: i64) -> DateTime<Local> {
+    Local::now()
+        .timezone()
+        .from_local_datetime(&date.and_hms_opt(23, 59, 59).unwrap())
+        .unwrap()
+        + Duration::seconds(1)
+        + Duration::minutes(end_of_day_offset_minutes)
 }
 
 #[cfg(test)]
