@@ -4471,6 +4471,24 @@ fn test_execute_空_日付指定は指定日の予定開始時刻でtodoをpendi
 }
 
 #[test]
+fn test_execute_空_明指定は次の業務日の予定をpendingにする() {
+    let now = Local.with_ymd_and_hms(2026, 8, 14, 12, 0, 0).unwrap();
+    let schronu_day_start = Local.with_ymd_and_hms(2026, 8, 15, 6, 0, 0).unwrap();
+    let task = Task::new("明指定の空対象");
+    task.set_start_time(schronu_day_start + Duration::hours(4));
+    task.set_estimated_work_seconds(30 * 60);
+    let task_id = task.get_id();
+
+    let result = execute_command_for_test(task, now, Some(task_id), "空 13:00 明");
+
+    assert_eq!(result.task.get_orig_status(), Status::Pending);
+    assert_eq!(
+        result.task.get_pending_until(),
+        schronu_day_start + Duration::hours(7)
+    );
+}
+
+#[test]
 fn test_execute_集_日付指定はpendingを業務日開始へ集める() {
     let now = Local.with_ymd_and_hms(2026, 8, 14, 12, 0, 0).unwrap();
     let schronu_day_start = Local.with_ymd_and_hms(2026, 8, 15, 6, 0, 0).unwrap();
@@ -4487,6 +4505,23 @@ fn test_execute_集_日付指定はpendingを業務日開始へ集める() {
     assert_eq!(result.task.get_orig_status(), Status::Pending);
     assert_eq!(result.task.get_pending_until(), schronu_day_start);
     assert_eq!(result.task.get_start_time(), original_start_time);
+}
+
+#[test]
+fn test_execute_集_曜日指定は次に来る曜日の業務日開始へ集める() {
+    let now = Local.with_ymd_and_hms(2026, 8, 14, 12, 0, 0).unwrap();
+    let schronu_day_start = Local.with_ymd_and_hms(2026, 8, 17, 6, 0, 0).unwrap();
+    let task = Task::new("曜日指定の集対象");
+    task.set_start_time(schronu_day_start + Duration::hours(4));
+    task.set_estimated_work_seconds(30 * 60);
+    task.set_orig_status(Status::Pending);
+    task.set_pending_until(schronu_day_start + Duration::hours(6));
+    let task_id = task.get_id();
+
+    let result = execute_command_for_test(task, now, Some(task_id), "集 24:00 月");
+
+    assert_eq!(result.task.get_orig_status(), Status::Pending);
+    assert_eq!(result.task.get_pending_until(), schronu_day_start);
 }
 
 #[test]
