@@ -289,6 +289,51 @@ fn resolve_upcoming_mmdd(mmdd: &str, now: DateTime<Local>) -> Option<LocalResult
     })
 }
 
+fn resolve_upcoming_clear_or_gather_day(
+    date: &str,
+    now: DateTime<Local>,
+) -> Option<LocalResult<DateTime<Local>>> {
+    let next_schronu_day_start = get_next_morning_datetime(now);
+    let resolve_schronu_day_start = |date: NaiveDate| {
+        Local.with_ymd_and_hms(
+            date.year(),
+            date.month(),
+            date.day(),
+            next_schronu_day_start.hour(),
+            next_schronu_day_start.minute(),
+            0,
+        )
+    };
+
+    if date == "明" {
+        return Some(resolve_schronu_day_start(
+            next_schronu_day_start.date_naive(),
+        ));
+    }
+
+    let days_of_week = ["月", "火", "水", "木", "金", "土", "日"];
+    if let Some(target_days_of_week_ind) = days_of_week.iter().position(|day| *day == date) {
+        let schronu_today = get_next_morning_datetime(now) - Duration::days(1);
+        let now_days_of_week_ind = days_of_week
+            .iter()
+            .position(|day| *day == get_weekday_jp(&schronu_today.date_naive()))?;
+        let days_until_target =
+            (7 + target_days_of_week_ind - now_days_of_week_ind) % days_of_week.len();
+        let days = if days_until_target == 0 {
+            7
+        } else {
+            days_until_target
+        };
+
+        let target_date = schronu_today
+            .date_naive()
+            .checked_add_signed(Duration::days(days as i64))?;
+        return Some(resolve_schronu_day_start(target_date));
+    }
+
+    resolve_upcoming_mmdd(date, now)
+}
+
 fn resolve_show_all_pattern(pattern: &str, now: DateTime<Local>) -> String {
     match resolve_upcoming_mmdd(pattern, now) {
         Some(LocalResult::Single(datetime)) => datetime.format("%Y/%m/%d").to_string(),
@@ -329,6 +374,53 @@ fn test_resolve_upcoming_mmdd_当日の境界時刻は現在年を使う() {
         resolve_upcoming_mmdd("9/26", now),
         Some(LocalResult::Single(now))
     );
+}
+
+#[test]
+fn test_resolve_upcoming_clear_or_gather_day_明は次の業務日を返す() {
+    let now = Local.with_ymd_and_hms(2026, 8, 14, 12, 0, 0).unwrap();
+
+    assert_eq!(
+        resolve_upcoming_clear_or_gather_day("明", now),
+        Some(LocalResult::Single(
+            Local.with_ymd_and_hms(2026, 8, 15, 6, 0, 0).unwrap()
+        ))
+    );
+}
+
+#[test]
+fn test_resolve_upcoming_clear_or_gather_day_曜日は明日以降で最も近い日を返す() {
+    let now = Local.with_ymd_and_hms(2026, 8, 14, 12, 0, 0).unwrap();
+
+    for (weekday, day) in [
+        ("月", 17),
+        ("火", 18),
+        ("水", 19),
+        ("木", 20),
+        ("金", 21),
+        ("土", 15),
+        ("日", 16),
+    ] {
+        assert_eq!(
+            resolve_upcoming_clear_or_gather_day(weekday, now),
+            Some(LocalResult::Single(
+                Local.with_ymd_and_hms(2026, 8, day, 6, 0, 0).unwrap()
+            ))
+        );
+    }
+}
+
+#[test]
+fn test_resolve_upcoming_clear_or_gather_day_午前6時前の明と不正値を扱う() {
+    let now = Local.with_ymd_and_hms(2026, 8, 14, 2, 0, 0).unwrap();
+
+    assert_eq!(
+        resolve_upcoming_clear_or_gather_day("明", now),
+        Some(LocalResult::Single(
+            Local.with_ymd_and_hms(2026, 8, 14, 6, 0, 0).unwrap()
+        ))
+    );
+    assert_eq!(resolve_upcoming_clear_or_gather_day("翌", now), None);
 }
 
 #[test]
@@ -418,7 +510,7 @@ fn parse_dated_clear_or_gather_time_range(
     mmdd: &str,
     now: DateTime<Local>,
 ) -> Option<(DateTime<Local>, DateTime<Local>)> {
-    let schronu_day_start = match resolve_upcoming_mmdd(mmdd, now)? {
+    let schronu_day_start = match resolve_upcoming_clear_or_gather_day(mmdd, now)? {
         LocalResult::Single(datetime) => datetime,
         LocalResult::Ambiguous(_, _) | LocalResult::None => return None,
     };
@@ -4591,6 +4683,20 @@ fn test_execute_空_2引数は従来通り現在時刻基準で処理する() {
         result.task.get_pending_until(),
         now + Duration::minutes(120)
     );
+}
+
+#[test]
+fn test_execute_集_2引数は従来通りtodoへ戻す() {
+    let now = Local.with_ymd_and_hms(2026, 8, 14, 12, 0, 0).unwrap();
+    let task = Task::new("従来の集対象");
+    task.set_start_time(now);
+    task.set_orig_status(Status::Pending);
+    task.set_pending_until(now + Duration::minutes(60));
+    let task_id = task.get_id();
+
+    let result = execute_command_for_test(task, now, Some(task_id), "集 120");
+
+    assert_eq!(result.task.get_orig_status(), Status::Todo);
 }
 
 #[test]
