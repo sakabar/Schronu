@@ -1576,9 +1576,15 @@ impl TaskHandle {
     // 「親が〆切を持っている時は、子も必ず〆切を持っており、それは親より早いか等しい」という制約を維持させたい
     // Todo: 単体テスト
     pub fn set_deadline_time_opt(&self, deadline_time_opt: Option<DateTime<Local>>) {
+        if self.propagate_deadline_time_opt(deadline_time_opt) {
+            self.mark_persistent_mutation();
+        }
+    }
+
+    fn propagate_deadline_time_opt(&self, deadline_time_opt: Option<DateTime<Local>>) -> bool {
         // Statusが既にdoneの時は何もしない。再帰もしないので止まる
         if self.get_status() == Status::Done {
-            return;
+            return false;
         }
 
         // 引数で渡された(親タスクから伝搬してきた)値か、元々の値のうち早いほうを採用する
@@ -1587,44 +1593,26 @@ impl TaskHandle {
         match deadline_time_opt {
             None => {
                 // 何も起こらない。元々Noneなら変化なし、元々がNone以外なら早いほう採用でやはり変化なし。
+                false
             }
             Some(deadline_time) => {
-                match original_deadline_time_opt {
-                    None => {
-                        // 引数で渡ってきたほうが勝つ
-                        self.node
-                            .borrow_data_mut()
-                            .set_deadline_time_opt(Some(deadline_time));
-                        self.mark_persistent_mutation();
+                let earlier_deadline_time = original_deadline_time_opt
+                    .map(|original_deadline_time| original_deadline_time.min(deadline_time))
+                    .unwrap_or(deadline_time);
+                let mut changed = Some(earlier_deadline_time) != original_deadline_time_opt;
 
-                        // 子に伝搬させる
-                        for child_node in self.node.children() {
-                            let child_task = Self { node: child_node };
-                            child_task.set_deadline_time_opt(Some(deadline_time));
-                        }
-                    }
-                    Some(original_deadline_time) => {
-                        // 早いほうを採用
-                        let earlier_deadline_time = if original_deadline_time < deadline_time {
-                            original_deadline_time
-                        } else {
-                            deadline_time
-                        };
-
-                        if Some(earlier_deadline_time) != original_deadline_time_opt {
-                            self.node
-                                .borrow_data_mut()
-                                .set_deadline_time_opt(Some(earlier_deadline_time));
-                            self.mark_persistent_mutation();
-                        }
-
-                        // 子に伝搬させる
-                        for child_node in self.node.children() {
-                            let child_task = Self { node: child_node };
-                            child_task.set_deadline_time_opt(Some(earlier_deadline_time));
-                        }
-                    }
+                if changed {
+                    self.node
+                        .borrow_data_mut()
+                        .set_deadline_time_opt(Some(earlier_deadline_time));
                 }
+
+                for child_node in self.node.children() {
+                    let child_task = Self { node: child_node };
+                    changed |= child_task.propagate_deadline_time_opt(Some(earlier_deadline_time));
+                }
+
+                changed
             }
         }
     }
