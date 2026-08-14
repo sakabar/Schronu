@@ -51,7 +51,7 @@ SCHRONU_STORAGE_DIR=/absolute/path/to/tasks SCHRONU_CONFIG_PATH=/absolute/path/t
 ```yaml
 obsidian_vault_name: Obsidian-Moica
 busy_time_slots_yaml_path: busy_time_slots.yaml
-end_of_day_duration: "00:30"
+end_of_day_offset_minutes: -120
 calendar_blank_line_weekday: Mon
 extrude_skip_weekdays: [Sat, Sun]
 default_deadline_time: "19:00"
@@ -63,12 +63,12 @@ default_deadline_time: "19:00"
 | --- | --- | --- |
 | `obsidian_vault_name` | `Obsidian-Moica` | `黒`(または`obs`)コマンドのObsidian検索先vault名です。空白や記号を含む名前も利用できます。 |
 | `busy_time_slots_yaml_path` | `../Schronu-private/busy_time_slots.yaml` | 毎週定期の行動不能時間を定義するYAMLへのpathです。 |
-| `end_of_day_duration` | `00:30` | 日次容量・`全`・`暦`・`帯`・`平`・`詰`で使う1日の終端時刻です。業務日の開始境界である06:00は変更しません。 |
+| `end_of_day_offset_minutes` | `30` | 当日24:00からの符号付き分オフセットです。`-120`は22:00、`30`は翌日00:30を表し、日次容量・`全`・`暦`・`帯`・`平`・`詰`で使います。業務日の開始境界である06:00は変更しません。 |
 | `calendar_blank_line_weekday` | `Mon` | `暦`の出力で、その曜日の直後に空行を入れます。 |
 | `extrude_skip_weekdays` | `[]` | `押`で次の割当日として飛ばす曜日です。例の`[Sat, Sun]`では土日を飛ばします。7曜日すべては指定できません。 |
 | `default_deadline_time` | `23:59:59` | `〆`の`今`・`明`・曜日・日付指定で使う締切時刻です。時刻を明示した`〆 19:00`と`〆 消`には適用しません。 |
 
-曜日は`Mon`、`Tue`、`Wed`、`Thu`、`Fri`、`Sat`、`Sun`のいずれかです。`end_of_day_duration`は`HH:MM`、`default_deadline_time`は`HH:MM`または`HH:MM:SS`で指定します。
+曜日は`Mon`、`Tue`、`Wed`、`Thu`、`Fri`、`Sat`、`Sun`のいずれかです。`end_of_day_offset_minutes`は`-1079`から`1439`までの整数、`default_deadline_time`は`HH:MM`または`HH:MM:SS`で指定します。
 
 ### MCP client設定例
 

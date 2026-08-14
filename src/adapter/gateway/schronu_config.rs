@@ -1,6 +1,6 @@
 #[cfg(test)]
 mod tests {
-    use chrono::{Duration, NaiveTime, Weekday};
+    use chrono::{NaiveTime, Weekday};
     use std::env;
     use std::fs;
     use std::path::{Path, PathBuf};
@@ -29,7 +29,7 @@ mod tests {
             actual.busy_time_slots_yaml_path,
             PathBuf::from("../Schronu-private/busy_time_slots.yaml")
         );
-        assert_eq!(actual.end_of_day_duration, Duration::minutes(30));
+        assert_eq!(actual.end_of_day_offset_minutes, 30);
         assert_eq!(actual.calendar_blank_line_weekday, Weekday::Mon);
         assert!(actual.extrude_skip_weekdays.is_empty());
         assert_eq!(
@@ -43,7 +43,7 @@ mod tests {
         let directory = test_directory();
         let path = write_config(
             &directory,
-            "obsidian_vault_name: Work\nbusy_time_slots_yaml_path: schedules/busy.yaml\nend_of_day_duration: '01:15'\ncalendar_blank_line_weekday: Fri\nextrude_skip_weekdays: [Sat, Sun]\ndefault_deadline_time: '19:00'\n",
+            "obsidian_vault_name: Work\nbusy_time_slots_yaml_path: schedules/busy.yaml\nend_of_day_offset_minutes: -120\ncalendar_blank_line_weekday: Fri\nextrude_skip_weekdays: [Sat, Sun]\ndefault_deadline_time: '19:00'\n",
         );
 
         let actual = load_schronu_config(Some(path.into_os_string())).unwrap();
@@ -53,7 +53,7 @@ mod tests {
             actual.busy_time_slots_yaml_path,
             directory.join("schedules/busy.yaml")
         );
-        assert_eq!(actual.end_of_day_duration, Duration::minutes(75));
+        assert_eq!(actual.end_of_day_offset_minutes, -120);
         assert_eq!(actual.calendar_blank_line_weekday, Weekday::Fri);
         assert_eq!(
             actual.extrude_skip_weekdays,
@@ -79,8 +79,10 @@ mod tests {
     fn config不正値と重複曜日はerrorにする() {
         for contents in [
             "calendar_blank_line_weekday: Monday\n",
-            "end_of_day_duration: '24:00'\n",
-            "end_of_day_duration: '1:02'\n",
+            "end_of_day_duration: '00:30'\n",
+            "end_of_day_offset_minutes: '30'\n",
+            "end_of_day_offset_minutes: -1080\n",
+            "end_of_day_offset_minutes: 1440\n",
             "default_deadline_time: '25:00'\n",
             "extrude_skip_weekdays: [Sat, Sat]\n",
             "extrude_skip_weekdays: [Mon, Tue, Wed, Thu, Fri, Sat, Sun]\n",
@@ -106,7 +108,7 @@ mod tests {
         let _: Option<SchronuConfig> = None;
     }
 }
-use chrono::{Duration, NaiveTime, Weekday};
+use chrono::{NaiveTime, Weekday};
 use std::collections::HashSet;
 use std::ffi::OsString;
 use std::fs;
@@ -120,7 +122,7 @@ const DEFAULT_BUSY_TIME_SLOTS_YAML_PATH: &str = "../Schronu-private/busy_time_sl
 pub struct SchronuConfig {
     pub obsidian_vault_name: String,
     pub busy_time_slots_yaml_path: PathBuf,
-    pub end_of_day_duration: Duration,
+    pub end_of_day_offset_minutes: i64,
     pub calendar_blank_line_weekday: Weekday,
     pub extrude_skip_weekdays: Vec<Weekday>,
     pub default_deadline_time: NaiveTime,
@@ -131,7 +133,7 @@ impl Default for SchronuConfig {
         Self {
             obsidian_vault_name: DEFAULT_OBSIDIAN_VAULT_NAME.to_string(),
             busy_time_slots_yaml_path: PathBuf::from(DEFAULT_BUSY_TIME_SLOTS_YAML_PATH),
-            end_of_day_duration: Duration::minutes(30),
+            end_of_day_offset_minutes: 30,
             calendar_blank_line_weekday: Weekday::Mon,
             extrude_skip_weekdays: vec![],
             default_deadline_time: NaiveTime::from_hms_opt(23, 59, 59).unwrap(),
@@ -165,7 +167,7 @@ fn parse_schronu_config(contents: &str, config_directory: &Path) -> Result<Schro
     let known_keys = [
         "obsidian_vault_name",
         "busy_time_slots_yaml_path",
-        "end_of_day_duration",
+        "end_of_day_offset_minutes",
         "calendar_blank_line_weekday",
         "extrude_skip_weekdays",
         "default_deadline_time",
@@ -197,8 +199,13 @@ fn parse_schronu_config(contents: &str, config_directory: &Path) -> Result<Schro
             config_directory.join(path)
         };
     }
-    if let Some(value) = optional_string(yaml, "end_of_day_duration")? {
-        config.end_of_day_duration = parse_end_of_day_duration(value)?;
+    if !matches!(yaml["end_of_day_offset_minutes"], Yaml::BadValue) {
+        config.end_of_day_offset_minutes = yaml["end_of_day_offset_minutes"]
+            .as_i64()
+            .ok_or_else(|| "end_of_day_offset_minutes must be an integer".to_string())?;
+        if !(-1079..=1439).contains(&config.end_of_day_offset_minutes) {
+            return Err("end_of_day_offset_minutes must be between -1079 and 1439".to_string());
+        }
     }
     if let Some(value) = optional_string(yaml, "calendar_blank_line_weekday")? {
         config.calendar_blank_line_weekday = parse_weekday(value)?;
@@ -239,27 +246,6 @@ fn optional_string<'a>(yaml: &'a Yaml, key: &str) -> Result<Option<&'a str>, Str
             .map(Some)
             .ok_or_else(|| format!("{key} must be a string")),
     }
-}
-
-fn parse_end_of_day_duration(value: &str) -> Result<Duration, String> {
-    let parts = value.split(':').collect::<Vec<_>>();
-    if parts.len() != 2
-        || parts
-            .iter()
-            .any(|part| part.len() != 2 || !part.as_bytes().iter().all(u8::is_ascii_digit))
-    {
-        return Err("end_of_day_duration must use HH:MM".to_string());
-    }
-    let hour = parts[0]
-        .parse::<i64>()
-        .map_err(|_| "end_of_day_duration hour must be numeric".to_string())?;
-    let minute = parts[1]
-        .parse::<i64>()
-        .map_err(|_| "end_of_day_duration minute must be numeric".to_string())?;
-    if !(0..24).contains(&hour) || !(0..60).contains(&minute) {
-        return Err("end_of_day_duration must be between 00:00 and 23:59".to_string());
-    }
-    Ok(Duration::minutes(hour * 60 + minute))
 }
 
 fn parse_deadline_time(value: &str) -> Result<NaiveTime, String> {

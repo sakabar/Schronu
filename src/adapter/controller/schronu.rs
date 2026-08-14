@@ -11,17 +11,18 @@ use schronu::adapter::gateway::task_repository::TaskRepository;
 use schronu::application::daily_capacity::subjective_date_start;
 use schronu::application::daily_capacity::{
     calculate_daily_rho_diff_hours,
-    calculate_free_time_minutes_for_subjective_date_with_end_of_day_duration,
-    calculate_full_day_free_time_minutes_for_subjective_date_with_end_of_day_duration, RHO_GOAL,
+    calculate_free_time_minutes_for_subjective_date_with_end_of_day_offset_minutes,
+    calculate_full_day_free_time_minutes_for_subjective_date_with_end_of_day_offset_minutes,
+    RHO_GOAL,
 };
 use schronu::application::flatten_use_case::{
-    flatten_tasks_with_end_of_day_duration, FlattenResult, UnresolvedReason,
+    flatten_tasks_with_end_of_day_offset_minutes, FlattenResult, UnresolvedReason,
 };
 use schronu::application::interface::FreeTimeManagerTrait;
 #[cfg(test)]
 use schronu::application::interface::{RepositoryReloadOutcome, TaskRepositoryOperation};
 use schronu::application::interface::{TaskRepositoryError, TaskRepositoryTrait};
-use schronu::application::pack_use_case::pack_tasks_with_end_of_day_duration;
+use schronu::application::pack_use_case::pack_tasks_with_end_of_day_offset_minutes;
 use schronu::application::schedule_use_case::get_schedule;
 use schronu::application::task_use_case::{
     breakdown_task, complete_task, create_task, defer_task, estimated_work_seconds_from_minutes,
@@ -1623,7 +1624,7 @@ fn calculate_project_category_denominator_seconds(
     rows: &[TaskListDisplayRow],
     last_synced_time: DateTime<Local>,
     free_time_manager: &mut dyn FreeTimeManagerTrait,
-    end_of_day_duration: Duration,
+    end_of_day_offset_minutes: i64,
 ) -> i64 {
     let mut dates = rows
         .iter()
@@ -1636,11 +1637,11 @@ fn calculate_project_category_denominator_seconds(
     dates
         .iter()
         .map(|date| {
-            calculate_free_time_minutes_for_subjective_date_with_end_of_day_duration(
+            calculate_free_time_minutes_for_subjective_date_with_end_of_day_offset_minutes(
                 date,
                 last_synced_time,
                 free_time_manager,
-                end_of_day_duration,
+                end_of_day_offset_minutes,
             ) * 60
         })
         .sum()
@@ -2121,7 +2122,7 @@ fn execute_show_all_tasks_with_config(
         .expect("invalid hour")
         .with_minute(0)
         .expect("invalid minute")
-        + config.end_of_day_duration;
+        + Duration::minutes(config.end_of_day_offset_minutes);
     // ここまでρ計算用
 
     let is_calendar_func = pattern_opt.as_ref().map_or(false, |pattern| {
@@ -2771,18 +2772,18 @@ fn execute_show_all_tasks_with_config(
         let weekday_jp = get_weekday_jp(date);
 
         let free_time_minutes =
-            calculate_free_time_minutes_for_subjective_date_with_end_of_day_duration(
+            calculate_free_time_minutes_for_subjective_date_with_end_of_day_offset_minutes(
                 date,
                 last_synced_time,
                 free_time_manager,
-                config.end_of_day_duration,
+                config.end_of_day_offset_minutes,
             );
         let full_day_free_time_minutes_opt = if is_band_func {
             Some(
-                calculate_full_day_free_time_minutes_for_subjective_date_with_end_of_day_duration(
+                calculate_full_day_free_time_minutes_for_subjective_date_with_end_of_day_offset_minutes(
                     date,
                     free_time_manager,
-                    config.end_of_day_duration,
+                    config.end_of_day_offset_minutes,
                 ),
             )
         } else {
@@ -3076,7 +3077,7 @@ fn execute_show_all_tasks_with_config(
             &task_list_display_rows,
             last_synced_time,
             free_time_manager,
-            config.end_of_day_duration,
+            config.end_of_day_offset_minutes,
         );
         writeln_newline(
             stdout,
@@ -5702,10 +5703,10 @@ fn execute_pack_with_config(
     free_time_manager: &mut dyn FreeTimeManagerTrait,
     config: &SchronuConfig,
 ) {
-    let result = pack_tasks_with_end_of_day_duration(
+    let result = pack_tasks_with_end_of_day_offset_minutes(
         task_repository,
         free_time_manager,
-        config.end_of_day_duration,
+        config.end_of_day_offset_minutes,
     );
     let total_work_seconds = result
         .packed_tasks
@@ -6570,10 +6571,10 @@ fn execute_with_config(
             }
         }
         "平" | "flatten" | "flat" => {
-            let result = flatten_tasks_with_end_of_day_duration(
+            let result = flatten_tasks_with_end_of_day_offset_minutes(
                 task_repository,
                 free_time_manager,
-                config.end_of_day_duration,
+                config.end_of_day_offset_minutes,
             );
             write_flatten_result(stdout, &result);
         }
