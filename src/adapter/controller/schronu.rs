@@ -3435,7 +3435,7 @@ fn test_make_obsidian_search_url_task_idをqueryにする() {
     let query = "11111111-1111-1111-1111-111111111111";
     let actual = make_obsidian_search_url(query);
     let expected =
-        "obsidian://search?vault=Obsidian-Moica&query=11111111-1111-1111-1111-111111111111";
+        "obsidian://search?vault=Obsidian-Work&query=11111111-1111-1111-1111-111111111111";
 
     assert_eq!(actual, expected);
 }
@@ -3459,7 +3459,7 @@ fn test_make_obsidian_root_task_search_url_子タスクからrootのtask_idをqu
 
     let actual = make_obsidian_root_task_search_url(&child_task);
     let expected =
-        "obsidian://search?vault=Obsidian-Moica&query=11111111-1111-1111-1111-111111111111";
+        "obsidian://search?vault=Obsidian-Work&query=11111111-1111-1111-1111-111111111111";
 
     assert_eq!(actual, expected);
 }

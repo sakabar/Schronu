@@ -49,7 +49,7 @@ SCHRONU_STORAGE_DIR=/absolute/path/to/tasks SCHRONU_CONFIG_PATH=/absolute/path/t
 仕事用設定の例です。
 
 ```yaml
-obsidian_vault_name: Obsidian-Moica
+obsidian_vault_name: Obsidian-Work
 busy_time_slots_yaml_path: busy_time_slots.yaml
 end_of_day_offset_minutes: -120
 calendar_blank_line_weekday: Mon
@@ -70,7 +70,7 @@ SCHRONU_CONFIG_PATH=/absolute/path/to/schronu.yaml cargo run --bin schronu
 
 | キー | 既定値 | 効果 |
 | --- | --- | --- |
-| `obsidian_vault_name` | `Obsidian-Moica` | `黒`(または`obs`)コマンドのObsidian検索先vault名です。空白や記号を含む名前も利用できます。 |
+| `obsidian_vault_name` | `Obsidian-Work` | `黒`(または`obs`)コマンドのObsidian検索先vault名です。空白や記号を含む名前も利用できます。 |
 | `busy_time_slots_yaml_path` | `../Schronu-private/busy_time_slots.yaml` | 毎週定期の行動不能時間を定義するYAMLへのpathです。 |
 | `end_of_day_offset_minutes` | `30` | 当日24:00からの符号付き分オフセットです。`-120`は22:00、`30`は翌日00:30を表し、日次容量・`全`・`暦`・`帯`・`平`・`詰`で使います。業務日の開始境界である06:00は変更しません。 |
 | `calendar_blank_line_weekday` | `Mon` | `暦`の出力で、その曜日の直後に空行を入れます。 |

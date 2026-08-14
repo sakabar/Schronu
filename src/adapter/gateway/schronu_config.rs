@@ -71,7 +71,7 @@ mod tests {
 
         let actual = load_schronu_config(Some(path.clone().into_os_string())).unwrap();
 
-        assert_eq!(actual.obsidian_vault_name, "Obsidian-Moica");
+        assert_eq!(actual.obsidian_vault_name, "Obsidian-Work");
         assert_eq!(
             actual.busy_time_slots_yaml_path,
             path.parent().unwrap().join("busy_time_slots.yaml")
@@ -138,7 +138,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use yaml_rust::{Yaml, YamlLoader};
 
-const DEFAULT_OBSIDIAN_VAULT_NAME: &str = "Obsidian-Moica";
+const DEFAULT_OBSIDIAN_VAULT_NAME: &str = "Obsidian-Work";
 const DEFAULT_BUSY_TIME_SLOTS_YAML_PATH: &str = "../Schronu-private/busy_time_slots.yaml";
 
 #[derive(Clone, Debug, Eq, PartialEq)]
