@@ -2088,6 +2088,26 @@ fn test_try_create_parentは子を親の直下に残さず挿入する() {
 }
 
 #[test]
+fn test_try_create_parentはhierarchy_grant取得失敗時にtreeとrevisionを変更しない() {
+    let root = TaskHandle::new("root");
+    let mut child = root.try_create_child(TaskAttr::new("child")).unwrap();
+    let before_snapshot = root.snapshot();
+    let before_revision = root.get_persistent_mutation_revision();
+    let hierarchy_edit_prohibition = root
+        .node
+        .tree()
+        .prohibit_hierarchy_edit()
+        .expect("test hierarchy edit prohibition");
+
+    let actual = child.try_create_parent(TaskAttr::new("parent"));
+
+    assert_eq!(actual, Err(TaskTreeError::HierarchyGrant));
+    assert_eq!(root.snapshot(), before_snapshot);
+    assert_eq!(root.get_persistent_mutation_revision(), before_revision);
+    drop(hierarchy_edit_prohibition);
+}
+
+#[test]
 fn test_try_create_sequential_childrenは不正な範囲でtreeとrevisionを変更しない() {
     let root = TaskHandle::new("root");
     let before_snapshot = root.snapshot();
