@@ -2878,6 +2878,35 @@ fn test_taskをcloneした場合はnodeは同じ木を指すポインタであ�
 }
 
 #[test]
+fn test_task_handle_snapshotは独立した読み取り値を返す() {
+    let root = TaskHandle::new("親");
+    let child = root.try_create_child(TaskAttr::new("子")).unwrap();
+    child.set_estimated_work_seconds(60);
+
+    let snapshot = root.snapshot();
+    child.set_estimated_work_seconds(120);
+
+    assert_eq!(snapshot.name(), "親");
+    assert_eq!(snapshot.children()[0].estimated_work_seconds(), 60);
+    assert_eq!(root.get_children()[0].get_estimated_work_seconds(), 120);
+}
+
+#[test]
+fn test_reparent_toは循環をerrorにして木とrevisionを変更しない() {
+    let root = TaskHandle::new("親");
+    let mut child = root.try_create_child(TaskAttr::new("子")).unwrap();
+    let before_root_snapshot = root.snapshot();
+    let before_root_revision = root.get_persistent_mutation_revision();
+
+    let actual = root.clone().try_reparent_to(&child);
+
+    assert_eq!(actual, Err(TaskTreeError::Cycle));
+    assert_eq!(root.snapshot(), before_root_snapshot);
+    assert_eq!(root.get_persistent_mutation_revision(), before_root_revision);
+    assert_eq!(child.parent().unwrap().get_id(), root.get_id());
+}
+
+#[test]
 fn test_first_available_time_pending状態の時はpending_untilとstart_timeの大きい方が採用されること_pending_untilの方が大きい場合(
 ) {
     let dt = Local.with_ymd_and_hms(2023, 5, 19, 1, 23, 45).unwrap();
