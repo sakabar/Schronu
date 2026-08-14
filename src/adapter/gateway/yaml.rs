@@ -235,7 +235,7 @@ pub fn yaml_to_immutable_task(yaml: &Yaml) -> ImmutableTask {
     }
 
     if let Ok(LocalResult::Single(pu)) = parse_local_datetime(
-        format!("{} 00:00", &pending_until_str).as_str(),
+        format!("{} 00:00", pending_until_str).as_str(),
         "%Y/%m/%d %H:%M",
     ) {
         pending_until = pu;
@@ -1060,7 +1060,7 @@ create_time: '2023/05/19 01:23:45'
     let docs = YamlLoader::load_from_str(s).unwrap();
     let project_yaml: &Yaml = &docs[0];
 
-    let now = Local.with_ymd_and_hms(2023, 5, 19, 01, 23, 45).unwrap();
+    let now = Local.with_ymd_and_hms(2023, 5, 19, 1, 23, 45).unwrap();
     let actual = yaml_to_task(project_yaml, now).unwrap();
     let mut expected = Task::new("タスク1");
     let id: Uuid = uuid!("67e55044-10b1-426f-9247-bb680e5fe0c8");
@@ -1090,7 +1090,7 @@ start_time: '2023/05/19 01:23:45'
     let docs = YamlLoader::load_from_str(s).unwrap();
     let project_yaml: &Yaml = &docs[0];
 
-    let now = Local.with_ymd_and_hms(2023, 5, 19, 01, 23, 45).unwrap();
+    let now = Local.with_ymd_and_hms(2023, 5, 19, 1, 23, 45).unwrap();
     let actual = yaml_to_task(project_yaml, now).unwrap();
     let mut expected = Task::new("タスク1");
     let id: Uuid = uuid!("67e55044-10b1-426f-9247-bb680e5fe0c8");
@@ -1120,7 +1120,7 @@ end_time: '2023/05/19 01:23:45'
     let docs = YamlLoader::load_from_str(s).unwrap();
     let project_yaml: &Yaml = &docs[0];
 
-    let now = Local.with_ymd_and_hms(2023, 5, 19, 01, 23, 45).unwrap();
+    let now = Local.with_ymd_and_hms(2023, 5, 19, 1, 23, 45).unwrap();
     let actual = yaml_to_task(project_yaml, now).unwrap();
     let mut expected = Task::new("タスク1");
     let id: Uuid = uuid!("67e55044-10b1-426f-9247-bb680e5fe0c8");
@@ -1149,7 +1149,7 @@ deadline_time: '2023/05/19 01:23:45'
     let docs = YamlLoader::load_from_str(s).unwrap();
     let project_yaml: &Yaml = &docs[0];
 
-    let now = Local.with_ymd_and_hms(2023, 5, 19, 01, 23, 45).unwrap();
+    let now = Local.with_ymd_and_hms(2023, 5, 19, 1, 23, 45).unwrap();
     let actual = yaml_to_task(project_yaml, now).unwrap();
     let mut expected = Task::new("タスク1");
     let id: Uuid = uuid!("67e55044-10b1-426f-9247-bb680e5fe0c8");

@@ -780,7 +780,7 @@ fn test_extract_leaf_tasks_from_project_子が全てdoneのタスクは葉とし
     let actual = extract_leaf_tasks_from_project(&parent_task);
 
     assert_eq!(actual.len(), 1);
-    assert_task(&actual.first().unwrap(), &expected_child_task_1);
+    assert_task(actual.first().unwrap(), &expected_child_task_1);
 }
 
 #[test]
@@ -881,7 +881,7 @@ impl fmt::Debug for TaskAttr {
                     } else {
                         ""
                     },
-                    &self.name
+                    self.name
                 )
                 .as_str(),
             )
@@ -944,8 +944,11 @@ impl TaskAttr {
         let deadline_buffer_seconds_before_start_time = 300;
 
         // pending_untilが〆切よりも後ろになってしまっている場合はpending_untilを調整する
-        if self.orig_status == Status::Pending && self.deadline_time_opt.is_some() {
-            let pending_time_before_deadline = self.deadline_time_opt.unwrap()
+        if let Some(deadline_time) = self
+            .deadline_time_opt
+            .filter(|_| self.orig_status == Status::Pending)
+        {
+            let pending_time_before_deadline = deadline_time
                 - Duration::seconds(self.estimated_work_seconds)
                 - Duration::seconds(deadline_buffer_seconds_before_start_time);
 
@@ -1223,7 +1226,7 @@ impl Task {
     // dendron::Node::try_detach_insert_subtree()は木そのものを消滅させることができない仕様のようなので、
     // ダミーのルートノードを用意することで、使いたいノードが全て子ノードになるようにする
     pub fn new(name: &str) -> Self {
-        let dummy_attr = TaskAttr::new(format!("dummy-for-{}", &name).as_str());
+        let dummy_attr = TaskAttr::new(format!("dummy-for-{}", name).as_str());
         let dummy_root = Node::new_tree(dummy_attr);
 
         let grant = dummy_root
@@ -1615,7 +1618,7 @@ impl Task {
     // }
 
     pub fn tree_debug_pretty_print(&self) -> String {
-        format!("{:?}", &self.node.tree().debug_pretty_print())
+        format!("{:?}", self.node.tree().debug_pretty_print())
     }
 
     pub fn try_eq_tree(&self, task: &Task) -> Result<bool, BorrowError> {
@@ -1882,17 +1885,17 @@ fn test_make_appointment_正常系1() {
     let task = root_task.create_as_last_child(TaskAttr::new("MTG"));
 
     task.set_estimated_work_seconds(3600);
-    let appointment_start_time = Local.with_ymd_and_hms(2023, 5, 19, 01, 23, 45).unwrap();
+    let appointment_start_time = Local.with_ymd_and_hms(2023, 5, 19, 1, 23, 45).unwrap();
 
     task.make_appointment(appointment_start_time);
 
     assert_eq!(
         &task.get_start_time(),
-        &Local.with_ymd_and_hms(2023, 5, 19, 01, 23, 45).unwrap()
+        &Local.with_ymd_and_hms(2023, 5, 19, 1, 23, 45).unwrap()
     );
     assert_eq!(
         &task.get_deadline_time_opt(),
-        &Some(Local.with_ymd_and_hms(2023, 5, 19, 02, 23, 45).unwrap())
+        &Some(Local.with_ymd_and_hms(2023, 5, 19, 2, 23, 45).unwrap())
     );
 }
 
@@ -2039,9 +2042,7 @@ fn test_create_sequential_children_正常系1() {
         Ok(grand_child_task) => {
             assert_task_and_tree(&grand_child_task, &expected_tree);
         }
-        _ => {
-            assert!(false);
-        }
+        _ => panic!("create_sequential_children must succeed"),
     }
 }
 
@@ -2051,32 +2052,24 @@ fn test_create_sequential_children_異常系1_begin_indexのほうが大きい�
     let task = Task::new("親タスク");
     let grand_child_task_result = task.create_sequential_children("鎖タスク", 600, 10, 1, "話");
 
-    match grand_child_task_result {
-        Ok(_) => {
-            assert!(false);
-        }
-        _ => {
-            // この分岐に入ることを意図している
-            assert!(true);
-        }
-    }
+    assert!(grand_child_task_result.is_err());
 }
 
 #[cfg(test)]
 fn get_tree_for_assert_debug(task1: &Task, task2: &Task) -> String {
     format!(
         "actual and expected are not equal:\n\n=== [actual] ===\n{}\n\n=== [expected] ===\n{}\n\n",
-        &task1.tree_debug_pretty_print(),
-        &task2.tree_debug_pretty_print(),
+        task1.tree_debug_pretty_print(),
+        task2.tree_debug_pretty_print(),
     )
 }
 
 #[cfg(test)]
 pub fn assert_task(task1: &Task, task2: &Task) {
-    let str_for_debug_string: String = get_tree_for_assert_debug(&task1, &task2);
+    let str_for_debug_string: String = get_tree_for_assert_debug(task1, task2);
 
     assert!(
-        &task1.try_eq_tree(&task2).expect("data are not borrowed"),
+        &task1.try_eq_tree(task2).expect("data are not borrowed"),
         "{}",
         str_for_debug_string.as_str()
     );
@@ -2086,20 +2079,20 @@ pub fn assert_task(task1: &Task, task2: &Task) {
 fn get_task_tree_for_assert_debug(task1: &Task, tree: &Tree<TaskAttr>) -> String {
     format!(
         "actual and expected are not equal:\n\n=== [actual] ===\n{}\n\n=== [expected] ===\n{:?}\n\n",
-        &task1.tree_debug_pretty_print(),
-        &tree.debug_pretty_print(),
+        task1.tree_debug_pretty_print(),
+        tree.debug_pretty_print(),
     )
 }
 
 #[cfg(test)]
 pub fn assert_task_and_tree(task1: &Task, tree: &Tree<TaskAttr>) {
-    let str_for_debug_string: String = get_task_tree_for_assert_debug(&task1, &tree);
+    let str_for_debug_string: String = get_task_tree_for_assert_debug(task1, tree);
 
     assert!(
         &task1
             .node
             .tree()
-            .try_eq(&tree)
+            .try_eq(tree)
             .expect("data are not borrowed"),
         "{}",
         str_for_debug_string.as_str()
@@ -2263,7 +2256,7 @@ fn test_task_to_yaml_正常系1_デフォルトの値と同じ場合は出力し
     let mut task = Task::new("タスク1");
     let id: Uuid = uuid!("67e55044-10b1-426f-9247-bb680e5fe0c8");
     task.set_id(id);
-    let now = Local.with_ymd_and_hms(2023, 5, 19, 01, 23, 45).unwrap();
+    let now = Local.with_ymd_and_hms(2023, 5, 19, 1, 23, 45).unwrap();
     task.set_create_time(now);
     task.set_start_time(now);
     let actual = task_to_yaml(&task);
@@ -2283,7 +2276,7 @@ start_time: '2023/05/19 01:23:45'
 
 #[test]
 fn test_task_to_yaml_正常系2_再帰() {
-    let now = Local.with_ymd_and_hms(2023, 5, 19, 01, 23, 45).unwrap();
+    let now = Local.with_ymd_and_hms(2023, 5, 19, 1, 23, 45).unwrap();
     let mut task = Task::new("親タスク1");
     task.set_orig_status(Status::Pending);
     task.set_pending_until(Local.with_ymd_and_hms(2023, 4, 1, 12, 0, 0).unwrap());
@@ -2345,7 +2338,7 @@ fn test_task_to_yaml_ユニークキー() {
     let mut task = Task::new("タスク1");
     let id: Uuid = uuid!("67e55044-10b1-426f-9247-bb680e5fe0c8");
     task.set_id(id);
-    let now = Local.with_ymd_and_hms(2023, 5, 19, 01, 23, 45).unwrap();
+    let now = Local.with_ymd_and_hms(2023, 5, 19, 1, 23, 45).unwrap();
     task.set_create_time(now);
     task.set_start_time(now);
     let actual = task_to_yaml(&task);
@@ -2368,7 +2361,7 @@ fn test_task_to_yaml_project_category() {
     let id: Uuid = uuid!("67e55044-10b1-426f-9247-bb680e5fe0c8");
     task.set_id(id);
     task.set_project_category_opt(Some(ProjectCategory::Sustaining));
-    let now = Local.with_ymd_and_hms(2023, 5, 19, 01, 23, 45).unwrap();
+    let now = Local.with_ymd_and_hms(2023, 5, 19, 1, 23, 45).unwrap();
     task.set_create_time(now);
     task.set_start_time(now);
     let actual = task_to_yaml(&task);
@@ -2388,7 +2381,7 @@ start_time: '2023/05/19 01:23:45'
 
 #[test]
 fn test_task_to_yaml_project_categoryは子タスクには出力しない() {
-    let now = Local.with_ymd_and_hms(2023, 5, 19, 01, 23, 45).unwrap();
+    let now = Local.with_ymd_and_hms(2023, 5, 19, 1, 23, 45).unwrap();
     let mut task = Task::new("親タスク");
     task.set_id(uuid!("67e55044-10b1-426f-9247-bb680e5fe0c8"));
     task.set_create_time(now);
@@ -2427,7 +2420,7 @@ fn test_task_to_yaml_is_on_other_side() {
     let id: Uuid = uuid!("67e55044-10b1-426f-9247-bb680e5fe0c8");
     task.set_id(id);
     task.set_is_on_other_side(true);
-    let now = Local.with_ymd_and_hms(2023, 5, 19, 01, 23, 45).unwrap();
+    let now = Local.with_ymd_and_hms(2023, 5, 19, 1, 23, 45).unwrap();
     task.set_create_time(now);
     task.set_start_time(now);
     let actual = task_to_yaml(&task);
@@ -2451,7 +2444,7 @@ fn test_task_to_yaml_atomic() {
     let id: Uuid = uuid!("67e55044-10b1-426f-9247-bb680e5fe0c8");
     task.set_id(id);
     task.set_atomic(true);
-    let now = Local.with_ymd_and_hms(2023, 5, 19, 01, 23, 45).unwrap();
+    let now = Local.with_ymd_and_hms(2023, 5, 19, 1, 23, 45).unwrap();
     task.set_create_time(now);
     task.set_start_time(now);
     let actual = task_to_yaml(&task);
@@ -2475,11 +2468,9 @@ fn test_task_to_yaml_end_time_opt() {
     let id: Uuid = uuid!("67e55044-10b1-426f-9247-bb680e5fe0c8");
     task.set_id(id);
     task.set_is_on_other_side(true);
-    task.set_create_time(Local.with_ymd_and_hms(2023, 5, 19, 01, 23, 45).unwrap());
-    task.set_start_time(Local.with_ymd_and_hms(2023, 5, 19, 02, 34, 56).unwrap());
-    task.set_end_time_opt(Some(
-        Local.with_ymd_and_hms(2023, 5, 19, 03, 45, 6).unwrap(),
-    ));
+    task.set_create_time(Local.with_ymd_and_hms(2023, 5, 19, 1, 23, 45).unwrap());
+    task.set_start_time(Local.with_ymd_and_hms(2023, 5, 19, 2, 34, 56).unwrap());
+    task.set_end_time_opt(Some(Local.with_ymd_and_hms(2023, 5, 19, 3, 45, 6).unwrap()));
     let actual = task_to_yaml(&task);
 
     let s = "
@@ -2502,11 +2493,9 @@ fn test_task_to_yaml_deadline_time_opt() {
     let id: Uuid = uuid!("67e55044-10b1-426f-9247-bb680e5fe0c8");
     task.set_id(id);
     task.set_is_on_other_side(true);
-    task.set_create_time(Local.with_ymd_and_hms(2023, 5, 19, 01, 23, 45).unwrap());
-    task.set_start_time(Local.with_ymd_and_hms(2023, 5, 19, 02, 34, 56).unwrap());
-    task.set_deadline_time_opt(Some(
-        Local.with_ymd_and_hms(2023, 5, 19, 03, 45, 6).unwrap(),
-    ));
+    task.set_create_time(Local.with_ymd_and_hms(2023, 5, 19, 1, 23, 45).unwrap());
+    task.set_start_time(Local.with_ymd_and_hms(2023, 5, 19, 2, 34, 56).unwrap());
+    task.set_deadline_time_opt(Some(Local.with_ymd_and_hms(2023, 5, 19, 3, 45, 6).unwrap()));
     let actual = task_to_yaml(&task);
 
     let s = "
@@ -2529,8 +2518,8 @@ fn test_task_to_yaml_estimated_work_seconds() {
     let id: Uuid = uuid!("67e55044-10b1-426f-9247-bb680e5fe0c8");
     task.set_id(id);
     task.set_is_on_other_side(true);
-    task.set_create_time(Local.with_ymd_and_hms(2023, 5, 19, 01, 23, 45).unwrap());
-    task.set_start_time(Local.with_ymd_and_hms(2023, 5, 19, 02, 34, 56).unwrap());
+    task.set_create_time(Local.with_ymd_and_hms(2023, 5, 19, 1, 23, 45).unwrap());
+    task.set_start_time(Local.with_ymd_and_hms(2023, 5, 19, 2, 34, 56).unwrap());
     task.set_estimated_work_seconds(1);
     let actual = task_to_yaml(&task);
 
@@ -2554,8 +2543,8 @@ fn test_task_to_yaml_actual_work_seconds() {
     let id: Uuid = uuid!("67e55044-10b1-426f-9247-bb680e5fe0c8");
     task.set_id(id);
     task.set_is_on_other_side(true);
-    task.set_create_time(Local.with_ymd_and_hms(2023, 5, 19, 01, 23, 45).unwrap());
-    task.set_start_time(Local.with_ymd_and_hms(2023, 5, 19, 02, 34, 56).unwrap());
+    task.set_create_time(Local.with_ymd_and_hms(2023, 5, 19, 1, 23, 45).unwrap());
+    task.set_start_time(Local.with_ymd_and_hms(2023, 5, 19, 2, 34, 56).unwrap());
     task.set_actual_work_seconds(1);
     let actual = task_to_yaml(&task);
 
@@ -2579,7 +2568,7 @@ fn test_task_to_yaml_repetition_interval() {
     let id: Uuid = uuid!("67e55044-10b1-426f-9247-bb680e5fe0c8");
     task.set_id(id);
     task.set_repetition_interval_days_opt(Some(7));
-    let now = Local.with_ymd_and_hms(2023, 5, 19, 01, 23, 45).unwrap();
+    let now = Local.with_ymd_and_hms(2023, 5, 19, 1, 23, 45).unwrap();
     task.set_create_time(now);
     task.set_start_time(now);
     let actual = task_to_yaml(&task);
@@ -2603,7 +2592,7 @@ fn test_task_to_yaml_repetition_anchor_completion() {
     let id: Uuid = uuid!("67e55044-10b1-426f-9247-bb680e5fe0c8");
     task.set_id(id);
     task.set_repetition_anchor(RepetitionAnchor::Completion);
-    let now = Local.with_ymd_and_hms(2023, 5, 19, 01, 23, 45).unwrap();
+    let now = Local.with_ymd_and_hms(2023, 5, 19, 1, 23, 45).unwrap();
     task.set_create_time(now);
     task.set_start_time(now);
     let actual = task_to_yaml(&task);
@@ -2627,7 +2616,7 @@ fn test_task_to_yaml_repetition_anchor_deadlineは出力しない() {
     let id: Uuid = uuid!("67e55044-10b1-426f-9247-bb680e5fe0c8");
     task.set_id(id);
     task.set_repetition_anchor(RepetitionAnchor::Deadline);
-    let now = Local.with_ymd_and_hms(2023, 5, 19, 01, 23, 45).unwrap();
+    let now = Local.with_ymd_and_hms(2023, 5, 19, 1, 23, 45).unwrap();
     task.set_create_time(now);
     task.set_start_time(now);
     let actual = task_to_yaml(&task);
@@ -2650,7 +2639,7 @@ fn test_task_to_yaml_days_in_advance() {
     let id: Uuid = uuid!("67e55044-10b1-426f-9247-bb680e5fe0c8");
     task.set_id(id);
     task.set_days_in_advance(1);
-    let now = Local.with_ymd_and_hms(2023, 5, 19, 01, 23, 45).unwrap();
+    let now = Local.with_ymd_and_hms(2023, 5, 19, 1, 23, 45).unwrap();
     task.set_create_time(now);
     task.set_start_time(now);
     let actual = task_to_yaml(&task);
@@ -2682,11 +2671,9 @@ fn test_get_by_id_ベースケース() {
     match actual_opt {
         Some(actual) => {
             assert_eq!(&actual, &task);
-            assert!(&actual.node.ptr_eq(&task_ptr));
+            assert!(&actual.node.ptr_eq(task_ptr));
         }
-        None => {
-            assert!(false);
-        }
+        None => panic!("task ID must be found"),
     }
 }
 
@@ -2878,9 +2865,7 @@ fn test_parent_親タスクがある場合() {
         Some(actual_task) => {
             assert_task(&actual_task, &parent_task);
         }
-        None => {
-            assert!(false);
-        }
+        None => panic!("child task must have its parent"),
     }
 }
 
@@ -2895,7 +2880,7 @@ fn test_taskをcloneした場合はnodeは同じ木を指すポインタであ�
 #[test]
 fn test_first_available_time_pending状態の時はpending_untilとstart_timeの大きい方が採用されること_pending_untilの方が大きい場合(
 ) {
-    let dt = Local.with_ymd_and_hms(2023, 5, 19, 01, 23, 45).unwrap();
+    let dt = Local.with_ymd_and_hms(2023, 5, 19, 1, 23, 45).unwrap();
     let parent_task = Task::new("親タスク");
     parent_task.set_create_time(dt);
     parent_task.set_start_time(dt);
@@ -2912,7 +2897,7 @@ fn test_first_available_time_pending状態の時はpending_untilとstart_timeの
 #[test]
 fn test_list_all_parent_tasks_with_first_available_time_タスク1個でpending状態の時はpending_untilとstart_timeの大きい方が採用されること_pending_untilの方が大きい場合(
 ) {
-    let dt = Local.with_ymd_and_hms(2023, 5, 19, 01, 23, 45).unwrap();
+    let dt = Local.with_ymd_and_hms(2023, 5, 19, 1, 23, 45).unwrap();
     let parent_task = Task::new("親タスク");
     parent_task.set_create_time(dt);
     parent_task.set_start_time(dt);
@@ -2929,7 +2914,7 @@ fn test_list_all_parent_tasks_with_first_available_time_タスク1個でpending�
 #[test]
 fn test_list_all_parent_tasks_with_first_available_time_タスク1個でpending状態の時はpending_untilとstart_timeの大きい方が採用されること_deadline_timeのほうが小さい場合(
 ) {
-    let dt = Local.with_ymd_and_hms(2023, 5, 19, 01, 23, 45).unwrap();
+    let dt = Local.with_ymd_and_hms(2023, 5, 19, 1, 23, 45).unwrap();
     let parent_task = Task::new("親タスク");
     parent_task.set_create_time(dt);
     parent_task.set_start_time(dt);
@@ -2951,7 +2936,7 @@ fn test_list_all_parent_tasks_with_first_available_time_タスク1個でpending�
 #[test]
 fn test_first_available_time_pending状態の時はpending_untilとstart_timeの大きい方が採用されること_start_timeの方が大きい場合(
 ) {
-    let dt = Local.with_ymd_and_hms(2023, 5, 19, 01, 23, 45).unwrap();
+    let dt = Local.with_ymd_and_hms(2023, 5, 19, 1, 23, 45).unwrap();
     let parent_task = Task::new("親タスク");
     parent_task.set_create_time(dt);
     parent_task.set_start_time(dt + Duration::hours(2));
@@ -2968,7 +2953,7 @@ fn test_first_available_time_pending状態の時はpending_untilとstart_timeの
 #[test]
 fn test_list_all_parent_tasks_with_first_available_time_タスク1個でpending状態の時はpending_untilとstart_timeの大きい方が採用されること_start_timeの方が大きい場合(
 ) {
-    let dt = Local.with_ymd_and_hms(2023, 5, 19, 01, 23, 45).unwrap();
+    let dt = Local.with_ymd_and_hms(2023, 5, 19, 1, 23, 45).unwrap();
     let parent_task = Task::new("親タスク");
     parent_task.set_create_time(dt);
     parent_task.set_start_time(dt + Duration::hours(2));
@@ -2985,7 +2970,7 @@ fn test_list_all_parent_tasks_with_first_available_time_タスク1個でpending�
 #[test]
 fn test_list_all_parent_tasks_with_first_available_time_タスク1個でpending状態ではない時はstart_timeが採用されること(
 ) {
-    let dt = Local.with_ymd_and_hms(2023, 5, 19, 01, 23, 45).unwrap();
+    let dt = Local.with_ymd_and_hms(2023, 5, 19, 1, 23, 45).unwrap();
     let parent_task = Task::new("親タスク");
     parent_task.set_create_time(dt);
     parent_task.set_start_time(dt + Duration::hours(1));
@@ -3001,7 +2986,7 @@ fn test_list_all_parent_tasks_with_first_available_time_タスク1個でpending�
 
 #[test]
 fn test_first_available_time_pending状態ではない時はstart_timeが採用されること() {
-    let dt = Local.with_ymd_and_hms(2023, 5, 19, 01, 23, 45).unwrap();
+    let dt = Local.with_ymd_and_hms(2023, 5, 19, 1, 23, 45).unwrap();
     let parent_task = Task::new("親タスク");
     parent_task.set_create_time(dt);
     parent_task.set_start_time(dt + Duration::hours(1));
@@ -3022,7 +3007,7 @@ fn test_list_all_parent_tasks_with_first_available_time_正常系() {
        - child_task_1
          - grand_child_task (葉)
     */
-    let dt = Local.with_ymd_and_hms(2023, 5, 19, 01, 23, 45).unwrap();
+    let dt = Local.with_ymd_and_hms(2023, 5, 19, 1, 23, 45).unwrap();
     let parent_task = Task::new("親タスク");
     parent_task.set_create_time(dt);
     parent_task.set_start_time(dt);
@@ -3095,7 +3080,7 @@ fn test_list_all_parent_tasks_with_first_available_time_葉に〆切がある場
        - child_task_1
          - grand_child_task (葉)
     */
-    let dt = Local.with_ymd_and_hms(2023, 5, 19, 01, 23, 45).unwrap();
+    let dt = Local.with_ymd_and_hms(2023, 5, 19, 1, 23, 45).unwrap();
     let parent_task = Task::new("親タスク");
     parent_task.set_create_time(dt);
     parent_task.set_start_time(dt);
@@ -3107,7 +3092,7 @@ fn test_list_all_parent_tasks_with_first_available_time_葉に〆切がある場
     let grand_child_task = child_task.create_as_last_child(TaskAttr::new("孫タスク"));
     grand_child_task.set_create_time(dt);
     grand_child_task.set_start_time(dt);
-    grand_child_task.set_estimated_work_seconds(3600 * 1);
+    grand_child_task.set_estimated_work_seconds(3600);
     grand_child_task.set_deadline_time_opt(Some(dt - Duration::hours(1)));
 
     let expected = vec![

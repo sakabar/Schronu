@@ -366,7 +366,7 @@ fn introduces_deadline_violation(
         trial_end > deadline
             && current_ends
                 .get(&scheduled.task.id)
-                .map_or(true, |current_end| trial_end > *current_end)
+                .is_none_or(|current_end| trial_end > *current_end)
     })
 }
 
