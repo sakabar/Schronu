@@ -543,6 +543,46 @@ fn test_load_busy_time_slots_from_file_負数durationはpathとfield_pathを含�
 }
 
 #[test]
+fn test_load_busy_time_slots_from_file_日跨ぎslotはpathとfield_pathを含むエラーになる() {
+    let yaml =
+        valid_busy_time_slots_yaml().replacen("start_time: '13:00'", "start_time: '23:30'", 1);
+    let file = BusyTimeSlotsYamlFile::new(&yaml);
+    let mut manager = FreeTimeManager::new();
+
+    assert_load_error_contains(
+        &mut manager,
+        file.path(),
+        "days_of_week[0].busy_time_slots[0].duration_minutes",
+    );
+}
+
+#[test]
+fn test_load_busy_time_slots_from_file_nameの型違いはpathとfield_pathを含むエラーになる() {
+    let yaml = valid_busy_time_slots_yaml().replacen("name: lunch", "name: 123", 1);
+    let file = BusyTimeSlotsYamlFile::new(&yaml);
+    let mut manager = FreeTimeManager::new();
+
+    assert_load_error_contains(
+        &mut manager,
+        file.path(),
+        "days_of_week[0].busy_time_slots[0].name",
+    );
+}
+
+#[test]
+fn test_load_busy_time_slots_from_file_name欠落はpathとfield_pathを含むエラーになる() {
+    let yaml = valid_busy_time_slots_yaml().replacen("        name: lunch\n", "", 1);
+    let file = BusyTimeSlotsYamlFile::new(&yaml);
+    let mut manager = FreeTimeManager::new();
+
+    assert_load_error_contains(
+        &mut manager,
+        file.path(),
+        "days_of_week[0].busy_time_slots[0].name",
+    );
+}
+
+#[test]
 fn test_register_busy_time_slot_日跨ぎは回復可能なエラーになる() {
     let mut manager = FreeTimeManager::new();
     let start = Local.with_ymd_and_hms(2000, 1, 1, 23, 30, 0).unwrap();
@@ -588,4 +628,33 @@ fn get_free_minutes_明示slotと定期slotが重なっても二重控除しな�
 
     assert_eq!(manager.get_free_minutes(&start, &end), 30);
     fs::remove_file(path).unwrap();
+}
+
+#[test]
+fn test_load_busy_time_slots_from_file_後半slotの異常読み込み時も既存状態を維持する() {
+    let valid_file = BusyTimeSlotsYamlFile::new(&valid_busy_time_slots_yaml());
+    let invalid_yaml = valid_busy_time_slots_yaml().replacen(
+        "  - day_of_week: Sun\n    end_of_day_hour: 23\n    end_of_day_minute: 59\n    busy_time_slots:\n      - start_time: '13:00'\n        duration_minutes: 60\n        name: lunch\n",
+        "  - day_of_week: Sun\n    end_of_day_hour: 23\n    end_of_day_minute: 59\n    busy_time_slots:\n      - start_time: '23:30'\n        duration_minutes: 60\n        name: lunch\n",
+        1,
+    );
+    let invalid_file = BusyTimeSlotsYamlFile::new(&invalid_yaml);
+    let start = Local.with_ymd_and_hms(2000, 1, 3, 13, 0, 0).unwrap();
+    let end = Local.with_ymd_and_hms(2000, 1, 3, 14, 0, 0).unwrap();
+    let mut manager = FreeTimeManager::new();
+
+    manager
+        .load_busy_time_slots_from_file(valid_file.path().to_str().unwrap())
+        .expect("正常なbusy_time_slots.yamlは読み込めるべきです");
+    let before = manager.get_busy_minutes(&start, &end);
+
+    assert_load_error_contains(
+        &mut manager,
+        invalid_file.path(),
+        "days_of_week[6].busy_time_slots[0].duration_minutes",
+    );
+    let after = manager.get_busy_minutes(&start, &end);
+
+    assert_eq!(before, 60);
+    assert_eq!(after, before);
 }
