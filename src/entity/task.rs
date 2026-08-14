@@ -1317,6 +1317,13 @@ impl TaskHandle {
         self.node.borrow_data().clone()
     }
 
+    pub fn try_get_attr(&self) -> Result<TaskAttr, TaskTreeError> {
+        self.node
+            .try_borrow_data()
+            .map(|attr| attr.clone())
+            .map_err(|_| TaskTreeError::Borrow)
+    }
+
     pub fn snapshot(&self) -> TaskSnapshot {
         TaskSnapshot {
             attr: self.get_attr(),
@@ -1326,6 +1333,17 @@ impl TaskHandle {
                 .map(|node| Self { node }.snapshot())
                 .collect(),
         }
+    }
+
+    pub fn try_snapshot(&self) -> Result<TaskSnapshot, TaskTreeError> {
+        Ok(TaskSnapshot {
+            attr: self.try_get_attr()?,
+            children: self
+                .node
+                .children()
+                .map(|node| Self { node }.try_snapshot())
+                .collect::<Result<Vec<_>, _>>()?,
+        })
     }
 
     pub fn try_create_child(&self, task_attr: TaskAttr) -> Result<Self, TaskTreeError> {
