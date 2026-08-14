@@ -35,12 +35,49 @@ Schronuは、ローカルのMCP clientから9個のtask toolを利用できるst
 
 ```shell
 cargo build --release --bin schronu-mcp
-SCHRONU_STORAGE_DIR=/absolute/path/to/tasks ./target/release/schronu-mcp
+SCHRONU_STORAGE_DIR=/absolute/path/to/tasks SCHRONU_CONFIG_PATH=/absolute/path/to/schronu.yaml ./target/release/schronu-mcp
 ```
 
 `schronu-mcp`はstdinからnewline区切りのJSON-RPC messageを読み、stdoutにはMCP protocol responseだけを出力します。起動時は保存先pathの検証だけを行い、lock取得やrepository loadは行いません。通常はterminalから直接操作せず、MCP clientからprocessを起動してください。
 
 保存先は`SCHRONU_STORAGE_DIR`で指定します。未指定時は起動時のworking directoryから見た`../Schronu-private/tasks/`です。相対pathの解釈違いを避けるため、MCP clientでは絶対pathを推奨します。同じ環境変数はCLIの`schronu`にも適用されます。
+
+### 設定ファイル
+
+`SCHRONU_CONFIG_PATH`には任意の設定YAMLのabsolute pathを指定できます。CLIの`schronu`とMCP serverの`schronu-mcp`は、ともに起動時に同じ設定を読み込みます。未指定時は従来の既定値で動作します。指定したfileが読めない、YAMLが壊れている、未知のキーや不正な値がある場合は、意図しない既定値でtaskを操作しないよう起動を停止します。
+
+仕事用設定の例です。
+
+```yaml
+obsidian_vault_name: Obsidian-Work
+busy_time_slots_yaml_path: busy_time_slots.yaml
+end_of_day_offset_minutes: -120
+calendar_blank_line_weekday: Mon
+extrude_skip_weekdays: [Sat, Sun]
+default_deadline_time: "19:00"
+```
+
+すべてのキーは任意です。相対`busy_time_slots_yaml_path`は、実行時のworking directoryではなく設定YAMLの親directoryから解釈します。
+
+編集用の雛形は[`config/schronu.sample.yaml`](config/schronu.sample.yaml)です。コピーして値を環境に合わせて変更し、`SCHRONU_CONFIG_PATH`でabsolute pathを指定します。
+
+```shell
+cp config/schronu.sample.yaml /absolute/path/to/schronu.yaml
+SCHRONU_CONFIG_PATH=/absolute/path/to/schronu.yaml cargo run --bin schronu
+```
+
+コピー後は`busy_time_slots_yaml_path`を、設定ファイルの親directoryを基準に実在するbusy time slots YAMLへのpathへ変更してください。
+
+| キー | 既定値 | 効果 |
+| --- | --- | --- |
+| `obsidian_vault_name` | `Obsidian-Work` | `黒`(または`obs`)コマンドのObsidian検索先vault名です。空白や記号を含む名前も利用できます。 |
+| `busy_time_slots_yaml_path` | `../Schronu-private/busy_time_slots.yaml` | 毎週定期の行動不能時間を定義するYAMLへのpathです。 |
+| `end_of_day_offset_minutes` | `30` | 当日24:00からの符号付き分オフセットです。`-120`は22:00、`30`は翌日00:30を表し、日次容量・`全`・`暦`・`帯`・`平`・`詰`で使います。業務日の開始境界である06:00は変更しません。 |
+| `calendar_blank_line_weekday` | `Mon` | `暦`の出力で、その曜日の直後に空行を入れます。 |
+| `extrude_skip_weekdays` | `[]` | `押`で次の割当日として飛ばす曜日です。例の`[Sat, Sun]`では土日を飛ばします。7曜日すべては指定できません。 |
+| `default_deadline_time` | `23:59:59` | `〆`の`今`・`明`・曜日・日付指定で使う締切時刻です。時刻を明示した`〆 19:00`と`〆 消`には適用しません。 |
+
+曜日は`Mon`、`Tue`、`Wed`、`Thu`、`Fri`、`Sat`、`Sun`のいずれかです。`end_of_day_offset_minutes`は`-1079`から`1439`までの整数、`default_deadline_time`は`HH:MM`または`HH:MM:SS`で指定します。
 
 ### MCP client設定例
 
@@ -52,7 +89,8 @@ clientごとの設定形式に合わせて、commandと環境変数を次のよ�
     "schronu": {
       "command": "/absolute/path/to/Schronu/target/release/schronu-mcp",
       "env": {
-        "SCHRONU_STORAGE_DIR": "/absolute/path/to/Schronu-private/tasks"
+        "SCHRONU_STORAGE_DIR": "/absolute/path/to/Schronu-private/tasks",
+        "SCHRONU_CONFIG_PATH": "/absolute/path/to/schronu.yaml"
       }
     }
   }

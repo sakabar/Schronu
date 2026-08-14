@@ -4,20 +4,25 @@ use chrono::{
 use percent_encoding::{percent_encode, AsciiSet, CONTROLS};
 use regex::Regex;
 use schronu::adapter::gateway::free_time_manager::FreeTimeManager;
+use schronu::adapter::gateway::schronu_config::{load_schronu_config, SchronuConfig};
 use schronu::adapter::gateway::storage_lock::{LockMode, StorageLock, StorageLockError};
 use schronu::adapter::gateway::task_repository::TaskRepository;
 #[cfg(test)]
 use schronu::application::daily_capacity::subjective_date_start;
 use schronu::application::daily_capacity::{
-    calculate_daily_rho_diff_hours, calculate_free_time_minutes_for_subjective_date,
-    calculate_full_day_free_time_minutes_for_subjective_date, END_OF_DAY_DURATION, RHO_GOAL,
+    calculate_daily_rho_diff_hours,
+    calculate_free_time_minutes_for_subjective_date_with_end_of_day_offset_minutes,
+    calculate_full_day_free_time_minutes_for_subjective_date_with_end_of_day_offset_minutes,
+    RHO_GOAL,
 };
-use schronu::application::flatten_use_case::{flatten_tasks, FlattenResult, UnresolvedReason};
+use schronu::application::flatten_use_case::{
+    flatten_tasks_with_end_of_day_offset_minutes, FlattenResult, UnresolvedReason,
+};
 use schronu::application::interface::FreeTimeManagerTrait;
 #[cfg(test)]
 use schronu::application::interface::{RepositoryReloadOutcome, TaskRepositoryOperation};
 use schronu::application::interface::{TaskRepositoryError, TaskRepositoryTrait};
-use schronu::application::pack_use_case::pack_tasks;
+use schronu::application::pack_use_case::pack_tasks_with_end_of_day_offset_minutes;
 use schronu::application::schedule_use_case::get_schedule;
 use schronu::application::task_use_case::{
     breakdown_task, complete_task, create_task, defer_task, estimated_work_seconds_from_minutes,
@@ -39,7 +44,10 @@ use std::io::{stdout, IsTerminal, Write};
 #[cfg(test)]
 use std::path::PathBuf;
 use std::process;
-use std::sync::mpsc::{self, RecvTimeoutError};
+use std::sync::{
+    mpsc::{self, RecvTimeoutError},
+    OnceLock,
+};
 use std::thread;
 
 mod storage_directory;
@@ -64,8 +72,15 @@ const FOCUS_PROGRESS_BAR_SEGMENTS: usize = 100;
 const IDLE_REFRESH_INTERVAL: StdDuration = StdDuration::from_secs(60);
 const CLI_LOCK_TIMEOUT: StdDuration = StdDuration::from_secs(1);
 
+static ACTIVE_CONFIG: OnceLock<SchronuConfig> = OnceLock::new();
+
+fn active_config() -> &'static SchronuConfig {
+    ACTIVE_CONFIG.get_or_init(SchronuConfig::default)
+}
+
 // パーセントエンコーディングする対象にスペースを追加する
 const MY_ASCII_SET: &AsciiSet = &CONTROLS.add(b' ');
+const OBSIDIAN_VAULT_ASCII_SET: &AsciiSet = &MY_ASCII_SET.add(b'&').add(b'=');
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum FocusSelectionMode {
@@ -255,7 +270,11 @@ fn backward_width(line: &str, cursor_x: usize) -> u16 {
 }
 
 fn get_weekday_jp(date: &NaiveDate) -> &str {
-    match date.weekday() {
+    get_weekday_jp_from_weekday(date.weekday())
+}
+
+fn get_weekday_jp_from_weekday(weekday: Weekday) -> &'static str {
+    match weekday {
         Weekday::Mon => "月",
         Weekday::Tue => "火",
         Weekday::Wed => "水",
@@ -1605,6 +1624,7 @@ fn calculate_project_category_denominator_seconds(
     rows: &[TaskListDisplayRow],
     last_synced_time: DateTime<Local>,
     free_time_manager: &mut dyn FreeTimeManagerTrait,
+    end_of_day_offset_minutes: i64,
 ) -> i64 {
     let mut dates = rows
         .iter()
@@ -1617,10 +1637,11 @@ fn calculate_project_category_denominator_seconds(
     dates
         .iter()
         .map(|date| {
-            calculate_free_time_minutes_for_subjective_date(
+            calculate_free_time_minutes_for_subjective_date_with_end_of_day_offset_minutes(
                 date,
                 last_synced_time,
                 free_time_manager,
+                end_of_day_offset_minutes,
             ) * 60
         })
         .sum()
@@ -2066,6 +2087,27 @@ fn execute_show_all_tasks(
     pattern_opt: &Option<String>,
     display_order: TaskListDisplayOrder,
 ) {
+    execute_show_all_tasks_with_config(
+        stdout,
+        focused_task_id_opt,
+        task_repository,
+        free_time_manager,
+        pattern_opt,
+        display_order,
+        active_config(),
+    );
+}
+
+#[allow(clippy::type_complexity)]
+fn execute_show_all_tasks_with_config(
+    stdout: &mut dyn SchronuWriter,
+    focused_task_id_opt: &mut Option<Uuid>,
+    task_repository: &mut dyn TaskRepositoryTrait,
+    free_time_manager: &mut dyn FreeTimeManagerTrait,
+    pattern_opt: &Option<String>,
+    display_order: TaskListDisplayOrder,
+    config: &SchronuConfig,
+) {
     let supports_ansi_color = stdout.supports_ansi_color();
     let scheduled_tasks = get_schedule(task_repository);
     let mut task_list_display_rows: Vec<TaskListDisplayRow> = vec![];
@@ -2080,7 +2122,7 @@ fn execute_show_all_tasks(
         .expect("invalid hour")
         .with_minute(0)
         .expect("invalid minute")
-        + END_OF_DAY_DURATION;
+        + Duration::minutes(config.end_of_day_offset_minutes);
     // ここまでρ計算用
 
     let is_calendar_func = pattern_opt.as_ref().map_or(false, |pattern| {
@@ -2729,16 +2771,21 @@ fn execute_show_all_tasks(
 
         let weekday_jp = get_weekday_jp(date);
 
-        let free_time_minutes = calculate_free_time_minutes_for_subjective_date(
-            date,
-            last_synced_time,
-            free_time_manager,
-        );
-        let full_day_free_time_minutes_opt = if is_band_func {
-            Some(calculate_full_day_free_time_minutes_for_subjective_date(
+        let free_time_minutes =
+            calculate_free_time_minutes_for_subjective_date_with_end_of_day_offset_minutes(
                 date,
+                last_synced_time,
                 free_time_manager,
-            ))
+                config.end_of_day_offset_minutes,
+            );
+        let full_day_free_time_minutes_opt = if is_band_func {
+            Some(
+                calculate_full_day_free_time_minutes_for_subjective_date_with_end_of_day_offset_minutes(
+                    date,
+                    free_time_manager,
+                    config.end_of_day_offset_minutes,
+                ),
+            )
         } else {
             None
         };
@@ -3030,6 +3077,7 @@ fn execute_show_all_tasks(
             &task_list_display_rows,
             last_synced_time,
             free_time_manager,
+            config.end_of_day_offset_minutes,
         );
         writeln_newline(
             stdout,
@@ -3049,7 +3097,11 @@ fn execute_show_all_tasks(
         for (cal_ind, row) in daily_summary_rows.iter().enumerate() {
             writeln_newline(stdout, &row.calendar_message).unwrap();
 
-            if row.calendar_message.contains("(月)") && cal_ind != daily_summary_rows.len() - 1 {
+            if row.calendar_message.contains(&format!(
+                "({})",
+                get_weekday_jp_from_weekday(config.calendar_blank_line_weekday)
+            )) && cal_ind != daily_summary_rows.len() - 1
+            {
                 writeln_newline(stdout, "").unwrap();
             }
         }
@@ -3317,16 +3369,30 @@ fn execute_open_link(focused_task_opt: &Option<Task>) {
     }
 }
 
+#[cfg(test)]
 fn make_obsidian_search_url(query: &str) -> String {
+    make_obsidian_search_url_with_vault(query, &active_config().obsidian_vault_name)
+}
+
+fn make_obsidian_search_url_with_vault(query: &str, vault_name: &str) -> String {
     format!(
-        "obsidian://search?vault=Obsidian-Moica&query={}",
+        "obsidian://search?vault={}&query={}",
+        percent_encode(vault_name.as_bytes(), OBSIDIAN_VAULT_ASCII_SET),
         percent_encode(query.as_bytes(), MY_ASCII_SET)
     )
 }
 
+#[cfg(test)]
 fn make_obsidian_root_task_search_url(focused_task: &Task) -> String {
+    make_obsidian_root_task_search_url_with_vault(
+        focused_task,
+        &active_config().obsidian_vault_name,
+    )
+}
+
+fn make_obsidian_root_task_search_url_with_vault(focused_task: &Task, vault_name: &str) -> String {
     let root_task_id = focused_task.root().get_id();
-    make_obsidian_search_url(&root_task_id.hyphenated().to_string())
+    make_obsidian_search_url_with_vault(&root_task_id.hyphenated().to_string(), vault_name)
 }
 
 fn open_obsidian_url(url: &str) -> Result<(), String> {
@@ -3350,9 +3416,15 @@ fn open_obsidian_url(url: &str) -> Result<(), String> {
     }
 }
 
-fn execute_open_obsidian_root_task_search(focused_task_opt: &Option<Task>) {
+fn execute_open_obsidian_root_task_search_with_config(
+    focused_task_opt: &Option<Task>,
+    config: &SchronuConfig,
+) {
     if let Some(focused_task) = focused_task_opt {
-        let url = make_obsidian_root_task_search_url(focused_task);
+        let url = make_obsidian_root_task_search_url_with_vault(
+            focused_task,
+            &config.obsidian_vault_name,
+        );
         // エラーは無視する
         let _ = open_obsidian_url(&url);
     }
@@ -3363,9 +3435,19 @@ fn test_make_obsidian_search_url_task_idをqueryにする() {
     let query = "11111111-1111-1111-1111-111111111111";
     let actual = make_obsidian_search_url(query);
     let expected =
-        "obsidian://search?vault=Obsidian-Moica&query=11111111-1111-1111-1111-111111111111";
+        "obsidian://search?vault=Obsidian-Work&query=11111111-1111-1111-1111-111111111111";
 
     assert_eq!(actual, expected);
+}
+
+#[test]
+fn test_make_obsidian_search_url_vault名をpercent_encodeする() {
+    let actual = make_obsidian_search_url_with_vault("task id", "Work & Personal");
+
+    assert_eq!(
+        actual,
+        "obsidian://search?vault=Work%20%26%20Personal&query=task%20id"
+    );
 }
 
 #[test]
@@ -3377,7 +3459,7 @@ fn test_make_obsidian_root_task_search_url_子タスクからrootのtask_idをqu
 
     let actual = make_obsidian_root_task_search_url(&child_task);
     let expected =
-        "obsidian://search?vault=Obsidian-Moica&query=11111111-1111-1111-1111-111111111111";
+        "obsidian://search?vault=Obsidian-Work&query=11111111-1111-1111-1111-111111111111";
 
     assert_eq!(actual, expected);
 }
@@ -3716,11 +3798,12 @@ fn execute_defer(
 }
 
 // 指定の日付から、step_days間隔でdeferしていく
-fn execute_extrude(
+fn execute_extrude_with_config(
     _focused_task_id_opt: &mut Option<Uuid>,
     focused_task_opt: &Option<Task>,
     first_datetime: &DateTime<Local>,
     step_days: u16,
+    config: &SchronuConfig,
 ) {
     if let Some(focused_task) = focused_task_opt {
         let mut pending_until_datetime = *first_datetime;
@@ -3734,17 +3817,12 @@ fn execute_extrude(
                 task.set_pending_until(pending_until_datetime);
 
                 pending_until_datetime += Duration::days(step_days as i64);
-
-                // 平日の仕事用: 土日にはextrudeせずにスキップする
-                // match pending_until_datetime.weekday() {
-                //     Weekday::Sat => {
-                //         pending_until_datetime = pending_until_datetime + Duration::days(2);
-                //     }
-                //     Weekday::Sun => {
-                //         pending_until_datetime = pending_until_datetime + Duration::days(1);
-                //     }
-                //     _ => {}
-                // }
+                while config
+                    .extrude_skip_weekdays
+                    .contains(&pending_until_datetime.weekday())
+                {
+                    pending_until_datetime += Duration::days(1);
+                }
             }
         }
     }
@@ -3858,10 +3936,11 @@ fn execute_defer_all_frequent_routines(
     // println!("{:?}", cnt );
 }
 
-fn execute_set_deadline(
+fn execute_set_deadline_with_config(
     task_repository: &mut dyn TaskRepositoryTrait,
     focused_task_id_opt: Option<Uuid>,
     deadline_date_str: &str,
+    config: &SchronuConfig,
 ) {
     if deadline_date_str == "消" {
         if let Some(task_id) = focused_task_id_opt {
@@ -3870,7 +3949,11 @@ fn execute_set_deadline(
         return;
     }
 
-    let mut deadline_time_str = format!("{} 23:59:59", deadline_date_str);
+    let mut deadline_time_str = format!(
+        "{} {}",
+        deadline_date_str,
+        config.default_deadline_time.format("%H:%M:%S")
+    );
     let hhmm_reg = Regex::new(r"^(\d{1,2}):(\d{1,2})$").unwrap();
 
     // 時刻のみを指定した場合は、日付は今日にする
@@ -5605,12 +5688,26 @@ fn format_work_seconds_as_hours_minutes_rounded_up(work_seconds: i64) -> String 
     format!("{:02}:{:02}", total_minutes / 60, total_minutes % 60)
 }
 
+#[cfg(test)]
 fn execute_pack(
     stdout: &mut dyn SchronuWriter,
     task_repository: &dyn TaskRepositoryTrait,
     free_time_manager: &mut dyn FreeTimeManagerTrait,
 ) {
-    let result = pack_tasks(task_repository, free_time_manager);
+    execute_pack_with_config(stdout, task_repository, free_time_manager, active_config());
+}
+
+fn execute_pack_with_config(
+    stdout: &mut dyn SchronuWriter,
+    task_repository: &dyn TaskRepositoryTrait,
+    free_time_manager: &mut dyn FreeTimeManagerTrait,
+    config: &SchronuConfig,
+) {
+    let result = pack_tasks_with_end_of_day_offset_minutes(
+        task_repository,
+        free_time_manager,
+        config.end_of_day_offset_minutes,
+    );
     let total_work_seconds = result
         .packed_tasks
         .iter()
@@ -5753,6 +5850,26 @@ fn execute(
     focused_task_id_opt: &mut Option<Uuid>,
     focus_started_datetime: &DateTime<Local>,
     untrimmed_line: &str,
+) {
+    execute_with_config(
+        stdout,
+        task_repository,
+        free_time_manager,
+        focused_task_id_opt,
+        focus_started_datetime,
+        untrimmed_line,
+        active_config(),
+    );
+}
+
+fn execute_with_config(
+    stdout: &mut dyn SchronuWriter,
+    task_repository: &mut dyn TaskRepositoryTrait,
+    free_time_manager: &mut dyn FreeTimeManagerTrait,
+    focused_task_id_opt: &mut Option<Uuid>,
+    focus_started_datetime: &DateTime<Local>,
+    untrimmed_line: &str,
+    config: &SchronuConfig,
 ) {
     // 整形
     let re = Regex::new(r"\s+").unwrap();
@@ -5923,13 +6040,14 @@ fn execute(
                 None
             };
 
-            execute_show_all_tasks(
+            execute_show_all_tasks_with_config(
                 stdout,
                 focused_task_id_opt,
                 task_repository,
                 free_time_manager,
                 &pattern_opt,
                 TaskListDisplayOrder::ScheduledStartDesc,
+                config,
             );
         }
         "尾" => {
@@ -5939,57 +6057,62 @@ fn execute(
                 Some("今".to_string())
             };
 
-            execute_show_all_tasks(
+            execute_show_all_tasks_with_config(
                 stdout,
                 focused_task_id_opt,
                 task_repository,
                 free_time_manager,
                 &pattern_opt,
                 TaskListDisplayOrder::LowPriorityTail,
+                config,
             );
         }
         "今" | "today" => {
             let pattern_opt = Some("今".to_string());
-            execute_show_all_tasks(
+            execute_show_all_tasks_with_config(
                 stdout,
                 focused_task_id_opt,
                 task_repository,
                 free_time_manager,
                 &pattern_opt,
                 TaskListDisplayOrder::ScheduledStartDesc,
+                config,
             );
         }
         "単" | "non_repetitive" => {
             let pattern_opt = Some("単".to_string());
-            execute_show_all_tasks(
+            execute_show_all_tasks_with_config(
                 stdout,
                 focused_task_id_opt,
                 task_repository,
                 free_time_manager,
                 &pattern_opt,
                 TaskListDisplayOrder::ScheduledStartDesc,
+                config,
             );
         }
         "暦" | "cal" => {
             let pattern_opt = Some("暦".to_string());
-            execute_show_all_tasks(
+            execute_show_all_tasks_with_config(
                 stdout,
                 focused_task_id_opt,
                 task_repository,
                 free_time_manager,
                 &pattern_opt,
                 TaskListDisplayOrder::ScheduledStartDesc,
+                config,
             );
         }
         "帯" | "band" => {
             let pattern_opt = Some("帯".to_string());
-            execute_show_all_tasks(
+            execute_show_all_tasks_with_config(
                 stdout,
                 focused_task_id_opt,
                 task_repository,
                 free_time_manager,
                 &pattern_opt,
                 TaskListDisplayOrder::ScheduledStartDesc,
+                config,
             );
         }
         "見" | "focus" | "fc" => {
@@ -6006,7 +6129,7 @@ fn execute(
             execute_open_link(&focused_task_opt);
         }
         "黒" | "obs" => {
-            execute_open_obsidian_root_task_search(&focused_task_opt);
+            execute_open_obsidian_root_task_search_with_config(&focused_task_opt, config);
         }
         "外" | "unfocus" | "ufc" => {
             execute_unfocus(focused_task_id_opt);
@@ -6144,12 +6267,22 @@ fn execute(
                     let s = (get_next_morning_datetime(now) - Duration::days(1))
                         .format("%Y/%m/%d")
                         .to_string();
-                    execute_set_deadline(task_repository, *focused_task_id_opt, &s);
+                    execute_set_deadline_with_config(
+                        task_repository,
+                        *focused_task_id_opt,
+                        &s,
+                        config,
+                    );
                 } else if tokens[1].starts_with('明') {
                     let s = get_next_morning_datetime(now)
                         .format("%Y/%m/%d")
                         .to_string();
-                    execute_set_deadline(task_repository, *focused_task_id_opt, &s);
+                    execute_set_deadline_with_config(
+                        task_repository,
+                        *focused_task_id_opt,
+                        &s,
+                        config,
+                    );
                 } else if ["月", "火", "水", "木", "金", "土", "日"].contains(&tokens[1]) {
                     // 月 火 水 木 金 土 日 が指定された時は、明日以降で、直近のその曜日の23:59を〆切とする
                     // (show_all_tasksとロジック重複...)
@@ -6178,7 +6311,12 @@ fn execute(
                         .format("%Y/%m/%d")
                         .to_string();
 
-                    execute_set_deadline(task_repository, *focused_task_id_opt, &s);
+                    execute_set_deadline_with_config(
+                        task_repository,
+                        *focused_task_id_opt,
+                        &s,
+                        config,
+                    );
                 } else if mmdd_reg.is_match(tokens[1]) {
                     // FIXME 「後」コマンドとロジック重複
 
@@ -6201,9 +6339,19 @@ fn execute(
 
                     let s = deadline_dst_time.format("%Y/%m/%d").to_string();
 
-                    execute_set_deadline(task_repository, *focused_task_id_opt, &s);
+                    execute_set_deadline_with_config(
+                        task_repository,
+                        *focused_task_id_opt,
+                        &s,
+                        config,
+                    );
                 } else {
-                    execute_set_deadline(task_repository, *focused_task_id_opt, deadline_date_str);
+                    execute_set_deadline_with_config(
+                        task_repository,
+                        *focused_task_id_opt,
+                        deadline_date_str,
+                        config,
+                    );
                 }
             }
         }
@@ -6410,23 +6558,28 @@ fn execute(
                 if tokens.len() >= 2 {
                     let s = format!("後 {}", tokens[1..].join(" "));
 
-                    execute(
+                    execute_with_config(
                         stdout,
                         task_repository,
                         free_time_manager,
                         focused_task_id_opt,
                         focus_started_datetime,
                         &s,
+                        config,
                     );
                 }
             }
         }
         "平" | "flatten" | "flat" => {
-            let result = flatten_tasks(task_repository, free_time_manager);
+            let result = flatten_tasks_with_end_of_day_offset_minutes(
+                task_repository,
+                free_time_manager,
+                config.end_of_day_offset_minutes,
+            );
             write_flatten_result(stdout, &result);
         }
         "詰" | "pack" => {
-            execute_pack(stdout, task_repository, free_time_manager);
+            execute_pack_with_config(stdout, task_repository, free_time_manager, config);
         }
         "押" | "extrude" => {
             if tokens.len() >= 2 {
@@ -6435,11 +6588,12 @@ fn execute(
                         focused_task.list_all_parent_tasks_with_first_available_time()[0].0;
                     let step_days: u16 = tokens[1].parse().unwrap_or(1);
 
-                    execute_extrude(
+                    execute_extrude_with_config(
                         focused_task_id_opt,
                         &focused_task_opt,
                         &first_datetime,
                         step_days,
+                        config,
                     );
                 }
             }
@@ -6996,8 +7150,8 @@ fn test_execute_flatten_業務日境界をまたぐtaskは延期しない() {
 
 #[test]
 fn test_execute_flatten_業務日境界をまたぐtaskの全作業時間を開始日の業務日に計上する() {
-    let now = Local.with_ymd_and_hms(2026, 8, 13, 5, 0, 0).unwrap();
-    let today = (get_next_morning_datetime(now) - Duration::days(1)).date_naive();
+    let now = Local.with_ymd_and_hms(2026, 8, 13, 6, 0, 0).unwrap();
+    let today = now.date_naive();
     let root = Task::new("平テスト");
     root.set_estimated_work_seconds(0);
     add_scheduled_child_for_test(&root, "日境界をまたぐ", now, 25 * 60);
@@ -7012,7 +7166,7 @@ fn test_execute_flatten_業務日境界をまたぐtaskの全作業時間を開�
     assert!(result.output.starts_with("平: 0件 00:00 (未解消1日)\n"));
     assert!(result
         .output
-        .contains(&format!("[Warn] 平\t{}\t未解消 25:00", today)));
+        .contains(&format!("[Warn] 平\t{}\t未解消 01:00", today)));
     assert!(result.output.contains("業務日境界をまたぐ: 1件"));
 }
 
@@ -7733,6 +7887,14 @@ fn reconcile_focus_after_reload(
 
 fn main() {
     let command_opt = parse_non_interactive_command(env::args().skip(1).collect());
+    let config = match load_schronu_config(env::var_os("SCHRONU_CONFIG_PATH")) {
+        Ok(config) => config,
+        Err(error) => {
+            eprintln!("[Error] {error}");
+            process::exit(1);
+        }
+    };
+    let _ = ACTIVE_CONFIG.set(config);
     let project_storage_directory =
         match resolve_project_storage_directory(env::var_os("SCHRONU_STORAGE_DIR")) {
             Ok(directory) => directory,
@@ -7858,8 +8020,13 @@ fn execute_non_interactive_command(
     command: &str,
 ) -> Result<(), RunError> {
     let now = Local::now();
-    free_time_manager
-        .load_busy_time_slots_from_file("../Schronu-private/busy_time_slots.yaml", &now);
+    free_time_manager.load_busy_time_slots_from_file(
+        active_config()
+            .busy_time_slots_yaml_path
+            .to_str()
+            .expect("config path was validated"),
+        &now,
+    );
 
     let focus_started_datetime: DateTime<Local> = now;
     let mut stdout = stdout();
@@ -9534,8 +9701,13 @@ fn application(
 
     drop(reload_repository_for_cli(task_repository, now)?);
 
-    free_time_manager
-        .load_busy_time_slots_from_file("../Schronu-private/busy_time_slots.yaml", &now);
+    free_time_manager.load_busy_time_slots_from_file(
+        active_config()
+            .busy_time_slots_yaml_path
+            .to_str()
+            .expect("config path was validated"),
+        &now,
+    );
 
     // RawModeを有効にする
     let mut stdout = stdout().into_raw_mode().unwrap();

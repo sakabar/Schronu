@@ -1,0 +1,15 @@
+# Schronu設定の雛形です。コピーして環境に合わせて編集してください。
+
+obsidian_vault_name: Obsidian-Work
+
+# 設定ファイルの親directoryからの相対pathです。実在するbusy time slots YAMLを指定してください。
+busy_time_slots_yaml_path: busy_time_slots.yaml
+
+# 当日24:00からの分オフセットです。-120は22:00を表します。
+end_of_day_offset_minutes: -120
+
+calendar_blank_line_weekday: Mon
+
+extrude_skip_weekdays: [Sat, Sun]
+
+default_deadline_time: "19:00"

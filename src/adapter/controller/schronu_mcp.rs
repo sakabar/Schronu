@@ -1,3 +1,4 @@
+use schronu::adapter::gateway::schronu_config::load_schronu_config;
 use schronu::adapter::gateway::task_repository::TaskRepository;
 use schronu::adapter::mcp::McpServer;
 use schronu::application::interface::TaskRepositoryTrait;
@@ -17,6 +18,7 @@ fn main() {
 }
 
 fn run() -> Result<(), Box<dyn Error>> {
+    load_schronu_config(std::env::var_os("SCHRONU_CONFIG_PATH"))?;
     let storage_directory =
         resolve_project_storage_directory(std::env::var_os("SCHRONU_STORAGE_DIR"))?;
     let storage_directory_text = storage_directory

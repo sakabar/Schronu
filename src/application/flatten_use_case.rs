@@ -1,5 +1,6 @@
 use super::daily_capacity::{
-    calculate_free_time_minutes_for_subjective_date, subjective_date, subjective_date_start,
+    calculate_free_time_minutes_for_subjective_date_with_end_of_day_offset_minutes,
+    subjective_date, subjective_date_end, subjective_date_start, END_OF_DAY_OFFSET_MINUTES,
 };
 use super::interface::{FreeTimeManagerTrait, TaskRepositoryTrait};
 use super::schedule_use_case::{
@@ -75,6 +76,18 @@ pub fn flatten_tasks(
     repository: &dyn TaskRepositoryTrait,
     free_time_manager: &mut dyn FreeTimeManagerTrait,
 ) -> FlattenResult {
+    flatten_tasks_with_end_of_day_offset_minutes(
+        repository,
+        free_time_manager,
+        END_OF_DAY_OFFSET_MINUTES,
+    )
+}
+
+pub fn flatten_tasks_with_end_of_day_offset_minutes(
+    repository: &dyn TaskRepositoryTrait,
+    free_time_manager: &mut dyn FreeTimeManagerTrait,
+    end_of_day_offset_minutes: i64,
+) -> FlattenResult {
     let today = subjective_date(repository.get_last_synced_time());
     let boundary_date = today + Duration::days(FLATTEN_TARGET_DAYS);
     let overflow_date = today + Duration::days(FLATTEN_OVERFLOW_DAY);
@@ -86,10 +99,11 @@ pub fn flatten_tasks(
         .map(|date| {
             (
                 *date,
-                calculate_free_time_minutes_for_subjective_date(
+                calculate_free_time_minutes_for_subjective_date_with_end_of_day_offset_minutes(
                     date,
                     repository.get_last_synced_time(),
                     free_time_manager,
+                    end_of_day_offset_minutes,
                 ) * 60,
             )
         })
@@ -122,7 +136,8 @@ pub fn flatten_tasks(
         } else {
             overload_date + Duration::days(1)
         };
-        let mut candidates = collect_candidates(&schedule, overload_date);
+        let mut candidates =
+            collect_candidates(&schedule, overload_date, end_of_day_offset_minutes);
         sort_candidates_for_deferral(&mut candidates);
 
         let mut accepted = None;
@@ -237,6 +252,7 @@ fn collect_original_task_details(
 fn collect_candidates(
     schedule: &[ScheduledTaskView],
     overload_date: NaiveDate,
+    end_of_day_offset_minutes: i64,
 ) -> Vec<FlattenCandidate> {
     let mut segments_by_task = HashMap::<Uuid, Vec<&ScheduledTaskView>>::new();
     for scheduled in schedule {
@@ -251,9 +267,9 @@ fn collect_candidates(
         .filter_map(|segments| {
             let first = segments.first().copied()?;
             if first.total_work_seconds <= 0
-                || !segments
-                    .iter()
-                    .any(|segment| segment_overlaps_date(segment, overload_date))
+                || !segments.iter().any(|segment| {
+                    segment_overlaps_date(segment, overload_date, end_of_day_offset_minutes)
+                })
             {
                 return None;
             }
@@ -264,7 +280,7 @@ fn collect_candidates(
             let all_work_is_on_overload_date = segments.iter().all(|segment| {
                 subjective_date(segment.scheduled_start) == overload_date
                     && segment.scheduled_end
-                        <= subjective_date_start(overload_date + Duration::days(1))
+                        <= subjective_date_end(overload_date, end_of_day_offset_minutes)
             });
             Some(FlattenCandidate {
                 task_id: first.task.id,
@@ -282,10 +298,14 @@ fn collect_candidates(
         .collect()
 }
 
-fn segment_overlaps_date(segment: &ScheduledTaskView, date: NaiveDate) -> bool {
+fn segment_overlaps_date(
+    segment: &ScheduledTaskView,
+    date: NaiveDate,
+    end_of_day_offset_minutes: i64,
+) -> bool {
     let date_start = subjective_date_start(date);
-    let next_date_start = subjective_date_start(date + Duration::days(1));
-    segment.scheduled_start < next_date_start && date_start < segment.scheduled_end
+    let date_end = subjective_date_end(date, end_of_day_offset_minutes);
+    segment.scheduled_start < date_end && date_start < segment.scheduled_end
 }
 
 fn candidate_precheck_reason(
