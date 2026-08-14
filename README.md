@@ -42,6 +42,12 @@ SCHRONU_STORAGE_DIR=/absolute/path/to/tasks SCHRONU_CONFIG_PATH=/absolute/path/t
 
 保存先は`SCHRONU_STORAGE_DIR`で指定します。未指定時は起動時のworking directoryから見た`../Schronu-private/tasks/`です。相対pathの解釈違いを避けるため、MCP clientでは絶対pathを推奨します。同じ環境変数はCLIの`schronu`にも適用されます。
 
+### 保存データの検証
+
+`schronu 検証`は、すべての`project.yaml`を読取専用で検査します。成功時は`検証: OK`を表示し、不正値がある場合はファイルpath、task path、field、原因を表示して失敗します。YAMLを書き換えず、free time設定も読み込みません。
+
+旧形式との互換性のため、fieldの欠落は既定値として読みます。`status`は`todo`、booleanは`false`、秒数・日数は0、見積時間は900秒、反復anchorは`deadline`、日時は`now`または未設定として扱います。`id`の欠落時だけは新規UUIDを生成します。一方、fieldが存在する場合の型違い、不正UUID、不正enum、負の秒数、0以下の反復間隔、不正または曖昧なローカル日時はエラーです。
+
 ### 設定ファイル
 
 `SCHRONU_CONFIG_PATH`には任意の設定YAMLのabsolute pathを指定できます。CLIの`schronu`とMCP serverの`schronu-mcp`は、ともに起動時に同じ設定を読み込みます。未指定時は従来の既定値で動作します。指定したfileが読めない、YAMLが壊れている、未知のキーや不正な値がある場合は、意図しない既定値でtaskを操作しないよう起動を停止します。

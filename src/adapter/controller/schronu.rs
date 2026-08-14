@@ -8408,6 +8408,11 @@ fn execute_non_interactive_command(
     command: &str,
 ) -> Result<(), RunError> {
     let now = Local::now();
+    if command.trim() == "検証" {
+        let _storage_lock = reload_repository_for_cli(task_repository, now)?;
+        writeln!(stdout(), "検証: OK").unwrap();
+        return Ok(());
+    }
     free_time_manager.load_busy_time_slots_from_file(
         active_config()
             .busy_time_slots_yaml_path
@@ -8464,6 +8469,21 @@ fn test_execute_non_interactive_command_load失敗時はcommandを実行しな�
 }
 
 #[test]
+fn test_execute_non_interactive_command_検証はsaveとfree_time読込を行わない() {
+    let storage_dir = TestStorageDir::new();
+    std::fs::create_dir_all(&storage_dir.path).unwrap();
+    let now = Local.with_ymd_and_hms(2026, 8, 11, 12, 0, 0).unwrap();
+    let task = Task::new("検証対象");
+    let mut task_repository =
+        TestTaskRepository::new(task, now).with_storage_directory(&storage_dir.path);
+    let mut free_time_manager = TestFreeTimeManager;
+
+    execute_non_interactive_command(&mut task_repository, &mut free_time_manager, "検証").unwrap();
+
+    assert_eq!(task_repository.save_attempt_count.get(), 0);
+}
+
+#[test]
 fn test_execute_non_interactive_command_gatewayの変換errorをstderrへ表示する() {
     let storage_dir = TestStorageDir::new();
     let project_dir = storage_dir.path.join("broken-project");
@@ -8486,7 +8506,7 @@ fn test_execute_non_interactive_command_gatewayの変換errorをstderrへ表示�
     let output = String::from_utf8(stderr).unwrap();
     assert!(output.contains("repository Load failed"));
     assert!(output.contains(project_yaml_path.to_str().unwrap()));
-    assert!(output.contains("children must be an array or null"));
+    assert!(output.contains("project.children: must be an array or null"));
 }
 
 #[test]

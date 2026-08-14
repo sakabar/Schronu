@@ -1205,7 +1205,7 @@ mod tests {
             .expect("io error source must be YamlConversionError");
         assert_eq!(
             conversion_error.to_string(),
-            "cannot convert project YAML to task: children must be an array or null"
+            "cannot convert project YAML to task: project.children: must be an array or null"
         );
     }
 
