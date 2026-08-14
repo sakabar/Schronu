@@ -1,19 +1,19 @@
 use super::interface::{TaskRepositoryError, TaskRepositoryTrait};
 use super::schedule_use_case::get_schedule;
 use super::task_use_case::get_task;
-use crate::entity::task::{Status, Task, TaskAttr};
+use crate::entity::task::{Status, TaskAttr, TaskHandle};
 use chrono::{DateTime, Duration, Local, TimeZone};
 use std::cell::Cell;
 use uuid::Uuid;
 
 struct TestTaskRepository {
-    projects: Vec<Task>,
+    projects: Vec<TaskHandle>,
     now: DateTime<Local>,
     save_count: Cell<usize>,
 }
 
 impl TestTaskRepository {
-    fn new(projects: Vec<Task>, now: DateTime<Local>) -> Self {
+    fn new(projects: Vec<TaskHandle>, now: DateTime<Local>) -> Self {
         Self {
             projects,
             now,
@@ -27,7 +27,7 @@ impl TaskRepositoryTrait for TestTaskRepository {
         "unused"
     }
 
-    fn get_all_projects(&self) -> Vec<&Task> {
+    fn get_all_projects(&self) -> Vec<&TaskHandle> {
         self.projects.iter().collect()
     }
 
@@ -48,7 +48,7 @@ impl TaskRepositoryTrait for TestTaskRepository {
         self.now
     }
 
-    fn get_highest_priority_project(&mut self) -> Option<&Task> {
+    fn get_highest_priority_project(&mut self) -> Option<&TaskHandle> {
         self.projects.first()
     }
 
@@ -60,11 +60,11 @@ impl TaskRepositoryTrait for TestTaskRepository {
         None
     }
 
-    fn get_by_id(&self, id: Uuid) -> Option<Task> {
+    fn get_by_id(&self, id: Uuid) -> Option<TaskHandle> {
         self.projects.iter().find_map(|task| task.get_by_id(id))
     }
 
-    fn start_new_project(&mut self, root_task: Task) {
+    fn start_new_project(&mut self, root_task: TaskHandle) {
         self.projects.push(root_task);
     }
 }
@@ -78,8 +78,8 @@ fn task_with_schedule(
     start: DateTime<Local>,
     work_seconds: i64,
     priority: i64,
-) -> Task {
-    let task = Task::new(name);
+) -> TaskHandle {
+    let task = TaskHandle::new(name);
     task.sync_clock(start);
     task.set_start_time(start);
     task.set_estimated_work_seconds(work_seconds);

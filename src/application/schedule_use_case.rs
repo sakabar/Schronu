@@ -1,7 +1,7 @@
 use crate::application::interface::TaskRepositoryTrait;
 use crate::application::task_view::TaskView;
 use crate::entity::datetime::get_next_morning_datetime;
-use crate::entity::task::{extract_leaf_tasks_from_project_with_pending, Task};
+use crate::entity::task::{extract_leaf_tasks_from_project_with_pending, TaskHandle};
 use chrono::{DateTime, Duration, Local};
 use std::cmp::max;
 use std::collections::HashMap;
@@ -22,7 +22,7 @@ pub struct ScheduledTaskView {
 
 #[derive(Clone)]
 struct TaskScheduleCandidate {
-    task: Task,
+    task: TaskHandle,
     first_available_time: DateTime<Local>,
     neg_priority: i64,
     rank: usize,
@@ -41,7 +41,7 @@ struct TaskScheduleAttributes {
 
 #[derive(Clone)]
 struct ScheduledTask {
-    task: Task,
+    task: TaskHandle,
     first_available_time: DateTime<Local>,
     scheduled_start: DateTime<Local>,
     scheduled_end: DateTime<Local>,
@@ -161,7 +161,7 @@ fn build_schedule_candidates(repository: &dyn TaskRepositoryTrait) -> Vec<TaskSc
         .collect()
 }
 
-fn calculate_remaining_work_seconds(task: &Task) -> i64 {
+fn calculate_remaining_work_seconds(task: &TaskHandle) -> i64 {
     if task.get_estimated_work_seconds() >= task.get_actual_work_seconds() {
         task.get_estimated_work_seconds() - task.get_actual_work_seconds()
     } else {
@@ -388,7 +388,7 @@ mod tests {
         remaining_seconds: i64,
     ) -> TaskScheduleCandidate {
         TaskScheduleCandidate {
-            task: Task::new(name),
+            task: TaskHandle::new(name),
             first_available_time,
             neg_priority,
             rank: 0,

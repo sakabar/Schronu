@@ -4,7 +4,7 @@ use chrono::{Local, Timelike};
 use schronu::adapter::gateway::storage_lock::{LockMode, StorageLock};
 use schronu::adapter::gateway::task_repository::TaskRepository;
 use schronu::application::interface::TaskRepositoryTrait;
-use schronu::entity::task::{Status, Task};
+use schronu::entity::task::{Status, TaskHandle};
 use serde_json::{json, Value};
 use std::fs;
 use std::io::{BufRead, BufReader, Write};
@@ -484,7 +484,7 @@ fn mcp_stdio_tools_call直前の現在時刻同期で期限切れpendingをtodo�
     let pending_until = Local::now() + chrono::Duration::seconds(3);
     let mut repository = TaskRepository::new(storage.path().to_str().unwrap());
     repository.sync_clock(Local::now());
-    let task = Task::new("pending across MCP idle time");
+    let task = TaskHandle::new("pending across MCP idle time");
     let task_id = task.get_id().to_owned();
     task.set_start_time(Local::now() - chrono::Duration::hours(1));
     task.set_pending_until(pending_until);

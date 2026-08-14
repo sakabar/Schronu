@@ -1,4 +1,4 @@
-use crate::entity::task::Task;
+use crate::entity::task::TaskHandle;
 use chrono::{DateTime, Local};
 use std::error::Error;
 use std::fmt;
@@ -57,7 +57,7 @@ impl Error for TaskRepositoryError {
 
 pub trait TaskRepositoryTrait {
     fn get_project_storage_dir_name(&self) -> &str;
-    fn get_all_projects(&self) -> Vec<&Task>;
+    fn get_all_projects(&self) -> Vec<&TaskHandle>;
     fn load(&mut self) -> Result<(), TaskRepositoryError>;
     fn reload_if_changed(
         &mut self,
@@ -70,11 +70,11 @@ pub trait TaskRepositoryTrait {
     fn save(&self) -> Result<(), TaskRepositoryError>;
     fn sync_clock(&mut self, now: DateTime<Local>);
     fn get_last_synced_time(&self) -> DateTime<Local>;
-    fn get_highest_priority_project(&mut self) -> Option<&Task>;
+    fn get_highest_priority_project(&mut self) -> Option<&TaskHandle>;
     fn get_highest_priority_leaf_task_id(&mut self) -> Option<Uuid>;
     fn get_defer_candidate_leaf_task_id(&mut self, recent_days: i64) -> Option<Uuid>;
-    fn get_by_id(&self, id: Uuid) -> Option<Task>;
-    fn start_new_project(&mut self, root_task: Task);
+    fn get_by_id(&self, id: Uuid) -> Option<TaskHandle>;
+    fn start_new_project(&mut self, root_task: TaskHandle);
 }
 
 pub trait FreeTimeManagerTrait {
