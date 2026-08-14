@@ -3368,6 +3368,7 @@ fn execute_open_link(focused_task_opt: &Option<Task>) {
     }
 }
 
+#[cfg(test)]
 fn make_obsidian_search_url(query: &str) -> String {
     make_obsidian_search_url_with_vault(query, &active_config().obsidian_vault_name)
 }
@@ -3380,6 +3381,7 @@ fn make_obsidian_search_url_with_vault(query: &str, vault_name: &str) -> String 
     )
 }
 
+#[cfg(test)]
 fn make_obsidian_root_task_search_url(focused_task: &Task) -> String {
     make_obsidian_root_task_search_url_with_vault(
         focused_task,
@@ -3411,10 +3413,6 @@ fn open_obsidian_url(url: &str) -> Result<(), String> {
     {
         webbrowser::open(url).map_err(|err| err.to_string())
     }
-}
-
-fn execute_open_obsidian_root_task_search(focused_task_opt: &Option<Task>) {
-    execute_open_obsidian_root_task_search_with_config(focused_task_opt, active_config());
 }
 
 fn execute_open_obsidian_root_task_search_with_config(
@@ -3799,21 +3797,6 @@ fn execute_defer(
 }
 
 // 指定の日付から、step_days間隔でdeferしていく
-fn execute_extrude(
-    _focused_task_id_opt: &mut Option<Uuid>,
-    focused_task_opt: &Option<Task>,
-    first_datetime: &DateTime<Local>,
-    step_days: u16,
-) {
-    execute_extrude_with_config(
-        _focused_task_id_opt,
-        focused_task_opt,
-        first_datetime,
-        step_days,
-        active_config(),
-    );
-}
-
 fn execute_extrude_with_config(
     _focused_task_id_opt: &mut Option<Uuid>,
     focused_task_opt: &Option<Task>,
@@ -3950,19 +3933,6 @@ fn execute_defer_all_frequent_routines(
     }
 
     // println!("{:?}", cnt );
-}
-
-fn execute_set_deadline(
-    task_repository: &mut dyn TaskRepositoryTrait,
-    focused_task_id_opt: Option<Uuid>,
-    deadline_date_str: &str,
-) {
-    execute_set_deadline_with_config(
-        task_repository,
-        focused_task_id_opt,
-        deadline_date_str,
-        active_config(),
-    );
 }
 
 fn execute_set_deadline_with_config(
@@ -5717,6 +5687,7 @@ fn format_work_seconds_as_hours_minutes_rounded_up(work_seconds: i64) -> String 
     format!("{:02}:{:02}", total_minutes / 60, total_minutes % 60)
 }
 
+#[cfg(test)]
 fn execute_pack(
     stdout: &mut dyn SchronuWriter,
     task_repository: &dyn TaskRepositoryTrait,
