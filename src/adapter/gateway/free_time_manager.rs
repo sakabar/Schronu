@@ -652,6 +652,22 @@ fn assert_load_error_value(
     assert!(error.source().is_some());
 }
 
+#[cfg(test)]
+fn assert_load_error_has_no_value(
+    manager: &mut FreeTimeManager,
+    path: &Path,
+    expected_field_path: &str,
+) {
+    let error = manager
+        .load_busy_time_slots_from_file(path.to_str().unwrap())
+        .expect_err("不正なbusy_time_slots.yamlは回復可能なエラーになるべきです");
+
+    assert_eq!(error.path(), path);
+    assert_eq!(error.field_path(), expected_field_path);
+    assert_eq!(error.value(), None);
+    assert!(error.source().is_some());
+}
+
 #[test]
 fn test_load_busy_time_slots_from_file_存在しないファイルはpathとfield_pathを含むエラーになる() {
     let path = unique_test_fixture_path("missing-busy-time-slots", ".yaml");
@@ -767,7 +783,16 @@ fn test_load_busy_time_slots_from_file_days_of_week要素がmappingでない場�
     let file = BusyTimeSlotsYamlFile::new(&yaml);
     let mut manager = FreeTimeManager::new();
 
-    assert_load_error_contains(&mut manager, file.path(), "days_of_week[0]");
+    assert_load_error_value(&mut manager, file.path(), "days_of_week[0]", "invalid");
+}
+
+#[test]
+fn test_load_busy_time_slots_from_file_day_of_week欠落は不正値なしで報告する() {
+    let yaml = valid_busy_time_slots_yaml().replacen("  - day_of_week: Mon\n", "  -\n", 1);
+    let file = BusyTimeSlotsYamlFile::new(&yaml);
+    let mut manager = FreeTimeManager::new();
+
+    assert_load_error_has_no_value(&mut manager, file.path(), "days_of_week[0].day_of_week");
 }
 
 #[test]
@@ -826,10 +851,11 @@ fn test_load_busy_time_slots_from_file_busy_time_slots要素がmappingでない�
     let file = BusyTimeSlotsYamlFile::new(&yaml);
     let mut manager = FreeTimeManager::new();
 
-    assert_load_error_contains(
+    assert_load_error_value(
         &mut manager,
         file.path(),
         "days_of_week[0].busy_time_slots[0]",
+        "invalid",
     );
 }
 
@@ -1098,7 +1124,7 @@ fn test_load_busy_time_slots_from_file_name欠落はpathとfield_pathを含む�
     let file = BusyTimeSlotsYamlFile::new(&yaml);
     let mut manager = FreeTimeManager::new();
 
-    assert_load_error_contains(
+    assert_load_error_has_no_value(
         &mut manager,
         file.path(),
         "days_of_week[0].busy_time_slots[0].name",
