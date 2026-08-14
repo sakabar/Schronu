@@ -2067,6 +2067,31 @@ fn test_create_as_parent_正常系1() {
 }
 
 #[test]
+fn test_try_create_parentは子を親の直下に残さず挿入する() {
+    let root = TaskHandle::new("root");
+    let mut child = root.try_create_child(TaskAttr::new("child")).unwrap();
+
+    child.try_create_parent(TaskAttr::new("parent")).unwrap();
+
+    let parent = child.parent().unwrap();
+    assert_eq!(parent.get_name(), "parent");
+    assert_eq!(parent.parent().unwrap().get_name(), "root");
+}
+
+#[test]
+fn test_try_create_sequential_childrenは不正な範囲でtreeとrevisionを変更しない() {
+    let root = TaskHandle::new("root");
+    let before_snapshot = root.snapshot();
+    let before_revision = root.get_persistent_mutation_revision();
+
+    let actual = root.try_create_sequential_children("step", 60, 2, 1, "");
+
+    assert_eq!(actual, Err(TaskTreeError::InvalidSequence));
+    assert_eq!(root.snapshot(), before_snapshot);
+    assert_eq!(root.get_persistent_mutation_revision(), before_revision);
+}
+
+#[test]
 fn test_get_inherited_repetition_interval_days_opt_直接の親の値を返す() {
     let parent_task = TaskHandle::new("親タスク");
     parent_task.set_repetition_interval_days_opt(Some(7));
