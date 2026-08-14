@@ -595,7 +595,7 @@ impl TaskRepositoryTrait for TaskRepository {
         // 副作用として、projectsを優先度の低い順に破壊的にソートする
         // 葉ノードを出力する際に優先度が高いものが下となり優先度が低いものが画面外(上)になるように、projectsは低い順に保持する
         // 最も優先度が高いprojectsが必要な場合はlast()で取得する
-        self.projects.sort_by(|a, b| a.priority.cmp(&b.priority));
+        self.projects.sort_by_key(|a| a.priority);
 
         self.projects.last().map(|project| &project.root_task)
     }
@@ -604,7 +604,7 @@ impl TaskRepositoryTrait for TaskRepository {
         // 副作用として、projectsを優先度の低い順に破壊的にソートする
         // 葉ノードを出力する際に優先度が高いものが下となり優先度が低いものが画面外(上)になるように、projectsは低い順に保持する
         // 最も優先度が高いprojectsが必要な場合はlast()で取得する
-        self.projects.sort_by(|a, b| a.priority.cmp(&b.priority));
+        self.projects.sort_by_key(|a| a.priority);
 
         // 優先度が低いPJ順に見て、返すべき葉タスクのid値を更新していく
         let mut ans = None;
@@ -638,7 +638,7 @@ impl TaskRepositoryTrait for TaskRepository {
     // 優先度の低いタスクを未来に飛ばすための先送り候補選択用
     fn get_defer_candidate_leaf_task_id(&mut self, recent_days: i64) -> Option<Uuid> {
         // 副作用として、projectsを優先度の低い順に破壊的にソートする
-        self.projects.sort_by(|a, b| a.priority.cmp(&b.priority));
+        self.projects.sort_by_key(|a| a.priority);
 
         // 優先度が低いPJ順に見て、返すべき葉タスクのid値を更新していく
         let mut ans = None;

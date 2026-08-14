@@ -1933,7 +1933,7 @@ fn mark_give_up_candidate_rows_by_date(
         })
         .collect::<Vec<_>>();
 
-    dates_and_shortages.sort_by(|a, b| a.0.cmp(&b.0));
+    dates_and_shortages.sort_by_key(|a| a.0);
 
     for (date, shortage_seconds) in dates_and_shortages {
         mark_give_up_candidate_rows(rows, shortage_seconds, date);
@@ -2218,7 +2218,7 @@ fn execute_show_ancestor(stdout: &mut dyn SchronuWriter, focused_task_opt: &Opti
             String::from("")
         } else {
             let indent = ' '.to_string().repeat(4 * (level - 1));
-            format!("{}`-- ", &indent)
+            format!("{}`-- ", indent)
         };
 
         let id = task.get_id();
@@ -2229,7 +2229,7 @@ fn execute_show_ancestor(stdout: &mut dyn SchronuWriter, focused_task_opt: &Opti
 
         let msg = format!(
             "{}{} [{}] {}m {}",
-            &header, &id, &first_available_date_str, &estimated_work_minutes, &name
+            header, id, first_available_date_str, estimated_work_minutes, name
         );
         writeln_newline(stdout, &msg).unwrap();
     }
@@ -2325,13 +2325,13 @@ fn execute_show_all_tasks_with_config(
         + Duration::minutes(config.end_of_day_offset_minutes);
     // ここまでρ計算用
 
-    let is_calendar_func = pattern_opt.as_ref().map_or(false, |pattern| {
-        pattern == "暦" || pattern == "calendar" || pattern == "cal"
-    });
+    let is_calendar_func = pattern_opt
+        .as_ref()
+        .is_some_and(|pattern| pattern == "暦" || pattern == "calendar" || pattern == "cal");
 
     let is_band_func = pattern_opt
         .as_ref()
-        .map_or(false, |pattern| pattern == "帯" || pattern == "band");
+        .is_some_and(|pattern| pattern == "帯" || pattern == "band");
 
     let is_daily_summary_func = is_calendar_func || is_band_func;
 
@@ -2657,15 +2657,15 @@ fn execute_show_all_tasks_with_config(
                             task_list_display_rows.push(task_list_display_row.clone());
                         }
                     } else if pattern == "印" {
-                        if msg.contains(&format!(" {} ", &deadline_icon))
-                            || msg.contains(&format!(" {} ", &breaking_deadline_icon))
-                            || msg.contains(&format!(" {} ", &today_leaf_icon))
+                        if msg.contains(&format!(" {} ", deadline_icon))
+                            || msg.contains(&format!(" {} ", breaking_deadline_icon))
+                            || msg.contains(&format!(" {} ", today_leaf_icon))
                         {
                             task_list_display_rows.push(task_list_display_row.clone());
                         }
                     } else if pattern == "〆" {
-                        if msg.contains(&format!(" {} ", &deadline_icon))
-                            || msg.contains(&format!(" {} ", &breaking_deadline_icon))
+                        if msg.contains(&format!(" {} ", deadline_icon))
+                            || msg.contains(&format!(" {} ", breaking_deadline_icon))
                         {
                             task_list_display_rows.push(task_list_display_row.clone());
                         }
@@ -3460,13 +3460,10 @@ fn execute_pick(
         }
         Err(_) => {
             // 今フォーカスが当たっているタスクをtodoに戻す
-            match focused_task_id_opt {
-                Some(focused_task_id) => {
-                    if let Some(task) = task_repository.get_by_id(*focused_task_id) {
-                        task.set_orig_status(Status::Todo);
-                    }
+            if let Some(focused_task_id) = focused_task_id_opt {
+                if let Some(task) = task_repository.get_by_id(*focused_task_id) {
+                    task.set_orig_status(Status::Todo);
                 }
-                None => {}
             }
         }
     }
@@ -3912,7 +3909,7 @@ fn execute_split(
 
             let new_task = focused_task.create_as_last_child(new_task_attr);
 
-            let msg: String = format!("{} {}", new_task.get_id(), &new_task_name);
+            let msg: String = format!("{} {}", new_task.get_id(), new_task_name);
             writeln_newline(stdout, msg.as_str()).unwrap();
 
             // 新しい子タスクにフォーカス(id)を移す
@@ -4803,11 +4800,11 @@ fn test_execute_pack_前倒し内容と集計を表示する() {
     task.set_pending_until(now + Duration::days(10));
     task.set_orig_status(Status::Pending);
     let task_id = task.get_id();
-    let mut repository = TestTaskRepository::new(task, now);
+    let repository = TestTaskRepository::new(task, now);
     let mut free_time_manager = TestFreeTimeManagerWithFreeMinutes { free_minutes: 120 };
     let mut stdout = TestWriter::new();
 
-    execute_pack(&mut stdout, &mut repository, &mut free_time_manager);
+    execute_pack(&mut stdout, &repository, &mut free_time_manager);
 
     let output = stdout.into_string();
     assert!(output.contains(&format!(
@@ -4822,11 +4819,11 @@ fn test_execute_pack_候補なしを表示する() {
     let now = Local.with_ymd_and_hms(2026, 8, 11, 12, 0, 0).unwrap();
     let task = Task::new("対象外");
     task.sync_clock(now);
-    let mut repository = TestTaskRepository::new(task, now);
+    let repository = TestTaskRepository::new(task, now);
     let mut free_time_manager = TestFreeTimeManagerWithFreeMinutes { free_minutes: 120 };
     let mut stdout = TestWriter::new();
 
-    execute_pack(&mut stdout, &mut repository, &mut free_time_manager);
+    execute_pack(&mut stdout, &repository, &mut free_time_manager);
 
     assert_eq!(
         stdout.into_string(),
@@ -4844,11 +4841,11 @@ fn test_execute_pack_収まらない候補はスキップ件数だけを表示�
     task.set_priority(9);
     task.set_pending_until(now + Duration::days(10));
     task.set_orig_status(Status::Pending);
-    let mut repository = TestTaskRepository::new(task, now);
+    let repository = TestTaskRepository::new(task, now);
     let mut free_time_manager = TestFreeTimeManagerWithFreeMinutes { free_minutes: 60 };
     let mut stdout = TestWriter::new();
 
-    execute_pack(&mut stdout, &mut repository, &mut free_time_manager);
+    execute_pack(&mut stdout, &repository, &mut free_time_manager);
 
     let output = stdout.into_string();
     assert!(!output.contains("[Skip]"));
@@ -6321,10 +6318,7 @@ fn execute_with_config(
                 let new_project_name_str = &tokens[1];
 
                 let estimated_work_minutes_opt: Option<i64> = if tokens.len() >= 3 {
-                    match tokens[2].parse() {
-                        Ok(m) => Some(m),
-                        Err(_) => None,
-                    }
+                    tokens[2].parse().ok()
                 } else {
                     None
                 };
@@ -6349,10 +6343,7 @@ fn execute_with_config(
                 let new_project_name_str = &tokens[1];
 
                 let estimated_work_minutes_opt: Option<i64> = if tokens.len() >= 3 {
-                    match tokens[2].parse() {
-                        Ok(m) => Some(m),
-                        Err(_) => None,
-                    }
+                    tokens[2].parse().ok()
                 } else {
                     None
                 };
@@ -7052,13 +7043,13 @@ fn execute_with_config(
                                             leaf_task.set_pending_until(defer_to_datetime);
                                         }
                                     }
-                                    "集" | "gather" => {
+                                    "集" | "gather"
                                         if leaf_task.get_status() == Status::Pending
                                             && leaf_task.get_start_time() < defer_to_datetime
-                                            && leaf_task.get_pending_until() < defer_to_datetime
-                                        {
-                                            leaf_task.set_orig_status(Status::Todo);
-                                        }
+                                            && leaf_task.get_pending_until()
+                                                < defer_to_datetime =>
+                                    {
+                                        leaf_task.set_orig_status(Status::Todo);
                                     }
                                     _ => {}
                                 }
@@ -7102,13 +7093,12 @@ fn execute_with_config(
                                         leaf_task.set_pending_until(end);
                                     }
                                 }
-                                "集" | "gather" => {
+                                "集" | "gather"
                                     if leaf_task.get_orig_status() == Status::Pending
                                         && scheduled_starts_opt.is_some()
-                                        && leaf_task.get_pending_until() <= end
-                                    {
-                                        leaf_task.set_pending_until(schronu_day_start);
-                                    }
+                                        && leaf_task.get_pending_until() <= end =>
+                                {
+                                    leaf_task.set_pending_until(schronu_day_start);
                                 }
                                 _ => {}
                             }
@@ -8283,7 +8273,7 @@ fn get_byte_offset_for_deletion(line: &str, cursor_x: usize) -> Option<usize> {
 fn get_byte_offset_for_deletion_noneを返す場合() {
     let line = "あ";
     let cursor_x = 0;
-    let actual = get_byte_offset_for_deletion(&line, cursor_x);
+    let actual = get_byte_offset_for_deletion(line, cursor_x);
     let expected = None;
     assert_eq!(actual, expected);
 }
@@ -8292,7 +8282,7 @@ fn get_byte_offset_for_deletion_noneを返す場合() {
 fn get_byte_offset_for_deletion_正常系() {
     let line = "あ";
     let cursor_x = 1;
-    let actual = get_byte_offset_for_deletion(&line, cursor_x);
+    let actual = get_byte_offset_for_deletion(line, cursor_x);
     let expected = Some(0);
     assert_eq!(actual, expected);
 }
@@ -8490,7 +8480,7 @@ fn execute_non_interactive_command(
     let now = Local::now();
     if command.trim() == "検証" {
         let _storage_lock = reload_repository_for_cli(task_repository, now)?;
-        writeln!(stdout(), "検証: OK").unwrap();
+        println!("検証: OK");
         return Ok(());
     }
     free_time_manager.load_busy_time_slots_from_file(

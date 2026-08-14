@@ -140,7 +140,7 @@ pub fn list_tasks(
             filter
                 .period
                 .as_ref()
-                .map_or(true, |period| match period.field {
+                .is_none_or(|period| match period.field {
                     TaskPeriodField::ScheduledStart => scheduled_task_ids
                         .as_ref()
                         .is_some_and(|task_ids| task_ids.contains(&task.id)),

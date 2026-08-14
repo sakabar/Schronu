@@ -913,8 +913,7 @@ fn assert_structured_tool_error(
 }
 
 fn spawn_mcp(storage_directory: &Path) -> Child {
-    let executable = option_env!("CARGO_BIN_EXE_schronu-mcp")
-        .expect("schronu-mcp binary must be built for integration tests");
+    let executable = env!("CARGO_BIN_EXE_schronu-mcp");
     Command::new(executable)
         .env("SCHRONU_STORAGE_DIR", storage_directory)
         .stdin(Stdio::piped())
