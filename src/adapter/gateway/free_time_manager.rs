@@ -939,7 +939,7 @@ fn test_load_busy_time_slots_from_file_duration_minutesの最大値はpanicせ�
         error.field_path(),
         "days_of_week[0].busy_time_slots[0].duration_minutes"
     );
-    assert_eq!(error.value(), Some(i64::MAX.to_string()));
+    assert_eq!(error.value(), Some(i64::MAX.to_string()).as_deref());
     assert_eq!(manager.get_busy_minutes(&start, &end), before);
 }
 
@@ -960,7 +960,7 @@ fn test_load_busy_time_slots_from_file_23時開始の日跨ぎはdurationの構�
         error.field_path(),
         "days_of_week[0].busy_time_slots[0].duration_minutes"
     );
-    assert_eq!(error.value(), Some("60".to_string()));
+    assert_eq!(error.value(), Some("60".to_string()).as_deref());
 }
 
 #[test]
