@@ -18,9 +18,11 @@ use schronu::application::daily_capacity::{
 use schronu::application::flatten_use_case::{
     flatten_tasks_with_end_of_day_offset_minutes, FlattenResult, UnresolvedReason,
 };
-use schronu::application::interface::FreeTimeManagerTrait;
+use schronu::application::interface::{BusyTimeSlotLoadError, FreeTimeManagerTrait};
 #[cfg(test)]
-use schronu::application::interface::{RepositoryReloadOutcome, TaskRepositoryOperation};
+use schronu::application::interface::{
+    BusyTimeSlotRegistrationError, RepositoryReloadOutcome, TaskRepositoryOperation,
+};
 use schronu::application::interface::{TaskRepositoryError, TaskRepositoryTrait};
 use schronu::application::pack_use_case::pack_tasks_with_end_of_day_offset_minutes;
 use schronu::application::schedule_use_case::get_schedule;
@@ -35,7 +37,7 @@ use schronu::entity::task::{
     read_project_category, round_up_sec_as_minute, ProjectCategory, Status, Task, TaskAttr,
 };
 #[cfg(test)]
-use std::cell::Cell;
+use std::cell::{Cell, RefCell};
 use std::cmp::{max, min};
 use std::collections::{HashMap, HashSet};
 use std::env;
@@ -115,6 +117,7 @@ trait SchronuWriter: Write {
 
 #[derive(Debug)]
 enum RunError {
+    BusyTimeSlots(BusyTimeSlotLoadError),
     Repository(TaskRepositoryError),
     CliRepositoryTransaction(CliRepositoryTransactionError),
     InputDisconnected {
@@ -144,6 +147,11 @@ enum CliRepositoryTransactionError {
 impl From<TaskRepositoryError> for RunError {
     fn from(error: TaskRepositoryError) -> Self {
         Self::Repository(error)
+    }
+}
+impl From<BusyTimeSlotLoadError> for RunError {
+    fn from(error: BusyTimeSlotLoadError) -> Self {
+        Self::BusyTimeSlots(error)
     }
 }
 
@@ -178,6 +186,7 @@ impl std::error::Error for CliRepositoryTransactionError {
 impl std::fmt::Display for RunError {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
+            Self::BusyTimeSlots(error) => error.fmt(formatter),
             Self::Repository(error) => error.fmt(formatter),
             Self::CliRepositoryTransaction(error) => error.fmt(formatter),
             Self::InputDisconnected {
@@ -219,6 +228,7 @@ impl std::fmt::Display for RunError {
 impl std::error::Error for RunError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
+            Self::BusyTimeSlots(error) => Some(error),
             Self::Repository(error) => Some(error),
             Self::CliRepositoryTransaction(error) => Some(error),
             Self::InputDisconnected { save_error_opt } => save_error_opt
@@ -4998,9 +5008,66 @@ impl FreeTimeManagerTrait for TestFreeTimeManager {
         0
     }
 
-    fn register_busy_time_slot(&mut self, _start: &DateTime<Local>, _end: &DateTime<Local>) {}
+    fn register_busy_time_slot(
+        &mut self,
+        _start: &DateTime<Local>,
+        _end: &DateTime<Local>,
+    ) -> Result<(), BusyTimeSlotRegistrationError> {
+        Ok(())
+    }
 
-    fn load_busy_time_slots_from_file(&mut self, _busy_time_slots_file_path: &str) {}
+    fn load_busy_time_slots_from_file(
+        &mut self,
+        _busy_time_slots_file_path: &str,
+    ) -> Result<(), BusyTimeSlotLoadError> {
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+#[derive(Default)]
+struct TestFreeTimeManagerWithLoadError {
+    loaded_path: RefCell<Option<PathBuf>>,
+}
+
+#[cfg(test)]
+impl TestFreeTimeManagerWithLoadError {
+    fn loaded_path(&self) -> Option<PathBuf> {
+        self.loaded_path.borrow().clone()
+    }
+}
+
+#[cfg(test)]
+impl FreeTimeManagerTrait for TestFreeTimeManagerWithLoadError {
+    fn get_free_minutes(&mut self, _start: &DateTime<Local>, _end: &DateTime<Local>) -> i64 {
+        0
+    }
+
+    fn get_busy_minutes(&mut self, _start: &DateTime<Local>, _end: &DateTime<Local>) -> i64 {
+        0
+    }
+
+    fn register_busy_time_slot(
+        &mut self,
+        _start: &DateTime<Local>,
+        _end: &DateTime<Local>,
+    ) -> Result<(), BusyTimeSlotRegistrationError> {
+        Ok(())
+    }
+
+    fn load_busy_time_slots_from_file(
+        &mut self,
+        busy_time_slots_file_path: &str,
+    ) -> Result<(), BusyTimeSlotLoadError> {
+        let path = PathBuf::from(busy_time_slots_file_path);
+        self.loaded_path.replace(Some(path.clone()));
+        Err(BusyTimeSlotLoadError::new(
+            path,
+            "$",
+            None,
+            std::io::Error::new(std::io::ErrorKind::InvalidData, "test load error"),
+        ))
+    }
 }
 
 #[cfg(test)]
@@ -5018,9 +5085,20 @@ impl FreeTimeManagerTrait for TestFreeTimeManagerWithFreeMinutes {
         0
     }
 
-    fn register_busy_time_slot(&mut self, _start: &DateTime<Local>, _end: &DateTime<Local>) {}
+    fn register_busy_time_slot(
+        &mut self,
+        _start: &DateTime<Local>,
+        _end: &DateTime<Local>,
+    ) -> Result<(), BusyTimeSlotRegistrationError> {
+        Ok(())
+    }
 
-    fn load_busy_time_slots_from_file(&mut self, _busy_time_slots_file_path: &str) {}
+    fn load_busy_time_slots_from_file(
+        &mut self,
+        _busy_time_slots_file_path: &str,
+    ) -> Result<(), BusyTimeSlotLoadError> {
+        Ok(())
+    }
 }
 
 #[cfg(test)]
@@ -5040,9 +5118,20 @@ impl FreeTimeManagerTrait for TestFreeTimeManagerForBand {
         0
     }
 
-    fn register_busy_time_slot(&mut self, _start: &DateTime<Local>, _end: &DateTime<Local>) {}
+    fn register_busy_time_slot(
+        &mut self,
+        _start: &DateTime<Local>,
+        _end: &DateTime<Local>,
+    ) -> Result<(), BusyTimeSlotRegistrationError> {
+        Ok(())
+    }
 
-    fn load_busy_time_slots_from_file(&mut self, _busy_time_slots_file_path: &str) {}
+    fn load_busy_time_slots_from_file(
+        &mut self,
+        _busy_time_slots_file_path: &str,
+    ) -> Result<(), BusyTimeSlotLoadError> {
+        Ok(())
+    }
 }
 
 #[cfg(test)]
@@ -5063,9 +5152,20 @@ impl FreeTimeManagerTrait for TestFreeTimeManagerByDate {
         0
     }
 
-    fn register_busy_time_slot(&mut self, _start: &DateTime<Local>, _end: &DateTime<Local>) {}
+    fn register_busy_time_slot(
+        &mut self,
+        _start: &DateTime<Local>,
+        _end: &DateTime<Local>,
+    ) -> Result<(), BusyTimeSlotRegistrationError> {
+        Ok(())
+    }
 
-    fn load_busy_time_slots_from_file(&mut self, _busy_time_slots_file_path: &str) {}
+    fn load_busy_time_slots_from_file(
+        &mut self,
+        _busy_time_slots_file_path: &str,
+    ) -> Result<(), BusyTimeSlotLoadError> {
+        Ok(())
+    }
 }
 
 #[cfg(test)]
@@ -8398,7 +8498,7 @@ fn execute_non_interactive_command(
             .busy_time_slots_yaml_path
             .to_str()
             .expect("config path was validated"),
-    );
+    )?;
 
     let focus_started_datetime: DateTime<Local> = now;
     let mut stdout = stdout();
@@ -8486,6 +8586,75 @@ fn test_execute_non_interactive_command_gatewayの変換errorをstderrへ表示�
     assert!(output.contains("repository Load failed"));
     assert!(output.contains(project_yaml_path.to_str().unwrap()));
     assert!(output.contains("project.children: must be an array or null"));
+}
+
+#[test]
+fn test_execute_non_interactive_command_busy_time_slots読込失敗はstderrへ表示しrepository_transactionとcommandを実行しない(
+) {
+    let now = Local.with_ymd_and_hms(2026, 8, 11, 12, 0, 0).unwrap();
+    let task = Task::new("変更しないtask");
+    let task_id = task.get_id();
+    let original_estimated_work_seconds = task.get_estimated_work_seconds();
+    let mut task_repository = TestTaskRepository::new(task, now);
+    let mut free_time_manager = TestFreeTimeManagerWithLoadError::default();
+    let busy_time_slots_yaml_path = active_config().busy_time_slots_yaml_path.clone();
+
+    let error =
+        execute_non_interactive_command(&mut task_repository, &mut free_time_manager, "予 45")
+            .expect_err("busy time slotsの読込失敗はRunErrorとして返るべきです");
+
+    assert!(matches!(
+        error,
+        RunError::BusyTimeSlots(ref error)
+            if error.to_string().contains(busy_time_slots_yaml_path.to_str().unwrap())
+                && error.to_string().contains("$")
+    ));
+    assert_eq!(task_repository.load_attempt_count.get(), 0);
+    assert_eq!(task_repository.reload_if_changed_attempt_count.get(), 0);
+    assert_eq!(task_repository.save_attempt_count.get(), 0);
+    assert_eq!(
+        free_time_manager.loaded_path(),
+        Some(busy_time_slots_yaml_path.clone())
+    );
+    assert_eq!(
+        task_repository
+            .get_by_id(task_id)
+            .unwrap()
+            .get_estimated_work_seconds(),
+        original_estimated_work_seconds
+    );
+
+    let mut stderr = Vec::new();
+    let succeeded = report_run_result(&mut stderr, Err(error));
+
+    assert!(!succeeded);
+    let output = String::from_utf8(stderr).unwrap();
+    assert!(output.contains("[Error]"));
+    assert!(output.contains(busy_time_slots_yaml_path.to_str().unwrap()));
+    assert!(output.contains("$"));
+}
+
+#[test]
+fn test_interactive起動前のbusy_time_slots読込失敗はraw_modeなしでrun_errorとして返す() {
+    let mut free_time_manager = TestFreeTimeManagerWithLoadError::default();
+    let busy_time_slots_yaml_path = active_config().busy_time_slots_yaml_path.clone();
+
+    let error = load_busy_time_slots_for_interactive_application(
+        &mut free_time_manager,
+        busy_time_slots_yaml_path.to_str().unwrap(),
+    )
+    .expect_err("対話起動前の設定読込失敗はRawModeを有効化せずRunErrorとして返すべきです");
+
+    assert!(matches!(
+        error,
+        RunError::BusyTimeSlots(ref error)
+            if error.path() == busy_time_slots_yaml_path.as_path()
+                && error.field_path() == "$"
+    ));
+    assert_eq!(
+        free_time_manager.loaded_path(),
+        Some(busy_time_slots_yaml_path)
+    );
 }
 
 #[test]
@@ -10073,6 +10242,14 @@ fn handle_interactive_repository_event(
     }
 }
 
+fn load_busy_time_slots_for_interactive_application(
+    free_time_manager: &mut dyn FreeTimeManagerTrait,
+    busy_time_slots_file_path: &str,
+) -> Result<(), RunError> {
+    free_time_manager.load_busy_time_slots_from_file(busy_time_slots_file_path)?;
+    Ok(())
+}
+
 fn application(
     task_repository: &mut dyn TaskRepositoryTrait,
     free_time_manager: &mut dyn FreeTimeManagerTrait,
@@ -10088,12 +10265,13 @@ fn application(
 
     drop(reload_repository_for_cli(task_repository, now)?);
 
-    free_time_manager.load_busy_time_slots_from_file(
+    load_busy_time_slots_for_interactive_application(
+        free_time_manager,
         active_config()
             .busy_time_slots_yaml_path
             .to_str()
             .expect("config path was validated"),
-    );
+    )?;
 
     // RawModeを有効にする
     let mut stdout = stdout().into_raw_mode().unwrap();
