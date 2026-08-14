@@ -24,7 +24,7 @@ mod tests {
     fn config_path未指定時は既存の既定値を返す() {
         let actual = load_schronu_config(None).unwrap();
 
-        assert_eq!(actual.obsidian_vault_name, "Obsidian-Moica");
+        assert_eq!(actual.obsidian_vault_name, "Obsidian-Work");
         assert_eq!(
             actual.busy_time_slots_yaml_path,
             PathBuf::from("../Schronu-private/busy_time_slots.yaml")
