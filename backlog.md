@@ -39,7 +39,7 @@
 | TD-001 | P0 | 完了 | L | 毎週定期の行動不能時間が将来日・日跨ぎ計算へ正しく反映されない |
 | TD-002 | P0 | 完了 | M | 行動不能時間YAMLの異常が回復可能なエラーではなくpanicになる |
 | TD-003 | P0 | 完了| L | 永続化YAMLの不正値が黙って既定値や新規UUIDへ変換される |
-| TD-004 | P1 | 未着手 | XL | `Task`の木構造と内部可変性が暗黙の共有状態とpanic前提を作っている |
+| TD-004 | P1 | 完了 | XL | `Task`の木構造と内部可変性が暗黙の共有状態とpanic前提を作っている |
 | TD-005 | P1 | 未着手 | XL | CLIコントローラーへ責務が集中している |
 | TD-006 | P1 | 未着手 | L | CLIの入力・application・出力エラーが握り潰される |
 | TD-007 | P1 | 未着手 | L | CLIとMCPでrepository transactionが別々に組み立てられている |
@@ -52,6 +52,7 @@
 | TD-014 | P2 | 未着手 | M | Apps Scriptの同期処理が行数に比例してAPI呼出しを増やす |
 | TD-015 | P2 | 未着手 | L | テストが巨大な製品ファイルへ混在し、fixtureも重複している |
 | TD-016 | P3 | 未着手 | M | マジック値、未使用フィールド、古いコメントが意図を曖昧にしている |
+| TD-017 | P1 | 未着手 | XL | `TaskHandle`の既存infallible APIが内部不変条件の破れをpanicとして扱う |
 
 ## 詳細
 
@@ -177,6 +178,9 @@
 
 - 優先度: `P1`
 - 概算規模: `XL`
+- 完了日: 2026-08-15
+- 対応: 共有可変な`Task`を`TaskHandle`へ全面移行し、独立した`TaskSnapshot`を追加した。create、reparent、親追加、連番生成をfallible APIへ集約し、`TaskTreeError`をapplication、controller、MCPまで保持した。strict YAML loaderもfallible tree operationを経由させ、deadline伝搬のmutation revisionを1操作につき1回へ一元化した。
+- 検証: `cargo fmt --check`、`cargo clippy --locked --all-targets -- -D warnings`、`cargo test --locked`に成功した。testは392件、controller testは219件、MCP binary testは2件、integration testは12件が成功し、1件はignored。
 
 #### 現状と根拠
 
@@ -213,6 +217,41 @@
 
 - TD-003のstrict loaderが木を組み立てるため、現在の構築契約を先にテストで固定する。
 - TD-009、TD-010は本項目を小さくするが、同一PRへまとめない。
+
+### TD-017: `TaskHandle`の既存infallible APIが内部不変条件の破れをpanicとして扱う
+
+- 優先度: `P1`
+- 概算規模: `XL`
+
+#### 現状と根拠
+
+- TD-004で`try_get_attr`、`try_snapshot`、fallible tree operationを導入した一方、互換性のため`TaskHandle::new`、`root`、`snapshot`、`get_attr`はinfallible APIとして残っている。
+- `new`と`root`はdummy rootの子ノード存在を`expect`し、内部不変条件が壊れた場合にpanicする。
+- `root`をfallible化すると、getter、setter、dirty tracking、deadline伝搬、repository trait、application、CLI、MCPおよび多数のfixtureへ`Result`のerror contractが波及する。
+
+#### 影響
+
+- borrow競合やtree不変条件の破れを、呼出し元が構造化errorとして扱えない経路が残る。
+- CLIとMCPでdomain内部エラーの表示・JSON error contractが統一されない。
+- `try_*` APIと旧infallible APIが並存し、どちらを選ぶべきか利用者が判断する必要がある。
+
+#### 推奨する改善方針
+
+- `new`、`root`、read APIをfallible APIへ統一し、旧infallible APIを削除する。
+- `TaskTreeError`をrepository/application errorへ保持したまま、CLI表示とMCP structured errorへ変換する。
+- productionとfixtureを段階移行し、各層でerrorを握り潰さない契約テストを追加する。
+
+#### 完了条件
+
+- 公開`TaskHandle` APIにtree由来の`expect`、`unwrap`、panic前提のread/mutationがない。
+- constructor、root探索、snapshot、mutationの失敗理由を型で判別できる。
+- CLI、MCP、repository、applicationの各経路で構造化errorが保持される。
+- 既存のYAML形式、CLI表示、MCP JSON契約、dirty trackingを維持する。
+
+#### 依存関係
+
+- TD-004の`TaskHandle`、`TaskSnapshot`、`TaskTreeError`を基盤として利用する。
+- TD-006のerror分類と整合させ、同一PRでCLI分割を行わない。
 
 ### TD-005: CLIコントローラーへ責務が集中している
 
