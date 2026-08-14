@@ -1163,6 +1163,10 @@ pub struct TaskSnapshot {
 }
 
 impl TaskSnapshot {
+    pub fn attr(&self) -> &TaskAttr {
+        &self.attr
+    }
+
     pub fn name(&self) -> &str {
         self.attr.get_name()
     }
@@ -1180,6 +1184,7 @@ impl TaskSnapshot {
 pub enum TaskTreeError {
     RootOperation,
     Cycle,
+    Borrow,
     HierarchyGrant,
     Insert,
 }
@@ -1189,6 +1194,7 @@ impl fmt::Display for TaskTreeError {
         let reason = match self {
             Self::RootOperation => "cannot modify the project root hierarchy",
             Self::Cycle => "cannot insert a task into its own descendant",
+            Self::Borrow => "cannot borrow task tree data",
             Self::HierarchyGrant => "cannot acquire hierarchy edit grant",
             Self::Insert => "cannot insert task subtree",
         };
@@ -2994,6 +3000,14 @@ fn test_task_handle_snapshotは独立した読み取り値を返す() {
 
     assert_eq!(snapshot.name(), "親");
     assert_eq!(snapshot.children()[0].estimated_work_seconds(), 60);
+    assert_eq!(
+        snapshot.children()[0].attr().get_id(),
+        child.get_attr().get_id()
+    );
+    assert_eq!(
+        snapshot.children()[0].attr().get_pending_until(),
+        child.get_attr().get_pending_until()
+    );
     assert_eq!(root.get_children()[0].get_estimated_work_seconds(), 120);
 }
 
