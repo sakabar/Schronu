@@ -10193,9 +10193,8 @@ fn handle_interactive_repository_event(
 fn load_busy_time_slots_for_interactive_application(
     free_time_manager: &mut dyn FreeTimeManagerTrait,
     busy_time_slots_file_path: &str,
-    now: &DateTime<Local>,
 ) -> Result<(), RunError> {
-    free_time_manager.load_busy_time_slots_from_file(busy_time_slots_file_path, now)?;
+    free_time_manager.load_busy_time_slots_from_file(busy_time_slots_file_path)?;
     Ok(())
 }
 

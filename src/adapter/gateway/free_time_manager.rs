@@ -1,9 +1,12 @@
-use crate::application::interface::FreeTimeManagerTrait;
+use crate::application::interface::{
+    BusyTimeSlotLoadError, BusyTimeSlotRegistrationError, FreeTimeManagerTrait,
+};
 use crate::entity::busy_time_slot::BusyTimeSlot;
 use chrono::{DateTime, Datelike, Local, NaiveDate, Timelike, Weekday};
 use std::collections::HashMap;
 use std::fs::File;
 use std::io::prelude::*;
+use std::path::Path;
 use yaml_rust::{Yaml, YamlLoader};
 
 use chrono::TimeZone;
@@ -36,12 +39,19 @@ impl FreeTimeManager {
         }
     }
 
-    fn load_busy_time_slots_from_file(&mut self, busy_time_slots_file_path: &str) {
-        let mut file = File::open(busy_time_slots_file_path).unwrap();
+    fn load_busy_time_slots_from_file(
+        &mut self,
+        busy_time_slots_file_path: &str,
+    ) -> Result<(), BusyTimeSlotLoadError> {
+        let path = Path::new(busy_time_slots_file_path);
+        let mut file = File::open(path)
+            .map_err(|error| BusyTimeSlotLoadError::new(path, "$", None, error))?;
         let mut text = String::new();
-        file.read_to_string(&mut text).unwrap();
+        file.read_to_string(&mut text)
+            .map_err(|error| BusyTimeSlotLoadError::new(path, "$", None, error))?;
 
         self.weekly_busy_time_slots = self.load_busy_time_slots_from_str(&text);
+        Ok(())
     }
 
     fn load_busy_time_slots_from_str(&self, yaml_str: &str) -> HashMap<Weekday, Vec<BusyTimeSlot>> {
@@ -190,9 +200,13 @@ impl FreeTimeManagerTrait for FreeTimeManager {
 
     // [start, end)
     // TODO: エラー処理
-    fn register_busy_time_slot(&mut self, start: &DateTime<Local>, end: &DateTime<Local>) {
+    fn register_busy_time_slot(
+        &mut self,
+        start: &DateTime<Local>,
+        end: &DateTime<Local>,
+    ) -> Result<(), BusyTimeSlotRegistrationError> {
         if start.date_naive() != end.date_naive() {
-            panic!("different date between start and end.");
+            return Err(BusyTimeSlotRegistrationError);
         }
 
         let date = start.date_naive();
@@ -207,10 +221,14 @@ impl FreeTimeManagerTrait for FreeTimeManager {
         for ind in start_index..end_index {
             free_time_slot[ind as usize] = 0;
         }
+        Ok(())
     }
 
-    fn load_busy_time_slots_from_file(&mut self, busy_time_slots_file_path: &str) {
-        self.load_busy_time_slots_from_file(busy_time_slots_file_path);
+    fn load_busy_time_slots_from_file(
+        &mut self,
+        busy_time_slots_file_path: &str,
+    ) -> Result<(), BusyTimeSlotLoadError> {
+        FreeTimeManager::load_busy_time_slots_from_file(self, busy_time_slots_file_path)
     }
 }
 
@@ -496,7 +514,7 @@ fn test_load_busy_time_slots_from_file_存在しないファイルのエラー�
     let mut manager = FreeTimeManager::new();
 
     let error = manager
-        .load_busy_time_slots_from_file(path.to_str().unwrap(), &now)
+        .load_busy_time_slots_from_file(path.to_str().unwrap())
         .expect_err("存在しない設定ファイルは回復可能なエラーになるべきです");
 
     assert_eq!(error.path(), path.as_path());
@@ -653,11 +671,8 @@ fn test_load_busy_time_slots_from_file_end_of_day_minuteの範囲外値はpath�
 
 #[test]
 fn test_load_busy_time_slots_from_file_end_of_day_minuteの負数は回復可能なエラーになる() {
-    let yaml = valid_busy_time_slots_yaml().replacen(
-        "end_of_day_minute: 59",
-        "end_of_day_minute: -1",
-        1,
-    );
+    let yaml =
+        valid_busy_time_slots_yaml().replacen("end_of_day_minute: 59", "end_of_day_minute: -1", 1);
     let file = BusyTimeSlotsYamlFile::new(&yaml);
     let mut manager = FreeTimeManager::new();
 
@@ -734,8 +749,8 @@ fn test_load_busy_time_slots_from_file_空YAMLはpathとfield_pathを含むエ�
 
 #[test]
 fn test_load_busy_time_slots_from_file_型違いはpathとfield_pathを含むエラーになる() {
-    let yaml = valid_busy_time_slots_yaml()
-        .replacen("duration_minutes: 60", "duration_minutes: sixty", 1);
+    let yaml =
+        valid_busy_time_slots_yaml().replacen("duration_minutes: 60", "duration_minutes: sixty", 1);
     let file = BusyTimeSlotsYamlFile::new(&yaml);
     let mut manager = FreeTimeManager::new();
 
@@ -755,7 +770,7 @@ fn test_load_busy_time_slots_from_file_型違いのエラーは構造化情報�
     let mut manager = FreeTimeManager::new();
 
     let error = manager
-        .load_busy_time_slots_from_file(file.path().to_str().unwrap(), &now)
+        .load_busy_time_slots_from_file(file.path().to_str().unwrap())
         .expect_err("型違いの設定値は回復可能なエラーになるべきです");
 
     assert_eq!(error.path(), file.path());
@@ -841,8 +856,8 @@ fn test_load_busy_time_slots_from_file_start_timeの数値変換失敗はpathと
 
 #[test]
 fn test_load_busy_time_slots_from_file_不正時刻はpathとfield_pathを含むエラーになる() {
-    let yaml = valid_busy_time_slots_yaml()
-        .replacen("start_time: '13:00'", "start_time: '24:00'", 1);
+    let yaml =
+        valid_busy_time_slots_yaml().replacen("start_time: '13:00'", "start_time: '24:00'", 1);
     let file = BusyTimeSlotsYamlFile::new(&yaml);
     let mut manager = FreeTimeManager::new();
 
@@ -868,8 +883,8 @@ fn test_load_busy_time_slots_from_file_duration_minutes欠落はpathとfield_pat
 
 #[test]
 fn test_load_busy_time_slots_from_file_負数durationはpathとfield_pathを含むエラーになる() {
-    let yaml = valid_busy_time_slots_yaml()
-        .replacen("duration_minutes: 60", "duration_minutes: -1", 1);
+    let yaml =
+        valid_busy_time_slots_yaml().replacen("duration_minutes: 60", "duration_minutes: -1", 1);
     let file = BusyTimeSlotsYamlFile::new(&yaml);
     let mut manager = FreeTimeManager::new();
 
@@ -909,12 +924,12 @@ fn test_load_busy_time_slots_from_file_duration_minutesの最大値はpanicせ�
     let mut manager = FreeTimeManager::new();
 
     manager
-        .load_busy_time_slots_from_file(valid_file.path().to_str().unwrap(), &now)
+        .load_busy_time_slots_from_file(valid_file.path().to_str().unwrap())
         .expect("正常なbusy_time_slots.yamlは読み込めるべきです");
     let before = manager.get_busy_minutes(&start, &end);
 
     let error = manager
-        .load_busy_time_slots_from_file(invalid_file.path().to_str().unwrap(), &now)
+        .load_busy_time_slots_from_file(invalid_file.path().to_str().unwrap())
         .expect_err("duration_minutesの最大値は回復可能なエラーになるべきです");
 
     assert_eq!(error.path(), invalid_file.path());
@@ -935,7 +950,7 @@ fn test_load_busy_time_slots_from_file_23時開始の日跨ぎはdurationの構�
     let mut manager = FreeTimeManager::new();
 
     let error = manager
-        .load_busy_time_slots_from_file(file.path().to_str().unwrap(), &now)
+        .load_busy_time_slots_from_file(file.path().to_str().unwrap())
         .expect_err("日跨ぎslotはdurationの回復可能なエラーになるべきです");
 
     assert_eq!(error.path(), file.path());
