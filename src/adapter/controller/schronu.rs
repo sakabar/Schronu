@@ -431,7 +431,7 @@ fn parse_dated_clear_or_gather_time_range(
     }
 
     let calendar_hour = u32::try_from(hour % 24).ok()?;
-    let calendar_days = hour / 24;
+    let calendar_duration = Duration::try_days(hour / 24)?;
     let mut end = match Local.with_ymd_and_hms(
         schronu_day_start.year(),
         schronu_day_start.month(),
@@ -440,11 +440,11 @@ fn parse_dated_clear_or_gather_time_range(
         minute,
         0,
     ) {
-        LocalResult::Single(datetime) => datetime + Duration::days(calendar_days),
+        LocalResult::Single(datetime) => datetime.checked_add_signed(calendar_duration)?,
         LocalResult::Ambiguous(_, _) | LocalResult::None => return None,
     };
     if end < schronu_day_start {
-        end += Duration::days(1);
+        end = end.checked_add_signed(Duration::days(1))?;
     }
 
     (schronu_day_start < end).then_some((schronu_day_start, end))
@@ -639,7 +639,7 @@ mod tests {
     fn test_parse_dated_clear_or_gather_time_range_不正値と空区間を拒否する() {
         let now = Local.with_ymd_and_hms(2026, 8, 14, 12, 0, 0).unwrap();
 
-        for time in ["120", "06:00", "10:60", "invalid"] {
+        for time in ["120", "06:00", "10:60", "invalid", "9223372036854775807:00"] {
             assert_eq!(
                 parse_dated_clear_or_gather_time_range(time, "8/15", now),
                 None
@@ -4512,6 +4512,24 @@ fn test_execute_空_日付指定はpending_untilの半開区間だけを変更�
 }
 
 #[test]
+fn test_execute_空_日付指定は予定候補外のpendingを変更しない() {
+    let now = Local.with_ymd_and_hms(2026, 8, 14, 12, 0, 0).unwrap();
+    let schronu_day_start = Local.with_ymd_and_hms(2026, 8, 15, 6, 0, 0).unwrap();
+    let task = Task::new("予定候補外のpending");
+    task.set_start_time(schronu_day_start + Duration::days(1));
+    task.set_estimated_work_seconds(30 * 60);
+    task.set_orig_status(Status::Pending);
+    let original_pending_until = schronu_day_start + Duration::hours(5);
+    task.set_pending_until(original_pending_until);
+    let task_id = task.get_id();
+
+    let result = execute_command_for_test(task, now, Some(task_id), "空 13:00 8/15");
+
+    assert_eq!(result.task.get_orig_status(), Status::Pending);
+    assert_eq!(result.task.get_pending_until(), original_pending_until);
+}
+
+#[test]
 fn test_execute_日付指定の不正入力は状態を変更しない() {
     let now = Local.with_ymd_and_hms(2026, 8, 14, 12, 0, 0).unwrap();
     let task = Task::new("不正入力対象");
@@ -6701,6 +6719,7 @@ fn execute(
                                         });
                                     let pending_is_in_range = leaf_task.get_orig_status()
                                         == Status::Pending
+                                        && scheduled_starts_opt.is_some()
                                         && schronu_day_start <= leaf_task.get_pending_until()
                                         && leaf_task.get_pending_until() < end;
                                     if todo_is_scheduled_in_range || pending_is_in_range {
