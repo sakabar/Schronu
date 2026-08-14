@@ -1,13 +1,14 @@
 use crate::application::interface::FreeTimeManagerTrait;
-use crate::entity::busy_time_slot::{BusyTimeSlot, DayOfWeekBusyTimeSlots};
-use chrono::{DateTime, Datelike, Duration, Local, NaiveDate, Timelike, Weekday};
+use crate::entity::busy_time_slot::BusyTimeSlot;
+use chrono::{DateTime, Datelike, Local, NaiveDate, Timelike, Weekday};
 use std::collections::HashMap;
 use std::fs::File;
 use std::io::prelude::*;
 use yaml_rust::{Yaml, YamlLoader};
 
-#[cfg(test)]
 use chrono::TimeZone;
+#[cfg(test)]
+use std::fmt::Write as _;
 #[cfg(test)]
 use std::fs;
 #[cfg(test)]
@@ -15,7 +16,8 @@ use std::path::PathBuf;
 
 // Scheduleをどう持つか: 日付をキーとする辞書
 pub struct FreeTimeManager {
-    free_time_slots_map: HashMap<NaiveDate, Vec<i64>>,
+    weekly_busy_time_slots: HashMap<Weekday, Vec<BusyTimeSlot>>,
+    registered_busy_time_slots_map: HashMap<NaiveDate, Vec<i64>>,
 }
 
 impl Default for FreeTimeManager {
@@ -26,57 +28,22 @@ impl Default for FreeTimeManager {
 
 impl FreeTimeManager {
     pub fn new() -> Self {
-        let free_time_slots_map = HashMap::new();
-
         Self {
-            free_time_slots_map,
+            weekly_busy_time_slots: HashMap::new(),
+            registered_busy_time_slots_map: HashMap::new(),
         }
     }
 
-    fn load_busy_time_slots_from_file(
-        &mut self,
-        busy_time_slots_file_path: &str,
-        now: &DateTime<Local>,
-    ) {
+    fn load_busy_time_slots_from_file(&mut self, busy_time_slots_file_path: &str) {
         let mut file = File::open(busy_time_slots_file_path).unwrap();
         let mut text = String::new();
         file.read_to_string(&mut text).unwrap();
 
-        let day_of_week_map: HashMap<Weekday, DayOfWeekBusyTimeSlots> =
-            self.load_busy_time_slots_from_str(&text);
-
-        // 直近1週間は、週次の繰り返しタスクが入っているので正確。そのまま反映する
-        // それ以降は、ダミータスクを入れることで繰り返しタスクのぶんの時間を表現する
-        for d in 0..70 {
-            let dt = *now + Duration::days(d);
-            let day_of_week = dt.weekday();
-            let day_of_week_busy_time_slots = day_of_week_map.get(&day_of_week).unwrap();
-
-            for busy_time_slot in day_of_week_busy_time_slots.get_busy_time_slots().iter() {
-                let hour = busy_time_slot.get_start_time_hour();
-                let minute = busy_time_slot.get_start_time_minute();
-
-                let start = dt
-                    .with_hour(hour)
-                    .expect("invalid hour")
-                    .with_minute(minute)
-                    .expect("invalid minute")
-                    .with_second(0)
-                    .expect("invalid second");
-
-                let duration_minutes = &busy_time_slot.get_duration_minutes();
-                let end = start + Duration::minutes(*duration_minutes);
-
-                self.register_busy_time_slot(&start, &end);
-            }
-        }
+        self.weekly_busy_time_slots = self.load_busy_time_slots_from_str(&text);
     }
 
-    fn load_busy_time_slots_from_str(
-        &self,
-        yaml_str: &str,
-    ) -> HashMap<Weekday, DayOfWeekBusyTimeSlots> {
-        let mut day_of_week_map: HashMap<Weekday, DayOfWeekBusyTimeSlots> = HashMap::new();
+    fn load_busy_time_slots_from_str(&self, yaml_str: &str) -> HashMap<Weekday, Vec<BusyTimeSlot>> {
+        let mut day_of_week_map: HashMap<Weekday, Vec<BusyTimeSlot>> = HashMap::new();
 
         match YamlLoader::load_from_str(yaml_str) {
             Err(_) => {
@@ -99,8 +66,6 @@ impl FreeTimeManager {
                         s => panic!("Unknown day_of_week: {}", s),
                     };
 
-                    let end_of_day_hour = day_of_week_yaml["end_of_day_hour"].as_i64().unwrap();
-                    let end_of_day_minute = day_of_week_yaml["end_of_day_hour"].as_i64().unwrap();
                     let busy_time_slots_yaml =
                         day_of_week_yaml["busy_time_slots"].as_vec().unwrap();
 
@@ -135,51 +100,84 @@ impl FreeTimeManager {
                         busy_time_slots.push(busy_time_slot);
                     }
 
-                    let day_of_week_busy_time_slots = DayOfWeekBusyTimeSlots::new(
-                        day_of_week,
-                        end_of_day_hour,
-                        end_of_day_minute,
-                        busy_time_slots,
-                    );
-                    day_of_week_map.insert(day_of_week, day_of_week_busy_time_slots);
+                    day_of_week_map.insert(day_of_week, busy_time_slots);
                 }
             }
         }
         day_of_week_map
     }
+
+    fn get_free_time_slot(&self, date: NaiveDate) -> Vec<i64> {
+        let mut free_time_slot = vec![1; 24 * 60];
+
+        if let Some(busy_time_slots) = self.weekly_busy_time_slots.get(&date.weekday()) {
+            for busy_time_slot in busy_time_slots {
+                mark_busy_time_slot(&mut free_time_slot, busy_time_slot);
+            }
+        }
+
+        if let Some(registered_free_time_slot) = self.registered_busy_time_slots_map.get(&date) {
+            for (index, free) in registered_free_time_slot.iter().enumerate() {
+                if *free == 0 {
+                    free_time_slot[index] = 0;
+                }
+            }
+        }
+
+        free_time_slot
+    }
+}
+
+fn mark_busy_time_slot(free_time_slot: &mut [i64], busy_time_slot: &BusyTimeSlot) {
+    let start_index =
+        (busy_time_slot.get_start_time_hour() * 60 + busy_time_slot.get_start_time_minute()) as i64;
+    let end_index = (start_index + busy_time_slot.get_duration_minutes()).clamp(0, 24 * 60);
+
+    for index in start_index.clamp(0, 24 * 60)..end_index {
+        free_time_slot[index as usize] = 0;
+    }
 }
 
 impl FreeTimeManagerTrait for FreeTimeManager {
-    // 簡単のため、日を跨いだ後は全て自由な時間であるとする
     fn get_free_minutes(&mut self, start: &DateTime<Local>, end: &DateTime<Local>) -> i64 {
         const CAP_RATE: f64 = 1.0;
 
-        let eod = start
-            .with_hour(23)
-            .expect("invalid hour")
-            .with_minute(59)
-            .expect("invalid minute");
-
-        if start.date_naive() != end.date_naive() {
-            return (end.signed_duration_since(eod).num_minutes() as f64 * CAP_RATE) as i64
-                + self.get_free_minutes(start, &eod);
+        if start >= end {
+            return 0;
         }
 
-        let date = start.date_naive();
-        let free_time_slot = self
-            .free_time_slots_map
-            .entry(date)
-            .or_insert(vec![1; 24 * 60]);
+        let mut current = *start;
+        let mut free_minutes = 0;
+        while current < *end {
+            let next_date = current.date_naive().succ_opt().expect("date overflow");
+            let next_midnight = Local
+                .with_ymd_and_hms(
+                    next_date.year(),
+                    next_date.month(),
+                    next_date.day(),
+                    0,
+                    0,
+                    0,
+                )
+                .single()
+                .expect("invalid local midnight");
+            let segment_end = (*end).min(next_midnight);
+            let free_time_slot = self.get_free_time_slot(current.date_naive());
 
-        let start_index = start.hour() * 60 + start.minute();
-        let end_index = end.hour() * 60 + end.minute();
+            let start_index = current.hour() * 60 + current.minute();
+            let end_index = if current.date_naive() == segment_end.date_naive() {
+                segment_end.hour() * 60 + segment_end.minute()
+            } else {
+                24 * 60
+            };
 
-        let mut ans = 0;
-        for ind in start_index..end_index {
-            ans += free_time_slot[ind as usize];
+            for index in start_index..end_index {
+                free_minutes += free_time_slot[index as usize];
+            }
+            current = segment_end;
         }
 
-        (ans as f64 * CAP_RATE) as i64
+        (free_minutes as f64 * CAP_RATE) as i64
     }
 
     fn get_busy_minutes(&mut self, start: &DateTime<Local>, end: &DateTime<Local>) -> i64 {
@@ -188,9 +186,7 @@ impl FreeTimeManagerTrait for FreeTimeManager {
         (*end - *start).num_minutes() - free_minutes
     }
 
-    // 簡単のため、日を跨いだ取得はされない制約とする
     // [start, end)
-    // その仕様から、取得できるのは23:59まで。
     // TODO: エラー処理
     fn register_busy_time_slot(&mut self, start: &DateTime<Local>, end: &DateTime<Local>) {
         if start.date_naive() != end.date_naive() {
@@ -199,7 +195,7 @@ impl FreeTimeManagerTrait for FreeTimeManager {
 
         let date = start.date_naive();
         let free_time_slot = self
-            .free_time_slots_map
+            .registered_busy_time_slots_map
             .entry(date)
             .or_insert(vec![1; 24 * 60]);
 
@@ -211,12 +207,8 @@ impl FreeTimeManagerTrait for FreeTimeManager {
         }
     }
 
-    fn load_busy_time_slots_from_file(
-        &mut self,
-        busy_time_slots_file_path: &str,
-        now: &DateTime<Local>,
-    ) {
-        self.load_busy_time_slots_from_file(busy_time_slots_file_path, now);
+    fn load_busy_time_slots_from_file(&mut self, busy_time_slots_file_path: &str) {
+        self.load_busy_time_slots_from_file(busy_time_slots_file_path);
     }
 }
 
@@ -281,14 +273,14 @@ fn busy_time_slots_yaml_with_daily_slot(include_legacy_end_of_day_fields: bool) 
     } else {
         "    end_of_day_hour: 0\n    end_of_day_minute: 0\n"
     };
-    let days = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
-        .into_iter()
-        .map(|day_of_week| {
-            format!(
-                "  - day_of_week: {day_of_week}\n{legacy_end_of_day_fields}    busy_time_slots:\n      - start_time: \"00:00\"\n        duration_minutes: 60\n        name: sleep\n"
-            )
-        })
-        .collect::<String>();
+    let mut days = String::new();
+    for day_of_week in ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"] {
+        write!(
+            days,
+            "  - day_of_week: {day_of_week}\n{legacy_end_of_day_fields}    busy_time_slots:\n      - start_time: \"00:00\"\n        duration_minutes: 60\n        name: sleep\n"
+        )
+        .unwrap();
+    }
     format!("days_of_week:\n{days}")
 }
 
@@ -310,8 +302,7 @@ fn write_busy_time_slots_yaml(include_legacy_end_of_day_fields: bool) -> PathBuf
 fn load_busy_time_slots_from_file_70日を超える将来日にも毎週定期slotを適用する() {
     let path = write_busy_time_slots_yaml(false);
     let mut manager = FreeTimeManager::new();
-    let now = Local.with_ymd_and_hms(2026, 8, 10, 12, 0, 0).unwrap();
-    manager.load_busy_time_slots_from_file(path.to_str().unwrap(), &now);
+    manager.load_busy_time_slots_from_file(path.to_str().unwrap());
 
     let start = Local.with_ymd_and_hms(2026, 10, 20, 0, 0, 0).unwrap();
     let end = Local.with_ymd_and_hms(2026, 10, 20, 1, 0, 0).unwrap();
@@ -324,14 +315,13 @@ fn load_busy_time_slots_from_file_70日を超える将来日にも毎週定期sl
 fn get_free_minutes_日跨ぎ照会でも各日の定期slotを差し引く() {
     let path = write_busy_time_slots_yaml(false);
     let mut manager = FreeTimeManager::new();
-    let now = Local.with_ymd_and_hms(2026, 8, 10, 12, 0, 0).unwrap();
-    manager.load_busy_time_slots_from_file(path.to_str().unwrap(), &now);
+    manager.load_busy_time_slots_from_file(path.to_str().unwrap());
 
     let start = Local.with_ymd_and_hms(2026, 8, 10, 23, 30, 0).unwrap();
     let middle = Local.with_ymd_and_hms(2026, 8, 11, 0, 0, 0).unwrap();
     let end = Local.with_ymd_and_hms(2026, 8, 12, 1, 30, 0).unwrap();
 
-    assert_eq!(manager.get_free_minutes(&start, &end), 24 * 60 + 30);
+    assert_eq!(manager.get_free_minutes(&start, &end), 24 * 60);
     assert_eq!(
         manager.get_free_minutes(&start, &end),
         manager.get_free_minutes(&start, &middle) + manager.get_free_minutes(&middle, &end)
@@ -349,11 +339,19 @@ fn get_free_minutes_23時59分から翌日00時00分を1分として扱う() {
 }
 
 #[test]
+fn get_free_minutes_終了が開始以前なら0分を返す() {
+    let mut manager = FreeTimeManager::new();
+    let start = Local.with_ymd_and_hms(2026, 8, 11, 0, 0, 0).unwrap();
+    let end = Local.with_ymd_and_hms(2026, 8, 10, 23, 59, 0).unwrap();
+
+    assert_eq!(manager.get_free_minutes(&start, &end), 0);
+}
+
+#[test]
 fn get_free_minutes_06時を跨いでも通常の日付境界で定期slotを適用する() {
     let path = write_busy_time_slots_yaml(false);
     let mut manager = FreeTimeManager::new();
-    let now = Local.with_ymd_and_hms(2026, 8, 10, 12, 0, 0).unwrap();
-    manager.load_busy_time_slots_from_file(path.to_str().unwrap(), &now);
+    manager.load_busy_time_slots_from_file(path.to_str().unwrap());
 
     let start = Local.with_ymd_and_hms(2026, 8, 10, 23, 30, 0).unwrap();
     let end = Local.with_ymd_and_hms(2026, 8, 11, 6, 30, 0).unwrap();
@@ -366,8 +364,7 @@ fn get_free_minutes_06時を跨いでも通常の日付境界で定期slotを適
 fn load_busy_time_slots_from_file_廃止した日終端fieldを無視する() {
     let path = write_busy_time_slots_yaml(true);
     let mut manager = FreeTimeManager::new();
-    let now = Local.with_ymd_and_hms(2026, 8, 10, 12, 0, 0).unwrap();
-    manager.load_busy_time_slots_from_file(path.to_str().unwrap(), &now);
+    manager.load_busy_time_slots_from_file(path.to_str().unwrap());
 
     let start = Local.with_ymd_and_hms(2026, 8, 10, 0, 0, 0).unwrap();
     let end = Local.with_ymd_and_hms(2026, 8, 10, 1, 0, 0).unwrap();
@@ -377,11 +374,25 @@ fn load_busy_time_slots_from_file_廃止した日終端fieldを無視する() {
 }
 
 #[test]
+fn load_busy_time_slots_from_file_再読込後も明示slotを維持する() {
+    let path = write_busy_time_slots_yaml(false);
+    let mut manager = FreeTimeManager::new();
+    manager.load_busy_time_slots_from_file(path.to_str().unwrap());
+
+    let explicit_start = Local.with_ymd_and_hms(2026, 8, 10, 2, 0, 0).unwrap();
+    let explicit_end = Local.with_ymd_and_hms(2026, 8, 10, 3, 0, 0).unwrap();
+    manager.register_busy_time_slot(&explicit_start, &explicit_end);
+    manager.load_busy_time_slots_from_file(path.to_str().unwrap());
+
+    assert_eq!(manager.get_free_minutes(&explicit_start, &explicit_end), 0);
+    fs::remove_file(path).unwrap();
+}
+
+#[test]
 fn get_free_minutes_明示slotと定期slotが重なっても二重控除しない() {
     let path = write_busy_time_slots_yaml(false);
     let mut manager = FreeTimeManager::new();
-    let now = Local.with_ymd_and_hms(2026, 8, 10, 12, 0, 0).unwrap();
-    manager.load_busy_time_slots_from_file(path.to_str().unwrap(), &now);
+    manager.load_busy_time_slots_from_file(path.to_str().unwrap());
 
     let start = Local.with_ymd_and_hms(2026, 8, 10, 0, 0, 0).unwrap();
     let end = Local.with_ymd_and_hms(2026, 8, 10, 2, 0, 0).unwrap();

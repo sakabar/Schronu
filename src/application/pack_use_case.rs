@@ -464,12 +464,7 @@ mod tests {
 
         fn register_busy_time_slot(&mut self, _start: &DateTime<Local>, _end: &DateTime<Local>) {}
 
-        fn load_busy_time_slots_from_file(
-            &mut self,
-            _busy_time_slots_file_path: &str,
-            _now: &DateTime<Local>,
-        ) {
-        }
+        fn load_busy_time_slots_from_file(&mut self, _busy_time_slots_file_path: &str) {}
     }
 
     fn fixed_now() -> DateTime<Local> {
