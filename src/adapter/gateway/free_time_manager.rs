@@ -14,7 +14,7 @@ use std::fs;
 #[cfg(test)]
 use std::path::{Path, PathBuf};
 #[cfg(test)]
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::sync::atomic::{AtomicU64, Ordering};
 
 // Scheduleをどう持つか: 日付をキーとする辞書
 pub struct FreeTimeManager {
@@ -396,17 +396,22 @@ struct BusyTimeSlotsYamlFile {
 }
 
 #[cfg(test)]
+static TEST_FIXTURE_SEQUENCE: AtomicU64 = AtomicU64::new(0);
+
+#[cfg(test)]
+fn unique_test_fixture_path(prefix: &str, suffix: &str) -> PathBuf {
+    let sequence = TEST_FIXTURE_SEQUENCE.fetch_add(1, Ordering::Relaxed);
+
+    std::env::temp_dir().join(format!(
+        "schronu-{prefix}-{}-{sequence}{suffix}",
+        std::process::id(),
+    ))
+}
+
+#[cfg(test)]
 impl BusyTimeSlotsYamlFile {
     fn new(contents: &str) -> Self {
-        let unique_suffix = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_nanos();
-        let path = std::env::temp_dir().join(format!(
-            "schronu-busy-time-slots-{}-{}.yaml",
-            std::process::id(),
-            unique_suffix
-        ));
+        let path = unique_test_fixture_path("busy-time-slots", ".yaml");
         fs::write(&path, contents).unwrap();
 
         Self { path }
@@ -432,15 +437,7 @@ struct BusyTimeSlotsYamlDirectory {
 #[cfg(test)]
 impl BusyTimeSlotsYamlDirectory {
     fn new() -> Self {
-        let unique_suffix = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_nanos();
-        let path = std::env::temp_dir().join(format!(
-            "schronu-busy-time-slots-directory-{}-{}",
-            std::process::id(),
-            unique_suffix
-        ));
+        let path = unique_test_fixture_path("busy-time-slots-directory", "");
         fs::create_dir(&path).unwrap();
 
         Self { path }
@@ -486,14 +483,7 @@ fn assert_load_error_contains(
 
 #[test]
 fn test_load_busy_time_slots_from_file_存在しないファイルはpathとfield_pathを含むエラーになる() {
-    let path = std::env::temp_dir().join(format!(
-        "schronu-missing-busy-time-slots-{}-{}.yaml",
-        std::process::id(),
-        SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_nanos()
-    ));
+    let path = unique_test_fixture_path("missing-busy-time-slots", ".yaml");
     let mut manager = FreeTimeManager::new();
 
     assert_load_error_contains(&mut manager, &path, "$");
@@ -501,14 +491,7 @@ fn test_load_busy_time_slots_from_file_存在しないファイルはpathとfiel
 
 #[test]
 fn test_load_busy_time_slots_from_file_存在しないファイルのエラーは構造化情報を保持する() {
-    let path = std::env::temp_dir().join(format!(
-        "schronu-missing-busy-time-slots-{}-{}.yaml",
-        std::process::id(),
-        SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_nanos()
-    ));
+    let path = unique_test_fixture_path("missing-busy-time-slots", ".yaml");
     let now = Local.with_ymd_and_hms(2000, 1, 3, 0, 0, 0).unwrap();
     let mut manager = FreeTimeManager::new();
 
