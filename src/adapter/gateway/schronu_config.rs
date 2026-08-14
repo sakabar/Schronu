@@ -67,7 +67,7 @@ mod tests {
 
     #[test]
     fn configサンプルは有効な全項目設定である() {
-        let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("config/schronu.sample.conf");
+        let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("config/schronu.sample.yaml");
 
         let actual = load_schronu_config(Some(path.clone().into_os_string())).unwrap();
 

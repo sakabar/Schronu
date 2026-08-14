@@ -59,6 +59,13 @@ default_deadline_time: "19:00"
 
 すべてのキーは任意です。相対`busy_time_slots_yaml_path`は、実行時のworking directoryではなく設定YAMLの親directoryから解釈します。
 
+編集用の雛形は[`config/schronu.sample.yaml`](config/schronu.sample.yaml)です。コピーして値を環境に合わせて変更し、`SCHRONU_CONFIG_PATH`でabsolute pathを指定します。
+
+```shell
+cp config/schronu.sample.yaml /absolute/path/to/schronu.yaml
+SCHRONU_CONFIG_PATH=/absolute/path/to/schronu.yaml cargo run --bin schronu
+```
+
 | キー | 既定値 | 効果 |
 | --- | --- | --- |
 | `obsidian_vault_name` | `Obsidian-Moica` | `黒`(または`obs`)コマンドのObsidian検索先vault名です。空白や記号を含む名前も利用できます。 |
