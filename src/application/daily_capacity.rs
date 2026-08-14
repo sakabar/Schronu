@@ -139,9 +139,20 @@ mod tests {
             0
         }
 
-        fn register_busy_time_slot(&mut self, _start: &DateTime<Local>, _end: &DateTime<Local>) {}
+        fn register_busy_time_slot(
+            &mut self,
+            _start: &DateTime<Local>,
+            _end: &DateTime<Local>,
+        ) -> Result<(), super::super::interface::BusyTimeSlotRegistrationError> {
+            Ok(())
+        }
 
-        fn load_busy_time_slots_from_file(&mut self, _busy_time_slots_file_path: &str) {}
+        fn load_busy_time_slots_from_file(
+            &mut self,
+            _busy_time_slots_file_path: &str,
+        ) -> Result<(), super::super::interface::BusyTimeSlotLoadError> {
+            Ok(())
+        }
     }
 
     #[test]

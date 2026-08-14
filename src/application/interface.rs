@@ -2,6 +2,7 @@ use crate::entity::task::Task;
 use chrono::{DateTime, Local};
 use std::error::Error;
 use std::fmt;
+use std::path::{Path, PathBuf};
 use uuid::Uuid;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -79,6 +80,81 @@ pub trait TaskRepositoryTrait {
 pub trait FreeTimeManagerTrait {
     fn get_free_minutes(&mut self, start: &DateTime<Local>, end: &DateTime<Local>) -> i64;
     fn get_busy_minutes(&mut self, start: &DateTime<Local>, end: &DateTime<Local>) -> i64;
-    fn register_busy_time_slot(&mut self, start: &DateTime<Local>, end: &DateTime<Local>);
-    fn load_busy_time_slots_from_file(&mut self, busy_time_slots_file_path: &str);
+    fn register_busy_time_slot(
+        &mut self,
+        start: &DateTime<Local>,
+        end: &DateTime<Local>,
+    ) -> Result<(), BusyTimeSlotRegistrationError>;
+    fn load_busy_time_slots_from_file(
+        &mut self,
+        busy_time_slots_file_path: &str,
+    ) -> Result<(), BusyTimeSlotLoadError>;
 }
+
+#[derive(Debug)]
+pub struct BusyTimeSlotLoadError {
+    path: PathBuf,
+    field_path: String,
+    value: Option<String>,
+    source: Box<dyn Error + Send + Sync>,
+}
+
+impl BusyTimeSlotLoadError {
+    pub fn new<E>(
+        path: impl Into<PathBuf>,
+        field_path: impl Into<String>,
+        value: Option<String>,
+        source: E,
+    ) -> Self
+    where
+        E: Error + Send + Sync + 'static,
+    {
+        Self {
+            path: path.into(),
+            field_path: field_path.into(),
+            value,
+            source: Box::new(source),
+        }
+    }
+    pub fn path(&self) -> &Path {
+        &self.path
+    }
+    pub fn field_path(&self) -> &str {
+        &self.field_path
+    }
+    pub fn value(&self) -> Option<&str> {
+        self.value.as_deref()
+    }
+    pub fn source(&self) -> Option<&(dyn Error + 'static)> {
+        Some(self.source.as_ref())
+    }
+}
+
+impl fmt::Display for BusyTimeSlotLoadError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "failed to load busy time slots at {}:{}",
+            self.path.display(),
+            self.field_path
+        )?;
+        if let Some(value) = &self.value {
+            write!(f, " (value: {value})")?;
+        }
+        write!(f, ": {}", self.source)
+    }
+}
+impl Error for BusyTimeSlotLoadError {
+    fn source(&self) -> Option<&(dyn Error + 'static)> {
+        Some(self.source.as_ref())
+    }
+}
+
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
+pub struct BusyTimeSlotRegistrationError;
+impl fmt::Display for BusyTimeSlotRegistrationError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "different date between start and end")
+    }
+}
+impl Error for BusyTimeSlotRegistrationError {}

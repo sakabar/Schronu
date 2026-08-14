@@ -462,9 +462,20 @@ mod tests {
             (*end - *start).num_minutes() - self.get_free_minutes(start, end)
         }
 
-        fn register_busy_time_slot(&mut self, _start: &DateTime<Local>, _end: &DateTime<Local>) {}
+        fn register_busy_time_slot(
+            &mut self,
+            _start: &DateTime<Local>,
+            _end: &DateTime<Local>,
+        ) -> Result<(), crate::application::interface::BusyTimeSlotRegistrationError> {
+            Ok(())
+        }
 
-        fn load_busy_time_slots_from_file(&mut self, _busy_time_slots_file_path: &str) {}
+        fn load_busy_time_slots_from_file(
+            &mut self,
+            _busy_time_slots_file_path: &str,
+        ) -> Result<(), crate::application::interface::BusyTimeSlotLoadError> {
+            Ok(())
+        }
     }
 
     fn fixed_now() -> DateTime<Local> {

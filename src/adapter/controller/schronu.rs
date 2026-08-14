@@ -18,7 +18,9 @@ use schronu::application::daily_capacity::{
 use schronu::application::flatten_use_case::{
     flatten_tasks_with_end_of_day_offset_minutes, FlattenResult, UnresolvedReason,
 };
-use schronu::application::interface::FreeTimeManagerTrait;
+use schronu::application::interface::{
+    BusyTimeSlotLoadError, BusyTimeSlotRegistrationError, FreeTimeManagerTrait,
+};
 #[cfg(test)]
 use schronu::application::interface::{RepositoryReloadOutcome, TaskRepositoryOperation};
 use schronu::application::interface::{TaskRepositoryError, TaskRepositoryTrait};
@@ -115,6 +117,7 @@ trait SchronuWriter: Write {
 
 #[derive(Debug)]
 enum RunError {
+    BusyTimeSlots(BusyTimeSlotLoadError),
     Repository(TaskRepositoryError),
     CliRepositoryTransaction(CliRepositoryTransactionError),
     InputDisconnected {
@@ -144,6 +147,11 @@ enum CliRepositoryTransactionError {
 impl From<TaskRepositoryError> for RunError {
     fn from(error: TaskRepositoryError) -> Self {
         Self::Repository(error)
+    }
+}
+impl From<BusyTimeSlotLoadError> for RunError {
+    fn from(error: BusyTimeSlotLoadError) -> Self {
+        Self::BusyTimeSlots(error)
     }
 }
 
@@ -178,6 +186,7 @@ impl std::error::Error for CliRepositoryTransactionError {
 impl std::fmt::Display for RunError {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
+            Self::BusyTimeSlots(error) => error.fmt(formatter),
             Self::Repository(error) => error.fmt(formatter),
             Self::CliRepositoryTransaction(error) => error.fmt(formatter),
             Self::InputDisconnected {
@@ -219,6 +228,7 @@ impl std::fmt::Display for RunError {
 impl std::error::Error for RunError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
+            Self::BusyTimeSlots(error) => Some(error),
             Self::Repository(error) => Some(error),
             Self::CliRepositoryTransaction(error) => Some(error),
             Self::InputDisconnected { save_error_opt } => save_error_opt
@@ -4998,9 +5008,20 @@ impl FreeTimeManagerTrait for TestFreeTimeManager {
         0
     }
 
-    fn register_busy_time_slot(&mut self, _start: &DateTime<Local>, _end: &DateTime<Local>) {}
+    fn register_busy_time_slot(
+        &mut self,
+        _start: &DateTime<Local>,
+        _end: &DateTime<Local>,
+    ) -> Result<(), BusyTimeSlotRegistrationError> {
+        Ok(())
+    }
 
-    fn load_busy_time_slots_from_file(&mut self, _busy_time_slots_file_path: &str) {}
+    fn load_busy_time_slots_from_file(
+        &mut self,
+        _busy_time_slots_file_path: &str,
+    ) -> Result<(), BusyTimeSlotLoadError> {
+        Ok(())
+    }
 }
 
 #[cfg(test)]
@@ -5018,9 +5039,20 @@ impl FreeTimeManagerTrait for TestFreeTimeManagerWithFreeMinutes {
         0
     }
 
-    fn register_busy_time_slot(&mut self, _start: &DateTime<Local>, _end: &DateTime<Local>) {}
+    fn register_busy_time_slot(
+        &mut self,
+        _start: &DateTime<Local>,
+        _end: &DateTime<Local>,
+    ) -> Result<(), BusyTimeSlotRegistrationError> {
+        Ok(())
+    }
 
-    fn load_busy_time_slots_from_file(&mut self, _busy_time_slots_file_path: &str) {}
+    fn load_busy_time_slots_from_file(
+        &mut self,
+        _busy_time_slots_file_path: &str,
+    ) -> Result<(), BusyTimeSlotLoadError> {
+        Ok(())
+    }
 }
 
 #[cfg(test)]
@@ -5040,9 +5072,20 @@ impl FreeTimeManagerTrait for TestFreeTimeManagerForBand {
         0
     }
 
-    fn register_busy_time_slot(&mut self, _start: &DateTime<Local>, _end: &DateTime<Local>) {}
+    fn register_busy_time_slot(
+        &mut self,
+        _start: &DateTime<Local>,
+        _end: &DateTime<Local>,
+    ) -> Result<(), BusyTimeSlotRegistrationError> {
+        Ok(())
+    }
 
-    fn load_busy_time_slots_from_file(&mut self, _busy_time_slots_file_path: &str) {}
+    fn load_busy_time_slots_from_file(
+        &mut self,
+        _busy_time_slots_file_path: &str,
+    ) -> Result<(), BusyTimeSlotLoadError> {
+        Ok(())
+    }
 }
 
 #[cfg(test)]
@@ -5063,9 +5106,20 @@ impl FreeTimeManagerTrait for TestFreeTimeManagerByDate {
         0
     }
 
-    fn register_busy_time_slot(&mut self, _start: &DateTime<Local>, _end: &DateTime<Local>) {}
+    fn register_busy_time_slot(
+        &mut self,
+        _start: &DateTime<Local>,
+        _end: &DateTime<Local>,
+    ) -> Result<(), BusyTimeSlotRegistrationError> {
+        Ok(())
+    }
 
-    fn load_busy_time_slots_from_file(&mut self, _busy_time_slots_file_path: &str) {}
+    fn load_busy_time_slots_from_file(
+        &mut self,
+        _busy_time_slots_file_path: &str,
+    ) -> Result<(), BusyTimeSlotLoadError> {
+        Ok(())
+    }
 }
 
 #[cfg(test)]
@@ -8398,7 +8452,7 @@ fn execute_non_interactive_command(
             .busy_time_slots_yaml_path
             .to_str()
             .expect("config path was validated"),
-    );
+    )?;
 
     let focus_started_datetime: DateTime<Local> = now;
     let mut stdout = stdout();
@@ -10136,6 +10190,15 @@ fn handle_interactive_repository_event(
     }
 }
 
+fn load_busy_time_slots_for_interactive_application(
+    free_time_manager: &mut dyn FreeTimeManagerTrait,
+    busy_time_slots_file_path: &str,
+    now: &DateTime<Local>,
+) -> Result<(), RunError> {
+    free_time_manager.load_busy_time_slots_from_file(busy_time_slots_file_path, now)?;
+    Ok(())
+}
+
 fn application(
     task_repository: &mut dyn TaskRepositoryTrait,
     free_time_manager: &mut dyn FreeTimeManagerTrait,
@@ -10151,12 +10214,13 @@ fn application(
 
     drop(reload_repository_for_cli(task_repository, now)?);
 
-    free_time_manager.load_busy_time_slots_from_file(
+    load_busy_time_slots_for_interactive_application(
+        free_time_manager,
         active_config()
             .busy_time_slots_yaml_path
             .to_str()
             .expect("config path was validated"),
-    );
+    )?;
 
     // RawModeを有効にする
     let mut stdout = stdout().into_raw_mode().unwrap();
