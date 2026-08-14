@@ -12,7 +12,9 @@ use std::fmt::Write as _;
 #[cfg(test)]
 use std::fs;
 #[cfg(test)]
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
+#[cfg(test)]
+use std::time::{SystemTime, UNIX_EPOCH};
 
 // Scheduleをどう持つか: 日付をキーとする辞書
 pub struct FreeTimeManager {
@@ -386,6 +388,191 @@ fn load_busy_time_slots_from_file_再読込後も明示slotを維持する() {
 
     assert_eq!(manager.get_free_minutes(&explicit_start, &explicit_end), 0);
     fs::remove_file(path).unwrap();
+}
+
+#[cfg(test)]
+struct BusyTimeSlotsYamlFile {
+    path: PathBuf,
+}
+
+#[cfg(test)]
+impl BusyTimeSlotsYamlFile {
+    fn new(contents: &str) -> Self {
+        let unique_suffix = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let path = std::env::temp_dir().join(format!(
+            "schronu-busy-time-slots-{}-{}.yaml",
+            std::process::id(),
+            unique_suffix
+        ));
+        fs::write(&path, contents).unwrap();
+
+        Self { path }
+    }
+
+    fn path(&self) -> &Path {
+        &self.path
+    }
+}
+
+#[cfg(test)]
+impl Drop for BusyTimeSlotsYamlFile {
+    fn drop(&mut self) {
+        let _ = fs::remove_file(&self.path);
+    }
+}
+
+#[cfg(test)]
+fn valid_busy_time_slots_yaml() -> String {
+    let mut yaml = String::from("days_of_week:\n");
+    for day_of_week in ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"] {
+        yaml.push_str(&format!(
+            "  - day_of_week: {day_of_week}\n    end_of_day_hour: 23\n    end_of_day_minute: 59\n    busy_time_slots:\n      - start_time: '13:00'\n        duration_minutes: 60\n        name: lunch\n"
+        ));
+    }
+    yaml
+}
+
+#[cfg(test)]
+fn assert_load_error_contains(
+    manager: &mut FreeTimeManager,
+    path: &Path,
+    expected_field_path: &str,
+) {
+    let error = manager
+        .load_busy_time_slots_from_file(path.to_str().unwrap())
+        .expect_err("不正なbusy_time_slots.yamlは回復可能なエラーになるべきです");
+    let message = error.to_string();
+
+    assert!(message.contains(path.to_str().unwrap()));
+    assert!(message.contains(expected_field_path));
+}
+
+#[test]
+fn test_load_busy_time_slots_from_file_存在しないファイルはpathとfield_pathを含むエラーになる() {
+    let path = std::env::temp_dir().join(format!(
+        "schronu-missing-busy-time-slots-{}-{}.yaml",
+        std::process::id(),
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    let mut manager = FreeTimeManager::new();
+
+    assert_load_error_contains(&mut manager, &path, "$");
+}
+
+#[test]
+fn test_load_busy_time_slots_from_file_不正_yamlはpathとfield_pathを含むエラーになる() {
+    let file = BusyTimeSlotsYamlFile::new("days_of_week: [\n");
+    let mut manager = FreeTimeManager::new();
+
+    assert_load_error_contains(&mut manager, file.path(), "$");
+}
+
+#[test]
+fn test_load_busy_time_slots_from_file_曜日欠落はpathとfield_pathを含むエラーになる() {
+    let yaml = valid_busy_time_slots_yaml().replacen("  - day_of_week: Sun\n    end_of_day_hour: 23\n    end_of_day_minute: 59\n    busy_time_slots:\n      - start_time: '13:00'\n        duration_minutes: 60\n        name: lunch\n", "", 1);
+    let file = BusyTimeSlotsYamlFile::new(&yaml);
+    let mut manager = FreeTimeManager::new();
+
+    assert_load_error_contains(&mut manager, file.path(), "days_of_week");
+}
+
+#[test]
+fn test_load_busy_time_slots_from_file_未知曜日はpathとfield_pathを含むエラーになる() {
+    let yaml = valid_busy_time_slots_yaml().replacen("day_of_week: Mon", "day_of_week: Holiday", 1);
+    let file = BusyTimeSlotsYamlFile::new(&yaml);
+    let mut manager = FreeTimeManager::new();
+
+    assert_load_error_contains(&mut manager, file.path(), "days_of_week[0].day_of_week");
+}
+
+#[test]
+fn test_load_busy_time_slots_from_file_重複曜日はpathとfield_pathを含むエラーになる() {
+    let yaml = valid_busy_time_slots_yaml().replacen("day_of_week: Tue", "day_of_week: Mon", 1);
+    let file = BusyTimeSlotsYamlFile::new(&yaml);
+    let mut manager = FreeTimeManager::new();
+
+    assert_load_error_contains(&mut manager, file.path(), "days_of_week[1].day_of_week");
+}
+
+#[test]
+fn test_load_busy_time_slots_from_file_型違いはpathとfield_pathを含むエラーになる() {
+    let yaml = valid_busy_time_slots_yaml()
+        .replacen("duration_minutes: 60", "duration_minutes: sixty", 1);
+    let file = BusyTimeSlotsYamlFile::new(&yaml);
+    let mut manager = FreeTimeManager::new();
+
+    assert_load_error_contains(
+        &mut manager,
+        file.path(),
+        "days_of_week[0].busy_time_slots[0].duration_minutes",
+    );
+}
+
+#[test]
+fn test_load_busy_time_slots_from_file_不正時刻はpathとfield_pathを含むエラーになる() {
+    let yaml = valid_busy_time_slots_yaml()
+        .replacen("start_time: '13:00'", "start_time: '24:00'", 1);
+    let file = BusyTimeSlotsYamlFile::new(&yaml);
+    let mut manager = FreeTimeManager::new();
+
+    assert_load_error_contains(
+        &mut manager,
+        file.path(),
+        "days_of_week[0].busy_time_slots[0].start_time",
+    );
+}
+
+#[test]
+fn test_load_busy_time_slots_from_file_負数durationはpathとfield_pathを含むエラーになる() {
+    let yaml = valid_busy_time_slots_yaml()
+        .replacen("duration_minutes: 60", "duration_minutes: -1", 1);
+    let file = BusyTimeSlotsYamlFile::new(&yaml);
+    let mut manager = FreeTimeManager::new();
+
+    assert_load_error_contains(
+        &mut manager,
+        file.path(),
+        "days_of_week[0].busy_time_slots[0].duration_minutes",
+    );
+}
+
+#[test]
+fn test_register_busy_time_slot_日跨ぎは回復可能なエラーになる() {
+    let mut manager = FreeTimeManager::new();
+    let start = Local.with_ymd_and_hms(2000, 1, 1, 23, 30, 0).unwrap();
+    let end = Local.with_ymd_and_hms(2000, 1, 2, 0, 30, 0).unwrap();
+
+    let error = manager
+        .register_busy_time_slot(&start, &end)
+        .expect_err("日跨ぎslotはpanicせず登録エラーになるべきです");
+
+    assert!(error.to_string().contains("different date"));
+}
+
+#[test]
+fn test_load_busy_time_slots_from_file_異常読み込み時は既存状態を維持する() {
+    let valid_file = BusyTimeSlotsYamlFile::new(&valid_busy_time_slots_yaml());
+    let invalid_file = BusyTimeSlotsYamlFile::new("days_of_week: [\n");
+    let start = Local.with_ymd_and_hms(2000, 1, 3, 13, 0, 0).unwrap();
+    let end = Local.with_ymd_and_hms(2000, 1, 3, 14, 0, 0).unwrap();
+    let mut manager = FreeTimeManager::new();
+
+    manager
+        .load_busy_time_slots_from_file(valid_file.path().to_str().unwrap())
+        .expect("正常なbusy_time_slots.yamlは読み込めるべきです");
+    let before = manager.get_busy_minutes(&start, &end);
+
+    assert_load_error_contains(&mut manager, invalid_file.path(), "$");
+    let after = manager.get_busy_minutes(&start, &end);
+
+    assert_eq!(before, 60);
+    assert_eq!(after, before);
 }
 
 #[test]
