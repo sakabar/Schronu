@@ -471,7 +471,7 @@ fn scheduled_leaf_starts_on_schronu_day(
         .fold(HashMap::new(), |mut starts, scheduled| {
             starts
                 .entry(scheduled.task.id)
-                .or_insert_with(Vec::new)
+                .or_default()
                 .push(scheduled.scheduled_start);
             starts
         })
