@@ -43,7 +43,7 @@
 | TD-005 | P1 | 未着手 | XL | CLIコントローラーへ責務が集中している |
 | TD-006 | P1 | 未着手 | L | CLIの入力・application・出力エラーが握り潰される |
 | TD-007 | P1 | 未着手 | L | CLIとMCPでrepository transactionが別々に組み立てられている |
-| TD-008 | P1 | 未着手 | M | CIがリポジトリ規約を満たさず、ビルド再現性も固定されていない |
+| TD-008 | P1 | 完了 | M | CIがリポジトリ規約を満たさず、ビルド再現性も固定されていない |
 | TD-009 | P2 | 未着手 | L | entity層がYAML形式へ依存している |
 | TD-010 | P2 | 未着手 | L | 現在時刻、UUID、業務日境界がドメイン内部へ埋め込まれている |
 | TD-011 | P2 | 未着手 | L | MCPのschema、入力検証、Rust入力型、JSON出力が重複している |
@@ -331,6 +331,9 @@
 
 - 優先度: `P1`
 - 概算規模: `M`
+- 完了日: 2026-08-15
+- 対応: Rust 1.97.1を`rust-toolchain.toml`とCIで固定し、`Cargo.lock`を追跡した。CIは`cargo test --locked`、`cargo fmt --check`、`cargo clippy --locked --all-targets -- -D warnings`を実行する。既存のproduction codeとtest codeのClippy違反を挙動不変で解消し、ignored性能testの用途と手動実行方法をREADMEへ記載した。
+- 検証: `cargo test --locked --offline`は615件成功、1件ignored、失敗0件。`cargo fmt --check`と`cargo clippy --locked --offline --all-targets -- -D warnings`は成功した。
 
 #### 現状と根拠
 

@@ -15,7 +15,7 @@
 - ビルド: `cargo build --release`
 - 実行: `cargo run --bin schronu -- <args>`
 - テスト: `cargo test`
-- 静的解析: `cargo clippy -- -D warnings`
+- 静的解析: `cargo clippy --all-targets -- -D warnings`
 - フォーマット: `cargo fmt` / 検査は `cargo fmt --check`
 
 ## コーディング規約
@@ -32,7 +32,7 @@
 ## コミット & PR ガイドライン
 - コミット: 短い要約(命令形、約 50 文字)。必要なら本文に背景/方針/影響範囲を箇条書き。
 - 例: `Task: 親子タスクの初期日付ずれを修正`
-- PR: 目的、変更点、テスト方針、互換性、関連 Issue(`#123`)を記載。`cargo fmt --check && cargo clippy && cargo test` を通過させること。
+- PR: 目的、変更点、テスト方針、互換性、関連 Issue(`#123`)を記載。`cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test` を通過させること。
 
 ## セキュリティ/設定
 - 秘密情報はコミットしない(環境変数で注入)。

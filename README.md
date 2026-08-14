@@ -8,6 +8,25 @@ Schronu (スロン) : タスクの抵抗感を減らして前に進んでいく�
 * その他のUnix系OSでは動作する可能性がありますが、継続的な動作確認は行っていません。
 * Windowsには現在対応していません。
 
+## 開発と検証
+
+Rust toolchainは[`rust-toolchain.toml`](rust-toolchain.toml)で1.97.1に固定しています。依存関係は追跡済みの`Cargo.lock`を使い、通常の検証では次を実行します。
+
+```shell
+cargo test --locked
+cargo fmt --check
+cargo clippy --locked --all-targets -- -D warnings
+```
+
+Rust versionまたは依存関係を更新する場合は、`rust-toolchain.toml`と`Cargo.lock`を同じ専用PRで更新し、上記の全検証を通してください。
+
+保存性能を測定するignored testは、2172 projectを含むtask storageのコピー元を`SCHRONU_BENCHMARK_STORAGE`へ指定して手動実行します。外部fixtureと実行環境に依存するため、CIでは実行しません。
+
+```shell
+SCHRONU_BENCHMARK_STORAGE=/absolute/path/to/task-storage-copy \
+  cargo test benchmark_save_2172project中1件変更を2秒未満で処理する -- --ignored --nocapture
+```
+
 ## Schronuが対象とすること
 
 * あなた1人が持っているタスクの抵抗感を小さくし、スムーズに進めるようにすること
