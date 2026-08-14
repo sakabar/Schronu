@@ -43,7 +43,7 @@ mod tests {
         let directory = test_directory();
         let path = write_config(
             &directory,
-            "obsidian_vault_name: Work\\nbusy_time_slots_yaml_path: schedules/busy.yaml\\nend_of_day_duration: '01:15'\\ncalendar_blank_line_weekday: Fri\\nextrude_skip_weekdays: [Sat, Sun]\\ndefault_deadline_time: '19:00'\\n",
+            "obsidian_vault_name: Work\nbusy_time_slots_yaml_path: schedules/busy.yaml\nend_of_day_duration: '01:15'\ncalendar_blank_line_weekday: Fri\nextrude_skip_weekdays: [Sat, Sun]\ndefault_deadline_time: '19:00'\n",
         );
 
         let actual = load_schronu_config(Some(path.into_os_string())).unwrap();
@@ -68,7 +68,7 @@ mod tests {
     #[test]
     fn config未知キーはerrorにする() {
         let directory = test_directory();
-        let path = write_config(&directory, "unknown: value\\n");
+        let path = write_config(&directory, "unknown: value\n");
 
         let error = load_schronu_config(Some(path.into_os_string())).unwrap_err();
 
@@ -78,10 +78,12 @@ mod tests {
     #[test]
     fn config不正値と重複曜日はerrorにする() {
         for contents in [
-            "calendar_blank_line_weekday: Monday\\n",
-            "end_of_day_duration: '24:00'\\n",
-            "default_deadline_time: '25:00'\\n",
-            "extrude_skip_weekdays: [Sat, Sat]\\n",
+            "calendar_blank_line_weekday: Monday\n",
+            "end_of_day_duration: '24:00'\n",
+            "end_of_day_duration: '1:02'\n",
+            "default_deadline_time: '25:00'\n",
+            "extrude_skip_weekdays: [Sat, Sat]\n",
+            "extrude_skip_weekdays: [Mon, Tue, Wed, Thu, Fri, Sat, Sun]\n",
         ] {
             let directory = test_directory();
             let path = write_config(&directory, contents);
@@ -106,7 +108,6 @@ mod tests {
 }
 use chrono::{Duration, NaiveTime, Weekday};
 use std::collections::HashSet;
-use std::env;
 use std::ffi::OsString;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -221,6 +222,9 @@ fn parse_schronu_config(contents: &str, config_directory: &Path) -> Result<Schro
     } else if !matches!(yaml["extrude_skip_weekdays"], Yaml::BadValue) {
         return Err("extrude_skip_weekdays must be an array".to_string());
     }
+    if config.extrude_skip_weekdays.len() == 7 {
+        return Err("extrude_skip_weekdays must leave at least one weekday".to_string());
+    }
     if let Some(value) = optional_string(yaml, "default_deadline_time")? {
         config.default_deadline_time = parse_deadline_time(value)?;
     }
@@ -239,7 +243,11 @@ fn optional_string<'a>(yaml: &'a Yaml, key: &str) -> Result<Option<&'a str>, Str
 
 fn parse_end_of_day_duration(value: &str) -> Result<Duration, String> {
     let parts = value.split(':').collect::<Vec<_>>();
-    if parts.len() != 2 {
+    if parts.len() != 2
+        || parts
+            .iter()
+            .any(|part| part.len() != 2 || !part.as_bytes().iter().all(u8::is_ascii_digit))
+    {
         return Err("end_of_day_duration must use HH:MM".to_string());
     }
     let hour = parts[0]

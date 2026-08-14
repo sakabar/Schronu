@@ -10,7 +10,7 @@ use schronu::adapter::gateway::task_repository::TaskRepository;
 #[cfg(test)]
 use schronu::application::daily_capacity::subjective_date_start;
 use schronu::application::daily_capacity::{
-    calculate_daily_rho_diff_hours, calculate_free_time_minutes_for_subjective_date,
+    calculate_daily_rho_diff_hours,
     calculate_free_time_minutes_for_subjective_date_with_end_of_day_duration,
     calculate_full_day_free_time_minutes_for_subjective_date_with_end_of_day_duration, RHO_GOAL,
 };
@@ -79,6 +79,7 @@ fn active_config() -> &'static SchronuConfig {
 
 // パーセントエンコーディングする対象にスペースを追加する
 const MY_ASCII_SET: &AsciiSet = &CONTROLS.add(b' ');
+const OBSIDIAN_VAULT_ASCII_SET: &AsciiSet = &MY_ASCII_SET.add(b'&').add(b'=');
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum FocusSelectionMode {
@@ -1622,6 +1623,7 @@ fn calculate_project_category_denominator_seconds(
     rows: &[TaskListDisplayRow],
     last_synced_time: DateTime<Local>,
     free_time_manager: &mut dyn FreeTimeManagerTrait,
+    end_of_day_duration: Duration,
 ) -> i64 {
     let mut dates = rows
         .iter()
@@ -1634,10 +1636,11 @@ fn calculate_project_category_denominator_seconds(
     dates
         .iter()
         .map(|date| {
-            calculate_free_time_minutes_for_subjective_date(
+            calculate_free_time_minutes_for_subjective_date_with_end_of_day_duration(
                 date,
                 last_synced_time,
                 free_time_manager,
+                end_of_day_duration,
             ) * 60
         })
         .sum()
@@ -3073,6 +3076,7 @@ fn execute_show_all_tasks_with_config(
             &task_list_display_rows,
             last_synced_time,
             free_time_manager,
+            config.end_of_day_duration,
         );
         writeln_newline(
             stdout,
@@ -3370,7 +3374,8 @@ fn make_obsidian_search_url(query: &str) -> String {
 
 fn make_obsidian_search_url_with_vault(query: &str, vault_name: &str) -> String {
     format!(
-        "obsidian://search?vault={vault_name}&query={}",
+        "obsidian://search?vault={}&query={}",
+        percent_encode(vault_name.as_bytes(), OBSIDIAN_VAULT_ASCII_SET),
         percent_encode(query.as_bytes(), MY_ASCII_SET)
     )
 }
@@ -3434,6 +3439,16 @@ fn test_make_obsidian_search_url_task_idをqueryにする() {
         "obsidian://search?vault=Obsidian-Moica&query=11111111-1111-1111-1111-111111111111";
 
     assert_eq!(actual, expected);
+}
+
+#[test]
+fn test_make_obsidian_search_url_vault名をpercent_encodeする() {
+    let actual = make_obsidian_search_url_with_vault("task id", "Work & Personal");
+
+    assert_eq!(
+        actual,
+        "obsidian://search?vault=Work%20%26%20Personal&query=task%20id"
+    );
 }
 
 #[test]
