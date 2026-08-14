@@ -32,10 +32,11 @@ use schronu::application::task_use_case::{
     BreakdownTaskInput, CompleteTaskInput, CreateTaskInput,
 };
 use schronu::entity::datetime::{get_next_morning_datetime, parse_local_datetime};
+#[cfg(test)]
+use schronu::entity::task::TaskTreeError;
 use schronu::entity::task::{
     extract_leaf_tasks_from_project, extract_leaf_tasks_from_project_with_pending,
     read_project_category, round_up_sec_as_minute, ProjectCategory, Status, TaskAttr, TaskHandle,
-    TaskTreeError,
 };
 #[cfg(test)]
 use std::cell::{Cell, RefCell};
@@ -3695,36 +3696,42 @@ fn execute_next_up(
         return Ok(None);
     };
     let mut new_task_attr = TaskAttr::new(new_task_name_str);
+    let parent_task_opt = focused_task.parent();
 
     // 親タスクの〆切を引き継ぐ
-    if let Some(parent_task) = focused_task.parent() {
+    if let Some(parent_task) = &parent_task_opt {
         new_task_attr.set_deadline_time_opt(parent_task.get_deadline_time_opt());
     }
 
-    if let Some(new_task_estimated_work_seconds) = estimated_work_seconds_opt {
-        new_task_attr.set_estimated_work_seconds(new_task_estimated_work_seconds);
-
-        // 親タスクの見積もりをそのぶん減らす
-        if let Some(parent_task) = focused_task.parent() {
-            let parent_task_estimated_work_seconds = parent_task.get_estimated_work_seconds();
-            parent_task.set_estimated_work_seconds(
+    let parent_estimated_work_seconds_opt =
+        estimated_work_seconds_opt.and_then(|new_task_estimated_work_seconds| {
+            parent_task_opt.as_ref().map(|parent_task| {
+                let parent_task_estimated_work_seconds = parent_task.get_estimated_work_seconds();
                 if parent_task_estimated_work_seconds > new_task_estimated_work_seconds {
                     parent_task_estimated_work_seconds - new_task_estimated_work_seconds
                 } else {
                     0
-                },
-            );
-        }
+                }
+            })
+        });
+
+    if let Some(new_task_estimated_work_seconds) = estimated_work_seconds_opt {
+        new_task_attr.set_estimated_work_seconds(new_task_estimated_work_seconds);
     }
 
     let new_task_id = *new_task_attr.get_id();
+    focused_task
+        .try_create_parent(new_task_attr)
+        .map_err(ApplicationError::TaskTree)?;
 
-    if focused_task.try_create_parent(new_task_attr).is_ok() {
-        *focused_task_id_opt = Some(new_task_id);
-        Ok(Some(new_task_id))
-    } else {
-        Ok(None)
+    if let (Some(parent_task), Some(parent_estimated_work_seconds)) =
+        (parent_task_opt, parent_estimated_work_seconds_opt)
+    {
+        parent_task.set_estimated_work_seconds(parent_estimated_work_seconds);
     }
+
+    *focused_task_id_opt = Some(new_task_id);
+    Ok(Some(new_task_id))
 }
 
 fn execute_breakdown(
@@ -5486,6 +5493,7 @@ fn test_execute_next_up_rootへの親追加失敗を構造化errorで返す() {
     let root = TaskHandle::new("root");
     let mut stdout = TestWriter::new();
     let mut focused_task_id_opt = Some(root.get_id());
+    let before_estimated_work_seconds = root.get_estimated_work_seconds();
 
     let actual = execute_next_up(
         &mut stdout,
@@ -5495,8 +5503,14 @@ fn test_execute_next_up_rootへの親追加失敗を構造化errorで返す() {
         &Some(10),
     );
 
-    assert_eq!(actual, Err(ApplicationError::TaskTree(TaskTreeError::RootOperation)));
-    assert_eq!(root.get_estimated_work_seconds(), 0);
+    assert_eq!(
+        actual,
+        Err(ApplicationError::TaskTree(TaskTreeError::RootOperation))
+    );
+    assert_eq!(
+        root.get_estimated_work_seconds(),
+        before_estimated_work_seconds
+    );
     assert_eq!(focused_task_id_opt, Some(root.get_id()));
 }
 
