@@ -35,6 +35,7 @@ use schronu::entity::datetime::{get_next_morning_datetime, parse_local_datetime}
 use schronu::entity::task::{
     extract_leaf_tasks_from_project, extract_leaf_tasks_from_project_with_pending,
     read_project_category, round_up_sec_as_minute, ProjectCategory, Status, TaskAttr, TaskHandle,
+    TaskTreeError,
 };
 #[cfg(test)]
 use std::cell::{Cell, RefCell};
@@ -5478,6 +5479,25 @@ fn test_execute_next_up_数値名と負の見積もりでは変更しない() {
         assert_eq!(result.task.get_children()[0].get_name(), "focus");
         assert_eq!(result.focused_task_id_opt, Some(focused.get_id()));
     }
+}
+
+#[test]
+fn test_execute_next_up_rootへの親追加失敗を構造化errorで返す() {
+    let root = TaskHandle::new("root");
+    let mut stdout = TestWriter::new();
+    let mut focused_task_id_opt = Some(root.get_id());
+
+    let actual = execute_next_up(
+        &mut stdout,
+        &mut focused_task_id_opt,
+        &Some(root.clone()),
+        "new parent",
+        &Some(10),
+    );
+
+    assert_eq!(actual, Err(ApplicationError::TaskTree(TaskTreeError::RootOperation)));
+    assert_eq!(root.get_estimated_work_seconds(), 0);
+    assert_eq!(focused_task_id_opt, Some(root.get_id()));
 }
 
 #[test]
