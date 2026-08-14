@@ -37,7 +37,7 @@ use schronu::entity::task::{
 #[cfg(test)]
 use std::cell::Cell;
 use std::cmp::{max, min};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::env;
 use std::io::Stdout;
 use std::io::{stdout, IsTerminal, Write};
@@ -308,6 +308,51 @@ fn resolve_upcoming_mmdd(mmdd: &str, now: DateTime<Local>) -> Option<LocalResult
     })
 }
 
+fn resolve_upcoming_clear_or_gather_day(
+    date: &str,
+    now: DateTime<Local>,
+) -> Option<LocalResult<DateTime<Local>>> {
+    let next_schronu_day_start = get_next_morning_datetime(now);
+    let resolve_schronu_day_start = |date: NaiveDate| {
+        Local.with_ymd_and_hms(
+            date.year(),
+            date.month(),
+            date.day(),
+            next_schronu_day_start.hour(),
+            next_schronu_day_start.minute(),
+            0,
+        )
+    };
+
+    if date == "明" {
+        return Some(resolve_schronu_day_start(
+            next_schronu_day_start.date_naive(),
+        ));
+    }
+
+    let days_of_week = ["月", "火", "水", "木", "金", "土", "日"];
+    if let Some(target_days_of_week_ind) = days_of_week.iter().position(|day| *day == date) {
+        let schronu_today = get_next_morning_datetime(now) - Duration::days(1);
+        let now_days_of_week_ind = days_of_week
+            .iter()
+            .position(|day| *day == get_weekday_jp(&schronu_today.date_naive()))?;
+        let days_until_target =
+            (7 + target_days_of_week_ind - now_days_of_week_ind) % days_of_week.len();
+        let days = if days_until_target == 0 {
+            7
+        } else {
+            days_until_target
+        };
+
+        let target_date = schronu_today
+            .date_naive()
+            .checked_add_signed(Duration::days(days as i64))?;
+        return Some(resolve_schronu_day_start(target_date));
+    }
+
+    resolve_upcoming_mmdd(date, now)
+}
+
 fn resolve_show_all_pattern(pattern: &str, now: DateTime<Local>) -> String {
     match resolve_upcoming_mmdd(pattern, now) {
         Some(LocalResult::Single(datetime)) => datetime.format("%Y/%m/%d").to_string(),
@@ -348,6 +393,53 @@ fn test_resolve_upcoming_mmdd_当日の境界時刻は現在年を使う() {
         resolve_upcoming_mmdd("9/26", now),
         Some(LocalResult::Single(now))
     );
+}
+
+#[test]
+fn test_resolve_upcoming_clear_or_gather_day_明は次の業務日を返す() {
+    let now = Local.with_ymd_and_hms(2026, 8, 14, 12, 0, 0).unwrap();
+
+    assert_eq!(
+        resolve_upcoming_clear_or_gather_day("明", now),
+        Some(LocalResult::Single(
+            Local.with_ymd_and_hms(2026, 8, 15, 6, 0, 0).unwrap()
+        ))
+    );
+}
+
+#[test]
+fn test_resolve_upcoming_clear_or_gather_day_曜日は明日以降で最も近い日を返す() {
+    let now = Local.with_ymd_and_hms(2026, 8, 14, 12, 0, 0).unwrap();
+
+    for (weekday, day) in [
+        ("月", 17),
+        ("火", 18),
+        ("水", 19),
+        ("木", 20),
+        ("金", 21),
+        ("土", 15),
+        ("日", 16),
+    ] {
+        assert_eq!(
+            resolve_upcoming_clear_or_gather_day(weekday, now),
+            Some(LocalResult::Single(
+                Local.with_ymd_and_hms(2026, 8, day, 6, 0, 0).unwrap()
+            ))
+        );
+    }
+}
+
+#[test]
+fn test_resolve_upcoming_clear_or_gather_day_午前6時前の明と不正値を扱う() {
+    let now = Local.with_ymd_and_hms(2026, 8, 14, 2, 0, 0).unwrap();
+
+    assert_eq!(
+        resolve_upcoming_clear_or_gather_day("明", now),
+        Some(LocalResult::Single(
+            Local.with_ymd_and_hms(2026, 8, 14, 6, 0, 0).unwrap()
+        ))
+    );
+    assert_eq!(resolve_upcoming_clear_or_gather_day("翌", now), None);
 }
 
 #[test]
@@ -430,6 +522,70 @@ fn parse_clear_or_gather_defer_to_datetime(
     }
 
     None
+}
+
+fn parse_dated_clear_or_gather_time_range(
+    time: &str,
+    mmdd: &str,
+    now: DateTime<Local>,
+) -> Option<(DateTime<Local>, DateTime<Local>)> {
+    let schronu_day_start = match resolve_upcoming_clear_or_gather_day(mmdd, now)? {
+        LocalResult::Single(datetime) => datetime,
+        LocalResult::Ambiguous(_, _) | LocalResult::None => return None,
+    };
+    let hhmm_reg = Regex::new(r"^(\d+):(\d{1,2})$").unwrap();
+    let caps = hhmm_reg.captures(time)?;
+    let hour: i64 = caps[1].parse().ok()?;
+    let minute: u32 = caps[2].parse().ok()?;
+    if minute >= 60 {
+        return None;
+    }
+
+    let calendar_hour = u32::try_from(hour % 24).ok()?;
+    let calendar_duration = Duration::try_days(hour / 24)?;
+    let mut end = match Local.with_ymd_and_hms(
+        schronu_day_start.year(),
+        schronu_day_start.month(),
+        schronu_day_start.day(),
+        calendar_hour,
+        minute,
+        0,
+    ) {
+        LocalResult::Single(datetime) => datetime.checked_add_signed(calendar_duration)?,
+        LocalResult::Ambiguous(_, _) | LocalResult::None => return None,
+    };
+    if end < schronu_day_start {
+        end = end.checked_add_signed(Duration::days(1))?;
+    }
+
+    (schronu_day_start < end).then_some((schronu_day_start, end))
+}
+
+fn scheduled_leaf_starts_on_schronu_day(
+    task_repository: &dyn TaskRepositoryTrait,
+    schronu_day_start: DateTime<Local>,
+) -> HashMap<Uuid, Vec<DateTime<Local>>> {
+    let leaf_task_ids = task_repository
+        .get_all_projects()
+        .into_iter()
+        .flat_map(extract_leaf_tasks_from_project_with_pending)
+        .map(|task| task.get_id())
+        .collect::<HashSet<_>>();
+
+    get_schedule(task_repository)
+        .into_iter()
+        .filter(|scheduled| leaf_task_ids.contains(&scheduled.task.id))
+        .filter(|scheduled| {
+            get_next_morning_datetime(scheduled.scheduled_start) - Duration::days(1)
+                == schronu_day_start
+        })
+        .fold(HashMap::new(), |mut starts, scheduled| {
+            starts
+                .entry(scheduled.task.id)
+                .or_default()
+                .push(scheduled.scheduled_start);
+            starts
+        })
 }
 
 fn parse_focus_selection_mode_command(line: &str) -> Option<FocusSelectionMode> {
@@ -570,6 +726,40 @@ mod tests {
         let actual = parse_clear_or_gather_defer_to_datetime("集", "120", now);
 
         assert_eq!(actual, Some(now + Duration::minutes(120)));
+    }
+
+    #[test]
+    fn test_parse_dated_clear_or_gather_time_range_深夜と24時以降を指定業務日へ対応付ける() {
+        let now = Local.with_ymd_and_hms(2026, 8, 14, 12, 0, 0).unwrap();
+        let start = Local.with_ymd_and_hms(2026, 8, 15, 6, 0, 0).unwrap();
+
+        assert_eq!(
+            parse_dated_clear_or_gather_time_range("03:00", "8/15", now),
+            Some((start, Local.with_ymd_and_hms(2026, 8, 16, 3, 0, 0).unwrap()))
+        );
+        assert_eq!(
+            parse_dated_clear_or_gather_time_range("24:30", "8/15", now),
+            Some((
+                start,
+                Local.with_ymd_and_hms(2026, 8, 16, 0, 30, 0).unwrap()
+            ))
+        );
+    }
+
+    #[test]
+    fn test_parse_dated_clear_or_gather_time_range_不正値と空区間を拒否する() {
+        let now = Local.with_ymd_and_hms(2026, 8, 14, 12, 0, 0).unwrap();
+
+        for time in ["120", "06:00", "10:60", "invalid", "9223372036854775807:00"] {
+            assert_eq!(
+                parse_dated_clear_or_gather_time_range(time, "8/15", now),
+                None
+            );
+        }
+        assert_eq!(
+            parse_dated_clear_or_gather_time_range("13:00", "13/40", now),
+            None
+        );
     }
 
     #[test]
@@ -4436,6 +4626,163 @@ fn execute_command_for_test(
 }
 
 #[test]
+fn test_execute_空_日付指定は指定日の予定開始時刻でtodoをpendingにする() {
+    let now = Local.with_ymd_and_hms(2026, 8, 14, 12, 0, 0).unwrap();
+    let schronu_day_start = Local.with_ymd_and_hms(2026, 8, 15, 6, 0, 0).unwrap();
+    let task = Task::new("日付指定の空対象");
+    task.set_start_time(schronu_day_start + Duration::hours(4));
+    task.set_estimated_work_seconds(30 * 60);
+    let task_id = task.get_id();
+    let original_start_time = task.get_start_time();
+
+    let result = execute_command_for_test(task, now, Some(task_id), "空 13:00 8/15");
+
+    assert_eq!(result.task.get_orig_status(), Status::Pending);
+    assert_eq!(
+        result.task.get_pending_until(),
+        schronu_day_start + Duration::hours(7)
+    );
+    assert_eq!(result.task.get_start_time(), original_start_time);
+}
+
+#[test]
+fn test_execute_空_明指定は次の業務日の予定をpendingにする() {
+    let now = Local.with_ymd_and_hms(2026, 8, 14, 12, 0, 0).unwrap();
+    let schronu_day_start = Local.with_ymd_and_hms(2026, 8, 15, 6, 0, 0).unwrap();
+    let task = Task::new("明指定の空対象");
+    task.set_start_time(schronu_day_start + Duration::hours(4));
+    task.set_estimated_work_seconds(30 * 60);
+    let task_id = task.get_id();
+
+    let result = execute_command_for_test(task, now, Some(task_id), "空 13:00 明");
+
+    assert_eq!(result.task.get_orig_status(), Status::Pending);
+    assert_eq!(
+        result.task.get_pending_until(),
+        schronu_day_start + Duration::hours(7)
+    );
+}
+
+#[test]
+fn test_execute_集_日付指定はpendingを業務日開始へ集める() {
+    let now = Local.with_ymd_and_hms(2026, 8, 14, 12, 0, 0).unwrap();
+    let schronu_day_start = Local.with_ymd_and_hms(2026, 8, 15, 6, 0, 0).unwrap();
+    let task = Task::new("日付指定の集対象");
+    task.set_start_time(schronu_day_start + Duration::hours(4));
+    task.set_estimated_work_seconds(30 * 60);
+    task.set_orig_status(Status::Pending);
+    task.set_pending_until(schronu_day_start + Duration::hours(6));
+    let task_id = task.get_id();
+    let original_start_time = task.get_start_time();
+
+    let result = execute_command_for_test(task, now, Some(task_id), "集 13:00 8/15");
+
+    assert_eq!(result.task.get_orig_status(), Status::Pending);
+    assert_eq!(result.task.get_pending_until(), schronu_day_start);
+    assert_eq!(result.task.get_start_time(), original_start_time);
+}
+
+#[test]
+fn test_execute_集_曜日指定は次に来る曜日の業務日開始へ集める() {
+    let now = Local.with_ymd_and_hms(2026, 8, 14, 12, 0, 0).unwrap();
+    let schronu_day_start = Local.with_ymd_and_hms(2026, 8, 17, 6, 0, 0).unwrap();
+    let task = Task::new("曜日指定の集対象");
+    task.set_start_time(schronu_day_start + Duration::hours(4));
+    task.set_estimated_work_seconds(30 * 60);
+    task.set_orig_status(Status::Pending);
+    task.set_pending_until(schronu_day_start + Duration::hours(6));
+    let task_id = task.get_id();
+
+    let result = execute_command_for_test(task, now, Some(task_id), "集 24:00 月");
+
+    assert_eq!(result.task.get_orig_status(), Status::Pending);
+    assert_eq!(result.task.get_pending_until(), schronu_day_start);
+}
+
+#[test]
+fn test_execute_空_日付指定はpending_untilの半開区間だけを変更する() {
+    let now = Local.with_ymd_and_hms(2026, 8, 14, 12, 0, 0).unwrap();
+    let schronu_day_start = Local.with_ymd_and_hms(2026, 8, 15, 6, 0, 0).unwrap();
+    let task = Task::new("日付指定のpending対象");
+    task.set_start_time(schronu_day_start + Duration::hours(4));
+    task.set_estimated_work_seconds(30 * 60);
+    task.set_orig_status(Status::Pending);
+    task.set_pending_until(schronu_day_start + Duration::hours(5));
+    let task_id = task.get_id();
+    let original_start_time = task.get_start_time();
+
+    let result = execute_command_for_test(task, now, Some(task_id), "clear 13:00 8/15");
+
+    assert_eq!(result.task.get_orig_status(), Status::Pending);
+    assert_eq!(
+        result.task.get_pending_until(),
+        schronu_day_start + Duration::hours(7)
+    );
+    assert_eq!(result.task.get_start_time(), original_start_time);
+}
+
+#[test]
+fn test_execute_空_日付指定は予定候補外のpendingを変更しない() {
+    let now = Local.with_ymd_and_hms(2026, 8, 14, 12, 0, 0).unwrap();
+    let schronu_day_start = Local.with_ymd_and_hms(2026, 8, 15, 6, 0, 0).unwrap();
+    let task = Task::new("予定候補外のpending");
+    task.set_start_time(schronu_day_start + Duration::days(1));
+    task.set_estimated_work_seconds(30 * 60);
+    task.set_orig_status(Status::Pending);
+    let original_pending_until = schronu_day_start + Duration::hours(5);
+    task.set_pending_until(original_pending_until);
+    let task_id = task.get_id();
+
+    let result = execute_command_for_test(task, now, Some(task_id), "空 13:00 8/15");
+
+    assert_eq!(result.task.get_orig_status(), Status::Pending);
+    assert_eq!(result.task.get_pending_until(), original_pending_until);
+}
+
+#[test]
+fn test_execute_日付指定の不正入力は状態を変更しない() {
+    let now = Local.with_ymd_and_hms(2026, 8, 14, 12, 0, 0).unwrap();
+    let task = Task::new("不正入力対象");
+    task.set_start_time(now);
+    let task_id = task.get_id();
+
+    let result = execute_command_for_test(task, now, Some(task_id), "空 06:00 8/15");
+
+    assert_eq!(result.task.get_orig_status(), Status::Todo);
+    assert_eq!(result.task.get_start_time(), now);
+}
+
+#[test]
+fn test_execute_空_2引数は従来通り現在時刻基準で処理する() {
+    let now = Local.with_ymd_and_hms(2026, 8, 14, 12, 0, 0).unwrap();
+    let task = Task::new("従来の空対象");
+    task.set_start_time(now);
+    let task_id = task.get_id();
+
+    let result = execute_command_for_test(task, now, Some(task_id), "空 120");
+
+    assert_eq!(result.task.get_orig_status(), Status::Pending);
+    assert_eq!(
+        result.task.get_pending_until(),
+        now + Duration::minutes(120)
+    );
+}
+
+#[test]
+fn test_execute_集_2引数は従来通りtodoへ戻す() {
+    let now = Local.with_ymd_and_hms(2026, 8, 14, 12, 0, 0).unwrap();
+    let task = Task::new("従来の集対象");
+    task.set_start_time(now);
+    task.set_orig_status(Status::Pending);
+    task.set_pending_until(now + Duration::minutes(60));
+    let task_id = task.get_id();
+
+    let result = execute_command_for_test(task, now, Some(task_id), "集 120");
+
+    assert_eq!(result.task.get_orig_status(), Status::Todo);
+}
+
+#[test]
 fn test_execute_pack_前倒し内容と集計を表示する() {
     let now = Local.with_ymd_and_hms(2026, 8, 11, 12, 0, 0).unwrap();
     let task = Task::new("前倒し対象");
@@ -6599,55 +6946,96 @@ fn execute_with_config(
             }
         }
         "空" | "clear" | "集" | "gather" => {
-            // 空 13:00
-            // 今着手可能なタスクについてactiveなものを、指定したタイミングまでpendingする
+            let cmd_str = tokens[0];
+            match tokens.as_slice() {
+                [_, defer_to] => {
+                    let defer_to_datetime_opt = parse_clear_or_gather_defer_to_datetime(
+                        cmd_str,
+                        defer_to,
+                        task_repository.get_last_synced_time(),
+                    );
 
-            // 空 13:00 10:00
-            // 10:00以降に着手可能なタスクについてactiveなものを、指定したタイミングまでpendingする
-            // 第3引数を任意とするので、順番が to → from の順になっているのはちょっと気になる
-
-            // 集 13:00
-            // 指定したタイミングまでに着手する予定のタスクを全てTodoに直す
-            if tokens.len() >= 2 {
-                let cmd_str = tokens[0];
-                let defer_to_datetime_opt = parse_clear_or_gather_defer_to_datetime(
-                    cmd_str,
-                    tokens[1],
-                    task_repository.get_last_synced_time(),
-                );
-
-                if let Some(defer_to_datetime) = defer_to_datetime_opt {
-                    for project_root_task in task_repository.get_all_projects().iter() {
-                        let leaf_tasks =
-                            extract_leaf_tasks_from_project_with_pending(project_root_task);
-                        for leaf_task in leaf_tasks.iter() {
-                            match cmd_str {
-                                "空" | "clear" => {
-                                    if leaf_task.get_start_time() < defer_to_datetime
-                                        && (leaf_task.get_orig_status() == Status::Todo
-                                            || (leaf_task.get_orig_status() == Status::Pending
-                                                && leaf_task.get_pending_until()
-                                                    < defer_to_datetime))
-                                    {
-                                        leaf_task.set_orig_status(Status::Pending);
-                                        leaf_task.set_pending_until(defer_to_datetime);
+                    if let Some(defer_to_datetime) = defer_to_datetime_opt {
+                        for project_root_task in task_repository.get_all_projects().iter() {
+                            let leaf_tasks =
+                                extract_leaf_tasks_from_project_with_pending(project_root_task);
+                            for leaf_task in leaf_tasks.iter() {
+                                match cmd_str {
+                                    "空" | "clear" => {
+                                        if leaf_task.get_start_time() < defer_to_datetime
+                                            && (leaf_task.get_orig_status() == Status::Todo
+                                                || (leaf_task.get_orig_status() == Status::Pending
+                                                    && leaf_task.get_pending_until()
+                                                        < defer_to_datetime))
+                                        {
+                                            leaf_task.set_orig_status(Status::Pending);
+                                            leaf_task.set_pending_until(defer_to_datetime);
+                                        }
                                     }
-                                }
-                                "集" | "gather" => {
-                                    if leaf_task.get_status() == Status::Pending
-                                        && leaf_task.get_start_time() < defer_to_datetime
-                                        && leaf_task.get_pending_until() < defer_to_datetime
-                                    {
-                                        leaf_task.set_orig_status(Status::Todo);
+                                    "集" | "gather" => {
+                                        if leaf_task.get_status() == Status::Pending
+                                            && leaf_task.get_start_time() < defer_to_datetime
+                                            && leaf_task.get_pending_until() < defer_to_datetime
+                                        {
+                                            leaf_task.set_orig_status(Status::Todo);
+                                        }
                                     }
-                                }
-                                _ => {
-                                    // Skip
+                                    _ => {}
                                 }
                             }
                         }
                     }
                 }
+                [_, time, mmdd] => {
+                    let Some((schronu_day_start, end)) = parse_dated_clear_or_gather_time_range(
+                        time,
+                        mmdd,
+                        task_repository.get_last_synced_time(),
+                    ) else {
+                        return;
+                    };
+                    let scheduled_starts =
+                        scheduled_leaf_starts_on_schronu_day(task_repository, schronu_day_start);
+
+                    for project_root_task in task_repository.get_all_projects().iter() {
+                        let leaf_tasks =
+                            extract_leaf_tasks_from_project_with_pending(project_root_task);
+                        for leaf_task in leaf_tasks.iter() {
+                            let scheduled_starts_opt = scheduled_starts.get(&leaf_task.get_id());
+                            match cmd_str {
+                                "空" | "clear" => {
+                                    let todo_is_scheduled_in_range = leaf_task.get_orig_status()
+                                        == Status::Todo
+                                        && scheduled_starts_opt.is_some_and(|starts| {
+                                            starts.iter().any(|scheduled_start| {
+                                                schronu_day_start <= *scheduled_start
+                                                    && *scheduled_start < end
+                                            })
+                                        });
+                                    let pending_is_in_range = leaf_task.get_orig_status()
+                                        == Status::Pending
+                                        && scheduled_starts_opt.is_some()
+                                        && schronu_day_start <= leaf_task.get_pending_until()
+                                        && leaf_task.get_pending_until() < end;
+                                    if todo_is_scheduled_in_range || pending_is_in_range {
+                                        leaf_task.set_orig_status(Status::Pending);
+                                        leaf_task.set_pending_until(end);
+                                    }
+                                }
+                                "集" | "gather" => {
+                                    if leaf_task.get_orig_status() == Status::Pending
+                                        && scheduled_starts_opt.is_some()
+                                        && leaf_task.get_pending_until() <= end
+                                    {
+                                        leaf_task.set_pending_until(schronu_day_start);
+                                    }
+                                }
+                                _ => {}
+                            }
+                        }
+                    }
+                }
+                _ => {}
             }
         }
         "終" | "finish" | "fin" => {
