@@ -4353,6 +4353,61 @@ fn execute_command_for_test(
 }
 
 #[test]
+fn test_execute_空_日付指定は指定日の予定開始時刻でtodoをpendingにする() {
+    let now = Local.with_ymd_and_hms(2026, 8, 14, 12, 0, 0).unwrap();
+    let schronu_day_start = Local.with_ymd_and_hms(2026, 8, 15, 6, 0, 0).unwrap();
+    let task = Task::new("日付指定の空対象");
+    task.set_start_time(schronu_day_start + Duration::hours(4));
+    task.set_estimated_work_seconds(30 * 60);
+    let task_id = task.get_id();
+    let original_start_time = task.get_start_time();
+
+    let result = execute_command_for_test(task, now, Some(task_id), "空 13:00 8/15");
+
+    assert_eq!(result.task.get_orig_status(), Status::Pending);
+    assert_eq!(
+        result.task.get_pending_until(),
+        schronu_day_start + Duration::hours(7)
+    );
+    assert_eq!(result.task.get_start_time(), original_start_time);
+}
+
+#[test]
+fn test_execute_集_日付指定はpendingを業務日開始へ集める() {
+    let now = Local.with_ymd_and_hms(2026, 8, 14, 12, 0, 0).unwrap();
+    let schronu_day_start = Local.with_ymd_and_hms(2026, 8, 15, 6, 0, 0).unwrap();
+    let task = Task::new("日付指定の集対象");
+    task.set_start_time(schronu_day_start + Duration::hours(4));
+    task.set_estimated_work_seconds(30 * 60);
+    task.set_orig_status(Status::Pending);
+    task.set_pending_until(schronu_day_start + Duration::hours(6));
+    let task_id = task.get_id();
+    let original_start_time = task.get_start_time();
+
+    let result = execute_command_for_test(task, now, Some(task_id), "集 13:00 8/15");
+
+    assert_eq!(result.task.get_orig_status(), Status::Pending);
+    assert_eq!(result.task.get_pending_until(), schronu_day_start);
+    assert_eq!(result.task.get_start_time(), original_start_time);
+}
+
+#[test]
+fn test_execute_空_2引数は従来通り現在時刻基準で処理する() {
+    let now = Local.with_ymd_and_hms(2026, 8, 14, 12, 0, 0).unwrap();
+    let task = Task::new("従来の空対象");
+    task.set_start_time(now);
+    let task_id = task.get_id();
+
+    let result = execute_command_for_test(task, now, Some(task_id), "空 120");
+
+    assert_eq!(result.task.get_orig_status(), Status::Pending);
+    assert_eq!(
+        result.task.get_pending_until(),
+        now + Duration::minutes(120)
+    );
+}
+
+#[test]
 fn test_execute_pack_前倒し内容と集計を表示する() {
     let now = Local.with_ymd_and_hms(2026, 8, 11, 12, 0, 0).unwrap();
     let task = Task::new("前倒し対象");
