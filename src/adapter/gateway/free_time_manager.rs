@@ -596,6 +596,26 @@ fn assert_load_error_contains(
     assert!(message.contains(expected_field_path));
 }
 
+#[cfg(test)]
+fn assert_load_error_value(
+    manager: &mut FreeTimeManager,
+    path: &Path,
+    expected_field_path: &str,
+    expected_value: &str,
+) {
+    let error = manager
+        .load_busy_time_slots_from_file(path.to_str().unwrap())
+        .expect_err("不正なbusy_time_slots.yamlは回復可能なエラーになるべきです");
+
+    assert_eq!(error.path(), path);
+    assert_eq!(error.field_path(), expected_field_path);
+    assert!(error
+        .value()
+        .expect("型違いでは不正値を保持するべきです")
+        .contains(expected_value));
+    assert!(error.source().is_some());
+}
+
 #[test]
 fn test_load_busy_time_slots_from_file_存在しないファイルはpathとfield_pathを含むエラーになる() {
     let path = unique_test_fixture_path("missing-busy-time-slots", ".yaml");
@@ -661,6 +681,28 @@ fn test_load_busy_time_slots_from_file_days_of_weekの型違いはpathとfield_p
 }
 
 #[test]
+fn test_load_busy_time_slots_from_file_days_of_weekの型違いは不正値を保持する() {
+    let file = BusyTimeSlotsYamlFile::new("days_of_week: invalid\n");
+    let mut manager = FreeTimeManager::new();
+
+    assert_load_error_value(&mut manager, file.path(), "days_of_week", "invalid");
+}
+
+#[test]
+fn test_load_busy_time_slots_from_file_day_of_weekの型違いは不正値を保持する() {
+    let yaml = valid_busy_time_slots_yaml().replacen("day_of_week: Mon", "day_of_week: 123", 1);
+    let file = BusyTimeSlotsYamlFile::new(&yaml);
+    let mut manager = FreeTimeManager::new();
+
+    assert_load_error_value(
+        &mut manager,
+        file.path(),
+        "days_of_week[0].day_of_week",
+        "123",
+    );
+}
+
+#[test]
 fn test_load_busy_time_slots_from_file_未知曜日はpathとfield_pathを含むエラーになる() {
     let yaml = valid_busy_time_slots_yaml().replacen("day_of_week: Mon", "day_of_week: Holiday", 1);
     let file = BusyTimeSlotsYamlFile::new(&yaml);
@@ -704,6 +746,24 @@ fn test_load_busy_time_slots_from_file_busy_time_slotsの型違いはpathとfiel
     let mut manager = FreeTimeManager::new();
 
     assert_load_error_contains(&mut manager, file.path(), "days_of_week[0].busy_time_slots");
+}
+
+#[test]
+fn test_load_busy_time_slots_from_file_busy_time_slotsの型違いは不正値を保持する() {
+    let yaml = valid_busy_time_slots_yaml().replacen(
+        "    busy_time_slots:\n      - start_time: '13:00'\n        duration_minutes: 60\n        name: lunch\n",
+        "    busy_time_slots: invalid\n",
+        1,
+    );
+    let file = BusyTimeSlotsYamlFile::new(&yaml);
+    let mut manager = FreeTimeManager::new();
+
+    assert_load_error_value(
+        &mut manager,
+        file.path(),
+        "days_of_week[0].busy_time_slots",
+        "invalid",
+    );
 }
 
 #[test]
@@ -780,6 +840,20 @@ fn test_load_busy_time_slots_from_file_型違いのエラーは構造化情報�
         .expect("型違いでは不正値を保持するべきです")
         .contains("sixty"));
     assert!(error.source().is_some());
+}
+
+#[test]
+fn test_load_busy_time_slots_from_file_nameの型違いは不正値を保持する() {
+    let yaml = valid_busy_time_slots_yaml().replacen("name: lunch", "name: 123", 1);
+    let file = BusyTimeSlotsYamlFile::new(&yaml);
+    let mut manager = FreeTimeManager::new();
+
+    assert_load_error_value(
+        &mut manager,
+        file.path(),
+        "days_of_week[0].busy_time_slots[0].name",
+        "123",
+    );
 }
 
 #[test]
