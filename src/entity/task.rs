@@ -1233,6 +1233,24 @@ fn test_persistent_mutation_revisionは同じ値の設定では進まない() {
 }
 
 #[test]
+fn test_deadline伝搬はrootのrevisionを一度だけ進める() {
+    let root = TaskHandle::new("root");
+    let child = root.create_as_last_child(TaskAttr::new("child"));
+    child.create_as_last_child(TaskAttr::new("grand_child"));
+    let before_revision = root.get_persistent_mutation_revision();
+    let deadline = Local.with_ymd_and_hms(2026, 8, 15, 12, 0, 0).unwrap();
+
+    root.set_deadline_time_opt(Some(deadline));
+
+    assert_eq!(root.get_deadline_time_opt(), Some(deadline));
+    assert_eq!(child.get_deadline_time_opt(), Some(deadline));
+    assert_eq!(
+        root.get_persistent_mutation_revision(),
+        before_revision.wrapping_add(1)
+    );
+}
+
+#[test]
 fn test_persistent_mutation_revisionはtree構造変更で進む() {
     let root = TaskHandle::new("root");
     let initial_revision = root.get_persistent_mutation_revision();
