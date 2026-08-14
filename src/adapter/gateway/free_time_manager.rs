@@ -805,11 +805,20 @@ fn test_load_busy_time_slots_from_file_start_timeの型違いはpathとfield_pat
     let file = BusyTimeSlotsYamlFile::new(&yaml);
     let mut manager = FreeTimeManager::new();
 
-    assert_load_error_contains(
-        &mut manager,
-        file.path(),
-        "days_of_week[0].busy_time_slots[0].start_time",
+    let error = manager
+        .load_busy_time_slots_from_file(file.path().to_str().unwrap())
+        .expect_err("start_timeの型違いは回復可能なエラーになるべきです");
+
+    assert_eq!(error.path(), file.path());
+    assert_eq!(
+        error.field_path(),
+        "days_of_week[0].busy_time_slots[0].start_time"
     );
+    assert!(error
+        .value()
+        .expect("型違いでは不正値を保持するべきです")
+        .contains("1300"));
+    assert!(error.source().is_some());
 }
 
 #[test]
