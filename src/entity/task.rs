@@ -3066,6 +3066,14 @@ fn test_task_handle_snapshotは独立した読み取り値を返す() {
 }
 
 #[test]
+fn test_try_snapshotは借用競合をerrorとして返す() {
+    let task = TaskHandle::new("タスク");
+    let _exclusive_borrow = task.node.borrow_data_mut();
+
+    assert_eq!(task.try_snapshot(), Err(TaskTreeError::Borrow));
+}
+
+#[test]
 fn test_reparent_toは循環をerrorにして木とrevisionを変更しない() {
     let root = TaskHandle::new("親");
     let mut child = root.try_create_child(TaskAttr::new("子")).unwrap();
