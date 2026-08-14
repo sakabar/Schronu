@@ -8,6 +8,10 @@ use yaml_rust::{Yaml, YamlLoader};
 
 #[cfg(test)]
 use chrono::TimeZone;
+#[cfg(test)]
+use std::fs;
+#[cfg(test)]
+use std::path::PathBuf;
 
 // Scheduleをどう持つか: 日付をキーとする辞書
 pub struct FreeTimeManager {
@@ -268,4 +272,122 @@ fn test_get_busy_minutes_簡単なケース() {
     let actual = ft_mng.get_busy_minutes(&start, &end);
 
     assert_eq!(actual, 60);
+}
+
+#[cfg(test)]
+fn busy_time_slots_yaml_with_daily_slot(include_legacy_end_of_day_fields: bool) -> String {
+    let legacy_end_of_day_fields = if include_legacy_end_of_day_fields {
+        "    end_of_day_hour: ignored\n    end_of_day_minute: ignored\n"
+    } else {
+        "    end_of_day_hour: 0\n    end_of_day_minute: 0\n"
+    };
+    let days = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
+        .into_iter()
+        .map(|day_of_week| {
+            format!(
+                "  - day_of_week: {day_of_week}\n{legacy_end_of_day_fields}    busy_time_slots:\n      - start_time: \"00:00\"\n        duration_minutes: 60\n        name: sleep\n"
+            )
+        })
+        .collect::<String>();
+    format!("days_of_week:\n{days}")
+}
+
+#[cfg(test)]
+fn write_busy_time_slots_yaml(include_legacy_end_of_day_fields: bool) -> PathBuf {
+    let path = std::env::temp_dir().join(format!(
+        "schronu-free-time-manager-{}.yaml",
+        uuid::Uuid::new_v4()
+    ));
+    fs::write(
+        &path,
+        busy_time_slots_yaml_with_daily_slot(include_legacy_end_of_day_fields),
+    )
+    .unwrap();
+    path
+}
+
+#[test]
+fn load_busy_time_slots_from_file_70日を超える将来日にも毎週定期slotを適用する() {
+    let path = write_busy_time_slots_yaml(false);
+    let mut manager = FreeTimeManager::new();
+    let now = Local.with_ymd_and_hms(2026, 8, 10, 12, 0, 0).unwrap();
+    manager.load_busy_time_slots_from_file(path.to_str().unwrap(), &now);
+
+    let start = Local.with_ymd_and_hms(2026, 10, 20, 0, 0, 0).unwrap();
+    let end = Local.with_ymd_and_hms(2026, 10, 20, 1, 0, 0).unwrap();
+
+    assert_eq!(manager.get_free_minutes(&start, &end), 0);
+    fs::remove_file(path).unwrap();
+}
+
+#[test]
+fn get_free_minutes_日跨ぎ照会でも各日の定期slotを差し引く() {
+    let path = write_busy_time_slots_yaml(false);
+    let mut manager = FreeTimeManager::new();
+    let now = Local.with_ymd_and_hms(2026, 8, 10, 12, 0, 0).unwrap();
+    manager.load_busy_time_slots_from_file(path.to_str().unwrap(), &now);
+
+    let start = Local.with_ymd_and_hms(2026, 8, 10, 23, 30, 0).unwrap();
+    let middle = Local.with_ymd_and_hms(2026, 8, 11, 0, 0, 0).unwrap();
+    let end = Local.with_ymd_and_hms(2026, 8, 12, 1, 30, 0).unwrap();
+
+    assert_eq!(manager.get_free_minutes(&start, &end), 24 * 60 + 30);
+    assert_eq!(
+        manager.get_free_minutes(&start, &end),
+        manager.get_free_minutes(&start, &middle) + manager.get_free_minutes(&middle, &end)
+    );
+    fs::remove_file(path).unwrap();
+}
+
+#[test]
+fn get_free_minutes_23時59分から翌日00時00分を1分として扱う() {
+    let mut manager = FreeTimeManager::new();
+    let start = Local.with_ymd_and_hms(2026, 8, 10, 23, 59, 0).unwrap();
+    let end = Local.with_ymd_and_hms(2026, 8, 11, 0, 0, 0).unwrap();
+
+    assert_eq!(manager.get_free_minutes(&start, &end), 1);
+}
+
+#[test]
+fn get_free_minutes_06時を跨いでも通常の日付境界で定期slotを適用する() {
+    let path = write_busy_time_slots_yaml(false);
+    let mut manager = FreeTimeManager::new();
+    let now = Local.with_ymd_and_hms(2026, 8, 10, 12, 0, 0).unwrap();
+    manager.load_busy_time_slots_from_file(path.to_str().unwrap(), &now);
+
+    let start = Local.with_ymd_and_hms(2026, 8, 10, 23, 30, 0).unwrap();
+    let end = Local.with_ymd_and_hms(2026, 8, 11, 6, 30, 0).unwrap();
+
+    assert_eq!(manager.get_free_minutes(&start, &end), 6 * 60);
+    fs::remove_file(path).unwrap();
+}
+
+#[test]
+fn load_busy_time_slots_from_file_廃止した日終端fieldを無視する() {
+    let path = write_busy_time_slots_yaml(true);
+    let mut manager = FreeTimeManager::new();
+    let now = Local.with_ymd_and_hms(2026, 8, 10, 12, 0, 0).unwrap();
+    manager.load_busy_time_slots_from_file(path.to_str().unwrap(), &now);
+
+    let start = Local.with_ymd_and_hms(2026, 8, 10, 0, 0, 0).unwrap();
+    let end = Local.with_ymd_and_hms(2026, 8, 10, 1, 0, 0).unwrap();
+
+    assert_eq!(manager.get_free_minutes(&start, &end), 0);
+    fs::remove_file(path).unwrap();
+}
+
+#[test]
+fn get_free_minutes_明示slotと定期slotが重なっても二重控除しない() {
+    let path = write_busy_time_slots_yaml(false);
+    let mut manager = FreeTimeManager::new();
+    let now = Local.with_ymd_and_hms(2026, 8, 10, 12, 0, 0).unwrap();
+    manager.load_busy_time_slots_from_file(path.to_str().unwrap(), &now);
+
+    let start = Local.with_ymd_and_hms(2026, 8, 10, 0, 0, 0).unwrap();
+    let end = Local.with_ymd_and_hms(2026, 8, 10, 2, 0, 0).unwrap();
+    let explicit_busy_end = Local.with_ymd_and_hms(2026, 8, 10, 1, 30, 0).unwrap();
+    manager.register_busy_time_slot(&start, &explicit_busy_end);
+
+    assert_eq!(manager.get_free_minutes(&start, &end), 30);
+    fs::remove_file(path).unwrap();
 }
