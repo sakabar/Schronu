@@ -2,7 +2,9 @@ use crate::application::interface::TaskRepositoryTrait;
 use crate::application::schedule_use_case::get_schedule;
 pub use crate::application::task_view::TaskView;
 use crate::entity::datetime::get_next_morning_datetime;
-use crate::entity::task::{ProjectCategory, RepetitionAnchor, Status, TaskAttr, TaskHandle};
+use crate::entity::task::{
+    ProjectCategory, RepetitionAnchor, Status, TaskAttr, TaskHandle, TaskTreeError,
+};
 use chrono::{DateTime, Datelike, Duration, Local, Timelike};
 use std::cmp::{max, Ordering};
 use std::collections::HashSet;
@@ -18,6 +20,7 @@ pub enum ApplicationError {
         reason: &'static str,
     },
     HasUndoneChildren(Uuid),
+    TaskTree(TaskTreeError),
 }
 
 impl fmt::Display for ApplicationError {
@@ -30,6 +33,7 @@ impl fmt::Display for ApplicationError {
             Self::HasUndoneChildren(task_id) => {
                 write!(formatter, "task has undone children: {task_id}")
             }
+            Self::TaskTree(error) => write!(formatter, "task tree operation failed: {error}"),
         }
     }
 }
@@ -218,7 +222,9 @@ pub fn breakdown_task(
             child_attr.set_pending_until(pending_until);
         }
 
-        let child_task = parent_task.create_as_last_child(child_attr);
+        let child_task = parent_task
+            .try_create_child(child_attr)
+            .map_err(ApplicationError::TaskTree)?;
         if let Some(deadline_time) = parent_task.get_deadline_time_opt() {
             child_task.set_deadline_time_opt(Some(deadline_time));
         }
@@ -370,7 +376,7 @@ fn create_next_repetition_task(task: &TaskHandle, finished_at: DateTime<Local>) 
     adjust_repetition_estimate(&parent_task, task);
     let new_task_attr =
         build_next_repetition_task_attr(task, &parent_task, repetition_interval_days, finished_at);
-    Some(parent_task.create_as_last_child(new_task_attr).get_id())
+    Some(parent_task.try_create_child(new_task_attr).ok()?.get_id())
 }
 
 fn adjust_repetition_estimate(parent_task: &TaskHandle, task: &TaskHandle) {

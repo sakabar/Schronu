@@ -310,6 +310,9 @@ impl<R: TaskRepositoryTrait> McpServer<R> {
             Err(ApplicationError::InvalidInput { field, reason }) => {
                 return invalid_input_response(id, field, reason)
             }
+            Err(ApplicationError::TaskTree(error)) => {
+                return internal_error_response(id, &error.to_string())
+            }
         };
 
         self.save_after_mutation(

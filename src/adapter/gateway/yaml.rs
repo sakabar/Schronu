@@ -428,8 +428,8 @@ fn yaml_to_task_legacy(
     for child_yaml in task_children_yaml(yaml)? {
         let mut child_task = yaml_to_task_legacy(child_yaml, now)?;
         child_task
-            .detach_insert_as_last_child_of(parent_task)
-            .map_err(YamlConversionError::new)?;
+            .try_reparent_to(&parent_task)
+            .map_err(|error| YamlConversionError::new(error.to_string()))?;
 
         parent_task = child_task
             .parent()

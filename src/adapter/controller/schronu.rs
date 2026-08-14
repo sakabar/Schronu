@@ -76,6 +76,19 @@ const CLI_LOCK_TIMEOUT: StdDuration = StdDuration::from_secs(1);
 
 static ACTIVE_CONFIG: OnceLock<SchronuConfig> = OnceLock::new();
 
+#[cfg(test)]
+trait TaskHandleTestExt {
+    fn create_as_last_child(&self, task_attr: TaskAttr) -> TaskHandle;
+}
+
+#[cfg(test)]
+impl TaskHandleTestExt for TaskHandle {
+    fn create_as_last_child(&self, task_attr: TaskAttr) -> TaskHandle {
+        self.try_create_child(task_attr)
+            .expect("test hierarchy child creation must succeed")
+    }
+}
+
 fn active_config() -> &'static SchronuConfig {
     ACTIVE_CONFIG.get_or_init(SchronuConfig::default)
 }
@@ -3705,7 +3718,7 @@ fn execute_next_up(
 
     let new_task_id = *new_task_attr.get_id();
 
-    if focused_task.create_as_parent(new_task_attr).is_ok() {
+    if focused_task.try_create_parent(new_task_attr).is_ok() {
         *focused_task_id_opt = Some(new_task_id);
         Ok(Some(new_task_id))
     } else {
@@ -3757,7 +3770,7 @@ fn execute_breakdown_sequentially(
     let estimated_work_seconds = estimated_work_seconds_from_minutes(estimated_work_minutes)?;
 
     if let Some(focused_task) = focused_task_opt {
-        let grand_child_task_result = focused_task.create_sequential_children(
+        let grand_child_task_result = focused_task.try_create_sequential_children(
             new_task_name_str,
             estimated_work_seconds,
             begin_index,
@@ -3910,7 +3923,9 @@ fn execute_split(
                 }
             }
 
-            let new_task = focused_task.create_as_last_child(new_task_attr);
+            let new_task = focused_task
+                .try_create_child(new_task_attr)
+                .map_err(ApplicationError::TaskTree)?;
 
             let msg: String = format!("{} {}", new_task.get_id(), new_task_name);
             writeln_newline(stdout, msg.as_str()).unwrap();

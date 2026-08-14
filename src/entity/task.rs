@@ -1184,6 +1184,7 @@ impl TaskSnapshot {
 pub enum TaskTreeError {
     RootOperation,
     Cycle,
+    InvalidSequence,
     Borrow,
     HierarchyGrant,
     Insert,
@@ -1194,6 +1195,7 @@ impl fmt::Display for TaskTreeError {
         let reason = match self {
             Self::RootOperation => "cannot modify the project root hierarchy",
             Self::Cycle => "cannot insert a task into its own descendant",
+            Self::InvalidSequence => "sequential child range must not be empty",
             Self::Borrow => "cannot borrow task tree data",
             Self::HierarchyGrant => "cannot acquire hierarchy edit grant",
             Self::Insert => "cannot insert task subtree",
@@ -1351,6 +1353,60 @@ impl TaskHandle {
             destination_root.mark_persistent_mutation();
         }
         Ok(())
+    }
+
+    /// Inserts a newly-created parent between this task and its current parent.
+    pub fn try_create_parent(&mut self, task_attr: TaskAttr) -> Result<(), TaskTreeError> {
+        let original_parent = self.parent().ok_or(TaskTreeError::RootOperation)?;
+        let grant = self
+            .node
+            .tree()
+            .grant_hierarchy_edit()
+            .map_err(|_| TaskTreeError::HierarchyGrant)?;
+        let new_parent_node = original_parent.node.create_as_last_child(&grant, task_attr);
+        let new_parent = Self {
+            node: new_parent_node,
+        };
+        let parent_hot = new_parent
+            .node
+            .clone()
+            .bundle_new_hierarchy_edit_grant()
+            .map_err(|_| TaskTreeError::HierarchyGrant)?;
+
+        self.node
+            .try_detach_insert_subtree(&grant, InsertAs::LastChildOf(&parent_hot))
+            .map_err(|_| TaskTreeError::Insert)?;
+        self.mark_persistent_mutation();
+        Ok(())
+    }
+
+    /// Creates a chain of child tasks and returns the deepest child.
+    pub fn try_create_sequential_children(
+        &self,
+        task_name: &str,
+        estimated_work_seconds: i64,
+        begin_index: u64,
+        end_index: u64,
+        task_name_suffix: &str,
+    ) -> Result<Self, TaskTreeError> {
+        if begin_index > end_index {
+            return Err(TaskTreeError::InvalidSequence);
+        }
+        let grant = self
+            .node
+            .tree()
+            .grant_hierarchy_edit()
+            .map_err(|_| TaskTreeError::HierarchyGrant)?;
+        let mut current_node = self.node.clone();
+
+        for index in (begin_index..=end_index).rev() {
+            let mut task_attr = TaskAttr::new(&format!("{task_name} {index}{task_name_suffix}"));
+            task_attr.set_estimated_work_seconds(estimated_work_seconds);
+            current_node = current_node.create_as_last_child(&grant, task_attr);
+        }
+
+        self.mark_persistent_mutation();
+        Ok(Self { node: current_node })
     }
 
     pub fn get_id(&self) -> Uuid {
@@ -1732,64 +1788,29 @@ impl TaskHandle {
         self.node.tree().try_eq(&task.node.tree())
     }
 
-    // pub fn insert_as_last_child(&self, task: TaskHandle) {
-    pub fn detach_insert_as_last_child_of(
+    #[cfg(test)]
+    pub(crate) fn detach_insert_as_last_child_of(
         &mut self,
         parent_task: TaskHandle,
     ) -> Result<(), String> {
-        // taskのsubtreeをコピーしてselfを親から切り離して、parent_taskに結合する
-        // という挙動を期待しているが、木を丸ごとくっつけるのはライブラリの仕様(?)により実現できていない。
-        // https://gitlab.com/nop_thread/dendron/-/issues/3
-        // 仕方がないので、TaskHandleは必ずダミーのrootノードを持つという仕様にして対応している。
-
-        // ダミーのrootノードで行おうとしている場合はエラーとする
-        if self.node.is_root() {
-            return Err(String::from("cannot use detach_insert for a root node"));
-        }
-
-        let source_root = self.root();
-        let destination_root = parent_task.root();
-        let self_grant = &self.node.tree().grant_hierarchy_edit().expect("self grant");
-
-        let parent_task_hot: HotNode<TaskAttr> = parent_task
-            .node
-            .bundle_new_hierarchy_edit_grant()
-            .expect("parent hot node");
-
-        self.node
-            .try_detach_insert_subtree(self_grant, InsertAs::LastChildOf(&parent_task_hot))
-            .expect("creating valid hierarchy");
-
-        source_root.mark_persistent_mutation();
-        destination_root.mark_persistent_mutation();
-
-        Ok(())
+        self.try_reparent_to(&parent_task)
+            .map_err(|error| error.to_string())
     }
 
-    pub fn create_as_last_child(&self, task_attr: TaskAttr) -> Self {
-        let self_grant = &self.node.tree().grant_hierarchy_edit().expect("self grant");
-
-        let child_node = self.node.create_as_last_child(self_grant, task_attr);
-        self.mark_persistent_mutation();
-        Self { node: child_node }
+    #[cfg(test)]
+    pub(crate) fn create_as_last_child(&self, task_attr: TaskAttr) -> Self {
+        self.try_create_child(task_attr)
+            .expect("test hierarchy child creation must succeed")
     }
 
-    // 親タスクとしてタスクを新規作成する
-    #[allow(unused_must_use)]
-    pub fn create_as_parent(&mut self, task_attr: TaskAttr) -> Result<(), String> {
-        // ダミーのrootノードで行おうとしている場合はエラーとする
-        match self.parent() {
-            Some(original_parent_task) => {
-                let new_task = original_parent_task.create_as_last_child(task_attr);
-                self.detach_insert_as_last_child_of(new_task);
-                Ok(())
-            }
-            None => Err(String::from("cannot use create_as_parent for a root node")),
-        }
+    #[cfg(test)]
+    pub(crate) fn create_as_parent(&mut self, task_attr: TaskAttr) -> Result<(), String> {
+        self.try_create_parent(task_attr)
+            .map_err(|error| error.to_string())
     }
 
-    // 連番の子タスクを生成する
-    pub fn create_sequential_children(
+    #[cfg(test)]
+    pub(crate) fn create_sequential_children(
         &self,
         task_name: &str,
         estimated_work_seconds: i64,
@@ -1797,32 +1818,14 @@ impl TaskHandle {
         end_index: u64,
         task_name_suffix: &str,
     ) -> Result<TaskHandle, String> {
-        let tree_grant = &self.node.tree().grant_hierarchy_edit().expect("tree grant");
-        let mut current_node_opt: Option<Node<TaskAttr>> = None;
-
-        for index in (begin_index..=end_index).rev() {
-            let task_name = format!("{} {}{}", task_name, index, task_name_suffix);
-            let mut task_attr = TaskAttr::new(&task_name);
-            task_attr.set_estimated_work_seconds(estimated_work_seconds);
-
-            match current_node_opt {
-                Some(current_node) => {
-                    current_node_opt =
-                        Some(current_node.create_as_last_child(tree_grant, task_attr));
-                }
-                None => {
-                    current_node_opt = Some(self.node.create_as_last_child(tree_grant, task_attr));
-                }
-            }
-        }
-
-        match current_node_opt {
-            Some(current_node) => {
-                self.mark_persistent_mutation();
-                Ok(Self { node: current_node })
-            }
-            None => Err(String::from("cannot create sequentially")),
-        }
+        self.try_create_sequential_children(
+            task_name,
+            estimated_work_seconds,
+            begin_index,
+            end_index,
+            task_name_suffix,
+        )
+        .map_err(|error| error.to_string())
     }
 
     pub fn get_by_id(&self, id: Uuid) -> Option<TaskHandle> {
