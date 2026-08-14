@@ -500,6 +500,29 @@ fn test_load_busy_time_slots_from_file_存在しないファイルはpathとfiel
 }
 
 #[test]
+fn test_load_busy_time_slots_from_file_存在しないファイルのエラーは構造化情報を保持する() {
+    let path = std::env::temp_dir().join(format!(
+        "schronu-missing-busy-time-slots-{}-{}.yaml",
+        std::process::id(),
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    let now = Local.with_ymd_and_hms(2000, 1, 3, 0, 0, 0).unwrap();
+    let mut manager = FreeTimeManager::new();
+
+    let error = manager
+        .load_busy_time_slots_from_file(path.to_str().unwrap(), &now)
+        .expect_err("存在しない設定ファイルは回復可能なエラーになるべきです");
+
+    assert_eq!(error.path(), path.as_path());
+    assert_eq!(error.field_path(), "$");
+    assert_eq!(error.value(), None);
+    assert!(error.source().is_some());
+}
+
+#[test]
 fn test_load_busy_time_slots_from_file_ディレクトリpathはpathとfield_pathを含むエラーになる() {
     let directory = BusyTimeSlotsYamlDirectory::new();
     let mut manager = FreeTimeManager::new();
@@ -581,6 +604,16 @@ fn test_load_busy_time_slots_from_file_end_of_day_hourの範囲外値はpathとf
 }
 
 #[test]
+fn test_load_busy_time_slots_from_file_end_of_day_hourの負数は回復可能なエラーになる() {
+    let yaml =
+        valid_busy_time_slots_yaml().replacen("end_of_day_hour: 23", "end_of_day_hour: -1", 1);
+    let file = BusyTimeSlotsYamlFile::new(&yaml);
+    let mut manager = FreeTimeManager::new();
+
+    assert_load_error_contains(&mut manager, file.path(), "days_of_week[0].end_of_day_hour");
+}
+
+#[test]
 fn test_load_busy_time_slots_from_file_end_of_day_hour欠落はpathとfield_pathを含むエラーになる() {
     let yaml = valid_busy_time_slots_yaml().replacen("    end_of_day_hour: 23\n", "", 1);
     let file = BusyTimeSlotsYamlFile::new(&yaml);
@@ -625,6 +658,23 @@ fn test_load_busy_time_slots_from_file_end_of_day_minuteの範囲外値はpath�
 ) {
     let yaml =
         valid_busy_time_slots_yaml().replacen("end_of_day_minute: 59", "end_of_day_minute: 60", 1);
+    let file = BusyTimeSlotsYamlFile::new(&yaml);
+    let mut manager = FreeTimeManager::new();
+
+    assert_load_error_contains(
+        &mut manager,
+        file.path(),
+        "days_of_week[0].end_of_day_minute",
+    );
+}
+
+#[test]
+fn test_load_busy_time_slots_from_file_end_of_day_minuteの負数は回復可能なエラーになる() {
+    let yaml = valid_busy_time_slots_yaml().replacen(
+        "end_of_day_minute: 59",
+        "end_of_day_minute: -1",
+        1,
+    );
     let file = BusyTimeSlotsYamlFile::new(&yaml);
     let mut manager = FreeTimeManager::new();
 
@@ -711,6 +761,30 @@ fn test_load_busy_time_slots_from_file_型違いはpathとfield_pathを含むエ
         file.path(),
         "days_of_week[0].busy_time_slots[0].duration_minutes",
     );
+}
+
+#[test]
+fn test_load_busy_time_slots_from_file_型違いのエラーは構造化情報を保持する() {
+    let yaml =
+        valid_busy_time_slots_yaml().replacen("duration_minutes: 60", "duration_minutes: sixty", 1);
+    let file = BusyTimeSlotsYamlFile::new(&yaml);
+    let now = Local.with_ymd_and_hms(2000, 1, 3, 0, 0, 0).unwrap();
+    let mut manager = FreeTimeManager::new();
+
+    let error = manager
+        .load_busy_time_slots_from_file(file.path().to_str().unwrap(), &now)
+        .expect_err("型違いの設定値は回復可能なエラーになるべきです");
+
+    assert_eq!(error.path(), file.path());
+    assert_eq!(
+        error.field_path(),
+        "days_of_week[0].busy_time_slots[0].duration_minutes"
+    );
+    assert!(error
+        .value()
+        .expect("型違いでは不正値を保持するべきです")
+        .contains("sixty"));
+    assert!(error.source().is_some());
 }
 
 #[test]
@@ -874,6 +948,28 @@ fn test_register_busy_time_slot_日跨ぎは回復可能なエラーになる() 
         .expect_err("日跨ぎslotはpanicせず登録エラーになるべきです");
 
     assert!(error.to_string().contains("different date"));
+}
+
+#[test]
+fn test_register_busy_time_slot_日跨ぎエラー後も既存状態を維持する() {
+    let mut manager = FreeTimeManager::new();
+    let existing_start = Local.with_ymd_and_hms(2000, 1, 1, 13, 0, 0).unwrap();
+    let existing_end = Local.with_ymd_and_hms(2000, 1, 1, 14, 0, 0).unwrap();
+    let invalid_start = Local.with_ymd_and_hms(2000, 1, 1, 23, 30, 0).unwrap();
+    let invalid_end = Local.with_ymd_and_hms(2000, 1, 2, 0, 30, 0).unwrap();
+
+    manager
+        .register_busy_time_slot(&existing_start, &existing_end)
+        .expect("同日のslotは登録できるべきです");
+    let before = manager.get_busy_minutes(&existing_start, &existing_end);
+
+    manager
+        .register_busy_time_slot(&invalid_start, &invalid_end)
+        .expect_err("日跨ぎslotは回復可能なエラーになるべきです");
+    let after = manager.get_busy_minutes(&existing_start, &existing_end);
+
+    assert_eq!(before, 60);
+    assert_eq!(after, before);
 }
 
 #[test]

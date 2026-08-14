@@ -8531,6 +8531,27 @@ fn test_execute_non_interactive_command_busy_time_slots読込失敗はstderrへ�
 }
 
 #[test]
+fn test_interactive起動前のbusy_time_slots読込失敗はRawModeなしでRunErrorとして返す() {
+    let mut free_time_manager = FreeTimeManager::new();
+    let busy_time_slots_yaml_path = active_config().busy_time_slots_yaml_path.clone();
+    let now = Local.with_ymd_and_hms(2026, 8, 11, 12, 0, 0).unwrap();
+
+    let error = load_busy_time_slots_for_interactive_application(
+        &mut free_time_manager,
+        busy_time_slots_yaml_path.to_str().unwrap(),
+        &now,
+    )
+    .expect_err("対話起動前の設定読込失敗はRawModeを有効化せずRunErrorとして返すべきです");
+
+    assert!(matches!(
+        error,
+        RunError::BusyTimeSlots(ref error)
+            if error.path() == busy_time_slots_yaml_path.as_path()
+                && error.field_path() == "$"
+    ));
+}
+
+#[test]
 fn test_cli_repository初期load後はmcpがlockを取得できる() {
     let storage_dir = TestStorageDir::new();
     std::fs::create_dir_all(&storage_dir.path).unwrap();
