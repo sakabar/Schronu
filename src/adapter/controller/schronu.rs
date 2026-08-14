@@ -18,11 +18,11 @@ use schronu::application::daily_capacity::{
 use schronu::application::flatten_use_case::{
     flatten_tasks_with_end_of_day_offset_minutes, FlattenResult, UnresolvedReason,
 };
-use schronu::application::interface::{
-    BusyTimeSlotLoadError, BusyTimeSlotRegistrationError, FreeTimeManagerTrait,
-};
+use schronu::application::interface::{BusyTimeSlotLoadError, FreeTimeManagerTrait};
 #[cfg(test)]
-use schronu::application::interface::{RepositoryReloadOutcome, TaskRepositoryOperation};
+use schronu::application::interface::{
+    BusyTimeSlotRegistrationError, RepositoryReloadOutcome, TaskRepositoryOperation,
+};
 use schronu::application::interface::{TaskRepositoryError, TaskRepositoryTrait};
 use schronu::application::pack_use_case::pack_tasks_with_end_of_day_offset_minutes;
 use schronu::application::schedule_use_case::get_schedule;
@@ -8585,7 +8585,7 @@ fn test_execute_non_interactive_command_busy_time_slots読込失敗はstderrへ�
 }
 
 #[test]
-fn test_interactive起動前のbusy_time_slots読込失敗はRawModeなしでRunErrorとして返す() {
+fn test_interactive起動前のbusy_time_slots読込失敗はraw_modeなしでrun_errorとして返す() {
     let mut free_time_manager = FreeTimeManager::new();
     let busy_time_slots_yaml_path = active_config().busy_time_slots_yaml_path.clone();
     let now = Local.with_ymd_and_hms(2026, 8, 11, 12, 0, 0).unwrap();
