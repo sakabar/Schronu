@@ -37,7 +37,7 @@ use schronu::entity::task::{
     read_project_category, round_up_sec_as_minute, ProjectCategory, Status, Task, TaskAttr,
 };
 #[cfg(test)]
-use std::cell::Cell;
+use std::cell::{Cell, RefCell};
 use std::cmp::{max, min};
 use std::collections::{HashMap, HashSet};
 use std::env;
@@ -5025,6 +5025,52 @@ impl FreeTimeManagerTrait for TestFreeTimeManager {
 }
 
 #[cfg(test)]
+#[derive(Default)]
+struct TestFreeTimeManagerWithLoadError {
+    loaded_path: RefCell<Option<PathBuf>>,
+}
+
+#[cfg(test)]
+impl TestFreeTimeManagerWithLoadError {
+    fn loaded_path(&self) -> Option<PathBuf> {
+        self.loaded_path.borrow().clone()
+    }
+}
+
+#[cfg(test)]
+impl FreeTimeManagerTrait for TestFreeTimeManagerWithLoadError {
+    fn get_free_minutes(&mut self, _start: &DateTime<Local>, _end: &DateTime<Local>) -> i64 {
+        0
+    }
+
+    fn get_busy_minutes(&mut self, _start: &DateTime<Local>, _end: &DateTime<Local>) -> i64 {
+        0
+    }
+
+    fn register_busy_time_slot(
+        &mut self,
+        _start: &DateTime<Local>,
+        _end: &DateTime<Local>,
+    ) -> Result<(), BusyTimeSlotRegistrationError> {
+        Ok(())
+    }
+
+    fn load_busy_time_slots_from_file(
+        &mut self,
+        busy_time_slots_file_path: &str,
+    ) -> Result<(), BusyTimeSlotLoadError> {
+        let path = PathBuf::from(busy_time_slots_file_path);
+        self.loaded_path.replace(Some(path.clone()));
+        Err(BusyTimeSlotLoadError::new(
+            path,
+            "$",
+            None,
+            std::io::Error::new(std::io::ErrorKind::InvalidData, "test load error"),
+        ))
+    }
+}
+
+#[cfg(test)]
 struct TestFreeTimeManagerWithFreeMinutes {
     free_minutes: i64,
 }
@@ -8550,7 +8596,7 @@ fn test_execute_non_interactive_command_busy_time_slots読込失敗はstderrへ�
     let task_id = task.get_id();
     let original_estimated_work_seconds = task.get_estimated_work_seconds();
     let mut task_repository = TestTaskRepository::new(task, now);
-    let mut free_time_manager = FreeTimeManager::new();
+    let mut free_time_manager = TestFreeTimeManagerWithLoadError::default();
     let busy_time_slots_yaml_path = active_config().busy_time_slots_yaml_path.clone();
 
     let error =
@@ -8566,6 +8612,10 @@ fn test_execute_non_interactive_command_busy_time_slots読込失敗はstderrへ�
     assert_eq!(task_repository.load_attempt_count.get(), 0);
     assert_eq!(task_repository.reload_if_changed_attempt_count.get(), 0);
     assert_eq!(task_repository.save_attempt_count.get(), 0);
+    assert_eq!(
+        free_time_manager.loaded_path(),
+        Some(busy_time_slots_yaml_path.clone())
+    );
     assert_eq!(
         task_repository
             .get_by_id(task_id)
@@ -8586,14 +8636,12 @@ fn test_execute_non_interactive_command_busy_time_slots読込失敗はstderrへ�
 
 #[test]
 fn test_interactive起動前のbusy_time_slots読込失敗はraw_modeなしでrun_errorとして返す() {
-    let mut free_time_manager = FreeTimeManager::new();
+    let mut free_time_manager = TestFreeTimeManagerWithLoadError::default();
     let busy_time_slots_yaml_path = active_config().busy_time_slots_yaml_path.clone();
-    let now = Local.with_ymd_and_hms(2026, 8, 11, 12, 0, 0).unwrap();
 
     let error = load_busy_time_slots_for_interactive_application(
         &mut free_time_manager,
         busy_time_slots_yaml_path.to_str().unwrap(),
-        &now,
     )
     .expect_err("対話起動前の設定読込失敗はRawModeを有効化せずRunErrorとして返すべきです");
 
@@ -8603,6 +8651,10 @@ fn test_interactive起動前のbusy_time_slots読込失敗はraw_modeなしでru
             if error.path() == busy_time_slots_yaml_path.as_path()
                 && error.field_path() == "$"
     ));
+    assert_eq!(
+        free_time_manager.loaded_path(),
+        Some(busy_time_slots_yaml_path)
+    );
 }
 
 #[test]
