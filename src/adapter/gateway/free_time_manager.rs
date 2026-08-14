@@ -119,7 +119,7 @@ impl FreeTimeManager {
                     invalid(
                         path,
                         &format!("{slot_path}.start_time"),
-                        Some(format!("{:?}", slot["duration_minutes"])),
+                        Some(format!("{:?}", slot["start_time"])),
                         "must be a string",
                     )
                 })?;
