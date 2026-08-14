@@ -981,6 +981,16 @@ mod tests {
     }
 
     #[test]
+    fn create_next_repetition_taskは構造化errorを返せるresultを維持する() {
+        let task = TaskHandle::new("単発");
+
+        let actual: Result<Option<Uuid>, ApplicationError> =
+            create_next_repetition_task(&task, fixed_now());
+
+        assert_eq!(actual, Ok(None));
+    }
+
+    #[test]
     fn complete_task_繰り返しtaskを生成して見積もりを補正する() {
         let parent = TaskHandle::new("ルーチン");
         parent.set_repetition_interval_days_opt(Some(7));
