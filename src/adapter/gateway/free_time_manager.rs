@@ -912,6 +912,58 @@ fn test_load_busy_time_slots_from_file_日跨ぎslotはpathとfield_pathを含�
 }
 
 #[test]
+fn test_load_busy_time_slots_from_file_duration_minutesの最大値はpanicせず原子性を維持する() {
+    let valid_file = BusyTimeSlotsYamlFile::new(&valid_busy_time_slots_yaml());
+    let invalid_yaml = valid_busy_time_slots_yaml().replacen(
+        "duration_minutes: 60",
+        &format!("duration_minutes: {}", i64::MAX),
+        1,
+    );
+    let invalid_file = BusyTimeSlotsYamlFile::new(&invalid_yaml);
+    let now = Local.with_ymd_and_hms(2000, 1, 3, 0, 0, 0).unwrap();
+    let start = Local.with_ymd_and_hms(2000, 1, 3, 13, 0, 0).unwrap();
+    let end = Local.with_ymd_and_hms(2000, 1, 3, 14, 0, 0).unwrap();
+    let mut manager = FreeTimeManager::new();
+
+    manager
+        .load_busy_time_slots_from_file(valid_file.path().to_str().unwrap(), &now)
+        .expect("正常なbusy_time_slots.yamlは読み込めるべきです");
+    let before = manager.get_busy_minutes(&start, &end);
+
+    let error = manager
+        .load_busy_time_slots_from_file(invalid_file.path().to_str().unwrap(), &now)
+        .expect_err("duration_minutesの最大値は回復可能なエラーになるべきです");
+
+    assert_eq!(error.path(), invalid_file.path());
+    assert_eq!(
+        error.field_path(),
+        "days_of_week[0].busy_time_slots[0].duration_minutes"
+    );
+    assert_eq!(error.value(), Some(i64::MAX.to_string()));
+    assert_eq!(manager.get_busy_minutes(&start, &end), before);
+}
+
+#[test]
+fn test_load_busy_time_slots_from_file_23時開始の日跨ぎはdurationの構造化エラーになる() {
+    let yaml =
+        valid_busy_time_slots_yaml().replacen("start_time: '13:00'", "start_time: '23:00'", 1);
+    let file = BusyTimeSlotsYamlFile::new(&yaml);
+    let now = Local.with_ymd_and_hms(2000, 1, 3, 0, 0, 0).unwrap();
+    let mut manager = FreeTimeManager::new();
+
+    let error = manager
+        .load_busy_time_slots_from_file(file.path().to_str().unwrap(), &now)
+        .expect_err("日跨ぎslotはdurationの回復可能なエラーになるべきです");
+
+    assert_eq!(error.path(), file.path());
+    assert_eq!(
+        error.field_path(),
+        "days_of_week[0].busy_time_slots[0].duration_minutes"
+    );
+    assert_eq!(error.value(), Some("60".to_string()));
+}
+
+#[test]
 fn test_load_busy_time_slots_from_file_nameの型違いはpathとfield_pathを含むエラーになる() {
     let yaml = valid_busy_time_slots_yaml().replacen("name: lunch", "name: 123", 1);
     let file = BusyTimeSlotsYamlFile::new(&yaml);
