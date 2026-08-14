@@ -2,17 +2,17 @@ use super::interface::{TaskRepositoryError, TaskRepositoryTrait};
 use super::task_use_case::{
     list_tasks, ApplicationError, ListTasksFilter, TaskPeriodField, TaskPeriodFilter,
 };
-use crate::entity::task::{ProjectCategory, Status, Task, TaskAttr};
+use crate::entity::task::{ProjectCategory, Status, TaskAttr, TaskHandle};
 use chrono::{DateTime, Duration, Local, TimeZone};
 use uuid::Uuid;
 
 struct TestTaskRepository {
-    projects: Vec<Task>,
+    projects: Vec<TaskHandle>,
     now: DateTime<Local>,
 }
 
 impl TestTaskRepository {
-    fn new(projects: Vec<Task>, now: DateTime<Local>) -> Self {
+    fn new(projects: Vec<TaskHandle>, now: DateTime<Local>) -> Self {
         Self { projects, now }
     }
 }
@@ -22,7 +22,7 @@ impl TaskRepositoryTrait for TestTaskRepository {
         "unused"
     }
 
-    fn get_all_projects(&self) -> Vec<&Task> {
+    fn get_all_projects(&self) -> Vec<&TaskHandle> {
         self.projects.iter().collect()
     }
 
@@ -42,7 +42,7 @@ impl TaskRepositoryTrait for TestTaskRepository {
         self.now
     }
 
-    fn get_highest_priority_project(&mut self) -> Option<&Task> {
+    fn get_highest_priority_project(&mut self) -> Option<&TaskHandle> {
         self.projects.first()
     }
 
@@ -54,11 +54,11 @@ impl TaskRepositoryTrait for TestTaskRepository {
         None
     }
 
-    fn get_by_id(&self, id: Uuid) -> Option<Task> {
+    fn get_by_id(&self, id: Uuid) -> Option<TaskHandle> {
         self.projects.iter().find_map(|task| task.get_by_id(id))
     }
 
-    fn start_new_project(&mut self, root_task: Task) {
+    fn start_new_project(&mut self, root_task: TaskHandle) {
         self.projects.push(root_task);
     }
 }
@@ -78,13 +78,13 @@ fn no_filter() -> ListTasksFilter {
 #[test]
 fn list_tasks_filterなしならdoneを含む全taskをpre_orderで返す() {
     let now = fixed_now();
-    let first_root = Task::new("root 1");
+    let first_root = TaskHandle::new("root 1");
     first_root.sync_clock(now);
     let first_child = first_root.create_as_last_child(TaskAttr::new("child 1"));
     let grandchild = first_child.create_as_last_child(TaskAttr::new("grandchild"));
     let second_child = first_root.create_as_last_child(TaskAttr::new("child 2"));
     second_child.set_orig_status(Status::Done);
-    let second_root = Task::new("root 2");
+    let second_root = TaskHandle::new("root 2");
     second_root.sync_clock(now);
     let repository = TestTaskRepository::new(vec![first_root.clone(), second_root.clone()], now);
 
@@ -106,17 +106,17 @@ fn list_tasks_filterなしならdoneを含む全taskをpre_orderで返す() {
 #[test]
 fn list_tasks_statusは期限経過を反映した実効状態をorで絞る() {
     let now = fixed_now();
-    let expired_pending = Task::new("期限経過Pending");
+    let expired_pending = TaskHandle::new("期限経過Pending");
     expired_pending.set_start_time(now - Duration::hours(1));
     expired_pending.set_pending_until(now - Duration::minutes(1));
     expired_pending.set_orig_status(Status::Pending);
     expired_pending.sync_clock(now);
-    let active_pending = Task::new("Pending");
+    let active_pending = TaskHandle::new("Pending");
     active_pending.set_start_time(now - Duration::hours(1));
     active_pending.set_pending_until(now + Duration::hours(1));
     active_pending.set_orig_status(Status::Pending);
     active_pending.sync_clock(now);
-    let done = Task::new("Done");
+    let done = TaskHandle::new("Done");
     done.set_orig_status(Status::Done);
     done.sync_clock(now);
     let repository = TestTaskRepository::new(
@@ -143,12 +143,12 @@ fn list_tasks_statusは期限経過を反映した実効状態をorで絞る() {
 #[test]
 fn list_tasks_category内はorでstatusとはandで絞る() {
     let now = fixed_now();
-    let investment = Task::new("投資Todo");
+    let investment = TaskHandle::new("投資Todo");
     investment.set_project_category_opt(Some(ProjectCategory::Investment));
-    let uncategorized = Task::new("未分類Todo");
-    let earning = Task::new("獲得Todo");
+    let uncategorized = TaskHandle::new("未分類Todo");
+    let earning = TaskHandle::new("獲得Todo");
     earning.set_project_category_opt(Some(ProjectCategory::Earning));
-    let done_investment = Task::new("投資Done");
+    let done_investment = TaskHandle::new("投資Done");
     done_investment.set_project_category_opt(Some(ProjectCategory::Investment));
     done_investment.set_orig_status(Status::Done);
     let repository = TestTaskRepository::new(
@@ -175,17 +175,17 @@ fn list_tasks_category内はorでstatusとはandで絞る() {
 #[test]
 fn list_tasks_period_status_categoryの全filterをandで絞る() {
     let now = fixed_now();
-    let matched = Task::new("matched");
+    let matched = TaskHandle::new("matched");
     matched.set_create_time(now + Duration::minutes(30));
     matched.set_project_category_opt(Some(ProjectCategory::Investment));
-    let outside_period = Task::new("outside period");
+    let outside_period = TaskHandle::new("outside period");
     outside_period.set_create_time(now - Duration::minutes(1));
     outside_period.set_project_category_opt(Some(ProjectCategory::Investment));
-    let done = Task::new("done");
+    let done = TaskHandle::new("done");
     done.set_create_time(now + Duration::minutes(30));
     done.set_project_category_opt(Some(ProjectCategory::Investment));
     done.set_orig_status(Status::Done);
-    let earning = Task::new("earning");
+    let earning = TaskHandle::new("earning");
     earning.set_create_time(now + Duration::minutes(30));
     earning.set_project_category_opt(Some(ProjectCategory::Earning));
     let repository =
@@ -214,23 +214,23 @@ fn list_tasks_period_status_categoryの全filterをandで絞る() {
 #[test]
 fn list_tasks_created_deadline_completedの期間を半開区間で絞る() {
     let now = fixed_now();
-    let before = Task::new("before");
+    let before = TaskHandle::new("before");
     before.set_create_time(now - Duration::seconds(1));
     before.set_deadline_time_opt(Some(now - Duration::seconds(1)));
     before.set_end_time_opt(Some(now - Duration::seconds(1)));
-    let from = Task::new("from");
+    let from = TaskHandle::new("from");
     from.set_create_time(now);
     from.set_deadline_time_opt(Some(now));
     from.set_end_time_opt(Some(now));
-    let inside = Task::new("inside");
+    let inside = TaskHandle::new("inside");
     inside.set_create_time(now + Duration::minutes(30));
     inside.set_deadline_time_opt(Some(now + Duration::minutes(30)));
     inside.set_end_time_opt(Some(now + Duration::minutes(30)));
-    let until = Task::new("until");
+    let until = TaskHandle::new("until");
     until.set_create_time(now + Duration::hours(1));
     until.set_deadline_time_opt(Some(now + Duration::hours(1)));
     until.set_end_time_opt(Some(now + Duration::hours(1)));
-    let missing = Task::new("missing");
+    let missing = TaskHandle::new("missing");
     let repository = TestTaskRepository::new(
         vec![before, from.clone(), inside.clone(), until, missing],
         now,
@@ -267,15 +267,15 @@ fn list_tasks_periodは指定された時刻fieldだけを参照する() {
     let now = fixed_now();
     let outside = now - Duration::hours(1);
     let inside = now + Duration::minutes(30);
-    let created = Task::new("created");
+    let created = TaskHandle::new("created");
     created.set_create_time(inside);
     created.set_deadline_time_opt(Some(outside));
     created.set_end_time_opt(Some(outside));
-    let deadline = Task::new("deadline");
+    let deadline = TaskHandle::new("deadline");
     deadline.set_create_time(outside);
     deadline.set_deadline_time_opt(Some(inside));
     deadline.set_end_time_opt(Some(outside));
-    let completed = Task::new("completed");
+    let completed = TaskHandle::new("completed");
     completed.set_create_time(outside);
     completed.set_deadline_time_opt(Some(outside));
     completed.set_end_time_opt(Some(inside));
@@ -313,12 +313,12 @@ fn list_tasks_periodは指定された時刻fieldだけを参照する() {
 #[test]
 fn list_tasks_scheduled_start期間は分割taskを重複させない() {
     let now = fixed_now();
-    let low_priority = Task::new("低優先度");
+    let low_priority = TaskHandle::new("低優先度");
     low_priority.sync_clock(now);
     low_priority.set_start_time(now + Duration::hours(1));
     low_priority.set_estimated_work_seconds(10 * 3600);
     low_priority.set_priority(88);
-    let high_priority = Task::new("高優先度");
+    let high_priority = TaskHandle::new("高優先度");
     high_priority.sync_clock(now);
     high_priority.set_start_time(now + Duration::hours(6));
     high_priority.set_estimated_work_seconds(3600);
@@ -385,7 +385,7 @@ fn list_tasks_scheduled_start期間は分割taskを重複させない() {
 #[test]
 fn list_tasks_fromがuntil以上ならinvalid_inputを返す() {
     let now = fixed_now();
-    let repository = TestTaskRepository::new(vec![Task::new("task")], now);
+    let repository = TestTaskRepository::new(vec![TaskHandle::new("task")], now);
 
     for from in [now, now + Duration::seconds(1)] {
         let actual = list_tasks(

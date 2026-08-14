@@ -344,19 +344,19 @@ mod tests {
     use crate::application::interface::{
         FreeTimeManagerTrait, TaskRepositoryError, TaskRepositoryTrait,
     };
-    use crate::entity::task::{Status, Task};
+    use crate::entity::task::{Status, TaskHandle};
     use chrono::{DateTime, Duration, Local, NaiveDate, TimeZone};
     use std::cell::Cell;
     use uuid::Uuid;
 
     struct TestTaskRepository {
-        projects: Vec<Task>,
+        projects: Vec<TaskHandle>,
         now: DateTime<Local>,
         save_count: Cell<usize>,
     }
 
     impl TestTaskRepository {
-        fn new(projects: Vec<Task>, now: DateTime<Local>) -> Self {
+        fn new(projects: Vec<TaskHandle>, now: DateTime<Local>) -> Self {
             Self {
                 projects,
                 now,
@@ -370,7 +370,7 @@ mod tests {
             "unused"
         }
 
-        fn get_all_projects(&self) -> Vec<&Task> {
+        fn get_all_projects(&self) -> Vec<&TaskHandle> {
             self.projects.iter().collect()
         }
 
@@ -394,7 +394,7 @@ mod tests {
             self.now
         }
 
-        fn get_highest_priority_project(&mut self) -> Option<&Task> {
+        fn get_highest_priority_project(&mut self) -> Option<&TaskHandle> {
             self.projects.first()
         }
 
@@ -406,11 +406,11 @@ mod tests {
             None
         }
 
-        fn get_by_id(&self, id: Uuid) -> Option<Task> {
+        fn get_by_id(&self, id: Uuid) -> Option<TaskHandle> {
             self.projects.iter().find_map(|task| task.get_by_id(id))
         }
 
-        fn start_new_project(&mut self, root_task: Task) {
+        fn start_new_project(&mut self, root_task: TaskHandle) {
             self.projects.push(root_task);
         }
     }
@@ -488,8 +488,8 @@ mod tests {
         pending_until: DateTime<Local>,
         work_minutes: i64,
         priority: i64,
-    ) -> Task {
-        let task = Task::new(name);
+    ) -> TaskHandle {
+        let task = TaskHandle::new(name);
         task.sync_clock(now);
         task.set_start_time(now);
         task.set_estimated_work_seconds(work_minutes * 60);
@@ -629,7 +629,7 @@ mod tests {
     #[test]
     fn pack_tasks_pending_untilを実際の配置開始時刻へ設定する() {
         let now = fixed_now();
-        let blocker = Task::new("先行");
+        let blocker = TaskHandle::new("先行");
         blocker.sync_clock(now);
         blocker.set_start_time(now);
         blocker.set_estimated_work_seconds(30 * 60);

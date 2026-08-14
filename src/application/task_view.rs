@@ -1,4 +1,4 @@
-use crate::entity::task::{ProjectCategory, RepetitionAnchor, Status, Task};
+use crate::entity::task::{ProjectCategory, RepetitionAnchor, Status, TaskHandle};
 use chrono::{DateTime, Local};
 use uuid::Uuid;
 
@@ -27,13 +27,13 @@ pub struct TaskView {
     pub project_category: Option<ProjectCategory>,
 }
 
-impl From<&Task> for TaskView {
-    fn from(task: &Task) -> Self {
+impl From<&TaskHandle> for TaskView {
+    fn from(task: &TaskHandle) -> Self {
         Self {
             id: task.get_id(),
             root_id: task.root().get_id(),
             parent_id: task.parent().map(|parent| parent.get_id()),
-            child_ids: task.get_children().iter().map(Task::get_id).collect(),
+            child_ids: task.get_children().iter().map(TaskHandle::get_id).collect(),
             name: task.get_name(),
             status: task.get_status(),
             original_status: task.get_orig_status(),
