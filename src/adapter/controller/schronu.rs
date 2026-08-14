@@ -8489,6 +8489,48 @@ fn test_execute_non_interactive_command_gatewayの変換errorをstderrへ表示�
 }
 
 #[test]
+fn test_execute_non_interactive_command_busy_time_slots読込失敗はstderrへ表示しrepository_transactionとcommandを実行しない(
+) {
+    let now = Local.with_ymd_and_hms(2026, 8, 11, 12, 0, 0).unwrap();
+    let task = Task::new("変更しないtask");
+    let task_id = task.get_id();
+    let original_estimated_work_seconds = task.get_estimated_work_seconds();
+    let mut task_repository = TestTaskRepository::new(task, now);
+    let mut free_time_manager = FreeTimeManager::new();
+    let busy_time_slots_yaml_path = active_config().busy_time_slots_yaml_path.clone();
+
+    let error =
+        execute_non_interactive_command(&mut task_repository, &mut free_time_manager, "予 45")
+            .expect_err("busy time slotsの読込失敗はRunErrorとして返るべきです");
+
+    assert!(matches!(
+        error,
+        RunError::BusyTimeSlots(ref error)
+            if error.to_string().contains(busy_time_slots_yaml_path.to_str().unwrap())
+                && error.to_string().contains("$")
+    ));
+    assert_eq!(task_repository.load_attempt_count.get(), 0);
+    assert_eq!(task_repository.reload_if_changed_attempt_count.get(), 0);
+    assert_eq!(task_repository.save_attempt_count.get(), 0);
+    assert_eq!(
+        task_repository
+            .get_by_id(task_id)
+            .unwrap()
+            .get_estimated_work_seconds(),
+        original_estimated_work_seconds
+    );
+
+    let mut stderr = Vec::new();
+    let succeeded = report_run_result(&mut stderr, Err(error));
+
+    assert!(!succeeded);
+    let output = String::from_utf8(stderr).unwrap();
+    assert!(output.contains("[Error]"));
+    assert!(output.contains(busy_time_slots_yaml_path.to_str().unwrap()));
+    assert!(output.contains("$"));
+}
+
+#[test]
 fn test_cli_repository初期load後はmcpがlockを取得できる() {
     let storage_dir = TestStorageDir::new();
     std::fs::create_dir_all(&storage_dir.path).unwrap();
