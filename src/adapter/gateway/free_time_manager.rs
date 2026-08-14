@@ -7,7 +7,7 @@ use std::collections::HashMap;
 use std::fs::File;
 use std::io::prelude::*;
 use std::path::Path;
-use yaml_rust::YamlLoader;
+use yaml_rust::{Yaml, YamlLoader};
 
 use chrono::TimeZone;
 #[cfg(test)]
@@ -66,16 +66,31 @@ impl FreeTimeManager {
         let document = docs
             .first()
             .ok_or_else(|| invalid(path, "$", None, "empty YAML document"))?;
-        let days = document["days_of_week"]
-            .as_vec()
-            .ok_or_else(|| invalid(path, "days_of_week", None, "must be an array"))?;
+        let days_yaml = &document["days_of_week"];
+        let days = days_yaml.as_vec().ok_or_else(|| {
+            invalid(
+                path,
+                "days_of_week",
+                yaml_error_value(days_yaml),
+                "must be an array",
+            )
+        })?;
         for (day_index, day) in days.iter().enumerate() {
             let day_path = format!("days_of_week[{day_index}]");
-            let day_name = day["day_of_week"].as_str().ok_or_else(|| {
+            if day.as_hash().is_none() {
+                return Err(invalid(
+                    path,
+                    &day_path,
+                    yaml_error_value(day),
+                    "must be a mapping",
+                ));
+            }
+            let day_name_yaml = &day["day_of_week"];
+            let day_name = day_name_yaml.as_str().ok_or_else(|| {
                 invalid(
                     path,
                     &format!("{day_path}.day_of_week"),
-                    None,
+                    yaml_error_value(day_name_yaml),
                     "must be a string",
                 )
             })?;
@@ -104,22 +119,32 @@ impl FreeTimeManager {
                     "duplicate weekday",
                 ));
             }
-            let slots = day["busy_time_slots"].as_vec().ok_or_else(|| {
+            let slots_yaml = &day["busy_time_slots"];
+            let slots = slots_yaml.as_vec().ok_or_else(|| {
                 invalid(
                     path,
                     &format!("{day_path}.busy_time_slots"),
-                    None,
+                    yaml_error_value(slots_yaml),
                     "must be an array",
                 )
             })?;
             let mut busy_time_slots = vec![];
             for (slot_index, slot) in slots.iter().enumerate() {
                 let slot_path = format!("{day_path}.busy_time_slots[{slot_index}]");
-                let start = slot["start_time"].as_str().ok_or_else(|| {
+                if slot.as_hash().is_none() {
+                    return Err(invalid(
+                        path,
+                        &slot_path,
+                        yaml_error_value(slot),
+                        "must be a mapping",
+                    ));
+                }
+                let start_yaml = &slot["start_time"];
+                let start = start_yaml.as_str().ok_or_else(|| {
                     invalid(
                         path,
                         &format!("{slot_path}.start_time"),
-                        Some(format!("{:?}", slot["start_time"])),
+                        yaml_error_value(start_yaml),
                         "must be a string",
                     )
                 })?;
@@ -147,16 +172,23 @@ impl FreeTimeManager {
                         e,
                     )
                 })?;
-                let duration = slot["duration_minutes"].as_i64().ok_or_else(|| {
+                let duration_yaml = &slot["duration_minutes"];
+                let duration = duration_yaml.as_i64().ok_or_else(|| {
                     invalid(
                         path,
                         &format!("{slot_path}.duration_minutes"),
-                        Some(format!("{:?}", slot["duration_minutes"])),
+                        yaml_error_value(duration_yaml),
                         "must be an integer",
                     )
                 })?;
-                let name = slot["name"].as_str().ok_or_else(|| {
-                    invalid(path, &format!("{slot_path}.name"), None, "must be a string")
+                let name_yaml = &slot["name"];
+                let name = name_yaml.as_str().ok_or_else(|| {
+                    invalid(
+                        path,
+                        &format!("{slot_path}.name"),
+                        yaml_error_value(name_yaml),
+                        "must be a string",
+                    )
                 })?;
                 if hour >= 24 || minute >= 60 {
                     return Err(invalid(
@@ -226,6 +258,10 @@ fn invalid(
         value,
         std::io::Error::new(std::io::ErrorKind::InvalidData, message),
     )
+}
+
+fn yaml_error_value(value: &Yaml) -> Option<String> {
+    (!matches!(value, Yaml::BadValue)).then(|| format!("{value:?}"))
 }
 
 fn mark_busy_time_slot(free_time_slot: &mut [i64], busy_time_slot: &BusyTimeSlot) {
