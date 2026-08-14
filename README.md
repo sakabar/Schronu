@@ -66,6 +66,8 @@ cp config/schronu.sample.yaml /absolute/path/to/schronu.yaml
 SCHRONU_CONFIG_PATH=/absolute/path/to/schronu.yaml cargo run --bin schronu
 ```
 
+コピー後は`busy_time_slots_yaml_path`を、設定ファイルの親directoryを基準に実在するbusy time slots YAMLへのpathへ変更してください。
+
 | キー | 既定値 | 効果 |
 | --- | --- | --- |
 | `obsidian_vault_name` | `Obsidian-Moica` | `黒`(または`obs`)コマンドのObsidian検索先vault名です。空白や記号を含む名前も利用できます。 |
