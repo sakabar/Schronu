@@ -35,12 +35,25 @@ Schronuは、ローカルのMCP clientから9個のtask toolを利用できるst
 
 ```shell
 cargo build --release --bin schronu-mcp
-SCHRONU_STORAGE_DIR=/absolute/path/to/tasks ./target/release/schronu-mcp
+SCHRONU_STORAGE_DIR=/absolute/path/to/tasks SCHRONU_CONFIG_PATH=/absolute/path/to/schronu.yaml ./target/release/schronu-mcp
 ```
 
 `schronu-mcp`はstdinからnewline区切りのJSON-RPC messageを読み、stdoutにはMCP protocol responseだけを出力します。起動時は保存先pathの検証だけを行い、lock取得やrepository loadは行いません。通常はterminalから直接操作せず、MCP clientからprocessを起動してください。
 
 保存先は`SCHRONU_STORAGE_DIR`で指定します。未指定時は起動時のworking directoryから見た`../Schronu-private/tasks/`です。相対pathの解釈違いを避けるため、MCP clientでは絶対pathを推奨します。同じ環境変数はCLIの`schronu`にも適用されます。
+
+`SCHRONU_CONFIG_PATH`には任意の設定YAMLを指定できます。未指定時は既存の既定値で動作し、指定した設定が読めない、または値が不正な場合は起動を停止します。
+
+```yaml
+obsidian_vault_name: Obsidian-Moica
+busy_time_slots_yaml_path: busy_time_slots.yaml
+end_of_day_duration: "00:30"
+calendar_blank_line_weekday: Mon
+extrude_skip_weekdays: [Sat, Sun]
+default_deadline_time: "19:00"
+```
+
+すべてのキーは任意です。既定値は順に`Obsidian-Moica`、`../Schronu-private/busy_time_slots.yaml`、`00:30`、`Mon`、空配列、`23:59:59`です。曜日は`Mon`から`Sun`、終端時刻は`HH:MM`、締切時刻は`HH:MM`または`HH:MM:SS`で指定します。`busy_time_slots_yaml_path`の相対pathは設定YAMLの親directoryから解釈します。
 
 ### MCP client設定例
 
@@ -52,7 +65,8 @@ clientごとの設定形式に合わせて、commandと環境変数を次のよ�
     "schronu": {
       "command": "/absolute/path/to/Schronu/target/release/schronu-mcp",
       "env": {
-        "SCHRONU_STORAGE_DIR": "/absolute/path/to/Schronu-private/tasks"
+        "SCHRONU_STORAGE_DIR": "/absolute/path/to/Schronu-private/tasks",
+        "SCHRONU_CONFIG_PATH": "/absolute/path/to/schronu.yaml"
       }
     }
   }

@@ -1,5 +1,6 @@
 use super::daily_capacity::{
-    calculate_free_time_minutes_for_subjective_date, subjective_date, subjective_date_start,
+    calculate_free_time_minutes_for_subjective_date_with_end_of_day_duration, subjective_date,
+    subjective_date_start, DEFAULT_END_OF_DAY_DURATION,
 };
 use super::interface::{FreeTimeManagerTrait, TaskRepositoryTrait};
 use super::schedule_use_case::{
@@ -75,6 +76,18 @@ pub fn flatten_tasks(
     repository: &dyn TaskRepositoryTrait,
     free_time_manager: &mut dyn FreeTimeManagerTrait,
 ) -> FlattenResult {
+    flatten_tasks_with_end_of_day_duration(
+        repository,
+        free_time_manager,
+        DEFAULT_END_OF_DAY_DURATION,
+    )
+}
+
+pub fn flatten_tasks_with_end_of_day_duration(
+    repository: &dyn TaskRepositoryTrait,
+    free_time_manager: &mut dyn FreeTimeManagerTrait,
+    end_of_day_duration: Duration,
+) -> FlattenResult {
     let today = subjective_date(repository.get_last_synced_time());
     let boundary_date = today + Duration::days(FLATTEN_TARGET_DAYS);
     let overflow_date = today + Duration::days(FLATTEN_OVERFLOW_DAY);
@@ -86,10 +99,11 @@ pub fn flatten_tasks(
         .map(|date| {
             (
                 *date,
-                calculate_free_time_minutes_for_subjective_date(
+                calculate_free_time_minutes_for_subjective_date_with_end_of_day_duration(
                     date,
                     repository.get_last_synced_time(),
                     free_time_manager,
+                    end_of_day_duration,
                 ) * 60,
             )
         })

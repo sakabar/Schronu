@@ -55,7 +55,10 @@ mod tests {
         );
         assert_eq!(actual.end_of_day_duration, Duration::minutes(75));
         assert_eq!(actual.calendar_blank_line_weekday, Weekday::Fri);
-        assert_eq!(actual.extrude_skip_weekdays, vec![Weekday::Sat, Weekday::Sun]);
+        assert_eq!(
+            actual.extrude_skip_weekdays,
+            vec![Weekday::Sat, Weekday::Sun]
+        );
         assert_eq!(
             actual.default_deadline_time,
             NaiveTime::from_hms_opt(19, 0, 0).unwrap()
@@ -99,5 +102,173 @@ mod tests {
     #[test]
     fn config型は公開される() {
         let _: Option<SchronuConfig> = None;
+    }
+}
+use chrono::{Duration, NaiveTime, Weekday};
+use std::collections::HashSet;
+use std::env;
+use std::ffi::OsString;
+use std::fs;
+use std::path::{Path, PathBuf};
+use yaml_rust::{Yaml, YamlLoader};
+
+const DEFAULT_OBSIDIAN_VAULT_NAME: &str = "Obsidian-Moica";
+const DEFAULT_BUSY_TIME_SLOTS_YAML_PATH: &str = "../Schronu-private/busy_time_slots.yaml";
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct SchronuConfig {
+    pub obsidian_vault_name: String,
+    pub busy_time_slots_yaml_path: PathBuf,
+    pub end_of_day_duration: Duration,
+    pub calendar_blank_line_weekday: Weekday,
+    pub extrude_skip_weekdays: Vec<Weekday>,
+    pub default_deadline_time: NaiveTime,
+}
+
+impl Default for SchronuConfig {
+    fn default() -> Self {
+        Self {
+            obsidian_vault_name: DEFAULT_OBSIDIAN_VAULT_NAME.to_string(),
+            busy_time_slots_yaml_path: PathBuf::from(DEFAULT_BUSY_TIME_SLOTS_YAML_PATH),
+            end_of_day_duration: Duration::minutes(30),
+            calendar_blank_line_weekday: Weekday::Mon,
+            extrude_skip_weekdays: vec![],
+            default_deadline_time: NaiveTime::from_hms_opt(23, 59, 59).unwrap(),
+        }
+    }
+}
+
+pub fn load_schronu_config(configured_path: Option<OsString>) -> Result<SchronuConfig, String> {
+    let Some(path) = configured_path else {
+        return Ok(SchronuConfig::default());
+    };
+    let path = PathBuf::from(path);
+    let path_text = path
+        .to_str()
+        .ok_or_else(|| "config path must be valid UTF-8".to_string())?;
+    let contents = fs::read_to_string(&path)
+        .map_err(|error| format!("failed to read config {path_text}: {error}"))?;
+    parse_schronu_config(&contents, path.parent().unwrap_or_else(|| Path::new(".")))
+}
+
+fn parse_schronu_config(contents: &str, config_directory: &Path) -> Result<SchronuConfig, String> {
+    let documents = YamlLoader::load_from_str(contents)
+        .map_err(|error| format!("failed to parse config YAML: {error}"))?;
+    if documents.len() != 1 {
+        return Err("config YAML must contain exactly one document".to_string());
+    }
+    let yaml = &documents[0];
+    let mapping = yaml
+        .as_hash()
+        .ok_or_else(|| "config YAML root must be a mapping".to_string())?;
+    let known_keys = [
+        "obsidian_vault_name",
+        "busy_time_slots_yaml_path",
+        "end_of_day_duration",
+        "calendar_blank_line_weekday",
+        "extrude_skip_weekdays",
+        "default_deadline_time",
+    ];
+    for key in mapping.keys() {
+        let key = key
+            .as_str()
+            .ok_or_else(|| "config keys must be strings".to_string())?;
+        if !known_keys.contains(&key) {
+            return Err(format!("unknown config key: {key}"));
+        }
+    }
+
+    let mut config = SchronuConfig::default();
+    if let Some(value) = optional_string(yaml, "obsidian_vault_name")? {
+        if value.is_empty() {
+            return Err("obsidian_vault_name must not be empty".to_string());
+        }
+        config.obsidian_vault_name = value.to_string();
+    }
+    if let Some(value) = optional_string(yaml, "busy_time_slots_yaml_path")? {
+        if value.is_empty() {
+            return Err("busy_time_slots_yaml_path must not be empty".to_string());
+        }
+        let path = PathBuf::from(value);
+        config.busy_time_slots_yaml_path = if path.is_absolute() {
+            path
+        } else {
+            config_directory.join(path)
+        };
+    }
+    if let Some(value) = optional_string(yaml, "end_of_day_duration")? {
+        config.end_of_day_duration = parse_end_of_day_duration(value)?;
+    }
+    if let Some(value) = optional_string(yaml, "calendar_blank_line_weekday")? {
+        config.calendar_blank_line_weekday = parse_weekday(value)?;
+    }
+    if let Some(value) = yaml["extrude_skip_weekdays"].as_vec() {
+        let mut weekdays = Vec::with_capacity(value.len());
+        let mut seen = HashSet::new();
+        for weekday in value {
+            let weekday = weekday
+                .as_str()
+                .ok_or_else(|| "extrude_skip_weekdays must contain weekday strings".to_string())?;
+            let weekday = parse_weekday(weekday)?;
+            if !seen.insert(weekday) {
+                return Err(format!(
+                    "extrude_skip_weekdays contains duplicate weekday: {weekday:?}"
+                ));
+            }
+            weekdays.push(weekday);
+        }
+        config.extrude_skip_weekdays = weekdays;
+    } else if !matches!(yaml["extrude_skip_weekdays"], Yaml::BadValue) {
+        return Err("extrude_skip_weekdays must be an array".to_string());
+    }
+    if let Some(value) = optional_string(yaml, "default_deadline_time")? {
+        config.default_deadline_time = parse_deadline_time(value)?;
+    }
+    Ok(config)
+}
+
+fn optional_string<'a>(yaml: &'a Yaml, key: &str) -> Result<Option<&'a str>, String> {
+    match &yaml[key] {
+        Yaml::BadValue => Ok(None),
+        value => value
+            .as_str()
+            .map(Some)
+            .ok_or_else(|| format!("{key} must be a string")),
+    }
+}
+
+fn parse_end_of_day_duration(value: &str) -> Result<Duration, String> {
+    let parts = value.split(':').collect::<Vec<_>>();
+    if parts.len() != 2 {
+        return Err("end_of_day_duration must use HH:MM".to_string());
+    }
+    let hour = parts[0]
+        .parse::<i64>()
+        .map_err(|_| "end_of_day_duration hour must be numeric".to_string())?;
+    let minute = parts[1]
+        .parse::<i64>()
+        .map_err(|_| "end_of_day_duration minute must be numeric".to_string())?;
+    if !(0..24).contains(&hour) || !(0..60).contains(&minute) {
+        return Err("end_of_day_duration must be between 00:00 and 23:59".to_string());
+    }
+    Ok(Duration::minutes(hour * 60 + minute))
+}
+
+fn parse_deadline_time(value: &str) -> Result<NaiveTime, String> {
+    NaiveTime::parse_from_str(value, "%H:%M:%S")
+        .or_else(|_| NaiveTime::parse_from_str(value, "%H:%M"))
+        .map_err(|_| "default_deadline_time must use HH:MM or HH:MM:SS".to_string())
+}
+
+fn parse_weekday(value: &str) -> Result<Weekday, String> {
+    match value {
+        "Mon" => Ok(Weekday::Mon),
+        "Tue" => Ok(Weekday::Tue),
+        "Wed" => Ok(Weekday::Wed),
+        "Thu" => Ok(Weekday::Thu),
+        "Fri" => Ok(Weekday::Fri),
+        "Sat" => Ok(Weekday::Sat),
+        "Sun" => Ok(Weekday::Sun),
+        _ => Err(format!("invalid weekday: {value}")),
     }
 }

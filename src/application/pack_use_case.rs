@@ -1,6 +1,7 @@
 use super::daily_capacity::{
-    calculate_daily_leeway_seconds, calculate_free_time_minutes_for_subjective_date,
-    subjective_date, subjective_date_start,
+    calculate_daily_leeway_seconds,
+    calculate_free_time_minutes_for_subjective_date_with_end_of_day_duration, subjective_date,
+    subjective_date_start, DEFAULT_END_OF_DAY_DURATION,
 };
 use super::interface::{FreeTimeManagerTrait, TaskRepositoryTrait};
 use super::schedule_use_case::{
@@ -51,6 +52,14 @@ pub fn pack_tasks(
     repository: &dyn TaskRepositoryTrait,
     free_time_manager: &mut dyn FreeTimeManagerTrait,
 ) -> PackResult {
+    pack_tasks_with_end_of_day_duration(repository, free_time_manager, DEFAULT_END_OF_DAY_DURATION)
+}
+
+pub fn pack_tasks_with_end_of_day_duration(
+    repository: &dyn TaskRepositoryTrait,
+    free_time_manager: &mut dyn FreeTimeManagerTrait,
+    end_of_day_duration: Duration,
+) -> PackResult {
     let now = repository.get_last_synced_time();
     let first_date = subjective_date(now);
     let target_dates = (0..PACK_TARGET_DAYS)
@@ -75,7 +84,12 @@ pub fn pack_tasks(
         let Some(current_planned_start) = current_planned_start_opt else {
             continue;
         };
-        let daily_leeway = calculate_daily_leeway(repository, free_time_manager, &target_dates);
+        let daily_leeway = calculate_daily_leeway(
+            repository,
+            free_time_manager,
+            &target_dates,
+            end_of_day_duration,
+        );
 
         for target_date in &target_dates {
             if subjective_date(current_planned_start) <= *target_date
@@ -241,6 +255,7 @@ fn calculate_daily_leeway(
     repository: &dyn TaskRepositoryTrait,
     free_time_manager: &mut dyn FreeTimeManagerTrait,
     target_dates: &[NaiveDate],
+    end_of_day_duration: Duration,
 ) -> HashMap<NaiveDate, i64> {
     let mut total_work_seconds = HashMap::<NaiveDate, i64>::new();
     let mut repetitive_work_seconds = HashMap::<NaiveDate, i64>::new();
@@ -262,11 +277,13 @@ fn calculate_daily_leeway(
     target_dates
         .iter()
         .map(|date| {
-            let free_time_minutes = calculate_free_time_minutes_for_subjective_date(
-                date,
-                repository.get_last_synced_time(),
-                free_time_manager,
-            );
+            let free_time_minutes =
+                calculate_free_time_minutes_for_subjective_date_with_end_of_day_duration(
+                    date,
+                    repository.get_last_synced_time(),
+                    free_time_manager,
+                    end_of_day_duration,
+                );
             let repetitive = repetitive_work_seconds.get(date).copied().unwrap_or(0);
             let total = total_work_seconds.get(date).copied().unwrap_or(0);
             (

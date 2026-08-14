@@ -3,7 +3,7 @@ use crate::entity::datetime::get_next_morning_datetime;
 use chrono::{DateTime, Duration, Local, NaiveDate, TimeZone, Timelike};
 
 pub const RHO_GOAL: f64 = 0.7;
-pub const END_OF_DAY_DURATION: Duration = Duration::minutes(30);
+pub const DEFAULT_END_OF_DAY_DURATION: Duration = Duration::minutes(30);
 
 pub fn calculate_daily_leeway_seconds(
     free_time_minutes: i64,
@@ -38,13 +38,27 @@ pub fn calculate_free_time_minutes_for_subjective_date(
     last_synced_time: DateTime<Local>,
     free_time_manager: &mut dyn FreeTimeManagerTrait,
 ) -> i64 {
+    calculate_free_time_minutes_for_subjective_date_with_end_of_day_duration(
+        date,
+        last_synced_time,
+        free_time_manager,
+        DEFAULT_END_OF_DAY_DURATION,
+    )
+}
+
+pub fn calculate_free_time_minutes_for_subjective_date_with_end_of_day_duration(
+    date: &NaiveDate,
+    last_synced_time: DateTime<Local>,
+    free_time_manager: &mut dyn FreeTimeManagerTrait,
+    end_of_day_duration: Duration,
+) -> i64 {
     let local_datetime_base = subjective_date_start(*date);
     let eod = get_next_morning_datetime(last_synced_time)
         .with_hour(0)
         .expect("invalid hour")
         .with_minute(0)
         .expect("invalid minute")
-        + END_OF_DAY_DURATION;
+        + end_of_day_duration;
 
     if local_datetime_base < last_synced_time
         && last_synced_time < get_next_morning_datetime(local_datetime_base)
@@ -59,7 +73,11 @@ pub fn calculate_free_time_minutes_for_subjective_date(
             free_time_manager.get_free_minutes(&last_synced_time, &eod)
         }
     } else {
-        calculate_full_day_free_time_minutes_for_subjective_date(date, free_time_manager)
+        calculate_full_day_free_time_minutes_for_subjective_date_with_end_of_day_duration(
+            date,
+            free_time_manager,
+            end_of_day_duration,
+        )
     }
 }
 
@@ -67,12 +85,24 @@ pub fn calculate_full_day_free_time_minutes_for_subjective_date(
     date: &NaiveDate,
     free_time_manager: &mut dyn FreeTimeManagerTrait,
 ) -> i64 {
+    calculate_full_day_free_time_minutes_for_subjective_date_with_end_of_day_duration(
+        date,
+        free_time_manager,
+        DEFAULT_END_OF_DAY_DURATION,
+    )
+}
+
+pub fn calculate_full_day_free_time_minutes_for_subjective_date_with_end_of_day_duration(
+    date: &NaiveDate,
+    free_time_manager: &mut dyn FreeTimeManagerTrait,
+    end_of_day_duration: Duration,
+) -> i64 {
     let start = subjective_date_start(*date);
     let local_tz = Local::now().timezone();
     let end = local_tz
         .from_local_datetime(&date.and_hms_opt(23, 59, 59).unwrap())
         .unwrap()
-        + END_OF_DAY_DURATION;
+        + end_of_day_duration;
     free_time_manager.get_free_minutes(&start, &end)
 }
 
