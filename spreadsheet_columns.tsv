@@ -1,0 +1,20 @@
+# column	index	name	source	sync	time_format	purpose
+A	1	rank	CLI	false		表示順の通し番号
+B	2	task_id	CLI	false		タスクの一意IDとシート間の同期キー
+C	3	icon	CLI	false		タスク状態を示すアイコン
+D	4	remaining_time	CLI	false		残作業時間の表示
+E	5	scheduled_time	CLI	false		予定日時の表示
+F	6	priority	CLI	false		優先度
+G	7	estimated_minutes	CLI	false		見積もり分数
+H	8	project_number	CLI	false		project番号
+I	9	category	CLI	false		category
+J	10	task_name	CLI	false		タスク名
+K	11	is_manual_start	formula	false		L列が手入力かを示す
+L	12	start_time	formula	true	hh:mm	開始時刻
+M	13	start_time_copy	formula	false	hh:mm	開始時刻の補助列
+N	14	finish_flag	manual	true		完了済みを示すFフラグ
+O	15	finish_time_copy	formula	false	hh:mm	完了時刻の補助列
+P	16	finish_time	formula	true	hh:mm	完了時刻
+Q	17	should_extract	formula	false		コマンド生成の抽出対象
+R	18	defer_command	manual	true		延期または表示制御の指定
+S	19	actual_work_time	manual	false		実作業時間

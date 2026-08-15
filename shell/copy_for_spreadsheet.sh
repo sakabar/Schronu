@@ -3,8 +3,30 @@
 set -ue
 
 cell_row_num=3
-cat - | grep '^0' | grep -v -- '^----' | tr ' ' '\t' | tac | awk 'NF >= 10' | while read line_many_col; do
-    line=$(echo ${line_many_col} | cut -f1-10)
+cat - | awk '
+/^0/ && !/^----/ {
+    line = $0
+    for (i = 1; i <= 9; i++) {
+        sub(/^[[:space:]]+/, "", line)
+        if (!match(line, /^[^[:space:]]+/)) {
+            next
+        }
+        column[i] = substr(line, RSTART, RLENGTH)
+        line = substr(line, RSTART + RLENGTH)
+    }
+
+    sub(/^[[:space:]]+/, "", line)
+    if (line == "") {
+        next
+    }
+    gsub(/[[:space:]]+/, " ", line)
+
+    for (i = 1; i <= 9; i++) {
+        printf "%s\t", column[i]
+    }
+    print line
+}
+' | tac | while IFS=$'\t' read -r rank task_id icon remaining_time scheduled_time priority estimated_minutes project_number category task_name; do
     prev_cell_row_num=$[$cell_row_num - 1]
 
     hour="LEFT(MID(E${cell_row_num}, 10, 5), 2)"
@@ -21,10 +43,14 @@ cat - | grep '^0' | grep -v -- '^----' | tr ' ' '\t' | tac | awk 'NF >= 10' | wh
     p_cell="=NOT(ISFORMULA(P${cell_row_num}))"
     q_cell=''
 
-    echo ${line}"\t${manu_cell}\t${k_cell}\t${l_cell}\t${m_cell}\t${n_cell}\t${o_cell}\t${p_cell}\t${q_cell}"
+    printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+        "${rank}" "${task_id}" "${icon}" "${remaining_time}" "${scheduled_time}" \
+        "${priority}" "${estimated_minutes}" "${project_number}" "${category}" "${task_name}" \
+        "${manu_cell}" "${k_cell}" "${l_cell}" "${m_cell}" "${n_cell}" "${o_cell}" \
+        "${p_cell}" "${q_cell}"
 
     cell_row_num=$[$cell_row_num + 1]
 done
 
-tabs_line=$(seq  1 10 | awk '{print ""}'| tr '\n' '\t')
-yes ${tabs_line} | head -n 50
+tabs_line=$(seq 1 10 | awk '{print ""}' | tr '\n' '\t')
+yes "${tabs_line}" | head -n 50

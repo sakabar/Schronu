@@ -21,8 +21,11 @@
 | P | 同期対象 |
 | Q | 抽出対象。`shell/copy_for_spreadsheet.sh` ではP列が手入力のときTRUEになる式を入れる |
 | R | 同期対象。初期値は空白、`W`と`d`はコマンド生成指定、`t`はSpreadsheet上の表示制御用 |
+| S | 実作業時間。`generate_command_from_spreadsheet.sh`が`働`コマンドの分数へ変換する |
 
 データ行は3行目から始まる前提です。
+
+完全なA-S列の定義はリポジトリルートの`spreadsheet_columns.tsv`を正本とします。A-J列はSchronu出力、K-S列はSpreadsheetの補助列です。
 
 ## 起動時の動作
 

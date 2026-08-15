@@ -416,6 +416,8 @@ R列には、タスクの処理時期を変更するときに実行するコマ�
 
 新規タスクを仮登録する場合は、B列を空欄のままJ列にタスク名を入力してください。Q列の抽出フラグに関係なく、`新 <タスク名>`、仮の説明、見積もり3分のコマンドが生成されます。
 
+SpreadsheetのA-S列は[spreadsheet_columns.tsv](spreadsheet_columns.tsv)を正本とします。A-J列はSchronuの`全`出力、K-S列はSpreadsheet上の補助列です。B列は`task_id`、J列は`task_name`、L/N/P/R列はシート間の同期対象、P列は完了時刻、Q列は抽出対象、S列は実作業時間です。
+
 (例)
 
 ```
