@@ -1,3 +1,5 @@
+#![allow(unused_must_use)]
+
 use chrono::{
     DateTime, Datelike, Duration, Local, LocalResult, NaiveDate, TimeZone, Timelike, Weekday,
 };
@@ -130,8 +132,63 @@ trait SchronuWriter: Write {
     }
 }
 
+struct ErrorCapturingWriter<'a> {
+    inner: &'a mut dyn SchronuWriter,
+    first_error: Option<std::io::Error>,
+}
+
+impl<'a> ErrorCapturingWriter<'a> {
+    fn new(inner: &'a mut dyn SchronuWriter) -> Self {
+        Self {
+            inner,
+            first_error: None,
+        }
+    }
+
+    fn take_error(&mut self) -> Option<std::io::Error> {
+        self.first_error.take()
+    }
+
+    fn capture(&mut self, error: std::io::Error) {
+        if self.first_error.is_none() {
+            self.first_error = Some(error);
+        }
+    }
+}
+
+impl Write for ErrorCapturingWriter<'_> {
+    fn write(&mut self, buffer: &[u8]) -> std::io::Result<usize> {
+        match self.inner.write(buffer) {
+            Ok(written) => Ok(written),
+            Err(error) => {
+                self.capture(error);
+                Ok(buffer.len())
+            }
+        }
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        if let Err(error) = self.inner.flush() {
+            self.capture(error);
+        }
+        Ok(())
+    }
+}
+
+impl SchronuWriter for ErrorCapturingWriter<'_> {
+    fn writeln_newline(&mut self, message: &str) -> Result<(), std::io::Error> {
+        let _ = writeln!(self, "{message}");
+        Ok(())
+    }
+
+    fn supports_ansi_color(&self) -> bool {
+        self.inner.supports_ansi_color()
+    }
+}
+
 #[derive(Debug)]
 enum RunError {
+    Command(CommandError),
     BusyTimeSlots(BusyTimeSlotLoadError),
     Repository(TaskRepositoryError),
     CliRepositoryTransaction(CliRepositoryTransactionError),
@@ -153,6 +210,161 @@ enum RunError {
 }
 
 #[derive(Debug)]
+struct CommandParseError {
+    command: &'static str,
+    field: &'static str,
+    reason: &'static str,
+    usage: &'static str,
+}
+
+impl std::fmt::Display for CommandParseError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            formatter,
+            "入力エラー: {}: {} (コマンド: {}, 使い方: {})",
+            self.field, self.reason, self.command, self.usage
+        )
+    }
+}
+
+impl std::error::Error for CommandParseError {}
+
+#[derive(Debug)]
+enum CommandError {
+    Parse(CommandParseError),
+    Application(ApplicationError),
+    Output(std::io::Error),
+    ExternalOpen {
+        target: &'static str,
+        source: Box<dyn std::error::Error + Send + Sync>,
+    },
+}
+
+impl std::fmt::Display for CommandError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Parse(error) => error.fmt(formatter),
+            Self::Application(error) => write!(formatter, "操作エラー: {error}"),
+            Self::Output(error) => write!(formatter, "出力エラー: {error}"),
+            Self::ExternalOpen { target, source } => {
+                write!(formatter, "外部起動エラー ({target}): {source}")
+            }
+        }
+    }
+}
+
+impl std::error::Error for CommandError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::Parse(error) => Some(error),
+            Self::Application(error) => Some(error),
+            Self::Output(error) => Some(error),
+            Self::ExternalOpen { source, .. } => Some(source.as_ref()),
+        }
+    }
+}
+
+fn validate_non_interactive_command(command: &str) -> Result<(), CommandError> {
+    let tokens = command.split_whitespace().collect::<Vec<_>>();
+    let Some(command_name) = tokens.first().copied() else {
+        return Ok(());
+    };
+    match command_name {
+        "予" | "estimate" | "es" => {
+            let value = tokens.get(1).ok_or_else(|| {
+                command_parse_error("予", "estimated_work_minutes", "値が必要です", "予 <分>")
+            })?;
+            let minutes = value.parse::<i64>().map_err(|_| {
+                command_parse_error(
+                    "予",
+                    "estimated_work_minutes",
+                    "整数で指定してください",
+                    "予 <分>",
+                )
+            })?;
+            estimated_work_seconds_from_minutes(minutes)?;
+            Ok(())
+        }
+        "類" | "category" | "cat" => {
+            let value = tokens.get(1).ok_or_else(|| {
+                command_parse_error("類", "category", "値が必要です", "類 <カテゴリ>")
+            })?;
+            read_project_category_command_arg(value).ok_or_else(|| {
+                command_parse_error("類", "category", "カテゴリが不正です", "類 <カテゴリ>")
+            })?;
+            Ok(())
+        }
+        "〆" | "締" | "deadline" => {
+            let value = tokens.get(1).ok_or_else(|| {
+                command_parse_error("〆", "deadline", "値が必要です", "〆 <日付または時刻>")
+            })?;
+            if matches!(
+                *value,
+                "消" | "今" | "明" | "月" | "火" | "水" | "木" | "金" | "土" | "日"
+            ) || Regex::new(r"^\d{1,2}/\d{1,2}$")
+                .expect("valid regex")
+                .is_match(value)
+                || Regex::new(r"^\d{1,2}:\d{1,2}$")
+                    .expect("valid regex")
+                    .is_match(value)
+                || parse_local_datetime(&format!("{} 23:59:59", value), "%Y/%m/%d %H:%M:%S").is_ok()
+            {
+                Ok(())
+            } else {
+                Err(command_parse_error(
+                    "〆",
+                    "deadline",
+                    "日時が不正です",
+                    "〆 <日付または時刻>",
+                ))
+            }
+        }
+        _ => Ok(()),
+    }
+}
+
+impl From<ApplicationError> for CommandError {
+    fn from(error: ApplicationError) -> Self {
+        Self::Application(error)
+    }
+}
+
+fn command_parse_error(
+    command: &'static str,
+    field: &'static str,
+    reason: &'static str,
+    usage: &'static str,
+) -> CommandError {
+    CommandError::Parse(CommandParseError {
+        command,
+        field,
+        reason,
+        usage,
+    })
+}
+
+fn write_command_error(stdout: &mut dyn SchronuWriter, error: &CommandError) {
+    if let Err(output_error) = writeln_newline(stdout, &format!("[Error] {error}")) {
+        let _output_error = CommandError::Output(output_error);
+    }
+}
+
+fn report_command_result(stdout: &mut dyn SchronuWriter, result: Result<(), CommandError>) {
+    if let Err(error) = result {
+        write_command_error(stdout, &error);
+    }
+}
+
+fn report_application_result<T>(
+    stdout: &mut dyn SchronuWriter,
+    result: Result<T, ApplicationError>,
+) {
+    if let Err(error) = result {
+        write_command_error(stdout, &CommandError::Application(error));
+    }
+}
+
+#[derive(Debug)]
 enum CliRepositoryTransactionError {
     Lock(StorageLockError),
     Load(TaskRepositoryError),
@@ -162,6 +374,11 @@ enum CliRepositoryTransactionError {
 impl From<TaskRepositoryError> for RunError {
     fn from(error: TaskRepositoryError) -> Self {
         Self::Repository(error)
+    }
+}
+impl From<CommandError> for RunError {
+    fn from(error: CommandError) -> Self {
+        Self::Command(error)
     }
 }
 impl From<BusyTimeSlotLoadError> for RunError {
@@ -201,6 +418,7 @@ impl std::error::Error for CliRepositoryTransactionError {
 impl std::fmt::Display for RunError {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
+            Self::Command(error) => error.fmt(formatter),
             Self::BusyTimeSlots(error) => error.fmt(formatter),
             Self::Repository(error) => error.fmt(formatter),
             Self::CliRepositoryTransaction(error) => error.fmt(formatter),
@@ -243,6 +461,7 @@ impl std::fmt::Display for RunError {
 impl std::error::Error for RunError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
+            Self::Command(error) => Some(error),
             Self::BusyTimeSlots(error) => Some(error),
             Self::Repository(error) => Some(error),
             Self::CliRepositoryTransaction(error) => Some(error),
@@ -2192,21 +2411,21 @@ fn execute_start_new_project(
     new_project_name_str: &str,
     defer_days_opt: Option<i64>,
     estimated_work_minutes_opt: Option<i64>,
-) {
+) -> Result<(), ApplicationError> {
     let pending_until = defer_days_opt.map(|defer_days| {
         get_next_morning_datetime(task_repository.get_last_synced_time())
             + Duration::days(defer_days - 1)
     });
-    if let Ok(task_id) = create_task(
+    let task_id = create_task(
         task_repository,
         CreateTaskInput {
             name: new_project_name_str.to_string(),
             estimated_work_minutes: estimated_work_minutes_opt,
             pending_until,
         },
-    ) {
-        *focused_task_id_opt = Some(task_id);
-    }
+    )?;
+    *focused_task_id_opt = Some(task_id);
+    Ok(())
 }
 
 fn execute_make_appointment(focused_task_opt: &Option<TaskHandle>, start_time: DateTime<Local>) {
@@ -3571,18 +3790,21 @@ fn test_extract_url_正常系_正しいURLのまま文字列が終わるケー�
 }
 
 //親に辿っていって見つかった最初のリンクを開く
-fn execute_open_link(focused_task_opt: &Option<TaskHandle>) {
+fn execute_open_link(focused_task_opt: &Option<TaskHandle>) -> Result<(), CommandError> {
     let mut t_opt: Option<TaskHandle> = focused_task_opt.clone();
 
     while let Some(t) = &t_opt {
         if let Some(url) = extract_url(&t.get_name()) {
-            // エラーは無視する
-            let _ = webbrowser::open(&url);
-            return;
+            webbrowser::open(&url).map_err(|source| CommandError::ExternalOpen {
+                target: "browser",
+                source: Box::new(source),
+            })?;
+            return Ok(());
         }
 
         t_opt = t.parent();
     }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -3638,15 +3860,18 @@ fn open_obsidian_url(url: &str) -> Result<(), String> {
 fn execute_open_obsidian_root_task_search_with_config(
     focused_task_opt: &Option<TaskHandle>,
     config: &SchronuConfig,
-) {
+) -> Result<(), CommandError> {
     if let Some(focused_task) = focused_task_opt {
         let url = make_obsidian_root_task_search_url_with_vault(
             focused_task,
             &config.obsidian_vault_name,
         );
-        // エラーは無視する
-        let _ = open_obsidian_url(&url);
+        open_obsidian_url(&url).map_err(|source| CommandError::ExternalOpen {
+            target: "Obsidian",
+            source: Box::new(std::io::Error::other(source)),
+        })?;
     }
+    Ok(())
 }
 
 #[test]
@@ -3826,11 +4051,9 @@ fn execute_create_repetition_task(
     };
     let repetition_parent_task_opt =
         focused_task_id_opt.and_then(|id| task_repository.get_by_id(id));
-    execute_set_estimated_work_minutes(
-        task_repository,
-        repetition_parent_task_opt.map(|task| task.get_id()),
-        &format!("{}", estimated_work_minutes),
-    );
+    if let Some(task_id) = repetition_parent_task_opt.map(|task| task.get_id()) {
+        set_estimate(task_repository, task_id, estimated_work_minutes)?;
+    }
 
     let task_num = if exec_day_str == "毎" { 7 } else { 4 };
 
@@ -3850,11 +4073,9 @@ fn execute_create_repetition_task(
                 return Ok(None);
             };
             let child_task_opt = focused_task_id_opt.and_then(|id| task_repository.get_by_id(id));
-            execute_set_estimated_work_minutes(
-                task_repository,
-                child_task_opt.map(|task| task.get_id()),
-                &format!("{}", estimated_work_minutes),
-            );
+            if let Some(task_id) = child_task_opt.map(|task| task.get_id()) {
+                set_estimate(task_repository, task_id, estimated_work_minutes)?;
+            }
 
             // 次ここから作業再開する。start_timeを作るために、「毎」か「月~日」でそれぞれ日付をループさせたい
             // focused_task.set_start_time(start_dst_time);
@@ -3997,8 +4218,10 @@ fn execute_defer(
     focused_task_id_opt: &mut Option<Uuid>,
     amount_str: &str,
     unit_str: &str,
-) {
-    let amount: i64 = amount_str.parse().unwrap();
+) -> Result<(), CommandError> {
+    let amount: i64 = amount_str.parse().map_err(|_| {
+        command_parse_error("後", "amount", "整数で指定してください", "後 <数値> <単位>")
+    })?;
     let duration = match unit_str.chars().next() {
         // 24時間単位ではなく、next_monring単位とする
         Some('日') | Some('d') => {
@@ -4018,10 +4241,11 @@ fn execute_defer(
 
     if let Some(task_id) = *focused_task_id_opt {
         let pending_until = task_repository.get_last_synced_time() + duration;
-        let _ = defer_task(task_repository, task_id, pending_until);
+        defer_task(task_repository, task_id, pending_until)?;
     }
 
     *focused_task_id_opt = None;
+    Ok(())
 }
 
 // 指定の日付から、step_days間隔でdeferしていく
@@ -4168,12 +4392,12 @@ fn execute_set_deadline_with_config(
     focused_task_id_opt: Option<Uuid>,
     deadline_date_str: &str,
     config: &SchronuConfig,
-) {
+) -> Result<(), CommandError> {
     if deadline_date_str == "消" {
         if let Some(task_id) = focused_task_id_opt {
-            let _ = set_deadline(task_repository, task_id, None);
+            set_deadline(task_repository, task_id, None)?;
         }
-        return;
+        return Ok(());
     }
 
     let mut deadline_time_str = format!(
@@ -4185,9 +4409,15 @@ fn execute_set_deadline_with_config(
 
     // 時刻のみを指定した場合は、日付は今日にする
     if hhmm_reg.is_match(deadline_date_str) {
-        let caps = hhmm_reg.captures(deadline_date_str).unwrap();
-        let hh: u32 = caps[1].parse().unwrap();
-        let mm: u32 = caps[2].parse().unwrap();
+        let caps = hhmm_reg
+            .captures(deadline_date_str)
+            .expect("matched deadline time must have captures");
+        let hh: u32 = caps[1].parse().map_err(|_| {
+            command_parse_error("〆", "deadline", "時刻が不正です", "〆 <日付または時刻>")
+        })?;
+        let mm: u32 = caps[2].parse().map_err(|_| {
+            command_parse_error("〆", "deadline", "時刻が不正です", "〆 <日付または時刻>")
+        })?;
 
         let now = task_repository.get_last_synced_time();
         deadline_time_str = format!("{} {:02}:{:02}:00", now.format("%Y/%m/%d"), hh, mm);
@@ -4195,24 +4425,40 @@ fn execute_set_deadline_with_config(
 
     let deadline_time_opt_result = parse_local_datetime(&deadline_time_str, "%Y/%m/%d %H:%M:%S");
 
-    if let Ok(LocalResult::Single(deadline_time)) = deadline_time_opt_result {
-        if let Some(task_id) = focused_task_id_opt {
-            let _ = set_deadline(task_repository, task_id, Some(deadline_time));
-        }
+    let LocalResult::Single(deadline_time) = deadline_time_opt_result.map_err(|_| {
+        command_parse_error("〆", "deadline", "日時が不正です", "〆 <日付または時刻>")
+    })?
+    else {
+        return Err(command_parse_error(
+            "〆",
+            "deadline",
+            "曖昧または存在しないローカル時刻です",
+            "〆 <日付または時刻>",
+        ));
+    };
+    if let Some(task_id) = focused_task_id_opt {
+        set_deadline(task_repository, task_id, Some(deadline_time))?;
     }
+    Ok(())
 }
 
 fn execute_set_estimated_work_minutes(
     task_repository: &mut dyn TaskRepositoryTrait,
     focused_task_id_opt: Option<Uuid>,
     estimated_work_minutes_str: &str,
-) {
-    if let (Some(task_id), Ok(estimated_work_minutes)) = (
-        focused_task_id_opt,
-        estimated_work_minutes_str.parse::<i64>(),
-    ) {
-        let _ = set_estimate(task_repository, task_id, estimated_work_minutes);
+) -> Result<(), CommandError> {
+    let estimated_work_minutes = estimated_work_minutes_str.parse::<i64>().map_err(|_| {
+        command_parse_error(
+            "予",
+            "estimated_work_minutes",
+            "整数で指定してください",
+            "予 <分>",
+        )
+    })?;
+    if let Some(task_id) = focused_task_id_opt {
+        set_estimate(task_repository, task_id, estimated_work_minutes)?;
     }
+    Ok(())
 }
 
 fn execute_set_arrange_children_work_minutes(
@@ -4280,13 +4526,15 @@ fn execute_set_project_category(
     task_repository: &mut dyn TaskRepositoryTrait,
     focused_task_id_opt: Option<Uuid>,
     project_category_str: &str,
-) {
-    if let (Some(task_id), Some(project_category_opt)) = (
-        focused_task_id_opt,
-        read_project_category_command_arg(project_category_str),
-    ) {
-        let _ = set_category(task_repository, task_id, project_category_opt);
+) -> Result<(), CommandError> {
+    let project_category_opt =
+        read_project_category_command_arg(project_category_str).ok_or_else(|| {
+            command_parse_error("類", "category", "カテゴリが不正です", "類 <カテゴリ>")
+        })?;
+    if let Some(task_id) = focused_task_id_opt {
+        set_category(task_repository, task_id, project_category_opt)?;
     }
+    Ok(())
 }
 
 fn decide_time(tokens: &[&str], now: &DateTime<Local>) -> Option<DateTime<Local>> {
@@ -4649,14 +4897,16 @@ fn execute_command_for_test(
     let mut focused_task_id_opt = focused_task_id_opt;
     let mut stdout = TestWriter::new();
 
-    execute(
+    if let Err(error) = execute(
         &mut stdout,
         &mut task_repository,
         &mut free_time_manager,
         &mut focused_task_id_opt,
         &now,
         command,
-    );
+    ) {
+        write_command_error(&mut stdout, &error);
+    }
 
     CommandTestResult {
         task: task_repository.task,
@@ -5728,6 +5978,22 @@ fn test_execute_estimate_見積もりを更新し不正値では維持する() {
 }
 
 #[test]
+fn test_execute_estimate_不正値はfield付き入力エラーを表示して状態を変更しない() {
+    let now = Local.with_ymd_and_hms(2026, 8, 11, 12, 0, 0).unwrap();
+    let task = TaskHandle::new("更新対象");
+    task.set_estimated_work_seconds(45 * 60);
+    let task_id = task.get_id();
+
+    let result = execute_command_for_test(task, now, Some(task_id), "予 invalid");
+
+    assert_eq!(result.task.get_estimated_work_seconds(), 45 * 60);
+    assert_eq!(result.focused_task_id_opt, Some(task_id));
+    assert!(result
+        .output
+        .contains("[Error] 入力エラー: estimated_work_minutes:"));
+}
+
+#[test]
 fn test_execute_deadline_締切を設定して解除する() {
     let now = Local.with_ymd_and_hms(2026, 8, 11, 12, 0, 0).unwrap();
     let task = TaskHandle::new("更新対象");
@@ -5753,6 +6019,20 @@ fn test_execute_deadline_締切を設定して解除する() {
         invalid.task.get_deadline_time_opt(),
         Some(Local.with_ymd_and_hms(2026, 8, 11, 14, 30, 0).unwrap())
     );
+}
+
+#[test]
+fn test_execute_deadline_不正日時はfield付き入力エラーを表示して状態を変更しない() {
+    let now = Local.with_ymd_and_hms(2026, 8, 11, 12, 0, 0).unwrap();
+    let task = TaskHandle::new("更新対象");
+    let task_id = task.get_id();
+    let previous_deadline = Local.with_ymd_and_hms(2026, 8, 20, 23, 59, 59).unwrap();
+    task.set_deadline_time_opt(Some(previous_deadline));
+
+    let result = execute_command_for_test(task, now, Some(task_id), "〆 invalid");
+
+    assert_eq!(result.task.get_deadline_time_opt(), Some(previous_deadline));
+    assert!(result.output.contains("[Error] 入力エラー: deadline:"));
 }
 
 #[test]
@@ -6160,6 +6440,22 @@ fn test_execute_set_project_category_不正カテゴリでは変更しない() {
     );
 }
 
+#[test]
+fn test_execute_category_不正値はfield付き入力エラーを表示して状態を変更しない() {
+    let now = Local.with_ymd_and_hms(2026, 8, 11, 12, 0, 0).unwrap();
+    let task = TaskHandle::new("カテゴリ対象");
+    let task_id = task.get_id();
+    task.set_project_category_opt(Some(ProjectCategory::Investment));
+
+    let result = execute_command_for_test(task, now, Some(task_id), "類 invalid");
+
+    assert_eq!(
+        result.task.get_project_category_opt(),
+        Some(ProjectCategory::Investment)
+    );
+    assert!(result.output.contains("[Error] 入力エラー: category:"));
+}
+
 fn format_work_seconds_as_hours_minutes(work_seconds: i64) -> String {
     let total_minutes = work_seconds.max(0) / 60;
     format!("{:02}:{:02}", total_minutes / 60, total_minutes % 60)
@@ -6333,18 +6629,25 @@ fn execute(
     focused_task_id_opt: &mut Option<Uuid>,
     focus_started_datetime: &DateTime<Local>,
     untrimmed_line: &str,
-) {
+) -> Result<(), CommandError> {
+    let mut output = ErrorCapturingWriter::new(stdout);
     execute_with_config(
-        stdout,
+        &mut output,
         task_repository,
         free_time_manager,
         focused_task_id_opt,
         focus_started_datetime,
         untrimmed_line,
         active_config(),
-    );
+    )?;
+    match output.take_error() {
+        Some(error) if error.kind() == std::io::ErrorKind::BrokenPipe => Ok(()),
+        Some(error) => Err(CommandError::Output(error)),
+        None => Ok(()),
+    }
 }
 
+#[allow(unused_must_use)]
 fn execute_with_config(
     stdout: &mut dyn SchronuWriter,
     task_repository: &mut dyn TaskRepositoryTrait,
@@ -6353,7 +6656,7 @@ fn execute_with_config(
     focus_started_datetime: &DateTime<Local>,
     untrimmed_line: &str,
     config: &SchronuConfig,
-) {
+) -> Result<(), CommandError> {
     // 整形
     let re = Regex::new(r"\s+").unwrap();
     let line: String = re
@@ -6368,7 +6671,7 @@ fn execute_with_config(
     let tokens: Vec<&str> = line.split(' ').collect();
 
     if tokens.is_empty() {
-        return;
+        return Ok(());
     }
 
     match tokens[0] {
@@ -6387,14 +6690,16 @@ fn execute_with_config(
                 } else {
                     Some(1400)
                 };
-                execute_start_new_project(
+                if let Err(error) = execute_start_new_project(
                     stdout,
                     focused_task_id_opt,
                     task_repository,
                     new_project_name_str,
                     defer_days_opt,
                     estimated_work_minutes_opt,
-                );
+                ) {
+                    return Err(error.into());
+                }
             }
         }
         "突" | "unplanned" => {
@@ -6408,14 +6713,16 @@ fn execute_with_config(
                 };
 
                 let defer_days_opt = None;
-                execute_start_new_project(
+                if let Err(error) = execute_start_new_project(
                     stdout,
                     focused_task_id_opt,
                     task_repository,
                     new_project_name_str,
                     defer_days_opt,
                     estimated_work_minutes_opt,
-                );
+                ) {
+                    return Err(error.into());
+                }
             }
         }
         "連" | "sequential" | "seq" => {
@@ -6432,7 +6739,7 @@ fn execute_with_config(
                     if let Ok(begin_index) = begin_index_result {
                         if let Ok(end_index) = end_index_result {
                             if begin_index <= end_index {
-                                let _ = execute_breakdown_sequentially(
+                                let result = execute_breakdown_sequentially(
                                     stdout,
                                     focused_task_id_opt,
                                     &focused_task_opt,
@@ -6442,6 +6749,7 @@ fn execute_with_config(
                                     *end_index,
                                     &new_task_name_suffix,
                                 );
+                                report_application_result(stdout, result);
                             }
                         }
                     }
@@ -6457,7 +6765,7 @@ fn execute_with_config(
                 let deadline_time_str = &tokens[5];
 
                 if let Ok(estimated_work_minutes) = estimated_work_minutes_result {
-                    let _ = execute_create_repetition_task(
+                    let result = execute_create_repetition_task(
                         stdout,
                         task_repository,
                         focused_task_id_opt,
@@ -6467,6 +6775,7 @@ fn execute_with_config(
                         start_time_str,
                         deadline_time_str,
                     );
+                    report_application_result(stdout, result);
                 }
             }
         }
@@ -6603,10 +6912,10 @@ fn execute_with_config(
             execute_pick(task_repository, focused_task_id_opt, new_task_id_str);
         }
         "開" | "open" | "op" => {
-            execute_open_link(&focused_task_opt);
+            execute_open_link(&focused_task_opt)?;
         }
         "黒" | "obs" => {
-            execute_open_obsidian_root_task_search_with_config(&focused_task_opt, config);
+            execute_open_obsidian_root_task_search_with_config(&focused_task_opt, config)?;
         }
         "外" | "unfocus" | "ufc" => {
             execute_unfocus(focused_task_id_opt);
@@ -6683,13 +6992,14 @@ fn execute_with_config(
                     tokens.get(2).map(|token| token.parse::<i64>()).transpose();
 
                 if let Ok(estimated_work_minutes_opt) = estimated_work_minutes_result {
-                    let _ = execute_next_up(
+                    let result = execute_next_up(
                         stdout,
                         focused_task_id_opt,
                         &focused_task_opt,
                         new_task_name_str,
                         &estimated_work_minutes_opt,
                     );
+                    report_application_result(stdout, result);
                 }
             }
         }
@@ -6699,13 +7009,14 @@ fn execute_with_config(
 
                 // 「割」コマンドと間違えて数値を引数に取った場合は何もしない
                 if !tokens.iter().any(|token| token.parse::<i64>().is_ok()) {
-                    let _ = execute_breakdown(
+                    let result = execute_breakdown(
                         stdout,
                         task_repository,
                         focused_task_id_opt,
                         new_task_names,
                         &None,
                     );
+                    report_application_result(stdout, result);
                 }
             }
         }
@@ -6714,13 +7025,14 @@ fn execute_with_config(
                 let splitted_work_minutes_str = &tokens[1];
                 let new_task_name = &tokens[2];
 
-                let _ = execute_split(
+                let result = execute_split(
                     stdout,
                     focused_task_id_opt,
                     &focused_task_opt,
                     new_task_name,
                     splitted_work_minutes_str,
                 );
+                report_application_result(stdout, result);
             }
         }
         // "詳" | "description" | "desc" => {}
@@ -6749,7 +7061,7 @@ fn execute_with_config(
                         *focused_task_id_opt,
                         &s,
                         config,
-                    );
+                    )?;
                 } else if tokens[1].starts_with('明') {
                     let s = get_next_morning_datetime(now)
                         .format("%Y/%m/%d")
@@ -6759,7 +7071,7 @@ fn execute_with_config(
                         *focused_task_id_opt,
                         &s,
                         config,
-                    );
+                    )?;
                 } else if ["月", "火", "水", "木", "金", "土", "日"].contains(&tokens[1]) {
                     // 月 火 水 木 金 土 日 が指定された時は、明日以降で、直近のその曜日の23:59を〆切とする
                     // (show_all_tasksとロジック重複...)
@@ -6788,12 +7100,14 @@ fn execute_with_config(
                         .format("%Y/%m/%d")
                         .to_string();
 
-                    execute_set_deadline_with_config(
+                    if let Err(error) = execute_set_deadline_with_config(
                         task_repository,
                         *focused_task_id_opt,
                         &s,
                         config,
-                    );
+                    ) {
+                        write_command_error(stdout, &error);
+                    }
                 } else if mmdd_reg.is_match(tokens[1]) {
                     // FIXME 「後」コマンドとロジック重複
 
@@ -6816,19 +7130,23 @@ fn execute_with_config(
 
                     let s = deadline_dst_time.format("%Y/%m/%d").to_string();
 
-                    execute_set_deadline_with_config(
+                    if let Err(error) = execute_set_deadline_with_config(
                         task_repository,
                         *focused_task_id_opt,
                         &s,
                         config,
-                    );
+                    ) {
+                        write_command_error(stdout, &error);
+                    }
                 } else {
-                    execute_set_deadline_with_config(
+                    if let Err(error) = execute_set_deadline_with_config(
                         task_repository,
                         *focused_task_id_opt,
                         deadline_date_str,
                         config,
-                    );
+                    ) {
+                        write_command_error(stdout, &error);
+                    }
                 }
             }
         }
@@ -6839,7 +7157,7 @@ fn execute_with_config(
                     task_repository,
                     *focused_task_id_opt,
                     estimated_work_minutes_str,
-                );
+                )?;
             }
         }
         "揃" | "arrange" | "arr" => {
@@ -6874,7 +7192,7 @@ fn execute_with_config(
                     task_repository,
                     *focused_task_id_opt,
                     project_category_str,
-                );
+                )?;
             }
         }
         "働" | "work" | "wk" => {
@@ -6899,7 +7217,10 @@ fn execute_with_config(
                 let amount_str = &tokens[1];
                 let unit_str = &tokens[2].to_lowercase();
 
-                execute_defer(task_repository, focused_task_id_opt, amount_str, unit_str);
+                report_command_result(
+                    stdout,
+                    execute_defer(task_repository, focused_task_id_opt, amount_str, unit_str),
+                );
             } else if tokens.len() == 2 {
                 let yyyymmdd_reg = Regex::new(r"^\d{4}/\d{2}/\d{2}$").unwrap();
                 let hhmm_reg = Regex::new(r"^(\d{1,2}):(\d{1,2})$").unwrap();
@@ -6917,11 +7238,14 @@ fn execute_with_config(
                             let now: DateTime<Local> = task_repository.get_last_synced_time();
                             let seconds = (defer_dst_time - now).num_seconds() + 1;
 
-                            execute_defer(
-                                task_repository,
-                                focused_task_id_opt,
-                                &format!("{}", seconds),
-                                "秒",
+                            report_command_result(
+                                stdout,
+                                execute_defer(
+                                    task_repository,
+                                    focused_task_id_opt,
+                                    &format!("{}", seconds),
+                                    "秒",
+                                ),
                             );
                         }
                         _ => {
@@ -6935,11 +7259,14 @@ fn execute_with_config(
                     let seconds = (defer_dst_time - now).num_seconds() + 1;
 
                     if seconds > 0 {
-                        execute_defer(
-                            task_repository,
-                            focused_task_id_opt,
-                            &format!("{}", seconds),
-                            "秒",
+                        report_command_result(
+                            stdout,
+                            execute_defer(
+                                task_repository,
+                                focused_task_id_opt,
+                                &format!("{}", seconds),
+                                "秒",
+                            ),
                         );
                     }
                 } else if hhmm_reg.is_match(tokens[1]) {
@@ -6962,11 +7289,14 @@ fn execute_with_config(
                     let seconds = (defer_dst_time - now).num_seconds() + 1;
 
                     if seconds > 0 {
-                        execute_defer(
-                            task_repository,
-                            focused_task_id_opt,
-                            &format!("{}", seconds),
-                            "秒",
+                        report_command_result(
+                            stdout,
+                            execute_defer(
+                                task_repository,
+                                focused_task_id_opt,
+                                &format!("{}", seconds),
+                                "秒",
+                            ),
                         );
                     }
                 } else if ["月", "火", "水", "木", "金", "土", "日"].contains(&tokens[1]) {
@@ -6999,11 +7329,14 @@ fn execute_with_config(
                         + 1;
 
                     if seconds > 0 {
-                        execute_defer(
-                            task_repository,
-                            focused_task_id_opt,
-                            &format!("{}", seconds),
-                            "秒",
+                        report_command_result(
+                            stdout,
+                            execute_defer(
+                                task_repository,
+                                focused_task_id_opt,
+                                &format!("{}", seconds),
+                                "秒",
+                            ),
                         );
                     }
                 } else {
@@ -7013,7 +7346,15 @@ fn execute_with_config(
                         let amount_str = &splitted[0];
                         let unit_str = &splitted[1].to_lowercase();
 
-                        execute_defer(task_repository, focused_task_id_opt, amount_str, unit_str);
+                        report_command_result(
+                            stdout,
+                            execute_defer(
+                                task_repository,
+                                focused_task_id_opt,
+                                amount_str,
+                                unit_str,
+                            ),
+                        );
                     }
                 }
             }
@@ -7122,7 +7463,7 @@ fn execute_with_config(
                         mmdd,
                         task_repository.get_last_synced_time(),
                     ) else {
-                        return;
+                        return Ok(());
                     };
                     let scheduled_starts =
                         scheduled_leaf_starts_on_schronu_day(task_repository, schronu_day_start);
@@ -7230,7 +7571,8 @@ fn execute_with_config(
         }
     }
 
-    stdout.flush().unwrap();
+    stdout.flush().map_err(CommandError::Output)?;
+    Ok(())
 }
 
 #[cfg(test)]
@@ -8409,10 +8751,10 @@ fn reload_repository_for_cli(
 fn run_cli_repository_transaction<T>(
     task_repository: &mut dyn TaskRepositoryTrait,
     now: DateTime<Local>,
-    operation: impl FnOnce(&mut dyn TaskRepositoryTrait) -> T,
-) -> Result<T, CliRepositoryTransactionError> {
+    operation: impl FnOnce(&mut dyn TaskRepositoryTrait) -> Result<T, CommandError>,
+) -> Result<T, RunError> {
     let _storage_lock = reload_repository_for_cli(task_repository, now)?;
-    let output = operation(task_repository);
+    let output = operation(task_repository)?;
     task_repository
         .save()
         .map_err(CliRepositoryTransactionError::Save)?;
@@ -8581,6 +8923,7 @@ fn execute_non_interactive_command(
     command: &str,
 ) -> Result<(), RunError> {
     let now = Local::now();
+    validate_non_interactive_command(command).map_err(RunError::Command)?;
     if command.trim() == "検証" {
         let _storage_lock = reload_repository_for_cli(task_repository, now)?;
         println!("検証: OK");
@@ -8605,7 +8948,7 @@ fn execute_non_interactive_command(
             &mut focused_task_id_opt,
             &focus_started_datetime,
             command,
-        );
+        )
     })?;
     Ok(())
 }
@@ -8783,6 +9126,7 @@ fn test_cli_repository_transactionは外部更新を再読込してcommandを即
 
     run_cli_repository_transaction(&mut cli_repository, now, |repository| {
         repository.start_new_project(TaskHandle::new("CLI更新"));
+        Ok(())
     })
     .unwrap();
 
@@ -8808,7 +9152,7 @@ fn test_cli_repository_transactionはreload_if_changed経路を使う() {
     let mut repository = TestTaskRepository::new(TaskHandle::new("cache経路"), now)
         .with_storage_directory(&storage_dir.path);
 
-    run_cli_repository_transaction(&mut repository, now, |_| {}).unwrap();
+    run_cli_repository_transaction(&mut repository, now, |_| Ok(())).unwrap();
 
     assert_eq!(repository.reload_if_changed_attempt_count.get(), 1);
     assert_eq!(repository.load_attempt_count.get(), 1);
@@ -8827,12 +9171,10 @@ fn test_cli_repository_transactionはload失敗時にcommandもsaveも実行し�
 
     let result = run_cli_repository_transaction(&mut repository, now, |_| {
         command_executed.set(true);
+        Ok(())
     });
 
-    assert!(matches!(
-        result,
-        Err(CliRepositoryTransactionError::Load(_))
-    ));
+    assert!(matches!(result, Err(RunError::Repository(_))));
     assert!(!command_executed.get());
     assert_eq!(repository.save_attempt_count.get(), 0);
     assert!(StorageLock::acquire(&storage_dir.path, LockMode::Mcp).is_ok());
@@ -8854,11 +9196,14 @@ fn test_cli_repository_transactionはsave失敗をfatalなphase付きerrorにす
             .get_by_id(task_id)
             .unwrap()
             .set_estimated_work_seconds(45 * 60);
+        Ok(())
     });
 
     assert!(matches!(
         result,
-        Err(CliRepositoryTransactionError::Save(_))
+        Err(RunError::CliRepositoryTransaction(
+            CliRepositoryTransactionError::Save(_)
+        ))
     ));
     assert_eq!(repository.save_attempt_count.get(), 1);
     assert_eq!(
@@ -10083,7 +10428,7 @@ fn test_try_exit_interactive_ctrl_d終了時は帯を表示する() {
     assert!(!output.contains("日          \t空          \t空差"));
 }
 
-#[allow(clippy::too_many_arguments)]
+#[allow(clippy::too_many_arguments, unused_must_use)]
 fn execute_interactive_command(
     stdout: &mut dyn SchronuWriter,
     task_repository: &mut dyn TaskRepositoryTrait,
@@ -10270,13 +10615,22 @@ fn handle_interactive_repository_event(
                     ) {
                         *state.last_focused_task_id_opt = None;
                     }
+                    Ok(())
                 });
             match transaction_result {
                 Ok(()) => InteractiveRepositoryEventOutcome::CommandExecuted(command),
-                Err(error @ CliRepositoryTransactionError::Save(_)) => {
-                    InteractiveRepositoryEventOutcome::Fatal(error.into())
+                Err(
+                    error @ RunError::CliRepositoryTransaction(CliRepositoryTransactionError::Save(
+                        _,
+                    )),
+                ) => InteractiveRepositoryEventOutcome::Fatal(error),
+                Err(RunError::CliRepositoryTransaction(error)) => {
+                    InteractiveRepositoryEventOutcome::Retry(error)
                 }
-                Err(error) => InteractiveRepositoryEventOutcome::Retry(error),
+                Err(RunError::Repository(error)) => InteractiveRepositoryEventOutcome::Retry(
+                    CliRepositoryTransactionError::Load(error),
+                ),
+                Err(error) => InteractiveRepositoryEventOutcome::Fatal(error),
             }
         }
         InteractiveRepositoryEvent::Refresh => {
