@@ -1755,12 +1755,15 @@ impl TaskHandle {
     ) -> Result<(), TaskTreeError> {
         let root = self.root()?;
         let mut updates = Vec::new();
-        self.collect_deadline_updates(deadline_time_opt, &mut updates)?;
+        self.collect_deadline_updates(deadline_time_opt, None, &mut updates)?;
         root.node
-            .try_borrow_data()
+            .try_borrow_data_mut()
             .map_err(|_| TaskTreeError::Borrow)?;
+        for (node, _) in &updates {
+            node.try_borrow_data_mut()
+                .map_err(|_| TaskTreeError::Borrow)?;
+        }
         for (node, deadline) in &updates {
-            node.try_borrow_data().map_err(|_| TaskTreeError::Borrow)?;
             node.try_borrow_data_mut()
                 .map_err(|_| TaskTreeError::Borrow)?
                 .set_deadline_time_opt(Some(*deadline));
@@ -1774,6 +1777,7 @@ impl TaskHandle {
     fn collect_deadline_updates(
         &self,
         inherited: Option<DateTime<Local>>,
+        current_deadline_override: Option<Option<DateTime<Local>>>,
         updates: &mut Vec<(Node<TaskAttr>, DateTime<Local>)>,
     ) -> Result<(), TaskTreeError> {
         let attr = self
@@ -1783,7 +1787,7 @@ impl TaskHandle {
         if *attr.get_status() == Status::Done {
             return Ok(());
         }
-        let current = *attr.get_deadline_time_opt();
+        let current = current_deadline_override.unwrap_or(*attr.get_deadline_time_opt());
         drop(attr);
         let Some(inherited) = inherited else {
             return Ok(());
@@ -1795,7 +1799,7 @@ impl TaskHandle {
             updates.push((self.node.clone(), effective));
         }
         for child in self.node.children() {
-            Self { node: child }.collect_deadline_updates(Some(effective), updates)?;
+            Self { node: child }.collect_deadline_updates(Some(effective), None, updates)?;
         }
         Ok(())
     }
@@ -1960,6 +1964,21 @@ impl TaskHandle {
         // 〆切については、子タスク全体に掛かるようにする
         let deadline_time =
             appointment_start_time + Duration::seconds(self.get_estimated_work_seconds()?);
+
+        let root = self.root()?;
+        let mut deadline_updates = Vec::new();
+        self.collect_deadline_updates(Some(deadline_time), Some(None), &mut deadline_updates)?;
+        root.node
+            .try_borrow_data_mut()
+            .map_err(|_| TaskTreeError::Borrow)?;
+        self.node
+            .try_borrow_data_mut()
+            .map_err(|_| TaskTreeError::Borrow)?;
+        for (node, _) in &deadline_updates {
+            node.try_borrow_data_mut()
+                .map_err(|_| TaskTreeError::Borrow)?;
+        }
+
         self.unset_deadline_time_opt()?;
         self.set_deadline_time_opt(Some(deadline_time))?;
 
@@ -3454,6 +3473,126 @@ fn test_make_appointmentは子の共有借用競合時に部分更新とrevision
 
     assert_eq!(actual, Err(TaskTreeError::Borrow));
     assert_eq!(root.snapshot().unwrap(), before_snapshot);
+    assert_eq!(
+        root.get_persistent_mutation_revision().unwrap(),
+        before_revision
+    );
+}
+
+#[test]
+fn test_deadline伝搬はrootのshared_borrow競合時に全属性とtreeとrevisionを変更しない() {
+    let root = TaskHandle::new("親").unwrap();
+    let child = root.create_child(TaskAttr::new("子")).unwrap();
+    let deadline = Local.with_ymd_and_hms(2026, 8, 15, 12, 0, 0).unwrap();
+    let before_snapshot = root.snapshot().unwrap();
+    let before_revision = root.get_persistent_mutation_revision().unwrap();
+
+    root.with_shared_data_borrow_for_test(|| {
+        assert_eq!(
+            root.set_deadline_time_opt(Some(deadline)),
+            Err(TaskTreeError::Borrow)
+        );
+    });
+
+    assert_eq!(root.snapshot().unwrap(), before_snapshot);
+    assert_eq!(
+        root.get_start_time().unwrap(),
+        before_snapshot.attr.get_start_time().to_owned()
+    );
+    assert_eq!(
+        child.get_start_time().unwrap(),
+        before_snapshot.children[0].attr.get_start_time().to_owned()
+    );
+    assert_eq!(
+        root.get_persistent_mutation_revision().unwrap(),
+        before_revision
+    );
+}
+
+#[test]
+fn test_deadline伝搬は子のshared_borrow競合時に全属性とtreeとrevisionを変更しない() {
+    let root = TaskHandle::new("親").unwrap();
+    let child = root.create_child(TaskAttr::new("子")).unwrap();
+    let deadline = Local.with_ymd_and_hms(2026, 8, 15, 12, 0, 0).unwrap();
+    let before_snapshot = root.snapshot().unwrap();
+    let before_revision = root.get_persistent_mutation_revision().unwrap();
+
+    child.with_shared_data_borrow_for_test(|| {
+        assert_eq!(
+            root.set_deadline_time_opt(Some(deadline)),
+            Err(TaskTreeError::Borrow)
+        );
+    });
+
+    assert_eq!(root.snapshot().unwrap(), before_snapshot);
+    assert_eq!(
+        root.get_start_time().unwrap(),
+        before_snapshot.attr.get_start_time().to_owned()
+    );
+    assert_eq!(
+        child.get_start_time().unwrap(),
+        before_snapshot.children[0].attr.get_start_time().to_owned()
+    );
+    assert_eq!(
+        root.get_persistent_mutation_revision().unwrap(),
+        before_revision
+    );
+}
+
+#[test]
+fn test_make_appointmentはrootのshared_borrow競合時に全属性とtreeとrevisionを変更しない() {
+    let root = TaskHandle::new("親").unwrap();
+    let child = root.create_child(TaskAttr::new("子")).unwrap();
+    let appointment_start_time = Local.with_ymd_and_hms(2026, 8, 15, 9, 0, 0).unwrap();
+    let before_snapshot = root.snapshot().unwrap();
+    let before_revision = root.get_persistent_mutation_revision().unwrap();
+
+    root.with_shared_data_borrow_for_test(|| {
+        assert_eq!(
+            root.make_appointment(appointment_start_time),
+            Err(TaskTreeError::Borrow)
+        );
+    });
+
+    assert_eq!(root.snapshot().unwrap(), before_snapshot);
+    assert_eq!(
+        root.get_start_time().unwrap(),
+        before_snapshot.attr.get_start_time().to_owned()
+    );
+    assert_eq!(
+        child.get_start_time().unwrap(),
+        before_snapshot.children[0].attr.get_start_time().to_owned()
+    );
+    assert_eq!(
+        root.get_persistent_mutation_revision().unwrap(),
+        before_revision
+    );
+}
+
+#[test]
+fn test_make_appointmentは子のshared_borrow競合時に全属性とtreeとrevisionを変更しない() {
+    let root = TaskHandle::new("親").unwrap();
+    let child = root.create_child(TaskAttr::new("子")).unwrap();
+    let appointment_start_time = Local.with_ymd_and_hms(2026, 8, 15, 9, 0, 0).unwrap();
+    let before_snapshot = root.snapshot().unwrap();
+    let before_revision = root.get_persistent_mutation_revision().unwrap();
+
+    child.with_shared_data_borrow_for_test(|| {
+        assert_eq!(
+            root.make_appointment(appointment_start_time),
+            Err(TaskTreeError::Borrow)
+        );
+    });
+
+    assert_eq!(root.snapshot().unwrap(), before_snapshot);
+    assert_eq!(
+        root.get_start_time().unwrap(),
+        before_snapshot.attr.get_start_time().to_owned()
+    );
+    assert_eq!(
+        child.get_start_time().unwrap(),
+        before_snapshot.children[0].attr.get_start_time().to_owned()
+    );
     assert_eq!(
         root.get_persistent_mutation_revision().unwrap(),
         before_revision
