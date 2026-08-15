@@ -4,7 +4,14 @@ set -o pipefail
 
 # AからT列まであるスプレッドシートをクリップボードにコピーしてあるとする
 
-pbpaste | tr -d '\r' | awk -F '\t' '
+if [[ $# -eq 0 ]]; then
+    pbpaste
+elif [[ $# -eq 1 && $1 == "--stdin" ]]; then
+    cat
+else
+    print -u2 -- "usage: $0 [--stdin]"
+    exit 2
+fi | tr -d '\r' | awk -F '\t' '
 function trim(str) {
     sub(/^[[:space:]]+/, "", str)
     sub(/[[:space:]]+$/, "", str)

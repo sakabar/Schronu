@@ -14,6 +14,11 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Install zsh
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes zsh
+
       - name: Set up Rust 1.97.1
         uses: dtolnay/rust-toolchain@master
         with:

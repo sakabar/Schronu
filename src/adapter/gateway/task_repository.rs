@@ -515,6 +515,14 @@ impl TaskRepositoryTrait for TaskRepository {
         Ok(RepositoryReloadOutcome::Reloaded)
     }
 
+    fn has_pending_changes(&self) -> Result<bool, TaskTreeError> {
+        self.projects
+            .iter()
+            .map(Project::needs_save)
+            .collect::<Result<Vec<_>, _>>()
+            .map(|needs_save| needs_save.into_iter().any(|needs_save| needs_save))
+    }
+
     fn save(&self) -> Result<(), TaskRepositoryError> {
         let projects_to_save = self
             .projects

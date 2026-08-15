@@ -27,6 +27,9 @@ use schronu::application::interface::{
 };
 use schronu::application::interface::{TaskRepositoryError, TaskRepositoryTrait};
 use schronu::application::pack_use_case::pack_tasks_with_end_of_day_offset_minutes;
+use schronu::application::repository_transaction::{
+    run_repository_transaction, RepositoryTransactionError,
+};
 use schronu::application::schedule_use_case::get_schedule;
 use schronu::application::task_use_case::{
     breakdown_task, complete_task, create_task, defer_task, estimated_work_seconds_from_minutes,
@@ -5100,6 +5103,7 @@ struct TestTaskRepository {
     reload_if_changed_attempt_count: Cell<usize>,
     save_failures_remaining: Cell<usize>,
     save_attempt_count: Cell<usize>,
+    has_pending_changes: Cell<bool>,
 }
 
 #[cfg(test)]
@@ -5425,6 +5429,7 @@ impl TestTaskRepository {
             reload_if_changed_attempt_count: Cell::new(0),
             save_failures_remaining: Cell::new(0),
             save_attempt_count: Cell::new(0),
+            has_pending_changes: Cell::new(true),
         }
     }
 
@@ -5488,6 +5493,10 @@ impl TaskRepositoryTrait for TestTaskRepository {
         } else {
             Ok(())
         }
+    }
+
+    fn has_pending_changes(&self) -> Result<bool, TaskTreeError> {
+        Ok(self.has_pending_changes.get())
     }
 
     fn sync_clock(&mut self, now: DateTime<Local>) -> Result<(), TaskTreeError> {
@@ -9369,12 +9378,38 @@ fn run_cli_repository_transaction<T>(
     now: DateTime<Local>,
     operation: impl FnOnce(&mut dyn TaskRepositoryTrait) -> Result<T, CommandError>,
 ) -> Result<T, RunError> {
-    let _storage_lock = reload_repository_for_cli(task_repository, now)?;
-    let output = operation(task_repository)?;
-    task_repository
-        .save()
-        .map_err(CliRepositoryTransactionError::Save)?;
-    Ok(output)
+    let storage_directory = task_repository.get_project_storage_dir_name().to_string();
+    run_repository_transaction(
+        task_repository,
+        now,
+        || {
+            StorageLock::acquire_with_timeout(
+                storage_directory.as_ref(),
+                LockMode::Cli,
+                CLI_LOCK_TIMEOUT,
+            )
+        },
+        |repository| {
+            let output = operation(repository)?;
+            let should_save = repository
+                .has_pending_changes()
+                .map_err(ApplicationError::TaskTree)
+                .map_err(CommandError::Application)?;
+            Ok::<_, CommandError>((output, should_save))
+        },
+    )
+    .map_err(|error| match error {
+        RepositoryTransactionError::Lock(error) => {
+            RunError::from(CliRepositoryTransactionError::Lock(error))
+        }
+        RepositoryTransactionError::Load(error) => {
+            RunError::from(CliRepositoryTransactionError::Load(error))
+        }
+        RepositoryTransactionError::Operation(error) => RunError::from(error),
+        RepositoryTransactionError::StateUncertain(error) => {
+            RunError::from(CliRepositoryTransactionError::Save(error))
+        }
+    })
 }
 
 fn reconcile_focus_after_reload(
@@ -9773,18 +9808,19 @@ fn test_cli_repository_transactionは外部更新を再読込してcommandを即
 }
 
 #[test]
-fn test_cli_repository_transactionはreload_if_changed経路を使う() {
+fn test_cli_repository_transactionはread_only_operationでsaveしない() {
     let storage_dir = TestStorageDir::new();
     std::fs::create_dir_all(&storage_dir.path).unwrap();
     let now = Local.with_ymd_and_hms(2026, 8, 12, 12, 0, 0).unwrap();
     let mut repository = TestTaskRepository::new(TaskHandle::new("cache経路").unwrap(), now)
         .with_storage_directory(&storage_dir.path);
+    repository.has_pending_changes.set(false);
 
     run_cli_repository_transaction(&mut repository, now, |_| Ok(())).unwrap();
 
     assert_eq!(repository.reload_if_changed_attempt_count.get(), 1);
     assert_eq!(repository.load_attempt_count.get(), 1);
-    assert_eq!(repository.save_attempt_count.get(), 1);
+    assert_eq!(repository.save_attempt_count.get(), 0);
 }
 
 #[test]

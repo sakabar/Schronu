@@ -42,13 +42,13 @@
 | TD-004 | P1 | 完了 | XL | `Task`の木構造と内部可変性が暗黙の共有状態とpanic前提を作っている |
 | TD-005 | P1 | 未着手 | XL | CLIコントローラーへ責務が集中している |
 | TD-006 | P1 | 完了 | L | CLIの入力・application・出力エラーが握り潰される |
-| TD-007 | P1 | 未着手 | L | CLIとMCPでrepository transactionが別々に組み立てられている |
+| TD-007 | P1 | 完了 | L | CLIとMCPでrepository transactionが別々に組み立てられている |
 | TD-008 | P1 | 完了 | M | CIがリポジトリ規約を満たさず、ビルド再現性も固定されていない |
 | TD-009 | P2 | 未着手 | L | entity層がYAML形式へ依存している |
 | TD-010 | P2 | 未着手 | L | 現在時刻、UUID、業務日境界がドメイン内部へ埋め込まれている |
 | TD-011 | P2 | 未着手 | L | MCPのschema、入力検証、Rust入力型、JSON出力が重複している |
 | TD-012 | P2 | 未着手 | L | flatten・pack・scheduleの再計算コストに性能上限が定義されていない |
-| TD-013 | P2 | 未着手 | M | Spreadsheetの列契約が複数言語・文書へ重複している |
+| TD-013 | P2 | 完了 | M | Spreadsheetの列契約が複数言語・文書へ重複している |
 | TD-014 | P2 | 未着手 | M | Apps Scriptの同期処理が行数に比例してAPI呼出しを増やす |
 | TD-015 | P2 | 未着手 | L | テストが巨大な製品ファイルへ混在し、fixtureも重複している |
 | TD-016 | P3 | 未着手 | M | マジック値、未使用フィールド、古いコメントが意図を曖昧にしている |
@@ -339,6 +339,9 @@
 
 - 優先度: `P1`
 - 概算規模: `L`
+- 完了日: 2026-08-15
+- 対応: lock、reload、operation、条件付きsaveを共通transaction実行器へ集約し、CLIとMCPから利用するようにした。read-only operationと実変更のないMCP更新はsaveを行わず、save失敗は`StateUncertain`としてMCPの既存`repository_state_uncertain` / `restart_server`契約へ変換する。
+- 検証: read-only CLI transaction、MCPの更新・入力エラー・save失敗・同値更新、MCP stdioの契約testを追加・維持した。`cargo test --locked`、`cargo fmt --check`、`cargo clippy --locked --all-targets -- -D warnings`に成功した。
 
 #### 現状と根拠
 
@@ -567,6 +570,9 @@
 
 - 優先度: `P2`
 - 概算規模: `M`
+- 完了日: 2026-08-15
+- 対応: A-S列の列名、番号、同期対象、時刻書式を`spreadsheet_columns.tsv`へ集約した。Rust契約テストがmanifestを読み、shell script、Apps Script、文書の重要な列定義と照合する。CLI出力からSpreadsheet値を経由したコマンド生成もfixtureで固定した。
+- 検証: `cargo fmt --check`、`cargo clippy --locked --all-targets -- -D warnings`、`cargo test --locked`に成功した。
 
 #### 現状と根拠
 
