@@ -3103,6 +3103,17 @@ fn test_task_handleの公開read_apiは借用競合をerrorとして返す() {
 }
 
 #[test]
+fn test_task_viewは借用競合をtask_tree_errorとして返す() {
+    let task = TaskHandle::new("タスク");
+    let _exclusive_borrow = task.node.borrow_data_mut();
+
+    assert_eq!(
+        crate::application::task_use_case::TaskView::try_from(&task),
+        Err(TaskTreeError::Borrow)
+    );
+}
+
+#[test]
 fn test_reparent_toは循環をerrorにして木とrevisionを変更しない() {
     let root = TaskHandle::new("親");
     let mut child = root.try_create_child(TaskAttr::new("子")).unwrap();
