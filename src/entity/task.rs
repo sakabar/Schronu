@@ -3131,6 +3131,29 @@ fn test_task_handleの公開read_apiは借用競合をerrorとして返す() {
 }
 
 #[test]
+fn test_task_handleのcore_read_apiは借用競合をerrorとして返す() {
+    let task = TaskHandle::new("タスク");
+    let _exclusive_borrow = task.node.borrow_data_mut();
+
+    assert_eq!(task.get_attr(), Err(TaskTreeError::Borrow));
+    assert_eq!(task.get_id(), Err(TaskTreeError::Borrow));
+    assert_eq!(task.get_status(), Err(TaskTreeError::Borrow));
+    assert_eq!(task.get_children(), Err(TaskTreeError::Borrow));
+    assert_eq!(task.num_children(), Err(TaskTreeError::Borrow));
+    assert_eq!(task.snapshot(), Err(TaskTreeError::Borrow));
+}
+
+#[test]
+fn test_rootはdummy_rootの子が欠落した場合にinvariant_errorを返す() {
+    let task = TaskHandle::new("タスク");
+    let dummy_root = task.node.root();
+    let grant = dummy_root.tree().grant_hierarchy_edit().unwrap();
+    task.node.detach_subtree(&grant);
+
+    assert_eq!(task.root(), Err(TaskTreeError::MissingDummyRootChild));
+}
+
+#[test]
 fn test_task_viewは借用競合をtask_tree_errorとして返す() {
     let task = TaskHandle::new("タスク");
     let _exclusive_borrow = task.node.borrow_data_mut();
