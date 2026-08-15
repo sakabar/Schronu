@@ -32,7 +32,8 @@ impl TryFrom<&TaskHandle> for TaskView {
 
     fn try_from(task: &TaskHandle) -> Result<Self, Self::Error> {
         let attr = task.try_get_attr()?;
-        let root_id = *task.try_root()?.try_get_attr()?.get_id();
+        let root_attr = task.try_root()?.try_get_attr()?;
+        let root_id = *root_attr.get_id();
         let parent_id = task
             .try_parent()?
             .map(|parent| parent.try_get_attr().map(|attr| *attr.get_id()))
@@ -55,7 +56,7 @@ impl TryFrom<&TaskHandle> for TaskView {
             atomic: attr.get_atomic(),
             pending_until: (*attr.get_orig_status() == Status::Pending)
                 .then(|| *attr.get_pending_until()),
-            priority: attr.get_priority(),
+            priority: root_attr.get_priority(),
             create_time: *attr.get_create_time(),
             start_time: *attr.get_start_time(),
             end_time: *attr.get_end_time_opt(),
@@ -65,7 +66,7 @@ impl TryFrom<&TaskHandle> for TaskView {
             repetition_interval_days: attr.get_repetition_interval_days_opt(),
             repetition_anchor: attr.get_repetition_anchor(),
             days_in_advance: attr.get_days_in_advance(),
-            project_category: attr.get_project_category_opt(),
+            project_category: root_attr.get_project_category_opt(),
         })
     }
 }
