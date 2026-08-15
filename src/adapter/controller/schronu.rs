@@ -9269,7 +9269,7 @@ fn test_cli_repository_transactionは外部更新を再読込してcommandを即
 }
 
 #[test]
-fn test_cli_repository_transactionはreload_if_changed経路を使う() {
+fn test_cli_repository_transactionはread_only_operationでsaveしない() {
     let storage_dir = TestStorageDir::new();
     std::fs::create_dir_all(&storage_dir.path).unwrap();
     let now = Local.with_ymd_and_hms(2026, 8, 12, 12, 0, 0).unwrap();
@@ -9280,7 +9280,7 @@ fn test_cli_repository_transactionはreload_if_changed経路を使う() {
 
     assert_eq!(repository.reload_if_changed_attempt_count.get(), 1);
     assert_eq!(repository.load_attempt_count.get(), 1);
-    assert_eq!(repository.save_attempt_count.get(), 1);
+    assert_eq!(repository.save_attempt_count.get(), 0);
 }
 
 #[test]
