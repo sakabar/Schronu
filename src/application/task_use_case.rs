@@ -94,6 +94,7 @@ pub fn get_focus(
 ) -> Result<Option<TaskView>, ApplicationError> {
     repository
         .get_highest_priority_leaf_task_id()
+        .map_err(ApplicationError::TaskTree)?
         .map_or(Ok(None), |task_id| get_task(repository, task_id))
 }
 
@@ -103,6 +104,7 @@ pub fn get_task(
 ) -> Result<Option<TaskView>, ApplicationError> {
     repository
         .get_by_id(task_id)
+        .map_err(ApplicationError::TaskTree)?
         .as_ref()
         .map(|task| TaskView::try_from(task).map_err(ApplicationError::TaskTree))
         .transpose()
@@ -140,7 +142,7 @@ pub fn list_tasks(
 
     let mut tasks = Vec::new();
     for root in repository.get_all_projects() {
-        collect_tasks_pre_order(root, &mut tasks);
+        collect_tasks_pre_order(root, &mut tasks).map_err(ApplicationError::TaskTree)?;
     }
 
     Ok(tasks
@@ -174,11 +176,15 @@ pub fn list_tasks(
         .collect::<Vec<_>>())
 }
 
-fn collect_tasks_pre_order(task: &TaskHandle, tasks: &mut Vec<TaskHandle>) {
+fn collect_tasks_pre_order(
+    task: &TaskHandle,
+    tasks: &mut Vec<TaskHandle>,
+) -> Result<(), TaskTreeError> {
     tasks.push(task.clone());
-    for child in task.get_children() {
-        collect_tasks_pre_order(&child, tasks);
+    for child in task.get_children()? {
+        collect_tasks_pre_order(&child, tasks)?;
     }
+    Ok(())
 }
 
 fn is_in_period(time: DateTime<Local>, from: DateTime<Local>, until: DateTime<Local>) -> bool {
@@ -191,21 +197,29 @@ pub fn create_task(
 ) -> Result<Uuid, ApplicationError> {
     validate_task_name(&input.name, "name")?;
 
-    let root_task = TaskHandle::new(&input.name);
-    root_task.set_priority(5);
+    let root_task = TaskHandle::new(&input.name).map_err(ApplicationError::TaskTree)?;
+    root_task
+        .set_priority(5)
+        .map_err(ApplicationError::TaskTree)?;
 
     if let Some(pending_until) = input.pending_until {
-        root_task.set_pending_until(pending_until);
-        root_task.set_orig_status(Status::Pending);
+        root_task
+            .set_pending_until(pending_until)
+            .map_err(ApplicationError::TaskTree)?;
+        root_task
+            .set_orig_status(Status::Pending)
+            .map_err(ApplicationError::TaskTree)?;
     }
 
     if let Some(estimated_work_minutes) = input.estimated_work_minutes {
-        root_task.set_estimated_work_seconds(estimated_work_seconds_from_minutes(
-            estimated_work_minutes,
-        )?);
+        root_task
+            .set_estimated_work_seconds(estimated_work_seconds_from_minutes(
+                estimated_work_minutes,
+            )?)
+            .map_err(ApplicationError::TaskTree)?;
     }
 
-    let task_id = root_task.get_id();
+    let task_id = root_task.get_id().map_err(ApplicationError::TaskTree)?;
     repository
         .start_new_project(root_task)
         .map_err(ApplicationError::TaskTree)?;
@@ -237,12 +251,17 @@ pub fn breakdown_task(
         }
 
         let child_task = parent_task
-            .try_create_child(child_attr)
+            .create_child(child_attr)
             .map_err(ApplicationError::TaskTree)?;
-        if let Some(deadline_time) = parent_task.get_deadline_time_opt() {
-            child_task.set_deadline_time_opt(Some(deadline_time));
+        if let Some(deadline_time) = parent_task
+            .get_deadline_time_opt()
+            .map_err(ApplicationError::TaskTree)?
+        {
+            child_task
+                .set_deadline_time_opt(Some(deadline_time))
+                .map_err(ApplicationError::TaskTree)?;
         }
-        child_ids.push(child_task.get_id());
+        child_ids.push(child_task.get_id().map_err(ApplicationError::TaskTree)?);
     }
 
     Ok(child_ids)
@@ -254,8 +273,10 @@ pub fn defer_task(
     pending_until: DateTime<Local>,
 ) -> Result<(), ApplicationError> {
     let task = find_task(repository, task_id)?;
-    task.set_pending_until(pending_until);
-    task.set_orig_status(Status::Pending);
+    task.set_pending_until(pending_until)
+        .map_err(ApplicationError::TaskTree)?;
+    task.set_orig_status(Status::Pending)
+        .map_err(ApplicationError::TaskTree)?;
     Ok(())
 }
 
@@ -264,7 +285,10 @@ pub fn complete_task(
     input: CompleteTaskInput,
 ) -> Result<CompleteTaskOutput, ApplicationError> {
     let task = find_task(repository, input.task_id)?;
-    if task.has_undone_children() {
+    if task
+        .has_undone_children()
+        .map_err(ApplicationError::TaskTree)?
+    {
         return Err(ApplicationError::HasUndoneChildren(input.task_id));
     }
 
@@ -276,19 +300,30 @@ pub fn complete_task(
     }
     let actual_work_seconds = task
         .get_actual_work_seconds()
+        .map_err(ApplicationError::TaskTree)?
         .checked_add(input.additional_actual_work_seconds)
         .ok_or(ApplicationError::InvalidInput {
             field: "additional_actual_work_seconds",
             reason: "actual work seconds overflow",
         })?;
 
-    task.set_actual_work_seconds(actual_work_seconds);
-    task.set_orig_status(Status::Done);
-    task.set_end_time_opt(Some(input.finished_at));
+    task.set_actual_work_seconds(actual_work_seconds)
+        .map_err(ApplicationError::TaskTree)?;
+    task.set_orig_status(Status::Done)
+        .map_err(ApplicationError::TaskTree)?;
+    task.set_end_time_opt(Some(input.finished_at))
+        .map_err(ApplicationError::TaskTree)?;
 
     let next_repetition_task_id = create_next_repetition_task(&task, input.finished_at)?;
-    let next_focus_task_id = if task.all_sibling_tasks_are_all_done() {
-        task.parent().map(|parent| parent.get_id())
+    let next_focus_task_id = if task
+        .all_sibling_tasks_are_all_done()
+        .map_err(ApplicationError::TaskTree)?
+    {
+        task.parent()
+            .map_err(ApplicationError::TaskTree)?
+            .map(|parent| parent.get_id())
+            .transpose()
+            .map_err(ApplicationError::TaskTree)?
     } else {
         None
     };
@@ -306,7 +341,8 @@ pub fn set_estimate(
 ) -> Result<(), ApplicationError> {
     let estimated_work_seconds = estimated_work_seconds_from_minutes(estimated_work_minutes)?;
     let task = find_task(repository, task_id)?;
-    task.set_estimated_work_seconds(estimated_work_seconds);
+    task.set_estimated_work_seconds(estimated_work_seconds)
+        .map_err(ApplicationError::TaskTree)?;
     Ok(())
 }
 
@@ -317,8 +353,12 @@ pub fn set_deadline(
 ) -> Result<(), ApplicationError> {
     let task = find_task(repository, task_id)?;
     match deadline_time {
-        Some(deadline_time) => task.set_deadline_time_opt(Some(deadline_time)),
-        None => task.unset_deadline_time_opt(),
+        Some(deadline_time) => task
+            .set_deadline_time_opt(Some(deadline_time))
+            .map_err(ApplicationError::TaskTree)?,
+        None => task
+            .unset_deadline_time_opt()
+            .map_err(ApplicationError::TaskTree)?,
     }
     Ok(())
 }
@@ -329,7 +369,8 @@ pub fn set_category(
     project_category: Option<ProjectCategory>,
 ) -> Result<(), ApplicationError> {
     let task = find_task(repository, task_id)?;
-    task.set_project_category_opt(project_category);
+    task.set_project_category_opt(project_category)
+        .map_err(ApplicationError::TaskTree)?;
     Ok(())
 }
 
@@ -339,6 +380,7 @@ fn find_task(
 ) -> Result<TaskHandle, ApplicationError> {
     repository
         .get_by_id(task_id)
+        .map_err(ApplicationError::TaskTree)?
         .ok_or(ApplicationError::TaskNotFound(task_id))
 }
 
@@ -387,36 +429,45 @@ fn create_next_repetition_task(
     task: &TaskHandle,
     finished_at: DateTime<Local>,
 ) -> Result<Option<Uuid>, ApplicationError> {
-    let Some(parent_task) = task.parent() else {
+    let Some(parent_task) = task.parent().map_err(ApplicationError::TaskTree)? else {
         return Ok(None);
     };
-    let Some(repetition_interval_days) = parent_task.get_repetition_interval_days_opt() else {
+    let Some(repetition_interval_days) = parent_task
+        .get_repetition_interval_days_opt()
+        .map_err(ApplicationError::TaskTree)?
+    else {
         return Ok(None);
     };
 
-    adjust_repetition_estimate(&parent_task, task);
+    adjust_repetition_estimate(&parent_task, task).map_err(ApplicationError::TaskTree)?;
     let new_task_attr =
         build_next_repetition_task_attr(task, &parent_task, repetition_interval_days, finished_at)
             .map_err(ApplicationError::TaskTree)?;
     let next_task = parent_task
-        .try_create_child(new_task_attr)
+        .create_child(new_task_attr)
         .map_err(ApplicationError::TaskTree)?;
-    Ok(Some(next_task.get_id()))
+    Ok(Some(
+        next_task.get_id().map_err(ApplicationError::TaskTree)?,
+    ))
 }
 
-fn adjust_repetition_estimate(parent_task: &TaskHandle, task: &TaskHandle) {
-    if task.get_actual_work_seconds() <= 0 {
-        return;
+fn adjust_repetition_estimate(
+    parent_task: &TaskHandle,
+    task: &TaskHandle,
+) -> Result<(), TaskTreeError> {
+    if task.get_actual_work_seconds()? <= 0 {
+        return Ok(());
     }
 
-    let original_estimated_seconds = parent_task.get_estimated_work_seconds();
-    let difference = task.get_actual_work_seconds() - original_estimated_seconds;
+    let original_estimated_seconds = parent_task.get_estimated_work_seconds()?;
+    let difference = task.get_actual_work_seconds()? - original_estimated_seconds;
     let new_estimated_work_seconds = match difference.cmp(&0) {
         Ordering::Greater => original_estimated_seconds + difference * 3 / 4,
         Ordering::Less => max(60, original_estimated_seconds + difference / 4),
         Ordering::Equal => original_estimated_seconds,
     };
-    parent_task.set_estimated_work_seconds(new_estimated_work_seconds);
+    parent_task.set_estimated_work_seconds(new_estimated_work_seconds)?;
+    Ok(())
 }
 
 fn apply_time_template(
@@ -440,14 +491,14 @@ fn build_next_repetition_task_attr(
     repetition_interval_days: i64,
     finished_at: DateTime<Local>,
 ) -> Result<TaskAttr, TaskTreeError> {
-    let occurrence_anchor = match parent_task.get_repetition_anchor() {
-        RepetitionAnchor::Deadline => task.get_deadline_time_opt().unwrap_or(finished_at),
+    let occurrence_anchor = match parent_task.get_repetition_anchor()? {
+        RepetitionAnchor::Deadline => task.get_deadline_time_opt()?.unwrap_or(finished_at),
         RepetitionAnchor::Completion => finished_at,
     };
     let next_occurrence_day =
         get_next_morning_datetime(occurrence_anchor) + Duration::days(repetition_interval_days - 1);
-    let new_start_time = apply_time_template(next_occurrence_day, parent_task.get_start_time());
-    let new_deadline_time = match parent_task.get_deadline_time_opt() {
+    let new_start_time = apply_time_template(next_occurrence_day, parent_task.get_start_time()?);
+    let new_deadline_time = match parent_task.get_deadline_time_opt()? {
         Some(parent_deadline_time) => {
             apply_time_template(next_occurrence_day, parent_deadline_time)
         }
@@ -469,10 +520,10 @@ fn build_next_repetition_task_attr(
         new_start_time.day()
     ));
     new_task_attr
-        .set_start_time(new_start_time - Duration::days(parent_task.get_days_in_advance()));
+        .set_start_time(new_start_time - Duration::days(parent_task.get_days_in_advance()?));
     new_task_attr.set_deadline_time_opt(Some(new_deadline_time));
-    new_task_attr.set_estimated_work_seconds(parent_task.get_estimated_work_seconds());
-    new_task_attr.set_atomic(parent_task.get_atomic());
+    new_task_attr.set_estimated_work_seconds(parent_task.get_estimated_work_seconds()?);
+    new_task_attr.set_atomic(parent_task.get_atomic()?);
     Ok(new_task_attr)
 }
 
@@ -519,8 +570,12 @@ mod tests {
             Ok(())
         }
 
-        fn sync_clock(&mut self, now: DateTime<Local>) {
+        fn sync_clock(
+            &mut self,
+            now: DateTime<Local>,
+        ) -> Result<(), crate::entity::task::TaskTreeError> {
             self.now = now;
+            Ok(())
         }
 
         fn get_last_synced_time(&self) -> DateTime<Local> {
@@ -531,16 +586,29 @@ mod tests {
             self.projects.first()
         }
 
-        fn get_highest_priority_leaf_task_id(&mut self) -> Option<Uuid> {
-            self.highest_priority_leaf_task_id
+        fn get_highest_priority_leaf_task_id(
+            &mut self,
+        ) -> Result<Option<Uuid>, crate::entity::task::TaskTreeError> {
+            Ok(self.highest_priority_leaf_task_id)
         }
 
-        fn get_defer_candidate_leaf_task_id(&mut self, _recent_days: i64) -> Option<Uuid> {
-            None
+        fn get_defer_candidate_leaf_task_id(
+            &mut self,
+            _recent_days: i64,
+        ) -> Result<Option<Uuid>, crate::entity::task::TaskTreeError> {
+            Ok(None)
         }
 
-        fn get_by_id(&self, id: Uuid) -> Option<TaskHandle> {
-            self.projects.iter().find_map(|task| task.get_by_id(id))
+        fn get_by_id(
+            &self,
+            id: Uuid,
+        ) -> Result<Option<TaskHandle>, crate::entity::task::TaskTreeError> {
+            for task in &self.projects {
+                if let Some(found) = task.get_by_id(id)? {
+                    return Ok(Some(found));
+                }
+            }
+            Ok(None)
         }
 
         fn start_new_project(
@@ -563,14 +631,22 @@ mod tests {
         focused_deadline_time_opt: Option<DateTime<Local>>,
         finished_at: DateTime<Local>,
     ) -> TaskHandle {
-        let parent_task = TaskHandle::new("ルーチン");
-        parent_task.set_repetition_interval_days_opt(Some(7));
-        parent_task.set_repetition_anchor(repetition_anchor);
-        parent_task.set_days_in_advance(days_in_advance);
-        parent_task.set_start_time(Local.with_ymd_and_hms(2026, 5, 10, 9, 30, 15).unwrap());
-        parent_task.set_deadline_time_opt(Some(
-            Local.with_ymd_and_hms(2026, 5, 10, 23, 59, 59).unwrap(),
-        ));
+        let parent_task = TaskHandle::new("ルーチン").unwrap();
+        parent_task
+            .set_repetition_interval_days_opt(Some(7))
+            .unwrap();
+        parent_task
+            .set_repetition_anchor(repetition_anchor)
+            .unwrap();
+        parent_task.set_days_in_advance(days_in_advance).unwrap();
+        parent_task
+            .set_start_time(Local.with_ymd_and_hms(2026, 5, 10, 9, 30, 15).unwrap())
+            .unwrap();
+        parent_task
+            .set_deadline_time_opt(Some(
+                Local.with_ymd_and_hms(2026, 5, 10, 23, 59, 59).unwrap(),
+            ))
+            .unwrap();
 
         let mut child_task_attr = TaskAttr::new("ルーチン(5/16)");
         child_task_attr.set_start_time(focused_start_time);
@@ -581,7 +657,7 @@ mod tests {
         complete_task(
             &mut repository,
             CompleteTaskInput {
-                task_id: child_task.get_id(),
+                task_id: child_task.get_id().unwrap(),
                 finished_at,
                 additional_actual_work_seconds: 0,
             },
@@ -590,24 +666,28 @@ mod tests {
 
         parent_task
             .get_children()
+            .unwrap()
             .into_iter()
-            .find(|task| task.get_status() != Status::Done)
+            .find(|task| task.get_status().unwrap() != Status::Done)
             .expect("next repetition child")
     }
 
     #[test]
     fn get_task_親子関係を含むviewを返す() {
-        let root = TaskHandle::new("親");
-        root.set_priority(5);
-        root.set_project_category_opt(Some(ProjectCategory::Investment));
+        let root = TaskHandle::new("親").unwrap();
+        root.set_priority(5).unwrap();
+        root.set_project_category_opt(Some(ProjectCategory::Investment))
+            .unwrap();
         let child = root.create_as_last_child(TaskAttr::new("子"));
         let repository = TestTaskRepository::new(vec![root.clone()], fixed_now());
 
-        let actual = get_task(&repository, child.get_id()).unwrap().unwrap();
+        let actual = get_task(&repository, child.get_id().unwrap())
+            .unwrap()
+            .unwrap();
 
-        assert_eq!(actual.id, child.get_id());
-        assert_eq!(actual.root_id, root.get_id());
-        assert_eq!(actual.parent_id, Some(root.get_id()));
+        assert_eq!(actual.id, child.get_id().unwrap());
+        assert_eq!(actual.root_id, root.get_id().unwrap());
+        assert_eq!(actual.parent_id, Some(root.get_id().unwrap()));
         assert!(actual.child_ids.is_empty());
         assert_eq!(actual.name, "子");
         assert_eq!(actual.priority, 5);
@@ -622,32 +702,36 @@ mod tests {
         let start_time = Local.with_ymd_and_hms(2026, 8, 10, 10, 0, 0).unwrap();
         let end_time = Local.with_ymd_and_hms(2026, 8, 11, 11, 0, 0).unwrap();
         let deadline_time = Local.with_ymd_and_hms(2026, 8, 20, 23, 59, 59).unwrap();
-        let root = TaskHandle::new("全属性");
-        root.set_orig_status(Status::Pending);
-        root.set_pending_until(pending_until);
-        root.set_priority(7);
-        root.set_create_time(create_time);
-        root.set_start_time(start_time);
-        root.set_end_time_opt(Some(end_time));
-        root.set_deadline_time_opt(Some(deadline_time));
-        root.set_estimated_work_seconds(1_800);
-        root.set_actual_work_seconds(900);
-        root.set_atomic(true);
-        root.set_is_on_other_side(true);
-        root.set_repetition_interval_days_opt(Some(7));
-        root.set_repetition_anchor(RepetitionAnchor::Completion);
-        root.set_days_in_advance(2);
-        root.set_project_category_opt(Some(ProjectCategory::Recovery));
-        root.sync_clock(now);
+        let root = TaskHandle::new("全属性").unwrap();
+        root.set_orig_status(Status::Pending).unwrap();
+        root.set_pending_until(pending_until).unwrap();
+        root.set_priority(7).unwrap();
+        root.set_create_time(create_time).unwrap();
+        root.set_start_time(start_time).unwrap();
+        root.set_end_time_opt(Some(end_time)).unwrap();
+        root.set_deadline_time_opt(Some(deadline_time)).unwrap();
+        root.set_estimated_work_seconds(1_800).unwrap();
+        root.set_actual_work_seconds(900).unwrap();
+        root.set_atomic(true).unwrap();
+        root.set_is_on_other_side(true).unwrap();
+        root.set_repetition_interval_days_opt(Some(7)).unwrap();
+        root.set_repetition_anchor(RepetitionAnchor::Completion)
+            .unwrap();
+        root.set_days_in_advance(2).unwrap();
+        root.set_project_category_opt(Some(ProjectCategory::Recovery))
+            .unwrap();
+        root.sync_clock(now).unwrap();
         let child = root.create_as_last_child(TaskAttr::new("子"));
         let repository = TestTaskRepository::new(vec![root.clone()], now);
 
-        let actual = get_task(&repository, root.get_id()).unwrap().unwrap();
+        let actual = get_task(&repository, root.get_id().unwrap())
+            .unwrap()
+            .unwrap();
 
-        assert_eq!(actual.id, root.get_id());
-        assert_eq!(actual.root_id, root.get_id());
+        assert_eq!(actual.id, root.get_id().unwrap());
+        assert_eq!(actual.root_id, root.get_id().unwrap());
         assert_eq!(actual.parent_id, None);
-        assert_eq!(actual.child_ids, vec![child.get_id()]);
+        assert_eq!(actual.child_ids, vec![child.get_id().unwrap()]);
         assert_eq!(actual.name, "全属性");
         assert_eq!(actual.status, Status::Pending);
         assert_eq!(actual.original_status, Status::Pending);
@@ -675,10 +759,12 @@ mod tests {
 
     #[test]
     fn get_task_pendingでなければpending_untilはnoneを返す() {
-        let task = TaskHandle::new("未延期");
+        let task = TaskHandle::new("未延期").unwrap();
         let repository = TestTaskRepository::new(vec![task.clone()], fixed_now());
 
-        let actual = get_task(&repository, task.get_id()).unwrap().unwrap();
+        let actual = get_task(&repository, task.get_id().unwrap())
+            .unwrap()
+            .unwrap();
 
         assert_eq!(actual.original_status, Status::Todo);
         assert_eq!(actual.pending_until, None);
@@ -686,14 +772,14 @@ mod tests {
 
     #[test]
     fn get_focus_最高優先度leafのviewを返す() {
-        let root = TaskHandle::new("親");
+        let root = TaskHandle::new("親").unwrap();
         let child = root.create_as_last_child(TaskAttr::new("子"));
         let mut repository = TestTaskRepository::new(vec![root], fixed_now());
-        repository.highest_priority_leaf_task_id = Some(child.get_id());
+        repository.highest_priority_leaf_task_id = Some(child.get_id().unwrap());
 
         assert_eq!(
             get_focus(&mut repository).unwrap().unwrap().id,
-            child.get_id()
+            child.get_id().unwrap()
         );
     }
 
@@ -727,12 +813,12 @@ mod tests {
         )
         .unwrap();
 
-        let task = repository.get_by_id(task_id).unwrap();
+        let task = repository.get_by_id(task_id).unwrap().unwrap();
         assert_eq!(task.get_name().unwrap(), "新規");
-        assert_eq!(task.get_priority(), 5);
-        assert_eq!(task.get_estimated_work_seconds(), 30 * 60);
-        assert_eq!(task.get_orig_status(), Status::Pending);
-        assert_eq!(task.get_pending_until(), pending_until);
+        assert_eq!(task.get_priority().unwrap(), 5);
+        assert_eq!(task.get_estimated_work_seconds().unwrap(), 30 * 60);
+        assert_eq!(task.get_orig_status().unwrap(), Status::Pending);
+        assert_eq!(task.get_pending_until().unwrap(), pending_until);
         assert_eq!(repository.save_count.get(), 0);
     }
 
@@ -834,15 +920,15 @@ mod tests {
 
     #[test]
     fn breakdown_task_入力順と締切を維持する() {
-        let parent = TaskHandle::new("親");
+        let parent = TaskHandle::new("親").unwrap();
         let deadline = Local.with_ymd_and_hms(2026, 8, 20, 23, 59, 59).unwrap();
-        parent.set_deadline_time_opt(Some(deadline));
+        parent.set_deadline_time_opt(Some(deadline)).unwrap();
         let mut repository = TestTaskRepository::new(vec![parent.clone()], fixed_now());
 
         let child_ids = breakdown_task(
             &mut repository,
             BreakdownTaskInput {
-                parent_id: parent.get_id(),
+                parent_id: parent.get_id().unwrap(),
                 names: vec!["一".to_string(), "二".to_string()],
                 pending_until: None,
             },
@@ -852,6 +938,7 @@ mod tests {
         assert_eq!(
             parent
                 .get_children()
+                .unwrap()
                 .iter()
                 .map(|task| task.get_name().unwrap())
                 .collect::<Vec<_>>(),
@@ -860,20 +947,21 @@ mod tests {
         assert_eq!(child_ids.len(), 2);
         assert!(parent
             .get_children()
+            .unwrap()
             .iter()
-            .all(|child| child.get_deadline_time_opt() == Some(deadline)));
+            .all(|child| child.get_deadline_time_opt().unwrap() == Some(deadline)));
     }
 
     #[test]
     fn breakdown_task_全ての子を指定時刻までpendingにする() {
-        let parent = TaskHandle::new("親");
+        let parent = TaskHandle::new("親").unwrap();
         let pending_until = Local.with_ymd_and_hms(2026, 8, 13, 6, 0, 0).unwrap();
         let mut repository = TestTaskRepository::new(vec![parent.clone()], fixed_now());
 
         let child_ids = breakdown_task(
             &mut repository,
             BreakdownTaskInput {
-                parent_id: parent.get_id(),
+                parent_id: parent.get_id().unwrap(),
                 names: vec!["一".to_string(), "二".to_string()],
                 pending_until: Some(pending_until),
             },
@@ -883,44 +971,46 @@ mod tests {
         assert_eq!(
             parent
                 .get_children()
+                .unwrap()
                 .iter()
                 .map(|task| task.get_name().unwrap())
                 .collect::<Vec<_>>(),
             vec!["一", "二"]
         );
         assert_eq!(child_ids.len(), 2);
-        assert!(parent.get_children().iter().all(|child| {
-            child.get_orig_status() == Status::Pending && child.get_pending_until() == pending_until
+        assert!(parent.get_children().unwrap().iter().all(|child| {
+            child.get_orig_status().unwrap() == Status::Pending
+                && child.get_pending_until().unwrap() == pending_until
         }));
     }
 
     #[test]
     fn breakdown_task_数値名を含む場合は変更しない() {
-        let parent = TaskHandle::new("親");
+        let parent = TaskHandle::new("親").unwrap();
         let mut repository = TestTaskRepository::new(vec![parent.clone()], fixed_now());
 
         let actual = breakdown_task(
             &mut repository,
             BreakdownTaskInput {
-                parent_id: parent.get_id(),
+                parent_id: parent.get_id().unwrap(),
                 names: vec!["子".to_string(), "10".to_string()],
                 pending_until: None,
             },
         );
 
         assert!(matches!(actual, Err(ApplicationError::InvalidInput { .. })));
-        assert!(parent.get_children().is_empty());
+        assert!(parent.get_children().unwrap().is_empty());
     }
 
     #[test]
     fn breakdown_task_空の名前一覧を拒否して変更しない() {
-        let parent = TaskHandle::new("親");
+        let parent = TaskHandle::new("親").unwrap();
         let mut repository = TestTaskRepository::new(vec![parent.clone()], fixed_now());
 
         let actual = breakdown_task(
             &mut repository,
             BreakdownTaskInput {
-                parent_id: parent.get_id(),
+                parent_id: parent.get_id().unwrap(),
                 names: vec![],
                 pending_until: None,
             },
@@ -930,46 +1020,46 @@ mod tests {
             actual,
             Err(ApplicationError::InvalidInput { field: "names", .. })
         ));
-        assert!(parent.get_children().is_empty());
+        assert!(parent.get_children().unwrap().is_empty());
     }
 
     #[test]
     fn breakdown_task_空白名を含む場合は変更しない() {
-        let parent = TaskHandle::new("親");
+        let parent = TaskHandle::new("親").unwrap();
         let mut repository = TestTaskRepository::new(vec![parent.clone()], fixed_now());
 
         let actual = breakdown_task(
             &mut repository,
             BreakdownTaskInput {
-                parent_id: parent.get_id(),
+                parent_id: parent.get_id().unwrap(),
                 names: vec!["子".to_string(), "   ".to_string()],
                 pending_until: None,
             },
         );
 
         assert!(matches!(actual, Err(ApplicationError::InvalidInput { .. })));
-        assert!(parent.get_children().is_empty());
+        assert!(parent.get_children().unwrap().is_empty());
     }
 
     #[test]
     fn defer_task_絶対時刻までpendingにする() {
-        let task = TaskHandle::new("延期");
-        let task_id = task.get_id();
+        let task = TaskHandle::new("延期").unwrap();
+        let task_id = task.get_id().unwrap();
         let mut repository = TestTaskRepository::new(vec![task], fixed_now());
         let pending_until = Local.with_ymd_and_hms(2026, 8, 13, 6, 0, 1).unwrap();
 
         defer_task(&mut repository, task_id, pending_until).unwrap();
 
-        let task = repository.get_by_id(task_id).unwrap();
-        assert_eq!(task.get_orig_status(), Status::Pending);
-        assert_eq!(task.get_pending_until(), pending_until);
+        let task = repository.get_by_id(task_id).unwrap().unwrap();
+        assert_eq!(task.get_orig_status().unwrap(), Status::Pending);
+        assert_eq!(task.get_pending_until().unwrap(), pending_until);
     }
 
     #[test]
     fn complete_task_未完了の子があれば変更しない() {
-        let task = TaskHandle::new("親");
+        let task = TaskHandle::new("親").unwrap();
         task.create_as_last_child(TaskAttr::new("未完了"));
-        let task_id = task.get_id();
+        let task_id = task.get_id().unwrap();
         let mut repository = TestTaskRepository::new(vec![task], fixed_now());
 
         let actual = complete_task(
@@ -982,16 +1072,16 @@ mod tests {
         );
 
         assert_eq!(actual, Err(ApplicationError::HasUndoneChildren(task_id)));
-        let task = repository.get_by_id(task_id).unwrap();
-        assert_eq!(task.get_status(), Status::Todo);
-        assert_eq!(task.get_actual_work_seconds(), 0);
+        let task = repository.get_by_id(task_id).unwrap().unwrap();
+        assert_eq!(task.get_status().unwrap(), Status::Todo);
+        assert_eq!(task.get_actual_work_seconds().unwrap(), 0);
     }
 
     #[test]
     fn complete_task_実績を加算して完了する() {
-        let task = TaskHandle::new("完了");
-        task.set_actual_work_seconds(60);
-        let task_id = task.get_id();
+        let task = TaskHandle::new("完了").unwrap();
+        task.set_actual_work_seconds(60).unwrap();
+        let task_id = task.get_id().unwrap();
         let mut repository = TestTaskRepository::new(vec![task], fixed_now());
 
         let output = complete_task(
@@ -1004,17 +1094,17 @@ mod tests {
         )
         .unwrap();
 
-        let task = repository.get_by_id(task_id).unwrap();
-        assert_eq!(task.get_status(), Status::Done);
-        assert_eq!(task.get_end_time_opt(), Some(fixed_now()));
-        assert_eq!(task.get_actual_work_seconds(), 180);
+        let task = repository.get_by_id(task_id).unwrap().unwrap();
+        assert_eq!(task.get_status().unwrap(), Status::Done);
+        assert_eq!(task.get_end_time_opt().unwrap(), Some(fixed_now()));
+        assert_eq!(task.get_actual_work_seconds().unwrap(), 180);
         assert_eq!(output.next_focus_task_id, None);
         assert_eq!(output.next_repetition_task_id, None);
     }
 
     #[test]
     fn create_next_repetition_taskは構造化errorを返せるresultを維持する() {
-        let task = TaskHandle::new("単発");
+        let task = TaskHandle::new("単発").unwrap();
 
         let actual: Result<Option<Uuid>, ApplicationError> =
             create_next_repetition_task(&task, fixed_now());
@@ -1024,12 +1114,12 @@ mod tests {
 
     #[test]
     fn complete_task_繰り返しtaskを生成して見積もりを補正する() {
-        let parent = TaskHandle::new("ルーチン");
-        parent.set_repetition_interval_days_opt(Some(7));
-        parent.set_estimated_work_seconds(600);
+        let parent = TaskHandle::new("ルーチン").unwrap();
+        parent.set_repetition_interval_days_opt(Some(7)).unwrap();
+        parent.set_estimated_work_seconds(600).unwrap();
         let child = parent.create_as_last_child(TaskAttr::new("今回"));
-        child.set_actual_work_seconds(1000);
-        let child_id = child.get_id();
+        child.set_actual_work_seconds(1000).unwrap();
+        let child_id = child.get_id().unwrap();
         let mut repository = TestTaskRepository::new(vec![parent.clone()], fixed_now());
 
         let output = complete_task(
@@ -1042,9 +1132,9 @@ mod tests {
         )
         .unwrap();
 
-        assert_eq!(parent.get_estimated_work_seconds(), 900);
+        assert_eq!(parent.get_estimated_work_seconds().unwrap(), 900);
         assert!(output.next_repetition_task_id.is_some());
-        assert_eq!(parent.get_children().len(), 2);
+        assert_eq!(parent.get_children().unwrap().len(), 2);
     }
 
     #[test]
@@ -1058,7 +1148,7 @@ mod tests {
         );
 
         assert_eq!(
-            next_child.get_deadline_time_opt(),
+            next_child.get_deadline_time_opt().unwrap(),
             Some(Local.with_ymd_and_hms(2026, 5, 23, 23, 59, 59).unwrap())
         );
     }
@@ -1074,7 +1164,7 @@ mod tests {
         );
 
         assert_eq!(
-            next_child.get_deadline_time_opt(),
+            next_child.get_deadline_time_opt().unwrap(),
             Some(Local.with_ymd_and_hms(2026, 5, 24, 23, 59, 59).unwrap())
         );
     }
@@ -1090,11 +1180,11 @@ mod tests {
         );
 
         assert_eq!(
-            next_child.get_start_time(),
+            next_child.get_start_time().unwrap(),
             Local.with_ymd_and_hms(2026, 5, 21, 9, 30, 15).unwrap()
         );
         assert_eq!(
-            next_child.get_deadline_time_opt(),
+            next_child.get_deadline_time_opt().unwrap(),
             Some(Local.with_ymd_and_hms(2026, 5, 23, 23, 59, 59).unwrap())
         );
     }
@@ -1110,19 +1200,24 @@ mod tests {
         );
 
         assert_eq!(
-            next_child.get_deadline_time_opt(),
+            next_child.get_deadline_time_opt().unwrap(),
             Some(Local.with_ymd_and_hms(2026, 5, 24, 23, 59, 59).unwrap())
         );
     }
 
     #[test]
     fn complete_task_繰り返し親のatomicを次回子タスクに引き継ぐ() {
-        let parent_task = TaskHandle::new("通勤");
-        parent_task.set_repetition_interval_days_opt(Some(7));
-        parent_task.set_atomic(true);
-        parent_task.set_start_time(Local.with_ymd_and_hms(2026, 5, 10, 9, 0, 0).unwrap());
+        let parent_task = TaskHandle::new("通勤").unwrap();
         parent_task
-            .set_deadline_time_opt(Some(Local.with_ymd_and_hms(2026, 5, 10, 10, 0, 0).unwrap()));
+            .set_repetition_interval_days_opt(Some(7))
+            .unwrap();
+        parent_task.set_atomic(true).unwrap();
+        parent_task
+            .set_start_time(Local.with_ymd_and_hms(2026, 5, 10, 9, 0, 0).unwrap())
+            .unwrap();
+        parent_task
+            .set_deadline_time_opt(Some(Local.with_ymd_and_hms(2026, 5, 10, 10, 0, 0).unwrap()))
+            .unwrap();
 
         let mut child_task_attr = TaskAttr::new("通勤(5/16)");
         child_task_attr.set_start_time(Local.with_ymd_and_hms(2026, 5, 16, 9, 0, 0).unwrap());
@@ -1135,7 +1230,7 @@ mod tests {
         complete_task(
             &mut repository,
             CompleteTaskInput {
-                task_id: child_task.get_id(),
+                task_id: child_task.get_id().unwrap(),
                 finished_at,
                 additional_actual_work_seconds: 0,
             },
@@ -1144,17 +1239,18 @@ mod tests {
 
         let next_child = parent_task
             .get_children()
+            .unwrap()
             .into_iter()
-            .find(|task| task.get_status() != Status::Done)
+            .find(|task| task.get_status().unwrap() != Status::Done)
             .expect("next repetition child");
-        assert!(next_child.get_atomic());
+        assert!(next_child.get_atomic().unwrap());
     }
 
     #[test]
     fn complete_task_負の追加実績を拒否して変更しない() {
-        let task = TaskHandle::new("完了対象");
-        task.set_actual_work_seconds(120);
-        let task_id = task.get_id();
+        let task = TaskHandle::new("完了対象").unwrap();
+        task.set_actual_work_seconds(120).unwrap();
+        let task_id = task.get_id().unwrap();
         let mut repository = TestTaskRepository::new(vec![task], fixed_now());
 
         let actual = complete_task(
@@ -1173,17 +1269,17 @@ mod tests {
                 ..
             })
         ));
-        let task = repository.get_by_id(task_id).unwrap();
-        assert_eq!(task.get_status(), Status::Todo);
-        assert_eq!(task.get_actual_work_seconds(), 120);
-        assert_eq!(task.get_end_time_opt(), None);
+        let task = repository.get_by_id(task_id).unwrap().unwrap();
+        assert_eq!(task.get_status().unwrap(), Status::Todo);
+        assert_eq!(task.get_actual_work_seconds().unwrap(), 120);
+        assert_eq!(task.get_end_time_opt().unwrap(), None);
     }
 
     #[test]
     fn complete_task_実績加算がoverflowする場合はerrorにして変更しない() {
-        let task = TaskHandle::new("完了対象");
-        task.set_actual_work_seconds(i64::MAX);
-        let task_id = task.get_id();
+        let task = TaskHandle::new("完了対象").unwrap();
+        task.set_actual_work_seconds(i64::MAX).unwrap();
+        let task_id = task.get_id().unwrap();
         let mut repository = TestTaskRepository::new(vec![task], fixed_now());
 
         let actual = catch_unwind(AssertUnwindSafe(|| {
@@ -1204,16 +1300,16 @@ mod tests {
                 ..
             }))
         ));
-        let task = repository.get_by_id(task_id).unwrap();
-        assert_eq!(task.get_status(), Status::Todo);
-        assert_eq!(task.get_actual_work_seconds(), i64::MAX);
-        assert_eq!(task.get_end_time_opt(), None);
+        let task = repository.get_by_id(task_id).unwrap().unwrap();
+        assert_eq!(task.get_status().unwrap(), Status::Todo);
+        assert_eq!(task.get_actual_work_seconds().unwrap(), i64::MAX);
+        assert_eq!(task.get_end_time_opt().unwrap(), None);
     }
 
     #[test]
     fn update_use_cases_見積もり締切カテゴリを設定して解除する() {
-        let task = TaskHandle::new("更新");
-        let task_id = task.get_id();
+        let task = TaskHandle::new("更新").unwrap();
+        let task_id = task.get_id().unwrap();
         let mut repository = TestTaskRepository::new(vec![task], fixed_now());
         let deadline = Local.with_ymd_and_hms(2026, 8, 20, 23, 59, 59).unwrap();
 
@@ -1221,18 +1317,18 @@ mod tests {
         set_deadline(&mut repository, task_id, Some(deadline)).unwrap();
         set_category(&mut repository, task_id, Some(ProjectCategory::Recovery)).unwrap();
 
-        let task = repository.get_by_id(task_id).unwrap();
-        assert_eq!(task.get_estimated_work_seconds(), 45 * 60);
-        assert_eq!(task.get_deadline_time_opt(), Some(deadline));
+        let task = repository.get_by_id(task_id).unwrap().unwrap();
+        assert_eq!(task.get_estimated_work_seconds().unwrap(), 45 * 60);
+        assert_eq!(task.get_deadline_time_opt().unwrap(), Some(deadline));
         assert_eq!(
-            task.get_project_category_opt(),
+            task.get_project_category_opt().unwrap(),
             Some(ProjectCategory::Recovery)
         );
 
         set_deadline(&mut repository, task_id, None).unwrap();
         set_category(&mut repository, task_id, None).unwrap();
-        assert_eq!(task.get_deadline_time_opt(), None);
-        assert_eq!(task.get_project_category_opt(), None);
+        assert_eq!(task.get_deadline_time_opt().unwrap(), None);
+        assert_eq!(task.get_project_category_opt().unwrap(), None);
     }
 
     #[test]
@@ -1282,9 +1378,9 @@ mod tests {
 
     #[test]
     fn set_estimate_負数を拒否して変更しない() {
-        let task = TaskHandle::new("更新対象");
-        task.set_estimated_work_seconds(30 * 60);
-        let task_id = task.get_id();
+        let task = TaskHandle::new("更新対象").unwrap();
+        task.set_estimated_work_seconds(30 * 60).unwrap();
+        let task_id = task.get_id().unwrap();
         let mut repository = TestTaskRepository::new(vec![task], fixed_now());
 
         let negative = set_estimate(&mut repository, task_id, -1);
@@ -1299,16 +1395,18 @@ mod tests {
             repository
                 .get_by_id(task_id)
                 .unwrap()
-                .get_estimated_work_seconds(),
+                .unwrap()
+                .get_estimated_work_seconds()
+                .unwrap(),
             30 * 60
         );
     }
 
     #[test]
     fn set_estimate_秒変換がoverflowする場合はerrorにして変更しない() {
-        let task = TaskHandle::new("更新対象");
-        task.set_estimated_work_seconds(30 * 60);
-        let task_id = task.get_id();
+        let task = TaskHandle::new("更新対象").unwrap();
+        task.set_estimated_work_seconds(30 * 60).unwrap();
+        let task_id = task.get_id().unwrap();
         let mut repository = TestTaskRepository::new(vec![task], fixed_now());
 
         let overflow = catch_unwind(AssertUnwindSafe(|| {
@@ -1325,15 +1423,17 @@ mod tests {
             repository
                 .get_by_id(task_id)
                 .unwrap()
-                .get_estimated_work_seconds(),
+                .unwrap()
+                .get_estimated_work_seconds()
+                .unwrap(),
             30 * 60
         );
     }
 
     #[test]
     fn write_use_cases_repositoryをsaveしない() {
-        let root = TaskHandle::new("親");
-        let root_id = root.get_id();
+        let root = TaskHandle::new("親").unwrap();
+        let root_id = root.get_id().unwrap();
         let mut repository = TestTaskRepository::new(vec![root], fixed_now());
 
         let created_id = create_task(
@@ -1368,7 +1468,7 @@ mod tests {
         )
         .unwrap();
 
-        assert!(repository.get_by_id(created_id).is_some());
+        assert!(repository.get_by_id(created_id).unwrap().is_some());
         assert_eq!(repository.save_count.get(), 0);
     }
 }

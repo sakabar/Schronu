@@ -202,11 +202,16 @@ pub fn flatten_tasks_with_end_of_day_offset_minutes(
         else {
             continue;
         };
-        let Some(task) = repository.get_by_id(task_id) else {
+        let Some(task) = repository
+            .get_by_id(task_id)
+            .map_err(ApplicationError::TaskTree)?
+        else {
             continue;
         };
-        task.set_pending_until(target_datetime);
-        task.set_orig_status(Status::Pending);
+        task.set_pending_until(target_datetime)
+            .map_err(ApplicationError::TaskTree)?;
+        task.set_orig_status(Status::Pending)
+            .map_err(ApplicationError::TaskTree)?;
         flattened_tasks.push(FlattenedTask {
             task_id,
             name,

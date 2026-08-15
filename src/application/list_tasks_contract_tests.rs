@@ -34,8 +34,12 @@ impl TaskRepositoryTrait for TestTaskRepository {
         Ok(())
     }
 
-    fn sync_clock(&mut self, now: DateTime<Local>) {
+    fn sync_clock(
+        &mut self,
+        now: DateTime<Local>,
+    ) -> Result<(), crate::entity::task::TaskTreeError> {
         self.now = now;
+        Ok(())
     }
 
     fn get_last_synced_time(&self) -> DateTime<Local> {
@@ -46,16 +50,29 @@ impl TaskRepositoryTrait for TestTaskRepository {
         self.projects.first()
     }
 
-    fn get_highest_priority_leaf_task_id(&mut self) -> Option<Uuid> {
-        None
+    fn get_highest_priority_leaf_task_id(
+        &mut self,
+    ) -> Result<Option<Uuid>, crate::entity::task::TaskTreeError> {
+        Ok(None)
     }
 
-    fn get_defer_candidate_leaf_task_id(&mut self, _recent_days: i64) -> Option<Uuid> {
-        None
+    fn get_defer_candidate_leaf_task_id(
+        &mut self,
+        _recent_days: i64,
+    ) -> Result<Option<Uuid>, crate::entity::task::TaskTreeError> {
+        Ok(None)
     }
 
-    fn get_by_id(&self, id: Uuid) -> Option<TaskHandle> {
-        self.projects.iter().find_map(|task| task.get_by_id(id))
+    fn get_by_id(
+        &self,
+        id: Uuid,
+    ) -> Result<Option<TaskHandle>, crate::entity::task::TaskTreeError> {
+        for task in &self.projects {
+            if let Some(found) = task.get_by_id(id)? {
+                return Ok(Some(found));
+            }
+        }
+        Ok(None)
     }
 
     fn start_new_project(
@@ -82,14 +99,14 @@ fn no_filter() -> ListTasksFilter {
 #[test]
 fn list_tasks_filterなしならdoneを含む全taskをpre_orderで返す() {
     let now = fixed_now();
-    let first_root = TaskHandle::new("root 1");
-    first_root.sync_clock(now);
+    let first_root = TaskHandle::new("root 1").unwrap();
+    first_root.sync_clock(now).unwrap();
     let first_child = first_root.create_as_last_child(TaskAttr::new("child 1"));
     let grandchild = first_child.create_as_last_child(TaskAttr::new("grandchild"));
     let second_child = first_root.create_as_last_child(TaskAttr::new("child 2"));
-    second_child.set_orig_status(Status::Done);
-    let second_root = TaskHandle::new("root 2");
-    second_root.sync_clock(now);
+    second_child.set_orig_status(Status::Done).unwrap();
+    let second_root = TaskHandle::new("root 2").unwrap();
+    second_root.sync_clock(now).unwrap();
     let repository = TestTaskRepository::new(vec![first_root.clone(), second_root.clone()], now);
 
     let actual = list_tasks(&repository, no_filter()).unwrap();
@@ -97,11 +114,11 @@ fn list_tasks_filterなしならdoneを含む全taskをpre_orderで返す() {
     assert_eq!(
         actual.iter().map(|task| task.id).collect::<Vec<_>>(),
         vec![
-            first_root.get_id(),
-            first_child.get_id(),
-            grandchild.get_id(),
-            second_child.get_id(),
-            second_root.get_id(),
+            first_root.get_id().unwrap(),
+            first_child.get_id().unwrap(),
+            grandchild.get_id().unwrap(),
+            second_child.get_id().unwrap(),
+            second_root.get_id().unwrap(),
         ]
     );
     assert_eq!(actual[3].status, Status::Done);
@@ -110,19 +127,27 @@ fn list_tasks_filterなしならdoneを含む全taskをpre_orderで返す() {
 #[test]
 fn list_tasks_statusは期限経過を反映した実効状態をorで絞る() {
     let now = fixed_now();
-    let expired_pending = TaskHandle::new("期限経過Pending");
-    expired_pending.set_start_time(now - Duration::hours(1));
-    expired_pending.set_pending_until(now - Duration::minutes(1));
-    expired_pending.set_orig_status(Status::Pending);
-    expired_pending.sync_clock(now);
-    let active_pending = TaskHandle::new("Pending");
-    active_pending.set_start_time(now - Duration::hours(1));
-    active_pending.set_pending_until(now + Duration::hours(1));
-    active_pending.set_orig_status(Status::Pending);
-    active_pending.sync_clock(now);
-    let done = TaskHandle::new("Done");
-    done.set_orig_status(Status::Done);
-    done.sync_clock(now);
+    let expired_pending = TaskHandle::new("期限経過Pending").unwrap();
+    expired_pending
+        .set_start_time(now - Duration::hours(1))
+        .unwrap();
+    expired_pending
+        .set_pending_until(now - Duration::minutes(1))
+        .unwrap();
+    expired_pending.set_orig_status(Status::Pending).unwrap();
+    expired_pending.sync_clock(now).unwrap();
+    let active_pending = TaskHandle::new("Pending").unwrap();
+    active_pending
+        .set_start_time(now - Duration::hours(1))
+        .unwrap();
+    active_pending
+        .set_pending_until(now + Duration::hours(1))
+        .unwrap();
+    active_pending.set_orig_status(Status::Pending).unwrap();
+    active_pending.sync_clock(now).unwrap();
+    let done = TaskHandle::new("Done").unwrap();
+    done.set_orig_status(Status::Done).unwrap();
+    done.sync_clock(now).unwrap();
     let repository = TestTaskRepository::new(
         vec![
             expired_pending.clone(),
@@ -138,7 +163,7 @@ fn list_tasks_statusは期限経過を反映した実効状態をorで絞る() {
 
     assert_eq!(
         actual.iter().map(|task| task.id).collect::<Vec<_>>(),
-        vec![expired_pending.get_id(), done.get_id()]
+        vec![expired_pending.get_id().unwrap(), done.get_id().unwrap()]
     );
     assert_eq!(actual[0].original_status, Status::Pending);
     assert_eq!(actual[0].status, Status::Todo);
@@ -147,14 +172,20 @@ fn list_tasks_statusは期限経過を反映した実効状態をorで絞る() {
 #[test]
 fn list_tasks_category内はorでstatusとはandで絞る() {
     let now = fixed_now();
-    let investment = TaskHandle::new("投資Todo");
-    investment.set_project_category_opt(Some(ProjectCategory::Investment));
-    let uncategorized = TaskHandle::new("未分類Todo");
-    let earning = TaskHandle::new("獲得Todo");
-    earning.set_project_category_opt(Some(ProjectCategory::Earning));
-    let done_investment = TaskHandle::new("投資Done");
-    done_investment.set_project_category_opt(Some(ProjectCategory::Investment));
-    done_investment.set_orig_status(Status::Done);
+    let investment = TaskHandle::new("投資Todo").unwrap();
+    investment
+        .set_project_category_opt(Some(ProjectCategory::Investment))
+        .unwrap();
+    let uncategorized = TaskHandle::new("未分類Todo").unwrap();
+    let earning = TaskHandle::new("獲得Todo").unwrap();
+    earning
+        .set_project_category_opt(Some(ProjectCategory::Earning))
+        .unwrap();
+    let done_investment = TaskHandle::new("投資Done").unwrap();
+    done_investment
+        .set_project_category_opt(Some(ProjectCategory::Investment))
+        .unwrap();
+    done_investment.set_orig_status(Status::Done).unwrap();
     let repository = TestTaskRepository::new(
         vec![
             investment.clone(),
@@ -172,26 +203,42 @@ fn list_tasks_category内はorでstatusとはandで絞る() {
 
     assert_eq!(
         actual.iter().map(|task| task.id).collect::<Vec<_>>(),
-        vec![investment.get_id(), uncategorized.get_id()]
+        vec![
+            investment.get_id().unwrap(),
+            uncategorized.get_id().unwrap()
+        ]
     );
 }
 
 #[test]
 fn list_tasks_period_status_categoryの全filterをandで絞る() {
     let now = fixed_now();
-    let matched = TaskHandle::new("matched");
-    matched.set_create_time(now + Duration::minutes(30));
-    matched.set_project_category_opt(Some(ProjectCategory::Investment));
-    let outside_period = TaskHandle::new("outside period");
-    outside_period.set_create_time(now - Duration::minutes(1));
-    outside_period.set_project_category_opt(Some(ProjectCategory::Investment));
-    let done = TaskHandle::new("done");
-    done.set_create_time(now + Duration::minutes(30));
-    done.set_project_category_opt(Some(ProjectCategory::Investment));
-    done.set_orig_status(Status::Done);
-    let earning = TaskHandle::new("earning");
-    earning.set_create_time(now + Duration::minutes(30));
-    earning.set_project_category_opt(Some(ProjectCategory::Earning));
+    let matched = TaskHandle::new("matched").unwrap();
+    matched
+        .set_create_time(now + Duration::minutes(30))
+        .unwrap();
+    matched
+        .set_project_category_opt(Some(ProjectCategory::Investment))
+        .unwrap();
+    let outside_period = TaskHandle::new("outside period").unwrap();
+    outside_period
+        .set_create_time(now - Duration::minutes(1))
+        .unwrap();
+    outside_period
+        .set_project_category_opt(Some(ProjectCategory::Investment))
+        .unwrap();
+    let done = TaskHandle::new("done").unwrap();
+    done.set_create_time(now + Duration::minutes(30)).unwrap();
+    done.set_project_category_opt(Some(ProjectCategory::Investment))
+        .unwrap();
+    done.set_orig_status(Status::Done).unwrap();
+    let earning = TaskHandle::new("earning").unwrap();
+    earning
+        .set_create_time(now + Duration::minutes(30))
+        .unwrap();
+    earning
+        .set_project_category_opt(Some(ProjectCategory::Earning))
+        .unwrap();
     let repository =
         TestTaskRepository::new(vec![matched.clone(), outside_period, done, earning], now);
 
@@ -211,30 +258,42 @@ fn list_tasks_period_status_categoryの全filterをandで絞る() {
 
     assert_eq!(
         actual.iter().map(|task| task.id).collect::<Vec<_>>(),
-        vec![matched.get_id()]
+        vec![matched.get_id().unwrap()]
     );
 }
 
 #[test]
 fn list_tasks_created_deadline_completedの期間を半開区間で絞る() {
     let now = fixed_now();
-    let before = TaskHandle::new("before");
-    before.set_create_time(now - Duration::seconds(1));
-    before.set_deadline_time_opt(Some(now - Duration::seconds(1)));
-    before.set_end_time_opt(Some(now - Duration::seconds(1)));
-    let from = TaskHandle::new("from");
-    from.set_create_time(now);
-    from.set_deadline_time_opt(Some(now));
-    from.set_end_time_opt(Some(now));
-    let inside = TaskHandle::new("inside");
-    inside.set_create_time(now + Duration::minutes(30));
-    inside.set_deadline_time_opt(Some(now + Duration::minutes(30)));
-    inside.set_end_time_opt(Some(now + Duration::minutes(30)));
-    let until = TaskHandle::new("until");
-    until.set_create_time(now + Duration::hours(1));
-    until.set_deadline_time_opt(Some(now + Duration::hours(1)));
-    until.set_end_time_opt(Some(now + Duration::hours(1)));
-    let missing = TaskHandle::new("missing");
+    let before = TaskHandle::new("before").unwrap();
+    before.set_create_time(now - Duration::seconds(1)).unwrap();
+    before
+        .set_deadline_time_opt(Some(now - Duration::seconds(1)))
+        .unwrap();
+    before
+        .set_end_time_opt(Some(now - Duration::seconds(1)))
+        .unwrap();
+    let from = TaskHandle::new("from").unwrap();
+    from.set_create_time(now).unwrap();
+    from.set_deadline_time_opt(Some(now)).unwrap();
+    from.set_end_time_opt(Some(now)).unwrap();
+    let inside = TaskHandle::new("inside").unwrap();
+    inside.set_create_time(now + Duration::minutes(30)).unwrap();
+    inside
+        .set_deadline_time_opt(Some(now + Duration::minutes(30)))
+        .unwrap();
+    inside
+        .set_end_time_opt(Some(now + Duration::minutes(30)))
+        .unwrap();
+    let until = TaskHandle::new("until").unwrap();
+    until.set_create_time(now + Duration::hours(1)).unwrap();
+    until
+        .set_deadline_time_opt(Some(now + Duration::hours(1)))
+        .unwrap();
+    until
+        .set_end_time_opt(Some(now + Duration::hours(1)))
+        .unwrap();
+    let missing = TaskHandle::new("missing").unwrap();
     let repository = TestTaskRepository::new(
         vec![before, from.clone(), inside.clone(), until, missing],
         now,
@@ -261,7 +320,7 @@ fn list_tasks_created_deadline_completedの期間を半開区間で絞る() {
 
         assert_eq!(
             actual.iter().map(|task| task.id).collect::<Vec<_>>(),
-            vec![from.get_id(), inside.get_id()]
+            vec![from.get_id().unwrap(), inside.get_id().unwrap()]
         );
     }
 }
@@ -271,27 +330,27 @@ fn list_tasks_periodは指定された時刻fieldだけを参照する() {
     let now = fixed_now();
     let outside = now - Duration::hours(1);
     let inside = now + Duration::minutes(30);
-    let created = TaskHandle::new("created");
-    created.set_create_time(inside);
-    created.set_deadline_time_opt(Some(outside));
-    created.set_end_time_opt(Some(outside));
-    let deadline = TaskHandle::new("deadline");
-    deadline.set_create_time(outside);
-    deadline.set_deadline_time_opt(Some(inside));
-    deadline.set_end_time_opt(Some(outside));
-    let completed = TaskHandle::new("completed");
-    completed.set_create_time(outside);
-    completed.set_deadline_time_opt(Some(outside));
-    completed.set_end_time_opt(Some(inside));
+    let created = TaskHandle::new("created").unwrap();
+    created.set_create_time(inside).unwrap();
+    created.set_deadline_time_opt(Some(outside)).unwrap();
+    created.set_end_time_opt(Some(outside)).unwrap();
+    let deadline = TaskHandle::new("deadline").unwrap();
+    deadline.set_create_time(outside).unwrap();
+    deadline.set_deadline_time_opt(Some(inside)).unwrap();
+    deadline.set_end_time_opt(Some(outside)).unwrap();
+    let completed = TaskHandle::new("completed").unwrap();
+    completed.set_create_time(outside).unwrap();
+    completed.set_deadline_time_opt(Some(outside)).unwrap();
+    completed.set_end_time_opt(Some(inside)).unwrap();
     let repository = TestTaskRepository::new(
         vec![created.clone(), deadline.clone(), completed.clone()],
         now,
     );
 
     for (field, expected_id) in [
-        (TaskPeriodField::CreatedAt, created.get_id()),
-        (TaskPeriodField::Deadline, deadline.get_id()),
-        (TaskPeriodField::CompletedAt, completed.get_id()),
+        (TaskPeriodField::CreatedAt, created.get_id().unwrap()),
+        (TaskPeriodField::Deadline, deadline.get_id().unwrap()),
+        (TaskPeriodField::CompletedAt, completed.get_id().unwrap()),
     ] {
         let actual = list_tasks(
             &repository,
@@ -317,16 +376,20 @@ fn list_tasks_periodは指定された時刻fieldだけを参照する() {
 #[test]
 fn list_tasks_scheduled_start期間は分割taskを重複させない() {
     let now = fixed_now();
-    let low_priority = TaskHandle::new("低優先度");
-    low_priority.sync_clock(now);
-    low_priority.set_start_time(now + Duration::hours(1));
-    low_priority.set_estimated_work_seconds(10 * 3600);
-    low_priority.set_priority(88);
-    let high_priority = TaskHandle::new("高優先度");
-    high_priority.sync_clock(now);
-    high_priority.set_start_time(now + Duration::hours(6));
-    high_priority.set_estimated_work_seconds(3600);
-    high_priority.set_priority(89);
+    let low_priority = TaskHandle::new("低優先度").unwrap();
+    low_priority.sync_clock(now).unwrap();
+    low_priority
+        .set_start_time(now + Duration::hours(1))
+        .unwrap();
+    low_priority.set_estimated_work_seconds(10 * 3600).unwrap();
+    low_priority.set_priority(88).unwrap();
+    let high_priority = TaskHandle::new("高優先度").unwrap();
+    high_priority.sync_clock(now).unwrap();
+    high_priority
+        .set_start_time(now + Duration::hours(6))
+        .unwrap();
+    high_priority.set_estimated_work_seconds(3600).unwrap();
+    high_priority.set_priority(89).unwrap();
     let repository =
         TestTaskRepository::new(vec![low_priority.clone(), high_priority.clone()], now);
 
@@ -346,7 +409,10 @@ fn list_tasks_scheduled_start期間は分割taskを重複させない() {
 
     assert_eq!(
         actual.iter().map(|task| task.id).collect::<Vec<_>>(),
-        vec![low_priority.get_id(), high_priority.get_id()]
+        vec![
+            low_priority.get_id().unwrap(),
+            high_priority.get_id().unwrap()
+        ]
     );
 
     let second_segment_only = list_tasks(
@@ -367,7 +433,7 @@ fn list_tasks_scheduled_start期間は分割taskを重複させない() {
             .iter()
             .map(|task| task.id)
             .collect::<Vec<_>>(),
-        vec![low_priority.get_id()]
+        vec![low_priority.get_id().unwrap()]
     );
 
     let until_exclusive = list_tasks(
@@ -389,7 +455,7 @@ fn list_tasks_scheduled_start期間は分割taskを重複させない() {
 #[test]
 fn list_tasks_fromがuntil以上ならinvalid_inputを返す() {
     let now = fixed_now();
-    let repository = TestTaskRepository::new(vec![TaskHandle::new("task")], now);
+    let repository = TestTaskRepository::new(vec![TaskHandle::new("task").unwrap()], now);
 
     for from in [now, now + Duration::seconds(1)] {
         let actual = list_tasks(

@@ -31,17 +31,17 @@ impl TryFrom<&TaskHandle> for TaskView {
     type Error = TaskTreeError;
 
     fn try_from(task: &TaskHandle) -> Result<Self, Self::Error> {
-        let attr = task.try_get_attr()?;
-        let root_attr = task.try_root()?.try_get_attr()?;
+        let attr = task.get_attr()?;
+        let root_attr = task.root()?.get_attr()?;
         let root_id = *root_attr.get_id();
         let parent_id = task
-            .try_parent()?
-            .map(|parent| parent.try_get_attr().map(|attr| *attr.get_id()))
+            .parent()?
+            .map(|parent| parent.get_attr().map(|attr| *attr.get_id()))
             .transpose()?;
         let child_ids = task
-            .try_get_children()?
+            .get_children()?
             .into_iter()
-            .map(|child| child.try_get_attr().map(|attr| *attr.get_id()))
+            .map(|child| child.get_attr().map(|attr| *attr.get_id()))
             .collect::<Result<Vec<_>, _>>()?;
 
         Ok(Self {

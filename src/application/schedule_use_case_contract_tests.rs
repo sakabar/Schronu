@@ -40,8 +40,12 @@ impl TaskRepositoryTrait for TestTaskRepository {
         Ok(())
     }
 
-    fn sync_clock(&mut self, now: DateTime<Local>) {
+    fn sync_clock(
+        &mut self,
+        now: DateTime<Local>,
+    ) -> Result<(), crate::entity::task::TaskTreeError> {
         self.now = now;
+        Ok(())
     }
 
     fn get_last_synced_time(&self) -> DateTime<Local> {
@@ -52,16 +56,29 @@ impl TaskRepositoryTrait for TestTaskRepository {
         self.projects.first()
     }
 
-    fn get_highest_priority_leaf_task_id(&mut self) -> Option<Uuid> {
-        None
+    fn get_highest_priority_leaf_task_id(
+        &mut self,
+    ) -> Result<Option<Uuid>, crate::entity::task::TaskTreeError> {
+        Ok(None)
     }
 
-    fn get_defer_candidate_leaf_task_id(&mut self, _recent_days: i64) -> Option<Uuid> {
-        None
+    fn get_defer_candidate_leaf_task_id(
+        &mut self,
+        _recent_days: i64,
+    ) -> Result<Option<Uuid>, crate::entity::task::TaskTreeError> {
+        Ok(None)
     }
 
-    fn get_by_id(&self, id: Uuid) -> Option<TaskHandle> {
-        self.projects.iter().find_map(|task| task.get_by_id(id))
+    fn get_by_id(
+        &self,
+        id: Uuid,
+    ) -> Result<Option<TaskHandle>, crate::entity::task::TaskTreeError> {
+        for task in &self.projects {
+            if let Some(found) = task.get_by_id(id)? {
+                return Ok(Some(found));
+            }
+        }
+        Ok(None)
     }
 
     fn start_new_project(
@@ -79,7 +96,7 @@ fn fixed_now() -> DateTime<Local> {
 
 #[test]
 fn get_scheduleは借用競合をtask_tree_errorとして返す() {
-    let task = TaskHandle::new("借用競合");
+    let task = TaskHandle::new("借用競合").unwrap();
     let repository = TestTaskRepository::new(vec![task.clone()], fixed_now());
 
     let actual = task.with_exclusive_data_borrow_for_test(|| get_schedule(&repository));
@@ -98,11 +115,11 @@ fn task_with_schedule(
     work_seconds: i64,
     priority: i64,
 ) -> TaskHandle {
-    let task = TaskHandle::new(name);
-    task.sync_clock(start);
-    task.set_start_time(start);
-    task.set_estimated_work_seconds(work_seconds);
-    task.set_priority(priority);
+    let task = TaskHandle::new(name).unwrap();
+    task.sync_clock(start).unwrap();
+    task.set_start_time(start).unwrap();
+    task.set_estimated_work_seconds(work_seconds).unwrap();
+    task.set_priority(priority).unwrap();
     task
 }
 
@@ -110,10 +127,12 @@ fn task_with_schedule(
 fn get_schedule_締切を優先しdoneを除外してtask_viewを返す() {
     let now = fixed_now();
     let deadline_task = task_with_schedule("締切あり", now, 15 * 60, 1);
-    deadline_task.set_deadline_time_opt(Some(now + Duration::hours(2)));
+    deadline_task
+        .set_deadline_time_opt(Some(now + Duration::hours(2)))
+        .unwrap();
     let high_priority_task = task_with_schedule("高優先度", now, 30 * 60, 99);
     let done_task = task_with_schedule("完了済み", now, 10 * 60, 100);
-    done_task.set_orig_status(Status::Done);
+    done_task.set_orig_status(Status::Done).unwrap();
     let repository = TestTaskRepository::new(
         vec![
             high_priority_task.clone(),
@@ -125,30 +144,36 @@ fn get_schedule_締切を優先しdoneを除外してtask_viewを返す() {
     let views_before = repository
         .projects
         .iter()
-        .map(|task| get_task(&repository, task.get_id()).unwrap().unwrap())
+        .map(|task| {
+            get_task(&repository, task.get_id().unwrap())
+                .unwrap()
+                .unwrap()
+        })
         .collect::<Vec<_>>();
 
     let actual = get_schedule(&repository).unwrap();
 
     assert_eq!(actual.len(), 2);
-    assert_eq!(actual[0].task.id, deadline_task.get_id());
+    assert_eq!(actual[0].task.id, deadline_task.get_id().unwrap());
     assert_eq!(actual[0].task.name, "締切あり");
     assert_eq!(actual[0].scheduled_start, now);
     assert_eq!(actual[0].scheduled_end, now + Duration::minutes(15));
     assert_eq!(actual[0].scheduled_work_seconds, 15 * 60);
     assert_eq!(actual[0].total_work_seconds, 15 * 60);
     assert_eq!(actual[0].rank, 0);
-    assert_eq!(actual[1].task.id, high_priority_task.get_id());
+    assert_eq!(actual[1].task.id, high_priority_task.get_id().unwrap());
     assert_eq!(actual[1].scheduled_start, now + Duration::minutes(15));
     assert!(!actual
         .iter()
-        .any(|entry| entry.task.id == done_task.get_id()));
+        .any(|entry| entry.task.id == done_task.get_id().unwrap()));
     assert_eq!(repository.save_count.get(), 0);
     assert_eq!(
         repository
             .projects
             .iter()
-            .map(|task| get_task(&repository, task.get_id()).unwrap().unwrap())
+            .map(|task| get_task(&repository, task.get_id().unwrap())
+                .unwrap()
+                .unwrap())
             .collect::<Vec<_>>(),
         views_before
     );
@@ -163,8 +188,8 @@ fn get_schedule_i64最小値付近でも優先度の高いtaskを先に配置す
 
     let actual = get_schedule(&repository).unwrap();
 
-    assert_eq!(actual[0].task.id, next.get_id());
-    assert_eq!(actual[1].task.id, lowest.get_id());
+    assert_eq!(actual[0].task.id, next.get_id().unwrap());
+    assert_eq!(actual[1].task.id, lowest.get_id().unwrap());
 }
 
 #[test]
@@ -175,19 +200,19 @@ fn get_schedule_pending解除後に子を配置し親をその後へ置く() {
     child_attr.set_estimated_work_seconds(15 * 60);
     child_attr.set_start_time(now);
     let child = parent.create_as_last_child(child_attr);
-    child.sync_clock(now);
-    child.set_pending_until(now + Duration::hours(2));
-    child.set_orig_status(Status::Pending);
+    child.sync_clock(now).unwrap();
+    child.set_pending_until(now + Duration::hours(2)).unwrap();
+    child.set_orig_status(Status::Pending).unwrap();
     let repository = TestTaskRepository::new(vec![parent.clone()], now);
 
     let actual = get_schedule(&repository).unwrap();
     let child_schedule = actual
         .iter()
-        .find(|entry| entry.task.id == child.get_id())
+        .find(|entry| entry.task.id == child.get_id().unwrap())
         .unwrap();
     let parent_schedule = actual
         .iter()
-        .find(|entry| entry.task.id == parent.get_id())
+        .find(|entry| entry.task.id == parent.get_id().unwrap())
         .unwrap();
 
     assert_eq!(
@@ -213,7 +238,7 @@ fn get_schedule_非atomic_taskを未来の高優先度taskの前後へ分割す�
     let actual = get_schedule(&repository).unwrap();
     let low_segments = actual
         .iter()
-        .filter(|entry| entry.task.id == low_priority.get_id())
+        .filter(|entry| entry.task.id == low_priority.get_id().unwrap())
         .collect::<Vec<_>>();
 
     assert_eq!(low_segments.len(), 2);
@@ -234,14 +259,14 @@ fn get_schedule_非atomic_taskを未来の高優先度taskの前後へ分割す�
 fn get_schedule_atomic_taskを分割せず連続枠へ配置する() {
     let now = fixed_now();
     let atomic_task = task_with_schedule("atomic", now + Duration::hours(1), 10 * 3600, 88);
-    atomic_task.set_atomic(true);
+    atomic_task.set_atomic(true).unwrap();
     let high_priority = task_with_schedule("高優先度", now + Duration::hours(6), 3600, 89);
     let repository = TestTaskRepository::new(vec![atomic_task.clone(), high_priority], now);
 
     let actual = get_schedule(&repository).unwrap();
     let atomic_segments = actual
         .iter()
-        .filter(|entry| entry.task.id == atomic_task.get_id())
+        .filter(|entry| entry.task.id == atomic_task.get_id().unwrap())
         .collect::<Vec<_>>();
 
     assert_eq!(atomic_segments.len(), 1);

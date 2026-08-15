@@ -1632,15 +1632,20 @@ mod tests {
         ) -> Result<RepositoryReloadOutcome, TaskRepositoryError> {
             self.reload_if_changed_count
                 .set(self.reload_if_changed_count.get() + 1);
-            self.sync_clock(now);
+            self.sync_clock(now)
+                .map_err(|error| TaskRepositoryError::new(TaskRepositoryOperation::Load, error))?;
             self.load()?;
             Ok(RepositoryReloadOutcome::Reloaded)
         }
 
-        fn sync_clock(&mut self, now: DateTime<Local>) {
+        fn sync_clock(
+            &mut self,
+            now: DateTime<Local>,
+        ) -> Result<(), crate::entity::task::TaskTreeError> {
             self.sync_clock_times.borrow_mut().push(now);
             self.operation_order.borrow_mut().push("sync_clock");
             self.now = now;
+            Ok(())
         }
 
         fn get_last_synced_time(&self) -> DateTime<Local> {
@@ -1651,16 +1656,29 @@ mod tests {
             self.projects.first()
         }
 
-        fn get_highest_priority_leaf_task_id(&mut self) -> Option<Uuid> {
-            self.focus_task_id
+        fn get_highest_priority_leaf_task_id(
+            &mut self,
+        ) -> Result<Option<Uuid>, crate::entity::task::TaskTreeError> {
+            Ok(self.focus_task_id)
         }
 
-        fn get_defer_candidate_leaf_task_id(&mut self, _recent_days: i64) -> Option<Uuid> {
-            None
+        fn get_defer_candidate_leaf_task_id(
+            &mut self,
+            _recent_days: i64,
+        ) -> Result<Option<Uuid>, crate::entity::task::TaskTreeError> {
+            Ok(None)
         }
 
-        fn get_by_id(&self, id: Uuid) -> Option<TaskHandle> {
-            self.projects.iter().find_map(|task| task.get_by_id(id))
+        fn get_by_id(
+            &self,
+            id: Uuid,
+        ) -> Result<Option<TaskHandle>, crate::entity::task::TaskTreeError> {
+            for task in &self.projects {
+                if let Some(found) = task.get_by_id(id)? {
+                    return Ok(Some(found));
+                }
+            }
+            Ok(None)
         }
 
         fn start_new_project(
@@ -1833,7 +1851,7 @@ mod tests {
 
     #[test]
     fn get_scheduleは借用競合を既存internal_error形式で返す() {
-        let task = TaskHandle::new("借用競合");
+        let task = TaskHandle::new("借用競合").unwrap();
         let server = McpServer::new(RecordingRepository::new(vec![task.clone()]));
 
         let response = task.with_exclusive_data_borrow_for_test(|| {
@@ -1857,9 +1875,9 @@ mod tests {
         let storage_path = storage.path.to_str().unwrap();
         let now = fixed_now();
         let mut source = TaskRepository::new(storage_path);
-        source.sync_clock(now);
+        source.sync_clock(now).unwrap();
         source
-            .start_new_project(TaskHandle::new("MCP cache対象"))
+            .start_new_project(TaskHandle::new("MCP cache対象").unwrap())
             .unwrap();
         source.save().unwrap();
         let project_yaml_path = storage
@@ -2948,25 +2966,27 @@ mod tests {
         let create_time = Local.with_ymd_and_hms(2026, 8, 1, 9, 0, 0).unwrap();
         let start_time = Local.with_ymd_and_hms(2026, 8, 10, 10, 0, 0).unwrap();
         let deadline_time = Local.with_ymd_and_hms(2026, 8, 20, 23, 59, 59).unwrap();
-        let root = TaskHandle::new("MCP task");
-        root.set_orig_status(Status::Pending);
-        root.set_pending_until(pending_until);
-        root.set_priority(7);
-        root.set_create_time(create_time);
-        root.set_start_time(start_time);
-        root.set_deadline_time_opt(Some(deadline_time));
-        root.set_estimated_work_seconds(1_800);
-        root.set_actual_work_seconds(900);
-        root.set_atomic(true);
-        root.set_is_on_other_side(true);
-        root.set_repetition_interval_days_opt(Some(7));
-        root.set_repetition_anchor(RepetitionAnchor::Completion);
-        root.set_days_in_advance(2);
-        root.set_project_category_opt(Some(ProjectCategory::Recovery));
-        root.sync_clock(fixed_now());
+        let root = TaskHandle::new("MCP task").unwrap();
+        root.set_orig_status(Status::Pending).unwrap();
+        root.set_pending_until(pending_until).unwrap();
+        root.set_priority(7).unwrap();
+        root.set_create_time(create_time).unwrap();
+        root.set_start_time(start_time).unwrap();
+        root.set_deadline_time_opt(Some(deadline_time)).unwrap();
+        root.set_estimated_work_seconds(1_800).unwrap();
+        root.set_actual_work_seconds(900).unwrap();
+        root.set_atomic(true).unwrap();
+        root.set_is_on_other_side(true).unwrap();
+        root.set_repetition_interval_days_opt(Some(7)).unwrap();
+        root.set_repetition_anchor(RepetitionAnchor::Completion)
+            .unwrap();
+        root.set_days_in_advance(2).unwrap();
+        root.set_project_category_opt(Some(ProjectCategory::Recovery))
+            .unwrap();
+        root.sync_clock(fixed_now()).unwrap();
         let child = root.create_as_last_child(TaskAttr::new("child"));
-        let task_id = root.get_id();
-        let child_id = child.get_id();
+        let task_id = root.get_id().unwrap();
+        let child_id = child.get_id().unwrap();
         let repository = RecordingRepository::new(vec![root]);
         let save_count = Rc::clone(&repository.save_count);
         let mutation_count = Rc::clone(&repository.mutation_count);
@@ -3168,9 +3188,9 @@ mod tests {
 
     #[test]
     fn get_focus_選択taskを返してrepositoryを変更しない() {
-        let non_focused_task = TaskHandle::new("not focused");
-        let focused_task = TaskHandle::new("focused task");
-        let task_id = focused_task.get_id();
+        let non_focused_task = TaskHandle::new("not focused").unwrap();
+        let focused_task = TaskHandle::new("focused task").unwrap();
+        let task_id = focused_task.get_id().unwrap();
         let repository = RecordingRepository::new(vec![non_focused_task, focused_task])
             .with_focus_task_id(task_id);
         let save_count = Rc::clone(&repository.save_count);
@@ -3258,7 +3278,7 @@ mod tests {
             ProjectCategory::Recovery,
             Local.with_ymd_and_hms(2026, 8, 10, 9, 0, 0).unwrap(),
         );
-        let matching_id = matching.get_id();
+        let matching_id = matching.get_id().unwrap();
         let wrong_status = task_for_list(
             "wrong status",
             Status::Todo,
@@ -3317,12 +3337,12 @@ mod tests {
 
     #[test]
     fn list_tasks_arguments省略で全taskを返す() {
-        let first = TaskHandle::new("first");
-        let first_id = first.get_id();
+        let first = TaskHandle::new("first").unwrap();
+        let first_id = first.get_id().unwrap();
         let child = first.create_as_last_child(TaskAttr::new("child"));
-        let child_id = child.get_id();
-        let second = TaskHandle::new("second");
-        let second_id = second.get_id();
+        let child_id = child.get_id().unwrap();
+        let second = TaskHandle::new("second").unwrap();
+        let second_id = second.get_id().unwrap();
         let repository = RecordingRepository::new(vec![first, second]);
         let save_count = Rc::clone(&repository.save_count);
         let mutation_count = Rc::clone(&repository.mutation_count);
@@ -3359,10 +3379,12 @@ mod tests {
 
     #[test]
     fn list_tasks_null_categoryで未分類taskを絞る() {
-        let uncategorized = TaskHandle::new("uncategorized");
-        let uncategorized_id = uncategorized.get_id();
-        let categorized = TaskHandle::new("categorized");
-        categorized.set_project_category_opt(Some(ProjectCategory::Recovery));
+        let uncategorized = TaskHandle::new("uncategorized").unwrap();
+        let uncategorized_id = uncategorized.get_id().unwrap();
+        let categorized = TaskHandle::new("categorized").unwrap();
+        categorized
+            .set_project_category_opt(Some(ProjectCategory::Recovery))
+            .unwrap();
         let repository = RecordingRepository::new(vec![uncategorized, categorized]);
         let save_count = Rc::clone(&repository.save_count);
         let mutation_count = Rc::clone(&repository.mutation_count);
@@ -3499,12 +3521,12 @@ mod tests {
     #[test]
     #[allow(non_snake_case)]
     fn get_scheduleは予定をScheduledTaskViewの全field付きで返しrepositoryを変更しない() {
-        let task = TaskHandle::new("scheduled task");
-        let task_id = task.get_id();
-        task.set_start_time(fixed_now());
-        task.set_estimated_work_seconds(15 * 60);
-        task.set_priority(5);
-        task.sync_clock(fixed_now());
+        let task = TaskHandle::new("scheduled task").unwrap();
+        let task_id = task.get_id().unwrap();
+        task.set_start_time(fixed_now()).unwrap();
+        task.set_estimated_work_seconds(15 * 60).unwrap();
+        task.set_priority(5).unwrap();
+        task.sync_clock(fixed_now()).unwrap();
         let repository = RecordingRepository::new(vec![task]);
         let save_count = Rc::clone(&repository.save_count);
         let mutation_count = Rc::clone(&repository.mutation_count);
@@ -3559,13 +3581,15 @@ mod tests {
     #[test]
     fn get_scheduleは引数なしで現在から次の業務日境界までの予定だけを返す() {
         let now = Local::now();
-        let current_task = TaskHandle::new("current task");
-        current_task.set_start_time(now);
-        current_task.set_estimated_work_seconds(15 * 60);
+        let current_task = TaskHandle::new("current task").unwrap();
+        current_task.set_start_time(now).unwrap();
+        current_task.set_estimated_work_seconds(15 * 60).unwrap();
 
-        let future_task = TaskHandle::new("future task");
-        future_task.set_start_time(get_next_morning_datetime(now) + Duration::hours(1));
-        future_task.set_estimated_work_seconds(15 * 60);
+        let future_task = TaskHandle::new("future task").unwrap();
+        future_task
+            .set_start_time(get_next_morning_datetime(now) + Duration::hours(1))
+            .unwrap();
+        future_task.set_estimated_work_seconds(15 * 60).unwrap();
 
         let repository = RecordingRepository::new(vec![current_task, future_task]);
         let mut server = initialized_server(repository);
@@ -3591,17 +3615,25 @@ mod tests {
         let from_boundary = get_next_morning_datetime(now);
         let until_boundary = get_next_morning_datetime(from_boundary);
 
-        let crossing_task = TaskHandle::new("crossing task");
-        crossing_task.set_start_time(from_boundary - Duration::minutes(30));
-        crossing_task.set_estimated_work_seconds(2 * 60 * 60);
+        let crossing_task = TaskHandle::new("crossing task").unwrap();
+        crossing_task
+            .set_start_time(from_boundary - Duration::minutes(30))
+            .unwrap();
+        crossing_task
+            .set_estimated_work_seconds(2 * 60 * 60)
+            .unwrap();
 
-        let inside_task = TaskHandle::new("inside task");
-        inside_task.set_start_time(from_boundary + Duration::hours(3));
-        inside_task.set_estimated_work_seconds(15 * 60);
+        let inside_task = TaskHandle::new("inside task").unwrap();
+        inside_task
+            .set_start_time(from_boundary + Duration::hours(3))
+            .unwrap();
+        inside_task.set_estimated_work_seconds(15 * 60).unwrap();
 
-        let later_task = TaskHandle::new("later task");
-        later_task.set_start_time(until_boundary + Duration::hours(1));
-        later_task.set_estimated_work_seconds(15 * 60);
+        let later_task = TaskHandle::new("later task").unwrap();
+        later_task
+            .set_start_time(until_boundary + Duration::hours(1))
+            .unwrap();
+        later_task.set_estimated_work_seconds(15 * 60).unwrap();
 
         let repository = RecordingRepository::new(vec![crossing_task, inside_task, later_task]);
         let mut server = initialized_server(repository);
@@ -3912,8 +3944,8 @@ mod tests {
     #[test]
     fn breakdown_task_子を入力順に追加して1回saveする() {
         let pending_until = fixed_now() + Duration::hours(18);
-        let parent = TaskHandle::new("parent");
-        let parent_id = parent.get_id();
+        let parent = TaskHandle::new("parent").unwrap();
+        let parent_id = parent.get_id().unwrap();
         let repository = RecordingRepository::new(vec![parent]);
         let save_count = Rc::clone(&repository.save_count);
         let mut server = initialized_server(repository);
@@ -4018,8 +4050,8 @@ mod tests {
 
     #[test]
     fn breakdown_task_意味的不正と未知parentでは変更もsaveもしない() {
-        let parent = TaskHandle::new("parent");
-        let parent_id = parent.get_id();
+        let parent = TaskHandle::new("parent").unwrap();
+        let parent_id = parent.get_id().unwrap();
         let cases = [
             (
                 "invalid-parent-id",
@@ -4093,8 +4125,8 @@ mod tests {
 
     #[test]
     fn breakdown_task_save失敗を成功扱いしない() {
-        let parent = TaskHandle::new("parent");
-        let parent_id = parent.get_id();
+        let parent = TaskHandle::new("parent").unwrap();
+        let parent_id = parent.get_id().unwrap();
         let parent_observer = parent.clone();
         let repository = RecordingRepository::new(vec![parent]).with_save_failure();
         let save_count = Rc::clone(&repository.save_count);
@@ -4121,7 +4153,7 @@ mod tests {
             .unwrap()
             .is_empty());
         assert_eq!(save_count.get(), 1);
-        assert_eq!(parent_observer.get_children().len(), 1);
+        assert_eq!(parent_observer.get_children().unwrap().len(), 1);
 
         let parent_response = server
             .handle_request(tool_call_request(
@@ -4139,8 +4171,8 @@ mod tests {
     #[test]
     fn defer_task_絶対時刻まで延期して1回saveする() {
         let pending_until = fixed_now() + Duration::hours(18);
-        let task = TaskHandle::new("deferred task");
-        let task_id = task.get_id();
+        let task = TaskHandle::new("deferred task").unwrap();
+        let task_id = task.get_id().unwrap();
         let repository = RecordingRepository::new(vec![task]);
         let save_count = Rc::clone(&repository.save_count);
         let mut server = initialized_server(repository);
@@ -4181,8 +4213,8 @@ mod tests {
 
     #[test]
     fn defer_task_入力不正と未知taskでは変更もsaveもしない() {
-        let task = TaskHandle::new("unchanged task");
-        let task_id = task.get_id();
+        let task = TaskHandle::new("unchanged task").unwrap();
+        let task_id = task.get_id().unwrap();
         let cases = [
             (
                 "missing-task-id",
@@ -4295,8 +4327,8 @@ mod tests {
     #[test]
     fn defer_task_save失敗を成功扱いしない() {
         let pending_until = fixed_now() + Duration::hours(18);
-        let task = TaskHandle::new("deferred task");
-        let task_id = task.get_id();
+        let task = TaskHandle::new("deferred task").unwrap();
+        let task_id = task.get_id().unwrap();
         let task_observer = task.clone();
         let repository = RecordingRepository::new(vec![task]).with_save_failure();
         let save_count = Rc::clone(&repository.save_count);
@@ -4326,8 +4358,8 @@ mod tests {
             .unwrap()
             .is_empty());
         assert_eq!(save_count.get(), 1);
-        assert_eq!(task_observer.get_orig_status(), Status::Pending);
-        assert_eq!(task_observer.get_pending_until(), pending_until);
+        assert_eq!(task_observer.get_orig_status().unwrap(), Status::Pending);
+        assert_eq!(task_observer.get_pending_until().unwrap(), pending_until);
 
         let task_response = server
             .handle_request(tool_call_request(
@@ -4345,9 +4377,9 @@ mod tests {
     #[test]
     fn complete_task_完了と実績を反映して1回saveする() {
         let finished_at = fixed_now() + Duration::hours(1);
-        let task = TaskHandle::new("completed task");
-        task.set_actual_work_seconds(60);
-        let task_id = task.get_id();
+        let task = TaskHandle::new("completed task").unwrap();
+        task.set_actual_work_seconds(60).unwrap();
+        let task_id = task.get_id().unwrap();
         let repository = RecordingRepository::new(vec![task]);
         let save_count = Rc::clone(&repository.save_count);
         let mut server = initialized_server(repository);
@@ -4394,9 +4426,9 @@ mod tests {
 
     #[test]
     fn complete_task_optional省略時は現在時刻と追加実績0を使う() {
-        let task = TaskHandle::new("completed with defaults");
-        task.set_actual_work_seconds(60);
-        let task_id = task.get_id();
+        let task = TaskHandle::new("completed with defaults").unwrap();
+        task.set_actual_work_seconds(60).unwrap();
+        let task_id = task.get_id().unwrap();
         let repository = RecordingRepository::new(vec![task]);
         let save_count = Rc::clone(&repository.save_count);
         let mut server = initialized_server(repository);
@@ -4430,10 +4462,10 @@ mod tests {
 
     #[test]
     fn complete_task_next_focusとnext_repetitionのuuidを返す() {
-        let parent = TaskHandle::new("parent");
+        let parent = TaskHandle::new("parent").unwrap();
         let child = parent.create_as_last_child(TaskAttr::new("only child"));
-        let parent_id = parent.get_id();
-        let child_id = child.get_id();
+        let parent_id = parent.get_id().unwrap();
+        let child_id = child.get_id().unwrap();
         let mut focus_server = initialized_server(RecordingRepository::new(vec![parent]));
 
         let focus_response = focus_server
@@ -4453,12 +4485,14 @@ mod tests {
             serde_json::Value::Null
         );
 
-        let repetition_parent = TaskHandle::new("weekly");
-        repetition_parent.set_repetition_interval_days_opt(Some(7));
+        let repetition_parent = TaskHandle::new("weekly").unwrap();
+        repetition_parent
+            .set_repetition_interval_days_opt(Some(7))
+            .unwrap();
         let repetition_child =
             repetition_parent.create_as_last_child(TaskAttr::new("weekly occurrence"));
-        let repetition_parent_id = repetition_parent.get_id();
-        let repetition_child_id = repetition_child.get_id();
+        let repetition_parent_id = repetition_parent.get_id().unwrap();
+        let repetition_child_id = repetition_child.get_id().unwrap();
         let mut repetition_server =
             initialized_server(RecordingRepository::new(vec![repetition_parent]));
 
@@ -4496,9 +4530,9 @@ mod tests {
 
     #[test]
     fn complete_task_未完了childと未知taskを区別してsaveしない() {
-        let parent = TaskHandle::new("parent");
+        let parent = TaskHandle::new("parent").unwrap();
         parent.create_as_last_child(TaskAttr::new("undone child"));
-        let parent_id = parent.get_id();
+        let parent_id = parent.get_id().unwrap();
         let cases = [
             ("undone-child", parent_id, "has_undone_children", "task_id"),
             ("missing-task", Uuid::new_v4(), "task_not_found", "task_id"),
@@ -4545,8 +4579,8 @@ mod tests {
 
     #[test]
     fn complete_task_入力不正では変更もsaveもしない() {
-        let task = TaskHandle::new("unchanged task");
-        let task_id = task.get_id();
+        let task = TaskHandle::new("unchanged task").unwrap();
+        let task_id = task.get_id().unwrap();
         let cases = [
             ("missing-task-id", json!({}), Some(-32602), "task_id"),
             (
@@ -4629,8 +4663,8 @@ mod tests {
 
     #[test]
     fn complete_task_save失敗を成功扱いしない() {
-        let task = TaskHandle::new("completed task");
-        let task_id = task.get_id();
+        let task = TaskHandle::new("completed task").unwrap();
+        let task_id = task.get_id().unwrap();
         let task_observer = task.clone();
         let repository = RecordingRepository::new(vec![task]).with_save_failure();
         let save_count = Rc::clone(&repository.save_count);
@@ -4657,7 +4691,7 @@ mod tests {
             .unwrap()
             .is_empty());
         assert_eq!(save_count.get(), 1);
-        assert_eq!(task_observer.get_orig_status(), Status::Done);
+        assert_eq!(task_observer.get_orig_status().unwrap(), Status::Done);
         let task_response = server
             .handle_request(tool_call_request(
                 "completed-after-save-failure",
@@ -4674,8 +4708,8 @@ mod tests {
     #[test]
     fn update_task_指定fieldをまとめて更新して1回saveする() {
         let deadline = fixed_now() + Duration::days(10);
-        let task = TaskHandle::new("updated task");
-        let task_id = task.get_id();
+        let task = TaskHandle::new("updated task").unwrap();
+        let task_id = task.get_id().unwrap();
         let repository = RecordingRepository::new(vec![task]);
         let save_count = Rc::clone(&repository.save_count);
         let mut server = initialized_server(repository);
@@ -4719,10 +4753,12 @@ mod tests {
 
     #[test]
     fn update_task_nullでdeadlineとcategoryを解除する() {
-        let task = TaskHandle::new("cleared task");
-        task.set_deadline_time_opt(Some(fixed_now() + Duration::days(10)));
-        task.set_project_category_opt(Some(ProjectCategory::Investment));
-        let task_id = task.get_id();
+        let task = TaskHandle::new("cleared task").unwrap();
+        task.set_deadline_time_opt(Some(fixed_now() + Duration::days(10)))
+            .unwrap();
+        task.set_project_category_opt(Some(ProjectCategory::Investment))
+            .unwrap();
+        let task_id = task.get_id().unwrap();
         let repository = RecordingRepository::new(vec![task]);
         let save_count = Rc::clone(&repository.save_count);
         let mut server = initialized_server(repository);
@@ -4762,8 +4798,8 @@ mod tests {
             "earning",
             "sustaining",
         ] {
-            let task = TaskHandle::new("categorized task");
-            let task_id = task.get_id();
+            let task = TaskHandle::new("categorized task").unwrap();
+            let task_id = task.get_id().unwrap();
             let mut server = initialized_server(RecordingRepository::new(vec![task]));
 
             let response = server
@@ -4792,11 +4828,12 @@ mod tests {
     #[test]
     fn update_task_入力不正では変更もsaveもしない() {
         let deadline = fixed_now() + Duration::days(10);
-        let task = TaskHandle::new("unchanged update task");
-        task.set_estimated_work_seconds(30 * 60);
-        task.set_deadline_time_opt(Some(deadline));
-        task.set_project_category_opt(Some(ProjectCategory::Consumption));
-        let task_id = task.get_id();
+        let task = TaskHandle::new("unchanged update task").unwrap();
+        task.set_estimated_work_seconds(30 * 60).unwrap();
+        task.set_deadline_time_opt(Some(deadline)).unwrap();
+        task.set_project_category_opt(Some(ProjectCategory::Consumption))
+            .unwrap();
+        let task_id = task.get_id().unwrap();
         let cases = [
             (
                 "no-update-field",
@@ -4898,11 +4935,12 @@ mod tests {
     fn update_task_application_errorと未知taskでは変更もsaveもしない() {
         let original_deadline = fixed_now() + Duration::days(10);
         let requested_deadline = fixed_now() + Duration::days(20);
-        let task = TaskHandle::new("unchanged application task");
-        task.set_estimated_work_seconds(30 * 60);
-        task.set_deadline_time_opt(Some(original_deadline));
-        task.set_project_category_opt(Some(ProjectCategory::Consumption));
-        let task_id = task.get_id();
+        let task = TaskHandle::new("unchanged application task").unwrap();
+        task.set_estimated_work_seconds(30 * 60).unwrap();
+        task.set_deadline_time_opt(Some(original_deadline)).unwrap();
+        task.set_project_category_opt(Some(ProjectCategory::Consumption))
+            .unwrap();
+        let task_id = task.get_id().unwrap();
         let missing_task_id = Uuid::new_v4();
         let cases = [
             (
@@ -4962,8 +5000,8 @@ mod tests {
 
     #[test]
     fn update_task_save失敗を成功扱いしない() {
-        let task = TaskHandle::new("updated before save failure");
-        let task_id = task.get_id();
+        let task = TaskHandle::new("updated before save failure").unwrap();
+        let task_id = task.get_id().unwrap();
         let task_observer = task.clone();
         let repository = RecordingRepository::new(vec![task]).with_save_failure();
         let save_count = Rc::clone(&repository.save_count);
@@ -4990,7 +5028,7 @@ mod tests {
             .unwrap()
             .is_empty());
         assert_eq!(save_count.get(), 1);
-        assert_eq!(task_observer.get_estimated_work_seconds(), 20 * 60);
+        assert_eq!(task_observer.get_estimated_work_seconds().unwrap(), 20 * 60);
         let task_response = server
             .handle_request(tool_call_request(
                 "updated-after-save-failure",
@@ -5046,15 +5084,16 @@ mod tests {
         category: ProjectCategory,
         create_time: DateTime<Local>,
     ) -> TaskHandle {
-        let task = TaskHandle::new(name);
-        task.set_orig_status(status);
+        let task = TaskHandle::new(name).unwrap();
+        task.set_orig_status(status).unwrap();
         if status == Status::Pending {
-            task.set_pending_until(Local.with_ymd_and_hms(2026, 8, 12, 6, 0, 0).unwrap());
+            task.set_pending_until(Local.with_ymd_and_hms(2026, 8, 12, 6, 0, 0).unwrap())
+                .unwrap();
         }
-        task.set_project_category_opt(Some(category));
-        task.set_create_time(create_time);
-        task.set_start_time(create_time);
-        task.sync_clock(fixed_now());
+        task.set_project_category_opt(Some(category)).unwrap();
+        task.set_create_time(create_time).unwrap();
+        task.set_start_time(create_time).unwrap();
+        task.sync_clock(fixed_now()).unwrap();
         task
     }
 
