@@ -3,7 +3,7 @@ use crate::entity::task::read_project_category;
 use crate::entity::task::read_repetition_anchor;
 use crate::entity::task::read_status;
 use crate::entity::task::Status;
-use crate::entity::task::{ImmutableTask, RepetitionAnchor, TaskAttr, TaskHandle};
+use crate::entity::task::{ImmutableTask, RepetitionAnchor, TaskAttr, TaskHandle, TaskTreeError};
 use chrono::LocalResult;
 use chrono::TimeZone;
 use chrono::{DateTime, Local};
@@ -296,6 +296,10 @@ impl fmt::Display for YamlConversionError {
 
 impl Error for YamlConversionError {}
 
+fn map_task_tree_error(error: TaskTreeError) -> YamlConversionError {
+    YamlConversionError::new(error.to_string())
+}
+
 #[allow(dead_code)]
 fn transform_from_pending_until_str(pending_until_str: &str) -> DateTime<Local> {
     for format in ["%Y/%m/%d %H:%M:%S", "%Y/%m/%d %H:%M"] {
@@ -370,69 +374,104 @@ fn yaml_to_task_legacy(
         .as_i64()
         .unwrap_or(default_attr.get_days_in_advance());
 
-    let mut parent_task: TaskHandle = TaskHandle::new(name);
+    let mut parent_task = TaskHandle::new(name).map_err(map_task_tree_error)?;
 
     let id_str: &str = yaml["id"].as_str().unwrap_or("");
     if let Ok(id) = Uuid::parse_str(id_str) {
-        parent_task.set_id(id);
+        parent_task.set_id(id).map_err(map_task_tree_error)?;
     }
 
-    parent_task.set_orig_status(status);
-    parent_task.set_is_on_other_side(is_on_other_side);
-    parent_task.set_atomic(atomic);
-    parent_task.set_pending_until(pending_until);
-    parent_task.set_priority(priority);
-    parent_task.set_project_category_opt(project_category_opt);
+    parent_task
+        .set_orig_status(status)
+        .map_err(map_task_tree_error)?;
+    parent_task
+        .set_is_on_other_side(is_on_other_side)
+        .map_err(map_task_tree_error)?;
+    parent_task
+        .set_atomic(atomic)
+        .map_err(map_task_tree_error)?;
+    parent_task
+        .set_pending_until(pending_until)
+        .map_err(map_task_tree_error)?;
+    parent_task
+        .set_priority(priority)
+        .map_err(map_task_tree_error)?;
+    parent_task
+        .set_project_category_opt(project_category_opt)
+        .map_err(map_task_tree_error)?;
 
     if let Ok(LocalResult::Single(create_time)) =
         parse_local_datetime(create_time_str, "%Y/%m/%d %H:%M:%S")
     {
-        parent_task.set_create_time(create_time);
+        parent_task
+            .set_create_time(create_time)
+            .map_err(map_task_tree_error)?;
     }
 
     if let Ok(LocalResult::Single(start_time)) =
         parse_local_datetime(start_time_str, "%Y/%m/%d %H:%M:%S")
     {
-        parent_task.set_start_time(start_time);
+        parent_task
+            .set_start_time(start_time)
+            .map_err(map_task_tree_error)?;
     }
 
     if let Ok(LocalResult::Single(end_time)) =
         parse_local_datetime(end_time_str, "%Y/%m/%d %H:%M:%S")
     {
-        parent_task.set_end_time_opt(Some(end_time));
+        parent_task
+            .set_end_time_opt(Some(end_time))
+            .map_err(map_task_tree_error)?;
     }
 
     if let Ok(LocalResult::Single(deadline_time)) =
         parse_local_datetime(deadline_time_str, "%Y/%m/%d %H:%M:%S")
     {
-        parent_task.set_deadline_time_opt(Some(deadline_time));
+        parent_task
+            .set_deadline_time_opt(Some(deadline_time))
+            .map_err(map_task_tree_error)?;
     }
 
-    parent_task.set_estimated_work_seconds(estimated_work_seconds);
-    parent_task.set_actual_work_seconds(actual_work_seconds);
-    parent_task.set_repetition_interval_days_opt(repetition_interval_days_opt);
-    parent_task.set_repetition_anchor(repetition_anchor);
-    parent_task.set_days_in_advance(days_in_advance);
+    parent_task
+        .set_estimated_work_seconds(estimated_work_seconds)
+        .map_err(map_task_tree_error)?;
+    parent_task
+        .set_actual_work_seconds(actual_work_seconds)
+        .map_err(map_task_tree_error)?;
+    parent_task
+        .set_repetition_interval_days_opt(repetition_interval_days_opt)
+        .map_err(map_task_tree_error)?;
+    parent_task
+        .set_repetition_anchor(repetition_anchor)
+        .map_err(map_task_tree_error)?;
+    parent_task
+        .set_days_in_advance(days_in_advance)
+        .map_err(map_task_tree_error)?;
 
     // repetition_interval_daysを持つタスクがtodoのままだと、
     // show_all_tasks()する際にestimated_work_secondsを二重に数えてしまうことになるので
     // 便宜的に2037/12/31までpendingする
     if repetition_interval_days_opt.is_some() {
         let distant_future = Local.with_ymd_and_hms(2037, 12, 31, 23, 59, 59).unwrap();
-        parent_task.set_pending_until(distant_future);
-        parent_task.set_orig_status(Status::Pending);
+        parent_task
+            .set_pending_until(distant_future)
+            .map_err(map_task_tree_error)?;
+        parent_task
+            .set_orig_status(Status::Pending)
+            .map_err(map_task_tree_error)?;
     }
 
-    parent_task.sync_clock(now);
+    parent_task.sync_clock(now).map_err(map_task_tree_error)?;
 
     for child_yaml in task_children_yaml(yaml)? {
         let mut child_task = yaml_to_task_legacy(child_yaml, now)?;
         child_task
-            .try_reparent_to(&parent_task)
-            .map_err(|error| YamlConversionError::new(error.to_string()))?;
+            .reparent_to(&parent_task)
+            .map_err(map_task_tree_error)?;
 
         parent_task = child_task
             .parent()
+            .map_err(map_task_tree_error)?
             .ok_or_else(|| YamlConversionError::new("inserted child has no parent"))?;
     }
 
@@ -586,43 +625,59 @@ fn yaml_to_task_strict(
         Some(Yaml::Array(children)) => children.as_slice(),
         Some(_) => return Err(strict_error(path, "children", "must be an array or null")),
     };
-    let mut task = TaskHandle::new(name);
+    let mut task = TaskHandle::new(name).map_err(map_task_tree_error)?;
     if let Some(id) = id {
-        task.set_id(id);
+        task.set_id(id).map_err(map_task_tree_error)?;
     }
-    task.set_orig_status(status);
-    task.set_is_on_other_side(boolean("is_on_other_side")?);
-    task.set_atomic(boolean("atomic")?);
-    task.set_pending_until(pending);
+    task.set_orig_status(status).map_err(map_task_tree_error)?;
+    task.set_is_on_other_side(boolean("is_on_other_side")?)
+        .map_err(map_task_tree_error)?;
+    task.set_atomic(boolean("atomic")?)
+        .map_err(map_task_tree_error)?;
+    task.set_pending_until(pending)
+        .map_err(map_task_tree_error)?;
     task.set_priority(match yaml_field(yaml, "priority") {
         None => 0,
         Some(value) => value
             .as_i64()
             .ok_or_else(|| strict_error(path, "priority", "must be an integer"))?,
-    });
-    task.set_project_category_opt(category);
+    })
+    .map_err(map_task_tree_error)?;
+    task.set_project_category_opt(category)
+        .map_err(map_task_tree_error)?;
     if let Some(create_time) = legacy_datetime("create_time")? {
-        task.set_create_time(create_time);
+        task.set_create_time(create_time)
+            .map_err(map_task_tree_error)?;
     }
     if let Some(start_time) = legacy_datetime("start_time")? {
-        task.set_start_time(start_time);
+        task.set_start_time(start_time)
+            .map_err(map_task_tree_error)?;
     }
-    task.set_end_time_opt(optional_datetime("end_time")?);
-    task.set_deadline_time_opt(optional_datetime("deadline_time")?);
-    task.set_estimated_work_seconds(nonnegative("estimated_work_seconds", 900)?);
-    task.set_actual_work_seconds(nonnegative("actual_work_seconds", 0)?);
-    task.set_repetition_interval_days_opt(interval);
-    task.set_repetition_anchor(anchor);
-    task.set_days_in_advance(nonnegative("days_in_advance", 0)?);
+    task.set_end_time_opt(optional_datetime("end_time")?)
+        .map_err(map_task_tree_error)?;
+    task.set_deadline_time_opt(optional_datetime("deadline_time")?)
+        .map_err(map_task_tree_error)?;
+    task.set_estimated_work_seconds(nonnegative("estimated_work_seconds", 900)?)
+        .map_err(map_task_tree_error)?;
+    task.set_actual_work_seconds(nonnegative("actual_work_seconds", 0)?)
+        .map_err(map_task_tree_error)?;
+    task.set_repetition_interval_days_opt(interval)
+        .map_err(map_task_tree_error)?;
+    task.set_repetition_anchor(anchor)
+        .map_err(map_task_tree_error)?;
+    task.set_days_in_advance(nonnegative("days_in_advance", 0)?)
+        .map_err(map_task_tree_error)?;
     if interval.is_some() {
-        task.set_pending_until(Local.with_ymd_and_hms(2037, 12, 31, 23, 59, 59).unwrap());
-        task.set_orig_status(Status::Pending);
+        task.set_pending_until(Local.with_ymd_and_hms(2037, 12, 31, 23, 59, 59).unwrap())
+            .map_err(map_task_tree_error)?;
+        task.set_orig_status(Status::Pending)
+            .map_err(map_task_tree_error)?;
     }
-    task.sync_clock(now);
+    task.sync_clock(now).map_err(map_task_tree_error)?;
     for (index, child_yaml) in children.iter().enumerate() {
         let mut child = yaml_to_task_strict(child_yaml, now, &format!("{path}.children[{index}]"))?;
         child
-            .try_reparent_to(&task)
+            .reparent_to(&task)
             .map_err(|reason| strict_error(path, "children", &reason.to_string()))?;
     }
     Ok(task)
@@ -764,13 +819,11 @@ status: 'todo'
 
     let now = Local::now();
     let actual = yaml_to_task(project_yaml, now).unwrap();
-    let expected = TaskHandle::new("タスク1");
-    expected.sync_clock(now);
+    let expected = TaskHandle::new("タスク1").unwrap();
+    expected.sync_clock(now).unwrap();
 
     assert!(
-        &actual
-            .try_eq_tree(&expected)
-            .expect("data are not borrowed"),
+        &actual.eq_tree(&expected).expect("data are not borrowed"),
         "actual and expected are not equal"
     );
 }
@@ -787,13 +840,11 @@ children: []
 
     let now = Local::now();
     let actual = yaml_to_task(project_yaml, now).unwrap();
-    let expected = TaskHandle::new("タスク1");
-    expected.sync_clock(now);
+    let expected = TaskHandle::new("タスク1").unwrap();
+    expected.sync_clock(now).unwrap();
 
     assert!(
-        &actual
-            .try_eq_tree(&expected)
-            .expect("data are not borrowed"),
+        &actual.eq_tree(&expected).expect("data are not borrowed"),
         "actual and expected are not equal"
     );
 }
@@ -811,13 +862,11 @@ children: []
 
     let now = Local::now();
     let actual = yaml_to_task(project_yaml, now).unwrap();
-    let expected = TaskHandle::new("タスク1");
-    expected.sync_clock(now);
+    let expected = TaskHandle::new("タスク1").unwrap();
+    expected.sync_clock(now).unwrap();
 
     assert!(
-        &actual
-            .try_eq_tree(&expected)
-            .expect("data are not borrowed"),
+        &actual.eq_tree(&expected).expect("data are not borrowed"),
         "actual and expected are not equal"
     );
 }
@@ -854,10 +903,10 @@ children:
 
     let now = Local::now();
     let actual = yaml_to_task(project_yaml, now).unwrap();
-    let expected = TaskHandle::new("タスク1");
-    expected.sync_clock(now);
+    let expected = TaskHandle::new("タスク1").unwrap();
+    expected.sync_clock(now).unwrap();
 
-    expected.set_orig_status(Status::Done);
+    expected.set_orig_status(Status::Done).unwrap();
     assert_task(&actual, &expected);
 }
 
@@ -874,9 +923,9 @@ priority: 5
 
     let now = Local::now();
     let actual = yaml_to_task(project_yaml, now).unwrap();
-    let expected = TaskHandle::new("タスク1");
-    expected.set_priority(5);
-    expected.sync_clock(now);
+    let expected = TaskHandle::new("タスク1").unwrap();
+    expected.set_priority(5).unwrap();
+    expected.sync_clock(now).unwrap();
 
     assert_task(&actual, &expected);
 }
@@ -913,9 +962,11 @@ category: sustaining
 
     let now = Local::now();
     let actual = yaml_to_task(project_yaml, now).unwrap();
-    let expected = TaskHandle::new("タスク1");
-    expected.set_project_category_opt(Some(ProjectCategory::Sustaining));
-    expected.sync_clock(now);
+    let expected = TaskHandle::new("タスク1").unwrap();
+    expected
+        .set_project_category_opt(Some(ProjectCategory::Sustaining))
+        .unwrap();
+    expected.sync_clock(now).unwrap();
 
     assert_task(&actual, &expected);
 }
@@ -934,7 +985,7 @@ category:
     let now = Local::now();
     let actual = yaml_to_task(project_yaml, now).unwrap();
 
-    assert_eq!(actual.get_project_category_opt(), None);
+    assert_eq!(actual.get_project_category_opt().unwrap(), None);
 }
 
 #[test]
@@ -950,7 +1001,7 @@ status: 'todo'
     let now = Local::now();
     let actual = yaml_to_task(project_yaml, now).unwrap();
 
-    assert_eq!(actual.get_project_category_opt(), None);
+    assert_eq!(actual.get_project_category_opt().unwrap(), None);
 }
 
 #[test]
@@ -966,19 +1017,17 @@ status: 'todo'
 
     let now = Local::now();
     let actual = yaml_to_task(project_yaml, now).unwrap();
-    let mut expected = TaskHandle::new("タスク1");
+    let mut expected = TaskHandle::new("タスク1").unwrap();
     let id: Uuid = uuid!("67e55044-10b1-426f-9247-bb680e5fe0c8");
-    expected.set_id(id);
-    expected.sync_clock(now);
+    expected.set_id(id).unwrap();
+    expected.sync_clock(now).unwrap();
 
     assert!(
-        &actual
-            .try_eq_tree(&expected)
-            .expect("data are not borrowed"),
+        &actual.eq_tree(&expected).expect("data are not borrowed"),
         "actual and expected are not equal"
     );
 
-    assert_eq!(&actual.get_id(), &expected.get_id());
+    assert_eq!(&actual.get_id().unwrap(), &expected.get_id().unwrap());
 }
 
 #[test]
@@ -994,20 +1043,18 @@ is_on_other_side: true
 
     let now = Local::now();
     let actual = yaml_to_task(project_yaml, now).unwrap();
-    let mut expected = TaskHandle::new("タスク1");
+    let mut expected = TaskHandle::new("タスク1").unwrap();
     let id: Uuid = uuid!("67e55044-10b1-426f-9247-bb680e5fe0c8");
-    expected.set_id(id);
-    expected.set_is_on_other_side(true);
-    expected.sync_clock(now);
+    expected.set_id(id).unwrap();
+    expected.set_is_on_other_side(true).unwrap();
+    expected.sync_clock(now).unwrap();
 
     assert!(
-        &actual
-            .try_eq_tree(&expected)
-            .expect("data are not borrowed"),
+        &actual.eq_tree(&expected).expect("data are not borrowed"),
         "actual and expected are not equal"
     );
 
-    assert_eq!(&actual.get_id(), &expected.get_id());
+    assert_eq!(&actual.get_id().unwrap(), &expected.get_id().unwrap());
 }
 
 #[test]
@@ -1023,20 +1070,18 @@ atomic: true
 
     let now = Local::now();
     let actual = yaml_to_task(project_yaml, now).unwrap();
-    let mut expected = TaskHandle::new("タスク1");
+    let mut expected = TaskHandle::new("タスク1").unwrap();
     let id: Uuid = uuid!("67e55044-10b1-426f-9247-bb680e5fe0c8");
-    expected.set_id(id);
-    expected.set_atomic(true);
-    expected.sync_clock(now);
+    expected.set_id(id).unwrap();
+    expected.set_atomic(true).unwrap();
+    expected.sync_clock(now).unwrap();
 
     assert!(
-        &actual
-            .try_eq_tree(&expected)
-            .expect("data are not borrowed"),
+        &actual.eq_tree(&expected).expect("data are not borrowed"),
         "actual and expected are not equal"
     );
 
-    assert_eq!(&actual.get_id(), &expected.get_id());
+    assert_eq!(&actual.get_id().unwrap(), &expected.get_id().unwrap());
 }
 
 #[test]
@@ -1052,7 +1097,7 @@ name: 'タスク1'
     let now = Local::now();
     let actual = yaml_to_task(project_yaml, now).unwrap();
 
-    assert!(!actual.get_atomic());
+    assert!(!actual.get_atomic().unwrap());
 }
 
 #[test]
@@ -1068,21 +1113,22 @@ create_time: '2023/05/19 01:23:45'
 
     let now = Local.with_ymd_and_hms(2023, 5, 19, 1, 23, 45).unwrap();
     let actual = yaml_to_task(project_yaml, now).unwrap();
-    let mut expected = TaskHandle::new("タスク1");
+    let mut expected = TaskHandle::new("タスク1").unwrap();
     let id: Uuid = uuid!("67e55044-10b1-426f-9247-bb680e5fe0c8");
-    expected.set_id(id);
-    expected.set_create_time(now);
-    expected.sync_clock(now);
+    expected.set_id(id).unwrap();
+    expected.set_create_time(now).unwrap();
+    expected.sync_clock(now).unwrap();
 
     assert!(
-        &actual
-            .try_eq_tree(&expected)
-            .expect("data are not borrowed"),
+        &actual.eq_tree(&expected).expect("data are not borrowed"),
         "actual and expected are not equal"
     );
 
-    assert_eq!(&actual.get_id(), &expected.get_id());
-    assert_eq!(&actual.get_create_time(), &expected.get_create_time());
+    assert_eq!(&actual.get_id().unwrap(), &expected.get_id().unwrap());
+    assert_eq!(
+        &actual.get_create_time().unwrap(),
+        &expected.get_create_time().unwrap()
+    );
 }
 
 #[test]
@@ -1098,21 +1144,22 @@ start_time: '2023/05/19 01:23:45'
 
     let now = Local.with_ymd_and_hms(2023, 5, 19, 1, 23, 45).unwrap();
     let actual = yaml_to_task(project_yaml, now).unwrap();
-    let mut expected = TaskHandle::new("タスク1");
+    let mut expected = TaskHandle::new("タスク1").unwrap();
     let id: Uuid = uuid!("67e55044-10b1-426f-9247-bb680e5fe0c8");
-    expected.set_id(id);
-    expected.set_start_time(now);
-    expected.sync_clock(now);
+    expected.set_id(id).unwrap();
+    expected.set_start_time(now).unwrap();
+    expected.sync_clock(now).unwrap();
 
     assert!(
-        &actual
-            .try_eq_tree(&expected)
-            .expect("data are not borrowed"),
+        &actual.eq_tree(&expected).expect("data are not borrowed"),
         "actual and expected are not equal"
     );
 
-    assert_eq!(&actual.get_id(), &expected.get_id());
-    assert_eq!(&actual.get_start_time(), &expected.get_start_time());
+    assert_eq!(&actual.get_id().unwrap(), &expected.get_id().unwrap());
+    assert_eq!(
+        &actual.get_start_time().unwrap(),
+        &expected.get_start_time().unwrap()
+    );
 }
 
 #[test]
@@ -1128,20 +1175,18 @@ end_time: '2023/05/19 01:23:45'
 
     let now = Local.with_ymd_and_hms(2023, 5, 19, 1, 23, 45).unwrap();
     let actual = yaml_to_task(project_yaml, now).unwrap();
-    let mut expected = TaskHandle::new("タスク1");
+    let mut expected = TaskHandle::new("タスク1").unwrap();
     let id: Uuid = uuid!("67e55044-10b1-426f-9247-bb680e5fe0c8");
-    expected.set_id(id);
-    expected.set_end_time_opt(Some(now));
-    expected.sync_clock(now);
+    expected.set_id(id).unwrap();
+    expected.set_end_time_opt(Some(now)).unwrap();
+    expected.sync_clock(now).unwrap();
 
     assert!(
-        &actual
-            .try_eq_tree(&expected)
-            .expect("data are not borrowed"),
+        &actual.eq_tree(&expected).expect("data are not borrowed"),
         "actual and expected are not equal"
     );
 
-    assert_eq!(&actual.get_id(), &expected.get_id());
+    assert_eq!(&actual.get_id().unwrap(), &expected.get_id().unwrap());
 }
 
 #[test]
@@ -1157,20 +1202,18 @@ deadline_time: '2023/05/19 01:23:45'
 
     let now = Local.with_ymd_and_hms(2023, 5, 19, 1, 23, 45).unwrap();
     let actual = yaml_to_task(project_yaml, now).unwrap();
-    let mut expected = TaskHandle::new("タスク1");
+    let mut expected = TaskHandle::new("タスク1").unwrap();
     let id: Uuid = uuid!("67e55044-10b1-426f-9247-bb680e5fe0c8");
-    expected.set_id(id);
-    expected.set_deadline_time_opt(Some(now));
-    expected.sync_clock(now);
+    expected.set_id(id).unwrap();
+    expected.set_deadline_time_opt(Some(now)).unwrap();
+    expected.sync_clock(now).unwrap();
 
     assert!(
-        &actual
-            .try_eq_tree(&expected)
-            .expect("data are not borrowed"),
+        &actual.eq_tree(&expected).expect("data are not borrowed"),
         "actual and expected are not equal"
     );
 
-    assert_eq!(&actual.get_id(), &expected.get_id());
+    assert_eq!(&actual.get_id().unwrap(), &expected.get_id().unwrap());
 }
 
 #[test]
@@ -1186,9 +1229,9 @@ estimated_work_seconds: 5
 
     let now = Local::now();
     let actual = yaml_to_task(project_yaml, now).unwrap();
-    let expected = TaskHandle::new("タスク1");
-    expected.set_estimated_work_seconds(5);
-    expected.sync_clock(now);
+    let expected = TaskHandle::new("タスク1").unwrap();
+    expected.set_estimated_work_seconds(5).unwrap();
+    expected.sync_clock(now).unwrap();
 
     assert_task(&actual, &expected);
 }
@@ -1206,9 +1249,9 @@ actual_work_seconds: 5
 
     let now = Local::now();
     let actual = yaml_to_task(project_yaml, now).unwrap();
-    let expected = TaskHandle::new("タスク1");
-    expected.set_actual_work_seconds(5);
-    expected.sync_clock(now);
+    let expected = TaskHandle::new("タスク1").unwrap();
+    expected.set_actual_work_seconds(5).unwrap();
+    expected.sync_clock(now).unwrap();
 
     assert_task(&actual, &expected);
 }
@@ -1226,15 +1269,15 @@ repetition_interval_days: 7
 
     let now = Local::now();
     let actual = yaml_to_task(project_yaml, now).unwrap();
-    let expected = TaskHandle::new("タスク1");
-    expected.set_repetition_interval_days_opt(Some(7));
+    let expected = TaskHandle::new("タスク1").unwrap();
+    expected.set_repetition_interval_days_opt(Some(7)).unwrap();
 
     // 2037/12/31までpendingになる
     let distant_future = Local.with_ymd_and_hms(2037, 12, 31, 23, 59, 59).unwrap();
-    expected.set_orig_status(Status::Pending);
-    expected.set_pending_until(distant_future);
+    expected.set_orig_status(Status::Pending).unwrap();
+    expected.set_pending_until(distant_future).unwrap();
 
-    expected.sync_clock(now);
+    expected.sync_clock(now).unwrap();
 
     assert_task(&actual, &expected);
 }
@@ -1252,9 +1295,11 @@ repetition_anchor: completion
 
     let now = Local::now();
     let actual = yaml_to_task(project_yaml, now).unwrap();
-    let expected = TaskHandle::new("タスク1");
-    expected.set_repetition_anchor(RepetitionAnchor::Completion);
-    expected.sync_clock(now);
+    let expected = TaskHandle::new("タスク1").unwrap();
+    expected
+        .set_repetition_anchor(RepetitionAnchor::Completion)
+        .unwrap();
+    expected.sync_clock(now).unwrap();
 
     assert_task(&actual, &expected);
 }
@@ -1271,9 +1316,11 @@ status: 'todo'
 
     let now = Local::now();
     let actual = yaml_to_task(project_yaml, now).unwrap();
-    let expected = TaskHandle::new("タスク1");
-    expected.set_repetition_anchor(RepetitionAnchor::Deadline);
-    expected.sync_clock(now);
+    let expected = TaskHandle::new("タスク1").unwrap();
+    expected
+        .set_repetition_anchor(RepetitionAnchor::Deadline)
+        .unwrap();
+    expected.sync_clock(now).unwrap();
 
     assert_task(&actual, &expected);
 }
@@ -1307,9 +1354,9 @@ days_in_advance: 1
 
     let now = Local::now();
     let actual = yaml_to_task(project_yaml, now).unwrap();
-    let expected = TaskHandle::new("タスク1");
-    expected.set_days_in_advance(1);
-    expected.sync_clock(now);
+    let expected = TaskHandle::new("タスク1").unwrap();
+    expected.set_days_in_advance(1).unwrap();
+    expected.sync_clock(now).unwrap();
 
     assert_task(&actual, &expected);
 }
@@ -1327,8 +1374,8 @@ children:
     let now = Local::now();
     let actual = yaml_to_task(project_yaml, now).unwrap();
 
-    let parent_task = TaskHandle::new("親タスク");
-    parent_task.sync_clock(now);
+    let parent_task = TaskHandle::new("親タスク").unwrap();
+    parent_task.sync_clock(now).unwrap();
     let mut task_attr = TaskAttr::new("子タスク");
     task_attr.sync_clock(now);
     parent_task.create_as_last_child(task_attr);
@@ -1352,17 +1399,17 @@ children:
     let now = Local::now();
     let actual_task = yaml_to_task(project_yaml, now).unwrap();
 
-    let parent_task = TaskHandle::new("親タスク");
-    parent_task.sync_clock(now);
+    let parent_task = TaskHandle::new("親タスク").unwrap();
+    parent_task.sync_clock(now).unwrap();
 
     let child_task_1 = parent_task.create_as_last_child(TaskAttr::new("子タスク1"));
-    child_task_1.sync_clock(now);
+    child_task_1.sync_clock(now).unwrap();
 
     let grand_child_task = child_task_1.create_as_last_child(TaskAttr::new("孫タスク"));
-    grand_child_task.sync_clock(now);
+    grand_child_task.sync_clock(now).unwrap();
 
-    let _child_task_2 = parent_task.create_as_last_child(TaskAttr::new("子タスク2"));
-    _child_task_2.sync_clock(now);
+    let child_task_2 = parent_task.create_as_last_child(TaskAttr::new("子タスク2"));
+    child_task_2.sync_clock(now).unwrap();
 
     assert_task(&actual_task, &grand_child_task);
 }

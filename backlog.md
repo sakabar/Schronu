@@ -41,7 +41,7 @@
 | TD-003 | P0 | 完了| L | 永続化YAMLの不正値が黙って既定値や新規UUIDへ変換される |
 | TD-004 | P1 | 完了 | XL | `Task`の木構造と内部可変性が暗黙の共有状態とpanic前提を作っている |
 | TD-005 | P1 | 未着手 | XL | CLIコントローラーへ責務が集中している |
-| TD-006 | P1 | 未着手 | L | CLIの入力・application・出力エラーが握り潰される |
+| TD-006 | P1 | 完了 | L | CLIの入力・application・出力エラーが握り潰される |
 | TD-007 | P1 | 完了 | L | CLIとMCPでrepository transactionが別々に組み立てられている |
 | TD-008 | P1 | 完了 | M | CIがリポジトリ規約を満たさず、ビルド再現性も固定されていない |
 | TD-009 | P2 | 未着手 | L | entity層がYAML形式へ依存している |
@@ -52,7 +52,7 @@
 | TD-014 | P2 | 未着手 | M | Apps Scriptの同期処理が行数に比例してAPI呼出しを増やす |
 | TD-015 | P2 | 未着手 | L | テストが巨大な製品ファイルへ混在し、fixtureも重複している |
 | TD-016 | P3 | 未着手 | M | マジック値、未使用フィールド、古いコメントが意図を曖昧にしている |
-| TD-017 | P1 | 未着手 | XL | `TaskHandle`の既存infallible APIが内部不変条件の破れをpanicとして扱う |
+| TD-017 | P1 | 完了 | XL | `TaskHandle`の既存infallible APIが内部不変条件の破れをpanicとして扱う |
 
 ## 詳細
 
@@ -222,6 +222,9 @@
 
 - 優先度: `P1`
 - 概算規模: `XL`
+- 完了日: 2026-08-15
+- 対応: `TaskHandle`の公開read、write、tree操作を`Result<_, TaskTreeError>`へ統一し、infallible APIと`try_*`互換APIを除去した。借用競合とdummy root不整合は構造化errorとしてapplication、CLI、MCPへ伝搬する。更新前のborrow可否検証により、attribute、tree、mutation revisionの原子性を保証した。
+- 検証: 借用競合、dummy root欠落・複数child、tree操作、deadline伝搬、appointment、CLI/MCP error形式の契約testを追加した。`cargo fmt --check`、`cargo clippy --locked --all-targets -- -D warnings`、`cargo test --locked`に成功した。
 
 #### 現状と根拠
 
@@ -295,6 +298,9 @@
 
 - 優先度: `P1`
 - 概算規模: `L`
+- 完了日: 2026-08-15
+- 対応: `CommandError`でparse、application、external open、outputの失敗を区別し、command実行の失敗を診断表示してrepository保存を抑止するようにした。stdoutの最初のI/O失敗を捕捉し、broken pipeは正常終了、それ以外は`CommandError::Output`として伝搬するようにした。
+- 検証: CLI入力エラー、保存抑止、stdout error、broken pipe、改行出力の契約testを追加し、`cargo fmt --check`、`cargo clippy --locked --all-targets -- -D warnings`、`cargo test --locked`を成功させた。
 
 #### 現状と根拠
 

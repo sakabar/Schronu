@@ -8,7 +8,7 @@ use crate::application::interface::{
 use crate::entity::datetime::get_next_morning_datetime;
 use crate::entity::task::extract_leaf_tasks_from_project;
 use crate::entity::task::extract_leaf_tasks_from_project_with_pending;
-use crate::entity::task::{task_to_yaml, Status, TaskHandle};
+use crate::entity::task::{task_to_yaml, Status, TaskHandle, TaskTreeError};
 use chrono::Duration;
 use chrono::{DateTime, Local};
 use linked_hash_map::LinkedHashMap;
@@ -240,14 +240,15 @@ impl Project {
         }
     }
 
-    fn mark_clean(&self) {
+    fn mark_clean(&self) -> Result<(), TaskTreeError> {
         self.persisted_mutation_revision
-            .set(Some(self.root_task.get_persistent_mutation_revision()));
+            .set(Some(self.root_task.get_persistent_mutation_revision()?));
+        Ok(())
     }
 
-    fn needs_save(&self) -> bool {
-        self.persisted_mutation_revision.get()
-            != Some(self.root_task.get_persistent_mutation_revision())
+    fn needs_save(&self) -> Result<bool, TaskTreeError> {
+        Ok(self.persisted_mutation_revision.get()
+            != Some(self.root_task.get_persistent_mutation_revision()?))
     }
 }
 
@@ -263,21 +264,26 @@ impl TaskRepository {
         }
     }
 
-    fn cache_task_and_descendants(&self, task: &TaskHandle) {
+    fn cache_task_and_descendants(&self, task: &TaskHandle) -> Result<(), TaskTreeError> {
         self.id_to_task_map
             .borrow_mut()
-            .insert(task.get_id(), task.clone());
+            .insert(task.get_id()?, task.clone());
 
-        for child_task in task.get_children() {
-            self.cache_task_and_descendants(&child_task);
+        for child_task in task.get_children()? {
+            self.cache_task_and_descendants(&child_task)?;
         }
+        Ok(())
     }
 
-    fn sync_task_and_descendants(task: &TaskHandle, now: DateTime<Local>) {
-        task.sync_clock(now);
-        for child_task in task.get_children() {
-            Self::sync_task_and_descendants(&child_task, now);
+    fn sync_task_and_descendants(
+        task: &TaskHandle,
+        now: DateTime<Local>,
+    ) -> Result<(), TaskTreeError> {
+        task.sync_clock(now)?;
+        for child_task in task.get_children()? {
+            Self::sync_task_and_descendants(&child_task, now)?;
         }
+        Ok(())
     }
 
     fn storage_revision_path(&self) -> PathBuf {
@@ -323,7 +329,9 @@ impl TaskRepository {
     }
 
     fn serialize_project(project: &Project) -> Result<Vec<u8>, TaskRepositoryError> {
-        let task_yaml = task_to_yaml(&project.root_task);
+        let task_yaml = task_to_yaml(&project.root_task).map_err(|error| {
+            TaskRepositoryError::new(ApplicationRepositoryOperation::Save, error)
+        })?;
         let mut project_hash = LinkedHashMap::new();
         project_hash.insert(Yaml::String(String::from("project")), task_yaml);
         let doc = Yaml::Hash(project_hash);
@@ -459,14 +467,18 @@ impl TaskRepositoryTrait for TaskRepository {
                             ),
                         )
                     })?;
-                let priority = root_task.get_priority();
+                let priority = root_task.get_priority().map_err(|error| {
+                    TaskRepositoryError::new(ApplicationRepositoryOperation::Load, error)
+                })?;
                 let project = Project::new(
                     root_task,
                     project_dir_path,
                     project_yaml_file_path,
                     priority,
                 );
-                project.mark_clean();
+                project.mark_clean().map_err(|error| {
+                    TaskRepositoryError::new(ApplicationRepositoryOperation::Load, error)
+                })?;
                 loaded_projects.push(project);
             }
         }
@@ -474,7 +486,10 @@ impl TaskRepositoryTrait for TaskRepository {
         self.projects = loaded_projects;
         self.id_to_task_map.borrow_mut().clear();
         for project in &self.projects {
-            self.cache_task_and_descendants(&project.root_task);
+            self.cache_task_and_descendants(&project.root_task)
+                .map_err(|error| {
+                    TaskRepositoryError::new(ApplicationRepositoryOperation::Load, error)
+                })?;
         }
         self.storage_revision.set(storage_revision);
         self.has_loaded = true;
@@ -489,7 +504,9 @@ impl TaskRepositoryTrait for TaskRepository {
             TaskRepositoryError::new(ApplicationRepositoryOperation::Load, error)
         })?;
         if self.has_loaded && storage_revision == self.storage_revision.get() {
-            self.sync_clock(now);
+            self.sync_clock(now).map_err(|error| {
+                TaskRepositoryError::new(ApplicationRepositoryOperation::Load, error)
+            })?;
             return Ok(RepositoryReloadOutcome::Cached);
         }
 
@@ -498,15 +515,23 @@ impl TaskRepositoryTrait for TaskRepository {
         Ok(RepositoryReloadOutcome::Reloaded)
     }
 
-    fn has_pending_changes(&self) -> bool {
-        self.projects.iter().any(Project::needs_save)
+    fn has_pending_changes(&self) -> Result<bool, TaskTreeError> {
+        self.projects
+            .iter()
+            .map(Project::needs_save)
+            .collect::<Result<Vec<_>, _>>()
+            .map(|needs_save| needs_save.into_iter().any(|needs_save| needs_save))
     }
 
     fn save(&self) -> Result<(), TaskRepositoryError> {
         let projects_to_save = self
             .projects
             .iter()
-            .filter(|project| project.needs_save())
+            .map(|project| project.needs_save().map(|needs_save| (project, needs_save)))
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|error| TaskRepositoryError::new(ApplicationRepositoryOperation::Save, error))?
+            .into_iter()
+            .filter_map(|(project, needs_save)| needs_save.then_some(project))
             .collect::<Vec<_>>();
 
         let mut prepared_writes = Vec::new();
@@ -521,7 +546,9 @@ impl TaskRepositoryTrait for TaskRepository {
 
         if prepared_writes.is_empty() {
             for project in projects_to_save {
-                project.mark_clean();
+                project.mark_clean().map_err(|error| {
+                    TaskRepositoryError::new(ApplicationRepositoryOperation::Save, error)
+                })?;
             }
             return Ok(());
         }
@@ -578,17 +605,20 @@ impl TaskRepositoryTrait for TaskRepository {
         }
 
         for project in projects_to_save {
-            project.mark_clean();
+            project.mark_clean().map_err(|error| {
+                TaskRepositoryError::new(ApplicationRepositoryOperation::Save, error)
+            })?;
         }
         self.storage_revision.set(Some(new_storage_revision));
         Ok(())
     }
 
-    fn sync_clock(&mut self, now: DateTime<Local>) {
+    fn sync_clock(&mut self, now: DateTime<Local>) -> Result<(), TaskTreeError> {
         self.last_synced_time = now;
         for project in &self.projects {
-            Self::sync_task_and_descendants(&project.root_task, now);
+            Self::sync_task_and_descendants(&project.root_task, now)?;
         }
+        Ok(())
     }
 
     fn get_last_synced_time(&self) -> DateTime<Local> {
@@ -604,7 +634,7 @@ impl TaskRepositoryTrait for TaskRepository {
         self.projects.last().map(|project| &project.root_task)
     }
 
-    fn get_highest_priority_leaf_task_id(&mut self) -> Option<Uuid> {
+    fn get_highest_priority_leaf_task_id(&mut self) -> Result<Option<Uuid>, TaskTreeError> {
         // 副作用として、projectsを優先度の低い順に破壊的にソートする
         // 葉ノードを出力する際に優先度が高いものが下となり優先度が低いものが画面外(上)になるように、projectsは低い順に保持する
         // 最も優先度が高いprojectsが必要な場合はlast()で取得する
@@ -616,12 +646,12 @@ impl TaskRepositoryTrait for TaskRepository {
         for project in &self.projects {
             let root_task = &project.root_task;
 
-            let leaf_tasks: Vec<TaskHandle> = extract_leaf_tasks_from_project(root_task);
+            let leaf_tasks = extract_leaf_tasks_from_project(root_task)?;
 
             for leaf_task in leaf_tasks.iter() {
-                let deadline_time_opt = leaf_task.get_deadline_time_opt();
-                let neg_priority = !leaf_task.get_priority();
-                let id = leaf_task.get_id();
+                let deadline_time_opt = leaf_task.get_deadline_time_opt()?;
+                let neg_priority = !leaf_task.get_priority()?;
+                let id = leaf_task.get_id()?;
 
                 let tpl = (
                     deadline_time_opt.is_none(),
@@ -636,11 +666,14 @@ impl TaskRepositoryTrait for TaskRepository {
             }
         }
 
-        ans.map(|tpl| tpl.3)
+        Ok(ans.map(|tpl| tpl.3))
     }
 
     // 優先度の低いタスクを未来に飛ばすための先送り候補選択用
-    fn get_defer_candidate_leaf_task_id(&mut self, recent_days: i64) -> Option<Uuid> {
+    fn get_defer_candidate_leaf_task_id(
+        &mut self,
+        recent_days: i64,
+    ) -> Result<Option<Uuid>, TaskTreeError> {
         // 副作用として、projectsを優先度の低い順に破壊的にソートする
         self.projects.sort_by_key(|a| a.priority);
 
@@ -652,22 +685,21 @@ impl TaskRepositoryTrait for TaskRepository {
         for project in &self.projects {
             let root_task = &project.root_task;
 
-            let leaf_tasks: Vec<TaskHandle> =
-                extract_leaf_tasks_from_project_with_pending(root_task);
+            let leaf_tasks = extract_leaf_tasks_from_project_with_pending(root_task)?;
 
             for leaf_task in leaf_tasks.iter() {
-                if leaf_task.get_start_time() >= recent_threshold
-                    || (leaf_task.get_orig_status() == Status::Pending
-                        && leaf_task.get_pending_until() >= recent_threshold)
+                if leaf_task.get_start_time()? >= recent_threshold
+                    || (leaf_task.get_orig_status()? == Status::Pending
+                        && leaf_task.get_pending_until()? >= recent_threshold)
                 {
                     continue;
                 }
 
-                let deadline_time_opt = leaf_task.get_deadline_time_opt();
-                let first_available_time = leaf_task.first_available_time();
+                let deadline_time_opt = leaf_task.get_deadline_time_opt()?;
+                let first_available_time = leaf_task.first_available_time()?;
                 let is_recent = first_available_time < recent_threshold;
-                let neg_priority = !leaf_task.get_priority();
-                let id = leaf_task.get_id();
+                let neg_priority = !leaf_task.get_priority()?;
+                let id = leaf_task.get_id()?;
 
                 // 優先度が低いほど大さい値になる
                 let tpl = (
@@ -685,27 +717,27 @@ impl TaskRepositoryTrait for TaskRepository {
             }
         }
 
-        ans.map(|tpl| tpl.5)
+        Ok(ans.map(|tpl| tpl.5))
     }
 
-    fn get_by_id(&self, id: Uuid) -> Option<TaskHandle> {
+    fn get_by_id(&self, id: Uuid) -> Result<Option<TaskHandle>, TaskTreeError> {
         if let Some(task) = self.id_to_task_map.borrow().get(&id).cloned() {
-            return Some(task);
+            return Ok(Some(task));
         }
 
         for project in self.projects.iter() {
-            let tmp = project.root_task.get_by_id(id);
+            let tmp = project.root_task.get_by_id(id)?;
             if let Some(task) = tmp {
                 self.id_to_task_map.borrow_mut().insert(id, task.clone());
-                return Some(task);
+                return Ok(Some(task));
             }
         }
 
-        None
+        Ok(None)
     }
 
-    fn start_new_project(&mut self, root_task: TaskHandle) {
-        let project_name = root_task.get_name();
+    fn start_new_project(&mut self, root_task: TaskHandle) -> Result<(), TaskTreeError> {
+        let project_name = root_task.get_name()?;
 
         let yyyymmdd = self.last_synced_time.format("%Y%m%d").to_string();
 
@@ -718,7 +750,7 @@ impl TaskRepositoryTrait for TaskRepository {
 
         let project_yaml_file_path = project_dir_path.join("project.yaml");
 
-        let priority = root_task.get_priority();
+        let priority = root_task.get_priority()?;
         let project = Project::new(
             root_task,
             project_dir_path,
@@ -726,8 +758,9 @@ impl TaskRepositoryTrait for TaskRepository {
             priority,
         );
 
-        self.cache_task_and_descendants(&project.root_task);
+        self.cache_task_and_descendants(&project.root_task)?;
         self.projects.push(project);
+        Ok(())
     }
 }
 
@@ -811,18 +844,19 @@ mod tests {
     }
 
     fn task_with_start_time(name: &str, start_time: DateTime<Local>) -> TaskHandle {
-        let task = TaskHandle::new(name);
-        task.set_start_time(start_time);
-        task.set_priority(5);
+        let task = TaskHandle::new(name).unwrap();
+        task.set_start_time(start_time).unwrap();
+        task.set_priority(5).unwrap();
         task
     }
 
     fn pending_task_with_until(name: &str, pending_until: DateTime<Local>) -> TaskHandle {
-        let task = TaskHandle::new(name);
-        task.set_start_time(DateTime::<Local>::MIN_UTC.into());
-        task.set_pending_until(pending_until);
-        task.set_orig_status(Status::Pending);
-        task.set_priority(5);
+        let task = TaskHandle::new(name).unwrap();
+        task.set_start_time(DateTime::<Local>::MIN_UTC.into())
+            .unwrap();
+        task.set_pending_until(pending_until).unwrap();
+        task.set_orig_status(Status::Pending).unwrap();
+        task.set_priority(5).unwrap();
         task
     }
 
@@ -837,14 +871,19 @@ mod tests {
         let storage_dir = TestStorageDir::new();
         let now = Local.with_ymd_and_hms(2026, 8, 11, 12, 0, 0).unwrap();
         let mut task_repository = TaskRepository::new(storage_dir.path_str());
-        task_repository.sync_clock(now);
-        let root_task = TaskHandle::new("メモリ登録対象");
-        let root_task_id = root_task.get_id();
+        task_repository.sync_clock(now).unwrap();
+        let root_task = TaskHandle::new("メモリ登録対象").unwrap();
+        let root_task_id = root_task.get_id().unwrap();
 
-        task_repository.start_new_project(root_task);
+        task_repository.start_new_project(root_task).unwrap();
 
         assert_eq!(
-            task_repository.get_by_id(root_task_id).unwrap().get_name(),
+            task_repository
+                .get_by_id(root_task_id)
+                .unwrap()
+                .unwrap()
+                .get_name()
+                .unwrap(),
             "メモリ登録対象"
         );
     }
@@ -856,23 +895,27 @@ mod tests {
         let pending_until = now - Duration::hours(1);
         let root_task = pending_task_with_until("root", pending_until);
         let child_task = root_task.create_as_last_child(TaskAttr::new("child"));
-        child_task.set_start_time(DateTime::<Local>::MIN_UTC.into());
-        child_task.set_orig_status(Status::Pending);
-        child_task.set_pending_until(pending_until);
+        child_task
+            .set_start_time(DateTime::<Local>::MIN_UTC.into())
+            .unwrap();
+        child_task.set_orig_status(Status::Pending).unwrap();
+        child_task.set_pending_until(pending_until).unwrap();
         let grandchild_task = child_task.create_as_last_child(TaskAttr::new("grandchild"));
-        grandchild_task.set_start_time(DateTime::<Local>::MIN_UTC.into());
-        grandchild_task.set_orig_status(Status::Pending);
-        grandchild_task.set_pending_until(pending_until);
+        grandchild_task
+            .set_start_time(DateTime::<Local>::MIN_UTC.into())
+            .unwrap();
+        grandchild_task.set_orig_status(Status::Pending).unwrap();
+        grandchild_task.set_pending_until(pending_until).unwrap();
         let second_root_task = pending_task_with_until("second root", pending_until);
         let mut task_repository = TaskRepository::new(storage_dir.path_str());
         add_project(&mut task_repository, root_task.clone());
         add_project(&mut task_repository, second_root_task.clone());
 
-        task_repository.sync_clock(now);
+        task_repository.sync_clock(now).unwrap();
 
         for task in [root_task, child_task, grandchild_task, second_root_task] {
-            assert_eq!(task.get_last_synced_time(), now);
-            assert_eq!(task.get_status(), Status::Todo);
+            assert_eq!(task.get_last_synced_time().unwrap(), now);
+            assert_eq!(task.get_status().unwrap(), Status::Todo);
         }
         assert_eq!(task_repository.get_last_synced_time(), now);
     }
@@ -882,9 +925,11 @@ mod tests {
         let storage_dir = TestStorageDir::new();
         let now = Local.with_ymd_and_hms(2026, 8, 11, 12, 0, 0).unwrap();
         let mut task_repository = TaskRepository::new(storage_dir.path_str());
-        task_repository.sync_clock(now);
+        task_repository.sync_clock(now).unwrap();
 
-        task_repository.start_new_project(TaskHandle::new("filesystem非変更対象"));
+        task_repository
+            .start_new_project(TaskHandle::new("filesystem非変更対象").unwrap())
+            .unwrap();
 
         assert!(!storage_dir.path.exists());
     }
@@ -894,10 +939,10 @@ mod tests {
         let storage_dir = TestStorageDir::new();
         let now = Local.with_ymd_and_hms(2026, 8, 11, 12, 0, 0).unwrap();
         let mut task_repository = TaskRepository::new(storage_dir.path_str());
-        task_repository.sync_clock(now);
-        let root_task = TaskHandle::new("保存対象");
-        let root_task_id = root_task.get_id();
-        task_repository.start_new_project(root_task);
+        task_repository.sync_clock(now).unwrap();
+        let root_task = TaskHandle::new("保存対象").unwrap();
+        let root_task_id = root_task.get_id().unwrap();
+        task_repository.start_new_project(root_task).unwrap();
         let project_dir_path = storage_dir.project_dir_path("20260811", "保存対象");
         let markdown_dir_path = project_dir_path.join("markdown");
         let project_yaml_file_path = project_dir_path.join("project.yaml");
@@ -910,10 +955,10 @@ mod tests {
         assert!(project_yaml_file_path.is_file());
 
         let mut loaded_repository = TaskRepository::new(storage_dir.path_str());
-        loaded_repository.sync_clock(now);
+        loaded_repository.sync_clock(now).unwrap();
         loaded_repository.load().unwrap();
-        let loaded_task = loaded_repository.get_by_id(root_task_id).unwrap();
-        assert_eq!(loaded_task.get_name(), "保存対象");
+        let loaded_task = loaded_repository.get_by_id(root_task_id).unwrap().unwrap();
+        assert_eq!(loaded_task.get_name().unwrap(), "保存対象");
     }
 
     #[test]
@@ -922,8 +967,10 @@ mod tests {
         fs::write(&storage_dir.path, b"not a directory").unwrap();
         let now = Local.with_ymd_and_hms(2026, 8, 11, 12, 0, 0).unwrap();
         let mut task_repository = TaskRepository::new(storage_dir.path_str());
-        task_repository.sync_clock(now);
-        task_repository.start_new_project(TaskHandle::new("保存失敗対象"));
+        task_repository.sync_clock(now).unwrap();
+        task_repository
+            .start_new_project(TaskHandle::new("保存失敗対象").unwrap())
+            .unwrap();
         let expected_project_dir = storage_dir.project_dir_path("20260811", "保存失敗対象");
 
         let actual = task_repository.save().unwrap_err();
@@ -941,8 +988,10 @@ mod tests {
         let storage_dir = TestStorageDir::new();
         let now = Local.with_ymd_and_hms(2026, 8, 11, 12, 0, 0).unwrap();
         let mut task_repository = TaskRepository::new(storage_dir.path_str());
-        task_repository.sync_clock(now);
-        task_repository.start_new_project(TaskHandle::new("read失敗対象"));
+        task_repository.sync_clock(now).unwrap();
+        task_repository
+            .start_new_project(TaskHandle::new("read失敗対象").unwrap())
+            .unwrap();
         let project_yaml_path = storage_dir
             .project_dir_path("20260811", "read失敗対象")
             .join("project.yaml");
@@ -1259,22 +1308,22 @@ mod tests {
         let storage_dir = TestStorageDir::new();
         let now = Local.with_ymd_and_hms(2026, 8, 11, 12, 0, 0).unwrap();
         let mut source_repository = TaskRepository::new(storage_dir.path_str());
-        source_repository.sync_clock(now);
-        let stored_task = TaskHandle::new("保存済みtask");
-        let stored_task_id = stored_task.get_id();
-        source_repository.start_new_project(stored_task);
+        source_repository.sync_clock(now).unwrap();
+        let stored_task = TaskHandle::new("保存済みtask").unwrap();
+        let stored_task_id = stored_task.get_id().unwrap();
+        source_repository.start_new_project(stored_task).unwrap();
         source_repository.save().unwrap();
         write_project_yaml(&storage_dir, "zz-broken", "project: [");
 
         let mut repository = TaskRepository::new(storage_dir.path_str());
-        repository.sync_clock(now);
-        let memory_task = TaskHandle::new("memory task");
-        let memory_task_id = memory_task.get_id();
-        repository.start_new_project(memory_task);
+        repository.sync_clock(now).unwrap();
+        let memory_task = TaskHandle::new("memory task").unwrap();
+        let memory_task_id = memory_task.get_id().unwrap();
+        repository.start_new_project(memory_task).unwrap();
 
         assert!(repository.load().is_err());
-        assert!(repository.get_by_id(memory_task_id).is_some());
-        assert!(repository.get_by_id(stored_task_id).is_none());
+        assert!(repository.get_by_id(memory_task_id).unwrap().is_some());
+        assert!(repository.get_by_id(stored_task_id).unwrap().is_none());
         assert_eq!(repository.get_all_projects().len(), 1);
     }
 
@@ -1286,11 +1335,11 @@ mod tests {
         let storage_dir = TestStorageDir::new();
         let now = Local.with_ymd_and_hms(2026, 8, 11, 12, 0, 0).unwrap();
         let mut repository = TaskRepository::new(storage_dir.path_str());
-        repository.sync_clock(now);
-        let changed_task = TaskHandle::new("変更対象");
-        let unchanged_task = TaskHandle::new("未変更対象");
-        repository.start_new_project(changed_task.clone());
-        repository.start_new_project(unchanged_task);
+        repository.sync_clock(now).unwrap();
+        let changed_task = TaskHandle::new("変更対象").unwrap();
+        let unchanged_task = TaskHandle::new("未変更対象").unwrap();
+        repository.start_new_project(changed_task.clone()).unwrap();
+        repository.start_new_project(unchanged_task).unwrap();
         repository.save().unwrap();
 
         let changed_yaml_path = storage_dir
@@ -1302,7 +1351,7 @@ mod tests {
         let changed_inode = fs::metadata(&changed_yaml_path).unwrap().ino();
         let unchanged_inode = fs::metadata(&unchanged_yaml_path).unwrap().ino();
 
-        changed_task.set_estimated_work_seconds(30 * 60);
+        changed_task.set_estimated_work_seconds(30 * 60).unwrap();
         repository.save().unwrap();
 
         assert_ne!(
@@ -1314,13 +1363,15 @@ mod tests {
             unchanged_inode
         );
         let mut loaded_repository = TaskRepository::new(storage_dir.path_str());
-        loaded_repository.sync_clock(now);
+        loaded_repository.sync_clock(now).unwrap();
         loaded_repository.load().unwrap();
         assert_eq!(
             loaded_repository
-                .get_by_id(changed_task.get_id())
+                .get_by_id(changed_task.get_id().unwrap())
                 .unwrap()
-                .get_estimated_work_seconds(),
+                .unwrap()
+                .get_estimated_work_seconds()
+                .unwrap(),
             30 * 60
         );
     }
@@ -1330,16 +1381,16 @@ mod tests {
         let storage_dir = TestStorageDir::new();
         let now = Local.with_ymd_and_hms(2026, 8, 13, 12, 0, 0).unwrap();
         let mut repository = TaskRepository::new(storage_dir.path_str());
-        repository.sync_clock(now);
-        let changed_task = TaskHandle::new("変更対象");
-        let unchanged_task = TaskHandle::new("未変更対象");
-        repository.start_new_project(changed_task.clone());
-        repository.start_new_project(unchanged_task);
+        repository.sync_clock(now).unwrap();
+        let changed_task = TaskHandle::new("変更対象").unwrap();
+        let unchanged_task = TaskHandle::new("未変更対象").unwrap();
+        repository.start_new_project(changed_task.clone()).unwrap();
+        repository.start_new_project(unchanged_task).unwrap();
         repository.save().unwrap();
         let unchanged_dir = storage_dir.project_dir_path("20260813", "未変更対象");
         fs::remove_dir_all(&unchanged_dir).unwrap();
 
-        changed_task.set_estimated_work_seconds(30 * 60);
+        changed_task.set_estimated_work_seconds(30 * 60).unwrap();
         repository.save().unwrap();
 
         assert!(!unchanged_dir.exists());
@@ -1350,16 +1401,20 @@ mod tests {
         let storage_dir = TestStorageDir::new();
         let now = Local.with_ymd_and_hms(2026, 8, 13, 12, 0, 0).unwrap();
         let mut source = TaskRepository::new(storage_dir.path_str());
-        source.sync_clock(now);
-        source.start_new_project(TaskHandle::new("読込済み"));
+        source.sync_clock(now).unwrap();
+        source
+            .start_new_project(TaskHandle::new("読込済み").unwrap())
+            .unwrap();
         source.save().unwrap();
 
         let mut repository = TaskRepository::new(storage_dir.path_str());
-        repository.sync_clock(now);
+        repository.sync_clock(now).unwrap();
         repository.load().unwrap();
         let loaded_dir = storage_dir.project_dir_path("20260813", "読込済み");
         fs::remove_dir_all(&loaded_dir).unwrap();
-        repository.start_new_project(TaskHandle::new("新規"));
+        repository
+            .start_new_project(TaskHandle::new("新規").unwrap())
+            .unwrap();
 
         repository.save().unwrap();
 
@@ -1375,10 +1430,10 @@ mod tests {
         let storage_dir = TestStorageDir::new();
         let now = Local.with_ymd_and_hms(2026, 8, 13, 12, 0, 0).unwrap();
         let mut repository = TaskRepository::new(storage_dir.path_str());
-        repository.sync_clock(now);
-        let task = TaskHandle::new("再試行対象");
-        let task_id = task.get_id();
-        repository.start_new_project(task.clone());
+        repository.sync_clock(now).unwrap();
+        let task = TaskHandle::new("再試行対象").unwrap();
+        let task_id = task.get_id().unwrap();
+        repository.start_new_project(task.clone()).unwrap();
         repository.save().unwrap();
         let project_yaml_path = storage_dir
             .project_dir_path("20260813", "再試行対象")
@@ -1386,7 +1441,7 @@ mod tests {
         let old_bytes = fs::read(&project_yaml_path).unwrap();
         fs::remove_file(&project_yaml_path).unwrap();
         fs::create_dir(&project_yaml_path).unwrap();
-        task.set_estimated_work_seconds(30 * 60);
+        task.set_estimated_work_seconds(30 * 60).unwrap();
 
         assert!(repository.save().is_err());
         fs::remove_dir(&project_yaml_path).unwrap();
@@ -1394,13 +1449,15 @@ mod tests {
         repository.save().unwrap();
 
         let mut reloaded = TaskRepository::new(storage_dir.path_str());
-        reloaded.sync_clock(now);
+        reloaded.sync_clock(now).unwrap();
         reloaded.load().unwrap();
         assert_eq!(
             reloaded
                 .get_by_id(task_id)
                 .unwrap()
-                .get_estimated_work_seconds(),
+                .unwrap()
+                .get_estimated_work_seconds()
+                .unwrap(),
             30 * 60
         );
     }
@@ -1410,14 +1467,16 @@ mod tests {
         let storage_dir = TestStorageDir::new();
         let now = Local.with_ymd_and_hms(2026, 8, 13, 12, 0, 0).unwrap();
         let mut source = TaskRepository::new(storage_dir.path_str());
-        source.sync_clock(now);
-        source.start_new_project(TaskHandle::new("既存project"));
+        source.sync_clock(now).unwrap();
+        source
+            .start_new_project(TaskHandle::new("既存project").unwrap())
+            .unwrap();
         source.save().unwrap();
         let revision_path = storage_dir.path.join(".revision");
         fs::remove_file(&revision_path).unwrap();
 
         let mut repository = TaskRepository::new(storage_dir.path_str());
-        repository.sync_clock(now);
+        repository.sync_clock(now).unwrap();
         repository.load().unwrap();
 
         assert_eq!(repository.get_all_projects().len(), 1);
@@ -1430,8 +1489,10 @@ mod tests {
         let now = Local.with_ymd_and_hms(2026, 8, 13, 12, 0, 0).unwrap();
         let revision_path = storage_dir.path.join(".revision");
         let mut repository = TaskRepository::new(storage_dir.path_str());
-        repository.sync_clock(now);
-        repository.start_new_project(TaskHandle::new("保存対象"));
+        repository.sync_clock(now).unwrap();
+        repository
+            .start_new_project(TaskHandle::new("保存対象").unwrap())
+            .unwrap();
 
         repository.save().unwrap();
 
@@ -1451,9 +1512,9 @@ mod tests {
         let now = Local.with_ymd_and_hms(2026, 8, 13, 12, 0, 0).unwrap();
         let revision_path = storage_dir.path.join(".revision");
         let mut repository = TaskRepository::new(storage_dir.path_str());
-        repository.sync_clock(now);
-        let task = TaskHandle::new("失敗対象");
-        repository.start_new_project(task.clone());
+        repository.sync_clock(now).unwrap();
+        let task = TaskHandle::new("失敗対象").unwrap();
+        repository.start_new_project(task.clone()).unwrap();
         repository.save().unwrap();
         let previous_revision = repository.storage_revision.get().unwrap();
         let project_yaml_path = storage_dir
@@ -1461,7 +1522,7 @@ mod tests {
             .join("project.yaml");
         fs::remove_file(&project_yaml_path).unwrap();
         fs::create_dir(&project_yaml_path).unwrap();
-        task.set_estimated_work_seconds(30 * 60);
+        task.set_estimated_work_seconds(30 * 60).unwrap();
 
         assert!(repository.save().is_err());
 
@@ -1544,8 +1605,10 @@ mod tests {
         symlink(&target_path, &revision_path).unwrap();
         let now = Local.with_ymd_and_hms(2026, 8, 13, 12, 0, 0).unwrap();
         let mut repository = TaskRepository::new(storage_dir.path_str());
-        repository.sync_clock(now);
-        repository.start_new_project(TaskHandle::new("保存対象"));
+        repository.sync_clock(now).unwrap();
+        repository
+            .start_new_project(TaskHandle::new("保存対象").unwrap())
+            .unwrap();
 
         let actual = repository.save().unwrap_err();
 
@@ -1565,10 +1628,10 @@ mod tests {
         let storage_dir = TestStorageDir::new();
         let now = Local.with_ymd_and_hms(2026, 8, 13, 12, 0, 0).unwrap();
         let mut source = TaskRepository::new(storage_dir.path_str());
-        source.sync_clock(now);
-        let task = TaskHandle::new("初回読込対象");
-        let task_id = task.get_id();
-        source.start_new_project(task);
+        source.sync_clock(now).unwrap();
+        let task = TaskHandle::new("初回読込対象").unwrap();
+        let task_id = task.get_id().unwrap();
+        source.start_new_project(task).unwrap();
         source.save().unwrap();
         fs::remove_file(storage_dir.path.join(".revision")).unwrap();
         let mut repository = TaskRepository::new(storage_dir.path_str());
@@ -1576,7 +1639,7 @@ mod tests {
         let outcome = repository.reload_if_changed(now).unwrap();
 
         assert_eq!(outcome, RepositoryReloadOutcome::Reloaded);
-        assert!(repository.get_by_id(task_id).is_some());
+        assert!(repository.get_by_id(task_id).unwrap().is_some());
     }
 
     #[test]
@@ -1585,13 +1648,13 @@ mod tests {
         let before = Local.with_ymd_and_hms(2026, 8, 13, 12, 0, 0).unwrap();
         let after = before + Duration::hours(2);
         let mut source = TaskRepository::new(storage_dir.path_str());
-        source.sync_clock(before);
-        let task = TaskHandle::new("cache対象");
-        task.set_start_time(before - Duration::hours(1));
-        task.set_pending_until(before + Duration::hours(1));
-        task.set_orig_status(Status::Pending);
-        let task_id = task.get_id();
-        source.start_new_project(task);
+        source.sync_clock(before).unwrap();
+        let task = TaskHandle::new("cache対象").unwrap();
+        task.set_start_time(before - Duration::hours(1)).unwrap();
+        task.set_pending_until(before + Duration::hours(1)).unwrap();
+        task.set_orig_status(Status::Pending).unwrap();
+        let task_id = task.get_id().unwrap();
+        source.start_new_project(task).unwrap();
         source.save().unwrap();
         let project_yaml_path = storage_dir
             .project_dir_path("20260813", "cache対象")
@@ -1602,7 +1665,12 @@ mod tests {
             RepositoryReloadOutcome::Reloaded
         );
         assert_eq!(
-            repository.get_by_id(task_id).unwrap().get_status(),
+            repository
+                .get_by_id(task_id)
+                .unwrap()
+                .unwrap()
+                .get_status()
+                .unwrap(),
             Status::Pending
         );
         fs::write(&project_yaml_path, "project: [").unwrap();
@@ -1611,7 +1679,12 @@ mod tests {
 
         assert_eq!(outcome, RepositoryReloadOutcome::Cached);
         assert_eq!(
-            repository.get_by_id(task_id).unwrap().get_status(),
+            repository
+                .get_by_id(task_id)
+                .unwrap()
+                .unwrap()
+                .get_status()
+                .unwrap(),
             Status::Todo
         );
     }
@@ -1621,10 +1694,10 @@ mod tests {
         let storage_dir = TestStorageDir::new();
         let now = Local.with_ymd_and_hms(2026, 8, 13, 12, 0, 0).unwrap();
         let mut source = TaskRepository::new(storage_dir.path_str());
-        source.sync_clock(now);
-        let task = TaskHandle::new("外部更新対象");
-        let task_id = task.get_id();
-        source.start_new_project(task);
+        source.sync_clock(now).unwrap();
+        let task = TaskHandle::new("外部更新対象").unwrap();
+        let task_id = task.get_id().unwrap();
+        source.start_new_project(task).unwrap();
         source.save().unwrap();
         let mut cached = TaskRepository::new(storage_dir.path_str());
         cached.reload_if_changed(now).unwrap();
@@ -1633,7 +1706,9 @@ mod tests {
         external
             .get_by_id(task_id)
             .unwrap()
-            .set_estimated_work_seconds(45 * 60);
+            .unwrap()
+            .set_estimated_work_seconds(45 * 60)
+            .unwrap();
         external.save().unwrap();
 
         assert_eq!(
@@ -1644,7 +1719,9 @@ mod tests {
             cached
                 .get_by_id(task_id)
                 .unwrap()
-                .get_estimated_work_seconds(),
+                .unwrap()
+                .get_estimated_work_seconds()
+                .unwrap(),
             45 * 60
         );
         assert_eq!(
@@ -1658,10 +1735,10 @@ mod tests {
         let storage_dir = TestStorageDir::new();
         let now = Local.with_ymd_and_hms(2026, 8, 13, 12, 0, 0).unwrap();
         let mut source = TaskRepository::new(storage_dir.path_str());
-        source.sync_clock(now);
-        let task = TaskHandle::new("停止中編集対象");
-        let task_id = task.get_id();
-        source.start_new_project(task);
+        source.sync_clock(now).unwrap();
+        let task = TaskHandle::new("停止中編集対象").unwrap();
+        let task_id = task.get_id().unwrap();
+        source.start_new_project(task).unwrap();
         source.save().unwrap();
         let original_revision = fs::read(storage_dir.path.join(".revision")).unwrap();
         let original_revision_id =
@@ -1669,7 +1746,9 @@ mod tests {
         source
             .get_by_id(task_id)
             .unwrap()
-            .set_estimated_work_seconds(50 * 60);
+            .unwrap()
+            .set_estimated_work_seconds(50 * 60)
+            .unwrap();
         source.save().unwrap();
         fs::write(storage_dir.path.join(".revision"), original_revision).unwrap();
         let mut restarted = TaskRepository::new(storage_dir.path_str());
@@ -1682,7 +1761,9 @@ mod tests {
             restarted
                 .get_by_id(task_id)
                 .unwrap()
-                .get_estimated_work_seconds(),
+                .unwrap()
+                .get_estimated_work_seconds()
+                .unwrap(),
             50 * 60
         );
     }
@@ -1710,7 +1791,7 @@ mod tests {
 
         let now = Local::now();
         let mut repository = TaskRepository::new(storage_dir.path_str());
-        repository.sync_clock(now);
+        repository.sync_clock(now).unwrap();
         repository.load().unwrap();
         assert_eq!(repository.get_all_projects().len(), 2_172);
         let changed_task = (*repository
@@ -1718,7 +1799,9 @@ mod tests {
             .first()
             .expect("benchmark storage must contain a project"))
         .clone();
-        changed_task.set_priority(changed_task.get_priority() + 1);
+        changed_task
+            .set_priority(changed_task.get_priority().unwrap() + 1)
+            .unwrap();
 
         let started_at = Instant::now();
         repository.save().unwrap();
@@ -1731,18 +1814,20 @@ mod tests {
     #[test]
     fn test_get_by_id_キャッシュから取得する() {
         let mut task_repository = TaskRepository::new("");
-        let root_task = TaskHandle::new("親タスク");
+        let root_task = TaskHandle::new("親タスク").unwrap();
         let child_task = root_task.create_as_last_child(TaskAttr::new("子タスク"));
-        let child_task_id = child_task.get_id();
+        let child_task_id = child_task.get_id().unwrap();
 
-        task_repository.cache_task_and_descendants(&root_task);
+        task_repository
+            .cache_task_and_descendants(&root_task)
+            .unwrap();
         task_repository
             .projects
             .push(Project::new(root_task, "".to_string(), "".to_string(), 5));
 
-        let actual = task_repository.get_by_id(child_task_id).unwrap();
+        let actual = task_repository.get_by_id(child_task_id).unwrap().unwrap();
 
-        assert_eq!(actual.get_name(), "子タスク");
+        assert_eq!(actual.get_name().unwrap(), "子タスク");
         assert!(task_repository
             .id_to_task_map
             .borrow()
@@ -1752,9 +1837,11 @@ mod tests {
     #[test]
     fn test_get_by_id_実行中に追加された子タスクを検索してキャッシュする() {
         let mut task_repository = TaskRepository::new("");
-        let root_task = TaskHandle::new("親タスク");
+        let root_task = TaskHandle::new("親タスク").unwrap();
 
-        task_repository.cache_task_and_descendants(&root_task);
+        task_repository
+            .cache_task_and_descendants(&root_task)
+            .unwrap();
         task_repository.projects.push(Project::new(
             root_task.clone(),
             "".to_string(),
@@ -1763,15 +1850,15 @@ mod tests {
         ));
 
         let child_task = root_task.create_as_last_child(TaskAttr::new("子タスク"));
-        let child_task_id = child_task.get_id();
+        let child_task_id = child_task.get_id().unwrap();
         assert!(!task_repository
             .id_to_task_map
             .borrow()
             .contains_key(&child_task_id));
 
-        let actual = task_repository.get_by_id(child_task_id).unwrap();
+        let actual = task_repository.get_by_id(child_task_id).unwrap().unwrap();
 
-        assert_eq!(actual.get_name(), "子タスク");
+        assert_eq!(actual.get_name().unwrap(), "子タスク");
         assert!(task_repository
             .id_to_task_map
             .borrow()
@@ -1781,79 +1868,88 @@ mod tests {
     #[test]
     fn test_get_by_id_未知のidならnoneを返す() {
         let mut task_repository = TaskRepository::new("");
-        let root_task = TaskHandle::new("親タスク");
-        task_repository.cache_task_and_descendants(&root_task);
+        let root_task = TaskHandle::new("親タスク").unwrap();
+        task_repository
+            .cache_task_and_descendants(&root_task)
+            .unwrap();
         add_project(&mut task_repository, root_task);
 
         let actual = task_repository.get_by_id(Uuid::new_v4());
 
-        assert_eq!(actual, None);
+        assert_eq!(actual.unwrap(), None);
     }
 
     #[test]
     fn test_get_highest_priority_leaf_task_id_締切なし同士では優先度が高いタスクを選ぶ() {
         let mut task_repository = TaskRepository::new("");
-        let low_priority_task = TaskHandle::new("低優先度タスク");
-        low_priority_task.set_priority(1);
-        let high_priority_task = TaskHandle::new("高優先度タスク");
-        high_priority_task.set_priority(9);
-        let high_priority_task_id = high_priority_task.get_id();
+        let low_priority_task = TaskHandle::new("低優先度タスク").unwrap();
+        low_priority_task.set_priority(1).unwrap();
+        let high_priority_task = TaskHandle::new("高優先度タスク").unwrap();
+        high_priority_task.set_priority(9).unwrap();
+        let high_priority_task_id = high_priority_task.get_id().unwrap();
 
         add_project(&mut task_repository, high_priority_task);
         add_project(&mut task_repository, low_priority_task);
 
         let actual = task_repository.get_highest_priority_leaf_task_id();
 
-        assert_eq!(actual, Some(high_priority_task_id));
+        assert_eq!(actual.unwrap(), Some(high_priority_task_id));
     }
 
     #[test]
     fn test_get_highest_priority_leaf_task_id_pending中のタスクは選ばない() {
         let now = Local.with_ymd_and_hms(2026, 8, 11, 12, 0, 0).unwrap();
         let mut task_repository = TaskRepository::new("");
-        task_repository.sync_clock(now);
+        task_repository.sync_clock(now).unwrap();
 
-        let active_task = TaskHandle::new("着手可能タスク");
-        active_task.set_priority(1);
-        let active_task_id = active_task.get_id();
+        let active_task = TaskHandle::new("着手可能タスク").unwrap();
+        active_task.set_priority(1).unwrap();
+        let active_task_id = active_task.get_id().unwrap();
 
         let pending_task = pending_task_with_until("Pendingタスク", now + Duration::days(1));
-        pending_task.set_priority(99);
+        pending_task.set_priority(99).unwrap();
 
         add_project(&mut task_repository, active_task);
         add_project(&mut task_repository, pending_task);
 
         let actual = task_repository.get_highest_priority_leaf_task_id();
 
-        assert_eq!(actual, Some(active_task_id));
+        assert_eq!(actual.unwrap(), Some(active_task_id));
     }
 
     #[test]
     fn test_get_highest_priority_leaf_task_id_締切あり同士では優先度より締切日時を先に見る() {
         let mut task_repository = TaskRepository::new("");
-        let high_priority_late_deadline_task = TaskHandle::new("高優先度だが締切が遅いタスク");
-        high_priority_late_deadline_task.set_priority(99);
+        let high_priority_late_deadline_task =
+            TaskHandle::new("高優先度だが締切が遅いタスク").unwrap();
+        high_priority_late_deadline_task.set_priority(99).unwrap();
         high_priority_late_deadline_task
-            .set_deadline_time_opt(Some(Local.with_ymd_and_hms(2026, 5, 11, 20, 0, 0).unwrap()));
+            .set_deadline_time_opt(Some(Local.with_ymd_and_hms(2026, 5, 11, 20, 0, 0).unwrap()))
+            .unwrap();
 
-        let low_priority_early_deadline_task = TaskHandle::new("低優先度だが締切が早いタスク");
-        low_priority_early_deadline_task.set_priority(1);
+        let low_priority_early_deadline_task =
+            TaskHandle::new("低優先度だが締切が早いタスク").unwrap();
+        low_priority_early_deadline_task.set_priority(1).unwrap();
         low_priority_early_deadline_task
-            .set_deadline_time_opt(Some(Local.with_ymd_and_hms(2026, 5, 10, 20, 0, 0).unwrap()));
-        let low_priority_early_deadline_task_id = low_priority_early_deadline_task.get_id();
+            .set_deadline_time_opt(Some(Local.with_ymd_and_hms(2026, 5, 10, 20, 0, 0).unwrap()))
+            .unwrap();
+        let low_priority_early_deadline_task_id =
+            low_priority_early_deadline_task.get_id().unwrap();
 
         add_project(&mut task_repository, high_priority_late_deadline_task);
         add_project(&mut task_repository, low_priority_early_deadline_task);
 
         let actual = task_repository.get_highest_priority_leaf_task_id();
 
-        assert_eq!(actual, Some(low_priority_early_deadline_task_id));
+        assert_eq!(actual.unwrap(), Some(low_priority_early_deadline_task_id));
     }
 
     #[test]
     fn test_get_defer_candidate_leaf_task_id_0日指定は次の朝より前だけrecent扱いする() {
         let mut task_repository = TaskRepository::new("");
-        task_repository.sync_clock(Local.with_ymd_and_hms(2026, 5, 10, 12, 0, 0).unwrap());
+        task_repository
+            .sync_clock(Local.with_ymd_and_hms(2026, 5, 10, 12, 0, 0).unwrap())
+            .unwrap();
         let recent_task = task_with_start_time(
             "閾値より前",
             Local.with_ymd_and_hms(2026, 5, 11, 5, 59, 59).unwrap(),
@@ -1862,20 +1958,22 @@ mod tests {
             "閾値ちょうど",
             Local.with_ymd_and_hms(2026, 5, 11, 6, 0, 0).unwrap(),
         );
-        let recent_task_id = recent_task.get_id();
+        let recent_task_id = recent_task.get_id().unwrap();
 
         add_project(&mut task_repository, boundary_task);
         add_project(&mut task_repository, recent_task);
 
         let actual = task_repository.get_defer_candidate_leaf_task_id(0);
 
-        assert_eq!(actual, Some(recent_task_id));
+        assert_eq!(actual.unwrap(), Some(recent_task_id));
     }
 
     #[test]
     fn test_get_defer_candidate_leaf_task_id_10日指定は次の朝から10日後を閾値にする() {
         let mut task_repository = TaskRepository::new("");
-        task_repository.sync_clock(Local.with_ymd_and_hms(2026, 5, 10, 12, 0, 0).unwrap());
+        task_repository
+            .sync_clock(Local.with_ymd_and_hms(2026, 5, 10, 12, 0, 0).unwrap())
+            .unwrap();
         let recent_task = task_with_start_time(
             "10日指定でrecent",
             Local.with_ymd_and_hms(2026, 5, 21, 5, 59, 59).unwrap(),
@@ -1884,20 +1982,22 @@ mod tests {
             "10日指定の閾値ちょうど",
             Local.with_ymd_and_hms(2026, 5, 21, 6, 0, 0).unwrap(),
         );
-        let recent_task_id = recent_task.get_id();
+        let recent_task_id = recent_task.get_id().unwrap();
 
         add_project(&mut task_repository, boundary_task);
         add_project(&mut task_repository, recent_task);
 
         let actual = task_repository.get_defer_candidate_leaf_task_id(10);
 
-        assert_eq!(actual, Some(recent_task_id));
+        assert_eq!(actual.unwrap(), Some(recent_task_id));
     }
 
     #[test]
     fn test_get_defer_candidate_leaf_task_id_対象範囲外までpending済みのタスクは候補から除外する() {
         let mut task_repository = TaskRepository::new("");
-        task_repository.sync_clock(Local.with_ymd_and_hms(2026, 5, 10, 12, 0, 0).unwrap());
+        task_repository
+            .sync_clock(Local.with_ymd_and_hms(2026, 5, 10, 12, 0, 0).unwrap())
+            .unwrap();
         let pending_task = pending_task_with_until(
             "100日後までpending済み",
             Local.with_ymd_and_hms(2026, 8, 18, 6, 0, 0).unwrap(),
@@ -1906,21 +2006,23 @@ mod tests {
             "通常のTodo",
             Local.with_ymd_and_hms(2026, 5, 10, 12, 0, 0).unwrap(),
         );
-        let todo_task_id = todo_task.get_id();
+        let todo_task_id = todo_task.get_id().unwrap();
 
         add_project(&mut task_repository, pending_task);
         add_project(&mut task_repository, todo_task);
 
         let actual = task_repository.get_defer_candidate_leaf_task_id(0);
 
-        assert_eq!(actual, Some(todo_task_id));
+        assert_eq!(actual.unwrap(), Some(todo_task_id));
     }
 
     #[test]
     fn test_get_defer_candidate_leaf_task_id_対象範囲外のstart_timeを持つタスクは候補から除外する()
     {
         let mut task_repository = TaskRepository::new("");
-        task_repository.sync_clock(Local.with_ymd_and_hms(2026, 5, 10, 12, 0, 0).unwrap());
+        task_repository
+            .sync_clock(Local.with_ymd_and_hms(2026, 5, 10, 12, 0, 0).unwrap())
+            .unwrap();
         let future_task = task_with_start_time(
             "遠い未来に開始するTodo",
             Local.with_ymd_and_hms(2026, 12, 19, 6, 0, 0).unwrap(),
@@ -1929,21 +2031,23 @@ mod tests {
             "通常のTodo",
             Local.with_ymd_and_hms(2026, 5, 10, 12, 0, 0).unwrap(),
         );
-        let todo_task_id = todo_task.get_id();
+        let todo_task_id = todo_task.get_id().unwrap();
 
         add_project(&mut task_repository, future_task);
         add_project(&mut task_repository, todo_task);
 
         let actual = task_repository.get_defer_candidate_leaf_task_id(0);
 
-        assert_eq!(actual, Some(todo_task_id));
+        assert_eq!(actual.unwrap(), Some(todo_task_id));
     }
 
     #[test]
     fn test_get_defer_candidate_leaf_task_id_対象範囲外までpending済みのタスクしかなければnoneを返す(
     ) {
         let mut task_repository = TaskRepository::new("");
-        task_repository.sync_clock(Local.with_ymd_and_hms(2026, 5, 10, 12, 0, 0).unwrap());
+        task_repository
+            .sync_clock(Local.with_ymd_and_hms(2026, 5, 10, 12, 0, 0).unwrap())
+            .unwrap();
         let pending_task = pending_task_with_until(
             "100日後までpending済み",
             Local.with_ymd_and_hms(2026, 8, 18, 6, 0, 0).unwrap(),
@@ -1953,14 +2057,16 @@ mod tests {
 
         let actual = task_repository.get_defer_candidate_leaf_task_id(0);
 
-        assert_eq!(actual, None);
+        assert_eq!(actual.unwrap(), None);
     }
 
     #[test]
     fn test_get_defer_candidate_leaf_task_id_対象範囲外のstart_timeを持つタスクしかなければnoneを返す(
     ) {
         let mut task_repository = TaskRepository::new("");
-        task_repository.sync_clock(Local.with_ymd_and_hms(2026, 5, 10, 12, 0, 0).unwrap());
+        task_repository
+            .sync_clock(Local.with_ymd_and_hms(2026, 5, 10, 12, 0, 0).unwrap())
+            .unwrap();
         let future_task = task_with_start_time(
             "遠い未来に開始するTodo",
             Local.with_ymd_and_hms(2026, 12, 19, 6, 0, 0).unwrap(),
@@ -1970,30 +2076,34 @@ mod tests {
 
         let actual = task_repository.get_defer_candidate_leaf_task_id(0);
 
-        assert_eq!(actual, None);
+        assert_eq!(actual.unwrap(), None);
     }
 
     #[test]
     fn test_get_defer_candidate_leaf_task_id_pending_untilが閾値より前なら候補に残す() {
         let mut task_repository = TaskRepository::new("");
-        task_repository.sync_clock(Local.with_ymd_and_hms(2026, 5, 10, 12, 0, 0).unwrap());
+        task_repository
+            .sync_clock(Local.with_ymd_and_hms(2026, 5, 10, 12, 0, 0).unwrap())
+            .unwrap();
         let pending_task = pending_task_with_until(
             "閾値より前までpending",
             Local.with_ymd_and_hms(2026, 5, 11, 5, 59, 59).unwrap(),
         );
-        let pending_task_id = pending_task.get_id();
+        let pending_task_id = pending_task.get_id().unwrap();
 
         add_project(&mut task_repository, pending_task);
 
         let actual = task_repository.get_defer_candidate_leaf_task_id(0);
 
-        assert_eq!(actual, Some(pending_task_id));
+        assert_eq!(actual.unwrap(), Some(pending_task_id));
     }
 
     #[test]
     fn test_get_defer_candidate_leaf_task_id_pending_untilが閾値ちょうどなら候補から除外する() {
         let mut task_repository = TaskRepository::new("");
-        task_repository.sync_clock(Local.with_ymd_and_hms(2026, 5, 10, 12, 0, 0).unwrap());
+        task_repository
+            .sync_clock(Local.with_ymd_and_hms(2026, 5, 10, 12, 0, 0).unwrap())
+            .unwrap();
         let pending_task = pending_task_with_until(
             "閾値ちょうどまでpending",
             Local.with_ymd_and_hms(2026, 5, 11, 6, 0, 0).unwrap(),
@@ -2003,6 +2113,6 @@ mod tests {
 
         let actual = task_repository.get_defer_candidate_leaf_task_id(0);
 
-        assert_eq!(actual, None);
+        assert_eq!(actual.unwrap(), None);
     }
 }

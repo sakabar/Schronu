@@ -1,4 +1,4 @@
-use crate::entity::task::TaskHandle;
+use crate::entity::task::{TaskHandle, TaskTreeError};
 use chrono::{DateTime, Local};
 use std::error::Error;
 use std::fmt;
@@ -63,21 +63,25 @@ pub trait TaskRepositoryTrait {
         &mut self,
         now: DateTime<Local>,
     ) -> Result<RepositoryReloadOutcome, TaskRepositoryError> {
-        self.sync_clock(now);
+        self.sync_clock(now)
+            .map_err(|error| TaskRepositoryError::new(TaskRepositoryOperation::Load, error))?;
         self.load()?;
         Ok(RepositoryReloadOutcome::Reloaded)
     }
-    fn has_pending_changes(&self) -> bool {
-        true
+    fn has_pending_changes(&self) -> Result<bool, TaskTreeError> {
+        Ok(true)
     }
     fn save(&self) -> Result<(), TaskRepositoryError>;
-    fn sync_clock(&mut self, now: DateTime<Local>);
+    fn sync_clock(&mut self, now: DateTime<Local>) -> Result<(), TaskTreeError>;
     fn get_last_synced_time(&self) -> DateTime<Local>;
     fn get_highest_priority_project(&mut self) -> Option<&TaskHandle>;
-    fn get_highest_priority_leaf_task_id(&mut self) -> Option<Uuid>;
-    fn get_defer_candidate_leaf_task_id(&mut self, recent_days: i64) -> Option<Uuid>;
-    fn get_by_id(&self, id: Uuid) -> Option<TaskHandle>;
-    fn start_new_project(&mut self, root_task: TaskHandle);
+    fn get_highest_priority_leaf_task_id(&mut self) -> Result<Option<Uuid>, TaskTreeError>;
+    fn get_defer_candidate_leaf_task_id(
+        &mut self,
+        recent_days: i64,
+    ) -> Result<Option<Uuid>, TaskTreeError>;
+    fn get_by_id(&self, id: Uuid) -> Result<Option<TaskHandle>, TaskTreeError>;
+    fn start_new_project(&mut self, root_task: TaskHandle) -> Result<(), TaskTreeError>;
 }
 
 pub trait FreeTimeManagerTrait {

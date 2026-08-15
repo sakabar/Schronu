@@ -483,13 +483,14 @@ fn mcp_stdio_tools_call直前の現在時刻同期で期限切れpendingをtodo�
     let storage = TestStorageDirectory::new();
     let pending_until = Local::now() + chrono::Duration::seconds(3);
     let mut repository = TaskRepository::new(storage.path().to_str().unwrap());
-    repository.sync_clock(Local::now());
-    let task = TaskHandle::new("pending across MCP idle time");
-    let task_id = task.get_id().to_owned();
-    task.set_start_time(Local::now() - chrono::Duration::hours(1));
-    task.set_pending_until(pending_until);
-    task.set_orig_status(Status::Pending);
-    repository.start_new_project(task);
+    repository.sync_clock(Local::now()).unwrap();
+    let task = TaskHandle::new("pending across MCP idle time").unwrap();
+    let task_id = task.get_id().unwrap();
+    task.set_start_time(Local::now() - chrono::Duration::hours(1))
+        .unwrap();
+    task.set_pending_until(pending_until).unwrap();
+    task.set_orig_status(Status::Pending).unwrap();
+    repository.start_new_project(task).unwrap();
     repository.save().unwrap();
 
     let mut mcp = McpSession::spawn(storage.path());

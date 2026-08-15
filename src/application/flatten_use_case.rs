@@ -6,6 +6,7 @@ use super::interface::{FreeTimeManagerTrait, TaskRepositoryTrait};
 use super::schedule_use_case::{
     get_schedule, get_schedule_with_first_available_time_overrides, ScheduledTaskView,
 };
+use super::task_use_case::ApplicationError;
 use crate::entity::task::Status;
 use chrono::{DateTime, Duration, Local, NaiveDate};
 use std::collections::{HashMap, HashSet};
@@ -75,7 +76,7 @@ struct FlattenCandidate {
 pub fn flatten_tasks(
     repository: &dyn TaskRepositoryTrait,
     free_time_manager: &mut dyn FreeTimeManagerTrait,
-) -> FlattenResult {
+) -> Result<FlattenResult, ApplicationError> {
     flatten_tasks_with_end_of_day_offset_minutes(
         repository,
         free_time_manager,
@@ -87,7 +88,7 @@ pub fn flatten_tasks_with_end_of_day_offset_minutes(
     repository: &dyn TaskRepositoryTrait,
     free_time_manager: &mut dyn FreeTimeManagerTrait,
     end_of_day_offset_minutes: i64,
-) -> FlattenResult {
+) -> Result<FlattenResult, ApplicationError> {
     let today = subjective_date(repository.get_last_synced_time());
     let boundary_date = today + Duration::days(FLATTEN_TARGET_DAYS);
     let overflow_date = today + Duration::days(FLATTEN_OVERFLOW_DAY);
@@ -109,7 +110,7 @@ pub fn flatten_tasks_with_end_of_day_offset_minutes(
         })
         .collect::<HashMap<_, _>>();
     let maximum_daily_capacity = capacities.values().copied().max().unwrap_or(0);
-    let initial_schedule = get_schedule(repository);
+    let initial_schedule = get_schedule(repository)?;
     let original_task_details = collect_original_task_details(&initial_schedule);
     let mut schedule = initial_schedule;
     let mut overrides = HashMap::<Uuid, DateTime<Local>>::new();
@@ -160,7 +161,7 @@ pub fn flatten_tasks_with_end_of_day_offset_minutes(
             let mut trial_overrides = overrides.clone();
             trial_overrides.insert(candidate.task_id, target_datetime);
             let trial_schedule =
-                get_schedule_with_first_available_time_overrides(repository, &trial_overrides);
+                get_schedule_with_first_available_time_overrides(repository, &trial_overrides)?;
             if introduces_deadline_violation(&schedule, &trial_schedule) {
                 rejected.push((candidate, UnresolvedReason::RelatedDeadline));
                 continue;
@@ -188,7 +189,7 @@ pub fn flatten_tasks_with_end_of_day_offset_minutes(
     }
 
     if !had_overload {
-        return FlattenResult::default();
+        return Ok(FlattenResult::default());
     }
 
     let mut flattened_tasks = Vec::new();
@@ -201,11 +202,16 @@ pub fn flatten_tasks_with_end_of_day_offset_minutes(
         else {
             continue;
         };
-        let Some(task) = repository.get_by_id(task_id) else {
+        let Some(task) = repository
+            .get_by_id(task_id)
+            .map_err(ApplicationError::TaskTree)?
+        else {
             continue;
         };
-        task.set_pending_until(target_datetime);
-        task.set_orig_status(Status::Pending);
+        task.set_pending_until(target_datetime)
+            .map_err(ApplicationError::TaskTree)?;
+        task.set_orig_status(Status::Pending)
+            .map_err(ApplicationError::TaskTree)?;
         flattened_tasks.push(FlattenedTask {
             task_id,
             name,
@@ -220,7 +226,7 @@ pub fn flatten_tasks_with_end_of_day_offset_minutes(
         .iter()
         .filter(|flattened| flattened.target_date == overflow_date)
         .collect::<Vec<_>>();
-    FlattenResult {
+    Ok(FlattenResult {
         overflowed_task_count: overflowed_tasks.len(),
         overflowed_work_seconds: overflowed_tasks
             .iter()
@@ -229,7 +235,7 @@ pub fn flatten_tasks_with_end_of_day_offset_minutes(
         flattened_tasks,
         had_overload,
         unresolved_overloads,
-    }
+    })
 }
 
 fn collect_original_task_details(

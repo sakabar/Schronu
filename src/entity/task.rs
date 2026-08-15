@@ -1,5 +1,4 @@
 use chrono::{DateTime, Duration, Local};
-use core::cell::BorrowError;
 use dendron::{HotNode, InsertAs, Node};
 use linked_hash_map::LinkedHashMap;
 use std::cmp::{max, min};
@@ -531,13 +530,17 @@ pub fn extract_leaf_immutable_tasks_from_project(task: &ImmutableTask) -> Vec<&I
 }
 
 // Todoの葉タスクを抽出する
-pub fn extract_leaf_tasks_from_project(task: &TaskHandle) -> Vec<TaskHandle> {
+pub fn extract_leaf_tasks_from_project(
+    task: &TaskHandle,
+) -> Result<Vec<TaskHandle>, TaskTreeError> {
     let target_status: Vec<Status> = vec![Status::Todo];
     extract_leaf_tasks_from_project_rec(task, &target_status)
 }
 
 // TodoもしくはPendingの葉タスクを抽出する
-pub fn extract_leaf_tasks_from_project_with_pending(task: &TaskHandle) -> Vec<TaskHandle> {
+pub fn extract_leaf_tasks_from_project_with_pending(
+    task: &TaskHandle,
+) -> Result<Vec<TaskHandle>, TaskTreeError> {
     let target_status: Vec<Status> = vec![Status::Todo, Status::Pending];
     extract_leaf_tasks_from_project_rec(task, &target_status)
 }
@@ -545,43 +548,57 @@ pub fn extract_leaf_tasks_from_project_with_pending(task: &TaskHandle) -> Vec<Ta
 fn extract_leaf_tasks_from_project_rec(
     task: &TaskHandle,
     target_status_arr: &Vec<Status>,
-) -> Vec<TaskHandle> {
-    let children_are_all_done = task
-        .node
-        .children()
-        .all(|child_node| child_node.borrow_data().get_status() == &Status::Done);
+) -> Result<Vec<TaskHandle>, TaskTreeError> {
+    let mut children_are_all_done = true;
+    for child_node in task.node.children() {
+        if child_node
+            .try_borrow_data()
+            .map_err(|_| TaskTreeError::Borrow)?
+            .get_status()
+            != &Status::Done
+        {
+            children_are_all_done = false;
+            break;
+        }
+    }
 
-    if target_status_arr.contains(&task.get_status())
+    if target_status_arr.contains(&task.get_status()?)
         && (!task.node.has_children() || children_are_all_done)
     {
         let new_task = TaskHandle {
             node: task.node.clone(),
         };
-        return vec![new_task];
+        return Ok(vec![new_task]);
     }
 
     let mut ans: Vec<TaskHandle> = vec![];
 
     // 深さ優先
     for child_node in task.node.children() {
-        if child_node.borrow_data().get_status() != &Status::Done {
+        if child_node
+            .try_borrow_data()
+            .map_err(|_| TaskTreeError::Borrow)?
+            .get_status()
+            != &Status::Done
+        {
             let child_task = TaskHandle { node: child_node };
 
             let leaves_with_pending: Vec<TaskHandle> =
-                extract_leaf_tasks_from_project_rec(&child_task, target_status_arr);
+                extract_leaf_tasks_from_project_rec(&child_task, target_status_arr)?;
 
-            let mut leaves: Vec<TaskHandle> = leaves_with_pending
-                .iter()
-                .filter(|&leaf| target_status_arr.contains(&leaf.get_status()))
-                .map(|leaf| TaskHandle {
-                    node: leaf.node.clone(),
-                })
-                .collect::<Vec<_>>();
+            let mut leaves = Vec::new();
+            for leaf in leaves_with_pending {
+                if target_status_arr.contains(&leaf.get_status()?) {
+                    leaves.push(TaskHandle {
+                        node: leaf.node.clone(),
+                    });
+                }
+            }
             ans.append(&mut leaves);
         }
     }
 
-    ans
+    Ok(ans)
 }
 
 pub fn round_up_sec_as_minute(seconds: i64) -> i64 {
@@ -624,10 +641,10 @@ pub fn round_up_sec_as_minute(seconds: i64) -> i64 {
 
 #[test]
 fn test_extract_leaf_tasks_from_project_タスクのchildrenが空配列の場合() {
-    let task = TaskHandle::new("タスク");
-    let actual = extract_leaf_tasks_from_project(&task);
+    let task = TaskHandle::new("タスク").unwrap();
+    let actual = extract_leaf_tasks_from_project(&task).unwrap();
 
-    let t = TaskHandle::new("タスク");
+    let t = TaskHandle::new("タスク").unwrap();
 
     let expected = vec![t];
     assert_eq!(actual, expected);
@@ -641,32 +658,32 @@ fn test_extract_leaf_tasks_from_project_タスクのchildrenが空配列では�
          - grand_child_task (葉)
        - child_task_2 (葉)
     */
-    let mut grand_child_task_1 = TaskHandle::new("孫タスク1");
+    let mut grand_child_task_1 = TaskHandle::new("孫タスク1").unwrap();
     let ptr_to_grand_child_task_1_node = grand_child_task_1.node.clone();
 
-    let child_task_1 = TaskHandle::new("子タスク1");
+    let child_task_1 = TaskHandle::new("子タスク1").unwrap();
     grand_child_task_1
         .detach_insert_as_last_child_of(child_task_1)
         .unwrap();
 
-    let mut child_task_1_again = grand_child_task_1.root();
+    let mut child_task_1_again = grand_child_task_1.root().unwrap();
 
-    let mut child_task_2 = TaskHandle::new("子タスク2");
-    let parent_task_1 = TaskHandle::new("親タスク1");
+    let mut child_task_2 = TaskHandle::new("子タスク2").unwrap();
+    let parent_task_1 = TaskHandle::new("親タスク1").unwrap();
 
     child_task_1_again
         .detach_insert_as_last_child_of(parent_task_1)
         .unwrap();
-    let parent_task_again = child_task_1_again.root();
+    let parent_task_again = child_task_1_again.root().unwrap();
     child_task_2
         .detach_insert_as_last_child_of(parent_task_again)
         .unwrap();
 
-    let parent_task_again_again = child_task_2.root();
+    let parent_task_again_again = child_task_2.root().unwrap();
 
-    let actual = extract_leaf_tasks_from_project(&parent_task_again_again);
-    let t1 = TaskHandle::new("孫タスク1");
-    let t2 = TaskHandle::new("子タスク2");
+    let actual = extract_leaf_tasks_from_project(&parent_task_again_again).unwrap();
+    let t1 = TaskHandle::new("孫タスク1").unwrap();
+    let t2 = TaskHandle::new("子タスク2").unwrap();
     let expected = vec![t1, t2];
     assert_eq!(&actual, &expected);
 
@@ -676,8 +693,14 @@ fn test_extract_leaf_tasks_from_project_タスクのchildrenが空配列では�
     let actual2 = actual.last().unwrap();
 
     assert_ne!(actual1, actual2);
-    assert_eq!(actual1.root().node.borrow_data().get_name(), "親タスク1");
-    assert_eq!(actual2.root().node.borrow_data().get_name(), "親タスク1");
+    assert_eq!(
+        actual1.root().unwrap().node.borrow_data().get_name(),
+        "親タスク1"
+    );
+    assert_eq!(
+        actual2.root().unwrap().node.borrow_data().get_name(),
+        "親タスク1"
+    );
     assert!(actual1
         .node
         .belongs_to_same_tree(&ptr_to_grand_child_task_1_node));
@@ -758,29 +781,29 @@ fn test_extract_leaf_tasks_from_project_子が全てdoneのタスクは葉とし
          - grand_child_task_2 (done)
        - child_task_2 (返る)
     */
-    let mut grand_child_task_1 = TaskHandle::new("孫タスク1");
-    grand_child_task_1.set_orig_status(Status::Done);
+    let mut grand_child_task_1 = TaskHandle::new("孫タスク1").unwrap();
+    grand_child_task_1.set_orig_status(Status::Done).unwrap();
 
-    let mut grand_child_task_2 = TaskHandle::new("孫タスク2");
-    grand_child_task_2.set_orig_status(Status::Done);
+    let mut grand_child_task_2 = TaskHandle::new("孫タスク2").unwrap();
+    grand_child_task_2.set_orig_status(Status::Done).unwrap();
 
-    let child_task_1 = TaskHandle::new("子タスク1");
+    let child_task_1 = TaskHandle::new("子タスク1").unwrap();
 
     grand_child_task_1
         .detach_insert_as_last_child_of(child_task_1)
         .unwrap();
-    let child_task_1_again = grand_child_task_1.parent().unwrap();
+    let child_task_1_again = grand_child_task_1.parent().unwrap().unwrap();
     grand_child_task_2
         .detach_insert_as_last_child_of(child_task_1_again)
         .unwrap();
 
-    let parent_task = grand_child_task_2.root();
+    let parent_task = grand_child_task_2.root().unwrap();
 
     let expected_child_task_1 = TaskHandle {
         node: parent_task.node.first_child().unwrap(),
     };
 
-    let actual = extract_leaf_tasks_from_project(&parent_task);
+    let actual = extract_leaf_tasks_from_project(&parent_task).unwrap();
 
     assert_eq!(actual.len(), 1);
     assert_task(actual.first().unwrap(), &expected_child_task_1);
@@ -792,19 +815,19 @@ fn test_extract_leaf_tasks_from_project_子が全てdoneのタスクで親がpen
      parent_task_1 (pending)
        - child_task_1 (done)
     */
-    let mut child_task_1 = TaskHandle::new("子タスク1");
-    child_task_1.set_orig_status(Status::Done);
+    let mut child_task_1 = TaskHandle::new("子タスク1").unwrap();
+    child_task_1.set_orig_status(Status::Done).unwrap();
 
     let pending_until = Local.with_ymd_and_hms(2037, 12, 31, 0, 0, 0).unwrap();
-    let parent_task_1 = TaskHandle::new("親タスク1");
-    parent_task_1.set_orig_status(Status::Pending);
-    parent_task_1.set_pending_until(pending_until);
+    let parent_task_1 = TaskHandle::new("親タスク1").unwrap();
+    parent_task_1.set_orig_status(Status::Pending).unwrap();
+    parent_task_1.set_pending_until(pending_until).unwrap();
     child_task_1
         .detach_insert_as_last_child_of(parent_task_1)
         .unwrap();
 
-    let root_task = &child_task_1.root();
-    let actual = extract_leaf_tasks_from_project(root_task);
+    let root_task = child_task_1.root().unwrap();
+    let actual = extract_leaf_tasks_from_project(&root_task).unwrap();
     let expected: Vec<TaskHandle> = vec![];
     assert_eq!(actual, expected);
 }
@@ -1188,6 +1211,8 @@ pub enum TaskTreeError {
     Borrow,
     HierarchyGrant,
     Insert,
+    /// The hidden dummy root no longer has exactly one task child, or this handle is outside it.
+    MissingDummyRootChild,
 }
 
 impl fmt::Display for TaskTreeError {
@@ -1199,6 +1224,9 @@ impl fmt::Display for TaskTreeError {
             Self::Borrow => "cannot borrow task tree data",
             Self::HierarchyGrant => "cannot acquire hierarchy edit grant",
             Self::Insert => "cannot insert task subtree",
+            Self::MissingDummyRootChild => {
+                "task tree dummy root must have exactly one task child containing this handle"
+            }
         };
         formatter.write_str(reason)
     }
@@ -1208,156 +1236,200 @@ impl std::error::Error for TaskTreeError {}
 
 #[test]
 fn test_persistent_mutation_revisionはrootとchildの永続化変更で進む() {
-    let root = TaskHandle::new("root");
+    let root = TaskHandle::new("root").unwrap();
     let child = root.create_as_last_child(TaskAttr::new("child"));
-    let initial_revision = root.get_persistent_mutation_revision();
+    let initial_revision = root.get_persistent_mutation_revision().unwrap();
 
-    child.set_estimated_work_seconds(30 * 60);
+    child.set_estimated_work_seconds(30 * 60).unwrap();
 
-    assert!(root.get_persistent_mutation_revision() > initial_revision);
+    assert!(root.get_persistent_mutation_revision().unwrap() > initial_revision);
     assert_eq!(
-        child.get_persistent_mutation_revision(),
-        root.get_persistent_mutation_revision()
+        child.get_persistent_mutation_revision().unwrap(),
+        root.get_persistent_mutation_revision().unwrap()
     );
 }
 
 #[test]
 fn test_persistent_mutation_revisionは同じ値の設定では進まない() {
-    let task = TaskHandle::new("task");
-    let initial_revision = task.get_persistent_mutation_revision();
+    let task = TaskHandle::new("task").unwrap();
+    let initial_revision = task.get_persistent_mutation_revision().unwrap();
 
-    task.set_estimated_work_seconds(task.get_estimated_work_seconds());
-    task.set_priority(task.get_priority());
+    task.set_estimated_work_seconds(task.get_estimated_work_seconds().unwrap())
+        .unwrap();
+    task.set_priority(task.get_priority().unwrap()).unwrap();
 
-    assert_eq!(task.get_persistent_mutation_revision(), initial_revision);
+    assert_eq!(
+        task.get_persistent_mutation_revision().unwrap(),
+        initial_revision
+    );
 }
 
 #[test]
 fn test_deadline伝搬はrootのrevisionを一度だけ進める() {
-    let root = TaskHandle::new("root");
+    let root = TaskHandle::new("root").unwrap();
     let child = root.create_as_last_child(TaskAttr::new("child"));
     child.create_as_last_child(TaskAttr::new("grand_child"));
-    let before_revision = root.get_persistent_mutation_revision();
+    let before_revision = root.get_persistent_mutation_revision().unwrap();
     let deadline = Local.with_ymd_and_hms(2026, 8, 15, 12, 0, 0).unwrap();
 
-    root.set_deadline_time_opt(Some(deadline));
+    root.set_deadline_time_opt(Some(deadline)).unwrap();
 
-    assert_eq!(root.get_deadline_time_opt(), Some(deadline));
-    assert_eq!(child.get_deadline_time_opt(), Some(deadline));
+    assert_eq!(root.get_deadline_time_opt().unwrap(), Some(deadline));
+    assert_eq!(child.get_deadline_time_opt().unwrap(), Some(deadline));
     assert_eq!(
-        root.get_persistent_mutation_revision(),
+        root.get_persistent_mutation_revision().unwrap(),
         before_revision.wrapping_add(1)
     );
 }
 
 #[test]
 fn test_persistent_mutation_revisionはtree構造変更で進む() {
-    let root = TaskHandle::new("root");
-    let initial_revision = root.get_persistent_mutation_revision();
+    let root = TaskHandle::new("root").unwrap();
+    let initial_revision = root.get_persistent_mutation_revision().unwrap();
     let child = root.create_as_last_child(TaskAttr::new("child"));
-    let after_child_revision = root.get_persistent_mutation_revision();
+    let after_child_revision = root.get_persistent_mutation_revision().unwrap();
 
     root.create_sequential_children("step", 60, 1, 2, "")
         .unwrap();
-    let after_sequential_revision = root.get_persistent_mutation_revision();
+    let after_sequential_revision = root.get_persistent_mutation_revision().unwrap();
     let mut child = child;
     child.create_as_parent(TaskAttr::new("parent")).unwrap();
 
     assert!(after_child_revision > initial_revision);
     assert!(after_sequential_revision > after_child_revision);
-    assert!(root.get_persistent_mutation_revision() > after_sequential_revision);
+    assert!(root.get_persistent_mutation_revision().unwrap() > after_sequential_revision);
 }
 
 #[test]
 fn test_persistent_mutation_revisionはclockの永続化変更だけで進む() {
     let now = Local.with_ymd_and_hms(2026, 8, 13, 12, 0, 0).unwrap();
-    let unchanged = TaskHandle::new("unchanged");
-    let unchanged_revision = unchanged.get_persistent_mutation_revision();
+    let unchanged = TaskHandle::new("unchanged").unwrap();
+    let unchanged_revision = unchanged.get_persistent_mutation_revision().unwrap();
 
-    unchanged.sync_clock(now);
+    unchanged.sync_clock(now).unwrap();
 
     assert_eq!(
-        unchanged.get_persistent_mutation_revision(),
+        unchanged.get_persistent_mutation_revision().unwrap(),
         unchanged_revision
     );
 
-    let adjusted = TaskHandle::new("adjusted");
-    adjusted.set_orig_status(Status::Pending);
-    adjusted.set_pending_until(now + Duration::days(10));
-    adjusted.set_deadline_time_opt(Some(now + Duration::hours(2)));
-    let before_sync_revision = adjusted.get_persistent_mutation_revision();
-    let before_sync_pending_until = adjusted.get_pending_until();
+    let adjusted = TaskHandle::new("adjusted").unwrap();
+    adjusted.set_orig_status(Status::Pending).unwrap();
+    adjusted
+        .set_pending_until(now + Duration::days(10))
+        .unwrap();
+    adjusted
+        .set_deadline_time_opt(Some(now + Duration::hours(2)))
+        .unwrap();
+    let before_sync_revision = adjusted.get_persistent_mutation_revision().unwrap();
+    let before_sync_pending_until = adjusted.get_pending_until().unwrap();
 
-    adjusted.sync_clock(now);
+    adjusted.sync_clock(now).unwrap();
 
-    assert!(adjusted.get_pending_until() < before_sync_pending_until);
-    assert!(adjusted.get_persistent_mutation_revision() > before_sync_revision);
+    assert!(adjusted.get_pending_until().unwrap() < before_sync_pending_until);
+    assert!(adjusted.get_persistent_mutation_revision().unwrap() > before_sync_revision);
 }
 
 impl TaskHandle {
     // dendron::Node::try_detach_insert_subtree()は木そのものを消滅させることができない仕様のようなので、
     // ダミーのルートノードを用意することで、使いたいノードが全て子ノードになるようにする
-    pub fn new(name: &str) -> Self {
+    pub fn new(name: &str) -> Result<Self, TaskTreeError> {
         let dummy_attr = TaskAttr::new(format!("dummy-for-{}", name).as_str());
         let dummy_root = Node::new_tree(dummy_attr);
 
         let grant = dummy_root
             .tree()
             .grant_hierarchy_edit()
-            .expect("tree grant");
+            .map_err(|_| TaskTreeError::HierarchyGrant)?;
         let task_attr = TaskAttr::new(name);
         dummy_root.create_as_last_child(&grant, task_attr);
 
-        let node = dummy_root.first_child().expect("has a child");
+        let node = dummy_root
+            .first_child()
+            .ok_or(TaskTreeError::MissingDummyRootChild)?;
 
-        Self { node }
+        Ok(Self { node })
     }
 
-    pub fn get_attr(&self) -> TaskAttr {
-        self.node.borrow_data().clone()
-    }
-
-    pub fn try_get_attr(&self) -> Result<TaskAttr, TaskTreeError> {
+    pub fn get_attr(&self) -> Result<TaskAttr, TaskTreeError> {
         self.node
             .try_borrow_data()
             .map(|attr| attr.clone())
             .map_err(|_| TaskTreeError::Borrow)
     }
 
-    pub fn snapshot(&self) -> TaskSnapshot {
-        TaskSnapshot {
-            attr: self.get_attr(),
+    pub fn parent(&self) -> Result<Option<Self>, TaskTreeError> {
+        if self.node.parent() == Some(self.node.root()) {
+            return Ok(None);
+        }
+
+        Ok(self.node.parent().map(|node| Self { node }))
+    }
+
+    pub fn root(&self) -> Result<Self, TaskTreeError> {
+        self.get_attr()?;
+        let dummy_root = self.node.root();
+        let mut children = dummy_root.children();
+        let task_root = children
+            .next()
+            .ok_or(TaskTreeError::MissingDummyRootChild)?;
+        if children.next().is_some() {
+            return Err(TaskTreeError::MissingDummyRootChild);
+        }
+
+        let mut ancestor = Some(self.node.clone());
+        while let Some(node) = ancestor {
+            if node.ptr_eq(&task_root) {
+                return Ok(Self { node: task_root });
+            }
+            ancestor = node.parent();
+        }
+
+        Err(TaskTreeError::MissingDummyRootChild)
+    }
+
+    pub fn get_children(&self) -> Result<Vec<Self>, TaskTreeError> {
+        self.get_attr()?;
+        Ok(self.node.children().map(|node| Self { node }).collect())
+    }
+
+    #[cfg(test)]
+    pub(crate) fn with_exclusive_data_borrow_for_test<T>(&self, action: impl FnOnce() -> T) -> T {
+        let _exclusive_borrow = self.node.borrow_data_mut();
+        action()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn with_shared_data_borrow_for_test<T>(&self, action: impl FnOnce() -> T) -> T {
+        let _shared_borrow = self.node.borrow_data();
+        action()
+    }
+
+    pub fn snapshot(&self) -> Result<TaskSnapshot, TaskTreeError> {
+        Ok(TaskSnapshot {
+            attr: self.get_attr()?,
             children: self
                 .node
                 .children()
                 .map(|node| Self { node }.snapshot())
-                .collect(),
-        }
-    }
-
-    pub fn try_snapshot(&self) -> Result<TaskSnapshot, TaskTreeError> {
-        Ok(TaskSnapshot {
-            attr: self.try_get_attr()?,
-            children: self
-                .node
-                .children()
-                .map(|node| Self { node }.try_snapshot())
                 .collect::<Result<Vec<_>, _>>()?,
         })
     }
 
-    pub fn try_create_child(&self, task_attr: TaskAttr) -> Result<Self, TaskTreeError> {
+    pub fn create_child(&self, task_attr: TaskAttr) -> Result<Self, TaskTreeError> {
+        let root = self.root()?;
+        root.ensure_persistent_mutation_writable()?;
         let grant = self
             .node
             .tree()
             .grant_hierarchy_edit()
             .map_err(|_| TaskTreeError::HierarchyGrant)?;
         let child_node = self.node.create_as_last_child(&grant, task_attr);
-        self.mark_persistent_mutation();
+        root.mark_persistent_mutation()?;
         Ok(Self { node: child_node })
     }
 
-    pub fn try_reparent_to(&mut self, parent_task: &Self) -> Result<(), TaskTreeError> {
+    pub fn reparent_to(&mut self, parent_task: &Self) -> Result<(), TaskTreeError> {
         if self.node.ptr_eq(&parent_task.node)
             || parent_task
                 .node
@@ -1367,8 +1439,12 @@ impl TaskHandle {
             return Err(TaskTreeError::Cycle);
         }
 
-        let source_root = self.root();
-        let destination_root = parent_task.root();
+        let source_root = self.root()?;
+        let destination_root = parent_task.root()?;
+        source_root.ensure_persistent_mutation_writable()?;
+        if !source_root.node.ptr_eq(&destination_root.node) {
+            destination_root.ensure_persistent_mutation_writable()?;
+        }
         let self_grant = self
             .node
             .tree()
@@ -1384,16 +1460,18 @@ impl TaskHandle {
             .try_detach_insert_subtree(&self_grant, InsertAs::LastChildOf(&parent_task_hot))
             .map_err(|_| TaskTreeError::Insert)?;
 
-        source_root.mark_persistent_mutation();
+        source_root.mark_persistent_mutation()?;
         if !source_root.node.ptr_eq(&destination_root.node) {
-            destination_root.mark_persistent_mutation();
+            destination_root.mark_persistent_mutation()?;
         }
         Ok(())
     }
 
     /// Inserts a newly-created parent between this task and its current parent.
-    pub fn try_create_parent(&mut self, task_attr: TaskAttr) -> Result<(), TaskTreeError> {
-        let original_parent = self.parent().ok_or(TaskTreeError::RootOperation)?;
+    pub fn create_parent(&mut self, task_attr: TaskAttr) -> Result<(), TaskTreeError> {
+        let original_parent = self.parent()?.ok_or(TaskTreeError::RootOperation)?;
+        let root = self.root()?;
+        root.ensure_persistent_mutation_writable()?;
         let grant = self
             .node
             .tree()
@@ -1412,12 +1490,12 @@ impl TaskHandle {
         self.node
             .try_detach_insert_subtree(&grant, InsertAs::LastChildOf(&parent_hot))
             .map_err(|_| TaskTreeError::Insert)?;
-        self.mark_persistent_mutation();
+        root.mark_persistent_mutation()?;
         Ok(())
     }
 
     /// Creates a chain of child tasks and returns the deepest child.
-    pub fn try_create_sequential_children(
+    pub fn create_sequential_children(
         &self,
         task_name: &str,
         estimated_work_seconds: i64,
@@ -1428,6 +1506,8 @@ impl TaskHandle {
         if begin_index > end_index {
             return Err(TaskTreeError::InvalidSequence);
         }
+        let root = self.root()?;
+        root.ensure_persistent_mutation_writable()?;
         let grant = self
             .node
             .tree()
@@ -1441,375 +1521,513 @@ impl TaskHandle {
             current_node = current_node.create_as_last_child(&grant, task_attr);
         }
 
-        self.mark_persistent_mutation();
+        root.mark_persistent_mutation()?;
         Ok(Self { node: current_node })
     }
 
-    pub fn get_id(&self) -> Uuid {
-        *self.node.borrow_data().get_id()
-    }
-
-    pub fn set_id(&mut self, id: Uuid) {
-        if self.get_id() == id {
-            return;
-        }
-        self.node.borrow_data_mut().set_id(id);
-        self.mark_persistent_mutation();
-    }
-
-    pub(crate) fn get_persistent_mutation_revision(&self) -> u64 {
-        self.root().node.borrow_data().persistent_mutation_revision
-    }
-
-    fn mark_persistent_mutation(&self) {
-        let root = self.root();
-        let revision = root.node.borrow_data().persistent_mutation_revision;
-        root.node.borrow_data_mut().persistent_mutation_revision = revision.wrapping_add(1);
-    }
-
-    pub fn get_name(&self) -> String {
-        self.node.borrow_data().get_name().to_string()
-    }
-
-    pub fn get_status(&self) -> Status {
-        *self.node.borrow_data().get_status()
-    }
-
-    pub fn get_orig_status(&self) -> Status {
-        *self.node.borrow_data().get_orig_status()
-    }
-
-    pub fn set_orig_status(&self, orig_status: Status) {
-        let before = (self.get_orig_status(), self.get_pending_until());
-        self.node.borrow_data_mut().set_orig_status(orig_status);
-        let after = (self.get_orig_status(), self.get_pending_until());
-        if before != after {
-            self.mark_persistent_mutation();
-        }
-    }
-
-    pub fn get_is_on_other_side(&self) -> bool {
-        *self.node.borrow_data().get_is_on_other_side()
-    }
-
-    pub fn set_is_on_other_side(&self, is_on_other_side: bool) {
-        if self.get_is_on_other_side() == is_on_other_side {
-            return;
-        }
+    pub fn get_id(&self) -> Result<Uuid, TaskTreeError> {
         self.node
-            .borrow_data_mut()
-            .set_is_on_other_side(is_on_other_side);
-        self.mark_persistent_mutation();
+            .try_borrow_data()
+            .map(|attr| *attr.get_id())
+            .map_err(|_| TaskTreeError::Borrow)
     }
 
-    pub fn get_atomic(&self) -> bool {
-        self.node.borrow_data().get_atomic()
+    pub fn set_id(&mut self, id: Uuid) -> Result<(), TaskTreeError> {
+        self.update(|attr| {
+            if attr.get_id() == &id {
+                false
+            } else {
+                attr.set_id(id);
+                true
+            }
+        })
     }
 
-    pub fn set_atomic(&self, atomic: bool) {
-        if self.get_atomic() == atomic {
-            return;
+    pub(crate) fn get_persistent_mutation_revision(&self) -> Result<u64, TaskTreeError> {
+        self.root()?
+            .node
+            .try_borrow_data()
+            .map(|attr| attr.persistent_mutation_revision)
+            .map_err(|_| TaskTreeError::Borrow)
+    }
+
+    fn mark_persistent_mutation(&self) -> Result<(), TaskTreeError> {
+        let root = self.root()?;
+        let mut attr = root
+            .node
+            .try_borrow_data_mut()
+            .map_err(|_| TaskTreeError::Borrow)?;
+        attr.persistent_mutation_revision = attr.persistent_mutation_revision.wrapping_add(1);
+        Ok(())
+    }
+
+    fn ensure_persistent_mutation_writable(&self) -> Result<(), TaskTreeError> {
+        self.node
+            .try_borrow_data_mut()
+            .map(|_| ())
+            .map_err(|_| TaskTreeError::Borrow)
+    }
+
+    fn update(&self, update: impl FnOnce(&mut TaskAttr) -> bool) -> Result<(), TaskTreeError> {
+        let root = self.root()?;
+        self.node
+            .try_borrow_data()
+            .map_err(|_| TaskTreeError::Borrow)?;
+        root.ensure_persistent_mutation_writable()?;
+        let changed = update(
+            &mut *self
+                .node
+                .try_borrow_data_mut()
+                .map_err(|_| TaskTreeError::Borrow)?,
+        );
+        if changed {
+            root.mark_persistent_mutation()?;
         }
-        self.node.borrow_data_mut().set_atomic(atomic);
-        self.mark_persistent_mutation();
+        Ok(())
     }
 
-    pub fn set_pending_until(&self, pending_until: DateTime<Local>) {
-        let before = self.get_pending_until();
-        self.node.borrow_data_mut().set_pending_until(pending_until);
-        if self.get_pending_until() != before {
-            self.mark_persistent_mutation();
-        }
+    pub fn get_name(&self) -> Result<String, TaskTreeError> {
+        self.node
+            .try_borrow_data()
+            .map(|attr| attr.get_name().to_string())
+            .map_err(|_| TaskTreeError::Borrow)
     }
 
-    pub fn get_pending_until(&self) -> DateTime<Local> {
-        *self.node.borrow_data().get_pending_until()
+    pub fn get_status(&self) -> Result<Status, TaskTreeError> {
+        self.node
+            .try_borrow_data()
+            .map(|attr| *attr.get_status())
+            .map_err(|_| TaskTreeError::Borrow)
     }
 
-    pub fn sync_clock(&self, now: DateTime<Local>) {
-        let before = self.get_pending_until();
-        self.node.borrow_data_mut().sync_clock(now);
-        if self.get_pending_until() != before {
-            self.mark_persistent_mutation();
-        }
+    pub fn get_orig_status(&self) -> Result<Status, TaskTreeError> {
+        self.node
+            .try_borrow_data()
+            .map(|attr| *attr.get_orig_status())
+            .map_err(|_| TaskTreeError::Borrow)
     }
 
-    pub fn get_last_synced_time(&self) -> DateTime<Local> {
-        *self.node.borrow_data().get_last_synced_time()
+    pub fn set_orig_status(&self, orig_status: Status) -> Result<(), TaskTreeError> {
+        self.update(|attr| {
+            let before = (*attr.get_orig_status(), *attr.get_pending_until());
+            attr.set_orig_status(orig_status);
+            before != (*attr.get_orig_status(), *attr.get_pending_until())
+        })
     }
 
-    pub fn set_priority(&self, priority: i64) {
-        let root = self.root();
-        if root.node.borrow_data().get_priority() == priority {
-            return;
-        }
-        root.node.borrow_data_mut().set_priority(priority);
-        root.mark_persistent_mutation();
+    pub fn get_is_on_other_side(&self) -> Result<bool, TaskTreeError> {
+        self.node
+            .try_borrow_data()
+            .map(|attr| *attr.get_is_on_other_side())
+            .map_err(|_| TaskTreeError::Borrow)
     }
 
-    pub fn get_priority(&self) -> i64 {
-        self.root().node.borrow_data().get_priority()
+    pub fn set_is_on_other_side(&self, is_on_other_side: bool) -> Result<(), TaskTreeError> {
+        self.update(|attr| {
+            if attr.get_is_on_other_side() == &is_on_other_side {
+                false
+            } else {
+                attr.set_is_on_other_side(is_on_other_side);
+                true
+            }
+        })
     }
 
-    pub fn set_create_time(&self, create_time: DateTime<Local>) {
-        if self.get_create_time() == create_time {
-            return;
-        }
-        self.node.borrow_data_mut().set_create_time(create_time);
-        self.mark_persistent_mutation();
+    pub fn get_atomic(&self) -> Result<bool, TaskTreeError> {
+        self.node
+            .try_borrow_data()
+            .map(|attr| attr.get_atomic())
+            .map_err(|_| TaskTreeError::Borrow)
     }
 
-    pub fn get_create_time(&self) -> DateTime<Local> {
-        *self.node.borrow_data().get_create_time()
+    pub fn set_atomic(&self, atomic: bool) -> Result<(), TaskTreeError> {
+        self.update(|attr| {
+            if attr.get_atomic() == atomic {
+                false
+            } else {
+                attr.set_atomic(atomic);
+                true
+            }
+        })
     }
 
-    pub fn set_start_time(&self, start_time: DateTime<Local>) {
-        let before = (self.get_start_time(), self.get_pending_until());
-        self.node.borrow_data_mut().set_start_time(start_time);
-        let after = (self.get_start_time(), self.get_pending_until());
-        if before != after {
-            self.mark_persistent_mutation();
-        }
+    pub fn set_pending_until(&self, pending_until: DateTime<Local>) -> Result<(), TaskTreeError> {
+        self.update(|attr| {
+            let before = *attr.get_pending_until();
+            attr.set_pending_until(pending_until);
+            before != *attr.get_pending_until()
+        })
     }
 
-    pub fn get_start_time(&self) -> DateTime<Local> {
-        *self.node.borrow_data().get_start_time()
+    pub fn get_pending_until(&self) -> Result<DateTime<Local>, TaskTreeError> {
+        self.node
+            .try_borrow_data()
+            .map(|attr| *attr.get_pending_until())
+            .map_err(|_| TaskTreeError::Borrow)
     }
 
-    pub fn set_end_time_opt(&self, end_time_opt: Option<DateTime<Local>>) {
-        if self.get_end_time_opt() == end_time_opt {
-            return;
-        }
-        self.node.borrow_data_mut().set_end_time_opt(end_time_opt);
-        self.mark_persistent_mutation();
+    pub fn sync_clock(&self, now: DateTime<Local>) -> Result<(), TaskTreeError> {
+        self.update(|attr| {
+            let before = *attr.get_pending_until();
+            attr.sync_clock(now);
+            before != *attr.get_pending_until()
+        })
     }
 
-    pub fn get_end_time_opt(&self) -> Option<DateTime<Local>> {
-        *self.node.borrow_data().get_end_time_opt()
+    pub fn get_last_synced_time(&self) -> Result<DateTime<Local>, TaskTreeError> {
+        self.node
+            .try_borrow_data()
+            .map(|attr| *attr.get_last_synced_time())
+            .map_err(|_| TaskTreeError::Borrow)
+    }
+
+    pub fn set_priority(&self, priority: i64) -> Result<(), TaskTreeError> {
+        let root = self.root()?;
+        root.update(|attr| {
+            if attr.get_priority() == priority {
+                false
+            } else {
+                attr.set_priority(priority);
+                true
+            }
+        })
+    }
+
+    pub fn get_priority(&self) -> Result<i64, TaskTreeError> {
+        self.root()?
+            .node
+            .try_borrow_data()
+            .map(|attr| attr.get_priority())
+            .map_err(|_| TaskTreeError::Borrow)
+    }
+
+    pub fn set_create_time(&self, create_time: DateTime<Local>) -> Result<(), TaskTreeError> {
+        self.update(|attr| {
+            if attr.get_create_time() == &create_time {
+                false
+            } else {
+                attr.set_create_time(create_time);
+                true
+            }
+        })
+    }
+
+    pub fn get_create_time(&self) -> Result<DateTime<Local>, TaskTreeError> {
+        self.node
+            .try_borrow_data()
+            .map(|attr| *attr.get_create_time())
+            .map_err(|_| TaskTreeError::Borrow)
+    }
+
+    pub fn set_start_time(&self, start_time: DateTime<Local>) -> Result<(), TaskTreeError> {
+        self.update(|attr| {
+            let before = (*attr.get_start_time(), *attr.get_pending_until());
+            attr.set_start_time(start_time);
+            before != (*attr.get_start_time(), *attr.get_pending_until())
+        })
+    }
+
+    pub fn get_start_time(&self) -> Result<DateTime<Local>, TaskTreeError> {
+        self.node
+            .try_borrow_data()
+            .map(|attr| *attr.get_start_time())
+            .map_err(|_| TaskTreeError::Borrow)
+    }
+
+    pub fn set_end_time_opt(
+        &self,
+        end_time_opt: Option<DateTime<Local>>,
+    ) -> Result<(), TaskTreeError> {
+        self.update(|attr| {
+            if attr.get_end_time_opt() == &end_time_opt {
+                false
+            } else {
+                attr.set_end_time_opt(end_time_opt);
+                true
+            }
+        })
+    }
+
+    pub fn get_end_time_opt(&self) -> Result<Option<DateTime<Local>>, TaskTreeError> {
+        self.node
+            .try_borrow_data()
+            .map(|attr| *attr.get_end_time_opt())
+            .map_err(|_| TaskTreeError::Borrow)
     }
 
     // 親タスクと子タスクの〆切のうち、早いほうが子タスクの〆切となる
     // 〆切を設定する時には、子タスクに伝搬させていく
     // Noneの扱いが難しい。Noneを子に伝搬させても子の値に勝てないので、意味ないのでは?
     // 「親が〆切を持っている時は、子も必ず〆切を持っており、それは親より早いか等しい」という制約を維持させたい
-    // Todo: 単体テスト
-    pub fn set_deadline_time_opt(&self, deadline_time_opt: Option<DateTime<Local>>) {
-        if self.propagate_deadline_time_opt(deadline_time_opt) {
-            self.mark_persistent_mutation();
+    pub fn set_deadline_time_opt(
+        &self,
+        deadline_time_opt: Option<DateTime<Local>>,
+    ) -> Result<(), TaskTreeError> {
+        let root = self.root()?;
+        let mut updates = Vec::new();
+        self.collect_deadline_updates(deadline_time_opt, None, &mut updates)?;
+        root.node
+            .try_borrow_data_mut()
+            .map_err(|_| TaskTreeError::Borrow)?;
+        for (node, _) in &updates {
+            node.try_borrow_data_mut()
+                .map_err(|_| TaskTreeError::Borrow)?;
         }
+        for (node, deadline) in &updates {
+            node.try_borrow_data_mut()
+                .map_err(|_| TaskTreeError::Borrow)?
+                .set_deadline_time_opt(Some(*deadline));
+        }
+        if !updates.is_empty() {
+            root.mark_persistent_mutation()?;
+        }
+        Ok(())
     }
 
-    fn propagate_deadline_time_opt(&self, deadline_time_opt: Option<DateTime<Local>>) -> bool {
-        // Statusが既にdoneの時は何もしない。再帰もしないので止まる
-        if self.get_status() == Status::Done {
-            return false;
+    fn collect_deadline_updates(
+        &self,
+        inherited: Option<DateTime<Local>>,
+        current_deadline_override: Option<Option<DateTime<Local>>>,
+        updates: &mut Vec<(Node<TaskAttr>, DateTime<Local>)>,
+    ) -> Result<(), TaskTreeError> {
+        let attr = self
+            .node
+            .try_borrow_data()
+            .map_err(|_| TaskTreeError::Borrow)?;
+        if *attr.get_status() == Status::Done {
+            return Ok(());
         }
+        let current = current_deadline_override.unwrap_or(*attr.get_deadline_time_opt());
+        drop(attr);
+        let Some(inherited) = inherited else {
+            return Ok(());
+        };
+        let effective = current
+            .map(|current| current.min(inherited))
+            .unwrap_or(inherited);
+        if current != Some(effective) {
+            updates.push((self.node.clone(), effective));
+        }
+        for child in self.node.children() {
+            Self { node: child }.collect_deadline_updates(Some(effective), None, updates)?;
+        }
+        Ok(())
+    }
 
-        // 引数で渡された(親タスクから伝搬してきた)値か、元々の値のうち早いほうを採用する
-        let original_deadline_time_opt = self.get_deadline_time_opt();
-
-        match deadline_time_opt {
-            None => {
-                // 何も起こらない。元々Noneなら変化なし、元々がNone以外なら早いほう採用でやはり変化なし。
+    pub fn unset_deadline_time_opt(&self) -> Result<(), TaskTreeError> {
+        self.update(|attr| {
+            if attr.get_deadline_time_opt().is_none() {
                 false
+            } else {
+                attr.set_deadline_time_opt(None);
+                true
             }
-            Some(deadline_time) => {
-                let earlier_deadline_time = original_deadline_time_opt
-                    .map(|original_deadline_time| original_deadline_time.min(deadline_time))
-                    .unwrap_or(deadline_time);
-                let mut changed = Some(earlier_deadline_time) != original_deadline_time_opt;
+        })
+    }
 
-                if changed {
-                    self.node
-                        .borrow_data_mut()
-                        .set_deadline_time_opt(Some(earlier_deadline_time));
-                }
+    pub fn get_deadline_time_opt(&self) -> Result<Option<DateTime<Local>>, TaskTreeError> {
+        self.node
+            .try_borrow_data()
+            .map(|attr| *attr.get_deadline_time_opt())
+            .map_err(|_| TaskTreeError::Borrow)
+    }
 
-                for child_node in self.node.children() {
-                    let child_task = Self { node: child_node };
-                    changed |= child_task.propagate_deadline_time_opt(Some(earlier_deadline_time));
-                }
-
-                changed
+    pub fn set_estimated_work_seconds(
+        &self,
+        estimated_work_seconds: i64,
+    ) -> Result<(), TaskTreeError> {
+        self.update(|attr| {
+            if attr.get_estimated_work_seconds() == estimated_work_seconds {
+                false
+            } else {
+                attr.set_estimated_work_seconds(estimated_work_seconds);
+                true
             }
-        }
+        })
     }
 
-    pub fn unset_deadline_time_opt(&self) {
-        if self.get_deadline_time_opt().is_none() {
-            return;
-        }
-        self.node.borrow_data_mut().set_deadline_time_opt(None);
-        self.mark_persistent_mutation();
-    }
-
-    pub fn get_deadline_time_opt(&self) -> Option<DateTime<Local>> {
-        *self.node.borrow_data().get_deadline_time_opt()
-    }
-
-    pub fn set_estimated_work_seconds(&self, estimated_work_seconds: i64) {
-        if self.get_estimated_work_seconds() == estimated_work_seconds {
-            return;
-        }
+    pub fn get_estimated_work_seconds(&self) -> Result<i64, TaskTreeError> {
         self.node
-            .borrow_data_mut()
-            .set_estimated_work_seconds(estimated_work_seconds);
-        self.mark_persistent_mutation();
+            .try_borrow_data()
+            .map(|attr| attr.get_estimated_work_seconds())
+            .map_err(|_| TaskTreeError::Borrow)
     }
 
-    pub fn get_estimated_work_seconds(&self) -> i64 {
-        self.node.borrow_data().get_estimated_work_seconds()
+    pub fn set_actual_work_seconds(&self, actual_work_seconds: i64) -> Result<(), TaskTreeError> {
+        self.update(|attr| {
+            if attr.get_actual_work_seconds() == actual_work_seconds {
+                false
+            } else {
+                attr.set_actual_work_seconds(actual_work_seconds);
+                true
+            }
+        })
     }
 
-    pub fn set_actual_work_seconds(&self, actual_work_seconds: i64) {
-        if self.get_actual_work_seconds() == actual_work_seconds {
-            return;
-        }
+    pub fn get_repetition_interval_days_opt(&self) -> Result<Option<i64>, TaskTreeError> {
         self.node
-            .borrow_data_mut()
-            .set_actual_work_seconds(actual_work_seconds);
-        self.mark_persistent_mutation();
+            .try_borrow_data()
+            .map(|attr| attr.get_repetition_interval_days_opt())
+            .map_err(|_| TaskTreeError::Borrow)
     }
 
-    pub fn get_repetition_interval_days_opt(&self) -> Option<i64> {
-        self.node.borrow_data().get_repetition_interval_days_opt()
-    }
-
-    pub fn get_inherited_repetition_interval_days_opt(&self) -> Option<i64> {
-        let mut current_parent_opt = self.parent();
+    pub fn get_inherited_repetition_interval_days_opt(&self) -> Result<Option<i64>, TaskTreeError> {
+        let mut current_parent_opt = self.parent()?;
 
         while let Some(parent) = current_parent_opt {
-            if let Some(repetition_interval_days) = parent.get_repetition_interval_days_opt() {
-                return Some(repetition_interval_days);
+            if let Some(repetition_interval_days) = parent.get_repetition_interval_days_opt()? {
+                return Ok(Some(repetition_interval_days));
             }
 
-            current_parent_opt = parent.parent();
+            current_parent_opt = parent.parent()?;
         }
 
-        None
+        Ok(None)
     }
 
-    pub fn set_repetition_interval_days_opt(&self, repetition_interval_days_opt: Option<i64>) {
-        if self.get_repetition_interval_days_opt() == repetition_interval_days_opt {
-            return;
-        }
+    pub fn set_repetition_interval_days_opt(
+        &self,
+        repetition_interval_days_opt: Option<i64>,
+    ) -> Result<(), TaskTreeError> {
+        self.update(|attr| {
+            if attr.get_repetition_interval_days_opt() == repetition_interval_days_opt {
+                false
+            } else {
+                attr.set_repetition_interval_days_opt(repetition_interval_days_opt);
+                true
+            }
+        })
+    }
+
+    pub fn get_repetition_anchor(&self) -> Result<RepetitionAnchor, TaskTreeError> {
         self.node
-            .borrow_data_mut()
-            .set_repetition_interval_days_opt(repetition_interval_days_opt);
-        self.mark_persistent_mutation();
+            .try_borrow_data()
+            .map(|attr| attr.get_repetition_anchor())
+            .map_err(|_| TaskTreeError::Borrow)
     }
 
-    pub fn get_repetition_anchor(&self) -> RepetitionAnchor {
-        self.node.borrow_data().get_repetition_anchor()
+    pub fn set_repetition_anchor(
+        &self,
+        repetition_anchor: RepetitionAnchor,
+    ) -> Result<(), TaskTreeError> {
+        self.update(|attr| {
+            if attr.get_repetition_anchor() == repetition_anchor {
+                false
+            } else {
+                attr.set_repetition_anchor(repetition_anchor);
+                true
+            }
+        })
     }
 
-    pub fn set_repetition_anchor(&self, repetition_anchor: RepetitionAnchor) {
-        if self.get_repetition_anchor() == repetition_anchor {
-            return;
-        }
+    pub fn get_days_in_advance(&self) -> Result<i64, TaskTreeError> {
         self.node
-            .borrow_data_mut()
-            .set_repetition_anchor(repetition_anchor);
-        self.mark_persistent_mutation();
+            .try_borrow_data()
+            .map(|attr| attr.get_days_in_advance())
+            .map_err(|_| TaskTreeError::Borrow)
     }
 
-    pub fn get_days_in_advance(&self) -> i64 {
-        self.node.borrow_data().get_days_in_advance()
+    pub fn set_days_in_advance(&self, days_in_advance: i64) -> Result<(), TaskTreeError> {
+        self.update(|attr| {
+            if attr.get_days_in_advance() == days_in_advance {
+                false
+            } else {
+                attr.set_days_in_advance(days_in_advance);
+                true
+            }
+        })
     }
 
-    pub fn set_days_in_advance(&self, days_in_advance: i64) {
-        if self.get_days_in_advance() == days_in_advance {
-            return;
-        }
+    pub fn get_project_category_opt(&self) -> Result<Option<ProjectCategory>, TaskTreeError> {
+        self.root()?
+            .node
+            .try_borrow_data()
+            .map(|attr| attr.get_project_category_opt())
+            .map_err(|_| TaskTreeError::Borrow)
+    }
+
+    pub fn set_project_category_opt(
+        &self,
+        project_category_opt: Option<ProjectCategory>,
+    ) -> Result<(), TaskTreeError> {
+        self.root()?.update(|attr| {
+            if attr.get_project_category_opt() == project_category_opt {
+                false
+            } else {
+                attr.set_project_category_opt(project_category_opt);
+                true
+            }
+        })
+    }
+
+    pub fn get_actual_work_seconds(&self) -> Result<i64, TaskTreeError> {
         self.node
-            .borrow_data_mut()
-            .set_days_in_advance(days_in_advance);
-        self.mark_persistent_mutation();
+            .try_borrow_data()
+            .map(|attr| attr.get_actual_work_seconds())
+            .map_err(|_| TaskTreeError::Borrow)
     }
 
-    pub fn get_project_category_opt(&self) -> Option<ProjectCategory> {
-        self.root().node.borrow_data().get_project_category_opt()
-    }
-
-    pub fn set_project_category_opt(&self, project_category_opt: Option<ProjectCategory>) {
-        let root = self.root();
-        if root.node.borrow_data().get_project_category_opt() == project_category_opt {
-            return;
-        }
-        root.node
-            .borrow_data_mut()
-            .set_project_category_opt(project_category_opt);
-        root.mark_persistent_mutation();
-    }
-
-    pub fn get_actual_work_seconds(&self) -> i64 {
-        self.node.borrow_data().get_actual_work_seconds()
-    }
-
-    // TODO FIXME テスト
-    pub fn get_children(&self) -> Vec<TaskHandle> {
-        self.node
-            .children()
-            .map(|node| Self { node })
-            .collect::<Vec<_>>()
-    }
-
-    pub fn make_appointment(&self, appointment_start_time: DateTime<Local>) {
+    pub fn make_appointment(
+        &self,
+        appointment_start_time: DateTime<Local>,
+    ) -> Result<(), TaskTreeError> {
         // 〆切については、子タスク全体に掛かるようにする
         let deadline_time =
-            appointment_start_time + Duration::seconds(self.get_estimated_work_seconds());
-        self.unset_deadline_time_opt();
-        self.set_deadline_time_opt(Some(deadline_time));
+            appointment_start_time + Duration::seconds(self.get_estimated_work_seconds()?);
 
-        self.set_start_time(appointment_start_time);
-    }
-
-    pub fn num_children(&self) -> usize {
-        self.node.num_children()
-    }
-
-    pub fn has_undone_children(&self) -> bool {
-        self.get_children()
-            .iter()
-            .any(|child| child.get_status() != Status::Done)
-    }
-
-    // 外から見て、ダミーノードのことは考慮させないように、ダミーの子の場合はNoneを返す
-    pub fn parent(&self) -> Option<Self> {
-        if self.node.parent() == Some(self.node.root()) {
-            return None;
+        let root = self.root()?;
+        let mut deadline_updates = Vec::new();
+        self.collect_deadline_updates(Some(deadline_time), Some(None), &mut deadline_updates)?;
+        root.node
+            .try_borrow_data_mut()
+            .map_err(|_| TaskTreeError::Borrow)?;
+        self.node
+            .try_borrow_data_mut()
+            .map_err(|_| TaskTreeError::Borrow)?;
+        for (node, _) in &deadline_updates {
+            node.try_borrow_data_mut()
+                .map_err(|_| TaskTreeError::Borrow)?;
         }
 
-        self.node.parent().map(|node| TaskHandle { node })
+        self.unset_deadline_time_opt()?;
+        self.set_deadline_time_opt(Some(deadline_time))?;
+
+        self.set_start_time(appointment_start_time)
     }
 
-    // 外から見て、ダミーノードのことは考慮させないように、ダミーノードの子を返す
-    pub fn root(&self) -> Self {
-        TaskHandle {
-            node: self
-                .node
-                .root()
-                .first_child()
-                .expect("dummy_root has one child"),
+    pub fn num_children(&self) -> Result<usize, TaskTreeError> {
+        self.node
+            .try_borrow_data()
+            .map_err(|_| TaskTreeError::Borrow)?;
+        Ok(self.node.num_children())
+    }
+
+    pub fn has_undone_children(&self) -> Result<bool, TaskTreeError> {
+        for child in self.get_children()? {
+            if child.get_status()? != Status::Done {
+                return Ok(true);
+            }
         }
+        Ok(false)
     }
 
     // 外から見て、ダミーノードのことは考慮させないように、ダミーノードの子で評価
-    fn is_root(&self) -> bool {
-        let root = self.root();
-        self.node.ptr_eq(&root.node)
+    fn is_root(&self) -> Result<bool, TaskTreeError> {
+        let root = self.root()?;
+        Ok(self.node.ptr_eq(&root.node))
     }
 
-    // pub fn try_eq_subtree(&self, task: &TaskHandle) -> Result<bool, BorrowError> {
-    //     self.node.try_eq(&task.node)
-    // }
-
-    pub fn tree_debug_pretty_print(&self) -> String {
-        format!("{:?}", self.node.tree().debug_pretty_print())
+    pub fn tree_debug_pretty_print(&self) -> Result<String, TaskTreeError> {
+        self.get_attr()?;
+        Ok(format!("{:?}", self.node.tree().debug_pretty_print()))
     }
 
-    pub fn try_eq_tree(&self, task: &TaskHandle) -> Result<bool, BorrowError> {
-        self.node.tree().try_eq(&task.node.tree())
+    #[cfg(test)]
+    pub(crate) fn eq_tree(&self, task: &TaskHandle) -> Result<bool, TaskTreeError> {
+        self.node
+            .tree()
+            .try_eq(&task.node.tree())
+            .map_err(|_| TaskTreeError::Borrow)
     }
 
     #[cfg(test)]
@@ -1817,52 +2035,40 @@ impl TaskHandle {
         &mut self,
         parent_task: TaskHandle,
     ) -> Result<(), String> {
-        self.try_reparent_to(&parent_task)
+        self.reparent_to(&parent_task)
             .map_err(|error| error.to_string())
     }
 
     #[cfg(test)]
     pub(crate) fn create_as_last_child(&self, task_attr: TaskAttr) -> Self {
-        self.try_create_child(task_attr)
+        self.create_child(task_attr)
             .expect("test hierarchy child creation must succeed")
     }
 
     #[cfg(test)]
     pub(crate) fn create_as_parent(&mut self, task_attr: TaskAttr) -> Result<(), String> {
-        self.try_create_parent(task_attr)
+        self.create_parent(task_attr)
             .map_err(|error| error.to_string())
     }
 
-    #[cfg(test)]
-    pub(crate) fn create_sequential_children(
-        &self,
-        task_name: &str,
-        estimated_work_seconds: i64,
-        begin_index: u64,
-        end_index: u64,
-        task_name_suffix: &str,
-    ) -> Result<TaskHandle, String> {
-        self.try_create_sequential_children(
-            task_name,
-            estimated_work_seconds,
-            begin_index,
-            end_index,
-            task_name_suffix,
-        )
-        .map_err(|error| error.to_string())
+    pub fn get_by_id(&self, id: Uuid) -> Result<Option<TaskHandle>, TaskTreeError> {
+        let node_opt = Self::get_by_id_private(&self.node, id)?;
+
+        Ok(node_opt.map(|node| Self { node }))
     }
 
-    pub fn get_by_id(&self, id: Uuid) -> Option<TaskHandle> {
-        let node_opt = Self::get_by_id_private(&self.node, id);
-
-        node_opt.map(|node| Self { node })
-    }
-
-    // fn get_by_id_private(&self, id: Uuid) -> Option<&TaskHandle>> {
-    fn get_by_id_private(node: &Node<TaskAttr>, id: Uuid) -> Option<Node<TaskAttr>> {
+    fn get_by_id_private(
+        node: &Node<TaskAttr>,
+        id: Uuid,
+    ) -> Result<Option<Node<TaskAttr>>, TaskTreeError> {
         // ベースケース
-        if node.borrow_data().get_id() == &id {
-            return Some(node.clone());
+        if node
+            .try_borrow_data()
+            .map_err(|_| TaskTreeError::Borrow)?
+            .get_id()
+            == &id
+        {
+            return Ok(Some(node.clone()));
         }
 
         // 子あり
@@ -1874,38 +2080,43 @@ impl TaskHandle {
             //     return  child_task_found_opt;
             // }
 
-            let child_task_found_opt = Self::get_by_id_private(&child_node, id);
+            let child_task_found_opt = Self::get_by_id_private(&child_node, id)?;
             if child_task_found_opt.is_some() {
-                return child_task_found_opt;
+                return Ok(child_task_found_opt);
             }
         }
 
-        None
+        Ok(None)
     }
 
-    pub fn all_sibling_tasks_are_all_done(&self) -> bool {
+    pub fn all_sibling_tasks_are_all_done(&self) -> Result<bool, TaskTreeError> {
         let mut ans = true;
 
         for sibling_node in self.node.siblings() {
-            if sibling_node.borrow_data().get_status() != &Status::Done {
+            if sibling_node
+                .try_borrow_data()
+                .map_err(|_| TaskTreeError::Borrow)?
+                .get_status()
+                != &Status::Done
+            {
                 ans = false;
                 break;
             }
         }
 
-        ans
+        Ok(ans)
     }
 
     // 親のタスクを考慮せずに、そのタスク単体で見た時に最速で着手できる時刻
-    pub fn first_available_time(&self) -> DateTime<Local> {
-        let dt_cand = if self.get_orig_status() == Status::Pending {
-            vec![self.get_start_time(), self.get_pending_until()]
+    pub fn first_available_time(&self) -> Result<DateTime<Local>, TaskTreeError> {
+        let dt_cand = if self.get_orig_status()? == Status::Pending {
+            vec![self.get_start_time()?, self.get_pending_until()?]
         } else {
-            vec![self.get_start_time()]
+            vec![self.get_start_time()?]
         };
 
         // 1要素以上ありNoneになり得ないのでunwrap()してよい
-        *dt_cand.iter().max().unwrap()
+        Ok(*dt_cand.iter().max().unwrap())
     }
 
     // 親を辿って、Todoのタスクを全て返す
@@ -1913,7 +2124,7 @@ impl TaskHandle {
     // ただし、〆切を守れるように、pending_untilよりも〆切を優先する
     pub fn list_all_parent_tasks_with_first_available_time(
         &self,
-    ) -> Vec<(DateTime<Local>, TaskHandle)> {
+    ) -> Result<Vec<(DateTime<Local>, TaskHandle)>, TaskTreeError> {
         let mut ans: Vec<(DateTime<Local>, TaskHandle)> = vec![];
         let mut child_task_first_available_time: DateTime<Local> =
             DateTime::<Local>::MIN_UTC.into();
@@ -1926,21 +2137,21 @@ impl TaskHandle {
         // ここからPhase1: 子→親に辿って仮のfirst_available_timeを決定する
         let mut task_opt = Some(self.clone());
         while let Some(task) = task_opt {
-            let first_available_time = task.first_available_time();
+            let first_available_time = task.first_available_time()?;
             let task_first_available_time =
                 max(child_task_first_available_time, first_available_time);
 
             child_task_first_available_time = task_first_available_time
                 + Duration::seconds(max(
                     0,
-                    task.get_estimated_work_seconds() - task.get_actual_work_seconds(),
+                    task.get_estimated_work_seconds()? - task.get_actual_work_seconds()?,
                 ));
 
             let tpl = (task_first_available_time, task.clone());
             ans.push(tpl);
 
             // 再代入
-            task_opt = task.parent();
+            task_opt = task.parent()?;
         }
 
         // ここからPhase2: 〆切に対してオーバーしている時間を計算し、逆に親→子の順に時間を修正する
@@ -1953,7 +2164,7 @@ impl TaskHandle {
         for (rough_first_available_time, task) in ans.iter_mut().rev() {
             // 親から引き継いだ〆切か、自分の〆切のうち早いほう
             let mut required_start_time_for_deadline = parent_required_start_time_for_deadline;
-            if let Some(deadline_time) = task.get_deadline_time_opt() {
+            if let Some(deadline_time) = task.get_deadline_time_opt()? {
                 if deadline_time < required_start_time_for_deadline {
                     required_start_time_for_deadline = deadline_time;
                 }
@@ -1962,7 +2173,7 @@ impl TaskHandle {
             let lateness_duration = *rough_first_available_time
                 + Duration::seconds(max(
                     0,
-                    task.get_estimated_work_seconds() - task.get_actual_work_seconds(),
+                    task.get_estimated_work_seconds()? - task.get_actual_work_seconds()?,
                 ))
                 - required_start_time_for_deadline;
 
@@ -1974,32 +2185,32 @@ impl TaskHandle {
 
         let mut child_task_finish_time: DateTime<Local> = DateTime::<Local>::MIN_UTC.into();
         for (first_available_time, task) in ans.iter_mut() {
-            let earliest_time_for_task = min(*first_available_time, task.first_available_time());
+            let earliest_time_for_task = min(*first_available_time, task.first_available_time()?);
             *first_available_time = max(earliest_time_for_task, child_task_finish_time);
             child_task_finish_time = *first_available_time
                 + Duration::seconds(max(
                     0,
-                    task.get_estimated_work_seconds() - task.get_actual_work_seconds(),
+                    task.get_estimated_work_seconds()? - task.get_actual_work_seconds()?,
                 ));
         }
 
-        ans
+        Ok(ans)
     }
 }
 
 #[test]
 fn test_task_new_タスクを初期化した時に見ているノードはダミーrootノードではないこと() {
-    let task = TaskHandle::new("親タスク");
+    let task = TaskHandle::new("親タスク").unwrap();
     assert_eq!(task.node.borrow_data().get_name(), "親タスク");
     assert!(!task.node.is_root());
 }
 
 #[test]
 fn test_new_with_node_タスク化したnodeの親子関係が維持されること() {
-    let parent_task = TaskHandle::new("親タスク");
+    let parent_task = TaskHandle::new("親タスク").unwrap();
     let parent_task_node_ptr = parent_task.node.clone();
 
-    let mut child_task = TaskHandle::new("子タスク");
+    let mut child_task = TaskHandle::new("子タスク").unwrap();
     child_task.create_as_last_child(TaskAttr::new("孫タスク"));
 
     child_task
@@ -2011,7 +2222,12 @@ fn test_new_with_node_タスク化したnodeの親子関係が維持されるこ
         node: grand_children_task_node.clone(),
     };
     assert_eq!(
-        new_grand_children_task.root().node.borrow_data().get_name(),
+        new_grand_children_task
+            .root()
+            .unwrap()
+            .node
+            .borrow_data()
+            .get_name(),
         "親タスク"
     );
 
@@ -2020,28 +2236,28 @@ fn test_new_with_node_タスク化したnodeの親子関係が維持されるこ
 
 #[test]
 fn test_make_appointment_正常系1() {
-    let root_task = TaskHandle::new("MTGが完了した状態");
+    let root_task = TaskHandle::new("MTGが完了した状態").unwrap();
     let task = root_task.create_as_last_child(TaskAttr::new("MTG"));
 
-    task.set_estimated_work_seconds(3600);
+    task.set_estimated_work_seconds(3600).unwrap();
     let appointment_start_time = Local.with_ymd_and_hms(2023, 5, 19, 1, 23, 45).unwrap();
 
-    task.make_appointment(appointment_start_time);
+    task.make_appointment(appointment_start_time).unwrap();
 
     assert_eq!(
-        &task.get_start_time(),
+        &task.get_start_time().unwrap(),
         &Local.with_ymd_and_hms(2023, 5, 19, 1, 23, 45).unwrap()
     );
     assert_eq!(
-        &task.get_deadline_time_opt(),
+        &task.get_deadline_time_opt().unwrap(),
         &Some(Local.with_ymd_and_hms(2023, 5, 19, 2, 23, 45).unwrap())
     );
 }
 
 #[test]
 fn test_new_detach_insert_as_last_child_of_正常系1() {
-    let parent_task = TaskHandle::new("親タスク");
-    let mut child_task = TaskHandle::new("子タスク");
+    let parent_task = TaskHandle::new("親タスク").unwrap();
+    let mut child_task = TaskHandle::new("子タスク").unwrap();
     let parent_task_ptr = parent_task.node.clone();
     let child_task_ptr = child_task.node.clone();
 
@@ -2050,7 +2266,7 @@ fn test_new_detach_insert_as_last_child_of_正常系1() {
         .unwrap();
     assert_eq!(*child_task.node.borrow_data(), TaskAttr::new("子タスク"));
     assert_eq!(
-        *child_task.root().node.borrow_data(),
+        *child_task.root().unwrap().node.borrow_data(),
         TaskAttr::new("親タスク")
     );
 
@@ -2060,7 +2276,7 @@ fn test_new_detach_insert_as_last_child_of_正常系1() {
 
 #[test]
 fn test_create_as_last_child_正常系1() {
-    let actual_task = TaskHandle::new("親タスク");
+    let actual_task = TaskHandle::new("親タスク").unwrap();
     actual_task.create_as_last_child(TaskAttr::new("子タスク"));
 
     let expected_tree = tree! {
@@ -2076,7 +2292,7 @@ fn test_create_as_last_child_正常系1() {
 
 #[test]
 fn test_create_as_parent_正常系1() {
-    let actual_task = TaskHandle::new("親タスク");
+    let actual_task = TaskHandle::new("親タスク").unwrap();
     let mut child_task = actual_task.create_as_last_child(TaskAttr::new("子タスク"));
     child_task.create_as_parent(TaskAttr::new("中タスク")).ok();
 
@@ -2095,20 +2311,23 @@ fn test_create_as_parent_正常系1() {
 
 #[test]
 fn test_try_create_parentは子を親の直下に残さず挿入する() {
-    let root = TaskHandle::new("root");
-    let mut child = root.try_create_child(TaskAttr::new("child")).unwrap();
+    let root = TaskHandle::new("root").unwrap();
+    let mut child = root.create_child(TaskAttr::new("child")).unwrap();
 
-    child.try_create_parent(TaskAttr::new("parent")).unwrap();
+    child.create_parent(TaskAttr::new("parent")).unwrap();
 
-    let parent = child.parent().unwrap();
-    assert_eq!(parent.get_name(), "parent");
-    assert_eq!(parent.parent().unwrap().get_name(), "root");
+    let parent = child.parent().unwrap().unwrap();
+    assert_eq!(parent.get_name().unwrap(), "parent");
+    assert_eq!(
+        parent.parent().unwrap().unwrap().get_name().unwrap(),
+        "root"
+    );
 }
 
 #[test]
 fn test_try_create_parentはhierarchy_grant取得失敗時にtreeとrevisionを変更しない() {
-    let root = TaskHandle::new("root");
-    let mut child = root.try_create_child(TaskAttr::new("child")).unwrap();
+    let root = TaskHandle::new("root").unwrap();
+    let mut child = root.create_child(TaskAttr::new("child")).unwrap();
     let before_snapshot = root.snapshot();
     let before_revision = root.get_persistent_mutation_revision();
     let hierarchy_edit_prohibition = root
@@ -2117,7 +2336,7 @@ fn test_try_create_parentはhierarchy_grant取得失敗時にtreeとrevisionを�
         .prohibit_hierarchy_edit()
         .expect("test hierarchy edit prohibition");
 
-    let actual = child.try_create_parent(TaskAttr::new("parent"));
+    let actual = child.create_parent(TaskAttr::new("parent"));
 
     assert_eq!(actual, Err(TaskTreeError::HierarchyGrant));
     assert_eq!(root.snapshot(), before_snapshot);
@@ -2127,11 +2346,11 @@ fn test_try_create_parentはhierarchy_grant取得失敗時にtreeとrevisionを�
 
 #[test]
 fn test_try_create_sequential_childrenは不正な範囲でtreeとrevisionを変更しない() {
-    let root = TaskHandle::new("root");
+    let root = TaskHandle::new("root").unwrap();
     let before_snapshot = root.snapshot();
     let before_revision = root.get_persistent_mutation_revision();
 
-    let actual = root.try_create_sequential_children("step", 60, 2, 1, "");
+    let actual = root.create_sequential_children("step", 60, 2, 1, "");
 
     assert_eq!(actual, Err(TaskTreeError::InvalidSequence));
     assert_eq!(root.snapshot(), before_snapshot);
@@ -2140,70 +2359,90 @@ fn test_try_create_sequential_childrenは不正な範囲でtreeとrevisionを変
 
 #[test]
 fn test_get_inherited_repetition_interval_days_opt_直接の親の値を返す() {
-    let parent_task = TaskHandle::new("親タスク");
-    parent_task.set_repetition_interval_days_opt(Some(7));
+    let parent_task = TaskHandle::new("親タスク").unwrap();
+    parent_task
+        .set_repetition_interval_days_opt(Some(7))
+        .unwrap();
     let child_task = parent_task.create_as_last_child(TaskAttr::new("子タスク"));
 
     assert_eq!(
-        child_task.get_inherited_repetition_interval_days_opt(),
+        child_task
+            .get_inherited_repetition_interval_days_opt()
+            .unwrap(),
         Some(7)
     );
 }
 
 #[test]
 fn test_get_inherited_repetition_interval_days_opt_祖父の値を返す() {
-    let parent_task = TaskHandle::new("親タスク");
-    parent_task.set_repetition_interval_days_opt(Some(7));
+    let parent_task = TaskHandle::new("親タスク").unwrap();
+    parent_task
+        .set_repetition_interval_days_opt(Some(7))
+        .unwrap();
     let child_task = parent_task.create_as_last_child(TaskAttr::new("子タスク"));
     let grand_child_task = child_task.create_as_last_child(TaskAttr::new("孫タスク"));
 
     assert_eq!(
-        grand_child_task.get_inherited_repetition_interval_days_opt(),
+        grand_child_task
+            .get_inherited_repetition_interval_days_opt()
+            .unwrap(),
         Some(7)
     );
 }
 
 #[test]
 fn test_get_inherited_repetition_interval_days_opt_祖先に値がなければ_noneを返す() {
-    let parent_task = TaskHandle::new("親タスク");
+    let parent_task = TaskHandle::new("親タスク").unwrap();
     let child_task = parent_task.create_as_last_child(TaskAttr::new("子タスク"));
     let grand_child_task = child_task.create_as_last_child(TaskAttr::new("孫タスク"));
 
     assert_eq!(
-        grand_child_task.get_inherited_repetition_interval_days_opt(),
+        grand_child_task
+            .get_inherited_repetition_interval_days_opt()
+            .unwrap(),
         None
     );
 }
 
 #[test]
 fn test_get_inherited_repetition_interval_days_opt_自分自身の値は見ない() {
-    let parent_task = TaskHandle::new("親タスク");
+    let parent_task = TaskHandle::new("親タスク").unwrap();
     let child_task = parent_task.create_as_last_child(TaskAttr::new("子タスク"));
-    child_task.set_repetition_interval_days_opt(Some(7));
+    child_task
+        .set_repetition_interval_days_opt(Some(7))
+        .unwrap();
 
     assert_eq!(
-        child_task.get_inherited_repetition_interval_days_opt(),
+        child_task
+            .get_inherited_repetition_interval_days_opt()
+            .unwrap(),
         None
     );
 }
 
 #[test]
 fn test_get_inherited_repetition_interval_days_opt_最も近い祖先の値を返す() {
-    let parent_task = TaskHandle::new("親タスク");
-    parent_task.set_repetition_interval_days_opt(Some(30));
+    let parent_task = TaskHandle::new("親タスク").unwrap();
+    parent_task
+        .set_repetition_interval_days_opt(Some(30))
+        .unwrap();
     let child_task = parent_task.create_as_last_child(TaskAttr::new("子タスク"));
-    child_task.set_repetition_interval_days_opt(Some(7));
+    child_task
+        .set_repetition_interval_days_opt(Some(7))
+        .unwrap();
     let grand_child_task = child_task.create_as_last_child(TaskAttr::new("孫タスク"));
 
     assert_eq!(
-        grand_child_task.get_inherited_repetition_interval_days_opt(),
+        grand_child_task
+            .get_inherited_repetition_interval_days_opt()
+            .unwrap(),
         Some(7)
     );
 }
 
 #[test]
 fn test_create_sequential_children_正常系1() {
-    let task = TaskHandle::new("親タスク");
+    let task = TaskHandle::new("親タスク").unwrap();
     let grand_child_task_result = task.create_sequential_children("鎖タスク", 600, 1, 2, "話");
 
     let mut child_attr = TaskAttr::new("鎖タスク 2話");
@@ -2233,7 +2472,7 @@ fn test_create_sequential_children_正常系1() {
 #[test]
 #[allow(non_snake_case)]
 fn test_create_sequential_children_異常系1_begin_indexのほうが大きい場合はエラー() {
-    let task = TaskHandle::new("親タスク");
+    let task = TaskHandle::new("親タスク").unwrap();
     let grand_child_task_result = task.create_sequential_children("鎖タスク", 600, 10, 1, "話");
 
     assert!(grand_child_task_result.is_err());
@@ -2243,8 +2482,12 @@ fn test_create_sequential_children_異常系1_begin_indexのほうが大きい�
 fn get_tree_for_assert_debug(task1: &TaskHandle, task2: &TaskHandle) -> String {
     format!(
         "actual and expected are not equal:\n\n=== [actual] ===\n{}\n\n=== [expected] ===\n{}\n\n",
-        task1.tree_debug_pretty_print(),
-        task2.tree_debug_pretty_print(),
+        task1
+            .tree_debug_pretty_print()
+            .expect("data are not borrowed"),
+        task2
+            .tree_debug_pretty_print()
+            .expect("data are not borrowed"),
     )
 }
 
@@ -2253,7 +2496,7 @@ pub fn assert_task(task1: &TaskHandle, task2: &TaskHandle) {
     let str_for_debug_string: String = get_tree_for_assert_debug(task1, task2);
 
     assert!(
-        &task1.try_eq_tree(task2).expect("data are not borrowed"),
+        &task1.eq_tree(task2).expect("data are not borrowed"),
         "{}",
         str_for_debug_string.as_str()
     );
@@ -2263,7 +2506,7 @@ pub fn assert_task(task1: &TaskHandle, task2: &TaskHandle) {
 fn get_task_tree_for_assert_debug(task1: &TaskHandle, tree: &Tree<TaskAttr>) -> String {
     format!(
         "actual and expected are not equal:\n\n=== [actual] ===\n{}\n\n=== [expected] ===\n{:?}\n\n",
-        task1.tree_debug_pretty_print(),
+        task1.tree_debug_pretty_print().expect("data are not borrowed"),
         tree.debug_pretty_print(),
     )
 }
@@ -2284,22 +2527,22 @@ pub fn assert_task_and_tree(task1: &TaskHandle, tree: &Tree<TaskAttr>) {
 }
 
 // 詳細な構造を知っていたほうが構築しやすいので、gatewayではなくtaskの中で定義する
-pub fn task_to_yaml(task: &TaskHandle) -> Yaml {
+pub fn task_to_yaml(task: &TaskHandle) -> Result<Yaml, TaskTreeError> {
     let default_attr = TaskAttr::new("デフォルト用");
 
     let mut task_hash = LinkedHashMap::new();
 
     task_hash.insert(
         Yaml::String(String::from("name")),
-        Yaml::String(task.get_name()),
+        Yaml::String(task.get_name()?),
     );
 
     task_hash.insert(
         Yaml::String(String::from("id")),
-        Yaml::String(task.get_id().to_string()),
+        Yaml::String(task.get_id()?.to_string()),
     );
 
-    let orig_status = task.get_orig_status();
+    let orig_status = task.get_orig_status()?;
     if orig_status != *default_attr.get_orig_status() {
         task_hash.insert(
             Yaml::String(String::from("status")),
@@ -2307,7 +2550,7 @@ pub fn task_to_yaml(task: &TaskHandle) -> Yaml {
         );
     }
 
-    let is_on_other_side = task.get_is_on_other_side();
+    let is_on_other_side = task.get_is_on_other_side()?;
     if is_on_other_side != *default_attr.get_is_on_other_side() {
         task_hash.insert(
             Yaml::String(String::from("is_on_other_side")),
@@ -2315,12 +2558,12 @@ pub fn task_to_yaml(task: &TaskHandle) -> Yaml {
         );
     }
 
-    let atomic = task.get_atomic();
+    let atomic = task.get_atomic()?;
     if atomic != default_attr.get_atomic() {
         task_hash.insert(Yaml::String(String::from("atomic")), Yaml::Boolean(atomic));
     }
 
-    let pending_until = task.get_pending_until();
+    let pending_until = task.get_pending_until()?;
     if pending_until != *default_attr.get_pending_until() {
         let pending_until_string = pending_until.format("%Y/%m/%d %H:%M:%S").to_string();
         task_hash.insert(
@@ -2329,16 +2572,16 @@ pub fn task_to_yaml(task: &TaskHandle) -> Yaml {
         );
     }
 
-    let priority = task.get_priority();
-    if task.is_root() && priority != default_attr.get_priority() {
+    let priority = task.get_priority()?;
+    if task.is_root()? && priority != default_attr.get_priority() {
         task_hash.insert(
             Yaml::String(String::from("priority")),
             Yaml::Integer(priority),
         );
     }
 
-    if task.is_root() {
-        if let Some(project_category) = task.get_project_category_opt() {
+    if task.is_root()? {
+        if let Some(project_category) = task.get_project_category_opt()? {
             task_hash.insert(
                 Yaml::String(String::from("category")),
                 Yaml::String(project_category.to_string()),
@@ -2346,21 +2589,21 @@ pub fn task_to_yaml(task: &TaskHandle) -> Yaml {
         }
     }
 
-    let create_time = task.get_create_time();
+    let create_time = task.get_create_time()?;
     let create_time_string = create_time.format("%Y/%m/%d %H:%M:%S").to_string();
     task_hash.insert(
         Yaml::String(String::from("create_time")),
         Yaml::String(create_time_string),
     );
 
-    let start_time = task.get_start_time();
+    let start_time = task.get_start_time()?;
     let start_time_string = start_time.format("%Y/%m/%d %H:%M:%S").to_string();
     task_hash.insert(
         Yaml::String(String::from("start_time")),
         Yaml::String(start_time_string),
     );
 
-    let end_time_opt = task.get_end_time_opt();
+    let end_time_opt = task.get_end_time_opt()?;
     if let Some(end_time) = end_time_opt {
         let end_time_string = end_time.format("%Y/%m/%d %H:%M:%S").to_string();
         task_hash.insert(
@@ -2369,7 +2612,7 @@ pub fn task_to_yaml(task: &TaskHandle) -> Yaml {
         );
     }
 
-    let deadline_time_opt = task.get_deadline_time_opt();
+    let deadline_time_opt = task.get_deadline_time_opt()?;
     if let Some(deadline_time) = deadline_time_opt {
         let deadline_time_string = deadline_time.format("%Y/%m/%d %H:%M:%S").to_string();
         task_hash.insert(
@@ -2378,7 +2621,7 @@ pub fn task_to_yaml(task: &TaskHandle) -> Yaml {
         );
     }
 
-    let estimated_work_seconds = task.get_estimated_work_seconds();
+    let estimated_work_seconds = task.get_estimated_work_seconds()?;
     if estimated_work_seconds != default_attr.get_estimated_work_seconds() {
         task_hash.insert(
             Yaml::String(String::from("estimated_work_seconds")),
@@ -2386,7 +2629,7 @@ pub fn task_to_yaml(task: &TaskHandle) -> Yaml {
         );
     }
 
-    let actual_work_seconds = task.get_actual_work_seconds();
+    let actual_work_seconds = task.get_actual_work_seconds()?;
     if actual_work_seconds != default_attr.get_actual_work_seconds() {
         task_hash.insert(
             Yaml::String(String::from("actual_work_seconds")),
@@ -2394,7 +2637,7 @@ pub fn task_to_yaml(task: &TaskHandle) -> Yaml {
         );
     }
 
-    let repetition_interval_days_opt = task.get_repetition_interval_days_opt();
+    let repetition_interval_days_opt = task.get_repetition_interval_days_opt()?;
     if let Some(repetition_interval_days) = repetition_interval_days_opt {
         task_hash.insert(
             Yaml::String(String::from("repetition_interval_days")),
@@ -2402,7 +2645,7 @@ pub fn task_to_yaml(task: &TaskHandle) -> Yaml {
         );
     }
 
-    let repetition_anchor = task.get_repetition_anchor();
+    let repetition_anchor = task.get_repetition_anchor()?;
     if repetition_anchor != default_attr.get_repetition_anchor() {
         task_hash.insert(
             Yaml::String(String::from("repetition_anchor")),
@@ -2410,7 +2653,7 @@ pub fn task_to_yaml(task: &TaskHandle) -> Yaml {
         );
     }
 
-    let days_in_advance = task.get_days_in_advance();
+    let days_in_advance = task.get_days_in_advance()?;
     if days_in_advance != default_attr.get_days_in_advance() {
         task_hash.insert(
             Yaml::String(String::from("days_in_advance")),
@@ -2421,7 +2664,7 @@ pub fn task_to_yaml(task: &TaskHandle) -> Yaml {
     let mut children = vec![];
     for child_node in task.node.children() {
         let child_task = TaskHandle { node: child_node };
-        let child_yaml = task_to_yaml(&child_task);
+        let child_yaml = task_to_yaml(&child_task)?;
         children.push(child_yaml);
     }
 
@@ -2432,18 +2675,18 @@ pub fn task_to_yaml(task: &TaskHandle) -> Yaml {
         );
     }
 
-    Yaml::Hash(task_hash)
+    Ok(Yaml::Hash(task_hash))
 }
 
 #[test]
 fn test_task_to_yaml_正常系1_デフォルトの値と同じ場合は出力しない() {
-    let mut task = TaskHandle::new("タスク1");
+    let mut task = TaskHandle::new("タスク1").unwrap();
     let id: Uuid = uuid!("67e55044-10b1-426f-9247-bb680e5fe0c8");
-    task.set_id(id);
+    task.set_id(id).unwrap();
     let now = Local.with_ymd_and_hms(2023, 5, 19, 1, 23, 45).unwrap();
-    task.set_create_time(now);
-    task.set_start_time(now);
-    let actual = task_to_yaml(&task);
+    task.set_create_time(now).unwrap();
+    task.set_start_time(now).unwrap();
+    let actual = task_to_yaml(&task).unwrap();
 
     let s = "
 name: 'タスク1'
@@ -2461,13 +2704,14 @@ start_time: '2023/05/19 01:23:45'
 #[test]
 fn test_task_to_yaml_正常系2_再帰() {
     let now = Local.with_ymd_and_hms(2023, 5, 19, 1, 23, 45).unwrap();
-    let mut task = TaskHandle::new("親タスク1");
-    task.set_orig_status(Status::Pending);
-    task.set_pending_until(Local.with_ymd_and_hms(2023, 4, 1, 12, 0, 0).unwrap());
-    task.set_create_time(now);
-    task.set_start_time(now);
+    let mut task = TaskHandle::new("親タスク1").unwrap();
+    task.set_orig_status(Status::Pending).unwrap();
+    task.set_pending_until(Local.with_ymd_and_hms(2023, 4, 1, 12, 0, 0).unwrap())
+        .unwrap();
+    task.set_create_time(now).unwrap();
+    task.set_start_time(now).unwrap();
     let id: Uuid = uuid!("67e55044-10b1-426f-9247-bb680e5fe0c8");
-    task.set_id(id);
+    task.set_id(id).unwrap();
 
     let mut task_attr_child_1 = TaskAttr::new("子タスク1");
     task_attr_child_1.set_orig_status(Status::Pending);
@@ -2488,7 +2732,7 @@ fn test_task_to_yaml_正常系2_再帰() {
     task.create_as_last_child(task_attr_child_1);
     task.create_as_last_child(task_attr_child_2);
 
-    let actual = task_to_yaml(&task);
+    let actual = task_to_yaml(&task).unwrap();
 
     let s = "
 name: '親タスク1'
@@ -2519,13 +2763,13 @@ children:
 
 #[test]
 fn test_task_to_yaml_ユニークキー() {
-    let mut task = TaskHandle::new("タスク1");
+    let mut task = TaskHandle::new("タスク1").unwrap();
     let id: Uuid = uuid!("67e55044-10b1-426f-9247-bb680e5fe0c8");
-    task.set_id(id);
+    task.set_id(id).unwrap();
     let now = Local.with_ymd_and_hms(2023, 5, 19, 1, 23, 45).unwrap();
-    task.set_create_time(now);
-    task.set_start_time(now);
-    let actual = task_to_yaml(&task);
+    task.set_create_time(now).unwrap();
+    task.set_start_time(now).unwrap();
+    let actual = task_to_yaml(&task).unwrap();
 
     let s = "
 name: 'タスク1'
@@ -2541,14 +2785,15 @@ start_time: '2023/05/19 01:23:45'
 
 #[test]
 fn test_task_to_yaml_project_category() {
-    let mut task = TaskHandle::new("タスク1");
+    let mut task = TaskHandle::new("タスク1").unwrap();
     let id: Uuid = uuid!("67e55044-10b1-426f-9247-bb680e5fe0c8");
-    task.set_id(id);
-    task.set_project_category_opt(Some(ProjectCategory::Sustaining));
+    task.set_id(id).unwrap();
+    task.set_project_category_opt(Some(ProjectCategory::Sustaining))
+        .unwrap();
     let now = Local.with_ymd_and_hms(2023, 5, 19, 1, 23, 45).unwrap();
-    task.set_create_time(now);
-    task.set_start_time(now);
-    let actual = task_to_yaml(&task);
+    task.set_create_time(now).unwrap();
+    task.set_start_time(now).unwrap();
+    let actual = task_to_yaml(&task).unwrap();
 
     let s = "
 name: 'タスク1'
@@ -2566,10 +2811,11 @@ start_time: '2023/05/19 01:23:45'
 #[test]
 fn test_task_to_yaml_project_categoryは子タスクには出力しない() {
     let now = Local.with_ymd_and_hms(2023, 5, 19, 1, 23, 45).unwrap();
-    let mut task = TaskHandle::new("親タスク");
-    task.set_id(uuid!("67e55044-10b1-426f-9247-bb680e5fe0c8"));
-    task.set_create_time(now);
-    task.set_start_time(now);
+    let mut task = TaskHandle::new("親タスク").unwrap();
+    task.set_id(uuid!("67e55044-10b1-426f-9247-bb680e5fe0c8"))
+        .unwrap();
+    task.set_create_time(now).unwrap();
+    task.set_start_time(now).unwrap();
 
     let mut task_attr_child = TaskAttr::new("子タスク");
     task_attr_child.set_id(uuid!("0aaee735-3e22-4216-8b59-d56d5caf29ee"));
@@ -2579,7 +2825,7 @@ fn test_task_to_yaml_project_categoryは子タスクには出力しない() {
 
     task.create_as_last_child(task_attr_child);
 
-    let actual = task_to_yaml(&task);
+    let actual = task_to_yaml(&task).unwrap();
 
     let s = "
 name: '親タスク'
@@ -2600,14 +2846,14 @@ children:
 
 #[test]
 fn test_task_to_yaml_is_on_other_side() {
-    let mut task = TaskHandle::new("タスク1");
+    let mut task = TaskHandle::new("タスク1").unwrap();
     let id: Uuid = uuid!("67e55044-10b1-426f-9247-bb680e5fe0c8");
-    task.set_id(id);
-    task.set_is_on_other_side(true);
+    task.set_id(id).unwrap();
+    task.set_is_on_other_side(true).unwrap();
     let now = Local.with_ymd_and_hms(2023, 5, 19, 1, 23, 45).unwrap();
-    task.set_create_time(now);
-    task.set_start_time(now);
-    let actual = task_to_yaml(&task);
+    task.set_create_time(now).unwrap();
+    task.set_start_time(now).unwrap();
+    let actual = task_to_yaml(&task).unwrap();
 
     let s = "
 name: 'タスク1'
@@ -2624,14 +2870,14 @@ start_time: '2023/05/19 01:23:45'
 
 #[test]
 fn test_task_to_yaml_atomic() {
-    let mut task = TaskHandle::new("タスク1");
+    let mut task = TaskHandle::new("タスク1").unwrap();
     let id: Uuid = uuid!("67e55044-10b1-426f-9247-bb680e5fe0c8");
-    task.set_id(id);
-    task.set_atomic(true);
+    task.set_id(id).unwrap();
+    task.set_atomic(true).unwrap();
     let now = Local.with_ymd_and_hms(2023, 5, 19, 1, 23, 45).unwrap();
-    task.set_create_time(now);
-    task.set_start_time(now);
-    let actual = task_to_yaml(&task);
+    task.set_create_time(now).unwrap();
+    task.set_start_time(now).unwrap();
+    let actual = task_to_yaml(&task).unwrap();
 
     let s = "
 name: 'タスク1'
@@ -2648,14 +2894,17 @@ start_time: '2023/05/19 01:23:45'
 
 #[test]
 fn test_task_to_yaml_end_time_opt() {
-    let mut task = TaskHandle::new("タスク1");
+    let mut task = TaskHandle::new("タスク1").unwrap();
     let id: Uuid = uuid!("67e55044-10b1-426f-9247-bb680e5fe0c8");
-    task.set_id(id);
-    task.set_is_on_other_side(true);
-    task.set_create_time(Local.with_ymd_and_hms(2023, 5, 19, 1, 23, 45).unwrap());
-    task.set_start_time(Local.with_ymd_and_hms(2023, 5, 19, 2, 34, 56).unwrap());
-    task.set_end_time_opt(Some(Local.with_ymd_and_hms(2023, 5, 19, 3, 45, 6).unwrap()));
-    let actual = task_to_yaml(&task);
+    task.set_id(id).unwrap();
+    task.set_is_on_other_side(true).unwrap();
+    task.set_create_time(Local.with_ymd_and_hms(2023, 5, 19, 1, 23, 45).unwrap())
+        .unwrap();
+    task.set_start_time(Local.with_ymd_and_hms(2023, 5, 19, 2, 34, 56).unwrap())
+        .unwrap();
+    task.set_end_time_opt(Some(Local.with_ymd_and_hms(2023, 5, 19, 3, 45, 6).unwrap()))
+        .unwrap();
+    let actual = task_to_yaml(&task).unwrap();
 
     let s = "
 name: 'タスク1'
@@ -2673,14 +2922,17 @@ end_time: '2023/05/19 03:45:06'
 
 #[test]
 fn test_task_to_yaml_deadline_time_opt() {
-    let mut task = TaskHandle::new("タスク1");
+    let mut task = TaskHandle::new("タスク1").unwrap();
     let id: Uuid = uuid!("67e55044-10b1-426f-9247-bb680e5fe0c8");
-    task.set_id(id);
-    task.set_is_on_other_side(true);
-    task.set_create_time(Local.with_ymd_and_hms(2023, 5, 19, 1, 23, 45).unwrap());
-    task.set_start_time(Local.with_ymd_and_hms(2023, 5, 19, 2, 34, 56).unwrap());
-    task.set_deadline_time_opt(Some(Local.with_ymd_and_hms(2023, 5, 19, 3, 45, 6).unwrap()));
-    let actual = task_to_yaml(&task);
+    task.set_id(id).unwrap();
+    task.set_is_on_other_side(true).unwrap();
+    task.set_create_time(Local.with_ymd_and_hms(2023, 5, 19, 1, 23, 45).unwrap())
+        .unwrap();
+    task.set_start_time(Local.with_ymd_and_hms(2023, 5, 19, 2, 34, 56).unwrap())
+        .unwrap();
+    task.set_deadline_time_opt(Some(Local.with_ymd_and_hms(2023, 5, 19, 3, 45, 6).unwrap()))
+        .unwrap();
+    let actual = task_to_yaml(&task).unwrap();
 
     let s = "
 name: 'タスク1'
@@ -2698,14 +2950,16 @@ deadline_time: '2023/05/19 03:45:06'
 
 #[test]
 fn test_task_to_yaml_estimated_work_seconds() {
-    let mut task = TaskHandle::new("タスク1");
+    let mut task = TaskHandle::new("タスク1").unwrap();
     let id: Uuid = uuid!("67e55044-10b1-426f-9247-bb680e5fe0c8");
-    task.set_id(id);
-    task.set_is_on_other_side(true);
-    task.set_create_time(Local.with_ymd_and_hms(2023, 5, 19, 1, 23, 45).unwrap());
-    task.set_start_time(Local.with_ymd_and_hms(2023, 5, 19, 2, 34, 56).unwrap());
-    task.set_estimated_work_seconds(1);
-    let actual = task_to_yaml(&task);
+    task.set_id(id).unwrap();
+    task.set_is_on_other_side(true).unwrap();
+    task.set_create_time(Local.with_ymd_and_hms(2023, 5, 19, 1, 23, 45).unwrap())
+        .unwrap();
+    task.set_start_time(Local.with_ymd_and_hms(2023, 5, 19, 2, 34, 56).unwrap())
+        .unwrap();
+    task.set_estimated_work_seconds(1).unwrap();
+    let actual = task_to_yaml(&task).unwrap();
 
     let s = "
 name: 'タスク1'
@@ -2723,14 +2977,16 @@ estimated_work_seconds: 1
 
 #[test]
 fn test_task_to_yaml_actual_work_seconds() {
-    let mut task = TaskHandle::new("タスク1");
+    let mut task = TaskHandle::new("タスク1").unwrap();
     let id: Uuid = uuid!("67e55044-10b1-426f-9247-bb680e5fe0c8");
-    task.set_id(id);
-    task.set_is_on_other_side(true);
-    task.set_create_time(Local.with_ymd_and_hms(2023, 5, 19, 1, 23, 45).unwrap());
-    task.set_start_time(Local.with_ymd_and_hms(2023, 5, 19, 2, 34, 56).unwrap());
-    task.set_actual_work_seconds(1);
-    let actual = task_to_yaml(&task);
+    task.set_id(id).unwrap();
+    task.set_is_on_other_side(true).unwrap();
+    task.set_create_time(Local.with_ymd_and_hms(2023, 5, 19, 1, 23, 45).unwrap())
+        .unwrap();
+    task.set_start_time(Local.with_ymd_and_hms(2023, 5, 19, 2, 34, 56).unwrap())
+        .unwrap();
+    task.set_actual_work_seconds(1).unwrap();
+    let actual = task_to_yaml(&task).unwrap();
 
     let s = "
 name: 'タスク1'
@@ -2748,14 +3004,14 @@ actual_work_seconds: 1
 
 #[test]
 fn test_task_to_yaml_repetition_interval() {
-    let mut task = TaskHandle::new("タスク1");
+    let mut task = TaskHandle::new("タスク1").unwrap();
     let id: Uuid = uuid!("67e55044-10b1-426f-9247-bb680e5fe0c8");
-    task.set_id(id);
-    task.set_repetition_interval_days_opt(Some(7));
+    task.set_id(id).unwrap();
+    task.set_repetition_interval_days_opt(Some(7)).unwrap();
     let now = Local.with_ymd_and_hms(2023, 5, 19, 1, 23, 45).unwrap();
-    task.set_create_time(now);
-    task.set_start_time(now);
-    let actual = task_to_yaml(&task);
+    task.set_create_time(now).unwrap();
+    task.set_start_time(now).unwrap();
+    let actual = task_to_yaml(&task).unwrap();
 
     let s = "
 name: 'タスク1'
@@ -2772,14 +3028,15 @@ repetition_interval_days: 7
 
 #[test]
 fn test_task_to_yaml_repetition_anchor_completion() {
-    let mut task = TaskHandle::new("タスク1");
+    let mut task = TaskHandle::new("タスク1").unwrap();
     let id: Uuid = uuid!("67e55044-10b1-426f-9247-bb680e5fe0c8");
-    task.set_id(id);
-    task.set_repetition_anchor(RepetitionAnchor::Completion);
+    task.set_id(id).unwrap();
+    task.set_repetition_anchor(RepetitionAnchor::Completion)
+        .unwrap();
     let now = Local.with_ymd_and_hms(2023, 5, 19, 1, 23, 45).unwrap();
-    task.set_create_time(now);
-    task.set_start_time(now);
-    let actual = task_to_yaml(&task);
+    task.set_create_time(now).unwrap();
+    task.set_start_time(now).unwrap();
+    let actual = task_to_yaml(&task).unwrap();
 
     let s = "
 name: 'タスク1'
@@ -2796,14 +3053,15 @@ repetition_anchor: completion
 
 #[test]
 fn test_task_to_yaml_repetition_anchor_deadlineは出力しない() {
-    let mut task = TaskHandle::new("タスク1");
+    let mut task = TaskHandle::new("タスク1").unwrap();
     let id: Uuid = uuid!("67e55044-10b1-426f-9247-bb680e5fe0c8");
-    task.set_id(id);
-    task.set_repetition_anchor(RepetitionAnchor::Deadline);
+    task.set_id(id).unwrap();
+    task.set_repetition_anchor(RepetitionAnchor::Deadline)
+        .unwrap();
     let now = Local.with_ymd_and_hms(2023, 5, 19, 1, 23, 45).unwrap();
-    task.set_create_time(now);
-    task.set_start_time(now);
-    let actual = task_to_yaml(&task);
+    task.set_create_time(now).unwrap();
+    task.set_start_time(now).unwrap();
+    let actual = task_to_yaml(&task).unwrap();
 
     let s = "
 name: 'タスク1'
@@ -2819,14 +3077,14 @@ start_time: '2023/05/19 01:23:45'
 
 #[test]
 fn test_task_to_yaml_days_in_advance() {
-    let mut task = TaskHandle::new("タスク1");
+    let mut task = TaskHandle::new("タスク1").unwrap();
     let id: Uuid = uuid!("67e55044-10b1-426f-9247-bb680e5fe0c8");
-    task.set_id(id);
-    task.set_days_in_advance(1);
+    task.set_id(id).unwrap();
+    task.set_days_in_advance(1).unwrap();
     let now = Local.with_ymd_and_hms(2023, 5, 19, 1, 23, 45).unwrap();
-    task.set_create_time(now);
-    task.set_start_time(now);
-    let actual = task_to_yaml(&task);
+    task.set_create_time(now).unwrap();
+    task.set_start_time(now).unwrap();
+    let actual = task_to_yaml(&task).unwrap();
 
     let s = "
 name: 'タスク1'
@@ -2843,15 +3101,16 @@ days_in_advance: 1
 
 #[test]
 fn test_get_by_id_ベースケース() {
-    let mut task = TaskHandle::new("親タスク1");
-    task.set_orig_status(Status::Pending);
-    task.set_pending_until(Local.with_ymd_and_hms(2023, 4, 1, 12, 0, 0).unwrap());
+    let mut task = TaskHandle::new("親タスク1").unwrap();
+    task.set_orig_status(Status::Pending).unwrap();
+    task.set_pending_until(Local.with_ymd_and_hms(2023, 4, 1, 12, 0, 0).unwrap())
+        .unwrap();
     let id: Uuid = uuid!("67e55044-10b1-426f-9247-bb680e5fe0c8");
-    task.set_id(id);
+    task.set_id(id).unwrap();
 
     let task_ptr = &task.node;
 
-    let actual_opt = task.get_by_id(id);
+    let actual_opt = task.get_by_id(id).unwrap();
     match actual_opt {
         Some(actual) => {
             assert_eq!(&actual, &task);
@@ -2863,24 +3122,28 @@ fn test_get_by_id_ベースケース() {
 
 #[test]
 fn test_get_by_id_子なしタスクでヒットしなかった場合() {
-    let mut task = TaskHandle::new("親タスク1");
-    task.set_orig_status(Status::Pending);
-    task.set_pending_until(Local.with_ymd_and_hms(2023, 4, 1, 12, 0, 0).unwrap());
+    let mut task = TaskHandle::new("親タスク1").unwrap();
+    task.set_orig_status(Status::Pending).unwrap();
+    task.set_pending_until(Local.with_ymd_and_hms(2023, 4, 1, 12, 0, 0).unwrap())
+        .unwrap();
     let id: Uuid = uuid!("67e55044-10b1-426f-9247-bb680e5fe0c8");
-    task.set_id(id);
+    task.set_id(id).unwrap();
 
-    let actual = task.get_by_id(uuid!("ccdadeab-f60a-4bec-93f8-3d7e003b980f"));
+    let actual = task
+        .get_by_id(uuid!("ccdadeab-f60a-4bec-93f8-3d7e003b980f"))
+        .unwrap();
 
     assert_eq!(actual, None);
 }
 
 #[test]
 fn test_get_by_id_再帰でヒットする場合() {
-    let mut task = TaskHandle::new("親タスク1");
-    task.set_orig_status(Status::Pending);
-    task.set_pending_until(Local.with_ymd_and_hms(2023, 4, 1, 12, 0, 0).unwrap());
+    let mut task = TaskHandle::new("親タスク1").unwrap();
+    task.set_orig_status(Status::Pending).unwrap();
+    task.set_pending_until(Local.with_ymd_and_hms(2023, 4, 1, 12, 0, 0).unwrap())
+        .unwrap();
     let id_parent: Uuid = uuid!("67e55044-10b1-426f-9247-bb680e5fe0c8");
-    task.set_id(id_parent);
+    task.set_id(id_parent).unwrap();
 
     let mut task_attr_child_1 = TaskAttr::new("子タスク1");
     task_attr_child_1.set_orig_status(Status::Pending);
@@ -2899,27 +3162,28 @@ fn test_get_by_id_再帰でヒットする場合() {
     task.create_as_last_child(task_attr_child_1);
     task.create_as_last_child(task_attr_child_2);
 
-    let actual_opt = task.get_by_id(id_child_1);
+    let actual_opt = task.get_by_id(id_child_1).unwrap();
     match actual_opt {
         None => {
             panic!("assert some");
         }
         Some(actual) => {
-            assert_eq!(&actual.get_attr(), &expected_attr);
+            assert_eq!(&actual.get_attr().unwrap(), &expected_attr);
 
             // 親をたどることができること
-            assert_eq!(&actual.root(), &task);
+            assert_eq!(&actual.root().unwrap(), &task);
         }
     }
 }
 
 #[test]
 fn test_get_by_id_再帰でヒットしない場合() {
-    let mut task = TaskHandle::new("親タスク1");
-    task.set_orig_status(Status::Pending);
-    task.set_pending_until(Local.with_ymd_and_hms(2023, 4, 1, 12, 0, 0).unwrap());
+    let mut task = TaskHandle::new("親タスク1").unwrap();
+    task.set_orig_status(Status::Pending).unwrap();
+    task.set_pending_until(Local.with_ymd_and_hms(2023, 4, 1, 12, 0, 0).unwrap())
+        .unwrap();
     let id_parent: Uuid = uuid!("67e55044-10b1-426f-9247-bb680e5fe0c8");
-    task.set_id(id_parent);
+    task.set_id(id_parent).unwrap();
 
     let mut task_attr_child_1 = TaskAttr::new("子タスク1");
     task_attr_child_1.set_orig_status(Status::Pending);
@@ -2936,7 +3200,9 @@ fn test_get_by_id_再帰でヒットしない場合() {
     task.create_as_last_child(task_attr_child_1);
     task.create_as_last_child(task_attr_child_2);
 
-    let actual = task.get_by_id(uuid!("3aa89504-917d-4f20-a1e3-4eb196190c6f"));
+    let actual = task
+        .get_by_id(uuid!("3aa89504-917d-4f20-a1e3-4eb196190c6f"))
+        .unwrap();
     assert_eq!(actual, None);
 }
 
@@ -2948,7 +3214,7 @@ fn test_all_sibling_tasks_are_all_done_全ての兄弟タスクが完了して�
        - child_task_2 (完了)
     */
 
-    let parent_task = TaskHandle::new("親タスク");
+    let parent_task = TaskHandle::new("親タスク").unwrap();
 
     let mut task_attr_child_1 = TaskAttr::new("子タスク1");
     task_attr_child_1.set_orig_status(Status::Done);
@@ -2959,7 +3225,7 @@ fn test_all_sibling_tasks_are_all_done_全ての兄弟タスクが完了して�
     let child_task_1 = parent_task.create_as_last_child(task_attr_child_1);
     parent_task.create_as_last_child(task_attr_child_2);
 
-    assert!(child_task_1.all_sibling_tasks_are_all_done());
+    assert!(child_task_1.all_sibling_tasks_are_all_done().unwrap());
 }
 
 #[test]
@@ -2970,7 +3236,7 @@ fn test_all_sibling_tasks_are_all_done_一部の兄弟タスクが完了でな�
        - child_task_2 (Todo)
     */
 
-    let parent_task = TaskHandle::new("親タスク");
+    let parent_task = TaskHandle::new("親タスク").unwrap();
 
     let mut task_attr_child_1 = TaskAttr::new("子タスク1");
     task_attr_child_1.set_orig_status(Status::Done);
@@ -2981,19 +3247,19 @@ fn test_all_sibling_tasks_are_all_done_一部の兄弟タスクが完了でな�
     let child_task_1 = parent_task.create_as_last_child(task_attr_child_1);
     parent_task.create_as_last_child(task_attr_child_2);
 
-    assert!(!child_task_1.all_sibling_tasks_are_all_done());
+    assert!(!child_task_1.all_sibling_tasks_are_all_done().unwrap());
 }
 
 #[test]
 fn test_has_undone_children_子が存在しない場合はfalseとなる() {
-    let task = TaskHandle::new("親タスク");
+    let task = TaskHandle::new("親タスク").unwrap();
 
-    assert!(!task.has_undone_children());
+    assert!(!task.has_undone_children().unwrap());
 }
 
 #[test]
 fn test_has_undone_children_全ての子が完了済みの場合はfalseとなる() {
-    let parent_task = TaskHandle::new("親タスク");
+    let parent_task = TaskHandle::new("親タスク").unwrap();
 
     let mut task_attr_child_1 = TaskAttr::new("子タスク1");
     task_attr_child_1.set_orig_status(Status::Done);
@@ -3004,12 +3270,12 @@ fn test_has_undone_children_全ての子が完了済みの場合はfalseとな�
     parent_task.create_as_last_child(task_attr_child_1);
     parent_task.create_as_last_child(task_attr_child_2);
 
-    assert!(!parent_task.has_undone_children());
+    assert!(!parent_task.has_undone_children().unwrap());
 }
 
 #[test]
 fn test_has_undone_children_未完了の子がある場合はtrueとなる() {
-    let parent_task = TaskHandle::new("親タスク");
+    let parent_task = TaskHandle::new("親タスク").unwrap();
 
     let mut task_attr_child_1 = TaskAttr::new("子タスク1");
     task_attr_child_1.set_orig_status(Status::Done);
@@ -3020,7 +3286,7 @@ fn test_has_undone_children_未完了の子がある場合はtrueとなる() {
     parent_task.create_as_last_child(task_attr_child_1);
     parent_task.create_as_last_child(task_attr_child_2);
 
-    assert!(parent_task.has_undone_children());
+    assert!(parent_task.has_undone_children().unwrap());
 }
 
 #[test]
@@ -3029,8 +3295,8 @@ fn test_parent_ルートタスクの場合() {
      parent_task_1
     */
 
-    let parent_task = TaskHandle::new("親タスク");
-    assert_eq!(parent_task.parent(), None);
+    let parent_task = TaskHandle::new("親タスク").unwrap();
+    assert_eq!(parent_task.parent().unwrap(), None);
 }
 
 #[test]
@@ -3040,12 +3306,12 @@ fn test_parent_親タスクがある場合() {
        - child_task_1
     */
 
-    let parent_task = TaskHandle::new("親タスク");
+    let parent_task = TaskHandle::new("親タスク").unwrap();
 
     let task_attr_child_1 = TaskAttr::new("子タスク1");
     let child_task_1 = parent_task.create_as_last_child(task_attr_child_1);
 
-    match child_task_1.parent() {
+    match child_task_1.parent().unwrap() {
         Some(actual_task) => {
             assert_task(&actual_task, &parent_task);
         }
@@ -3055,7 +3321,7 @@ fn test_parent_親タスクがある場合() {
 
 #[test]
 fn test_taskをcloneした場合はnodeは同じ木を指すポインタであること() {
-    let task_orig = TaskHandle::new("タスク");
+    let task_orig = TaskHandle::new("タスク").unwrap();
     let task_cloned = task_orig.clone();
 
     assert!(&task_orig.node.ptr_eq(&task_cloned.node));
@@ -3063,43 +3329,157 @@ fn test_taskをcloneした場合はnodeは同じ木を指すポインタであ�
 
 #[test]
 fn test_task_handle_snapshotは独立した読み取り値を返す() {
-    let root = TaskHandle::new("親");
-    let child = root.try_create_child(TaskAttr::new("子")).unwrap();
-    child.set_estimated_work_seconds(60);
+    let root = TaskHandle::new("親").unwrap();
+    let child = root.create_child(TaskAttr::new("子")).unwrap();
+    child.set_estimated_work_seconds(60).unwrap();
 
-    let snapshot = root.snapshot();
-    child.set_estimated_work_seconds(120);
+    let snapshot = root.snapshot().unwrap();
+    child.set_estimated_work_seconds(120).unwrap();
 
     assert_eq!(snapshot.name(), "親");
     assert_eq!(snapshot.children()[0].estimated_work_seconds(), 60);
     assert_eq!(
         snapshot.children()[0].attr().get_id(),
-        child.get_attr().get_id()
+        child.get_attr().unwrap().get_id()
     );
     assert_eq!(
         snapshot.children()[0].attr().get_pending_until(),
-        child.get_attr().get_pending_until()
+        child.get_attr().unwrap().get_pending_until()
     );
-    assert_eq!(root.get_children()[0].get_estimated_work_seconds(), 120);
+    assert_eq!(
+        root.get_children().unwrap()[0]
+            .get_estimated_work_seconds()
+            .unwrap(),
+        120
+    );
 }
 
 #[test]
 fn test_try_snapshotは借用競合をerrorとして返す() {
-    let task = TaskHandle::new("タスク");
+    let task = TaskHandle::new("タスク").unwrap();
     let _exclusive_borrow = task.node.borrow_data_mut();
 
-    assert_eq!(task.try_snapshot(), Err(TaskTreeError::Borrow));
+    assert_eq!(task.snapshot(), Err(TaskTreeError::Borrow));
+}
+
+#[test]
+fn test_task_handleの公開read_apiは借用競合をerrorとして返す() {
+    let task = TaskHandle::new("タスク").unwrap();
+    let _exclusive_borrow = task.node.borrow_data_mut();
+
+    assert_eq!(task.get_name(), Err(TaskTreeError::Borrow));
+}
+
+#[test]
+fn test_task_handleのcore_read_apiは借用競合をerrorとして返す() {
+    let task = TaskHandle::new("タスク").unwrap();
+    let _exclusive_borrow = task.node.borrow_data_mut();
+
+    assert_eq!(task.get_attr(), Err(TaskTreeError::Borrow));
+    assert_eq!(task.get_id(), Err(TaskTreeError::Borrow));
+    assert_eq!(task.get_status(), Err(TaskTreeError::Borrow));
+    assert_eq!(task.get_children(), Err(TaskTreeError::Borrow));
+    assert_eq!(task.num_children(), Err(TaskTreeError::Borrow));
+    assert_eq!(task.snapshot(), Err(TaskTreeError::Borrow));
+}
+
+#[test]
+fn test_rootはdummy_rootの子が欠落した場合にinvariant_errorを返す() {
+    let task = TaskHandle::new("タスク").unwrap();
+    let dummy_root = task.node.root();
+    let grant = dummy_root.tree().grant_hierarchy_edit().unwrap();
+    task.node.detach_subtree(&grant);
+
+    assert_eq!(task.root(), Err(TaskTreeError::MissingDummyRootChild));
+}
+
+#[test]
+fn test_rootはdummy_rootに複数の子がある場合にinvariant_errorを返す() {
+    let first_task = TaskHandle::new("第一プロジェクト").unwrap();
+    first_task.set_priority(10).unwrap();
+    first_task
+        .set_project_category_opt(Some(ProjectCategory::Earning))
+        .unwrap();
+    let first_revision = first_task.get_persistent_mutation_revision().unwrap();
+    let dummy_root = first_task.node.root();
+    let grant = dummy_root.tree().grant_hierarchy_edit().unwrap();
+    let second_task = TaskHandle {
+        node: dummy_root.create_as_last_child(&grant, TaskAttr::new("第二プロジェクト")),
+    };
+    let second_revision = second_task.node.borrow_data().persistent_mutation_revision;
+
+    assert_eq!(
+        second_task.root(),
+        Err(TaskTreeError::MissingDummyRootChild)
+    );
+    assert_eq!(
+        second_task.get_priority(),
+        Err(TaskTreeError::MissingDummyRootChild)
+    );
+    assert_eq!(
+        second_task.get_project_category_opt(),
+        Err(TaskTreeError::MissingDummyRootChild)
+    );
+    assert_eq!(
+        second_task.set_priority(20),
+        Err(TaskTreeError::MissingDummyRootChild)
+    );
+    assert_eq!(
+        second_task.set_project_category_opt(Some(ProjectCategory::Recovery)),
+        Err(TaskTreeError::MissingDummyRootChild)
+    );
+    assert_eq!(first_task.node.borrow_data().get_priority(), 10);
+    assert_eq!(
+        first_task.node.borrow_data().get_project_category_opt(),
+        Some(ProjectCategory::Earning)
+    );
+    assert_eq!(
+        first_task.node.borrow_data().persistent_mutation_revision,
+        first_revision
+    );
+    assert_eq!(
+        second_task.node.borrow_data().persistent_mutation_revision,
+        second_revision
+    );
+}
+
+#[test]
+fn test_rootはhandleがdummy_root自身を指す場合にinvariant_errorを返す() {
+    let task = TaskHandle::new("タスク").unwrap();
+    let invalid_handle = TaskHandle {
+        node: task.node.root(),
+    };
+
+    assert_eq!(
+        invalid_handle.root(),
+        Err(TaskTreeError::MissingDummyRootChild)
+    );
+    assert_eq!(
+        invalid_handle.get_priority(),
+        Err(TaskTreeError::MissingDummyRootChild)
+    );
+}
+
+#[test]
+fn test_task_viewは借用競合をtask_tree_errorとして返す() {
+    let task = TaskHandle::new("タスク").unwrap();
+    let _exclusive_borrow = task.node.borrow_data_mut();
+
+    assert_eq!(
+        crate::application::task_use_case::TaskView::try_from(&task),
+        Err(TaskTreeError::Borrow)
+    );
 }
 
 #[test]
 fn test_reparent_toは循環をerrorにして木とrevisionを変更しない() {
-    let root = TaskHandle::new("親");
-    let mut child = root.try_create_child(TaskAttr::new("子")).unwrap();
-    let grandchild = child.try_create_child(TaskAttr::new("孫")).unwrap();
+    let root = TaskHandle::new("親").unwrap();
+    let mut child = root.create_child(TaskAttr::new("子")).unwrap();
+    let grandchild = child.create_child(TaskAttr::new("孫")).unwrap();
     let before_root_snapshot = root.snapshot();
     let before_root_revision = root.get_persistent_mutation_revision();
 
-    let actual = child.try_reparent_to(&grandchild);
+    let actual = child.reparent_to(&grandchild);
 
     assert_eq!(actual, Err(TaskTreeError::Cycle));
     assert_eq!(root.snapshot(), before_root_snapshot);
@@ -3107,21 +3487,339 @@ fn test_reparent_toは循環をerrorにして木とrevisionを変更しない() 
         root.get_persistent_mutation_revision(),
         before_root_revision
     );
-    assert_eq!(child.parent().unwrap().get_id(), root.get_id());
+    assert_eq!(
+        child.parent().unwrap().unwrap().get_id().unwrap(),
+        root.get_id().unwrap()
+    );
+}
+
+#[test]
+fn test_deadline伝搬は子の借用競合時に部分更新とrevision更新をしない() {
+    let root = TaskHandle::new("親").unwrap();
+    let child = root.create_child(TaskAttr::new("子")).unwrap();
+    let deadline = Local.with_ymd_and_hms(2026, 8, 15, 12, 0, 0).unwrap();
+    let before_revision = root.get_persistent_mutation_revision().unwrap();
+    let exclusive_borrow = child.node.borrow_data_mut();
+
+    assert_eq!(
+        root.set_deadline_time_opt(Some(deadline)),
+        Err(TaskTreeError::Borrow)
+    );
+    drop(exclusive_borrow);
+
+    assert_eq!(root.get_deadline_time_opt().unwrap(), None);
+    assert_eq!(child.get_deadline_time_opt().unwrap(), None);
+    assert_eq!(
+        root.get_persistent_mutation_revision().unwrap(),
+        before_revision
+    );
+}
+
+#[test]
+fn test_deadline伝搬は子の共有借用競合時に部分更新とrevision更新をしない() {
+    let root = TaskHandle::new("親").unwrap();
+    let child = root.create_child(TaskAttr::new("子")).unwrap();
+    let deadline = Local.with_ymd_and_hms(2026, 8, 15, 12, 0, 0).unwrap();
+    let before_snapshot = root.snapshot().unwrap();
+    let before_revision = root.get_persistent_mutation_revision().unwrap();
+
+    let actual =
+        child.with_shared_data_borrow_for_test(|| root.set_deadline_time_opt(Some(deadline)));
+
+    assert_eq!(actual, Err(TaskTreeError::Borrow));
+    assert_eq!(root.snapshot().unwrap(), before_snapshot);
+    assert_eq!(
+        root.get_persistent_mutation_revision().unwrap(),
+        before_revision
+    );
+}
+
+#[test]
+fn test_make_appointmentは子の共有借用競合時に部分更新とrevision更新をしない() {
+    let root = TaskHandle::new("親").unwrap();
+    let child = root.create_child(TaskAttr::new("子")).unwrap();
+    root.set_estimated_work_seconds(30 * 60).unwrap();
+    root.set_deadline_time_opt(Some(Local.with_ymd_and_hms(2026, 8, 15, 12, 0, 0).unwrap()))
+        .unwrap();
+    let appointment_start_time = Local.with_ymd_and_hms(2026, 8, 14, 9, 0, 0).unwrap();
+    let before_snapshot = root.snapshot().unwrap();
+    let before_revision = root.get_persistent_mutation_revision().unwrap();
+
+    let actual =
+        child.with_shared_data_borrow_for_test(|| root.make_appointment(appointment_start_time));
+
+    assert_eq!(actual, Err(TaskTreeError::Borrow));
+    assert_eq!(root.snapshot().unwrap(), before_snapshot);
+    assert_eq!(
+        root.get_persistent_mutation_revision().unwrap(),
+        before_revision
+    );
+}
+
+#[test]
+fn test_deadline伝搬はrootのshared_borrow競合時に全属性とtreeとrevisionを変更しない() {
+    let root = TaskHandle::new("親").unwrap();
+    let child = root.create_child(TaskAttr::new("子")).unwrap();
+    let deadline = Local.with_ymd_and_hms(2026, 8, 15, 12, 0, 0).unwrap();
+    let before_snapshot = root.snapshot().unwrap();
+    let before_revision = root.get_persistent_mutation_revision().unwrap();
+
+    root.with_shared_data_borrow_for_test(|| {
+        assert_eq!(
+            root.set_deadline_time_opt(Some(deadline)),
+            Err(TaskTreeError::Borrow)
+        );
+    });
+
+    assert_eq!(root.snapshot().unwrap(), before_snapshot);
+    assert_eq!(
+        root.get_start_time().unwrap(),
+        before_snapshot.attr.get_start_time().to_owned()
+    );
+    assert_eq!(
+        child.get_start_time().unwrap(),
+        before_snapshot.children[0].attr.get_start_time().to_owned()
+    );
+    assert_eq!(
+        root.get_persistent_mutation_revision().unwrap(),
+        before_revision
+    );
+}
+
+#[test]
+fn test_deadline伝搬は子のshared_borrow競合時に全属性とtreeとrevisionを変更しない() {
+    let root = TaskHandle::new("親").unwrap();
+    let child = root.create_child(TaskAttr::new("子")).unwrap();
+    let deadline = Local.with_ymd_and_hms(2026, 8, 15, 12, 0, 0).unwrap();
+    let before_snapshot = root.snapshot().unwrap();
+    let before_revision = root.get_persistent_mutation_revision().unwrap();
+
+    child.with_shared_data_borrow_for_test(|| {
+        assert_eq!(
+            root.set_deadline_time_opt(Some(deadline)),
+            Err(TaskTreeError::Borrow)
+        );
+    });
+
+    assert_eq!(root.snapshot().unwrap(), before_snapshot);
+    assert_eq!(
+        root.get_start_time().unwrap(),
+        before_snapshot.attr.get_start_time().to_owned()
+    );
+    assert_eq!(
+        child.get_start_time().unwrap(),
+        before_snapshot.children[0].attr.get_start_time().to_owned()
+    );
+    assert_eq!(
+        root.get_persistent_mutation_revision().unwrap(),
+        before_revision
+    );
+}
+
+#[test]
+fn test_make_appointmentはrootのshared_borrow競合時に全属性とtreeとrevisionを変更しない() {
+    let root = TaskHandle::new("親").unwrap();
+    let child = root.create_child(TaskAttr::new("子")).unwrap();
+    let appointment_start_time = Local.with_ymd_and_hms(2026, 8, 15, 9, 0, 0).unwrap();
+    let before_snapshot = root.snapshot().unwrap();
+    let before_revision = root.get_persistent_mutation_revision().unwrap();
+
+    root.with_shared_data_borrow_for_test(|| {
+        assert_eq!(
+            root.make_appointment(appointment_start_time),
+            Err(TaskTreeError::Borrow)
+        );
+    });
+
+    assert_eq!(root.snapshot().unwrap(), before_snapshot);
+    assert_eq!(
+        root.get_start_time().unwrap(),
+        before_snapshot.attr.get_start_time().to_owned()
+    );
+    assert_eq!(
+        child.get_start_time().unwrap(),
+        before_snapshot.children[0].attr.get_start_time().to_owned()
+    );
+    assert_eq!(
+        root.get_persistent_mutation_revision().unwrap(),
+        before_revision
+    );
+}
+
+#[test]
+fn test_make_appointmentは子のshared_borrow競合時に全属性とtreeとrevisionを変更しない() {
+    let root = TaskHandle::new("親").unwrap();
+    let child = root.create_child(TaskAttr::new("子")).unwrap();
+    let appointment_start_time = Local.with_ymd_and_hms(2026, 8, 15, 9, 0, 0).unwrap();
+    let before_snapshot = root.snapshot().unwrap();
+    let before_revision = root.get_persistent_mutation_revision().unwrap();
+
+    child.with_shared_data_borrow_for_test(|| {
+        assert_eq!(
+            root.make_appointment(appointment_start_time),
+            Err(TaskTreeError::Borrow)
+        );
+    });
+
+    assert_eq!(root.snapshot().unwrap(), before_snapshot);
+    assert_eq!(
+        root.get_start_time().unwrap(),
+        before_snapshot.attr.get_start_time().to_owned()
+    );
+    assert_eq!(
+        child.get_start_time().unwrap(),
+        before_snapshot.children[0].attr.get_start_time().to_owned()
+    );
+    assert_eq!(
+        root.get_persistent_mutation_revision().unwrap(),
+        before_revision
+    );
+}
+
+#[test]
+fn test_tree追加はrootの借用競合時にtreeとrevisionを変更しない() {
+    let root = TaskHandle::new("親").unwrap();
+    let before_revision = root.get_persistent_mutation_revision().unwrap();
+    let exclusive_borrow = root.node.borrow_data_mut();
+
+    assert_eq!(
+        root.create_child(TaskAttr::new("子")),
+        Err(TaskTreeError::Borrow)
+    );
+    drop(exclusive_borrow);
+
+    assert_eq!(root.num_children().unwrap(), 0);
+    assert_eq!(
+        root.get_persistent_mutation_revision().unwrap(),
+        before_revision
+    );
+}
+
+#[test]
+fn test_updateはrootのshared_borrow競合時に属性とrevisionを変更しない() {
+    let root = TaskHandle::new("親").unwrap();
+    let child = root.create_child(TaskAttr::new("子")).unwrap();
+    let before_snapshot = root.snapshot().unwrap();
+    let before_revision = root.get_persistent_mutation_revision().unwrap();
+
+    root.with_shared_data_borrow_for_test(|| {
+        assert_eq!(child.set_atomic(true), Err(TaskTreeError::Borrow));
+    });
+
+    assert_eq!(root.snapshot().unwrap(), before_snapshot);
+    assert_eq!(
+        root.get_persistent_mutation_revision().unwrap(),
+        before_revision
+    );
+}
+
+#[test]
+fn test_create_childはrootのshared_borrow競合時にtreeとrevisionを変更しない() {
+    let root = TaskHandle::new("親").unwrap();
+    let before_snapshot = root.snapshot().unwrap();
+    let before_revision = root.get_persistent_mutation_revision().unwrap();
+
+    root.with_shared_data_borrow_for_test(|| {
+        assert_eq!(
+            root.create_child(TaskAttr::new("子")),
+            Err(TaskTreeError::Borrow)
+        );
+    });
+
+    assert_eq!(root.snapshot().unwrap(), before_snapshot);
+    assert_eq!(
+        root.get_persistent_mutation_revision().unwrap(),
+        before_revision
+    );
+}
+
+#[test]
+fn test_create_parentはrootのshared_borrow競合時にtreeとrevisionを変更しない() {
+    let root = TaskHandle::new("親").unwrap();
+    let mut child = root.create_child(TaskAttr::new("子")).unwrap();
+    let before_snapshot = root.snapshot().unwrap();
+    let before_revision = root.get_persistent_mutation_revision().unwrap();
+
+    root.with_shared_data_borrow_for_test(|| {
+        assert_eq!(
+            child.create_parent(TaskAttr::new("新しい親")),
+            Err(TaskTreeError::Borrow)
+        );
+    });
+
+    assert_eq!(root.snapshot().unwrap(), before_snapshot);
+    assert_eq!(
+        root.get_persistent_mutation_revision().unwrap(),
+        before_revision
+    );
+}
+
+#[test]
+fn test_create_sequential_childrenはrootのshared_borrow競合時にtreeとrevisionを変更しない() {
+    let root = TaskHandle::new("親").unwrap();
+    let before_snapshot = root.snapshot().unwrap();
+    let before_revision = root.get_persistent_mutation_revision().unwrap();
+
+    root.with_shared_data_borrow_for_test(|| {
+        assert_eq!(
+            root.create_sequential_children("子", 60, 1, 2, ""),
+            Err(TaskTreeError::Borrow)
+        );
+    });
+
+    assert_eq!(root.snapshot().unwrap(), before_snapshot);
+    assert_eq!(
+        root.get_persistent_mutation_revision().unwrap(),
+        before_revision
+    );
+}
+
+#[test]
+fn test_reparent_toはsource_rootのshared_borrow競合時にtreeとrevisionを変更しない() {
+    let source_root = TaskHandle::new("移動元").unwrap();
+    let mut child = source_root.create_child(TaskAttr::new("子")).unwrap();
+    let destination_root = TaskHandle::new("移動先").unwrap();
+    let before_source_snapshot = source_root.snapshot().unwrap();
+    let before_destination_snapshot = destination_root.snapshot().unwrap();
+    let before_source_revision = source_root.get_persistent_mutation_revision().unwrap();
+    let before_destination_revision = destination_root.get_persistent_mutation_revision().unwrap();
+
+    source_root.with_shared_data_borrow_for_test(|| {
+        assert_eq!(
+            child.reparent_to(&destination_root),
+            Err(TaskTreeError::Borrow)
+        );
+    });
+
+    assert_eq!(source_root.snapshot().unwrap(), before_source_snapshot);
+    assert_eq!(
+        destination_root.snapshot().unwrap(),
+        before_destination_snapshot
+    );
+    assert_eq!(
+        source_root.get_persistent_mutation_revision().unwrap(),
+        before_source_revision
+    );
+    assert_eq!(
+        destination_root.get_persistent_mutation_revision().unwrap(),
+        before_destination_revision
+    );
 }
 
 #[test]
 fn test_first_available_time_pending状態の時はpending_untilとstart_timeの大きい方が採用されること_pending_untilの方が大きい場合(
 ) {
     let dt = Local.with_ymd_and_hms(2023, 5, 19, 1, 23, 45).unwrap();
-    let parent_task = TaskHandle::new("親タスク");
-    parent_task.set_create_time(dt);
-    parent_task.set_start_time(dt);
-    parent_task.set_orig_status(Status::Pending);
-    parent_task.set_pending_until(dt + Duration::hours(1));
-    parent_task.sync_clock(dt);
+    let parent_task = TaskHandle::new("親タスク").unwrap();
+    parent_task.set_create_time(dt).unwrap();
+    parent_task.set_start_time(dt).unwrap();
+    parent_task.set_orig_status(Status::Pending).unwrap();
+    parent_task
+        .set_pending_until(dt + Duration::hours(1))
+        .unwrap();
+    parent_task.sync_clock(dt).unwrap();
 
-    let actual = parent_task.first_available_time();
+    let actual = parent_task.first_available_time().unwrap();
     let expected = dt + Duration::hours(1);
 
     assert_eq!(actual, expected);
@@ -3131,14 +3829,18 @@ fn test_first_available_time_pending状態の時はpending_untilとstart_timeの
 fn test_list_all_parent_tasks_with_first_available_time_タスク1個でpending状態の時はpending_untilとstart_timeの大きい方が採用されること_pending_untilの方が大きい場合(
 ) {
     let dt = Local.with_ymd_and_hms(2023, 5, 19, 1, 23, 45).unwrap();
-    let parent_task = TaskHandle::new("親タスク");
-    parent_task.set_create_time(dt);
-    parent_task.set_start_time(dt);
-    parent_task.set_orig_status(Status::Pending);
-    parent_task.set_pending_until(dt + Duration::hours(1));
-    parent_task.sync_clock(dt);
+    let parent_task = TaskHandle::new("親タスク").unwrap();
+    parent_task.set_create_time(dt).unwrap();
+    parent_task.set_start_time(dt).unwrap();
+    parent_task.set_orig_status(Status::Pending).unwrap();
+    parent_task
+        .set_pending_until(dt + Duration::hours(1))
+        .unwrap();
+    parent_task.sync_clock(dt).unwrap();
 
-    let actual = parent_task.list_all_parent_tasks_with_first_available_time();
+    let actual = parent_task
+        .list_all_parent_tasks_with_first_available_time()
+        .unwrap();
     let expected = [(dt + Duration::hours(1), parent_task)];
 
     assert_eq!(actual, expected);
@@ -3148,16 +3850,22 @@ fn test_list_all_parent_tasks_with_first_available_time_タスク1個でpending�
 fn test_list_all_parent_tasks_with_first_available_time_タスク1個でpending状態の時はpending_untilとstart_timeの大きい方が採用されること_deadline_timeのほうが小さい場合(
 ) {
     let dt = Local.with_ymd_and_hms(2023, 5, 19, 1, 23, 45).unwrap();
-    let parent_task = TaskHandle::new("親タスク");
-    parent_task.set_create_time(dt);
-    parent_task.set_start_time(dt);
-    parent_task.set_estimated_work_seconds(3600);
-    parent_task.set_orig_status(Status::Pending);
-    parent_task.set_pending_until(dt + Duration::hours(1));
-    parent_task.set_deadline_time_opt(Some(dt - Duration::hours(1)));
-    parent_task.sync_clock(dt);
+    let parent_task = TaskHandle::new("親タスク").unwrap();
+    parent_task.set_create_time(dt).unwrap();
+    parent_task.set_start_time(dt).unwrap();
+    parent_task.set_estimated_work_seconds(3600).unwrap();
+    parent_task.set_orig_status(Status::Pending).unwrap();
+    parent_task
+        .set_pending_until(dt + Duration::hours(1))
+        .unwrap();
+    parent_task
+        .set_deadline_time_opt(Some(dt - Duration::hours(1)))
+        .unwrap();
+    parent_task.sync_clock(dt).unwrap();
 
-    let actual = parent_task.list_all_parent_tasks_with_first_available_time();
+    let actual = parent_task
+        .list_all_parent_tasks_with_first_available_time()
+        .unwrap();
     let expected = [(
         dt - Duration::hours(1) - Duration::seconds(3600),
         parent_task,
@@ -3170,14 +3878,16 @@ fn test_list_all_parent_tasks_with_first_available_time_タスク1個でpending�
 fn test_first_available_time_pending状態の時はpending_untilとstart_timeの大きい方が採用されること_start_timeの方が大きい場合(
 ) {
     let dt = Local.with_ymd_and_hms(2023, 5, 19, 1, 23, 45).unwrap();
-    let parent_task = TaskHandle::new("親タスク");
-    parent_task.set_create_time(dt);
-    parent_task.set_start_time(dt + Duration::hours(2));
-    parent_task.set_orig_status(Status::Pending);
-    parent_task.set_pending_until(dt + Duration::hours(1));
-    parent_task.sync_clock(dt);
+    let parent_task = TaskHandle::new("親タスク").unwrap();
+    parent_task.set_create_time(dt).unwrap();
+    parent_task.set_start_time(dt + Duration::hours(2)).unwrap();
+    parent_task.set_orig_status(Status::Pending).unwrap();
+    parent_task
+        .set_pending_until(dt + Duration::hours(1))
+        .unwrap();
+    parent_task.sync_clock(dt).unwrap();
 
-    let actual = parent_task.first_available_time();
+    let actual = parent_task.first_available_time().unwrap();
     let expected = dt + Duration::hours(2);
 
     assert_eq!(actual, expected);
@@ -3187,14 +3897,18 @@ fn test_first_available_time_pending状態の時はpending_untilとstart_timeの
 fn test_list_all_parent_tasks_with_first_available_time_タスク1個でpending状態の時はpending_untilとstart_timeの大きい方が採用されること_start_timeの方が大きい場合(
 ) {
     let dt = Local.with_ymd_and_hms(2023, 5, 19, 1, 23, 45).unwrap();
-    let parent_task = TaskHandle::new("親タスク");
-    parent_task.set_create_time(dt);
-    parent_task.set_start_time(dt + Duration::hours(2));
-    parent_task.set_orig_status(Status::Pending);
-    parent_task.set_pending_until(dt + Duration::hours(1));
-    parent_task.sync_clock(dt);
+    let parent_task = TaskHandle::new("親タスク").unwrap();
+    parent_task.set_create_time(dt).unwrap();
+    parent_task.set_start_time(dt + Duration::hours(2)).unwrap();
+    parent_task.set_orig_status(Status::Pending).unwrap();
+    parent_task
+        .set_pending_until(dt + Duration::hours(1))
+        .unwrap();
+    parent_task.sync_clock(dt).unwrap();
 
-    let actual = parent_task.list_all_parent_tasks_with_first_available_time();
+    let actual = parent_task
+        .list_all_parent_tasks_with_first_available_time()
+        .unwrap();
     let expected = [(dt + Duration::hours(2), parent_task)];
 
     assert_eq!(actual, expected);
@@ -3204,14 +3918,18 @@ fn test_list_all_parent_tasks_with_first_available_time_タスク1個でpending�
 fn test_list_all_parent_tasks_with_first_available_time_タスク1個でpending状態ではない時はstart_timeが採用されること(
 ) {
     let dt = Local.with_ymd_and_hms(2023, 5, 19, 1, 23, 45).unwrap();
-    let parent_task = TaskHandle::new("親タスク");
-    parent_task.set_create_time(dt);
-    parent_task.set_start_time(dt + Duration::hours(1));
-    parent_task.set_orig_status(Status::Todo);
-    parent_task.set_pending_until(dt + Duration::hours(2));
-    parent_task.sync_clock(dt);
+    let parent_task = TaskHandle::new("親タスク").unwrap();
+    parent_task.set_create_time(dt).unwrap();
+    parent_task.set_start_time(dt + Duration::hours(1)).unwrap();
+    parent_task.set_orig_status(Status::Todo).unwrap();
+    parent_task
+        .set_pending_until(dt + Duration::hours(2))
+        .unwrap();
+    parent_task.sync_clock(dt).unwrap();
 
-    let actual = parent_task.list_all_parent_tasks_with_first_available_time();
+    let actual = parent_task
+        .list_all_parent_tasks_with_first_available_time()
+        .unwrap();
     let expected = [(dt + Duration::hours(1), parent_task)];
 
     assert_eq!(actual, expected);
@@ -3220,14 +3938,16 @@ fn test_list_all_parent_tasks_with_first_available_time_タスク1個でpending�
 #[test]
 fn test_first_available_time_pending状態ではない時はstart_timeが採用されること() {
     let dt = Local.with_ymd_and_hms(2023, 5, 19, 1, 23, 45).unwrap();
-    let parent_task = TaskHandle::new("親タスク");
-    parent_task.set_create_time(dt);
-    parent_task.set_start_time(dt + Duration::hours(1));
-    parent_task.set_orig_status(Status::Todo);
-    parent_task.set_pending_until(dt + Duration::hours(2));
-    parent_task.sync_clock(dt);
+    let parent_task = TaskHandle::new("親タスク").unwrap();
+    parent_task.set_create_time(dt).unwrap();
+    parent_task.set_start_time(dt + Duration::hours(1)).unwrap();
+    parent_task.set_orig_status(Status::Todo).unwrap();
+    parent_task
+        .set_pending_until(dt + Duration::hours(2))
+        .unwrap();
+    parent_task.sync_clock(dt).unwrap();
 
-    let actual = parent_task.first_available_time();
+    let actual = parent_task.first_available_time().unwrap();
     let expected = dt + Duration::hours(1);
 
     assert_eq!(actual, expected);
@@ -3241,17 +3961,17 @@ fn test_list_all_parent_tasks_with_first_available_time_正常系() {
          - grand_child_task (葉)
     */
     let dt = Local.with_ymd_and_hms(2023, 5, 19, 1, 23, 45).unwrap();
-    let parent_task = TaskHandle::new("親タスク");
-    parent_task.set_create_time(dt);
-    parent_task.set_start_time(dt);
+    let parent_task = TaskHandle::new("親タスク").unwrap();
+    parent_task.set_create_time(dt).unwrap();
+    parent_task.set_start_time(dt).unwrap();
 
-    let mut child_task = TaskHandle::new("子タスク");
-    child_task.set_create_time(dt);
-    child_task.set_start_time(dt);
+    let mut child_task = TaskHandle::new("子タスク").unwrap();
+    child_task.set_create_time(dt).unwrap();
+    child_task.set_start_time(dt).unwrap();
 
     let grand_child_task = child_task.create_as_last_child(TaskAttr::new("孫タスク"));
-    grand_child_task.set_create_time(dt);
-    grand_child_task.set_start_time(dt);
+    grand_child_task.set_create_time(dt).unwrap();
+    grand_child_task.set_start_time(dt).unwrap();
 
     let expected = vec![
         (dt, grand_child_task.clone()),
@@ -3263,7 +3983,9 @@ fn test_list_all_parent_tasks_with_first_available_time_正常系() {
         .detach_insert_as_last_child_of(parent_task)
         .unwrap();
 
-    let actual = grand_child_task.list_all_parent_tasks_with_first_available_time();
+    let actual = grand_child_task
+        .list_all_parent_tasks_with_first_available_time()
+        .unwrap();
 
     assert_eq!(actual, expected);
 }
@@ -3276,20 +3998,20 @@ fn test_list_all_parent_tasks_with_first_available_time_親は子の残作業後
          - grand_child_task (葉) (見積もり1m)
     */
     let dt = Local.with_ymd_and_hms(2026, 5, 10, 14, 5, 0).unwrap();
-    let parent_task = TaskHandle::new("親タスク");
-    parent_task.set_create_time(dt);
-    parent_task.set_start_time(dt);
-    parent_task.set_estimated_work_seconds(0);
+    let parent_task = TaskHandle::new("親タスク").unwrap();
+    parent_task.set_create_time(dt).unwrap();
+    parent_task.set_start_time(dt).unwrap();
+    parent_task.set_estimated_work_seconds(0).unwrap();
 
-    let mut child_task = TaskHandle::new("子タスク");
-    child_task.set_create_time(dt);
-    child_task.set_start_time(dt);
-    child_task.set_estimated_work_seconds(15 * 60);
+    let mut child_task = TaskHandle::new("子タスク").unwrap();
+    child_task.set_create_time(dt).unwrap();
+    child_task.set_start_time(dt).unwrap();
+    child_task.set_estimated_work_seconds(15 * 60).unwrap();
 
     let grand_child_task = child_task.create_as_last_child(TaskAttr::new("孫タスク"));
-    grand_child_task.set_create_time(dt);
-    grand_child_task.set_start_time(dt);
-    grand_child_task.set_estimated_work_seconds(60);
+    grand_child_task.set_create_time(dt).unwrap();
+    grand_child_task.set_start_time(dt).unwrap();
+    grand_child_task.set_estimated_work_seconds(60).unwrap();
 
     let expected = vec![
         (dt, grand_child_task.clone()),
@@ -3301,7 +4023,9 @@ fn test_list_all_parent_tasks_with_first_available_time_親は子の残作業後
         .detach_insert_as_last_child_of(parent_task)
         .unwrap();
 
-    let actual = grand_child_task.list_all_parent_tasks_with_first_available_time();
+    let actual = grand_child_task
+        .list_all_parent_tasks_with_first_available_time()
+        .unwrap();
 
     assert_eq!(actual, expected);
 }
@@ -3314,19 +4038,21 @@ fn test_list_all_parent_tasks_with_first_available_time_葉に〆切がある場
          - grand_child_task (葉)
     */
     let dt = Local.with_ymd_and_hms(2023, 5, 19, 1, 23, 45).unwrap();
-    let parent_task = TaskHandle::new("親タスク");
-    parent_task.set_create_time(dt);
-    parent_task.set_start_time(dt);
+    let parent_task = TaskHandle::new("親タスク").unwrap();
+    parent_task.set_create_time(dt).unwrap();
+    parent_task.set_start_time(dt).unwrap();
 
-    let mut child_task = TaskHandle::new("子タスク");
-    child_task.set_create_time(dt);
-    child_task.set_start_time(dt);
+    let mut child_task = TaskHandle::new("子タスク").unwrap();
+    child_task.set_create_time(dt).unwrap();
+    child_task.set_start_time(dt).unwrap();
 
     let grand_child_task = child_task.create_as_last_child(TaskAttr::new("孫タスク"));
-    grand_child_task.set_create_time(dt);
-    grand_child_task.set_start_time(dt);
-    grand_child_task.set_estimated_work_seconds(3600);
-    grand_child_task.set_deadline_time_opt(Some(dt - Duration::hours(1)));
+    grand_child_task.set_create_time(dt).unwrap();
+    grand_child_task.set_start_time(dt).unwrap();
+    grand_child_task.set_estimated_work_seconds(3600).unwrap();
+    grand_child_task
+        .set_deadline_time_opt(Some(dt - Duration::hours(1)))
+        .unwrap();
 
     let expected = vec![
         (
@@ -3341,7 +4067,9 @@ fn test_list_all_parent_tasks_with_first_available_time_葉に〆切がある場
         .detach_insert_as_last_child_of(parent_task)
         .unwrap();
 
-    let actual = grand_child_task.list_all_parent_tasks_with_first_available_time();
+    let actual = grand_child_task
+        .list_all_parent_tasks_with_first_available_time()
+        .unwrap();
 
     assert_eq!(actual, expected);
 }
@@ -3355,28 +4083,36 @@ fn test_list_all_parent_tasks_with_first_available_time_単に計算すると〆
          - grand_child_task (葉) (見積もり1h)
     */
     let dt = Local.with_ymd_and_hms(2023, 5, 19, 0, 0, 0).unwrap();
-    let parent_task = TaskHandle::new("親タスク");
-    parent_task.set_create_time(dt);
-    parent_task.set_start_time(dt);
-    parent_task.set_estimated_work_seconds(3600 * 2);
-    parent_task.set_deadline_time_opt(Some(dt + Duration::hours(24)));
+    let parent_task = TaskHandle::new("親タスク").unwrap();
+    parent_task.set_create_time(dt).unwrap();
+    parent_task.set_start_time(dt).unwrap();
+    parent_task.set_estimated_work_seconds(3600 * 2).unwrap();
+    parent_task
+        .set_deadline_time_opt(Some(dt + Duration::hours(24)))
+        .unwrap();
 
-    let mut child_task = TaskHandle::new("子タスク");
-    child_task.set_create_time(dt);
-    child_task.set_start_time(dt);
-    child_task.set_estimated_work_seconds(3600 * 3);
-    child_task.set_deadline_time_opt(Some(dt + Duration::hours(24)));
+    let mut child_task = TaskHandle::new("子タスク").unwrap();
+    child_task.set_create_time(dt).unwrap();
+    child_task.set_start_time(dt).unwrap();
+    child_task.set_estimated_work_seconds(3600 * 3).unwrap();
+    child_task
+        .set_deadline_time_opt(Some(dt + Duration::hours(24)))
+        .unwrap();
 
     let grand_child_task = child_task.create_as_last_child(TaskAttr::new("孫タスク"));
-    grand_child_task.set_create_time(dt);
-    grand_child_task.set_start_time(dt);
-    grand_child_task.set_estimated_work_seconds(3600);
-    grand_child_task.set_pending_until(dt + Duration::hours(22));
-    grand_child_task.set_orig_status(Status::Pending);
+    grand_child_task.set_create_time(dt).unwrap();
+    grand_child_task.set_start_time(dt).unwrap();
+    grand_child_task.set_estimated_work_seconds(3600).unwrap();
+    grand_child_task
+        .set_pending_until(dt + Duration::hours(22))
+        .unwrap();
+    grand_child_task.set_orig_status(Status::Pending).unwrap();
     // 先に締切を設定してしまうと、pending_untilを設定する時にその〆切からバッファを考慮して前倒ししてしまう
     // バッファの量はset_pending_until()の中で設定されており、このテストでは考慮したくない
     // よって、締切は最後に設定する
-    grand_child_task.set_deadline_time_opt(Some(dt + Duration::hours(24)));
+    grand_child_task
+        .set_deadline_time_opt(Some(dt + Duration::hours(24)))
+        .unwrap();
 
     let expected = vec![
         (
@@ -3399,7 +4135,9 @@ fn test_list_all_parent_tasks_with_first_available_time_単に計算すると〆
         .detach_insert_as_last_child_of(parent_task)
         .unwrap();
 
-    let actual = grand_child_task.list_all_parent_tasks_with_first_available_time();
+    let actual = grand_child_task
+        .list_all_parent_tasks_with_first_available_time()
+        .unwrap();
 
     assert_eq!(actual, expected);
 }
@@ -3412,32 +4150,42 @@ fn test_list_all_parent_tasks_with_first_available_time_繰り返しタスクの
          - grand_child_task (葉) (見積もり8h)
     */
     let dt = Local.with_ymd_and_hms(2023, 5, 19, 0, 0, 0).unwrap();
-    let parent_task = TaskHandle::new("親タスク");
-    parent_task.set_create_time(dt);
-    parent_task.set_start_time(dt);
-    parent_task.set_estimated_work_seconds(0);
+    let parent_task = TaskHandle::new("親タスク").unwrap();
+    parent_task.set_create_time(dt).unwrap();
+    parent_task.set_start_time(dt).unwrap();
+    parent_task.set_estimated_work_seconds(0).unwrap();
 
-    let mut child_task = TaskHandle::new("子タスク");
-    child_task.set_create_time(dt);
-    child_task.set_start_time(dt);
-    child_task.set_estimated_work_seconds(3600 * 8);
-    child_task.set_pending_until(Local.with_ymd_and_hms(2038, 1, 1, 0, 0, 0).unwrap());
-    child_task.set_orig_status(Status::Pending);
+    let mut child_task = TaskHandle::new("子タスク").unwrap();
+    child_task.set_create_time(dt).unwrap();
+    child_task.set_start_time(dt).unwrap();
+    child_task.set_estimated_work_seconds(3600 * 8).unwrap();
+    child_task
+        .set_pending_until(Local.with_ymd_and_hms(2038, 1, 1, 0, 0, 0).unwrap())
+        .unwrap();
+    child_task.set_orig_status(Status::Pending).unwrap();
     // 先に締切を設定してしまうと、pending_untilを設定する時にその〆切からバッファを考慮して前倒ししてしまう
     // バッファの量はset_pending_until()の中で設定されており、このテストでは考慮したくない
     // よって、締切は最後に設定する
-    child_task.set_deadline_time_opt(Some(
-        Local.with_ymd_and_hms(2037, 12, 31, 20, 0, 0).unwrap(),
-    ));
+    child_task
+        .set_deadline_time_opt(Some(
+            Local.with_ymd_and_hms(2037, 12, 31, 20, 0, 0).unwrap(),
+        ))
+        .unwrap();
 
     let grand_child_task = child_task.create_as_last_child(TaskAttr::new("孫タスク"));
-    grand_child_task.set_create_time(dt);
-    grand_child_task.set_start_time(dt);
-    grand_child_task.set_estimated_work_seconds(3600 * 8);
-    grand_child_task.set_pending_until(dt + Duration::hours(22));
-    grand_child_task.set_orig_status(Status::Pending);
+    grand_child_task.set_create_time(dt).unwrap();
+    grand_child_task.set_start_time(dt).unwrap();
+    grand_child_task
+        .set_estimated_work_seconds(3600 * 8)
+        .unwrap();
+    grand_child_task
+        .set_pending_until(dt + Duration::hours(22))
+        .unwrap();
+    grand_child_task.set_orig_status(Status::Pending).unwrap();
     // 上に同じく、締切は最後に設定する
-    grand_child_task.set_deadline_time_opt(Some(dt + Duration::hours(20)));
+    grand_child_task
+        .set_deadline_time_opt(Some(dt + Duration::hours(20)))
+        .unwrap();
 
     let expected = vec![
         (
@@ -3464,7 +4212,9 @@ fn test_list_all_parent_tasks_with_first_available_time_繰り返しタスクの
         .detach_insert_as_last_child_of(parent_task)
         .unwrap();
 
-    let actual = grand_child_task.list_all_parent_tasks_with_first_available_time();
+    let actual = grand_child_task
+        .list_all_parent_tasks_with_first_available_time()
+        .unwrap();
 
     assert_eq!(actual, expected);
 }

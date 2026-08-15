@@ -1,7 +1,10 @@
 use crate::application::interface::TaskRepositoryTrait;
+use crate::application::task_use_case::ApplicationError;
 use crate::application::task_view::TaskView;
 use crate::entity::datetime::get_next_morning_datetime;
-use crate::entity::task::{extract_leaf_tasks_from_project_with_pending, TaskHandle};
+use crate::entity::task::{
+    extract_leaf_tasks_from_project_with_pending, TaskHandle, TaskTreeError,
+};
 use chrono::{DateTime, Duration, Local};
 use std::cmp::max;
 use std::collections::HashMap;
@@ -22,6 +25,7 @@ pub struct ScheduledTaskView {
 
 #[derive(Clone)]
 struct TaskScheduleCandidate {
+    id: Uuid,
     task: TaskHandle,
     first_available_time: DateTime<Local>,
     neg_priority: i64,
@@ -41,6 +45,7 @@ struct TaskScheduleAttributes {
 
 #[derive(Clone)]
 struct ScheduledTask {
+    id: Uuid,
     task: TaskHandle,
     first_available_time: DateTime<Local>,
     scheduled_start: DateTime<Local>,
@@ -52,7 +57,9 @@ struct ScheduledTask {
     deadline_time: Option<DateTime<Local>>,
 }
 
-pub fn get_schedule(repository: &dyn TaskRepositoryTrait) -> Vec<ScheduledTaskView> {
+pub fn get_schedule(
+    repository: &dyn TaskRepositoryTrait,
+) -> Result<Vec<ScheduledTaskView>, ApplicationError> {
     get_schedule_with_first_available_time_overrides(repository, &HashMap::new())
 }
 
@@ -60,7 +67,7 @@ pub(crate) fn get_schedule_with_task_first_available_time(
     repository: &dyn TaskRepositoryTrait,
     task_id: Uuid,
     first_available_time: DateTime<Local>,
-) -> Vec<ScheduledTaskView> {
+) -> Result<Vec<ScheduledTaskView>, ApplicationError> {
     get_schedule_with_first_available_time_overrides(
         repository,
         &HashMap::from([(task_id, first_available_time)]),
@@ -70,41 +77,59 @@ pub(crate) fn get_schedule_with_task_first_available_time(
 pub(crate) fn get_schedule_with_first_available_time_overrides(
     repository: &dyn TaskRepositoryTrait,
     first_available_time_overrides: &HashMap<Uuid, DateTime<Local>>,
-) -> Vec<ScheduledTaskView> {
-    let mut candidates = build_schedule_candidates(repository);
+) -> Result<Vec<ScheduledTaskView>, ApplicationError> {
+    for project_root in repository.get_all_projects() {
+        project_root
+            .snapshot()
+            .map_err(ApplicationError::TaskTree)?;
+    }
+
+    let mut candidates = build_schedule_candidates(repository)?;
     for candidate in &mut candidates {
-        if let Some(first_available_time) =
-            first_available_time_overrides.get(&candidate.task.get_id())
-        {
+        if let Some(first_available_time) = first_available_time_overrides.get(
+            &candidate
+                .task
+                .get_id()
+                .map_err(ApplicationError::TaskTree)?,
+        ) {
             candidate.first_available_time =
                 max(*first_available_time, repository.get_last_synced_time());
         }
     }
     schedule_tasks_by_priority(&candidates, repository.get_last_synced_time())
+        .map_err(ApplicationError::TaskTree)?
         .into_iter()
-        .map(|scheduled| ScheduledTaskView {
-            task: TaskView::from(&scheduled.task),
-            first_available_time: scheduled.first_available_time,
-            scheduled_start: scheduled.scheduled_start,
-            scheduled_end: scheduled.scheduled_end,
-            scheduled_work_seconds: scheduled.scheduled_work_seconds,
-            total_work_seconds: scheduled.total_work_seconds,
-            rank: scheduled.rank,
+        .map(|scheduled| {
+            Ok(ScheduledTaskView {
+                task: TaskView::try_from(&scheduled.task).map_err(ApplicationError::TaskTree)?,
+                first_available_time: scheduled.first_available_time,
+                scheduled_start: scheduled.scheduled_start,
+                scheduled_end: scheduled.scheduled_end,
+                scheduled_work_seconds: scheduled.scheduled_work_seconds,
+                total_work_seconds: scheduled.total_work_seconds,
+                rank: scheduled.rank,
+            })
         })
         .collect()
 }
 
-fn build_schedule_candidates(repository: &dyn TaskRepositoryTrait) -> Vec<TaskScheduleCandidate> {
+fn build_schedule_candidates(
+    repository: &dyn TaskRepositoryTrait,
+) -> Result<Vec<TaskScheduleCandidate>, ApplicationError> {
     let last_synced_time = repository.get_last_synced_time();
     let mut task_schedule_attributes: HashMap<Uuid, TaskScheduleAttributes> = HashMap::new();
     let mut child_ids_by_parent_id: HashMap<Uuid, Vec<Uuid>> = HashMap::new();
 
     for project_root in repository.get_all_projects() {
-        for leaf in extract_leaf_tasks_from_project_with_pending(project_root) {
-            let ancestors = leaf.list_all_parent_tasks_with_first_available_time();
+        for leaf in extract_leaf_tasks_from_project_with_pending(project_root)
+            .map_err(ApplicationError::TaskTree)?
+        {
+            let ancestors = leaf
+                .list_all_parent_tasks_with_first_available_time()
+                .map_err(ApplicationError::TaskTree)?;
             for pair in ancestors.windows(2) {
-                let child_id = pair[0].1.get_id();
-                let parent_id = pair[1].1.get_id();
+                let child_id = pair[0].1.get_id().map_err(ApplicationError::TaskTree)?;
+                let parent_id = pair[1].1.get_id().map_err(ApplicationError::TaskTree)?;
                 let child_ids = child_ids_by_parent_id.entry(parent_id).or_default();
                 if !child_ids.contains(&child_id) {
                     child_ids.push(child_id);
@@ -114,7 +139,7 @@ fn build_schedule_candidates(repository: &dyn TaskRepositoryTrait) -> Vec<TaskSc
             for (rank, (first_available_time, task)) in ancestors.iter().enumerate() {
                 let first_available_time = max(*first_available_time, last_synced_time);
                 task_schedule_attributes
-                    .entry(task.get_id())
+                    .entry(task.get_id().map_err(ApplicationError::TaskTree)?)
                     .and_modify(|attributes| {
                         attributes.first_available_time =
                             max(attributes.first_available_time, first_available_time);
@@ -122,9 +147,11 @@ fn build_schedule_candidates(repository: &dyn TaskRepositoryTrait) -> Vec<TaskSc
                     })
                     .or_insert(TaskScheduleAttributes {
                         first_available_time,
-                        neg_priority: !task.get_priority(),
+                        neg_priority: !task.get_priority().map_err(ApplicationError::TaskTree)?,
                         rank,
-                        deadline_time: task.get_deadline_time_opt(),
+                        deadline_time: task
+                            .get_deadline_time_opt()
+                            .map_err(ApplicationError::TaskTree)?,
                     });
             }
         }
@@ -144,31 +171,37 @@ fn build_schedule_candidates(repository: &dyn TaskRepositoryTrait) -> Vec<TaskSc
         )
     });
 
-    attributes
-        .into_iter()
-        .filter_map(|(id, attributes)| {
-            repository.get_by_id(id).map(|task| TaskScheduleCandidate {
-                remaining_seconds: calculate_remaining_work_seconds(&task),
-                dependency_ids: child_ids_by_parent_id.remove(&id).unwrap_or_default(),
-                atomic: task.get_atomic(),
-                task,
-                first_available_time: attributes.first_available_time,
-                neg_priority: attributes.neg_priority,
-                rank: attributes.rank,
-                deadline_time: attributes.deadline_time,
-            })
-        })
-        .collect()
+    let mut candidates = Vec::new();
+    for (id, attributes) in attributes {
+        let Some(task) = repository
+            .get_by_id(id)
+            .map_err(ApplicationError::TaskTree)?
+        else {
+            continue;
+        };
+        candidates.push(TaskScheduleCandidate {
+            id,
+            remaining_seconds: calculate_remaining_work_seconds(&task)
+                .map_err(ApplicationError::TaskTree)?,
+            dependency_ids: child_ids_by_parent_id.remove(&id).unwrap_or_default(),
+            atomic: task.get_atomic().map_err(ApplicationError::TaskTree)?,
+            task,
+            first_available_time: attributes.first_available_time,
+            neg_priority: attributes.neg_priority,
+            rank: attributes.rank,
+            deadline_time: attributes.deadline_time,
+        });
+    }
+    Ok(candidates)
 }
 
-fn calculate_remaining_work_seconds(task: &TaskHandle) -> i64 {
-    if task.get_estimated_work_seconds() >= task.get_actual_work_seconds() {
-        task.get_estimated_work_seconds() - task.get_actual_work_seconds()
+fn calculate_remaining_work_seconds(task: &TaskHandle) -> Result<i64, TaskTreeError> {
+    let estimated_work_seconds = task.get_estimated_work_seconds()?;
+    let actual_work_seconds = task.get_actual_work_seconds()?;
+    if estimated_work_seconds >= actual_work_seconds {
+        Ok(estimated_work_seconds - actual_work_seconds)
     } else {
-        max(
-            0,
-            task.get_estimated_work_seconds() * 2 - task.get_actual_work_seconds(),
-        )
+        Ok(max(0, estimated_work_seconds * 2 - actual_work_seconds))
     }
 }
 
@@ -208,7 +241,7 @@ fn find_next_occupied_slot(
 fn schedule_tasks_by_priority(
     candidates: &[TaskScheduleCandidate],
     last_synced_time: DateTime<Local>,
-) -> Vec<ScheduledTask> {
+) -> Result<Vec<ScheduledTask>, TaskTreeError> {
     let mut pending_candidates = candidates.to_vec();
     pending_candidates.sort_by(|a, b| {
         (
@@ -217,7 +250,7 @@ fn schedule_tasks_by_priority(
             a.neg_priority,
             a.first_available_time,
             a.rank,
-            a.task.get_id(),
+            a.id,
         )
             .cmp(&(
                 b.deadline_time.is_none(),
@@ -225,7 +258,7 @@ fn schedule_tasks_by_priority(
                 b.neg_priority,
                 b.first_available_time,
                 b.rank,
-                b.task.get_id(),
+                b.id,
             ))
     });
 
@@ -334,7 +367,7 @@ fn schedule_tasks_by_priority(
                 segment_start = segment_end;
             }
         }
-        scheduled_end_by_id.insert(candidate.task.get_id(), candidate_scheduled_end);
+        scheduled_end_by_id.insert(candidate.id, candidate_scheduled_end);
     }
 
     scheduled_tasks.sort_by(|a, b| {
@@ -343,17 +376,17 @@ fn schedule_tasks_by_priority(
             a.deadline_time.is_none(),
             a.neg_priority,
             a.rank,
-            a.task.get_id(),
+            a.id,
         )
             .cmp(&(
                 b.scheduled_start,
                 b.deadline_time.is_none(),
                 b.neg_priority,
                 b.rank,
-                b.task.get_id(),
+                b.id,
             ))
     });
-    scheduled_tasks
+    Ok(scheduled_tasks)
 }
 
 fn to_scheduled_task(
@@ -364,6 +397,7 @@ fn to_scheduled_task(
     total_work_seconds: i64,
 ) -> ScheduledTask {
     ScheduledTask {
+        id: candidate.id,
         task: candidate.task.clone(),
         first_available_time: candidate.first_available_time,
         scheduled_start,
@@ -387,8 +421,10 @@ mod tests {
         neg_priority: i64,
         remaining_seconds: i64,
     ) -> TaskScheduleCandidate {
+        let task = TaskHandle::new(name).unwrap();
         TaskScheduleCandidate {
-            task: TaskHandle::new(name),
+            id: task.get_id().unwrap(),
+            task,
             first_available_time,
             neg_priority,
             rank: 0,
@@ -408,7 +444,7 @@ mod tests {
             -88,
             20 * 60,
         );
-        let low_id = low.task.get_id();
+        let low_id = low.task.get_id().unwrap();
         let high = candidate(
             "高優先度",
             Local.with_ymd_and_hms(2026, 5, 10, 13, 5, 0).unwrap(),
@@ -416,10 +452,10 @@ mod tests {
             60 * 60,
         );
 
-        let actual = schedule_tasks_by_priority(&[low, high], now);
+        let actual = schedule_tasks_by_priority(&[low, high], now).unwrap();
         let low_segments = actual
             .iter()
-            .filter(|scheduled| scheduled.task.get_id() == low_id)
+            .filter(|scheduled| scheduled.task.get_id().unwrap() == low_id)
             .collect::<Vec<_>>();
 
         assert_eq!(low_segments.len(), 1);
@@ -439,7 +475,7 @@ mod tests {
             -88,
             20 * 60,
         );
-        let low_id = low.task.get_id();
+        let low_id = low.task.get_id().unwrap();
         let high = candidate(
             "高優先度",
             Local.with_ymd_and_hms(2026, 5, 10, 13, 6, 0).unwrap(),
@@ -447,10 +483,10 @@ mod tests {
             60 * 60,
         );
 
-        let actual = schedule_tasks_by_priority(&[low, high], now);
+        let actual = schedule_tasks_by_priority(&[low, high], now).unwrap();
         let low_segments = actual
             .iter()
-            .filter(|scheduled| scheduled.task.get_id() == low_id)
+            .filter(|scheduled| scheduled.task.get_id().unwrap() == low_id)
             .collect::<Vec<_>>();
 
         assert_eq!(low_segments.len(), 2);
@@ -475,7 +511,7 @@ mod tests {
             -88,
             20 * 60,
         );
-        let low_id = low.task.get_id();
+        let low_id = low.task.get_id().unwrap();
         let high = candidate(
             "高優先度",
             Local.with_ymd_and_hms(2026, 5, 10, 13, 15, 0).unwrap(),
@@ -483,10 +519,10 @@ mod tests {
             60 * 60,
         );
 
-        let actual = schedule_tasks_by_priority(&[low, high], now);
+        let actual = schedule_tasks_by_priority(&[low, high], now).unwrap();
         let low_segments = actual
             .iter()
-            .filter(|scheduled| scheduled.task.get_id() == low_id)
+            .filter(|scheduled| scheduled.task.get_id().unwrap() == low_id)
             .collect::<Vec<_>>();
 
         assert_eq!(low_segments.len(), 1);
@@ -507,12 +543,12 @@ mod tests {
             -88,
             5 * 60,
         );
-        let task_id = task.task.get_id();
+        let task_id = task.task.get_id().unwrap();
 
-        let actual = schedule_tasks_by_priority(&[blocker, task], now);
+        let actual = schedule_tasks_by_priority(&[blocker, task], now).unwrap();
         let scheduled = actual
             .iter()
-            .find(|scheduled| scheduled.task.get_id() == task_id)
+            .find(|scheduled| scheduled.task.get_id().unwrap() == task_id)
             .unwrap();
 
         assert_eq!(
@@ -526,7 +562,7 @@ mod tests {
     fn schedule_tasks_by_priority_atomic_taskは依存終了後の連続枠に配置する() {
         let now = Local.with_ymd_and_hms(2026, 5, 10, 12, 0, 0).unwrap();
         let child = candidate("子", now, -99, 60 * 60);
-        let child_id = child.task.get_id();
+        let child_id = child.task.get_id().unwrap();
         let blocker = candidate(
             "blocker",
             Local.with_ymd_and_hms(2026, 5, 10, 13, 30, 0).unwrap(),
@@ -537,12 +573,12 @@ mod tests {
         parent.rank = 1;
         parent.atomic = true;
         parent.dependency_ids = vec![child_id];
-        let parent_id = parent.task.get_id();
+        let parent_id = parent.task.get_id().unwrap();
 
-        let actual = schedule_tasks_by_priority(&[parent, blocker, child], now);
+        let actual = schedule_tasks_by_priority(&[parent, blocker, child], now).unwrap();
         let scheduled = actual
             .iter()
-            .find(|scheduled| scheduled.task.get_id() == parent_id)
+            .find(|scheduled| scheduled.task.get_id().unwrap() == parent_id)
             .unwrap();
 
         assert_eq!(
@@ -559,34 +595,35 @@ mod tests {
     fn schedule_tasks_by_priority_高優先度task間の隙間を優先度順に埋める() {
         let now = Local.with_ymd_and_hms(2026, 5, 10, 12, 0, 0).unwrap();
         let lunch = candidate("昼食", now, -89, 60 * 60);
-        let lunch_id = lunch.task.get_id();
+        let lunch_id = lunch.task.get_id().unwrap();
         let priority_88 = candidate(
             "優先度88",
             Local.with_ymd_and_hms(2026, 5, 10, 13, 0, 0).unwrap(),
             -88,
             4 * 60 * 60,
         );
-        let priority_88_id = priority_88.task.get_id();
+        let priority_88_id = priority_88.task.get_id().unwrap();
         let priority_87 = candidate(
             "優先度87",
             Local.with_ymd_and_hms(2026, 5, 10, 13, 0, 0).unwrap(),
             -87,
             60 * 60,
         );
-        let priority_87_id = priority_87.task.get_id();
+        let priority_87_id = priority_87.task.get_id().unwrap();
         let dinner = candidate(
             "夕食",
             Local.with_ymd_and_hms(2026, 5, 10, 18, 0, 0).unwrap(),
             -89,
             60 * 60,
         );
-        let dinner_id = dinner.task.get_id();
+        let dinner_id = dinner.task.get_id().unwrap();
 
-        let actual = schedule_tasks_by_priority(&[priority_87, dinner, priority_88, lunch], now);
+        let actual =
+            schedule_tasks_by_priority(&[priority_87, dinner, priority_88, lunch], now).unwrap();
         let start = |id| {
             actual
                 .iter()
-                .find(|scheduled| scheduled.task.get_id() == id)
+                .find(|scheduled| scheduled.task.get_id().unwrap() == id)
                 .unwrap()
                 .scheduled_start
         };
@@ -611,17 +648,17 @@ mod tests {
         let now = Local.with_ymd_and_hms(2026, 5, 10, 14, 0, 0).unwrap();
         let blocker = candidate("blocker", now, -90, 60 * 60);
         let child = candidate("子", now, -1, 60);
-        let child_id = child.task.get_id();
+        let child_id = child.task.get_id().unwrap();
         let mut parent = candidate("親", now, -99, 0);
         parent.rank = 1;
         parent.dependency_ids = vec![child_id];
-        let parent_id = parent.task.get_id();
+        let parent_id = parent.task.get_id().unwrap();
 
-        let actual = schedule_tasks_by_priority(&[parent, blocker, child], now);
+        let actual = schedule_tasks_by_priority(&[parent, blocker, child], now).unwrap();
         let start = |id| {
             actual
                 .iter()
-                .find(|scheduled| scheduled.task.get_id() == id)
+                .find(|scheduled| scheduled.task.get_id().unwrap() == id)
                 .unwrap()
                 .scheduled_start
         };
