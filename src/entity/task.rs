@@ -1402,17 +1402,15 @@ impl TaskHandle {
     }
 
     pub fn create_child(&self, task_attr: TaskAttr) -> Result<Self, TaskTreeError> {
-        self.root()?
-            .node
-            .try_borrow_data()
-            .map_err(|_| TaskTreeError::Borrow)?;
+        let root = self.root()?;
+        root.ensure_persistent_mutation_writable()?;
         let grant = self
             .node
             .tree()
             .grant_hierarchy_edit()
             .map_err(|_| TaskTreeError::HierarchyGrant)?;
         let child_node = self.node.create_as_last_child(&grant, task_attr);
-        self.mark_persistent_mutation()?;
+        root.mark_persistent_mutation()?;
         Ok(Self { node: child_node })
     }
 
@@ -1428,14 +1426,10 @@ impl TaskHandle {
 
         let source_root = self.root()?;
         let destination_root = parent_task.root()?;
-        source_root
-            .node
-            .try_borrow_data()
-            .map_err(|_| TaskTreeError::Borrow)?;
-        destination_root
-            .node
-            .try_borrow_data()
-            .map_err(|_| TaskTreeError::Borrow)?;
+        source_root.ensure_persistent_mutation_writable()?;
+        if !source_root.node.ptr_eq(&destination_root.node) {
+            destination_root.ensure_persistent_mutation_writable()?;
+        }
         let self_grant = self
             .node
             .tree()
@@ -1461,10 +1455,8 @@ impl TaskHandle {
     /// Inserts a newly-created parent between this task and its current parent.
     pub fn create_parent(&mut self, task_attr: TaskAttr) -> Result<(), TaskTreeError> {
         let original_parent = self.parent()?.ok_or(TaskTreeError::RootOperation)?;
-        self.root()?
-            .node
-            .try_borrow_data()
-            .map_err(|_| TaskTreeError::Borrow)?;
+        let root = self.root()?;
+        root.ensure_persistent_mutation_writable()?;
         let grant = self
             .node
             .tree()
@@ -1483,7 +1475,7 @@ impl TaskHandle {
         self.node
             .try_detach_insert_subtree(&grant, InsertAs::LastChildOf(&parent_hot))
             .map_err(|_| TaskTreeError::Insert)?;
-        self.mark_persistent_mutation()?;
+        root.mark_persistent_mutation()?;
         Ok(())
     }
 
@@ -1499,10 +1491,8 @@ impl TaskHandle {
         if begin_index > end_index {
             return Err(TaskTreeError::InvalidSequence);
         }
-        self.root()?
-            .node
-            .try_borrow_data()
-            .map_err(|_| TaskTreeError::Borrow)?;
+        let root = self.root()?;
+        root.ensure_persistent_mutation_writable()?;
         let grant = self
             .node
             .tree()
@@ -1516,7 +1506,7 @@ impl TaskHandle {
             current_node = current_node.create_as_last_child(&grant, task_attr);
         }
 
-        self.mark_persistent_mutation()?;
+        root.mark_persistent_mutation()?;
         Ok(Self { node: current_node })
     }
 
@@ -1556,14 +1546,19 @@ impl TaskHandle {
         Ok(())
     }
 
+    fn ensure_persistent_mutation_writable(&self) -> Result<(), TaskTreeError> {
+        self.node
+            .try_borrow_data_mut()
+            .map(|_| ())
+            .map_err(|_| TaskTreeError::Borrow)
+    }
+
     fn update(&self, update: impl FnOnce(&mut TaskAttr) -> bool) -> Result<(), TaskTreeError> {
         let root = self.root()?;
         self.node
             .try_borrow_data()
             .map_err(|_| TaskTreeError::Borrow)?;
-        root.node
-            .try_borrow_data()
-            .map_err(|_| TaskTreeError::Borrow)?;
+        root.ensure_persistent_mutation_writable()?;
         let changed = update(
             &mut *self
                 .node
@@ -3708,11 +3703,17 @@ fn test_reparent_toはsource_rootのshared_borrow競合時にtreeとrevisionを�
     let before_destination_revision = destination_root.get_persistent_mutation_revision().unwrap();
 
     source_root.with_shared_data_borrow_for_test(|| {
-        assert_eq!(child.reparent_to(&destination_root), Err(TaskTreeError::Borrow));
+        assert_eq!(
+            child.reparent_to(&destination_root),
+            Err(TaskTreeError::Borrow)
+        );
     });
 
     assert_eq!(source_root.snapshot().unwrap(), before_source_snapshot);
-    assert_eq!(destination_root.snapshot().unwrap(), before_destination_snapshot);
+    assert_eq!(
+        destination_root.snapshot().unwrap(),
+        before_destination_snapshot
+    );
     assert_eq!(
         source_root.get_persistent_mutation_revision().unwrap(),
         before_source_revision
