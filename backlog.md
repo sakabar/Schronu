@@ -52,7 +52,7 @@
 | TD-014 | P2 | 未着手 | M | Apps Scriptの同期処理が行数に比例してAPI呼出しを増やす |
 | TD-015 | P2 | 未着手 | L | テストが巨大な製品ファイルへ混在し、fixtureも重複している |
 | TD-016 | P3 | 未着手 | M | マジック値、未使用フィールド、古いコメントが意図を曖昧にしている |
-| TD-017 | P1 | 未着手 | XL | `TaskHandle`の既存infallible APIが内部不変条件の破れをpanicとして扱う |
+| TD-017 | P1 | 完了 | XL | `TaskHandle`の既存infallible APIが内部不変条件の破れをpanicとして扱う |
 
 ## 詳細
 
@@ -222,6 +222,9 @@
 
 - 優先度: `P1`
 - 概算規模: `XL`
+- 完了日: 2026-08-15
+- 対応: `TaskHandle`の公開read、write、tree操作を`Result<_, TaskTreeError>`へ統一し、infallible APIと`try_*`互換APIを除去した。借用競合とdummy root不整合は構造化errorとしてapplication、CLI、MCPへ伝搬する。更新前のborrow可否検証により、attribute、tree、mutation revisionの原子性を保証した。
+- 検証: 借用競合、dummy root欠落・複数child、tree操作、deadline伝搬、appointment、CLI/MCP error形式の契約testを追加した。`cargo fmt --check`、`cargo clippy --locked --all-targets -- -D warnings`、`cargo test --locked`に成功した。
 
 #### 現状と根拠
 
