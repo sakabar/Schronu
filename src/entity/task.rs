@@ -1211,7 +1211,7 @@ pub enum TaskTreeError {
     Borrow,
     HierarchyGrant,
     Insert,
-    /// The hidden dummy root no longer has the single task child required by TaskHandle.
+    /// The hidden dummy root no longer has exactly one task child, or this handle is outside it.
     MissingDummyRootChild,
 }
 
@@ -1224,7 +1224,9 @@ impl fmt::Display for TaskTreeError {
             Self::Borrow => "cannot borrow task tree data",
             Self::HierarchyGrant => "cannot acquire hierarchy edit grant",
             Self::Insert => "cannot insert task subtree",
-            Self::MissingDummyRootChild => "task tree dummy root has no task child",
+            Self::MissingDummyRootChild => {
+                "task tree dummy root must have exactly one task child containing this handle"
+            }
         };
         formatter.write_str(reason)
     }
@@ -1366,11 +1368,24 @@ impl TaskHandle {
 
     pub fn root(&self) -> Result<Self, TaskTreeError> {
         self.get_attr()?;
-        self.node
-            .root()
-            .first_child()
-            .map(|node| Self { node })
-            .ok_or(TaskTreeError::MissingDummyRootChild)
+        let dummy_root = self.node.root();
+        let mut children = dummy_root.children();
+        let task_root = children
+            .next()
+            .ok_or(TaskTreeError::MissingDummyRootChild)?;
+        if children.next().is_some() {
+            return Err(TaskTreeError::MissingDummyRootChild);
+        }
+
+        let mut ancestor = Some(self.node.clone());
+        while let Some(node) = ancestor {
+            if node.ptr_eq(&task_root) {
+                return Ok(Self { node: task_root });
+            }
+            ancestor = node.parent();
+        }
+
+        Err(TaskTreeError::MissingDummyRootChild)
     }
 
     pub fn get_children(&self) -> Result<Vec<Self>, TaskTreeError> {
@@ -3393,8 +3408,14 @@ fn test_rootはdummy_rootに複数の子がある場合にinvariant_errorを返�
     };
     let second_revision = second_task.node.borrow_data().persistent_mutation_revision;
 
-    assert_eq!(second_task.root(), Err(TaskTreeError::MissingDummyRootChild));
-    assert_eq!(second_task.get_priority(), Err(TaskTreeError::MissingDummyRootChild));
+    assert_eq!(
+        second_task.root(),
+        Err(TaskTreeError::MissingDummyRootChild)
+    );
+    assert_eq!(
+        second_task.get_priority(),
+        Err(TaskTreeError::MissingDummyRootChild)
+    );
     assert_eq!(
         second_task.get_project_category_opt(),
         Err(TaskTreeError::MissingDummyRootChild)
@@ -3407,13 +3428,13 @@ fn test_rootはdummy_rootに複数の子がある場合にinvariant_errorを返�
         second_task.set_project_category_opt(Some(ProjectCategory::Recovery)),
         Err(TaskTreeError::MissingDummyRootChild)
     );
-    assert_eq!(first_task.get_priority().unwrap(), 10);
+    assert_eq!(first_task.node.borrow_data().get_priority(), 10);
     assert_eq!(
-        first_task.get_project_category_opt().unwrap(),
+        first_task.node.borrow_data().get_project_category_opt(),
         Some(ProjectCategory::Earning)
     );
     assert_eq!(
-        first_task.get_persistent_mutation_revision().unwrap(),
+        first_task.node.borrow_data().persistent_mutation_revision,
         first_revision
     );
     assert_eq!(
@@ -3429,8 +3450,14 @@ fn test_rootはhandleがdummy_root自身を指す場合にinvariant_errorを返�
         node: task.node.root(),
     };
 
-    assert_eq!(invalid_handle.root(), Err(TaskTreeError::MissingDummyRootChild));
-    assert_eq!(invalid_handle.get_priority(), Err(TaskTreeError::MissingDummyRootChild));
+    assert_eq!(
+        invalid_handle.root(),
+        Err(TaskTreeError::MissingDummyRootChild)
+    );
+    assert_eq!(
+        invalid_handle.get_priority(),
+        Err(TaskTreeError::MissingDummyRootChild)
+    );
 }
 
 #[test]
