@@ -1832,6 +1832,26 @@ mod tests {
     }
 
     #[test]
+    fn get_scheduleは借用競合を既存internal_error形式で返す() {
+        let task = TaskHandle::new("借用競合");
+        let server = McpServer::new(RecordingRepository::new(vec![task.clone()]));
+
+        let response = task.with_exclusive_data_borrow_for_test(|| {
+            server.call_get_schedule(json!("borrow"), Some(&json!({})))
+        });
+
+        assert_eq!(response["result"]["isError"], true);
+        assert_eq!(
+            response["result"]["structuredContent"]["error"]["code"],
+            "internal_error"
+        );
+        assert_eq!(
+            response["result"]["structuredContent"]["error"]["message"],
+            "task tree operation failed: cannot borrow task tree data"
+        );
+    }
+
+    #[test]
     fn 同一mcp_processの2回目のread_toolは実repositoryのcacheを使う() {
         let storage = McpCacheTestStorage::new();
         let storage_path = storage.path.to_str().unwrap();
