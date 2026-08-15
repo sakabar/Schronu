@@ -132,6 +132,60 @@ trait SchronuWriter: Write {
     }
 }
 
+struct ErrorCapturingWriter<'a> {
+    inner: &'a mut dyn SchronuWriter,
+    first_error: Option<std::io::Error>,
+}
+
+impl<'a> ErrorCapturingWriter<'a> {
+    fn new(inner: &'a mut dyn SchronuWriter) -> Self {
+        Self {
+            inner,
+            first_error: None,
+        }
+    }
+
+    fn take_error(&mut self) -> Option<std::io::Error> {
+        self.first_error.take()
+    }
+
+    fn capture(&mut self, error: std::io::Error) {
+        if self.first_error.is_none() {
+            self.first_error = Some(error);
+        }
+    }
+}
+
+impl Write for ErrorCapturingWriter<'_> {
+    fn write(&mut self, buffer: &[u8]) -> std::io::Result<usize> {
+        match self.inner.write(buffer) {
+            Ok(written) => Ok(written),
+            Err(error) => {
+                self.capture(error);
+                Ok(buffer.len())
+            }
+        }
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        if let Err(error) = self.inner.flush() {
+            self.capture(error);
+        }
+        Ok(())
+    }
+}
+
+impl SchronuWriter for ErrorCapturingWriter<'_> {
+    fn writeln_newline(&mut self, message: &str) -> Result<(), std::io::Error> {
+        let _ = writeln!(self, "{message}");
+        Ok(())
+    }
+
+    fn supports_ansi_color(&self) -> bool {
+        self.inner.supports_ansi_color()
+    }
+}
+
 #[derive(Debug)]
 enum RunError {
     Command(CommandError),
@@ -6576,15 +6630,21 @@ fn execute(
     focus_started_datetime: &DateTime<Local>,
     untrimmed_line: &str,
 ) -> Result<(), CommandError> {
+    let mut output = ErrorCapturingWriter::new(stdout);
     execute_with_config(
-        stdout,
+        &mut output,
         task_repository,
         free_time_manager,
         focused_task_id_opt,
         focus_started_datetime,
         untrimmed_line,
         active_config(),
-    )
+    )?;
+    match output.take_error() {
+        Some(error) if error.kind() == std::io::ErrorKind::BrokenPipe => Ok(()),
+        Some(error) => Err(CommandError::Output(error)),
+        None => Ok(()),
+    }
 }
 
 #[allow(unused_must_use)]
