@@ -67,6 +67,9 @@ pub trait TaskRepositoryTrait {
         self.load()?;
         Ok(RepositoryReloadOutcome::Reloaded)
     }
+    fn has_pending_changes(&self) -> bool {
+        true
+    }
     fn save(&self) -> Result<(), TaskRepositoryError>;
     fn sync_clock(&mut self, now: DateTime<Local>);
     fn get_last_synced_time(&self) -> DateTime<Local>;

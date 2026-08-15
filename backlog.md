@@ -42,7 +42,7 @@
 | TD-004 | P1 | 完了 | XL | `Task`の木構造と内部可変性が暗黙の共有状態とpanic前提を作っている |
 | TD-005 | P1 | 未着手 | XL | CLIコントローラーへ責務が集中している |
 | TD-006 | P1 | 未着手 | L | CLIの入力・application・出力エラーが握り潰される |
-| TD-007 | P1 | 未着手 | L | CLIとMCPでrepository transactionが別々に組み立てられている |
+| TD-007 | P1 | 完了 | L | CLIとMCPでrepository transactionが別々に組み立てられている |
 | TD-008 | P1 | 完了 | M | CIがリポジトリ規約を満たさず、ビルド再現性も固定されていない |
 | TD-009 | P2 | 未着手 | L | entity層がYAML形式へ依存している |
 | TD-010 | P2 | 未着手 | L | 現在時刻、UUID、業務日境界がドメイン内部へ埋め込まれている |
@@ -333,6 +333,9 @@
 
 - 優先度: `P1`
 - 概算規模: `L`
+- 完了日: 2026-08-15
+- 対応: lock、reload、operation、条件付きsaveを共通transaction実行器へ集約し、CLIとMCPから利用するようにした。read-only operationと実変更のないMCP更新はsaveを行わず、save失敗は`StateUncertain`としてMCPの既存`repository_state_uncertain` / `restart_server`契約へ変換する。
+- 検証: read-only CLI transaction、MCPの更新・入力エラー・save失敗・同値更新、MCP stdioの契約testを追加・維持した。`cargo test --locked`、`cargo fmt --check`、`cargo clippy --locked --all-targets -- -D warnings`に成功した。
 
 #### 現状と根拠
 
