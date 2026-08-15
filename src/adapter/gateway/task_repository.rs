@@ -498,6 +498,10 @@ impl TaskRepositoryTrait for TaskRepository {
         Ok(RepositoryReloadOutcome::Reloaded)
     }
 
+    fn has_pending_changes(&self) -> bool {
+        self.projects.iter().any(Project::needs_save)
+    }
+
     fn save(&self) -> Result<(), TaskRepositoryError> {
         let projects_to_save = self
             .projects
