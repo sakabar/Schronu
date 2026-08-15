@@ -5728,6 +5728,20 @@ fn test_execute_estimate_見積もりを更新し不正値では維持する() {
 }
 
 #[test]
+fn test_execute_estimate_不正値はfield付き入力エラーを表示して状態を変更しない() {
+    let now = Local.with_ymd_and_hms(2026, 8, 11, 12, 0, 0).unwrap();
+    let task = TaskHandle::new("更新対象");
+    task.set_estimated_work_seconds(45 * 60);
+    let task_id = task.get_id();
+
+    let result = execute_command_for_test(task, now, Some(task_id), "予 invalid");
+
+    assert_eq!(result.task.get_estimated_work_seconds(), 45 * 60);
+    assert_eq!(result.focused_task_id_opt, Some(task_id));
+    assert!(result.output.contains("[Error] 入力エラー: estimated_work_minutes:"));
+}
+
+#[test]
 fn test_execute_deadline_締切を設定して解除する() {
     let now = Local.with_ymd_and_hms(2026, 8, 11, 12, 0, 0).unwrap();
     let task = TaskHandle::new("更新対象");
@@ -5753,6 +5767,20 @@ fn test_execute_deadline_締切を設定して解除する() {
         invalid.task.get_deadline_time_opt(),
         Some(Local.with_ymd_and_hms(2026, 8, 11, 14, 30, 0).unwrap())
     );
+}
+
+#[test]
+fn test_execute_deadline_不正日時はfield付き入力エラーを表示して状態を変更しない() {
+    let now = Local.with_ymd_and_hms(2026, 8, 11, 12, 0, 0).unwrap();
+    let task = TaskHandle::new("更新対象");
+    let task_id = task.get_id();
+    let previous_deadline = Local.with_ymd_and_hms(2026, 8, 20, 23, 59, 59).unwrap();
+    task.set_deadline_time_opt(Some(previous_deadline));
+
+    let result = execute_command_for_test(task, now, Some(task_id), "〆 invalid");
+
+    assert_eq!(result.task.get_deadline_time_opt(), Some(previous_deadline));
+    assert!(result.output.contains("[Error] 入力エラー: deadline:"));
 }
 
 #[test]
@@ -6158,6 +6186,22 @@ fn test_execute_set_project_category_不正カテゴリでは変更しない() {
         actual.get_project_category_opt(),
         Some(ProjectCategory::Investment)
     );
+}
+
+#[test]
+fn test_execute_category_不正値はfield付き入力エラーを表示して状態を変更しない() {
+    let now = Local.with_ymd_and_hms(2026, 8, 11, 12, 0, 0).unwrap();
+    let task = TaskHandle::new("カテゴリ対象");
+    let task_id = task.get_id();
+    task.set_project_category_opt(Some(ProjectCategory::Investment));
+
+    let result = execute_command_for_test(task, now, Some(task_id), "類 invalid");
+
+    assert_eq!(
+        result.task.get_project_category_opt(),
+        Some(ProjectCategory::Investment)
+    );
+    assert!(result.output.contains("[Error] 入力エラー: category:"));
 }
 
 fn format_work_seconds_as_hours_minutes(work_seconds: i64) -> String {
