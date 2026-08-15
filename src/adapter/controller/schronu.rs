@@ -3308,37 +3308,7 @@ fn execute_show_all_tasks_with_config(
     // 逆順にして、下側に直近の日付があるようにする
     daily_summary_rows.reverse();
 
-    if is_calendar_func {
-        for (cal_ind, row) in daily_summary_rows.iter().enumerate() {
-            writeln_newline(stdout, &row.calendar_message).unwrap();
-
-            if row.calendar_message.contains(&format!(
-                "({})",
-                get_weekday_jp_from_weekday(config.calendar_blank_line_weekday)
-            )) && cal_ind != daily_summary_rows.len() - 1
-            {
-                writeln_newline(stdout, "").unwrap();
-            }
-        }
-        // フッター
-        let footer: String = [
-            "日          ",
-            "空          ",
-            "空差      ",
-            "空差比",
-            "余差    ",
-            "余差累    ",
-            "〆差      ",
-            "〆差比",
-            "空差累    ",
-            "単発余暇",
-            "空差累比",
-            "タスク数",
-        ]
-        .join("\t");
-        writeln_newline(stdout, &footer).unwrap();
-        writeln_newline(stdout, "").unwrap();
-
+    let write_daily_summary = |stdout: &mut dyn SchronuWriter| {
         let clear_date_info = format!(
             "今のタスクが片付く日付: {}日後の{}",
             (first_caught_up_date - last_synced_time.date_naive()).num_days(),
@@ -3377,7 +3347,6 @@ fn execute_show_all_tasks_with_config(
 
         let mut is_all_favorable = true;
 
-        // 順調フラグが折れている時にアラート表示
         if !has_today_deadline_leeway {
             writeln_newline(stdout, "[Crit] 【今日の】〆切に間に合いません。【ただちに】〆切をリスケする調整をしてください。").unwrap();
             is_all_favorable = false;
@@ -3422,6 +3391,39 @@ fn execute_show_all_tasks_with_config(
         }
 
         writeln_newline(stdout, "").unwrap();
+    };
+
+    if is_calendar_func {
+        for (cal_ind, row) in daily_summary_rows.iter().enumerate() {
+            writeln_newline(stdout, &row.calendar_message).unwrap();
+
+            if row.calendar_message.contains(&format!(
+                "({})",
+                get_weekday_jp_from_weekday(config.calendar_blank_line_weekday)
+            )) && cal_ind != daily_summary_rows.len() - 1
+            {
+                writeln_newline(stdout, "").unwrap();
+            }
+        }
+        // フッター
+        let footer: String = [
+            "日          ",
+            "空          ",
+            "空差      ",
+            "空差比",
+            "余差    ",
+            "余差累    ",
+            "〆差      ",
+            "〆差比",
+            "空差累    ",
+            "単発余暇",
+            "空差累比",
+            "タスク数",
+        ]
+        .join("\t");
+        writeln_newline(stdout, &footer).unwrap();
+        writeln_newline(stdout, "").unwrap();
+        write_daily_summary(stdout);
     } else if is_band_func {
         writeln_newline(stdout, &format_daily_band_legend(supports_ansi_color)).unwrap();
         writeln_newline(stdout, "").unwrap();
@@ -3433,9 +3435,11 @@ fn execute_show_all_tasks_with_config(
                 writeln_newline(stdout, "").unwrap();
             }
         }
+        writeln_newline(stdout, "").unwrap();
+        write_daily_summary(stdout);
     }
 
-    if !is_band_func {
+    if is_calendar_func || is_band_func {
         writeln_newline(stdout, &busy_s).unwrap();
         writeln_newline(stdout, &s).unwrap();
         writeln_newline(stdout, &s_for_rho1).unwrap();
@@ -8169,7 +8173,7 @@ fn test_format_daily_band_当日経過と24時間超過を表示する() {
 }
 
 #[test]
-fn test_execute_band_日本語と英語で凡例と棒だけを表示する() {
+fn test_execute_band_日本語と英語で凡例と棒とサマリーを表示する() {
     let now = Local.with_ymd_and_hms(2026, 8, 11, 12, 0, 0).unwrap();
     let task = TaskHandle::new("帯出力固定用タスク");
     task.set_estimated_work_seconds(60 * 60);
@@ -8185,6 +8189,16 @@ fn test_execute_band_日本語と英語で凡例と棒だけを表示する() {
             "\n",
             "2026-08-11(火) -06:00 -09:00 [{}{}{}{}]\n",
             "\n",
+            "今のタスクが片付く日付: 4160日後の2037-12-31\n",
+            "最大の累積時間: -09時間00分 (2026-08-11), 最大のrhoの差: -1.00 (1900-01-01), 次にタスクを積める日付: 0日後の2026-08-11 (-6時間00分)\n",
+            "\n",
+            "[Info] 順調です。突発タスクに対応したり1日の終わり際にタスクを新しく積んだりする余裕があります。ひとまずは脇道に逸れずに予定の遂行をしてください。\n",
+            "\n",
+            "残り拘束時間は0.0時間です\n",
+            "完了見込み日時は1.0時間後の2026/08/11 13:00:00です\n",
+            "rep ρ = (1.00 + 0.00) / (1.00 + 0.00 + 11 + 30/60) = 0.08, Lq = 0.1\n",
+            "one ρ = (1.00 + 0.00) / (1.00 + 0.00 + 11 + 30/60) = 0.08, Lq = 0.1\n",
+            "\n",
         ),
         "#".repeat(56),
         "-".repeat(4),
@@ -8195,8 +8209,28 @@ fn test_execute_band_日本語と英語で凡例と棒だけを表示する() {
     assert_eq!(strip_ansi_escape_sequences(&japanese), expected);
     assert_eq!(strip_ansi_escape_sequences(&english), expected);
     assert!(!japanese.contains("日          "));
-    assert!(!japanese.contains("残り拘束時間"));
     assert!(!japanese.contains("帯出力固定用タスク"));
+}
+
+#[test]
+fn test_execute_band_当日終了時刻と翌日締切のアラートを表示する() {
+    let now = Local.with_ymd_and_hms(2026, 8, 11, 12, 0, 0).unwrap();
+    let tomorrow = now + Duration::days(1);
+    let root = TaskHandle::new("帯アラートfixture");
+    root.set_estimated_work_seconds(0);
+    add_scheduled_child_for_test(&root, "今日の超過", now, 11 * 60);
+    add_scheduled_child_for_test(&root, "明日の予定", tomorrow, 1);
+    let tomorrow_task = add_scheduled_child_for_test(&root, "明日締切", now, 11 * 60);
+    tomorrow_task.set_deadline_time_opt(Some(tomorrow));
+
+    let actual = execute_calendar_command_for_test("帯", now, root, 10 * 60);
+
+    assert!(actual.contains(
+        "[Crit] 【今日の】終了予定時刻に間に合いません。【ただちに】どれかの予定を諦めて明日以降に延期してください。"
+    ), "{actual}");
+    assert!(actual.contains(
+        "[Warn] 【明日の】〆切に間に合いません。〆切をあさって以降にリスケする調整を【今日中に】してください。"
+    ), "{actual}");
 }
 
 #[test]
@@ -8215,6 +8249,16 @@ fn test_execute_band_凡例と帯を7色の_ansi前景色で表示する() {
             "凡例: {} 固定  {} 経過済み  {} 繰返  {} 単発  {} 余差  {} 空き  {} 超過  (1文字=15分)\n",
             "\n",
             "2026-08-11(火) -06:00 -09:00 [{}{}{}{}]\n",
+            "\n",
+            "今のタスクが片付く日付: 4160日後の2037-12-31\n",
+            "最大の累積時間: -09時間00分 (2026-08-11), 最大のrhoの差: -1.00 (1900-01-01), 次にタスクを積める日付: 0日後の2026-08-11 (-6時間00分)\n",
+            "\n",
+            "[Info] 順調です。突発タスクに対応したり1日の終わり際にタスクを新しく積んだりする余裕があります。ひとまずは脇道に逸れずに予定の遂行をしてください。\n",
+            "\n",
+            "残り拘束時間は0.0時間です\n",
+            "完了見込み日時は1.0時間後の2026/08/11 13:00:00です\n",
+            "rep ρ = (1.00 + 0.00) / (1.00 + 0.00 + 11 + 30/60) = 0.08, Lq = 0.1\n",
+            "one ρ = (1.00 + 0.00) / (1.00 + 0.00 + 11 + 30/60) = 0.08, Lq = 0.1\n",
             "\n",
         ),
         color(110, "#"),
