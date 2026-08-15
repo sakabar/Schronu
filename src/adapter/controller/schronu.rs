@@ -177,7 +177,9 @@ impl Write for ErrorCapturingWriter<'_> {
 
 impl SchronuWriter for ErrorCapturingWriter<'_> {
     fn writeln_newline(&mut self, message: &str) -> Result<(), std::io::Error> {
-        let _ = writeln!(self, "{message}");
+        if let Err(error) = self.inner.writeln_newline(message) {
+            self.capture(error);
+        }
         Ok(())
     }
 
@@ -4903,10 +4905,7 @@ impl SchronuWriter for FailingNewlineWriter {
         self.newline_call_count += 1;
         if self.failures_remaining > 0 {
             self.failures_remaining -= 1;
-            return Err(std::io::Error::new(
-                std::io::ErrorKind::Other,
-                "newline write failure",
-            ));
+            return Err(std::io::Error::other("newline write failure"));
         }
         writeln!(self, "<reset>{message}")
     }
