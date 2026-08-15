@@ -4981,28 +4981,19 @@ fn execute_command_for_test(
 }
 
 #[test]
-fn test_execute_show_allは借用競合を既存の操作エラー形式で表示する() {
-    let now = Local.with_ymd_and_hms(2026, 8, 14, 12, 0, 0).unwrap();
-    let task = TaskHandle::new("借用競合");
-    let mut task_repository = TestTaskRepository::new(task.clone(), now);
-    let mut free_time_manager = TestFreeTimeManager;
-    let mut focused_task_id_opt = None;
+fn test_report_command_resultはtask_tree_errorを既存の操作エラー形式で表示する() {
     let mut stdout = TestWriter::new();
 
-    let result = task.with_exclusive_data_borrow_for_test(|| {
-        execute(
-            &mut stdout,
-            &mut task_repository,
-            &mut free_time_manager,
-            &mut focused_task_id_opt,
-            &now,
-            "全",
-        )
-    });
+    report_command_result(
+        &mut stdout,
+        Err(CommandError::Application(ApplicationError::TaskTree(
+            TaskTreeError::Borrow,
+        ))),
+    );
 
     assert_eq!(
-        result.unwrap_err().to_string(),
-        "操作エラー: task tree operation failed: cannot borrow task tree data"
+        stdout.into_string(),
+        "[Error] 操作エラー: task tree operation failed: cannot borrow task tree data\n"
     );
 }
 

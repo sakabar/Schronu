@@ -1346,8 +1346,8 @@ impl TaskHandle {
         Ok(self.node.children().map(|node| Self { node }).collect())
     }
 
-    #[doc(hidden)]
-    pub fn with_exclusive_data_borrow_for_test<T>(&self, action: impl FnOnce() -> T) -> T {
+    #[cfg(test)]
+    pub(crate) fn with_exclusive_data_borrow_for_test<T>(&self, action: impl FnOnce() -> T) -> T {
         let _exclusive_borrow = self.node.borrow_data_mut();
         action()
     }
