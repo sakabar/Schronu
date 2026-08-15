@@ -41,7 +41,7 @@
 | TD-003 | P0 | 完了| L | 永続化YAMLの不正値が黙って既定値や新規UUIDへ変換される |
 | TD-004 | P1 | 完了 | XL | `Task`の木構造と内部可変性が暗黙の共有状態とpanic前提を作っている |
 | TD-005 | P1 | 未着手 | XL | CLIコントローラーへ責務が集中している |
-| TD-006 | P1 | 未着手 | L | CLIの入力・application・出力エラーが握り潰される |
+| TD-006 | P1 | 完了 | L | CLIの入力・application・出力エラーが握り潰される |
 | TD-007 | P1 | 未着手 | L | CLIとMCPでrepository transactionが別々に組み立てられている |
 | TD-008 | P1 | 完了 | M | CIがリポジトリ規約を満たさず、ビルド再現性も固定されていない |
 | TD-009 | P2 | 未着手 | L | entity層がYAML形式へ依存している |
@@ -295,6 +295,9 @@
 
 - 優先度: `P1`
 - 概算規模: `L`
+- 完了日: 2026-08-15
+- 対応: `CommandError`でparse、application、external open、outputの失敗を区別し、command実行の失敗を診断表示してrepository保存を抑止するようにした。stdoutの最初のI/O失敗を捕捉し、broken pipeは正常終了、それ以外は`CommandError::Output`として伝搬するようにした。
+- 検証: CLI入力エラー、保存抑止、stdout error、broken pipe、改行出力の契約testを追加し、`cargo fmt --check`、`cargo clippy --locked --all-targets -- -D warnings`、`cargo test --locked`を成功させた。
 
 #### 現状と根拠
 
