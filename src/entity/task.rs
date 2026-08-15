@@ -1384,6 +1384,12 @@ impl TaskHandle {
         action()
     }
 
+    #[cfg(test)]
+    pub(crate) fn with_shared_data_borrow_for_test<T>(&self, action: impl FnOnce() -> T) -> T {
+        let _shared_borrow = self.node.borrow_data();
+        action()
+    }
+
     pub fn snapshot(&self) -> Result<TaskSnapshot, TaskTreeError> {
         Ok(TaskSnapshot {
             attr: self.get_attr()?,
@@ -3407,6 +3413,47 @@ fn test_deadline伝搬は子の借用競合時に部分更新とrevision更新�
 
     assert_eq!(root.get_deadline_time_opt().unwrap(), None);
     assert_eq!(child.get_deadline_time_opt().unwrap(), None);
+    assert_eq!(
+        root.get_persistent_mutation_revision().unwrap(),
+        before_revision
+    );
+}
+
+#[test]
+fn test_deadline伝搬は子の共有借用競合時に部分更新とrevision更新をしない() {
+    let root = TaskHandle::new("親").unwrap();
+    let child = root.create_child(TaskAttr::new("子")).unwrap();
+    let deadline = Local.with_ymd_and_hms(2026, 8, 15, 12, 0, 0).unwrap();
+    let before_snapshot = root.snapshot().unwrap();
+    let before_revision = root.get_persistent_mutation_revision().unwrap();
+
+    let actual =
+        child.with_shared_data_borrow_for_test(|| root.set_deadline_time_opt(Some(deadline)));
+
+    assert_eq!(actual, Err(TaskTreeError::Borrow));
+    assert_eq!(root.snapshot().unwrap(), before_snapshot);
+    assert_eq!(
+        root.get_persistent_mutation_revision().unwrap(),
+        before_revision
+    );
+}
+
+#[test]
+fn test_make_appointmentは子の共有借用競合時に部分更新とrevision更新をしない() {
+    let root = TaskHandle::new("親").unwrap();
+    let child = root.create_child(TaskAttr::new("子")).unwrap();
+    root.set_estimated_work_seconds(30 * 60).unwrap();
+    root.set_deadline_time_opt(Some(Local.with_ymd_and_hms(2026, 8, 15, 12, 0, 0).unwrap()))
+        .unwrap();
+    let appointment_start_time = Local.with_ymd_and_hms(2026, 8, 14, 9, 0, 0).unwrap();
+    let before_snapshot = root.snapshot().unwrap();
+    let before_revision = root.get_persistent_mutation_revision().unwrap();
+
+    let actual =
+        child.with_shared_data_borrow_for_test(|| root.make_appointment(appointment_start_time));
+
+    assert_eq!(actual, Err(TaskTreeError::Borrow));
+    assert_eq!(root.snapshot().unwrap(), before_snapshot);
     assert_eq!(
         root.get_persistent_mutation_revision().unwrap(),
         before_revision
