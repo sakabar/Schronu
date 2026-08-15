@@ -1188,6 +1188,7 @@ pub enum TaskTreeError {
     Borrow,
     HierarchyGrant,
     Insert,
+    Invariant,
 }
 
 impl fmt::Display for TaskTreeError {
@@ -1199,6 +1200,7 @@ impl fmt::Display for TaskTreeError {
             Self::Borrow => "cannot borrow task tree data",
             Self::HierarchyGrant => "cannot acquire hierarchy edit grant",
             Self::Insert => "cannot insert task subtree",
+            Self::Invariant => "task tree invariant is violated",
         };
         formatter.write_str(reason)
     }
@@ -1322,6 +1324,32 @@ impl TaskHandle {
             .try_borrow_data()
             .map(|attr| attr.clone())
             .map_err(|_| TaskTreeError::Borrow)
+    }
+
+    pub fn try_parent(&self) -> Result<Option<Self>, TaskTreeError> {
+        if self.node.parent() == Some(self.node.root()) {
+            return Ok(None);
+        }
+
+        Ok(self.node.parent().map(|node| Self { node }))
+    }
+
+    pub fn try_root(&self) -> Result<Self, TaskTreeError> {
+        self.node
+            .root()
+            .first_child()
+            .map(|node| Self { node })
+            .ok_or(TaskTreeError::Invariant)
+    }
+
+    pub fn try_get_children(&self) -> Result<Vec<Self>, TaskTreeError> {
+        Ok(self.node.children().map(|node| Self { node }).collect())
+    }
+
+    #[cfg(test)]
+    pub(crate) fn with_exclusive_data_borrow_for_test<T>(&self, action: impl FnOnce() -> T) -> T {
+        let _exclusive_borrow = self.node.borrow_data_mut();
+        action()
     }
 
     pub fn snapshot(&self) -> TaskSnapshot {

@@ -77,6 +77,21 @@ fn fixed_now() -> DateTime<Local> {
     Local.with_ymd_and_hms(2026, 8, 11, 12, 0, 0).unwrap()
 }
 
+#[test]
+fn get_scheduleは借用競合をtask_tree_errorとして返す() {
+    let task = TaskHandle::new("借用競合");
+    let repository = TestTaskRepository::new(vec![task.clone()], fixed_now());
+
+    let actual = task.with_exclusive_data_borrow_for_test(|| get_schedule(&repository));
+
+    assert_eq!(
+        actual,
+        Err(super::task_use_case::ApplicationError::TaskTree(
+            crate::entity::task::TaskTreeError::Borrow
+        ))
+    );
+}
+
 fn task_with_schedule(
     name: &str,
     start: DateTime<Local>,

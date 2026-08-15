@@ -74,6 +74,12 @@ pub(crate) fn get_schedule_with_first_available_time_overrides(
     repository: &dyn TaskRepositoryTrait,
     first_available_time_overrides: &HashMap<Uuid, DateTime<Local>>,
 ) -> Result<Vec<ScheduledTaskView>, ApplicationError> {
+    for project_root in repository.get_all_projects() {
+        project_root
+            .try_snapshot()
+            .map_err(ApplicationError::TaskTree)?;
+    }
+
     let mut candidates = build_schedule_candidates(repository);
     for candidate in &mut candidates {
         if let Some(first_available_time) =
