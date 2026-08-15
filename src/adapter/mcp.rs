@@ -127,7 +127,8 @@ impl<R: TaskRepositoryTrait> McpServer<R> {
             },
             |repository| {
                 let response = Self::call_tool(repository, id.clone(), request);
-                let should_save = tool_call_succeeded_with_mutation(request, &response);
+                let should_save = tool_call_succeeded_with_mutation(request, &response)
+                    && repository.has_pending_changes();
                 Ok::<_, Infallible>((response, should_save))
             },
         ) {
@@ -1558,6 +1559,7 @@ mod tests {
         project_count: Rc<Cell<usize>>,
         save_count: Rc<Cell<usize>>,
         mutation_count: Rc<Cell<usize>>,
+        persisted_project_revisions: RefCell<Vec<u64>>,
         operation_order: Rc<RefCell<Vec<&'static str>>>,
         sync_clock_times: Rc<RefCell<Vec<DateTime<Local>>>>,
     }
@@ -1565,6 +1567,10 @@ mod tests {
     impl RecordingRepository {
         fn new(projects: Vec<TaskHandle>) -> Self {
             let project_count = projects.len();
+            let persisted_project_revisions = projects
+                .iter()
+                .map(TaskHandle::get_persistent_mutation_revision)
+                .collect();
             Self {
                 projects,
                 now: fixed_now(),
@@ -1576,6 +1582,7 @@ mod tests {
                 project_count: Rc::new(Cell::new(project_count)),
                 save_count: Rc::new(Cell::new(0)),
                 mutation_count: Rc::new(Cell::new(0)),
+                persisted_project_revisions: RefCell::new(persisted_project_revisions),
                 operation_order: Rc::new(RefCell::new(Vec::new())),
                 sync_clock_times: Rc::new(RefCell::new(Vec::new())),
             }
@@ -1628,6 +1635,11 @@ mod tests {
                     std::io::Error::other("test save failure"),
                 ))
             } else {
+                *self.persisted_project_revisions.borrow_mut() = self
+                    .projects
+                    .iter()
+                    .map(TaskHandle::get_persistent_mutation_revision)
+                    .collect();
                 Ok(())
             }
         }
@@ -1644,7 +1656,14 @@ mod tests {
         }
 
         fn has_pending_changes(&self) -> bool {
-            self.mutation_count.get() > self.save_count.get()
+            let persisted = self.persisted_project_revisions.borrow();
+            self.projects.len() != persisted.len()
+                || self
+                    .projects
+                    .iter()
+                    .map(TaskHandle::get_persistent_mutation_revision)
+                    .zip(persisted.iter())
+                    .any(|(current, persisted)| current != *persisted)
         }
 
         fn sync_clock(&mut self, now: DateTime<Local>) {
@@ -4699,6 +4718,29 @@ mod tests {
         assert_eq!(updated["deadline_time"], deadline.to_rfc3339());
         assert_eq!(updated["project_category"], "recovery");
         assert_eq!(save_count.get(), 1);
+    }
+
+    #[test]
+    fn update_task_同じ値ならsaveしない() {
+        let task = TaskHandle::new("unchanged task");
+        let task_id = task.get_id();
+        let repository = RecordingRepository::new(vec![task]);
+        let save_count = Rc::clone(&repository.save_count);
+        let mut server = initialized_server(repository);
+
+        let response = server
+            .handle_request(tool_call_request(
+                "update-with-same-value",
+                "update_task",
+                json!({
+                    "task_id": task_id.to_string(),
+                    "estimated_work_minutes": 15
+                }),
+            ))
+            .unwrap();
+
+        assert_eq!(response["result"]["isError"], false);
+        assert_eq!(save_count.get(), 0);
     }
 
     #[test]
