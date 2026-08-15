@@ -8897,7 +8897,7 @@ fn run_cli_repository_transaction<T>(
                 CLI_LOCK_TIMEOUT,
             )
         },
-        operation,
+        |repository| operation(repository).map(|output| (output, repository.has_pending_changes())),
     )
     .map_err(|error| match error {
         RepositoryTransactionError::Lock(error) => {

@@ -2,6 +2,9 @@ use crate::adapter::gateway::storage_lock::{
     LockMode, StorageLock, StorageLockError, StorageLockErrorKind,
 };
 use crate::application::interface::TaskRepositoryTrait;
+use crate::application::repository_transaction::{
+    run_repository_transaction, RepositoryTransactionError,
+};
 use crate::application::schedule_use_case::{get_schedule, ScheduledTaskView};
 use crate::application::task_use_case::{
     breakdown_task as breakdown_task_use_case, complete_task as complete_task_use_case,
@@ -15,6 +18,7 @@ use crate::entity::task::{ProjectCategory, Status};
 use chrono::{DateTime, Duration, Local, LocalResult, NaiveDate};
 use serde_json::Map;
 use serde_json::{json, Value};
+use std::convert::Infallible;
 use std::path::PathBuf;
 use uuid::Uuid;
 
@@ -105,60 +109,78 @@ impl<R: TaskRepositoryTrait> McpServer<R> {
             "tools/call" if self.repository_state_uncertain => {
                 Some(repository_state_uncertain_response(id))
             }
-            "tools/call" => {
-                let _storage_lock = match &self.storage_directory {
-                    Some(storage_directory) => {
-                        match StorageLock::acquire(storage_directory, LockMode::Mcp) {
-                            Ok(storage_lock) => storage_lock,
-                            Err(error) => return Some(repository_lock_error_response(id, &error)),
-                        }
-                    }
-                    None => return Some(self.reload_and_call(id, &request)),
-                };
-                Some(self.reload_and_call(id, &request))
-            }
+            "tools/call" => Some(self.run_transaction_and_call(id, &request)),
             _ => Some(error_response(id, -32601, "Method not found")),
         }
     }
 
-    fn reload_and_call(&mut self, id: Value, request: &Value) -> Value {
-        match self.repository.reload_if_changed(Local::now()) {
-            Ok(_) => self.call_tool(id, request),
-            Err(error) => repository_load_error_response(id, &error.to_string()),
+    fn run_transaction_and_call(&mut self, id: Value, request: &Value) -> Value {
+        let storage_directory = self.storage_directory.clone();
+        match run_repository_transaction(
+            &mut self.repository,
+            Local::now(),
+            || match storage_directory {
+                Some(storage_directory) => {
+                    StorageLock::acquire(&storage_directory, LockMode::Mcp).map(Some)
+                }
+                None => Ok(None),
+            },
+            |repository| {
+                let response = Self::call_tool(repository, id.clone(), request);
+                let should_save = tool_call_succeeded_with_mutation(request, &response);
+                Ok::<_, Infallible>((response, should_save))
+            },
+        ) {
+            Ok(response) => response,
+            Err(RepositoryTransactionError::Lock(error)) => {
+                repository_lock_error_response(id, &error)
+            }
+            Err(RepositoryTransactionError::Load(error)) => {
+                repository_load_error_response(id, &error.to_string())
+            }
+            Err(RepositoryTransactionError::Operation(never)) => match never {},
+            Err(RepositoryTransactionError::StateUncertain(error)) => {
+                self.repository_state_uncertain = true;
+                repository_save_error_response(id, &error.to_string())
+            }
         }
     }
 
-    fn call_tool(&mut self, id: Value, request: &Value) -> Value {
+    fn call_tool(repository: &mut R, id: Value, request: &Value) -> Value {
         let params = &request["params"];
         match params["name"].as_str() {
-            Some("get_focus") => self.call_get_focus(id, params.get("arguments")),
-            Some("get_task") => self.call_get_task(id, &params["arguments"]),
-            Some("list_tasks") => self.call_list_tasks(id, params.get("arguments")),
-            Some("get_schedule") => self.call_get_schedule(id, params.get("arguments")),
-            Some("create_task") => self.call_create_task(id, &params["arguments"]),
-            Some("breakdown_task") => self.call_breakdown_task(id, &params["arguments"]),
-            Some("defer_task") => self.call_defer_task(id, &params["arguments"]),
-            Some("complete_task") => self.call_complete_task(id, &params["arguments"]),
-            Some("update_task") => self.call_update_task(id, &params["arguments"]),
+            Some("get_focus") => Self::call_get_focus(repository, id, params.get("arguments")),
+            Some("get_task") => Self::call_get_task(repository, id, &params["arguments"]),
+            Some("list_tasks") => Self::call_list_tasks(repository, id, params.get("arguments")),
+            Some("get_schedule") => {
+                Self::call_get_schedule(repository, id, params.get("arguments"))
+            }
+            Some("create_task") => Self::call_create_task(repository, id, &params["arguments"]),
+            Some("breakdown_task") => {
+                Self::call_breakdown_task(repository, id, &params["arguments"])
+            }
+            Some("defer_task") => Self::call_defer_task(repository, id, &params["arguments"]),
+            Some("complete_task") => Self::call_complete_task(repository, id, &params["arguments"]),
+            Some("update_task") => Self::call_update_task(repository, id, &params["arguments"]),
             _ => error_response(id, -32602, "Unknown tool"),
         }
     }
 
-    fn call_get_focus(&mut self, id: Value, arguments: Option<&Value>) -> Value {
+    fn call_get_focus(repository: &mut R, id: Value, arguments: Option<&Value>) -> Value {
         if let Some(arguments) = arguments {
             if let Err(error) = validate_argument_object(arguments, &[], &[]) {
                 return invalid_params_response(id, error);
             }
         }
 
-        let task = get_focus(&mut self.repository)
+        let task = get_focus(repository)
             .as_ref()
             .map(task_view_json)
             .unwrap_or(Value::Null);
         tool_result_response(id, json!({"task": task}), false)
     }
 
-    fn call_get_task(&self, id: Value, arguments: &Value) -> Value {
+    fn call_get_task(repository: &R, id: Value, arguments: &Value) -> Value {
         let argument_object = match validate_argument_object(arguments, &["task_id"], &["task_id"])
         {
             Ok(argument_object) => argument_object,
@@ -172,13 +194,13 @@ impl<R: TaskRepositoryTrait> McpServer<R> {
             return invalid_input_response(id, "task_id", "must be a valid UUID");
         };
 
-        match get_task(&self.repository, task_id) {
+        match get_task(repository, task_id) {
             Some(task) => tool_result_response(id, json!({"task": task_view_json(&task)}), false),
             None => task_not_found_response(id, task_id, None),
         }
     }
 
-    fn call_list_tasks(&self, id: Value, arguments: Option<&Value>) -> Value {
+    fn call_list_tasks(repository: &R, id: Value, arguments: Option<&Value>) -> Value {
         let filter = match list_tasks_filter(arguments) {
             Ok(filter) => filter,
             Err(ToolInputError::Schema(error)) => return invalid_params_response(id, error),
@@ -187,7 +209,7 @@ impl<R: TaskRepositoryTrait> McpServer<R> {
             }
         };
 
-        match list_tasks(&self.repository, filter) {
+        match list_tasks(repository, filter) {
             Ok(tasks) => tool_result_response(
                 id,
                 json!({
@@ -202,9 +224,8 @@ impl<R: TaskRepositoryTrait> McpServer<R> {
         }
     }
 
-    fn call_get_schedule(&self, id: Value, arguments: Option<&Value>) -> Value {
-        let (from, until) = match schedule_period(arguments, self.repository.get_last_synced_time())
-        {
+    fn call_get_schedule(repository: &R, id: Value, arguments: Option<&Value>) -> Value {
+        let (from, until) = match schedule_period(arguments, repository.get_last_synced_time()) {
             Ok(period) => period,
             Err(ToolInputError::Schema(error)) => return invalid_params_response(id, error),
             Err(ToolInputError::Semantic { field, message }) => {
@@ -212,7 +233,7 @@ impl<R: TaskRepositoryTrait> McpServer<R> {
             }
         };
 
-        let schedule = get_schedule(&self.repository)
+        let schedule = get_schedule(repository)
             .iter()
             .filter(|scheduled| scheduled.scheduled_start < until && scheduled.scheduled_end > from)
             .map(scheduled_task_view_json)
@@ -220,7 +241,7 @@ impl<R: TaskRepositoryTrait> McpServer<R> {
         tool_result_response(id, json!({"schedule": schedule}), false)
     }
 
-    fn call_create_task(&mut self, id: Value, arguments: &Value) -> Value {
+    fn call_create_task(repository: &mut R, id: Value, arguments: &Value) -> Value {
         let input = match create_task_input(arguments) {
             Ok(input) => input,
             Err(ToolInputError::Schema(error)) => return invalid_params_response(id, error),
@@ -229,7 +250,7 @@ impl<R: TaskRepositoryTrait> McpServer<R> {
             }
         };
 
-        let task_id = match create_task_use_case(&mut self.repository, input) {
+        let task_id = match create_task_use_case(repository, input) {
             Ok(task_id) => task_id,
             Err(ApplicationError::InvalidInput { field, reason }) => {
                 return invalid_input_response(id, field, reason)
@@ -237,10 +258,10 @@ impl<R: TaskRepositoryTrait> McpServer<R> {
             Err(error) => return internal_error_response(id, &error.to_string()),
         };
 
-        self.save_after_mutation(id, json!({"task_id": task_id.to_string()}))
+        tool_result_response(id, json!({"task_id": task_id.to_string()}), false)
     }
 
-    fn call_breakdown_task(&mut self, id: Value, arguments: &Value) -> Value {
+    fn call_breakdown_task(repository: &mut R, id: Value, arguments: &Value) -> Value {
         let input = match breakdown_task_input(arguments) {
             Ok(input) => input,
             Err(ToolInputError::Schema(error)) => return invalid_params_response(id, error),
@@ -248,7 +269,7 @@ impl<R: TaskRepositoryTrait> McpServer<R> {
                 return invalid_input_response(id, field, message)
             }
         };
-        let child_ids = match breakdown_task_use_case(&mut self.repository, input) {
+        let child_ids = match breakdown_task_use_case(repository, input) {
             Ok(child_ids) => child_ids,
             Err(ApplicationError::TaskNotFound(task_id)) => {
                 return task_not_found_response(id, task_id, Some("parent_id"))
@@ -259,15 +280,16 @@ impl<R: TaskRepositoryTrait> McpServer<R> {
             Err(error) => return internal_error_response(id, &error.to_string()),
         };
 
-        self.save_after_mutation(
+        tool_result_response(
             id,
             json!({
                 "child_ids": child_ids.iter().map(Uuid::to_string).collect::<Vec<_>>()
             }),
+            false,
         )
     }
 
-    fn call_defer_task(&mut self, id: Value, arguments: &Value) -> Value {
+    fn call_defer_task(repository: &mut R, id: Value, arguments: &Value) -> Value {
         let (task_id, pending_until) = match defer_task_input(arguments) {
             Ok(input) => input,
             Err(ToolInputError::Schema(error)) => return invalid_params_response(id, error),
@@ -276,7 +298,7 @@ impl<R: TaskRepositoryTrait> McpServer<R> {
             }
         };
 
-        match defer_task_use_case(&mut self.repository, task_id, pending_until) {
+        match defer_task_use_case(repository, task_id, pending_until) {
             Ok(()) => {}
             Err(ApplicationError::TaskNotFound(task_id)) => {
                 return task_not_found_response(id, task_id, Some("task_id"))
@@ -287,10 +309,10 @@ impl<R: TaskRepositoryTrait> McpServer<R> {
             Err(error) => return internal_error_response(id, &error.to_string()),
         }
 
-        self.save_after_mutation(id, json!({"task_id": task_id.to_string()}))
+        tool_result_response(id, json!({"task_id": task_id.to_string()}), false)
     }
 
-    fn call_complete_task(&mut self, id: Value, arguments: &Value) -> Value {
+    fn call_complete_task(repository: &mut R, id: Value, arguments: &Value) -> Value {
         let input = match complete_task_input(arguments) {
             Ok(input) => input,
             Err(ToolInputError::Schema(error)) => return invalid_params_response(id, error),
@@ -299,7 +321,7 @@ impl<R: TaskRepositoryTrait> McpServer<R> {
             }
         };
         let task_id = input.task_id;
-        let output = match complete_task_use_case(&mut self.repository, input) {
+        let output = match complete_task_use_case(repository, input) {
             Ok(output) => output,
             Err(ApplicationError::TaskNotFound(task_id)) => {
                 return task_not_found_response(id, task_id, Some("task_id"))
@@ -315,17 +337,18 @@ impl<R: TaskRepositoryTrait> McpServer<R> {
             }
         };
 
-        self.save_after_mutation(
+        tool_result_response(
             id,
             json!({
                 "task_id": task_id.to_string(),
                 "next_focus_task_id": output.next_focus_task_id.map(|task_id| task_id.to_string()),
                 "next_repetition_task_id": output.next_repetition_task_id.map(|task_id| task_id.to_string())
             }),
+            false,
         )
     }
 
-    fn call_update_task(&mut self, id: Value, arguments: &Value) -> Value {
+    fn call_update_task(repository: &mut R, id: Value, arguments: &Value) -> Value {
         let input = match update_task_input(arguments) {
             Ok(input) => input,
             Err(ToolInputError::Schema(error)) => return invalid_params_response(id, error),
@@ -335,35 +358,31 @@ impl<R: TaskRepositoryTrait> McpServer<R> {
         };
 
         if let Some(estimated_work_minutes) = input.estimated_work_minutes {
-            if let Err(error) =
-                set_estimate(&mut self.repository, input.task_id, estimated_work_minutes)
-            {
+            if let Err(error) = set_estimate(repository, input.task_id, estimated_work_minutes) {
                 return update_task_application_error_response(id, error);
             }
         }
         if let Some(deadline_time) = input.deadline_time {
-            if let Err(error) = set_deadline(&mut self.repository, input.task_id, deadline_time) {
+            if let Err(error) = set_deadline(repository, input.task_id, deadline_time) {
                 return update_task_application_error_response(id, error);
             }
         }
         if let Some(category) = input.category {
-            if let Err(error) = set_category(&mut self.repository, input.task_id, category) {
+            if let Err(error) = set_category(repository, input.task_id, category) {
                 return update_task_application_error_response(id, error);
             }
         }
 
-        self.save_after_mutation(id, json!({"task_id": input.task_id.to_string()}))
+        tool_result_response(id, json!({"task_id": input.task_id.to_string()}), false)
     }
+}
 
-    fn save_after_mutation(&mut self, id: Value, success_content: Value) -> Value {
-        match self.repository.save() {
-            Ok(()) => tool_result_response(id, success_content, false),
-            Err(error) => {
-                self.repository_state_uncertain = true;
-                repository_save_error_response(id, &error.to_string())
-            }
-        }
-    }
+fn tool_call_succeeded_with_mutation(request: &Value, response: &Value) -> bool {
+    matches!(
+        request["params"]["name"].as_str(),
+        Some("create_task" | "breakdown_task" | "defer_task" | "complete_task" | "update_task")
+    ) && response.get("error").is_none()
+        && response["result"]["isError"] != Value::Bool(true)
 }
 
 fn validate_request_envelope(request: &Value) -> Result<(String, Option<Value>), Value> {
@@ -1622,6 +1641,10 @@ mod tests {
             self.sync_clock(now);
             self.load()?;
             Ok(RepositoryReloadOutcome::Reloaded)
+        }
+
+        fn has_pending_changes(&self) -> bool {
+            self.mutation_count.get() > self.save_count.get()
         }
 
         fn sync_clock(&mut self, now: DateTime<Local>) {
