@@ -41,7 +41,7 @@
 | TD-003 | P0 | 完了| L | 永続化YAMLの不正値が黙って既定値や新規UUIDへ変換される |
 | TD-004 | P1 | 完了 | XL | `Task`の木構造と内部可変性が暗黙の共有状態とpanic前提を作っている |
 | TD-005 | P1 | 未着手 | XL | CLIコントローラーへ責務が集中している |
-| TD-006 | P1 | 完了 | L | CLIの入力・application・出力エラーが握り潰される |
+| TD-006 | P1 | 未着手 | L | CLIの入力・application・出力エラーが握り潰される |
 | TD-007 | P1 | 未着手 | L | CLIとMCPでrepository transactionが別々に組み立てられている |
 | TD-008 | P1 | 完了 | M | CIがリポジトリ規約を満たさず、ビルド再現性も固定されていない |
 | TD-009 | P2 | 未着手 | L | entity層がYAML形式へ依存している |
@@ -52,7 +52,7 @@
 | TD-014 | P2 | 未着手 | M | Apps Scriptの同期処理が行数に比例してAPI呼出しを増やす |
 | TD-015 | P2 | 未着手 | L | テストが巨大な製品ファイルへ混在し、fixtureも重複している |
 | TD-016 | P3 | 未着手 | M | マジック値、未使用フィールド、古いコメントが意図を曖昧にしている |
-| TD-017 | P1 | 実装中 | XL | `TaskHandle`の既存infallible APIが内部不変条件の破れをpanicとして扱う |
+| TD-017 | P1 | 未着手 | XL | `TaskHandle`の既存infallible APIが内部不変条件の破れをpanicとして扱う |
 
 ## 詳細
 
