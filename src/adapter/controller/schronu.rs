@@ -4788,6 +4788,7 @@ fn test_decide_finish_time_不正な日付は完了時刻にしない() {
 struct TestWriter {
     buffer: Vec<u8>,
     supports_ansi_color: bool,
+    newline_prefix: &'static str,
 }
 
 #[cfg(test)]
@@ -4817,6 +4818,7 @@ impl TestWriter {
         Self {
             buffer: vec![],
             supports_ansi_color: true,
+            newline_prefix: "",
         }
     }
 
@@ -4824,6 +4826,15 @@ impl TestWriter {
         Self {
             buffer: vec![],
             supports_ansi_color: false,
+            newline_prefix: "",
+        }
+    }
+
+    fn new_with_newline_prefix(newline_prefix: &'static str) -> Self {
+        Self {
+            buffer: vec![],
+            supports_ansi_color: true,
+            newline_prefix,
         }
     }
 
@@ -4847,11 +4858,57 @@ impl Write for TestWriter {
 #[cfg(test)]
 impl SchronuWriter for TestWriter {
     fn writeln_newline(&mut self, message: &str) -> Result<(), std::io::Error> {
-        writeln!(self, "{}", message)
+        let newline_prefix = self.newline_prefix;
+        writeln!(self, "{newline_prefix}{message}")
     }
 
     fn supports_ansi_color(&self) -> bool {
         self.supports_ansi_color
+    }
+}
+
+#[cfg(test)]
+struct FailingNewlineWriter {
+    buffer: Vec<u8>,
+    failures_remaining: usize,
+    newline_call_count: usize,
+}
+
+#[cfg(test)]
+impl FailingNewlineWriter {
+    fn fail_once() -> Self {
+        Self {
+            buffer: vec![],
+            failures_remaining: 1,
+            newline_call_count: 0,
+        }
+    }
+}
+
+#[cfg(test)]
+impl Write for FailingNewlineWriter {
+    fn write(&mut self, buffer: &[u8]) -> std::io::Result<usize> {
+        self.buffer.extend_from_slice(buffer);
+        Ok(buffer.len())
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+impl SchronuWriter for FailingNewlineWriter {
+    fn writeln_newline(&mut self, message: &str) -> Result<(), std::io::Error> {
+        self.newline_call_count += 1;
+        if self.failures_remaining > 0 {
+            self.failures_remaining -= 1;
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::Other,
+                "newline write failure",
+            ));
+        }
+        writeln!(self, "<reset>{message}")
     }
 }
 
@@ -5379,6 +5436,74 @@ impl FreeTimeManagerTrait for TestFreeTimeManagerWithFreeMinutes {
     ) -> Result<(), BusyTimeSlotLoadError> {
         Ok(())
     }
+}
+
+#[test]
+fn test_execute_表示コマンドはwriter固有の改行処理を保持する() {
+    let now = Local.with_ymd_and_hms(2026, 8, 11, 12, 0, 0).unwrap();
+
+    for command in ["今", "暦", "帯"] {
+        let task = TaskHandle::new("改行処理確認用タスク");
+        task.set_estimated_work_seconds(60 * 60);
+        task.set_start_time(now);
+        task.set_pending_until(now);
+        task.set_orig_status(Status::Pending);
+        let mut task_repository = TestTaskRepository::new(task, now);
+        let mut free_time_manager = TestFreeTimeManagerWithFreeMinutes {
+            free_minutes: 10 * 60,
+        };
+        let mut focused_task_id_opt = None;
+        let mut stdout = TestWriter::new_with_newline_prefix("<reset>");
+
+        execute(
+            &mut stdout,
+            &mut task_repository,
+            &mut free_time_manager,
+            &mut focused_task_id_opt,
+            &now,
+            command,
+        )
+        .unwrap();
+
+        let output = stdout.into_string();
+        assert!(output.contains("<reset>"), "{command}: {output}");
+        assert!(
+            output
+                .lines()
+                .filter(|line| !line.is_empty())
+                .all(|line| line.starts_with("<reset>")),
+            "{command}: {output}"
+        );
+    }
+}
+
+#[test]
+fn test_execute_改行出力の失敗を捕捉して後続出力を継続する() {
+    let now = Local.with_ymd_and_hms(2026, 8, 11, 12, 0, 0).unwrap();
+    let task = TaskHandle::new("出力失敗確認用タスク");
+    task.set_estimated_work_seconds(60 * 60);
+    task.set_start_time(now);
+    let mut task_repository = TestTaskRepository::new(task, now);
+    let mut free_time_manager = TestFreeTimeManager;
+    let mut focused_task_id_opt = None;
+    let mut stdout = FailingNewlineWriter::fail_once();
+
+    let actual = execute(
+        &mut stdout,
+        &mut task_repository,
+        &mut free_time_manager,
+        &mut focused_task_id_opt,
+        &now,
+        "今",
+    );
+
+    assert!(matches!(
+        actual,
+        Err(CommandError::Output(error)) if error.kind() == std::io::ErrorKind::Other
+    ));
+    assert!(stdout.newline_call_count > 1);
+    let output = String::from_utf8(stdout.buffer).unwrap();
+    assert!(output.contains("<reset>"), "{output}");
 }
 
 #[cfg(test)]
