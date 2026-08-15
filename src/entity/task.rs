@@ -1467,8 +1467,11 @@ impl TaskHandle {
         root.node.borrow_data_mut().persistent_mutation_revision = revision.wrapping_add(1);
     }
 
-    pub fn get_name(&self) -> String {
-        self.node.borrow_data().get_name().to_string()
+    pub fn get_name(&self) -> Result<String, TaskTreeError> {
+        self.node
+            .try_borrow_data()
+            .map(|attr| attr.get_name().to_string())
+            .map_err(|_| TaskTreeError::Borrow)
     }
 
     pub fn get_status(&self) -> Status {
@@ -2101,8 +2104,8 @@ fn test_try_create_parentは子を親の直下に残さず挿入する() {
     child.try_create_parent(TaskAttr::new("parent")).unwrap();
 
     let parent = child.parent().unwrap();
-    assert_eq!(parent.get_name(), "parent");
-    assert_eq!(parent.parent().unwrap().get_name(), "root");
+    assert_eq!(parent.get_name().unwrap(), "parent");
+    assert_eq!(parent.parent().unwrap().get_name().unwrap(), "root");
 }
 
 #[test]
@@ -2284,14 +2287,14 @@ pub fn assert_task_and_tree(task1: &TaskHandle, tree: &Tree<TaskAttr>) {
 }
 
 // 詳細な構造を知っていたほうが構築しやすいので、gatewayではなくtaskの中で定義する
-pub fn task_to_yaml(task: &TaskHandle) -> Yaml {
+pub fn task_to_yaml(task: &TaskHandle) -> Result<Yaml, TaskTreeError> {
     let default_attr = TaskAttr::new("デフォルト用");
 
     let mut task_hash = LinkedHashMap::new();
 
     task_hash.insert(
         Yaml::String(String::from("name")),
-        Yaml::String(task.get_name()),
+        Yaml::String(task.get_name()?),
     );
 
     task_hash.insert(
@@ -2421,7 +2424,7 @@ pub fn task_to_yaml(task: &TaskHandle) -> Yaml {
     let mut children = vec![];
     for child_node in task.node.children() {
         let child_task = TaskHandle { node: child_node };
-        let child_yaml = task_to_yaml(&child_task);
+        let child_yaml = task_to_yaml(&child_task)?;
         children.push(child_yaml);
     }
 
@@ -2432,7 +2435,7 @@ pub fn task_to_yaml(task: &TaskHandle) -> Yaml {
         );
     }
 
-    Yaml::Hash(task_hash)
+    Ok(Yaml::Hash(task_hash))
 }
 
 #[test]
@@ -2443,7 +2446,7 @@ fn test_task_to_yaml_正常系1_デフォルトの値と同じ場合は出力し
     let now = Local.with_ymd_and_hms(2023, 5, 19, 1, 23, 45).unwrap();
     task.set_create_time(now);
     task.set_start_time(now);
-    let actual = task_to_yaml(&task);
+    let actual = task_to_yaml(&task).unwrap();
 
     let s = "
 name: 'タスク1'
@@ -2488,7 +2491,7 @@ fn test_task_to_yaml_正常系2_再帰() {
     task.create_as_last_child(task_attr_child_1);
     task.create_as_last_child(task_attr_child_2);
 
-    let actual = task_to_yaml(&task);
+    let actual = task_to_yaml(&task).unwrap();
 
     let s = "
 name: '親タスク1'
@@ -2525,7 +2528,7 @@ fn test_task_to_yaml_ユニークキー() {
     let now = Local.with_ymd_and_hms(2023, 5, 19, 1, 23, 45).unwrap();
     task.set_create_time(now);
     task.set_start_time(now);
-    let actual = task_to_yaml(&task);
+    let actual = task_to_yaml(&task).unwrap();
 
     let s = "
 name: 'タスク1'
@@ -2548,7 +2551,7 @@ fn test_task_to_yaml_project_category() {
     let now = Local.with_ymd_and_hms(2023, 5, 19, 1, 23, 45).unwrap();
     task.set_create_time(now);
     task.set_start_time(now);
-    let actual = task_to_yaml(&task);
+    let actual = task_to_yaml(&task).unwrap();
 
     let s = "
 name: 'タスク1'
@@ -2579,7 +2582,7 @@ fn test_task_to_yaml_project_categoryは子タスクには出力しない() {
 
     task.create_as_last_child(task_attr_child);
 
-    let actual = task_to_yaml(&task);
+    let actual = task_to_yaml(&task).unwrap();
 
     let s = "
 name: '親タスク'
@@ -2607,7 +2610,7 @@ fn test_task_to_yaml_is_on_other_side() {
     let now = Local.with_ymd_and_hms(2023, 5, 19, 1, 23, 45).unwrap();
     task.set_create_time(now);
     task.set_start_time(now);
-    let actual = task_to_yaml(&task);
+    let actual = task_to_yaml(&task).unwrap();
 
     let s = "
 name: 'タスク1'
@@ -2631,7 +2634,7 @@ fn test_task_to_yaml_atomic() {
     let now = Local.with_ymd_and_hms(2023, 5, 19, 1, 23, 45).unwrap();
     task.set_create_time(now);
     task.set_start_time(now);
-    let actual = task_to_yaml(&task);
+    let actual = task_to_yaml(&task).unwrap();
 
     let s = "
 name: 'タスク1'
@@ -2655,7 +2658,7 @@ fn test_task_to_yaml_end_time_opt() {
     task.set_create_time(Local.with_ymd_and_hms(2023, 5, 19, 1, 23, 45).unwrap());
     task.set_start_time(Local.with_ymd_and_hms(2023, 5, 19, 2, 34, 56).unwrap());
     task.set_end_time_opt(Some(Local.with_ymd_and_hms(2023, 5, 19, 3, 45, 6).unwrap()));
-    let actual = task_to_yaml(&task);
+    let actual = task_to_yaml(&task).unwrap();
 
     let s = "
 name: 'タスク1'
@@ -2680,7 +2683,7 @@ fn test_task_to_yaml_deadline_time_opt() {
     task.set_create_time(Local.with_ymd_and_hms(2023, 5, 19, 1, 23, 45).unwrap());
     task.set_start_time(Local.with_ymd_and_hms(2023, 5, 19, 2, 34, 56).unwrap());
     task.set_deadline_time_opt(Some(Local.with_ymd_and_hms(2023, 5, 19, 3, 45, 6).unwrap()));
-    let actual = task_to_yaml(&task);
+    let actual = task_to_yaml(&task).unwrap();
 
     let s = "
 name: 'タスク1'
@@ -2705,7 +2708,7 @@ fn test_task_to_yaml_estimated_work_seconds() {
     task.set_create_time(Local.with_ymd_and_hms(2023, 5, 19, 1, 23, 45).unwrap());
     task.set_start_time(Local.with_ymd_and_hms(2023, 5, 19, 2, 34, 56).unwrap());
     task.set_estimated_work_seconds(1);
-    let actual = task_to_yaml(&task);
+    let actual = task_to_yaml(&task).unwrap();
 
     let s = "
 name: 'タスク1'
@@ -2730,7 +2733,7 @@ fn test_task_to_yaml_actual_work_seconds() {
     task.set_create_time(Local.with_ymd_and_hms(2023, 5, 19, 1, 23, 45).unwrap());
     task.set_start_time(Local.with_ymd_and_hms(2023, 5, 19, 2, 34, 56).unwrap());
     task.set_actual_work_seconds(1);
-    let actual = task_to_yaml(&task);
+    let actual = task_to_yaml(&task).unwrap();
 
     let s = "
 name: 'タスク1'
@@ -2755,7 +2758,7 @@ fn test_task_to_yaml_repetition_interval() {
     let now = Local.with_ymd_and_hms(2023, 5, 19, 1, 23, 45).unwrap();
     task.set_create_time(now);
     task.set_start_time(now);
-    let actual = task_to_yaml(&task);
+    let actual = task_to_yaml(&task).unwrap();
 
     let s = "
 name: 'タスク1'
@@ -2779,7 +2782,7 @@ fn test_task_to_yaml_repetition_anchor_completion() {
     let now = Local.with_ymd_and_hms(2023, 5, 19, 1, 23, 45).unwrap();
     task.set_create_time(now);
     task.set_start_time(now);
-    let actual = task_to_yaml(&task);
+    let actual = task_to_yaml(&task).unwrap();
 
     let s = "
 name: 'タスク1'
@@ -2803,7 +2806,7 @@ fn test_task_to_yaml_repetition_anchor_deadlineは出力しない() {
     let now = Local.with_ymd_and_hms(2023, 5, 19, 1, 23, 45).unwrap();
     task.set_create_time(now);
     task.set_start_time(now);
-    let actual = task_to_yaml(&task);
+    let actual = task_to_yaml(&task).unwrap();
 
     let s = "
 name: 'タスク1'
@@ -2826,7 +2829,7 @@ fn test_task_to_yaml_days_in_advance() {
     let now = Local.with_ymd_and_hms(2023, 5, 19, 1, 23, 45).unwrap();
     task.set_create_time(now);
     task.set_start_time(now);
-    let actual = task_to_yaml(&task);
+    let actual = task_to_yaml(&task).unwrap();
 
     let s = "
 name: 'タスク1'

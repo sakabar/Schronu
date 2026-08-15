@@ -7,6 +7,7 @@ use super::interface::{FreeTimeManagerTrait, TaskRepositoryTrait};
 use super::schedule_use_case::{
     get_schedule, get_schedule_with_task_first_available_time, ScheduledTaskView,
 };
+use super::task_use_case::ApplicationError;
 use crate::entity::task::Status;
 use chrono::{DateTime, Duration, Local, NaiveDate};
 use std::cmp::Reverse;
@@ -57,7 +58,7 @@ struct PackTargetDay {
 pub fn pack_tasks(
     repository: &dyn TaskRepositoryTrait,
     free_time_manager: &mut dyn FreeTimeManagerTrait,
-) -> PackResult {
+) -> Result<PackResult, ApplicationError> {
     pack_tasks_with_end_of_day_offset_minutes(
         repository,
         free_time_manager,
@@ -69,13 +70,13 @@ pub fn pack_tasks_with_end_of_day_offset_minutes(
     repository: &dyn TaskRepositoryTrait,
     free_time_manager: &mut dyn FreeTimeManagerTrait,
     end_of_day_offset_minutes: i64,
-) -> PackResult {
+) -> Result<PackResult, ApplicationError> {
     let now = repository.get_last_synced_time();
     let first_date = subjective_date(now);
     let target_dates = (0..PACK_TARGET_DAYS)
         .map(|days| first_date + Duration::days(days))
         .collect::<Vec<_>>();
-    let mut candidates = collect_candidates(repository, &target_dates);
+    let mut candidates = collect_candidates(repository, &target_dates)?;
     candidates.sort_by_key(|candidate| {
         (
             Reverse(candidate.priority),
@@ -87,7 +88,7 @@ pub fn pack_tasks_with_end_of_day_offset_minutes(
     let mut result = PackResult::default();
     for candidate in candidates {
         let mut packed_task_opt = None;
-        let current_planned_start_opt = get_schedule(repository)
+        let current_planned_start_opt = get_schedule(repository)?
             .into_iter()
             .find(|scheduled| scheduled.task.id == candidate.task_id)
             .map(|scheduled| scheduled.scheduled_start);
@@ -99,7 +100,7 @@ pub fn pack_tasks_with_end_of_day_offset_minutes(
             free_time_manager,
             &target_dates,
             end_of_day_offset_minutes,
-        );
+        )?;
 
         for target_date in &target_dates {
             if subjective_date(current_planned_start) <= *target_date
@@ -128,7 +129,7 @@ pub fn pack_tasks_with_end_of_day_offset_minutes(
                 target_day,
                 candidate.work_seconds,
                 task.get_atomic(),
-            );
+            )?;
 
             if let Some(placement_start) =
                 placement_start_opt.filter(|start| *start < current_planned_start)
@@ -159,7 +160,7 @@ pub fn pack_tasks_with_end_of_day_offset_minutes(
         }
     }
 
-    result
+    Ok(result)
 }
 
 fn find_placement_start(
@@ -170,20 +171,24 @@ fn find_placement_start(
     target_day: PackTargetDay,
     work_seconds: i64,
     atomic: bool,
-) -> Option<DateTime<Local>> {
+) -> Result<Option<DateTime<Local>>, ApplicationError> {
     let target_end = target_day.end;
     let mut trial_time = first_available_time.max(repository.get_last_synced_time());
 
     while trial_time + Duration::seconds(work_seconds) <= target_end {
         if atomic {
-            trial_time = find_next_continuous_free_time(
+            let Some(next_free_time) = find_next_continuous_free_time(
                 free_time_manager,
                 trial_time,
                 target_end,
                 work_seconds,
-            )?;
+            ) else {
+                return Ok(None);
+            };
+            trial_time = next_free_time;
         }
-        let schedule = get_schedule_with_task_first_available_time(repository, task_id, trial_time);
+        let schedule =
+            get_schedule_with_task_first_available_time(repository, task_id, trial_time)?;
         let task_segments = schedule
             .iter()
             .filter(|scheduled| scheduled.task.id == task_id)
@@ -196,13 +201,13 @@ fn find_placement_start(
             atomic,
             free_time_manager,
         ) {
-            return task_segments
+            return Ok(task_segments
                 .first()
-                .map(|scheduled| scheduled.scheduled_start);
+                .map(|scheduled| scheduled.scheduled_start));
         }
 
         if !atomic {
-            return None;
+            return Ok(None);
         }
         trial_time = task_segments
             .first()
@@ -212,7 +217,7 @@ fn find_placement_start(
             });
     }
 
-    None
+    Ok(None)
 }
 
 fn find_next_continuous_free_time(
@@ -239,10 +244,10 @@ fn find_next_continuous_free_time(
 fn collect_candidates(
     repository: &dyn TaskRepositoryTrait,
     target_dates: &[NaiveDate],
-) -> Vec<PackCandidate> {
-    let schedule = get_schedule(repository);
+) -> Result<Vec<PackCandidate>, ApplicationError> {
+    let schedule = get_schedule(repository)?;
     let mut seen_ids = HashSet::new();
-    schedule
+    Ok(schedule
         .into_iter()
         .filter(|scheduled| seen_ids.insert(scheduled.task.id))
         .filter(|scheduled| {
@@ -262,7 +267,7 @@ fn collect_candidates(
             planned_start: scheduled.scheduled_start,
             work_seconds: scheduled.total_work_seconds,
         })
-        .collect()
+        .collect())
 }
 
 fn calculate_daily_leeway(
@@ -270,11 +275,11 @@ fn calculate_daily_leeway(
     free_time_manager: &mut dyn FreeTimeManagerTrait,
     target_dates: &[NaiveDate],
     end_of_day_offset_minutes: i64,
-) -> HashMap<NaiveDate, i64> {
+) -> Result<HashMap<NaiveDate, i64>, ApplicationError> {
     let mut total_work_seconds = HashMap::<NaiveDate, i64>::new();
     let mut repetitive_work_seconds = HashMap::<NaiveDate, i64>::new();
 
-    for scheduled in get_schedule(repository) {
+    for scheduled in get_schedule(repository)? {
         let date = subjective_date(scheduled.scheduled_start);
         if !target_dates.contains(&date) {
             continue;
@@ -288,7 +293,7 @@ fn calculate_daily_leeway(
         }
     }
 
-    target_dates
+    Ok(target_dates
         .iter()
         .map(|date| {
             let free_time_minutes =
@@ -305,7 +310,7 @@ fn calculate_daily_leeway(
                 calculate_daily_leeway_seconds(free_time_minutes, repetitive, total),
             )
         })
-        .collect()
+        .collect())
 }
 
 fn placement_fits_target_day(
@@ -410,8 +415,12 @@ mod tests {
             self.projects.iter().find_map(|task| task.get_by_id(id))
         }
 
-        fn start_new_project(&mut self, root_task: TaskHandle) {
+        fn start_new_project(
+            &mut self,
+            root_task: TaskHandle,
+        ) -> Result<(), crate::entity::task::TaskTreeError> {
             self.projects.push(root_task);
+            Ok(())
         }
     }
 
@@ -507,7 +516,7 @@ mod tests {
         let repository = TestTaskRepository::new(vec![low.clone(), high.clone()], now);
         let mut free_time_manager = TestFreeTimeManager::new(120);
 
-        let actual = pack_tasks(&repository, &mut free_time_manager);
+        let actual = pack_tasks(&repository, &mut free_time_manager).unwrap();
 
         assert_eq!(
             actual
@@ -533,7 +542,7 @@ mod tests {
         let repository = TestTaskRepository::new(vec![later.clone(), earlier.clone()], now);
         let mut free_time_manager = TestFreeTimeManager::new(120);
 
-        let actual = pack_tasks(&repository, &mut free_time_manager);
+        let actual = pack_tasks(&repository, &mut free_time_manager).unwrap();
 
         assert_eq!(
             actual
@@ -555,7 +564,7 @@ mod tests {
         let repository = TestTaskRepository::new(vec![larger_id.clone(), smaller_id.clone()], now);
         let mut free_time_manager = TestFreeTimeManager::new(120);
 
-        let actual = pack_tasks(&repository, &mut free_time_manager);
+        let actual = pack_tasks(&repository, &mut free_time_manager).unwrap();
 
         assert_eq!(
             actual
@@ -580,7 +589,7 @@ mod tests {
         );
         let mut free_time_manager = TestFreeTimeManager::new(120);
 
-        let actual = pack_tasks(&repository, &mut free_time_manager);
+        let actual = pack_tasks(&repository, &mut free_time_manager).unwrap();
 
         assert_eq!(
             actual
@@ -604,7 +613,7 @@ mod tests {
         let repository = TestTaskRepository::new(vec![first.clone(), second.clone()], now);
         let mut free_time_manager = TestFreeTimeManager::new(40 * 60);
 
-        let actual = pack_tasks(&repository, &mut free_time_manager);
+        let actual = pack_tasks(&repository, &mut free_time_manager).unwrap();
 
         assert_eq!(actual.packed_tasks.len(), 1);
         assert_eq!(actual.packed_tasks[0].task_id, first.get_id());
@@ -620,7 +629,7 @@ mod tests {
         let repository = TestTaskRepository::new(vec![task.clone()], now);
         let mut free_time_manager = TestFreeTimeManager::new(120);
 
-        let actual = pack_tasks(&repository, &mut free_time_manager);
+        let actual = pack_tasks(&repository, &mut free_time_manager).unwrap();
 
         assert_eq!(actual.packed_tasks.len(), 1);
         assert_eq!(actual.packed_tasks[0].task_id, task.get_id());
@@ -638,7 +647,7 @@ mod tests {
         let repository = TestTaskRepository::new(vec![blocker, candidate.clone()], now);
         let mut free_time_manager = TestFreeTimeManager::new(180);
 
-        let actual = pack_tasks(&repository, &mut free_time_manager);
+        let actual = pack_tasks(&repository, &mut free_time_manager).unwrap();
 
         assert_eq!(actual.packed_tasks.len(), 1);
         assert_eq!(candidate.get_start_time(), now);
@@ -655,7 +664,7 @@ mod tests {
         let repository = TestTaskRepository::new(vec![low.clone(), high.clone()], now);
         let mut free_time_manager = TestFreeTimeManager::new(60);
 
-        let actual = pack_tasks(&repository, &mut free_time_manager);
+        let actual = pack_tasks(&repository, &mut free_time_manager).unwrap();
 
         assert_eq!(actual.packed_tasks.len(), 1);
         assert_eq!(actual.packed_tasks[0].task_id, low.get_id());
@@ -675,7 +684,7 @@ mod tests {
         let repository = TestTaskRepository::new(vec![task.clone()], now);
         let mut free_time_manager = TestFreeTimeManager::new(60);
 
-        let actual = pack_tasks(&repository, &mut free_time_manager);
+        let actual = pack_tasks(&repository, &mut free_time_manager).unwrap();
 
         assert!(actual.packed_tasks.is_empty());
         assert_eq!(actual.skipped_tasks.len(), 1);
@@ -690,7 +699,7 @@ mod tests {
         let repository = TestTaskRepository::new(vec![task.clone()], now);
         let mut free_time_manager = TestFreeTimeManager::new(60);
 
-        let actual = pack_tasks(&repository, &mut free_time_manager);
+        let actual = pack_tasks(&repository, &mut free_time_manager).unwrap();
 
         assert_eq!(actual.packed_tasks.len(), 1);
         assert_eq!(
@@ -707,7 +716,7 @@ mod tests {
         let repository = TestTaskRepository::new(vec![task], now);
         let mut free_time_manager = TestFreeTimeManager::new(60);
 
-        let actual = pack_tasks(&repository, &mut free_time_manager);
+        let actual = pack_tasks(&repository, &mut free_time_manager).unwrap();
 
         assert!(actual.packed_tasks.is_empty());
         assert!(actual.skipped_tasks.is_empty());
@@ -723,7 +732,7 @@ mod tests {
         let repository = TestTaskRepository::new(vec![task.clone()], now);
         let mut free_time_manager = TestFreeTimeManager::new(120);
 
-        let actual = pack_tasks(&repository, &mut free_time_manager);
+        let actual = pack_tasks(&repository, &mut free_time_manager).unwrap();
 
         assert_eq!(actual.packed_tasks.len(), 1);
         assert_eq!(task.get_deadline_time_opt(), Some(deadline));
@@ -743,7 +752,7 @@ mod tests {
             now + Duration::minutes(90),
         );
 
-        let actual = pack_tasks(&repository, &mut free_time_manager);
+        let actual = pack_tasks(&repository, &mut free_time_manager).unwrap();
 
         assert_eq!(actual.packed_tasks.len(), 1);
         assert_eq!(
@@ -762,7 +771,7 @@ mod tests {
         let mut free_time_manager =
             TestFreeTimeManager::with_blocked_interval(180, now, now + Duration::hours(1));
 
-        let actual = pack_tasks(&repository, &mut free_time_manager);
+        let actual = pack_tasks(&repository, &mut free_time_manager).unwrap();
 
         assert_eq!(actual.packed_tasks.len(), 1);
         assert_eq!(
@@ -784,7 +793,7 @@ mod tests {
             Local.with_ymd_and_hms(2026, 8, 12, 6, 0, 0).unwrap(),
         );
 
-        let actual = pack_tasks(&repository, &mut free_time_manager);
+        let actual = pack_tasks(&repository, &mut free_time_manager).unwrap();
 
         assert_eq!(actual.packed_tasks.len(), 1);
         assert_eq!(
@@ -802,7 +811,7 @@ mod tests {
         let repository = TestTaskRepository::new(vec![task.clone()], now);
         let mut free_time_manager = TestFreeTimeManager::new(60);
 
-        let actual = pack_tasks(&repository, &mut free_time_manager);
+        let actual = pack_tasks(&repository, &mut free_time_manager).unwrap();
 
         assert_eq!(actual.packed_tasks.len(), 1);
         assert_eq!(actual.packed_tasks[0].work_seconds, 30 * 60 - 1);
@@ -819,7 +828,7 @@ mod tests {
         let mut free_time_manager =
             TestFreeTimeManager::with_blocked_interval(180, now, now + Duration::days(7));
 
-        let actual = pack_tasks(&repository, &mut free_time_manager);
+        let actual = pack_tasks(&repository, &mut free_time_manager).unwrap();
 
         assert_eq!(actual.skipped_tasks.len(), 1);
         assert_eq!(actual.skipped_tasks[0].task_id, atomic.get_id());
@@ -837,7 +846,7 @@ mod tests {
             TestTaskRepository::new(vec![first.clone(), second.clone(), third.clone()], now);
         let mut free_time_manager = TestFreeTimeManager::new(60);
 
-        let actual = pack_tasks(&repository, &mut free_time_manager);
+        let actual = pack_tasks(&repository, &mut free_time_manager).unwrap();
 
         assert_eq!(
             actual
@@ -861,7 +870,7 @@ mod tests {
         let repository = TestTaskRepository::new(vec![waiting, future], now);
         let mut free_time_manager = TestFreeTimeManager::new(120);
 
-        let actual = pack_tasks(&repository, &mut free_time_manager);
+        let actual = pack_tasks(&repository, &mut free_time_manager).unwrap();
 
         assert!(actual.packed_tasks.is_empty());
         assert!(actual.skipped_tasks.is_empty());
@@ -879,7 +888,7 @@ mod tests {
         let repository = TestTaskRepository::new(vec![parent, done, zero], now);
         let mut free_time_manager = TestFreeTimeManager::new(120);
 
-        let actual = pack_tasks(&repository, &mut free_time_manager);
+        let actual = pack_tasks(&repository, &mut free_time_manager).unwrap();
 
         assert!(actual.packed_tasks.is_empty());
         assert!(actual.skipped_tasks.is_empty());

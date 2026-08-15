@@ -151,11 +151,13 @@ impl<R: TaskRepositoryTrait> McpServer<R> {
             }
         }
 
-        let task = get_focus(&mut self.repository)
-            .as_ref()
-            .map(task_view_json)
-            .unwrap_or(Value::Null);
-        tool_result_response(id, json!({"task": task}), false)
+        match get_focus(&mut self.repository) {
+            Ok(task) => {
+                let task = task.as_ref().map(task_view_json).unwrap_or(Value::Null);
+                tool_result_response(id, json!({"task": task}), false)
+            }
+            Err(error) => internal_error_response(id, &error.to_string()),
+        }
     }
 
     fn call_get_task(&self, id: Value, arguments: &Value) -> Value {
@@ -173,8 +175,11 @@ impl<R: TaskRepositoryTrait> McpServer<R> {
         };
 
         match get_task(&self.repository, task_id) {
-            Some(task) => tool_result_response(id, json!({"task": task_view_json(&task)}), false),
-            None => task_not_found_response(id, task_id, None),
+            Ok(Some(task)) => {
+                tool_result_response(id, json!({"task": task_view_json(&task)}), false)
+            }
+            Ok(None) => task_not_found_response(id, task_id, None),
+            Err(error) => internal_error_response(id, &error.to_string()),
         }
     }
 
@@ -212,12 +217,20 @@ impl<R: TaskRepositoryTrait> McpServer<R> {
             }
         };
 
-        let schedule = get_schedule(&self.repository)
-            .iter()
-            .filter(|scheduled| scheduled.scheduled_start < until && scheduled.scheduled_end > from)
-            .map(scheduled_task_view_json)
-            .collect::<Vec<_>>();
-        tool_result_response(id, json!({"schedule": schedule}), false)
+        match get_schedule(&self.repository) {
+            Ok(schedule) => tool_result_response(
+                id,
+                json!({
+                    "schedule": schedule
+                        .iter()
+                        .filter(|scheduled| scheduled.scheduled_start < until && scheduled.scheduled_end > from)
+                        .map(scheduled_task_view_json)
+                        .collect::<Vec<_>>()
+                }),
+                false,
+            ),
+            Err(error) => internal_error_response(id, &error.to_string()),
+        }
     }
 
     fn call_create_task(&mut self, id: Value, arguments: &Value) -> Value {
@@ -1650,11 +1663,15 @@ mod tests {
             self.projects.iter().find_map(|task| task.get_by_id(id))
         }
 
-        fn start_new_project(&mut self, root_task: TaskHandle) {
+        fn start_new_project(
+            &mut self,
+            root_task: TaskHandle,
+        ) -> Result<(), crate::entity::task::TaskTreeError> {
             self.mutation_count.set(self.mutation_count.get() + 1);
             self.operation_order.borrow_mut().push("mutation");
             self.projects.push(root_task);
             self.project_count.set(self.projects.len());
+            Ok(())
         }
     }
 
@@ -1821,7 +1838,9 @@ mod tests {
         let now = fixed_now();
         let mut source = TaskRepository::new(storage_path);
         source.sync_clock(now);
-        source.start_new_project(TaskHandle::new("MCP cache対象"));
+        source
+            .start_new_project(TaskHandle::new("MCP cache対象"))
+            .unwrap();
         source.save().unwrap();
         let project_yaml_path = storage
             .path

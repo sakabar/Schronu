@@ -8,7 +8,7 @@ use crate::application::interface::{
 use crate::entity::datetime::get_next_morning_datetime;
 use crate::entity::task::extract_leaf_tasks_from_project;
 use crate::entity::task::extract_leaf_tasks_from_project_with_pending;
-use crate::entity::task::{task_to_yaml, Status, TaskHandle};
+use crate::entity::task::{task_to_yaml, Status, TaskHandle, TaskTreeError};
 use chrono::Duration;
 use chrono::{DateTime, Local};
 use linked_hash_map::LinkedHashMap;
@@ -323,7 +323,9 @@ impl TaskRepository {
     }
 
     fn serialize_project(project: &Project) -> Result<Vec<u8>, TaskRepositoryError> {
-        let task_yaml = task_to_yaml(&project.root_task);
+        let task_yaml = task_to_yaml(&project.root_task).map_err(|error| {
+            TaskRepositoryError::new(ApplicationRepositoryOperation::Save, error)
+        })?;
         let mut project_hash = LinkedHashMap::new();
         project_hash.insert(Yaml::String(String::from("project")), task_yaml);
         let doc = Yaml::Hash(project_hash);
@@ -700,8 +702,8 @@ impl TaskRepositoryTrait for TaskRepository {
         None
     }
 
-    fn start_new_project(&mut self, root_task: TaskHandle) {
-        let project_name = root_task.get_name();
+    fn start_new_project(&mut self, root_task: TaskHandle) -> Result<(), TaskTreeError> {
+        let project_name = root_task.get_name()?;
 
         let yyyymmdd = self.last_synced_time.format("%Y%m%d").to_string();
 
@@ -724,6 +726,7 @@ impl TaskRepositoryTrait for TaskRepository {
 
         self.cache_task_and_descendants(&project.root_task);
         self.projects.push(project);
+        Ok(())
     }
 }
 
@@ -837,10 +840,14 @@ mod tests {
         let root_task = TaskHandle::new("メモリ登録対象");
         let root_task_id = root_task.get_id();
 
-        task_repository.start_new_project(root_task);
+        task_repository.start_new_project(root_task).unwrap();
 
         assert_eq!(
-            task_repository.get_by_id(root_task_id).unwrap().get_name(),
+            task_repository
+                .get_by_id(root_task_id)
+                .unwrap()
+                .get_name()
+                .unwrap(),
             "メモリ登録対象"
         );
     }
@@ -880,7 +887,9 @@ mod tests {
         let mut task_repository = TaskRepository::new(storage_dir.path_str());
         task_repository.sync_clock(now);
 
-        task_repository.start_new_project(TaskHandle::new("filesystem非変更対象"));
+        task_repository
+            .start_new_project(TaskHandle::new("filesystem非変更対象"))
+            .unwrap();
 
         assert!(!storage_dir.path.exists());
     }
@@ -893,7 +902,7 @@ mod tests {
         task_repository.sync_clock(now);
         let root_task = TaskHandle::new("保存対象");
         let root_task_id = root_task.get_id();
-        task_repository.start_new_project(root_task);
+        task_repository.start_new_project(root_task).unwrap();
         let project_dir_path = storage_dir.project_dir_path("20260811", "保存対象");
         let markdown_dir_path = project_dir_path.join("markdown");
         let project_yaml_file_path = project_dir_path.join("project.yaml");
@@ -909,7 +918,7 @@ mod tests {
         loaded_repository.sync_clock(now);
         loaded_repository.load().unwrap();
         let loaded_task = loaded_repository.get_by_id(root_task_id).unwrap();
-        assert_eq!(loaded_task.get_name(), "保存対象");
+        assert_eq!(loaded_task.get_name().unwrap(), "保存対象");
     }
 
     #[test]
@@ -919,7 +928,9 @@ mod tests {
         let now = Local.with_ymd_and_hms(2026, 8, 11, 12, 0, 0).unwrap();
         let mut task_repository = TaskRepository::new(storage_dir.path_str());
         task_repository.sync_clock(now);
-        task_repository.start_new_project(TaskHandle::new("保存失敗対象"));
+        task_repository
+            .start_new_project(TaskHandle::new("保存失敗対象"))
+            .unwrap();
         let expected_project_dir = storage_dir.project_dir_path("20260811", "保存失敗対象");
 
         let actual = task_repository.save().unwrap_err();
@@ -938,7 +949,9 @@ mod tests {
         let now = Local.with_ymd_and_hms(2026, 8, 11, 12, 0, 0).unwrap();
         let mut task_repository = TaskRepository::new(storage_dir.path_str());
         task_repository.sync_clock(now);
-        task_repository.start_new_project(TaskHandle::new("read失敗対象"));
+        task_repository
+            .start_new_project(TaskHandle::new("read失敗対象"))
+            .unwrap();
         let project_yaml_path = storage_dir
             .project_dir_path("20260811", "read失敗対象")
             .join("project.yaml");
@@ -1258,7 +1271,7 @@ mod tests {
         source_repository.sync_clock(now);
         let stored_task = TaskHandle::new("保存済みtask");
         let stored_task_id = stored_task.get_id();
-        source_repository.start_new_project(stored_task);
+        source_repository.start_new_project(stored_task).unwrap();
         source_repository.save().unwrap();
         write_project_yaml(&storage_dir, "zz-broken", "project: [");
 
@@ -1266,7 +1279,7 @@ mod tests {
         repository.sync_clock(now);
         let memory_task = TaskHandle::new("memory task");
         let memory_task_id = memory_task.get_id();
-        repository.start_new_project(memory_task);
+        repository.start_new_project(memory_task).unwrap();
 
         assert!(repository.load().is_err());
         assert!(repository.get_by_id(memory_task_id).is_some());
@@ -1285,8 +1298,8 @@ mod tests {
         repository.sync_clock(now);
         let changed_task = TaskHandle::new("変更対象");
         let unchanged_task = TaskHandle::new("未変更対象");
-        repository.start_new_project(changed_task.clone());
-        repository.start_new_project(unchanged_task);
+        repository.start_new_project(changed_task.clone()).unwrap();
+        repository.start_new_project(unchanged_task).unwrap();
         repository.save().unwrap();
 
         let changed_yaml_path = storage_dir
@@ -1329,8 +1342,8 @@ mod tests {
         repository.sync_clock(now);
         let changed_task = TaskHandle::new("変更対象");
         let unchanged_task = TaskHandle::new("未変更対象");
-        repository.start_new_project(changed_task.clone());
-        repository.start_new_project(unchanged_task);
+        repository.start_new_project(changed_task.clone()).unwrap();
+        repository.start_new_project(unchanged_task).unwrap();
         repository.save().unwrap();
         let unchanged_dir = storage_dir.project_dir_path("20260813", "未変更対象");
         fs::remove_dir_all(&unchanged_dir).unwrap();
@@ -1347,7 +1360,9 @@ mod tests {
         let now = Local.with_ymd_and_hms(2026, 8, 13, 12, 0, 0).unwrap();
         let mut source = TaskRepository::new(storage_dir.path_str());
         source.sync_clock(now);
-        source.start_new_project(TaskHandle::new("読込済み"));
+        source
+            .start_new_project(TaskHandle::new("読込済み"))
+            .unwrap();
         source.save().unwrap();
 
         let mut repository = TaskRepository::new(storage_dir.path_str());
@@ -1355,7 +1370,9 @@ mod tests {
         repository.load().unwrap();
         let loaded_dir = storage_dir.project_dir_path("20260813", "読込済み");
         fs::remove_dir_all(&loaded_dir).unwrap();
-        repository.start_new_project(TaskHandle::new("新規"));
+        repository
+            .start_new_project(TaskHandle::new("新規"))
+            .unwrap();
 
         repository.save().unwrap();
 
@@ -1374,7 +1391,7 @@ mod tests {
         repository.sync_clock(now);
         let task = TaskHandle::new("再試行対象");
         let task_id = task.get_id();
-        repository.start_new_project(task.clone());
+        repository.start_new_project(task.clone()).unwrap();
         repository.save().unwrap();
         let project_yaml_path = storage_dir
             .project_dir_path("20260813", "再試行対象")
@@ -1407,7 +1424,9 @@ mod tests {
         let now = Local.with_ymd_and_hms(2026, 8, 13, 12, 0, 0).unwrap();
         let mut source = TaskRepository::new(storage_dir.path_str());
         source.sync_clock(now);
-        source.start_new_project(TaskHandle::new("既存project"));
+        source
+            .start_new_project(TaskHandle::new("既存project"))
+            .unwrap();
         source.save().unwrap();
         let revision_path = storage_dir.path.join(".revision");
         fs::remove_file(&revision_path).unwrap();
@@ -1427,7 +1446,9 @@ mod tests {
         let revision_path = storage_dir.path.join(".revision");
         let mut repository = TaskRepository::new(storage_dir.path_str());
         repository.sync_clock(now);
-        repository.start_new_project(TaskHandle::new("保存対象"));
+        repository
+            .start_new_project(TaskHandle::new("保存対象"))
+            .unwrap();
 
         repository.save().unwrap();
 
@@ -1449,7 +1470,7 @@ mod tests {
         let mut repository = TaskRepository::new(storage_dir.path_str());
         repository.sync_clock(now);
         let task = TaskHandle::new("失敗対象");
-        repository.start_new_project(task.clone());
+        repository.start_new_project(task.clone()).unwrap();
         repository.save().unwrap();
         let previous_revision = repository.storage_revision.get().unwrap();
         let project_yaml_path = storage_dir
@@ -1541,7 +1562,9 @@ mod tests {
         let now = Local.with_ymd_and_hms(2026, 8, 13, 12, 0, 0).unwrap();
         let mut repository = TaskRepository::new(storage_dir.path_str());
         repository.sync_clock(now);
-        repository.start_new_project(TaskHandle::new("保存対象"));
+        repository
+            .start_new_project(TaskHandle::new("保存対象"))
+            .unwrap();
 
         let actual = repository.save().unwrap_err();
 
@@ -1564,7 +1587,7 @@ mod tests {
         source.sync_clock(now);
         let task = TaskHandle::new("初回読込対象");
         let task_id = task.get_id();
-        source.start_new_project(task);
+        source.start_new_project(task).unwrap();
         source.save().unwrap();
         fs::remove_file(storage_dir.path.join(".revision")).unwrap();
         let mut repository = TaskRepository::new(storage_dir.path_str());
@@ -1587,7 +1610,7 @@ mod tests {
         task.set_pending_until(before + Duration::hours(1));
         task.set_orig_status(Status::Pending);
         let task_id = task.get_id();
-        source.start_new_project(task);
+        source.start_new_project(task).unwrap();
         source.save().unwrap();
         let project_yaml_path = storage_dir
             .project_dir_path("20260813", "cache対象")
@@ -1620,7 +1643,7 @@ mod tests {
         source.sync_clock(now);
         let task = TaskHandle::new("外部更新対象");
         let task_id = task.get_id();
-        source.start_new_project(task);
+        source.start_new_project(task).unwrap();
         source.save().unwrap();
         let mut cached = TaskRepository::new(storage_dir.path_str());
         cached.reload_if_changed(now).unwrap();
@@ -1657,7 +1680,7 @@ mod tests {
         source.sync_clock(now);
         let task = TaskHandle::new("停止中編集対象");
         let task_id = task.get_id();
-        source.start_new_project(task);
+        source.start_new_project(task).unwrap();
         source.save().unwrap();
         let original_revision = fs::read(storage_dir.path.join(".revision")).unwrap();
         let original_revision_id =
@@ -1738,7 +1761,7 @@ mod tests {
 
         let actual = task_repository.get_by_id(child_task_id).unwrap();
 
-        assert_eq!(actual.get_name(), "子タスク");
+        assert_eq!(actual.get_name().unwrap(), "子タスク");
         assert!(task_repository
             .id_to_task_map
             .borrow()
@@ -1767,7 +1790,7 @@ mod tests {
 
         let actual = task_repository.get_by_id(child_task_id).unwrap();
 
-        assert_eq!(actual.get_name(), "子タスク");
+        assert_eq!(actual.get_name().unwrap(), "子タスク");
         assert!(task_repository
             .id_to_task_map
             .borrow()

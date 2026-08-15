@@ -58,8 +58,12 @@ impl TaskRepositoryTrait for TestTaskRepository {
         self.projects.iter().find_map(|task| task.get_by_id(id))
     }
 
-    fn start_new_project(&mut self, root_task: TaskHandle) {
+    fn start_new_project(
+        &mut self,
+        root_task: TaskHandle,
+    ) -> Result<(), crate::entity::task::TaskTreeError> {
         self.projects.push(root_task);
+        Ok(())
     }
 }
 

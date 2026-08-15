@@ -810,7 +810,7 @@ fn parse_dated_clear_or_gather_time_range(
 fn scheduled_leaf_starts_on_schronu_day(
     task_repository: &dyn TaskRepositoryTrait,
     schronu_day_start: DateTime<Local>,
-) -> HashMap<Uuid, Vec<DateTime<Local>>> {
+) -> Result<HashMap<Uuid, Vec<DateTime<Local>>>, ApplicationError> {
     let leaf_task_ids = task_repository
         .get_all_projects()
         .into_iter()
@@ -818,7 +818,7 @@ fn scheduled_leaf_starts_on_schronu_day(
         .map(|task| task.get_id())
         .collect::<HashSet<_>>();
 
-    get_schedule(task_repository)
+    Ok(get_schedule(task_repository)?
         .into_iter()
         .filter(|scheduled| leaf_task_ids.contains(&scheduled.task.id))
         .filter(|scheduled| {
@@ -831,7 +831,7 @@ fn scheduled_leaf_starts_on_schronu_day(
                 .or_default()
                 .push(scheduled.scheduled_start);
             starts
-        })
+        }))
 }
 
 fn parse_focus_selection_mode_command(line: &str) -> Option<FocusSelectionMode> {
@@ -857,13 +857,14 @@ fn parse_focus_selection_mode_command(line: &str) -> Option<FocusSelectionMode> 
 fn select_focus_task_id(
     task_repository: &mut dyn TaskRepositoryTrait,
     focus_selection_mode: FocusSelectionMode,
-) -> Option<Uuid> {
+) -> Result<Option<Uuid>, ApplicationError> {
     match focus_selection_mode {
-        FocusSelectionMode::HighestPriority => get_focus(task_repository).map(|task| task.id),
-        FocusSelectionMode::LowestPriority { recent_days } => {
-            task_repository.get_defer_candidate_leaf_task_id(recent_days)
+        FocusSelectionMode::HighestPriority | FocusSelectionMode::Explicit => {
+            Ok(get_focus(task_repository)?.map(|task| task.id))
         }
-        FocusSelectionMode::Explicit => get_focus(task_repository).map(|task| task.id),
+        FocusSelectionMode::LowestPriority { recent_days } => {
+            Ok(task_repository.get_defer_candidate_leaf_task_id(recent_days))
+        }
     }
 }
 
@@ -2436,7 +2437,10 @@ fn execute_make_appointment(focused_task_opt: &Option<TaskHandle>, start_time: D
     }
 }
 
-fn execute_show_ancestor(stdout: &mut dyn SchronuWriter, focused_task_opt: &Option<TaskHandle>) {
+fn execute_show_ancestor(
+    stdout: &mut dyn SchronuWriter,
+    focused_task_opt: &Option<TaskHandle>,
+) -> Result<(), ApplicationError> {
     writeln!(stdout).unwrap();
 
     // まずは葉タスクから根に向かいながら後ろに追加していき、
@@ -2458,7 +2462,7 @@ fn execute_show_ancestor(stdout: &mut dyn SchronuWriter, focused_task_opt: &Opti
         };
 
         let id = task.get_id();
-        let name = task.get_name();
+        let name = task.get_name().map_err(ApplicationError::TaskTree)?;
         let estimated_work_minutes =
             (task.get_estimated_work_seconds() as f64 / 60.0).ceil() as i64;
         let first_available_date_str = first_available_datetime.format("%Y/%m/%d").to_string();
@@ -2471,17 +2475,20 @@ fn execute_show_ancestor(stdout: &mut dyn SchronuWriter, focused_task_opt: &Opti
     }
 
     writeln_newline(stdout, "").unwrap();
+    Ok(())
 }
 
 fn execute_show_leaf_tasks(
     stdout: &mut dyn SchronuWriter,
     task_repository: &mut dyn TaskRepositoryTrait,
     _free_time_manager: &mut dyn FreeTimeManagerTrait,
-) {
+) -> Result<(), ApplicationError> {
     let mut ans_tpls = vec![];
 
     for project_root_task in task_repository.get_all_projects().iter() {
-        let project_name = project_root_task.get_name();
+        let project_name = project_root_task
+            .get_name()
+            .map_err(ApplicationError::TaskTree)?;
 
         // 優先度が高いタスクほど下に表示されるようにし、フォーカスが当たるタスクは末尾に表示されるようにする。
         let leaf_tasks = extract_leaf_tasks_from_project(project_root_task);
@@ -2511,6 +2518,7 @@ fn execute_show_leaf_tasks(
         writeln_newline(stdout, &message).unwrap();
     }
     writeln_newline(stdout, "").unwrap();
+    Ok(())
 }
 
 // 集計用タプルはこの関数内だけで使用し、意味を持つ公開型を増やさない。
@@ -2522,7 +2530,7 @@ fn execute_show_all_tasks(
     free_time_manager: &mut dyn FreeTimeManagerTrait,
     pattern_opt: &Option<String>,
     display_order: TaskListDisplayOrder,
-) {
+) -> Result<(), ApplicationError> {
     execute_show_all_tasks_with_config(
         stdout,
         focused_task_id_opt,
@@ -2531,7 +2539,7 @@ fn execute_show_all_tasks(
         pattern_opt,
         display_order,
         active_config(),
-    );
+    )
 }
 
 #[allow(clippy::type_complexity)]
@@ -2543,9 +2551,9 @@ fn execute_show_all_tasks_with_config(
     pattern_opt: &Option<String>,
     display_order: TaskListDisplayOrder,
     config: &SchronuConfig,
-) {
+) -> Result<(), ApplicationError> {
     let supports_ansi_color = stdout.supports_ansi_color();
-    let scheduled_tasks = get_schedule(task_repository);
+    let scheduled_tasks = get_schedule(task_repository)?;
     let mut task_list_display_rows: Vec<TaskListDisplayRow> = vec![];
     let mut available_biggest_row_opt: Option<TaskListDisplayRow> = None;
     let mut available_biggest_task_estimate_work_seconds = 0;
@@ -2672,7 +2680,7 @@ fn execute_show_all_tasks_with_config(
                 "{}{}{}",
                 adjustable_prefix_label,
                 repetition_prefix_label,
-                task.get_name()
+                task.get_name().map_err(ApplicationError::TaskTree)?
             );
             let chars_vec: Vec<char> = name.chars().collect();
             let max_len: usize = 70;
@@ -3668,6 +3676,7 @@ fn execute_show_all_tasks_with_config(
     }
 
     writeln_newline(stdout, "").unwrap();
+    Ok(())
 }
 
 fn execute_focus(focused_task_id_opt: &mut Option<Uuid>, new_task_id_str: &str) {
@@ -3796,7 +3805,7 @@ fn execute_open_link(focused_task_opt: &Option<TaskHandle>) -> Result<(), Comman
     let mut t_opt: Option<TaskHandle> = focused_task_opt.clone();
 
     while let Some(t) = &t_opt {
-        if let Some(url) = extract_url(&t.get_name()) {
+        if let Some(url) = extract_url(&t.get_name().map_err(ApplicationError::TaskTree)?) {
             webbrowser::open(&url).map_err(|source| CommandError::ExternalOpen {
                 target: "browser",
                 source: Box::new(source),
@@ -5326,8 +5335,9 @@ impl TaskRepositoryTrait for TestTaskRepository {
         self.task.get_by_id(id)
     }
 
-    fn start_new_project(&mut self, root_task: TaskHandle) {
+    fn start_new_project(&mut self, root_task: TaskHandle) -> Result<(), TaskTreeError> {
         self.task = root_task;
+        Ok(())
     }
 }
 
@@ -5641,7 +5651,7 @@ fn test_select_focus_task_id_高優先度modeでは最優先leafを返す() {
 
     let actual = select_focus_task_id(&mut task_repository, FocusSelectionMode::HighestPriority);
 
-    assert_eq!(actual, Some(expected_id));
+    assert_eq!(actual, Ok(Some(expected_id)));
 }
 
 #[test]
@@ -5657,7 +5667,7 @@ fn test_select_focus_task_id_低優先度modeでは指定日数の延期候補�
         FocusSelectionMode::LowestPriority { recent_days: 3 },
     );
 
-    assert_eq!(actual, Some(expected_id));
+    assert_eq!(actual, Ok(Some(expected_id)));
     assert_eq!(
         task_repository.last_defer_candidate_recent_days_opt,
         Some(3)
@@ -5758,7 +5768,7 @@ fn test_execute_new_新規projectを翌朝までpendingで作成する() {
         "新 新規project 30",
     );
 
-    assert_eq!(result.task.get_name(), "新規project");
+    assert_eq!(result.task.get_name().unwrap(), "新規project");
     assert_eq!(result.task.get_priority(), 5);
     assert_eq!(result.task.get_estimated_work_seconds(), 30 * 60);
     assert_eq!(result.task.get_orig_status(), Status::Pending);
@@ -5780,7 +5790,7 @@ fn test_execute_unplanned_延期と見積もりを省略して即時着手可能
         "突 割り込みproject",
     );
 
-    assert_eq!(result.task.get_name(), "割り込みproject");
+    assert_eq!(result.task.get_name().unwrap(), "割り込みproject");
     assert_eq!(result.task.get_orig_status(), Status::Todo);
     assert_eq!(result.task.get_estimated_work_seconds(), 15 * 60);
     assert_eq!(result.focused_task_id_opt, Some(result.task.get_id()));
@@ -5805,7 +5815,7 @@ fn test_execute_breakdown_子を順に作り締切を継承して最初の子へ
     assert_eq!(
         children
             .iter()
-            .map(|task| task.get_name())
+            .map(|task| task.get_name().unwrap())
             .collect::<Vec<_>>(),
         vec!["子A", "子B"]
     );
@@ -5861,7 +5871,7 @@ fn test_execute_next_up_数値名と負の見積もりでは変更しない() {
         let result = execute_command_for_test(root, now, Some(focused.get_id()), command);
 
         assert_eq!(result.task.get_children().len(), 1);
-        assert_eq!(result.task.get_children()[0].get_name(), "focus");
+        assert_eq!(result.task.get_children()[0].get_name().unwrap(), "focus");
         assert_eq!(result.focused_task_id_opt, Some(focused.get_id()));
     }
 }
@@ -5915,7 +5925,7 @@ fn test_execute_split_負数は親に残す時間として扱う() {
     let child = &result.task.get_children()[0];
 
     assert_eq!(result.task.get_estimated_work_seconds(), 15 * 60);
-    assert_eq!(child.get_name(), "子");
+    assert_eq!(child.get_name().unwrap(), "子");
     assert_eq!(child.get_estimated_work_seconds(), 85 * 60);
     assert_eq!(result.focused_task_id_opt, Some(child.get_id()));
 }
@@ -6067,7 +6077,7 @@ fn test_execute_new_数値だけの名前は拒否して元taskを変更しな�
     let result = execute_command_for_test(task.clone(), now, Some(task.get_id()), "新 123 10");
 
     assert_eq!(result.task.get_id(), task.get_id());
-    assert_eq!(result.task.get_name(), "既存タスク");
+    assert_eq!(result.task.get_name().unwrap(), "既存タスク");
     assert_eq!(result.focused_task_id_opt, Some(task.get_id()));
 }
 
@@ -6245,11 +6255,11 @@ fn test_execute_sequential_接尾辞の前にハイフンを付ける() {
 
     let children = task.get_children();
     assert_eq!(children.len(), 1);
-    assert_eq!(children[0].get_name(), "鎖タスク 2-話");
+    assert_eq!(children[0].get_name().unwrap(), "鎖タスク 2-話");
 
     let grand_children = children[0].get_children();
     assert_eq!(grand_children.len(), 1);
-    assert_eq!(grand_children[0].get_name(), "鎖タスク 1-話");
+    assert_eq!(grand_children[0].get_name().unwrap(), "鎖タスク 1-話");
     assert_eq!(focused_task_id_opt, Some(grand_children[0].get_id()));
 }
 
@@ -6259,11 +6269,11 @@ fn test_execute_sequential_接尾辞なしではハイフンを付けない() {
 
     let children = task.get_children();
     assert_eq!(children.len(), 1);
-    assert_eq!(children[0].get_name(), "鎖タスク 2");
+    assert_eq!(children[0].get_name().unwrap(), "鎖タスク 2");
 
     let grand_children = children[0].get_children();
     assert_eq!(grand_children.len(), 1);
-    assert_eq!(grand_children[0].get_name(), "鎖タスク 1");
+    assert_eq!(grand_children[0].get_name().unwrap(), "鎖タスク 1");
     assert_eq!(focused_task_id_opt, Some(grand_children[0].get_id()));
 }
 
@@ -6597,7 +6607,7 @@ fn execute_pack(
     task_repository: &dyn TaskRepositoryTrait,
     free_time_manager: &mut dyn FreeTimeManagerTrait,
 ) {
-    execute_pack_with_config(stdout, task_repository, free_time_manager, active_config());
+    execute_pack_with_config(stdout, task_repository, free_time_manager, active_config()).unwrap();
 }
 
 fn execute_pack_with_config(
@@ -6605,12 +6615,12 @@ fn execute_pack_with_config(
     task_repository: &dyn TaskRepositoryTrait,
     free_time_manager: &mut dyn FreeTimeManagerTrait,
     config: &SchronuConfig,
-) {
+) -> Result<(), ApplicationError> {
     let result = pack_tasks_with_end_of_day_offset_minutes(
         task_repository,
         free_time_manager,
         config.end_of_day_offset_minutes,
-    );
+    )?;
     let total_work_seconds = result
         .packed_tasks
         .iter()
@@ -6632,7 +6642,6 @@ fn execute_pack_with_config(
         )
         .unwrap();
     }
-
     if result.packed_tasks.is_empty() && result.skipped_tasks.is_empty() {
         writeln_newline(stdout, "[Info] 詰められるタスクはありません。").unwrap();
     } else {
@@ -6647,6 +6656,7 @@ fn execute_pack_with_config(
         )
         .unwrap();
     }
+    Ok(())
 }
 
 fn write_flatten_result(stdout: &mut dyn SchronuWriter, result: &FlattenResult) {
@@ -6928,7 +6938,7 @@ fn execute_with_config(
             execute_show_tree(stdout, &focused_task_opt);
         }
         "条" | "祖" | "ancestor" | "anc" => {
-            execute_show_ancestor(stdout, &focused_task_opt);
+            execute_show_ancestor(stdout, &focused_task_opt)?;
         }
         "根" | "root" => {
             if let Some(focused_task) = focused_task_opt {
@@ -6938,7 +6948,7 @@ fn execute_with_config(
             }
         }
         "葉" | "leaves" | "leaf" | "lf" => {
-            execute_show_leaf_tasks(stdout, task_repository, free_time_manager);
+            execute_show_leaf_tasks(stdout, task_repository, free_time_manager)?;
         }
         "全" | "all" => {
             let pattern_opt = if tokens.len() >= 2 {
@@ -6958,7 +6968,7 @@ fn execute_with_config(
                 &pattern_opt,
                 TaskListDisplayOrder::ScheduledStartDesc,
                 config,
-            );
+            )?;
         }
         "尾" => {
             let pattern_opt = if tokens.len() >= 2 {
@@ -6975,7 +6985,7 @@ fn execute_with_config(
                 &pattern_opt,
                 TaskListDisplayOrder::LowPriorityTail,
                 config,
-            );
+            )?;
         }
         "今" | "today" => {
             let pattern_opt = Some("今".to_string());
@@ -6987,7 +6997,7 @@ fn execute_with_config(
                 &pattern_opt,
                 TaskListDisplayOrder::ScheduledStartDesc,
                 config,
-            );
+            )?;
         }
         "単" | "non_repetitive" => {
             let pattern_opt = Some("単".to_string());
@@ -6999,7 +7009,7 @@ fn execute_with_config(
                 &pattern_opt,
                 TaskListDisplayOrder::ScheduledStartDesc,
                 config,
-            );
+            )?;
         }
         "暦" | "cal" => {
             let pattern_opt = Some("暦".to_string());
@@ -7011,7 +7021,7 @@ fn execute_with_config(
                 &pattern_opt,
                 TaskListDisplayOrder::ScheduledStartDesc,
                 config,
-            );
+            )?;
         }
         "帯" | "band" => {
             let pattern_opt = Some("帯".to_string());
@@ -7023,7 +7033,7 @@ fn execute_with_config(
                 &pattern_opt,
                 TaskListDisplayOrder::ScheduledStartDesc,
                 config,
-            );
+            )?;
         }
         "見" | "focus" | "fc" => {
             if tokens.len() >= 2 {
@@ -7517,11 +7527,11 @@ fn execute_with_config(
                 task_repository,
                 free_time_manager,
                 config.end_of_day_offset_minutes,
-            );
+            )?;
             write_flatten_result(stdout, &result);
         }
         "詰" | "pack" => {
-            execute_pack_with_config(stdout, task_repository, free_time_manager, config);
+            execute_pack_with_config(stdout, task_repository, free_time_manager, config)?;
         }
         "押" | "extrude" => {
             if tokens.len() >= 2 {
@@ -7590,7 +7600,7 @@ fn execute_with_config(
                         return Ok(());
                     };
                     let scheduled_starts =
-                        scheduled_leaf_starts_on_schronu_day(task_repository, schronu_day_start);
+                        scheduled_leaf_starts_on_schronu_day(task_repository, schronu_day_start)?;
 
                     for project_root_task in task_repository.get_all_projects().iter() {
                         let leaf_tasks =
@@ -8889,7 +8899,7 @@ fn reconcile_focus_after_reload(
     task_repository: &mut dyn TaskRepositoryTrait,
     focused_task_id_opt: &mut Option<Uuid>,
     focus_selection_mode: &mut FocusSelectionMode,
-) -> bool {
+) -> Result<bool, ApplicationError> {
     let should_reselect = match *focused_task_id_opt {
         Some(focused_task_id) => match task_repository.get_by_id(focused_task_id) {
             Some(focused_task) => {
@@ -8901,15 +8911,15 @@ fn reconcile_focus_after_reload(
         None => true,
     };
     if !should_reselect {
-        return false;
+        return Ok(false);
     }
 
     let previous_focus = *focused_task_id_opt;
     if *focus_selection_mode == FocusSelectionMode::Explicit {
         *focus_selection_mode = FocusSelectionMode::HighestPriority;
     }
-    *focused_task_id_opt = select_focus_task_id(task_repository, *focus_selection_mode);
-    previous_focus != *focused_task_id_opt
+    *focused_task_id_opt = select_focus_task_id(task_repository, *focus_selection_mode)?;
+    Ok(previous_focus != *focused_task_id_opt)
 }
 
 fn main() {
@@ -9064,7 +9074,7 @@ fn execute_non_interactive_command(
     let mut stdout = stdout();
     run_cli_repository_transaction(task_repository, now, |task_repository| {
         let mut focused_task_id_opt: Option<Uuid> =
-            select_focus_task_id(task_repository, FocusSelectionMode::HighestPriority);
+            select_focus_task_id(task_repository, FocusSelectionMode::HighestPriority)?;
         execute(
             &mut stdout,
             task_repository,
@@ -9244,12 +9254,16 @@ fn test_cli_repository_transactionは外部更新を再読込してcommandを即
         let mut mcp_repository = TaskRepository::new(storage_dir.path.to_str().unwrap());
         mcp_repository.sync_clock(now);
         mcp_repository.load().unwrap();
-        mcp_repository.start_new_project(TaskHandle::new("MCP更新"));
+        mcp_repository
+            .start_new_project(TaskHandle::new("MCP更新"))
+            .unwrap();
         mcp_repository.save().unwrap();
     }
 
     run_cli_repository_transaction(&mut cli_repository, now, |repository| {
-        repository.start_new_project(TaskHandle::new("CLI更新"));
+        repository
+            .start_new_project(TaskHandle::new("CLI更新"))
+            .unwrap();
         Ok(())
     })
     .unwrap();
@@ -9261,7 +9275,7 @@ fn test_cli_repository_transactionは外部更新を再読込してcommandを即
     let names = reloaded
         .get_all_projects()
         .iter()
-        .map(|task| task.get_name())
+        .map(|task| task.get_name().unwrap())
         .collect::<Vec<_>>();
     assert_eq!(names.len(), 2);
     assert!(names.contains(&"MCP更新".to_string()));
@@ -9358,7 +9372,7 @@ fn test_reload後にfocus中taskがdoneなら次候補を選び直す() {
         &mut focus_selection_mode,
     );
 
-    assert!(changed);
+    assert!(changed.unwrap());
     assert_eq!(focused_task_id_opt, Some(next.get_id()));
 }
 
@@ -10164,7 +10178,7 @@ fn try_exit_interactive(
     }
 
     task_repository.sync_clock(now);
-    execute_show_all_tasks(
+    let result = execute_show_all_tasks(
         stdout,
         focused_task_id_opt,
         task_repository,
@@ -10172,6 +10186,7 @@ fn try_exit_interactive(
         &Some("帯".to_string()),
         TaskListDisplayOrder::ScheduledStartDesc,
     );
+    report_application_result(stdout, result);
     true
 }
 
@@ -10193,7 +10208,8 @@ fn render_focused_task(
         *last_focused_task_id_opt = focused_task_id_opt;
     }
 
-    execute_show_ancestor(stdout, &focused_task_opt);
+    let result = execute_show_ancestor(stdout, &focused_task_opt);
+    report_application_result(stdout, result);
 
     if let Some(focused_task) = focused_task_opt {
         writeln_newline(
@@ -10239,7 +10255,7 @@ fn render_interactive_screen(
     )
     .unwrap();
 
-    execute_show_all_tasks(
+    let result = execute_show_all_tasks(
         stdout,
         focus_state.focused_task_id_opt,
         task_repository,
@@ -10247,6 +10263,7 @@ fn render_interactive_screen(
         &Some("帯".to_string()),
         TaskListDisplayOrder::ScheduledStartDesc,
     );
+    report_application_result(stdout, result);
     render_focused_task(
         stdout,
         task_repository,
@@ -10410,7 +10427,11 @@ fn test_try_save_before_exit_保存失敗ならerrorを表示して終了を止�
 
     assert!(!actual);
     assert_eq!(
-        task_repository.get_by_id(task_id).unwrap().get_name(),
+        task_repository
+            .get_by_id(task_id)
+            .unwrap()
+            .get_name()
+            .unwrap(),
         "memoryに残すtask"
     );
     let output = stdout.into_string();
@@ -10511,7 +10532,11 @@ fn test_try_exit_interactive_保存失敗後の再試行で成功する() {
     assert!(exited);
     assert_eq!(task_repository.save_attempt_count.get(), 2);
     assert_eq!(
-        task_repository.get_by_id(task_id).unwrap().get_name(),
+        task_repository
+            .get_by_id(task_id)
+            .unwrap()
+            .get_name()
+            .unwrap(),
         "再試行中もmemoryに残すtask"
     );
     let output = stdout.into_string();
@@ -10561,7 +10586,7 @@ fn execute_interactive_command(
     focus_started_datetime: &DateTime<Local>,
     focus_selection_mode: &mut FocusSelectionMode,
     command: &str,
-) -> bool {
+) -> Result<bool, CommandError> {
     if let Some(new_focus_selection_mode) = parse_focus_selection_mode_command(command) {
         *focus_selection_mode = new_focus_selection_mode;
         *focused_task_id_opt = None;
@@ -10656,6 +10681,7 @@ fn execute_interactive_command(
 
     task_repository.sync_clock(Local::now());
     reconcile_focus_after_reload(task_repository, focused_task_id_opt, focus_selection_mode)
+        .map_err(CommandError::from)
 }
 
 struct InteractiveRepositoryState<'a> {
@@ -10692,15 +10718,16 @@ fn reconcile_interactive_state_after_reload(
     task_repository: &mut dyn TaskRepositoryTrait,
     state: &mut InteractiveRepositoryState<'_>,
     now: DateTime<Local>,
-) {
+) -> Result<(), ApplicationError> {
     if reconcile_focus_after_reload(
         task_repository,
         state.focused_task_id_opt,
         state.focus_selection_mode,
-    ) {
+    )? {
         *state.last_focused_task_id_opt = None;
         *state.focus_started_datetime = now;
     }
+    Ok(())
 }
 
 fn handle_interactive_repository_event(
@@ -10716,7 +10743,7 @@ fn handle_interactive_repository_event(
             let now = Local::now();
             let transaction_result =
                 run_cli_repository_transaction(task_repository, now, |task_repository| {
-                    reconcile_interactive_state_after_reload(task_repository, &mut state, now);
+                    reconcile_interactive_state_after_reload(task_repository, &mut state, now)?;
                     writeln_newline(stdout, "").unwrap();
                     println!(
                         "{}{}> {}{}",
@@ -10736,7 +10763,7 @@ fn handle_interactive_repository_event(
                         state.focus_started_datetime,
                         state.focus_selection_mode,
                         &command,
-                    ) {
+                    )? {
                         *state.last_focused_task_id_opt = None;
                     }
                     Ok(())
@@ -10858,7 +10885,9 @@ fn application(
 
     let mut focus_selection_mode = FocusSelectionMode::HighestPriority;
     let mut focused_task_id_opt: Option<Uuid> =
-        select_focus_task_id(task_repository, focus_selection_mode);
+        select_focus_task_id(task_repository, focus_selection_mode)
+            .map_err(CommandError::from)
+            .map_err(RunError::from)?;
 
     let mut last_focused_task_id_opt: Option<Uuid> = None;
     let mut focus_started_datetime: DateTime<Local> = now;
@@ -11197,7 +11226,9 @@ fn application(
                 // スクロールするのが面倒なので、新や突のように付加情報を表示するコマンドの直後は葉を表示しない
                 // Todo: "new" や  "unplanned" の場合にも対応する
                 if !should_suppress_leaf_tasks_after_command(&command) {
-                    execute_show_leaf_tasks(&mut stdout, task_repository, free_time_manager);
+                    let result =
+                        execute_show_leaf_tasks(&mut stdout, task_repository, free_time_manager);
+                    report_application_result(&mut stdout, result);
                 }
 
                 render_focused_task(

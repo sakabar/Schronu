@@ -64,8 +64,12 @@ impl TaskRepositoryTrait for TestTaskRepository {
         self.projects.iter().find_map(|task| task.get_by_id(id))
     }
 
-    fn start_new_project(&mut self, root_task: TaskHandle) {
+    fn start_new_project(
+        &mut self,
+        root_task: TaskHandle,
+    ) -> Result<(), crate::entity::task::TaskTreeError> {
         self.projects.push(root_task);
+        Ok(())
     }
 }
 
@@ -106,10 +110,10 @@ fn get_schedule_締切を優先しdoneを除外してtask_viewを返す() {
     let views_before = repository
         .projects
         .iter()
-        .map(|task| get_task(&repository, task.get_id()).unwrap())
+        .map(|task| get_task(&repository, task.get_id()).unwrap().unwrap())
         .collect::<Vec<_>>();
 
-    let actual = get_schedule(&repository);
+    let actual = get_schedule(&repository).unwrap();
 
     assert_eq!(actual.len(), 2);
     assert_eq!(actual[0].task.id, deadline_task.get_id());
@@ -129,7 +133,7 @@ fn get_schedule_締切を優先しdoneを除外してtask_viewを返す() {
         repository
             .projects
             .iter()
-            .map(|task| get_task(&repository, task.get_id()).unwrap())
+            .map(|task| get_task(&repository, task.get_id()).unwrap().unwrap())
             .collect::<Vec<_>>(),
         views_before
     );
@@ -142,7 +146,7 @@ fn get_schedule_i64最小値付近でも優先度の高いtaskを先に配置す
     let next = task_with_schedule("次", now, 15 * 60, i64::MIN + 1);
     let repository = TestTaskRepository::new(vec![lowest.clone(), next.clone()], now);
 
-    let actual = get_schedule(&repository);
+    let actual = get_schedule(&repository).unwrap();
 
     assert_eq!(actual[0].task.id, next.get_id());
     assert_eq!(actual[1].task.id, lowest.get_id());
@@ -161,7 +165,7 @@ fn get_schedule_pending解除後に子を配置し親をその後へ置く() {
     child.set_orig_status(Status::Pending);
     let repository = TestTaskRepository::new(vec![parent.clone()], now);
 
-    let actual = get_schedule(&repository);
+    let actual = get_schedule(&repository).unwrap();
     let child_schedule = actual
         .iter()
         .find(|entry| entry.task.id == child.get_id())
@@ -191,7 +195,7 @@ fn get_schedule_非atomic_taskを未来の高優先度taskの前後へ分割す�
     let repository =
         TestTaskRepository::new(vec![low_priority.clone(), high_priority.clone()], now);
 
-    let actual = get_schedule(&repository);
+    let actual = get_schedule(&repository).unwrap();
     let low_segments = actual
         .iter()
         .filter(|entry| entry.task.id == low_priority.get_id())
@@ -219,7 +223,7 @@ fn get_schedule_atomic_taskを分割せず連続枠へ配置する() {
     let high_priority = task_with_schedule("高優先度", now + Duration::hours(6), 3600, 89);
     let repository = TestTaskRepository::new(vec![atomic_task.clone(), high_priority], now);
 
-    let actual = get_schedule(&repository);
+    let actual = get_schedule(&repository).unwrap();
     let atomic_segments = actual
         .iter()
         .filter(|entry| entry.task.id == atomic_task.get_id())

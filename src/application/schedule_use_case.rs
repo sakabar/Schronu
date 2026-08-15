@@ -1,4 +1,5 @@
 use crate::application::interface::TaskRepositoryTrait;
+use crate::application::task_use_case::ApplicationError;
 use crate::application::task_view::TaskView;
 use crate::entity::datetime::get_next_morning_datetime;
 use crate::entity::task::{extract_leaf_tasks_from_project_with_pending, TaskHandle};
@@ -52,7 +53,9 @@ struct ScheduledTask {
     deadline_time: Option<DateTime<Local>>,
 }
 
-pub fn get_schedule(repository: &dyn TaskRepositoryTrait) -> Vec<ScheduledTaskView> {
+pub fn get_schedule(
+    repository: &dyn TaskRepositoryTrait,
+) -> Result<Vec<ScheduledTaskView>, ApplicationError> {
     get_schedule_with_first_available_time_overrides(repository, &HashMap::new())
 }
 
@@ -60,7 +63,7 @@ pub(crate) fn get_schedule_with_task_first_available_time(
     repository: &dyn TaskRepositoryTrait,
     task_id: Uuid,
     first_available_time: DateTime<Local>,
-) -> Vec<ScheduledTaskView> {
+) -> Result<Vec<ScheduledTaskView>, ApplicationError> {
     get_schedule_with_first_available_time_overrides(
         repository,
         &HashMap::from([(task_id, first_available_time)]),
@@ -70,7 +73,7 @@ pub(crate) fn get_schedule_with_task_first_available_time(
 pub(crate) fn get_schedule_with_first_available_time_overrides(
     repository: &dyn TaskRepositoryTrait,
     first_available_time_overrides: &HashMap<Uuid, DateTime<Local>>,
-) -> Vec<ScheduledTaskView> {
+) -> Result<Vec<ScheduledTaskView>, ApplicationError> {
     let mut candidates = build_schedule_candidates(repository);
     for candidate in &mut candidates {
         if let Some(first_available_time) =
@@ -82,14 +85,16 @@ pub(crate) fn get_schedule_with_first_available_time_overrides(
     }
     schedule_tasks_by_priority(&candidates, repository.get_last_synced_time())
         .into_iter()
-        .map(|scheduled| ScheduledTaskView {
-            task: TaskView::from(&scheduled.task),
-            first_available_time: scheduled.first_available_time,
-            scheduled_start: scheduled.scheduled_start,
-            scheduled_end: scheduled.scheduled_end,
-            scheduled_work_seconds: scheduled.scheduled_work_seconds,
-            total_work_seconds: scheduled.total_work_seconds,
-            rank: scheduled.rank,
+        .map(|scheduled| {
+            Ok(ScheduledTaskView {
+                task: TaskView::try_from(&scheduled.task).map_err(ApplicationError::TaskTree)?,
+                first_available_time: scheduled.first_available_time,
+                scheduled_start: scheduled.scheduled_start,
+                scheduled_end: scheduled.scheduled_end,
+                scheduled_work_seconds: scheduled.scheduled_work_seconds,
+                total_work_seconds: scheduled.total_work_seconds,
+                rank: scheduled.rank,
+            })
         })
         .collect()
 }

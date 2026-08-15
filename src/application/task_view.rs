@@ -1,4 +1,4 @@
-use crate::entity::task::{ProjectCategory, RepetitionAnchor, Status, TaskHandle};
+use crate::entity::task::{ProjectCategory, RepetitionAnchor, Status, TaskHandle, TaskTreeError};
 use chrono::{DateTime, Local};
 use uuid::Uuid;
 
@@ -27,14 +27,16 @@ pub struct TaskView {
     pub project_category: Option<ProjectCategory>,
 }
 
-impl From<&TaskHandle> for TaskView {
-    fn from(task: &TaskHandle) -> Self {
-        Self {
+impl TryFrom<&TaskHandle> for TaskView {
+    type Error = TaskTreeError;
+
+    fn try_from(task: &TaskHandle) -> Result<Self, Self::Error> {
+        Ok(Self {
             id: task.get_id(),
             root_id: task.root().get_id(),
             parent_id: task.parent().map(|parent| parent.get_id()),
             child_ids: task.get_children().iter().map(TaskHandle::get_id).collect(),
-            name: task.get_name(),
+            name: task.get_name()?,
             status: task.get_status(),
             original_status: task.get_orig_status(),
             is_on_other_side: task.get_is_on_other_side(),
@@ -52,6 +54,6 @@ impl From<&TaskHandle> for TaskView {
             repetition_anchor: task.get_repetition_anchor(),
             days_in_advance: task.get_days_in_advance(),
             project_category: task.get_project_category_opt(),
-        }
+        })
     }
 }

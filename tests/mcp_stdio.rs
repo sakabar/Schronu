@@ -489,7 +489,7 @@ fn mcp_stdio_tools_call直前の現在時刻同期で期限切れpendingをtodo�
     task.set_start_time(Local::now() - chrono::Duration::hours(1));
     task.set_pending_until(pending_until);
     task.set_orig_status(Status::Pending);
-    repository.start_new_project(task);
+    repository.start_new_project(task).unwrap();
     repository.save().unwrap();
 
     let mut mcp = McpSession::spawn(storage.path());

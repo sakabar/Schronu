@@ -89,14 +89,23 @@ pub struct ListTasksFilter {
     pub categories: Vec<Option<ProjectCategory>>,
 }
 
-pub fn get_focus(repository: &mut dyn TaskRepositoryTrait) -> Option<TaskView> {
+pub fn get_focus(
+    repository: &mut dyn TaskRepositoryTrait,
+) -> Result<Option<TaskView>, ApplicationError> {
     repository
         .get_highest_priority_leaf_task_id()
-        .and_then(|task_id| get_task(repository, task_id))
+        .map_or(Ok(None), |task_id| get_task(repository, task_id))
 }
 
-pub fn get_task(repository: &dyn TaskRepositoryTrait, task_id: Uuid) -> Option<TaskView> {
-    repository.get_by_id(task_id).as_ref().map(TaskView::from)
+pub fn get_task(
+    repository: &dyn TaskRepositoryTrait,
+    task_id: Uuid,
+) -> Result<Option<TaskView>, ApplicationError> {
+    repository
+        .get_by_id(task_id)
+        .as_ref()
+        .map(|task| TaskView::try_from(task).map_err(ApplicationError::TaskTree))
+        .transpose()
 }
 
 pub fn list_tasks(
@@ -119,14 +128,15 @@ pub fn list_tasks(
         .as_ref()
         .filter(|period| period.field == TaskPeriodField::ScheduledStart)
         .map(|period| {
-            get_schedule(repository)
+            Ok(get_schedule(repository)?
                 .into_iter()
                 .filter(|entry| {
                     period.from <= entry.scheduled_start && entry.scheduled_start < period.until
                 })
                 .map(|entry| entry.task.id)
-                .collect::<HashSet<_>>()
-        });
+                .collect::<HashSet<_>>())
+        })
+        .transpose()?;
 
     let mut tasks = Vec::new();
     for root in repository.get_all_projects() {
@@ -135,7 +145,9 @@ pub fn list_tasks(
 
     Ok(tasks
         .into_iter()
-        .map(|task| TaskView::from(&task))
+        .map(|task| TaskView::try_from(&task).map_err(ApplicationError::TaskTree))
+        .collect::<Result<Vec<_>, _>>()?
+        .into_iter()
         .filter(|task| filter.statuses.is_empty() || filter.statuses.contains(&task.status))
         .filter(|task| {
             filter.categories.is_empty() || filter.categories.contains(&task.project_category)
@@ -159,7 +171,7 @@ pub fn list_tasks(
                         .is_some_and(|time| is_in_period(time, period.from, period.until)),
                 })
         })
-        .collect())
+        .collect::<Vec<_>>())
 }
 
 fn collect_tasks_pre_order(task: &TaskHandle, tasks: &mut Vec<TaskHandle>) {
@@ -194,7 +206,9 @@ pub fn create_task(
     }
 
     let task_id = root_task.get_id();
-    repository.start_new_project(root_task);
+    repository
+        .start_new_project(root_task)
+        .map_err(ApplicationError::TaskTree)?;
     Ok(task_id)
 }
 
@@ -382,7 +396,8 @@ fn create_next_repetition_task(
 
     adjust_repetition_estimate(&parent_task, task);
     let new_task_attr =
-        build_next_repetition_task_attr(task, &parent_task, repetition_interval_days, finished_at);
+        build_next_repetition_task_attr(task, &parent_task, repetition_interval_days, finished_at)
+            .map_err(ApplicationError::TaskTree)?;
     let next_task = parent_task
         .try_create_child(new_task_attr)
         .map_err(ApplicationError::TaskTree)?;
@@ -424,7 +439,7 @@ fn build_next_repetition_task_attr(
     parent_task: &TaskHandle,
     repetition_interval_days: i64,
     finished_at: DateTime<Local>,
-) -> TaskAttr {
+) -> Result<TaskAttr, TaskTreeError> {
     let occurrence_anchor = match parent_task.get_repetition_anchor() {
         RepetitionAnchor::Deadline => task.get_deadline_time_opt().unwrap_or(finished_at),
         RepetitionAnchor::Completion => finished_at,
@@ -449,7 +464,7 @@ fn build_next_repetition_task_attr(
 
     let mut new_task_attr = TaskAttr::new(&format!(
         "{}({}/{})",
-        parent_task.get_name(),
+        parent_task.get_name()?,
         new_start_time.month(),
         new_start_time.day()
     ));
@@ -458,7 +473,7 @@ fn build_next_repetition_task_attr(
     new_task_attr.set_deadline_time_opt(Some(new_deadline_time));
     new_task_attr.set_estimated_work_seconds(parent_task.get_estimated_work_seconds());
     new_task_attr.set_atomic(parent_task.get_atomic());
-    new_task_attr
+    Ok(new_task_attr)
 }
 
 #[cfg(test)]
@@ -528,8 +543,12 @@ mod tests {
             self.projects.iter().find_map(|task| task.get_by_id(id))
         }
 
-        fn start_new_project(&mut self, root_task: TaskHandle) {
+        fn start_new_project(
+            &mut self,
+            root_task: TaskHandle,
+        ) -> Result<(), crate::entity::task::TaskTreeError> {
             self.projects.push(root_task);
+            Ok(())
         }
     }
 
@@ -584,7 +603,7 @@ mod tests {
         let child = root.create_as_last_child(TaskAttr::new("子"));
         let repository = TestTaskRepository::new(vec![root.clone()], fixed_now());
 
-        let actual = get_task(&repository, child.get_id()).unwrap();
+        let actual = get_task(&repository, child.get_id()).unwrap().unwrap();
 
         assert_eq!(actual.id, child.get_id());
         assert_eq!(actual.root_id, root.get_id());
@@ -623,7 +642,7 @@ mod tests {
         let child = root.create_as_last_child(TaskAttr::new("子"));
         let repository = TestTaskRepository::new(vec![root.clone()], now);
 
-        let actual = get_task(&repository, root.get_id()).unwrap();
+        let actual = get_task(&repository, root.get_id()).unwrap().unwrap();
 
         assert_eq!(actual.id, root.get_id());
         assert_eq!(actual.root_id, root.get_id());
@@ -651,7 +670,7 @@ mod tests {
     #[test]
     fn get_task_未知uuidはnoneを返す() {
         let repository = TestTaskRepository::new(vec![], fixed_now());
-        assert_eq!(get_task(&repository, Uuid::new_v4()), None);
+        assert_eq!(get_task(&repository, Uuid::new_v4()), Ok(None));
     }
 
     #[test]
@@ -659,7 +678,7 @@ mod tests {
         let task = TaskHandle::new("未延期");
         let repository = TestTaskRepository::new(vec![task.clone()], fixed_now());
 
-        let actual = get_task(&repository, task.get_id()).unwrap();
+        let actual = get_task(&repository, task.get_id()).unwrap().unwrap();
 
         assert_eq!(actual.original_status, Status::Todo);
         assert_eq!(actual.pending_until, None);
@@ -672,14 +691,17 @@ mod tests {
         let mut repository = TestTaskRepository::new(vec![root], fixed_now());
         repository.highest_priority_leaf_task_id = Some(child.get_id());
 
-        assert_eq!(get_focus(&mut repository).unwrap().id, child.get_id());
+        assert_eq!(
+            get_focus(&mut repository).unwrap().unwrap().id,
+            child.get_id()
+        );
     }
 
     #[test]
     fn get_focus_候補がなければnoneを返す() {
         let mut repository = TestTaskRepository::new(vec![], fixed_now());
 
-        assert_eq!(get_focus(&mut repository), None);
+        assert_eq!(get_focus(&mut repository), Ok(None));
     }
 
     #[test]
@@ -687,7 +709,7 @@ mod tests {
         let mut repository = TestTaskRepository::new(vec![], fixed_now());
         repository.highest_priority_leaf_task_id = Some(Uuid::new_v4());
 
-        assert_eq!(get_focus(&mut repository), None);
+        assert_eq!(get_focus(&mut repository), Ok(None));
     }
 
     #[test]
@@ -706,7 +728,7 @@ mod tests {
         .unwrap();
 
         let task = repository.get_by_id(task_id).unwrap();
-        assert_eq!(task.get_name(), "新規");
+        assert_eq!(task.get_name().unwrap(), "新規");
         assert_eq!(task.get_priority(), 5);
         assert_eq!(task.get_estimated_work_seconds(), 30 * 60);
         assert_eq!(task.get_orig_status(), Status::Pending);
@@ -831,7 +853,7 @@ mod tests {
             parent
                 .get_children()
                 .iter()
-                .map(TaskHandle::get_name)
+                .map(|task| task.get_name().unwrap())
                 .collect::<Vec<_>>(),
             vec!["一", "二"]
         );
@@ -862,7 +884,7 @@ mod tests {
             parent
                 .get_children()
                 .iter()
-                .map(TaskHandle::get_name)
+                .map(|task| task.get_name().unwrap())
                 .collect::<Vec<_>>(),
             vec!["一", "二"]
         );
