@@ -3619,6 +3619,111 @@ fn test_tree追加はrootの借用競合時にtreeとrevisionを変更しない(
 }
 
 #[test]
+fn test_updateはrootのshared_borrow競合時に属性とrevisionを変更しない() {
+    let root = TaskHandle::new("親").unwrap();
+    let child = root.create_child(TaskAttr::new("子")).unwrap();
+    let before_snapshot = root.snapshot().unwrap();
+    let before_revision = root.get_persistent_mutation_revision().unwrap();
+
+    root.with_shared_data_borrow_for_test(|| {
+        assert_eq!(child.set_atomic(true), Err(TaskTreeError::Borrow));
+    });
+
+    assert_eq!(root.snapshot().unwrap(), before_snapshot);
+    assert_eq!(
+        root.get_persistent_mutation_revision().unwrap(),
+        before_revision
+    );
+}
+
+#[test]
+fn test_create_childはrootのshared_borrow競合時にtreeとrevisionを変更しない() {
+    let root = TaskHandle::new("親").unwrap();
+    let before_snapshot = root.snapshot().unwrap();
+    let before_revision = root.get_persistent_mutation_revision().unwrap();
+
+    root.with_shared_data_borrow_for_test(|| {
+        assert_eq!(
+            root.create_child(TaskAttr::new("子")),
+            Err(TaskTreeError::Borrow)
+        );
+    });
+
+    assert_eq!(root.snapshot().unwrap(), before_snapshot);
+    assert_eq!(
+        root.get_persistent_mutation_revision().unwrap(),
+        before_revision
+    );
+}
+
+#[test]
+fn test_create_parentはrootのshared_borrow競合時にtreeとrevisionを変更しない() {
+    let root = TaskHandle::new("親").unwrap();
+    let mut child = root.create_child(TaskAttr::new("子")).unwrap();
+    let before_snapshot = root.snapshot().unwrap();
+    let before_revision = root.get_persistent_mutation_revision().unwrap();
+
+    root.with_shared_data_borrow_for_test(|| {
+        assert_eq!(
+            child.create_parent(TaskAttr::new("新しい親")),
+            Err(TaskTreeError::Borrow)
+        );
+    });
+
+    assert_eq!(root.snapshot().unwrap(), before_snapshot);
+    assert_eq!(
+        root.get_persistent_mutation_revision().unwrap(),
+        before_revision
+    );
+}
+
+#[test]
+fn test_create_sequential_childrenはrootのshared_borrow競合時にtreeとrevisionを変更しない() {
+    let root = TaskHandle::new("親").unwrap();
+    let before_snapshot = root.snapshot().unwrap();
+    let before_revision = root.get_persistent_mutation_revision().unwrap();
+
+    root.with_shared_data_borrow_for_test(|| {
+        assert_eq!(
+            root.create_sequential_children("子", 60, 1, 2, ""),
+            Err(TaskTreeError::Borrow)
+        );
+    });
+
+    assert_eq!(root.snapshot().unwrap(), before_snapshot);
+    assert_eq!(
+        root.get_persistent_mutation_revision().unwrap(),
+        before_revision
+    );
+}
+
+#[test]
+fn test_reparent_toはsource_rootのshared_borrow競合時にtreeとrevisionを変更しない() {
+    let source_root = TaskHandle::new("移動元").unwrap();
+    let mut child = source_root.create_child(TaskAttr::new("子")).unwrap();
+    let destination_root = TaskHandle::new("移動先").unwrap();
+    let before_source_snapshot = source_root.snapshot().unwrap();
+    let before_destination_snapshot = destination_root.snapshot().unwrap();
+    let before_source_revision = source_root.get_persistent_mutation_revision().unwrap();
+    let before_destination_revision = destination_root.get_persistent_mutation_revision().unwrap();
+
+    source_root.with_shared_data_borrow_for_test(|| {
+        assert_eq!(child.reparent_to(&destination_root), Err(TaskTreeError::Borrow));
+    });
+
+    assert_eq!(source_root.snapshot().unwrap(), before_source_snapshot);
+    assert_eq!(destination_root.snapshot().unwrap(), before_destination_snapshot);
+    assert_eq!(
+        source_root.get_persistent_mutation_revision().unwrap(),
+        before_source_revision
+    );
+    assert_eq!(
+        destination_root.get_persistent_mutation_revision().unwrap(),
+        before_destination_revision
+    );
+}
+
+#[test]
 fn test_first_available_time_pending状態の時はpending_untilとstart_timeの大きい方が採用されること_pending_untilの方が大きい場合(
 ) {
     let dt = Local.with_ymd_and_hms(2023, 5, 19, 1, 23, 45).unwrap();
