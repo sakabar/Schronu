@@ -3379,6 +3379,61 @@ fn test_rootはdummy_rootの子が欠落した場合にinvariant_errorを返す(
 }
 
 #[test]
+fn test_rootはdummy_rootに複数の子がある場合にinvariant_errorを返す() {
+    let first_task = TaskHandle::new("第一プロジェクト").unwrap();
+    first_task.set_priority(10).unwrap();
+    first_task
+        .set_project_category_opt(Some(ProjectCategory::Earning))
+        .unwrap();
+    let first_revision = first_task.get_persistent_mutation_revision().unwrap();
+    let dummy_root = first_task.node.root();
+    let grant = dummy_root.tree().grant_hierarchy_edit().unwrap();
+    let second_task = TaskHandle {
+        node: dummy_root.create_as_last_child(&grant, TaskAttr::new("第二プロジェクト")),
+    };
+    let second_revision = second_task.node.borrow_data().persistent_mutation_revision;
+
+    assert_eq!(second_task.root(), Err(TaskTreeError::MissingDummyRootChild));
+    assert_eq!(second_task.get_priority(), Err(TaskTreeError::MissingDummyRootChild));
+    assert_eq!(
+        second_task.get_project_category_opt(),
+        Err(TaskTreeError::MissingDummyRootChild)
+    );
+    assert_eq!(
+        second_task.set_priority(20),
+        Err(TaskTreeError::MissingDummyRootChild)
+    );
+    assert_eq!(
+        second_task.set_project_category_opt(Some(ProjectCategory::Recovery)),
+        Err(TaskTreeError::MissingDummyRootChild)
+    );
+    assert_eq!(first_task.get_priority().unwrap(), 10);
+    assert_eq!(
+        first_task.get_project_category_opt().unwrap(),
+        Some(ProjectCategory::Earning)
+    );
+    assert_eq!(
+        first_task.get_persistent_mutation_revision().unwrap(),
+        first_revision
+    );
+    assert_eq!(
+        second_task.node.borrow_data().persistent_mutation_revision,
+        second_revision
+    );
+}
+
+#[test]
+fn test_rootはhandleがdummy_root自身を指す場合にinvariant_errorを返す() {
+    let task = TaskHandle::new("タスク").unwrap();
+    let invalid_handle = TaskHandle {
+        node: task.node.root(),
+    };
+
+    assert_eq!(invalid_handle.root(), Err(TaskTreeError::MissingDummyRootChild));
+    assert_eq!(invalid_handle.get_priority(), Err(TaskTreeError::MissingDummyRootChild));
+}
+
+#[test]
 fn test_task_viewは借用競合をtask_tree_errorとして返す() {
     let task = TaskHandle::new("タスク").unwrap();
     let _exclusive_borrow = task.node.borrow_data_mut();
