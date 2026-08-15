@@ -8169,7 +8169,7 @@ fn test_format_daily_band_当日経過と24時間超過を表示する() {
 }
 
 #[test]
-fn test_execute_band_日本語と英語で凡例と棒だけを表示する() {
+fn test_execute_band_日本語と英語で凡例と棒とサマリーを表示する() {
     let now = Local.with_ymd_and_hms(2026, 8, 11, 12, 0, 0).unwrap();
     let task = TaskHandle::new("帯出力固定用タスク");
     task.set_estimated_work_seconds(60 * 60);
@@ -8185,6 +8185,16 @@ fn test_execute_band_日本語と英語で凡例と棒だけを表示する() {
             "\n",
             "2026-08-11(火) -06:00 -09:00 [{}{}{}{}]\n",
             "\n",
+            "今のタスクが片付く日付: 4160日後の2037-12-31\n",
+            "最大の累積時間: -09時間00分 (2026-08-11), 最大のrhoの差: -1.00 (1900-01-01), 次にタスクを積める日付: 0日後の2026-08-11 (-6時間00分)\n",
+            "\n",
+            "[Info] 順調です。突発タスクに対応したり1日の終わり際にタスクを新しく積んだりする余裕があります。ひとまずは脇道に逸れずに予定の遂行をしてください。\n",
+            "\n",
+            "残り拘束時間は0.0時間です\n",
+            "完了見込み日時は1.0時間後の2026/08/11 13:00:00です\n",
+            "rep ρ = (1.00 + 0.00) / (1.00 + 0.00 + 11 + 30/60) = 0.08, Lq = 0.1\n",
+            "one ρ = (1.00 + 0.00) / (1.00 + 0.00 + 11 + 30/60) = 0.08, Lq = 0.1\n",
+            "\n",
         ),
         "#".repeat(56),
         "-".repeat(4),
@@ -8195,7 +8205,6 @@ fn test_execute_band_日本語と英語で凡例と棒だけを表示する() {
     assert_eq!(strip_ansi_escape_sequences(&japanese), expected);
     assert_eq!(strip_ansi_escape_sequences(&english), expected);
     assert!(!japanese.contains("日          "));
-    assert!(!japanese.contains("残り拘束時間"));
     assert!(!japanese.contains("帯出力固定用タスク"));
 }
 
