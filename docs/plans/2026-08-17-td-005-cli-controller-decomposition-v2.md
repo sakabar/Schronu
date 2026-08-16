@@ -42,7 +42,7 @@
 - Commit 7で`renderer.rs`へ最小の`DisplayModel`、`DisplayFragment`、`DisplayRecorder`、`render_display_model`を導入し、最終形の`CommandOutcome { display: DisplayModel, external_request: Option<ExternalRequest>, focus_request: Option<FocusRequest> }`を定義する。
 - Commit 7では`Open`、`Obsidian`、`FocusHighest`、`FocusLowest`を最初の移行済みcommandとしてhandlerへ移す。handlerはbrowserやfocus状態を直接操作せず、`external_request`または`focus_request`を返す。
 - Commit 7からCommit 22まではruntimeが全`Command`を受け取り、移行済み`CommandKind`だけをhandlerへ渡す。移行済みcommandは`DisplayRecorder`へ書き、runtimeが直ちに`render_display_model`で実writerへ出力する。未移行variantだけをruntime内の既存writer付きtyped dispatchが所有し、handlerからruntimeを呼ばない。
-- runtimeはCommit 7から構造化要求を受けて既存のbrowser起動処理とfocus変更処理を実行し、従来挙動をGreenに保つ。Commit 27でbrowser実装とrepository transactionのruntime集約を完成させる。
+- Commit 7ではinteractive / non-interactiveの各既存runtime経路が個別に`CommandOutcome`を解釈してbrowser起動とfocus変更を実行し、従来挙動をGreenに保つ。Commit 27で両経路を共通の`apply_command_outcome`へ集約し、browser実装とrepository transactionのruntime調停を完成させる。
 - Commit 23では`DisplayModel`を初導入せず、残っている全handler出力とerror、flush、broken pipe分類をrenderer境界へ完全移行する。
 - module依存は`runtime -> handler / renderer`、`handler -> command / renderer`とし、`handler -> runtime`を禁止する。
 
@@ -251,15 +251,15 @@
 
 ### Commit 26: `Test: CLI runtimeの外部I/O境界を固定する`
 
-- **固定する契約:** browser要求、`CommandError::ExternalOpen`、repository transaction、reload / saveがruntimeにあり、interactive / non-interactive双方の保存時点とerror分類を維持する。
-- **対象:** runtimeの外部I/O境界test。
+- **固定する契約:** interactive / non-interactiveの両経路が共通の`apply_command_outcome` runtime調停関数を使い、browser / focus要求、`CommandError::ExternalOpen`、repository transaction、reload / saveの既存分類と実行時点を維持する。
+- **対象:** `apply_command_outcome`を通るinteractive / non-interactiveのruntime調停test。
 - **依存:** Commit 25。
-- **Red確認:** 外部起動とtransactionの各scenarioは共通のruntime調停入口を通し、この入口が外部要求をまだ実行しないことだけを理由にassertion failureで失敗させる。handlerの依存方向はCommit 7の境界testで既にGreenとし、ここで別の失敗理由にしない。
+- **Red確認:** 両経路の契約testは共通の`apply_command_outcome`を直接呼び、この関数が未導入であることだけを理由にcompile errorで失敗させる。各既存経路によるbrowser / focus要求の個別実行はCommit 7からGreenのまま維持する。
 
 ### Commit 27: `CLI: 外部I/Oとtransactionをruntimeへ集約する`
 
-- **固定する契約:** Commit 7からruntimeが担うbrowser / focus要求の実行を維持し、残存するbrowser実装とrepository transactionをruntimeへ集約して外部I/O境界を完成させる。
-- **対象:** `runtime.rs`、`handler.rs`、残存する外部I/O adapter接続とtransaction調停。
+- **固定する契約:** Commit 7から各runtime経路が個別に担うoutcome解釈を共通の`apply_command_outcome`へ集約し、browser error reason、transaction、reload / saveの分類と実行時点を維持する。
+- **対象:** `runtime.rs`のinteractive / non-interactive個別処理を共通調停関数へ置き換え、browser実装、focus変更、repository transactionを同じruntime境界から呼ぶ。`handler.rs`の構造化要求契約は変更しない。
 - **依存:** Commit 26。
 - **Green確認:** runtime外部I/O境界test、interactive / non-interactive保存時点test、全品質ゲート。
 
