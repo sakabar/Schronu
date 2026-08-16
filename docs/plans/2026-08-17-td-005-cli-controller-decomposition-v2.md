@@ -40,7 +40,9 @@
 ### Handlerの段階移行
 
 - Commit 7で`renderer.rs`へ最小の`DisplayModel`、`DisplayFragment`、`DisplayRecorder`、`render_display_model`を導入し、最終形の`CommandOutcome { display: DisplayModel, external_request: Option<ExternalRequest>, focus_request: Option<FocusRequest> }`を定義する。
+- Commit 7では`Open`、`Obsidian`、`FocusHighest`、`FocusLowest`を最初の移行済みcommandとしてhandlerへ移す。handlerはbrowserやfocus状態を直接操作せず、`external_request`または`focus_request`を返す。
 - Commit 7からCommit 22まではruntimeが全`Command`を受け取り、移行済み`CommandKind`だけをhandlerへ渡す。移行済みcommandは`DisplayRecorder`へ書き、runtimeが直ちに`render_display_model`で実writerへ出力する。未移行variantだけをruntime内の既存writer付きtyped dispatchが所有し、handlerからruntimeを呼ばない。
+- runtimeはCommit 7から構造化要求を受けて既存のbrowser起動処理とfocus変更処理を実行し、従来挙動をGreenに保つ。Commit 27でbrowser実装とrepository transactionのruntime集約を完成させる。
 - Commit 23では`DisplayModel`を初導入せず、残っている全handler出力とerror、flush、broken pipe分類をrenderer境界へ完全移行する。
 - module依存は`runtime -> handler / renderer`、`handler -> command / renderer`とし、`handler -> runtime`を禁止する。
 
@@ -109,7 +111,7 @@
 
 ### Commit 6: `Test: typed command handler境界を固定する`
 
-- **固定する契約:** handler入力はtyped `Command`、出力は最終形の`CommandOutcome { display: DisplayModel, external_request: Option<ExternalRequest>, focus_request: Option<FocusRequest> }`である。runtimeが全commandを受け、移行済み`CommandKind`だけをhandlerへ渡し、未移行variantをruntime内のtyped dispatchが所有する。
+- **固定する契約:** handler入力はtyped `Command`、出力は最終形の`CommandOutcome { display: DisplayModel, external_request: Option<ExternalRequest>, focus_request: Option<FocusRequest> }`である。最初の移行対象は`Open`、`Obsidian`、`FocusHighest`、`FocusLowest`とし、handlerが対応する構造化要求を返す。runtimeが全commandを受け、移行済み`CommandKind`だけをhandlerへ渡し、未移行variantをruntime内のtyped dispatchが所有する。
 - **対象:** `src/adapter/controller/schronu/handler.rs`の境界test。
 - **依存:** Commit 5。
 - **Red確認:** handler境界が未導入である1つの理由で対象testが失敗する。
@@ -117,9 +119,9 @@
 ### Commit 7: `CLI: typed command handler境界を導入する`
 
 - **固定する契約:** handlerはterminal、環境変数、browser、transaction、runtimeへ依存せず、command文字列やtoken列を再生成しない。依存方向は`runtime -> handler / renderer`、`handler -> command / renderer`とする。
-- **対象:** `handler.rs`、最終形の`CommandOutcome`、`renderer.rs`の最小`DisplayModel` / `DisplayFragment` / `DisplayRecorder` / `render_display_model`を追加する。runtimeが全`Command`を受け、移行済み`CommandKind`だけをhandlerへ渡し、その`DisplayModel`を直ちに実writerへ出力する。未移行variantだけはruntime内の既存writer付きtyped dispatchで処理し、handlerからruntimeを呼ばない。
+- **対象:** `handler.rs`、最終形の`CommandOutcome`、`renderer.rs`の最小`DisplayModel` / `DisplayFragment` / `DisplayRecorder` / `render_display_model`を追加する。`Open`、`Obsidian`、`FocusHighest`、`FocusLowest`をhandlerへ移し、runtimeが返却されたexternal / focus要求を既存browser / focus実装で実行する。runtimeが全`Command`を受け、移行済み`CommandKind`だけをhandlerへ渡して`DisplayModel`を直ちに実writerへ出力し、未移行variantだけはruntime内の既存writer付きtyped dispatchで処理する。handlerからruntimeを呼ばない。
 - **依存:** Commit 6。
-- **Green確認:** handler境界testと全品質ゲート。
+- **Green確認:** handler境界test、Open / Obsidianの外部要求test、FocusHighest / FocusLowestのfocus要求test、runtimeによる各要求の実行test、全品質ゲート。
 
 ### Commit 8: `Test: project作成commandのtyped dispatchを固定する`
 
@@ -256,8 +258,8 @@
 
 ### Commit 27: `CLI: 外部I/Oとtransactionをruntimeへ集約する`
 
-- **固定する契約:** browser起動とrepository transactionをhandler外へ置き、runtimeで外部要求を実行する。
-- **対象:** `runtime.rs`、`handler.rs`、外部I/O adapter接続。
+- **固定する契約:** Commit 7からruntimeが担うbrowser / focus要求の実行を維持し、残存するbrowser実装とrepository transactionをruntimeへ集約して外部I/O境界を完成させる。
+- **対象:** `runtime.rs`、`handler.rs`、残存する外部I/O adapter接続とtransaction調停。
 - **依存:** Commit 26。
 - **Green確認:** runtime外部I/O境界test、interactive / non-interactive保存時点test、全品質ゲート。
 
