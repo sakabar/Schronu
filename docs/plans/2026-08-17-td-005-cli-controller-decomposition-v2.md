@@ -91,7 +91,7 @@
 - **固定する契約:** 全command名・alias、typed field、field・reason・usageを持つparse error、空入力、comment、検索fallback、先頭空白付き`0`、interactive shortcut、focus mode、extrude互換を固定する。
 - **対象:** `src/adapter/controller/schronu/command.rs`のunit testとnon-interactive製品経路test。
 - **依存:** Commit 3。
-- **Red確認:** parser型または製品経路への接続がない1つの理由で対象testが失敗する。
+- **Red確認:** 全table testと製品経路testは共通の`command::parse`を直接呼ぶ構成にし、`command::parse`が存在しないことだけを理由にcompile errorで失敗させる。製品経路への接続有無を別の失敗理由にしない。
 
 ### Commit 5: `CLI: typed command parserを導入する`
 
@@ -203,7 +203,7 @@
 - **固定する契約:** 製品formatterがA-J列を生成し、I列は`category`、J列は`task_name`である。
 - **対象:** `全`の製品実行経路、既存fixture、`shell/copy_for_spreadsheet.sh`、`shell/generate_command_from_spreadsheet.sh`、`apps_script/main.js`、`apps_script/README.md`、`README.md`の列契約test。
 - **依存:** Commit 19。
-- **Red確認:** formatterが未分離または製品経路へ未接続である1つの理由で失敗する。
+- **Red確認:** formatter単体testと`全`の製品経路testは共通の`renderer::format_spreadsheet_row`を参照し、この関数が存在しないことだけを理由にcompile errorで失敗させる。列値の不一致や製品配線の不在を同時の失敗理由にしない。
 
 ### Commit 21: `CLI: Spreadsheet formatterを分離する`
 
@@ -231,7 +231,7 @@
 - **固定する契約:** submitとrefreshが共通parser・handler・renderer経路を通り、focus、Ctrl-C、Ctrl-D、切断、read error、raw mode開始前errorを維持する。
 - **対象:** interactive driverとruntime調停test。
 - **依存:** Commit 23。
-- **Red確認:** interactive境界が未分離または共通経路へ未接続である1つの理由で失敗する。
+- **Red確認:** driverとruntime調停のtestは共通の`interactive::run`入口を呼び、この入口が存在しないことだけを理由にcompile errorで失敗させる。parser・handler・rendererの既存testはGreenのまま維持する。
 
 ### Commit 25: `CLI: interactive terminal driverを分離する`
 
@@ -245,7 +245,7 @@
 - **固定する契約:** browser要求、`CommandError::ExternalOpen`、repository transaction、reload / saveがruntimeにあり、interactive / non-interactive双方の保存時点とerror分類を維持する。
 - **対象:** runtimeの外部I/O境界test。
 - **依存:** Commit 25。
-- **Red確認:** 外部I/Oまたはtransactionがhandler等に残る1つの理由で失敗する。
+- **Red確認:** 外部起動とtransactionの各scenarioは共通のruntime調停入口を通し、この入口が外部要求をまだ実行しないことだけを理由にassertion failureで失敗させる。handlerの依存方向はCommit 7の境界testで既にGreenとし、ここで別の失敗理由にしない。
 
 ### Commit 27: `CLI: 外部I/Oとtransactionをruntimeへ集約する`
 
