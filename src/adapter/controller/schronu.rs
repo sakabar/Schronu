@@ -9904,6 +9904,42 @@ fn test_reload後にfocus中taskがdoneなら次候補を選び直す() {
 }
 
 #[test]
+fn test_低優先度modeで外したfocusは低優先度候補を再選択する() {
+    let now = Local.with_ymd_and_hms(2026, 8, 16, 12, 0, 0).unwrap();
+    let root = TaskHandle::new("root").unwrap();
+    let high_priority_task = root.create_as_last_child(TaskAttr::new("高優先度候補"));
+    let low_priority_task = root.create_as_last_child(TaskAttr::new("低優先度候補"));
+    let high_priority_task_id = high_priority_task.get_id().unwrap();
+    let low_priority_task_id = low_priority_task.get_id().unwrap();
+    let mut repository = TestTaskRepository::new(root, now);
+    repository.highest_priority_leaf_task_id_opt = Some(high_priority_task_id);
+    repository.defer_candidate_leaf_task_id_opt = Some(low_priority_task_id);
+    let mut free_time_manager = TestFreeTimeManager;
+    let mut stdout = TestWriter::new();
+    let mut focused_task_id_opt = Some(high_priority_task_id);
+    let focus_started_datetime = now;
+    let mut focus_selection_mode = FocusSelectionMode::LowestPriority { recent_days: 3 };
+
+    execute_interactive_command(
+        &mut stdout,
+        &mut repository,
+        &mut free_time_manager,
+        &mut focused_task_id_opt,
+        &focus_started_datetime,
+        &mut focus_selection_mode,
+        "外",
+    )
+    .unwrap();
+
+    assert_eq!(focused_task_id_opt, Some(low_priority_task_id));
+    assert_eq!(
+        focus_selection_mode,
+        FocusSelectionMode::LowestPriority { recent_days: 3 }
+    );
+    assert_eq!(repository.last_defer_candidate_recent_days_opt, Some(3));
+}
+
+#[test]
 fn test_interactive_submitは製品event経路でload実行保存する() {
     let storage_dir = TestStorageDir::new();
     std::fs::create_dir_all(&storage_dir.path).unwrap();
