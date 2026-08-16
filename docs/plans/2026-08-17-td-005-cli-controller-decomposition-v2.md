@@ -37,6 +37,13 @@
 - `runtime.rs`: repository transaction、reload / save、browser起動、interactive / non-interactive調停を担当する。
 - `schronu.rs`: module宣言と依存構築後に`runtime::application()`を呼ぶだけのentrypointにする。
 
+### Handlerの段階移行
+
+- Commit 7からCommit 22まではruntimeが全`Command`を受け取り、移行済み`CommandKind`だけをhandlerへ渡す。未移行variantはruntime内のtyped dispatchが所有し、handlerからruntimeを呼ばない。
+- Commit 7の暫定結果型は`CommandOutcome { external_request: Option<ExternalRequest>, focus_request: Option<FocusRequest> }`とする。表示は既存runtime writer経路に残し、暫定結果型へ表示fieldを設けない。
+- Commit 23で`CommandOutcome`へ`display: DisplayModel`を追加する。handler内の製品処理は`DisplayRecorder`へ書き、runtimeが`DisplayModel`をrendererへ渡して最終出力する。
+- module依存は`runtime -> handler / renderer`、`handler -> command / renderer`とし、`handler -> runtime`を禁止する。
+
 ## 必須の互換性
 
 ### 検索fallback
@@ -102,15 +109,15 @@
 
 ### Commit 6: `Test: typed command handler境界を固定する`
 
-- **固定する契約:** handler入力はtyped `Command`、出力は表示、外部起動要求、focus mode変更要求を持つ結果型である。
+- **固定する契約:** handler入力はtyped `Command`、暫定出力は`CommandOutcome { external_request: Option<ExternalRequest>, focus_request: Option<FocusRequest> }`である。runtimeが全commandを受け、移行済み`CommandKind`だけをhandlerへ渡し、未移行variantをruntime内のtyped dispatchが所有する。
 - **対象:** `src/adapter/controller/schronu/handler.rs`の境界test。
 - **依存:** Commit 5。
 - **Red確認:** handler境界が未導入である1つの理由で対象testが失敗する。
 
 ### Commit 7: `CLI: typed command handler境界を導入する`
 
-- **固定する契約:** handlerはterminal、環境変数、browser、transactionへ依存せず、command文字列やtoken列を再生成しない。
-- **対象:** `handler.rs`を追加し、未移行commandはruntimeのtyped dispatchへ委譲する。
+- **固定する契約:** handlerはterminal、環境変数、browser、transaction、runtimeへ依存せず、command文字列やtoken列を再生成しない。依存方向は`runtime -> handler`、`handler -> command`とする。
+- **対象:** `handler.rs`と暫定`CommandOutcome`を追加する。runtimeが全`Command`を受け、移行済み`CommandKind`だけをhandlerへ渡し、未移行variantはruntime内のtyped dispatchで処理する。表示はCommit 23まで既存runtime writer経路を維持し、handlerからruntimeを呼ばない。
 - **依存:** Commit 6。
 - **Green確認:** handler境界testと全品質ゲート。
 
@@ -221,8 +228,8 @@
 
 ### Commit 23: `CLI: rendererへの出力境界を分離する`
 
-- **固定する契約:** handlerは実writerへ書かず、raw fragmentを保持する`DisplayModel` / recorderを返し、runtimeがrendererへ渡す。
-- **対象:** `renderer.rs`、`handler.rs`、runtimeの出力接続。
+- **固定する契約:** `CommandOutcome`へ`display: DisplayModel`を追加し、handlerは実writerへ書かず、raw fragmentを保持する`DisplayRecorder`へ製品処理の出力を書き、runtimeが`DisplayModel`をrendererへ渡す。
+- **対象:** `renderer.rs`、`handler.rs`、runtimeの出力接続。依存方向を`runtime -> handler / renderer`、`handler -> command / renderer`とし、`handler -> runtime`を禁止する。
 - **依存:** Commit 22。
 - **Green確認:** 表示とwriter契約test、全品質ゲート。意味的表示modelへの全面移行は行わない。
 
