@@ -53,6 +53,7 @@
 | TD-015 | P2 | 未着手 | L | テストが巨大な製品ファイルへ混在し、fixtureも重複している |
 | TD-016 | P3 | 未着手 | M | マジック値、未使用フィールド、古いコメントが意図を曖昧にしている |
 | TD-017 | P1 | 完了 | XL | `TaskHandle`の既存infallible APIが内部不変条件の破れをpanicとして扱う |
+| TD-018 | P1 | 未着手 | XL | CLI runtimeにcommand orchestrationと表示生成が残っている |
 
 ## 詳細
 
@@ -296,6 +297,55 @@
 - TD-006のerror分類をparserとhandlerのinterfaceへ反映する。
 - TD-007のtransaction境界をhandlerの外側へ置く。
 - TD-013のSpreadsheet契約テストを分割前に用意する。
+
+#### 残存負債
+
+- TD-005では文字列dispatch、terminal driver、外部I/O、transaction、出力writerの境界を分離したが、command orchestrationと意味的な表示modelの分離はTD-018へ切り出す。
+- CLIのtest fixture/helper分離はcommand実行境界と独立して進められるため、既存のTD-015で扱う。
+
+### TD-018: CLI runtimeにcommand orchestrationと表示生成が残っている
+
+- 優先度: `P1`
+- 概算規模: `XL`
+
+#### 現状と根拠
+
+- `src/adapter/controller/schronu/runtime.rs`は約9,200行あり、TD-005分割前のcontrollerの約77%が残っている。
+- `handler.rs`はtyped `Command`を受け取るが、`execute_start_new_project`、`execute_breakdown`、`execute_defer`などruntime内のcommand実装を多数importしている。依存構築側であるruntimeをhandlerが参照するため、目標とする依存方向になっていない。
+- `CommandExecution`の`DisplayModel`はraw byte列とwriter固有改行を保持するrecording bufferであり、tree、task list、calendar、band、focus、errorなどの意味を型として表現していない。
+- `renderer.rs`の`execute_show_all_tasks_with_config`はtask抽出、schedule計算、表示行構築、描画を同時に行う。rendererが意味的な表示modelだけを受け取る境界にはなっていない。
+- runtimeにはcommand固有のmutation、日時解釈、pack/flatten結果整形が残り、mode選択・transaction・外部I/O調停以外の変更理由を持つ。
+
+#### 影響
+
+- command処理を変更する際にhandlerとruntimeを同時に編集する必要があり、TD-005で導入したtyped境界だけでは変更範囲を局所化できない。
+- 表示互換性がraw出力の記録に依存し、表示model単位でrendererをtestできない。
+- runtimeが依存構築層とcommand実装層を兼ねるため、fake application依存を使ったhandler単体testが作りにくい。
+- ファイル名から期待される責務と実装の所在が一致せず、負債が解消されたのか移動しただけなのか判断しにくい。
+
+#### 推奨する改善方針
+
+- tree、task list、calendar、band、focus、errorを表す意味的な表示modelを定義する。Spreadsheet A-J列は専用modelとformatterを維持し、人間向け表示modelへ暗黙に混在させない。
+- commandごとのapplication呼出しとfocus変更判断をhandler配下へ移し、domain/application use caseとして再利用すべき処理だけをapplication層へ抽出する。
+- handlerはtyped `Command`と明示的な依存を受け、意味的な表示model・外部起動要求・focus変更情報を`CommandExecution`として返す。
+- rendererは表示modelだけを受け取り、ANSI、改行、broken pipeのwriter契約を適用する。
+- runtimeは依存構築、parse mode選択、repository transaction、browser adapter、終了code変換、各境界の調停だけを担当する。
+- command名、alias、表示文言、Spreadsheet列、YAML、MCP契約は変更せず、command単位の小さいRed/Greenで移行する。
+
+#### 完了条件
+
+- handlerからruntime内のcommand固有関数への依存がなく、runtimeからparser・handler・renderer・interactive driverを呼ぶ一方向の依存になる。
+- handlerの製品経路をfake repository/free-time依存で実行でき、raw terminal、環境変数、browser、文字列tokenize、実writerへ依存しない。
+- `CommandExecution`がtree、task list、calendar、band、focus、errorなどの意味的な表示modelを保持し、raw byte recordingをhandlerとrendererの主境界にしない。
+- rendererのgolden testが意味的な表示modelから既存CLI出力を生成し、Spreadsheet A-J列の契約testも維持される。
+- runtimeにcommand固有のmutation・表示整形が残らず、依存構築、mode選択、transaction、外部I/O調停、終了code変換に限定される。
+- interactive/non-interactiveが同じparser・handler・renderer経路を通り、既存のtransaction、save、error分類を維持する。
+
+#### 依存関係
+
+- TD-006、TD-007、TD-013で確定したerror、transaction、Spreadsheet契約を前提にする。
+- 意味的な表示modelとcommand orchestrationは相互に影響するため、同じ項目内でcommand単位に移行する。
+- test fixture/helperの物理分離は本項目の製品依存方向と独立しているため、TD-015として別に進める。
 
 ### TD-006: CLIの入力・application・出力エラーが握り潰される
 
@@ -657,7 +707,7 @@
 #### 現状と根拠
 
 - `src/entity/task.rs`は約3,250行で、production type・operation・YAML出力と多数の個別`#[test]`が交互に配置される。
-- `src/adapter/controller/schronu.rs`はproduction helperの間に大量のcommand test、repository stub、free-time stubを持つ。
+- `src/adapter/controller/schronu/runtime.rs`はproduction helperの間に大量のcommand test、repository stub、free-time stubを持つ。
 - `src/adapter/mcp.rs`は約1,500行のproduction codeに続いて約3,600行のtest moduleを持つ。
 - application contract testsにも類似の`TestTaskRepository`とtask builderが複数存在する。
 - clippy失敗の多くは古いテスト表現であり、productionの新しい問題と既存test cleanupが同じ出力に混在する。
@@ -685,7 +735,8 @@
 #### 依存関係
 
 - TD-008のclippy Green化を先行し、移動後に新旧lint差分を持ち込まない。
-- TD-004、TD-005、TD-011の大規模分割前にcharacterization testを安定させる。
+- TD-004、TD-011、TD-018の大規模分割前にcharacterization testを安定させる。
+- TD-018の製品依存方向変更とは独立して進め、test file移動とcommand実装移動を同じcommitへ混ぜない。
 
 ### TD-016: マジック値、未使用フィールド、古いコメントが意図を曖昧にしている
 
@@ -731,9 +782,9 @@
 2. TD-001とTD-002を別々のRed/Green系列で直し、scheduleの入力となる自由時間を正確かつfallibleにする。
 3. TD-003で永続化データのsilent fallbackを止める。厳格化前に既存データのdry-run検査を行う。
 4. TD-006とTD-007でerror・transaction境界を整え、adapter間の挙動を統一する。
-5. TD-013でSpreadsheet互換fixtureを固定してから、TD-005のCLI分割へ進む。
+5. TD-013でSpreadsheet互換fixtureを固定してからTD-005のCLI境界分割を行い、残るorchestration・意味的表示model分離をTD-018で進める。
 6. TD-010、TD-009、TD-004の順でdomain境界を狭める。tree実装の全面変更は最後の独立段階にする。
-7. TD-011、TD-014、TD-015を独立して進める。
+7. TD-011、TD-014、TD-015を独立して進める。TD-015のCLI fixture分離はTD-018の製品コード移動とcommitを分ける。
 8. TD-012はbenchmark結果を取得してから最適化範囲を決める。
 9. TD-016は関連する上位項目の完了時に、小さいcleanup commitとして解消する。
 
