@@ -60,6 +60,9 @@ use std::sync::{
 use std::thread;
 
 mod storage_directory;
+#[cfg(test)]
+#[path = "schronu/command_contract_tests.rs"]
+mod command_contract_tests;
 use std::time::{Duration as StdDuration, Instant};
 use storage_directory::resolve_project_storage_directory;
 use termion::color;
