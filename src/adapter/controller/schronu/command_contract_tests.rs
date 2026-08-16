@@ -1,5 +1,9 @@
-use super::command::{parse_command, Command, CommandKind, ParseMode};
-use super::renderer::{format_spreadsheet_task_row, SpreadsheetTaskRow};
+use super::command::{parse_command, Command, CommandAction, CommandKind, ParseMode};
+use super::handler::{handle_command, ExternalRequest, FocusRequest};
+use super::renderer::{
+    format_spreadsheet_task_row, DisplayModel, DisplayRecorder, SpreadsheetTaskRow,
+};
+use std::io::Write;
 use uuid::Uuid;
 
 #[test]
@@ -107,6 +111,16 @@ fn parserは空入力_comment_検索fallback_interactive_shortcutを区別する
             unit: "秒".to_string(),
         }
     );
+    assert_eq!(
+        parse_command(" 0001 task row", ParseMode::NonInteractive).unwrap(),
+        Command::ShowAll {
+            pattern: Some("0001".to_string()),
+        }
+    );
+    assert_eq!(
+        parse_command("0001 task row", ParseMode::NonInteractive).unwrap(),
+        Command::Noop
+    );
 }
 
 #[test]
@@ -137,21 +151,122 @@ fn spreadsheet_formatterはaからj列を固定する() {
     );
 }
 
+#[test]
+fn handlerはtyped_commandを文字列へ戻さず製品dispatch境界へ渡す() {
+    let command = parse_command("estimate 45", ParseMode::NonInteractive).unwrap();
+    let mut dispatched = None;
+
+    let execution = handle_command(command, |command| {
+        dispatched = Some(command.clone());
+        let mut recorder = DisplayRecorder::new(false);
+        recorder.write_all(b"typed output").unwrap();
+        Ok::<_, ()>(recorder.finish())
+    })
+    .unwrap();
+
+    assert_eq!(dispatched, Some(Command::Estimate { minutes: 45 }));
+    assert_eq!(execution.kind, CommandKind::Estimate);
+    assert_eq!(execution.external_request, None);
+    assert_eq!(execution.focus_request, None);
+    assert_ne!(execution.display, DisplayModel::default());
+}
+
+#[test]
+fn handlerはfocus_mode変更を構造化要求として返す() {
+    let command = parse_command("低 3", ParseMode::Interactive).unwrap();
+    let mut dispatched = false;
+
+    let execution = handle_command(command, |_| {
+        dispatched = true;
+        Ok::<_, ()>(DisplayModel::default())
+    })
+    .unwrap();
+
+    assert!(!dispatched);
+    assert_eq!(execution.kind, CommandKind::FocusLowest);
+    assert_eq!(
+        execution.focus_request,
+        Some(FocusRequest::LowestPriority { recent_days: 3 })
+    );
+}
+
+#[test]
+fn handlerはbrowserを直接起動せず外部要求を返す() {
+    let command = parse_command("open", ParseMode::NonInteractive).unwrap();
+    let mut dispatched = false;
+
+    let execution = handle_command(command, |_| {
+        dispatched = true;
+        Ok::<_, ()>(DisplayModel::default())
+    })
+    .unwrap();
+
+    assert!(!dispatched);
+    assert_eq!(execution.kind, CommandKind::Open);
+    assert_eq!(
+        execution.external_request,
+        Some(ExternalRequest::OpenFocusedLink)
+    );
+}
+
+#[test]
+fn interactive_focus_modeは従来どおり引数を検証する() {
+    assert!(parse_command("高", ParseMode::Interactive).is_ok());
+    assert!(parse_command("低", ParseMode::Interactive).is_ok());
+    assert!(parse_command("低 0", ParseMode::Interactive).is_ok());
+
+    for input in ["高 1", "低 -1", "低 1 2"] {
+        assert!(
+            parse_command(input, ParseMode::Interactive).is_err(),
+            "{input} must be rejected"
+        );
+    }
+}
+
+#[test]
+fn extrudeは省略時noopかつ不正値を1日として保持する() {
+    assert_eq!(
+        parse_command("押", ParseMode::NonInteractive).unwrap(),
+        Command::Action(CommandAction::Extrude { step_days: None })
+    );
+    assert_eq!(
+        parse_command("extrude invalid", ParseMode::NonInteractive).unwrap(),
+        Command::Action(CommandAction::Extrude { step_days: Some(1) })
+    );
+}
+
+#[test]
+fn 検索fallbackは先頭語だけを使いfocus_modeはinteractiveだけで解釈する() {
+    assert_eq!(
+        parse_command("foo bar", ParseMode::NonInteractive).unwrap(),
+        Command::ShowAll {
+            pattern: Some("foo".to_string())
+        }
+    );
+    for input in ["high", "低"] {
+        assert!(matches!(
+            parse_command(input, ParseMode::NonInteractive).unwrap(),
+            Command::ShowAll { .. }
+        ));
+        assert!(matches!(
+            parse_command(input, ParseMode::Interactive).unwrap(),
+            Command::Action(CommandAction::FocusMode { .. })
+        ));
+    }
+}
+
 fn command_with_minimum_valid_arguments(command: &str) -> String {
     let arguments = match command {
         "新" | "new" | "遊" | "hobby" | "突" | "unplanned" => " project 15",
         "連" | "sequential" | "seq" => " task 15 1 2",
         "繰" | "repeat" => " task 15 月 09:00 10:00",
         "約" | "appointment" | "始" | "start" => " 今",
-        "見" | "focus" | "fc" | "選" | "pick" => {
-            " 00000000-0000-0000-0000-000000000001"
-        }
+        "見" | "focus" | "fc" | "選" | "pick" => " 00000000-0000-0000-0000-000000000001",
         "上" | "nextup" | "nu" | "下" | "breakdown" | "bd" => " task 15",
         "割" | "split" | "sp" => " 15 child",
         "〆" | "締" | "deadline" => " 今",
-        "予" | "estimate" | "es" | "揃" | "arrange" | "arr" | "実" | "actual"
-        | "ac" | "重" | "priority" | "pr" | "働" | "work" | "wk" | "押"
-        | "extrude" => " 15",
+        "予" | "estimate" | "es" | "揃" | "arrange" | "arr" | "実" | "actual" | "ac" | "重"
+        | "priority" | "pr" | "働" | "work" | "wk" | "押" | "extrude" => " 15",
         "類" | "category" | "cat" => " 資",
         "後" | "defer" | "逃" | "escape" | "esc" => " 1 秒",
         "空" | "clear" | "集" | "gather" => " 明",
