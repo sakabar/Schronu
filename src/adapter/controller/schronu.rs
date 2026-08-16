@@ -11245,7 +11245,6 @@ fn execute_interactive_command(
             &format!("後 {seconds}秒"),
         );
     } else {
-        let previous_focused_task_id_opt = *focused_task_id_opt;
         execute(
             stdout,
             task_repository,
@@ -11258,8 +11257,6 @@ fn execute_interactive_command(
             .is_some_and(|task_id| *focused_task_id_opt == Some(task_id))
         {
             *focus_selection_mode = FocusSelectionMode::Explicit;
-        } else if previous_focused_task_id_opt != *focused_task_id_opt {
-            *focus_selection_mode = FocusSelectionMode::HighestPriority;
         }
     }
 
