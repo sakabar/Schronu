@@ -43,7 +43,7 @@
 - Commit 7では`Open`、`Obsidian`、`FocusHighest`、`FocusLowest`を最初の移行済みcommandとしてhandlerへ移す。handlerはbrowserやfocus状態を直接操作せず、`external_request`または`focus_request`を返す。
 - Commit 7からCommit 22まではruntimeが全`Command`を受け取り、移行済み`CommandKind`だけをhandlerへ渡す。移行済みcommandは`DisplayRecorder`へ書き、runtimeが直ちに`render_display_model`で実writerへ出力する。未移行variantだけをruntime内の既存writer付きtyped dispatchが所有し、handlerからruntimeを呼ばない。
 - Commit 7ではinteractive / non-interactiveの各既存runtime経路が個別に`CommandOutcome`を解釈してbrowser起動とfocus変更を実行し、従来挙動をGreenに保つ。Commit 27で両経路を共通の`apply_command_outcome`へ集約し、browser実装とrepository transactionのruntime調停を完成させる。
-- Commit 23では`DisplayModel`を初導入せず、残っている全handler出力とerror、flush、broken pipe分類をrenderer境界へ完全移行する。
+- Commit 23では`DisplayModel`を初導入せず、runtimeに残る`write_command_error`、`report_run_result`、final flushをrenderer境界へ移し、broken pipeとその他出力errorの分類を維持する。
 - module依存は`runtime -> handler / renderer`、`handler -> command / renderer`とし、`handler -> runtime`を禁止する。
 
 ## 必須の互換性
@@ -223,15 +223,15 @@
 
 ### Commit 22: `Test: CLI表示結果とwriter契約を固定する`
 
-- **固定する契約:** 全handler出力が既存の`DisplayModel` / `DisplayRecorder`を通り、tree、list、calendar、band、focus、error、ANSI、writer固有改行、write順、flush、broken pipe分類を維持する。
-- **対象:** rendererへの完全移行、writer、error分類test。
+- **固定する契約:** Commit 21時点でruntimeに残る`write_command_error`、`report_run_result`、final flushをrenderer境界へ移す契約を固定し、error、ANSI、writer固有改行、write順、flush、broken pipe分類を維持する。
+- **対象:** `write_command_error`の製品経路、runtimeのrun error報告、final flush、rendererのwriter / error分類test。
 - **依存:** Commit 21。
-- **Red確認:** runtime writer spyを使う製品経路testが、残存するhandler出力の直接writeを1件検出することだけを理由に失敗する。`DisplayModel`自体はCommit 7からGreenである。
+- **Red確認:** `write_command_error`の製品経路testが、その出力を`DisplayModel` / `render_display_model`経由として観測できないことだけを理由に失敗する。`DisplayModel`とhandler出力はCommit 7からGreenであり、別の失敗理由にしない。
 
 ### Commit 23: `CLI: rendererへの出力境界を分離する`
 
-- **固定する契約:** 残っている全handler出力とerror、flush、broken pipe分類をrenderer境界へ完全移行する。handlerは実writerへ書かず、raw fragmentを保持する既存の`DisplayRecorder`へ書き、runtimeが`DisplayModel`を`render_display_model`へ渡す。
-- **対象:** `renderer.rs`、`handler.rs`、runtimeの残存出力接続。依存方向を`runtime -> handler / renderer`、`handler -> command / renderer`とし、`handler -> runtime`を禁止する。
+- **固定する契約:** command error、run error、final flushをrenderer境界へ完全移行し、broken pipeとその他出力errorの分類を維持する。handlerは引き続き実writerへ書かず、runtimeが全`DisplayModel`を`render_display_model`へ渡す。
+- **対象:** `renderer.rs`とruntimeの`write_command_error` / `report_run_result` / final flush接続。依存方向を`runtime -> handler / renderer`、`handler -> command / renderer`とし、`handler -> runtime`を禁止する。
 - **依存:** Commit 22。
 - **Green確認:** 表示とwriter契約test、全品質ゲート。意味的表示modelへの全面移行は行わない。
 
