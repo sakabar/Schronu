@@ -40,7 +40,7 @@
 | TD-002 | P0 | 完了 | M | 行動不能時間YAMLの異常が回復可能なエラーではなくpanicになる |
 | TD-003 | P0 | 完了| L | 永続化YAMLの不正値が黙って既定値や新規UUIDへ変換される |
 | TD-004 | P1 | 完了 | XL | `Task`の木構造と内部可変性が暗黙の共有状態とpanic前提を作っている |
-| TD-005 | P1 | 未着手 | XL | CLIコントローラーへ責務が集中している |
+| TD-005 | P1 | 完了 | XL | CLIコントローラーへ責務が集中している |
 | TD-006 | P1 | 完了 | L | CLIの入力・application・出力エラーが握り潰される |
 | TD-007 | P1 | 完了 | L | CLIとMCPでrepository transactionが別々に組み立てられている |
 | TD-008 | P1 | 完了 | M | CIがリポジトリ規約を満たさず、ビルド再現性も固定されていない |
@@ -260,6 +260,9 @@
 
 - 優先度: `P1`
 - 概算規模: `XL`
+- 完了日: 2026-08-17
+- 対応: CLIをtyped parser、command handler、renderer、interactive terminal driver、runtimeへ分割した。handlerの実行結果は表示model・外部起動要求・focus変更要求として構造化し、runtimeでtransactionと外部I/Oを調停する。`全`のA-J列は製品用Spreadsheet formatterへ集約し、binary entrypointはruntime呼出しだけに縮小した。
+- 検証: 全alias、typed引数、parse error、検索fallback、interactive shortcut、handler境界、表示model、Spreadsheet A-J列、interactive/non-interactive共通経路をtestで固定した。`cargo fmt --check`、`cargo clippy --locked --all-targets -- -D warnings`、`cargo test --locked`は成功した。
 
 #### 現状と根拠
 
