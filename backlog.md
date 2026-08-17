@@ -330,7 +330,7 @@
 
 #### 完了条件
 
-- runtimeにcommand固有のdomain mutation、日時解釈、表示計算が残らず、handlerの製品経路をfake contextで検証できる。
+- runtimeにcommand固有のdomain mutation、command引数の日時解釈、表示計算が残らず、handlerの製品経路をfake contextで検証できる。
 - `DisplayModel`がtree、task list、calendar、band、focus、errorなどの意味を表し、raw fragment recordingをhandlerとrendererの主境界にしない。
 - rendererのgolden testが意味的な表示modelから既存CLI出力を生成し、Spreadsheet A-J列の契約testも維持される。
 - interactive/non-interactiveが同じparser・handler・renderer経路を通り、既存のtransaction、save、error分類を維持する。
