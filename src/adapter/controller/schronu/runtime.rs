@@ -5913,6 +5913,111 @@ fn test_execute_unplanned_延期と見積もりを省略して即時着手可能
 }
 
 #[test]
+fn test_project作成commandの製品handler経路がtyped_fieldと表示とfocusを反映する() {
+    let now = Local.with_ymd_and_hms(2026, 8, 11, 12, 0, 0).unwrap();
+
+    let new_root = TaskHandle::new("既存").unwrap();
+    let new_result = execute_command_for_test(
+        new_root.clone(),
+        now,
+        Some(new_root.get_id().unwrap()),
+        "新 新規 25",
+    );
+    assert_eq!(new_result.task.get_name().unwrap(), "新規");
+    assert_eq!(new_result.task.get_estimated_work_seconds().unwrap(), 25 * 60);
+    assert_eq!(
+        new_result.focused_task_id_opt,
+        Some(new_result.task.get_id().unwrap())
+    );
+
+    let hobby_root = TaskHandle::new("既存").unwrap();
+    let hobby_result = execute_command_for_test(
+        hobby_root.clone(),
+        now,
+        Some(hobby_root.get_id().unwrap()),
+        "遊 趣味 20",
+    );
+    assert_eq!(hobby_result.task.get_name().unwrap(), "趣味");
+    assert_eq!(
+        hobby_result.task.get_pending_until().unwrap(),
+        get_next_morning_datetime(now) + Duration::days(1399)
+    );
+
+    let unplanned_root = TaskHandle::new("既存").unwrap();
+    let unplanned_result = execute_command_for_test(
+        unplanned_root.clone(),
+        now,
+        Some(unplanned_root.get_id().unwrap()),
+        "突 割り込み 10",
+    );
+    assert_eq!(unplanned_result.task.get_name().unwrap(), "割り込み");
+    assert_eq!(unplanned_result.task.get_orig_status().unwrap(), Status::Todo);
+
+    let sequential_root = TaskHandle::new("親").unwrap();
+    let sequential_result = execute_command_for_test(
+        sequential_root.clone(),
+        now,
+        Some(sequential_root.get_id().unwrap()),
+        "連 手順 15 2 3 章",
+    );
+    let sequential_children = sequential_result.task.get_children().unwrap();
+    assert_eq!(sequential_children[0].get_name().unwrap(), "手順 3-章");
+    assert_eq!(
+        sequential_result.focused_task_id_opt,
+        Some(
+            sequential_children[0].get_children().unwrap()[0]
+                .get_id()
+                .unwrap()
+        )
+    );
+
+    let repeat_root = TaskHandle::new("親").unwrap();
+    let repeat_result = execute_command_for_test(
+        repeat_root.clone(),
+        now,
+        Some(repeat_root.get_id().unwrap()),
+        "繰 習慣 10 毎 09:00 10:00",
+    );
+    assert_eq!(repeat_result.task.get_children().unwrap().len(), 1);
+    assert!(repeat_result.output.contains("習慣"));
+
+    let appointment_task = TaskHandle::new("予定").unwrap();
+    let appointment_id = appointment_task.get_id().unwrap();
+    let appointment_result = execute_command_for_test(
+        appointment_task,
+        now,
+        Some(appointment_id),
+        "約 14:30 8/12",
+    );
+    assert_eq!(
+        appointment_result.task.get_start_time().unwrap(),
+        Local.with_ymd_and_hms(2026, 8, 12, 14, 30, 0).unwrap()
+    );
+    assert_eq!(appointment_result.focused_task_id_opt, Some(appointment_id));
+
+    let start_task = TaskHandle::new("開始").unwrap();
+    let start_id = start_task.get_id().unwrap();
+    let start_result =
+        execute_command_for_test(start_task, now, Some(start_id), "始 16:45 8/13");
+    assert_eq!(
+        start_result.task.get_start_time().unwrap(),
+        Local.with_ymd_and_hms(2026, 8, 13, 16, 45, 0).unwrap()
+    );
+
+    for invalid_command in ["新 123 10", "連 手順 -1 1 2", "繰 習慣 -1 毎 09:00 10:00"] {
+        let task = TaskHandle::new("変更なし").unwrap();
+        let result = execute_command_for_test(
+            task.clone(),
+            now,
+            Some(task.get_id().unwrap()),
+            invalid_command,
+        );
+        assert_eq!(result.task.get_name().unwrap(), "変更なし");
+        assert!(result.task.get_children().unwrap().is_empty());
+    }
+}
+
+#[test]
 fn test_execute_breakdown_子を順に作り締切を継承して最初の子へfocusする() {
     let now = Local.with_ymd_and_hms(2026, 8, 11, 12, 0, 0).unwrap();
     let deadline = Local.with_ymd_and_hms(2026, 8, 20, 23, 59, 59).unwrap();

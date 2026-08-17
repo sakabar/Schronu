@@ -96,6 +96,45 @@ fn handler_has_no_runtime_or_external_io_dependency_and_no_command_reconstructio
     }
 }
 
+#[test]
+fn project作成commandはhandlerがtyped_fieldを直接matchして所有する() {
+    let runtime_source = include_str!("runtime.rs");
+    let legacy_dispatch = runtime_source
+        .split_once("fn execute_with_config(")
+        .expect("runtime must retain the typed fallback entrypoint")
+        .1
+        .split_once("fn execute_non_interactive_command(")
+        .expect("runtime fallback must remain bounded by the non-interactive entrypoint")
+        .0;
+    for migrated_kind in [
+        "CommandKind::NewProject",
+        "CommandKind::HobbyProject",
+        "CommandKind::UnplannedProject",
+        "CommandKind::Sequential",
+        "CommandKind::Repeat",
+        "CommandKind::Appointment",
+        "CommandKind::Start",
+    ] {
+        assert!(
+            !legacy_dispatch.contains(migrated_kind),
+            "migrated command must not remain in runtime fallback: {migrated_kind}"
+        );
+    }
+
+    let handler_source = include_str!("handler.rs");
+    for action_pattern in [
+        "CommandAction::NewProject {",
+        "CommandAction::Sequential {",
+        "CommandAction::Repeat {",
+        "CommandAction::TimeExpression {",
+    ] {
+        assert!(
+            handler_source.contains(action_pattern),
+            "handler must directly match typed action fields: {action_pattern}"
+        );
+    }
+}
+
 #[derive(Default)]
 struct TraceWriter {
     writes: Vec<String>,
