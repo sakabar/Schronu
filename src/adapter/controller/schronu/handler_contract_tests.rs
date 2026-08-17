@@ -364,6 +364,52 @@ fn task_tree表示commandはruntime_fallbackに残さない() {
     }
 }
 
+#[test]
+fn breakdownとsplitはhandlerがtyped_fieldを直接matchして所有する() {
+    let runtime_source = include_str!("runtime.rs");
+    let legacy_dispatch = runtime_source
+        .split_once("fn execute_with_config(")
+        .expect("runtime must retain the typed fallback entrypoint")
+        .1
+        .split_once("fn execute_non_interactive_command(")
+        .expect("runtime fallback must remain bounded by the non-interactive entrypoint")
+        .0;
+    for migrated_kind in [
+        "CommandKind::Breakdown",
+        "CommandKind::Split",
+        "CommandKind::Wait",
+    ] {
+        assert!(
+            !legacy_dispatch.contains(migrated_kind),
+            "migrated command must not remain in runtime fallback: {migrated_kind}"
+        );
+    }
+
+    let product_dispatch = runtime_source
+        .split_once("fn execute_parsed(")
+        .expect("runtime must retain the parsed command entrypoint")
+        .1
+        .split_once("struct RuntimeProjectCommandContext")
+        .expect("parsed command entrypoint must remain bounded by its context")
+        .0;
+    assert!(
+        product_dispatch.contains("handle_breakdown_split_command(parsed_command"),
+        "product dispatch must route breakdown, split, and wait through the handler"
+    );
+
+    let handler_source = include_str!("handler.rs");
+    for action_pattern in [
+        "CommandAction::TaskNames { names }",
+        "CommandAction::Split { minutes, name }",
+        "kind: CommandKind::Wait",
+    ] {
+        assert!(
+            handler_source.contains(action_pattern),
+            "handler must directly match typed action fields: {action_pattern}"
+        );
+    }
+}
+
 #[derive(Default)]
 struct TraceWriter {
     writes: Vec<String>,

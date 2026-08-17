@@ -5538,6 +5538,71 @@ fn task_tree表示commandはflush_errorとbroken_pipeを製品経路で分類す
     assert_eq!(broken_pipe_flush_count, 1);
 }
 
+#[test]
+fn breakdownとsplitは製品経路で必ず1回flushする() {
+    let now = Local.with_ymd_and_hms(2026, 8, 11, 12, 0, 0).unwrap();
+
+    for command in ["下 child", "割 15 child", "待"] {
+        let task = TaskHandle::new("flush対象").unwrap();
+        task.set_estimated_work_seconds(30 * 60);
+        let task_id = task.get_id().unwrap();
+        let mut task_repository = TestTaskRepository::new(task, now);
+        let mut free_time_manager = TestFreeTimeManager;
+        let mut focused_task_id_opt = Some(task_id);
+        let mut stdout = FlushTrackingWriter::successful(true);
+
+        execute(
+            &mut stdout,
+            &mut task_repository,
+            &mut free_time_manager,
+            &mut focused_task_id_opt,
+            &now,
+            command,
+        )
+        .unwrap();
+
+        assert_eq!(stdout.flush_count, 1, "{command}");
+    }
+}
+
+#[test]
+fn breakdownとsplitはflush_errorとbroken_pipeを製品経路で分類する() {
+    let now = Local.with_ymd_and_hms(2026, 8, 11, 12, 0, 0).unwrap();
+
+    for command in ["下 child", "割 15 child", "待"] {
+        let execute_with_error = |kind| {
+            let task = TaskHandle::new("flush error対象").unwrap();
+            task.set_estimated_work_seconds(30 * 60);
+            let task_id = task.get_id().unwrap();
+            let mut task_repository = TestTaskRepository::new(task, now);
+            let mut free_time_manager = TestFreeTimeManager;
+            let mut focused_task_id_opt = Some(task_id);
+            let mut stdout = FlushTrackingWriter::failing(kind);
+            let result = execute(
+                &mut stdout,
+                &mut task_repository,
+                &mut free_time_manager,
+                &mut focused_task_id_opt,
+                &now,
+                command,
+            );
+            (result, stdout.flush_count)
+        };
+
+        let (output_error, output_flush_count) = execute_with_error(std::io::ErrorKind::Other);
+        assert!(matches!(
+            output_error,
+            Err(CommandError::Output(error)) if error.kind() == std::io::ErrorKind::Other
+        ));
+        assert_eq!(output_flush_count, 1, "{command}");
+
+        let (broken_pipe, broken_pipe_flush_count) =
+            execute_with_error(std::io::ErrorKind::BrokenPipe);
+        assert!(broken_pipe.is_ok(), "{command}");
+        assert_eq!(broken_pipe_flush_count, 1, "{command}");
+    }
+}
+
 #[cfg(test)]
 struct TestFreeTimeManagerForBand;
 
