@@ -5,8 +5,9 @@ use super::command::{
     ParseMode,
 };
 use super::handler::{
-    decide_time_values, execute_breakdown, handle, handle_project_command, CommandOutcome,
-    ExternalRequest, FocusRequest, ProjectCommandContext,
+    decide_time_values, execute_breakdown, handle, handle_project_command,
+    handle_task_tree_command, CommandOutcome, ExternalRequest, FocusRequest, ProjectCommandContext,
+    TaskListOrder, TaskTreeCommandContext,
 };
 use super::renderer::{
     render_display_model, writeln_newline, ErrorCapturingWriter, SchronuWriter, MAX_COL,
@@ -3574,46 +3575,6 @@ fn execute_show_all_tasks_with_config(
     Ok(())
 }
 
-fn execute_focus(focused_task_id_opt: &mut Option<Uuid>, new_task_id_str: &str) {
-    if let Ok(id) = Uuid::parse_str(new_task_id_str) {
-        *focused_task_id_opt = Some(id)
-    }
-}
-
-fn execute_pick(
-    task_repository: &mut dyn TaskRepositoryTrait,
-    focused_task_id_opt: &mut Option<Uuid>,
-    new_task_id_str: &str,
-) -> Result<(), ApplicationError> {
-    match Uuid::parse_str(new_task_id_str) {
-        Ok(id) => {
-            *focused_task_id_opt = Some(id);
-
-            // Statusをtodoに戻す
-            if let Some(task) = task_repository
-                .get_by_id(id)
-                .map_err(ApplicationError::TaskTree)?
-            {
-                task.set_orig_status(Status::Todo)
-                    .map_err(ApplicationError::TaskTree)?;
-            }
-        }
-        Err(_) => {
-            // 今フォーカスが当たっているタスクをtodoに戻す
-            if let Some(focused_task_id) = focused_task_id_opt {
-                if let Some(task) = task_repository
-                    .get_by_id(*focused_task_id)
-                    .map_err(ApplicationError::TaskTree)?
-                {
-                    task.set_orig_status(Status::Todo)
-                        .map_err(ApplicationError::TaskTree)?;
-                }
-            }
-        }
-    }
-    Ok(())
-}
-
 fn execute_unfocus(focused_task_id_opt: &mut Option<Uuid>) {
     *focused_task_id_opt = None;
 }
@@ -5486,23 +5447,13 @@ fn calendarとbandは製品経路で代表出力とansi_capabilityを維持す�
     assert!(calendar.contains("2026-08-11(火)"));
     assert!(calendar.contains("日          \t空"));
 
-    let band = execute_calendar_command_with_ansi_color_for_test(
-        "帯",
-        now,
-        make_task(),
-        10 * 60,
-        true,
-    );
+    let band =
+        execute_calendar_command_with_ansi_color_for_test("帯", now, make_task(), 10 * 60, true);
     assert!(band.contains("凡例:"));
     assert!(band.contains("\x1b[38;5;"));
 
-    let pipe_band = execute_calendar_command_with_ansi_color_for_test(
-        "帯",
-        now,
-        make_task(),
-        10 * 60,
-        false,
-    );
+    let pipe_band =
+        execute_calendar_command_with_ansi_color_for_test("帯", now, make_task(), 10 * 60, false);
     assert!(pipe_band.contains("凡例:"));
     assert!(!pipe_band.contains("\x1b["));
 }
@@ -5582,8 +5533,7 @@ fn task_tree表示commandはflush_errorとbroken_pipeを製品経路で分類す
     ));
     assert_eq!(output_flush_count, 1);
 
-    let (broken_pipe, broken_pipe_flush_count) =
-        execute_with_error(std::io::ErrorKind::BrokenPipe);
+    let (broken_pipe, broken_pipe_flush_count) = execute_with_error(std::io::ErrorKind::BrokenPipe);
     assert!(broken_pipe.is_ok());
     assert_eq!(broken_pipe_flush_count, 1);
 }
@@ -7132,6 +7082,24 @@ fn execute_parsed(
             outcome,
             active_config(),
         )?;
+    } else if let Some(outcome) = {
+        let supports_ansi_color = output.supports_ansi_color();
+        let mut context = RuntimeTaskTreeCommandContext {
+            task_repository,
+            free_time_manager,
+            focused_task_id_opt,
+            config: active_config(),
+            supports_ansi_color,
+        };
+        handle_task_tree_command(parsed_command, &mut context)?
+    } {
+        execute_handler_outcome(
+            &mut output,
+            task_repository,
+            focused_task_id_opt,
+            outcome,
+            active_config(),
+        )?;
     } else if let Some(outcome) = handle(parsed_command) {
         execute_handler_outcome(
             &mut output,
@@ -7200,6 +7168,188 @@ impl ProjectCommandContext for RuntimeProjectCommandContext<'_> {
     }
 }
 
+struct RuntimeTaskTreeCommandContext<'a> {
+    task_repository: &'a mut dyn TaskRepositoryTrait,
+    free_time_manager: &'a mut dyn FreeTimeManagerTrait,
+    focused_task_id_opt: &'a mut Option<Uuid>,
+    config: &'a SchronuConfig,
+    supports_ansi_color: bool,
+}
+
+impl RuntimeTaskTreeCommandContext<'_> {
+    fn focused_task(&self) -> Result<Option<TaskHandle>, ApplicationError> {
+        match *self.focused_task_id_opt {
+            Some(id) => self
+                .task_repository
+                .get_by_id(id)
+                .map_err(ApplicationError::TaskTree),
+            None => Ok(None),
+        }
+    }
+}
+
+impl TaskTreeCommandContext for RuntimeTaskTreeCommandContext<'_> {
+    fn supports_ansi_color(&self) -> bool {
+        self.supports_ansi_color
+    }
+
+    fn show_tree(&mut self, display: &mut dyn SchronuWriter) -> Result<(), ApplicationError> {
+        execute_show_tree(display, &self.focused_task()?)
+    }
+
+    fn show_ancestor(&mut self, display: &mut dyn SchronuWriter) -> Result<(), ApplicationError> {
+        execute_show_ancestor(display, &self.focused_task()?)
+    }
+
+    fn focus_root(&mut self) -> Result<(), ApplicationError> {
+        if let Some(focused_task) = self.focused_task()? {
+            let root_task = focused_task.root().map_err(ApplicationError::TaskTree)?;
+            *self.focused_task_id_opt =
+                Some(root_task.get_id().map_err(ApplicationError::TaskTree)?);
+        }
+        Ok(())
+    }
+
+    fn show_leaves(&mut self, display: &mut dyn SchronuWriter) -> Result<(), ApplicationError> {
+        execute_show_leaf_tasks(display, self.task_repository, self.free_time_manager)
+    }
+
+    fn show_task_list(
+        &mut self,
+        display: &mut dyn SchronuWriter,
+        pattern: Option<&str>,
+        order: TaskListOrder,
+        resolve_pattern: bool,
+    ) -> Result<(), ApplicationError> {
+        let pattern = pattern.map(|pattern| {
+            if resolve_pattern {
+                resolve_show_all_pattern(pattern, self.task_repository.get_last_synced_time())
+            } else {
+                pattern.to_string()
+            }
+        });
+        let order = match order {
+            TaskListOrder::ScheduledStartDesc => TaskListDisplayOrder::ScheduledStartDesc,
+            TaskListOrder::LowPriorityTail => TaskListDisplayOrder::LowPriorityTail,
+        };
+        execute_show_all_tasks_with_config(
+            display,
+            self.focused_task_id_opt,
+            self.task_repository,
+            self.free_time_manager,
+            &pattern,
+            order,
+            self.config,
+        )
+    }
+
+    fn focus(&mut self, task_id: Uuid) {
+        *self.focused_task_id_opt = Some(task_id);
+    }
+
+    fn pick(&mut self, task_id: Uuid) -> Result<(), ApplicationError> {
+        *self.focused_task_id_opt = Some(task_id);
+        if let Some(task) = self
+            .task_repository
+            .get_by_id(task_id)
+            .map_err(ApplicationError::TaskTree)?
+        {
+            task.set_orig_status(Status::Todo)
+                .map_err(ApplicationError::TaskTree)?;
+        }
+        Ok(())
+    }
+
+    fn focus_parent(&mut self) -> Result<(), ApplicationError> {
+        if let Some(focused_task) = self.focused_task()? {
+            if let Some(parent_task) = focused_task.parent().map_err(ApplicationError::TaskTree)? {
+                *self.focused_task_id_opt =
+                    Some(parent_task.get_id().map_err(ApplicationError::TaskTree)?);
+            }
+        }
+        Ok(())
+    }
+
+    fn focus_children(&mut self, display: &mut dyn SchronuWriter) -> Result<(), ApplicationError> {
+        let focused_task_opt = self.focused_task()?;
+        if let Some(focused_task) = focused_task_opt.as_ref() {
+            let children = focused_task
+                .get_children()
+                .map_err(ApplicationError::TaskTree)?
+                .into_iter()
+                .filter_map(|child| match child.get_status() {
+                    Ok(Status::Done) => None,
+                    Ok(_) => Some(Ok(child)),
+                    Err(error) => Some(Err(error)),
+                })
+                .collect::<Result<Vec<_>, _>>()
+                .map_err(ApplicationError::TaskTree)?;
+            match children.as_slice() {
+                [child] => {
+                    *self.focused_task_id_opt =
+                        Some(child.get_id().map_err(ApplicationError::TaskTree)?);
+                }
+                [_, _, ..] => execute_show_tree(display, &focused_task_opt)?,
+                _ => {}
+            }
+        }
+        Ok(())
+    }
+
+    fn focus_deepest(&mut self, display: &mut dyn SchronuWriter) -> Result<(), ApplicationError> {
+        let Some(focused_task) = self.focused_task()? else {
+            return Ok(());
+        };
+        let mut deepest_task = focused_task;
+        loop {
+            let children = deepest_task
+                .get_children()
+                .map_err(ApplicationError::TaskTree)?
+                .into_iter()
+                .filter_map(|child| match child.get_status() {
+                    Ok(Status::Done) => None,
+                    Ok(_) => Some(Ok(child)),
+                    Err(error) => Some(Err(error)),
+                })
+                .collect::<Result<Vec<_>, _>>()
+                .map_err(ApplicationError::TaskTree)?;
+            let [only_child] = children.as_slice() else {
+                break;
+            };
+            deepest_task = only_child.clone();
+        }
+        *self.focused_task_id_opt =
+            Some(deepest_task.get_id().map_err(ApplicationError::TaskTree)?);
+        if deepest_task
+            .get_children()
+            .map_err(ApplicationError::TaskTree)?
+            .len()
+            > 1
+        {
+            execute_show_tree(display, &Some(deepest_task))?;
+        }
+        Ok(())
+    }
+
+    fn next_up(
+        &mut self,
+        display: &mut dyn SchronuWriter,
+        name: &str,
+        estimated_minutes: Option<i64>,
+    ) -> Result<(), ApplicationError> {
+        let focused_task_opt = self.focused_task()?;
+        let result = execute_next_up(
+            display,
+            self.focused_task_id_opt,
+            &focused_task_opt,
+            name,
+            &estimated_minutes,
+        );
+        report_application_result(display, result);
+        Ok(())
+    }
+}
+
 fn execute_handler_outcome(
     stdout: &mut dyn SchronuWriter,
     task_repository: &mut dyn TaskRepositoryTrait,
@@ -7260,255 +7410,16 @@ fn execute_with_config(
 
     let tokens: Vec<&str> = line.split(' ').collect();
 
-    match parsed_command {
-        Command::Noop => return Ok(()),
-        Command::ShowAll { pattern } => {
-            let pattern_opt = pattern.as_deref().map(|pattern| {
-                resolve_show_all_pattern(pattern, task_repository.get_last_synced_time())
-            });
-            execute_show_all_tasks_with_config(
-                stdout,
-                focused_task_id_opt,
-                task_repository,
-                free_time_manager,
-                &pattern_opt,
-                TaskListDisplayOrder::ScheduledStartDesc,
-                config,
-            )?;
-            stdout.flush().map_err(CommandError::Output)?;
-            return Ok(());
-        }
-        _ => {}
+    if matches!(parsed_command, Command::Noop) {
+        return Ok(());
     }
 
     match parsed_command.kind() {
-        // 最初は「木」コマンドだったが、曜日だけを指定して直近のその曜日について「全」コマンドを動かすコマンドとコンフリクトしてしまったためリネームした。
-        CommandKind::Tree => {
-            execute_show_tree(stdout, &focused_task_opt)?;
-        }
-        CommandKind::Ancestor => {
-            execute_show_ancestor(stdout, &focused_task_opt)?;
-        }
-        CommandKind::Root => {
-            if let Some(focused_task) = focused_task_opt {
-                let root_task = focused_task.root().map_err(ApplicationError::TaskTree)?;
-                let root_task_id = root_task.get_id().map_err(ApplicationError::TaskTree)?;
-                execute_focus(focused_task_id_opt, &root_task_id.hyphenated().to_string());
-            }
-        }
-        CommandKind::Leaves => {
-            execute_show_leaf_tasks(stdout, task_repository, free_time_manager)?;
-        }
-        CommandKind::ShowAll => {
-            let pattern_opt = if tokens.len() >= 2 {
-                Some(resolve_show_all_pattern(
-                    tokens[1],
-                    task_repository.get_last_synced_time(),
-                ))
-            } else {
-                None
-            };
-
-            execute_show_all_tasks_with_config(
-                stdout,
-                focused_task_id_opt,
-                task_repository,
-                free_time_manager,
-                &pattern_opt,
-                TaskListDisplayOrder::ScheduledStartDesc,
-                config,
-            )?;
-        }
-        CommandKind::Tail => {
-            let pattern_opt = if tokens.len() >= 2 {
-                Some(tokens[1].to_string())
-            } else {
-                Some("今".to_string())
-            };
-
-            execute_show_all_tasks_with_config(
-                stdout,
-                focused_task_id_opt,
-                task_repository,
-                free_time_manager,
-                &pattern_opt,
-                TaskListDisplayOrder::LowPriorityTail,
-                config,
-            )?;
-        }
-        CommandKind::Today => {
-            let pattern_opt = Some("今".to_string());
-            execute_show_all_tasks_with_config(
-                stdout,
-                focused_task_id_opt,
-                task_repository,
-                free_time_manager,
-                &pattern_opt,
-                TaskListDisplayOrder::ScheduledStartDesc,
-                config,
-            )?;
-        }
-        CommandKind::NonRepetitive => {
-            let pattern_opt = Some("単".to_string());
-            execute_show_all_tasks_with_config(
-                stdout,
-                focused_task_id_opt,
-                task_repository,
-                free_time_manager,
-                &pattern_opt,
-                TaskListDisplayOrder::ScheduledStartDesc,
-                config,
-            )?;
-        }
-        CommandKind::Calendar => {
-            let pattern_opt = Some("暦".to_string());
-            execute_show_all_tasks_with_config(
-                stdout,
-                focused_task_id_opt,
-                task_repository,
-                free_time_manager,
-                &pattern_opt,
-                TaskListDisplayOrder::ScheduledStartDesc,
-                config,
-            )?;
-        }
-        CommandKind::Band => {
-            let pattern_opt = Some("帯".to_string());
-            execute_show_all_tasks_with_config(
-                stdout,
-                focused_task_id_opt,
-                task_repository,
-                free_time_manager,
-                &pattern_opt,
-                TaskListDisplayOrder::ScheduledStartDesc,
-                config,
-            )?;
-        }
-        CommandKind::Focus => {
-            if tokens.len() >= 2 {
-                let new_task_id_str = &tokens[1];
-                execute_focus(focused_task_id_opt, new_task_id_str);
-            }
-        }
-        CommandKind::Pick => {
-            let new_task_id_str = if tokens.len() >= 2 { tokens[1] } else { "" };
-            execute_pick(task_repository, focused_task_id_opt, new_task_id_str)?;
-        }
         CommandKind::Open | CommandKind::Obsidian => {
             unreachable!("migrated command must be handled before legacy dispatch")
         }
         CommandKind::Unfocus => {
             execute_unfocus(focused_task_id_opt);
-        }
-        CommandKind::Parent => {
-            if let Some(focused_task) = focused_task_opt {
-                if let Some(parent_task) =
-                    focused_task.parent().map_err(ApplicationError::TaskTree)?
-                {
-                    let parent_task_id =
-                        parent_task.get_id().map_err(ApplicationError::TaskTree)?;
-                    execute_focus(
-                        focused_task_id_opt,
-                        &parent_task_id.hyphenated().to_string(),
-                    );
-                }
-            }
-        }
-        CommandKind::Children => {
-            // 今見ているノードの子タスクが1つだけの時、その子に移動する
-            // 2つ以上ある時には、「木」コマンドを実行してツリーの様子を表示する
-
-            if let Some(ref focused_task) = focused_task_opt {
-                let tmp_children = focused_task
-                    .get_children()
-                    .map_err(ApplicationError::TaskTree)?;
-                let children = tmp_children
-                    .iter()
-                    .filter_map(|child| match child.get_status() {
-                        Ok(Status::Done) => None,
-                        Ok(_) => Some(Ok(child)),
-                        Err(error) => Some(Err(error)),
-                    })
-                    .collect::<Result<Vec<_>, _>>()
-                    .map_err(ApplicationError::TaskTree)?;
-
-                match children.len() {
-                    0 => {
-                        // Do nothing
-                    }
-                    1 => {
-                        *focused_task_id_opt =
-                            Some(children[0].get_id().map_err(ApplicationError::TaskTree)?);
-                    }
-                    _ => {
-                        execute_show_tree(stdout, &focused_task_opt)?;
-                    }
-                }
-            }
-        }
-        CommandKind::Deepest => {
-            // 今見ているノードの子タスクが1つだけである限り、その子に移動して同じことを繰り返す
-            // 2つ以上ある時には、「木」コマンドを実行してツリーの様子を表示する
-
-            if let Some(ref focused_task) = focused_task_opt {
-                let mut tmp_focused_task_opt: Option<TaskHandle> = Some(focused_task.clone());
-
-                while let Some(ref tmp_focused_task) = tmp_focused_task_opt {
-                    let tmp_children = tmp_focused_task
-                        .get_children()
-                        .map_err(ApplicationError::TaskTree)?;
-                    let children = tmp_children
-                        .iter()
-                        .filter_map(|child| match child.get_status() {
-                            Ok(Status::Done) => None,
-                            Ok(_) => Some(Ok(child)),
-                            Err(error) => Some(Err(error)),
-                        })
-                        .collect::<Result<Vec<_>, _>>()
-                        .map_err(ApplicationError::TaskTree)?;
-
-                    if children.len() != 1 {
-                        break;
-                    }
-
-                    tmp_focused_task_opt = Some(children[0].clone());
-                }
-
-                if let Some(ref tmp_focused_task) = tmp_focused_task_opt {
-                    *focused_task_id_opt = Some(
-                        tmp_focused_task
-                            .get_id()
-                            .map_err(ApplicationError::TaskTree)?,
-                    );
-
-                    if tmp_focused_task
-                        .get_children()
-                        .map_err(ApplicationError::TaskTree)?
-                        .len()
-                        > 1
-                    {
-                        execute_show_tree(stdout, &tmp_focused_task_opt)?;
-                    }
-                }
-            }
-        }
-        CommandKind::NextUp => {
-            if tokens.len() >= 2 {
-                let new_task_name_str = &tokens[1];
-                let estimated_work_minutes_result =
-                    tokens.get(2).map(|token| token.parse::<i64>()).transpose();
-
-                if let Ok(estimated_work_minutes_opt) = estimated_work_minutes_result {
-                    let result = execute_next_up(
-                        stdout,
-                        focused_task_id_opt,
-                        &focused_task_opt,
-                        new_task_name_str,
-                        &estimated_work_minutes_opt,
-                    );
-                    report_application_result(stdout, result);
-                }
-            }
         }
         CommandKind::Breakdown => {
             if tokens.len() >= 2 {

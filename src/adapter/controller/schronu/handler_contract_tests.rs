@@ -1,6 +1,7 @@
 use super::command::{Command, CommandAction, CommandKind};
 use super::handler::{
-    handle, handle_view_command, ExternalRequest, FocusRequest, TaskListOrder, ViewCommandContext,
+    handle, handle_task_tree_command, ExternalRequest, FocusRequest, TaskListOrder,
+    TaskTreeCommandContext,
 };
 use super::renderer::{
     render_display_model, DisplayFragment, DisplayModel, DisplayRecorder, SchronuWriter,
@@ -140,11 +141,15 @@ fn project作成commandはhandlerがtyped_fieldを直接matchして所有する(
 }
 
 #[derive(Default)]
-struct TraceViewContext {
+struct TraceTaskTreeContext {
     calls: Vec<String>,
 }
 
-impl ViewCommandContext for TraceViewContext {
+impl TaskTreeCommandContext for TraceTaskTreeContext {
+    fn supports_ansi_color(&self) -> bool {
+        true
+    }
+
     fn show_tree(&mut self, display: &mut dyn SchronuWriter) -> Result<(), ApplicationError> {
         self.calls.push("tree".to_string());
         display.write_all(b"tree").unwrap();
@@ -196,19 +201,13 @@ impl ViewCommandContext for TraceViewContext {
         Ok(())
     }
 
-    fn focus_children(
-        &mut self,
-        display: &mut dyn SchronuWriter,
-    ) -> Result<(), ApplicationError> {
+    fn focus_children(&mut self, display: &mut dyn SchronuWriter) -> Result<(), ApplicationError> {
         self.calls.push("children".to_string());
         display.write_all(b"children").unwrap();
         Ok(())
     }
 
-    fn focus_deepest(
-        &mut self,
-        display: &mut dyn SchronuWriter,
-    ) -> Result<(), ApplicationError> {
+    fn focus_deepest(&mut self, display: &mut dyn SchronuWriter) -> Result<(), ApplicationError> {
         self.calls.push("deepest".to_string());
         display.write_all(b"deepest").unwrap();
         Ok(())
@@ -279,10 +278,10 @@ fn task_tree表示commandはhandlerがtyped_fieldから表示modelと操作要�
     ];
 
     for (command, expected_call) in commands.iter().zip(expected_calls) {
-        let mut context = TraceViewContext::default();
-        let outcome = handle_view_command(command, &mut context)
+        let mut context = TraceTaskTreeContext::default();
+        let outcome = handle_task_tree_command(command, &mut context)
             .unwrap()
-            .expect("view command is migrated");
+            .expect("task tree command is migrated");
         assert_eq!(outcome.kind, command.kind());
         assert_eq!(context.calls, [expected_call]);
         let expects_display = matches!(
@@ -346,8 +345,8 @@ fn task_tree表示commandはruntime_fallbackに残さない() {
         .expect("parsed command entrypoint must remain bounded by its context")
         .0;
     assert!(
-        product_dispatch.contains("handle_view_command(parsed_command"),
-        "product dispatch must route parsed view commands through the handler"
+        product_dispatch.contains("handle_task_tree_command(parsed_command"),
+        "product dispatch must route parsed task tree commands through the handler"
     );
 
     let handler_source = include_str!("handler.rs");

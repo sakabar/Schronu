@@ -39,12 +39,28 @@ impl DisplayModel {
     }
 }
 
-#[derive(Default)]
 pub(super) struct DisplayRecorder {
     model: DisplayModel,
+    supports_ansi_color: bool,
+}
+
+impl Default for DisplayRecorder {
+    fn default() -> Self {
+        Self {
+            model: DisplayModel::default(),
+            supports_ansi_color: true,
+        }
+    }
 }
 
 impl DisplayRecorder {
+    pub(super) fn with_ansi_color(supports_ansi_color: bool) -> Self {
+        Self {
+            model: DisplayModel::default(),
+            supports_ansi_color,
+        }
+    }
+
     pub(super) fn model(&self) -> &DisplayModel {
         &self.model
     }
@@ -70,6 +86,10 @@ impl SchronuWriter for DisplayRecorder {
             .fragments
             .push(DisplayFragment::Newline(message.to_string()));
         Ok(())
+    }
+
+    fn supports_ansi_color(&self) -> bool {
+        self.supports_ansi_color
     }
 }
 

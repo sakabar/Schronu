@@ -40,6 +40,38 @@ pub(super) trait ProjectCommandContext {
     fn set_focused_task_id(&mut self, task_id_opt: Option<Uuid>);
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(super) enum TaskListOrder {
+    ScheduledStartDesc,
+    LowPriorityTail,
+}
+
+pub(super) trait TaskTreeCommandContext {
+    fn supports_ansi_color(&self) -> bool;
+    fn show_tree(&mut self, display: &mut dyn SchronuWriter) -> Result<(), ApplicationError>;
+    fn show_ancestor(&mut self, display: &mut dyn SchronuWriter) -> Result<(), ApplicationError>;
+    fn focus_root(&mut self) -> Result<(), ApplicationError>;
+    fn show_leaves(&mut self, display: &mut dyn SchronuWriter) -> Result<(), ApplicationError>;
+    fn show_task_list(
+        &mut self,
+        display: &mut dyn SchronuWriter,
+        pattern: Option<&str>,
+        order: TaskListOrder,
+        resolve_pattern: bool,
+    ) -> Result<(), ApplicationError>;
+    fn focus(&mut self, task_id: Uuid);
+    fn pick(&mut self, task_id: Uuid) -> Result<(), ApplicationError>;
+    fn focus_parent(&mut self) -> Result<(), ApplicationError>;
+    fn focus_children(&mut self, display: &mut dyn SchronuWriter) -> Result<(), ApplicationError>;
+    fn focus_deepest(&mut self, display: &mut dyn SchronuWriter) -> Result<(), ApplicationError>;
+    fn next_up(
+        &mut self,
+        display: &mut dyn SchronuWriter,
+        name: &str,
+        estimated_minutes: Option<i64>,
+    ) -> Result<(), ApplicationError>;
+}
+
 impl CommandOutcome {
     fn empty(kind: CommandKind) -> Self {
         Self {
@@ -94,6 +126,110 @@ pub(super) fn handle(command: &Command) -> Option<CommandOutcome> {
     }
 
     Some(outcome)
+}
+
+pub(super) fn handle_task_tree_command(
+    command: &Command,
+    context: &mut dyn TaskTreeCommandContext,
+) -> Result<Option<CommandOutcome>, ApplicationError> {
+    let mut display = DisplayRecorder::with_ansi_color(context.supports_ansi_color());
+    let kind = command.kind();
+
+    match command {
+        Command::ShowAll { pattern } => context.show_task_list(
+            &mut display,
+            pattern.as_deref(),
+            TaskListOrder::ScheduledStartDesc,
+            true,
+        )?,
+        Command::Focus { task_id } => context.focus(*task_id),
+        Command::Action(CommandAction::NoArguments {
+            kind: CommandKind::Tree,
+            ..
+        }) => context.show_tree(&mut display)?,
+        Command::Action(CommandAction::NoArguments {
+            kind: CommandKind::Ancestor,
+            ..
+        }) => context.show_ancestor(&mut display)?,
+        Command::Action(CommandAction::NoArguments {
+            kind: CommandKind::Root,
+            ..
+        }) => context.focus_root()?,
+        Command::Action(CommandAction::NoArguments {
+            kind: CommandKind::Leaves,
+            ..
+        }) => context.show_leaves(&mut display)?,
+        Command::Action(CommandAction::OptionalPattern {
+            kind: CommandKind::Tail,
+            pattern,
+            ..
+        }) => context.show_task_list(
+            &mut display,
+            Some(pattern.as_deref().unwrap_or("今")),
+            TaskListOrder::LowPriorityTail,
+            false,
+        )?,
+        Command::Action(CommandAction::NoArguments {
+            kind: CommandKind::Today,
+            ..
+        }) => context.show_task_list(
+            &mut display,
+            Some("今"),
+            TaskListOrder::ScheduledStartDesc,
+            false,
+        )?,
+        Command::Action(CommandAction::NoArguments {
+            kind: CommandKind::NonRepetitive,
+            ..
+        }) => context.show_task_list(
+            &mut display,
+            Some("単"),
+            TaskListOrder::ScheduledStartDesc,
+            false,
+        )?,
+        Command::Action(CommandAction::NoArguments {
+            kind: CommandKind::Calendar,
+            ..
+        }) => context.show_task_list(
+            &mut display,
+            Some("暦"),
+            TaskListOrder::ScheduledStartDesc,
+            false,
+        )?,
+        Command::Action(CommandAction::NoArguments {
+            kind: CommandKind::Band,
+            ..
+        }) => context.show_task_list(
+            &mut display,
+            Some("帯"),
+            TaskListOrder::ScheduledStartDesc,
+            false,
+        )?,
+        Command::Action(CommandAction::Pick { task_id }) => context.pick(*task_id)?,
+        Command::Action(CommandAction::NoArguments {
+            kind: CommandKind::Parent,
+            ..
+        }) => context.focus_parent()?,
+        Command::Action(CommandAction::NoArguments {
+            kind: CommandKind::Children,
+            ..
+        }) => context.focus_children(&mut display)?,
+        Command::Action(CommandAction::NoArguments {
+            kind: CommandKind::Deepest,
+            ..
+        }) => context.focus_deepest(&mut display)?,
+        Command::Action(CommandAction::TaskWithEstimate {
+            kind: CommandKind::NextUp,
+            name,
+            estimated_minutes,
+            ..
+        }) => context.next_up(&mut display, name, *estimated_minutes)?,
+        _ => return Ok(None),
+    }
+
+    let mut outcome = CommandOutcome::empty(kind);
+    outcome.display = display.model().clone();
+    Ok(Some(outcome))
 }
 
 pub(super) fn handle_project_command(
