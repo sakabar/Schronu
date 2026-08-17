@@ -1,7 +1,8 @@
-use super::command::{Command, CommandAction, CommandKind};
+use super::command::{Command, CommandAction, CommandKind, InteractiveShortcut};
 use super::handler::{
-    handle, handle_task_attribute_command, handle_task_tree_command, ExternalRequest, FocusRequest,
-    TaskAttributeCommandContext, TaskListOrder, TaskTreeCommandContext,
+    handle, handle_defer_command, handle_task_attribute_command, handle_task_tree_command,
+    DeferCommandContext, ExternalRequest, FocusRequest, TaskAttributeCommandContext, TaskListOrder,
+    TaskTreeCommandContext,
 };
 use super::renderer::{
     render_display_model, DisplayFragment, DisplayModel, DisplayRecorder, SchronuWriter,
@@ -569,6 +570,206 @@ fn task属性更新commandはruntime_fallbackに残さない() {
         assert!(
             !handler_source.contains(forbidden),
             "handler must not reconstruct typed values: {forbidden}"
+        );
+    }
+}
+
+#[derive(Default)]
+struct TraceDeferContext {
+    calls: Vec<String>,
+}
+
+impl DeferCommandContext for TraceDeferContext {
+    fn defer(&mut self, amount: i64, unit: &str) -> Result<(), ApplicationError> {
+        self.calls.push(format!("defer:{amount}:{unit}"));
+        Ok(())
+    }
+
+    fn defer_expression(&mut self, values: &[String]) -> Result<(), ApplicationError> {
+        self.calls.push(format!("expression:{}", values.join("|")));
+        Ok(())
+    }
+
+    fn defer_next_morning(&mut self) -> Result<(), ApplicationError> {
+        self.calls.push("next-morning".to_string());
+        Ok(())
+    }
+
+    fn defer_next_week(&mut self) -> Result<(), ApplicationError> {
+        self.calls.push("next-week".to_string());
+        Ok(())
+    }
+
+    fn defer_routine(&mut self) -> Result<(), ApplicationError> {
+        self.calls.push("defer-routine".to_string());
+        Ok(())
+    }
+
+    fn defer_five_years(&mut self) -> Result<(), ApplicationError> {
+        self.calls.push("five-years".to_string());
+        Ok(())
+    }
+
+    fn defer_all_frequent_routines(&mut self) -> Result<(), ApplicationError> {
+        self.calls.push("defer-all-routines".to_string());
+        Ok(())
+    }
+
+    fn escape(&mut self, defer_expression: Option<&[String]>) -> Result<(), ApplicationError> {
+        self.calls.push(format!(
+            "escape:{}",
+            defer_expression.map_or_else(|| "none".to_string(), |values| values.join("|"))
+        ));
+        Ok(())
+    }
+
+    fn extrude(&mut self, step_days: Option<u16>) -> Result<(), ApplicationError> {
+        self.calls.push(format!("extrude:{step_days:?}"));
+        Ok(())
+    }
+
+    fn clear_or_gather(
+        &mut self,
+        kind: CommandKind,
+        values: &[String],
+    ) -> Result<(), ApplicationError> {
+        self.calls
+            .push(format!("clear-or-gather:{kind:?}:{}", values.join("|")));
+        Ok(())
+    }
+}
+
+#[test]
+fn defer系commandはhandlerがtyped_fieldを直接matchして所有する() {
+    let commands = [
+        Command::Defer {
+            amount: 3,
+            unit: "日".to_string(),
+        },
+        Command::Action(CommandAction::TimeExpression {
+            kind: CommandKind::Defer,
+            canonical_name: "後",
+            values: vec!["09:30".to_string(), "8/20".to_string()],
+        }),
+        Command::InteractiveShortcut(InteractiveShortcut::NextMorning),
+        Command::InteractiveShortcut(InteractiveShortcut::NextWeek),
+        Command::InteractiveShortcut(InteractiveShortcut::DeferRoutine),
+        Command::InteractiveShortcut(InteractiveShortcut::FiveYears),
+        no_arguments(CommandKind::DeferRoutines, "清"),
+        Command::Action(CommandAction::Escape {
+            defer_expression: None,
+        }),
+        Command::Action(CommandAction::Escape {
+            defer_expression: Some(vec!["2".to_string(), "日".to_string()]),
+        }),
+        Command::Action(CommandAction::Extrude { step_days: None }),
+        Command::Action(CommandAction::Extrude { step_days: Some(1) }),
+        Command::Action(CommandAction::Extrude { step_days: Some(4) }),
+        Command::Action(CommandAction::ClearOrGather {
+            kind: CommandKind::Clear,
+            canonical_name: "空",
+            values: vec!["10:30".to_string()],
+        }),
+        Command::Action(CommandAction::ClearOrGather {
+            kind: CommandKind::Gather,
+            canonical_name: "集",
+            values: vec!["09:00".to_string(), "8/20".to_string()],
+        }),
+    ];
+    let expected_calls = [
+        "defer:3:日",
+        "expression:09:30|8/20",
+        "next-morning",
+        "next-week",
+        "defer-routine",
+        "five-years",
+        "defer-all-routines",
+        "escape:none",
+        "escape:2|日",
+        "extrude:None",
+        "extrude:Some(1)",
+        "extrude:Some(4)",
+        "clear-or-gather:Clear:10:30",
+        "clear-or-gather:Gather:09:00|8/20",
+    ];
+
+    for (command, expected_call) in commands.iter().zip(expected_calls) {
+        let mut context = TraceDeferContext::default();
+        let outcome = handle_defer_command(command, &mut context)
+            .unwrap()
+            .expect("defer command is migrated");
+        assert_eq!(outcome.kind, command.kind());
+        assert!(outcome.display.is_empty());
+        assert_eq!(context.calls, [expected_call]);
+    }
+}
+
+#[test]
+fn defer系commandはruntime_fallbackとinteractive特別経路に残さない() {
+    let runtime_source = include_str!("runtime.rs");
+    let legacy_dispatch = runtime_source
+        .split_once("fn execute_with_config(")
+        .expect("runtime must retain the typed fallback entrypoint")
+        .1
+        .split_once("fn execute_non_interactive_command(")
+        .expect("runtime fallback must remain bounded by the non-interactive entrypoint")
+        .0;
+    for migrated_kind in [
+        "CommandKind::Defer =>",
+        "CommandKind::DeferRoutines",
+        "CommandKind::Escape",
+        "CommandKind::Extrude",
+        "CommandKind::Clear | CommandKind::Gather",
+    ] {
+        assert!(
+            !legacy_dispatch.contains(migrated_kind),
+            "migrated command must not remain in runtime fallback: {migrated_kind}"
+        );
+    }
+
+    let product_dispatch = runtime_source
+        .split_once("fn execute_parsed(")
+        .expect("runtime must retain the parsed command entrypoint")
+        .1
+        .split_once("struct RuntimeProjectCommandContext")
+        .expect("parsed command entrypoint must remain bounded by its context")
+        .0;
+    assert!(
+        product_dispatch.contains("handle_defer_command(parsed_command"),
+        "product dispatch must route defer commands through the handler"
+    );
+
+    let interactive_dispatch = runtime_source
+        .split_once("fn execute_interactive_command(")
+        .expect("runtime must retain interactive dispatch")
+        .1
+        .split_once("struct InteractiveRepositoryState")
+        .expect("interactive dispatch must remain bounded")
+        .0;
+    for forbidden in [
+        "Command::Defer { amount, unit }",
+        "InteractiveShortcut::NextMorning",
+        "InteractiveShortcut::NextWeek",
+        "InteractiveShortcut::DeferRoutine",
+        "InteractiveShortcut::FiveYears",
+    ] {
+        assert!(
+            !interactive_dispatch.contains(forbidden),
+            "interactive defer shortcut must use the shared handler path: {forbidden}"
+        );
+    }
+
+    let handler_source = include_str!("handler.rs");
+    for action_pattern in [
+        "Command::Defer { amount, unit }",
+        "CommandAction::TimeExpression {",
+        "CommandAction::Escape { defer_expression }",
+        "CommandAction::Extrude { step_days }",
+        "CommandAction::ClearOrGather { kind, values, .. }",
+    ] {
+        assert!(
+            handler_source.contains(action_pattern),
+            "handler must directly match typed action fields: {action_pattern}"
         );
     }
 }
