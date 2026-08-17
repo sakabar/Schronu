@@ -1,8 +1,8 @@
 use super::command::{Command, CommandAction, CommandKind, InteractiveShortcut};
 use super::handler::{
     handle, handle_defer_command, handle_task_attribute_command, handle_task_tree_command,
-    DeferCommandContext, ExternalRequest, FocusRequest, TaskAttributeCommandContext, TaskListOrder,
-    TaskTreeCommandContext,
+    DeferCommandContext, DeferCommandError, ExternalRequest, FocusRequest,
+    TaskAttributeCommandContext, TaskListOrder, TaskTreeCommandContext,
 };
 use super::renderer::{
     render_display_model, DisplayFragment, DisplayModel, DisplayRecorder, SchronuWriter,
@@ -577,25 +577,26 @@ fn task属性更新commandはruntime_fallbackに残さない() {
 #[derive(Default)]
 struct TraceDeferContext {
     calls: Vec<String>,
+    escape_should_fail: bool,
 }
 
 impl DeferCommandContext for TraceDeferContext {
-    fn defer(&mut self, amount: i64, unit: &str) -> Result<(), ApplicationError> {
+    fn defer(&mut self, amount: i64, unit: &str) -> Result<(), DeferCommandError> {
         self.calls.push(format!("defer:{amount}:{unit}"));
         Ok(())
     }
 
-    fn defer_expression(&mut self, values: &[String]) -> Result<(), ApplicationError> {
+    fn defer_expression(&mut self, values: &[String]) -> Result<(), DeferCommandError> {
         self.calls.push(format!("expression:{}", values.join("|")));
         Ok(())
     }
 
-    fn defer_next_morning(&mut self) -> Result<(), ApplicationError> {
+    fn defer_next_morning(&mut self) -> Result<(), DeferCommandError> {
         self.calls.push("next-morning".to_string());
         Ok(())
     }
 
-    fn defer_next_week(&mut self) -> Result<(), ApplicationError> {
+    fn defer_next_week(&mut self) -> Result<(), DeferCommandError> {
         self.calls.push("next-week".to_string());
         Ok(())
     }
@@ -605,7 +606,7 @@ impl DeferCommandContext for TraceDeferContext {
         Ok(())
     }
 
-    fn defer_five_years(&mut self) -> Result<(), ApplicationError> {
+    fn defer_five_years(&mut self) -> Result<(), DeferCommandError> {
         self.calls.push("five-years".to_string());
         Ok(())
     }
@@ -615,12 +616,14 @@ impl DeferCommandContext for TraceDeferContext {
         Ok(())
     }
 
-    fn escape(&mut self, defer_expression: Option<&[String]>) -> Result<(), ApplicationError> {
-        self.calls.push(format!(
-            "escape:{}",
-            defer_expression.map_or_else(|| "none".to_string(), |values| values.join("|"))
-        ));
-        Ok(())
+    fn prepare_escape(&mut self) -> Result<bool, ApplicationError> {
+        if self.escape_should_fail {
+            return Err(ApplicationError::InvalidInput {
+                field: "estimated_work_seconds",
+                reason: "injected escape failure",
+            });
+        }
+        Ok(true)
     }
 
     fn extrude(&mut self, step_days: Option<u16>) -> Result<(), ApplicationError> {
@@ -637,6 +640,28 @@ impl DeferCommandContext for TraceDeferContext {
             .push(format!("clear-or-gather:{kind:?}:{}", values.join("|")));
         Ok(())
     }
+}
+
+#[test]
+fn escapeの見積更新errorは表示用outcomeに変換せず呼び出し側へ返す() {
+    let command = Command::Action(CommandAction::Escape {
+        defer_expression: Some(vec!["2".to_string(), "日".to_string()]),
+    });
+    let mut context = TraceDeferContext {
+        escape_should_fail: true,
+        ..TraceDeferContext::default()
+    };
+
+    let result = handle_defer_command(&command, &mut context);
+
+    assert!(matches!(
+        result,
+        Err(ApplicationError::InvalidInput {
+            field: "estimated_work_seconds",
+            reason: "injected escape failure",
+        })
+    ));
+    assert!(context.calls.is_empty());
 }
 
 #[test]
@@ -677,20 +702,20 @@ fn defer系commandはhandlerがtyped_fieldを直接matchして所有する() {
         }),
     ];
     let expected_calls = [
-        "defer:3:日",
-        "expression:09:30|8/20",
-        "next-morning",
-        "next-week",
-        "defer-routine",
-        "five-years",
-        "defer-all-routines",
-        "escape:none",
-        "escape:2|日",
-        "extrude:None",
-        "extrude:Some(1)",
-        "extrude:Some(4)",
-        "clear-or-gather:Clear:10:30",
-        "clear-or-gather:Gather:09:00|8/20",
+        vec!["defer:3:日"],
+        vec!["expression:09:30|8/20"],
+        vec!["next-morning"],
+        vec!["next-week"],
+        vec!["defer-routine"],
+        vec!["five-years"],
+        vec!["defer-all-routines"],
+        vec![],
+        vec!["expression:2|日"],
+        vec!["extrude:None"],
+        vec!["extrude:Some(1)"],
+        vec!["extrude:Some(4)"],
+        vec!["clear-or-gather:Clear:10:30"],
+        vec!["clear-or-gather:Gather:09:00|8/20"],
     ];
 
     for (command, expected_call) in commands.iter().zip(expected_calls) {
@@ -700,7 +725,7 @@ fn defer系commandはhandlerがtyped_fieldを直接matchして所有する() {
             .expect("defer command is migrated");
         assert_eq!(outcome.kind, command.kind());
         assert!(outcome.display.is_empty());
-        assert_eq!(context.calls, [expected_call]);
+        assert_eq!(context.calls, expected_call);
     }
 }
 

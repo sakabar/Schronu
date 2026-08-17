@@ -1,14 +1,13 @@
 #![allow(unused_must_use)]
 
 use super::command::{
-    parse_command, Command, CommandAction, CommandKind, CommandParseError, InteractiveShortcut,
-    ParseMode,
+    parse_command, Command, CommandAction, CommandKind, CommandParseError, ParseMode,
 };
 use super::handler::{
-    decide_time_values, handle, handle_breakdown_split_command, handle_project_command,
-    handle_task_attribute_command, handle_task_tree_command, CommandOutcome, ExternalRequest,
-    FocusRequest, ProjectCommandContext, TaskAttributeCommandContext, TaskListOrder,
-    TaskTreeCommandContext,
+    decide_time_values, handle, handle_breakdown_split_command, handle_defer_command,
+    handle_project_command, handle_task_attribute_command, handle_task_tree_command,
+    CommandOutcome, DeferCommandContext, DeferCommandError, ExternalRequest, FocusRequest,
+    ProjectCommandContext, TaskAttributeCommandContext, TaskListOrder, TaskTreeCommandContext,
 };
 use super::renderer::{
     render_display_model, writeln_newline, ErrorCapturingWriter, SchronuWriter, MAX_COL,
@@ -275,6 +274,7 @@ fn write_command_error(stdout: &mut dyn SchronuWriter, error: &CommandError) {
     }
 }
 
+#[cfg(test)]
 fn report_command_result(stdout: &mut dyn SchronuWriter, result: Result<(), CommandError>) {
     if let Err(error) = result {
         write_command_error(stdout, &error);
@@ -741,6 +741,131 @@ fn scheduled_leaf_starts_on_schronu_day(
                 .push(scheduled.scheduled_start);
             starts
         }))
+}
+
+fn execute_clear_or_gather(
+    task_repository: &mut dyn TaskRepositoryTrait,
+    kind: CommandKind,
+    values: &[String],
+) -> Result<(), ApplicationError> {
+    match values {
+        [defer_to] => {
+            let canonical_name = match kind {
+                CommandKind::Clear => "空",
+                CommandKind::Gather => "集",
+                _ => return Ok(()),
+            };
+            let Some(defer_to_datetime) = parse_clear_or_gather_defer_to_datetime(
+                canonical_name,
+                defer_to,
+                task_repository.get_last_synced_time(),
+            ) else {
+                return Ok(());
+            };
+            for project_root_task in task_repository.get_all_projects() {
+                for leaf_task in extract_leaf_tasks_from_project_with_pending(project_root_task)
+                    .map_err(ApplicationError::TaskTree)?
+                {
+                    let start_time = leaf_task
+                        .get_start_time()
+                        .map_err(ApplicationError::TaskTree)?;
+                    let orig_status = leaf_task
+                        .get_orig_status()
+                        .map_err(ApplicationError::TaskTree)?;
+                    let pending_until = leaf_task
+                        .get_pending_until()
+                        .map_err(ApplicationError::TaskTree)?;
+                    match kind {
+                        CommandKind::Clear
+                            if start_time < defer_to_datetime
+                                && (orig_status == Status::Todo
+                                    || (orig_status == Status::Pending
+                                        && pending_until < defer_to_datetime)) =>
+                        {
+                            leaf_task
+                                .set_orig_status(Status::Pending)
+                                .map_err(ApplicationError::TaskTree)?;
+                            leaf_task
+                                .set_pending_until(defer_to_datetime)
+                                .map_err(ApplicationError::TaskTree)?;
+                        }
+                        CommandKind::Gather
+                            if leaf_task.get_status().map_err(ApplicationError::TaskTree)?
+                                == Status::Pending
+                                && start_time < defer_to_datetime
+                                && pending_until < defer_to_datetime =>
+                        {
+                            leaf_task
+                                .set_orig_status(Status::Todo)
+                                .map_err(ApplicationError::TaskTree)?;
+                        }
+                        _ => {}
+                    }
+                }
+            }
+        }
+        [time, mmdd] => {
+            let Some((schronu_day_start, end)) = parse_dated_clear_or_gather_time_range(
+                time,
+                mmdd,
+                task_repository.get_last_synced_time(),
+            ) else {
+                return Ok(());
+            };
+            let scheduled_starts =
+                scheduled_leaf_starts_on_schronu_day(task_repository, schronu_day_start)?;
+
+            for project_root_task in task_repository.get_all_projects() {
+                for leaf_task in extract_leaf_tasks_from_project_with_pending(project_root_task)
+                    .map_err(ApplicationError::TaskTree)?
+                {
+                    let scheduled_starts_opt = scheduled_starts
+                        .get(&leaf_task.get_id().map_err(ApplicationError::TaskTree)?);
+                    let orig_status = leaf_task
+                        .get_orig_status()
+                        .map_err(ApplicationError::TaskTree)?;
+                    let pending_until = leaf_task
+                        .get_pending_until()
+                        .map_err(ApplicationError::TaskTree)?;
+                    match kind {
+                        CommandKind::Clear => {
+                            let todo_is_scheduled_in_range = orig_status == Status::Todo
+                                && scheduled_starts_opt.is_some_and(|starts| {
+                                    starts.iter().any(|scheduled_start| {
+                                        schronu_day_start <= *scheduled_start
+                                            && *scheduled_start < end
+                                    })
+                                });
+                            let pending_is_in_range = orig_status == Status::Pending
+                                && scheduled_starts_opt.is_some()
+                                && schronu_day_start <= pending_until
+                                && pending_until < end;
+                            if todo_is_scheduled_in_range || pending_is_in_range {
+                                leaf_task
+                                    .set_orig_status(Status::Pending)
+                                    .map_err(ApplicationError::TaskTree)?;
+                                leaf_task
+                                    .set_pending_until(end)
+                                    .map_err(ApplicationError::TaskTree)?;
+                            }
+                        }
+                        CommandKind::Gather
+                            if orig_status == Status::Pending
+                                && scheduled_starts_opt.is_some()
+                                && pending_until <= end =>
+                        {
+                            leaf_task
+                                .set_pending_until(schronu_day_start)
+                                .map_err(ApplicationError::TaskTree)?;
+                        }
+                        _ => {}
+                    }
+                }
+            }
+        }
+        _ => {}
+    }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -3903,12 +4028,9 @@ fn test_split_amount_and_unit_err() {
 fn execute_defer(
     task_repository: &mut dyn TaskRepositoryTrait,
     focused_task_id_opt: &mut Option<Uuid>,
-    amount_str: &str,
+    amount: i64,
     unit_str: &str,
-) -> Result<(), CommandError> {
-    let amount: i64 = amount_str.parse().map_err(|_| {
-        command_parse_error("後", "amount", "整数で指定してください", "後 <数値> <単位>")
-    })?;
+) -> Result<(), ApplicationError> {
     let duration = match unit_str.chars().next() {
         // 24時間単位ではなく、next_monring単位とする
         Some('日') | Some('d') => {
@@ -3933,6 +4055,105 @@ fn execute_defer(
 
     *focused_task_id_opt = None;
     Ok(())
+}
+
+fn execute_defer_expression(
+    task_repository: &mut dyn TaskRepositoryTrait,
+    focused_task_id_opt: &mut Option<Uuid>,
+    values: &[String],
+) -> Result<(), DeferCommandError> {
+    match values {
+        [amount, unit, ..] => {
+            let amount = amount.parse::<i64>().map_err(|_| {
+                DeferCommandError::Parse(CommandParseError::new(
+                    "後",
+                    "amount",
+                    "整数で指定してください",
+                    "後 <数値> <単位>",
+                ))
+            })?;
+            execute_defer(
+                task_repository,
+                focused_task_id_opt,
+                amount,
+                &unit.to_lowercase(),
+            )
+            .map_err(DeferCommandError::from)
+        }
+        [value] => {
+            let yyyymmdd_reg = Regex::new(r"^\d{4}/\d{2}/\d{2}$").unwrap();
+            let hhmm_reg = Regex::new(r"^(\d{1,2}):(\d{1,2})$").unwrap();
+            let now = task_repository.get_last_synced_time();
+            let seconds = if yyyymmdd_reg.is_match(value) {
+                let defer_dst_str = format!("{value} 12:00:00");
+                match parse_local_datetime(&defer_dst_str, "%Y/%m/%d %H:%M:%S") {
+                    Ok(LocalResult::Single(defer_dst_date)) => Some(
+                        (get_next_morning_datetime(defer_dst_date) - Duration::days(1) - now)
+                            .num_seconds()
+                            + 1,
+                    ),
+                    Ok(LocalResult::Ambiguous(_, _)) | Ok(LocalResult::None) | Err(_) => None,
+                }
+            } else if let Some(LocalResult::Single(defer_dst_time)) =
+                resolve_upcoming_mmdd(value, now)
+            {
+                let seconds = (defer_dst_time - now).num_seconds() + 1;
+                (seconds > 0).then_some(seconds)
+            } else if let Some(captures) = hhmm_reg.captures(value) {
+                let hh_i64: i64 = captures[1].parse().unwrap();
+                let minute: u32 = captures[2].parse().unwrap();
+                let defer_dst_time = now
+                    .with_hour((hh_i64 % 24) as u32)
+                    .expect("invalid hour")
+                    .with_minute(minute)
+                    .expect("invalid minute")
+                    + Duration::days(hh_i64 / 24);
+                let seconds = (defer_dst_time - now).num_seconds() + 1;
+                (seconds > 0).then_some(seconds)
+            } else if ["月", "火", "水", "木", "金", "土", "日"].contains(&value.as_str()) {
+                let days_of_week = ["月", "火", "水", "木", "金", "土", "日"];
+                let today = get_next_morning_datetime(now) - Duration::days(1);
+                let current_index = days_of_week
+                    .iter()
+                    .position(|day| *day == get_weekday_jp(&today.date_naive()))
+                    .unwrap();
+                let target_index = days_of_week.iter().position(|day| *day == value).unwrap();
+                let difference = (7 + target_index - current_index) % 7;
+                let days = if difference == 0 {
+                    7
+                } else {
+                    difference as i64
+                };
+                Some(
+                    (get_next_morning_datetime(now) + Duration::days(days - 1) - now).num_seconds()
+                        + 1,
+                )
+            } else {
+                let split = split_amount_and_unit(value);
+                if split.len() == 2 && !split[0].is_empty() {
+                    split[0]
+                        .parse::<i64>()
+                        .ok()
+                        .map(|amount| (amount, split[1].clone()))
+                        .map_or(Ok(()), |(amount, unit)| {
+                            execute_defer(
+                                task_repository,
+                                focused_task_id_opt,
+                                amount,
+                                &unit.to_lowercase(),
+                            )
+                        })?;
+                }
+                return Ok(());
+            };
+
+            if let Some(seconds) = seconds {
+                execute_defer(task_repository, focused_task_id_opt, seconds, "秒")?;
+            }
+            Ok(())
+        }
+        _ => Ok(()),
+    }
 }
 
 // 指定の日付から、step_days間隔でdeferしていく
@@ -5622,6 +5843,65 @@ fn task属性更新commandはflush_errorとbroken_pipeを製品経路で分類�
     assert_eq!(broken_pipe_flush_count, 1);
 }
 
+#[test]
+fn defer系の通常interactive_commandはflushしshortcutはflushしない() {
+    let now = Local.with_ymd_and_hms(2026, 8, 11, 12, 0, 0).unwrap();
+
+    for command in [
+        "後 09:30",
+        "後 abc 日 extra",
+        "清",
+        "逃",
+        "押",
+        "空 10:00",
+        "集 10:00",
+    ] {
+        let task = TaskHandle::new("通常commandのflush対象").unwrap();
+        let task_id = task.get_id().unwrap();
+        let mut task_repository = TestTaskRepository::new(task, now);
+        let mut free_time_manager = TestFreeTimeManager;
+        let mut focused_task_id_opt = Some(task_id);
+        let mut focus_selection_mode = FocusSelectionMode::Explicit;
+        let mut stdout = FlushTrackingWriter::successful(true);
+
+        execute_interactive_command(
+            &mut stdout,
+            &mut task_repository,
+            &mut free_time_manager,
+            &mut focused_task_id_opt,
+            &now,
+            &mut focus_selection_mode,
+            command,
+        )
+        .unwrap();
+
+        assert_eq!(stdout.flush_count, 1, "{command}");
+    }
+
+    for command in ["t", "h", "D", "d", "w", "W", "y"] {
+        let task = TaskHandle::new("shortcutのflush対象").unwrap();
+        let task_id = task.get_id().unwrap();
+        let mut task_repository = TestTaskRepository::new(task, now);
+        let mut free_time_manager = TestFreeTimeManager;
+        let mut focused_task_id_opt = Some(task_id);
+        let mut focus_selection_mode = FocusSelectionMode::Explicit;
+        let mut stdout = FlushTrackingWriter::successful(true);
+
+        execute_interactive_command(
+            &mut stdout,
+            &mut task_repository,
+            &mut free_time_manager,
+            &mut focused_task_id_opt,
+            &now,
+            &mut focus_selection_mode,
+            command,
+        )
+        .unwrap();
+
+        assert_eq!(stdout.flush_count, 0, "{command}");
+    }
+}
+
 #[cfg(test)]
 struct TestFreeTimeManagerForBand;
 
@@ -6250,6 +6530,29 @@ fn test_execute_defer_日付指定はその日の朝までpendingにする() {
         Local.with_ymd_and_hms(2026, 8, 13, 6, 0, 1).unwrap()
     );
     assert_eq!(result.focused_task_id_opt, None);
+}
+
+#[test]
+fn test_execute_defer_余剰引数でも単位正規化と入力error表示を維持する() {
+    let now = Local.with_ymd_and_hms(2026, 8, 11, 12, 0, 0).unwrap();
+    let task = TaskHandle::new("余剰引数の延期対象").unwrap();
+    let task_id = task.get_id().unwrap();
+
+    let valid = execute_command_for_test(task.clone(), now, Some(task_id), "後 2 DAYS extra");
+    assert_eq!(valid.task.get_orig_status().unwrap(), Status::Pending);
+    assert_eq!(
+        valid.task.get_pending_until().unwrap(),
+        Local.with_ymd_and_hms(2026, 8, 13, 6, 0, 0).unwrap()
+    );
+    assert_eq!(valid.focused_task_id_opt, None);
+
+    task.set_orig_status(Status::Todo).unwrap();
+    let invalid = execute_command_for_test(task.clone(), now, Some(task_id), "後 abc 日 extra");
+    assert_eq!(invalid.task.get_orig_status().unwrap(), Status::Todo);
+    assert_eq!(invalid.focused_task_id_opt, Some(task_id));
+    assert!(invalid.output.contains(
+        "[Error] 入力エラー: amount: 整数で指定してください (コマンド: 後, 使い方: 後 <数値> <単位>)"
+    ));
 }
 
 #[test]
@@ -7297,6 +7600,21 @@ fn execute_parsed(
             active_config(),
         )?;
     } else if let Some(outcome) = {
+        let mut context = RuntimeDeferCommandContext {
+            task_repository,
+            focused_task_id_opt,
+            config: active_config(),
+        };
+        handle_defer_command(parsed_command, &mut context)?
+    } {
+        execute_handler_outcome(
+            &mut output,
+            task_repository,
+            focused_task_id_opt,
+            outcome,
+            active_config(),
+        )?;
+    } else if let Some(outcome) = {
         let supports_ansi_color = output.supports_ansi_color();
         let mut context = RuntimeTaskTreeCommandContext {
             task_repository,
@@ -7469,6 +7787,111 @@ impl TaskAttributeCommandContext for RuntimeTaskAttributeCommandContext<'_> {
             *self.focused_task_id_opt = None;
         }
         Ok(())
+    }
+}
+
+struct RuntimeDeferCommandContext<'a> {
+    task_repository: &'a mut dyn TaskRepositoryTrait,
+    focused_task_id_opt: &'a mut Option<Uuid>,
+    config: &'a SchronuConfig,
+}
+
+impl RuntimeDeferCommandContext<'_> {
+    fn focused_task(&self) -> Result<Option<TaskHandle>, ApplicationError> {
+        match *self.focused_task_id_opt {
+            Some(id) => self
+                .task_repository
+                .get_by_id(id)
+                .map_err(ApplicationError::TaskTree),
+            None => Ok(None),
+        }
+    }
+}
+
+impl DeferCommandContext for RuntimeDeferCommandContext<'_> {
+    fn defer(&mut self, amount: i64, unit: &str) -> Result<(), DeferCommandError> {
+        execute_defer(self.task_repository, self.focused_task_id_opt, amount, unit)
+            .map_err(DeferCommandError::from)
+    }
+
+    fn defer_expression(&mut self, values: &[String]) -> Result<(), DeferCommandError> {
+        execute_defer_expression(self.task_repository, self.focused_task_id_opt, values)
+    }
+
+    fn defer_next_morning(&mut self) -> Result<(), DeferCommandError> {
+        let now = self.task_repository.get_last_synced_time();
+        let seconds = (get_next_morning_datetime(now) - now).num_seconds() + 1;
+        self.defer(seconds, "秒")
+    }
+
+    fn defer_next_week(&mut self) -> Result<(), DeferCommandError> {
+        let now = self.task_repository.get_last_synced_time();
+        let seconds = (get_next_morning_datetime(now) - now).num_seconds() + 86400 * 6 + 1;
+        self.defer(seconds, "秒")
+    }
+
+    fn defer_routine(&mut self) -> Result<(), ApplicationError> {
+        execute_defer_routine(self.task_repository, self.focused_task_id_opt)
+    }
+
+    fn defer_five_years(&mut self) -> Result<(), DeferCommandError> {
+        let now = self.task_repository.get_last_synced_time();
+        let seconds =
+            (get_next_morning_datetime(now) - now).num_seconds() + 86400 * (7 * 52 * 5 - 1) + 1;
+        self.defer(seconds, "秒")
+    }
+
+    fn defer_all_frequent_routines(&mut self) -> Result<(), ApplicationError> {
+        let focused_task = self.focused_task()?;
+        execute_defer_all_frequent_routines(
+            self.task_repository,
+            self.focused_task_id_opt,
+            &focused_task,
+        )
+    }
+
+    fn prepare_escape(&mut self) -> Result<bool, ApplicationError> {
+        if let Some(focused_task) = self.focused_task()? {
+            let estimated_work_seconds = focused_task
+                .get_estimated_work_seconds()
+                .map_err(ApplicationError::TaskTree)?;
+            focused_task
+                .set_estimated_work_seconds(estimated_work_seconds * 2)
+                .map_err(ApplicationError::TaskTree)?;
+            return Ok(true);
+        }
+        Ok(false)
+    }
+
+    fn extrude(&mut self, step_days: Option<u16>) -> Result<(), ApplicationError> {
+        let Some(step_days) = step_days else {
+            return Ok(());
+        };
+        let focused_task = self.focused_task()?;
+        let Some(task) = focused_task.as_ref() else {
+            return Ok(());
+        };
+        let ancestors = task
+            .list_all_parent_tasks_with_first_available_time()
+            .map_err(ApplicationError::TaskTree)?;
+        let Some((first_datetime, _)) = ancestors.first() else {
+            return Ok(());
+        };
+        execute_extrude_with_config(
+            self.focused_task_id_opt,
+            &focused_task,
+            first_datetime,
+            step_days,
+            self.config,
+        )
+    }
+
+    fn clear_or_gather(
+        &mut self,
+        kind: CommandKind,
+        values: &[String],
+    ) -> Result<(), ApplicationError> {
+        execute_clear_or_gather(self.task_repository, kind, values)
     }
 }
 
@@ -7726,194 +8149,6 @@ fn execute_with_config(
             execute_unfocus(focused_task_id_opt);
         }
         // "詳" | "description" | "desc" => {}
-        CommandKind::Defer => {
-            if tokens.len() >= 3 {
-                let amount_str = &tokens[1];
-                let unit_str = &tokens[2].to_lowercase();
-
-                report_command_result(
-                    stdout,
-                    execute_defer(task_repository, focused_task_id_opt, amount_str, unit_str),
-                );
-            } else if tokens.len() == 2 {
-                let yyyymmdd_reg = Regex::new(r"^\d{4}/\d{2}/\d{2}$").unwrap();
-                let hhmm_reg = Regex::new(r"^(\d{1,2}):(\d{1,2})$").unwrap();
-
-                if yyyymmdd_reg.is_match(tokens[1]) {
-                    let defer_dst_str = format!("{} 12:00:00", tokens[1]);
-                    let defer_dst_date_result =
-                        parse_local_datetime(&defer_dst_str, "%Y/%m/%d %H:%M:%S");
-
-                    match defer_dst_date_result {
-                        Ok(LocalResult::Single(defer_dst_date)) => {
-                            let defer_dst_time =
-                                get_next_morning_datetime(defer_dst_date) - Duration::days(1);
-
-                            let now: DateTime<Local> = task_repository.get_last_synced_time();
-                            let seconds = (defer_dst_time - now).num_seconds() + 1;
-
-                            report_command_result(
-                                stdout,
-                                execute_defer(
-                                    task_repository,
-                                    focused_task_id_opt,
-                                    &format!("{}", seconds),
-                                    "秒",
-                                ),
-                            );
-                        }
-                        _ => {
-                            // pass
-                        }
-                    }
-                } else if let Some(LocalResult::Single(defer_dst_time)) =
-                    resolve_upcoming_mmdd(tokens[1], task_repository.get_last_synced_time())
-                {
-                    let now: DateTime<Local> = task_repository.get_last_synced_time();
-                    let seconds = (defer_dst_time - now).num_seconds() + 1;
-
-                    if seconds > 0 {
-                        report_command_result(
-                            stdout,
-                            execute_defer(
-                                task_repository,
-                                focused_task_id_opt,
-                                &format!("{}", seconds),
-                                "秒",
-                            ),
-                        );
-                    }
-                } else if hhmm_reg.is_match(tokens[1]) {
-                    // 時刻が指定された時は今日のその時刻まで送る。25:00のような指定も可能
-                    let now: DateTime<Local> = task_repository.get_last_synced_time();
-
-                    let caps = hhmm_reg.captures(tokens[1]).unwrap();
-                    let hh_i64: i64 = caps[1].parse().unwrap();
-                    let mm: u32 = caps[2].parse().unwrap();
-
-                    let hh = (hh_i64 % 24) as u32;
-
-                    let defer_dst_time = now
-                        .with_hour(hh % 24)
-                        .expect("invalid hour")
-                        .with_minute(mm)
-                        .expect("invalid minute")
-                        + Duration::days(hh_i64 / 24);
-
-                    let seconds = (defer_dst_time - now).num_seconds() + 1;
-
-                    if seconds > 0 {
-                        report_command_result(
-                            stdout,
-                            execute_defer(
-                                task_repository,
-                                focused_task_id_opt,
-                                &format!("{}", seconds),
-                                "秒",
-                            ),
-                        );
-                    }
-                } else if ["月", "火", "水", "木", "金", "土", "日"].contains(&tokens[1]) {
-                    // 月 火 水 木 金 土 日 が指定された時は、明日以降で、直近のその曜日の06:00にpendingする
-                    // (show_all_tasksとロジック重複...)
-
-                    let now: DateTime<Local> = task_repository.get_last_synced_time();
-                    let days_of_week = ["月", "火", "水", "木", "金", "土", "日"];
-
-                    let todays_morning_datetime =
-                        get_next_morning_datetime(now) - Duration::days(1);
-
-                    let dn = todays_morning_datetime.date_naive();
-                    let now_weekday_jp = get_weekday_jp(&dn);
-
-                    let now_days_of_week_ind = days_of_week
-                        .iter()
-                        .position(|&x| x == now_weekday_jp)
-                        .unwrap();
-                    let target_days_of_week_ind =
-                        days_of_week.iter().position(|&x| x == tokens[1]).unwrap();
-
-                    let ind_diff = (7 + target_days_of_week_ind - now_days_of_week_ind) % 7;
-
-                    // 今日の6:00にdeferする味意はないので、その代わりに、1週間後の同じ曜日にdeferできるようにする
-                    let days: i64 = if ind_diff == 0 { 7 } else { ind_diff as i64 };
-
-                    let seconds = (get_next_morning_datetime(now) + Duration::days(days - 1) - now)
-                        .num_seconds()
-                        + 1;
-
-                    if seconds > 0 {
-                        report_command_result(
-                            stdout,
-                            execute_defer(
-                                task_repository,
-                                focused_task_id_opt,
-                                &format!("{}", seconds),
-                                "秒",
-                            ),
-                        );
-                    }
-                } else {
-                    // "defer 5days" のように引数が1つしか与えられなかった場合は、数字部分とそれ以降に分割する
-                    let splitted = split_amount_and_unit(tokens[1]);
-                    if splitted.len() == 2 && !splitted[0].is_empty() {
-                        let amount_str = &splitted[0];
-                        let unit_str = &splitted[1].to_lowercase();
-
-                        report_command_result(
-                            stdout,
-                            execute_defer(
-                                task_repository,
-                                focused_task_id_opt,
-                                amount_str,
-                                unit_str,
-                            ),
-                        );
-                    }
-                }
-            }
-        }
-        CommandKind::DeferRoutines => {
-            execute_defer_all_frequent_routines(
-                task_repository,
-                focused_task_id_opt,
-                &focused_task_opt,
-            )?;
-        }
-        CommandKind::Escape => {
-            // 先延ばしにしてしまう時。要求している見積もりが小さすぎる可能性があるので、2倍にする
-            if let Some(focused_task) = focused_task_opt {
-                let estimated_work_seconds = focused_task
-                    .get_estimated_work_seconds()
-                    .map_err(ApplicationError::TaskTree)?;
-                focused_task
-                    .set_estimated_work_seconds(estimated_work_seconds * 2)
-                    .map_err(ApplicationError::TaskTree)?;
-
-                // 引数が与えられた時はそのままdeferする
-                if let Command::Action(CommandAction::Escape {
-                    defer_expression: Some(values),
-                }) = parsed_command
-                {
-                    let deferred_command = Command::Action(CommandAction::TimeExpression {
-                        kind: CommandKind::Defer,
-                        canonical_name: "後",
-                        values: values.clone(),
-                    });
-
-                    execute_with_config(
-                        stdout,
-                        task_repository,
-                        free_time_manager,
-                        focused_task_id_opt,
-                        focus_started_datetime,
-                        untrimmed_line,
-                        &deferred_command,
-                        config,
-                    )?;
-                }
-            }
-        }
         CommandKind::Flatten => {
             let result = flatten_tasks_with_end_of_day_offset_minutes(
                 task_repository,
@@ -7924,148 +8159,6 @@ fn execute_with_config(
         }
         CommandKind::Pack => {
             execute_pack_with_config(stdout, task_repository, free_time_manager, config)?;
-        }
-        CommandKind::Extrude => {
-            if tokens.len() >= 2 {
-                if let Some(ref focused_task) = focused_task_opt {
-                    let ancestors = focused_task
-                        .list_all_parent_tasks_with_first_available_time()
-                        .map_err(ApplicationError::TaskTree)?;
-                    let Some((first_datetime, _)) = ancestors.first() else {
-                        return Ok(());
-                    };
-                    let step_days: u16 = tokens[1].parse().unwrap_or(1);
-
-                    execute_extrude_with_config(
-                        focused_task_id_opt,
-                        &focused_task_opt,
-                        first_datetime,
-                        step_days,
-                        config,
-                    )?;
-                }
-            }
-        }
-        CommandKind::Clear | CommandKind::Gather => {
-            let cmd_str = tokens[0];
-            match tokens.as_slice() {
-                [_, defer_to] => {
-                    let defer_to_datetime_opt = parse_clear_or_gather_defer_to_datetime(
-                        cmd_str,
-                        defer_to,
-                        task_repository.get_last_synced_time(),
-                    );
-
-                    if let Some(defer_to_datetime) = defer_to_datetime_opt {
-                        for project_root_task in task_repository.get_all_projects().iter() {
-                            let leaf_tasks =
-                                extract_leaf_tasks_from_project_with_pending(project_root_task)
-                                    .map_err(ApplicationError::TaskTree)?;
-                            for leaf_task in leaf_tasks.iter() {
-                                let start_time = leaf_task
-                                    .get_start_time()
-                                    .map_err(ApplicationError::TaskTree)?;
-                                let orig_status = leaf_task
-                                    .get_orig_status()
-                                    .map_err(ApplicationError::TaskTree)?;
-                                let pending_until = leaf_task
-                                    .get_pending_until()
-                                    .map_err(ApplicationError::TaskTree)?;
-                                match cmd_str {
-                                    "空" | "clear" => {
-                                        if start_time < defer_to_datetime
-                                            && (orig_status == Status::Todo
-                                                || (orig_status == Status::Pending
-                                                    && pending_until < defer_to_datetime))
-                                        {
-                                            leaf_task
-                                                .set_orig_status(Status::Pending)
-                                                .map_err(ApplicationError::TaskTree)?;
-                                            leaf_task
-                                                .set_pending_until(defer_to_datetime)
-                                                .map_err(ApplicationError::TaskTree)?;
-                                        }
-                                    }
-                                    "集" | "gather"
-                                        if leaf_task
-                                            .get_status()
-                                            .map_err(ApplicationError::TaskTree)?
-                                            == Status::Pending
-                                            && start_time < defer_to_datetime
-                                            && pending_until < defer_to_datetime =>
-                                    {
-                                        leaf_task
-                                            .set_orig_status(Status::Todo)
-                                            .map_err(ApplicationError::TaskTree)?;
-                                    }
-                                    _ => {}
-                                }
-                            }
-                        }
-                    }
-                }
-                [_, time, mmdd] => {
-                    let Some((schronu_day_start, end)) = parse_dated_clear_or_gather_time_range(
-                        time,
-                        mmdd,
-                        task_repository.get_last_synced_time(),
-                    ) else {
-                        return Ok(());
-                    };
-                    let scheduled_starts =
-                        scheduled_leaf_starts_on_schronu_day(task_repository, schronu_day_start)?;
-
-                    for project_root_task in task_repository.get_all_projects().iter() {
-                        let leaf_tasks =
-                            extract_leaf_tasks_from_project_with_pending(project_root_task)
-                                .map_err(ApplicationError::TaskTree)?;
-                        for leaf_task in leaf_tasks.iter() {
-                            let scheduled_starts_opt = scheduled_starts
-                                .get(&leaf_task.get_id().map_err(ApplicationError::TaskTree)?);
-                            let orig_status = leaf_task
-                                .get_orig_status()
-                                .map_err(ApplicationError::TaskTree)?;
-                            let pending_until = leaf_task
-                                .get_pending_until()
-                                .map_err(ApplicationError::TaskTree)?;
-                            match cmd_str {
-                                "空" | "clear" => {
-                                    let todo_is_scheduled_in_range = orig_status == Status::Todo
-                                        && scheduled_starts_opt.is_some_and(|starts| {
-                                            starts.iter().any(|scheduled_start| {
-                                                schronu_day_start <= *scheduled_start
-                                                    && *scheduled_start < end
-                                            })
-                                        });
-                                    let pending_is_in_range = orig_status == Status::Pending
-                                        && scheduled_starts_opt.is_some()
-                                        && schronu_day_start <= pending_until
-                                        && pending_until < end;
-                                    if todo_is_scheduled_in_range || pending_is_in_range {
-                                        leaf_task
-                                            .set_orig_status(Status::Pending)
-                                            .map_err(ApplicationError::TaskTree)?;
-                                        leaf_task
-                                            .set_pending_until(end)
-                                            .map_err(ApplicationError::TaskTree)?;
-                                    }
-                                }
-                                "集" | "gather"
-                                    if orig_status == Status::Pending
-                                        && scheduled_starts_opt.is_some()
-                                        && pending_until <= end =>
-                                {
-                                    leaf_task
-                                        .set_pending_until(schronu_day_start)
-                                        .map_err(ApplicationError::TaskTree)?;
-                                }
-                                _ => {}
-                            }
-                        }
-                    }
-                }
-                _ => {}
-            }
         }
         CommandKind::Finish => {
             if let Some(ref focused_task) = focused_task_opt {
@@ -11175,57 +11268,20 @@ fn execute_interactive_command(
         );
         *focused_task_id_opt = None;
         render_display_model(stdout, &outcome.display).map_err(CommandError::Output)?;
-    } else if let Command::Defer { amount, unit } = &parsed_command {
-        report_command_result(
-            stdout,
-            execute_defer(
-                task_repository,
-                focused_task_id_opt,
-                &amount.to_string(),
-                unit,
-            ),
-        );
-    } else if parsed_command == Command::InteractiveShortcut(InteractiveShortcut::NextMorning) {
-        let now = task_repository.get_last_synced_time();
-        let next_morning = get_next_morning_datetime(now);
-        let seconds = (next_morning - now).num_seconds() + 1;
-        report_command_result(
-            stdout,
-            execute_defer(
-                task_repository,
-                focused_task_id_opt,
-                &seconds.to_string(),
-                "秒",
-            ),
-        );
-    } else if parsed_command == Command::InteractiveShortcut(InteractiveShortcut::NextWeek) {
-        let now = task_repository.get_last_synced_time();
-        let next_morning = get_next_morning_datetime(now);
-        let seconds = (next_morning - now).num_seconds() + 86400 * 6 + 1;
-        report_command_result(
-            stdout,
-            execute_defer(
-                task_repository,
-                focused_task_id_opt,
-                &seconds.to_string(),
-                "秒",
-            ),
-        );
-    } else if parsed_command == Command::InteractiveShortcut(InteractiveShortcut::DeferRoutine) {
-        execute_defer_routine(task_repository, focused_task_id_opt);
-    } else if parsed_command == Command::InteractiveShortcut(InteractiveShortcut::FiveYears) {
-        let now = task_repository.get_last_synced_time();
-        let next_morning = get_next_morning_datetime(now);
-        let seconds = (next_morning - now).num_seconds() + 86400 * (7 * 52 * 5 - 1) + 1;
-        report_command_result(
-            stdout,
-            execute_defer(
-                task_repository,
-                focused_task_id_opt,
-                &seconds.to_string(),
-                "秒",
-            ),
-        );
+    } else if matches!(
+        parsed_command,
+        Command::Defer { .. } | Command::InteractiveShortcut(_)
+    ) {
+        let mut context = RuntimeDeferCommandContext {
+            task_repository,
+            focused_task_id_opt,
+            config: active_config(),
+        };
+        let outcome = handle_defer_command(&parsed_command, &mut context)?
+            .expect("interactive defer command must be handler-owned");
+        if !outcome.display.is_empty() {
+            render_display_model(stdout, &outcome.display).map_err(CommandError::Output)?;
+        }
     } else {
         if let Err(error) = execute_parsed(
             stdout,

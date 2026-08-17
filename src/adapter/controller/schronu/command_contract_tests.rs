@@ -99,6 +99,14 @@ fn parser_converts_command_fields_to_typed_values() {
             unit: "day".to_string(),
         }
     );
+    assert_eq!(
+        parse_command("後 2 DAYS extra", ParseMode::NonInteractive).unwrap(),
+        Command::Action(CommandAction::TimeExpression {
+            kind: CommandKind::Defer,
+            canonical_name: "後",
+            values: vec!["2".to_string(), "DAYS".to_string(), "extra".to_string()],
+        })
+    );
 }
 
 #[test]

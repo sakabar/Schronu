@@ -1,4 +1,4 @@
-use super::command::{Command, CommandAction, CommandKind};
+use super::command::{Command, CommandAction, CommandKind, CommandParseError, InteractiveShortcut};
 use super::renderer::{DisplayModel, DisplayRecorder, SchronuWriter};
 use chrono::{DateTime, Datelike, Duration, Local, TimeZone};
 use regex::Regex;
@@ -85,6 +85,44 @@ pub(super) trait TaskAttributeCommandContext {
     fn set_priority(&mut self, priority: i64) -> Result<(), ApplicationError>;
     fn set_category(&mut self, value: &str) -> Result<(), ApplicationError>;
     fn add_work(&mut self, minutes: Option<i64>) -> Result<(), ApplicationError>;
+}
+
+pub(super) trait DeferCommandContext {
+    fn defer(&mut self, amount: i64, unit: &str) -> Result<(), DeferCommandError>;
+    fn defer_expression(&mut self, values: &[String]) -> Result<(), DeferCommandError>;
+    fn defer_next_morning(&mut self) -> Result<(), DeferCommandError>;
+    fn defer_next_week(&mut self) -> Result<(), DeferCommandError>;
+    fn defer_routine(&mut self) -> Result<(), ApplicationError>;
+    fn defer_five_years(&mut self) -> Result<(), DeferCommandError>;
+    fn defer_all_frequent_routines(&mut self) -> Result<(), ApplicationError>;
+    fn prepare_escape(&mut self) -> Result<bool, ApplicationError>;
+    fn extrude(&mut self, step_days: Option<u16>) -> Result<(), ApplicationError>;
+    fn clear_or_gather(
+        &mut self,
+        kind: CommandKind,
+        values: &[String],
+    ) -> Result<(), ApplicationError>;
+}
+
+#[derive(Debug)]
+pub(super) enum DeferCommandError {
+    Parse(CommandParseError),
+    Application(ApplicationError),
+}
+
+impl std::fmt::Display for DeferCommandError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Parse(error) => error.fmt(formatter),
+            Self::Application(error) => write!(formatter, "操作エラー: {error}"),
+        }
+    }
+}
+
+impl From<ApplicationError> for DeferCommandError {
+    fn from(error: ApplicationError) -> Self {
+        Self::Application(error)
+    }
 }
 
 impl CommandOutcome {
@@ -440,6 +478,62 @@ pub(super) fn handle_task_attribute_command(
     Ok(Some(CommandOutcome::empty(kind)))
 }
 
+pub(super) fn handle_defer_command(
+    command: &Command,
+    context: &mut dyn DeferCommandContext,
+) -> Result<Option<CommandOutcome>, ApplicationError> {
+    let kind = command.kind();
+    let reported_result = match command {
+        Command::Defer { amount, unit } => Some(context.defer(*amount, unit)),
+        Command::Action(CommandAction::TimeExpression {
+            kind: CommandKind::Defer,
+            values,
+            ..
+        }) => Some(context.defer_expression(values)),
+        Command::InteractiveShortcut(InteractiveShortcut::NextMorning) => {
+            Some(context.defer_next_morning())
+        }
+        Command::InteractiveShortcut(InteractiveShortcut::NextWeek) => {
+            Some(context.defer_next_week())
+        }
+        Command::InteractiveShortcut(InteractiveShortcut::DeferRoutine) => {
+            let _result = context.defer_routine();
+            return Ok(Some(CommandOutcome::empty(kind)));
+        }
+        Command::InteractiveShortcut(InteractiveShortcut::FiveYears) => {
+            Some(context.defer_five_years())
+        }
+        Command::Action(CommandAction::NoArguments {
+            kind: CommandKind::DeferRoutines,
+            ..
+        }) => {
+            context.defer_all_frequent_routines()?;
+            return Ok(Some(CommandOutcome::empty(kind)));
+        }
+        Command::Action(CommandAction::Escape { defer_expression }) => {
+            if !context.prepare_escape()? {
+                return Ok(Some(CommandOutcome::empty(kind)));
+            }
+            let Some(values) = defer_expression else {
+                return Ok(Some(CommandOutcome::empty(kind)));
+            };
+            let result = context.defer_expression(values);
+            return Ok(Some(outcome_from_reported_defer_result(kind, result)));
+        }
+        Command::Action(CommandAction::Extrude { step_days }) => {
+            context.extrude(*step_days)?;
+            return Ok(Some(CommandOutcome::empty(kind)));
+        }
+        Command::Action(CommandAction::ClearOrGather { kind, values, .. }) => {
+            context.clear_or_gather(*kind, values)?;
+            return Ok(Some(CommandOutcome::empty(command.kind())));
+        }
+        _ => return Ok(None),
+    };
+
+    Ok(reported_result.map(|result| outcome_from_reported_defer_result(kind, result)))
+}
+
 fn report_result<T>(display: &mut dyn SchronuWriter, result: Result<T, ApplicationError>) {
     if let Err(error) = result {
         display
@@ -456,6 +550,21 @@ fn outcome_from_reported_result<T>(
     let mut display = DisplayRecorder::default();
     report_result(&mut display, result);
     outcome.display = display.model().clone();
+    outcome
+}
+
+fn outcome_from_reported_defer_result(
+    kind: CommandKind,
+    result: Result<(), DeferCommandError>,
+) -> CommandOutcome {
+    let mut outcome = CommandOutcome::empty(kind);
+    if let Err(error) = result {
+        let mut display = DisplayRecorder::default();
+        display
+            .writeln_newline(&format!("[Error] {error}"))
+            .expect("display recording is infallible");
+        outcome.display = display.model().clone();
+    }
     outcome
 }
 
