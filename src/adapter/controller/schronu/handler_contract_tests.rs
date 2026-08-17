@@ -799,6 +799,84 @@ fn defer系commandはruntime_fallbackとinteractive特別経路に残さない()
     }
 }
 
+#[test]
+fn 完了と配置commandはtyped値のままhandlerが所有してruntime_fallbackに残さない() {
+    let handler_source = include_str!("handler.rs");
+    let handler_dispatch = handler_source
+        .split_once("pub(super) fn handle_finish_placement_command(")
+        .expect("handler must own the finish and placement dispatch")
+        .1
+        .split_once("\nfn report_result")
+        .expect("finish and placement dispatch must remain bounded")
+        .0;
+
+    for action_pattern in [
+        "CommandAction::Finish { values }",
+        "kind: CommandKind::Pack",
+        "kind: CommandKind::Flatten",
+    ] {
+        assert!(
+            handler_dispatch.contains(action_pattern),
+            "handler must directly match typed action fields: {action_pattern}"
+        );
+    }
+    for forbidden in [
+        "canonical_name",
+        "canonical_command",
+        "legacy_tokens",
+        "split_whitespace",
+        "values[",
+        "values.get(",
+    ] {
+        assert!(
+            !handler_dispatch.contains(forbidden),
+            "handler must not reconstruct or index legacy command tokens: {forbidden}"
+        );
+    }
+
+    let runtime_source = include_str!("runtime.rs");
+    let product_dispatch = runtime_source
+        .split_once("fn execute_parsed(")
+        .expect("runtime must retain the parsed command entrypoint")
+        .1
+        .split_once("struct RuntimeProjectCommandContext")
+        .expect("parsed command entrypoint must remain bounded by its context")
+        .0;
+    assert!(
+        product_dispatch.contains("handle_finish_placement_command(parsed_command"),
+        "product dispatch must route finish and placement commands through the handler"
+    );
+
+    let legacy_dispatch = runtime_source
+        .split_once("fn execute_with_config(")
+        .expect("runtime must retain the typed fallback entrypoint")
+        .1
+        .split_once("\n#[cfg(test)]\nfn execute_show_all_command_for_test(")
+        .expect("runtime fallback must remain bounded by the non-interactive entrypoint")
+        .0;
+    for migrated_kind in [
+        "CommandKind::Finish",
+        "CommandKind::Pack",
+        "CommandKind::Flatten",
+        "CommandKind::Unfocus",
+    ] {
+        assert!(
+            !legacy_dispatch.contains(migrated_kind),
+            "migrated command must not remain in runtime fallback: {migrated_kind}"
+        );
+    }
+    for forbidden in ["complete_task(", "pack_tasks_", "flatten_tasks_"] {
+        assert!(
+            !legacy_dispatch.contains(forbidden),
+            "runtime fallback must not retain migrated command implementation: {forbidden}"
+        );
+    }
+    assert!(
+        !legacy_dispatch.contains("execute_"),
+        "runtime fallback must not retain normal command implementation calls"
+    );
+}
+
 #[derive(Default)]
 struct TraceWriter {
     writes: Vec<String>,
