@@ -182,6 +182,16 @@ impl std::error::Error for CommandError {
     }
 }
 
+fn external_open_error(
+    target: &'static str,
+    source: impl std::error::Error + Send + Sync + 'static,
+) -> CommandError {
+    CommandError::ExternalOpen {
+        target,
+        source: Box::new(source),
+    }
+}
+
 fn validate_non_interactive_command(command: &Command) -> Result<(), CommandError> {
     match command {
         Command::Estimate { minutes } => {
@@ -3816,10 +3826,7 @@ fn execute_open_link(focused_task_opt: &Option<TaskHandle>) -> Result<(), Comman
 
     while let Some(t) = &t_opt {
         if let Some(url) = extract_url(&t.get_name().map_err(ApplicationError::TaskTree)?) {
-            webbrowser::open(&url).map_err(|source| CommandError::ExternalOpen {
-                target: "browser",
-                source: Box::new(source),
-            })?;
+            webbrowser::open(&url).map_err(|source| external_open_error("browser", source))?;
             return Ok(());
         }
 
@@ -3894,10 +3901,8 @@ fn execute_open_obsidian_root_task_search_with_config(
             focused_task,
             &config.obsidian_vault_name,
         )?;
-        open_obsidian_url(&url).map_err(|source| CommandError::ExternalOpen {
-            target: "Obsidian",
-            source: Box::new(std::io::Error::other(source)),
-        })?;
+        open_obsidian_url(&url)
+            .map_err(|source| external_open_error("Obsidian", std::io::Error::other(source)))?;
     }
     Ok(())
 }
@@ -5876,6 +5881,48 @@ fn defer系の通常interactive_commandはflushしshortcutはflushしない() {
     }
 }
 
+#[test]
+fn interactive低優先度modeは共通outcome経路でfocusと表示を更新する() {
+    let now = Local.with_ymd_and_hms(2026, 8, 18, 12, 0, 0).unwrap();
+    let root = TaskHandle::new("root").unwrap();
+    let high_priority_task = root.create_as_last_child(TaskAttr::new("高優先度候補"));
+    let low_priority_task = root.create_as_last_child(TaskAttr::new("低優先度候補"));
+    let high_priority_task_id = high_priority_task.get_id().unwrap();
+    let low_priority_task_id = low_priority_task.get_id().unwrap();
+    let mut task_repository = TestTaskRepository::new(root, now);
+    task_repository.highest_priority_leaf_task_id_opt = Some(high_priority_task_id);
+    task_repository.defer_candidate_leaf_task_id_opt = Some(low_priority_task_id);
+    let mut free_time_manager = TestFreeTimeManager;
+    let mut focused_task_id_opt = Some(high_priority_task_id);
+    let mut focus_selection_mode = FocusSelectionMode::HighestPriority;
+    let mut stdout = FlushTrackingWriter::successful(true);
+
+    execute_interactive_command(
+        &mut stdout,
+        &mut task_repository,
+        &mut free_time_manager,
+        &mut focused_task_id_opt,
+        &now,
+        &mut focus_selection_mode,
+        "低 3",
+    )
+    .unwrap();
+
+    assert_eq!(
+        focus_selection_mode,
+        FocusSelectionMode::LowestPriority { recent_days: 3 }
+    );
+    assert_eq!(focused_task_id_opt, Some(low_priority_task_id));
+    assert_eq!(
+        task_repository.last_defer_candidate_recent_days_opt,
+        Some(3)
+    );
+    assert_eq!(stdout.flush_count, 0);
+    assert!(String::from_utf8(stdout.buffer)
+        .unwrap()
+        .contains("フォーカス選択モード: 低 3"));
+}
+
 #[cfg(test)]
 struct TestFreeTimeManagerForBand;
 
@@ -7409,10 +7456,11 @@ fn execute_parsed(
         handle_project_command(parsed_command, &mut context)?
     };
     if let Some(outcome) = project_outcome {
-        execute_handler_outcome(
+        apply_command_outcome(
             &mut output,
             task_repository,
             focused_task_id_opt,
+            OutcomeApplicationMode::Flushed,
             outcome,
             active_config(),
         )?;
@@ -7423,10 +7471,11 @@ fn execute_parsed(
         };
         handle_breakdown_split_command(parsed_command, &mut context)?
     } {
-        execute_handler_outcome(
+        apply_command_outcome(
             &mut output,
             task_repository,
             focused_task_id_opt,
+            OutcomeApplicationMode::Flushed,
             outcome,
             active_config(),
         )?;
@@ -7439,10 +7488,11 @@ fn execute_parsed(
         };
         handle_task_attribute_command(parsed_command, &mut context)?
     } {
-        execute_handler_outcome(
+        apply_command_outcome(
             &mut output,
             task_repository,
             focused_task_id_opt,
+            OutcomeApplicationMode::Flushed,
             outcome,
             active_config(),
         )?;
@@ -7454,10 +7504,11 @@ fn execute_parsed(
         };
         handle_defer_command(parsed_command, &mut context)?
     } {
-        execute_handler_outcome(
+        apply_command_outcome(
             &mut output,
             task_repository,
             focused_task_id_opt,
+            OutcomeApplicationMode::Flushed,
             outcome,
             active_config(),
         )?;
@@ -7473,10 +7524,11 @@ fn execute_parsed(
         };
         handle_finish_placement_command(parsed_command, &mut context)?
     } {
-        execute_handler_outcome(
+        apply_command_outcome(
             &mut output,
             task_repository,
             focused_task_id_opt,
+            OutcomeApplicationMode::Flushed,
             outcome,
             active_config(),
         )?;
@@ -7491,18 +7543,20 @@ fn execute_parsed(
         };
         handle_task_tree_command(parsed_command, &mut context)?
     } {
-        execute_handler_outcome(
+        apply_command_outcome(
             &mut output,
             task_repository,
             focused_task_id_opt,
+            OutcomeApplicationMode::Flushed,
             outcome,
             active_config(),
         )?;
     } else if let Some(outcome) = handle(parsed_command) {
-        execute_handler_outcome(
+        apply_command_outcome(
             &mut output,
             task_repository,
             focused_task_id_opt,
+            OutcomeApplicationMode::Flushed,
             outcome,
             active_config(),
         )?;
@@ -8010,10 +8064,11 @@ impl TaskTreeCommandContext for RuntimeTaskTreeCommandContext<'_> {
     }
 }
 
-fn execute_handler_outcome(
+fn apply_command_outcome(
     stdout: &mut dyn SchronuWriter,
     task_repository: &mut dyn TaskRepositoryTrait,
     focused_task_id_opt: &mut Option<Uuid>,
+    mut application_mode: OutcomeApplicationMode<'_>,
     outcome: CommandOutcome,
     config: &SchronuConfig,
 ) -> Result<(), CommandError> {
@@ -8036,14 +8091,32 @@ fn execute_handler_outcome(
         }
     }
 
-    if matches!(outcome.focus_request, Some(FocusRequest::Clear)) {
-        *focused_task_id_opt = None;
+    if let Some(request) = outcome.focus_request {
+        match request {
+            FocusRequest::Clear => *focused_task_id_opt = None,
+            request => match &mut application_mode {
+                OutcomeApplicationMode::InteractiveUnflushed(focus_selection_mode) => {
+                    **focus_selection_mode = focus_selection_mode_from_request(request);
+                    *focused_task_id_opt = None;
+                }
+                OutcomeApplicationMode::Flushed => {
+                    unreachable!("focus mode request must use the interactive outcome path")
+                }
+            },
+        }
     }
 
-    if outcome.kind != CommandKind::Noop {
+    if matches!(&application_mode, OutcomeApplicationMode::Flushed)
+        && outcome.kind != CommandKind::Noop
+    {
         render_display_model(stdout, &DisplayModel::flush()).map_err(CommandError::Output)?;
     }
     Ok(())
+}
+
+enum OutcomeApplicationMode<'a> {
+    Flushed,
+    InteractiveUnflushed(&'a mut FocusSelectionMode),
 }
 
 #[test]
@@ -8053,8 +8126,8 @@ fn runtime外部ioとoutcome調停は共通境界に集約する() {
         .split_once("\nfn apply_command_outcome(")
         .expect("runtime must define the shared apply_command_outcome boundary")
         .1
-        .split_once("fn execute_with_config(")
-        .expect("outcome boundary must remain outside the legacy fallback")
+        .split_once("\n#[test]\nfn runtime外部ioとoutcome調停は共通境界に集約する(")
+        .expect("outcome boundary must remain bounded")
         .0;
 
     for required in [
@@ -8086,18 +8159,28 @@ fn runtime外部ioとoutcome調停は共通境界に集約する() {
     );
 
     let interactive_source = runtime_source
-        .split_once("fn execute_interactive_command(")
+        .split_once("\nfn execute_interactive_command(")
         .expect("interactive command path must exist")
         .1
         .split_once("struct InteractiveRepositoryState")
         .expect("interactive command path must remain bounded")
         .0;
+    let (focus_branch, after_focus_branch) = interactive_source
+        .split_once("    } else if matches!(")
+        .expect("interactive focus branch must remain distinct");
+    let (shortcut_branch, _) = after_focus_branch
+        .split_once("    } else {")
+        .expect("interactive shortcut branch must remain distinct");
     assert!(
-        interactive_source.matches("apply_command_outcome(").count() >= 2,
-        "interactive focus and shortcut outcomes must both use the shared boundary"
+        focus_branch.contains("apply_command_outcome("),
+        "interactive focus outcomes must use the shared boundary"
     );
     assert!(
-        !runtime_source.contains("fn execute_handler_outcome("),
+        shortcut_branch.contains("apply_command_outcome("),
+        "interactive shortcut outcomes must use the shared boundary"
+    );
+    assert!(
+        !runtime_source.contains("\nfn execute_handler_outcome("),
         "the superseded outcome coordinator must be removed"
     );
 
@@ -8121,10 +8204,7 @@ fn runtime外部ioとoutcome調停は共通境界に集約する() {
 
 #[test]
 fn external_open_errorはtargetとsource_reason_chainを保持する() {
-    let error = CommandError::ExternalOpen {
-        target: "test-target",
-        source: Box::new(std::io::Error::other("test-reason")),
-    };
+    let error = external_open_error("test-target", std::io::Error::other("test-reason"));
 
     assert_eq!(
         error.to_string(),
@@ -11103,14 +11183,14 @@ fn execute_interactive_command(
         parse_command(command, ParseMode::Interactive).map_err(map_command_parse_error)?;
     if let Some(outcome) = handle(&parsed_command).filter(|outcome| outcome.focus_request.is_some())
     {
-        let request = outcome
-            .focus_request
-            .expect("focus outcome must contain a focus request");
-        if request != FocusRequest::Clear {
-            *focus_selection_mode = focus_selection_mode_from_request(request);
-        }
-        *focused_task_id_opt = None;
-        render_display_model(stdout, &outcome.display).map_err(CommandError::Output)?;
+        apply_command_outcome(
+            stdout,
+            task_repository,
+            focused_task_id_opt,
+            OutcomeApplicationMode::InteractiveUnflushed(focus_selection_mode),
+            outcome,
+            active_config(),
+        )?;
     } else if matches!(
         parsed_command,
         Command::Defer { .. } | Command::InteractiveShortcut(_)
@@ -11122,9 +11202,14 @@ fn execute_interactive_command(
         };
         let outcome = handle_defer_command(&parsed_command, &mut context)?
             .expect("interactive defer command must be handler-owned");
-        if !outcome.display.is_empty() {
-            render_display_model(stdout, &outcome.display).map_err(CommandError::Output)?;
-        }
+        apply_command_outcome(
+            stdout,
+            task_repository,
+            focused_task_id_opt,
+            OutcomeApplicationMode::InteractiveUnflushed(focus_selection_mode),
+            outcome,
+            active_config(),
+        )?;
     } else {
         if let Err(error) = execute_parsed(
             stdout,
