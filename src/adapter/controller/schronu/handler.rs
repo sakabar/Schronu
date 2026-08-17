@@ -1,10 +1,12 @@
 use super::command::{Command, CommandAction, CommandKind, CommandParseError, InteractiveShortcut};
 use super::renderer::{DisplayModel, DisplayRecorder, SchronuWriter};
-use chrono::{DateTime, Datelike, Duration, Local, TimeZone};
+use chrono::{DateTime, Datelike, Duration, Local, TimeZone, Timelike};
 use regex::Regex;
+use schronu::application::flatten_use_case::{FlattenResult, UnresolvedReason};
+use schronu::application::pack_use_case::PackResult;
 use schronu::application::task_use_case::{
     estimated_work_seconds_from_minutes, validate_task_name, ApplicationError, BreakdownTaskInput,
-    CreateTaskInput,
+    CompleteTaskInput, CreateTaskInput,
 };
 use schronu::entity::datetime::get_next_morning_datetime;
 use schronu::entity::task::{TaskAttr, TaskHandle};
@@ -19,6 +21,7 @@ pub(super) enum ExternalRequest {
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(super) enum FocusRequest {
+    Clear,
     HighestPriority,
     LowestPriority { recent_days: i64 },
 }
@@ -104,6 +107,24 @@ pub(super) trait DeferCommandContext {
     ) -> Result<(), ApplicationError>;
 }
 
+pub(super) trait FinishPlacementCommandContext {
+    fn supports_ansi_color(&self) -> bool;
+    fn last_synced_time(&self) -> DateTime<Local>;
+    fn focus_started_datetime(&self) -> DateTime<Local>;
+    fn focused_task(&self) -> Result<Option<TaskHandle>, ApplicationError>;
+    fn show_focused_tree(
+        &mut self,
+        display: &mut dyn SchronuWriter,
+    ) -> Result<(), ApplicationError>;
+    fn complete_focused_task(
+        &mut self,
+        input: CompleteTaskInput,
+    ) -> Result<Option<Uuid>, ApplicationError>;
+    fn set_focused_task_id(&mut self, task_id_opt: Option<Uuid>);
+    fn pack(&mut self) -> Result<PackResult, ApplicationError>;
+    fn flatten(&mut self) -> Result<FlattenResult, ApplicationError>;
+}
+
 #[derive(Debug)]
 pub(super) enum DeferCommandError {
     Parse(CommandParseError),
@@ -150,6 +171,10 @@ pub(super) fn handle(command: &Command) -> Option<CommandOutcome> {
             kind: CommandKind::Obsidian,
             ..
         }) => outcome.external_request = Some(ExternalRequest::OpenObsidianRootSearch),
+        Command::Action(CommandAction::NoArguments {
+            kind: CommandKind::Unfocus,
+            ..
+        }) => outcome.focus_request = Some(FocusRequest::Clear),
         Command::Action(CommandAction::FocusMode {
             kind: CommandKind::FocusHighest,
             ..
@@ -532,6 +557,250 @@ pub(super) fn handle_defer_command(
     };
 
     Ok(reported_result.map(|result| outcome_from_reported_defer_result(kind, result)))
+}
+
+pub(super) fn handle_finish_placement_command(
+    command: &Command,
+    context: &mut dyn FinishPlacementCommandContext,
+) -> Result<Option<CommandOutcome>, ApplicationError> {
+    let kind = command.kind();
+    let mut display = DisplayRecorder::with_ansi_color(context.supports_ansi_color());
+
+    match command {
+        Command::Action(CommandAction::Finish { values }) => {
+            let Some(focused_task) = context.focused_task()? else {
+                return Ok(Some(CommandOutcome::empty(kind)));
+            };
+            if focused_task
+                .has_undone_children()
+                .map_err(ApplicationError::TaskTree)?
+            {
+                context.show_focused_tree(&mut display)?;
+            } else {
+                let now = context.last_synced_time();
+                if let Some(finished_at) = decide_finish_time_values(values, &now) {
+                    let additional_actual_work_seconds = if values.is_empty() {
+                        let focus_duration_seconds =
+                            (now - context.focus_started_datetime()).num_seconds();
+                        if focus_duration_seconds >= 60 {
+                            focus_duration_seconds
+                        } else {
+                            0
+                        }
+                    } else {
+                        0
+                    };
+                    let input = CompleteTaskInput {
+                        task_id: focused_task.get_id().map_err(ApplicationError::TaskTree)?,
+                        finished_at,
+                        additional_actual_work_seconds,
+                    };
+                    match context.complete_focused_task(input) {
+                        Ok(next_focus_task_id) => {
+                            context.set_focused_task_id(next_focus_task_id);
+                        }
+                        Err(ApplicationError::HasUndoneChildren(_)) => {
+                            context.show_focused_tree(&mut display)?;
+                        }
+                        Err(_) => {}
+                    }
+                }
+            }
+        }
+        Command::Action(CommandAction::NoArguments {
+            kind: CommandKind::Pack,
+            ..
+        }) => write_pack_result(&mut display, &context.pack()?),
+        Command::Action(CommandAction::NoArguments {
+            kind: CommandKind::Flatten,
+            ..
+        }) => write_flatten_result(&mut display, &context.flatten()?),
+        _ => return Ok(None),
+    }
+
+    let mut outcome = CommandOutcome::empty(kind);
+    outcome.display = display.model().clone();
+    Ok(Some(outcome))
+}
+
+pub(super) fn decide_finish_time_values(
+    values: &[String],
+    now: &DateTime<Local>,
+) -> Option<DateTime<Local>> {
+    let hhmmss_reg = Regex::new(r"^(\d{1,2}):(\d{1,2})(?::(\d{1,2}))?$").unwrap();
+    let yyyymmdd_reg = Regex::new(r"^\d{2,4}/\d{1,2}/\d{1,2}$").unwrap();
+    let mmdd_reg = Regex::new(r"^\d{1,2}/\d{1,2}$").unwrap();
+    let days_of_week = ["月", "火", "水", "木", "金", "土", "日"];
+
+    let build_finish_time = |hhmmss: &str, date: Option<&String>| {
+        let captures = hhmmss_reg.captures(hhmmss)?;
+        let hours: u32 = captures[1].parse().ok()?;
+        let minutes: u32 = captures[2].parse().ok()?;
+        let seconds: u32 = captures
+            .get(3)
+            .map(|value| value.as_str().parse().ok())
+            .unwrap_or(Some(0))?;
+        if hours > 23 || minutes > 59 || seconds > 59 {
+            return None;
+        }
+        let mut time_values = vec![format!("{hours}:{minutes}")];
+        if let Some(date) = date {
+            time_values.push(date.clone());
+        }
+        decide_time_values(&time_values, now)?.with_second(seconds)
+    };
+
+    match values {
+        [] => Some(*now),
+        [value] if matches!(value.as_str(), "今" | "now") => Some(*now),
+        [time] if hhmmss_reg.is_match(time) => build_finish_time(time, None),
+        [time, date]
+            if hhmmss_reg.is_match(time)
+                && (yyyymmdd_reg.is_match(date)
+                    || mmdd_reg.is_match(date)
+                    || date.starts_with('明')
+                    || days_of_week.contains(&date.as_str())) =>
+        {
+            build_finish_time(time, Some(date))
+        }
+        _ => None,
+    }
+}
+
+pub(super) fn write_pack_result(display: &mut dyn SchronuWriter, result: &PackResult) {
+    let total_work_seconds = result
+        .packed_tasks
+        .iter()
+        .map(|packed| packed.work_seconds)
+        .sum::<i64>();
+
+    for packed in &result.packed_tasks {
+        display
+            .writeln_newline(&format!(
+                "詰\t{}\t{}\t{}\t優先度{}\t{}\t{}",
+                packed.source_date,
+                packed.target_date,
+                format_work_seconds_as_hours_minutes(packed.work_seconds),
+                packed.priority,
+                packed.task_id,
+                packed.name,
+            ))
+            .expect("display recording is infallible");
+    }
+    if result.packed_tasks.is_empty() && result.skipped_tasks.is_empty() {
+        display
+            .writeln_newline("[Info] 詰められるタスクはありません。")
+            .expect("display recording is infallible");
+    } else {
+        display
+            .writeln_newline(&format!(
+                "詰: {}件 {} (スキップ{}件)",
+                result.packed_tasks.len(),
+                format_work_seconds_as_hours_minutes(total_work_seconds),
+                result.skipped_tasks.len(),
+            ))
+            .expect("display recording is infallible");
+    }
+}
+
+fn write_flatten_result(display: &mut dyn SchronuWriter, result: &FlattenResult) {
+    let total_work_seconds = result
+        .flattened_tasks
+        .iter()
+        .map(|flattened| flattened.work_seconds)
+        .sum::<i64>();
+
+    for flattened in &result.flattened_tasks {
+        display
+            .writeln_newline(&format!(
+                "平\t{}\t{}\t{}\t優先度{}\t{}\t{}",
+                flattened.source_date,
+                flattened.target_date,
+                format_work_seconds_as_hours_minutes(flattened.work_seconds),
+                flattened.priority,
+                flattened.task_id,
+                flattened.name,
+            ))
+            .expect("display recording is infallible");
+    }
+
+    if !result.had_overload {
+        display
+            .writeln_newline("[Info] 100%を超過している日はありません。")
+            .expect("display recording is infallible");
+    } else {
+        display
+            .writeln_newline(&format!(
+                "平: {}件 {}{}",
+                result.flattened_tasks.len(),
+                format_work_seconds_as_hours_minutes(total_work_seconds),
+                if result.unresolved_overloads.is_empty() {
+                    String::new()
+                } else {
+                    format!(" (未解消{}日)", result.unresolved_overloads.len())
+                },
+            ))
+            .expect("display recording is infallible");
+        if result.overflowed_task_count > 0 {
+            display
+                .writeln_newline(&format!(
+                    "[Warn] 35日後の退避先は日次容量の上限を適用していません: {}件 {}",
+                    result.overflowed_task_count,
+                    format_work_seconds_as_hours_minutes(result.overflowed_work_seconds),
+                ))
+                .expect("display recording is infallible");
+        }
+        for unresolved in &result.unresolved_overloads {
+            display
+                .writeln_newline(&format!(
+                    "[Warn] 平\t{}\t未解消 {}",
+                    unresolved.date,
+                    format_work_seconds_as_hours_minutes_rounded_up(
+                        unresolved.excess_work_seconds,
+                    ),
+                ))
+                .expect("display recording is infallible");
+            for summary in &unresolved.reasons {
+                display
+                    .writeln_newline(&format!(
+                        "  {}: {}件",
+                        unresolved_reason_label(summary.reason),
+                        summary.task_count,
+                    ))
+                    .expect("display recording is infallible");
+                if let (Some(task_id), Some(task_name)) = (
+                    summary.representative_task_id,
+                    summary.representative_task_name.as_deref(),
+                ) {
+                    display
+                        .writeln_newline(&format!("    {task_id}\t{task_name}"))
+                        .expect("display recording is infallible");
+                }
+            }
+        }
+    }
+}
+
+fn format_work_seconds_as_hours_minutes(work_seconds: i64) -> String {
+    let total_minutes = work_seconds.max(0) / 60;
+    format!("{:02}:{:02}", total_minutes / 60, total_minutes % 60)
+}
+
+fn format_work_seconds_as_hours_minutes_rounded_up(work_seconds: i64) -> String {
+    let positive_seconds = work_seconds.max(0);
+    let total_minutes = (positive_seconds + 59) / 60;
+    format!("{:02}:{:02}", total_minutes / 60, total_minutes % 60)
+}
+
+fn unresolved_reason_label(reason: UnresolvedReason) -> &'static str {
+    match reason {
+        UnresolvedReason::OnOtherSide => "相手待ち",
+        UnresolvedReason::CrossesBusinessDay => "業務日境界をまたぐ",
+        UnresolvedReason::ExceedsDailyCapacity => "1日の最大容量を超える",
+        UnresolvedReason::OwnDeadline => "自身の期限により翌日06:00を維持できない",
+        UnresolvedReason::RelatedDeadline => "仮延期によって関連taskの期限を超える",
+        UnresolvedReason::Other => "その他",
+    }
 }
 
 fn report_result<T>(display: &mut dyn SchronuWriter, result: Result<T, ApplicationError>) {

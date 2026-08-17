@@ -3,11 +3,14 @@
 use super::command::{
     parse_command, Command, CommandAction, CommandKind, CommandParseError, ParseMode,
 };
+#[cfg(test)]
+use super::handler::{decide_finish_time_values, decide_time_values, write_pack_result};
 use super::handler::{
-    decide_time_values, handle, handle_breakdown_split_command, handle_defer_command,
+    handle, handle_breakdown_split_command, handle_defer_command, handle_finish_placement_command,
     handle_project_command, handle_task_attribute_command, handle_task_tree_command,
-    CommandOutcome, DeferCommandContext, DeferCommandError, ExternalRequest, FocusRequest,
-    ProjectCommandContext, TaskAttributeCommandContext, TaskListOrder, TaskTreeCommandContext,
+    CommandOutcome, DeferCommandContext, DeferCommandError, ExternalRequest,
+    FinishPlacementCommandContext, FocusRequest, ProjectCommandContext,
+    TaskAttributeCommandContext, TaskListOrder, TaskTreeCommandContext,
 };
 use super::renderer::{
     render_display_model, writeln_newline, ErrorCapturingWriter, SchronuWriter, MAX_COL,
@@ -30,7 +33,7 @@ use schronu::application::daily_capacity::{
     RHO_GOAL,
 };
 use schronu::application::flatten_use_case::{
-    flatten_tasks_with_end_of_day_offset_minutes, FlattenResult, UnresolvedReason,
+    flatten_tasks_with_end_of_day_offset_minutes, FlattenResult,
 };
 use schronu::application::interface::{BusyTimeSlotLoadError, FreeTimeManagerTrait};
 #[cfg(test)]
@@ -38,7 +41,7 @@ use schronu::application::interface::{
     BusyTimeSlotRegistrationError, RepositoryReloadOutcome, TaskRepositoryOperation,
 };
 use schronu::application::interface::{TaskRepositoryError, TaskRepositoryTrait};
-use schronu::application::pack_use_case::pack_tasks_with_end_of_day_offset_minutes;
+use schronu::application::pack_use_case::{pack_tasks_with_end_of_day_offset_minutes, PackResult};
 use schronu::application::repository_transaction::{
     run_repository_transaction, RepositoryTransactionError,
 };
@@ -877,6 +880,7 @@ fn focus_selection_mode_from_command(command: &Command) -> Option<FocusSelection
 
 fn focus_selection_mode_from_request(request: FocusRequest) -> FocusSelectionMode {
     match request {
+        FocusRequest::Clear => unreachable!("clear focus does not select a focus mode"),
         FocusRequest::HighestPriority => FocusSelectionMode::HighestPriority,
         FocusRequest::LowestPriority { recent_days } => {
             FocusSelectionMode::LowestPriority { recent_days }
@@ -3720,10 +3724,6 @@ fn execute_show_all_tasks_with_config(
     Ok(())
 }
 
-fn execute_unfocus(focused_task_id_opt: &mut Option<Uuid>) {
-    *focused_task_id_opt = None;
-}
-
 // 文字列の中からhttpから始まる部分文字列でURLとして解釈できる一番長い文字列を抽出する
 fn extract_url(s: &str) -> Option<String> {
     // "http"が始まるインデックスを探す
@@ -4529,6 +4529,7 @@ fn read_project_category_command_arg(s: &str) -> Option<Option<ProjectCategory>>
     }
 }
 
+#[cfg(test)]
 fn decide_time(tokens: &[&str], now: &DateTime<Local>) -> Option<DateTime<Local>> {
     let values = tokens
         .iter()
@@ -4538,50 +4539,14 @@ fn decide_time(tokens: &[&str], now: &DateTime<Local>) -> Option<DateTime<Local>
     decide_time_values(&values, now)
 }
 
+#[cfg(test)]
 fn decide_finish_time(tokens: &Vec<&str>, now: &DateTime<Local>) -> Option<DateTime<Local>> {
-    let hhmmss_reg = Regex::new(r"^(\d{1,2}):(\d{1,2})(?::(\d{1,2}))?$").unwrap();
-    let yyyymmdd_reg = Regex::new(r"^\d{2,4}/\d{1,2}/\d{1,2}$").unwrap();
-    let mmdd_reg = Regex::new(r"^\d{1,2}/\d{1,2}$").unwrap();
-    let days_of_week = ["月", "火", "水", "木", "金", "土", "日"];
-
-    let build_finish_time = |hhmmss: &str| -> Option<DateTime<Local>> {
-        let caps = hhmmss_reg.captures(hhmmss)?;
-        let hh: u32 = caps[1].parse().ok()?;
-        let mm: u32 = caps[2].parse().ok()?;
-        let ss: u32 = caps
-            .get(3)
-            .map(|sec| sec.as_str().parse().ok())
-            .unwrap_or(Some(0))?;
-
-        if hh > 23 || mm > 59 || ss > 59 {
-            return None;
-        }
-
-        let hhmm = format!("{}:{}", hh, mm);
-        let finish_time = match tokens.as_slice() {
-            [cmd, _] => decide_time(&[*cmd, hhmm.as_str()], now),
-            [cmd, _, date] => decide_time(&[*cmd, hhmm.as_str(), *date], now),
-            _ => None,
-        }?;
-
-        finish_time.with_second(ss)
-    };
-
-    match tokens.as_slice() {
-        [_] => Some(*now),
-        [_, "今"] | [_, "now"] => Some(*now),
-        [_, hhmmss] if hhmmss_reg.is_match(hhmmss) => build_finish_time(hhmmss),
-        [_, hhmmss, date]
-            if hhmmss_reg.is_match(hhmmss)
-                && (yyyymmdd_reg.is_match(date)
-                    || mmdd_reg.is_match(date)
-                    || date.starts_with('明')
-                    || days_of_week.contains(date)) =>
-        {
-            build_finish_time(hhmmss)
-        }
-        _ => None,
-    }
+    let values = tokens
+        .iter()
+        .skip(1)
+        .map(|value| (*value).to_string())
+        .collect::<Vec<_>>();
+    decide_finish_time_values(&values, now)
 }
 
 #[test]
@@ -7349,170 +7314,19 @@ fn test_execute_category_不正値はfield付き入力エラーを表示して�
     assert!(result.output.contains("[Error] 入力エラー: category:"));
 }
 
-fn format_work_seconds_as_hours_minutes(work_seconds: i64) -> String {
-    let total_minutes = work_seconds.max(0) / 60;
-    format!("{:02}:{:02}", total_minutes / 60, total_minutes % 60)
-}
-
-fn format_work_seconds_as_hours_minutes_rounded_up(work_seconds: i64) -> String {
-    let positive_seconds = work_seconds.max(0);
-    let total_minutes = (positive_seconds + 59) / 60;
-    format!("{:02}:{:02}", total_minutes / 60, total_minutes % 60)
-}
-
 #[cfg(test)]
 fn execute_pack(
     stdout: &mut dyn SchronuWriter,
     task_repository: &dyn TaskRepositoryTrait,
     free_time_manager: &mut dyn FreeTimeManagerTrait,
 ) {
-    execute_pack_with_config(stdout, task_repository, free_time_manager, active_config()).unwrap();
-}
-
-fn execute_pack_with_config(
-    stdout: &mut dyn SchronuWriter,
-    task_repository: &dyn TaskRepositoryTrait,
-    free_time_manager: &mut dyn FreeTimeManagerTrait,
-    config: &SchronuConfig,
-) -> Result<(), ApplicationError> {
     let result = pack_tasks_with_end_of_day_offset_minutes(
         task_repository,
         free_time_manager,
-        config.end_of_day_offset_minutes,
-    )?;
-    let total_work_seconds = result
-        .packed_tasks
-        .iter()
-        .map(|packed| packed.work_seconds)
-        .sum::<i64>();
-
-    for packed in &result.packed_tasks {
-        writeln_newline(
-            stdout,
-            &format!(
-                "詰\t{}\t{}\t{}\t優先度{}\t{}\t{}",
-                packed.source_date,
-                packed.target_date,
-                format_work_seconds_as_hours_minutes(packed.work_seconds),
-                packed.priority,
-                packed.task_id,
-                packed.name,
-            ),
-        )
-        .unwrap();
-    }
-    if result.packed_tasks.is_empty() && result.skipped_tasks.is_empty() {
-        writeln_newline(stdout, "[Info] 詰められるタスクはありません。").unwrap();
-    } else {
-        writeln_newline(
-            stdout,
-            &format!(
-                "詰: {}件 {} (スキップ{}件)",
-                result.packed_tasks.len(),
-                format_work_seconds_as_hours_minutes(total_work_seconds),
-                result.skipped_tasks.len(),
-            ),
-        )
-        .unwrap();
-    }
-    Ok(())
-}
-
-fn write_flatten_result(stdout: &mut dyn SchronuWriter, result: &FlattenResult) {
-    let total_work_seconds = result
-        .flattened_tasks
-        .iter()
-        .map(|flattened| flattened.work_seconds)
-        .sum::<i64>();
-
-    for flattened in &result.flattened_tasks {
-        writeln_newline(
-            stdout,
-            &format!(
-                "平\t{}\t{}\t{}\t優先度{}\t{}\t{}",
-                flattened.source_date,
-                flattened.target_date,
-                format_work_seconds_as_hours_minutes(flattened.work_seconds),
-                flattened.priority,
-                flattened.task_id,
-                flattened.name,
-            ),
-        )
-        .unwrap();
-    }
-
-    if !result.had_overload {
-        writeln_newline(stdout, "[Info] 100%を超過している日はありません。").unwrap();
-    } else {
-        writeln_newline(
-            stdout,
-            &format!(
-                "平: {}件 {}{}",
-                result.flattened_tasks.len(),
-                format_work_seconds_as_hours_minutes(total_work_seconds),
-                if result.unresolved_overloads.is_empty() {
-                    String::new()
-                } else {
-                    format!(" (未解消{}日)", result.unresolved_overloads.len())
-                },
-            ),
-        )
-        .unwrap();
-
-        if result.overflowed_task_count > 0 {
-            writeln_newline(
-                stdout,
-                &format!(
-                    "[Warn] 35日後の退避先は日次容量の上限を適用していません: {}件 {}",
-                    result.overflowed_task_count,
-                    format_work_seconds_as_hours_minutes(result.overflowed_work_seconds),
-                ),
-            )
-            .unwrap();
-        }
-
-        for unresolved in &result.unresolved_overloads {
-            writeln_newline(
-                stdout,
-                &format!(
-                    "[Warn] 平\t{}\t未解消 {}",
-                    unresolved.date,
-                    format_work_seconds_as_hours_minutes_rounded_up(
-                        unresolved.excess_work_seconds,
-                    ),
-                ),
-            )
-            .unwrap();
-            for summary in &unresolved.reasons {
-                writeln_newline(
-                    stdout,
-                    &format!(
-                        "  {}: {}件",
-                        unresolved_reason_label(summary.reason),
-                        summary.task_count,
-                    ),
-                )
-                .unwrap();
-                if let (Some(task_id), Some(task_name)) = (
-                    summary.representative_task_id,
-                    summary.representative_task_name.as_deref(),
-                ) {
-                    writeln_newline(stdout, &format!("    {task_id}\t{task_name}")).unwrap();
-                }
-            }
-        }
-    }
-}
-
-fn unresolved_reason_label(reason: UnresolvedReason) -> &'static str {
-    match reason {
-        UnresolvedReason::OnOtherSide => "相手待ち",
-        UnresolvedReason::CrossesBusinessDay => "業務日境界をまたぐ",
-        UnresolvedReason::ExceedsDailyCapacity => "1日の最大容量を超える",
-        UnresolvedReason::OwnDeadline => "自身の期限により翌日06:00を維持できない",
-        UnresolvedReason::RelatedDeadline => "仮延期によって関連taskの期限を超える",
-        UnresolvedReason::Other => "その他",
-    }
+        active_config().end_of_day_offset_minutes,
+    )
+    .unwrap();
+    write_pack_result(stdout, &result);
 }
 
 #[cfg(test)]
@@ -7606,6 +7420,25 @@ fn execute_parsed(
             config: active_config(),
         };
         handle_defer_command(parsed_command, &mut context)?
+    } {
+        execute_handler_outcome(
+            &mut output,
+            task_repository,
+            focused_task_id_opt,
+            outcome,
+            active_config(),
+        )?;
+    } else if let Some(outcome) = {
+        let supports_ansi_color = output.supports_ansi_color();
+        let mut context = RuntimeFinishPlacementCommandContext {
+            task_repository,
+            free_time_manager,
+            focused_task_id_opt,
+            focus_started_datetime: *focus_started_datetime,
+            config: active_config(),
+            supports_ansi_color,
+        };
+        handle_finish_placement_command(parsed_command, &mut context)?
     } {
         execute_handler_outcome(
             &mut output,
@@ -7895,6 +7728,73 @@ impl DeferCommandContext for RuntimeDeferCommandContext<'_> {
     }
 }
 
+struct RuntimeFinishPlacementCommandContext<'a> {
+    task_repository: &'a mut dyn TaskRepositoryTrait,
+    free_time_manager: &'a mut dyn FreeTimeManagerTrait,
+    focused_task_id_opt: &'a mut Option<Uuid>,
+    focus_started_datetime: DateTime<Local>,
+    config: &'a SchronuConfig,
+    supports_ansi_color: bool,
+}
+
+impl FinishPlacementCommandContext for RuntimeFinishPlacementCommandContext<'_> {
+    fn supports_ansi_color(&self) -> bool {
+        self.supports_ansi_color
+    }
+
+    fn last_synced_time(&self) -> DateTime<Local> {
+        self.task_repository.get_last_synced_time()
+    }
+
+    fn focus_started_datetime(&self) -> DateTime<Local> {
+        self.focus_started_datetime
+    }
+
+    fn focused_task(&self) -> Result<Option<TaskHandle>, ApplicationError> {
+        match *self.focused_task_id_opt {
+            Some(task_id) => self
+                .task_repository
+                .get_by_id(task_id)
+                .map_err(ApplicationError::TaskTree),
+            None => Ok(None),
+        }
+    }
+
+    fn show_focused_tree(
+        &mut self,
+        display: &mut dyn SchronuWriter,
+    ) -> Result<(), ApplicationError> {
+        execute_show_tree(display, &self.focused_task()?)
+    }
+
+    fn complete_focused_task(
+        &mut self,
+        input: CompleteTaskInput,
+    ) -> Result<Option<Uuid>, ApplicationError> {
+        complete_task(self.task_repository, input).map(|output| output.next_focus_task_id)
+    }
+
+    fn set_focused_task_id(&mut self, task_id_opt: Option<Uuid>) {
+        *self.focused_task_id_opt = task_id_opt;
+    }
+
+    fn pack(&mut self) -> Result<PackResult, ApplicationError> {
+        pack_tasks_with_end_of_day_offset_minutes(
+            self.task_repository,
+            self.free_time_manager,
+            self.config.end_of_day_offset_minutes,
+        )
+    }
+
+    fn flatten(&mut self) -> Result<FlattenResult, ApplicationError> {
+        flatten_tasks_with_end_of_day_offset_minutes(
+            self.task_repository,
+            self.free_time_manager,
+            self.config.end_of_day_offset_minutes,
+        )
+    }
+}
+
 struct RuntimeTaskTreeCommandContext<'a> {
     task_repository: &'a mut dyn TaskRepositoryTrait,
     free_time_manager: &'a mut dyn FreeTimeManagerTrait,
@@ -8080,7 +7980,7 @@ impl TaskTreeCommandContext for RuntimeTaskTreeCommandContext<'_> {
 fn execute_handler_outcome(
     stdout: &mut dyn SchronuWriter,
     task_repository: &mut dyn TaskRepositoryTrait,
-    focused_task_id_opt: &Option<Uuid>,
+    focused_task_id_opt: &mut Option<Uuid>,
     outcome: CommandOutcome,
     config: &SchronuConfig,
 ) -> Result<(), CommandError> {
@@ -8103,6 +8003,10 @@ fn execute_handler_outcome(
         }
     }
 
+    if matches!(outcome.focus_request, Some(FocusRequest::Clear)) {
+        *focused_task_id_opt = None;
+    }
+
     if outcome.kind != CommandKind::Noop {
         stdout.flush().map_err(CommandError::Output)?;
     }
@@ -8112,31 +8016,14 @@ fn execute_handler_outcome(
 #[allow(clippy::too_many_arguments, unused_must_use)]
 fn execute_with_config(
     stdout: &mut dyn SchronuWriter,
-    task_repository: &mut dyn TaskRepositoryTrait,
-    free_time_manager: &mut dyn FreeTimeManagerTrait,
-    focused_task_id_opt: &mut Option<Uuid>,
-    focus_started_datetime: &DateTime<Local>,
-    untrimmed_line: &str,
+    _task_repository: &mut dyn TaskRepositoryTrait,
+    _free_time_manager: &mut dyn FreeTimeManagerTrait,
+    _focused_task_id_opt: &mut Option<Uuid>,
+    _focus_started_datetime: &DateTime<Local>,
+    _untrimmed_line: &str,
     parsed_command: &Command,
-    config: &SchronuConfig,
+    _config: &SchronuConfig,
 ) -> Result<(), CommandError> {
-    // 整形
-    let re = Regex::new(r"\s+").unwrap();
-    let line: String = re
-        .replace_all(untrimmed_line, " ")
-        .to_string()
-        .trim()
-        .to_string();
-
-    let focused_task_opt: Option<TaskHandle> = match focused_task_id_opt {
-        Some(id) => task_repository
-            .get_by_id(*id)
-            .map_err(ApplicationError::TaskTree)?,
-        None => None,
-    };
-
-    let tokens: Vec<&str> = line.split(' ').collect();
-
     if matches!(parsed_command, Command::Noop) {
         return Ok(());
     }
@@ -8144,65 +8031,6 @@ fn execute_with_config(
     match parsed_command.kind() {
         CommandKind::Open | CommandKind::Obsidian => {
             unreachable!("migrated command must be handled before legacy dispatch")
-        }
-        CommandKind::Unfocus => {
-            execute_unfocus(focused_task_id_opt);
-        }
-        // "詳" | "description" | "desc" => {}
-        CommandKind::Flatten => {
-            let result = flatten_tasks_with_end_of_day_offset_minutes(
-                task_repository,
-                free_time_manager,
-                config.end_of_day_offset_minutes,
-            )?;
-            write_flatten_result(stdout, &result);
-        }
-        CommandKind::Pack => {
-            execute_pack_with_config(stdout, task_repository, free_time_manager, config)?;
-        }
-        CommandKind::Finish => {
-            if let Some(ref focused_task) = focused_task_opt {
-                if focused_task
-                    .has_undone_children()
-                    .map_err(ApplicationError::TaskTree)?
-                {
-                    execute_show_tree(stdout, &focused_task_opt)?;
-                } else {
-                    let now = task_repository.get_last_synced_time();
-                    if let Some(finished_at) = decide_finish_time(&tokens, &now) {
-                        let additional_actual_work_seconds = if tokens.len() == 1 {
-                            let focus_duration_seconds =
-                                (now - *focus_started_datetime).num_seconds();
-                            if focus_duration_seconds >= 60 {
-                                focus_duration_seconds
-                            } else {
-                                0
-                            }
-                        } else {
-                            0
-                        };
-
-                        match complete_task(
-                            task_repository,
-                            CompleteTaskInput {
-                                task_id: focused_task
-                                    .get_id()
-                                    .map_err(ApplicationError::TaskTree)?,
-                                finished_at,
-                                additional_actual_work_seconds,
-                            },
-                        ) {
-                            Ok(output) => {
-                                *focused_task_id_opt = output.next_focus_task_id;
-                            }
-                            Err(ApplicationError::HasUndoneChildren(_)) => {
-                                execute_show_tree(stdout, &focused_task_opt)?;
-                            }
-                            Err(_) => {}
-                        }
-                    }
-                }
-            }
         }
         CommandKind::Noop
         | CommandKind::FocusHighest
@@ -11261,11 +11089,12 @@ fn execute_interactive_command(
         parse_command(command, ParseMode::Interactive).map_err(map_command_parse_error)?;
     if let Some(outcome) = handle(&parsed_command).filter(|outcome| outcome.focus_request.is_some())
     {
-        *focus_selection_mode = focus_selection_mode_from_request(
-            outcome
-                .focus_request
-                .expect("focus outcome must contain a focus request"),
-        );
+        let request = outcome
+            .focus_request
+            .expect("focus outcome must contain a focus request");
+        if request != FocusRequest::Clear {
+            *focus_selection_mode = focus_selection_mode_from_request(request);
+        }
         *focused_task_id_opt = None;
         render_display_model(stdout, &outcome.display).map_err(CommandError::Output)?;
     } else if matches!(
