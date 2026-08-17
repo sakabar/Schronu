@@ -703,7 +703,7 @@
 - `src/adapter/controller/schronu/runtime.rs`はproduction helperの間に大量のcommand test、repository stub、free-time stubを持つ。
 - `src/adapter/mcp.rs`は約1,500行のproduction codeに続いて約3,600行のtest moduleを持つ。
 - application contract testsにも類似の`TestTaskRepository`とtask builderが複数存在する。
-- clippy失敗の多くは古いテスト表現であり、productionの新しい問題と既存test cleanupが同じ出力に混在する。
+- TD-008対応前にclippyが検出した違反の多くは古いテスト表現に由来した。現在のall-target clippyはGreenだが、production codeとtest cleanupの対象が同じ巨大fileに混在する構造は残る。
 
 #### 影響
 
