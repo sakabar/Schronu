@@ -32,6 +32,19 @@ pub(super) enum DriverOutcome<R, E> {
     Fatal(E),
 }
 
+fn expect_continue<R, E>(outcome: DriverOutcome<R, E>, event: &str) {
+    if !matches!(outcome, DriverOutcome::Continue) {
+        unreachable!("{event} event returned an invalid outcome");
+    }
+}
+
+fn expect_fatal<R, E>(outcome: DriverOutcome<R, E>, event: &str) -> E {
+    match outcome {
+        DriverOutcome::Fatal(error) => error,
+        _ => unreachable!("{event} event returned an invalid outcome"),
+    }
+}
+
 #[derive(Debug, Eq, PartialEq)]
 enum ControlKey {
     Exit,
@@ -180,7 +193,10 @@ where
     let mut line = String::new();
     let mut cursor_x = 0;
     clear_screen(&mut stdout);
-    let _ = handle_event(&mut stdout, DriverEvent::RenderScreen { now: initial_now });
+    expect_continue(
+        handle_event(&mut stdout, DriverEvent::RenderScreen { now: initial_now }),
+        "render screen",
+    );
     render_prompt(&mut stdout, header, &line, cursor_x);
 
     let (key_sender, key_receiver) = mpsc::channel();
@@ -202,11 +218,10 @@ where
                 key
             }
             ReceivedInput::ReadError(error) => {
-                if let DriverOutcome::Fatal(error) =
-                    handle_event(&mut stdout, DriverEvent::InputRead(error))
-                {
-                    loop_error_opt = Some(error);
-                }
+                loop_error_opt = Some(expect_fatal(
+                    handle_event(&mut stdout, DriverEvent::InputRead(error)),
+                    "input read",
+                ));
                 break;
             }
             ReceivedInput::Refresh => {
@@ -225,17 +240,19 @@ where
                     _ => unreachable!("refresh event returned an invalid outcome"),
                 }
                 clear_screen(&mut stdout);
-                let _ = handle_event(&mut stdout, DriverEvent::RenderScreen { now: Local::now() });
+                expect_continue(
+                    handle_event(&mut stdout, DriverEvent::RenderScreen { now: Local::now() }),
+                    "render screen",
+                );
                 render_prompt(&mut stdout, header, &line, cursor_x);
                 next_refresh_at = idle_refresh_deadline(Instant::now());
                 continue;
             }
             ReceivedInput::Disconnected => {
-                if let DriverOutcome::Fatal(error) =
-                    handle_event(&mut stdout, DriverEvent::InputDisconnected)
-                {
-                    loop_error_opt = Some(error);
-                }
+                loop_error_opt = Some(expect_fatal(
+                    handle_event(&mut stdout, DriverEvent::InputDisconnected),
+                    "input disconnected",
+                ));
                 break;
             }
         };
@@ -257,11 +274,10 @@ where
                 _ => unreachable!("exit event returned an invalid outcome"),
             },
             Some(ControlKey::Interrupted) => {
-                if let DriverOutcome::Fatal(error) =
-                    handle_event(&mut stdout, DriverEvent::Interrupted)
-                {
-                    loop_error_opt = Some(error);
-                }
+                loop_error_opt = Some(expect_fatal(
+                    handle_event(&mut stdout, DriverEvent::Interrupted),
+                    "interrupted",
+                ));
                 break;
             }
             Some(ControlKey::Submit) => {
@@ -438,5 +454,20 @@ mod tests {
         reset_submitted_line(&mut line, &mut cursor_x);
         assert!(line.is_empty());
         assert_eq!(cursor_x, 0);
+    }
+
+    #[test]
+    fn event_specific_outcomes_preserve_fatal_error() {
+        expect_continue::<(), ()>(DriverOutcome::Continue, "render screen");
+        assert_eq!(
+            expect_fatal::<(), _>(DriverOutcome::Fatal("fatal"), "input read"),
+            "fatal"
+        );
+    }
+
+    #[test]
+    #[should_panic(expected = "input read event returned an invalid outcome")]
+    fn event_specific_outcomes_reject_invalid_variant() {
+        expect_fatal::<(), ()>(DriverOutcome::Continue, "input read");
     }
 }
