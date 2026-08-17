@@ -40,7 +40,7 @@
 | TD-002 | P0 | 完了 | M | 行動不能時間YAMLの異常が回復可能なエラーではなくpanicになる |
 | TD-003 | P0 | 完了| L | 永続化YAMLの不正値が黙って既定値や新規UUIDへ変換される |
 | TD-004 | P1 | 完了 | XL | `Task`の木構造と内部可変性が暗黙の共有状態とpanic前提を作っている |
-| TD-005 | P1 | 未着手 | XL | CLIコントローラーへ責務が集中している |
+| TD-005 | P1 | 完了 | XL | CLIコントローラーへ責務が集中している |
 | TD-006 | P1 | 完了 | L | CLIの入力・application・出力エラーが握り潰される |
 | TD-007 | P1 | 完了 | L | CLIとMCPでrepository transactionが別々に組み立てられている |
 | TD-008 | P1 | 完了 | M | CIがリポジトリ規約を満たさず、ビルド再現性も固定されていない |
@@ -260,6 +260,9 @@
 
 - 優先度: `P1`
 - 概算規模: `XL`
+- 完了日: 2026-08-18
+- 対応: binary entrypointをprivate module宣言と`runtime::application()`呼び出しへ限定した。CLI入力をtyped commandへ変換するparser、typed context経由でcommandを処理するhandler、`DisplayModel`とwriterを扱うrenderer、対話入力とterminal制御を担うinteractive driver、実行結果・repository transaction・外部I/Oを調停するruntimeへ境界を分割した。Spreadsheet A-J列の出力はrendererの専用formatterへ集約した。
+- 検証: 日本語・英語alias、typed fieldとparse error、各command群のdispatch、Spreadsheet A-J列、表示順・ANSI・改行・flush・broken pipe、interactive submit・refresh・終了、外部起動・保存時点・transaction errorの契約testを追加した。`cargo fmt --check`、`cargo clippy --locked --all-targets -- -D warnings`、`cargo test --locked`に成功した。
 
 #### 現状と根拠
 
