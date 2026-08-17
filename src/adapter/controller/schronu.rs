@@ -22,6 +22,10 @@ mod handler_contract_tests;
 #[path = "schronu/renderer_contract_tests.rs"]
 mod renderer_contract_tests;
 
+#[cfg(test)]
+#[path = "schronu/interactive_contract_tests.rs"]
+mod interactive_contract_tests;
+
 fn main() {
     runtime::application();
 }
