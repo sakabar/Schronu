@@ -4664,6 +4664,62 @@ impl SchronuWriter for FailingNewlineWriter {
 }
 
 #[cfg(test)]
+struct FlushTrackingWriter {
+    buffer: Vec<u8>,
+    flush_count: usize,
+    flush_error_kind: Option<std::io::ErrorKind>,
+    supports_ansi_color: bool,
+}
+
+#[cfg(test)]
+impl FlushTrackingWriter {
+    fn successful(supports_ansi_color: bool) -> Self {
+        Self {
+            buffer: vec![],
+            flush_count: 0,
+            flush_error_kind: None,
+            supports_ansi_color,
+        }
+    }
+
+    fn failing(error_kind: std::io::ErrorKind) -> Self {
+        Self {
+            buffer: vec![],
+            flush_count: 0,
+            flush_error_kind: Some(error_kind),
+            supports_ansi_color: true,
+        }
+    }
+}
+
+#[cfg(test)]
+impl Write for FlushTrackingWriter {
+    fn write(&mut self, buffer: &[u8]) -> std::io::Result<usize> {
+        self.buffer.extend_from_slice(buffer);
+        Ok(buffer.len())
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        self.flush_count += 1;
+        match self.flush_error_kind {
+            Some(kind) => Err(std::io::Error::new(kind, "flush failure")),
+            None => Ok(()),
+        }
+    }
+}
+
+#[cfg(test)]
+impl SchronuWriter for FlushTrackingWriter {
+    fn writeln_newline(&mut self, message: &str) -> Result<(), std::io::Error> {
+        writeln!(self, "{message}")
+    }
+
+    fn supports_ansi_color(&self) -> bool {
+        self.supports_ansi_color
+    }
+}
+
+#[cfg(test)]
 fn strip_ansi_escape_sequences(value: &str) -> String {
     Regex::new(r"\x1b\[[0-?]*[ -/]*[@-~]")
         .unwrap()
@@ -5322,6 +5378,214 @@ fn test_execute_改行出力の失敗を捕捉して後続出力を継続する(
     assert!(stdout.newline_call_count > 1);
     let output = String::from_utf8(stdout.buffer).unwrap();
     assert!(output.contains("<reset>"), "{output}");
+}
+
+#[test]
+fn task_tree表示commandは製品経路でtyped_fieldと表示modelを反映する() {
+    let now = Local.with_ymd_and_hms(2026, 8, 11, 12, 0, 0).unwrap();
+    let root = TaskHandle::new("ROOT").unwrap();
+    root.set_estimated_work_seconds(0);
+    let mut matched_attr = TaskAttr::new("BOUNDARY_MATCH");
+    matched_attr.set_estimated_work_seconds(15 * 60);
+    matched_attr.set_start_time(now);
+    let matched = root.create_as_last_child(matched_attr);
+    matched.sync_clock(now);
+    let mut other_attr = TaskAttr::new("BOUNDARY_OTHER");
+    other_attr.set_estimated_work_seconds(15 * 60);
+    other_attr.set_start_time(now);
+    let other = root.create_as_last_child(other_attr);
+    other.sync_clock(now);
+    let root_id = root.get_id().unwrap();
+    let matched_id = matched.get_id().unwrap();
+    let other_id = other.get_id().unwrap();
+    let mut task_repository = TestTaskRepository::new(root, now);
+    let mut free_time_manager = TestFreeTimeManager;
+    let mut focused_task_id_opt = Some(root_id);
+
+    let mut show_all_output = TestWriter::new();
+    execute(
+        &mut show_all_output,
+        &mut task_repository,
+        &mut free_time_manager,
+        &mut focused_task_id_opt,
+        &now,
+        "全 BOUNDARY_MATCH",
+    )
+    .unwrap();
+    let show_all_output = show_all_output.into_string();
+    assert!(show_all_output.contains("BOUNDARY_MATCH"));
+    assert!(!show_all_output.contains("BOUNDARY_OTHER"));
+
+    focused_task_id_opt = Some(root_id);
+    let mut tree_output = TestWriter::new();
+    execute(
+        &mut tree_output,
+        &mut task_repository,
+        &mut free_time_manager,
+        &mut focused_task_id_opt,
+        &now,
+        "樹",
+    )
+    .unwrap();
+    let tree_output = tree_output.into_string();
+    assert!(tree_output.contains("BOUNDARY_MATCH"), "{tree_output}");
+    assert!(tree_output.contains("BOUNDARY_OTHER"), "{tree_output}");
+
+    let mut list_output = TestWriter::new();
+    execute(
+        &mut list_output,
+        &mut task_repository,
+        &mut free_time_manager,
+        &mut focused_task_id_opt,
+        &now,
+        "今",
+    )
+    .unwrap();
+    assert!(list_output.into_string().contains("BOUNDARY_MATCH"));
+
+    let mut focus_output = TestWriter::new();
+    execute(
+        &mut focus_output,
+        &mut task_repository,
+        &mut free_time_manager,
+        &mut focused_task_id_opt,
+        &now,
+        &format!("見 {matched_id}"),
+    )
+    .unwrap();
+    assert_eq!(focused_task_id_opt, Some(matched_id));
+
+    other.set_orig_status(Status::Pending).unwrap();
+    let mut pick_output = TestWriter::new();
+    execute(
+        &mut pick_output,
+        &mut task_repository,
+        &mut free_time_manager,
+        &mut focused_task_id_opt,
+        &now,
+        &format!("選 {other_id}"),
+    )
+    .unwrap();
+    assert_eq!(focused_task_id_opt, Some(other_id));
+    assert_eq!(other.get_orig_status().unwrap(), Status::Todo);
+}
+
+#[test]
+fn calendarとbandは製品経路で代表出力とansi_capabilityを維持する() {
+    let now = Local.with_ymd_and_hms(2026, 8, 11, 12, 0, 0).unwrap();
+    let make_task = || {
+        let task = TaskHandle::new("BOUNDARY_DAILY").unwrap();
+        task.set_estimated_work_seconds(60 * 60);
+        task.set_start_time(now);
+        task.set_pending_until(now);
+        task.set_orig_status(Status::Pending);
+        task
+    };
+
+    let calendar = execute_calendar_command_for_test("暦", now, make_task(), 10 * 60);
+    assert!(calendar.contains("2026-08-11(火)"));
+    assert!(calendar.contains("日          \t空"));
+
+    let band = execute_calendar_command_with_ansi_color_for_test(
+        "帯",
+        now,
+        make_task(),
+        10 * 60,
+        true,
+    );
+    assert!(band.contains("凡例:"));
+    assert!(band.contains("\x1b[38;5;"));
+
+    let pipe_band = execute_calendar_command_with_ansi_color_for_test(
+        "帯",
+        now,
+        make_task(),
+        10 * 60,
+        false,
+    );
+    assert!(pipe_band.contains("凡例:"));
+    assert!(!pipe_band.contains("\x1b["));
+}
+
+#[test]
+fn task_tree表示commandは製品経路で必ず1回flushする() {
+    let now = Local.with_ymd_and_hms(2026, 8, 11, 12, 0, 0).unwrap();
+    let task = TaskHandle::new("flush対象").unwrap();
+    task.set_estimated_work_seconds(15 * 60);
+    task.set_start_time(now);
+    let task_id = task.get_id().unwrap();
+    let commands = [
+        "樹".to_string(),
+        "条".to_string(),
+        "根".to_string(),
+        "葉".to_string(),
+        "全".to_string(),
+        "尾".to_string(),
+        "今".to_string(),
+        "単".to_string(),
+        "暦".to_string(),
+        "帯".to_string(),
+        format!("見 {task_id}"),
+        format!("選 {task_id}"),
+        "親".to_string(),
+        "子".to_string(),
+        "深".to_string(),
+        "上 next 15".to_string(),
+    ];
+
+    for command in commands {
+        let mut task_repository = TestTaskRepository::new(task.clone(), now);
+        let mut free_time_manager = TestFreeTimeManager;
+        let mut focused_task_id_opt = Some(task_id);
+        let mut stdout = FlushTrackingWriter::successful(true);
+
+        execute(
+            &mut stdout,
+            &mut task_repository,
+            &mut free_time_manager,
+            &mut focused_task_id_opt,
+            &now,
+            &command,
+        )
+        .unwrap();
+
+        assert_eq!(stdout.flush_count, 1, "{command}");
+    }
+}
+
+#[test]
+fn task_tree表示commandはflush_errorとbroken_pipeを製品経路で分類する() {
+    let now = Local.with_ymd_and_hms(2026, 8, 11, 12, 0, 0).unwrap();
+    let task = TaskHandle::new("flush error対象").unwrap();
+    let task_id = task.get_id().unwrap();
+
+    let execute_with_error = |kind| {
+        let mut task_repository = TestTaskRepository::new(task.clone(), now);
+        let mut free_time_manager = TestFreeTimeManager;
+        let mut focused_task_id_opt = Some(task_id);
+        let mut stdout = FlushTrackingWriter::failing(kind);
+        let result = execute(
+            &mut stdout,
+            &mut task_repository,
+            &mut free_time_manager,
+            &mut focused_task_id_opt,
+            &now,
+            "樹",
+        );
+        (result, stdout.flush_count)
+    };
+
+    let (output_error, output_flush_count) = execute_with_error(std::io::ErrorKind::Other);
+    assert!(matches!(
+        output_error,
+        Err(CommandError::Output(error)) if error.kind() == std::io::ErrorKind::Other
+    ));
+    assert_eq!(output_flush_count, 1);
+
+    let (broken_pipe, broken_pipe_flush_count) =
+        execute_with_error(std::io::ErrorKind::BrokenPipe);
+    assert!(broken_pipe.is_ok());
+    assert_eq!(broken_pipe_flush_count, 1);
 }
 
 #[cfg(test)]
