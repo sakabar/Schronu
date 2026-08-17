@@ -1,12 +1,22 @@
 #[path = "schronu/command.rs"]
 mod command;
 
+#[path = "schronu/handler.rs"]
+mod handler;
+
+#[path = "schronu/renderer.rs"]
+mod renderer;
+
 #[path = "schronu/runtime.rs"]
 mod runtime;
 
 #[cfg(test)]
 #[path = "schronu/command_contract_tests.rs"]
 mod command_contract_tests;
+
+#[cfg(test)]
+#[path = "schronu/handler_contract_tests.rs"]
+mod handler_contract_tests;
 
 fn main() {
     runtime::application();
