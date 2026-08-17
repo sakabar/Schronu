@@ -6132,6 +6132,16 @@ fn test_execute_all_project_categoryで絞り込む() {
 
 #[test]
 fn test_execute_allはspreadsheet_a_j列を製品formatterで出力する() {
+    assert_show_all_spreadsheet_formatter_contract();
+}
+
+#[test]
+fn show_allの製品経路はspreadsheet_formatterを使う() {
+    assert_show_all_spreadsheet_formatter_contract();
+}
+
+#[cfg(test)]
+fn assert_show_all_spreadsheet_formatter_contract() {
     let now = Local.with_ymd_and_hms(2026, 8, 11, 12, 0, 0).unwrap();
     let task = TaskHandle::new("夕食  の 準備").unwrap();
     task.set_estimated_work_seconds(40 * 60);
