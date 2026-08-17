@@ -3,6 +3,36 @@ use termion::raw::RawTerminal;
 
 pub(super) const MAX_COL: u16 = 999;
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(super) struct SpreadsheetTaskRow<'a> {
+    pub(super) rank: &'a str,
+    pub(super) task_id: &'a str,
+    pub(super) icon: &'a str,
+    pub(super) remaining_time: &'a str,
+    pub(super) scheduled_time: &'a str,
+    pub(super) priority: &'a str,
+    pub(super) estimated_minutes: &'a str,
+    pub(super) project_number: &'a str,
+    pub(super) category: &'a str,
+    pub(super) task_name: &'a str,
+}
+
+pub(super) fn format_spreadsheet_task_row(row: &SpreadsheetTaskRow<'_>) -> String {
+    format!(
+        "{} {} {} {} {} {} {} {} {} {}",
+        row.rank,
+        row.task_id,
+        row.icon,
+        row.remaining_time,
+        row.scheduled_time,
+        row.priority,
+        row.estimated_minutes,
+        row.project_number,
+        row.category,
+        row.task_name,
+    )
+}
+
 pub(super) trait SchronuWriter: Write {
     fn writeln_newline(&mut self, message: &str) -> Result<(), std::io::Error>;
 

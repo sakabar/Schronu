@@ -29,13 +29,3 @@ fn spreadsheet_task_rowはaからjの10列を既存cli形式で出力する() {
         "J列はtask_name"
     );
 }
-
-#[test]
-fn show_allの製品経路はspreadsheet_formatterを使う() {
-    let runtime_source = include_str!("runtime.rs");
-
-    assert!(
-        runtime_source.contains("format_spreadsheet_task_row(&SpreadsheetTaskRow"),
-        "ShowAllを含むtask listの製品経路はrendererのSpreadsheet formatterを使う"
-    );
-}

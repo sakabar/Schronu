@@ -13,7 +13,8 @@ use super::handler::{
     TaskAttributeCommandContext, TaskListOrder, TaskTreeCommandContext,
 };
 use super::renderer::{
-    render_display_model, writeln_newline, ErrorCapturingWriter, SchronuWriter, MAX_COL,
+    format_spreadsheet_task_row, render_display_model, writeln_newline, ErrorCapturingWriter,
+    SchronuWriter, SpreadsheetTaskRow, MAX_COL,
 };
 use chrono::{
     DateTime, Datelike, Duration, Local, LocalResult, NaiveDate, TimeZone, Timelike, Weekday,
@@ -1589,13 +1590,13 @@ mod tests {
     #[test]
     fn test_replace_task_list_icon_アイコン列だけを置き換える() {
         let message_prefix =
-            "0028 task-id / ____/__/__ 06/28(日)-23:11~23:30 0 19 05 資 ".to_string();
+            "0028 task-id / ____/__/__ 06/28(日)-23:11~23:30 0 19 05 資 夕食  の 準備".to_string();
 
         let actual = replace_task_list_icon(&message_prefix, "A");
 
         assert_eq!(
             actual,
-            "0028 task-id A ____/__/__ 06/28(日)-23:11~23:30 0 19 05 資 "
+            "0028 task-id A ____/__/__ 06/28(日)-23:11~23:30 0 19 05 資 夕食  の 準備"
         );
     }
 
@@ -1923,6 +1924,7 @@ struct TaskListDisplayRow {
 
 impl TaskListDisplayRow {
     // 表示行の全属性を呼び出し側で確定させるため、引数を個別に受け取る。
+    #[cfg(test)]
     #[allow(clippy::too_many_arguments)]
     fn new_task(
         scheduled_start: DateTime<Local>,
@@ -1974,6 +1976,33 @@ impl TaskListDisplayRow {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
+    fn new_spreadsheet_task(
+        scheduled_start: DateTime<Local>,
+        subjective_naive_date: NaiveDate,
+        rank: usize,
+        id: Uuid,
+        priority: i64,
+        work_seconds: i64,
+        project_category_opt: Option<ProjectCategory>,
+        message: String,
+    ) -> Self {
+        TaskListDisplayRow {
+            scheduled_start,
+            subjective_naive_date_opt: Some(subjective_naive_date),
+            rank,
+            id,
+            priority,
+            work_seconds,
+            project_category_opt,
+            is_real_task: true,
+            give_up_candidate: false,
+            message_prefix: message,
+            task_name: String::new(),
+            message: String::new(),
+        }
+    }
+
     fn render_message(&self) -> String {
         if self.is_real_task {
             let message_prefix = if self.give_up_candidate {
@@ -1991,13 +2020,33 @@ impl TaskListDisplayRow {
 }
 
 fn replace_task_list_icon(message_prefix: &str, icon: &str) -> String {
-    let mut parts = message_prefix.split_whitespace().collect::<Vec<_>>();
-    if parts.len() < 8 {
+    let mut token_ranges = message_prefix
+        .char_indices()
+        .filter(|(_, character)| !character.is_whitespace())
+        .map(|(index, _)| index)
+        .scan(None, |previous_index, index| {
+            let starts_token = previous_index.is_none_or(|previous_index| {
+                message_prefix[previous_index..index]
+                    .chars()
+                    .any(char::is_whitespace)
+            });
+            *previous_index = Some(index);
+            Some(starts_token.then_some(index))
+        })
+        .flatten();
+    let Some(icon_start) = token_ranges.nth(2) else {
         return message_prefix.to_string();
-    }
+    };
+    let icon_end = message_prefix[icon_start..]
+        .find(char::is_whitespace)
+        .map_or(message_prefix.len(), |offset| icon_start + offset);
 
-    parts[2] = icon;
-    format!("{} ", parts.join(" "))
+    format!(
+        "{}{}{}",
+        &message_prefix[..icon_start],
+        icon,
+        &message_prefix[icon_end..]
+    )
 }
 
 const PROJECT_CATEGORY_SUMMARY_LEN: usize = 6;
@@ -2901,23 +2950,32 @@ fn execute_show_all_tasks_with_config(
                 "____/__/__".to_string()
             };
 
-            let message_prefix: String = format!(
-                "{:04} {} {} {} {}({})-{}~{} {} {:02.0} {:02} {} ",
-                ind,
-                id,
-                icon,
-                deadline_string,
+            let spreadsheet_rank = format!("{ind:04}");
+            let spreadsheet_task_id = id.to_string();
+            let spreadsheet_scheduled_time = format!(
+                "{}({})-{}~{}",
                 start_datetime.format("%m/%d"),
                 get_weekday_jp(&start_datetime.date_naive()),
                 start_datetime.format("%H:%M"),
                 end_datetime.format("%H:%M"),
-                rank,
-                round_up_sec_as_minute(estimated_work_seconds),
-                task_priority,
-                project_category_symbol(task_project_category_opt)
             );
-            let msg = format!("{}{}", message_prefix, shorten_name);
-            let task_list_display_row = TaskListDisplayRow::new_task(
+            let spreadsheet_priority = rank.to_string();
+            let spreadsheet_estimated_minutes =
+                format!("{:02.0}", round_up_sec_as_minute(estimated_work_seconds));
+            let spreadsheet_project_number = format!("{task_priority:02}");
+            let message = format_spreadsheet_task_row(&SpreadsheetTaskRow {
+                rank: &spreadsheet_rank,
+                task_id: &spreadsheet_task_id,
+                icon,
+                remaining_time: &deadline_string,
+                scheduled_time: &spreadsheet_scheduled_time,
+                priority: &spreadsheet_priority,
+                estimated_minutes: &spreadsheet_estimated_minutes,
+                project_number: &spreadsheet_project_number,
+                category: project_category_symbol(task_project_category_opt),
+                task_name: &shorten_name,
+            });
+            let task_list_display_row = TaskListDisplayRow::new_spreadsheet_task(
                 *scheduled_start,
                 subjective_naive_date,
                 *rank,
@@ -2925,9 +2983,11 @@ fn execute_show_all_tasks_with_config(
                 task_priority,
                 estimated_work_seconds,
                 task_project_category_opt,
-                message_prefix,
-                shorten_name,
+                message,
             );
+            let msg = &task_list_display_row.message_prefix;
+            let has_deadline_icon = icon == deadline_icon || icon == breaking_deadline_icon;
+            let has_task_list_icon = has_deadline_icon || icon == today_leaf_icon;
 
             match pattern_opt {
                 Some(pattern) => {
@@ -2945,16 +3005,11 @@ fn execute_show_all_tasks_with_config(
                             task_list_display_rows.push(task_list_display_row.clone());
                         }
                     } else if pattern == "印" {
-                        if msg.contains(&format!(" {} ", deadline_icon))
-                            || msg.contains(&format!(" {} ", breaking_deadline_icon))
-                            || msg.contains(&format!(" {} ", today_leaf_icon))
-                        {
+                        if has_task_list_icon {
                             task_list_display_rows.push(task_list_display_row.clone());
                         }
                     } else if pattern == "〆" {
-                        if msg.contains(&format!(" {} ", deadline_icon))
-                            || msg.contains(&format!(" {} ", breaking_deadline_icon))
-                        {
+                        if has_deadline_icon {
                             task_list_display_rows.push(task_list_display_row.clone());
                         }
                     } else if is_daily_summary_func {
@@ -6072,6 +6127,30 @@ fn test_execute_all_project_categoryで絞り込む() {
 
     assert!(matched.output.contains("カテゴリ対象タスク"));
     assert!(!unmatched.output.contains("カテゴリ対象タスク"));
+}
+
+#[test]
+fn test_execute_allはspreadsheet_a_j列を製品formatterで出力する() {
+    let now = Local.with_ymd_and_hms(2026, 8, 11, 12, 0, 0).unwrap();
+    let task = TaskHandle::new("夕食  の 準備").unwrap();
+    task.set_estimated_work_seconds(40 * 60);
+    task.set_start_time(now);
+    task.set_priority(1);
+    task.set_project_category_opt(Some(ProjectCategory::Investment));
+    task.sync_clock(now);
+    let task_id = task.get_id().unwrap();
+
+    let result = execute_command_for_test(task, now, Some(task_id), "全");
+    let task_row = result
+        .output
+        .lines()
+        .find(|line| line.contains(&task_id.to_string()))
+        .expect("ShowAll task row");
+
+    assert_eq!(
+        task_row,
+        format!("0000 {task_id} A ____/__/__ 08/11(火)-12:00~12:40 0 40 01 資 夕食  の 準備")
+    );
 }
 
 #[test]
