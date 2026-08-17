@@ -265,7 +265,7 @@
 - 対応: binary entrypointをprivate module宣言と`runtime::application()`呼び出しへ限定した。CLI入力をtyped commandへ変換するparser、typed context経由でcommandを処理するhandler、`DisplayModel`とwriterを扱うrenderer、対話入力とterminal制御を担うinteractive driver、実行結果・repository transaction・外部I/Oを調停するruntimeへ境界を分割した。Spreadsheet A-J列の出力はrendererの専用formatterへ集約した。
 - 検証: 日本語・英語alias、typed fieldとparse error、各command群のdispatch、Spreadsheet A-J列、表示順・ANSI・改行・flush・broken pipe、interactive submit・refresh・終了、外部起動・保存時点・transaction errorの契約testを追加した。`cargo fmt --check`、`cargo clippy --locked --all-targets -- -D warnings`、`cargo test --locked`に成功した。
 
-#### 現状と根拠
+#### 対応前の現状と根拠
 
 - `src/adapter/controller/schronu.rs`は約10,500行あり、1つのbinary entrypointへコマンドparse、日時parse、application呼出し、表示整形、terminal raw mode、入力thread、外部URL起動、repository transaction、テストfixtureが同居する。
 - `execute_with_config`は`src/adapter/controller/schronu.rs:6212`から始まる巨大な文字列matchで、日本語・英語alias、引数個数、parse、domain mutation、表示を同時に扱う。
