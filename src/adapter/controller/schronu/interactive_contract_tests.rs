@@ -18,11 +18,14 @@ fn interactive_terminal_driver_is_isolated_from_runtime() {
         "termion::event::Key",
         "termion::input::TermRead",
         "termion::raw::IntoRawMode",
+        "termion::raw::RawTerminal",
         "std::io::stdin().keys()",
         "recv_timeout",
         "fn render_prompt(",
         "fn get_byte_offset_for_insert(",
         "fn get_byte_offset_for_deletion(",
+        "termion::cursor",
+        "termion::clear",
     ] {
         assert!(
             interactive_source.contains(required),

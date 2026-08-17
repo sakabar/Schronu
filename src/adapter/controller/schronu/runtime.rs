@@ -12,9 +12,15 @@ use super::handler::{
     FinishPlacementCommandContext, FocusRequest, ProjectCommandContext,
     TaskAttributeCommandContext, TaskListOrder, TaskTreeCommandContext,
 };
+use super::interactive;
+#[cfg(test)]
+use super::interactive::{
+    backward_width, get_byte_offset_for_deletion, get_byte_offset_for_insert, get_forward_width,
+    get_width_for_rerender, idle_refresh_deadline, idle_wait_duration,
+};
 use super::renderer::{
     format_spreadsheet_task_row, render_display_model, render_plain_display_model, writeln_newline,
-    DisplayModel, ErrorCapturingWriter, SchronuWriter, SpreadsheetTaskRow, MAX_COL,
+    DisplayModel, ErrorCapturingWriter, SchronuWriter, SpreadsheetTaskRow,
 };
 use chrono::{
     DateTime, Datelike, Duration, Local, LocalResult, NaiveDate, TimeZone, Timelike, Weekday,
@@ -68,23 +74,17 @@ use std::io::{stdout, Write};
 #[cfg(test)]
 use std::path::PathBuf;
 use std::process;
-use std::sync::{
-    mpsc::{self, RecvTimeoutError},
-    OnceLock,
-};
-use std::thread;
+use std::sync::OnceLock;
 
 #[path = "../storage_directory.rs"]
 mod storage_directory;
-use std::time::{Duration as StdDuration, Instant};
+use std::time::Duration as StdDuration;
+#[cfg(test)]
+use std::time::Instant;
 use storage_directory::resolve_project_storage_directory;
 use termion::color;
-use termion::event::Key;
-use termion::input::TermRead;
-use termion::raw::IntoRawMode;
 use termion::style;
 use unicode_width::UnicodeWidthChar;
-use unicode_width::UnicodeWidthStr;
 use url::Url;
 use uuid::Uuid;
 
@@ -92,7 +92,6 @@ const MAX_ARRANGE_ESTIMATED_WORK_MINUTES: i64 = 1439;
 #[cfg(test)]
 const DEFAULT_LOWEST_PRIORITY_RECENT_DAYS: i64 = 0;
 const FOCUS_PROGRESS_BAR_SEGMENTS: usize = 100;
-const IDLE_REFRESH_INTERVAL: StdDuration = StdDuration::from_secs(60);
 const CLI_LOCK_TIMEOUT: StdDuration = StdDuration::from_secs(1);
 
 static ACTIVE_CONFIG: OnceLock<SchronuConfig> = OnceLock::new();
@@ -405,19 +404,6 @@ impl std::error::Error for RunError {
             Self::Interrupted => None,
         }
     }
-}
-
-fn backward_width(line: &str, cursor_x: usize) -> u16 {
-    if line.chars().count() == 0 || cursor_x == 0 {
-        return 0;
-    }
-
-    let ch_opt = line.chars().nth(cursor_x - 1);
-
-    (match ch_opt {
-        Some(ch) => UnicodeWidthChar::width(ch).unwrap_or(0),
-        None => 0,
-    }) as u16
 }
 
 fn get_weekday_jp(date: &NaiveDate) -> &str {
@@ -2364,16 +2350,6 @@ fn test_calculate_lq_opt_負荷率が1以上ならinf扱いになること() {
     assert_eq!(calculate_lq_opt(f64::INFINITY), None);
 }
 
-fn get_byte_offset_for_insert(line: &str, cursor_x: usize) -> usize {
-    let char_indices_vec = line.char_indices().collect::<Vec<_>>();
-
-    if !line.is_empty() && cursor_x < char_indices_vec.len() {
-        char_indices_vec[cursor_x].0
-    } else {
-        line.len()
-    }
-}
-
 #[test]
 fn test_get_byte_offset_for_insert_正常系1() {
     // "|"
@@ -2414,16 +2390,6 @@ fn test_get_byte_offset_for_insert_正常系4() {
     assert_eq!(actual, expected);
 }
 
-fn get_width_for_rerender(header: &str, line: &str, cursor_x: usize) -> u16 {
-    let mut width = UnicodeWidthStr::width(header);
-
-    for ch in line.chars().take(cursor_x) {
-        width += UnicodeWidthChar::width(ch).unwrap_or(0);
-    }
-
-    width as u16
-}
-
 #[test]
 fn test_get_width_for_rerender_正常系_アスキー() {
     let header = String::from("schronu>");
@@ -2455,20 +2421,6 @@ fn test_get_width_for_rerender_正常系_多バイト2() {
     let actual = get_width_for_rerender(&header, &line, cursor_x);
     let expected = 12; // "schronu>あい"
     assert_eq!(actual, expected);
-}
-
-fn get_forward_width(line: &str, cursor_x: usize) -> u16 {
-    if !line.is_empty() && cursor_x < line.chars().count() {
-        let ch_opt = line.chars().nth(cursor_x);
-        let n = match ch_opt {
-            Some(ch) => UnicodeWidthChar::width(ch).unwrap_or(0),
-            None => 0,
-        } as u16;
-
-        return n;
-    }
-
-    0
 }
 
 #[test]
@@ -9284,18 +9236,6 @@ fn test_execute_show_all_過ぎた年なし日付は翌年の予定を表示す�
 }
 
 // 削除できない時はNoneを返す。例えば、文字列が空の時
-fn get_byte_offset_for_deletion(line: &str, cursor_x: usize) -> Option<usize> {
-    let byte_offset_opt = if line.is_empty() || cursor_x == 0 {
-        None
-    } else {
-        let char_indices_vec = line.char_indices().collect::<Vec<_>>();
-
-        Some(char_indices_vec[cursor_x - 1].0)
-    };
-
-    byte_offset_opt
-}
-
 #[test]
 fn get_byte_offset_for_deletion_noneを返す場合() {
     let line = "あ";
@@ -10087,11 +10027,7 @@ fn test_interactive_submitは外部完了によるfocus切替時に開始時刻�
 fn test_interactive_refreshとctrl_dは外部完了によるfocus切替時に開始時刻を更新する() {
     for event in [
         InteractiveRepositoryEvent::Refresh,
-        InteractiveRepositoryEvent::Exit {
-            header: "schronu> ",
-            line: "",
-            cursor_x: 0,
-        },
+        InteractiveRepositoryEvent::Exit,
     ] {
         let storage_dir = TestStorageDir::new();
         std::fs::create_dir_all(&storage_dir.path).unwrap();
@@ -10394,11 +10330,7 @@ fn test_interactive_ctrl_dは製品event経路でreload後に保存して終了�
             focus_started_datetime: &mut focus_started_datetime,
             focus_selection_mode: &mut focus_selection_mode,
         },
-        InteractiveRepositoryEvent::Exit {
-            header: "schronu> ",
-            line: "",
-            cursor_x: 0,
-        },
+        InteractiveRepositoryEvent::Exit,
     );
 
     assert!(matches!(outcome, InteractiveRepositoryEventOutcome::Exit));
@@ -10640,35 +10572,6 @@ fn test_make_messages_about_focus_見積時間が0なら進捗を未算定とし
     assert_eq!(actual[1], format!("[{}] --%", "-".repeat(100)));
 }
 
-fn idle_refresh_deadline(now: Instant) -> Instant {
-    now + IDLE_REFRESH_INTERVAL
-}
-
-fn idle_wait_duration(deadline: Instant, now: Instant) -> StdDuration {
-    deadline.saturating_duration_since(now)
-}
-
-fn render_prompt(stdout: &mut dyn SchronuWriter, header: &str, line: &str, cursor_x: usize) {
-    write!(
-        stdout,
-        "{}{}",
-        termion::cursor::Left(MAX_COL),
-        termion::clear::CurrentLine,
-    )
-    .unwrap();
-
-    let width = get_width_for_rerender(header, line, cursor_x);
-    write!(stdout, "{}{}", header, line).unwrap();
-    write!(
-        stdout,
-        "{}{}",
-        termion::cursor::Left(MAX_COL),
-        termion::cursor::Right(width)
-    )
-    .unwrap();
-    stdout.flush().unwrap();
-}
-
 fn try_save_before_exit(
     stdout: &mut dyn SchronuWriter,
     task_repository: &dyn TaskRepositoryTrait,
@@ -10727,16 +10630,9 @@ fn try_exit_interactive(
     task_repository: &mut dyn TaskRepositoryTrait,
     free_time_manager: &mut dyn FreeTimeManagerTrait,
     focused_task_id_opt: &mut Option<Uuid>,
-    header: &str,
-    line: &str,
-    cursor_x: usize,
     now: DateTime<Local>,
 ) -> bool {
-    if !line.is_empty() {
-        return false;
-    }
     if !try_save_before_exit(stdout, task_repository) {
-        render_prompt(stdout, header, line, cursor_x);
         return false;
     }
 
@@ -10812,28 +10708,13 @@ struct FocusRenderState<'a> {
     focus_started_datetime: &'a mut DateTime<Local>,
 }
 
-struct PromptRenderState<'a> {
-    header: &'a str,
-    line: &'a str,
-    cursor_x: usize,
-}
-
 fn render_interactive_screen(
     stdout: &mut dyn SchronuWriter,
     task_repository: &mut dyn TaskRepositoryTrait,
     free_time_manager: &mut dyn FreeTimeManagerTrait,
     focus_state: FocusRenderState,
-    prompt_state: PromptRenderState,
     now: DateTime<Local>,
 ) {
-    write!(
-        stdout,
-        "{}{}",
-        termion::clear::All,
-        termion::cursor::Goto(1, 1)
-    )
-    .unwrap();
-
     let result = execute_show_all_tasks(
         stdout,
         focus_state.focused_task_id_opt,
@@ -10850,12 +10731,6 @@ fn render_interactive_screen(
         focus_state.last_focused_task_id_opt,
         focus_state.focus_started_datetime,
         now,
-    );
-    render_prompt(
-        stdout,
-        prompt_state.header,
-        prompt_state.line,
-        prompt_state.cursor_x,
     );
 }
 
@@ -10883,11 +10758,6 @@ fn test_render_interactive_screen_起動時と自動更新時の既定表示は�
             focused_task_id_opt: &mut focused_task_id_opt,
             last_focused_task_id_opt: &mut last_focused_task_id_opt,
             focus_started_datetime: &mut focus_started_datetime,
-        },
-        PromptRenderState {
-            header: "schronu> ",
-            line: "",
-            cursor_x: 0,
         },
         now,
     );
@@ -10962,23 +10832,6 @@ fn test_idle_wait_duration_期限を過ぎていれば0秒を返す() {
         idle_wait_duration(deadline, now + StdDuration::from_secs(16)),
         StdDuration::ZERO
     );
-}
-
-#[test]
-fn test_render_prompt_日本語入力中のカーソル位置を復元する() {
-    let mut stdout = TestWriter::new();
-
-    render_prompt(&mut stdout, "schronu> ", "あいう", 1);
-
-    let actual = String::from_utf8(stdout.buffer).unwrap();
-    let expected = format!(
-        "{}{}schronu> あいう{}{}",
-        termion::cursor::Left(MAX_COL),
-        termion::clear::CurrentLine,
-        termion::cursor::Left(MAX_COL),
-        termion::cursor::Right(11),
-    );
-    assert_eq!(actual, expected);
 }
 
 #[test]
@@ -11087,22 +10940,16 @@ fn test_try_exit_interactive_保存失敗後の再試行で成功する() {
     let mut free_time_manager = TestFreeTimeManager;
     let mut focused_task_id_opt = Some(task_id);
     let mut stdout = TestWriter::new();
-    let keys = [Key::Ctrl('d'), Key::Ctrl('d')];
     let mut exited = false;
 
-    for key in keys {
-        if key == Key::Ctrl('d')
-            && try_exit_interactive(
-                &mut stdout,
-                &mut task_repository,
-                &mut free_time_manager,
-                &mut focused_task_id_opt,
-                "schronu> ",
-                "",
-                0,
-                now,
-            )
-        {
+    for _attempt in 0..2 {
+        if try_exit_interactive(
+            &mut stdout,
+            &mut task_repository,
+            &mut free_time_manager,
+            &mut focused_task_id_opt,
+            now,
+        ) {
             exited = true;
             break;
         }
@@ -11120,7 +10967,6 @@ fn test_try_exit_interactive_保存失敗後の再試行で成功する() {
     );
     let output = stdout.into_string();
     assert_eq!(output.matches("[Error]").count(), 1);
-    assert!(output.contains("schronu> "));
 }
 
 #[test]
@@ -11142,9 +10988,6 @@ fn test_try_exit_interactive_ctrl_d終了時は帯を表示する() {
         &mut task_repository,
         &mut free_time_manager,
         &mut focused_task_id_opt,
-        "schronu> ",
-        "",
-        0,
         now,
     );
 
@@ -11224,15 +11067,9 @@ struct InteractiveRepositoryState<'a> {
 }
 
 enum InteractiveRepositoryEvent<'a> {
-    Submit {
-        line: &'a str,
-    },
+    Submit { line: &'a str },
     Refresh,
-    Exit {
-        header: &'a str,
-        line: &'a str,
-        cursor_x: usize,
-    },
+    Exit,
     InputDisconnected,
     InputRead(std::io::Error),
     Interrupted,
@@ -11327,14 +11164,7 @@ fn handle_interactive_repository_event(
                 Err(error) => InteractiveRepositoryEventOutcome::Retry(error),
             }
         }
-        InteractiveRepositoryEvent::Exit {
-            header,
-            line,
-            cursor_x,
-        } => {
-            if !line.is_empty() {
-                return InteractiveRepositoryEventOutcome::Continue;
-            }
+        InteractiveRepositoryEvent::Exit => {
             let now = Local::now();
             match reload_repository_for_cli(task_repository, now) {
                 Ok(_storage_lock) => {
@@ -11344,9 +11174,6 @@ fn handle_interactive_repository_event(
                         task_repository,
                         free_time_manager,
                         state.focused_task_id_opt,
-                        header,
-                        line,
-                        cursor_x,
                         now,
                     ) {
                         InteractiveRepositoryEventOutcome::Exit
@@ -11385,16 +11212,7 @@ fn interactive_application(
     free_time_manager: &mut dyn FreeTimeManagerTrait,
 ) -> Result<(), RunError> {
     let now = Local::now();
-
-    // let next_morning = get_next_morning_datetime(now)
-    //     .with_hour(6)
-    //     .expect("invalid hour")
-    //     .with_minute(0)
-    //     .expect("invalid minute");
-    // task_repository.sync_clock(next_morning);
-
     drop(reload_repository_for_cli(task_repository, now)?);
-
     load_busy_time_slots_for_interactive_application(
         free_time_manager,
         active_config()
@@ -11403,430 +11221,82 @@ fn interactive_application(
             .expect("config path was validated"),
     )?;
 
-    // RawModeを有効にする
-    let mut stdout = stdout().into_raw_mode().unwrap();
-
-    write!(stdout, "{}", termion::cursor::BlinkingBar).unwrap();
-    stdout.flush().unwrap();
-
-    // 起動直後はrhoの値を見たいので葉は出力しない
-    // execute_show_leaf_tasks(&mut stdout, task_repository, free_time_manager);
-
-    // 優先度の最も高いPJを一つ選ぶ
-    // 一番下のタスクにフォーカスが自動的に当たる
-
     let mut focus_selection_mode = FocusSelectionMode::HighestPriority;
-    let mut focused_task_id_opt: Option<Uuid> =
-        select_focus_task_id(task_repository, focus_selection_mode)
-            .map_err(CommandError::from)
-            .map_err(RunError::from)?;
+    let mut focused_task_id_opt = select_focus_task_id(task_repository, focus_selection_mode)
+        .map_err(CommandError::from)
+        .map_err(RunError::from)?;
+    let mut last_focused_task_id_opt = None;
+    let mut focus_started_datetime = now;
 
-    let mut last_focused_task_id_opt: Option<Uuid> = None;
-    let mut focus_started_datetime: DateTime<Local> = now;
-
-    let header: &str = "schronu> ";
-    let mut line = String::from("");
-
-    // 画面に表示されている「文字」単位でのカーソル。
-    let mut cursor_x: usize = 0;
-
-    render_interactive_screen(
-        &mut stdout,
-        task_repository,
-        free_time_manager,
-        FocusRenderState {
-            focused_task_id_opt: &mut focused_task_id_opt,
-            last_focused_task_id_opt: &mut last_focused_task_id_opt,
-            focus_started_datetime: &mut focus_started_datetime,
-        },
-        PromptRenderState {
-            header,
-            line: &line,
-            cursor_x,
-        },
-        now,
-    );
-
-    let (key_sender, key_receiver) = mpsc::channel();
-    thread::spawn(move || {
-        for key_result in std::io::stdin().keys() {
-            if key_sender.send(key_result).is_err() {
-                break;
-            }
+    interactive::run(now, |stdout, event| {
+        if let interactive::DriverEvent::RenderScreen { now } = event {
+            render_interactive_screen(
+                stdout,
+                task_repository,
+                free_time_manager,
+                FocusRenderState {
+                    focused_task_id_opt: &mut focused_task_id_opt,
+                    last_focused_task_id_opt: &mut last_focused_task_id_opt,
+                    focus_started_datetime: &mut focus_started_datetime,
+                },
+                now,
+            );
+            return interactive::DriverOutcome::Continue;
         }
-    });
 
-    let mut next_refresh_at = idle_refresh_deadline(Instant::now());
-    let mut loop_error_opt = None;
-
-    // キー入力を受け付け、無操作が60秒続いたら画面を再描画する
-    loop {
-        let wait_duration = idle_wait_duration(next_refresh_at, Instant::now());
-        let key = match key_receiver.recv_timeout(wait_duration) {
-            Ok(Ok(key)) => {
-                next_refresh_at = idle_refresh_deadline(Instant::now());
-                key
+        let repository_event = match event {
+            interactive::DriverEvent::Refresh => InteractiveRepositoryEvent::Refresh,
+            interactive::DriverEvent::Submit { line } => {
+                InteractiveRepositoryEvent::Submit { line }
             }
-            Ok(Err(input_error)) => {
-                let outcome = handle_interactive_repository_event(
-                    &mut stdout,
-                    task_repository,
-                    free_time_manager,
-                    InteractiveRepositoryState {
-                        focused_task_id_opt: &mut focused_task_id_opt,
-                        last_focused_task_id_opt: &mut last_focused_task_id_opt,
-                        focus_started_datetime: &mut focus_started_datetime,
-                        focus_selection_mode: &mut focus_selection_mode,
-                    },
-                    InteractiveRepositoryEvent::InputRead(input_error),
-                );
-                if let InteractiveRepositoryEventOutcome::Fatal(error) = outcome {
-                    loop_error_opt = Some(error);
-                }
-                break;
+            interactive::DriverEvent::Exit => InteractiveRepositoryEvent::Exit,
+            interactive::DriverEvent::Interrupted => InteractiveRepositoryEvent::Interrupted,
+            interactive::DriverEvent::InputDisconnected => {
+                InteractiveRepositoryEvent::InputDisconnected
             }
-            Err(RecvTimeoutError::Timeout) => {
-                let outcome = handle_interactive_repository_event(
-                    &mut stdout,
-                    task_repository,
-                    free_time_manager,
-                    InteractiveRepositoryState {
-                        focused_task_id_opt: &mut focused_task_id_opt,
-                        last_focused_task_id_opt: &mut last_focused_task_id_opt,
-                        focus_started_datetime: &mut focus_started_datetime,
-                        focus_selection_mode: &mut focus_selection_mode,
-                    },
-                    InteractiveRepositoryEvent::Refresh,
-                );
-                match outcome {
-                    InteractiveRepositoryEventOutcome::Continue => {}
-                    InteractiveRepositoryEventOutcome::Retry(error) => {
-                        writeln_newline(&mut stdout, &format!("[Error] {error}")).unwrap();
-                        render_prompt(&mut stdout, header, &line, cursor_x);
-                        next_refresh_at = idle_refresh_deadline(Instant::now());
-                        continue;
-                    }
-                    InteractiveRepositoryEventOutcome::Fatal(error) => {
-                        loop_error_opt = Some(error);
-                        break;
-                    }
-                    _ => unreachable!("refresh event returned an invalid outcome"),
-                }
-                render_interactive_screen(
-                    &mut stdout,
-                    task_repository,
-                    free_time_manager,
-                    FocusRenderState {
-                        focused_task_id_opt: &mut focused_task_id_opt,
-                        last_focused_task_id_opt: &mut last_focused_task_id_opt,
-                        focus_started_datetime: &mut focus_started_datetime,
-                    },
-                    PromptRenderState {
-                        header,
-                        line: &line,
-                        cursor_x,
-                    },
-                    Local::now(),
-                );
-                next_refresh_at = idle_refresh_deadline(Instant::now());
-                continue;
+            interactive::DriverEvent::InputRead(error) => {
+                InteractiveRepositoryEvent::InputRead(error)
             }
-            Err(RecvTimeoutError::Disconnected) => {
-                let outcome = handle_interactive_repository_event(
-                    &mut stdout,
-                    task_repository,
-                    free_time_manager,
-                    InteractiveRepositoryState {
-                        focused_task_id_opt: &mut focused_task_id_opt,
-                        last_focused_task_id_opt: &mut last_focused_task_id_opt,
-                        focus_started_datetime: &mut focus_started_datetime,
-                        focus_selection_mode: &mut focus_selection_mode,
-                    },
-                    InteractiveRepositoryEvent::InputDisconnected,
-                );
-                if let InteractiveRepositoryEventOutcome::Fatal(error) = outcome {
-                    loop_error_opt = Some(error);
-                }
-                break;
-            }
+            interactive::DriverEvent::RenderScreen { .. } => unreachable!(),
         };
+        let outcome = handle_interactive_repository_event(
+            stdout,
+            task_repository,
+            free_time_manager,
+            InteractiveRepositoryState {
+                focused_task_id_opt: &mut focused_task_id_opt,
+                last_focused_task_id_opt: &mut last_focused_task_id_opt,
+                focus_started_datetime: &mut focus_started_datetime,
+                focus_selection_mode: &mut focus_selection_mode,
+            },
+            repository_event,
+        );
 
-        match key {
-            Key::Ctrl('d') => {
-                let outcome = handle_interactive_repository_event(
-                    &mut stdout,
-                    task_repository,
-                    free_time_manager,
-                    InteractiveRepositoryState {
-                        focused_task_id_opt: &mut focused_task_id_opt,
-                        last_focused_task_id_opt: &mut last_focused_task_id_opt,
-                        focus_started_datetime: &mut focus_started_datetime,
-                        focus_selection_mode: &mut focus_selection_mode,
-                    },
-                    InteractiveRepositoryEvent::Exit {
-                        header,
-                        line: &line,
-                        cursor_x,
-                    },
-                );
-                match outcome {
-                    InteractiveRepositoryEventOutcome::Exit => break,
-                    InteractiveRepositoryEventOutcome::Retry(error) => {
-                        writeln_newline(&mut stdout, &format!("[Error] {error}")).unwrap();
-                        render_prompt(&mut stdout, header, &line, cursor_x);
-                    }
-                    InteractiveRepositoryEventOutcome::Fatal(error) => {
-                        loop_error_opt = Some(error);
-                        break;
-                    }
-                    InteractiveRepositoryEventOutcome::Continue => {}
-                    _ => unreachable!("exit event returned an invalid outcome"),
-                }
-            }
-            Key::Ctrl('c') => {
-                // 未送信の入力を破棄し、terminalを後始末してから異常終了する
-                let outcome = handle_interactive_repository_event(
-                    &mut stdout,
-                    task_repository,
-                    free_time_manager,
-                    InteractiveRepositoryState {
-                        focused_task_id_opt: &mut focused_task_id_opt,
-                        last_focused_task_id_opt: &mut last_focused_task_id_opt,
-                        focus_started_datetime: &mut focus_started_datetime,
-                        focus_selection_mode: &mut focus_selection_mode,
-                    },
-                    InteractiveRepositoryEvent::Interrupted,
-                );
-                if let InteractiveRepositoryEventOutcome::Fatal(error) = outcome {
-                    loop_error_opt = Some(error);
-                }
-                break;
-            }
-            // Key::Up => write!(stdout, "{}", termion::cursor::Up(1)).unwrap(),
-            // Key::Down => write!(stdout, "{}", termion::cursor::Down(1)).unwrap(),
-            Key::Left | Key::Ctrl('b') => {
-                let width = backward_width(&line, cursor_x);
-
-                if width > 0 {
-                    cursor_x -= 1;
-                    write!(stdout, "{}", termion::cursor::Left(width)).unwrap();
-                    stdout.flush().unwrap();
-                }
-            }
-            Key::Right | Key::Ctrl('f') => {
-                let width = get_forward_width(&line, cursor_x);
-
-                if width > 0 {
-                    cursor_x += 1;
-                    write!(stdout, "{}", termion::cursor::Right(width)).unwrap();
-                    stdout.flush().unwrap();
-                }
-            }
-            Key::Ctrl('a') => {
-                cursor_x = 0;
-
-                write!(
-                    stdout,
-                    "{}{}",
-                    termion::cursor::Left(MAX_COL),
-                    termion::clear::CurrentLine
-                )
-                .unwrap();
-
-                let width = get_width_for_rerender(header, &line, cursor_x);
-                write!(stdout, "{}{}", header, line).unwrap();
-                write!(
-                    stdout,
-                    "{}{}",
-                    termion::cursor::Left(MAX_COL),
-                    termion::cursor::Right(width)
-                )
-                .unwrap();
-                stdout.flush().unwrap();
-            }
-            Key::Ctrl('e') => {
-                loop {
-                    let width = get_forward_width(&line, cursor_x);
-
-                    if width == 0 {
-                        break;
-                    }
-                    cursor_x += 1;
-                    write!(stdout, "{}", termion::cursor::Right(width)).unwrap();
-                }
-                stdout.flush().unwrap();
-            }
-            Key::Ctrl('u') => {
-                cursor_x = 0;
-                line.clear();
-
-                write!(
-                    stdout,
-                    "{}{}",
-                    termion::cursor::Left(MAX_COL),
-                    termion::clear::CurrentLine,
-                )
-                .unwrap();
-
-                let width = get_width_for_rerender(header, &line, cursor_x);
-                write!(stdout, "{}{}", header, line).unwrap();
-                write!(
-                    stdout,
-                    "{}{}",
-                    termion::cursor::Left(MAX_COL),
-                    termion::cursor::Right(width)
-                )
-                .unwrap();
-                stdout.flush().unwrap();
-            }
-            Key::Ctrl('k') => {
-                // カーソルの位置を変えずに後ろをカットする
-                line = line.chars().take(cursor_x).collect();
-
-                write!(
-                    stdout,
-                    "{}{}",
-                    termion::cursor::Left(MAX_COL),
-                    termion::clear::CurrentLine,
-                )
-                .unwrap();
-
-                let width = get_width_for_rerender(header, &line, cursor_x);
-                write!(stdout, "{}{}", header, line).unwrap();
-                write!(
-                    stdout,
-                    "{}{}",
-                    termion::cursor::Left(MAX_COL),
-                    termion::cursor::Right(width)
-                )
-                .unwrap();
-                stdout.flush().unwrap();
-            }
-            Key::Backspace | Key::Ctrl('h') => {
-                let byte_offset_opt = get_byte_offset_for_deletion(&line, cursor_x);
-                if let Some(byte_offset) = byte_offset_opt {
-                    line.remove(byte_offset);
-                    cursor_x -= 1;
-                }
-
-                write!(
-                    stdout,
-                    "{}{}",
-                    termion::cursor::Left(MAX_COL),
-                    termion::clear::CurrentLine,
-                )
-                .unwrap();
-
-                let width = get_width_for_rerender(header, &line, cursor_x);
-                write!(stdout, "{}{}", header, line).unwrap();
-                write!(
-                    stdout,
-                    "{}{}",
-                    termion::cursor::Left(MAX_COL),
-                    termion::cursor::Right(width)
-                )
-                .unwrap();
-                stdout.flush().unwrap();
-            }
-            Key::Char('\n') | Key::Ctrl('m') => {
-                let outcome = handle_interactive_repository_event(
-                    &mut stdout,
-                    task_repository,
-                    free_time_manager,
-                    InteractiveRepositoryState {
-                        focused_task_id_opt: &mut focused_task_id_opt,
-                        last_focused_task_id_opt: &mut last_focused_task_id_opt,
-                        focus_started_datetime: &mut focus_started_datetime,
-                        focus_selection_mode: &mut focus_selection_mode,
-                    },
-                    InteractiveRepositoryEvent::Submit { line: &line },
-                );
-                let command = match outcome {
-                    InteractiveRepositoryEventOutcome::CommandExecuted(command) => command,
-                    InteractiveRepositoryEventOutcome::Fatal(error) => {
-                        loop_error_opt = Some(error);
-                        break;
-                    }
-                    InteractiveRepositoryEventOutcome::Retry(error) => {
-                        writeln_newline(&mut stdout, &format!("[Error] {error}")).unwrap();
-                        render_prompt(&mut stdout, header, &line, cursor_x);
-                        continue;
-                    }
-                    _ => unreachable!("submit event returned an invalid outcome"),
-                };
-
-                // スクロールするのが面倒なので、新や突のように付加情報を表示するコマンドの直後は葉を表示しない
-                // Todo: "new" や  "unplanned" の場合にも対応する
+        match outcome {
+            InteractiveRepositoryEventOutcome::Continue => interactive::DriverOutcome::Continue,
+            InteractiveRepositoryEventOutcome::CommandExecuted(command) => {
                 if !should_suppress_leaf_tasks_after_command(&command) {
                     let result =
-                        execute_show_leaf_tasks(&mut stdout, task_repository, free_time_manager);
-                    report_application_result(&mut stdout, result);
+                        execute_show_leaf_tasks(stdout, task_repository, free_time_manager);
+                    report_application_result(stdout, result);
                 }
-
                 render_focused_task(
-                    &mut stdout,
+                    stdout,
                     task_repository,
                     focused_task_id_opt,
                     &mut last_focused_task_id_opt,
                     &mut focus_started_datetime,
                     Local::now(),
                 );
-
-                //////////////////////////////
-
-                // 初期化
-                cursor_x = 0;
-                line.clear();
-                render_prompt(&mut stdout, header, &line, cursor_x);
+                interactive::DriverOutcome::Submitted
             }
-            Key::Char(c) => {
-                // 多バイト文字の挿入位置を知る
-                let byte_offset = get_byte_offset_for_insert(&line, cursor_x);
-                line.insert(byte_offset, c);
-
-                cursor_x += 1;
-                write!(stdout, "{}", c).unwrap();
-                write!(
-                    stdout,
-                    "{}{}",
-                    termion::cursor::Left(MAX_COL),
-                    termion::clear::CurrentLine
-                )
-                .unwrap();
-
-                let width = get_width_for_rerender(header, &line, cursor_x);
-                write!(stdout, "{}{}", header, line).unwrap();
-                write!(
-                    stdout,
-                    "{}{}",
-                    termion::cursor::Left(MAX_COL),
-                    termion::cursor::Right(width)
-                )
-                .unwrap();
-                stdout.flush().unwrap();
+            InteractiveRepositoryEventOutcome::Retry(error) => {
+                interactive::DriverOutcome::Retry(error)
             }
-            _key => {
-                // write!(stdout, "{:?}", x).unwrap();
-                // stdout.flush().unwrap();
-
-                // キー入力をリアルタイムで反映させる
-                // write!(stdout, "{}", termion::clear::CurrentLine).unwrap();
-                // write!(stdout, "{}", termion::cursor::Left(999)).unwrap();
-                // stdout.flush().unwrap();
-                // write!(stdout, "{}", line).unwrap();
-                // stdout.flush().unwrap();
+            InteractiveRepositoryEventOutcome::Exit => interactive::DriverOutcome::Exit,
+            InteractiveRepositoryEventOutcome::Fatal(error) => {
+                interactive::DriverOutcome::Fatal(error)
             }
         }
-    }
-
-    write!(stdout, "{}", termion::clear::CurrentLine).unwrap();
-    println!("{}{}{}", style::Bold, line, style::Reset);
-
-    // SteadyBlockに戻す
-    // Todo: 本当は、元々の状態を保存しておいてそれに戻したい。
-    writeln!(stdout, "{}", termion::cursor::SteadyBlock).unwrap();
-    match loop_error_opt {
-        Some(error) => Err(error),
-        None => Ok(()),
-    }
+    })
 }

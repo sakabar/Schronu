@@ -4,6 +4,9 @@ mod command;
 #[path = "schronu/handler.rs"]
 mod handler;
 
+#[path = "schronu/interactive.rs"]
+mod interactive;
+
 #[path = "schronu/renderer.rs"]
 mod renderer;
 
