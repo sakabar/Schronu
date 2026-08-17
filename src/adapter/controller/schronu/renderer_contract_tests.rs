@@ -1,4 +1,8 @@
-use super::renderer::{format_spreadsheet_task_row, SpreadsheetTaskRow};
+use super::renderer::{
+    format_spreadsheet_task_row, render_display_model, DisplayFragment, DisplayRecorder,
+    ErrorCapturingWriter, SchronuWriter, SpreadsheetTaskRow,
+};
+use std::io::Write;
 
 #[test]
 fn spreadsheet_task_rowはaからjの10列を既存cli形式で出力する() {
@@ -27,5 +31,118 @@ fn spreadsheet_task_rowはaからjの10列を既存cli形式で出力する() {
         formatted.splitn(10, char::is_whitespace).nth(9),
         Some("夕食 の 準備"),
         "J列はtask_name"
+    );
+}
+
+#[derive(Default)]
+struct TraceWriter {
+    operations: Vec<String>,
+    flush_count: usize,
+    supports_ansi_color: bool,
+}
+
+impl Write for TraceWriter {
+    fn write(&mut self, buffer: &[u8]) -> std::io::Result<usize> {
+        self.operations
+            .push(format!("raw:{}", String::from_utf8_lossy(buffer)));
+        Ok(buffer.len())
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        self.flush_count += 1;
+        Ok(())
+    }
+}
+
+impl SchronuWriter for TraceWriter {
+    fn writeln_newline(&mut self, message: &str) -> std::io::Result<()> {
+        self.operations.push(format!("newline:{message}"));
+        Ok(())
+    }
+
+    fn supports_ansi_color(&self) -> bool {
+        self.supports_ansi_color
+    }
+}
+
+#[test]
+fn display_modelはrawとwriter固有newlineとansiとflushの順序を保持する() {
+    let mut recorder = DisplayRecorder::with_ansi_color(false);
+    assert!(!recorder.supports_ansi_color());
+    recorder.write_all(b"\x1b[31mraw").unwrap();
+    recorder.writeln_newline("line").unwrap();
+    recorder.write_all(b"tail").unwrap();
+    recorder.flush().unwrap();
+
+    assert_eq!(
+        recorder.model().fragments(),
+        &[
+            DisplayFragment::Raw(b"\x1b[31mraw".to_vec()),
+            DisplayFragment::Newline("line".to_string()),
+            DisplayFragment::Raw(b"tail".to_vec()),
+            DisplayFragment::Flush,
+        ]
+    );
+
+    let mut writer = TraceWriter::default();
+    render_display_model(&mut writer, recorder.model()).unwrap();
+    assert_eq!(
+        writer.operations,
+        ["raw:\x1b[31mraw", "newline:line", "raw:tail"]
+    );
+    assert_eq!(writer.flush_count, 1);
+}
+
+struct AlwaysFailWriter;
+
+impl Write for AlwaysFailWriter {
+    fn write(&mut self, _buffer: &[u8]) -> std::io::Result<usize> {
+        Err(std::io::Error::new(
+            std::io::ErrorKind::BrokenPipe,
+            "first write failure",
+        ))
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        Err(std::io::Error::new(
+            std::io::ErrorKind::Other,
+            "later flush failure",
+        ))
+    }
+}
+
+impl SchronuWriter for AlwaysFailWriter {
+    fn writeln_newline(&mut self, _message: &str) -> std::io::Result<()> {
+        Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            "later newline failure",
+        ))
+    }
+}
+
+#[test]
+fn error_capturing_writerは最初のio_errorを保持して後続fragmentを処理する() {
+    let mut inner = AlwaysFailWriter;
+    let mut writer = ErrorCapturingWriter::new(&mut inner);
+    writer.write_all(b"raw").unwrap();
+    writer.writeln_newline("line").unwrap();
+    writer.flush().unwrap();
+
+    let error = writer.take_error().unwrap();
+    assert_eq!(error.kind(), std::io::ErrorKind::BrokenPipe);
+    assert!(writer.take_error().is_none());
+}
+
+#[test]
+fn command_errorはdisplay_modelを経由してrendererへ渡される() {
+    let runtime_source = include_str!("runtime.rs");
+
+    assert!(
+        !runtime_source.contains("fn write_command_error("),
+        "command errorの直接writer helperを残さないこと"
+    );
+    assert!(
+        runtime_source.contains("DisplayModel::newline(format!(\"[Error] {error}\"))"),
+        "command errorをDisplayModelへ変換すること"
     );
 }
