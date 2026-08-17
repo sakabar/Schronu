@@ -1,7 +1,7 @@
 use super::command::{Command, CommandAction, CommandKind};
 use super::handler::{
-    handle, handle_task_tree_command, ExternalRequest, FocusRequest, TaskListOrder,
-    TaskTreeCommandContext,
+    handle, handle_task_attribute_command, handle_task_tree_command, ExternalRequest, FocusRequest,
+    TaskAttributeCommandContext, TaskListOrder, TaskTreeCommandContext,
 };
 use super::renderer::{
     render_display_model, DisplayFragment, DisplayModel, DisplayRecorder, SchronuWriter,
@@ -406,6 +406,169 @@ fn breakdownとsplitはhandlerがtyped_fieldを直接matchして所有する() {
         assert!(
             handler_source.contains(action_pattern),
             "handler must directly match typed action fields: {action_pattern}"
+        );
+    }
+}
+
+#[derive(Default)]
+struct TraceTaskAttributeContext {
+    calls: Vec<String>,
+}
+
+impl TaskAttributeCommandContext for TraceTaskAttributeContext {
+    fn set_deadline(&mut self, value: &str) -> Result<(), ApplicationError> {
+        self.calls.push(format!("deadline:{value}"));
+        Ok(())
+    }
+
+    fn set_estimate(&mut self, minutes: i64) -> Result<(), ApplicationError> {
+        self.calls.push(format!("estimate:{minutes}"));
+        Ok(())
+    }
+
+    fn arrange(
+        &mut self,
+        minutes: i64,
+        includes_zero_estimate: bool,
+    ) -> Result<(), ApplicationError> {
+        self.calls
+            .push(format!("arrange:{minutes}:{includes_zero_estimate}"));
+        Ok(())
+    }
+
+    fn set_actual(&mut self, minutes: i64) -> Result<(), ApplicationError> {
+        self.calls.push(format!("actual:{minutes}"));
+        Ok(())
+    }
+
+    fn set_priority(&mut self, priority: i64) -> Result<(), ApplicationError> {
+        self.calls.push(format!("priority:{priority}"));
+        Ok(())
+    }
+
+    fn set_category(&mut self, value: &str) -> Result<(), ApplicationError> {
+        self.calls.push(format!("category:{value}"));
+        Ok(())
+    }
+
+    fn add_work(&mut self, minutes: Option<i64>) -> Result<(), ApplicationError> {
+        self.calls.push(format!("work:{minutes:?}"));
+        Ok(())
+    }
+}
+
+#[test]
+fn task属性更新commandはhandlerがtyped_fieldを直接matchして所有する() {
+    let commands = [
+        Command::Action(CommandAction::StringValue {
+            kind: CommandKind::Deadline,
+            canonical_name: "〆",
+            value: "明".to_string(),
+        }),
+        Command::Estimate { minutes: 25 },
+        Command::Arrange {
+            minutes: 30,
+            includes_zero_estimate: true,
+        },
+        Command::Action(CommandAction::IntegerValue {
+            kind: CommandKind::Actual,
+            canonical_name: "実",
+            value: 35,
+        }),
+        Command::Action(CommandAction::IntegerValue {
+            kind: CommandKind::Priority,
+            canonical_name: "重",
+            value: 7,
+        }),
+        Command::Action(CommandAction::StringValue {
+            kind: CommandKind::Category,
+            canonical_name: "類",
+            value: "investment".to_string(),
+        }),
+        Command::Action(CommandAction::OptionalInteger {
+            kind: CommandKind::Work,
+            canonical_name: "働",
+            value: Some(40),
+        }),
+    ];
+    let expected_calls = [
+        "deadline:明",
+        "estimate:25",
+        "arrange:30:true",
+        "actual:35",
+        "priority:7",
+        "category:investment",
+        "work:Some(40)",
+    ];
+
+    for (command, expected_call) in commands.iter().zip(expected_calls) {
+        let mut context = TraceTaskAttributeContext::default();
+        let outcome = handle_task_attribute_command(command, &mut context)
+            .unwrap()
+            .expect("task attribute command is migrated");
+        assert_eq!(outcome.kind, command.kind());
+        assert!(outcome.display.is_empty());
+        assert_eq!(context.calls, [expected_call]);
+    }
+}
+
+#[test]
+fn task属性更新commandはruntime_fallbackに残さない() {
+    let runtime_source = include_str!("runtime.rs");
+    let legacy_dispatch = runtime_source
+        .split_once("fn execute_with_config(")
+        .expect("runtime must retain the typed fallback entrypoint")
+        .1
+        .split_once("fn execute_non_interactive_command(")
+        .expect("runtime fallback must remain bounded by the non-interactive entrypoint")
+        .0;
+    for migrated_kind in [
+        "CommandKind::Deadline",
+        "CommandKind::Estimate",
+        "CommandKind::Arrange",
+        "CommandKind::Actual",
+        "CommandKind::Priority",
+        "CommandKind::Category",
+        "CommandKind::Work",
+    ] {
+        assert!(
+            !legacy_dispatch.contains(migrated_kind),
+            "migrated command must not remain in runtime fallback: {migrated_kind}"
+        );
+    }
+
+    let product_dispatch = runtime_source
+        .split_once("fn execute_parsed(")
+        .expect("runtime must retain the parsed command entrypoint")
+        .1
+        .split_once("struct RuntimeProjectCommandContext")
+        .expect("parsed command entrypoint must remain bounded by its context")
+        .0;
+    assert!(
+        product_dispatch.contains("handle_task_attribute_command(parsed_command"),
+        "product dispatch must route task attribute commands through the handler"
+    );
+
+    let handler_source = include_str!("handler.rs");
+    for action_pattern in [
+        "Command::Estimate { minutes }",
+        "Command::Arrange {",
+        "kind: CommandKind::Deadline",
+        "kind: CommandKind::Actual",
+        "kind: CommandKind::Priority",
+        "kind: CommandKind::Category",
+        "kind: CommandKind::Work",
+    ] {
+        assert!(
+            handler_source.contains(action_pattern),
+            "handler must directly match typed action fields: {action_pattern}"
+        );
+    }
+
+    for forbidden in ["minutes.to_string()", "value.to_string()"] {
+        assert!(
+            !handler_source.contains(forbidden),
+            "handler must not reconstruct typed values: {forbidden}"
         );
     }
 }
