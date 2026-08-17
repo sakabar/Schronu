@@ -4,7 +4,10 @@ use super::command::{
     parse_command, Command, CommandAction, CommandKind, CommandParseError, InteractiveShortcut,
     ParseMode,
 };
-use super::handler::{handle, CommandOutcome, ExternalRequest, FocusRequest};
+use super::handler::{
+    decide_time_values, execute_breakdown, handle, handle_project_command, CommandOutcome,
+    ExternalRequest, FocusRequest, ProjectCommandContext,
+};
 use super::renderer::{
     render_display_model, writeln_newline, ErrorCapturingWriter, SchronuWriter, MAX_COL,
 };
@@ -2300,41 +2303,6 @@ fn execute_show_tree(
     Ok(())
 }
 
-fn execute_start_new_project(
-    _stdout: &mut dyn SchronuWriter,
-    focused_task_id_opt: &mut Option<Uuid>,
-    task_repository: &mut dyn TaskRepositoryTrait,
-    new_project_name_str: &str,
-    defer_days_opt: Option<i64>,
-    estimated_work_minutes_opt: Option<i64>,
-) -> Result<(), ApplicationError> {
-    let pending_until = defer_days_opt.map(|defer_days| {
-        get_next_morning_datetime(task_repository.get_last_synced_time())
-            + Duration::days(defer_days - 1)
-    });
-    let task_id = create_task(
-        task_repository,
-        CreateTaskInput {
-            name: new_project_name_str.to_string(),
-            estimated_work_minutes: estimated_work_minutes_opt,
-            pending_until,
-        },
-    )?;
-    *focused_task_id_opt = Some(task_id);
-    Ok(())
-}
-
-fn execute_make_appointment(
-    focused_task_opt: &Option<TaskHandle>,
-    start_time: DateTime<Local>,
-) -> Result<(), ApplicationError> {
-    if let Some(task) = focused_task_opt {
-        task.make_appointment(start_time)
-            .map_err(ApplicationError::TaskTree)?;
-    }
-    Ok(())
-}
-
 fn execute_show_ancestor(
     stdout: &mut dyn SchronuWriter,
     focused_task_opt: &Option<TaskHandle>,
@@ -3914,152 +3882,6 @@ fn execute_next_up(
     Ok(Some(new_task_id))
 }
 
-fn execute_breakdown(
-    stdout: &mut dyn SchronuWriter,
-    task_repository: &mut dyn TaskRepositoryTrait,
-    focused_task_id_opt: &mut Option<Uuid>,
-    new_task_names: &[&str],
-    pending_until_opt: &Option<DateTime<Local>>,
-) -> Result<Option<Vec<Uuid>>, ApplicationError> {
-    let Some(parent_id) = *focused_task_id_opt else {
-        return Ok(None);
-    };
-    let names = new_task_names
-        .iter()
-        .map(|name| (*name).to_string())
-        .collect::<Vec<_>>();
-
-    let input = BreakdownTaskInput {
-        parent_id,
-        names,
-        pending_until: *pending_until_opt,
-    };
-    let child_ids = breakdown_task(task_repository, input)?;
-    for (child_id, child_name) in child_ids.iter().zip(new_task_names.iter()) {
-        writeln_newline(stdout, &format!("{child_id} {child_name}")).unwrap();
-    }
-    *focused_task_id_opt = child_ids.first().copied();
-    Ok(Some(child_ids))
-}
-
-// コマンド引数を変換せず、そのままドメイン操作へ渡す境界関数である。
-#[allow(clippy::too_many_arguments)]
-fn execute_breakdown_sequentially(
-    _stdout: &mut dyn SchronuWriter,
-    focused_task_id_opt: &mut Option<Uuid>,
-    focused_task_opt: &Option<TaskHandle>,
-    new_task_name_str: &str,
-    estimated_work_minutes: i64,
-    begin_index: u64,
-    end_index: u64,
-    new_task_name_suffix_str: &str,
-) -> Result<Option<Uuid>, ApplicationError> {
-    validate_task_name(new_task_name_str, "name")?;
-    let estimated_work_seconds = estimated_work_seconds_from_minutes(estimated_work_minutes)?;
-
-    if let Some(focused_task) = focused_task_opt {
-        let grand_child_task = focused_task
-            .create_sequential_children(
-                new_task_name_str,
-                estimated_work_seconds,
-                begin_index,
-                end_index,
-                new_task_name_suffix_str,
-            )
-            .map_err(ApplicationError::TaskTree)?;
-        let grand_child_task_id = grand_child_task
-            .get_id()
-            .map_err(ApplicationError::TaskTree)?;
-        *focused_task_id_opt = Some(grand_child_task_id);
-        return Ok(Some(grand_child_task_id));
-    }
-    Ok(None)
-}
-
-// 繰り返しタスク作成コマンドの全入力を明示的に受け取る境界関数である。
-#[allow(clippy::too_many_arguments)]
-fn execute_create_repetition_task(
-    _stdout: &mut dyn SchronuWriter,
-    task_repository: &mut dyn TaskRepositoryTrait,
-    focused_task_id_opt: &mut Option<Uuid>,
-    new_task_name_str: &str,
-    exec_day_str: &str,
-    estimated_work_minutes: i64,
-    _start_time_str: &str,
-    _deadline_time_str: &str,
-) -> Result<Option<Uuid>, ApplicationError> {
-    estimated_work_seconds_from_minutes(estimated_work_minutes)?;
-
-    // まず繰り返しタスクの親タスクを作る。
-    let Some(_) = execute_breakdown(
-        _stdout,
-        task_repository,
-        focused_task_id_opt,
-        &[new_task_name_str],
-        &None,
-    )?
-    else {
-        return Ok(None);
-    };
-    let repetition_parent_task_opt = match focused_task_id_opt {
-        Some(id) => task_repository
-            .get_by_id(*id)
-            .map_err(ApplicationError::TaskTree)?,
-        None => None,
-    };
-    if let Some(task_id) = repetition_parent_task_opt
-        .map(|task| task.get_id())
-        .transpose()
-        .map_err(ApplicationError::TaskTree)?
-    {
-        set_estimate(task_repository, task_id, estimated_work_minutes)?;
-    }
-
-    let task_num = if exec_day_str == "毎" { 7 } else { 4 };
-
-    if let Some(focused_task_id) = focused_task_id_opt {
-        let repetition_parent_task_id = *focused_task_id;
-
-        // ループを回して子タスクを作る
-        for _ in 0..task_num {
-            let Some(_) = execute_breakdown(
-                _stdout,
-                task_repository,
-                focused_task_id_opt,
-                &[new_task_name_str],
-                &None,
-            )?
-            else {
-                return Ok(None);
-            };
-            let child_task_opt = match focused_task_id_opt {
-                Some(id) => task_repository
-                    .get_by_id(*id)
-                    .map_err(ApplicationError::TaskTree)?,
-                None => None,
-            };
-            if let Some(task_id) = child_task_opt
-                .map(|task| task.get_id())
-                .transpose()
-                .map_err(ApplicationError::TaskTree)?
-            {
-                set_estimate(task_repository, task_id, estimated_work_minutes)?;
-            }
-
-            // 次ここから作業再開する。start_timeを作るために、「毎」か「月~日」でそれぞれ日付をループさせたい
-            // focused_task.set_start_time(start_dst_time);
-
-            execute_focus(
-                focused_task_id_opt,
-                &repetition_parent_task_id.hyphenated().to_string(),
-            );
-        }
-        Ok(Some(repetition_parent_task_id))
-    } else {
-        Ok(None)
-    }
-}
-
 fn execute_split(
     stdout: &mut dyn SchronuWriter,
     focused_task_id_opt: &mut Option<Uuid>,
@@ -4578,120 +4400,12 @@ fn execute_set_project_category(
 }
 
 fn decide_time(tokens: &[&str], now: &DateTime<Local>) -> Option<DateTime<Local>> {
-    let mut start_time = None;
-
-    if tokens.len() >= 2 {
-        let start_hhmm_str = &tokens[1];
-
-        // 日付はオプショナル引数。入力されなかった場合は今日の日付とする。
-        let start_date_str = if tokens.len() >= 3 {
-            tokens[2]
-        } else {
-            "dummy"
-        };
-
-        let hhmm_reg = Regex::new(r"^(\d{1,2}):(\d{1,2})$").unwrap();
-        let (hh, mm) = if hhmm_reg.is_match(start_hhmm_str) {
-            let caps = hhmm_reg.captures(start_hhmm_str).unwrap();
-            let hh: u32 = caps[1].parse().unwrap();
-            let mm: u32 = caps[2].parse().unwrap();
-
-            (hh, mm)
-        } else {
-            (12, 00)
-        };
-
-        let yyyymmdd_reg = Regex::new(r"^(\d{2,4})/(\d{1,2})/(\d{1,2})$").unwrap();
-        let mmdd_reg = Regex::new(r"^(\d{1,2})/(\d{1,2})$").unwrap();
-
-        let start_time_tmp = if yyyymmdd_reg.is_match(start_date_str) {
-            let caps = yyyymmdd_reg.captures(start_date_str).unwrap();
-            let tmp_yyyy: i32 = caps[1].parse().unwrap();
-            let yyyy = if tmp_yyyy < 100 {
-                tmp_yyyy + 2000
-            } else {
-                tmp_yyyy
-            };
-            let mm_month: u32 = caps[2].parse().unwrap();
-            let dd: u32 = caps[3].parse().unwrap();
-
-            Local
-                .with_ymd_and_hms(yyyy, mm_month, dd, hh, mm, 0)
-                .unwrap()
-        } else if mmdd_reg.is_match(start_date_str) {
-            // 年なしの日付が指定された場合は未来方向でその日付に合致する日付に送る
-            let caps = mmdd_reg.captures(start_date_str).unwrap();
-            let mm_month: u32 = caps[1].parse().unwrap();
-            let dd: u32 = caps[2].parse().unwrap();
-
-            let mut ans_datetime = Local
-                .with_ymd_and_hms(now.year(), mm_month, dd, hh, mm, 0)
-                .unwrap();
-
-            if ans_datetime < *now {
-                ans_datetime = Local
-                    .with_ymd_and_hms(now.year() + 1, mm_month, dd, hh, mm, 0)
-                    .unwrap()
-            }
-
-            ans_datetime
-        } else if start_date_str.starts_with('明') {
-            let next_schronu_day = get_next_morning_datetime(*now);
-            Local
-                .with_ymd_and_hms(
-                    next_schronu_day.year(),
-                    next_schronu_day.month(),
-                    next_schronu_day.day(),
-                    hh,
-                    mm,
-                    0,
-                )
-                .unwrap()
-        } else if tokens.len() >= 3
-            && ["月", "火", "水", "木", "金", "土", "日"].contains(&tokens[2])
-        {
-            // 月 火 水 木 金 土 日 が指定された時は、明日以降で、直近のその曜日とする。
-            // (show_all_tasksとロジック重複...)
-            let days_of_week = ["月", "火", "水", "木", "金", "土", "日"];
-
-            let todays_morning_datetime = get_next_morning_datetime(*now) - Duration::days(1);
-
-            let dn = todays_morning_datetime.date_naive();
-            let now_weekday_jp = get_weekday_jp(&dn);
-
-            let now_days_of_week_ind = days_of_week
-                .iter()
-                .position(|&x| x == now_weekday_jp)
-                .unwrap();
-            let target_days_of_week_ind =
-                days_of_week.iter().position(|&x| x == tokens[2]).unwrap();
-
-            let ind_diff = (7 + target_days_of_week_ind - now_days_of_week_ind) % 7;
-
-            // 今日の6:00にdeferする味意はないので、その代わりに、1週間後の同じ曜日にdeferできるようにする
-            let days: i64 = if ind_diff == 0 { 7 } else { ind_diff as i64 };
-            let n_days_after_datetime = get_next_morning_datetime(*now) + Duration::days(days - 1);
-
-            Local
-                .with_ymd_and_hms(
-                    n_days_after_datetime.year(),
-                    n_days_after_datetime.month(),
-                    n_days_after_datetime.day(),
-                    hh,
-                    mm,
-                    0,
-                )
-                .unwrap()
-        } else {
-            Local
-                .with_ymd_and_hms(now.year(), now.month(), now.day(), hh, mm, 0)
-                .unwrap()
-        };
-
-        start_time = Some(start_time_tmp);
-    }
-
-    start_time
+    let values = tokens
+        .iter()
+        .skip(1)
+        .map(|value| (*value).to_string())
+        .collect::<Vec<_>>();
+    decide_time_values(&values, now)
 }
 
 fn decide_finish_time(tokens: &Vec<&str>, now: &DateTime<Local>) -> Option<DateTime<Local>> {
@@ -5924,7 +5638,10 @@ fn test_project作成commandの製品handler経路がtyped_fieldと表示とfocu
         "新 新規 25",
     );
     assert_eq!(new_result.task.get_name().unwrap(), "新規");
-    assert_eq!(new_result.task.get_estimated_work_seconds().unwrap(), 25 * 60);
+    assert_eq!(
+        new_result.task.get_estimated_work_seconds().unwrap(),
+        25 * 60
+    );
     assert_eq!(
         new_result.focused_task_id_opt,
         Some(new_result.task.get_id().unwrap())
@@ -5951,7 +5668,10 @@ fn test_project作成commandの製品handler経路がtyped_fieldと表示とfocu
         "突 割り込み 10",
     );
     assert_eq!(unplanned_result.task.get_name().unwrap(), "割り込み");
-    assert_eq!(unplanned_result.task.get_orig_status().unwrap(), Status::Todo);
+    assert_eq!(
+        unplanned_result.task.get_orig_status().unwrap(),
+        Status::Todo
+    );
 
     let sequential_root = TaskHandle::new("親").unwrap();
     let sequential_result = execute_command_for_test(
@@ -5983,12 +5703,8 @@ fn test_project作成commandの製品handler経路がtyped_fieldと表示とfocu
 
     let appointment_task = TaskHandle::new("予定").unwrap();
     let appointment_id = appointment_task.get_id().unwrap();
-    let appointment_result = execute_command_for_test(
-        appointment_task,
-        now,
-        Some(appointment_id),
-        "約 14:30 8/12",
-    );
+    let appointment_result =
+        execute_command_for_test(appointment_task, now, Some(appointment_id), "約 14:30 8/12");
     assert_eq!(
         appointment_result.task.get_start_time().unwrap(),
         Local.with_ymd_and_hms(2026, 8, 12, 14, 30, 0).unwrap()
@@ -5997,8 +5713,7 @@ fn test_project作成commandの製品handler経路がtyped_fieldと表示とfocu
 
     let start_task = TaskHandle::new("開始").unwrap();
     let start_id = start_task.get_id().unwrap();
-    let start_result =
-        execute_command_for_test(start_task, now, Some(start_id), "始 16:45 8/13");
+    let start_result = execute_command_for_test(start_task, now, Some(start_id), "始 16:45 8/13");
     assert_eq!(
         start_result.task.get_start_time().unwrap(),
         Local.with_ymd_and_hms(2026, 8, 13, 16, 45, 0).unwrap()
@@ -7138,7 +6853,22 @@ fn execute_parsed(
     parsed_command: &Command,
 ) -> Result<(), CommandError> {
     let mut output = ErrorCapturingWriter::new(stdout);
-    if let Some(outcome) = handle(parsed_command) {
+    let project_outcome = {
+        let mut context = RuntimeProjectCommandContext {
+            task_repository,
+            focused_task_id_opt,
+        };
+        handle_project_command(parsed_command, &mut context)?
+    };
+    if let Some(outcome) = project_outcome {
+        execute_handler_outcome(
+            &mut output,
+            task_repository,
+            focused_task_id_opt,
+            outcome,
+            active_config(),
+        )?;
+    } else if let Some(outcome) = handle(parsed_command) {
         execute_handler_outcome(
             &mut output,
             task_repository,
@@ -7162,6 +6892,47 @@ fn execute_parsed(
         Some(error) if error.kind() == std::io::ErrorKind::BrokenPipe => Ok(()),
         Some(error) => Err(CommandError::Output(error)),
         None => Ok(()),
+    }
+}
+
+struct RuntimeProjectCommandContext<'a> {
+    task_repository: &'a mut dyn TaskRepositoryTrait,
+    focused_task_id_opt: &'a mut Option<Uuid>,
+}
+
+impl ProjectCommandContext for RuntimeProjectCommandContext<'_> {
+    fn last_synced_time(&self) -> DateTime<Local> {
+        self.task_repository.get_last_synced_time()
+    }
+
+    fn focused_task(&mut self) -> Result<Option<TaskHandle>, ApplicationError> {
+        match self.focused_task_id_opt {
+            Some(id) => self
+                .task_repository
+                .get_by_id(*id)
+                .map_err(ApplicationError::TaskTree),
+            None => Ok(None),
+        }
+    }
+
+    fn create_task(&mut self, input: CreateTaskInput) -> Result<Uuid, ApplicationError> {
+        create_task(self.task_repository, input)
+    }
+
+    fn breakdown_task(&mut self, input: BreakdownTaskInput) -> Result<Vec<Uuid>, ApplicationError> {
+        breakdown_task(self.task_repository, input)
+    }
+
+    fn set_estimate(&mut self, task_id: Uuid, minutes: i64) -> Result<(), ApplicationError> {
+        set_estimate(self.task_repository, task_id, minutes)
+    }
+
+    fn focused_task_id(&self) -> Option<Uuid> {
+        *self.focused_task_id_opt
+    }
+
+    fn set_focused_task_id(&mut self, task_id_opt: Option<Uuid>) {
+        *self.focused_task_id_opt = task_id_opt;
     }
 }
 
@@ -7247,135 +7018,6 @@ fn execute_with_config(
     }
 
     match parsed_command.kind() {
-        CommandKind::NewProject | CommandKind::HobbyProject => {
-            if tokens.len() >= 2 {
-                let new_project_name_str = &tokens[1];
-
-                let estimated_work_minutes_opt: Option<i64> = if tokens.len() >= 3 {
-                    tokens[2].parse().ok()
-                } else {
-                    None
-                };
-
-                let defer_days_opt = if parsed_command.kind() == CommandKind::NewProject {
-                    Some(1)
-                } else {
-                    Some(1400)
-                };
-                if let Err(error) = execute_start_new_project(
-                    stdout,
-                    focused_task_id_opt,
-                    task_repository,
-                    new_project_name_str,
-                    defer_days_opt,
-                    estimated_work_minutes_opt,
-                ) {
-                    return Err(error.into());
-                }
-            }
-        }
-        CommandKind::UnplannedProject => {
-            if tokens.len() >= 2 {
-                let new_project_name_str = &tokens[1];
-
-                let estimated_work_minutes_opt: Option<i64> = if tokens.len() >= 3 {
-                    tokens[2].parse().ok()
-                } else {
-                    None
-                };
-
-                let defer_days_opt = None;
-                if let Err(error) = execute_start_new_project(
-                    stdout,
-                    focused_task_id_opt,
-                    task_repository,
-                    new_project_name_str,
-                    defer_days_opt,
-                    estimated_work_minutes_opt,
-                ) {
-                    return Err(error.into());
-                }
-            }
-        }
-        CommandKind::Sequential => {
-            if tokens.len() >= 5 {
-                let new_task_name_str = &tokens[1];
-                let estimated_work_minutes_result = &tokens[2].parse();
-                let begin_index_result = &tokens[3].parse();
-                let end_index_result = &tokens[4].parse();
-                let new_task_name_suffix = tokens
-                    .get(5)
-                    .map_or_else(String::new, |suffix| format!("-{suffix}"));
-
-                if let Ok(estimated_work_minutes) = estimated_work_minutes_result {
-                    if let Ok(begin_index) = begin_index_result {
-                        if let Ok(end_index) = end_index_result {
-                            if begin_index <= end_index {
-                                let result = execute_breakdown_sequentially(
-                                    stdout,
-                                    focused_task_id_opt,
-                                    &focused_task_opt,
-                                    new_task_name_str,
-                                    *estimated_work_minutes,
-                                    *begin_index,
-                                    *end_index,
-                                    &new_task_name_suffix,
-                                );
-                                report_application_result(stdout, result);
-                            }
-                        }
-                    }
-                }
-            }
-        }
-        CommandKind::Repeat => {
-            if tokens.len() == 6 {
-                let new_task_name_str = &tokens[1];
-                let estimated_work_minutes_result = &tokens[2].parse();
-                let day = &tokens[3];
-                let start_time_str = &tokens[4];
-                let deadline_time_str = &tokens[5];
-
-                if let Ok(estimated_work_minutes) = estimated_work_minutes_result {
-                    let result = execute_create_repetition_task(
-                        stdout,
-                        task_repository,
-                        focused_task_id_opt,
-                        new_task_name_str,
-                        day,
-                        *estimated_work_minutes,
-                        start_time_str,
-                        deadline_time_str,
-                    );
-                    report_application_result(stdout, result);
-                }
-            }
-        }
-        CommandKind::Appointment => {
-            let now = task_repository.get_last_synced_time();
-            let start_time_opt = decide_time(&tokens, &now);
-
-            if let Some(start_time) = start_time_opt {
-                execute_make_appointment(&focused_task_opt, start_time)?;
-            }
-        }
-        CommandKind::Start => {
-            let now: DateTime<Local> = task_repository.get_last_synced_time();
-            let start_dst_time_opt = decide_time(&tokens, &now);
-
-            if let Some(start_dst_time) = start_dst_time_opt {
-                if let Some(focused_task) = match focused_task_id_opt {
-                    Some(id) => task_repository
-                        .get_by_id(*id)
-                        .map_err(ApplicationError::TaskTree)?,
-                    None => None,
-                } {
-                    focused_task
-                        .set_start_time(start_dst_time)
-                        .map_err(ApplicationError::TaskTree)?;
-                }
-            }
-        }
         // 最初は「木」コマンドだったが、曜日だけを指定して直近のその曜日について「全」コマンドを動かすコマンドとコンフリクトしてしまったためリネームした。
         CommandKind::Tree => {
             execute_show_tree(stdout, &focused_task_opt)?;
@@ -7610,13 +7252,11 @@ fn execute_with_config(
 
                 // 「割」コマンドと間違えて数値を引数に取った場合は何もしない
                 if !tokens.iter().any(|token| token.parse::<i64>().is_ok()) {
-                    let result = execute_breakdown(
-                        stdout,
+                    let mut context = RuntimeProjectCommandContext {
                         task_repository,
                         focused_task_id_opt,
-                        new_task_names,
-                        &None,
-                    );
+                    };
+                    let result = execute_breakdown(stdout, &mut context, new_task_names, &None);
                     report_application_result(stdout, result);
                 }
             }
@@ -8205,6 +7845,7 @@ fn execute_with_config(
         | CommandKind::FocusHighest
         | CommandKind::FocusLowest
         | CommandKind::Verify => {}
+        _ => unreachable!("handler-owned command reached runtime fallback"),
     }
 
     stdout.flush().map_err(CommandError::Output)?;

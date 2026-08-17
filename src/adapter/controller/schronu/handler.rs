@@ -1,5 +1,14 @@
 use super::command::{Command, CommandAction, CommandKind};
 use super::renderer::{DisplayModel, DisplayRecorder, SchronuWriter};
+use chrono::{DateTime, Datelike, Duration, Local, TimeZone};
+use regex::Regex;
+use schronu::application::task_use_case::{
+    estimated_work_seconds_from_minutes, validate_task_name, ApplicationError, BreakdownTaskInput,
+    CreateTaskInput,
+};
+use schronu::entity::datetime::get_next_morning_datetime;
+use schronu::entity::task::TaskHandle;
+use uuid::Uuid;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(super) enum ExternalRequest {
@@ -19,6 +28,16 @@ pub(super) struct CommandOutcome {
     pub(super) display: DisplayModel,
     pub(super) external_request: Option<ExternalRequest>,
     pub(super) focus_request: Option<FocusRequest>,
+}
+
+pub(super) trait ProjectCommandContext {
+    fn last_synced_time(&self) -> DateTime<Local>;
+    fn focused_task(&mut self) -> Result<Option<TaskHandle>, ApplicationError>;
+    fn create_task(&mut self, input: CreateTaskInput) -> Result<Uuid, ApplicationError>;
+    fn breakdown_task(&mut self, input: BreakdownTaskInput) -> Result<Vec<Uuid>, ApplicationError>;
+    fn set_estimate(&mut self, task_id: Uuid, minutes: i64) -> Result<(), ApplicationError>;
+    fn focused_task_id(&self) -> Option<Uuid>;
+    fn set_focused_task_id(&mut self, task_id_opt: Option<Uuid>);
 }
 
 impl CommandOutcome {
@@ -75,4 +94,350 @@ pub(super) fn handle(command: &Command) -> Option<CommandOutcome> {
     }
 
     Some(outcome)
+}
+
+pub(super) fn handle_project_command(
+    command: &Command,
+    context: &mut dyn ProjectCommandContext,
+) -> Result<Option<CommandOutcome>, ApplicationError> {
+    let action = match command {
+        Command::Action(action) => action,
+        _ => return Ok(None),
+    };
+    let kind = command.kind();
+
+    match action {
+        CommandAction::NewProject {
+            kind,
+            name,
+            estimated_minutes,
+            ..
+        } => {
+            let defer_days_opt = match kind {
+                CommandKind::NewProject => Some(1),
+                CommandKind::HobbyProject => Some(1400),
+                CommandKind::UnplannedProject => None,
+                _ => return Ok(None),
+            };
+            execute_start_new_project(context, name, defer_days_opt, *estimated_minutes)?;
+            Ok(Some(CommandOutcome::empty(*kind)))
+        }
+        CommandAction::Sequential {
+            name,
+            estimated_minutes,
+            begin_index,
+            end_index,
+            suffix,
+        } => {
+            let (Ok(begin_index), Ok(end_index)) =
+                (u64::try_from(*begin_index), u64::try_from(*end_index))
+            else {
+                return Ok(Some(CommandOutcome::empty(kind)));
+            };
+            if begin_index > end_index {
+                return Ok(Some(CommandOutcome::empty(kind)));
+            }
+            let focused_task_opt = context.focused_task()?;
+            let suffix = suffix
+                .as_ref()
+                .map_or_else(String::new, |suffix| format!("-{suffix}"));
+            let result = execute_breakdown_sequentially(
+                context,
+                &focused_task_opt,
+                name,
+                *estimated_minutes,
+                begin_index,
+                end_index,
+                &suffix,
+            );
+            Ok(Some(outcome_from_reported_result(kind, result)))
+        }
+        CommandAction::Repeat {
+            name,
+            estimated_minutes,
+            day,
+            start_time,
+            deadline_time,
+        } => {
+            let mut display = DisplayRecorder::default();
+            let result = execute_create_repetition_task(
+                &mut display,
+                context,
+                name,
+                day,
+                *estimated_minutes,
+                start_time,
+                deadline_time,
+            );
+            let mut outcome = CommandOutcome::empty(kind);
+            if let Err(error) = result {
+                display
+                    .writeln_newline(&format!("[Error] 操作エラー: {error}"))
+                    .expect("display recording is infallible");
+            }
+            outcome.display = display.model().clone();
+            Ok(Some(outcome))
+        }
+        CommandAction::TimeExpression {
+            kind: CommandKind::Appointment,
+            values,
+            ..
+        } => {
+            let now = context.last_synced_time();
+            if let Some(start_time) = decide_time_values(values, &now) {
+                let focused_task_opt = context.focused_task()?;
+                execute_make_appointment(&focused_task_opt, start_time)?;
+            }
+            Ok(Some(CommandOutcome::empty(kind)))
+        }
+        CommandAction::TimeExpression {
+            kind: CommandKind::Start,
+            values,
+            ..
+        } => {
+            let now = context.last_synced_time();
+            if let Some(start_time) = decide_time_values(values, &now) {
+                if let Some(task) = context.focused_task()? {
+                    task.set_start_time(start_time)
+                        .map_err(ApplicationError::TaskTree)?;
+                }
+            }
+            Ok(Some(CommandOutcome::empty(kind)))
+        }
+        _ => Ok(None),
+    }
+}
+
+fn outcome_from_reported_result<T>(
+    kind: CommandKind,
+    result: Result<T, ApplicationError>,
+) -> CommandOutcome {
+    let mut outcome = CommandOutcome::empty(kind);
+    if let Err(error) = result {
+        outcome.display = DisplayModel::newline(format!("[Error] 操作エラー: {error}"));
+    }
+    outcome
+}
+
+fn execute_start_new_project(
+    context: &mut dyn ProjectCommandContext,
+    name: &str,
+    defer_days_opt: Option<i64>,
+    estimated_work_minutes_opt: Option<i64>,
+) -> Result<(), ApplicationError> {
+    let pending_until = defer_days_opt.map(|defer_days| {
+        get_next_morning_datetime(context.last_synced_time()) + Duration::days(defer_days - 1)
+    });
+    let task_id = context.create_task(CreateTaskInput {
+        name: name.to_string(),
+        estimated_work_minutes: estimated_work_minutes_opt,
+        pending_until,
+    })?;
+    context.set_focused_task_id(Some(task_id));
+    Ok(())
+}
+
+fn execute_make_appointment(
+    focused_task_opt: &Option<TaskHandle>,
+    start_time: DateTime<Local>,
+) -> Result<(), ApplicationError> {
+    if let Some(task) = focused_task_opt {
+        task.make_appointment(start_time)
+            .map_err(ApplicationError::TaskTree)?;
+    }
+    Ok(())
+}
+
+fn execute_breakdown_sequentially(
+    context: &mut dyn ProjectCommandContext,
+    focused_task_opt: &Option<TaskHandle>,
+    name: &str,
+    estimated_work_minutes: i64,
+    begin_index: u64,
+    end_index: u64,
+    suffix: &str,
+) -> Result<Option<Uuid>, ApplicationError> {
+    validate_task_name(name, "name")?;
+    let estimated_work_seconds = estimated_work_seconds_from_minutes(estimated_work_minutes)?;
+
+    if let Some(focused_task) = focused_task_opt {
+        let grand_child_task = focused_task
+            .create_sequential_children(
+                name,
+                estimated_work_seconds,
+                begin_index,
+                end_index,
+                suffix,
+            )
+            .map_err(ApplicationError::TaskTree)?;
+        let grand_child_task_id = grand_child_task
+            .get_id()
+            .map_err(ApplicationError::TaskTree)?;
+        context.set_focused_task_id(Some(grand_child_task_id));
+        return Ok(Some(grand_child_task_id));
+    }
+    Ok(None)
+}
+
+pub(super) fn execute_breakdown(
+    stdout: &mut dyn SchronuWriter,
+    context: &mut dyn ProjectCommandContext,
+    new_task_names: &[&str],
+    pending_until_opt: &Option<DateTime<Local>>,
+) -> Result<Option<Vec<Uuid>>, ApplicationError> {
+    let Some(parent_id) = context.focused_task_id() else {
+        return Ok(None);
+    };
+    let names = new_task_names
+        .iter()
+        .map(|name| (*name).to_string())
+        .collect::<Vec<_>>();
+    let child_ids = context.breakdown_task(BreakdownTaskInput {
+        parent_id,
+        names,
+        pending_until: *pending_until_opt,
+    })?;
+    for (child_id, child_name) in child_ids.iter().zip(new_task_names.iter()) {
+        stdout
+            .writeln_newline(&format!("{child_id} {child_name}"))
+            .expect("display recording is infallible");
+    }
+    context.set_focused_task_id(child_ids.first().copied());
+    Ok(Some(child_ids))
+}
+
+#[allow(clippy::too_many_arguments)]
+fn execute_create_repetition_task(
+    stdout: &mut dyn SchronuWriter,
+    context: &mut dyn ProjectCommandContext,
+    name: &str,
+    day: &str,
+    estimated_work_minutes: i64,
+    _start_time: &str,
+    _deadline_time: &str,
+) -> Result<Option<Uuid>, ApplicationError> {
+    estimated_work_seconds_from_minutes(estimated_work_minutes)?;
+    let Some(_) = execute_breakdown(stdout, context, &[name], &None)? else {
+        return Ok(None);
+    };
+    let repetition_parent_task_opt = context.focused_task()?;
+    if let Some(task_id) = repetition_parent_task_opt
+        .map(|task| task.get_id())
+        .transpose()
+        .map_err(ApplicationError::TaskTree)?
+    {
+        context.set_estimate(task_id, estimated_work_minutes)?;
+    }
+
+    let task_num = if day == "毎" { 7 } else { 4 };
+    if let Some(repetition_parent_task_id) = context.focused_task_id() {
+        for _ in 0..task_num {
+            let Some(_) = execute_breakdown(stdout, context, &[name], &None)? else {
+                return Ok(None);
+            };
+            let child_task_opt = context.focused_task()?;
+            if let Some(task_id) = child_task_opt
+                .map(|task| task.get_id())
+                .transpose()
+                .map_err(ApplicationError::TaskTree)?
+            {
+                context.set_estimate(task_id, estimated_work_minutes)?;
+            }
+            context.set_focused_task_id(Some(repetition_parent_task_id));
+        }
+        Ok(Some(repetition_parent_task_id))
+    } else {
+        Ok(None)
+    }
+}
+
+pub(super) fn decide_time_values(
+    values: &[String],
+    now: &DateTime<Local>,
+) -> Option<DateTime<Local>> {
+    let start_hhmm_str = values.first()?;
+    let start_date_str = values.get(1).map_or("dummy", String::as_str);
+    let hhmm_reg = Regex::new(r"^(\d{1,2}):(\d{1,2})$").unwrap();
+    let (hh, mm) = if let Some(captures) = hhmm_reg.captures(start_hhmm_str) {
+        (captures[1].parse().unwrap(), captures[2].parse().unwrap())
+    } else {
+        (12, 0)
+    };
+    let yyyymmdd_reg = Regex::new(r"^(\d{2,4})/(\d{1,2})/(\d{1,2})$").unwrap();
+    let mmdd_reg = Regex::new(r"^(\d{1,2})/(\d{1,2})$").unwrap();
+
+    if let Some(captures) = yyyymmdd_reg.captures(start_date_str) {
+        let raw_year: i32 = captures[1].parse().unwrap();
+        let year = if raw_year < 100 {
+            raw_year + 2000
+        } else {
+            raw_year
+        };
+        return Some(
+            Local
+                .with_ymd_and_hms(
+                    year,
+                    captures[2].parse().unwrap(),
+                    captures[3].parse().unwrap(),
+                    hh,
+                    mm,
+                    0,
+                )
+                .unwrap(),
+        );
+    }
+    if let Some(captures) = mmdd_reg.captures(start_date_str) {
+        let month = captures[1].parse().unwrap();
+        let day = captures[2].parse().unwrap();
+        let mut answer = Local
+            .with_ymd_and_hms(now.year(), month, day, hh, mm, 0)
+            .unwrap();
+        if answer < *now {
+            answer = Local
+                .with_ymd_and_hms(now.year() + 1, month, day, hh, mm, 0)
+                .unwrap();
+        }
+        return Some(answer);
+    }
+    if start_date_str.starts_with('明') {
+        let next_day = get_next_morning_datetime(*now);
+        return Some(
+            Local
+                .with_ymd_and_hms(next_day.year(), next_day.month(), next_day.day(), hh, mm, 0)
+                .unwrap(),
+        );
+    }
+    let days_of_week = ["月", "火", "水", "木", "金", "土", "日"];
+    if days_of_week.contains(&start_date_str) {
+        let today = get_next_morning_datetime(*now) - Duration::days(1);
+        let current_index = today.weekday().num_days_from_monday() as usize;
+        let target_index = days_of_week
+            .iter()
+            .position(|day| day == &start_date_str)
+            .unwrap();
+        let difference = (7 + target_index - current_index) % 7;
+        let days = if difference == 0 {
+            7
+        } else {
+            difference as i64
+        };
+        let target_day = get_next_morning_datetime(*now) + Duration::days(days - 1);
+        return Some(
+            Local
+                .with_ymd_and_hms(
+                    target_day.year(),
+                    target_day.month(),
+                    target_day.day(),
+                    hh,
+                    mm,
+                    0,
+                )
+                .unwrap(),
+        );
+    }
+    Some(
+        Local
+            .with_ymd_and_hms(now.year(), now.month(), now.day(), hh, mm, 0)
+            .unwrap(),
+    )
 }
