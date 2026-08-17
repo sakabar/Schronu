@@ -6,8 +6,9 @@ use super::command::{
 };
 use super::handler::{
     decide_time_values, handle, handle_breakdown_split_command, handle_project_command,
-    handle_task_tree_command, CommandOutcome, ExternalRequest, FocusRequest, ProjectCommandContext,
-    TaskListOrder, TaskTreeCommandContext,
+    handle_task_attribute_command, handle_task_tree_command, CommandOutcome, ExternalRequest,
+    FocusRequest, ProjectCommandContext, TaskAttributeCommandContext, TaskListOrder,
+    TaskTreeCommandContext,
 };
 use super::renderer::{
     render_display_model, writeln_newline, ErrorCapturingWriter, SchronuWriter, MAX_COL,
@@ -200,12 +201,15 @@ fn validate_non_interactive_command(command: &Command) -> Result<(), CommandErro
             value,
             ..
         }) => {
-            if matches!(
-                value.as_str(),
-                "消" | "今" | "明" | "月" | "火" | "水" | "木" | "金" | "土" | "日"
-            ) || Regex::new(r"^\d{1,2}/\d{1,2}$")
-                .expect("valid regex")
-                .is_match(value)
+            if value.starts_with('今')
+                || value.starts_with('明')
+                || matches!(
+                    value.as_str(),
+                    "消" | "月" | "火" | "水" | "木" | "金" | "土" | "日"
+                )
+                || Regex::new(r"^\d{1,2}/\d{1,2}$")
+                    .expect("valid regex")
+                    .is_match(value)
                 || Regex::new(r"^\d{1,2}:\d{1,2}$")
                     .expect("valid regex")
                     .is_match(value)
@@ -223,6 +227,22 @@ fn validate_non_interactive_command(command: &Command) -> Result<(), CommandErro
         }
         _ => Ok(()),
     }
+}
+
+fn validate_contextual_task_attribute_command(
+    command: &Command,
+    now: DateTime<Local>,
+    config: &SchronuConfig,
+) -> Result<(), CommandError> {
+    if let Command::Action(CommandAction::StringValue {
+        kind: CommandKind::Deadline,
+        value,
+        ..
+    }) = command
+    {
+        resolve_deadline_time(value, now, config)?;
+    }
+    Ok(())
 }
 
 impl From<ApplicationError> for CommandError {
@@ -4092,17 +4112,73 @@ fn execute_defer_all_frequent_routines(
     Ok(())
 }
 
-fn execute_set_deadline_with_config(
-    task_repository: &mut dyn TaskRepositoryTrait,
-    focused_task_id_opt: Option<Uuid>,
-    deadline_date_str: &str,
-    config: &SchronuConfig,
-) -> Result<(), CommandError> {
-    if deadline_date_str == "消" {
-        if let Some(task_id) = focused_task_id_opt {
-            set_deadline(task_repository, task_id, None)?;
+fn resolve_deadline_date(value: &str, now: DateTime<Local>) -> Result<String, CommandError> {
+    if value == "消" {
+        return Ok(value.to_string());
+    }
+    if value.starts_with('今') {
+        return Ok((get_next_morning_datetime(now) - Duration::days(1))
+            .format("%Y/%m/%d")
+            .to_string());
+    }
+    if value.starts_with('明') {
+        return Ok(get_next_morning_datetime(now)
+            .format("%Y/%m/%d")
+            .to_string());
+    }
+
+    let days_of_week = ["月", "火", "水", "木", "金", "土", "日"];
+    if days_of_week.contains(&value) {
+        let today = get_next_morning_datetime(now) - Duration::days(1);
+        let current_index = days_of_week
+            .iter()
+            .position(|day| *day == get_weekday_jp(&today.date_naive()))
+            .expect("current weekday must be in the Japanese weekday table");
+        let target_index = days_of_week
+            .iter()
+            .position(|day| *day == value)
+            .expect("matched deadline weekday must be in the weekday table");
+        let difference = (7 + target_index - current_index) % 7;
+        let days = if difference == 0 {
+            7
+        } else {
+            difference as i64
+        };
+        return Ok((get_next_morning_datetime(now) + Duration::days(days - 1))
+            .format("%Y/%m/%d")
+            .to_string());
+    }
+
+    let mmdd = Regex::new(r"^(\d{1,2})/(\d{1,2})$").expect("valid deadline regex");
+    if let Some(captures) = mmdd.captures(value) {
+        let invalid_deadline =
+            || command_parse_error("〆", "deadline", "日時が不正です", "〆 <日付または時刻>");
+        let month = captures[1].parse::<u32>().map_err(|_| invalid_deadline())?;
+        let day = captures[2].parse::<u32>().map_err(|_| invalid_deadline())?;
+        let mut deadline_date = Local
+            .with_ymd_and_hms(now.year(), month, day, 12, 0, 0)
+            .single()
+            .ok_or_else(invalid_deadline)?;
+        if deadline_date < now {
+            deadline_date = Local
+                .with_ymd_and_hms(now.year() + 1, month, day, 12, 0, 0)
+                .single()
+                .ok_or_else(invalid_deadline)?;
         }
-        return Ok(());
+        return Ok(deadline_date.format("%Y/%m/%d").to_string());
+    }
+
+    Ok(value.to_string())
+}
+
+fn resolve_deadline_time(
+    deadline_value: &str,
+    now: DateTime<Local>,
+    config: &SchronuConfig,
+) -> Result<Option<DateTime<Local>>, CommandError> {
+    let deadline_date_str = resolve_deadline_date(deadline_value, now)?;
+    if deadline_date_str == "消" {
+        return Ok(None);
     }
 
     let mut deadline_time_str = format!(
@@ -4113,9 +4189,9 @@ fn execute_set_deadline_with_config(
     let hhmm_reg = Regex::new(r"^(\d{1,2}):(\d{1,2})$").unwrap();
 
     // 時刻のみを指定した場合は、日付は今日にする
-    if hhmm_reg.is_match(deadline_date_str) {
+    if hhmm_reg.is_match(&deadline_date_str) {
         let caps = hhmm_reg
-            .captures(deadline_date_str)
+            .captures(&deadline_date_str)
             .expect("matched deadline time must have captures");
         let hh: u32 = caps[1].parse().map_err(|_| {
             command_parse_error("〆", "deadline", "時刻が不正です", "〆 <日付または時刻>")
@@ -4124,7 +4200,6 @@ fn execute_set_deadline_with_config(
             command_parse_error("〆", "deadline", "時刻が不正です", "〆 <日付または時刻>")
         })?;
 
-        let now = task_repository.get_last_synced_time();
         deadline_time_str = format!("{} {:02}:{:02}:00", now.format("%Y/%m/%d"), hh, mm);
     }
 
@@ -4141,68 +4216,42 @@ fn execute_set_deadline_with_config(
             "〆 <日付または時刻>",
         ));
     };
-    if let Some(task_id) = focused_task_id_opt {
-        set_deadline(task_repository, task_id, Some(deadline_time))?;
-    }
-    Ok(())
-}
-
-fn execute_set_estimated_work_minutes(
-    task_repository: &mut dyn TaskRepositoryTrait,
-    focused_task_id_opt: Option<Uuid>,
-    estimated_work_minutes_str: &str,
-) -> Result<(), CommandError> {
-    let estimated_work_minutes = estimated_work_minutes_str.parse::<i64>().map_err(|_| {
-        command_parse_error(
-            "予",
-            "estimated_work_minutes",
-            "整数で指定してください",
-            "予 <分>",
-        )
-    })?;
-    if let Some(task_id) = focused_task_id_opt {
-        set_estimate(task_repository, task_id, estimated_work_minutes)?;
-    }
-    Ok(())
+    Ok(Some(deadline_time))
 }
 
 fn execute_set_arrange_children_work_minutes(
     focused_task_opt: &Option<TaskHandle>,
-    estimated_work_minutes_str: &str,
+    estimated_minutes: i64,
     includes_zero_estimate: bool,
 ) -> Result<(), ApplicationError> {
-    let estimated_minutes_result = estimated_work_minutes_str.parse::<i64>();
-
     // 繰り返しタスクについて、その子タスクでDoneでないものの時間を一律変更する。
-    if let Ok(estimated_minutes) = estimated_minutes_result {
-        if !(0..=MAX_ARRANGE_ESTIMATED_WORK_MINUTES).contains(&estimated_minutes) {
-            return Ok(());
-        }
+    if !(0..=MAX_ARRANGE_ESTIMATED_WORK_MINUTES).contains(&estimated_minutes) {
+        return Ok(());
+    }
 
-        if let Some(focused_task) = focused_task_opt {
-            if focused_task
-                .get_repetition_interval_days_opt()
-                .map_err(ApplicationError::TaskTree)?
-                .is_some()
-            {
-                let children = focused_task
-                    .get_children()
-                    .map_err(ApplicationError::TaskTree)?;
-                for child_task in children.iter() {
-                    if child_task
-                        .get_status()
-                        .map_err(ApplicationError::TaskTree)?
-                        != Status::Done
-                        && (includes_zero_estimate
-                            || child_task
-                                .get_estimated_work_seconds()
-                                .map_err(ApplicationError::TaskTree)?
-                                != 0)
-                    {
-                        child_task
-                            .set_estimated_work_seconds(estimated_minutes * 60)
-                            .map_err(ApplicationError::TaskTree)?;
-                    }
+    if let Some(focused_task) = focused_task_opt {
+        if focused_task
+            .get_repetition_interval_days_opt()
+            .map_err(ApplicationError::TaskTree)?
+            .is_some()
+        {
+            let children = focused_task
+                .get_children()
+                .map_err(ApplicationError::TaskTree)?;
+            for child_task in children.iter() {
+                if child_task
+                    .get_status()
+                    .map_err(ApplicationError::TaskTree)?
+                    != Status::Done
+                    && (includes_zero_estimate
+                        || child_task
+                            .get_estimated_work_seconds()
+                            .map_err(ApplicationError::TaskTree)?
+                            != 0)
+                {
+                    child_task
+                        .set_estimated_work_seconds(estimated_minutes * 60)
+                        .map_err(ApplicationError::TaskTree)?;
                 }
             }
         }
@@ -4210,35 +4259,44 @@ fn execute_set_arrange_children_work_minutes(
     Ok(())
 }
 
-fn execute_set_actual_work_minutes(
+fn set_focused_task_actual_work_minutes(
     focused_task_opt: &Option<TaskHandle>,
-    actual_work_minutes_str: &str,
+    actual_work_minutes: i64,
 ) -> Result<(), ApplicationError> {
-    let actual_minutes_result = actual_work_minutes_str.parse::<i64>();
-
-    if let Ok(actual_work_minutes) = actual_minutes_result {
-        let actual_work_seconds = actual_work_minutes * 60;
-        if let Some(focused_task) = focused_task_opt.as_ref() {
-            focused_task
-                .set_actual_work_seconds(actual_work_seconds)
-                .map_err(ApplicationError::TaskTree)?;
-        }
+    let actual_work_seconds =
+        actual_work_minutes
+            .checked_mul(60)
+            .ok_or(ApplicationError::InvalidInput {
+                field: "actual_work_minutes",
+                reason: "seconds conversion overflow",
+            })?;
+    if let Some(focused_task) = focused_task_opt.as_ref() {
+        focused_task
+            .set_actual_work_seconds(actual_work_seconds)
+            .map_err(ApplicationError::TaskTree)?;
     }
     Ok(())
 }
 
+fn set_focused_task_priority(
+    focused_task_opt: &Option<TaskHandle>,
+    priority: i64,
+) -> Result<(), ApplicationError> {
+    if let Some(focused_task) = focused_task_opt.as_ref() {
+        focused_task
+            .set_priority(priority)
+            .map_err(ApplicationError::TaskTree)?;
+    }
+    Ok(())
+}
+
+#[cfg(test)]
 fn execute_set_priority(
     focused_task_opt: &Option<TaskHandle>,
     priority_str: &str,
 ) -> Result<(), ApplicationError> {
-    let priority_result = priority_str.parse::<i64>();
-
-    if let Ok(priority) = priority_result {
-        if let Some(focused_task) = focused_task_opt.as_ref() {
-            focused_task
-                .set_priority(priority)
-                .map_err(ApplicationError::TaskTree)?;
-        }
+    if let Ok(priority) = priority_str.parse::<i64>() {
+        set_focused_task_priority(focused_task_opt, priority)?;
     }
     Ok(())
 }
@@ -4248,21 +4306,6 @@ fn read_project_category_command_arg(s: &str) -> Option<Option<ProjectCategory>>
         "_" | "none" | "clear" => Some(None),
         _ => read_project_category(s).map(Some),
     }
-}
-
-fn execute_set_project_category(
-    task_repository: &mut dyn TaskRepositoryTrait,
-    focused_task_id_opt: Option<Uuid>,
-    project_category_str: &str,
-) -> Result<(), CommandError> {
-    let project_category_opt =
-        read_project_category_command_arg(project_category_str).ok_or_else(|| {
-            command_parse_error("類", "category", "カテゴリが不正です", "類 <カテゴリ>")
-        })?;
-    if let Some(task_id) = focused_task_id_opt {
-        set_category(task_repository, task_id, project_category_opt)?;
-    }
-    Ok(())
 }
 
 fn decide_time(tokens: &[&str], now: &DateTime<Local>) -> Option<DateTime<Local>> {
@@ -5508,6 +5551,77 @@ fn breakdownとsplitはflush_errorとbroken_pipeを製品経路で分類する()
     }
 }
 
+#[test]
+fn task属性更新commandは製品経路で必ず1回flushする() {
+    let now = Local.with_ymd_and_hms(2026, 8, 11, 12, 0, 0).unwrap();
+    for command in [
+        "〆 2026/08/20",
+        "予 15",
+        "揃 15",
+        "実 20",
+        "重 3",
+        "類 資",
+        "働 5",
+    ] {
+        let task = TaskHandle::new("flush対象").unwrap();
+        let task_id = task.get_id().unwrap();
+        let mut task_repository = TestTaskRepository::new(task, now);
+        let mut free_time_manager = TestFreeTimeManager;
+        let mut focused_task_id_opt = Some(task_id);
+        let parsed = parse_command(command, ParseMode::NonInteractive).unwrap();
+        let mut stdout = FlushTrackingWriter::successful(true);
+
+        execute_parsed(
+            &mut stdout,
+            &mut task_repository,
+            &mut free_time_manager,
+            &mut focused_task_id_opt,
+            &now,
+            command,
+            &parsed,
+        )
+        .unwrap();
+
+        assert_eq!(stdout.flush_count, 1, "{command}");
+    }
+}
+
+#[test]
+fn task属性更新commandはflush_errorとbroken_pipeを製品経路で分類する() {
+    let execute_with_error = |error_kind| {
+        let now = Local.with_ymd_and_hms(2026, 8, 11, 12, 0, 0).unwrap();
+        let task = TaskHandle::new("flush error対象").unwrap();
+        let task_id = task.get_id().unwrap();
+        let mut task_repository = TestTaskRepository::new(task, now);
+        let mut free_time_manager = TestFreeTimeManager;
+        let mut focused_task_id_opt = Some(task_id);
+        let parsed = parse_command("予 15", ParseMode::NonInteractive).unwrap();
+        let mut stdout = FlushTrackingWriter::failing(error_kind);
+
+        let result = execute_parsed(
+            &mut stdout,
+            &mut task_repository,
+            &mut free_time_manager,
+            &mut focused_task_id_opt,
+            &now,
+            "予 15",
+            &parsed,
+        );
+        (result, stdout.flush_count)
+    };
+
+    let (output_error, output_flush_count) = execute_with_error(std::io::ErrorKind::Other);
+    assert!(matches!(
+        output_error,
+        Err(CommandError::Output(error)) if error.kind() == std::io::ErrorKind::Other
+    ));
+    assert_eq!(output_flush_count, 1);
+
+    let (broken_pipe, broken_pipe_flush_count) = execute_with_error(std::io::ErrorKind::BrokenPipe);
+    assert!(broken_pipe.is_ok());
+    assert_eq!(broken_pipe_flush_count, 1);
+}
+
 #[cfg(test)]
 struct TestFreeTimeManagerForBand;
 
@@ -6325,6 +6439,62 @@ fn test_execute_estimate_不正値はfield付き入力エラーを表示して�
 }
 
 #[test]
+fn test_execute_actual_priority_work_typed値でtaskを更新する() {
+    let now = Local.with_ymd_and_hms(2026, 8, 11, 12, 0, 0).unwrap();
+    let task = TaskHandle::new("更新対象").unwrap();
+    let task_id = task.get_id().unwrap();
+
+    let actual = execute_command_for_test(task, now, Some(task_id), "実 20");
+    assert_eq!(actual.task.get_actual_work_seconds().unwrap(), 20 * 60);
+
+    let prioritized = execute_command_for_test(actual.task, now, Some(task_id), "重 7");
+    assert_eq!(prioritized.task.get_priority().unwrap(), 7);
+
+    let worked = execute_command_for_test(prioritized.task, now, Some(task_id), "働 5");
+    assert_eq!(worked.task.get_actual_work_seconds().unwrap(), 25 * 60);
+    assert_eq!(worked.focused_task_id_opt, None);
+}
+
+#[test]
+fn test_execute_actual_priority_work_不正値はfield付き入力エラーで状態を変更しない() {
+    let now = Local.with_ymd_and_hms(2026, 8, 11, 12, 0, 0).unwrap();
+    for command in ["実 invalid", "重 invalid", "働 invalid"] {
+        let task = TaskHandle::new("更新対象").unwrap();
+        task.set_actual_work_seconds(20 * 60);
+        task.set_priority(7);
+        let task_id = task.get_id().unwrap();
+
+        let result = execute_command_for_test(task, now, Some(task_id), command);
+
+        assert_eq!(result.task.get_actual_work_seconds().unwrap(), 20 * 60);
+        assert_eq!(result.task.get_priority().unwrap(), 7);
+        assert_eq!(result.focused_task_id_opt, Some(task_id));
+        assert!(result.output.contains("[Error] 入力エラー:"));
+    }
+}
+
+#[test]
+fn test_execute_actual_work_overflowはfield付きerrorで状態を変更しない() {
+    let now = Local.with_ymd_and_hms(2026, 8, 11, 12, 0, 0).unwrap();
+    for command in [
+        format!("実 {}", i64::MAX),
+        format!("実 {}", i64::MIN),
+        format!("働 {}", i64::MAX),
+        format!("働 {}", i64::MIN),
+    ] {
+        let task = TaskHandle::new("更新対象").unwrap();
+        task.set_actual_work_seconds(20 * 60);
+        let task_id = task.get_id().unwrap();
+
+        let result = execute_command_for_test(task, now, Some(task_id), &command);
+
+        assert_eq!(result.task.get_actual_work_seconds().unwrap(), 20 * 60);
+        assert_eq!(result.focused_task_id_opt, Some(task_id));
+        assert!(result.output.contains("actual_work_minutes"));
+    }
+}
+
+#[test]
 fn test_execute_deadline_締切を設定して解除する() {
     let now = Local.with_ymd_and_hms(2026, 8, 11, 12, 0, 0).unwrap();
     let task = TaskHandle::new("更新対象").unwrap();
@@ -6350,6 +6520,22 @@ fn test_execute_deadline_締切を設定して解除する() {
         invalid.task.get_deadline_time_opt().unwrap(),
         Some(Local.with_ymd_and_hms(2026, 8, 11, 14, 30, 0).unwrap())
     );
+
+    let today_task = TaskHandle::new("今日締切").unwrap();
+    let today_task_id = today_task.get_id().unwrap();
+    let today = execute_command_for_test(today_task, now, Some(today_task_id), "〆 今日");
+    assert_eq!(
+        today.task.get_deadline_time_opt().unwrap(),
+        Some(Local.with_ymd_and_hms(2026, 8, 11, 23, 59, 59).unwrap())
+    );
+
+    let tomorrow_task = TaskHandle::new("明日締切").unwrap();
+    let tomorrow_task_id = tomorrow_task.get_id().unwrap();
+    let tomorrow = execute_command_for_test(tomorrow_task, now, Some(tomorrow_task_id), "〆 明日");
+    assert_eq!(
+        tomorrow.task.get_deadline_time_opt().unwrap(),
+        Some(Local.with_ymd_and_hms(2026, 8, 12, 23, 59, 59).unwrap())
+    );
 }
 
 #[test]
@@ -6367,6 +6553,16 @@ fn test_execute_deadline_不正日時はfield付き入力エラーを表示し�
         Some(previous_deadline)
     );
     assert!(result.output.contains("[Error] 入力エラー: deadline:"));
+
+    for command in ["〆 13/40", "〆 25:99"] {
+        let result = execute_command_for_test(result.task.clone(), now, Some(task_id), command);
+        assert_eq!(
+            result.task.get_deadline_time_opt().unwrap(),
+            Some(previous_deadline)
+        );
+        assert!(result.output.contains("コマンド: 〆"));
+        assert!(result.output.contains("使い方: 〆 <日付または時刻>"));
+    }
 }
 
 #[test]
@@ -7048,6 +7244,12 @@ fn execute_parsed(
     untrimmed_line: &str,
     parsed_command: &Command,
 ) -> Result<(), CommandError> {
+    validate_non_interactive_command(parsed_command)?;
+    validate_contextual_task_attribute_command(
+        parsed_command,
+        task_repository.get_last_synced_time(),
+        active_config(),
+    )?;
     let mut output = ErrorCapturingWriter::new(stdout);
     let project_outcome = {
         let mut context = RuntimeProjectCommandContext {
@@ -7070,6 +7272,22 @@ fn execute_parsed(
             focused_task_id_opt,
         };
         handle_breakdown_split_command(parsed_command, &mut context)?
+    } {
+        execute_handler_outcome(
+            &mut output,
+            task_repository,
+            focused_task_id_opt,
+            outcome,
+            active_config(),
+        )?;
+    } else if let Some(outcome) = {
+        let mut context = RuntimeTaskAttributeCommandContext {
+            task_repository,
+            focused_task_id_opt,
+            focus_started_datetime,
+            config: active_config(),
+        };
+        handle_task_attribute_command(parsed_command, &mut context)?
     } {
         execute_handler_outcome(
             &mut output,
@@ -7161,6 +7379,96 @@ impl ProjectCommandContext for RuntimeProjectCommandContext<'_> {
 
     fn set_focused_task_id(&mut self, task_id_opt: Option<Uuid>) {
         *self.focused_task_id_opt = task_id_opt;
+    }
+}
+
+struct RuntimeTaskAttributeCommandContext<'a> {
+    task_repository: &'a mut dyn TaskRepositoryTrait,
+    focused_task_id_opt: &'a mut Option<Uuid>,
+    focus_started_datetime: &'a DateTime<Local>,
+    config: &'a SchronuConfig,
+}
+
+impl RuntimeTaskAttributeCommandContext<'_> {
+    fn focused_task(&self) -> Result<Option<TaskHandle>, ApplicationError> {
+        match *self.focused_task_id_opt {
+            Some(id) => self
+                .task_repository
+                .get_by_id(id)
+                .map_err(ApplicationError::TaskTree),
+            None => Ok(None),
+        }
+    }
+}
+
+impl TaskAttributeCommandContext for RuntimeTaskAttributeCommandContext<'_> {
+    fn set_deadline(&mut self, value: &str) -> Result<(), ApplicationError> {
+        let deadline_time = resolve_deadline_time(
+            value,
+            self.task_repository.get_last_synced_time(),
+            self.config,
+        )
+        .expect("task attribute command must be contextually validated before handling");
+        if let Some(task_id) = *self.focused_task_id_opt {
+            set_deadline(self.task_repository, task_id, deadline_time)?;
+        }
+        Ok(())
+    }
+
+    fn set_estimate(&mut self, minutes: i64) -> Result<(), ApplicationError> {
+        if let Some(task_id) = *self.focused_task_id_opt {
+            set_estimate(self.task_repository, task_id, minutes)?;
+        }
+        Ok(())
+    }
+
+    fn arrange(
+        &mut self,
+        minutes: i64,
+        includes_zero_estimate: bool,
+    ) -> Result<(), ApplicationError> {
+        execute_set_arrange_children_work_minutes(
+            &self.focused_task()?,
+            minutes,
+            includes_zero_estimate,
+        )
+    }
+
+    fn set_actual(&mut self, minutes: i64) -> Result<(), ApplicationError> {
+        set_focused_task_actual_work_minutes(&self.focused_task()?, minutes)
+    }
+
+    fn set_priority(&mut self, priority: i64) -> Result<(), ApplicationError> {
+        set_focused_task_priority(&self.focused_task()?, priority)
+    }
+
+    fn set_category(&mut self, value: &str) -> Result<(), ApplicationError> {
+        let project_category = read_project_category_command_arg(value)
+            .expect("task attribute command must be validated before handling");
+        if let Some(task_id) = *self.focused_task_id_opt {
+            set_category(self.task_repository, task_id, project_category)?;
+        }
+        Ok(())
+    }
+
+    fn add_work(&mut self, minutes: Option<i64>) -> Result<(), ApplicationError> {
+        let additional_minutes = minutes
+            .unwrap_or_else(|| (Local::now() - *self.focus_started_datetime).num_minutes() + 1);
+        if let Some(focused_task) = self.focused_task()? {
+            let original_minutes = focused_task
+                .get_actual_work_seconds()
+                .map_err(ApplicationError::TaskTree)?
+                / 60;
+            let total_minutes = original_minutes.checked_add(additional_minutes).ok_or(
+                ApplicationError::InvalidInput {
+                    field: "additional_actual_work_minutes",
+                    reason: "actual work minutes overflow",
+                },
+            )?;
+            set_focused_task_actual_work_minutes(&Some(focused_task), total_minutes)?;
+            *self.focused_task_id_opt = None;
+        }
+        Ok(())
     }
 }
 
@@ -7418,181 +7726,6 @@ fn execute_with_config(
             execute_unfocus(focused_task_id_opt);
         }
         // "詳" | "description" | "desc" => {}
-        CommandKind::Deadline => {
-            if tokens.len() >= 2 {
-                // "2023/05/23"とか。簡単のため、時刻は指定不要とし、自動的に23:59を〆切と設定する
-                // 5/23のようにhh/mmで指定した場合は、年の情報を補完してその日の23:59を〆切と設定する
-                // 月~日と指定した場合、明日以降で直近のその曜日の23:59を〆切と設定する
-
-                let deadline_date_str = &tokens[1];
-
-                let now: DateTime<Local> = task_repository.get_last_synced_time();
-
-                let mmdd_reg = Regex::new(r"^(\d{1,2})/(\d{1,2})$").unwrap();
-
-                if tokens[1].starts_with('今') {
-                    let s = (get_next_morning_datetime(now) - Duration::days(1))
-                        .format("%Y/%m/%d")
-                        .to_string();
-                    execute_set_deadline_with_config(
-                        task_repository,
-                        *focused_task_id_opt,
-                        &s,
-                        config,
-                    )?;
-                } else if tokens[1].starts_with('明') {
-                    let s = get_next_morning_datetime(now)
-                        .format("%Y/%m/%d")
-                        .to_string();
-                    execute_set_deadline_with_config(
-                        task_repository,
-                        *focused_task_id_opt,
-                        &s,
-                        config,
-                    )?;
-                } else if ["月", "火", "水", "木", "金", "土", "日"].contains(&tokens[1]) {
-                    // 月 火 水 木 金 土 日 が指定された時は、明日以降で、直近のその曜日の23:59を〆切とする
-                    // (show_all_tasksとロジック重複...)
-
-                    let days_of_week = ["月", "火", "水", "木", "金", "土", "日"];
-
-                    let todays_morning_datetime =
-                        get_next_morning_datetime(now) - Duration::days(1);
-
-                    let dn = todays_morning_datetime.date_naive();
-                    let now_weekday_jp = get_weekday_jp(&dn);
-
-                    let now_days_of_week_ind = days_of_week
-                        .iter()
-                        .position(|&x| x == now_weekday_jp)
-                        .unwrap();
-                    let target_days_of_week_ind =
-                        days_of_week.iter().position(|&x| x == tokens[1]).unwrap();
-
-                    let ind_diff = (7 + target_days_of_week_ind - now_days_of_week_ind) % 7;
-
-                    // 今日の〆切については「〆 今」で設定できるので、その代わりに、1週間後の同じ曜日の情報を設定するようにする
-                    let days: i64 = if ind_diff == 0 { 7 } else { ind_diff as i64 };
-
-                    let s = (get_next_morning_datetime(now) + Duration::days(days - 1))
-                        .format("%Y/%m/%d")
-                        .to_string();
-
-                    if let Err(error) = execute_set_deadline_with_config(
-                        task_repository,
-                        *focused_task_id_opt,
-                        &s,
-                        config,
-                    ) {
-                        write_command_error(stdout, &error);
-                    }
-                } else if mmdd_reg.is_match(tokens[1]) {
-                    // FIXME 「後」コマンドとロジック重複
-
-                    let caps = mmdd_reg.captures(tokens[1]).unwrap();
-                    let mm: u32 = caps[1].parse().unwrap();
-                    let dd: u32 = caps[2].parse().unwrap();
-
-                    // この時点では12:00にしているが、後で時刻を無視するので問題ない
-                    let mut deadline_dst_time = Local
-                        .with_ymd_and_hms(now.year(), mm, dd, 12, 0, 0)
-                        .unwrap();
-
-                    if deadline_dst_time < now {
-                        deadline_dst_time = get_next_morning_datetime(
-                            Local
-                                .with_ymd_and_hms(now.year() + 1, mm, dd, 12, 0, 0)
-                                .unwrap(),
-                        ) - Duration::days(1);
-                    }
-
-                    let s = deadline_dst_time.format("%Y/%m/%d").to_string();
-
-                    if let Err(error) = execute_set_deadline_with_config(
-                        task_repository,
-                        *focused_task_id_opt,
-                        &s,
-                        config,
-                    ) {
-                        write_command_error(stdout, &error);
-                    }
-                } else {
-                    if let Err(error) = execute_set_deadline_with_config(
-                        task_repository,
-                        *focused_task_id_opt,
-                        deadline_date_str,
-                        config,
-                    ) {
-                        write_command_error(stdout, &error);
-                    }
-                }
-            }
-        }
-        CommandKind::Estimate => {
-            if tokens.len() >= 2 {
-                let estimated_work_minutes_str = &tokens[1];
-                execute_set_estimated_work_minutes(
-                    task_repository,
-                    *focused_task_id_opt,
-                    estimated_work_minutes_str,
-                )?;
-            }
-        }
-        CommandKind::Arrange => {
-            if tokens.len() >= 2 {
-                let estimated_work_minutes_str = &tokens[1];
-                let includes_zero_estimate = tokens
-                    .get(2)
-                    .is_some_and(|token| matches!(*token, "全" | "all"));
-                execute_set_arrange_children_work_minutes(
-                    &focused_task_opt,
-                    estimated_work_minutes_str,
-                    includes_zero_estimate,
-                );
-            }
-        }
-        CommandKind::Actual => {
-            if tokens.len() >= 2 {
-                let actual_work_minutes_str = &tokens[1];
-                execute_set_actual_work_minutes(&focused_task_opt, actual_work_minutes_str);
-            }
-        }
-        CommandKind::Priority => {
-            if tokens.len() >= 2 {
-                let priority_str = &tokens[1];
-                execute_set_priority(&focused_task_opt, priority_str)?;
-            }
-        }
-        CommandKind::Category => {
-            if tokens.len() >= 2 {
-                let project_category_str = &tokens[1];
-                execute_set_project_category(
-                    task_repository,
-                    *focused_task_id_opt,
-                    project_category_str,
-                )?;
-            }
-        }
-        CommandKind::Work => {
-            let additional_actual_work_minutes: i64 = if tokens.len() >= 2 {
-                tokens[1].parse().unwrap()
-            } else {
-                (Local::now() - *focus_started_datetime).num_minutes() + 1
-            };
-
-            if let Some(ref focused_task) = focused_task_opt {
-                let original_actual_work_minutes = focused_task
-                    .get_actual_work_seconds()
-                    .map_err(ApplicationError::TaskTree)?
-                    / 60;
-                let actual_work_minutes_str = format!(
-                    "{}",
-                    original_actual_work_minutes + additional_actual_work_minutes
-                );
-                execute_set_actual_work_minutes(&focused_task_opt, &actual_work_minutes_str)?;
-                *focused_task_id_opt = None;
-            }
-        }
         CommandKind::Defer => {
             if tokens.len() >= 3 {
                 let amount_str = &tokens[1];
@@ -9766,6 +9899,40 @@ fn test_低優先度modeで外したfocusは低優先度候補を再選択する
 }
 
 #[test]
+fn test_interactive_task属性更新_不正deadlineはfield付きerrorを表示して状態を維持する() {
+    let now = Local.with_ymd_and_hms(2026, 8, 16, 12, 0, 0).unwrap();
+    let task = TaskHandle::new("更新対象").unwrap();
+    let task_id = task.get_id().unwrap();
+    let previous_deadline = Local.with_ymd_and_hms(2026, 8, 20, 23, 59, 59).unwrap();
+    task.set_deadline_time_opt(Some(previous_deadline));
+    let mut repository = TestTaskRepository::new(task, now);
+    let mut free_time_manager = TestFreeTimeManager;
+    let mut stdout = TestWriter::new();
+    let mut focused_task_id_opt = Some(task_id);
+    let mut focus_selection_mode = FocusSelectionMode::HighestPriority;
+
+    execute_interactive_command(
+        &mut stdout,
+        &mut repository,
+        &mut free_time_manager,
+        &mut focused_task_id_opt,
+        &now,
+        &mut focus_selection_mode,
+        "〆 invalid",
+    )
+    .unwrap();
+
+    let actual = repository.get_by_id(task_id).unwrap().unwrap();
+    assert_eq!(
+        actual.get_deadline_time_opt().unwrap(),
+        Some(previous_deadline)
+    );
+    assert!(stdout
+        .into_string()
+        .contains("[Error] 入力エラー: deadline:"));
+}
+
+#[test]
 fn test_interactive_submitは製品event経路でload実行保存する() {
     let storage_dir = TestStorageDir::new();
     std::fs::create_dir_all(&storage_dir.path).unwrap();
@@ -11060,7 +11227,7 @@ fn execute_interactive_command(
             ),
         );
     } else {
-        execute_parsed(
+        if let Err(error) = execute_parsed(
             stdout,
             task_repository,
             free_time_manager,
@@ -11068,7 +11235,9 @@ fn execute_interactive_command(
             focus_started_datetime,
             command,
             &parsed_command,
-        );
+        ) {
+            write_command_error(stdout, &error);
+        }
         if matches!(parsed_command, Command::Focus { task_id } if *focused_task_id_opt == Some(task_id))
         {
             *focus_selection_mode = FocusSelectionMode::Explicit;

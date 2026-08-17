@@ -73,6 +73,20 @@ pub(super) trait TaskTreeCommandContext {
     ) -> Result<(), ApplicationError>;
 }
 
+pub(super) trait TaskAttributeCommandContext {
+    fn set_deadline(&mut self, value: &str) -> Result<(), ApplicationError>;
+    fn set_estimate(&mut self, minutes: i64) -> Result<(), ApplicationError>;
+    fn arrange(
+        &mut self,
+        minutes: i64,
+        includes_zero_estimate: bool,
+    ) -> Result<(), ApplicationError>;
+    fn set_actual(&mut self, minutes: i64) -> Result<(), ApplicationError>;
+    fn set_priority(&mut self, priority: i64) -> Result<(), ApplicationError>;
+    fn set_category(&mut self, value: &str) -> Result<(), ApplicationError>;
+    fn add_work(&mut self, minutes: Option<i64>) -> Result<(), ApplicationError>;
+}
+
 impl CommandOutcome {
     fn empty(kind: CommandKind) -> Self {
         Self {
@@ -381,6 +395,49 @@ pub(super) fn handle_breakdown_split_command(
     let mut outcome = CommandOutcome::empty(kind);
     outcome.display = display.model().clone();
     Ok(Some(outcome))
+}
+
+pub(super) fn handle_task_attribute_command(
+    command: &Command,
+    context: &mut dyn TaskAttributeCommandContext,
+) -> Result<Option<CommandOutcome>, ApplicationError> {
+    let kind = command.kind();
+
+    match command {
+        Command::Action(CommandAction::StringValue {
+            kind: CommandKind::Deadline,
+            value,
+            ..
+        }) => context.set_deadline(value)?,
+        Command::Estimate { minutes } => context.set_estimate(*minutes)?,
+        Command::Arrange {
+            minutes,
+            includes_zero_estimate,
+        } => context.arrange(*minutes, *includes_zero_estimate)?,
+        Command::Action(CommandAction::IntegerValue {
+            kind: CommandKind::Actual,
+            value,
+            ..
+        }) => context.set_actual(*value)?,
+        Command::Action(CommandAction::IntegerValue {
+            kind: CommandKind::Priority,
+            value,
+            ..
+        }) => context.set_priority(*value)?,
+        Command::Action(CommandAction::StringValue {
+            kind: CommandKind::Category,
+            value,
+            ..
+        }) => context.set_category(value)?,
+        Command::Action(CommandAction::OptionalInteger {
+            kind: CommandKind::Work,
+            value,
+            ..
+        }) => context.add_work(*value)?,
+        _ => return Ok(None),
+    }
+
+    Ok(Some(CommandOutcome::empty(kind)))
 }
 
 fn report_result<T>(display: &mut dyn SchronuWriter, result: Result<T, ApplicationError>) {
