@@ -4,6 +4,10 @@ use super::command::{
     parse_command, Command, CommandAction, CommandKind, CommandParseError, InteractiveShortcut,
     ParseMode,
 };
+use super::handler::{handle, CommandOutcome, ExternalRequest, FocusRequest};
+use super::renderer::{
+    render_display_model, writeln_newline, ErrorCapturingWriter, SchronuWriter, MAX_COL,
+};
 use chrono::{
     DateTime, Datelike, Duration, Local, LocalResult, NaiveDate, TimeZone, Timelike, Weekday,
 };
@@ -52,8 +56,7 @@ use std::cell::{Cell, RefCell};
 use std::cmp::{max, min};
 use std::collections::{HashMap, HashSet};
 use std::env;
-use std::io::Stdout;
-use std::io::{stdout, IsTerminal, Write};
+use std::io::{stdout, Write};
 #[cfg(test)]
 use std::path::PathBuf;
 use std::process;
@@ -71,16 +74,14 @@ use termion::color;
 use termion::event::Key;
 use termion::input::TermRead;
 use termion::raw::IntoRawMode;
-use termion::raw::RawTerminal;
 use termion::style;
 use unicode_width::UnicodeWidthChar;
 use unicode_width::UnicodeWidthStr;
 use url::Url;
 use uuid::Uuid;
 
-const MAX_COL: u16 = 999;
-
 const MAX_ARRANGE_ESTIMATED_WORK_MINUTES: i64 = 1439;
+#[cfg(test)]
 const DEFAULT_LOWEST_PRIORITY_RECENT_DAYS: i64 = 0;
 const FOCUS_PROGRESS_BAR_SEGMENTS: usize = 100;
 const IDLE_REFRESH_INTERVAL: StdDuration = StdDuration::from_secs(60);
@@ -114,86 +115,6 @@ enum FocusSelectionMode {
     HighestPriority,
     LowestPriority { recent_days: i64 },
     Explicit,
-}
-
-impl FocusSelectionMode {
-    fn label(&self) -> String {
-        match self {
-            FocusSelectionMode::HighestPriority => "高".to_string(),
-            FocusSelectionMode::LowestPriority { recent_days } => {
-                if *recent_days == DEFAULT_LOWEST_PRIORITY_RECENT_DAYS {
-                    "低".to_string()
-                } else {
-                    format!("低 {}", recent_days)
-                }
-            }
-            FocusSelectionMode::Explicit => "明示".to_string(),
-        }
-    }
-}
-
-trait SchronuWriter: Write {
-    fn writeln_newline(&mut self, message: &str) -> Result<(), std::io::Error>;
-
-    fn supports_ansi_color(&self) -> bool {
-        true
-    }
-}
-
-struct ErrorCapturingWriter<'a> {
-    inner: &'a mut dyn SchronuWriter,
-    first_error: Option<std::io::Error>,
-}
-
-impl<'a> ErrorCapturingWriter<'a> {
-    fn new(inner: &'a mut dyn SchronuWriter) -> Self {
-        Self {
-            inner,
-            first_error: None,
-        }
-    }
-
-    fn take_error(&mut self) -> Option<std::io::Error> {
-        self.first_error.take()
-    }
-
-    fn capture(&mut self, error: std::io::Error) {
-        if self.first_error.is_none() {
-            self.first_error = Some(error);
-        }
-    }
-}
-
-impl Write for ErrorCapturingWriter<'_> {
-    fn write(&mut self, buffer: &[u8]) -> std::io::Result<usize> {
-        match self.inner.write(buffer) {
-            Ok(written) => Ok(written),
-            Err(error) => {
-                self.capture(error);
-                Ok(buffer.len())
-            }
-        }
-    }
-
-    fn flush(&mut self) -> std::io::Result<()> {
-        if let Err(error) = self.inner.flush() {
-            self.capture(error);
-        }
-        Ok(())
-    }
-}
-
-impl SchronuWriter for ErrorCapturingWriter<'_> {
-    fn writeln_newline(&mut self, message: &str) -> Result<(), std::io::Error> {
-        if let Err(error) = self.inner.writeln_newline(message) {
-            self.capture(error);
-        }
-        Ok(())
-    }
-
-    fn supports_ansi_color(&self) -> bool {
-        self.inner.supports_ansi_color()
-    }
 }
 
 #[derive(Debug)]
@@ -455,30 +376,6 @@ impl std::error::Error for RunError {
             Self::Interrupted => None,
         }
     }
-}
-
-impl SchronuWriter for RawTerminal<Stdout> {
-    fn writeln_newline(&mut self, message: &str) -> Result<(), std::io::Error> {
-        writeln!(self, "{}{}", termion::cursor::Left(MAX_COL), message)
-    }
-
-    fn supports_ansi_color(&self) -> bool {
-        true
-    }
-}
-
-impl SchronuWriter for Stdout {
-    fn writeln_newline(&mut self, message: &str) -> Result<(), std::io::Error> {
-        writeln!(self, "{}", message)
-    }
-
-    fn supports_ansi_color(&self) -> bool {
-        self.is_terminal()
-    }
-}
-
-fn writeln_newline(stdout: &mut dyn SchronuWriter, message: &str) -> Result<(), std::io::Error> {
-    stdout.writeln_newline(message)
 }
 
 fn backward_width(line: &str, cursor_x: usize) -> u16 {
@@ -822,20 +719,19 @@ fn scheduled_leaf_starts_on_schronu_day(
         }))
 }
 
+#[cfg(test)]
 fn focus_selection_mode_from_command(command: &Command) -> Option<FocusSelectionMode> {
-    match command {
-        Command::Action(CommandAction::FocusMode {
-            kind: CommandKind::FocusHighest,
-            ..
-        }) => Some(FocusSelectionMode::HighestPriority),
-        Command::Action(CommandAction::FocusMode {
-            kind: CommandKind::FocusLowest,
-            recent_days,
-            ..
-        }) => Some(FocusSelectionMode::LowestPriority {
-            recent_days: recent_days.unwrap_or(DEFAULT_LOWEST_PRIORITY_RECENT_DAYS),
-        }),
-        _ => None,
+    handle(command)
+        .and_then(|outcome| outcome.focus_request)
+        .map(focus_selection_mode_from_request)
+}
+
+fn focus_selection_mode_from_request(request: FocusRequest) -> FocusSelectionMode {
+    match request {
+        FocusRequest::HighestPriority => FocusSelectionMode::HighestPriority,
+        FocusRequest::LowestPriority { recent_days } => {
+            FocusSelectionMode::LowestPriority { recent_days }
+        }
     }
 }
 
@@ -7137,21 +7033,63 @@ fn execute_parsed(
     parsed_command: &Command,
 ) -> Result<(), CommandError> {
     let mut output = ErrorCapturingWriter::new(stdout);
-    execute_with_config(
-        &mut output,
-        task_repository,
-        free_time_manager,
-        focused_task_id_opt,
-        focus_started_datetime,
-        untrimmed_line,
-        parsed_command,
-        active_config(),
-    )?;
+    if let Some(outcome) = handle(parsed_command) {
+        execute_handler_outcome(
+            &mut output,
+            task_repository,
+            focused_task_id_opt,
+            outcome,
+            active_config(),
+        )?;
+    } else {
+        execute_with_config(
+            &mut output,
+            task_repository,
+            free_time_manager,
+            focused_task_id_opt,
+            focus_started_datetime,
+            untrimmed_line,
+            parsed_command,
+            active_config(),
+        )?;
+    }
     match output.take_error() {
         Some(error) if error.kind() == std::io::ErrorKind::BrokenPipe => Ok(()),
         Some(error) => Err(CommandError::Output(error)),
         None => Ok(()),
     }
+}
+
+fn execute_handler_outcome(
+    stdout: &mut dyn SchronuWriter,
+    task_repository: &mut dyn TaskRepositoryTrait,
+    focused_task_id_opt: &Option<Uuid>,
+    outcome: CommandOutcome,
+    config: &SchronuConfig,
+) -> Result<(), CommandError> {
+    if !outcome.display.is_empty() {
+        render_display_model(stdout, &outcome.display).map_err(CommandError::Output)?;
+    }
+
+    if let Some(request) = outcome.external_request {
+        let focused_task_opt = match focused_task_id_opt {
+            Some(task_id) => task_repository
+                .get_by_id(*task_id)
+                .map_err(ApplicationError::TaskTree)?,
+            None => None,
+        };
+        match request {
+            ExternalRequest::OpenFocusedLink => execute_open_link(&focused_task_opt)?,
+            ExternalRequest::OpenObsidianRootSearch => {
+                execute_open_obsidian_root_task_search_with_config(&focused_task_opt, config)?
+            }
+        }
+    }
+
+    if outcome.kind != CommandKind::Noop {
+        stdout.flush().map_err(CommandError::Output)?;
+    }
+    Ok(())
 }
 
 #[allow(clippy::too_many_arguments, unused_must_use)]
@@ -7445,11 +7383,8 @@ fn execute_with_config(
             let new_task_id_str = if tokens.len() >= 2 { tokens[1] } else { "" };
             execute_pick(task_repository, focused_task_id_opt, new_task_id_str)?;
         }
-        CommandKind::Open => {
-            execute_open_link(&focused_task_opt)?;
-        }
-        CommandKind::Obsidian => {
-            execute_open_obsidian_root_task_search_with_config(&focused_task_opt, config)?;
+        CommandKind::Open | CommandKind::Obsidian => {
+            unreachable!("migrated command must be handled before legacy dispatch")
         }
         CommandKind::Unfocus => {
             execute_unfocus(focused_task_id_opt);
@@ -11181,14 +11116,15 @@ fn execute_interactive_command(
 ) -> Result<bool, CommandError> {
     let parsed_command =
         parse_command(command, ParseMode::Interactive).map_err(map_command_parse_error)?;
-    if let Some(new_focus_selection_mode) = focus_selection_mode_from_command(&parsed_command) {
-        *focus_selection_mode = new_focus_selection_mode;
+    if let Some(outcome) = handle(&parsed_command).filter(|outcome| outcome.focus_request.is_some())
+    {
+        *focus_selection_mode = focus_selection_mode_from_request(
+            outcome
+                .focus_request
+                .expect("focus outcome must contain a focus request"),
+        );
         *focused_task_id_opt = None;
-        writeln_newline(
-            stdout,
-            &format!("フォーカス選択モード: {}", focus_selection_mode.label()),
-        )
-        .unwrap();
+        render_display_model(stdout, &outcome.display).map_err(CommandError::Output)?;
     } else if let Command::Defer { amount, unit } = &parsed_command {
         report_command_result(
             stdout,

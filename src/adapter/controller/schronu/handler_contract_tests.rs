@@ -16,7 +16,10 @@ fn no_arguments(kind: CommandKind, canonical_name: &'static str) -> Command {
 fn handler_returns_structured_external_requests_without_opening_them() {
     let open = handle(&no_arguments(CommandKind::Open, "開")).expect("open is migrated");
     assert_eq!(open.kind, CommandKind::Open);
-    assert_eq!(open.external_request, Some(ExternalRequest::OpenFocusedLink));
+    assert_eq!(
+        open.external_request,
+        Some(ExternalRequest::OpenFocusedLink)
+    );
     assert_eq!(open.focus_request, None);
     assert!(open.display.is_empty());
 
