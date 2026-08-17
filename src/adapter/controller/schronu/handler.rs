@@ -7,7 +7,8 @@ use schronu::application::task_use_case::{
     CreateTaskInput,
 };
 use schronu::entity::datetime::get_next_morning_datetime;
-use schronu::entity::task::TaskHandle;
+use schronu::entity::task::{TaskAttr, TaskHandle};
+use std::cmp::min;
 use uuid::Uuid;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -305,12 +306,8 @@ pub(super) fn handle_project_command(
                 start_time,
                 deadline_time,
             );
+            report_result(&mut display, result);
             let mut outcome = CommandOutcome::empty(kind);
-            if let Err(error) = result {
-                display
-                    .writeln_newline(&format!("[Error] 操作エラー: {error}"))
-                    .expect("display recording is infallible");
-            }
             outcome.display = display.model().clone();
             Ok(Some(outcome))
         }
@@ -344,14 +341,64 @@ pub(super) fn handle_project_command(
     }
 }
 
+pub(super) fn handle_breakdown_split_command(
+    command: &Command,
+    context: &mut dyn ProjectCommandContext,
+) -> Result<Option<CommandOutcome>, ApplicationError> {
+    let action = match command {
+        Command::Action(action) => action,
+        _ => return Ok(None),
+    };
+    let kind = command.kind();
+    let mut display = DisplayRecorder::default();
+
+    match action {
+        CommandAction::TaskNames { names } => {
+            if !names.is_empty() && !names.iter().any(|name| name.parse::<i64>().is_ok()) {
+                let names = names.iter().map(String::as_str).collect::<Vec<_>>();
+                let result = execute_breakdown(&mut display, context, &names, &None);
+                report_result(&mut display, result);
+            }
+        }
+        CommandAction::Split { minutes, name } => {
+            let focused_task = context.focused_task()?;
+            let result = execute_split(context, &focused_task, name, *minutes, &mut display);
+            report_result(&mut display, result);
+        }
+        CommandAction::NoArguments {
+            kind: CommandKind::Wait,
+            ..
+        } => {
+            if let Some(focused_task) = context.focused_task()? {
+                let _result = focused_task
+                    .set_is_on_other_side(true)
+                    .map_err(ApplicationError::TaskTree);
+            }
+        }
+        _ => return Ok(None),
+    }
+
+    let mut outcome = CommandOutcome::empty(kind);
+    outcome.display = display.model().clone();
+    Ok(Some(outcome))
+}
+
+fn report_result<T>(display: &mut dyn SchronuWriter, result: Result<T, ApplicationError>) {
+    if let Err(error) = result {
+        display
+            .writeln_newline(&format!("[Error] 操作エラー: {error}"))
+            .expect("display recording is infallible");
+    }
+}
+
 fn outcome_from_reported_result<T>(
     kind: CommandKind,
     result: Result<T, ApplicationError>,
 ) -> CommandOutcome {
     let mut outcome = CommandOutcome::empty(kind);
-    if let Err(error) = result {
-        outcome.display = DisplayModel::newline(format!("[Error] 操作エラー: {error}"));
-    }
+    let mut display = DisplayRecorder::default();
+    report_result(&mut display, result);
+    outcome.display = display.model().clone();
     outcome
 }
 
@@ -415,7 +462,7 @@ fn execute_breakdown_sequentially(
     Ok(None)
 }
 
-pub(super) fn execute_breakdown(
+fn execute_breakdown(
     stdout: &mut dyn SchronuWriter,
     context: &mut dyn ProjectCommandContext,
     new_task_names: &[&str],
@@ -440,6 +487,66 @@ pub(super) fn execute_breakdown(
     }
     context.set_focused_task_id(child_ids.first().copied());
     Ok(Some(child_ids))
+}
+
+fn execute_split(
+    context: &mut dyn ProjectCommandContext,
+    focused_task_opt: &Option<TaskHandle>,
+    new_task_name: &str,
+    splitted_work_minutes: i64,
+    display: &mut dyn SchronuWriter,
+) -> Result<Option<Uuid>, ApplicationError> {
+    validate_task_name(new_task_name, "name")?;
+
+    let Some(focused_task) = focused_task_opt else {
+        return Ok(None);
+    };
+    let focused_estimated_work_seconds = focused_task
+        .get_estimated_work_seconds()
+        .map_err(ApplicationError::TaskTree)?;
+    let splitted_work_seconds = if splitted_work_minutes > 0 {
+        min(
+            estimated_work_seconds_from_minutes(splitted_work_minutes)?,
+            focused_estimated_work_seconds,
+        )
+    } else {
+        let retained_work_minutes =
+            splitted_work_minutes
+                .checked_abs()
+                .ok_or(ApplicationError::InvalidInput {
+                    field: "splitted_work_minutes",
+                    reason: "absolute value is too large",
+                })?;
+        let retained_work_seconds = estimated_work_seconds_from_minutes(retained_work_minutes)?;
+        if focused_estimated_work_seconds > retained_work_seconds {
+            focused_estimated_work_seconds - retained_work_seconds
+        } else {
+            0
+        }
+    };
+
+    focused_task
+        .set_estimated_work_seconds(focused_estimated_work_seconds - splitted_work_seconds)
+        .map_err(ApplicationError::TaskTree)?;
+
+    let mut new_task_attr = TaskAttr::new(new_task_name);
+    new_task_attr.set_estimated_work_seconds(splitted_work_seconds);
+    if let Some(deadline_time) = focused_task
+        .get_deadline_time_opt()
+        .map_err(ApplicationError::TaskTree)?
+    {
+        new_task_attr.set_deadline_time_opt(Some(deadline_time));
+    }
+
+    let new_task = focused_task
+        .create_child(new_task_attr)
+        .map_err(ApplicationError::TaskTree)?;
+    let new_task_id = new_task.get_id().map_err(ApplicationError::TaskTree)?;
+    display
+        .writeln_newline(&format!("{new_task_id} {new_task_name}"))
+        .expect("display recording is infallible");
+    context.set_focused_task_id(Some(new_task_id));
+    Ok(Some(new_task_id))
 }
 
 #[allow(clippy::too_many_arguments)]

@@ -5,7 +5,7 @@ use super::command::{
     ParseMode,
 };
 use super::handler::{
-    decide_time_values, execute_breakdown, handle, handle_project_command,
+    decide_time_values, handle, handle_breakdown_split_command, handle_project_command,
     handle_task_tree_command, CommandOutcome, ExternalRequest, FocusRequest, ProjectCommandContext,
     TaskListOrder, TaskTreeCommandContext,
 };
@@ -3843,92 +3843,6 @@ fn execute_next_up(
     Ok(Some(new_task_id))
 }
 
-fn execute_split(
-    stdout: &mut dyn SchronuWriter,
-    focused_task_id_opt: &mut Option<Uuid>,
-    focused_task_opt: &Option<TaskHandle>,
-    new_task_name: &str,
-    splitted_work_minutes_str: &str,
-) -> Result<Option<Uuid>, ApplicationError> {
-    validate_task_name(new_task_name, "name")?;
-
-    match focused_task_opt {
-        None => Ok(None),
-        Some(focused_task) => {
-            // 今のタスクの予時間をn減らす
-            // 下 <new_task_name>
-            // 予 n
-
-            let focused_estimated_work_seconds = focused_task
-                .get_estimated_work_seconds()
-                .map_err(ApplicationError::TaskTree)?;
-
-            // もしsplitted_work_minutes_strがマイナスの場合は、親タスクにその値だけ残すようにする
-            // 割 -30 <新タスク> なら、(親タスク-30)を見積もりとして<新タスク>を作るよ、という意味合い
-            let splitted_work_minutes = splitted_work_minutes_str.parse::<i64>().map_err(|_| {
-                ApplicationError::InvalidInput {
-                    field: "splitted_work_minutes",
-                    reason: "must be an integer",
-                }
-            })?;
-
-            let splitted_work_seconds: i64 = if splitted_work_minutes > 0 {
-                min(
-                    estimated_work_seconds_from_minutes(splitted_work_minutes)?,
-                    focused_estimated_work_seconds,
-                )
-            } else {
-                // このif分岐では負の場合splitted_work_minutesは負だが、
-                // 分かりやすいようにabs()して引き算している
-                let retained_work_minutes =
-                    splitted_work_minutes
-                        .checked_abs()
-                        .ok_or(ApplicationError::InvalidInput {
-                            field: "splitted_work_minutes",
-                            reason: "absolute value is too large",
-                        })?;
-                let retained_work_seconds =
-                    estimated_work_seconds_from_minutes(retained_work_minutes)?;
-                if focused_estimated_work_seconds > retained_work_seconds {
-                    focused_estimated_work_seconds - retained_work_seconds
-                } else {
-                    0
-                }
-            };
-
-            focused_task
-                .set_estimated_work_seconds(focused_estimated_work_seconds - splitted_work_seconds)
-                .map_err(ApplicationError::TaskTree)?;
-
-            let mut new_task_attr = TaskAttr::new(new_task_name);
-            new_task_attr.set_estimated_work_seconds(splitted_work_seconds);
-
-            // 親タスクに〆切がある場合には、それを引き継ぐ
-            match focused_task
-                .get_deadline_time_opt()
-                .map_err(ApplicationError::TaskTree)?
-            {
-                Some(deadline_time) => new_task_attr.set_deadline_time_opt(Some(deadline_time)),
-                None => {
-                    // pass
-                }
-            }
-
-            let new_task = focused_task
-                .create_child(new_task_attr)
-                .map_err(ApplicationError::TaskTree)?;
-
-            let new_task_id = new_task.get_id().map_err(ApplicationError::TaskTree)?;
-            let msg: String = format!("{} {}", new_task_id, new_task_name);
-            writeln_newline(stdout, msg.as_str()).unwrap();
-
-            // 新しい子タスクにフォーカス(id)を移す
-            *focused_task_id_opt = Some(new_task_id);
-            Ok(Some(new_task_id))
-        }
-    }
-}
-
 fn split_amount_and_unit(input: &str) -> Vec<String> {
     let mut result = Vec::new();
     let mut buffer = String::new();
@@ -3964,15 +3878,6 @@ fn test_split_amount_and_unit_err() {
         actual,
         vec!["6543".to_string(), "abc123def456gh789".to_string()]
     );
-}
-
-fn execute_wait_for_others(focused_task_opt: &Option<TaskHandle>) -> Result<(), ApplicationError> {
-    if let Some(focused_task) = focused_task_opt.as_ref() {
-        focused_task
-            .set_is_on_other_side(true)
-            .map_err(ApplicationError::TaskTree)?;
-    }
-    Ok(())
 }
 
 fn execute_defer(
@@ -6075,6 +5980,18 @@ fn test_execute_breakdown_親に締切がなければ子も締切なしで作る
 }
 
 #[test]
+fn test_execute_wait_相手待ちにしてfocusを維持する() {
+    let now = Local.with_ymd_and_hms(2026, 8, 11, 12, 0, 0).unwrap();
+    let task = TaskHandle::new("待機対象").unwrap();
+    let task_id = task.get_id().unwrap();
+
+    let result = execute_command_for_test(task, now, Some(task_id), "待");
+
+    assert!(result.task.get_is_on_other_side().unwrap());
+    assert_eq!(result.focused_task_id_opt, Some(task_id));
+}
+
+#[test]
 fn test_execute_next_up_数値名と負の見積もりでは変更しない() {
     let now = Local.with_ymd_and_hms(2026, 8, 11, 12, 0, 0).unwrap();
 
@@ -7148,6 +7065,20 @@ fn execute_parsed(
             active_config(),
         )?;
     } else if let Some(outcome) = {
+        let mut context = RuntimeProjectCommandContext {
+            task_repository,
+            focused_task_id_opt,
+        };
+        handle_breakdown_split_command(parsed_command, &mut context)?
+    } {
+        execute_handler_outcome(
+            &mut output,
+            task_repository,
+            focused_task_id_opt,
+            outcome,
+            active_config(),
+        )?;
+    } else if let Some(outcome) = {
         let supports_ansi_color = output.supports_ansi_color();
         let mut context = RuntimeTaskTreeCommandContext {
             task_repository,
@@ -7486,41 +7417,7 @@ fn execute_with_config(
         CommandKind::Unfocus => {
             execute_unfocus(focused_task_id_opt);
         }
-        CommandKind::Breakdown => {
-            if tokens.len() >= 2 {
-                let new_task_names = &tokens[1..];
-
-                // 「割」コマンドと間違えて数値を引数に取った場合は何もしない
-                if !tokens.iter().any(|token| token.parse::<i64>().is_ok()) {
-                    let mut context = RuntimeProjectCommandContext {
-                        task_repository,
-                        focused_task_id_opt,
-                    };
-                    let result = execute_breakdown(stdout, &mut context, new_task_names, &None);
-                    report_application_result(stdout, result);
-                }
-            }
-        }
-        CommandKind::Split => {
-            if tokens.len() == 3 {
-                let splitted_work_minutes_str = &tokens[1];
-                let new_task_name = &tokens[2];
-
-                let result = execute_split(
-                    stdout,
-                    focused_task_id_opt,
-                    &focused_task_opt,
-                    new_task_name,
-                    splitted_work_minutes_str,
-                );
-                report_application_result(stdout, result);
-            }
-        }
         // "詳" | "description" | "desc" => {}
-        CommandKind::Wait => {
-            // フラグを立てるだけか、deferコマンドを自動実行するかは迷う。
-            execute_wait_for_others(&focused_task_opt);
-        }
         CommandKind::Deadline => {
             if tokens.len() >= 2 {
                 // "2023/05/23"とか。簡単のため、時刻は指定不要とし、自動的に23:59を〆切と設定する
