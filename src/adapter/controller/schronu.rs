@@ -1,6 +1,10 @@
 #[path = "schronu/runtime.rs"]
 mod runtime;
 
+#[cfg(test)]
+#[path = "schronu/command_contract_tests.rs"]
+mod command_contract_tests;
+
 fn main() {
     runtime::application();
 }
