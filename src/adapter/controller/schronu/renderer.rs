@@ -60,6 +60,12 @@ impl DisplayModel {
         }
     }
 
+    pub(super) fn flush() -> Self {
+        Self {
+            fragments: vec![DisplayFragment::Flush],
+        }
+    }
+
     pub(super) fn is_empty(&self) -> bool {
         self.fragments.is_empty()
     }
@@ -135,6 +141,33 @@ pub(super) fn render_display_model(
         }
     }
     Ok(())
+}
+
+pub(super) fn render_plain_display_model(
+    writer: &mut dyn Write,
+    model: &DisplayModel,
+) -> Result<(), std::io::Error> {
+    struct PlainWriter<'a> {
+        inner: &'a mut dyn Write,
+    }
+
+    impl Write for PlainWriter<'_> {
+        fn write(&mut self, buffer: &[u8]) -> std::io::Result<usize> {
+            self.inner.write(buffer)
+        }
+
+        fn flush(&mut self) -> std::io::Result<()> {
+            self.inner.flush()
+        }
+    }
+
+    impl SchronuWriter for PlainWriter<'_> {
+        fn writeln_newline(&mut self, message: &str) -> Result<(), std::io::Error> {
+            writeln!(self.inner, "{message}")
+        }
+    }
+
+    render_display_model(&mut PlainWriter { inner: writer }, model)
 }
 
 pub(super) struct ErrorCapturingWriter<'a> {

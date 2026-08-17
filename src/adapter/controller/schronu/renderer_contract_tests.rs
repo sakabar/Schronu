@@ -104,10 +104,7 @@ impl Write for AlwaysFailWriter {
     }
 
     fn flush(&mut self) -> std::io::Result<()> {
-        Err(std::io::Error::new(
-            std::io::ErrorKind::Other,
-            "later flush failure",
-        ))
+        Err(std::io::Error::other("later flush failure"))
     }
 }
 

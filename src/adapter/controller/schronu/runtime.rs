@@ -13,8 +13,8 @@ use super::handler::{
     TaskAttributeCommandContext, TaskListOrder, TaskTreeCommandContext,
 };
 use super::renderer::{
-    format_spreadsheet_task_row, render_display_model, writeln_newline, ErrorCapturingWriter,
-    SchronuWriter, SpreadsheetTaskRow, MAX_COL,
+    format_spreadsheet_task_row, render_display_model, render_plain_display_model, writeln_newline,
+    DisplayModel, ErrorCapturingWriter, SchronuWriter, SpreadsheetTaskRow, MAX_COL,
 };
 use chrono::{
     DateTime, Datelike, Duration, Local, LocalResult, NaiveDate, TimeZone, Timelike, Weekday,
@@ -272,16 +272,15 @@ fn map_command_parse_error(error: CommandParseError) -> CommandError {
     )
 }
 
-fn write_command_error(stdout: &mut dyn SchronuWriter, error: &CommandError) {
-    if let Err(output_error) = writeln_newline(stdout, &format!("[Error] {error}")) {
-        let _output_error = CommandError::Output(output_error);
-    }
+fn error_display_model(error: &impl std::fmt::Display) -> DisplayModel {
+    DisplayModel::newline(format!("[Error] {error}"))
 }
 
 #[cfg(test)]
 fn report_command_result(stdout: &mut dyn SchronuWriter, result: Result<(), CommandError>) {
     if let Err(error) = result {
-        write_command_error(stdout, &error);
+        let _output_error = render_display_model(stdout, &error_display_model(&error))
+            .map_err(CommandError::Output);
     }
 }
 
@@ -290,7 +289,9 @@ fn report_application_result<T>(
     result: Result<T, ApplicationError>,
 ) {
     if let Err(error) = result {
-        write_command_error(stdout, &CommandError::Application(error));
+        let error = CommandError::Application(error);
+        let _output_error = render_display_model(stdout, &error_display_model(&error))
+            .map_err(CommandError::Output);
     }
 }
 
@@ -4920,7 +4921,8 @@ fn execute_command_for_test(
         &now,
         command,
     ) {
-        write_command_error(&mut stdout, &error);
+        let _output_error = render_display_model(&mut stdout, &error_display_model(&error))
+            .map_err(CommandError::Output);
     }
 
     CommandTestResult {
@@ -8087,7 +8089,7 @@ fn execute_handler_outcome(
     }
 
     if outcome.kind != CommandKind::Noop {
-        stdout.flush().map_err(CommandError::Output)?;
+        render_display_model(stdout, &DisplayModel::flush()).map_err(CommandError::Output)?;
     }
     Ok(())
 }
@@ -8118,7 +8120,7 @@ fn execute_with_config(
         _ => unreachable!("handler-owned command reached runtime fallback"),
     }
 
-    stdout.flush().map_err(CommandError::Output)?;
+    render_display_model(stdout, &DisplayModel::flush()).map_err(CommandError::Output)?;
     Ok(())
 }
 
@@ -9441,7 +9443,7 @@ fn report_run_result(stderr: &mut dyn Write, result: Result<(), RunError>) -> bo
     match result {
         Ok(()) => true,
         Err(error) => {
-            writeln!(stderr, "[Error] {error}").unwrap();
+            render_plain_display_model(stderr, &error_display_model(&error)).unwrap();
             false
         }
     }
@@ -11200,7 +11202,8 @@ fn execute_interactive_command(
             command,
             &parsed_command,
         ) {
-            write_command_error(stdout, &error);
+            let _output_error = render_display_model(stdout, &error_display_model(&error))
+                .map_err(CommandError::Output);
         }
         if matches!(parsed_command, Command::Focus { task_id } if *focused_task_id_opt == Some(task_id))
         {
