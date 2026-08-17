@@ -8046,6 +8046,96 @@ fn execute_handler_outcome(
     Ok(())
 }
 
+#[test]
+fn runtime外部ioとoutcome調停は共通境界に集約する() {
+    let runtime_source = include_str!("runtime.rs");
+    let apply_source = runtime_source
+        .split_once("\nfn apply_command_outcome(")
+        .expect("runtime must define the shared apply_command_outcome boundary")
+        .1
+        .split_once("fn execute_with_config(")
+        .expect("outcome boundary must remain outside the legacy fallback")
+        .0;
+
+    for required in [
+        "render_display_model",
+        "ExternalRequest::OpenFocusedLink",
+        "execute_open_link",
+        "ExternalRequest::OpenObsidianRootSearch",
+        "execute_open_obsidian_root_task_search_with_config",
+        "FocusRequest::Clear",
+        "focus_selection_mode_from_request",
+        "CommandError::Output",
+    ] {
+        assert!(
+            apply_source.contains(required),
+            "shared outcome boundary must coordinate {required}"
+        );
+    }
+
+    let execute_parsed_source = runtime_source
+        .split_once("fn execute_parsed(")
+        .expect("non-interactive command path must exist")
+        .1
+        .split_once("struct RuntimeProjectCommandContext")
+        .expect("non-interactive command path must remain bounded")
+        .0;
+    assert!(
+        execute_parsed_source.contains("apply_command_outcome("),
+        "non-interactive outcomes must use the shared boundary"
+    );
+
+    let interactive_source = runtime_source
+        .split_once("fn execute_interactive_command(")
+        .expect("interactive command path must exist")
+        .1
+        .split_once("struct InteractiveRepositoryState")
+        .expect("interactive command path must remain bounded")
+        .0;
+    assert!(
+        interactive_source.matches("apply_command_outcome(").count() >= 2,
+        "interactive focus and shortcut outcomes must both use the shared boundary"
+    );
+    assert!(
+        !runtime_source.contains("fn execute_handler_outcome("),
+        "the superseded outcome coordinator must be removed"
+    );
+
+    for isolated_source in [
+        include_str!("handler.rs"),
+        include_str!("interactive.rs"),
+        include_str!("renderer.rs"),
+    ] {
+        for forbidden in [
+            "run_repository_transaction",
+            "webbrowser::open",
+            "process::Command",
+        ] {
+            assert!(
+                !isolated_source.contains(forbidden),
+                "external I/O and repository transactions must remain in runtime: {forbidden}"
+            );
+        }
+    }
+}
+
+#[test]
+fn external_open_errorはtargetとsource_reason_chainを保持する() {
+    let error = CommandError::ExternalOpen {
+        target: "test-target",
+        source: Box::new(std::io::Error::other("test-reason")),
+    };
+
+    assert_eq!(
+        error.to_string(),
+        "外部起動エラー (test-target): test-reason"
+    );
+    assert_eq!(
+        std::error::Error::source(&error).map(ToString::to_string),
+        Some("test-reason".to_string())
+    );
+}
+
 #[allow(clippy::too_many_arguments, unused_must_use)]
 fn execute_with_config(
     stdout: &mut dyn SchronuWriter,
