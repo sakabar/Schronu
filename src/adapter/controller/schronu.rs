@@ -1,3 +1,6 @@
+#[path = "schronu/command.rs"]
+mod command;
+
 #[path = "schronu/runtime.rs"]
 mod runtime;
 

@@ -1,5 +1,9 @@
 #![allow(unused_must_use)]
 
+use super::command::{
+    parse_command, Command, CommandAction, CommandKind, CommandParseError, InteractiveShortcut,
+    ParseMode,
+};
 use chrono::{
     DateTime, Datelike, Duration, Local, LocalResult, NaiveDate, TimeZone, Timelike, Weekday,
 };
@@ -216,26 +220,6 @@ enum RunError {
 }
 
 #[derive(Debug)]
-struct CommandParseError {
-    command: &'static str,
-    field: &'static str,
-    reason: &'static str,
-    usage: &'static str,
-}
-
-impl std::fmt::Display for CommandParseError {
-    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(
-            formatter,
-            "入力エラー: {}: {} (コマンド: {}, 使い方: {})",
-            self.field, self.reason, self.command, self.usage
-        )
-    }
-}
-
-impl std::error::Error for CommandParseError {}
-
-#[derive(Debug)]
 enum CommandError {
     Parse(CommandParseError),
     Application(ApplicationError),
@@ -270,42 +254,29 @@ impl std::error::Error for CommandError {
     }
 }
 
-fn validate_non_interactive_command(command: &str) -> Result<(), CommandError> {
-    let tokens = command.split_whitespace().collect::<Vec<_>>();
-    let Some(command_name) = tokens.first().copied() else {
-        return Ok(());
-    };
-    match command_name {
-        "予" | "estimate" | "es" => {
-            let value = tokens.get(1).ok_or_else(|| {
-                command_parse_error("予", "estimated_work_minutes", "値が必要です", "予 <分>")
-            })?;
-            let minutes = value.parse::<i64>().map_err(|_| {
-                command_parse_error(
-                    "予",
-                    "estimated_work_minutes",
-                    "整数で指定してください",
-                    "予 <分>",
-                )
-            })?;
-            estimated_work_seconds_from_minutes(minutes)?;
+fn validate_non_interactive_command(command: &Command) -> Result<(), CommandError> {
+    match command {
+        Command::Estimate { minutes } => {
+            estimated_work_seconds_from_minutes(*minutes)?;
             Ok(())
         }
-        "類" | "category" | "cat" => {
-            let value = tokens.get(1).ok_or_else(|| {
-                command_parse_error("類", "category", "値が必要です", "類 <カテゴリ>")
-            })?;
+        Command::Action(CommandAction::StringValue {
+            kind: CommandKind::Category,
+            value,
+            ..
+        }) => {
             read_project_category_command_arg(value).ok_or_else(|| {
                 command_parse_error("類", "category", "カテゴリが不正です", "類 <カテゴリ>")
             })?;
             Ok(())
         }
-        "〆" | "締" | "deadline" => {
-            let value = tokens.get(1).ok_or_else(|| {
-                command_parse_error("〆", "deadline", "値が必要です", "〆 <日付または時刻>")
-            })?;
+        Command::Action(CommandAction::StringValue {
+            kind: CommandKind::Deadline,
+            value,
+            ..
+        }) => {
             if matches!(
-                *value,
+                value.as_str(),
                 "消" | "今" | "明" | "月" | "火" | "水" | "木" | "金" | "土" | "日"
             ) || Regex::new(r"^\d{1,2}/\d{1,2}$")
                 .expect("valid regex")
@@ -341,12 +312,16 @@ fn command_parse_error(
     reason: &'static str,
     usage: &'static str,
 ) -> CommandError {
-    CommandError::Parse(CommandParseError {
-        command,
-        field,
-        reason,
-        usage,
-    })
+    CommandError::Parse(CommandParseError::new(command, field, reason, usage))
+}
+
+fn map_command_parse_error(error: CommandParseError) -> CommandError {
+    command_parse_error(
+        error.command(),
+        error.field(),
+        error.reason(),
+        error.usage(),
+    )
 }
 
 fn write_command_error(stdout: &mut dyn SchronuWriter, error: &CommandError) {
@@ -847,22 +822,19 @@ fn scheduled_leaf_starts_on_schronu_day(
         }))
 }
 
-fn parse_focus_selection_mode_command(line: &str) -> Option<FocusSelectionMode> {
-    let tokens = line.split_whitespace().collect::<Vec<&str>>();
-
-    match tokens.as_slice() {
-        ["低" | "low" | "lo" | "lowest"] => Some(FocusSelectionMode::LowestPriority {
-            recent_days: DEFAULT_LOWEST_PRIORITY_RECENT_DAYS,
+fn focus_selection_mode_from_command(command: &Command) -> Option<FocusSelectionMode> {
+    match command {
+        Command::Action(CommandAction::FocusMode {
+            kind: CommandKind::FocusHighest,
+            ..
+        }) => Some(FocusSelectionMode::HighestPriority),
+        Command::Action(CommandAction::FocusMode {
+            kind: CommandKind::FocusLowest,
+            recent_days,
+            ..
+        }) => Some(FocusSelectionMode::LowestPriority {
+            recent_days: recent_days.unwrap_or(DEFAULT_LOWEST_PRIORITY_RECENT_DAYS),
         }),
-        ["低" | "low" | "lo" | "lowest", recent_days_str]
-            if recent_days_str.chars().all(|ch| ch.is_ascii_digit()) =>
-        {
-            match recent_days_str.parse::<i64>() {
-                Ok(recent_days) => Some(FocusSelectionMode::LowestPriority { recent_days }),
-                Err(_) => None,
-            }
-        }
-        ["高" | "high" | "hi" | "highest"] => Some(FocusSelectionMode::HighestPriority),
         _ => None,
     }
 }
@@ -884,6 +856,12 @@ fn select_focus_task_id(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn parse_focus_selection_mode_command(line: &str) -> Option<FocusSelectionMode> {
+        parse_command(line, ParseMode::Interactive)
+            .ok()
+            .and_then(|command| focus_selection_mode_from_command(&command))
+    }
 
     #[test]
     fn test_get_adjustable_prefix_label_前倒し可能日数を表示する() {
@@ -3735,14 +3713,6 @@ fn execute_show_all_tasks_with_config(
 fn execute_focus(focused_task_id_opt: &mut Option<Uuid>, new_task_id_str: &str) {
     if let Ok(id) = Uuid::parse_str(new_task_id_str) {
         *focused_task_id_opt = Some(id)
-    }
-}
-
-fn parse_explicit_focus_task_id(command: &str) -> Option<Uuid> {
-    let mut tokens = command.split_whitespace();
-    match (tokens.next(), tokens.next()) {
-        (Some("見" | "focus" | "fc"), Some(task_id)) => Uuid::parse_str(task_id).ok(),
-        _ => None,
     }
 }
 
@@ -7134,6 +7104,7 @@ fn unresolved_reason_label(reason: UnresolvedReason) -> &'static str {
     }
 }
 
+#[cfg(test)]
 fn execute(
     stdout: &mut dyn SchronuWriter,
     task_repository: &mut dyn TaskRepositoryTrait,
@@ -7141,6 +7112,29 @@ fn execute(
     focused_task_id_opt: &mut Option<Uuid>,
     focus_started_datetime: &DateTime<Local>,
     untrimmed_line: &str,
+) -> Result<(), CommandError> {
+    let parsed_command = parse_command(untrimmed_line, ParseMode::NonInteractive)
+        .map_err(map_command_parse_error)?;
+    execute_parsed(
+        stdout,
+        task_repository,
+        free_time_manager,
+        focused_task_id_opt,
+        focus_started_datetime,
+        untrimmed_line,
+        &parsed_command,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn execute_parsed(
+    stdout: &mut dyn SchronuWriter,
+    task_repository: &mut dyn TaskRepositoryTrait,
+    free_time_manager: &mut dyn FreeTimeManagerTrait,
+    focused_task_id_opt: &mut Option<Uuid>,
+    focus_started_datetime: &DateTime<Local>,
+    untrimmed_line: &str,
+    parsed_command: &Command,
 ) -> Result<(), CommandError> {
     let mut output = ErrorCapturingWriter::new(stdout);
     execute_with_config(
@@ -7150,6 +7144,7 @@ fn execute(
         focused_task_id_opt,
         focus_started_datetime,
         untrimmed_line,
+        parsed_command,
         active_config(),
     )?;
     match output.take_error() {
@@ -7159,7 +7154,7 @@ fn execute(
     }
 }
 
-#[allow(unused_must_use)]
+#[allow(clippy::too_many_arguments, unused_must_use)]
 fn execute_with_config(
     stdout: &mut dyn SchronuWriter,
     task_repository: &mut dyn TaskRepositoryTrait,
@@ -7167,6 +7162,7 @@ fn execute_with_config(
     focused_task_id_opt: &mut Option<Uuid>,
     focus_started_datetime: &DateTime<Local>,
     untrimmed_line: &str,
+    parsed_command: &Command,
     config: &SchronuConfig,
 ) -> Result<(), CommandError> {
     // 整形
@@ -7186,12 +7182,29 @@ fn execute_with_config(
 
     let tokens: Vec<&str> = line.split(' ').collect();
 
-    if tokens.is_empty() {
-        return Ok(());
+    match parsed_command {
+        Command::Noop => return Ok(()),
+        Command::ShowAll { pattern } => {
+            let pattern_opt = pattern.as_deref().map(|pattern| {
+                resolve_show_all_pattern(pattern, task_repository.get_last_synced_time())
+            });
+            execute_show_all_tasks_with_config(
+                stdout,
+                focused_task_id_opt,
+                task_repository,
+                free_time_manager,
+                &pattern_opt,
+                TaskListDisplayOrder::ScheduledStartDesc,
+                config,
+            )?;
+            stdout.flush().map_err(CommandError::Output)?;
+            return Ok(());
+        }
+        _ => {}
     }
 
-    match tokens[0] {
-        "新" | "遊" | "new" | "hobby" => {
+    match parsed_command.kind() {
+        CommandKind::NewProject | CommandKind::HobbyProject => {
             if tokens.len() >= 2 {
                 let new_project_name_str = &tokens[1];
 
@@ -7201,7 +7214,7 @@ fn execute_with_config(
                     None
                 };
 
-                let defer_days_opt = if tokens[0] == "新" || tokens[0] == "new" {
+                let defer_days_opt = if parsed_command.kind() == CommandKind::NewProject {
                     Some(1)
                 } else {
                     Some(1400)
@@ -7218,7 +7231,7 @@ fn execute_with_config(
                 }
             }
         }
-        "突" | "unplanned" => {
+        CommandKind::UnplannedProject => {
             if tokens.len() >= 2 {
                 let new_project_name_str = &tokens[1];
 
@@ -7241,7 +7254,7 @@ fn execute_with_config(
                 }
             }
         }
-        "連" | "sequential" | "seq" => {
+        CommandKind::Sequential => {
             if tokens.len() >= 5 {
                 let new_task_name_str = &tokens[1];
                 let estimated_work_minutes_result = &tokens[2].parse();
@@ -7272,7 +7285,7 @@ fn execute_with_config(
                 }
             }
         }
-        "繰" | "repeat" => {
+        CommandKind::Repeat => {
             if tokens.len() == 6 {
                 let new_task_name_str = &tokens[1];
                 let estimated_work_minutes_result = &tokens[2].parse();
@@ -7295,7 +7308,7 @@ fn execute_with_config(
                 }
             }
         }
-        "約" | "appointment" => {
+        CommandKind::Appointment => {
             let now = task_repository.get_last_synced_time();
             let start_time_opt = decide_time(&tokens, &now);
 
@@ -7303,7 +7316,7 @@ fn execute_with_config(
                 execute_make_appointment(&focused_task_opt, start_time)?;
             }
         }
-        "始" | "start" => {
+        CommandKind::Start => {
             let now: DateTime<Local> = task_repository.get_last_synced_time();
             let start_dst_time_opt = decide_time(&tokens, &now);
 
@@ -7321,23 +7334,23 @@ fn execute_with_config(
             }
         }
         // 最初は「木」コマンドだったが、曜日だけを指定して直近のその曜日について「全」コマンドを動かすコマンドとコンフリクトしてしまったためリネームした。
-        "樹" | "tree" => {
+        CommandKind::Tree => {
             execute_show_tree(stdout, &focused_task_opt)?;
         }
-        "条" | "祖" | "ancestor" | "anc" => {
+        CommandKind::Ancestor => {
             execute_show_ancestor(stdout, &focused_task_opt)?;
         }
-        "根" | "root" => {
+        CommandKind::Root => {
             if let Some(focused_task) = focused_task_opt {
                 let root_task = focused_task.root().map_err(ApplicationError::TaskTree)?;
                 let root_task_id = root_task.get_id().map_err(ApplicationError::TaskTree)?;
                 execute_focus(focused_task_id_opt, &root_task_id.hyphenated().to_string());
             }
         }
-        "葉" | "leaves" | "leaf" | "lf" => {
+        CommandKind::Leaves => {
             execute_show_leaf_tasks(stdout, task_repository, free_time_manager)?;
         }
-        "全" | "all" => {
+        CommandKind::ShowAll => {
             let pattern_opt = if tokens.len() >= 2 {
                 Some(resolve_show_all_pattern(
                     tokens[1],
@@ -7357,7 +7370,7 @@ fn execute_with_config(
                 config,
             )?;
         }
-        "尾" => {
+        CommandKind::Tail => {
             let pattern_opt = if tokens.len() >= 2 {
                 Some(tokens[1].to_string())
             } else {
@@ -7374,7 +7387,7 @@ fn execute_with_config(
                 config,
             )?;
         }
-        "今" | "today" => {
+        CommandKind::Today => {
             let pattern_opt = Some("今".to_string());
             execute_show_all_tasks_with_config(
                 stdout,
@@ -7386,7 +7399,7 @@ fn execute_with_config(
                 config,
             )?;
         }
-        "単" | "non_repetitive" => {
+        CommandKind::NonRepetitive => {
             let pattern_opt = Some("単".to_string());
             execute_show_all_tasks_with_config(
                 stdout,
@@ -7398,7 +7411,7 @@ fn execute_with_config(
                 config,
             )?;
         }
-        "暦" | "cal" => {
+        CommandKind::Calendar => {
             let pattern_opt = Some("暦".to_string());
             execute_show_all_tasks_with_config(
                 stdout,
@@ -7410,7 +7423,7 @@ fn execute_with_config(
                 config,
             )?;
         }
-        "帯" | "band" => {
+        CommandKind::Band => {
             let pattern_opt = Some("帯".to_string());
             execute_show_all_tasks_with_config(
                 stdout,
@@ -7422,26 +7435,26 @@ fn execute_with_config(
                 config,
             )?;
         }
-        "見" | "focus" | "fc" => {
+        CommandKind::Focus => {
             if tokens.len() >= 2 {
                 let new_task_id_str = &tokens[1];
                 execute_focus(focused_task_id_opt, new_task_id_str);
             }
         }
-        "選" | "pick" => {
+        CommandKind::Pick => {
             let new_task_id_str = if tokens.len() >= 2 { tokens[1] } else { "" };
             execute_pick(task_repository, focused_task_id_opt, new_task_id_str)?;
         }
-        "開" | "open" | "op" => {
+        CommandKind::Open => {
             execute_open_link(&focused_task_opt)?;
         }
-        "黒" | "obs" => {
+        CommandKind::Obsidian => {
             execute_open_obsidian_root_task_search_with_config(&focused_task_opt, config)?;
         }
-        "外" | "unfocus" | "ufc" => {
+        CommandKind::Unfocus => {
             execute_unfocus(focused_task_id_opt);
         }
-        "親" | "parent" => {
+        CommandKind::Parent => {
             if let Some(focused_task) = focused_task_opt {
                 if let Some(parent_task) =
                     focused_task.parent().map_err(ApplicationError::TaskTree)?
@@ -7455,7 +7468,7 @@ fn execute_with_config(
                 }
             }
         }
-        "子" | "children" | "ch" => {
+        CommandKind::Children => {
             // 今見ているノードの子タスクが1つだけの時、その子に移動する
             // 2つ以上ある時には、「木」コマンドを実行してツリーの様子を表示する
 
@@ -7487,7 +7500,7 @@ fn execute_with_config(
                 }
             }
         }
-        "深" | "deep" | "deepest" => {
+        CommandKind::Deepest => {
             // 今見ているノードの子タスクが1つだけである限り、その子に移動して同じことを繰り返す
             // 2つ以上ある時には、「木」コマンドを実行してツリーの様子を表示する
 
@@ -7533,7 +7546,7 @@ fn execute_with_config(
                 }
             }
         }
-        "上" | "nextup" | "nu" => {
+        CommandKind::NextUp => {
             if tokens.len() >= 2 {
                 let new_task_name_str = &tokens[1];
                 let estimated_work_minutes_result =
@@ -7551,7 +7564,7 @@ fn execute_with_config(
                 }
             }
         }
-        "下" | "breakdown" | "bd" => {
+        CommandKind::Breakdown => {
             if tokens.len() >= 2 {
                 let new_task_names = &tokens[1..];
 
@@ -7568,7 +7581,7 @@ fn execute_with_config(
                 }
             }
         }
-        "割" | "split" | "sp" => {
+        CommandKind::Split => {
             if tokens.len() == 3 {
                 let splitted_work_minutes_str = &tokens[1];
                 let new_task_name = &tokens[2];
@@ -7584,11 +7597,11 @@ fn execute_with_config(
             }
         }
         // "詳" | "description" | "desc" => {}
-        "待" | "wait" => {
+        CommandKind::Wait => {
             // フラグを立てるだけか、deferコマンドを自動実行するかは迷う。
             execute_wait_for_others(&focused_task_opt);
         }
-        "〆" | "締" | "deadline" => {
+        CommandKind::Deadline => {
             if tokens.len() >= 2 {
                 // "2023/05/23"とか。簡単のため、時刻は指定不要とし、自動的に23:59を〆切と設定する
                 // 5/23のようにhh/mmで指定した場合は、年の情報を補完してその日の23:59を〆切と設定する
@@ -7698,7 +7711,7 @@ fn execute_with_config(
                 }
             }
         }
-        "予" | "estimate" | "es" => {
+        CommandKind::Estimate => {
             if tokens.len() >= 2 {
                 let estimated_work_minutes_str = &tokens[1];
                 execute_set_estimated_work_minutes(
@@ -7708,7 +7721,7 @@ fn execute_with_config(
                 )?;
             }
         }
-        "揃" | "arrange" | "arr" => {
+        CommandKind::Arrange => {
             if tokens.len() >= 2 {
                 let estimated_work_minutes_str = &tokens[1];
                 let includes_zero_estimate = tokens
@@ -7721,19 +7734,19 @@ fn execute_with_config(
                 );
             }
         }
-        "実" | "actual" | "ac" => {
+        CommandKind::Actual => {
             if tokens.len() >= 2 {
                 let actual_work_minutes_str = &tokens[1];
                 execute_set_actual_work_minutes(&focused_task_opt, actual_work_minutes_str);
             }
         }
-        "重" | "priority" | "pr" => {
+        CommandKind::Priority => {
             if tokens.len() >= 2 {
                 let priority_str = &tokens[1];
                 execute_set_priority(&focused_task_opt, priority_str)?;
             }
         }
-        "類" | "category" | "cat" => {
+        CommandKind::Category => {
             if tokens.len() >= 2 {
                 let project_category_str = &tokens[1];
                 execute_set_project_category(
@@ -7743,7 +7756,7 @@ fn execute_with_config(
                 )?;
             }
         }
-        "働" | "work" | "wk" => {
+        CommandKind::Work => {
             let additional_actual_work_minutes: i64 = if tokens.len() >= 2 {
                 tokens[1].parse().unwrap()
             } else {
@@ -7763,7 +7776,7 @@ fn execute_with_config(
                 *focused_task_id_opt = None;
             }
         }
-        "後" | "defer" => {
+        CommandKind::Defer => {
             if tokens.len() >= 3 {
                 let amount_str = &tokens[1];
                 let unit_str = &tokens[2].to_lowercase();
@@ -7910,14 +7923,14 @@ fn execute_with_config(
                 }
             }
         }
-        "清" | "defer_all_frequent_routines" => {
+        CommandKind::DeferRoutines => {
             execute_defer_all_frequent_routines(
                 task_repository,
                 focused_task_id_opt,
                 &focused_task_opt,
             )?;
         }
-        "逃" | "escape" | "esc" => {
+        CommandKind::Escape => {
             // 先延ばしにしてしまう時。要求している見積もりが小さすぎる可能性があるので、2倍にする
             if let Some(focused_task) = focused_task_opt {
                 let estimated_work_seconds = focused_task
@@ -7928,8 +7941,15 @@ fn execute_with_config(
                     .map_err(ApplicationError::TaskTree)?;
 
                 // 引数が与えられた時はそのままdeferする
-                if tokens.len() >= 2 {
-                    let s = format!("後 {}", tokens[1..].join(" "));
+                if let Command::Action(CommandAction::Escape {
+                    defer_expression: Some(values),
+                }) = parsed_command
+                {
+                    let deferred_command = Command::Action(CommandAction::TimeExpression {
+                        kind: CommandKind::Defer,
+                        canonical_name: "後",
+                        values: values.clone(),
+                    });
 
                     execute_with_config(
                         stdout,
@@ -7937,13 +7957,14 @@ fn execute_with_config(
                         free_time_manager,
                         focused_task_id_opt,
                         focus_started_datetime,
-                        &s,
+                        untrimmed_line,
+                        &deferred_command,
                         config,
                     )?;
                 }
             }
         }
-        "平" | "flatten" | "flat" => {
+        CommandKind::Flatten => {
             let result = flatten_tasks_with_end_of_day_offset_minutes(
                 task_repository,
                 free_time_manager,
@@ -7951,10 +7972,10 @@ fn execute_with_config(
             )?;
             write_flatten_result(stdout, &result);
         }
-        "詰" | "pack" => {
+        CommandKind::Pack => {
             execute_pack_with_config(stdout, task_repository, free_time_manager, config)?;
         }
-        "押" | "extrude" => {
+        CommandKind::Extrude => {
             if tokens.len() >= 2 {
                 if let Some(ref focused_task) = focused_task_opt {
                     let ancestors = focused_task
@@ -7975,7 +7996,7 @@ fn execute_with_config(
                 }
             }
         }
-        "空" | "clear" | "集" | "gather" => {
+        CommandKind::Clear | CommandKind::Gather => {
             let cmd_str = tokens[0];
             match tokens.as_slice() {
                 [_, defer_to] => {
@@ -8096,7 +8117,7 @@ fn execute_with_config(
                 _ => {}
             }
         }
-        "終" | "finish" | "fin" => {
+        CommandKind::Finish => {
             if let Some(ref focused_task) = focused_task_opt {
                 if focused_task
                     .has_undone_children()
@@ -8140,28 +8161,10 @@ fn execute_with_config(
                 }
             }
         }
-        "" | "#" => {}
-        &_ => {
-            // 何も該当するコマンドが無い場合には「全」コマンドとして実行する
-            // ただし、最初が数字の0から始まる場合は無視する
-            // show_all_commandの結果をコピーしたものを誤って貼り付けた場合に迅速に停止させるため。
-            // 精緻に書こうと思えば条件を変えられる。
-
-            if let Some(first_char) = untrimmed_line.chars().next() {
-                if first_char != '0' {
-                    let cmd_of_show_all = String::from("全 ") + untrimmed_line;
-
-                    execute(
-                        stdout,
-                        task_repository,
-                        free_time_manager,
-                        focused_task_id_opt,
-                        focus_started_datetime,
-                        &cmd_of_show_all,
-                    );
-                }
-            }
-        }
+        CommandKind::Noop
+        | CommandKind::FocusHighest
+        | CommandKind::FocusLowest
+        | CommandKind::Verify => {}
     }
 
     stdout.flush().map_err(CommandError::Output)?;
@@ -9581,8 +9584,11 @@ fn execute_non_interactive_command(
     command: &str,
 ) -> Result<(), RunError> {
     let now = Local::now();
-    validate_non_interactive_command(command).map_err(RunError::Command)?;
-    if command.trim() == "検証" {
+    let parsed_command = parse_command(command, ParseMode::NonInteractive)
+        .map_err(map_command_parse_error)
+        .map_err(RunError::Command)?;
+    validate_non_interactive_command(&parsed_command).map_err(RunError::Command)?;
+    if parsed_command.kind() == CommandKind::Verify {
         let _storage_lock = reload_repository_for_cli(task_repository, now)?;
         println!("検証: OK");
         return Ok(());
@@ -9599,13 +9605,14 @@ fn execute_non_interactive_command(
     run_cli_repository_transaction(task_repository, now, |task_repository| {
         let mut focused_task_id_opt: Option<Uuid> =
             select_focus_task_id(task_repository, FocusSelectionMode::HighestPriority)?;
-        execute(
+        execute_parsed(
             &mut stdout,
             task_repository,
             free_time_manager,
             &mut focused_task_id_opt,
             &focus_started_datetime,
             command,
+            &parsed_command,
         )
     })?;
     Ok(())
@@ -11172,7 +11179,9 @@ fn execute_interactive_command(
     focus_selection_mode: &mut FocusSelectionMode,
     command: &str,
 ) -> Result<bool, CommandError> {
-    if let Some(new_focus_selection_mode) = parse_focus_selection_mode_command(command) {
+    let parsed_command =
+        parse_command(command, ParseMode::Interactive).map_err(map_command_parse_error)?;
+    if let Some(new_focus_selection_mode) = focus_selection_mode_from_command(&parsed_command) {
         *focus_selection_mode = new_focus_selection_mode;
         *focused_task_id_opt = None;
         writeln_newline(
@@ -11180,82 +11189,68 @@ fn execute_interactive_command(
             &format!("フォーカス選択モード: {}", focus_selection_mode.label()),
         )
         .unwrap();
-    } else if command == "t" {
-        execute(
+    } else if let Command::Defer { amount, unit } = &parsed_command {
+        report_command_result(
             stdout,
-            task_repository,
-            free_time_manager,
-            focused_task_id_opt,
-            focus_started_datetime,
-            "後 1秒",
+            execute_defer(
+                task_repository,
+                focused_task_id_opt,
+                &amount.to_string(),
+                unit,
+            ),
         );
-    } else if command == "h" {
-        execute(
-            stdout,
-            task_repository,
-            free_time_manager,
-            focused_task_id_opt,
-            focus_started_datetime,
-            "後 1時間",
-        );
-    } else if command == "d" {
+    } else if parsed_command == Command::InteractiveShortcut(InteractiveShortcut::NextMorning) {
         let now = task_repository.get_last_synced_time();
         let next_morning = get_next_morning_datetime(now);
         let seconds = (next_morning - now).num_seconds() + 1;
-        execute(
+        report_command_result(
             stdout,
-            task_repository,
-            free_time_manager,
-            focused_task_id_opt,
-            focus_started_datetime,
-            &format!("後 {seconds}秒"),
+            execute_defer(
+                task_repository,
+                focused_task_id_opt,
+                &seconds.to_string(),
+                "秒",
+            ),
         );
-    } else if command == "D" {
-        execute(
-            stdout,
-            task_repository,
-            free_time_manager,
-            focused_task_id_opt,
-            focus_started_datetime,
-            &format!("後 {}秒", 24 * 60 * 60),
-        );
-    } else if command == "w" {
+    } else if parsed_command == Command::InteractiveShortcut(InteractiveShortcut::NextWeek) {
         let now = task_repository.get_last_synced_time();
         let next_morning = get_next_morning_datetime(now);
         let seconds = (next_morning - now).num_seconds() + 86400 * 6 + 1;
-        execute(
+        report_command_result(
             stdout,
-            task_repository,
-            free_time_manager,
-            focused_task_id_opt,
-            focus_started_datetime,
-            &format!("後 {seconds}秒"),
+            execute_defer(
+                task_repository,
+                focused_task_id_opt,
+                &seconds.to_string(),
+                "秒",
+            ),
         );
-    } else if command == "W" {
+    } else if parsed_command == Command::InteractiveShortcut(InteractiveShortcut::DeferRoutine) {
         execute_defer_routine(task_repository, focused_task_id_opt);
-    } else if command == "y" {
+    } else if parsed_command == Command::InteractiveShortcut(InteractiveShortcut::FiveYears) {
         let now = task_repository.get_last_synced_time();
         let next_morning = get_next_morning_datetime(now);
         let seconds = (next_morning - now).num_seconds() + 86400 * (7 * 52 * 5 - 1) + 1;
-        execute(
+        report_command_result(
             stdout,
-            task_repository,
-            free_time_manager,
-            focused_task_id_opt,
-            focus_started_datetime,
-            &format!("後 {seconds}秒"),
+            execute_defer(
+                task_repository,
+                focused_task_id_opt,
+                &seconds.to_string(),
+                "秒",
+            ),
         );
     } else {
-        execute(
+        execute_parsed(
             stdout,
             task_repository,
             free_time_manager,
             focused_task_id_opt,
             focus_started_datetime,
             command,
+            &parsed_command,
         );
-        if parse_explicit_focus_task_id(command)
-            .is_some_and(|task_id| *focused_task_id_opt == Some(task_id))
+        if matches!(parsed_command, Command::Focus { task_id } if *focused_task_id_opt == Some(task_id))
         {
             *focus_selection_mode = FocusSelectionMode::Explicit;
         }

@@ -92,6 +92,13 @@ fn parser_converts_command_fields_to_typed_values() {
             value: -3,
         })
     );
+    assert_eq!(
+        parse_command("defer 1 DAY", ParseMode::Interactive).unwrap(),
+        Command::Defer {
+            amount: 1,
+            unit: "day".to_string(),
+        }
+    );
 }
 
 #[test]
@@ -189,6 +196,13 @@ fn parse_errors_preserve_field_reason_usage_and_display_contract() {
         error.to_string(),
         "入力エラー: estimated_work_minutes: 整数で指定してください (コマンド: 予, 使い方: 予 <分>)"
     );
+
+    let deadline_error = parse_command("〆", ParseMode::NonInteractive).unwrap_err();
+    assert_eq!(deadline_error.field(), "deadline");
+    assert_eq!(deadline_error.usage(), "〆 <日付または時刻>");
+    let category_error = parse_command("類", ParseMode::NonInteractive).unwrap_err();
+    assert_eq!(category_error.field(), "category");
+    assert_eq!(category_error.usage(), "類 <カテゴリ>");
 }
 
 #[test]
