@@ -776,7 +776,7 @@
 2. TD-001とTD-002を別々のRed/Green系列で直し、scheduleの入力となる自由時間を正確かつfallibleにする。
 3. TD-003で永続化データのsilent fallbackを止める。厳格化前に既存データのdry-run検査を行う。
 4. TD-006とTD-007でerror・transaction境界を整え、adapter間の挙動を統一する。
-5. TD-013でSpreadsheet互換fixtureを固定してからTD-005のCLI境界分割を行い、残るruntime縮小と意味的表示model分離をTD-018で進める。
+5. TD-013でSpreadsheet互換fixtureを固定してからTD-005のCLI境界分割を行う。その後、TD-015のCLI characterization testと`test_support`分離を先行し、残るruntime縮小と意味的表示model分離をTD-018で進める。
 6. TD-010、TD-009、TD-004の順でdomain境界を狭める。tree実装の全面変更は最後の独立段階にする。
 7. TD-011、TD-014、TD-015を独立して進める。TD-015のCLI fixture分離はTD-018の製品コード移動とcommitを分ける。
 8. TD-012はbenchmark結果を取得してから最適化範囲を決める。
