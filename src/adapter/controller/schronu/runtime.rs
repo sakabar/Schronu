@@ -7248,6 +7248,35 @@ fn test_execute_today_カテゴリ別の予定時間集計を表示する() {
 }
 
 #[test]
+fn test_execute_today_今を絞る全経路で負荷指標を表示する() {
+    let now = Local.with_ymd_and_hms(2026, 8, 11, 12, 0, 0).unwrap();
+    let task = TaskHandle::new("今の負荷指標用タスク").unwrap();
+    task.set_estimated_work_seconds(60 * 60);
+    task.set_start_time(now);
+    task.set_pending_until(now);
+    task.set_orig_status(Status::Pending);
+    let expected_footer = concat!(
+        "残り拘束時間は0.0時間です\n",
+        "完了見込み日時は1.0時間後の2026/08/11 13:00:00です\n",
+        "rep ρ = (1.00 + 0.00) / (1.00 + 0.00 + 11 + 30/60) = 0.08, Lq = 0.1\n",
+        "one ρ = (1.00 + 0.00) / (1.00 + 0.00 + 11 + 30/60) = 0.08, Lq = 0.1\n",
+        "\n",
+    );
+
+    for command in ["今", "today", "全 今", "尾", "尾 今"] {
+        let actual = execute_calendar_command_for_test(command, now, task.clone(), 10 * 60);
+        assert!(
+            actual.ends_with(expected_footer),
+            "{command} must end with today's load metrics: {actual}"
+        );
+    }
+
+    let weekly = execute_calendar_command_for_test("全 週", now, task, 10 * 60);
+    assert!(!weekly.contains("残り拘束時間は"), "{weekly}");
+    assert!(!weekly.contains("rep ρ ="), "{weekly}");
+}
+
+#[test]
 fn test_execute_set_project_category_表示記号でカテゴリを設定する() {
     let now = Local.with_ymd_and_hms(2026, 5, 17, 12, 0, 0).unwrap();
     let focus_started_datetime = now;
