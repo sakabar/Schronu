@@ -2619,6 +2619,8 @@ fn execute_show_all_tasks_with_config(
         .as_ref()
         .is_some_and(|pattern| pattern == "帯" || pattern == "band");
 
+    let is_today_func = pattern_opt.as_ref().is_some_and(|pattern| pattern == "今");
+
     let is_daily_summary_func = is_calendar_func || is_band_func;
 
     // 日付ごとのタスク数を集計する
@@ -3731,7 +3733,7 @@ fn execute_show_all_tasks_with_config(
         write_daily_summary(stdout);
     }
 
-    if is_calendar_func || is_band_func {
+    if is_today_func || is_calendar_func || is_band_func {
         writeln_newline(stdout, &busy_s).unwrap();
         writeln_newline(stdout, &s).unwrap();
         writeln_newline(stdout, &s_for_rho1).unwrap();
