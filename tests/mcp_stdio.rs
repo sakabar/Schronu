@@ -1,6 +1,6 @@
 #![cfg(unix)]
 
-use chrono::{Local, Timelike};
+use chrono::{DateTime, Local, TimeZone, Timelike};
 use schronu::adapter::gateway::storage_lock::{LockMode, StorageLock};
 use schronu::adapter::gateway::task_repository::TaskRepository;
 use schronu::application::interface::TaskRepositoryTrait;
@@ -16,7 +16,12 @@ use std::time::{Duration, Instant};
 use uuid::Uuid;
 
 fn new_test_task_handle(name: &str) -> TaskHandle {
-    TaskHandle::with_identity(name, Uuid::new_v4(), Local::now()).unwrap()
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    static SEQUENCE: AtomicU64 = AtomicU64::new(1);
+    let id = Uuid::from_u128(u128::from(SEQUENCE.fetch_add(1, Ordering::Relaxed)));
+    let now: DateTime<Local> = Local.with_ymd_and_hms(2026, 8, 19, 0, 0, 0).unwrap();
+    TaskHandle::with_identity(name, id, now).unwrap()
 }
 
 struct TestStorageDirectory {
