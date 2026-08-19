@@ -6517,6 +6517,50 @@ fn test_execute_next_up_rootへの親追加失敗を構造化errorで返す() {
 }
 
 #[test]
+fn test_execute_next_up_task生成contextと既存の親挿入契約を固定する() {
+    let operation_now = Local.with_ymd_and_hms(2026, 8, 19, 14, 30, 0).unwrap();
+    let deadline = operation_now + Duration::days(2);
+    let expected_new_parent_id =
+        Uuid::parse_str("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa").unwrap();
+    let mut next_id = || expected_new_parent_id;
+    let mut factory = TaskFactory::new(operation_now, &mut next_id);
+
+    let root = new_test_task_handle("root").unwrap();
+    root.set_deadline_time_opt(Some(deadline)).unwrap();
+    root.set_estimated_work_seconds(120 * 60).unwrap();
+    let focused = root.create_as_last_child(new_test_task_attr("focused"));
+    let focused_id = focused.get_id().unwrap();
+    let mut focused_task_id_opt = Some(focused_id);
+    let mut stdout = TestWriter::new();
+
+    let actual = execute_next_up(
+        &mut stdout,
+        &mut focused_task_id_opt,
+        &Some(focused),
+        "new parent",
+        &Some(15),
+        &mut factory,
+    );
+
+    assert_eq!(actual, Ok(Some(expected_new_parent_id)));
+    assert_eq!(focused_task_id_opt, Some(expected_new_parent_id));
+    assert_eq!(root.get_estimated_work_seconds().unwrap(), 105 * 60);
+
+    let root_children = root.get_children().unwrap();
+    assert_eq!(root_children.len(), 1);
+    let new_parent = &root_children[0];
+    assert_eq!(new_parent.get_id().unwrap(), expected_new_parent_id);
+    assert_eq!(new_parent.get_name().unwrap(), "new parent");
+    assert_eq!(new_parent.get_start_time().unwrap(), operation_now);
+    assert_eq!(new_parent.get_deadline_time_opt().unwrap(), Some(deadline));
+    assert_eq!(new_parent.get_estimated_work_seconds().unwrap(), 15 * 60);
+    assert_eq!(
+        new_parent.get_children().unwrap()[0].get_id().unwrap(),
+        focused_id
+    );
+}
+
+#[test]
 fn test_execute_sequential_数値名と負の見積もりでは変更しない() {
     let now = Local.with_ymd_and_hms(2026, 8, 11, 12, 0, 0).unwrap();
 
