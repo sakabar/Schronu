@@ -7479,35 +7479,23 @@ fn execute_parsed(
     parsed_command: &Command,
 ) -> Result<(), CommandError> {
     validate_non_interactive_command(parsed_command)?;
-    validate_contextual_task_attribute_command(
-        parsed_command,
-        task_repository.get_last_synced_time(),
-        active_config(),
-    )?;
+    let operation_now = task_repository.get_last_synced_time();
+    validate_contextual_task_attribute_command(parsed_command, operation_now, active_config())?;
     let mut output = ErrorCapturingWriter::new(stdout);
-    let project_outcome = {
+    let mut next_id = Uuid::new_v4;
+    let mut task_factory = TaskFactory::new(operation_now, &mut next_id);
+    let project_or_breakdown_outcome = {
         let mut context = RuntimeProjectCommandContext {
             task_repository,
             focused_task_id_opt,
+            task_factory: &mut task_factory,
         };
-        handle_project_command(parsed_command, &mut context)?
+        match handle_project_command(parsed_command, &mut context)? {
+            Some(outcome) => Some(outcome),
+            None => handle_breakdown_split_command(parsed_command, &mut context)?,
+        }
     };
-    if let Some(outcome) = project_outcome {
-        apply_command_outcome(
-            &mut output,
-            task_repository,
-            focused_task_id_opt,
-            OutcomeApplicationMode::Flushed,
-            outcome,
-            active_config(),
-        )?;
-    } else if let Some(outcome) = {
-        let mut context = RuntimeProjectCommandContext {
-            task_repository,
-            focused_task_id_opt,
-        };
-        handle_breakdown_split_command(parsed_command, &mut context)?
-    } {
+    if let Some(outcome) = project_or_breakdown_outcome {
         apply_command_outcome(
             &mut output,
             task_repository,
@@ -7616,12 +7604,13 @@ fn execute_parsed(
     }
 }
 
-struct RuntimeProjectCommandContext<'a> {
-    task_repository: &'a mut dyn TaskRepositoryTrait,
-    focused_task_id_opt: &'a mut Option<Uuid>,
+struct RuntimeProjectCommandContext<'repository, 'factory, 'generator> {
+    task_repository: &'repository mut dyn TaskRepositoryTrait,
+    focused_task_id_opt: &'repository mut Option<Uuid>,
+    task_factory: &'factory mut TaskFactory<'generator>,
 }
 
-impl ProjectCommandContext for RuntimeProjectCommandContext<'_> {
+impl ProjectCommandContext for RuntimeProjectCommandContext<'_, '_, '_> {
     fn last_synced_time(&self) -> DateTime<Local> {
         self.task_repository.get_last_synced_time()
     }
@@ -7637,15 +7626,15 @@ impl ProjectCommandContext for RuntimeProjectCommandContext<'_> {
     }
 
     fn create_task(&mut self, input: CreateTaskInput) -> Result<Uuid, ApplicationError> {
-        let mut next_id = Uuid::new_v4;
-        let mut factory = TaskFactory::new(Local::now(), &mut next_id);
-        create_task(self.task_repository, input, &mut factory)
+        create_task(self.task_repository, input, self.task_factory)
     }
 
     fn breakdown_task(&mut self, input: BreakdownTaskInput) -> Result<Vec<Uuid>, ApplicationError> {
-        let mut next_id = Uuid::new_v4;
-        let mut factory = TaskFactory::new(Local::now(), &mut next_id);
-        breakdown_task(self.task_repository, input, &mut factory)
+        breakdown_task(self.task_repository, input, self.task_factory)
+    }
+
+    fn create_task_attr(&mut self, name: &str) -> TaskAttr {
+        self.task_factory.create_task_attr(name)
     }
 
     fn set_estimate(&mut self, task_id: Uuid, minutes: i64) -> Result<(), ApplicationError> {

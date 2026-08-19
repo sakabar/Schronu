@@ -1349,7 +1349,7 @@ fn test_persistent_mutation_revisionはtree構造変更で進む() {
     let child = root.create_as_last_child(new_test_task_attr("child"));
     let after_child_revision = root.get_persistent_mutation_revision().unwrap();
 
-    root.create_sequential_children("step", 60, 1, 2, "", (test_task_time(), next_test_task_id))
+    root.create_sequential_children("step", 60, 1, 2, "", new_test_task_attr)
         .unwrap();
     let after_sequential_revision = root.get_persistent_mutation_revision().unwrap();
     let mut child = child;
@@ -1587,7 +1587,7 @@ impl TaskHandle {
         begin_index: u64,
         end_index: u64,
         task_name_suffix: &str,
-        identity_source: (DateTime<Local>, impl FnMut() -> Uuid),
+        mut create_task_attr: impl FnMut(&str) -> TaskAttr,
     ) -> Result<Self, TaskTreeError> {
         if begin_index > end_index {
             return Err(TaskTreeError::InvalidSequence);
@@ -1600,14 +1600,9 @@ impl TaskHandle {
             .grant_hierarchy_edit()
             .map_err(|_| TaskTreeError::HierarchyGrant)?;
         let mut current_node = self.node.clone();
-        let (now, mut next_id) = identity_source;
 
         for index in (begin_index..=end_index).rev() {
-            let mut task_attr = TaskAttr::with_identity(
-                &format!("{task_name} {index}{task_name_suffix}"),
-                next_id(),
-                now,
-            );
+            let mut task_attr = create_task_attr(&format!("{task_name} {index}{task_name_suffix}"));
             task_attr.set_estimated_work_seconds(estimated_work_seconds);
             current_node = current_node.create_as_last_child(&grant, task_attr);
         }
@@ -2446,14 +2441,7 @@ fn test_try_create_sequential_childrenは不正な範囲でtreeとrevisionを変
     let before_snapshot = root.snapshot();
     let before_revision = root.get_persistent_mutation_revision();
 
-    let actual = root.create_sequential_children(
-        "step",
-        60,
-        2,
-        1,
-        "",
-        (test_task_time(), next_test_task_id),
-    );
+    let actual = root.create_sequential_children("step", 60, 2, 1, "", new_test_task_attr);
 
     assert_eq!(actual, Err(TaskTreeError::InvalidSequence));
     assert_eq!(root.snapshot(), before_snapshot);
@@ -2546,14 +2534,8 @@ fn test_get_inherited_repetition_interval_days_opt_最も近い祖先の値を�
 #[test]
 fn test_create_sequential_children_正常系1() {
     let task = new_test_task_handle("親タスク").unwrap();
-    let grand_child_task_result = task.create_sequential_children(
-        "鎖タスク",
-        600,
-        1,
-        2,
-        "話",
-        (test_task_time(), next_test_task_id),
-    );
+    let grand_child_task_result =
+        task.create_sequential_children("鎖タスク", 600, 1, 2, "話", new_test_task_attr);
 
     let mut child_attr = new_test_task_attr("鎖タスク 2話");
     child_attr.set_estimated_work_seconds(600);
@@ -2583,14 +2565,8 @@ fn test_create_sequential_children_正常系1() {
 #[allow(non_snake_case)]
 fn test_create_sequential_children_異常系1_begin_indexのほうが大きい場合はエラー() {
     let task = new_test_task_handle("親タスク").unwrap();
-    let grand_child_task_result = task.create_sequential_children(
-        "鎖タスク",
-        600,
-        10,
-        1,
-        "話",
-        (test_task_time(), next_test_task_id),
-    );
+    let grand_child_task_result =
+        task.create_sequential_children("鎖タスク", 600, 10, 1, "話", new_test_task_attr);
 
     assert!(grand_child_task_result.is_err());
 }
@@ -3883,14 +3859,7 @@ fn test_create_sequential_childrenはrootのshared_borrow競合時にtreeとrevi
 
     root.with_shared_data_borrow_for_test(|| {
         assert_eq!(
-            root.create_sequential_children(
-                "子",
-                60,
-                1,
-                2,
-                "",
-                (test_task_time(), next_test_task_id),
-            ),
+            root.create_sequential_children("子", 60, 1, 2, "", new_test_task_attr,),
             Err(TaskTreeError::Borrow)
         );
     });

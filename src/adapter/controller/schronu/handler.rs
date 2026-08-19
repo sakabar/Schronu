@@ -39,6 +39,7 @@ pub(super) trait ProjectCommandContext {
     fn focused_task(&mut self) -> Result<Option<TaskHandle>, ApplicationError>;
     fn create_task(&mut self, input: CreateTaskInput) -> Result<Uuid, ApplicationError>;
     fn breakdown_task(&mut self, input: BreakdownTaskInput) -> Result<Vec<Uuid>, ApplicationError>;
+    fn create_task_attr(&mut self, name: &str) -> TaskAttr;
     fn set_estimate(&mut self, task_id: Uuid, minutes: i64) -> Result<(), ApplicationError>;
     fn focused_task_id(&self) -> Option<Uuid>;
     fn set_focused_task_id(&mut self, task_id_opt: Option<Uuid>);
@@ -886,7 +887,7 @@ fn execute_breakdown_sequentially(
                 begin_index,
                 end_index,
                 suffix,
-                (Local::now(), Uuid::new_v4),
+                |child_name| context.create_task_attr(child_name),
             )
             .map_err(ApplicationError::TaskTree)?;
         let grand_child_task_id = grand_child_task
@@ -965,8 +966,7 @@ fn execute_split(
         .set_estimated_work_seconds(focused_estimated_work_seconds - splitted_work_seconds)
         .map_err(ApplicationError::TaskTree)?;
 
-    let mut new_task_attr =
-        TaskAttr::with_identity(new_task_name, uuid::Uuid::new_v4(), chrono::Local::now());
+    let mut new_task_attr = context.create_task_attr(new_task_name);
     new_task_attr.set_estimated_work_seconds(splitted_work_seconds);
     if let Some(deadline_time) = focused_task
         .get_deadline_time_opt()
