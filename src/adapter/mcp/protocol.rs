@@ -1,4 +1,4 @@
-use super::InvalidParams;
+use super::error::InvalidParams;
 use serde_json::{json, Map, Value};
 
 const MCP_PROTOCOL_VERSION: &str = "2025-06-18";
