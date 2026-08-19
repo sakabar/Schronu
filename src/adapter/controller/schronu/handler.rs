@@ -1121,3 +1121,128 @@ pub(super) fn decide_time_values(
             .unwrap(),
     )
 }
+
+#[cfg(test)]
+mod task_generation_context_tests {
+    use super::*;
+    use std::collections::VecDeque;
+
+    struct FixedIdentityProjectCommandContext {
+        now: DateTime<Local>,
+        next_ids: VecDeque<Uuid>,
+        focused_task_id_opt: Option<Uuid>,
+    }
+
+    impl FixedIdentityProjectCommandContext {
+        fn new(now: DateTime<Local>, next_ids: impl IntoIterator<Item = Uuid>) -> Self {
+            Self {
+                now,
+                next_ids: next_ids.into_iter().collect(),
+                focused_task_id_opt: None,
+            }
+        }
+    }
+
+    impl ProjectCommandContext for FixedIdentityProjectCommandContext {
+        fn last_synced_time(&self) -> DateTime<Local> {
+            self.now
+        }
+
+        fn focused_task(&mut self) -> Result<Option<TaskHandle>, ApplicationError> {
+            unreachable!("this contract test passes the focused task explicitly")
+        }
+
+        fn create_task(&mut self, _input: CreateTaskInput) -> Result<Uuid, ApplicationError> {
+            unreachable!("this contract test exercises direct child creation")
+        }
+
+        fn breakdown_task(
+            &mut self,
+            _input: BreakdownTaskInput,
+        ) -> Result<Vec<Uuid>, ApplicationError> {
+            unreachable!("this contract test exercises direct child creation")
+        }
+
+        fn create_task_attr(&mut self, name: &str) -> TaskAttr {
+            TaskAttr::with_identity(
+                name,
+                self.next_ids
+                    .pop_front()
+                    .expect("the fixed identity sequence must cover every created task"),
+                self.now,
+            )
+        }
+
+        fn set_estimate(&mut self, _task_id: Uuid, _minutes: i64) -> Result<(), ApplicationError> {
+            unreachable!("this contract test does not set estimates through the context")
+        }
+
+        fn focused_task_id(&self) -> Option<Uuid> {
+            self.focused_task_id_opt
+        }
+
+        fn set_focused_task_id(&mut self, task_id_opt: Option<Uuid>) {
+            self.focused_task_id_opt = task_id_opt;
+        }
+    }
+
+    fn task(name: &str, id: u128, now: DateTime<Local>) -> TaskHandle {
+        TaskHandle::with_identity(name, Uuid::from_u128(id), now)
+            .expect("test task creation must succeed")
+    }
+
+    #[test]
+    fn splitはcontextが供給するidentityで子taskを生成する() {
+        let now = Local.with_ymd_and_hms(2026, 8, 19, 12, 34, 56).unwrap();
+        let child_id = Uuid::from_u128(101);
+        let root = task("root", 1, now);
+        root.set_estimated_work_seconds(90 * 60).unwrap();
+        let mut context = FixedIdentityProjectCommandContext::new(now, [child_id]);
+        let mut display = DisplayRecorder::default();
+
+        let actual = execute_split(&mut context, &Some(root.clone()), "child", 30, &mut display)
+            .expect("split must succeed")
+            .expect("split must create a child");
+
+        let child = root.get_children().unwrap().remove(0);
+        assert_eq!(actual, child_id);
+        assert_eq!(child.get_id().unwrap(), child_id);
+        assert_eq!(child.get_create_time().unwrap(), now);
+        assert_eq!(context.focused_task_id(), Some(child_id));
+        assert!(context.next_ids.is_empty());
+    }
+
+    #[test]
+    fn sequentialは実生成順にcontextのidentityを消費して同じ時刻を共有する() {
+        let now = Local.with_ymd_and_hms(2026, 8, 19, 12, 34, 56).unwrap();
+        let creation_order_ids = [
+            Uuid::from_u128(201),
+            Uuid::from_u128(202),
+            Uuid::from_u128(203),
+        ];
+        let root = task("root", 1, now);
+        let mut context =
+            FixedIdentityProjectCommandContext::new(now, creation_order_ids.iter().copied());
+
+        let actual =
+            execute_breakdown_sequentially(&mut context, &Some(root.clone()), "step", 10, 1, 3, "")
+                .expect("sequential creation must succeed")
+                .expect("sequential creation must return the deepest child");
+
+        let step_3 = root.get_children().unwrap().remove(0);
+        let step_2 = step_3.get_children().unwrap().remove(0);
+        let step_1 = step_2.get_children().unwrap().remove(0);
+        for (task, expected_name, expected_id) in [
+            (&step_3, "step 3", creation_order_ids[0]),
+            (&step_2, "step 2", creation_order_ids[1]),
+            (&step_1, "step 1", creation_order_ids[2]),
+        ] {
+            assert_eq!(task.get_name().unwrap(), expected_name);
+            assert_eq!(task.get_id().unwrap(), expected_id);
+            assert_eq!(task.get_create_time().unwrap(), now);
+        }
+        assert_eq!(actual, creation_order_ids[2]);
+        assert_eq!(context.focused_task_id(), Some(creation_order_ids[2]));
+        assert!(context.next_ids.is_empty());
+    }
+}
