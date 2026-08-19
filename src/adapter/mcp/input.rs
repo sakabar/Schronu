@@ -568,3 +568,222 @@ pub(super) fn string_argument<'a>(
             reason: "must be a string",
         })
 }
+
+#[cfg(test)]
+mod tests {
+    use super::{common_input_contract, ToolInputError};
+    use serde_json::{json, Value};
+
+    #[derive(Clone, Copy, Debug)]
+    enum ExpectedDecode {
+        Valid,
+        Schema {
+            field: &'static str,
+            reason: &'static str,
+        },
+        Semantic {
+            field: &'static str,
+            reason: &'static str,
+        },
+    }
+
+    struct ContractCase {
+        name: &'static str,
+        input: Value,
+        schema_accepts: bool,
+        decode: ExpectedDecode,
+    }
+
+    #[test]
+    fn common_input_constraints_are_checked_against_the_same_case_set() {
+        let contract = common_input_contract();
+        let validator = jsonschema::options()
+            .should_validate_formats(true)
+            .build(contract.schema())
+            .expect("generated common input schema must be valid JSON Schema");
+
+        for case in common_input_cases() {
+            assert_eq!(
+                validator.is_valid(&case.input),
+                case.schema_accepts,
+                "schema outcome differed for {}",
+                case.name
+            );
+            assert_decode_outcome(case.name, contract.decode(&case.input), case.decode);
+        }
+    }
+
+    fn common_input_cases() -> Vec<ContractCase> {
+        vec![
+            ContractCase {
+                name: "valid values",
+                input: valid_input(),
+                schema_accepts: true,
+                decode: ExpectedDecode::Valid,
+            },
+            ContractCase {
+                name: "unknown field",
+                input: with_field(valid_input(), "extra", json!(true)),
+                schema_accepts: false,
+                decode: ExpectedDecode::Schema {
+                    field: "arguments.extra",
+                    reason: "additional property is not allowed",
+                },
+            },
+            ContractCase {
+                name: "required field",
+                input: without_field(valid_input(), "task_id"),
+                schema_accepts: false,
+                decode: ExpectedDecode::Schema {
+                    field: "task_id",
+                    reason: "field is required",
+                },
+            },
+            ContractCase {
+                name: "nullable value",
+                input: with_field(valid_input(), "deadline_time", Value::Null),
+                schema_accepts: true,
+                decode: ExpectedDecode::Valid,
+            },
+            ContractCase {
+                name: "nullable value has wrong type",
+                input: with_field(valid_input(), "deadline_time", json!(42)),
+                schema_accepts: false,
+                decode: ExpectedDecode::Schema {
+                    field: "deadline_time",
+                    reason: "must be a string or null",
+                },
+            },
+            ContractCase {
+                name: "invalid UUID",
+                input: with_field(valid_input(), "task_id", json!("not-a-uuid")),
+                schema_accepts: false,
+                decode: ExpectedDecode::Semantic {
+                    field: "task_id",
+                    reason: "must be a valid UUID",
+                },
+            },
+            ContractCase {
+                name: "invalid RFC 3339 date-time",
+                input: with_field(valid_input(), "pending_until", json!("2026-08-19 10:00")),
+                schema_accepts: false,
+                decode: ExpectedDecode::Semantic {
+                    field: "pending_until",
+                    reason: "must be a valid RFC 3339 date-time",
+                },
+            },
+            ContractCase {
+                name: "invalid ISO date",
+                input: with_field(valid_input(), "date", json!("2026-02-30")),
+                schema_accepts: false,
+                decode: ExpectedDecode::Semantic {
+                    field: "date",
+                    reason: "must be a valid ISO 8601 date",
+                },
+            },
+            ContractCase {
+                name: "negative i64",
+                input: with_field(valid_input(), "work_seconds", json!(-1)),
+                schema_accepts: false,
+                decode: ExpectedDecode::Schema {
+                    field: "work_seconds",
+                    reason: "must be a non-negative integer",
+                },
+            },
+            ContractCase {
+                name: "u64 outside i64 range",
+                input: with_field(valid_input(), "work_seconds", json!(u64::MAX)),
+                schema_accepts: true,
+                decode: ExpectedDecode::Semantic {
+                    field: "work_seconds",
+                    reason: "is outside the supported integer range",
+                },
+            },
+            ContractCase {
+                name: "empty string",
+                input: with_field(valid_input(), "name", json!("")),
+                schema_accepts: false,
+                decode: ExpectedDecode::Schema {
+                    field: "name",
+                    reason: "must not be empty",
+                },
+            },
+        ]
+    }
+
+    fn valid_input() -> Value {
+        json!({
+            "task_id": "80d7db87-324e-4e8d-a5b7-ff78cd5bf39a",
+            "deadline_time": "2026-08-19T10:00:00+09:00",
+            "pending_until": "2026-08-20T10:00:00+09:00",
+            "date": "2026-08-19",
+            "work_seconds": 0,
+            "name": "write contract test"
+        })
+    }
+
+    fn with_field(mut input: Value, field: &str, value: Value) -> Value {
+        input
+            .as_object_mut()
+            .expect("test input must be an object")
+            .insert(field.to_string(), value);
+        input
+    }
+
+    fn without_field(mut input: Value, field: &str) -> Value {
+        input
+            .as_object_mut()
+            .expect("test input must be an object")
+            .remove(field);
+        input
+    }
+
+    fn assert_decode_outcome(
+        case_name: &str,
+        actual: Result<(), ToolInputError>,
+        expected: ExpectedDecode,
+    ) {
+        match (actual, expected) {
+            (Ok(()), ExpectedDecode::Valid) => {}
+            (Err(ToolInputError::Schema(actual)), ExpectedDecode::Schema { field, reason }) => {
+                assert_eq!(actual.field, field, "schema field differed for {case_name}");
+                assert_eq!(
+                    actual.reason, reason,
+                    "schema reason differed for {case_name}"
+                );
+            }
+            (
+                Err(ToolInputError::Semantic {
+                    field: actual_field,
+                    message: actual_reason,
+                }),
+                ExpectedDecode::Semantic { field, reason },
+            ) => {
+                assert_eq!(
+                    actual_field, field,
+                    "semantic field differed for {case_name}"
+                );
+                assert_eq!(
+                    actual_reason, reason,
+                    "semantic reason differed for {case_name}"
+                );
+            }
+            (actual, expected) => panic!(
+                "decode outcome differed for {case_name}: actual={}, expected={expected:?}",
+                describe_decode(actual)
+            ),
+        }
+    }
+
+    fn describe_decode(result: Result<(), ToolInputError>) -> String {
+        match result {
+            Ok(()) => "valid".to_string(),
+            Err(ToolInputError::Schema(error)) => {
+                format!("schema({}, {})", error.field, error.reason)
+            }
+            Err(ToolInputError::Semantic { field, message }) => {
+                format!("semantic({field}, {message})")
+            }
+        }
+    }
+}
