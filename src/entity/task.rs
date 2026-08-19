@@ -950,13 +950,6 @@ impl fmt::Debug for TaskAttr {
 }
 
 impl TaskAttr {
-    pub fn new(name: &str) -> Self {
-        // 本当はnow()で副作用を持たせたくなかったが、毎回手入力するわけにもいかないので渋々使用
-        let now = Local::now();
-
-        Self::with_identity(name, Uuid::new_v4(), now)
-    }
-
     pub fn with_identity(name: &str, id: Uuid, now: DateTime<Local>) -> Self {
         Self {
             id,
@@ -1420,24 +1413,6 @@ fn test_task_handle_with_identity_caller指定のidと時刻を保持しdummy_ro
 impl TaskHandle {
     // dendron::Node::try_detach_insert_subtree()は木そのものを消滅させることができない仕様のようなので、
     // ダミーのルートノードを用意することで、使いたいノードが全て子ノードになるようにする
-    pub fn new(name: &str) -> Result<Self, TaskTreeError> {
-        let dummy_attr = TaskAttr::new(format!("dummy-for-{}", name).as_str());
-        let dummy_root = Node::new_tree(dummy_attr);
-
-        let grant = dummy_root
-            .tree()
-            .grant_hierarchy_edit()
-            .map_err(|_| TaskTreeError::HierarchyGrant)?;
-        let task_attr = TaskAttr::new(name);
-        dummy_root.create_as_last_child(&grant, task_attr);
-
-        let node = dummy_root
-            .first_child()
-            .ok_or(TaskTreeError::MissingDummyRootChild)?;
-
-        Ok(Self { node })
-    }
-
     pub fn with_identity(
         name: &str,
         id: Uuid,
