@@ -527,8 +527,7 @@ mod tests {
         work_minutes: i64,
         priority: i64,
     ) -> TaskHandle {
-        let task =
-            TaskHandle::with_identity(name, uuid::Uuid::new_v4(), chrono::Local::now()).unwrap();
+        let task = crate::test_support::new_task_handle(name).unwrap();
         task.sync_clock(now).unwrap();
         task.set_start_time(now).unwrap();
         task.set_estimated_work_seconds(work_minutes * 60).unwrap();
@@ -679,8 +678,7 @@ mod tests {
     #[test]
     fn pack_tasks_pending_untilを実際の配置開始時刻へ設定する() {
         let now = fixed_now();
-        let blocker =
-            TaskHandle::with_identity("先行", uuid::Uuid::new_v4(), chrono::Local::now()).unwrap();
+        let blocker = crate::test_support::new_task_handle("先行").unwrap();
         blocker.sync_clock(now).unwrap();
         blocker.set_start_time(now).unwrap();
         blocker.set_estimated_work_seconds(30 * 60).unwrap();
@@ -930,11 +928,7 @@ mod tests {
     fn pack_tasks_親taskと完了済みtaskと残作業0のtaskは候補にしない() {
         let now = fixed_now();
         let parent = pending_task("親", now, now + Duration::days(10), 30, 9);
-        let child = parent.create_as_last_child(crate::entity::task::TaskAttr::with_identity(
-            "子",
-            uuid::Uuid::new_v4(),
-            chrono::Local::now(),
-        ));
+        let child = parent.create_as_last_child(crate::test_support::new_task_attr("子"));
         child.sync_clock(now).unwrap();
         let done = pending_task("完了", now, now + Duration::days(10), 30, 8);
         done.set_orig_status(Status::Done).unwrap();

@@ -421,8 +421,7 @@ mod tests {
         neg_priority: i64,
         remaining_seconds: i64,
     ) -> TaskScheduleCandidate {
-        let task =
-            TaskHandle::with_identity(name, uuid::Uuid::new_v4(), chrono::Local::now()).unwrap();
+        let task = crate::test_support::new_task_handle(name).unwrap();
         TaskScheduleCandidate {
             id: task.get_id().unwrap(),
             task,

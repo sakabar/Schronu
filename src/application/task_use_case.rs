@@ -638,9 +638,7 @@ mod tests {
         focused_deadline_time_opt: Option<DateTime<Local>>,
         finished_at: DateTime<Local>,
     ) -> TaskHandle {
-        let parent_task =
-            TaskHandle::with_identity("ルーチン", uuid::Uuid::new_v4(), chrono::Local::now())
-                .unwrap();
+        let parent_task = crate::test_support::new_task_handle("ルーチン").unwrap();
         parent_task
             .set_repetition_interval_days_opt(Some(7))
             .unwrap();
@@ -684,16 +682,11 @@ mod tests {
 
     #[test]
     fn get_task_親子関係を含むviewを返す() {
-        let root =
-            TaskHandle::with_identity("親", uuid::Uuid::new_v4(), chrono::Local::now()).unwrap();
+        let root = crate::test_support::new_task_handle("親").unwrap();
         root.set_priority(5).unwrap();
         root.set_project_category_opt(Some(ProjectCategory::Investment))
             .unwrap();
-        let child = root.create_as_last_child(TaskAttr::with_identity(
-            "子",
-            uuid::Uuid::new_v4(),
-            chrono::Local::now(),
-        ));
+        let child = root.create_as_last_child(crate::test_support::new_task_attr("子"));
         let repository = TestTaskRepository::new(vec![root.clone()], fixed_now());
 
         let actual = get_task(&repository, child.get_id().unwrap())
@@ -717,8 +710,7 @@ mod tests {
         let start_time = Local.with_ymd_and_hms(2026, 8, 10, 10, 0, 0).unwrap();
         let end_time = Local.with_ymd_and_hms(2026, 8, 11, 11, 0, 0).unwrap();
         let deadline_time = Local.with_ymd_and_hms(2026, 8, 20, 23, 59, 59).unwrap();
-        let root = TaskHandle::with_identity("全属性", uuid::Uuid::new_v4(), chrono::Local::now())
-            .unwrap();
+        let root = crate::test_support::new_task_handle("全属性").unwrap();
         root.set_orig_status(Status::Pending).unwrap();
         root.set_pending_until(pending_until).unwrap();
         root.set_priority(7).unwrap();
@@ -737,11 +729,7 @@ mod tests {
         root.set_project_category_opt(Some(ProjectCategory::Recovery))
             .unwrap();
         root.sync_clock(now).unwrap();
-        let child = root.create_as_last_child(TaskAttr::with_identity(
-            "子",
-            uuid::Uuid::new_v4(),
-            chrono::Local::now(),
-        ));
+        let child = root.create_as_last_child(crate::test_support::new_task_attr("子"));
         let repository = TestTaskRepository::new(vec![root.clone()], now);
 
         let actual = get_task(&repository, root.get_id().unwrap())
@@ -779,8 +767,7 @@ mod tests {
 
     #[test]
     fn get_task_pendingでなければpending_untilはnoneを返す() {
-        let task = TaskHandle::with_identity("未延期", uuid::Uuid::new_v4(), chrono::Local::now())
-            .unwrap();
+        let task = crate::test_support::new_task_handle("未延期").unwrap();
         let repository = TestTaskRepository::new(vec![task.clone()], fixed_now());
 
         let actual = get_task(&repository, task.get_id().unwrap())
@@ -793,13 +780,8 @@ mod tests {
 
     #[test]
     fn get_focus_最高優先度leafのviewを返す() {
-        let root =
-            TaskHandle::with_identity("親", uuid::Uuid::new_v4(), chrono::Local::now()).unwrap();
-        let child = root.create_as_last_child(TaskAttr::with_identity(
-            "子",
-            uuid::Uuid::new_v4(),
-            chrono::Local::now(),
-        ));
+        let root = crate::test_support::new_task_handle("親").unwrap();
+        let child = root.create_as_last_child(crate::test_support::new_task_attr("子"));
         let mut repository = TestTaskRepository::new(vec![root], fixed_now());
         repository.highest_priority_leaf_task_id = Some(child.get_id().unwrap());
 
@@ -946,8 +928,7 @@ mod tests {
 
     #[test]
     fn breakdown_task_入力順と締切を維持する() {
-        let parent =
-            TaskHandle::with_identity("親", uuid::Uuid::new_v4(), chrono::Local::now()).unwrap();
+        let parent = crate::test_support::new_task_handle("親").unwrap();
         let deadline = Local.with_ymd_and_hms(2026, 8, 20, 23, 59, 59).unwrap();
         parent.set_deadline_time_opt(Some(deadline)).unwrap();
         let mut repository = TestTaskRepository::new(vec![parent.clone()], fixed_now());
@@ -981,8 +962,7 @@ mod tests {
 
     #[test]
     fn breakdown_task_全ての子を指定時刻までpendingにする() {
-        let parent =
-            TaskHandle::with_identity("親", uuid::Uuid::new_v4(), chrono::Local::now()).unwrap();
+        let parent = crate::test_support::new_task_handle("親").unwrap();
         let pending_until = Local.with_ymd_and_hms(2026, 8, 13, 6, 0, 0).unwrap();
         let mut repository = TestTaskRepository::new(vec![parent.clone()], fixed_now());
 
@@ -1014,8 +994,7 @@ mod tests {
 
     #[test]
     fn breakdown_task_数値名を含む場合は変更しない() {
-        let parent =
-            TaskHandle::with_identity("親", uuid::Uuid::new_v4(), chrono::Local::now()).unwrap();
+        let parent = crate::test_support::new_task_handle("親").unwrap();
         let mut repository = TestTaskRepository::new(vec![parent.clone()], fixed_now());
 
         let actual = breakdown_task(
@@ -1033,8 +1012,7 @@ mod tests {
 
     #[test]
     fn breakdown_task_空の名前一覧を拒否して変更しない() {
-        let parent =
-            TaskHandle::with_identity("親", uuid::Uuid::new_v4(), chrono::Local::now()).unwrap();
+        let parent = crate::test_support::new_task_handle("親").unwrap();
         let mut repository = TestTaskRepository::new(vec![parent.clone()], fixed_now());
 
         let actual = breakdown_task(
@@ -1055,8 +1033,7 @@ mod tests {
 
     #[test]
     fn breakdown_task_空白名を含む場合は変更しない() {
-        let parent =
-            TaskHandle::with_identity("親", uuid::Uuid::new_v4(), chrono::Local::now()).unwrap();
+        let parent = crate::test_support::new_task_handle("親").unwrap();
         let mut repository = TestTaskRepository::new(vec![parent.clone()], fixed_now());
 
         let actual = breakdown_task(
@@ -1074,8 +1051,7 @@ mod tests {
 
     #[test]
     fn defer_task_絶対時刻までpendingにする() {
-        let task =
-            TaskHandle::with_identity("延期", uuid::Uuid::new_v4(), chrono::Local::now()).unwrap();
+        let task = crate::test_support::new_task_handle("延期").unwrap();
         let task_id = task.get_id().unwrap();
         let mut repository = TestTaskRepository::new(vec![task], fixed_now());
         let pending_until = Local.with_ymd_and_hms(2026, 8, 13, 6, 0, 1).unwrap();
@@ -1089,13 +1065,8 @@ mod tests {
 
     #[test]
     fn complete_task_未完了の子があれば変更しない() {
-        let task =
-            TaskHandle::with_identity("親", uuid::Uuid::new_v4(), chrono::Local::now()).unwrap();
-        task.create_as_last_child(TaskAttr::with_identity(
-            "未完了",
-            uuid::Uuid::new_v4(),
-            chrono::Local::now(),
-        ));
+        let task = crate::test_support::new_task_handle("親").unwrap();
+        task.create_as_last_child(crate::test_support::new_task_attr("未完了"));
         let task_id = task.get_id().unwrap();
         let mut repository = TestTaskRepository::new(vec![task], fixed_now());
 
@@ -1116,8 +1087,7 @@ mod tests {
 
     #[test]
     fn complete_task_実績を加算して完了する() {
-        let task =
-            TaskHandle::with_identity("完了", uuid::Uuid::new_v4(), chrono::Local::now()).unwrap();
+        let task = crate::test_support::new_task_handle("完了").unwrap();
         task.set_actual_work_seconds(60).unwrap();
         let task_id = task.get_id().unwrap();
         let mut repository = TestTaskRepository::new(vec![task], fixed_now());
@@ -1142,8 +1112,7 @@ mod tests {
 
     #[test]
     fn create_next_repetition_taskは構造化errorを返せるresultを維持する() {
-        let task =
-            TaskHandle::with_identity("単発", uuid::Uuid::new_v4(), chrono::Local::now()).unwrap();
+        let task = crate::test_support::new_task_handle("単発").unwrap();
 
         let actual: Result<Option<Uuid>, ApplicationError> =
             create_next_repetition_task(&task, fixed_now());
@@ -1153,16 +1122,10 @@ mod tests {
 
     #[test]
     fn complete_task_繰り返しtaskを生成して見積もりを補正する() {
-        let parent =
-            TaskHandle::with_identity("ルーチン", uuid::Uuid::new_v4(), chrono::Local::now())
-                .unwrap();
+        let parent = crate::test_support::new_task_handle("ルーチン").unwrap();
         parent.set_repetition_interval_days_opt(Some(7)).unwrap();
         parent.set_estimated_work_seconds(600).unwrap();
-        let child = parent.create_as_last_child(TaskAttr::with_identity(
-            "今回",
-            uuid::Uuid::new_v4(),
-            chrono::Local::now(),
-        ));
+        let child = parent.create_as_last_child(crate::test_support::new_task_attr("今回"));
         child.set_actual_work_seconds(1000).unwrap();
         let child_id = child.get_id().unwrap();
         let mut repository = TestTaskRepository::new(vec![parent.clone()], fixed_now());
@@ -1257,8 +1220,7 @@ mod tests {
 
     #[test]
     fn complete_task_繰り返し親のatomicを次回子タスクに引き継ぐ() {
-        let parent_task =
-            TaskHandle::with_identity("通勤", uuid::Uuid::new_v4(), chrono::Local::now()).unwrap();
+        let parent_task = crate::test_support::new_task_handle("通勤").unwrap();
         parent_task
             .set_repetition_interval_days_opt(Some(7))
             .unwrap();
@@ -1300,9 +1262,7 @@ mod tests {
 
     #[test]
     fn complete_task_負の追加実績を拒否して変更しない() {
-        let task =
-            TaskHandle::with_identity("完了対象", uuid::Uuid::new_v4(), chrono::Local::now())
-                .unwrap();
+        let task = crate::test_support::new_task_handle("完了対象").unwrap();
         task.set_actual_work_seconds(120).unwrap();
         let task_id = task.get_id().unwrap();
         let mut repository = TestTaskRepository::new(vec![task], fixed_now());
@@ -1331,9 +1291,7 @@ mod tests {
 
     #[test]
     fn complete_task_実績加算がoverflowする場合はerrorにして変更しない() {
-        let task =
-            TaskHandle::with_identity("完了対象", uuid::Uuid::new_v4(), chrono::Local::now())
-                .unwrap();
+        let task = crate::test_support::new_task_handle("完了対象").unwrap();
         task.set_actual_work_seconds(i64::MAX).unwrap();
         let task_id = task.get_id().unwrap();
         let mut repository = TestTaskRepository::new(vec![task], fixed_now());
@@ -1364,8 +1322,7 @@ mod tests {
 
     #[test]
     fn update_use_cases_見積もり締切カテゴリを設定して解除する() {
-        let task =
-            TaskHandle::with_identity("更新", uuid::Uuid::new_v4(), chrono::Local::now()).unwrap();
+        let task = crate::test_support::new_task_handle("更新").unwrap();
         let task_id = task.get_id().unwrap();
         let mut repository = TestTaskRepository::new(vec![task], fixed_now());
         let deadline = Local.with_ymd_and_hms(2026, 8, 20, 23, 59, 59).unwrap();
@@ -1435,9 +1392,7 @@ mod tests {
 
     #[test]
     fn set_estimate_負数を拒否して変更しない() {
-        let task =
-            TaskHandle::with_identity("更新対象", uuid::Uuid::new_v4(), chrono::Local::now())
-                .unwrap();
+        let task = crate::test_support::new_task_handle("更新対象").unwrap();
         task.set_estimated_work_seconds(30 * 60).unwrap();
         let task_id = task.get_id().unwrap();
         let mut repository = TestTaskRepository::new(vec![task], fixed_now());
@@ -1463,9 +1418,7 @@ mod tests {
 
     #[test]
     fn set_estimate_秒変換がoverflowする場合はerrorにして変更しない() {
-        let task =
-            TaskHandle::with_identity("更新対象", uuid::Uuid::new_v4(), chrono::Local::now())
-                .unwrap();
+        let task = crate::test_support::new_task_handle("更新対象").unwrap();
         task.set_estimated_work_seconds(30 * 60).unwrap();
         let task_id = task.get_id().unwrap();
         let mut repository = TestTaskRepository::new(vec![task], fixed_now());
@@ -1493,8 +1446,7 @@ mod tests {
 
     #[test]
     fn write_use_cases_repositoryをsaveしない() {
-        let root =
-            TaskHandle::with_identity("親", uuid::Uuid::new_v4(), chrono::Local::now()).unwrap();
+        let root = crate::test_support::new_task_handle("親").unwrap();
         let root_id = root.get_id().unwrap();
         let mut repository = TestTaskRepository::new(vec![root], fixed_now());
 
