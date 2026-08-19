@@ -20,6 +20,7 @@ use uuid::Uuid;
 
 mod handler;
 mod protocol;
+mod registry;
 
 use protocol::{
     error_response, initialize_response, initialized_notification_params_are_valid,
@@ -81,7 +82,7 @@ impl<R: TaskRepositoryTrait> McpServer<R> {
             "tools/list" if self.lifecycle_state != LifecycleState::Initialized => {
                 Some(error_response(id, -32002, "Server not initialized"))
             }
-            "tools/list" => Some(tools_list_response(id, tool_definitions())),
+            "tools/list" => Some(tools_list_response(id, registry::tool_definitions())),
             "tools/call" if self.lifecycle_state != LifecycleState::Initialized => {
                 Some(error_response(id, -32002, "Server not initialized"))
             }
@@ -796,187 +797,6 @@ fn scheduled_task_view_json(scheduled: &ScheduledTaskView) -> Value {
         "scheduled_work_seconds": scheduled.scheduled_work_seconds,
         "total_work_seconds": scheduled.total_work_seconds,
         "rank": scheduled.rank
-    })
-}
-
-fn tool_definitions() -> Vec<Value> {
-    vec![
-        json!({
-            "name": "get_focus",
-            "description": "Get the task that should be worked on now.",
-            "inputSchema": {
-                "type": "object",
-                "properties": {},
-                "required": [],
-                "additionalProperties": false
-            }
-        }),
-        json!({
-            "name": "get_task",
-            "description": "Get one task by UUID.",
-            "inputSchema": {
-                "type": "object",
-                "properties": {
-                    "task_id": {"type": "string", "format": "uuid"}
-                },
-                "required": ["task_id"],
-                "additionalProperties": false
-            }
-        }),
-        json!({
-            "name": "list_tasks",
-            "description": "List tasks filtered by period, status, and category.",
-            "inputSchema": {
-                "type": "object",
-                "properties": {
-                    "period": {
-                        "type": "object",
-                        "properties": {
-                            "field": {
-                                "type": "string",
-                                "enum": [
-                                    "scheduled_start",
-                                    "created_at",
-                                    "deadline",
-                                    "completed_at"
-                                ]
-                            },
-                            "from": {"type": "string", "format": "date-time"},
-                            "until": {"type": "string", "format": "date-time"}
-                        },
-                        "required": ["field", "from", "until"],
-                        "additionalProperties": false
-                    },
-                    "statuses": {
-                        "type": "array",
-                        "items": {"type": "string", "enum": ["todo", "pending", "done"]}
-                    },
-                    "categories": {
-                        "type": "array",
-                        "items": category_schema()
-                    }
-                },
-                "required": [],
-                "additionalProperties": false
-            }
-        }),
-        json!({
-            "name": "get_schedule",
-            "description": "Get Schronu's calculated task schedule for a date range.",
-            "inputSchema": {
-                "type": "object",
-                "properties": {
-                    "from": {"type": "string", "format": "date"},
-                    "until": {"type": "string", "format": "date"}
-                },
-                "required": [],
-                "additionalProperties": false
-            }
-        }),
-        json!({
-            "name": "create_task",
-            "description": "Create a new root project task.",
-            "inputSchema": {
-                "type": "object",
-                "properties": {
-                    "name": {"type": "string", "minLength": 1},
-                    "estimated_work_minutes": {"type": "integer", "minimum": 0},
-                    "pending_until": {"type": "string", "format": "date-time"}
-                },
-                "required": ["name"],
-                "additionalProperties": false
-            }
-        }),
-        json!({
-            "name": "breakdown_task",
-            "description": "Add child tasks to an existing task.",
-            "inputSchema": {
-                "type": "object",
-                "properties": {
-                    "parent_id": {"type": "string", "format": "uuid"},
-                    "names": {
-                        "type": "array",
-                        "items": {"type": "string", "minLength": 1},
-                        "minItems": 1
-                    },
-                    "pending_until": {"type": "string", "format": "date-time"}
-                },
-                "required": ["parent_id", "names"],
-                "additionalProperties": false
-            }
-        }),
-        json!({
-            "name": "defer_task",
-            "description": "Defer a task until an absolute date and time.",
-            "inputSchema": {
-                "type": "object",
-                "properties": {
-                    "task_id": {"type": "string", "format": "uuid"},
-                    "pending_until": {"type": "string", "format": "date-time"}
-                },
-                "required": ["task_id", "pending_until"],
-                "additionalProperties": false
-            }
-        }),
-        json!({
-            "name": "complete_task",
-            "description": "Complete a task, optionally recording finish time and work seconds.",
-            "inputSchema": {
-                "type": "object",
-                "properties": {
-                    "task_id": {"type": "string", "format": "uuid"},
-                    "finished_at": {"type": "string", "format": "date-time"},
-                    "additional_actual_work_seconds": {
-                        "type": "integer",
-                        "minimum": 0,
-                        "default": 0
-                    }
-                },
-                "required": ["task_id"],
-                "additionalProperties": false
-            }
-        }),
-        json!({
-            "name": "update_task",
-            "description": "Update a task's estimate, deadline, or category.",
-            "inputSchema": {
-                "type": "object",
-                "properties": {
-                    "task_id": {"type": "string", "format": "uuid"},
-                    "estimated_work_minutes": {"type": "integer", "minimum": 0},
-                    "deadline_time": nullable_datetime_schema(),
-                    "category": category_schema()
-                },
-                "required": ["task_id"],
-                "anyOf": [
-                    {"required": ["estimated_work_minutes"]},
-                    {"required": ["deadline_time"]},
-                    {"required": ["category"]}
-                ],
-                "additionalProperties": false
-            }
-        }),
-    ]
-}
-
-fn nullable_datetime_schema() -> Value {
-    json!({
-        "anyOf": [
-            {"type": "string", "format": "date-time"},
-            {"type": "null"}
-        ]
-    })
-}
-
-fn category_schema() -> Value {
-    json!({
-        "anyOf": [
-            {
-                "type": "string",
-                "enum": ["earning", "sustaining", "recovery", "investment", "consumption"]
-            },
-            {"type": "null"}
-        ]
     })
 }
 
