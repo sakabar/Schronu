@@ -6488,6 +6488,60 @@ fn test_execute_next_up_数値名と負の見積もりでは変更しない() {
 }
 
 #[test]
+fn test_execute_next_up_入力不正とfocusなしではidentityを消費しない() {
+    let assert_identity_not_consumed =
+        |focused_task_opt: Option<TaskHandle>,
+         name: &str,
+         estimated_minutes: Option<i64>,
+         expected: Result<Option<Uuid>, ApplicationError>| {
+            let operation_now = Local.with_ymd_and_hms(2026, 8, 19, 14, 30, 0).unwrap();
+            let id_generator_call_count = Cell::new(0);
+            let mut next_id = || {
+                id_generator_call_count.set(id_generator_call_count.get() + 1);
+                Uuid::parse_str("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa").unwrap()
+            };
+            let mut factory = TaskFactory::new(operation_now, &mut next_id);
+            let mut focused_task_id_opt =
+                focused_task_opt.as_ref().map(|task| task.get_id().unwrap());
+            let mut stdout = TestWriter::new();
+
+            let actual = execute_next_up(
+                &mut stdout,
+                &mut focused_task_id_opt,
+                &focused_task_opt,
+                name,
+                &estimated_minutes,
+                &mut factory,
+            );
+
+            assert_eq!(actual, expected);
+            assert_eq!(id_generator_call_count.get(), 0);
+        };
+
+    let root = new_test_task_handle("root").unwrap();
+    let focused = root.create_as_last_child(new_test_task_attr("focused"));
+    assert_identity_not_consumed(
+        Some(focused.clone()),
+        "123",
+        Some(10),
+        Err(ApplicationError::InvalidInput {
+            field: "name",
+            reason: "must not be an integer-only name",
+        }),
+    );
+    assert_identity_not_consumed(
+        Some(focused),
+        "new parent",
+        Some(-1),
+        Err(ApplicationError::InvalidInput {
+            field: "estimated_work_minutes",
+            reason: "must not be negative",
+        }),
+    );
+    assert_identity_not_consumed(None, "new parent", Some(10), Ok(None));
+}
+
+#[test]
 fn test_execute_next_up_rootへの親追加失敗を構造化errorで返す() {
     let operation_now = Local.with_ymd_and_hms(2026, 8, 19, 14, 30, 0).unwrap();
     let mut next_id = || Uuid::parse_str("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa").unwrap();
