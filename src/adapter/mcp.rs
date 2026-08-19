@@ -129,11 +129,6 @@ impl<R: TaskRepositoryTrait> McpServer<R> {
             }
         }
     }
-
-    #[cfg(test)]
-    fn call_get_schedule(repository: &R, id: Value, arguments: Option<&Value>) -> Value {
-        handler::call_get_schedule(repository, id, arguments)
-    }
 }
 
 fn repository_save_error_response(id: Value, message: &str) -> Value {
