@@ -6,15 +6,386 @@ use crate::application::task_use_case::{
 use crate::entity::datetime::get_next_morning_datetime;
 use crate::entity::task::{ProjectCategory, Status};
 use chrono::{DateTime, Duration, Local, LocalResult, NaiveDate};
+use schemars::{generate::SchemaSettings, json_schema, JsonSchema, Schema, SchemaGenerator};
+use serde::{de::DeserializeOwned, de::IntoDeserializer, Deserialize, Deserializer};
 use serde_json::{Map, Value};
+use std::borrow::Cow;
 use uuid::Uuid;
 
 pub(super) enum ToolInputError {
     Schema(InvalidParams),
     Semantic {
-        field: &'static str,
+        field: String,
         message: &'static str,
     },
+}
+
+#[allow(dead_code, reason = "used by the staged typed-tool migration")]
+const SCHEMA_ERROR_PREFIX: &str = "mcp-schema:";
+#[allow(dead_code, reason = "used by the staged typed-tool migration")]
+const SEMANTIC_ERROR_PREFIX: &str = "mcp-semantic:";
+
+#[allow(dead_code, reason = "used by the staged typed-tool migration")]
+pub(super) struct UuidValue(pub(super) Uuid);
+
+impl<'de> Deserialize<'de> for UuidValue {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let value = String::deserialize(deserializer)?;
+        Uuid::parse_str(&value).map(Self).map_err(|_| {
+            serde::de::Error::custom(format!("{SEMANTIC_ERROR_PREFIX}must be a valid UUID"))
+        })
+    }
+}
+
+impl JsonSchema for UuidValue {
+    fn schema_name() -> Cow<'static, str> {
+        "UuidValue".into()
+    }
+
+    fn inline_schema() -> bool {
+        true
+    }
+
+    fn json_schema(_generator: &mut SchemaGenerator) -> Schema {
+        json_schema!({"type": "string", "format": "uuid"})
+    }
+}
+
+#[allow(dead_code, reason = "used by the staged typed-tool migration")]
+pub(super) struct Rfc3339DateTime(pub(super) DateTime<Local>);
+
+impl<'de> Deserialize<'de> for Rfc3339DateTime {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let value = String::deserialize(deserializer)?;
+        parse_local_datetime(&value).map(Self).map_err(|_| {
+            serde::de::Error::custom(format!(
+                "{SEMANTIC_ERROR_PREFIX}must be a valid RFC 3339 date-time"
+            ))
+        })
+    }
+}
+
+impl JsonSchema for Rfc3339DateTime {
+    fn schema_name() -> Cow<'static, str> {
+        "Rfc3339DateTime".into()
+    }
+
+    fn inline_schema() -> bool {
+        true
+    }
+
+    fn json_schema(_generator: &mut SchemaGenerator) -> Schema {
+        json_schema!({"type": "string", "format": "date-time"})
+    }
+}
+
+#[allow(dead_code, reason = "used by the staged typed-tool migration")]
+pub(super) struct IsoDate(pub(super) NaiveDate);
+
+impl<'de> Deserialize<'de> for IsoDate {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let value = String::deserialize(deserializer)?;
+        NaiveDate::parse_from_str(&value, "%Y-%m-%d")
+            .map(Self)
+            .map_err(|_| {
+                serde::de::Error::custom(format!(
+                    "{SEMANTIC_ERROR_PREFIX}must be a valid ISO 8601 date"
+                ))
+            })
+    }
+}
+
+impl JsonSchema for IsoDate {
+    fn schema_name() -> Cow<'static, str> {
+        "IsoDate".into()
+    }
+
+    fn inline_schema() -> bool {
+        true
+    }
+
+    fn json_schema(_generator: &mut SchemaGenerator) -> Schema {
+        json_schema!({"type": "string", "format": "date"})
+    }
+}
+
+#[allow(dead_code, reason = "used by the staged typed-tool migration")]
+pub(super) struct NonNegativeI64(pub(super) i64);
+
+impl<'de> Deserialize<'de> for NonNegativeI64 {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let value = Value::deserialize(deserializer)?;
+        let Value::Number(value) = value else {
+            return Err(serde::de::Error::custom(format!(
+                "{SCHEMA_ERROR_PREFIX}must be a non-negative integer"
+            )));
+        };
+        if let Some(value) = value.as_i64() {
+            if value >= 0 {
+                return Ok(Self(value));
+            }
+            return Err(serde::de::Error::custom(format!(
+                "{SCHEMA_ERROR_PREFIX}must be a non-negative integer"
+            )));
+        }
+        if value.as_u64().is_some() {
+            return Err(serde::de::Error::custom(format!(
+                "{SEMANTIC_ERROR_PREFIX}is outside the supported integer range"
+            )));
+        }
+        Err(serde::de::Error::custom(format!(
+            "{SCHEMA_ERROR_PREFIX}must be a non-negative integer"
+        )))
+    }
+}
+
+impl JsonSchema for NonNegativeI64 {
+    fn schema_name() -> Cow<'static, str> {
+        "NonNegativeI64".into()
+    }
+
+    fn inline_schema() -> bool {
+        true
+    }
+
+    fn json_schema(_generator: &mut SchemaGenerator) -> Schema {
+        json_schema!({"type": "integer", "minimum": 0})
+    }
+}
+
+#[allow(dead_code, reason = "used by the staged typed-tool migration")]
+pub(super) struct NonEmptyString(pub(super) String);
+
+impl<'de> Deserialize<'de> for NonEmptyString {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let value = String::deserialize(deserializer)?;
+        if value.is_empty() {
+            Err(serde::de::Error::custom(format!(
+                "{SCHEMA_ERROR_PREFIX}must not be empty"
+            )))
+        } else {
+            Ok(Self(value))
+        }
+    }
+}
+
+impl JsonSchema for NonEmptyString {
+    fn schema_name() -> Cow<'static, str> {
+        "NonEmptyString".into()
+    }
+
+    fn inline_schema() -> bool {
+        true
+    }
+
+    fn json_schema(_generator: &mut SchemaGenerator) -> Schema {
+        json_schema!({"type": "string", "minLength": 1})
+    }
+}
+
+#[derive(Default)]
+#[allow(dead_code, reason = "used by the staged typed-tool migration")]
+pub(super) enum NullablePatch<T> {
+    #[default]
+    Missing,
+    Null,
+    Value(T),
+}
+
+#[allow(dead_code, reason = "used by the staged typed-tool migration")]
+pub(super) trait NullableValue {
+    const WRONG_TYPE_REASON: &'static str;
+}
+
+impl NullableValue for Rfc3339DateTime {
+    const WRONG_TYPE_REASON: &'static str = "must be a string or null";
+}
+
+impl<'de, T> Deserialize<'de> for NullablePatch<T>
+where
+    T: DeserializeOwned + NullableValue,
+{
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let value = Value::deserialize(deserializer)?;
+        if value.is_null() {
+            return Ok(Self::Null);
+        }
+        serde_json::from_value(value)
+            .map(Self::Value)
+            .map_err(|error| {
+                let message = error.to_string();
+                if let Some(reason) = error_reason(&message, SEMANTIC_ERROR_PREFIX) {
+                    return serde::de::Error::custom(format!("{SEMANTIC_ERROR_PREFIX}{reason}"));
+                }
+                if let Some(reason) = error_reason(&message, SCHEMA_ERROR_PREFIX) {
+                    return serde::de::Error::custom(format!("{SCHEMA_ERROR_PREFIX}{reason}"));
+                }
+                serde::de::Error::custom(format!("{SCHEMA_ERROR_PREFIX}{}", T::WRONG_TYPE_REASON))
+            })
+    }
+}
+
+impl<T> JsonSchema for NullablePatch<T>
+where
+    T: JsonSchema,
+{
+    fn schema_name() -> Cow<'static, str> {
+        format!("NullablePatch_{}", T::schema_name()).into()
+    }
+
+    fn schema_id() -> Cow<'static, str> {
+        format!("{}::NullablePatch<{}>", module_path!(), T::schema_id()).into()
+    }
+
+    fn inline_schema() -> bool {
+        true
+    }
+
+    fn json_schema(generator: &mut SchemaGenerator) -> Schema {
+        let value_schema = generator.subschema_for::<T>().to_value();
+        json_schema!({"anyOf": [value_schema, {"type": "null"}]})
+    }
+}
+
+#[allow(dead_code, reason = "used by the staged typed-tool migration")]
+pub(super) fn generated_input_schema<T: JsonSchema>() -> Value {
+    let mut settings = SchemaSettings::draft07();
+    settings.meta_schema = None;
+    settings.inline_subschemas = true;
+    let mut schema = settings.into_generator().root_schema_for::<T>().to_value();
+    if let Some(object) = schema.as_object_mut() {
+        object.remove("title");
+    }
+    schema
+}
+
+#[allow(dead_code, reason = "used by the staged typed-tool migration")]
+pub(super) fn decode_input<T: DeserializeOwned>(value: &Value) -> Result<T, ToolInputError> {
+    let deserializer = value.clone().into_deserializer();
+    serde_path_to_error::deserialize(deserializer).map_err(classify_decode_error)
+}
+
+#[allow(dead_code, reason = "used by the staged typed-tool migration")]
+fn classify_decode_error(error: serde_path_to_error::Error<serde_json::Error>) -> ToolInputError {
+    let path = error.path().to_string();
+    let message = error.inner().to_string();
+    if let Some(reason) = error_reason(&message, SEMANTIC_ERROR_PREFIX) {
+        return ToolInputError::Semantic {
+            field: path,
+            message: semantic_reason(reason),
+        };
+    }
+    if let Some(reason) = error_reason(&message, SCHEMA_ERROR_PREFIX) {
+        return ToolInputError::Schema(InvalidParams {
+            field: path,
+            reason: schema_reason(reason),
+        });
+    }
+    structural_decode_error(path, &message)
+}
+
+#[allow(dead_code, reason = "used by the staged typed-tool migration")]
+fn error_reason<'a>(message: &'a str, prefix: &str) -> Option<&'a str> {
+    let message = message.strip_prefix(prefix)?;
+    Some(message.split(" at line ").next().unwrap_or_default())
+}
+
+#[allow(dead_code, reason = "used by the staged typed-tool migration")]
+fn semantic_reason(reason: &str) -> &'static str {
+    match reason {
+        "must be a valid UUID" => "must be a valid UUID",
+        "must be a valid RFC 3339 date-time" => "must be a valid RFC 3339 date-time",
+        "must be a valid ISO 8601 date" => "must be a valid ISO 8601 date",
+        "is outside the supported integer range" => "is outside the supported integer range",
+        _ => "contains an invalid value",
+    }
+}
+
+#[allow(dead_code, reason = "used by the staged typed-tool migration")]
+fn schema_reason(reason: &str) -> &'static str {
+    match reason {
+        "must be a non-negative integer" => "must be a non-negative integer",
+        "must not be empty" => "must not be empty",
+        "must be a string or null" => "must be a string or null",
+        _ => "has an invalid value",
+    }
+}
+
+#[allow(dead_code, reason = "used by the staged typed-tool migration")]
+fn structural_decode_error(path: String, message: &str) -> ToolInputError {
+    if let Some(field) = quoted_serde_field(message, "unknown field `") {
+        return ToolInputError::Schema(InvalidParams {
+            field: child_field_path(&path, &field, true),
+            reason: "additional property is not allowed",
+        });
+    }
+    if let Some(field) = quoted_serde_field(message, "missing field `") {
+        return ToolInputError::Schema(InvalidParams {
+            field: child_field_path(&path, &field, false),
+            reason: "field is required",
+        });
+    }
+    if (path.is_empty() || path == ".")
+        && (message.contains("expected struct") || message.contains("expected a map"))
+    {
+        return ToolInputError::Schema(InvalidParams {
+            field: "arguments".to_string(),
+            reason: "must be an object",
+        });
+    }
+    let reason = if message.contains("expected a string") {
+        "must be a string"
+    } else if message.contains("expected an integer") {
+        "must be a non-negative integer"
+    } else {
+        "has an invalid type"
+    };
+    ToolInputError::Schema(InvalidParams {
+        field: path,
+        reason,
+    })
+}
+
+#[allow(dead_code, reason = "used by the staged typed-tool migration")]
+fn child_field_path(parent: &str, field: &str, root_has_arguments_prefix: bool) -> String {
+    if parent.is_empty() || parent == "." {
+        return if root_has_arguments_prefix {
+            format!("arguments.{field}")
+        } else {
+            field.to_string()
+        };
+    }
+    if root_has_arguments_prefix && parent == field {
+        return format!("arguments.{field}");
+    }
+    if root_has_arguments_prefix && parent.ends_with(&format!(".{field}")) {
+        return parent.to_string();
+    }
+    format!("{parent}.{field}")
+}
+
+#[allow(dead_code, reason = "used by the staged typed-tool migration")]
+fn quoted_serde_field(message: &str, prefix: &str) -> Option<String> {
+    let start = message.find(prefix)? + prefix.len();
+    Some(message[start..].split('`').next()?.to_string())
 }
 
 pub(super) struct UpdateTaskInput {
@@ -30,7 +401,7 @@ fn uuid_argument(
 ) -> Result<Uuid, ToolInputError> {
     let value = string_argument(arguments, field).map_err(ToolInputError::Schema)?;
     Uuid::parse_str(value).map_err(|_| ToolInputError::Semantic {
-        field,
+        field: field.to_string(),
         message: "must be a valid UUID",
     })
 }
@@ -41,7 +412,7 @@ fn datetime_argument(
 ) -> Result<DateTime<Local>, ToolInputError> {
     let value = string_argument(arguments, field).map_err(ToolInputError::Schema)?;
     parse_local_datetime(value).map_err(|_| ToolInputError::Semantic {
-        field,
+        field: field.to_string(),
         message: "must be a valid RFC 3339 date-time",
     })
 }
@@ -60,7 +431,7 @@ fn optional_datetime_argument(
                 })
             })?;
             parse_local_datetime(value).map_err(|_| ToolInputError::Semantic {
-                field,
+                field: field.to_string(),
                 message: "must be a valid RFC 3339 date-time",
             })
         })
@@ -86,7 +457,7 @@ fn optional_non_negative_i64_argument(
             }
             if value.as_u64().is_some() {
                 return Err(ToolInputError::Semantic {
-                    field,
+                    field: field.to_string(),
                     message: "is outside the supported integer range",
                 });
             }
@@ -151,7 +522,7 @@ fn nullable_datetime_argument(
             parse_local_datetime(value)
                 .map(|value| Some(Some(value)))
                 .map_err(|_| ToolInputError::Semantic {
-                    field,
+                    field: field.to_string(),
                     message: "must be a valid RFC 3339 date-time",
                 })
         }
@@ -350,7 +721,7 @@ pub(super) fn schedule_period(
     };
     if from >= until {
         return Err(ToolInputError::Semantic {
-            field: "until",
+            field: "until".to_string(),
             message: "must be later than from",
         });
     }
@@ -370,18 +741,18 @@ fn schedule_day_start(
     })?;
     let date =
         NaiveDate::parse_from_str(value, "%Y-%m-%d").map_err(|_| ToolInputError::Semantic {
-            field,
+            field: field.to_string(),
             message: "must be a valid ISO 8601 date",
         })?;
     let local_noon = date.and_hms_opt(12, 0, 0).ok_or(ToolInputError::Semantic {
-        field,
+        field: field.to_string(),
         message: "must be a valid ISO 8601 date",
     })?;
     let local_noon = match local_noon.and_local_timezone(Local) {
         LocalResult::Single(datetime) => datetime,
         _ => {
             return Err(ToolInputError::Semantic {
-                field,
+                field: field.to_string(),
                 message: "must resolve to a local date-time",
             })
         }
@@ -454,7 +825,7 @@ fn required_nested_string<'a>(
 
 fn parse_datetime(value: &str, field: &'static str) -> Result<DateTime<Local>, ToolInputError> {
     parse_local_datetime(value).map_err(|_| ToolInputError::Semantic {
-        field,
+        field: field.to_string(),
         message: "must be a valid RFC 3339 date-time",
     })
 }
@@ -570,8 +941,46 @@ pub(super) fn string_argument<'a>(
 }
 
 #[cfg(test)]
+#[allow(dead_code)]
+#[derive(Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+struct CommonInputContractFields {
+    task_id: UuidValue,
+    #[serde(default)]
+    deadline_time: NullablePatch<Rfc3339DateTime>,
+    pending_until: Rfc3339DateTime,
+    date: IsoDate,
+    work_seconds: NonNegativeI64,
+    name: NonEmptyString,
+}
+
+#[cfg(test)]
+struct CommonInputContract {
+    schema: Value,
+}
+
+#[cfg(test)]
+impl CommonInputContract {
+    fn schema(&self) -> &Value {
+        &self.schema
+    }
+
+    fn decode(&self, value: &Value) -> Result<(), ToolInputError> {
+        decode_input::<CommonInputContractFields>(value).map(|_| ())
+    }
+}
+
+#[cfg(test)]
+fn common_input_contract() -> CommonInputContract {
+    CommonInputContract {
+        schema: generated_input_schema::<CommonInputContractFields>(),
+    }
+}
+
+#[cfg(test)]
 mod tests {
-    use super::{common_input_contract, ToolInputError};
+    use super::{common_input_contract, decode_input, ToolInputError};
+    use serde::Deserialize;
     use serde_json::{json, Value};
 
     #[derive(Clone, Copy, Debug)]
@@ -622,11 +1031,29 @@ mod tests {
                 decode: ExpectedDecode::Valid,
             },
             ContractCase {
+                name: "arguments has wrong type",
+                input: json!(42),
+                schema_accepts: false,
+                decode: ExpectedDecode::Schema {
+                    field: "arguments",
+                    reason: "must be an object",
+                },
+            },
+            ContractCase {
                 name: "unknown field",
                 input: with_field(valid_input(), "extra", json!(true)),
                 schema_accepts: false,
                 decode: ExpectedDecode::Schema {
                     field: "arguments.extra",
+                    reason: "additional property is not allowed",
+                },
+            },
+            ContractCase {
+                name: "unknown field cannot inject an error marker",
+                input: with_field(valid_input(), "mcp-semantic:x", json!(true)),
+                schema_accepts: false,
+                decode: ExpectedDecode::Schema {
+                    field: "arguments.mcp-semantic:x",
                     reason: "additional property is not allowed",
                 },
             },
@@ -691,6 +1118,15 @@ mod tests {
                 },
             },
             ContractCase {
+                name: "fractional number",
+                input: with_field(valid_input(), "work_seconds", json!(1.5)),
+                schema_accepts: false,
+                decode: ExpectedDecode::Schema {
+                    field: "work_seconds",
+                    reason: "must be a non-negative integer",
+                },
+            },
+            ContractCase {
                 name: "u64 outside i64 range",
                 input: with_field(valid_input(), "work_seconds", json!(u64::MAX)),
                 schema_accepts: true,
@@ -720,6 +1156,51 @@ mod tests {
             "work_seconds": 0,
             "name": "write contract test"
         })
+    }
+
+    #[allow(dead_code)]
+    #[derive(Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct NestedArguments {
+        period: NestedPeriod,
+    }
+
+    #[allow(dead_code)]
+    #[derive(Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct NestedPeriod {
+        from: String,
+        until: String,
+    }
+
+    #[test]
+    fn decode_input_preserves_nested_field_paths() {
+        assert_decode_outcome(
+            "nested missing field",
+            decode_input::<NestedArguments>(&json!({
+                "period": {"from": "2026-08-19T10:00:00+09:00"}
+            }))
+            .map(|_| ()),
+            ExpectedDecode::Schema {
+                field: "period.until",
+                reason: "field is required",
+            },
+        );
+        assert_decode_outcome(
+            "nested unknown field",
+            decode_input::<NestedArguments>(&json!({
+                "period": {
+                    "from": "2026-08-19T10:00:00+09:00",
+                    "until": "2026-08-20T10:00:00+09:00",
+                    "extra": true
+                }
+            }))
+            .map(|_| ()),
+            ExpectedDecode::Schema {
+                field: "period.extra",
+                reason: "additional property is not allowed",
+            },
+        );
     }
 
     fn with_field(mut input: Value, field: &str, value: Value) -> Value {

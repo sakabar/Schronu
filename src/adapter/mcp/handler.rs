@@ -85,7 +85,7 @@ fn call_list_tasks<R: TaskRepositoryTrait>(
         Ok(filter) => filter,
         Err(ToolInputError::Schema(error)) => return invalid_params_response(id, error),
         Err(ToolInputError::Semantic { field, message }) => {
-            return invalid_input_response(id, field, message)
+            return invalid_input_response(id, &field, message)
         }
     };
 
@@ -113,7 +113,7 @@ pub(super) fn call_get_schedule<R: TaskRepositoryTrait>(
         Ok(period) => period,
         Err(ToolInputError::Schema(error)) => return invalid_params_response(id, error),
         Err(ToolInputError::Semantic { field, message }) => {
-            return invalid_input_response(id, field, message)
+            return invalid_input_response(id, &field, message)
         }
     };
 
@@ -142,7 +142,7 @@ fn call_create_task<R: TaskRepositoryTrait>(
         Ok(input) => input,
         Err(ToolInputError::Schema(error)) => return invalid_params_response(id, error),
         Err(ToolInputError::Semantic { field, message }) => {
-            return invalid_input_response(id, field, message)
+            return invalid_input_response(id, &field, message)
         }
     };
 
@@ -166,7 +166,7 @@ fn call_breakdown_task<R: TaskRepositoryTrait>(
         Ok(input) => input,
         Err(ToolInputError::Schema(error)) => return invalid_params_response(id, error),
         Err(ToolInputError::Semantic { field, message }) => {
-            return invalid_input_response(id, field, message)
+            return invalid_input_response(id, &field, message)
         }
     };
     let child_ids = match breakdown_task_use_case(repository, input) {
@@ -198,7 +198,7 @@ fn call_defer_task<R: TaskRepositoryTrait>(
         Ok(input) => input,
         Err(ToolInputError::Schema(error)) => return invalid_params_response(id, error),
         Err(ToolInputError::Semantic { field, message }) => {
-            return invalid_input_response(id, field, message)
+            return invalid_input_response(id, &field, message)
         }
     };
 
@@ -225,7 +225,7 @@ fn call_complete_task<R: TaskRepositoryTrait>(
         Ok(input) => input,
         Err(ToolInputError::Schema(error)) => return invalid_params_response(id, error),
         Err(ToolInputError::Semantic { field, message }) => {
-            return invalid_input_response(id, field, message)
+            return invalid_input_response(id, &field, message)
         }
     };
     let task_id = input.task_id;
@@ -265,7 +265,7 @@ fn call_update_task<R: TaskRepositoryTrait>(
         Ok(input) => input,
         Err(ToolInputError::Schema(error)) => return invalid_params_response(id, error),
         Err(ToolInputError::Semantic { field, message }) => {
-            return invalid_input_response(id, field, message)
+            return invalid_input_response(id, &field, message)
         }
     };
 
