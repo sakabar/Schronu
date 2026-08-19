@@ -256,6 +256,30 @@ pub fn test_new_with_current_time_現在時刻がpending_until以降の場合Tod
     assert_eq!(actual, expected);
 }
 
+#[test]
+fn test_new_with_current_time_caller指定時刻でpending状態を評価する() {
+    let now = Local.with_ymd_and_hms(2026, 8, 19, 12, 0, 0).unwrap();
+    let pending_until = now + Duration::minutes(1);
+
+    let pending = ImmutableTask::new_with_current_time(
+        "タスク".to_string(),
+        Status::Pending,
+        pending_until,
+        vec![],
+        now,
+    );
+    let todo = ImmutableTask::new_with_current_time(
+        "タスク".to_string(),
+        Status::Pending,
+        pending_until,
+        vec![],
+        pending_until + Duration::seconds(1),
+    );
+
+    assert_eq!(pending.get_status(), &Status::Pending);
+    assert_eq!(todo.get_status(), &Status::Todo);
+}
+
 impl ImmutableTask {
     pub fn new(
         name: String,
@@ -1151,6 +1175,18 @@ impl TaskAttr {
 }
 
 #[test]
+fn test_task_attr_with_identity_caller指定のidと時刻を保持する() {
+    let id = uuid!("018d578c-3f3b-7bd6-9384-9b4b00d69c21");
+    let now = Local.with_ymd_and_hms(2026, 8, 19, 12, 34, 56).unwrap();
+
+    let attr = TaskAttr::with_identity("タスク", id, now);
+
+    assert_eq!(attr.get_id(), &id);
+    assert_eq!(attr.get_create_time(), &now);
+    assert_eq!(attr.get_start_time(), &now);
+}
+
+#[test]
 fn test_task_attr_set_status() {
     let mut attr = TaskAttr::new("タスク");
     attr.set_orig_status(Status::Done);
@@ -1328,6 +1364,24 @@ fn test_persistent_mutation_revisionはclockの永続化変更だけで進む() 
 
     assert!(adjusted.get_pending_until().unwrap() < before_sync_pending_until);
     assert!(adjusted.get_persistent_mutation_revision().unwrap() > before_sync_revision);
+}
+
+#[test]
+fn test_task_handle_with_identity_caller指定のidと時刻を保持しdummy_rootだけnil_idにする() {
+    let id = uuid!("018d578c-3f3b-7bd6-9384-9b4b00d69c22");
+    let now = Local.with_ymd_and_hms(2026, 8, 19, 12, 34, 56).unwrap();
+
+    let task = TaskHandle::with_identity("タスク", id, now).unwrap();
+
+    assert_eq!(task.get_id().unwrap(), id);
+    assert_eq!(task.get_create_time().unwrap(), now);
+    assert_eq!(task.get_start_time().unwrap(), now);
+
+    let dummy_root = task.node.root();
+    let dummy_attr = dummy_root.borrow_data();
+    assert_eq!(dummy_attr.get_id(), &Uuid::nil());
+    assert_eq!(dummy_attr.get_create_time(), &now);
+    assert_eq!(dummy_attr.get_start_time(), &now);
 }
 
 impl TaskHandle {
