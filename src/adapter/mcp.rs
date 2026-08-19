@@ -2830,6 +2830,13 @@ mod tests {
 
         assert_eq!(response["jsonrpc"], "2.0");
         assert_eq!(response["id"], "tools-list");
+        assert_eq!(
+            response["result"]["tools"],
+            json_fixture(
+                include_str!("../../tests/fixtures/mcp/tools-list.json"),
+                &[]
+            )
+        );
         let tools = response["result"]["tools"].as_array().unwrap();
         let mut names = tools
             .iter()
@@ -3081,6 +3088,16 @@ mod tests {
                 "start_time",
                 "status"
             ]
+        );
+        assert_eq!(
+            task,
+            &json_fixture(
+                include_str!("../../tests/fixtures/mcp/task-view.json"),
+                &[
+                    ("{{task_id}}", &task_id.to_string()),
+                    ("{{child_id}}", &child_id.to_string()),
+                ],
+            )
         );
         assert_eq!(task["id"], task_id.to_string());
         assert_eq!(task["root_id"], task_id.to_string());
@@ -3574,6 +3591,8 @@ mod tests {
     fn get_scheduleは予定をScheduledTaskViewの全field付きで返しrepositoryを変更しない() {
         let task = TaskHandle::new("scheduled task").unwrap();
         let task_id = task.get_id().unwrap();
+        task.set_create_time(Local.with_ymd_and_hms(2026, 8, 1, 9, 0, 0).unwrap())
+            .unwrap();
         task.set_start_time(fixed_now()).unwrap();
         task.set_estimated_work_seconds(15 * 60).unwrap();
         task.set_priority(5).unwrap();
@@ -3613,9 +3632,23 @@ mod tests {
                 "total_work_seconds"
             ]
         );
+        let synced_now = sync_clock_times.borrow()[0];
+        assert_eq!(
+            schedule[0],
+            json_fixture(
+                include_str!("../../tests/fixtures/mcp/scheduled-task-view.json"),
+                &[
+                    ("{{task_id}}", &task_id.to_string()),
+                    ("{{scheduled_start}}", &synced_now.to_rfc3339()),
+                    (
+                        "{{scheduled_end}}",
+                        &(synced_now + Duration::minutes(15)).to_rfc3339(),
+                    ),
+                ],
+            )
+        );
         assert_eq!(schedule[0]["task"]["id"], task_id.to_string());
         assert_eq!(schedule[0]["task"]["name"], "scheduled task");
-        let synced_now = sync_clock_times.borrow()[0];
         assert_eq!(schedule[0]["first_available_time"], synced_now.to_rfc3339());
         assert_eq!(schedule[0]["scheduled_start"], synced_now.to_rfc3339());
         assert_eq!(
@@ -5169,6 +5202,14 @@ mod tests {
         task.set_start_time(create_time).unwrap();
         task.sync_clock(fixed_now()).unwrap();
         task
+    }
+
+    fn json_fixture(source: &str, replacements: &[(&str, &str)]) -> serde_json::Value {
+        let mut source = source.to_owned();
+        for (placeholder, value) in replacements {
+            source = source.replace(placeholder, value);
+        }
+        serde_json::from_str(&source).unwrap()
     }
 
     fn sorted_object_keys(value: &serde_json::Value) -> Vec<&str> {

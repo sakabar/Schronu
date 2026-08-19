@@ -1,0 +1,31 @@
+{
+  "first_available_time": "{{scheduled_start}}",
+  "rank": 0,
+  "scheduled_end": "{{scheduled_end}}",
+  "scheduled_start": "{{scheduled_start}}",
+  "scheduled_work_seconds": 900,
+  "task": {
+    "actual_work_seconds": 0,
+    "atomic": false,
+    "child_ids": [],
+    "create_time": "2026-08-01T09:00:00+09:00",
+    "days_in_advance": 0,
+    "deadline_time": null,
+    "end_time": null,
+    "estimated_work_seconds": 900,
+    "id": "{{task_id}}",
+    "is_on_other_side": false,
+    "name": "scheduled task",
+    "original_status": "todo",
+    "parent_id": null,
+    "pending_until": null,
+    "priority": 5,
+    "project_category": null,
+    "repetition_anchor": "deadline",
+    "repetition_interval_days": null,
+    "root_id": "{{task_id}}",
+    "start_time": "2026-08-11T12:00:00+09:00",
+    "status": "todo"
+  },
+  "total_work_seconds": 900
+}
