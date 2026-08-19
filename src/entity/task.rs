@@ -229,12 +229,14 @@ pub struct ImmutableTask {
 #[test]
 #[allow(non_snake_case)]
 pub fn test_new_with_current_time_現在時刻がpending_until以前でPending状態であること() {
+    let now = Local.with_ymd_and_hms(2026, 8, 19, 12, 0, 0).unwrap();
     let pending_until = DateTime::<Local>::MAX_UTC.into();
     let actual = ImmutableTask::new_with_current_time(
         "タスク".to_string(),
         Status::Pending,
         pending_until,
         vec![],
+        now,
     );
     let expected = ImmutableTask::new("タスク".to_string(), Status::Pending, pending_until, vec![]);
 
@@ -244,12 +246,14 @@ pub fn test_new_with_current_time_現在時刻がpending_until以前でPending�
 #[test]
 #[allow(non_snake_case)]
 pub fn test_new_with_current_time_現在時刻がpending_until以降の場合Todo状態となること() {
+    let now = Local.with_ymd_and_hms(2026, 8, 19, 12, 0, 0).unwrap();
     let pending_until = DateTime::<Local>::MIN_UTC.into();
     let actual = ImmutableTask::new_with_current_time(
         "タスク".to_string(),
         Status::Pending,
         pending_until,
         vec![],
+        now,
     );
     let expected = ImmutableTask::new("タスク".to_string(), Status::Todo, pending_until, vec![]);
 
@@ -295,14 +299,14 @@ impl ImmutableTask {
         }
     }
 
-    // 現在時刻に依存する関数であることに注意
     pub fn new_with_current_time(
         name: String,
         status: Status,
         pending_until: DateTime<Local>,
         children: Vec<ImmutableTask>,
+        now: DateTime<Local>,
     ) -> Self {
-        let new_status = if status == Status::Pending && Local::now() > pending_until {
+        let new_status = if status == Status::Pending && now > pending_until {
             Status::Todo
         } else {
             status
@@ -950,8 +954,12 @@ impl TaskAttr {
         // 本当はnow()で副作用を持たせたくなかったが、毎回手入力するわけにもいかないので渋々使用
         let now = Local::now();
 
+        Self::with_identity(name, Uuid::new_v4(), now)
+    }
+
+    pub fn with_identity(name: &str, id: Uuid, now: DateTime<Local>) -> Self {
         Self {
-            id: Uuid::new_v4(),
+            id,
             name: name.to_string(),
             orig_status: Status::Todo,
             status: Status::Todo,
@@ -1396,6 +1404,29 @@ impl TaskHandle {
             .grant_hierarchy_edit()
             .map_err(|_| TaskTreeError::HierarchyGrant)?;
         let task_attr = TaskAttr::new(name);
+        dummy_root.create_as_last_child(&grant, task_attr);
+
+        let node = dummy_root
+            .first_child()
+            .ok_or(TaskTreeError::MissingDummyRootChild)?;
+
+        Ok(Self { node })
+    }
+
+    pub fn with_identity(
+        name: &str,
+        id: Uuid,
+        now: DateTime<Local>,
+    ) -> Result<Self, TaskTreeError> {
+        let dummy_attr =
+            TaskAttr::with_identity(format!("dummy-for-{}", name).as_str(), Uuid::nil(), now);
+        let dummy_root = Node::new_tree(dummy_attr);
+
+        let grant = dummy_root
+            .tree()
+            .grant_hierarchy_edit()
+            .map_err(|_| TaskTreeError::HierarchyGrant)?;
+        let task_attr = TaskAttr::with_identity(name, id, now);
         dummy_root.create_as_last_child(&grant, task_attr);
 
         let node = dummy_root

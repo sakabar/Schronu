@@ -248,7 +248,7 @@ pub fn yaml_to_immutable_task(yaml: &Yaml) -> ImmutableTask {
         children.push(child);
     }
 
-    ImmutableTask::new_with_current_time(name, status, pending_until, children)
+    ImmutableTask::new_with_current_time(name, status, pending_until, children, Local::now())
 }
 
 #[derive(Debug, Eq, PartialEq)]
