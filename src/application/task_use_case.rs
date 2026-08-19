@@ -54,6 +54,25 @@ pub struct BreakdownTaskInput {
     pub pending_until: Option<DateTime<Local>>,
 }
 
+pub struct TaskFactory<'a> {
+    now: DateTime<Local>,
+    next_id: &'a mut dyn FnMut() -> Uuid,
+}
+
+impl<'a> TaskFactory<'a> {
+    pub fn new(now: DateTime<Local>, next_id: &'a mut dyn FnMut() -> Uuid) -> Self {
+        Self { now, next_id }
+    }
+
+    pub fn create_task_attr(&mut self, name: &str) -> TaskAttr {
+        TaskAttr::with_identity(name, (self.next_id)(), self.now)
+    }
+
+    pub fn create_root_task(&mut self, name: &str) -> Result<TaskHandle, TaskTreeError> {
+        TaskHandle::with_identity(name, (self.next_id)(), self.now)
+    }
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct CompleteTaskInput {
     pub task_id: Uuid,
@@ -194,12 +213,13 @@ fn is_in_period(time: DateTime<Local>, from: DateTime<Local>, until: DateTime<Lo
 pub fn create_task(
     repository: &mut dyn TaskRepositoryTrait,
     input: CreateTaskInput,
+    factory: &mut TaskFactory<'_>,
 ) -> Result<Uuid, ApplicationError> {
     validate_task_name(&input.name, "name")?;
 
-    let root_task =
-        TaskHandle::with_identity(&input.name, uuid::Uuid::new_v4(), chrono::Local::now())
-            .map_err(ApplicationError::TaskTree)?;
+    let root_task = factory
+        .create_root_task(&input.name)
+        .map_err(ApplicationError::TaskTree)?;
     root_task
         .set_priority(5)
         .map_err(ApplicationError::TaskTree)?;
@@ -231,6 +251,7 @@ pub fn create_task(
 pub fn breakdown_task(
     repository: &mut dyn TaskRepositoryTrait,
     input: BreakdownTaskInput,
+    factory: &mut TaskFactory<'_>,
 ) -> Result<Vec<Uuid>, ApplicationError> {
     if input.names.is_empty() {
         return Err(ApplicationError::InvalidInput {
@@ -246,8 +267,7 @@ pub fn breakdown_task(
     let mut child_ids = Vec::with_capacity(input.names.len());
 
     for name in input.names {
-        let mut child_attr =
-            TaskAttr::with_identity(&name, uuid::Uuid::new_v4(), chrono::Local::now());
+        let mut child_attr = factory.create_task_attr(&name);
         if let Some(pending_until) = input.pending_until {
             child_attr.set_orig_status(Status::Pending);
             child_attr.set_pending_until(pending_until);
@@ -631,6 +651,24 @@ mod tests {
         Local.with_ymd_and_hms(2026, 8, 11, 12, 0, 0).unwrap()
     }
 
+    fn create_task_with_fresh_factory(
+        repository: &mut dyn TaskRepositoryTrait,
+        input: CreateTaskInput,
+    ) -> Result<Uuid, ApplicationError> {
+        let mut next_id = Uuid::new_v4;
+        let mut factory = TaskFactory::new(fixed_now(), &mut next_id);
+        create_task(repository, input, &mut factory)
+    }
+
+    fn breakdown_task_with_fresh_factory(
+        repository: &mut dyn TaskRepositoryTrait,
+        input: BreakdownTaskInput,
+    ) -> Result<Vec<Uuid>, ApplicationError> {
+        let mut next_id = Uuid::new_v4;
+        let mut factory = TaskFactory::new(fixed_now(), &mut next_id);
+        breakdown_task(repository, input, &mut factory)
+    }
+
     fn next_child_after_finish(
         repetition_anchor: RepetitionAnchor,
         days_in_advance: i64,
@@ -811,7 +849,7 @@ mod tests {
         let pending_until = Local.with_ymd_and_hms(2026, 8, 12, 6, 0, 0).unwrap();
         let mut repository = TestTaskRepository::new(vec![], fixed_now());
 
-        let task_id = create_task(
+        let task_id = create_task_with_fresh_factory(
             &mut repository,
             CreateTaskInput {
                 name: "新規".to_string(),
@@ -859,7 +897,7 @@ mod tests {
     fn create_task_空の名前を拒否して変更しない() {
         let mut repository = TestTaskRepository::new(vec![], fixed_now());
 
-        let actual = create_task(
+        let actual = create_task_with_fresh_factory(
             &mut repository,
             CreateTaskInput {
                 name: String::new(),
@@ -886,7 +924,7 @@ mod tests {
         ] {
             let mut repository = TestTaskRepository::new(vec![], fixed_now());
 
-            let actual = create_task(
+            let actual = create_task_with_fresh_factory(
                 &mut repository,
                 CreateTaskInput {
                     name: name.to_string(),
@@ -907,7 +945,7 @@ mod tests {
     fn create_task_負の見積もりを拒否して変更しない() {
         let mut repository = TestTaskRepository::new(vec![], fixed_now());
 
-        let actual = create_task(
+        let actual = create_task_with_fresh_factory(
             &mut repository,
             CreateTaskInput {
                 name: "負の見積もり".to_string(),
@@ -931,7 +969,7 @@ mod tests {
         let mut repository = TestTaskRepository::new(vec![], fixed_now());
 
         let actual = catch_unwind(AssertUnwindSafe(|| {
-            create_task(
+            create_task_with_fresh_factory(
                 &mut repository,
                 CreateTaskInput {
                     name: "巨大な見積もり".to_string(),
@@ -958,7 +996,7 @@ mod tests {
         parent.set_deadline_time_opt(Some(deadline)).unwrap();
         let mut repository = TestTaskRepository::new(vec![parent.clone()], fixed_now());
 
-        let child_ids = breakdown_task(
+        let child_ids = breakdown_task_with_fresh_factory(
             &mut repository,
             BreakdownTaskInput {
                 parent_id: parent.get_id().unwrap(),
@@ -993,7 +1031,10 @@ mod tests {
             Uuid::parse_str("00000000-0000-0000-0000-000000000202").unwrap(),
         ];
         let mut ids = expected_ids.into_iter();
-        let mut next_id = || ids.next().expect("task id should be consumed once per child");
+        let mut next_id = || {
+            ids.next()
+                .expect("task id should be consumed once per child")
+        };
         let mut factory = TaskFactory::new(now, &mut next_id);
         let parent = crate::test_support::new_task_handle("親").unwrap();
         let mut repository = TestTaskRepository::new(vec![parent.clone()], now);
@@ -1010,12 +1051,7 @@ mod tests {
         .unwrap();
 
         assert_eq!(actual_ids, expected_ids);
-        for (child, expected_id) in parent
-            .get_children()
-            .unwrap()
-            .into_iter()
-            .zip(expected_ids)
-        {
+        for (child, expected_id) in parent.get_children().unwrap().into_iter().zip(expected_ids) {
             assert_eq!(child.get_id().unwrap(), expected_id);
             assert_eq!(child.get_create_time().unwrap(), now);
             assert_eq!(child.get_start_time().unwrap(), now);
@@ -1028,7 +1064,7 @@ mod tests {
         let pending_until = Local.with_ymd_and_hms(2026, 8, 13, 6, 0, 0).unwrap();
         let mut repository = TestTaskRepository::new(vec![parent.clone()], fixed_now());
 
-        let child_ids = breakdown_task(
+        let child_ids = breakdown_task_with_fresh_factory(
             &mut repository,
             BreakdownTaskInput {
                 parent_id: parent.get_id().unwrap(),
@@ -1059,7 +1095,7 @@ mod tests {
         let parent = crate::test_support::new_task_handle("親").unwrap();
         let mut repository = TestTaskRepository::new(vec![parent.clone()], fixed_now());
 
-        let actual = breakdown_task(
+        let actual = breakdown_task_with_fresh_factory(
             &mut repository,
             BreakdownTaskInput {
                 parent_id: parent.get_id().unwrap(),
@@ -1077,7 +1113,7 @@ mod tests {
         let parent = crate::test_support::new_task_handle("親").unwrap();
         let mut repository = TestTaskRepository::new(vec![parent.clone()], fixed_now());
 
-        let actual = breakdown_task(
+        let actual = breakdown_task_with_fresh_factory(
             &mut repository,
             BreakdownTaskInput {
                 parent_id: parent.get_id().unwrap(),
@@ -1098,7 +1134,7 @@ mod tests {
         let parent = crate::test_support::new_task_handle("親").unwrap();
         let mut repository = TestTaskRepository::new(vec![parent.clone()], fixed_now());
 
-        let actual = breakdown_task(
+        let actual = breakdown_task_with_fresh_factory(
             &mut repository,
             BreakdownTaskInput {
                 parent_id: parent.get_id().unwrap(),
@@ -1421,7 +1457,7 @@ mod tests {
             Err(ApplicationError::TaskNotFound(task_id))
         );
         assert_eq!(
-            breakdown_task(
+            breakdown_task_with_fresh_factory(
                 &mut repository,
                 BreakdownTaskInput {
                     parent_id: task_id,
@@ -1516,7 +1552,7 @@ mod tests {
         let root_id = root.get_id().unwrap();
         let mut repository = TestTaskRepository::new(vec![root], fixed_now());
 
-        let created_id = create_task(
+        let created_id = create_task_with_fresh_factory(
             &mut repository,
             CreateTaskInput {
                 name: "新規".to_string(),
@@ -1525,7 +1561,7 @@ mod tests {
             },
         )
         .unwrap();
-        let child_id = breakdown_task(
+        let child_id = breakdown_task_with_fresh_factory(
             &mut repository,
             BreakdownTaskInput {
                 parent_id: root_id,

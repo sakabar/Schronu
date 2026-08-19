@@ -56,7 +56,7 @@ use schronu::application::schedule_use_case::get_schedule;
 use schronu::application::task_use_case::{
     breakdown_task, complete_task, create_task, defer_task, estimated_work_seconds_from_minutes,
     get_focus, set_category, set_deadline, set_estimate, validate_task_name, ApplicationError,
-    BreakdownTaskInput, CompleteTaskInput, CreateTaskInput,
+    BreakdownTaskInput, CompleteTaskInput, CreateTaskInput, TaskFactory,
 };
 use schronu::entity::datetime::{get_next_morning_datetime, parse_local_datetime};
 #[cfg(test)]
@@ -7637,11 +7637,15 @@ impl ProjectCommandContext for RuntimeProjectCommandContext<'_> {
     }
 
     fn create_task(&mut self, input: CreateTaskInput) -> Result<Uuid, ApplicationError> {
-        create_task(self.task_repository, input)
+        let mut next_id = Uuid::new_v4;
+        let mut factory = TaskFactory::new(Local::now(), &mut next_id);
+        create_task(self.task_repository, input, &mut factory)
     }
 
     fn breakdown_task(&mut self, input: BreakdownTaskInput) -> Result<Vec<Uuid>, ApplicationError> {
-        breakdown_task(self.task_repository, input)
+        let mut next_id = Uuid::new_v4;
+        let mut factory = TaskFactory::new(Local::now(), &mut next_id);
+        breakdown_task(self.task_repository, input, &mut factory)
     }
 
     fn set_estimate(&mut self, task_id: Uuid, minutes: i64) -> Result<(), ApplicationError> {

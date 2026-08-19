@@ -10,8 +10,8 @@ use crate::application::task_use_case::{
     breakdown_task as breakdown_task_use_case, complete_task as complete_task_use_case,
     create_task as create_task_use_case, defer_task as defer_task_use_case, get_focus, get_task,
     list_tasks, set_category, set_deadline, set_estimate, ApplicationError, BreakdownTaskInput,
-    CompleteTaskInput, CreateTaskInput, ListTasksFilter, TaskPeriodField, TaskPeriodFilter,
-    TaskView,
+    CompleteTaskInput, CreateTaskInput, ListTasksFilter, TaskFactory, TaskPeriodField,
+    TaskPeriodFilter, TaskView,
 };
 use crate::entity::datetime::get_next_morning_datetime;
 use crate::entity::task::{ProjectCategory, Status};
@@ -267,7 +267,9 @@ impl<R: TaskRepositoryTrait> McpServer<R> {
             }
         };
 
-        let task_id = match create_task_use_case(repository, input) {
+        let mut next_id = Uuid::new_v4;
+        let mut factory = TaskFactory::new(Local::now(), &mut next_id);
+        let task_id = match create_task_use_case(repository, input, &mut factory) {
             Ok(task_id) => task_id,
             Err(ApplicationError::InvalidInput { field, reason }) => {
                 return invalid_input_response(id, field, reason)
@@ -286,7 +288,9 @@ impl<R: TaskRepositoryTrait> McpServer<R> {
                 return invalid_input_response(id, field, message)
             }
         };
-        let child_ids = match breakdown_task_use_case(repository, input) {
+        let mut next_id = Uuid::new_v4;
+        let mut factory = TaskFactory::new(Local::now(), &mut next_id);
+        let child_ids = match breakdown_task_use_case(repository, input, &mut factory) {
             Ok(child_ids) => child_ids,
             Err(ApplicationError::TaskNotFound(task_id)) => {
                 return task_not_found_response(id, task_id, Some("parent_id"))
