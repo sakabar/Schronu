@@ -1130,6 +1130,7 @@ mod tests {
         let child_id = child.get_id().unwrap();
         let mut repository = TestTaskRepository::new(vec![parent.clone()], fixed_now());
 
+        let before_completion = Local::now();
         let output = complete_task(
             &mut repository,
             CompleteTaskInput {
@@ -1139,6 +1140,7 @@ mod tests {
             },
         )
         .unwrap();
+        let after_completion = Local::now();
 
         assert_eq!(parent.get_estimated_work_seconds().unwrap(), 900);
         assert!(output.next_repetition_task_id.is_some());
@@ -1147,7 +1149,9 @@ mod tests {
             .get_by_id(output.next_repetition_task_id.unwrap())
             .unwrap()
             .unwrap();
-        assert!(next_task.get_create_time().unwrap() > fixed_now());
+        let create_time = next_task.get_create_time().unwrap();
+        assert!(before_completion <= create_time);
+        assert!(create_time <= after_completion);
     }
 
     #[test]
