@@ -3096,6 +3096,10 @@ mod tests {
                 &[
                     ("{{task_id}}", &task_id.to_string()),
                     ("{{child_id}}", &child_id.to_string()),
+                    ("{{create_time}}", &create_time.to_rfc3339()),
+                    ("{{deadline_time}}", &deadline_time.to_rfc3339()),
+                    ("{{pending_until}}", &pending_until.to_rfc3339()),
+                    ("{{start_time}}", &start_time.to_rfc3339()),
                 ],
             )
         );
@@ -3591,8 +3595,8 @@ mod tests {
     fn get_scheduleは予定をScheduledTaskViewの全field付きで返しrepositoryを変更しない() {
         let task = TaskHandle::new("scheduled task").unwrap();
         let task_id = task.get_id().unwrap();
-        task.set_create_time(Local.with_ymd_and_hms(2026, 8, 1, 9, 0, 0).unwrap())
-            .unwrap();
+        let create_time = Local.with_ymd_and_hms(2026, 8, 1, 9, 0, 0).unwrap();
+        task.set_create_time(create_time).unwrap();
         task.set_start_time(fixed_now()).unwrap();
         task.set_estimated_work_seconds(15 * 60).unwrap();
         task.set_priority(5).unwrap();
@@ -3639,6 +3643,8 @@ mod tests {
                 include_str!("../../tests/fixtures/mcp/scheduled-task-view.json"),
                 &[
                     ("{{task_id}}", &task_id.to_string()),
+                    ("{{create_time}}", &create_time.to_rfc3339()),
+                    ("{{start_time}}", &fixed_now().to_rfc3339()),
                     ("{{scheduled_start}}", &synced_now.to_rfc3339()),
                     (
                         "{{scheduled_end}}",
