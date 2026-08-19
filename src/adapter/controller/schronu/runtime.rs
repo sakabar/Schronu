@@ -3971,6 +3971,7 @@ fn execute_next_up(
     focused_task_opt: &Option<TaskHandle>,
     new_task_name_str: &str,
     estimated_work_minutes_opt: &Option<i64>,
+    task_factory: &mut TaskFactory<'_>,
 ) -> Result<Option<Uuid>, ApplicationError> {
     validate_task_name(new_task_name_str, "name")?;
     let estimated_work_seconds_opt = estimated_work_minutes_opt
@@ -3980,11 +3981,7 @@ fn execute_next_up(
     let Some(mut focused_task) = focused_task_opt.clone() else {
         return Ok(None);
     };
-    let mut new_task_attr = TaskAttr::with_identity(
-        new_task_name_str,
-        uuid::Uuid::new_v4(),
-        chrono::Local::now(),
-    );
+    let mut new_task_attr = task_factory.create_task_attr(new_task_name_str);
     let parent_task_opt = focused_task.parent().map_err(ApplicationError::TaskTree)?;
 
     // 親タスクの〆切を引き継ぐ
@@ -6492,6 +6489,9 @@ fn test_execute_next_up_数値名と負の見積もりでは変更しない() {
 
 #[test]
 fn test_execute_next_up_rootへの親追加失敗を構造化errorで返す() {
+    let operation_now = Local.with_ymd_and_hms(2026, 8, 19, 14, 30, 0).unwrap();
+    let mut next_id = || Uuid::parse_str("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa").unwrap();
+    let mut factory = TaskFactory::new(operation_now, &mut next_id);
     let root = new_test_task_handle("root").unwrap();
     let mut stdout = TestWriter::new();
     let mut focused_task_id_opt = Some(root.get_id().unwrap());
@@ -6503,6 +6503,7 @@ fn test_execute_next_up_rootへの親追加失敗を構造化errorで返す() {
         &Some(root.clone()),
         "new parent",
         &Some(10),
+        &mut factory,
     );
 
     assert_eq!(
@@ -6520,8 +6521,7 @@ fn test_execute_next_up_rootへの親追加失敗を構造化errorで返す() {
 fn test_execute_next_up_task生成contextと既存の親挿入契約を固定する() {
     let operation_now = Local.with_ymd_and_hms(2026, 8, 19, 14, 30, 0).unwrap();
     let deadline = operation_now + Duration::days(2);
-    let expected_new_parent_id =
-        Uuid::parse_str("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa").unwrap();
+    let expected_new_parent_id = Uuid::parse_str("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa").unwrap();
     let mut next_id = || expected_new_parent_id;
     let mut factory = TaskFactory::new(operation_now, &mut next_id);
 
@@ -7607,6 +7607,7 @@ fn execute_parsed(
             task_repository,
             free_time_manager,
             focused_task_id_opt,
+            task_factory: &mut task_factory,
             config: active_config(),
             supports_ansi_color,
         };
@@ -7959,15 +7960,16 @@ impl FinishPlacementCommandContext for RuntimeFinishPlacementCommandContext<'_> 
     }
 }
 
-struct RuntimeTaskTreeCommandContext<'a> {
-    task_repository: &'a mut dyn TaskRepositoryTrait,
-    free_time_manager: &'a mut dyn FreeTimeManagerTrait,
-    focused_task_id_opt: &'a mut Option<Uuid>,
-    config: &'a SchronuConfig,
+struct RuntimeTaskTreeCommandContext<'repository, 'factory, 'generator> {
+    task_repository: &'repository mut dyn TaskRepositoryTrait,
+    free_time_manager: &'repository mut dyn FreeTimeManagerTrait,
+    focused_task_id_opt: &'repository mut Option<Uuid>,
+    task_factory: &'factory mut TaskFactory<'generator>,
+    config: &'repository SchronuConfig,
     supports_ansi_color: bool,
 }
 
-impl RuntimeTaskTreeCommandContext<'_> {
+impl RuntimeTaskTreeCommandContext<'_, '_, '_> {
     fn focused_task(&self) -> Result<Option<TaskHandle>, ApplicationError> {
         match *self.focused_task_id_opt {
             Some(id) => self
@@ -7979,7 +7981,7 @@ impl RuntimeTaskTreeCommandContext<'_> {
     }
 }
 
-impl TaskTreeCommandContext for RuntimeTaskTreeCommandContext<'_> {
+impl TaskTreeCommandContext for RuntimeTaskTreeCommandContext<'_, '_, '_> {
     fn supports_ansi_color(&self) -> bool {
         self.supports_ansi_color
     }
@@ -8135,6 +8137,7 @@ impl TaskTreeCommandContext for RuntimeTaskTreeCommandContext<'_> {
             &focused_task_opt,
             name,
             &estimated_minutes,
+            self.task_factory,
         );
         report_application_result(display, result);
         Ok(())
