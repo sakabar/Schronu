@@ -342,7 +342,9 @@ impl<R: TaskRepositoryTrait> McpServer<R> {
             }
         };
         let task_id = input.task_id;
-        let output = match complete_task_use_case(repository, input) {
+        let mut next_id = Uuid::new_v4;
+        let mut factory = TaskFactory::new(Local::now(), &mut next_id);
+        let output = match complete_task_use_case(repository, input, &mut factory) {
             Ok(output) => output,
             Err(ApplicationError::TaskNotFound(task_id)) => {
                 return task_not_found_response(id, task_id, Some("task_id"))

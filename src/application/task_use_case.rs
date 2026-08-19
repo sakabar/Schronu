@@ -306,6 +306,7 @@ pub fn defer_task(
 pub fn complete_task(
     repository: &mut dyn TaskRepositoryTrait,
     input: CompleteTaskInput,
+    factory: &mut TaskFactory<'_>,
 ) -> Result<CompleteTaskOutput, ApplicationError> {
     let task = find_task(repository, input.task_id)?;
     if task
@@ -337,7 +338,7 @@ pub fn complete_task(
     task.set_end_time_opt(Some(input.finished_at))
         .map_err(ApplicationError::TaskTree)?;
 
-    let next_repetition_task_id = create_next_repetition_task(&task, input.finished_at)?;
+    let next_repetition_task_id = create_next_repetition_task(&task, input.finished_at, factory)?;
     let next_focus_task_id = if task
         .all_sibling_tasks_are_all_done()
         .map_err(ApplicationError::TaskTree)?
@@ -451,6 +452,7 @@ pub fn estimated_work_seconds_from_minutes(minutes: i64) -> Result<i64, Applicat
 fn create_next_repetition_task(
     task: &TaskHandle,
     finished_at: DateTime<Local>,
+    factory: &mut TaskFactory<'_>,
 ) -> Result<Option<Uuid>, ApplicationError> {
     let Some(parent_task) = task.parent().map_err(ApplicationError::TaskTree)? else {
         return Ok(None);
@@ -463,9 +465,14 @@ fn create_next_repetition_task(
     };
 
     adjust_repetition_estimate(&parent_task, task).map_err(ApplicationError::TaskTree)?;
-    let new_task_attr =
-        build_next_repetition_task_attr(task, &parent_task, repetition_interval_days, finished_at)
-            .map_err(ApplicationError::TaskTree)?;
+    let new_task_attr = build_next_repetition_task_attr(
+        task,
+        &parent_task,
+        repetition_interval_days,
+        finished_at,
+        factory,
+    )
+    .map_err(ApplicationError::TaskTree)?;
     let next_task = parent_task
         .create_child(new_task_attr)
         .map_err(ApplicationError::TaskTree)?;
@@ -513,6 +520,7 @@ fn build_next_repetition_task_attr(
     parent_task: &TaskHandle,
     repetition_interval_days: i64,
     finished_at: DateTime<Local>,
+    factory: &mut TaskFactory<'_>,
 ) -> Result<TaskAttr, TaskTreeError> {
     let occurrence_anchor = match parent_task.get_repetition_anchor()? {
         RepetitionAnchor::Deadline => task.get_deadline_time_opt()?.unwrap_or(finished_at),
@@ -536,16 +544,12 @@ fn build_next_repetition_task_attr(
             .expect("invalid nanosecond"),
     };
 
-    let mut new_task_attr = TaskAttr::with_identity(
-        &format!(
-            "{}({}/{})",
-            parent_task.get_name()?,
-            new_start_time.month(),
-            new_start_time.day()
-        ),
-        Uuid::new_v4(),
-        Local::now(),
-    );
+    let mut new_task_attr = factory.create_task_attr(&format!(
+        "{}({}/{})",
+        parent_task.get_name()?,
+        new_start_time.month(),
+        new_start_time.day()
+    ));
     new_task_attr
         .set_start_time(new_start_time - Duration::days(parent_task.get_days_in_advance()?));
     new_task_attr.set_deadline_time_opt(Some(new_deadline_time));
@@ -669,6 +673,15 @@ mod tests {
         breakdown_task(repository, input, &mut factory)
     }
 
+    fn complete_task_with_fresh_factory(
+        repository: &mut dyn TaskRepositoryTrait,
+        input: CompleteTaskInput,
+    ) -> Result<CompleteTaskOutput, ApplicationError> {
+        let mut next_id = Uuid::new_v4;
+        let mut factory = TaskFactory::new(fixed_now(), &mut next_id);
+        complete_task(repository, input, &mut factory)
+    }
+
     fn next_child_after_finish(
         repetition_anchor: RepetitionAnchor,
         days_in_advance: i64,
@@ -700,7 +713,7 @@ mod tests {
         let child_task = parent_task.create_as_last_child(child_task_attr);
 
         let mut repository = TestTaskRepository::new(vec![parent_task.clone()], finished_at);
-        complete_task(
+        complete_task_with_fresh_factory(
             &mut repository,
             CompleteTaskInput {
                 task_id: child_task.get_id().unwrap(),
@@ -1168,7 +1181,7 @@ mod tests {
         let task_id = task.get_id().unwrap();
         let mut repository = TestTaskRepository::new(vec![task], fixed_now());
 
-        let actual = complete_task(
+        let actual = complete_task_with_fresh_factory(
             &mut repository,
             CompleteTaskInput {
                 task_id,
@@ -1190,7 +1203,7 @@ mod tests {
         let task_id = task.get_id().unwrap();
         let mut repository = TestTaskRepository::new(vec![task], fixed_now());
 
-        let output = complete_task(
+        let output = complete_task_with_fresh_factory(
             &mut repository,
             CompleteTaskInput {
                 task_id,
@@ -1237,9 +1250,11 @@ mod tests {
     #[test]
     fn create_next_repetition_taskは構造化errorを返せるresultを維持する() {
         let task = crate::test_support::new_task_handle("単発").unwrap();
+        let mut next_id = Uuid::new_v4;
+        let mut factory = TaskFactory::new(fixed_now(), &mut next_id);
 
         let actual: Result<Option<Uuid>, ApplicationError> =
-            create_next_repetition_task(&task, fixed_now());
+            create_next_repetition_task(&task, fixed_now(), &mut factory);
 
         assert_eq!(actual, Ok(None));
     }
@@ -1255,6 +1270,8 @@ mod tests {
         let mut repository = TestTaskRepository::new(vec![parent.clone()], fixed_now());
 
         let before_completion = Local::now();
+        let mut next_id = Uuid::new_v4;
+        let mut factory = TaskFactory::new(Local::now(), &mut next_id);
         let output = complete_task(
             &mut repository,
             CompleteTaskInput {
@@ -1262,6 +1279,7 @@ mod tests {
                 finished_at: fixed_now(),
                 additional_actual_work_seconds: 0,
             },
+            &mut factory,
         )
         .unwrap();
         let after_completion = Local::now();
@@ -1403,7 +1421,7 @@ mod tests {
 
         let finished_at = Local.with_ymd_and_hms(2026, 5, 16, 10, 0, 0).unwrap();
         let mut repository = TestTaskRepository::new(vec![parent_task.clone()], finished_at);
-        complete_task(
+        complete_task_with_fresh_factory(
             &mut repository,
             CompleteTaskInput {
                 task_id: child_task.get_id().unwrap(),
@@ -1429,7 +1447,7 @@ mod tests {
         let task_id = task.get_id().unwrap();
         let mut repository = TestTaskRepository::new(vec![task], fixed_now());
 
-        let actual = complete_task(
+        let actual = complete_task_with_fresh_factory(
             &mut repository,
             CompleteTaskInput {
                 task_id,
@@ -1459,7 +1477,7 @@ mod tests {
         let mut repository = TestTaskRepository::new(vec![task], fixed_now());
 
         let actual = catch_unwind(AssertUnwindSafe(|| {
-            complete_task(
+            complete_task_with_fresh_factory(
                 &mut repository,
                 CompleteTaskInput {
                     task_id,
@@ -1532,7 +1550,7 @@ mod tests {
             Err(ApplicationError::TaskNotFound(task_id))
         );
         assert_eq!(
-            complete_task(
+            complete_task_with_fresh_factory(
                 &mut repository,
                 CompleteTaskInput {
                     task_id,
@@ -1634,7 +1652,7 @@ mod tests {
         set_estimate(&mut repository, child_id, 10).unwrap();
         set_deadline(&mut repository, child_id, Some(fixed_now())).unwrap();
         set_category(&mut repository, child_id, Some(ProjectCategory::Investment)).unwrap();
-        complete_task(
+        complete_task_with_fresh_factory(
             &mut repository,
             CompleteTaskInput {
                 task_id: child_id,

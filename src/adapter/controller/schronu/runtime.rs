@@ -7899,7 +7899,10 @@ impl FinishPlacementCommandContext for RuntimeFinishPlacementCommandContext<'_> 
         &mut self,
         input: CompleteTaskInput,
     ) -> Result<Option<Uuid>, ApplicationError> {
-        complete_task(self.task_repository, input).map(|output| output.next_focus_task_id)
+        let mut next_id = Uuid::new_v4;
+        let mut factory = TaskFactory::new(Local::now(), &mut next_id);
+        complete_task(self.task_repository, input, &mut factory)
+            .map(|output| output.next_focus_task_id)
     }
 
     fn set_focused_task_id(&mut self, task_id_opt: Option<Uuid>) {
