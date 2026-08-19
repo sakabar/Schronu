@@ -831,6 +831,31 @@ mod tests {
     }
 
     #[test]
+    fn create_task_operationで固定したidと時刻を使う() {
+        let now = fixed_now();
+        let expected_id = Uuid::parse_str("00000000-0000-0000-0000-000000000101").unwrap();
+        let mut next_id = || expected_id;
+        let mut factory = TaskFactory::new(now, &mut next_id);
+        let mut repository = TestTaskRepository::new(vec![], now);
+
+        let actual_id = create_task(
+            &mut repository,
+            CreateTaskInput {
+                name: "新規".to_string(),
+                estimated_work_minutes: None,
+                pending_until: None,
+            },
+            &mut factory,
+        )
+        .unwrap();
+
+        let task = repository.get_by_id(actual_id).unwrap().unwrap();
+        assert_eq!(actual_id, expected_id);
+        assert_eq!(task.get_create_time().unwrap(), now);
+        assert_eq!(task.get_start_time().unwrap(), now);
+    }
+
+    #[test]
     fn create_task_空の名前を拒否して変更しない() {
         let mut repository = TestTaskRepository::new(vec![], fixed_now());
 
@@ -958,6 +983,43 @@ mod tests {
             .unwrap()
             .iter()
             .all(|child| child.get_deadline_time_opt().unwrap() == Some(deadline)));
+    }
+
+    #[test]
+    fn breakdown_task_operationで固定したid列と時刻を使う() {
+        let now = fixed_now();
+        let expected_ids = [
+            Uuid::parse_str("00000000-0000-0000-0000-000000000201").unwrap(),
+            Uuid::parse_str("00000000-0000-0000-0000-000000000202").unwrap(),
+        ];
+        let mut ids = expected_ids.into_iter();
+        let mut next_id = || ids.next().expect("task id should be consumed once per child");
+        let mut factory = TaskFactory::new(now, &mut next_id);
+        let parent = crate::test_support::new_task_handle("親").unwrap();
+        let mut repository = TestTaskRepository::new(vec![parent.clone()], now);
+
+        let actual_ids = breakdown_task(
+            &mut repository,
+            BreakdownTaskInput {
+                parent_id: parent.get_id().unwrap(),
+                names: vec!["一".to_string(), "二".to_string()],
+                pending_until: None,
+            },
+            &mut factory,
+        )
+        .unwrap();
+
+        assert_eq!(actual_ids, expected_ids);
+        for (child, expected_id) in parent
+            .get_children()
+            .unwrap()
+            .into_iter()
+            .zip(expected_ids)
+        {
+            assert_eq!(child.get_id().unwrap(), expected_id);
+            assert_eq!(child.get_create_time().unwrap(), now);
+            assert_eq!(child.get_start_time().unwrap(), now);
+        }
     }
 
     #[test]
