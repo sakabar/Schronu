@@ -1902,7 +1902,9 @@ mod tests {
 
     #[test]
     fn get_scheduleは借用競合を既存internal_error形式で返す() {
-        let task = TaskHandle::new("借用競合").unwrap();
+        let task =
+            TaskHandle::with_identity("借用競合", uuid::Uuid::new_v4(), chrono::Local::now())
+                .unwrap();
         let server = McpServer::new(RecordingRepository::new(vec![task.clone()]));
 
         let response = task.with_exclusive_data_borrow_for_test(|| {
@@ -1928,7 +1930,14 @@ mod tests {
         let mut source = TaskRepository::new(storage_path);
         source.sync_clock(now).unwrap();
         source
-            .start_new_project(TaskHandle::new("MCP cache対象").unwrap())
+            .start_new_project(
+                TaskHandle::with_identity(
+                    "MCP cache対象",
+                    uuid::Uuid::new_v4(),
+                    chrono::Local::now(),
+                )
+                .unwrap(),
+            )
             .unwrap();
         source.save().unwrap();
         let project_yaml_path = storage
@@ -3017,7 +3026,9 @@ mod tests {
         let create_time = Local.with_ymd_and_hms(2026, 8, 1, 9, 0, 0).unwrap();
         let start_time = Local.with_ymd_and_hms(2026, 8, 10, 10, 0, 0).unwrap();
         let deadline_time = Local.with_ymd_and_hms(2026, 8, 20, 23, 59, 59).unwrap();
-        let root = TaskHandle::new("MCP task").unwrap();
+        let root =
+            TaskHandle::with_identity("MCP task", uuid::Uuid::new_v4(), chrono::Local::now())
+                .unwrap();
         root.set_orig_status(Status::Pending).unwrap();
         root.set_pending_until(pending_until).unwrap();
         root.set_priority(7).unwrap();
@@ -3035,7 +3046,11 @@ mod tests {
         root.set_project_category_opt(Some(ProjectCategory::Recovery))
             .unwrap();
         root.sync_clock(fixed_now()).unwrap();
-        let child = root.create_as_last_child(TaskAttr::new("child"));
+        let child = root.create_as_last_child(TaskAttr::with_identity(
+            "child",
+            uuid::Uuid::new_v4(),
+            chrono::Local::now(),
+        ));
         let task_id = root.get_id().unwrap();
         let child_id = child.get_id().unwrap();
         let repository = RecordingRepository::new(vec![root]);
@@ -3239,8 +3254,12 @@ mod tests {
 
     #[test]
     fn get_focus_選択taskを返してrepositoryを変更しない() {
-        let non_focused_task = TaskHandle::new("not focused").unwrap();
-        let focused_task = TaskHandle::new("focused task").unwrap();
+        let non_focused_task =
+            TaskHandle::with_identity("not focused", uuid::Uuid::new_v4(), chrono::Local::now())
+                .unwrap();
+        let focused_task =
+            TaskHandle::with_identity("focused task", uuid::Uuid::new_v4(), chrono::Local::now())
+                .unwrap();
         let task_id = focused_task.get_id().unwrap();
         let repository = RecordingRepository::new(vec![non_focused_task, focused_task])
             .with_focus_task_id(task_id);
@@ -3388,11 +3407,18 @@ mod tests {
 
     #[test]
     fn list_tasks_arguments省略で全taskを返す() {
-        let first = TaskHandle::new("first").unwrap();
+        let first =
+            TaskHandle::with_identity("first", uuid::Uuid::new_v4(), chrono::Local::now()).unwrap();
         let first_id = first.get_id().unwrap();
-        let child = first.create_as_last_child(TaskAttr::new("child"));
+        let child = first.create_as_last_child(TaskAttr::with_identity(
+            "child",
+            uuid::Uuid::new_v4(),
+            chrono::Local::now(),
+        ));
         let child_id = child.get_id().unwrap();
-        let second = TaskHandle::new("second").unwrap();
+        let second =
+            TaskHandle::with_identity("second", uuid::Uuid::new_v4(), chrono::Local::now())
+                .unwrap();
         let second_id = second.get_id().unwrap();
         let repository = RecordingRepository::new(vec![first, second]);
         let save_count = Rc::clone(&repository.save_count);
@@ -3430,9 +3456,13 @@ mod tests {
 
     #[test]
     fn list_tasks_null_categoryで未分類taskを絞る() {
-        let uncategorized = TaskHandle::new("uncategorized").unwrap();
+        let uncategorized =
+            TaskHandle::with_identity("uncategorized", uuid::Uuid::new_v4(), chrono::Local::now())
+                .unwrap();
         let uncategorized_id = uncategorized.get_id().unwrap();
-        let categorized = TaskHandle::new("categorized").unwrap();
+        let categorized =
+            TaskHandle::with_identity("categorized", uuid::Uuid::new_v4(), chrono::Local::now())
+                .unwrap();
         categorized
             .set_project_category_opt(Some(ProjectCategory::Recovery))
             .unwrap();
@@ -3572,7 +3602,9 @@ mod tests {
     #[test]
     #[allow(non_snake_case)]
     fn get_scheduleは予定をScheduledTaskViewの全field付きで返しrepositoryを変更しない() {
-        let task = TaskHandle::new("scheduled task").unwrap();
+        let task =
+            TaskHandle::with_identity("scheduled task", uuid::Uuid::new_v4(), chrono::Local::now())
+                .unwrap();
         let task_id = task.get_id().unwrap();
         task.set_start_time(fixed_now()).unwrap();
         task.set_estimated_work_seconds(15 * 60).unwrap();
@@ -3632,11 +3664,15 @@ mod tests {
     #[test]
     fn get_scheduleは引数なしで現在から次の業務日境界までの予定だけを返す() {
         let now = Local::now();
-        let current_task = TaskHandle::new("current task").unwrap();
+        let current_task =
+            TaskHandle::with_identity("current task", uuid::Uuid::new_v4(), chrono::Local::now())
+                .unwrap();
         current_task.set_start_time(now).unwrap();
         current_task.set_estimated_work_seconds(15 * 60).unwrap();
 
-        let future_task = TaskHandle::new("future task").unwrap();
+        let future_task =
+            TaskHandle::with_identity("future task", uuid::Uuid::new_v4(), chrono::Local::now())
+                .unwrap();
         future_task
             .set_start_time(get_next_morning_datetime(now) + Duration::hours(1))
             .unwrap();
@@ -3666,7 +3702,9 @@ mod tests {
         let from_boundary = get_next_morning_datetime(now);
         let until_boundary = get_next_morning_datetime(from_boundary);
 
-        let crossing_task = TaskHandle::new("crossing task").unwrap();
+        let crossing_task =
+            TaskHandle::with_identity("crossing task", uuid::Uuid::new_v4(), chrono::Local::now())
+                .unwrap();
         crossing_task
             .set_start_time(from_boundary - Duration::minutes(30))
             .unwrap();
@@ -3674,13 +3712,17 @@ mod tests {
             .set_estimated_work_seconds(2 * 60 * 60)
             .unwrap();
 
-        let inside_task = TaskHandle::new("inside task").unwrap();
+        let inside_task =
+            TaskHandle::with_identity("inside task", uuid::Uuid::new_v4(), chrono::Local::now())
+                .unwrap();
         inside_task
             .set_start_time(from_boundary + Duration::hours(3))
             .unwrap();
         inside_task.set_estimated_work_seconds(15 * 60).unwrap();
 
-        let later_task = TaskHandle::new("later task").unwrap();
+        let later_task =
+            TaskHandle::with_identity("later task", uuid::Uuid::new_v4(), chrono::Local::now())
+                .unwrap();
         later_task
             .set_start_time(until_boundary + Duration::hours(1))
             .unwrap();
@@ -3995,7 +4037,9 @@ mod tests {
     #[test]
     fn breakdown_task_子を入力順に追加して1回saveする() {
         let pending_until = fixed_now() + Duration::hours(18);
-        let parent = TaskHandle::new("parent").unwrap();
+        let parent =
+            TaskHandle::with_identity("parent", uuid::Uuid::new_v4(), chrono::Local::now())
+                .unwrap();
         let parent_id = parent.get_id().unwrap();
         let repository = RecordingRepository::new(vec![parent]);
         let save_count = Rc::clone(&repository.save_count);
@@ -4101,7 +4145,9 @@ mod tests {
 
     #[test]
     fn breakdown_task_意味的不正と未知parentでは変更もsaveもしない() {
-        let parent = TaskHandle::new("parent").unwrap();
+        let parent =
+            TaskHandle::with_identity("parent", uuid::Uuid::new_v4(), chrono::Local::now())
+                .unwrap();
         let parent_id = parent.get_id().unwrap();
         let cases = [
             (
@@ -4176,7 +4222,9 @@ mod tests {
 
     #[test]
     fn breakdown_task_save失敗を成功扱いしない() {
-        let parent = TaskHandle::new("parent").unwrap();
+        let parent =
+            TaskHandle::with_identity("parent", uuid::Uuid::new_v4(), chrono::Local::now())
+                .unwrap();
         let parent_id = parent.get_id().unwrap();
         let parent_observer = parent.clone();
         let repository = RecordingRepository::new(vec![parent]).with_save_failure();
@@ -4222,7 +4270,9 @@ mod tests {
     #[test]
     fn defer_task_絶対時刻まで延期して1回saveする() {
         let pending_until = fixed_now() + Duration::hours(18);
-        let task = TaskHandle::new("deferred task").unwrap();
+        let task =
+            TaskHandle::with_identity("deferred task", uuid::Uuid::new_v4(), chrono::Local::now())
+                .unwrap();
         let task_id = task.get_id().unwrap();
         let repository = RecordingRepository::new(vec![task]);
         let save_count = Rc::clone(&repository.save_count);
@@ -4264,7 +4314,9 @@ mod tests {
 
     #[test]
     fn defer_task_入力不正と未知taskでは変更もsaveもしない() {
-        let task = TaskHandle::new("unchanged task").unwrap();
+        let task =
+            TaskHandle::with_identity("unchanged task", uuid::Uuid::new_v4(), chrono::Local::now())
+                .unwrap();
         let task_id = task.get_id().unwrap();
         let cases = [
             (
@@ -4378,7 +4430,9 @@ mod tests {
     #[test]
     fn defer_task_save失敗を成功扱いしない() {
         let pending_until = fixed_now() + Duration::hours(18);
-        let task = TaskHandle::new("deferred task").unwrap();
+        let task =
+            TaskHandle::with_identity("deferred task", uuid::Uuid::new_v4(), chrono::Local::now())
+                .unwrap();
         let task_id = task.get_id().unwrap();
         let task_observer = task.clone();
         let repository = RecordingRepository::new(vec![task]).with_save_failure();
@@ -4428,7 +4482,9 @@ mod tests {
     #[test]
     fn complete_task_完了と実績を反映して1回saveする() {
         let finished_at = fixed_now() + Duration::hours(1);
-        let task = TaskHandle::new("completed task").unwrap();
+        let task =
+            TaskHandle::with_identity("completed task", uuid::Uuid::new_v4(), chrono::Local::now())
+                .unwrap();
         task.set_actual_work_seconds(60).unwrap();
         let task_id = task.get_id().unwrap();
         let repository = RecordingRepository::new(vec![task]);
@@ -4477,7 +4533,12 @@ mod tests {
 
     #[test]
     fn complete_task_optional省略時は現在時刻と追加実績0を使う() {
-        let task = TaskHandle::new("completed with defaults").unwrap();
+        let task = TaskHandle::with_identity(
+            "completed with defaults",
+            uuid::Uuid::new_v4(),
+            chrono::Local::now(),
+        )
+        .unwrap();
         task.set_actual_work_seconds(60).unwrap();
         let task_id = task.get_id().unwrap();
         let repository = RecordingRepository::new(vec![task]);
@@ -4513,8 +4574,14 @@ mod tests {
 
     #[test]
     fn complete_task_next_focusとnext_repetitionのuuidを返す() {
-        let parent = TaskHandle::new("parent").unwrap();
-        let child = parent.create_as_last_child(TaskAttr::new("only child"));
+        let parent =
+            TaskHandle::with_identity("parent", uuid::Uuid::new_v4(), chrono::Local::now())
+                .unwrap();
+        let child = parent.create_as_last_child(TaskAttr::with_identity(
+            "only child",
+            uuid::Uuid::new_v4(),
+            chrono::Local::now(),
+        ));
         let parent_id = parent.get_id().unwrap();
         let child_id = child.get_id().unwrap();
         let mut focus_server = initialized_server(RecordingRepository::new(vec![parent]));
@@ -4536,12 +4603,17 @@ mod tests {
             serde_json::Value::Null
         );
 
-        let repetition_parent = TaskHandle::new("weekly").unwrap();
+        let repetition_parent =
+            TaskHandle::with_identity("weekly", uuid::Uuid::new_v4(), chrono::Local::now())
+                .unwrap();
         repetition_parent
             .set_repetition_interval_days_opt(Some(7))
             .unwrap();
-        let repetition_child =
-            repetition_parent.create_as_last_child(TaskAttr::new("weekly occurrence"));
+        let repetition_child = repetition_parent.create_as_last_child(TaskAttr::with_identity(
+            "weekly occurrence",
+            uuid::Uuid::new_v4(),
+            chrono::Local::now(),
+        ));
         let repetition_parent_id = repetition_parent.get_id().unwrap();
         let repetition_child_id = repetition_child.get_id().unwrap();
         let mut repetition_server =
@@ -4581,8 +4653,14 @@ mod tests {
 
     #[test]
     fn complete_task_未完了childと未知taskを区別してsaveしない() {
-        let parent = TaskHandle::new("parent").unwrap();
-        parent.create_as_last_child(TaskAttr::new("undone child"));
+        let parent =
+            TaskHandle::with_identity("parent", uuid::Uuid::new_v4(), chrono::Local::now())
+                .unwrap();
+        parent.create_as_last_child(TaskAttr::with_identity(
+            "undone child",
+            uuid::Uuid::new_v4(),
+            chrono::Local::now(),
+        ));
         let parent_id = parent.get_id().unwrap();
         let cases = [
             ("undone-child", parent_id, "has_undone_children", "task_id"),
@@ -4630,7 +4708,9 @@ mod tests {
 
     #[test]
     fn complete_task_入力不正では変更もsaveもしない() {
-        let task = TaskHandle::new("unchanged task").unwrap();
+        let task =
+            TaskHandle::with_identity("unchanged task", uuid::Uuid::new_v4(), chrono::Local::now())
+                .unwrap();
         let task_id = task.get_id().unwrap();
         let cases = [
             ("missing-task-id", json!({}), Some(-32602), "task_id"),
@@ -4714,7 +4794,9 @@ mod tests {
 
     #[test]
     fn complete_task_save失敗を成功扱いしない() {
-        let task = TaskHandle::new("completed task").unwrap();
+        let task =
+            TaskHandle::with_identity("completed task", uuid::Uuid::new_v4(), chrono::Local::now())
+                .unwrap();
         let task_id = task.get_id().unwrap();
         let task_observer = task.clone();
         let repository = RecordingRepository::new(vec![task]).with_save_failure();
@@ -4759,7 +4841,9 @@ mod tests {
     #[test]
     fn update_task_指定fieldをまとめて更新して1回saveする() {
         let deadline = fixed_now() + Duration::days(10);
-        let task = TaskHandle::new("updated task").unwrap();
+        let task =
+            TaskHandle::with_identity("updated task", uuid::Uuid::new_v4(), chrono::Local::now())
+                .unwrap();
         let task_id = task.get_id().unwrap();
         let repository = RecordingRepository::new(vec![task]);
         let save_count = Rc::clone(&repository.save_count);
@@ -4804,7 +4888,9 @@ mod tests {
 
     #[test]
     fn update_task_同じ値ならsaveしない() {
-        let task = TaskHandle::new("unchanged task").unwrap();
+        let task =
+            TaskHandle::with_identity("unchanged task", uuid::Uuid::new_v4(), chrono::Local::now())
+                .unwrap();
         let task_id = task.get_id().unwrap();
         let repository = RecordingRepository::new(vec![task]);
         let save_count = Rc::clone(&repository.save_count);
@@ -4827,7 +4913,9 @@ mod tests {
 
     #[test]
     fn update_task_nullでdeadlineとcategoryを解除する() {
-        let task = TaskHandle::new("cleared task").unwrap();
+        let task =
+            TaskHandle::with_identity("cleared task", uuid::Uuid::new_v4(), chrono::Local::now())
+                .unwrap();
         task.set_deadline_time_opt(Some(fixed_now() + Duration::days(10)))
             .unwrap();
         task.set_project_category_opt(Some(ProjectCategory::Investment))
@@ -4872,7 +4960,12 @@ mod tests {
             "earning",
             "sustaining",
         ] {
-            let task = TaskHandle::new("categorized task").unwrap();
+            let task = TaskHandle::with_identity(
+                "categorized task",
+                uuid::Uuid::new_v4(),
+                chrono::Local::now(),
+            )
+            .unwrap();
             let task_id = task.get_id().unwrap();
             let mut server = initialized_server(RecordingRepository::new(vec![task]));
 
@@ -4902,7 +4995,12 @@ mod tests {
     #[test]
     fn update_task_入力不正では変更もsaveもしない() {
         let deadline = fixed_now() + Duration::days(10);
-        let task = TaskHandle::new("unchanged update task").unwrap();
+        let task = TaskHandle::with_identity(
+            "unchanged update task",
+            uuid::Uuid::new_v4(),
+            chrono::Local::now(),
+        )
+        .unwrap();
         task.set_estimated_work_seconds(30 * 60).unwrap();
         task.set_deadline_time_opt(Some(deadline)).unwrap();
         task.set_project_category_opt(Some(ProjectCategory::Consumption))
@@ -5009,7 +5107,12 @@ mod tests {
     fn update_task_application_errorと未知taskでは変更もsaveもしない() {
         let original_deadline = fixed_now() + Duration::days(10);
         let requested_deadline = fixed_now() + Duration::days(20);
-        let task = TaskHandle::new("unchanged application task").unwrap();
+        let task = TaskHandle::with_identity(
+            "unchanged application task",
+            uuid::Uuid::new_v4(),
+            chrono::Local::now(),
+        )
+        .unwrap();
         task.set_estimated_work_seconds(30 * 60).unwrap();
         task.set_deadline_time_opt(Some(original_deadline)).unwrap();
         task.set_project_category_opt(Some(ProjectCategory::Consumption))
@@ -5074,7 +5177,12 @@ mod tests {
 
     #[test]
     fn update_task_save失敗を成功扱いしない() {
-        let task = TaskHandle::new("updated before save failure").unwrap();
+        let task = TaskHandle::with_identity(
+            "updated before save failure",
+            uuid::Uuid::new_v4(),
+            chrono::Local::now(),
+        )
+        .unwrap();
         let task_id = task.get_id().unwrap();
         let task_observer = task.clone();
         let repository = RecordingRepository::new(vec![task]).with_save_failure();
@@ -5158,7 +5266,8 @@ mod tests {
         category: ProjectCategory,
         create_time: DateTime<Local>,
     ) -> TaskHandle {
-        let task = TaskHandle::new(name).unwrap();
+        let task =
+            TaskHandle::with_identity(name, uuid::Uuid::new_v4(), chrono::Local::now()).unwrap();
         task.set_orig_status(status).unwrap();
         if status == Status::Pending {
             task.set_pending_until(Local.with_ymd_and_hms(2026, 8, 12, 6, 0, 0).unwrap())

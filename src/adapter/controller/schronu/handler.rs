@@ -886,6 +886,7 @@ fn execute_breakdown_sequentially(
                 begin_index,
                 end_index,
                 suffix,
+                (Local::now(), Uuid::new_v4),
             )
             .map_err(ApplicationError::TaskTree)?;
         let grand_child_task_id = grand_child_task
@@ -964,7 +965,8 @@ fn execute_split(
         .set_estimated_work_seconds(focused_estimated_work_seconds - splitted_work_seconds)
         .map_err(ApplicationError::TaskTree)?;
 
-    let mut new_task_attr = TaskAttr::new(new_task_name);
+    let mut new_task_attr =
+        TaskAttr::with_identity(new_task_name, uuid::Uuid::new_v4(), chrono::Local::now());
     new_task_attr.set_estimated_work_seconds(splitted_work_seconds);
     if let Some(deadline_time) = focused_task
         .get_deadline_time_opt()

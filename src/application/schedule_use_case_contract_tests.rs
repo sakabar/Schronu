@@ -96,7 +96,8 @@ fn fixed_now() -> DateTime<Local> {
 
 #[test]
 fn get_scheduleは借用競合をtask_tree_errorとして返す() {
-    let task = TaskHandle::new("借用競合").unwrap();
+    let task =
+        TaskHandle::with_identity("借用競合", uuid::Uuid::new_v4(), chrono::Local::now()).unwrap();
     let repository = TestTaskRepository::new(vec![task.clone()], fixed_now());
 
     let actual = task.with_exclusive_data_borrow_for_test(|| get_schedule(&repository));
@@ -115,7 +116,7 @@ fn task_with_schedule(
     work_seconds: i64,
     priority: i64,
 ) -> TaskHandle {
-    let task = TaskHandle::new(name).unwrap();
+    let task = TaskHandle::with_identity(name, uuid::Uuid::new_v4(), chrono::Local::now()).unwrap();
     task.sync_clock(start).unwrap();
     task.set_start_time(start).unwrap();
     task.set_estimated_work_seconds(work_seconds).unwrap();
@@ -196,7 +197,7 @@ fn get_schedule_i64最小値付近でも優先度の高いtaskを先に配置す
 fn get_schedule_pending解除後に子を配置し親をその後へ置く() {
     let now = fixed_now();
     let parent = task_with_schedule("親", now, 0, 5);
-    let mut child_attr = TaskAttr::new("子");
+    let mut child_attr = TaskAttr::with_identity("子", uuid::Uuid::new_v4(), chrono::Local::now());
     child_attr.set_estimated_work_seconds(15 * 60);
     child_attr.set_start_time(now);
     let child = parent.create_as_last_child(child_attr);

@@ -912,7 +912,8 @@ mod tests {
 
     #[test]
     fn test_get_adjustable_prefix_label_前倒し可能日数を表示する() {
-        let task = TaskHandle::new("タスク").unwrap();
+        let task = TaskHandle::with_identity("タスク", uuid::Uuid::new_v4(), chrono::Local::now())
+            .unwrap();
         task.set_start_time(Local.with_ymd_and_hms(2026, 5, 7, 12, 0, 0).unwrap());
         let dt = Local.with_ymd_and_hms(2026, 5, 10, 12, 0, 0).unwrap();
         let last_synced_time = Local.with_ymd_and_hms(2026, 5, 7, 12, 0, 0).unwrap();
@@ -924,7 +925,8 @@ mod tests {
 
     #[test]
     fn test_get_adjustable_prefix_label_今日より前には戻さない() {
-        let task = TaskHandle::new("タスク").unwrap();
+        let task = TaskHandle::with_identity("タスク", uuid::Uuid::new_v4(), chrono::Local::now())
+            .unwrap();
         task.set_start_time(Local.with_ymd_and_hms(2026, 5, 1, 12, 0, 0).unwrap());
         let dt = Local.with_ymd_and_hms(2026, 5, 10, 12, 0, 0).unwrap();
         let last_synced_time = Local.with_ymd_and_hms(2026, 5, 7, 12, 0, 0).unwrap();
@@ -936,7 +938,8 @@ mod tests {
 
     #[test]
     fn test_get_adjustable_prefix_label_同日着手可能なら表示しない() {
-        let task = TaskHandle::new("タスク").unwrap();
+        let task = TaskHandle::with_identity("タスク", uuid::Uuid::new_v4(), chrono::Local::now())
+            .unwrap();
         task.set_start_time(Local.with_ymd_and_hms(2026, 5, 10, 12, 0, 0).unwrap());
         let dt = Local.with_ymd_and_hms(2026, 5, 10, 18, 0, 0).unwrap();
         let last_synced_time = Local.with_ymd_and_hms(2026, 5, 7, 12, 0, 0).unwrap();
@@ -948,7 +951,8 @@ mod tests {
 
     #[test]
     fn test_get_adjustable_prefix_label_今日と予定日が同じなら過去の着手可能日は表示しない() {
-        let task = TaskHandle::new("タスク").unwrap();
+        let task = TaskHandle::with_identity("タスク", uuid::Uuid::new_v4(), chrono::Local::now())
+            .unwrap();
         task.set_start_time(Local.with_ymd_and_hms(2026, 5, 1, 12, 0, 0).unwrap());
         let dt = Local.with_ymd_and_hms(2026, 5, 7, 18, 0, 0).unwrap();
         let last_synced_time = Local.with_ymd_and_hms(2026, 5, 7, 12, 0, 0).unwrap();
@@ -960,7 +964,8 @@ mod tests {
 
     #[test]
     fn test_get_adjustable_prefix_label_相手待ちは表示しない() {
-        let task = TaskHandle::new("タスク").unwrap();
+        let task = TaskHandle::with_identity("タスク", uuid::Uuid::new_v4(), chrono::Local::now())
+            .unwrap();
         task.set_start_time(Local.with_ymd_and_hms(2026, 5, 7, 12, 0, 0).unwrap());
         task.set_is_on_other_side(true);
         let dt = Local.with_ymd_and_hms(2026, 5, 10, 12, 0, 0).unwrap();
@@ -973,7 +978,8 @@ mod tests {
 
     #[test]
     fn test_get_adjustable_prefix_label_葉以外は表示しない() {
-        let task = TaskHandle::new("タスク").unwrap();
+        let task = TaskHandle::with_identity("タスク", uuid::Uuid::new_v4(), chrono::Local::now())
+            .unwrap();
         task.set_start_time(Local.with_ymd_and_hms(2026, 5, 7, 12, 0, 0).unwrap());
         let dt = Local.with_ymd_and_hms(2026, 5, 10, 12, 0, 0).unwrap();
         let last_synced_time = Local.with_ymd_and_hms(2026, 5, 7, 12, 0, 0).unwrap();
@@ -1119,7 +1125,8 @@ mod tests {
 
     #[test]
     fn test_execute_set_priority_優先度を変更する() {
-        let task = TaskHandle::new("タスク").unwrap();
+        let task = TaskHandle::with_identity("タスク", uuid::Uuid::new_v4(), chrono::Local::now())
+            .unwrap();
         let focused_task_opt = Some(task.clone());
 
         execute_set_priority(&focused_task_opt, "8");
@@ -1129,7 +1136,8 @@ mod tests {
 
     #[test]
     fn test_execute_set_priority_不正値なら変更しない() {
-        let task = TaskHandle::new("タスク").unwrap();
+        let task = TaskHandle::with_identity("タスク", uuid::Uuid::new_v4(), chrono::Local::now())
+            .unwrap();
         task.set_priority(5);
         let focused_task_opt = Some(task.clone());
 
@@ -3929,10 +3937,15 @@ fn test_make_obsidian_search_url_vault名をpercent_encodeする() {
 
 #[test]
 fn test_make_obsidian_root_task_search_url_子タスクからrootのtask_idをqueryにする() {
-    let mut root_task = TaskHandle::new("root").unwrap();
+    let mut root_task =
+        TaskHandle::with_identity("root", uuid::Uuid::new_v4(), chrono::Local::now()).unwrap();
     let root_task_id = Uuid::parse_str("11111111-1111-1111-1111-111111111111").unwrap();
     root_task.set_id(root_task_id);
-    let child_task = root_task.create_as_last_child(TaskAttr::new("child"));
+    let child_task = root_task.create_as_last_child(TaskAttr::with_identity(
+        "child",
+        uuid::Uuid::new_v4(),
+        chrono::Local::now(),
+    ));
 
     let actual = make_obsidian_root_task_search_url(&child_task);
     let expected =
@@ -3957,7 +3970,11 @@ fn execute_next_up(
     let Some(mut focused_task) = focused_task_opt.clone() else {
         return Ok(None);
     };
-    let mut new_task_attr = TaskAttr::new(new_task_name_str);
+    let mut new_task_attr = TaskAttr::with_identity(
+        new_task_name_str,
+        uuid::Uuid::new_v4(),
+        chrono::Local::now(),
+    );
     let parent_task_opt = focused_task.parent().map_err(ApplicationError::TaskTree)?;
 
     // 親タスクの〆切を引き継ぐ
@@ -4910,7 +4927,12 @@ fn test_report_command_resultはtask_tree_errorを既存の操作エラー形式
 fn test_execute_空_日付指定は指定日の予定開始時刻でtodoをpendingにする() {
     let now = Local.with_ymd_and_hms(2026, 8, 14, 12, 0, 0).unwrap();
     let schronu_day_start = Local.with_ymd_and_hms(2026, 8, 15, 6, 0, 0).unwrap();
-    let task = TaskHandle::new("日付指定の空対象").unwrap();
+    let task = TaskHandle::with_identity(
+        "日付指定の空対象",
+        uuid::Uuid::new_v4(),
+        chrono::Local::now(),
+    )
+    .unwrap();
     task.set_start_time(schronu_day_start + Duration::hours(4));
     task.set_estimated_work_seconds(30 * 60);
     let task_id = task.get_id().unwrap();
@@ -4930,7 +4952,9 @@ fn test_execute_空_日付指定は指定日の予定開始時刻でtodoをpendi
 fn test_execute_空_明指定は次の業務日の予定をpendingにする() {
     let now = Local.with_ymd_and_hms(2026, 8, 14, 12, 0, 0).unwrap();
     let schronu_day_start = Local.with_ymd_and_hms(2026, 8, 15, 6, 0, 0).unwrap();
-    let task = TaskHandle::new("明指定の空対象").unwrap();
+    let task =
+        TaskHandle::with_identity("明指定の空対象", uuid::Uuid::new_v4(), chrono::Local::now())
+            .unwrap();
     task.set_start_time(schronu_day_start + Duration::hours(4));
     task.set_estimated_work_seconds(30 * 60);
     let task_id = task.get_id().unwrap();
@@ -4948,7 +4972,12 @@ fn test_execute_空_明指定は次の業務日の予定をpendingにする() {
 fn test_execute_集_日付指定はpendingを業務日開始へ集める() {
     let now = Local.with_ymd_and_hms(2026, 8, 14, 12, 0, 0).unwrap();
     let schronu_day_start = Local.with_ymd_and_hms(2026, 8, 15, 6, 0, 0).unwrap();
-    let task = TaskHandle::new("日付指定の集対象").unwrap();
+    let task = TaskHandle::with_identity(
+        "日付指定の集対象",
+        uuid::Uuid::new_v4(),
+        chrono::Local::now(),
+    )
+    .unwrap();
     task.set_start_time(schronu_day_start + Duration::hours(4));
     task.set_estimated_work_seconds(30 * 60);
     task.set_orig_status(Status::Pending);
@@ -4967,7 +4996,12 @@ fn test_execute_集_日付指定はpendingを業務日開始へ集める() {
 fn test_execute_集_曜日指定は次に来る曜日の業務日開始へ集める() {
     let now = Local.with_ymd_and_hms(2026, 8, 14, 12, 0, 0).unwrap();
     let schronu_day_start = Local.with_ymd_and_hms(2026, 8, 17, 6, 0, 0).unwrap();
-    let task = TaskHandle::new("曜日指定の集対象").unwrap();
+    let task = TaskHandle::with_identity(
+        "曜日指定の集対象",
+        uuid::Uuid::new_v4(),
+        chrono::Local::now(),
+    )
+    .unwrap();
     task.set_start_time(schronu_day_start + Duration::hours(4));
     task.set_estimated_work_seconds(30 * 60);
     task.set_orig_status(Status::Pending);
@@ -4984,7 +5018,12 @@ fn test_execute_集_曜日指定は次に来る曜日の業務日開始へ集め
 fn test_execute_空_日付指定はpending_untilの半開区間だけを変更する() {
     let now = Local.with_ymd_and_hms(2026, 8, 14, 12, 0, 0).unwrap();
     let schronu_day_start = Local.with_ymd_and_hms(2026, 8, 15, 6, 0, 0).unwrap();
-    let task = TaskHandle::new("日付指定のpending対象").unwrap();
+    let task = TaskHandle::with_identity(
+        "日付指定のpending対象",
+        uuid::Uuid::new_v4(),
+        chrono::Local::now(),
+    )
+    .unwrap();
     task.set_start_time(schronu_day_start + Duration::hours(4));
     task.set_estimated_work_seconds(30 * 60);
     task.set_orig_status(Status::Pending);
@@ -5006,7 +5045,12 @@ fn test_execute_空_日付指定はpending_untilの半開区間だけを変更�
 fn test_execute_空_日付指定は予定候補外のpendingを変更しない() {
     let now = Local.with_ymd_and_hms(2026, 8, 14, 12, 0, 0).unwrap();
     let schronu_day_start = Local.with_ymd_and_hms(2026, 8, 15, 6, 0, 0).unwrap();
-    let task = TaskHandle::new("予定候補外のpending").unwrap();
+    let task = TaskHandle::with_identity(
+        "予定候補外のpending",
+        uuid::Uuid::new_v4(),
+        chrono::Local::now(),
+    )
+    .unwrap();
     task.set_start_time(schronu_day_start + Duration::days(1));
     task.set_estimated_work_seconds(30 * 60);
     task.set_orig_status(Status::Pending);
@@ -5026,7 +5070,9 @@ fn test_execute_空_日付指定は予定候補外のpendingを変更しない()
 #[test]
 fn test_execute_日付指定の不正入力は状態を変更しない() {
     let now = Local.with_ymd_and_hms(2026, 8, 14, 12, 0, 0).unwrap();
-    let task = TaskHandle::new("不正入力対象").unwrap();
+    let task =
+        TaskHandle::with_identity("不正入力対象", uuid::Uuid::new_v4(), chrono::Local::now())
+            .unwrap();
     task.set_start_time(now);
     let task_id = task.get_id().unwrap();
 
@@ -5039,7 +5085,9 @@ fn test_execute_日付指定の不正入力は状態を変更しない() {
 #[test]
 fn test_execute_空_2引数は従来通り現在時刻基準で処理する() {
     let now = Local.with_ymd_and_hms(2026, 8, 14, 12, 0, 0).unwrap();
-    let task = TaskHandle::new("従来の空対象").unwrap();
+    let task =
+        TaskHandle::with_identity("従来の空対象", uuid::Uuid::new_v4(), chrono::Local::now())
+            .unwrap();
     task.set_start_time(now);
     let task_id = task.get_id().unwrap();
 
@@ -5055,7 +5103,9 @@ fn test_execute_空_2引数は従来通り現在時刻基準で処理する() {
 #[test]
 fn test_execute_集_2引数は従来通りtodoへ戻す() {
     let now = Local.with_ymd_and_hms(2026, 8, 14, 12, 0, 0).unwrap();
-    let task = TaskHandle::new("従来の集対象").unwrap();
+    let task =
+        TaskHandle::with_identity("従来の集対象", uuid::Uuid::new_v4(), chrono::Local::now())
+            .unwrap();
     task.set_start_time(now);
     task.set_orig_status(Status::Pending);
     task.set_pending_until(now + Duration::minutes(60));
@@ -5069,7 +5119,8 @@ fn test_execute_集_2引数は従来通りtodoへ戻す() {
 #[test]
 fn test_execute_pack_前倒し内容と集計を表示する() {
     let now = Local.with_ymd_and_hms(2026, 8, 11, 12, 0, 0).unwrap();
-    let task = TaskHandle::new("前倒し対象").unwrap();
+    let task = TaskHandle::with_identity("前倒し対象", uuid::Uuid::new_v4(), chrono::Local::now())
+        .unwrap();
     task.sync_clock(now);
     task.set_start_time(now);
     task.set_estimated_work_seconds(30 * 60);
@@ -5094,7 +5145,8 @@ fn test_execute_pack_前倒し内容と集計を表示する() {
 #[test]
 fn test_execute_pack_候補なしを表示する() {
     let now = Local.with_ymd_and_hms(2026, 8, 11, 12, 0, 0).unwrap();
-    let task = TaskHandle::new("対象外").unwrap();
+    let task =
+        TaskHandle::with_identity("対象外", uuid::Uuid::new_v4(), chrono::Local::now()).unwrap();
     task.sync_clock(now);
     let repository = TestTaskRepository::new(task, now);
     let mut free_time_manager = TestFreeTimeManagerWithFreeMinutes { free_minutes: 120 };
@@ -5111,7 +5163,8 @@ fn test_execute_pack_候補なしを表示する() {
 #[test]
 fn test_execute_pack_収まらない候補はスキップ件数だけを表示する() {
     let now = Local.with_ymd_and_hms(2026, 8, 11, 12, 0, 0).unwrap();
-    let task = TaskHandle::new("大きい").unwrap();
+    let task =
+        TaskHandle::with_identity("大きい", uuid::Uuid::new_v4(), chrono::Local::now()).unwrap();
     task.sync_clock(now);
     task.set_start_time(now);
     task.set_estimated_work_seconds(60 * 60);
@@ -5134,7 +5187,8 @@ fn test_execute_pack_収まらない候補はスキップ件数だけを表示�
 fn test_execute_詰とpackの両aliasで製品command経路を実行する() {
     for command in ["詰", "pack"] {
         let now = Local.with_ymd_and_hms(2026, 8, 11, 12, 0, 0).unwrap();
-        let task = TaskHandle::new("対象").unwrap();
+        let task =
+            TaskHandle::with_identity("対象", uuid::Uuid::new_v4(), chrono::Local::now()).unwrap();
         task.sync_clock(now);
         task.set_start_time(now);
         task.set_estimated_work_seconds(30 * 60);
@@ -5426,7 +5480,12 @@ fn test_execute_表示コマンドはwriter固有の改行処理を保持する(
     let now = Local.with_ymd_and_hms(2026, 8, 11, 12, 0, 0).unwrap();
 
     for command in ["今", "暦", "帯"] {
-        let task = TaskHandle::new("改行処理確認用タスク").unwrap();
+        let task = TaskHandle::with_identity(
+            "改行処理確認用タスク",
+            uuid::Uuid::new_v4(),
+            chrono::Local::now(),
+        )
+        .unwrap();
         task.set_estimated_work_seconds(60 * 60);
         task.set_start_time(now);
         task.set_pending_until(now);
@@ -5463,7 +5522,12 @@ fn test_execute_表示コマンドはwriter固有の改行処理を保持する(
 #[test]
 fn test_execute_改行出力の失敗を捕捉して後続出力を継続する() {
     let now = Local.with_ymd_and_hms(2026, 8, 11, 12, 0, 0).unwrap();
-    let task = TaskHandle::new("出力失敗確認用タスク").unwrap();
+    let task = TaskHandle::with_identity(
+        "出力失敗確認用タスク",
+        uuid::Uuid::new_v4(),
+        chrono::Local::now(),
+    )
+    .unwrap();
     task.set_estimated_work_seconds(60 * 60);
     task.set_start_time(now);
     let mut task_repository = TestTaskRepository::new(task, now);
@@ -5492,14 +5556,17 @@ fn test_execute_改行出力の失敗を捕捉して後続出力を継続する(
 #[test]
 fn task_tree表示commandは製品経路でtyped_fieldと表示modelを反映する() {
     let now = Local.with_ymd_and_hms(2026, 8, 11, 12, 0, 0).unwrap();
-    let root = TaskHandle::new("ROOT").unwrap();
+    let root =
+        TaskHandle::with_identity("ROOT", uuid::Uuid::new_v4(), chrono::Local::now()).unwrap();
     root.set_estimated_work_seconds(0);
-    let mut matched_attr = TaskAttr::new("BOUNDARY_MATCH");
+    let mut matched_attr =
+        TaskAttr::with_identity("BOUNDARY_MATCH", uuid::Uuid::new_v4(), chrono::Local::now());
     matched_attr.set_estimated_work_seconds(15 * 60);
     matched_attr.set_start_time(now);
     let matched = root.create_as_last_child(matched_attr);
     matched.sync_clock(now);
-    let mut other_attr = TaskAttr::new("BOUNDARY_OTHER");
+    let mut other_attr =
+        TaskAttr::with_identity("BOUNDARY_OTHER", uuid::Uuid::new_v4(), chrono::Local::now());
     other_attr.set_estimated_work_seconds(15 * 60);
     other_attr.set_start_time(now);
     let other = root.create_as_last_child(other_attr);
@@ -5583,7 +5650,9 @@ fn task_tree表示commandは製品経路でtyped_fieldと表示modelを反映す
 fn calendarとbandは製品経路で代表出力とansi_capabilityを維持する() {
     let now = Local.with_ymd_and_hms(2026, 8, 11, 12, 0, 0).unwrap();
     let make_task = || {
-        let task = TaskHandle::new("BOUNDARY_DAILY").unwrap();
+        let task =
+            TaskHandle::with_identity("BOUNDARY_DAILY", uuid::Uuid::new_v4(), chrono::Local::now())
+                .unwrap();
         task.set_estimated_work_seconds(60 * 60);
         task.set_start_time(now);
         task.set_pending_until(now);
@@ -5609,7 +5678,8 @@ fn calendarとbandは製品経路で代表出力とansi_capabilityを維持す�
 #[test]
 fn task_tree表示commandは製品経路で必ず1回flushする() {
     let now = Local.with_ymd_and_hms(2026, 8, 11, 12, 0, 0).unwrap();
-    let task = TaskHandle::new("flush対象").unwrap();
+    let task =
+        TaskHandle::with_identity("flush対象", uuid::Uuid::new_v4(), chrono::Local::now()).unwrap();
     task.set_estimated_work_seconds(15 * 60);
     task.set_start_time(now);
     let task_id = task.get_id().unwrap();
@@ -5655,7 +5725,12 @@ fn task_tree表示commandは製品経路で必ず1回flushする() {
 #[test]
 fn task_tree表示commandはflush_errorとbroken_pipeを製品経路で分類する() {
     let now = Local.with_ymd_and_hms(2026, 8, 11, 12, 0, 0).unwrap();
-    let task = TaskHandle::new("flush error対象").unwrap();
+    let task = TaskHandle::with_identity(
+        "flush error対象",
+        uuid::Uuid::new_v4(),
+        chrono::Local::now(),
+    )
+    .unwrap();
     let task_id = task.get_id().unwrap();
 
     let execute_with_error = |kind| {
@@ -5691,7 +5766,9 @@ fn breakdownとsplitは製品経路で必ず1回flushする() {
     let now = Local.with_ymd_and_hms(2026, 8, 11, 12, 0, 0).unwrap();
 
     for command in ["下 child", "割 15 child", "待"] {
-        let task = TaskHandle::new("flush対象").unwrap();
+        let task =
+            TaskHandle::with_identity("flush対象", uuid::Uuid::new_v4(), chrono::Local::now())
+                .unwrap();
         task.set_estimated_work_seconds(30 * 60);
         let task_id = task.get_id().unwrap();
         let mut task_repository = TestTaskRepository::new(task, now);
@@ -5719,7 +5796,12 @@ fn breakdownとsplitはflush_errorとbroken_pipeを製品経路で分類する()
 
     for command in ["下 child", "割 15 child", "待"] {
         let execute_with_error = |kind| {
-            let task = TaskHandle::new("flush error対象").unwrap();
+            let task = TaskHandle::with_identity(
+                "flush error対象",
+                uuid::Uuid::new_v4(),
+                chrono::Local::now(),
+            )
+            .unwrap();
             task.set_estimated_work_seconds(30 * 60);
             let task_id = task.get_id().unwrap();
             let mut task_repository = TestTaskRepository::new(task, now);
@@ -5763,7 +5845,9 @@ fn task属性更新commandは製品経路で必ず1回flushする() {
         "類 資",
         "働 5",
     ] {
-        let task = TaskHandle::new("flush対象").unwrap();
+        let task =
+            TaskHandle::with_identity("flush対象", uuid::Uuid::new_v4(), chrono::Local::now())
+                .unwrap();
         let task_id = task.get_id().unwrap();
         let mut task_repository = TestTaskRepository::new(task, now);
         let mut free_time_manager = TestFreeTimeManager;
@@ -5790,7 +5874,12 @@ fn task属性更新commandは製品経路で必ず1回flushする() {
 fn task属性更新commandはflush_errorとbroken_pipeを製品経路で分類する() {
     let execute_with_error = |error_kind| {
         let now = Local.with_ymd_and_hms(2026, 8, 11, 12, 0, 0).unwrap();
-        let task = TaskHandle::new("flush error対象").unwrap();
+        let task = TaskHandle::with_identity(
+            "flush error対象",
+            uuid::Uuid::new_v4(),
+            chrono::Local::now(),
+        )
+        .unwrap();
         let task_id = task.get_id().unwrap();
         let mut task_repository = TestTaskRepository::new(task, now);
         let mut free_time_manager = TestFreeTimeManager;
@@ -5835,7 +5924,12 @@ fn defer系の通常interactive_commandはflushしshortcutはflushしない() {
         "空 10:00",
         "集 10:00",
     ] {
-        let task = TaskHandle::new("通常commandのflush対象").unwrap();
+        let task = TaskHandle::with_identity(
+            "通常commandのflush対象",
+            uuid::Uuid::new_v4(),
+            chrono::Local::now(),
+        )
+        .unwrap();
         let task_id = task.get_id().unwrap();
         let mut task_repository = TestTaskRepository::new(task, now);
         let mut free_time_manager = TestFreeTimeManager;
@@ -5858,7 +5952,12 @@ fn defer系の通常interactive_commandはflushしshortcutはflushしない() {
     }
 
     for command in ["t", "h", "D", "d", "w", "W", "y"] {
-        let task = TaskHandle::new("shortcutのflush対象").unwrap();
+        let task = TaskHandle::with_identity(
+            "shortcutのflush対象",
+            uuid::Uuid::new_v4(),
+            chrono::Local::now(),
+        )
+        .unwrap();
         let task_id = task.get_id().unwrap();
         let mut task_repository = TestTaskRepository::new(task, now);
         let mut free_time_manager = TestFreeTimeManager;
@@ -5884,9 +5983,18 @@ fn defer系の通常interactive_commandはflushしshortcutはflushしない() {
 #[test]
 fn interactive低優先度modeは共通outcome経路でfocusと表示を更新する() {
     let now = Local.with_ymd_and_hms(2026, 8, 18, 12, 0, 0).unwrap();
-    let root = TaskHandle::new("root").unwrap();
-    let high_priority_task = root.create_as_last_child(TaskAttr::new("高優先度候補"));
-    let low_priority_task = root.create_as_last_child(TaskAttr::new("低優先度候補"));
+    let root =
+        TaskHandle::with_identity("root", uuid::Uuid::new_v4(), chrono::Local::now()).unwrap();
+    let high_priority_task = root.create_as_last_child(TaskAttr::with_identity(
+        "高優先度候補",
+        uuid::Uuid::new_v4(),
+        chrono::Local::now(),
+    ));
+    let low_priority_task = root.create_as_last_child(TaskAttr::with_identity(
+        "低優先度候補",
+        uuid::Uuid::new_v4(),
+        chrono::Local::now(),
+    ));
     let high_priority_task_id = high_priority_task.get_id().unwrap();
     let low_priority_task_id = low_priority_task.get_id().unwrap();
     let mut task_repository = TestTaskRepository::new(root, now);
@@ -5993,7 +6101,8 @@ impl FreeTimeManagerTrait for TestFreeTimeManagerByDate {
 #[cfg(test)]
 fn execute_sequential_command(command: &str) -> (TaskHandle, Option<Uuid>) {
     let now = Local.with_ymd_and_hms(2026, 7, 26, 12, 0, 0).unwrap();
-    let task = TaskHandle::new("親タスク").unwrap();
+    let task =
+        TaskHandle::with_identity("親タスク", uuid::Uuid::new_v4(), chrono::Local::now()).unwrap();
     let task_id = task.get_id().unwrap();
     let mut task_repository = TestTaskRepository::new(task.clone(), now);
     let mut free_time_manager = TestFreeTimeManager;
@@ -6015,18 +6124,22 @@ fn execute_sequential_command(command: &str) -> (TaskHandle, Option<Uuid>) {
 #[cfg(test)]
 fn execute_arrange_command(command: &str) -> TaskHandle {
     let now = Local.with_ymd_and_hms(2026, 8, 3, 12, 0, 0).unwrap();
-    let task = TaskHandle::new("ルーチン").unwrap();
+    let task =
+        TaskHandle::with_identity("ルーチン", uuid::Uuid::new_v4(), chrono::Local::now()).unwrap();
     task.set_repetition_interval_days_opt(Some(7));
 
-    let mut estimated_child_attr = TaskAttr::new("見積もりあり");
+    let mut estimated_child_attr =
+        TaskAttr::with_identity("見積もりあり", uuid::Uuid::new_v4(), chrono::Local::now());
     estimated_child_attr.set_estimated_work_seconds(5 * 60);
     task.create_as_last_child(estimated_child_attr);
 
-    let mut zero_estimate_child_attr = TaskAttr::new("見積もり0");
+    let mut zero_estimate_child_attr =
+        TaskAttr::with_identity("見積もり0", uuid::Uuid::new_v4(), chrono::Local::now());
     zero_estimate_child_attr.set_estimated_work_seconds(0);
     task.create_as_last_child(zero_estimate_child_attr);
 
-    let mut done_child_attr = TaskAttr::new("完了済み");
+    let mut done_child_attr =
+        TaskAttr::with_identity("完了済み", uuid::Uuid::new_v4(), chrono::Local::now());
     done_child_attr.set_estimated_work_seconds(10 * 60);
     done_child_attr.set_orig_status(Status::Done);
     task.create_as_last_child(done_child_attr);
@@ -6052,7 +6165,8 @@ fn execute_arrange_command(command: &str) -> TaskHandle {
 #[test]
 fn test_select_focus_task_id_高優先度modeでは最優先leafを返す() {
     let now = Local.with_ymd_and_hms(2026, 8, 11, 12, 0, 0).unwrap();
-    let task = TaskHandle::new("タスク").unwrap();
+    let task =
+        TaskHandle::with_identity("タスク", uuid::Uuid::new_v4(), chrono::Local::now()).unwrap();
     let expected_id = task.get_id().unwrap();
     let mut task_repository = TestTaskRepository::new(task, now);
     task_repository.highest_priority_leaf_task_id_opt = Some(expected_id);
@@ -6065,7 +6179,8 @@ fn test_select_focus_task_id_高優先度modeでは最優先leafを返す() {
 #[test]
 fn test_select_focus_task_id_低優先度modeでは指定日数の延期候補を返す() {
     let now = Local.with_ymd_and_hms(2026, 8, 11, 12, 0, 0).unwrap();
-    let task = TaskHandle::new("タスク").unwrap();
+    let task =
+        TaskHandle::with_identity("タスク", uuid::Uuid::new_v4(), chrono::Local::now()).unwrap();
     let expected_id = Uuid::new_v4();
     let mut task_repository = TestTaskRepository::new(task, now);
     task_repository.defer_candidate_leaf_task_id_opt = Some(expected_id);
@@ -6086,7 +6201,9 @@ fn test_select_focus_task_id_低優先度modeでは指定日数の延期候補�
 fn test_execute_all_pendingタスクを予定時刻に含め_doneタスクを除外する() {
     let now = Local.with_ymd_and_hms(2026, 8, 11, 12, 0, 0).unwrap();
 
-    let pending_task = TaskHandle::new("延期中タスク").unwrap();
+    let pending_task =
+        TaskHandle::with_identity("延期中タスク", uuid::Uuid::new_v4(), chrono::Local::now())
+            .unwrap();
     pending_task.set_start_time(now);
     pending_task.sync_clock(now);
     pending_task.set_pending_until(now + Duration::hours(2));
@@ -6098,7 +6215,9 @@ fn test_execute_all_pendingタスクを予定時刻に含め_doneタスクを除
         "全",
     );
 
-    let done_task = TaskHandle::new("完了済みタスク").unwrap();
+    let done_task =
+        TaskHandle::with_identity("完了済みタスク", uuid::Uuid::new_v4(), chrono::Local::now())
+            .unwrap();
     done_task.set_start_time(now);
     done_task.sync_clock(now);
     done_task.set_orig_status(Status::Done);
@@ -6117,7 +6236,12 @@ fn test_execute_all_pendingタスクを予定時刻に含め_doneタスクを除
 #[test]
 fn test_execute_all_project_categoryで絞り込む() {
     let now = Local.with_ymd_and_hms(2026, 8, 11, 12, 0, 0).unwrap();
-    let task = TaskHandle::new("カテゴリ対象タスク").unwrap();
+    let task = TaskHandle::with_identity(
+        "カテゴリ対象タスク",
+        uuid::Uuid::new_v4(),
+        chrono::Local::now(),
+    )
+    .unwrap();
     task.sync_clock(now);
     task.set_project_category_opt(Some(ProjectCategory::Investment));
 
@@ -6143,7 +6267,9 @@ fn show_allの製品経路はspreadsheet_formatterを使う() {
 #[cfg(test)]
 fn assert_show_all_spreadsheet_formatter_contract() {
     let now = Local.with_ymd_and_hms(2026, 8, 11, 12, 0, 0).unwrap();
-    let task = TaskHandle::new("夕食  の 準備").unwrap();
+    let task =
+        TaskHandle::with_identity("夕食  の 準備", uuid::Uuid::new_v4(), chrono::Local::now())
+            .unwrap();
     task.set_estimated_work_seconds(40 * 60);
     task.set_start_time(now);
     task.set_priority(1);
@@ -6167,18 +6293,27 @@ fn assert_show_all_spreadsheet_formatter_contract() {
 #[test]
 fn test_execute_all_締切順の予定時刻を表示する() {
     let now = Local.with_ymd_and_hms(2026, 8, 11, 12, 0, 0).unwrap();
-    let root_task = TaskHandle::new("親タスク").unwrap();
+    let root_task =
+        TaskHandle::with_identity("親タスク", uuid::Uuid::new_v4(), chrono::Local::now()).unwrap();
     root_task.sync_clock(now);
     root_task.set_estimated_work_seconds(0);
 
-    let mut late_deadline_attr = TaskAttr::new("締切が遅いタスク");
+    let mut late_deadline_attr = TaskAttr::with_identity(
+        "締切が遅いタスク",
+        uuid::Uuid::new_v4(),
+        chrono::Local::now(),
+    );
     late_deadline_attr.set_estimated_work_seconds(30 * 60);
     late_deadline_attr.set_start_time(now);
     late_deadline_attr.set_deadline_time_opt(Some(now + Duration::hours(3)));
     let late_deadline_task = root_task.create_as_last_child(late_deadline_attr);
     late_deadline_task.sync_clock(now);
 
-    let mut early_deadline_attr = TaskAttr::new("締切が早いタスク");
+    let mut early_deadline_attr = TaskAttr::with_identity(
+        "締切が早いタスク",
+        uuid::Uuid::new_v4(),
+        chrono::Local::now(),
+    );
     early_deadline_attr.set_estimated_work_seconds(15 * 60);
     early_deadline_attr.set_start_time(now);
     early_deadline_attr.set_deadline_time_opt(Some(now + Duration::hours(2)));
@@ -6217,7 +6352,9 @@ fn test_execute_all_締切順の予定時刻を表示する() {
 #[test]
 fn test_execute_new_新規projectを翌朝までpendingで作成する() {
     let now = Local.with_ymd_and_hms(2026, 8, 11, 12, 0, 0).unwrap();
-    let original_task = TaskHandle::new("既存タスク").unwrap();
+    let original_task =
+        TaskHandle::with_identity("既存タスク", uuid::Uuid::new_v4(), chrono::Local::now())
+            .unwrap();
     let result = execute_command_for_test(
         original_task.clone(),
         now,
@@ -6242,7 +6379,9 @@ fn test_execute_new_新規projectを翌朝までpendingで作成する() {
 #[test]
 fn test_execute_unplanned_延期と見積もりを省略して即時着手可能で作成する() {
     let now = Local.with_ymd_and_hms(2026, 8, 11, 12, 0, 0).unwrap();
-    let original_task = TaskHandle::new("既存タスク").unwrap();
+    let original_task =
+        TaskHandle::with_identity("既存タスク", uuid::Uuid::new_v4(), chrono::Local::now())
+            .unwrap();
     let result = execute_command_for_test(
         original_task.clone(),
         now,
@@ -6263,7 +6402,8 @@ fn test_execute_unplanned_延期と見積もりを省略して即時着手可能
 fn test_project作成commandの製品handler経路がtyped_fieldと表示とfocusを反映する() {
     let now = Local.with_ymd_and_hms(2026, 8, 11, 12, 0, 0).unwrap();
 
-    let new_root = TaskHandle::new("既存").unwrap();
+    let new_root =
+        TaskHandle::with_identity("既存", uuid::Uuid::new_v4(), chrono::Local::now()).unwrap();
     let new_result = execute_command_for_test(
         new_root.clone(),
         now,
@@ -6280,7 +6420,8 @@ fn test_project作成commandの製品handler経路がtyped_fieldと表示とfocu
         Some(new_result.task.get_id().unwrap())
     );
 
-    let hobby_root = TaskHandle::new("既存").unwrap();
+    let hobby_root =
+        TaskHandle::with_identity("既存", uuid::Uuid::new_v4(), chrono::Local::now()).unwrap();
     let hobby_result = execute_command_for_test(
         hobby_root.clone(),
         now,
@@ -6293,7 +6434,8 @@ fn test_project作成commandの製品handler経路がtyped_fieldと表示とfocu
         get_next_morning_datetime(now) + Duration::days(1399)
     );
 
-    let unplanned_root = TaskHandle::new("既存").unwrap();
+    let unplanned_root =
+        TaskHandle::with_identity("既存", uuid::Uuid::new_v4(), chrono::Local::now()).unwrap();
     let unplanned_result = execute_command_for_test(
         unplanned_root.clone(),
         now,
@@ -6306,7 +6448,8 @@ fn test_project作成commandの製品handler経路がtyped_fieldと表示とfocu
         Status::Todo
     );
 
-    let sequential_root = TaskHandle::new("親").unwrap();
+    let sequential_root =
+        TaskHandle::with_identity("親", uuid::Uuid::new_v4(), chrono::Local::now()).unwrap();
     let sequential_result = execute_command_for_test(
         sequential_root.clone(),
         now,
@@ -6324,7 +6467,8 @@ fn test_project作成commandの製品handler経路がtyped_fieldと表示とfocu
         )
     );
 
-    let repeat_root = TaskHandle::new("親").unwrap();
+    let repeat_root =
+        TaskHandle::with_identity("親", uuid::Uuid::new_v4(), chrono::Local::now()).unwrap();
     let repeat_result = execute_command_for_test(
         repeat_root.clone(),
         now,
@@ -6334,7 +6478,8 @@ fn test_project作成commandの製品handler経路がtyped_fieldと表示とfocu
     assert_eq!(repeat_result.task.get_children().unwrap().len(), 1);
     assert!(repeat_result.output.contains("習慣"));
 
-    let appointment_task = TaskHandle::new("予定").unwrap();
+    let appointment_task =
+        TaskHandle::with_identity("予定", uuid::Uuid::new_v4(), chrono::Local::now()).unwrap();
     let appointment_id = appointment_task.get_id().unwrap();
     let appointment_result =
         execute_command_for_test(appointment_task, now, Some(appointment_id), "約 14:30 8/12");
@@ -6344,7 +6489,8 @@ fn test_project作成commandの製品handler経路がtyped_fieldと表示とfocu
     );
     assert_eq!(appointment_result.focused_task_id_opt, Some(appointment_id));
 
-    let start_task = TaskHandle::new("開始").unwrap();
+    let start_task =
+        TaskHandle::with_identity("開始", uuid::Uuid::new_v4(), chrono::Local::now()).unwrap();
     let start_id = start_task.get_id().unwrap();
     let start_result = execute_command_for_test(start_task, now, Some(start_id), "始 16:45 8/13");
     assert_eq!(
@@ -6353,7 +6499,9 @@ fn test_project作成commandの製品handler経路がtyped_fieldと表示とfocu
     );
 
     for invalid_command in ["新 123 10", "連 手順 -1 1 2", "繰 習慣 -1 毎 09:00 10:00"] {
-        let task = TaskHandle::new("変更なし").unwrap();
+        let task =
+            TaskHandle::with_identity("変更なし", uuid::Uuid::new_v4(), chrono::Local::now())
+                .unwrap();
         let result = execute_command_for_test(
             task.clone(),
             now,
@@ -6369,7 +6517,8 @@ fn test_project作成commandの製品handler経路がtyped_fieldと表示とfocu
 fn test_execute_breakdown_子を順に作り締切を継承して最初の子へfocusする() {
     let now = Local.with_ymd_and_hms(2026, 8, 11, 12, 0, 0).unwrap();
     let deadline = Local.with_ymd_and_hms(2026, 8, 20, 23, 59, 59).unwrap();
-    let parent_task = TaskHandle::new("親タスク").unwrap();
+    let parent_task =
+        TaskHandle::with_identity("親タスク", uuid::Uuid::new_v4(), chrono::Local::now()).unwrap();
     parent_task.sync_clock(now);
     parent_task.set_deadline_time_opt(Some(deadline));
 
@@ -6402,7 +6551,8 @@ fn test_execute_breakdown_子を順に作り締切を継承して最初の子へ
 #[test]
 fn test_execute_breakdown_数値を含む引数では子を作らない() {
     let now = Local.with_ymd_and_hms(2026, 8, 11, 12, 0, 0).unwrap();
-    let parent_task = TaskHandle::new("親タスク").unwrap();
+    let parent_task =
+        TaskHandle::with_identity("親タスク", uuid::Uuid::new_v4(), chrono::Local::now()).unwrap();
     let parent_task_id = parent_task.get_id().unwrap();
 
     let result = execute_command_for_test(parent_task, now, Some(parent_task_id), "下 子タスク 15");
@@ -6414,7 +6564,8 @@ fn test_execute_breakdown_数値を含む引数では子を作らない() {
 #[test]
 fn test_execute_breakdown_親に締切がなければ子も締切なしで作る() {
     let now = Local.with_ymd_and_hms(2026, 8, 11, 12, 0, 0).unwrap();
-    let parent_task = TaskHandle::new("親タスク").unwrap();
+    let parent_task =
+        TaskHandle::with_identity("親タスク", uuid::Uuid::new_v4(), chrono::Local::now()).unwrap();
 
     let result = execute_command_for_test(
         parent_task.clone(),
@@ -6431,7 +6582,8 @@ fn test_execute_breakdown_親に締切がなければ子も締切なしで作る
 #[test]
 fn test_execute_wait_相手待ちにしてfocusを維持する() {
     let now = Local.with_ymd_and_hms(2026, 8, 11, 12, 0, 0).unwrap();
-    let task = TaskHandle::new("待機対象").unwrap();
+    let task =
+        TaskHandle::with_identity("待機対象", uuid::Uuid::new_v4(), chrono::Local::now()).unwrap();
     let task_id = task.get_id().unwrap();
 
     let result = execute_command_for_test(task, now, Some(task_id), "待");
@@ -6450,8 +6602,13 @@ fn test_execute_next_up_数値名と負の見積もりでは変更しない() {
         "上 新しい親 abc",
         "上 新しい親 9223372036854775808",
     ] {
-        let root = TaskHandle::new("root").unwrap();
-        let focused = root.create_as_last_child(TaskAttr::new("focus"));
+        let root =
+            TaskHandle::with_identity("root", uuid::Uuid::new_v4(), chrono::Local::now()).unwrap();
+        let focused = root.create_as_last_child(TaskAttr::with_identity(
+            "focus",
+            uuid::Uuid::new_v4(),
+            chrono::Local::now(),
+        ));
         let result = execute_command_for_test(root, now, Some(focused.get_id().unwrap()), command);
 
         assert_eq!(result.task.get_children().unwrap().len(), 1);
@@ -6465,7 +6622,8 @@ fn test_execute_next_up_数値名と負の見積もりでは変更しない() {
 
 #[test]
 fn test_execute_next_up_rootへの親追加失敗を構造化errorで返す() {
-    let root = TaskHandle::new("root").unwrap();
+    let root =
+        TaskHandle::with_identity("root", uuid::Uuid::new_v4(), chrono::Local::now()).unwrap();
     let mut stdout = TestWriter::new();
     let mut focused_task_id_opt = Some(root.get_id().unwrap());
     let before_estimated_work_seconds = root.get_estimated_work_seconds().unwrap();
@@ -6494,7 +6652,8 @@ fn test_execute_sequential_数値名と負の見積もりでは変更しない()
     let now = Local.with_ymd_and_hms(2026, 8, 11, 12, 0, 0).unwrap();
 
     for command in ["連 123 10 1 2", "連 子 -1 1 2"] {
-        let root = TaskHandle::new("root").unwrap();
+        let root =
+            TaskHandle::with_identity("root", uuid::Uuid::new_v4(), chrono::Local::now()).unwrap();
         let result =
             execute_command_for_test(root.clone(), now, Some(root.get_id().unwrap()), command);
 
@@ -6510,7 +6669,8 @@ fn test_execute_sequential_数値名と負の見積もりでは変更しない()
 #[test]
 fn test_execute_split_負数は親に残す時間として扱う() {
     let now = Local.with_ymd_and_hms(2026, 8, 11, 12, 0, 0).unwrap();
-    let root = TaskHandle::new("root").unwrap();
+    let root =
+        TaskHandle::with_identity("root", uuid::Uuid::new_v4(), chrono::Local::now()).unwrap();
     root.set_estimated_work_seconds(100 * 60);
 
     let result =
@@ -6536,7 +6696,8 @@ fn test_execute_split_数値名とoverflowでは変更しない() {
         "割 -9223372036854775808 子",
         "割 9223372036854775807 子",
     ] {
-        let root = TaskHandle::new("root").unwrap();
+        let root =
+            TaskHandle::with_identity("root", uuid::Uuid::new_v4(), chrono::Local::now()).unwrap();
         root.set_estimated_work_seconds(100 * 60);
         let result =
             execute_command_for_test(root.clone(), now, Some(root.get_id().unwrap()), command);
@@ -6554,7 +6715,8 @@ fn test_execute_split_数値名とoverflowでは変更しない() {
 #[test]
 fn test_execute_defer_指定時間までpendingにしてfocusを外す() {
     let now = Local.with_ymd_and_hms(2026, 8, 11, 12, 0, 0).unwrap();
-    let task = TaskHandle::new("延期対象").unwrap();
+    let task =
+        TaskHandle::with_identity("延期対象", uuid::Uuid::new_v4(), chrono::Local::now()).unwrap();
 
     let result =
         execute_command_for_test(task.clone(), now, Some(task.get_id().unwrap()), "後 5 分");
@@ -6570,7 +6732,8 @@ fn test_execute_defer_指定時間までpendingにしてfocusを外す() {
 #[test]
 fn test_execute_defer_日付指定はその日の朝までpendingにする() {
     let now = Local.with_ymd_and_hms(2026, 8, 11, 12, 0, 0).unwrap();
-    let task = TaskHandle::new("延期対象").unwrap();
+    let task =
+        TaskHandle::with_identity("延期対象", uuid::Uuid::new_v4(), chrono::Local::now()).unwrap();
 
     let result = execute_command_for_test(
         task.clone(),
@@ -6590,7 +6753,12 @@ fn test_execute_defer_日付指定はその日の朝までpendingにする() {
 #[test]
 fn test_execute_defer_余剰引数でも単位正規化と入力error表示を維持する() {
     let now = Local.with_ymd_and_hms(2026, 8, 11, 12, 0, 0).unwrap();
-    let task = TaskHandle::new("余剰引数の延期対象").unwrap();
+    let task = TaskHandle::with_identity(
+        "余剰引数の延期対象",
+        uuid::Uuid::new_v4(),
+        chrono::Local::now(),
+    )
+    .unwrap();
     let task_id = task.get_id().unwrap();
 
     let valid = execute_command_for_test(task.clone(), now, Some(task_id), "後 2 DAYS extra");
@@ -6613,8 +6781,13 @@ fn test_execute_defer_余剰引数でも単位正規化と入力error表示を�
 #[test]
 fn test_execute_finish_未完了の子があれば完了しない() {
     let now = Local.with_ymd_and_hms(2026, 8, 11, 12, 0, 0).unwrap();
-    let parent_task = TaskHandle::new("親タスク").unwrap();
-    parent_task.create_as_last_child(TaskAttr::new("未完了の子"));
+    let parent_task =
+        TaskHandle::with_identity("親タスク", uuid::Uuid::new_v4(), chrono::Local::now()).unwrap();
+    parent_task.create_as_last_child(TaskAttr::with_identity(
+        "未完了の子",
+        uuid::Uuid::new_v4(),
+        chrono::Local::now(),
+    ));
 
     let result = execute_command_for_test(
         parent_task.clone(),
@@ -6635,8 +6808,13 @@ fn test_execute_finish_未完了の子があれば完了しない() {
 #[test]
 fn test_execute_finish_未完了の子があれば不正引数でもtreeを表示する() {
     let now = Local.with_ymd_and_hms(2026, 8, 11, 12, 0, 0).unwrap();
-    let parent_task = TaskHandle::new("親タスク").unwrap();
-    parent_task.create_as_last_child(TaskAttr::new("未完了の子"));
+    let parent_task =
+        TaskHandle::with_identity("親タスク", uuid::Uuid::new_v4(), chrono::Local::now()).unwrap();
+    parent_task.create_as_last_child(TaskAttr::with_identity(
+        "未完了の子",
+        uuid::Uuid::new_v4(),
+        chrono::Local::now(),
+    ));
 
     let result = execute_command_for_test(
         parent_task.clone(),
@@ -6657,8 +6835,13 @@ fn test_execute_finish_未完了の子があれば不正引数でもtreeを表�
 #[test]
 fn test_execute_finish_唯一の子を完了すると親へfocusする() {
     let now = Local.with_ymd_and_hms(2026, 8, 11, 12, 0, 0).unwrap();
-    let parent_task = TaskHandle::new("親タスク").unwrap();
-    let child_task = parent_task.create_as_last_child(TaskAttr::new("子タスク"));
+    let parent_task =
+        TaskHandle::with_identity("親タスク", uuid::Uuid::new_v4(), chrono::Local::now()).unwrap();
+    let child_task = parent_task.create_as_last_child(TaskAttr::with_identity(
+        "子タスク",
+        uuid::Uuid::new_v4(),
+        chrono::Local::now(),
+    ));
 
     let result = execute_command_for_test(
         parent_task.clone(),
@@ -6686,10 +6869,13 @@ fn test_execute_finish_繰り返しtaskの見積もりを実績との差に応�
     let cases = [(1_000, 900), (200, 500), (600, 600)];
 
     for (actual_work_seconds, expected_estimated_work_seconds) in cases {
-        let parent_task = TaskHandle::new("繰り返しtask").unwrap();
+        let parent_task =
+            TaskHandle::with_identity("繰り返しtask", uuid::Uuid::new_v4(), chrono::Local::now())
+                .unwrap();
         parent_task.set_repetition_interval_days_opt(Some(7));
         parent_task.set_estimated_work_seconds(600);
-        let mut child_attr = TaskAttr::new("今回分");
+        let mut child_attr =
+            TaskAttr::with_identity("今回分", uuid::Uuid::new_v4(), chrono::Local::now());
         child_attr.set_actual_work_seconds(actual_work_seconds);
         let child_task = parent_task.create_as_last_child(child_attr);
 
@@ -6710,7 +6896,8 @@ fn test_execute_finish_繰り返しtaskの見積もりを実績との差に応�
 #[test]
 fn test_execute_repetition_数値だけの名前は拒否して元taskを変更しない() {
     let now = Local.with_ymd_and_hms(2026, 8, 11, 12, 0, 0).unwrap();
-    let task = TaskHandle::new("既存タスク").unwrap();
+    let task = TaskHandle::with_identity("既存タスク", uuid::Uuid::new_v4(), chrono::Local::now())
+        .unwrap();
     task.set_estimated_work_seconds(45 * 60);
 
     let result = execute_command_for_test(
@@ -6732,7 +6919,8 @@ fn test_execute_repetition_数値だけの名前は拒否して元taskを変更�
 #[test]
 fn test_execute_new_数値だけの名前は拒否して元taskを変更しない() {
     let now = Local.with_ymd_and_hms(2026, 8, 11, 12, 0, 0).unwrap();
-    let task = TaskHandle::new("既存タスク").unwrap();
+    let task = TaskHandle::with_identity("既存タスク", uuid::Uuid::new_v4(), chrono::Local::now())
+        .unwrap();
 
     let result =
         execute_command_for_test(task.clone(), now, Some(task.get_id().unwrap()), "新 123 10");
@@ -6747,7 +6935,9 @@ fn test_execute_repetition_不正な見積もりでは元taskを変更しない(
     let now = Local.with_ymd_and_hms(2026, 8, 11, 12, 0, 0).unwrap();
 
     for estimated_work_minutes in ["-1", "9223372036854775807"] {
-        let task = TaskHandle::new("既存タスク").unwrap();
+        let task =
+            TaskHandle::with_identity("既存タスク", uuid::Uuid::new_v4(), chrono::Local::now())
+                .unwrap();
         task.set_estimated_work_seconds(45 * 60);
         let command = format!("繰 反復 {estimated_work_minutes} 毎 09:00 10:00");
 
@@ -6767,7 +6957,8 @@ fn test_execute_repetition_不正な見積もりでは元taskを変更しない(
 #[test]
 fn test_execute_estimate_見積もりを更新し不正値では維持する() {
     let now = Local.with_ymd_and_hms(2026, 8, 11, 12, 0, 0).unwrap();
-    let task = TaskHandle::new("更新対象").unwrap();
+    let task =
+        TaskHandle::with_identity("更新対象", uuid::Uuid::new_v4(), chrono::Local::now()).unwrap();
     let task_id = task.get_id().unwrap();
 
     let updated = execute_command_for_test(task, now, Some(task_id), "予 45");
@@ -6783,7 +6974,8 @@ fn test_execute_estimate_見積もりを更新し不正値では維持する() {
 #[test]
 fn test_execute_estimate_不正値はfield付き入力エラーを表示して状態を変更しない() {
     let now = Local.with_ymd_and_hms(2026, 8, 11, 12, 0, 0).unwrap();
-    let task = TaskHandle::new("更新対象").unwrap();
+    let task =
+        TaskHandle::with_identity("更新対象", uuid::Uuid::new_v4(), chrono::Local::now()).unwrap();
     task.set_estimated_work_seconds(45 * 60);
     let task_id = task.get_id().unwrap();
 
@@ -6799,7 +6991,8 @@ fn test_execute_estimate_不正値はfield付き入力エラーを表示して�
 #[test]
 fn test_execute_actual_priority_work_typed値でtaskを更新する() {
     let now = Local.with_ymd_and_hms(2026, 8, 11, 12, 0, 0).unwrap();
-    let task = TaskHandle::new("更新対象").unwrap();
+    let task =
+        TaskHandle::with_identity("更新対象", uuid::Uuid::new_v4(), chrono::Local::now()).unwrap();
     let task_id = task.get_id().unwrap();
 
     let actual = execute_command_for_test(task, now, Some(task_id), "実 20");
@@ -6817,7 +7010,9 @@ fn test_execute_actual_priority_work_typed値でtaskを更新する() {
 fn test_execute_actual_priority_work_不正値はfield付き入力エラーで状態を変更しない() {
     let now = Local.with_ymd_and_hms(2026, 8, 11, 12, 0, 0).unwrap();
     for command in ["実 invalid", "重 invalid", "働 invalid"] {
-        let task = TaskHandle::new("更新対象").unwrap();
+        let task =
+            TaskHandle::with_identity("更新対象", uuid::Uuid::new_v4(), chrono::Local::now())
+                .unwrap();
         task.set_actual_work_seconds(20 * 60);
         task.set_priority(7);
         let task_id = task.get_id().unwrap();
@@ -6840,7 +7035,9 @@ fn test_execute_actual_work_overflowはfield付きerrorで状態を変更しな�
         format!("働 {}", i64::MAX),
         format!("働 {}", i64::MIN),
     ] {
-        let task = TaskHandle::new("更新対象").unwrap();
+        let task =
+            TaskHandle::with_identity("更新対象", uuid::Uuid::new_v4(), chrono::Local::now())
+                .unwrap();
         task.set_actual_work_seconds(20 * 60);
         let task_id = task.get_id().unwrap();
 
@@ -6855,7 +7052,8 @@ fn test_execute_actual_work_overflowはfield付きerrorで状態を変更しな�
 #[test]
 fn test_execute_deadline_締切を設定して解除する() {
     let now = Local.with_ymd_and_hms(2026, 8, 11, 12, 0, 0).unwrap();
-    let task = TaskHandle::new("更新対象").unwrap();
+    let task =
+        TaskHandle::with_identity("更新対象", uuid::Uuid::new_v4(), chrono::Local::now()).unwrap();
     let task_id = task.get_id().unwrap();
 
     let updated = execute_command_for_test(task, now, Some(task_id), "〆 2026/08/20");
@@ -6879,7 +7077,8 @@ fn test_execute_deadline_締切を設定して解除する() {
         Some(Local.with_ymd_and_hms(2026, 8, 11, 14, 30, 0).unwrap())
     );
 
-    let today_task = TaskHandle::new("今日締切").unwrap();
+    let today_task =
+        TaskHandle::with_identity("今日締切", uuid::Uuid::new_v4(), chrono::Local::now()).unwrap();
     let today_task_id = today_task.get_id().unwrap();
     let today = execute_command_for_test(today_task, now, Some(today_task_id), "〆 今日");
     assert_eq!(
@@ -6887,7 +7086,8 @@ fn test_execute_deadline_締切を設定して解除する() {
         Some(Local.with_ymd_and_hms(2026, 8, 11, 23, 59, 59).unwrap())
     );
 
-    let tomorrow_task = TaskHandle::new("明日締切").unwrap();
+    let tomorrow_task =
+        TaskHandle::with_identity("明日締切", uuid::Uuid::new_v4(), chrono::Local::now()).unwrap();
     let tomorrow_task_id = tomorrow_task.get_id().unwrap();
     let tomorrow = execute_command_for_test(tomorrow_task, now, Some(tomorrow_task_id), "〆 明日");
     assert_eq!(
@@ -6899,7 +7099,8 @@ fn test_execute_deadline_締切を設定して解除する() {
 #[test]
 fn test_execute_deadline_不正日時はfield付き入力エラーを表示して状態を変更しない() {
     let now = Local.with_ymd_and_hms(2026, 8, 11, 12, 0, 0).unwrap();
-    let task = TaskHandle::new("更新対象").unwrap();
+    let task =
+        TaskHandle::with_identity("更新対象", uuid::Uuid::new_v4(), chrono::Local::now()).unwrap();
     let task_id = task.get_id().unwrap();
     let previous_deadline = Local.with_ymd_and_hms(2026, 8, 20, 23, 59, 59).unwrap();
     task.set_deadline_time_opt(Some(previous_deadline));
@@ -7065,7 +7266,8 @@ fn test_execute_sequential_接尾辞なしではハイフンを付けない() {
 fn test_execute_finish_引数なしは実作業時間を自動加算して現在時刻で完了する() {
     let now = Local.with_ymd_and_hms(2026, 5, 17, 12, 5, 0).unwrap();
     let focus_started_datetime = Local.with_ymd_and_hms(2026, 5, 17, 12, 0, 0).unwrap();
-    let task = TaskHandle::new("タスク").unwrap();
+    let task =
+        TaskHandle::with_identity("タスク", uuid::Uuid::new_v4(), chrono::Local::now()).unwrap();
     task.set_actual_work_seconds(60);
     let task_id = task.get_id().unwrap();
     let mut task_repository = TestTaskRepository::new(task.clone(), now);
@@ -7095,7 +7297,8 @@ fn test_execute_finish_引数なしは実作業時間を自動加算して現在
 fn test_execute_finish_今は実作業時間を自動加算せず現在時刻で完了する() {
     let now = Local.with_ymd_and_hms(2026, 5, 17, 12, 5, 0).unwrap();
     let focus_started_datetime = Local.with_ymd_and_hms(2026, 5, 17, 12, 0, 0).unwrap();
-    let task = TaskHandle::new("タスク").unwrap();
+    let task =
+        TaskHandle::with_identity("タスク", uuid::Uuid::new_v4(), chrono::Local::now()).unwrap();
     task.set_actual_work_seconds(60);
     let task_id = task.get_id().unwrap();
     let mut task_repository = TestTaskRepository::new(task.clone(), now);
@@ -7125,7 +7328,8 @@ fn test_execute_finish_今は実作業時間を自動加算せず現在時刻で
 fn test_execute_finish_時刻指定は実作業時間を自動加算せず指定時刻で完了する() {
     let now = Local.with_ymd_and_hms(2026, 5, 17, 12, 5, 0).unwrap();
     let focus_started_datetime = Local.with_ymd_and_hms(2026, 5, 17, 12, 0, 0).unwrap();
-    let task = TaskHandle::new("タスク").unwrap();
+    let task =
+        TaskHandle::with_identity("タスク", uuid::Uuid::new_v4(), chrono::Local::now()).unwrap();
     task.set_actual_work_seconds(60);
     let task_id = task.get_id().unwrap();
     let mut task_repository = TestTaskRepository::new(task.clone(), now);
@@ -7158,7 +7362,8 @@ fn test_execute_finish_時刻指定は実作業時間を自動加算せず指定
 fn test_execute_finish_秒つき時刻指定は指定秒で完了する() {
     let now = Local.with_ymd_and_hms(2026, 5, 17, 12, 5, 0).unwrap();
     let focus_started_datetime = Local.with_ymd_and_hms(2026, 5, 17, 12, 0, 0).unwrap();
-    let task = TaskHandle::new("タスク").unwrap();
+    let task =
+        TaskHandle::with_identity("タスク", uuid::Uuid::new_v4(), chrono::Local::now()).unwrap();
     task.set_actual_work_seconds(60);
     let task_id = task.get_id().unwrap();
     let mut task_repository = TestTaskRepository::new(task.clone(), now);
@@ -7191,7 +7396,8 @@ fn test_execute_finish_秒つき時刻指定は指定秒で完了する() {
 fn test_execute_finish_不正な引数では完了しない() {
     let now = Local.with_ymd_and_hms(2026, 5, 17, 12, 5, 0).unwrap();
     let focus_started_datetime = Local.with_ymd_and_hms(2026, 5, 17, 12, 0, 0).unwrap();
-    let task = TaskHandle::new("タスク").unwrap();
+    let task =
+        TaskHandle::with_identity("タスク", uuid::Uuid::new_v4(), chrono::Local::now()).unwrap();
     task.set_actual_work_seconds(60);
     let task_id = task.get_id().unwrap();
     let mut task_repository = TestTaskRepository::new(task.clone(), now);
@@ -7221,7 +7427,8 @@ fn test_execute_finish_不正な引数では完了しない() {
 fn test_execute_today_カテゴリ別の予定時間集計を表示する() {
     let now = Local.with_ymd_and_hms(2026, 5, 17, 12, 0, 0).unwrap();
     let focus_started_datetime = now;
-    let task = TaskHandle::new("投資タスク").unwrap();
+    let task = TaskHandle::with_identity("投資タスク", uuid::Uuid::new_v4(), chrono::Local::now())
+        .unwrap();
     task.set_project_category_opt(Some(ProjectCategory::Investment));
     task.set_estimated_work_seconds(60 * 60);
     task.set_start_time(now);
@@ -7251,7 +7458,8 @@ fn test_execute_today_カテゴリ別の予定時間集計を表示する() {
 fn test_execute_set_project_category_表示記号でカテゴリを設定する() {
     let now = Local.with_ymd_and_hms(2026, 5, 17, 12, 0, 0).unwrap();
     let focus_started_datetime = now;
-    let task = TaskHandle::new("タスク").unwrap();
+    let task =
+        TaskHandle::with_identity("タスク", uuid::Uuid::new_v4(), chrono::Local::now()).unwrap();
     let task_id = task.get_id().unwrap();
     let mut task_repository = TestTaskRepository::new(task.clone(), now);
     let mut free_time_manager = TestFreeTimeManager;
@@ -7281,7 +7489,8 @@ fn test_execute_set_project_category_表示記号でカテゴリを設定する(
 fn test_execute_set_project_category_英語aliasでカテゴリを設定する() {
     let now = Local.with_ymd_and_hms(2026, 5, 17, 12, 0, 0).unwrap();
     let focus_started_datetime = now;
-    let task = TaskHandle::new("タスク").unwrap();
+    let task =
+        TaskHandle::with_identity("タスク", uuid::Uuid::new_v4(), chrono::Local::now()).unwrap();
     let task_id = task.get_id().unwrap();
     let mut task_repository = TestTaskRepository::new(task.clone(), now);
     let mut free_time_manager = TestFreeTimeManager;
@@ -7329,7 +7538,8 @@ fn test_execute_set_project_category_英語aliasでカテゴリを設定する()
 fn test_execute_set_project_category_未分類に戻す() {
     let now = Local.with_ymd_and_hms(2026, 5, 17, 12, 0, 0).unwrap();
     let focus_started_datetime = now;
-    let task = TaskHandle::new("タスク").unwrap();
+    let task =
+        TaskHandle::with_identity("タスク", uuid::Uuid::new_v4(), chrono::Local::now()).unwrap();
     task.set_project_category_opt(Some(ProjectCategory::Investment));
     let task_id = task.get_id().unwrap();
     let mut task_repository = TestTaskRepository::new(task.clone(), now);
@@ -7361,7 +7571,8 @@ fn test_execute_set_project_category_未分類に戻す() {
 fn test_execute_set_project_category_不正カテゴリでは変更しない() {
     let now = Local.with_ymd_and_hms(2026, 5, 17, 12, 0, 0).unwrap();
     let focus_started_datetime = now;
-    let task = TaskHandle::new("タスク").unwrap();
+    let task =
+        TaskHandle::with_identity("タスク", uuid::Uuid::new_v4(), chrono::Local::now()).unwrap();
     task.set_project_category_opt(Some(ProjectCategory::Investment));
     let task_id = task.get_id().unwrap();
     let mut task_repository = TestTaskRepository::new(task.clone(), now);
@@ -7391,7 +7602,9 @@ fn test_execute_set_project_category_不正カテゴリでは変更しない() {
 #[test]
 fn test_execute_category_不正値はfield付き入力エラーを表示して状態を変更しない() {
     let now = Local.with_ymd_and_hms(2026, 8, 11, 12, 0, 0).unwrap();
-    let task = TaskHandle::new("カテゴリ対象").unwrap();
+    let task =
+        TaskHandle::with_identity("カテゴリ対象", uuid::Uuid::new_v4(), chrono::Local::now())
+            .unwrap();
     let task_id = task.get_id().unwrap();
     task.set_project_category_opt(Some(ProjectCategory::Investment));
 
@@ -8348,7 +8561,11 @@ fn add_scheduled_child_for_test(
     start_time: DateTime<Local>,
     estimated_work_minutes: i64,
 ) -> TaskHandle {
-    let child = root.create_as_last_child(TaskAttr::new(name));
+    let child = root.create_as_last_child(TaskAttr::with_identity(
+        name,
+        uuid::Uuid::new_v4(),
+        chrono::Local::now(),
+    ));
     child.set_estimated_work_seconds(estimated_work_minutes * 60);
     child.set_start_time(start_time);
     child.set_pending_until(start_time);
@@ -8390,7 +8607,8 @@ fn execute_flatten_command_for_test(
 fn test_execute_flatten_過負荷日では葉より親を先に翌日へ延期する() {
     let now = Local.with_ymd_and_hms(2026, 8, 13, 6, 0, 0).unwrap();
     let today = now.date_naive();
-    let root = TaskHandle::new("平テスト").unwrap();
+    let root =
+        TaskHandle::with_identity("平テスト", uuid::Uuid::new_v4(), chrono::Local::now()).unwrap();
     root.set_estimated_work_seconds(30 * 60);
     root.set_start_time(now);
     root.set_pending_until(now);
@@ -8432,7 +8650,8 @@ fn test_execute_flatten_過負荷日では葉より親を先に翌日へ延期�
 fn test_execute_flatten_多階層ではrankが大きい親から延期する() {
     let now = Local.with_ymd_and_hms(2026, 8, 13, 6, 0, 0).unwrap();
     let today = now.date_naive();
-    let root = TaskHandle::new("平テスト").unwrap();
+    let root =
+        TaskHandle::with_identity("平テスト", uuid::Uuid::new_v4(), chrono::Local::now()).unwrap();
     root.set_estimated_work_seconds(30 * 60);
     root.set_start_time(now);
     root.set_pending_until(now);
@@ -8474,7 +8693,8 @@ fn test_execute_flatten_多階層ではrankが大きい親から延期する() {
 fn test_execute_flatten_親だけで解消できなければ低優先度の葉も連鎖延期する() {
     let now = Local.with_ymd_and_hms(2026, 8, 13, 6, 0, 0).unwrap();
     let today = now.date_naive();
-    let root = TaskHandle::new("平テスト").unwrap();
+    let root =
+        TaskHandle::with_identity("平テスト", uuid::Uuid::new_v4(), chrono::Local::now()).unwrap();
     root.set_estimated_work_seconds(30 * 60);
     root.set_start_time(now);
     root.set_pending_until(now);
@@ -8536,7 +8756,9 @@ fn test_execute_flatten_余裕日と100percentちょうどの日は変更しな�
     let today = now.date_naive();
 
     for command in ["平", "flatten", "flat"] {
-        let root = TaskHandle::new("平テスト").unwrap();
+        let root =
+            TaskHandle::with_identity("平テスト", uuid::Uuid::new_v4(), chrono::Local::now())
+                .unwrap();
         root.set_estimated_work_seconds(0);
         let target = add_scheduled_child_for_test(&root, "変更しない", now, 60);
 
@@ -8566,7 +8788,8 @@ fn test_execute_flatten_28日境界の超過を29日から34日を飛ばして35
     let today = now.date_naive();
     let boundary_date = today + Duration::days(28);
     let overflow_date = today + Duration::days(35);
-    let root = TaskHandle::new("平テスト").unwrap();
+    let root =
+        TaskHandle::with_identity("平テスト", uuid::Uuid::new_v4(), chrono::Local::now()).unwrap();
     root.set_estimated_work_seconds(0);
     let boundary_start = subjective_date_start(boundary_date);
     let keeper = add_scheduled_child_for_test(&root, "境界に残す", boundary_start, 30);
@@ -8629,7 +8852,8 @@ fn test_execute_flatten_28日境界の超過を29日から34日を飛ばして35
 fn test_execute_flatten_日容量を超えるtaskだけでは解消不能として状態を変更しない() {
     let now = Local.with_ymd_and_hms(2026, 8, 13, 6, 0, 0).unwrap();
     let today = now.date_naive();
-    let root = TaskHandle::new("平テスト").unwrap();
+    let root =
+        TaskHandle::with_identity("平テスト", uuid::Uuid::new_v4(), chrono::Local::now()).unwrap();
     root.set_estimated_work_seconds(0);
     let target = add_scheduled_child_for_test(&root, "大きすぎる", now, 90);
 
@@ -8664,7 +8888,8 @@ fn test_execute_flatten_日容量を超えるtaskだけでは解消不能とし�
 fn test_execute_flatten_未解消の超過が1分未満でも切り上げて表示する() {
     let now = Local.with_ymd_and_hms(2026, 8, 13, 6, 0, 0).unwrap();
     let today = now.date_naive();
-    let root = TaskHandle::new("平テスト").unwrap();
+    let root =
+        TaskHandle::with_identity("平テスト", uuid::Uuid::new_v4(), chrono::Local::now()).unwrap();
     root.set_estimated_work_seconds(0);
     let target = add_scheduled_child_for_test(&root, "1秒超過", now, 60);
     target.set_estimated_work_seconds(60 * 60 + 1);
@@ -8685,7 +8910,8 @@ fn test_execute_flatten_未解消の超過が1分未満でも切り上げて表�
 fn test_execute_flatten_業務日境界をまたぐtaskは延期しない() {
     let now = Local.with_ymd_and_hms(2026, 8, 13, 6, 0, 0).unwrap();
     let today = now.date_naive();
-    let root = TaskHandle::new("平テスト").unwrap();
+    let root =
+        TaskHandle::with_identity("平テスト", uuid::Uuid::new_v4(), chrono::Local::now()).unwrap();
     root.set_estimated_work_seconds(0);
     let target = add_scheduled_child_for_test(&root, "境界をまたぐ", now, 25 * 60);
 
@@ -8715,7 +8941,8 @@ fn test_execute_flatten_業務日境界をまたぐtaskは延期しない() {
 fn test_execute_flatten_業務日境界をまたぐtaskの全作業時間を開始日の業務日に計上する() {
     let now = Local.with_ymd_and_hms(2026, 8, 13, 6, 0, 0).unwrap();
     let today = now.date_naive();
-    let root = TaskHandle::new("平テスト").unwrap();
+    let root =
+        TaskHandle::with_identity("平テスト", uuid::Uuid::new_v4(), chrono::Local::now()).unwrap();
     root.set_estimated_work_seconds(0);
     add_scheduled_child_for_test(&root, "日境界をまたぐ", now, 25 * 60);
 
@@ -8737,7 +8964,8 @@ fn test_execute_flatten_業務日境界をまたぐtaskの全作業時間を開�
 fn test_execute_flatten_終了時刻が期限と等しいtaskは延期できる() {
     let now = Local.with_ymd_and_hms(2026, 8, 13, 6, 0, 0).unwrap();
     let today = now.date_naive();
-    let root = TaskHandle::new("平テスト").unwrap();
+    let root =
+        TaskHandle::with_identity("平テスト", uuid::Uuid::new_v4(), chrono::Local::now()).unwrap();
     root.set_estimated_work_seconds(0);
     root.set_deadline_time_opt(Some(
         subjective_date_start(today + Duration::days(1)) + Duration::minutes(30),
@@ -8766,7 +8994,8 @@ fn test_execute_flatten_終了時刻が期限と等しいtaskは延期できる(
 fn test_execute_flatten_延期対象自身の期限補正で翌日06時を維持できなければ延期しない() {
     let now = Local.with_ymd_and_hms(2026, 8, 13, 6, 0, 0).unwrap();
     let today = now.date_naive();
-    let root = TaskHandle::new("平テスト").unwrap();
+    let root =
+        TaskHandle::with_identity("平テスト", uuid::Uuid::new_v4(), chrono::Local::now()).unwrap();
     root.set_estimated_work_seconds(0);
     let target = add_scheduled_child_for_test(&root, "平日を表すダミータスク(8/21)", now, 30);
     target.set_deadline_time_opt(Some(
@@ -8802,7 +9031,8 @@ fn test_execute_flatten_延期対象自身の期限補正で翌日06時を維持
 fn test_execute_flatten_待機taskと残作業0を延期候補から除外する() {
     let now = Local.with_ymd_and_hms(2026, 8, 13, 6, 0, 0).unwrap();
     let today = now.date_naive();
-    let root = TaskHandle::new("平テスト").unwrap();
+    let root =
+        TaskHandle::with_identity("平テスト", uuid::Uuid::new_v4(), chrono::Local::now()).unwrap();
     root.set_estimated_work_seconds(0);
     let movable = add_scheduled_child_for_test(&root, "移動対象", now, 30);
     let waiting = add_scheduled_child_for_test(&root, "待機", now, 30);
@@ -8843,7 +9073,9 @@ fn test_execute_flatten_35日後への退避で親の期限を超えるなら未
     let now = Local.with_ymd_and_hms(2026, 8, 13, 6, 0, 0).unwrap();
     let today = now.date_naive();
     let boundary_date = today + Duration::days(28);
-    let root = TaskHandle::new("期限のある親").unwrap();
+    let root =
+        TaskHandle::with_identity("期限のある親", uuid::Uuid::new_v4(), chrono::Local::now())
+            .unwrap();
     root.set_estimated_work_seconds(30 * 60);
     root.set_start_time(subjective_date_start(boundary_date));
     root.set_pending_until(subjective_date_start(boundary_date));
@@ -8888,7 +9120,8 @@ fn test_execute_flatten_35日後への退避で親の期限を超えるなら未
 fn test_execute_flatten_延期不能日を飛ばして翌日以降の平坦化を保存する() {
     let now = Local.with_ymd_and_hms(2026, 8, 13, 6, 0, 0).unwrap();
     let today = now.date_naive();
-    let root = TaskHandle::new("平テスト").unwrap();
+    let root =
+        TaskHandle::with_identity("平テスト", uuid::Uuid::new_v4(), chrono::Local::now()).unwrap();
     root.set_estimated_work_seconds(0);
     let blocked = add_scheduled_child_for_test(&root, "今日の固定負荷", now, 90);
     let tomorrow_start = subjective_date_start(today + Duration::days(1));
@@ -8946,7 +9179,8 @@ fn test_execute_flatten_延期不能日を飛ばして翌日以降の平坦化�
 fn test_execute_flatten_未解消理由を固定順で表示して同じtaskを重複計上しない() {
     let now = Local.with_ymd_and_hms(2026, 8, 13, 6, 0, 0).unwrap();
     let today = now.date_naive();
-    let root = TaskHandle::new("平テスト").unwrap();
+    let root =
+        TaskHandle::with_identity("平テスト", uuid::Uuid::new_v4(), chrono::Local::now()).unwrap();
     root.set_estimated_work_seconds(0);
     let waiting = add_scheduled_child_for_test(&root, "待機かつ大きすぎる", now, 90);
     waiting.set_is_on_other_side(true);
@@ -8985,7 +9219,8 @@ fn test_execute_flatten_28日目は延期可能分を35日目へ退避して固�
     let boundary_date = today + Duration::days(28);
     let overflow_date = today + Duration::days(35);
     let boundary_start = subjective_date_start(boundary_date);
-    let root = TaskHandle::new("平テスト").unwrap();
+    let root =
+        TaskHandle::with_identity("平テスト", uuid::Uuid::new_v4(), chrono::Local::now()).unwrap();
     root.set_estimated_work_seconds(0);
     let waiting = add_scheduled_child_for_test(&root, "境界の待機", boundary_start, 30);
     waiting.set_is_on_other_side(true);
@@ -9030,7 +9265,9 @@ fn test_execute_flatten_各aliasで未解消日を飛ばして後続を延期す
     let today = now.date_naive();
 
     for command in ["平", "flatten", "flat"] {
-        let root = TaskHandle::new("平テスト").unwrap();
+        let root =
+            TaskHandle::with_identity("平テスト", uuid::Uuid::new_v4(), chrono::Local::now())
+                .unwrap();
         root.set_estimated_work_seconds(0);
         add_scheduled_child_for_test(&root, "固定負荷", now, 90);
         let tomorrow = subjective_date_start(today + Duration::days(1));
@@ -9069,7 +9306,12 @@ fn test_execute_flatten_各aliasで未解消日を飛ばして後続を延期す
 #[test]
 fn test_execute_calendar_現行出力を固定する() {
     let now = Local.with_ymd_and_hms(2026, 8, 11, 12, 0, 0).unwrap();
-    let task = TaskHandle::new("暦出力固定用タスク").unwrap();
+    let task = TaskHandle::with_identity(
+        "暦出力固定用タスク",
+        uuid::Uuid::new_v4(),
+        chrono::Local::now(),
+    )
+    .unwrap();
     task.set_estimated_work_seconds(60 * 60);
     task.set_start_time(now);
     task.set_pending_until(now);
@@ -9101,7 +9343,12 @@ fn test_execute_calendar_現行出力を固定する() {
 #[test]
 fn test_execute_calendar_日付逆順と週区切りと28日境界を固定する() {
     let now = Local.with_ymd_and_hms(2026, 8, 11, 12, 0, 0).unwrap();
-    let root = TaskHandle::new("暦複数日fixture").unwrap();
+    let root = TaskHandle::with_identity(
+        "暦複数日fixture",
+        uuid::Uuid::new_v4(),
+        chrono::Local::now(),
+    )
+    .unwrap();
     root.set_estimated_work_seconds(0);
     add_scheduled_child_for_test(&root, "当日", now, 15);
     add_scheduled_child_for_test(
@@ -9231,7 +9478,12 @@ fn test_format_daily_band_当日経過と24時間超過を表示する() {
 #[test]
 fn test_execute_band_日本語と英語で凡例と棒とサマリーを表示する() {
     let now = Local.with_ymd_and_hms(2026, 8, 11, 12, 0, 0).unwrap();
-    let task = TaskHandle::new("帯出力固定用タスク").unwrap();
+    let task = TaskHandle::with_identity(
+        "帯出力固定用タスク",
+        uuid::Uuid::new_v4(),
+        chrono::Local::now(),
+    )
+    .unwrap();
     task.set_estimated_work_seconds(60 * 60);
     task.set_start_time(now);
     task.set_pending_until(now);
@@ -9272,7 +9524,12 @@ fn test_execute_band_日本語と英語で凡例と棒とサマリーを表示�
 fn test_execute_band_当日終了時刻と翌日締切のアラートを表示する() {
     let now = Local.with_ymd_and_hms(2026, 8, 11, 12, 0, 0).unwrap();
     let tomorrow = now + Duration::days(1);
-    let root = TaskHandle::new("帯アラートfixture").unwrap();
+    let root = TaskHandle::with_identity(
+        "帯アラートfixture",
+        uuid::Uuid::new_v4(),
+        chrono::Local::now(),
+    )
+    .unwrap();
     root.set_estimated_work_seconds(0);
     add_scheduled_child_for_test(&root, "今日の超過", now, 11 * 60);
     add_scheduled_child_for_test(&root, "明日の予定", tomorrow, 1);
@@ -9292,7 +9549,12 @@ fn test_execute_band_当日終了時刻と翌日締切のアラートを表示�
 #[test]
 fn test_execute_band_凡例と帯を7色の_ansi前景色で表示する() {
     let now = Local.with_ymd_and_hms(2026, 8, 11, 12, 0, 0).unwrap();
-    let task = TaskHandle::new("帯色出力固定用タスク").unwrap();
+    let task = TaskHandle::with_identity(
+        "帯色出力固定用タスク",
+        uuid::Uuid::new_v4(),
+        chrono::Local::now(),
+    )
+    .unwrap();
     task.set_estimated_work_seconds(60 * 60);
     task.set_start_time(now);
     task.set_pending_until(now);
@@ -9336,7 +9598,12 @@ fn test_execute_band_凡例と帯を7色の_ansi前景色で表示する() {
 #[test]
 fn test_execute_band_パイプ出力では_ansi前景色を含めない() {
     let now = Local.with_ymd_and_hms(2026, 8, 11, 12, 0, 0).unwrap();
-    let task = TaskHandle::new("帯パイプ出力固定用タスク").unwrap();
+    let task = TaskHandle::with_identity(
+        "帯パイプ出力固定用タスク",
+        uuid::Uuid::new_v4(),
+        chrono::Local::now(),
+    )
+    .unwrap();
     task.set_estimated_work_seconds(60 * 60);
     task.set_start_time(now);
     task.set_pending_until(now);
@@ -9351,9 +9618,18 @@ fn test_execute_band_パイプ出力では_ansi前景色を含めない() {
 #[test]
 fn test_execute_band_全日空き差分と繰り返し判定を帯へ反映する() {
     let now = Local.with_ymd_and_hms(2026, 8, 11, 12, 0, 0).unwrap();
-    let root = TaskHandle::new("帯データフローfixture").unwrap();
+    let root = TaskHandle::with_identity(
+        "帯データフローfixture",
+        uuid::Uuid::new_v4(),
+        chrono::Local::now(),
+    )
+    .unwrap();
     root.set_estimated_work_seconds(0);
-    let repetitive_group = root.create_as_last_child(TaskAttr::new("繰り返しグループ"));
+    let repetitive_group = root.create_as_last_child(TaskAttr::with_identity(
+        "繰り返しグループ",
+        uuid::Uuid::new_v4(),
+        chrono::Local::now(),
+    ));
     repetitive_group.set_estimated_work_seconds(0);
     repetitive_group.set_repetition_interval_days_opt(Some(7));
     add_scheduled_child_for_test(&repetitive_group, "繰り返しタスク", now, 40);
@@ -9385,7 +9661,12 @@ fn test_should_suppress_leaf_tasks_after_command_帯とbandでは葉を追加表
 fn test_execute_show_all_年なし日付は完全日付と同じ予定を表示する() {
     let now = Local.with_ymd_and_hms(2026, 8, 11, 12, 0, 0).unwrap();
     let scheduled_start = Local.with_ymd_and_hms(2026, 9, 26, 6, 0, 0).unwrap();
-    let task = TaskHandle::new("TARGET_DATE_TASK").unwrap();
+    let task = TaskHandle::with_identity(
+        "TARGET_DATE_TASK",
+        uuid::Uuid::new_v4(),
+        chrono::Local::now(),
+    )
+    .unwrap();
     task.set_start_time(scheduled_start);
     task.set_pending_until(scheduled_start);
     task.set_orig_status(Status::Pending);
@@ -9403,7 +9684,12 @@ fn test_execute_show_all_年なし日付は完全日付と同じ予定を表示�
 fn test_execute_show_all_過ぎた年なし日付は翌年の予定を表示する() {
     let now = Local.with_ymd_and_hms(2026, 10, 1, 12, 0, 0).unwrap();
     let scheduled_start = Local.with_ymd_and_hms(2027, 9, 26, 6, 0, 0).unwrap();
-    let task = TaskHandle::new("TARGET_DATE_TASK").unwrap();
+    let task = TaskHandle::with_identity(
+        "TARGET_DATE_TASK",
+        uuid::Uuid::new_v4(),
+        chrono::Local::now(),
+    )
+    .unwrap();
     task.set_start_time(scheduled_start);
     task.set_pending_until(scheduled_start);
     task.set_orig_status(Status::Pending);
@@ -9696,7 +9982,9 @@ fn test_execute_non_interactive_command_load失敗時はcommandを実行しな�
     let storage_dir = TestStorageDir::new();
     std::fs::create_dir_all(&storage_dir.path).unwrap();
     let now = Local.with_ymd_and_hms(2026, 8, 11, 12, 0, 0).unwrap();
-    let task = TaskHandle::new("変更しないtask").unwrap();
+    let task =
+        TaskHandle::with_identity("変更しないtask", uuid::Uuid::new_v4(), chrono::Local::now())
+            .unwrap();
     let task_id = task.get_id().unwrap();
     let original_estimated_work_seconds = task.get_estimated_work_seconds().unwrap();
     let mut task_repository =
@@ -9727,7 +10015,8 @@ fn test_execute_non_interactive_command_検証はsaveとfree_time読込を行わ
     let storage_dir = TestStorageDir::new();
     std::fs::create_dir_all(&storage_dir.path).unwrap();
     let now = Local.with_ymd_and_hms(2026, 8, 11, 12, 0, 0).unwrap();
-    let task = TaskHandle::new("検証対象").unwrap();
+    let task =
+        TaskHandle::with_identity("検証対象", uuid::Uuid::new_v4(), chrono::Local::now()).unwrap();
     let mut task_repository =
         TestTaskRepository::new(task, now).with_storage_directory(&storage_dir.path);
     let mut free_time_manager = TestFreeTimeManager;
@@ -9767,7 +10056,9 @@ fn test_execute_non_interactive_command_gatewayの変換errorをstderrへ表示�
 fn test_execute_non_interactive_command_busy_time_slots読込失敗はstderrへ表示しrepository_transactionとcommandを実行しない(
 ) {
     let now = Local.with_ymd_and_hms(2026, 8, 11, 12, 0, 0).unwrap();
-    let task = TaskHandle::new("変更しないtask").unwrap();
+    let task =
+        TaskHandle::with_identity("変更しないtask", uuid::Uuid::new_v4(), chrono::Local::now())
+            .unwrap();
     let task_id = task.get_id().unwrap();
     let original_estimated_work_seconds = task.get_estimated_work_seconds().unwrap();
     let mut task_repository = TestTaskRepository::new(task, now);
@@ -9861,14 +10152,20 @@ fn test_cli_repository_transactionは外部更新を再読込してcommandを即
         mcp_repository.sync_clock(now);
         mcp_repository.load().unwrap();
         mcp_repository
-            .start_new_project(TaskHandle::new("MCP更新").unwrap())
+            .start_new_project(
+                TaskHandle::with_identity("MCP更新", uuid::Uuid::new_v4(), chrono::Local::now())
+                    .unwrap(),
+            )
             .unwrap();
         mcp_repository.save().unwrap();
     }
 
     run_cli_repository_transaction(&mut cli_repository, now, |repository| {
         repository
-            .start_new_project(TaskHandle::new("CLI更新").unwrap())
+            .start_new_project(
+                TaskHandle::with_identity("CLI更新", uuid::Uuid::new_v4(), chrono::Local::now())
+                    .unwrap(),
+            )
             .unwrap();
         Ok(())
     })
@@ -9893,8 +10190,11 @@ fn test_cli_repository_transactionはread_only_operationでsaveしない() {
     let storage_dir = TestStorageDir::new();
     std::fs::create_dir_all(&storage_dir.path).unwrap();
     let now = Local.with_ymd_and_hms(2026, 8, 12, 12, 0, 0).unwrap();
-    let mut repository = TestTaskRepository::new(TaskHandle::new("cache経路").unwrap(), now)
-        .with_storage_directory(&storage_dir.path);
+    let mut repository = TestTaskRepository::new(
+        TaskHandle::with_identity("cache経路", uuid::Uuid::new_v4(), chrono::Local::now()).unwrap(),
+        now,
+    )
+    .with_storage_directory(&storage_dir.path);
     repository.has_pending_changes.set(false);
 
     run_cli_repository_transaction(&mut repository, now, |_| Ok(())).unwrap();
@@ -9909,8 +10209,11 @@ fn test_cli_repository_transactionはload失敗時にcommandもsaveも実行し�
     let storage_dir = TestStorageDir::new();
     std::fs::create_dir_all(&storage_dir.path).unwrap();
     let now = Local.with_ymd_and_hms(2026, 8, 12, 12, 0, 0).unwrap();
-    let mut repository = TestTaskRepository::new(TaskHandle::new("変更前").unwrap(), now)
-        .with_storage_directory(&storage_dir.path);
+    let mut repository = TestTaskRepository::new(
+        TaskHandle::with_identity("変更前", uuid::Uuid::new_v4(), chrono::Local::now()).unwrap(),
+        now,
+    )
+    .with_storage_directory(&storage_dir.path);
     repository.load_should_fail = true;
     let command_executed = Cell::new(false);
 
@@ -9930,7 +10233,8 @@ fn test_cli_repository_transactionはsave失敗をfatalなphase付きerrorにす
     let storage_dir = TestStorageDir::new();
     std::fs::create_dir_all(&storage_dir.path).unwrap();
     let now = Local.with_ymd_and_hms(2026, 8, 12, 12, 0, 0).unwrap();
-    let task = TaskHandle::new("変更前").unwrap();
+    let task =
+        TaskHandle::with_identity("変更前", uuid::Uuid::new_v4(), chrono::Local::now()).unwrap();
     let task_id = task.get_id().unwrap();
     let mut repository =
         TestTaskRepository::new(task, now).with_storage_directory(&storage_dir.path);
@@ -9965,10 +10269,19 @@ fn test_cli_repository_transactionはsave失敗をfatalなphase付きerrorにす
 #[test]
 fn test_reload後にfocus中taskがdoneなら次候補を選び直す() {
     let now = Local.with_ymd_and_hms(2026, 8, 12, 12, 0, 0).unwrap();
-    let root = TaskHandle::new("root").unwrap();
-    let done = root.create_as_last_child(TaskAttr::new("完了済みfocus"));
+    let root =
+        TaskHandle::with_identity("root", uuid::Uuid::new_v4(), chrono::Local::now()).unwrap();
+    let done = root.create_as_last_child(TaskAttr::with_identity(
+        "完了済みfocus",
+        uuid::Uuid::new_v4(),
+        chrono::Local::now(),
+    ));
     done.set_orig_status(Status::Done);
-    let next = root.create_as_last_child(TaskAttr::new("次候補"));
+    let next = root.create_as_last_child(TaskAttr::with_identity(
+        "次候補",
+        uuid::Uuid::new_v4(),
+        chrono::Local::now(),
+    ));
     let mut repository = TestTaskRepository::new(root, now);
     repository.highest_priority_leaf_task_id_opt = Some(next.get_id().unwrap());
     let mut focused_task_id_opt = Some(done.get_id().unwrap());
@@ -9987,9 +10300,18 @@ fn test_reload後にfocus中taskがdoneなら次候補を選び直す() {
 #[test]
 fn test_低優先度modeで外したfocusは低優先度候補を再選択する() {
     let now = Local.with_ymd_and_hms(2026, 8, 16, 12, 0, 0).unwrap();
-    let root = TaskHandle::new("root").unwrap();
-    let high_priority_task = root.create_as_last_child(TaskAttr::new("高優先度候補"));
-    let low_priority_task = root.create_as_last_child(TaskAttr::new("低優先度候補"));
+    let root =
+        TaskHandle::with_identity("root", uuid::Uuid::new_v4(), chrono::Local::now()).unwrap();
+    let high_priority_task = root.create_as_last_child(TaskAttr::with_identity(
+        "高優先度候補",
+        uuid::Uuid::new_v4(),
+        chrono::Local::now(),
+    ));
+    let low_priority_task = root.create_as_last_child(TaskAttr::with_identity(
+        "低優先度候補",
+        uuid::Uuid::new_v4(),
+        chrono::Local::now(),
+    ));
     let high_priority_task_id = high_priority_task.get_id().unwrap();
     let low_priority_task_id = low_priority_task.get_id().unwrap();
     let mut repository = TestTaskRepository::new(root, now);
@@ -10023,7 +10345,8 @@ fn test_低優先度modeで外したfocusは低優先度候補を再選択する
 #[test]
 fn test_interactive_task属性更新_不正deadlineはfield付きerrorを表示して状態を維持する() {
     let now = Local.with_ymd_and_hms(2026, 8, 16, 12, 0, 0).unwrap();
-    let task = TaskHandle::new("更新対象").unwrap();
+    let task =
+        TaskHandle::with_identity("更新対象", uuid::Uuid::new_v4(), chrono::Local::now()).unwrap();
     let task_id = task.get_id().unwrap();
     let previous_deadline = Local.with_ymd_and_hms(2026, 8, 20, 23, 59, 59).unwrap();
     task.set_deadline_time_opt(Some(previous_deadline));
@@ -10059,7 +10382,8 @@ fn test_interactive_submitは製品event経路でload実行保存する() {
     let storage_dir = TestStorageDir::new();
     std::fs::create_dir_all(&storage_dir.path).unwrap();
     let now = Local.with_ymd_and_hms(2026, 8, 12, 12, 0, 0).unwrap();
-    let task = TaskHandle::new("更新対象").unwrap();
+    let task =
+        TaskHandle::with_identity("更新対象", uuid::Uuid::new_v4(), chrono::Local::now()).unwrap();
     let task_id = task.get_id().unwrap();
     let mut repository =
         TestTaskRepository::new(task, now).with_storage_directory(&storage_dir.path);
@@ -10105,10 +10429,19 @@ fn test_interactive_submitの見は完了済みtaskへの明示focusを更新後
     let storage_dir = TestStorageDir::new();
     std::fs::create_dir_all(&storage_dir.path).unwrap();
     let now = Local.with_ymd_and_hms(2026, 8, 12, 12, 0, 0).unwrap();
-    let root = TaskHandle::new("root").unwrap();
-    let done = root.create_as_last_child(TaskAttr::new("完了済みtask"));
+    let root =
+        TaskHandle::with_identity("root", uuid::Uuid::new_v4(), chrono::Local::now()).unwrap();
+    let done = root.create_as_last_child(TaskAttr::with_identity(
+        "完了済みtask",
+        uuid::Uuid::new_v4(),
+        chrono::Local::now(),
+    ));
     done.set_orig_status(Status::Done);
-    let next = root.create_as_last_child(TaskAttr::new("次候補"));
+    let next = root.create_as_last_child(TaskAttr::with_identity(
+        "次候補",
+        uuid::Uuid::new_v4(),
+        chrono::Local::now(),
+    ));
     let done_id = done.get_id().unwrap();
     let next_id = next.get_id().unwrap();
     let mut repository =
@@ -10166,10 +10499,19 @@ fn test_interactive_submitは外部完了によるfocus切替時に開始時刻�
     let storage_dir = TestStorageDir::new();
     std::fs::create_dir_all(&storage_dir.path).unwrap();
     let old_focus_started_datetime = Local.with_ymd_and_hms(2020, 8, 12, 12, 0, 0).unwrap();
-    let root = TaskHandle::new("root").unwrap();
-    let done = root.create_as_last_child(TaskAttr::new("外部で完了したfocus"));
+    let root =
+        TaskHandle::with_identity("root", uuid::Uuid::new_v4(), chrono::Local::now()).unwrap();
+    let done = root.create_as_last_child(TaskAttr::with_identity(
+        "外部で完了したfocus",
+        uuid::Uuid::new_v4(),
+        chrono::Local::now(),
+    ));
     done.set_orig_status(Status::Done);
-    let next = root.create_as_last_child(TaskAttr::new("次候補"));
+    let next = root.create_as_last_child(TaskAttr::with_identity(
+        "次候補",
+        uuid::Uuid::new_v4(),
+        chrono::Local::now(),
+    ));
     let done_id = done.get_id().unwrap();
     let next_id = next.get_id().unwrap();
     let mut repository = TestTaskRepository::new(root, old_focus_started_datetime)
@@ -10212,10 +10554,19 @@ fn test_interactive_refreshとctrl_dは外部完了によるfocus切替時に開
         let storage_dir = TestStorageDir::new();
         std::fs::create_dir_all(&storage_dir.path).unwrap();
         let old_focus_started_datetime = Local.with_ymd_and_hms(2020, 8, 12, 12, 0, 0).unwrap();
-        let root = TaskHandle::new("root").unwrap();
-        let done = root.create_as_last_child(TaskAttr::new("外部で完了したfocus"));
+        let root =
+            TaskHandle::with_identity("root", uuid::Uuid::new_v4(), chrono::Local::now()).unwrap();
+        let done = root.create_as_last_child(TaskAttr::with_identity(
+            "外部で完了したfocus",
+            uuid::Uuid::new_v4(),
+            chrono::Local::now(),
+        ));
         done.set_orig_status(Status::Done);
-        let next = root.create_as_last_child(TaskAttr::new("次候補"));
+        let next = root.create_as_last_child(TaskAttr::with_identity(
+            "次候補",
+            uuid::Uuid::new_v4(),
+            chrono::Local::now(),
+        ));
         let done_id = done.get_id().unwrap();
         let next_id = next.get_id().unwrap();
         let mut repository = TestTaskRepository::new(root, old_focus_started_datetime)
@@ -10258,7 +10609,8 @@ fn test_interactive_commandによるfocus切替は次のrender時刻を開始時
     let old_focus_started_datetime = Local.with_ymd_and_hms(2020, 8, 12, 12, 0, 0).unwrap();
     let first_render_datetime = Local.with_ymd_and_hms(2026, 8, 12, 13, 0, 0).unwrap();
     let second_render_datetime = Local.with_ymd_and_hms(2026, 8, 12, 14, 0, 0).unwrap();
-    let task = TaskHandle::new("focus対象").unwrap();
+    let task =
+        TaskHandle::with_identity("focus対象", uuid::Uuid::new_v4(), chrono::Local::now()).unwrap();
     let task_id = task.get_id().unwrap();
     let mut repository = TestTaskRepository::new(task, old_focus_started_datetime)
         .with_storage_directory(&storage_dir.path);
@@ -10314,7 +10666,9 @@ fn test_interactive_submitはload失敗ならretryしsave失敗ならfatalにす
     let now = Local.with_ymd_and_hms(2026, 8, 12, 12, 0, 0).unwrap();
 
     for (load_should_fail, save_failures, expected_fatal) in [(true, 0, false), (false, 1, true)] {
-        let task = TaskHandle::new("更新対象").unwrap();
+        let task =
+            TaskHandle::with_identity("更新対象", uuid::Uuid::new_v4(), chrono::Local::now())
+                .unwrap();
         let task_id = task.get_id().unwrap();
         let mut repository =
             TestTaskRepository::new(task, now).with_storage_directory(&storage_dir.path);
@@ -10360,7 +10714,8 @@ fn test_interactive_refreshは再読込後にlockを解放する() {
     let storage_dir = TestStorageDir::new();
     std::fs::create_dir_all(&storage_dir.path).unwrap();
     let now = Local.with_ymd_and_hms(2026, 8, 12, 12, 0, 0).unwrap();
-    let task = TaskHandle::new("表示対象").unwrap();
+    let task =
+        TaskHandle::with_identity("表示対象", uuid::Uuid::new_v4(), chrono::Local::now()).unwrap();
     let task_id = task.get_id().unwrap();
     let mut repository =
         TestTaskRepository::new(task, now).with_storage_directory(&storage_dir.path);
@@ -10399,7 +10754,8 @@ fn test_interactive_ctrl_cは成功済みcommandを再保存せずfatal終了す
     let storage_dir = TestStorageDir::new();
     std::fs::create_dir_all(&storage_dir.path).unwrap();
     let now = Local.with_ymd_and_hms(2026, 8, 12, 12, 0, 0).unwrap();
-    let task = TaskHandle::new("更新対象").unwrap();
+    let task =
+        TaskHandle::with_identity("更新対象", uuid::Uuid::new_v4(), chrono::Local::now()).unwrap();
     let task_id = task.get_id().unwrap();
     let mut repository =
         TestTaskRepository::new(task, now).with_storage_directory(&storage_dir.path);
@@ -10451,7 +10807,8 @@ fn test_interactive_input切断はreload後に保存してfatal終了する() {
     let storage_dir = TestStorageDir::new();
     std::fs::create_dir_all(&storage_dir.path).unwrap();
     let now = Local.with_ymd_and_hms(2026, 8, 12, 12, 0, 0).unwrap();
-    let task = TaskHandle::new("保存対象").unwrap();
+    let task =
+        TaskHandle::with_identity("保存対象", uuid::Uuid::new_v4(), chrono::Local::now()).unwrap();
     let task_id = task.get_id().unwrap();
     let mut repository =
         TestTaskRepository::new(task, now).with_storage_directory(&storage_dir.path);
@@ -10489,7 +10846,8 @@ fn test_interactive_ctrl_dは製品event経路でreload後に保存して終了�
     let storage_dir = TestStorageDir::new();
     std::fs::create_dir_all(&storage_dir.path).unwrap();
     let now = Local.with_ymd_and_hms(2026, 8, 12, 12, 0, 0).unwrap();
-    let task = TaskHandle::new("保存対象").unwrap();
+    let task =
+        TaskHandle::with_identity("保存対象", uuid::Uuid::new_v4(), chrono::Local::now()).unwrap();
     let task_id = task.get_id().unwrap();
     let mut repository =
         TestTaskRepository::new(task, now).with_storage_directory(&storage_dir.path);
@@ -10524,7 +10882,8 @@ fn test_interactive_input読込errorは製品event経路でreload後に保存し
     let storage_dir = TestStorageDir::new();
     std::fs::create_dir_all(&storage_dir.path).unwrap();
     let now = Local.with_ymd_and_hms(2026, 8, 12, 12, 0, 0).unwrap();
-    let task = TaskHandle::new("保存対象").unwrap();
+    let task =
+        TaskHandle::with_identity("保存対象", uuid::Uuid::new_v4(), chrono::Local::now()).unwrap();
     let task_id = task.get_id().unwrap();
     let mut repository =
         TestTaskRepository::new(task, now).with_storage_directory(&storage_dir.path);
@@ -10691,7 +11050,8 @@ fn test_format_focus_progress_99パーセントでは1区画を未達として�
 fn test_make_messages_about_focus_既存実績と表示中の作業時間から進捗を表示する() {
     let focus_started_datetime = Local.with_ymd_and_hms(2026, 7, 25, 12, 0, 0).unwrap();
     let now = Local.with_ymd_and_hms(2026, 7, 25, 12, 19, 0).unwrap();
-    let task = TaskHandle::new("タスク").unwrap();
+    let task =
+        TaskHandle::with_identity("タスク", uuid::Uuid::new_v4(), chrono::Local::now()).unwrap();
     task.set_estimated_work_seconds(60 * 60);
     task.set_actual_work_seconds(10 * 60);
 
@@ -10708,7 +11068,8 @@ fn test_make_messages_about_focus_既存実績と表示中の作業時間から�
 fn test_make_messages_about_focus_バーを1パーセント単位で表示する() {
     let focus_started_datetime = Local.with_ymd_and_hms(2026, 7, 25, 12, 0, 0).unwrap();
     let now = Local.with_ymd_and_hms(2026, 7, 25, 12, 19, 0).unwrap();
-    let task = TaskHandle::new("タスク").unwrap();
+    let task =
+        TaskHandle::with_identity("タスク", uuid::Uuid::new_v4(), chrono::Local::now()).unwrap();
     task.set_estimated_work_seconds(100 * 60);
     task.set_actual_work_seconds(39 * 60);
 
@@ -10725,7 +11086,8 @@ fn test_make_messages_about_focus_バーを1パーセント単位で表示する
 fn test_make_messages_about_focus_見積時間超過時はバーだけ100パーセントを上限にする() {
     let focus_started_datetime = Local.with_ymd_and_hms(2026, 7, 25, 12, 0, 0).unwrap();
     let now = Local.with_ymd_and_hms(2026, 7, 25, 12, 59, 0).unwrap();
-    let task = TaskHandle::new("タスク").unwrap();
+    let task =
+        TaskHandle::with_identity("タスク", uuid::Uuid::new_v4(), chrono::Local::now()).unwrap();
     task.set_estimated_work_seconds(100 * 60);
     task.set_actual_work_seconds(57 * 60);
 
@@ -10742,7 +11104,8 @@ fn test_make_messages_about_focus_見積時間超過時はバーだけ100パー�
 fn test_make_messages_about_focus_見積時間が0なら進捗を未算定として表示する() {
     let focus_started_datetime = Local.with_ymd_and_hms(2026, 7, 25, 12, 0, 0).unwrap();
     let now = Local.with_ymd_and_hms(2026, 7, 25, 12, 19, 0).unwrap();
-    let task = TaskHandle::new("タスク").unwrap();
+    let task =
+        TaskHandle::with_identity("タスク", uuid::Uuid::new_v4(), chrono::Local::now()).unwrap();
     task.set_estimated_work_seconds(0);
     task.set_actual_work_seconds(10 * 60);
 
@@ -10917,7 +11280,12 @@ fn render_interactive_screen(
 #[test]
 fn test_render_interactive_screen_起動時と自動更新時の既定表示は帯() {
     let now = Local.with_ymd_and_hms(2026, 8, 12, 12, 0, 0).unwrap();
-    let task = TaskHandle::new("対話画面表示対象").unwrap();
+    let task = TaskHandle::with_identity(
+        "対話画面表示対象",
+        uuid::Uuid::new_v4(),
+        chrono::Local::now(),
+    )
+    .unwrap();
     let task_id = task.get_id().unwrap();
     task.set_estimated_work_seconds(60 * 60);
     task.set_start_time(now);
@@ -11017,7 +11385,10 @@ fn test_idle_wait_duration_期限を過ぎていれば0秒を返す() {
 #[test]
 fn test_try_save_before_exit_保存成功なら終了可能にする() {
     let now = Local.with_ymd_and_hms(2026, 8, 11, 12, 0, 0).unwrap();
-    let task_repository = TestTaskRepository::new(TaskHandle::new("保存対象").unwrap(), now);
+    let task_repository = TestTaskRepository::new(
+        TaskHandle::with_identity("保存対象", uuid::Uuid::new_v4(), chrono::Local::now()).unwrap(),
+        now,
+    );
     let mut stdout = TestWriter::new();
 
     let actual = try_save_before_exit(&mut stdout, &task_repository);
@@ -11029,7 +11400,12 @@ fn test_try_save_before_exit_保存成功なら終了可能にする() {
 #[test]
 fn test_try_save_before_exit_保存失敗ならerrorを表示して終了を止める() {
     let now = Local.with_ymd_and_hms(2026, 8, 11, 12, 0, 0).unwrap();
-    let task = TaskHandle::new("memoryに残すtask").unwrap();
+    let task = TaskHandle::with_identity(
+        "memoryに残すtask",
+        uuid::Uuid::new_v4(),
+        chrono::Local::now(),
+    )
+    .unwrap();
     let task_id = task.get_id().unwrap();
     let task_repository = TestTaskRepository::new(task, now);
     task_repository.save_failures_remaining.set(1);
@@ -11058,7 +11434,11 @@ fn test_handle_input_disconnected_保存を1回試して入力異常を返す() 
     let now = Local.with_ymd_and_hms(2026, 8, 11, 12, 0, 0).unwrap();
 
     for save_failures in [0, 1] {
-        let task_repository = TestTaskRepository::new(TaskHandle::new("保存対象").unwrap(), now);
+        let task_repository = TestTaskRepository::new(
+            TaskHandle::with_identity("保存対象", uuid::Uuid::new_v4(), chrono::Local::now())
+                .unwrap(),
+            now,
+        );
         task_repository.save_failures_remaining.set(save_failures);
 
         let actual = handle_input_disconnected(&task_repository);
@@ -11084,7 +11464,11 @@ fn test_handle_input_read_error_保存を1回試して両方のerrorを保持す
     let now = Local.with_ymd_and_hms(2026, 8, 11, 12, 0, 0).unwrap();
 
     for save_failures in [0, 1] {
-        let task_repository = TestTaskRepository::new(TaskHandle::new("保存対象").unwrap(), now);
+        let task_repository = TestTaskRepository::new(
+            TaskHandle::with_identity("保存対象", uuid::Uuid::new_v4(), chrono::Local::now())
+                .unwrap(),
+            now,
+        );
         task_repository.save_failures_remaining.set(save_failures);
 
         let actual = handle_input_read_error(
@@ -11113,7 +11497,12 @@ fn test_handle_input_read_error_保存を1回試して両方のerrorを保持す
 #[test]
 fn test_try_exit_interactive_保存失敗後の再試行で成功する() {
     let now = Local.with_ymd_and_hms(2026, 8, 11, 12, 0, 0).unwrap();
-    let task = TaskHandle::new("再試行中もmemoryに残すtask").unwrap();
+    let task = TaskHandle::with_identity(
+        "再試行中もmemoryに残すtask",
+        uuid::Uuid::new_v4(),
+        chrono::Local::now(),
+    )
+    .unwrap();
     let task_id = task.get_id().unwrap();
     let mut task_repository = TestTaskRepository::new(task, now);
     task_repository.save_failures_remaining.set(1);
@@ -11152,7 +11541,12 @@ fn test_try_exit_interactive_保存失敗後の再試行で成功する() {
 #[test]
 fn test_try_exit_interactive_ctrl_d終了時は帯を表示する() {
     let now = Local.with_ymd_and_hms(2026, 8, 11, 12, 0, 0).unwrap();
-    let task = TaskHandle::new("Ctrl-D終了表示対象").unwrap();
+    let task = TaskHandle::with_identity(
+        "Ctrl-D終了表示対象",
+        uuid::Uuid::new_v4(),
+        chrono::Local::now(),
+    )
+    .unwrap();
     let task_id = task.get_id().unwrap();
     task.set_estimated_work_seconds(60 * 60);
     task.set_start_time(now);

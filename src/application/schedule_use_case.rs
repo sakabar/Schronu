@@ -421,7 +421,8 @@ mod tests {
         neg_priority: i64,
         remaining_seconds: i64,
     ) -> TaskScheduleCandidate {
-        let task = TaskHandle::new(name).unwrap();
+        let task =
+            TaskHandle::with_identity(name, uuid::Uuid::new_v4(), chrono::Local::now()).unwrap();
         TaskScheduleCandidate {
             id: task.get_id().unwrap(),
             task,
