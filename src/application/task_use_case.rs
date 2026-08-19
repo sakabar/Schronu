@@ -1209,6 +1209,32 @@ mod tests {
     }
 
     #[test]
+    fn complete_task_反復なしではtask_factoryのidを消費しない() {
+        let task = crate::test_support::new_task_handle("単発").unwrap();
+        let task_id = task.get_id().unwrap();
+        let mut repository = TestTaskRepository::new(vec![task], fixed_now());
+        let id_call_count = Cell::new(0);
+        let mut next_id = || {
+            id_call_count.set(id_call_count.get() + 1);
+            Uuid::from_u128(0x101)
+        };
+        let mut factory = TaskFactory::new(fixed_now(), &mut next_id);
+
+        complete_task(
+            &mut repository,
+            CompleteTaskInput {
+                task_id,
+                finished_at: fixed_now(),
+                additional_actual_work_seconds: 0,
+            },
+            &mut factory,
+        )
+        .unwrap();
+
+        assert_eq!(id_call_count.get(), 0);
+    }
+
+    #[test]
     fn create_next_repetition_taskは構造化errorを返せるresultを維持する() {
         let task = crate::test_support::new_task_handle("単発").unwrap();
 
@@ -1250,6 +1276,40 @@ mod tests {
         let create_time = next_task.get_create_time().unwrap();
         assert!(before_completion <= create_time);
         assert!(create_time <= after_completion);
+    }
+
+    #[test]
+    fn complete_task_反復taskはoperation固定のidentityを使う() {
+        let parent = crate::test_support::new_task_handle("ルーチン").unwrap();
+        parent.set_repetition_interval_days_opt(Some(7)).unwrap();
+        let child = parent.create_as_last_child(crate::test_support::new_task_attr("今回"));
+        let child_id = child.get_id().unwrap();
+        let mut repository = TestTaskRepository::new(vec![parent], fixed_now());
+        let operation_now = Local.with_ymd_and_hms(2026, 8, 12, 14, 15, 16).unwrap();
+        let expected_id = Uuid::from_u128(0x102);
+        let id_call_count = Cell::new(0);
+        let mut next_id = || {
+            id_call_count.set(id_call_count.get() + 1);
+            expected_id
+        };
+        let mut factory = TaskFactory::new(operation_now, &mut next_id);
+
+        let output = complete_task(
+            &mut repository,
+            CompleteTaskInput {
+                task_id: child_id,
+                finished_at: fixed_now(),
+                additional_actual_work_seconds: 0,
+            },
+            &mut factory,
+        )
+        .unwrap();
+
+        assert_eq!(output.next_repetition_task_id, Some(expected_id));
+        assert_eq!(id_call_count.get(), 1);
+        let next_task = repository.get_by_id(expected_id).unwrap().unwrap();
+        assert_eq!(next_task.get_id().unwrap(), expected_id);
+        assert_eq!(next_task.get_create_time().unwrap(), operation_now);
     }
 
     #[test]
