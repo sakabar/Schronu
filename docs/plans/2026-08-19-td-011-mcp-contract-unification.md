@@ -22,7 +22,7 @@
 - `src/adapter/mcp/handler.rs`はtool dispatchとapplication use case呼び出しを担う。
 - `src/adapter/mcp/registry.rs`はtool名、description、入力型、生成schemaの対応を担う。
 - `src/adapter/mcp/input.rs`はSerde入力DTO、field-path付きdecode、application型への変換を担う。
-- `src/adapter/mcp/output.rs`は`TaskView`と`ScheduledTaskView`のSerde serializationを担い、手書きmapperを廃止する。
+- application/entityのviewとenumがSerialize表現を定義し、`src/adapter/mcp/output.rs`は`serde_json::to_value`によるresponse変換だけを担って手書きmapperを廃止する。
 - 入力DTOは`Deserialize + JsonSchema + deny_unknown_fields`を基本とする。UUID、RFC 3339日時、ISO日付、非負`i64`、非空文字列、nullable patchを共通型として1か所に定義する。
 - `update_task`の「更新fieldを1つ以上指定」は共有field定数をschema transformとruntime検証の双方から参照する。
 - `schemars = "1.2.2"`、`serde_path_to_error = "0.1.20"`をproduction dependencyに追加する。schema検証用の`jsonschema = { version = "0.49.3", default-features = false }`はdev-dependencyに限定する。
@@ -36,21 +36,31 @@
 | 3 | `Test: MCP protocolとtool testを分離する` | protocolとbusiness testの独立実行 | test module | 2 | 両filterと全test |
 | 4 | `MCP: protocol lifecycle境界を分離する` | lifecycleとJSON-RPC envelope | protocol | 3 | protocol / stdio |
 | 5 | `MCP: tool handler境界を分離する` | dispatch、transaction、save判定 | handler | 4 | tool / stdio |
-| 6 | `MCP: registryと入出力境界を分離する` | 現行schema、validator、mapperを挙動変更なしで移動 | registry / input / output | 5 | tools/listとtool responseが移動前と同じJSON値 |
-| 7 | `Test: MCP共通入力制約の生成契約を追加する` | 共通scalarのschema/decode一致 | input test | 6 | 想定理由でRed |
-| 8 | `MCP: Serde入力契約の共通基盤を追加する` | field pathとerror区分 | input | 7 | input unit / schema検証 |
-| 9 | `Test: 参照toolのtyped契約を追加する` | get_focus / get_task | tool contract | 8 | 想定理由でRed |
-| 10 | `MCP: 参照toolをtyped registryへ移行する` | 空入力、UUID、unknown field | registry / input / handler | 9 | 対象matrix / business test |
-| 11 | `Test: 検索toolのtyped契約を追加する` | list_tasks / get_schedule | tool contract | 10 | 想定理由でRed |
-| 12 | `MCP: 検索toolをtyped registryへ移行する` | nested field path、nullable category、逆転期間、既定期間 | registry / input / handler | 11 | schema golden、structured error、検索結果 |
-| 13 | `Test: 作成toolのtyped契約を追加する` | create_task / breakdown_task | tool contract | 12 | 想定理由でRed |
-| 14 | `MCP: 作成toolをtyped registryへ移行する` | 空文字と空白のerror区分、overflow、mutation原子性 | registry / input / handler | 13 | schema、error階層、save回数 |
-| 15 | `Test: 状態変更toolのtyped契約を追加する` | defer / complete / update | tool contract | 14 | 想定理由でRed |
-| 16 | `MCP: 状態変更toolをtyped registryへ移行する` | finished_at既定値、work seconds、category/deadline解除、partial update順序 | registry / input / handler | 15 | schema、error階層、save回数 |
-| 17 | `Test: MCP viewのSerde出力契約を追加する` | application viewとJSONの同一性 | output test | 16 | 想定理由でRed |
-| 18 | `MCP: view出力をSerde serializationへ統合する` | UUID、日時、enum、null、全field | application / entity / output | 17 | output / integration |
-| 19 | `MCP: 旧契約経路を除去する` | 手書きvalidator・schema・mapperとregistry外のtool定義経路を廃止 | MCP全体 | 18 | `rg`で旧helper不在 / 全品質ゲート |
-| 20 | `Docs: TD-011の完了を記録` | 対応内容と検証証跡 | backlog | 19 / 最終review | `git diff --check` |
+| 6 | `MCP: tool registry境界を分離する` | 現行tool metadataとschemaを挙動変更なしで移動 | registry | 5 | tools/listが移動前と同じJSON値 |
+| 7 | `MCP: tool input境界を分離する` | 現行validatorを挙動変更なしで移動 | input | 6 | 全入力error test |
+| 8 | `MCP: tool output境界を分離する` | 現行mapperを挙動変更なしで移動 | output | 7 | Task/Schedule golden |
+| 9 | `Test: MCP共通入力制約の生成契約を追加する` | 共通scalarのschema/decode一致 | input test | 8 | 想定理由でRed |
+| 10 | `MCP: Serde入力契約の共通基盤を追加する` | field pathとerror区分 | input | 9 | input unit / schema検証 |
+| 11 | `Test: 参照toolのtyped入力契約を追加する` | get_focus / get_task DTOとschema | input contract | 10 | 想定理由でRed |
+| 12 | `MCP: 参照toolのtyped入力を実装する` | 空入力、UUID、unknown field | input / registry metadata | 11 | 対象schema/decode matrix |
+| 13 | `Test: 参照toolのtyped handler契約を追加する` | handlerがtyped入力だけを受け取る | handler contract | 12 | 想定理由でRed |
+| 14 | `MCP: 参照tool handlerをtyped入力へ接続する` | application変換と既存response | handler | 13 | get_focus/get_task business test |
+| 15 | `Test: 検索toolのtyped入力契約を追加する` | list_tasks / get_schedule DTOとschema | input contract | 14 | 想定理由でRed |
+| 16 | `MCP: 検索toolのtyped入力を実装する` | nested path、nullable category、period/date | input / registry metadata | 15 | 対象schema/decode matrix |
+| 17 | `Test: 検索toolのtyped handler契約を追加する` | typed filterと既定期間のapplication変換 | handler contract | 16 | 想定理由でRed |
+| 18 | `MCP: 検索tool handlerをtyped入力へ接続する` | 逆転期間、structured error、検索結果 | handler | 17 | list/schedule business test |
+| 19 | `Test: 作成toolのtyped入力契約を追加する` | create_task / breakdown_task DTOとschema | input contract | 18 | 想定理由でRed |
+| 20 | `MCP: 作成toolのtyped入力を実装する` | name、names、見積、日時 | input / registry metadata | 19 | 対象schema/decode matrix |
+| 21 | `Test: 作成toolのtyped handler契約を追加する` | typed作成入力のapplication変換 | handler contract | 20 | 想定理由でRed |
+| 22 | `MCP: 作成tool handlerをtyped入力へ接続する` | 空白error、overflow、原子性、save回数 | handler | 21 | create/breakdown business test |
+| 23 | `Test: 状態変更toolのtyped入力契約を追加する` | defer / complete / update DTOとschema | input contract | 22 | 想定理由でRed |
+| 24 | `MCP: 状態変更toolのtyped入力を実装する` | default、nullable patch、更新field共有定数 | input / registry metadata | 23 | 対象schema/decode matrix |
+| 25 | `Test: 状態変更toolのtyped handler契約を追加する` | typed状態変更入力のapplication変換 | handler contract | 24 | 想定理由でRed |
+| 26 | `MCP: 状態変更tool handlerをtyped入力へ接続する` | finished_at、解除、partial update順序、save回数 | handler | 25 | defer/complete/update business test |
+| 27 | `Test: MCP viewのSerde出力契約を追加する` | application viewとJSONの同一性 | output test | 26 | 想定理由でRed |
+| 28 | `MCP: view出力をSerde serializationへ統合する` | UUID、日時、lowercase enum、null、全field | application / entity serialization | 27 | output / integration |
+| 29 | `MCP: 旧契約経路を除去する` | 手書きvalidator・schema・mapperとregistry外のtool定義経路を廃止 | MCP全体 | 28 | `rg`で旧helper不在 / 全品質ゲート |
+| 30 | `Docs: TD-011の完了を記録` | 対応内容と検証証跡 | backlog | 29 / 最終review | `git diff --check` |
 
 各Red commitでは対象testが期待した1つの未実装理由で失敗することを確認する。各基礎Green後に対象test、全品質ゲート、subagent reviewを行い、review指摘は1件ずつ個別commitにする。
 
@@ -71,4 +81,5 @@ cargo test --locked
 - UUID・日時の形式不正はtool-level structured error、JSON型・required・minimum・additional property違反はJSON-RPC `-32602`を維持する。
 - `complete_task.finished_at`の`Local::now()`と`get_schedule`の既定期間は変更しない。
 - application/entityへの変更は汎用的な`Serialize`追加だけに限定する。
+- Commit 28で`chrono`と`uuid`の`serde` featureを有効化し、`Status`、`RepetitionAnchor`、`ProjectCategory`は`lowercase`のSerde表現を明示する。
 - schema生成結果は事前に固定したgolden fixtureとJSON値として一致させる。
