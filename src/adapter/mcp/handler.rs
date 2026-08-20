@@ -357,9 +357,16 @@ fn update_task_application_error_response(id: Value, error: ApplicationError) ->
 
 #[cfg(test)]
 mod typed_handler_contract_tests {
-    use super::{call_get_focus, call_get_task};
-    use crate::adapter::mcp::input::{GetFocusInput, GetTaskInput, UuidValue};
-    use crate::adapter::mcp::test_support::{RecordingRepository, TaskHandle};
+    use super::{call_get_focus, call_get_schedule, call_get_task, call_list_tasks};
+    use crate::adapter::mcp::input::{
+        GetFocusInput, GetScheduleInput, GetTaskInput, IsoDate, ListTasksInput, OptionalValue,
+        ProjectCategoryValue, Rfc3339DateTime, StatusValue, TaskPeriodFieldValue, TaskPeriodInput,
+        UuidValue,
+    };
+    use crate::adapter::mcp::test_support::{
+        fixed_now, get_next_morning_datetime, task_for_list, Duration, Local, ProjectCategory,
+        RecordingRepository, Status, TaskHandle, TimeZone,
+    };
     use serde_json::json;
     use std::rc::Rc;
 
@@ -404,6 +411,128 @@ mod typed_handler_contract_tests {
             response["result"]["structuredContent"]["task"]["id"],
             task_id.to_string()
         );
+        assert_eq!(save_count.get(), 0);
+        assert_eq!(mutation_count.get(), 0);
+    }
+
+    #[test]
+    fn list_tasks_handlerはtyped_filterをapplication入力へ変換しrepositoryを変更しない() {
+        let matching = task_for_list(
+            "matching",
+            Status::Pending,
+            ProjectCategory::Recovery,
+            Local.with_ymd_and_hms(2026, 8, 10, 9, 0, 0).unwrap(),
+        );
+        let matching_id = matching.get_id().unwrap();
+        let wrong_status = task_for_list(
+            "wrong status",
+            Status::Todo,
+            ProjectCategory::Recovery,
+            Local.with_ymd_and_hms(2026, 8, 10, 10, 0, 0).unwrap(),
+        );
+        let wrong_category = task_for_list(
+            "wrong category",
+            Status::Pending,
+            ProjectCategory::Investment,
+            Local.with_ymd_and_hms(2026, 8, 10, 11, 0, 0).unwrap(),
+        );
+        let outside_period = task_for_list(
+            "outside period",
+            Status::Pending,
+            ProjectCategory::Recovery,
+            Local.with_ymd_and_hms(2026, 8, 9, 23, 59, 59).unwrap(),
+        );
+        let repository =
+            RecordingRepository::new(vec![matching, wrong_status, wrong_category, outside_period]);
+        let save_count = Rc::clone(&repository.save_count);
+        let mutation_count = Rc::clone(&repository.mutation_count);
+
+        let response = call_list_tasks(
+            &repository,
+            json!("typed-list"),
+            ListTasksInput {
+                period: OptionalValue::Value(TaskPeriodInput {
+                    field: TaskPeriodFieldValue::CreatedAt,
+                    from: Rfc3339DateTime(Local.with_ymd_and_hms(2026, 8, 10, 0, 0, 0).unwrap()),
+                    until: Rfc3339DateTime(Local.with_ymd_and_hms(2026, 8, 11, 0, 0, 0).unwrap()),
+                }),
+                statuses: OptionalValue::Value(vec![StatusValue::Pending]),
+                categories: OptionalValue::Value(vec![Some(ProjectCategoryValue::Recovery)]),
+            },
+        );
+
+        assert_eq!(response["result"]["isError"], false);
+        let tasks = response["result"]["structuredContent"]["tasks"]
+            .as_array()
+            .unwrap();
+        assert_eq!(tasks.len(), 1);
+        assert_eq!(tasks[0]["id"], matching_id.to_string());
+        assert_eq!(save_count.get(), 0);
+        assert_eq!(mutation_count.get(), 0);
+    }
+
+    #[test]
+    fn get_schedule_handlerはtyped日付範囲で予定を絞りrepositoryを変更しない() {
+        let from = Local.with_ymd_and_hms(2026, 8, 12, 6, 0, 0).unwrap();
+        let until = Local.with_ymd_and_hms(2026, 8, 13, 6, 0, 0).unwrap();
+        let inside = TaskHandle::new("inside range").unwrap();
+        inside.set_start_time(from + Duration::hours(1)).unwrap();
+        inside.set_estimated_work_seconds(15 * 60).unwrap();
+        let outside = TaskHandle::new("outside range").unwrap();
+        outside.set_start_time(until + Duration::hours(1)).unwrap();
+        outside.set_estimated_work_seconds(15 * 60).unwrap();
+        let repository = RecordingRepository::new(vec![inside, outside]);
+        let save_count = Rc::clone(&repository.save_count);
+        let mutation_count = Rc::clone(&repository.mutation_count);
+
+        let response = call_get_schedule(
+            &repository,
+            json!("typed-schedule-range"),
+            GetScheduleInput {
+                from: OptionalValue::Value(IsoDate(from.date_naive())),
+                until: OptionalValue::Value(IsoDate(until.date_naive())),
+            },
+        );
+
+        assert_eq!(response["result"]["isError"], false);
+        let schedule = response["result"]["structuredContent"]["schedule"]
+            .as_array()
+            .unwrap();
+        assert_eq!(schedule.len(), 1);
+        assert_eq!(schedule[0]["task"]["name"], "inside range");
+        assert_eq!(save_count.get(), 0);
+        assert_eq!(mutation_count.get(), 0);
+    }
+
+    #[test]
+    fn get_schedule_handlerはtyped_missingで現在から次の業務日境界までを既定とする() {
+        let current = TaskHandle::new("current task").unwrap();
+        current.set_start_time(fixed_now()).unwrap();
+        current.set_estimated_work_seconds(15 * 60).unwrap();
+        let future = TaskHandle::new("future task").unwrap();
+        future
+            .set_start_time(get_next_morning_datetime(fixed_now()) + Duration::hours(1))
+            .unwrap();
+        future.set_estimated_work_seconds(15 * 60).unwrap();
+        let repository = RecordingRepository::new(vec![current, future]);
+        let save_count = Rc::clone(&repository.save_count);
+        let mutation_count = Rc::clone(&repository.mutation_count);
+
+        let response = call_get_schedule(
+            &repository,
+            json!("typed-schedule-default"),
+            GetScheduleInput {
+                from: OptionalValue::Missing,
+                until: OptionalValue::Missing,
+            },
+        );
+
+        assert_eq!(response["result"]["isError"], false);
+        let schedule = response["result"]["structuredContent"]["schedule"]
+            .as_array()
+            .unwrap();
+        assert_eq!(schedule.len(), 1);
+        assert_eq!(schedule[0]["task"]["name"], "current task");
         assert_eq!(save_count.get(), 0);
         assert_eq!(mutation_count.get(), 0);
     }
