@@ -1,7 +1,7 @@
+use crate::application::daily_capacity::try_next_business_day_start;
 use crate::application::interface::TaskRepositoryTrait;
 use crate::application::task_use_case::ApplicationError;
 use crate::application::task_view::TaskView;
-use crate::entity::datetime::get_next_morning_datetime;
 use crate::entity::task::{
     extract_leaf_tasks_from_project_with_pending, TaskHandle, TaskTreeError,
 };
@@ -157,22 +157,33 @@ fn build_schedule_candidates(
         }
     }
 
-    let mut attributes = task_schedule_attributes.into_iter().collect::<Vec<_>>();
-    attributes.sort_by_key(|(id, attributes)| {
-        (
-            (get_next_morning_datetime(attributes.first_available_time) - Duration::days(1))
-                .date_naive(),
-            attributes.deadline_time.is_none(),
-            attributes.first_available_time,
-            attributes.neg_priority,
-            attributes.rank,
-            attributes.deadline_time,
-            *id,
-        )
-    });
+    let mut attributes = task_schedule_attributes
+        .into_iter()
+        .map(|(id, attributes)| {
+            let first_available_time = attributes.first_available_time;
+            let subjective_date = try_next_business_day_start(first_available_time)?
+                .checked_sub_signed(Duration::days(1))
+                .map(|datetime| datetime.date_naive())
+                .ok_or(ApplicationError::SubjectiveDateOutOfRange {
+                    operation: "subjective_date",
+                    datetime: first_available_time,
+                })?;
+            let sort_key = (
+                subjective_date,
+                attributes.deadline_time.is_none(),
+                first_available_time,
+                attributes.neg_priority,
+                attributes.rank,
+                attributes.deadline_time,
+                id,
+            );
+            Ok((sort_key, (id, attributes)))
+        })
+        .collect::<Result<Vec<_>, ApplicationError>>()?;
+    attributes.sort_by_key(|entry| entry.0);
 
     let mut candidates = Vec::new();
-    for (id, attributes) in attributes {
+    for (_, (id, attributes)) in attributes {
         let Some(task) = repository
             .get_by_id(id)
             .map_err(ApplicationError::TaskTree)?
