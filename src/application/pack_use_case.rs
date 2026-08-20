@@ -266,15 +266,18 @@ fn collect_candidates(
         if !seen_ids.insert(scheduled.task.id) {
             continue;
         }
+        if scheduled.rank != 0
+            || scheduled.task.status != Status::Pending
+            || scheduled.task.is_on_other_side
+            || scheduled.total_work_seconds <= 0
+        {
+            continue;
+        }
         let scheduled_date = try_subjective_date(scheduled.scheduled_start)?;
         let task_start_date = try_subjective_date(scheduled.task.start_time)?;
-        if scheduled.rank == 0
-            && scheduled.task.status == Status::Pending
-            && !scheduled.task.is_on_other_side
-            && scheduled.total_work_seconds > 0
-            && target_dates
-                .iter()
-                .any(|target_date| *target_date < scheduled_date && task_start_date <= *target_date)
+        if target_dates
+            .iter()
+            .any(|target_date| *target_date < scheduled_date && task_start_date <= *target_date)
         {
             candidates.push(PackCandidate {
                 task_id: scheduled.task.id,
@@ -1024,5 +1027,30 @@ mod tests {
 
         assert!(actual.packed_tasks.is_empty());
         assert!(actual.skipped_tasks.is_empty());
+    }
+
+    #[test]
+    fn pack_tasks_候補外の親taskの範囲外start_timeは正常な葉taskの配置を妨げない() {
+        let now = fixed_now();
+        let parent = pending_task("親", now, now + Duration::days(10), 30, 1);
+        let out_of_range_start = DateTime::<Local>::from_naive_utc_and_offset(
+            NaiveDate::MIN.and_hms_opt(5, 59, 0).unwrap(),
+            FixedOffset::east_opt(0).unwrap(),
+        );
+        parent.set_start_time(out_of_range_start).unwrap();
+        let child = parent.create_as_last_child(crate::test_support::new_task_attr("子"));
+        child.sync_clock(now).unwrap();
+        child.set_start_time(now).unwrap();
+        child.set_estimated_work_seconds(30 * 60).unwrap();
+
+        let leaf = pending_task("正常な葉", now, now + Duration::days(10), 30, 9);
+        let repository = TestTaskRepository::new(vec![parent, leaf.clone()], now);
+        let mut free_time_manager = TestFreeTimeManager::new(120);
+
+        let actual = pack_tasks(&repository, &mut free_time_manager).unwrap();
+
+        assert_eq!(actual.packed_tasks.len(), 1);
+        assert_eq!(actual.packed_tasks[0].task_id, leaf.get_id().unwrap());
+        assert!(leaf.get_pending_until().unwrap() < now + Duration::days(10));
     }
 }
