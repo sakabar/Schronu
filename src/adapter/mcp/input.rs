@@ -145,6 +145,17 @@ impl<'de> Deserialize<'de> for NonNegativeI64 {
                 "{SEMANTIC_ERROR_PREFIX}is outside the supported integer range"
             )));
         }
+        if let Some(value) = value.as_f64() {
+            const I64_UPPER_BOUND_EXCLUSIVE: f64 = 9_223_372_036_854_775_808.0;
+            if value >= 0.0 && value.fract() == 0.0 {
+                if value < I64_UPPER_BOUND_EXCLUSIVE {
+                    return Ok(Self(value as i64));
+                }
+                return Err(serde::de::Error::custom(format!(
+                    "{SEMANTIC_ERROR_PREFIX}is outside the supported integer range"
+                )));
+            }
+        }
         Err(serde::de::Error::custom(format!(
             "{SCHEMA_ERROR_PREFIX}must be a non-negative integer"
         )))
@@ -1026,7 +1037,7 @@ fn common_input_contract() -> CommonInputContract {
 #[cfg(test)]
 mod tests {
     use super::{
-        common_input_contract, decode_input, generated_input_schema, OptionalValue,
+        common_input_contract, decode_input, generated_input_schema, NonNegativeI64, OptionalValue,
         Rfc3339DateTime, ToolInputError,
     };
     use schemars::JsonSchema;
@@ -1263,6 +1274,12 @@ mod tests {
 
     #[derive(Deserialize, JsonSchema)]
     #[serde(deny_unknown_fields)]
+    struct IntegerInput {
+        work_seconds: NonNegativeI64,
+    }
+
+    #[derive(Deserialize, JsonSchema)]
+    #[serde(deny_unknown_fields)]
     struct EmptyInput {}
 
     #[test]
@@ -1275,6 +1292,43 @@ mod tests {
             ),
         ] {
             assert_eq!(schema.get("required"), Some(&json!([])), "{name}");
+        }
+    }
+
+    #[test]
+    fn json_integer_representation_matches_schema_and_decode() {
+        let schema = generated_input_schema::<IntegerInput>();
+        let validator = jsonschema::options()
+            .build(&schema)
+            .expect("generated integer input schema must be valid JSON Schema");
+        let cases = [
+            ("integral float", json!({"work_seconds": 1.0}), true),
+            ("fractional number", json!({"work_seconds": 1.5}), false),
+        ];
+
+        for (name, input, schema_accepts) in cases {
+            assert_eq!(
+                validator.is_valid(&input),
+                schema_accepts,
+                "schema outcome differed for {name}"
+            );
+            if schema_accepts {
+                let decoded = decode_input::<IntegerInput>(&input)
+                    .unwrap_or_else(|_| panic!("decode unexpectedly rejected {name}"));
+                assert_eq!(
+                    decoded.work_seconds.0, 1,
+                    "decoded value differed for {name}"
+                );
+            } else {
+                assert_decode_outcome(
+                    name,
+                    decode_input::<IntegerInput>(&input).map(|_| ()),
+                    ExpectedDecode::Schema {
+                        field: "work_seconds",
+                        reason: "must be a non-negative integer",
+                    },
+                );
+            }
         }
     }
 
