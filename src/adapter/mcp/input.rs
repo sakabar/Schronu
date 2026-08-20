@@ -1051,8 +1051,9 @@ fn common_input_contract() -> CommonInputContract {
 #[cfg(test)]
 mod tests {
     use super::{
-        common_input_contract, decode_input, generated_input_schema, GetFocusInput, GetTaskInput,
-        NonNegativeI64, OptionalValue, Rfc3339DateTime, ToolInputError,
+        common_input_contract, decode_input, generated_input_schema, GetFocusInput,
+        GetScheduleInput, GetTaskInput, ListTasksInput, NonNegativeI64, OptionalValue,
+        Rfc3339DateTime, ToolInputError,
     };
     use chrono::{DateTime, Local};
     use schemars::JsonSchema;
@@ -1194,6 +1195,329 @@ mod tests {
                 },
             ],
         );
+    }
+
+    #[test]
+    fn search_tool_inputs_match_public_schema_and_decode_contract() {
+        assert_reference_input_contract::<ListTasksInput>(
+            "list_tasks",
+            public_tool_schema("list_tasks"),
+            list_tasks_input_cases(),
+        );
+        assert_reference_input_contract::<GetScheduleInput>(
+            "get_schedule",
+            public_tool_schema("get_schedule"),
+            get_schedule_input_cases(),
+        );
+    }
+
+    fn list_tasks_input_cases() -> Vec<ContractCase> {
+        let valid_period = json!({
+            "field": "created_at",
+            "from": "2026-08-10T00:00:00+09:00",
+            "until": "2026-08-11T00:00:00+09:00"
+        });
+        vec![
+            ContractCase {
+                name: "empty filter",
+                input: json!({}),
+                schema_accepts: true,
+                decode: ExpectedDecode::Valid,
+            },
+            ContractCase {
+                name: "all filters",
+                input: json!({
+                    "period": valid_period,
+                    "statuses": ["todo", "pending", "done"],
+                    "categories": ["earning", "sustaining", "recovery", "investment", "consumption", null]
+                }),
+                schema_accepts: true,
+                decode: ExpectedDecode::Valid,
+            },
+            ContractCase {
+                name: "period is missing a required field",
+                input: json!({
+                    "period": {
+                        "field": "created_at",
+                        "from": "2026-08-10T00:00:00+09:00"
+                    }
+                }),
+                schema_accepts: false,
+                decode: ExpectedDecode::Schema {
+                    field: "period.until",
+                    reason: "field is required",
+                },
+            },
+            ContractCase {
+                name: "period has an unknown field",
+                input: json!({
+                    "period": {
+                        "field": "created_at",
+                        "from": "2026-08-10T00:00:00+09:00",
+                        "until": "2026-08-11T00:00:00+09:00",
+                        "extra": true
+                    }
+                }),
+                schema_accepts: false,
+                decode: ExpectedDecode::Schema {
+                    field: "period.extra",
+                    reason: "additional property is not allowed",
+                },
+            },
+            ContractCase {
+                name: "period has wrong type",
+                input: json!({"period": true}),
+                schema_accepts: false,
+                decode: ExpectedDecode::Schema {
+                    field: "period",
+                    reason: "must be an object",
+                },
+            },
+            ContractCase {
+                name: "period field has wrong type",
+                input: json!({
+                    "period": {
+                        "field": 42,
+                        "from": "2026-08-10T00:00:00+09:00",
+                        "until": "2026-08-11T00:00:00+09:00"
+                    }
+                }),
+                schema_accepts: false,
+                decode: ExpectedDecode::Schema {
+                    field: "period.field",
+                    reason: "must be a string",
+                },
+            },
+            ContractCase {
+                name: "period field has unsupported value",
+                input: json!({
+                    "period": {
+                        "field": "invalid",
+                        "from": "2026-08-10T00:00:00+09:00",
+                        "until": "2026-08-11T00:00:00+09:00"
+                    }
+                }),
+                schema_accepts: false,
+                decode: ExpectedDecode::Schema {
+                    field: "period.field",
+                    reason: "must be a supported period field",
+                },
+            },
+            ContractCase {
+                name: "period date-time has wrong type",
+                input: json!({
+                    "period": {
+                        "field": "created_at",
+                        "from": 42,
+                        "until": "2026-08-11T00:00:00+09:00"
+                    }
+                }),
+                schema_accepts: false,
+                decode: ExpectedDecode::Schema {
+                    field: "period.from",
+                    reason: "must be a string",
+                },
+            },
+            ContractCase {
+                name: "period date-time is invalid",
+                input: json!({
+                    "period": {
+                        "field": "created_at",
+                        "from": "not-a-date",
+                        "until": "2026-08-11T00:00:00+09:00"
+                    }
+                }),
+                schema_accepts: false,
+                decode: ExpectedDecode::Semantic {
+                    field: "period.from",
+                    reason: "must be a valid RFC 3339 date-time",
+                },
+            },
+            ContractCase {
+                name: "reversed period is decoded for handler validation",
+                input: json!({
+                    "period": {
+                        "field": "created_at",
+                        "from": "2026-08-11T00:00:00+09:00",
+                        "until": "2026-08-10T00:00:00+09:00"
+                    }
+                }),
+                schema_accepts: true,
+                decode: ExpectedDecode::Valid,
+            },
+            ContractCase {
+                name: "statuses has wrong type",
+                input: json!({"statuses": "pending"}),
+                schema_accepts: false,
+                decode: ExpectedDecode::Schema {
+                    field: "statuses",
+                    reason: "must be an array",
+                },
+            },
+            ContractCase {
+                name: "status has unsupported value",
+                input: json!({"statuses": ["invalid"]}),
+                schema_accepts: false,
+                decode: ExpectedDecode::Schema {
+                    field: "statuses[0]",
+                    reason: "must be todo, pending, or done",
+                },
+            },
+            ContractCase {
+                name: "status has wrong type",
+                input: json!({"statuses": [42]}),
+                schema_accepts: false,
+                decode: ExpectedDecode::Schema {
+                    field: "statuses[0]",
+                    reason: "must be todo, pending, or done",
+                },
+            },
+            ContractCase {
+                name: "categories can contain null",
+                input: json!({"categories": [null]}),
+                schema_accepts: true,
+                decode: ExpectedDecode::Valid,
+            },
+            ContractCase {
+                name: "categories array cannot be null",
+                input: json!({"categories": null}),
+                schema_accepts: false,
+                decode: ExpectedDecode::Schema {
+                    field: "categories",
+                    reason: "must be an array",
+                },
+            },
+            ContractCase {
+                name: "category has unsupported value",
+                input: json!({"categories": ["invalid"]}),
+                schema_accepts: false,
+                decode: ExpectedDecode::Schema {
+                    field: "categories[0]",
+                    reason: "must be a supported category or null",
+                },
+            },
+            ContractCase {
+                name: "category has wrong type",
+                input: json!({"categories": [42]}),
+                schema_accepts: false,
+                decode: ExpectedDecode::Schema {
+                    field: "categories[0]",
+                    reason: "must be a supported category or null",
+                },
+            },
+            ContractCase {
+                name: "unknown field",
+                input: json!({"extra": true}),
+                schema_accepts: false,
+                decode: ExpectedDecode::Schema {
+                    field: "arguments.extra",
+                    reason: "additional property is not allowed",
+                },
+            },
+            ContractCase {
+                name: "arguments has wrong type",
+                input: json!(42),
+                schema_accepts: false,
+                decode: ExpectedDecode::Schema {
+                    field: "arguments",
+                    reason: "must be an object",
+                },
+            },
+        ]
+    }
+
+    fn get_schedule_input_cases() -> Vec<ContractCase> {
+        vec![
+            ContractCase {
+                name: "empty range",
+                input: json!({}),
+                schema_accepts: true,
+                decode: ExpectedDecode::Valid,
+            },
+            ContractCase {
+                name: "complete range",
+                input: json!({"from": "2026-08-10", "until": "2026-08-11"}),
+                schema_accepts: true,
+                decode: ExpectedDecode::Valid,
+            },
+            ContractCase {
+                name: "from only",
+                input: json!({"from": "2026-08-10"}),
+                schema_accepts: true,
+                decode: ExpectedDecode::Valid,
+            },
+            ContractCase {
+                name: "until only",
+                input: json!({"until": "2026-08-11"}),
+                schema_accepts: true,
+                decode: ExpectedDecode::Valid,
+            },
+            ContractCase {
+                name: "from cannot be null",
+                input: json!({"from": null}),
+                schema_accepts: false,
+                decode: ExpectedDecode::Schema {
+                    field: "from",
+                    reason: "must be a date string",
+                },
+            },
+            ContractCase {
+                name: "until has wrong type",
+                input: json!({"until": 42}),
+                schema_accepts: false,
+                decode: ExpectedDecode::Schema {
+                    field: "until",
+                    reason: "must be a date string",
+                },
+            },
+            ContractCase {
+                name: "date is invalid",
+                input: json!({"from": "2026-02-30"}),
+                schema_accepts: false,
+                decode: ExpectedDecode::Semantic {
+                    field: "from",
+                    reason: "must be a valid ISO 8601 date",
+                },
+            },
+            ContractCase {
+                name: "reversed range is decoded for handler validation",
+                input: json!({"from": "2026-08-11", "until": "2026-08-10"}),
+                schema_accepts: true,
+                decode: ExpectedDecode::Valid,
+            },
+            ContractCase {
+                name: "unknown field",
+                input: json!({"extra": true}),
+                schema_accepts: false,
+                decode: ExpectedDecode::Schema {
+                    field: "arguments.extra",
+                    reason: "additional property is not allowed",
+                },
+            },
+            ContractCase {
+                name: "arguments has wrong type",
+                input: json!(42),
+                schema_accepts: false,
+                decode: ExpectedDecode::Schema {
+                    field: "arguments",
+                    reason: "must be an object",
+                },
+            },
+        ]
+    }
+
+    fn public_tool_schema(tool_name: &str) -> Value {
+        let tools: Value =
+            serde_json::from_str(include_str!("../../../tests/fixtures/mcp/tools-list.json"))
+                .expect("MCP tools/list golden fixture must be valid JSON");
+        tools
+            .as_array()
+            .expect("MCP tools/list golden fixture must be an array")
+            .iter()
+            .find(|tool| tool["name"] == tool_name)
+            .unwrap_or_else(|| panic!("{tool_name} must exist in MCP tools/list golden fixture"))
+            ["inputSchema"]
+            .clone()
     }
 
     fn assert_reference_input_contract<T>(
