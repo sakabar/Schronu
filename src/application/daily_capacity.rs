@@ -106,7 +106,9 @@ pub fn calculate_full_day_free_time_minutes_for_subjective_date_with_end_of_day_
 }
 
 pub fn subjective_date(datetime: DateTime<Local>) -> NaiveDate {
-    BusinessDateTimePolicy::new(END_OF_DAY_OFFSET_MINUTES).subjective_date(datetime)
+    BusinessDateTimePolicy::new(END_OF_DAY_OFFSET_MINUTES)
+        .subjective_date(datetime)
+        .unwrap_or_else(|| panic!("subjective date is outside the supported range"))
 }
 
 pub fn subjective_date_start(date: NaiveDate) -> DateTime<Local> {

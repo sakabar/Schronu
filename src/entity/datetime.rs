@@ -18,12 +18,19 @@ impl BusinessDateTimePolicy {
         }
     }
 
-    pub fn subjective_date(&self, datetime: DateTime<Local>) -> NaiveDate {
-        let date = datetime.date_naive();
-        if datetime.hour() < BUSINESS_DAY_START_HOUR {
-            date.pred_opt().unwrap_or(date)
+    pub fn subjective_date(&self, datetime: DateTime<Local>) -> Option<NaiveDate> {
+        self.subjective_date_from_local_date_and_hour(datetime.date_naive(), datetime.hour())
+    }
+
+    fn subjective_date_from_local_date_and_hour(
+        &self,
+        date: NaiveDate,
+        hour: u32,
+    ) -> Option<NaiveDate> {
+        if hour < BUSINESS_DAY_START_HOUR {
+            date.pred_opt()
         } else {
-            date
+            Some(date)
         }
     }
 
@@ -127,15 +134,25 @@ mod business_datetime_policy_contract_tests {
 
         assert_eq!(
             policy.subjective_date(local_datetime(2026, 8, 12, 5, 59)),
-            chrono::NaiveDate::from_ymd_opt(2026, 8, 11).unwrap()
+            chrono::NaiveDate::from_ymd_opt(2026, 8, 11)
         );
         assert_eq!(
             policy.subjective_date(local_datetime(2026, 8, 12, 6, 0)),
-            chrono::NaiveDate::from_ymd_opt(2026, 8, 12).unwrap()
+            chrono::NaiveDate::from_ymd_opt(2026, 8, 12)
         );
         assert_eq!(
             policy.subjective_date(local_datetime(2026, 8, 12, 6, 1)),
-            chrono::NaiveDate::from_ymd_opt(2026, 8, 12).unwrap()
+            chrono::NaiveDate::from_ymd_opt(2026, 8, 12)
+        );
+    }
+
+    #[test]
+    fn subjective_dateは最小日の06時前をnoneにする() {
+        let policy = BusinessDateTimePolicy::new(30);
+
+        assert_eq!(
+            policy.subjective_date_from_local_date_and_hour(chrono::NaiveDate::MIN, 5),
+            None
         );
     }
 
