@@ -200,6 +200,47 @@ impl JsonSchema for NonEmptyString {
 
 #[derive(Default)]
 #[allow(dead_code, reason = "used by the staged typed-tool migration")]
+pub(super) enum OptionalValue<T> {
+    #[default]
+    Missing,
+    Value(T),
+}
+
+impl<'de, T> Deserialize<'de> for OptionalValue<T>
+where
+    T: Deserialize<'de>,
+{
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        T::deserialize(deserializer).map(Self::Value)
+    }
+}
+
+impl<T> JsonSchema for OptionalValue<T>
+where
+    T: JsonSchema,
+{
+    fn schema_name() -> Cow<'static, str> {
+        format!("OptionalValue_{}", T::schema_name()).into()
+    }
+
+    fn schema_id() -> Cow<'static, str> {
+        format!("{}::OptionalValue<{}>", module_path!(), T::schema_id()).into()
+    }
+
+    fn inline_schema() -> bool {
+        true
+    }
+
+    fn json_schema(generator: &mut SchemaGenerator) -> Schema {
+        generator.subschema_for::<T>()
+    }
+}
+
+#[derive(Default)]
+#[allow(dead_code, reason = "used by the staged typed-tool migration")]
 pub(super) enum NullablePatch<T> {
     #[default]
     Missing,
@@ -979,7 +1020,11 @@ fn common_input_contract() -> CommonInputContract {
 
 #[cfg(test)]
 mod tests {
-    use super::{common_input_contract, decode_input, ToolInputError};
+    use super::{
+        common_input_contract, decode_input, generated_input_schema, OptionalValue,
+        Rfc3339DateTime, ToolInputError,
+    };
+    use schemars::JsonSchema;
     use serde::Deserialize;
     use serde_json::{json, Value};
 
@@ -1201,6 +1246,54 @@ mod tests {
                 reason: "additional property is not allowed",
             },
         );
+    }
+
+    #[allow(dead_code)]
+    #[derive(Deserialize, JsonSchema)]
+    #[serde(deny_unknown_fields)]
+    struct OptionalInput {
+        #[serde(default)]
+        pending_until: OptionalValue<Rfc3339DateTime>,
+    }
+
+    #[test]
+    fn optional_non_null_input_matches_schema_for_missing_null_and_value() {
+        let schema = generated_input_schema::<OptionalInput>();
+        let validator = jsonschema::options()
+            .should_validate_formats(true)
+            .build(&schema)
+            .expect("generated optional input schema must be valid JSON Schema");
+        let cases = [
+            ("missing", json!({}), true, ExpectedDecode::Valid),
+            (
+                "value",
+                json!({"pending_until": "2026-08-20T10:00:00+09:00"}),
+                true,
+                ExpectedDecode::Valid,
+            ),
+            (
+                "null",
+                json!({"pending_until": null}),
+                false,
+                ExpectedDecode::Schema {
+                    field: "pending_until",
+                    reason: "must be a string",
+                },
+            ),
+        ];
+
+        for (name, input, schema_accepts, expected_decode) in cases {
+            assert_eq!(
+                validator.is_valid(&input),
+                schema_accepts,
+                "schema outcome differed for {name}"
+            );
+            assert_decode_outcome(
+                name,
+                decode_input::<OptionalInput>(&input).map(|_| ()),
+                expected_decode,
+            );
+        }
     }
 
     fn with_field(mut input: Value, field: &str, value: Value) -> Value {
