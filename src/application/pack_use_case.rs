@@ -362,7 +362,7 @@ mod tests {
         FreeTimeManagerTrait, TaskRepositoryError, TaskRepositoryTrait,
     };
     use crate::entity::task::{Status, TaskHandle};
-    use chrono::{DateTime, Duration, Local, NaiveDate, TimeZone};
+    use chrono::{DateTime, Duration, FixedOffset, Local, NaiveDate, TimeZone};
     use std::cell::Cell;
     use uuid::Uuid;
 
@@ -535,6 +535,69 @@ mod tests {
         task.set_pending_until(pending_until).unwrap();
         task.set_orig_status(Status::Pending).unwrap();
         task
+    }
+
+    #[test]
+    fn pack_tasksはoperation時刻のsubjective_date計算不能を伝搬しtaskを変更しない() {
+        let local_datetime = NaiveDate::MIN.and_hms_opt(5, 59, 0).unwrap();
+        let now = DateTime::<Local>::from_naive_utc_and_offset(
+            local_datetime,
+            FixedOffset::east_opt(0).unwrap(),
+        );
+        let task = crate::test_support::new_task_handle("対象").unwrap();
+        let original_revision = task.get_persistent_mutation_revision().unwrap();
+        let repository = TestTaskRepository::new(vec![task.clone()], now);
+        let mut free_time_manager = TestFreeTimeManager::new(60);
+
+        let actual = pack_tasks_with_end_of_day_offset_minutes(
+            &repository,
+            &mut free_time_manager,
+            END_OF_DAY_OFFSET_MINUTES,
+        );
+
+        assert_eq!(
+            actual,
+            Err(ApplicationError::SubjectiveDateOutOfRange {
+                operation: "subjective_date",
+                datetime: now,
+            })
+        );
+        assert_eq!(
+            task.get_persistent_mutation_revision().unwrap(),
+            original_revision
+        );
+    }
+
+    #[test]
+    fn flatten_tasksはoperation時刻のsubjective_date計算不能を伝搬しtaskを変更しない() {
+        let local_datetime = NaiveDate::MIN.and_hms_opt(5, 59, 0).unwrap();
+        let now = DateTime::<Local>::from_naive_utc_and_offset(
+            local_datetime,
+            FixedOffset::east_opt(0).unwrap(),
+        );
+        let task = crate::test_support::new_task_handle("対象").unwrap();
+        let original_revision = task.get_persistent_mutation_revision().unwrap();
+        let repository = TestTaskRepository::new(vec![task.clone()], now);
+        let mut free_time_manager = TestFreeTimeManager::new(60);
+
+        let actual =
+            crate::application::flatten_use_case::flatten_tasks_with_end_of_day_offset_minutes(
+                &repository,
+                &mut free_time_manager,
+                END_OF_DAY_OFFSET_MINUTES,
+            );
+
+        assert_eq!(
+            actual,
+            Err(ApplicationError::SubjectiveDateOutOfRange {
+                operation: "subjective_date",
+                datetime: now,
+            })
+        );
+        assert_eq!(
+            task.get_persistent_mutation_revision().unwrap(),
+            original_revision
+        );
     }
 
     #[test]

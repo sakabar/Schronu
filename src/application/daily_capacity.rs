@@ -292,6 +292,48 @@ mod tests {
     }
 
     #[test]
+    fn full_day_free_timeは最大日の終端計算不能をdateとoffset付きで返す() {
+        let mut free_time_manager = DurationFreeTimeManager;
+
+        let actual =
+            calculate_full_day_free_time_minutes_for_subjective_date_with_end_of_day_offset_minutes(
+                &NaiveDate::MAX,
+                &mut free_time_manager,
+                END_OF_DAY_OFFSET_MINUTES,
+            );
+
+        assert_eq!(
+            actual,
+            Err(ApplicationError::SubjectiveDateEndOutOfRange {
+                date: NaiveDate::MAX,
+                end_of_day_offset_minutes: END_OF_DAY_OFFSET_MINUTES,
+            })
+        );
+    }
+
+    #[test]
+    fn free_timeは極端なoffsetの終端計算不能をdateとoffset付きで返す() {
+        let date = NaiveDate::from_ymd_opt(2026, 8, 12).unwrap();
+        let last_synced_time = Local.with_ymd_and_hms(2026, 8, 12, 12, 0, 0).unwrap();
+        let mut free_time_manager = DurationFreeTimeManager;
+
+        let actual = calculate_free_time_minutes_for_subjective_date_with_end_of_day_offset_minutes(
+            &date,
+            last_synced_time,
+            &mut free_time_manager,
+            i64::MAX,
+        );
+
+        assert_eq!(
+            actual,
+            Err(ApplicationError::SubjectiveDateEndOutOfRange {
+                date,
+                end_of_day_offset_minutes: i64::MAX,
+            })
+        );
+    }
+
+    #[test]
     fn local_datetime変換はsingleを採用する() {
         let naive = NaiveDate::from_ymd_opt(2026, 8, 12)
             .unwrap()
