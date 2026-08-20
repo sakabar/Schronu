@@ -249,6 +249,39 @@ fn get_scheduleは候補の次業務日開始計算不能を伝搬しtaskを変�
 }
 
 #[test]
+fn get_scheduleは複数の日時errorからuuid順先頭候補を決定的に返す() {
+    let lower_id_datetime = DateTime::<Local>::from_naive_utc_and_offset(
+        NaiveDate::MAX.and_hms_opt(6, 0, 0).unwrap(),
+        FixedOffset::east_opt(0).unwrap(),
+    );
+    let higher_id_datetime = DateTime::<Local>::from_naive_utc_and_offset(
+        NaiveDate::MAX.and_hms_opt(7, 0, 0).unwrap(),
+        FixedOffset::east_opt(0).unwrap(),
+    );
+    let lower_id = Uuid::from_u128(1);
+    let higher_id = Uuid::from_u128(2);
+    let lower_id_task = TaskHandle::with_identity("低UUID", lower_id, fixed_now()).unwrap();
+    lower_id_task.sync_clock(lower_id_datetime).unwrap();
+    lower_id_task.set_start_time(lower_id_datetime).unwrap();
+    lower_id_task.set_estimated_work_seconds(15 * 60).unwrap();
+    let higher_id_task = TaskHandle::with_identity("高UUID", higher_id, fixed_now()).unwrap();
+    higher_id_task.sync_clock(higher_id_datetime).unwrap();
+    higher_id_task.set_start_time(higher_id_datetime).unwrap();
+    higher_id_task.set_estimated_work_seconds(15 * 60).unwrap();
+    let repository = TestTaskRepository::new(vec![higher_id_task, lower_id_task], fixed_now());
+    let expected = Err(
+        super::task_use_case::ApplicationError::SubjectiveDateOutOfRange {
+            operation: "next_business_day_start",
+            datetime: lower_id_datetime,
+        },
+    );
+
+    for _ in 0..64 {
+        assert_eq!(get_schedule(&repository), expected);
+    }
+}
+
+#[test]
 fn get_schedule_pending解除後に子を配置し親をその後へ置く() {
     let now = fixed_now();
     let parent = task_with_schedule("親", now, 0, 5);

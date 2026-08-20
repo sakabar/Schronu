@@ -157,7 +157,9 @@ fn build_schedule_candidates(
         }
     }
 
-    let mut attributes = task_schedule_attributes
+    let mut attributes = task_schedule_attributes.into_iter().collect::<Vec<_>>();
+    attributes.sort_by_key(|(id, _)| *id);
+    let mut attributes = attributes
         .into_iter()
         .map(|(id, attributes)| {
             let first_available_time = attributes.first_available_time;
