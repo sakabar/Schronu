@@ -59,11 +59,10 @@ use schronu::application::task_use_case::{
     BreakdownTaskInput, CompleteTaskInput, CreateTaskInput, TaskFactory,
 };
 use schronu::entity::datetime::{get_next_morning_datetime, parse_local_datetime};
-#[cfg(test)]
-use schronu::entity::task::TaskTreeError;
 use schronu::entity::task::{
     extract_leaf_tasks_from_project, extract_leaf_tasks_from_project_with_pending,
     read_project_category, round_up_sec_as_minute, ProjectCategory, Status, TaskAttr, TaskHandle,
+    TaskTreeError,
 };
 #[cfg(test)]
 use std::cell::{Cell, RefCell};
@@ -3981,28 +3980,28 @@ fn execute_next_up(
     let Some(mut focused_task) = focused_task_opt.clone() else {
         return Ok(None);
     };
-    let mut new_task_attr = task_factory.create_task_attr(new_task_name_str);
-    let parent_task_opt = focused_task.parent().map_err(ApplicationError::TaskTree)?;
+    let parent_task = focused_task
+        .parent()
+        .map_err(ApplicationError::TaskTree)?
+        .ok_or(ApplicationError::TaskTree(TaskTreeError::RootOperation))?;
 
     // 親タスクの〆切を引き継ぐ
-    if let Some(parent_task) = &parent_task_opt {
-        new_task_attr.set_deadline_time_opt(
+    let parent_deadline_time_opt = parent_task
+        .get_deadline_time_opt()
+        .map_err(ApplicationError::TaskTree)?;
+    let parent_estimated_work_seconds_opt = estimated_work_seconds_opt
+        .map(|new_task_estimated_work_seconds| {
             parent_task
-                .get_deadline_time_opt()
-                .map_err(ApplicationError::TaskTree)?,
-        );
-    }
+                .get_estimated_work_seconds()
+                .map(|parent_task_estimated_work_seconds| {
+                    (parent_task_estimated_work_seconds - new_task_estimated_work_seconds).max(0)
+                })
+                .map_err(ApplicationError::TaskTree)
+        })
+        .transpose()?;
 
-    let parent_estimated_work_seconds_opt =
-        match (estimated_work_seconds_opt, parent_task_opt.as_ref()) {
-            (Some(new_task_estimated_work_seconds), Some(parent_task)) => {
-                let parent_task_estimated_work_seconds = parent_task
-                    .get_estimated_work_seconds()
-                    .map_err(ApplicationError::TaskTree)?;
-                Some((parent_task_estimated_work_seconds - new_task_estimated_work_seconds).max(0))
-            }
-            _ => None,
-        };
+    let mut new_task_attr = task_factory.create_task_attr(new_task_name_str);
+    new_task_attr.set_deadline_time_opt(parent_deadline_time_opt);
 
     if let Some(new_task_estimated_work_seconds) = estimated_work_seconds_opt {
         new_task_attr.set_estimated_work_seconds(new_task_estimated_work_seconds);
@@ -4013,9 +4012,7 @@ fn execute_next_up(
         .create_parent(new_task_attr)
         .map_err(ApplicationError::TaskTree)?;
 
-    if let (Some(parent_task), Some(parent_estimated_work_seconds)) =
-        (parent_task_opt, parent_estimated_work_seconds_opt)
-    {
+    if let Some(parent_estimated_work_seconds) = parent_estimated_work_seconds_opt {
         parent_task
             .set_estimated_work_seconds(parent_estimated_work_seconds)
             .map_err(ApplicationError::TaskTree)?;
@@ -6544,7 +6541,11 @@ fn test_execute_next_up_入力不正とfocusなしではidentityを消費しな�
 #[test]
 fn test_execute_next_up_rootへの親追加失敗を構造化errorで返す() {
     let operation_now = Local.with_ymd_and_hms(2026, 8, 19, 14, 30, 0).unwrap();
-    let mut next_id = || Uuid::parse_str("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa").unwrap();
+    let id_generator_call_count = Cell::new(0);
+    let mut next_id = || {
+        id_generator_call_count.set(id_generator_call_count.get() + 1);
+        Uuid::parse_str("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa").unwrap()
+    };
     let mut factory = TaskFactory::new(operation_now, &mut next_id);
     let root = new_test_task_handle("root").unwrap();
     let mut stdout = TestWriter::new();
@@ -6569,6 +6570,7 @@ fn test_execute_next_up_rootへの親追加失敗を構造化errorで返す() {
         before_estimated_work_seconds
     );
     assert_eq!(focused_task_id_opt, Some(root.get_id().unwrap()));
+    assert_eq!(id_generator_call_count.get(), 0);
 }
 
 #[test]
