@@ -1331,6 +1331,39 @@ mod tests {
                 );
             }
         }
+
+        let exact_i64 = json!({"work_seconds": 9_223_372_036_854_774_784.0_f64});
+        assert!(validator.is_valid(&exact_i64));
+        let decoded = match decode_input::<IntegerInput>(&exact_i64) {
+            Ok(decoded) => decoded,
+            Err(error) => panic!(
+                "exact f64 integer below i64::MAX must be accepted: {}",
+                describe_decode(Err(error))
+            ),
+        };
+        assert_eq!(decoded.work_seconds.0, 9_223_372_036_854_774_784_i64);
+
+        let i64_upper_bound = json!({"work_seconds": 9_223_372_036_854_775_808.0_f64});
+        assert!(validator.is_valid(&i64_upper_bound));
+        assert_decode_outcome(
+            "f64 at i64 upper bound",
+            decode_input::<IntegerInput>(&i64_upper_bound).map(|_| ()),
+            ExpectedDecode::Semantic {
+                field: "work_seconds",
+                reason: "is outside the supported integer range",
+            },
+        );
+
+        let negative_zero = json!({"work_seconds": -0.0_f64});
+        assert!(validator.is_valid(&negative_zero));
+        let decoded = match decode_input::<IntegerInput>(&negative_zero) {
+            Ok(decoded) => decoded,
+            Err(error) => panic!(
+                "negative zero must be accepted as zero: {}",
+                describe_decode(Err(error))
+            ),
+        };
+        assert_eq!(decoded.work_seconds.0, 0);
     }
 
     #[test]
