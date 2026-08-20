@@ -93,7 +93,12 @@ impl<'de> Deserialize<'de> for IsoDate {
     where
         D: Deserializer<'de>,
     {
-        let value = String::deserialize(deserializer)?;
+        let value = Value::deserialize(deserializer)?;
+        let Value::String(value) = value else {
+            return Err(serde::de::Error::custom(format!(
+                "{SCHEMA_ERROR_PREFIX}must be a date string"
+            )));
+        };
         NaiveDate::parse_from_str(&value, "%Y-%m-%d")
             .map(Self)
             .map_err(|_| {
@@ -328,6 +333,180 @@ pub(super) struct GetTaskInput {
     pub(super) task_id: UuidValue,
 }
 
+#[derive(Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+#[allow(dead_code, reason = "used by the staged typed-handler migration")]
+pub(super) struct ListTasksInput {
+    #[serde(default)]
+    pub(super) period: OptionalValue<TaskPeriodInput>,
+    #[serde(default)]
+    pub(super) statuses: OptionalValue<Vec<StatusValue>>,
+    #[serde(default)]
+    #[schemars(schema_with = "categories_schema")]
+    pub(super) categories: OptionalValue<Vec<Option<ProjectCategoryValue>>>,
+}
+
+#[derive(Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+#[allow(dead_code, reason = "used by the staged typed-handler migration")]
+pub(super) struct TaskPeriodInput {
+    pub(super) field: TaskPeriodFieldValue,
+    pub(super) from: Rfc3339DateTime,
+    pub(super) until: Rfc3339DateTime,
+}
+
+#[allow(dead_code, reason = "used by the staged typed-handler migration")]
+pub(super) enum TaskPeriodFieldValue {
+    ScheduledStart,
+    CreatedAt,
+    Deadline,
+    CompletedAt,
+}
+
+impl<'de> Deserialize<'de> for TaskPeriodFieldValue {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let value = String::deserialize(deserializer)?;
+        match value.as_str() {
+            "scheduled_start" => Ok(Self::ScheduledStart),
+            "created_at" => Ok(Self::CreatedAt),
+            "deadline" => Ok(Self::Deadline),
+            "completed_at" => Ok(Self::CompletedAt),
+            _ => Err(serde::de::Error::custom(format!(
+                "{SCHEMA_ERROR_PREFIX}must be a supported period field"
+            ))),
+        }
+    }
+}
+
+impl JsonSchema for TaskPeriodFieldValue {
+    fn schema_name() -> Cow<'static, str> {
+        "TaskPeriodFieldValue".into()
+    }
+
+    fn inline_schema() -> bool {
+        true
+    }
+
+    fn json_schema(_generator: &mut SchemaGenerator) -> Schema {
+        json_schema!({
+            "type": "string",
+            "enum": ["scheduled_start", "created_at", "deadline", "completed_at"]
+        })
+    }
+}
+
+#[allow(dead_code, reason = "used by the staged typed-handler migration")]
+pub(super) enum StatusValue {
+    Todo,
+    Pending,
+    Done,
+}
+
+impl<'de> Deserialize<'de> for StatusValue {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        match Value::deserialize(deserializer)? {
+            Value::String(value) => match value.as_str() {
+                "todo" => Ok(Self::Todo),
+                "pending" => Ok(Self::Pending),
+                "done" => Ok(Self::Done),
+                _ => Err(serde::de::Error::custom(format!(
+                    "{SCHEMA_ERROR_PREFIX}must be todo, pending, or done"
+                ))),
+            },
+            _ => Err(serde::de::Error::custom(format!(
+                "{SCHEMA_ERROR_PREFIX}must be todo, pending, or done"
+            ))),
+        }
+    }
+}
+
+impl JsonSchema for StatusValue {
+    fn schema_name() -> Cow<'static, str> {
+        "StatusValue".into()
+    }
+
+    fn inline_schema() -> bool {
+        true
+    }
+
+    fn json_schema(_generator: &mut SchemaGenerator) -> Schema {
+        json_schema!({"type": "string", "enum": ["todo", "pending", "done"]})
+    }
+}
+
+#[allow(dead_code, reason = "used by the staged typed-handler migration")]
+pub(super) enum ProjectCategoryValue {
+    Earning,
+    Sustaining,
+    Recovery,
+    Investment,
+    Consumption,
+}
+
+impl JsonSchema for ProjectCategoryValue {
+    fn schema_name() -> Cow<'static, str> {
+        "ProjectCategoryValue".into()
+    }
+
+    fn inline_schema() -> bool {
+        true
+    }
+
+    fn json_schema(_generator: &mut SchemaGenerator) -> Schema {
+        json_schema!({
+            "type": "string",
+            "enum": ["earning", "sustaining", "recovery", "investment", "consumption"]
+        })
+    }
+}
+
+impl<'de> Deserialize<'de> for ProjectCategoryValue {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        match Value::deserialize(deserializer)? {
+            Value::String(value) => match value.as_str() {
+                "earning" => Ok(Self::Earning),
+                "sustaining" => Ok(Self::Sustaining),
+                "recovery" => Ok(Self::Recovery),
+                "investment" => Ok(Self::Investment),
+                "consumption" => Ok(Self::Consumption),
+                _ => Err(serde::de::Error::custom(format!(
+                    "{SCHEMA_ERROR_PREFIX}must be a supported category or null"
+                ))),
+            },
+            _ => Err(serde::de::Error::custom(format!(
+                "{SCHEMA_ERROR_PREFIX}must be a supported category or null"
+            ))),
+        }
+    }
+}
+
+fn categories_schema(generator: &mut SchemaGenerator) -> Schema {
+    let category_schema = generator.subschema_for::<ProjectCategoryValue>().to_value();
+    json_schema!({
+        "type": "array",
+        "items": {"anyOf": [category_schema, {"type": "null"}]}
+    })
+}
+
+#[derive(Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+#[allow(dead_code, reason = "used by the staged typed-handler migration")]
+pub(super) struct GetScheduleInput {
+    #[serde(default)]
+    pub(super) from: OptionalValue<IsoDate>,
+    #[serde(default)]
+    pub(super) until: OptionalValue<IsoDate>,
+}
+
 #[allow(dead_code, reason = "used by the staged typed-tool migration")]
 pub(super) fn generated_input_schema<T: JsonSchema>() -> Value {
     let mut settings = SchemaSettings::draft07();
@@ -396,6 +575,10 @@ fn schema_reason(reason: &str) -> &'static str {
         "must be a non-negative integer" => "must be a non-negative integer",
         "must not be empty" => "must not be empty",
         "must be a string or null" => "must be a string or null",
+        "must be a date string" => "must be a date string",
+        "must be a supported period field" => "must be a supported period field",
+        "must be todo, pending, or done" => "must be todo, pending, or done",
+        "must be a supported category or null" => "must be a supported category or null",
         _ => "has an invalid value",
     }
 }
@@ -422,7 +605,11 @@ fn structural_decode_error(path: String, message: &str) -> ToolInputError {
             reason: "must be an object",
         });
     }
-    let reason = if message.contains("expected a string") {
+    let reason = if message.contains("expected struct") || message.contains("expected a map") {
+        "must be an object"
+    } else if message.contains("expected a sequence") {
+        "must be an array"
+    } else if message.contains("expected a string") {
         "must be a string"
     } else if message.contains("expected an integer") {
         "must be a non-negative integer"

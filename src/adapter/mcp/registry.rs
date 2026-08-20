@@ -1,4 +1,6 @@
-use super::input::{generated_input_schema, GetFocusInput, GetTaskInput};
+use super::input::{
+    generated_input_schema, GetFocusInput, GetScheduleInput, GetTaskInput, ListTasksInput,
+};
 use serde_json::{json, Value};
 
 pub(super) fn tool_definitions() -> Vec<Value> {
@@ -16,52 +18,12 @@ pub(super) fn tool_definitions() -> Vec<Value> {
         json!({
             "name": "list_tasks",
             "description": "List tasks filtered by period, status, and category.",
-            "inputSchema": {
-                "type": "object",
-                "properties": {
-                    "period": {
-                        "type": "object",
-                        "properties": {
-                            "field": {
-                                "type": "string",
-                                "enum": [
-                                    "scheduled_start",
-                                    "created_at",
-                                    "deadline",
-                                    "completed_at"
-                                ]
-                            },
-                            "from": {"type": "string", "format": "date-time"},
-                            "until": {"type": "string", "format": "date-time"}
-                        },
-                        "required": ["field", "from", "until"],
-                        "additionalProperties": false
-                    },
-                    "statuses": {
-                        "type": "array",
-                        "items": {"type": "string", "enum": ["todo", "pending", "done"]}
-                    },
-                    "categories": {
-                        "type": "array",
-                        "items": category_schema()
-                    }
-                },
-                "required": [],
-                "additionalProperties": false
-            }
+            "inputSchema": generated_input_schema::<ListTasksInput>()
         }),
         json!({
             "name": "get_schedule",
             "description": "Get Schronu's calculated task schedule for a date range.",
-            "inputSchema": {
-                "type": "object",
-                "properties": {
-                    "from": {"type": "string", "format": "date"},
-                    "until": {"type": "string", "format": "date"}
-                },
-                "required": [],
-                "additionalProperties": false
-            }
+            "inputSchema": generated_input_schema::<GetScheduleInput>()
         }),
         json!({
             "name": "create_task",
