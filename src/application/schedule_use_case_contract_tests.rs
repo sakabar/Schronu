@@ -2,7 +2,7 @@ use super::interface::{TaskRepositoryError, TaskRepositoryTrait};
 use super::schedule_use_case::get_schedule;
 use super::task_use_case::get_task;
 use crate::entity::task::{Status, TaskHandle};
-use chrono::{DateTime, Duration, Local, TimeZone};
+use chrono::{DateTime, Duration, FixedOffset, Local, NaiveDate, TimeZone};
 use std::cell::Cell;
 use uuid::Uuid;
 
@@ -190,6 +190,62 @@ fn get_schedule_i64最小値付近でも優先度の高いtaskを先に配置す
 
     assert_eq!(actual[0].task.id, next.get_id().unwrap());
     assert_eq!(actual[1].task.id, lowest.get_id().unwrap());
+}
+
+#[test]
+fn get_scheduleは候補の次業務日開始計算不能を伝搬しtaskを変更しない() {
+    let local_datetime = NaiveDate::MAX.and_hms_opt(6, 0, 0).unwrap();
+    let out_of_range_start = DateTime::<Local>::from_naive_utc_and_offset(
+        local_datetime,
+        FixedOffset::east_opt(0).unwrap(),
+    );
+    let first = task_with_schedule("範囲外1", out_of_range_start, 15 * 60, 1);
+    let second = task_with_schedule("範囲外2", out_of_range_start, 15 * 60, 2);
+    let repository =
+        TestTaskRepository::new(vec![first.clone(), second.clone()], out_of_range_start);
+    let original_views = repository
+        .projects
+        .iter()
+        .map(|task| {
+            get_task(&repository, task.get_id().unwrap())
+                .unwrap()
+                .unwrap()
+        })
+        .collect::<Vec<_>>();
+    let original_revisions = [
+        first.get_persistent_mutation_revision().unwrap(),
+        second.get_persistent_mutation_revision().unwrap(),
+    ];
+
+    let actual = get_schedule(&repository);
+
+    assert_eq!(
+        actual,
+        Err(
+            super::task_use_case::ApplicationError::SubjectiveDateOutOfRange {
+                operation: "next_business_day_start",
+                datetime: out_of_range_start,
+            }
+        )
+    );
+    assert_eq!(
+        repository
+            .projects
+            .iter()
+            .map(|task| get_task(&repository, task.get_id().unwrap())
+                .unwrap()
+                .unwrap())
+            .collect::<Vec<_>>(),
+        original_views
+    );
+    assert_eq!(
+        [
+            first.get_persistent_mutation_revision().unwrap(),
+            second.get_persistent_mutation_revision().unwrap(),
+        ],
+        original_revisions
+    );
+    assert_eq!(repository.save_count.get(), 0);
 }
 
 #[test]
