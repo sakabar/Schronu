@@ -1,3 +1,4 @@
+use super::input::{generated_input_schema, GetFocusInput, GetTaskInput};
 use serde_json::{json, Value};
 
 pub(super) fn tool_definitions() -> Vec<Value> {
@@ -5,24 +6,12 @@ pub(super) fn tool_definitions() -> Vec<Value> {
         json!({
             "name": "get_focus",
             "description": "Get the task that should be worked on now.",
-            "inputSchema": {
-                "type": "object",
-                "properties": {},
-                "required": [],
-                "additionalProperties": false
-            }
+            "inputSchema": generated_input_schema::<GetFocusInput>()
         }),
         json!({
             "name": "get_task",
             "description": "Get one task by UUID.",
-            "inputSchema": {
-                "type": "object",
-                "properties": {
-                    "task_id": {"type": "string", "format": "uuid"}
-                },
-                "required": ["task_id"],
-                "additionalProperties": false
-            }
+            "inputSchema": generated_input_schema::<GetTaskInput>()
         }),
         json!({
             "name": "list_tasks",

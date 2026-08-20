@@ -317,6 +317,17 @@ where
     }
 }
 
+#[derive(Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub(super) struct GetFocusInput {}
+
+#[derive(Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+#[allow(dead_code, reason = "used by the staged typed-handler migration")]
+pub(super) struct GetTaskInput {
+    pub(super) task_id: UuidValue,
+}
+
 #[allow(dead_code, reason = "used by the staged typed-tool migration")]
 pub(super) fn generated_input_schema<T: JsonSchema>() -> Value {
     let mut settings = SchemaSettings::draft07();
@@ -326,6 +337,9 @@ pub(super) fn generated_input_schema<T: JsonSchema>() -> Value {
     if let Some(object) = schema.as_object_mut() {
         object.remove("title");
         if object.get("type") == Some(&Value::String("object".to_string())) {
+            object
+                .entry("properties")
+                .or_insert_with(|| Value::Object(Map::new()));
             object
                 .entry("required")
                 .or_insert_with(|| Value::Array(Vec::new()));
