@@ -1,9 +1,12 @@
 use super::interface::FreeTimeManagerTrait;
-use crate::entity::datetime::get_next_morning_datetime;
-use chrono::{DateTime, Duration, Local, NaiveDate, TimeZone, Timelike};
+use super::task_use_case::resolve_local_datetime;
+use crate::entity::datetime::{
+    get_next_morning_datetime, BusinessDateTimePolicy, DEFAULT_END_OF_DAY_OFFSET_MINUTES,
+};
+use chrono::{DateTime, Duration, Local, NaiveDate, Timelike};
 
 pub const RHO_GOAL: f64 = 0.7;
-pub const END_OF_DAY_OFFSET_MINUTES: i64 = 30;
+pub const END_OF_DAY_OFFSET_MINUTES: i64 = DEFAULT_END_OF_DAY_OFFSET_MINUTES;
 
 pub fn calculate_daily_leeway_seconds(
     free_time_minutes: i64,
@@ -103,32 +106,32 @@ pub fn calculate_full_day_free_time_minutes_for_subjective_date_with_end_of_day_
 }
 
 pub fn subjective_date(datetime: DateTime<Local>) -> NaiveDate {
-    (get_next_morning_datetime(datetime) - Duration::days(1)).date_naive()
+    BusinessDateTimePolicy::new(END_OF_DAY_OFFSET_MINUTES).subjective_date(datetime)
 }
 
 pub fn subjective_date_start(date: NaiveDate) -> DateTime<Local> {
-    get_next_morning_datetime(
-        Local::now()
-            .timezone()
-            .from_local_datetime(&date.and_hms_opt(0, 0, 0).unwrap())
-            .unwrap(),
-    )
+    let policy = BusinessDateTimePolicy::new(END_OF_DAY_OFFSET_MINUTES);
+    let naive = policy
+        .subjective_date_start_naive(date)
+        .expect("business day start must be a valid time");
+    resolve_local_datetime(naive, policy.subjective_date_start(date))
+        .unwrap_or_else(|error| panic!("{error}"))
 }
 
 pub fn subjective_date_end(date: NaiveDate, end_of_day_offset_minutes: i64) -> DateTime<Local> {
-    Local::now()
-        .timezone()
-        .from_local_datetime(&date.and_hms_opt(23, 59, 59).unwrap())
-        .unwrap()
-        + Duration::seconds(1)
-        + Duration::minutes(end_of_day_offset_minutes)
+    let policy = BusinessDateTimePolicy::new(end_of_day_offset_minutes);
+    let naive = policy
+        .subjective_date_end_naive(date)
+        .unwrap_or_else(|| panic!("subjective date end is outside the supported range"));
+    resolve_local_datetime(naive, policy.subjective_date_end(date))
+        .unwrap_or_else(|error| panic!("{error}"))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::application::task_use_case::{resolve_local_datetime, ApplicationError};
-    use chrono::{LocalResult, NaiveDateTime};
+    use chrono::{LocalResult, NaiveDateTime, TimeZone};
 
     struct DurationFreeTimeManager;
 

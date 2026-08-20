@@ -5,7 +5,7 @@ use crate::entity::datetime::get_next_morning_datetime;
 use crate::entity::task::{
     ProjectCategory, RepetitionAnchor, Status, TaskAttr, TaskHandle, TaskTreeError,
 };
-use chrono::{DateTime, Datelike, Duration, Local, Timelike};
+use chrono::{DateTime, Datelike, Duration, Local, LocalResult, NaiveDateTime, Timelike};
 use std::cmp::{max, Ordering};
 use std::collections::HashSet;
 use std::error::Error;
@@ -21,6 +21,14 @@ pub enum ApplicationError {
     },
     HasUndoneChildren(Uuid),
     TaskTree(TaskTreeError),
+    AmbiguousLocalDateTime {
+        local_datetime: NaiveDateTime,
+        earlier: DateTime<Local>,
+        later: DateTime<Local>,
+    },
+    NonexistentLocalDateTime {
+        local_datetime: NaiveDateTime,
+    },
 }
 
 impl fmt::Display for ApplicationError {
@@ -34,11 +42,37 @@ impl fmt::Display for ApplicationError {
                 write!(formatter, "task has undone children: {task_id}")
             }
             Self::TaskTree(error) => write!(formatter, "task tree operation failed: {error}"),
+            Self::AmbiguousLocalDateTime {
+                local_datetime,
+                earlier,
+                later,
+            } => write!(
+                formatter,
+                "ambiguous local datetime {local_datetime}: {earlier} or {later}"
+            ),
+            Self::NonexistentLocalDateTime { local_datetime } => {
+                write!(formatter, "nonexistent local datetime: {local_datetime}")
+            }
         }
     }
 }
 
 impl Error for ApplicationError {}
+
+pub fn resolve_local_datetime(
+    local_datetime: NaiveDateTime,
+    result: LocalResult<DateTime<Local>>,
+) -> Result<DateTime<Local>, ApplicationError> {
+    match result {
+        LocalResult::Single(datetime) => Ok(datetime),
+        LocalResult::Ambiguous(earlier, later) => Err(ApplicationError::AmbiguousLocalDateTime {
+            local_datetime,
+            earlier,
+            later,
+        }),
+        LocalResult::None => Err(ApplicationError::NonexistentLocalDateTime { local_datetime }),
+    }
+}
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct CreateTaskInput {

@@ -1,6 +1,72 @@
 use chrono::{
-    DateTime, Datelike, Duration, Local, LocalResult, NaiveDateTime, ParseError, TimeZone, Timelike,
+    DateTime, Duration, Local, LocalResult, NaiveDate, NaiveDateTime, ParseError, TimeZone,
+    Timelike,
 };
+
+pub const BUSINESS_DAY_START_HOUR: u32 = 6;
+pub const DEFAULT_END_OF_DAY_OFFSET_MINUTES: i64 = 30;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct BusinessDateTimePolicy {
+    end_of_day_offset_minutes: i64,
+}
+
+impl BusinessDateTimePolicy {
+    pub fn new(end_of_day_offset_minutes: i64) -> Self {
+        Self {
+            end_of_day_offset_minutes,
+        }
+    }
+
+    pub fn subjective_date(&self, datetime: DateTime<Local>) -> NaiveDate {
+        let date = datetime.date_naive();
+        if datetime.hour() < BUSINESS_DAY_START_HOUR {
+            date.pred_opt().unwrap_or(date)
+        } else {
+            date
+        }
+    }
+
+    pub fn next_business_day_start(
+        &self,
+        datetime: DateTime<Local>,
+    ) -> LocalResult<DateTime<Local>> {
+        let date = if datetime.hour() < BUSINESS_DAY_START_HOUR {
+            Some(datetime.date_naive())
+        } else {
+            datetime.date_naive().succ_opt()
+        };
+        let naive = date.and_then(|date| date.and_hms_opt(BUSINESS_DAY_START_HOUR, 0, 0));
+        local_datetime(naive)
+    }
+
+    pub fn subjective_date_start(&self, date: NaiveDate) -> LocalResult<DateTime<Local>> {
+        local_datetime(self.subjective_date_start_naive(date))
+    }
+
+    pub fn subjective_date_end(&self, date: NaiveDate) -> LocalResult<DateTime<Local>> {
+        local_datetime(self.subjective_date_end_naive(date))
+    }
+
+    pub(crate) fn subjective_date_start_naive(&self, date: NaiveDate) -> Option<NaiveDateTime> {
+        date.and_hms_opt(BUSINESS_DAY_START_HOUR, 0, 0)
+    }
+
+    pub(crate) fn subjective_date_end_naive(&self, date: NaiveDate) -> Option<NaiveDateTime> {
+        let offset = Duration::try_minutes(self.end_of_day_offset_minutes);
+        date.succ_opt()
+            .and_then(|date| date.and_hms_opt(0, 0, 0))
+            .zip(offset)
+            .and_then(|(midnight, offset)| midnight.checked_add_signed(offset))
+    }
+}
+
+fn local_datetime(naive: Option<NaiveDateTime>) -> LocalResult<DateTime<Local>> {
+    match naive {
+        Some(naive) => Local.from_local_datetime(&naive),
+        None => LocalResult::None,
+    }
+}
 
 pub fn parse_local_datetime(
     datetime_str: &str,
@@ -11,17 +77,14 @@ pub fn parse_local_datetime(
 }
 
 pub fn get_next_morning_datetime(now: DateTime<Local>) -> DateTime<Local> {
-    if now.hour() >= 6 {
-        // 翌日の午前6時
-        let dt = now + Duration::days(1);
-        Local
-            .with_ymd_and_hms(dt.year(), dt.month(), dt.day(), 6, 0, 0)
-            .unwrap()
-    } else {
-        // 今日の午前6時
-        Local
-            .with_ymd_and_hms(now.year(), now.month(), now.day(), 6, 0, 0)
-            .unwrap()
+    match BusinessDateTimePolicy::new(DEFAULT_END_OF_DAY_OFFSET_MINUTES)
+        .next_business_day_start(now)
+    {
+        LocalResult::Single(datetime) => datetime,
+        LocalResult::Ambiguous(earlier, later) => {
+            panic!("ambiguous business day start: {earlier} or {later}")
+        }
+        LocalResult::None => panic!("nonexistent business day start"),
     }
 }
 

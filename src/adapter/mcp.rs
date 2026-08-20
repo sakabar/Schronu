@@ -358,6 +358,7 @@ impl<R: TaskRepositoryTrait> McpServer<R> {
             Err(ApplicationError::TaskTree(error)) => {
                 return internal_error_response(id, &error.to_string())
             }
+            Err(error) => return internal_error_response(id, &error.to_string()),
         };
 
         tool_result_response(
