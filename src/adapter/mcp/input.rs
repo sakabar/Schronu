@@ -1040,6 +1040,7 @@ mod tests {
         common_input_contract, decode_input, generated_input_schema, NonNegativeI64, OptionalValue,
         Rfc3339DateTime, ToolInputError,
     };
+    use chrono::{DateTime, Local};
     use schemars::JsonSchema;
     use serde::Deserialize;
     use serde_json::{json, Value};
@@ -1339,37 +1340,46 @@ mod tests {
             .should_validate_formats(true)
             .build(&schema)
             .expect("generated optional input schema must be valid JSON Schema");
-        let cases = [
-            ("missing", json!({}), true, ExpectedDecode::Valid),
-            (
-                "value",
-                json!({"pending_until": "2026-08-20T10:00:00+09:00"}),
-                true,
-                ExpectedDecode::Valid,
+        let missing = json!({});
+        assert!(validator.is_valid(&missing));
+        let decoded = match decode_input::<OptionalInput>(&missing) {
+            Ok(decoded) => decoded,
+            Err(error) => panic!(
+                "missing optional input must be accepted: {}",
+                describe_decode(Err(error))
             ),
-            (
-                "null",
-                json!({"pending_until": null}),
-                false,
-                ExpectedDecode::Schema {
-                    field: "pending_until",
-                    reason: "must be a string",
-                },
-            ),
-        ];
+        };
+        assert!(matches!(decoded.pending_until, OptionalValue::Missing));
 
-        for (name, input, schema_accepts, expected_decode) in cases {
-            assert_eq!(
-                validator.is_valid(&input),
-                schema_accepts,
-                "schema outcome differed for {name}"
-            );
-            assert_decode_outcome(
-                name,
-                decode_input::<OptionalInput>(&input).map(|_| ()),
-                expected_decode,
-            );
-        }
+        let value = json!({"pending_until": "2026-08-20T10:00:00+09:00"});
+        assert!(validator.is_valid(&value));
+        let decoded = match decode_input::<OptionalInput>(&value) {
+            Ok(decoded) => decoded,
+            Err(error) => panic!(
+                "present optional input must be accepted: {}",
+                describe_decode(Err(error))
+            ),
+        };
+        let OptionalValue::Value(actual) = decoded.pending_until else {
+            panic!("present optional input must decode as OptionalValue::Value");
+        };
+        assert_eq!(
+            actual.0,
+            DateTime::parse_from_rfc3339("2026-08-20T10:00:00+09:00")
+                .expect("test date-time must be valid")
+                .with_timezone(&Local)
+        );
+
+        let null = json!({"pending_until": null});
+        assert!(!validator.is_valid(&null));
+        assert_decode_outcome(
+            "null",
+            decode_input::<OptionalInput>(&null).map(|_| ()),
+            ExpectedDecode::Schema {
+                field: "pending_until",
+                reason: "must be a string",
+            },
+        );
     }
 
     fn with_field(mut input: Value, field: &str, value: Value) -> Value {
