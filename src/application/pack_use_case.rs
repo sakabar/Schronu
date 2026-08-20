@@ -1,7 +1,8 @@
 use super::daily_capacity::{
     calculate_daily_leeway_seconds,
     calculate_free_time_minutes_for_subjective_date_with_end_of_day_offset_minutes,
-    subjective_date, subjective_date_end, subjective_date_start, END_OF_DAY_OFFSET_MINUTES,
+    try_subjective_date, try_subjective_date_end, try_subjective_date_start,
+    END_OF_DAY_OFFSET_MINUTES,
 };
 use super::interface::{FreeTimeManagerTrait, TaskRepositoryTrait};
 use super::schedule_use_case::{
@@ -72,10 +73,17 @@ pub fn pack_tasks_with_end_of_day_offset_minutes(
     end_of_day_offset_minutes: i64,
 ) -> Result<PackResult, ApplicationError> {
     let now = repository.get_last_synced_time();
-    let first_date = subjective_date(now);
+    let first_date = try_subjective_date(now)?;
     let target_dates = (0..PACK_TARGET_DAYS)
-        .map(|days| first_date + Duration::days(days))
-        .collect::<Vec<_>>();
+        .map(|days| {
+            first_date.checked_add_signed(Duration::days(days)).ok_or(
+                ApplicationError::SubjectiveDateOutOfRange {
+                    operation: "pack_target_dates",
+                    datetime: now,
+                },
+            )
+        })
+        .collect::<Result<Vec<_>, _>>()?;
     let mut candidates = collect_candidates(repository, &target_dates)?;
     candidates.sort_by_key(|candidate| {
         (
@@ -103,7 +111,7 @@ pub fn pack_tasks_with_end_of_day_offset_minutes(
         )?;
 
         for target_date in &target_dates {
-            if subjective_date(current_planned_start) <= *target_date
+            if try_subjective_date(current_planned_start)? <= *target_date
                 || daily_leeway.get(target_date).copied().unwrap_or(0) < candidate.work_seconds
             {
                 continue;
@@ -115,15 +123,15 @@ pub fn pack_tasks_with_end_of_day_offset_minutes(
             else {
                 continue;
             };
-            let target_datetime = subjective_date_start(*target_date)
+            let target_datetime = try_subjective_date_start(*target_date)?
                 .max(task.get_start_time().map_err(ApplicationError::TaskTree)?);
-            if subjective_date(target_datetime) != *target_date {
+            if try_subjective_date(target_datetime)? != *target_date {
                 continue;
             }
 
             let target_day = PackTargetDay {
                 date: *target_date,
-                end: subjective_date_end(*target_date, end_of_day_offset_minutes),
+                end: try_subjective_date_end(*target_date, end_of_day_offset_minutes)?,
             };
             let placement_start_opt = find_placement_start(
                 repository,
@@ -138,13 +146,14 @@ pub fn pack_tasks_with_end_of_day_offset_minutes(
             if let Some(placement_start) =
                 placement_start_opt.filter(|start| *start < current_planned_start)
             {
+                let source_date = try_subjective_date(current_planned_start)?;
                 task.set_pending_until(placement_start)
                     .map_err(ApplicationError::TaskTree)?;
                 packed_task_opt = Some(PackedTask {
                     task_id: candidate.task_id,
                     name: candidate.name.clone(),
                     priority: candidate.priority,
-                    source_date: subjective_date(current_planned_start),
+                    source_date,
                     target_date: *target_date,
                     work_seconds: candidate.work_seconds,
                 });
@@ -205,7 +214,7 @@ fn find_placement_start(
             work_seconds,
             atomic,
             free_time_manager,
-        ) {
+        )? {
             return Ok(task_segments
                 .first()
                 .map(|scheduled| scheduled.scheduled_start));
@@ -252,27 +261,31 @@ fn collect_candidates(
 ) -> Result<Vec<PackCandidate>, ApplicationError> {
     let schedule = get_schedule(repository)?;
     let mut seen_ids = HashSet::new();
-    Ok(schedule
-        .into_iter()
-        .filter(|scheduled| seen_ids.insert(scheduled.task.id))
-        .filter(|scheduled| {
-            scheduled.rank == 0
-                && scheduled.task.status == Status::Pending
-                && !scheduled.task.is_on_other_side
-                && scheduled.total_work_seconds > 0
-                && target_dates.iter().any(|target_date| {
-                    *target_date < subjective_date(scheduled.scheduled_start)
-                        && subjective_date(scheduled.task.start_time) <= *target_date
-                })
-        })
-        .map(|scheduled| PackCandidate {
-            task_id: scheduled.task.id,
-            name: scheduled.task.name,
-            priority: scheduled.task.priority,
-            planned_start: scheduled.scheduled_start,
-            work_seconds: scheduled.total_work_seconds,
-        })
-        .collect())
+    let mut candidates = Vec::new();
+    for scheduled in schedule {
+        if !seen_ids.insert(scheduled.task.id) {
+            continue;
+        }
+        let scheduled_date = try_subjective_date(scheduled.scheduled_start)?;
+        let task_start_date = try_subjective_date(scheduled.task.start_time)?;
+        if scheduled.rank == 0
+            && scheduled.task.status == Status::Pending
+            && !scheduled.task.is_on_other_side
+            && scheduled.total_work_seconds > 0
+            && target_dates
+                .iter()
+                .any(|target_date| *target_date < scheduled_date && task_start_date <= *target_date)
+        {
+            candidates.push(PackCandidate {
+                task_id: scheduled.task.id,
+                name: scheduled.task.name,
+                priority: scheduled.task.priority,
+                planned_start: scheduled.scheduled_start,
+                work_seconds: scheduled.total_work_seconds,
+            });
+        }
+    }
+    Ok(candidates)
 }
 
 fn calculate_daily_leeway(
@@ -285,7 +298,7 @@ fn calculate_daily_leeway(
     let mut repetitive_work_seconds = HashMap::<NaiveDate, i64>::new();
 
     for scheduled in get_schedule(repository)? {
-        let date = subjective_date(scheduled.scheduled_start);
+        let date = try_subjective_date(scheduled.scheduled_start)?;
         if !target_dates.contains(&date) {
             continue;
         }
@@ -305,7 +318,7 @@ fn calculate_daily_leeway(
         }
     }
 
-    Ok(target_dates
+    target_dates
         .iter()
         .map(|date| {
             let free_time_minutes =
@@ -314,15 +327,15 @@ fn calculate_daily_leeway(
                     repository.get_last_synced_time(),
                     free_time_manager,
                     end_of_day_offset_minutes,
-                );
+                )?;
             let repetitive = repetitive_work_seconds.get(date).copied().unwrap_or(0);
             let total = total_work_seconds.get(date).copied().unwrap_or(0);
-            (
+            Ok((
                 *date,
                 calculate_daily_leeway_seconds(free_time_minutes, repetitive, total),
-            )
+            ))
         })
-        .collect())
+        .collect()
 }
 
 fn placement_fits_target_day(
@@ -331,13 +344,19 @@ fn placement_fits_target_day(
     work_seconds: i64,
     atomic: bool,
     free_time_manager: &mut dyn FreeTimeManagerTrait,
-) -> bool {
+) -> Result<bool, ApplicationError> {
     let target_end = target_day.end;
+    let scheduled_dates = task_segments
+        .iter()
+        .map(|scheduled| try_subjective_date(scheduled.scheduled_start))
+        .collect::<Result<Vec<_>, _>>()?;
     let fits_in_day = !task_segments.is_empty()
-        && task_segments.iter().all(|scheduled| {
-            subjective_date(scheduled.scheduled_start) == target_day.date
-                && scheduled.scheduled_end <= target_end
-        })
+        && task_segments
+            .iter()
+            .zip(scheduled_dates)
+            .all(|(scheduled, scheduled_date)| {
+                scheduled_date == target_day.date && scheduled.scheduled_end <= target_end
+            })
         && task_segments
             .iter()
             .map(|scheduled| scheduled.scheduled_work_seconds)
@@ -345,14 +364,16 @@ fn placement_fits_target_day(
             == work_seconds;
 
     if !fits_in_day || !atomic || task_segments.len() != 1 {
-        return fits_in_day && !atomic;
+        return Ok(fits_in_day && !atomic);
     }
 
     let scheduled = task_segments[0];
     let required_minutes = (work_seconds + 59) / 60;
     let free_time_check_end = scheduled.scheduled_start + Duration::minutes(required_minutes);
-    free_time_manager.get_free_minutes(&scheduled.scheduled_start, &free_time_check_end)
-        >= required_minutes
+    Ok(
+        free_time_manager.get_free_minutes(&scheduled.scheduled_start, &free_time_check_end)
+            >= required_minutes,
+    )
 }
 
 #[cfg(test)]

@@ -37,7 +37,7 @@ use schronu::application::daily_capacity::{
     calculate_daily_rho_diff_hours,
     calculate_free_time_minutes_for_subjective_date_with_end_of_day_offset_minutes,
     calculate_full_day_free_time_minutes_for_subjective_date_with_end_of_day_offset_minutes,
-    RHO_GOAL,
+    try_subjective_date, try_subjective_date_end, RHO_GOAL,
 };
 use schronu::application::flatten_use_case::{
     flatten_tasks_with_end_of_day_offset_minutes, FlattenResult,
@@ -2170,7 +2170,7 @@ fn calculate_project_category_denominator_seconds(
     last_synced_time: DateTime<Local>,
     free_time_manager: &mut dyn FreeTimeManagerTrait,
     end_of_day_offset_minutes: i64,
-) -> i64 {
+) -> Result<i64, ApplicationError> {
     let mut dates = rows
         .iter()
         .filter(|row| row.is_real_task)
@@ -2179,17 +2179,15 @@ fn calculate_project_category_denominator_seconds(
     dates.sort();
     dates.dedup();
 
-    dates
-        .iter()
-        .map(|date| {
-            calculate_free_time_minutes_for_subjective_date_with_end_of_day_offset_minutes(
-                date,
-                last_synced_time,
-                free_time_manager,
-                end_of_day_offset_minutes,
-            ) * 60
-        })
-        .sum()
+    dates.iter().try_fold(0, |total, date| {
+        calculate_free_time_minutes_for_subjective_date_with_end_of_day_offset_minutes(
+            date,
+            last_synced_time,
+            free_time_manager,
+            end_of_day_offset_minutes,
+        )
+        .map(|minutes| total + minutes * 60)
+    })
 }
 
 fn advance_display_datetime_cursor(
@@ -2625,12 +2623,10 @@ fn execute_show_all_tasks_with_config(
     // ここからρ計算用
     let last_synced_time = task_repository.get_last_synced_time();
 
-    let eod = (get_next_morning_datetime(last_synced_time) + Duration::days(0))
-        .with_hour(0)
-        .expect("invalid hour")
-        .with_minute(0)
-        .expect("invalid minute")
-        + Duration::minutes(config.end_of_day_offset_minutes);
+    let eod = try_subjective_date_end(
+        try_subjective_date(last_synced_time)?,
+        config.end_of_day_offset_minutes,
+    )?;
     // ここまでρ計算用
 
     let is_calendar_func = pattern_opt
@@ -3306,14 +3302,14 @@ fn execute_show_all_tasks_with_config(
                 last_synced_time,
                 free_time_manager,
                 config.end_of_day_offset_minutes,
-            );
+            )?;
         let full_day_free_time_minutes_opt = if is_band_func {
             Some(
                 calculate_full_day_free_time_minutes_for_subjective_date_with_end_of_day_offset_minutes(
                     date,
                     free_time_manager,
                     config.end_of_day_offset_minutes,
-                ),
+                )?,
             )
         } else {
             None
@@ -3607,7 +3603,7 @@ fn execute_show_all_tasks_with_config(
             last_synced_time,
             free_time_manager,
             config.end_of_day_offset_minutes,
-        );
+        )?;
         writeln_newline(
             stdout,
             &format_scheduled_work_seconds_by_project_category(

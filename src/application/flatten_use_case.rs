@@ -1,6 +1,7 @@
 use super::daily_capacity::{
     calculate_free_time_minutes_for_subjective_date_with_end_of_day_offset_minutes,
-    subjective_date, subjective_date_end, subjective_date_start, END_OF_DAY_OFFSET_MINUTES,
+    try_subjective_date, try_subjective_date_end, try_subjective_date_start,
+    END_OF_DAY_OFFSET_MINUTES,
 };
 use super::interface::{FreeTimeManagerTrait, TaskRepositoryTrait};
 use super::schedule_use_case::{
@@ -89,29 +90,38 @@ pub fn flatten_tasks_with_end_of_day_offset_minutes(
     free_time_manager: &mut dyn FreeTimeManagerTrait,
     end_of_day_offset_minutes: i64,
 ) -> Result<FlattenResult, ApplicationError> {
-    let today = subjective_date(repository.get_last_synced_time());
-    let boundary_date = today + Duration::days(FLATTEN_TARGET_DAYS);
-    let overflow_date = today + Duration::days(FLATTEN_OVERFLOW_DAY);
+    let operation_datetime = repository.get_last_synced_time();
+    let today = try_subjective_date(operation_datetime)?;
+    let checked_target_date = |days| {
+        today.checked_add_signed(Duration::days(days)).ok_or(
+            ApplicationError::SubjectiveDateOutOfRange {
+                operation: "flatten_target_dates",
+                datetime: operation_datetime,
+            },
+        )
+    };
+    let boundary_date = checked_target_date(FLATTEN_TARGET_DAYS)?;
+    let overflow_date = checked_target_date(FLATTEN_OVERFLOW_DAY)?;
     let dates = (0..=FLATTEN_TARGET_DAYS)
-        .map(|days| today + Duration::days(days))
-        .collect::<Vec<_>>();
+        .map(checked_target_date)
+        .collect::<Result<Vec<_>, _>>()?;
     let capacities = dates
         .iter()
         .map(|date| {
-            (
+            Ok((
                 *date,
                 calculate_free_time_minutes_for_subjective_date_with_end_of_day_offset_minutes(
                     date,
-                    repository.get_last_synced_time(),
+                    operation_datetime,
                     free_time_manager,
                     end_of_day_offset_minutes,
-                ) * 60,
-            )
+                )? * 60,
+            ))
         })
-        .collect::<HashMap<_, _>>();
+        .collect::<Result<HashMap<_, _>, ApplicationError>>()?;
     let maximum_daily_capacity = capacities.values().copied().max().unwrap_or(0);
     let initial_schedule = get_schedule(repository)?;
-    let original_task_details = collect_original_task_details(&initial_schedule);
+    let original_task_details = collect_original_task_details(&initial_schedule)?;
     let mut schedule = initial_schedule;
     let mut overrides = HashMap::<Uuid, DateTime<Local>>::new();
     let mut movement_order = Vec::<Uuid>::new();
@@ -121,7 +131,7 @@ pub fn flatten_tasks_with_end_of_day_offset_minutes(
     let mut had_overload = false;
 
     loop {
-        let usage = calculate_scheduled_work_seconds_by_date(&schedule);
+        let usage = calculate_scheduled_work_seconds_by_date(&schedule)?;
         let overload_date_opt = dates.iter().find(|date| {
             !blocked_dates.contains(date)
                 && usage.get(date).copied().unwrap_or(0)
@@ -135,10 +145,15 @@ pub fn flatten_tasks_with_end_of_day_offset_minutes(
         let target_date = if overload_date == boundary_date {
             overflow_date
         } else {
-            overload_date + Duration::days(1)
+            overload_date.checked_add_signed(Duration::days(1)).ok_or(
+                ApplicationError::SubjectiveDateOutOfRange {
+                    operation: "flatten_target_date",
+                    datetime: operation_datetime,
+                },
+            )?
         };
         let mut candidates =
-            collect_candidates(&schedule, overload_date, end_of_day_offset_minutes);
+            collect_candidates(&schedule, overload_date, end_of_day_offset_minutes)?;
         sort_candidates_for_deferral(&mut candidates);
 
         let mut accepted = None;
@@ -148,7 +163,7 @@ pub fn flatten_tasks_with_end_of_day_offset_minutes(
                 rejected.push((candidate, reason));
                 continue;
             }
-            let target_datetime = subjective_date_start(target_date);
+            let target_datetime = try_subjective_date_start(target_date)?;
             if effective_pending_until(
                 target_datetime,
                 candidate.deadline_time,
@@ -202,6 +217,7 @@ pub fn flatten_tasks_with_end_of_day_offset_minutes(
         else {
             continue;
         };
+        let target_date = try_subjective_date(target_datetime)?;
         let Some(task) = repository
             .get_by_id(task_id)
             .map_err(ApplicationError::TaskTree)?
@@ -217,7 +233,7 @@ pub fn flatten_tasks_with_end_of_day_offset_minutes(
             name,
             priority,
             source_date,
-            target_date: subjective_date(target_datetime),
+            target_date,
             work_seconds,
         });
     }
@@ -238,28 +254,29 @@ pub fn flatten_tasks_with_end_of_day_offset_minutes(
     })
 }
 
+#[allow(clippy::type_complexity)]
 fn collect_original_task_details(
     schedule: &[ScheduledTaskView],
-) -> HashMap<Uuid, (String, i64, NaiveDate, i64)> {
+) -> Result<HashMap<Uuid, (String, i64, NaiveDate, i64)>, ApplicationError> {
     let mut details = HashMap::new();
     for scheduled in schedule {
-        details.entry(scheduled.task.id).or_insert_with(|| {
-            (
+        if let std::collections::hash_map::Entry::Vacant(entry) = details.entry(scheduled.task.id) {
+            entry.insert((
                 scheduled.task.name.clone(),
                 scheduled.task.priority,
-                subjective_date(scheduled.scheduled_start),
+                try_subjective_date(scheduled.scheduled_start)?,
                 scheduled.total_work_seconds,
-            )
-        });
+            ));
+        }
     }
-    details
+    Ok(details)
 }
 
 fn collect_candidates(
     schedule: &[ScheduledTaskView],
     overload_date: NaiveDate,
     end_of_day_offset_minutes: i64,
-) -> Vec<FlattenCandidate> {
+) -> Result<Vec<FlattenCandidate>, ApplicationError> {
     let mut segments_by_task = HashMap::<Uuid, Vec<&ScheduledTaskView>>::new();
     for scheduled in schedule {
         segments_by_task
@@ -268,50 +285,60 @@ fn collect_candidates(
             .push(scheduled);
     }
 
-    segments_by_task
-        .into_values()
-        .filter_map(|segments| {
-            let first = segments.first().copied()?;
-            if first.total_work_seconds <= 0
-                || !segments.iter().any(|segment| {
+    let mut candidates = Vec::new();
+    for segments in segments_by_task.into_values() {
+        let Some(first) = segments.first().copied() else {
+            continue;
+        };
+        if first.total_work_seconds <= 0
+            || !segments
+                .iter()
+                .map(|segment| {
                     segment_overlaps_date(segment, overload_date, end_of_day_offset_minutes)
                 })
-            {
-                return None;
-            }
-            let scheduled_start = segments
-                .iter()
-                .map(|segment| segment.scheduled_start)
-                .min()?;
-            let all_work_is_on_overload_date = segments.iter().all(|segment| {
-                subjective_date(segment.scheduled_start) == overload_date
-                    && segment.scheduled_end
-                        <= subjective_date_end(overload_date, end_of_day_offset_minutes)
+                .collect::<Result<Vec<_>, _>>()?
+                .into_iter()
+                .any(|overlaps| overlaps)
+        {
+            continue;
+        }
+        let Some(scheduled_start) = segments.iter().map(|segment| segment.scheduled_start).min()
+        else {
+            continue;
+        };
+        let overload_date_end = try_subjective_date_end(overload_date, end_of_day_offset_minutes)?;
+        let segment_dates = segments
+            .iter()
+            .map(|segment| try_subjective_date(segment.scheduled_start))
+            .collect::<Result<Vec<_>, _>>()?;
+        let all_work_is_on_overload_date =
+            segments.iter().zip(segment_dates).all(|(segment, date)| {
+                date == overload_date && segment.scheduled_end <= overload_date_end
             });
-            Some(FlattenCandidate {
-                task_id: first.task.id,
-                name: first.task.name.clone(),
-                priority: first.task.priority,
-                deadline_time: first.task.deadline_time,
-                rank: first.rank,
-                scheduled_start,
-                estimated_work_seconds: first.task.estimated_work_seconds,
-                total_work_seconds: first.total_work_seconds,
-                is_on_other_side: first.task.is_on_other_side,
-                all_work_is_on_overload_date,
-            })
-        })
-        .collect()
+        candidates.push(FlattenCandidate {
+            task_id: first.task.id,
+            name: first.task.name.clone(),
+            priority: first.task.priority,
+            deadline_time: first.task.deadline_time,
+            rank: first.rank,
+            scheduled_start,
+            estimated_work_seconds: first.task.estimated_work_seconds,
+            total_work_seconds: first.total_work_seconds,
+            is_on_other_side: first.task.is_on_other_side,
+            all_work_is_on_overload_date,
+        });
+    }
+    Ok(candidates)
 }
 
 fn segment_overlaps_date(
     segment: &ScheduledTaskView,
     date: NaiveDate,
     end_of_day_offset_minutes: i64,
-) -> bool {
-    let date_start = subjective_date_start(date);
-    let date_end = subjective_date_end(date, end_of_day_offset_minutes);
-    segment.scheduled_start < date_end && date_start < segment.scheduled_end
+) -> Result<bool, ApplicationError> {
+    let date_start = try_subjective_date_start(date)?;
+    let date_end = try_subjective_date_end(date, end_of_day_offset_minutes)?;
+    Ok(segment.scheduled_start < date_end && date_start < segment.scheduled_end)
 }
 
 fn candidate_precheck_reason(
@@ -435,24 +462,25 @@ fn summarize_unresolved_overload(
 
 fn calculate_scheduled_work_seconds_by_date(
     schedule: &[ScheduledTaskView],
-) -> HashMap<NaiveDate, i64> {
+) -> Result<HashMap<NaiveDate, i64>, ApplicationError> {
     let mut usage = HashMap::new();
     for scheduled in schedule {
         add_scheduled_work_seconds_by_date(
             &mut usage,
             scheduled.scheduled_start,
             scheduled.scheduled_end,
-        );
+        )?;
     }
-    usage
+    Ok(usage)
 }
 
 fn add_scheduled_work_seconds_by_date(
     scheduled_work_seconds_by_date: &mut HashMap<NaiveDate, i64>,
     scheduled_start: DateTime<Local>,
     scheduled_end: DateTime<Local>,
-) {
-    let date = subjective_date(scheduled_start);
+) -> Result<(), ApplicationError> {
+    let date = try_subjective_date(scheduled_start)?;
     *scheduled_work_seconds_by_date.entry(date).or_default() +=
         (scheduled_end - scheduled_start).num_seconds();
+    Ok(())
 }

@@ -1,9 +1,7 @@
 use super::interface::FreeTimeManagerTrait;
 use super::task_use_case::{resolve_local_datetime, ApplicationError};
-use crate::entity::datetime::{
-    get_next_morning_datetime, BusinessDateTimePolicy, DEFAULT_END_OF_DAY_OFFSET_MINUTES,
-};
-use chrono::{DateTime, Duration, Local, NaiveDate, Timelike};
+use crate::entity::datetime::{BusinessDateTimePolicy, DEFAULT_END_OF_DAY_OFFSET_MINUTES};
+use chrono::{DateTime, Local, NaiveDate, Timelike};
 
 pub const RHO_GOAL: f64 = 0.7;
 pub const END_OF_DAY_OFFSET_MINUTES: i64 = DEFAULT_END_OF_DAY_OFFSET_MINUTES;
@@ -40,7 +38,7 @@ pub fn calculate_free_time_minutes_for_subjective_date(
     date: &NaiveDate,
     last_synced_time: DateTime<Local>,
     free_time_manager: &mut dyn FreeTimeManagerTrait,
-) -> i64 {
+) -> Result<i64, ApplicationError> {
     calculate_free_time_minutes_for_subjective_date_with_end_of_day_offset_minutes(
         date,
         last_synced_time,
@@ -54,26 +52,22 @@ pub fn calculate_free_time_minutes_for_subjective_date_with_end_of_day_offset_mi
     last_synced_time: DateTime<Local>,
     free_time_manager: &mut dyn FreeTimeManagerTrait,
     end_of_day_offset_minutes: i64,
-) -> i64 {
-    let local_datetime_base = subjective_date_start(*date);
-    let eod = get_next_morning_datetime(last_synced_time)
-        .with_hour(0)
-        .expect("invalid hour")
-        .with_minute(0)
-        .expect("invalid minute")
-        + Duration::minutes(end_of_day_offset_minutes);
+) -> Result<i64, ApplicationError> {
+    let local_datetime_base = try_subjective_date_start(*date)?;
+    let current_subjective_date = try_subjective_date(last_synced_time)?;
+    let eod = try_subjective_date_end(current_subjective_date, end_of_day_offset_minutes)?;
+    let next_boundary_for_base = try_next_business_day_start(local_datetime_base)?;
+    let next_boundary_for_last_synced_time = try_next_business_day_start(last_synced_time)?;
 
-    if local_datetime_base < last_synced_time
-        && last_synced_time < get_next_morning_datetime(local_datetime_base)
-    {
-        if last_synced_time.hour() < get_next_morning_datetime(last_synced_time).hour() {
+    if local_datetime_base < last_synced_time && last_synced_time < next_boundary_for_base {
+        if last_synced_time.hour() < next_boundary_for_last_synced_time.hour() {
             if last_synced_time < eod {
-                (eod - last_synced_time).num_minutes()
+                Ok((eod - last_synced_time).num_minutes())
             } else {
-                0
+                Ok(0)
             }
         } else {
-            free_time_manager.get_free_minutes(&last_synced_time, &eod)
+            Ok(free_time_manager.get_free_minutes(&last_synced_time, &eod))
         }
     } else {
         calculate_full_day_free_time_minutes_for_subjective_date_with_end_of_day_offset_minutes(
@@ -87,7 +81,7 @@ pub fn calculate_free_time_minutes_for_subjective_date_with_end_of_day_offset_mi
 pub fn calculate_full_day_free_time_minutes_for_subjective_date(
     date: &NaiveDate,
     free_time_manager: &mut dyn FreeTimeManagerTrait,
-) -> i64 {
+) -> Result<i64, ApplicationError> {
     calculate_full_day_free_time_minutes_for_subjective_date_with_end_of_day_offset_minutes(
         date,
         free_time_manager,
@@ -99,10 +93,10 @@ pub fn calculate_full_day_free_time_minutes_for_subjective_date_with_end_of_day_
     date: &NaiveDate,
     free_time_manager: &mut dyn FreeTimeManagerTrait,
     end_of_day_offset_minutes: i64,
-) -> i64 {
-    let start = subjective_date_start(*date);
-    let end = subjective_date_end(*date, end_of_day_offset_minutes);
-    free_time_manager.get_free_minutes(&start, &end)
+) -> Result<i64, ApplicationError> {
+    let start = try_subjective_date_start(*date)?;
+    let end = try_subjective_date_end(*date, end_of_day_offset_minutes)?;
+    Ok(free_time_manager.get_free_minutes(&start, &end))
 }
 
 pub fn try_subjective_date(datetime: DateTime<Local>) -> Result<NaiveDate, ApplicationError> {
@@ -116,6 +110,19 @@ pub fn try_subjective_date(datetime: DateTime<Local>) -> Result<NaiveDate, Appli
 
 pub fn subjective_date(datetime: DateTime<Local>) -> NaiveDate {
     try_subjective_date(datetime).unwrap_or_else(|error| panic!("{error}"))
+}
+
+pub(crate) fn try_next_business_day_start(
+    datetime: DateTime<Local>,
+) -> Result<DateTime<Local>, ApplicationError> {
+    let policy = BusinessDateTimePolicy::new(END_OF_DAY_OFFSET_MINUTES);
+    let naive = policy.next_business_day_start_naive(datetime).ok_or(
+        ApplicationError::SubjectiveDateOutOfRange {
+            operation: "next_business_day_start",
+            datetime,
+        },
+    )?;
+    resolve_local_datetime(naive, policy.next_business_day_start(datetime))
 }
 
 pub fn try_subjective_date_start(date: NaiveDate) -> Result<DateTime<Local>, ApplicationError> {
@@ -153,7 +160,7 @@ pub fn subjective_date_end(date: NaiveDate, end_of_day_offset_minutes: i64) -> D
 mod tests {
     use super::*;
     use crate::application::task_use_case::{resolve_local_datetime, ApplicationError};
-    use chrono::{FixedOffset, LocalResult, NaiveDateTime, TimeZone};
+    use chrono::{Duration, FixedOffset, LocalResult, NaiveDateTime, TimeZone};
 
     struct DurationFreeTimeManager;
 
@@ -288,7 +295,7 @@ mod tests {
                 -120,
             );
 
-        assert_eq!(actual, 16 * 60);
+        assert_eq!(actual, Ok(16 * 60));
     }
 
     #[test]

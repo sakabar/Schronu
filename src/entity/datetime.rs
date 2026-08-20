@@ -38,13 +38,7 @@ impl BusinessDateTimePolicy {
         &self,
         datetime: DateTime<Local>,
     ) -> LocalResult<DateTime<Local>> {
-        let date = if datetime.hour() < BUSINESS_DAY_START_HOUR {
-            Some(datetime.date_naive())
-        } else {
-            datetime.date_naive().succ_opt()
-        };
-        let naive = date.and_then(|date| date.and_hms_opt(BUSINESS_DAY_START_HOUR, 0, 0));
-        local_datetime(naive)
+        local_datetime(self.next_business_day_start_naive(datetime))
     }
 
     pub fn subjective_date_start(&self, date: NaiveDate) -> LocalResult<DateTime<Local>> {
@@ -57,6 +51,18 @@ impl BusinessDateTimePolicy {
 
     pub(crate) fn subjective_date_start_naive(&self, date: NaiveDate) -> Option<NaiveDateTime> {
         date.and_hms_opt(BUSINESS_DAY_START_HOUR, 0, 0)
+    }
+
+    pub(crate) fn next_business_day_start_naive(
+        &self,
+        datetime: DateTime<Local>,
+    ) -> Option<NaiveDateTime> {
+        let date = if datetime.hour() < BUSINESS_DAY_START_HOUR {
+            Some(datetime.date_naive())
+        } else {
+            datetime.date_naive().succ_opt()
+        };
+        date.and_then(|date| date.and_hms_opt(BUSINESS_DAY_START_HOUR, 0, 0))
     }
 
     pub(crate) fn subjective_date_end_naive(&self, date: NaiveDate) -> Option<NaiveDateTime> {
