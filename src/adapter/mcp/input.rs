@@ -1235,6 +1235,42 @@ mod tests {
                 decode: ExpectedDecode::Valid,
             },
             ContractCase {
+                name: "scheduled_start period field",
+                input: json!({
+                    "period": {
+                        "field": "scheduled_start",
+                        "from": "2026-08-10T00:00:00+09:00",
+                        "until": "2026-08-11T00:00:00+09:00"
+                    }
+                }),
+                schema_accepts: true,
+                decode: ExpectedDecode::Valid,
+            },
+            ContractCase {
+                name: "deadline period field",
+                input: json!({
+                    "period": {
+                        "field": "deadline",
+                        "from": "2026-08-10T00:00:00+09:00",
+                        "until": "2026-08-11T00:00:00+09:00"
+                    }
+                }),
+                schema_accepts: true,
+                decode: ExpectedDecode::Valid,
+            },
+            ContractCase {
+                name: "completed_at period field",
+                input: json!({
+                    "period": {
+                        "field": "completed_at",
+                        "from": "2026-08-10T00:00:00+09:00",
+                        "until": "2026-08-11T00:00:00+09:00"
+                    }
+                }),
+                schema_accepts: true,
+                decode: ExpectedDecode::Valid,
+            },
+            ContractCase {
                 name: "period is missing a required field",
                 input: json!({
                     "period": {
