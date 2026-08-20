@@ -314,6 +314,11 @@ pub(super) fn generated_input_schema<T: JsonSchema>() -> Value {
     let mut schema = settings.into_generator().root_schema_for::<T>().to_value();
     if let Some(object) = schema.as_object_mut() {
         object.remove("title");
+        if object.get("type") == Some(&Value::String("object".to_string())) {
+            object
+                .entry("required")
+                .or_insert_with(|| Value::Array(Vec::new()));
+        }
     }
     schema
 }
@@ -1254,6 +1259,23 @@ mod tests {
     struct OptionalInput {
         #[serde(default)]
         pending_until: OptionalValue<Rfc3339DateTime>,
+    }
+
+    #[derive(Deserialize, JsonSchema)]
+    #[serde(deny_unknown_fields)]
+    struct EmptyInput {}
+
+    #[test]
+    fn generated_object_schema_preserves_empty_required_array() {
+        for (name, schema) in [
+            ("empty input", generated_input_schema::<EmptyInput>()),
+            (
+                "all optional input",
+                generated_input_schema::<OptionalInput>(),
+            ),
+        ] {
+            assert_eq!(schema.get("required"), Some(&json!([])), "{name}");
+        }
     }
 
     #[test]
