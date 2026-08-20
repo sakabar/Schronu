@@ -1037,8 +1037,8 @@ fn common_input_contract() -> CommonInputContract {
 #[cfg(test)]
 mod tests {
     use super::{
-        common_input_contract, decode_input, generated_input_schema, NonNegativeI64, OptionalValue,
-        Rfc3339DateTime, ToolInputError,
+        common_input_contract, decode_input, generated_input_schema, GetFocusInput, GetTaskInput,
+        NonNegativeI64, OptionalValue, Rfc3339DateTime, ToolInputError,
     };
     use chrono::{DateTime, Local};
     use schemars::JsonSchema;
@@ -1081,6 +1081,136 @@ mod tests {
                 case.name
             );
             assert_decode_outcome(case.name, contract.decode(&case.input), case.decode);
+        }
+    }
+
+    #[test]
+    fn reference_tool_inputs_match_public_schema_and_decode_contract() {
+        assert_reference_input_contract::<GetFocusInput>(
+            "get_focus",
+            json!({
+                "type": "object",
+                "properties": {},
+                "required": [],
+                "additionalProperties": false
+            }),
+            vec![
+                ContractCase {
+                    name: "empty object",
+                    input: json!({}),
+                    schema_accepts: true,
+                    decode: ExpectedDecode::Valid,
+                },
+                ContractCase {
+                    name: "unknown field",
+                    input: json!({"extra": true}),
+                    schema_accepts: false,
+                    decode: ExpectedDecode::Schema {
+                        field: "arguments.extra",
+                        reason: "additional property is not allowed",
+                    },
+                },
+                ContractCase {
+                    name: "arguments has wrong type",
+                    input: json!(42),
+                    schema_accepts: false,
+                    decode: ExpectedDecode::Schema {
+                        field: "arguments",
+                        reason: "must be an object",
+                    },
+                },
+            ],
+        );
+
+        assert_reference_input_contract::<GetTaskInput>(
+            "get_task",
+            json!({
+                "type": "object",
+                "properties": {
+                    "task_id": {"type": "string", "format": "uuid"}
+                },
+                "required": ["task_id"],
+                "additionalProperties": false
+            }),
+            vec![
+                ContractCase {
+                    name: "valid UUID",
+                    input: json!({"task_id": "80d7db87-324e-4e8d-a5b7-ff78cd5bf39a"}),
+                    schema_accepts: true,
+                    decode: ExpectedDecode::Valid,
+                },
+                ContractCase {
+                    name: "missing task_id",
+                    input: json!({}),
+                    schema_accepts: false,
+                    decode: ExpectedDecode::Schema {
+                        field: "task_id",
+                        reason: "field is required",
+                    },
+                },
+                ContractCase {
+                    name: "task_id has wrong type",
+                    input: json!({"task_id": 42}),
+                    schema_accepts: false,
+                    decode: ExpectedDecode::Schema {
+                        field: "task_id",
+                        reason: "must be a string",
+                    },
+                },
+                ContractCase {
+                    name: "unknown field",
+                    input: json!({
+                        "task_id": "80d7db87-324e-4e8d-a5b7-ff78cd5bf39a",
+                        "extra": true
+                    }),
+                    schema_accepts: false,
+                    decode: ExpectedDecode::Schema {
+                        field: "arguments.extra",
+                        reason: "additional property is not allowed",
+                    },
+                },
+                ContractCase {
+                    name: "invalid UUID",
+                    input: json!({"task_id": "not-a-uuid"}),
+                    schema_accepts: false,
+                    decode: ExpectedDecode::Semantic {
+                        field: "task_id",
+                        reason: "must be a valid UUID",
+                    },
+                },
+            ],
+        );
+    }
+
+    fn assert_reference_input_contract<T>(
+        tool_name: &str,
+        expected_schema: Value,
+        cases: Vec<ContractCase>,
+    ) where
+        T: for<'de> Deserialize<'de> + JsonSchema,
+    {
+        let schema = generated_input_schema::<T>();
+        assert_eq!(
+            schema, expected_schema,
+            "generated schema drifted from the public {tool_name} schema"
+        );
+        let validator = jsonschema::options()
+            .should_validate_formats(true)
+            .build(&schema)
+            .unwrap_or_else(|error| panic!("generated {tool_name} schema must be valid: {error}"));
+
+        for case in cases {
+            assert_eq!(
+                validator.is_valid(&case.input),
+                case.schema_accepts,
+                "schema outcome differed for {tool_name}: {}",
+                case.name
+            );
+            assert_decode_outcome(
+                case.name,
+                decode_input::<T>(&case.input).map(|_| ()),
+                case.decode,
+            );
         }
     }
 
