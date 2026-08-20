@@ -127,6 +127,8 @@ pub fn subjective_date_end(date: NaiveDate, end_of_day_offset_minutes: i64) -> D
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::application::task_use_case::{resolve_local_datetime, ApplicationError};
+    use chrono::{LocalResult, NaiveDateTime};
 
     struct DurationFreeTimeManager;
 
@@ -192,5 +194,53 @@ mod tests {
             );
 
         assert_eq!(actual, 16 * 60);
+    }
+
+    #[test]
+    fn local_datetime変換はsingleを採用する() {
+        let naive = NaiveDate::from_ymd_opt(2026, 8, 12)
+            .unwrap()
+            .and_hms_opt(6, 0, 0)
+            .unwrap();
+        let datetime = Local.with_ymd_and_hms(2026, 8, 12, 6, 0, 0).unwrap();
+
+        assert_eq!(
+            resolve_local_datetime(naive, LocalResult::Single(datetime)),
+            Ok(datetime)
+        );
+    }
+
+    #[test]
+    fn local_datetime変換はambiguousの日時と2候補を保持する() {
+        let naive = NaiveDate::from_ymd_opt(2026, 10, 25)
+            .unwrap()
+            .and_hms_opt(1, 30, 0)
+            .unwrap();
+        let earlier = Local.with_ymd_and_hms(2026, 10, 25, 1, 30, 0).unwrap();
+        let later = earlier + Duration::hours(1);
+
+        assert_eq!(
+            resolve_local_datetime(naive, LocalResult::Ambiguous(earlier, later)),
+            Err(ApplicationError::AmbiguousLocalDateTime {
+                local_datetime: naive,
+                earlier,
+                later,
+            })
+        );
+    }
+
+    #[test]
+    fn local_datetime変換はnoneの日時を保持する() {
+        let naive: NaiveDateTime = NaiveDate::from_ymd_opt(2026, 3, 29)
+            .unwrap()
+            .and_hms_opt(2, 30, 0)
+            .unwrap();
+
+        assert_eq!(
+            resolve_local_datetime(naive, LocalResult::None),
+            Err(ApplicationError::NonexistentLocalDateTime {
+                local_datetime: naive,
+            })
+        );
     }
 }
