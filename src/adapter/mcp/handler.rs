@@ -1,7 +1,7 @@
 use super::input::{
-    breakdown_task_input, complete_task_input, create_task_input, defer_task_input,
-    list_tasks_filter, schedule_period, string_argument, update_task_input,
-    validate_argument_object, ToolInputError,
+    breakdown_task_input, complete_task_input, create_task_input, decode_input, defer_task_input,
+    list_tasks_filter, schedule_period, update_task_input, GetFocusInput, GetTaskInput,
+    ToolInputError,
 };
 use super::internal_error_response;
 use super::output::{scheduled_task_view_json, task_view_json};
@@ -23,8 +23,23 @@ pub(super) fn call_tool<R: TaskRepositoryTrait>(
 ) -> Value {
     let params = &request["params"];
     match params["name"].as_str() {
-        Some("get_focus") => call_get_focus(repository, id, params.get("arguments")),
-        Some("get_task") => call_get_task(repository, id, &params["arguments"]),
+        Some("get_focus") => {
+            let empty_arguments = json!({});
+            let input = match decode_input::<GetFocusInput>(
+                params.get("arguments").unwrap_or(&empty_arguments),
+            ) {
+                Ok(input) => input,
+                Err(error) => return tool_input_error_response(id, error),
+            };
+            call_get_focus(repository, id, input)
+        }
+        Some("get_task") => {
+            let input = match decode_input::<GetTaskInput>(&params["arguments"]) {
+                Ok(input) => input,
+                Err(error) => return tool_input_error_response(id, error),
+            };
+            call_get_task(repository, id, input)
+        }
         Some("list_tasks") => call_list_tasks(repository, id, params.get("arguments")),
         Some("get_schedule") => call_get_schedule(repository, id, params.get("arguments")),
         Some("create_task") => call_create_task(repository, id, &params["arguments"]),
@@ -39,14 +54,8 @@ pub(super) fn call_tool<R: TaskRepositoryTrait>(
 fn call_get_focus<R: TaskRepositoryTrait>(
     repository: &mut R,
     id: Value,
-    arguments: Option<&Value>,
+    _input: GetFocusInput,
 ) -> Value {
-    if let Some(arguments) = arguments {
-        if let Err(error) = validate_argument_object(arguments, &[], &[]) {
-            return invalid_params_response(id, error);
-        }
-    }
-
     match get_focus(repository) {
         Ok(task) => {
             let task = task.as_ref().map(task_view_json).unwrap_or(Value::Null);
@@ -56,18 +65,8 @@ fn call_get_focus<R: TaskRepositoryTrait>(
     }
 }
 
-fn call_get_task<R: TaskRepositoryTrait>(repository: &R, id: Value, arguments: &Value) -> Value {
-    let argument_object = match validate_argument_object(arguments, &["task_id"], &["task_id"]) {
-        Ok(argument_object) => argument_object,
-        Err(error) => return invalid_params_response(id, error),
-    };
-    let task_id_text = match string_argument(argument_object, "task_id") {
-        Ok(task_id_text) => task_id_text,
-        Err(error) => return invalid_params_response(id, error),
-    };
-    let Ok(task_id) = Uuid::parse_str(task_id_text) else {
-        return invalid_input_response(id, "task_id", "must be a valid UUID");
-    };
+fn call_get_task<R: TaskRepositoryTrait>(repository: &R, id: Value, input: GetTaskInput) -> Value {
+    let task_id = input.task_id.0;
 
     match get_task(repository, task_id) {
         Ok(Some(task)) => tool_result_response(id, json!({"task": task_view_json(&task)}), false),
@@ -308,6 +307,13 @@ fn invalid_input_response(id: Value, field: &str, message: &str) -> Value {
         }),
         true,
     )
+}
+
+fn tool_input_error_response(id: Value, error: ToolInputError) -> Value {
+    match error {
+        ToolInputError::Schema(error) => invalid_params_response(id, error),
+        ToolInputError::Semantic { field, message } => invalid_input_response(id, &field, message),
+    }
 }
 
 fn task_not_found_response(id: Value, task_id: Uuid, field: Option<&str>) -> Value {
