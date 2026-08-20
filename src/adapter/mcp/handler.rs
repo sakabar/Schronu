@@ -348,3 +348,57 @@ fn update_task_application_error_response(id: Value, error: ApplicationError) ->
         error => internal_error_response(id, &error.to_string()),
     }
 }
+
+#[cfg(test)]
+mod typed_handler_contract_tests {
+    use super::{call_get_focus, call_get_task};
+    use crate::adapter::mcp::input::{GetFocusInput, GetTaskInput, UuidValue};
+    use crate::adapter::mcp::test_support::{RecordingRepository, TaskHandle};
+    use serde_json::json;
+    use std::rc::Rc;
+
+    #[test]
+    fn get_focus_handlerはtyped_inputを受け取りrepositoryを変更しない() {
+        let focused_task = TaskHandle::new("typed focus").unwrap();
+        let task_id = focused_task.get_id().unwrap();
+        let repository = RecordingRepository::new(vec![focused_task]).with_focus_task_id(task_id);
+        let save_count = Rc::clone(&repository.save_count);
+        let mutation_count = Rc::clone(&repository.mutation_count);
+        let mut repository = repository;
+
+        let response = call_get_focus(&mut repository, json!("typed-focus"), GetFocusInput {});
+
+        assert_eq!(response["result"]["isError"], false);
+        assert_eq!(
+            response["result"]["structuredContent"]["task"]["id"],
+            task_id.to_string()
+        );
+        assert_eq!(save_count.get(), 0);
+        assert_eq!(mutation_count.get(), 0);
+    }
+
+    #[test]
+    fn get_task_handlerはtyped_inputを受け取りrepositoryを変更しない() {
+        let task = TaskHandle::new("typed task").unwrap();
+        let task_id = task.get_id().unwrap();
+        let repository = RecordingRepository::new(vec![task]);
+        let save_count = Rc::clone(&repository.save_count);
+        let mutation_count = Rc::clone(&repository.mutation_count);
+
+        let response = call_get_task(
+            &repository,
+            json!("typed-task"),
+            GetTaskInput {
+                task_id: UuidValue(task_id),
+            },
+        );
+
+        assert_eq!(response["result"]["isError"], false);
+        assert_eq!(
+            response["result"]["structuredContent"]["task"]["id"],
+            task_id.to_string()
+        );
+        assert_eq!(save_count.get(), 0);
+        assert_eq!(mutation_count.get(), 0);
+    }
+}
