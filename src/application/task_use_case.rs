@@ -5,7 +5,9 @@ use crate::entity::datetime::get_next_morning_datetime;
 use crate::entity::task::{
     ProjectCategory, RepetitionAnchor, Status, TaskAttr, TaskHandle, TaskTreeError,
 };
-use chrono::{DateTime, Datelike, Duration, Local, LocalResult, NaiveDateTime, Timelike};
+use chrono::{
+    DateTime, Datelike, Duration, Local, LocalResult, NaiveDate, NaiveDateTime, Timelike,
+};
 use std::cmp::{max, Ordering};
 use std::collections::HashSet;
 use std::error::Error;
@@ -28,6 +30,17 @@ pub enum ApplicationError {
     },
     NonexistentLocalDateTime {
         local_datetime: NaiveDateTime,
+    },
+    SubjectiveDateOutOfRange {
+        operation: &'static str,
+        datetime: DateTime<Local>,
+    },
+    SubjectiveDateStartOutOfRange {
+        date: NaiveDate,
+    },
+    SubjectiveDateEndOutOfRange {
+        date: NaiveDate,
+        end_of_day_offset_minutes: i64,
     },
 }
 
@@ -53,6 +66,24 @@ impl fmt::Display for ApplicationError {
             Self::NonexistentLocalDateTime { local_datetime } => {
                 write!(formatter, "nonexistent local datetime: {local_datetime}")
             }
+            Self::SubjectiveDateOutOfRange {
+                operation,
+                datetime,
+            } => write!(
+                formatter,
+                "subjective date operation {operation} is outside the supported range: {datetime}"
+            ),
+            Self::SubjectiveDateStartOutOfRange { date } => write!(
+                formatter,
+                "subjective date start is outside the supported range: date={date}"
+            ),
+            Self::SubjectiveDateEndOutOfRange {
+                date,
+                end_of_day_offset_minutes,
+            } => write!(
+                formatter,
+                "subjective date end is outside the supported range: date={date}, end_of_day_offset_minutes={end_of_day_offset_minutes}"
+            ),
         }
     }
 }

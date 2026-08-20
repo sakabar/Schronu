@@ -1,5 +1,5 @@
 use super::interface::FreeTimeManagerTrait;
-use super::task_use_case::resolve_local_datetime;
+use super::task_use_case::{resolve_local_datetime, ApplicationError};
 use crate::entity::datetime::{
     get_next_morning_datetime, BusinessDateTimePolicy, DEFAULT_END_OF_DAY_OFFSET_MINUTES,
 };
@@ -105,27 +105,47 @@ pub fn calculate_full_day_free_time_minutes_for_subjective_date_with_end_of_day_
     free_time_manager.get_free_minutes(&start, &end)
 }
 
-pub fn subjective_date(datetime: DateTime<Local>) -> NaiveDate {
+pub fn try_subjective_date(datetime: DateTime<Local>) -> Result<NaiveDate, ApplicationError> {
     BusinessDateTimePolicy::new(END_OF_DAY_OFFSET_MINUTES)
         .subjective_date(datetime)
-        .unwrap_or_else(|| panic!("subjective date is outside the supported range"))
+        .ok_or(ApplicationError::SubjectiveDateOutOfRange {
+            operation: "subjective_date",
+            datetime,
+        })
 }
 
-pub fn subjective_date_start(date: NaiveDate) -> DateTime<Local> {
+pub fn subjective_date(datetime: DateTime<Local>) -> NaiveDate {
+    try_subjective_date(datetime).unwrap_or_else(|error| panic!("{error}"))
+}
+
+pub fn try_subjective_date_start(date: NaiveDate) -> Result<DateTime<Local>, ApplicationError> {
     let policy = BusinessDateTimePolicy::new(END_OF_DAY_OFFSET_MINUTES);
     let naive = policy
         .subjective_date_start_naive(date)
-        .expect("business day start must be a valid time");
+        .ok_or(ApplicationError::SubjectiveDateStartOutOfRange { date })?;
     resolve_local_datetime(naive, policy.subjective_date_start(date))
-        .unwrap_or_else(|error| panic!("{error}"))
+}
+
+pub fn subjective_date_start(date: NaiveDate) -> DateTime<Local> {
+    try_subjective_date_start(date).unwrap_or_else(|error| panic!("{error}"))
+}
+
+pub fn try_subjective_date_end(
+    date: NaiveDate,
+    end_of_day_offset_minutes: i64,
+) -> Result<DateTime<Local>, ApplicationError> {
+    let policy = BusinessDateTimePolicy::new(end_of_day_offset_minutes);
+    let naive = policy.subjective_date_end_naive(date).ok_or(
+        ApplicationError::SubjectiveDateEndOutOfRange {
+            date,
+            end_of_day_offset_minutes,
+        },
+    )?;
+    resolve_local_datetime(naive, policy.subjective_date_end(date))
 }
 
 pub fn subjective_date_end(date: NaiveDate, end_of_day_offset_minutes: i64) -> DateTime<Local> {
-    let policy = BusinessDateTimePolicy::new(end_of_day_offset_minutes);
-    let naive = policy
-        .subjective_date_end_naive(date)
-        .unwrap_or_else(|| panic!("subjective date end is outside the supported range"));
-    resolve_local_datetime(naive, policy.subjective_date_end(date))
+    try_subjective_date_end(date, end_of_day_offset_minutes)
         .unwrap_or_else(|error| panic!("{error}"))
 }
 
