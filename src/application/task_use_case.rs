@@ -59,7 +59,7 @@ impl fmt::Display for ApplicationError {
 
 impl Error for ApplicationError {}
 
-pub fn resolve_local_datetime(
+pub(crate) fn resolve_local_datetime(
     local_datetime: NaiveDateTime,
     result: LocalResult<DateTime<Local>>,
 ) -> Result<DateTime<Local>, ApplicationError> {

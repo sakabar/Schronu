@@ -3,7 +3,7 @@ use chrono::{
     Timelike,
 };
 
-pub const BUSINESS_DAY_START_HOUR: u32 = 6;
+const BUSINESS_DAY_START_HOUR: u32 = 6;
 pub const DEFAULT_END_OF_DAY_OFFSET_MINUTES: i64 = 30;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
