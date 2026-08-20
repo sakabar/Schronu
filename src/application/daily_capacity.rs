@@ -133,7 +133,7 @@ pub fn subjective_date_end(date: NaiveDate, end_of_day_offset_minutes: i64) -> D
 mod tests {
     use super::*;
     use crate::application::task_use_case::{resolve_local_datetime, ApplicationError};
-    use chrono::{LocalResult, NaiveDateTime, TimeZone};
+    use chrono::{FixedOffset, LocalResult, NaiveDateTime, TimeZone};
 
     struct DurationFreeTimeManager;
 
@@ -183,6 +183,76 @@ mod tests {
         assert_eq!(
             subjective_date(datetime),
             NaiveDate::from_ymd_opt(2026, 8, 11).unwrap()
+        );
+    }
+
+    #[test]
+    fn try_subjective_dateは通常値をpolicyと同じ日付へ変換する() {
+        let datetime = Local.with_ymd_and_hms(2026, 8, 12, 5, 59, 0).unwrap();
+        let expected = BusinessDateTimePolicy::new(END_OF_DAY_OFFSET_MINUTES)
+            .subjective_date(datetime)
+            .unwrap();
+
+        assert_eq!(try_subjective_date(datetime), Ok(expected));
+    }
+
+    #[test]
+    fn try_subjective_dateは日付減算不能の操作と入力日時を保持する() {
+        let local_datetime = NaiveDate::MIN.and_hms_opt(5, 59, 0).unwrap();
+        let datetime = DateTime::<Local>::from_naive_utc_and_offset(
+            local_datetime,
+            FixedOffset::east_opt(0).unwrap(),
+        );
+
+        assert_eq!(
+            try_subjective_date(datetime),
+            Err(ApplicationError::SubjectiveDateOutOfRange {
+                operation: "subjective_date",
+                datetime,
+            })
+        );
+    }
+
+    #[test]
+    fn try_subjective_date_startは通常値をpolicyと同じ日時へ変換する() {
+        let date = NaiveDate::from_ymd_opt(2026, 8, 12).unwrap();
+        let expected = subjective_date_start(date);
+
+        assert_eq!(try_subjective_date_start(date), Ok(expected));
+    }
+
+    #[test]
+    fn try_subjective_date_endは通常値をpolicyと同じ日時へ変換する() {
+        let date = NaiveDate::from_ymd_opt(2026, 8, 12).unwrap();
+        let expected = subjective_date_end(date, END_OF_DAY_OFFSET_MINUTES);
+
+        assert_eq!(
+            try_subjective_date_end(date, END_OF_DAY_OFFSET_MINUTES),
+            Ok(expected)
+        );
+    }
+
+    #[test]
+    fn try_subjective_date_endは最大日の終端計算不能をdateとoffset付きで返す() {
+        assert_eq!(
+            try_subjective_date_end(NaiveDate::MAX, END_OF_DAY_OFFSET_MINUTES),
+            Err(ApplicationError::SubjectiveDateEndOutOfRange {
+                date: NaiveDate::MAX,
+                end_of_day_offset_minutes: END_OF_DAY_OFFSET_MINUTES,
+            })
+        );
+    }
+
+    #[test]
+    fn try_subjective_date_endは極端なoffsetによる計算不能をdateとoffset付きで返す() {
+        let date = NaiveDate::from_ymd_opt(2026, 8, 12).unwrap();
+
+        assert_eq!(
+            try_subjective_date_end(date, i64::MAX),
+            Err(ApplicationError::SubjectiveDateEndOutOfRange {
+                date,
+                end_of_day_offset_minutes: i64::MAX,
+            })
         );
     }
 
