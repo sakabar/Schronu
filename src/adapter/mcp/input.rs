@@ -1361,16 +1361,22 @@ mod tests {
     #[test]
     fn state_change_input_payload_and_patch_values_are_preserved() {
         let task_id = "80d7db87-324e-4e8d-a5b7-ff78cd5bf39a";
+        let expected_pending_until = DateTime::parse_from_rfc3339("2026-08-20T10:00:00+09:00")
+            .unwrap()
+            .with_timezone(&Local);
+        let expected_finished_at = DateTime::parse_from_rfc3339("2026-08-19T10:00:00+09:00")
+            .unwrap()
+            .with_timezone(&Local);
+        let expected_deadline = DateTime::parse_from_rfc3339("2026-08-19T10:00:00+09:00")
+            .unwrap()
+            .with_timezone(&Local);
         let defer = decode_input::<DeferTaskInput>(&json!({
             "task_id": task_id,
             "pending_until": "2026-08-20T10:00:00+09:00"
         }))
         .unwrap_or_else(|_| panic!("defer payload must decode"));
         assert_eq!(defer.task_id.0.to_string(), task_id);
-        assert_eq!(
-            defer.pending_until.0.to_rfc3339(),
-            "2026-08-20T10:00:00+09:00"
-        );
+        assert_eq!(defer.pending_until.0, expected_pending_until);
 
         let complete = decode_input::<CompleteTaskInput>(&json!({"task_id": task_id}))
             .unwrap_or_else(|_| panic!("required complete input must decode"));
@@ -1386,8 +1392,7 @@ mod tests {
         .unwrap_or_else(|_| panic!("complete optional values must decode"));
         assert!(matches!(
             complete.finished_at,
-            OptionalValue::Value(value)
-                if value.0.to_rfc3339() == "2026-08-19T10:00:00+09:00"
+            OptionalValue::Value(value) if value.0 == expected_finished_at
         ));
         assert_eq!(complete.additional_actual_work_seconds.0, 15);
 
@@ -1425,8 +1430,7 @@ mod tests {
         ));
         assert!(matches!(
             update.deadline_time,
-            NullablePatch::Value(value)
-                if value.0.to_rfc3339() == "2026-08-19T10:00:00+09:00"
+            NullablePatch::Value(value) if value.0 == expected_deadline
         ));
         assert!(matches!(
             update.category,
