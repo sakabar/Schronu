@@ -4193,10 +4193,10 @@ fn execute_defer_expression(
                 (seconds > 0).then_some(seconds)
             } else if ["月", "火", "水", "木", "金", "土", "日"].contains(&value.as_str()) {
                 let days_of_week = ["月", "火", "水", "木", "金", "土", "日"];
-                let today = get_next_morning_datetime(now) - Duration::days(1);
+                let today = try_subjective_date(now)?;
                 let current_index = days_of_week
                     .iter()
-                    .position(|day| *day == get_weekday_jp(&today.date_naive()))
+                    .position(|day| *day == get_weekday_jp(&today))
                     .unwrap();
                 let target_index = days_of_week.iter().position(|day| *day == value).unwrap();
                 let difference = (7 + target_index - current_index) % 7;
@@ -4205,10 +4205,18 @@ fn execute_defer_expression(
                 } else {
                     difference as i64
                 };
-                Some(
-                    (get_next_morning_datetime(now) + Duration::days(days - 1) - now).num_seconds()
-                        + 1,
-                )
+                let offset_seconds = days
+                    .checked_sub(1)
+                    .and_then(|days| days.checked_mul(86_400))
+                    .and_then(|seconds| seconds.checked_add(1))
+                    .ok_or(ApplicationError::SubjectiveDateOutOfRange {
+                        operation: "next_business_day_start",
+                        datetime: now,
+                    })?;
+                Some(seconds_until_next_business_day_start_with_offset(
+                    now,
+                    offset_seconds,
+                )?)
             } else {
                 let split = split_amount_and_unit(value);
                 if split.len() == 2 && !split[0].is_empty() {
@@ -6785,6 +6793,25 @@ fn test_execute_defer_日付指定はその日の朝までpendingにする() {
         Local.with_ymd_and_hms(2026, 8, 13, 6, 0, 1).unwrap()
     );
     assert_eq!(result.focused_task_id_opt, None);
+}
+
+#[test]
+fn test_execute_defer_expression_曜日指定は次の該当曜日までpendingにする() {
+    let now = Local.with_ymd_and_hms(2026, 8, 17, 12, 0, 0).unwrap();
+
+    for (weekday, expected) in [
+        ("月", Local.with_ymd_and_hms(2026, 8, 24, 6, 0, 1).unwrap()),
+        ("火", Local.with_ymd_and_hms(2026, 8, 18, 6, 0, 1).unwrap()),
+    ] {
+        let task = new_test_task_handle("曜日延期対象").unwrap();
+        let task_id = task.get_id().unwrap();
+
+        let result = execute_command_for_test(task, now, Some(task_id), &format!("後 {weekday}"));
+
+        assert_eq!(result.task.get_orig_status().unwrap(), Status::Pending);
+        assert_eq!(result.task.get_pending_until().unwrap(), expected);
+        assert_eq!(result.focused_task_id_opt, None);
+    }
 }
 
 #[test]
