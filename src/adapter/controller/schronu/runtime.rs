@@ -2824,6 +2824,27 @@ fn execute_show_all_tasks_with_config(
     config: &SchronuConfig,
 ) -> Result<(), ApplicationError> {
     let supports_ansi_color = stdout.supports_ansi_color();
+    let yyyymmdd_reg = Regex::new(r"^(\d{4})/(\d{2})/(\d{2})$").unwrap();
+    let yyyymmdd_pattern_date = pattern_opt
+        .as_ref()
+        .and_then(|pattern| yyyymmdd_reg.captures(pattern))
+        .map(|captures| {
+            let invalid_calendar_date = || ApplicationError::InvalidInput {
+                field: "pattern",
+                reason: "invalid calendar date",
+            };
+            let year = captures[1]
+                .parse::<i32>()
+                .map_err(|_| invalid_calendar_date())?;
+            let month = captures[2]
+                .parse::<u32>()
+                .map_err(|_| invalid_calendar_date())?;
+            let day = captures[3]
+                .parse::<u32>()
+                .map_err(|_| invalid_calendar_date())?;
+            NaiveDate::from_ymd_opt(year, month, day).ok_or_else(invalid_calendar_date)
+        })
+        .transpose()?;
     let scheduled_tasks = get_schedule(task_repository)?;
     let mut task_list_display_rows: Vec<TaskListDisplayRow> = vec![];
     let mut available_biggest_row_opt: Option<TaskListDisplayRow> = None;
@@ -2867,7 +2888,6 @@ fn execute_show_all_tasks_with_config(
 
     // タスク一覧で、どのタスクをいつやる見込みかを表示するために、「現在時刻」をズラして見ていく
     let mut current_datetime_cursor = task_repository.get_last_synced_time();
-    let yyyymmdd_reg = Regex::new(r"^(\d{4})/(\d{2})/(\d{2})$").unwrap();
     let integer_reg = Regex::new(r"^\d+$").unwrap();
     let days_of_week = ["月", "火", "水", "木", "金", "土", "日"];
 
@@ -3302,18 +3322,8 @@ fn execute_show_all_tasks_with_config(
                         }) {
                             task_list_display_rows.push(task_list_display_row.clone());
                         }
-                    } else if yyyymmdd_reg.is_match(pattern) {
-                        let caps = yyyymmdd_reg.captures(pattern).unwrap();
-                        let pattern_date = caps[1]
-                            .parse::<i32>()
-                            .ok()
-                            .zip(caps[2].parse::<u32>().ok())
-                            .zip(caps[3].parse::<u32>().ok())
-                            .and_then(|((year, month), day)| {
-                                NaiveDate::from_ymd_opt(year, month, day)
-                            });
-
-                        if pattern_date.is_some_and(|date| date == subjective_naive_date) {
+                    } else if let Some(pattern_date) = yyyymmdd_pattern_date {
+                        if pattern_date == subjective_naive_date {
                             task_list_display_rows.push(task_list_display_row.clone());
                         }
                     } else if integer_reg.is_match(pattern) {
