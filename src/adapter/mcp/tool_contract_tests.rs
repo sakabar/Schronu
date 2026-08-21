@@ -62,7 +62,14 @@ fn get_scheduleは借用競合を既存internal_error形式で返す() {
     let server = McpServer::new(RecordingRepository::new(vec![task.clone()]));
 
     let response = task.with_exclusive_data_borrow_for_test(|| {
-        super::handler::call_get_schedule(&server.repository, json!("borrow"), Some(&json!({})))
+        super::handler::call_get_schedule(
+            &server.repository,
+            json!("borrow"),
+            super::input::GetScheduleInput {
+                from: super::input::OptionalValue::Missing,
+                until: super::input::OptionalValue::Missing,
+            },
+        )
     });
 
     assert_eq!(response["result"]["isError"], true);

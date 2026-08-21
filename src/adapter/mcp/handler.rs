@@ -1,6 +1,6 @@
 use super::input::{
     breakdown_task_input, complete_task_input, create_task_input, decode_input, defer_task_input,
-    list_tasks_filter, schedule_period, update_task_input, GetFocusInput, GetTaskInput,
+    update_task_input, GetFocusInput, GetScheduleInput, GetTaskInput, ListTasksInput,
     ToolInputError,
 };
 use super::internal_error_response;
@@ -40,8 +40,26 @@ pub(super) fn call_tool<R: TaskRepositoryTrait>(
             };
             call_get_task(repository, id, input)
         }
-        Some("list_tasks") => call_list_tasks(repository, id, params.get("arguments")),
-        Some("get_schedule") => call_get_schedule(repository, id, params.get("arguments")),
+        Some("list_tasks") => {
+            let empty_arguments = json!({});
+            let input = match decode_input::<ListTasksInput>(
+                params.get("arguments").unwrap_or(&empty_arguments),
+            ) {
+                Ok(input) => input,
+                Err(error) => return tool_input_error_response(id, error),
+            };
+            call_list_tasks(repository, id, input)
+        }
+        Some("get_schedule") => {
+            let empty_arguments = json!({});
+            let input = match decode_input::<GetScheduleInput>(
+                params.get("arguments").unwrap_or(&empty_arguments),
+            ) {
+                Ok(input) => input,
+                Err(error) => return tool_input_error_response(id, error),
+            };
+            call_get_schedule(repository, id, input)
+        }
         Some("create_task") => call_create_task(repository, id, &params["arguments"]),
         Some("breakdown_task") => call_breakdown_task(repository, id, &params["arguments"]),
         Some("defer_task") => call_defer_task(repository, id, &params["arguments"]),
@@ -78,17 +96,9 @@ fn call_get_task<R: TaskRepositoryTrait>(repository: &R, id: Value, input: GetTa
 fn call_list_tasks<R: TaskRepositoryTrait>(
     repository: &R,
     id: Value,
-    arguments: Option<&Value>,
+    input: ListTasksInput,
 ) -> Value {
-    let filter = match list_tasks_filter(arguments) {
-        Ok(filter) => filter,
-        Err(ToolInputError::Schema(error)) => return invalid_params_response(id, error),
-        Err(ToolInputError::Semantic { field, message }) => {
-            return invalid_input_response(id, &field, message)
-        }
-    };
-
-    match list_tasks(repository, filter) {
+    match list_tasks(repository, input.into_filter()) {
         Ok(tasks) => tool_result_response(
             id,
             json!({
@@ -106,9 +116,9 @@ fn call_list_tasks<R: TaskRepositoryTrait>(
 pub(super) fn call_get_schedule<R: TaskRepositoryTrait>(
     repository: &R,
     id: Value,
-    arguments: Option<&Value>,
+    input: GetScheduleInput,
 ) -> Value {
-    let (from, until) = match schedule_period(arguments, repository.get_last_synced_time()) {
+    let (from, until) = match input.into_period(repository.get_last_synced_time()) {
         Ok(period) => period,
         Err(ToolInputError::Schema(error)) => return invalid_params_response(id, error),
         Err(ToolInputError::Semantic { field, message }) => {

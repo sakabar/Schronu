@@ -335,7 +335,6 @@ pub(super) struct GetTaskInput {
 
 #[derive(Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
-#[allow(dead_code, reason = "used by the staged typed-handler migration")]
 pub(super) struct ListTasksInput {
     #[serde(default)]
     pub(super) period: OptionalValue<TaskPeriodInput>,
@@ -346,21 +345,64 @@ pub(super) struct ListTasksInput {
     pub(super) categories: OptionalValue<Vec<Option<ProjectCategoryValue>>>,
 }
 
+impl ListTasksInput {
+    pub(super) fn into_filter(self) -> ListTasksFilter {
+        ListTasksFilter {
+            period: match self.period {
+                OptionalValue::Missing => None,
+                OptionalValue::Value(period) => Some(period.into_filter()),
+            },
+            statuses: match self.statuses {
+                OptionalValue::Missing => Vec::new(),
+                OptionalValue::Value(statuses) => {
+                    statuses.into_iter().map(StatusValue::into_status).collect()
+                }
+            },
+            categories: match self.categories {
+                OptionalValue::Missing => Vec::new(),
+                OptionalValue::Value(categories) => categories
+                    .into_iter()
+                    .map(|category| category.map(ProjectCategoryValue::into_category))
+                    .collect(),
+            },
+        }
+    }
+}
+
 #[derive(Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
-#[allow(dead_code, reason = "used by the staged typed-handler migration")]
 pub(super) struct TaskPeriodInput {
     pub(super) field: TaskPeriodFieldValue,
     pub(super) from: Rfc3339DateTime,
     pub(super) until: Rfc3339DateTime,
 }
 
-#[allow(dead_code, reason = "used by the staged typed-handler migration")]
+impl TaskPeriodInput {
+    fn into_filter(self) -> TaskPeriodFilter {
+        TaskPeriodFilter {
+            field: self.field.into_field(),
+            from: self.from.0,
+            until: self.until.0,
+        }
+    }
+}
+
 pub(super) enum TaskPeriodFieldValue {
     ScheduledStart,
     CreatedAt,
     Deadline,
     CompletedAt,
+}
+
+impl TaskPeriodFieldValue {
+    fn into_field(self) -> TaskPeriodField {
+        match self {
+            Self::ScheduledStart => TaskPeriodField::ScheduledStart,
+            Self::CreatedAt => TaskPeriodField::CreatedAt,
+            Self::Deadline => TaskPeriodField::Deadline,
+            Self::CompletedAt => TaskPeriodField::CompletedAt,
+        }
+    }
 }
 
 impl<'de> Deserialize<'de> for TaskPeriodFieldValue {
@@ -398,11 +440,20 @@ impl JsonSchema for TaskPeriodFieldValue {
     }
 }
 
-#[allow(dead_code, reason = "used by the staged typed-handler migration")]
 pub(super) enum StatusValue {
     Todo,
     Pending,
     Done,
+}
+
+impl StatusValue {
+    fn into_status(self) -> Status {
+        match self {
+            Self::Todo => Status::Todo,
+            Self::Pending => Status::Pending,
+            Self::Done => Status::Done,
+        }
+    }
 }
 
 impl<'de> Deserialize<'de> for StatusValue {
@@ -440,13 +491,24 @@ impl JsonSchema for StatusValue {
     }
 }
 
-#[allow(dead_code, reason = "used by the staged typed-handler migration")]
 pub(super) enum ProjectCategoryValue {
     Earning,
     Sustaining,
     Recovery,
     Investment,
     Consumption,
+}
+
+impl ProjectCategoryValue {
+    fn into_category(self) -> ProjectCategory {
+        match self {
+            Self::Earning => ProjectCategory::Earning,
+            Self::Sustaining => ProjectCategory::Sustaining,
+            Self::Recovery => ProjectCategory::Recovery,
+            Self::Investment => ProjectCategory::Investment,
+            Self::Consumption => ProjectCategory::Consumption,
+        }
+    }
 }
 
 impl JsonSchema for ProjectCategoryValue {
@@ -499,12 +561,66 @@ fn categories_schema(generator: &mut SchemaGenerator) -> Schema {
 
 #[derive(Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
-#[allow(dead_code, reason = "used by the staged typed-handler migration")]
 pub(super) struct GetScheduleInput {
     #[serde(default)]
     pub(super) from: OptionalValue<IsoDate>,
     #[serde(default)]
     pub(super) until: OptionalValue<IsoDate>,
+}
+
+impl GetScheduleInput {
+    pub(super) fn into_period(
+        self,
+        now: DateTime<Local>,
+    ) -> Result<(DateTime<Local>, DateTime<Local>), ToolInputError> {
+        let from = match self.from {
+            OptionalValue::Missing => None,
+            OptionalValue::Value(date) => Some(schedule_day_start(date, "from")?),
+        };
+        let until = match self.until {
+            OptionalValue::Missing => None,
+            OptionalValue::Value(date) => Some(schedule_day_start(date, "until")?),
+        };
+
+        let (from, until) = match (from, until) {
+            (Some(from), Some(until)) => (from, until),
+            (Some(from), None) => (from, get_next_morning_datetime(from)),
+            (None, Some(until)) => (now, until),
+            (None, None) => (now, get_next_morning_datetime(now)),
+        };
+        if from >= until {
+            return Err(ToolInputError::Semantic {
+                field: "until".to_string(),
+                message: "must be later than from",
+            });
+        }
+
+        Ok((from, until))
+    }
+}
+
+fn schedule_day_start(
+    date: IsoDate,
+    field: &'static str,
+) -> Result<DateTime<Local>, ToolInputError> {
+    let local_noon = date
+        .0
+        .and_hms_opt(12, 0, 0)
+        .ok_or(ToolInputError::Semantic {
+            field: field.to_string(),
+            message: "must be a valid ISO 8601 date",
+        })?;
+    let local_noon = match local_noon.and_local_timezone(Local) {
+        LocalResult::Single(datetime) => datetime,
+        _ => {
+            return Err(ToolInputError::Semantic {
+                field: field.to_string(),
+                message: "must resolve to a local date-time",
+            })
+        }
+    };
+
+    Ok(get_next_morning_datetime(local_noon) - Duration::days(1))
 }
 
 #[allow(dead_code, reason = "used by the staged typed-tool migration")]
@@ -930,224 +1046,8 @@ pub(super) fn create_task_input(arguments: &Value) -> Result<CreateTaskInput, To
     })
 }
 
-pub(super) fn list_tasks_filter(
-    arguments: Option<&Value>,
-) -> Result<ListTasksFilter, ToolInputError> {
-    let Some(arguments) = arguments else {
-        return Ok(ListTasksFilter {
-            period: None,
-            statuses: vec![],
-            categories: vec![],
-        });
-    };
-    let arguments = validate_argument_object(arguments, &["period", "statuses", "categories"], &[])
-        .map_err(ToolInputError::Schema)?;
-
-    Ok(ListTasksFilter {
-        period: arguments
-            .get("period")
-            .map(parse_period_filter)
-            .transpose()?,
-        statuses: parse_status_filters(arguments.get("statuses"))?,
-        categories: parse_category_filters(arguments.get("categories"))?,
-    })
-}
-
-pub(super) fn schedule_period(
-    arguments: Option<&Value>,
-    now: DateTime<Local>,
-) -> Result<(DateTime<Local>, DateTime<Local>), ToolInputError> {
-    let Some(arguments) = arguments else {
-        return Ok((now, get_next_morning_datetime(now)));
-    };
-    let arguments = validate_argument_object(arguments, &["from", "until"], &[])
-        .map_err(ToolInputError::Schema)?;
-    let from = arguments
-        .get("from")
-        .map(|value| schedule_day_start(value, "from"))
-        .transpose()?;
-    let until = arguments
-        .get("until")
-        .map(|value| schedule_day_start(value, "until"))
-        .transpose()?;
-
-    let (from, until) = match (from, until) {
-        (Some(from), Some(until)) => (from, until),
-        (Some(from), None) => (from, get_next_morning_datetime(from)),
-        (None, Some(until)) => (now, until),
-        (None, None) => (now, get_next_morning_datetime(now)),
-    };
-    if from >= until {
-        return Err(ToolInputError::Semantic {
-            field: "until".to_string(),
-            message: "must be later than from",
-        });
-    }
-
-    Ok((from, until))
-}
-
-fn schedule_day_start(
-    value: &Value,
-    field: &'static str,
-) -> Result<DateTime<Local>, ToolInputError> {
-    let value = value.as_str().ok_or_else(|| {
-        ToolInputError::Schema(InvalidParams {
-            field: field.to_string(),
-            reason: "must be a date string",
-        })
-    })?;
-    let date =
-        NaiveDate::parse_from_str(value, "%Y-%m-%d").map_err(|_| ToolInputError::Semantic {
-            field: field.to_string(),
-            message: "must be a valid ISO 8601 date",
-        })?;
-    let local_noon = date.and_hms_opt(12, 0, 0).ok_or(ToolInputError::Semantic {
-        field: field.to_string(),
-        message: "must be a valid ISO 8601 date",
-    })?;
-    let local_noon = match local_noon.and_local_timezone(Local) {
-        LocalResult::Single(datetime) => datetime,
-        _ => {
-            return Err(ToolInputError::Semantic {
-                field: field.to_string(),
-                message: "must resolve to a local date-time",
-            })
-        }
-    };
-
-    Ok(get_next_morning_datetime(local_noon) - Duration::days(1))
-}
-
-fn parse_period_filter(value: &Value) -> Result<TaskPeriodFilter, ToolInputError> {
-    let period = value.as_object().ok_or_else(|| {
-        ToolInputError::Schema(InvalidParams {
-            field: "period".to_string(),
-            reason: "must be an object",
-        })
-    })?;
-    if let Some(field) = period
-        .keys()
-        .find(|field| !["field", "from", "until"].contains(&field.as_str()))
-    {
-        return Err(ToolInputError::Schema(InvalidParams {
-            field: format!("period.{field}"),
-            reason: "additional property is not allowed",
-        }));
-    }
-    for field in ["field", "from", "until"] {
-        if !period.contains_key(field) {
-            return Err(ToolInputError::Schema(InvalidParams {
-                field: format!("period.{field}"),
-                reason: "field is required",
-            }));
-        }
-    }
-
-    let field = match required_nested_string(period, "period", "field")? {
-        "scheduled_start" => TaskPeriodField::ScheduledStart,
-        "created_at" => TaskPeriodField::CreatedAt,
-        "deadline" => TaskPeriodField::Deadline,
-        "completed_at" => TaskPeriodField::CompletedAt,
-        _ => {
-            return Err(ToolInputError::Schema(InvalidParams {
-                field: "period.field".to_string(),
-                reason: "must be a supported period field",
-            }))
-        }
-    };
-    let from = parse_datetime(
-        required_nested_string(period, "period", "from")?,
-        "period.from",
-    )?;
-    let until = parse_datetime(
-        required_nested_string(period, "period", "until")?,
-        "period.until",
-    )?;
-
-    Ok(TaskPeriodFilter { field, from, until })
-}
-
-fn required_nested_string<'a>(
-    object: &'a Map<String, Value>,
-    object_name: &str,
-    field: &str,
-) -> Result<&'a str, ToolInputError> {
-    object.get(field).and_then(Value::as_str).ok_or_else(|| {
-        ToolInputError::Schema(InvalidParams {
-            field: format!("{object_name}.{field}"),
-            reason: "must be a string",
-        })
-    })
-}
-
-fn parse_datetime(value: &str, field: &'static str) -> Result<DateTime<Local>, ToolInputError> {
-    parse_local_datetime(value).map_err(|_| ToolInputError::Semantic {
-        field: field.to_string(),
-        message: "must be a valid RFC 3339 date-time",
-    })
-}
-
 fn parse_local_datetime(value: &str) -> Result<DateTime<Local>, chrono::ParseError> {
     DateTime::parse_from_rfc3339(value).map(|time| time.with_timezone(&Local))
-}
-
-fn parse_status_filters(value: Option<&Value>) -> Result<Vec<Status>, ToolInputError> {
-    let Some(value) = value else {
-        return Ok(vec![]);
-    };
-    let values = value.as_array().ok_or_else(|| {
-        ToolInputError::Schema(InvalidParams {
-            field: "statuses".to_string(),
-            reason: "must be an array",
-        })
-    })?;
-
-    values
-        .iter()
-        .enumerate()
-        .map(|(index, value)| match value.as_str() {
-            Some("todo") => Ok(Status::Todo),
-            Some("pending") => Ok(Status::Pending),
-            Some("done") => Ok(Status::Done),
-            _ => Err(ToolInputError::Schema(InvalidParams {
-                field: format!("statuses[{index}]"),
-                reason: "must be todo, pending, or done",
-            })),
-        })
-        .collect()
-}
-
-fn parse_category_filters(
-    value: Option<&Value>,
-) -> Result<Vec<Option<ProjectCategory>>, ToolInputError> {
-    let Some(value) = value else {
-        return Ok(vec![]);
-    };
-    let values = value.as_array().ok_or_else(|| {
-        ToolInputError::Schema(InvalidParams {
-            field: "categories".to_string(),
-            reason: "must be an array",
-        })
-    })?;
-
-    values
-        .iter()
-        .enumerate()
-        .map(|(index, value)| match value {
-            Value::Null => Ok(None),
-            Value::String(value) => parse_mcp_category(value).map(Some).ok_or_else(|| {
-                ToolInputError::Schema(InvalidParams {
-                    field: format!("categories[{index}]"),
-                    reason: "must be a supported category or null",
-                })
-            }),
-            _ => Err(ToolInputError::Schema(InvalidParams {
-                field: format!("categories[{index}]"),
-                reason: "must be a supported category or null",
-            })),
-        })
-        .collect()
 }
 
 pub(super) fn validate_argument_object<'a>(
