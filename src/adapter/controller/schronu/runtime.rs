@@ -25,7 +25,8 @@ use super::renderer::{
 #[cfg(test)]
 use chrono::FixedOffset;
 use chrono::{
-    DateTime, Datelike, Duration, Local, LocalResult, NaiveDate, TimeZone, Timelike, Weekday,
+    DateTime, Datelike, Duration, Local, LocalResult, NaiveDate, NaiveTime, TimeZone, Timelike,
+    Weekday,
 };
 use percent_encoding::{percent_encode, AsciiSet, CONTROLS};
 use regex::Regex;
@@ -39,8 +40,8 @@ use schronu::application::daily_capacity::{
     calculate_daily_rho_diff_hours,
     calculate_free_time_minutes_for_subjective_date_with_end_of_day_offset_minutes,
     calculate_full_day_free_time_minutes_for_subjective_date_with_end_of_day_offset_minutes,
-    try_next_business_day_start, try_subjective_date, try_subjective_date_end,
-    try_subjective_date_start, RHO_GOAL,
+    try_local_date_and_time, try_next_business_day_start, try_subjective_date,
+    try_subjective_date_end, try_subjective_date_start, RHO_GOAL,
 };
 use schronu::application::flatten_use_case::{
     flatten_tasks_with_end_of_day_offset_minutes, FlattenResult,
@@ -767,21 +768,12 @@ fn parse_dated_clear_or_gather_time_range(
     else {
         return Ok(None);
     };
-    let mut end = match Local.with_ymd_and_hms(
-        schronu_day_start.year(),
-        schronu_day_start.month(),
-        schronu_day_start.day(),
-        calendar_hour,
-        minute,
-        0,
-    ) {
-        LocalResult::Single(datetime) => {
-            let Some(datetime) = datetime.checked_add_signed(calendar_duration) else {
-                return Ok(None);
-            };
-            datetime
-        }
-        LocalResult::Ambiguous(_, _) | LocalResult::None => return Ok(None),
+    let Some(calendar_time) = NaiveTime::from_hms_opt(calendar_hour, minute, 0) else {
+        return Ok(None);
+    };
+    let localized_end = try_local_date_and_time(schronu_day_start.date_naive(), calendar_time)?;
+    let Some(mut end) = localized_end.checked_add_signed(calendar_duration) else {
+        return Ok(None);
     };
     if end < schronu_day_start {
         let Some(adjusted_end) = end.checked_add_signed(Duration::days(1)) else {
