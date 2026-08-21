@@ -7420,6 +7420,58 @@ fn test_execute_defer_expression_同日と24時超過を現在calendar日基準�
 }
 
 #[test]
+fn test_execute_defer_routine_翌朝計算不能を情報付きerrorにして親子とfocusを変更しない() {
+    let orig_deadline = maximum_local_datetime();
+    let now = Local.with_ymd_and_hms(2026, 8, 14, 12, 0, 0).unwrap();
+    let parent = new_test_task_handle("反復routine親").unwrap();
+    parent.set_repetition_interval_days_opt(Some(7)).unwrap();
+    parent
+        .set_deadline_time_opt(Some(Local.with_ymd_and_hms(2026, 8, 20, 18, 0, 0).unwrap()))
+        .unwrap();
+    let mut child_attr = new_test_task_attr("延期対象routine子");
+    child_attr.set_deadline_time_opt(Some(orig_deadline));
+    let child = parent.create_as_last_child(child_attr);
+    let child_id = child.get_id().unwrap();
+    let parent_snapshot = parent.snapshot().unwrap();
+    let child_snapshot = child.snapshot().unwrap();
+    let child_ids = parent
+        .get_children()
+        .unwrap()
+        .into_iter()
+        .map(|task| task.get_id().unwrap())
+        .collect::<Vec<_>>();
+    let mut task_repository = TestTaskRepository::new(parent.clone(), now);
+    let mut focused_task_id_opt = Some(child_id);
+    let mut context = RuntimeDeferCommandContext {
+        task_repository: &mut task_repository,
+        focused_task_id_opt: &mut focused_task_id_opt,
+        config: active_config(),
+    };
+
+    let actual = context.defer_routine();
+
+    assert_eq!(
+        actual,
+        Err(ApplicationError::SubjectiveDateOutOfRange {
+            operation: "next_business_day_start",
+            datetime: orig_deadline,
+        })
+    );
+    assert_eq!(parent.snapshot().unwrap(), parent_snapshot);
+    assert_eq!(child.snapshot().unwrap(), child_snapshot);
+    assert_eq!(
+        parent
+            .get_children()
+            .unwrap()
+            .into_iter()
+            .map(|task| task.get_id().unwrap())
+            .collect::<Vec<_>>(),
+        child_ids
+    );
+    assert_eq!(focused_task_id_opt, Some(child_id));
+}
+
+#[test]
 fn test_execute_deadline_翌朝計算不能を情報付きerrorにして状態を変更しない() {
     let now = maximum_local_datetime();
     let task = new_test_task_handle("日時範囲外のdeadline対象").unwrap();
