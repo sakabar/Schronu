@@ -198,6 +198,8 @@ fn internal_error_response(id: Value, message: &str) -> Value {
 }
 
 #[cfg(test)]
+mod output_contract_tests;
+#[cfg(test)]
 mod protocol_contract_tests;
 #[cfg(test)]
 mod test_support;
