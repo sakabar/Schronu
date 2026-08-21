@@ -22,6 +22,8 @@ use super::renderer::{
     format_spreadsheet_task_row, render_display_model, render_plain_display_model, writeln_newline,
     DisplayModel, ErrorCapturingWriter, SchronuWriter, SpreadsheetTaskRow,
 };
+#[cfg(test)]
+use chrono::FixedOffset;
 use chrono::{
     DateTime, Datelike, Duration, Local, LocalResult, NaiveDate, TimeZone, Timelike, Weekday,
 };
@@ -119,6 +121,14 @@ fn next_test_task_id() -> Uuid {
 #[cfg(test)]
 fn test_task_time() -> DateTime<Local> {
     Local.with_ymd_and_hms(2026, 8, 19, 0, 0, 0).unwrap()
+}
+
+#[cfg(test)]
+fn maximum_local_datetime() -> DateTime<Local> {
+    DateTime::<Local>::from_naive_utc_and_offset(
+        NaiveDate::MAX.and_hms_opt(12, 0, 0).unwrap(),
+        FixedOffset::east_opt(0).unwrap(),
+    )
 }
 
 #[cfg(test)]
@@ -6757,6 +6767,98 @@ fn test_execute_defer_余剰引数でも単位正規化と入力error表示を�
     assert!(invalid.output.contains(
         "[Error] 入力エラー: amount: 整数で指定してください (コマンド: 後, 使い方: 後 <数値> <単位>)"
     ));
+}
+
+#[test]
+fn test_execute_defer_翌朝計算不能を情報付きerrorにして状態を変更しない() {
+    let now = maximum_local_datetime();
+    let task = new_test_task_handle("日時範囲外の延期対象").unwrap();
+    let task_id = task.get_id().unwrap();
+    let original_snapshot = task.snapshot().unwrap();
+    let mut task_repository = TestTaskRepository::new(task, now);
+    let mut focused_task_id_opt = Some(task_id);
+
+    let actual = execute_defer(&mut task_repository, &mut focused_task_id_opt, 1, "日");
+
+    assert_eq!(
+        actual,
+        Err(ApplicationError::SubjectiveDateOutOfRange {
+            operation: "next_business_day_start",
+            datetime: now,
+        })
+    );
+    assert_eq!(task_repository.task.snapshot().unwrap(), original_snapshot);
+    assert_eq!(focused_task_id_opt, Some(task_id));
+}
+
+#[test]
+fn test_runtime_defer_shortcut_翌朝計算不能を情報付きerrorにして状態を変更しない() {
+    for shortcut in ["next_morning", "next_week", "five_years"] {
+        let now = maximum_local_datetime();
+        let task = new_test_task_handle("日時範囲外の延期shortcut対象").unwrap();
+        let task_id = task.get_id().unwrap();
+        let original_snapshot = task.snapshot().unwrap();
+        let mut task_repository = TestTaskRepository::new(task, now);
+        let mut focused_task_id_opt = Some(task_id);
+        let mut context = RuntimeDeferCommandContext {
+            task_repository: &mut task_repository,
+            focused_task_id_opt: &mut focused_task_id_opt,
+            config: active_config(),
+        };
+
+        let actual = match shortcut {
+            "next_morning" => context.defer_next_morning(),
+            "next_week" => context.defer_next_week(),
+            "five_years" => context.defer_five_years(),
+            _ => unreachable!("test shortcut table must contain supported values"),
+        };
+
+        assert!(matches!(
+            actual,
+            Err(DeferCommandError::Application(
+                ApplicationError::SubjectiveDateOutOfRange {
+                    operation: "next_business_day_start",
+                    datetime,
+                }
+            )) if datetime == now
+        ));
+        assert_eq!(task_repository.task.snapshot().unwrap(), original_snapshot);
+        assert_eq!(focused_task_id_opt, Some(task_id));
+    }
+}
+
+#[test]
+fn test_execute_deadline_翌朝計算不能を情報付きerrorにして状態を変更しない() {
+    let now = maximum_local_datetime();
+    let task = new_test_task_handle("日時範囲外のdeadline対象").unwrap();
+    let task_id = task.get_id().unwrap();
+    let original_snapshot = task.snapshot().unwrap();
+    let mut task_repository = TestTaskRepository::new(task, now);
+    let mut free_time_manager = TestFreeTimeManager;
+    let mut focused_task_id_opt = Some(task_id);
+    let mut stdout = TestWriter::new();
+
+    let actual = execute(
+        &mut stdout,
+        &mut task_repository,
+        &mut free_time_manager,
+        &mut focused_task_id_opt,
+        &now,
+        "〆 明",
+    );
+
+    assert!(matches!(
+        actual,
+        Err(CommandError::Application(
+            ApplicationError::SubjectiveDateOutOfRange {
+                operation: "next_business_day_start",
+                datetime,
+            }
+        )) if datetime == now
+    ));
+    assert_eq!(task_repository.task.snapshot().unwrap(), original_snapshot);
+    assert_eq!(focused_task_id_opt, Some(task_id));
+    assert!(stdout.into_string().is_empty());
 }
 
 #[test]
