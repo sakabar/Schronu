@@ -1596,10 +1596,10 @@ fn category_schema() -> Value {
 mod tests {
     use super::McpServer;
     use crate::adapter::gateway::task_repository::TaskRepository;
+    use crate::application::daily_capacity::try_next_business_day_start;
     use crate::application::interface::{
         RepositoryReloadOutcome, TaskRepositoryError, TaskRepositoryOperation, TaskRepositoryTrait,
     };
-    use crate::entity::datetime::get_next_morning_datetime;
     use crate::entity::task::{ProjectCategory, RepetitionAnchor, Status, TaskHandle};
     use chrono::{DateTime, Duration, FixedOffset, Local, NaiveDate, TimeZone};
     use serde_json::json;
@@ -3701,7 +3701,7 @@ mod tests {
 
         let future_task = crate::test_support::new_task_handle("future task").unwrap();
         future_task
-            .set_start_time(get_next_morning_datetime(now) + Duration::hours(1))
+            .set_start_time(try_next_business_day_start(now).unwrap() + Duration::hours(1))
             .unwrap();
         future_task.set_estimated_work_seconds(15 * 60).unwrap();
 
@@ -3726,8 +3726,8 @@ mod tests {
     #[test]
     fn get_scheduleは日付範囲と片方の日付指定で重なる予定を返す() {
         let now = Local::now();
-        let from_boundary = get_next_morning_datetime(now);
-        let until_boundary = get_next_morning_datetime(from_boundary);
+        let from_boundary = try_next_business_day_start(now).unwrap();
+        let until_boundary = try_next_business_day_start(from_boundary).unwrap();
 
         let crossing_task = crate::test_support::new_task_handle("crossing task").unwrap();
         crossing_task

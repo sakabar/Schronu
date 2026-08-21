@@ -116,10 +116,6 @@ pub fn try_local_date_and_time(
     resolve_local_datetime(local_datetime, Local.from_local_datetime(&local_datetime))
 }
 
-pub fn subjective_date(datetime: DateTime<Local>) -> NaiveDate {
-    try_subjective_date(datetime).unwrap_or_else(|error| panic!("{error}"))
-}
-
 pub fn try_next_business_day_start(
     datetime: DateTime<Local>,
 ) -> Result<DateTime<Local>, ApplicationError> {
@@ -141,10 +137,6 @@ pub fn try_subjective_date_start(date: NaiveDate) -> Result<DateTime<Local>, App
     resolve_local_datetime(naive, policy.subjective_date_start(date))
 }
 
-pub fn subjective_date_start(date: NaiveDate) -> DateTime<Local> {
-    try_subjective_date_start(date).unwrap_or_else(|error| panic!("{error}"))
-}
-
 pub fn try_subjective_date_end(
     date: NaiveDate,
     end_of_day_offset_minutes: i64,
@@ -157,11 +149,6 @@ pub fn try_subjective_date_end(
         },
     )?;
     resolve_local_datetime(naive, policy.subjective_date_end(date))
-}
-
-pub fn subjective_date_end(date: NaiveDate, end_of_day_offset_minutes: i64) -> DateTime<Local> {
-    try_subjective_date_end(date, end_of_day_offset_minutes)
-        .unwrap_or_else(|error| panic!("{error}"))
 }
 
 #[cfg(test)]
@@ -216,7 +203,7 @@ mod tests {
         let datetime = Local.with_ymd_and_hms(2026, 8, 12, 1, 0, 0).unwrap();
 
         assert_eq!(
-            subjective_date(datetime),
+            try_subjective_date(datetime).unwrap(),
             NaiveDate::from_ymd_opt(2026, 8, 11).unwrap()
         );
     }
@@ -251,7 +238,7 @@ mod tests {
     #[test]
     fn try_subjective_date_startは通常値をpolicyと同じ日時へ変換する() {
         let date = NaiveDate::from_ymd_opt(2026, 8, 12).unwrap();
-        let expected = subjective_date_start(date);
+        let expected = try_subjective_date_start(date).unwrap();
 
         assert_eq!(try_subjective_date_start(date), Ok(expected));
     }
@@ -259,7 +246,7 @@ mod tests {
     #[test]
     fn try_subjective_date_endは通常値をpolicyと同じ日時へ変換する() {
         let date = NaiveDate::from_ymd_opt(2026, 8, 12).unwrap();
-        let expected = subjective_date_end(date, END_OF_DAY_OFFSET_MINUTES);
+        let expected = try_subjective_date_end(date, END_OF_DAY_OFFSET_MINUTES).unwrap();
 
         assert_eq!(
             try_subjective_date_end(date, END_OF_DAY_OFFSET_MINUTES),

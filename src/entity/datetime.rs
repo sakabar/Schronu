@@ -111,30 +111,24 @@ pub fn parse_local_datetime(
         .map(|datetime| datetime.and_local_timezone(Local))
 }
 
-pub fn get_next_morning_datetime(now: DateTime<Local>) -> DateTime<Local> {
-    match BusinessDateTimePolicy::new(DEFAULT_END_OF_DAY_OFFSET_MINUTES)
-        .next_business_day_start(now)
-    {
-        LocalResult::Single(datetime) => datetime,
-        LocalResult::Ambiguous(earlier, later) => {
-            panic!("ambiguous business day start: {earlier} or {later}")
-        }
-        LocalResult::None => panic!("nonexistent business day start"),
-    }
-}
-
 #[test]
-fn test_get_next_morning_datetime_6時以降の場合() {
+fn test_next_business_day_start_6時以降の場合() {
     let dt = Local.with_ymd_and_hms(2023, 4, 1, 12, 0, 0).unwrap();
-    let actual = get_next_morning_datetime(dt);
+    let actual = BusinessDateTimePolicy::new(DEFAULT_END_OF_DAY_OFFSET_MINUTES)
+        .next_business_day_start(dt)
+        .single()
+        .unwrap();
 
     assert_eq!(actual, Local.with_ymd_and_hms(2023, 4, 2, 6, 0, 0).unwrap());
 }
 
 #[test]
-fn test_get_next_morning_datetime_6時以前の場合() {
+fn test_next_business_day_start_6時以前の場合() {
     let dt = Local.with_ymd_and_hms(2023, 4, 1, 1, 0, 0).unwrap();
-    let actual = get_next_morning_datetime(dt);
+    let actual = BusinessDateTimePolicy::new(DEFAULT_END_OF_DAY_OFFSET_MINUTES)
+        .next_business_day_start(dt)
+        .single()
+        .unwrap();
 
     assert_eq!(actual, Local.with_ymd_and_hms(2023, 4, 1, 6, 0, 0).unwrap());
 }

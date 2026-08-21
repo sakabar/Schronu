@@ -31,8 +31,6 @@ use schronu::adapter::gateway::free_time_manager::FreeTimeManager;
 use schronu::adapter::gateway::schronu_config::{load_schronu_config, SchronuConfig};
 use schronu::adapter::gateway::storage_lock::{LockMode, StorageLock, StorageLockError};
 use schronu::adapter::gateway::task_repository::TaskRepository;
-#[cfg(test)]
-use schronu::application::daily_capacity::subjective_date_start;
 use schronu::application::daily_capacity::{
     calculate_daily_rho_diff_hours,
     calculate_free_time_minutes_for_subjective_date_with_end_of_day_offset_minutes,
@@ -59,8 +57,6 @@ use schronu::application::task_use_case::{
     get_focus, set_category, set_deadline, set_estimate, validate_task_name, ApplicationError,
     BreakdownTaskInput, CompleteTaskInput, CreateTaskInput, TaskFactory,
 };
-#[cfg(test)]
-use schronu::entity::datetime::get_next_morning_datetime;
 use schronu::entity::datetime::parse_local_datetime;
 use schronu::entity::task::{
     extract_leaf_tasks_from_project, extract_leaf_tasks_from_project_with_pending,
@@ -552,7 +548,7 @@ fn resolve_show_all_pattern(
 fn test_resolve_upcoming_mmdd_未来の日付は現在年を使う() {
     let now = Local.with_ymd_and_hms(2026, 8, 11, 12, 0, 0).unwrap();
     let target_date = Local.with_ymd_and_hms(2026, 9, 26, 12, 0, 0).unwrap();
-    let expected = get_next_morning_datetime(target_date) - Duration::days(1);
+    let expected = try_next_business_day_start(target_date).unwrap() - Duration::days(1);
 
     assert_eq!(resolve_upcoming_mmdd("9/26", now), Ok(Some(expected)));
 }
@@ -561,7 +557,7 @@ fn test_resolve_upcoming_mmdd_未来の日付は現在年を使う() {
 fn test_resolve_upcoming_mmdd_過去の日付は翌年を使う() {
     let now = Local.with_ymd_and_hms(2026, 10, 1, 12, 0, 0).unwrap();
     let target_date = Local.with_ymd_and_hms(2027, 9, 26, 12, 0, 0).unwrap();
-    let expected = get_next_morning_datetime(target_date) - Duration::days(1);
+    let expected = try_next_business_day_start(target_date).unwrap() - Duration::days(1);
 
     assert_eq!(resolve_upcoming_mmdd("09/26", now), Ok(Some(expected)));
 }
@@ -569,7 +565,7 @@ fn test_resolve_upcoming_mmdd_過去の日付は翌年を使う() {
 #[test]
 fn test_resolve_upcoming_mmdd_当日の境界時刻は現在年を使う() {
     let target_date = Local.with_ymd_and_hms(2026, 9, 26, 12, 0, 0).unwrap();
-    let now = get_next_morning_datetime(target_date) - Duration::days(1);
+    let now = try_next_business_day_start(target_date).unwrap() - Duration::days(1);
 
     assert_eq!(resolve_upcoming_mmdd("9/26", now), Ok(Some(now)));
 }
@@ -6839,7 +6835,7 @@ fn test_execute_new_新規projectを翌朝までpendingで作成する() {
     assert_eq!(result.task.get_orig_status().unwrap(), Status::Pending);
     assert_eq!(
         result.task.get_pending_until().unwrap(),
-        get_next_morning_datetime(now)
+        try_next_business_day_start(now).unwrap()
     );
     assert_eq!(
         result.focused_task_id_opt,
@@ -6898,7 +6894,7 @@ fn test_project作成commandの製品handler経路がtyped_fieldと表示とfocu
     assert_eq!(hobby_result.task.get_name().unwrap(), "趣味");
     assert_eq!(
         hobby_result.task.get_pending_until().unwrap(),
-        get_next_morning_datetime(now) + Duration::days(1399)
+        try_next_business_day_start(now).unwrap() + Duration::days(1399)
     );
 
     let unplanned_root = new_test_task_handle("既存").unwrap();
@@ -9574,7 +9570,7 @@ fn test_execute_flatten_過負荷日では葉より親を先に翌日へ延期�
             .unwrap()
             .get_pending_until()
             .unwrap(),
-        subjective_date_start(today + Duration::days(1))
+        try_subjective_date_start(today + Duration::days(1)).unwrap()
     );
     assert_eq!(
         result
@@ -9617,7 +9613,7 @@ fn test_execute_flatten_多階層ではrankが大きい親から延期する() {
             .unwrap()
             .get_pending_until()
             .unwrap(),
-        subjective_date_start(today + Duration::days(1))
+        try_subjective_date_start(today + Duration::days(1)).unwrap()
     );
     assert_eq!(
         result
@@ -9626,7 +9622,7 @@ fn test_execute_flatten_多階層ではrankが大きい親から延期する() {
             .unwrap()
             .get_pending_until()
             .unwrap(),
-        subjective_date_start(today + Duration::days(1))
+        try_subjective_date_start(today + Duration::days(1)).unwrap()
     );
     let root_position = result.output.find("\t平テスト\n").unwrap();
     let middle_position = result.output.find("\t中間親\n").unwrap();
@@ -9664,7 +9660,7 @@ fn test_execute_flatten_親だけで解消できなければ低優先度の葉�
             .unwrap()
             .get_pending_until()
             .unwrap(),
-        subjective_date_start(today + Duration::days(2))
+        try_subjective_date_start(today + Duration::days(2)).unwrap()
     );
     assert_eq!(
         result
@@ -9673,7 +9669,7 @@ fn test_execute_flatten_親だけで解消できなければ低優先度の葉�
             .unwrap()
             .get_pending_until()
             .unwrap(),
-        subjective_date_start(today + Duration::days(2))
+        try_subjective_date_start(today + Duration::days(2)).unwrap()
     );
     assert_eq!(
         result
@@ -9731,7 +9727,7 @@ fn test_execute_flatten_28日境界の超過を29日から34日を飛ばして35
     let overflow_date = today + Duration::days(35);
     let root = new_test_task_handle("平テスト").unwrap();
     root.set_estimated_work_seconds(0);
-    let boundary_start = subjective_date_start(boundary_date);
+    let boundary_start = try_subjective_date_start(boundary_date).unwrap();
     let keeper = add_scheduled_child_for_test(&root, "境界に残す", boundary_start, 30);
     let first = add_scheduled_child_for_test(
         &root,
@@ -9756,7 +9752,7 @@ fn test_execute_flatten_28日境界の超過を29日から34日を飛ばして35
             .unwrap()
             .get_pending_until()
             .unwrap(),
-        subjective_date_start(boundary_date)
+        try_subjective_date_start(boundary_date).unwrap()
     );
     assert_eq!(
         result
@@ -9765,7 +9761,7 @@ fn test_execute_flatten_28日境界の超過を29日から34日を飛ばして35
             .unwrap()
             .get_pending_until()
             .unwrap(),
-        subjective_date_start(overflow_date)
+        try_subjective_date_start(overflow_date).unwrap()
     );
     assert_eq!(
         result
@@ -9774,7 +9770,7 @@ fn test_execute_flatten_28日境界の超過を29日から34日を飛ばして35
             .unwrap()
             .get_pending_until()
             .unwrap(),
-        subjective_date_start(overflow_date)
+        try_subjective_date_start(overflow_date).unwrap()
     );
     assert_eq!(
         result
@@ -9903,7 +9899,7 @@ fn test_execute_flatten_終了時刻が期限と等しいtaskは延期できる(
     let root = new_test_task_handle("平テスト").unwrap();
     root.set_estimated_work_seconds(0);
     root.set_deadline_time_opt(Some(
-        subjective_date_start(today + Duration::days(1)) + Duration::minutes(30),
+        try_subjective_date_start(today + Duration::days(1)).unwrap() + Duration::minutes(30),
     ));
     let target = add_scheduled_child_for_test(&root, "期限ちょうど", now, 30);
 
@@ -9921,7 +9917,7 @@ fn test_execute_flatten_終了時刻が期限と等しいtaskは延期できる(
             .unwrap()
             .get_pending_until()
             .unwrap(),
-        subjective_date_start(today + Duration::days(1))
+        try_subjective_date_start(today + Duration::days(1)).unwrap()
     );
 }
 
@@ -9933,7 +9929,7 @@ fn test_execute_flatten_延期対象自身の期限補正で翌日06時を維持
     root.set_estimated_work_seconds(0);
     let target = add_scheduled_child_for_test(&root, "平日を表すダミータスク(8/21)", now, 30);
     target.set_deadline_time_opt(Some(
-        subjective_date_start(today + Duration::days(1)) + Duration::minutes(30),
+        try_subjective_date_start(today + Duration::days(1)).unwrap() + Duration::minutes(30),
     ));
 
     let result = execute_flatten_command_for_test(
@@ -9986,7 +9982,7 @@ fn test_execute_flatten_待機taskと残作業0を延期候補から除外する
             .unwrap()
             .get_pending_until()
             .unwrap(),
-        subjective_date_start(today + Duration::days(1))
+        try_subjective_date_start(today + Duration::days(1)).unwrap()
     );
     for unchanged in [waiting.get_id().unwrap(), zero.get_id().unwrap()] {
         assert_eq!(
@@ -10008,12 +10004,18 @@ fn test_execute_flatten_35日後への退避で親の期限を超えるなら未
     let boundary_date = today + Duration::days(28);
     let root = new_test_task_handle("期限のある親").unwrap();
     root.set_estimated_work_seconds(30 * 60);
-    root.set_start_time(subjective_date_start(boundary_date));
-    root.set_pending_until(subjective_date_start(boundary_date));
+    root.set_start_time(try_subjective_date_start(boundary_date).unwrap());
+    root.set_pending_until(try_subjective_date_start(boundary_date).unwrap());
     root.set_orig_status(Status::Pending);
-    root.set_deadline_time_opt(Some(subjective_date_start(today + Duration::days(35))));
-    let child =
-        add_scheduled_child_for_test(&root, "境界の葉", subjective_date_start(boundary_date), 60);
+    root.set_deadline_time_opt(Some(
+        try_subjective_date_start(today + Duration::days(35)).unwrap(),
+    ));
+    let child = add_scheduled_child_for_test(
+        &root,
+        "境界の葉",
+        try_subjective_date_start(boundary_date).unwrap(),
+        60,
+    );
 
     let result = execute_flatten_command_for_test(
         "平",
@@ -10029,7 +10031,7 @@ fn test_execute_flatten_35日後への退避で親の期限を超えるなら未
             .unwrap()
             .get_pending_until()
             .unwrap(),
-        subjective_date_start(boundary_date)
+        try_subjective_date_start(boundary_date).unwrap()
     );
     assert_eq!(
         result
@@ -10038,7 +10040,7 @@ fn test_execute_flatten_35日後への退避で親の期限を超えるなら未
             .unwrap()
             .get_pending_until()
             .unwrap(),
-        subjective_date_start(boundary_date)
+        try_subjective_date_start(boundary_date).unwrap()
     );
     assert!(result.output.contains("平: 0件 00:00 (未解消1日)"));
     assert!(result
@@ -10054,7 +10056,7 @@ fn test_execute_flatten_延期不能日を飛ばして翌日以降の平坦化�
     let root = new_test_task_handle("平テスト").unwrap();
     root.set_estimated_work_seconds(0);
     let blocked = add_scheduled_child_for_test(&root, "今日の固定負荷", now, 90);
-    let tomorrow_start = subjective_date_start(today + Duration::days(1));
+    let tomorrow_start = try_subjective_date_start(today + Duration::days(1)).unwrap();
     let tomorrow_first = add_scheduled_child_for_test(&root, "翌日の先行", tomorrow_start, 30);
     let tomorrow_late = add_scheduled_child_for_test(
         &root,
@@ -10099,7 +10101,7 @@ fn test_execute_flatten_延期不能日を飛ばして翌日以降の平坦化�
             .unwrap()
             .get_pending_until()
             .unwrap(),
-        subjective_date_start(today + Duration::days(2))
+        try_subjective_date_start(today + Duration::days(2)).unwrap()
     );
     assert!(result.output.contains("平: 1件 00:30 (未解消1日)"));
     assert_eq!(result.output.matches("[Warn] 平\t2026-08-13").count(), 1);
@@ -10115,7 +10117,7 @@ fn test_execute_flatten_未解消理由を固定順で表示して同じtaskを�
     waiting.set_is_on_other_side(true);
     let own_deadline = add_scheduled_child_for_test(&root, "自身に期限", now, 30);
     own_deadline.set_deadline_time_opt(Some(
-        subjective_date_start(today + Duration::days(1)) + Duration::minutes(30),
+        try_subjective_date_start(today + Duration::days(1)).unwrap() + Duration::minutes(30),
     ));
 
     let result = execute_flatten_command_for_test(
@@ -10147,7 +10149,7 @@ fn test_execute_flatten_28日目は延期可能分を35日目へ退避して固�
     let today = now.date_naive();
     let boundary_date = today + Duration::days(28);
     let overflow_date = today + Duration::days(35);
-    let boundary_start = subjective_date_start(boundary_date);
+    let boundary_start = try_subjective_date_start(boundary_date).unwrap();
     let root = new_test_task_handle("平テスト").unwrap();
     root.set_estimated_work_seconds(0);
     let waiting = add_scheduled_child_for_test(&root, "境界の待機", boundary_start, 30);
@@ -10176,7 +10178,7 @@ fn test_execute_flatten_28日目は延期可能分を35日目へ退避して固�
             .unwrap()
             .get_pending_until()
             .unwrap(),
-        subjective_date_start(overflow_date)
+        try_subjective_date_start(overflow_date).unwrap()
     );
     assert!(result.output.contains("平: 1件 00:30 (未解消1日)"));
     assert!(result
@@ -10196,7 +10198,7 @@ fn test_execute_flatten_各aliasで未解消日を飛ばして後続を延期す
         let root = new_test_task_handle("平テスト").unwrap();
         root.set_estimated_work_seconds(0);
         add_scheduled_child_for_test(&root, "固定負荷", now, 90);
-        let tomorrow = subjective_date_start(today + Duration::days(1));
+        let tomorrow = try_subjective_date_start(today + Duration::days(1)).unwrap();
         add_scheduled_child_for_test(&root, "翌日の先行", tomorrow, 30);
         let movable = add_scheduled_child_for_test(
             &root,
@@ -10223,7 +10225,7 @@ fn test_execute_flatten_各aliasで未解消日を飛ばして後続を延期す
                 .unwrap()
                 .get_pending_until()
                 .unwrap(),
-            subjective_date_start(today + Duration::days(2))
+            try_subjective_date_start(today + Duration::days(2)).unwrap()
         );
         assert!(result.output.contains("平: 1件 00:30 (未解消1日)"));
     }
