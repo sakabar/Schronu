@@ -1731,6 +1731,15 @@ mod tests {
         let expected_next_id = Uuid::from_u128(0x232);
         let mut next_id = || expected_next_id;
         let mut factory = TaskFactory::new(fixed_now(), &mut next_id);
+        assert_eq!(
+            parent
+                .get_children()
+                .unwrap()
+                .into_iter()
+                .filter(|task| task.get_status().unwrap() != Status::Done)
+                .count(),
+            1
+        );
 
         let output = complete_task(
             &mut repository,
