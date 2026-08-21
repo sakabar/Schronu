@@ -1138,9 +1138,9 @@ fn common_input_contract() -> CommonInputContract {
 #[cfg(test)]
 mod tests {
     use super::{
-        common_input_contract, decode_input, generated_input_schema, GetFocusInput,
-        GetScheduleInput, GetTaskInput, ListTasksInput, NonNegativeI64, OptionalValue,
-        Rfc3339DateTime, ToolInputError,
+        common_input_contract, decode_input, generated_input_schema, BreakdownTaskInput,
+        CreateTaskInput, GetFocusInput, GetScheduleInput, GetTaskInput, ListTasksInput,
+        NonNegativeI64, OptionalValue, Rfc3339DateTime, ToolInputError,
     };
     use chrono::{DateTime, Local};
     use schemars::JsonSchema;
@@ -1296,6 +1296,326 @@ mod tests {
             public_tool_schema("get_schedule"),
             get_schedule_input_cases(),
         );
+    }
+
+    #[test]
+    fn creation_tool_inputs_match_public_schema_and_decode_contract() {
+        assert_reference_input_contract::<CreateTaskInput>(
+            "create_task",
+            public_tool_schema("create_task"),
+            create_task_input_cases(),
+        );
+        assert_reference_input_contract::<BreakdownTaskInput>(
+            "breakdown_task",
+            public_tool_schema("breakdown_task"),
+            breakdown_task_input_cases(),
+        );
+    }
+
+    fn create_task_input_cases() -> Vec<ContractCase> {
+        vec![
+            ContractCase {
+                name: "required name only",
+                input: json!({"name": "write contract test"}),
+                schema_accepts: true,
+                decode: ExpectedDecode::Valid,
+            },
+            ContractCase {
+                name: "all create fields",
+                input: json!({
+                    "name": "write contract test",
+                    "estimated_work_minutes": 0,
+                    "pending_until": "2026-08-19T10:00:00+09:00"
+                }),
+                schema_accepts: true,
+                decode: ExpectedDecode::Valid,
+            },
+            ContractCase {
+                name: "missing name",
+                input: json!({}),
+                schema_accepts: false,
+                decode: ExpectedDecode::Schema {
+                    field: "name",
+                    reason: "field is required",
+                },
+            },
+            ContractCase {
+                name: "name has wrong type",
+                input: json!({"name": 42}),
+                schema_accepts: false,
+                decode: ExpectedDecode::Schema {
+                    field: "name",
+                    reason: "must be a string",
+                },
+            },
+            ContractCase {
+                name: "name is empty",
+                input: json!({"name": ""}),
+                schema_accepts: false,
+                decode: ExpectedDecode::Schema {
+                    field: "name",
+                    reason: "must not be empty",
+                },
+            },
+            ContractCase {
+                name: "whitespace-only name is decoded for application validation",
+                input: json!({"name": "   "}),
+                schema_accepts: true,
+                decode: ExpectedDecode::Valid,
+            },
+            ContractCase {
+                name: "estimated work can be omitted",
+                input: json!({"name": "write contract test"}),
+                schema_accepts: true,
+                decode: ExpectedDecode::Valid,
+            },
+            ContractCase {
+                name: "estimated work cannot be null",
+                input: json!({"name": "write contract test", "estimated_work_minutes": null}),
+                schema_accepts: false,
+                decode: ExpectedDecode::Schema {
+                    field: "estimated_work_minutes",
+                    reason: "must be a non-negative integer",
+                },
+            },
+            ContractCase {
+                name: "estimated work can be zero",
+                input: json!({"name": "write contract test", "estimated_work_minutes": 0}),
+                schema_accepts: true,
+                decode: ExpectedDecode::Valid,
+            },
+            ContractCase {
+                name: "estimated work cannot be negative",
+                input: json!({"name": "write contract test", "estimated_work_minutes": -1}),
+                schema_accepts: false,
+                decode: ExpectedDecode::Schema {
+                    field: "estimated_work_minutes",
+                    reason: "must be a non-negative integer",
+                },
+            },
+            ContractCase {
+                name: "estimated work cannot be fractional",
+                input: json!({"name": "write contract test", "estimated_work_minutes": 1.5}),
+                schema_accepts: false,
+                decode: ExpectedDecode::Schema {
+                    field: "estimated_work_minutes",
+                    reason: "must be a non-negative integer",
+                },
+            },
+            ContractCase {
+                name: "estimated work has wrong type",
+                input: json!({"name": "write contract test", "estimated_work_minutes": "1"}),
+                schema_accepts: false,
+                decode: ExpectedDecode::Schema {
+                    field: "estimated_work_minutes",
+                    reason: "must be a non-negative integer",
+                },
+            },
+            ContractCase {
+                name: "estimated work outside i64 range",
+                input: json!({
+                    "name": "write contract test",
+                    "estimated_work_minutes": u64::MAX
+                }),
+                schema_accepts: true,
+                decode: ExpectedDecode::Semantic {
+                    field: "estimated_work_minutes",
+                    reason: "is outside the supported integer range",
+                },
+            },
+            ContractCase {
+                name: "pending until can be omitted",
+                input: json!({"name": "write contract test"}),
+                schema_accepts: true,
+                decode: ExpectedDecode::Valid,
+            },
+            ContractCase {
+                name: "pending until cannot be null",
+                input: json!({"name": "write contract test", "pending_until": null}),
+                schema_accepts: false,
+                decode: ExpectedDecode::Schema {
+                    field: "pending_until",
+                    reason: "must be a string",
+                },
+            },
+            ContractCase {
+                name: "pending until is invalid",
+                input: json!({"name": "write contract test", "pending_until": "not-a-date"}),
+                schema_accepts: false,
+                decode: ExpectedDecode::Semantic {
+                    field: "pending_until",
+                    reason: "must be a valid RFC 3339 date-time",
+                },
+            },
+            ContractCase {
+                name: "create task has unknown field",
+                input: json!({"name": "write contract test", "extra": true}),
+                schema_accepts: false,
+                decode: ExpectedDecode::Schema {
+                    field: "arguments.extra",
+                    reason: "additional property is not allowed",
+                },
+            },
+            ContractCase {
+                name: "create task arguments has wrong type",
+                input: json!(42),
+                schema_accepts: false,
+                decode: ExpectedDecode::Schema {
+                    field: "arguments",
+                    reason: "must be an object",
+                },
+            },
+        ]
+    }
+
+    fn breakdown_task_input_cases() -> Vec<ContractCase> {
+        let parent_id = "80d7db87-324e-4e8d-a5b7-ff78cd5bf39a";
+        vec![
+            ContractCase {
+                name: "required breakdown fields",
+                input: json!({"parent_id": parent_id, "names": ["first child"]}),
+                schema_accepts: true,
+                decode: ExpectedDecode::Valid,
+            },
+            ContractCase {
+                name: "all breakdown fields and names",
+                input: json!({
+                    "parent_id": parent_id,
+                    "names": ["first child", "second child"],
+                    "pending_until": "2026-08-19T10:00:00+09:00"
+                }),
+                schema_accepts: true,
+                decode: ExpectedDecode::Valid,
+            },
+            ContractCase {
+                name: "missing parent id",
+                input: json!({"names": ["first child"]}),
+                schema_accepts: false,
+                decode: ExpectedDecode::Schema {
+                    field: "parent_id",
+                    reason: "field is required",
+                },
+            },
+            ContractCase {
+                name: "parent id has wrong type",
+                input: json!({"parent_id": 42, "names": ["first child"]}),
+                schema_accepts: false,
+                decode: ExpectedDecode::Schema {
+                    field: "parent_id",
+                    reason: "must be a string",
+                },
+            },
+            ContractCase {
+                name: "parent id is invalid",
+                input: json!({"parent_id": "not-a-uuid", "names": ["first child"]}),
+                schema_accepts: false,
+                decode: ExpectedDecode::Semantic {
+                    field: "parent_id",
+                    reason: "must be a valid UUID",
+                },
+            },
+            ContractCase {
+                name: "missing names",
+                input: json!({"parent_id": parent_id}),
+                schema_accepts: false,
+                decode: ExpectedDecode::Schema {
+                    field: "names",
+                    reason: "field is required",
+                },
+            },
+            ContractCase {
+                name: "names has wrong type",
+                input: json!({"parent_id": parent_id, "names": "first child"}),
+                schema_accepts: false,
+                decode: ExpectedDecode::Schema {
+                    field: "names",
+                    reason: "must be an array",
+                },
+            },
+            ContractCase {
+                name: "names is empty",
+                input: json!({"parent_id": parent_id, "names": []}),
+                schema_accepts: false,
+                decode: ExpectedDecode::Schema {
+                    field: "names",
+                    reason: "must contain at least one item",
+                },
+            },
+            ContractCase {
+                name: "name element has wrong type",
+                input: json!({"parent_id": parent_id, "names": [42]}),
+                schema_accepts: false,
+                decode: ExpectedDecode::Schema {
+                    field: "names[0]",
+                    reason: "must be a string",
+                },
+            },
+            ContractCase {
+                name: "name element is empty",
+                input: json!({"parent_id": parent_id, "names": [""]}),
+                schema_accepts: false,
+                decode: ExpectedDecode::Schema {
+                    field: "names[0]",
+                    reason: "must not be empty",
+                },
+            },
+            ContractCase {
+                name: "whitespace-only element is decoded for application validation",
+                input: json!({"parent_id": parent_id, "names": ["   "]}),
+                schema_accepts: true,
+                decode: ExpectedDecode::Valid,
+            },
+            ContractCase {
+                name: "breakdown pending until can be omitted",
+                input: json!({"parent_id": parent_id, "names": ["first child"]}),
+                schema_accepts: true,
+                decode: ExpectedDecode::Valid,
+            },
+            ContractCase {
+                name: "breakdown pending until cannot be null",
+                input: json!({
+                    "parent_id": parent_id,
+                    "names": ["first child"],
+                    "pending_until": null
+                }),
+                schema_accepts: false,
+                decode: ExpectedDecode::Schema {
+                    field: "pending_until",
+                    reason: "must be a string",
+                },
+            },
+            ContractCase {
+                name: "breakdown pending until is invalid",
+                input: json!({
+                    "parent_id": parent_id,
+                    "names": ["first child"],
+                    "pending_until": "not-a-date"
+                }),
+                schema_accepts: false,
+                decode: ExpectedDecode::Semantic {
+                    field: "pending_until",
+                    reason: "must be a valid RFC 3339 date-time",
+                },
+            },
+            ContractCase {
+                name: "breakdown task has unknown field",
+                input: json!({"parent_id": parent_id, "names": ["first child"], "extra": true}),
+                schema_accepts: false,
+                decode: ExpectedDecode::Schema {
+                    field: "arguments.extra",
+                    reason: "additional property is not allowed",
+                },
+            },
+            ContractCase {
+                name: "breakdown task arguments has wrong type",
+                input: json!(42),
+                schema_accepts: false,
+                decode: ExpectedDecode::Schema {
+                    field: "arguments",
+                    reason: "must be an object",
+                },
+            },
+        ]
     }
 
     fn list_tasks_input_cases() -> Vec<ContractCase> {
