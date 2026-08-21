@@ -8,6 +8,7 @@ use super::schedule_use_case::{
     get_schedule, get_schedule_with_first_available_time_overrides, ScheduledTaskView,
 };
 use super::task_use_case::ApplicationError;
+use crate::entity::datetime::BusinessDateTimePolicy;
 use crate::entity::task::Status;
 use chrono::{DateTime, Duration, Local, NaiveDate};
 use std::collections::{HashMap, HashSet};
@@ -361,13 +362,9 @@ fn effective_pending_until(
     deadline_time: Option<DateTime<Local>>,
     estimated_work_seconds: i64,
 ) -> DateTime<Local> {
-    const DEADLINE_BUFFER_SECONDS: i64 = 5 * 60;
+    let datetime_policy = BusinessDateTimePolicy::new(END_OF_DAY_OFFSET_MINUTES);
     deadline_time.map_or(requested, |deadline| {
-        requested.min(
-            deadline
-                - Duration::seconds(estimated_work_seconds)
-                - Duration::seconds(DEADLINE_BUFFER_SECONDS),
-        )
+        requested.min(datetime_policy.deadline_pending_limit(deadline, estimated_work_seconds))
     })
 }
 
