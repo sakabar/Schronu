@@ -1,7 +1,7 @@
 use crate::adapter::gateway::storage_lock::{
     LockMode, StorageLock, StorageLockError, StorageLockErrorKind,
 };
-use crate::application::daily_capacity::{try_next_business_day_start, try_subjective_date_start};
+use crate::application::daily_capacity::try_next_business_day_start;
 use crate::application::interface::TaskRepositoryTrait;
 use crate::application::repository_transaction::{
     run_repository_transaction, RepositoryTransactionError,
@@ -10,12 +10,13 @@ use crate::application::schedule_use_case::{get_schedule, ScheduledTaskView};
 use crate::application::task_use_case::{
     breakdown_task as breakdown_task_use_case, complete_task as complete_task_use_case,
     create_task as create_task_use_case, defer_task as defer_task_use_case, get_focus, get_task,
-    list_tasks, set_category, set_deadline, set_estimate, ApplicationError, BreakdownTaskInput,
-    CompleteTaskInput, CreateTaskInput, ListTasksFilter, TaskFactory, TaskPeriodField,
-    TaskPeriodFilter, TaskView,
+    list_tasks, resolve_local_datetime, set_category, set_deadline, set_estimate, ApplicationError,
+    BreakdownTaskInput, CompleteTaskInput, CreateTaskInput, ListTasksFilter, TaskFactory,
+    TaskPeriodField, TaskPeriodFilter, TaskView,
 };
+use crate::entity::datetime::{BusinessDateTimePolicy, DEFAULT_END_OF_DAY_OFFSET_MINUTES};
 use crate::entity::task::{ProjectCategory, Status};
-use chrono::{DateTime, Local, NaiveDate};
+use chrono::{DateTime, Local, LocalResult, NaiveDate};
 use serde_json::Map;
 use serde_json::{json, Value};
 use std::path::PathBuf;
@@ -1162,7 +1163,21 @@ fn schedule_day_start(
             field,
             message: "must be a valid ISO 8601 date",
         })?;
-    try_subjective_date_start(date).map_err(ToolInputError::Application)
+    let result =
+        BusinessDateTimePolicy::new(DEFAULT_END_OF_DAY_OFFSET_MINUTES).subjective_date_start(date);
+    resolve_schedule_day_start(date, result)
+}
+
+fn resolve_schedule_day_start(
+    date: NaiveDate,
+    result: LocalResult<DateTime<Local>>,
+) -> Result<DateTime<Local>, ToolInputError> {
+    let local_datetime = BusinessDateTimePolicy::new(DEFAULT_END_OF_DAY_OFFSET_MINUTES)
+        .subjective_date_start_naive(date)
+        .ok_or(ToolInputError::Application(
+            ApplicationError::SubjectiveDateStartOutOfRange { date },
+        ))?;
+    resolve_local_datetime(local_datetime, result).map_err(ToolInputError::Application)
 }
 
 fn parse_period_filter(value: &Value) -> Result<TaskPeriodFilter, ToolInputError> {
@@ -1601,7 +1616,7 @@ mod tests {
     };
     use crate::entity::datetime::get_next_morning_datetime;
     use crate::entity::task::{ProjectCategory, RepetitionAnchor, Status, TaskHandle};
-    use chrono::{DateTime, Duration, Local, NaiveDate, TimeZone};
+    use chrono::{DateTime, Duration, FixedOffset, Local, LocalResult, NaiveDate, TimeZone};
     use serde_json::json;
     use std::cell::{Cell, RefCell};
     use std::fs;
@@ -3865,12 +3880,10 @@ mod tests {
     }
 
     fn 最大日の業務日開始() -> DateTime<Local> {
-        NaiveDate::MAX
-            .and_hms_opt(6, 0, 0)
-            .unwrap()
-            .and_local_timezone(Local)
-            .single()
-            .unwrap()
+        DateTime::<Local>::from_naive_utc_and_offset(
+            NaiveDate::MAX.and_hms_opt(6, 0, 0).unwrap(),
+            FixedOffset::east_opt(0).unwrap(),
+        )
     }
 
     #[test]
@@ -3891,8 +3904,11 @@ mod tests {
 
     #[test]
     fn schedule_periodはfromのみの次業務日境界計算不能をfrom日時付きで返す() {
-        let from = 最大日の業務日開始();
         let arguments = json!({"from": NaiveDate::MAX.to_string()});
+        let from = match super::schedule_day_start(&arguments["from"], "from") {
+            Ok(from) => from,
+            Err(_) => panic!("expected the maximum date to resolve to a local datetime"),
+        };
 
         match super::schedule_period(Some(&arguments), fixed_now()) {
             Err(super::ToolInputError::Application(error)) => assert_eq!(
@@ -3907,15 +3923,41 @@ mod tests {
     }
 
     #[test]
-    fn schedule_day_startはlocal変換不能を変換元日時付きで返す() {
-        let local_datetime = NaiveDate::MIN.and_hms_opt(6, 0, 0).unwrap();
-        let value = json!(NaiveDate::MIN.to_string());
+    fn schedule_day_start_resolverはlocal変換不能を変換元日時付きで返す() {
+        let date = NaiveDate::from_ymd_opt(2026, 8, 21).unwrap();
+        let local_datetime = date.and_hms_opt(6, 0, 0).unwrap();
 
-        match super::schedule_day_start(&value, "from") {
+        match super::resolve_schedule_day_start(date, LocalResult::None) {
             Err(super::ToolInputError::Application(error)) => assert_eq!(
                 error,
                 crate::application::task_use_case::ApplicationError::NonexistentLocalDateTime {
                     local_datetime,
+                }
+            ),
+            _ => panic!("expected an application datetime error"),
+        }
+    }
+
+    #[test]
+    fn schedule_day_start_resolverは曖昧な両候補と変換元日時を保持する() {
+        let date = NaiveDate::from_ymd_opt(2026, 8, 21).unwrap();
+        let local_datetime = date.and_hms_opt(6, 0, 0).unwrap();
+        let earlier = DateTime::<Local>::from_naive_utc_and_offset(
+            local_datetime,
+            FixedOffset::east_opt(9 * 60 * 60).unwrap(),
+        );
+        let later = DateTime::<Local>::from_naive_utc_and_offset(
+            local_datetime,
+            FixedOffset::east_opt(8 * 60 * 60).unwrap(),
+        );
+
+        match super::resolve_schedule_day_start(date, LocalResult::Ambiguous(earlier, later)) {
+            Err(super::ToolInputError::Application(error)) => assert_eq!(
+                error,
+                crate::application::task_use_case::ApplicationError::AmbiguousLocalDateTime {
+                    local_datetime,
+                    earlier,
+                    later,
                 }
             ),
             _ => panic!("expected an application datetime error"),
