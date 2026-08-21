@@ -4278,7 +4278,7 @@ fn execute_defer_expression(
                     ),
                     Ok(LocalResult::Ambiguous(_, _)) | Ok(LocalResult::None) | Err(_) => None,
                 }
-            } else if let Ok(Some(defer_dst_time)) = resolve_upcoming_mmdd(value, now) {
+            } else if let Some(defer_dst_time) = resolve_upcoming_mmdd(value, now)? {
                 let seconds = (defer_dst_time - now).num_seconds() + 1;
                 (seconds > 0).then_some(seconds)
             } else if let Some(captures) = hhmm_reg.captures(value) {
