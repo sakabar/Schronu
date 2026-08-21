@@ -4,6 +4,8 @@ use chrono::{
 };
 
 const BUSINESS_DAY_START_HOUR: u32 = 6;
+const DEADLINE_PENDING_BUFFER_MINUTES: i64 = 5;
+const DEADLINE_FORCE_TODO_AFTER_START_BUFFER_MINUTES: i64 = 60;
 pub const DEFAULT_END_OF_DAY_OFFSET_MINUTES: i64 = 30;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -47,6 +49,26 @@ impl BusinessDateTimePolicy {
 
     pub fn subjective_date_end(&self, date: NaiveDate) -> LocalResult<DateTime<Local>> {
         local_datetime(self.subjective_date_end_naive(date))
+    }
+
+    pub fn deadline_pending_limit(
+        &self,
+        deadline: DateTime<Local>,
+        estimated_work_seconds: i64,
+    ) -> DateTime<Local> {
+        deadline
+            - Duration::seconds(estimated_work_seconds)
+            - Duration::minutes(DEADLINE_PENDING_BUFFER_MINUTES)
+    }
+
+    pub fn deadline_force_todo_after_start_threshold(
+        &self,
+        deadline: DateTime<Local>,
+        remaining_work_seconds: i64,
+    ) -> DateTime<Local> {
+        deadline
+            - Duration::seconds(remaining_work_seconds)
+            - Duration::minutes(DEADLINE_FORCE_TODO_AFTER_START_BUFFER_MINUTES)
     }
 
     pub(crate) fn subjective_date_start_naive(&self, date: NaiveDate) -> Option<NaiveDateTime> {

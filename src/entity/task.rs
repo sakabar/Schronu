@@ -6,6 +6,8 @@ use std::fmt;
 use uuid::Uuid;
 use yaml_rust::Yaml;
 
+use crate::entity::datetime::{BusinessDateTimePolicy, DEFAULT_END_OF_DAY_OFFSET_MINUTES};
+
 #[cfg(test)]
 use chrono::TimeZone;
 
@@ -989,19 +991,15 @@ impl TaskAttr {
 
     pub fn set_orig_status(&mut self, orig_status: Status) {
         self.orig_status = orig_status;
-
-        // 〆切の何秒前から強制的にTodo扱いにするか
-        let deadline_buffer_seconds_after_start_time = 3600;
-        let deadline_buffer_seconds_before_start_time = 300;
+        let datetime_policy = BusinessDateTimePolicy::new(DEFAULT_END_OF_DAY_OFFSET_MINUTES);
 
         // pending_untilが〆切よりも後ろになってしまっている場合はpending_untilを調整する
         if let Some(deadline_time) = self
             .deadline_time_opt
             .filter(|_| self.orig_status == Status::Pending)
         {
-            let pending_time_before_deadline = deadline_time
-                - Duration::seconds(self.estimated_work_seconds)
-                - Duration::seconds(deadline_buffer_seconds_before_start_time);
+            let pending_time_before_deadline =
+                datetime_policy.deadline_pending_limit(deadline_time, self.estimated_work_seconds);
 
             if pending_time_before_deadline < self.pending_until {
                 self.pending_until = pending_time_before_deadline;
@@ -1015,20 +1013,17 @@ impl TaskAttr {
         let should_be_todo = (self.orig_status != Status::Done
             && self.last_synced_time > self.start_time
             && self.deadline_time_opt.is_some()
-            && self.deadline_time_opt.unwrap()
-                - Duration::seconds(max(
-                    0,
-                    self.estimated_work_seconds - self.actual_work_seconds,
-                ))
-                - Duration::seconds(deadline_buffer_seconds_after_start_time)
-                < self.last_synced_time)
+            && datetime_policy.deadline_force_todo_after_start_threshold(
+                self.deadline_time_opt.unwrap(),
+                max(0, self.estimated_work_seconds - self.actual_work_seconds),
+            ) < self.last_synced_time)
             || (self.orig_status != Status::Done
                 && self.last_synced_time < self.start_time
                 && self.deadline_time_opt.is_some()
-                && self.deadline_time_opt.unwrap()
-                    - Duration::seconds(self.estimated_work_seconds)
-                    - Duration::seconds(deadline_buffer_seconds_before_start_time)
-                    < self.last_synced_time)
+                && datetime_policy.deadline_pending_limit(
+                    self.deadline_time_opt.unwrap(),
+                    self.estimated_work_seconds,
+                ) < self.last_synced_time)
             || (self.orig_status == Status::Pending
                 && self.last_synced_time > self.pending_until
                 && self.last_synced_time > self.start_time);
