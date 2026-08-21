@@ -23,8 +23,7 @@ use super::renderer::{
     DisplayModel, ErrorCapturingWriter, SchronuWriter, SpreadsheetTaskRow,
 };
 use chrono::{
-    DateTime, Datelike, Duration, Local, LocalResult, NaiveDate, NaiveDateTime, NaiveTime,
-    TimeZone, Weekday,
+    DateTime, Datelike, Duration, Local, NaiveDate, NaiveDateTime, NaiveTime, TimeZone, Weekday,
 };
 #[cfg(test)]
 use chrono::{FixedOffset, Timelike};
@@ -4688,15 +4687,10 @@ fn resolve_deadline_time(
         return Ok(None);
     }
 
-    let mut deadline_time_str = format!(
-        "{} {}",
-        deadline_date_str,
-        config.default_deadline_time.format("%H:%M:%S")
-    );
     let hhmm_reg = Regex::new(r"^(\d{1,2}):(\d{1,2})$").unwrap();
-
-    // 時刻のみを指定した場合は、日付は今日にする
-    if hhmm_reg.is_match(&deadline_date_str) {
+    let invalid_datetime =
+        || command_parse_error("〆", "deadline", "日時が不正です", "〆 <日付または時刻>");
+    let (date, time) = if hhmm_reg.is_match(&deadline_date_str) {
         let caps = hhmm_reg
             .captures(&deadline_date_str)
             .expect("matched deadline time must have captures");
@@ -4706,24 +4700,14 @@ fn resolve_deadline_time(
         let mm: u32 = caps[2].parse().map_err(|_| {
             command_parse_error("〆", "deadline", "時刻が不正です", "〆 <日付または時刻>")
         })?;
-
-        deadline_time_str = format!("{} {:02}:{:02}:00", now.format("%Y/%m/%d"), hh, mm);
-    }
-
-    let deadline_time_opt_result = parse_local_datetime(&deadline_time_str, "%Y/%m/%d %H:%M:%S");
-
-    let LocalResult::Single(deadline_time) = deadline_time_opt_result.map_err(|_| {
-        command_parse_error("〆", "deadline", "日時が不正です", "〆 <日付または時刻>")
-    })?
-    else {
-        return Err(command_parse_error(
-            "〆",
-            "deadline",
-            "曖昧または存在しないローカル時刻です",
-            "〆 <日付または時刻>",
-        ));
+        let time = NaiveTime::from_hms_opt(hh, mm, 0).ok_or_else(invalid_datetime)?;
+        (now.date_naive(), time)
+    } else {
+        let date = NaiveDate::parse_from_str(&deadline_date_str, "%Y/%m/%d")
+            .map_err(|_| invalid_datetime())?;
+        (date, config.default_deadline_time)
     };
-    Ok(Some(deadline_time))
+    Ok(Some(try_local_date_and_time(date, time)?))
 }
 
 fn execute_set_arrange_children_work_minutes(
