@@ -1,7 +1,6 @@
 use super::input::{
     complete_task_input, decode_input, defer_task_input, update_task_input, BreakdownTaskInput,
-    CreateTaskInput, GetFocusInput, GetScheduleInput, GetTaskInput, ListTasksInput, OptionalValue,
-    ToolInputError,
+    CreateTaskInput, GetFocusInput, GetScheduleInput, GetTaskInput, ListTasksInput, ToolInputError,
 };
 use super::internal_error_response;
 use super::output::{scheduled_task_view_json, task_view_json};
@@ -12,8 +11,6 @@ use crate::application::task_use_case::{
     breakdown_task as breakdown_task_use_case, complete_task as complete_task_use_case,
     create_task as create_task_use_case, defer_task as defer_task_use_case, get_focus, get_task,
     list_tasks, set_category, set_deadline, set_estimate, ApplicationError,
-    BreakdownTaskInput as ApplicationBreakdownTaskInput,
-    CreateTaskInput as ApplicationCreateTaskInput,
 };
 use serde_json::{json, Value};
 use uuid::Uuid;
@@ -161,16 +158,9 @@ fn call_create_task<R: TaskRepositoryTrait>(
     id: Value,
     input: CreateTaskInput,
 ) -> Value {
-    let input = ApplicationCreateTaskInput {
-        name: input.name.0,
-        estimated_work_minutes: match input.estimated_work_minutes {
-            OptionalValue::Missing => None,
-            OptionalValue::Value(minutes) => Some(minutes.0),
-        },
-        pending_until: match input.pending_until {
-            OptionalValue::Missing => None,
-            OptionalValue::Value(pending_until) => Some(pending_until.0),
-        },
+    let input = match input.into_application() {
+        Ok(input) => input,
+        Err(error) => return tool_input_error_response(id, error),
     };
 
     let task_id = match create_task_use_case(repository, input) {
@@ -189,14 +179,7 @@ fn call_breakdown_task<R: TaskRepositoryTrait>(
     id: Value,
     input: BreakdownTaskInput,
 ) -> Value {
-    let input = ApplicationBreakdownTaskInput {
-        parent_id: input.parent_id.0,
-        names: input.names.0.into_iter().map(|name| name.0).collect(),
-        pending_until: match input.pending_until {
-            OptionalValue::Missing => None,
-            OptionalValue::Value(pending_until) => Some(pending_until.0),
-        },
-    };
+    let input = input.into_application();
     let child_ids = match breakdown_task_use_case(repository, input) {
         Ok(child_ids) => child_ids,
         Err(ApplicationError::TaskNotFound(task_id)) => {

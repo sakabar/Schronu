@@ -1,6 +1,8 @@
 use super::error::InvalidParams;
 use crate::application::task_use_case::{
-    CompleteTaskInput, ListTasksFilter, TaskPeriodField, TaskPeriodFilter,
+    BreakdownTaskInput as ApplicationBreakdownTaskInput, CompleteTaskInput,
+    CreateTaskInput as ApplicationCreateTaskInput, ListTasksFilter, TaskPeriodField,
+    TaskPeriodFilter,
 };
 use crate::entity::datetime::get_next_morning_datetime;
 use crate::entity::task::{ProjectCategory, Status};
@@ -386,6 +388,33 @@ pub(super) struct CreateTaskInput {
     pub(super) pending_until: OptionalValue<Rfc3339DateTime>,
 }
 
+impl CreateTaskInput {
+    pub(super) fn into_application(self) -> Result<ApplicationCreateTaskInput, ToolInputError> {
+        let estimated_work_minutes = match self.estimated_work_minutes {
+            OptionalValue::Missing => None,
+            OptionalValue::Value(minutes) => {
+                minutes
+                    .0
+                    .checked_mul(60)
+                    .ok_or_else(|| ToolInputError::Semantic {
+                        field: "estimated_work_minutes".to_string(),
+                        message: "seconds conversion overflow",
+                    })?;
+                Some(minutes.0)
+            }
+        };
+
+        Ok(ApplicationCreateTaskInput {
+            name: self.name.0,
+            estimated_work_minutes,
+            pending_until: match self.pending_until {
+                OptionalValue::Missing => None,
+                OptionalValue::Value(pending_until) => Some(pending_until.0),
+            },
+        })
+    }
+}
+
 #[derive(Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub(super) struct BreakdownTaskInput {
@@ -393,6 +422,19 @@ pub(super) struct BreakdownTaskInput {
     pub(super) names: NonEmptyVec<NonEmptyString>,
     #[serde(default)]
     pub(super) pending_until: OptionalValue<Rfc3339DateTime>,
+}
+
+impl BreakdownTaskInput {
+    pub(super) fn into_application(self) -> ApplicationBreakdownTaskInput {
+        ApplicationBreakdownTaskInput {
+            parent_id: self.parent_id.0,
+            names: self.names.0.into_iter().map(|name| name.0).collect(),
+            pending_until: match self.pending_until {
+                OptionalValue::Missing => None,
+                OptionalValue::Value(pending_until) => Some(pending_until.0),
+            },
+        }
+    }
 }
 
 #[derive(Deserialize, JsonSchema)]
