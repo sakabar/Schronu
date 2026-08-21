@@ -4324,14 +4324,17 @@ fn execute_defer_expression(
             let hhmm_reg = Regex::new(r"^(\d{1,2}):(\d{1,2})$").unwrap();
             let now = task_repository.get_last_synced_time();
             let seconds = if yyyymmdd_reg.is_match(value) {
-                let defer_dst_str = format!("{value} 12:00:00");
-                match parse_local_datetime(&defer_dst_str, "%Y/%m/%d %H:%M:%S") {
-                    Ok(LocalResult::Single(defer_dst_date)) => Some(
-                        (get_next_morning_datetime(defer_dst_date) - Duration::days(1) - now)
-                            .num_seconds()
-                            + 1,
-                    ),
-                    Ok(LocalResult::Ambiguous(_, _)) | Ok(LocalResult::None) | Err(_) => None,
+                match NaiveDate::parse_from_str(value, "%Y/%m/%d") {
+                    Ok(date) => {
+                        let defer_dst_time = try_subjective_date_start(date)?;
+                        Some((defer_dst_time - now).num_seconds().checked_add(1).ok_or(
+                            ApplicationError::SubjectiveDateOutOfRange {
+                                operation: "defer_date",
+                                datetime: now,
+                            },
+                        )?)
+                    }
+                    Err(_) => None,
                 }
             } else if let Some(defer_dst_time) = resolve_upcoming_mmdd(value, now)? {
                 let seconds = (defer_dst_time - now).num_seconds() + 1;
