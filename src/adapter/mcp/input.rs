@@ -1,8 +1,6 @@
 use super::error::InvalidParams;
 use crate::application::task_use_case::{
-    BreakdownTaskInput as ApplicationBreakdownTaskInput, CompleteTaskInput,
-    CreateTaskInput as ApplicationCreateTaskInput, ListTasksFilter, TaskPeriodField,
-    TaskPeriodFilter,
+    CompleteTaskInput, ListTasksFilter, TaskPeriodField, TaskPeriodFilter,
 };
 use crate::entity::datetime::get_next_morning_datetime;
 use crate::entity::task::{ProjectCategory, Status};
@@ -380,7 +378,6 @@ pub(super) struct GetTaskInput {
 
 #[derive(Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
-#[allow(dead_code, reason = "used by the staged typed-handler migration")]
 pub(super) struct CreateTaskInput {
     pub(super) name: NonEmptyString,
     #[serde(default)]
@@ -391,7 +388,6 @@ pub(super) struct CreateTaskInput {
 
 #[derive(Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
-#[allow(dead_code, reason = "used by the staged typed-handler migration")]
 pub(super) struct BreakdownTaskInput {
     pub(super) parent_id: UuidValue,
     pub(super) names: NonEmptyVec<NonEmptyString>,
@@ -1036,83 +1032,6 @@ pub(super) fn defer_task_input(
     let task_id = uuid_argument(arguments, "task_id")?;
     let pending_until = datetime_argument(arguments, "pending_until")?;
     Ok((task_id, pending_until))
-}
-
-pub(super) fn breakdown_task_input(
-    arguments: &Value,
-) -> Result<ApplicationBreakdownTaskInput, ToolInputError> {
-    let arguments = validate_argument_object(
-        arguments,
-        &["parent_id", "names", "pending_until"],
-        &["parent_id", "names"],
-    )
-    .map_err(ToolInputError::Schema)?;
-    let parent_id = uuid_argument(arguments, "parent_id")?;
-    let names = arguments
-        .get("names")
-        .and_then(Value::as_array)
-        .ok_or_else(|| {
-            ToolInputError::Schema(InvalidParams {
-                field: "names".to_string(),
-                reason: "must be an array",
-            })
-        })?;
-    if names.is_empty() {
-        return Err(ToolInputError::Schema(InvalidParams {
-            field: "names".to_string(),
-            reason: "must contain at least one item",
-        }));
-    }
-    let names = names
-        .iter()
-        .enumerate()
-        .map(|(index, value)| match value.as_str() {
-            Some("") => Err(ToolInputError::Schema(InvalidParams {
-                field: format!("names[{index}]"),
-                reason: "must not be empty",
-            })),
-            Some(value) => Ok(value.to_string()),
-            None => Err(ToolInputError::Schema(InvalidParams {
-                field: format!("names[{index}]"),
-                reason: "must be a string",
-            })),
-        })
-        .collect::<Result<Vec<_>, _>>()?;
-    let pending_until = optional_datetime_argument(arguments, "pending_until")?;
-
-    Ok(ApplicationBreakdownTaskInput {
-        parent_id,
-        names,
-        pending_until,
-    })
-}
-
-pub(super) fn create_task_input(
-    arguments: &Value,
-) -> Result<ApplicationCreateTaskInput, ToolInputError> {
-    let arguments = validate_argument_object(
-        arguments,
-        &["name", "estimated_work_minutes", "pending_until"],
-        &["name"],
-    )
-    .map_err(ToolInputError::Schema)?;
-    let name = string_argument(arguments, "name").map_err(ToolInputError::Schema)?;
-    if name.is_empty() {
-        return Err(ToolInputError::Schema(InvalidParams {
-            field: "name".to_string(),
-            reason: "must not be empty",
-        }));
-    }
-
-    let estimated_work_minutes =
-        optional_non_negative_i64_argument(arguments, "estimated_work_minutes")?;
-    let pending_until = optional_datetime_argument(arguments, "pending_until")?;
-
-    Ok(ApplicationCreateTaskInput {
-        name: name.to_string(),
-        estimated_work_minutes,
-        pending_until,
-    })
 }
 
 fn parse_local_datetime(value: &str) -> Result<DateTime<Local>, chrono::ParseError> {
