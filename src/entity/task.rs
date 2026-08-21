@@ -1210,6 +1210,154 @@ fn test_task_attr_set_pending_until() {
     assert_eq!(actual, &pending_until);
 }
 
+#[cfg(test)]
+mod deadline_buffer_contract_tests {
+    use super::*;
+
+    fn local_datetime(hour: u32, minute: u32, second: u32) -> DateTime<Local> {
+        Local
+            .with_ymd_and_hms(2026, 8, 20, hour, minute, second)
+            .unwrap()
+    }
+
+    fn task_at(
+        now: DateTime<Local>,
+        start_time: DateTime<Local>,
+        deadline: DateTime<Local>,
+        estimated_work_seconds: i64,
+        actual_work_seconds: i64,
+        pending_until: DateTime<Local>,
+        orig_status: Status,
+    ) -> TaskAttr {
+        let mut task = TaskAttr::with_identity("task", Uuid::nil(), local_datetime(0, 0, 0));
+        task.set_start_time(start_time);
+        task.set_deadline_time_opt(Some(deadline));
+        task.set_estimated_work_seconds(estimated_work_seconds);
+        task.set_actual_work_seconds(actual_work_seconds);
+        task.set_pending_until(pending_until);
+        task.sync_clock(now);
+        task.set_orig_status(orig_status);
+        task
+    }
+
+    #[test]
+    fn start前はdeadlineから見積と5分を引いた境界を超えるとtodoになる() {
+        let deadline = local_datetime(12, 0, 0);
+        let cutoff = local_datetime(11, 25, 0);
+        let start_time = local_datetime(11, 50, 0);
+
+        for (now, expected) in [
+            (cutoff - Duration::seconds(1), Status::Pending),
+            (cutoff, Status::Pending),
+            (cutoff + Duration::seconds(1), Status::Todo),
+        ] {
+            let task = task_at(
+                now,
+                start_time,
+                deadline,
+                30 * 60,
+                0,
+                deadline,
+                Status::Pending,
+            );
+
+            assert_eq!(task.get_status(), &expected, "now={now}");
+        }
+    }
+
+    #[test]
+    fn start後はdeadlineから残作業と60分を引いた境界を超えるとtodoになる() {
+        let deadline = local_datetime(12, 0, 0);
+        let cutoff = local_datetime(10, 30, 0);
+        let start_time = local_datetime(10, 0, 0);
+
+        for (now, expected) in [
+            (cutoff - Duration::seconds(1), Status::Pending),
+            (cutoff, Status::Pending),
+            (cutoff + Duration::seconds(1), Status::Todo),
+        ] {
+            let task = task_at(
+                now,
+                start_time,
+                deadline,
+                30 * 60,
+                0,
+                deadline,
+                Status::Pending,
+            );
+
+            assert_eq!(task.get_status(), &expected, "now={now}");
+        }
+    }
+
+    #[test]
+    fn start後の残作業が0でもdeadlineの60分前境界を使う() {
+        let deadline = local_datetime(12, 0, 0);
+        let cutoff = local_datetime(11, 0, 0);
+        let start_time = local_datetime(10, 0, 0);
+
+        for (now, expected) in [
+            (cutoff - Duration::seconds(1), Status::Pending),
+            (cutoff, Status::Pending),
+            (cutoff + Duration::seconds(1), Status::Todo),
+        ] {
+            let task = task_at(
+                now,
+                start_time,
+                deadline,
+                30 * 60,
+                30 * 60,
+                deadline,
+                Status::Pending,
+            );
+
+            assert_eq!(task.get_status(), &expected, "now={now}");
+        }
+    }
+
+    #[test]
+    fn pending_untilはdeadlineから見積と5分を引いた時刻より後だけ補正する() {
+        let deadline = local_datetime(12, 0, 0);
+        let cutoff = local_datetime(11, 25, 0);
+
+        for (pending_until, expected) in [
+            (cutoff - Duration::seconds(1), cutoff - Duration::seconds(1)),
+            (cutoff, cutoff),
+            (cutoff + Duration::seconds(1), cutoff),
+        ] {
+            let task = task_at(
+                local_datetime(9, 0, 0),
+                local_datetime(10, 0, 0),
+                deadline,
+                30 * 60,
+                0,
+                pending_until,
+                Status::Pending,
+            );
+
+            assert_eq!(task.get_pending_until(), &expected);
+        }
+    }
+
+    #[test]
+    fn doneはdeadlineによるstatusとpending_untilの補正対象外である() {
+        let deadline = local_datetime(12, 0, 0);
+        let pending_until = deadline + Duration::hours(1);
+        let task = task_at(
+            local_datetime(11, 59, 0),
+            local_datetime(10, 0, 0),
+            deadline,
+            30 * 60,
+            0,
+            pending_until,
+            Status::Done,
+        );
+
+        assert_eq!(task.get_status(), &Status::Done);
+        assert_eq!(task.get_pending_until(), &pending_until);
+    }
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct TaskHandle {
     node: Node<TaskAttr>,

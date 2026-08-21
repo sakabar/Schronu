@@ -219,4 +219,30 @@ mod business_datetime_policy_contract_tests {
             local_datetime(2027, 1, 1, 0, 30)
         );
     }
+
+    #[test]
+    fn deadline_pending_limitはdeadlineから見積時間と5分を引く() {
+        let policy = BusinessDateTimePolicy::new(30);
+        let deadline = local_datetime(2026, 8, 20, 12, 0);
+
+        assert_eq!(
+            policy.deadline_pending_limit(deadline, 30 * 60),
+            local_datetime(2026, 8, 20, 11, 25)
+        );
+    }
+
+    #[test]
+    fn deadline_force_todo_after_start_thresholdはdeadlineから残作業時間と60分を引く() {
+        let policy = BusinessDateTimePolicy::new(30);
+        let deadline = local_datetime(2026, 8, 20, 12, 0);
+
+        assert_eq!(
+            policy.deadline_force_todo_after_start_threshold(deadline, 30 * 60),
+            local_datetime(2026, 8, 20, 10, 30)
+        );
+        assert_eq!(
+            policy.deadline_force_todo_after_start_threshold(deadline, 0),
+            local_datetime(2026, 8, 20, 11, 0)
+        );
+    }
 }
