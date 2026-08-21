@@ -39,7 +39,7 @@ use schronu::application::daily_capacity::{
     calculate_daily_rho_diff_hours,
     calculate_free_time_minutes_for_subjective_date_with_end_of_day_offset_minutes,
     calculate_full_day_free_time_minutes_for_subjective_date_with_end_of_day_offset_minutes,
-    try_subjective_date, try_subjective_date_end, RHO_GOAL,
+    try_next_business_day_start, try_subjective_date, try_subjective_date_end, RHO_GOAL,
 };
 use schronu::application::flatten_use_case::{
     flatten_tasks_with_end_of_day_offset_minutes, FlattenResult,
@@ -4071,30 +4071,53 @@ fn execute_defer(
     amount: i64,
     unit_str: &str,
 ) -> Result<(), ApplicationError> {
+    let now = task_repository.get_last_synced_time();
+    let duration_out_of_range = || ApplicationError::SubjectiveDateOutOfRange {
+        operation: "defer_pending_until",
+        datetime: now,
+    };
     let duration = match unit_str.chars().next() {
         // 24時間単位ではなく、next_monring単位とする
         Some('日') | Some('d') => {
-            let mut dt = task_repository.get_last_synced_time();
+            let mut dt = now;
 
             for _ in 0..amount {
-                dt = get_next_morning_datetime(dt);
+                dt = try_next_business_day_start(dt)?;
             }
 
-            dt - task_repository.get_last_synced_time()
+            dt - now
         }
-        Some('時') | Some('h') => Duration::hours(amount),
-        Some('分') | Some('m') => Duration::minutes(amount),
+        Some('時') | Some('h') => Duration::try_hours(amount).ok_or_else(duration_out_of_range)?,
+        Some('分') | Some('m') => {
+            Duration::try_minutes(amount).ok_or_else(duration_out_of_range)?
+        }
         // 誤入力した時に傷が浅いように、デフォルトは秒としておく
-        _ => Duration::seconds(amount),
+        _ => Duration::try_seconds(amount).ok_or_else(duration_out_of_range)?,
     };
 
     if let Some(task_id) = *focused_task_id_opt {
-        let pending_until = task_repository.get_last_synced_time() + duration;
+        let pending_until = now
+            .checked_add_signed(duration)
+            .ok_or_else(duration_out_of_range)?;
         defer_task(task_repository, task_id, pending_until)?;
     }
 
     *focused_task_id_opt = None;
     Ok(())
+}
+
+fn seconds_until_next_business_day_start_with_offset(
+    now: DateTime<Local>,
+    offset_seconds: i64,
+) -> Result<i64, ApplicationError> {
+    let next_business_day_start = try_next_business_day_start(now)?;
+    (next_business_day_start - now)
+        .num_seconds()
+        .checked_add(offset_seconds)
+        .ok_or(ApplicationError::SubjectiveDateOutOfRange {
+            operation: "next_business_day_start",
+            datetime: now,
+        })
 }
 
 fn execute_defer_expression(
@@ -4383,7 +4406,7 @@ fn resolve_deadline_date(value: &str, now: DateTime<Local>) -> Result<String, Co
             .to_string());
     }
     if value.starts_with('明') {
-        return Ok(get_next_morning_datetime(now)
+        return Ok(try_next_business_day_start(now)?
             .format("%Y/%m/%d")
             .to_string());
     }
@@ -7999,13 +8022,13 @@ impl DeferCommandContext for RuntimeDeferCommandContext<'_> {
 
     fn defer_next_morning(&mut self) -> Result<(), DeferCommandError> {
         let now = self.task_repository.get_last_synced_time();
-        let seconds = (get_next_morning_datetime(now) - now).num_seconds() + 1;
+        let seconds = seconds_until_next_business_day_start_with_offset(now, 1)?;
         self.defer(seconds, "秒")
     }
 
     fn defer_next_week(&mut self) -> Result<(), DeferCommandError> {
         let now = self.task_repository.get_last_synced_time();
-        let seconds = (get_next_morning_datetime(now) - now).num_seconds() + 86400 * 6 + 1;
+        let seconds = seconds_until_next_business_day_start_with_offset(now, 86400 * 6 + 1)?;
         self.defer(seconds, "秒")
     }
 
@@ -8016,7 +8039,7 @@ impl DeferCommandContext for RuntimeDeferCommandContext<'_> {
     fn defer_five_years(&mut self) -> Result<(), DeferCommandError> {
         let now = self.task_repository.get_last_synced_time();
         let seconds =
-            (get_next_morning_datetime(now) - now).num_seconds() + 86400 * (7 * 52 * 5 - 1) + 1;
+            seconds_until_next_business_day_start_with_offset(now, 86400 * (7 * 52 * 5 - 1) + 1)?;
         self.defer(seconds, "秒")
     }
 
