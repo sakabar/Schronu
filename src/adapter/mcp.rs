@@ -1601,7 +1601,7 @@ mod tests {
         RepositoryReloadOutcome, TaskRepositoryError, TaskRepositoryOperation, TaskRepositoryTrait,
     };
     use crate::entity::task::{ProjectCategory, RepetitionAnchor, Status, TaskHandle};
-    use chrono::{DateTime, Duration, FixedOffset, Local, NaiveDate, TimeZone};
+    use chrono::{DateTime, Duration, FixedOffset, Local, NaiveDate, NaiveDateTime, TimeZone};
     use serde_json::json;
     use std::cell::{Cell, RefCell};
     use std::fs;
@@ -3932,6 +3932,66 @@ mod tests {
             response["result"]["structuredContent"]["error"]["message"],
             expected.to_string()
         );
+    }
+
+    fn application_datetime_errorのmetadata保持を確認する(
+        expected: crate::application::task_use_case::ApplicationError,
+    ) {
+        let error = super::ToolInputError::Application(expected.clone());
+        let actual = match error {
+            super::ToolInputError::Application(error) => error,
+            _ => panic!("expected an application datetime error"),
+        };
+        let response = super::internal_error_response(json!("datetime-error"), &actual.to_string());
+
+        assert_eq!(actual, expected);
+        assert_eq!(response["result"]["isError"], true);
+        assert_eq!(
+            response["result"]["structuredContent"]["error"]["code"],
+            "internal_error"
+        );
+        assert_eq!(
+            response["result"]["structuredContent"]["error"]["message"],
+            expected.to_string()
+        );
+    }
+
+    #[test]
+    fn mcp日時error境界は存在しないlocal日時を保持する() {
+        let local_datetime = NaiveDateTime::new(
+            NaiveDate::from_ymd_opt(2026, 3, 29).unwrap(),
+            chrono::NaiveTime::from_hms_opt(2, 30, 0).unwrap(),
+        );
+        let expected =
+            crate::application::task_use_case::ApplicationError::NonexistentLocalDateTime {
+                local_datetime,
+            };
+
+        application_datetime_errorのmetadata保持を確認する(expected);
+    }
+
+    #[test]
+    fn mcp日時error境界は曖昧なlocal日時と両候補を保持する() {
+        let local_datetime = NaiveDateTime::new(
+            NaiveDate::from_ymd_opt(2026, 10, 25).unwrap(),
+            chrono::NaiveTime::from_hms_opt(2, 30, 0).unwrap(),
+        );
+        let earlier = DateTime::<Local>::from_naive_utc_and_offset(
+            local_datetime,
+            FixedOffset::east_opt(2 * 60 * 60).unwrap(),
+        );
+        let later = DateTime::<Local>::from_naive_utc_and_offset(
+            local_datetime,
+            FixedOffset::east_opt(60 * 60).unwrap(),
+        );
+        let expected =
+            crate::application::task_use_case::ApplicationError::AmbiguousLocalDateTime {
+                local_datetime,
+                earlier,
+                later,
+            };
+
+        application_datetime_errorのmetadata保持を確認する(expected);
     }
 
     #[test]
