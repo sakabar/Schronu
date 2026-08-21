@@ -1,12 +1,12 @@
+use crate::application::daily_capacity::try_next_business_day_start;
 use crate::application::interface::TaskRepositoryTrait;
 use crate::application::schedule_use_case::get_schedule;
 pub use crate::application::task_view::TaskView;
-use crate::entity::datetime::get_next_morning_datetime;
 use crate::entity::task::{
     ProjectCategory, RepetitionAnchor, Status, TaskAttr, TaskHandle, TaskTreeError,
 };
 use chrono::{
-    DateTime, Datelike, Duration, Local, LocalResult, NaiveDate, NaiveDateTime, Timelike,
+    DateTime, Datelike, Duration, Local, LocalResult, NaiveDate, NaiveDateTime, NaiveTime, Timelike,
 };
 use std::cmp::{max, Ordering};
 use std::collections::HashSet;
@@ -396,6 +396,9 @@ pub fn complete_task(
             reason: "actual work seconds overflow",
         })?;
 
+    let next_repetition_task =
+        prepare_next_repetition_task(&task, actual_work_seconds, input.finished_at, factory)?;
+
     task.set_actual_work_seconds(actual_work_seconds)
         .map_err(ApplicationError::TaskTree)?;
     task.set_orig_status(Status::Done)
@@ -403,7 +406,7 @@ pub fn complete_task(
     task.set_end_time_opt(Some(input.finished_at))
         .map_err(ApplicationError::TaskTree)?;
 
-    let next_repetition_task_id = create_next_repetition_task(&task, input.finished_at, factory)?;
+    let next_repetition_task_id = create_prepared_repetition_task(next_repetition_task)?;
     let next_focus_task_id = if task
         .all_sibling_tasks_are_all_done()
         .map_err(ApplicationError::TaskTree)?
@@ -514,11 +517,32 @@ pub fn estimated_work_seconds_from_minutes(minutes: i64) -> Result<i64, Applicat
         })
 }
 
+#[cfg(test)]
 fn create_next_repetition_task(
     task: &TaskHandle,
     finished_at: DateTime<Local>,
     factory: &mut TaskFactory<'_>,
 ) -> Result<Option<Uuid>, ApplicationError> {
+    let actual_work_seconds = task
+        .get_actual_work_seconds()
+        .map_err(ApplicationError::TaskTree)?;
+    let prepared = prepare_next_repetition_task(task, actual_work_seconds, finished_at, factory)?;
+    create_prepared_repetition_task(prepared)
+}
+
+struct PreparedRepetitionTask {
+    parent_task: TaskHandle,
+    task_attr: TaskAttr,
+    task_id: Uuid,
+    adjusted_parent_estimated_work_seconds: i64,
+}
+
+fn prepare_next_repetition_task(
+    task: &TaskHandle,
+    actual_work_seconds: i64,
+    finished_at: DateTime<Local>,
+    factory: &mut TaskFactory<'_>,
+) -> Result<Option<PreparedRepetitionTask>, ApplicationError> {
     let Some(parent_task) = task.parent().map_err(ApplicationError::TaskTree)? else {
         return Ok(None);
     };
@@ -529,55 +553,80 @@ fn create_next_repetition_task(
         return Ok(None);
     };
 
-    adjust_repetition_estimate(&parent_task, task).map_err(ApplicationError::TaskTree)?;
-    let new_task_attr = build_next_repetition_task_attr(
+    let original_parent_estimated_work_seconds = parent_task
+        .get_estimated_work_seconds()
+        .map_err(ApplicationError::TaskTree)?;
+    let adjusted_parent_estimated_work_seconds =
+        adjusted_repetition_estimate(original_parent_estimated_work_seconds, actual_work_seconds);
+    let task_attr = build_next_repetition_task_attr(
         task,
         &parent_task,
         repetition_interval_days,
         finished_at,
+        adjusted_parent_estimated_work_seconds,
         factory,
-    )
-    .map_err(ApplicationError::TaskTree)?;
-    let next_task = parent_task
-        .create_child(new_task_attr)
-        .map_err(ApplicationError::TaskTree)?;
-    Ok(Some(
-        next_task.get_id().map_err(ApplicationError::TaskTree)?,
-    ))
+    )?;
+    let task_id = *task_attr.get_id();
+    Ok(Some(PreparedRepetitionTask {
+        parent_task,
+        task_attr,
+        task_id,
+        adjusted_parent_estimated_work_seconds,
+    }))
 }
 
-fn adjust_repetition_estimate(
-    parent_task: &TaskHandle,
-    task: &TaskHandle,
-) -> Result<(), TaskTreeError> {
-    if task.get_actual_work_seconds()? <= 0 {
-        return Ok(());
+fn create_prepared_repetition_task(
+    prepared: Option<PreparedRepetitionTask>,
+) -> Result<Option<Uuid>, ApplicationError> {
+    let Some(prepared) = prepared else {
+        return Ok(None);
+    };
+    prepared
+        .parent_task
+        .set_estimated_work_seconds(prepared.adjusted_parent_estimated_work_seconds)
+        .map_err(ApplicationError::TaskTree)?;
+    prepared
+        .parent_task
+        .create_child(prepared.task_attr)
+        .map_err(ApplicationError::TaskTree)?;
+    Ok(Some(prepared.task_id))
+}
+
+fn adjusted_repetition_estimate(original_estimated_seconds: i64, actual_work_seconds: i64) -> i64 {
+    if actual_work_seconds <= 0 {
+        return original_estimated_seconds;
     }
 
-    let original_estimated_seconds = parent_task.get_estimated_work_seconds()?;
-    let difference = task.get_actual_work_seconds()? - original_estimated_seconds;
-    let new_estimated_work_seconds = match difference.cmp(&0) {
+    let difference = actual_work_seconds - original_estimated_seconds;
+    match difference.cmp(&0) {
         Ordering::Greater => original_estimated_seconds + difference * 3 / 4,
         Ordering::Less => max(60, original_estimated_seconds + difference / 4),
         Ordering::Equal => original_estimated_seconds,
-    };
-    parent_task.set_estimated_work_seconds(new_estimated_work_seconds)?;
-    Ok(())
+    }
 }
 
 fn apply_time_template(
     base_datetime: DateTime<Local>,
     time_template: DateTime<Local>,
-) -> DateTime<Local> {
-    base_datetime
-        .with_hour(time_template.hour())
-        .expect("invalid hour")
-        .with_minute(time_template.minute())
-        .expect("invalid minute")
-        .with_second(time_template.second())
-        .expect("invalid second")
-        .with_nanosecond(0)
-        .expect("invalid nanosecond")
+) -> Result<DateTime<Local>, ApplicationError> {
+    let time = NaiveTime::from_hms_opt(
+        time_template.hour(),
+        time_template.minute(),
+        time_template.second(),
+    )
+    .ok_or(ApplicationError::SubjectiveDateOutOfRange {
+        operation: "apply_time_template",
+        datetime: time_template,
+    })?;
+    resolve_date_and_time(base_datetime, time)
+}
+
+fn resolve_date_and_time(
+    base_datetime: DateTime<Local>,
+    time: NaiveTime,
+) -> Result<DateTime<Local>, ApplicationError> {
+    let local_datetime = base_datetime.date_naive().and_time(time);
+    resolve_local_datetime(local_datetime, local_datetime.and_local_timezone(Local))
 }
 
 fn build_next_repetition_task_attr(
@@ -585,41 +634,89 @@ fn build_next_repetition_task_attr(
     parent_task: &TaskHandle,
     repetition_interval_days: i64,
     finished_at: DateTime<Local>,
+    adjusted_parent_estimated_work_seconds: i64,
     factory: &mut TaskFactory<'_>,
-) -> Result<TaskAttr, TaskTreeError> {
-    let occurrence_anchor = match parent_task.get_repetition_anchor()? {
-        RepetitionAnchor::Deadline => task.get_deadline_time_opt()?.unwrap_or(finished_at),
+) -> Result<TaskAttr, ApplicationError> {
+    let occurrence_anchor = match parent_task
+        .get_repetition_anchor()
+        .map_err(ApplicationError::TaskTree)?
+    {
+        RepetitionAnchor::Deadline => task
+            .get_deadline_time_opt()
+            .map_err(ApplicationError::TaskTree)?
+            .unwrap_or(finished_at),
         RepetitionAnchor::Completion => finished_at,
     };
-    let next_occurrence_day =
-        get_next_morning_datetime(occurrence_anchor) + Duration::days(repetition_interval_days - 1);
-    let new_start_time = apply_time_template(next_occurrence_day, parent_task.get_start_time()?);
-    let new_deadline_time = match parent_task.get_deadline_time_opt()? {
+    let parent_start_time = parent_task
+        .get_start_time()
+        .map_err(ApplicationError::TaskTree)?;
+    let parent_deadline_time = parent_task
+        .get_deadline_time_opt()
+        .map_err(ApplicationError::TaskTree)?;
+    let days_in_advance = parent_task
+        .get_days_in_advance()
+        .map_err(ApplicationError::TaskTree)?;
+    let parent_name = parent_task.get_name().map_err(ApplicationError::TaskTree)?;
+    let parent_atomic = parent_task
+        .get_atomic()
+        .map_err(ApplicationError::TaskTree)?;
+
+    let next_business_day_start = try_next_business_day_start(occurrence_anchor)?;
+    let repetition_offset_days = repetition_interval_days.checked_sub(1).ok_or(
+        ApplicationError::SubjectiveDateOutOfRange {
+            operation: "next_business_day_start",
+            datetime: occurrence_anchor,
+        },
+    )?;
+    let repetition_offset = Duration::try_days(repetition_offset_days).ok_or(
+        ApplicationError::SubjectiveDateOutOfRange {
+            operation: "next_business_day_start",
+            datetime: occurrence_anchor,
+        },
+    )?;
+    let next_occurrence_day = next_business_day_start
+        .checked_add_signed(repetition_offset)
+        .ok_or(ApplicationError::SubjectiveDateOutOfRange {
+            operation: "next_business_day_start",
+            datetime: occurrence_anchor,
+        })?;
+    let occurrence_start_time = apply_time_template(next_occurrence_day, parent_start_time)?;
+    let days_in_advance =
+        Duration::try_days(days_in_advance).ok_or(ApplicationError::SubjectiveDateOutOfRange {
+            operation: "repetition_start_time",
+            datetime: occurrence_start_time,
+        })?;
+    let task_start_time = occurrence_start_time
+        .checked_sub_signed(days_in_advance)
+        .ok_or(ApplicationError::SubjectiveDateOutOfRange {
+            operation: "repetition_start_time",
+            datetime: occurrence_start_time,
+        })?;
+    let new_deadline_time = match parent_deadline_time {
         Some(parent_deadline_time) => {
-            apply_time_template(next_occurrence_day, parent_deadline_time)
+            apply_time_template(next_occurrence_day, parent_deadline_time)?
         }
-        None => new_start_time
-            .with_hour(23)
-            .expect("invalid hour")
-            .with_minute(59)
-            .expect("invalid minute")
-            .with_second(59)
-            .expect("invalid second")
-            .with_nanosecond(0)
-            .expect("invalid nanosecond"),
+        None => {
+            let end_of_day = NaiveTime::from_hms_opt(23, 59, 59).ok_or(
+                ApplicationError::SubjectiveDateOutOfRange {
+                    operation: "repetition_deadline_time",
+                    datetime: next_occurrence_day,
+                },
+            )?;
+            resolve_date_and_time(next_occurrence_day, end_of_day)?
+        }
     };
 
     let mut new_task_attr = factory.create_task_attr(&format!(
         "{}({}/{})",
-        parent_task.get_name()?,
-        new_start_time.month(),
-        new_start_time.day()
+        parent_name,
+        occurrence_start_time.month(),
+        occurrence_start_time.day()
     ));
-    new_task_attr
-        .set_start_time(new_start_time - Duration::days(parent_task.get_days_in_advance()?));
+    new_task_attr.set_start_time(task_start_time);
     new_task_attr.set_deadline_time_opt(Some(new_deadline_time));
-    new_task_attr.set_estimated_work_seconds(parent_task.get_estimated_work_seconds()?);
-    new_task_attr.set_atomic(parent_task.get_atomic()?);
+    new_task_attr.set_estimated_work_seconds(adjusted_parent_estimated_work_seconds);
+    new_task_attr.set_atomic(parent_atomic);
     Ok(new_task_attr)
 }
 
