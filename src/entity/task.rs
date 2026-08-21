@@ -1,6 +1,7 @@
 use chrono::{DateTime, Duration, Local};
 use dendron::{HotNode, InsertAs, Node};
 use linked_hash_map::LinkedHashMap;
+use serde::Serialize;
 use std::cmp::{max, min};
 use std::fmt;
 use uuid::Uuid;
@@ -18,16 +19,19 @@ use yaml_rust::YamlLoader;
 #[cfg(test)]
 use uuid::uuid;
 
-#[derive(Copy, Clone, Debug, PartialEq)]
+#[derive(Copy, Clone, Debug, PartialEq, Serialize)]
 pub enum Status {
     // 初期状態
+    #[serde(rename = "todo")]
     Todo,
 
     // 優先度が低いなどの理由でスコープアウトした状態
     // 相手ボールの場合は相手の返答をウォッチして適宜つつくという作業があるので、Pendingではない
+    #[serde(rename = "pending")]
     Pending,
 
     // 完了
+    #[serde(rename = "done")]
     Done,
 }
 
@@ -61,9 +65,11 @@ pub fn read_status(s: &str) -> Option<Status> {
     None
 }
 
-#[derive(Copy, Clone, Debug, PartialEq)]
+#[derive(Copy, Clone, Debug, PartialEq, Serialize)]
 pub enum RepetitionAnchor {
+    #[serde(rename = "deadline")]
     Deadline,
+    #[serde(rename = "completion")]
     Completion,
 }
 
@@ -83,12 +89,17 @@ pub fn read_repetition_anchor(s: &str) -> RepetitionAnchor {
     }
 }
 
-#[derive(Copy, Clone, Debug, Eq, Hash, PartialEq)]
+#[derive(Copy, Clone, Debug, Eq, Hash, PartialEq, Serialize)]
 pub enum ProjectCategory {
+    #[serde(rename = "earning")]
     Earning,
+    #[serde(rename = "sustaining")]
     Sustaining,
+    #[serde(rename = "recovery")]
     Recovery,
+    #[serde(rename = "investment")]
     Investment,
+    #[serde(rename = "consumption")]
     Consumption,
 }
 

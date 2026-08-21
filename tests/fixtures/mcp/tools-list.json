@@ -1,0 +1,287 @@
+[
+  {
+    "description": "Get the task that should be worked on now.",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {},
+      "required": [],
+      "type": "object"
+    },
+    "name": "get_focus"
+  },
+  {
+    "description": "Get one task by UUID.",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "task_id": {
+          "format": "uuid",
+          "type": "string"
+        }
+      },
+      "required": [
+        "task_id"
+      ],
+      "type": "object"
+    },
+    "name": "get_task"
+  },
+  {
+    "description": "List tasks filtered by period, status, and category.",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "categories": {
+          "items": {
+            "anyOf": [
+              {
+                "enum": [
+                  "earning",
+                  "sustaining",
+                  "recovery",
+                  "investment",
+                  "consumption"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "type": "array"
+        },
+        "period": {
+          "additionalProperties": false,
+          "properties": {
+            "field": {
+              "enum": [
+                "scheduled_start",
+                "created_at",
+                "deadline",
+                "completed_at"
+              ],
+              "type": "string"
+            },
+            "from": {
+              "format": "date-time",
+              "type": "string"
+            },
+            "until": {
+              "format": "date-time",
+              "type": "string"
+            }
+          },
+          "required": [
+            "field",
+            "from",
+            "until"
+          ],
+          "type": "object"
+        },
+        "statuses": {
+          "items": {
+            "enum": [
+              "todo",
+              "pending",
+              "done"
+            ],
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "required": [],
+      "type": "object"
+    },
+    "name": "list_tasks"
+  },
+  {
+    "description": "Get Schronu's calculated task schedule for a date range.",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "from": {
+          "format": "date",
+          "type": "string"
+        },
+        "until": {
+          "format": "date",
+          "type": "string"
+        }
+      },
+      "required": [],
+      "type": "object"
+    },
+    "name": "get_schedule"
+  },
+  {
+    "description": "Create a new root project task.",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "estimated_work_minutes": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "name": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "pending_until": {
+          "format": "date-time",
+          "type": "string"
+        }
+      },
+      "required": [
+        "name"
+      ],
+      "type": "object"
+    },
+    "name": "create_task"
+  },
+  {
+    "description": "Add child tasks to an existing task.",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "names": {
+          "items": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "minItems": 1,
+          "type": "array"
+        },
+        "parent_id": {
+          "format": "uuid",
+          "type": "string"
+        },
+        "pending_until": {
+          "format": "date-time",
+          "type": "string"
+        }
+      },
+      "required": [
+        "parent_id",
+        "names"
+      ],
+      "type": "object"
+    },
+    "name": "breakdown_task"
+  },
+  {
+    "description": "Defer a task until an absolute date and time.",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "pending_until": {
+          "format": "date-time",
+          "type": "string"
+        },
+        "task_id": {
+          "format": "uuid",
+          "type": "string"
+        }
+      },
+      "required": [
+        "task_id",
+        "pending_until"
+      ],
+      "type": "object"
+    },
+    "name": "defer_task"
+  },
+  {
+    "description": "Complete a task, optionally recording finish time and work seconds.",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "additional_actual_work_seconds": {
+          "default": 0,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "finished_at": {
+          "format": "date-time",
+          "type": "string"
+        },
+        "task_id": {
+          "format": "uuid",
+          "type": "string"
+        }
+      },
+      "required": [
+        "task_id"
+      ],
+      "type": "object"
+    },
+    "name": "complete_task"
+  },
+  {
+    "description": "Update a task's estimate, deadline, or category.",
+    "inputSchema": {
+      "additionalProperties": false,
+      "anyOf": [
+        {
+          "required": [
+            "estimated_work_minutes"
+          ]
+        },
+        {
+          "required": [
+            "deadline_time"
+          ]
+        },
+        {
+          "required": [
+            "category"
+          ]
+        }
+      ],
+      "properties": {
+        "category": {
+          "anyOf": [
+            {
+              "enum": [
+                "earning",
+                "sustaining",
+                "recovery",
+                "investment",
+                "consumption"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "deadline_time": {
+          "anyOf": [
+            {
+              "format": "date-time",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "estimated_work_minutes": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "task_id": {
+          "format": "uuid",
+          "type": "string"
+        }
+      },
+      "required": [
+        "task_id"
+      ],
+      "type": "object"
+    },
+    "name": "update_task"
+  }
+]
