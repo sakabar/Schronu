@@ -367,15 +367,20 @@ fn update_task_application_error_response(id: Value, error: ApplicationError) ->
 
 #[cfg(test)]
 mod typed_handler_contract_tests {
-    use super::{call_get_focus, call_get_schedule, call_get_task, call_list_tasks};
+    use super::{
+        call_breakdown_task, call_create_task, call_get_focus, call_get_schedule, call_get_task,
+        call_list_tasks,
+    };
     use crate::adapter::mcp::input::{
-        GetFocusInput, GetScheduleInput, GetTaskInput, IsoDate, ListTasksInput, OptionalValue,
+        BreakdownTaskInput, CreateTaskInput, GetFocusInput, GetScheduleInput, GetTaskInput,
+        IsoDate, ListTasksInput, NonEmptyString, NonEmptyVec, NonNegativeI64, OptionalValue,
         ProjectCategoryValue, Rfc3339DateTime, StatusValue, TaskPeriodFieldValue, TaskPeriodInput,
         UuidValue,
     };
     use crate::adapter::mcp::test_support::{
-        fixed_now, get_next_morning_datetime, task_for_list, Duration, Local, ProjectCategory,
-        RecordingRepository, Status, TaskHandle, TimeZone,
+        assert_tool_result_content_matches_structured, fixed_now, get_next_morning_datetime,
+        task_for_list, Duration, Local, ProjectCategory, RecordingRepository, Status, TaskHandle,
+        TimeZone,
     };
     use serde_json::json;
     use std::rc::Rc;
@@ -753,5 +758,178 @@ mod typed_handler_contract_tests {
             .all(|scheduled| scheduled["task"]["name"] != "past task"));
         assert_eq!(save_count.get(), 0);
         assert_eq!(mutation_count.get(), 0);
+    }
+
+    #[test]
+    fn create_task_handlerはtyped_inputをapplication入力へ変換する() {
+        let pending_until = fixed_now() + Duration::hours(18);
+        let repository = RecordingRepository::new(vec![]);
+        let save_count = Rc::clone(&repository.save_count);
+        let mutation_count = Rc::clone(&repository.mutation_count);
+        let mut repository = repository;
+
+        let response = call_create_task(
+            &mut repository,
+            json!("typed-create"),
+            CreateTaskInput {
+                name: NonEmptyString("created by typed input".to_string()),
+                estimated_work_minutes: OptionalValue::Value(NonNegativeI64(30)),
+                pending_until: OptionalValue::Value(Rfc3339DateTime(pending_until)),
+            },
+        );
+
+        assert_eq!(response["result"]["isError"], false);
+        assert_tool_result_content_matches_structured(&response);
+        let task_id = Uuid::parse_str(
+            response["result"]["structuredContent"]["task_id"]
+                .as_str()
+                .unwrap(),
+        )
+        .unwrap();
+        let created = call_get_task(
+            &repository,
+            json!("typed-created-task"),
+            GetTaskInput {
+                task_id: UuidValue(task_id),
+            },
+        );
+        let task = &created["result"]["structuredContent"]["task"];
+        assert_eq!(task["name"], "created by typed input");
+        assert_eq!(task["estimated_work_seconds"], 30 * 60);
+        assert_eq!(task["original_status"], "pending");
+        assert_eq!(task["pending_until"], pending_until.to_rfc3339());
+        assert_eq!(mutation_count.get(), 1);
+        assert_eq!(save_count.get(), 0);
+    }
+
+    #[test]
+    fn breakdown_task_handlerはtyped_inputの順序と時刻をapplication入力へ変換する() {
+        let pending_until = fixed_now() + Duration::hours(18);
+        let parent = TaskHandle::new("typed parent").unwrap();
+        let parent_id = parent.get_id().unwrap();
+        let repository = RecordingRepository::new(vec![parent]);
+        let save_count = Rc::clone(&repository.save_count);
+        let mut repository = repository;
+
+        let response = call_breakdown_task(
+            &mut repository,
+            json!("typed-breakdown"),
+            BreakdownTaskInput {
+                parent_id: UuidValue(parent_id),
+                names: NonEmptyVec(vec![
+                    NonEmptyString("first typed child".to_string()),
+                    NonEmptyString("second typed child".to_string()),
+                ]),
+                pending_until: OptionalValue::Value(Rfc3339DateTime(pending_until)),
+            },
+        );
+
+        assert_eq!(response["result"]["isError"], false);
+        assert_tool_result_content_matches_structured(&response);
+        let child_ids = response["result"]["structuredContent"]["child_ids"]
+            .as_array()
+            .unwrap();
+        assert_eq!(child_ids.len(), 2);
+        for (index, expected_name) in ["first typed child", "second typed child"]
+            .iter()
+            .enumerate()
+        {
+            let child_id = Uuid::parse_str(child_ids[index].as_str().unwrap()).unwrap();
+            let child = call_get_task(
+                &repository,
+                json!("typed-child"),
+                GetTaskInput {
+                    task_id: UuidValue(child_id),
+                },
+            );
+            let task = &child["result"]["structuredContent"]["task"];
+            assert_eq!(task["name"], *expected_name);
+            assert_eq!(task["original_status"], "pending");
+            assert_eq!(task["pending_until"], pending_until.to_rfc3339());
+        }
+        assert_eq!(save_count.get(), 0);
+    }
+
+    #[test]
+    fn create_task_handlerはtyped_inputの空白名をapplicationへそのまま渡す() {
+        let repository = RecordingRepository::new(vec![]);
+        let save_count = Rc::clone(&repository.save_count);
+        let mutation_count = Rc::clone(&repository.mutation_count);
+        let mut repository = repository;
+
+        let response = call_create_task(
+            &mut repository,
+            json!("typed-create-blank"),
+            CreateTaskInput {
+                name: NonEmptyString("   ".to_string()),
+                estimated_work_minutes: OptionalValue::Missing,
+                pending_until: OptionalValue::Missing,
+            },
+        );
+
+        assert_eq!(response["result"]["isError"], true);
+        assert_tool_result_content_matches_structured(&response);
+        let error = &response["result"]["structuredContent"]["error"];
+        assert_eq!(error["code"], "invalid_input");
+        assert_eq!(error["field"], "name");
+        assert_eq!(error["message"], "must not be blank");
+        assert_eq!(mutation_count.get(), 0);
+        assert_eq!(save_count.get(), 0);
+    }
+
+    #[test]
+    fn breakdown_task_handlerはtyped_inputの空白名をapplicationへそのまま渡す() {
+        let parent = TaskHandle::new("typed parent").unwrap();
+        let parent_id = parent.get_id().unwrap();
+        let parent_observer = parent.clone();
+        let repository = RecordingRepository::new(vec![parent]);
+        let save_count = Rc::clone(&repository.save_count);
+        let mut repository = repository;
+
+        let response = call_breakdown_task(
+            &mut repository,
+            json!("typed-breakdown-blank"),
+            BreakdownTaskInput {
+                parent_id: UuidValue(parent_id),
+                names: NonEmptyVec(vec![NonEmptyString("   ".to_string())]),
+                pending_until: OptionalValue::Missing,
+            },
+        );
+
+        assert_eq!(response["result"]["isError"], true);
+        assert_tool_result_content_matches_structured(&response);
+        let error = &response["result"]["structuredContent"]["error"];
+        assert_eq!(error["code"], "invalid_input");
+        assert_eq!(error["field"], "names");
+        assert_eq!(error["message"], "must not be blank");
+        assert!(parent_observer.get_children().unwrap().is_empty());
+        assert_eq!(save_count.get(), 0);
+    }
+
+    #[test]
+    fn create_task_handlerはtyped_i64上限の秒変換overflowをtool_errorにする() {
+        let repository = RecordingRepository::new(vec![]);
+        let save_count = Rc::clone(&repository.save_count);
+        let mutation_count = Rc::clone(&repository.mutation_count);
+        let mut repository = repository;
+
+        let response = call_create_task(
+            &mut repository,
+            json!("typed-create-overflow"),
+            CreateTaskInput {
+                name: NonEmptyString("overflow".to_string()),
+                estimated_work_minutes: OptionalValue::Value(NonNegativeI64(i64::MAX)),
+                pending_until: OptionalValue::Missing,
+            },
+        );
+
+        assert_eq!(response["result"]["isError"], true);
+        assert_tool_result_content_matches_structured(&response);
+        let error = &response["result"]["structuredContent"]["error"];
+        assert_eq!(error["code"], "invalid_input");
+        assert_eq!(error["field"], "estimated_work_minutes");
+        assert_eq!(error["message"], "seconds conversion overflow");
+        assert_eq!(mutation_count.get(), 0);
+        assert_eq!(save_count.get(), 0);
     }
 }
