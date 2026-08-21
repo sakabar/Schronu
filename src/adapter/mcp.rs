@@ -1,6 +1,7 @@
 use crate::adapter::gateway::storage_lock::{
     LockMode, StorageLock, StorageLockError, StorageLockErrorKind,
 };
+use crate::application::daily_capacity::{try_next_business_day_start, try_subjective_date_start};
 use crate::application::interface::TaskRepositoryTrait;
 use crate::application::repository_transaction::{
     run_repository_transaction, RepositoryTransactionError,
@@ -13,9 +14,8 @@ use crate::application::task_use_case::{
     CompleteTaskInput, CreateTaskInput, ListTasksFilter, TaskFactory, TaskPeriodField,
     TaskPeriodFilter, TaskView,
 };
-use crate::entity::datetime::get_next_morning_datetime;
 use crate::entity::task::{ProjectCategory, Status};
-use chrono::{DateTime, Duration, Local, LocalResult, NaiveDate};
+use chrono::{DateTime, Local, NaiveDate};
 use serde_json::Map;
 use serde_json::{json, Value};
 use std::path::PathBuf;
@@ -242,6 +242,9 @@ impl<R: TaskRepositoryTrait> McpServer<R> {
             Err(ToolInputError::Semantic { field, message }) => {
                 return invalid_input_response(id, field, message)
             }
+            Err(ToolInputError::Application(error)) => {
+                return internal_error_response(id, &error.to_string())
+            }
         };
 
         match list_tasks(repository, filter) {
@@ -265,6 +268,9 @@ impl<R: TaskRepositoryTrait> McpServer<R> {
             Err(ToolInputError::Schema(error)) => return invalid_params_response(id, error),
             Err(ToolInputError::Semantic { field, message }) => {
                 return invalid_input_response(id, field, message)
+            }
+            Err(ToolInputError::Application(error)) => {
+                return internal_error_response(id, &error.to_string())
             }
         };
 
@@ -296,6 +302,9 @@ impl<R: TaskRepositoryTrait> McpServer<R> {
             Err(ToolInputError::Semantic { field, message }) => {
                 return invalid_input_response(id, field, message)
             }
+            Err(ToolInputError::Application(error)) => {
+                return internal_error_response(id, &error.to_string())
+            }
         };
 
         let task_id = match create_task_use_case(repository, input, factory) {
@@ -320,6 +329,9 @@ impl<R: TaskRepositoryTrait> McpServer<R> {
             Err(ToolInputError::Schema(error)) => return invalid_params_response(id, error),
             Err(ToolInputError::Semantic { field, message }) => {
                 return invalid_input_response(id, field, message)
+            }
+            Err(ToolInputError::Application(error)) => {
+                return internal_error_response(id, &error.to_string())
             }
         };
         let child_ids = match breakdown_task_use_case(repository, input, factory) {
@@ -349,6 +361,9 @@ impl<R: TaskRepositoryTrait> McpServer<R> {
             Err(ToolInputError::Semantic { field, message }) => {
                 return invalid_input_response(id, field, message)
             }
+            Err(ToolInputError::Application(error)) => {
+                return internal_error_response(id, &error.to_string())
+            }
         };
 
         match defer_task_use_case(repository, task_id, pending_until) {
@@ -377,6 +392,9 @@ impl<R: TaskRepositoryTrait> McpServer<R> {
             Err(ToolInputError::Schema(error)) => return invalid_params_response(id, error),
             Err(ToolInputError::Semantic { field, message }) => {
                 return invalid_input_response(id, field, message)
+            }
+            Err(ToolInputError::Application(error)) => {
+                return internal_error_response(id, &error.to_string())
             }
         };
         let task_id = input.task_id;
@@ -414,6 +432,9 @@ impl<R: TaskRepositoryTrait> McpServer<R> {
             Err(ToolInputError::Schema(error)) => return invalid_params_response(id, error),
             Err(ToolInputError::Semantic { field, message }) => {
                 return invalid_input_response(id, field, message)
+            }
+            Err(ToolInputError::Application(error)) => {
+                return internal_error_response(id, &error.to_string())
             }
         };
 
@@ -776,6 +797,7 @@ enum ToolInputError {
         field: &'static str,
         message: &'static str,
     },
+    Application(ApplicationError),
 }
 
 struct UpdateTaskInput {
@@ -1087,7 +1109,10 @@ fn schedule_period(
     now: DateTime<Local>,
 ) -> Result<(DateTime<Local>, DateTime<Local>), ToolInputError> {
     let Some(arguments) = arguments else {
-        return Ok((now, get_next_morning_datetime(now)));
+        return Ok((
+            now,
+            try_next_business_day_start(now).map_err(ToolInputError::Application)?,
+        ));
     };
     let arguments = validate_argument_object(arguments, &["from", "until"], &[])
         .map_err(ToolInputError::Schema)?;
@@ -1102,9 +1127,15 @@ fn schedule_period(
 
     let (from, until) = match (from, until) {
         (Some(from), Some(until)) => (from, until),
-        (Some(from), None) => (from, get_next_morning_datetime(from)),
+        (Some(from), None) => (
+            from,
+            try_next_business_day_start(from).map_err(ToolInputError::Application)?,
+        ),
         (None, Some(until)) => (now, until),
-        (None, None) => (now, get_next_morning_datetime(now)),
+        (None, None) => (
+            now,
+            try_next_business_day_start(now).map_err(ToolInputError::Application)?,
+        ),
     };
     if from >= until {
         return Err(ToolInputError::Semantic {
@@ -1131,21 +1162,7 @@ fn schedule_day_start(
             field,
             message: "must be a valid ISO 8601 date",
         })?;
-    let local_noon = date.and_hms_opt(12, 0, 0).ok_or(ToolInputError::Semantic {
-        field,
-        message: "must be a valid ISO 8601 date",
-    })?;
-    let local_noon = match local_noon.and_local_timezone(Local) {
-        LocalResult::Single(datetime) => datetime,
-        _ => {
-            return Err(ToolInputError::Semantic {
-                field,
-                message: "must resolve to a local date-time",
-            })
-        }
-    };
-
-    Ok(get_next_morning_datetime(local_noon) - Duration::days(1))
+    try_subjective_date_start(date).map_err(ToolInputError::Application)
 }
 
 fn parse_period_filter(value: &Value) -> Result<TaskPeriodFilter, ToolInputError> {
