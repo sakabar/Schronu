@@ -4340,15 +4340,32 @@ fn execute_defer_expression(
                 let seconds = (defer_dst_time - now).num_seconds() + 1;
                 (seconds > 0).then_some(seconds)
             } else if let Some(captures) = hhmm_reg.captures(value) {
-                let hh_i64: i64 = captures[1].parse().unwrap();
-                let minute: u32 = captures[2].parse().unwrap();
-                let defer_dst_time = now
-                    .with_hour((hh_i64 % 24) as u32)
-                    .expect("invalid hour")
-                    .with_minute(minute)
-                    .expect("invalid minute")
-                    + Duration::days(hh_i64 / 24);
-                let seconds = (defer_dst_time - now).num_seconds() + 1;
+                let (Some(hour), Some(minute)) = (
+                    captures[1].parse::<i64>().ok(),
+                    captures[2].parse::<u32>().ok(),
+                ) else {
+                    return Ok(());
+                };
+                let Some(calendar_hour) = u32::try_from(hour % 24).ok() else {
+                    return Ok(());
+                };
+                let Some(calendar_time) = NaiveTime::from_hms_opt(calendar_hour, minute, 0) else {
+                    return Ok(());
+                };
+                let out_of_range = || ApplicationError::SubjectiveDateOutOfRange {
+                    operation: "defer_time",
+                    datetime: now,
+                };
+                let day_offset = Duration::try_days(hour / 24).ok_or_else(out_of_range)?;
+                let target_date = now
+                    .date_naive()
+                    .checked_add_signed(day_offset)
+                    .ok_or_else(out_of_range)?;
+                let defer_dst_time = try_local_date_and_time(target_date, calendar_time)?;
+                let seconds = (defer_dst_time - now)
+                    .num_seconds()
+                    .checked_add(1)
+                    .ok_or_else(out_of_range)?;
                 (seconds > 0).then_some(seconds)
             } else if ["月", "火", "水", "木", "金", "土", "日"].contains(&value.as_str()) {
                 let days_of_week = ["月", "火", "水", "木", "金", "土", "日"];
@@ -7368,6 +7385,38 @@ fn test_execute_defer_expression_不正なcalendar時刻を変更せず拒否す
     assert_eq!(task_repository.task.snapshot().unwrap(), original_snapshot);
     assert_eq!(focused_task_id_opt, Some(task_id));
     assert!(stdout.into_string().is_empty());
+}
+
+#[test]
+fn test_execute_defer_expression_同日と24時超過を現在calendar日基準で解釈する() {
+    let now = Local.with_ymd_and_hms(2026, 8, 14, 12, 0, 0).unwrap();
+
+    for (value, expected) in [
+        (
+            "13:30",
+            Local.with_ymd_and_hms(2026, 8, 14, 13, 30, 1).unwrap(),
+        ),
+        (
+            "25:30",
+            Local.with_ymd_and_hms(2026, 8, 15, 1, 30, 1).unwrap(),
+        ),
+    ] {
+        let task = new_test_task_handle("時刻指定の延期対象").unwrap();
+        let task_id = task.get_id().unwrap();
+        let mut task_repository = TestTaskRepository::new(task, now);
+        let mut focused_task_id_opt = Some(task_id);
+        let mut context = RuntimeDeferCommandContext {
+            task_repository: &mut task_repository,
+            focused_task_id_opt: &mut focused_task_id_opt,
+            config: active_config(),
+        };
+
+        let actual = context.defer_expression(&[value.to_string()]);
+
+        assert!(actual.is_ok());
+        assert_eq!(task_repository.task.get_pending_until().unwrap(), expected);
+        assert_eq!(focused_task_id_opt, None);
+    }
 }
 
 #[test]
