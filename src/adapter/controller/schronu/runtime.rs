@@ -6618,6 +6618,32 @@ fn test_select_focus_task_id_低優先度modeでは指定日数の延期候補�
 }
 
 #[test]
+fn test_select_focus_task_id_延期候補の日時閾値errorを伝搬して状態を変更しない() {
+    let now = maximum_local_datetime();
+    let task = new_test_task_handle("日時閾値範囲外の延期候補").unwrap();
+    let task_id = task.get_id().unwrap();
+    let original_snapshot = task.snapshot().unwrap();
+    let focused_task_id_opt = Some(task_id);
+    let mut task_repository = TestTaskRepository::new(task, now);
+
+    let actual = select_focus_task_id(
+        &mut task_repository,
+        FocusSelectionMode::LowestPriority { recent_days: 3 },
+    );
+
+    assert!(matches!(
+        actual,
+        Err(ApplicationError::SubjectiveDateOutOfRange {
+            operation: "next_business_day_start",
+            datetime,
+        }) if datetime == now
+    ));
+    assert_eq!(task_repository.task.snapshot().unwrap(), original_snapshot);
+    assert_eq!(focused_task_id_opt, Some(task_id));
+    assert_eq!(task_repository.last_defer_candidate_recent_days_opt, None);
+}
+
+#[test]
 fn test_execute_all_pendingタスクを予定時刻に含め_doneタスクを除外する() {
     let now = Local.with_ymd_and_hms(2026, 8, 11, 12, 0, 0).unwrap();
 
