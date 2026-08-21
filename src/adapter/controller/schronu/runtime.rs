@@ -708,37 +708,33 @@ fn parse_clear_or_gather_defer_to_datetime(
     cmd_str: &str,
     arg: &str,
     now: DateTime<Local>,
-) -> Option<DateTime<Local>> {
+) -> Result<Option<DateTime<Local>>, ApplicationError> {
     let hhmm_reg = Regex::new(r"^(\d{1,2}):(\d{1,2})$").unwrap();
     if let Some(caps) = hhmm_reg.captures(arg) {
-        let hh_orig: u32 = caps[1].parse().unwrap();
-        let hh = hh_orig % 24;
-        let mm: u32 = caps[2].parse().unwrap();
-        let days: i64 = hh_orig as i64 / 24;
-        let todays_start = get_next_morning_datetime(now) - Duration::days(1);
-
-        return Some(
-            Local
-                .with_ymd_and_hms(
-                    todays_start.year(),
-                    todays_start.month(),
-                    todays_start.day(),
-                    hh,
-                    mm,
-                    0,
-                )
-                .unwrap()
-                + Duration::days(days),
-        );
+        let (Some(hour), Some(minute)) = (caps[1].parse::<u32>().ok(), caps[2].parse::<u32>().ok())
+        else {
+            return Ok(None);
+        };
+        let Some(calendar_time) = NaiveTime::from_hms_opt(hour % 24, minute, 0) else {
+            return Ok(None);
+        };
+        let subjective_date = try_subjective_date(now)?;
+        let target_date = subjective_date
+            .checked_add_signed(Duration::days(i64::from(hour / 24)))
+            .ok_or(ApplicationError::SubjectiveDateOutOfRange {
+                operation: "clear_or_gather_time",
+                datetime: now,
+            })?;
+        return Ok(Some(try_local_date_and_time(target_date, calendar_time)?));
     }
 
     let integer_reg = Regex::new(r"^\d+$").unwrap();
     if matches!(cmd_str, "空" | "clear" | "集" | "gather") && integer_reg.is_match(arg) {
         let minutes: i64 = arg.parse().unwrap();
-        return Some(now + Duration::minutes(minutes));
+        return Ok(Some(now + Duration::minutes(minutes)));
     }
 
-    None
+    Ok(None)
 }
 
 type ClearOrGatherTimeRange = (DateTime<Local>, DateTime<Local>);
@@ -833,7 +829,8 @@ fn execute_clear_or_gather(
                 canonical_name,
                 defer_to,
                 task_repository.get_last_synced_time(),
-            ) else {
+            )?
+            else {
                 return Ok(());
             };
             for project_root_task in task_repository.get_all_projects() {
@@ -1063,7 +1060,7 @@ mod tests {
 
         let actual = parse_clear_or_gather_defer_to_datetime("空", "120", now);
 
-        assert_eq!(actual, Some(now + Duration::minutes(120)));
+        assert_eq!(actual, Ok(Some(now + Duration::minutes(120))));
     }
 
     #[test]
@@ -1074,7 +1071,7 @@ mod tests {
 
         assert_eq!(
             actual,
-            Some(Local.with_ymd_and_hms(2026, 5, 7, 10, 0, 0).unwrap())
+            Ok(Some(Local.with_ymd_and_hms(2026, 5, 7, 10, 0, 0).unwrap()))
         );
     }
 
@@ -1084,7 +1081,7 @@ mod tests {
 
         let actual = parse_clear_or_gather_defer_to_datetime("集", "120", now);
 
-        assert_eq!(actual, Some(now + Duration::minutes(120)));
+        assert_eq!(actual, Ok(Some(now + Duration::minutes(120))));
     }
 
     #[test]
@@ -1093,7 +1090,7 @@ mod tests {
 
         assert_eq!(
             parse_clear_or_gather_defer_to_datetime("空", "13:99", now),
-            None
+            Ok(None)
         );
     }
 
