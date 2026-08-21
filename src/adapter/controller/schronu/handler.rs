@@ -1081,16 +1081,14 @@ pub(super) fn decide_time_values(
     };
     let start_date_str = values.get(1).map_or("dummy", String::as_str);
     let hhmm_reg = Regex::new(r"^(\d{1,2}):(\d{1,2})$").unwrap();
-    let (hh, mm) = if let Some(captures) = hhmm_reg.captures(start_hhmm_str) {
-        let (Some(hour), Some(minute)) = (
-            captures[1].parse::<u32>().ok(),
-            captures[2].parse::<u32>().ok(),
-        ) else {
-            return Ok(None);
-        };
-        (hour, minute)
-    } else {
-        (12, 0)
+    let Some(captures) = hhmm_reg.captures(start_hhmm_str) else {
+        return Ok(None);
+    };
+    let (Some(hh), Some(mm)) = (
+        captures[1].parse::<u32>().ok(),
+        captures[2].parse::<u32>().ok(),
+    ) else {
+        return Ok(None);
     };
     let Some(time) = NaiveTime::from_hms_opt(hh, mm, 0) else {
         return Ok(None);

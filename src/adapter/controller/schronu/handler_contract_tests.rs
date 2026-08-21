@@ -68,6 +68,13 @@ fn 明示日付と月日はsingleのlocal日時だけを返し不正日付はnon
 }
 
 #[test]
+fn 不正な時刻構文は正午へ補正せずnoneにする() {
+    let now = Local.with_ymd_and_hms(2026, 8, 21, 12, 0, 0).unwrap();
+
+    assert_eq!(decide_time_values(&["invalid".to_string()], &now), Ok(None));
+}
+
+#[test]
 fn 完了時刻指定は日時errorを保持し省略と今と不正構文を区別する() {
     let now = maximum_local_business_day_start();
 

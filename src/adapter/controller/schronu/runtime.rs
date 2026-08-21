@@ -5054,6 +5054,29 @@ fn test_execute_日付指定の不正入力は状態を変更しない() {
 }
 
 #[test]
+fn test_execute_始と約の不正時刻はtask日時を変更しない() {
+    let now = Local.with_ymd_and_hms(2026, 8, 14, 12, 0, 0).unwrap();
+    let original_start = Local.with_ymd_and_hms(2026, 8, 15, 8, 0, 0).unwrap();
+    let original_deadline = Local.with_ymd_and_hms(2026, 8, 16, 18, 0, 0).unwrap();
+
+    for command in ["始 invalid", "約 invalid"] {
+        let task = new_test_task_handle("不正時刻対象").unwrap();
+        task.set_start_time(original_start);
+        task.set_deadline_time_opt(Some(original_deadline));
+        let task_id = task.get_id().unwrap();
+
+        let result = execute_command_for_test(task, now, Some(task_id), command);
+
+        assert_eq!(result.task.get_start_time().unwrap(), original_start);
+        assert_eq!(
+            result.task.get_deadline_time_opt().unwrap(),
+            Some(original_deadline)
+        );
+        assert_eq!(result.focused_task_id_opt, Some(task_id));
+    }
+}
+
+#[test]
 fn test_execute_空_2引数は従来通り現在時刻基準で処理する() {
     let now = Local.with_ymd_and_hms(2026, 8, 14, 12, 0, 0).unwrap();
     let task = new_test_task_handle("従来の空対象").unwrap();
