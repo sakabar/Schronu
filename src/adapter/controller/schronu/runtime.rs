@@ -674,6 +674,46 @@ fn test_resolve_show_all_pattern_完全日付と検索語は変更しない() {
     assert_eq!(resolve_show_all_pattern("タスク", now), "タスク");
 }
 
+#[test]
+fn test_show_task_list_mmddの日時errorを伝搬して表示と状態を変更しない() {
+    let now = maximum_local_datetime();
+    let task = new_test_task_handle("show all日時範囲外対象").unwrap();
+    let task_id = task.get_id().unwrap();
+    let original_snapshot = task.snapshot().unwrap();
+    let mut task_repository = TestTaskRepository::new(task, now);
+    let mut free_time_manager = TestFreeTimeManager;
+    let mut focused_task_id_opt = Some(task_id);
+    let mut display = TestWriter::new();
+    let mut next_id = || Uuid::nil();
+    let mut task_factory = TaskFactory::new(now, &mut next_id);
+    let mut context = RuntimeTaskTreeCommandContext {
+        task_repository: &mut task_repository,
+        free_time_manager: &mut free_time_manager,
+        focused_task_id_opt: &mut focused_task_id_opt,
+        task_factory: &mut task_factory,
+        config: active_config(),
+        supports_ansi_color: false,
+    };
+
+    let actual = context.show_task_list(
+        &mut display,
+        Some("12/31"),
+        TaskListOrder::ScheduledStartDesc,
+        true,
+    );
+
+    assert!(matches!(
+        actual,
+        Err(ApplicationError::SubjectiveDateOutOfRange {
+            operation: "upcoming_calendar_date",
+            datetime,
+        }) if datetime == now
+    ));
+    assert_eq!(task_repository.task.snapshot().unwrap(), original_snapshot);
+    assert_eq!(focused_task_id_opt, Some(task_id));
+    assert!(display.into_string().is_empty());
+}
+
 fn get_adjustable_prefix_label(
     task: &TaskHandle,
     dt: DateTime<Local>,
