@@ -623,6 +623,19 @@ fn test_resolve_upcoming_clear_or_gather_day_午前6時前の明と不正値を�
 }
 
 #[test]
+fn test_resolve_upcoming_clear_or_gather_day_業務日計算不能を情報付きerrorにする() {
+    let now = maximum_local_datetime();
+
+    assert_eq!(
+        resolve_upcoming_clear_or_gather_day("明", now),
+        Err(ApplicationError::SubjectiveDateOutOfRange {
+            operation: "next_business_day_start",
+            datetime: now,
+        })
+    );
+}
+
+#[test]
 fn test_resolve_show_all_pattern_年なし日付を完全日付へ変換する() {
     let now = Local.with_ymd_and_hms(2026, 8, 11, 12, 0, 0).unwrap();
 
@@ -5018,6 +5031,40 @@ fn test_execute_空_明指定は次の業務日の予定をpendingにする() {
         result.task.get_pending_until().unwrap(),
         schronu_day_start + Duration::hours(7)
     );
+}
+
+#[test]
+fn test_execute_空_日付selectorの業務日計算不能を情報付きerrorにして変更しない() {
+    let now = maximum_local_datetime();
+    let task = new_test_task_handle("日時範囲外の空対象").unwrap();
+    let task_id = task.get_id().unwrap();
+    let original_snapshot = task.snapshot().unwrap();
+    let mut task_repository = TestTaskRepository::new(task, now);
+    let mut free_time_manager = TestFreeTimeManager;
+    let mut focused_task_id_opt = Some(task_id);
+    let mut stdout = TestWriter::new();
+
+    let actual = execute(
+        &mut stdout,
+        &mut task_repository,
+        &mut free_time_manager,
+        &mut focused_task_id_opt,
+        &now,
+        "空 13:00 明",
+    );
+
+    assert!(matches!(
+        actual,
+        Err(CommandError::Application(
+            ApplicationError::SubjectiveDateOutOfRange {
+                operation: "next_business_day_start",
+                datetime,
+            }
+        )) if datetime == now
+    ));
+    assert_eq!(task_repository.task.snapshot().unwrap(), original_snapshot);
+    assert_eq!(focused_task_id_opt, Some(task_id));
+    assert!(stdout.into_string().is_empty());
 }
 
 #[test]
