@@ -733,7 +733,13 @@ fn parse_clear_or_gather_defer_to_datetime(
         let Some(minutes) = arg.parse::<i64>().ok() else {
             return Ok(None);
         };
-        return Ok(Some(now + Duration::minutes(minutes)));
+        let defer_to_datetime = Duration::try_minutes(minutes)
+            .and_then(|duration| now.checked_add_signed(duration))
+            .ok_or(ApplicationError::SubjectiveDateOutOfRange {
+                operation: "clear_or_gather_minutes",
+                datetime: now,
+            })?;
+        return Ok(Some(defer_to_datetime));
     }
 
     Ok(None)
