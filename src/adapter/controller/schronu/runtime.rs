@@ -9814,6 +9814,82 @@ fn execute_non_interactive_command(
 }
 
 #[test]
+fn test_execute_non_interactive_command_project作成はoperation時刻を共有する() {
+    let storage_dir = TestStorageDir::new();
+    std::fs::create_dir_all(&storage_dir.path).unwrap();
+    let previous_synced_time = Local.with_ymd_and_hms(2026, 8, 19, 9, 0, 0).unwrap();
+    let operation_now = Local.with_ymd_and_hms(2026, 8, 20, 14, 30, 45).unwrap();
+    let mut task_repository = TestTaskRepository::new(
+        new_test_task_handle("既存project").unwrap(),
+        previous_synced_time,
+    )
+    .with_storage_directory(&storage_dir.path);
+    let mut free_time_manager = TestFreeTimeManager;
+
+    execute_non_interactive_command_at(
+        &mut task_repository,
+        &mut free_time_manager,
+        "新 snapshot_project 30",
+        operation_now,
+    )
+    .unwrap();
+
+    assert_eq!(task_repository.get_last_synced_time(), operation_now);
+    assert_eq!(task_repository.reload_if_changed_attempt_count.get(), 1);
+    assert_eq!(task_repository.task.get_name().unwrap(), "snapshot_project");
+    assert_eq!(
+        task_repository.task.get_create_time().unwrap(),
+        operation_now
+    );
+    assert_eq!(
+        task_repository.task.get_start_time().unwrap(),
+        operation_now
+    );
+}
+
+#[test]
+fn test_execute_non_interactive_command_finishはoperation時刻を共有する() {
+    let storage_dir = TestStorageDir::new();
+    std::fs::create_dir_all(&storage_dir.path).unwrap();
+    let previous_synced_time = Local.with_ymd_and_hms(2026, 8, 19, 9, 0, 0).unwrap();
+    let operation_now = Local.with_ymd_and_hms(2026, 8, 20, 14, 30, 45).unwrap();
+    let repetitive_parent = new_test_task_handle("反復project").unwrap();
+    repetitive_parent
+        .set_repetition_interval_days_opt(Some(7))
+        .unwrap();
+    let focused = repetitive_parent.create_as_last_child(new_test_task_attr("今回の反復task"));
+    let focused_id = focused.get_id().unwrap();
+    let mut task_repository = TestTaskRepository::new(repetitive_parent, previous_synced_time)
+        .with_storage_directory(&storage_dir.path);
+    task_repository.highest_priority_leaf_task_id_opt = Some(focused_id);
+    let mut free_time_manager = TestFreeTimeManager;
+
+    execute_non_interactive_command_at(
+        &mut task_repository,
+        &mut free_time_manager,
+        "終",
+        operation_now,
+    )
+    .unwrap();
+
+    assert_eq!(task_repository.get_last_synced_time(), operation_now);
+    assert_eq!(task_repository.reload_if_changed_attempt_count.get(), 1);
+    let finished = task_repository
+        .get_by_id(focused_id)
+        .unwrap()
+        .expect("完了対象のtaskはtreeに残るべきです");
+    assert_eq!(finished.get_end_time_opt().unwrap(), Some(operation_now));
+    let next_repetition = task_repository
+        .task
+        .get_children()
+        .unwrap()
+        .into_iter()
+        .find(|task| task.get_id().unwrap() != focused_id)
+        .expect("反復taskの完了時は次回taskを生成すべきです");
+    assert_eq!(next_repetition.get_create_time().unwrap(), operation_now);
+}
+
+#[test]
 fn test_execute_non_interactive_command_load失敗時はcommandを実行しない() {
     let storage_dir = TestStorageDir::new();
     std::fs::create_dir_all(&storage_dir.path).unwrap();
