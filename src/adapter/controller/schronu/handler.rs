@@ -1,14 +1,16 @@
 use super::command::{Command, CommandAction, CommandKind, CommandParseError, InteractiveShortcut};
 use super::renderer::{DisplayModel, DisplayRecorder, SchronuWriter};
-use chrono::{DateTime, Datelike, Duration, Local, TimeZone, Timelike};
+use chrono::{DateTime, Datelike, Days, Duration, Local, NaiveDate, NaiveTime};
 use regex::Regex;
+use schronu::application::daily_capacity::{
+    try_local_date_and_time, try_next_business_day_start, try_subjective_date,
+};
 use schronu::application::flatten_use_case::{FlattenResult, UnresolvedReason};
 use schronu::application::pack_use_case::PackResult;
 use schronu::application::task_use_case::{
     estimated_work_seconds_from_minutes, validate_task_name, ApplicationError, BreakdownTaskInput,
     CompleteTaskInput, CreateTaskInput,
 };
-use schronu::entity::datetime::get_next_morning_datetime;
 use schronu::entity::task::{TaskAttr, TaskHandle};
 use std::cmp::min;
 use uuid::Uuid;
@@ -395,7 +397,7 @@ pub(super) fn handle_project_command(
             ..
         } => {
             let now = context.last_synced_time();
-            if let Some(start_time) = decide_time_values(values, &now) {
+            if let Some(start_time) = decide_time_values(values, &now)? {
                 let focused_task_opt = context.focused_task()?;
                 execute_make_appointment(&focused_task_opt, start_time)?;
             }
@@ -407,7 +409,7 @@ pub(super) fn handle_project_command(
             ..
         } => {
             let now = context.last_synced_time();
-            if let Some(start_time) = decide_time_values(values, &now) {
+            if let Some(start_time) = decide_time_values(values, &now)? {
                 if let Some(task) = context.focused_task()? {
                     task.set_start_time(start_time)
                         .map_err(ApplicationError::TaskTree)?;
@@ -579,7 +581,7 @@ pub(super) fn handle_finish_placement_command(
                 context.show_focused_tree(&mut display)?;
             } else {
                 let now = context.last_synced_time();
-                if let Some(finished_at) = decide_finish_time_values(values, &now) {
+                if let Some(finished_at) = decide_finish_time_values(values, &now)? {
                     let additional_actual_work_seconds = if values.is_empty() {
                         let focus_duration_seconds =
                             (now - context.focus_started_datetime()).num_seconds();
@@ -627,33 +629,47 @@ pub(super) fn handle_finish_placement_command(
 pub(super) fn decide_finish_time_values(
     values: &[String],
     now: &DateTime<Local>,
-) -> Option<DateTime<Local>> {
+) -> Result<Option<DateTime<Local>>, ApplicationError> {
     let hhmmss_reg = Regex::new(r"^(\d{1,2}):(\d{1,2})(?::(\d{1,2}))?$").unwrap();
     let yyyymmdd_reg = Regex::new(r"^\d{2,4}/\d{1,2}/\d{1,2}$").unwrap();
     let mmdd_reg = Regex::new(r"^\d{1,2}/\d{1,2}$").unwrap();
     let days_of_week = ["月", "火", "水", "木", "金", "土", "日"];
 
-    let build_finish_time = |hhmmss: &str, date: Option<&String>| {
-        let captures = hhmmss_reg.captures(hhmmss)?;
-        let hours: u32 = captures[1].parse().ok()?;
-        let minutes: u32 = captures[2].parse().ok()?;
-        let seconds: u32 = captures
+    let build_finish_time = |hhmmss: &str,
+                             date: Option<&String>|
+     -> Result<Option<DateTime<Local>>, ApplicationError> {
+        let Some(captures) = hhmmss_reg.captures(hhmmss) else {
+            return Ok(None);
+        };
+        let Some(hours) = captures[1].parse::<u32>().ok() else {
+            return Ok(None);
+        };
+        let Some(minutes) = captures[2].parse::<u32>().ok() else {
+            return Ok(None);
+        };
+        let Some(seconds) = captures
             .get(3)
             .map(|value| value.as_str().parse().ok())
-            .unwrap_or(Some(0))?;
-        if hours > 23 || minutes > 59 || seconds > 59 {
-            return None;
-        }
+            .unwrap_or(Some(0))
+        else {
+            return Ok(None);
+        };
+        let Some(time) = NaiveTime::from_hms_opt(hours, minutes, seconds) else {
+            return Ok(None);
+        };
         let mut time_values = vec![format!("{hours}:{minutes}")];
         if let Some(date) = date {
             time_values.push(date.clone());
         }
-        decide_time_values(&time_values, now)?.with_second(seconds)
+        let Some(base_datetime) = decide_time_values(&time_values, now)? else {
+            return Ok(None);
+        };
+        resolve_date_and_time(base_datetime.date_naive(), time).map(Some)
     };
 
     match values {
-        [] => Some(*now),
-        [value] if matches!(value.as_str(), "今" | "now") => Some(*now),
+        [] => Ok(Some(*now)),
+        [value] if matches!(value.as_str(), "今" | "now") => Ok(Some(*now)),
         [time] if hhmmss_reg.is_match(time) => build_finish_time(time, None),
         [time, date]
             if hhmmss_reg.is_match(time)
@@ -664,7 +680,7 @@ pub(super) fn decide_finish_time_values(
         {
             build_finish_time(time, Some(date))
         }
-        _ => None,
+        _ => Ok(None),
     }
 }
 
@@ -844,9 +860,34 @@ fn execute_start_new_project(
     defer_days_opt: Option<i64>,
     estimated_work_minutes_opt: Option<i64>,
 ) -> Result<(), ApplicationError> {
-    let pending_until = defer_days_opt.map(|defer_days| {
-        get_next_morning_datetime(context.last_synced_time()) + Duration::days(defer_days - 1)
-    });
+    validate_task_name(name, "name")?;
+    if let Some(estimated_work_minutes) = estimated_work_minutes_opt {
+        estimated_work_seconds_from_minutes(estimated_work_minutes)?;
+    }
+    let pending_until = if let Some(defer_days) = defer_days_opt {
+        let now = context.last_synced_time();
+        let next_business_day_start = try_next_business_day_start(now)?;
+        let offset_days =
+            defer_days
+                .checked_sub(1)
+                .ok_or(ApplicationError::SubjectiveDateOutOfRange {
+                    operation: "next_business_day_start",
+                    datetime: now,
+                })?;
+        let offset =
+            Duration::try_days(offset_days).ok_or(ApplicationError::SubjectiveDateOutOfRange {
+                operation: "next_business_day_start",
+                datetime: now,
+            })?;
+        Some(next_business_day_start.checked_add_signed(offset).ok_or(
+            ApplicationError::SubjectiveDateOutOfRange {
+                operation: "next_business_day_start",
+                datetime: now,
+            },
+        )?)
+    } else {
+        None
+    };
     let task_id = context.create_task(CreateTaskInput {
         name: name.to_string(),
         estimated_work_minutes: estimated_work_minutes_opt,
@@ -1034,63 +1075,83 @@ fn execute_create_repetition_task(
 pub(super) fn decide_time_values(
     values: &[String],
     now: &DateTime<Local>,
-) -> Option<DateTime<Local>> {
-    let start_hhmm_str = values.first()?;
+) -> Result<Option<DateTime<Local>>, ApplicationError> {
+    let Some(start_hhmm_str) = values.first() else {
+        return Ok(None);
+    };
     let start_date_str = values.get(1).map_or("dummy", String::as_str);
     let hhmm_reg = Regex::new(r"^(\d{1,2}):(\d{1,2})$").unwrap();
     let (hh, mm) = if let Some(captures) = hhmm_reg.captures(start_hhmm_str) {
-        (captures[1].parse().unwrap(), captures[2].parse().unwrap())
+        let (Some(hour), Some(minute)) = (
+            captures[1].parse::<u32>().ok(),
+            captures[2].parse::<u32>().ok(),
+        ) else {
+            return Ok(None);
+        };
+        (hour, minute)
     } else {
         (12, 0)
+    };
+    let Some(time) = NaiveTime::from_hms_opt(hh, mm, 0) else {
+        return Ok(None);
     };
     let yyyymmdd_reg = Regex::new(r"^(\d{2,4})/(\d{1,2})/(\d{1,2})$").unwrap();
     let mmdd_reg = Regex::new(r"^(\d{1,2})/(\d{1,2})$").unwrap();
 
     if let Some(captures) = yyyymmdd_reg.captures(start_date_str) {
-        let raw_year: i32 = captures[1].parse().unwrap();
+        let (Some(raw_year), Some(month), Some(day)) = (
+            captures[1].parse::<i32>().ok(),
+            captures[2].parse::<u32>().ok(),
+            captures[3].parse::<u32>().ok(),
+        ) else {
+            return Ok(None);
+        };
         let year = if raw_year < 100 {
             raw_year + 2000
         } else {
             raw_year
         };
-        return Some(
-            Local
-                .with_ymd_and_hms(
-                    year,
-                    captures[2].parse().unwrap(),
-                    captures[3].parse().unwrap(),
-                    hh,
-                    mm,
-                    0,
-                )
-                .unwrap(),
-        );
+        let Some(date) = NaiveDate::from_ymd_opt(year, month, day) else {
+            return Ok(None);
+        };
+        return resolve_date_and_time(date, time).map(Some);
     }
     if let Some(captures) = mmdd_reg.captures(start_date_str) {
-        let month = captures[1].parse().unwrap();
-        let day = captures[2].parse().unwrap();
-        let mut answer = Local
-            .with_ymd_and_hms(now.year(), month, day, hh, mm, 0)
-            .unwrap();
+        let (Some(month), Some(day)) = (
+            captures[1].parse::<u32>().ok(),
+            captures[2].parse::<u32>().ok(),
+        ) else {
+            return Ok(None);
+        };
+        let Some(mut date) = NaiveDate::from_ymd_opt(now.year(), month, day) else {
+            return Ok(None);
+        };
+        let mut answer = resolve_date_and_time(date, time)?;
         if answer < *now {
-            answer = Local
-                .with_ymd_and_hms(now.year() + 1, month, day, hh, mm, 0)
-                .unwrap();
+            let next_year =
+                now.year()
+                    .checked_add(1)
+                    .ok_or(ApplicationError::SubjectiveDateOutOfRange {
+                        operation: "upcoming_calendar_date",
+                        datetime: *now,
+                    })?;
+            let Some(next_date) = NaiveDate::from_ymd_opt(next_year, month, day) else {
+                return Ok(None);
+            };
+            date = next_date;
+            answer = resolve_date_and_time(date, time)?;
         }
-        return Some(answer);
+        return Ok(Some(answer));
     }
     if start_date_str.starts_with('明') {
-        let next_day = get_next_morning_datetime(*now);
-        return Some(
-            Local
-                .with_ymd_and_hms(next_day.year(), next_day.month(), next_day.day(), hh, mm, 0)
-                .unwrap(),
-        );
+        let next_day = try_next_business_day_start(*now)?;
+        return resolve_date_and_time(next_day.date_naive(), time).map(Some);
     }
     let days_of_week = ["月", "火", "水", "木", "金", "土", "日"];
     if days_of_week.contains(&start_date_str) {
-        let today = get_next_morning_datetime(*now) - Duration::days(1);
-        let current_index = today.weekday().num_days_from_monday() as usize;
+        let next_business_day_start = try_next_business_day_start(*now)?;
+        let subjective_date = try_subjective_date(*now)?;
+        let current_index = subjective_date.weekday().num_days_from_monday() as usize;
         let target_index = days_of_week
             .iter()
             .position(|day| day == &start_date_str)
@@ -1101,30 +1162,31 @@ pub(super) fn decide_time_values(
         } else {
             difference as i64
         };
-        let target_day = get_next_morning_datetime(*now) + Duration::days(days - 1);
-        return Some(
-            Local
-                .with_ymd_and_hms(
-                    target_day.year(),
-                    target_day.month(),
-                    target_day.day(),
-                    hh,
-                    mm,
-                    0,
-                )
-                .unwrap(),
-        );
+        let Some(target_date) = next_business_day_start
+            .date_naive()
+            .checked_add_days(Days::new((days - 1) as u64))
+        else {
+            return Err(ApplicationError::SubjectiveDateOutOfRange {
+                operation: "weekday_date",
+                datetime: *now,
+            });
+        };
+        return resolve_date_and_time(target_date, time).map(Some);
     }
-    Some(
-        Local
-            .with_ymd_and_hms(now.year(), now.month(), now.day(), hh, mm, 0)
-            .unwrap(),
-    )
+    resolve_date_and_time(now.date_naive(), time).map(Some)
+}
+
+fn resolve_date_and_time(
+    date: NaiveDate,
+    time: NaiveTime,
+) -> Result<DateTime<Local>, ApplicationError> {
+    try_local_date_and_time(date, time)
 }
 
 #[cfg(test)]
 mod task_generation_context_tests {
     use super::*;
+    use chrono::TimeZone;
     use std::collections::VecDeque;
 
     struct FixedIdentityProjectCommandContext {

@@ -1,7 +1,7 @@
 use super::interface::FreeTimeManagerTrait;
 use super::task_use_case::{resolve_local_datetime, ApplicationError};
 use crate::entity::datetime::{BusinessDateTimePolicy, DEFAULT_END_OF_DAY_OFFSET_MINUTES};
-use chrono::{DateTime, Local, NaiveDate, Timelike};
+use chrono::{DateTime, Local, NaiveDate, NaiveTime, TimeZone, Timelike};
 
 pub const RHO_GOAL: f64 = 0.7;
 pub const END_OF_DAY_OFFSET_MINUTES: i64 = DEFAULT_END_OF_DAY_OFFSET_MINUTES;
@@ -108,11 +108,19 @@ pub fn try_subjective_date(datetime: DateTime<Local>) -> Result<NaiveDate, Appli
         })
 }
 
+pub fn try_local_date_and_time(
+    date: NaiveDate,
+    time: NaiveTime,
+) -> Result<DateTime<Local>, ApplicationError> {
+    let local_datetime = date.and_time(time);
+    resolve_local_datetime(local_datetime, Local.from_local_datetime(&local_datetime))
+}
+
 pub fn subjective_date(datetime: DateTime<Local>) -> NaiveDate {
     try_subjective_date(datetime).unwrap_or_else(|error| panic!("{error}"))
 }
 
-pub(crate) fn try_next_business_day_start(
+pub fn try_next_business_day_start(
     datetime: DateTime<Local>,
 ) -> Result<DateTime<Local>, ApplicationError> {
     let policy = BusinessDateTimePolicy::new(END_OF_DAY_OFFSET_MINUTES);

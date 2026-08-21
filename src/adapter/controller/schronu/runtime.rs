@@ -4566,7 +4566,7 @@ fn decide_time(tokens: &[&str], now: &DateTime<Local>) -> Option<DateTime<Local>
         .skip(1)
         .map(|value| (*value).to_string())
         .collect::<Vec<_>>();
-    decide_time_values(&values, now)
+    decide_time_values(&values, now).expect("test datetime input must resolve")
 }
 
 #[cfg(test)]
@@ -4576,7 +4576,7 @@ fn decide_finish_time(tokens: &Vec<&str>, now: &DateTime<Local>) -> Option<DateT
         .skip(1)
         .map(|value| (*value).to_string())
         .collect::<Vec<_>>();
-    decide_finish_time_values(&values, now)
+    decide_finish_time_values(&values, now).expect("test finish datetime input must resolve")
 }
 
 #[test]
