@@ -1,5 +1,6 @@
 use super::input::{
-    generated_input_schema, GetFocusInput, GetScheduleInput, GetTaskInput, ListTasksInput,
+    generated_input_schema, BreakdownTaskInput, CreateTaskInput, GetFocusInput, GetScheduleInput,
+    GetTaskInput, ListTasksInput,
 };
 use serde_json::{json, Value};
 
@@ -28,34 +29,12 @@ pub(super) fn tool_definitions() -> Vec<Value> {
         json!({
             "name": "create_task",
             "description": "Create a new root project task.",
-            "inputSchema": {
-                "type": "object",
-                "properties": {
-                    "name": {"type": "string", "minLength": 1},
-                    "estimated_work_minutes": {"type": "integer", "minimum": 0},
-                    "pending_until": {"type": "string", "format": "date-time"}
-                },
-                "required": ["name"],
-                "additionalProperties": false
-            }
+            "inputSchema": generated_input_schema::<CreateTaskInput>()
         }),
         json!({
             "name": "breakdown_task",
             "description": "Add child tasks to an existing task.",
-            "inputSchema": {
-                "type": "object",
-                "properties": {
-                    "parent_id": {"type": "string", "format": "uuid"},
-                    "names": {
-                        "type": "array",
-                        "items": {"type": "string", "minLength": 1},
-                        "minItems": 1
-                    },
-                    "pending_until": {"type": "string", "format": "date-time"}
-                },
-                "required": ["parent_id", "names"],
-                "additionalProperties": false
-            }
+            "inputSchema": generated_input_schema::<BreakdownTaskInput>()
         }),
         json!({
             "name": "defer_task",

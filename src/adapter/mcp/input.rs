@@ -1,6 +1,7 @@
 use super::error::InvalidParams;
 use crate::application::task_use_case::{
-    BreakdownTaskInput, CompleteTaskInput, CreateTaskInput, ListTasksFilter, TaskPeriodField,
+    BreakdownTaskInput as ApplicationBreakdownTaskInput, CompleteTaskInput,
+    CreateTaskInput as ApplicationCreateTaskInput, ListTasksFilter, TaskPeriodField,
     TaskPeriodFilter,
 };
 use crate::entity::datetime::get_next_morning_datetime;
@@ -214,6 +215,50 @@ impl JsonSchema for NonEmptyString {
     }
 }
 
+#[allow(dead_code, reason = "used by the staged typed-tool migration")]
+pub(super) struct NonEmptyVec<T>(pub(super) Vec<T>);
+
+impl<'de, T> Deserialize<'de> for NonEmptyVec<T>
+where
+    T: Deserialize<'de>,
+{
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let values = Vec::<T>::deserialize(deserializer)?;
+        if values.is_empty() {
+            Err(serde::de::Error::custom(format!(
+                "{SCHEMA_ERROR_PREFIX}must contain at least one item"
+            )))
+        } else {
+            Ok(Self(values))
+        }
+    }
+}
+
+impl<T> JsonSchema for NonEmptyVec<T>
+where
+    T: JsonSchema,
+{
+    fn schema_name() -> Cow<'static, str> {
+        format!("NonEmptyVec_{}", T::schema_name()).into()
+    }
+
+    fn schema_id() -> Cow<'static, str> {
+        format!("{}::NonEmptyVec<{}>", module_path!(), T::schema_id()).into()
+    }
+
+    fn inline_schema() -> bool {
+        true
+    }
+
+    fn json_schema(generator: &mut SchemaGenerator) -> Schema {
+        let item_schema = generator.subschema_for::<T>().to_value();
+        json_schema!({"type": "array", "items": item_schema, "minItems": 1})
+    }
+}
+
 #[derive(Default)]
 #[allow(dead_code, reason = "used by the staged typed-tool migration")]
 pub(super) enum OptionalValue<T> {
@@ -331,6 +376,27 @@ pub(super) struct GetFocusInput {}
 #[allow(dead_code, reason = "used by the staged typed-handler migration")]
 pub(super) struct GetTaskInput {
     pub(super) task_id: UuidValue,
+}
+
+#[derive(Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+#[allow(dead_code, reason = "used by the staged typed-handler migration")]
+pub(super) struct CreateTaskInput {
+    pub(super) name: NonEmptyString,
+    #[serde(default)]
+    pub(super) estimated_work_minutes: OptionalValue<NonNegativeI64>,
+    #[serde(default)]
+    pub(super) pending_until: OptionalValue<Rfc3339DateTime>,
+}
+
+#[derive(Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+#[allow(dead_code, reason = "used by the staged typed-handler migration")]
+pub(super) struct BreakdownTaskInput {
+    pub(super) parent_id: UuidValue,
+    pub(super) names: NonEmptyVec<NonEmptyString>,
+    #[serde(default)]
+    pub(super) pending_until: OptionalValue<Rfc3339DateTime>,
 }
 
 #[derive(Deserialize, JsonSchema)]
@@ -690,6 +756,7 @@ fn schema_reason(reason: &str) -> &'static str {
     match reason {
         "must be a non-negative integer" => "must be a non-negative integer",
         "must not be empty" => "must not be empty",
+        "must contain at least one item" => "must contain at least one item",
         "must be a string or null" => "must be a string or null",
         "must be a date string" => "must be a date string",
         "must be a supported period field" => "must be a supported period field",
@@ -973,7 +1040,7 @@ pub(super) fn defer_task_input(
 
 pub(super) fn breakdown_task_input(
     arguments: &Value,
-) -> Result<BreakdownTaskInput, ToolInputError> {
+) -> Result<ApplicationBreakdownTaskInput, ToolInputError> {
     let arguments = validate_argument_object(
         arguments,
         &["parent_id", "names", "pending_until"],
@@ -1013,14 +1080,16 @@ pub(super) fn breakdown_task_input(
         .collect::<Result<Vec<_>, _>>()?;
     let pending_until = optional_datetime_argument(arguments, "pending_until")?;
 
-    Ok(BreakdownTaskInput {
+    Ok(ApplicationBreakdownTaskInput {
         parent_id,
         names,
         pending_until,
     })
 }
 
-pub(super) fn create_task_input(arguments: &Value) -> Result<CreateTaskInput, ToolInputError> {
+pub(super) fn create_task_input(
+    arguments: &Value,
+) -> Result<ApplicationCreateTaskInput, ToolInputError> {
     let arguments = validate_argument_object(
         arguments,
         &["name", "estimated_work_minutes", "pending_until"],
@@ -1039,7 +1108,7 @@ pub(super) fn create_task_input(arguments: &Value) -> Result<CreateTaskInput, To
         optional_non_negative_i64_argument(arguments, "estimated_work_minutes")?;
     let pending_until = optional_datetime_argument(arguments, "pending_until")?;
 
-    Ok(CreateTaskInput {
+    Ok(ApplicationCreateTaskInput {
         name: name.to_string(),
         estimated_work_minutes,
         pending_until,
