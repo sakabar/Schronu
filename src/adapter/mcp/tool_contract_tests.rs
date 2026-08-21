@@ -1473,6 +1473,13 @@ fn 状態変更入力はunknown_fieldとrequired_task_idを他の違反より先
             "task_id",
             "field is required",
         ),
+        (
+            "update-empty-patch-first",
+            "update_task",
+            json!({"task_id": "invalid"}),
+            "arguments",
+            "must include at least one field to update",
+        ),
     ];
 
     for (id, tool_name, arguments, field, reason) in cases {
