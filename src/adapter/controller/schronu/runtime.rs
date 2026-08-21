@@ -25,8 +25,8 @@ use super::renderer::{
 #[cfg(test)]
 use chrono::FixedOffset;
 use chrono::{
-    DateTime, Datelike, Duration, Local, LocalResult, NaiveDate, NaiveTime, TimeZone, Timelike,
-    Weekday,
+    DateTime, Datelike, Duration, Local, LocalResult, NaiveDate, NaiveDateTime, NaiveTime,
+    TimeZone, Timelike, Weekday,
 };
 use percent_encoding::{percent_encode, AsciiSet, CONTROLS};
 use regex::Regex;
@@ -743,6 +743,25 @@ fn parse_clear_or_gather_defer_to_datetime(
 
 type ClearOrGatherTimeRange = (DateTime<Local>, DateTime<Local>);
 
+fn resolve_dated_clear_or_gather_end_naive(
+    schronu_day_start: NaiveDateTime,
+    hour: i64,
+    minute: u32,
+) -> Option<NaiveDateTime> {
+    let calendar_hour = u32::try_from(hour % 24).ok()?;
+    let calendar_time = NaiveTime::from_hms_opt(calendar_hour, minute, 0)?;
+    let calendar_duration = Duration::try_days(hour / 24)?;
+    let mut target_date = schronu_day_start
+        .date()
+        .checked_add_signed(calendar_duration)?;
+    let mut target = target_date.and_time(calendar_time);
+    if target < schronu_day_start {
+        target_date = target_date.checked_add_signed(Duration::days(1))?;
+        target = target_date.and_time(calendar_time);
+    }
+    Some(target)
+}
+
 fn parse_dated_clear_or_gather_time_range(
     time: &str,
     mmdd: &str,
@@ -759,28 +778,12 @@ fn parse_dated_clear_or_gather_time_range(
     else {
         return Ok(None);
     };
-    if minute >= 60 {
-        return Ok(None);
-    }
-
-    let (Some(calendar_hour), Some(calendar_duration)) =
-        (u32::try_from(hour % 24).ok(), Duration::try_days(hour / 24))
+    let Some(end_naive) =
+        resolve_dated_clear_or_gather_end_naive(schronu_day_start.naive_local(), hour, minute)
     else {
         return Ok(None);
     };
-    let Some(calendar_time) = NaiveTime::from_hms_opt(calendar_hour, minute, 0) else {
-        return Ok(None);
-    };
-    let localized_end = try_local_date_and_time(schronu_day_start.date_naive(), calendar_time)?;
-    let Some(mut end) = localized_end.checked_add_signed(calendar_duration) else {
-        return Ok(None);
-    };
-    if end < schronu_day_start {
-        let Some(adjusted_end) = end.checked_add_signed(Duration::days(1)) else {
-            return Ok(None);
-        };
-        end = adjusted_end;
-    }
+    let end = try_local_date_and_time(end_naive.date(), end_naive.time())?;
 
     Ok((schronu_day_start < end).then_some((schronu_day_start, end)))
 }
@@ -1102,6 +1105,27 @@ mod tests {
                 start,
                 Local.with_ymd_and_hms(2026, 8, 16, 0, 30, 0).unwrap()
             )))
+        );
+    }
+
+    #[test]
+    fn test_resolve_dated_clear_or_gather_end_naive_最終壁時計日付を変換前に確定する() {
+        let day_start = NaiveDate::from_ymd_opt(2026, 3, 28)
+            .unwrap()
+            .and_hms_opt(6, 0, 0)
+            .unwrap();
+
+        assert_eq!(
+            resolve_dated_clear_or_gather_end_naive(day_start, 24, 30),
+            NaiveDate::from_ymd_opt(2026, 3, 29)
+                .unwrap()
+                .and_hms_opt(0, 30, 0)
+        );
+        assert_eq!(
+            resolve_dated_clear_or_gather_end_naive(day_start, 3, 0),
+            NaiveDate::from_ymd_opt(2026, 3, 29)
+                .unwrap()
+                .and_hms_opt(3, 0, 0)
         );
     }
 
