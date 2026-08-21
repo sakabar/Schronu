@@ -1434,8 +1434,8 @@ fn 状態変更入力はunknown_fieldとrequired_task_idを他の違反より先
         (
             "defer-unknown-first",
             "defer_task",
-            json!({"pending_until": 1, "extra": true}),
-            "arguments.extra",
+            json!({"pending_until": 1, "zzz": true}),
+            "arguments.zzz",
             "additional property is not allowed",
         ),
         (
@@ -1448,8 +1448,8 @@ fn 状態変更入力はunknown_fieldとrequired_task_idを他の違反より先
         (
             "complete-unknown-first",
             "complete_task",
-            json!({"finished_at": 1, "extra": true}),
-            "arguments.extra",
+            json!({"finished_at": 1, "zzz": true}),
+            "arguments.zzz",
             "additional property is not allowed",
         ),
         (
@@ -1462,8 +1462,8 @@ fn 状態変更入力はunknown_fieldとrequired_task_idを他の違反より先
         (
             "update-unknown-first",
             "update_task",
-            json!({"category": "unknown", "extra": true}),
-            "arguments.extra",
+            json!({"category": "unknown", "zzz": true}),
+            "arguments.zzz",
             "additional property is not allowed",
         ),
         (
