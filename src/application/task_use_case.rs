@@ -416,24 +416,17 @@ pub fn complete_task(
 }
 
 fn prospective_next_focus_task_id(task: &TaskHandle) -> Result<Option<Uuid>, ApplicationError> {
-    let task_id = task.get_id().map_err(ApplicationError::TaskTree)?;
-    let Some(parent) = task.parent().map_err(ApplicationError::TaskTree)? else {
+    if !task
+        .all_sibling_tasks_are_all_done()
+        .map_err(ApplicationError::TaskTree)?
+    {
         return Ok(None);
-    };
-    let siblings = parent.get_children().map_err(ApplicationError::TaskTree)?;
-
-    for sibling in siblings {
-        let sibling_id = sibling.get_id().map_err(ApplicationError::TaskTree)?;
-        if sibling_id != task_id
-            && sibling.get_status().map_err(ApplicationError::TaskTree)? != Status::Done
-        {
-            return Ok(None);
-        }
     }
 
-    parent
-        .get_id()
-        .map(Some)
+    task.parent()
+        .map_err(ApplicationError::TaskTree)?
+        .map(|parent| parent.get_id())
+        .transpose()
         .map_err(ApplicationError::TaskTree)
 }
 
@@ -1697,6 +1690,73 @@ mod tests {
             child_ids_before
         );
         assert_eq!(id_call_count.get(), 0);
+    }
+
+    #[test]
+    fn complete_task_対象以外のsiblingが全てdoneならparentを次focusにする() {
+        let parent = crate::test_support::new_task_handle("親").unwrap();
+        let child = parent.create_as_last_child(crate::test_support::new_task_attr("対象"));
+        let mut sibling_attr = crate::test_support::new_task_attr("完了済み");
+        sibling_attr.set_orig_status(Status::Done);
+        parent.create_as_last_child(sibling_attr);
+        let parent_id = parent.get_id().unwrap();
+        let child_id = child.get_id().unwrap();
+        let mut repository = TestTaskRepository::new(vec![parent], fixed_now());
+
+        let output = complete_task_with_fresh_factory(
+            &mut repository,
+            CompleteTaskInput {
+                task_id: child_id,
+                finished_at: fixed_now(),
+                additional_actual_work_seconds: 0,
+            },
+        )
+        .unwrap();
+
+        assert_eq!(output.next_focus_task_id, Some(parent_id));
+    }
+
+    #[test]
+    fn complete_task_todoのsiblingがあれば次focusを返さない() {
+        let parent = crate::test_support::new_task_handle("親").unwrap();
+        let child = parent.create_as_last_child(crate::test_support::new_task_attr("対象"));
+        parent.create_as_last_child(crate::test_support::new_task_attr("未完了"));
+        let child_id = child.get_id().unwrap();
+        let mut repository = TestTaskRepository::new(vec![parent], fixed_now());
+
+        let output = complete_task_with_fresh_factory(
+            &mut repository,
+            CompleteTaskInput {
+                task_id: child_id,
+                finished_at: fixed_now(),
+                additional_actual_work_seconds: 0,
+            },
+        )
+        .unwrap();
+
+        assert_eq!(output.next_focus_task_id, None);
+    }
+
+    #[test]
+    fn complete_task_同一uuidのtodo_siblingを対象taskと誤認しない() {
+        let parent = crate::test_support::new_task_handle("親").unwrap();
+        let duplicate_id = Uuid::from_u128(0x231);
+        let child =
+            parent.create_as_last_child(TaskAttr::with_identity("対象", duplicate_id, fixed_now()));
+        parent.create_as_last_child(TaskAttr::with_identity("未完了", duplicate_id, fixed_now()));
+        let mut repository = TestTaskRepository::new(vec![parent], fixed_now());
+
+        let output = complete_task_with_fresh_factory(
+            &mut repository,
+            CompleteTaskInput {
+                task_id: child.get_id().unwrap(),
+                finished_at: fixed_now(),
+                additional_actual_work_seconds: 0,
+            },
+        )
+        .unwrap();
+
+        assert_eq!(output.next_focus_task_id, None);
     }
 
     #[test]

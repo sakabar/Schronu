@@ -2179,6 +2179,9 @@ impl TaskHandle {
         let mut ans = true;
 
         for sibling_node in self.node.siblings() {
+            if sibling_node.ptr_eq(&self.node) {
+                continue;
+            }
             if sibling_node
                 .try_borrow_data()
                 .map_err(|_| TaskTreeError::Borrow)?
