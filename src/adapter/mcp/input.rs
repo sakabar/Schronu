@@ -319,6 +319,10 @@ impl NullableValue for Rfc3339DateTime {
     const WRONG_TYPE_REASON: &'static str = "must be a string or null";
 }
 
+impl NullableValue for ProjectCategoryValue {
+    const WRONG_TYPE_REASON: &'static str = "must be a supported category or null";
+}
+
 impl<'de, T> Deserialize<'de> for NullablePatch<T>
 where
     T: DeserializeOwned + NullableValue,
@@ -427,6 +431,98 @@ impl BreakdownTaskInput {
             },
         }
     }
+}
+
+#[derive(Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+#[allow(dead_code, reason = "used by the staged typed-handler migration")]
+pub(super) struct DeferTaskInput {
+    pub(super) task_id: UuidValue,
+    pub(super) pending_until: Rfc3339DateTime,
+}
+
+#[derive(Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+#[allow(dead_code, reason = "used by the staged typed-handler migration")]
+pub(super) struct CompleteTaskInput {
+    pub(super) task_id: UuidValue,
+    #[serde(default)]
+    pub(super) finished_at: OptionalValue<Rfc3339DateTime>,
+    #[serde(default = "zero_non_negative")]
+    #[schemars(schema_with = "additional_work_seconds_schema")]
+    pub(super) additional_actual_work_seconds: NonNegativeI64,
+}
+
+fn zero_non_negative() -> NonNegativeI64 {
+    NonNegativeI64(0)
+}
+
+fn additional_work_seconds_schema(_generator: &mut SchemaGenerator) -> Schema {
+    json_schema!({"type": "integer", "minimum": 0, "default": 0})
+}
+
+const UPDATE_TASK_FIELDS: [&str; 3] = ["estimated_work_minutes", "deadline_time", "category"];
+const UPDATE_TASK_FIELD_REQUIRED_REASON: &str = "must include at least one field to update";
+
+#[derive(Deserialize, JsonSchema)]
+#[serde(try_from = "UpdateTaskInputFields")]
+#[allow(dead_code, reason = "used by the staged typed-handler migration")]
+pub(super) struct UpdateTaskInput {
+    pub(super) task_id: UuidValue,
+    pub(super) estimated_work_minutes: OptionalValue<NonNegativeI64>,
+    pub(super) deadline_time: NullablePatch<Rfc3339DateTime>,
+    pub(super) category: NullablePatch<ProjectCategoryValue>,
+}
+
+#[derive(Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+#[schemars(transform = require_update_task_field)]
+struct UpdateTaskInputFields {
+    task_id: UuidValue,
+    #[serde(default)]
+    estimated_work_minutes: OptionalValue<NonNegativeI64>,
+    #[serde(default)]
+    deadline_time: NullablePatch<Rfc3339DateTime>,
+    #[serde(default)]
+    category: NullablePatch<ProjectCategoryValue>,
+}
+
+impl TryFrom<UpdateTaskInputFields> for UpdateTaskInput {
+    type Error = String;
+
+    fn try_from(fields: UpdateTaskInputFields) -> Result<Self, Self::Error> {
+        let provided = [
+            !matches!(fields.estimated_work_minutes, OptionalValue::Missing),
+            !matches!(fields.deadline_time, NullablePatch::Missing),
+            !matches!(fields.category, NullablePatch::Missing),
+        ];
+        if !UPDATE_TASK_FIELDS
+            .iter()
+            .zip(provided)
+            .any(|(_, provided)| provided)
+        {
+            return Err(format!(
+                "{SCHEMA_ERROR_PREFIX}{UPDATE_TASK_FIELD_REQUIRED_REASON}"
+            ));
+        }
+
+        Ok(Self {
+            task_id: fields.task_id,
+            estimated_work_minutes: fields.estimated_work_minutes,
+            deadline_time: fields.deadline_time,
+            category: fields.category,
+        })
+    }
+}
+
+fn require_update_task_field(schema: &mut Schema) {
+    let alternatives = UPDATE_TASK_FIELDS
+        .iter()
+        .map(|field| serde_json::json!({"required": [field]}))
+        .collect();
+    schema
+        .ensure_object()
+        .insert("anyOf".to_string(), Value::Array(alternatives));
 }
 
 #[derive(Deserialize, JsonSchema)]
@@ -756,8 +852,14 @@ fn classify_decode_error(error: serde_path_to_error::Error<serde_json::Error>) -
         };
     }
     if let Some(reason) = error_reason(&message, SCHEMA_ERROR_PREFIX) {
+        let field =
+            if reason == UPDATE_TASK_FIELD_REQUIRED_REASON && (path.is_empty() || path == ".") {
+                "arguments".to_string()
+            } else {
+                path
+            };
         return ToolInputError::Schema(InvalidParams {
-            field: path,
+            field,
             reason: schema_reason(reason),
         });
     }
@@ -792,6 +894,7 @@ fn schema_reason(reason: &str) -> &'static str {
         "must be a supported period field" => "must be a supported period field",
         "must be todo, pending, or done" => "must be todo, pending, or done",
         "must be a supported category or null" => "must be a supported category or null",
+        UPDATE_TASK_FIELD_REQUIRED_REASON => UPDATE_TASK_FIELD_REQUIRED_REASON,
         _ => "has an invalid value",
     }
 }

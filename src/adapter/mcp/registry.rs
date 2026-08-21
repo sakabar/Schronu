@@ -1,6 +1,6 @@
 use super::input::{
-    generated_input_schema, BreakdownTaskInput, CreateTaskInput, GetFocusInput, GetScheduleInput,
-    GetTaskInput, ListTasksInput,
+    generated_input_schema, BreakdownTaskInput, CompleteTaskInput, CreateTaskInput, DeferTaskInput,
+    GetFocusInput, GetScheduleInput, GetTaskInput, ListTasksInput, UpdateTaskInput,
 };
 use serde_json::{json, Value};
 
@@ -39,74 +39,17 @@ pub(super) fn tool_definitions() -> Vec<Value> {
         json!({
             "name": "defer_task",
             "description": "Defer a task until an absolute date and time.",
-            "inputSchema": {
-                "type": "object",
-                "properties": {
-                    "task_id": {"type": "string", "format": "uuid"},
-                    "pending_until": {"type": "string", "format": "date-time"}
-                },
-                "required": ["task_id", "pending_until"],
-                "additionalProperties": false
-            }
+            "inputSchema": generated_input_schema::<DeferTaskInput>()
         }),
         json!({
             "name": "complete_task",
             "description": "Complete a task, optionally recording finish time and work seconds.",
-            "inputSchema": {
-                "type": "object",
-                "properties": {
-                    "task_id": {"type": "string", "format": "uuid"},
-                    "finished_at": {"type": "string", "format": "date-time"},
-                    "additional_actual_work_seconds": {
-                        "type": "integer",
-                        "minimum": 0,
-                        "default": 0
-                    }
-                },
-                "required": ["task_id"],
-                "additionalProperties": false
-            }
+            "inputSchema": generated_input_schema::<CompleteTaskInput>()
         }),
         json!({
             "name": "update_task",
             "description": "Update a task's estimate, deadline, or category.",
-            "inputSchema": {
-                "type": "object",
-                "properties": {
-                    "task_id": {"type": "string", "format": "uuid"},
-                    "estimated_work_minutes": {"type": "integer", "minimum": 0},
-                    "deadline_time": nullable_datetime_schema(),
-                    "category": category_schema()
-                },
-                "required": ["task_id"],
-                "anyOf": [
-                    {"required": ["estimated_work_minutes"]},
-                    {"required": ["deadline_time"]},
-                    {"required": ["category"]}
-                ],
-                "additionalProperties": false
-            }
+            "inputSchema": generated_input_schema::<UpdateTaskInput>()
         }),
     ]
-}
-
-fn nullable_datetime_schema() -> Value {
-    json!({
-        "anyOf": [
-            {"type": "string", "format": "date-time"},
-            {"type": "null"}
-        ]
-    })
-}
-
-fn category_schema() -> Value {
-    json!({
-        "anyOf": [
-            {
-                "type": "string",
-                "enum": ["earning", "sustaining", "recovery", "investment", "consumption"]
-            },
-            {"type": "null"}
-        ]
-    })
 }
