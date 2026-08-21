@@ -7639,6 +7639,7 @@ fn execute_parsed(
             task_repository,
             free_time_manager,
             focused_task_id_opt,
+            task_factory: &mut task_factory,
             focus_started_datetime: *focus_started_datetime,
             config: active_config(),
             supports_ansi_color,
@@ -7817,8 +7818,11 @@ impl TaskAttributeCommandContext for RuntimeTaskAttributeCommandContext<'_> {
     }
 
     fn add_work(&mut self, minutes: Option<i64>) -> Result<(), ApplicationError> {
-        let additional_minutes = minutes
-            .unwrap_or_else(|| (Local::now() - *self.focus_started_datetime).num_minutes() + 1);
+        let additional_minutes = minutes.unwrap_or_else(|| {
+            (self.task_repository.get_last_synced_time() - *self.focus_started_datetime)
+                .num_minutes()
+                + 1
+        });
         if let Some(focused_task) = self.focused_task()? {
             let original_minutes = focused_task
                 .get_actual_work_seconds()
@@ -7942,16 +7946,17 @@ impl DeferCommandContext for RuntimeDeferCommandContext<'_> {
     }
 }
 
-struct RuntimeFinishPlacementCommandContext<'a> {
-    task_repository: &'a mut dyn TaskRepositoryTrait,
-    free_time_manager: &'a mut dyn FreeTimeManagerTrait,
-    focused_task_id_opt: &'a mut Option<Uuid>,
+struct RuntimeFinishPlacementCommandContext<'repository, 'factory, 'generator> {
+    task_repository: &'repository mut dyn TaskRepositoryTrait,
+    free_time_manager: &'repository mut dyn FreeTimeManagerTrait,
+    focused_task_id_opt: &'repository mut Option<Uuid>,
+    task_factory: &'factory mut TaskFactory<'generator>,
     focus_started_datetime: DateTime<Local>,
-    config: &'a SchronuConfig,
+    config: &'repository SchronuConfig,
     supports_ansi_color: bool,
 }
 
-impl FinishPlacementCommandContext for RuntimeFinishPlacementCommandContext<'_> {
+impl FinishPlacementCommandContext for RuntimeFinishPlacementCommandContext<'_, '_, '_> {
     fn supports_ansi_color(&self) -> bool {
         self.supports_ansi_color
     }
@@ -7985,9 +7990,7 @@ impl FinishPlacementCommandContext for RuntimeFinishPlacementCommandContext<'_> 
         &mut self,
         input: CompleteTaskInput,
     ) -> Result<Option<Uuid>, ApplicationError> {
-        let mut next_id = Uuid::new_v4;
-        let mut factory = TaskFactory::new(Local::now(), &mut next_id);
-        complete_task(self.task_repository, input, &mut factory)
+        complete_task(self.task_repository, input, self.task_factory)
             .map(|output| output.next_focus_task_id)
     }
 
@@ -9778,13 +9781,21 @@ fn execute_non_interactive_command(
     free_time_manager: &mut dyn FreeTimeManagerTrait,
     command: &str,
 ) -> Result<(), RunError> {
-    let now = Local::now();
+    execute_non_interactive_command_at(task_repository, free_time_manager, command, Local::now())
+}
+
+fn execute_non_interactive_command_at(
+    task_repository: &mut dyn TaskRepositoryTrait,
+    free_time_manager: &mut dyn FreeTimeManagerTrait,
+    command: &str,
+    operation_now: DateTime<Local>,
+) -> Result<(), RunError> {
     let parsed_command = parse_command(command, ParseMode::NonInteractive)
         .map_err(map_command_parse_error)
         .map_err(RunError::Command)?;
     validate_non_interactive_command(&parsed_command).map_err(RunError::Command)?;
     if parsed_command.kind() == CommandKind::Verify {
-        let _storage_lock = reload_repository_for_cli(task_repository, now)?;
+        let _storage_lock = reload_repository_for_cli(task_repository, operation_now)?;
         println!("検証: OK");
         return Ok(());
     }
@@ -9795,9 +9806,9 @@ fn execute_non_interactive_command(
             .expect("config path was validated"),
     )?;
 
-    let focus_started_datetime: DateTime<Local> = now;
+    let focus_started_datetime = operation_now;
     let mut stdout = stdout();
-    run_cli_repository_transaction(task_repository, now, |task_repository| {
+    run_cli_repository_transaction(task_repository, operation_now, |task_repository| {
         let mut focused_task_id_opt: Option<Uuid> =
             select_focus_task_id(task_repository, FocusSelectionMode::HighestPriority)?;
         execute_parsed(
