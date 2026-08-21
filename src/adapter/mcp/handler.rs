@@ -891,7 +891,10 @@ mod typed_handler_contract_tests {
             json!("typed-breakdown-blank"),
             BreakdownTaskInput {
                 parent_id: UuidValue(parent_id),
-                names: NonEmptyVec(vec![NonEmptyString("   ".to_string())]),
+                names: NonEmptyVec(vec![
+                    NonEmptyString("valid child".to_string()),
+                    NonEmptyString("   ".to_string()),
+                ]),
                 pending_until: OptionalValue::Missing,
             },
         );
