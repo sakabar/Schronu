@@ -396,6 +396,7 @@ pub fn complete_task(
             reason: "actual work seconds overflow",
         })?;
 
+    let next_focus_task_id = prospective_next_focus_task_id(&task)?;
     let next_repetition_task =
         prepare_next_repetition_task(&task, actual_work_seconds, input.finished_at, factory)?;
 
@@ -407,23 +408,33 @@ pub fn complete_task(
         .map_err(ApplicationError::TaskTree)?;
 
     let next_repetition_task_id = create_prepared_repetition_task(next_repetition_task)?;
-    let next_focus_task_id = if task
-        .all_sibling_tasks_are_all_done()
-        .map_err(ApplicationError::TaskTree)?
-    {
-        task.parent()
-            .map_err(ApplicationError::TaskTree)?
-            .map(|parent| parent.get_id())
-            .transpose()
-            .map_err(ApplicationError::TaskTree)?
-    } else {
-        None
-    };
 
     Ok(CompleteTaskOutput {
         next_focus_task_id,
         next_repetition_task_id,
     })
+}
+
+fn prospective_next_focus_task_id(task: &TaskHandle) -> Result<Option<Uuid>, ApplicationError> {
+    let task_id = task.get_id().map_err(ApplicationError::TaskTree)?;
+    let Some(parent) = task.parent().map_err(ApplicationError::TaskTree)? else {
+        return Ok(None);
+    };
+    let siblings = parent.get_children().map_err(ApplicationError::TaskTree)?;
+
+    for sibling in siblings {
+        let sibling_id = sibling.get_id().map_err(ApplicationError::TaskTree)?;
+        if sibling_id != task_id
+            && sibling.get_status().map_err(ApplicationError::TaskTree)? != Status::Done
+        {
+            return Ok(None);
+        }
+    }
+
+    parent
+        .get_id()
+        .map(Some)
+        .map_err(ApplicationError::TaskTree)
 }
 
 pub fn set_estimate(
@@ -1577,6 +1588,86 @@ mod tests {
                 field: "estimated_work_seconds",
                 reason: "repetition estimate adjustment overflow",
             })
+        );
+        assert_eq!(child.get_status().unwrap(), child_status_before);
+        assert_eq!(
+            child.get_actual_work_seconds().unwrap(),
+            child_actual_before
+        );
+        assert_eq!(child.get_end_time_opt().unwrap(), child_end_before);
+        assert_eq!(
+            child.get_persistent_mutation_revision().unwrap(),
+            child_revision_before
+        );
+        assert_eq!(
+            parent.get_estimated_work_seconds().unwrap(),
+            parent_estimate_before
+        );
+        assert_eq!(
+            parent.get_persistent_mutation_revision().unwrap(),
+            parent_revision_before
+        );
+        assert_eq!(
+            parent
+                .get_children()
+                .unwrap()
+                .into_iter()
+                .map(|task| task.get_id().unwrap())
+                .collect::<Vec<_>>(),
+            child_ids_before
+        );
+        assert_eq!(id_call_count.get(), 0);
+    }
+
+    #[test]
+    fn complete_task_focus先読み失敗でtaskと反復親を変更しない() {
+        let parent =
+            TaskHandle::with_identity("ルーチン", Uuid::from_u128(0x221), fixed_now()).unwrap();
+        parent.set_repetition_interval_days_opt(Some(7)).unwrap();
+        parent.set_estimated_work_seconds(600).unwrap();
+        let mut child_attr = TaskAttr::with_identity("今回", Uuid::from_u128(0x222), fixed_now());
+        child_attr.set_actual_work_seconds(120);
+        let child = parent.create_as_last_child(child_attr);
+        let mut sibling_attr =
+            TaskAttr::with_identity("完了済み", Uuid::from_u128(0x223), fixed_now());
+        sibling_attr.set_orig_status(Status::Done);
+        let sibling = parent.create_as_last_child(sibling_attr);
+        let child_id = child.get_id().unwrap();
+        let child_status_before = child.get_status().unwrap();
+        let child_actual_before = child.get_actual_work_seconds().unwrap();
+        let child_end_before = child.get_end_time_opt().unwrap();
+        let child_revision_before = child.get_persistent_mutation_revision().unwrap();
+        let parent_estimate_before = parent.get_estimated_work_seconds().unwrap();
+        let parent_revision_before = parent.get_persistent_mutation_revision().unwrap();
+        let child_ids_before = parent
+            .get_children()
+            .unwrap()
+            .into_iter()
+            .map(|task| task.get_id().unwrap())
+            .collect::<Vec<_>>();
+        let mut repository = TestTaskRepository::new(vec![parent.clone()], fixed_now());
+        let id_call_count = Cell::new(0);
+        let mut next_id = || {
+            id_call_count.set(id_call_count.get() + 1);
+            Uuid::from_u128(0x224)
+        };
+        let mut factory = TaskFactory::new(fixed_now(), &mut next_id);
+
+        let actual = sibling.with_exclusive_data_borrow_for_test(|| {
+            complete_task(
+                &mut repository,
+                CompleteTaskInput {
+                    task_id: child_id,
+                    finished_at: fixed_now(),
+                    additional_actual_work_seconds: 60,
+                },
+                &mut factory,
+            )
+        });
+
+        assert_eq!(
+            actual,
+            Err(ApplicationError::TaskTree(TaskTreeError::Borrow))
         );
         assert_eq!(child.get_status().unwrap(), child_status_before);
         assert_eq!(
