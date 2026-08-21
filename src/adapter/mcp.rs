@@ -1584,7 +1584,7 @@ mod tests {
     };
     use crate::entity::datetime::get_next_morning_datetime;
     use crate::entity::task::{ProjectCategory, RepetitionAnchor, Status, TaskHandle};
-    use chrono::{DateTime, Duration, Local, TimeZone};
+    use chrono::{DateTime, Duration, Local, NaiveDate, TimeZone};
     use serde_json::json;
     use std::cell::{Cell, RefCell};
     use std::fs;
@@ -3845,6 +3845,91 @@ mod tests {
                 field
             );
         }
+    }
+
+    fn 最大日の業務日開始() -> DateTime<Local> {
+        NaiveDate::MAX
+            .and_hms_opt(6, 0, 0)
+            .unwrap()
+            .and_local_timezone(Local)
+            .single()
+            .unwrap()
+    }
+
+    #[test]
+    fn schedule_periodは引数なしの次業務日境界計算不能を入力日時付きで返す() {
+        let now = 最大日の業務日開始();
+
+        match super::schedule_period(None, now) {
+            Err(super::ToolInputError::Application(error)) => assert_eq!(
+                error,
+                crate::application::task_use_case::ApplicationError::SubjectiveDateOutOfRange {
+                    operation: "next_business_day_start",
+                    datetime: now,
+                }
+            ),
+            _ => panic!("expected an application datetime error"),
+        }
+    }
+
+    #[test]
+    fn schedule_periodはfromのみの次業務日境界計算不能をfrom日時付きで返す() {
+        let from = 最大日の業務日開始();
+        let arguments = json!({"from": NaiveDate::MAX.to_string()});
+
+        match super::schedule_period(Some(&arguments), fixed_now()) {
+            Err(super::ToolInputError::Application(error)) => assert_eq!(
+                error,
+                crate::application::task_use_case::ApplicationError::SubjectiveDateOutOfRange {
+                    operation: "next_business_day_start",
+                    datetime: from,
+                }
+            ),
+            _ => panic!("expected an application datetime error"),
+        }
+    }
+
+    #[test]
+    fn schedule_day_startはlocal変換不能を変換元日時付きで返す() {
+        let local_datetime = NaiveDate::MIN.and_hms_opt(6, 0, 0).unwrap();
+        let value = json!(NaiveDate::MIN.to_string());
+
+        match super::schedule_day_start(&value, "from") {
+            Err(super::ToolInputError::Application(error)) => assert_eq!(
+                error,
+                crate::application::task_use_case::ApplicationError::NonexistentLocalDateTime {
+                    local_datetime,
+                }
+            ),
+            _ => panic!("expected an application datetime error"),
+        }
+    }
+
+    #[test]
+    fn get_scheduleは日時application_errorを情報付きinternal_errorとして返す() {
+        let now = 最大日の業務日開始();
+        let repository = RecordingRepository::new(vec![]);
+        let mut server = initialized_server(repository);
+        let response = server.run_transaction_and_call_at(
+            json!("datetime-error"),
+            &tool_call_request("datetime-error", "get_schedule", json!({})),
+            now,
+        );
+        let expected =
+            crate::application::task_use_case::ApplicationError::SubjectiveDateOutOfRange {
+                operation: "next_business_day_start",
+                datetime: now,
+            };
+
+        assert_eq!(response["result"]["isError"], true);
+        assert_eq!(
+            response["result"]["structuredContent"]["error"]["code"],
+            "internal_error"
+        );
+        assert_eq!(
+            response["result"]["structuredContent"]["error"]["message"],
+            expected.to_string()
+        );
     }
 
     #[test]
