@@ -1,6 +1,6 @@
 use super::input::{
-    complete_task_input, decode_input, defer_task_input, update_task_input, BreakdownTaskInput,
-    CreateTaskInput, GetFocusInput, GetScheduleInput, GetTaskInput, ListTasksInput, ToolInputError,
+    decode_input, BreakdownTaskInput, CompleteTaskInput, CreateTaskInput, DeferTaskInput,
+    GetFocusInput, GetScheduleInput, GetTaskInput, ListTasksInput, ToolInputError, UpdateTaskInput,
 };
 use super::internal_error_response;
 use super::output::{scheduled_task_view_json, task_view_json};
@@ -73,9 +73,27 @@ pub(super) fn call_tool<R: TaskRepositoryTrait>(
             };
             call_breakdown_task(repository, id, input)
         }
-        Some("defer_task") => call_defer_task(repository, id, &params["arguments"]),
-        Some("complete_task") => call_complete_task(repository, id, &params["arguments"]),
-        Some("update_task") => call_update_task(repository, id, &params["arguments"]),
+        Some("defer_task") => {
+            let input = match decode_input::<DeferTaskInput>(&params["arguments"]) {
+                Ok(input) => input,
+                Err(error) => return tool_input_error_response(id, error),
+            };
+            call_defer_task(repository, id, input)
+        }
+        Some("complete_task") => {
+            let input = match decode_input::<CompleteTaskInput>(&params["arguments"]) {
+                Ok(input) => input,
+                Err(error) => return tool_input_error_response(id, error),
+            };
+            call_complete_task(repository, id, input)
+        }
+        Some("update_task") => {
+            let input = match decode_input::<UpdateTaskInput>(&params["arguments"]) {
+                Ok(input) => input,
+                Err(error) => return tool_input_error_response(id, error),
+            };
+            call_update_task(repository, id, input)
+        }
         _ => error_response(id, -32602, "Unknown tool"),
     }
 }
@@ -200,15 +218,9 @@ fn call_breakdown_task<R: TaskRepositoryTrait>(
 fn call_defer_task<R: TaskRepositoryTrait>(
     repository: &mut R,
     id: Value,
-    arguments: &Value,
+    input: DeferTaskInput,
 ) -> Value {
-    let (task_id, pending_until) = match defer_task_input(arguments) {
-        Ok(input) => input,
-        Err(ToolInputError::Schema(error)) => return invalid_params_response(id, error),
-        Err(ToolInputError::Semantic { field, message }) => {
-            return invalid_input_response(id, &field, message)
-        }
-    };
+    let (task_id, pending_until) = input.into_parts();
 
     match defer_task_use_case(repository, task_id, pending_until) {
         Ok(()) => {}
@@ -227,15 +239,9 @@ fn call_defer_task<R: TaskRepositoryTrait>(
 fn call_complete_task<R: TaskRepositoryTrait>(
     repository: &mut R,
     id: Value,
-    arguments: &Value,
+    input: CompleteTaskInput,
 ) -> Value {
-    let input = match complete_task_input(arguments) {
-        Ok(input) => input,
-        Err(ToolInputError::Schema(error)) => return invalid_params_response(id, error),
-        Err(ToolInputError::Semantic { field, message }) => {
-            return invalid_input_response(id, &field, message)
-        }
-    };
+    let input = input.into_application();
     let task_id = input.task_id;
     let output = match complete_task_use_case(repository, input) {
         Ok(output) => output,
@@ -267,15 +273,9 @@ fn call_complete_task<R: TaskRepositoryTrait>(
 fn call_update_task<R: TaskRepositoryTrait>(
     repository: &mut R,
     id: Value,
-    arguments: &Value,
+    input: UpdateTaskInput,
 ) -> Value {
-    let input = match update_task_input(arguments) {
-        Ok(input) => input,
-        Err(ToolInputError::Schema(error)) => return invalid_params_response(id, error),
-        Err(ToolInputError::Semantic { field, message }) => {
-            return invalid_input_response(id, &field, message)
-        }
-    };
+    let input = input.into_changes();
 
     if let Some(estimated_work_minutes) = input.estimated_work_minutes {
         if let Err(error) = set_estimate(repository, input.task_id, estimated_work_minutes) {

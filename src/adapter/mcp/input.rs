@@ -435,15 +435,19 @@ impl BreakdownTaskInput {
 
 #[derive(Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
-#[allow(dead_code, reason = "used by the staged typed-handler migration")]
 pub(super) struct DeferTaskInput {
     pub(super) task_id: UuidValue,
     pub(super) pending_until: Rfc3339DateTime,
 }
 
+impl DeferTaskInput {
+    pub(super) fn into_parts(self) -> (Uuid, DateTime<Local>) {
+        (self.task_id.0, self.pending_until.0)
+    }
+}
+
 #[derive(Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
-#[allow(dead_code, reason = "used by the staged typed-handler migration")]
 pub(super) struct CompleteTaskInput {
     pub(super) task_id: UuidValue,
     #[serde(default)]
@@ -451,6 +455,19 @@ pub(super) struct CompleteTaskInput {
     #[serde(default = "zero_non_negative")]
     #[schemars(schema_with = "additional_work_seconds_schema")]
     pub(super) additional_actual_work_seconds: NonNegativeI64,
+}
+
+impl CompleteTaskInput {
+    pub(super) fn into_application(self) -> ApplicationCompleteTaskInput {
+        ApplicationCompleteTaskInput {
+            task_id: self.task_id.0,
+            finished_at: match self.finished_at {
+                OptionalValue::Missing => Local::now(),
+                OptionalValue::Value(finished_at) => finished_at.0,
+            },
+            additional_actual_work_seconds: self.additional_actual_work_seconds.0,
+        }
+    }
 }
 
 fn zero_non_negative() -> NonNegativeI64 {
@@ -497,12 +514,44 @@ const UPDATE_TASK_FIELD_REQUIRED_REASON: &str = "must include at least one field
 
 #[derive(Deserialize, JsonSchema)]
 #[serde(try_from = "UpdateTaskInputFields")]
-#[allow(dead_code, reason = "used by the staged typed-handler migration")]
 pub(super) struct UpdateTaskInput {
     pub(super) task_id: UuidValue,
     pub(super) estimated_work_minutes: OptionalValue<NonNegativeI64>,
     pub(super) deadline_time: NullablePatch<Rfc3339DateTime>,
     pub(super) category: NullablePatch<ProjectCategoryValue>,
+}
+
+pub(super) struct UpdateTaskChanges {
+    pub(super) task_id: Uuid,
+    pub(super) estimated_work_minutes: Option<i64>,
+    pub(super) deadline_time: Option<Option<DateTime<Local>>>,
+    pub(super) category: Option<Option<ProjectCategory>>,
+}
+
+impl UpdateTaskInput {
+    pub(super) fn into_changes(self) -> UpdateTaskChanges {
+        let estimated_work_minutes = match self.estimated_work_minutes {
+            OptionalValue::Missing => None,
+            OptionalValue::Value(minutes) => Some(minutes.0),
+        };
+        let deadline_time = match self.deadline_time {
+            NullablePatch::Missing => None,
+            NullablePatch::Null => Some(None),
+            NullablePatch::Value(deadline_time) => Some(Some(deadline_time.0)),
+        };
+        let category = match self.category {
+            NullablePatch::Missing => None,
+            NullablePatch::Null => Some(None),
+            NullablePatch::Value(category) => Some(Some(category.into_category())),
+        };
+
+        UpdateTaskChanges {
+            task_id: self.task_id.0,
+            estimated_work_minutes,
+            deadline_time,
+            category,
+        }
+    }
 }
 
 #[derive(Deserialize, JsonSchema)]
@@ -987,269 +1036,8 @@ fn quoted_serde_field(message: &str, prefix: &str) -> Option<String> {
     Some(message[start..].split('`').next()?.to_string())
 }
 
-pub(super) struct ParsedUpdateTaskInput {
-    pub(super) task_id: Uuid,
-    pub(super) estimated_work_minutes: Option<i64>,
-    pub(super) deadline_time: Option<Option<DateTime<Local>>>,
-    pub(super) category: Option<Option<ProjectCategory>>,
-}
-
-fn uuid_argument(
-    arguments: &Map<String, Value>,
-    field: &'static str,
-) -> Result<Uuid, ToolInputError> {
-    let value = string_argument(arguments, field).map_err(ToolInputError::Schema)?;
-    Uuid::parse_str(value).map_err(|_| ToolInputError::Semantic {
-        field: field.to_string(),
-        message: "must be a valid UUID",
-    })
-}
-
-fn datetime_argument(
-    arguments: &Map<String, Value>,
-    field: &'static str,
-) -> Result<DateTime<Local>, ToolInputError> {
-    let value = string_argument(arguments, field).map_err(ToolInputError::Schema)?;
-    parse_local_datetime(value).map_err(|_| ToolInputError::Semantic {
-        field: field.to_string(),
-        message: "must be a valid RFC 3339 date-time",
-    })
-}
-
-fn optional_datetime_argument(
-    arguments: &Map<String, Value>,
-    field: &'static str,
-) -> Result<Option<DateTime<Local>>, ToolInputError> {
-    arguments
-        .get(field)
-        .map(|value| {
-            let value = value.as_str().ok_or_else(|| {
-                ToolInputError::Schema(InvalidParams {
-                    field: field.to_string(),
-                    reason: "must be a string",
-                })
-            })?;
-            parse_local_datetime(value).map_err(|_| ToolInputError::Semantic {
-                field: field.to_string(),
-                message: "must be a valid RFC 3339 date-time",
-            })
-        })
-        .transpose()
-}
-
-fn optional_non_negative_i64_argument(
-    arguments: &Map<String, Value>,
-    field: &'static str,
-) -> Result<Option<i64>, ToolInputError> {
-    arguments
-        .get(field)
-        .map(|value| {
-            if let Some(value) = value.as_i64() {
-                return if value >= 0 {
-                    Ok(value)
-                } else {
-                    Err(ToolInputError::Schema(InvalidParams {
-                        field: field.to_string(),
-                        reason: "must be a non-negative integer",
-                    }))
-                };
-            }
-            if value.as_u64().is_some() {
-                return Err(ToolInputError::Semantic {
-                    field: field.to_string(),
-                    message: "is outside the supported integer range",
-                });
-            }
-            Err(ToolInputError::Schema(InvalidParams {
-                field: field.to_string(),
-                reason: "must be a non-negative integer",
-            }))
-        })
-        .transpose()
-}
-
-pub(super) fn update_task_input(
-    arguments: &Value,
-) -> Result<ParsedUpdateTaskInput, ToolInputError> {
-    let arguments = validate_argument_object(
-        arguments,
-        &[
-            "task_id",
-            "estimated_work_minutes",
-            "deadline_time",
-            "category",
-        ],
-        &["task_id"],
-    )
-    .map_err(ToolInputError::Schema)?;
-    if !["estimated_work_minutes", "deadline_time", "category"]
-        .iter()
-        .any(|field| arguments.contains_key(*field))
-    {
-        return Err(ToolInputError::Schema(InvalidParams {
-            field: "arguments".to_string(),
-            reason: "must include at least one field to update",
-        }));
-    }
-
-    let task_id = uuid_argument(arguments, "task_id")?;
-    let estimated_work_minutes =
-        optional_non_negative_i64_argument(arguments, "estimated_work_minutes")?;
-    let deadline_time = nullable_datetime_argument(arguments, "deadline_time")?;
-    let category = nullable_category_argument(arguments, "category")?;
-
-    Ok(ParsedUpdateTaskInput {
-        task_id,
-        estimated_work_minutes,
-        deadline_time,
-        category,
-    })
-}
-
-fn nullable_datetime_argument(
-    arguments: &Map<String, Value>,
-    field: &'static str,
-) -> Result<Option<Option<DateTime<Local>>>, ToolInputError> {
-    match arguments.get(field) {
-        None => Ok(None),
-        Some(Value::Null) => Ok(Some(None)),
-        Some(value) => {
-            let value = value.as_str().ok_or_else(|| {
-                ToolInputError::Schema(InvalidParams {
-                    field: field.to_string(),
-                    reason: "must be a string or null",
-                })
-            })?;
-            parse_local_datetime(value)
-                .map(|value| Some(Some(value)))
-                .map_err(|_| ToolInputError::Semantic {
-                    field: field.to_string(),
-                    message: "must be a valid RFC 3339 date-time",
-                })
-        }
-    }
-}
-
-fn nullable_category_argument(
-    arguments: &Map<String, Value>,
-    field: &'static str,
-) -> Result<Option<Option<ProjectCategory>>, ToolInputError> {
-    match arguments.get(field) {
-        None => Ok(None),
-        Some(Value::Null) => Ok(Some(None)),
-        Some(Value::String(value)) => parse_mcp_category(value)
-            .map(|category| Some(Some(category)))
-            .ok_or_else(|| {
-                ToolInputError::Schema(InvalidParams {
-                    field: field.to_string(),
-                    reason: "must be a supported category or null",
-                })
-            }),
-        Some(_) => Err(ToolInputError::Schema(InvalidParams {
-            field: field.to_string(),
-            reason: "must be a supported category or null",
-        })),
-    }
-}
-
-fn parse_mcp_category(value: &str) -> Option<ProjectCategory> {
-    match value {
-        "earning" => Some(ProjectCategory::Earning),
-        "sustaining" => Some(ProjectCategory::Sustaining),
-        "recovery" => Some(ProjectCategory::Recovery),
-        "investment" => Some(ProjectCategory::Investment),
-        "consumption" => Some(ProjectCategory::Consumption),
-        _ => None,
-    }
-}
-
-pub(super) fn complete_task_input(
-    arguments: &Value,
-) -> Result<ApplicationCompleteTaskInput, ToolInputError> {
-    let arguments = validate_argument_object(
-        arguments,
-        &["task_id", "finished_at", "additional_actual_work_seconds"],
-        &["task_id"],
-    )
-    .map_err(ToolInputError::Schema)?;
-    let task_id = uuid_argument(arguments, "task_id")?;
-    let finished_at =
-        optional_datetime_argument(arguments, "finished_at")?.unwrap_or_else(Local::now);
-    let additional_actual_work_seconds =
-        optional_non_negative_i64_argument(arguments, "additional_actual_work_seconds")?
-            .unwrap_or(0);
-
-    Ok(ApplicationCompleteTaskInput {
-        task_id,
-        finished_at,
-        additional_actual_work_seconds,
-    })
-}
-
-pub(super) fn defer_task_input(
-    arguments: &Value,
-) -> Result<(Uuid, DateTime<Local>), ToolInputError> {
-    let arguments = validate_argument_object(
-        arguments,
-        &["task_id", "pending_until"],
-        &["task_id", "pending_until"],
-    )
-    .map_err(ToolInputError::Schema)?;
-    let task_id = uuid_argument(arguments, "task_id")?;
-    let pending_until = datetime_argument(arguments, "pending_until")?;
-    Ok((task_id, pending_until))
-}
-
 fn parse_local_datetime(value: &str) -> Result<DateTime<Local>, chrono::ParseError> {
     DateTime::parse_from_rfc3339(value).map(|time| time.with_timezone(&Local))
-}
-
-pub(super) fn validate_argument_object<'a>(
-    arguments: &'a Value,
-    allowed_fields: &[&str],
-    required_fields: &[&str],
-) -> Result<&'a Map<String, Value>, InvalidParams> {
-    let Some(arguments) = arguments.as_object() else {
-        return Err(InvalidParams {
-            field: "arguments".to_string(),
-            reason: "must be an object",
-        });
-    };
-
-    if let Some(field) = arguments
-        .keys()
-        .find(|field| !allowed_fields.contains(&field.as_str()))
-    {
-        return Err(InvalidParams {
-            field: format!("arguments.{field}"),
-            reason: "additional property is not allowed",
-        });
-    }
-
-    if let Some(field) = required_fields
-        .iter()
-        .find(|field| !arguments.contains_key(**field))
-    {
-        return Err(InvalidParams {
-            field: (*field).to_string(),
-            reason: "field is required",
-        });
-    }
-
-    Ok(arguments)
-}
-
-pub(super) fn string_argument<'a>(
-    arguments: &'a Map<String, Value>,
-    field: &str,
-) -> Result<&'a str, InvalidParams> {
-    arguments
-        .get(field)
-        .and_then(Value::as_str)
-        .ok_or_else(|| InvalidParams {
-            field: field.to_string(),
-            reason: "must be a string",
-        })
 }
 
 #[cfg(test)]
