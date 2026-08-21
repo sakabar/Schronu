@@ -730,7 +730,9 @@ fn parse_clear_or_gather_defer_to_datetime(
 
     let integer_reg = Regex::new(r"^\d+$").unwrap();
     if matches!(cmd_str, "空" | "clear" | "集" | "gather") && integer_reg.is_match(arg) {
-        let minutes: i64 = arg.parse().unwrap();
+        let Some(minutes) = arg.parse::<i64>().ok() else {
+            return Ok(None);
+        };
         return Ok(Some(now + Duration::minutes(minutes)));
     }
 
