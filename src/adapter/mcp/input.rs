@@ -1,6 +1,7 @@
 use super::error::InvalidParams;
 use crate::application::task_use_case::{
-    BreakdownTaskInput as ApplicationBreakdownTaskInput, CompleteTaskInput,
+    BreakdownTaskInput as ApplicationBreakdownTaskInput,
+    CompleteTaskInput as ApplicationCompleteTaskInput,
     CreateTaskInput as ApplicationCreateTaskInput, ListTasksFilter, TaskPeriodField,
     TaskPeriodFilter,
 };
@@ -858,7 +859,7 @@ fn quoted_serde_field(message: &str, prefix: &str) -> Option<String> {
     Some(message[start..].split('`').next()?.to_string())
 }
 
-pub(super) struct UpdateTaskInput {
+pub(super) struct ParsedUpdateTaskInput {
     pub(super) task_id: Uuid,
     pub(super) estimated_work_minutes: Option<i64>,
     pub(super) deadline_time: Option<Option<DateTime<Local>>>,
@@ -939,7 +940,9 @@ fn optional_non_negative_i64_argument(
         .transpose()
 }
 
-pub(super) fn update_task_input(arguments: &Value) -> Result<UpdateTaskInput, ToolInputError> {
+pub(super) fn update_task_input(
+    arguments: &Value,
+) -> Result<ParsedUpdateTaskInput, ToolInputError> {
     let arguments = validate_argument_object(
         arguments,
         &[
@@ -967,7 +970,7 @@ pub(super) fn update_task_input(arguments: &Value) -> Result<UpdateTaskInput, To
     let deadline_time = nullable_datetime_argument(arguments, "deadline_time")?;
     let category = nullable_category_argument(arguments, "category")?;
 
-    Ok(UpdateTaskInput {
+    Ok(ParsedUpdateTaskInput {
         task_id,
         estimated_work_minutes,
         deadline_time,
@@ -1032,7 +1035,9 @@ fn parse_mcp_category(value: &str) -> Option<ProjectCategory> {
     }
 }
 
-pub(super) fn complete_task_input(arguments: &Value) -> Result<CompleteTaskInput, ToolInputError> {
+pub(super) fn complete_task_input(
+    arguments: &Value,
+) -> Result<ApplicationCompleteTaskInput, ToolInputError> {
     let arguments = validate_argument_object(
         arguments,
         &["task_id", "finished_at", "additional_actual_work_seconds"],
@@ -1046,7 +1051,7 @@ pub(super) fn complete_task_input(arguments: &Value) -> Result<CompleteTaskInput
         optional_non_negative_i64_argument(arguments, "additional_actual_work_seconds")?
             .unwrap_or(0);
 
-    Ok(CompleteTaskInput {
+    Ok(ApplicationCompleteTaskInput {
         task_id,
         finished_at,
         additional_actual_work_seconds,
