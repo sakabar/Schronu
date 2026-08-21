@@ -39,7 +39,8 @@ use schronu::application::daily_capacity::{
     calculate_daily_rho_diff_hours,
     calculate_free_time_minutes_for_subjective_date_with_end_of_day_offset_minutes,
     calculate_full_day_free_time_minutes_for_subjective_date_with_end_of_day_offset_minutes,
-    try_next_business_day_start, try_subjective_date, try_subjective_date_end, RHO_GOAL,
+    try_next_business_day_start, try_subjective_date, try_subjective_date_end,
+    try_subjective_date_start, RHO_GOAL,
 };
 use schronu::application::flatten_use_case::{
     flatten_tasks_with_end_of_day_offset_minutes, FlattenResult,
@@ -4079,13 +4080,8 @@ fn execute_defer(
     let duration = match unit_str.chars().next() {
         // 24時間単位ではなく、next_monring単位とする
         Some('日') | Some('d') => {
-            let mut dt = now;
-
-            for _ in 0..amount {
-                dt = try_next_business_day_start(dt)?;
-            }
-
-            dt - now
+            let target = defer_business_day_target(now, amount)?;
+            target - now
         }
         Some('時') | Some('h') => Duration::try_hours(amount).ok_or_else(duration_out_of_range)?,
         Some('分') | Some('m') => {
@@ -4104,6 +4100,28 @@ fn execute_defer(
 
     *focused_task_id_opt = None;
     Ok(())
+}
+
+fn defer_business_day_target(
+    now: DateTime<Local>,
+    amount: i64,
+) -> Result<DateTime<Local>, ApplicationError> {
+    if amount <= 0 {
+        return Ok(now);
+    }
+
+    let first_business_day_start = try_next_business_day_start(now)?;
+    let out_of_range = || ApplicationError::SubjectiveDateOutOfRange {
+        operation: "defer_business_days",
+        datetime: now,
+    };
+    let additional_days = amount.checked_sub(1).ok_or_else(out_of_range)?;
+    let additional_duration = Duration::try_days(additional_days).ok_or_else(out_of_range)?;
+    let target_date = first_business_day_start
+        .date_naive()
+        .checked_add_signed(additional_duration)
+        .ok_or_else(out_of_range)?;
+    try_subjective_date_start(target_date)
 }
 
 fn seconds_until_next_business_day_start_with_offset(
@@ -6807,6 +6825,42 @@ fn test_execute_defer_翌朝計算不能を情報付きerrorにして状態を�
         actual,
         Err(ApplicationError::SubjectiveDateOutOfRange {
             operation: "next_business_day_start",
+            datetime: now,
+        })
+    );
+    assert_eq!(task_repository.task.snapshot().unwrap(), original_snapshot);
+    assert_eq!(focused_task_id_opt, Some(task_id));
+}
+
+#[test]
+fn test_execute_defer_巨大な日数を即座に情報付きerrorにして状態を変更しない() {
+    let now = Local.with_ymd_and_hms(2026, 8, 21, 12, 0, 0).unwrap();
+    assert_eq!(defer_business_day_target(now, 0), Ok(now));
+    assert_eq!(defer_business_day_target(now, -1), Ok(now));
+    assert_eq!(
+        defer_business_day_target(now, i64::MAX),
+        Err(ApplicationError::SubjectiveDateOutOfRange {
+            operation: "defer_business_days",
+            datetime: now,
+        })
+    );
+    let task = new_test_task_handle("巨大日数の延期対象").unwrap();
+    let task_id = task.get_id().unwrap();
+    let original_snapshot = task.snapshot().unwrap();
+    let mut task_repository = TestTaskRepository::new(task, now);
+    let mut focused_task_id_opt = Some(task_id);
+
+    let actual = execute_defer(
+        &mut task_repository,
+        &mut focused_task_id_opt,
+        i64::MAX,
+        "日",
+    );
+
+    assert_eq!(
+        actual,
+        Err(ApplicationError::SubjectiveDateOutOfRange {
+            operation: "defer_business_days",
             datetime: now,
         })
     );
