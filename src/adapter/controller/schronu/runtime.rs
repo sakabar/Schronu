@@ -22,12 +22,12 @@ use super::renderer::{
     format_spreadsheet_task_row, render_display_model, render_plain_display_model, writeln_newline,
     DisplayModel, ErrorCapturingWriter, SchronuWriter, SpreadsheetTaskRow,
 };
-#[cfg(test)]
-use chrono::FixedOffset;
 use chrono::{
     DateTime, Datelike, Duration, Local, LocalResult, NaiveDate, NaiveDateTime, NaiveTime,
-    TimeZone, Timelike, Weekday,
+    TimeZone, Weekday,
 };
+#[cfg(test)]
+use chrono::{FixedOffset, Timelike};
 use percent_encoding::{percent_encode, AsciiSet, CONTROLS};
 use regex::Regex;
 use schronu::adapter::gateway::free_time_manager::FreeTimeManager;
@@ -4465,65 +4465,83 @@ fn execute_defer_routine(
     task_repository: &mut dyn TaskRepositoryTrait,
     focused_task_id_opt: &mut Option<Uuid>,
 ) -> Result<(), ApplicationError> {
-    if let Some(focused_task_id) = focused_task_id_opt {
-        if let Some(focused_task) = task_repository
-            .get_by_id(*focused_task_id)
-            .map_err(ApplicationError::TaskTree)?
-        {
-            if let Some(orig_deadline_time) = focused_task
-                .get_deadline_time_opt()
-                .map_err(ApplicationError::TaskTree)?
-            {
-                if let Some(parent_task) =
-                    focused_task.parent().map_err(ApplicationError::TaskTree)?
-                {
-                    if let Some(repetition_interval_days) = parent_task
-                        .get_repetition_interval_days_opt()
-                        .map_err(ApplicationError::TaskTree)?
-                    {
-                        let new_deadline_time = if let Some(parent_deadline_time) = parent_task
-                            .get_deadline_time_opt()
-                            .map_err(ApplicationError::TaskTree)?
-                        {
-                            (get_next_morning_datetime(orig_deadline_time)
-                                + Duration::days(repetition_interval_days - 1))
-                            .with_hour(parent_deadline_time.hour())
-                            .expect("invalid hour")
-                            .with_minute(parent_deadline_time.minute())
-                            .expect("invalid minute")
-                            .with_second(parent_deadline_time.second())
-                            .expect("invalid second")
-                        } else {
-                            orig_deadline_time + Duration::days(repetition_interval_days)
-                        };
+    let Some(focused_task_id) = *focused_task_id_opt else {
+        return Ok(());
+    };
+    let Some(focused_task) = task_repository
+        .get_by_id(focused_task_id)
+        .map_err(ApplicationError::TaskTree)?
+    else {
+        return Ok(());
+    };
+    let Some(orig_deadline_time) = focused_task
+        .get_deadline_time_opt()
+        .map_err(ApplicationError::TaskTree)?
+    else {
+        return Ok(());
+    };
+    let Some(parent_task) = focused_task.parent().map_err(ApplicationError::TaskTree)? else {
+        return Ok(());
+    };
+    let Some(repetition_interval_days) = parent_task
+        .get_repetition_interval_days_opt()
+        .map_err(ApplicationError::TaskTree)?
+    else {
+        return Ok(());
+    };
+    let parent_deadline_time_opt = parent_task
+        .get_deadline_time_opt()
+        .map_err(ApplicationError::TaskTree)?;
+    let orig_start_time = focused_task
+        .get_start_time()
+        .map_err(ApplicationError::TaskTree)?;
 
-                        focused_task
-                            .unset_deadline_time_opt()
-                            .map_err(ApplicationError::TaskTree)?;
-                        focused_task
-                            .set_deadline_time_opt(Some(new_deadline_time))
-                            .map_err(ApplicationError::TaskTree)?;
+    let deadline_out_of_range = || ApplicationError::SubjectiveDateOutOfRange {
+        operation: "defer_routine_deadline",
+        datetime: orig_deadline_time,
+    };
+    let new_deadline_time = if let Some(parent_deadline_time) = parent_deadline_time_opt {
+        let first_business_day_start = try_next_business_day_start(orig_deadline_time)?;
+        let additional_days = repetition_interval_days
+            .checked_sub(1)
+            .ok_or_else(deadline_out_of_range)?;
+        let additional_duration =
+            Duration::try_days(additional_days).ok_or_else(deadline_out_of_range)?;
+        let target_date = first_business_day_start
+            .date_naive()
+            .checked_add_signed(additional_duration)
+            .ok_or_else(deadline_out_of_range)?;
+        try_local_date_and_time(target_date, parent_deadline_time.time())?
+    } else {
+        let duration =
+            Duration::try_days(repetition_interval_days).ok_or_else(deadline_out_of_range)?;
+        orig_deadline_time
+            .checked_add_signed(duration)
+            .ok_or_else(deadline_out_of_range)?
+    };
+    let start_out_of_range = || ApplicationError::SubjectiveDateOutOfRange {
+        operation: "defer_routine_start",
+        datetime: orig_start_time,
+    };
+    let start_offset_days = (new_deadline_time - orig_deadline_time).num_days();
+    let start_offset = Duration::try_days(start_offset_days).ok_or_else(start_out_of_range)?;
+    let new_start_time = orig_start_time
+        .checked_add_signed(start_offset)
+        .ok_or_else(start_out_of_range)?;
 
-                        focused_task
-                            .set_orig_status(Status::Todo)
-                            .map_err(ApplicationError::TaskTree)?;
-
-                        // 〆切の日に合わせる
-                        let new_start_time = focused_task
-                            .get_start_time()
-                            .map_err(ApplicationError::TaskTree)?
-                            + Duration::days((new_deadline_time - orig_deadline_time).num_days());
-
-                        focused_task
-                            .set_start_time(new_start_time)
-                            .map_err(ApplicationError::TaskTree)?;
-
-                        *focused_task_id_opt = None;
-                    }
-                }
-            }
-        }
-    }
+    focused_task
+        .unset_deadline_time_opt()
+        .map_err(ApplicationError::TaskTree)?;
+    focused_task
+        .set_deadline_time_opt(Some(new_deadline_time))
+        .map_err(ApplicationError::TaskTree)?;
+    focused_task
+        .set_orig_status(Status::Todo)
+        .map_err(ApplicationError::TaskTree)?;
+    focused_task
+        .set_start_time(new_start_time)
+        .map_err(ApplicationError::TaskTree)?;
+    *focused_task_id_opt = None;
     Ok(())
 }
 
@@ -7469,6 +7487,50 @@ fn test_execute_defer_routine_翌朝計算不能を情報付きerrorにして親
         child_ids
     );
     assert_eq!(focused_task_id_opt, Some(child_id));
+}
+
+#[test]
+fn test_execute_defer_routine_親の反復間隔と任意deadline時刻で延期する() {
+    let now = Local.with_ymd_and_hms(2026, 8, 14, 12, 0, 0).unwrap();
+    let orig_deadline = Local.with_ymd_and_hms(2026, 8, 13, 10, 0, 0).unwrap();
+    let orig_start = Local.with_ymd_and_hms(2026, 8, 10, 9, 0, 0).unwrap();
+    let expected_start = Local.with_ymd_and_hms(2026, 8, 17, 9, 0, 0).unwrap();
+
+    for (parent_deadline, expected_deadline) in [
+        (
+            Some(Local.with_ymd_and_hms(2026, 8, 20, 18, 0, 0).unwrap()),
+            Local.with_ymd_and_hms(2026, 8, 20, 18, 0, 0).unwrap(),
+        ),
+        (None, Local.with_ymd_and_hms(2026, 8, 20, 10, 0, 0).unwrap()),
+    ] {
+        let parent = new_test_task_handle("正常反復routine親").unwrap();
+        parent.set_repetition_interval_days_opt(Some(7)).unwrap();
+        parent.set_deadline_time_opt(parent_deadline).unwrap();
+        let mut child_attr = new_test_task_attr("正常延期routine子");
+        child_attr.set_deadline_time_opt(Some(orig_deadline));
+        child_attr.set_start_time(orig_start);
+        child_attr.set_orig_status(Status::Pending);
+        let child = parent.create_as_last_child(child_attr);
+        let child_id = child.get_id().unwrap();
+        let mut task_repository = TestTaskRepository::new(parent, now);
+        let mut focused_task_id_opt = Some(child_id);
+        let mut context = RuntimeDeferCommandContext {
+            task_repository: &mut task_repository,
+            focused_task_id_opt: &mut focused_task_id_opt,
+            config: active_config(),
+        };
+
+        let actual = context.defer_routine();
+
+        assert_eq!(actual, Ok(()));
+        assert_eq!(
+            child.get_deadline_time_opt().unwrap(),
+            Some(expected_deadline)
+        );
+        assert_eq!(child.get_start_time().unwrap(), expected_start);
+        assert_eq!(child.get_orig_status().unwrap(), Status::Todo);
+        assert_eq!(focused_task_id_opt, None);
+    }
 }
 
 #[test]
