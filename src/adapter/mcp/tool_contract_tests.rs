@@ -1873,6 +1873,39 @@ fn complete_task_next_focusとnext_repetitionのuuidを返す() {
 }
 
 #[test]
+fn complete_task_唯一の反復子から次回taskを生成したらnext_focusをnullにする() {
+    let repetition_parent = new_task_handle("weekly").unwrap();
+    repetition_parent
+        .set_repetition_interval_days_opt(Some(7))
+        .unwrap();
+    let repetition_child =
+        repetition_parent.create_as_last_child(new_task_attr("weekly occurrence"));
+    let repetition_child_id = repetition_child.get_id().unwrap();
+    let mut server = initialized_server(RecordingRepository::new(vec![repetition_parent]));
+
+    let response = server
+        .handle_request(tool_call_request(
+            "complete-repetition-without-focus",
+            "complete_task",
+            json!({
+                "task_id": repetition_child_id.to_string(),
+                "finished_at": fixed_now().to_rfc3339()
+            }),
+        ))
+        .unwrap();
+
+    assert_eq!(response["result"]["isError"], false);
+    assert_eq!(
+        response["result"]["structuredContent"]["next_focus_task_id"],
+        serde_json::Value::Null
+    );
+    let next_repetition_id = response["result"]["structuredContent"]["next_repetition_task_id"]
+        .as_str()
+        .expect("next repetition task id must be returned");
+    assert!(Uuid::parse_str(next_repetition_id).is_ok());
+}
+
+#[test]
 fn complete_task_未完了childと未知taskを区別してsaveしない() {
     let parent = new_task_handle("parent").unwrap();
     parent.create_as_last_child(new_task_attr("undone child"));

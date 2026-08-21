@@ -1717,6 +1717,42 @@ mod tests {
     }
 
     #[test]
+    fn complete_task_唯一の反復子から次回taskを生成したらfocusを返さない() {
+        let parent = crate::test_support::new_task_handle("ルーチン").unwrap();
+        parent.set_repetition_interval_days_opt(Some(7)).unwrap();
+        let child = parent.create_as_last_child(crate::test_support::new_task_attr("今回"));
+        let child_id = child.get_id().unwrap();
+        let mut repository = TestTaskRepository::new(vec![parent.clone()], fixed_now());
+        let expected_next_id = Uuid::from_u128(0x232);
+        let mut next_id = || expected_next_id;
+        let mut factory = TaskFactory::new(fixed_now(), &mut next_id);
+
+        let output = complete_task(
+            &mut repository,
+            CompleteTaskInput {
+                task_id: child_id,
+                finished_at: fixed_now(),
+                additional_actual_work_seconds: 0,
+            },
+            &mut factory,
+        )
+        .unwrap();
+
+        assert_eq!(output.next_focus_task_id, None);
+        assert_eq!(output.next_repetition_task_id, Some(expected_next_id));
+        let children = parent.get_children().unwrap();
+        assert_eq!(children.len(), 2);
+        assert_eq!(child.get_status().unwrap(), Status::Done);
+        assert_eq!(
+            children
+                .into_iter()
+                .filter(|task| task.get_status().unwrap() != Status::Done)
+                .count(),
+            1
+        );
+    }
+
+    #[test]
     fn complete_task_todoのsiblingがあれば次focusを返さない() {
         let parent = crate::test_support::new_task_handle("親").unwrap();
         let child = parent.create_as_last_child(crate::test_support::new_task_attr("対象"));

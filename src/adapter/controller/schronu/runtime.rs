@@ -7838,6 +7838,31 @@ fn test_execute_finish_唯一の子を完了すると親へfocusする() {
 }
 
 #[test]
+fn test_execute_finish_唯一の反復子から次回taskを生成したらfocusを解除する() {
+    let now = Local.with_ymd_and_hms(2026, 8, 11, 12, 0, 0).unwrap();
+    let parent_task = new_test_task_handle("繰り返しtask").unwrap();
+    parent_task
+        .set_repetition_interval_days_opt(Some(7))
+        .unwrap();
+    let child_task = parent_task.create_as_last_child(new_test_task_attr("今回分"));
+    let child_id = child_task.get_id().unwrap();
+
+    let result = execute_command_for_test(parent_task, now, Some(child_id), "終 今");
+
+    assert_eq!(result.focused_task_id_opt, None);
+    assert_eq!(child_task.get_status().unwrap(), Status::Done);
+    let children = result.task.get_children().unwrap();
+    assert_eq!(children.len(), 2);
+    assert_eq!(
+        children
+            .into_iter()
+            .filter(|task| task.get_status().unwrap() != Status::Done)
+            .count(),
+        1
+    );
+}
+
+#[test]
 fn test_execute_finish_繰り返しtaskの見積もりを実績との差に応じて補正する() {
     let now = Local.with_ymd_and_hms(2026, 8, 11, 12, 0, 0).unwrap();
     let cases = [(1_000, 900), (200, 500), (600, 600)];
