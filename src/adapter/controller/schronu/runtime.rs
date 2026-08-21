@@ -7348,6 +7348,29 @@ fn test_execute_defer_expression_mmddの日時errorを伝搬して状態を変�
 }
 
 #[test]
+fn test_execute_defer_expression_不正なcalendar時刻を変更せず拒否する() {
+    let now = Local.with_ymd_and_hms(2026, 8, 14, 12, 0, 0).unwrap();
+    let task = new_test_task_handle("不正calendar時刻の延期対象").unwrap();
+    let task_id = task.get_id().unwrap();
+    let original_snapshot = task.snapshot().unwrap();
+    let mut task_repository = TestTaskRepository::new(task, now);
+    let mut focused_task_id_opt = Some(task_id);
+    let stdout = TestWriter::new();
+    let mut context = RuntimeDeferCommandContext {
+        task_repository: &mut task_repository,
+        focused_task_id_opt: &mut focused_task_id_opt,
+        config: active_config(),
+    };
+
+    let actual = context.defer_expression(&["13:99".to_string()]);
+
+    assert!(actual.is_ok());
+    assert_eq!(task_repository.task.snapshot().unwrap(), original_snapshot);
+    assert_eq!(focused_task_id_opt, Some(task_id));
+    assert!(stdout.into_string().is_empty());
+}
+
+#[test]
 fn test_execute_deadline_翌朝計算不能を情報付きerrorにして状態を変更しない() {
     let now = maximum_local_datetime();
     let task = new_test_task_handle("日時範囲外のdeadline対象").unwrap();
