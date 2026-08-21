@@ -557,7 +557,7 @@ fn prepare_next_repetition_task(
         .get_estimated_work_seconds()
         .map_err(ApplicationError::TaskTree)?;
     let adjusted_parent_estimated_work_seconds =
-        adjusted_repetition_estimate(original_parent_estimated_work_seconds, actual_work_seconds);
+        adjusted_repetition_estimate(original_parent_estimated_work_seconds, actual_work_seconds)?;
     let task_attr = build_next_repetition_task_attr(
         task,
         &parent_task,
@@ -592,17 +592,34 @@ fn create_prepared_repetition_task(
     Ok(Some(prepared.task_id))
 }
 
-fn adjusted_repetition_estimate(original_estimated_seconds: i64, actual_work_seconds: i64) -> i64 {
+fn adjusted_repetition_estimate(
+    original_estimated_seconds: i64,
+    actual_work_seconds: i64,
+) -> Result<i64, ApplicationError> {
     if actual_work_seconds <= 0 {
-        return original_estimated_seconds;
+        return Ok(original_estimated_seconds);
     }
 
-    let difference = actual_work_seconds - original_estimated_seconds;
-    match difference.cmp(&0) {
-        Ordering::Greater => original_estimated_seconds + difference * 3 / 4,
-        Ordering::Less => max(60, original_estimated_seconds + difference / 4),
+    let overflow_error = || ApplicationError::InvalidInput {
+        field: "estimated_work_seconds",
+        reason: "repetition estimate adjustment overflow",
+    };
+    let difference = actual_work_seconds
+        .checked_sub(original_estimated_seconds)
+        .ok_or_else(overflow_error)?;
+    let adjusted_estimated_seconds = match difference.cmp(&0) {
+        Ordering::Greater => difference
+            .checked_mul(3)
+            .map(|weighted_difference| weighted_difference / 4)
+            .and_then(|adjustment| original_estimated_seconds.checked_add(adjustment))
+            .ok_or_else(overflow_error)?,
+        Ordering::Less => original_estimated_seconds
+            .checked_add(difference / 4)
+            .map(|adjusted| max(60, adjusted))
+            .ok_or_else(overflow_error)?,
         Ordering::Equal => original_estimated_seconds,
-    }
+    };
+    Ok(adjusted_estimated_seconds)
 }
 
 fn apply_time_template(
@@ -1506,6 +1523,88 @@ mod tests {
             child_ids_before
         );
         assert_eq!(repository.highest_priority_leaf_task_id, focus_before);
+        assert_eq!(id_call_count.get(), 0);
+    }
+
+    #[test]
+    fn complete_task_反復見積補正のoverflowをerrorにして変更しない() {
+        let parent =
+            TaskHandle::with_identity("ルーチン", Uuid::from_u128(0x211), fixed_now()).unwrap();
+        parent.set_repetition_interval_days_opt(Some(7)).unwrap();
+        parent.set_estimated_work_seconds(0).unwrap();
+        let child = parent.create_as_last_child(TaskAttr::with_identity(
+            "今回",
+            Uuid::from_u128(0x212),
+            fixed_now(),
+        ));
+        let child_id = child.get_id().unwrap();
+        let child_status_before = child.get_status().unwrap();
+        let child_actual_before = child.get_actual_work_seconds().unwrap();
+        let child_end_before = child.get_end_time_opt().unwrap();
+        let child_revision_before = child.get_persistent_mutation_revision().unwrap();
+        let parent_estimate_before = parent.get_estimated_work_seconds().unwrap();
+        let parent_revision_before = parent.get_persistent_mutation_revision().unwrap();
+        let child_ids_before = parent
+            .get_children()
+            .unwrap()
+            .into_iter()
+            .map(|task| task.get_id().unwrap())
+            .collect::<Vec<_>>();
+        let mut repository = TestTaskRepository::new(vec![parent.clone()], fixed_now());
+        let id_call_count = Cell::new(0);
+        let mut next_id = || {
+            id_call_count.set(id_call_count.get() + 1);
+            Uuid::from_u128(0x213)
+        };
+        let mut factory = TaskFactory::new(fixed_now(), &mut next_id);
+
+        let actual = catch_unwind(AssertUnwindSafe(|| {
+            complete_task(
+                &mut repository,
+                CompleteTaskInput {
+                    task_id: child_id,
+                    finished_at: fixed_now(),
+                    additional_actual_work_seconds: i64::MAX,
+                },
+                &mut factory,
+            )
+        }));
+
+        let actual = actual.expect("complete_task must return an error instead of panicking");
+        assert_eq!(
+            actual,
+            Err(ApplicationError::InvalidInput {
+                field: "estimated_work_seconds",
+                reason: "repetition estimate adjustment overflow",
+            })
+        );
+        assert_eq!(child.get_status().unwrap(), child_status_before);
+        assert_eq!(
+            child.get_actual_work_seconds().unwrap(),
+            child_actual_before
+        );
+        assert_eq!(child.get_end_time_opt().unwrap(), child_end_before);
+        assert_eq!(
+            child.get_persistent_mutation_revision().unwrap(),
+            child_revision_before
+        );
+        assert_eq!(
+            parent.get_estimated_work_seconds().unwrap(),
+            parent_estimate_before
+        );
+        assert_eq!(
+            parent.get_persistent_mutation_revision().unwrap(),
+            parent_revision_before
+        );
+        assert_eq!(
+            parent
+                .get_children()
+                .unwrap()
+                .into_iter()
+                .map(|task| task.get_id().unwrap())
+                .collect::<Vec<_>>(),
+            child_ids_before
+        );
         assert_eq!(id_call_count.get(), 0);
     }
 
