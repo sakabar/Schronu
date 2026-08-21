@@ -1131,6 +1131,9 @@ mod task_generation_context_tests {
         now: DateTime<Local>,
         next_ids: VecDeque<Uuid>,
         focused_task_id_opt: Option<Uuid>,
+        created_task_inputs: Vec<CreateTaskInput>,
+        created_task_attr_names: Vec<String>,
+        focused_task_updates: Vec<Option<Uuid>>,
     }
 
     impl FixedIdentityProjectCommandContext {
@@ -1139,6 +1142,9 @@ mod task_generation_context_tests {
                 now,
                 next_ids: next_ids.into_iter().collect(),
                 focused_task_id_opt: None,
+                created_task_inputs: Vec::new(),
+                created_task_attr_names: Vec::new(),
+                focused_task_updates: Vec::new(),
             }
         }
     }
@@ -1152,8 +1158,12 @@ mod task_generation_context_tests {
             unreachable!("this contract test passes the focused task explicitly")
         }
 
-        fn create_task(&mut self, _input: CreateTaskInput) -> Result<Uuid, ApplicationError> {
-            unreachable!("this contract test exercises direct child creation")
+        fn create_task(&mut self, input: CreateTaskInput) -> Result<Uuid, ApplicationError> {
+            self.created_task_inputs.push(input);
+            Ok(self
+                .next_ids
+                .pop_front()
+                .expect("the fixed identity sequence must cover every created task"))
         }
 
         fn breakdown_task(
@@ -1164,6 +1174,7 @@ mod task_generation_context_tests {
         }
 
         fn create_task_attr(&mut self, name: &str) -> TaskAttr {
+            self.created_task_attr_names.push(name.to_string());
             TaskAttr::with_identity(
                 name,
                 self.next_ids
@@ -1183,12 +1194,47 @@ mod task_generation_context_tests {
 
         fn set_focused_task_id(&mut self, task_id_opt: Option<Uuid>) {
             self.focused_task_id_opt = task_id_opt;
+            self.focused_task_updates.push(task_id_opt);
         }
     }
 
     fn task(name: &str, id: u128, now: DateTime<Local>) -> TaskHandle {
         TaskHandle::with_identity(name, Uuid::from_u128(id), now)
             .expect("test task creation must succeed")
+    }
+
+    #[test]
+    fn project作成は次の業務日境界を算出できない場合に副作用なくerrorを返す() {
+        let local_datetime = chrono::NaiveDate::MAX
+            .and_hms_opt(6, 0, 0)
+            .expect("maximum date at 06:00 must be valid");
+        let now = Local
+            .from_local_datetime(&local_datetime)
+            .single()
+            .expect("maximum local date at 06:00 must be unambiguous");
+        let unused_id = Uuid::from_u128(100);
+        let mut context = FixedIdentityProjectCommandContext::new(now, [unused_id]);
+        let command = Command::Action(CommandAction::NewProject {
+            kind: CommandKind::NewProject,
+            canonical_name: "新",
+            name: "project".to_string(),
+            estimated_minutes: Some(30),
+        });
+
+        let actual = handle_project_command(&command, &mut context);
+
+        assert_eq!(
+            actual,
+            Err(ApplicationError::SubjectiveDateOutOfRange {
+                operation: "next_business_day_start",
+                datetime: now,
+            })
+        );
+        assert!(context.created_task_inputs.is_empty());
+        assert!(context.created_task_attr_names.is_empty());
+        assert_eq!(context.next_ids, [unused_id]);
+        assert_eq!(context.focused_task_id_opt, None);
+        assert!(context.focused_task_updates.is_empty());
     }
 
     #[test]

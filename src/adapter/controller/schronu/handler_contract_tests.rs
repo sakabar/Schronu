@@ -1,12 +1,14 @@
 use super::command::{Command, CommandAction, CommandKind, InteractiveShortcut};
 use super::handler::{
-    handle, handle_defer_command, handle_task_attribute_command, handle_task_tree_command,
-    DeferCommandContext, DeferCommandError, ExternalRequest, FocusRequest,
-    TaskAttributeCommandContext, TaskListOrder, TaskTreeCommandContext,
+    decide_finish_time_values, decide_time_values, handle, handle_defer_command,
+    handle_task_attribute_command, handle_task_tree_command, DeferCommandContext,
+    DeferCommandError, ExternalRequest, FocusRequest, TaskAttributeCommandContext, TaskListOrder,
+    TaskTreeCommandContext,
 };
 use super::renderer::{
     render_display_model, DisplayFragment, DisplayModel, DisplayRecorder, SchronuWriter,
 };
+use chrono::{Local, NaiveDate, TimeZone};
 use schronu::application::task_use_case::ApplicationError;
 use std::io::Write;
 use uuid::Uuid;
@@ -16,6 +18,75 @@ fn no_arguments(kind: CommandKind, canonical_name: &'static str) -> Command {
         kind,
         canonical_name,
     })
+}
+
+fn maximum_local_business_day_start() -> chrono::DateTime<Local> {
+    let local_datetime = NaiveDate::MAX
+        .and_hms_opt(6, 0, 0)
+        .expect("maximum date at 06:00 must be valid");
+    Local
+        .from_local_datetime(&local_datetime)
+        .single()
+        .expect("maximum local date at 06:00 must be unambiguous")
+}
+
+#[test]
+fn 明日と曜日の日時指定は次の業務日境界errorを保持する() {
+    let now = maximum_local_business_day_start();
+
+    for date_expression in ["明", "月"] {
+        assert_eq!(
+            decide_time_values(&["09:30".to_string(), date_expression.to_string()], &now),
+            Err(ApplicationError::SubjectiveDateOutOfRange {
+                operation: "next_business_day_start",
+                datetime: now,
+            })
+        );
+    }
+}
+
+#[test]
+fn 明示日付と月日はsingleのlocal日時だけを返し不正日付はnoneにする() {
+    let now = Local.with_ymd_and_hms(2026, 8, 21, 12, 0, 0).unwrap();
+
+    assert_eq!(
+        decide_time_values(&["09:30".to_string(), "2026/8/22".to_string()], &now),
+        Ok(Some(Local.with_ymd_and_hms(2026, 8, 22, 9, 30, 0).unwrap()))
+    );
+    assert_eq!(
+        decide_time_values(&["09:30".to_string(), "8/23".to_string()], &now),
+        Ok(Some(Local.with_ymd_and_hms(2026, 8, 23, 9, 30, 0).unwrap()))
+    );
+    assert_eq!(
+        decide_time_values(&["09:30".to_string()], &now),
+        Ok(Some(Local.with_ymd_and_hms(2026, 8, 21, 9, 30, 0).unwrap()))
+    );
+    assert_eq!(
+        decide_time_values(&["09:30".to_string(), "2026/2/30".to_string()], &now),
+        Ok(None)
+    );
+}
+
+#[test]
+fn 完了時刻指定は日時errorを保持し省略と今と不正構文を区別する() {
+    let now = maximum_local_business_day_start();
+
+    assert_eq!(decide_finish_time_values(&[], &now), Ok(Some(now)));
+    assert_eq!(
+        decide_finish_time_values(&["今".to_string()], &now),
+        Ok(Some(now))
+    );
+    assert_eq!(
+        decide_finish_time_values(&["invalid".to_string()], &now),
+        Ok(None)
+    );
+    assert_eq!(
+        decide_finish_time_values(&["09:30".to_string(), "明".to_string()], &now),
+        Err(ApplicationError::SubjectiveDateOutOfRange {
+            operation: "next_business_day_start",
+            datetime: now,
+        })
+    );
 }
 
 #[test]
