@@ -498,7 +498,6 @@ fn resolve_upcoming_clear_or_gather_day(
 
     let days_of_week = ["月", "火", "水", "木", "金", "土", "日"];
     if let Some(target_days_of_week_ind) = days_of_week.iter().position(|day| *day == date) {
-        let next_business_day_start = try_next_business_day_start(now)?;
         let subjective_date = try_subjective_date(now)?;
         let now_days_of_week_ind = days_of_week
             .iter()
@@ -512,9 +511,8 @@ fn resolve_upcoming_clear_or_gather_day(
             days_until_target
         };
 
-        let target_date = next_business_day_start
-            .date_naive()
-            .checked_add_signed(Duration::days(days as i64 - 1))
+        let target_date = subjective_date
+            .checked_add_signed(Duration::days(days as i64))
             .ok_or(ApplicationError::SubjectiveDateOutOfRange {
                 operation: "weekday_date",
                 datetime: now,
@@ -623,6 +621,19 @@ fn test_resolve_upcoming_clear_or_gather_day_業務日計算不能を情報付�
         resolve_upcoming_clear_or_gather_day("明", now),
         Err(ApplicationError::SubjectiveDateOutOfRange {
             operation: "next_business_day_start",
+            datetime: now,
+        })
+    );
+}
+
+#[test]
+fn test_resolve_upcoming_clear_or_gather_day_曜日範囲外は曜日計算errorにする() {
+    let now = maximum_local_datetime();
+
+    assert_eq!(
+        resolve_upcoming_clear_or_gather_day("月", now),
+        Err(ApplicationError::SubjectiveDateOutOfRange {
+            operation: "weekday_date",
             datetime: now,
         })
     );
@@ -5118,6 +5129,40 @@ fn test_execute_集_曜日指定は次に来る曜日の業務日開始へ集め
 
     assert_eq!(result.task.get_orig_status().unwrap(), Status::Pending);
     assert_eq!(result.task.get_pending_until().unwrap(), schronu_day_start);
+}
+
+#[test]
+fn test_execute_集_曜日selector範囲外を情報付きerrorにして変更しない() {
+    let now = maximum_local_datetime();
+    let task = new_test_task_handle("日時範囲外の曜日集約対象").unwrap();
+    let task_id = task.get_id().unwrap();
+    let original_snapshot = task.snapshot().unwrap();
+    let mut task_repository = TestTaskRepository::new(task, now);
+    let mut free_time_manager = TestFreeTimeManager;
+    let mut focused_task_id_opt = Some(task_id);
+    let mut stdout = TestWriter::new();
+
+    let actual = execute(
+        &mut stdout,
+        &mut task_repository,
+        &mut free_time_manager,
+        &mut focused_task_id_opt,
+        &now,
+        "集 13:00 月",
+    );
+
+    assert!(matches!(
+        actual,
+        Err(CommandError::Application(
+            ApplicationError::SubjectiveDateOutOfRange {
+                operation: "weekday_date",
+                datetime,
+            }
+        )) if datetime == now
+    ));
+    assert_eq!(task_repository.task.snapshot().unwrap(), original_snapshot);
+    assert_eq!(focused_task_id_opt, Some(task_id));
+    assert!(stdout.into_string().is_empty());
 }
 
 #[test]
