@@ -214,6 +214,35 @@ children:
     assert_eq!(actual, parent_task);
 }
 
+#[test]
+fn test_yaml_to_immutable_taskはcaller指定時刻を全nodeのpending判定へ共有する() {
+    let s = "
+name: '親タスク'
+status: 'pending'
+pending_until: '2001/01/01 00:00:00'
+children:
+  - name: '子タスク'
+    status: 'pending'
+    pending_until: '2001/01/01 00:00:00'
+    children:
+      - name: '孫タスク'
+        status: 'pending'
+        pending_until: '2001/01/01 00:00:00'
+";
+    let docs = YamlLoader::load_from_str(s).unwrap();
+    let project_yaml: &Yaml = &docs[0];
+    let operation_now = Local.with_ymd_and_hms(2000, 1, 1, 0, 0, 0).unwrap();
+
+    let actual = yaml_to_immutable_task(project_yaml, operation_now);
+
+    assert_eq!(actual.get_status(), &Status::Pending);
+    assert_eq!(actual.get_children()[0].get_status(), &Status::Pending);
+    assert_eq!(
+        actual.get_children()[0].get_children()[0].get_status(),
+        &Status::Pending
+    );
+}
+
 pub fn yaml_to_immutable_task(yaml: &Yaml) -> ImmutableTask {
     let name: String = yaml["name"].as_str().unwrap_or("").to_string();
 
