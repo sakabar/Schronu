@@ -465,35 +465,49 @@ fn get_weekday_jp_from_weekday(weekday: Weekday) -> &'static str {
     }
 }
 
-fn resolve_upcoming_mmdd(mmdd: &str, now: DateTime<Local>) -> Option<LocalResult<DateTime<Local>>> {
+fn resolve_upcoming_mmdd(
+    mmdd: &str,
+    now: DateTime<Local>,
+) -> Result<Option<DateTime<Local>>, ApplicationError> {
     let mmdd_reg = Regex::new(r"^(\d{1,2})/(\d{1,2})$").unwrap();
-    let caps = mmdd_reg.captures(mmdd)?;
-    let month: u32 = caps[1].parse().ok()?;
-    let day: u32 = caps[2].parse().ok()?;
-
-    let schronu_day_start = |year| match Local.with_ymd_and_hms(year, month, day, 12, 0, 0) {
-        LocalResult::Single(datetime) => {
-            LocalResult::Single(get_next_morning_datetime(datetime) - Duration::days(1))
-        }
-        LocalResult::Ambiguous(earliest, latest) => LocalResult::Ambiguous(
-            get_next_morning_datetime(earliest) - Duration::days(1),
-            get_next_morning_datetime(latest) - Duration::days(1),
-        ),
-        LocalResult::None => LocalResult::None,
+    let Some(caps) = mmdd_reg.captures(mmdd) else {
+        return Ok(None);
+    };
+    let (Some(month), Some(day)) = (caps[1].parse::<u32>().ok(), caps[2].parse::<u32>().ok())
+    else {
+        return Ok(None);
     };
 
-    Some(match schronu_day_start(now.year()) {
-        LocalResult::Single(datetime) if datetime < now => schronu_day_start(now.year() + 1),
-        result => result,
-    })
+    let validation_year = 2000 + now.year().rem_euclid(400);
+    if NaiveDate::from_ymd_opt(validation_year, month, day).is_none() {
+        return Ok(None);
+    }
+    let out_of_range = || ApplicationError::SubjectiveDateOutOfRange {
+        operation: "upcoming_calendar_date",
+        datetime: now,
+    };
+    let current_year_date =
+        NaiveDate::from_ymd_opt(now.year(), month, day).ok_or_else(out_of_range)?;
+    let current_year_start = try_subjective_date_start(current_year_date)?;
+    if current_year_start >= now {
+        return Ok(Some(current_year_start));
+    }
+
+    let next_year = now.year().checked_add(1).ok_or_else(out_of_range)?;
+    let next_validation_year = 2000 + next_year.rem_euclid(400);
+    if NaiveDate::from_ymd_opt(next_validation_year, month, day).is_none() {
+        return Ok(None);
+    }
+    let next_year_date = NaiveDate::from_ymd_opt(next_year, month, day).ok_or_else(out_of_range)?;
+    Ok(Some(try_subjective_date_start(next_year_date)?))
 }
 
 fn resolve_upcoming_clear_or_gather_day(
     date: &str,
     now: DateTime<Local>,
-) -> Result<Option<LocalResult<DateTime<Local>>>, ApplicationError> {
+) -> Result<Option<DateTime<Local>>, ApplicationError> {
     if date == "明" {
-        return Ok(Some(LocalResult::Single(try_next_business_day_start(now)?)));
+        return Ok(Some(try_next_business_day_start(now)?));
     }
 
     let days_of_week = ["月", "火", "水", "木", "金", "土", "日"];
@@ -518,15 +532,15 @@ fn resolve_upcoming_clear_or_gather_day(
                 datetime: now,
             })?;
         let target_datetime = try_subjective_date_start(target_date)?;
-        return Ok(Some(LocalResult::Single(target_datetime)));
+        return Ok(Some(target_datetime));
     }
 
-    Ok(resolve_upcoming_mmdd(date, now))
+    resolve_upcoming_mmdd(date, now)
 }
 
 fn resolve_show_all_pattern(pattern: &str, now: DateTime<Local>) -> String {
     match resolve_upcoming_mmdd(pattern, now) {
-        Some(LocalResult::Single(datetime)) => datetime.format("%Y/%m/%d").to_string(),
+        Ok(Some(datetime)) => datetime.format("%Y/%m/%d").to_string(),
         _ => pattern.to_string(),
     }
 }
@@ -537,10 +551,7 @@ fn test_resolve_upcoming_mmdd_未来の日付は現在年を使う() {
     let target_date = Local.with_ymd_and_hms(2026, 9, 26, 12, 0, 0).unwrap();
     let expected = get_next_morning_datetime(target_date) - Duration::days(1);
 
-    assert_eq!(
-        resolve_upcoming_mmdd("9/26", now),
-        Some(LocalResult::Single(expected))
-    );
+    assert_eq!(resolve_upcoming_mmdd("9/26", now), Ok(Some(expected)));
 }
 
 #[test]
@@ -549,10 +560,7 @@ fn test_resolve_upcoming_mmdd_過去の日付は翌年を使う() {
     let target_date = Local.with_ymd_and_hms(2027, 9, 26, 12, 0, 0).unwrap();
     let expected = get_next_morning_datetime(target_date) - Duration::days(1);
 
-    assert_eq!(
-        resolve_upcoming_mmdd("09/26", now),
-        Some(LocalResult::Single(expected))
-    );
+    assert_eq!(resolve_upcoming_mmdd("09/26", now), Ok(Some(expected)));
 }
 
 #[test]
@@ -560,10 +568,7 @@ fn test_resolve_upcoming_mmdd_当日の境界時刻は現在年を使う() {
     let target_date = Local.with_ymd_and_hms(2026, 9, 26, 12, 0, 0).unwrap();
     let now = get_next_morning_datetime(target_date) - Duration::days(1);
 
-    assert_eq!(
-        resolve_upcoming_mmdd("9/26", now),
-        Some(LocalResult::Single(now))
-    );
+    assert_eq!(resolve_upcoming_mmdd("9/26", now), Ok(Some(now)));
 }
 
 #[test]
@@ -572,9 +577,7 @@ fn test_resolve_upcoming_clear_or_gather_day_明は次の業務日を返す() {
 
     assert_eq!(
         resolve_upcoming_clear_or_gather_day("明", now),
-        Ok(Some(LocalResult::Single(
-            Local.with_ymd_and_hms(2026, 8, 15, 6, 0, 0).unwrap()
-        )))
+        Ok(Some(Local.with_ymd_and_hms(2026, 8, 15, 6, 0, 0).unwrap()))
     );
 }
 
@@ -593,9 +596,7 @@ fn test_resolve_upcoming_clear_or_gather_day_曜日は明日以降で最も近�
     ] {
         assert_eq!(
             resolve_upcoming_clear_or_gather_day(weekday, now),
-            Ok(Some(LocalResult::Single(
-                Local.with_ymd_and_hms(2026, 8, day, 6, 0, 0).unwrap()
-            )))
+            Ok(Some(Local.with_ymd_and_hms(2026, 8, day, 6, 0, 0).unwrap()))
         );
     }
 }
@@ -606,9 +607,7 @@ fn test_resolve_upcoming_clear_or_gather_day_午前6時前の明と不正値を�
 
     assert_eq!(
         resolve_upcoming_clear_or_gather_day("明", now),
-        Ok(Some(LocalResult::Single(
-            Local.with_ymd_and_hms(2026, 8, 14, 6, 0, 0).unwrap()
-        )))
+        Ok(Some(Local.with_ymd_and_hms(2026, 8, 14, 6, 0, 0).unwrap()))
     );
     assert_eq!(resolve_upcoming_clear_or_gather_day("翌", now), Ok(None));
 }
@@ -634,6 +633,19 @@ fn test_resolve_upcoming_clear_or_gather_day_曜日範囲外は曜日計算error
         resolve_upcoming_clear_or_gather_day("月", now),
         Err(ApplicationError::SubjectiveDateOutOfRange {
             operation: "weekday_date",
+            datetime: now,
+        })
+    );
+}
+
+#[test]
+fn test_resolve_upcoming_clear_or_gather_day_mmddの翌年計算不能を情報付きerrorにする() {
+    let now = maximum_local_datetime();
+
+    assert_eq!(
+        resolve_upcoming_clear_or_gather_day("12/31", now),
+        Err(ApplicationError::SubjectiveDateOutOfRange {
+            operation: "upcoming_calendar_date",
             datetime: now,
         })
     );
@@ -735,12 +747,8 @@ fn parse_dated_clear_or_gather_time_range(
     mmdd: &str,
     now: DateTime<Local>,
 ) -> Result<Option<ClearOrGatherTimeRange>, ApplicationError> {
-    let Some(resolved_day_start) = resolve_upcoming_clear_or_gather_day(mmdd, now)? else {
+    let Some(schronu_day_start) = resolve_upcoming_clear_or_gather_day(mmdd, now)? else {
         return Ok(None);
-    };
-    let schronu_day_start = match resolved_day_start {
-        LocalResult::Single(datetime) => datetime,
-        LocalResult::Ambiguous(_, _) | LocalResult::None => return Ok(None),
     };
     let hhmm_reg = Regex::new(r"^(\d+):(\d{1,2})$").unwrap();
     let Some(caps) = hhmm_reg.captures(time) else {
@@ -4216,9 +4224,7 @@ fn execute_defer_expression(
                     ),
                     Ok(LocalResult::Ambiguous(_, _)) | Ok(LocalResult::None) | Err(_) => None,
                 }
-            } else if let Some(LocalResult::Single(defer_dst_time)) =
-                resolve_upcoming_mmdd(value, now)
-            {
+            } else if let Ok(Some(defer_dst_time)) = resolve_upcoming_mmdd(value, now) {
                 let seconds = (defer_dst_time - now).num_seconds() + 1;
                 (seconds > 0).then_some(seconds)
             } else if let Some(captures) = hhmm_reg.captures(value) {
@@ -5086,6 +5092,40 @@ fn test_execute_空_日付selectorの業務日計算不能を情報付きerror�
         Err(CommandError::Application(
             ApplicationError::SubjectiveDateOutOfRange {
                 operation: "next_business_day_start",
+                datetime,
+            }
+        )) if datetime == now
+    ));
+    assert_eq!(task_repository.task.snapshot().unwrap(), original_snapshot);
+    assert_eq!(focused_task_id_opt, Some(task_id));
+    assert!(stdout.into_string().is_empty());
+}
+
+#[test]
+fn test_execute_空_mmddの翌年計算不能を情報付きerrorにして変更しない() {
+    let now = maximum_local_datetime();
+    let task = new_test_task_handle("日時範囲外のMMDD空対象").unwrap();
+    let task_id = task.get_id().unwrap();
+    let original_snapshot = task.snapshot().unwrap();
+    let mut task_repository = TestTaskRepository::new(task, now);
+    let mut free_time_manager = TestFreeTimeManager;
+    let mut focused_task_id_opt = Some(task_id);
+    let mut stdout = TestWriter::new();
+
+    let actual = execute(
+        &mut stdout,
+        &mut task_repository,
+        &mut free_time_manager,
+        &mut focused_task_id_opt,
+        &now,
+        "空 13:00 12/31",
+    );
+
+    assert!(matches!(
+        actual,
+        Err(CommandError::Application(
+            ApplicationError::SubjectiveDateOutOfRange {
+                operation: "upcoming_calendar_date",
                 datetime,
             }
         )) if datetime == now
