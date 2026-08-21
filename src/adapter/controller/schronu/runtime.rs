@@ -4622,9 +4622,7 @@ fn resolve_deadline_date(value: &str, now: DateTime<Local>) -> Result<String, Co
         return Ok(value.to_string());
     }
     if value.starts_with('今') {
-        return Ok((get_next_morning_datetime(now) - Duration::days(1))
-            .format("%Y/%m/%d")
-            .to_string());
+        return Ok(try_subjective_date(now)?.format("%Y/%m/%d").to_string());
     }
     if value.starts_with('明') {
         return Ok(try_next_business_day_start(now)?
@@ -4634,10 +4632,10 @@ fn resolve_deadline_date(value: &str, now: DateTime<Local>) -> Result<String, Co
 
     let days_of_week = ["月", "火", "水", "木", "金", "土", "日"];
     if days_of_week.contains(&value) {
-        let today = get_next_morning_datetime(now) - Duration::days(1);
+        let today = try_subjective_date(now)?;
         let current_index = days_of_week
             .iter()
-            .position(|day| *day == get_weekday_jp(&today.date_naive()))
+            .position(|day| *day == get_weekday_jp(&today))
             .expect("current weekday must be in the Japanese weekday table");
         let target_index = days_of_week
             .iter()
@@ -4649,9 +4647,13 @@ fn resolve_deadline_date(value: &str, now: DateTime<Local>) -> Result<String, Co
         } else {
             difference as i64
         };
-        return Ok((get_next_morning_datetime(now) + Duration::days(days - 1))
-            .format("%Y/%m/%d")
-            .to_string());
+        let deadline_date = today.checked_add_signed(Duration::days(days)).ok_or(
+            ApplicationError::SubjectiveDateOutOfRange {
+                operation: "deadline_weekday_date",
+                datetime: now,
+            },
+        )?;
+        return Ok(deadline_date.format("%Y/%m/%d").to_string());
     }
 
     let mmdd = Regex::new(r"^(\d{1,2})/(\d{1,2})$").expect("valid deadline regex");
@@ -7591,6 +7593,20 @@ fn test_resolve_deadline_date_曜日の範囲外を曜日計算errorにする() 
                 datetime,
             }
         )) if datetime == now
+    ));
+}
+
+#[test]
+fn test_resolve_deadline_date_曜日は同じ曜日を7日後にする() {
+    let now = Local.with_ymd_and_hms(2026, 8, 17, 12, 0, 0).unwrap();
+
+    assert!(matches!(
+        resolve_deadline_date("月", now),
+        Ok(actual) if actual == "2026/08/24"
+    ));
+    assert!(matches!(
+        resolve_deadline_date("火", now),
+        Ok(actual) if actual == "2026/08/18"
     ));
 }
 
