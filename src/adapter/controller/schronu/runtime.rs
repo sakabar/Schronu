@@ -6905,6 +6905,35 @@ fn test_runtime_defer_shortcut_翌朝計算不能を情報付きerrorにして�
 }
 
 #[test]
+fn test_execute_defer_expression_曜日の業務日計算不能を情報付きerrorにして状態を変更しない() {
+    let now = maximum_local_datetime();
+    let task = new_test_task_handle("日時範囲外の曜日延期対象").unwrap();
+    let task_id = task.get_id().unwrap();
+    let original_snapshot = task.snapshot().unwrap();
+    let mut task_repository = TestTaskRepository::new(task, now);
+    let mut focused_task_id_opt = Some(task_id);
+    let mut context = RuntimeDeferCommandContext {
+        task_repository: &mut task_repository,
+        focused_task_id_opt: &mut focused_task_id_opt,
+        config: active_config(),
+    };
+
+    let actual = context.defer_expression(&["月".to_string()]);
+
+    assert!(matches!(
+        actual,
+        Err(DeferCommandError::Application(
+            ApplicationError::SubjectiveDateOutOfRange {
+                operation: "next_business_day_start",
+                datetime,
+            }
+        )) if datetime == now
+    ));
+    assert_eq!(task_repository.task.snapshot().unwrap(), original_snapshot);
+    assert_eq!(focused_task_id_opt, Some(task_id));
+}
+
+#[test]
 fn test_execute_deadline_翌朝計算不能を情報付きerrorにして状態を変更しない() {
     let now = maximum_local_datetime();
     let task = new_test_task_handle("日時範囲外のdeadline対象").unwrap();
