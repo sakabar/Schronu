@@ -396,9 +396,14 @@ pub fn complete_task(
             reason: "actual work seconds overflow",
         })?;
 
-    let next_focus_task_id = prospective_next_focus_task_id(&task)?;
+    let prospective_next_focus_task_id = prospective_next_focus_task_id(&task)?;
     let next_repetition_task =
         prepare_next_repetition_task(&task, actual_work_seconds, input.finished_at, factory)?;
+    let next_focus_task_id = if next_repetition_task.is_some() {
+        None
+    } else {
+        prospective_next_focus_task_id
+    };
 
     task.set_actual_work_seconds(actual_work_seconds)
         .map_err(ApplicationError::TaskTree)?;
