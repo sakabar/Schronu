@@ -158,10 +158,7 @@ fn call_create_task<R: TaskRepositoryTrait>(
     id: Value,
     input: CreateTaskInput,
 ) -> Value {
-    let input = match input.into_application() {
-        Ok(input) => input,
-        Err(error) => return tool_input_error_response(id, error),
-    };
+    let input = input.into_application();
 
     let task_id = match create_task_use_case(repository, input) {
         Ok(task_id) => task_id,

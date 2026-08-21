@@ -389,29 +389,20 @@ pub(super) struct CreateTaskInput {
 }
 
 impl CreateTaskInput {
-    pub(super) fn into_application(self) -> Result<ApplicationCreateTaskInput, ToolInputError> {
+    pub(super) fn into_application(self) -> ApplicationCreateTaskInput {
         let estimated_work_minutes = match self.estimated_work_minutes {
             OptionalValue::Missing => None,
-            OptionalValue::Value(minutes) => {
-                minutes
-                    .0
-                    .checked_mul(60)
-                    .ok_or_else(|| ToolInputError::Semantic {
-                        field: "estimated_work_minutes".to_string(),
-                        message: "seconds conversion overflow",
-                    })?;
-                Some(minutes.0)
-            }
+            OptionalValue::Value(minutes) => Some(minutes.0),
         };
 
-        Ok(ApplicationCreateTaskInput {
+        ApplicationCreateTaskInput {
             name: self.name.0,
             estimated_work_minutes,
             pending_until: match self.pending_until {
                 OptionalValue::Missing => None,
                 OptionalValue::Value(pending_until) => Some(pending_until.0),
             },
-        })
+        }
     }
 }
 
