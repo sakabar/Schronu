@@ -504,11 +504,11 @@ mod typed_handler_contract_tests {
         created.set_end_time_opt(Some(outside)).unwrap();
 
         let deadline = TaskHandle::new("deadline").unwrap();
-        deadline.set_orig_status(Status::Done).unwrap();
         deadline.set_create_time(outside).unwrap();
         deadline
             .set_deadline_time_opt(Some(from + Duration::minutes(20)))
             .unwrap();
+        deadline.set_orig_status(Status::Done).unwrap();
         deadline.set_end_time_opt(Some(outside)).unwrap();
 
         let completed = TaskHandle::new("completed").unwrap();
