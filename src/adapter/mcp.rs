@@ -3856,6 +3856,30 @@ mod tests {
     }
 
     #[test]
+    fn create_taskはrepository同期とtask生成に同じoperation時刻を使う() {
+        let operation_now = Local.with_ymd_and_hms(2026, 8, 21, 9, 30, 0).unwrap();
+        let repository = RecordingRepository::new(vec![]);
+        let sync_clock_times = Rc::clone(&repository.sync_clock_times);
+        let mut server = initialized_server(repository);
+
+        let response = run_tool_at(
+            &mut server,
+            operation_now,
+            tool_call_request(
+                "create-operation-time",
+                "create_task",
+                json!({"name": "operation time task"}),
+            ),
+        );
+
+        assert_eq!(response["result"]["isError"], false);
+        assert_eq!(*sync_clock_times.borrow(), vec![operation_now]);
+        let created = &server.repository.projects[0];
+        assert_eq!(created.get_create_time().unwrap(), operation_now);
+        assert_eq!(created.get_start_time().unwrap(), operation_now);
+    }
+
+    #[test]
     fn create_task_schema違反ではtaskを作成せずsaveもしない() {
         let cases = [
             ("missing-name", json!({}), "name"),
@@ -4058,6 +4082,39 @@ mod tests {
             assert_eq!(child["pending_until"], pending_until.to_rfc3339());
         }
         assert_eq!(save_count.get(), 1);
+    }
+
+    #[test]
+    fn breakdown_taskはrepository同期と全child生成に同じoperation時刻を使う() {
+        let operation_now = Local.with_ymd_and_hms(2026, 8, 21, 10, 15, 0).unwrap();
+        let parent = crate::test_support::new_task_handle("parent").unwrap();
+        let parent_id = parent.get_id().unwrap();
+        let parent_observer = parent.clone();
+        let repository = RecordingRepository::new(vec![parent]);
+        let sync_clock_times = Rc::clone(&repository.sync_clock_times);
+        let mut server = initialized_server(repository);
+
+        let response = run_tool_at(
+            &mut server,
+            operation_now,
+            tool_call_request(
+                "breakdown-operation-time",
+                "breakdown_task",
+                json!({
+                    "parent_id": parent_id.to_string(),
+                    "names": ["first", "second"]
+                }),
+            ),
+        );
+
+        assert_eq!(response["result"]["isError"], false);
+        assert_eq!(*sync_clock_times.borrow(), vec![operation_now]);
+        let children = parent_observer.get_children().unwrap();
+        assert_eq!(children.len(), 2);
+        for child in children {
+            assert_eq!(child.get_create_time().unwrap(), operation_now);
+            assert_eq!(child.get_start_time().unwrap(), operation_now);
+        }
     }
 
     #[test]
@@ -4516,6 +4573,53 @@ mod tests {
             .with_timezone(&Local);
         assert!(before <= end_time && end_time <= after);
         assert_eq!(completed["actual_work_seconds"], 60);
+    }
+
+    #[test]
+    fn complete_taskは省略完了時刻と反復task生成に同じoperation時刻を使う() {
+        let operation_now = Local.with_ymd_and_hms(2026, 8, 21, 11, 45, 0).unwrap();
+        let repetition_parent = crate::test_support::new_task_handle("weekly").unwrap();
+        repetition_parent
+            .set_repetition_interval_days_opt(Some(7))
+            .unwrap();
+        let completed_task = repetition_parent
+            .create_as_last_child(crate::test_support::new_task_attr("weekly occurrence"));
+        let completed_task_id = completed_task.get_id().unwrap();
+        let parent_observer = repetition_parent.clone();
+        let completed_task_observer = completed_task.clone();
+        let repository = RecordingRepository::new(vec![repetition_parent]);
+        let sync_clock_times = Rc::clone(&repository.sync_clock_times);
+        let mut server = initialized_server(repository);
+
+        let response = run_tool_at(
+            &mut server,
+            operation_now,
+            tool_call_request(
+                "complete-operation-time",
+                "complete_task",
+                json!({"task_id": completed_task_id.to_string()}),
+            ),
+        );
+
+        assert_eq!(response["result"]["isError"], false);
+        assert_eq!(*sync_clock_times.borrow(), vec![operation_now]);
+        assert_eq!(
+            completed_task_observer.get_end_time_opt().unwrap(),
+            Some(operation_now)
+        );
+        let next_repetition_id = Uuid::parse_str(
+            response["result"]["structuredContent"]["next_repetition_task_id"]
+                .as_str()
+                .unwrap(),
+        )
+        .unwrap();
+        let next_repetition = parent_observer
+            .get_children()
+            .unwrap()
+            .into_iter()
+            .find(|child| child.get_id().unwrap() == next_repetition_id)
+            .unwrap();
+        assert_eq!(next_repetition.get_create_time().unwrap(), operation_now);
     }
 
     #[test]
@@ -5153,6 +5257,15 @@ mod tests {
             "method": "tools/call",
             "params": {"name": name, "arguments": arguments}
         })
+    }
+
+    fn run_tool_at<R: TaskRepositoryTrait>(
+        server: &mut McpServer<R>,
+        operation_now: DateTime<Local>,
+        request: serde_json::Value,
+    ) -> serde_json::Value {
+        let id = request["id"].clone();
+        server.run_transaction_and_call_at(id, &request, operation_now)
     }
 
     fn fixed_now() -> DateTime<Local> {
