@@ -369,6 +369,24 @@ mod typed_handler_contract_tests {
     };
     use serde_json::json;
     use std::rc::Rc;
+    use uuid::Uuid;
+
+    fn call_typed_list_tasks(
+        repository: &RecordingRepository,
+        id: &str,
+        input: ListTasksInput,
+    ) -> serde_json::Value {
+        call_list_tasks(repository, json!(id), input)
+    }
+
+    fn response_task_ids(response: &serde_json::Value) -> Vec<Uuid> {
+        response["result"]["structuredContent"]["tasks"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|task| Uuid::parse_str(task["id"].as_str().unwrap()).unwrap())
+            .collect()
+    }
 
     #[test]
     fn get_focus_handlerはtyped_inputを受け取りrepositoryを変更しない() {
@@ -447,9 +465,9 @@ mod typed_handler_contract_tests {
         let save_count = Rc::clone(&repository.save_count);
         let mutation_count = Rc::clone(&repository.mutation_count);
 
-        let response = call_list_tasks(
+        let response = call_typed_list_tasks(
             &repository,
-            json!("typed-list"),
+            "typed-list",
             ListTasksInput {
                 period: OptionalValue::Value(TaskPeriodInput {
                     field: TaskPeriodFieldValue::CreatedAt,
@@ -469,6 +487,188 @@ mod typed_handler_contract_tests {
         assert_eq!(tasks[0]["id"], matching_id.to_string());
         assert_eq!(save_count.get(), 0);
         assert_eq!(mutation_count.get(), 0);
+    }
+
+    #[test]
+    fn list_tasks_handlerはperiod_fieldの全4値をapplication入力へ変換する() {
+        let from = fixed_now();
+        let until = from + Duration::hours(1);
+        let outside = from - Duration::hours(1);
+
+        let created = TaskHandle::new("created").unwrap();
+        created.set_orig_status(Status::Done).unwrap();
+        created
+            .set_create_time(from + Duration::minutes(10))
+            .unwrap();
+        created.set_deadline_time_opt(Some(outside)).unwrap();
+        created.set_end_time_opt(Some(outside)).unwrap();
+
+        let deadline = TaskHandle::new("deadline").unwrap();
+        deadline.set_orig_status(Status::Done).unwrap();
+        deadline.set_create_time(outside).unwrap();
+        deadline
+            .set_deadline_time_opt(Some(from + Duration::minutes(20)))
+            .unwrap();
+        deadline.set_end_time_opt(Some(outside)).unwrap();
+
+        let completed = TaskHandle::new("completed").unwrap();
+        completed.set_orig_status(Status::Done).unwrap();
+        completed.set_create_time(outside).unwrap();
+        completed.set_deadline_time_opt(Some(outside)).unwrap();
+        completed
+            .set_end_time_opt(Some(from + Duration::minutes(30)))
+            .unwrap();
+
+        let scheduled = TaskHandle::new("scheduled").unwrap();
+        scheduled.set_create_time(outside).unwrap();
+        scheduled
+            .set_start_time(from + Duration::minutes(40))
+            .unwrap();
+        scheduled.set_estimated_work_seconds(15 * 60).unwrap();
+
+        let expected = [
+            (
+                TaskPeriodFieldValue::ScheduledStart,
+                scheduled.get_id().unwrap(),
+            ),
+            (TaskPeriodFieldValue::CreatedAt, created.get_id().unwrap()),
+            (TaskPeriodFieldValue::Deadline, deadline.get_id().unwrap()),
+            (
+                TaskPeriodFieldValue::CompletedAt,
+                completed.get_id().unwrap(),
+            ),
+        ];
+        let repository = RecordingRepository::new(vec![created, deadline, completed, scheduled]);
+
+        for (field, expected_id) in expected {
+            let response = call_typed_list_tasks(
+                &repository,
+                "typed-period-field",
+                ListTasksInput {
+                    period: OptionalValue::Value(TaskPeriodInput {
+                        field,
+                        from: Rfc3339DateTime(from),
+                        until: Rfc3339DateTime(until),
+                    }),
+                    statuses: OptionalValue::Missing,
+                    categories: OptionalValue::Missing,
+                },
+            );
+
+            assert_eq!(response_task_ids(&response), vec![expected_id]);
+        }
+    }
+
+    #[test]
+    fn list_tasks_handlerはstatusの全3値をapplication入力へ変換する() {
+        let todo = task_for_list("todo", Status::Todo, ProjectCategory::Recovery, fixed_now());
+        let pending = task_for_list(
+            "pending",
+            Status::Pending,
+            ProjectCategory::Recovery,
+            fixed_now(),
+        );
+        let done = task_for_list("done", Status::Done, ProjectCategory::Recovery, fixed_now());
+        let expected = [
+            (StatusValue::Todo, todo.get_id().unwrap()),
+            (StatusValue::Pending, pending.get_id().unwrap()),
+            (StatusValue::Done, done.get_id().unwrap()),
+        ];
+        let repository = RecordingRepository::new(vec![todo, pending, done]);
+
+        for (status, expected_id) in expected {
+            let response = call_typed_list_tasks(
+                &repository,
+                "typed-status",
+                ListTasksInput {
+                    period: OptionalValue::Missing,
+                    statuses: OptionalValue::Value(vec![status]),
+                    categories: OptionalValue::Missing,
+                },
+            );
+
+            assert_eq!(response_task_ids(&response), vec![expected_id]);
+        }
+    }
+
+    #[test]
+    fn list_tasks_handlerはcategoryの全5値とnullをapplication入力へ変換する() {
+        let earning = task_for_list(
+            "earning",
+            Status::Todo,
+            ProjectCategory::Earning,
+            fixed_now(),
+        );
+        let sustaining = task_for_list(
+            "sustaining",
+            Status::Todo,
+            ProjectCategory::Sustaining,
+            fixed_now(),
+        );
+        let recovery = task_for_list(
+            "recovery",
+            Status::Todo,
+            ProjectCategory::Recovery,
+            fixed_now(),
+        );
+        let investment = task_for_list(
+            "investment",
+            Status::Todo,
+            ProjectCategory::Investment,
+            fixed_now(),
+        );
+        let consumption = task_for_list(
+            "consumption",
+            Status::Todo,
+            ProjectCategory::Consumption,
+            fixed_now(),
+        );
+        let uncategorized = TaskHandle::new("uncategorized").unwrap();
+        let expected = [
+            (
+                Some(ProjectCategoryValue::Earning),
+                earning.get_id().unwrap(),
+            ),
+            (
+                Some(ProjectCategoryValue::Sustaining),
+                sustaining.get_id().unwrap(),
+            ),
+            (
+                Some(ProjectCategoryValue::Recovery),
+                recovery.get_id().unwrap(),
+            ),
+            (
+                Some(ProjectCategoryValue::Investment),
+                investment.get_id().unwrap(),
+            ),
+            (
+                Some(ProjectCategoryValue::Consumption),
+                consumption.get_id().unwrap(),
+            ),
+            (None, uncategorized.get_id().unwrap()),
+        ];
+        let repository = RecordingRepository::new(vec![
+            earning,
+            sustaining,
+            recovery,
+            investment,
+            consumption,
+            uncategorized,
+        ]);
+
+        for (category, expected_id) in expected {
+            let response = call_typed_list_tasks(
+                &repository,
+                "typed-category",
+                ListTasksInput {
+                    period: OptionalValue::Missing,
+                    statuses: OptionalValue::Missing,
+                    categories: OptionalValue::Value(vec![category]),
+                },
+            );
+
+            assert_eq!(response_task_ids(&response), vec![expected_id]);
+        }
     }
 
     #[test]
