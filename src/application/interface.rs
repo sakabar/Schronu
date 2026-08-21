@@ -78,7 +78,7 @@ pub trait TaskRepositoryTrait {
     fn get_highest_priority_leaf_task_id(&mut self) -> Result<Option<Uuid>, TaskTreeError>;
     fn get_defer_candidate_leaf_task_id(
         &mut self,
-        recent_days: i64,
+        recent_threshold: DateTime<Local>,
     ) -> Result<Option<Uuid>, TaskTreeError>;
     fn get_by_id(&self, id: Uuid) -> Result<Option<TaskHandle>, TaskTreeError>;
     fn start_new_project(&mut self, root_task: TaskHandle) -> Result<(), TaskTreeError>;

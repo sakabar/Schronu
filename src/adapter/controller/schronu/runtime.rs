@@ -1068,9 +1068,22 @@ fn select_focus_task_id(
         FocusSelectionMode::HighestPriority | FocusSelectionMode::Explicit => {
             Ok(get_focus(task_repository)?.map(|task| task.id))
         }
-        FocusSelectionMode::LowestPriority { recent_days } => task_repository
-            .get_defer_candidate_leaf_task_id(recent_days)
-            .map_err(ApplicationError::TaskTree),
+        FocusSelectionMode::LowestPriority { recent_days } => {
+            let now = task_repository.get_last_synced_time();
+            let first_business_day_start = try_next_business_day_start(now)?;
+            let threshold_out_of_range = || ApplicationError::SubjectiveDateOutOfRange {
+                operation: "defer_candidate_threshold",
+                datetime: now,
+            };
+            let recent_duration =
+                Duration::try_days(recent_days).ok_or_else(threshold_out_of_range)?;
+            let recent_threshold = first_business_day_start
+                .checked_add_signed(recent_duration)
+                .ok_or_else(threshold_out_of_range)?;
+            task_repository
+                .get_defer_candidate_leaf_task_id(recent_threshold)
+                .map_err(ApplicationError::TaskTree)
+        }
     }
 }
 
@@ -5154,7 +5167,7 @@ struct TestTaskRepository {
     last_synced_time: DateTime<Local>,
     highest_priority_leaf_task_id_opt: Option<Uuid>,
     defer_candidate_leaf_task_id_opt: Option<Uuid>,
-    last_defer_candidate_recent_days_opt: Option<i64>,
+    last_defer_candidate_recent_threshold_opt: Option<DateTime<Local>>,
     load_should_fail: bool,
     load_attempt_count: Cell<usize>,
     reload_if_changed_attempt_count: Cell<usize>,
@@ -5701,7 +5714,7 @@ impl TestTaskRepository {
             last_synced_time,
             highest_priority_leaf_task_id_opt: Some(task_id),
             defer_candidate_leaf_task_id_opt: Some(task_id),
-            last_defer_candidate_recent_days_opt: None,
+            last_defer_candidate_recent_threshold_opt: None,
             load_should_fail: false,
             load_attempt_count: Cell::new(0),
             reload_if_changed_attempt_count: Cell::new(0),
@@ -5796,9 +5809,9 @@ impl TaskRepositoryTrait for TestTaskRepository {
 
     fn get_defer_candidate_leaf_task_id(
         &mut self,
-        recent_days: i64,
+        recent_threshold: DateTime<Local>,
     ) -> Result<Option<Uuid>, TaskTreeError> {
-        self.last_defer_candidate_recent_days_opt = Some(recent_days);
+        self.last_defer_candidate_recent_threshold_opt = Some(recent_threshold);
         Ok(self.defer_candidate_leaf_task_id_opt)
     }
 
@@ -6449,8 +6462,8 @@ fn interactive低優先度modeは共通outcome経路でfocusと表示を更新�
     );
     assert_eq!(focused_task_id_opt, Some(low_priority_task_id));
     assert_eq!(
-        task_repository.last_defer_candidate_recent_days_opt,
-        Some(3)
+        task_repository.last_defer_candidate_recent_threshold_opt,
+        Some(Local.with_ymd_and_hms(2026, 8, 22, 6, 0, 0).unwrap())
     );
     assert_eq!(stdout.flush_count, 0);
     assert!(String::from_utf8(stdout.buffer)
@@ -6598,22 +6611,53 @@ fn test_select_focus_task_id_高優先度modeでは最優先leafを返す() {
 }
 
 #[test]
-fn test_select_focus_task_id_低優先度modeでは指定日数の延期候補を返す() {
+fn test_select_focus_task_id_低優先度modeでは0日と10日の完成閾値をrepositoryへ渡す() {
     let now = Local.with_ymd_and_hms(2026, 8, 11, 12, 0, 0).unwrap();
-    let task = new_test_task_handle("タスク").unwrap();
-    let expected_id = Uuid::new_v4();
+    for (recent_days, expected_threshold) in [
+        (0, Local.with_ymd_and_hms(2026, 8, 12, 6, 0, 0).unwrap()),
+        (10, Local.with_ymd_and_hms(2026, 8, 22, 6, 0, 0).unwrap()),
+    ] {
+        let task = new_test_task_handle("タスク").unwrap();
+        let expected_id = Uuid::new_v4();
+        let mut task_repository = TestTaskRepository::new(task, now);
+        task_repository.defer_candidate_leaf_task_id_opt = Some(expected_id);
+
+        let actual = select_focus_task_id(
+            &mut task_repository,
+            FocusSelectionMode::LowestPriority { recent_days },
+        );
+
+        assert_eq!(actual, Ok(Some(expected_id)));
+        assert_eq!(
+            task_repository.last_defer_candidate_recent_threshold_opt,
+            Some(expected_threshold)
+        );
+    }
+}
+
+#[test]
+fn test_select_focus_task_id_延期候補の日数範囲外を閾値errorにする() {
+    let now = Local.with_ymd_and_hms(2026, 8, 11, 12, 0, 0).unwrap();
+    let task = new_test_task_handle("延期候補の日数範囲外").unwrap();
     let mut task_repository = TestTaskRepository::new(task, now);
-    task_repository.defer_candidate_leaf_task_id_opt = Some(expected_id);
 
     let actual = select_focus_task_id(
         &mut task_repository,
-        FocusSelectionMode::LowestPriority { recent_days: 3 },
+        FocusSelectionMode::LowestPriority {
+            recent_days: i64::MAX,
+        },
     );
 
-    assert_eq!(actual, Ok(Some(expected_id)));
+    assert!(matches!(
+        actual,
+        Err(ApplicationError::SubjectiveDateOutOfRange {
+            operation: "defer_candidate_threshold",
+            datetime,
+        }) if datetime == now
+    ));
     assert_eq!(
-        task_repository.last_defer_candidate_recent_days_opt,
-        Some(3)
+        task_repository.last_defer_candidate_recent_threshold_opt,
+        None
     );
 }
 
@@ -6640,7 +6684,10 @@ fn test_select_focus_task_id_延期候補の日時閾値errorを伝搬して状�
     ));
     assert_eq!(task_repository.task.snapshot().unwrap(), original_snapshot);
     assert_eq!(focused_task_id_opt, Some(task_id));
-    assert_eq!(task_repository.last_defer_candidate_recent_days_opt, None);
+    assert_eq!(
+        task_repository.last_defer_candidate_recent_threshold_opt,
+        None
+    );
 }
 
 #[test]
@@ -11253,7 +11300,10 @@ fn test_低優先度modeで外したfocusは低優先度候補を再選択する
         focus_selection_mode,
         FocusSelectionMode::LowestPriority { recent_days: 3 }
     );
-    assert_eq!(repository.last_defer_candidate_recent_days_opt, Some(3));
+    assert_eq!(
+        repository.last_defer_candidate_recent_threshold_opt,
+        Some(Local.with_ymd_and_hms(2026, 8, 20, 6, 0, 0).unwrap())
+    );
 }
 
 #[test]

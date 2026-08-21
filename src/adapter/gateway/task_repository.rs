@@ -5,10 +5,10 @@ use crate::application::interface::{
     RepositoryReloadOutcome, TaskRepositoryError,
     TaskRepositoryOperation as ApplicationRepositoryOperation, TaskRepositoryTrait,
 };
-use crate::entity::datetime::get_next_morning_datetime;
 use crate::entity::task::extract_leaf_tasks_from_project;
 use crate::entity::task::extract_leaf_tasks_from_project_with_pending;
 use crate::entity::task::{task_to_yaml, Status, TaskHandle, TaskTreeError};
+#[cfg(test)]
 use chrono::Duration;
 use chrono::{DateTime, Local};
 use linked_hash_map::LinkedHashMap;
@@ -672,16 +672,13 @@ impl TaskRepositoryTrait for TaskRepository {
     // 優先度の低いタスクを未来に飛ばすための先送り候補選択用
     fn get_defer_candidate_leaf_task_id(
         &mut self,
-        recent_days: i64,
+        recent_threshold: DateTime<Local>,
     ) -> Result<Option<Uuid>, TaskTreeError> {
         // 副作用として、projectsを優先度の低い順に破壊的にソートする
         self.projects.sort_by_key(|a| a.priority);
 
         // 優先度が低いPJ順に見て、返すべき葉タスクのid値を更新していく
         let mut ans = None;
-        let recent_threshold =
-            get_next_morning_datetime(self.last_synced_time) + Duration::days(recent_days);
-
         for project in &self.projects {
             let root_task = &project.root_task;
 
@@ -1950,7 +1947,7 @@ mod tests {
     }
 
     #[test]
-    fn test_get_defer_candidate_leaf_task_id_0日指定は次の朝より前だけrecent扱いする() {
+    fn test_get_defer_candidate_leaf_task_id_完成閾値より前だけrecent扱いする() {
         let mut task_repository = TaskRepository::new("");
         task_repository
             .sync_clock(Local.with_ymd_and_hms(2026, 5, 10, 12, 0, 0).unwrap())
@@ -1968,13 +1965,14 @@ mod tests {
         add_project(&mut task_repository, boundary_task);
         add_project(&mut task_repository, recent_task);
 
-        let actual = task_repository.get_defer_candidate_leaf_task_id(0);
+        let recent_threshold = Local.with_ymd_and_hms(2026, 5, 11, 6, 0, 0).unwrap();
+        let actual = task_repository.get_defer_candidate_leaf_task_id(recent_threshold);
 
         assert_eq!(actual.unwrap(), Some(recent_task_id));
     }
 
     #[test]
-    fn test_get_defer_candidate_leaf_task_id_10日指定は次の朝から10日後を閾値にする() {
+    fn test_get_defer_candidate_leaf_task_id_10日後相当の完成閾値を使用する() {
         let mut task_repository = TaskRepository::new("");
         task_repository
             .sync_clock(Local.with_ymd_and_hms(2026, 5, 10, 12, 0, 0).unwrap())
@@ -1992,7 +1990,8 @@ mod tests {
         add_project(&mut task_repository, boundary_task);
         add_project(&mut task_repository, recent_task);
 
-        let actual = task_repository.get_defer_candidate_leaf_task_id(10);
+        let recent_threshold = Local.with_ymd_and_hms(2026, 5, 21, 6, 0, 0).unwrap();
+        let actual = task_repository.get_defer_candidate_leaf_task_id(recent_threshold);
 
         assert_eq!(actual.unwrap(), Some(recent_task_id));
     }
@@ -2016,7 +2015,8 @@ mod tests {
         add_project(&mut task_repository, pending_task);
         add_project(&mut task_repository, todo_task);
 
-        let actual = task_repository.get_defer_candidate_leaf_task_id(0);
+        let recent_threshold = Local.with_ymd_and_hms(2026, 5, 11, 6, 0, 0).unwrap();
+        let actual = task_repository.get_defer_candidate_leaf_task_id(recent_threshold);
 
         assert_eq!(actual.unwrap(), Some(todo_task_id));
     }
@@ -2041,7 +2041,8 @@ mod tests {
         add_project(&mut task_repository, future_task);
         add_project(&mut task_repository, todo_task);
 
-        let actual = task_repository.get_defer_candidate_leaf_task_id(0);
+        let recent_threshold = Local.with_ymd_and_hms(2026, 5, 11, 6, 0, 0).unwrap();
+        let actual = task_repository.get_defer_candidate_leaf_task_id(recent_threshold);
 
         assert_eq!(actual.unwrap(), Some(todo_task_id));
     }
@@ -2060,7 +2061,8 @@ mod tests {
 
         add_project(&mut task_repository, pending_task);
 
-        let actual = task_repository.get_defer_candidate_leaf_task_id(0);
+        let recent_threshold = Local.with_ymd_and_hms(2026, 5, 11, 6, 0, 0).unwrap();
+        let actual = task_repository.get_defer_candidate_leaf_task_id(recent_threshold);
 
         assert_eq!(actual.unwrap(), None);
     }
@@ -2079,7 +2081,8 @@ mod tests {
 
         add_project(&mut task_repository, future_task);
 
-        let actual = task_repository.get_defer_candidate_leaf_task_id(0);
+        let recent_threshold = Local.with_ymd_and_hms(2026, 5, 11, 6, 0, 0).unwrap();
+        let actual = task_repository.get_defer_candidate_leaf_task_id(recent_threshold);
 
         assert_eq!(actual.unwrap(), None);
     }
@@ -2098,7 +2101,8 @@ mod tests {
 
         add_project(&mut task_repository, pending_task);
 
-        let actual = task_repository.get_defer_candidate_leaf_task_id(0);
+        let recent_threshold = Local.with_ymd_and_hms(2026, 5, 11, 6, 0, 0).unwrap();
+        let actual = task_repository.get_defer_candidate_leaf_task_id(recent_threshold);
 
         assert_eq!(actual.unwrap(), Some(pending_task_id));
     }
@@ -2116,7 +2120,8 @@ mod tests {
 
         add_project(&mut task_repository, pending_task);
 
-        let actual = task_repository.get_defer_candidate_leaf_task_id(0);
+        let recent_threshold = Local.with_ymd_and_hms(2026, 5, 11, 6, 0, 0).unwrap();
+        let actual = task_repository.get_defer_candidate_leaf_task_id(recent_threshold);
 
         assert_eq!(actual.unwrap(), None);
     }

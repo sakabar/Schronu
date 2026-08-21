@@ -1778,7 +1778,7 @@ mod tests {
 
         fn get_defer_candidate_leaf_task_id(
             &mut self,
-            _recent_days: i64,
+            _recent_threshold: DateTime<Local>,
         ) -> Result<Option<Uuid>, crate::entity::task::TaskTreeError> {
             Ok(None)
         }
