@@ -491,31 +491,19 @@ fn resolve_upcoming_mmdd(mmdd: &str, now: DateTime<Local>) -> Option<LocalResult
 fn resolve_upcoming_clear_or_gather_day(
     date: &str,
     now: DateTime<Local>,
-) -> Option<LocalResult<DateTime<Local>>> {
-    let next_schronu_day_start = get_next_morning_datetime(now);
-    let resolve_schronu_day_start = |date: NaiveDate| {
-        Local.with_ymd_and_hms(
-            date.year(),
-            date.month(),
-            date.day(),
-            next_schronu_day_start.hour(),
-            next_schronu_day_start.minute(),
-            0,
-        )
-    };
-
+) -> Result<Option<LocalResult<DateTime<Local>>>, ApplicationError> {
     if date == "明" {
-        return Some(resolve_schronu_day_start(
-            next_schronu_day_start.date_naive(),
-        ));
+        return Ok(Some(LocalResult::Single(try_next_business_day_start(now)?)));
     }
 
     let days_of_week = ["月", "火", "水", "木", "金", "土", "日"];
     if let Some(target_days_of_week_ind) = days_of_week.iter().position(|day| *day == date) {
-        let schronu_today = get_next_morning_datetime(now) - Duration::days(1);
+        let next_business_day_start = try_next_business_day_start(now)?;
+        let subjective_date = try_subjective_date(now)?;
         let now_days_of_week_ind = days_of_week
             .iter()
-            .position(|day| *day == get_weekday_jp(&schronu_today.date_naive()))?;
+            .position(|day| *day == get_weekday_jp(&subjective_date))
+            .expect("subjective weekday must be in the Japanese weekday table");
         let days_until_target =
             (7 + target_days_of_week_ind - now_days_of_week_ind) % days_of_week.len();
         let days = if days_until_target == 0 {
@@ -524,13 +512,18 @@ fn resolve_upcoming_clear_or_gather_day(
             days_until_target
         };
 
-        let target_date = schronu_today
+        let target_date = next_business_day_start
             .date_naive()
-            .checked_add_signed(Duration::days(days as i64))?;
-        return Some(resolve_schronu_day_start(target_date));
+            .checked_add_signed(Duration::days(days as i64 - 1))
+            .ok_or(ApplicationError::SubjectiveDateOutOfRange {
+                operation: "weekday_date",
+                datetime: now,
+            })?;
+        let target_datetime = try_subjective_date_start(target_date)?;
+        return Ok(Some(LocalResult::Single(target_datetime)));
     }
 
-    resolve_upcoming_mmdd(date, now)
+    Ok(resolve_upcoming_mmdd(date, now))
 }
 
 fn resolve_show_all_pattern(pattern: &str, now: DateTime<Local>) -> String {
@@ -581,9 +574,9 @@ fn test_resolve_upcoming_clear_or_gather_day_明は次の業務日を返す() {
 
     assert_eq!(
         resolve_upcoming_clear_or_gather_day("明", now),
-        Some(LocalResult::Single(
+        Ok(Some(LocalResult::Single(
             Local.with_ymd_and_hms(2026, 8, 15, 6, 0, 0).unwrap()
-        ))
+        )))
     );
 }
 
@@ -602,9 +595,9 @@ fn test_resolve_upcoming_clear_or_gather_day_曜日は明日以降で最も近�
     ] {
         assert_eq!(
             resolve_upcoming_clear_or_gather_day(weekday, now),
-            Some(LocalResult::Single(
+            Ok(Some(LocalResult::Single(
                 Local.with_ymd_and_hms(2026, 8, day, 6, 0, 0).unwrap()
-            ))
+            )))
         );
     }
 }
@@ -615,11 +608,11 @@ fn test_resolve_upcoming_clear_or_gather_day_午前6時前の明と不正値を�
 
     assert_eq!(
         resolve_upcoming_clear_or_gather_day("明", now),
-        Some(LocalResult::Single(
+        Ok(Some(LocalResult::Single(
             Local.with_ymd_and_hms(2026, 8, 14, 6, 0, 0).unwrap()
-        ))
+        )))
     );
-    assert_eq!(resolve_upcoming_clear_or_gather_day("翌", now), None);
+    assert_eq!(resolve_upcoming_clear_or_gather_day("翌", now), Ok(None));
 }
 
 #[test]
@@ -724,25 +717,37 @@ fn parse_clear_or_gather_defer_to_datetime(
     None
 }
 
+type ClearOrGatherTimeRange = (DateTime<Local>, DateTime<Local>);
+
 fn parse_dated_clear_or_gather_time_range(
     time: &str,
     mmdd: &str,
     now: DateTime<Local>,
-) -> Option<(DateTime<Local>, DateTime<Local>)> {
-    let schronu_day_start = match resolve_upcoming_clear_or_gather_day(mmdd, now)? {
+) -> Result<Option<ClearOrGatherTimeRange>, ApplicationError> {
+    let Some(resolved_day_start) = resolve_upcoming_clear_or_gather_day(mmdd, now)? else {
+        return Ok(None);
+    };
+    let schronu_day_start = match resolved_day_start {
         LocalResult::Single(datetime) => datetime,
-        LocalResult::Ambiguous(_, _) | LocalResult::None => return None,
+        LocalResult::Ambiguous(_, _) | LocalResult::None => return Ok(None),
     };
     let hhmm_reg = Regex::new(r"^(\d+):(\d{1,2})$").unwrap();
-    let caps = hhmm_reg.captures(time)?;
-    let hour: i64 = caps[1].parse().ok()?;
-    let minute: u32 = caps[2].parse().ok()?;
+    let Some(caps) = hhmm_reg.captures(time) else {
+        return Ok(None);
+    };
+    let (Some(hour), Some(minute)) = (caps[1].parse::<i64>().ok(), caps[2].parse::<u32>().ok())
+    else {
+        return Ok(None);
+    };
     if minute >= 60 {
-        return None;
+        return Ok(None);
     }
 
-    let calendar_hour = u32::try_from(hour % 24).ok()?;
-    let calendar_duration = Duration::try_days(hour / 24)?;
+    let (Some(calendar_hour), Some(calendar_duration)) =
+        (u32::try_from(hour % 24).ok(), Duration::try_days(hour / 24))
+    else {
+        return Ok(None);
+    };
     let mut end = match Local.with_ymd_and_hms(
         schronu_day_start.year(),
         schronu_day_start.month(),
@@ -751,14 +756,22 @@ fn parse_dated_clear_or_gather_time_range(
         minute,
         0,
     ) {
-        LocalResult::Single(datetime) => datetime.checked_add_signed(calendar_duration)?,
-        LocalResult::Ambiguous(_, _) | LocalResult::None => return None,
+        LocalResult::Single(datetime) => {
+            let Some(datetime) = datetime.checked_add_signed(calendar_duration) else {
+                return Ok(None);
+            };
+            datetime
+        }
+        LocalResult::Ambiguous(_, _) | LocalResult::None => return Ok(None),
     };
     if end < schronu_day_start {
-        end = end.checked_add_signed(Duration::days(1))?;
+        let Some(adjusted_end) = end.checked_add_signed(Duration::days(1)) else {
+            return Ok(None);
+        };
+        end = adjusted_end;
     }
 
-    (schronu_day_start < end).then_some((schronu_day_start, end))
+    Ok((schronu_day_start < end).then_some((schronu_day_start, end)))
 }
 
 fn scheduled_leaf_starts_on_schronu_day(
@@ -856,7 +869,8 @@ fn execute_clear_or_gather(
                 time,
                 mmdd,
                 task_repository.get_last_synced_time(),
-            ) else {
+            )?
+            else {
                 return Ok(());
             };
             let scheduled_starts =
@@ -1066,14 +1080,17 @@ mod tests {
 
         assert_eq!(
             parse_dated_clear_or_gather_time_range("03:00", "8/15", now),
-            Some((start, Local.with_ymd_and_hms(2026, 8, 16, 3, 0, 0).unwrap()))
+            Ok(Some((
+                start,
+                Local.with_ymd_and_hms(2026, 8, 16, 3, 0, 0).unwrap()
+            )))
         );
         assert_eq!(
             parse_dated_clear_or_gather_time_range("24:30", "8/15", now),
-            Some((
+            Ok(Some((
                 start,
                 Local.with_ymd_and_hms(2026, 8, 16, 0, 30, 0).unwrap()
-            ))
+            )))
         );
     }
 
@@ -1084,12 +1101,12 @@ mod tests {
         for time in ["120", "06:00", "10:60", "invalid", "9223372036854775807:00"] {
             assert_eq!(
                 parse_dated_clear_or_gather_time_range(time, "8/15", now),
-                None
+                Ok(None)
             );
         }
         assert_eq!(
             parse_dated_clear_or_gather_time_range("13:00", "13/40", now),
-            None
+            Ok(None)
         );
     }
 
