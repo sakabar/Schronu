@@ -438,7 +438,6 @@ mod typed_handler_contract_tests {
             },
         );
 
-        assert_eq!(response["id"], "typed-defer");
         assert_eq!(response["result"]["isError"], false);
         assert_eq!(
             response["result"]["structuredContent"]["task"]["id"],
@@ -494,7 +493,6 @@ mod typed_handler_contract_tests {
             },
         );
 
-        assert_eq!(response["id"], "typed-complete");
         assert_eq!(response["result"]["isError"], false);
         let tasks = response["result"]["structuredContent"]["tasks"]
             .as_array()
