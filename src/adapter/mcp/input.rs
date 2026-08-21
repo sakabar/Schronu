@@ -1165,8 +1165,9 @@ fn common_input_contract() -> CommonInputContract {
 mod tests {
     use super::{
         common_input_contract, decode_input, generated_input_schema, BreakdownTaskInput,
-        CreateTaskInput, GetFocusInput, GetScheduleInput, GetTaskInput, ListTasksInput,
-        NonNegativeI64, OptionalValue, Rfc3339DateTime, ToolInputError,
+        CompleteTaskInput, CreateTaskInput, DeferTaskInput, GetFocusInput, GetScheduleInput,
+        GetTaskInput, ListTasksInput, NonNegativeI64, NullablePatch, OptionalValue,
+        Rfc3339DateTime, ToolInputError, UpdateTaskInput,
     };
     use chrono::{DateTime, Local};
     use schemars::JsonSchema;
@@ -1336,6 +1337,418 @@ mod tests {
             public_tool_schema("breakdown_task"),
             breakdown_task_input_cases(),
         );
+    }
+
+    #[test]
+    fn state_change_tool_inputs_match_public_schema_and_decode_contract() {
+        assert_reference_input_contract::<DeferTaskInput>(
+            "defer_task",
+            public_tool_schema("defer_task"),
+            defer_task_input_cases(),
+        );
+        assert_reference_input_contract::<CompleteTaskInput>(
+            "complete_task",
+            public_tool_schema("complete_task"),
+            complete_task_input_cases(),
+        );
+        assert_reference_input_contract::<UpdateTaskInput>(
+            "update_task",
+            public_tool_schema("update_task"),
+            update_task_input_cases(),
+        );
+    }
+
+    #[test]
+    fn state_change_optional_defaults_and_patch_presence_are_preserved() {
+        let task_id = "80d7db87-324e-4e8d-a5b7-ff78cd5bf39a";
+        let complete = decode_input::<CompleteTaskInput>(&json!({"task_id": task_id}))
+            .unwrap_or_else(|_| panic!("required complete input must decode"));
+        assert!(matches!(complete.finished_at, OptionalValue::Missing));
+        assert_eq!(complete.additional_actual_work_seconds.0, 0);
+
+        let complete = decode_input::<CompleteTaskInput>(&json!({
+            "task_id": task_id,
+            "finished_at": "2026-08-19T10:00:00+09:00",
+            "additional_actual_work_seconds": 15
+        }))
+        .unwrap_or_else(|_| panic!("complete optional values must decode"));
+        assert!(matches!(complete.finished_at, OptionalValue::Value(_)));
+        assert_eq!(complete.additional_actual_work_seconds.0, 15);
+
+        let update = decode_input::<UpdateTaskInput>(&json!({
+            "task_id": task_id,
+            "category": null
+        }))
+        .unwrap_or_else(|_| panic!("nullable update patch must decode"));
+        assert!(matches!(
+            update.estimated_work_minutes,
+            OptionalValue::Missing
+        ));
+        assert!(matches!(update.deadline_time, NullablePatch::Missing));
+        assert!(matches!(update.category, NullablePatch::Null));
+
+        let update = decode_input::<UpdateTaskInput>(&json!({
+            "task_id": task_id,
+            "estimated_work_minutes": 30,
+            "deadline_time": "2026-08-19T10:00:00+09:00",
+            "category": "earning"
+        }))
+        .unwrap_or_else(|_| panic!("update patch values must decode"));
+        assert!(matches!(
+            update.estimated_work_minutes,
+            OptionalValue::Value(value) if value.0 == 30
+        ));
+        assert!(matches!(update.deadline_time, NullablePatch::Value(_)));
+        assert!(matches!(update.category, NullablePatch::Value(_)));
+    }
+
+    fn defer_task_input_cases() -> Vec<ContractCase> {
+        let task_id = "80d7db87-324e-4e8d-a5b7-ff78cd5bf39a";
+        let pending_until = "2026-08-19T10:00:00+09:00";
+        vec![
+            valid_case(
+                "required defer fields",
+                json!({"task_id": task_id, "pending_until": pending_until}),
+            ),
+            schema_case(
+                "missing defer task id",
+                json!({"pending_until": pending_until}),
+                "task_id",
+                "field is required",
+            ),
+            schema_case(
+                "missing pending until",
+                json!({"task_id": task_id}),
+                "pending_until",
+                "field is required",
+            ),
+            schema_case(
+                "defer task id has wrong type",
+                json!({"task_id": 42, "pending_until": pending_until}),
+                "task_id",
+                "must be a string",
+            ),
+            semantic_case(
+                "defer task id is invalid",
+                json!({"task_id": "not-a-uuid", "pending_until": pending_until}),
+                "task_id",
+                "must be a valid UUID",
+            ),
+            schema_case(
+                "pending until has wrong type",
+                json!({"task_id": task_id, "pending_until": 42}),
+                "pending_until",
+                "must be a string",
+            ),
+            semantic_case(
+                "pending until is invalid",
+                json!({"task_id": task_id, "pending_until": "not-a-date"}),
+                "pending_until",
+                "must be a valid RFC 3339 date-time",
+            ),
+            schema_case(
+                "defer task has unknown field",
+                json!({"task_id": task_id, "pending_until": pending_until, "extra": true}),
+                "arguments.extra",
+                "additional property is not allowed",
+            ),
+            schema_case(
+                "defer arguments has wrong type",
+                json!(42),
+                "arguments",
+                "must be an object",
+            ),
+        ]
+    }
+
+    fn complete_task_input_cases() -> Vec<ContractCase> {
+        let task_id = "80d7db87-324e-4e8d-a5b7-ff78cd5bf39a";
+        vec![
+            valid_case("required complete field", json!({"task_id": task_id})),
+            valid_case(
+                "all complete fields",
+                json!({
+                    "task_id": task_id,
+                    "finished_at": "2026-08-19T10:00:00+09:00",
+                    "additional_actual_work_seconds": 0
+                }),
+            ),
+            schema_case(
+                "missing complete task id",
+                json!({}),
+                "task_id",
+                "field is required",
+            ),
+            semantic_case(
+                "complete task id is invalid",
+                json!({"task_id": "not-a-uuid"}),
+                "task_id",
+                "must be a valid UUID",
+            ),
+            schema_case(
+                "complete task id has wrong type",
+                json!({"task_id": 42}),
+                "task_id",
+                "must be a string",
+            ),
+            schema_case(
+                "finished at cannot be null",
+                json!({"task_id": task_id, "finished_at": null}),
+                "finished_at",
+                "must be a string",
+            ),
+            schema_case(
+                "finished at has wrong type",
+                json!({"task_id": task_id, "finished_at": 42}),
+                "finished_at",
+                "must be a string",
+            ),
+            semantic_case(
+                "finished at is invalid",
+                json!({"task_id": task_id, "finished_at": "not-a-date"}),
+                "finished_at",
+                "must be a valid RFC 3339 date-time",
+            ),
+            schema_case(
+                "additional work cannot be null",
+                json!({"task_id": task_id, "additional_actual_work_seconds": null}),
+                "additional_actual_work_seconds",
+                "must be a non-negative integer",
+            ),
+            schema_case(
+                "additional work cannot be negative",
+                json!({"task_id": task_id, "additional_actual_work_seconds": -1}),
+                "additional_actual_work_seconds",
+                "must be a non-negative integer",
+            ),
+            schema_case(
+                "additional work cannot be fractional",
+                json!({"task_id": task_id, "additional_actual_work_seconds": 1.5}),
+                "additional_actual_work_seconds",
+                "must be a non-negative integer",
+            ),
+            schema_case(
+                "additional work has wrong type",
+                json!({"task_id": task_id, "additional_actual_work_seconds": "1"}),
+                "additional_actual_work_seconds",
+                "must be a non-negative integer",
+            ),
+            valid_case(
+                "additional work accepts i64 maximum",
+                json!({"task_id": task_id, "additional_actual_work_seconds": i64::MAX}),
+            ),
+            semantic_case_with_schema_acceptance(
+                "additional work outside i64 range",
+                json!({"task_id": task_id, "additional_actual_work_seconds": u64::MAX}),
+                true,
+                "additional_actual_work_seconds",
+                "is outside the supported integer range",
+            ),
+            schema_case(
+                "complete task has unknown field",
+                json!({"task_id": task_id, "extra": true}),
+                "arguments.extra",
+                "additional property is not allowed",
+            ),
+            schema_case(
+                "complete arguments has wrong type",
+                json!(42),
+                "arguments",
+                "must be an object",
+            ),
+        ]
+    }
+
+    fn update_task_input_cases() -> Vec<ContractCase> {
+        let task_id = "80d7db87-324e-4e8d-a5b7-ff78cd5bf39a";
+        vec![
+            valid_case(
+                "update estimate",
+                json!({"task_id": task_id, "estimated_work_minutes": 0}),
+            ),
+            valid_case(
+                "set update deadline",
+                json!({
+                    "task_id": task_id,
+                    "deadline_time": "2026-08-19T10:00:00+09:00"
+                }),
+            ),
+            valid_case(
+                "clear update deadline",
+                json!({"task_id": task_id, "deadline_time": null}),
+            ),
+            valid_case(
+                "set every update category",
+                json!({
+                    "task_id": task_id,
+                    "category": "earning",
+                    "deadline_time": null,
+                    "estimated_work_minutes": 30
+                }),
+            ),
+            schema_case(
+                "no update field",
+                json!({"task_id": task_id}),
+                "arguments",
+                "must include at least one field to update",
+            ),
+            schema_case(
+                "missing update task id",
+                json!({"category": null}),
+                "task_id",
+                "field is required",
+            ),
+            semantic_case(
+                "update task id is invalid",
+                json!({"task_id": "not-a-uuid", "category": null}),
+                "task_id",
+                "must be a valid UUID",
+            ),
+            schema_case(
+                "update task id has wrong type",
+                json!({"task_id": 42, "category": null}),
+                "task_id",
+                "must be a string",
+            ),
+            schema_case(
+                "estimate cannot be null",
+                json!({"task_id": task_id, "estimated_work_minutes": null}),
+                "estimated_work_minutes",
+                "must be a non-negative integer",
+            ),
+            schema_case(
+                "estimate cannot be negative",
+                json!({"task_id": task_id, "estimated_work_minutes": -1}),
+                "estimated_work_minutes",
+                "must be a non-negative integer",
+            ),
+            schema_case(
+                "estimate cannot be fractional",
+                json!({"task_id": task_id, "estimated_work_minutes": 1.5}),
+                "estimated_work_minutes",
+                "must be a non-negative integer",
+            ),
+            schema_case(
+                "estimate has wrong type",
+                json!({"task_id": task_id, "estimated_work_minutes": "1"}),
+                "estimated_work_minutes",
+                "must be a non-negative integer",
+            ),
+            valid_case(
+                "estimate accepts i64 maximum",
+                json!({"task_id": task_id, "estimated_work_minutes": i64::MAX}),
+            ),
+            semantic_case_with_schema_acceptance(
+                "estimate outside i64 range",
+                json!({"task_id": task_id, "estimated_work_minutes": u64::MAX}),
+                true,
+                "estimated_work_minutes",
+                "is outside the supported integer range",
+            ),
+            schema_case(
+                "deadline has wrong type",
+                json!({"task_id": task_id, "deadline_time": 42}),
+                "deadline_time",
+                "must be a string or null",
+            ),
+            semantic_case(
+                "deadline is invalid",
+                json!({"task_id": task_id, "deadline_time": "not-a-date"}),
+                "deadline_time",
+                "must be a valid RFC 3339 date-time",
+            ),
+            valid_case(
+                "clear update category",
+                json!({"task_id": task_id, "category": null}),
+            ),
+            valid_case(
+                "all category values",
+                json!({"task_id": task_id, "category": "consumption"}),
+            ),
+            valid_case(
+                "sustaining category",
+                json!({"task_id": task_id, "category": "sustaining"}),
+            ),
+            valid_case(
+                "recovery category",
+                json!({"task_id": task_id, "category": "recovery"}),
+            ),
+            valid_case(
+                "investment category",
+                json!({"task_id": task_id, "category": "investment"}),
+            ),
+            schema_case(
+                "category has wrong type",
+                json!({"task_id": task_id, "category": 42}),
+                "category",
+                "must be a supported category or null",
+            ),
+            schema_case(
+                "category is unsupported",
+                json!({"task_id": task_id, "category": "unknown"}),
+                "category",
+                "must be a supported category or null",
+            ),
+            schema_case(
+                "update task has unknown field",
+                json!({"task_id": task_id, "category": null, "extra": true}),
+                "arguments.extra",
+                "additional property is not allowed",
+            ),
+            schema_case(
+                "update arguments has wrong type",
+                json!(42),
+                "arguments",
+                "must be an object",
+            ),
+        ]
+    }
+
+    fn valid_case(name: &'static str, input: Value) -> ContractCase {
+        ContractCase {
+            name,
+            input,
+            schema_accepts: true,
+            decode: ExpectedDecode::Valid,
+        }
+    }
+
+    fn schema_case(
+        name: &'static str,
+        input: Value,
+        field: &'static str,
+        reason: &'static str,
+    ) -> ContractCase {
+        ContractCase {
+            name,
+            input,
+            schema_accepts: false,
+            decode: ExpectedDecode::Schema { field, reason },
+        }
+    }
+
+    fn semantic_case(
+        name: &'static str,
+        input: Value,
+        field: &'static str,
+        reason: &'static str,
+    ) -> ContractCase {
+        semantic_case_with_schema_acceptance(name, input, false, field, reason)
+    }
+
+    fn semantic_case_with_schema_acceptance(
+        name: &'static str,
+        input: Value,
+        schema_accepts: bool,
+        field: &'static str,
+        reason: &'static str,
+    ) -> ContractCase {
+        ContractCase {
+            name,
+            input,
+            schema_accepts,
+            decode: ExpectedDecode::Semantic { field, reason },
+        }
     }
 
     fn create_task_input_cases() -> Vec<ContractCase> {
