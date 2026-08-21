@@ -1325,6 +1325,94 @@ mod tests {
     }
 
     #[test]
+    fn complete_task_反復anchorの次業務日計算不能をerrorにして変更しない() {
+        let occurrence_anchor = DateTime::<Local>::from_naive_utc_and_offset(
+            NaiveDate::MAX.and_hms_opt(6, 0, 0).unwrap(),
+            chrono::FixedOffset::east_opt(0).unwrap(),
+        );
+        let parent =
+            TaskHandle::with_identity("ルーチン", Uuid::from_u128(0x201), fixed_now()).unwrap();
+        parent.set_repetition_interval_days_opt(Some(7)).unwrap();
+        parent.set_estimated_work_seconds(600).unwrap();
+        let mut child_attr = TaskAttr::with_identity("今回", Uuid::from_u128(0x202), fixed_now());
+        child_attr.set_deadline_time_opt(Some(occurrence_anchor));
+        child_attr.set_actual_work_seconds(120);
+        let child = parent.create_as_last_child(child_attr);
+        let child_id = child.get_id().unwrap();
+        let child_status_before = child.get_status().unwrap();
+        let child_actual_before = child.get_actual_work_seconds().unwrap();
+        let child_end_before = child.get_end_time_opt().unwrap();
+        let child_revision_before = child.get_persistent_mutation_revision().unwrap();
+        let parent_estimate_before = parent.get_estimated_work_seconds().unwrap();
+        let parent_revision_before = parent.get_persistent_mutation_revision().unwrap();
+        let child_ids_before = parent
+            .get_children()
+            .unwrap()
+            .into_iter()
+            .map(|task| task.get_id().unwrap())
+            .collect::<Vec<_>>();
+        let mut repository = TestTaskRepository::new(vec![parent.clone()], fixed_now());
+        repository.highest_priority_leaf_task_id = Some(child_id);
+        let focus_before = repository.highest_priority_leaf_task_id;
+        let id_call_count = Cell::new(0);
+        let mut next_id = || {
+            id_call_count.set(id_call_count.get() + 1);
+            Uuid::from_u128(0x203)
+        };
+        let mut factory = TaskFactory::new(fixed_now(), &mut next_id);
+
+        let actual = catch_unwind(AssertUnwindSafe(|| {
+            complete_task(
+                &mut repository,
+                CompleteTaskInput {
+                    task_id: child_id,
+                    finished_at: fixed_now(),
+                    additional_actual_work_seconds: 60,
+                },
+                &mut factory,
+            )
+        }));
+
+        let actual = actual.expect("complete_task must return an error instead of panicking");
+        assert_eq!(
+            actual,
+            Err(ApplicationError::SubjectiveDateOutOfRange {
+                operation: "next_business_day_start",
+                datetime: occurrence_anchor,
+            })
+        );
+        assert_eq!(child.get_status().unwrap(), child_status_before);
+        assert_eq!(
+            child.get_actual_work_seconds().unwrap(),
+            child_actual_before
+        );
+        assert_eq!(child.get_end_time_opt().unwrap(), child_end_before);
+        assert_eq!(
+            child.get_persistent_mutation_revision().unwrap(),
+            child_revision_before
+        );
+        assert_eq!(
+            parent.get_estimated_work_seconds().unwrap(),
+            parent_estimate_before
+        );
+        assert_eq!(
+            parent.get_persistent_mutation_revision().unwrap(),
+            parent_revision_before
+        );
+        assert_eq!(
+            parent
+                .get_children()
+                .unwrap()
+                .into_iter()
+                .map(|task| task.get_id().unwrap())
+                .collect::<Vec<_>>(),
+            child_ids_before
+        );
+        assert_eq!(repository.highest_priority_leaf_task_id, focus_before);
+        assert_eq!(id_call_count.get(), 0);
+    }
+
+    #[test]
     fn complete_task_繰り返しtaskを生成して見積もりを補正する() {
         let parent = crate::test_support::new_task_handle("ルーチン").unwrap();
         parent.set_repetition_interval_days_opt(Some(7)).unwrap();
