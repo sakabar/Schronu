@@ -1107,6 +1107,19 @@ mod tests {
     }
 
     #[test]
+    fn test_parse_clear_or_gather_defer_to_datetime_minutesの日時範囲外を情報付きerrorにする() {
+        let now = Local.with_ymd_and_hms(2026, 5, 7, 12, 34, 56).unwrap();
+
+        assert_eq!(
+            parse_clear_or_gather_defer_to_datetime("空", "9223372036854775807", now),
+            Err(ApplicationError::SubjectiveDateOutOfRange {
+                operation: "clear_or_gather_minutes",
+                datetime: now,
+            })
+        );
+    }
+
+    #[test]
     fn test_parse_dated_clear_or_gather_time_range_深夜と24時以降を指定業務日へ対応付ける() {
         let now = Local.with_ymd_and_hms(2026, 8, 14, 12, 0, 0).unwrap();
         let start = Local.with_ymd_and_hms(2026, 8, 15, 6, 0, 0).unwrap();
@@ -5387,6 +5400,43 @@ fn test_execute_空と集_i64範囲外のminutesは変更せず拒否する() {
         );
 
         assert!(actual.is_ok());
+        assert_eq!(task_repository.task.snapshot().unwrap(), original_snapshot);
+        assert_eq!(focused_task_id_opt, Some(task_id));
+        assert!(stdout.into_string().is_empty());
+    }
+}
+
+#[test]
+fn test_execute_空と集_minutesの日時範囲外を情報付きerrorにして変更しない() {
+    let now = Local.with_ymd_and_hms(2026, 8, 14, 12, 0, 0).unwrap();
+
+    for command in ["空 9223372036854775807", "集 9223372036854775807"] {
+        let task = new_test_task_handle("minutes日時範囲外対象").unwrap();
+        let task_id = task.get_id().unwrap();
+        let original_snapshot = task.snapshot().unwrap();
+        let mut task_repository = TestTaskRepository::new(task, now);
+        let mut free_time_manager = TestFreeTimeManager;
+        let mut focused_task_id_opt = Some(task_id);
+        let mut stdout = TestWriter::new();
+
+        let actual = execute(
+            &mut stdout,
+            &mut task_repository,
+            &mut free_time_manager,
+            &mut focused_task_id_opt,
+            &now,
+            command,
+        );
+
+        assert!(matches!(
+            actual,
+            Err(CommandError::Application(
+                ApplicationError::SubjectiveDateOutOfRange {
+                    operation: "clear_or_gather_minutes",
+                    datetime,
+                }
+            )) if datetime == now
+        ));
         assert_eq!(task_repository.task.snapshot().unwrap(), original_snapshot);
         assert_eq!(focused_task_id_opt, Some(task_id));
         assert!(stdout.into_string().is_empty());
