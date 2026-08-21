@@ -706,6 +706,11 @@ mod typed_handler_contract_tests {
 
     #[test]
     fn get_schedule_handlerはtyped_missingで現在から次の業務日境界までを既定とする() {
+        let past = TaskHandle::new("past task").unwrap();
+        past.set_start_time(fixed_now() - Duration::hours(1))
+            .unwrap();
+        past.set_estimated_work_seconds(15 * 60).unwrap();
+        past.set_actual_work_seconds(15 * 60).unwrap();
         let current = TaskHandle::new("current task").unwrap();
         current.set_start_time(fixed_now()).unwrap();
         current.set_estimated_work_seconds(15 * 60).unwrap();
@@ -714,7 +719,7 @@ mod typed_handler_contract_tests {
             .set_start_time(get_next_morning_datetime(fixed_now()) + Duration::hours(1))
             .unwrap();
         future.set_estimated_work_seconds(15 * 60).unwrap();
-        let repository = RecordingRepository::new(vec![current, future]);
+        let repository = RecordingRepository::new(vec![past, current, future]);
         let save_count = Rc::clone(&repository.save_count);
         let mutation_count = Rc::clone(&repository.mutation_count);
 
@@ -733,6 +738,9 @@ mod typed_handler_contract_tests {
             .unwrap();
         assert_eq!(schedule.len(), 1);
         assert_eq!(schedule[0]["task"]["name"], "current task");
+        assert!(schedule
+            .iter()
+            .all(|scheduled| scheduled["task"]["name"] != "past task"));
         assert_eq!(save_count.get(), 0);
         assert_eq!(mutation_count.get(), 0);
     }
