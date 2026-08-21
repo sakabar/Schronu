@@ -22,12 +22,9 @@ pub(super) enum ToolInputError {
     },
 }
 
-#[allow(dead_code, reason = "used by the staged typed-tool migration")]
 const SCHEMA_ERROR_PREFIX: &str = "mcp-schema:";
-#[allow(dead_code, reason = "used by the staged typed-tool migration")]
 const SEMANTIC_ERROR_PREFIX: &str = "mcp-semantic:";
 
-#[allow(dead_code, reason = "used by the staged typed-tool migration")]
 pub(super) struct UuidValue(pub(super) Uuid);
 
 impl<'de> Deserialize<'de> for UuidValue {
@@ -56,7 +53,6 @@ impl JsonSchema for UuidValue {
     }
 }
 
-#[allow(dead_code, reason = "used by the staged typed-tool migration")]
 pub(super) struct Rfc3339DateTime(pub(super) DateTime<Local>);
 
 impl<'de> Deserialize<'de> for Rfc3339DateTime {
@@ -87,7 +83,6 @@ impl JsonSchema for Rfc3339DateTime {
     }
 }
 
-#[allow(dead_code, reason = "used by the staged typed-tool migration")]
 pub(super) struct IsoDate(pub(super) NaiveDate);
 
 impl<'de> Deserialize<'de> for IsoDate {
@@ -125,7 +120,6 @@ impl JsonSchema for IsoDate {
     }
 }
 
-#[allow(dead_code, reason = "used by the staged typed-tool migration")]
 pub(super) struct NonNegativeI64(pub(super) i64);
 
 impl<'de> Deserialize<'de> for NonNegativeI64 {
@@ -183,7 +177,6 @@ impl JsonSchema for NonNegativeI64 {
     }
 }
 
-#[allow(dead_code, reason = "used by the staged typed-tool migration")]
 pub(super) struct NonEmptyString(pub(super) String);
 
 impl<'de> Deserialize<'de> for NonEmptyString {
@@ -216,7 +209,6 @@ impl JsonSchema for NonEmptyString {
     }
 }
 
-#[allow(dead_code, reason = "used by the staged typed-tool migration")]
 pub(super) struct NonEmptyVec<T>(pub(super) Vec<T>);
 
 impl<'de, T> Deserialize<'de> for NonEmptyVec<T>
@@ -261,7 +253,6 @@ where
 }
 
 #[derive(Default)]
-#[allow(dead_code, reason = "used by the staged typed-tool migration")]
 pub(super) enum OptionalValue<T> {
     #[default]
     Missing,
@@ -302,7 +293,6 @@ where
 }
 
 #[derive(Default)]
-#[allow(dead_code, reason = "used by the staged typed-tool migration")]
 pub(super) enum NullablePatch<T> {
     #[default]
     Missing,
@@ -310,7 +300,6 @@ pub(super) enum NullablePatch<T> {
     Value(T),
 }
 
-#[allow(dead_code, reason = "used by the staged typed-tool migration")]
 pub(super) trait NullableValue {
     const WRONG_TYPE_REASON: &'static str;
 }
@@ -378,7 +367,6 @@ pub(super) struct GetFocusInput {}
 
 #[derive(Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
-#[allow(dead_code, reason = "used by the staged typed-handler migration")]
 pub(super) struct GetTaskInput {
     pub(super) task_id: UuidValue,
 }
@@ -889,7 +877,6 @@ fn schedule_day_start(
     Ok(get_next_morning_datetime(local_noon) - Duration::days(1))
 }
 
-#[allow(dead_code, reason = "used by the staged typed-tool migration")]
 pub(super) fn generated_input_schema<T: JsonSchema>() -> Value {
     let mut settings = SchemaSettings::draft07();
     settings.meta_schema = None;
@@ -909,7 +896,6 @@ pub(super) fn generated_input_schema<T: JsonSchema>() -> Value {
     schema
 }
 
-#[allow(dead_code, reason = "used by the staged typed-tool migration")]
 pub(super) fn decode_input<T: DeserializeOwned + JsonSchema>(
     value: &Value,
 ) -> Result<T, ToolInputError> {
@@ -991,7 +977,6 @@ fn required_alternatives_are_unmet(schema: &Value, arguments: &Map<String, Value
     has_required_alternative
 }
 
-#[allow(dead_code, reason = "used by the staged typed-tool migration")]
 fn classify_decode_error(error: serde_path_to_error::Error<serde_json::Error>) -> ToolInputError {
     let path = error.path().to_string();
     let message = error.inner().to_string();
@@ -1016,13 +1001,11 @@ fn classify_decode_error(error: serde_path_to_error::Error<serde_json::Error>) -
     structural_decode_error(path, &message)
 }
 
-#[allow(dead_code, reason = "used by the staged typed-tool migration")]
 fn error_reason<'a>(message: &'a str, prefix: &str) -> Option<&'a str> {
     let message = message.strip_prefix(prefix)?;
     Some(message.split(" at line ").next().unwrap_or_default())
 }
 
-#[allow(dead_code, reason = "used by the staged typed-tool migration")]
 fn semantic_reason(reason: &str) -> &'static str {
     match reason {
         "must be a valid UUID" => "must be a valid UUID",
@@ -1033,7 +1016,6 @@ fn semantic_reason(reason: &str) -> &'static str {
     }
 }
 
-#[allow(dead_code, reason = "used by the staged typed-tool migration")]
 fn schema_reason(reason: &str) -> &'static str {
     match reason {
         "must be a non-negative integer" => "must be a non-negative integer",
@@ -1049,7 +1031,6 @@ fn schema_reason(reason: &str) -> &'static str {
     }
 }
 
-#[allow(dead_code, reason = "used by the staged typed-tool migration")]
 fn structural_decode_error(path: String, message: &str) -> ToolInputError {
     if let Some(field) = quoted_serde_field(message, "unknown field `") {
         return ToolInputError::Schema(InvalidParams {
@@ -1088,7 +1069,6 @@ fn structural_decode_error(path: String, message: &str) -> ToolInputError {
     })
 }
 
-#[allow(dead_code, reason = "used by the staged typed-tool migration")]
 fn child_field_path(parent: &str, field: &str, root_has_arguments_prefix: bool) -> String {
     if parent.is_empty() || parent == "." {
         return if root_has_arguments_prefix {
@@ -1106,7 +1086,6 @@ fn child_field_path(parent: &str, field: &str, root_has_arguments_prefix: bool) 
     format!("{parent}.{field}")
 }
 
-#[allow(dead_code, reason = "used by the staged typed-tool migration")]
 fn quoted_serde_field(message: &str, prefix: &str) -> Option<String> {
     let start = message.find(prefix)? + prefix.len();
     Some(message[start..].split('`').next()?.to_string())
