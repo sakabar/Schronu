@@ -4661,15 +4661,27 @@ fn resolve_deadline_date(value: &str, now: DateTime<Local>) -> Result<String, Co
             || command_parse_error("〆", "deadline", "日時が不正です", "〆 <日付または時刻>");
         let month = captures[1].parse::<u32>().map_err(|_| invalid_deadline())?;
         let day = captures[2].parse::<u32>().map_err(|_| invalid_deadline())?;
-        let mut deadline_date = Local
-            .with_ymd_and_hms(now.year(), month, day, 12, 0, 0)
-            .single()
-            .ok_or_else(invalid_deadline)?;
-        if deadline_date < now {
-            deadline_date = Local
-                .with_ymd_and_hms(now.year() + 1, month, day, 12, 0, 0)
-                .single()
-                .ok_or_else(invalid_deadline)?;
+        let validation_year = 2000 + now.year().rem_euclid(400);
+        if NaiveDate::from_ymd_opt(validation_year, month, day).is_none() {
+            return Err(invalid_deadline());
+        }
+        let out_of_range = || ApplicationError::SubjectiveDateOutOfRange {
+            operation: "deadline_calendar_date",
+            datetime: now,
+        };
+        let mut deadline_date =
+            NaiveDate::from_ymd_opt(now.year(), month, day).ok_or_else(out_of_range)?;
+        let deadline_noon = deadline_date
+            .and_hms_opt(12, 0, 0)
+            .ok_or_else(out_of_range)?;
+        if deadline_noon < now.naive_local() {
+            let next_year = now.year().checked_add(1).ok_or_else(out_of_range)?;
+            let next_validation_year = 2000 + next_year.rem_euclid(400);
+            if NaiveDate::from_ymd_opt(next_validation_year, month, day).is_none() {
+                return Err(invalid_deadline());
+            }
+            deadline_date =
+                NaiveDate::from_ymd_opt(next_year, month, day).ok_or_else(out_of_range)?;
         }
         return Ok(deadline_date.format("%Y/%m/%d").to_string());
     }
@@ -7601,6 +7613,26 @@ fn test_resolve_deadline_date_mmddは同日正午を過ぎると翌年を選ぶ(
     assert!(matches!(
         resolve_deadline_date("8/14", now),
         Ok(actual) if actual == "2027/08/14"
+    ));
+}
+
+#[test]
+fn test_resolve_deadline_date_mmddは同日正午直前なら現在年を選ぶ() {
+    let now = Local.with_ymd_and_hms(2026, 8, 14, 11, 59, 59).unwrap();
+
+    assert!(matches!(
+        resolve_deadline_date("8/14", now),
+        Ok(actual) if actual == "2026/08/14"
+    ));
+}
+
+#[test]
+fn test_resolve_deadline_date_mmddは同日正午ちょうどなら現在年を選ぶ() {
+    let now = Local.with_ymd_and_hms(2026, 8, 14, 12, 0, 0).unwrap();
+
+    assert!(matches!(
+        resolve_deadline_date("8/14", now),
+        Ok(actual) if actual == "2026/08/14"
     ));
 }
 
