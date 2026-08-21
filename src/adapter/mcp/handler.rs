@@ -1073,6 +1073,45 @@ mod typed_handler_contract_tests {
     }
 
     #[test]
+    fn update_task_handlerはtyped_missingのnullable_patchを変更しない() {
+        let deadline = fixed_now() + Duration::days(10);
+        let task = TaskHandle::new("typed preserved task").unwrap();
+        task.set_estimated_work_seconds(30 * 60).unwrap();
+        task.set_deadline_time_opt(Some(deadline)).unwrap();
+        task.set_project_category_opt(Some(ProjectCategory::Investment))
+            .unwrap();
+        let task_id = task.get_id().unwrap();
+        let task_observer = task.clone();
+        let repository = RecordingRepository::new(vec![task]);
+        let save_count = Rc::clone(&repository.save_count);
+        let mut repository = repository;
+
+        let response = call_update_task(
+            &mut repository,
+            json!("typed-update-missing-patches"),
+            UpdateTaskInput {
+                task_id: UuidValue(task_id),
+                estimated_work_minutes: OptionalValue::Value(NonNegativeI64(45)),
+                deadline_time: NullablePatch::Missing,
+                category: NullablePatch::Missing,
+            },
+        );
+
+        assert_eq!(response["id"], "typed-update-missing-patches");
+        assert_eq!(response["result"]["isError"], false);
+        assert_eq!(task_observer.get_estimated_work_seconds().unwrap(), 45 * 60);
+        assert_eq!(
+            task_observer.get_deadline_time_opt().unwrap(),
+            Some(deadline)
+        );
+        assert_eq!(
+            task_observer.get_project_category_opt().unwrap(),
+            Some(ProjectCategory::Investment)
+        );
+        assert_eq!(save_count.get(), 0);
+    }
+
+    #[test]
     fn update_task_handlerはtyped_missingを変更せずnullを解除に変換する() {
         let deadline = fixed_now() + Duration::days(10);
         let task = TaskHandle::new("typed cleared task").unwrap();
