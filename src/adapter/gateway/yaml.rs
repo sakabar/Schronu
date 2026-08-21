@@ -729,6 +729,27 @@ pub(crate) fn yaml_to_task(
 }
 
 #[test]
+fn test_yaml_to_taskは欠落した生成時刻と開始時刻へoperation時刻を全nodeで共有する() {
+    let docs = YamlLoader::load_from_str(
+        "
+name: 親
+children:
+  - name: 子
+",
+    )
+    .unwrap();
+    let operation_now = Local.with_ymd_and_hms(2000, 1, 1, 0, 0, 0).unwrap();
+
+    let actual = yaml_to_task(&docs[0], operation_now).unwrap();
+    let child = actual.get_children().unwrap().remove(0);
+
+    assert_eq!(actual.get_create_time().unwrap(), operation_now);
+    assert_eq!(actual.get_start_time().unwrap(), operation_now);
+    assert_eq!(child.get_create_time().unwrap(), operation_now);
+    assert_eq!(child.get_start_time().unwrap(), operation_now);
+}
+
+#[test]
 fn test_yaml_to_task_childrenが配列でなければerrorを返す() {
     let docs = YamlLoader::load_from_str(
         "
