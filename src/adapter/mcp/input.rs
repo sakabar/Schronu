@@ -958,7 +958,37 @@ fn preflight_object_contract<T: JsonSchema>(value: &Value) -> Result<(), ToolInp
         }));
     }
 
+    if required_alternatives_are_unmet(&schema, arguments) {
+        return Err(ToolInputError::Schema(InvalidParams {
+            field: "arguments".to_string(),
+            reason: UPDATE_TASK_FIELD_REQUIRED_REASON,
+        }));
+    }
+
     Ok(())
+}
+
+fn required_alternatives_are_unmet(schema: &Value, arguments: &Map<String, Value>) -> bool {
+    let Some(alternatives) = schema.get("anyOf").and_then(Value::as_array) else {
+        return false;
+    };
+    let mut has_required_alternative = false;
+
+    for alternative in alternatives {
+        let Some(required) = alternative.get("required").and_then(Value::as_array) else {
+            return false;
+        };
+        has_required_alternative = true;
+        if required.iter().all(|field| {
+            field
+                .as_str()
+                .is_some_and(|field| arguments.contains_key(field))
+        }) {
+            return false;
+        }
+    }
+
+    has_required_alternative
 }
 
 #[allow(dead_code, reason = "used by the staged typed-tool migration")]
