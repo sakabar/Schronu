@@ -24,6 +24,11 @@ use crate::entity::task::ProjectCategory;
 #[cfg(test)]
 use uuid::uuid;
 
+#[cfg(test)]
+fn yaml_test_now() -> DateTime<Local> {
+    Local.with_ymd_and_hms(2026, 8, 20, 12, 0, 0).unwrap()
+}
+
 #[test]
 fn test_yaml_to_immutable_task_childrenキーが存在しない場合は空配列として登録されること() {
     let s = "
@@ -34,7 +39,7 @@ status: 'todo'
     let docs = YamlLoader::load_from_str(s).unwrap();
     let project_yaml: &Yaml = &docs[0];
 
-    let actual = yaml_to_immutable_task(project_yaml);
+    let actual = yaml_to_immutable_task(project_yaml, yaml_test_now());
     let expected = ImmutableTask::new_with_name("タスク1".to_string());
     assert_eq!(actual, expected);
 }
@@ -48,7 +53,7 @@ children: []
     let docs = YamlLoader::load_from_str(s).unwrap();
     let project_yaml: &Yaml = &docs[0];
 
-    let actual = yaml_to_immutable_task(project_yaml);
+    let actual = yaml_to_immutable_task(project_yaml, yaml_test_now());
     let expected = ImmutableTask::new_with_name("タスク1".to_string());
     assert_eq!(actual, expected);
 }
@@ -64,7 +69,7 @@ children: []
     let docs = YamlLoader::load_from_str(s).unwrap();
     let project_yaml: &Yaml = &docs[0];
 
-    let actual = yaml_to_immutable_task(project_yaml);
+    let actual = yaml_to_immutable_task(project_yaml, yaml_test_now());
     let expected = ImmutableTask::new_with_name("タスク1".to_string());
     assert_eq!(actual, expected);
 }
@@ -81,7 +86,7 @@ children: []
     let docs = YamlLoader::load_from_str(s).unwrap();
     let project_yaml: &Yaml = &docs[0];
 
-    let actual = yaml_to_immutable_task(project_yaml);
+    let actual = yaml_to_immutable_task(project_yaml, yaml_test_now());
     let expected = ImmutableTask::new_with_name("タスク1".to_string());
     assert_eq!(actual, expected);
 }
@@ -96,7 +101,7 @@ children:
     let docs = YamlLoader::load_from_str(s).unwrap();
     let project_yaml: &Yaml = &docs[0];
 
-    let actual = yaml_to_immutable_task(project_yaml);
+    let actual = yaml_to_immutable_task(project_yaml, yaml_test_now());
     let expected =
         ImmutableTask::new_with_name_status_children("タスク1".to_string(), Status::Done, vec![]);
     assert_eq!(actual, expected);
@@ -114,7 +119,7 @@ children: []
     let docs = YamlLoader::load_from_str(s).unwrap();
     let project_yaml: &Yaml = &docs[0];
 
-    let actual = yaml_to_immutable_task(project_yaml);
+    let actual = yaml_to_immutable_task(project_yaml, yaml_test_now());
     // 1970は過去なので、pendingではなくtodoとなる
     let expected =
         ImmutableTask::new_with_name_status_children("タスク1".to_string(), Status::Todo, vec![]);
@@ -135,7 +140,7 @@ children: []
     let docs = YamlLoader::load_from_str(s).unwrap();
     let project_yaml: &Yaml = &docs[0];
 
-    let actual = yaml_to_immutable_task(project_yaml);
+    let actual = yaml_to_immutable_task(project_yaml, yaml_test_now());
     // 2000/01/01は過去なので、pendingではなくtodoとなる
     let expected = ImmutableTask::new(
         "タスク1".to_string(),
@@ -160,7 +165,7 @@ children: []
     let docs = YamlLoader::load_from_str(s).unwrap();
     let project_yaml: &Yaml = &docs[0];
 
-    let actual = yaml_to_immutable_task(project_yaml);
+    let actual = yaml_to_immutable_task(project_yaml, yaml_test_now());
     // 2000/01/01は過去なので、pendingではなくtodoとなる
     let expected = ImmutableTask::new(
         "タスク1".to_string(),
@@ -185,7 +190,7 @@ children: []
     let docs = YamlLoader::load_from_str(s).unwrap();
     let project_yaml: &Yaml = &docs[0];
 
-    let actual = yaml_to_immutable_task(project_yaml);
+    let actual = yaml_to_immutable_task(project_yaml, yaml_test_now());
     // 2000/01/01は過去なので、pendingではなくtodoとなる
     let expected = ImmutableTask::new(
         "タスク1".to_string(),
@@ -206,7 +211,7 @@ children:
     let docs = YamlLoader::load_from_str(s).unwrap();
     let project_yaml: &Yaml = &docs[0];
 
-    let actual = yaml_to_immutable_task(project_yaml);
+    let actual = yaml_to_immutable_task(project_yaml, yaml_test_now());
 
     let child_task = ImmutableTask::new_with_name("子タスク".to_string());
     let parent_task =
@@ -243,7 +248,7 @@ children:
     );
 }
 
-pub fn yaml_to_immutable_task(yaml: &Yaml) -> ImmutableTask {
+pub fn yaml_to_immutable_task(yaml: &Yaml, now: DateTime<Local>) -> ImmutableTask {
     let name: String = yaml["name"].as_str().unwrap_or("").to_string();
 
     let status_str: String = yaml["status"].as_str().unwrap_or("").to_string();
@@ -273,11 +278,11 @@ pub fn yaml_to_immutable_task(yaml: &Yaml) -> ImmutableTask {
     let mut children = vec![];
 
     for child_yaml in yaml["children"].as_vec().unwrap_or(&vec![]) {
-        let child = yaml_to_immutable_task(child_yaml);
+        let child = yaml_to_immutable_task(child_yaml, now);
         children.push(child);
     }
 
-    ImmutableTask::new_with_current_time(name, status, pending_until, children, Local::now())
+    ImmutableTask::new_with_current_time(name, status, pending_until, children, now)
 }
 
 #[derive(Debug, Eq, PartialEq)]
