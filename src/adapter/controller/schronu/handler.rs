@@ -1,6 +1,6 @@
 use super::command::{Command, CommandAction, CommandKind, CommandParseError, InteractiveShortcut};
 use super::renderer::{DisplayModel, DisplayRecorder, SchronuWriter};
-use chrono::{DateTime, Datelike, Days, Duration, Local, NaiveDate, NaiveTime};
+use chrono::{DateTime, Datelike, Days, Duration, Local, NaiveDate, NaiveDateTime, NaiveTime};
 use regex::Regex;
 use schronu::application::daily_capacity::{
     try_local_date_and_time, try_next_business_day_start, try_subjective_date,
@@ -654,17 +654,14 @@ pub(super) fn decide_finish_time_values(
         else {
             return Ok(None);
         };
-        let Some(time) = NaiveTime::from_hms_opt(hours, minutes, seconds) else {
-            return Ok(None);
-        };
         let mut time_values = vec![format!("{hours}:{minutes}")];
         if let Some(date) = date {
             time_values.push(date.clone());
         }
-        let Some(base_datetime) = decide_time_values(&time_values, now)? else {
+        let Some(naive_datetime) = decide_naive_datetime_values(&time_values, now, seconds)? else {
             return Ok(None);
         };
-        resolve_date_and_time(base_datetime.date_naive(), time).map(Some)
+        resolve_date_and_time(naive_datetime.date(), naive_datetime.time()).map(Some)
     };
 
     match values {
@@ -1076,6 +1073,17 @@ pub(super) fn decide_time_values(
     values: &[String],
     now: &DateTime<Local>,
 ) -> Result<Option<DateTime<Local>>, ApplicationError> {
+    let Some(naive_datetime) = decide_naive_datetime_values(values, now, 0)? else {
+        return Ok(None);
+    };
+    resolve_date_and_time(naive_datetime.date(), naive_datetime.time()).map(Some)
+}
+
+fn decide_naive_datetime_values(
+    values: &[String],
+    now: &DateTime<Local>,
+    seconds: u32,
+) -> Result<Option<NaiveDateTime>, ApplicationError> {
     let Some(start_hhmm_str) = values.first() else {
         return Ok(None);
     };
@@ -1090,7 +1098,7 @@ pub(super) fn decide_time_values(
     ) else {
         return Ok(None);
     };
-    let Some(time) = NaiveTime::from_hms_opt(hh, mm, 0) else {
+    let Some(time) = NaiveTime::from_hms_opt(hh, mm, seconds) else {
         return Ok(None);
     };
     let yyyymmdd_reg = Regex::new(r"^(\d{2,4})/(\d{1,2})/(\d{1,2})$").unwrap();
@@ -1112,7 +1120,7 @@ pub(super) fn decide_time_values(
         let Some(date) = NaiveDate::from_ymd_opt(year, month, day) else {
             return Ok(None);
         };
-        return resolve_date_and_time(date, time).map(Some);
+        return Ok(Some(date.and_time(time)));
     }
     if let Some(captures) = mmdd_reg.captures(start_date_str) {
         let (Some(month), Some(day)) = (
@@ -1124,8 +1132,8 @@ pub(super) fn decide_time_values(
         let Some(mut date) = NaiveDate::from_ymd_opt(now.year(), month, day) else {
             return Ok(None);
         };
-        let mut answer = resolve_date_and_time(date, time)?;
-        if answer < *now {
+        let mut answer = date.and_time(time);
+        if answer < now.naive_local() {
             let next_year =
                 now.year()
                     .checked_add(1)
@@ -1137,13 +1145,13 @@ pub(super) fn decide_time_values(
                 return Ok(None);
             };
             date = next_date;
-            answer = resolve_date_and_time(date, time)?;
+            answer = date.and_time(time);
         }
         return Ok(Some(answer));
     }
     if start_date_str.starts_with('明') {
         let next_day = try_next_business_day_start(*now)?;
-        return resolve_date_and_time(next_day.date_naive(), time).map(Some);
+        return Ok(Some(next_day.date_naive().and_time(time)));
     }
     let days_of_week = ["月", "火", "水", "木", "金", "土", "日"];
     if days_of_week.contains(&start_date_str) {
@@ -1169,9 +1177,9 @@ pub(super) fn decide_time_values(
                 datetime: *now,
             });
         };
-        return resolve_date_and_time(target_date, time).map(Some);
+        return Ok(Some(target_date.and_time(time)));
     }
-    resolve_date_and_time(now.date_naive(), time).map(Some)
+    Ok(Some(now.date_naive().and_time(time)))
 }
 
 fn resolve_date_and_time(
@@ -1179,6 +1187,35 @@ fn resolve_date_and_time(
     time: NaiveTime,
 ) -> Result<DateTime<Local>, ApplicationError> {
     try_local_date_and_time(date, time)
+}
+
+#[cfg(test)]
+mod datetime_resolution_tests {
+    use super::*;
+    use chrono::{NaiveDate, TimeZone, Timelike};
+
+    #[test]
+    fn 完了時刻は指定秒を含むnaive日時を構築してから1回だけlocal変換する() {
+        let now = Local.with_ymd_and_hms(2026, 10, 30, 12, 0, 0).unwrap();
+        let date_values = ["1:30".to_string(), "2026/11/1".to_string()];
+        let expected_naive = NaiveDate::from_ymd_opt(2026, 11, 1)
+            .unwrap()
+            .and_hms_opt(1, 30, 45)
+            .unwrap();
+
+        let naive = decide_naive_datetime_values(&date_values, &now, 45)
+            .expect("date resolution must succeed")
+            .expect("explicit date and time must resolve to a naive datetime");
+        let localized =
+            decide_finish_time_values(&["1:30:45".to_string(), "2026/11/1".to_string()], &now)
+                .expect("application local datetime resolution must succeed")
+                .expect("the local datetime must be Single in the test timezone");
+
+        assert_eq!(naive, expected_naive);
+        assert_eq!(naive.second(), 45);
+        assert_eq!(localized.naive_local(), expected_naive);
+        assert_eq!(localized.second(), 45);
+    }
 }
 
 #[cfg(test)]
