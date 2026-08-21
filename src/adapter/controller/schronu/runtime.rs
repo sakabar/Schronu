@@ -7569,6 +7569,32 @@ fn test_execute_deadline_翌朝計算不能を情報付きerrorにして状態�
 }
 
 #[test]
+fn test_resolve_deadline_date_今は最大日時でも同じcalendar日を返す() {
+    let now = maximum_local_datetime();
+    let expected = now.format("%Y/%m/%d").to_string();
+
+    assert!(matches!(
+        resolve_deadline_date("今", now),
+        Ok(actual) if actual == expected
+    ));
+}
+
+#[test]
+fn test_resolve_deadline_date_曜日の範囲外を曜日計算errorにする() {
+    let now = maximum_local_datetime();
+
+    assert!(matches!(
+        resolve_deadline_date("月", now),
+        Err(CommandError::Application(
+            ApplicationError::SubjectiveDateOutOfRange {
+                operation: "deadline_weekday_date",
+                datetime,
+            }
+        )) if datetime == now
+    ));
+}
+
+#[test]
 fn test_execute_finish_未完了の子があれば完了しない() {
     let now = Local.with_ymd_and_hms(2026, 8, 11, 12, 0, 0).unwrap();
     let parent_task = new_test_task_handle("親タスク").unwrap();
