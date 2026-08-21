@@ -910,9 +910,55 @@ pub(super) fn generated_input_schema<T: JsonSchema>() -> Value {
 }
 
 #[allow(dead_code, reason = "used by the staged typed-tool migration")]
-pub(super) fn decode_input<T: DeserializeOwned>(value: &Value) -> Result<T, ToolInputError> {
+pub(super) fn decode_input<T: DeserializeOwned + JsonSchema>(
+    value: &Value,
+) -> Result<T, ToolInputError> {
+    preflight_object_contract::<T>(value)?;
     let deserializer = value.clone().into_deserializer();
     serde_path_to_error::deserialize(deserializer).map_err(classify_decode_error)
+}
+
+fn preflight_object_contract<T: JsonSchema>(value: &Value) -> Result<(), ToolInputError> {
+    let arguments = value.as_object().ok_or_else(|| {
+        ToolInputError::Schema(InvalidParams {
+            field: "arguments".to_string(),
+            reason: "must be an object",
+        })
+    })?;
+    let schema = generated_input_schema::<T>();
+    let properties = schema
+        .get("properties")
+        .and_then(Value::as_object)
+        .expect("generated MCP input schema must define object properties");
+
+    if schema.get("additionalProperties") == Some(&Value::Bool(false)) {
+        if let Some(field) = arguments
+            .keys()
+            .find(|field| !properties.contains_key(field.as_str()))
+        {
+            return Err(ToolInputError::Schema(InvalidParams {
+                field: format!("arguments.{field}"),
+                reason: "additional property is not allowed",
+            }));
+        }
+    }
+
+    let required = schema
+        .get("required")
+        .and_then(Value::as_array)
+        .expect("generated MCP input schema must define required fields");
+    if let Some(field) = required
+        .iter()
+        .filter_map(Value::as_str)
+        .find(|field| !arguments.contains_key(*field))
+    {
+        return Err(ToolInputError::Schema(InvalidParams {
+            field: field.to_string(),
+            reason: "field is required",
+        }));
+    }
+
+    Ok(())
 }
 
 #[allow(dead_code, reason = "used by the staged typed-tool migration")]
@@ -2532,14 +2578,14 @@ mod tests {
     }
 
     #[allow(dead_code)]
-    #[derive(Deserialize)]
+    #[derive(Deserialize, JsonSchema)]
     #[serde(deny_unknown_fields)]
     struct NestedArguments {
         period: NestedPeriod,
     }
 
     #[allow(dead_code)]
-    #[derive(Deserialize)]
+    #[derive(Deserialize, JsonSchema)]
     #[serde(deny_unknown_fields)]
     struct NestedPeriod {
         from: String,
