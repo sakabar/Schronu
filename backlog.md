@@ -46,7 +46,7 @@
 | TD-008 | P1 | 完了 | M | CIがリポジトリ規約を満たさず、ビルド再現性も固定されていない |
 | TD-009 | P2 | 未着手 | L | entity層がYAML形式へ依存している |
 | TD-010 | P2 | 完了 | L | 現在時刻、UUID、業務日境界がドメイン内部へ埋め込まれている |
-| TD-011 | P2 | 未着手 | L | MCPのschema、入力検証、Rust入力型、JSON出力が重複している |
+| TD-011 | P2 | 完了 | L | MCPのschema、入力検証、Rust入力型、JSON出力が重複している |
 | TD-012 | P2 | 未着手 | L | flatten・pack・scheduleの再計算コストに性能上限が定義されていない |
 | TD-013 | P2 | 完了 | M | Spreadsheetの列契約が複数言語・文書へ重複している |
 | TD-014 | P2 | 未着手 | M | Apps Scriptの同期処理が行数に比例してAPI呼出しを増やす |
@@ -543,8 +543,20 @@
 
 - 優先度: `P2`
 - 概算規模: `L`
+- 完了日: 2026-08-21
+- 対応: MCP adapterをprotocol、handler、registry、input、outputへ分割した。9 toolのSerde入力DTOをschema生成、decode、handler変換の契約源とし、schemaに基づくpreflight validationでも既存のJSON-RPC errorとtool-level structured errorを維持した。`TaskView`と`ScheduledTaskView`はSerde serializationへ統合した。
+- 依存: `schemars 1.2.2`、`serde_path_to_error 0.1.20`を追加し、test専用の`jsonschema 0.49.3`は`default-features = false`とした。既存の`chrono`と`uuid`では`serde` featureを有効にした。
+- 検証: `cargo fmt --check`、`cargo clippy --locked --all-targets -- -D warnings`、`cargo test --locked`に成功した。MCPのprotocol contract 18件、tool contract 48件、output contract 3件、stdio integration 12件が成功した。既存の手動save性能計測1件は意図どおりignoredのまま維持した。
+- 残存負債: `Local::now()`とrepository同期時刻のclock注入はTD-010へ残した。互換性維持のため、生成schemaを使うpreflight validationは意図的に残している。
 
-#### 現状と根拠
+#### 完了の証跡
+
+- 9 toolすべてでtyped DTOからschemaを生成し、同じDTOをfield path付きdecodeとapplication inputへの変換に使用する契約testを追加した。
+- `tools/list`のgolden fixtureとschema/decode matrixで、required、nullable、型違い、unknown field、境界値の可否を照合した。
+- `-32602`とtool-level `invalid_input`の区別、field、reason、`structuredContent`、`content.text`をgoldenおよびbusiness testで固定した。
+- `adapter::mcp::protocol_contract_tests`と`adapter::mcp::tool_contract_tests`を個別filterで実行でき、protocol lifecycleとtool business contractを独立して検証した。
+
+#### 着手時の現状と根拠
 
 - `src/adapter/mcp.rs:699-1243`はtoolごとの入力structに加え、required、optional、nullable、UUID、日時、非負整数、additional propertyを手作業で検証する。
 - 同ファイル`1274-1310`は`TaskView`と`ScheduledTaskView`を手作業でJSONへ写像する。

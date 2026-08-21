@@ -1,0 +1,25 @@
+{
+  "actual_work_seconds": 900,
+  "atomic": true,
+  "child_ids": [
+    "{{child_id}}"
+  ],
+  "create_time": "{{create_time}}",
+  "days_in_advance": 2,
+  "deadline_time": "{{deadline_time}}",
+  "end_time": null,
+  "estimated_work_seconds": 1800,
+  "id": "{{task_id}}",
+  "is_on_other_side": true,
+  "name": "MCP task",
+  "original_status": "pending",
+  "parent_id": null,
+  "pending_until": "{{pending_until}}",
+  "priority": 7,
+  "project_category": "recovery",
+  "repetition_anchor": "completion",
+  "repetition_interval_days": 7,
+  "root_id": "{{task_id}}",
+  "start_time": "{{start_time}}",
+  "status": "pending"
+}

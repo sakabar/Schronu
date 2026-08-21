@@ -1,8 +1,9 @@
 use crate::entity::task::{ProjectCategory, RepetitionAnchor, Status, TaskHandle, TaskTreeError};
 use chrono::{DateTime, Local};
+use serde::Serialize;
 use uuid::Uuid;
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Serialize)]
 pub struct TaskView {
     pub id: Uuid,
     pub root_id: Uuid,

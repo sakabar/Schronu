@@ -6,13 +6,14 @@ use crate::entity::task::{
     extract_leaf_tasks_from_project_with_pending, TaskHandle, TaskTreeError,
 };
 use chrono::{DateTime, Duration, Local};
+use serde::Serialize;
 use std::cmp::max;
 use std::collections::HashMap;
 use uuid::Uuid;
 
 const MIN_SPLIT_SEGMENT_SECONDS: i64 = 5 * 60;
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Serialize)]
 pub struct ScheduledTaskView {
     pub task: TaskView,
     pub first_available_time: DateTime<Local>,
