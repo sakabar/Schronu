@@ -1412,6 +1412,15 @@ mod tests {
                 },
             },
             ContractCase {
+                name: "estimated work accepts i64 maximum",
+                input: json!({
+                    "name": "write contract test",
+                    "estimated_work_minutes": i64::MAX
+                }),
+                schema_accepts: true,
+                decode: ExpectedDecode::Valid,
+            },
+            ContractCase {
                 name: "estimated work outside i64 range",
                 input: json!({
                     "name": "write contract test",
