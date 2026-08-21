@@ -1429,6 +1429,83 @@ fn breakdown_task_save失敗を成功扱いしない() {
 }
 
 #[test]
+fn 状態変更入力はunknown_fieldとrequired_task_idを他の違反より先に返す() {
+    let cases = [
+        (
+            "defer-unknown-first",
+            "defer_task",
+            json!({"pending_until": 1, "extra": true}),
+            "arguments.extra",
+            "additional property is not allowed",
+        ),
+        (
+            "defer-required-first",
+            "defer_task",
+            json!({"pending_until": 1}),
+            "task_id",
+            "field is required",
+        ),
+        (
+            "complete-unknown-first",
+            "complete_task",
+            json!({"finished_at": 1, "extra": true}),
+            "arguments.extra",
+            "additional property is not allowed",
+        ),
+        (
+            "complete-required-first",
+            "complete_task",
+            json!({"finished_at": 1}),
+            "task_id",
+            "field is required",
+        ),
+        (
+            "update-unknown-first",
+            "update_task",
+            json!({"category": "unknown", "extra": true}),
+            "arguments.extra",
+            "additional property is not allowed",
+        ),
+        (
+            "update-required-first",
+            "update_task",
+            json!({"category": "unknown"}),
+            "task_id",
+            "field is required",
+        ),
+    ];
+
+    for (id, tool_name, arguments, field, reason) in cases {
+        let repository = RecordingRepository::new(vec![]);
+        let save_count = Rc::clone(&repository.save_count);
+        let mutation_count = Rc::clone(&repository.mutation_count);
+        let mut server = initialized_server(repository);
+
+        let response = server
+            .handle_request(tool_call_request(id, tool_name, arguments))
+            .unwrap();
+
+        assert_eq!(response["jsonrpc"], "2.0", "case: {id}");
+        assert_eq!(response["id"], id, "case: {id}");
+        assert_eq!(
+            response["error"],
+            json!({
+                "code": -32602,
+                "message": "Invalid params",
+                "data": {
+                    "code": "invalid_input",
+                    "field": field,
+                    "reason": reason
+                }
+            }),
+            "case: {id}"
+        );
+        assert_eq!(mutation_count.get(), 0, "case: {id}");
+        assert_eq!(save_count.get(), 0, "case: {id}");
+    }
+}
+
+#[test]
 fn defer_task_絶対時刻まで延期して1回saveする() {
     let pending_until = fixed_now() + Duration::hours(18);
     let task = TaskHandle::new("deferred task").unwrap();
