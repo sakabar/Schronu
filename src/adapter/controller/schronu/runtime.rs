@@ -743,13 +743,12 @@ fn get_adjustable_prefix_label(
         return Ok("".to_string());
     }
 
-    let planned_date = (get_next_morning_datetime(dt) - Duration::days(1)).date_naive();
+    let planned_date = try_subjective_date(dt)?;
     let available_datetime = max(
         task.get_start_time().map_err(ApplicationError::TaskTree)?,
         last_synced_time,
     );
-    let available_date =
-        (get_next_morning_datetime(available_datetime) - Duration::days(1)).date_naive();
+    let available_date = try_subjective_date(available_datetime)?;
     let advance_days = (planned_date - available_date).num_days();
 
     if advance_days > 0 {
@@ -860,20 +859,22 @@ fn scheduled_leaf_starts_on_schronu_day(
         }
     }
 
-    Ok(get_schedule(task_repository)?
-        .into_iter()
-        .filter(|scheduled| leaf_task_ids.contains(&scheduled.task.id))
-        .filter(|scheduled| {
-            get_next_morning_datetime(scheduled.scheduled_start) - Duration::days(1)
-                == schronu_day_start
-        })
-        .fold(HashMap::new(), |mut starts, scheduled| {
-            starts
-                .entry(scheduled.task.id)
-                .or_default()
-                .push(scheduled.scheduled_start);
-            starts
-        }))
+    let mut starts = HashMap::new();
+    for scheduled in get_schedule(task_repository)? {
+        if !leaf_task_ids.contains(&scheduled.task.id) {
+            continue;
+        }
+        let scheduled_day_start =
+            try_subjective_date_start(try_subjective_date(scheduled.scheduled_start)?)?;
+        if scheduled_day_start != schronu_day_start {
+            continue;
+        }
+        starts
+            .entry(scheduled.task.id)
+            .or_insert_with(Vec::new)
+            .push(scheduled.scheduled_start);
+    }
+    Ok(starts)
 }
 
 fn execute_clear_or_gather(
