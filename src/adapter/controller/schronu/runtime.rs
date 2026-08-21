@@ -9901,6 +9901,41 @@ fn test_execute_non_interactive_command_finishはoperation時刻を共有する(
 }
 
 #[test]
+fn test_execute_non_interactive_command_省略作業時間はoperation時刻を使う() {
+    let storage_dir = TestStorageDir::new();
+    std::fs::create_dir_all(&storage_dir.path).unwrap();
+    let previous_synced_time = Local.with_ymd_and_hms(2026, 8, 19, 9, 0, 0).unwrap();
+    let operation_now = Local.with_ymd_and_hms(2026, 8, 20, 14, 30, 45).unwrap();
+    let focused = new_test_task_handle("作業対象").unwrap();
+    focused.set_actual_work_seconds(2 * 60).unwrap();
+    let focused_id = focused.get_id().unwrap();
+    let mut task_repository = TestTaskRepository::new(focused, previous_synced_time)
+        .with_storage_directory(&storage_dir.path);
+    let mut free_time_manager = TestFreeTimeManager;
+
+    execute_non_interactive_command_at(
+        &mut task_repository,
+        &mut free_time_manager,
+        "働",
+        operation_now,
+    )
+    .unwrap();
+
+    assert_eq!(task_repository.get_last_synced_time(), operation_now);
+    assert_eq!(task_repository.reload_if_changed_attempt_count.get(), 1);
+    assert_eq!(task_repository.save_attempt_count.get(), 1);
+    assert_eq!(
+        task_repository
+            .get_by_id(focused_id)
+            .unwrap()
+            .expect("作業対象のtaskはtreeに残るべきです")
+            .get_actual_work_seconds()
+            .unwrap(),
+        3 * 60
+    );
+}
+
+#[test]
 fn test_execute_non_interactive_command_load失敗時はcommandを実行しない() {
     let storage_dir = TestStorageDir::new();
     std::fs::create_dir_all(&storage_dir.path).unwrap();
