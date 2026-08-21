@@ -367,14 +367,14 @@ fn update_task_application_error_response(id: Value, error: ApplicationError) ->
 #[cfg(test)]
 mod typed_handler_contract_tests {
     use super::{
-        call_breakdown_task, call_create_task, call_get_focus, call_get_schedule, call_get_task,
-        call_list_tasks,
+        call_breakdown_task, call_complete_task, call_create_task, call_defer_task, call_get_focus,
+        call_get_schedule, call_get_task, call_list_tasks, call_update_task,
     };
     use crate::adapter::mcp::input::{
-        BreakdownTaskInput, CreateTaskInput, GetFocusInput, GetScheduleInput, GetTaskInput,
-        IsoDate, ListTasksInput, NonEmptyString, NonEmptyVec, NonNegativeI64, OptionalValue,
-        ProjectCategoryValue, Rfc3339DateTime, StatusValue, TaskPeriodFieldValue, TaskPeriodInput,
-        UuidValue,
+        BreakdownTaskInput, CompleteTaskInput, CreateTaskInput, DeferTaskInput, GetFocusInput,
+        GetScheduleInput, GetTaskInput, IsoDate, ListTasksInput, NonEmptyString, NonEmptyVec,
+        NonNegativeI64, NullablePatch, OptionalValue, ProjectCategoryValue, Rfc3339DateTime,
+        StatusValue, TaskPeriodFieldValue, TaskPeriodInput, UpdateTaskInput, UuidValue,
     };
     use crate::adapter::mcp::test_support::{
         assert_tool_result_content_matches_structured, fixed_now, get_next_morning_datetime,
@@ -438,6 +438,7 @@ mod typed_handler_contract_tests {
             },
         );
 
+        assert_eq!(response["id"], "typed-defer");
         assert_eq!(response["result"]["isError"], false);
         assert_eq!(
             response["result"]["structuredContent"]["task"]["id"],
@@ -493,6 +494,7 @@ mod typed_handler_contract_tests {
             },
         );
 
+        assert_eq!(response["id"], "typed-complete");
         assert_eq!(response["result"]["isError"], false);
         let tasks = response["result"]["structuredContent"]["tasks"]
             .as_array()
@@ -932,6 +934,227 @@ mod typed_handler_contract_tests {
         assert_eq!(error["field"], "estimated_work_minutes");
         assert_eq!(error["message"], "seconds conversion overflow");
         assert_eq!(mutation_count.get(), 0);
+        assert_eq!(save_count.get(), 0);
+    }
+
+    #[test]
+    fn defer_task_handlerはtyped_uuidと時刻をapplication入力へ変換する() {
+        let pending_until = fixed_now() + Duration::hours(18);
+        let task = TaskHandle::new("typed deferred task").unwrap();
+        let task_id = task.get_id().unwrap();
+        let task_observer = task.clone();
+        let repository = RecordingRepository::new(vec![task]);
+        let save_count = Rc::clone(&repository.save_count);
+        let mut repository = repository;
+
+        let response = call_defer_task(
+            &mut repository,
+            json!("typed-defer"),
+            DeferTaskInput {
+                task_id: UuidValue(task_id),
+                pending_until: Rfc3339DateTime(pending_until),
+            },
+        );
+
+        assert_eq!(response["result"]["isError"], false);
+        assert_tool_result_content_matches_structured(&response);
+        assert_eq!(
+            response["result"]["structuredContent"],
+            json!({"task_id": task_id.to_string()})
+        );
+        assert_eq!(task_observer.get_orig_status().unwrap(), Status::Pending);
+        assert_eq!(task_observer.get_pending_until().unwrap(), pending_until);
+        assert_eq!(save_count.get(), 0);
+    }
+
+    #[test]
+    fn complete_task_handlerはtyped完了時刻と追加実績をapplication入力へ変換する() {
+        let finished_at = fixed_now() + Duration::hours(1);
+        let task = TaskHandle::new("typed completed task").unwrap();
+        task.set_actual_work_seconds(60).unwrap();
+        let task_id = task.get_id().unwrap();
+        let task_observer = task.clone();
+        let repository = RecordingRepository::new(vec![task]);
+        let save_count = Rc::clone(&repository.save_count);
+        let mut repository = repository;
+
+        let response = call_complete_task(
+            &mut repository,
+            json!("typed-complete"),
+            CompleteTaskInput {
+                task_id: UuidValue(task_id),
+                finished_at: OptionalValue::Value(Rfc3339DateTime(finished_at)),
+                additional_actual_work_seconds: NonNegativeI64(120),
+            },
+        );
+
+        assert_eq!(response["result"]["isError"], false);
+        assert_tool_result_content_matches_structured(&response);
+        assert_eq!(
+            response["result"]["structuredContent"],
+            json!({
+                "task_id": task_id.to_string(),
+                "next_focus_task_id": null,
+                "next_repetition_task_id": null
+            })
+        );
+        assert_eq!(task_observer.get_orig_status().unwrap(), Status::Done);
+        assert_eq!(task_observer.get_end_time_opt().unwrap(), Some(finished_at));
+        assert_eq!(task_observer.get_actual_work_seconds().unwrap(), 180);
+        assert_eq!(save_count.get(), 0);
+    }
+
+    #[test]
+    fn complete_task_handlerはfinished_at_missingを現在時刻に変換する() {
+        let task = TaskHandle::new("typed completed with defaults").unwrap();
+        task.set_actual_work_seconds(60).unwrap();
+        let task_id = task.get_id().unwrap();
+        let task_observer = task.clone();
+        let repository = RecordingRepository::new(vec![task]);
+        let save_count = Rc::clone(&repository.save_count);
+        let mut repository = repository;
+        let before = Local::now();
+
+        let response = call_complete_task(
+            &mut repository,
+            json!("typed-complete-defaults"),
+            CompleteTaskInput {
+                task_id: UuidValue(task_id),
+                finished_at: OptionalValue::Missing,
+                additional_actual_work_seconds: NonNegativeI64(0),
+            },
+        );
+        let after = Local::now();
+
+        assert_eq!(response["id"], "typed-complete-defaults");
+        assert_eq!(response["result"]["isError"], false);
+        let end_time = task_observer.get_end_time_opt().unwrap().unwrap();
+        assert!(before <= end_time && end_time <= after);
+        assert_eq!(task_observer.get_actual_work_seconds().unwrap(), 60);
+        assert_eq!(save_count.get(), 0);
+    }
+
+    #[test]
+    fn update_task_handlerはtyped_valueを公開field順に適用する() {
+        let deadline = fixed_now() + Duration::days(10);
+        let task = TaskHandle::new("typed updated task").unwrap();
+        let task_id = task.get_id().unwrap();
+        let task_observer = task.clone();
+        let repository = RecordingRepository::new(vec![task]);
+        let save_count = Rc::clone(&repository.save_count);
+        let mut repository = repository;
+
+        let response = call_update_task(
+            &mut repository,
+            json!("typed-update-values"),
+            UpdateTaskInput {
+                task_id: UuidValue(task_id),
+                estimated_work_minutes: OptionalValue::Value(NonNegativeI64(45)),
+                deadline_time: NullablePatch::Value(Rfc3339DateTime(deadline)),
+                category: NullablePatch::Value(ProjectCategoryValue::Recovery),
+            },
+        );
+
+        assert_eq!(response["id"], "typed-update-values");
+        assert_eq!(response["result"]["isError"], false);
+        assert_tool_result_content_matches_structured(&response);
+        assert_eq!(
+            response["result"]["structuredContent"],
+            json!({"task_id": task_id.to_string()})
+        );
+        assert_eq!(task_observer.get_estimated_work_seconds().unwrap(), 45 * 60);
+        assert_eq!(
+            task_observer.get_deadline_time_opt().unwrap(),
+            Some(deadline)
+        );
+        assert_eq!(
+            task_observer.get_project_category_opt().unwrap(),
+            Some(ProjectCategory::Recovery)
+        );
+        assert_eq!(save_count.get(), 0);
+    }
+
+    #[test]
+    fn update_task_handlerはtyped_missingを変更せずnullを解除に変換する() {
+        let deadline = fixed_now() + Duration::days(10);
+        let task = TaskHandle::new("typed cleared task").unwrap();
+        task.set_estimated_work_seconds(30 * 60).unwrap();
+        task.set_deadline_time_opt(Some(deadline)).unwrap();
+        task.set_project_category_opt(Some(ProjectCategory::Investment))
+            .unwrap();
+        let task_id = task.get_id().unwrap();
+        let task_observer = task.clone();
+        let repository = RecordingRepository::new(vec![task]);
+        let save_count = Rc::clone(&repository.save_count);
+        let mut repository = repository;
+
+        let response = call_update_task(
+            &mut repository,
+            json!("typed-update-clear"),
+            UpdateTaskInput {
+                task_id: UuidValue(task_id),
+                estimated_work_minutes: OptionalValue::Missing,
+                deadline_time: NullablePatch::Null,
+                category: NullablePatch::Null,
+            },
+        );
+
+        assert_eq!(response["id"], "typed-update-clear");
+        assert_eq!(response["result"]["isError"], false);
+        assert_eq!(task_observer.get_estimated_work_seconds().unwrap(), 30 * 60);
+        assert_eq!(task_observer.get_deadline_time_opt().unwrap(), None);
+        assert_eq!(task_observer.get_project_category_opt().unwrap(), None);
+        assert_eq!(save_count.get(), 0);
+    }
+
+    #[test]
+    fn update_task_handlerは途中fieldのapplication_error時に部分更新しない() {
+        let original_deadline = fixed_now() + Duration::days(10);
+        let requested_deadline = fixed_now() + Duration::days(20);
+        let task = TaskHandle::new("typed atomic update task").unwrap();
+        let child = task.create_as_last_child(crate::entity::task::TaskAttr::new("borrowed child"));
+        task.set_estimated_work_seconds(30 * 60).unwrap();
+        task.set_deadline_time_opt(Some(original_deadline)).unwrap();
+        task.set_project_category_opt(Some(ProjectCategory::Consumption))
+            .unwrap();
+        let task_id = task.get_id().unwrap();
+        let task_observer = task.clone();
+        let repository = RecordingRepository::new(vec![task]);
+        let save_count = Rc::clone(&repository.save_count);
+        let mut repository = repository;
+
+        let response = child.with_shared_data_borrow_for_test(|| {
+            call_update_task(
+                &mut repository,
+                json!("typed-update-atomic"),
+                UpdateTaskInput {
+                    task_id: UuidValue(task_id),
+                    estimated_work_minutes: OptionalValue::Value(NonNegativeI64(45)),
+                    deadline_time: NullablePatch::Value(Rfc3339DateTime(requested_deadline)),
+                    category: NullablePatch::Value(ProjectCategoryValue::Investment),
+                },
+            )
+        });
+
+        assert_eq!(response["id"], "typed-update-atomic");
+        assert_eq!(response["result"]["isError"], true);
+        assert_tool_result_content_matches_structured(&response);
+        assert_eq!(
+            response["result"]["structuredContent"]["error"],
+            json!({
+                "code": "internal_error",
+                "message": "cannot borrow task tree data"
+            })
+        );
+        assert_eq!(task_observer.get_estimated_work_seconds().unwrap(), 30 * 60);
+        assert_eq!(
+            task_observer.get_deadline_time_opt().unwrap(),
+            Some(original_deadline)
+        );
+        assert_eq!(
+            task_observer.get_project_category_opt().unwrap(),
+            Some(ProjectCategory::Consumption)
+        );
         assert_eq!(save_count.get(), 0);
     }
 }
