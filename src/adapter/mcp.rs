@@ -114,10 +114,19 @@ impl<R: TaskRepositoryTrait> McpServer<R> {
     }
 
     fn run_transaction_and_call(&mut self, id: Value, request: &Value) -> Value {
+        self.run_transaction_and_call_at(id, request, Local::now())
+    }
+
+    fn run_transaction_and_call_at(
+        &mut self,
+        id: Value,
+        request: &Value,
+        operation_now: DateTime<Local>,
+    ) -> Value {
         let storage_directory = self.storage_directory.clone();
         match run_repository_transaction(
             &mut self.repository,
-            Local::now(),
+            operation_now,
             || match storage_directory {
                 Some(storage_directory) => {
                     StorageLock::acquire(&storage_directory, LockMode::Mcp).map(Some)
@@ -125,7 +134,10 @@ impl<R: TaskRepositoryTrait> McpServer<R> {
                 None => Ok(None),
             },
             |repository| {
-                let response = Self::call_tool(repository, id.clone(), request);
+                let mut next_id = Uuid::new_v4;
+                let mut factory = TaskFactory::new(operation_now, &mut next_id);
+                let response =
+                    Self::call_tool(repository, id.clone(), request, operation_now, &mut factory);
                 let should_save = tool_call_succeeded_with_mutation(request, &response)
                     && repository
                         .has_pending_changes()
@@ -150,7 +162,13 @@ impl<R: TaskRepositoryTrait> McpServer<R> {
         }
     }
 
-    fn call_tool(repository: &mut R, id: Value, request: &Value) -> Value {
+    fn call_tool(
+        repository: &mut R,
+        id: Value,
+        request: &Value,
+        operation_now: DateTime<Local>,
+        factory: &mut TaskFactory<'_>,
+    ) -> Value {
         let params = &request["params"];
         match params["name"].as_str() {
             Some("get_focus") => Self::call_get_focus(repository, id, params.get("arguments")),
@@ -159,12 +177,20 @@ impl<R: TaskRepositoryTrait> McpServer<R> {
             Some("get_schedule") => {
                 Self::call_get_schedule(repository, id, params.get("arguments"))
             }
-            Some("create_task") => Self::call_create_task(repository, id, &params["arguments"]),
+            Some("create_task") => {
+                Self::call_create_task(repository, id, &params["arguments"], factory)
+            }
             Some("breakdown_task") => {
-                Self::call_breakdown_task(repository, id, &params["arguments"])
+                Self::call_breakdown_task(repository, id, &params["arguments"], factory)
             }
             Some("defer_task") => Self::call_defer_task(repository, id, &params["arguments"]),
-            Some("complete_task") => Self::call_complete_task(repository, id, &params["arguments"]),
+            Some("complete_task") => Self::call_complete_task(
+                repository,
+                id,
+                &params["arguments"],
+                operation_now,
+                factory,
+            ),
             Some("update_task") => Self::call_update_task(repository, id, &params["arguments"]),
             _ => error_response(id, -32602, "Unknown tool"),
         }
@@ -258,7 +284,12 @@ impl<R: TaskRepositoryTrait> McpServer<R> {
         }
     }
 
-    fn call_create_task(repository: &mut R, id: Value, arguments: &Value) -> Value {
+    fn call_create_task(
+        repository: &mut R,
+        id: Value,
+        arguments: &Value,
+        factory: &mut TaskFactory<'_>,
+    ) -> Value {
         let input = match create_task_input(arguments) {
             Ok(input) => input,
             Err(ToolInputError::Schema(error)) => return invalid_params_response(id, error),
@@ -267,9 +298,7 @@ impl<R: TaskRepositoryTrait> McpServer<R> {
             }
         };
 
-        let mut next_id = Uuid::new_v4;
-        let mut factory = TaskFactory::new(Local::now(), &mut next_id);
-        let task_id = match create_task_use_case(repository, input, &mut factory) {
+        let task_id = match create_task_use_case(repository, input, factory) {
             Ok(task_id) => task_id,
             Err(ApplicationError::InvalidInput { field, reason }) => {
                 return invalid_input_response(id, field, reason)
@@ -280,7 +309,12 @@ impl<R: TaskRepositoryTrait> McpServer<R> {
         tool_result_response(id, json!({"task_id": task_id.to_string()}), false)
     }
 
-    fn call_breakdown_task(repository: &mut R, id: Value, arguments: &Value) -> Value {
+    fn call_breakdown_task(
+        repository: &mut R,
+        id: Value,
+        arguments: &Value,
+        factory: &mut TaskFactory<'_>,
+    ) -> Value {
         let input = match breakdown_task_input(arguments) {
             Ok(input) => input,
             Err(ToolInputError::Schema(error)) => return invalid_params_response(id, error),
@@ -288,9 +322,7 @@ impl<R: TaskRepositoryTrait> McpServer<R> {
                 return invalid_input_response(id, field, message)
             }
         };
-        let mut next_id = Uuid::new_v4;
-        let mut factory = TaskFactory::new(Local::now(), &mut next_id);
-        let child_ids = match breakdown_task_use_case(repository, input, &mut factory) {
+        let child_ids = match breakdown_task_use_case(repository, input, factory) {
             Ok(child_ids) => child_ids,
             Err(ApplicationError::TaskNotFound(task_id)) => {
                 return task_not_found_response(id, task_id, Some("parent_id"))
@@ -333,8 +365,14 @@ impl<R: TaskRepositoryTrait> McpServer<R> {
         tool_result_response(id, json!({"task_id": task_id.to_string()}), false)
     }
 
-    fn call_complete_task(repository: &mut R, id: Value, arguments: &Value) -> Value {
-        let input = match complete_task_input(arguments) {
+    fn call_complete_task(
+        repository: &mut R,
+        id: Value,
+        arguments: &Value,
+        operation_now: DateTime<Local>,
+        factory: &mut TaskFactory<'_>,
+    ) -> Value {
+        let input = match complete_task_input(arguments, operation_now) {
             Ok(input) => input,
             Err(ToolInputError::Schema(error)) => return invalid_params_response(id, error),
             Err(ToolInputError::Semantic { field, message }) => {
@@ -342,9 +380,7 @@ impl<R: TaskRepositoryTrait> McpServer<R> {
             }
         };
         let task_id = input.task_id;
-        let mut next_id = Uuid::new_v4;
-        let mut factory = TaskFactory::new(Local::now(), &mut next_id);
-        let output = match complete_task_use_case(repository, input, &mut factory) {
+        let output = match complete_task_use_case(repository, input, factory) {
             Ok(output) => output,
             Err(ApplicationError::TaskNotFound(task_id)) => {
                 return task_not_found_response(id, task_id, Some("task_id"))
@@ -916,7 +952,10 @@ fn parse_mcp_category(value: &str) -> Option<ProjectCategory> {
     }
 }
 
-fn complete_task_input(arguments: &Value) -> Result<CompleteTaskInput, ToolInputError> {
+fn complete_task_input(
+    arguments: &Value,
+    operation_now: DateTime<Local>,
+) -> Result<CompleteTaskInput, ToolInputError> {
     let arguments = validate_argument_object(
         arguments,
         &["task_id", "finished_at", "additional_actual_work_seconds"],
@@ -925,7 +964,7 @@ fn complete_task_input(arguments: &Value) -> Result<CompleteTaskInput, ToolInput
     .map_err(ToolInputError::Schema)?;
     let task_id = uuid_argument(arguments, "task_id")?;
     let finished_at =
-        optional_datetime_argument(arguments, "finished_at")?.unwrap_or_else(Local::now);
+        optional_datetime_argument(arguments, "finished_at")?.unwrap_or(operation_now);
     let additional_actual_work_seconds =
         optional_non_negative_i64_argument(arguments, "additional_actual_work_seconds")?
             .unwrap_or(0);
