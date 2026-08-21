@@ -1106,11 +1106,10 @@ mod typed_handler_contract_tests {
     }
 
     #[test]
-    fn update_task_handlerは途中fieldのapplication_error時に部分更新しない() {
+    fn update_task_handlerは先頭field失敗時に後続fieldを適用しない() {
         let original_deadline = fixed_now() + Duration::days(10);
         let requested_deadline = fixed_now() + Duration::days(20);
-        let task = TaskHandle::new("typed atomic update task").unwrap();
-        let child = task.create_as_last_child(crate::entity::task::TaskAttr::new("borrowed child"));
+        let task = TaskHandle::new("typed unchanged update task").unwrap();
         task.set_estimated_work_seconds(30 * 60).unwrap();
         task.set_deadline_time_opt(Some(original_deadline)).unwrap();
         task.set_project_category_opt(Some(ProjectCategory::Consumption))
@@ -1121,27 +1120,26 @@ mod typed_handler_contract_tests {
         let save_count = Rc::clone(&repository.save_count);
         let mut repository = repository;
 
-        let response = child.with_shared_data_borrow_for_test(|| {
-            call_update_task(
-                &mut repository,
-                json!("typed-update-atomic"),
-                UpdateTaskInput {
-                    task_id: UuidValue(task_id),
-                    estimated_work_minutes: OptionalValue::Value(NonNegativeI64(45)),
-                    deadline_time: NullablePatch::Value(Rfc3339DateTime(requested_deadline)),
-                    category: NullablePatch::Value(ProjectCategoryValue::Investment),
-                },
-            )
-        });
+        let response = call_update_task(
+            &mut repository,
+            json!("typed-update-first-field-error"),
+            UpdateTaskInput {
+                task_id: UuidValue(task_id),
+                estimated_work_minutes: OptionalValue::Value(NonNegativeI64(i64::MAX)),
+                deadline_time: NullablePatch::Value(Rfc3339DateTime(requested_deadline)),
+                category: NullablePatch::Value(ProjectCategoryValue::Investment),
+            },
+        );
 
-        assert_eq!(response["id"], "typed-update-atomic");
+        assert_eq!(response["id"], "typed-update-first-field-error");
         assert_eq!(response["result"]["isError"], true);
         assert_tool_result_content_matches_structured(&response);
         assert_eq!(
             response["result"]["structuredContent"]["error"],
             json!({
-                "code": "internal_error",
-                "message": "cannot borrow task tree data"
+                "code": "invalid_input",
+                "message": "seconds conversion overflow",
+                "field": "estimated_work_minutes"
             })
         );
         assert_eq!(task_observer.get_estimated_work_seconds().unwrap(), 30 * 60);
