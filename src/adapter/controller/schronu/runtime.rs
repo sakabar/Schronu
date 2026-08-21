@@ -539,11 +539,14 @@ fn resolve_upcoming_clear_or_gather_day(
     resolve_upcoming_mmdd(date, now)
 }
 
-fn resolve_show_all_pattern(pattern: &str, now: DateTime<Local>) -> String {
-    match resolve_upcoming_mmdd(pattern, now) {
-        Ok(Some(datetime)) => datetime.format("%Y/%m/%d").to_string(),
-        _ => pattern.to_string(),
-    }
+fn resolve_show_all_pattern(
+    pattern: &str,
+    now: DateTime<Local>,
+) -> Result<String, ApplicationError> {
+    Ok(match resolve_upcoming_mmdd(pattern, now)? {
+        Some(datetime) => datetime.format("%Y/%m/%d").to_string(),
+        None => pattern.to_string(),
+    })
 }
 
 #[test]
@@ -656,22 +659,34 @@ fn test_resolve_upcoming_clear_or_gather_day_mmddの翌年計算不能を情報�
 fn test_resolve_show_all_pattern_年なし日付を完全日付へ変換する() {
     let now = Local.with_ymd_and_hms(2026, 8, 11, 12, 0, 0).unwrap();
 
-    assert_eq!(resolve_show_all_pattern("9/26", now), "2026/09/26");
+    assert_eq!(
+        resolve_show_all_pattern("9/26", now),
+        Ok("2026/09/26".to_string())
+    );
 }
 
 #[test]
 fn test_resolve_show_all_pattern_過ぎた日付は翌年へ変換する() {
     let now = Local.with_ymd_and_hms(2026, 10, 1, 12, 0, 0).unwrap();
 
-    assert_eq!(resolve_show_all_pattern("9/26", now), "2027/09/26");
+    assert_eq!(
+        resolve_show_all_pattern("9/26", now),
+        Ok("2027/09/26".to_string())
+    );
 }
 
 #[test]
 fn test_resolve_show_all_pattern_完全日付と検索語は変更しない() {
     let now = Local.with_ymd_and_hms(2026, 8, 11, 12, 0, 0).unwrap();
 
-    assert_eq!(resolve_show_all_pattern("2026/09/26", now), "2026/09/26");
-    assert_eq!(resolve_show_all_pattern("タスク", now), "タスク");
+    assert_eq!(
+        resolve_show_all_pattern("2026/09/26", now),
+        Ok("2026/09/26".to_string())
+    );
+    assert_eq!(
+        resolve_show_all_pattern("タスク", now),
+        Ok("タスク".to_string())
+    );
 }
 
 #[test]
@@ -8699,13 +8714,15 @@ impl TaskTreeCommandContext for RuntimeTaskTreeCommandContext<'_, '_, '_> {
         order: TaskListOrder,
         resolve_pattern: bool,
     ) -> Result<(), ApplicationError> {
-        let pattern = pattern.map(|pattern| {
-            if resolve_pattern {
-                resolve_show_all_pattern(pattern, self.task_repository.get_last_synced_time())
-            } else {
-                pattern.to_string()
-            }
-        });
+        let pattern = pattern
+            .map(|pattern| {
+                if resolve_pattern {
+                    resolve_show_all_pattern(pattern, self.task_repository.get_last_synced_time())
+                } else {
+                    Ok(pattern.to_string())
+                }
+            })
+            .transpose()?;
         let order = match order {
             TaskListOrder::ScheduledStartDesc => TaskListDisplayOrder::ScheduledStartDesc,
             TaskListOrder::LowPriorityTail => TaskListDisplayOrder::LowPriorityTail,
