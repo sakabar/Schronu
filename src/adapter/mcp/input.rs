@@ -461,7 +461,38 @@ fn additional_work_seconds_schema(_generator: &mut SchemaGenerator) -> Schema {
     json_schema!({"type": "integer", "minimum": 0, "default": 0})
 }
 
-const UPDATE_TASK_FIELDS: [&str; 3] = ["estimated_work_minutes", "deadline_time", "category"];
+#[derive(Clone, Copy)]
+enum UpdateTaskField {
+    EstimatedWorkMinutes,
+    DeadlineTime,
+    Category,
+}
+
+impl UpdateTaskField {
+    fn name(self) -> &'static str {
+        match self {
+            Self::EstimatedWorkMinutes => "estimated_work_minutes",
+            Self::DeadlineTime => "deadline_time",
+            Self::Category => "category",
+        }
+    }
+
+    fn is_provided(self, fields: &UpdateTaskInputFields) -> bool {
+        match self {
+            Self::EstimatedWorkMinutes => {
+                !matches!(fields.estimated_work_minutes, OptionalValue::Missing)
+            }
+            Self::DeadlineTime => !matches!(fields.deadline_time, NullablePatch::Missing),
+            Self::Category => !matches!(fields.category, NullablePatch::Missing),
+        }
+    }
+}
+
+const UPDATE_TASK_FIELDS: [UpdateTaskField; 3] = [
+    UpdateTaskField::EstimatedWorkMinutes,
+    UpdateTaskField::DeadlineTime,
+    UpdateTaskField::Category,
+];
 const UPDATE_TASK_FIELD_REQUIRED_REASON: &str = "must include at least one field to update";
 
 #[derive(Deserialize, JsonSchema)]
@@ -491,15 +522,9 @@ impl TryFrom<UpdateTaskInputFields> for UpdateTaskInput {
     type Error = String;
 
     fn try_from(fields: UpdateTaskInputFields) -> Result<Self, Self::Error> {
-        let provided = [
-            !matches!(fields.estimated_work_minutes, OptionalValue::Missing),
-            !matches!(fields.deadline_time, NullablePatch::Missing),
-            !matches!(fields.category, NullablePatch::Missing),
-        ];
         if !UPDATE_TASK_FIELDS
             .iter()
-            .zip(provided)
-            .any(|(_, provided)| provided)
+            .any(|field| field.is_provided(&fields))
         {
             return Err(format!(
                 "{SCHEMA_ERROR_PREFIX}{UPDATE_TASK_FIELD_REQUIRED_REASON}"
@@ -518,7 +543,7 @@ impl TryFrom<UpdateTaskInputFields> for UpdateTaskInput {
 fn require_update_task_field(schema: &mut Schema) {
     let alternatives = UPDATE_TASK_FIELDS
         .iter()
-        .map(|field| serde_json::json!({"required": [field]}))
+        .map(|field| serde_json::json!({"required": [field.name()]}))
         .collect();
     schema
         .ensure_object()
