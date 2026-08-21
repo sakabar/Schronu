@@ -19,11 +19,22 @@ fn task_time() -> DateTime<Local> {
 }
 
 pub(crate) fn new_task_attr(name: &str) -> TaskAttr {
-    TaskAttr::with_identity(name, next_task_id(), task_time())
+    new_task_attr_at(name, task_time())
+}
+
+pub(crate) fn new_task_attr_at(name: &str, now: DateTime<Local>) -> TaskAttr {
+    TaskAttr::with_identity(name, next_task_id(), now)
 }
 
 pub(crate) fn new_task_handle(name: &str) -> Result<TaskHandle, TaskTreeError> {
-    TaskHandle::with_identity(name, next_task_id(), task_time())
+    new_task_handle_at(name, task_time())
+}
+
+pub(crate) fn new_task_handle_at(
+    name: &str,
+    now: DateTime<Local>,
+) -> Result<TaskHandle, TaskTreeError> {
+    TaskHandle::with_identity(name, next_task_id(), now)
 }
 
 pub(crate) struct TestTaskRepository {
