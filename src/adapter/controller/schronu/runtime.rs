@@ -7595,6 +7595,33 @@ fn test_resolve_deadline_date_曜日は同じ曜日を7日後にする() {
 }
 
 #[test]
+fn test_resolve_deadline_date_mmddは同日正午を過ぎると翌年を選ぶ() {
+    let now = Local.with_ymd_and_hms(2026, 8, 14, 13, 0, 0).unwrap();
+
+    assert!(matches!(
+        resolve_deadline_date("8/14", now),
+        Ok(actual) if actual == "2027/08/14"
+    ));
+}
+
+#[test]
+fn test_resolve_deadline_date_mmddの翌年範囲外を情報付きerrorにする() {
+    let now = maximum_local_datetime()
+        .checked_add_signed(Duration::hours(1))
+        .unwrap();
+
+    assert!(matches!(
+        resolve_deadline_date("12/31", now),
+        Err(CommandError::Application(
+            ApplicationError::SubjectiveDateOutOfRange {
+                operation: "deadline_calendar_date",
+                datetime,
+            }
+        )) if datetime == now
+    ));
+}
+
+#[test]
 fn test_execute_finish_未完了の子があれば完了しない() {
     let now = Local.with_ymd_and_hms(2026, 8, 11, 12, 0, 0).unwrap();
     let parent_task = new_test_task_handle("親タスク").unwrap();
