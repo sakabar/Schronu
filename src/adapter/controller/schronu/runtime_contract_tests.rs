@@ -549,6 +549,25 @@ fn test_report_command_resultはtask_tree_errorを既存の操作エラー形式
 }
 
 #[test]
+fn test_error_display_modelはcommand_errorをwriter固有newlineで表示する() {
+    let error = CommandError::Application(ApplicationError::TaskTree(TaskTreeError::Borrow));
+    let display = error_display_model(&error);
+    let mut stdout = TestWriter::new_with_newline_prefix("<reset>");
+
+    render_display_model(&mut stdout, &display).unwrap();
+
+    assert_eq!(
+        stdout.into_string(),
+        "<reset>[Error] 操作エラー: task tree operation failed: cannot borrow task tree data\n"
+    );
+
+    let mut failing_stdout = FailingNewlineWriter::fail_once();
+    let output_error = render_display_model(&mut failing_stdout, &display).unwrap_err();
+    assert_eq!(output_error.kind(), std::io::ErrorKind::Other);
+    assert_eq!(output_error.to_string(), "newline write failure");
+}
+
+#[test]
 fn test_execute_空_日付指定は指定日の予定開始時刻でtodoをpendingにする() {
     let now = Local.with_ymd_and_hms(2026, 8, 14, 12, 0, 0).unwrap();
     let schronu_day_start = Local.with_ymd_and_hms(2026, 8, 15, 6, 0, 0).unwrap();
