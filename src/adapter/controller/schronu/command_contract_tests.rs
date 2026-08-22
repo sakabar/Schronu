@@ -188,9 +188,12 @@ fn parser_distinguishes_noop_search_fallback_and_interactive_shortcuts() {
             parse_command(input, ParseMode::Interactive).unwrap(),
             expected
         );
-        assert_eq!(parse_command(input, ParseMode::NonInteractive).unwrap(), Command::ShowAll {
-            pattern: Some(input.to_string())
-        });
+        assert_eq!(
+            parse_command(input, ParseMode::NonInteractive).unwrap(),
+            Command::ShowAll {
+                pattern: Some(input.to_string())
+            }
+        );
     }
 
     assert_eq!(

@@ -4585,6 +4585,8 @@ fn execute_interactive_command(
             outcome,
             active_config(),
         )?;
+    } else if matches!(parsed_command, Command::TuckAway) {
+        execute_defer(task_repository, focused_task_id_opt, 1, "秒")?;
     } else if matches!(
         parsed_command,
         Command::Defer { .. } | Command::InteractiveShortcut(_)

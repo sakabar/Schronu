@@ -45,6 +45,7 @@ pub(super) enum CommandKind {
     Priority,
     Category,
     Work,
+    TuckAway,
     Defer,
     DeferRoutines,
     Escape,
@@ -72,6 +73,7 @@ pub(super) enum Command {
         minutes: i64,
         includes_zero_estimate: bool,
     },
+    TuckAway,
     Defer {
         amount: i64,
         unit: String,
@@ -186,6 +188,7 @@ impl Command {
             Self::Estimate { .. } => CommandKind::Estimate,
             Self::Focus { .. } => CommandKind::Focus,
             Self::Arrange { .. } => CommandKind::Arrange,
+            Self::TuckAway => CommandKind::TuckAway,
             Self::Defer { .. } => CommandKind::Defer,
             Self::ShowAll { .. } => CommandKind::ShowAll,
             Self::InteractiveShortcut(InteractiveShortcut::DeferRoutine) => {
@@ -282,10 +285,7 @@ pub(super) fn parse_command(input: &str, mode: ParseMode) -> Result<Command, Com
 
     if mode == ParseMode::Interactive {
         let shortcut = match normalized.as_str() {
-            "t" => Some(Command::Defer {
-                amount: 1,
-                unit: "秒".to_string(),
-            }),
+            "t" => Some(Command::TuckAway),
             "h" => Some(Command::Defer {
                 amount: 1,
                 unit: "時間".to_string(),
@@ -317,6 +317,7 @@ pub(super) fn parse_command(input: &str, mode: ParseMode) -> Result<Command, Com
         .collect::<Vec<_>>();
 
     match name {
+        "tuck" | "伏" | "t" => parse_tuck_away(&arguments, mode),
         "予" | "estimate" | "es" => parse_estimate(&arguments),
         "見" | "focus" | "fc" => parse_focus(&arguments),
         "揃" | "arrange" | "arr" => parse_arrange(&arguments),
@@ -348,6 +349,14 @@ pub(super) fn parse_command(input: &str, mode: ParseMode) -> Result<Command, Com
             }),
         },
     }
+}
+
+fn parse_tuck_away(arguments: &[String], mode: ParseMode) -> Result<Command, CommandParseError> {
+    require_count(arguments, 0, 0, "tuck", "tuck")?;
+    if mode == ParseMode::NonInteractive {
+        return Err(parse_error("tuck", "mode", "対話モード専用です", "tuck"));
+    }
+    Ok(Command::TuckAway)
 }
 
 fn parse_estimate(arguments: &[String]) -> Result<Command, CommandParseError> {
@@ -632,7 +641,8 @@ fn parse_action(
         | CommandKind::ShowAll
         | CommandKind::Focus
         | CommandKind::Estimate
-        | CommandKind::Arrange => unreachable!("handled before action parsing"),
+        | CommandKind::Arrange
+        | CommandKind::TuckAway => unreachable!("handled before action parsing"),
     };
     Ok(Command::Action(action))
 }
