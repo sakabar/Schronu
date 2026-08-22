@@ -331,6 +331,7 @@ struct TestTaskRepository {
     load_should_fail: bool,
     load_attempt_count: Cell<usize>,
     reload_if_changed_attempt_count: Cell<usize>,
+    get_by_id_attempt_count: Cell<usize>,
     save_failures_remaining: Cell<usize>,
     save_attempt_count: Cell<usize>,
     has_pending_changes: Cell<bool>,
@@ -388,6 +389,7 @@ impl TestTaskRepository {
             load_should_fail: false,
             load_attempt_count: Cell::new(0),
             reload_if_changed_attempt_count: Cell::new(0),
+            get_by_id_attempt_count: Cell::new(0),
             save_failures_remaining: Cell::new(0),
             save_attempt_count: Cell::new(0),
             has_pending_changes: Cell::new(true),
@@ -486,6 +488,8 @@ impl TaskRepositoryTrait for TestTaskRepository {
     }
 
     fn get_by_id(&self, id: Uuid) -> Result<Option<TaskHandle>, TaskTreeError> {
+        self.get_by_id_attempt_count
+            .set(self.get_by_id_attempt_count.get() + 1);
         self.task.get_by_id(id)
     }
 

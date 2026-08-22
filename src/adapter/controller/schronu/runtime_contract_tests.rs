@@ -3541,64 +3541,103 @@ fn test_execute_category_不正値はfield付き入力エラーを表示して�
 
 #[test]
 fn runtime外部ioとoutcome調停は共通境界に集約する() {
-    let runtime_source = include_str!("runtime.rs");
-    let apply_source = runtime_source
-        .split_once("\nfn apply_command_outcome(")
-        .expect("runtime must define the shared apply_command_outcome boundary")
-        .1
-        .split_once("\nenum OutcomeApplicationMode")
-        .expect("outcome boundary must remain bounded")
-        .0;
+    let now = Local.with_ymd_and_hms(2026, 8, 23, 12, 0, 0).unwrap();
+    let task = new_test_task_handle("外部要求の参照対象").unwrap();
+    let task_id = task.get_id().unwrap();
+    let mut task_repository = TestTaskRepository::new(task, now);
+    let mut focused_task_id_opt = Some(task_id);
 
-    for required in [
-        "render_display_model",
-        "ExternalRequest::OpenFocusedLink",
-        "execute_open_link",
-        "ExternalRequest::OpenObsidianRootSearch",
-        "execute_open_obsidian_root_task_search_with_config",
-        "FocusRequest::Clear",
-        "focus_selection_mode_from_request",
-        "CommandError::Output",
+    let open_command = parse_command("開", ParseMode::NonInteractive).unwrap();
+    let mut open_outcome = handle(&open_command).expect("open must be handler-owned");
+    open_outcome.display = DisplayModel::newline("外部要求の前に表示");
+    let mut flushed_output = FlushTrackingWriter::successful(false);
+    apply_command_outcome(
+        &mut flushed_output,
+        &mut task_repository,
+        &mut focused_task_id_opt,
+        OutcomeApplicationMode::Flushed,
+        open_outcome,
+        active_config(),
+    )
+    .unwrap();
+
+    assert_eq!(
+        String::from_utf8(flushed_output.buffer).unwrap(),
+        "外部要求の前に表示\n"
+    );
+    assert_eq!(task_repository.get_by_id_attempt_count.get(), 1);
+    assert_eq!(flushed_output.flush_count, 1);
+
+    let noop_command = parse_command("", ParseMode::NonInteractive).unwrap();
+    let noop_outcome = handle(&noop_command).expect("noop must be handler-owned");
+    let mut noop_output = FlushTrackingWriter::successful(false);
+    apply_command_outcome(
+        &mut noop_output,
+        &mut task_repository,
+        &mut focused_task_id_opt,
+        OutcomeApplicationMode::Flushed,
+        noop_outcome,
+        active_config(),
+    )
+    .unwrap();
+    assert_eq!(noop_output.flush_count, 0);
+
+    let focus_command = parse_command("高", ParseMode::Interactive).unwrap();
+    let focus_outcome = handle(&focus_command).expect("focus mode must be handler-owned");
+    let mut focus_output = FlushTrackingWriter::successful(false);
+    let mut focus_selection_mode = FocusSelectionMode::Explicit;
+    apply_command_outcome(
+        &mut focus_output,
+        &mut task_repository,
+        &mut focused_task_id_opt,
+        OutcomeApplicationMode::InteractiveUnflushed(&mut focus_selection_mode),
+        focus_outcome,
+        active_config(),
+    )
+    .unwrap();
+
+    assert_eq!(
+        String::from_utf8(focus_output.buffer).unwrap(),
+        "フォーカス選択モード: 高\n"
+    );
+    assert_eq!(focus_selection_mode, FocusSelectionMode::HighestPriority);
+    assert_eq!(focused_task_id_opt, None);
+    assert_eq!(focus_output.flush_count, 0);
+
+    for (error_kind, expects_success) in [
+        (std::io::ErrorKind::BrokenPipe, true),
+        (std::io::ErrorKind::Other, false),
     ] {
-        assert!(
-            apply_source.contains(required),
-            "shared outcome boundary must coordinate {required}"
+        let task = new_test_task_handle("出力errorの対象").unwrap();
+        let task_id = task.get_id().unwrap();
+        let mut task_repository = TestTaskRepository::new(task, now);
+        let mut free_time_manager = TestFreeTimeManager::default();
+        let mut focused_task_id_opt = Some(task_id);
+        let parsed = parse_command("予 15", ParseMode::NonInteractive).unwrap();
+        let mut output = FlushTrackingWriter::failing(error_kind);
+
+        let result = execute_parsed(
+            &mut output,
+            &mut task_repository,
+            &mut free_time_manager,
+            &mut focused_task_id_opt,
+            &now,
+            "予 15",
+            &parsed,
         );
+
+        if expects_success {
+            assert!(result.is_ok());
+        } else {
+            assert!(matches!(
+                result,
+                Err(CommandError::Output(error)) if error.kind() == std::io::ErrorKind::Other
+            ));
+        }
+        assert_eq!(output.flush_count, 1);
     }
 
-    let execute_parsed_source = runtime_source
-        .split_once("fn execute_parsed(")
-        .expect("non-interactive command path must exist")
-        .1
-        .split_once("struct RuntimeProjectCommandContext")
-        .expect("non-interactive command path must remain bounded")
-        .0;
-    assert!(
-        execute_parsed_source.contains("apply_command_outcome("),
-        "non-interactive outcomes must use the shared boundary"
-    );
-
-    let interactive_source = runtime_source
-        .split_once("\nfn execute_interactive_command(")
-        .expect("interactive command path must exist")
-        .1
-        .split_once("struct InteractiveRepositoryState")
-        .expect("interactive command path must remain bounded")
-        .0;
-    let (focus_branch, after_focus_branch) = interactive_source
-        .split_once("    } else if matches!(")
-        .expect("interactive focus branch must remain distinct");
-    let (shortcut_branch, _) = after_focus_branch
-        .split_once("    } else {")
-        .expect("interactive shortcut branch must remain distinct");
-    assert!(
-        focus_branch.contains("apply_command_outcome("),
-        "interactive focus outcomes must use the shared boundary"
-    );
-    assert!(
-        shortcut_branch.contains("apply_command_outcome("),
-        "interactive shortcut outcomes must use the shared boundary"
-    );
+    let runtime_source = include_str!("runtime.rs");
     assert!(
         !runtime_source.contains("\nfn execute_handler_outcome("),
         "the superseded outcome coordinator must be removed"
