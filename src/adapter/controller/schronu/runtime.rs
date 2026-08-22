@@ -2671,18 +2671,45 @@ fn extract_url(s: &str) -> Option<String> {
     }
 }
 
-//親に辿っていって見つかった最初のリンクを開く
-fn execute_open_link(focused_task_opt: &Option<TaskHandle>) -> Result<(), CommandError> {
-    let mut t_opt: Option<TaskHandle> = focused_task_opt.clone();
+#[derive(Clone, Debug, Eq, PartialEq)]
+enum ResolvedExternalRequest {
+    BrowserUrl(String),
+    ObsidianUrl(String),
+}
 
-    while let Some(t) = &t_opt {
-        if let Some(url) = extract_url(&t.get_name().map_err(ApplicationError::TaskTree)?) {
-            webbrowser::open(&url).map_err(|source| external_open_error("browser", source))?;
-            return Ok(());
+fn resolve_external_request(
+    request: ExternalRequest,
+    focused_task_opt: &Option<TaskHandle>,
+    config: &SchronuConfig,
+) -> Result<Option<ResolvedExternalRequest>, ApplicationError> {
+    match request {
+        ExternalRequest::OpenFocusedLink => {
+            let mut task_opt = focused_task_opt.clone();
+            while let Some(task) = &task_opt {
+                if let Some(url) =
+                    extract_url(&task.get_name().map_err(ApplicationError::TaskTree)?)
+                {
+                    return Ok(Some(ResolvedExternalRequest::BrowserUrl(url)));
+                }
+                task_opt = task.parent().map_err(ApplicationError::TaskTree)?;
+            }
+            Ok(None)
         }
-
-        t_opt = t.parent().map_err(ApplicationError::TaskTree)?;
+        ExternalRequest::OpenObsidianRootSearch => focused_task_opt
+            .as_ref()
+            .map(|focused_task| {
+                make_obsidian_root_task_search_url_with_vault(
+                    focused_task,
+                    &config.obsidian_vault_name,
+                )
+                .map(ResolvedExternalRequest::ObsidianUrl)
+            })
+            .transpose(),
     }
+}
+
+fn execute_open_link(url: &str) -> Result<(), CommandError> {
+    webbrowser::open(url).map_err(|source| external_open_error("browser", source))?;
     Ok(())
 }
 
@@ -2729,18 +2756,9 @@ fn open_obsidian_url(url: &str) -> Result<(), String> {
     }
 }
 
-fn execute_open_obsidian_root_task_search_with_config(
-    focused_task_opt: &Option<TaskHandle>,
-    config: &SchronuConfig,
-) -> Result<(), CommandError> {
-    if let Some(focused_task) = focused_task_opt {
-        let url = make_obsidian_root_task_search_url_with_vault(
-            focused_task,
-            &config.obsidian_vault_name,
-        )?;
-        open_obsidian_url(&url)
-            .map_err(|source| external_open_error("Obsidian", std::io::Error::other(source)))?;
-    }
+fn execute_open_obsidian_root_task_search_with_config(url: &str) -> Result<(), CommandError> {
+    open_obsidian_url(url)
+        .map_err(|source| external_open_error("Obsidian", std::io::Error::other(source)))?;
     Ok(())
 }
 
@@ -4053,10 +4071,14 @@ fn apply_command_outcome(
                 .map_err(ApplicationError::TaskTree)?,
             None => None,
         };
-        match request {
-            ExternalRequest::OpenFocusedLink => execute_open_link(&focused_task_opt)?,
-            ExternalRequest::OpenObsidianRootSearch => {
-                execute_open_obsidian_root_task_search_with_config(&focused_task_opt, config)?
+        if let Some(resolved_request) =
+            resolve_external_request(request, &focused_task_opt, config)?
+        {
+            match resolved_request {
+                ResolvedExternalRequest::BrowserUrl(url) => execute_open_link(&url)?,
+                ResolvedExternalRequest::ObsidianUrl(url) => {
+                    execute_open_obsidian_root_task_search_with_config(&url)?
+                }
             }
         }
     }
