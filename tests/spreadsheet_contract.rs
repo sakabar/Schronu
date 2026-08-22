@@ -166,6 +166,42 @@ fn cli出力からspreadsheetを経由してコマンド生成まで列契約を
 }
 
 #[test]
+fn copy_for_spreadsheetは新しい業務日の最初のp列へ睡眠420分を算入する() {
+    let cli_output = fs::read_to_string(repository_path(
+        "tests/fixtures/spreadsheet/sleep-boundary-cli-output.txt",
+    ))
+    .expect("sleep boundary CLI output fixture exists");
+    let copied = run_script("shell/copy_for_spreadsheet.sh", &[], &cli_output);
+    let copied_rows: Vec<_> = copied
+        .lines()
+        .filter(|line| line.chars().any(|character| character != '\t'))
+        .collect();
+    let sleep_ranks = ["0003", "0006", "0007", "0009"];
+
+    assert_eq!(copied_rows.len(), 10);
+    for (index, copied_row) in copied_rows.iter().enumerate() {
+        let fields: Vec<_> = copied_row.split('\t').collect();
+        let row = index + 3;
+        let is_sleep_row = sleep_ranks.contains(&fields[0]);
+        let sleep_minutes = if is_sleep_row { "+420" } else { "" };
+        assert_eq!(
+            fields[13],
+            if is_sleep_row { "F" } else { "" },
+            "unexpected N flag for rank {}",
+            fields[0]
+        );
+        assert_eq!(
+            fields[15],
+            format!(
+                "=IF(OR(R{row}=\"W\", R{row}=\"d\"), L{row}, L{row}+TIME(0, G{row}{sleep_minutes}, 0))"
+            ),
+            "unexpected P formula for rank {}",
+            fields[0]
+        );
+    }
+}
+
+#[test]
 fn implementation_and_documentationはmanifestの重要な列契約を明記する() {
     let columns = parse_columns();
     let copy_script = fs::read_to_string(repository_path("shell/copy_for_spreadsheet.sh")).unwrap();
