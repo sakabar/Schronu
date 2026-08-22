@@ -31,7 +31,7 @@
 
 - `handler::handle_command`を全通常commandの統合入口にする。
 - privateな`CommandContext`を既存5 context traitの合成境界として定義し、`CliCommandContext`がrepository、free-time、TaskFactory、focus、設定を提供する。
-- `CommandOutcome`は`DisplayModel`、外部I/O要求、`FocusChange`を返す。既存の`FocusRequest`は`FocusChange::{Keep, Clear, Set(Uuid), SelectionMode(FocusSelection)}`へ置換し、runtimeは要求の適用だけを担当する。
+- `CommandOutcome`は`DisplayModel`、外部I/O要求、`FocusChange`を返す。既存の`FocusRequest`は`FocusChange::{Keep, Clear, Set(Uuid), SelectionMode(FocusSelection)}`へ置換し、`FocusSelection`は`HighestPriority`と`LowestPriority { recent_days: i64 }`で構成する。runtimeは要求の適用だけを担当する。
 - `HandlerError`は`Parse(CommandParseError)`と`Application(ApplicationError)`として原因情報を保持する。runtimeは両者をvariantを潰さず対応する`CommandError`へ変換する。`Output`と`ExternalOpen`のerrorはruntimeが所有する。
 - `DisplayModel`を`Message`、`Tree`、`TaskList`、`Calendar`、`Band`、`Focus`、`Pack`、`Flatten`、`Sequence`で構成する。
 - `DisplayFragment`と`DisplayRecorder`は最終的に削除する。ANSIとwriter固有改行はrenderer内部の責務とする。
