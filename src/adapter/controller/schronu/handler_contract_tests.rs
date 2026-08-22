@@ -429,6 +429,14 @@ fn project作成commandはhandlerがtyped_fieldを直接matchして所有する(
         sequential_context.created_attr_names,
         ["typed step 2-suffix", "typed step 1-suffix"]
     );
+    let step_2 = sequential_context
+        .focused_task
+        .get_children()
+        .unwrap()
+        .remove(0);
+    let step_1 = step_2.get_children().unwrap().remove(0);
+    assert_eq!(step_2.get_estimated_work_seconds().unwrap(), 10 * 60);
+    assert_eq!(step_1.get_estimated_work_seconds().unwrap(), 10 * 60);
     assert!(sequential.display.is_empty());
 
     let mut repeat_context = TraceProjectContext::new(now);
