@@ -51,6 +51,14 @@ impl TestTaskRepository {
             save_count: Cell::new(0),
         }
     }
+
+    pub(crate) fn projects(&self) -> &[TaskHandle] {
+        &self.projects
+    }
+
+    pub(crate) fn save_count(&self) -> usize {
+        self.save_count.get()
+    }
 }
 
 impl TaskRepositoryTrait for TestTaskRepository {
