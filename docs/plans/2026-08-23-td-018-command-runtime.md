@@ -97,7 +97,7 @@ git show --stat --oneline HEAD
 
 最終受入条件:
 
-- baselineの既存test名・assertion・852 passed、1 ignoredを維持し、新規contract testを追加する。
+- baselineの既存test名と保護対象契約、852 passed、1 ignoredを維持し、新規contract testを追加する。commit 2-5では、脆いsource依存assertionだけを同等以上の挙動assertionへ置換する。
 - ignored testは既存benchmarkのまま維持する。
 - `runtime.rs`にcommand context実装、command引数の日時解釈、domain mutation、表示計算、`DisplayFragment`、`DisplayRecorder`を残さない。
 - handlerの製品経路をfake `CommandContext`で検証できる。
