@@ -40,6 +40,7 @@ pub(crate) fn new_task_handle_at(
 pub(crate) struct TestTaskRepository {
     projects: Vec<TaskHandle>,
     now: DateTime<Local>,
+    highest_priority_leaf_task_id: Option<Uuid>,
     save_count: Cell<usize>,
 }
 
@@ -48,8 +49,25 @@ impl TestTaskRepository {
         Self {
             projects,
             now,
+            highest_priority_leaf_task_id: None,
             save_count: Cell::new(0),
         }
+    }
+
+    pub(crate) fn projects(&self) -> &[TaskHandle] {
+        &self.projects
+    }
+
+    pub(crate) fn save_count(&self) -> usize {
+        self.save_count.get()
+    }
+
+    pub(crate) fn set_highest_priority_leaf_task_id(&mut self, task_id: Option<Uuid>) {
+        self.highest_priority_leaf_task_id = task_id;
+    }
+
+    pub(crate) fn highest_priority_leaf_task_id(&self) -> Option<Uuid> {
+        self.highest_priority_leaf_task_id
     }
 }
 
@@ -88,7 +106,7 @@ impl TaskRepositoryTrait for TestTaskRepository {
     }
 
     fn get_highest_priority_leaf_task_id(&mut self) -> Result<Option<Uuid>, TaskTreeError> {
-        Ok(None)
+        Ok(self.highest_priority_leaf_task_id)
     }
 
     fn get_defer_candidate_leaf_task_id(

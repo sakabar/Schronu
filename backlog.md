@@ -50,7 +50,7 @@
 | TD-012 | P2 | 未着手 | L | flatten・pack・scheduleの再計算コストに性能上限が定義されていない |
 | TD-013 | P2 | 完了 | M | Spreadsheetの列契約が複数言語・文書へ重複している |
 | TD-014 | P2 | 完了 | M | 実環境計測で同期処理に有意な高速化の見込みがないことを確認した |
-| TD-015 | P2 | 未着手 | L | テストが巨大な製品ファイルへ混在し、fixtureも重複している |
+| TD-015 | P2 | 完了 | L | テストが巨大な製品ファイルへ混在し、fixtureも重複している |
 | TD-016 | P3 | 未着手 | M | マジック値、未使用フィールド、古いコメントが意図を曖昧にしている |
 | TD-017 | P1 | 完了 | XL | `TaskHandle`の既存infallible APIが内部不変条件の破れをpanicとして扱う |
 | TD-018 | P1 | 未着手 | XL | CLI runtimeにcommand orchestrationと表示計算が残っている |
@@ -696,12 +696,17 @@
 
 - 優先度: `P2`
 - 概算規模: `L`
+- 完了日: 2026-08-22
+- 対応: 巨大な製品moduleからtest bodyを挙動変更なしで別fileへ移し、CLI runtimeのunit test、contract test、test supportを分離した。application、gateway、MCPの対象testも外部化し、Task生成、repository、free-timeの同一目的fixtureをcrate境界に沿ったtest supportへ共通化した。製品API、CLI表示、YAML、MCP、Spreadsheet契約は変更していない。
+- 実測test件数: lib 501 passed、1 ignored、CLI binary 333 passed、MCP binary 2 passed、MCP stdio 12 passed、Spreadsheet 4 passed。合計852 passed、1 ignoredを維持した。
+- 品質ゲート: `git diff --check`、`cargo fmt --check`、`cargo clippy --locked --all-targets -- -D warnings`、`cargo test --locked`が成功した。
+- 意図的な対象外: 製品読解を妨げていない小規模inline testの`datetime`、`storage_lock`、`schronu_config`、`interactive`、testが1件だけの`flatten_use_case`はscope外として残した。これは未完了作業ではない。
 
-#### 現状と根拠
+#### 対応前の現状と根拠
 
-- `src/entity/task.rs`は約3,250行で、production type・operation・YAML出力と多数の個別`#[test]`が交互に配置される。
+- `src/entity/task.rs`は4,474行で、production type・operation・YAML出力と多数の個別`#[test]`が交互に配置される。
 - `src/adapter/controller/schronu/runtime.rs`はproduction helperの間に大量のcommand test、repository stub、free-time stubを持つ。
-- `src/adapter/mcp.rs`は約1,500行のproduction codeに続いて約3,600行のtest moduleを持つ。
+- `src/adapter/mcp/input.rs`は2,895行、`src/adapter/mcp/handler.rs`は1,291行で、それぞれproduction codeに大量のtestが混在する。
 - application contract testsにも類似の`TestTaskRepository`とtask builderが複数存在する。
 - TD-008対応前にclippyが検出した違反の多くは古いテスト表現に由来した。現在のall-target clippyはGreenだが、production codeとtest cleanupの対象が同じ巨大fileに混在する構造は残る。
 

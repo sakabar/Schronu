@@ -20,6 +20,14 @@ cargo clippy --locked --all-targets -- -D warnings
 
 Rust versionまたは依存関係を更新する場合は、`rust-toolchain.toml`と`Cargo.lock`を同じ専用PRで更新し、上記の全検証を通してください。
 
+### testの責務とfixture配置
+
+unit testはmodule privateな振る舞いを検証します。大規模なtest suiteは製品fileと同じdirectoryの`*_tests.rs`へ置き、`#[cfg(test)]`付きの`#[path = "..."] mod tests;`または`include!("...");`から読み込んで、従来のtest module pathを維持します。
+
+application contract testはfilesystemやterminalを介さずuse caseの契約を検証し、library共通fixtureは`src/test_support.rs`を利用します。CLI・MCP contract testはadapter境界を検証し、processやfilesystemを含むend-to-end testは`tests/`へ置きます。CLI binaryのfixtureは`src/adapter/controller/schronu/runtime_test_support.rs`、MCPのfixtureは`src/adapter/mcp/test_support.rs`へ配置します。
+
+test supportは`#[cfg(test)]`の範囲内またはprivateに保ち、製品向けpublic APIを追加しません。
+
 保存性能を測定するignored testは、2172 projectを含むtask storageのコピー元を`SCHRONU_BENCHMARK_STORAGE`へ指定して手動実行します。外部fixtureと実行環境に依存するため、CIでは実行しません。
 
 ```shell

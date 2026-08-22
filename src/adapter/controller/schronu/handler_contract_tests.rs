@@ -929,7 +929,7 @@ fn 完了と配置commandはtyped値のままhandlerが所有してruntime_fallb
         .split_once("fn execute_with_config(")
         .expect("runtime must retain the typed fallback entrypoint")
         .1
-        .split_once("\n#[cfg(test)]\nfn execute_show_all_command_for_test(")
+        .split_once("\nfn reload_repository_for_cli(")
         .expect("runtime fallback must remain bounded by the non-interactive entrypoint")
         .0;
     for migrated_kind in [

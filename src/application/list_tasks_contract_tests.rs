@@ -1,88 +1,9 @@
-use super::interface::{TaskRepositoryError, TaskRepositoryTrait};
 use super::task_use_case::{
     list_tasks, ApplicationError, ListTasksFilter, TaskPeriodField, TaskPeriodFilter,
 };
-use crate::entity::task::{ProjectCategory, Status, TaskHandle};
+use crate::entity::task::{ProjectCategory, Status};
+use crate::test_support::TestTaskRepository;
 use chrono::{DateTime, Duration, Local, TimeZone};
-use uuid::Uuid;
-
-struct TestTaskRepository {
-    projects: Vec<TaskHandle>,
-    now: DateTime<Local>,
-}
-
-impl TestTaskRepository {
-    fn new(projects: Vec<TaskHandle>, now: DateTime<Local>) -> Self {
-        Self { projects, now }
-    }
-}
-
-impl TaskRepositoryTrait for TestTaskRepository {
-    fn get_project_storage_dir_name(&self) -> &str {
-        "unused"
-    }
-
-    fn get_all_projects(&self) -> Vec<&TaskHandle> {
-        self.projects.iter().collect()
-    }
-
-    fn load(&mut self) -> Result<(), TaskRepositoryError> {
-        Ok(())
-    }
-
-    fn save(&self) -> Result<(), TaskRepositoryError> {
-        Ok(())
-    }
-
-    fn sync_clock(
-        &mut self,
-        now: DateTime<Local>,
-    ) -> Result<(), crate::entity::task::TaskTreeError> {
-        self.now = now;
-        Ok(())
-    }
-
-    fn get_last_synced_time(&self) -> DateTime<Local> {
-        self.now
-    }
-
-    fn get_highest_priority_project(&mut self) -> Option<&TaskHandle> {
-        self.projects.first()
-    }
-
-    fn get_highest_priority_leaf_task_id(
-        &mut self,
-    ) -> Result<Option<Uuid>, crate::entity::task::TaskTreeError> {
-        Ok(None)
-    }
-
-    fn get_defer_candidate_leaf_task_id(
-        &mut self,
-        _recent_threshold: DateTime<Local>,
-    ) -> Result<Option<Uuid>, crate::entity::task::TaskTreeError> {
-        Ok(None)
-    }
-
-    fn get_by_id(
-        &self,
-        id: Uuid,
-    ) -> Result<Option<TaskHandle>, crate::entity::task::TaskTreeError> {
-        for task in &self.projects {
-            if let Some(found) = task.get_by_id(id)? {
-                return Ok(Some(found));
-            }
-        }
-        Ok(None)
-    }
-
-    fn start_new_project(
-        &mut self,
-        root_task: TaskHandle,
-    ) -> Result<(), crate::entity::task::TaskTreeError> {
-        self.projects.push(root_task);
-        Ok(())
-    }
-}
 
 fn fixed_now() -> DateTime<Local> {
     Local.with_ymd_and_hms(2026, 8, 11, 12, 0, 0).unwrap()

@@ -1,94 +1,9 @@
-use super::interface::{TaskRepositoryError, TaskRepositoryTrait};
 use super::schedule_use_case::get_schedule;
 use super::task_use_case::get_task;
 use crate::entity::task::{Status, TaskHandle};
+use crate::test_support::TestTaskRepository;
 use chrono::{DateTime, Duration, FixedOffset, Local, NaiveDate, TimeZone};
-use std::cell::Cell;
 use uuid::Uuid;
-
-struct TestTaskRepository {
-    projects: Vec<TaskHandle>,
-    now: DateTime<Local>,
-    save_count: Cell<usize>,
-}
-
-impl TestTaskRepository {
-    fn new(projects: Vec<TaskHandle>, now: DateTime<Local>) -> Self {
-        Self {
-            projects,
-            now,
-            save_count: Cell::new(0),
-        }
-    }
-}
-
-impl TaskRepositoryTrait for TestTaskRepository {
-    fn get_project_storage_dir_name(&self) -> &str {
-        "unused"
-    }
-
-    fn get_all_projects(&self) -> Vec<&TaskHandle> {
-        self.projects.iter().collect()
-    }
-
-    fn load(&mut self) -> Result<(), TaskRepositoryError> {
-        Ok(())
-    }
-
-    fn save(&self) -> Result<(), TaskRepositoryError> {
-        self.save_count.set(self.save_count.get() + 1);
-        Ok(())
-    }
-
-    fn sync_clock(
-        &mut self,
-        now: DateTime<Local>,
-    ) -> Result<(), crate::entity::task::TaskTreeError> {
-        self.now = now;
-        Ok(())
-    }
-
-    fn get_last_synced_time(&self) -> DateTime<Local> {
-        self.now
-    }
-
-    fn get_highest_priority_project(&mut self) -> Option<&TaskHandle> {
-        self.projects.first()
-    }
-
-    fn get_highest_priority_leaf_task_id(
-        &mut self,
-    ) -> Result<Option<Uuid>, crate::entity::task::TaskTreeError> {
-        Ok(None)
-    }
-
-    fn get_defer_candidate_leaf_task_id(
-        &mut self,
-        _recent_threshold: DateTime<Local>,
-    ) -> Result<Option<Uuid>, crate::entity::task::TaskTreeError> {
-        Ok(None)
-    }
-
-    fn get_by_id(
-        &self,
-        id: Uuid,
-    ) -> Result<Option<TaskHandle>, crate::entity::task::TaskTreeError> {
-        for task in &self.projects {
-            if let Some(found) = task.get_by_id(id)? {
-                return Ok(Some(found));
-            }
-        }
-        Ok(None)
-    }
-
-    fn start_new_project(
-        &mut self,
-        root_task: TaskHandle,
-    ) -> Result<(), crate::entity::task::TaskTreeError> {
-        self.projects.push(root_task);
-        Ok(())
-    }
-}
 
 fn fixed_now() -> DateTime<Local> {
     Local.with_ymd_and_hms(2026, 8, 11, 12, 0, 0).unwrap()
@@ -142,7 +57,7 @@ fn get_schedule_締切を優先しdoneを除外してtask_viewを返す() {
         now,
     );
     let views_before = repository
-        .projects
+        .projects()
         .iter()
         .map(|task| {
             get_task(&repository, task.get_id().unwrap())
@@ -166,10 +81,10 @@ fn get_schedule_締切を優先しdoneを除外してtask_viewを返す() {
     assert!(!actual
         .iter()
         .any(|entry| entry.task.id == done_task.get_id().unwrap()));
-    assert_eq!(repository.save_count.get(), 0);
+    assert_eq!(repository.save_count(), 0);
     assert_eq!(
         repository
-            .projects
+            .projects()
             .iter()
             .map(|task| get_task(&repository, task.get_id().unwrap())
                 .unwrap()
@@ -204,7 +119,7 @@ fn get_scheduleは候補の次業務日開始計算不能を伝搬しtaskを変�
     let repository =
         TestTaskRepository::new(vec![first.clone(), second.clone()], out_of_range_start);
     let original_views = repository
-        .projects
+        .projects()
         .iter()
         .map(|task| {
             get_task(&repository, task.get_id().unwrap())
@@ -230,7 +145,7 @@ fn get_scheduleは候補の次業務日開始計算不能を伝搬しtaskを変�
     );
     assert_eq!(
         repository
-            .projects
+            .projects()
             .iter()
             .map(|task| get_task(&repository, task.get_id().unwrap())
                 .unwrap()
@@ -245,7 +160,7 @@ fn get_scheduleは候補の次業務日開始計算不能を伝搬しtaskを変�
         ],
         original_revisions
     );
-    assert_eq!(repository.save_count.get(), 0);
+    assert_eq!(repository.save_count(), 0);
 }
 
 #[test]
