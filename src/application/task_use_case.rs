@@ -176,8 +176,15 @@ pub struct ListTasksFilter {
 pub fn get_focus(
     repository: &mut dyn TaskRepositoryTrait,
 ) -> Result<Option<TaskView>, ApplicationError> {
+    get_focus_excluding(repository, &[])
+}
+
+pub fn get_focus_excluding(
+    repository: &mut dyn TaskRepositoryTrait,
+    excluded_task_ids: &[Uuid],
+) -> Result<Option<TaskView>, ApplicationError> {
     repository
-        .get_highest_priority_leaf_task_id()
+        .get_highest_priority_leaf_task_id(excluded_task_ids)
         .map_err(ApplicationError::TaskTree)?
         .map_or(Ok(None), |task_id| get_task(repository, task_id))
 }

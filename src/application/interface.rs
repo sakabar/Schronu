@@ -75,10 +75,14 @@ pub trait TaskRepositoryTrait {
     fn sync_clock(&mut self, now: DateTime<Local>) -> Result<(), TaskTreeError>;
     fn get_last_synced_time(&self) -> DateTime<Local>;
     fn get_highest_priority_project(&mut self) -> Option<&TaskHandle>;
-    fn get_highest_priority_leaf_task_id(&mut self) -> Result<Option<Uuid>, TaskTreeError>;
+    fn get_highest_priority_leaf_task_id(
+        &mut self,
+        excluded_task_ids: &[Uuid],
+    ) -> Result<Option<Uuid>, TaskTreeError>;
     fn get_defer_candidate_leaf_task_id(
         &mut self,
         recent_threshold: DateTime<Local>,
+        excluded_task_ids: &[Uuid],
     ) -> Result<Option<Uuid>, TaskTreeError>;
     fn get_by_id(&self, id: Uuid) -> Result<Option<TaskHandle>, TaskTreeError>;
     fn start_new_project(&mut self, root_task: TaskHandle) -> Result<(), TaskTreeError>;

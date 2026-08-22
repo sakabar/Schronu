@@ -777,7 +777,7 @@ fn select_focus_task_id(
                 .checked_add_signed(recent_duration)
                 .ok_or_else(threshold_out_of_range)?;
             task_repository
-                .get_defer_candidate_leaf_task_id(recent_threshold)
+                .get_defer_candidate_leaf_task_id(recent_threshold, &[])
                 .map_err(ApplicationError::TaskTree)
         }
     }
