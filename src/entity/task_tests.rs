@@ -708,26 +708,18 @@ mod deadline_buffer_contract_tests {
 }
 
 #[cfg(test)]
-fn next_test_task_id() -> Uuid {
-    use std::sync::atomic::{AtomicU64, Ordering};
-
-    static SEQUENCE: AtomicU64 = AtomicU64::new(1);
-    Uuid::from_u128(u128::from(SEQUENCE.fetch_add(1, Ordering::Relaxed)))
-}
-
-#[cfg(test)]
 fn test_task_time() -> DateTime<Local> {
     Local.with_ymd_and_hms(2026, 8, 19, 0, 0, 0).unwrap()
 }
 
 #[cfg(test)]
 fn new_test_task_attr(name: &str) -> TaskAttr {
-    TaskAttr::with_identity(name, next_test_task_id(), test_task_time())
+    crate::test_support::new_task_attr_at(name, test_task_time())
 }
 
 #[cfg(test)]
 fn new_test_task_handle(name: &str) -> Result<TaskHandle, TaskTreeError> {
-    TaskHandle::with_identity(name, next_test_task_id(), test_task_time())
+    crate::test_support::new_task_handle_at(name, test_task_time())
 }
 
 impl TaskHandle {
