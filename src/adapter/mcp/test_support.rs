@@ -1,12 +1,11 @@
 use super::McpServer;
 pub(super) use crate::adapter::gateway::task_repository::TaskRepository;
+pub(super) use crate::application::daily_capacity::try_next_business_day_start;
 pub(super) use crate::application::interface::{
     RepositoryReloadOutcome, TaskRepositoryError, TaskRepositoryOperation, TaskRepositoryTrait,
 };
-pub(super) use crate::entity::datetime::get_next_morning_datetime;
-pub(super) use crate::entity::task::{
-    ProjectCategory, RepetitionAnchor, Status, TaskAttr, TaskHandle,
-};
+pub(super) use crate::entity::task::{ProjectCategory, RepetitionAnchor, Status, TaskHandle};
+pub(super) use crate::test_support::{new_task_attr, new_task_handle};
 pub(super) use chrono::{DateTime, Duration, Local, TimeZone};
 pub(super) use serde_json::json;
 use std::cell::{Cell, RefCell};
@@ -182,7 +181,7 @@ impl TaskRepositoryTrait for RecordingRepository {
 
     fn get_defer_candidate_leaf_task_id(
         &mut self,
-        _recent_days: i64,
+        _recent_threshold: DateTime<Local>,
     ) -> Result<Option<Uuid>, crate::entity::task::TaskTreeError> {
         Ok(None)
     }
@@ -234,6 +233,15 @@ pub(super) fn initialized_server<R: TaskRepositoryTrait>(repository: R) -> McpSe
     server
 }
 
+pub(super) fn run_tool_at<R: TaskRepositoryTrait>(
+    server: &mut McpServer<R>,
+    operation_now: DateTime<Local>,
+    request: serde_json::Value,
+) -> serde_json::Value {
+    let id = request["id"].clone();
+    server.run_transaction_and_call_at(id, &request, operation_now)
+}
+
 pub(super) fn tool_call_request(
     id: &str,
     name: &str,
@@ -257,7 +265,7 @@ pub(super) fn task_for_list(
     category: ProjectCategory,
     create_time: DateTime<Local>,
 ) -> TaskHandle {
-    let task = TaskHandle::new(name).unwrap();
+    let task = new_task_handle(name).unwrap();
     task.set_orig_status(status).unwrap();
     if status == Status::Pending {
         task.set_pending_until(Local.with_ymd_and_hms(2026, 8, 12, 6, 0, 0).unwrap())

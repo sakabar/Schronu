@@ -58,7 +58,7 @@ fn 同一mcp_processの連続read_toolはreload_if_changed経路を使う() {
 
 #[test]
 fn get_scheduleは借用競合を既存internal_error形式で返す() {
-    let task = TaskHandle::new("借用競合").unwrap();
+    let task = new_task_handle("借用競合").unwrap();
     let server = McpServer::new(RecordingRepository::new(vec![task.clone()]));
 
     let response = task.with_exclusive_data_borrow_for_test(|| {
@@ -91,7 +91,7 @@ fn 同一mcp_processの2回目のread_toolは実repositoryのcacheを使う() {
     let mut source = TaskRepository::new(storage_path);
     source.sync_clock(now).unwrap();
     source
-        .start_new_project(TaskHandle::new("MCP cache対象").unwrap())
+        .start_new_project(new_task_handle("MCP cache対象").unwrap())
         .unwrap();
     source.save().unwrap();
     let project_yaml_path = storage
@@ -194,7 +194,7 @@ fn get_taskはTaskViewをstructured_contentで返してsaveしない() {
     let create_time = Local.with_ymd_and_hms(2026, 8, 1, 9, 0, 0).unwrap();
     let start_time = Local.with_ymd_and_hms(2026, 8, 10, 10, 0, 0).unwrap();
     let deadline_time = Local.with_ymd_and_hms(2026, 8, 20, 23, 59, 59).unwrap();
-    let root = TaskHandle::new("MCP task").unwrap();
+    let root = new_task_handle("MCP task").unwrap();
     root.set_orig_status(Status::Pending).unwrap();
     root.set_pending_until(pending_until).unwrap();
     root.set_priority(7).unwrap();
@@ -212,7 +212,7 @@ fn get_taskはTaskViewをstructured_contentで返してsaveしない() {
     root.set_project_category_opt(Some(ProjectCategory::Recovery))
         .unwrap();
     root.sync_clock(fixed_now()).unwrap();
-    let child = root.create_as_last_child(TaskAttr::new("child"));
+    let child = root.create_as_last_child(new_task_attr("child"));
     let task_id = root.get_id().unwrap();
     let child_id = child.get_id().unwrap();
     let repository = RecordingRepository::new(vec![root]);
@@ -430,8 +430,8 @@ fn get_task_未知uuidをstructured_errorで返す() {
 
 #[test]
 fn get_focus_選択taskを返してrepositoryを変更しない() {
-    let non_focused_task = TaskHandle::new("not focused").unwrap();
-    let focused_task = TaskHandle::new("focused task").unwrap();
+    let non_focused_task = new_task_handle("not focused").unwrap();
+    let focused_task = new_task_handle("focused task").unwrap();
     let task_id = focused_task.get_id().unwrap();
     let repository =
         RecordingRepository::new(vec![non_focused_task, focused_task]).with_focus_task_id(task_id);
@@ -579,11 +579,11 @@ fn list_tasks_期間status_categoryで絞ってrepositoryを変更しない() {
 
 #[test]
 fn list_tasks_arguments省略で全taskを返す() {
-    let first = TaskHandle::new("first").unwrap();
+    let first = new_task_handle("first").unwrap();
     let first_id = first.get_id().unwrap();
-    let child = first.create_as_last_child(TaskAttr::new("child"));
+    let child = first.create_as_last_child(new_task_attr("child"));
     let child_id = child.get_id().unwrap();
-    let second = TaskHandle::new("second").unwrap();
+    let second = new_task_handle("second").unwrap();
     let second_id = second.get_id().unwrap();
     let repository = RecordingRepository::new(vec![first, second]);
     let save_count = Rc::clone(&repository.save_count);
@@ -621,9 +621,9 @@ fn list_tasks_arguments省略で全taskを返す() {
 
 #[test]
 fn list_tasks_null_categoryで未分類taskを絞る() {
-    let uncategorized = TaskHandle::new("uncategorized").unwrap();
+    let uncategorized = new_task_handle("uncategorized").unwrap();
     let uncategorized_id = uncategorized.get_id().unwrap();
-    let categorized = TaskHandle::new("categorized").unwrap();
+    let categorized = new_task_handle("categorized").unwrap();
     categorized
         .set_project_category_opt(Some(ProjectCategory::Recovery))
         .unwrap();
@@ -763,7 +763,7 @@ fn list_tasks_不正日時と逆転期間をstructured_errorで返す() {
 #[test]
 #[allow(non_snake_case)]
 fn get_scheduleは予定をScheduledTaskViewの全field付きで返しrepositoryを変更しない() {
-    let task = TaskHandle::new("scheduled task").unwrap();
+    let task = new_task_handle("scheduled task").unwrap();
     let task_id = task.get_id().unwrap();
     let create_time = Local.with_ymd_and_hms(2026, 8, 1, 9, 0, 0).unwrap();
     task.set_create_time(create_time).unwrap();
@@ -841,13 +841,13 @@ fn get_scheduleは予定をScheduledTaskViewの全field付きで返しrepository
 #[test]
 fn get_scheduleは引数なしで現在から次の業務日境界までの予定だけを返す() {
     let now = Local::now();
-    let current_task = TaskHandle::new("current task").unwrap();
+    let current_task = new_task_handle("current task").unwrap();
     current_task.set_start_time(now).unwrap();
     current_task.set_estimated_work_seconds(15 * 60).unwrap();
 
-    let future_task = TaskHandle::new("future task").unwrap();
+    let future_task = new_task_handle("future task").unwrap();
     future_task
-        .set_start_time(get_next_morning_datetime(now) + Duration::hours(1))
+        .set_start_time(try_next_business_day_start(now).unwrap() + Duration::hours(1))
         .unwrap();
     future_task.set_estimated_work_seconds(15 * 60).unwrap();
 
@@ -872,10 +872,10 @@ fn get_scheduleは引数なしで現在から次の業務日境界までの予�
 #[test]
 fn get_scheduleは日付範囲と片方の日付指定で重なる予定を返す() {
     let now = Local::now();
-    let from_boundary = get_next_morning_datetime(now);
-    let until_boundary = get_next_morning_datetime(from_boundary);
+    let from_boundary = try_next_business_day_start(now).unwrap();
+    let until_boundary = try_next_business_day_start(from_boundary).unwrap();
 
-    let crossing_task = TaskHandle::new("crossing task").unwrap();
+    let crossing_task = new_task_handle("crossing task").unwrap();
     crossing_task
         .set_start_time(from_boundary - Duration::minutes(30))
         .unwrap();
@@ -883,13 +883,13 @@ fn get_scheduleは日付範囲と片方の日付指定で重なる予定を返�
         .set_estimated_work_seconds(2 * 60 * 60)
         .unwrap();
 
-    let inside_task = TaskHandle::new("inside task").unwrap();
+    let inside_task = new_task_handle("inside task").unwrap();
     inside_task
         .set_start_time(from_boundary + Duration::hours(3))
         .unwrap();
     inside_task.set_estimated_work_seconds(15 * 60).unwrap();
 
-    let later_task = TaskHandle::new("later task").unwrap();
+    let later_task = new_task_handle("later task").unwrap();
     later_task
         .set_start_time(until_boundary + Duration::hours(1))
         .unwrap();
@@ -1204,7 +1204,7 @@ fn create_task_save失敗を成功扱いしない() {
 #[test]
 fn breakdown_task_子を入力順に追加して1回saveする() {
     let pending_until = fixed_now() + Duration::hours(18);
-    let parent = TaskHandle::new("parent").unwrap();
+    let parent = new_task_handle("parent").unwrap();
     let parent_id = parent.get_id().unwrap();
     let repository = RecordingRepository::new(vec![parent]);
     let save_count = Rc::clone(&repository.save_count);
@@ -1310,7 +1310,7 @@ fn breakdown_task_schema違反では親を変更しない() {
 
 #[test]
 fn breakdown_task_意味的不正と未知parentでは変更もsaveもしない() {
-    let parent = TaskHandle::new("parent").unwrap();
+    let parent = new_task_handle("parent").unwrap();
     let parent_id = parent.get_id().unwrap();
     let cases = [
         (
@@ -1385,7 +1385,7 @@ fn breakdown_task_意味的不正と未知parentでは変更もsaveもしない(
 
 #[test]
 fn breakdown_task_save失敗を成功扱いしない() {
-    let parent = TaskHandle::new("parent").unwrap();
+    let parent = new_task_handle("parent").unwrap();
     let parent_id = parent.get_id().unwrap();
     let parent_observer = parent.clone();
     let repository = RecordingRepository::new(vec![parent]).with_save_failure();
@@ -1515,7 +1515,7 @@ fn 状態変更入力はunknown_fieldとrequired_task_idを他の違反より先
 #[test]
 fn defer_task_絶対時刻まで延期して1回saveする() {
     let pending_until = fixed_now() + Duration::hours(18);
-    let task = TaskHandle::new("deferred task").unwrap();
+    let task = new_task_handle("deferred task").unwrap();
     let task_id = task.get_id().unwrap();
     let repository = RecordingRepository::new(vec![task]);
     let save_count = Rc::clone(&repository.save_count);
@@ -1557,7 +1557,7 @@ fn defer_task_絶対時刻まで延期して1回saveする() {
 
 #[test]
 fn defer_task_入力不正と未知taskでは変更もsaveもしない() {
-    let task = TaskHandle::new("unchanged task").unwrap();
+    let task = new_task_handle("unchanged task").unwrap();
     let task_id = task.get_id().unwrap();
     let cases = [
         (
@@ -1671,7 +1671,7 @@ fn defer_task_入力不正と未知taskでは変更もsaveもしない() {
 #[test]
 fn defer_task_save失敗を成功扱いしない() {
     let pending_until = fixed_now() + Duration::hours(18);
-    let task = TaskHandle::new("deferred task").unwrap();
+    let task = new_task_handle("deferred task").unwrap();
     let task_id = task.get_id().unwrap();
     let task_observer = task.clone();
     let repository = RecordingRepository::new(vec![task]).with_save_failure();
@@ -1721,7 +1721,7 @@ fn defer_task_save失敗を成功扱いしない() {
 #[test]
 fn complete_task_完了と実績を反映して1回saveする() {
     let finished_at = fixed_now() + Duration::hours(1);
-    let task = TaskHandle::new("completed task").unwrap();
+    let task = new_task_handle("completed task").unwrap();
     task.set_actual_work_seconds(60).unwrap();
     let task_id = task.get_id().unwrap();
     let repository = RecordingRepository::new(vec![task]);
@@ -1770,7 +1770,7 @@ fn complete_task_完了と実績を反映して1回saveする() {
 
 #[test]
 fn complete_task_optional省略時は現在時刻と追加実績0を使う() {
-    let task = TaskHandle::new("completed with defaults").unwrap();
+    let task = new_task_handle("completed with defaults").unwrap();
     task.set_actual_work_seconds(60).unwrap();
     let task_id = task.get_id().unwrap();
     let repository = RecordingRepository::new(vec![task]);
@@ -1806,8 +1806,8 @@ fn complete_task_optional省略時は現在時刻と追加実績0を使う() {
 
 #[test]
 fn complete_task_next_focusとnext_repetitionのuuidを返す() {
-    let parent = TaskHandle::new("parent").unwrap();
-    let child = parent.create_as_last_child(TaskAttr::new("only child"));
+    let parent = new_task_handle("parent").unwrap();
+    let child = parent.create_as_last_child(new_task_attr("only child"));
     let parent_id = parent.get_id().unwrap();
     let child_id = child.get_id().unwrap();
     let mut focus_server = initialized_server(RecordingRepository::new(vec![parent]));
@@ -1829,12 +1829,12 @@ fn complete_task_next_focusとnext_repetitionのuuidを返す() {
         serde_json::Value::Null
     );
 
-    let repetition_parent = TaskHandle::new("weekly").unwrap();
+    let repetition_parent = new_task_handle("weekly").unwrap();
     repetition_parent
         .set_repetition_interval_days_opt(Some(7))
         .unwrap();
     let repetition_child =
-        repetition_parent.create_as_last_child(TaskAttr::new("weekly occurrence"));
+        repetition_parent.create_as_last_child(new_task_attr("weekly occurrence"));
     let repetition_parent_id = repetition_parent.get_id().unwrap();
     let repetition_child_id = repetition_child.get_id().unwrap();
     let mut repetition_server =
@@ -1873,9 +1873,42 @@ fn complete_task_next_focusとnext_repetitionのuuidを返す() {
 }
 
 #[test]
+fn complete_task_唯一の反復子から次回taskを生成したらnext_focusをnullにする() {
+    let repetition_parent = new_task_handle("weekly").unwrap();
+    repetition_parent
+        .set_repetition_interval_days_opt(Some(7))
+        .unwrap();
+    let repetition_child =
+        repetition_parent.create_as_last_child(new_task_attr("weekly occurrence"));
+    let repetition_child_id = repetition_child.get_id().unwrap();
+    let mut server = initialized_server(RecordingRepository::new(vec![repetition_parent]));
+
+    let response = server
+        .handle_request(tool_call_request(
+            "complete-repetition-without-focus",
+            "complete_task",
+            json!({
+                "task_id": repetition_child_id.to_string(),
+                "finished_at": fixed_now().to_rfc3339()
+            }),
+        ))
+        .unwrap();
+
+    assert_eq!(response["result"]["isError"], false);
+    assert_eq!(
+        response["result"]["structuredContent"]["next_focus_task_id"],
+        serde_json::Value::Null
+    );
+    let next_repetition_id = response["result"]["structuredContent"]["next_repetition_task_id"]
+        .as_str()
+        .expect("next repetition task id must be returned");
+    assert!(Uuid::parse_str(next_repetition_id).is_ok());
+}
+
+#[test]
 fn complete_task_未完了childと未知taskを区別してsaveしない() {
-    let parent = TaskHandle::new("parent").unwrap();
-    parent.create_as_last_child(TaskAttr::new("undone child"));
+    let parent = new_task_handle("parent").unwrap();
+    parent.create_as_last_child(new_task_attr("undone child"));
     let parent_id = parent.get_id().unwrap();
     let cases = [
         ("undone-child", parent_id, "has_undone_children", "task_id"),
@@ -1923,7 +1956,7 @@ fn complete_task_未完了childと未知taskを区別してsaveしない() {
 
 #[test]
 fn complete_task_入力不正では変更もsaveもしない() {
-    let task = TaskHandle::new("unchanged task").unwrap();
+    let task = new_task_handle("unchanged task").unwrap();
     let task_id = task.get_id().unwrap();
     let cases = [
         ("missing-task-id", json!({}), Some(-32602), "task_id"),
@@ -2007,7 +2040,7 @@ fn complete_task_入力不正では変更もsaveもしない() {
 
 #[test]
 fn complete_task_save失敗を成功扱いしない() {
-    let task = TaskHandle::new("completed task").unwrap();
+    let task = new_task_handle("completed task").unwrap();
     let task_id = task.get_id().unwrap();
     let task_observer = task.clone();
     let repository = RecordingRepository::new(vec![task]).with_save_failure();
@@ -2052,7 +2085,7 @@ fn complete_task_save失敗を成功扱いしない() {
 #[test]
 fn update_task_指定fieldをまとめて更新して1回saveする() {
     let deadline = fixed_now() + Duration::days(10);
-    let task = TaskHandle::new("updated task").unwrap();
+    let task = new_task_handle("updated task").unwrap();
     let task_id = task.get_id().unwrap();
     let repository = RecordingRepository::new(vec![task]);
     let save_count = Rc::clone(&repository.save_count);
@@ -2097,7 +2130,7 @@ fn update_task_指定fieldをまとめて更新して1回saveする() {
 
 #[test]
 fn update_task_同じ値ならsaveしない() {
-    let task = TaskHandle::new("unchanged task").unwrap();
+    let task = new_task_handle("unchanged task").unwrap();
     let task_id = task.get_id().unwrap();
     let repository = RecordingRepository::new(vec![task]);
     let save_count = Rc::clone(&repository.save_count);
@@ -2120,7 +2153,7 @@ fn update_task_同じ値ならsaveしない() {
 
 #[test]
 fn update_task_nullでdeadlineとcategoryを解除する() {
-    let task = TaskHandle::new("cleared task").unwrap();
+    let task = new_task_handle("cleared task").unwrap();
     task.set_deadline_time_opt(Some(fixed_now() + Duration::days(10)))
         .unwrap();
     task.set_project_category_opt(Some(ProjectCategory::Investment))
@@ -2165,7 +2198,7 @@ fn update_task_schemaで公開した全categoryを設定できる() {
         "earning",
         "sustaining",
     ] {
-        let task = TaskHandle::new("categorized task").unwrap();
+        let task = new_task_handle("categorized task").unwrap();
         let task_id = task.get_id().unwrap();
         let mut server = initialized_server(RecordingRepository::new(vec![task]));
 
@@ -2195,7 +2228,7 @@ fn update_task_schemaで公開した全categoryを設定できる() {
 #[test]
 fn update_task_入力不正では変更もsaveもしない() {
     let deadline = fixed_now() + Duration::days(10);
-    let task = TaskHandle::new("unchanged update task").unwrap();
+    let task = new_task_handle("unchanged update task").unwrap();
     task.set_estimated_work_seconds(30 * 60).unwrap();
     task.set_deadline_time_opt(Some(deadline)).unwrap();
     task.set_project_category_opt(Some(ProjectCategory::Consumption))
@@ -2302,7 +2335,7 @@ fn update_task_入力不正では変更もsaveもしない() {
 fn update_task_application_errorと未知taskでは変更もsaveもしない() {
     let original_deadline = fixed_now() + Duration::days(10);
     let requested_deadline = fixed_now() + Duration::days(20);
-    let task = TaskHandle::new("unchanged application task").unwrap();
+    let task = new_task_handle("unchanged application task").unwrap();
     task.set_estimated_work_seconds(30 * 60).unwrap();
     task.set_deadline_time_opt(Some(original_deadline)).unwrap();
     task.set_project_category_opt(Some(ProjectCategory::Consumption))
@@ -2367,7 +2400,7 @@ fn update_task_application_errorと未知taskでは変更もsaveもしない() {
 
 #[test]
 fn update_task_save失敗を成功扱いしない() {
-    let task = TaskHandle::new("updated before save failure").unwrap();
+    let task = new_task_handle("updated before save failure").unwrap();
     let task_id = task.get_id().unwrap();
     let task_observer = task.clone();
     let repository = RecordingRepository::new(vec![task]).with_save_failure();
@@ -2406,5 +2439,138 @@ fn update_task_save失敗を成功扱いしない() {
     assert_repository_state_uncertain_response(
         &task_response,
         &json!("updated-after-save-failure"),
+    );
+}
+
+#[test]
+fn create_taskはrepository同期とtask生成に同じoperation時刻を使う() {
+    let operation_now = Local.with_ymd_and_hms(2026, 8, 21, 9, 30, 0).unwrap();
+    let repository = RecordingRepository::new(vec![]);
+    let sync_clock_times = Rc::clone(&repository.sync_clock_times);
+    let mut server = initialized_server(repository);
+
+    let response = run_tool_at(
+        &mut server,
+        operation_now,
+        tool_call_request(
+            "create-operation-time",
+            "create_task",
+            json!({"name": "operation time task"}),
+        ),
+    );
+
+    assert_eq!(response["result"]["isError"], false);
+    assert_eq!(*sync_clock_times.borrow(), vec![operation_now]);
+    let created = server.repository.get_all_projects()[0];
+    assert_eq!(created.get_create_time().unwrap(), operation_now);
+    assert_eq!(created.get_start_time().unwrap(), operation_now);
+}
+
+#[test]
+fn breakdown_taskはrepository同期と全child生成に同じoperation時刻を使う() {
+    let operation_now = Local.with_ymd_and_hms(2026, 8, 21, 10, 15, 0).unwrap();
+    let parent = new_task_handle("parent").unwrap();
+    let parent_id = parent.get_id().unwrap();
+    let parent_observer = parent.clone();
+    let repository = RecordingRepository::new(vec![parent]);
+    let sync_clock_times = Rc::clone(&repository.sync_clock_times);
+    let mut server = initialized_server(repository);
+
+    let response = run_tool_at(
+        &mut server,
+        operation_now,
+        tool_call_request(
+            "breakdown-operation-time",
+            "breakdown_task",
+            json!({
+                "parent_id": parent_id.to_string(),
+                "names": ["first", "second"]
+            }),
+        ),
+    );
+
+    assert_eq!(response["result"]["isError"], false);
+    assert_eq!(*sync_clock_times.borrow(), vec![operation_now]);
+    let children = parent_observer.get_children().unwrap();
+    assert_eq!(children.len(), 2);
+    for child in children {
+        assert_eq!(child.get_create_time().unwrap(), operation_now);
+        assert_eq!(child.get_start_time().unwrap(), operation_now);
+    }
+}
+
+#[test]
+fn complete_taskは省略完了時刻と反復task生成に同じoperation時刻を使う() {
+    let operation_now = Local.with_ymd_and_hms(2026, 8, 21, 11, 45, 0).unwrap();
+    let repetition_parent = new_task_handle("weekly").unwrap();
+    repetition_parent
+        .set_repetition_interval_days_opt(Some(7))
+        .unwrap();
+    let completed_task = repetition_parent.create_as_last_child(new_task_attr("weekly occurrence"));
+    let completed_task_id = completed_task.get_id().unwrap();
+    let parent_observer = repetition_parent.clone();
+    let completed_task_observer = completed_task.clone();
+    let repository = RecordingRepository::new(vec![repetition_parent]);
+    let sync_clock_times = Rc::clone(&repository.sync_clock_times);
+    let mut server = initialized_server(repository);
+
+    let response = run_tool_at(
+        &mut server,
+        operation_now,
+        tool_call_request(
+            "complete-operation-time",
+            "complete_task",
+            json!({"task_id": completed_task_id.to_string()}),
+        ),
+    );
+
+    assert_eq!(response["result"]["isError"], false);
+    assert_eq!(*sync_clock_times.borrow(), vec![operation_now]);
+    assert_eq!(
+        completed_task_observer.get_end_time_opt().unwrap(),
+        Some(operation_now)
+    );
+    let next_repetition_id = Uuid::parse_str(
+        response["result"]["structuredContent"]["next_repetition_task_id"]
+            .as_str()
+            .unwrap(),
+    )
+    .unwrap();
+    let next_repetition = parent_observer
+        .get_children()
+        .unwrap()
+        .into_iter()
+        .find(|child| child.get_id().unwrap() == next_repetition_id)
+        .unwrap();
+    assert_eq!(next_repetition.get_create_time().unwrap(), operation_now);
+}
+
+#[test]
+fn get_scheduleは日時application_errorを情報付きinternal_errorとして返す() {
+    let operation_now = DateTime::<Local>::from_naive_utc_and_offset(
+        chrono::NaiveDate::MAX.and_hms_opt(6, 0, 0).unwrap(),
+        chrono::FixedOffset::east_opt(0).unwrap(),
+    );
+    let repository = RecordingRepository::new(vec![]);
+    let mut server = initialized_server(repository);
+
+    let response = run_tool_at(
+        &mut server,
+        operation_now,
+        tool_call_request("datetime-error", "get_schedule", json!({})),
+    );
+    let expected = crate::application::task_use_case::ApplicationError::SubjectiveDateOutOfRange {
+        operation: "next_business_day_start",
+        datetime: operation_now,
+    };
+
+    assert_eq!(response["result"]["isError"], true);
+    assert_eq!(
+        response["result"]["structuredContent"]["error"]["code"],
+        "internal_error"
+    );
+    assert_eq!(
+        response["result"]["structuredContent"]["error"]["message"],
+        expected.to_string()
     );
 }

@@ -1,6 +1,6 @@
 #![cfg(unix)]
 
-use chrono::{Local, Timelike};
+use chrono::{DateTime, Local, TimeZone, Timelike};
 use schronu::adapter::gateway::storage_lock::{LockMode, StorageLock};
 use schronu::adapter::gateway::task_repository::TaskRepository;
 use schronu::application::interface::TaskRepositoryTrait;
@@ -14,6 +14,15 @@ use std::sync::{mpsc, Arc, Mutex};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 use uuid::Uuid;
+
+fn new_test_task_handle(name: &str) -> TaskHandle {
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    static SEQUENCE: AtomicU64 = AtomicU64::new(1);
+    let id = Uuid::from_u128(u128::from(SEQUENCE.fetch_add(1, Ordering::Relaxed)));
+    let now: DateTime<Local> = Local.with_ymd_and_hms(2026, 8, 19, 0, 0, 0).unwrap();
+    TaskHandle::with_identity(name, id, now).unwrap()
+}
 
 struct TestStorageDirectory {
     path: PathBuf,
@@ -484,7 +493,7 @@ fn mcp_stdio_tools_call直前の現在時刻同期で期限切れpendingをtodo�
     let pending_until = Local::now() + chrono::Duration::seconds(3);
     let mut repository = TaskRepository::new(storage.path().to_str().unwrap());
     repository.sync_clock(Local::now()).unwrap();
-    let task = TaskHandle::new("pending across MCP idle time").unwrap();
+    let task = new_test_task_handle("pending across MCP idle time");
     let task_id = task.get_id().unwrap();
     task.set_start_time(Local::now() - chrono::Duration::hours(1))
         .unwrap();

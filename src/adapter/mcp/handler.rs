@@ -10,8 +10,9 @@ use crate::application::schedule_use_case::get_schedule;
 use crate::application::task_use_case::{
     breakdown_task as breakdown_task_use_case, complete_task as complete_task_use_case,
     create_task as create_task_use_case, defer_task as defer_task_use_case, get_focus, get_task,
-    list_tasks, set_category, set_deadline, set_estimate, ApplicationError,
+    list_tasks, set_category, set_deadline, set_estimate, ApplicationError, TaskFactory,
 };
+use chrono::{DateTime, Local};
 use serde_json::{json, Value};
 use uuid::Uuid;
 
@@ -19,6 +20,8 @@ pub(super) fn call_tool<R: TaskRepositoryTrait>(
     repository: &mut R,
     id: Value,
     request: &Value,
+    operation_now: DateTime<Local>,
+    factory: &mut TaskFactory<'_>,
 ) -> Value {
     let params = &request["params"];
     match params["name"].as_str() {
@@ -64,14 +67,14 @@ pub(super) fn call_tool<R: TaskRepositoryTrait>(
                 Ok(input) => input,
                 Err(error) => return tool_input_error_response(id, error),
             };
-            call_create_task(repository, id, input)
+            call_create_task(repository, id, input, factory)
         }
         Some("breakdown_task") => {
             let input = match decode_input::<BreakdownTaskInput>(&params["arguments"]) {
                 Ok(input) => input,
                 Err(error) => return tool_input_error_response(id, error),
             };
-            call_breakdown_task(repository, id, input)
+            call_breakdown_task(repository, id, input, factory)
         }
         Some("defer_task") => {
             let input = match decode_input::<DeferTaskInput>(&params["arguments"]) {
@@ -85,7 +88,7 @@ pub(super) fn call_tool<R: TaskRepositoryTrait>(
                 Ok(input) => input,
                 Err(error) => return tool_input_error_response(id, error),
             };
-            call_complete_task(repository, id, input)
+            call_complete_task(repository, id, input, operation_now, factory)
         }
         Some("update_task") => {
             let input = match decode_input::<UpdateTaskInput>(&params["arguments"]) {
@@ -153,6 +156,9 @@ pub(super) fn call_get_schedule<R: TaskRepositoryTrait>(
         Err(ToolInputError::Semantic { field, message }) => {
             return invalid_input_response(id, &field, message)
         }
+        Err(ToolInputError::Application(error)) => {
+            return internal_error_response(id, &error.to_string())
+        }
     };
 
     match get_schedule(repository) {
@@ -175,10 +181,11 @@ fn call_create_task<R: TaskRepositoryTrait>(
     repository: &mut R,
     id: Value,
     input: CreateTaskInput,
+    factory: &mut TaskFactory<'_>,
 ) -> Value {
     let input = input.into_application();
 
-    let task_id = match create_task_use_case(repository, input) {
+    let task_id = match create_task_use_case(repository, input, factory) {
         Ok(task_id) => task_id,
         Err(ApplicationError::InvalidInput { field, reason }) => {
             return invalid_input_response(id, field, reason)
@@ -193,9 +200,10 @@ fn call_breakdown_task<R: TaskRepositoryTrait>(
     repository: &mut R,
     id: Value,
     input: BreakdownTaskInput,
+    factory: &mut TaskFactory<'_>,
 ) -> Value {
     let input = input.into_application();
-    let child_ids = match breakdown_task_use_case(repository, input) {
+    let child_ids = match breakdown_task_use_case(repository, input, factory) {
         Ok(child_ids) => child_ids,
         Err(ApplicationError::TaskNotFound(task_id)) => {
             return task_not_found_response(id, task_id, Some("parent_id"))
@@ -240,10 +248,12 @@ fn call_complete_task<R: TaskRepositoryTrait>(
     repository: &mut R,
     id: Value,
     input: CompleteTaskInput,
+    operation_now: DateTime<Local>,
+    factory: &mut TaskFactory<'_>,
 ) -> Value {
-    let input = input.into_application();
+    let input = input.into_application(operation_now);
     let task_id = input.task_id;
-    let output = match complete_task_use_case(repository, input) {
+    let output = match complete_task_use_case(repository, input, factory) {
         Ok(output) => output,
         Err(ApplicationError::TaskNotFound(task_id)) => {
             return task_not_found_response(id, task_id, Some("task_id"))
@@ -257,6 +267,7 @@ fn call_complete_task<R: TaskRepositoryTrait>(
         Err(ApplicationError::TaskTree(error)) => {
             return internal_error_response(id, &error.to_string())
         }
+        Err(error) => return internal_error_response(id, &error.to_string()),
     };
 
     tool_result_response(
@@ -322,6 +333,7 @@ fn tool_input_error_response(id: Value, error: ToolInputError) -> Value {
     match error {
         ToolInputError::Schema(error) => invalid_params_response(id, error),
         ToolInputError::Semantic { field, message } => invalid_input_response(id, &field, message),
+        ToolInputError::Application(error) => internal_error_response(id, &error.to_string()),
     }
 }
 
@@ -367,23 +379,111 @@ fn update_task_application_error_response(id: Value, error: ApplicationError) ->
 #[cfg(test)]
 mod typed_handler_contract_tests {
     use super::{
-        call_breakdown_task, call_complete_task, call_create_task, call_defer_task, call_get_focus,
+        call_breakdown_task as call_breakdown_task_with_factory,
+        call_complete_task as call_complete_task_with_factory,
+        call_create_task as call_create_task_with_factory, call_defer_task, call_get_focus,
         call_get_schedule, call_get_task, call_list_tasks, call_update_task,
+        tool_input_error_response,
     };
     use crate::adapter::mcp::input::{
         BreakdownTaskInput, CompleteTaskInput, CreateTaskInput, DeferTaskInput, GetFocusInput,
         GetScheduleInput, GetTaskInput, IsoDate, ListTasksInput, NonEmptyString, NonEmptyVec,
         NonNegativeI64, NullablePatch, OptionalValue, ProjectCategoryValue, Rfc3339DateTime,
-        StatusValue, TaskPeriodFieldValue, TaskPeriodInput, UpdateTaskInput, UuidValue,
+        StatusValue, TaskPeriodFieldValue, TaskPeriodInput, ToolInputError, UpdateTaskInput,
+        UuidValue,
     };
     use crate::adapter::mcp::test_support::{
-        assert_tool_result_content_matches_structured, fixed_now, get_next_morning_datetime,
-        task_for_list, Duration, Local, ProjectCategory, RecordingRepository, Status, TaskHandle,
+        assert_tool_result_content_matches_structured, fixed_now, new_task_handle, task_for_list,
+        try_next_business_day_start, Duration, Local, ProjectCategory, RecordingRepository, Status,
         TimeZone,
     };
-    use serde_json::json;
+    use crate::application::task_use_case::{ApplicationError, TaskFactory};
+    use chrono::{DateTime, FixedOffset, NaiveDate, NaiveDateTime, NaiveTime};
+    use serde_json::{json, Value};
     use std::rc::Rc;
     use uuid::Uuid;
+
+    fn call_create_task(
+        repository: &mut RecordingRepository,
+        id: serde_json::Value,
+        input: CreateTaskInput,
+    ) -> serde_json::Value {
+        let mut next_id = Uuid::new_v4;
+        let mut factory = TaskFactory::new(fixed_now(), &mut next_id);
+        call_create_task_with_factory(repository, id, input, &mut factory)
+    }
+
+    fn call_breakdown_task(
+        repository: &mut RecordingRepository,
+        id: serde_json::Value,
+        input: BreakdownTaskInput,
+    ) -> serde_json::Value {
+        let mut next_id = Uuid::new_v4;
+        let mut factory = TaskFactory::new(fixed_now(), &mut next_id);
+        call_breakdown_task_with_factory(repository, id, input, &mut factory)
+    }
+
+    fn call_complete_task(
+        repository: &mut RecordingRepository,
+        id: serde_json::Value,
+        input: CompleteTaskInput,
+    ) -> serde_json::Value {
+        let operation_now = fixed_now();
+        let mut next_id = Uuid::new_v4;
+        let mut factory = TaskFactory::new(operation_now, &mut next_id);
+        call_complete_task_with_factory(repository, id, input, operation_now, &mut factory)
+    }
+
+    fn assert_application_datetime_error_metadata(expected: ApplicationError) {
+        let response = tool_input_error_response(
+            Value::String("datetime-error".to_string()),
+            ToolInputError::Application(expected.clone()),
+        );
+
+        assert_eq!(response["result"]["isError"], true);
+        assert_eq!(
+            response["result"]["structuredContent"]["error"]["code"],
+            "internal_error"
+        );
+        assert_eq!(
+            response["result"]["structuredContent"]["error"]["message"],
+            expected.to_string()
+        );
+    }
+
+    #[test]
+    fn mcp日時error境界は存在しないlocal日時を保持する() {
+        let local_datetime = NaiveDateTime::new(
+            NaiveDate::from_ymd_opt(2026, 3, 29).unwrap(),
+            NaiveTime::from_hms_opt(2, 30, 0).unwrap(),
+        );
+
+        assert_application_datetime_error_metadata(ApplicationError::NonexistentLocalDateTime {
+            local_datetime,
+        });
+    }
+
+    #[test]
+    fn mcp日時error境界は曖昧なlocal日時と両候補を保持する() {
+        let local_datetime = NaiveDateTime::new(
+            NaiveDate::from_ymd_opt(2026, 10, 25).unwrap(),
+            NaiveTime::from_hms_opt(2, 30, 0).unwrap(),
+        );
+        let earlier = DateTime::<Local>::from_naive_utc_and_offset(
+            local_datetime,
+            FixedOffset::east_opt(2 * 60 * 60).unwrap(),
+        );
+        let later = DateTime::<Local>::from_naive_utc_and_offset(
+            local_datetime,
+            FixedOffset::east_opt(60 * 60).unwrap(),
+        );
+
+        assert_application_datetime_error_metadata(ApplicationError::AmbiguousLocalDateTime {
+            local_datetime,
+            earlier,
+            later,
+        });
+    }
 
     fn call_typed_list_tasks(
         repository: &RecordingRepository,
@@ -404,7 +504,7 @@ mod typed_handler_contract_tests {
 
     #[test]
     fn get_focus_handlerはtyped_inputを受け取りrepositoryを変更しない() {
-        let focused_task = TaskHandle::new("typed focus").unwrap();
+        let focused_task = new_task_handle("typed focus").unwrap();
         let task_id = focused_task.get_id().unwrap();
         let repository = RecordingRepository::new(vec![focused_task]).with_focus_task_id(task_id);
         let save_count = Rc::clone(&repository.save_count);
@@ -424,7 +524,7 @@ mod typed_handler_contract_tests {
 
     #[test]
     fn get_task_handlerはtyped_inputを受け取りrepositoryを変更しない() {
-        let task = TaskHandle::new("typed task").unwrap();
+        let task = new_task_handle("typed task").unwrap();
         let task_id = task.get_id().unwrap();
         let repository = RecordingRepository::new(vec![task]);
         let save_count = Rc::clone(&repository.save_count);
@@ -509,7 +609,7 @@ mod typed_handler_contract_tests {
         let until = from + Duration::hours(1);
         let outside = from - Duration::hours(1);
 
-        let created = TaskHandle::new("created").unwrap();
+        let created = new_task_handle("created").unwrap();
         created.set_orig_status(Status::Done).unwrap();
         created
             .set_create_time(from + Duration::minutes(10))
@@ -517,7 +617,7 @@ mod typed_handler_contract_tests {
         created.set_deadline_time_opt(Some(outside)).unwrap();
         created.set_end_time_opt(Some(outside)).unwrap();
 
-        let deadline = TaskHandle::new("deadline").unwrap();
+        let deadline = new_task_handle("deadline").unwrap();
         deadline.set_create_time(outside).unwrap();
         deadline
             .set_deadline_time_opt(Some(from + Duration::minutes(20)))
@@ -525,7 +625,7 @@ mod typed_handler_contract_tests {
         deadline.set_orig_status(Status::Done).unwrap();
         deadline.set_end_time_opt(Some(outside)).unwrap();
 
-        let completed = TaskHandle::new("completed").unwrap();
+        let completed = new_task_handle("completed").unwrap();
         completed.set_orig_status(Status::Done).unwrap();
         completed.set_create_time(outside).unwrap();
         completed.set_deadline_time_opt(Some(outside)).unwrap();
@@ -533,7 +633,7 @@ mod typed_handler_contract_tests {
             .set_end_time_opt(Some(from + Duration::minutes(30)))
             .unwrap();
 
-        let scheduled = TaskHandle::new("scheduled").unwrap();
+        let scheduled = new_task_handle("scheduled").unwrap();
         scheduled.set_create_time(outside).unwrap();
         scheduled
             .set_start_time(from + Duration::minutes(40))
@@ -637,7 +737,7 @@ mod typed_handler_contract_tests {
             ProjectCategory::Consumption,
             fixed_now(),
         );
-        let uncategorized = TaskHandle::new("uncategorized").unwrap();
+        let uncategorized = new_task_handle("uncategorized").unwrap();
         let expected = [
             (
                 Some(ProjectCategoryValue::Earning),
@@ -689,10 +789,10 @@ mod typed_handler_contract_tests {
     fn get_schedule_handlerはtyped日付範囲で予定を絞りrepositoryを変更しない() {
         let from = Local.with_ymd_and_hms(2026, 8, 12, 6, 0, 0).unwrap();
         let until = Local.with_ymd_and_hms(2026, 8, 13, 6, 0, 0).unwrap();
-        let inside = TaskHandle::new("inside range").unwrap();
+        let inside = new_task_handle("inside range").unwrap();
         inside.set_start_time(from + Duration::hours(1)).unwrap();
         inside.set_estimated_work_seconds(15 * 60).unwrap();
-        let outside = TaskHandle::new("outside range").unwrap();
+        let outside = new_task_handle("outside range").unwrap();
         outside.set_start_time(until + Duration::hours(1)).unwrap();
         outside.set_estimated_work_seconds(15 * 60).unwrap();
         let repository = RecordingRepository::new(vec![inside, outside]);
@@ -720,17 +820,17 @@ mod typed_handler_contract_tests {
 
     #[test]
     fn get_schedule_handlerはtyped_missingで現在から次の業務日境界までを既定とする() {
-        let past = TaskHandle::new("past task").unwrap();
+        let past = new_task_handle("past task").unwrap();
         past.set_start_time(fixed_now() - Duration::hours(1))
             .unwrap();
         past.set_estimated_work_seconds(15 * 60).unwrap();
         past.set_actual_work_seconds(15 * 60).unwrap();
-        let current = TaskHandle::new("current task").unwrap();
+        let current = new_task_handle("current task").unwrap();
         current.set_start_time(fixed_now()).unwrap();
         current.set_estimated_work_seconds(15 * 60).unwrap();
-        let future = TaskHandle::new("future task").unwrap();
+        let future = new_task_handle("future task").unwrap();
         future
-            .set_start_time(get_next_morning_datetime(fixed_now()) + Duration::hours(1))
+            .set_start_time(try_next_business_day_start(fixed_now()).unwrap() + Duration::hours(1))
             .unwrap();
         future.set_estimated_work_seconds(15 * 60).unwrap();
         let repository = RecordingRepository::new(vec![past, current, future]);
@@ -804,7 +904,7 @@ mod typed_handler_contract_tests {
     #[test]
     fn breakdown_task_handlerはtyped_inputの順序と時刻をapplication入力へ変換する() {
         let pending_until = fixed_now() + Duration::hours(18);
-        let parent = TaskHandle::new("typed parent").unwrap();
+        let parent = new_task_handle("typed parent").unwrap();
         let parent_id = parent.get_id().unwrap();
         let repository = RecordingRepository::new(vec![parent]);
         let save_count = Rc::clone(&repository.save_count);
@@ -878,7 +978,7 @@ mod typed_handler_contract_tests {
 
     #[test]
     fn breakdown_task_handlerはtyped_inputの空白名をapplicationへそのまま渡す() {
-        let parent = TaskHandle::new("typed parent").unwrap();
+        let parent = new_task_handle("typed parent").unwrap();
         let parent_id = parent.get_id().unwrap();
         let parent_observer = parent.clone();
         let repository = RecordingRepository::new(vec![parent]);
@@ -938,7 +1038,7 @@ mod typed_handler_contract_tests {
     #[test]
     fn defer_task_handlerはtyped_uuidと時刻をapplication入力へ変換する() {
         let pending_until = fixed_now() + Duration::hours(18);
-        let task = TaskHandle::new("typed deferred task").unwrap();
+        let task = new_task_handle("typed deferred task").unwrap();
         let task_id = task.get_id().unwrap();
         let task_observer = task.clone();
         let repository = RecordingRepository::new(vec![task]);
@@ -968,7 +1068,7 @@ mod typed_handler_contract_tests {
     #[test]
     fn complete_task_handlerはtyped完了時刻と追加実績をapplication入力へ変換する() {
         let finished_at = fixed_now() + Duration::hours(1);
-        let task = TaskHandle::new("typed completed task").unwrap();
+        let task = new_task_handle("typed completed task").unwrap();
         task.set_actual_work_seconds(60).unwrap();
         let task_id = task.get_id().unwrap();
         let task_observer = task.clone();
@@ -1003,16 +1103,14 @@ mod typed_handler_contract_tests {
     }
 
     #[test]
-    fn complete_task_handlerはfinished_at_missingを現在時刻に変換する() {
-        let task = TaskHandle::new("typed completed with defaults").unwrap();
+    fn complete_task_handlerはfinished_at_missingをoperation時刻に変換する() {
+        let task = new_task_handle("typed completed with defaults").unwrap();
         task.set_actual_work_seconds(60).unwrap();
         let task_id = task.get_id().unwrap();
         let task_observer = task.clone();
         let repository = RecordingRepository::new(vec![task]);
         let save_count = Rc::clone(&repository.save_count);
         let mut repository = repository;
-        let before = Local::now();
-
         let response = call_complete_task(
             &mut repository,
             json!("typed-complete-defaults"),
@@ -1022,12 +1120,10 @@ mod typed_handler_contract_tests {
                 additional_actual_work_seconds: NonNegativeI64(0),
             },
         );
-        let after = Local::now();
-
         assert_eq!(response["id"], "typed-complete-defaults");
         assert_eq!(response["result"]["isError"], false);
         let end_time = task_observer.get_end_time_opt().unwrap().unwrap();
-        assert!(before <= end_time && end_time <= after);
+        assert_eq!(end_time, fixed_now());
         assert_eq!(task_observer.get_actual_work_seconds().unwrap(), 60);
         assert_eq!(save_count.get(), 0);
     }
@@ -1035,7 +1131,7 @@ mod typed_handler_contract_tests {
     #[test]
     fn update_task_handlerはtyped_valueを公開field順に適用する() {
         let deadline = fixed_now() + Duration::days(10);
-        let task = TaskHandle::new("typed updated task").unwrap();
+        let task = new_task_handle("typed updated task").unwrap();
         let task_id = task.get_id().unwrap();
         let task_observer = task.clone();
         let repository = RecordingRepository::new(vec![task]);
@@ -1075,7 +1171,7 @@ mod typed_handler_contract_tests {
     #[test]
     fn update_task_handlerはtyped_missingのnullable_patchを変更しない() {
         let deadline = fixed_now() + Duration::days(10);
-        let task = TaskHandle::new("typed preserved task").unwrap();
+        let task = new_task_handle("typed preserved task").unwrap();
         task.set_estimated_work_seconds(30 * 60).unwrap();
         task.set_deadline_time_opt(Some(deadline)).unwrap();
         task.set_project_category_opt(Some(ProjectCategory::Investment))
@@ -1114,7 +1210,7 @@ mod typed_handler_contract_tests {
     #[test]
     fn update_task_handlerはtyped_missingを変更せずnullを解除に変換する() {
         let deadline = fixed_now() + Duration::days(10);
-        let task = TaskHandle::new("typed cleared task").unwrap();
+        let task = new_task_handle("typed cleared task").unwrap();
         task.set_estimated_work_seconds(30 * 60).unwrap();
         task.set_deadline_time_opt(Some(deadline)).unwrap();
         task.set_project_category_opt(Some(ProjectCategory::Investment))
@@ -1148,7 +1244,7 @@ mod typed_handler_contract_tests {
     fn update_task_handlerは先頭field失敗時に後続fieldを適用しない() {
         let original_deadline = fixed_now() + Duration::days(10);
         let requested_deadline = fixed_now() + Duration::days(20);
-        let task = TaskHandle::new("typed unchanged update task").unwrap();
+        let task = new_task_handle("typed unchanged update task").unwrap();
         task.set_estimated_work_seconds(30 * 60).unwrap();
         task.set_deadline_time_opt(Some(original_deadline)).unwrap();
         task.set_project_category_opt(Some(ProjectCategory::Consumption))

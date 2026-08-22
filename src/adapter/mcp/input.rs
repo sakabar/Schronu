@@ -1,13 +1,13 @@
 use super::error::InvalidParams;
+use crate::application::daily_capacity::{try_next_business_day_start, try_subjective_date_start};
 use crate::application::task_use_case::{
-    BreakdownTaskInput as ApplicationBreakdownTaskInput,
+    ApplicationError, BreakdownTaskInput as ApplicationBreakdownTaskInput,
     CompleteTaskInput as ApplicationCompleteTaskInput,
     CreateTaskInput as ApplicationCreateTaskInput, ListTasksFilter, TaskPeriodField,
     TaskPeriodFilter,
 };
-use crate::entity::datetime::get_next_morning_datetime;
 use crate::entity::task::{ProjectCategory, Status};
-use chrono::{DateTime, Duration, Local, LocalResult, NaiveDate};
+use chrono::{DateTime, Local, NaiveDate};
 use schemars::{generate::SchemaSettings, json_schema, JsonSchema, Schema, SchemaGenerator};
 use serde::{de::DeserializeOwned, de::IntoDeserializer, Deserialize, Deserializer};
 use serde_json::{Map, Value};
@@ -20,6 +20,7 @@ pub(super) enum ToolInputError {
         field: String,
         message: &'static str,
     },
+    Application(ApplicationError),
 }
 
 const SCHEMA_ERROR_PREFIX: &str = "mcp-schema:";
@@ -446,11 +447,14 @@ pub(super) struct CompleteTaskInput {
 }
 
 impl CompleteTaskInput {
-    pub(super) fn into_application(self) -> ApplicationCompleteTaskInput {
+    pub(super) fn into_application(
+        self,
+        operation_now: DateTime<Local>,
+    ) -> ApplicationCompleteTaskInput {
         ApplicationCompleteTaskInput {
             task_id: self.task_id.0,
             finished_at: match self.finished_at {
-                OptionalValue::Missing => Local::now(),
+                OptionalValue::Missing => operation_now,
                 OptionalValue::Value(finished_at) => finished_at.0,
             },
             additional_actual_work_seconds: self.additional_actual_work_seconds.0,
@@ -838,9 +842,15 @@ impl GetScheduleInput {
 
         let (from, until) = match (from, until) {
             (Some(from), Some(until)) => (from, until),
-            (Some(from), None) => (from, get_next_morning_datetime(from)),
+            (Some(from), None) => (
+                from,
+                try_next_business_day_start(from).map_err(ToolInputError::Application)?,
+            ),
             (None, Some(until)) => (now, until),
-            (None, None) => (now, get_next_morning_datetime(now)),
+            (None, None) => (
+                now,
+                try_next_business_day_start(now).map_err(ToolInputError::Application)?,
+            ),
         };
         if from >= until {
             return Err(ToolInputError::Semantic {
@@ -855,26 +865,9 @@ impl GetScheduleInput {
 
 fn schedule_day_start(
     date: IsoDate,
-    field: &'static str,
+    _field: &'static str,
 ) -> Result<DateTime<Local>, ToolInputError> {
-    let local_noon = date
-        .0
-        .and_hms_opt(12, 0, 0)
-        .ok_or(ToolInputError::Semantic {
-            field: field.to_string(),
-            message: "must be a valid ISO 8601 date",
-        })?;
-    let local_noon = match local_noon.and_local_timezone(Local) {
-        LocalResult::Single(datetime) => datetime,
-        _ => {
-            return Err(ToolInputError::Semantic {
-                field: field.to_string(),
-                message: "must resolve to a local date-time",
-            })
-        }
-    };
-
-    Ok(get_next_morning_datetime(local_noon) - Duration::days(1))
+    try_subjective_date_start(date.0).map_err(ToolInputError::Application)
 }
 
 pub(super) fn generated_input_schema<T: JsonSchema>() -> Value {
@@ -1140,7 +1133,8 @@ mod tests {
         GetTaskInput, ListTasksInput, NonNegativeI64, NullablePatch, OptionalValue,
         ProjectCategoryValue, Rfc3339DateTime, ToolInputError, UpdateTaskInput,
     };
-    use chrono::{DateTime, Local};
+    use crate::application::task_use_case::ApplicationError;
+    use chrono::{DateTime, FixedOffset, Local, NaiveDate};
     use schemars::JsonSchema;
     use serde::Deserialize;
     use serde_json::{json, Value};
@@ -2843,6 +2837,59 @@ mod tests {
             Err(ToolInputError::Semantic { field, message }) => {
                 format!("semantic({field}, {message})")
             }
+            Err(ToolInputError::Application(error)) => format!("application({error})"),
+        }
+    }
+
+    fn maximum_business_day_start() -> DateTime<Local> {
+        DateTime::<Local>::from_naive_utc_and_offset(
+            NaiveDate::MAX.and_hms_opt(6, 0, 0).unwrap(),
+            FixedOffset::east_opt(0).unwrap(),
+        )
+    }
+
+    #[test]
+    fn schedule_periodは引数なしの次業務日境界errorを保持する() {
+        let now = maximum_business_day_start();
+        let result = GetScheduleInput {
+            from: OptionalValue::Missing,
+            until: OptionalValue::Missing,
+        }
+        .into_period(now);
+
+        match result {
+            Err(ToolInputError::Application(error)) => assert_eq!(
+                error,
+                ApplicationError::SubjectiveDateOutOfRange {
+                    operation: "next_business_day_start",
+                    datetime: now,
+                }
+            ),
+            _ => panic!("expected an application datetime error"),
+        }
+    }
+
+    #[test]
+    fn schedule_periodはfromのみの次業務日境界errorを保持する() {
+        let from = match super::schedule_day_start(super::IsoDate(NaiveDate::MAX), "from") {
+            Ok(from) => from,
+            Err(_) => panic!("expected the maximum date to resolve to a local datetime"),
+        };
+        let result = GetScheduleInput {
+            from: OptionalValue::Value(super::IsoDate(NaiveDate::MAX)),
+            until: OptionalValue::Missing,
+        }
+        .into_period(maximum_business_day_start());
+
+        match result {
+            Err(ToolInputError::Application(error)) => assert_eq!(
+                error,
+                ApplicationError::SubjectiveDateOutOfRange {
+                    operation: "next_business_day_start",
+                    datetime: from,
+                }
+            ),
+            _ => panic!("expected an application datetime error"),
         }
     }
 }

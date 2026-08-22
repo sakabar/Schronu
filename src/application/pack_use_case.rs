@@ -1,7 +1,8 @@
 use super::daily_capacity::{
     calculate_daily_leeway_seconds,
     calculate_free_time_minutes_for_subjective_date_with_end_of_day_offset_minutes,
-    subjective_date, subjective_date_end, subjective_date_start, END_OF_DAY_OFFSET_MINUTES,
+    try_subjective_date, try_subjective_date_end, try_subjective_date_start,
+    END_OF_DAY_OFFSET_MINUTES,
 };
 use super::interface::{FreeTimeManagerTrait, TaskRepositoryTrait};
 use super::schedule_use_case::{
@@ -72,10 +73,17 @@ pub fn pack_tasks_with_end_of_day_offset_minutes(
     end_of_day_offset_minutes: i64,
 ) -> Result<PackResult, ApplicationError> {
     let now = repository.get_last_synced_time();
-    let first_date = subjective_date(now);
+    let first_date = try_subjective_date(now)?;
     let target_dates = (0..PACK_TARGET_DAYS)
-        .map(|days| first_date + Duration::days(days))
-        .collect::<Vec<_>>();
+        .map(|days| {
+            first_date.checked_add_signed(Duration::days(days)).ok_or(
+                ApplicationError::SubjectiveDateOutOfRange {
+                    operation: "pack_target_dates",
+                    datetime: now,
+                },
+            )
+        })
+        .collect::<Result<Vec<_>, _>>()?;
     let mut candidates = collect_candidates(repository, &target_dates)?;
     candidates.sort_by_key(|candidate| {
         (
@@ -103,7 +111,7 @@ pub fn pack_tasks_with_end_of_day_offset_minutes(
         )?;
 
         for target_date in &target_dates {
-            if subjective_date(current_planned_start) <= *target_date
+            if try_subjective_date(current_planned_start)? <= *target_date
                 || daily_leeway.get(target_date).copied().unwrap_or(0) < candidate.work_seconds
             {
                 continue;
@@ -115,15 +123,15 @@ pub fn pack_tasks_with_end_of_day_offset_minutes(
             else {
                 continue;
             };
-            let target_datetime = subjective_date_start(*target_date)
+            let target_datetime = try_subjective_date_start(*target_date)?
                 .max(task.get_start_time().map_err(ApplicationError::TaskTree)?);
-            if subjective_date(target_datetime) != *target_date {
+            if try_subjective_date(target_datetime)? != *target_date {
                 continue;
             }
 
             let target_day = PackTargetDay {
                 date: *target_date,
-                end: subjective_date_end(*target_date, end_of_day_offset_minutes),
+                end: try_subjective_date_end(*target_date, end_of_day_offset_minutes)?,
             };
             let placement_start_opt = find_placement_start(
                 repository,
@@ -138,13 +146,14 @@ pub fn pack_tasks_with_end_of_day_offset_minutes(
             if let Some(placement_start) =
                 placement_start_opt.filter(|start| *start < current_planned_start)
             {
+                let source_date = try_subjective_date(current_planned_start)?;
                 task.set_pending_until(placement_start)
                     .map_err(ApplicationError::TaskTree)?;
                 packed_task_opt = Some(PackedTask {
                     task_id: candidate.task_id,
                     name: candidate.name.clone(),
                     priority: candidate.priority,
-                    source_date: subjective_date(current_planned_start),
+                    source_date,
                     target_date: *target_date,
                     work_seconds: candidate.work_seconds,
                 });
@@ -205,7 +214,7 @@ fn find_placement_start(
             work_seconds,
             atomic,
             free_time_manager,
-        ) {
+        )? {
             return Ok(task_segments
                 .first()
                 .map(|scheduled| scheduled.scheduled_start));
@@ -252,27 +261,34 @@ fn collect_candidates(
 ) -> Result<Vec<PackCandidate>, ApplicationError> {
     let schedule = get_schedule(repository)?;
     let mut seen_ids = HashSet::new();
-    Ok(schedule
-        .into_iter()
-        .filter(|scheduled| seen_ids.insert(scheduled.task.id))
-        .filter(|scheduled| {
-            scheduled.rank == 0
-                && scheduled.task.status == Status::Pending
-                && !scheduled.task.is_on_other_side
-                && scheduled.total_work_seconds > 0
-                && target_dates.iter().any(|target_date| {
-                    *target_date < subjective_date(scheduled.scheduled_start)
-                        && subjective_date(scheduled.task.start_time) <= *target_date
-                })
-        })
-        .map(|scheduled| PackCandidate {
-            task_id: scheduled.task.id,
-            name: scheduled.task.name,
-            priority: scheduled.task.priority,
-            planned_start: scheduled.scheduled_start,
-            work_seconds: scheduled.total_work_seconds,
-        })
-        .collect())
+    let mut candidates = Vec::new();
+    for scheduled in schedule {
+        if !seen_ids.insert(scheduled.task.id) {
+            continue;
+        }
+        if scheduled.rank != 0
+            || scheduled.task.status != Status::Pending
+            || scheduled.task.is_on_other_side
+            || scheduled.total_work_seconds <= 0
+        {
+            continue;
+        }
+        let scheduled_date = try_subjective_date(scheduled.scheduled_start)?;
+        let task_start_date = try_subjective_date(scheduled.task.start_time)?;
+        if target_dates
+            .iter()
+            .any(|target_date| *target_date < scheduled_date && task_start_date <= *target_date)
+        {
+            candidates.push(PackCandidate {
+                task_id: scheduled.task.id,
+                name: scheduled.task.name,
+                priority: scheduled.task.priority,
+                planned_start: scheduled.scheduled_start,
+                work_seconds: scheduled.total_work_seconds,
+            });
+        }
+    }
+    Ok(candidates)
 }
 
 fn calculate_daily_leeway(
@@ -285,7 +301,7 @@ fn calculate_daily_leeway(
     let mut repetitive_work_seconds = HashMap::<NaiveDate, i64>::new();
 
     for scheduled in get_schedule(repository)? {
-        let date = subjective_date(scheduled.scheduled_start);
+        let date = try_subjective_date(scheduled.scheduled_start)?;
         if !target_dates.contains(&date) {
             continue;
         }
@@ -305,7 +321,7 @@ fn calculate_daily_leeway(
         }
     }
 
-    Ok(target_dates
+    target_dates
         .iter()
         .map(|date| {
             let free_time_minutes =
@@ -314,15 +330,15 @@ fn calculate_daily_leeway(
                     repository.get_last_synced_time(),
                     free_time_manager,
                     end_of_day_offset_minutes,
-                );
+                )?;
             let repetitive = repetitive_work_seconds.get(date).copied().unwrap_or(0);
             let total = total_work_seconds.get(date).copied().unwrap_or(0);
-            (
+            Ok((
                 *date,
                 calculate_daily_leeway_seconds(free_time_minutes, repetitive, total),
-            )
+            ))
         })
-        .collect())
+        .collect()
 }
 
 fn placement_fits_target_day(
@@ -331,13 +347,19 @@ fn placement_fits_target_day(
     work_seconds: i64,
     atomic: bool,
     free_time_manager: &mut dyn FreeTimeManagerTrait,
-) -> bool {
+) -> Result<bool, ApplicationError> {
     let target_end = target_day.end;
+    let scheduled_dates = task_segments
+        .iter()
+        .map(|scheduled| try_subjective_date(scheduled.scheduled_start))
+        .collect::<Result<Vec<_>, _>>()?;
     let fits_in_day = !task_segments.is_empty()
-        && task_segments.iter().all(|scheduled| {
-            subjective_date(scheduled.scheduled_start) == target_day.date
-                && scheduled.scheduled_end <= target_end
-        })
+        && task_segments
+            .iter()
+            .zip(scheduled_dates)
+            .all(|(scheduled, scheduled_date)| {
+                scheduled_date == target_day.date && scheduled.scheduled_end <= target_end
+            })
         && task_segments
             .iter()
             .map(|scheduled| scheduled.scheduled_work_seconds)
@@ -345,176 +367,25 @@ fn placement_fits_target_day(
             == work_seconds;
 
     if !fits_in_day || !atomic || task_segments.len() != 1 {
-        return fits_in_day && !atomic;
+        return Ok(fits_in_day && !atomic);
     }
 
     let scheduled = task_segments[0];
     let required_minutes = (work_seconds + 59) / 60;
     let free_time_check_end = scheduled.scheduled_start + Duration::minutes(required_minutes);
-    free_time_manager.get_free_minutes(&scheduled.scheduled_start, &free_time_check_end)
-        >= required_minutes
+    Ok(
+        free_time_manager.get_free_minutes(&scheduled.scheduled_start, &free_time_check_end)
+            >= required_minutes,
+    )
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::application::interface::{
-        FreeTimeManagerTrait, TaskRepositoryError, TaskRepositoryTrait,
-    };
     use crate::entity::task::{Status, TaskHandle};
-    use chrono::{DateTime, Duration, Local, NaiveDate, TimeZone};
-    use std::cell::Cell;
+    use crate::test_support::{TestFreeTimeManager, TestTaskRepository};
+    use chrono::{DateTime, Duration, FixedOffset, Local, NaiveDate, TimeZone};
     use uuid::Uuid;
-
-    struct TestTaskRepository {
-        projects: Vec<TaskHandle>,
-        now: DateTime<Local>,
-        save_count: Cell<usize>,
-    }
-
-    impl TestTaskRepository {
-        fn new(projects: Vec<TaskHandle>, now: DateTime<Local>) -> Self {
-            Self {
-                projects,
-                now,
-                save_count: Cell::new(0),
-            }
-        }
-    }
-
-    impl TaskRepositoryTrait for TestTaskRepository {
-        fn get_project_storage_dir_name(&self) -> &str {
-            "unused"
-        }
-
-        fn get_all_projects(&self) -> Vec<&TaskHandle> {
-            self.projects.iter().collect()
-        }
-
-        fn load(&mut self) -> Result<(), TaskRepositoryError> {
-            Ok(())
-        }
-
-        fn save(&self) -> Result<(), TaskRepositoryError> {
-            self.save_count.set(self.save_count.get() + 1);
-            Ok(())
-        }
-
-        fn sync_clock(
-            &mut self,
-            now: DateTime<Local>,
-        ) -> Result<(), crate::entity::task::TaskTreeError> {
-            self.now = now;
-            for project in &self.projects {
-                project.sync_clock(now)?;
-            }
-            Ok(())
-        }
-
-        fn get_last_synced_time(&self) -> DateTime<Local> {
-            self.now
-        }
-
-        fn get_highest_priority_project(&mut self) -> Option<&TaskHandle> {
-            self.projects.first()
-        }
-
-        fn get_highest_priority_leaf_task_id(
-            &mut self,
-        ) -> Result<Option<Uuid>, crate::entity::task::TaskTreeError> {
-            Ok(None)
-        }
-
-        fn get_defer_candidate_leaf_task_id(
-            &mut self,
-            _recent_days: i64,
-        ) -> Result<Option<Uuid>, crate::entity::task::TaskTreeError> {
-            Ok(None)
-        }
-
-        fn get_by_id(
-            &self,
-            id: Uuid,
-        ) -> Result<Option<TaskHandle>, crate::entity::task::TaskTreeError> {
-            for task in &self.projects {
-                if let Some(found) = task.get_by_id(id)? {
-                    return Ok(Some(found));
-                }
-            }
-            Ok(None)
-        }
-
-        fn start_new_project(
-            &mut self,
-            root_task: TaskHandle,
-        ) -> Result<(), crate::entity::task::TaskTreeError> {
-            self.projects.push(root_task);
-            Ok(())
-        }
-    }
-
-    struct TestFreeTimeManager {
-        daily_free_minutes: i64,
-        blocked_interval: Option<(DateTime<Local>, DateTime<Local>)>,
-    }
-
-    impl TestFreeTimeManager {
-        fn new(daily_free_minutes: i64) -> Self {
-            Self {
-                daily_free_minutes,
-                blocked_interval: None,
-            }
-        }
-
-        fn with_blocked_interval(
-            daily_free_minutes: i64,
-            start: DateTime<Local>,
-            end: DateTime<Local>,
-        ) -> Self {
-            Self {
-                daily_free_minutes,
-                blocked_interval: Some((start, end)),
-            }
-        }
-    }
-
-    impl FreeTimeManagerTrait for TestFreeTimeManager {
-        fn get_free_minutes(&mut self, start: &DateTime<Local>, end: &DateTime<Local>) -> i64 {
-            let duration_minutes = (*end - *start).num_minutes().max(0);
-            if duration_minutes >= 12 * 60 {
-                return self.daily_free_minutes;
-            }
-
-            let blocked_minutes = self
-                .blocked_interval
-                .map(|(blocked_start, blocked_end)| {
-                    let overlap_start = (*start).max(blocked_start);
-                    let overlap_end = (*end).min(blocked_end);
-                    (overlap_end - overlap_start).num_minutes().max(0)
-                })
-                .unwrap_or(0);
-            duration_minutes - blocked_minutes
-        }
-
-        fn get_busy_minutes(&mut self, start: &DateTime<Local>, end: &DateTime<Local>) -> i64 {
-            (*end - *start).num_minutes() - self.get_free_minutes(start, end)
-        }
-
-        fn register_busy_time_slot(
-            &mut self,
-            _start: &DateTime<Local>,
-            _end: &DateTime<Local>,
-        ) -> Result<(), crate::application::interface::BusyTimeSlotRegistrationError> {
-            Ok(())
-        }
-
-        fn load_busy_time_slots_from_file(
-            &mut self,
-            _busy_time_slots_file_path: &str,
-        ) -> Result<(), crate::application::interface::BusyTimeSlotLoadError> {
-            Ok(())
-        }
-    }
 
     fn fixed_now() -> DateTime<Local> {
         Local.with_ymd_and_hms(2026, 8, 11, 12, 0, 0).unwrap()
@@ -527,7 +398,7 @@ mod tests {
         work_minutes: i64,
         priority: i64,
     ) -> TaskHandle {
-        let task = TaskHandle::new(name).unwrap();
+        let task = crate::test_support::new_task_handle(name).unwrap();
         task.sync_clock(now).unwrap();
         task.set_start_time(now).unwrap();
         task.set_estimated_work_seconds(work_minutes * 60).unwrap();
@@ -535,6 +406,37 @@ mod tests {
         task.set_pending_until(pending_until).unwrap();
         task.set_orig_status(Status::Pending).unwrap();
         task
+    }
+
+    #[test]
+    fn pack_tasksはoperation時刻のsubjective_date計算不能を伝搬しtaskを変更しない() {
+        let local_datetime = NaiveDate::MIN.and_hms_opt(5, 59, 0).unwrap();
+        let now = DateTime::<Local>::from_naive_utc_and_offset(
+            local_datetime,
+            FixedOffset::east_opt(0).unwrap(),
+        );
+        let task = crate::test_support::new_task_handle("対象").unwrap();
+        let original_revision = task.get_persistent_mutation_revision().unwrap();
+        let repository = TestTaskRepository::new(vec![task.clone()], now);
+        let mut free_time_manager = TestFreeTimeManager::new(60);
+
+        let actual = pack_tasks_with_end_of_day_offset_minutes(
+            &repository,
+            &mut free_time_manager,
+            END_OF_DAY_OFFSET_MINUTES,
+        );
+
+        assert_eq!(
+            actual,
+            Err(ApplicationError::SubjectiveDateOutOfRange {
+                operation: "subjective_date",
+                datetime: now,
+            })
+        );
+        assert_eq!(
+            task.get_persistent_mutation_revision().unwrap(),
+            original_revision
+        );
     }
 
     #[test]
@@ -678,7 +580,7 @@ mod tests {
     #[test]
     fn pack_tasks_pending_untilを実際の配置開始時刻へ設定する() {
         let now = fixed_now();
-        let blocker = TaskHandle::new("先行").unwrap();
+        let blocker = crate::test_support::new_task_handle("先行").unwrap();
         blocker.sync_clock(now).unwrap();
         blocker.set_start_time(now).unwrap();
         blocker.set_estimated_work_seconds(30 * 60).unwrap();
@@ -928,7 +830,7 @@ mod tests {
     fn pack_tasks_親taskと完了済みtaskと残作業0のtaskは候補にしない() {
         let now = fixed_now();
         let parent = pending_task("親", now, now + Duration::days(10), 30, 9);
-        let child = parent.create_as_last_child(crate::entity::task::TaskAttr::new("子"));
+        let child = parent.create_as_last_child(crate::test_support::new_task_attr("子"));
         child.sync_clock(now).unwrap();
         let done = pending_task("完了", now, now + Duration::days(10), 30, 8);
         done.set_orig_status(Status::Done).unwrap();
@@ -940,5 +842,30 @@ mod tests {
 
         assert!(actual.packed_tasks.is_empty());
         assert!(actual.skipped_tasks.is_empty());
+    }
+
+    #[test]
+    fn pack_tasks_候補外の親taskの範囲外start_timeは正常な葉taskの配置を妨げない() {
+        let now = fixed_now();
+        let parent = pending_task("親", now, now + Duration::days(10), 30, 1);
+        let out_of_range_start = DateTime::<Local>::from_naive_utc_and_offset(
+            NaiveDate::MIN.and_hms_opt(5, 59, 0).unwrap(),
+            FixedOffset::east_opt(0).unwrap(),
+        );
+        parent.set_start_time(out_of_range_start).unwrap();
+        let child = parent.create_as_last_child(crate::test_support::new_task_attr("子"));
+        child.sync_clock(now).unwrap();
+        child.set_start_time(now).unwrap();
+        child.set_estimated_work_seconds(30 * 60).unwrap();
+
+        let leaf = pending_task("正常な葉", now, now + Duration::days(10), 30, 9);
+        let repository = TestTaskRepository::new(vec![parent, leaf.clone()], now);
+        let mut free_time_manager = TestFreeTimeManager::new(120);
+
+        let actual = pack_tasks(&repository, &mut free_time_manager).unwrap();
+
+        assert_eq!(actual.packed_tasks.len(), 1);
+        assert_eq!(actual.packed_tasks[0].task_id, leaf.get_id().unwrap());
+        assert!(leaf.get_pending_until().unwrap() < now + Duration::days(10));
     }
 }

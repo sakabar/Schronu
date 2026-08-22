@@ -2,7 +2,7 @@ use super::interface::{TaskRepositoryError, TaskRepositoryTrait};
 use super::task_use_case::{
     list_tasks, ApplicationError, ListTasksFilter, TaskPeriodField, TaskPeriodFilter,
 };
-use crate::entity::task::{ProjectCategory, Status, TaskAttr, TaskHandle};
+use crate::entity::task::{ProjectCategory, Status, TaskHandle};
 use chrono::{DateTime, Duration, Local, TimeZone};
 use uuid::Uuid;
 
@@ -58,7 +58,7 @@ impl TaskRepositoryTrait for TestTaskRepository {
 
     fn get_defer_candidate_leaf_task_id(
         &mut self,
-        _recent_days: i64,
+        _recent_threshold: DateTime<Local>,
     ) -> Result<Option<Uuid>, crate::entity::task::TaskTreeError> {
         Ok(None)
     }
@@ -99,13 +99,16 @@ fn no_filter() -> ListTasksFilter {
 #[test]
 fn list_tasks_filterなしならdoneを含む全taskをpre_orderで返す() {
     let now = fixed_now();
-    let first_root = TaskHandle::new("root 1").unwrap();
+    let first_root = crate::test_support::new_task_handle("root 1").unwrap();
     first_root.sync_clock(now).unwrap();
-    let first_child = first_root.create_as_last_child(TaskAttr::new("child 1"));
-    let grandchild = first_child.create_as_last_child(TaskAttr::new("grandchild"));
-    let second_child = first_root.create_as_last_child(TaskAttr::new("child 2"));
+    let first_child =
+        first_root.create_as_last_child(crate::test_support::new_task_attr("child 1"));
+    let grandchild =
+        first_child.create_as_last_child(crate::test_support::new_task_attr("grandchild"));
+    let second_child =
+        first_root.create_as_last_child(crate::test_support::new_task_attr("child 2"));
     second_child.set_orig_status(Status::Done).unwrap();
-    let second_root = TaskHandle::new("root 2").unwrap();
+    let second_root = crate::test_support::new_task_handle("root 2").unwrap();
     second_root.sync_clock(now).unwrap();
     let repository = TestTaskRepository::new(vec![first_root.clone(), second_root.clone()], now);
 
@@ -127,7 +130,7 @@ fn list_tasks_filterなしならdoneを含む全taskをpre_orderで返す() {
 #[test]
 fn list_tasks_statusは期限経過を反映した実効状態をorで絞る() {
     let now = fixed_now();
-    let expired_pending = TaskHandle::new("期限経過Pending").unwrap();
+    let expired_pending = crate::test_support::new_task_handle("期限経過Pending").unwrap();
     expired_pending
         .set_start_time(now - Duration::hours(1))
         .unwrap();
@@ -136,7 +139,7 @@ fn list_tasks_statusは期限経過を反映した実効状態をorで絞る() {
         .unwrap();
     expired_pending.set_orig_status(Status::Pending).unwrap();
     expired_pending.sync_clock(now).unwrap();
-    let active_pending = TaskHandle::new("Pending").unwrap();
+    let active_pending = crate::test_support::new_task_handle("Pending").unwrap();
     active_pending
         .set_start_time(now - Duration::hours(1))
         .unwrap();
@@ -145,7 +148,7 @@ fn list_tasks_statusは期限経過を反映した実効状態をorで絞る() {
         .unwrap();
     active_pending.set_orig_status(Status::Pending).unwrap();
     active_pending.sync_clock(now).unwrap();
-    let done = TaskHandle::new("Done").unwrap();
+    let done = crate::test_support::new_task_handle("Done").unwrap();
     done.set_orig_status(Status::Done).unwrap();
     done.sync_clock(now).unwrap();
     let repository = TestTaskRepository::new(
@@ -172,16 +175,16 @@ fn list_tasks_statusは期限経過を反映した実効状態をorで絞る() {
 #[test]
 fn list_tasks_category内はorでstatusとはandで絞る() {
     let now = fixed_now();
-    let investment = TaskHandle::new("投資Todo").unwrap();
+    let investment = crate::test_support::new_task_handle("投資Todo").unwrap();
     investment
         .set_project_category_opt(Some(ProjectCategory::Investment))
         .unwrap();
-    let uncategorized = TaskHandle::new("未分類Todo").unwrap();
-    let earning = TaskHandle::new("獲得Todo").unwrap();
+    let uncategorized = crate::test_support::new_task_handle("未分類Todo").unwrap();
+    let earning = crate::test_support::new_task_handle("獲得Todo").unwrap();
     earning
         .set_project_category_opt(Some(ProjectCategory::Earning))
         .unwrap();
-    let done_investment = TaskHandle::new("投資Done").unwrap();
+    let done_investment = crate::test_support::new_task_handle("投資Done").unwrap();
     done_investment
         .set_project_category_opt(Some(ProjectCategory::Investment))
         .unwrap();
@@ -213,26 +216,26 @@ fn list_tasks_category内はorでstatusとはandで絞る() {
 #[test]
 fn list_tasks_period_status_categoryの全filterをandで絞る() {
     let now = fixed_now();
-    let matched = TaskHandle::new("matched").unwrap();
+    let matched = crate::test_support::new_task_handle("matched").unwrap();
     matched
         .set_create_time(now + Duration::minutes(30))
         .unwrap();
     matched
         .set_project_category_opt(Some(ProjectCategory::Investment))
         .unwrap();
-    let outside_period = TaskHandle::new("outside period").unwrap();
+    let outside_period = crate::test_support::new_task_handle("outside period").unwrap();
     outside_period
         .set_create_time(now - Duration::minutes(1))
         .unwrap();
     outside_period
         .set_project_category_opt(Some(ProjectCategory::Investment))
         .unwrap();
-    let done = TaskHandle::new("done").unwrap();
+    let done = crate::test_support::new_task_handle("done").unwrap();
     done.set_create_time(now + Duration::minutes(30)).unwrap();
     done.set_project_category_opt(Some(ProjectCategory::Investment))
         .unwrap();
     done.set_orig_status(Status::Done).unwrap();
-    let earning = TaskHandle::new("earning").unwrap();
+    let earning = crate::test_support::new_task_handle("earning").unwrap();
     earning
         .set_create_time(now + Duration::minutes(30))
         .unwrap();
@@ -265,7 +268,7 @@ fn list_tasks_period_status_categoryの全filterをandで絞る() {
 #[test]
 fn list_tasks_created_deadline_completedの期間を半開区間で絞る() {
     let now = fixed_now();
-    let before = TaskHandle::new("before").unwrap();
+    let before = crate::test_support::new_task_handle("before").unwrap();
     before.set_create_time(now - Duration::seconds(1)).unwrap();
     before
         .set_deadline_time_opt(Some(now - Duration::seconds(1)))
@@ -273,11 +276,11 @@ fn list_tasks_created_deadline_completedの期間を半開区間で絞る() {
     before
         .set_end_time_opt(Some(now - Duration::seconds(1)))
         .unwrap();
-    let from = TaskHandle::new("from").unwrap();
+    let from = crate::test_support::new_task_handle("from").unwrap();
     from.set_create_time(now).unwrap();
     from.set_deadline_time_opt(Some(now)).unwrap();
     from.set_end_time_opt(Some(now)).unwrap();
-    let inside = TaskHandle::new("inside").unwrap();
+    let inside = crate::test_support::new_task_handle("inside").unwrap();
     inside.set_create_time(now + Duration::minutes(30)).unwrap();
     inside
         .set_deadline_time_opt(Some(now + Duration::minutes(30)))
@@ -285,7 +288,7 @@ fn list_tasks_created_deadline_completedの期間を半開区間で絞る() {
     inside
         .set_end_time_opt(Some(now + Duration::minutes(30)))
         .unwrap();
-    let until = TaskHandle::new("until").unwrap();
+    let until = crate::test_support::new_task_handle("until").unwrap();
     until.set_create_time(now + Duration::hours(1)).unwrap();
     until
         .set_deadline_time_opt(Some(now + Duration::hours(1)))
@@ -293,7 +296,7 @@ fn list_tasks_created_deadline_completedの期間を半開区間で絞る() {
     until
         .set_end_time_opt(Some(now + Duration::hours(1)))
         .unwrap();
-    let missing = TaskHandle::new("missing").unwrap();
+    let missing = crate::test_support::new_task_handle("missing").unwrap();
     let repository = TestTaskRepository::new(
         vec![before, from.clone(), inside.clone(), until, missing],
         now,
@@ -330,15 +333,15 @@ fn list_tasks_periodは指定された時刻fieldだけを参照する() {
     let now = fixed_now();
     let outside = now - Duration::hours(1);
     let inside = now + Duration::minutes(30);
-    let created = TaskHandle::new("created").unwrap();
+    let created = crate::test_support::new_task_handle("created").unwrap();
     created.set_create_time(inside).unwrap();
     created.set_deadline_time_opt(Some(outside)).unwrap();
     created.set_end_time_opt(Some(outside)).unwrap();
-    let deadline = TaskHandle::new("deadline").unwrap();
+    let deadline = crate::test_support::new_task_handle("deadline").unwrap();
     deadline.set_create_time(outside).unwrap();
     deadline.set_deadline_time_opt(Some(inside)).unwrap();
     deadline.set_end_time_opt(Some(outside)).unwrap();
-    let completed = TaskHandle::new("completed").unwrap();
+    let completed = crate::test_support::new_task_handle("completed").unwrap();
     completed.set_create_time(outside).unwrap();
     completed.set_deadline_time_opt(Some(outside)).unwrap();
     completed.set_end_time_opt(Some(inside)).unwrap();
@@ -376,14 +379,14 @@ fn list_tasks_periodは指定された時刻fieldだけを参照する() {
 #[test]
 fn list_tasks_scheduled_start期間は分割taskを重複させない() {
     let now = fixed_now();
-    let low_priority = TaskHandle::new("低優先度").unwrap();
+    let low_priority = crate::test_support::new_task_handle("低優先度").unwrap();
     low_priority.sync_clock(now).unwrap();
     low_priority
         .set_start_time(now + Duration::hours(1))
         .unwrap();
     low_priority.set_estimated_work_seconds(10 * 3600).unwrap();
     low_priority.set_priority(88).unwrap();
-    let high_priority = TaskHandle::new("高優先度").unwrap();
+    let high_priority = crate::test_support::new_task_handle("高優先度").unwrap();
     high_priority.sync_clock(now).unwrap();
     high_priority
         .set_start_time(now + Duration::hours(6))
@@ -455,7 +458,10 @@ fn list_tasks_scheduled_start期間は分割taskを重複させない() {
 #[test]
 fn list_tasks_fromがuntil以上ならinvalid_inputを返す() {
     let now = fixed_now();
-    let repository = TestTaskRepository::new(vec![TaskHandle::new("task").unwrap()], now);
+    let repository = TestTaskRepository::new(
+        vec![crate::test_support::new_task_handle("task").unwrap()],
+        now,
+    );
 
     for from in [now, now + Duration::seconds(1)] {
         let actual = list_tasks(

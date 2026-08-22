@@ -1,9 +1,8 @@
 use crate::entity::datetime::parse_local_datetime;
 use crate::entity::task::read_project_category;
-use crate::entity::task::read_repetition_anchor;
 use crate::entity::task::read_status;
 use crate::entity::task::Status;
-use crate::entity::task::{ImmutableTask, RepetitionAnchor, TaskAttr, TaskHandle, TaskTreeError};
+use crate::entity::task::{ImmutableTask, RepetitionAnchor, TaskHandle, TaskTreeError};
 use chrono::LocalResult;
 use chrono::TimeZone;
 use chrono::{DateTime, Local};
@@ -24,6 +23,11 @@ use crate::entity::task::ProjectCategory;
 #[cfg(test)]
 use uuid::uuid;
 
+#[cfg(test)]
+fn yaml_test_now() -> DateTime<Local> {
+    Local.with_ymd_and_hms(2026, 8, 20, 12, 0, 0).unwrap()
+}
+
 #[test]
 fn test_yaml_to_immutable_task_childrenキーが存在しない場合は空配列として登録されること() {
     let s = "
@@ -34,7 +38,7 @@ status: 'todo'
     let docs = YamlLoader::load_from_str(s).unwrap();
     let project_yaml: &Yaml = &docs[0];
 
-    let actual = yaml_to_immutable_task(project_yaml);
+    let actual = yaml_to_immutable_task(project_yaml, yaml_test_now());
     let expected = ImmutableTask::new_with_name("タスク1".to_string());
     assert_eq!(actual, expected);
 }
@@ -48,7 +52,7 @@ children: []
     let docs = YamlLoader::load_from_str(s).unwrap();
     let project_yaml: &Yaml = &docs[0];
 
-    let actual = yaml_to_immutable_task(project_yaml);
+    let actual = yaml_to_immutable_task(project_yaml, yaml_test_now());
     let expected = ImmutableTask::new_with_name("タスク1".to_string());
     assert_eq!(actual, expected);
 }
@@ -64,7 +68,7 @@ children: []
     let docs = YamlLoader::load_from_str(s).unwrap();
     let project_yaml: &Yaml = &docs[0];
 
-    let actual = yaml_to_immutable_task(project_yaml);
+    let actual = yaml_to_immutable_task(project_yaml, yaml_test_now());
     let expected = ImmutableTask::new_with_name("タスク1".to_string());
     assert_eq!(actual, expected);
 }
@@ -81,7 +85,7 @@ children: []
     let docs = YamlLoader::load_from_str(s).unwrap();
     let project_yaml: &Yaml = &docs[0];
 
-    let actual = yaml_to_immutable_task(project_yaml);
+    let actual = yaml_to_immutable_task(project_yaml, yaml_test_now());
     let expected = ImmutableTask::new_with_name("タスク1".to_string());
     assert_eq!(actual, expected);
 }
@@ -96,7 +100,7 @@ children:
     let docs = YamlLoader::load_from_str(s).unwrap();
     let project_yaml: &Yaml = &docs[0];
 
-    let actual = yaml_to_immutable_task(project_yaml);
+    let actual = yaml_to_immutable_task(project_yaml, yaml_test_now());
     let expected =
         ImmutableTask::new_with_name_status_children("タスク1".to_string(), Status::Done, vec![]);
     assert_eq!(actual, expected);
@@ -114,7 +118,7 @@ children: []
     let docs = YamlLoader::load_from_str(s).unwrap();
     let project_yaml: &Yaml = &docs[0];
 
-    let actual = yaml_to_immutable_task(project_yaml);
+    let actual = yaml_to_immutable_task(project_yaml, yaml_test_now());
     // 1970は過去なので、pendingではなくtodoとなる
     let expected =
         ImmutableTask::new_with_name_status_children("タスク1".to_string(), Status::Todo, vec![]);
@@ -135,7 +139,7 @@ children: []
     let docs = YamlLoader::load_from_str(s).unwrap();
     let project_yaml: &Yaml = &docs[0];
 
-    let actual = yaml_to_immutable_task(project_yaml);
+    let actual = yaml_to_immutable_task(project_yaml, yaml_test_now());
     // 2000/01/01は過去なので、pendingではなくtodoとなる
     let expected = ImmutableTask::new(
         "タスク1".to_string(),
@@ -160,7 +164,7 @@ children: []
     let docs = YamlLoader::load_from_str(s).unwrap();
     let project_yaml: &Yaml = &docs[0];
 
-    let actual = yaml_to_immutable_task(project_yaml);
+    let actual = yaml_to_immutable_task(project_yaml, yaml_test_now());
     // 2000/01/01は過去なので、pendingではなくtodoとなる
     let expected = ImmutableTask::new(
         "タスク1".to_string(),
@@ -185,7 +189,7 @@ children: []
     let docs = YamlLoader::load_from_str(s).unwrap();
     let project_yaml: &Yaml = &docs[0];
 
-    let actual = yaml_to_immutable_task(project_yaml);
+    let actual = yaml_to_immutable_task(project_yaml, yaml_test_now());
     // 2000/01/01は過去なので、pendingではなくtodoとなる
     let expected = ImmutableTask::new(
         "タスク1".to_string(),
@@ -206,7 +210,7 @@ children:
     let docs = YamlLoader::load_from_str(s).unwrap();
     let project_yaml: &Yaml = &docs[0];
 
-    let actual = yaml_to_immutable_task(project_yaml);
+    let actual = yaml_to_immutable_task(project_yaml, yaml_test_now());
 
     let child_task = ImmutableTask::new_with_name("子タスク".to_string());
     let parent_task =
@@ -214,7 +218,36 @@ children:
     assert_eq!(actual, parent_task);
 }
 
-pub fn yaml_to_immutable_task(yaml: &Yaml) -> ImmutableTask {
+#[test]
+fn test_yaml_to_immutable_taskはcaller指定時刻を全nodeのpending判定へ共有する() {
+    let s = "
+name: '親タスク'
+status: 'pending'
+pending_until: '2001/01/01 00:00:00'
+children:
+  - name: '子タスク'
+    status: 'pending'
+    pending_until: '2001/01/01 00:00:00'
+    children:
+      - name: '孫タスク'
+        status: 'pending'
+        pending_until: '2001/01/01 00:00:00'
+";
+    let docs = YamlLoader::load_from_str(s).unwrap();
+    let project_yaml: &Yaml = &docs[0];
+    let operation_now = Local.with_ymd_and_hms(2000, 1, 1, 0, 0, 0).unwrap();
+
+    let actual = yaml_to_immutable_task(project_yaml, operation_now);
+
+    assert_eq!(actual.get_status(), &Status::Pending);
+    assert_eq!(actual.get_children()[0].get_status(), &Status::Pending);
+    assert_eq!(
+        actual.get_children()[0].get_children()[0].get_status(),
+        &Status::Pending
+    );
+}
+
+pub fn yaml_to_immutable_task(yaml: &Yaml, now: DateTime<Local>) -> ImmutableTask {
     let name: String = yaml["name"].as_str().unwrap_or("").to_string();
 
     let status_str: String = yaml["status"].as_str().unwrap_or("").to_string();
@@ -244,11 +277,11 @@ pub fn yaml_to_immutable_task(yaml: &Yaml) -> ImmutableTask {
     let mut children = vec![];
 
     for child_yaml in yaml["children"].as_vec().unwrap_or(&vec![]) {
-        let child = yaml_to_immutable_task(child_yaml);
+        let child = yaml_to_immutable_task(child_yaml, now);
         children.push(child);
     }
 
-    ImmutableTask::new_with_current_time(name, status, pending_until, children)
+    ImmutableTask::new_with_current_time(name, status, pending_until, children, now)
 }
 
 #[derive(Debug, Eq, PartialEq)]
@@ -298,184 +331,6 @@ impl Error for YamlConversionError {}
 
 fn map_task_tree_error(error: TaskTreeError) -> YamlConversionError {
     YamlConversionError::new(error.to_string())
-}
-
-#[allow(dead_code)]
-fn transform_from_pending_until_str(pending_until_str: &str) -> DateTime<Local> {
-    for format in ["%Y/%m/%d %H:%M:%S", "%Y/%m/%d %H:%M"] {
-        if let Ok(LocalResult::Single(datetime)) = parse_local_datetime(pending_until_str, format) {
-            return datetime;
-        }
-    }
-    if let Ok(LocalResult::Single(datetime)) =
-        parse_local_datetime(&format!("{pending_until_str} 00:00"), "%Y/%m/%d %H:%M")
-    {
-        return datetime;
-    }
-    DateTime::<Local>::MIN_UTC.into()
-}
-
-fn task_children_yaml(yaml: &Yaml) -> Result<&[Yaml], YamlConversionError> {
-    match &yaml["children"] {
-        Yaml::BadValue | Yaml::Null => Ok(&[]),
-        Yaml::Array(children) => Ok(children),
-        _ => Err(YamlConversionError::new(
-            "children must be an array or null",
-        )),
-    }
-}
-
-#[allow(dead_code)]
-fn yaml_to_task_legacy(
-    yaml: &Yaml,
-    now: DateTime<Local>,
-) -> Result<TaskHandle, YamlConversionError> {
-    if yaml.as_hash().is_none() {
-        return Err(YamlConversionError::new("task node must be a mapping"));
-    }
-
-    let default_attr = TaskAttr::new("デフォルト用");
-    let name: &str = yaml["name"].as_str().unwrap_or("");
-
-    let status_str: &str = yaml["status"].as_str().unwrap_or("");
-    let status: Status = read_status(status_str).unwrap_or(*default_attr.get_status());
-
-    let is_on_other_side: bool = yaml["is_on_other_side"]
-        .as_bool()
-        .unwrap_or(*default_attr.get_is_on_other_side());
-    let atomic: bool = yaml["atomic"]
-        .as_bool()
-        .unwrap_or(default_attr.get_atomic());
-
-    let pending_until_str: &str = yaml["pending_until"].as_str().unwrap_or("");
-    let pending_until = transform_from_pending_until_str(pending_until_str);
-
-    let priority: i64 = yaml["priority"]
-        .as_i64()
-        .unwrap_or(default_attr.get_priority());
-    let project_category_opt = yaml["category"].as_str().and_then(read_project_category);
-
-    let create_time_str: &str = yaml["create_time"].as_str().unwrap_or("");
-    let start_time_str: &str = yaml["start_time"].as_str().unwrap_or("");
-    let end_time_str: &str = yaml["end_time"].as_str().unwrap_or("");
-    let deadline_time_str: &str = yaml["deadline_time"].as_str().unwrap_or("");
-
-    let estimated_work_seconds: i64 = yaml["estimated_work_seconds"]
-        .as_i64()
-        .unwrap_or(default_attr.get_estimated_work_seconds());
-    let actual_work_seconds: i64 = yaml["actual_work_seconds"]
-        .as_i64()
-        .unwrap_or(default_attr.get_actual_work_seconds());
-
-    let repetition_interval_days_opt: Option<i64> = yaml["repetition_interval_days"].as_i64();
-    let repetition_anchor_str: &str = yaml["repetition_anchor"].as_str().unwrap_or("");
-    let repetition_anchor = read_repetition_anchor(repetition_anchor_str);
-    let days_in_advance: i64 = yaml["days_in_advance"]
-        .as_i64()
-        .unwrap_or(default_attr.get_days_in_advance());
-
-    let mut parent_task = TaskHandle::new(name).map_err(map_task_tree_error)?;
-
-    let id_str: &str = yaml["id"].as_str().unwrap_or("");
-    if let Ok(id) = Uuid::parse_str(id_str) {
-        parent_task.set_id(id).map_err(map_task_tree_error)?;
-    }
-
-    parent_task
-        .set_orig_status(status)
-        .map_err(map_task_tree_error)?;
-    parent_task
-        .set_is_on_other_side(is_on_other_side)
-        .map_err(map_task_tree_error)?;
-    parent_task
-        .set_atomic(atomic)
-        .map_err(map_task_tree_error)?;
-    parent_task
-        .set_pending_until(pending_until)
-        .map_err(map_task_tree_error)?;
-    parent_task
-        .set_priority(priority)
-        .map_err(map_task_tree_error)?;
-    parent_task
-        .set_project_category_opt(project_category_opt)
-        .map_err(map_task_tree_error)?;
-
-    if let Ok(LocalResult::Single(create_time)) =
-        parse_local_datetime(create_time_str, "%Y/%m/%d %H:%M:%S")
-    {
-        parent_task
-            .set_create_time(create_time)
-            .map_err(map_task_tree_error)?;
-    }
-
-    if let Ok(LocalResult::Single(start_time)) =
-        parse_local_datetime(start_time_str, "%Y/%m/%d %H:%M:%S")
-    {
-        parent_task
-            .set_start_time(start_time)
-            .map_err(map_task_tree_error)?;
-    }
-
-    if let Ok(LocalResult::Single(end_time)) =
-        parse_local_datetime(end_time_str, "%Y/%m/%d %H:%M:%S")
-    {
-        parent_task
-            .set_end_time_opt(Some(end_time))
-            .map_err(map_task_tree_error)?;
-    }
-
-    if let Ok(LocalResult::Single(deadline_time)) =
-        parse_local_datetime(deadline_time_str, "%Y/%m/%d %H:%M:%S")
-    {
-        parent_task
-            .set_deadline_time_opt(Some(deadline_time))
-            .map_err(map_task_tree_error)?;
-    }
-
-    parent_task
-        .set_estimated_work_seconds(estimated_work_seconds)
-        .map_err(map_task_tree_error)?;
-    parent_task
-        .set_actual_work_seconds(actual_work_seconds)
-        .map_err(map_task_tree_error)?;
-    parent_task
-        .set_repetition_interval_days_opt(repetition_interval_days_opt)
-        .map_err(map_task_tree_error)?;
-    parent_task
-        .set_repetition_anchor(repetition_anchor)
-        .map_err(map_task_tree_error)?;
-    parent_task
-        .set_days_in_advance(days_in_advance)
-        .map_err(map_task_tree_error)?;
-
-    // repetition_interval_daysを持つタスクがtodoのままだと、
-    // show_all_tasks()する際にestimated_work_secondsを二重に数えてしまうことになるので
-    // 便宜的に2037/12/31までpendingする
-    if repetition_interval_days_opt.is_some() {
-        let distant_future = Local.with_ymd_and_hms(2037, 12, 31, 23, 59, 59).unwrap();
-        parent_task
-            .set_pending_until(distant_future)
-            .map_err(map_task_tree_error)?;
-        parent_task
-            .set_orig_status(Status::Pending)
-            .map_err(map_task_tree_error)?;
-    }
-
-    parent_task.sync_clock(now).map_err(map_task_tree_error)?;
-
-    for child_yaml in task_children_yaml(yaml)? {
-        let mut child_task = yaml_to_task_legacy(child_yaml, now)?;
-        child_task
-            .reparent_to(&parent_task)
-            .map_err(map_task_tree_error)?;
-
-        parent_task = child_task
-            .parent()
-            .map_err(map_task_tree_error)?
-            .ok_or_else(|| YamlConversionError::new("inserted child has no parent"))?;
-    }
-
-    Ok(parent_task)
 }
 
 fn yaml_field<'a>(yaml: &'a Yaml, key: &str) -> Option<&'a Yaml> {
@@ -625,7 +480,8 @@ fn yaml_to_task_strict(
         Some(Yaml::Array(children)) => children.as_slice(),
         Some(_) => return Err(strict_error(path, "children", "must be an array or null")),
     };
-    let mut task = TaskHandle::new(name).map_err(map_task_tree_error)?;
+    let mut task =
+        TaskHandle::with_identity(name, uuid::Uuid::new_v4(), now).map_err(map_task_tree_error)?;
     if let Some(id) = id {
         task.set_id(id).map_err(map_task_tree_error)?;
     }
@@ -688,6 +544,27 @@ pub(crate) fn yaml_to_task(
     now: DateTime<Local>,
 ) -> Result<TaskHandle, YamlConversionError> {
     yaml_to_task_strict(yaml, now, "project")
+}
+
+#[test]
+fn test_yaml_to_taskは欠落した生成時刻と開始時刻へoperation時刻を全nodeで共有する() {
+    let docs = YamlLoader::load_from_str(
+        "
+name: 親
+children:
+  - name: 子
+",
+    )
+    .unwrap();
+    let operation_now = Local.with_ymd_and_hms(2000, 1, 1, 0, 0, 0).unwrap();
+
+    let actual = yaml_to_task(&docs[0], operation_now).unwrap();
+    let child = actual.get_children().unwrap().remove(0);
+
+    assert_eq!(actual.get_create_time().unwrap(), operation_now);
+    assert_eq!(actual.get_start_time().unwrap(), operation_now);
+    assert_eq!(child.get_create_time().unwrap(), operation_now);
+    assert_eq!(child.get_start_time().unwrap(), operation_now);
 }
 
 #[test]
@@ -819,7 +696,7 @@ status: 'todo'
 
     let now = Local::now();
     let actual = yaml_to_task(project_yaml, now).unwrap();
-    let expected = TaskHandle::new("タスク1").unwrap();
+    let expected = crate::test_support::new_task_handle_at("タスク1", now).unwrap();
     expected.sync_clock(now).unwrap();
 
     assert!(
@@ -840,7 +717,7 @@ children: []
 
     let now = Local::now();
     let actual = yaml_to_task(project_yaml, now).unwrap();
-    let expected = TaskHandle::new("タスク1").unwrap();
+    let expected = crate::test_support::new_task_handle_at("タスク1", now).unwrap();
     expected.sync_clock(now).unwrap();
 
     assert!(
@@ -862,7 +739,7 @@ children: []
 
     let now = Local::now();
     let actual = yaml_to_task(project_yaml, now).unwrap();
-    let expected = TaskHandle::new("タスク1").unwrap();
+    let expected = crate::test_support::new_task_handle_at("タスク1", now).unwrap();
     expected.sync_clock(now).unwrap();
 
     assert!(
@@ -903,7 +780,7 @@ children:
 
     let now = Local::now();
     let actual = yaml_to_task(project_yaml, now).unwrap();
-    let expected = TaskHandle::new("タスク1").unwrap();
+    let expected = crate::test_support::new_task_handle_at("タスク1", now).unwrap();
     expected.sync_clock(now).unwrap();
 
     expected.set_orig_status(Status::Done).unwrap();
@@ -923,7 +800,7 @@ priority: 5
 
     let now = Local::now();
     let actual = yaml_to_task(project_yaml, now).unwrap();
-    let expected = TaskHandle::new("タスク1").unwrap();
+    let expected = crate::test_support::new_task_handle_at("タスク1", now).unwrap();
     expected.set_priority(5).unwrap();
     expected.sync_clock(now).unwrap();
 
@@ -962,7 +839,7 @@ category: sustaining
 
     let now = Local::now();
     let actual = yaml_to_task(project_yaml, now).unwrap();
-    let expected = TaskHandle::new("タスク1").unwrap();
+    let expected = crate::test_support::new_task_handle_at("タスク1", now).unwrap();
     expected
         .set_project_category_opt(Some(ProjectCategory::Sustaining))
         .unwrap();
@@ -1017,7 +894,7 @@ status: 'todo'
 
     let now = Local::now();
     let actual = yaml_to_task(project_yaml, now).unwrap();
-    let mut expected = TaskHandle::new("タスク1").unwrap();
+    let mut expected = crate::test_support::new_task_handle_at("タスク1", now).unwrap();
     let id: Uuid = uuid!("67e55044-10b1-426f-9247-bb680e5fe0c8");
     expected.set_id(id).unwrap();
     expected.sync_clock(now).unwrap();
@@ -1043,7 +920,7 @@ is_on_other_side: true
 
     let now = Local::now();
     let actual = yaml_to_task(project_yaml, now).unwrap();
-    let mut expected = TaskHandle::new("タスク1").unwrap();
+    let mut expected = crate::test_support::new_task_handle_at("タスク1", now).unwrap();
     let id: Uuid = uuid!("67e55044-10b1-426f-9247-bb680e5fe0c8");
     expected.set_id(id).unwrap();
     expected.set_is_on_other_side(true).unwrap();
@@ -1070,7 +947,7 @@ atomic: true
 
     let now = Local::now();
     let actual = yaml_to_task(project_yaml, now).unwrap();
-    let mut expected = TaskHandle::new("タスク1").unwrap();
+    let mut expected = crate::test_support::new_task_handle_at("タスク1", now).unwrap();
     let id: Uuid = uuid!("67e55044-10b1-426f-9247-bb680e5fe0c8");
     expected.set_id(id).unwrap();
     expected.set_atomic(true).unwrap();
@@ -1113,7 +990,7 @@ create_time: '2023/05/19 01:23:45'
 
     let now = Local.with_ymd_and_hms(2023, 5, 19, 1, 23, 45).unwrap();
     let actual = yaml_to_task(project_yaml, now).unwrap();
-    let mut expected = TaskHandle::new("タスク1").unwrap();
+    let mut expected = crate::test_support::new_task_handle_at("タスク1", now).unwrap();
     let id: Uuid = uuid!("67e55044-10b1-426f-9247-bb680e5fe0c8");
     expected.set_id(id).unwrap();
     expected.set_create_time(now).unwrap();
@@ -1144,7 +1021,7 @@ start_time: '2023/05/19 01:23:45'
 
     let now = Local.with_ymd_and_hms(2023, 5, 19, 1, 23, 45).unwrap();
     let actual = yaml_to_task(project_yaml, now).unwrap();
-    let mut expected = TaskHandle::new("タスク1").unwrap();
+    let mut expected = crate::test_support::new_task_handle_at("タスク1", now).unwrap();
     let id: Uuid = uuid!("67e55044-10b1-426f-9247-bb680e5fe0c8");
     expected.set_id(id).unwrap();
     expected.set_start_time(now).unwrap();
@@ -1175,7 +1052,7 @@ end_time: '2023/05/19 01:23:45'
 
     let now = Local.with_ymd_and_hms(2023, 5, 19, 1, 23, 45).unwrap();
     let actual = yaml_to_task(project_yaml, now).unwrap();
-    let mut expected = TaskHandle::new("タスク1").unwrap();
+    let mut expected = crate::test_support::new_task_handle_at("タスク1", now).unwrap();
     let id: Uuid = uuid!("67e55044-10b1-426f-9247-bb680e5fe0c8");
     expected.set_id(id).unwrap();
     expected.set_end_time_opt(Some(now)).unwrap();
@@ -1202,7 +1079,7 @@ deadline_time: '2023/05/19 01:23:45'
 
     let now = Local.with_ymd_and_hms(2023, 5, 19, 1, 23, 45).unwrap();
     let actual = yaml_to_task(project_yaml, now).unwrap();
-    let mut expected = TaskHandle::new("タスク1").unwrap();
+    let mut expected = crate::test_support::new_task_handle_at("タスク1", now).unwrap();
     let id: Uuid = uuid!("67e55044-10b1-426f-9247-bb680e5fe0c8");
     expected.set_id(id).unwrap();
     expected.set_deadline_time_opt(Some(now)).unwrap();
@@ -1229,7 +1106,7 @@ estimated_work_seconds: 5
 
     let now = Local::now();
     let actual = yaml_to_task(project_yaml, now).unwrap();
-    let expected = TaskHandle::new("タスク1").unwrap();
+    let expected = crate::test_support::new_task_handle_at("タスク1", now).unwrap();
     expected.set_estimated_work_seconds(5).unwrap();
     expected.sync_clock(now).unwrap();
 
@@ -1249,7 +1126,7 @@ actual_work_seconds: 5
 
     let now = Local::now();
     let actual = yaml_to_task(project_yaml, now).unwrap();
-    let expected = TaskHandle::new("タスク1").unwrap();
+    let expected = crate::test_support::new_task_handle_at("タスク1", now).unwrap();
     expected.set_actual_work_seconds(5).unwrap();
     expected.sync_clock(now).unwrap();
 
@@ -1269,7 +1146,7 @@ repetition_interval_days: 7
 
     let now = Local::now();
     let actual = yaml_to_task(project_yaml, now).unwrap();
-    let expected = TaskHandle::new("タスク1").unwrap();
+    let expected = crate::test_support::new_task_handle_at("タスク1", now).unwrap();
     expected.set_repetition_interval_days_opt(Some(7)).unwrap();
 
     // 2037/12/31までpendingになる
@@ -1295,7 +1172,7 @@ repetition_anchor: completion
 
     let now = Local::now();
     let actual = yaml_to_task(project_yaml, now).unwrap();
-    let expected = TaskHandle::new("タスク1").unwrap();
+    let expected = crate::test_support::new_task_handle_at("タスク1", now).unwrap();
     expected
         .set_repetition_anchor(RepetitionAnchor::Completion)
         .unwrap();
@@ -1316,7 +1193,7 @@ status: 'todo'
 
     let now = Local::now();
     let actual = yaml_to_task(project_yaml, now).unwrap();
-    let expected = TaskHandle::new("タスク1").unwrap();
+    let expected = crate::test_support::new_task_handle_at("タスク1", now).unwrap();
     expected
         .set_repetition_anchor(RepetitionAnchor::Deadline)
         .unwrap();
@@ -1354,7 +1231,7 @@ days_in_advance: 1
 
     let now = Local::now();
     let actual = yaml_to_task(project_yaml, now).unwrap();
-    let expected = TaskHandle::new("タスク1").unwrap();
+    let expected = crate::test_support::new_task_handle_at("タスク1", now).unwrap();
     expected.set_days_in_advance(1).unwrap();
     expected.sync_clock(now).unwrap();
 
@@ -1374,9 +1251,9 @@ children:
     let now = Local::now();
     let actual = yaml_to_task(project_yaml, now).unwrap();
 
-    let parent_task = TaskHandle::new("親タスク").unwrap();
+    let parent_task = crate::test_support::new_task_handle_at("親タスク", now).unwrap();
     parent_task.sync_clock(now).unwrap();
-    let mut task_attr = TaskAttr::new("子タスク");
+    let mut task_attr = crate::test_support::new_task_attr_at("子タスク", now);
     task_attr.sync_clock(now);
     parent_task.create_as_last_child(task_attr);
 
@@ -1399,16 +1276,19 @@ children:
     let now = Local::now();
     let actual_task = yaml_to_task(project_yaml, now).unwrap();
 
-    let parent_task = TaskHandle::new("親タスク").unwrap();
+    let parent_task = crate::test_support::new_task_handle_at("親タスク", now).unwrap();
     parent_task.sync_clock(now).unwrap();
 
-    let child_task_1 = parent_task.create_as_last_child(TaskAttr::new("子タスク1"));
+    let child_task_1 =
+        parent_task.create_as_last_child(crate::test_support::new_task_attr_at("子タスク1", now));
     child_task_1.sync_clock(now).unwrap();
 
-    let grand_child_task = child_task_1.create_as_last_child(TaskAttr::new("孫タスク"));
+    let grand_child_task =
+        child_task_1.create_as_last_child(crate::test_support::new_task_attr_at("孫タスク", now));
     grand_child_task.sync_clock(now).unwrap();
 
-    let child_task_2 = parent_task.create_as_last_child(TaskAttr::new("子タスク2"));
+    let child_task_2 =
+        parent_task.create_as_last_child(crate::test_support::new_task_attr_at("子タスク2", now));
     child_task_2.sync_clock(now).unwrap();
 
     assert_task(&actual_task, &grand_child_task);

@@ -1,14 +1,16 @@
 use super::command::{Command, CommandAction, CommandKind, CommandParseError, InteractiveShortcut};
 use super::renderer::{DisplayModel, DisplayRecorder, SchronuWriter};
-use chrono::{DateTime, Datelike, Duration, Local, TimeZone, Timelike};
+use chrono::{DateTime, Datelike, Days, Duration, Local, NaiveDate, NaiveDateTime, NaiveTime};
 use regex::Regex;
+use schronu::application::daily_capacity::{
+    try_local_date_and_time, try_next_business_day_start, try_subjective_date,
+};
 use schronu::application::flatten_use_case::{FlattenResult, UnresolvedReason};
 use schronu::application::pack_use_case::PackResult;
 use schronu::application::task_use_case::{
     estimated_work_seconds_from_minutes, validate_task_name, ApplicationError, BreakdownTaskInput,
     CompleteTaskInput, CreateTaskInput,
 };
-use schronu::entity::datetime::get_next_morning_datetime;
 use schronu::entity::task::{TaskAttr, TaskHandle};
 use std::cmp::min;
 use uuid::Uuid;
@@ -39,6 +41,7 @@ pub(super) trait ProjectCommandContext {
     fn focused_task(&mut self) -> Result<Option<TaskHandle>, ApplicationError>;
     fn create_task(&mut self, input: CreateTaskInput) -> Result<Uuid, ApplicationError>;
     fn breakdown_task(&mut self, input: BreakdownTaskInput) -> Result<Vec<Uuid>, ApplicationError>;
+    fn create_task_attr(&mut self, name: &str) -> TaskAttr;
     fn set_estimate(&mut self, task_id: Uuid, minutes: i64) -> Result<(), ApplicationError>;
     fn focused_task_id(&self) -> Option<Uuid>;
     fn set_focused_task_id(&mut self, task_id_opt: Option<Uuid>);
@@ -394,7 +397,7 @@ pub(super) fn handle_project_command(
             ..
         } => {
             let now = context.last_synced_time();
-            if let Some(start_time) = decide_time_values(values, &now) {
+            if let Some(start_time) = decide_time_values(values, &now)? {
                 let focused_task_opt = context.focused_task()?;
                 execute_make_appointment(&focused_task_opt, start_time)?;
             }
@@ -406,7 +409,7 @@ pub(super) fn handle_project_command(
             ..
         } => {
             let now = context.last_synced_time();
-            if let Some(start_time) = decide_time_values(values, &now) {
+            if let Some(start_time) = decide_time_values(values, &now)? {
                 if let Some(task) = context.focused_task()? {
                     task.set_start_time(start_time)
                         .map_err(ApplicationError::TaskTree)?;
@@ -578,7 +581,7 @@ pub(super) fn handle_finish_placement_command(
                 context.show_focused_tree(&mut display)?;
             } else {
                 let now = context.last_synced_time();
-                if let Some(finished_at) = decide_finish_time_values(values, &now) {
+                if let Some(finished_at) = decide_finish_time_values(values, &now)? {
                     let additional_actual_work_seconds = if values.is_empty() {
                         let focus_duration_seconds =
                             (now - context.focus_started_datetime()).num_seconds();
@@ -626,33 +629,44 @@ pub(super) fn handle_finish_placement_command(
 pub(super) fn decide_finish_time_values(
     values: &[String],
     now: &DateTime<Local>,
-) -> Option<DateTime<Local>> {
+) -> Result<Option<DateTime<Local>>, ApplicationError> {
     let hhmmss_reg = Regex::new(r"^(\d{1,2}):(\d{1,2})(?::(\d{1,2}))?$").unwrap();
     let yyyymmdd_reg = Regex::new(r"^\d{2,4}/\d{1,2}/\d{1,2}$").unwrap();
     let mmdd_reg = Regex::new(r"^\d{1,2}/\d{1,2}$").unwrap();
     let days_of_week = ["月", "火", "水", "木", "金", "土", "日"];
 
-    let build_finish_time = |hhmmss: &str, date: Option<&String>| {
-        let captures = hhmmss_reg.captures(hhmmss)?;
-        let hours: u32 = captures[1].parse().ok()?;
-        let minutes: u32 = captures[2].parse().ok()?;
-        let seconds: u32 = captures
+    let build_finish_time = |hhmmss: &str,
+                             date: Option<&String>|
+     -> Result<Option<DateTime<Local>>, ApplicationError> {
+        let Some(captures) = hhmmss_reg.captures(hhmmss) else {
+            return Ok(None);
+        };
+        let Some(hours) = captures[1].parse::<u32>().ok() else {
+            return Ok(None);
+        };
+        let Some(minutes) = captures[2].parse::<u32>().ok() else {
+            return Ok(None);
+        };
+        let Some(seconds) = captures
             .get(3)
             .map(|value| value.as_str().parse().ok())
-            .unwrap_or(Some(0))?;
-        if hours > 23 || minutes > 59 || seconds > 59 {
-            return None;
-        }
+            .unwrap_or(Some(0))
+        else {
+            return Ok(None);
+        };
         let mut time_values = vec![format!("{hours}:{minutes}")];
         if let Some(date) = date {
             time_values.push(date.clone());
         }
-        decide_time_values(&time_values, now)?.with_second(seconds)
+        let Some(naive_datetime) = decide_naive_datetime_values(&time_values, now, seconds)? else {
+            return Ok(None);
+        };
+        resolve_date_and_time(naive_datetime.date(), naive_datetime.time()).map(Some)
     };
 
     match values {
-        [] => Some(*now),
-        [value] if matches!(value.as_str(), "今" | "now") => Some(*now),
+        [] => Ok(Some(*now)),
+        [value] if matches!(value.as_str(), "今" | "now") => Ok(Some(*now)),
         [time] if hhmmss_reg.is_match(time) => build_finish_time(time, None),
         [time, date]
             if hhmmss_reg.is_match(time)
@@ -663,7 +677,7 @@ pub(super) fn decide_finish_time_values(
         {
             build_finish_time(time, Some(date))
         }
-        _ => None,
+        _ => Ok(None),
     }
 }
 
@@ -843,9 +857,34 @@ fn execute_start_new_project(
     defer_days_opt: Option<i64>,
     estimated_work_minutes_opt: Option<i64>,
 ) -> Result<(), ApplicationError> {
-    let pending_until = defer_days_opt.map(|defer_days| {
-        get_next_morning_datetime(context.last_synced_time()) + Duration::days(defer_days - 1)
-    });
+    validate_task_name(name, "name")?;
+    if let Some(estimated_work_minutes) = estimated_work_minutes_opt {
+        estimated_work_seconds_from_minutes(estimated_work_minutes)?;
+    }
+    let pending_until = if let Some(defer_days) = defer_days_opt {
+        let now = context.last_synced_time();
+        let next_business_day_start = try_next_business_day_start(now)?;
+        let offset_days =
+            defer_days
+                .checked_sub(1)
+                .ok_or(ApplicationError::SubjectiveDateOutOfRange {
+                    operation: "next_business_day_start",
+                    datetime: now,
+                })?;
+        let offset =
+            Duration::try_days(offset_days).ok_or(ApplicationError::SubjectiveDateOutOfRange {
+                operation: "next_business_day_start",
+                datetime: now,
+            })?;
+        Some(next_business_day_start.checked_add_signed(offset).ok_or(
+            ApplicationError::SubjectiveDateOutOfRange {
+                operation: "next_business_day_start",
+                datetime: now,
+            },
+        )?)
+    } else {
+        None
+    };
     let task_id = context.create_task(CreateTaskInput {
         name: name.to_string(),
         estimated_work_minutes: estimated_work_minutes_opt,
@@ -886,6 +925,7 @@ fn execute_breakdown_sequentially(
                 begin_index,
                 end_index,
                 suffix,
+                |child_name| context.create_task_attr(child_name),
             )
             .map_err(ApplicationError::TaskTree)?;
         let grand_child_task_id = grand_child_task
@@ -964,7 +1004,7 @@ fn execute_split(
         .set_estimated_work_seconds(focused_estimated_work_seconds - splitted_work_seconds)
         .map_err(ApplicationError::TaskTree)?;
 
-    let mut new_task_attr = TaskAttr::new(new_task_name);
+    let mut new_task_attr = context.create_task_attr(new_task_name);
     new_task_attr.set_estimated_work_seconds(splitted_work_seconds);
     if let Some(deadline_time) = focused_task
         .get_deadline_time_opt()
@@ -1032,63 +1072,92 @@ fn execute_create_repetition_task(
 pub(super) fn decide_time_values(
     values: &[String],
     now: &DateTime<Local>,
-) -> Option<DateTime<Local>> {
-    let start_hhmm_str = values.first()?;
+) -> Result<Option<DateTime<Local>>, ApplicationError> {
+    let Some(naive_datetime) = decide_naive_datetime_values(values, now, 0)? else {
+        return Ok(None);
+    };
+    resolve_date_and_time(naive_datetime.date(), naive_datetime.time()).map(Some)
+}
+
+fn decide_naive_datetime_values(
+    values: &[String],
+    now: &DateTime<Local>,
+    seconds: u32,
+) -> Result<Option<NaiveDateTime>, ApplicationError> {
+    let Some(start_hhmm_str) = values.first() else {
+        return Ok(None);
+    };
     let start_date_str = values.get(1).map_or("dummy", String::as_str);
     let hhmm_reg = Regex::new(r"^(\d{1,2}):(\d{1,2})$").unwrap();
-    let (hh, mm) = if let Some(captures) = hhmm_reg.captures(start_hhmm_str) {
-        (captures[1].parse().unwrap(), captures[2].parse().unwrap())
-    } else {
-        (12, 0)
+    let Some(captures) = hhmm_reg.captures(start_hhmm_str) else {
+        return Ok(None);
+    };
+    let (Some(hh), Some(mm)) = (
+        captures[1].parse::<u32>().ok(),
+        captures[2].parse::<u32>().ok(),
+    ) else {
+        return Ok(None);
+    };
+    let Some(time) = NaiveTime::from_hms_opt(hh, mm, seconds) else {
+        return Ok(None);
     };
     let yyyymmdd_reg = Regex::new(r"^(\d{2,4})/(\d{1,2})/(\d{1,2})$").unwrap();
     let mmdd_reg = Regex::new(r"^(\d{1,2})/(\d{1,2})$").unwrap();
 
     if let Some(captures) = yyyymmdd_reg.captures(start_date_str) {
-        let raw_year: i32 = captures[1].parse().unwrap();
+        let (Some(raw_year), Some(month), Some(day)) = (
+            captures[1].parse::<i32>().ok(),
+            captures[2].parse::<u32>().ok(),
+            captures[3].parse::<u32>().ok(),
+        ) else {
+            return Ok(None);
+        };
         let year = if raw_year < 100 {
             raw_year + 2000
         } else {
             raw_year
         };
-        return Some(
-            Local
-                .with_ymd_and_hms(
-                    year,
-                    captures[2].parse().unwrap(),
-                    captures[3].parse().unwrap(),
-                    hh,
-                    mm,
-                    0,
-                )
-                .unwrap(),
-        );
+        let Some(date) = NaiveDate::from_ymd_opt(year, month, day) else {
+            return Ok(None);
+        };
+        return Ok(Some(date.and_time(time)));
     }
     if let Some(captures) = mmdd_reg.captures(start_date_str) {
-        let month = captures[1].parse().unwrap();
-        let day = captures[2].parse().unwrap();
-        let mut answer = Local
-            .with_ymd_and_hms(now.year(), month, day, hh, mm, 0)
-            .unwrap();
-        if answer < *now {
-            answer = Local
-                .with_ymd_and_hms(now.year() + 1, month, day, hh, mm, 0)
-                .unwrap();
+        let (Some(month), Some(day)) = (
+            captures[1].parse::<u32>().ok(),
+            captures[2].parse::<u32>().ok(),
+        ) else {
+            return Ok(None);
+        };
+        let Some(mut date) = NaiveDate::from_ymd_opt(now.year(), month, day) else {
+            return Ok(None);
+        };
+        let mut answer = date.and_time(time);
+        if answer < now.naive_local() {
+            let next_year =
+                now.year()
+                    .checked_add(1)
+                    .ok_or(ApplicationError::SubjectiveDateOutOfRange {
+                        operation: "upcoming_calendar_date",
+                        datetime: *now,
+                    })?;
+            let Some(next_date) = NaiveDate::from_ymd_opt(next_year, month, day) else {
+                return Ok(None);
+            };
+            date = next_date;
+            answer = date.and_time(time);
         }
-        return Some(answer);
+        return Ok(Some(answer));
     }
     if start_date_str.starts_with('明') {
-        let next_day = get_next_morning_datetime(*now);
-        return Some(
-            Local
-                .with_ymd_and_hms(next_day.year(), next_day.month(), next_day.day(), hh, mm, 0)
-                .unwrap(),
-        );
+        let next_day = try_next_business_day_start(*now)?;
+        return Ok(Some(next_day.date_naive().and_time(time)));
     }
     let days_of_week = ["月", "火", "水", "木", "金", "土", "日"];
     if days_of_week.contains(&start_date_str) {
-        let today = get_next_morning_datetime(*now) - Duration::days(1);
-        let current_index = today.weekday().num_days_from_monday() as usize;
+        let next_business_day_start = try_next_business_day_start(*now)?;
+        let subjective_date = try_subjective_date(*now)?;
+        let current_index = subjective_date.weekday().num_days_from_monday() as usize;
         let target_index = days_of_week
             .iter()
             .position(|day| day == &start_date_str)
@@ -1099,23 +1168,224 @@ pub(super) fn decide_time_values(
         } else {
             difference as i64
         };
-        let target_day = get_next_morning_datetime(*now) + Duration::days(days - 1);
-        return Some(
-            Local
-                .with_ymd_and_hms(
-                    target_day.year(),
-                    target_day.month(),
-                    target_day.day(),
-                    hh,
-                    mm,
-                    0,
-                )
-                .unwrap(),
-        );
+        let Some(target_date) = next_business_day_start
+            .date_naive()
+            .checked_add_days(Days::new((days - 1) as u64))
+        else {
+            return Err(ApplicationError::SubjectiveDateOutOfRange {
+                operation: "weekday_date",
+                datetime: *now,
+            });
+        };
+        return Ok(Some(target_date.and_time(time)));
     }
-    Some(
-        Local
-            .with_ymd_and_hms(now.year(), now.month(), now.day(), hh, mm, 0)
-            .unwrap(),
-    )
+    Ok(Some(now.date_naive().and_time(time)))
+}
+
+fn resolve_date_and_time(
+    date: NaiveDate,
+    time: NaiveTime,
+) -> Result<DateTime<Local>, ApplicationError> {
+    try_local_date_and_time(date, time)
+}
+
+#[cfg(test)]
+mod datetime_resolution_tests {
+    use super::*;
+    use chrono::{NaiveDate, TimeZone, Timelike};
+
+    #[test]
+    fn 完了時刻は指定秒を含むnaive日時を構築してから1回だけlocal変換する() {
+        let now = Local.with_ymd_and_hms(2026, 10, 30, 12, 0, 0).unwrap();
+        let date_values = ["1:30".to_string(), "2026/11/1".to_string()];
+        let expected_naive = NaiveDate::from_ymd_opt(2026, 11, 1)
+            .unwrap()
+            .and_hms_opt(1, 30, 45)
+            .unwrap();
+
+        let naive = decide_naive_datetime_values(&date_values, &now, 45)
+            .expect("date resolution must succeed")
+            .expect("explicit date and time must resolve to a naive datetime");
+        let localized =
+            decide_finish_time_values(&["1:30:45".to_string(), "2026/11/1".to_string()], &now)
+                .expect("application local datetime resolution must succeed")
+                .expect("the local datetime must be Single in the test timezone");
+
+        assert_eq!(naive, expected_naive);
+        assert_eq!(naive.second(), 45);
+        assert_eq!(localized.naive_local(), expected_naive);
+        assert_eq!(localized.second(), 45);
+    }
+}
+
+#[cfg(test)]
+mod task_generation_context_tests {
+    use super::*;
+    use chrono::TimeZone;
+    use std::collections::VecDeque;
+
+    struct FixedIdentityProjectCommandContext {
+        now: DateTime<Local>,
+        next_ids: VecDeque<Uuid>,
+        focused_task_id_opt: Option<Uuid>,
+        created_task_inputs: Vec<CreateTaskInput>,
+        created_task_attr_names: Vec<String>,
+        focused_task_updates: Vec<Option<Uuid>>,
+    }
+
+    impl FixedIdentityProjectCommandContext {
+        fn new(now: DateTime<Local>, next_ids: impl IntoIterator<Item = Uuid>) -> Self {
+            Self {
+                now,
+                next_ids: next_ids.into_iter().collect(),
+                focused_task_id_opt: None,
+                created_task_inputs: Vec::new(),
+                created_task_attr_names: Vec::new(),
+                focused_task_updates: Vec::new(),
+            }
+        }
+    }
+
+    impl ProjectCommandContext for FixedIdentityProjectCommandContext {
+        fn last_synced_time(&self) -> DateTime<Local> {
+            self.now
+        }
+
+        fn focused_task(&mut self) -> Result<Option<TaskHandle>, ApplicationError> {
+            unreachable!("this contract test passes the focused task explicitly")
+        }
+
+        fn create_task(&mut self, input: CreateTaskInput) -> Result<Uuid, ApplicationError> {
+            self.created_task_inputs.push(input);
+            Ok(self
+                .next_ids
+                .pop_front()
+                .expect("the fixed identity sequence must cover every created task"))
+        }
+
+        fn breakdown_task(
+            &mut self,
+            _input: BreakdownTaskInput,
+        ) -> Result<Vec<Uuid>, ApplicationError> {
+            unreachable!("this contract test exercises direct child creation")
+        }
+
+        fn create_task_attr(&mut self, name: &str) -> TaskAttr {
+            self.created_task_attr_names.push(name.to_string());
+            TaskAttr::with_identity(
+                name,
+                self.next_ids
+                    .pop_front()
+                    .expect("the fixed identity sequence must cover every created task"),
+                self.now,
+            )
+        }
+
+        fn set_estimate(&mut self, _task_id: Uuid, _minutes: i64) -> Result<(), ApplicationError> {
+            unreachable!("this contract test does not set estimates through the context")
+        }
+
+        fn focused_task_id(&self) -> Option<Uuid> {
+            self.focused_task_id_opt
+        }
+
+        fn set_focused_task_id(&mut self, task_id_opt: Option<Uuid>) {
+            self.focused_task_id_opt = task_id_opt;
+            self.focused_task_updates.push(task_id_opt);
+        }
+    }
+
+    fn task(name: &str, id: u128, now: DateTime<Local>) -> TaskHandle {
+        TaskHandle::with_identity(name, Uuid::from_u128(id), now)
+            .expect("test task creation must succeed")
+    }
+
+    #[test]
+    fn project作成は次の業務日境界を算出できない場合に副作用なくerrorを返す() {
+        let local_datetime = chrono::NaiveDate::MAX
+            .and_hms_opt(6, 0, 0)
+            .expect("maximum date at 06:00 must be valid");
+        let now = Local
+            .from_local_datetime(&local_datetime)
+            .single()
+            .expect("maximum local date at 06:00 must be unambiguous");
+        let unused_id = Uuid::from_u128(100);
+        let mut context = FixedIdentityProjectCommandContext::new(now, [unused_id]);
+        let command = Command::Action(CommandAction::NewProject {
+            kind: CommandKind::NewProject,
+            canonical_name: "新",
+            name: "project".to_string(),
+            estimated_minutes: Some(30),
+        });
+
+        let actual = handle_project_command(&command, &mut context);
+
+        assert_eq!(
+            actual,
+            Err(ApplicationError::SubjectiveDateOutOfRange {
+                operation: "next_business_day_start",
+                datetime: now,
+            })
+        );
+        assert!(context.created_task_inputs.is_empty());
+        assert!(context.created_task_attr_names.is_empty());
+        assert_eq!(context.next_ids, [unused_id]);
+        assert_eq!(context.focused_task_id_opt, None);
+        assert!(context.focused_task_updates.is_empty());
+    }
+
+    #[test]
+    fn splitはcontextが供給するidentityで子taskを生成する() {
+        let now = Local.with_ymd_and_hms(2026, 8, 19, 12, 34, 56).unwrap();
+        let child_id = Uuid::from_u128(101);
+        let root = task("root", 1, now);
+        root.set_estimated_work_seconds(90 * 60).unwrap();
+        let mut context = FixedIdentityProjectCommandContext::new(now, [child_id]);
+        let mut display = DisplayRecorder::default();
+
+        let actual = execute_split(&mut context, &Some(root.clone()), "child", 30, &mut display)
+            .expect("split must succeed")
+            .expect("split must create a child");
+
+        let child = root.get_children().unwrap().remove(0);
+        assert_eq!(actual, child_id);
+        assert_eq!(child.get_id().unwrap(), child_id);
+        assert_eq!(child.get_create_time().unwrap(), now);
+        assert_eq!(context.focused_task_id(), Some(child_id));
+        assert!(context.next_ids.is_empty());
+    }
+
+    #[test]
+    fn sequentialは実生成順にcontextのidentityを消費して同じ時刻を共有する() {
+        let now = Local.with_ymd_and_hms(2026, 8, 19, 12, 34, 56).unwrap();
+        let creation_order_ids = [
+            Uuid::from_u128(201),
+            Uuid::from_u128(202),
+            Uuid::from_u128(203),
+        ];
+        let root = task("root", 1, now);
+        let mut context =
+            FixedIdentityProjectCommandContext::new(now, creation_order_ids.iter().copied());
+
+        let actual =
+            execute_breakdown_sequentially(&mut context, &Some(root.clone()), "step", 10, 1, 3, "")
+                .expect("sequential creation must succeed")
+                .expect("sequential creation must return the deepest child");
+
+        let step_3 = root.get_children().unwrap().remove(0);
+        let step_2 = step_3.get_children().unwrap().remove(0);
+        let step_1 = step_2.get_children().unwrap().remove(0);
+        for (task, expected_name, expected_id) in [
+            (&step_3, "step 3", creation_order_ids[0]),
+            (&step_2, "step 2", creation_order_ids[1]),
+            (&step_1, "step 1", creation_order_ids[2]),
+        ] {
+            assert_eq!(task.get_name().unwrap(), expected_name);
+            assert_eq!(task.get_id().unwrap(), expected_id);
+            assert_eq!(task.get_create_time().unwrap(), now);
+        }
+        assert_eq!(actual, creation_order_ids[2]);
+        assert_eq!(context.focused_task_id(), Some(creation_order_ids[2]));
+        assert!(context.next_ids.is_empty());
+    }
 }

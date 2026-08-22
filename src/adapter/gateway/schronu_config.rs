@@ -6,6 +6,8 @@ mod tests {
     use std::path::{Path, PathBuf};
     use uuid::Uuid;
 
+    use crate::entity::datetime::DEFAULT_END_OF_DAY_OFFSET_MINUTES;
+
     use super::{load_schronu_config, SchronuConfig};
 
     fn write_config(directory: &Path, contents: &str) -> PathBuf {
@@ -29,7 +31,10 @@ mod tests {
             actual.busy_time_slots_yaml_path,
             PathBuf::from("../Schronu-private/busy_time_slots.yaml")
         );
-        assert_eq!(actual.end_of_day_offset_minutes, 30);
+        assert_eq!(
+            actual.end_of_day_offset_minutes,
+            DEFAULT_END_OF_DAY_OFFSET_MINUTES
+        );
         assert_eq!(actual.calendar_blank_line_weekday, Weekday::Mon);
         assert!(actual.extrude_skip_weekdays.is_empty());
         assert_eq!(
@@ -138,6 +143,8 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use yaml_rust::{Yaml, YamlLoader};
 
+use crate::entity::datetime::DEFAULT_END_OF_DAY_OFFSET_MINUTES;
+
 const DEFAULT_OBSIDIAN_VAULT_NAME: &str = "Obsidian-Work";
 const DEFAULT_BUSY_TIME_SLOTS_YAML_PATH: &str = "../Schronu-private/busy_time_slots.yaml";
 
@@ -156,7 +163,7 @@ impl Default for SchronuConfig {
         Self {
             obsidian_vault_name: DEFAULT_OBSIDIAN_VAULT_NAME.to_string(),
             busy_time_slots_yaml_path: PathBuf::from(DEFAULT_BUSY_TIME_SLOTS_YAML_PATH),
-            end_of_day_offset_minutes: 30,
+            end_of_day_offset_minutes: DEFAULT_END_OF_DAY_OFFSET_MINUTES,
             calendar_blank_line_weekday: Weekday::Mon,
             extrude_skip_weekdays: vec![],
             default_deadline_time: NaiveTime::from_hms_opt(23, 59, 59).unwrap(),

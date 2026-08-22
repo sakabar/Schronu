@@ -45,7 +45,7 @@
 | TD-007 | P1 | 完了 | L | CLIとMCPでrepository transactionが別々に組み立てられている |
 | TD-008 | P1 | 完了 | M | CIがリポジトリ規約を満たさず、ビルド再現性も固定されていない |
 | TD-009 | P2 | 未着手 | L | entity層がYAML形式へ依存している |
-| TD-010 | P2 | 未着手 | L | 現在時刻、UUID、業務日境界がドメイン内部へ埋め込まれている |
+| TD-010 | P2 | 完了 | L | 現在時刻、UUID、業務日境界がドメイン内部へ埋め込まれている |
 | TD-011 | P2 | 完了 | L | MCPのschema、入力検証、Rust入力型、JSON出力が重複している |
 | TD-012 | P2 | 未着手 | L | flatten・pack・scheduleの再計算コストに性能上限が定義されていない |
 | TD-013 | P2 | 完了 | M | Spreadsheetの列契約が複数言語・文書へ重複している |
@@ -501,6 +501,9 @@
 
 - 優先度: `P2`
 - 概算規模: `L`
+- 完了日: 2026-08-21
+- 対応: entityのtask生成からsystem clockとUUID生成を除去し、operation固定時刻と注入可能なUUID生成器を持つ`TaskFactory`へ集約した。06:00の業務日境界、subjective date、日次終端offset、deadline bufferを`BusinessDateTimePolicy`へ統合し、曖昧・不存在local timeは情報付き`ApplicationError`として伝搬する。CLI、MCP、YAML decodeはoperation入口の同一時刻snapshotをreload、入力既定値、task生成へ共有する。
+- 検証: `cargo fmt --check`、`cargo clippy --locked --all-targets -- -D warnings`、`cargo test --locked`、`git diff --check`に成功した。testは813件成功、1件ignored、失敗0件(entity/applicationを含むlib 465件、CLI 331件、MCP 2件、MCP stdio 12件、Spreadsheet 3件)。entity production codeの`Local::now()` / `Uuid::new_v4()`と旧暗黙constructorが0件であることも静的監査した。
 
 #### 現状と根拠
 

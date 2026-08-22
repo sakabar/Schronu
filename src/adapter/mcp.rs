@@ -5,10 +5,11 @@ use crate::application::interface::TaskRepositoryTrait;
 use crate::application::repository_transaction::{
     run_repository_transaction, RepositoryTransactionError,
 };
-use crate::application::task_use_case::ApplicationError;
-use chrono::Local;
+use crate::application::task_use_case::{ApplicationError, TaskFactory};
+use chrono::{DateTime, Local};
 use serde_json::{json, Value};
 use std::path::PathBuf;
+use uuid::Uuid;
 
 mod error;
 mod handler;
@@ -90,10 +91,19 @@ impl<R: TaskRepositoryTrait> McpServer<R> {
     }
 
     fn run_transaction_and_call(&mut self, id: Value, request: &Value) -> Value {
+        self.run_transaction_and_call_at(id, request, Local::now())
+    }
+
+    fn run_transaction_and_call_at(
+        &mut self,
+        id: Value,
+        request: &Value,
+        operation_now: DateTime<Local>,
+    ) -> Value {
         let storage_directory = self.storage_directory.clone();
         match run_repository_transaction(
             &mut self.repository,
-            Local::now(),
+            operation_now,
             || match storage_directory {
                 Some(storage_directory) => {
                     StorageLock::acquire(&storage_directory, LockMode::Mcp).map(Some)
@@ -101,7 +111,15 @@ impl<R: TaskRepositoryTrait> McpServer<R> {
                 None => Ok(None),
             },
             |repository| {
-                let response = handler::call_tool(repository, id.clone(), request);
+                let mut next_id = Uuid::new_v4;
+                let mut factory = TaskFactory::new(operation_now, &mut next_id);
+                let response = handler::call_tool(
+                    repository,
+                    id.clone(),
+                    request,
+                    operation_now,
+                    &mut factory,
+                );
                 let should_save = handler::tool_call_succeeded_with_mutation(request, &response)
                     && repository
                         .has_pending_changes()

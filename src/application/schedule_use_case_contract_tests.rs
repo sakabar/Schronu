@@ -1,8 +1,8 @@
 use super::interface::{TaskRepositoryError, TaskRepositoryTrait};
 use super::schedule_use_case::get_schedule;
 use super::task_use_case::get_task;
-use crate::entity::task::{Status, TaskAttr, TaskHandle};
-use chrono::{DateTime, Duration, Local, TimeZone};
+use crate::entity::task::{Status, TaskHandle};
+use chrono::{DateTime, Duration, FixedOffset, Local, NaiveDate, TimeZone};
 use std::cell::Cell;
 use uuid::Uuid;
 
@@ -64,7 +64,7 @@ impl TaskRepositoryTrait for TestTaskRepository {
 
     fn get_defer_candidate_leaf_task_id(
         &mut self,
-        _recent_days: i64,
+        _recent_threshold: DateTime<Local>,
     ) -> Result<Option<Uuid>, crate::entity::task::TaskTreeError> {
         Ok(None)
     }
@@ -96,7 +96,7 @@ fn fixed_now() -> DateTime<Local> {
 
 #[test]
 fn get_scheduleは借用競合をtask_tree_errorとして返す() {
-    let task = TaskHandle::new("借用競合").unwrap();
+    let task = crate::test_support::new_task_handle("借用競合").unwrap();
     let repository = TestTaskRepository::new(vec![task.clone()], fixed_now());
 
     let actual = task.with_exclusive_data_borrow_for_test(|| get_schedule(&repository));
@@ -115,7 +115,7 @@ fn task_with_schedule(
     work_seconds: i64,
     priority: i64,
 ) -> TaskHandle {
-    let task = TaskHandle::new(name).unwrap();
+    let task = crate::test_support::new_task_handle(name).unwrap();
     task.sync_clock(start).unwrap();
     task.set_start_time(start).unwrap();
     task.set_estimated_work_seconds(work_seconds).unwrap();
@@ -193,10 +193,99 @@ fn get_schedule_i64最小値付近でも優先度の高いtaskを先に配置す
 }
 
 #[test]
+fn get_scheduleは候補の次業務日開始計算不能を伝搬しtaskを変更しない() {
+    let local_datetime = NaiveDate::MAX.and_hms_opt(6, 0, 0).unwrap();
+    let out_of_range_start = DateTime::<Local>::from_naive_utc_and_offset(
+        local_datetime,
+        FixedOffset::east_opt(0).unwrap(),
+    );
+    let first = task_with_schedule("範囲外1", out_of_range_start, 15 * 60, 1);
+    let second = task_with_schedule("範囲外2", out_of_range_start, 15 * 60, 2);
+    let repository =
+        TestTaskRepository::new(vec![first.clone(), second.clone()], out_of_range_start);
+    let original_views = repository
+        .projects
+        .iter()
+        .map(|task| {
+            get_task(&repository, task.get_id().unwrap())
+                .unwrap()
+                .unwrap()
+        })
+        .collect::<Vec<_>>();
+    let original_revisions = [
+        first.get_persistent_mutation_revision().unwrap(),
+        second.get_persistent_mutation_revision().unwrap(),
+    ];
+
+    let actual = get_schedule(&repository);
+
+    assert_eq!(
+        actual,
+        Err(
+            super::task_use_case::ApplicationError::SubjectiveDateOutOfRange {
+                operation: "next_business_day_start",
+                datetime: out_of_range_start,
+            }
+        )
+    );
+    assert_eq!(
+        repository
+            .projects
+            .iter()
+            .map(|task| get_task(&repository, task.get_id().unwrap())
+                .unwrap()
+                .unwrap())
+            .collect::<Vec<_>>(),
+        original_views
+    );
+    assert_eq!(
+        [
+            first.get_persistent_mutation_revision().unwrap(),
+            second.get_persistent_mutation_revision().unwrap(),
+        ],
+        original_revisions
+    );
+    assert_eq!(repository.save_count.get(), 0);
+}
+
+#[test]
+fn get_scheduleは複数の日時errorからuuid順先頭候補を決定的に返す() {
+    let lower_id_datetime = DateTime::<Local>::from_naive_utc_and_offset(
+        NaiveDate::MAX.and_hms_opt(6, 0, 0).unwrap(),
+        FixedOffset::east_opt(0).unwrap(),
+    );
+    let higher_id_datetime = DateTime::<Local>::from_naive_utc_and_offset(
+        NaiveDate::MAX.and_hms_opt(7, 0, 0).unwrap(),
+        FixedOffset::east_opt(0).unwrap(),
+    );
+    let lower_id = Uuid::from_u128(1);
+    let higher_id = Uuid::from_u128(2);
+    let lower_id_task = TaskHandle::with_identity("低UUID", lower_id, fixed_now()).unwrap();
+    lower_id_task.sync_clock(lower_id_datetime).unwrap();
+    lower_id_task.set_start_time(lower_id_datetime).unwrap();
+    lower_id_task.set_estimated_work_seconds(15 * 60).unwrap();
+    let higher_id_task = TaskHandle::with_identity("高UUID", higher_id, fixed_now()).unwrap();
+    higher_id_task.sync_clock(higher_id_datetime).unwrap();
+    higher_id_task.set_start_time(higher_id_datetime).unwrap();
+    higher_id_task.set_estimated_work_seconds(15 * 60).unwrap();
+    let repository = TestTaskRepository::new(vec![higher_id_task, lower_id_task], fixed_now());
+    let expected = Err(
+        super::task_use_case::ApplicationError::SubjectiveDateOutOfRange {
+            operation: "next_business_day_start",
+            datetime: lower_id_datetime,
+        },
+    );
+
+    for _ in 0..64 {
+        assert_eq!(get_schedule(&repository), expected);
+    }
+}
+
+#[test]
 fn get_schedule_pending解除後に子を配置し親をその後へ置く() {
     let now = fixed_now();
     let parent = task_with_schedule("親", now, 0, 5);
-    let mut child_attr = TaskAttr::new("子");
+    let mut child_attr = crate::test_support::new_task_attr("子");
     child_attr.set_estimated_work_seconds(15 * 60);
     child_attr.set_start_time(now);
     let child = parent.create_as_last_child(child_attr);
