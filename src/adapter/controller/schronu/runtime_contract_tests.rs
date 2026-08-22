@@ -3638,6 +3638,22 @@ fn runtime外部ioとoutcome調停は共通境界に集約する() {
     }
 
     let runtime_source = include_str!("runtime.rs");
+    let outcome_application_source = runtime_source
+        .split_once("\nfn apply_command_outcome(")
+        .expect("runtime must define the shared outcome application boundary")
+        .1
+        .split_once("\nenum OutcomeApplicationMode")
+        .expect("outcome application boundary must remain bounded")
+        .0;
+    for expected_dispatch in [
+        "ExternalRequest::OpenFocusedLink => execute_open_link(&focused_task_opt)?",
+        "ExternalRequest::OpenObsidianRootSearch => {\n                execute_open_obsidian_root_task_search_with_config(&focused_task_opt, config)?\n            }",
+    ] {
+        assert!(
+            outcome_application_source.contains(expected_dispatch),
+            "external request must retain its runtime dispatch: {expected_dispatch}"
+        );
+    }
     assert!(
         !runtime_source.contains("\nfn execute_handler_outcome("),
         "the superseded outcome coordinator must be removed"
