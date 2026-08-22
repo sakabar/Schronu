@@ -33,7 +33,8 @@
 - privateな`CommandContext`を既存5 context traitの合成境界として定義し、`CliCommandContext`がrepository、free-time、TaskFactory、focus、設定を提供する。
 - `CommandOutcome`は`DisplayModel`、外部I/O要求、`FocusChange`を返す。runtimeは要求の適用だけを担当する。
 - `DisplayModel`を`Message`、`Tree`、`TaskList`、`Calendar`、`Band`、`Focus`、`Pack`、`Flatten`、`Sequence`で構成する。
-- `DisplayFragment`と`DisplayRecorder`は最終的に削除する。flush、ANSI、writer固有改行はrenderer内部の責務とする。
+- `DisplayFragment`と`DisplayRecorder`は最終的に削除する。ANSIとwriter固有改行はrenderer内部の責務とする。
+- privateな`RenderMode::{Flushed, Unflushed}`をrenderer APIへ渡す。runtimeはnon-interactiveのnon-`Noop`を`Flushed`、interactiveを`Unflushed`として選び、rendererが実際のflushを行う。`DisplayModel`にはflush指定を含めない。
 - `view.rs`はtyped row・集計値・alert状態を生成し、rendererが既存文字列へ変換する。
 - `Verify`のread-only repository検査と外部URL起動はruntimeに残すが、成功・error表示は意味的model経由にする。
 
