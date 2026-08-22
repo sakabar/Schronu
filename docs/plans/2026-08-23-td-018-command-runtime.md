@@ -31,7 +31,7 @@
 
 - `handler::handle_command`を全通常commandの統合入口にする。
 - privateな`CommandContext`を既存5 context traitの合成境界として定義し、`CliCommandContext`がrepository、free-time、TaskFactory、focus、設定を提供する。
-- `CommandOutcome`は`DisplayModel`、外部I/O要求、`FocusChange`を返す。runtimeは要求の適用だけを担当する。
+- `CommandOutcome`は`DisplayModel`、外部I/O要求、`FocusChange`を返す。既存の`FocusRequest`は`FocusChange::{Keep, Clear, Set(Uuid), SelectionMode(FocusSelection)}`へ置換し、runtimeは要求の適用だけを担当する。
 - `HandlerError`は`Parse(CommandParseError)`と`Application(ApplicationError)`として原因情報を保持する。runtimeは両者をvariantを潰さず対応する`CommandError`へ変換する。`Output`と`ExternalOpen`のerrorはruntimeが所有する。
 - `DisplayModel`を`Message`、`Tree`、`TaskList`、`Calendar`、`Band`、`Focus`、`Pack`、`Flatten`、`Sequence`で構成する。
 - `DisplayFragment`と`DisplayRecorder`は最終的に削除する。ANSIとwriter固有改行はrenderer内部の責務とする。
@@ -46,12 +46,12 @@
 | 1 | `Docs: TD-018の実装計画を記録する` | baseline、private interface、commit境界を記録 | なし | full suite | 全品質ゲート |
 | 2 | `Test: Handler所有権を挙動契約で固定する` | runtime source文字列依存を、typed commandとfake contextによるdispatch検証へ置換 | 1 | handler、runtime | 対象test後に全品質ゲート |
 | 3 | `Test: Renderer error契約を挙動検証へ置換する` | source検査をerror modelからの出力・I/O error検証へ置換 | 2 | renderer | 対象test後に全品質ゲート |
-| 4 | `Test: Runtime調停契約を挙動検証へ置換する` | outcome、flush、broken pipe、external request、focus適用をtraceで固定 | 3 | runtime | 対象test後に全品質ゲート |
+| 4 | `Test: Runtime調停契約を挙動検証へ置換する` | outcome、flush、broken pipe、external request、`FocusChange`の4 variant適用をtraceで固定 | 3 | runtime | 対象test後に全品質ゲート |
 | 5 | `Test: Interactive共通経路を挙動検証へ置換する` | interactive/non-interactiveが同じparser・handlerを通ることを固定 | 4 | interactive、runtime | 対象test後に全品質ゲート |
 | 6 | `Refactor: CLI表示計算をview moduleへ移す` | tree/list/calendar/band/focus builderと計算helperを`view.rs`へ機械移動 | 5 | runtime 291件 | 対象test後に全品質ゲート |
 | 7 | `Refactor: CLI command contextを別moduleへ移す` | context実装、日時解釈、command mutation helperを`command_context.rs`へ機械移動 | 6 | handler、runtime | 対象test後に全品質ゲート |
 | 8 | `Test: CLI handler統合経路を追加する` | `handle_command`未実装を理由にRed。全通常commandが1入口で処理される契約 | 7 | handler | 期待した1理由のRedを確認してtestだけcommit |
-| 9 | `CLI: composite command contextを実装する` | `CommandContext`、`CliCommandContext`、`HandlerError`を導入し、旧経路と併存させる | 8 | handler | 対象test後に全品質ゲート |
+| 9 | `CLI: composite command contextを実装する` | `CommandContext`、`CliCommandContext`、`HandlerError`、`FocusChange`を導入し、旧経路と併存させる | 8 | handler | 対象test後に全品質ゲート |
 | 10 | `CLI: Runtimeをhandler統合入口へ切り替える` | runtimeの全通常commandを`handle_command`経由へ切り替え、legacy dispatchは到達不能な旧実装として残す | 9 | handler、runtime | 対象test後に全品質ゲート |
 | 11 | `CLI: legacy command dispatchを除去する` | handler統合入口への切替後にlegacy dispatchを削除する | 10 | handler、runtime | 対象test後に全品質ゲート |
 | 12 | `Test: 意味的message modelを追加する` | plain/info/warn/critical/errorと複数messageのRed contract | 11 | renderer | 期待した1理由のRedを確認してtestだけcommit |
