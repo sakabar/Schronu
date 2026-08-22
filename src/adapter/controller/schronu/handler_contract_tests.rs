@@ -45,6 +45,23 @@ fn runtime_product_dispatch_source() -> &'static str {
         .0
 }
 
+fn handler_product_source() -> &'static str {
+    include_str!("handler.rs")
+        .split_once("#[cfg(test)]")
+        .expect("handler product source must precede its test-only code")
+        .0
+}
+
+fn finish_placement_handler_source() -> &'static str {
+    handler_product_source()
+        .split_once("pub(super) fn handle_finish_placement_command(")
+        .expect("handler must retain finish and placement dispatch")
+        .1
+        .split_once("fn report_result")
+        .expect("finish and placement dispatch must remain bounded by result reporting")
+        .0
+}
+
 fn runtime_fallback_source() -> &'static str {
     include_str!("runtime.rs")
         .split_once("fn execute_with_config(")
@@ -231,28 +248,23 @@ fn handler_has_no_runtime_or_external_io_dependency_and_no_command_reconstructio
         Some(FocusRequest::LowestPriority { recent_days: 7 })
     );
 
-    let handler_source = include_str!("handler.rs");
-    let imports = handler_source
-        .split_once("#[derive(Clone, Copy, Debug, Eq, PartialEq)]")
-        .expect("handler imports must precede its first product type")
-        .0;
-    for forbidden_import in [
+    let product_source = handler_product_source();
+    for forbidden_dependency_or_reconstruction in [
         "super::runtime",
         "termion",
+        "termion::",
         "std::env",
+        "std::env::",
         "webbrowser",
+        "webbrowser::",
         "TaskRepository",
         "run_repository_transaction",
+        "legacy_tokens",
+        "canonical_command",
     ] {
         assert!(
-            !imports.contains(forbidden_import),
-            "handler imports must not depend on runtime or external I/O: {forbidden_import}"
-        );
-    }
-    for forbidden_reconstruction in ["legacy_tokens", "canonical_command"] {
-        assert!(
-            !handler_source.contains(forbidden_reconstruction),
-            "handler must not reconstruct parsed commands: {forbidden_reconstruction}"
+            !product_source.contains(forbidden_dependency_or_reconstruction),
+            "handler product source must not depend on runtime, concrete repository I/O, or reconstruct parsed commands: {forbidden_dependency_or_reconstruction}"
         );
     }
 }
@@ -1135,6 +1147,17 @@ fn 完了と配置commandはtyped値のままhandlerが所有してruntime_fallb
             "flatten_tasks_",
         ],
     );
+    for forbidden_reconstruction in [
+        "split_whitespace",
+        "values[",
+        "values.get(",
+        "canonical_name",
+    ] {
+        assert!(
+            !finish_placement_handler_source().contains(forbidden_reconstruction),
+            "finish and placement handler must consume typed fields without reconstruction: {forbidden_reconstruction}"
+        );
+    }
 }
 
 #[derive(Default)]
