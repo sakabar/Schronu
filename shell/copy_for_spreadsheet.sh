@@ -100,11 +100,11 @@ cat - | awk '
             fi
         elif (( scheduled_start_minutes >= 360 )); then
             sleep_minutes=420
-        elif ! is_next_calendar_date \
-            "${previous_scheduled_date}" \
-            "${scheduled_date}" \
-            "${previous_scheduled_weekday}" \
-            "${scheduled_weekday}"; then
+        elif (( previous_scheduled_start_minutes < 360 )) || ! is_next_calendar_date \
+                "${previous_scheduled_date}" \
+                "${scheduled_date}" \
+                "${previous_scheduled_weekday}" \
+                "${scheduled_weekday}"; then
             sleep_minutes=420
         fi
     fi
