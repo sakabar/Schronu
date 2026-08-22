@@ -51,7 +51,7 @@
 | 6 | `Refactor: CLI表示計算をview moduleへ移す` | tree/list/calendar/band/focus builderと計算helperを`view.rs`へ機械移動 | 5 | runtime 291件 | 対象test後に全品質ゲート |
 | 7 | `Refactor: CLI command contextを別moduleへ移す` | context実装、日時解釈、command mutation helperを`command_context.rs`へ機械移動 | 6 | handler、runtime | 対象test後に全品質ゲート |
 | 8 | `Test: CLI handler統合経路を追加する` | `handle_command`未実装を理由にRed。全通常commandが1入口で処理される契約 | 7 | handler | 期待した1理由のRedを確認してtestだけcommit |
-| 9 | `CLI: composite command contextを実装する` | `CommandContext`、`CliCommandContext`、`HandlerError`、`FocusChange`を導入し、旧経路と併存させる | 8 | handler | 対象test後に全品質ゲート |
+| 9 | `CLI: composite command contextを実装する` | `CommandContext`、`CliCommandContext`、`HandlerError`、`FocusChange`と`handle_command`を実装してcommit 8をGreen化する。runtimeのlegacy dispatchは変更せず併存させる | 8 | handler | 対象test後に全品質ゲート |
 | 10 | `CLI: Runtimeをhandler統合入口へ切り替える` | runtimeの全通常commandを`handle_command`経由へ切り替え、legacy dispatchは到達不能な旧実装として残す | 9 | handler、runtime | 対象test後に全品質ゲート |
 | 11 | `CLI: legacy command dispatchを除去する` | handler統合入口への切替後にlegacy dispatchを削除する | 10 | handler、runtime | 対象test後に全品質ゲート |
 | 12 | `Test: 意味的message modelを追加する` | plain/info/warn/critical/errorと複数messageのRed contract | 11 | renderer | 期待した1理由のRedを確認してtestだけcommit |
