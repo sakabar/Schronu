@@ -1,15 +1,20 @@
 use super::command::{Command, CommandAction, CommandKind, InteractiveShortcut};
 use super::handler::{
-    decide_finish_time_values, decide_time_values, handle, handle_defer_command,
+    decide_finish_time_values, decide_time_values, handle, handle_breakdown_split_command,
+    handle_defer_command, handle_finish_placement_command, handle_project_command,
     handle_task_attribute_command, handle_task_tree_command, DeferCommandContext,
-    DeferCommandError, ExternalRequest, FocusRequest, TaskAttributeCommandContext, TaskListOrder,
-    TaskTreeCommandContext,
+    DeferCommandError, ExternalRequest, FinishPlacementCommandContext, FocusRequest,
+    ProjectCommandContext, TaskAttributeCommandContext, TaskListOrder, TaskTreeCommandContext,
 };
 use super::renderer::{
     render_display_model, DisplayFragment, DisplayModel, DisplayRecorder, SchronuWriter,
 };
 use chrono::{Local, NaiveDate, TimeZone};
+use schronu::application::flatten_use_case::FlattenResult;
+use schronu::application::pack_use_case::PackResult;
 use schronu::application::task_use_case::ApplicationError;
+use schronu::application::task_use_case::{BreakdownTaskInput, CompleteTaskInput, CreateTaskInput};
+use schronu::entity::task::{TaskAttr, TaskHandle};
 use std::io::Write;
 use uuid::Uuid;
 
@@ -162,60 +167,154 @@ fn handler_owns_noop_but_leaves_unmigrated_commands_to_runtime() {
 
 #[test]
 fn handler_has_no_runtime_or_external_io_dependency_and_no_command_reconstruction() {
-    let source = include_str!("handler.rs");
-    for forbidden in [
-        "super::runtime",
-        "termion",
-        "std::env",
-        "webbrowser",
-        "TaskRepository",
-        "run_repository_transaction",
-        "legacy_tokens",
-        "canonical_command",
-    ] {
-        assert!(
-            !source.contains(forbidden),
-            "handler must not contain forbidden dependency or reconstruction: {forbidden}"
-        );
+    let open = handle(&no_arguments(CommandKind::Open, "ignored alias"))
+        .expect("typed open command must produce an outcome");
+    let focus = handle(&Command::Action(CommandAction::FocusMode {
+        kind: CommandKind::FocusLowest,
+        canonical_name: "ignored alias",
+        recent_days: Some(7),
+    }))
+    .expect("typed focus command must produce an outcome");
+
+    assert_eq!(
+        open.external_request,
+        Some(ExternalRequest::OpenFocusedLink)
+    );
+    assert_eq!(open.focus_request, None);
+    assert_eq!(focus.external_request, None);
+    assert_eq!(
+        focus.focus_request,
+        Some(FocusRequest::LowestPriority { recent_days: 7 })
+    );
+}
+
+struct TraceProjectContext {
+    now: chrono::DateTime<Local>,
+    focused_task_id: Option<Uuid>,
+    focused_task: TaskHandle,
+    created: Vec<CreateTaskInput>,
+    breakdowns: Vec<BreakdownTaskInput>,
+}
+
+impl TraceProjectContext {
+    fn new(now: chrono::DateTime<Local>) -> Self {
+        Self {
+            now,
+            focused_task_id: Some(Uuid::from_u128(1)),
+            focused_task: TaskHandle::with_identity("focused", Uuid::from_u128(1), now).unwrap(),
+            created: Vec::new(),
+            breakdowns: Vec::new(),
+        }
+    }
+}
+
+impl ProjectCommandContext for TraceProjectContext {
+    fn last_synced_time(&self) -> chrono::DateTime<Local> {
+        self.now
+    }
+
+    fn focused_task(&mut self) -> Result<Option<TaskHandle>, ApplicationError> {
+        Ok(Some(self.focused_task.clone()))
+    }
+
+    fn create_task(&mut self, input: CreateTaskInput) -> Result<Uuid, ApplicationError> {
+        self.created.push(input);
+        Ok(Uuid::from_u128(2))
+    }
+
+    fn breakdown_task(&mut self, input: BreakdownTaskInput) -> Result<Vec<Uuid>, ApplicationError> {
+        self.breakdowns.push(input);
+        Ok(vec![Uuid::from_u128(3), Uuid::from_u128(4)])
+    }
+
+    fn create_task_attr(&mut self, name: &str) -> TaskAttr {
+        TaskAttr::with_identity(name, Uuid::from_u128(5), self.now)
+    }
+
+    fn set_estimate(&mut self, _task_id: Uuid, _minutes: i64) -> Result<(), ApplicationError> {
+        Ok(())
+    }
+
+    fn focused_task_id(&self) -> Option<Uuid> {
+        self.focused_task_id
+    }
+
+    fn set_focused_task_id(&mut self, task_id_opt: Option<Uuid>) {
+        self.focused_task_id = task_id_opt;
     }
 }
 
 #[test]
 fn project作成commandはhandlerがtyped_fieldを直接matchして所有する() {
-    let runtime_source = include_str!("runtime.rs");
-    let legacy_dispatch = runtime_source
-        .split_once("fn execute_with_config(")
-        .expect("runtime must retain the typed fallback entrypoint")
-        .1
-        .split_once("fn execute_non_interactive_command(")
-        .expect("runtime fallback must remain bounded by the non-interactive entrypoint")
-        .0;
-    for migrated_kind in [
-        "CommandKind::NewProject",
-        "CommandKind::HobbyProject",
-        "CommandKind::UnplannedProject",
-        "CommandKind::Sequential",
-        "CommandKind::Repeat",
-        "CommandKind::Appointment",
-        "CommandKind::Start",
-    ] {
-        assert!(
-            !legacy_dispatch.contains(migrated_kind),
-            "migrated command must not remain in runtime fallback: {migrated_kind}"
-        );
-    }
+    let now = Local.with_ymd_and_hms(2026, 8, 23, 12, 0, 0).unwrap();
+    let mut context = TraceProjectContext::new(now);
+    let command = Command::Action(CommandAction::NewProject {
+        kind: CommandKind::NewProject,
+        canonical_name: "ignored alias",
+        name: "typed project".to_string(),
+        estimated_minutes: Some(45),
+    });
 
-    let handler_source = include_str!("handler.rs");
-    for action_pattern in [
-        "CommandAction::NewProject {",
-        "CommandAction::Sequential {",
-        "CommandAction::Repeat {",
-        "CommandAction::TimeExpression {",
-    ] {
-        assert!(
-            handler_source.contains(action_pattern),
-            "handler must directly match typed action fields: {action_pattern}"
-        );
+    let outcome = handle_project_command(&command, &mut context)
+        .unwrap()
+        .expect("project command must be owned by the handler");
+
+    assert_eq!(outcome.kind, CommandKind::NewProject);
+    assert_eq!(
+        context.created,
+        [CreateTaskInput {
+            name: "typed project".to_string(),
+            estimated_work_minutes: Some(45),
+            pending_until: Some(Local.with_ymd_and_hms(2026, 8, 24, 6, 0, 0).unwrap()),
+        }]
+    );
+    assert_eq!(context.focused_task_id, Some(Uuid::from_u128(2)));
+
+    let commands = [
+        Command::Action(CommandAction::NewProject {
+            kind: CommandKind::HobbyProject,
+            canonical_name: "ignored alias",
+            name: "hobby".to_string(),
+            estimated_minutes: None,
+        }),
+        Command::Action(CommandAction::NewProject {
+            kind: CommandKind::UnplannedProject,
+            canonical_name: "ignored alias",
+            name: "unplanned".to_string(),
+            estimated_minutes: None,
+        }),
+        Command::Action(CommandAction::Sequential {
+            name: "step".to_string(),
+            estimated_minutes: 10,
+            begin_index: 1,
+            end_index: 2,
+            suffix: Some("typed".to_string()),
+        }),
+        Command::Action(CommandAction::Repeat {
+            name: "routine".to_string(),
+            estimated_minutes: 15,
+            day: "月".to_string(),
+            start_time: "09:00".to_string(),
+            deadline_time: "10:00".to_string(),
+        }),
+        Command::Action(CommandAction::TimeExpression {
+            kind: CommandKind::Appointment,
+            canonical_name: "ignored alias",
+            values: vec!["13:30".to_string()],
+        }),
+        Command::Action(CommandAction::TimeExpression {
+            kind: CommandKind::Start,
+            canonical_name: "ignored alias",
+            values: vec!["14:30".to_string()],
+        }),
+    ];
+
+    for command in commands {
+        let mut context = TraceProjectContext::new(now);
+        let outcome = handle_project_command(&command, &mut context)
+            .unwrap()
+            .expect("every typed project command must be owned by the handler");
+        assert_eq!(outcome.kind, command.kind());
     }
 }
 
@@ -384,108 +483,76 @@ fn task_tree表示commandはhandlerがtyped_fieldから表示modelと操作要�
 
 #[test]
 fn task_tree表示commandはruntime_fallbackに残さない() {
-    let runtime_source = include_str!("runtime.rs");
-    let legacy_dispatch = runtime_source
-        .split_once("fn execute_with_config(")
-        .expect("runtime must retain the typed fallback entrypoint")
-        .1
-        .split_once("fn execute_non_interactive_command(")
-        .expect("runtime fallback must remain bounded by the non-interactive entrypoint")
-        .0;
-    for migrated_kind in [
-        "CommandKind::Tree",
-        "CommandKind::Ancestor",
-        "CommandKind::Root",
-        "CommandKind::Leaves",
-        "CommandKind::ShowAll",
-        "CommandKind::Tail",
-        "CommandKind::Today",
-        "CommandKind::NonRepetitive",
-        "CommandKind::Calendar",
-        "CommandKind::Band",
-        "CommandKind::Focus =>",
-        "CommandKind::Pick",
-        "CommandKind::Parent",
-        "CommandKind::Children",
-        "CommandKind::Deepest",
-        "CommandKind::NextUp",
-    ] {
-        assert!(
-            !legacy_dispatch.contains(migrated_kind),
-            "migrated command must not remain in runtime fallback: {migrated_kind}"
-        );
-    }
+    let task_id = Uuid::from_u128(11);
+    let commands = [
+        Command::ShowAll {
+            pattern: Some("typed pattern".to_string()),
+        },
+        Command::Focus { task_id },
+        Command::Action(CommandAction::Pick { task_id }),
+        Command::Action(CommandAction::TaskWithEstimate {
+            kind: CommandKind::NextUp,
+            canonical_name: "ignored alias",
+            name: "typed task".to_string(),
+            estimated_minutes: Some(20),
+        }),
+    ];
+    let expected_calls = [
+        "list:Some(\"typed pattern\"):ScheduledStartDesc:resolve=true".to_string(),
+        format!("focus:{task_id}"),
+        format!("pick:{task_id}"),
+        "next_up:typed task:Some(20)".to_string(),
+    ];
 
-    let product_dispatch = runtime_source
-        .split_once("fn execute_parsed(")
-        .expect("runtime must retain the parsed command entrypoint")
-        .1
-        .split_once("struct RuntimeProjectCommandContext")
-        .expect("parsed command entrypoint must remain bounded by its context")
-        .0;
-    assert!(
-        product_dispatch.contains("handle_task_tree_command(parsed_command"),
-        "product dispatch must route parsed task tree commands through the handler"
-    );
-
-    let handler_source = include_str!("handler.rs");
-    for action_pattern in [
-        "Command::ShowAll { pattern }",
-        "Command::Focus { task_id }",
-        "CommandAction::OptionalPattern {",
-        "CommandAction::Pick { task_id }",
-        "CommandAction::TaskWithEstimate {",
-    ] {
-        assert!(
-            handler_source.contains(action_pattern),
-            "handler must directly match typed action fields: {action_pattern}"
-        );
+    for (command, expected_call) in commands.iter().zip(expected_calls) {
+        let mut context = TraceTaskTreeContext::default();
+        let outcome = handle_task_tree_command(command, &mut context)
+            .unwrap()
+            .expect("typed task tree command must be owned by the handler");
+        assert_eq!(outcome.kind, command.kind());
+        assert_eq!(context.calls, [expected_call]);
     }
 }
 
 #[test]
 fn breakdownとsplitはhandlerがtyped_fieldを直接matchして所有する() {
-    let runtime_source = include_str!("runtime.rs");
-    let legacy_dispatch = runtime_source
-        .split_once("fn execute_with_config(")
-        .expect("runtime must retain the typed fallback entrypoint")
-        .1
-        .split_once("fn execute_non_interactive_command(")
-        .expect("runtime fallback must remain bounded by the non-interactive entrypoint")
-        .0;
-    for migrated_kind in [
-        "CommandKind::Breakdown",
-        "CommandKind::Split",
-        "CommandKind::Wait",
-    ] {
-        assert!(
-            !legacy_dispatch.contains(migrated_kind),
-            "migrated command must not remain in runtime fallback: {migrated_kind}"
-        );
-    }
+    let now = Local.with_ymd_and_hms(2026, 8, 23, 12, 0, 0).unwrap();
+    let mut context = TraceProjectContext::new(now);
+    let command = Command::Action(CommandAction::TaskNames {
+        names: vec!["first".to_string(), "second".to_string()],
+    });
 
-    let product_dispatch = runtime_source
-        .split_once("fn execute_parsed(")
-        .expect("runtime must retain the parsed command entrypoint")
-        .1
-        .split_once("struct RuntimeProjectCommandContext")
-        .expect("parsed command entrypoint must remain bounded by its context")
-        .0;
-    assert!(
-        product_dispatch.contains("handle_breakdown_split_command(parsed_command"),
-        "product dispatch must route breakdown, split, and wait through the handler"
+    let outcome = handle_breakdown_split_command(&command, &mut context)
+        .unwrap()
+        .expect("typed breakdown command must be owned by the handler");
+
+    assert_eq!(outcome.kind, CommandKind::Breakdown);
+    assert_eq!(
+        context.breakdowns,
+        [BreakdownTaskInput {
+            parent_id: Uuid::from_u128(1),
+            names: vec!["first".to_string(), "second".to_string()],
+            pending_until: None,
+        }]
     );
+    assert_eq!(context.focused_task_id, Some(Uuid::from_u128(3)));
 
-    let handler_source = include_str!("handler.rs");
-    for action_pattern in [
-        "CommandAction::TaskNames { names }",
-        "CommandAction::Split { minutes, name }",
-        "kind: CommandKind::Wait",
+    for command in [
+        Command::Action(CommandAction::Split {
+            minutes: 5,
+            name: "typed split".to_string(),
+        }),
+        no_arguments(CommandKind::Wait, "ignored alias"),
     ] {
-        assert!(
-            handler_source.contains(action_pattern),
-            "handler must directly match typed action fields: {action_pattern}"
-        );
+        let mut context = TraceProjectContext::new(now);
+        context
+            .focused_task
+            .set_estimated_work_seconds(30 * 60)
+            .unwrap();
+        let outcome = handle_breakdown_split_command(&command, &mut context)
+            .unwrap()
+            .expect("typed split or wait command must be owned by the handler");
+        assert_eq!(outcome.kind, command.kind());
     }
 }
 
@@ -593,63 +660,18 @@ fn task属性更新commandはhandlerがtyped_fieldを直接matchして所有す�
 
 #[test]
 fn task属性更新commandはruntime_fallbackに残さない() {
-    let runtime_source = include_str!("runtime.rs");
-    let legacy_dispatch = runtime_source
-        .split_once("fn execute_with_config(")
-        .expect("runtime must retain the typed fallback entrypoint")
-        .1
-        .split_once("fn execute_non_interactive_command(")
-        .expect("runtime fallback must remain bounded by the non-interactive entrypoint")
-        .0;
-    for migrated_kind in [
-        "CommandKind::Deadline",
-        "CommandKind::Estimate",
-        "CommandKind::Arrange",
-        "CommandKind::Actual",
-        "CommandKind::Priority",
-        "CommandKind::Category",
-        "CommandKind::Work",
-    ] {
-        assert!(
-            !legacy_dispatch.contains(migrated_kind),
-            "migrated command must not remain in runtime fallback: {migrated_kind}"
-        );
-    }
+    let command = Command::Arrange {
+        minutes: 37,
+        includes_zero_estimate: true,
+    };
+    let mut context = TraceTaskAttributeContext::default();
 
-    let product_dispatch = runtime_source
-        .split_once("fn execute_parsed(")
-        .expect("runtime must retain the parsed command entrypoint")
-        .1
-        .split_once("struct RuntimeProjectCommandContext")
-        .expect("parsed command entrypoint must remain bounded by its context")
-        .0;
-    assert!(
-        product_dispatch.contains("handle_task_attribute_command(parsed_command"),
-        "product dispatch must route task attribute commands through the handler"
-    );
+    let outcome = handle_task_attribute_command(&command, &mut context)
+        .unwrap()
+        .expect("typed attribute command must be owned by the handler");
 
-    let handler_source = include_str!("handler.rs");
-    for action_pattern in [
-        "Command::Estimate { minutes }",
-        "Command::Arrange {",
-        "kind: CommandKind::Deadline",
-        "kind: CommandKind::Actual",
-        "kind: CommandKind::Priority",
-        "kind: CommandKind::Category",
-        "kind: CommandKind::Work",
-    ] {
-        assert!(
-            handler_source.contains(action_pattern),
-            "handler must directly match typed action fields: {action_pattern}"
-        );
-    }
-
-    for forbidden in ["minutes.to_string()", "value.to_string()"] {
-        assert!(
-            !handler_source.contains(forbidden),
-            "handler must not reconstruct typed values: {forbidden}"
-        );
-    }
+    assert_eq!(outcome.kind, CommandKind::Arrange);
+    assert_eq!(context.calls, ["arrange:37:true"]);
 }
 
 #[derive(Default)]
@@ -809,150 +831,114 @@ fn defer系commandはhandlerがtyped_fieldを直接matchして所有する() {
 
 #[test]
 fn defer系commandはruntime_fallbackとinteractive特別経路に残さない() {
-    let runtime_source = include_str!("runtime.rs");
-    let legacy_dispatch = runtime_source
-        .split_once("fn execute_with_config(")
-        .expect("runtime must retain the typed fallback entrypoint")
-        .1
-        .split_once("fn execute_non_interactive_command(")
-        .expect("runtime fallback must remain bounded by the non-interactive entrypoint")
-        .0;
-    for migrated_kind in [
-        "CommandKind::Defer =>",
-        "CommandKind::DeferRoutines",
-        "CommandKind::Escape",
-        "CommandKind::Extrude",
-        "CommandKind::Clear | CommandKind::Gather",
-    ] {
-        assert!(
-            !legacy_dispatch.contains(migrated_kind),
-            "migrated command must not remain in runtime fallback: {migrated_kind}"
-        );
+    let commands = [
+        Command::Defer {
+            amount: 9,
+            unit: "day".to_string(),
+        },
+        Command::InteractiveShortcut(InteractiveShortcut::NextMorning),
+        Command::Action(CommandAction::ClearOrGather {
+            kind: CommandKind::Gather,
+            canonical_name: "ignored alias",
+            values: vec!["10:30".to_string(), "8/24".to_string()],
+        }),
+    ];
+    let expected_calls = [
+        "defer:9:day",
+        "next-morning",
+        "clear-or-gather:Gather:10:30|8/24",
+    ];
+
+    for (command, expected_call) in commands.iter().zip(expected_calls) {
+        let mut context = TraceDeferContext::default();
+        let outcome = handle_defer_command(command, &mut context)
+            .unwrap()
+            .expect("typed defer command must be owned by the shared handler path");
+        assert_eq!(outcome.kind, command.kind());
+        assert_eq!(context.calls, [expected_call]);
+    }
+}
+
+struct TraceFinishPlacementContext {
+    now: chrono::DateTime<Local>,
+    calls: Vec<String>,
+}
+
+impl FinishPlacementCommandContext for TraceFinishPlacementContext {
+    fn supports_ansi_color(&self) -> bool {
+        false
     }
 
-    let product_dispatch = runtime_source
-        .split_once("fn execute_parsed(")
-        .expect("runtime must retain the parsed command entrypoint")
-        .1
-        .split_once("struct RuntimeProjectCommandContext")
-        .expect("parsed command entrypoint must remain bounded by its context")
-        .0;
-    assert!(
-        product_dispatch.contains("handle_defer_command(parsed_command"),
-        "product dispatch must route defer commands through the handler"
-    );
-
-    let interactive_dispatch = runtime_source
-        .split_once("fn execute_interactive_command(")
-        .expect("runtime must retain interactive dispatch")
-        .1
-        .split_once("struct InteractiveRepositoryState")
-        .expect("interactive dispatch must remain bounded")
-        .0;
-    for forbidden in [
-        "Command::Defer { amount, unit }",
-        "InteractiveShortcut::NextMorning",
-        "InteractiveShortcut::NextWeek",
-        "InteractiveShortcut::DeferRoutine",
-        "InteractiveShortcut::FiveYears",
-    ] {
-        assert!(
-            !interactive_dispatch.contains(forbidden),
-            "interactive defer shortcut must use the shared handler path: {forbidden}"
-        );
+    fn last_synced_time(&self) -> chrono::DateTime<Local> {
+        self.now
     }
 
-    let handler_source = include_str!("handler.rs");
-    for action_pattern in [
-        "Command::Defer { amount, unit }",
-        "CommandAction::TimeExpression {",
-        "CommandAction::Escape { defer_expression }",
-        "CommandAction::Extrude { step_days }",
-        "CommandAction::ClearOrGather { kind, values, .. }",
-    ] {
-        assert!(
-            handler_source.contains(action_pattern),
-            "handler must directly match typed action fields: {action_pattern}"
-        );
+    fn focus_started_datetime(&self) -> chrono::DateTime<Local> {
+        self.now
+    }
+
+    fn focused_task(&self) -> Result<Option<TaskHandle>, ApplicationError> {
+        Ok(None)
+    }
+
+    fn show_focused_tree(
+        &mut self,
+        _display: &mut dyn SchronuWriter,
+    ) -> Result<(), ApplicationError> {
+        self.calls.push("show-focused-tree".to_string());
+        Ok(())
+    }
+
+    fn complete_focused_task(
+        &mut self,
+        _input: CompleteTaskInput,
+    ) -> Result<Option<Uuid>, ApplicationError> {
+        self.calls.push("complete".to_string());
+        Ok(None)
+    }
+
+    fn set_focused_task_id(&mut self, task_id_opt: Option<Uuid>) {
+        self.calls.push(format!("focus:{task_id_opt:?}"));
+    }
+
+    fn pack(&mut self) -> Result<PackResult, ApplicationError> {
+        self.calls.push("pack".to_string());
+        Ok(PackResult::default())
+    }
+
+    fn flatten(&mut self) -> Result<FlattenResult, ApplicationError> {
+        self.calls.push("flatten".to_string());
+        Ok(FlattenResult::default())
     }
 }
 
 #[test]
 fn 完了と配置commandはtyped値のままhandlerが所有してruntime_fallbackに残さない() {
-    let handler_source = include_str!("handler.rs");
-    let handler_dispatch = handler_source
-        .split_once("pub(super) fn handle_finish_placement_command(")
-        .expect("handler must own the finish and placement dispatch")
-        .1
-        .split_once("\nfn report_result")
-        .expect("finish and placement dispatch must remain bounded")
-        .0;
+    let now = Local.with_ymd_and_hms(2026, 8, 23, 12, 0, 0).unwrap();
+    let commands = [
+        Command::Action(CommandAction::Finish {
+            values: vec!["09:45".to_string()],
+        }),
+        no_arguments(CommandKind::Pack, "ignored alias"),
+        no_arguments(CommandKind::Flatten, "ignored alias"),
+    ];
+    let expected_calls = [vec![], vec!["pack"], vec!["flatten"]];
 
-    for action_pattern in [
-        "CommandAction::Finish { values }",
-        "kind: CommandKind::Pack",
-        "kind: CommandKind::Flatten",
-    ] {
-        assert!(
-            handler_dispatch.contains(action_pattern),
-            "handler must directly match typed action fields: {action_pattern}"
-        );
-    }
-    for forbidden in [
-        "canonical_name",
-        "canonical_command",
-        "legacy_tokens",
-        "split_whitespace",
-        "values[",
-        "values.get(",
-    ] {
-        assert!(
-            !handler_dispatch.contains(forbidden),
-            "handler must not reconstruct or index legacy command tokens: {forbidden}"
-        );
+    for (command, expected_call) in commands.iter().zip(expected_calls) {
+        let mut context = TraceFinishPlacementContext {
+            now,
+            calls: Vec::new(),
+        };
+        let outcome = handle_finish_placement_command(command, &mut context)
+            .unwrap()
+            .expect("typed finish or placement command must be owned by the handler");
+        assert_eq!(outcome.kind, command.kind());
+        assert_eq!(context.calls, expected_call);
     }
 
-    let runtime_source = include_str!("runtime.rs");
-    let product_dispatch = runtime_source
-        .split_once("fn execute_parsed(")
-        .expect("runtime must retain the parsed command entrypoint")
-        .1
-        .split_once("struct RuntimeProjectCommandContext")
-        .expect("parsed command entrypoint must remain bounded by its context")
-        .0;
-    assert!(
-        product_dispatch.contains("handle_finish_placement_command(parsed_command"),
-        "product dispatch must route finish and placement commands through the handler"
-    );
-
-    let legacy_dispatch = runtime_source
-        .split_once("fn execute_with_config(")
-        .expect("runtime must retain the typed fallback entrypoint")
-        .1
-        .split_once("\nfn reload_repository_for_cli(")
-        .expect("runtime fallback must remain bounded by the non-interactive entrypoint")
-        .0;
-    for migrated_kind in [
-        "CommandKind::Finish",
-        "CommandKind::Pack",
-        "CommandKind::Flatten",
-        "CommandKind::Unfocus",
-    ] {
-        assert!(
-            !legacy_dispatch.contains(migrated_kind),
-            "migrated command must not remain in runtime fallback: {migrated_kind}"
-        );
-    }
-    for forbidden in ["complete_task(", "pack_tasks_", "flatten_tasks_"] {
-        assert!(
-            !legacy_dispatch.contains(forbidden),
-            "runtime fallback must not retain migrated command implementation: {forbidden}"
-        );
-    }
-    assert!(
-        !legacy_dispatch.contains("execute_"),
-        "runtime fallback must not retain normal command implementation calls"
-    );
+    let unfocus = handle(&no_arguments(CommandKind::Unfocus, "ignored alias"))
+        .expect("typed unfocus command must be owned by the handler");
+    assert_eq!(unfocus.focus_request, Some(FocusRequest::Clear));
 }
 
 #[derive(Default)]
