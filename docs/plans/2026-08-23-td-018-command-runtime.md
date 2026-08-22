@@ -72,9 +72,9 @@
 | 27 | `CLI: Focus表示を意味的modelへ移す` | focus計算をviewへ、terminal描画をrendererへ移す | 26 | interactive画面契約 | 対象test後に全品質ゲート |
 | 28 | `Test: Interactive再描画判断をtyped commandで固定する` | raw先頭文字ではなく`CommandKind`で再描画を判断するRed contract | 27 | interactive | 期待した1理由のRedを確認してtestだけcommit |
 | 29 | `CLI: Interactive再描画をtyped commandへ統一する` | command文字列の再解析・先頭文字判定を除去 | 28 | interactive、runtime | 対象test後に全品質ゲート |
-| 30 | `Test: Runtime責務境界を固定する` | context、日時解釈、mutation、表示計算、raw recorderがruntimeにないことをRedで固定 | 29 | runtime architecture | 期待した1理由のRedを確認してtestだけcommit |
-| 31 | `Test: Verify表示を意味的modelで固定する` | Verifyの成功・error表示を意味的modelから生成するRed contract | 30 | renderer、runtime | 期待した1理由のRedを確認してtestだけcommit |
-| 32 | `CLI: Verify表示を意味的modelへ移す` | Verifyのread-only検査をruntimeに保ち、成功・error表示をrenderer経由へ統一 | 31 | renderer、runtime | 対象test後に全品質ゲート |
+| 30 | `Test: Verify表示を意味的modelで固定する` | Verifyの成功・error表示を意味的modelから生成するRed contract | 29 | renderer、runtime | 期待した1理由のRedを確認してtestだけcommit |
+| 31 | `CLI: Verify表示を意味的modelへ移す` | Verifyのread-only検査をruntimeに保ち、成功・error表示をrenderer経由へ統一 | 30 | renderer、runtime | 対象test後に全品質ゲート |
+| 32 | `Test: Runtime責務境界を固定する` | context、日時解釈、mutation、表示計算、raw recorderがruntimeにないことをRedで固定 | 31 | runtime architecture | 期待した1理由のRedを確認してtestだけcommit |
 | 33 | `Refactor: legacy display recorderを除去する` | legacy fragment/recorderと不要helper/importだけを挙動変更なしで削除し、runtimeをI/O調停へ限定 | 32 | CLI全test | 対象test後に全品質ゲート |
 | 34 | `Docs: CLI command境界を説明する` | READMEへparser→handler→view model→renderer→runtimeの責務を記録 | 33 | full suite | 全品質ゲート |
 | 35 | `Docs: TD-018の完了を記録する` | backlogへ完了日、実測件数、runtime行数、品質ゲートを記録 | 34 | full suite | 全品質ゲート |
