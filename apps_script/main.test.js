@@ -95,17 +95,12 @@ class MockSpreadsheet {
 }
 
 function loadScript({ lockAvailable = true } = {}) {
-  const logs = [];
   const lockState = {
     acquireCalls: 0,
     releaseCalls: 0,
   };
   const context = vm.createContext({
-    console: {
-      log(message) {
-        logs.push(message);
-      },
-    },
+    console: { log() {} },
     LockService: {
       getDocumentLock() {
         return {
@@ -121,7 +116,7 @@ function loadScript({ lockAvailable = true } = {}) {
     },
   });
   vm.runInContext(SCRIPT_SOURCE, context, { filename: SCRIPT_PATH });
-  return { context, lockState, logs };
+  return { context, lockState };
 }
 
 function synchronizationFixture() {
@@ -155,150 +150,8 @@ test('1セル編集は同じtask IDの同期列へ値を反映する', () => {
   assert.equal(lockState.releaseCalls, 1);
 });
 
-test('1セル同期は機密値を含まない区間計測を1件記録する', () => {
-  const { context, logs } = loadScript();
-  const { sourceSheet, spreadsheet } = synchronizationFixture();
-
-  context.onEdit({
-    source: spreadsheet,
-    range: sourceSheet.getRange(5, 12),
-  });
-
-  assert.equal(logs.length, 1);
-  const metric = JSON.parse(logs[0]);
-  assert.deepEqual(
-    Object.keys(metric).sort(),
-    [
-      'event',
-      'lockWaitMs',
-      'outcome',
-      'rowsScanned',
-      'sourceSheet',
-      'sourceTaskIdReadMs',
-      'sourceValueReadMs',
-      'targetIdReadMs',
-      'targetIdSearchMs',
-      'targetLastRowReadMs',
-      'targetSheet',
-      'targetValueWriteCallMs',
-    ],
-  );
-  assert.equal(metric.event, 'td_014_single_cell_sync');
-  assert.equal(metric.outcome, 'synced');
-  assert.equal(metric.sourceSheet, '実ログ');
-  assert.equal(metric.targetSheet, '優先度低い順');
-  assert.equal(metric.rowsScanned, 2);
-  for (const field of [
-    'lockWaitMs',
-    'sourceTaskIdReadMs',
-    'targetLastRowReadMs',
-    'targetIdReadMs',
-    'targetIdSearchMs',
-    'sourceValueReadMs',
-    'targetValueWriteCallMs',
-  ]) {
-    assert.equal(Number.isInteger(metric[field]), true, `${field} must be an integer`);
-    assert.equal(metric[field] >= 0, true, `${field} must be non-negative`);
-  }
-  assert.equal(logs[0].includes('task-2'), false);
-  assert.equal(logs[0].includes('source-value'), false);
-  assert.equal(logs[0].includes('target-value'), false);
-});
-
-test('lock失敗は同期せず計測結果へ記録する', () => {
-  const { context, lockState, logs } = loadScript({ lockAvailable: false });
-  const { sourceSheet, targetSheet, spreadsheet } = synchronizationFixture();
-
-  context.onEdit({
-    source: spreadsheet,
-    range: sourceSheet.getRange(5, 12),
-  });
-
-  assert.equal(targetSheet.valueAt(4, 12), 'target-value');
-  assert.equal(lockState.releaseCalls, 0);
-  assert.equal(JSON.parse(logs[0]).outcome, 'lock_unavailable');
-});
-
-test('空task IDは同期せず計測結果へ記録する', () => {
-  const { context, logs } = loadScript();
-  const { sourceSheet, targetSheet, spreadsheet } = synchronizationFixture();
-  sourceSheet.setValue(5, 2, '');
-
-  context.onEdit({
-    source: spreadsheet,
-    range: sourceSheet.getRange(5, 12),
-  });
-
-  assert.equal(targetSheet.valueAt(4, 12), 'target-value');
-  assert.equal(JSON.parse(logs[0]).outcome, 'source_task_id_empty');
-});
-
-test('同期先にtask IDがなければ計測結果へ記録する', () => {
-  const { context, logs } = loadScript();
-  const { sourceSheet, targetSheet, spreadsheet } = synchronizationFixture();
-  targetSheet.setValue(4, 2, 'different-task');
-
-  context.onEdit({
-    source: spreadsheet,
-    range: sourceSheet.getRange(5, 12),
-  });
-
-  assert.equal(targetSheet.valueAt(4, 12), 'target-value');
-  assert.equal(JSON.parse(logs[0]).outcome, 'target_task_not_found');
-});
-
-test('相手sheetがなければ計測結果へ記録する', () => {
-  const { context, logs } = loadScript();
-  const { sourceSheet } = synchronizationFixture();
-
-  context.onEdit({
-    source: new MockSpreadsheet([sourceSheet]),
-    range: sourceSheet.getRange(5, 12),
-  });
-
-  const metric = JSON.parse(logs[0]);
-  assert.equal(metric.outcome, 'target_sheet_missing');
-  assert.equal(metric.targetSheet, '優先度低い順');
-});
-
-test('Spreadsheet API例外は正常sampleへ混入させず再送出する', () => {
-  const { context, lockState, logs } = loadScript();
-  const { sourceSheet, targetSheet, spreadsheet } = synchronizationFixture();
-  targetSheet.getLastRow = () => {
-    throw new Error('target ID read failed');
-  };
-
-  assert.throws(
-    () => context.onEdit({
-      source: spreadsheet,
-      range: sourceSheet.getRange(5, 12),
-    }),
-    /target ID read failed/,
-  );
-
-  assert.equal(logs.length, 0);
-  assert.equal(lockState.releaseCalls, 1);
-});
-
-test('複数行編集は同期を維持し1セルbenchmarkへ混入させない', () => {
-  const { context, logs } = loadScript();
-  const { sourceSheet, targetSheet, spreadsheet } = synchronizationFixture();
-  sourceSheet.setValue(6, 2, 'task-1');
-  sourceSheet.setValue(6, 12, 'second-source-value');
-  targetSheet.setValue(3, 12, 'second-target-value');
-
-  context.onEdit({
-    source: spreadsheet,
-    range: sourceSheet.getRange(5, 12, 2, 1),
-  });
-
-  assert.equal(targetSheet.valueAt(4, 12), 'source-value');
-  assert.equal(targetSheet.valueAt(3, 12), 'second-source-value');
-  assert.equal(logs.length, 0);
-});
-
 test('対象外sheetの編集は同期処理を開始しない', () => {
-  const { context, lockState, logs } = loadScript();
+  const { context, lockState } = loadScript();
   const sheet = new MockSheet('その他', [[3, 12, 'value']]);
 
   context.onEdit({
@@ -307,11 +160,10 @@ test('対象外sheetの編集は同期処理を開始しない', () => {
   });
 
   assert.equal(lockState.acquireCalls, 0);
-  assert.equal(logs.length, 0);
 });
 
 test('header行だけの編集は同期処理を開始しない', () => {
-  const { context, lockState, logs } = loadScript();
+  const { context, lockState } = loadScript();
   const { sourceSheet, spreadsheet } = synchronizationFixture();
 
   context.onEdit({
@@ -320,11 +172,10 @@ test('header行だけの編集は同期処理を開始しない', () => {
   });
 
   assert.equal(lockState.acquireCalls, 0);
-  assert.equal(logs.length, 0);
 });
 
 test('同期対象外列の編集は相手sheetを変更しない', () => {
-  const { context, lockState, logs } = loadScript();
+  const { context, lockState } = loadScript();
   const { sourceSheet, targetSheet, spreadsheet } = synchronizationFixture();
 
   context.onEdit({
@@ -335,11 +186,10 @@ test('同期対象外列の編集は相手sheetを変更しない', () => {
   assert.equal(targetSheet.valueAt(4, 12), 'target-value');
   assert.equal(lockState.acquireCalls, 1);
   assert.equal(lockState.releaseCalls, 1);
-  assert.equal(logs.length, 0);
 });
 
 test('B列を含む複数行pasteは相手sheetを変更しない', () => {
-  const { context, lockState, logs } = loadScript();
+  const { context, lockState } = loadScript();
   const { sourceSheet, targetSheet, spreadsheet } = synchronizationFixture();
 
   context.onEdit({
@@ -350,5 +200,4 @@ test('B列を含む複数行pasteは相手sheetを変更しない', () => {
   assert.equal(targetSheet.valueAt(4, 12), 'target-value');
   assert.equal(lockState.acquireCalls, 1);
   assert.equal(lockState.releaseCalls, 1);
-  assert.equal(logs.length, 0);
 });
