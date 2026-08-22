@@ -3723,6 +3723,39 @@ fn runtime外部ioとoutcome調停は共通境界に集約する() {
 }
 
 #[test]
+fn external_requestは副作用なしでtyped_targetへ解決する() {
+    let root = new_test_task_handle("root https://example.com/tasks/42").unwrap();
+    let root_id = root.get_id().unwrap();
+    let focused_task = root.create_as_last_child(new_test_task_attr("focused task"));
+    let focused_task_opt = Some(focused_task);
+    let mut config = SchronuConfig::default();
+    config.obsidian_vault_name = "Work & Notes".to_string();
+
+    assert_eq!(
+        resolve_external_request(
+            ExternalRequest::OpenFocusedLink,
+            &focused_task_opt,
+            &config,
+        )
+        .unwrap(),
+        Some(ResolvedExternalRequest::BrowserUrl(
+            "https://example.com/tasks/42".to_string()
+        ))
+    );
+    assert_eq!(
+        resolve_external_request(
+            ExternalRequest::OpenObsidianRootSearch,
+            &focused_task_opt,
+            &config,
+        )
+        .unwrap(),
+        Some(ResolvedExternalRequest::ObsidianUrl(format!(
+            "obsidian://search?vault=Work%20%26%20Notes&query={root_id}"
+        )))
+    );
+}
+
+#[test]
 fn external_open_errorはtargetとsource_reason_chainを保持する() {
     let error = external_open_error("test-target", std::io::Error::other("test-reason"));
 
