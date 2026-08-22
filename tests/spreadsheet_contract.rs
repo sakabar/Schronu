@@ -182,11 +182,14 @@ fn copy_for_spreadsheetは新しい業務日の最初のp列へ睡眠420分を�
     for (index, copied_row) in copied_rows.iter().enumerate() {
         let fields: Vec<_> = copied_row.split('\t').collect();
         let row = index + 3;
-        let sleep_minutes = if sleep_ranks.contains(&fields[0]) {
-            "+420"
-        } else {
-            ""
-        };
+        let is_sleep_row = sleep_ranks.contains(&fields[0]);
+        let sleep_minutes = if is_sleep_row { "+420" } else { "" };
+        assert_eq!(
+            fields[13],
+            if is_sleep_row { "F" } else { "" },
+            "unexpected N flag for rank {}",
+            fields[0]
+        );
         assert_eq!(
             fields[15],
             format!(
