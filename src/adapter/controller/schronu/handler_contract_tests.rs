@@ -30,6 +30,33 @@ fn maximum_local_business_day_start() -> chrono::DateTime<Local> {
         .expect("maximum local date at 06:00 must be unambiguous")
 }
 
+fn function_source<'a>(source: &'a str, signature: &str) -> &'a str {
+    let function_start = source
+        .find(signature)
+        .expect("function signature must exist in source");
+    let body_start = function_start
+        + source[function_start..]
+            .find('{')
+            .expect("function body must start after its signature");
+    let mut brace_depth = 0;
+
+    for (offset, character) in source[body_start..].char_indices() {
+        match character {
+            '{' => brace_depth += 1,
+            '}' => {
+                brace_depth -= 1;
+                if brace_depth == 0 {
+                    let function_end = body_start + offset + character.len_utf8();
+                    return &source[body_start..function_end];
+                }
+            }
+            _ => {}
+        }
+    }
+
+    panic!("function body must have balanced braces");
+}
+
 #[test]
 fn 明日と曜日の日時指定は次の業務日境界errorを保持する() {
     let now = maximum_local_business_day_start();
@@ -925,13 +952,7 @@ fn 完了と配置commandはtyped値のままhandlerが所有してruntime_fallb
         "product dispatch must route finish and placement commands through the handler"
     );
 
-    let legacy_dispatch = runtime_source
-        .split_once("fn execute_with_config(")
-        .expect("runtime must retain the typed fallback entrypoint")
-        .1
-        .split_once("\n#[cfg(test)]\nfn execute_show_all_command_for_test(")
-        .expect("runtime fallback must remain bounded by the non-interactive entrypoint")
-        .0;
+    let legacy_dispatch = function_source(runtime_source, "fn execute_with_config(");
     for migrated_kind in [
         "CommandKind::Finish",
         "CommandKind::Pack",
