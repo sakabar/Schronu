@@ -1,6 +1,6 @@
 use super::renderer::{
-    format_spreadsheet_task_row, render_display_model, DisplayFragment, DisplayRecorder,
-    ErrorCapturingWriter, SchronuWriter, SpreadsheetTaskRow,
+    format_spreadsheet_task_row, render_display_model, DisplayFragment, DisplayModel,
+    DisplayRecorder, ErrorCapturingWriter, SchronuWriter, SpreadsheetTaskRow,
 };
 use std::io::Write;
 
@@ -132,14 +132,16 @@ fn error_capturing_writerは最初のio_errorを保持して後続fragmentを処
 
 #[test]
 fn command_errorはdisplay_modelを経由してrendererへ渡される() {
-    let runtime_source = include_str!("runtime.rs");
+    let error = std::io::Error::other("command failed");
+    let display = DisplayModel::newline(format!("[Error] {error}"));
+    let mut writer = TraceWriter::default();
 
-    assert!(
-        !runtime_source.contains("fn write_command_error("),
-        "command errorの直接writer helperを残さないこと"
-    );
-    assert!(
-        runtime_source.contains("DisplayModel::newline(format!(\"[Error] {error}\"))"),
-        "command errorをDisplayModelへ変換すること"
-    );
+    render_display_model(&mut writer, &display).unwrap();
+
+    assert_eq!(writer.operations, ["newline:[Error] command failed"]);
+
+    let mut broken_writer = AlwaysFailWriter;
+    let error = render_display_model(&mut broken_writer, &display).unwrap_err();
+    assert_eq!(error.kind(), std::io::ErrorKind::InvalidData);
+    assert_eq!(error.to_string(), "later newline failure");
 }
