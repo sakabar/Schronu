@@ -351,7 +351,7 @@ fn execute_command_for_test(
     command: &str,
 ) -> CommandTestResult {
     let mut task_repository = TestTaskRepository::new(task, now);
-    let mut free_time_manager = TestFreeTimeManager;
+    let mut free_time_manager = TestFreeTimeManager::default();
     let mut focused_task_id_opt = focused_task_id_opt;
     let mut stdout = TestWriter::new();
 
@@ -496,7 +496,17 @@ impl TaskRepositoryTrait for TestTaskRepository {
 }
 
 #[cfg(test)]
-struct TestFreeTimeManager;
+#[derive(Default)]
+struct TestFreeTimeManager {
+    free_minutes: i64,
+}
+
+#[cfg(test)]
+impl TestFreeTimeManager {
+    fn with_free_minutes(free_minutes: i64) -> Self {
+        Self { free_minutes }
+    }
+}
 
 #[cfg(test)]
 trait FixtureTaskOptionExt {
@@ -536,7 +546,7 @@ impl FixtureTaskOptionExt for Option<TaskHandle> {
 #[cfg(test)]
 impl FreeTimeManagerTrait for TestFreeTimeManager {
     fn get_free_minutes(&mut self, _start: &DateTime<Local>, _end: &DateTime<Local>) -> i64 {
-        0
+        self.free_minutes
     }
 
     fn get_busy_minutes(&mut self, _start: &DateTime<Local>, _end: &DateTime<Local>) -> i64 {
@@ -602,37 +612,6 @@ impl FreeTimeManagerTrait for TestFreeTimeManagerWithLoadError {
             None,
             std::io::Error::new(std::io::ErrorKind::InvalidData, "test load error"),
         ))
-    }
-}
-
-#[cfg(test)]
-struct TestFreeTimeManagerWithFreeMinutes {
-    free_minutes: i64,
-}
-
-#[cfg(test)]
-impl FreeTimeManagerTrait for TestFreeTimeManagerWithFreeMinutes {
-    fn get_free_minutes(&mut self, _start: &DateTime<Local>, _end: &DateTime<Local>) -> i64 {
-        self.free_minutes
-    }
-
-    fn get_busy_minutes(&mut self, _start: &DateTime<Local>, _end: &DateTime<Local>) -> i64 {
-        0
-    }
-
-    fn register_busy_time_slot(
-        &mut self,
-        _start: &DateTime<Local>,
-        _end: &DateTime<Local>,
-    ) -> Result<(), BusyTimeSlotRegistrationError> {
-        Ok(())
-    }
-
-    fn load_busy_time_slots_from_file(
-        &mut self,
-        _busy_time_slots_file_path: &str,
-    ) -> Result<(), BusyTimeSlotLoadError> {
-        Ok(())
     }
 }
 
@@ -709,7 +688,7 @@ fn execute_sequential_command(command: &str) -> (TaskHandle, Option<Uuid>) {
     let task = new_test_task_handle("親タスク").unwrap();
     let task_id = task.get_id().unwrap();
     let mut task_repository = TestTaskRepository::new(task.clone(), now);
-    let mut free_time_manager = TestFreeTimeManager;
+    let mut free_time_manager = TestFreeTimeManager::default();
     let mut focused_task_id_opt = Some(task_id);
     let mut stdout = TestWriter::new();
 
@@ -746,7 +725,7 @@ fn execute_arrange_command(command: &str) -> TaskHandle {
 
     let task_id = task.get_id().unwrap();
     let mut task_repository = TestTaskRepository::new(task.clone(), now);
-    let mut free_time_manager = TestFreeTimeManager;
+    let mut free_time_manager = TestFreeTimeManager::default();
     let mut focused_task_id_opt = Some(task_id);
     let mut stdout = TestWriter::new();
 
@@ -830,7 +809,7 @@ fn execute_show_all_command_for_test(
     task: TaskHandle,
 ) -> String {
     let mut task_repository = TestTaskRepository::new(task, now);
-    let mut free_time_manager = TestFreeTimeManager;
+    let mut free_time_manager = TestFreeTimeManager::default();
     let mut focused_task_id_opt = None;
     let mut stdout = TestWriter::new();
 
@@ -865,7 +844,7 @@ fn execute_calendar_command_with_ansi_color_for_test(
     supports_ansi_color: bool,
 ) -> String {
     let mut task_repository = TestTaskRepository::new(task, now);
-    let mut free_time_manager = TestFreeTimeManagerWithFreeMinutes { free_minutes };
+    let mut free_time_manager = TestFreeTimeManager::with_free_minutes(free_minutes);
     let mut focused_task_id_opt = None;
     let mut stdout = if supports_ansi_color {
         TestWriter::new()

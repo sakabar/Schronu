@@ -145,7 +145,7 @@ fn test_show_task_list_mmddの日時errorを伝搬して表示と状態を変更
     let task_id = task.get_id().unwrap();
     let original_snapshot = task.snapshot().unwrap();
     let mut task_repository = TestTaskRepository::new(task, now);
-    let mut free_time_manager = TestFreeTimeManager;
+    let mut free_time_manager = TestFreeTimeManager::default();
     let mut focused_task_id_opt = Some(task_id);
     let mut display = TestWriter::new();
     let mut next_id = || Uuid::nil();
@@ -185,7 +185,7 @@ fn test_show_task_listの不正な完全日付をerrorにして表示と状態�
     let task_id = task.get_id().unwrap();
     let original_snapshot = task.snapshot().unwrap();
     let mut task_repository = TestTaskRepository::new(task, now);
-    let mut free_time_manager = TestFreeTimeManager;
+    let mut free_time_manager = TestFreeTimeManager::default();
     let mut focused_task_id_opt = Some(task_id);
     let mut display = TestWriter::new();
     let mut next_id = || Uuid::nil();
@@ -593,7 +593,7 @@ fn test_execute_空_日付selectorの業務日計算不能を情報付きerror�
     let task_id = task.get_id().unwrap();
     let original_snapshot = task.snapshot().unwrap();
     let mut task_repository = TestTaskRepository::new(task, now);
-    let mut free_time_manager = TestFreeTimeManager;
+    let mut free_time_manager = TestFreeTimeManager::default();
     let mut focused_task_id_opt = Some(task_id);
     let mut stdout = TestWriter::new();
 
@@ -627,7 +627,7 @@ fn test_execute_空_mmddの翌年計算不能を情報付きerrorにして変更
     let task_id = task.get_id().unwrap();
     let original_snapshot = task.snapshot().unwrap();
     let mut task_repository = TestTaskRepository::new(task, now);
-    let mut free_time_manager = TestFreeTimeManager;
+    let mut free_time_manager = TestFreeTimeManager::default();
     let mut focused_task_id_opt = Some(task_id);
     let mut stdout = TestWriter::new();
 
@@ -697,7 +697,7 @@ fn test_execute_集_曜日selector範囲外を情報付きerrorにして変更�
     let task_id = task.get_id().unwrap();
     let original_snapshot = task.snapshot().unwrap();
     let mut task_repository = TestTaskRepository::new(task, now);
-    let mut free_time_manager = TestFreeTimeManager;
+    let mut free_time_manager = TestFreeTimeManager::default();
     let mut focused_task_id_opt = Some(task_id);
     let mut stdout = TestWriter::new();
 
@@ -828,7 +828,7 @@ fn test_execute_空と集_2引数の不正なcalendar時刻は変更せず拒否
         let task_id = task.get_id().unwrap();
         let original_snapshot = task.snapshot().unwrap();
         let mut task_repository = TestTaskRepository::new(task, now);
-        let mut free_time_manager = TestFreeTimeManager;
+        let mut free_time_manager = TestFreeTimeManager::default();
         let mut focused_task_id_opt = Some(task_id);
         let mut stdout = TestWriter::new();
 
@@ -857,7 +857,7 @@ fn test_execute_空と集_i64範囲外のminutesは変更せず拒否する() {
         let task_id = task.get_id().unwrap();
         let original_snapshot = task.snapshot().unwrap();
         let mut task_repository = TestTaskRepository::new(task, now);
-        let mut free_time_manager = TestFreeTimeManager;
+        let mut free_time_manager = TestFreeTimeManager::default();
         let mut focused_task_id_opt = Some(task_id);
         let mut stdout = TestWriter::new();
 
@@ -886,7 +886,7 @@ fn test_execute_空と集_minutesの日時範囲外を情報付きerrorにして
         let task_id = task.get_id().unwrap();
         let original_snapshot = task.snapshot().unwrap();
         let mut task_repository = TestTaskRepository::new(task, now);
-        let mut free_time_manager = TestFreeTimeManager;
+        let mut free_time_manager = TestFreeTimeManager::default();
         let mut focused_task_id_opt = Some(task_id);
         let mut stdout = TestWriter::new();
 
@@ -940,7 +940,7 @@ fn test_execute_pack_前倒し内容と集計を表示する() {
     task.set_orig_status(Status::Pending);
     let task_id = task.get_id().unwrap();
     let repository = TestTaskRepository::new(task, now);
-    let mut free_time_manager = TestFreeTimeManagerWithFreeMinutes { free_minutes: 120 };
+    let mut free_time_manager = TestFreeTimeManager::with_free_minutes(120);
     let mut stdout = TestWriter::new();
 
     execute_pack(&mut stdout, &repository, &mut free_time_manager);
@@ -959,7 +959,7 @@ fn test_execute_pack_候補なしを表示する() {
     let task = new_test_task_handle("対象外").unwrap();
     task.sync_clock(now);
     let repository = TestTaskRepository::new(task, now);
-    let mut free_time_manager = TestFreeTimeManagerWithFreeMinutes { free_minutes: 120 };
+    let mut free_time_manager = TestFreeTimeManager::with_free_minutes(120);
     let mut stdout = TestWriter::new();
 
     execute_pack(&mut stdout, &repository, &mut free_time_manager);
@@ -981,7 +981,7 @@ fn test_execute_pack_収まらない候補はスキップ件数だけを表示�
     task.set_pending_until(now + Duration::days(10));
     task.set_orig_status(Status::Pending);
     let repository = TestTaskRepository::new(task, now);
-    let mut free_time_manager = TestFreeTimeManagerWithFreeMinutes { free_minutes: 60 };
+    let mut free_time_manager = TestFreeTimeManager::with_free_minutes(60);
     let mut stdout = TestWriter::new();
 
     execute_pack(&mut stdout, &repository, &mut free_time_manager);
@@ -1003,7 +1003,7 @@ fn test_execute_詰とpackの両aliasで製品command経路を実行する() {
         task.set_pending_until(now + Duration::days(10));
         task.set_orig_status(Status::Pending);
         let mut repository = TestTaskRepository::new(task, now);
-        let mut free_time_manager = TestFreeTimeManagerWithFreeMinutes { free_minutes: 120 };
+        let mut free_time_manager = TestFreeTimeManager::with_free_minutes(120);
         let mut stdout = TestWriter::new();
         let mut focused_task_id_opt = None;
 
@@ -1032,9 +1032,7 @@ fn test_execute_表示コマンドはwriter固有の改行処理を保持する(
         task.set_pending_until(now);
         task.set_orig_status(Status::Pending);
         let mut task_repository = TestTaskRepository::new(task, now);
-        let mut free_time_manager = TestFreeTimeManagerWithFreeMinutes {
-            free_minutes: 10 * 60,
-        };
+        let mut free_time_manager = TestFreeTimeManager::with_free_minutes(10 * 60);
         let mut focused_task_id_opt = None;
         let mut stdout = TestWriter::new_with_newline_prefix("<reset>");
 
@@ -1067,7 +1065,7 @@ fn test_execute_改行出力の失敗を捕捉して後続出力を継続する(
     task.set_estimated_work_seconds(60 * 60);
     task.set_start_time(now);
     let mut task_repository = TestTaskRepository::new(task, now);
-    let mut free_time_manager = TestFreeTimeManager;
+    let mut free_time_manager = TestFreeTimeManager::default();
     let mut focused_task_id_opt = None;
     let mut stdout = FailingNewlineWriter::fail_once();
 
@@ -1108,7 +1106,7 @@ fn task_tree表示commandは製品経路でtyped_fieldと表示modelを反映す
     let matched_id = matched.get_id().unwrap();
     let other_id = other.get_id().unwrap();
     let mut task_repository = TestTaskRepository::new(root, now);
-    let mut free_time_manager = TestFreeTimeManager;
+    let mut free_time_manager = TestFreeTimeManager::default();
     let mut focused_task_id_opt = Some(root_id);
 
     let mut show_all_output = TestWriter::new();
@@ -1234,7 +1232,7 @@ fn task_tree表示commandは製品経路で必ず1回flushする() {
 
     for command in commands {
         let mut task_repository = TestTaskRepository::new(task.clone(), now);
-        let mut free_time_manager = TestFreeTimeManager;
+        let mut free_time_manager = TestFreeTimeManager::default();
         let mut focused_task_id_opt = Some(task_id);
         let mut stdout = FlushTrackingWriter::successful(true);
 
@@ -1260,7 +1258,7 @@ fn task_tree表示commandはflush_errorとbroken_pipeを製品経路で分類す
 
     let execute_with_error = |kind| {
         let mut task_repository = TestTaskRepository::new(task.clone(), now);
-        let mut free_time_manager = TestFreeTimeManager;
+        let mut free_time_manager = TestFreeTimeManager::default();
         let mut focused_task_id_opt = Some(task_id);
         let mut stdout = FlushTrackingWriter::failing(kind);
         let result = execute(
@@ -1295,7 +1293,7 @@ fn breakdownとsplitは製品経路で必ず1回flushする() {
         task.set_estimated_work_seconds(30 * 60);
         let task_id = task.get_id().unwrap();
         let mut task_repository = TestTaskRepository::new(task, now);
-        let mut free_time_manager = TestFreeTimeManager;
+        let mut free_time_manager = TestFreeTimeManager::default();
         let mut focused_task_id_opt = Some(task_id);
         let mut stdout = FlushTrackingWriter::successful(true);
 
@@ -1323,7 +1321,7 @@ fn breakdownとsplitはflush_errorとbroken_pipeを製品経路で分類する()
             task.set_estimated_work_seconds(30 * 60);
             let task_id = task.get_id().unwrap();
             let mut task_repository = TestTaskRepository::new(task, now);
-            let mut free_time_manager = TestFreeTimeManager;
+            let mut free_time_manager = TestFreeTimeManager::default();
             let mut focused_task_id_opt = Some(task_id);
             let mut stdout = FlushTrackingWriter::failing(kind);
             let result = execute(
@@ -1366,7 +1364,7 @@ fn task属性更新commandは製品経路で必ず1回flushする() {
         let task = new_test_task_handle("flush対象").unwrap();
         let task_id = task.get_id().unwrap();
         let mut task_repository = TestTaskRepository::new(task, now);
-        let mut free_time_manager = TestFreeTimeManager;
+        let mut free_time_manager = TestFreeTimeManager::default();
         let mut focused_task_id_opt = Some(task_id);
         let parsed = parse_command(command, ParseMode::NonInteractive).unwrap();
         let mut stdout = FlushTrackingWriter::successful(true);
@@ -1393,7 +1391,7 @@ fn task属性更新commandはflush_errorとbroken_pipeを製品経路で分類�
         let task = new_test_task_handle("flush error対象").unwrap();
         let task_id = task.get_id().unwrap();
         let mut task_repository = TestTaskRepository::new(task, now);
-        let mut free_time_manager = TestFreeTimeManager;
+        let mut free_time_manager = TestFreeTimeManager::default();
         let mut focused_task_id_opt = Some(task_id);
         let parsed = parse_command("予 15", ParseMode::NonInteractive).unwrap();
         let mut stdout = FlushTrackingWriter::failing(error_kind);
@@ -1438,7 +1436,7 @@ fn defer系の通常interactive_commandはflushしshortcutはflushしない() {
         let task = new_test_task_handle("通常commandのflush対象").unwrap();
         let task_id = task.get_id().unwrap();
         let mut task_repository = TestTaskRepository::new(task, now);
-        let mut free_time_manager = TestFreeTimeManager;
+        let mut free_time_manager = TestFreeTimeManager::default();
         let mut focused_task_id_opt = Some(task_id);
         let mut focus_selection_mode = FocusSelectionMode::Explicit;
         let mut stdout = FlushTrackingWriter::successful(true);
@@ -1462,7 +1460,7 @@ fn defer系の通常interactive_commandはflushしshortcutはflushしない() {
         let task = new_test_task_handle("shortcutのflush対象").unwrap();
         let task_id = task.get_id().unwrap();
         let mut task_repository = TestTaskRepository::new(task, now);
-        let mut free_time_manager = TestFreeTimeManager;
+        let mut free_time_manager = TestFreeTimeManager::default();
         let mut focused_task_id_opt = Some(task_id);
         let mut focus_selection_mode = FocusSelectionMode::Explicit;
         let mut stdout = FlushTrackingWriter::successful(true);
@@ -1494,7 +1492,7 @@ fn interactive低優先度modeは共通outcome経路でfocusと表示を更新�
     let mut task_repository = TestTaskRepository::new(root, now);
     task_repository.highest_priority_leaf_task_id_opt = Some(high_priority_task_id);
     task_repository.defer_candidate_leaf_task_id_opt = Some(low_priority_task_id);
-    let mut free_time_manager = TestFreeTimeManager;
+    let mut free_time_manager = TestFreeTimeManager::default();
     let mut focused_task_id_opt = Some(high_priority_task_id);
     let mut focus_selection_mode = FocusSelectionMode::HighestPriority;
     let mut stdout = FlushTrackingWriter::successful(true);
@@ -2560,7 +2558,7 @@ fn test_execute_deadline_翌朝計算不能を情報付きerrorにして状態�
     let task_id = task.get_id().unwrap();
     let original_snapshot = task.snapshot().unwrap();
     let mut task_repository = TestTaskRepository::new(task, now);
-    let mut free_time_manager = TestFreeTimeManager;
+    let mut free_time_manager = TestFreeTimeManager::default();
     let mut focused_task_id_opt = Some(task_id);
     let mut stdout = TestWriter::new();
 
@@ -3158,7 +3156,7 @@ fn test_execute_finish_引数なしは実作業時間を自動加算して現在
     task.set_actual_work_seconds(60);
     let task_id = task.get_id().unwrap();
     let mut task_repository = TestTaskRepository::new(task.clone(), now);
-    let mut free_time_manager = TestFreeTimeManager;
+    let mut free_time_manager = TestFreeTimeManager::default();
     let mut focused_task_id_opt = Some(task_id);
     let mut stdout = TestWriter::new();
 
@@ -3188,7 +3186,7 @@ fn test_execute_finish_今は実作業時間を自動加算せず現在時刻で
     task.set_actual_work_seconds(60);
     let task_id = task.get_id().unwrap();
     let mut task_repository = TestTaskRepository::new(task.clone(), now);
-    let mut free_time_manager = TestFreeTimeManager;
+    let mut free_time_manager = TestFreeTimeManager::default();
     let mut focused_task_id_opt = Some(task_id);
     let mut stdout = TestWriter::new();
 
@@ -3218,7 +3216,7 @@ fn test_execute_finish_時刻指定は実作業時間を自動加算せず指定
     task.set_actual_work_seconds(60);
     let task_id = task.get_id().unwrap();
     let mut task_repository = TestTaskRepository::new(task.clone(), now);
-    let mut free_time_manager = TestFreeTimeManager;
+    let mut free_time_manager = TestFreeTimeManager::default();
     let mut focused_task_id_opt = Some(task_id);
     let mut stdout = TestWriter::new();
 
@@ -3251,7 +3249,7 @@ fn test_execute_finish_秒つき時刻指定は指定秒で完了する() {
     task.set_actual_work_seconds(60);
     let task_id = task.get_id().unwrap();
     let mut task_repository = TestTaskRepository::new(task.clone(), now);
-    let mut free_time_manager = TestFreeTimeManager;
+    let mut free_time_manager = TestFreeTimeManager::default();
     let mut focused_task_id_opt = Some(task_id);
     let mut stdout = TestWriter::new();
 
@@ -3284,7 +3282,7 @@ fn test_execute_finish_不正な引数では完了しない() {
     task.set_actual_work_seconds(60);
     let task_id = task.get_id().unwrap();
     let mut task_repository = TestTaskRepository::new(task.clone(), now);
-    let mut free_time_manager = TestFreeTimeManager;
+    let mut free_time_manager = TestFreeTimeManager::default();
     let mut focused_task_id_opt = Some(task_id);
     let mut stdout = TestWriter::new();
 
@@ -3316,7 +3314,7 @@ fn test_execute_today_カテゴリ別の予定時間集計を表示する() {
     task.set_start_time(now);
     let task_id = task.get_id().unwrap();
     let mut task_repository = TestTaskRepository::new(task.clone(), now);
-    let mut free_time_manager = TestFreeTimeManagerWithFreeMinutes { free_minutes: 30 };
+    let mut free_time_manager = TestFreeTimeManager::with_free_minutes(30);
     let mut focused_task_id_opt = Some(task_id);
     let mut stdout = TestWriter::new();
 
@@ -3372,7 +3370,7 @@ fn test_execute_set_project_category_表示記号でカテゴリを設定する(
     let task = new_test_task_handle("タスク").unwrap();
     let task_id = task.get_id().unwrap();
     let mut task_repository = TestTaskRepository::new(task.clone(), now);
-    let mut free_time_manager = TestFreeTimeManager;
+    let mut free_time_manager = TestFreeTimeManager::default();
     let mut focused_task_id_opt = Some(task_id);
     let mut stdout = TestWriter::new();
 
@@ -3402,7 +3400,7 @@ fn test_execute_set_project_category_英語aliasでカテゴリを設定する()
     let task = new_test_task_handle("タスク").unwrap();
     let task_id = task.get_id().unwrap();
     let mut task_repository = TestTaskRepository::new(task.clone(), now);
-    let mut free_time_manager = TestFreeTimeManager;
+    let mut free_time_manager = TestFreeTimeManager::default();
     let mut focused_task_id_opt = Some(task_id);
     let mut stdout = TestWriter::new();
 
@@ -3451,7 +3449,7 @@ fn test_execute_set_project_category_未分類に戻す() {
     task.set_project_category_opt(Some(ProjectCategory::Investment));
     let task_id = task.get_id().unwrap();
     let mut task_repository = TestTaskRepository::new(task.clone(), now);
-    let mut free_time_manager = TestFreeTimeManager;
+    let mut free_time_manager = TestFreeTimeManager::default();
     let mut focused_task_id_opt = Some(task_id);
     let mut stdout = TestWriter::new();
 
@@ -3483,7 +3481,7 @@ fn test_execute_set_project_category_不正カテゴリでは変更しない() {
     task.set_project_category_opt(Some(ProjectCategory::Investment));
     let task_id = task.get_id().unwrap();
     let mut task_repository = TestTaskRepository::new(task.clone(), now);
-    let mut free_time_manager = TestFreeTimeManager;
+    let mut free_time_manager = TestFreeTimeManager::default();
     let mut focused_task_id_opt = Some(task_id);
     let mut stdout = TestWriter::new();
 
@@ -4757,7 +4755,7 @@ fn test_execute_non_interactive_command_project作成はoperation時刻を共有
         previous_synced_time,
     )
     .with_storage_directory(&storage_dir.path);
-    let mut free_time_manager = TestFreeTimeManager;
+    let mut free_time_manager = TestFreeTimeManager::default();
 
     execute_non_interactive_command_at(
         &mut task_repository,
@@ -4795,7 +4793,7 @@ fn test_execute_non_interactive_command_finishはoperation時刻を共有する(
     let mut task_repository = TestTaskRepository::new(repetitive_parent, previous_synced_time)
         .with_storage_directory(&storage_dir.path);
     task_repository.highest_priority_leaf_task_id_opt = Some(focused_id);
-    let mut free_time_manager = TestFreeTimeManager;
+    let mut free_time_manager = TestFreeTimeManager::default();
 
     execute_non_interactive_command_at(
         &mut task_repository,
@@ -4833,7 +4831,7 @@ fn test_execute_non_interactive_command_省略作業時間はoperation時刻を�
     let focused_id = focused.get_id().unwrap();
     let mut task_repository = TestTaskRepository::new(focused, previous_synced_time)
         .with_storage_directory(&storage_dir.path);
-    let mut free_time_manager = TestFreeTimeManager;
+    let mut free_time_manager = TestFreeTimeManager::default();
 
     execute_non_interactive_command_at(
         &mut task_repository,
@@ -4868,7 +4866,7 @@ fn test_execute_non_interactive_command_load失敗時はcommandを実行しな�
     let mut task_repository =
         TestTaskRepository::new(task, now).with_storage_directory(&storage_dir.path);
     task_repository.load_should_fail = true;
-    let mut free_time_manager = TestFreeTimeManager;
+    let mut free_time_manager = TestFreeTimeManager::default();
 
     let actual =
         execute_non_interactive_command(&mut task_repository, &mut free_time_manager, "予 45");
@@ -4896,7 +4894,7 @@ fn test_execute_non_interactive_command_検証はsaveとfree_time読込を行わ
     let task = new_test_task_handle("検証対象").unwrap();
     let mut task_repository =
         TestTaskRepository::new(task, now).with_storage_directory(&storage_dir.path);
-    let mut free_time_manager = TestFreeTimeManager;
+    let mut free_time_manager = TestFreeTimeManager::default();
 
     execute_non_interactive_command(&mut task_repository, &mut free_time_manager, "検証").unwrap();
 
@@ -4915,7 +4913,7 @@ fn test_execute_non_interactive_command_gatewayの変換errorをstderrへ表示�
     )
     .unwrap();
     let mut task_repository = TaskRepository::new(storage_dir.path.to_str().unwrap());
-    let mut free_time_manager = TestFreeTimeManager;
+    let mut free_time_manager = TestFreeTimeManager::default();
 
     let result =
         execute_non_interactive_command(&mut task_repository, &mut free_time_manager, "予 45");
@@ -5161,7 +5159,7 @@ fn test_低優先度modeで外したfocusは低優先度候補を再選択する
     let mut repository = TestTaskRepository::new(root, now);
     repository.highest_priority_leaf_task_id_opt = Some(high_priority_task_id);
     repository.defer_candidate_leaf_task_id_opt = Some(low_priority_task_id);
-    let mut free_time_manager = TestFreeTimeManager;
+    let mut free_time_manager = TestFreeTimeManager::default();
     let mut stdout = TestWriter::new();
     let mut focused_task_id_opt = Some(high_priority_task_id);
     let focus_started_datetime = now;
@@ -5198,7 +5196,7 @@ fn test_interactive_task属性更新_不正deadlineはfield付きerrorを表示�
     let previous_deadline = Local.with_ymd_and_hms(2026, 8, 20, 23, 59, 59).unwrap();
     task.set_deadline_time_opt(Some(previous_deadline));
     let mut repository = TestTaskRepository::new(task, now);
-    let mut free_time_manager = TestFreeTimeManager;
+    let mut free_time_manager = TestFreeTimeManager::default();
     let mut stdout = TestWriter::new();
     let mut focused_task_id_opt = Some(task_id);
     let mut focus_selection_mode = FocusSelectionMode::HighestPriority;
@@ -5234,7 +5232,7 @@ fn test_interactive_submitは製品event経路でload実行保存する() {
     let task_id = task.get_id().unwrap();
     let mut repository =
         TestTaskRepository::new(task, now).with_storage_directory(&storage_dir.path);
-    let mut free_time_manager = TestFreeTimeManager;
+    let mut free_time_manager = TestFreeTimeManager::default();
     let mut stdout = TestWriter::new();
     let mut focused_task_id_opt = Some(task_id);
     let mut last_focused_task_id_opt = Some(task_id);
@@ -5281,7 +5279,7 @@ fn test_interactive_submitはoperation時刻をcommandと直後renderへ共有�
     let existing_id = existing.get_id().unwrap();
     let mut repository = TestTaskRepository::new(existing, previous_synced_time)
         .with_storage_directory(&storage_dir.path);
-    let mut free_time_manager = TestFreeTimeManager;
+    let mut free_time_manager = TestFreeTimeManager::default();
     let mut stdout = TestWriter::new();
     let mut focused_task_id_opt = Some(existing_id);
     let mut last_focused_task_id_opt = Some(existing_id);
@@ -5350,7 +5348,7 @@ fn test_interactive_submitの見は完了済みtaskへの明示focusを更新後
     let mut repository =
         TestTaskRepository::new(root, now).with_storage_directory(&storage_dir.path);
     repository.highest_priority_leaf_task_id_opt = Some(next_id);
-    let mut free_time_manager = TestFreeTimeManager;
+    let mut free_time_manager = TestFreeTimeManager::default();
     let mut stdout = TestWriter::new();
     let mut focused_task_id_opt = Some(next_id);
     let mut last_focused_task_id_opt = Some(next_id);
@@ -5411,7 +5409,7 @@ fn test_interactive_submitは外部完了によるfocus切替時に開始時刻�
     let mut repository = TestTaskRepository::new(root, old_focus_started_datetime)
         .with_storage_directory(&storage_dir.path);
     repository.highest_priority_leaf_task_id_opt = Some(next_id);
-    let mut free_time_manager = TestFreeTimeManager;
+    let mut free_time_manager = TestFreeTimeManager::default();
     let mut stdout = TestWriter::new();
     let mut focused_task_id_opt = Some(done_id);
     let mut last_focused_task_id_opt = Some(done_id);
@@ -5457,7 +5455,7 @@ fn test_interactive_refreshとctrl_dは外部完了によるfocus切替時に開
         let mut repository = TestTaskRepository::new(root, old_focus_started_datetime)
             .with_storage_directory(&storage_dir.path);
         repository.highest_priority_leaf_task_id_opt = Some(next_id);
-        let mut free_time_manager = TestFreeTimeManager;
+        let mut free_time_manager = TestFreeTimeManager::default();
         let mut stdout = TestWriter::new();
         let mut focused_task_id_opt = Some(done_id);
         let mut last_focused_task_id_opt = Some(done_id);
@@ -5498,7 +5496,7 @@ fn test_interactive_commandによるfocus切替は次のrender時刻を開始時
     let task_id = task.get_id().unwrap();
     let mut repository = TestTaskRepository::new(task, old_focus_started_datetime)
         .with_storage_directory(&storage_dir.path);
-    let mut free_time_manager = TestFreeTimeManager;
+    let mut free_time_manager = TestFreeTimeManager::default();
     let mut stdout = TestWriter::new();
     let mut focused_task_id_opt = Some(task_id);
     let mut last_focused_task_id_opt = Some(task_id);
@@ -5556,7 +5554,7 @@ fn test_interactive_submitはload失敗ならretryしsave失敗ならfatalにす
             TestTaskRepository::new(task, now).with_storage_directory(&storage_dir.path);
         repository.load_should_fail = load_should_fail;
         repository.save_failures_remaining.set(save_failures);
-        let mut free_time_manager = TestFreeTimeManager;
+        let mut free_time_manager = TestFreeTimeManager::default();
         let mut stdout = TestWriter::new();
         let mut focused_task_id_opt = Some(task_id);
         let mut last_focused_task_id_opt = Some(task_id);
@@ -5600,7 +5598,7 @@ fn test_interactive_refreshは再読込後にlockを解放する() {
     let task_id = task.get_id().unwrap();
     let mut repository =
         TestTaskRepository::new(task, now).with_storage_directory(&storage_dir.path);
-    let mut free_time_manager = TestFreeTimeManager;
+    let mut free_time_manager = TestFreeTimeManager::default();
     let mut stdout = TestWriter::new();
     let mut focused_task_id_opt = Some(task_id);
     let mut last_focused_task_id_opt = Some(task_id);
@@ -5639,7 +5637,7 @@ fn test_interactive_ctrl_cは成功済みcommandを再保存せずfatal終了す
     let task_id = task.get_id().unwrap();
     let mut repository =
         TestTaskRepository::new(task, now).with_storage_directory(&storage_dir.path);
-    let mut free_time_manager = TestFreeTimeManager;
+    let mut free_time_manager = TestFreeTimeManager::default();
     let mut stdout = TestWriter::new();
     let mut focused_task_id_opt = Some(task_id);
     let mut last_focused_task_id_opt = Some(task_id);
@@ -5691,7 +5689,7 @@ fn test_interactive_input切断はreload後に保存してfatal終了する() {
     let task_id = task.get_id().unwrap();
     let mut repository =
         TestTaskRepository::new(task, now).with_storage_directory(&storage_dir.path);
-    let mut free_time_manager = TestFreeTimeManager;
+    let mut free_time_manager = TestFreeTimeManager::default();
     let mut stdout = TestWriter::new();
     let mut focused_task_id_opt = Some(task_id);
     let mut last_focused_task_id_opt = Some(task_id);
@@ -5729,7 +5727,7 @@ fn test_interactive_ctrl_dは製品event経路でreload後に保存して終了�
     let task_id = task.get_id().unwrap();
     let mut repository =
         TestTaskRepository::new(task, now).with_storage_directory(&storage_dir.path);
-    let mut free_time_manager = TestFreeTimeManager;
+    let mut free_time_manager = TestFreeTimeManager::default();
     let mut stdout = TestWriter::new();
     let mut focused_task_id_opt = Some(task_id);
     let mut last_focused_task_id_opt = Some(task_id);
@@ -5764,7 +5762,7 @@ fn test_interactive_input読込errorは製品event経路でreload後に保存し
     let task_id = task.get_id().unwrap();
     let mut repository =
         TestTaskRepository::new(task, now).with_storage_directory(&storage_dir.path);
-    let mut free_time_manager = TestFreeTimeManager;
+    let mut free_time_manager = TestFreeTimeManager::default();
     let mut stdout = TestWriter::new();
     let mut focused_task_id_opt = Some(task_id);
     let mut last_focused_task_id_opt = Some(task_id);
@@ -6104,7 +6102,7 @@ fn test_try_exit_interactive_保存失敗後の再試行で成功する() {
     let task_id = task.get_id().unwrap();
     let mut task_repository = TestTaskRepository::new(task, now);
     task_repository.save_failures_remaining.set(1);
-    let mut free_time_manager = TestFreeTimeManager;
+    let mut free_time_manager = TestFreeTimeManager::default();
     let mut focused_task_id_opt = Some(task_id);
     let mut stdout = TestWriter::new();
     let mut exited = false;
