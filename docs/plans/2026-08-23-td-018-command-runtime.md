@@ -49,29 +49,31 @@
 | 6 | `Refactor: CLI表示計算をview moduleへ移す` | tree/list/calendar/band/focus builderと計算helperを`view.rs`へ機械移動 | 5 | runtime 291件 | 対象test後に全品質ゲート |
 | 7 | `Refactor: CLI command contextを別moduleへ移す` | context実装、日時解釈、command mutation helperを`command_context.rs`へ機械移動 | 6 | handler、runtime | 対象test後に全品質ゲート |
 | 8 | `Test: CLI handler統合経路を追加する` | `handle_command`未実装を理由にRed。全通常commandが1入口で処理される契約 | 7 | handler | 期待した1理由のRedを確認してtestだけcommit |
-| 9 | `CLI: command handler統合経路を実装する` | `CommandContext`、`CliCommandContext`、`HandlerError`を導入し、legacy dispatchを除去 | 8 | handler、runtime | 対象test後に全品質ゲート |
-| 10 | `Test: 意味的message modelを追加する` | plain/info/warn/critical/errorと複数messageのRed contract | 9 | renderer | 期待した1理由のRedを確認してtestだけcommit |
-| 11 | `CLI: messageとerror表示を意味的modelへ移す` | prefix、改行、error分類を維持し、単純出力をmodel化 | 10 | renderer、handler、runtime | 対象test後に全品質ゲート |
-| 12 | `Test: Tree表示modelを追加する` | tree、ancestor、leaf rowと空行配置のRed contract | 11 | renderer | 期待した1理由のRedを確認してtestだけcommit |
-| 13 | `CLI: Tree表示を意味的modelへ移す` | writerをcontext traitから除き、typed tree modelを返す | 12 | tree関連runtime契約 | 対象test後に全品質ゲート |
-| 14 | `Test: Task list表示modelを追加する` | row順、give-up icon、category集計、A-J列のRed contract | 13 | renderer、Spreadsheet | 期待した1理由のRedを確認してtestだけcommit |
-| 15 | `CLI: Task list表示を意味的modelへ移す` | task rowと集計値をtyped model化し、A-J formatterをrendererに維持 | 14 | list/today/tail全契約 | 対象test後に全品質ゲート |
-| 16 | `Test: Calendar表示modelを追加する` | 日付逆順、週区切り、footer、alertのRed contract | 15 | renderer | 期待した1理由のRedを確認してtestだけcommit |
-| 17 | `CLI: Calendar表示を意味的modelへ移す` | 日別数値とalert状態をmodel化し、文字列整形をrendererへ移す | 16 | calendar契約 | 対象test後に全品質ゲート |
-| 18 | `Test: Band表示modelを追加する` | 96 segment、7色ANSI、非terminal、overflow、凡例のRed contract | 17 | renderer | 期待した1理由のRedを確認してtestだけcommit |
-| 19 | `CLI: Band表示を意味的modelへ移す` | duration分類をtyped model化し、色と記号の選択をrendererへ移す | 18 | band契約 | 対象test後に全品質ゲート |
-| 20 | `Test: Pack表示modelを追加する` | packed row、空結果、summary、skip件数のRed contract | 19 | renderer、pack | 期待した1理由のRedを確認してtestだけcommit |
-| 21 | `CLI: Pack表示を意味的modelへ移す` | `PackResult`からprivate `PackDisplay`を構築 | 20 | pack契約 | 対象test後に全品質ゲート |
-| 22 | `Test: Flatten表示modelを追加する` | overload、未解消理由、代表task、warning順のRed contract | 21 | renderer、flatten | 期待した1理由のRedを確認してtestだけcommit |
-| 23 | `CLI: Flatten表示を意味的modelへ移す` | `FlattenResult`をtyped displayへ変換 | 22 | flatten契約 | 対象test後に全品質ゲート |
-| 24 | `Test: Focus表示modelを追加する` | ancestor、category、attr、残時間、progress、overflowのRed contract | 23 | renderer、runtime | 期待した1理由のRedを確認してtestだけcommit |
-| 25 | `CLI: Focus表示を意味的modelへ移す` | focus計算をviewへ、terminal描画をrendererへ移す | 24 | interactive画面契約 | 対象test後に全品質ゲート |
-| 26 | `Test: Interactive再描画判断をtyped commandで固定する` | raw先頭文字ではなく`CommandKind`で再描画を判断するRed contract | 25 | interactive | 期待した1理由のRedを確認してtestだけcommit |
-| 27 | `CLI: Interactive再描画をtyped commandへ統一する` | command文字列の再解析・先頭文字判定を除去 | 26 | interactive、runtime | 対象test後に全品質ゲート |
-| 28 | `Test: Runtime責務境界を固定する` | context、日時解釈、mutation、表示計算、raw recorderがruntimeにないことをRedで固定 | 27 | runtime architecture | 期待した1理由のRedを確認してtestだけcommit |
-| 29 | `CLI: RuntimeをI/O調停へ限定する` | legacy fragment/recorder、不要helper/importを削除し、verify表示もrenderer経由へ統一 | 28 | CLI全test | 対象test後に全品質ゲート |
-| 30 | `Docs: CLI command境界を説明する` | READMEへparser→handler→view model→renderer→runtimeの責務を記録 | 29 | full suite | 全品質ゲート |
-| 31 | `Docs: TD-018の完了を記録する` | backlogへ完了日、実測件数、runtime行数、品質ゲートを記録 | 30 | full suite | 全品質ゲート |
+| 9 | `CLI: composite command contextを実装する` | `CommandContext`、`CliCommandContext`、`HandlerError`を導入し、旧経路と併存させる | 8 | handler | 対象test後に全品質ゲート |
+| 10 | `CLI: Runtimeをhandler統合入口へ切り替える` | runtimeの全通常commandを`handle_command`経由へ切り替え、legacy dispatchは到達不能な旧実装として残す | 9 | handler、runtime | 対象test後に全品質ゲート |
+| 11 | `CLI: legacy command dispatchを除去する` | handler統合入口への切替後にlegacy dispatchを削除する | 10 | handler、runtime | 対象test後に全品質ゲート |
+| 12 | `Test: 意味的message modelを追加する` | plain/info/warn/critical/errorと複数messageのRed contract | 11 | renderer | 期待した1理由のRedを確認してtestだけcommit |
+| 13 | `CLI: messageとerror表示を意味的modelへ移す` | prefix、改行、error分類を維持し、単純出力をmodel化 | 12 | renderer、handler、runtime | 対象test後に全品質ゲート |
+| 14 | `Test: Tree表示modelを追加する` | tree、ancestor、leaf rowと空行配置のRed contract | 13 | renderer | 期待した1理由のRedを確認してtestだけcommit |
+| 15 | `CLI: Tree表示を意味的modelへ移す` | writerをcontext traitから除き、typed tree modelを返す | 14 | tree関連runtime契約 | 対象test後に全品質ゲート |
+| 16 | `Test: Task list表示modelを追加する` | row順、give-up icon、category集計、A-J列のRed contract | 15 | renderer、Spreadsheet | 期待した1理由のRedを確認してtestだけcommit |
+| 17 | `CLI: Task list表示を意味的modelへ移す` | task rowと集計値をtyped model化し、A-J formatterをrendererに維持 | 16 | list/today/tail全契約 | 対象test後に全品質ゲート |
+| 18 | `Test: Calendar表示modelを追加する` | 日付逆順、週区切り、footer、alertのRed contract | 17 | renderer | 期待した1理由のRedを確認してtestだけcommit |
+| 19 | `CLI: Calendar表示を意味的modelへ移す` | 日別数値とalert状態をmodel化し、文字列整形をrendererへ移す | 18 | calendar契約 | 対象test後に全品質ゲート |
+| 20 | `Test: Band表示modelを追加する` | 96 segment、7色ANSI、非terminal、overflow、凡例のRed contract | 19 | renderer | 期待した1理由のRedを確認してtestだけcommit |
+| 21 | `CLI: Band表示を意味的modelへ移す` | duration分類をtyped model化し、色と記号の選択をrendererへ移す | 20 | band契約 | 対象test後に全品質ゲート |
+| 22 | `Test: Pack表示modelを追加する` | packed row、空結果、summary、skip件数のRed contract | 21 | renderer、pack | 期待した1理由のRedを確認してtestだけcommit |
+| 23 | `CLI: Pack表示を意味的modelへ移す` | `PackResult`からprivate `PackDisplay`を構築 | 22 | pack契約 | 対象test後に全品質ゲート |
+| 24 | `Test: Flatten表示modelを追加する` | overload、未解消理由、代表task、warning順のRed contract | 23 | renderer、flatten | 期待した1理由のRedを確認してtestだけcommit |
+| 25 | `CLI: Flatten表示を意味的modelへ移す` | `FlattenResult`をtyped displayへ変換 | 24 | flatten契約 | 対象test後に全品質ゲート |
+| 26 | `Test: Focus表示modelを追加する` | ancestor、category、attr、残時間、progress、overflowのRed contract | 25 | renderer、runtime | 期待した1理由のRedを確認してtestだけcommit |
+| 27 | `CLI: Focus表示を意味的modelへ移す` | focus計算をviewへ、terminal描画をrendererへ移す | 26 | interactive画面契約 | 対象test後に全品質ゲート |
+| 28 | `Test: Interactive再描画判断をtyped commandで固定する` | raw先頭文字ではなく`CommandKind`で再描画を判断するRed contract | 27 | interactive | 期待した1理由のRedを確認してtestだけcommit |
+| 29 | `CLI: Interactive再描画をtyped commandへ統一する` | command文字列の再解析・先頭文字判定を除去 | 28 | interactive、runtime | 対象test後に全品質ゲート |
+| 30 | `Test: Runtime責務境界を固定する` | context、日時解釈、mutation、表示計算、raw recorderがruntimeにないことをRedで固定 | 29 | runtime architecture | 期待した1理由のRedを確認してtestだけcommit |
+| 31 | `CLI: RuntimeをI/O調停へ限定する` | legacy fragment/recorder、不要helper/importを削除し、verify表示もrenderer経由へ統一 | 30 | CLI全test | 対象test後に全品質ゲート |
+| 32 | `Docs: CLI command境界を説明する` | READMEへparser→handler→view model→renderer→runtimeの責務を記録 | 31 | full suite | 全品質ゲート |
+| 33 | `Docs: TD-018の完了を記録する` | backlogへ完了日、実測件数、runtime行数、品質ゲートを記録 | 32 | full suite | 全品質ゲート |
 
 順序6・7は機械移動のみとし、commit本文へ大規模になる理由、挙動変更なし、実行した品質ゲートを記録する。Red commit以外の全commitも、本文へ対象testと全品質ゲートの結果を残す。
 
