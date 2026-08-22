@@ -1,7 +1,5 @@
 # TD-015 Test Organization Implementation Plan
 
-> **For Claude:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development to implement this plan task-by-task.
-
 **Goal:** 巨大な製品moduleからtestを挙動変更なしで分離し、同じ目的のtest fixtureを共通化する。
 
 **Architecture:** 既存のinline `mod tests`は外部fileを指す同名moduleへ、top-level testは`include!`先へ機械的に移す。機械的移動とfixtureの意味的な共通化を別commitにし、製品APIと既存のtest名・assertion・fixture値を維持する。
