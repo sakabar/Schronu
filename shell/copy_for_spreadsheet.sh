@@ -69,7 +69,10 @@ cat - | awk '
     m_cell=''
     n_cell="=P${cell_row_num}"
     estimated_minutes_formula="G${cell_row_num}"
-    (( sleep_minutes > 0 )) && estimated_minutes_formula+="+${sleep_minutes}"
+    if (( sleep_minutes > 0 )); then
+        m_cell='F'
+        estimated_minutes_formula+="+${sleep_minutes}"
+    fi
     o_cell='=IF(OR(R'"${cell_row_num}"'="W", R'"${cell_row_num}"'="d"), L'"${cell_row_num}"', L'"${cell_row_num}"'+TIME(0, '"${estimated_minutes_formula}"', 0))'
     p_cell="=NOT(ISFORMULA(P${cell_row_num}))"
     q_cell=''
