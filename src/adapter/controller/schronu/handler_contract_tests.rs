@@ -278,6 +278,7 @@ struct TraceProjectContext {
     created: Vec<CreateTaskInput>,
     breakdowns: Vec<BreakdownTaskInput>,
     created_attr_names: Vec<String>,
+    estimates: Vec<(Uuid, i64)>,
 }
 
 impl TraceProjectContext {
@@ -289,6 +290,7 @@ impl TraceProjectContext {
             created: Vec::new(),
             breakdowns: Vec::new(),
             created_attr_names: Vec::new(),
+            estimates: Vec::new(),
         }
     }
 }
@@ -317,7 +319,8 @@ impl ProjectCommandContext for TraceProjectContext {
         TaskAttr::with_identity(name, Uuid::from_u128(5), self.now)
     }
 
-    fn set_estimate(&mut self, _task_id: Uuid, _minutes: i64) -> Result<(), ApplicationError> {
+    fn set_estimate(&mut self, task_id: Uuid, minutes: i64) -> Result<(), ApplicationError> {
+        self.estimates.push((task_id, minutes));
         Ok(())
     }
 
@@ -368,52 +371,132 @@ fn project作成commandはhandlerがtyped_fieldを直接matchして所有する(
         ],
     );
 
-    let commands = [
-        Command::Action(CommandAction::NewProject {
+    let mut hobby_context = TraceProjectContext::new(now);
+    handle_project_command(
+        &Command::Action(CommandAction::NewProject {
             kind: CommandKind::HobbyProject,
             canonical_name: "ignored alias",
-            name: "hobby".to_string(),
-            estimated_minutes: None,
+            name: "typed hobby".to_string(),
+            estimated_minutes: Some(20),
         }),
-        Command::Action(CommandAction::NewProject {
+        &mut hobby_context,
+    )
+    .unwrap()
+    .expect("hobby project must be owned by the handler");
+    assert_eq!(hobby_context.created[0].name, "typed hobby");
+    assert_eq!(hobby_context.created[0].estimated_work_minutes, Some(20));
+    assert_eq!(
+        hobby_context.created[0].pending_until,
+        Some(Local.with_ymd_and_hms(2026, 8, 24, 6, 0, 0).unwrap() + chrono::Duration::days(1399))
+    );
+
+    let mut unplanned_context = TraceProjectContext::new(now);
+    handle_project_command(
+        &Command::Action(CommandAction::NewProject {
             kind: CommandKind::UnplannedProject,
             canonical_name: "ignored alias",
-            name: "unplanned".to_string(),
-            estimated_minutes: None,
+            name: "typed unplanned".to_string(),
+            estimated_minutes: Some(25),
         }),
-        Command::Action(CommandAction::Sequential {
-            name: "step".to_string(),
+        &mut unplanned_context,
+    )
+    .unwrap()
+    .expect("unplanned project must be owned by the handler");
+    assert_eq!(
+        unplanned_context.created,
+        [CreateTaskInput {
+            name: "typed unplanned".to_string(),
+            estimated_work_minutes: Some(25),
+            pending_until: None,
+        }]
+    );
+
+    let mut sequential_context = TraceProjectContext::new(now);
+    let sequential = handle_project_command(
+        &Command::Action(CommandAction::Sequential {
+            name: "typed step".to_string(),
             estimated_minutes: 10,
             begin_index: 1,
             end_index: 2,
-            suffix: Some("typed".to_string()),
+            suffix: Some("suffix".to_string()),
         }),
-        Command::Action(CommandAction::Repeat {
-            name: "routine".to_string(),
+        &mut sequential_context,
+    )
+    .unwrap()
+    .expect("sequential command must be owned by the handler");
+    assert_eq!(sequential.kind, CommandKind::Sequential);
+    assert_eq!(
+        sequential_context.created_attr_names,
+        ["typed step 2-suffix", "typed step 1-suffix"]
+    );
+    assert!(sequential.display.is_empty());
+
+    let mut repeat_context = TraceProjectContext::new(now);
+    let repeat = handle_project_command(
+        &Command::Action(CommandAction::Repeat {
+            name: "typed routine".to_string(),
             estimated_minutes: 15,
             day: "月".to_string(),
             start_time: "09:00".to_string(),
             deadline_time: "10:00".to_string(),
         }),
-        Command::Action(CommandAction::TimeExpression {
+        &mut repeat_context,
+    )
+    .unwrap()
+    .expect("repeat command must be owned by the handler");
+    assert_eq!(repeat_context.breakdowns.len(), 5);
+    assert!(repeat_context
+        .breakdowns
+        .iter()
+        .all(|input| { input.names == ["typed routine"] && input.pending_until.is_none() }));
+    assert_eq!(repeat_context.estimates, vec![(Uuid::from_u128(1), 15); 5]);
+    assert_eq!(repeat.display.fragments().len(), 5);
+    assert!(repeat.display.fragments().iter().all(|fragment| {
+        fragment == &DisplayFragment::Newline(format!("{} typed routine", Uuid::from_u128(3)))
+    }));
+
+    let mut appointment_context = TraceProjectContext::new(now);
+    appointment_context
+        .focused_task
+        .set_estimated_work_seconds(30 * 60)
+        .unwrap();
+    handle_project_command(
+        &Command::Action(CommandAction::TimeExpression {
             kind: CommandKind::Appointment,
             canonical_name: "ignored alias",
             values: vec!["13:30".to_string()],
         }),
-        Command::Action(CommandAction::TimeExpression {
+        &mut appointment_context,
+    )
+    .unwrap()
+    .expect("appointment command must be owned by the handler");
+    assert_eq!(
+        appointment_context.focused_task.get_start_time().unwrap(),
+        Local.with_ymd_and_hms(2026, 8, 23, 13, 30, 0).unwrap()
+    );
+    assert_eq!(
+        appointment_context
+            .focused_task
+            .get_deadline_time_opt()
+            .unwrap(),
+        Some(Local.with_ymd_and_hms(2026, 8, 23, 14, 0, 0).unwrap())
+    );
+
+    let mut start_context = TraceProjectContext::new(now);
+    handle_project_command(
+        &Command::Action(CommandAction::TimeExpression {
             kind: CommandKind::Start,
             canonical_name: "ignored alias",
             values: vec!["14:30".to_string()],
         }),
-    ];
-
-    for command in commands {
-        let mut context = TraceProjectContext::new(now);
-        let outcome = handle_project_command(&command, &mut context)
-            .unwrap()
-            .expect("every typed project command must be owned by the handler");
-        assert_eq!(outcome.kind, command.kind());
-    }
+        &mut start_context,
+    )
+    .unwrap()
+    .expect("start command must be owned by the handler");
+    assert_eq!(
+        start_context.focused_task.get_start_time().unwrap(),
+        Local.with_ymd_and_hms(2026, 8, 23, 14, 30, 0).unwrap()
+    );
 }
 
 #[derive(Default)]
