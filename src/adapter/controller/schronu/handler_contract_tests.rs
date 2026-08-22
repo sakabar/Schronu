@@ -1184,9 +1184,13 @@ fn 完了と配置commandはtyped値のままhandlerが所有してruntime_fallb
         .unwrap()
         .expect("typed finish command must be owned by the handler");
     assert_eq!(finish_outcome.kind, CommandKind::Finish);
-    assert_eq!(finish_context.calls.len(), 2);
-    assert_eq!(finish_context.calls[0], "complete");
-    assert!(finish_context.calls[1].starts_with("focus:Some("));
+    assert_eq!(
+        finish_context.calls,
+        [
+            "complete".to_string(),
+            format!("focus:{:?}", Some(Uuid::from_u128(22))),
+        ]
+    );
     assert_eq!(
         finish_context.completion_inputs,
         [CompleteTaskInput {
