@@ -5189,6 +5189,55 @@ fn test_低優先度modeで外したfocusは低優先度候補を再選択する
 }
 
 #[test]
+fn test_tuck_awayは高低mode内でtaskを伏せて見は除外を維持したままfocusする() {
+    let now = Local.with_ymd_and_hms(2026, 8, 16, 12, 0, 0).unwrap();
+    let task = new_test_task_handle("伏せるtask").unwrap();
+    let task_id = task.get_id().unwrap();
+    let original_pending_until = task.get_pending_until().unwrap();
+    let mut repository = TestTaskRepository::new(task.clone(), now);
+    repository.highest_priority_leaf_task_id_opt = Some(task_id);
+    repository.defer_candidate_leaf_task_id_opt = Some(task_id);
+    let mut free_time_manager = TestFreeTimeManager::default();
+    let mut stdout = TestWriter::new();
+    let mut focused_task_id_opt = Some(task_id);
+    let mut focus_selection_mode = FocusSelectionMode::HighestPriority;
+
+    macro_rules! execute {
+        ($command:expr) => {
+            execute_interactive_command(
+                &mut stdout,
+                &mut repository,
+                &mut free_time_manager,
+                &mut focused_task_id_opt,
+                &now,
+                &mut focus_selection_mode,
+                now,
+                $command,
+            )
+            .unwrap()
+        };
+    }
+
+    execute!("tuck");
+    assert_eq!(focused_task_id_opt, None);
+    assert_eq!(task.get_orig_status().unwrap(), Status::Todo);
+    assert_eq!(task.get_pending_until().unwrap(), original_pending_until);
+
+    execute!(&format!("見 {task_id}"));
+    assert_eq!(focused_task_id_opt, Some(task_id));
+    execute!("外");
+    assert_eq!(focused_task_id_opt, None);
+
+    execute!("低");
+    assert_eq!(focused_task_id_opt, Some(task_id));
+    execute!("伏");
+    assert_eq!(focused_task_id_opt, None);
+
+    execute!("高");
+    assert_eq!(focused_task_id_opt, Some(task_id));
+}
+
+#[test]
 fn test_interactive_task属性更新_不正deadlineはfield付きerrorを表示して状態を維持する() {
     let now = Local.with_ymd_and_hms(2026, 8, 16, 12, 0, 0).unwrap();
     let task = new_test_task_handle("更新対象").unwrap();
