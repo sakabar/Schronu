@@ -37,7 +37,7 @@
 | 12 | `Test: Free time gateway testを別fileへ移す` | free-time testとtest専用helperを`free_time_manager_tests.rs`へ移動 | 1 | `adapter::gateway::free_time_manager` |
 | 13 | `Test: MCP input単体testを別fileへ移す` | `mcp/input.rs`のunit testを`input_tests.rs`へ移動 | 1 | `adapter::mcp::input::tests` |
 | 14 | `Test: MCP handler単体testを別fileへ移す` | `mcp/handler.rs`のunit testを`handler_tests.rs`へ移動 | 1 | `adapter::mcp::handler::tests` |
-| 15 | `Test: Task fixture生成を共通化する` | entityとCLIの重複UUID・Task builderを`crate::test_support`経由へ統一 | 2、5 | entity、CLI runtime |
+| 15 | `Test: Task fixture生成を共通化する` | entityはlibraryの`crate::test_support`へ、CLIはbinary privateな`runtime_test_support`へUUID・Task builderを統合 | 2、5 | entity、CLI runtime |
 | 16 | `Test: List tasks repository fixtureを共通化する` | list contractのrepository stubを共通fixtureへ置換 | 1 | `application::list_tasks_contract_tests` |
 | 17 | `Test: Schedule repository fixtureを共通化する` | project参照・save回数を共通fixtureで検証 | 16 | `application::schedule_use_case_contract_tests` |
 | 18 | `Test: Task use case repository fixtureを共通化する` | focus候補、project状態、save回数を共通fixtureへ統合 | 6、17 | `application::task_use_case::tests` |
@@ -51,7 +51,7 @@
 
 ## Test-only interfaces
 
-製品の公開interfaceは変更しない。`crate::test_support::TestTaskRepository`にはproject・save回数・highest-priority leaf IDを操作するtest専用APIだけを追加する。CLIの`runtime_test_support`にはrecording repository、writer、temporary storage、設定可能なfree-time fakeを置き、異なる失敗契約を表すfakeは別型のまま維持する。
+製品の公開interfaceは変更しない。library crateの`crate::test_support::TestTaskRepository`にはproject・save回数・highest-priority leaf IDを操作するtest専用APIだけを追加する。CLIは別binary crateであるためlibraryの`cfg(test)` moduleを公開せず、binary privateな`runtime_test_support`へUUID・Task builder、recording repository、writer、temporary storage、設定可能なfree-time fakeを置く。異なる失敗契約を表すfakeは別型のまま維持する。
 
 ## Verification
 
