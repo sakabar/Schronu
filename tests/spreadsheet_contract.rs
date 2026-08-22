@@ -166,6 +166,49 @@ fn cli出力からspreadsheetを経由してコマンド生成まで列契約を
 }
 
 #[test]
+fn copy_for_spreadsheetは新しい業務日の最初のp列へ睡眠420分を算入する() {
+    let cli_output = fs::read_to_string(repository_path(
+        "tests/fixtures/spreadsheet/sleep-boundary-cli-output.txt",
+    ))
+    .expect("sleep boundary CLI output fixture exists");
+    let copied = run_script("shell/copy_for_spreadsheet.sh", &[], &cli_output);
+    let finish_formulas: Vec<_> = copied
+        .lines()
+        .filter(|line| line.chars().any(|character| character != '\t'))
+        .map(|line| {
+            let fields: Vec<_> = line.split('\t').collect();
+            (fields[0], fields[15])
+        })
+        .collect();
+
+    assert_eq!(
+        finish_formulas,
+        [
+            ("0000", "=IF(OR(R3=\"W\", R3=\"d\"), L3, L3+TIME(0, G3, 0))",),
+            ("0001", "=IF(OR(R4=\"W\", R4=\"d\"), L4, L4+TIME(0, G4, 0))",),
+            ("0002", "=IF(OR(R5=\"W\", R5=\"d\"), L5, L5+TIME(0, G5, 0))",),
+            (
+                "0003",
+                "=IF(OR(R6=\"W\", R6=\"d\"), L6, L6+TIME(0, G6+420, 0))",
+            ),
+            ("0004", "=IF(OR(R7=\"W\", R7=\"d\"), L7, L7+TIME(0, G7, 0))",),
+            (
+                "0005",
+                "=IF(OR(R8=\"W\", R8=\"d\"), L8, L8+TIME(0, G8+420, 0))",
+            ),
+            (
+                "0006",
+                "=IF(OR(R9=\"W\", R9=\"d\"), L9, L9+TIME(0, G9+420, 0))",
+            ),
+            (
+                "0007",
+                "=IF(OR(R10=\"W\", R10=\"d\"), L10, L10+TIME(0, G10, 0))",
+            ),
+        ]
+    );
+}
+
+#[test]
 fn implementation_and_documentationはmanifestの重要な列契約を明記する() {
     let columns = parse_columns();
     let copy_script = fs::read_to_string(repository_path("shell/copy_for_spreadsheet.sh")).unwrap();
