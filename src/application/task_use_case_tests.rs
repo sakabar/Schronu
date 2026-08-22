@@ -1,93 +1,8 @@
 use super::*;
+use crate::test_support::TestTaskRepository;
 use chrono::TimeZone;
 use std::cell::Cell;
 use std::panic::{catch_unwind, AssertUnwindSafe};
-
-struct TestTaskRepository {
-    projects: Vec<TaskHandle>,
-    now: DateTime<Local>,
-    highest_priority_leaf_task_id: Option<Uuid>,
-    save_count: Cell<usize>,
-}
-
-impl TestTaskRepository {
-    fn new(projects: Vec<TaskHandle>, now: DateTime<Local>) -> Self {
-        Self {
-            projects,
-            now,
-            highest_priority_leaf_task_id: None,
-            save_count: Cell::new(0),
-        }
-    }
-}
-
-impl TaskRepositoryTrait for TestTaskRepository {
-    fn get_project_storage_dir_name(&self) -> &str {
-        "unused"
-    }
-
-    fn get_all_projects(&self) -> Vec<&TaskHandle> {
-        self.projects.iter().collect()
-    }
-
-    fn load(&mut self) -> Result<(), crate::application::interface::TaskRepositoryError> {
-        Ok(())
-    }
-
-    fn save(&self) -> Result<(), crate::application::interface::TaskRepositoryError> {
-        self.save_count.set(self.save_count.get() + 1);
-        Ok(())
-    }
-
-    fn sync_clock(
-        &mut self,
-        now: DateTime<Local>,
-    ) -> Result<(), crate::entity::task::TaskTreeError> {
-        self.now = now;
-        Ok(())
-    }
-
-    fn get_last_synced_time(&self) -> DateTime<Local> {
-        self.now
-    }
-
-    fn get_highest_priority_project(&mut self) -> Option<&TaskHandle> {
-        self.projects.first()
-    }
-
-    fn get_highest_priority_leaf_task_id(
-        &mut self,
-    ) -> Result<Option<Uuid>, crate::entity::task::TaskTreeError> {
-        Ok(self.highest_priority_leaf_task_id)
-    }
-
-    fn get_defer_candidate_leaf_task_id(
-        &mut self,
-        _recent_threshold: DateTime<Local>,
-    ) -> Result<Option<Uuid>, crate::entity::task::TaskTreeError> {
-        Ok(None)
-    }
-
-    fn get_by_id(
-        &self,
-        id: Uuid,
-    ) -> Result<Option<TaskHandle>, crate::entity::task::TaskTreeError> {
-        for task in &self.projects {
-            if let Some(found) = task.get_by_id(id)? {
-                return Ok(Some(found));
-            }
-        }
-        Ok(None)
-    }
-
-    fn start_new_project(
-        &mut self,
-        root_task: TaskHandle,
-    ) -> Result<(), crate::entity::task::TaskTreeError> {
-        self.projects.push(root_task);
-        Ok(())
-    }
-}
 
 fn fixed_now() -> DateTime<Local> {
     Local.with_ymd_and_hms(2026, 8, 11, 12, 0, 0).unwrap()
@@ -272,7 +187,7 @@ fn get_focus_最高優先度leafのviewを返す() {
     let root = crate::test_support::new_task_handle("親").unwrap();
     let child = root.create_as_last_child(crate::test_support::new_task_attr("子"));
     let mut repository = TestTaskRepository::new(vec![root], fixed_now());
-    repository.highest_priority_leaf_task_id = Some(child.get_id().unwrap());
+    repository.set_highest_priority_leaf_task_id(Some(child.get_id().unwrap()));
 
     assert_eq!(
         get_focus(&mut repository).unwrap().unwrap().id,
@@ -290,7 +205,7 @@ fn get_focus_候補がなければnoneを返す() {
 #[test]
 fn get_focus_選択されたtaskが取得できなければnoneを返す() {
     let mut repository = TestTaskRepository::new(vec![], fixed_now());
-    repository.highest_priority_leaf_task_id = Some(Uuid::new_v4());
+    repository.set_highest_priority_leaf_task_id(Some(Uuid::new_v4()));
 
     assert_eq!(get_focus(&mut repository), Ok(None));
 }
@@ -316,7 +231,7 @@ fn create_task_属性を設定してsaveしない() {
     assert_eq!(task.get_estimated_work_seconds().unwrap(), 30 * 60);
     assert_eq!(task.get_orig_status().unwrap(), Status::Pending);
     assert_eq!(task.get_pending_until().unwrap(), pending_until);
-    assert_eq!(repository.save_count.get(), 0);
+    assert_eq!(repository.save_count(), 0);
 }
 
 #[test]
@@ -361,7 +276,7 @@ fn create_task_空の名前を拒否して変更しない() {
         actual,
         Err(ApplicationError::InvalidInput { field: "name", .. })
     ));
-    assert!(repository.projects.is_empty());
+    assert!(repository.projects().is_empty());
 }
 
 #[test]
@@ -388,7 +303,7 @@ fn create_task_空白名と整数名を拒否して変更しない() {
             actual,
             Err(ApplicationError::InvalidInput { field: "name", .. })
         ));
-        assert!(repository.projects.is_empty());
+        assert!(repository.projects().is_empty());
     }
 }
 
@@ -412,7 +327,7 @@ fn create_task_負の見積もりを拒否して変更しない() {
             ..
         })
     ));
-    assert!(repository.projects.is_empty());
+    assert!(repository.projects().is_empty());
 }
 
 #[test]
@@ -437,7 +352,7 @@ fn create_task_秒変換がoverflowする見積もりをerrorにする() {
             ..
         }))
     ));
-    assert!(repository.projects.is_empty());
+    assert!(repository.projects().is_empty());
 }
 
 #[test]
@@ -725,8 +640,8 @@ fn complete_task_反復anchorの次業務日計算不能をerrorにして変更�
         .map(|task| task.get_id().unwrap())
         .collect::<Vec<_>>();
     let mut repository = TestTaskRepository::new(vec![parent.clone()], fixed_now());
-    repository.highest_priority_leaf_task_id = Some(child_id);
-    let focus_before = repository.highest_priority_leaf_task_id;
+    repository.set_highest_priority_leaf_task_id(Some(child_id));
+    let focus_before = repository.highest_priority_leaf_task_id();
     let id_call_count = Cell::new(0);
     let mut next_id = || {
         id_call_count.set(id_call_count.get() + 1);
@@ -781,7 +696,7 @@ fn complete_task_反復anchorの次業務日計算不能をerrorにして変更�
             .collect::<Vec<_>>(),
         child_ids_before
     );
-    assert_eq!(repository.highest_priority_leaf_task_id, focus_before);
+    assert_eq!(repository.highest_priority_leaf_task_id(), focus_before);
     assert_eq!(id_call_count.get(), 0);
 }
 
@@ -1461,5 +1376,5 @@ fn write_use_cases_repositoryをsaveしない() {
     .unwrap();
 
     assert!(repository.get_by_id(created_id).unwrap().is_some());
-    assert_eq!(repository.save_count.get(), 0);
+    assert_eq!(repository.save_count(), 0);
 }
