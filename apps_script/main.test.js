@@ -95,12 +95,17 @@ class MockSpreadsheet {
 }
 
 function loadScript({ lockAvailable = true } = {}) {
+  const logs = [];
   const lockState = {
     acquireCalls: 0,
     releaseCalls: 0,
   };
   const context = vm.createContext({
-    console: { log() {} },
+    console: {
+      log(message) {
+        logs.push(message);
+      },
+    },
     LockService: {
       getDocumentLock() {
         return {
@@ -116,7 +121,7 @@ function loadScript({ lockAvailable = true } = {}) {
     },
   });
   vm.runInContext(SCRIPT_SOURCE, context, { filename: SCRIPT_PATH });
-  return { context, lockState };
+  return { context, lockState, logs };
 }
 
 function synchronizationFixture() {
@@ -148,6 +153,56 @@ test('1セル編集は同じtask IDの同期列へ値を反映する', () => {
   assert.equal(targetSheet.valueAt(4, 12), 'source-value');
   assert.equal(lockState.acquireCalls, 1);
   assert.equal(lockState.releaseCalls, 1);
+});
+
+test('1セル同期は機密値を含まない区間計測を1件記録する', () => {
+  const { context, logs } = loadScript();
+  const { sourceSheet, spreadsheet } = synchronizationFixture();
+
+  context.onEdit({
+    source: spreadsheet,
+    range: sourceSheet.getRange(5, 12),
+  });
+
+  assert.equal(logs.length, 1);
+  const metric = JSON.parse(logs[0]);
+  assert.deepEqual(
+    Object.keys(metric).sort(),
+    [
+      'event',
+      'lockWaitMs',
+      'outcome',
+      'rowsScanned',
+      'sourceSheet',
+      'sourceTaskIdReadMs',
+      'sourceValueReadMs',
+      'targetIdReadMs',
+      'targetIdSearchMs',
+      'targetLastRowReadMs',
+      'targetSheet',
+      'targetValueWriteCallMs',
+    ],
+  );
+  assert.equal(metric.event, 'td_014_single_cell_sync');
+  assert.equal(metric.outcome, 'synced');
+  assert.equal(metric.sourceSheet, '実ログ');
+  assert.equal(metric.targetSheet, '優先度低い順');
+  assert.equal(metric.rowsScanned, 2);
+  for (const field of [
+    'lockWaitMs',
+    'sourceTaskIdReadMs',
+    'targetLastRowReadMs',
+    'targetIdReadMs',
+    'targetIdSearchMs',
+    'sourceValueReadMs',
+    'targetValueWriteCallMs',
+  ]) {
+    assert.equal(Number.isInteger(metric[field]), true, `${field} must be an integer`);
+    assert.equal(metric[field] >= 0, true, `${field} must be non-negative`);
+  }
+  assert.equal(logs[0].includes('task-2'), false);
+  assert.equal(logs[0].includes('source-value'), false);
+  assert.equal(logs[0].includes('target-value'), false);
 });
 
 test('対象外sheetの編集は同期処理を開始しない', () => {
