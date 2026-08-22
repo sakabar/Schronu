@@ -35,6 +35,50 @@ fn maximum_local_business_day_start() -> chrono::DateTime<Local> {
         .expect("maximum local date at 06:00 must be unambiguous")
 }
 
+fn runtime_product_dispatch_source() -> &'static str {
+    include_str!("runtime.rs")
+        .split_once("fn execute_parsed(")
+        .expect("runtime must retain the parsed command entrypoint")
+        .1
+        .split_once("struct RuntimeProjectCommandContext")
+        .expect("parsed command entrypoint must remain bounded by its first context")
+        .0
+}
+
+fn runtime_fallback_source() -> &'static str {
+    include_str!("runtime.rs")
+        .split_once("fn execute_with_config(")
+        .expect("runtime must retain the typed fallback entrypoint")
+        .1
+        .split_once("fn reload_repository_for_cli(")
+        .expect("runtime fallback must remain bounded by repository reload")
+        .0
+}
+
+fn runtime_interactive_dispatch_source() -> &'static str {
+    include_str!("runtime.rs")
+        .split_once("fn execute_interactive_command(")
+        .expect("runtime must retain interactive dispatch")
+        .1
+        .split_once("struct InteractiveRepositoryState")
+        .expect("interactive dispatch must remain bounded by its repository state")
+        .0
+}
+
+fn assert_runtime_routes_to_handler(handler_call: &str, forbidden_fallback_tokens: &[&str]) {
+    assert!(
+        runtime_product_dispatch_source().contains(handler_call),
+        "product dispatch must route the typed command through {handler_call}"
+    );
+    let fallback = runtime_fallback_source();
+    for forbidden in forbidden_fallback_tokens {
+        assert!(
+            !fallback.contains(forbidden),
+            "handler-owned command must not remain in runtime fallback: {forbidden}"
+        );
+    }
+}
+
 #[test]
 fn 明日と曜日の日時指定は次の業務日境界errorを保持する() {
     let now = maximum_local_business_day_start();
@@ -186,6 +230,31 @@ fn handler_has_no_runtime_or_external_io_dependency_and_no_command_reconstructio
         focus.focus_request,
         Some(FocusRequest::LowestPriority { recent_days: 7 })
     );
+
+    let handler_source = include_str!("handler.rs");
+    let imports = handler_source
+        .split_once("#[derive(Clone, Copy, Debug, Eq, PartialEq)]")
+        .expect("handler imports must precede its first product type")
+        .0;
+    for forbidden_import in [
+        "super::runtime",
+        "termion",
+        "std::env",
+        "webbrowser",
+        "TaskRepository",
+        "run_repository_transaction",
+    ] {
+        assert!(
+            !imports.contains(forbidden_import),
+            "handler imports must not depend on runtime or external I/O: {forbidden_import}"
+        );
+    }
+    for forbidden_reconstruction in ["legacy_tokens", "canonical_command"] {
+        assert!(
+            !handler_source.contains(forbidden_reconstruction),
+            "handler must not reconstruct parsed commands: {forbidden_reconstruction}"
+        );
+    }
 }
 
 struct TraceProjectContext {
@@ -194,6 +263,7 @@ struct TraceProjectContext {
     focused_task: TaskHandle,
     created: Vec<CreateTaskInput>,
     breakdowns: Vec<BreakdownTaskInput>,
+    created_attr_names: Vec<String>,
 }
 
 impl TraceProjectContext {
@@ -204,6 +274,7 @@ impl TraceProjectContext {
             focused_task: TaskHandle::with_identity("focused", Uuid::from_u128(1), now).unwrap(),
             created: Vec::new(),
             breakdowns: Vec::new(),
+            created_attr_names: Vec::new(),
         }
     }
 }
@@ -228,6 +299,7 @@ impl ProjectCommandContext for TraceProjectContext {
     }
 
     fn create_task_attr(&mut self, name: &str) -> TaskAttr {
+        self.created_attr_names.push(name.to_string());
         TaskAttr::with_identity(name, Uuid::from_u128(5), self.now)
     }
 
@@ -269,6 +341,18 @@ fn project作成commandはhandlerがtyped_fieldを直接matchして所有する(
         }]
     );
     assert_eq!(context.focused_task_id, Some(Uuid::from_u128(2)));
+    assert_runtime_routes_to_handler(
+        "handle_project_command(parsed_command",
+        &[
+            "CommandKind::NewProject",
+            "CommandKind::HobbyProject",
+            "CommandKind::UnplannedProject",
+            "CommandKind::Sequential",
+            "CommandKind::Repeat",
+            "CommandKind::Appointment",
+            "CommandKind::Start",
+        ],
+    );
 
     let commands = [
         Command::Action(CommandAction::NewProject {
@@ -512,6 +596,27 @@ fn task_tree表示commandはruntime_fallbackに残さない() {
         assert_eq!(outcome.kind, command.kind());
         assert_eq!(context.calls, [expected_call]);
     }
+    assert_runtime_routes_to_handler(
+        "handle_task_tree_command(parsed_command",
+        &[
+            "CommandKind::Tree",
+            "CommandKind::Ancestor",
+            "CommandKind::Root",
+            "CommandKind::Leaves",
+            "CommandKind::ShowAll",
+            "CommandKind::Tail",
+            "CommandKind::Today",
+            "CommandKind::NonRepetitive",
+            "CommandKind::Calendar",
+            "CommandKind::Band",
+            "CommandKind::Focus =>",
+            "CommandKind::Pick",
+            "CommandKind::Parent",
+            "CommandKind::Children",
+            "CommandKind::Deepest",
+            "CommandKind::NextUp",
+        ],
+    );
 }
 
 #[test]
@@ -537,23 +642,38 @@ fn breakdownとsplitはhandlerがtyped_fieldを直接matchして所有する() {
     );
     assert_eq!(context.focused_task_id, Some(Uuid::from_u128(3)));
 
-    for command in [
-        Command::Action(CommandAction::Split {
-            minutes: 5,
-            name: "typed split".to_string(),
-        }),
-        no_arguments(CommandKind::Wait, "ignored alias"),
-    ] {
-        let mut context = TraceProjectContext::new(now);
-        context
-            .focused_task
-            .set_estimated_work_seconds(30 * 60)
-            .unwrap();
-        let outcome = handle_breakdown_split_command(&command, &mut context)
-            .unwrap()
-            .expect("typed split or wait command must be owned by the handler");
-        assert_eq!(outcome.kind, command.kind());
-    }
+    let split = Command::Action(CommandAction::Split {
+        minutes: 5,
+        name: "typed split".to_string(),
+    });
+    let mut split_context = TraceProjectContext::new(now);
+    split_context
+        .focused_task
+        .set_estimated_work_seconds(30 * 60)
+        .unwrap();
+    let split_outcome = handle_breakdown_split_command(&split, &mut split_context)
+        .unwrap()
+        .expect("typed split command must be owned by the handler");
+    assert_eq!(split_outcome.kind, CommandKind::Split);
+    assert_eq!(split_context.created_attr_names, ["typed split"]);
+    let split_child = split_context.focused_task.get_children().unwrap().remove(0);
+    assert_eq!(split_child.get_estimated_work_seconds().unwrap(), 5 * 60);
+
+    let wait = no_arguments(CommandKind::Wait, "ignored alias");
+    let mut wait_context = TraceProjectContext::new(now);
+    let wait_outcome = handle_breakdown_split_command(&wait, &mut wait_context)
+        .unwrap()
+        .expect("typed wait command must be owned by the handler");
+    assert_eq!(wait_outcome.kind, CommandKind::Wait);
+
+    assert_runtime_routes_to_handler(
+        "handle_breakdown_split_command(parsed_command",
+        &[
+            "CommandKind::Breakdown",
+            "CommandKind::Split",
+            "CommandKind::Wait",
+        ],
+    );
 }
 
 #[derive(Default)]
@@ -672,6 +792,18 @@ fn task属性更新commandはruntime_fallbackに残さない() {
 
     assert_eq!(outcome.kind, CommandKind::Arrange);
     assert_eq!(context.calls, ["arrange:37:true"]);
+    assert_runtime_routes_to_handler(
+        "handle_task_attribute_command(parsed_command",
+        &[
+            "CommandKind::Deadline",
+            "CommandKind::Estimate",
+            "CommandKind::Arrange",
+            "CommandKind::Actual",
+            "CommandKind::Priority",
+            "CommandKind::Category",
+            "CommandKind::Work",
+        ],
+    );
 }
 
 #[derive(Default)]
@@ -857,11 +989,35 @@ fn defer系commandはruntime_fallbackとinteractive特別経路に残さない()
         assert_eq!(outcome.kind, command.kind());
         assert_eq!(context.calls, [expected_call]);
     }
+    assert_runtime_routes_to_handler(
+        "handle_defer_command(parsed_command",
+        &[
+            "CommandKind::Defer =>",
+            "CommandKind::DeferRoutines",
+            "CommandKind::Escape",
+            "CommandKind::Extrude",
+            "CommandKind::Clear | CommandKind::Gather",
+        ],
+    );
+    for forbidden_interactive_shortcut in [
+        "Command::Defer { amount, unit }",
+        "InteractiveShortcut::NextMorning",
+        "InteractiveShortcut::NextWeek",
+        "InteractiveShortcut::DeferRoutine",
+        "InteractiveShortcut::FiveYears",
+    ] {
+        assert!(
+            !runtime_interactive_dispatch_source().contains(forbidden_interactive_shortcut),
+            "interactive defer shortcut must use the shared handler path: {forbidden_interactive_shortcut}"
+        );
+    }
 }
 
 struct TraceFinishPlacementContext {
     now: chrono::DateTime<Local>,
+    focused_task: TaskHandle,
     calls: Vec<String>,
+    completion_inputs: Vec<CompleteTaskInput>,
 }
 
 impl FinishPlacementCommandContext for TraceFinishPlacementContext {
@@ -878,7 +1034,7 @@ impl FinishPlacementCommandContext for TraceFinishPlacementContext {
     }
 
     fn focused_task(&self) -> Result<Option<TaskHandle>, ApplicationError> {
-        Ok(None)
+        Ok(Some(self.focused_task.clone()))
     }
 
     fn show_focused_tree(
@@ -891,10 +1047,11 @@ impl FinishPlacementCommandContext for TraceFinishPlacementContext {
 
     fn complete_focused_task(
         &mut self,
-        _input: CompleteTaskInput,
+        input: CompleteTaskInput,
     ) -> Result<Option<Uuid>, ApplicationError> {
         self.calls.push("complete".to_string());
-        Ok(None)
+        self.completion_inputs.push(input);
+        Ok(Some(Uuid::from_u128(22)))
     }
 
     fn set_focused_task_id(&mut self, task_id_opt: Option<Uuid>) {
@@ -915,30 +1072,69 @@ impl FinishPlacementCommandContext for TraceFinishPlacementContext {
 #[test]
 fn 完了と配置commandはtyped値のままhandlerが所有してruntime_fallbackに残さない() {
     let now = Local.with_ymd_and_hms(2026, 8, 23, 12, 0, 0).unwrap();
-    let commands = [
-        Command::Action(CommandAction::Finish {
-            values: vec!["09:45".to_string()],
-        }),
-        no_arguments(CommandKind::Pack, "ignored alias"),
-        no_arguments(CommandKind::Flatten, "ignored alias"),
-    ];
-    let expected_calls = [vec![], vec!["pack"], vec!["flatten"]];
+    let focused_task =
+        TaskHandle::with_identity("finish target", Uuid::from_u128(21), now).unwrap();
+    let finish = Command::Action(CommandAction::Finish {
+        values: vec!["09:45".to_string()],
+    });
+    let mut finish_context = TraceFinishPlacementContext {
+        now,
+        focused_task: focused_task.clone(),
+        calls: Vec::new(),
+        completion_inputs: Vec::new(),
+    };
+    let finish_outcome = handle_finish_placement_command(&finish, &mut finish_context)
+        .unwrap()
+        .expect("typed finish command must be owned by the handler");
+    assert_eq!(finish_outcome.kind, CommandKind::Finish);
+    assert_eq!(finish_context.calls.len(), 2);
+    assert_eq!(finish_context.calls[0], "complete");
+    assert!(finish_context.calls[1].starts_with("focus:Some("));
+    assert_eq!(
+        finish_context.completion_inputs,
+        [CompleteTaskInput {
+            task_id: Uuid::from_u128(21),
+            finished_at: Local.with_ymd_and_hms(2026, 8, 23, 9, 45, 0).unwrap(),
+            additional_actual_work_seconds: 0,
+        }]
+    );
 
-    for (command, expected_call) in commands.iter().zip(expected_calls) {
+    for (command, expected_call) in [
+        (no_arguments(CommandKind::Pack, "ignored alias"), "pack"),
+        (
+            no_arguments(CommandKind::Flatten, "ignored alias"),
+            "flatten",
+        ),
+    ] {
         let mut context = TraceFinishPlacementContext {
             now,
+            focused_task: focused_task.clone(),
             calls: Vec::new(),
+            completion_inputs: Vec::new(),
         };
-        let outcome = handle_finish_placement_command(command, &mut context)
+        let outcome = handle_finish_placement_command(&command, &mut context)
             .unwrap()
             .expect("typed finish or placement command must be owned by the handler");
         assert_eq!(outcome.kind, command.kind());
-        assert_eq!(context.calls, expected_call);
+        assert_eq!(context.calls, [expected_call]);
+        assert!(context.completion_inputs.is_empty());
     }
 
     let unfocus = handle(&no_arguments(CommandKind::Unfocus, "ignored alias"))
         .expect("typed unfocus command must be owned by the handler");
     assert_eq!(unfocus.focus_request, Some(FocusRequest::Clear));
+    assert_runtime_routes_to_handler(
+        "handle_finish_placement_command(parsed_command",
+        &[
+            "CommandKind::Finish",
+            "CommandKind::Pack",
+            "CommandKind::Flatten",
+            "CommandKind::Unfocus",
+            "complete_task(",
+            "pack_tasks_",
+            "flatten_tasks_",
+        ],
+    );
 }
 
 #[derive(Default)]
