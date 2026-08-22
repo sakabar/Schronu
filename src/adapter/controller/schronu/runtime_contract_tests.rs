@@ -3604,6 +3604,51 @@ fn runtime外部ioとoutcome調停は共通境界に集約する() {
     assert_eq!(focused_task_id_opt, None);
     assert_eq!(focus_output.flush_count, 0);
 
+    focused_task_id_opt = Some(task_id);
+    let clear_command = parse_command("外", ParseMode::Interactive).unwrap();
+    let clear_outcome = handle(&clear_command).expect("unfocus must be handler-owned");
+    let mut clear_output = FlushTrackingWriter::successful(false);
+    let mut clear_selection_mode = FocusSelectionMode::Explicit;
+    apply_command_outcome(
+        &mut clear_output,
+        &mut task_repository,
+        &mut focused_task_id_opt,
+        OutcomeApplicationMode::InteractiveUnflushed(&mut clear_selection_mode),
+        clear_outcome,
+        active_config(),
+    )
+    .unwrap();
+
+    assert_eq!(clear_selection_mode, FocusSelectionMode::Explicit);
+    assert_eq!(focused_task_id_opt, None);
+    assert_eq!(clear_output.flush_count, 0);
+
+    focused_task_id_opt = Some(task_id);
+    let low_command = parse_command("低 3", ParseMode::Interactive).unwrap();
+    let low_outcome = handle(&low_command).expect("low focus mode must be handler-owned");
+    let mut low_output = FlushTrackingWriter::successful(false);
+    let mut low_selection_mode = FocusSelectionMode::Explicit;
+    apply_command_outcome(
+        &mut low_output,
+        &mut task_repository,
+        &mut focused_task_id_opt,
+        OutcomeApplicationMode::InteractiveUnflushed(&mut low_selection_mode),
+        low_outcome,
+        active_config(),
+    )
+    .unwrap();
+
+    assert_eq!(
+        String::from_utf8(low_output.buffer).unwrap(),
+        "フォーカス選択モード: 低 3\n"
+    );
+    assert_eq!(
+        low_selection_mode,
+        FocusSelectionMode::LowestPriority { recent_days: 3 }
+    );
+    assert_eq!(focused_task_id_opt, None);
+    assert_eq!(low_output.flush_count, 0);
+
     for (error_kind, expects_success) in [
         (std::io::ErrorKind::BrokenPipe, true),
         (std::io::ErrorKind::Other, false),
