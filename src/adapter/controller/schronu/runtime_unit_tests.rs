@@ -204,15 +204,15 @@ fn test_parse_dated_clear_or_gather_time_range_不正値と空区間を拒否す
 fn test_parse_focus_selection_mode_command_low() {
     assert_eq!(
         parse_focus_selection_mode_command("低"),
-        Some(FocusSelectionMode::LowestPriority {
-            recent_days: DEFAULT_LOWEST_PRIORITY_RECENT_DAYS
-        })
+        Some(FocusSelectionMode::lowest_priority(
+            DEFAULT_LOWEST_PRIORITY_RECENT_DAYS
+        ))
     );
     assert_eq!(
         parse_focus_selection_mode_command("low"),
-        Some(FocusSelectionMode::LowestPriority {
-            recent_days: DEFAULT_LOWEST_PRIORITY_RECENT_DAYS
-        })
+        Some(FocusSelectionMode::lowest_priority(
+            DEFAULT_LOWEST_PRIORITY_RECENT_DAYS
+        ))
     );
 }
 
@@ -220,19 +220,19 @@ fn test_parse_focus_selection_mode_command_low() {
 fn test_parse_focus_selection_mode_command_low_with_recent_days() {
     assert_eq!(
         parse_focus_selection_mode_command("低 0"),
-        Some(FocusSelectionMode::LowestPriority { recent_days: 0 })
+        Some(FocusSelectionMode::lowest_priority(0))
     );
     assert_eq!(
         parse_focus_selection_mode_command("low 0"),
-        Some(FocusSelectionMode::LowestPriority { recent_days: 0 })
+        Some(FocusSelectionMode::lowest_priority(0))
     );
     assert_eq!(
         parse_focus_selection_mode_command("lo 3"),
-        Some(FocusSelectionMode::LowestPriority { recent_days: 3 })
+        Some(FocusSelectionMode::lowest_priority(3))
     );
     assert_eq!(
         parse_focus_selection_mode_command("lowest 12"),
-        Some(FocusSelectionMode::LowestPriority { recent_days: 12 })
+        Some(FocusSelectionMode::lowest_priority(12))
     );
 }
 
@@ -240,11 +240,11 @@ fn test_parse_focus_selection_mode_command_low_with_recent_days() {
 fn test_parse_focus_selection_mode_command_high() {
     assert_eq!(
         parse_focus_selection_mode_command("高"),
-        Some(FocusSelectionMode::HighestPriority)
+        Some(FocusSelectionMode::highest_priority())
     );
     assert_eq!(
         parse_focus_selection_mode_command("high"),
-        Some(FocusSelectionMode::HighestPriority)
+        Some(FocusSelectionMode::highest_priority())
     );
 }
 
@@ -252,13 +252,13 @@ fn test_parse_focus_selection_mode_command_high() {
 fn test_parse_focus_selection_mode_command_trims_spaces() {
     assert_eq!(
         parse_focus_selection_mode_command("  low  "),
-        Some(FocusSelectionMode::LowestPriority {
-            recent_days: DEFAULT_LOWEST_PRIORITY_RECENT_DAYS
-        })
+        Some(FocusSelectionMode::lowest_priority(
+            DEFAULT_LOWEST_PRIORITY_RECENT_DAYS
+        ))
     );
     assert_eq!(
         parse_focus_selection_mode_command("  高  "),
-        Some(FocusSelectionMode::HighestPriority)
+        Some(FocusSelectionMode::highest_priority())
     );
 }
 

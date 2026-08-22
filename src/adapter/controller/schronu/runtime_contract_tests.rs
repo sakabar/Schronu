@@ -1438,7 +1438,8 @@ fn defer系の通常interactive_commandはflushしshortcutはflushしない() {
         let mut task_repository = TestTaskRepository::new(task, now);
         let mut free_time_manager = TestFreeTimeManager::default();
         let mut focused_task_id_opt = Some(task_id);
-        let mut focus_selection_mode = FocusSelectionMode::Explicit;
+        let mut focus_selection_mode = FocusSelectionMode::highest_priority();
+        focus_selection_mode.set_explicit(true);
         let mut stdout = FlushTrackingWriter::successful(true);
 
         execute_interactive_command(
@@ -1462,7 +1463,8 @@ fn defer系の通常interactive_commandはflushしshortcutはflushしない() {
         let mut task_repository = TestTaskRepository::new(task, now);
         let mut free_time_manager = TestFreeTimeManager::default();
         let mut focused_task_id_opt = Some(task_id);
-        let mut focus_selection_mode = FocusSelectionMode::Explicit;
+        let mut focus_selection_mode = FocusSelectionMode::highest_priority();
+        focus_selection_mode.set_explicit(true);
         let mut stdout = FlushTrackingWriter::successful(true);
 
         execute_interactive_command(
@@ -1494,7 +1496,7 @@ fn interactive低優先度modeは共通outcome経路でfocusと表示を更新�
     task_repository.defer_candidate_leaf_task_id_opt = Some(low_priority_task_id);
     let mut free_time_manager = TestFreeTimeManager::default();
     let mut focused_task_id_opt = Some(high_priority_task_id);
-    let mut focus_selection_mode = FocusSelectionMode::HighestPriority;
+    let mut focus_selection_mode = FocusSelectionMode::highest_priority();
     let mut stdout = FlushTrackingWriter::successful(true);
 
     execute_interactive_command(
@@ -1511,7 +1513,7 @@ fn interactive低優先度modeは共通outcome経路でfocusと表示を更新�
 
     assert_eq!(
         focus_selection_mode,
-        FocusSelectionMode::LowestPriority { recent_days: 3 }
+        FocusSelectionMode::lowest_priority(3)
     );
     assert_eq!(focused_task_id_opt, Some(low_priority_task_id));
     assert_eq!(
@@ -1532,7 +1534,10 @@ fn test_select_focus_task_id_高優先度modeでは最優先leafを返す() {
     let mut task_repository = TestTaskRepository::new(task, now);
     task_repository.highest_priority_leaf_task_id_opt = Some(expected_id);
 
-    let actual = select_focus_task_id(&mut task_repository, FocusSelectionMode::HighestPriority);
+    let actual = select_focus_task_id(
+        &mut task_repository,
+        &FocusSelectionMode::highest_priority(),
+    );
 
     assert_eq!(actual, Ok(Some(expected_id)));
 }
@@ -1551,7 +1556,7 @@ fn test_select_focus_task_id_低優先度modeでは0日と10日の完成閾値�
 
         let actual = select_focus_task_id(
             &mut task_repository,
-            FocusSelectionMode::LowestPriority { recent_days },
+            &FocusSelectionMode::lowest_priority(recent_days),
         );
 
         assert_eq!(actual, Ok(Some(expected_id)));
@@ -1570,9 +1575,7 @@ fn test_select_focus_task_id_延期候補の日数範囲外を閾値errorにす�
 
     let actual = select_focus_task_id(
         &mut task_repository,
-        FocusSelectionMode::LowestPriority {
-            recent_days: i64::MAX,
-        },
+        &FocusSelectionMode::lowest_priority(i64::MAX),
     );
 
     assert!(matches!(
@@ -1599,7 +1602,7 @@ fn test_select_focus_task_id_延期候補の日時閾値errorを伝搬して状�
 
     let actual = select_focus_task_id(
         &mut task_repository,
-        FocusSelectionMode::LowestPriority { recent_days: 3 },
+        &FocusSelectionMode::lowest_priority(3),
     );
 
     assert!(matches!(
@@ -5136,7 +5139,7 @@ fn test_reload後にfocus中taskがdoneなら次候補を選び直す() {
     let mut repository = TestTaskRepository::new(root, now);
     repository.highest_priority_leaf_task_id_opt = Some(next.get_id().unwrap());
     let mut focused_task_id_opt = Some(done.get_id().unwrap());
-    let mut focus_selection_mode = FocusSelectionMode::HighestPriority;
+    let mut focus_selection_mode = FocusSelectionMode::highest_priority();
 
     let changed = reconcile_focus_after_reload(
         &mut repository,
@@ -5163,7 +5166,7 @@ fn test_低優先度modeで外したfocusは低優先度候補を再選択する
     let mut stdout = TestWriter::new();
     let mut focused_task_id_opt = Some(high_priority_task_id);
     let focus_started_datetime = now;
-    let mut focus_selection_mode = FocusSelectionMode::LowestPriority { recent_days: 3 };
+    let mut focus_selection_mode = FocusSelectionMode::lowest_priority(3);
 
     execute_interactive_command(
         &mut stdout,
@@ -5180,7 +5183,7 @@ fn test_低優先度modeで外したfocusは低優先度候補を再選択する
     assert_eq!(focused_task_id_opt, Some(low_priority_task_id));
     assert_eq!(
         focus_selection_mode,
-        FocusSelectionMode::LowestPriority { recent_days: 3 }
+        FocusSelectionMode::lowest_priority(3)
     );
     assert_eq!(
         repository.last_defer_candidate_recent_threshold_opt,
@@ -5194,13 +5197,16 @@ fn test_tuck_awayは高低mode内でtaskを伏せて見は除外を維持した�
     let task = new_test_task_handle("伏せるtask").unwrap();
     let task_id = task.get_id().unwrap();
     let original_pending_until = task.get_pending_until().unwrap();
+    let original_priority = task.get_priority().unwrap();
+    let original_start_time = task.get_start_time().unwrap();
     let mut repository = TestTaskRepository::new(task.clone(), now);
+    repository.has_pending_changes.set(false);
     repository.highest_priority_leaf_task_id_opt = Some(task_id);
     repository.defer_candidate_leaf_task_id_opt = Some(task_id);
     let mut free_time_manager = TestFreeTimeManager::default();
     let mut stdout = TestWriter::new();
     let mut focused_task_id_opt = Some(task_id);
-    let mut focus_selection_mode = FocusSelectionMode::HighestPriority;
+    let mut focus_selection_mode = FocusSelectionMode::highest_priority();
 
     macro_rules! execute {
         ($command:expr) => {
@@ -5222,6 +5228,14 @@ fn test_tuck_awayは高低mode内でtaskを伏せて見は除外を維持した�
     assert_eq!(focused_task_id_opt, None);
     assert_eq!(task.get_orig_status().unwrap(), Status::Todo);
     assert_eq!(task.get_pending_until().unwrap(), original_pending_until);
+    assert_eq!(task.get_priority().unwrap(), original_priority);
+    assert_eq!(task.get_start_time().unwrap(), original_start_time);
+    assert!(!repository.has_pending_changes.get());
+
+    execute!("高");
+    assert_eq!(focused_task_id_opt, Some(task_id));
+    execute!("t");
+    assert_eq!(focused_task_id_opt, None);
 
     execute!(&format!("見 {task_id}"));
     assert_eq!(focused_task_id_opt, Some(task_id));
@@ -5233,8 +5247,99 @@ fn test_tuck_awayは高低mode内でtaskを伏せて見は除外を維持した�
     execute!("伏");
     assert_eq!(focused_task_id_opt, None);
 
+    execute!("低");
+    assert_eq!(focused_task_id_opt, Some(task_id));
+    execute!("tuck");
+    assert_eq!(focused_task_id_opt, None);
+
     execute!("高");
     assert_eq!(focused_task_id_opt, Some(task_id));
+}
+
+#[test]
+fn test_明示focus中の手動navigationは明示状態を維持する() {
+    let now = Local.with_ymd_and_hms(2026, 8, 16, 12, 0, 0).unwrap();
+    let root = new_test_task_handle("root").unwrap();
+    let child = root.create_as_last_child(new_test_task_attr("child"));
+    let child_id = child.get_id().unwrap();
+    let root_id = root.get_id().unwrap();
+    let mut repository = TestTaskRepository::new(root, now);
+    let mut free_time_manager = TestFreeTimeManager::default();
+    let mut stdout = TestWriter::new();
+    let mut focused_task_id_opt = None;
+    let mut focus_selection_mode = FocusSelectionMode::highest_priority();
+
+    execute_interactive_command(
+        &mut stdout,
+        &mut repository,
+        &mut free_time_manager,
+        &mut focused_task_id_opt,
+        &now,
+        &mut focus_selection_mode,
+        now,
+        &format!("見 {child_id}"),
+    )
+    .unwrap();
+    execute_interactive_command(
+        &mut stdout,
+        &mut repository,
+        &mut free_time_manager,
+        &mut focused_task_id_opt,
+        &now,
+        &mut focus_selection_mode,
+        now,
+        "親",
+    )
+    .unwrap();
+
+    assert_eq!(focused_task_id_opt, Some(root_id));
+    assert!(focus_selection_mode.is_explicit());
+}
+
+#[test]
+fn test_明示focus中に終了したらhandlerの次focusではなく元modeから再選択する() {
+    let now = Local.with_ymd_and_hms(2026, 8, 16, 12, 0, 0).unwrap();
+    let root = new_test_task_handle("root").unwrap();
+    let explicit_task = root.create_as_last_child(new_test_task_attr("明示focus対象"));
+    let automatic_task = root.create_as_last_child(new_test_task_attr("自動focus候補"));
+    automatic_task.set_orig_status(Status::Done);
+    let explicit_task_id = explicit_task.get_id().unwrap();
+    let automatic_task_id = automatic_task.get_id().unwrap();
+    let root_id = root.get_id().unwrap();
+    let mut repository = TestTaskRepository::new(root, now);
+    repository.highest_priority_leaf_task_id_opt = Some(automatic_task_id);
+    let mut free_time_manager = TestFreeTimeManager::default();
+    let mut stdout = TestWriter::new();
+    let mut focused_task_id_opt = None;
+    let mut focus_selection_mode = FocusSelectionMode::highest_priority();
+
+    execute_interactive_command(
+        &mut stdout,
+        &mut repository,
+        &mut free_time_manager,
+        &mut focused_task_id_opt,
+        &now,
+        &mut focus_selection_mode,
+        now,
+        &format!("見 {explicit_task_id}"),
+    )
+    .unwrap();
+    execute_interactive_command(
+        &mut stdout,
+        &mut repository,
+        &mut free_time_manager,
+        &mut focused_task_id_opt,
+        &now,
+        &mut focus_selection_mode,
+        now,
+        "終 今",
+    )
+    .unwrap();
+
+    assert_eq!(explicit_task.get_orig_status().unwrap(), Status::Done);
+    assert_ne!(automatic_task_id, root_id);
+    assert_eq!(focused_task_id_opt, Some(automatic_task_id));
+    assert!(!focus_selection_mode.is_explicit());
 }
 
 #[test]
@@ -5248,7 +5353,7 @@ fn test_interactive_task属性更新_不正deadlineはfield付きerrorを表示�
     let mut free_time_manager = TestFreeTimeManager::default();
     let mut stdout = TestWriter::new();
     let mut focused_task_id_opt = Some(task_id);
-    let mut focus_selection_mode = FocusSelectionMode::HighestPriority;
+    let mut focus_selection_mode = FocusSelectionMode::highest_priority();
 
     execute_interactive_command(
         &mut stdout,
@@ -5286,7 +5391,7 @@ fn test_interactive_submitは製品event経路でload実行保存する() {
     let mut focused_task_id_opt = Some(task_id);
     let mut last_focused_task_id_opt = Some(task_id);
     let mut focus_started_datetime = now;
-    let mut focus_selection_mode = FocusSelectionMode::HighestPriority;
+    let mut focus_selection_mode = FocusSelectionMode::highest_priority();
 
     let outcome = handle_interactive_repository_event(
         &mut stdout,
@@ -5333,7 +5438,7 @@ fn test_interactive_submitはoperation時刻をcommandと直後renderへ共有�
     let mut focused_task_id_opt = Some(existing_id);
     let mut last_focused_task_id_opt = Some(existing_id);
     let mut focus_started_datetime = previous_synced_time;
-    let mut focus_selection_mode = FocusSelectionMode::HighestPriority;
+    let mut focus_selection_mode = FocusSelectionMode::highest_priority();
 
     let outcome = handle_interactive_submit_at(
         &mut stdout,
@@ -5402,7 +5507,7 @@ fn test_interactive_submitの見は完了済みtaskへの明示focusを更新後
     let mut focused_task_id_opt = Some(next_id);
     let mut last_focused_task_id_opt = Some(next_id);
     let mut focus_started_datetime = now;
-    let mut focus_selection_mode = FocusSelectionMode::HighestPriority;
+    let mut focus_selection_mode = FocusSelectionMode::highest_priority();
     let command = format!("見 {done_id}");
 
     let submit_outcome = handle_interactive_repository_event(
@@ -5463,7 +5568,7 @@ fn test_interactive_submitは外部完了によるfocus切替時に開始時刻�
     let mut focused_task_id_opt = Some(done_id);
     let mut last_focused_task_id_opt = Some(done_id);
     let mut focus_started_datetime = old_focus_started_datetime;
-    let mut focus_selection_mode = FocusSelectionMode::HighestPriority;
+    let mut focus_selection_mode = FocusSelectionMode::highest_priority();
 
     let outcome = handle_interactive_repository_event(
         &mut stdout,
@@ -5509,7 +5614,7 @@ fn test_interactive_refreshとctrl_dは外部完了によるfocus切替時に開
         let mut focused_task_id_opt = Some(done_id);
         let mut last_focused_task_id_opt = Some(done_id);
         let mut focus_started_datetime = old_focus_started_datetime;
-        let mut focus_selection_mode = FocusSelectionMode::HighestPriority;
+        let mut focus_selection_mode = FocusSelectionMode::highest_priority();
 
         let outcome = handle_interactive_repository_event(
             &mut stdout,
@@ -5550,7 +5655,7 @@ fn test_interactive_commandによるfocus切替は次のrender時刻を開始時
     let mut focused_task_id_opt = Some(task_id);
     let mut last_focused_task_id_opt = Some(task_id);
     let mut focus_started_datetime = old_focus_started_datetime;
-    let mut focus_selection_mode = FocusSelectionMode::HighestPriority;
+    let mut focus_selection_mode = FocusSelectionMode::highest_priority();
 
     let outcome = handle_interactive_repository_event(
         &mut stdout,
@@ -5608,7 +5713,7 @@ fn test_interactive_submitはload失敗ならretryしsave失敗ならfatalにす
         let mut focused_task_id_opt = Some(task_id);
         let mut last_focused_task_id_opt = Some(task_id);
         let mut focus_started_datetime = now;
-        let mut focus_selection_mode = FocusSelectionMode::HighestPriority;
+        let mut focus_selection_mode = FocusSelectionMode::highest_priority();
 
         let outcome = handle_interactive_repository_event(
             &mut stdout,
@@ -5652,7 +5757,7 @@ fn test_interactive_refreshは再読込後にlockを解放する() {
     let mut focused_task_id_opt = Some(task_id);
     let mut last_focused_task_id_opt = Some(task_id);
     let mut focus_started_datetime = now;
-    let mut focus_selection_mode = FocusSelectionMode::HighestPriority;
+    let mut focus_selection_mode = FocusSelectionMode::highest_priority();
 
     let outcome = handle_interactive_repository_event(
         &mut stdout,
@@ -5691,7 +5796,7 @@ fn test_interactive_ctrl_cは成功済みcommandを再保存せずfatal終了す
     let mut focused_task_id_opt = Some(task_id);
     let mut last_focused_task_id_opt = Some(task_id);
     let mut focus_started_datetime = now;
-    let mut focus_selection_mode = FocusSelectionMode::HighestPriority;
+    let mut focus_selection_mode = FocusSelectionMode::highest_priority();
 
     let submitted = handle_interactive_repository_event(
         &mut stdout,
@@ -5743,7 +5848,7 @@ fn test_interactive_input切断はreload後に保存してfatal終了する() {
     let mut focused_task_id_opt = Some(task_id);
     let mut last_focused_task_id_opt = Some(task_id);
     let mut focus_started_datetime = now;
-    let mut focus_selection_mode = FocusSelectionMode::HighestPriority;
+    let mut focus_selection_mode = FocusSelectionMode::highest_priority();
 
     let outcome = handle_interactive_repository_event(
         &mut stdout,
@@ -5781,7 +5886,7 @@ fn test_interactive_ctrl_dは製品event経路でreload後に保存して終了�
     let mut focused_task_id_opt = Some(task_id);
     let mut last_focused_task_id_opt = Some(task_id);
     let mut focus_started_datetime = now;
-    let mut focus_selection_mode = FocusSelectionMode::HighestPriority;
+    let mut focus_selection_mode = FocusSelectionMode::highest_priority();
 
     let outcome = handle_interactive_repository_event(
         &mut stdout,
@@ -5816,7 +5921,7 @@ fn test_interactive_input読込errorは製品event経路でreload後に保存し
     let mut focused_task_id_opt = Some(task_id);
     let mut last_focused_task_id_opt = Some(task_id);
     let mut focus_started_datetime = now;
-    let mut focus_selection_mode = FocusSelectionMode::HighestPriority;
+    let mut focus_selection_mode = FocusSelectionMode::highest_priority();
 
     let outcome = handle_interactive_repository_event(
         &mut stdout,

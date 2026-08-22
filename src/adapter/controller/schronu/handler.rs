@@ -165,7 +165,7 @@ pub(super) fn handle(command: &Command) -> Option<CommandOutcome> {
     let mut outcome = CommandOutcome::empty(kind);
 
     match command {
-        Command::Noop => {}
+        Command::Noop | Command::TuckAway => {}
         Command::Action(CommandAction::NoArguments {
             kind: CommandKind::Open,
             ..

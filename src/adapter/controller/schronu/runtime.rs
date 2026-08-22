@@ -41,8 +41,8 @@ use schronu::application::repository_transaction::{
 use schronu::application::schedule_use_case::get_schedule;
 use schronu::application::task_use_case::{
     breakdown_task, complete_task, create_task, defer_task, estimated_work_seconds_from_minutes,
-    get_focus, set_category, set_deadline, set_estimate, validate_task_name, ApplicationError,
-    BreakdownTaskInput, CompleteTaskInput, CreateTaskInput, TaskFactory,
+    get_focus_excluding, set_category, set_deadline, set_estimate, validate_task_name,
+    ApplicationError, BreakdownTaskInput, CompleteTaskInput, CreateTaskInput, TaskFactory,
 };
 use schronu::entity::datetime::parse_local_datetime;
 use schronu::entity::task::{
@@ -81,11 +81,63 @@ fn active_config() -> &'static SchronuConfig {
 const MY_ASCII_SET: &AsciiSet = &CONTROLS.add(b' ');
 const OBSIDIAN_VAULT_ASCII_SET: &AsciiSet = &MY_ASCII_SET.add(b'&').add(b'=');
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 enum FocusSelectionMode {
-    HighestPriority,
-    LowestPriority { recent_days: i64 },
-    Explicit,
+    HighestPriority {
+        tucked_task_ids: Vec<Uuid>,
+        is_explicit: bool,
+    },
+    LowestPriority {
+        recent_days: i64,
+        tucked_task_ids: Vec<Uuid>,
+        is_explicit: bool,
+    },
+}
+
+impl FocusSelectionMode {
+    fn highest_priority() -> Self {
+        Self::HighestPriority {
+            tucked_task_ids: Vec::new(),
+            is_explicit: false,
+        }
+    }
+
+    fn lowest_priority(recent_days: i64) -> Self {
+        Self::LowestPriority {
+            recent_days,
+            tucked_task_ids: Vec::new(),
+            is_explicit: false,
+        }
+    }
+
+    fn tuck_away(&mut self, task_id: Uuid) {
+        let tucked_task_ids = match self {
+            Self::HighestPriority {
+                tucked_task_ids, ..
+            }
+            | Self::LowestPriority {
+                tucked_task_ids, ..
+            } => tucked_task_ids,
+        };
+        if !tucked_task_ids.contains(&task_id) {
+            tucked_task_ids.push(task_id);
+        }
+        self.set_explicit(false);
+    }
+
+    fn is_explicit(&self) -> bool {
+        match self {
+            Self::HighestPriority { is_explicit, .. }
+            | Self::LowestPriority { is_explicit, .. } => *is_explicit,
+        }
+    }
+
+    fn set_explicit(&mut self, explicit: bool) {
+        match self {
+            Self::HighestPriority { is_explicit, .. }
+            | Self::LowestPriority { is_explicit, .. } => *is_explicit = explicit,
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -749,22 +801,26 @@ fn execute_clear_or_gather(
 fn focus_selection_mode_from_request(request: FocusRequest) -> FocusSelectionMode {
     match request {
         FocusRequest::Clear => unreachable!("clear focus does not select a focus mode"),
-        FocusRequest::HighestPriority => FocusSelectionMode::HighestPriority,
+        FocusRequest::HighestPriority => FocusSelectionMode::highest_priority(),
         FocusRequest::LowestPriority { recent_days } => {
-            FocusSelectionMode::LowestPriority { recent_days }
+            FocusSelectionMode::lowest_priority(recent_days)
         }
     }
 }
 
 fn select_focus_task_id(
     task_repository: &mut dyn TaskRepositoryTrait,
-    focus_selection_mode: FocusSelectionMode,
+    focus_selection_mode: &FocusSelectionMode,
 ) -> Result<Option<Uuid>, ApplicationError> {
     match focus_selection_mode {
-        FocusSelectionMode::HighestPriority | FocusSelectionMode::Explicit => {
-            Ok(get_focus(task_repository)?.map(|task| task.id))
-        }
-        FocusSelectionMode::LowestPriority { recent_days } => {
+        FocusSelectionMode::HighestPriority {
+            tucked_task_ids, ..
+        } => Ok(get_focus_excluding(task_repository, tucked_task_ids)?.map(|task| task.id)),
+        FocusSelectionMode::LowestPriority {
+            recent_days,
+            tucked_task_ids,
+            ..
+        } => {
             let now = task_repository.get_last_synced_time();
             let first_business_day_start = try_next_business_day_start(now)?;
             let threshold_out_of_range = || ApplicationError::SubjectiveDateOutOfRange {
@@ -772,12 +828,12 @@ fn select_focus_task_id(
                 datetime: now,
             };
             let recent_duration =
-                Duration::try_days(recent_days).ok_or_else(threshold_out_of_range)?;
+                Duration::try_days(*recent_days).ok_or_else(threshold_out_of_range)?;
             let recent_threshold = first_business_day_start
                 .checked_add_signed(recent_duration)
                 .ok_or_else(threshold_out_of_range)?;
             task_repository
-                .get_defer_candidate_leaf_task_id(recent_threshold, &[])
+                .get_defer_candidate_leaf_task_id(recent_threshold, tucked_task_ids)
                 .map_err(ApplicationError::TaskTree)
         }
     }
@@ -4190,7 +4246,7 @@ fn reconcile_focus_after_reload(
                     .get_status()
                     .map_err(ApplicationError::TaskTree)?
                     == Status::Done
-                    && *focus_selection_mode != FocusSelectionMode::Explicit
+                    && !focus_selection_mode.is_explicit()
             }
             None => true,
         },
@@ -4201,10 +4257,8 @@ fn reconcile_focus_after_reload(
     }
 
     let previous_focus = *focused_task_id_opt;
-    if *focus_selection_mode == FocusSelectionMode::Explicit {
-        *focus_selection_mode = FocusSelectionMode::HighestPriority;
-    }
-    *focused_task_id_opt = select_focus_task_id(task_repository, *focus_selection_mode)?;
+    focus_selection_mode.set_explicit(false);
+    *focused_task_id_opt = select_focus_task_id(task_repository, focus_selection_mode)?;
     Ok(previous_focus != *focused_task_id_opt)
 }
 
@@ -4297,7 +4351,7 @@ fn execute_non_interactive_command_at(
     let mut stdout = stdout();
     run_cli_repository_transaction(task_repository, operation_now, |task_repository| {
         let mut focused_task_id_opt: Option<Uuid> =
-            select_focus_task_id(task_repository, FocusSelectionMode::HighestPriority)?;
+            select_focus_task_id(task_repository, &FocusSelectionMode::highest_priority())?;
         execute_parsed(
             &mut stdout,
             task_repository,
@@ -4586,7 +4640,20 @@ fn execute_interactive_command(
             active_config(),
         )?;
     } else if matches!(parsed_command, Command::TuckAway) {
-        execute_defer(task_repository, focused_task_id_opt, 1, "秒")?;
+        focus_selection_mode.set_explicit(false);
+        if let Some(task_id) = *focused_task_id_opt {
+            focus_selection_mode.tuck_away(task_id);
+        }
+        *focused_task_id_opt = None;
+        let outcome = handle(&parsed_command).expect("TuckAway must be handler-owned");
+        apply_command_outcome(
+            stdout,
+            task_repository,
+            focused_task_id_opt,
+            OutcomeApplicationMode::InteractiveUnflushed(focus_selection_mode),
+            outcome,
+            active_config(),
+        )?;
     } else if matches!(
         parsed_command,
         Command::Defer { .. } | Command::InteractiveShortcut(_)
@@ -4607,6 +4674,8 @@ fn execute_interactive_command(
             active_config(),
         )?;
     } else {
+        let was_explicit = focus_selection_mode.is_explicit();
+        let previous_focused_task_id_opt = *focused_task_id_opt;
         if let Err(error) = execute_parsed(
             stdout,
             task_repository,
@@ -4621,7 +4690,15 @@ fn execute_interactive_command(
         }
         if matches!(parsed_command, Command::Focus { task_id } if *focused_task_id_opt == Some(task_id))
         {
-            *focus_selection_mode = FocusSelectionMode::Explicit;
+            focus_selection_mode.set_explicit(true);
+        } else if parsed_command.kind() == CommandKind::Unfocus
+            || (parsed_command.kind() == CommandKind::Finish
+                && *focused_task_id_opt != previous_focused_task_id_opt)
+        {
+            focus_selection_mode.set_explicit(false);
+            if was_explicit && parsed_command.kind() == CommandKind::Finish {
+                *focused_task_id_opt = None;
+            }
         }
     }
 
@@ -4810,8 +4887,8 @@ fn interactive_application(
             .expect("config path was validated"),
     )?;
 
-    let mut focus_selection_mode = FocusSelectionMode::HighestPriority;
-    let mut focused_task_id_opt = select_focus_task_id(task_repository, focus_selection_mode)
+    let mut focus_selection_mode = FocusSelectionMode::highest_priority();
+    let mut focused_task_id_opt = select_focus_task_id(task_repository, &focus_selection_mode)
         .map_err(CommandError::from)
         .map_err(RunError::from)?;
     let mut last_focused_task_id_opt = None;
