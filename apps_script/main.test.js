@@ -280,6 +280,23 @@ test('Spreadsheet API例外は正常sampleへ混入させず再送出する', ()
   assert.equal(lockState.releaseCalls, 1);
 });
 
+test('複数行編集は同期を維持し1セルbenchmarkへ混入させない', () => {
+  const { context, logs } = loadScript();
+  const { sourceSheet, targetSheet, spreadsheet } = synchronizationFixture();
+  sourceSheet.setValue(6, 2, 'task-1');
+  sourceSheet.setValue(6, 12, 'second-source-value');
+  targetSheet.setValue(3, 12, 'second-target-value');
+
+  context.onEdit({
+    source: spreadsheet,
+    range: sourceSheet.getRange(5, 12, 2, 1),
+  });
+
+  assert.equal(targetSheet.valueAt(4, 12), 'source-value');
+  assert.equal(targetSheet.valueAt(3, 12), 'second-source-value');
+  assert.equal(logs.length, 0);
+});
+
 test('対象外sheetの編集は同期処理を開始しない', () => {
   const { context, lockState, logs } = loadScript();
   const sheet = new MockSheet('その他', [[3, 12, 'value']]);

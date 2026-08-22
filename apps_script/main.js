@@ -54,7 +54,7 @@ function onEdit(e) {
     return;
   }
 
-  const shouldMeasureSync = !isCommandOutputPaste_(range) && rangeTouchesSyncCols_(range);
+  const shouldMeasureSync = isSingleCellSyncEdit_(range);
   const syncBenchmark = shouldMeasureSync
     ? createSyncBenchmark_(sheet.getName(), getOtherSheetName_(sheet.getName()))
     : null;
@@ -97,7 +97,9 @@ function syncEditedManualCols_(spreadsheet, sourceSheet, editedRange, syncBenchm
   const otherSheet = getOtherSheet_(spreadsheet, sourceSheet.getName());
 
   if (!otherSheet) {
-    syncBenchmark.outcome = 'target_sheet_missing';
+    if (syncBenchmark) {
+      syncBenchmark.outcome = 'target_sheet_missing';
+    }
     return;
   }
 
@@ -111,7 +113,7 @@ function syncEditedManualCols_(spreadsheet, sourceSheet, editedRange, syncBenchm
       getTaskId_(sourceSheet, row));
 
     if (!taskId) {
-      if (syncBenchmark.outcome !== 'synced') {
+      if (syncBenchmark && syncBenchmark.outcome !== 'synced') {
         syncBenchmark.outcome = 'source_task_id_empty';
       }
       continue;
@@ -120,7 +122,7 @@ function syncEditedManualCols_(spreadsheet, sourceSheet, editedRange, syncBenchm
     const targetRow = findRowByTaskId_(otherSheet, taskId, syncBenchmark);
 
     if (!targetRow) {
-      if (syncBenchmark.outcome !== 'synced') {
+      if (syncBenchmark && syncBenchmark.outcome !== 'synced') {
         syncBenchmark.outcome = 'target_task_not_found';
       }
       continue;
@@ -135,7 +137,9 @@ function syncEditedManualCols_(spreadsheet, sourceSheet, editedRange, syncBenchm
         sourceSheet.getRange(row, col).getValue());
       measureSyncStage_(syncBenchmark, 'targetValueWriteCallMs', () =>
         otherSheet.getRange(targetRow, col).setValue(value));
-      syncBenchmark.outcome = 'synced';
+      if (syncBenchmark) {
+        syncBenchmark.outcome = 'synced';
+      }
     }
   }
 }
@@ -152,7 +156,9 @@ function findRowByTaskId_(sheet, taskId, syncBenchmark) {
     sheet
       .getRange(SCHRONU_CONFIG.dataStartRow, SCHRONU_CONFIG.taskIdCol, lastRow - SCHRONU_CONFIG.dataStartRow + 1, 1)
       .getValues());
-  syncBenchmark.rowsScanned += values.length;
+  if (syncBenchmark) {
+    syncBenchmark.rowsScanned += values.length;
+  }
 
   return measureSyncStage_(syncBenchmark, 'targetIdSearchMs', () => {
     for (let i = 0; i < values.length; i++) {
@@ -205,6 +211,10 @@ function createSyncBenchmark_(sourceSheet, targetSheet) {
 }
 
 function measureSyncStage_(syncBenchmark, field, operation) {
+  if (!syncBenchmark) {
+    return operation();
+  }
+
   const startedAt = Date.now();
 
   try {
@@ -241,4 +251,10 @@ function rangeTouchesSyncCols_(range) {
   const endCol = startCol + range.getNumColumns() - 1;
 
   return SCHRONU_CONFIG.syncCols.some((col) => startCol <= col && col <= endCol);
+}
+
+function isSingleCellSyncEdit_(range) {
+  return range.getNumRows() === 1
+    && range.getNumColumns() === 1
+    && SCHRONU_CONFIG.syncCols.includes(range.getColumn());
 }
