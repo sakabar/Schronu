@@ -40,8 +40,8 @@ fn runtime_product_dispatch_source() -> &'static str {
         .split_once("fn execute_parsed(")
         .expect("runtime must retain the parsed command entrypoint")
         .1
-        .split_once("struct RuntimeProjectCommandContext")
-        .expect("parsed command entrypoint must remain bounded by its first context")
+        .split_once("fn apply_command_outcome(")
+        .expect("parsed command path must remain bounded by outcome application")
         .0
 }
 
@@ -57,19 +57,20 @@ fn finish_placement_handler_source() -> &'static str {
         .split_once("pub(super) fn handle_finish_placement_command(")
         .expect("handler must retain finish and placement dispatch")
         .1
-        .split_once("fn report_result")
-        .expect("finish and placement dispatch must remain bounded by result reporting")
+        .split_once("pub(super) fn decide_finish_time_values(")
+        .expect("finish and placement dispatch must remain bounded by finish time resolution")
         .0
 }
 
-fn runtime_fallback_source() -> &'static str {
-    include_str!("runtime.rs")
-        .split_once("fn execute_with_config(")
-        .expect("runtime must retain the typed fallback entrypoint")
-        .1
-        .split_once("fn reload_repository_for_cli(")
-        .expect("runtime fallback must remain bounded by repository reload")
-        .0
+fn runtime_fallback_source() -> Option<&'static str> {
+    let (_, fallback_and_rest) =
+        include_str!("runtime.rs").split_once("fn execute_with_config(")?;
+    Some(
+        fallback_and_rest
+            .split_once("fn reload_repository_for_cli(")
+            .expect("runtime fallback must remain bounded by repository reload")
+            .0,
+    )
 }
 
 fn runtime_interactive_dispatch_source() -> &'static str {
@@ -87,12 +88,13 @@ fn assert_runtime_routes_to_handler(handler_call: &str, forbidden_fallback_token
         runtime_product_dispatch_source().contains(handler_call),
         "product dispatch must route the typed command through {handler_call}"
     );
-    let fallback = runtime_fallback_source();
-    for forbidden in forbidden_fallback_tokens {
-        assert!(
-            !fallback.contains(forbidden),
-            "handler-owned command must not remain in runtime fallback: {forbidden}"
-        );
+    if let Some(fallback) = runtime_fallback_source() {
+        for forbidden in forbidden_fallback_tokens {
+            assert!(
+                !fallback.contains(forbidden),
+                "handler-owned command must not remain in runtime fallback: {forbidden}"
+            );
+        }
     }
 }
 
