@@ -49,7 +49,7 @@
 | TD-011 | P2 | 完了 | L | MCPのschema、入力検証、Rust入力型、JSON出力が重複している |
 | TD-012 | P2 | 未着手 | L | flatten・pack・scheduleの再計算コストに性能上限が定義されていない |
 | TD-013 | P2 | 完了 | M | Spreadsheetの列契約が複数言語・文書へ重複している |
-| TD-014 | P2 | 未着手 | M | Apps Scriptの同期処理が行数に比例してAPI呼出しを増やす |
+| TD-014 | P2 | 完了 | M | 実環境計測で同期処理に有意な高速化の見込みがないことを確認した |
 | TD-015 | P2 | 完了 | L | テストが巨大な製品ファイルへ混在し、fixtureも重複している |
 | TD-016 | P3 | 未着手 | M | マジック値、未使用フィールド、古いコメントが意図を曖昧にしている |
 | TD-017 | P1 | 完了 | XL | `TaskHandle`の既存infallible APIが内部不変条件の破れをpanicとして扱う |
@@ -667,7 +667,6 @@
 #### 依存関係
 
 - TD-005のCLI分割前に現行出力fixtureを作る。
-- TD-014のApps Script最適化でも同じ列manifestを使う。
 
 ### TD-014: Apps Scriptの同期処理が行数に比例してAPI呼出しを増やす
 
@@ -676,36 +675,22 @@
 
 #### 現状と根拠
 
-- `apps_script/main.js:69-101`は編集された各行についてtask IDを読み、相手sheetの`findRowByTaskId_`を呼ぶ。
-- `findRowByTaskId_`は呼出しごとに相手sheetのtask ID列全体を`getValues()`する。
-- 同期fieldごとにsourceの`getValue()`とtargetの`setValue()`を行うため、複数行pasteではSpreadsheet API round tripが行数と列数に応じて増える。
-- `tryLock(1000)`失敗時は通知やretryなしで同期を取り止める。
-- task ID重複時は最初の行だけを暗黙に採用する。
+- 実際の運用ではL/N/P/R列を1セルずつ編集し、sheetは約1,000行、task数は50-100件である。
+- 実Spreadsheetで安定してend-to-end 1.3-1.5秒を要した。
+- 203行を走査した代表sampleでは、計測区間の合計が357msと463ms、target ID列readが134msと169ms、memory上のID検索が1msと0msだった。
+- target ID列readはend-to-end時間の約9-13%であり、最適化候補とした50%を大きく下回った。
+- 計測区間外の約0.8-1.1秒が支配的であり、ID列readや検索を最適化しても有意な短縮は見込めない。
 
 #### 影響
 
-- 行数が増えたsheetや複数行pasteで実行時間制限へ近づき、部分同期や取りこぼしが起きやすい。
-- lock競合と重複IDがsilent failureになり、2sheetの値が不一致のまま残る。
-- Apps Script固有APIへ直接依存し、純粋な同期ロジックをローカルで検証できない。
+- 現行のsimple `onEdit`を維持する。
+- installable triggerやSheets batch APIの導入は複雑性に対する速度改善の根拠がないため行わない。
+- 計測のために追加したlog、test、CI設定、計画文書はbranch内でrevertした。
 
-#### 推奨する改善方針
+#### 完了判断
 
-- source編集範囲とtarget ID列を各1回で読み、task IDからtarget rowへのindexを1回構築する。
-- 更新値をmemory上で作り、連続rangeまたは最小回数のbatch writeで反映する。
-- 重複IDを検出して同期せず、対象sheetと行を含む明示的エラーにする。
-- range計算と同期plan生成をpure functionへ分離し、Apps Script APIは薄いadapterにする。
-- lock失敗時の方針をretry、通知、次回再同期のいずれかへ明示する。
-
-#### 完了条件
-
-- target ID列の全走査は1 edit eventにつき1回以下になる。
-- 複数行・複数同期列pasteでもread/write回数が編集行数に比例して増えない。
-- 単一セル、複数行paste、command出力paste、重複ID、対象sheet欠落、lock失敗のテストがある。
-- TD-013の列契約を維持する。
-
-#### 依存関係
-
-- TD-013の列manifestまたはfixtureを先行する。
+- 今回の実測結果が同じ傾向で継続すると判断し、TD-014は「高速化の見込み無し」として完了する。
+- lock競合、重複ID、同期失敗の検出は性能改善とは別の正確性課題として扱う。
 
 ### TD-015: テストが巨大な製品ファイルへ混在し、fixtureも重複している
 
@@ -798,7 +783,7 @@
 4. TD-006とTD-007でerror・transaction境界を整え、adapter間の挙動を統一する。
 5. TD-013でSpreadsheet互換fixtureを固定してからTD-005のCLI境界分割を行う。その後、TD-015のCLI characterization testと`test_support`分離を先行し、残るruntime縮小と意味的表示model分離をTD-018で進める。
 6. TD-010、TD-009、TD-004の順でdomain境界を狭める。tree実装の全面変更は最後の独立段階にする。
-7. TD-011、TD-014、TD-015を独立して進める。TD-015のCLI fixture分離はTD-018の製品コード移動とcommitを分ける。
+7. TD-011、TD-015を独立して進める。TD-015のCLI fixture分離はTD-018の製品コード移動とcommitを分ける。
 8. TD-012はbenchmark結果を取得してから最適化範囲を決める。
 9. TD-016は関連する上位項目の完了時に、小さいcleanup commitとして解消する。
 
