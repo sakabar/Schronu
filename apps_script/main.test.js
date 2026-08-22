@@ -261,6 +261,25 @@ test('相手sheetがなければ計測結果へ記録する', () => {
   assert.equal(metric.targetSheet, '優先度低い順');
 });
 
+test('Spreadsheet API例外は正常sampleへ混入させず再送出する', () => {
+  const { context, lockState, logs } = loadScript();
+  const { sourceSheet, targetSheet, spreadsheet } = synchronizationFixture();
+  targetSheet.getLastRow = () => {
+    throw new Error('target ID read failed');
+  };
+
+  assert.throws(
+    () => context.onEdit({
+      source: spreadsheet,
+      range: sourceSheet.getRange(5, 12),
+    }),
+    /target ID read failed/,
+  );
+
+  assert.equal(logs.length, 0);
+  assert.equal(lockState.releaseCalls, 1);
+});
+
 test('対象外sheetの編集は同期処理を開始しない', () => {
   const { context, lockState, logs } = loadScript();
   const sheet = new MockSheet('その他', [[3, 12, 'value']]);

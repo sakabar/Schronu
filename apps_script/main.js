@@ -74,6 +74,8 @@ function onEdit(e) {
     return;
   }
 
+  let syncCompleted = false;
+
   try {
     if (isCommandOutputPaste_(range)) {
       return;
@@ -81,10 +83,11 @@ function onEdit(e) {
 
     if (rangeTouchesSyncCols_(range)) {
       syncEditedManualCols_(e.source, sheet, range, syncBenchmark);
+      syncCompleted = true;
     }
   } finally {
     lock.releaseLock();
-    if (syncBenchmark) {
+    if (syncBenchmark && syncCompleted) {
       logSyncBenchmark_(syncBenchmark);
     }
   }
