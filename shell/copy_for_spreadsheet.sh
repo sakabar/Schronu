@@ -4,6 +4,7 @@ set -ue
 
 cell_row_num=3
 weekday_order='月火水木金土日月'
+month_offset=(0 31 59 90 120 151 181 212 243 273 304 334)
 cat - | awk '
 /^0/ && !/^----/ {
     line = $0
@@ -38,14 +39,20 @@ cat - | awk '
     scheduled_hour=${scheduled_start%%:*}
     scheduled_minute=${scheduled_start#*:}
     scheduled_start_minutes=$((10#${scheduled_hour} * 60 + 10#${scheduled_minute}))
+    scheduled_month=${scheduled_date%%/*}
+    scheduled_day=${scheduled_date#*/}
+    scheduled_ordinal=$((month_offset[10#${scheduled_month}] + 10#${scheduled_day}))
     sleep_minutes=0
 
     if (( cell_row_num > 3 )); then
+        calendar_day_gap=$(((scheduled_ordinal - previous_scheduled_ordinal + 365) % 365))
+        [[ ${previous_scheduled_date} == '02/29' && ${scheduled_date} == '03/01' ]] && calendar_day_gap=1
         if [[ ${scheduled_date} == ${previous_scheduled_date} ]]; then
             if (( previous_scheduled_start_minutes < 360 && scheduled_start_minutes >= 360 )); then
                 sleep_minutes=420
             fi
         elif (( scheduled_start_minutes >= 360 || previous_scheduled_start_minutes < 360 )) ||
+            (( calendar_day_gap != 1 )) ||
             [[ ${weekday_order} != *${previous_scheduled_weekday}${scheduled_weekday}* ]]; then
             sleep_minutes=420
         fi
@@ -76,6 +83,7 @@ cat - | awk '
     previous_scheduled_date=${scheduled_date}
     previous_scheduled_weekday=${scheduled_weekday}
     previous_scheduled_start_minutes=${scheduled_start_minutes}
+    previous_scheduled_ordinal=${scheduled_ordinal}
     cell_row_num=$[$cell_row_num + 1]
 done
 
