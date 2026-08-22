@@ -8464,7 +8464,7 @@ fn runtime外部ioとoutcome調停は共通境界に集約する() {
         .split_once("\nfn apply_command_outcome(")
         .expect("runtime must define the shared apply_command_outcome boundary")
         .1
-        .split_once("\n#[test]\nfn runtime外部ioとoutcome調停は共通境界に集約する(")
+        .split_once("\nenum OutcomeApplicationMode")
         .expect("outcome boundary must remain bounded")
         .0;
 
