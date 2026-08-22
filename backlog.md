@@ -719,9 +719,9 @@
 
 #### 対応前の現状と根拠
 
-- `src/entity/task.rs`は約3,250行で、production type・operation・YAML出力と多数の個別`#[test]`が交互に配置される。
+- `src/entity/task.rs`は4,474行で、production type・operation・YAML出力と多数の個別`#[test]`が交互に配置される。
 - `src/adapter/controller/schronu/runtime.rs`はproduction helperの間に大量のcommand test、repository stub、free-time stubを持つ。
-- `src/adapter/mcp.rs`は約1,500行のproduction codeに続いて約3,600行のtest moduleを持つ。
+- `src/adapter/mcp/input.rs`は2,895行、`src/adapter/mcp/handler.rs`は1,291行で、それぞれproduction codeに大量のtestが混在する。
 - application contract testsにも類似の`TestTaskRepository`とtask builderが複数存在する。
 - TD-008対応前にclippyが検出した違反の多くは古いテスト表現に由来した。現在のall-target clippyはGreenだが、production codeとtest cleanupの対象が同じ巨大fileに混在する構造は残る。
 
