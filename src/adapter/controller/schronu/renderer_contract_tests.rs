@@ -334,21 +334,6 @@ fn task_list_icon_modeは同じgive_up候補の検索iconと表示iconを区別�
 
 #[test]
 fn calendar_displayはtyped日別値を逆順と週区切りとsummaryとalertへ描画する() {
-    let day_row = |date| CalendarDayRow {
-        date,
-        free_time_minutes: 60,
-        free_time_diff_minutes: 0,
-        adjustable_work_seconds: 0,
-        rho_diff: 0.0,
-        rho_goal_diff_minutes: 0,
-        accumulated_rho_goal_diff_minutes: 0,
-        deadline_diff_seconds: 0,
-        deadline_ratio: 0.0,
-        accumulated_free_diff_minutes: 0,
-        non_repetitive_free_minutes: 60,
-        accumulated_rho_diff: 0.0,
-        task_count: 1,
-    };
     let summary = CalendarSummary {
         last_synced_date: NaiveDate::from_ymd_opt(2026, 8, 23).unwrap(),
         first_caught_up_date: NaiveDate::from_ymd_opt(2026, 8, 25).unwrap(),
@@ -360,9 +345,51 @@ fn calendar_displayはtyped日別値を逆順と週区切りとsummaryとalert�
         max_accumulated_rho_diff_date: NaiveDate::from_ymd_opt(2026, 8, 24).unwrap(),
     };
     let rows = vec![
-        day_row(NaiveDate::from_ymd_opt(2026, 8, 23).unwrap()),
-        day_row(NaiveDate::from_ymd_opt(2026, 8, 24).unwrap()),
-        day_row(NaiveDate::from_ymd_opt(2026, 8, 25).unwrap()),
+        CalendarDayRow {
+            date: NaiveDate::from_ymd_opt(2026, 8, 23).unwrap(),
+            free_time_minutes: 600,
+            free_time_diff_minutes: -90,
+            adjustable_work_seconds: 0,
+            rho_diff: -0.25,
+            rho_goal_diff_minutes: -75,
+            accumulated_rho_goal_diff_minutes: -125,
+            deadline_diff_seconds: -5400,
+            deadline_ratio: -0.15,
+            accumulated_free_diff_minutes: -95,
+            non_repetitive_free_minutes: 480,
+            accumulated_rho_diff: -0.20,
+            task_count: 2,
+        },
+        CalendarDayRow {
+            date: NaiveDate::from_ymd_opt(2026, 8, 24).unwrap(),
+            free_time_minutes: 300,
+            free_time_diff_minutes: 135,
+            adjustable_work_seconds: 3600,
+            rho_diff: 0.50,
+            rho_goal_diff_minutes: 45,
+            accumulated_rho_goal_diff_minutes: 70,
+            deadline_diff_seconds: 7200,
+            deadline_ratio: 0.40,
+            accumulated_free_diff_minutes: 125,
+            non_repetitive_free_minutes: -30,
+            accumulated_rho_diff: 1.25,
+            task_count: 12,
+        },
+        CalendarDayRow {
+            date: NaiveDate::from_ymd_opt(2026, 8, 25).unwrap(),
+            free_time_minutes: 90,
+            free_time_diff_minutes: -1,
+            adjustable_work_seconds: 900,
+            rho_diff: -1.00,
+            rho_goal_diff_minutes: 1,
+            accumulated_rho_goal_diff_minutes: -1,
+            deadline_diff_seconds: 3599,
+            deadline_ratio: 0.01,
+            accumulated_free_diff_minutes: -1,
+            non_repetitive_free_minutes: 1,
+            accumulated_rho_diff: 2.50,
+            task_count: 99,
+        },
     ];
     let display = DisplayModel::Calendar(CalendarDisplay {
         rows: rows.clone(),
@@ -385,10 +412,10 @@ fn calendar_displayはtyped日別値を逆順と週区切りとsummaryとalert�
     assert_eq!(
         writer.operations,
         [
-            "newline:2026-08-25(火)\t 1.0時間\t-0時間00分     \t 0.00\t-0時間00分\t-00時間00分\t-0時間00分\t 0.00\t-00時間00分\t 01時間00分\t 0.00\t01[タスク]",
-            "newline:2026-08-24(月)\t 1.0時間\t-0時間00分     \t 0.00\t-0時間00分\t-00時間00分\t-0時間00分\t 0.00\t-00時間00分\t 01時間00分\t 0.00\t01[タスク]",
+            "newline:2026-08-25(火)\t 1.5時間\t-0時間01分(17%)\t-1.00\t 0時間01分\t-00時間01分\t 0時間59分\t 0.01\t-00時間01分\t 00時間01分\t 2.50\t99[タスク]",
+            "newline:2026-08-24(月)\t 5.0時間\t 2時間15分(20%)\t 0.50\t 0時間45分\t 01時間10分\t 2時間00分\t 0.40\t 02時間05分\t-00時間30分\t 1.25\t12[タスク]",
             "newline:",
-            "newline:2026-08-23(日)\t 1.0時間\t-0時間00分     \t 0.00\t-0時間00分\t-00時間00分\t-0時間00分\t 0.00\t-00時間00分\t 01時間00分\t 0.00\t01[タスク]",
+            "newline:2026-08-23(日)\t10.0時間\t-1時間30分     \t-0.25\t-1時間15分\t-02時間05分\t-1時間30分\t-0.15\t-01時間35分\t 08時間00分\t-0.20\t02[タスク]",
             "newline:日          \t空          \t空差      \t空差比\t余差    \t余差累    \t〆差      \t〆差比\t空差累    \t単発余暇\t空差累比\tタスク数",
             "newline:",
             "newline:今のタスクが片付く日付: 2日後の2026-08-25",
