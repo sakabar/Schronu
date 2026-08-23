@@ -3,11 +3,12 @@ pub(super) use super::renderer::project_category_symbol;
 use super::renderer::{format_task_category_summary, format_task_list_row};
 use super::renderer::{
     format_task_list_columns, task_list_columns, weekday_jp, writeln_newline, AncestorTreeRow,
-    CalendarAlerts, CalendarDayRow, CalendarDisplay, CalendarSummary, DebugTreeRow, DisplayModel,
-    LeafTreeRow, SchronuWriter, TaskCategoryWorkSeconds, TaskListDisplay, TaskListIconMode,
-    TaskListRow, TaskListTaskRow, TreeDisplay,
+    BandDayRow, BandDisplay, BandDurations, CalendarAlerts, CalendarDayRow, CalendarDisplay,
+    CalendarSummary, DebugTreeRow, DisplayModel, LeafTreeRow, SchronuWriter,
+    TaskCategoryWorkSeconds, TaskListDisplay, TaskListIconMode, TaskListRow, TaskListTaskRow,
+    TreeDisplay,
 };
-use chrono::{DateTime, Datelike, Duration, Local, NaiveDate, Weekday};
+use chrono::{DateTime, Datelike, Duration, Local, NaiveDate};
 use regex::Regex;
 use schronu::adapter::gateway::schronu_config::SchronuConfig;
 use schronu::application::daily_capacity::{
@@ -24,7 +25,6 @@ use schronu::entity::task::{
 };
 use std::cmp::{max, min};
 use std::collections::HashMap;
-use termion::color;
 use unicode_width::UnicodeWidthChar;
 use uuid::Uuid;
 
@@ -83,22 +83,11 @@ pub(super) enum TaskListDisplayOrder {
     LowPriorityTail,
 }
 
-const DAILY_BAND_SECONDS_PER_SEGMENT: i64 = 15 * 60;
-pub(super) const DAILY_BAND_SEGMENTS: usize = 24 * 4;
 const SECONDS_PER_DAY: i64 = 24 * 60 * 60;
 
 struct DailySummaryRow {
-    date: NaiveDate,
     calendar_row: CalendarDayRow,
-    band_message: String,
-}
-
-pub(super) struct DailyBandDurations {
-    pub(super) fixed_seconds: i64,
-    pub(super) elapsed_seconds: i64,
-    pub(super) repetitive_seconds: i64,
-    pub(super) non_repetitive_seconds: i64,
-    pub(super) rho_leeway_seconds: i64,
+    band_row: Option<BandDayRow>,
 }
 
 pub(super) fn calculate_daily_band_durations(
@@ -108,8 +97,8 @@ pub(super) fn calculate_daily_band_durations(
     total_work_seconds: i64,
     repetitive_work_seconds: i64,
     diff_to_goal_hours: f64,
-) -> DailyBandDurations {
-    DailyBandDurations {
+) -> BandDurations {
+    BandDurations {
         fixed_seconds: (SECONDS_PER_DAY - full_day_free_minutes.max(0) * 60).max(0),
         elapsed_seconds: if is_today {
             (full_day_free_minutes - remaining_free_minutes).max(0) * 60
@@ -120,120 +109,6 @@ pub(super) fn calculate_daily_band_durations(
         non_repetitive_seconds: (total_work_seconds - repetitive_work_seconds).max(0),
         rho_leeway_seconds: (-diff_to_goal_hours * 3600.0).max(0.0).round() as i64,
     }
-}
-
-fn round_daily_band_segment_count(seconds: i64) -> usize {
-    let non_negative_seconds = seconds.max(0);
-    ((non_negative_seconds.saturating_add(DAILY_BAND_SECONDS_PER_SEGMENT / 2))
-        / DAILY_BAND_SECONDS_PER_SEGMENT) as usize
-}
-
-pub(super) fn format_signed_hours_minutes(duration: Duration) -> String {
-    let sign = if duration >= Duration::zero() {
-        '+'
-    } else {
-        '-'
-    };
-    let absolute_minutes = duration.num_seconds().unsigned_abs() / 60;
-
-    format!(
-        "{}{:02}:{:02}",
-        sign,
-        absolute_minutes / 60,
-        absolute_minutes % 60
-    )
-}
-
-fn format_daily_band_segment(symbol: char, count: usize, supports_ansi_color: bool) -> String {
-    if count == 0 {
-        return String::new();
-    }
-    if !supports_ansi_color {
-        return symbol.to_string().repeat(count);
-    }
-    let color_value = match symbol {
-        '#' => 110,
-        'x' => 244,
-        '=' => 33,
-        '-' => 208,
-        ':' => 28,
-        '.' => 34,
-        '>' => 196,
-        _ => return symbol.to_string().repeat(count),
-    };
-    let symbols = symbol.to_string().repeat(count);
-    format!(
-        "{}{}{}",
-        color::Fg(color::AnsiValue(color_value)),
-        symbols,
-        color::Fg(color::Reset)
-    )
-}
-
-fn format_daily_band_legend(supports_ansi_color: bool) -> String {
-    format!(
-        "凡例: {} 固定  {} 経過済み  {} 繰返  {} 単発  {} 余差  {} 空き  {} 超過  (1文字=15分)",
-        format_daily_band_segment('#', 1, supports_ansi_color),
-        format_daily_band_segment('x', 1, supports_ansi_color),
-        format_daily_band_segment('=', 1, supports_ansi_color),
-        format_daily_band_segment('-', 1, supports_ansi_color),
-        format_daily_band_segment(':', 1, supports_ansi_color),
-        format_daily_band_segment('.', 1, supports_ansi_color),
-        format_daily_band_segment('>', 1, supports_ansi_color),
-    )
-}
-
-pub(super) fn format_daily_band(
-    date: NaiveDate,
-    weekday_jp: &str,
-    accumulated_free_diff: Duration,
-    accumulated_rho_diff: Duration,
-    durations: &DailyBandDurations,
-    supports_ansi_color: bool,
-) -> String {
-    let categories = [
-        ('#', durations.fixed_seconds.max(0)),
-        ('x', durations.elapsed_seconds.max(0)),
-        ('=', durations.repetitive_seconds.max(0)),
-        ('-', durations.non_repetitive_seconds.max(0)),
-        (':', durations.rho_leeway_seconds.max(0)),
-    ];
-    let used_seconds = categories
-        .iter()
-        .fold(0_i64, |sum, (_, seconds)| sum.saturating_add(*seconds));
-    let empty_seconds = SECONDS_PER_DAY.saturating_sub(used_seconds);
-    let overflow_seconds = used_seconds.saturating_sub(SECONDS_PER_DAY);
-
-    let mut bar = String::with_capacity(DAILY_BAND_SEGMENTS);
-    let mut cumulative_seconds = 0_i64;
-    let mut previous_boundary = 0_usize;
-
-    for (symbol, seconds) in categories.into_iter().chain([('.', empty_seconds)]) {
-        cumulative_seconds = cumulative_seconds.saturating_add(seconds);
-        let boundary = round_daily_band_segment_count(cumulative_seconds.min(SECONDS_PER_DAY))
-            .min(DAILY_BAND_SEGMENTS);
-        bar.push_str(&format_daily_band_segment(
-            symbol,
-            boundary - previous_boundary,
-            supports_ansi_color,
-        ));
-        previous_boundary = boundary;
-    }
-
-    let overflow = format_daily_band_segment(
-        '>',
-        round_daily_band_segment_count(overflow_seconds),
-        supports_ansi_color,
-    );
-    format!(
-        "{}({}) {} {} [{}]{}",
-        date,
-        weekday_jp,
-        format_signed_hours_minutes(accumulated_rho_diff),
-        format_signed_hours_minutes(accumulated_free_diff),
-        bar,
-        overflow
-    )
 }
 
 #[derive(Clone)]
@@ -772,7 +647,6 @@ pub(super) fn execute_show_all_tasks_with_config(
     display_order: TaskListDisplayOrder,
     config: &SchronuConfig,
 ) -> Result<Option<DisplayModel>, ApplicationError> {
-    let supports_ansi_color = stdout.supports_ansi_color();
     let yyyymmdd_reg = Regex::new(r"^(\d{4})/(\d{2})/(\d{2})$").unwrap();
     let yyyymmdd_pattern_date = pattern_opt
         .as_ref()
@@ -1439,8 +1313,6 @@ pub(super) fn execute_show_all_tasks_with_config(
 
         let cnt_of_the_date = *counter.get(date).unwrap_or(&0);
 
-        let weekday_jp = get_weekday_jp(date);
-
         let free_time_minutes =
             calculate_free_time_minutes_for_subjective_date_with_end_of_day_offset_minutes(
                 date,
@@ -1634,29 +1506,23 @@ pub(super) fn execute_show_all_tasks_with_config(
             task_count: cnt_of_the_date,
         };
 
-        let band_message =
-            full_day_free_time_minutes_opt.map_or_else(String::new, |full_minutes| {
-                format_daily_band(
-                    **date,
-                    weekday_jp,
-                    accumulate_duration_diff_to_limit,
-                    accumulate_duration_diff_to_goal_rho,
-                    &calculate_daily_band_durations(
-                        **date == naive_dt_today,
-                        full_minutes,
-                        free_time_minutes,
-                        total_estimated_work_seconds_of_the_date,
-                        total_repetitive_task_work_seconds_of_the_date,
-                        diff_to_goal,
-                    ),
-                    supports_ansi_color,
-                )
-            });
+        let band_row = full_day_free_time_minutes_opt.map(|full_minutes| BandDayRow {
+            date: **date,
+            accumulated_rho_diff_seconds: accumulate_duration_diff_to_goal_rho.num_seconds(),
+            accumulated_free_diff_seconds: accumulate_duration_diff_to_limit.num_seconds(),
+            durations: calculate_daily_band_durations(
+                **date == naive_dt_today,
+                full_minutes,
+                free_time_minutes,
+                total_estimated_work_seconds_of_the_date,
+                total_repetitive_task_work_seconds_of_the_date,
+                diff_to_goal,
+            ),
+        });
 
         daily_summary_rows.push(DailySummaryRow {
-            date: **date,
             calendar_row,
-            band_message,
+            band_row,
         });
     }
 
@@ -1694,6 +1560,25 @@ pub(super) fn execute_show_all_tasks_with_config(
         None
     };
 
+    let summary = CalendarSummary {
+        last_synced_date: last_synced_time.date_naive(),
+        first_caught_up_date,
+        first_leeway_date,
+        first_leeway_minutes: first_leeway_duration.num_minutes(),
+        max_accumulated_free_diff_minutes: max_accumulate_duration_diff_to_limit.num_minutes(),
+        max_accumulated_free_diff_date: max_accumulate_duration_diff_to_limit_date,
+        max_accumulated_rho_diff,
+        max_accumulated_rho_diff_date,
+    };
+    let alerts = CalendarAlerts {
+        has_today_deadline_leeway,
+        has_today_freetime_leeway,
+        has_today_new_task_leeway,
+        has_tomorrow_deadline_leeway,
+        has_tomorrow_freetime_leeway,
+        has_weekly_deadline_leeway,
+        has_weekly_freetime_leeway,
+    };
     let calendar_display = is_calendar_func.then(|| {
         DisplayModel::Calendar(CalendarDisplay {
             rows: daily_summary_rows
@@ -1701,130 +1586,21 @@ pub(super) fn execute_show_all_tasks_with_config(
                 .map(|row| row.calendar_row.clone())
                 .collect(),
             blank_line_weekday: config.calendar_blank_line_weekday,
-            summary: CalendarSummary {
-                last_synced_date: last_synced_time.date_naive(),
-                first_caught_up_date,
-                first_leeway_date,
-                first_leeway_minutes: first_leeway_duration.num_minutes(),
-                max_accumulated_free_diff_minutes: max_accumulate_duration_diff_to_limit
-                    .num_minutes(),
-                max_accumulated_free_diff_date: max_accumulate_duration_diff_to_limit_date,
-                max_accumulated_rho_diff,
-                max_accumulated_rho_diff_date,
-            },
-            alerts: CalendarAlerts {
-                has_today_deadline_leeway,
-                has_today_freetime_leeway,
-                has_today_new_task_leeway,
-                has_tomorrow_deadline_leeway,
-                has_tomorrow_freetime_leeway,
-                has_weekly_deadline_leeway,
-                has_weekly_freetime_leeway,
-            },
+            summary: summary.clone(),
+            alerts,
         })
     });
 
-    let write_daily_summary = |stdout: &mut dyn SchronuWriter| {
-        let clear_date_info = format!(
-            "今のタスクが片付く日付: {}日後の{}",
-            (first_caught_up_date - last_synced_time.date_naive()).num_days(),
-            first_caught_up_date
-        );
-
-        let first_leeway_date_info = format!(
-            "次にタスクを積める日付: {}日後の{} (-{}時間{:02}分)",
-            (first_leeway_date - last_synced_time.date_naive()).num_days(),
-            first_leeway_date,
-            first_leeway_duration.num_hours().abs(),
-            first_leeway_duration.num_minutes().abs() % 60,
-        );
-
-        let max_hours_sign = if max_accumulate_duration_diff_to_limit >= Duration::seconds(0) {
-            ' '
-        } else {
-            '-'
-        };
-        let max_hours = max_accumulate_duration_diff_to_limit.num_hours().abs();
-        let max_minutes = max_accumulate_duration_diff_to_limit.num_minutes().abs() % 60;
-        let max_info = format!(
-            "最大の累積時間: {}{:02}時間{:02}分 ({}), 最大のrhoの差: {:.2} ({}), {}",
-            max_hours_sign,
-            max_hours,
-            max_minutes,
-            max_accumulate_duration_diff_to_limit_date,
-            max_accumulated_rho_diff,
-            max_accumulated_rho_diff_date,
-            first_leeway_date_info,
-        );
-
-        writeln_newline(stdout, &clear_date_info).unwrap();
-        writeln_newline(stdout, &max_info).unwrap();
-        writeln_newline(stdout, "").unwrap();
-
-        let mut is_all_favorable = true;
-
-        if !has_today_deadline_leeway {
-            writeln_newline(stdout, "[Crit] 【今日の】〆切に間に合いません。【ただちに】〆切をリスケする調整をしてください。").unwrap();
-            is_all_favorable = false;
-        }
-
-        if has_today_freetime_leeway {
-            if !has_today_new_task_leeway {
-                writeln_newline(stdout, "[Warn] 脇道に逸れずに予定の遂行をしてください。見積もりを間違えたり突発タスクが発生したりした場合に終了予定時刻に間に合わなくなる可能性があります。").unwrap();
-                is_all_favorable = false;
-            }
-        } else {
-            writeln_newline(stdout, "[Crit] 【今日の】終了予定時刻に間に合いません。【ただちに】どれかの予定を諦めて明日以降に延期してください。").unwrap();
-            is_all_favorable = false;
-        }
-
-        if !has_tomorrow_deadline_leeway {
-            writeln_newline(stdout, "[Warn] 【明日の】〆切に間に合いません。〆切をあさって以降にリスケする調整を【今日中に】してください。").unwrap();
-            is_all_favorable = false;
-        }
-
-        if !has_tomorrow_freetime_leeway {
-            writeln_newline(stdout, "[Warn] 【明日の】終了予定時刻に間に合いません。【今日中に】どれかの予定を諦めてあさって以降に延期してください。").unwrap();
-            is_all_favorable = false;
-        }
-
-        if !has_weekly_deadline_leeway {
-            writeln_newline(stdout, "[Warn] 【1週間以内の】〆切に間に合いません。【近々】どれかの予定を諦めて来週以降に延期してください。").unwrap();
-            is_all_favorable = false;
-        }
-
-        if !has_weekly_freetime_leeway {
-            writeln_newline(stdout, "[Warn] 【1週間以内の】終了予定時刻に間に合いません。【近々】どれかの予定を諦めて来週以降に延期してください。").unwrap();
-            is_all_favorable = false;
-        }
-
-        if is_all_favorable {
-            writeln_newline(
-                stdout,
-                "[Info] 順調です。突発タスクに対応したり1日の終わり際にタスクを新しく積んだりする余裕があります。ひとまずは脇道に逸れずに予定の遂行をしてください。",
-            )
-            .unwrap();
-        }
-
-        writeln_newline(stdout, "").unwrap();
-    };
-
-    if is_band_func {
-        // Bandのtyped model移行までは既存表示順を維持する。
-        daily_summary_rows.reverse();
-        writeln_newline(stdout, &format_daily_band_legend(supports_ansi_color)).unwrap();
-        writeln_newline(stdout, "").unwrap();
-
-        for (band_ind, row) in daily_summary_rows.iter().enumerate() {
-            writeln_newline(stdout, &row.band_message).unwrap();
-
-            if row.date.weekday() == Weekday::Mon && band_ind != daily_summary_rows.len() - 1 {
-                writeln_newline(stdout, "").unwrap();
-            }
-        }
-        writeln_newline(stdout, "").unwrap();
-        write_daily_summary(stdout);
-    }
+    let band_display = is_band_func.then(|| {
+        DisplayModel::Band(BandDisplay {
+            rows: daily_summary_rows
+                .iter()
+                .filter_map(|row| row.band_row.clone())
+                .collect(),
+            summary,
+            alerts,
+        })
+    });
 
     if is_today_func || is_calendar_func || is_band_func {
         writeln_newline(stdout, &busy_s).unwrap();
@@ -1834,5 +1610,5 @@ pub(super) fn execute_show_all_tasks_with_config(
     }
 
     writeln_newline(stdout, "").unwrap();
-    Ok(task_list_display.or(calendar_display))
+    Ok(task_list_display.or(calendar_display).or(band_display))
 }

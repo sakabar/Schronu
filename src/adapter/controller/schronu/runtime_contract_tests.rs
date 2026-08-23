@@ -4651,17 +4651,20 @@ fn test_execute_calendar_日付逆順と週区切りと28日境界を固定す�
 #[test]
 fn test_format_daily_band_累積境界で端数を丸めて96文字にする() {
     let date = NaiveDate::from_ymd_opt(2026, 8, 15).unwrap();
-    let actual = format_daily_band(
-        date,
-        "土",
-        Duration::hours(46) + Duration::minutes(9),
-        -Duration::hours(7) - Duration::minutes(8),
-        &DailyBandDurations {
+    let actual = format_band_day_row(
+        &BandDayRow {
+            date,
+            accumulated_rho_diff_seconds: (-Duration::hours(7) - Duration::minutes(8))
+                .num_seconds(),
+            accumulated_free_diff_seconds: (Duration::hours(46) + Duration::minutes(9))
+                .num_seconds(),
+            durations: BandDurations {
             fixed_seconds: 450 * 60,
             elapsed_seconds: 0,
             repetitive_seconds: 855 * 60,
             non_repetitive_seconds: 71 * 60,
             rho_leeway_seconds: 24 * 60,
+            },
         },
         true,
     );
@@ -4692,13 +4695,13 @@ fn test_calculate_daily_band_durations_経過した空き時間を当日だけ�
 
 #[test]
 fn test_format_signed_hours_minutes_符号付きで時分を2桁ゼロ埋めする() {
-    assert_eq!(format_signed_hours_minutes(Duration::zero()), "+00:00");
+    assert_eq!(format_signed_seconds(Duration::zero().num_seconds()), "+00:00");
     assert_eq!(
-        format_signed_hours_minutes(Duration::hours(6) + Duration::minutes(5)),
+        format_signed_seconds((Duration::hours(6) + Duration::minutes(5)).num_seconds()),
         "+06:05"
     );
     assert_eq!(
-        format_signed_hours_minutes(-Duration::hours(6) - Duration::minutes(5)),
+        format_signed_seconds((-Duration::hours(6) - Duration::minutes(5)).num_seconds()),
         "-06:05"
     );
 }
@@ -4706,17 +4709,20 @@ fn test_format_signed_hours_minutes_符号付きで時分を2桁ゼロ埋めす�
 #[test]
 fn test_format_daily_band_当日経過と24時間超過を表示する() {
     let date = NaiveDate::from_ymd_opt(2026, 8, 11).unwrap();
-    let actual = format_daily_band(
-        date,
-        "火",
-        -Duration::hours(3) - Duration::minutes(4),
-        Duration::hours(5) + Duration::minutes(6),
-        &DailyBandDurations {
+    let actual = format_band_day_row(
+        &BandDayRow {
+            date,
+            accumulated_rho_diff_seconds: (Duration::hours(5) + Duration::minutes(6))
+                .num_seconds(),
+            accumulated_free_diff_seconds: (-Duration::hours(3) - Duration::minutes(4))
+                .num_seconds(),
+            durations: BandDurations {
             fixed_seconds: 450 * 60,
             elapsed_seconds: 800 * 60,
             repetitive_seconds: 476 * 60,
             non_repetitive_seconds: 40 * 60,
             rho_leeway_seconds: 0,
+            },
         },
         true,
     );
@@ -6369,7 +6375,7 @@ fn test_render_interactive_screen_起動時と自動更新時の既定表示は�
         .expect("日次帯は角括弧内に表示する");
     assert_eq!(
         strip_ansi_escape_sequences(band).chars().count(),
-        DAILY_BAND_SEGMENTS
+        BAND_SEGMENTS
     );
     assert!(!output.contains("日          \t空          \t空差"));
 }

@@ -602,7 +602,7 @@ fn band_displayは96segmentと超過と逆順と週区切りとsummary_alertを�
             "newline:",
             &format!(
                 "newline:2026-08-23(日) +01:02 -03:04 [{}{}{}{}{}{}]",
-                "#".repeat(1),
+                "#",
                 "x".repeat(2),
                 "=".repeat(3),
                 "-".repeat(4),

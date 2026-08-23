@@ -11,9 +11,13 @@ use super::handler::{
     DeferCommandContext, DeferCommandError, TaskListOrder, TaskTreeCommandContext,
 };
 use super::interactive;
+#[cfg(test)]
+use super::renderer::{
+    format_band_day_row, format_signed_seconds, BandDayRow, BandDurations, BAND_SEGMENTS,
+};
 use super::renderer::{
     render_display_model, render_plain_display_model, writeln_newline, DisplayModel,
-    ErrorCapturingWriter, MessageLevel, SchronuWriter,
+    DisplayRecorder, ErrorCapturingWriter, MessageLevel, SchronuWriter,
 };
 use super::view::*;
 use chrono::{DateTime, Duration, Local};
@@ -848,18 +852,44 @@ fn try_exit_interactive(
     }
 
     task_repository.sync_clock(now);
-    let result = execute_show_all_tasks_with_config(
+    render_interactive_band(
         stdout,
+        focused_task_id_opt,
+        task_repository,
+        free_time_manager,
+    );
+    true
+}
+
+fn render_interactive_band(
+    stdout: &mut dyn SchronuWriter,
+    focused_task_id_opt: &mut Option<Uuid>,
+    task_repository: &mut dyn TaskRepositoryTrait,
+    free_time_manager: &mut dyn FreeTimeManagerTrait,
+) {
+    let mut recorder = DisplayRecorder::with_ansi_color(stdout.supports_ansi_color());
+    let result = execute_show_all_tasks_with_config(
+        &mut recorder,
         focused_task_id_opt,
         task_repository,
         free_time_manager,
         &Some("帯".to_string()),
         TaskListDisplayOrder::ScheduledStartDesc,
         active_config(),
-    )
-    .map(|_| ());
-    report_application_result(stdout, result);
-    true
+    );
+    let legacy_display = recorder.model().clone();
+    match result {
+        Ok(Some(display)) => render_display_model(
+            stdout,
+            &DisplayModel::Sequence(vec![display, legacy_display]),
+        )
+        .unwrap(),
+        Ok(None) => render_display_model(stdout, &legacy_display).unwrap(),
+        Err(error) => {
+            render_display_model(stdout, &legacy_display).unwrap();
+            report_application_result::<()>(stdout, Err(error));
+        }
+    }
 }
 
 fn render_focused_task(
@@ -930,17 +960,12 @@ fn render_interactive_screen(
     focus_state: FocusRenderState,
     now: DateTime<Local>,
 ) {
-    let result = execute_show_all_tasks_with_config(
+    render_interactive_band(
         stdout,
         focus_state.focused_task_id_opt,
         task_repository,
         free_time_manager,
-        &Some("帯".to_string()),
-        TaskListDisplayOrder::ScheduledStartDesc,
-        active_config(),
-    )
-    .map(|_| ());
-    report_application_result(stdout, result);
+    );
     render_focused_task(
         stdout,
         task_repository,

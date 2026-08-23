@@ -1,6 +1,7 @@
 use chrono::{DateTime, Datelike, Local, NaiveDate, Weekday};
 use schronu::entity::task::ProjectCategory;
 use std::io::{IsTerminal, Stdout, Write};
+use termion::color;
 use termion::raw::RawTerminal;
 use uuid::Uuid;
 
@@ -195,6 +196,30 @@ pub(super) struct CalendarDisplay {
     pub(super) alerts: CalendarAlerts,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(super) struct BandDurations {
+    pub(super) fixed_seconds: i64,
+    pub(super) elapsed_seconds: i64,
+    pub(super) repetitive_seconds: i64,
+    pub(super) non_repetitive_seconds: i64,
+    pub(super) rho_leeway_seconds: i64,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(super) struct BandDayRow {
+    pub(super) date: NaiveDate,
+    pub(super) accumulated_rho_diff_seconds: i64,
+    pub(super) accumulated_free_diff_seconds: i64,
+    pub(super) durations: BandDurations,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub(super) struct BandDisplay {
+    pub(super) rows: Vec<BandDayRow>,
+    pub(super) summary: CalendarSummary,
+    pub(super) alerts: CalendarAlerts,
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub(super) enum DisplayModel {
     Legacy {
@@ -207,6 +232,7 @@ pub(super) enum DisplayModel {
     Tree(TreeDisplay),
     TaskList(TaskListDisplay),
     Calendar(CalendarDisplay),
+    Band(BandDisplay),
     #[allow(dead_code)] // Composition boundary for later typed display models.
     Sequence(Vec<DisplayModel>),
 }
@@ -237,7 +263,7 @@ impl DisplayModel {
         match self {
             Self::Legacy { fragments } => fragments.is_empty(),
             Self::Message { .. } => false,
-            Self::Tree(_) | Self::TaskList(_) | Self::Calendar(_) => false,
+            Self::Tree(_) | Self::TaskList(_) | Self::Calendar(_) | Self::Band(_) => false,
             Self::Sequence(models) => models.iter().all(Self::is_empty),
         }
     }
@@ -250,6 +276,7 @@ impl DisplayModel {
             | Self::Tree(_)
             | Self::TaskList(_)
             | Self::Calendar(_)
+            | Self::Band(_)
             | Self::Sequence(_) => {
                 unreachable!("semantic display models do not expose legacy fragments")
             }
@@ -263,6 +290,7 @@ impl DisplayModel {
             | Self::Tree(_)
             | Self::TaskList(_)
             | Self::Calendar(_)
+            | Self::Band(_)
             | Self::Sequence(_) => {
                 unreachable!("DisplayRecorder always owns a legacy display model")
             }
@@ -353,6 +381,7 @@ pub(super) fn render_display_model(
         DisplayModel::Tree(tree) => render_tree_display(writer, tree)?,
         DisplayModel::TaskList(task_list) => render_task_list_display(writer, task_list)?,
         DisplayModel::Calendar(calendar) => render_calendar_display(writer, calendar)?,
+        DisplayModel::Band(band) => render_band_display(writer, band)?,
         DisplayModel::Sequence(models) => {
             for model in models {
                 render_display_model(writer, model)?;
@@ -395,6 +424,127 @@ fn render_calendar_display(
     render_calendar_summary(writer, &display.summary)?;
     render_calendar_alerts(writer, display.alerts)?;
     Ok(())
+}
+
+const BAND_SECONDS_PER_SEGMENT: i64 = 15 * 60;
+pub(super) const BAND_SEGMENTS: usize = 24 * 4;
+const SECONDS_PER_DAY: i64 = 24 * 60 * 60;
+
+fn render_band_display(
+    writer: &mut dyn SchronuWriter,
+    display: &BandDisplay,
+) -> Result<(), std::io::Error> {
+    let supports_ansi_color = writer.supports_ansi_color();
+    writer.writeln_newline(&format_band_legend(supports_ansi_color))?;
+    writer.writeln_newline("")?;
+    for (index, row) in display.rows.iter().rev().enumerate() {
+        writer.writeln_newline(&format_band_day_row(row, supports_ansi_color))?;
+        if row.date.weekday() == Weekday::Mon && index + 1 < display.rows.len() {
+            writer.writeln_newline("")?;
+        }
+    }
+    writer.writeln_newline("")?;
+    render_calendar_summary(writer, &display.summary)?;
+    render_calendar_alerts(writer, display.alerts)?;
+    Ok(())
+}
+
+fn round_band_segment_count(seconds: i64) -> usize {
+    let non_negative_seconds = seconds.max(0);
+    ((non_negative_seconds.saturating_add(BAND_SECONDS_PER_SEGMENT / 2)) / BAND_SECONDS_PER_SEGMENT)
+        as usize
+}
+
+fn format_band_segment(symbol: char, count: usize, supports_ansi_color: bool) -> String {
+    if count == 0 {
+        return String::new();
+    }
+    if !supports_ansi_color {
+        return symbol.to_string().repeat(count);
+    }
+    let color_value = match symbol {
+        '#' => 110,
+        'x' => 244,
+        '=' => 33,
+        '-' => 208,
+        ':' => 28,
+        '.' => 34,
+        '>' => 196,
+        _ => return symbol.to_string().repeat(count),
+    };
+    format!(
+        "{}{}{}",
+        color::Fg(color::AnsiValue(color_value)),
+        symbol.to_string().repeat(count),
+        color::Fg(color::Reset)
+    )
+}
+
+fn format_band_legend(supports_ansi_color: bool) -> String {
+    format!(
+        "凡例: {} 固定  {} 経過済み  {} 繰返  {} 単発  {} 余差  {} 空き  {} 超過  (1文字=15分)",
+        format_band_segment('#', 1, supports_ansi_color),
+        format_band_segment('x', 1, supports_ansi_color),
+        format_band_segment('=', 1, supports_ansi_color),
+        format_band_segment('-', 1, supports_ansi_color),
+        format_band_segment(':', 1, supports_ansi_color),
+        format_band_segment('.', 1, supports_ansi_color),
+        format_band_segment('>', 1, supports_ansi_color),
+    )
+}
+
+pub(super) fn format_band_day_row(row: &BandDayRow, supports_ansi_color: bool) -> String {
+    let durations = row.durations;
+    let categories = [
+        ('#', durations.fixed_seconds.max(0)),
+        ('x', durations.elapsed_seconds.max(0)),
+        ('=', durations.repetitive_seconds.max(0)),
+        ('-', durations.non_repetitive_seconds.max(0)),
+        (':', durations.rho_leeway_seconds.max(0)),
+    ];
+    let used_seconds = categories
+        .iter()
+        .fold(0_i64, |sum, (_, seconds)| sum.saturating_add(*seconds));
+    let empty_seconds = SECONDS_PER_DAY.saturating_sub(used_seconds);
+    let overflow_seconds = used_seconds.saturating_sub(SECONDS_PER_DAY);
+    let mut bar = String::with_capacity(BAND_SEGMENTS);
+    let mut cumulative_seconds = 0_i64;
+    let mut previous_boundary = 0_usize;
+    for (symbol, seconds) in categories.into_iter().chain([('.', empty_seconds)]) {
+        cumulative_seconds = cumulative_seconds.saturating_add(seconds);
+        let boundary =
+            round_band_segment_count(cumulative_seconds.min(SECONDS_PER_DAY)).min(BAND_SEGMENTS);
+        bar.push_str(&format_band_segment(
+            symbol,
+            boundary - previous_boundary,
+            supports_ansi_color,
+        ));
+        previous_boundary = boundary;
+    }
+    let overflow = format_band_segment(
+        '>',
+        round_band_segment_count(overflow_seconds),
+        supports_ansi_color,
+    );
+    format!(
+        "{}({}) {} {} [{}]{}",
+        row.date,
+        weekday_jp(row.date.weekday()),
+        format_signed_seconds(row.accumulated_rho_diff_seconds),
+        format_signed_seconds(row.accumulated_free_diff_seconds),
+        bar,
+        overflow,
+    )
+}
+
+pub(super) fn format_signed_seconds(seconds: i64) -> String {
+    let sign = if seconds >= 0 { '+' } else { '-' };
+    let absolute_minutes = seconds.unsigned_abs() / 60;
+    format!(
+        "{sign}{:02}:{:02}",
+        absolute_minutes / 60,
+        absolute_minutes % 60
+    )
 }
 
 fn format_calendar_day_row(row: &CalendarDayRow) -> String {
