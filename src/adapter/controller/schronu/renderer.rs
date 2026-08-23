@@ -281,28 +281,17 @@ pub(super) struct FlattenDisplay {
 }
 
 #[derive(Clone, Debug, PartialEq)]
-pub(super) struct FocusDisplay {
-    pub(super) ancestors: Vec<AncestorTreeRow>,
-    pub(super) project_category: Option<ProjectCategory>,
-    pub(super) task_attr: TaskAttr,
-    pub(super) estimated_work_seconds: i64,
-    pub(super) actual_work_seconds: i64,
-    pub(super) focus_started_at: DateTime<Local>,
-    pub(super) now: DateTime<Local>,
-}
-
-#[derive(Clone, Debug, PartialEq)]
-pub(super) struct FocusHeaderDisplay {
-    pub(super) project_category: Option<ProjectCategory>,
-    pub(super) task_attr: Result<TaskAttr, TaskTreeError>,
-}
-
-#[derive(Clone, Debug, PartialEq)]
-pub(super) struct FocusTimingDisplay {
-    pub(super) estimated_work_seconds: i64,
-    pub(super) actual_work_seconds: i64,
-    pub(super) focus_started_at: DateTime<Local>,
-    pub(super) now: DateTime<Local>,
+pub(super) enum FocusDisplay {
+    Header {
+        project_category: Option<ProjectCategory>,
+        task_attr: Result<TaskAttr, TaskTreeError>,
+    },
+    Timing {
+        estimated_work_seconds: i64,
+        actual_work_seconds: i64,
+        focus_started_at: DateTime<Local>,
+        now: DateTime<Local>,
+    },
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -320,8 +309,6 @@ pub(super) enum DisplayModel {
     Band(BandDisplay),
     Pack(PackDisplay),
     Flatten(FlattenDisplay),
-    #[allow(dead_code)]
-    // Runtime uses staged focus models so earlier output survives later getter errors.
     Focus(FocusDisplay),
     #[allow(dead_code)] // Composition boundary for later typed display models.
     Sequence(Vec<DisplayModel>),
@@ -765,50 +752,30 @@ fn render_focus_display(
     writer: &mut dyn SchronuWriter,
     display: &FocusDisplay,
 ) -> Result<(), std::io::Error> {
-    render_tree_display(
-        writer,
-        &TreeDisplay::Ancestors {
-            rows: display.ancestors.clone(),
-        },
-    )?;
-    render_focus_header_display(
-        writer,
-        &FocusHeaderDisplay {
-            project_category: display.project_category,
-            task_attr: Ok(display.task_attr.clone()),
-        },
-    )?;
-    render_focus_timing_display(
-        writer,
-        &FocusTimingDisplay {
-            estimated_work_seconds: display.estimated_work_seconds,
-            actual_work_seconds: display.actual_work_seconds,
-            focus_started_at: display.focus_started_at,
-            now: display.now,
-        },
-    )
-}
-
-pub(super) fn render_focus_header_display(
-    writer: &mut dyn SchronuWriter,
-    display: &FocusHeaderDisplay,
-) -> Result<(), std::io::Error> {
-    writer.writeln_newline(&format_focused_task_header(display.project_category))?;
-    writer.writeln_newline(&format!("{:?}", display.task_attr))
-}
-
-pub(super) fn render_focus_timing_display(
-    writer: &mut dyn SchronuWriter,
-    display: &FocusTimingDisplay,
-) -> Result<(), std::io::Error> {
-    let focusing_seconds = (display.now - display.focus_started_at).num_seconds();
-    let estimated_finish_at = display.focus_started_at
-        + Duration::seconds(
-            display
-                .estimated_work_seconds
-                .saturating_sub(display.actual_work_seconds),
-        );
-    let left_duration = estimated_finish_at - display.now;
+    let (estimated_work_seconds, actual_work_seconds, focus_started_at, now) = match display {
+        FocusDisplay::Header {
+            project_category,
+            task_attr,
+        } => {
+            writer.writeln_newline(&format_focused_task_header(*project_category))?;
+            return writer.writeln_newline(&format!("{task_attr:?}"));
+        }
+        FocusDisplay::Timing {
+            estimated_work_seconds,
+            actual_work_seconds,
+            focus_started_at,
+            now,
+        } => (
+            estimated_work_seconds,
+            actual_work_seconds,
+            focus_started_at,
+            now,
+        ),
+    };
+    let focusing_seconds = (*now - *focus_started_at).num_seconds();
+    let estimated_finish_at = *focus_started_at
+        + Duration::seconds(estimated_work_seconds.saturating_sub(*actual_work_seconds));
+    let left_duration = estimated_finish_at - *now;
     let focusing_minutes = focusing_seconds / 60 + 1;
     let remaining = if left_duration >= Duration::minutes(1) {
         format!("{} minutes left", left_duration.num_minutes())
@@ -820,13 +787,13 @@ pub(super) fn render_focus_timing_display(
     writer.writeln_newline(&format!(
         "{} (since {} until {}) focusing for {} minutes",
         remaining,
-        display.focus_started_at.format("%H:%M:%S"),
+        focus_started_at.format("%H:%M:%S"),
         estimated_finish_at.format("%H:%M:%S"),
         focusing_minutes,
     ))?;
     writer.writeln_newline(&format_focus_progress(
-        display.estimated_work_seconds,
-        display.actual_work_seconds,
+        *estimated_work_seconds,
+        *actual_work_seconds,
         focusing_seconds,
     ))?;
     Ok(())

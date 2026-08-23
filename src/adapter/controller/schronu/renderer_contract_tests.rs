@@ -900,21 +900,27 @@ fn focus_displayはtyped属性からancestorと残り時間とprogress境界を�
     task_attr.set_estimated_work_seconds(60 * 60);
     task_attr.set_actual_work_seconds(10 * 60);
     let task_debug = format!("Ok({task_attr:?})");
-    let display = DisplayModel::Focus(FocusDisplay {
-        ancestors: vec![AncestorTreeRow {
-            level: 0,
-            task_id,
-            first_available_date: NaiveDate::from_ymd_opt(2026, 7, 25).unwrap(),
-            estimated_minutes: 60,
-            name: "フォーカス対象".to_string(),
-        }],
-        project_category: Some(ProjectCategory::Investment),
-        task_attr,
-        estimated_work_seconds: 60 * 60,
-        actual_work_seconds: 10 * 60,
-        focus_started_at,
-        now: Local.with_ymd_and_hms(2026, 7, 25, 12, 19, 0).unwrap(),
-    });
+    let display = DisplayModel::Sequence(vec![
+        DisplayModel::Tree(TreeDisplay::Ancestors {
+            rows: vec![AncestorTreeRow {
+                level: 0,
+                task_id,
+                first_available_date: NaiveDate::from_ymd_opt(2026, 7, 25).unwrap(),
+                estimated_minutes: 60,
+                name: "フォーカス対象".to_string(),
+            }],
+        }),
+        DisplayModel::Focus(FocusDisplay::Header {
+            project_category: Some(ProjectCategory::Investment),
+            task_attr: Ok(task_attr),
+        }),
+        DisplayModel::Focus(FocusDisplay::Timing {
+            estimated_work_seconds: 60 * 60,
+            actual_work_seconds: 10 * 60,
+            focus_started_at,
+            now: Local.with_ymd_and_hms(2026, 7, 25, 12, 19, 0).unwrap(),
+        }),
+    ]);
     let mut writer = TraceWriter::default();
 
     render_display_model(&mut writer, &display).unwrap();
@@ -979,15 +985,19 @@ fn focus_displayはtyped属性からancestorと残り時間とprogress境界を�
         let mut case_writer = TraceWriter::default();
         render_display_model(
             &mut case_writer,
-            &DisplayModel::Focus(FocusDisplay {
-                ancestors: vec![],
-                project_category: None,
-                task_attr,
-                estimated_work_seconds,
-                actual_work_seconds,
-                focus_started_at,
-                now,
-            }),
+            &DisplayModel::Sequence(vec![
+                DisplayModel::Tree(TreeDisplay::Ancestors { rows: vec![] }),
+                DisplayModel::Focus(FocusDisplay::Header {
+                    project_category: None,
+                    task_attr: Ok(task_attr),
+                }),
+                DisplayModel::Focus(FocusDisplay::Timing {
+                    estimated_work_seconds,
+                    actual_work_seconds,
+                    focus_started_at,
+                    now,
+                }),
+            ]),
         )
         .unwrap();
         assert_eq!(

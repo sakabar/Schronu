@@ -5,9 +5,9 @@ use super::renderer::{format_task_category_summary, format_task_list_row};
 use super::renderer::{
     format_task_list_columns, task_list_columns, weekday_jp, writeln_newline, AncestorTreeRow,
     BandDayRow, BandDisplay, BandDurations, CalendarAlerts, CalendarDayRow, CalendarDisplay,
-    CalendarSummary, DebugTreeRow, DisplayModel, FocusDisplay, FocusHeaderDisplay,
-    FocusTimingDisplay, LeafTreeRow, SchronuWriter, TaskCategoryWorkSeconds, TaskListDisplay,
-    TaskListIconMode, TaskListRow, TaskListTaskRow, TreeDisplay, BAND_SECONDS_PER_DAY,
+    CalendarSummary, DebugTreeRow, DisplayModel, FocusDisplay, LeafTreeRow, SchronuWriter,
+    TaskCategoryWorkSeconds, TaskListDisplay, TaskListIconMode, TaskListRow, TaskListTaskRow,
+    TreeDisplay, BAND_SECONDS_PER_DAY,
 };
 use chrono::{DateTime, Datelike, Duration, Local, NaiveDate};
 use regex::Regex;
@@ -504,34 +504,10 @@ pub(super) fn build_ancestor_tree_display(
     Ok(TreeDisplay::Ancestors { rows })
 }
 
-#[allow(dead_code)] // Full-model contracts compose the same staged builders used by runtime.
-pub(super) fn build_focus_display(
-    focused_task: &TaskHandle,
-    focus_started_datetime: &DateTime<Local>,
-    now: &DateTime<Local>,
-) -> Result<FocusDisplay, ApplicationError> {
-    let ancestors = match build_ancestor_tree_display(&Some(focused_task.clone()))? {
-        TreeDisplay::Ancestors { rows } => rows,
-        _ => unreachable!("ancestor builder always returns ancestor rows"),
-    };
-    let header = build_focus_header_display(focused_task)?;
-    let task_attr = header.task_attr.map_err(ApplicationError::TaskTree)?;
-    let timing = build_focus_timing_display(focused_task, focus_started_datetime, now)?;
-    Ok(FocusDisplay {
-        ancestors,
-        project_category: header.project_category,
-        task_attr,
-        estimated_work_seconds: timing.estimated_work_seconds,
-        actual_work_seconds: timing.actual_work_seconds,
-        focus_started_at: timing.focus_started_at,
-        now: timing.now,
-    })
-}
-
 pub(super) fn build_focus_header_display(
     focused_task: &TaskHandle,
-) -> Result<FocusHeaderDisplay, ApplicationError> {
-    Ok(FocusHeaderDisplay {
+) -> Result<FocusDisplay, ApplicationError> {
+    Ok(FocusDisplay::Header {
         project_category: focused_task
             .get_project_category_opt()
             .map_err(ApplicationError::TaskTree)?,
@@ -543,8 +519,8 @@ pub(super) fn build_focus_timing_display(
     focused_task: &TaskHandle,
     focus_started_datetime: &DateTime<Local>,
     now: &DateTime<Local>,
-) -> Result<FocusTimingDisplay, ApplicationError> {
-    Ok(FocusTimingDisplay {
+) -> Result<FocusDisplay, ApplicationError> {
+    Ok(FocusDisplay::Timing {
         estimated_work_seconds: focused_task
             .get_estimated_work_seconds()
             .map_err(ApplicationError::TaskTree)?,

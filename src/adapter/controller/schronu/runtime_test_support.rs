@@ -878,7 +878,7 @@ fn rendered_focus_messages_for_test(
     focus_started_datetime: &DateTime<Local>,
     now: &DateTime<Local>,
 ) -> [String; 2] {
-    let display = build_focus_display(focused_task, focus_started_datetime, now).unwrap();
+    let display = build_focus_timing_display(focused_task, focus_started_datetime, now).unwrap();
     let mut writer = TestWriter::new_for_pipe();
     render_display_model(&mut writer, &DisplayModel::Focus(display)).unwrap();
     let output = writer.into_string();

@@ -6361,12 +6361,12 @@ impl FocusDisplaySource for CharacterizationFocusDisplaySource {
         }
     }
 
-    fn build_header(&self) -> Option<Result<FocusHeaderDisplay, ApplicationError>> {
+    fn build_header(&self) -> Option<Result<FocusDisplay, ApplicationError>> {
         self.has_focused_task.then(|| {
             if self.failure == FocusStageFailure::Category {
                 Err(ApplicationError::TaskTree(TaskTreeError::Borrow))
             } else {
-                Ok(FocusHeaderDisplay {
+                Ok(FocusDisplay::Header {
                     project_category: Some(ProjectCategory::Investment),
                     task_attr: if self.failure == FocusStageFailure::Attr {
                         Err(TaskTreeError::Borrow)
@@ -6382,12 +6382,12 @@ impl FocusDisplaySource for CharacterizationFocusDisplaySource {
         })
     }
 
-    fn build_timing(&self) -> Option<Result<FocusTimingDisplay, ApplicationError>> {
+    fn build_timing(&self) -> Option<Result<FocusDisplay, ApplicationError>> {
         self.has_focused_task.then(|| {
             if self.failure == FocusStageFailure::Timing {
                 Err(ApplicationError::TaskTree(TaskTreeError::Borrow))
             } else {
-                Ok(FocusTimingDisplay {
+                Ok(FocusDisplay::Timing {
                     estimated_work_seconds: 60 * 60,
                     actual_work_seconds: 10 * 60,
                     focus_started_at: self.focus_started_at,
