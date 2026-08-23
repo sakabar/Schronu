@@ -317,7 +317,7 @@ pub(super) fn parse_command(input: &str, mode: ParseMode) -> Result<Command, Com
         .collect::<Vec<_>>();
 
     match name {
-        "tuck" | "伏" | "t" => parse_tuck_away(&arguments, mode),
+        "伏" | "tuck" | "t" => parse_tuck_away(&arguments, mode),
         "予" | "estimate" | "es" => parse_estimate(&arguments),
         "見" | "focus" | "fc" => parse_focus(&arguments),
         "揃" | "arrange" | "arr" => parse_arrange(&arguments),
