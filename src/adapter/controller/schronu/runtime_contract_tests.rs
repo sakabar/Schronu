@@ -1691,6 +1691,45 @@ fn show_allの製品経路はspreadsheet_formatterを使う() {
 }
 
 #[test]
+fn task_list通常表示はcategory集計後の2空行をwriter固有newlineで維持する() {
+    let now = Local.with_ymd_and_hms(2026, 8, 11, 12, 0, 0).unwrap();
+    let task = new_test_task_handle("末尾空行確認用タスク").unwrap();
+    task.set_estimated_work_seconds(30 * 60);
+    task.set_start_time(now);
+    task.set_pending_until(now);
+    task.set_orig_status(Status::Pending);
+
+    for command in ["全", "尾 単", "単"] {
+        let mut task_repository = TestTaskRepository::new(task.clone(), now);
+        let mut free_time_manager = TestFreeTimeManager::with_free_minutes(60);
+        let mut focused_task_id_opt = None;
+        let mut stdout = TestWriter::new_with_newline_prefix("<newline>");
+
+        execute(
+            &mut stdout,
+            &mut task_repository,
+            &mut free_time_manager,
+            &mut focused_task_id_opt,
+            &now,
+            command,
+        )
+        .unwrap();
+
+        let output = stdout.into_string();
+        let lines = output.lines().collect::<Vec<_>>();
+        assert!(
+            lines[lines.len() - 3].starts_with("<newline>予定カテゴリ:"),
+            "{command}: {output}"
+        );
+        assert_eq!(
+            &lines[lines.len() - 2..],
+            ["<newline>", "<newline>"],
+            "{command}: category summary後は2空行"
+        );
+    }
+}
+
+#[test]
 fn test_execute_all_締切順の予定時刻を表示する() {
     let now = Local.with_ymd_and_hms(2026, 8, 11, 12, 0, 0).unwrap();
     let root_task = new_test_task_handle("親タスク").unwrap();

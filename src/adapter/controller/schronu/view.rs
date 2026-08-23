@@ -1912,8 +1912,6 @@ pub(super) fn execute_show_all_tasks_with_config(
         writeln_newline(stdout, &s_for_non_repetitive_rho).unwrap();
     }
 
-    if is_today_func || is_daily_summary_func {
-        writeln_newline(stdout, "").unwrap();
-    }
+    writeln_newline(stdout, "").unwrap();
     Ok(task_list_display)
 }
