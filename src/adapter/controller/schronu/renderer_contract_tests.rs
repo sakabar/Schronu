@@ -1,8 +1,11 @@
 use super::renderer::{
-    format_spreadsheet_task_row, render_display_model, DisplayFragment, DisplayModel,
-    DisplayRecorder, ErrorCapturingWriter, MessageLevel, SchronuWriter, SpreadsheetTaskRow,
+    format_spreadsheet_task_row, render_display_model, AncestorTreeRow, DebugTreeRow,
+    DisplayFragment, DisplayModel, DisplayRecorder, ErrorCapturingWriter, LeafTreeRow,
+    MessageLevel, SchronuWriter, SpreadsheetTaskRow, TreeDisplay,
 };
+use chrono::NaiveDate;
 use std::io::Write;
+use uuid::Uuid;
 
 #[test]
 fn spreadsheet_task_rowはaからjの10列を既存cli形式で出力する() {
@@ -129,6 +132,76 @@ fn semantic_message_sequenceはlevelとwriter固有newlineの順序を保持す�
             "newline:[Warn] warning",
             "newline:[Critical] critical",
             "newline:[Error] failure",
+        ]
+    );
+}
+
+#[test]
+fn tree_displayはtyped_rowから既存のraw空行とwriter固有newlineを生成する() {
+    let root_id = Uuid::parse_str("11111111-1111-1111-1111-111111111111").unwrap();
+    let child_id = Uuid::parse_str("22222222-2222-2222-2222-222222222222").unwrap();
+    let display = DisplayModel::Sequence(vec![
+        DisplayModel::Tree(TreeDisplay::Debug {
+            rows: vec![
+                DebugTreeRow {
+                    debug: "[ ] debug root".to_string(),
+                },
+                DebugTreeRow {
+                    debug: "    [-] debug child".to_string(),
+                },
+            ],
+        }),
+        DisplayModel::Tree(TreeDisplay::Ancestors {
+            rows: vec![
+                AncestorTreeRow {
+                    level: 0,
+                    task_id: root_id,
+                    first_available_date: NaiveDate::from_ymd_opt(2026, 8, 23).unwrap(),
+                    estimated_minutes: 30,
+                    name: "root".to_string(),
+                },
+                AncestorTreeRow {
+                    level: 2,
+                    task_id: child_id,
+                    first_available_date: NaiveDate::from_ymd_opt(2026, 8, 24).unwrap(),
+                    estimated_minutes: 15,
+                    name: "child".to_string(),
+                },
+            ],
+        }),
+        DisplayModel::Tree(TreeDisplay::Leaves {
+            rows: vec![
+                LeafTreeRow {
+                    remaining_count: 2,
+                    project_name: "project A".to_string(),
+                    task_debug: "TaskAttr { name: \"first\" }".to_string(),
+                },
+                LeafTreeRow {
+                    remaining_count: 1,
+                    project_name: "project B".to_string(),
+                    task_debug: "TaskAttr { name: \"second\" }".to_string(),
+                },
+            ],
+        }),
+    ]);
+    let mut writer = TraceWriter::default();
+
+    render_display_model(&mut writer, &display).unwrap();
+
+    assert_eq!(
+        writer.operations,
+        [
+            "raw:\n",
+            "newline:[ ] debug root",
+            "newline:    [-] debug child",
+            "raw:\n",
+            "raw:\n",
+            "newline:11111111-1111-1111-1111-111111111111 [2026/08/23] 30m root",
+            "newline:    `-- 22222222-2222-2222-2222-222222222222 [2026/08/24] 15m child",
+            "newline:",
+            "newline:2\tproject A\tTaskAttr { name: \"first\" }",
+            "newline:1\tproject B\tTaskAttr { name: \"second\" }",
+            "newline:",
         ]
     );
 }
