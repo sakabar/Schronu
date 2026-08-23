@@ -1,7 +1,6 @@
 use super::renderer::{
     format_spreadsheet_task_row, writeln_newline, SchronuWriter, SpreadsheetTaskRow,
 };
-use super::runtime::{active_config, get_weekday_jp, get_weekday_jp_from_weekday};
 use chrono::{DateTime, Datelike, Duration, Local, NaiveDate, Weekday};
 use regex::Regex;
 use schronu::adapter::gateway::schronu_config::SchronuConfig;
@@ -24,6 +23,22 @@ use unicode_width::UnicodeWidthChar;
 use uuid::Uuid;
 
 const FOCUS_PROGRESS_BAR_SEGMENTS: usize = 100;
+
+pub(super) fn get_weekday_jp(date: &NaiveDate) -> &str {
+    get_weekday_jp_from_weekday(date.weekday())
+}
+
+fn get_weekday_jp_from_weekday(weekday: Weekday) -> &'static str {
+    match weekday {
+        Weekday::Mon => "月",
+        Weekday::Tue => "火",
+        Weekday::Wed => "水",
+        Weekday::Thu => "木",
+        Weekday::Fri => "金",
+        Weekday::Sat => "土",
+        Weekday::Sun => "日",
+    }
+}
 
 pub(super) fn get_adjustable_prefix_label(
     task: &TaskHandle,
@@ -783,26 +798,6 @@ pub(super) fn execute_show_leaf_tasks(
 }
 
 // 集計用タプルはこの関数内だけで使用し、意味を持つ公開型を増やさない。
-#[allow(clippy::type_complexity)]
-pub(super) fn execute_show_all_tasks(
-    stdout: &mut dyn SchronuWriter,
-    focused_task_id_opt: &mut Option<Uuid>,
-    task_repository: &mut dyn TaskRepositoryTrait,
-    free_time_manager: &mut dyn FreeTimeManagerTrait,
-    pattern_opt: &Option<String>,
-    display_order: TaskListDisplayOrder,
-) -> Result<(), ApplicationError> {
-    execute_show_all_tasks_with_config(
-        stdout,
-        focused_task_id_opt,
-        task_repository,
-        free_time_manager,
-        pattern_opt,
-        display_order,
-        active_config(),
-    )
-}
-
 #[allow(clippy::type_complexity)]
 pub(super) fn execute_show_all_tasks_with_config(
     stdout: &mut dyn SchronuWriter,

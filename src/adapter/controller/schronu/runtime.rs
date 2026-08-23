@@ -16,7 +16,7 @@ use super::renderer::{
     ErrorCapturingWriter, SchronuWriter,
 };
 use super::view::*;
-use chrono::{DateTime, Datelike, Duration, Local, NaiveDate, NaiveDateTime, NaiveTime, Weekday};
+use chrono::{DateTime, Datelike, Duration, Local, NaiveDate, NaiveDateTime, NaiveTime};
 use percent_encoding::{percent_encode, AsciiSet, CONTROLS};
 use regex::Regex;
 use schronu::adapter::gateway::free_time_manager::FreeTimeManager;
@@ -362,22 +362,6 @@ impl std::error::Error for RunError {
             Self::InputReadWithRepository { input_error, .. } => Some(input_error),
             Self::Interrupted => None,
         }
-    }
-}
-
-pub(super) fn get_weekday_jp(date: &NaiveDate) -> &str {
-    get_weekday_jp_from_weekday(date.weekday())
-}
-
-pub(super) fn get_weekday_jp_from_weekday(weekday: Weekday) -> &'static str {
-    match weekday {
-        Weekday::Mon => "月",
-        Weekday::Tue => "火",
-        Weekday::Wed => "水",
-        Weekday::Thu => "木",
-        Weekday::Fri => "金",
-        Weekday::Sat => "土",
-        Weekday::Sun => "日",
     }
 }
 
@@ -2520,13 +2504,14 @@ fn try_exit_interactive(
     }
 
     task_repository.sync_clock(now);
-    let result = execute_show_all_tasks(
+    let result = execute_show_all_tasks_with_config(
         stdout,
         focused_task_id_opt,
         task_repository,
         free_time_manager,
         &Some("帯".to_string()),
         TaskListDisplayOrder::ScheduledStartDesc,
+        active_config(),
     );
     report_application_result(stdout, result);
     true
@@ -2598,13 +2583,14 @@ fn render_interactive_screen(
     focus_state: FocusRenderState,
     now: DateTime<Local>,
 ) {
-    let result = execute_show_all_tasks(
+    let result = execute_show_all_tasks_with_config(
         stdout,
         focus_state.focused_task_id_opt,
         task_repository,
         free_time_manager,
         &Some("帯".to_string()),
         TaskListDisplayOrder::ScheduledStartDesc,
+        active_config(),
     );
     report_application_result(stdout, result);
     render_focused_task(
