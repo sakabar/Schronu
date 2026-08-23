@@ -5412,6 +5412,64 @@ fn test_interactive_submitは製品event経路でload実行保存する() {
 }
 
 #[test]
+fn test_interactive_verifyは出力errorを分類してtransactionを継続する() {
+    let operation_now = Local.with_ymd_and_hms(2026, 8, 23, 12, 0, 0).unwrap();
+
+    for error_kind in [
+        std::io::ErrorKind::BrokenPipe,
+        std::io::ErrorKind::Other,
+    ] {
+        let storage_dir = TestStorageDir::new();
+        std::fs::create_dir_all(&storage_dir.path).unwrap();
+        let task = new_test_task_handle("検証対象").unwrap();
+        let task_id = task.get_id().unwrap();
+        let mut repository = TestTaskRepository::new(
+            task,
+            operation_now - chrono::Duration::hours(1),
+        )
+        .with_storage_directory(&storage_dir.path);
+        let mut free_time_manager = TestFreeTimeManager::default();
+        let mut stdout = FlushTrackingWriter::failing_on_nth_flush(2, error_kind);
+        let mut focused_task_id_opt = Some(task_id);
+        let mut last_focused_task_id_opt = Some(task_id);
+        let mut focus_started_datetime = operation_now;
+        let mut focus_selection_mode = FocusSelectionMode::HighestPriority;
+
+        let outcome = handle_interactive_submit_at(
+            &mut stdout,
+            &mut repository,
+            &mut free_time_manager,
+            InteractiveRepositoryState {
+                focused_task_id_opt: &mut focused_task_id_opt,
+                last_focused_task_id_opt: &mut last_focused_task_id_opt,
+                focus_started_datetime: &mut focus_started_datetime,
+                focus_selection_mode: &mut focus_selection_mode,
+            },
+            "検証",
+            operation_now,
+        );
+
+        assert!(matches!(
+            outcome,
+            InteractiveRepositoryEventOutcome::CommandExecuted(ref command, now)
+                if command == "検証" && now == operation_now
+        ));
+        assert_eq!(stdout.flush_count, 2);
+        let output = String::from_utf8(stdout.buffer).unwrap();
+        assert_eq!(
+            output.contains("[Error] 出力エラー: flush failure"),
+            error_kind == std::io::ErrorKind::Other
+        );
+        assert_eq!(repository.get_last_synced_time(), operation_now);
+        assert_eq!(repository.save_attempt_count.get(), 1);
+        assert_eq!(
+            repository.operation_trace(),
+            ["reload_if_changed", "load", "has_pending_changes", "save"]
+        );
+    }
+}
+
+#[test]
 fn test_interactive_submitとnoninteractive実行は共通command_transaction経路を通る() {
     let now = Local.with_ymd_and_hms(2026, 8, 12, 12, 0, 0).unwrap();
     let mut traces = Vec::new();

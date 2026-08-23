@@ -513,11 +513,21 @@ fn execute_parsed(
         outcome,
         active_config(),
     )?;
+    captured_output_result(&mut output)
+}
+
+fn captured_output_result(output: &mut ErrorCapturingWriter<'_>) -> Result<(), CommandError> {
     match output.take_error() {
         Some(error) if error.kind() == std::io::ErrorKind::BrokenPipe => Ok(()),
         Some(error) => Err(CommandError::Output(error)),
         None => Ok(()),
     }
+}
+
+fn render_verify_flush(stdout: &mut dyn SchronuWriter) -> Result<(), CommandError> {
+    let mut output = ErrorCapturingWriter::new(stdout);
+    render_display_model(&mut output, &DisplayModel::flush()).map_err(CommandError::Output)?;
+    captured_output_result(&mut output)
 }
 
 fn apply_command_outcome(
@@ -1001,16 +1011,19 @@ fn execute_interactive_command(
             active_config(),
         )?;
     } else {
-        if parsed_command.kind() == CommandKind::Verify {
-            render_display_model(stdout, &DisplayModel::flush()).map_err(CommandError::Output)?;
-        } else if let Err(error) = execute_parsed(
-            stdout,
-            task_repository,
-            free_time_manager,
-            focused_task_id_opt,
-            focus_started_datetime,
-            &parsed_command,
-        ) {
+        let command_result = if parsed_command.kind() == CommandKind::Verify {
+            render_verify_flush(stdout)
+        } else {
+            execute_parsed(
+                stdout,
+                task_repository,
+                free_time_manager,
+                focused_task_id_opt,
+                focus_started_datetime,
+                &parsed_command,
+            )
+        };
+        if let Err(error) = command_result {
             let _output_error = render_display_model(stdout, &error_display_model(&error))
                 .map_err(CommandError::Output);
         }

@@ -264,7 +264,7 @@ impl SchronuWriter for FailingNewlineWriter {
 struct FlushTrackingWriter {
     buffer: Vec<u8>,
     flush_count: usize,
-    flush_error_kind: Option<std::io::ErrorKind>,
+    flush_error: Option<(usize, std::io::ErrorKind)>,
     supports_ansi_color: bool,
 }
 
@@ -274,7 +274,7 @@ impl FlushTrackingWriter {
         Self {
             buffer: vec![],
             flush_count: 0,
-            flush_error_kind: None,
+            flush_error: None,
             supports_ansi_color,
         }
     }
@@ -283,7 +283,16 @@ impl FlushTrackingWriter {
         Self {
             buffer: vec![],
             flush_count: 0,
-            flush_error_kind: Some(error_kind),
+            flush_error: Some((1, error_kind)),
+            supports_ansi_color: true,
+        }
+    }
+
+    fn failing_on_nth_flush(flush_count: usize, error_kind: std::io::ErrorKind) -> Self {
+        Self {
+            buffer: vec![],
+            flush_count: 0,
+            flush_error: Some((flush_count, error_kind)),
             supports_ansi_color: true,
         }
     }
@@ -298,9 +307,11 @@ impl Write for FlushTrackingWriter {
 
     fn flush(&mut self) -> std::io::Result<()> {
         self.flush_count += 1;
-        match self.flush_error_kind {
-            Some(kind) => Err(std::io::Error::new(kind, "flush failure")),
-            None => Ok(()),
+        match self.flush_error {
+            Some((failure_count, kind)) if self.flush_count == failure_count => {
+                Err(std::io::Error::new(kind, "flush failure"))
+            }
+            Some(_) | None => Ok(()),
         }
     }
 }
