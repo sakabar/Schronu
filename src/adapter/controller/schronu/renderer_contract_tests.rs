@@ -1,11 +1,11 @@
 use super::renderer::{
     format_spreadsheet_task_row, format_task_list_columns, render_display_model, task_list_columns,
-    AncestorTreeRow, DebugTreeRow, DisplayFragment, DisplayModel, DisplayRecorder,
-    ErrorCapturingWriter, LeafTreeRow, MessageLevel, SchronuWriter, SpreadsheetTaskRow,
-    TaskCategoryWorkSeconds, TaskListDisplay, TaskListIconMode, TaskListRow, TaskListTaskRow,
-    TreeDisplay,
+    AncestorTreeRow, CalendarAlerts, CalendarDayRow, CalendarDisplay, CalendarSummary,
+    DebugTreeRow, DisplayFragment, DisplayModel, DisplayRecorder, ErrorCapturingWriter,
+    LeafTreeRow, MessageLevel, SchronuWriter, SpreadsheetTaskRow, TaskCategoryWorkSeconds,
+    TaskListDisplay, TaskListIconMode, TaskListRow, TaskListTaskRow, TreeDisplay,
 };
-use chrono::{Local, NaiveDate, TimeZone};
+use chrono::{Local, NaiveDate, TimeZone, Weekday};
 use schronu::entity::task::ProjectCategory;
 use std::io::Write;
 use uuid::Uuid;
@@ -330,6 +330,133 @@ fn task_list_icon_modeは同じgive_up候補の検索iconと表示iconを区別�
 
     assert!(search_text.contains(" ! ____-01:20"), "{search_text}");
     assert!(display_text.contains(" A ____-01:20"), "{display_text}");
+}
+
+#[test]
+fn calendar_displayはtyped日別値を逆順と週区切りとsummaryとalertへ描画する() {
+    let day_row = |date| CalendarDayRow {
+        date,
+        free_time_minutes: 60,
+        free_time_diff_minutes: 0,
+        adjustable_work_seconds: 0,
+        rho_diff: 0.0,
+        rho_goal_diff_minutes: 0,
+        accumulated_rho_goal_diff_minutes: 0,
+        deadline_diff_seconds: 0,
+        deadline_ratio: 0.0,
+        accumulated_free_diff_minutes: 0,
+        non_repetitive_free_minutes: 60,
+        accumulated_rho_diff: 0.0,
+        task_count: 1,
+    };
+    let summary = CalendarSummary {
+        last_synced_date: NaiveDate::from_ymd_opt(2026, 8, 23).unwrap(),
+        first_caught_up_date: NaiveDate::from_ymd_opt(2026, 8, 25).unwrap(),
+        first_leeway_date: NaiveDate::from_ymd_opt(2026, 8, 26).unwrap(),
+        first_leeway_minutes: -90,
+        max_accumulated_free_diff_minutes: 125,
+        max_accumulated_free_diff_date: NaiveDate::from_ymd_opt(2026, 8, 24).unwrap(),
+        max_accumulated_rho_diff: 1.25,
+        max_accumulated_rho_diff_date: NaiveDate::from_ymd_opt(2026, 8, 24).unwrap(),
+    };
+    let rows = vec![
+        day_row(NaiveDate::from_ymd_opt(2026, 8, 23).unwrap()),
+        day_row(NaiveDate::from_ymd_opt(2026, 8, 24).unwrap()),
+        day_row(NaiveDate::from_ymd_opt(2026, 8, 25).unwrap()),
+    ];
+    let display = DisplayModel::Calendar(CalendarDisplay {
+        rows: rows.clone(),
+        blank_line_weekday: Weekday::Mon,
+        summary: summary.clone(),
+        alerts: CalendarAlerts {
+            has_today_deadline_leeway: false,
+            has_today_freetime_leeway: false,
+            has_today_new_task_leeway: false,
+            has_tomorrow_deadline_leeway: false,
+            has_tomorrow_freetime_leeway: false,
+            has_weekly_deadline_leeway: false,
+            has_weekly_freetime_leeway: false,
+        },
+    });
+    let mut writer = TraceWriter::default();
+
+    render_display_model(&mut writer, &display).unwrap();
+
+    assert_eq!(
+        writer.operations,
+        [
+            "newline:2026-08-25(火)\t 1.0時間\t-0時間00分     \t 0.00\t-0時間00分\t-00時間00分\t-0時間00分\t 0.00\t-00時間00分\t 01時間00分\t 0.00\t01[タスク]",
+            "newline:2026-08-24(月)\t 1.0時間\t-0時間00分     \t 0.00\t-0時間00分\t-00時間00分\t-0時間00分\t 0.00\t-00時間00分\t 01時間00分\t 0.00\t01[タスク]",
+            "newline:",
+            "newline:2026-08-23(日)\t 1.0時間\t-0時間00分     \t 0.00\t-0時間00分\t-00時間00分\t-0時間00分\t 0.00\t-00時間00分\t 01時間00分\t 0.00\t01[タスク]",
+            "newline:日          \t空          \t空差      \t空差比\t余差    \t余差累    \t〆差      \t〆差比\t空差累    \t単発余暇\t空差累比\tタスク数",
+            "newline:",
+            "newline:今のタスクが片付く日付: 2日後の2026-08-25",
+            "newline:最大の累積時間:  02時間05分 (2026-08-24), 最大のrhoの差: 1.25 (2026-08-24), 次にタスクを積める日付: 3日後の2026-08-26 (-1時間30分)",
+            "newline:",
+            "newline:[Crit] 【今日の】〆切に間に合いません。【ただちに】〆切をリスケする調整をしてください。",
+            "newline:[Crit] 【今日の】終了予定時刻に間に合いません。【ただちに】どれかの予定を諦めて明日以降に延期してください。",
+            "newline:[Warn] 【明日の】〆切に間に合いません。〆切をあさって以降にリスケする調整を【今日中に】してください。",
+            "newline:[Warn] 【明日の】終了予定時刻に間に合いません。【今日中に】どれかの予定を諦めてあさって以降に延期してください。",
+            "newline:[Warn] 【1週間以内の】〆切に間に合いません。【近々】どれかの予定を諦めて来週以降に延期してください。",
+            "newline:[Warn] 【1週間以内の】終了予定時刻に間に合いません。【近々】どれかの予定を諦めて来週以降に延期してください。",
+            "newline:",
+        ]
+    );
+
+    let mut tight_writer = TraceWriter::default();
+    render_display_model(
+        &mut tight_writer,
+        &DisplayModel::Calendar(CalendarDisplay {
+            rows: rows.clone(),
+            blank_line_weekday: Weekday::Mon,
+            summary: summary.clone(),
+            alerts: CalendarAlerts {
+                has_today_deadline_leeway: true,
+                has_today_freetime_leeway: true,
+                has_today_new_task_leeway: false,
+                has_tomorrow_deadline_leeway: true,
+                has_tomorrow_freetime_leeway: true,
+                has_weekly_deadline_leeway: true,
+                has_weekly_freetime_leeway: true,
+            },
+        }),
+    )
+    .unwrap();
+    assert_eq!(
+        &tight_writer.operations[tight_writer.operations.len() - 2..],
+        [
+            "newline:[Warn] 脇道に逸れずに予定の遂行をしてください。見積もりを間違えたり突発タスクが発生したりした場合に終了予定時刻に間に合わなくなる可能性があります。",
+            "newline:",
+        ]
+    );
+
+    let mut healthy_writer = TraceWriter::default();
+    render_display_model(
+        &mut healthy_writer,
+        &DisplayModel::Calendar(CalendarDisplay {
+            rows,
+            blank_line_weekday: Weekday::Mon,
+            summary,
+            alerts: CalendarAlerts {
+                has_today_deadline_leeway: true,
+                has_today_freetime_leeway: true,
+                has_today_new_task_leeway: true,
+                has_tomorrow_deadline_leeway: true,
+                has_tomorrow_freetime_leeway: true,
+                has_weekly_deadline_leeway: true,
+                has_weekly_freetime_leeway: true,
+            },
+        }),
+    )
+    .unwrap();
+    assert_eq!(
+        &healthy_writer.operations[healthy_writer.operations.len() - 2..],
+        [
+            "newline:[Info] 順調です。突発タスクに対応したり1日の終わり際にタスクを新しく積んだりする余裕があります。ひとまずは脇道に逸れずに予定の遂行をしてください。",
+            "newline:",
+        ]
+    );
 }
 
 struct AlwaysFailWriter;
