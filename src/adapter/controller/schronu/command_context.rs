@@ -3,7 +3,9 @@ use super::handler::{
     DeferCommandContext, DeferCommandError, FinishPlacementCommandContext, ProjectCommandContext,
     TaskAttributeCommandContext, TaskListOrder, TaskTreeCommandContext,
 };
-use super::renderer::{render_display_model, DisplayModel, SchronuWriter, TreeDisplay};
+use super::renderer::{
+    render_display_model, DisplayModel, DisplayRecorder, SchronuWriter, TreeDisplay,
+};
 use super::runtime::{command_parse_error, report_application_result, CommandError};
 use super::view::{
     build_ancestor_tree_display, build_leaf_tree_display, build_tree_display,
@@ -1333,11 +1335,10 @@ impl TaskTreeCommandContext for RuntimeTaskTreeCommandContext<'_, '_, '_> {
 
     fn show_task_list(
         &mut self,
-        display: &mut dyn SchronuWriter,
         pattern: Option<&str>,
         order: TaskListOrder,
         resolve_pattern: bool,
-    ) -> Result<(), ApplicationError> {
+    ) -> Result<DisplayModel, ApplicationError> {
         let pattern = pattern
             .map(|pattern| {
                 if resolve_pattern {
@@ -1351,15 +1352,24 @@ impl TaskTreeCommandContext for RuntimeTaskTreeCommandContext<'_, '_, '_> {
             TaskListOrder::ScheduledStartDesc => TaskListDisplayOrder::ScheduledStartDesc,
             TaskListOrder::LowPriorityTail => TaskListDisplayOrder::LowPriorityTail,
         };
-        execute_show_all_tasks_with_config(
-            display,
+        let mut legacy_display = DisplayRecorder::with_ansi_color(self.supports_ansi_color);
+        let task_list = execute_show_all_tasks_with_config(
+            &mut legacy_display,
             self.focused_task_id_opt,
             self.task_repository,
             self.free_time_manager,
             &pattern,
             order,
             self.config,
-        )
+        )?;
+        let legacy_display = legacy_display.model().clone();
+        Ok(match (task_list, legacy_display.is_empty()) {
+            (Some(task_list), true) => DisplayModel::TaskList(task_list),
+            (Some(task_list), false) => {
+                DisplayModel::Sequence(vec![DisplayModel::TaskList(task_list), legacy_display])
+            }
+            (None, _) => legacy_display,
+        })
     }
 
     fn focus(&mut self, task_id: Uuid) {
@@ -1821,11 +1831,10 @@ impl TaskTreeCommandContext for CliCommandContext<'_, '_, '_> {
 
     fn show_task_list(
         &mut self,
-        display: &mut dyn SchronuWriter,
         pattern: Option<&str>,
         order: TaskListOrder,
         resolve_pattern: bool,
-    ) -> Result<(), ApplicationError> {
+    ) -> Result<DisplayModel, ApplicationError> {
         RuntimeTaskTreeCommandContext {
             task_repository: self.task_repository,
             free_time_manager: self.free_time_manager,
@@ -1834,7 +1843,7 @@ impl TaskTreeCommandContext for CliCommandContext<'_, '_, '_> {
             config: self.config,
             supports_ansi_color: self.supports_ansi_color,
         }
-        .show_task_list(display, pattern, order, resolve_pattern)
+        .show_task_list(pattern, order, resolve_pattern)
     }
 
     fn focus(&mut self, task_id: Uuid) {

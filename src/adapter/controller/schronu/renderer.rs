@@ -1,4 +1,5 @@
-use chrono::NaiveDate;
+use chrono::{DateTime, Datelike, Local, NaiveDate, Weekday};
+use schronu::entity::task::ProjectCategory;
 use std::io::{IsTerminal, Stdout, Write};
 use termion::raw::RawTerminal;
 use uuid::Uuid;
@@ -91,6 +92,42 @@ pub(super) enum TreeDisplay {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+pub(super) struct TaskListTaskRow {
+    pub(super) rank: usize,
+    pub(super) task_id: Uuid,
+    pub(super) icon: String,
+    pub(super) remaining_time: String,
+    pub(super) scheduled_start: DateTime<Local>,
+    pub(super) scheduled_end: DateTime<Local>,
+    pub(super) priority_rank: usize,
+    pub(super) estimated_minutes: i64,
+    pub(super) project_number_priority: i64,
+    pub(super) project_category: Option<ProjectCategory>,
+    pub(super) task_name: String,
+    pub(super) give_up_candidate: bool,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(super) enum TaskListRow {
+    Task(TaskListTaskRow),
+    Gap { minutes: i64 },
+    Message { text: String },
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(super) struct TaskCategoryWorkSeconds {
+    pub(super) project_category: Option<ProjectCategory>,
+    pub(super) seconds: i64,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(super) struct TaskListDisplay {
+    pub(super) rows: Vec<TaskListRow>,
+    pub(super) category_work_seconds: Vec<TaskCategoryWorkSeconds>,
+    pub(super) category_denominator_seconds: i64,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub(super) enum DisplayModel {
     Legacy {
         fragments: Vec<DisplayFragment>,
@@ -100,6 +137,7 @@ pub(super) enum DisplayModel {
         text: String,
     },
     Tree(TreeDisplay),
+    TaskList(TaskListDisplay),
     #[allow(dead_code)] // Composition boundary for later typed display models.
     Sequence(Vec<DisplayModel>),
 }
@@ -130,7 +168,7 @@ impl DisplayModel {
         match self {
             Self::Legacy { fragments } => fragments.is_empty(),
             Self::Message { .. } => false,
-            Self::Tree(_) => false,
+            Self::Tree(_) | Self::TaskList(_) => false,
             Self::Sequence(models) => models.iter().all(Self::is_empty),
         }
     }
@@ -139,7 +177,7 @@ impl DisplayModel {
     pub(super) fn fragments(&self) -> &[DisplayFragment] {
         match self {
             Self::Legacy { fragments } => fragments,
-            Self::Message { .. } | Self::Tree(_) | Self::Sequence(_) => {
+            Self::Message { .. } | Self::Tree(_) | Self::TaskList(_) | Self::Sequence(_) => {
                 unreachable!("semantic display models do not expose legacy fragments")
             }
         }
@@ -148,7 +186,7 @@ impl DisplayModel {
     fn legacy_fragments_mut(&mut self) -> &mut Vec<DisplayFragment> {
         match self {
             Self::Legacy { fragments } => fragments,
-            Self::Message { .. } | Self::Tree(_) | Self::Sequence(_) => {
+            Self::Message { .. } | Self::Tree(_) | Self::TaskList(_) | Self::Sequence(_) => {
                 unreachable!("DisplayRecorder always owns a legacy display model")
             }
         }
@@ -236,6 +274,7 @@ pub(super) fn render_display_model(
             writer.writeln_newline(&format!("{prefix}{text}"))?;
         }
         DisplayModel::Tree(tree) => render_tree_display(writer, tree)?,
+        DisplayModel::TaskList(task_list) => render_task_list_display(writer, task_list)?,
         DisplayModel::Sequence(models) => {
             for model in models {
                 render_display_model(writer, model)?;
@@ -243,6 +282,140 @@ pub(super) fn render_display_model(
         }
     }
     Ok(())
+}
+
+fn render_task_list_display(
+    writer: &mut dyn SchronuWriter,
+    display: &TaskListDisplay,
+) -> Result<(), std::io::Error> {
+    for row in &display.rows {
+        writer.writeln_newline(&format_task_list_row(row))?;
+    }
+    writer.writeln_newline("")?;
+    writer.writeln_newline(&format_task_category_summary(
+        &display.category_work_seconds,
+        display.category_denominator_seconds,
+    ))?;
+    writer.writeln_newline("")?;
+    Ok(())
+}
+
+pub(super) fn format_task_list_row(row: &TaskListRow) -> String {
+    match row {
+        TaskListRow::Task(row) => format_task_list_task_row(row),
+        TaskListRow::Gap { minutes } => format!(
+            "---- ------------------------------------ - ---------- --------------------- - -- -- {minutes}分間の空き時間"
+        ),
+        TaskListRow::Message { text } => text.clone(),
+    }
+}
+
+pub(super) fn format_task_list_task_row(row: &TaskListTaskRow) -> String {
+    let rank = format!("{:04}", row.rank);
+    let task_id = row.task_id.to_string();
+    let icon = if row.give_up_candidate {
+        "A"
+    } else {
+        &row.icon
+    };
+    let scheduled_time = format!(
+        "{}({})-{}~{}",
+        row.scheduled_start.format("%m/%d"),
+        weekday_jp(row.scheduled_start.weekday()),
+        row.scheduled_start.format("%H:%M"),
+        row.scheduled_end.format("%H:%M"),
+    );
+    let priority = row.priority_rank.to_string();
+    let estimated_minutes = format!("{:02}", row.estimated_minutes);
+    let project_number = format!("{:02}", row.project_number_priority);
+    format_spreadsheet_task_row(&SpreadsheetTaskRow {
+        rank: &rank,
+        task_id: &task_id,
+        icon,
+        remaining_time: &row.remaining_time,
+        scheduled_time: &scheduled_time,
+        priority: &priority,
+        estimated_minutes: &estimated_minutes,
+        project_number: &project_number,
+        category: project_category_symbol(row.project_category),
+        task_name: &row.task_name,
+    })
+}
+
+fn weekday_jp(weekday: Weekday) -> &'static str {
+    match weekday {
+        Weekday::Mon => "月",
+        Weekday::Tue => "火",
+        Weekday::Wed => "水",
+        Weekday::Thu => "木",
+        Weekday::Fri => "金",
+        Weekday::Sat => "土",
+        Weekday::Sun => "日",
+    }
+}
+
+pub(super) fn project_category_symbol(project_category: Option<ProjectCategory>) -> &'static str {
+    match project_category {
+        Some(ProjectCategory::Earning) => "獲",
+        Some(ProjectCategory::Sustaining) => "維",
+        Some(ProjectCategory::Recovery) => "回",
+        Some(ProjectCategory::Investment) => "資",
+        Some(ProjectCategory::Consumption) => "消",
+        None => "_",
+    }
+}
+
+pub(super) fn format_task_category_summary(
+    category_work_seconds: &[TaskCategoryWorkSeconds],
+    denominator_seconds: i64,
+) -> String {
+    if category_work_seconds
+        .iter()
+        .map(|entry| entry.seconds)
+        .sum::<i64>()
+        == 0
+    {
+        return "予定カテゴリ: 予定なし".to_string();
+    }
+    let mut cumulative_seconds = 0;
+    let parts = category_work_seconds
+        .iter()
+        .map(|entry| {
+            cumulative_seconds += entry.seconds;
+            format!(
+                "{} {:.1}時間({} | {})",
+                project_category_label(entry.project_category),
+                entry.seconds as f64 / 3600.0,
+                format_category_percentage(entry.seconds, denominator_seconds),
+                format_category_percentage(cumulative_seconds, denominator_seconds),
+            )
+        })
+        .collect::<Vec<_>>();
+    format!("予定カテゴリ: {}", parts.join(" / "))
+}
+
+fn project_category_label(category: Option<ProjectCategory>) -> &'static str {
+    match category {
+        Some(ProjectCategory::Earning) => "獲得",
+        Some(ProjectCategory::Sustaining) => "維持",
+        Some(ProjectCategory::Recovery) => "回復",
+        Some(ProjectCategory::Investment) => "投資",
+        Some(ProjectCategory::Consumption) => "消費",
+        None => "未分類",
+    }
+}
+
+fn format_category_percentage(seconds: i64, denominator_seconds: i64) -> String {
+    if denominator_seconds > 0 {
+        format!(
+            "{:.0}%",
+            seconds as f64 / denominator_seconds as f64 * 100.0
+        )
+    } else if seconds > 0 {
+        "inf%".to_string()
+    } else {
+        "0%".to_string()
+    }
 }
 
 fn render_tree_display(

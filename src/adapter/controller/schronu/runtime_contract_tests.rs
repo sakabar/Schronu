@@ -147,7 +147,7 @@ fn test_show_task_list_mmddの日時errorを伝搬して表示と状態を変更
     let mut task_repository = TestTaskRepository::new(task, now);
     let mut free_time_manager = TestFreeTimeManager::default();
     let mut focused_task_id_opt = Some(task_id);
-    let mut display = TestWriter::new();
+    let display = TestWriter::new();
     let mut next_id = || Uuid::nil();
     let mut task_factory = TaskFactory::new(now, &mut next_id);
     let mut context = RuntimeTaskTreeCommandContext {
@@ -160,7 +160,6 @@ fn test_show_task_list_mmddの日時errorを伝搬して表示と状態を変更
     };
 
     let actual = context.show_task_list(
-        &mut display,
         Some("12/31"),
         TaskListOrder::ScheduledStartDesc,
         true,
@@ -187,7 +186,7 @@ fn test_show_task_listの不正な完全日付をerrorにして表示と状態�
     let mut task_repository = TestTaskRepository::new(task, now);
     let mut free_time_manager = TestFreeTimeManager::default();
     let mut focused_task_id_opt = Some(task_id);
-    let mut display = TestWriter::new();
+    let display = TestWriter::new();
     let mut next_id = || Uuid::nil();
     let mut task_factory = TaskFactory::new(now, &mut next_id);
     let mut context = RuntimeTaskTreeCommandContext {
@@ -200,7 +199,6 @@ fn test_show_task_listの不正な完全日付をerrorにして表示と状態�
     };
 
     let actual = context.show_task_list(
-        &mut display,
         Some("2026/02/30"),
         TaskListOrder::ScheduledStartDesc,
         true,

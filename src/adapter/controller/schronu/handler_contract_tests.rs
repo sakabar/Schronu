@@ -11,7 +11,8 @@ use super::handler::{
 };
 use super::renderer::{
     render_display_model, AncestorTreeRow, DebugTreeRow, DisplayFragment, DisplayModel,
-    DisplayRecorder, LeafTreeRow, MessageLevel, SchronuWriter, TreeDisplay,
+    DisplayRecorder, LeafTreeRow, MessageLevel, SchronuWriter, TaskListDisplay, TaskListRow,
+    TreeDisplay,
 };
 use chrono::{Local, NaiveDate, TimeZone};
 use schronu::application::flatten_use_case::FlattenResult;
@@ -568,16 +569,20 @@ impl TaskTreeCommandContext for TraceTaskTreeContext {
 
     fn show_task_list(
         &mut self,
-        display: &mut dyn SchronuWriter,
         pattern: Option<&str>,
         order: TaskListOrder,
         resolve_pattern: bool,
-    ) -> Result<(), ApplicationError> {
+    ) -> Result<DisplayModel, ApplicationError> {
         self.calls.push(format!(
             "list:{pattern:?}:{order:?}:resolve={resolve_pattern}"
         ));
-        display.write_all(b"list").unwrap();
-        Ok(())
+        Ok(DisplayModel::TaskList(TaskListDisplay {
+            rows: vec![TaskListRow::Message {
+                text: "list".to_string(),
+            }],
+            category_work_seconds: vec![],
+            category_denominator_seconds: 0,
+        }))
     }
 
     fn focus(&mut self, task_id: Uuid) {
@@ -708,6 +713,13 @@ fn task_tree表示commandはhandlerがtyped_fieldから表示modelと操作要�
                     }],
                 })
             ),
+            CommandKind::ShowAll
+            | CommandKind::Tail
+            | CommandKind::Today
+            | CommandKind::NonRepetitive => assert!(matches!(
+                &outcome.display,
+                DisplayModel::TaskList(TaskListDisplay { .. })
+            )),
             _ => {}
         }
         let expects_display = matches!(
@@ -1426,13 +1438,12 @@ impl TaskTreeCommandContext for CompositeTraceContext {
 
     fn show_task_list(
         &mut self,
-        display: &mut dyn SchronuWriter,
         pattern: Option<&str>,
         order: TaskListOrder,
         resolve_pattern: bool,
-    ) -> Result<(), ApplicationError> {
+    ) -> Result<DisplayModel, ApplicationError> {
         self.task_tree
-            .show_task_list(display, pattern, order, resolve_pattern)
+            .show_task_list(pattern, order, resolve_pattern)
     }
 
     fn focus(&mut self, task_id: Uuid) {

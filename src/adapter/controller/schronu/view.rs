@@ -1,6 +1,10 @@
+pub(super) use super::renderer::project_category_symbol;
+#[cfg(test)]
+use super::renderer::{format_task_category_summary, format_task_list_row};
 use super::renderer::{
-    format_spreadsheet_task_row, writeln_newline, AncestorTreeRow, DebugTreeRow, LeafTreeRow,
-    SchronuWriter, SpreadsheetTaskRow, TreeDisplay,
+    format_task_list_task_row, writeln_newline, AncestorTreeRow, DebugTreeRow, LeafTreeRow,
+    SchronuWriter, TaskCategoryWorkSeconds, TaskListDisplay, TaskListRow, TaskListTaskRow,
+    TreeDisplay,
 };
 use chrono::{DateTime, Datelike, Duration, Local, NaiveDate, Weekday};
 use regex::Regex;
@@ -250,9 +254,7 @@ pub(super) struct TaskListDisplayRow {
     pub(super) project_category_opt: Option<ProjectCategory>,
     pub(super) is_real_task: bool,
     pub(super) give_up_candidate: bool,
-    pub(super) message_prefix: String,
-    pub(super) task_name: String,
-    pub(super) message: String,
+    pub(super) display_row: TaskListRow,
 }
 
 impl TaskListDisplayRow {
@@ -273,10 +275,20 @@ impl TaskListDisplayRow {
             project_category_opt: None,
             is_real_task: false,
             give_up_candidate: false,
-            message_prefix: String::new(),
-            task_name: String::new(),
-            message,
+            display_row: TaskListRow::Message { text: message },
         }
+    }
+
+    pub(super) fn new_gap(
+        scheduled_start: DateTime<Local>,
+        rank: usize,
+        id: Uuid,
+        priority: i64,
+        minutes: i64,
+    ) -> Self {
+        let mut row = Self::new_message(scheduled_start, rank, id, priority, String::new());
+        row.display_row = TaskListRow::Gap { minutes };
+        row
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -288,7 +300,7 @@ impl TaskListDisplayRow {
         priority: i64,
         work_seconds: i64,
         project_category_opt: Option<ProjectCategory>,
-        message: String,
+        task_row: TaskListTaskRow,
     ) -> Self {
         TaskListDisplayRow {
             scheduled_start,
@@ -300,28 +312,32 @@ impl TaskListDisplayRow {
             project_category_opt,
             is_real_task: true,
             give_up_candidate: false,
-            message_prefix: message,
-            task_name: String::new(),
-            message: String::new(),
+            display_row: TaskListRow::Task(task_row),
         }
     }
 
+    #[cfg(test)]
     pub(super) fn render_message(&self) -> String {
-        if self.is_real_task {
-            let message_prefix = if self.give_up_candidate {
-                // A means Abandon candidate.
-                replace_task_list_icon(&self.message_prefix, "A")
-            } else {
-                self.message_prefix.clone()
-            };
-
-            format!("{}{}", message_prefix, self.task_name)
-        } else {
-            self.message.clone()
+        let mut display_row = self.display_row.clone();
+        if let TaskListRow::Task(task_row) = &mut display_row {
+            task_row.give_up_candidate = self.give_up_candidate;
+        } else if self.is_real_task && self.give_up_candidate {
+            if let TaskListRow::Message { text } = &mut display_row {
+                *text = replace_task_list_icon(text, "A");
+            }
         }
+        format_task_list_row(&display_row)
+    }
+
+    fn into_display_row(mut self) -> TaskListRow {
+        if let TaskListRow::Task(task_row) = &mut self.display_row {
+            task_row.give_up_candidate = self.give_up_candidate;
+        }
+        self.display_row
     }
 }
 
+#[cfg(test)]
 pub(super) fn replace_task_list_icon(message_prefix: &str, icon: &str) -> String {
     let mut token_ranges = message_prefix
         .char_indices()
@@ -354,19 +370,6 @@ pub(super) fn replace_task_list_icon(message_prefix: &str, icon: &str) -> String
 
 pub(super) const PROJECT_CATEGORY_SUMMARY_LEN: usize = 6;
 
-pub(super) fn project_category_symbol(
-    project_category_opt: Option<ProjectCategory>,
-) -> &'static str {
-    match project_category_opt {
-        Some(ProjectCategory::Earning) => "獲",
-        Some(ProjectCategory::Sustaining) => "維",
-        Some(ProjectCategory::Recovery) => "回",
-        Some(ProjectCategory::Investment) => "資",
-        Some(ProjectCategory::Consumption) => "消",
-        None => "_",
-    }
-}
-
 pub(super) fn format_focused_task_header(project_category_opt: Option<ProjectCategory>) -> String {
     format!(
         "focused task is: project_category={}",
@@ -385,17 +388,6 @@ fn project_category_summary_index(project_category_opt: Option<ProjectCategory>)
     }
 }
 
-fn project_category_summary_label(index: usize) -> &'static str {
-    match index {
-        0 => "獲得",
-        1 => "維持",
-        2 => "回復",
-        3 => "投資",
-        4 => "消費",
-        _ => "未分類",
-    }
-}
-
 pub(super) fn summarize_scheduled_work_seconds_by_project_category(
     rows: &[TaskListDisplayRow],
 ) -> [i64; PROJECT_CATEGORY_SUMMARY_LEN] {
@@ -409,46 +401,32 @@ pub(super) fn summarize_scheduled_work_seconds_by_project_category(
     summary
 }
 
+#[cfg(test)]
 pub(super) fn format_scheduled_work_seconds_by_project_category(
     summary: &[i64; PROJECT_CATEGORY_SUMMARY_LEN],
     denominator_seconds: i64,
 ) -> String {
-    let total_seconds: i64 = summary.iter().sum();
-
-    if total_seconds == 0 {
-        return "予定カテゴリ: 予定なし".to_string();
-    }
-
-    let mut cumulative_seconds = 0;
-    let parts = summary
-        .iter()
-        .enumerate()
-        .map(|(index, seconds)| {
-            cumulative_seconds += seconds;
-            format!(
-                "{} {:.1}時間({} | {})",
-                project_category_summary_label(index),
-                *seconds as f64 / 3600.0,
-                format_project_category_percentage(*seconds, denominator_seconds),
-                format_project_category_percentage(cumulative_seconds, denominator_seconds)
-            )
-        })
-        .collect::<Vec<_>>();
-
-    format!("予定カテゴリ: {}", parts.join(" / "))
+    format_task_category_summary(&task_category_work_seconds(*summary), denominator_seconds)
 }
 
-fn format_project_category_percentage(seconds: i64, denominator_seconds: i64) -> String {
-    if denominator_seconds > 0 {
-        format!(
-            "{:.0}%",
-            seconds as f64 / denominator_seconds as f64 * 100.0
-        )
-    } else if seconds > 0 {
-        "inf%".to_string()
-    } else {
-        "0%".to_string()
-    }
+fn task_category_work_seconds(
+    summary: [i64; PROJECT_CATEGORY_SUMMARY_LEN],
+) -> Vec<TaskCategoryWorkSeconds> {
+    [
+        Some(ProjectCategory::Earning),
+        Some(ProjectCategory::Sustaining),
+        Some(ProjectCategory::Recovery),
+        Some(ProjectCategory::Investment),
+        Some(ProjectCategory::Consumption),
+        None,
+    ]
+    .into_iter()
+    .zip(summary)
+    .map(|(project_category, seconds)| TaskCategoryWorkSeconds {
+        project_category,
+        seconds,
+    })
+    .collect()
 }
 
 fn calculate_project_category_denominator_seconds(
@@ -800,7 +778,7 @@ pub(super) fn execute_show_all_tasks_with_config(
     pattern_opt: &Option<String>,
     display_order: TaskListDisplayOrder,
     config: &SchronuConfig,
-) -> Result<(), ApplicationError> {
+) -> Result<Option<TaskListDisplay>, ApplicationError> {
     let supports_ansi_color = stdout.supports_ansi_color();
     let yyyymmdd_reg = Regex::new(r"^(\d{4})/(\d{2})/(\d{2})$").unwrap();
     let yyyymmdd_pattern_date = pattern_opt
@@ -1056,11 +1034,6 @@ pub(super) fn execute_show_all_tasks_with_config(
                 let blank_duration = *scheduled_start - *current_datetime_cursor_clone;
                 let tmp_id = Uuid::new_v4();
 
-                let skip_msg = format!(
-                    "---- ------------------------------------ - ---------- --------------------- - -- -- {}分間の空き時間",
-                    blank_duration.num_minutes()
-                );
-
                 if let Some(pattern) = pattern_opt {
                     if (pattern == "今" && *scheduled_start < next_business_day_start)
                         || (pattern == "明"
@@ -1069,12 +1042,12 @@ pub(super) fn execute_show_all_tasks_with_config(
                         || (pattern == "近"
                             && (*scheduled_start - next_business_day_start) < Duration::days(1))
                     {
-                        task_list_display_rows.push(TaskListDisplayRow::new_message(
+                        task_list_display_rows.push(TaskListDisplayRow::new_gap(
                             *current_datetime_cursor_clone,
                             0,
                             tmp_id,
                             0,
-                            skip_msg,
+                            blank_duration.num_minutes(),
                         ));
                     }
                 }
@@ -1144,31 +1117,20 @@ pub(super) fn execute_show_all_tasks_with_config(
                 "____/__/__".to_string()
             };
 
-            let spreadsheet_rank = format!("{ind:04}");
-            let spreadsheet_task_id = id.to_string();
-            let spreadsheet_scheduled_time = format!(
-                "{}({})-{}~{}",
-                start_datetime.format("%m/%d"),
-                get_weekday_jp(&start_datetime.date_naive()),
-                start_datetime.format("%H:%M"),
-                end_datetime.format("%H:%M"),
-            );
-            let spreadsheet_priority = rank.to_string();
-            let spreadsheet_estimated_minutes =
-                format!("{:02.0}", round_up_sec_as_minute(estimated_work_seconds));
-            let spreadsheet_project_number = format!("{task_priority:02}");
-            let message = format_spreadsheet_task_row(&SpreadsheetTaskRow {
-                rank: &spreadsheet_rank,
-                task_id: &spreadsheet_task_id,
-                icon,
-                remaining_time: &deadline_string,
-                scheduled_time: &spreadsheet_scheduled_time,
-                priority: &spreadsheet_priority,
-                estimated_minutes: &spreadsheet_estimated_minutes,
-                project_number: &spreadsheet_project_number,
-                category: project_category_symbol(task_project_category_opt),
-                task_name: &shorten_name,
-            });
+            let task_row = TaskListTaskRow {
+                rank: ind,
+                task_id: *id,
+                icon: icon.to_string(),
+                remaining_time: deadline_string,
+                scheduled_start: *start_datetime,
+                scheduled_end: end_datetime,
+                priority_rank: *rank,
+                estimated_minutes: round_up_sec_as_minute(estimated_work_seconds),
+                project_number_priority: task_priority,
+                project_category: task_project_category_opt,
+                task_name: shorten_name,
+                give_up_candidate: false,
+            };
             let task_list_display_row = TaskListDisplayRow::new_spreadsheet_task(
                 *scheduled_start,
                 subjective_naive_date,
@@ -1177,9 +1139,12 @@ pub(super) fn execute_show_all_tasks_with_config(
                 task_priority,
                 estimated_work_seconds,
                 task_project_category_opt,
-                message,
+                task_row,
             );
-            let msg = &task_list_display_row.message_prefix;
+            let msg = match &task_list_display_row.display_row {
+                TaskListRow::Task(task_row) => format_task_list_task_row(task_row),
+                _ => unreachable!("spreadsheet task constructor must create a task row"),
+            };
             let has_deadline_icon = icon == deadline_icon || icon == breaking_deadline_icon;
             let has_task_list_icon = has_deadline_icon || icon == today_leaf_icon;
 
@@ -1781,13 +1746,10 @@ pub(super) fn execute_show_all_tasks_with_config(
 
     sort_task_list_display_rows(&mut task_list_display_rows, display_order);
 
-    if !is_daily_summary_func {
+    let task_list_display = if !is_daily_summary_func {
         for row in task_list_display_rows.iter() {
             *focused_task_id_opt = Some(row.id);
-            writeln_newline(stdout, &row.render_message()).unwrap();
         }
-
-        writeln_newline(stdout, "").unwrap();
         let project_category_summary =
             summarize_scheduled_work_seconds_by_project_category(&task_list_display_rows);
         let project_category_denominator_seconds = calculate_project_category_denominator_seconds(
@@ -1796,16 +1758,18 @@ pub(super) fn execute_show_all_tasks_with_config(
             free_time_manager,
             config.end_of_day_offset_minutes,
         )?;
-        writeln_newline(
-            stdout,
-            &format_scheduled_work_seconds_by_project_category(
-                &project_category_summary,
-                project_category_denominator_seconds,
-            ),
-        )
-        .unwrap();
-        writeln_newline(stdout, "").unwrap();
-    }
+        let category_work_seconds = task_category_work_seconds(project_category_summary);
+        Some(TaskListDisplay {
+            rows: task_list_display_rows
+                .into_iter()
+                .map(TaskListDisplayRow::into_display_row)
+                .collect(),
+            category_work_seconds,
+            category_denominator_seconds: project_category_denominator_seconds,
+        })
+    } else {
+        None
+    };
 
     // 逆順にして、下側に直近の日付があるようにする
     daily_summary_rows.reverse();
@@ -1948,6 +1912,8 @@ pub(super) fn execute_show_all_tasks_with_config(
         writeln_newline(stdout, &s_for_non_repetitive_rho).unwrap();
     }
 
-    writeln_newline(stdout, "").unwrap();
-    Ok(())
+    if is_today_func || is_daily_summary_func {
+        writeln_newline(stdout, "").unwrap();
+    }
+    Ok(task_list_display)
 }

@@ -856,7 +856,8 @@ fn try_exit_interactive(
         &Some("帯".to_string()),
         TaskListDisplayOrder::ScheduledStartDesc,
         active_config(),
-    );
+    )
+    .map(|_| ());
     report_application_result(stdout, result);
     true
 }
@@ -937,7 +938,8 @@ fn render_interactive_screen(
         &Some("帯".to_string()),
         TaskListDisplayOrder::ScheduledStartDesc,
         active_config(),
-    );
+    )
+    .map(|_| ());
     report_application_result(stdout, result);
     render_focused_task(
         stdout,

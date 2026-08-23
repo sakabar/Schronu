@@ -89,11 +89,10 @@ pub(super) trait TaskTreeCommandContext {
     fn show_leaves(&mut self) -> Result<TreeDisplay, ApplicationError>;
     fn show_task_list(
         &mut self,
-        display: &mut dyn SchronuWriter,
         pattern: Option<&str>,
         order: TaskListOrder,
         resolve_pattern: bool,
-    ) -> Result<(), ApplicationError>;
+    ) -> Result<DisplayModel, ApplicationError>;
     fn focus(&mut self, task_id: Uuid);
     fn pick(&mut self, task_id: Uuid) -> Result<(), ApplicationError>;
     fn focus_parent(&mut self) -> Result<(), ApplicationError>;
@@ -322,25 +321,26 @@ pub(super) fn handle_task_tree_command<C: TaskTreeCommandContext + ?Sized>(
     context: &mut C,
 ) -> Result<Option<CommandOutcome>, ApplicationError> {
     let mut display = DisplayRecorder::with_ansi_color(context.supports_ansi_color());
-    let mut tree_display = None;
+    let mut semantic_display = None;
     let kind = command.kind();
 
     match command {
-        Command::ShowAll { pattern } => context.show_task_list(
-            &mut display,
-            pattern.as_deref(),
-            TaskListOrder::ScheduledStartDesc,
-            true,
-        )?,
+        Command::ShowAll { pattern } => {
+            semantic_display = Some(context.show_task_list(
+                pattern.as_deref(),
+                TaskListOrder::ScheduledStartDesc,
+                true,
+            )?)
+        }
         Command::Focus { task_id } => context.focus(*task_id),
         Command::Action(CommandAction::NoArguments {
             kind: CommandKind::Tree,
             ..
-        }) => tree_display = Some(context.show_tree()?),
+        }) => semantic_display = Some(DisplayModel::Tree(context.show_tree()?)),
         Command::Action(CommandAction::NoArguments {
             kind: CommandKind::Ancestor,
             ..
-        }) => tree_display = Some(context.show_ancestor()?),
+        }) => semantic_display = Some(DisplayModel::Tree(context.show_ancestor()?)),
         Command::Action(CommandAction::NoArguments {
             kind: CommandKind::Root,
             ..
@@ -348,53 +348,58 @@ pub(super) fn handle_task_tree_command<C: TaskTreeCommandContext + ?Sized>(
         Command::Action(CommandAction::NoArguments {
             kind: CommandKind::Leaves,
             ..
-        }) => tree_display = Some(context.show_leaves()?),
+        }) => semantic_display = Some(DisplayModel::Tree(context.show_leaves()?)),
         Command::Action(CommandAction::OptionalPattern {
             kind: CommandKind::Tail,
             pattern,
             ..
-        }) => context.show_task_list(
-            &mut display,
-            Some(pattern.as_deref().unwrap_or("今")),
-            TaskListOrder::LowPriorityTail,
-            false,
-        )?,
+        }) => {
+            semantic_display = Some(context.show_task_list(
+                Some(pattern.as_deref().unwrap_or("今")),
+                TaskListOrder::LowPriorityTail,
+                false,
+            )?)
+        }
         Command::Action(CommandAction::NoArguments {
             kind: CommandKind::Today,
             ..
-        }) => context.show_task_list(
-            &mut display,
-            Some("今"),
-            TaskListOrder::ScheduledStartDesc,
-            false,
-        )?,
+        }) => {
+            semantic_display = Some(context.show_task_list(
+                Some("今"),
+                TaskListOrder::ScheduledStartDesc,
+                false,
+            )?)
+        }
         Command::Action(CommandAction::NoArguments {
             kind: CommandKind::NonRepetitive,
             ..
-        }) => context.show_task_list(
-            &mut display,
-            Some("単"),
-            TaskListOrder::ScheduledStartDesc,
-            false,
-        )?,
+        }) => {
+            semantic_display = Some(context.show_task_list(
+                Some("単"),
+                TaskListOrder::ScheduledStartDesc,
+                false,
+            )?)
+        }
         Command::Action(CommandAction::NoArguments {
             kind: CommandKind::Calendar,
             ..
-        }) => context.show_task_list(
-            &mut display,
-            Some("暦"),
-            TaskListOrder::ScheduledStartDesc,
-            false,
-        )?,
+        }) => {
+            semantic_display = Some(context.show_task_list(
+                Some("暦"),
+                TaskListOrder::ScheduledStartDesc,
+                false,
+            )?)
+        }
         Command::Action(CommandAction::NoArguments {
             kind: CommandKind::Band,
             ..
-        }) => context.show_task_list(
-            &mut display,
-            Some("帯"),
-            TaskListOrder::ScheduledStartDesc,
-            false,
-        )?,
+        }) => {
+            semantic_display = Some(context.show_task_list(
+                Some("帯"),
+                TaskListOrder::ScheduledStartDesc,
+                false,
+            )?)
+        }
         Command::Action(CommandAction::Pick { task_id }) => context.pick(*task_id)?,
         Command::Action(CommandAction::NoArguments {
             kind: CommandKind::Parent,
@@ -418,9 +423,7 @@ pub(super) fn handle_task_tree_command<C: TaskTreeCommandContext + ?Sized>(
     }
 
     let mut outcome = CommandOutcome::empty(kind);
-    outcome.display = tree_display
-        .map(DisplayModel::Tree)
-        .unwrap_or_else(|| display.model().clone());
+    outcome.display = semantic_display.unwrap_or_else(|| display.model().clone());
     Ok(Some(outcome))
 }
 

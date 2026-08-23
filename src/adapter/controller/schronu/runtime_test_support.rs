@@ -990,9 +990,9 @@ impl TaskListDisplayRow {
             project_category_opt,
             is_real_task: true,
             give_up_candidate: false,
-            message_prefix,
-            task_name,
-            message: String::new(),
+            display_row: super::renderer::TaskListRow::Message {
+                text: format!("{message_prefix}{task_name}"),
+            },
         }
     }
 }
