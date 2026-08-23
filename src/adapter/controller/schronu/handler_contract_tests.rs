@@ -1627,6 +1627,18 @@ fn verify以外の全command_shapeは統一handler入口でoutcomeを返す() {
 }
 
 #[test]
+fn parserが生成しない未処理typed_commandはnoneを返す() {
+    let now = Local.with_ymd_and_hms(2026, 8, 23, 12, 0, 0).unwrap();
+    let mut context = CompositeTraceContext::new(now);
+    let mismatched_command = no_arguments(CommandKind::NewProject, "invalid typed shape");
+
+    assert_eq!(
+        handle_command(&mismatched_command, &mut context).unwrap(),
+        None
+    );
+}
+
+#[test]
 fn noopとopenとfocusも単一handler入口からstructured_outcomeを返す() {
     let now = Local.with_ymd_and_hms(2026, 8, 23, 12, 0, 0).unwrap();
     let mut context = CompositeTraceContext::new(now);
