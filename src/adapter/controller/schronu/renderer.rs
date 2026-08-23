@@ -220,6 +220,22 @@ pub(super) struct BandDisplay {
     pub(super) alerts: CalendarAlerts,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(super) struct PackRow {
+    pub(super) source_date: NaiveDate,
+    pub(super) target_date: NaiveDate,
+    pub(super) work_seconds: i64,
+    pub(super) priority: i64,
+    pub(super) task_id: Uuid,
+    pub(super) name: String,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(super) struct PackDisplay {
+    pub(super) rows: Vec<PackRow>,
+    pub(super) skipped_count: usize,
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub(super) enum DisplayModel {
     Legacy {
@@ -233,6 +249,7 @@ pub(super) enum DisplayModel {
     TaskList(TaskListDisplay),
     Calendar(CalendarDisplay),
     Band(BandDisplay),
+    Pack(PackDisplay),
     #[allow(dead_code)] // Composition boundary for later typed display models.
     Sequence(Vec<DisplayModel>),
 }
@@ -263,7 +280,11 @@ impl DisplayModel {
         match self {
             Self::Legacy { fragments } => fragments.is_empty(),
             Self::Message { .. } => false,
-            Self::Tree(_) | Self::TaskList(_) | Self::Calendar(_) | Self::Band(_) => false,
+            Self::Tree(_)
+            | Self::TaskList(_)
+            | Self::Calendar(_)
+            | Self::Band(_)
+            | Self::Pack(_) => false,
             Self::Sequence(models) => models.iter().all(Self::is_empty),
         }
     }
@@ -277,6 +298,7 @@ impl DisplayModel {
             | Self::TaskList(_)
             | Self::Calendar(_)
             | Self::Band(_)
+            | Self::Pack(_)
             | Self::Sequence(_) => {
                 unreachable!("semantic display models do not expose legacy fragments")
             }
@@ -291,6 +313,7 @@ impl DisplayModel {
             | Self::TaskList(_)
             | Self::Calendar(_)
             | Self::Band(_)
+            | Self::Pack(_)
             | Self::Sequence(_) => {
                 unreachable!("DisplayRecorder always owns a legacy display model")
             }
@@ -382,6 +405,7 @@ pub(super) fn render_display_model(
         DisplayModel::TaskList(task_list) => render_task_list_display(writer, task_list)?,
         DisplayModel::Calendar(calendar) => render_calendar_display(writer, calendar)?,
         DisplayModel::Band(band) => render_band_display(writer, band)?,
+        DisplayModel::Pack(pack) => render_pack_display(writer, pack)?,
         DisplayModel::Sequence(models) => {
             for model in models {
                 render_display_model(writer, model)?;
@@ -545,6 +569,40 @@ pub(super) fn format_signed_seconds(seconds: i64) -> String {
         absolute_minutes / 60,
         absolute_minutes % 60
     )
+}
+
+fn render_pack_display(
+    writer: &mut dyn SchronuWriter,
+    display: &PackDisplay,
+) -> Result<(), std::io::Error> {
+    let total_work_seconds = display.rows.iter().map(|row| row.work_seconds).sum::<i64>();
+    for row in &display.rows {
+        writer.writeln_newline(&format!(
+            "詰\t{}\t{}\t{}\t優先度{}\t{}\t{}",
+            row.source_date,
+            row.target_date,
+            format_work_seconds_as_hours_minutes(row.work_seconds),
+            row.priority,
+            row.task_id,
+            row.name,
+        ))?;
+    }
+    if display.rows.is_empty() && display.skipped_count == 0 {
+        writer.writeln_newline("[Info] 詰められるタスクはありません。")?;
+    } else {
+        writer.writeln_newline(&format!(
+            "詰: {}件 {} (スキップ{}件)",
+            display.rows.len(),
+            format_work_seconds_as_hours_minutes(total_work_seconds),
+            display.skipped_count,
+        ))?;
+    }
+    Ok(())
+}
+
+fn format_work_seconds_as_hours_minutes(work_seconds: i64) -> String {
+    let total_minutes = work_seconds.max(0) / 60;
+    format!("{:02}:{:02}", total_minutes / 60, total_minutes % 60)
 }
 
 fn format_calendar_day_row(row: &CalendarDayRow) -> String {

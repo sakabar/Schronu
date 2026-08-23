@@ -1,5 +1,7 @@
 use super::command::{Command, CommandAction, CommandKind, CommandParseError, InteractiveShortcut};
-use super::renderer::{DisplayModel, DisplayRecorder, MessageLevel, SchronuWriter, TreeDisplay};
+use super::renderer::{
+    DisplayModel, DisplayRecorder, MessageLevel, PackDisplay, PackRow, SchronuWriter, TreeDisplay,
+};
 use chrono::{DateTime, Datelike, Days, Duration, Local, NaiveDate, NaiveDateTime, NaiveTime};
 use regex::Regex;
 use schronu::application::daily_capacity::{
@@ -682,6 +684,7 @@ pub(super) fn handle_finish_placement_command<C: FinishPlacementCommandContext +
 ) -> Result<Option<CommandOutcome>, ApplicationError> {
     let kind = command.kind();
     let mut display = DisplayRecorder::with_ansi_color(context.supports_ansi_color());
+    let mut semantic_display = None;
 
     match command {
         Command::Action(CommandAction::Finish { values }) => {
@@ -727,7 +730,9 @@ pub(super) fn handle_finish_placement_command<C: FinishPlacementCommandContext +
         Command::Action(CommandAction::NoArguments {
             kind: CommandKind::Pack,
             ..
-        }) => write_pack_result(&mut display, &context.pack()?),
+        }) => {
+            semantic_display = Some(DisplayModel::Pack(pack_display(context.pack()?)));
+        }
         Command::Action(CommandAction::NoArguments {
             kind: CommandKind::Flatten,
             ..
@@ -736,8 +741,26 @@ pub(super) fn handle_finish_placement_command<C: FinishPlacementCommandContext +
     }
 
     let mut outcome = CommandOutcome::empty(kind);
-    outcome.display = display.model().clone();
+    outcome.display = semantic_display.unwrap_or_else(|| display.model().clone());
     Ok(Some(outcome))
+}
+
+pub(super) fn pack_display(result: PackResult) -> PackDisplay {
+    PackDisplay {
+        rows: result
+            .packed_tasks
+            .into_iter()
+            .map(|packed| PackRow {
+                source_date: packed.source_date,
+                target_date: packed.target_date,
+                work_seconds: packed.work_seconds,
+                priority: packed.priority,
+                task_id: packed.task_id,
+                name: packed.name,
+            })
+            .collect(),
+        skipped_count: result.skipped_tasks.len(),
+    }
 }
 
 pub(super) fn decide_finish_time_values(
@@ -792,42 +815,6 @@ pub(super) fn decide_finish_time_values(
             build_finish_time(time, Some(date))
         }
         _ => Ok(None),
-    }
-}
-
-pub(super) fn write_pack_result(display: &mut dyn SchronuWriter, result: &PackResult) {
-    let total_work_seconds = result
-        .packed_tasks
-        .iter()
-        .map(|packed| packed.work_seconds)
-        .sum::<i64>();
-
-    for packed in &result.packed_tasks {
-        display
-            .writeln_newline(&format!(
-                "詰\t{}\t{}\t{}\t優先度{}\t{}\t{}",
-                packed.source_date,
-                packed.target_date,
-                format_work_seconds_as_hours_minutes(packed.work_seconds),
-                packed.priority,
-                packed.task_id,
-                packed.name,
-            ))
-            .expect("display recording is infallible");
-    }
-    if result.packed_tasks.is_empty() && result.skipped_tasks.is_empty() {
-        display
-            .writeln_newline("[Info] 詰められるタスクはありません。")
-            .expect("display recording is infallible");
-    } else {
-        display
-            .writeln_newline(&format!(
-                "詰: {}件 {} (スキップ{}件)",
-                result.packed_tasks.len(),
-                format_work_seconds_as_hours_minutes(total_work_seconds),
-                result.skipped_tasks.len(),
-            ))
-            .expect("display recording is infallible");
     }
 }
 

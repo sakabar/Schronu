@@ -1,5 +1,5 @@
 #[cfg(test)]
-use super::handler::{decide_finish_time_values, decide_time_values, write_pack_result};
+use super::handler::{decide_finish_time_values, decide_time_values, pack_display};
 
 #[cfg(test)]
 use super::interactive::{
@@ -810,7 +810,7 @@ fn execute_pack(
         active_config().end_of_day_offset_minutes,
     )
     .unwrap();
-    write_pack_result(stdout, &result);
+    render_display_model(stdout, &DisplayModel::Pack(pack_display(result))).unwrap();
 }
 
 #[cfg(test)]
