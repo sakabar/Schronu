@@ -44,12 +44,56 @@ fn function_region<'a>(source: &'a str, function_name: &str) -> &'a str {
         .find(&marker)
         .unwrap_or_else(|| panic!("product function {function_name} must exist"));
     let tail = &source[start..];
-    let end = ["\nfn ", "\nstruct ", "\nenum "]
-        .iter()
-        .filter_map(|next_item| tail[marker.len()..].find(next_item))
-        .min()
-        .map_or(tail.len(), |end| marker.len() + end);
+    let signature_end = tail.find('\n').map_or(tail.len(), |offset| offset + 1);
+    let mut end = tail.len();
+    let mut line_start = signature_end;
+    for line in tail[signature_end..].split_inclusive('\n') {
+        if is_top_level_rust_item(line.trim_end_matches('\n')) {
+            end = line_start;
+            break;
+        }
+        line_start += line.len();
+    }
     &tail[..end]
+}
+
+fn is_top_level_rust_item(line: &str) -> bool {
+    if line.is_empty() || line.chars().next().is_some_and(char::is_whitespace) {
+        return false;
+    }
+    if line.starts_with("#[") || line.starts_with("#![") {
+        return true;
+    }
+
+    let declaration = if let Some(declaration) = line.strip_prefix("pub ") {
+        declaration
+    } else if let Some(visibility) = line.strip_prefix("pub(") {
+        visibility
+            .split_once(") ")
+            .map_or(line, |(_, declaration)| declaration)
+    } else {
+        line
+    };
+
+    [
+        "fn ",
+        "async fn ",
+        "unsafe fn ",
+        "struct ",
+        "enum ",
+        "union ",
+        "impl ",
+        "trait ",
+        "const ",
+        "static ",
+        "type ",
+        "mod ",
+        "use ",
+        "extern ",
+        "macro_rules!",
+    ]
+    .iter()
+    .any(|item_prefix| declaration.starts_with(item_prefix))
 }
 
 #[test]
@@ -126,4 +170,16 @@ fn interactiveとnoninteractiveは単一のparsed_command_dispatcherを共有す
             );
         }
     }
+}
+
+#[test]
+fn function_regionはpub_superの次item前で切れる() {
+    let source =
+        "fn target() {\n    shared_dispatch();\n}\npub(super) fn next() {\n    bypass();\n}\n";
+
+    let region = function_region(source, "target");
+
+    assert!(region.contains("shared_dispatch();"));
+    assert!(!region.contains("pub(super) fn next"));
+    assert!(!region.contains("bypass();"));
 }
