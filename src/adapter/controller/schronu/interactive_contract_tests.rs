@@ -6,11 +6,23 @@ fn controller_product_source() -> String {
         Path::new(env!("CARGO_MANIFEST_DIR")).join("src/adapter/controller/schronu");
     let mut product_source = String::new();
 
-    for entry in fs::read_dir(controller_dir).expect("controller source directory must be readable")
+    append_controller_product_source(&controller_dir, &mut product_source);
+    product_source
+}
+
+fn append_controller_product_source(directory: &Path, product_source: &mut String) {
+    for entry in
+        fs::read_dir(directory).expect("controller source directory must be readable recursively")
     {
-        let path = entry
-            .expect("controller source entry must be readable")
-            .path();
+        let entry = entry.expect("controller source entry must be readable");
+        let file_type = entry
+            .file_type()
+            .expect("controller source entry type must be readable");
+        let path = entry.path();
+        if file_type.is_dir() {
+            append_controller_product_source(&path, product_source);
+            continue;
+        }
         let Some(file_name) = path.file_name().and_then(|name| name.to_str()) else {
             continue;
         };
@@ -24,8 +36,6 @@ fn controller_product_source() -> String {
             &fs::read_to_string(path).expect("controller product source must be readable"),
         );
     }
-
-    product_source
 }
 
 fn function_region<'a>(source: &'a str, function_name: &str) -> &'a str {
