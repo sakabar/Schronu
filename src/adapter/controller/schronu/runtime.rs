@@ -885,7 +885,9 @@ fn render_focused_task(
         *last_focused_task_id_opt = focused_task_id_opt;
     }
 
-    let result = execute_show_ancestor(stdout, &focused_task_opt);
+    let result = build_ancestor_tree_display(&focused_task_opt).map(|tree| {
+        render_display_model(stdout, &DisplayModel::Tree(tree)).unwrap();
+    });
     report_application_result(stdout, result);
 
     if let Some(focused_task) = focused_task_opt {
@@ -1276,8 +1278,9 @@ fn interactive_application(
             InteractiveRepositoryEventOutcome::Continue => interactive::DriverOutcome::Continue,
             InteractiveRepositoryEventOutcome::CommandExecuted(command, operation_now) => {
                 if !should_suppress_leaf_tasks_after_command(&command) {
-                    let result =
-                        execute_show_leaf_tasks(stdout, task_repository, free_time_manager);
+                    let result = build_leaf_tree_display(task_repository).map(|tree| {
+                        render_display_model(stdout, &DisplayModel::Tree(tree)).unwrap();
+                    });
                     report_application_result(stdout, result);
                 }
                 render_focused_task(

@@ -3,11 +3,11 @@ use super::handler::{
     DeferCommandContext, DeferCommandError, FinishPlacementCommandContext, ProjectCommandContext,
     TaskAttributeCommandContext, TaskListOrder, TaskTreeCommandContext,
 };
-use super::renderer::SchronuWriter;
+use super::renderer::{render_display_model, DisplayModel, SchronuWriter, TreeDisplay};
 use super::runtime::{command_parse_error, report_application_result, CommandError};
 use super::view::{
-    execute_show_all_tasks_with_config, execute_show_ancestor, execute_show_leaf_tasks,
-    execute_show_tree, get_weekday_jp, TaskListDisplayOrder,
+    build_ancestor_tree_display, build_leaf_tree_display, build_tree_display,
+    execute_show_all_tasks_with_config, get_weekday_jp, TaskListDisplayOrder,
 };
 use chrono::{DateTime, Datelike, Duration, Local, NaiveDate, NaiveDateTime, NaiveTime};
 use regex::Regex;
@@ -1310,12 +1310,12 @@ impl TaskTreeCommandContext for RuntimeTaskTreeCommandContext<'_, '_, '_> {
         self.supports_ansi_color
     }
 
-    fn show_tree(&mut self, display: &mut dyn SchronuWriter) -> Result<(), ApplicationError> {
-        execute_show_tree(display, &self.focused_task()?)
+    fn show_tree(&mut self) -> Result<TreeDisplay, ApplicationError> {
+        build_tree_display(&self.focused_task()?)
     }
 
-    fn show_ancestor(&mut self, display: &mut dyn SchronuWriter) -> Result<(), ApplicationError> {
-        execute_show_ancestor(display, &self.focused_task()?)
+    fn show_ancestor(&mut self) -> Result<TreeDisplay, ApplicationError> {
+        build_ancestor_tree_display(&self.focused_task()?)
     }
 
     fn focus_root(&mut self) -> Result<(), ApplicationError> {
@@ -1327,8 +1327,8 @@ impl TaskTreeCommandContext for RuntimeTaskTreeCommandContext<'_, '_, '_> {
         Ok(())
     }
 
-    fn show_leaves(&mut self, display: &mut dyn SchronuWriter) -> Result<(), ApplicationError> {
-        execute_show_leaf_tasks(display, self.task_repository, self.free_time_manager)
+    fn show_leaves(&mut self) -> Result<TreeDisplay, ApplicationError> {
+        build_leaf_tree_display(self.task_repository)
     }
 
     fn show_task_list(
@@ -1408,7 +1408,11 @@ impl TaskTreeCommandContext for RuntimeTaskTreeCommandContext<'_, '_, '_> {
                     *self.focused_task_id_opt =
                         Some(child.get_id().map_err(ApplicationError::TaskTree)?);
                 }
-                [_, _, ..] => execute_show_tree(display, &focused_task_opt)?,
+                [_, _, ..] => render_display_model(
+                    display,
+                    &DisplayModel::Tree(build_tree_display(&focused_task_opt)?),
+                )
+                .unwrap(),
                 _ => {}
             }
         }
@@ -1445,7 +1449,11 @@ impl TaskTreeCommandContext for RuntimeTaskTreeCommandContext<'_, '_, '_> {
             .len()
             > 1
         {
-            execute_show_tree(display, &Some(deepest_task))?;
+            render_display_model(
+                display,
+                &DisplayModel::Tree(build_tree_display(&Some(deepest_task))?),
+            )
+            .unwrap();
         }
         Ok(())
     }
@@ -1719,7 +1727,14 @@ impl FinishPlacementCommandContext for CliCommandContext<'_, '_, '_> {
         &mut self,
         display: &mut dyn SchronuWriter,
     ) -> Result<(), ApplicationError> {
-        execute_show_tree(display, &FinishPlacementCommandContext::focused_task(self)?)
+        render_display_model(
+            display,
+            &DisplayModel::Tree(build_tree_display(
+                &FinishPlacementCommandContext::focused_task(self)?,
+            )?),
+        )
+        .unwrap();
+        Ok(())
     }
 
     fn complete_focused_task(
@@ -1756,7 +1771,7 @@ impl TaskTreeCommandContext for CliCommandContext<'_, '_, '_> {
         self.supports_ansi_color
     }
 
-    fn show_tree(&mut self, display: &mut dyn SchronuWriter) -> Result<(), ApplicationError> {
+    fn show_tree(&mut self) -> Result<TreeDisplay, ApplicationError> {
         RuntimeTaskTreeCommandContext {
             task_repository: self.task_repository,
             free_time_manager: self.free_time_manager,
@@ -1765,10 +1780,10 @@ impl TaskTreeCommandContext for CliCommandContext<'_, '_, '_> {
             config: self.config,
             supports_ansi_color: self.supports_ansi_color,
         }
-        .show_tree(display)
+        .show_tree()
     }
 
-    fn show_ancestor(&mut self, display: &mut dyn SchronuWriter) -> Result<(), ApplicationError> {
+    fn show_ancestor(&mut self) -> Result<TreeDisplay, ApplicationError> {
         RuntimeTaskTreeCommandContext {
             task_repository: self.task_repository,
             free_time_manager: self.free_time_manager,
@@ -1777,7 +1792,7 @@ impl TaskTreeCommandContext for CliCommandContext<'_, '_, '_> {
             config: self.config,
             supports_ansi_color: self.supports_ansi_color,
         }
-        .show_ancestor(display)
+        .show_ancestor()
     }
 
     fn focus_root(&mut self) -> Result<(), ApplicationError> {
@@ -1792,7 +1807,7 @@ impl TaskTreeCommandContext for CliCommandContext<'_, '_, '_> {
         .focus_root()
     }
 
-    fn show_leaves(&mut self, display: &mut dyn SchronuWriter) -> Result<(), ApplicationError> {
+    fn show_leaves(&mut self) -> Result<TreeDisplay, ApplicationError> {
         RuntimeTaskTreeCommandContext {
             task_repository: self.task_repository,
             free_time_manager: self.free_time_manager,
@@ -1801,7 +1816,7 @@ impl TaskTreeCommandContext for CliCommandContext<'_, '_, '_> {
             config: self.config,
             supports_ansi_color: self.supports_ansi_color,
         }
-        .show_leaves(display)
+        .show_leaves()
     }
 
     fn show_task_list(

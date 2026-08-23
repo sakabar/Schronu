@@ -1,5 +1,7 @@
+use chrono::NaiveDate;
 use std::io::{IsTerminal, Stdout, Write};
 use termion::raw::RawTerminal;
+use uuid::Uuid;
 
 pub(super) const MAX_COL: u16 = 999;
 
@@ -61,6 +63,34 @@ pub(super) enum MessageLevel {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+pub(super) struct DebugTreeRow {
+    pub(super) debug: String,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(super) struct AncestorTreeRow {
+    pub(super) level: usize,
+    pub(super) task_id: Uuid,
+    pub(super) first_available_date: NaiveDate,
+    pub(super) estimated_minutes: i64,
+    pub(super) name: String,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(super) struct LeafTreeRow {
+    pub(super) remaining_count: usize,
+    pub(super) project_name: String,
+    pub(super) task_debug: String,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(super) enum TreeDisplay {
+    Debug { rows: Vec<DebugTreeRow> },
+    Ancestors { rows: Vec<AncestorTreeRow> },
+    Leaves { rows: Vec<LeafTreeRow> },
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub(super) enum DisplayModel {
     Legacy {
         fragments: Vec<DisplayFragment>,
@@ -69,6 +99,7 @@ pub(super) enum DisplayModel {
         level: MessageLevel,
         text: String,
     },
+    Tree(TreeDisplay),
     #[allow(dead_code)] // Composition boundary for later typed display models.
     Sequence(Vec<DisplayModel>),
 }
@@ -99,6 +130,7 @@ impl DisplayModel {
         match self {
             Self::Legacy { fragments } => fragments.is_empty(),
             Self::Message { .. } => false,
+            Self::Tree(_) => false,
             Self::Sequence(models) => models.iter().all(Self::is_empty),
         }
     }
@@ -107,7 +139,7 @@ impl DisplayModel {
     pub(super) fn fragments(&self) -> &[DisplayFragment] {
         match self {
             Self::Legacy { fragments } => fragments,
-            Self::Message { .. } | Self::Sequence(_) => {
+            Self::Message { .. } | Self::Tree(_) | Self::Sequence(_) => {
                 unreachable!("semantic display models do not expose legacy fragments")
             }
         }
@@ -116,7 +148,7 @@ impl DisplayModel {
     fn legacy_fragments_mut(&mut self) -> &mut Vec<DisplayFragment> {
         match self {
             Self::Legacy { fragments } => fragments,
-            Self::Message { .. } | Self::Sequence(_) => {
+            Self::Message { .. } | Self::Tree(_) | Self::Sequence(_) => {
                 unreachable!("DisplayRecorder always owns a legacy display model")
             }
         }
@@ -203,10 +235,54 @@ pub(super) fn render_display_model(
             };
             writer.writeln_newline(&format!("{prefix}{text}"))?;
         }
+        DisplayModel::Tree(tree) => render_tree_display(writer, tree)?,
         DisplayModel::Sequence(models) => {
             for model in models {
                 render_display_model(writer, model)?;
             }
+        }
+    }
+    Ok(())
+}
+
+fn render_tree_display(
+    writer: &mut dyn SchronuWriter,
+    tree: &TreeDisplay,
+) -> Result<(), std::io::Error> {
+    match tree {
+        TreeDisplay::Debug { rows } => {
+            writer.write_all(b"\n")?;
+            for row in rows {
+                writer.writeln_newline(&row.debug)?;
+            }
+            writer.write_all(b"\n")?;
+        }
+        TreeDisplay::Ancestors { rows } => {
+            writer.write_all(b"\n")?;
+            for row in rows {
+                let header = if row.level == 0 {
+                    String::new()
+                } else {
+                    format!("{}`-- ", " ".repeat(4 * (row.level - 1)))
+                };
+                writer.writeln_newline(&format!(
+                    "{header}{} [{}] {}m {}",
+                    row.task_id,
+                    row.first_available_date.format("%Y/%m/%d"),
+                    row.estimated_minutes,
+                    row.name,
+                ))?;
+            }
+            writer.writeln_newline("")?;
+        }
+        TreeDisplay::Leaves { rows } => {
+            for row in rows {
+                writer.writeln_newline(&format!(
+                    "{}\t{}\t{}",
+                    row.remaining_count, row.project_name, row.task_debug,
+                ))?;
+            }
+            writer.writeln_newline("")?;
         }
     }
     Ok(())

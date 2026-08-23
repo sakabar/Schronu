@@ -1,5 +1,6 @@
 use super::renderer::{
-    format_spreadsheet_task_row, writeln_newline, SchronuWriter, SpreadsheetTaskRow,
+    format_spreadsheet_task_row, writeln_newline, AncestorTreeRow, DebugTreeRow, LeafTreeRow,
+    SchronuWriter, SpreadsheetTaskRow, TreeDisplay,
 };
 use chrono::{DateTime, Datelike, Duration, Local, NaiveDate, Weekday};
 use regex::Regex;
@@ -611,34 +612,30 @@ pub(super) fn calculate_lq_opt(rho: f64) -> Option<f64> {
     }
 }
 
-pub(super) fn execute_show_tree(
-    stdout: &mut dyn SchronuWriter,
+pub(super) fn build_tree_display(
     focused_task_opt: &Option<TaskHandle>,
-) -> Result<(), ApplicationError> {
-    writeln!(stdout).unwrap();
+) -> Result<TreeDisplay, ApplicationError> {
+    let mut rows = Vec::new();
     if let Some(focused_task) = focused_task_opt.as_ref() {
         let s = focused_task
             .tree_debug_pretty_print()
             .map_err(ApplicationError::TaskTree)?;
-        let lines: Vec<_> = s.split('\n').collect();
-        for line in lines.iter() {
+        for line in s.split('\n') {
             // Done([+])のタスクは表示しない
             // 恒久的には、tree_debug_pretty_print()に似た関数を自分で実装してカスタマイズする
             if line.contains("[ ]") || line.contains("[-]") {
-                writeln_newline(stdout, line).unwrap()
+                rows.push(DebugTreeRow {
+                    debug: line.to_string(),
+                });
             }
         }
     }
-    writeln!(stdout).unwrap();
-    Ok(())
+    Ok(TreeDisplay::Debug { rows })
 }
 
-pub(super) fn execute_show_ancestor(
-    stdout: &mut dyn SchronuWriter,
+pub(super) fn build_ancestor_tree_display(
     focused_task_opt: &Option<TaskHandle>,
-) -> Result<(), ApplicationError> {
-    writeln!(stdout).unwrap();
-
+) -> Result<TreeDisplay, ApplicationError> {
     // まずは葉タスクから根に向かいながら後ろに追加していき、
     // 最後に逆順にして表示する
     let mut ancestors: Vec<(DateTime<Local>, TaskHandle)> = vec![];
@@ -651,14 +648,8 @@ pub(super) fn execute_show_ancestor(
 
     ancestors.reverse();
 
+    let mut rows = Vec::with_capacity(ancestors.len());
     for (level, (first_available_datetime, task)) in ancestors.iter().enumerate() {
-        let header = if level == 0 {
-            String::from("")
-        } else {
-            let indent = ' '.to_string().repeat(4 * (level - 1));
-            format!("{}`-- ", indent)
-        };
-
         let id = task.get_id().map_err(ApplicationError::TaskTree)?;
         let name = task.get_name().map_err(ApplicationError::TaskTree)?;
         let estimated_work_minutes = (task
@@ -666,17 +657,15 @@ pub(super) fn execute_show_ancestor(
             .map_err(ApplicationError::TaskTree)? as f64
             / 60.0)
             .ceil() as i64;
-        let first_available_date_str = first_available_datetime.format("%Y/%m/%d").to_string();
-
-        let msg = format!(
-            "{}{} [{}] {}m {}",
-            header, id, first_available_date_str, estimated_work_minutes, name
-        );
-        writeln_newline(stdout, &msg).unwrap();
+        rows.push(AncestorTreeRow {
+            level,
+            task_id: id,
+            first_available_date: first_available_datetime.date_naive(),
+            estimated_minutes: estimated_work_minutes,
+            name,
+        });
     }
-
-    writeln_newline(stdout, "").unwrap();
-    Ok(())
+    Ok(TreeDisplay::Ancestors { rows })
 }
 
 pub(super) fn make_messages_about_focus(
@@ -745,11 +734,9 @@ pub(super) fn format_focus_progress(
     )
 }
 
-pub(super) fn execute_show_leaf_tasks(
-    stdout: &mut dyn SchronuWriter,
+pub(super) fn build_leaf_tree_display(
     task_repository: &mut dyn TaskRepositoryTrait,
-    _free_time_manager: &mut dyn FreeTimeManagerTrait,
-) -> Result<(), ApplicationError> {
+) -> Result<TreeDisplay, ApplicationError> {
     let mut ans_tpls = vec![];
 
     for project_root_task in task_repository.get_all_projects().iter() {
@@ -768,9 +755,8 @@ pub(super) fn execute_show_leaf_tasks(
                 .get_priority()
                 .map_err(ApplicationError::TaskTree)?;
             let id = leaf_task.get_id().map_err(ApplicationError::TaskTree)?;
-            let message = format!(
-                "{}\t{:?}",
-                project_name,
+            let task_debug = format!(
+                "{:?}",
                 leaf_task.get_attr().map_err(ApplicationError::TaskTree)?
             );
 
@@ -779,7 +765,8 @@ pub(super) fn execute_show_leaf_tasks(
                 neg_priority,
                 deadline_time_opt,
                 id,
-                message,
+                project_name.clone(),
+                task_debug,
             );
             ans_tpls.push(tpl);
         }
@@ -788,13 +775,19 @@ pub(super) fn execute_show_leaf_tasks(
     ans_tpls.sort();
     ans_tpls.reverse();
 
-    for (ind, ans_tpl) in ans_tpls.iter().enumerate() {
-        let task_cnt = ans_tpls.len() - ind;
-        let message = format!("{}\t{}", task_cnt, ans_tpl.4);
-        writeln_newline(stdout, &message).unwrap();
-    }
-    writeln_newline(stdout, "").unwrap();
-    Ok(())
+    let row_count = ans_tpls.len();
+    let rows = ans_tpls
+        .into_iter()
+        .enumerate()
+        .map(
+            |(index, (_, _, _, _, project_name, task_debug))| LeafTreeRow {
+                remaining_count: row_count - index,
+                project_name,
+                task_debug,
+            },
+        )
+        .collect();
+    Ok(TreeDisplay::Leaves { rows })
 }
 
 // 集計用タプルはこの関数内だけで使用し、意味を持つ公開型を増やさない。

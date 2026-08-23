@@ -10,8 +10,8 @@ use super::handler::{
     TaskTreeCommandContext,
 };
 use super::renderer::{
-    render_display_model, DisplayFragment, DisplayModel, DisplayRecorder, MessageLevel,
-    SchronuWriter,
+    render_display_model, AncestorTreeRow, DebugTreeRow, DisplayFragment, DisplayModel,
+    DisplayRecorder, LeafTreeRow, MessageLevel, SchronuWriter, TreeDisplay,
 };
 use chrono::{Local, NaiveDate, TimeZone};
 use schronu::application::flatten_use_case::FlattenResult;
@@ -528,16 +528,26 @@ impl TaskTreeCommandContext for TraceTaskTreeContext {
         true
     }
 
-    fn show_tree(&mut self, display: &mut dyn SchronuWriter) -> Result<(), ApplicationError> {
+    fn show_tree(&mut self) -> Result<TreeDisplay, ApplicationError> {
         self.calls.push("tree".to_string());
-        display.write_all(b"tree").unwrap();
-        Ok(())
+        Ok(TreeDisplay::Debug {
+            rows: vec![DebugTreeRow {
+                debug: "tree".to_string(),
+            }],
+        })
     }
 
-    fn show_ancestor(&mut self, display: &mut dyn SchronuWriter) -> Result<(), ApplicationError> {
+    fn show_ancestor(&mut self) -> Result<TreeDisplay, ApplicationError> {
         self.calls.push("ancestor".to_string());
-        display.write_all(b"ancestor").unwrap();
-        Ok(())
+        Ok(TreeDisplay::Ancestors {
+            rows: vec![AncestorTreeRow {
+                level: 0,
+                task_id: Uuid::from_u128(1),
+                first_available_date: NaiveDate::from_ymd_opt(2026, 8, 23).unwrap(),
+                estimated_minutes: 15,
+                name: "ancestor".to_string(),
+            }],
+        })
     }
 
     fn focus_root(&mut self) -> Result<(), ApplicationError> {
@@ -545,10 +555,15 @@ impl TaskTreeCommandContext for TraceTaskTreeContext {
         Ok(())
     }
 
-    fn show_leaves(&mut self, display: &mut dyn SchronuWriter) -> Result<(), ApplicationError> {
+    fn show_leaves(&mut self) -> Result<TreeDisplay, ApplicationError> {
         self.calls.push("leaves".to_string());
-        display.write_all(b"leaves").unwrap();
-        Ok(())
+        Ok(TreeDisplay::Leaves {
+            rows: vec![LeafTreeRow {
+                remaining_count: 1,
+                project_name: "project".to_string(),
+                task_debug: "leaf".to_string(),
+            }],
+        })
     }
 
     fn show_task_list(
@@ -662,6 +677,39 @@ fn task_tree表示commandはhandlerがtyped_fieldから表示modelと操作要�
             .expect("task tree command is migrated");
         assert_eq!(outcome.kind, command.kind());
         assert_eq!(context.calls, [expected_call]);
+        match command.kind() {
+            CommandKind::Tree => assert_eq!(
+                outcome.display,
+                DisplayModel::Tree(TreeDisplay::Debug {
+                    rows: vec![DebugTreeRow {
+                        debug: "tree".to_string(),
+                    }],
+                })
+            ),
+            CommandKind::Ancestor => assert_eq!(
+                outcome.display,
+                DisplayModel::Tree(TreeDisplay::Ancestors {
+                    rows: vec![AncestorTreeRow {
+                        level: 0,
+                        task_id: Uuid::from_u128(1),
+                        first_available_date: NaiveDate::from_ymd_opt(2026, 8, 23).unwrap(),
+                        estimated_minutes: 15,
+                        name: "ancestor".to_string(),
+                    }],
+                })
+            ),
+            CommandKind::Leaves => assert_eq!(
+                outcome.display,
+                DisplayModel::Tree(TreeDisplay::Leaves {
+                    rows: vec![LeafTreeRow {
+                        remaining_count: 1,
+                        project_name: "project".to_string(),
+                        task_debug: "leaf".to_string(),
+                    }],
+                })
+            ),
+            _ => {}
+        }
         let expects_display = matches!(
             command.kind(),
             CommandKind::Tree
@@ -1360,20 +1408,20 @@ impl TaskTreeCommandContext for CompositeTraceContext {
         self.task_tree.supports_ansi_color()
     }
 
-    fn show_tree(&mut self, display: &mut dyn SchronuWriter) -> Result<(), ApplicationError> {
-        self.task_tree.show_tree(display)
+    fn show_tree(&mut self) -> Result<TreeDisplay, ApplicationError> {
+        self.task_tree.show_tree()
     }
 
-    fn show_ancestor(&mut self, display: &mut dyn SchronuWriter) -> Result<(), ApplicationError> {
-        self.task_tree.show_ancestor(display)
+    fn show_ancestor(&mut self) -> Result<TreeDisplay, ApplicationError> {
+        self.task_tree.show_ancestor()
     }
 
     fn focus_root(&mut self) -> Result<(), ApplicationError> {
         self.task_tree.focus_root()
     }
 
-    fn show_leaves(&mut self, display: &mut dyn SchronuWriter) -> Result<(), ApplicationError> {
-        self.task_tree.show_leaves(display)
+    fn show_leaves(&mut self) -> Result<TreeDisplay, ApplicationError> {
+        self.task_tree.show_leaves()
     }
 
     fn show_task_list(

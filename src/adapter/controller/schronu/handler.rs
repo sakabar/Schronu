@@ -1,5 +1,5 @@
 use super::command::{Command, CommandAction, CommandKind, CommandParseError, InteractiveShortcut};
-use super::renderer::{DisplayModel, DisplayRecorder, MessageLevel, SchronuWriter};
+use super::renderer::{DisplayModel, DisplayRecorder, MessageLevel, SchronuWriter, TreeDisplay};
 use chrono::{DateTime, Datelike, Days, Duration, Local, NaiveDate, NaiveDateTime, NaiveTime};
 use regex::Regex;
 use schronu::application::daily_capacity::{
@@ -83,10 +83,10 @@ pub(super) enum TaskListOrder {
 
 pub(super) trait TaskTreeCommandContext {
     fn supports_ansi_color(&self) -> bool;
-    fn show_tree(&mut self, display: &mut dyn SchronuWriter) -> Result<(), ApplicationError>;
-    fn show_ancestor(&mut self, display: &mut dyn SchronuWriter) -> Result<(), ApplicationError>;
+    fn show_tree(&mut self) -> Result<TreeDisplay, ApplicationError>;
+    fn show_ancestor(&mut self) -> Result<TreeDisplay, ApplicationError>;
     fn focus_root(&mut self) -> Result<(), ApplicationError>;
-    fn show_leaves(&mut self, display: &mut dyn SchronuWriter) -> Result<(), ApplicationError>;
+    fn show_leaves(&mut self) -> Result<TreeDisplay, ApplicationError>;
     fn show_task_list(
         &mut self,
         display: &mut dyn SchronuWriter,
@@ -322,6 +322,7 @@ pub(super) fn handle_task_tree_command<C: TaskTreeCommandContext + ?Sized>(
     context: &mut C,
 ) -> Result<Option<CommandOutcome>, ApplicationError> {
     let mut display = DisplayRecorder::with_ansi_color(context.supports_ansi_color());
+    let mut tree_display = None;
     let kind = command.kind();
 
     match command {
@@ -335,11 +336,11 @@ pub(super) fn handle_task_tree_command<C: TaskTreeCommandContext + ?Sized>(
         Command::Action(CommandAction::NoArguments {
             kind: CommandKind::Tree,
             ..
-        }) => context.show_tree(&mut display)?,
+        }) => tree_display = Some(context.show_tree()?),
         Command::Action(CommandAction::NoArguments {
             kind: CommandKind::Ancestor,
             ..
-        }) => context.show_ancestor(&mut display)?,
+        }) => tree_display = Some(context.show_ancestor()?),
         Command::Action(CommandAction::NoArguments {
             kind: CommandKind::Root,
             ..
@@ -347,7 +348,7 @@ pub(super) fn handle_task_tree_command<C: TaskTreeCommandContext + ?Sized>(
         Command::Action(CommandAction::NoArguments {
             kind: CommandKind::Leaves,
             ..
-        }) => context.show_leaves(&mut display)?,
+        }) => tree_display = Some(context.show_leaves()?),
         Command::Action(CommandAction::OptionalPattern {
             kind: CommandKind::Tail,
             pattern,
@@ -417,7 +418,9 @@ pub(super) fn handle_task_tree_command<C: TaskTreeCommandContext + ?Sized>(
     }
 
     let mut outcome = CommandOutcome::empty(kind);
-    outcome.display = display.model().clone();
+    outcome.display = tree_display
+        .map(DisplayModel::Tree)
+        .unwrap_or_else(|| display.model().clone());
     Ok(Some(outcome))
 }
 
