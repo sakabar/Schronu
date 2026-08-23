@@ -768,7 +768,7 @@ fn pack_displayはtyped_row順と集計と空結果とskip件数を描画する(
 }
 
 #[test]
-fn flatten_displayはtyped移動rowと超過warningと未解決理由を既存順で描画する() {
+fn flatten_displayはtyped移動rowと超過warningと未解消理由を既存順で描画する() {
     let first_task_id = Uuid::parse_str("11111111-1111-1111-1111-111111111111").unwrap();
     let second_task_id = Uuid::parse_str("22222222-2222-2222-2222-222222222222").unwrap();
     let representative_id = Uuid::parse_str("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa").unwrap();
@@ -859,9 +859,9 @@ fn flatten_displayはtyped移動rowと超過warningと未解決理由を既存�
         [
             "newline:平\t2026-08-25\t2026-08-23\t01:01\t優先度9\t11111111-1111-1111-1111-111111111111\t最初の平準化",
             "newline:平\t2026-08-26\t2026-08-24\t00:00\t優先度-2\t22222222-2222-2222-2222-222222222222\t次の平準化",
-            "newline:平: 2件 01:02 (未解決2日)",
+            "newline:平: 2件 01:02 (未解消2日)",
             "newline:[Warn] 35日後の退避先は日次容量の上限を適用していません: 2件 01:01",
-            "newline:[Warn] 平\t2026-08-27\t未解決 00:01",
+            "newline:[Warn] 平\t2026-08-27\t未解消 00:01",
             "newline:  相手待ち: 1件",
             "newline:    aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa\t代表task",
             "newline:  業務日境界をまたぐ: 2件",
@@ -869,7 +869,7 @@ fn flatten_displayはtyped移動rowと超過warningと未解決理由を既存�
             "newline:  自身の期限により翌日06:00を維持できない: 4件",
             "newline:  仮延期によって関連taskの期限を超える: 5件",
             "newline:  その他: 6件",
-            "newline:[Warn] 平\t2026-08-28\t未解決 01:00",
+            "newline:[Warn] 平\t2026-08-28\t未解消 01:00",
             "newline:  その他: 7件",
         ]
     );
