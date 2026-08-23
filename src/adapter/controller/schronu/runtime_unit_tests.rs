@@ -789,6 +789,41 @@ fn test_format_focused_task_header_project_categoryを表示する() {
 }
 
 #[test]
+fn test_task_list_search_textは旧a_j列の代表patternをtyped_fieldから構築する() {
+    let row = crate::renderer::TaskListTaskRow {
+        rank: 7,
+        task_id: Uuid::parse_str("11111111-1111-1111-1111-111111111111").unwrap(),
+        icon: "!".to_string(),
+        remaining_time: "____-01:20".to_string(),
+        scheduled_start: Local.with_ymd_and_hms(2026, 8, 23, 9, 0, 0).unwrap(),
+        scheduled_end: Local.with_ymd_and_hms(2026, 8, 23, 9, 40, 0).unwrap(),
+        priority_rank: 3,
+        estimated_minutes: 5,
+        project_number_priority: 8,
+        project_category: Some(ProjectCategory::Sustaining),
+        task_name: "検索 対象task".to_string(),
+        give_up_candidate: false,
+    };
+
+    let search_text = task_list_search_text(&row);
+
+    assert_eq!(
+        search_text,
+        "0007 11111111-1111-1111-1111-111111111111 ! ____-01:20 08/23(日)-09:00~09:40 3 05 08 維 検索 対象task"
+    );
+    for representative in [
+        "0007",
+        "11111111-1111-1111-1111-111111111111",
+        "! ____-01:20",
+        "08/23(日)-09:00~09:40",
+        "3 05 08 維",
+        "検索 対象task",
+    ] {
+        assert!(search_text.contains(representative), "{representative}");
+    }
+}
+
+#[test]
 fn test_summarize_scheduled_work_seconds_by_project_category_実タスクだけをカテゴリ別に集計する() {
     let target_date = NaiveDate::from_ymd_opt(2026, 5, 10).unwrap();
     let rows = vec![

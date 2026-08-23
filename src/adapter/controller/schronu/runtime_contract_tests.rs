@@ -1748,6 +1748,47 @@ fn 単発filterはtask名の繰返表示文字列ではなくtyped反復属性�
 }
 
 #[test]
+fn task_list検索はtyped_a_i列と名前の代表patternを製品経路で照合する() {
+    let now = Local.with_ymd_and_hms(2026, 8, 11, 12, 0, 0).unwrap();
+    let task = new_test_task_handle("typed検索対象task").unwrap();
+    task.set_project_category_opt(Some(ProjectCategory::Sustaining));
+    task.set_estimated_work_seconds(30 * 60);
+    task.set_start_time(now);
+    task.set_pending_until(now);
+    task.set_orig_status(Status::Pending);
+    let task_id = task.get_id().unwrap();
+
+    for pattern in [task_id.to_string(), "維".to_string(), "検索対象".to_string()] {
+        let command = format!("全 {pattern}");
+        let result = execute_command_for_test(task.clone(), now, None, &command);
+        assert!(
+            result.output.contains("typed検索対象task"),
+            "{pattern}: {}",
+            result.output
+        );
+    }
+}
+
+#[test]
+fn task_list数値filterはtyped待ち属性のtaskを候補から除外する() {
+    let now = Local.with_ymd_and_hms(2026, 8, 11, 12, 0, 0).unwrap();
+    let waiting_task = new_test_task_handle("数値filter待ちtask").unwrap();
+    waiting_task.set_is_on_other_side(true).unwrap();
+    waiting_task.set_estimated_work_seconds(30 * 60);
+    waiting_task.set_start_time(now);
+    waiting_task.set_pending_until(now);
+    waiting_task.set_orig_status(Status::Pending);
+
+    let result = execute_command_for_test(waiting_task, now, None, "全 60");
+
+    assert!(
+        !result.output.contains("数値filter待ちtask"),
+        "typed待ち属性のtaskは空き時間候補へ含めない: {}",
+        result.output
+    );
+}
+
+#[test]
 fn test_execute_all_締切順の予定時刻を表示する() {
     let now = Local.with_ymd_and_hms(2026, 8, 11, 12, 0, 0).unwrap();
     let root_task = new_test_task_handle("親タスク").unwrap();

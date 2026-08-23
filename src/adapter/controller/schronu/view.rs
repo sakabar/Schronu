@@ -2,9 +2,8 @@ pub(super) use super::renderer::project_category_symbol;
 #[cfg(test)]
 use super::renderer::{format_task_category_summary, format_task_list_row};
 use super::renderer::{
-    format_task_list_task_row, weekday_jp, writeln_newline, AncestorTreeRow, DebugTreeRow,
-    LeafTreeRow, SchronuWriter, TaskCategoryWorkSeconds, TaskListDisplay, TaskListRow,
-    TaskListTaskRow, TreeDisplay,
+    weekday_jp, writeln_newline, AncestorTreeRow, DebugTreeRow, LeafTreeRow, SchronuWriter,
+    TaskCategoryWorkSeconds, TaskListDisplay, TaskListRow, TaskListTaskRow, TreeDisplay,
 };
 use chrono::{DateTime, Datelike, Duration, Local, NaiveDate, Weekday};
 use regex::Regex;
@@ -31,6 +30,25 @@ const FOCUS_PROGRESS_BAR_SEGMENTS: usize = 100;
 
 pub(super) fn get_weekday_jp(date: &NaiveDate) -> &str {
     weekday_jp(date.weekday())
+}
+
+pub(super) fn task_list_search_text(row: &TaskListTaskRow) -> String {
+    format!(
+        "{:04} {} {} {} {}({})-{}~{} {} {:02} {:02} {} {}",
+        row.rank,
+        row.task_id,
+        row.icon,
+        row.remaining_time,
+        row.scheduled_start.format("%m/%d"),
+        weekday_jp(row.scheduled_start.weekday()),
+        row.scheduled_start.format("%H:%M"),
+        row.scheduled_end.format("%H:%M"),
+        row.priority_rank,
+        row.estimated_minutes,
+        row.project_number_priority,
+        project_category_symbol(row.project_category),
+        row.task_name,
+    )
 }
 
 pub(super) fn get_adjustable_prefix_label(
@@ -911,10 +929,10 @@ pub(super) fn execute_show_all_tasks_with_config(
                 );
             }
 
-            if task
+            let is_on_other_side = task
                 .get_is_on_other_side()
-                .map_err(ApplicationError::TaskTree)?
-            {
+                .map_err(ApplicationError::TaskTree)?;
+            if is_on_other_side {
                 repetition_prefix_label = format!("{}【待ち】", repetition_prefix_label);
             }
 
@@ -1119,6 +1137,7 @@ pub(super) fn execute_show_all_tasks_with_config(
                 task_name: shorten_name,
                 give_up_candidate: false,
             };
+            let task_search_text = task_list_search_text(&task_row);
             let task_list_display_row = TaskListDisplayRow::new_spreadsheet_task(
                 *scheduled_start,
                 subjective_naive_date,
@@ -1129,10 +1148,6 @@ pub(super) fn execute_show_all_tasks_with_config(
                 task_project_category_opt,
                 task_row,
             );
-            let msg = match &task_list_display_row.display_row {
-                TaskListRow::Task(task_row) => format_task_list_task_row(task_row),
-                _ => unreachable!("spreadsheet task constructor must create a task row"),
-            };
             let has_deadline_icon = icon == deadline_icon || icon == breaking_deadline_icon;
             let has_task_list_icon = has_deadline_icon || icon == today_leaf_icon;
 
@@ -1270,9 +1285,8 @@ pub(super) fn execute_show_all_tasks_with_config(
                             continue;
                         }
 
-                        // 【待ち】がマジックナンバーなのがちょっとよくない
                         if *rank == 0
-                            && !msg.contains("【待ち】")
+                            && !is_on_other_side
                             && estimated_work_seconds < target_free_time_seconds
                             && estimated_work_seconds > available_biggest_task_estimate_work_seconds
                         {
@@ -1281,7 +1295,7 @@ pub(super) fn execute_show_all_tasks_with_config(
                             available_biggest_row_opt = Some(task_list_display_row.clone());
                         }
                     } else if name.to_lowercase().contains(&pattern.to_lowercase())
-                        || msg.contains(pattern)
+                        || task_search_text.contains(pattern)
                     {
                         task_list_display_rows.push(task_list_display_row.clone());
                     }
