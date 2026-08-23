@@ -65,17 +65,6 @@ fn finish_placement_handler_source() -> &'static str {
         .0
 }
 
-fn runtime_fallback_source() -> Option<&'static str> {
-    let (_, fallback_and_rest) =
-        include_str!("runtime.rs").split_once("fn execute_with_config(")?;
-    Some(
-        fallback_and_rest
-            .split_once("fn reload_repository_for_cli(")
-            .expect("runtime fallback must remain bounded by repository reload")
-            .0,
-    )
-}
-
 fn runtime_interactive_dispatch_source() -> &'static str {
     include_str!("runtime.rs")
         .split_once("fn execute_interactive_command(")
@@ -98,13 +87,15 @@ fn assert_runtime_routes_to_handler(handler_call: &str, forbidden_fallback_token
         handler_product_source().contains(handler_name),
         "the composite handler must retain the {handler_name} behavior route"
     );
-    if let Some(fallback) = runtime_fallback_source() {
-        for forbidden in forbidden_fallback_tokens {
-            assert!(
-                !fallback.contains(forbidden),
-                "handler-owned command must not remain in runtime fallback: {forbidden}"
-            );
-        }
+    assert!(
+        !include_str!("runtime.rs").contains("fn execute_with_config("),
+        "legacy runtime dispatch must be removed"
+    );
+    for forbidden in forbidden_fallback_tokens {
+        assert!(
+            !runtime_product_dispatch_source().contains(forbidden),
+            "runtime product dispatch must not match handler-owned command kind: {forbidden}"
+        );
     }
 }
 

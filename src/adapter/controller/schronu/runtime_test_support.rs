@@ -819,7 +819,6 @@ fn execute(
         free_time_manager,
         focused_task_id_opt,
         focus_started_datetime,
-        untrimmed_line,
         &parsed_command,
     )
 }

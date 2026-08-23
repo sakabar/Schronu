@@ -483,7 +483,6 @@ fn execute_parsed(
     free_time_manager: &mut dyn FreeTimeManagerTrait,
     focused_task_id_opt: &mut Option<Uuid>,
     focus_started_datetime: &DateTime<Local>,
-    untrimmed_line: &str,
     parsed_command: &Command,
 ) -> Result<(), CommandError> {
     validate_non_interactive_command(parsed_command)?;
@@ -504,28 +503,16 @@ fn execute_parsed(
             supports_ansi_color,
         };
         handle_command(parsed_command, &mut context)?
-    };
-    if let Some(outcome) = outcome {
-        apply_command_outcome(
-            &mut output,
-            task_repository,
-            focused_task_id_opt,
-            OutcomeApplicationMode::Flushed,
-            outcome,
-            active_config(),
-        )?;
-    } else {
-        execute_with_config(
-            &mut output,
-            task_repository,
-            free_time_manager,
-            focused_task_id_opt,
-            focus_started_datetime,
-            untrimmed_line,
-            parsed_command,
-            active_config(),
-        )?;
     }
+    .unwrap_or_else(|| unreachable!("Verify must be handled before command execution"));
+    apply_command_outcome(
+        &mut output,
+        task_repository,
+        focused_task_id_opt,
+        OutcomeApplicationMode::Flushed,
+        outcome,
+        active_config(),
+    )?;
     match output.take_error() {
         Some(error) if error.kind() == std::io::ErrorKind::BrokenPipe => Ok(()),
         Some(error) => Err(CommandError::Output(error)),
@@ -590,36 +577,6 @@ fn apply_command_outcome(
 enum OutcomeApplicationMode<'a> {
     Flushed,
     InteractiveUnflushed(&'a mut FocusSelectionMode),
-}
-
-#[allow(clippy::too_many_arguments, unused_must_use)]
-fn execute_with_config(
-    stdout: &mut dyn SchronuWriter,
-    _task_repository: &mut dyn TaskRepositoryTrait,
-    _free_time_manager: &mut dyn FreeTimeManagerTrait,
-    _focused_task_id_opt: &mut Option<Uuid>,
-    _focus_started_datetime: &DateTime<Local>,
-    _untrimmed_line: &str,
-    parsed_command: &Command,
-    _config: &SchronuConfig,
-) -> Result<(), CommandError> {
-    if matches!(parsed_command, Command::Noop) {
-        return Ok(());
-    }
-
-    match parsed_command.kind() {
-        CommandKind::Open | CommandKind::Obsidian => {
-            unreachable!("migrated command must be handled before legacy dispatch")
-        }
-        CommandKind::Noop
-        | CommandKind::FocusHighest
-        | CommandKind::FocusLowest
-        | CommandKind::Verify => {}
-        _ => unreachable!("handler-owned command reached runtime fallback"),
-    }
-
-    render_display_model(stdout, &DisplayModel::flush()).map_err(CommandError::Output)?;
-    Ok(())
 }
 
 // 削除できない時はNoneを返す。例えば、文字列が空の時
@@ -807,7 +764,6 @@ fn execute_non_interactive_command_at(
             free_time_manager,
             &mut focused_task_id_opt,
             &focus_started_datetime,
-            command,
             &parsed_command,
         )
     })?;
@@ -1045,13 +1001,14 @@ fn execute_interactive_command(
             active_config(),
         )?;
     } else {
-        if let Err(error) = execute_parsed(
+        if parsed_command.kind() == CommandKind::Verify {
+            render_display_model(stdout, &DisplayModel::flush()).map_err(CommandError::Output)?;
+        } else if let Err(error) = execute_parsed(
             stdout,
             task_repository,
             free_time_manager,
             focused_task_id_opt,
             focus_started_datetime,
-            command,
             &parsed_command,
         ) {
             let _output_error = render_display_model(stdout, &error_display_model(&error))

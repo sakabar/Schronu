@@ -1394,7 +1394,6 @@ fn task属性更新commandは製品経路で必ず1回flushする() {
             &mut free_time_manager,
             &mut focused_task_id_opt,
             &now,
-            command,
             &parsed,
         )
         .unwrap();
@@ -1421,7 +1420,6 @@ fn task属性更新commandはflush_errorとbroken_pipeを製品経路で分類�
             &mut free_time_manager,
             &mut focused_task_id_opt,
             &now,
-            "予 15",
             &parsed,
         );
         (result, stdout.flush_count)
@@ -3670,7 +3668,6 @@ fn runtime外部ioとoutcome調停は共通境界に集約する() {
             &mut free_time_manager,
             &mut focused_task_id_opt,
             &now,
-            "予 15",
             &parsed,
         );
 

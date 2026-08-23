@@ -329,6 +329,7 @@ fn interactiveとnoninteractiveは単一のparsed_command_dispatcherを共有す
                 "Command::Focus",
                 "Command::Defer",
                 "Command::InteractiveShortcut",
+                "CommandKind::Verify",
             ][..],
         ),
     ] {
