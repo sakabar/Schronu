@@ -4570,6 +4570,22 @@ fn test_execute_calendar_現行出力を固定する() {
 }
 
 #[test]
+fn test_execute_calendar_単発余暇zeroは正符号で表示する() {
+    let now = Local.with_ymd_and_hms(2026, 8, 11, 12, 0, 0).unwrap();
+    let root = new_test_task_handle("単発余暇zero fixture").unwrap();
+    root.set_estimated_work_seconds(0);
+    root.set_repetition_interval_days_opt(Some(7)).unwrap();
+    add_scheduled_child_for_test(&root, "繰り返しタスク", now, 60);
+
+    let actual = execute_calendar_command_for_test("暦", now, root, 60);
+
+    assert!(
+        actual.contains("\t 00時間00分\t"),
+        "zeroの単発余暇は旧表示どおり正符号である必要があります: {actual}"
+    );
+}
+
+#[test]
 fn test_execute_calendar_日付逆順と週区切りと28日境界を固定する() {
     let now = Local.with_ymd_and_hms(2026, 8, 11, 12, 0, 0).unwrap();
     let root = new_test_task_handle("暦複数日fixture").unwrap();

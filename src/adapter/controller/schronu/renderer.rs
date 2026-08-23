@@ -419,9 +419,19 @@ fn format_calendar_day_row(row: &CalendarDayRow) -> String {
         format_signed_duration(row.deadline_diff_seconds / 60, false),
         row.deadline_ratio,
         format_signed_duration(row.accumulated_free_diff_minutes, true),
-        format_signed_duration(row.non_repetitive_free_minutes, true),
+        format_non_repetitive_duration(row.non_repetitive_free_minutes),
         row.accumulated_rho_diff,
         row.task_count,
+    )
+}
+
+fn format_non_repetitive_duration(minutes: i64) -> String {
+    let sign = if minutes >= 0 { ' ' } else { '-' };
+    let absolute_minutes = minutes.abs();
+    format!(
+        "{sign}{:02}時間{:02}分",
+        absolute_minutes / 60,
+        absolute_minutes % 60
     )
 }
 

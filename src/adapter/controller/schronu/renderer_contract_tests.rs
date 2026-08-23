@@ -386,7 +386,7 @@ fn calendar_displayはtyped日別値を逆順と週区切りとsummaryとalert�
             deadline_diff_seconds: 3599,
             deadline_ratio: 0.01,
             accumulated_free_diff_minutes: -1,
-            non_repetitive_free_minutes: 1,
+            non_repetitive_free_minutes: 0,
             accumulated_rho_diff: 2.50,
             task_count: 99,
         },
@@ -412,7 +412,7 @@ fn calendar_displayはtyped日別値を逆順と週区切りとsummaryとalert�
     assert_eq!(
         writer.operations,
         [
-            "newline:2026-08-25(火)\t 1.5時間\t-0時間01分(17%)\t-1.00\t 0時間01分\t-00時間01分\t 0時間59分\t 0.01\t-00時間01分\t 00時間01分\t 2.50\t99[タスク]",
+            "newline:2026-08-25(火)\t 1.5時間\t-0時間01分(17%)\t-1.00\t 0時間01分\t-00時間01分\t 0時間59分\t 0.01\t-00時間01分\t 00時間00分\t 2.50\t99[タスク]",
             "newline:2026-08-24(月)\t 5.0時間\t 2時間15分(20%)\t 0.50\t 0時間45分\t 01時間10分\t 2時間00分\t 0.40\t 02時間05分\t-00時間30分\t 1.25\t12[タスク]",
             "newline:",
             "newline:2026-08-23(日)\t10.0時間\t-1時間30分     \t-0.25\t-1時間15分\t-02時間05分\t-1時間30分\t-0.15\t-01時間35分\t 08時間00分\t-0.20\t02[タスク]",
