@@ -956,6 +956,20 @@ fn focus_displayはtyped属性からancestorと残り時間とprogress境界を�
             "30 minutes over (since 12:00:00 until 11:50:00) focusing for 20 minutes".to_string(),
             format!("[{}] --%", "-".repeat(100)),
         ),
+        (
+            i64::MAX,
+            i64::MAX,
+            Local.with_ymd_and_hms(2026, 7, 25, 12, 0, 1).unwrap(),
+            "1 minutes over (since 12:00:00 until 12:00:00) focusing for 1 minutes".to_string(),
+            format!("[{}] 100%", "█".repeat(100)),
+        ),
+        (
+            100,
+            -10,
+            Local.with_ymd_and_hms(2026, 7, 25, 12, 0, 1).unwrap(),
+            "1 minutes left (since 12:00:00 until 12:01:50) focusing for 1 minutes".to_string(),
+            format!("[{}] 0%", "░".repeat(100)),
+        ),
     ] {
         let mut task_attr =
             TaskAttr::with_identity("境界対象", Uuid::from_u128(2), focus_started_at);
