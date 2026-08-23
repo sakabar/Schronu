@@ -677,6 +677,30 @@ fn band_displayはterminalで凡例と帯の7記号を既存ansi色で描画す�
     );
 }
 
+#[test]
+fn band_displayは日別rowが空でもlegendとsummaryとhealthy_alertを描画する() {
+    let mut band = band_display_fixture();
+    band.rows.clear();
+    let display = DisplayModel::Band(band);
+    let mut writer = TraceWriter::default();
+
+    render_display_model(&mut writer, &display).unwrap();
+
+    assert_eq!(
+        writer.operations,
+        [
+            "newline:凡例: # 固定  x 経過済み  = 繰返  - 単発  : 余差  . 空き  > 超過  (1文字=15分)",
+            "newline:",
+            "newline:",
+            "newline:今のタスクが片付く日付: 2日後の2026-08-25",
+            "newline:最大の累積時間:  02時間05分 (2026-08-24), 最大のrhoの差: 1.25 (2026-08-24), 次にタスクを積める日付: 3日後の2026-08-26 (-1時間30分)",
+            "newline:",
+            "newline:[Info] 順調です。突発タスクに対応したり1日の終わり際にタスクを新しく積んだりする余裕があります。ひとまずは脇道に逸れずに予定の遂行をしてください。",
+            "newline:",
+        ]
+    );
+}
+
 struct AlwaysFailWriter;
 
 impl Write for AlwaysFailWriter {
