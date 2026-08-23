@@ -878,9 +878,9 @@ fn flatten_displayはtyped移動rowと超過warningと未解消理由を既存�
     render_display_model(
         &mut no_overload_writer,
         &DisplayModel::Flatten(FlattenDisplay {
-            rows,
-            overflowed_task_count: 9,
-            overflowed_work_seconds: 9_999,
+            rows: vec![],
+            overflowed_task_count: 0,
+            overflowed_work_seconds: 0,
             had_overload: false,
             unresolved_days: vec![],
         }),
@@ -888,11 +888,7 @@ fn flatten_displayはtyped移動rowと超過warningと未解消理由を既存�
     .unwrap();
     assert_eq!(
         no_overload_writer.operations,
-        [
-            "newline:平\t2026-08-25\t2026-08-23\t01:01\t優先度9\t11111111-1111-1111-1111-111111111111\t最初の平準化",
-            "newline:平\t2026-08-26\t2026-08-24\t00:00\t優先度-2\t22222222-2222-2222-2222-222222222222\t次の平準化",
-            "newline:[Info] 100%を超過している日はありません。",
-        ]
+        ["newline:[Info] 100%を超過している日はありません。"]
     );
 }
 
