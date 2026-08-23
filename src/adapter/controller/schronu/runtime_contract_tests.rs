@@ -4586,6 +4586,23 @@ fn test_execute_calendar_単発余暇zeroは正符号で表示する() {
 }
 
 #[test]
+fn test_execute_calendar_余差59点5分以上は0時間60分で表示する() {
+    let now = Local.with_ymd_and_hms(2026, 8, 11, 12, 0, 0).unwrap();
+    let task = new_test_task_handle("余差の分境界fixture").unwrap();
+    task.set_estimated_work_seconds(7_799);
+    task.set_start_time(now);
+    task.set_pending_until(now);
+    task.set_orig_status(Status::Pending);
+
+    let actual = execute_calendar_command_for_test("暦", now, task, 100);
+
+    assert!(
+        actual.contains("\t 0時間60分\t"),
+        "59.5分以上60分未満の余差は旧表示どおり0時間60分である必要があります: {actual}"
+    );
+}
+
+#[test]
 fn test_execute_calendar_日付逆順と週区切りと28日境界を固定する() {
     let now = Local.with_ymd_and_hms(2026, 8, 11, 12, 0, 0).unwrap();
     let root = new_test_task_handle("暦複数日fixture").unwrap();

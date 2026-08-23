@@ -1618,18 +1618,13 @@ pub(super) fn execute_show_all_tasks_with_config(
                 / 3600.0
         };
 
-        let rho_goal_diff_minutes = if diff_to_goal > 0.0 {
-            (diff_to_goal_hour * 60.0 + diff_to_goal_minute.round()) as i64
-        } else {
-            -(diff_to_goal_hour * 60.0 + diff_to_goal_minute.round()) as i64
-        };
         let calendar_row = CalendarDayRow {
             date: **date,
             free_time_minutes,
             free_time_diff_minutes: over_time_duration.num_minutes(),
             adjustable_work_seconds: (adjustable_estimated_work_hours * 3600.0).round() as i64,
             rho_diff: rho_in_date - 1.0,
-            rho_goal_diff_minutes,
+            rho_goal_diff_hours: diff_to_goal,
             accumulated_rho_goal_diff_minutes: accumulate_duration_diff_to_goal_rho.num_minutes(),
             deadline_diff_seconds: deadline_rest_duration_seconds,
             deadline_ratio: deadline_rest_duration_seconds as f64 / (free_time_hours * 60.0 * 60.0),

@@ -154,7 +154,7 @@ pub(super) struct CalendarDayRow {
     pub(super) free_time_diff_minutes: i64,
     pub(super) adjustable_work_seconds: i64,
     pub(super) rho_diff: f64,
-    pub(super) rho_goal_diff_minutes: i64,
+    pub(super) rho_goal_diff_hours: f64,
     pub(super) accumulated_rho_goal_diff_minutes: i64,
     pub(super) deadline_diff_seconds: i64,
     pub(super) deadline_ratio: f64,
@@ -414,7 +414,7 @@ fn format_calendar_day_row(row: &CalendarDayRow) -> String {
         format_signed_duration(row.free_time_diff_minutes, false),
         adjustable_rate,
         row.rho_diff,
-        format_signed_duration(row.rho_goal_diff_minutes, false),
+        format_rho_goal_diff(row.rho_goal_diff_hours),
         format_signed_duration(row.accumulated_rho_goal_diff_minutes, true),
         format_signed_duration(row.deadline_diff_seconds / 60, false),
         row.deadline_ratio,
@@ -423,6 +423,14 @@ fn format_calendar_day_row(row: &CalendarDayRow) -> String {
         row.accumulated_rho_diff,
         row.task_count,
     )
+}
+
+fn format_rho_goal_diff(hours: f64) -> String {
+    let sign = if hours > 0.0 { ' ' } else { '-' };
+    let absolute_hours = hours.abs();
+    let whole_hours = absolute_hours.floor();
+    let minutes = (absolute_hours - whole_hours) * 60.0;
+    format!("{sign}{whole_hours:.0}時間{minutes:02.0}分")
 }
 
 fn format_non_repetitive_duration(minutes: i64) -> String {
