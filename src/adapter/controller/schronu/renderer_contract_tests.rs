@@ -486,6 +486,49 @@ fn calendar_displayはtyped日別値を逆順と週区切りとsummaryとalert�
     );
 }
 
+#[test]
+fn calendar_displayは日別rowが空でもfooterとsummaryとhealthy_alertを描画する() {
+    let display = DisplayModel::Calendar(CalendarDisplay {
+        rows: vec![],
+        blank_line_weekday: Weekday::Mon,
+        summary: CalendarSummary {
+            last_synced_date: NaiveDate::from_ymd_opt(2026, 8, 23).unwrap(),
+            first_caught_up_date: NaiveDate::from_ymd_opt(2026, 8, 23).unwrap(),
+            first_leeway_date: NaiveDate::from_ymd_opt(2026, 8, 23).unwrap(),
+            first_leeway_minutes: -30,
+            max_accumulated_free_diff_minutes: -65,
+            max_accumulated_free_diff_date: NaiveDate::from_ymd_opt(2026, 8, 23).unwrap(),
+            max_accumulated_rho_diff: -0.50,
+            max_accumulated_rho_diff_date: NaiveDate::from_ymd_opt(2026, 8, 23).unwrap(),
+        },
+        alerts: CalendarAlerts {
+            has_today_deadline_leeway: true,
+            has_today_freetime_leeway: true,
+            has_today_new_task_leeway: true,
+            has_tomorrow_deadline_leeway: true,
+            has_tomorrow_freetime_leeway: true,
+            has_weekly_deadline_leeway: true,
+            has_weekly_freetime_leeway: true,
+        },
+    });
+    let mut writer = TraceWriter::default();
+
+    render_display_model(&mut writer, &display).unwrap();
+
+    assert_eq!(
+        writer.operations,
+        [
+            "newline:日          \t空          \t空差      \t空差比\t余差    \t余差累    \t〆差      \t〆差比\t空差累    \t単発余暇\t空差累比\tタスク数",
+            "newline:",
+            "newline:今のタスクが片付く日付: 0日後の2026-08-23",
+            "newline:最大の累積時間: -01時間05分 (2026-08-23), 最大のrhoの差: -0.50 (2026-08-23), 次にタスクを積める日付: 0日後の2026-08-23 (-0時間30分)",
+            "newline:",
+            "newline:[Info] 順調です。突発タスクに対応したり1日の終わり際にタスクを新しく積んだりする余裕があります。ひとまずは脇道に逸れずに予定の遂行をしてください。",
+            "newline:",
+        ]
+    );
+}
+
 struct AlwaysFailWriter;
 
 impl Write for AlwaysFailWriter {
