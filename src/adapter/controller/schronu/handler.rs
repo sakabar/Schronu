@@ -36,7 +36,7 @@ pub(super) enum FocusChange {
     SelectionMode(FocusSelection),
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub(super) struct CommandOutcome {
     pub(super) kind: CommandKind,
     pub(super) display: DisplayModel,

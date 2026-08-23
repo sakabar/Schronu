@@ -147,7 +147,55 @@ pub(super) struct TaskListDisplay {
     pub(super) category_denominator_seconds: i64,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
+pub(super) struct CalendarDayRow {
+    pub(super) date: NaiveDate,
+    pub(super) free_time_minutes: i64,
+    pub(super) free_time_diff_minutes: i64,
+    pub(super) adjustable_work_seconds: i64,
+    pub(super) rho_diff: f64,
+    pub(super) rho_goal_diff_minutes: i64,
+    pub(super) accumulated_rho_goal_diff_minutes: i64,
+    pub(super) deadline_diff_seconds: i64,
+    pub(super) deadline_ratio: f64,
+    pub(super) accumulated_free_diff_minutes: i64,
+    pub(super) non_repetitive_free_minutes: i64,
+    pub(super) accumulated_rho_diff: f64,
+    pub(super) task_count: usize,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub(super) struct CalendarSummary {
+    pub(super) last_synced_date: NaiveDate,
+    pub(super) first_caught_up_date: NaiveDate,
+    pub(super) first_leeway_date: NaiveDate,
+    pub(super) first_leeway_minutes: i64,
+    pub(super) max_accumulated_free_diff_minutes: i64,
+    pub(super) max_accumulated_free_diff_date: NaiveDate,
+    pub(super) max_accumulated_rho_diff: f64,
+    pub(super) max_accumulated_rho_diff_date: NaiveDate,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(super) struct CalendarAlerts {
+    pub(super) has_today_deadline_leeway: bool,
+    pub(super) has_today_freetime_leeway: bool,
+    pub(super) has_today_new_task_leeway: bool,
+    pub(super) has_tomorrow_deadline_leeway: bool,
+    pub(super) has_tomorrow_freetime_leeway: bool,
+    pub(super) has_weekly_deadline_leeway: bool,
+    pub(super) has_weekly_freetime_leeway: bool,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub(super) struct CalendarDisplay {
+    pub(super) rows: Vec<CalendarDayRow>,
+    pub(super) blank_line_weekday: Weekday,
+    pub(super) summary: CalendarSummary,
+    pub(super) alerts: CalendarAlerts,
+}
+
+#[derive(Clone, Debug, PartialEq)]
 pub(super) enum DisplayModel {
     Legacy {
         fragments: Vec<DisplayFragment>,
@@ -158,6 +206,7 @@ pub(super) enum DisplayModel {
     },
     Tree(TreeDisplay),
     TaskList(TaskListDisplay),
+    Calendar(CalendarDisplay),
     #[allow(dead_code)] // Composition boundary for later typed display models.
     Sequence(Vec<DisplayModel>),
 }
@@ -188,7 +237,7 @@ impl DisplayModel {
         match self {
             Self::Legacy { fragments } => fragments.is_empty(),
             Self::Message { .. } => false,
-            Self::Tree(_) | Self::TaskList(_) => false,
+            Self::Tree(_) | Self::TaskList(_) | Self::Calendar(_) => false,
             Self::Sequence(models) => models.iter().all(Self::is_empty),
         }
     }
@@ -197,7 +246,11 @@ impl DisplayModel {
     pub(super) fn fragments(&self) -> &[DisplayFragment] {
         match self {
             Self::Legacy { fragments } => fragments,
-            Self::Message { .. } | Self::Tree(_) | Self::TaskList(_) | Self::Sequence(_) => {
+            Self::Message { .. }
+            | Self::Tree(_)
+            | Self::TaskList(_)
+            | Self::Calendar(_)
+            | Self::Sequence(_) => {
                 unreachable!("semantic display models do not expose legacy fragments")
             }
         }
@@ -206,7 +259,11 @@ impl DisplayModel {
     fn legacy_fragments_mut(&mut self) -> &mut Vec<DisplayFragment> {
         match self {
             Self::Legacy { fragments } => fragments,
-            Self::Message { .. } | Self::Tree(_) | Self::TaskList(_) | Self::Sequence(_) => {
+            Self::Message { .. }
+            | Self::Tree(_)
+            | Self::TaskList(_)
+            | Self::Calendar(_)
+            | Self::Sequence(_) => {
                 unreachable!("DisplayRecorder always owns a legacy display model")
             }
         }
@@ -288,13 +345,14 @@ pub(super) fn render_display_model(
                 MessageLevel::Plain => "",
                 MessageLevel::Info => "[Info] ",
                 MessageLevel::Warn => "[Warn] ",
-                MessageLevel::Critical => "[Critical] ",
+                MessageLevel::Critical => "[Crit] ",
                 MessageLevel::Error => "[Error] ",
             };
             writer.writeln_newline(&format!("{prefix}{text}"))?;
         }
         DisplayModel::Tree(tree) => render_tree_display(writer, tree)?,
         DisplayModel::TaskList(task_list) => render_task_list_display(writer, task_list)?,
+        DisplayModel::Calendar(calendar) => render_calendar_display(writer, calendar)?,
         DisplayModel::Sequence(models) => {
             for model in models {
                 render_display_model(writer, model)?;
@@ -316,6 +374,137 @@ fn render_task_list_display(
         &display.category_work_seconds,
         display.category_denominator_seconds,
     ))?;
+    writer.writeln_newline("")?;
+    Ok(())
+}
+
+fn render_calendar_display(
+    writer: &mut dyn SchronuWriter,
+    display: &CalendarDisplay,
+) -> Result<(), std::io::Error> {
+    for (index, row) in display.rows.iter().rev().enumerate() {
+        writer.writeln_newline(&format_calendar_day_row(row))?;
+        if row.date.weekday() == display.blank_line_weekday && index + 1 < display.rows.len() {
+            writer.writeln_newline("")?;
+        }
+    }
+    writer.writeln_newline(
+        "日          \t空          \t空差      \t空差比\t余差    \t余差累    \t〆差      \t〆差比\t空差累    \t単発余暇\t空差累比\tタスク数",
+    )?;
+    writer.writeln_newline("")?;
+    render_calendar_summary(writer, &display.summary)?;
+    render_calendar_alerts(writer, display.alerts)?;
+    Ok(())
+}
+
+fn format_calendar_day_row(row: &CalendarDayRow) -> String {
+    let adjustable_rate = if row.adjustable_work_seconds == 0 {
+        "     ".to_string()
+    } else {
+        format!(
+            "({:02.0}%)",
+            row.adjustable_work_seconds as f64 / (row.free_time_minutes as f64 * 60.0) * 100.0
+        )
+    };
+    format!(
+        "{}({})\t{:4.1}時間\t{}{}\t{:5.2}\t{}\t{}\t{}\t{:5.2}\t{}\t{}\t{:5.2}\t{:02}[タスク]",
+        row.date,
+        weekday_jp(row.date.weekday()),
+        row.free_time_minutes as f64 / 60.0,
+        format_signed_duration(row.free_time_diff_minutes, false),
+        adjustable_rate,
+        row.rho_diff,
+        format_signed_duration(row.rho_goal_diff_minutes, false),
+        format_signed_duration(row.accumulated_rho_goal_diff_minutes, true),
+        format_signed_duration(row.deadline_diff_seconds / 60, false),
+        row.deadline_ratio,
+        format_signed_duration(row.accumulated_free_diff_minutes, true),
+        format_signed_duration(row.non_repetitive_free_minutes, true),
+        row.accumulated_rho_diff,
+        row.task_count,
+    )
+}
+
+fn format_signed_duration(minutes: i64, pad_hours: bool) -> String {
+    let sign = if minutes > 0 { ' ' } else { '-' };
+    let absolute_minutes = minutes.abs();
+    let hours = absolute_minutes / 60;
+    let minutes = absolute_minutes % 60;
+    if pad_hours {
+        format!("{sign}{hours:02}時間{minutes:02}分")
+    } else {
+        format!("{sign}{hours}時間{minutes:02}分")
+    }
+}
+
+fn render_calendar_summary(
+    writer: &mut dyn SchronuWriter,
+    summary: &CalendarSummary,
+) -> Result<(), std::io::Error> {
+    writer.writeln_newline(&format!(
+        "今のタスクが片付く日付: {}日後の{}",
+        (summary.first_caught_up_date - summary.last_synced_date).num_days(),
+        summary.first_caught_up_date,
+    ))?;
+    let max_sign = if summary.max_accumulated_free_diff_minutes >= 0 {
+        ' '
+    } else {
+        '-'
+    };
+    writer.writeln_newline(&format!(
+        "最大の累積時間: {}{:02}時間{:02}分 ({}), 最大のrhoの差: {:.2} ({}), 次にタスクを積める日付: {}日後の{} (-{}時間{:02}分)",
+        max_sign,
+        summary.max_accumulated_free_diff_minutes.abs() / 60,
+        summary.max_accumulated_free_diff_minutes.abs() % 60,
+        summary.max_accumulated_free_diff_date,
+        summary.max_accumulated_rho_diff,
+        summary.max_accumulated_rho_diff_date,
+        (summary.first_leeway_date - summary.last_synced_date).num_days(),
+        summary.first_leeway_date,
+        summary.first_leeway_minutes.abs() / 60,
+        summary.first_leeway_minutes.abs() % 60,
+    ))?;
+    writer.writeln_newline("")?;
+    Ok(())
+}
+
+fn render_calendar_alerts(
+    writer: &mut dyn SchronuWriter,
+    alerts: CalendarAlerts,
+) -> Result<(), std::io::Error> {
+    let mut is_all_favorable = true;
+    if !alerts.has_today_deadline_leeway {
+        writer.writeln_newline("[Crit] 【今日の】〆切に間に合いません。【ただちに】〆切をリスケする調整をしてください。")?;
+        is_all_favorable = false;
+    }
+    if alerts.has_today_freetime_leeway {
+        if !alerts.has_today_new_task_leeway {
+            writer.writeln_newline("[Warn] 脇道に逸れずに予定の遂行をしてください。見積もりを間違えたり突発タスクが発生したりした場合に終了予定時刻に間に合わなくなる可能性があります。")?;
+            is_all_favorable = false;
+        }
+    } else {
+        writer.writeln_newline("[Crit] 【今日の】終了予定時刻に間に合いません。【ただちに】どれかの予定を諦めて明日以降に延期してください。")?;
+        is_all_favorable = false;
+    }
+    if !alerts.has_tomorrow_deadline_leeway {
+        writer.writeln_newline("[Warn] 【明日の】〆切に間に合いません。〆切をあさって以降にリスケする調整を【今日中に】してください。")?;
+        is_all_favorable = false;
+    }
+    if !alerts.has_tomorrow_freetime_leeway {
+        writer.writeln_newline("[Warn] 【明日の】終了予定時刻に間に合いません。【今日中に】どれかの予定を諦めてあさって以降に延期してください。")?;
+        is_all_favorable = false;
+    }
+    if !alerts.has_weekly_deadline_leeway {
+        writer.writeln_newline("[Warn] 【1週間以内の】〆切に間に合いません。【近々】どれかの予定を諦めて来週以降に延期してください。")?;
+        is_all_favorable = false;
+    }
+    if !alerts.has_weekly_freetime_leeway {
+        writer.writeln_newline("[Warn] 【1週間以内の】終了予定時刻に間に合いません。【近々】どれかの予定を諦めて来週以降に延期してください。")?;
+        is_all_favorable = false;
+    }
+    if is_all_favorable {
+        writer.writeln_newline("[Info] 順調です。突発タスクに対応したり1日の終わり際にタスクを新しく積んだりする余裕があります。ひとまずは脇道に逸れずに予定の遂行をしてください。")?;
+    }
     writer.writeln_newline("")?;
     Ok(())
 }

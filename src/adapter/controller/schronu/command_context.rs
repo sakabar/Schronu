@@ -1364,10 +1364,8 @@ impl TaskTreeCommandContext for RuntimeTaskTreeCommandContext<'_, '_, '_> {
         )?;
         let legacy_display = legacy_display.model().clone();
         Ok(match (task_list, legacy_display.is_empty()) {
-            (Some(task_list), true) => DisplayModel::TaskList(task_list),
-            (Some(task_list), false) => {
-                DisplayModel::Sequence(vec![DisplayModel::TaskList(task_list), legacy_display])
-            }
+            (Some(display), true) => display,
+            (Some(display), false) => DisplayModel::Sequence(vec![display, legacy_display]),
             (None, _) => legacy_display,
         })
     }

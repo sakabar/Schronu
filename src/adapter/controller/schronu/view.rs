@@ -3,8 +3,9 @@ pub(super) use super::renderer::project_category_symbol;
 use super::renderer::{format_task_category_summary, format_task_list_row};
 use super::renderer::{
     format_task_list_columns, task_list_columns, weekday_jp, writeln_newline, AncestorTreeRow,
-    DebugTreeRow, LeafTreeRow, SchronuWriter, TaskCategoryWorkSeconds, TaskListDisplay,
-    TaskListIconMode, TaskListRow, TaskListTaskRow, TreeDisplay,
+    CalendarAlerts, CalendarDayRow, CalendarDisplay, CalendarSummary, DebugTreeRow, DisplayModel,
+    LeafTreeRow, SchronuWriter, TaskCategoryWorkSeconds, TaskListDisplay, TaskListIconMode,
+    TaskListRow, TaskListTaskRow, TreeDisplay,
 };
 use chrono::{DateTime, Datelike, Duration, Local, NaiveDate, Weekday};
 use regex::Regex;
@@ -88,7 +89,7 @@ const SECONDS_PER_DAY: i64 = 24 * 60 * 60;
 
 struct DailySummaryRow {
     date: NaiveDate,
-    calendar_message: String,
+    calendar_row: CalendarDayRow,
     band_message: String,
 }
 
@@ -770,7 +771,7 @@ pub(super) fn execute_show_all_tasks_with_config(
     pattern_opt: &Option<String>,
     display_order: TaskListDisplayOrder,
     config: &SchronuConfig,
-) -> Result<Option<TaskListDisplay>, ApplicationError> {
+) -> Result<Option<DisplayModel>, ApplicationError> {
     let supports_ansi_color = stdout.supports_ansi_color();
     let yyyymmdd_reg = Regex::new(r"^(\d{4})/(\d{2})/(\d{2})$").unwrap();
     let yyyymmdd_pattern_date = pattern_opt
@@ -1556,29 +1557,12 @@ pub(super) fn execute_show_all_tasks_with_config(
             first_leeway_duration = accumulate_duration_diff_to_goal_rho;
         }
 
-        let acc_diff_to_goal_sign: char =
-            if accumulate_duration_diff_to_goal_rho > Duration::minutes(0) {
-                ' '
-            } else {
-                '-'
-            };
-
         let diff_to_limit_in_day_sign: char =
             if total_estimated_work_hours_of_the_date > free_time_hours {
                 ' '
             } else {
                 '-'
             };
-        let diff_to_limit_hours_in_day: i64 = (total_estimated_work_hours_of_the_date
-            - free_time_hours)
-            .abs()
-            .floor() as i64;
-        let diff_to_limit_minutes_in_day: i64 =
-            (((total_estimated_work_hours_of_the_date - free_time_hours).abs()
-                - diff_to_limit_hours_in_day as f64)
-                * 60.0)
-                .floor() as i64;
-
         if !daily_summary_rows.is_empty()
             && accumulated_rho_diff.is_finite()
             && accumulated_rho_diff > max_accumulated_rho_diff
@@ -1590,38 +1574,11 @@ pub(super) fn execute_show_all_tasks_with_config(
         let deadline_rest_duration_seconds: i64 =
             deadline_estimated_work_seconds_map.get(date).unwrap_or(&0)
                 - (free_time_hours * 3600.0).floor() as i64;
-        let deadline_rest_hours = deadline_rest_duration_seconds.abs() / 3600;
-        let deadline_rest_minutes =
-            deadline_rest_duration_seconds.abs() / 60 - deadline_rest_hours * 60;
         let deadline_rest_sign: char = if deadline_rest_duration_seconds > 0 {
             ' '
         } else {
             '-'
         };
-
-        let indicator_about_deadline = format!(
-            "{}{:.0}時間{:02.0}分\t{:5.2}",
-            deadline_rest_sign,
-            deadline_rest_hours,
-            deadline_rest_minutes,
-            deadline_rest_duration_seconds as f64 / (free_time_hours * 60.0 * 60.0),
-        );
-
-        let non_repetitive_free_time_sign = if non_repetitive_free_time_hours >= 0.0 {
-            ' '
-        } else {
-            '-'
-        };
-        let indicator_about_diff_to_limit = format!(
-            "{}{:02}時間{:02}分\t{}{:02}時間{:02}分\t{:5.2}",
-            diff_to_limit_sign,
-            accumulate_duration_diff_to_limit.num_hours().abs(),
-            accumulate_duration_diff_to_limit.num_minutes().abs() % 60,
-            non_repetitive_free_time_sign,
-            non_repetitive_free_time_hours.abs().floor(),
-            (non_repetitive_free_time_hours.abs() * 60.0) as i64 % 60,
-            accumulated_rho_diff,
-        );
 
         // 順調フラグ確認
         if daily_summary_rows.is_empty() {
@@ -1661,42 +1618,26 @@ pub(super) fn execute_show_all_tasks_with_config(
                 / 3600.0
         };
 
-        let adjustable_estimated_work_rate = adjustable_estimated_work_hours / free_time_hours;
-
-        let adjustable_estimated_work_hours_str = if adjustable_estimated_work_hours == 0.0 {
-            // "({:02.0}%)"と同じ幅になるようにする
-            "     ".to_string()
+        let rho_goal_diff_minutes = if diff_to_goal > 0.0 {
+            (diff_to_goal_hour * 60.0 + diff_to_goal_minute.round()) as i64
         } else {
-            format!("({:02.0}%)", adjustable_estimated_work_rate * 100.0)
+            -(diff_to_goal_hour * 60.0 + diff_to_goal_minute.round()) as i64
         };
-
-        let s = format!(
-            "{}({})\t{:4.1}時間\t{}{:.0}時間{:02.0}分{}\t{:5.2}\t{}{:.0}時間{:02.0}分\t{}{:02}時間{:02}分\t{}\t{}\t{:02}[タスク]",
-            date,
-            weekday_jp,
-
-            free_time_hours,
-
-            diff_to_limit_in_day_sign,
-            diff_to_limit_hours_in_day,
-            diff_to_limit_minutes_in_day,
-            adjustable_estimated_work_hours_str,
-
-            rho_in_date - 1.0,
-
-            diff_to_goal_sign,
-            diff_to_goal_hour,
-            diff_to_goal_minute,
-
-            acc_diff_to_goal_sign,
-            accumulate_duration_diff_to_goal_rho.num_hours().abs(),
-            accumulate_duration_diff_to_goal_rho.num_minutes().abs() % 60,
-
-            indicator_about_deadline,
-            indicator_about_diff_to_limit,
-
-            cnt_of_the_date,
-        );
+        let calendar_row = CalendarDayRow {
+            date: **date,
+            free_time_minutes,
+            free_time_diff_minutes: over_time_duration.num_minutes(),
+            adjustable_work_seconds: (adjustable_estimated_work_hours * 3600.0).round() as i64,
+            rho_diff: rho_in_date - 1.0,
+            rho_goal_diff_minutes,
+            accumulated_rho_goal_diff_minutes: accumulate_duration_diff_to_goal_rho.num_minutes(),
+            deadline_diff_seconds: deadline_rest_duration_seconds,
+            deadline_ratio: deadline_rest_duration_seconds as f64 / (free_time_hours * 60.0 * 60.0),
+            accumulated_free_diff_minutes: accumulate_duration_diff_to_limit.num_minutes(),
+            non_repetitive_free_minutes: (non_repetitive_free_time_hours * 60.0) as i64,
+            accumulated_rho_diff,
+            task_count: cnt_of_the_date,
+        };
 
         let band_message =
             full_day_free_time_minutes_opt.map_or_else(String::new, |full_minutes| {
@@ -1719,7 +1660,7 @@ pub(super) fn execute_show_all_tasks_with_config(
 
         daily_summary_rows.push(DailySummaryRow {
             date: **date,
-            calendar_message: s,
+            calendar_row,
             band_message,
         });
     }
@@ -1746,20 +1687,47 @@ pub(super) fn execute_show_all_tasks_with_config(
             config.end_of_day_offset_minutes,
         )?;
         let category_work_seconds = task_category_work_seconds(project_category_summary);
-        Some(TaskListDisplay {
+        Some(DisplayModel::TaskList(TaskListDisplay {
             rows: task_list_display_rows
                 .into_iter()
                 .map(TaskListDisplayRow::into_display_row)
                 .collect(),
             category_work_seconds,
             category_denominator_seconds: project_category_denominator_seconds,
-        })
+        }))
     } else {
         None
     };
 
-    // 逆順にして、下側に直近の日付があるようにする
-    daily_summary_rows.reverse();
+    let calendar_display = is_calendar_func.then(|| {
+        DisplayModel::Calendar(CalendarDisplay {
+            rows: daily_summary_rows
+                .iter()
+                .map(|row| row.calendar_row.clone())
+                .collect(),
+            blank_line_weekday: config.calendar_blank_line_weekday,
+            summary: CalendarSummary {
+                last_synced_date: last_synced_time.date_naive(),
+                first_caught_up_date,
+                first_leeway_date,
+                first_leeway_minutes: first_leeway_duration.num_minutes(),
+                max_accumulated_free_diff_minutes: max_accumulate_duration_diff_to_limit
+                    .num_minutes(),
+                max_accumulated_free_diff_date: max_accumulate_duration_diff_to_limit_date,
+                max_accumulated_rho_diff,
+                max_accumulated_rho_diff_date,
+            },
+            alerts: CalendarAlerts {
+                has_today_deadline_leeway,
+                has_today_freetime_leeway,
+                has_today_new_task_leeway,
+                has_tomorrow_deadline_leeway,
+                has_tomorrow_freetime_leeway,
+                has_weekly_deadline_leeway,
+                has_weekly_freetime_leeway,
+            },
+        })
+    });
 
     let write_daily_summary = |stdout: &mut dyn SchronuWriter| {
         let clear_date_info = format!(
@@ -1846,38 +1814,9 @@ pub(super) fn execute_show_all_tasks_with_config(
         writeln_newline(stdout, "").unwrap();
     };
 
-    if is_calendar_func {
-        for (cal_ind, row) in daily_summary_rows.iter().enumerate() {
-            writeln_newline(stdout, &row.calendar_message).unwrap();
-
-            if row.calendar_message.contains(&format!(
-                "({})",
-                weekday_jp(config.calendar_blank_line_weekday)
-            )) && cal_ind != daily_summary_rows.len() - 1
-            {
-                writeln_newline(stdout, "").unwrap();
-            }
-        }
-        // フッター
-        let footer: String = [
-            "日          ",
-            "空          ",
-            "空差      ",
-            "空差比",
-            "余差    ",
-            "余差累    ",
-            "〆差      ",
-            "〆差比",
-            "空差累    ",
-            "単発余暇",
-            "空差累比",
-            "タスク数",
-        ]
-        .join("\t");
-        writeln_newline(stdout, &footer).unwrap();
-        writeln_newline(stdout, "").unwrap();
-        write_daily_summary(stdout);
-    } else if is_band_func {
+    if is_band_func {
+        // Bandのtyped model移行までは既存表示順を維持する。
+        daily_summary_rows.reverse();
         writeln_newline(stdout, &format_daily_band_legend(supports_ansi_color)).unwrap();
         writeln_newline(stdout, "").unwrap();
 
@@ -1900,5 +1839,5 @@ pub(super) fn execute_show_all_tasks_with_config(
     }
 
     writeln_newline(stdout, "").unwrap();
-    Ok(task_list_display)
+    Ok(task_list_display.or(calendar_display))
 }
