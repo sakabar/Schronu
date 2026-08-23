@@ -1,6 +1,6 @@
 use super::renderer::{
     format_spreadsheet_task_row, render_display_model, DisplayFragment, DisplayModel,
-    DisplayRecorder, ErrorCapturingWriter, SchronuWriter, SpreadsheetTaskRow,
+    DisplayRecorder, ErrorCapturingWriter, MessageLevel, SchronuWriter, SpreadsheetTaskRow,
 };
 use std::io::Write;
 
@@ -91,6 +91,46 @@ fn display_modelはrawとwriter固有newlineとansiとflushの順序を保持す
         ["raw:\x1b[31mraw", "newline:line", "raw:tail"]
     );
     assert_eq!(writer.flush_count, 1);
+}
+
+#[test]
+fn semantic_message_sequenceはlevelとwriter固有newlineの順序を保持する() {
+    let display = DisplayModel::Sequence(vec![
+        DisplayModel::Message {
+            level: MessageLevel::Plain,
+            text: "plain".to_string(),
+        },
+        DisplayModel::Message {
+            level: MessageLevel::Info,
+            text: "information".to_string(),
+        },
+        DisplayModel::Message {
+            level: MessageLevel::Warn,
+            text: "warning".to_string(),
+        },
+        DisplayModel::Message {
+            level: MessageLevel::Critical,
+            text: "critical".to_string(),
+        },
+        DisplayModel::Message {
+            level: MessageLevel::Error,
+            text: "failure".to_string(),
+        },
+    ]);
+    let mut writer = TraceWriter::default();
+
+    render_display_model(&mut writer, &display).unwrap();
+
+    assert_eq!(
+        writer.operations,
+        [
+            "newline:plain",
+            "newline:[Info] information",
+            "newline:[Warn] warning",
+            "newline:[Critical] critical",
+            "newline:[Error] failure",
+        ]
+    );
 }
 
 struct AlwaysFailWriter;
