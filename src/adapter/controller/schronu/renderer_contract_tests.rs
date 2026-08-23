@@ -2,7 +2,8 @@ use super::renderer::{
     format_spreadsheet_task_row, format_task_list_columns, render_display_model, task_list_columns,
     AncestorTreeRow, BandDayRow, BandDisplay, BandDurations, CalendarAlerts, CalendarDayRow,
     CalendarDisplay, CalendarSummary, DebugTreeRow, DisplayFragment, DisplayModel, DisplayRecorder,
-    ErrorCapturingWriter, LeafTreeRow, MessageLevel, PackDisplay, PackRow, SchronuWriter,
+    ErrorCapturingWriter, FlattenDisplay, FlattenReason, FlattenReasonSummary, FlattenRow,
+    FlattenUnresolvedDay, LeafTreeRow, MessageLevel, PackDisplay, PackRow, SchronuWriter,
     SpreadsheetTaskRow, TaskCategoryWorkSeconds, TaskListDisplay, TaskListIconMode, TaskListRow,
     TaskListTaskRow, TreeDisplay,
 };
@@ -763,6 +764,135 @@ fn pack_displayはtyped_row順と集計と空結果とskip件数を描画する(
     assert_eq!(
         skipped_writer.operations,
         ["newline:詰: 0件 00:00 (スキップ2件)"]
+    );
+}
+
+#[test]
+fn flatten_displayはtyped移動rowと超過warningと未解決理由を既存順で描画する() {
+    let first_task_id = Uuid::parse_str("11111111-1111-1111-1111-111111111111").unwrap();
+    let second_task_id = Uuid::parse_str("22222222-2222-2222-2222-222222222222").unwrap();
+    let representative_id = Uuid::parse_str("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa").unwrap();
+    let rows = vec![
+        FlattenRow {
+            source_date: NaiveDate::from_ymd_opt(2026, 8, 25).unwrap(),
+            target_date: NaiveDate::from_ymd_opt(2026, 8, 23).unwrap(),
+            work_seconds: 3_661,
+            priority: 9,
+            task_id: first_task_id,
+            name: "最初の平準化".to_string(),
+        },
+        FlattenRow {
+            source_date: NaiveDate::from_ymd_opt(2026, 8, 26).unwrap(),
+            target_date: NaiveDate::from_ymd_opt(2026, 8, 24).unwrap(),
+            work_seconds: 59,
+            priority: -2,
+            task_id: second_task_id,
+            name: "次の平準化".to_string(),
+        },
+    ];
+    let display = DisplayModel::Flatten(FlattenDisplay {
+        rows: rows.clone(),
+        overflowed_task_count: 2,
+        overflowed_work_seconds: 3_661,
+        had_overload: true,
+        unresolved_days: vec![
+            FlattenUnresolvedDay {
+                date: NaiveDate::from_ymd_opt(2026, 8, 27).unwrap(),
+                excess_work_seconds: 1,
+                reasons: vec![
+                    FlattenReasonSummary {
+                        reason: FlattenReason::OnOtherSide,
+                        task_count: 1,
+                        representative_task_id: Some(representative_id),
+                        representative_task_name: Some("代表task".to_string()),
+                    },
+                    FlattenReasonSummary {
+                        reason: FlattenReason::CrossesBusinessDay,
+                        task_count: 2,
+                        representative_task_id: Some(representative_id),
+                        representative_task_name: None,
+                    },
+                    FlattenReasonSummary {
+                        reason: FlattenReason::ExceedsDailyCapacity,
+                        task_count: 3,
+                        representative_task_id: None,
+                        representative_task_name: Some("名前だけ".to_string()),
+                    },
+                    FlattenReasonSummary {
+                        reason: FlattenReason::OwnDeadline,
+                        task_count: 4,
+                        representative_task_id: None,
+                        representative_task_name: None,
+                    },
+                    FlattenReasonSummary {
+                        reason: FlattenReason::RelatedDeadline,
+                        task_count: 5,
+                        representative_task_id: None,
+                        representative_task_name: None,
+                    },
+                    FlattenReasonSummary {
+                        reason: FlattenReason::Other,
+                        task_count: 6,
+                        representative_task_id: None,
+                        representative_task_name: None,
+                    },
+                ],
+            },
+            FlattenUnresolvedDay {
+                date: NaiveDate::from_ymd_opt(2026, 8, 28).unwrap(),
+                excess_work_seconds: 3_599,
+                reasons: vec![FlattenReasonSummary {
+                    reason: FlattenReason::Other,
+                    task_count: 7,
+                    representative_task_id: None,
+                    representative_task_name: None,
+                }],
+            },
+        ],
+    });
+    let mut writer = TraceWriter::default();
+
+    render_display_model(&mut writer, &display).unwrap();
+
+    assert_eq!(
+        writer.operations,
+        [
+            "newline:平\t2026-08-25\t2026-08-23\t01:01\t優先度9\t11111111-1111-1111-1111-111111111111\t最初の平準化",
+            "newline:平\t2026-08-26\t2026-08-24\t00:00\t優先度-2\t22222222-2222-2222-2222-222222222222\t次の平準化",
+            "newline:平: 2件 01:02 (未解決2日)",
+            "newline:[Warn] 35日後の退避先は日次容量の上限を適用していません: 2件 01:01",
+            "newline:[Warn] 平\t2026-08-27\t未解決 00:01",
+            "newline:  相手待ち: 1件",
+            "newline:    aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa\t代表task",
+            "newline:  業務日境界をまたぐ: 2件",
+            "newline:  1日の最大容量を超える: 3件",
+            "newline:  自身の期限により翌日06:00を維持できない: 4件",
+            "newline:  仮延期によって関連taskの期限を超える: 5件",
+            "newline:  その他: 6件",
+            "newline:[Warn] 平\t2026-08-28\t未解決 01:00",
+            "newline:  その他: 7件",
+        ]
+    );
+
+    let mut no_overload_writer = TraceWriter::default();
+    render_display_model(
+        &mut no_overload_writer,
+        &DisplayModel::Flatten(FlattenDisplay {
+            rows,
+            overflowed_task_count: 9,
+            overflowed_work_seconds: 9_999,
+            had_overload: false,
+            unresolved_days: vec![],
+        }),
+    )
+    .unwrap();
+    assert_eq!(
+        no_overload_writer.operations,
+        [
+            "newline:平\t2026-08-25\t2026-08-23\t01:01\t優先度9\t11111111-1111-1111-1111-111111111111\t最初の平準化",
+            "newline:平\t2026-08-26\t2026-08-24\t00:00\t優先度-2\t22222222-2222-2222-2222-222222222222\t次の平準化",
+            "newline:[Info] 100%を超過している日はありません。",
+        ]
     );
 }
 
