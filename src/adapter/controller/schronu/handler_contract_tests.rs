@@ -3,8 +3,9 @@ use super::handler::{
     decide_finish_time_values, decide_time_values, handle, handle_breakdown_split_command,
     handle_command, handle_defer_command, handle_finish_placement_command, handle_project_command,
     handle_task_attribute_command, handle_task_tree_command, CommandContext, DeferCommandContext,
-    DeferCommandError, ExternalRequest, FinishPlacementCommandContext, FocusRequest, HandlerError,
-    ProjectCommandContext, TaskAttributeCommandContext, TaskListOrder, TaskTreeCommandContext,
+    DeferCommandError, ExternalRequest, FinishPlacementCommandContext, FocusChange, FocusRequest,
+    FocusSelection, HandlerError, ProjectCommandContext, TaskAttributeCommandContext,
+    TaskListOrder, TaskTreeCommandContext,
 };
 use super::renderer::{
     render_display_model, DisplayFragment, DisplayModel, DisplayRecorder, SchronuWriter,
@@ -1559,7 +1560,11 @@ fn 全command_groupは単一handler入口からtyped_contextへdispatchされる
 
     let outcomes = commands
         .iter()
-        .map(|command| handle_command(command, &mut context).unwrap())
+        .map(|command| {
+            handle_command(command, &mut context)
+                .unwrap()
+                .expect("normal command must produce an outcome")
+        })
         .collect::<Vec<_>>();
 
     assert_eq!(
@@ -1604,19 +1609,24 @@ fn noopとopenとfocusも単一handler入口からstructured_outcomeを返す() 
     let now = Local.with_ymd_and_hms(2026, 8, 23, 12, 0, 0).unwrap();
     let mut context = CompositeTraceContext::new(now);
 
-    let noop = handle_command(&Command::Noop, &mut context).unwrap();
+    let noop = handle_command(&Command::Noop, &mut context)
+        .unwrap()
+        .expect("noop must produce an outcome");
     assert_eq!(noop.kind, CommandKind::Noop);
     assert!(noop.display.is_empty());
+    assert_eq!(noop.focus_change, FocusChange::Keep);
 
     let open = handle_command(
         &no_arguments(CommandKind::Open, "ignored alias"),
         &mut context,
     )
-    .unwrap();
+    .unwrap()
+    .expect("open must produce an outcome");
     assert_eq!(
         open.external_request,
         Some(ExternalRequest::OpenFocusedLink)
     );
+    assert_eq!(open.focus_change, FocusChange::Keep);
 
     let focus = handle_command(
         &Command::Action(CommandAction::FocusMode {
@@ -1626,16 +1636,49 @@ fn noopとopenとfocusも単一handler入口からstructured_outcomeを返す() 
         }),
         &mut context,
     )
-    .unwrap();
+    .unwrap()
+    .expect("focus selection mode must produce an outcome");
     assert_eq!(
-        focus.focus_request,
-        Some(FocusRequest::LowestPriority { recent_days: 3 })
+        focus.focus_change,
+        FocusChange::SelectionMode(FocusSelection::LowestPriority { recent_days: 3 })
     );
 
     let task_id = Uuid::from_u128(77);
-    let focus_task = handle_command(&Command::Focus { task_id }, &mut context).unwrap();
+    let focus_task = handle_command(&Command::Focus { task_id }, &mut context)
+        .unwrap()
+        .expect("explicit focus must produce an outcome");
     assert_eq!(focus_task.kind, CommandKind::Focus);
-    assert_eq!(context.task_tree.calls, [format!("focus:{task_id}")]);
+    assert_eq!(focus_task.focus_change, FocusChange::Set(task_id));
+
+    let unfocus = handle_command(
+        &no_arguments(CommandKind::Unfocus, "ignored alias"),
+        &mut context,
+    )
+    .unwrap()
+    .expect("unfocus must produce an outcome");
+    assert_eq!(unfocus.focus_change, FocusChange::Clear);
+
+    let highest = handle_command(
+        &Command::Action(CommandAction::FocusMode {
+            kind: CommandKind::FocusHighest,
+            canonical_name: "ignored alias",
+            recent_days: None,
+        }),
+        &mut context,
+    )
+    .unwrap()
+    .expect("highest focus selection mode must produce an outcome");
+    assert_eq!(
+        highest.focus_change,
+        FocusChange::SelectionMode(FocusSelection::HighestPriority)
+    );
+
+    let verify = handle_command(
+        &no_arguments(CommandKind::Verify, "ignored alias"),
+        &mut context,
+    )
+    .unwrap();
+    assert!(verify.is_none(), "verify remains owned by runtime");
 }
 
 #[test]
