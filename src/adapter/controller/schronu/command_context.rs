@@ -1086,7 +1086,6 @@ pub(super) fn read_project_category_command_arg(s: &str) -> Option<Option<Projec
     }
 }
 
-#[allow(clippy::too_many_arguments)]
 pub(super) struct RuntimeProjectCommandContext<'repository, 'factory, 'generator> {
     pub(super) task_repository: &'repository mut dyn TaskRepositoryTrait,
     pub(super) focused_task_id_opt: &'repository mut Option<Uuid>,
