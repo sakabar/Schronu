@@ -1730,6 +1730,24 @@ fn task_list通常表示はcategory集計後の2空行をwriter固有newlineで�
 }
 
 #[test]
+fn 単発filterはtask名の繰返表示文字列ではなくtyped反復属性を使う() {
+    let now = Local.with_ymd_and_hms(2026, 8, 11, 12, 0, 0).unwrap();
+    let task = new_test_task_handle("名前に【繰】を含む単発task").unwrap();
+    task.set_estimated_work_seconds(30 * 60);
+    task.set_start_time(now);
+    task.set_pending_until(now);
+    task.set_orig_status(Status::Pending);
+
+    let result = execute_command_for_test(task, now, None, "単");
+
+    assert!(
+        result.output.contains("名前に【繰】を含む単発task"),
+        "typed反復属性がないtaskは名前に表示markerを含んでも単発として表示する: {}",
+        result.output
+    );
+}
+
+#[test]
 fn test_execute_all_締切順の予定時刻を表示する() {
     let now = Local.with_ymd_and_hms(2026, 8, 11, 12, 0, 0).unwrap();
     let root_task = new_test_task_handle("親タスク").unwrap();

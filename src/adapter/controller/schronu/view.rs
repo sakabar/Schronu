@@ -1193,8 +1193,7 @@ pub(super) fn execute_show_all_tasks_with_config(
                         }
                     } else if pattern == "単" {
                         // non_repetitive (単発) のタスクのみを表示する
-                        // FIXME 【繰】が2ヶ所に登場していて危ない
-                        if !msg.contains("【繰】") {
+                        if inherited_repetition_interval_days_opt.is_none() {
                             task_list_display_rows.push(task_list_display_row.clone());
                         }
                     } else if days_of_week.contains(&pattern.as_str()) {
