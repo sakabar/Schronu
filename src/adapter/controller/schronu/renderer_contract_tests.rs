@@ -1,9 +1,11 @@
 use super::renderer::{
     format_spreadsheet_task_row, render_display_model, AncestorTreeRow, DebugTreeRow,
     DisplayFragment, DisplayModel, DisplayRecorder, ErrorCapturingWriter, LeafTreeRow,
-    MessageLevel, SchronuWriter, SpreadsheetTaskRow, TreeDisplay,
+    MessageLevel, SchronuWriter, SpreadsheetTaskRow, TaskCategoryWorkSeconds, TaskListDisplay,
+    TaskListRow, TaskListTaskRow, TreeDisplay,
 };
-use chrono::NaiveDate;
+use chrono::{Local, NaiveDate, TimeZone};
+use schronu::entity::task::ProjectCategory;
 use std::io::Write;
 use uuid::Uuid;
 
@@ -204,6 +206,101 @@ fn tree_displayはtyped_rowから既存のraw空行とwriter固有newlineを生�
             "newline:",
         ]
     );
+}
+
+#[test]
+fn task_list_displayはtyped_rowからa_j列とカテゴリ集計を既存順序で生成する() {
+    let first_task_id = Uuid::parse_str("11111111-1111-1111-1111-111111111111").unwrap();
+    let second_task_id = Uuid::parse_str("22222222-2222-2222-2222-222222222222").unwrap();
+    let display = DisplayModel::TaskList(TaskListDisplay {
+        rows: vec![
+            TaskListRow::Task(TaskListTaskRow {
+                rank: 1,
+                task_id: first_task_id,
+                icon: "!".to_string(),
+                remaining_time: "____-01:20".to_string(),
+                scheduled_start: Local.with_ymd_and_hms(2026, 8, 23, 9, 0, 0).unwrap(),
+                scheduled_end: Local.with_ymd_and_hms(2026, 8, 23, 9, 40, 0).unwrap(),
+                priority_rank: 0,
+                estimated_minutes: 40,
+                project_number_priority: 1,
+                project_category: Some(ProjectCategory::Sustaining),
+                task_name: "夕食 の 準備".to_string(),
+                give_up_candidate: true,
+            }),
+            TaskListRow::Gap { minutes: 15 },
+            TaskListRow::Message {
+                text: "予定外の案内".to_string(),
+            },
+            TaskListRow::Task(TaskListTaskRow {
+                rank: 2,
+                task_id: second_task_id,
+                icon: "/".to_string(),
+                remaining_time: "____/__/__".to_string(),
+                scheduled_start: Local.with_ymd_and_hms(2026, 8, 23, 10, 0, 0).unwrap(),
+                scheduled_end: Local.with_ymd_and_hms(2026, 8, 23, 10, 5, 0).unwrap(),
+                priority_rank: 3,
+                estimated_minutes: 5,
+                project_number_priority: 8,
+                project_category: None,
+                task_name: "短い task".to_string(),
+                give_up_candidate: false,
+            }),
+        ],
+        category_work_seconds: vec![
+            TaskCategoryWorkSeconds {
+                project_category: Some(ProjectCategory::Earning),
+                seconds: 3600,
+            },
+            TaskCategoryWorkSeconds {
+                project_category: Some(ProjectCategory::Sustaining),
+                seconds: 0,
+            },
+            TaskCategoryWorkSeconds {
+                project_category: Some(ProjectCategory::Recovery),
+                seconds: 0,
+            },
+            TaskCategoryWorkSeconds {
+                project_category: Some(ProjectCategory::Investment),
+                seconds: 1800,
+            },
+            TaskCategoryWorkSeconds {
+                project_category: Some(ProjectCategory::Consumption),
+                seconds: 0,
+            },
+            TaskCategoryWorkSeconds {
+                project_category: None,
+                seconds: 1800,
+            },
+        ],
+        category_denominator_seconds: 7200,
+    });
+    let mut writer = TraceWriter::default();
+
+    render_display_model(&mut writer, &display).unwrap();
+
+    assert_eq!(
+        writer.operations,
+        [
+            "newline:0001 11111111-1111-1111-1111-111111111111 A ____-01:20 08/23(日)-09:00~09:40 0 40 01 維 夕食 の 準備",
+            "newline:---- ------------------------------------ - ---------- --------------------- - -- -- 15分間の空き時間",
+            "newline:予定外の案内",
+            "newline:0002 22222222-2222-2222-2222-222222222222 / ____/__/__ 08/23(日)-10:00~10:05 3 05 08 _ 短い task",
+            "newline:",
+            "newline:予定カテゴリ: 獲得 1.0時間(50% | 50%) / 維持 0.0時間(0% | 50%) / 回復 0.0時間(0% | 50%) / 投資 0.5時間(25% | 75%) / 消費 0.0時間(0% | 75%) / 未分類 0.5時間(25% | 100%)",
+            "newline:",
+        ]
+    );
+
+    let first_task_line = writer.operations[0]
+        .strip_prefix("newline:")
+        .expect("task row must use writer-specific newline");
+    let columns = first_task_line
+        .splitn(10, char::is_whitespace)
+        .collect::<Vec<_>>();
+    assert_eq!(columns.len(), 10, "Spreadsheet連携はA-Jの10列");
+    assert_eq!(columns[8], "維", "I列はcategory");
+    assert_eq!(columns[9], "夕食 の 準備", "J列はtask_name");
 }
 
 struct AlwaysFailWriter;
