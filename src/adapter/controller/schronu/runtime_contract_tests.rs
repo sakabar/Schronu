@@ -6336,6 +6336,36 @@ fn test_make_messages_about_focus_見積時間が0なら進捗を未算定とし
 }
 
 #[test]
+fn test_render_focused_task_focus描画後に1回flushする() {
+    let now = Local.with_ymd_and_hms(2026, 8, 23, 12, 20, 0).unwrap();
+    let focus_started_datetime = Local.with_ymd_and_hms(2026, 8, 23, 12, 0, 0).unwrap();
+    let task = new_test_task_handle("flush契約のFocus").unwrap();
+    task.set_estimated_work_seconds(60 * 60);
+    task.set_actual_work_seconds(10 * 60);
+    let task_id = task.get_id().unwrap();
+    let repository = TestTaskRepository::new(task, now);
+    let mut writer = FlushTrackingWriter::successful(false);
+    let mut last_focused_task_id_opt = None;
+    let mut actual_focus_started_datetime = focus_started_datetime;
+
+    render_focused_task(
+        &mut writer,
+        &repository,
+        Some(task_id),
+        &mut last_focused_task_id_opt,
+        &mut actual_focus_started_datetime,
+        now,
+    );
+
+    assert!(
+        String::from_utf8(writer.buffer.clone())
+            .unwrap()
+            .contains("focused task is:")
+    );
+    assert_eq!(writer.flush_count, 1);
+}
+
+#[test]
 fn test_render_interactive_screen_起動時と自動更新時の既定表示は帯() {
     let now = Local.with_ymd_and_hms(2026, 8, 12, 12, 0, 0).unwrap();
     let task = new_test_task_handle("対話画面表示対象").unwrap();
