@@ -6,7 +6,7 @@ use super::renderer::{
     BandDayRow, BandDisplay, BandDurations, CalendarAlerts, CalendarDayRow, CalendarDisplay,
     CalendarSummary, DebugTreeRow, DisplayModel, LeafTreeRow, SchronuWriter,
     TaskCategoryWorkSeconds, TaskListDisplay, TaskListIconMode, TaskListRow, TaskListTaskRow,
-    TreeDisplay,
+    TreeDisplay, BAND_SECONDS_PER_DAY,
 };
 use chrono::{DateTime, Datelike, Duration, Local, NaiveDate};
 use regex::Regex;
@@ -83,8 +83,6 @@ pub(super) enum TaskListDisplayOrder {
     LowPriorityTail,
 }
 
-const SECONDS_PER_DAY: i64 = 24 * 60 * 60;
-
 struct DailySummaryRow {
     calendar_row: CalendarDayRow,
     band_row: Option<BandDayRow>,
@@ -99,7 +97,7 @@ pub(super) fn calculate_daily_band_durations(
     diff_to_goal_hours: f64,
 ) -> BandDurations {
     BandDurations {
-        fixed_seconds: (SECONDS_PER_DAY - full_day_free_minutes.max(0) * 60).max(0),
+        fixed_seconds: (BAND_SECONDS_PER_DAY - full_day_free_minutes.max(0) * 60).max(0),
         elapsed_seconds: if is_today {
             (full_day_free_minutes - remaining_free_minutes).max(0) * 60
         } else {

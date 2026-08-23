@@ -428,7 +428,7 @@ fn render_calendar_display(
 
 const BAND_SECONDS_PER_SEGMENT: i64 = 15 * 60;
 pub(super) const BAND_SEGMENTS: usize = 24 * 4;
-const SECONDS_PER_DAY: i64 = 24 * 60 * 60;
+pub(super) const BAND_SECONDS_PER_DAY: i64 = BAND_SEGMENTS as i64 * BAND_SECONDS_PER_SEGMENT;
 
 fn render_band_display(
     writer: &mut dyn SchronuWriter,
@@ -505,15 +505,15 @@ pub(super) fn format_band_day_row(row: &BandDayRow, supports_ansi_color: bool) -
     let used_seconds = categories
         .iter()
         .fold(0_i64, |sum, (_, seconds)| sum.saturating_add(*seconds));
-    let empty_seconds = SECONDS_PER_DAY.saturating_sub(used_seconds);
-    let overflow_seconds = used_seconds.saturating_sub(SECONDS_PER_DAY);
+    let empty_seconds = BAND_SECONDS_PER_DAY.saturating_sub(used_seconds);
+    let overflow_seconds = used_seconds.saturating_sub(BAND_SECONDS_PER_DAY);
     let mut bar = String::with_capacity(BAND_SEGMENTS);
     let mut cumulative_seconds = 0_i64;
     let mut previous_boundary = 0_usize;
     for (symbol, seconds) in categories.into_iter().chain([('.', empty_seconds)]) {
         cumulative_seconds = cumulative_seconds.saturating_add(seconds);
-        let boundary =
-            round_band_segment_count(cumulative_seconds.min(SECONDS_PER_DAY)).min(BAND_SEGMENTS);
+        let boundary = round_band_segment_count(cumulative_seconds.min(BAND_SECONDS_PER_DAY))
+            .min(BAND_SEGMENTS);
         bar.push_str(&format_band_segment(
             symbol,
             boundary - previous_boundary,
