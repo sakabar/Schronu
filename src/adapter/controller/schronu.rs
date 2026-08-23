@@ -1,6 +1,9 @@
 #[path = "schronu/command.rs"]
 mod command;
 
+#[path = "schronu/command_context.rs"]
+mod command_context;
+
 #[path = "schronu/handler.rs"]
 mod handler;
 
