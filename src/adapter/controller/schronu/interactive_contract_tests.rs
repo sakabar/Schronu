@@ -80,11 +80,15 @@ fn function_region_from_offset(source: &str, start: usize) -> &str {
     let signature_end = tail.find('\n').map_or(tail.len(), |offset| offset + 1);
     let mut end = tail.len();
     let mut line_start = signature_end;
+    let mut non_code_state = MultilineNonCodeState::default();
     for line in tail[signature_end..].split_inclusive('\n') {
-        if is_top_level_rust_item(line.trim_end_matches('\n')) {
+        if !non_code_state.starts_in_non_code()
+            && is_top_level_rust_item(line.trim_end_matches('\n'))
+        {
             end = line_start;
             break;
         }
+        non_code_state.scan_line(line);
         line_start += line.len();
     }
     &tail[..end]
@@ -94,76 +98,114 @@ fn top_level_function_definition_offsets(source: &str, function_name: &str) -> V
     let marker = format!("fn {function_name}(");
     let mut offsets = Vec::new();
     let mut line_start = 0;
-    let mut raw_string_terminator_opt: Option<String> = None;
-    let mut block_comment_depth = 0usize;
+    let mut non_code_state = MultilineNonCodeState::default();
 
     for line in source.split_inclusive('\n') {
-        let starts_in_non_code = raw_string_terminator_opt.is_some() || block_comment_depth > 0;
-        if !starts_in_non_code && is_top_level_function_definition(line.trim_end(), function_name) {
+        if !non_code_state.starts_in_non_code()
+            && is_top_level_function_definition(line.trim_end(), function_name)
+        {
             let marker_offset = line
                 .find(&marker)
                 .expect("matching function signature must contain its marker");
             offsets.push(line_start + marker_offset);
         }
-        update_multiline_non_code_state(
-            line,
-            &mut raw_string_terminator_opt,
-            &mut block_comment_depth,
-        );
+        non_code_state.scan_line(line);
         line_start += line.len();
     }
     offsets
 }
 
-fn update_multiline_non_code_state(
-    line: &str,
-    raw_string_terminator_opt: &mut Option<String>,
-    block_comment_depth: &mut usize,
-) {
-    if let Some(terminator) = raw_string_terminator_opt.as_ref() {
-        if line.contains(terminator.as_str()) {
-            *raw_string_terminator_opt = None;
-        }
-        return;
+#[derive(Default)]
+struct MultilineNonCodeState {
+    raw_string_terminator_opt: Option<String>,
+    block_comment_depth: usize,
+    in_quoted_string: bool,
+}
+
+impl MultilineNonCodeState {
+    fn starts_in_non_code(&self) -> bool {
+        self.raw_string_terminator_opt.is_some()
+            || self.block_comment_depth > 0
+            || self.in_quoted_string
     }
 
-    let mut remaining = line;
-    while let Some(start) = remaining.find("/*") {
-        *block_comment_depth += 1;
-        remaining = &remaining[start + 2..];
-    }
-    for _ in 0..line.matches("*/").count() {
-        *block_comment_depth = block_comment_depth.saturating_sub(1);
-    }
+    fn scan_line(&mut self, line: &str) {
+        let bytes = line.as_bytes();
+        let mut index = 0;
+        while index < bytes.len() {
+            if let Some(terminator) = self.raw_string_terminator_opt.as_ref() {
+                if bytes[index..].starts_with(terminator.as_bytes()) {
+                    index += terminator.len();
+                    self.raw_string_terminator_opt = None;
+                } else {
+                    index += 1;
+                }
+                continue;
+            }
 
-    if let Some((opener_start, hash_count)) = raw_string_opener(line) {
-        let terminator = format!("\"{}", "#".repeat(hash_count));
-        let after_opener = &line[opener_start + hash_count + 2..];
-        if !after_opener.contains(&terminator) {
-            *raw_string_terminator_opt = Some(terminator);
+            if self.block_comment_depth > 0 {
+                if bytes[index..].starts_with(b"/*") {
+                    self.block_comment_depth += 1;
+                    index += 2;
+                } else if bytes[index..].starts_with(b"*/") {
+                    self.block_comment_depth -= 1;
+                    index += 2;
+                } else {
+                    index += 1;
+                }
+                continue;
+            }
+
+            if self.in_quoted_string {
+                if bytes[index] == b'\\' {
+                    index = (index + 2).min(bytes.len());
+                } else if bytes[index] == b'"' {
+                    self.in_quoted_string = false;
+                    index += 1;
+                } else {
+                    index += 1;
+                }
+                continue;
+            }
+
+            if bytes[index..].starts_with(b"//") {
+                break;
+            }
+            if bytes[index..].starts_with(b"/*") {
+                self.block_comment_depth = 1;
+                index += 2;
+                continue;
+            }
+            if let Some((opener_length, terminator)) = raw_string_opener_at(line, index) {
+                self.raw_string_terminator_opt = Some(terminator);
+                index += opener_length;
+                continue;
+            }
+            if bytes[index] == b'"' {
+                self.in_quoted_string = true;
+            }
+            index += 1;
         }
     }
 }
 
-fn raw_string_opener(line: &str) -> Option<(usize, usize)> {
-    for (index, _) in line.match_indices('r') {
-        if line[..index]
-            .chars()
-            .next_back()
-            .is_some_and(|character| character.is_alphanumeric() || character == '_')
-        {
-            continue;
-        }
-        let suffix = &line[index + 1..];
-        let hash_count = suffix
-            .chars()
-            .take_while(|character| *character == '#')
-            .count();
-        if suffix[hash_count..].starts_with('"') {
-            return Some((index, hash_count));
-        }
+fn raw_string_opener_at(line: &str, index: usize) -> Option<(usize, String)> {
+    let bytes = line.as_bytes();
+    if bytes.get(index) != Some(&b'r') {
+        return None;
     }
-    None
+    if index > 0 && (bytes[index - 1].is_ascii_alphanumeric() || bytes[index - 1] == b'_') {
+        return None;
+    }
+    let mut quote_index = index + 1;
+    while bytes.get(quote_index) == Some(&b'#') {
+        quote_index += 1;
+    }
+    if bytes.get(quote_index) != Some(&b'"') {
+        return None;
+    }
+    let hash_count = quote_index - index - 1;
+    Some((hash_count + 2, format!("\"{}", "#".repeat(hash_count))))
 }
 
 fn is_top_level_rust_item(line: &str) -> bool {
@@ -315,8 +357,7 @@ fn interactiveとnoninteractiveは単一のparsed_command_dispatcherを共有す
 
 #[test]
 fn function_regionはpub_superの次item前で切れる() {
-    let source =
-        "fn target() {\n    shared_dispatch();\n}\npub(super) fn next() {\n    bypass();\n}\n";
+    let source = "fn target() {\n    let raw = r#\"\nfn fake() {}\nstruct Fake;\n\"#;\n    shared_dispatch();\n}\npub(super) fn next() {\n    bypass();\n}\n";
     let sources = [ControllerProductSource {
         path: PathBuf::from("fixture.rs"),
         text: source.to_string(),
@@ -324,9 +365,25 @@ fn function_regionはpub_superの次item前で切れる() {
 
     let (_, region) = unique_function_region(&sources, "target").unwrap();
 
+    assert!(region.contains("fn fake() {}"));
+    assert!(region.contains("struct Fake;"));
     assert!(region.contains("shared_dispatch();"));
     assert!(!region.contains("pub(super) fn next"));
     assert!(!region.contains("bypass();"));
+}
+
+#[test]
+fn unique_function_regionはblock_comment内のraw_openerを無視する() {
+    let sources = [ControllerProductSource {
+        path: PathBuf::from("fixture.rs"),
+        text: "/*\nr#\"\nfn target() {}\n*/\nfn target() {\n    shared_dispatch();\n}\n"
+            .to_string(),
+    }];
+
+    let (path, region) = unique_function_region(&sources, "target").unwrap();
+
+    assert_eq!(path, Path::new("fixture.rs"));
+    assert!(region.contains("shared_dispatch();"));
 }
 
 #[test]
