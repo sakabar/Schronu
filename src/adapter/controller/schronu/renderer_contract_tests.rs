@@ -3,12 +3,12 @@ use super::renderer::{
     AncestorTreeRow, BandDayRow, BandDisplay, BandDurations, CalendarAlerts, CalendarDayRow,
     CalendarDisplay, CalendarSummary, DebugTreeRow, DisplayFragment, DisplayModel, DisplayRecorder,
     ErrorCapturingWriter, FlattenDisplay, FlattenReason, FlattenReasonSummary, FlattenRow,
-    FlattenUnresolvedDay, LeafTreeRow, MessageLevel, PackDisplay, PackRow, SchronuWriter,
-    SpreadsheetTaskRow, TaskCategoryWorkSeconds, TaskListDisplay, TaskListIconMode, TaskListRow,
-    TaskListTaskRow, TreeDisplay,
+    FlattenUnresolvedDay, FocusDisplay, LeafTreeRow, MessageLevel, PackDisplay, PackRow,
+    SchronuWriter, SpreadsheetTaskRow, TaskCategoryWorkSeconds, TaskListDisplay, TaskListIconMode,
+    TaskListRow, TaskListTaskRow, TreeDisplay,
 };
 use chrono::{Local, NaiveDate, TimeZone, Weekday};
-use schronu::entity::task::ProjectCategory;
+use schronu::entity::task::{ProjectCategory, TaskAttr};
 use std::io::Write;
 use uuid::Uuid;
 
@@ -890,6 +890,104 @@ fn flatten_displayはtyped移動rowと超過warningと未解消理由を既存�
         no_overload_writer.operations,
         ["newline:[Info] 100%を超過している日はありません。"]
     );
+}
+
+#[test]
+fn focus_displayはtyped属性からancestorと残り時間とprogress境界を描画する() {
+    let focus_started_at = Local.with_ymd_and_hms(2026, 7, 25, 12, 0, 0).unwrap();
+    let task_id = Uuid::parse_str("11111111-1111-1111-1111-111111111111").unwrap();
+    let mut task_attr = TaskAttr::with_identity("フォーカス対象", task_id, focus_started_at);
+    task_attr.set_estimated_work_seconds(60 * 60);
+    task_attr.set_actual_work_seconds(10 * 60);
+    let task_debug = format!("{task_attr:?}");
+    let display = DisplayModel::Focus(FocusDisplay {
+        ancestors: vec![AncestorTreeRow {
+            level: 0,
+            task_id,
+            first_available_date: NaiveDate::from_ymd_opt(2026, 7, 25).unwrap(),
+            estimated_minutes: 60,
+            name: "フォーカス対象".to_string(),
+        }],
+        project_category: Some(ProjectCategory::Investment),
+        task_attr,
+        estimated_work_seconds: 60 * 60,
+        actual_work_seconds: 10 * 60,
+        focus_started_at,
+        now: Local.with_ymd_and_hms(2026, 7, 25, 12, 19, 0).unwrap(),
+    });
+    let mut writer = TraceWriter::default();
+
+    render_display_model(&mut writer, &display).unwrap();
+
+    assert_eq!(
+        writer.operations,
+        [
+            "raw:\n".to_string(),
+            "newline:11111111-1111-1111-1111-111111111111 [2026/07/25] 60m フォーカス対象"
+                .to_string(),
+            "newline:".to_string(),
+            "newline:focused task is: project_category=資".to_string(),
+            format!("newline:{task_debug}"),
+            "newline:31 minutes left (since 12:00:00 until 12:50:00) focusing for 20 minutes"
+                .to_string(),
+            format!("newline:[{}{}] 48%", "█".repeat(48), "░".repeat(52)),
+        ]
+    );
+
+    for (estimated_work_seconds, actual_work_seconds, now, expected_summary, expected_progress) in [
+        (
+            60,
+            0,
+            Local.with_ymd_and_hms(2026, 7, 25, 12, 0, 30).unwrap(),
+            "30 seconds left (since 12:00:00 until 12:01:00) focusing for 1 minutes".to_string(),
+            format!("[{}{}] 50%", "█".repeat(50), "░".repeat(50)),
+        ),
+        (
+            60,
+            0,
+            Local.with_ymd_and_hms(2026, 7, 25, 12, 1, 1).unwrap(),
+            "1 minutes over (since 12:00:00 until 12:01:00) focusing for 2 minutes".to_string(),
+            format!("[{}]> 101%", "█".repeat(100)),
+        ),
+        (
+            0,
+            10 * 60,
+            Local.with_ymd_and_hms(2026, 7, 25, 12, 19, 0).unwrap(),
+            "30 minutes over (since 12:00:00 until 11:50:00) focusing for 20 minutes".to_string(),
+            format!("[{}] --%", "-".repeat(100)),
+        ),
+    ] {
+        let mut task_attr =
+            TaskAttr::with_identity("境界対象", Uuid::from_u128(2), focus_started_at);
+        task_attr.set_estimated_work_seconds(estimated_work_seconds);
+        task_attr.set_actual_work_seconds(actual_work_seconds);
+        let expected_debug = format!("newline:{task_attr:?}");
+        let mut case_writer = TraceWriter::default();
+        render_display_model(
+            &mut case_writer,
+            &DisplayModel::Focus(FocusDisplay {
+                ancestors: vec![],
+                project_category: None,
+                task_attr,
+                estimated_work_seconds,
+                actual_work_seconds,
+                focus_started_at,
+                now,
+            }),
+        )
+        .unwrap();
+        assert_eq!(
+            case_writer.operations,
+            [
+                "raw:\n".to_string(),
+                "newline:".to_string(),
+                "newline:focused task is: project_category=_".to_string(),
+                expected_debug,
+                format!("newline:{expected_summary}"),
+                format!("newline:{expected_progress}"),
+            ]
+        );
+    }
 }
 
 struct AlwaysFailWriter;
