@@ -6363,6 +6363,7 @@ fn test_render_focused_task_focus描画後に1回flushする() {
             .contains("focused task is:")
     );
     assert_eq!(writer.flush_count, 1);
+    assert_eq!(writer.flush_buffer_lengths, [writer.buffer.len()]);
 }
 
 #[test]
