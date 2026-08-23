@@ -873,6 +873,22 @@ fn execute_calendar_command_for_test(
 }
 
 #[cfg(test)]
+fn rendered_focus_messages_for_test(
+    focused_task: &TaskHandle,
+    focus_started_datetime: &DateTime<Local>,
+    now: &DateTime<Local>,
+) -> [String; 2] {
+    let display = build_focus_display(focused_task, focus_started_datetime, now).unwrap();
+    let mut writer = TestWriter::new_for_pipe();
+    render_display_model(&mut writer, &DisplayModel::Focus(display)).unwrap();
+    let output = writer.into_string();
+    let mut lines = output.lines().rev();
+    let progress = lines.next().unwrap().to_string();
+    let summary = lines.next().unwrap().to_string();
+    [summary, progress]
+}
+
+#[cfg(test)]
 fn execute_calendar_command_with_ansi_color_for_test(
     command: &str,
     now: DateTime<Local>,

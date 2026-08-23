@@ -13,7 +13,8 @@ use super::handler::{
 use super::interactive;
 #[cfg(test)]
 use super::renderer::{
-    format_band_day_row, format_signed_seconds, BandDayRow, BandDurations, BAND_SEGMENTS,
+    format_band_day_row, format_focus_progress, format_focused_task_header, format_signed_seconds,
+    BandDayRow, BandDurations, BAND_SEGMENTS,
 };
 use super::renderer::{
     render_display_model, render_plain_display_model, writeln_newline, DisplayModel,
@@ -916,33 +917,15 @@ fn render_focused_task(
         *last_focused_task_id_opt = focused_task_id_opt;
     }
 
-    let result = build_ancestor_tree_display(&focused_task_opt).map(|tree| {
-        render_display_model(stdout, &DisplayModel::Tree(tree)).unwrap();
-    });
-    report_application_result(stdout, result);
-
     if let Some(focused_task) = focused_task_opt {
-        let project_category_opt = match focused_task.get_project_category_opt() {
-            Ok(project_category_opt) => project_category_opt,
-            Err(error) => {
-                report_application_result::<()>(stdout, Err(ApplicationError::TaskTree(error)));
-                return;
-            }
-        };
-        writeln_newline(stdout, &format_focused_task_header(project_category_opt)).unwrap();
-        writeln_newline(stdout, &format!("{:?}", focused_task.get_attr())).unwrap();
-
-        let messages = match make_messages_about_focus(&focused_task, focus_started_datetime, &now)
-        {
-            Ok(messages) => messages,
+        let display = match build_focus_display(&focused_task, focus_started_datetime, &now) {
+            Ok(display) => display,
             Err(error) => {
                 report_application_result::<()>(stdout, Err(error));
                 return;
             }
         };
-        for message in messages {
-            writeln_newline(stdout, &message).unwrap();
-        }
+        render_display_model(stdout, &DisplayModel::Focus(display)).unwrap();
         stdout.flush().unwrap();
     }
 }

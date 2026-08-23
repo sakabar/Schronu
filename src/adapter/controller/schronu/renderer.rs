@@ -1,5 +1,5 @@
-use chrono::{DateTime, Datelike, Local, NaiveDate, Weekday};
-use schronu::entity::task::ProjectCategory;
+use chrono::{DateTime, Datelike, Duration, Local, NaiveDate, Weekday};
+use schronu::entity::task::{ProjectCategory, TaskAttr};
 use std::io::{IsTerminal, Stdout, Write};
 use termion::color;
 use termion::raw::RawTerminal;
@@ -281,6 +281,17 @@ pub(super) struct FlattenDisplay {
 }
 
 #[derive(Clone, Debug, PartialEq)]
+pub(super) struct FocusDisplay {
+    pub(super) ancestors: Vec<AncestorTreeRow>,
+    pub(super) project_category: Option<ProjectCategory>,
+    pub(super) task_attr: TaskAttr,
+    pub(super) estimated_work_seconds: i64,
+    pub(super) actual_work_seconds: i64,
+    pub(super) focus_started_at: DateTime<Local>,
+    pub(super) now: DateTime<Local>,
+}
+
+#[derive(Clone, Debug, PartialEq)]
 pub(super) enum DisplayModel {
     Legacy {
         fragments: Vec<DisplayFragment>,
@@ -295,6 +306,7 @@ pub(super) enum DisplayModel {
     Band(BandDisplay),
     Pack(PackDisplay),
     Flatten(FlattenDisplay),
+    Focus(FocusDisplay),
     #[allow(dead_code)] // Composition boundary for later typed display models.
     Sequence(Vec<DisplayModel>),
 }
@@ -330,7 +342,8 @@ impl DisplayModel {
             | Self::Calendar(_)
             | Self::Band(_)
             | Self::Pack(_)
-            | Self::Flatten(_) => false,
+            | Self::Flatten(_)
+            | Self::Focus(_) => false,
             Self::Sequence(models) => models.iter().all(Self::is_empty),
         }
     }
@@ -346,6 +359,7 @@ impl DisplayModel {
             | Self::Band(_)
             | Self::Pack(_)
             | Self::Flatten(_)
+            | Self::Focus(_)
             | Self::Sequence(_) => {
                 unreachable!("semantic display models do not expose legacy fragments")
             }
@@ -362,6 +376,7 @@ impl DisplayModel {
             | Self::Band(_)
             | Self::Pack(_)
             | Self::Flatten(_)
+            | Self::Focus(_)
             | Self::Sequence(_) => {
                 unreachable!("DisplayRecorder always owns a legacy display model")
             }
@@ -455,6 +470,7 @@ pub(super) fn render_display_model(
         DisplayModel::Band(band) => render_band_display(writer, band)?,
         DisplayModel::Pack(pack) => render_pack_display(writer, pack)?,
         DisplayModel::Flatten(flatten) => render_flatten_display(writer, flatten)?,
+        DisplayModel::Focus(focus) => render_focus_display(writer, focus)?,
         DisplayModel::Sequence(models) => {
             for model in models {
                 render_display_model(writer, model)?;
@@ -725,6 +741,80 @@ fn flatten_reason_label(reason: FlattenReason) -> &'static str {
         FlattenReason::RelatedDeadline => "仮延期によって関連taskの期限を超える",
         FlattenReason::Other => "その他",
     }
+}
+
+const FOCUS_PROGRESS_BAR_SEGMENTS: usize = 100;
+
+fn render_focus_display(
+    writer: &mut dyn SchronuWriter,
+    display: &FocusDisplay,
+) -> Result<(), std::io::Error> {
+    render_tree_display(
+        writer,
+        &TreeDisplay::Ancestors {
+            rows: display.ancestors.clone(),
+        },
+    )?;
+    writer.writeln_newline(&format_focused_task_header(display.project_category))?;
+    writer.writeln_newline(&format!("{:?}", display.task_attr))?;
+    let focusing_seconds = (display.now - display.focus_started_at).num_seconds();
+    let estimated_finish_at = display.focus_started_at
+        + Duration::seconds(
+            display
+                .estimated_work_seconds
+                .saturating_sub(display.actual_work_seconds),
+        );
+    let left_duration = estimated_finish_at - display.now;
+    let focusing_minutes = focusing_seconds / 60 + 1;
+    let remaining = if left_duration >= Duration::minutes(1) {
+        format!("{} minutes left", left_duration.num_minutes())
+    } else if left_duration >= Duration::zero() {
+        format!("{} seconds left", left_duration.num_seconds())
+    } else {
+        format!("{} minutes over", -left_duration.num_minutes() + 1)
+    };
+    writer.writeln_newline(&format!(
+        "{} (since {} until {}) focusing for {} minutes",
+        remaining,
+        display.focus_started_at.format("%H:%M:%S"),
+        estimated_finish_at.format("%H:%M:%S"),
+        focusing_minutes,
+    ))?;
+    writer.writeln_newline(&format_focus_progress(
+        display.estimated_work_seconds,
+        display.actual_work_seconds,
+        focusing_seconds,
+    ))?;
+    Ok(())
+}
+
+pub(super) fn format_focused_task_header(project_category: Option<ProjectCategory>) -> String {
+    format!(
+        "focused task is: project_category={}",
+        project_category_symbol(project_category)
+    )
+}
+
+pub(super) fn format_focus_progress(
+    estimated_work_seconds: i64,
+    actual_work_seconds: i64,
+    focusing_seconds: i64,
+) -> String {
+    if estimated_work_seconds <= 0 {
+        return format!("[{}] --%", "-".repeat(FOCUS_PROGRESS_BAR_SEGMENTS));
+    }
+    let total_work_seconds =
+        (i128::from(actual_work_seconds) + i128::from(focusing_seconds)).max(0);
+    let percentage = total_work_seconds * 100 / i128::from(estimated_work_seconds);
+    let filled_segments = percentage.min(FOCUS_PROGRESS_BAR_SEGMENTS as i128) as usize;
+    let overflow_segments = (percentage - 100).max(0) as usize;
+    format!(
+        "[{}{}]{} {}%",
+        "█".repeat(filled_segments),
+        "░".repeat(FOCUS_PROGRESS_BAR_SEGMENTS - filled_segments),
+        ">".repeat(overflow_segments),
+        percentage,
+    )
 }
 
 pub(super) fn format_work_seconds_as_hours_minutes(work_seconds: i64) -> String {

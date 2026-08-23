@@ -6278,7 +6278,7 @@ fn test_make_messages_about_focus_既存実績と表示中の作業時間から�
     task.set_estimated_work_seconds(60 * 60);
     task.set_actual_work_seconds(10 * 60);
 
-    let actual = make_messages_about_focus(&task, &focus_started_datetime, &now).unwrap();
+    let actual = rendered_focus_messages_for_test(&task, &focus_started_datetime, &now);
 
     assert!(actual[0].ends_with("focusing for 20 minutes"));
     assert_eq!(
@@ -6295,7 +6295,7 @@ fn test_make_messages_about_focus_バーを1パーセント単位で表示する
     task.set_estimated_work_seconds(100 * 60);
     task.set_actual_work_seconds(39 * 60);
 
-    let actual = make_messages_about_focus(&task, &focus_started_datetime, &now).unwrap();
+    let actual = rendered_focus_messages_for_test(&task, &focus_started_datetime, &now);
 
     assert!(actual[0].ends_with("focusing for 20 minutes"));
     assert_eq!(
@@ -6312,7 +6312,7 @@ fn test_make_messages_about_focus_見積時間超過時はバーだけ100パー�
     task.set_estimated_work_seconds(100 * 60);
     task.set_actual_work_seconds(57 * 60);
 
-    let actual = make_messages_about_focus(&task, &focus_started_datetime, &now).unwrap();
+    let actual = rendered_focus_messages_for_test(&task, &focus_started_datetime, &now);
 
     assert!(actual[0].ends_with("focusing for 60 minutes"));
     assert_eq!(
@@ -6329,7 +6329,7 @@ fn test_make_messages_about_focus_見積時間が0なら進捗を未算定とし
     task.set_estimated_work_seconds(0);
     task.set_actual_work_seconds(10 * 60);
 
-    let actual = make_messages_about_focus(&task, &focus_started_datetime, &now).unwrap();
+    let actual = rendered_focus_messages_for_test(&task, &focus_started_datetime, &now);
 
     assert!(actual[0].ends_with("focusing for 20 minutes"));
     assert_eq!(actual[1], format!("[{}] --%", "-".repeat(100)));

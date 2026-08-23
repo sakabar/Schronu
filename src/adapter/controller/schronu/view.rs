@@ -1,10 +1,11 @@
+#[cfg(test)]
 pub(super) use super::renderer::project_category_symbol;
 #[cfg(test)]
 use super::renderer::{format_task_category_summary, format_task_list_row};
 use super::renderer::{
     format_task_list_columns, task_list_columns, weekday_jp, writeln_newline, AncestorTreeRow,
     BandDayRow, BandDisplay, BandDurations, CalendarAlerts, CalendarDayRow, CalendarDisplay,
-    CalendarSummary, DebugTreeRow, DisplayModel, LeafTreeRow, SchronuWriter,
+    CalendarSummary, DebugTreeRow, DisplayModel, FocusDisplay, LeafTreeRow, SchronuWriter,
     TaskCategoryWorkSeconds, TaskListDisplay, TaskListIconMode, TaskListRow, TaskListTaskRow,
     TreeDisplay, BAND_SECONDS_PER_DAY,
 };
@@ -27,8 +28,6 @@ use std::cmp::{max, min};
 use std::collections::HashMap;
 use unicode_width::UnicodeWidthChar;
 use uuid::Uuid;
-
-const FOCUS_PROGRESS_BAR_SEGMENTS: usize = 100;
 
 pub(super) fn get_weekday_jp(date: &NaiveDate) -> &str {
     weekday_jp(date.weekday())
@@ -235,13 +234,6 @@ pub(super) fn replace_task_list_icon(message_prefix: &str, icon: &str) -> String
 }
 
 pub(super) const PROJECT_CATEGORY_SUMMARY_LEN: usize = 6;
-
-pub(super) fn format_focused_task_header(project_category_opt: Option<ProjectCategory>) -> String {
-    format!(
-        "focused task is: project_category={}",
-        project_category_symbol(project_category_opt)
-    )
-}
 
 fn project_category_summary_index(project_category_opt: Option<ProjectCategory>) -> usize {
     match project_category_opt {
@@ -512,70 +504,36 @@ pub(super) fn build_ancestor_tree_display(
     Ok(TreeDisplay::Ancestors { rows })
 }
 
-pub(super) fn make_messages_about_focus(
+pub(super) fn build_focus_display(
     focused_task: &TaskHandle,
     focus_started_datetime: &DateTime<Local>,
     now: &DateTime<Local>,
-) -> Result<[String; 2], ApplicationError> {
+) -> Result<FocusDisplay, ApplicationError> {
+    let ancestors = match build_ancestor_tree_display(&Some(focused_task.clone()))? {
+        TreeDisplay::Ancestors { rows } => rows,
+        _ => unreachable!("ancestor builder always returns ancestor rows"),
+    };
+    let project_category = focused_task
+        .get_project_category_opt()
+        .map_err(ApplicationError::TaskTree)?;
+    let task_attr = focused_task
+        .get_attr()
+        .map_err(ApplicationError::TaskTree)?;
     let estimated_work_seconds = focused_task
         .get_estimated_work_seconds()
         .map_err(ApplicationError::TaskTree)?;
     let actual_work_seconds = focused_task
         .get_actual_work_seconds()
         .map_err(ApplicationError::TaskTree)?;
-    let estimated_finish_datetime =
-        *focus_started_datetime + Duration::seconds(estimated_work_seconds - actual_work_seconds);
-
-    let left_duration = estimated_finish_datetime - *now;
-    let for_duration = *now - *focus_started_datetime;
-    let focusing_minutes = for_duration.num_minutes() + 1;
-    let progress = format_focus_progress(
+    Ok(FocusDisplay {
+        ancestors,
+        project_category,
+        task_attr,
         estimated_work_seconds,
         actual_work_seconds,
-        for_duration.num_seconds(),
-    );
-
-    let summary = format!(
-        "{} (since {} until {}) focusing for {} minutes",
-        if left_duration >= Duration::minutes(1) {
-            format!("{} minutes left", left_duration.num_minutes())
-        } else if left_duration >= Duration::seconds(0) {
-            format!("{} seconds left", left_duration.num_seconds())
-        } else {
-            format!("{} minutes over", -left_duration.num_minutes() + 1)
-        },
-        focus_started_datetime.format("%H:%M:%S"),
-        estimated_finish_datetime.format("%H:%M:%S"),
-        focusing_minutes,
-    );
-
-    Ok([summary, progress])
-}
-
-pub(super) fn format_focus_progress(
-    estimated_work_seconds: i64,
-    actual_work_seconds: i64,
-    focusing_seconds: i64,
-) -> String {
-    if estimated_work_seconds <= 0 {
-        return format!("[{}] --%", "-".repeat(FOCUS_PROGRESS_BAR_SEGMENTS));
-    }
-
-    let total_work_seconds =
-        (i128::from(actual_work_seconds) + i128::from(focusing_seconds)).max(0);
-    let percentage = total_work_seconds * 100 / i128::from(estimated_work_seconds);
-    let filled_segments = percentage.min(FOCUS_PROGRESS_BAR_SEGMENTS as i128) as usize;
-    let overflow_segments = (percentage - 100).max(0) as usize;
-
-    format!(
-        "[{}{}]{} {}%",
-        // U+2588 FULL BLOCK
-        "█".repeat(filled_segments),
-        // U+2591 LIGHT SHADE
-        "░".repeat(FOCUS_PROGRESS_BAR_SEGMENTS - filled_segments),
-        ">".repeat(overflow_segments),
-        percentage
-    )
+        focus_started_at: *focus_started_datetime,
+        now: *now,
+    })
 }
 
 pub(super) fn build_leaf_tree_display(
