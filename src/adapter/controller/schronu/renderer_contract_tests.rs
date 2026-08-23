@@ -2,9 +2,9 @@ use super::renderer::{
     format_spreadsheet_task_row, format_task_list_columns, render_display_model, task_list_columns,
     AncestorTreeRow, BandDayRow, BandDisplay, BandDurations, CalendarAlerts, CalendarDayRow,
     CalendarDisplay, CalendarSummary, DebugTreeRow, DisplayFragment, DisplayModel, DisplayRecorder,
-    ErrorCapturingWriter, LeafTreeRow, MessageLevel, SchronuWriter, SpreadsheetTaskRow,
-    TaskCategoryWorkSeconds, TaskListDisplay, TaskListIconMode, TaskListRow, TaskListTaskRow,
-    TreeDisplay,
+    ErrorCapturingWriter, LeafTreeRow, MessageLevel, PackDisplay, PackRow, SchronuWriter,
+    SpreadsheetTaskRow, TaskCategoryWorkSeconds, TaskListDisplay, TaskListIconMode, TaskListRow,
+    TaskListTaskRow, TreeDisplay,
 };
 use chrono::{Local, NaiveDate, TimeZone, Weekday};
 use schronu::entity::task::ProjectCategory;
@@ -698,6 +698,71 @@ fn band_displayは日別rowが空でもlegendとsummaryとhealthy_alertを描画
             "newline:[Info] 順調です。突発タスクに対応したり1日の終わり際にタスクを新しく積んだりする余裕があります。ひとまずは脇道に逸れずに予定の遂行をしてください。",
             "newline:",
         ]
+    );
+}
+
+#[test]
+fn pack_displayはtyped_row順と集計と空結果とskip件数を描画する() {
+    let packed = DisplayModel::Pack(PackDisplay {
+        rows: vec![
+            PackRow {
+                source_date: NaiveDate::from_ymd_opt(2026, 8, 25).unwrap(),
+                target_date: NaiveDate::from_ymd_opt(2026, 8, 23).unwrap(),
+                work_seconds: 3_661,
+                priority: 9,
+                task_id: Uuid::parse_str("11111111-1111-1111-1111-111111111111").unwrap(),
+                name: "最初の前倒し".to_string(),
+            },
+            PackRow {
+                source_date: NaiveDate::from_ymd_opt(2026, 8, 26).unwrap(),
+                target_date: NaiveDate::from_ymd_opt(2026, 8, 24).unwrap(),
+                work_seconds: 59,
+                priority: -2,
+                task_id: Uuid::parse_str("22222222-2222-2222-2222-222222222222").unwrap(),
+                name: "次の前倒し".to_string(),
+            },
+        ],
+        skipped_count: 3,
+    });
+    let mut packed_writer = TraceWriter::default();
+
+    render_display_model(&mut packed_writer, &packed).unwrap();
+
+    assert_eq!(
+        packed_writer.operations,
+        [
+            "newline:詰\t2026-08-25\t2026-08-23\t01:01\t優先度9\t11111111-1111-1111-1111-111111111111\t最初の前倒し",
+            "newline:詰\t2026-08-26\t2026-08-24\t00:00\t優先度-2\t22222222-2222-2222-2222-222222222222\t次の前倒し",
+            "newline:詰: 2件 01:02 (スキップ3件)",
+        ]
+    );
+
+    let mut empty_writer = TraceWriter::default();
+    render_display_model(
+        &mut empty_writer,
+        &DisplayModel::Pack(PackDisplay {
+            rows: vec![],
+            skipped_count: 0,
+        }),
+    )
+    .unwrap();
+    assert_eq!(
+        empty_writer.operations,
+        ["newline:[Info] 詰められるタスクはありません。"]
+    );
+
+    let mut skipped_writer = TraceWriter::default();
+    render_display_model(
+        &mut skipped_writer,
+        &DisplayModel::Pack(PackDisplay {
+            rows: vec![],
+            skipped_count: 2,
+        }),
+    )
+    .unwrap();
+    assert_eq!(
+        skipped_writer.operations,
+        ["newline:詰: 0件 00:00 (スキップ2件)"]
     );
 }
 
