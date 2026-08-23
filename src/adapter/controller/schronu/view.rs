@@ -2,9 +2,9 @@ pub(super) use super::renderer::project_category_symbol;
 #[cfg(test)]
 use super::renderer::{format_task_category_summary, format_task_list_row};
 use super::renderer::{
-    format_task_list_task_row, writeln_newline, AncestorTreeRow, DebugTreeRow, LeafTreeRow,
-    SchronuWriter, TaskCategoryWorkSeconds, TaskListDisplay, TaskListRow, TaskListTaskRow,
-    TreeDisplay,
+    format_task_list_task_row, weekday_jp, writeln_newline, AncestorTreeRow, DebugTreeRow,
+    LeafTreeRow, SchronuWriter, TaskCategoryWorkSeconds, TaskListDisplay, TaskListRow,
+    TaskListTaskRow, TreeDisplay,
 };
 use chrono::{DateTime, Datelike, Duration, Local, NaiveDate, Weekday};
 use regex::Regex;
@@ -30,19 +30,7 @@ use uuid::Uuid;
 const FOCUS_PROGRESS_BAR_SEGMENTS: usize = 100;
 
 pub(super) fn get_weekday_jp(date: &NaiveDate) -> &str {
-    get_weekday_jp_from_weekday(date.weekday())
-}
-
-fn get_weekday_jp_from_weekday(weekday: Weekday) -> &'static str {
-    match weekday {
-        Weekday::Mon => "月",
-        Weekday::Tue => "火",
-        Weekday::Wed => "水",
-        Weekday::Thu => "木",
-        Weekday::Fri => "金",
-        Weekday::Sat => "土",
-        Weekday::Sun => "日",
-    }
+    weekday_jp(date.weekday())
 }
 
 pub(super) fn get_adjustable_prefix_label(
@@ -1864,7 +1852,7 @@ pub(super) fn execute_show_all_tasks_with_config(
 
             if row.calendar_message.contains(&format!(
                 "({})",
-                get_weekday_jp_from_weekday(config.calendar_blank_line_weekday)
+                weekday_jp(config.calendar_blank_line_weekday)
             )) && cal_ind != daily_summary_rows.len() - 1
             {
                 writeln_newline(stdout, "").unwrap();

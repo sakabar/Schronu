@@ -342,7 +342,7 @@ pub(super) fn format_task_list_task_row(row: &TaskListTaskRow) -> String {
     })
 }
 
-fn weekday_jp(weekday: Weekday) -> &'static str {
+pub(super) fn weekday_jp(weekday: Weekday) -> &'static str {
     match weekday {
         Weekday::Mon => "月",
         Weekday::Tue => "火",
