@@ -335,6 +335,7 @@ struct TestTaskRepository {
     save_failures_remaining: Cell<usize>,
     save_attempt_count: Cell<usize>,
     has_pending_changes: Cell<bool>,
+    operation_trace: RefCell<Vec<&'static str>>,
 }
 
 #[cfg(test)]
@@ -393,12 +394,17 @@ impl TestTaskRepository {
             save_failures_remaining: Cell::new(0),
             save_attempt_count: Cell::new(0),
             has_pending_changes: Cell::new(true),
+            operation_trace: RefCell::new(Vec::new()),
         }
     }
 
     fn with_storage_directory(mut self, storage_directory: &std::path::Path) -> Self {
         self.storage_directory = storage_directory.to_str().unwrap().to_string();
         self
+    }
+
+    fn operation_trace(&self) -> Vec<&'static str> {
+        self.operation_trace.borrow().clone()
     }
 }
 
@@ -413,6 +419,7 @@ impl TaskRepositoryTrait for TestTaskRepository {
     }
 
     fn load(&mut self) -> Result<(), schronu::application::interface::TaskRepositoryError> {
+        self.operation_trace.borrow_mut().push("load");
         self.load_attempt_count
             .set(self.load_attempt_count.get() + 1);
         if self.load_should_fail {
@@ -432,6 +439,9 @@ impl TaskRepositoryTrait for TestTaskRepository {
         &mut self,
         now: DateTime<Local>,
     ) -> Result<RepositoryReloadOutcome, TaskRepositoryError> {
+        self.operation_trace
+            .borrow_mut()
+            .push("reload_if_changed");
         self.reload_if_changed_attempt_count
             .set(self.reload_if_changed_attempt_count.get() + 1);
         self.sync_clock(now)
@@ -441,6 +451,7 @@ impl TaskRepositoryTrait for TestTaskRepository {
     }
 
     fn save(&self) -> Result<(), schronu::application::interface::TaskRepositoryError> {
+        self.operation_trace.borrow_mut().push("save");
         self.save_attempt_count
             .set(self.save_attempt_count.get() + 1);
         let failures_remaining = self.save_failures_remaining.get();
@@ -459,6 +470,9 @@ impl TaskRepositoryTrait for TestTaskRepository {
     }
 
     fn has_pending_changes(&self) -> Result<bool, TaskTreeError> {
+        self.operation_trace
+            .borrow_mut()
+            .push("has_pending_changes");
         Ok(self.has_pending_changes.get())
     }
 

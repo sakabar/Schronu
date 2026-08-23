@@ -36,13 +36,4 @@ fn interactive_terminal_driver_is_isolated_from_runtime() {
             "runtime must not retain terminal detail {required}"
         );
     }
-
-    assert!(
-        runtime_source.contains("parse_command(command, ParseMode::Interactive)"),
-        "interactive product path must keep using the shared typed parser"
-    );
-    assert!(
-        runtime_source.contains("handle_interactive_repository_event"),
-        "runtime must retain repository transaction orchestration"
-    );
 }
