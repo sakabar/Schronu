@@ -600,7 +600,7 @@ fn render_pack_display(
     Ok(())
 }
 
-fn format_work_seconds_as_hours_minutes(work_seconds: i64) -> String {
+pub(super) fn format_work_seconds_as_hours_minutes(work_seconds: i64) -> String {
     let total_minutes = work_seconds.max(0) / 60;
     format!("{:02}:{:02}", total_minutes / 60, total_minutes % 60)
 }

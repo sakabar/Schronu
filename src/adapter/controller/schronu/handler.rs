@@ -1,6 +1,7 @@
 use super::command::{Command, CommandAction, CommandKind, CommandParseError, InteractiveShortcut};
 use super::renderer::{
-    DisplayModel, DisplayRecorder, MessageLevel, PackDisplay, PackRow, SchronuWriter, TreeDisplay,
+    format_work_seconds_as_hours_minutes, DisplayModel, DisplayRecorder, MessageLevel, PackDisplay,
+    PackRow, SchronuWriter, TreeDisplay,
 };
 use chrono::{DateTime, Datelike, Days, Duration, Local, NaiveDate, NaiveDateTime, NaiveTime};
 use regex::Regex;
@@ -894,11 +895,6 @@ fn write_flatten_result(display: &mut dyn SchronuWriter, result: &FlattenResult)
             }
         }
     }
-}
-
-fn format_work_seconds_as_hours_minutes(work_seconds: i64) -> String {
-    let total_minutes = work_seconds.max(0) / 60;
-    format!("{:02}:{:02}", total_minutes / 60, total_minutes % 60)
 }
 
 fn format_work_seconds_as_hours_minutes_rounded_up(work_seconds: i64) -> String {
