@@ -1545,6 +1545,9 @@ fn 全command_groupは単一handler入口からtyped_contextへdispatchされる
             name: "typed project".to_string(),
             estimated_minutes: Some(45),
         }),
+        Command::Action(CommandAction::TaskNames {
+            names: vec!["typed first".to_string(), "typed second".to_string()],
+        }),
         no_arguments(CommandKind::Tree, "ignored alias"),
         Command::Estimate { minutes: 30 },
         Command::Defer {
@@ -1566,6 +1569,7 @@ fn 全command_groupは単一handler入口からtyped_contextへdispatchされる
             .collect::<Vec<_>>(),
         [
             CommandKind::NewProject,
+            CommandKind::Breakdown,
             CommandKind::Tree,
             CommandKind::Estimate,
             CommandKind::Defer,
@@ -1573,6 +1577,22 @@ fn 全command_groupは単一handler入口からtyped_contextへdispatchされる
         ]
     );
     assert_eq!(context.project.created.len(), 1);
+    assert_eq!(
+        context.project.breakdowns,
+        [BreakdownTaskInput {
+            parent_id: Uuid::from_u128(2),
+            names: vec!["typed first".to_string(), "typed second".to_string()],
+            pending_until: None,
+        }]
+    );
+    assert_eq!(context.project.focused_task_id, Some(Uuid::from_u128(3)));
+    assert_eq!(
+        outcomes[1].display.fragments(),
+        [
+            DisplayFragment::Newline(format!("{} typed first", Uuid::from_u128(3))),
+            DisplayFragment::Newline(format!("{} typed second", Uuid::from_u128(4))),
+        ]
+    );
     assert_eq!(context.task_tree.calls, ["tree"]);
     assert_eq!(context.task_attribute.calls, ["estimate:30"]);
     assert_eq!(context.defer.calls, ["defer:2:日"]);
