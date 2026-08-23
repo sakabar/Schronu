@@ -6342,6 +6342,7 @@ fn test_render_focused_task_focus描画後に1回flushする() {
     let task = new_test_task_handle("flush契約のFocus").unwrap();
     task.set_estimated_work_seconds(60 * 60);
     task.set_actual_work_seconds(10 * 60);
+    let expected_attr_debug = format!("{:?}", task.get_attr());
     let task_id = task.get_id().unwrap();
     let repository = TestTaskRepository::new(task, now);
     let mut writer = FlushTrackingWriter::successful(false);
@@ -6357,11 +6358,9 @@ fn test_render_focused_task_focus描画後に1回flushする() {
         now,
     );
 
-    assert!(
-        String::from_utf8(writer.buffer.clone())
-            .unwrap()
-            .contains("focused task is:")
-    );
+    let output = String::from_utf8(writer.buffer.clone()).unwrap();
+    assert!(output.contains("focused task is:"));
+    assert!(output.lines().any(|line| line == expected_attr_debug));
     assert_eq!(writer.flush_count, 1);
     assert_eq!(writer.flush_buffer_lengths, [writer.buffer.len()]);
 }

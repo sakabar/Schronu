@@ -899,7 +899,7 @@ fn focus_displayはtyped属性からancestorと残り時間とprogress境界を�
     let mut task_attr = TaskAttr::with_identity("フォーカス対象", task_id, focus_started_at);
     task_attr.set_estimated_work_seconds(60 * 60);
     task_attr.set_actual_work_seconds(10 * 60);
-    let task_debug = format!("{task_attr:?}");
+    let task_debug = format!("Ok({task_attr:?})");
     let display = DisplayModel::Focus(FocusDisplay {
         ancestors: vec![AncestorTreeRow {
             level: 0,
@@ -975,7 +975,7 @@ fn focus_displayはtyped属性からancestorと残り時間とprogress境界を�
             TaskAttr::with_identity("境界対象", Uuid::from_u128(2), focus_started_at);
         task_attr.set_estimated_work_seconds(estimated_work_seconds);
         task_attr.set_actual_work_seconds(actual_work_seconds);
-        let expected_debug = format!("newline:{task_attr:?}");
+        let expected_debug = format!("newline:Ok({task_attr:?})");
         let mut case_writer = TraceWriter::default();
         render_display_model(
             &mut case_writer,

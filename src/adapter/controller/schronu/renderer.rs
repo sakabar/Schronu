@@ -756,7 +756,7 @@ fn render_focus_display(
         },
     )?;
     writer.writeln_newline(&format_focused_task_header(display.project_category))?;
-    writer.writeln_newline(&format!("{:?}", display.task_attr))?;
+    writer.writeln_newline(&format!("Ok({:?})", display.task_attr))?;
     let focusing_seconds = (display.now - display.focus_started_at).num_seconds();
     let estimated_finish_at = display.focus_started_at
         + Duration::seconds(
