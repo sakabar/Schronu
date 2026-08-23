@@ -1,5 +1,5 @@
 use chrono::{DateTime, Datelike, Duration, Local, NaiveDate, Weekday};
-use schronu::entity::task::{ProjectCategory, TaskAttr};
+use schronu::entity::task::{ProjectCategory, TaskAttr, TaskTreeError};
 use std::io::{IsTerminal, Stdout, Write};
 use termion::color;
 use termion::raw::RawTerminal;
@@ -292,6 +292,20 @@ pub(super) struct FocusDisplay {
 }
 
 #[derive(Clone, Debug, PartialEq)]
+pub(super) struct FocusHeaderDisplay {
+    pub(super) project_category: Option<ProjectCategory>,
+    pub(super) task_attr: Result<TaskAttr, TaskTreeError>,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub(super) struct FocusTimingDisplay {
+    pub(super) estimated_work_seconds: i64,
+    pub(super) actual_work_seconds: i64,
+    pub(super) focus_started_at: DateTime<Local>,
+    pub(super) now: DateTime<Local>,
+}
+
+#[derive(Clone, Debug, PartialEq)]
 pub(super) enum DisplayModel {
     Legacy {
         fragments: Vec<DisplayFragment>,
@@ -306,6 +320,8 @@ pub(super) enum DisplayModel {
     Band(BandDisplay),
     Pack(PackDisplay),
     Flatten(FlattenDisplay),
+    #[allow(dead_code)]
+    // Runtime uses staged focus models so earlier output survives later getter errors.
     Focus(FocusDisplay),
     #[allow(dead_code)] // Composition boundary for later typed display models.
     Sequence(Vec<DisplayModel>),
@@ -755,8 +771,36 @@ fn render_focus_display(
             rows: display.ancestors.clone(),
         },
     )?;
+    render_focus_header_display(
+        writer,
+        &FocusHeaderDisplay {
+            project_category: display.project_category,
+            task_attr: Ok(display.task_attr.clone()),
+        },
+    )?;
+    render_focus_timing_display(
+        writer,
+        &FocusTimingDisplay {
+            estimated_work_seconds: display.estimated_work_seconds,
+            actual_work_seconds: display.actual_work_seconds,
+            focus_started_at: display.focus_started_at,
+            now: display.now,
+        },
+    )
+}
+
+pub(super) fn render_focus_header_display(
+    writer: &mut dyn SchronuWriter,
+    display: &FocusHeaderDisplay,
+) -> Result<(), std::io::Error> {
     writer.writeln_newline(&format_focused_task_header(display.project_category))?;
-    writer.writeln_newline(&format!("Ok({:?})", display.task_attr))?;
+    writer.writeln_newline(&format!("{:?}", display.task_attr))
+}
+
+pub(super) fn render_focus_timing_display(
+    writer: &mut dyn SchronuWriter,
+    display: &FocusTimingDisplay,
+) -> Result<(), std::io::Error> {
     let focusing_seconds = (display.now - display.focus_started_at).num_seconds();
     let estimated_finish_at = display.focus_started_at
         + Duration::seconds(

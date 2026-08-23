@@ -17,8 +17,9 @@ use super::renderer::{
     BandDayRow, BandDurations, BAND_SEGMENTS,
 };
 use super::renderer::{
-    render_display_model, render_plain_display_model, writeln_newline, DisplayModel,
-    DisplayRecorder, ErrorCapturingWriter, MessageLevel, SchronuWriter,
+    render_display_model, render_focus_header_display, render_focus_timing_display,
+    render_plain_display_model, writeln_newline, DisplayModel, DisplayRecorder,
+    ErrorCapturingWriter, FocusHeaderDisplay, FocusTimingDisplay, MessageLevel, SchronuWriter,
 };
 use super::view::*;
 use chrono::{DateTime, Duration, Local};
@@ -893,6 +894,66 @@ fn render_interactive_band(
     }
 }
 
+trait FocusDisplaySource {
+    fn build_ancestors(&self) -> Result<DisplayModel, ApplicationError>;
+    fn build_header(&self) -> Option<Result<FocusHeaderDisplay, ApplicationError>>;
+    fn build_timing(&self) -> Option<Result<FocusTimingDisplay, ApplicationError>>;
+}
+
+struct TaskFocusDisplaySource<'a> {
+    focused_task_opt: Option<&'a TaskHandle>,
+    focus_started_datetime: &'a DateTime<Local>,
+    now: DateTime<Local>,
+}
+
+impl FocusDisplaySource for TaskFocusDisplaySource<'_> {
+    fn build_ancestors(&self) -> Result<DisplayModel, ApplicationError> {
+        build_ancestor_tree_display(&self.focused_task_opt.cloned()).map(DisplayModel::Tree)
+    }
+
+    fn build_header(&self) -> Option<Result<FocusHeaderDisplay, ApplicationError>> {
+        self.focused_task_opt.map(build_focus_header_display)
+    }
+
+    fn build_timing(&self) -> Option<Result<FocusTimingDisplay, ApplicationError>> {
+        self.focused_task_opt.map(|focused_task| {
+            build_focus_timing_display(focused_task, self.focus_started_datetime, &self.now)
+        })
+    }
+}
+
+fn render_focus_from_source(stdout: &mut dyn SchronuWriter, source: &dyn FocusDisplaySource) {
+    let ancestors = source.build_ancestors().map(|display| {
+        render_display_model(stdout, &display).unwrap();
+    });
+    report_application_result(stdout, ancestors);
+
+    let Some(header) = source.build_header() else {
+        return;
+    };
+    let header = match header {
+        Ok(header) => header,
+        Err(error) => {
+            report_application_result::<()>(stdout, Err(error));
+            return;
+        }
+    };
+    render_focus_header_display(stdout, &header).unwrap();
+
+    let Some(timing) = source.build_timing() else {
+        return;
+    };
+    let timing = match timing {
+        Ok(timing) => timing,
+        Err(error) => {
+            report_application_result::<()>(stdout, Err(error));
+            return;
+        }
+    };
+    render_focus_timing_display(stdout, &timing).unwrap();
+    stdout.flush().unwrap();
+}
+
 fn render_focused_task(
     stdout: &mut dyn SchronuWriter,
     task_repository: &dyn TaskRepositoryTrait,
@@ -917,17 +978,14 @@ fn render_focused_task(
         *last_focused_task_id_opt = focused_task_id_opt;
     }
 
-    if let Some(focused_task) = focused_task_opt {
-        let display = match build_focus_display(&focused_task, focus_started_datetime, &now) {
-            Ok(display) => display,
-            Err(error) => {
-                report_application_result::<()>(stdout, Err(error));
-                return;
-            }
-        };
-        render_display_model(stdout, &DisplayModel::Focus(display)).unwrap();
-        stdout.flush().unwrap();
-    }
+    render_focus_from_source(
+        stdout,
+        &TaskFocusDisplaySource {
+            focused_task_opt: focused_task_opt.as_ref(),
+            focus_started_datetime,
+            now,
+        },
+    );
 }
 
 struct FocusRenderState<'a> {

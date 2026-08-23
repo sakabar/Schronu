@@ -6335,6 +6335,185 @@ fn test_make_messages_about_focus_見積時間が0なら進捗を未算定とし
     assert_eq!(actual[1], format!("[{}] --%", "-".repeat(100)));
 }
 
+#[derive(Clone, Copy, Eq, PartialEq)]
+enum FocusStageFailure {
+    Ancestors,
+    Category,
+    Attr,
+    Timing,
+}
+
+struct CharacterizationFocusDisplaySource {
+    failure: FocusStageFailure,
+    has_focused_task: bool,
+    focus_started_at: DateTime<Local>,
+    now: DateTime<Local>,
+}
+
+impl FocusDisplaySource for CharacterizationFocusDisplaySource {
+    fn build_ancestors(&self) -> Result<DisplayModel, ApplicationError> {
+        if self.failure == FocusStageFailure::Ancestors {
+            Err(ApplicationError::TaskTree(TaskTreeError::Borrow))
+        } else {
+            Ok(DisplayModel::Tree(super::renderer::TreeDisplay::Ancestors {
+                rows: vec![],
+            }))
+        }
+    }
+
+    fn build_header(&self) -> Option<Result<FocusHeaderDisplay, ApplicationError>> {
+        self.has_focused_task.then(|| {
+            if self.failure == FocusStageFailure::Category {
+                Err(ApplicationError::TaskTree(TaskTreeError::Borrow))
+            } else {
+                Ok(FocusHeaderDisplay {
+                    project_category: Some(ProjectCategory::Investment),
+                    task_attr: if self.failure == FocusStageFailure::Attr {
+                        Err(TaskTreeError::Borrow)
+                    } else {
+                        Ok(TaskAttr::with_identity(
+                            "部分表示対象",
+                            Uuid::from_u128(42),
+                            self.focus_started_at,
+                        ))
+                    },
+                })
+            }
+        })
+    }
+
+    fn build_timing(&self) -> Option<Result<FocusTimingDisplay, ApplicationError>> {
+        self.has_focused_task.then(|| {
+            if self.failure == FocusStageFailure::Timing {
+                Err(ApplicationError::TaskTree(TaskTreeError::Borrow))
+            } else {
+                Ok(FocusTimingDisplay {
+                    estimated_work_seconds: 60 * 60,
+                    actual_work_seconds: 10 * 60,
+                    focus_started_at: self.focus_started_at,
+                    now: self.now,
+                })
+            }
+        })
+    }
+}
+
+fn focus_stage_source(failure: FocusStageFailure) -> CharacterizationFocusDisplaySource {
+    CharacterizationFocusDisplaySource {
+        failure,
+        has_focused_task: true,
+        focus_started_at: Local.with_ymd_and_hms(2026, 8, 23, 12, 0, 0).unwrap(),
+        now: Local.with_ymd_and_hms(2026, 8, 23, 12, 20, 0).unwrap(),
+    }
+}
+
+fn assert_fragments_in_order(output: &str, fragments: &[&str]) {
+    let mut remaining = output;
+    for fragment in fragments {
+        let index = remaining
+            .find(fragment)
+            .unwrap_or_else(|| panic!("missing fragment {fragment:?} in {output:?}"));
+        remaining = &remaining[index + fragment.len()..];
+    }
+}
+
+#[test]
+fn test_render_focus_from_source_ancestor_error後もfocus詳細を描画してflushする() {
+    let mut writer = FlushTrackingWriter::successful(false);
+
+    render_focus_from_source(
+        &mut writer,
+        &focus_stage_source(FocusStageFailure::Ancestors),
+    );
+
+    let output = String::from_utf8(writer.buffer.clone()).unwrap();
+    assert_fragments_in_order(
+        &output,
+        &[
+            "[Error] 操作エラー: task tree operation failed: cannot borrow task tree data",
+            "focused task is: project_category=資",
+            "Ok( {",
+            "minutes left",
+            "] 50%",
+        ],
+    );
+    assert_eq!(writer.flush_count, 1);
+    assert_eq!(writer.flush_buffer_lengths, [writer.buffer.len()]);
+}
+
+#[test]
+fn test_render_focus_from_source_categoryとgetterのerror時もそれ以前の出力を保持する() {
+    let mut category_error_writer = FlushTrackingWriter::successful(false);
+    render_focus_from_source(
+        &mut category_error_writer,
+        &focus_stage_source(FocusStageFailure::Category),
+    );
+    let category_error_output = String::from_utf8(category_error_writer.buffer.clone()).unwrap();
+    assert!(category_error_output.starts_with("\n\n[Error] 操作エラー:"));
+    assert!(!category_error_output.contains("focused task is:"));
+    assert_eq!(category_error_writer.flush_count, 0);
+
+    let mut attr_error_writer = FlushTrackingWriter::successful(false);
+    render_focus_from_source(
+        &mut attr_error_writer,
+        &focus_stage_source(FocusStageFailure::Attr),
+    );
+    let attr_error_output = String::from_utf8(attr_error_writer.buffer.clone()).unwrap();
+    assert_fragments_in_order(
+        &attr_error_output,
+        &[
+            "\n\nfocused task is: project_category=資",
+            "Err(Borrow)",
+            "minutes left",
+            "] 50%",
+        ],
+    );
+    assert_eq!(attr_error_writer.flush_count, 1);
+    assert_eq!(
+        attr_error_writer.flush_buffer_lengths,
+        [attr_error_writer.buffer.len()]
+    );
+
+    let mut timing_error_writer = FlushTrackingWriter::successful(false);
+    render_focus_from_source(
+        &mut timing_error_writer,
+        &focus_stage_source(FocusStageFailure::Timing),
+    );
+    let timing_error_output = String::from_utf8(timing_error_writer.buffer.clone()).unwrap();
+    assert_fragments_in_order(
+        &timing_error_output,
+        &[
+            "\n\nfocused task is: project_category=資",
+            "Ok( {",
+            "[Error] 操作エラー: task tree operation failed: cannot borrow task tree data",
+        ],
+    );
+    assert!(!timing_error_output.contains("minutes left"));
+    assert_eq!(timing_error_writer.flush_count, 0);
+}
+
+#[test]
+fn test_render_focused_task_repositoryにfocus対象が無くても空ancestorだけ描画する() {
+    let now = Local.with_ymd_and_hms(2026, 8, 23, 12, 20, 0).unwrap();
+    let repository = TestTaskRepository::new(new_test_task_handle("別task").unwrap(), now);
+    let mut writer = FlushTrackingWriter::successful(false);
+    let missing_id = Uuid::from_u128(999);
+    let mut last_focused_task_id_opt = None;
+    let mut focus_started_datetime = now - Duration::minutes(10);
+
+    render_focused_task(
+        &mut writer,
+        &repository,
+        Some(missing_id),
+        &mut last_focused_task_id_opt,
+        &mut focus_started_datetime,
+        now,
+    );
+
+    assert_eq!(writer.buffer, b"\n\n");
+    assert_eq!(writer.flush_count, 0);
+}
+
 #[test]
 fn test_render_focused_task_focus描画後に1回flushする() {
     let now = Local.with_ymd_and_hms(2026, 8, 23, 12, 20, 0).unwrap();
