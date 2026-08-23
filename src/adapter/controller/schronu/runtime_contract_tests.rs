@@ -3608,7 +3608,7 @@ fn runtime外部ioとoutcome調停は共通境界に集約する() {
     let clear_command = parse_command("外", ParseMode::Interactive).unwrap();
     let clear_outcome = handle(&clear_command).expect("unfocus must be handler-owned");
     let mut clear_output = FlushTrackingWriter::successful(false);
-    let mut clear_selection_mode = FocusSelectionMode::Explicit;
+    let mut clear_selection_mode = FocusSelectionMode::LowestPriority { recent_days: 3 };
     apply_command_outcome(
         &mut clear_output,
         &mut task_repository,
@@ -3619,7 +3619,10 @@ fn runtime外部ioとoutcome調停は共通境界に集約する() {
     )
     .unwrap();
 
-    assert_eq!(clear_selection_mode, FocusSelectionMode::Explicit);
+    assert_eq!(
+        clear_selection_mode,
+        FocusSelectionMode::LowestPriority { recent_days: 3 }
+    );
     assert_eq!(focused_task_id_opt, None);
     assert_eq!(clear_output.flush_count, 0);
 
