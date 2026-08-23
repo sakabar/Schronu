@@ -1,9 +1,9 @@
 use super::command::{Command, CommandAction, CommandKind, InteractiveShortcut};
 use super::handler::{
     decide_finish_time_values, decide_time_values, handle, handle_breakdown_split_command,
-    handle_defer_command, handle_finish_placement_command, handle_project_command,
-    handle_task_attribute_command, handle_task_tree_command, DeferCommandContext,
-    DeferCommandError, ExternalRequest, FinishPlacementCommandContext, FocusRequest,
+    handle_command, handle_defer_command, handle_finish_placement_command, handle_project_command,
+    handle_task_attribute_command, handle_task_tree_command, CommandContext, DeferCommandContext,
+    DeferCommandError, ExternalRequest, FinishPlacementCommandContext, FocusRequest, HandlerError,
     ProjectCommandContext, TaskAttributeCommandContext, TaskListOrder, TaskTreeCommandContext,
 };
 use super::renderer::{
@@ -1281,6 +1281,361 @@ impl SchronuWriter for TraceWriter {
         self.writes.push(format!("newline:{message}"));
         Ok(())
     }
+}
+
+struct CompositeTraceContext {
+    project: TraceProjectContext,
+    task_tree: TraceTaskTreeContext,
+    task_attribute: TraceTaskAttributeContext,
+    defer: TraceDeferContext,
+    finish_placement: TraceFinishPlacementContext,
+}
+
+impl CompositeTraceContext {
+    fn new(now: chrono::DateTime<Local>) -> Self {
+        let focused_task =
+            TaskHandle::with_identity("finish target", Uuid::from_u128(21), now).unwrap();
+        Self {
+            project: TraceProjectContext::new(now),
+            task_tree: TraceTaskTreeContext::default(),
+            task_attribute: TraceTaskAttributeContext::default(),
+            defer: TraceDeferContext::default(),
+            finish_placement: TraceFinishPlacementContext {
+                now,
+                focused_task,
+                calls: Vec::new(),
+                completion_inputs: Vec::new(),
+            },
+        }
+    }
+}
+
+impl ProjectCommandContext for CompositeTraceContext {
+    fn last_synced_time(&self) -> chrono::DateTime<Local> {
+        self.project.last_synced_time()
+    }
+
+    fn focused_task(&mut self) -> Result<Option<TaskHandle>, ApplicationError> {
+        self.project.focused_task()
+    }
+
+    fn create_task(&mut self, input: CreateTaskInput) -> Result<Uuid, ApplicationError> {
+        self.project.create_task(input)
+    }
+
+    fn breakdown_task(&mut self, input: BreakdownTaskInput) -> Result<Vec<Uuid>, ApplicationError> {
+        self.project.breakdown_task(input)
+    }
+
+    fn create_task_attr(&mut self, name: &str) -> TaskAttr {
+        self.project.create_task_attr(name)
+    }
+
+    fn set_estimate(&mut self, task_id: Uuid, minutes: i64) -> Result<(), ApplicationError> {
+        self.project.set_estimate(task_id, minutes)
+    }
+
+    fn focused_task_id(&self) -> Option<Uuid> {
+        self.project.focused_task_id()
+    }
+
+    fn set_focused_task_id(&mut self, task_id_opt: Option<Uuid>) {
+        self.project.set_focused_task_id(task_id_opt);
+    }
+}
+
+impl TaskTreeCommandContext for CompositeTraceContext {
+    fn supports_ansi_color(&self) -> bool {
+        self.task_tree.supports_ansi_color()
+    }
+
+    fn show_tree(&mut self, display: &mut dyn SchronuWriter) -> Result<(), ApplicationError> {
+        self.task_tree.show_tree(display)
+    }
+
+    fn show_ancestor(&mut self, display: &mut dyn SchronuWriter) -> Result<(), ApplicationError> {
+        self.task_tree.show_ancestor(display)
+    }
+
+    fn focus_root(&mut self) -> Result<(), ApplicationError> {
+        self.task_tree.focus_root()
+    }
+
+    fn show_leaves(&mut self, display: &mut dyn SchronuWriter) -> Result<(), ApplicationError> {
+        self.task_tree.show_leaves(display)
+    }
+
+    fn show_task_list(
+        &mut self,
+        display: &mut dyn SchronuWriter,
+        pattern: Option<&str>,
+        order: TaskListOrder,
+        resolve_pattern: bool,
+    ) -> Result<(), ApplicationError> {
+        self.task_tree
+            .show_task_list(display, pattern, order, resolve_pattern)
+    }
+
+    fn focus(&mut self, task_id: Uuid) {
+        self.task_tree.focus(task_id);
+    }
+
+    fn pick(&mut self, task_id: Uuid) -> Result<(), ApplicationError> {
+        self.task_tree.pick(task_id)
+    }
+
+    fn focus_parent(&mut self) -> Result<(), ApplicationError> {
+        self.task_tree.focus_parent()
+    }
+
+    fn focus_children(&mut self, display: &mut dyn SchronuWriter) -> Result<(), ApplicationError> {
+        self.task_tree.focus_children(display)
+    }
+
+    fn focus_deepest(&mut self, display: &mut dyn SchronuWriter) -> Result<(), ApplicationError> {
+        self.task_tree.focus_deepest(display)
+    }
+
+    fn next_up(
+        &mut self,
+        display: &mut dyn SchronuWriter,
+        name: &str,
+        estimated_minutes: Option<i64>,
+    ) -> Result<(), ApplicationError> {
+        self.task_tree.next_up(display, name, estimated_minutes)
+    }
+}
+
+impl TaskAttributeCommandContext for CompositeTraceContext {
+    fn set_deadline(&mut self, value: &str) -> Result<(), ApplicationError> {
+        self.task_attribute.set_deadline(value)
+    }
+
+    fn set_estimate(&mut self, minutes: i64) -> Result<(), ApplicationError> {
+        self.task_attribute.set_estimate(minutes)
+    }
+
+    fn arrange(
+        &mut self,
+        minutes: i64,
+        includes_zero_estimate: bool,
+    ) -> Result<(), ApplicationError> {
+        self.task_attribute.arrange(minutes, includes_zero_estimate)
+    }
+
+    fn set_actual(&mut self, minutes: i64) -> Result<(), ApplicationError> {
+        self.task_attribute.set_actual(minutes)
+    }
+
+    fn set_priority(&mut self, priority: i64) -> Result<(), ApplicationError> {
+        self.task_attribute.set_priority(priority)
+    }
+
+    fn set_category(&mut self, value: &str) -> Result<(), ApplicationError> {
+        self.task_attribute.set_category(value)
+    }
+
+    fn add_work(&mut self, minutes: Option<i64>) -> Result<(), ApplicationError> {
+        self.task_attribute.add_work(minutes)
+    }
+}
+
+impl DeferCommandContext for CompositeTraceContext {
+    fn defer(&mut self, amount: i64, unit: &str) -> Result<(), DeferCommandError> {
+        self.defer.defer(amount, unit)
+    }
+
+    fn defer_expression(&mut self, values: &[String]) -> Result<(), DeferCommandError> {
+        self.defer.defer_expression(values)
+    }
+
+    fn defer_next_morning(&mut self) -> Result<(), DeferCommandError> {
+        self.defer.defer_next_morning()
+    }
+
+    fn defer_next_week(&mut self) -> Result<(), DeferCommandError> {
+        self.defer.defer_next_week()
+    }
+
+    fn defer_routine(&mut self) -> Result<(), ApplicationError> {
+        self.defer.defer_routine()
+    }
+
+    fn defer_five_years(&mut self) -> Result<(), DeferCommandError> {
+        self.defer.defer_five_years()
+    }
+
+    fn defer_all_frequent_routines(&mut self) -> Result<(), ApplicationError> {
+        self.defer.defer_all_frequent_routines()
+    }
+
+    fn prepare_escape(&mut self) -> Result<bool, ApplicationError> {
+        self.defer.prepare_escape()
+    }
+
+    fn extrude(&mut self, step_days: Option<u16>) -> Result<(), ApplicationError> {
+        self.defer.extrude(step_days)
+    }
+
+    fn clear_or_gather(
+        &mut self,
+        kind: CommandKind,
+        values: &[String],
+    ) -> Result<(), ApplicationError> {
+        self.defer.clear_or_gather(kind, values)
+    }
+}
+
+impl FinishPlacementCommandContext for CompositeTraceContext {
+    fn supports_ansi_color(&self) -> bool {
+        self.finish_placement.supports_ansi_color()
+    }
+
+    fn last_synced_time(&self) -> chrono::DateTime<Local> {
+        self.finish_placement.last_synced_time()
+    }
+
+    fn focus_started_datetime(&self) -> chrono::DateTime<Local> {
+        self.finish_placement.focus_started_datetime()
+    }
+
+    fn focused_task(&self) -> Result<Option<TaskHandle>, ApplicationError> {
+        self.finish_placement.focused_task()
+    }
+
+    fn show_focused_tree(
+        &mut self,
+        display: &mut dyn SchronuWriter,
+    ) -> Result<(), ApplicationError> {
+        self.finish_placement.show_focused_tree(display)
+    }
+
+    fn complete_focused_task(
+        &mut self,
+        input: CompleteTaskInput,
+    ) -> Result<Option<Uuid>, ApplicationError> {
+        self.finish_placement.complete_focused_task(input)
+    }
+
+    fn set_focused_task_id(&mut self, task_id_opt: Option<Uuid>) {
+        self.finish_placement.set_focused_task_id(task_id_opt);
+    }
+
+    fn pack(&mut self) -> Result<PackResult, ApplicationError> {
+        self.finish_placement.pack()
+    }
+
+    fn flatten(&mut self) -> Result<FlattenResult, ApplicationError> {
+        self.finish_placement.flatten()
+    }
+}
+
+fn assert_composite_command_context(_context: &mut dyn CommandContext) {}
+
+#[test]
+fn 全command_groupは単一handler入口からtyped_contextへdispatchされる() {
+    let now = Local.with_ymd_and_hms(2026, 8, 23, 12, 0, 0).unwrap();
+    let mut context = CompositeTraceContext::new(now);
+    assert_composite_command_context(&mut context);
+
+    let commands = [
+        Command::Action(CommandAction::NewProject {
+            kind: CommandKind::NewProject,
+            canonical_name: "ignored alias",
+            name: "typed project".to_string(),
+            estimated_minutes: Some(45),
+        }),
+        no_arguments(CommandKind::Tree, "ignored alias"),
+        Command::Estimate { minutes: 30 },
+        Command::Defer {
+            amount: 2,
+            unit: "日".to_string(),
+        },
+        no_arguments(CommandKind::Pack, "ignored alias"),
+    ];
+
+    let outcomes = commands
+        .iter()
+        .map(|command| handle_command(command, &mut context).unwrap())
+        .collect::<Vec<_>>();
+
+    assert_eq!(
+        outcomes
+            .iter()
+            .map(|outcome| outcome.kind)
+            .collect::<Vec<_>>(),
+        [
+            CommandKind::NewProject,
+            CommandKind::Tree,
+            CommandKind::Estimate,
+            CommandKind::Defer,
+            CommandKind::Pack,
+        ]
+    );
+    assert_eq!(context.project.created.len(), 1);
+    assert_eq!(context.task_tree.calls, ["tree"]);
+    assert_eq!(context.task_attribute.calls, ["estimate:30"]);
+    assert_eq!(context.defer.calls, ["defer:2:日"]);
+    assert_eq!(context.finish_placement.calls, ["pack"]);
+}
+
+#[test]
+fn noopとopenとfocusも単一handler入口からstructured_outcomeを返す() {
+    let now = Local.with_ymd_and_hms(2026, 8, 23, 12, 0, 0).unwrap();
+    let mut context = CompositeTraceContext::new(now);
+
+    let noop = handle_command(&Command::Noop, &mut context).unwrap();
+    assert_eq!(noop.kind, CommandKind::Noop);
+    assert!(noop.display.is_empty());
+
+    let open = handle_command(
+        &no_arguments(CommandKind::Open, "ignored alias"),
+        &mut context,
+    )
+    .unwrap();
+    assert_eq!(
+        open.external_request,
+        Some(ExternalRequest::OpenFocusedLink)
+    );
+
+    let focus = handle_command(
+        &Command::Action(CommandAction::FocusMode {
+            kind: CommandKind::FocusLowest,
+            canonical_name: "ignored alias",
+            recent_days: Some(3),
+        }),
+        &mut context,
+    )
+    .unwrap();
+    assert_eq!(
+        focus.focus_request,
+        Some(FocusRequest::LowestPriority { recent_days: 3 })
+    );
+
+    let task_id = Uuid::from_u128(77);
+    let focus_task = handle_command(&Command::Focus { task_id }, &mut context).unwrap();
+    assert_eq!(focus_task.kind, CommandKind::Focus);
+    assert_eq!(context.task_tree.calls, [format!("focus:{task_id}")]);
+}
+
+#[test]
+fn context_validation_errorは統一handler_errorとして呼び出し側へ返す() {
+    let now = Local.with_ymd_and_hms(2026, 8, 23, 12, 0, 0).unwrap();
+    let mut context = CompositeTraceContext::new(now);
+    context.defer.escape_should_fail = true;
+    let command = Command::Action(CommandAction::Escape {
+        defer_expression: Some(vec!["2".to_string(), "日".to_string()]),
+    });
+
+    let result = handle_command(&command, &mut context);
+
+    assert!(matches!(
+        result,
+        Err(HandlerError::Application(ApplicationError::InvalidInput {
+            field: "estimated_work_seconds",
+            reason: "injected escape failure",
+        }))
+    ));
 }
 
 #[test]
