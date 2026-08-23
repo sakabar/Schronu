@@ -88,8 +88,15 @@ fn runtime_interactive_dispatch_source() -> &'static str {
 
 fn assert_runtime_routes_to_handler(handler_call: &str, forbidden_fallback_tokens: &[&str]) {
     assert!(
-        runtime_product_dispatch_source().contains(handler_call),
-        "product dispatch must route the typed command through {handler_call}"
+        runtime_product_dispatch_source().contains("handle_command(parsed_command"),
+        "product dispatch must route every typed command through handle_command"
+    );
+    let handler_name = handler_call
+        .split_once('(')
+        .map_or(handler_call, |(name, _)| name);
+    assert!(
+        handler_product_source().contains(handler_name),
+        "the composite handler must retain the {handler_name} behavior route"
     );
     if let Some(fallback) = runtime_fallback_source() {
         for forbidden in forbidden_fallback_tokens {

@@ -3,9 +3,8 @@
 use super::command::{parse_command, Command, CommandKind, CommandParseError, ParseMode};
 use super::command_context::*;
 use super::handler::{
-    handle, handle_breakdown_split_command, handle_defer_command, handle_finish_placement_command,
-    handle_project_command, handle_task_attribute_command, handle_task_tree_command,
-    CommandOutcome, ExternalRequest, FocusChange, FocusSelection, HandlerError,
+    handle, handle_command, handle_defer_command, CommandOutcome, ExternalRequest, FocusChange,
+    FocusSelection, HandlerError,
 };
 #[cfg(test)]
 use super::handler::{
@@ -504,25 +503,9 @@ fn execute_parsed(
             config: active_config(),
             supports_ansi_color,
         };
-        let project_or_breakdown = match handle_project_command(parsed_command, &mut context)? {
-            Some(outcome) => Some(outcome),
-            None => handle_breakdown_split_command(parsed_command, &mut context)?,
-        };
-        match project_or_breakdown {
-            Some(outcome) => Some(outcome),
-            None => match handle_task_attribute_command(parsed_command, &mut context)? {
-                Some(outcome) => Some(outcome),
-                None => match handle_defer_command(parsed_command, &mut context)? {
-                    Some(outcome) => Some(outcome),
-                    None => match handle_finish_placement_command(parsed_command, &mut context)? {
-                        Some(outcome) => Some(outcome),
-                        None => handle_task_tree_command(parsed_command, &mut context)?,
-                    },
-                },
-            },
-        }
+        handle_command(parsed_command, &mut context)?
     };
-    if let Some(outcome) = outcome.or_else(|| handle(parsed_command)) {
+    if let Some(outcome) = outcome {
         apply_command_outcome(
             &mut output,
             task_repository,
