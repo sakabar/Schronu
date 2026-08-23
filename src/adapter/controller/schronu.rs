@@ -13,6 +13,9 @@ mod renderer;
 #[path = "schronu/runtime.rs"]
 mod runtime;
 
+#[path = "schronu/view.rs"]
+mod view;
+
 #[cfg(test)]
 #[path = "schronu/command_contract_tests.rs"]
 mod command_contract_tests;
