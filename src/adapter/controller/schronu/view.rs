@@ -467,6 +467,9 @@ pub(super) fn build_focus_header_display(
         project_category: focused_task
             .get_project_category_opt()
             .map_err(ApplicationError::TaskTree)?,
+        project_priority: focused_task
+            .get_priority()
+            .map_err(ApplicationError::TaskTree)?,
         task_attr: focused_task.get_attr(),
     })
 }

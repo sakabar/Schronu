@@ -291,6 +291,7 @@ pub(super) struct FlattenDisplay {
 pub(super) enum FocusDisplay {
     Header {
         project_category: Option<ProjectCategory>,
+        project_priority: i64,
         task_attr: Result<TaskAttr, TaskTreeError>,
     },
     Timing {
@@ -721,9 +722,13 @@ fn render_focus_display(
     let (estimated_work_seconds, actual_work_seconds, focus_started_at, now) = match display {
         FocusDisplay::Header {
             project_category,
+            project_priority,
             task_attr,
         } => {
-            writer.writeln_newline(&format_focused_task_header(*project_category))?;
+            writer.writeln_newline(&format_focused_task_header(
+                *project_category,
+                *project_priority,
+            ))?;
             return writer.writeln_newline(&format!("{task_attr:?}"));
         }
         FocusDisplay::Timing {
@@ -765,10 +770,14 @@ fn render_focus_display(
     Ok(())
 }
 
-pub(super) fn format_focused_task_header(project_category: Option<ProjectCategory>) -> String {
+pub(super) fn format_focused_task_header(
+    project_category: Option<ProjectCategory>,
+    project_priority: i64,
+) -> String {
     format!(
-        "focused task is: project_category={}",
-        project_category_symbol(project_category)
+        "focused task is: project_category={} project_priority={}",
+        project_category_symbol(project_category),
+        project_priority
     )
 }
 
