@@ -48,30 +48,78 @@ pub(super) enum DisplayFragment {
     Flush,
 }
 
-#[derive(Clone, Debug, Default, Eq, PartialEq)]
-pub(super) struct DisplayModel {
-    fragments: Vec<DisplayFragment>,
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(super) enum MessageLevel {
+    Plain,
+    #[allow(dead_code)] // Adopted by later display-model migrations.
+    Info,
+    #[allow(dead_code)] // Adopted by later display-model migrations.
+    Warn,
+    #[allow(dead_code)] // Adopted by later display-model migrations.
+    Critical,
+    Error,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(super) enum DisplayModel {
+    Legacy {
+        fragments: Vec<DisplayFragment>,
+    },
+    Message {
+        level: MessageLevel,
+        text: String,
+    },
+    #[allow(dead_code)] // Composition boundary for later typed display models.
+    Sequence(Vec<DisplayModel>),
+}
+
+impl Default for DisplayModel {
+    fn default() -> Self {
+        Self::Legacy {
+            fragments: Vec::new(),
+        }
+    }
 }
 
 impl DisplayModel {
+    #[allow(dead_code)] // Legacy callers remain covered until their dedicated migration commits.
     pub(super) fn newline(message: impl Into<String>) -> Self {
-        Self {
+        Self::Legacy {
             fragments: vec![DisplayFragment::Newline(message.into())],
         }
     }
 
     pub(super) fn flush() -> Self {
-        Self {
+        Self::Legacy {
             fragments: vec![DisplayFragment::Flush],
         }
     }
 
     pub(super) fn is_empty(&self) -> bool {
-        self.fragments.is_empty()
+        match self {
+            Self::Legacy { fragments } => fragments.is_empty(),
+            Self::Message { .. } => false,
+            Self::Sequence(models) => models.iter().all(Self::is_empty),
+        }
     }
 
+    #[allow(dead_code)] // DisplayRecorder compatibility is retained during incremental migration.
     pub(super) fn fragments(&self) -> &[DisplayFragment] {
-        &self.fragments
+        match self {
+            Self::Legacy { fragments } => fragments,
+            Self::Message { .. } | Self::Sequence(_) => {
+                unreachable!("semantic display models do not expose legacy fragments")
+            }
+        }
+    }
+
+    fn legacy_fragments_mut(&mut self) -> &mut Vec<DisplayFragment> {
+        match self {
+            Self::Legacy { fragments } => fragments,
+            Self::Message { .. } | Self::Sequence(_) => {
+                unreachable!("DisplayRecorder always owns a legacy display model")
+            }
+        }
     }
 }
 
@@ -105,13 +153,15 @@ impl DisplayRecorder {
 impl Write for DisplayRecorder {
     fn write(&mut self, buffer: &[u8]) -> std::io::Result<usize> {
         self.model
-            .fragments
+            .legacy_fragments_mut()
             .push(DisplayFragment::Raw(buffer.to_vec()));
         Ok(buffer.len())
     }
 
     fn flush(&mut self) -> std::io::Result<()> {
-        self.model.fragments.push(DisplayFragment::Flush);
+        self.model
+            .legacy_fragments_mut()
+            .push(DisplayFragment::Flush);
         Ok(())
     }
 }
@@ -119,7 +169,7 @@ impl Write for DisplayRecorder {
 impl SchronuWriter for DisplayRecorder {
     fn writeln_newline(&mut self, message: &str) -> Result<(), std::io::Error> {
         self.model
-            .fragments
+            .legacy_fragments_mut()
             .push(DisplayFragment::Newline(message.to_string()));
         Ok(())
     }
@@ -133,11 +183,30 @@ pub(super) fn render_display_model(
     writer: &mut dyn SchronuWriter,
     model: &DisplayModel,
 ) -> Result<(), std::io::Error> {
-    for fragment in model.fragments() {
-        match fragment {
-            DisplayFragment::Raw(buffer) => writer.write_all(buffer)?,
-            DisplayFragment::Newline(message) => writer.writeln_newline(message)?,
-            DisplayFragment::Flush => writer.flush()?,
+    match model {
+        DisplayModel::Legacy { fragments } => {
+            for fragment in fragments {
+                match fragment {
+                    DisplayFragment::Raw(buffer) => writer.write_all(buffer)?,
+                    DisplayFragment::Newline(message) => writer.writeln_newline(message)?,
+                    DisplayFragment::Flush => writer.flush()?,
+                }
+            }
+        }
+        DisplayModel::Message { level, text } => {
+            let prefix = match level {
+                MessageLevel::Plain => "",
+                MessageLevel::Info => "[Info] ",
+                MessageLevel::Warn => "[Warn] ",
+                MessageLevel::Critical => "[Critical] ",
+                MessageLevel::Error => "[Error] ",
+            };
+            writer.writeln_newline(&format!("{prefix}{text}"))?;
+        }
+        DisplayModel::Sequence(models) => {
+            for model in models {
+                render_display_model(writer, model)?;
+            }
         }
     }
     Ok(())

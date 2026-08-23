@@ -10,7 +10,8 @@ use super::handler::{
     TaskTreeCommandContext,
 };
 use super::renderer::{
-    render_display_model, DisplayFragment, DisplayModel, DisplayRecorder, SchronuWriter,
+    render_display_model, DisplayFragment, DisplayModel, DisplayRecorder, MessageLevel,
+    SchronuWriter,
 };
 use chrono::{Local, NaiveDate, TimeZone};
 use schronu::application::flatten_use_case::FlattenResult;
@@ -202,7 +203,10 @@ fn handler_returns_focus_requests_and_the_existing_confirmation_display() {
     );
     assert_eq!(
         highest.display,
-        DisplayModel::newline("フォーカス選択モード: 高")
+        DisplayModel::Message {
+            level: MessageLevel::Plain,
+            text: "フォーカス選択モード: 高".to_string(),
+        }
     );
 
     let lowest = handle(&Command::Action(CommandAction::FocusMode {
@@ -217,7 +221,10 @@ fn handler_returns_focus_requests_and_the_existing_confirmation_display() {
     );
     assert_eq!(
         lowest.display,
-        DisplayModel::newline("フォーカス選択モード: 低 3")
+        DisplayModel::Message {
+            level: MessageLevel::Plain,
+            text: "フォーカス選択モード: 低 3".to_string(),
+        }
     );
 }
 

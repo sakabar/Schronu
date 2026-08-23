@@ -1,5 +1,5 @@
 use super::command::{Command, CommandAction, CommandKind, CommandParseError, InteractiveShortcut};
-use super::renderer::{DisplayModel, DisplayRecorder, SchronuWriter};
+use super::renderer::{DisplayModel, DisplayRecorder, MessageLevel, SchronuWriter};
 use chrono::{DateTime, Datelike, Days, Duration, Local, NaiveDate, NaiveDateTime, NaiveTime};
 use regex::Regex;
 use schronu::application::daily_capacity::{
@@ -250,7 +250,10 @@ pub(super) fn handle(command: &Command) -> Option<CommandOutcome> {
             ..
         }) => {
             outcome.focus_change = FocusChange::SelectionMode(FocusSelection::HighestPriority);
-            outcome.display = DisplayModel::newline("フォーカス選択モード: 高");
+            outcome.display = DisplayModel::Message {
+                level: MessageLevel::Plain,
+                text: "フォーカス選択モード: 高".to_string(),
+            };
         }
         Command::Action(CommandAction::FocusMode {
             kind: CommandKind::FocusLowest,
@@ -265,11 +268,10 @@ pub(super) fn handle(command: &Command) -> Option<CommandOutcome> {
             } else {
                 format!("低 {recent_days}")
             };
-            let mut display = DisplayRecorder::default();
-            display
-                .writeln_newline(&format!("フォーカス選択モード: {label}"))
-                .expect("display recording is infallible");
-            outcome.display = display.model().clone();
+            outcome.display = DisplayModel::Message {
+                level: MessageLevel::Plain,
+                text: format!("フォーカス選択モード: {label}"),
+            };
         }
         _ => return None,
     }
@@ -936,9 +938,12 @@ fn outcome_from_reported_result<T>(
     result: Result<T, ApplicationError>,
 ) -> CommandOutcome {
     let mut outcome = CommandOutcome::empty(kind);
-    let mut display = DisplayRecorder::default();
-    report_result(&mut display, result);
-    outcome.display = display.model().clone();
+    if let Err(error) = result {
+        outcome.display = DisplayModel::Message {
+            level: MessageLevel::Error,
+            text: format!("操作エラー: {error}"),
+        };
+    }
     outcome
 }
 
@@ -948,11 +953,10 @@ fn outcome_from_reported_defer_result(
 ) -> CommandOutcome {
     let mut outcome = CommandOutcome::empty(kind);
     if let Err(error) = result {
-        let mut display = DisplayRecorder::default();
-        display
-            .writeln_newline(&format!("[Error] {error}"))
-            .expect("display recording is infallible");
-        outcome.display = display.model().clone();
+        outcome.display = DisplayModel::Message {
+            level: MessageLevel::Error,
+            text: error.to_string(),
+        };
     }
     outcome
 }

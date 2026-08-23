@@ -13,7 +13,7 @@ use super::handler::{
 use super::interactive;
 use super::renderer::{
     render_display_model, render_plain_display_model, writeln_newline, DisplayModel,
-    ErrorCapturingWriter, SchronuWriter,
+    ErrorCapturingWriter, MessageLevel, SchronuWriter,
 };
 use super::view::*;
 use chrono::{DateTime, Duration, Local};
@@ -177,7 +177,10 @@ fn map_command_parse_error(error: CommandParseError) -> CommandError {
 }
 
 fn error_display_model(error: &impl std::fmt::Display) -> DisplayModel {
-    DisplayModel::newline(format!("[Error] {error}"))
+    DisplayModel::Message {
+        level: MessageLevel::Error,
+        text: error.to_string(),
+    }
 }
 
 pub(super) fn report_application_result<T>(
