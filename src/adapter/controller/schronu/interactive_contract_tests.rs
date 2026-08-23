@@ -37,3 +37,42 @@ fn interactive_terminal_driver_is_isolated_from_runtime() {
         );
     }
 }
+
+#[test]
+fn interactiveとnoninteractiveは単一のtyped_parserを共有する() {
+    let controller_dir =
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("src/adapter/controller/schronu");
+    let mut product_source = String::new();
+
+    for entry in fs::read_dir(controller_dir).expect("controller source directory must be readable")
+    {
+        let path = entry
+            .expect("controller source entry must be readable")
+            .path();
+        let Some(file_name) = path.file_name().and_then(|name| name.to_str()) else {
+            continue;
+        };
+        if path.extension().and_then(|extension| extension.to_str()) != Some("rs")
+            || file_name.ends_with("_tests.rs")
+            || file_name.ends_with("_test_support.rs")
+        {
+            continue;
+        }
+        product_source.push_str(
+            &fs::read_to_string(path).expect("controller product source must be readable"),
+        );
+    }
+
+    let compact_source = product_source.split_whitespace().collect::<String>();
+    assert_eq!(
+        compact_source.matches("fnparse_command(").count(),
+        1,
+        "controller must keep one shared typed parser definition"
+    );
+    for parse_mode in ["Interactive", "NonInteractive"] {
+        assert!(
+            compact_source.contains(&format!("parse_command(command,ParseMode::{parse_mode})")),
+            "{parse_mode} product entry must call the shared typed parser"
+        );
+    }
+}
