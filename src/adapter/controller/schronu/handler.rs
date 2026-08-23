@@ -1,7 +1,7 @@
 use super::command::{Command, CommandAction, CommandKind, CommandParseError, InteractiveShortcut};
 use super::renderer::{
-    format_work_seconds_as_hours_minutes, DisplayModel, DisplayRecorder, MessageLevel, PackDisplay,
-    PackRow, SchronuWriter, TreeDisplay,
+    DisplayModel, DisplayRecorder, FlattenDisplay, FlattenReason, FlattenReasonSummary, FlattenRow,
+    FlattenUnresolvedDay, MessageLevel, PackDisplay, PackRow, SchronuWriter, TreeDisplay,
 };
 use chrono::{DateTime, Datelike, Days, Duration, Local, NaiveDate, NaiveDateTime, NaiveTime};
 use regex::Regex;
@@ -737,7 +737,9 @@ pub(super) fn handle_finish_placement_command<C: FinishPlacementCommandContext +
         Command::Action(CommandAction::NoArguments {
             kind: CommandKind::Flatten,
             ..
-        }) => write_flatten_result(&mut display, &context.flatten()?),
+        }) => {
+            semantic_display = Some(DisplayModel::Flatten(flatten_display(context.flatten()?)));
+        }
         _ => return Ok(None),
     }
 
@@ -761,6 +763,55 @@ pub(super) fn pack_display(result: PackResult) -> PackDisplay {
             })
             .collect(),
         skipped_count: result.skipped_tasks.len(),
+    }
+}
+
+fn flatten_display(result: FlattenResult) -> FlattenDisplay {
+    FlattenDisplay {
+        rows: result
+            .flattened_tasks
+            .into_iter()
+            .map(|flattened| FlattenRow {
+                source_date: flattened.source_date,
+                target_date: flattened.target_date,
+                work_seconds: flattened.work_seconds,
+                priority: flattened.priority,
+                task_id: flattened.task_id,
+                name: flattened.name,
+            })
+            .collect(),
+        overflowed_task_count: result.overflowed_task_count,
+        overflowed_work_seconds: result.overflowed_work_seconds,
+        had_overload: result.had_overload,
+        unresolved_days: result
+            .unresolved_overloads
+            .into_iter()
+            .map(|unresolved| FlattenUnresolvedDay {
+                date: unresolved.date,
+                excess_work_seconds: unresolved.excess_work_seconds,
+                reasons: unresolved
+                    .reasons
+                    .into_iter()
+                    .map(|summary| FlattenReasonSummary {
+                        reason: match summary.reason {
+                            UnresolvedReason::OnOtherSide => FlattenReason::OnOtherSide,
+                            UnresolvedReason::CrossesBusinessDay => {
+                                FlattenReason::CrossesBusinessDay
+                            }
+                            UnresolvedReason::ExceedsDailyCapacity => {
+                                FlattenReason::ExceedsDailyCapacity
+                            }
+                            UnresolvedReason::OwnDeadline => FlattenReason::OwnDeadline,
+                            UnresolvedReason::RelatedDeadline => FlattenReason::RelatedDeadline,
+                            UnresolvedReason::Other => FlattenReason::Other,
+                        },
+                        task_count: summary.task_count,
+                        representative_task_id: summary.representative_task_id,
+                        representative_task_name: summary.representative_task_name,
+                    })
+                    .collect(),
+            })
+            .collect(),
     }
 }
 
@@ -816,101 +867,6 @@ pub(super) fn decide_finish_time_values(
             build_finish_time(time, Some(date))
         }
         _ => Ok(None),
-    }
-}
-
-fn write_flatten_result(display: &mut dyn SchronuWriter, result: &FlattenResult) {
-    let total_work_seconds = result
-        .flattened_tasks
-        .iter()
-        .map(|flattened| flattened.work_seconds)
-        .sum::<i64>();
-
-    for flattened in &result.flattened_tasks {
-        display
-            .writeln_newline(&format!(
-                "平\t{}\t{}\t{}\t優先度{}\t{}\t{}",
-                flattened.source_date,
-                flattened.target_date,
-                format_work_seconds_as_hours_minutes(flattened.work_seconds),
-                flattened.priority,
-                flattened.task_id,
-                flattened.name,
-            ))
-            .expect("display recording is infallible");
-    }
-
-    if !result.had_overload {
-        display
-            .writeln_newline("[Info] 100%を超過している日はありません。")
-            .expect("display recording is infallible");
-    } else {
-        display
-            .writeln_newline(&format!(
-                "平: {}件 {}{}",
-                result.flattened_tasks.len(),
-                format_work_seconds_as_hours_minutes(total_work_seconds),
-                if result.unresolved_overloads.is_empty() {
-                    String::new()
-                } else {
-                    format!(" (未解消{}日)", result.unresolved_overloads.len())
-                },
-            ))
-            .expect("display recording is infallible");
-        if result.overflowed_task_count > 0 {
-            display
-                .writeln_newline(&format!(
-                    "[Warn] 35日後の退避先は日次容量の上限を適用していません: {}件 {}",
-                    result.overflowed_task_count,
-                    format_work_seconds_as_hours_minutes(result.overflowed_work_seconds),
-                ))
-                .expect("display recording is infallible");
-        }
-        for unresolved in &result.unresolved_overloads {
-            display
-                .writeln_newline(&format!(
-                    "[Warn] 平\t{}\t未解消 {}",
-                    unresolved.date,
-                    format_work_seconds_as_hours_minutes_rounded_up(
-                        unresolved.excess_work_seconds,
-                    ),
-                ))
-                .expect("display recording is infallible");
-            for summary in &unresolved.reasons {
-                display
-                    .writeln_newline(&format!(
-                        "  {}: {}件",
-                        unresolved_reason_label(summary.reason),
-                        summary.task_count,
-                    ))
-                    .expect("display recording is infallible");
-                if let (Some(task_id), Some(task_name)) = (
-                    summary.representative_task_id,
-                    summary.representative_task_name.as_deref(),
-                ) {
-                    display
-                        .writeln_newline(&format!("    {task_id}\t{task_name}"))
-                        .expect("display recording is infallible");
-                }
-            }
-        }
-    }
-}
-
-fn format_work_seconds_as_hours_minutes_rounded_up(work_seconds: i64) -> String {
-    let positive_seconds = work_seconds.max(0);
-    let total_minutes = (positive_seconds + 59) / 60;
-    format!("{:02}:{:02}", total_minutes / 60, total_minutes % 60)
-}
-
-fn unresolved_reason_label(reason: UnresolvedReason) -> &'static str {
-    match reason {
-        UnresolvedReason::OnOtherSide => "相手待ち",
-        UnresolvedReason::CrossesBusinessDay => "業務日境界をまたぐ",
-        UnresolvedReason::ExceedsDailyCapacity => "1日の最大容量を超える",
-        UnresolvedReason::OwnDeadline => "自身の期限により翌日06:00を維持できない",
-        UnresolvedReason::RelatedDeadline => "仮延期によって関連taskの期限を超える",
-        UnresolvedReason::Other => "その他",
     }
 }
 

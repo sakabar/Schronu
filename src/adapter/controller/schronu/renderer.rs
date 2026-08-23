@@ -236,6 +236,50 @@ pub(super) struct PackDisplay {
     pub(super) skipped_count: usize,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(super) struct FlattenRow {
+    pub(super) source_date: NaiveDate,
+    pub(super) target_date: NaiveDate,
+    pub(super) work_seconds: i64,
+    pub(super) priority: i64,
+    pub(super) task_id: Uuid,
+    pub(super) name: String,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(super) enum FlattenReason {
+    OnOtherSide,
+    CrossesBusinessDay,
+    ExceedsDailyCapacity,
+    OwnDeadline,
+    RelatedDeadline,
+    Other,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(super) struct FlattenReasonSummary {
+    pub(super) reason: FlattenReason,
+    pub(super) task_count: usize,
+    pub(super) representative_task_id: Option<Uuid>,
+    pub(super) representative_task_name: Option<String>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(super) struct FlattenUnresolvedDay {
+    pub(super) date: NaiveDate,
+    pub(super) excess_work_seconds: i64,
+    pub(super) reasons: Vec<FlattenReasonSummary>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(super) struct FlattenDisplay {
+    pub(super) rows: Vec<FlattenRow>,
+    pub(super) overflowed_task_count: usize,
+    pub(super) overflowed_work_seconds: i64,
+    pub(super) had_overload: bool,
+    pub(super) unresolved_days: Vec<FlattenUnresolvedDay>,
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub(super) enum DisplayModel {
     Legacy {
@@ -250,6 +294,7 @@ pub(super) enum DisplayModel {
     Calendar(CalendarDisplay),
     Band(BandDisplay),
     Pack(PackDisplay),
+    Flatten(FlattenDisplay),
     #[allow(dead_code)] // Composition boundary for later typed display models.
     Sequence(Vec<DisplayModel>),
 }
@@ -284,7 +329,8 @@ impl DisplayModel {
             | Self::TaskList(_)
             | Self::Calendar(_)
             | Self::Band(_)
-            | Self::Pack(_) => false,
+            | Self::Pack(_)
+            | Self::Flatten(_) => false,
             Self::Sequence(models) => models.iter().all(Self::is_empty),
         }
     }
@@ -299,6 +345,7 @@ impl DisplayModel {
             | Self::Calendar(_)
             | Self::Band(_)
             | Self::Pack(_)
+            | Self::Flatten(_)
             | Self::Sequence(_) => {
                 unreachable!("semantic display models do not expose legacy fragments")
             }
@@ -314,6 +361,7 @@ impl DisplayModel {
             | Self::Calendar(_)
             | Self::Band(_)
             | Self::Pack(_)
+            | Self::Flatten(_)
             | Self::Sequence(_) => {
                 unreachable!("DisplayRecorder always owns a legacy display model")
             }
@@ -406,6 +454,7 @@ pub(super) fn render_display_model(
         DisplayModel::Calendar(calendar) => render_calendar_display(writer, calendar)?,
         DisplayModel::Band(band) => render_band_display(writer, band)?,
         DisplayModel::Pack(pack) => render_pack_display(writer, pack)?,
+        DisplayModel::Flatten(flatten) => render_flatten_display(writer, flatten)?,
         DisplayModel::Sequence(models) => {
             for model in models {
                 render_display_model(writer, model)?;
@@ -598,6 +647,84 @@ fn render_pack_display(
         ))?;
     }
     Ok(())
+}
+
+fn render_flatten_display(
+    writer: &mut dyn SchronuWriter,
+    display: &FlattenDisplay,
+) -> Result<(), std::io::Error> {
+    let total_work_seconds = display.rows.iter().map(|row| row.work_seconds).sum::<i64>();
+    for row in &display.rows {
+        writer.writeln_newline(&format!(
+            "平\t{}\t{}\t{}\t優先度{}\t{}\t{}",
+            row.source_date,
+            row.target_date,
+            format_work_seconds_as_hours_minutes(row.work_seconds),
+            row.priority,
+            row.task_id,
+            row.name,
+        ))?;
+    }
+    if !display.had_overload {
+        writer.writeln_newline("[Info] 100%を超過している日はありません。")?;
+        return Ok(());
+    }
+    let unresolved_suffix = if display.unresolved_days.is_empty() {
+        String::new()
+    } else {
+        format!(" (未解消{}日)", display.unresolved_days.len())
+    };
+    writer.writeln_newline(&format!(
+        "平: {}件 {}{}",
+        display.rows.len(),
+        format_work_seconds_as_hours_minutes(total_work_seconds),
+        unresolved_suffix,
+    ))?;
+    if display.overflowed_task_count > 0 {
+        writer.writeln_newline(&format!(
+            "[Warn] 35日後の退避先は日次容量の上限を適用していません: {}件 {}",
+            display.overflowed_task_count,
+            format_work_seconds_as_hours_minutes(display.overflowed_work_seconds),
+        ))?;
+    }
+    for unresolved in &display.unresolved_days {
+        writer.writeln_newline(&format!(
+            "[Warn] 平\t{}\t未解消 {}",
+            unresolved.date,
+            format_work_seconds_as_hours_minutes_rounded_up(unresolved.excess_work_seconds),
+        ))?;
+        for summary in &unresolved.reasons {
+            writer.writeln_newline(&format!(
+                "  {}: {}件",
+                flatten_reason_label(summary.reason),
+                summary.task_count,
+            ))?;
+            if let (Some(task_id), Some(task_name)) = (
+                summary.representative_task_id,
+                summary.representative_task_name.as_deref(),
+            ) {
+                writer.writeln_newline(&format!("    {task_id}\t{task_name}"))?;
+            }
+        }
+    }
+    Ok(())
+}
+
+fn format_work_seconds_as_hours_minutes_rounded_up(work_seconds: i64) -> String {
+    let positive_seconds = work_seconds.max(0);
+    let total_minutes = (positive_seconds + 59) / 60;
+    format!("{:02}:{:02}", total_minutes / 60, total_minutes % 60)
+}
+
+fn flatten_reason_label(reason: FlattenReason) -> &'static str {
+    match reason {
+        FlattenReason::OnOtherSide => "相手待ち",
+        FlattenReason::CrossesBusinessDay => "業務日境界をまたぐ",
+        FlattenReason::ExceedsDailyCapacity => "1日の最大容量を超える",
+        FlattenReason::OwnDeadline => "自身の期限により翌日06:00を維持できない",
+        FlattenReason::RelatedDeadline => "仮延期によって関連taskの期限を超える",
+        FlattenReason::Other => "その他",
+    }
 }
 
 pub(super) fn format_work_seconds_as_hours_minutes(work_seconds: i64) -> String {
