@@ -1,4 +1,6 @@
-use super::command::{Command, CommandAction, CommandKind, InteractiveShortcut};
+use super::command::{
+    representative_valid_commands, Command, CommandAction, CommandKind, InteractiveShortcut,
+};
 use super::handler::{
     decide_finish_time_values, decide_time_values, handle, handle_breakdown_split_command,
     handle_command, handle_defer_command, handle_finish_placement_command, handle_project_command,
@@ -1605,6 +1607,23 @@ fn 全command_groupは単一handler入口からtyped_contextへdispatchされる
     assert_eq!(context.task_attribute.calls, ["estimate:30"]);
     assert_eq!(context.defer.calls, ["defer:2:日"]);
     assert_eq!(context.finish_placement.calls, ["pack"]);
+}
+
+#[test]
+fn verify以外の全command_shapeは統一handler入口でoutcomeを返す() {
+    let now = Local.with_ymd_and_hms(2026, 8, 23, 12, 0, 0).unwrap();
+
+    for command in representative_valid_commands() {
+        let kind = command.kind();
+        let mut context = CompositeTraceContext::new(now);
+        let outcome = handle_command(&command, &mut context)
+            .unwrap_or_else(|error| panic!("{kind:?} must be handled without error: {error}"));
+        if kind == CommandKind::Verify {
+            assert!(outcome.is_none(), "verify remains owned by runtime");
+        } else {
+            assert!(outcome.is_some(), "{kind:?} must produce an outcome");
+        }
+    }
 }
 
 #[test]

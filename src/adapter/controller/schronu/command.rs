@@ -764,3 +764,50 @@ fn known_command(name: &str) -> Option<(CommandKind, &'static str)> {
     };
     Some(command)
 }
+
+#[cfg(test)]
+pub(super) fn command_with_minimum_valid_arguments(command: &str) -> String {
+    let arguments = match command {
+        "新" | "new" | "遊" | "hobby" | "突" | "unplanned" => " project 15",
+        "連" | "sequential" | "seq" => " task 15 1 2",
+        "繰" | "repeat" => " task 15 月 09:00 10:00",
+        "約" | "appointment" | "始" | "start" => " 今",
+        "見" | "focus" | "fc" | "選" | "pick" => " 00000000-0000-0000-0000-000000000001",
+        "上" | "nextup" | "nu" | "下" | "breakdown" | "bd" => " task 15",
+        "割" | "split" | "sp" => " 15 child",
+        "〆" | "締" | "deadline" => " 今",
+        "予" | "estimate" | "es" | "揃" | "arrange" | "arr" | "実" | "actual" | "ac" | "重"
+        | "priority" | "pr" | "働" | "work" | "wk" | "押" | "extrude" => " 15",
+        "類" | "category" | "cat" => " 資",
+        "後" | "defer" | "逃" | "escape" | "esc" => " 1 秒",
+        "空" | "clear" | "集" | "gather" => " 明",
+        "終" | "finish" | "fin" => " 今",
+        _ => "",
+    };
+    format!("{command}{arguments}")
+}
+
+#[cfg(test)]
+pub(super) fn representative_valid_commands() -> Vec<Command> {
+    let names = [
+        "新", "遊", "突", "連", "繰", "約", "始", "樹", "条", "根", "葉", "全", "尾", "今", "単",
+        "暦", "帯", "見", "選", "開", "黒", "外", "親", "子", "深", "上", "下", "割", "待", "〆",
+        "予", "揃", "実", "重", "類", "働", "後", "清", "逃", "平", "詰", "押", "空", "集", "終",
+        "高", "低", "検証",
+    ];
+    let mut commands = vec![Command::Noop];
+    commands.extend(names.into_iter().map(|name| {
+        let mode = if matches!(name, "高" | "低") {
+            ParseMode::Interactive
+        } else {
+            ParseMode::NonInteractive
+        };
+        parse_command(&command_with_minimum_valid_arguments(name), mode)
+            .expect("representative command must parse")
+    }));
+    commands.extend(["t", "d", "w", "W", "y"].map(|shortcut| {
+        parse_command(shortcut, ParseMode::Interactive)
+            .expect("representative interactive shortcut must parse")
+    }));
+    commands
+}

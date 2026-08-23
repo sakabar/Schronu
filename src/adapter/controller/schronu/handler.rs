@@ -312,7 +312,7 @@ pub(super) fn handle_command<C: CommandContext + ?Sized>(
         return Ok(Some(outcome));
     }
 
-    Ok(Some(CommandOutcome::empty(command.kind())))
+    Ok(None)
 }
 
 pub(super) fn handle_task_tree_command<C: TaskTreeCommandContext + ?Sized>(

@@ -1,5 +1,6 @@
 use super::command::{
-    parse_command, Command, CommandAction, CommandKind, InteractiveShortcut, ParseMode,
+    command_with_minimum_valid_arguments, parse_command, Command, CommandAction, CommandKind,
+    InteractiveShortcut, ParseMode,
 };
 use uuid::Uuid;
 
@@ -255,25 +256,4 @@ fn runtime_routes_both_product_entry_paths_through_the_shared_parser() {
     let source = include_str!("runtime.rs");
     assert!(source.contains("parse_command(command, ParseMode::NonInteractive)"));
     assert!(source.contains("parse_command(command, ParseMode::Interactive)"));
-}
-
-fn command_with_minimum_valid_arguments(command: &str) -> String {
-    let arguments = match command {
-        "新" | "new" | "遊" | "hobby" | "突" | "unplanned" => " project 15",
-        "連" | "sequential" | "seq" => " task 15 1 2",
-        "繰" | "repeat" => " task 15 月 09:00 10:00",
-        "約" | "appointment" | "始" | "start" => " 今",
-        "見" | "focus" | "fc" | "選" | "pick" => " 00000000-0000-0000-0000-000000000001",
-        "上" | "nextup" | "nu" | "下" | "breakdown" | "bd" => " task 15",
-        "割" | "split" | "sp" => " 15 child",
-        "〆" | "締" | "deadline" => " 今",
-        "予" | "estimate" | "es" | "揃" | "arrange" | "arr" | "実" | "actual" | "ac" | "重"
-        | "priority" | "pr" | "働" | "work" | "wk" | "押" | "extrude" => " 15",
-        "類" | "category" | "cat" => " 資",
-        "後" | "defer" | "逃" | "escape" | "esc" => " 1 秒",
-        "空" | "clear" | "集" | "gather" => " 明",
-        "終" | "finish" | "fin" => " 今",
-        _ => "",
-    };
-    format!("{command}{arguments}")
 }
