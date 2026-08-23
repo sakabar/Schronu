@@ -1,8 +1,9 @@
 use super::renderer::{
-    format_spreadsheet_task_row, render_display_model, AncestorTreeRow, DebugTreeRow,
-    DisplayFragment, DisplayModel, DisplayRecorder, ErrorCapturingWriter, LeafTreeRow,
-    MessageLevel, SchronuWriter, SpreadsheetTaskRow, TaskCategoryWorkSeconds, TaskListDisplay,
-    TaskListRow, TaskListTaskRow, TreeDisplay,
+    format_spreadsheet_task_row, format_task_list_columns, render_display_model, task_list_columns,
+    AncestorTreeRow, DebugTreeRow, DisplayFragment, DisplayModel, DisplayRecorder,
+    ErrorCapturingWriter, LeafTreeRow, MessageLevel, SchronuWriter, SpreadsheetTaskRow,
+    TaskCategoryWorkSeconds, TaskListDisplay, TaskListIconMode, TaskListRow, TaskListTaskRow,
+    TreeDisplay,
 };
 use chrono::{Local, NaiveDate, TimeZone};
 use schronu::entity::task::ProjectCategory;
@@ -301,6 +302,34 @@ fn task_list_displayはtyped_rowからa_j列とカテゴリ集計を既存順序
     assert_eq!(columns.len(), 10, "Spreadsheet連携はA-Jの10列");
     assert_eq!(columns[8], "維", "I列はcategory");
     assert_eq!(columns[9], "夕食 の 準備", "J列はtask_name");
+}
+
+#[test]
+fn task_list_icon_modeは同じgive_up候補の検索iconと表示iconを区別する() {
+    let row = TaskListTaskRow {
+        rank: 1,
+        task_id: Uuid::parse_str("11111111-1111-1111-1111-111111111111").unwrap(),
+        icon: "!".to_string(),
+        remaining_time: "____-01:20".to_string(),
+        scheduled_start: Local.with_ymd_and_hms(2026, 8, 23, 9, 0, 0).unwrap(),
+        scheduled_end: Local.with_ymd_and_hms(2026, 8, 23, 9, 40, 0).unwrap(),
+        priority_rank: 0,
+        estimated_minutes: 40,
+        project_number_priority: 1,
+        project_category: Some(ProjectCategory::Sustaining),
+        task_name: "give-up候補".to_string(),
+        give_up_candidate: true,
+    };
+
+    let search_text =
+        format_task_list_columns(&task_list_columns(&row, TaskListIconMode::Original));
+    let display_text = format_task_list_columns(&task_list_columns(
+        &row,
+        TaskListIconMode::ApplyGiveUpCandidate,
+    ));
+
+    assert!(search_text.contains(" ! ____-01:20"), "{search_text}");
+    assert!(display_text.contains(" A ____-01:20"), "{display_text}");
 }
 
 struct AlwaysFailWriter;
