@@ -1642,6 +1642,8 @@ fn noopとopenとfocusも単一handler入口からstructured_outcomeを返す() 
         focus.focus_change,
         FocusChange::SelectionMode(FocusSelection::LowestPriority { recent_days: 3 })
     );
+    assert!(context.task_tree.calls.is_empty());
+    assert_eq!(context.project.focused_task_id, Some(Uuid::from_u128(1)));
 
     let task_id = Uuid::from_u128(77);
     let focus_task = handle_command(&Command::Focus { task_id }, &mut context)
@@ -1649,6 +1651,8 @@ fn noopとopenとfocusも単一handler入口からstructured_outcomeを返す() 
         .expect("explicit focus must produce an outcome");
     assert_eq!(focus_task.kind, CommandKind::Focus);
     assert_eq!(focus_task.focus_change, FocusChange::Set(task_id));
+    assert!(context.task_tree.calls.is_empty());
+    assert_eq!(context.project.focused_task_id, Some(Uuid::from_u128(1)));
 
     let unfocus = handle_command(
         &no_arguments(CommandKind::Unfocus, "ignored alias"),
@@ -1657,6 +1661,8 @@ fn noopとopenとfocusも単一handler入口からstructured_outcomeを返す() 
     .unwrap()
     .expect("unfocus must produce an outcome");
     assert_eq!(unfocus.focus_change, FocusChange::Clear);
+    assert!(context.task_tree.calls.is_empty());
+    assert_eq!(context.project.focused_task_id, Some(Uuid::from_u128(1)));
 
     let highest = handle_command(
         &Command::Action(CommandAction::FocusMode {
@@ -1672,6 +1678,8 @@ fn noopとopenとfocusも単一handler入口からstructured_outcomeを返す() 
         highest.focus_change,
         FocusChange::SelectionMode(FocusSelection::HighestPriority)
     );
+    assert!(context.task_tree.calls.is_empty());
+    assert_eq!(context.project.focused_task_id, Some(Uuid::from_u128(1)));
 
     let verify = handle_command(
         &no_arguments(CommandKind::Verify, "ignored alias"),
