@@ -107,6 +107,26 @@ pub(super) struct TaskListTaskRow {
     pub(super) give_up_candidate: bool,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(super) enum TaskListIconMode {
+    Original,
+    ApplyGiveUpCandidate,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(super) struct TaskListColumns {
+    rank: String,
+    task_id: String,
+    icon: String,
+    remaining_time: String,
+    scheduled_time: String,
+    priority: String,
+    estimated_minutes: String,
+    project_number: String,
+    category: String,
+    task_name: String,
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(super) enum TaskListRow {
     Task(TaskListTaskRow),
@@ -311,34 +331,51 @@ pub(super) fn format_task_list_row(row: &TaskListRow) -> String {
 }
 
 pub(super) fn format_task_list_task_row(row: &TaskListTaskRow) -> String {
-    let rank = format!("{:04}", row.rank);
-    let task_id = row.task_id.to_string();
-    let icon = if row.give_up_candidate {
-        "A"
-    } else {
-        &row.icon
+    let columns = task_list_columns(row, TaskListIconMode::ApplyGiveUpCandidate);
+    format_task_list_columns(&columns)
+}
+
+pub(super) fn task_list_columns(
+    row: &TaskListTaskRow,
+    icon_mode: TaskListIconMode,
+) -> TaskListColumns {
+    let icon = match icon_mode {
+        TaskListIconMode::Original => row.icon.clone(),
+        TaskListIconMode::ApplyGiveUpCandidate if row.give_up_candidate => "A".to_string(),
+        TaskListIconMode::ApplyGiveUpCandidate => row.icon.clone(),
     };
-    let scheduled_time = format!(
-        "{}({})-{}~{}",
-        row.scheduled_start.format("%m/%d"),
-        weekday_jp(row.scheduled_start.weekday()),
-        row.scheduled_start.format("%H:%M"),
-        row.scheduled_end.format("%H:%M"),
-    );
-    let priority = row.priority_rank.to_string();
-    let estimated_minutes = format!("{:02}", row.estimated_minutes);
-    let project_number = format!("{:02}", row.project_number_priority);
-    format_spreadsheet_task_row(&SpreadsheetTaskRow {
-        rank: &rank,
-        task_id: &task_id,
+    TaskListColumns {
+        rank: format!("{:04}", row.rank),
+        task_id: row.task_id.to_string(),
         icon,
-        remaining_time: &row.remaining_time,
-        scheduled_time: &scheduled_time,
-        priority: &priority,
-        estimated_minutes: &estimated_minutes,
-        project_number: &project_number,
-        category: project_category_symbol(row.project_category),
-        task_name: &row.task_name,
+        remaining_time: row.remaining_time.clone(),
+        scheduled_time: format!(
+            "{}({})-{}~{}",
+            row.scheduled_start.format("%m/%d"),
+            weekday_jp(row.scheduled_start.weekday()),
+            row.scheduled_start.format("%H:%M"),
+            row.scheduled_end.format("%H:%M"),
+        ),
+        priority: row.priority_rank.to_string(),
+        estimated_minutes: format!("{:02}", row.estimated_minutes),
+        project_number: format!("{:02}", row.project_number_priority),
+        category: project_category_symbol(row.project_category).to_string(),
+        task_name: row.task_name.clone(),
+    }
+}
+
+pub(super) fn format_task_list_columns(columns: &TaskListColumns) -> String {
+    format_spreadsheet_task_row(&SpreadsheetTaskRow {
+        rank: &columns.rank,
+        task_id: &columns.task_id,
+        icon: &columns.icon,
+        remaining_time: &columns.remaining_time,
+        scheduled_time: &columns.scheduled_time,
+        priority: &columns.priority,
+        estimated_minutes: &columns.estimated_minutes,
+        project_number: &columns.project_number,
+        category: &columns.category,
+        task_name: &columns.task_name,
     })
 }
 

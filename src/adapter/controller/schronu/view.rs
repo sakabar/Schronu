@@ -2,8 +2,9 @@ pub(super) use super::renderer::project_category_symbol;
 #[cfg(test)]
 use super::renderer::{format_task_category_summary, format_task_list_row};
 use super::renderer::{
-    weekday_jp, writeln_newline, AncestorTreeRow, DebugTreeRow, LeafTreeRow, SchronuWriter,
-    TaskCategoryWorkSeconds, TaskListDisplay, TaskListRow, TaskListTaskRow, TreeDisplay,
+    format_task_list_columns, task_list_columns, weekday_jp, writeln_newline, AncestorTreeRow,
+    DebugTreeRow, LeafTreeRow, SchronuWriter, TaskCategoryWorkSeconds, TaskListDisplay,
+    TaskListIconMode, TaskListRow, TaskListTaskRow, TreeDisplay,
 };
 use chrono::{DateTime, Datelike, Duration, Local, NaiveDate, Weekday};
 use regex::Regex;
@@ -33,22 +34,7 @@ pub(super) fn get_weekday_jp(date: &NaiveDate) -> &str {
 }
 
 pub(super) fn task_list_search_text(row: &TaskListTaskRow) -> String {
-    format!(
-        "{:04} {} {} {} {}({})-{}~{} {} {:02} {:02} {} {}",
-        row.rank,
-        row.task_id,
-        row.icon,
-        row.remaining_time,
-        row.scheduled_start.format("%m/%d"),
-        weekday_jp(row.scheduled_start.weekday()),
-        row.scheduled_start.format("%H:%M"),
-        row.scheduled_end.format("%H:%M"),
-        row.priority_rank,
-        row.estimated_minutes,
-        row.project_number_priority,
-        project_category_symbol(row.project_category),
-        row.task_name,
-    )
+    format_task_list_columns(&task_list_columns(row, TaskListIconMode::Original))
 }
 
 pub(super) fn get_adjustable_prefix_label(
