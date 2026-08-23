@@ -65,15 +65,7 @@ fn is_top_level_rust_item(line: &str) -> bool {
         return true;
     }
 
-    let declaration = if let Some(declaration) = line.strip_prefix("pub ") {
-        declaration
-    } else if let Some(visibility) = line.strip_prefix("pub(") {
-        visibility
-            .split_once(") ")
-            .map_or(line, |(_, declaration)| declaration)
-    } else {
-        line
-    };
+    let declaration = strip_top_level_visibility(line);
 
     [
         "fn ",
@@ -94,6 +86,25 @@ fn is_top_level_rust_item(line: &str) -> bool {
     ]
     .iter()
     .any(|item_prefix| declaration.starts_with(item_prefix))
+}
+
+fn strip_top_level_visibility(line: &str) -> &str {
+    if let Some(declaration) = line.strip_prefix("pub ") {
+        declaration
+    } else if let Some(visibility) = line.strip_prefix("pub(") {
+        visibility
+            .split_once(") ")
+            .map_or(line, |(_, declaration)| declaration)
+    } else {
+        line
+    }
+}
+
+fn is_top_level_function_definition(line: &str, function_name: &str) -> bool {
+    if line.is_empty() || line.chars().next().is_some_and(char::is_whitespace) {
+        return false;
+    }
+    strip_top_level_visibility(line).starts_with(&format!("fn {function_name}("))
 }
 
 #[test]
@@ -153,22 +164,48 @@ fn interactiveとnoninteractiveは単一のtyped_parserを共有する() {
 #[test]
 fn interactiveとnoninteractiveは単一のparsed_command_dispatcherを共有する() {
     let product_source = controller_product_source();
+    assert_eq!(
+        product_source
+            .lines()
+            .filter(|line| is_top_level_function_definition(line, "execute_parsed"))
+            .count(),
+        1,
+        "controller must define exactly one shared parsed-command dispatcher"
+    );
 
-    for entry_function in [
-        "execute_non_interactive_command_at",
-        "execute_interactive_command",
+    for (entry_function, allowed_direct_dispatches) in [
+        (
+            "execute_non_interactive_command_at",
+            &["CommandKind::Verify"][..],
+        ),
+        (
+            "execute_interactive_command",
+            &[
+                "Command::Focus",
+                "Command::Defer",
+                "Command::InteractiveShortcut",
+            ][..],
+        ),
     ] {
         let entry_source = function_region(&product_source, entry_function);
         assert!(
             entry_source.contains("execute_parsed("),
             "{entry_function} must route parsed commands through the shared dispatcher"
         );
-        for forbidden_direct_dispatch in ["Command::Estimate", "CommandKind::Estimate"] {
+        let mut source_without_allowed_dispatches = entry_source.to_string();
+        for allowed_direct_dispatch in allowed_direct_dispatches {
             assert!(
-                !entry_source.contains(forbidden_direct_dispatch),
-                "{entry_function} must not bypass the shared handler for Estimate"
+                entry_source.contains(allowed_direct_dispatch),
+                "{entry_function} must retain intentional direct dispatch {allowed_direct_dispatch}"
             );
+            source_without_allowed_dispatches =
+                source_without_allowed_dispatches.replace(allowed_direct_dispatch, "");
         }
+        assert!(
+            !source_without_allowed_dispatches.contains("Command::")
+                && !source_without_allowed_dispatches.contains("CommandKind::"),
+            "{entry_function} must not add a direct typed-command dispatch outside the allowlist"
+        );
     }
 }
 
