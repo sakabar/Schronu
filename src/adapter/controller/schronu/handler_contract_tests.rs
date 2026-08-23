@@ -3,9 +3,9 @@ use super::handler::{
     decide_finish_time_values, decide_time_values, handle, handle_breakdown_split_command,
     handle_command, handle_defer_command, handle_finish_placement_command, handle_project_command,
     handle_task_attribute_command, handle_task_tree_command, CommandContext, DeferCommandContext,
-    DeferCommandError, ExternalRequest, FinishPlacementCommandContext, FocusChange, FocusRequest,
-    FocusSelection, HandlerError, ProjectCommandContext, TaskAttributeCommandContext,
-    TaskListOrder, TaskTreeCommandContext,
+    DeferCommandError, ExternalRequest, FinishPlacementCommandContext, FocusChange, FocusSelection,
+    HandlerError, ProjectCommandContext, TaskAttributeCommandContext, TaskListOrder,
+    TaskTreeCommandContext,
 };
 use super::renderer::{
     render_display_model, DisplayFragment, DisplayModel, DisplayRecorder, SchronuWriter,
@@ -55,7 +55,7 @@ fn handler_product_source() -> &'static str {
 
 fn finish_placement_handler_source() -> &'static str {
     handler_product_source()
-        .split_once("pub(super) fn handle_finish_placement_command(")
+        .split_once("pub(super) fn handle_finish_placement_command")
         .expect("handler must retain finish and placement dispatch")
         .1
         .split_once("pub(super) fn decide_finish_time_values(")
@@ -173,7 +173,7 @@ fn handler_returns_structured_external_requests_without_opening_them() {
         open.external_request,
         Some(ExternalRequest::OpenFocusedLink)
     );
-    assert_eq!(open.focus_request, None);
+    assert_eq!(open.focus_change, FocusChange::Keep);
     assert!(open.display.is_empty());
 
     let obsidian =
@@ -183,7 +183,7 @@ fn handler_returns_structured_external_requests_without_opening_them() {
         obsidian.external_request,
         Some(ExternalRequest::OpenObsidianRootSearch)
     );
-    assert_eq!(obsidian.focus_request, None);
+    assert_eq!(obsidian.focus_change, FocusChange::Keep);
     assert!(obsidian.display.is_empty());
 }
 
@@ -196,7 +196,10 @@ fn handler_returns_focus_requests_and_the_existing_confirmation_display() {
     }))
     .expect("highest focus mode is migrated");
     assert_eq!(highest.kind, CommandKind::FocusHighest);
-    assert_eq!(highest.focus_request, Some(FocusRequest::HighestPriority));
+    assert_eq!(
+        highest.focus_change,
+        FocusChange::SelectionMode(FocusSelection::HighestPriority)
+    );
     assert_eq!(
         highest.display,
         DisplayModel::newline("フォーカス選択モード: 高")
@@ -209,8 +212,8 @@ fn handler_returns_focus_requests_and_the_existing_confirmation_display() {
     }))
     .expect("lowest focus mode is migrated");
     assert_eq!(
-        lowest.focus_request,
-        Some(FocusRequest::LowestPriority { recent_days: 3 })
+        lowest.focus_change,
+        FocusChange::SelectionMode(FocusSelection::LowestPriority { recent_days: 3 })
     );
     assert_eq!(
         lowest.display,
@@ -224,7 +227,7 @@ fn handler_owns_noop_but_leaves_unmigrated_commands_to_runtime() {
     assert_eq!(noop.kind, CommandKind::Noop);
     assert!(noop.display.is_empty());
     assert_eq!(noop.external_request, None);
-    assert_eq!(noop.focus_request, None);
+    assert_eq!(noop.focus_change, FocusChange::Keep);
 
     assert_eq!(handle(&Command::Estimate { minutes: 15 }), None);
 }
@@ -244,11 +247,11 @@ fn handler_has_no_runtime_or_external_io_dependency_and_no_command_reconstructio
         open.external_request,
         Some(ExternalRequest::OpenFocusedLink)
     );
-    assert_eq!(open.focus_request, None);
+    assert_eq!(open.focus_change, FocusChange::Keep);
     assert_eq!(focus.external_request, None);
     assert_eq!(
-        focus.focus_request,
-        Some(FocusRequest::LowestPriority { recent_days: 7 })
+        focus.focus_change,
+        FocusChange::SelectionMode(FocusSelection::LowestPriority { recent_days: 7 })
     );
 
     let product_source = handler_product_source();
@@ -1232,7 +1235,7 @@ fn 完了と配置commandはtyped値のままhandlerが所有してruntime_fallb
 
     let unfocus = handle(&no_arguments(CommandKind::Unfocus, "ignored alias"))
         .expect("typed unfocus command must be owned by the handler");
-    assert_eq!(unfocus.focus_request, Some(FocusRequest::Clear));
+    assert_eq!(unfocus.focus_change, FocusChange::Clear);
     assert_runtime_routes_to_handler(
         "handle_finish_placement_command(parsed_command",
         &[

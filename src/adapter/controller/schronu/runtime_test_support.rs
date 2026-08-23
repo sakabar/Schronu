@@ -82,8 +82,12 @@ fn report_command_result(stdout: &mut dyn SchronuWriter, result: Result<(), Comm
 #[cfg(test)]
 fn focus_selection_mode_from_command(command: &Command) -> Option<FocusSelectionMode> {
     handle(command)
-        .and_then(|outcome| outcome.focus_request)
-        .map(focus_selection_mode_from_request)
+        .and_then(|outcome| match outcome.focus_change {
+            FocusChange::SelectionMode(selection) => {
+                Some(focus_selection_mode_from_selection(selection))
+            }
+            FocusChange::Keep | FocusChange::Clear | FocusChange::Set(_) => None,
+        })
 }
 
 #[cfg(test)]

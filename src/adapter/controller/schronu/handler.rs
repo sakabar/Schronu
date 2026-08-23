@@ -22,10 +22,18 @@ pub(super) enum ExternalRequest {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(super) enum FocusRequest {
-    Clear,
+pub(super) enum FocusSelection {
     HighestPriority,
     LowestPriority { recent_days: i64 },
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[allow(dead_code)] // The runtime adopts Set through handle_command in the next migration step.
+pub(super) enum FocusChange {
+    Keep,
+    Clear,
+    Set(Uuid),
+    SelectionMode(FocusSelection),
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -33,7 +41,27 @@ pub(super) struct CommandOutcome {
     pub(super) kind: CommandKind,
     pub(super) display: DisplayModel,
     pub(super) external_request: Option<ExternalRequest>,
-    pub(super) focus_request: Option<FocusRequest>,
+    pub(super) focus_change: FocusChange,
+}
+
+#[allow(dead_code)] // The legacy runtime dispatch coexists until its dedicated migration commit.
+pub(super) trait CommandContext:
+    ProjectCommandContext
+    + TaskTreeCommandContext
+    + TaskAttributeCommandContext
+    + DeferCommandContext
+    + FinishPlacementCommandContext
+{
+}
+
+impl<T> CommandContext for T where
+    T: ProjectCommandContext
+        + TaskTreeCommandContext
+        + TaskAttributeCommandContext
+        + DeferCommandContext
+        + FinishPlacementCommandContext
+        + ?Sized
+{
 }
 
 pub(super) trait ProjectCommandContext {
@@ -134,6 +162,45 @@ pub(super) enum DeferCommandError {
     Application(ApplicationError),
 }
 
+#[derive(Debug)]
+pub(super) enum HandlerError {
+    Parse(CommandParseError),
+    Application(ApplicationError),
+}
+
+impl std::fmt::Display for HandlerError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Parse(error) => error.fmt(formatter),
+            Self::Application(error) => write!(formatter, "操作エラー: {error}"),
+        }
+    }
+}
+
+impl std::error::Error for HandlerError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::Parse(error) => Some(error),
+            Self::Application(error) => Some(error),
+        }
+    }
+}
+
+impl From<ApplicationError> for HandlerError {
+    fn from(error: ApplicationError) -> Self {
+        Self::Application(error)
+    }
+}
+
+impl From<DeferCommandError> for HandlerError {
+    fn from(error: DeferCommandError) -> Self {
+        match error {
+            DeferCommandError::Parse(error) => Self::Parse(error),
+            DeferCommandError::Application(error) => Self::Application(error),
+        }
+    }
+}
+
 impl std::fmt::Display for DeferCommandError {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
@@ -155,7 +222,7 @@ impl CommandOutcome {
             kind,
             display: DisplayModel::default(),
             external_request: None,
-            focus_request: None,
+            focus_change: FocusChange::Keep,
         }
     }
 }
@@ -177,12 +244,12 @@ pub(super) fn handle(command: &Command) -> Option<CommandOutcome> {
         Command::Action(CommandAction::NoArguments {
             kind: CommandKind::Unfocus,
             ..
-        }) => outcome.focus_request = Some(FocusRequest::Clear),
+        }) => outcome.focus_change = FocusChange::Clear,
         Command::Action(CommandAction::FocusMode {
             kind: CommandKind::FocusHighest,
             ..
         }) => {
-            outcome.focus_request = Some(FocusRequest::HighestPriority);
+            outcome.focus_change = FocusChange::SelectionMode(FocusSelection::HighestPriority);
             outcome.display = DisplayModel::newline("フォーカス選択モード: 高");
         }
         Command::Action(CommandAction::FocusMode {
@@ -191,7 +258,8 @@ pub(super) fn handle(command: &Command) -> Option<CommandOutcome> {
             ..
         }) => {
             let recent_days = recent_days.unwrap_or(0);
-            outcome.focus_request = Some(FocusRequest::LowestPriority { recent_days });
+            outcome.focus_change =
+                FocusChange::SelectionMode(FocusSelection::LowestPriority { recent_days });
             let label = if recent_days == 0 {
                 "低".to_string()
             } else {
@@ -209,9 +277,47 @@ pub(super) fn handle(command: &Command) -> Option<CommandOutcome> {
     Some(outcome)
 }
 
-pub(super) fn handle_task_tree_command(
+#[allow(dead_code)] // The contract precedes the runtime entrypoint migration by one commit.
+pub(super) fn handle_command<C: CommandContext + ?Sized>(
     command: &Command,
-    context: &mut dyn TaskTreeCommandContext,
+    context: &mut C,
+) -> Result<Option<CommandOutcome>, HandlerError> {
+    if command.kind() == CommandKind::Verify {
+        return Ok(None);
+    }
+    if let Command::Focus { task_id } = command {
+        let mut outcome = CommandOutcome::empty(CommandKind::Focus);
+        outcome.focus_change = FocusChange::Set(*task_id);
+        return Ok(Some(outcome));
+    }
+    if let Some(outcome) = handle(command) {
+        return Ok(Some(outcome));
+    }
+    if let Some(outcome) = handle_project_command(command, context)? {
+        return Ok(Some(outcome));
+    }
+    if let Some(outcome) = handle_breakdown_split_command(command, context)? {
+        return Ok(Some(outcome));
+    }
+    if let Some(outcome) = handle_task_attribute_command(command, context)? {
+        return Ok(Some(outcome));
+    }
+    if let Some(outcome) = handle_defer_command(command, context)? {
+        return Ok(Some(outcome));
+    }
+    if let Some(outcome) = handle_finish_placement_command(command, context)? {
+        return Ok(Some(outcome));
+    }
+    if let Some(outcome) = handle_task_tree_command(command, context)? {
+        return Ok(Some(outcome));
+    }
+
+    Ok(Some(CommandOutcome::empty(command.kind())))
+}
+
+pub(super) fn handle_task_tree_command<C: TaskTreeCommandContext + ?Sized>(
+    command: &Command,
+    context: &mut C,
 ) -> Result<Option<CommandOutcome>, ApplicationError> {
     let mut display = DisplayRecorder::with_ansi_color(context.supports_ansi_color());
     let kind = command.kind();
@@ -313,9 +419,9 @@ pub(super) fn handle_task_tree_command(
     Ok(Some(outcome))
 }
 
-pub(super) fn handle_project_command(
+pub(super) fn handle_project_command<C: ProjectCommandContext + ?Sized>(
     command: &Command,
-    context: &mut dyn ProjectCommandContext,
+    context: &mut C,
 ) -> Result<Option<CommandOutcome>, ApplicationError> {
     let action = match command {
         Command::Action(action) => action,
@@ -421,9 +527,9 @@ pub(super) fn handle_project_command(
     }
 }
 
-pub(super) fn handle_breakdown_split_command(
+pub(super) fn handle_breakdown_split_command<C: ProjectCommandContext + ?Sized>(
     command: &Command,
-    context: &mut dyn ProjectCommandContext,
+    context: &mut C,
 ) -> Result<Option<CommandOutcome>, ApplicationError> {
     let action = match command {
         Command::Action(action) => action,
@@ -463,9 +569,9 @@ pub(super) fn handle_breakdown_split_command(
     Ok(Some(outcome))
 }
 
-pub(super) fn handle_task_attribute_command(
+pub(super) fn handle_task_attribute_command<C: TaskAttributeCommandContext + ?Sized>(
     command: &Command,
-    context: &mut dyn TaskAttributeCommandContext,
+    context: &mut C,
 ) -> Result<Option<CommandOutcome>, ApplicationError> {
     let kind = command.kind();
 
@@ -506,9 +612,9 @@ pub(super) fn handle_task_attribute_command(
     Ok(Some(CommandOutcome::empty(kind)))
 }
 
-pub(super) fn handle_defer_command(
+pub(super) fn handle_defer_command<C: DeferCommandContext + ?Sized>(
     command: &Command,
-    context: &mut dyn DeferCommandContext,
+    context: &mut C,
 ) -> Result<Option<CommandOutcome>, ApplicationError> {
     let kind = command.kind();
     let reported_result = match command {
@@ -562,9 +668,9 @@ pub(super) fn handle_defer_command(
     Ok(reported_result.map(|result| outcome_from_reported_defer_result(kind, result)))
 }
 
-pub(super) fn handle_finish_placement_command(
+pub(super) fn handle_finish_placement_command<C: FinishPlacementCommandContext + ?Sized>(
     command: &Command,
-    context: &mut dyn FinishPlacementCommandContext,
+    context: &mut C,
 ) -> Result<Option<CommandOutcome>, ApplicationError> {
     let kind = command.kind();
     let mut display = DisplayRecorder::with_ansi_color(context.supports_ansi_color());
@@ -851,8 +957,8 @@ fn outcome_from_reported_defer_result(
     outcome
 }
 
-fn execute_start_new_project(
-    context: &mut dyn ProjectCommandContext,
+fn execute_start_new_project<C: ProjectCommandContext + ?Sized>(
+    context: &mut C,
     name: &str,
     defer_days_opt: Option<i64>,
     estimated_work_minutes_opt: Option<i64>,
@@ -905,8 +1011,8 @@ fn execute_make_appointment(
     Ok(())
 }
 
-fn execute_breakdown_sequentially(
-    context: &mut dyn ProjectCommandContext,
+fn execute_breakdown_sequentially<C: ProjectCommandContext + ?Sized>(
+    context: &mut C,
     focused_task_opt: &Option<TaskHandle>,
     name: &str,
     estimated_work_minutes: i64,
@@ -937,9 +1043,9 @@ fn execute_breakdown_sequentially(
     Ok(None)
 }
 
-fn execute_breakdown(
+fn execute_breakdown<C: ProjectCommandContext + ?Sized>(
     stdout: &mut dyn SchronuWriter,
-    context: &mut dyn ProjectCommandContext,
+    context: &mut C,
     new_task_names: &[&str],
     pending_until_opt: &Option<DateTime<Local>>,
 ) -> Result<Option<Vec<Uuid>>, ApplicationError> {
@@ -964,8 +1070,8 @@ fn execute_breakdown(
     Ok(Some(child_ids))
 }
 
-fn execute_split(
-    context: &mut dyn ProjectCommandContext,
+fn execute_split<C: ProjectCommandContext + ?Sized>(
+    context: &mut C,
     focused_task_opt: &Option<TaskHandle>,
     new_task_name: &str,
     splitted_work_minutes: i64,
@@ -1025,9 +1131,9 @@ fn execute_split(
 }
 
 #[allow(clippy::too_many_arguments)]
-fn execute_create_repetition_task(
+fn execute_create_repetition_task<C: ProjectCommandContext + ?Sized>(
     stdout: &mut dyn SchronuWriter,
-    context: &mut dyn ProjectCommandContext,
+    context: &mut C,
     name: &str,
     day: &str,
     estimated_work_minutes: i64,

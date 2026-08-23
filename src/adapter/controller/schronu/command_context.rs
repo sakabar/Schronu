@@ -1086,52 +1086,6 @@ pub(super) fn read_project_category_command_arg(s: &str) -> Option<Option<Projec
     }
 }
 
-pub(super) struct RuntimeProjectCommandContext<'repository, 'factory, 'generator> {
-    pub(super) task_repository: &'repository mut dyn TaskRepositoryTrait,
-    pub(super) focused_task_id_opt: &'repository mut Option<Uuid>,
-    pub(super) task_factory: &'factory mut TaskFactory<'generator>,
-}
-
-impl ProjectCommandContext for RuntimeProjectCommandContext<'_, '_, '_> {
-    fn last_synced_time(&self) -> DateTime<Local> {
-        self.task_repository.get_last_synced_time()
-    }
-
-    fn focused_task(&mut self) -> Result<Option<TaskHandle>, ApplicationError> {
-        match self.focused_task_id_opt {
-            Some(id) => self
-                .task_repository
-                .get_by_id(*id)
-                .map_err(ApplicationError::TaskTree),
-            None => Ok(None),
-        }
-    }
-
-    fn create_task(&mut self, input: CreateTaskInput) -> Result<Uuid, ApplicationError> {
-        create_task(self.task_repository, input, self.task_factory)
-    }
-
-    fn breakdown_task(&mut self, input: BreakdownTaskInput) -> Result<Vec<Uuid>, ApplicationError> {
-        breakdown_task(self.task_repository, input, self.task_factory)
-    }
-
-    fn create_task_attr(&mut self, name: &str) -> TaskAttr {
-        self.task_factory.create_task_attr(name)
-    }
-
-    fn set_estimate(&mut self, task_id: Uuid, minutes: i64) -> Result<(), ApplicationError> {
-        set_estimate(self.task_repository, task_id, minutes)
-    }
-
-    fn focused_task_id(&self) -> Option<Uuid> {
-        *self.focused_task_id_opt
-    }
-
-    fn set_focused_task_id(&mut self, task_id_opt: Option<Uuid>) {
-        *self.focused_task_id_opt = task_id_opt;
-    }
-}
-
 pub(super) struct RuntimeTaskAttributeCommandContext<'a> {
     pub(super) task_repository: &'a mut dyn TaskRepositoryTrait,
     pub(super) focused_task_id_opt: &'a mut Option<Uuid>,
@@ -1330,75 +1284,6 @@ impl DeferCommandContext for RuntimeDeferCommandContext<'_> {
     }
 }
 
-pub(super) struct RuntimeFinishPlacementCommandContext<'repository, 'factory, 'generator> {
-    pub(super) task_repository: &'repository mut dyn TaskRepositoryTrait,
-    pub(super) free_time_manager: &'repository mut dyn FreeTimeManagerTrait,
-    pub(super) focused_task_id_opt: &'repository mut Option<Uuid>,
-    pub(super) task_factory: &'factory mut TaskFactory<'generator>,
-    pub(super) focus_started_datetime: DateTime<Local>,
-    pub(super) config: &'repository SchronuConfig,
-    pub(super) supports_ansi_color: bool,
-}
-
-impl FinishPlacementCommandContext for RuntimeFinishPlacementCommandContext<'_, '_, '_> {
-    fn supports_ansi_color(&self) -> bool {
-        self.supports_ansi_color
-    }
-
-    fn last_synced_time(&self) -> DateTime<Local> {
-        self.task_repository.get_last_synced_time()
-    }
-
-    fn focus_started_datetime(&self) -> DateTime<Local> {
-        self.focus_started_datetime
-    }
-
-    fn focused_task(&self) -> Result<Option<TaskHandle>, ApplicationError> {
-        match *self.focused_task_id_opt {
-            Some(task_id) => self
-                .task_repository
-                .get_by_id(task_id)
-                .map_err(ApplicationError::TaskTree),
-            None => Ok(None),
-        }
-    }
-
-    fn show_focused_tree(
-        &mut self,
-        display: &mut dyn SchronuWriter,
-    ) -> Result<(), ApplicationError> {
-        execute_show_tree(display, &self.focused_task()?)
-    }
-
-    fn complete_focused_task(
-        &mut self,
-        input: CompleteTaskInput,
-    ) -> Result<Option<Uuid>, ApplicationError> {
-        complete_task(self.task_repository, input, self.task_factory)
-            .map(|output| output.next_focus_task_id)
-    }
-
-    fn set_focused_task_id(&mut self, task_id_opt: Option<Uuid>) {
-        *self.focused_task_id_opt = task_id_opt;
-    }
-
-    fn pack(&mut self) -> Result<PackResult, ApplicationError> {
-        pack_tasks_with_end_of_day_offset_minutes(
-            self.task_repository,
-            self.free_time_manager,
-            self.config.end_of_day_offset_minutes,
-        )
-    }
-
-    fn flatten(&mut self) -> Result<FlattenResult, ApplicationError> {
-        flatten_tasks_with_end_of_day_offset_minutes(
-            self.task_repository,
-            self.free_time_manager,
-            self.config.end_of_day_offset_minutes,
-        )
-    }
-}
-
 pub(super) struct RuntimeTaskTreeCommandContext<'repository, 'factory, 'generator> {
     pub(super) task_repository: &'repository mut dyn TaskRepositoryTrait,
     pub(super) free_time_manager: &'repository mut dyn FreeTimeManagerTrait,
@@ -1582,5 +1467,427 @@ impl TaskTreeCommandContext for RuntimeTaskTreeCommandContext<'_, '_, '_> {
         );
         report_application_result(display, result);
         Ok(())
+    }
+}
+
+pub(super) struct CliCommandContext<'repository, 'factory, 'generator> {
+    pub(super) task_repository: &'repository mut dyn TaskRepositoryTrait,
+    pub(super) free_time_manager: &'repository mut dyn FreeTimeManagerTrait,
+    pub(super) focused_task_id_opt: &'repository mut Option<Uuid>,
+    pub(super) task_factory: &'factory mut TaskFactory<'generator>,
+    pub(super) focus_started_datetime: DateTime<Local>,
+    pub(super) config: &'repository SchronuConfig,
+    pub(super) supports_ansi_color: bool,
+}
+
+impl ProjectCommandContext for CliCommandContext<'_, '_, '_> {
+    fn last_synced_time(&self) -> DateTime<Local> {
+        self.task_repository.get_last_synced_time()
+    }
+
+    fn focused_task(&mut self) -> Result<Option<TaskHandle>, ApplicationError> {
+        match *self.focused_task_id_opt {
+            Some(id) => self
+                .task_repository
+                .get_by_id(id)
+                .map_err(ApplicationError::TaskTree),
+            None => Ok(None),
+        }
+    }
+
+    fn create_task(&mut self, input: CreateTaskInput) -> Result<Uuid, ApplicationError> {
+        create_task(self.task_repository, input, self.task_factory)
+    }
+
+    fn breakdown_task(&mut self, input: BreakdownTaskInput) -> Result<Vec<Uuid>, ApplicationError> {
+        breakdown_task(self.task_repository, input, self.task_factory)
+    }
+
+    fn create_task_attr(&mut self, name: &str) -> TaskAttr {
+        self.task_factory.create_task_attr(name)
+    }
+
+    fn set_estimate(&mut self, task_id: Uuid, minutes: i64) -> Result<(), ApplicationError> {
+        set_estimate(self.task_repository, task_id, minutes)
+    }
+
+    fn focused_task_id(&self) -> Option<Uuid> {
+        *self.focused_task_id_opt
+    }
+
+    fn set_focused_task_id(&mut self, task_id_opt: Option<Uuid>) {
+        *self.focused_task_id_opt = task_id_opt;
+    }
+}
+
+impl TaskAttributeCommandContext for CliCommandContext<'_, '_, '_> {
+    fn set_deadline(&mut self, value: &str) -> Result<(), ApplicationError> {
+        let mut context = RuntimeTaskAttributeCommandContext {
+            task_repository: self.task_repository,
+            focused_task_id_opt: self.focused_task_id_opt,
+            focus_started_datetime: &self.focus_started_datetime,
+            config: self.config,
+        };
+        context.set_deadline(value)
+    }
+
+    fn set_estimate(&mut self, minutes: i64) -> Result<(), ApplicationError> {
+        let mut context = RuntimeTaskAttributeCommandContext {
+            task_repository: self.task_repository,
+            focused_task_id_opt: self.focused_task_id_opt,
+            focus_started_datetime: &self.focus_started_datetime,
+            config: self.config,
+        };
+        context.set_estimate(minutes)
+    }
+
+    fn arrange(
+        &mut self,
+        minutes: i64,
+        includes_zero_estimate: bool,
+    ) -> Result<(), ApplicationError> {
+        let mut context = RuntimeTaskAttributeCommandContext {
+            task_repository: self.task_repository,
+            focused_task_id_opt: self.focused_task_id_opt,
+            focus_started_datetime: &self.focus_started_datetime,
+            config: self.config,
+        };
+        context.arrange(minutes, includes_zero_estimate)
+    }
+
+    fn set_actual(&mut self, minutes: i64) -> Result<(), ApplicationError> {
+        let mut context = RuntimeTaskAttributeCommandContext {
+            task_repository: self.task_repository,
+            focused_task_id_opt: self.focused_task_id_opt,
+            focus_started_datetime: &self.focus_started_datetime,
+            config: self.config,
+        };
+        context.set_actual(minutes)
+    }
+
+    fn set_priority(&mut self, priority: i64) -> Result<(), ApplicationError> {
+        let mut context = RuntimeTaskAttributeCommandContext {
+            task_repository: self.task_repository,
+            focused_task_id_opt: self.focused_task_id_opt,
+            focus_started_datetime: &self.focus_started_datetime,
+            config: self.config,
+        };
+        context.set_priority(priority)
+    }
+
+    fn set_category(&mut self, value: &str) -> Result<(), ApplicationError> {
+        let mut context = RuntimeTaskAttributeCommandContext {
+            task_repository: self.task_repository,
+            focused_task_id_opt: self.focused_task_id_opt,
+            focus_started_datetime: &self.focus_started_datetime,
+            config: self.config,
+        };
+        context.set_category(value)
+    }
+
+    fn add_work(&mut self, minutes: Option<i64>) -> Result<(), ApplicationError> {
+        let mut context = RuntimeTaskAttributeCommandContext {
+            task_repository: self.task_repository,
+            focused_task_id_opt: self.focused_task_id_opt,
+            focus_started_datetime: &self.focus_started_datetime,
+            config: self.config,
+        };
+        context.add_work(minutes)
+    }
+}
+
+impl DeferCommandContext for CliCommandContext<'_, '_, '_> {
+    fn defer(&mut self, amount: i64, unit: &str) -> Result<(), DeferCommandError> {
+        RuntimeDeferCommandContext {
+            task_repository: self.task_repository,
+            focused_task_id_opt: self.focused_task_id_opt,
+            config: self.config,
+        }
+        .defer(amount, unit)
+    }
+
+    fn defer_expression(&mut self, values: &[String]) -> Result<(), DeferCommandError> {
+        RuntimeDeferCommandContext {
+            task_repository: self.task_repository,
+            focused_task_id_opt: self.focused_task_id_opt,
+            config: self.config,
+        }
+        .defer_expression(values)
+    }
+
+    fn defer_next_morning(&mut self) -> Result<(), DeferCommandError> {
+        RuntimeDeferCommandContext {
+            task_repository: self.task_repository,
+            focused_task_id_opt: self.focused_task_id_opt,
+            config: self.config,
+        }
+        .defer_next_morning()
+    }
+
+    fn defer_next_week(&mut self) -> Result<(), DeferCommandError> {
+        RuntimeDeferCommandContext {
+            task_repository: self.task_repository,
+            focused_task_id_opt: self.focused_task_id_opt,
+            config: self.config,
+        }
+        .defer_next_week()
+    }
+
+    fn defer_routine(&mut self) -> Result<(), ApplicationError> {
+        RuntimeDeferCommandContext {
+            task_repository: self.task_repository,
+            focused_task_id_opt: self.focused_task_id_opt,
+            config: self.config,
+        }
+        .defer_routine()
+    }
+
+    fn defer_five_years(&mut self) -> Result<(), DeferCommandError> {
+        RuntimeDeferCommandContext {
+            task_repository: self.task_repository,
+            focused_task_id_opt: self.focused_task_id_opt,
+            config: self.config,
+        }
+        .defer_five_years()
+    }
+
+    fn defer_all_frequent_routines(&mut self) -> Result<(), ApplicationError> {
+        RuntimeDeferCommandContext {
+            task_repository: self.task_repository,
+            focused_task_id_opt: self.focused_task_id_opt,
+            config: self.config,
+        }
+        .defer_all_frequent_routines()
+    }
+
+    fn prepare_escape(&mut self) -> Result<bool, ApplicationError> {
+        RuntimeDeferCommandContext {
+            task_repository: self.task_repository,
+            focused_task_id_opt: self.focused_task_id_opt,
+            config: self.config,
+        }
+        .prepare_escape()
+    }
+
+    fn extrude(&mut self, step_days: Option<u16>) -> Result<(), ApplicationError> {
+        RuntimeDeferCommandContext {
+            task_repository: self.task_repository,
+            focused_task_id_opt: self.focused_task_id_opt,
+            config: self.config,
+        }
+        .extrude(step_days)
+    }
+
+    fn clear_or_gather(
+        &mut self,
+        kind: CommandKind,
+        values: &[String],
+    ) -> Result<(), ApplicationError> {
+        RuntimeDeferCommandContext {
+            task_repository: self.task_repository,
+            focused_task_id_opt: self.focused_task_id_opt,
+            config: self.config,
+        }
+        .clear_or_gather(kind, values)
+    }
+}
+
+impl FinishPlacementCommandContext for CliCommandContext<'_, '_, '_> {
+    fn supports_ansi_color(&self) -> bool {
+        self.supports_ansi_color
+    }
+
+    fn last_synced_time(&self) -> DateTime<Local> {
+        self.task_repository.get_last_synced_time()
+    }
+
+    fn focus_started_datetime(&self) -> DateTime<Local> {
+        self.focus_started_datetime
+    }
+
+    fn focused_task(&self) -> Result<Option<TaskHandle>, ApplicationError> {
+        match *self.focused_task_id_opt {
+            Some(task_id) => self
+                .task_repository
+                .get_by_id(task_id)
+                .map_err(ApplicationError::TaskTree),
+            None => Ok(None),
+        }
+    }
+
+    fn show_focused_tree(
+        &mut self,
+        display: &mut dyn SchronuWriter,
+    ) -> Result<(), ApplicationError> {
+        execute_show_tree(display, &FinishPlacementCommandContext::focused_task(self)?)
+    }
+
+    fn complete_focused_task(
+        &mut self,
+        input: CompleteTaskInput,
+    ) -> Result<Option<Uuid>, ApplicationError> {
+        complete_task(self.task_repository, input, self.task_factory)
+            .map(|output| output.next_focus_task_id)
+    }
+
+    fn set_focused_task_id(&mut self, task_id_opt: Option<Uuid>) {
+        *self.focused_task_id_opt = task_id_opt;
+    }
+
+    fn pack(&mut self) -> Result<PackResult, ApplicationError> {
+        pack_tasks_with_end_of_day_offset_minutes(
+            self.task_repository,
+            self.free_time_manager,
+            self.config.end_of_day_offset_minutes,
+        )
+    }
+
+    fn flatten(&mut self) -> Result<FlattenResult, ApplicationError> {
+        flatten_tasks_with_end_of_day_offset_minutes(
+            self.task_repository,
+            self.free_time_manager,
+            self.config.end_of_day_offset_minutes,
+        )
+    }
+}
+
+impl TaskTreeCommandContext for CliCommandContext<'_, '_, '_> {
+    fn supports_ansi_color(&self) -> bool {
+        self.supports_ansi_color
+    }
+
+    fn show_tree(&mut self, display: &mut dyn SchronuWriter) -> Result<(), ApplicationError> {
+        RuntimeTaskTreeCommandContext {
+            task_repository: self.task_repository,
+            free_time_manager: self.free_time_manager,
+            focused_task_id_opt: self.focused_task_id_opt,
+            task_factory: self.task_factory,
+            config: self.config,
+            supports_ansi_color: self.supports_ansi_color,
+        }
+        .show_tree(display)
+    }
+
+    fn show_ancestor(&mut self, display: &mut dyn SchronuWriter) -> Result<(), ApplicationError> {
+        RuntimeTaskTreeCommandContext {
+            task_repository: self.task_repository,
+            free_time_manager: self.free_time_manager,
+            focused_task_id_opt: self.focused_task_id_opt,
+            task_factory: self.task_factory,
+            config: self.config,
+            supports_ansi_color: self.supports_ansi_color,
+        }
+        .show_ancestor(display)
+    }
+
+    fn focus_root(&mut self) -> Result<(), ApplicationError> {
+        RuntimeTaskTreeCommandContext {
+            task_repository: self.task_repository,
+            free_time_manager: self.free_time_manager,
+            focused_task_id_opt: self.focused_task_id_opt,
+            task_factory: self.task_factory,
+            config: self.config,
+            supports_ansi_color: self.supports_ansi_color,
+        }
+        .focus_root()
+    }
+
+    fn show_leaves(&mut self, display: &mut dyn SchronuWriter) -> Result<(), ApplicationError> {
+        RuntimeTaskTreeCommandContext {
+            task_repository: self.task_repository,
+            free_time_manager: self.free_time_manager,
+            focused_task_id_opt: self.focused_task_id_opt,
+            task_factory: self.task_factory,
+            config: self.config,
+            supports_ansi_color: self.supports_ansi_color,
+        }
+        .show_leaves(display)
+    }
+
+    fn show_task_list(
+        &mut self,
+        display: &mut dyn SchronuWriter,
+        pattern: Option<&str>,
+        order: TaskListOrder,
+        resolve_pattern: bool,
+    ) -> Result<(), ApplicationError> {
+        RuntimeTaskTreeCommandContext {
+            task_repository: self.task_repository,
+            free_time_manager: self.free_time_manager,
+            focused_task_id_opt: self.focused_task_id_opt,
+            task_factory: self.task_factory,
+            config: self.config,
+            supports_ansi_color: self.supports_ansi_color,
+        }
+        .show_task_list(display, pattern, order, resolve_pattern)
+    }
+
+    fn focus(&mut self, task_id: Uuid) {
+        *self.focused_task_id_opt = Some(task_id);
+    }
+
+    fn pick(&mut self, task_id: Uuid) -> Result<(), ApplicationError> {
+        RuntimeTaskTreeCommandContext {
+            task_repository: self.task_repository,
+            free_time_manager: self.free_time_manager,
+            focused_task_id_opt: self.focused_task_id_opt,
+            task_factory: self.task_factory,
+            config: self.config,
+            supports_ansi_color: self.supports_ansi_color,
+        }
+        .pick(task_id)
+    }
+
+    fn focus_parent(&mut self) -> Result<(), ApplicationError> {
+        RuntimeTaskTreeCommandContext {
+            task_repository: self.task_repository,
+            free_time_manager: self.free_time_manager,
+            focused_task_id_opt: self.focused_task_id_opt,
+            task_factory: self.task_factory,
+            config: self.config,
+            supports_ansi_color: self.supports_ansi_color,
+        }
+        .focus_parent()
+    }
+
+    fn focus_children(&mut self, display: &mut dyn SchronuWriter) -> Result<(), ApplicationError> {
+        RuntimeTaskTreeCommandContext {
+            task_repository: self.task_repository,
+            free_time_manager: self.free_time_manager,
+            focused_task_id_opt: self.focused_task_id_opt,
+            task_factory: self.task_factory,
+            config: self.config,
+            supports_ansi_color: self.supports_ansi_color,
+        }
+        .focus_children(display)
+    }
+
+    fn focus_deepest(&mut self, display: &mut dyn SchronuWriter) -> Result<(), ApplicationError> {
+        RuntimeTaskTreeCommandContext {
+            task_repository: self.task_repository,
+            free_time_manager: self.free_time_manager,
+            focused_task_id_opt: self.focused_task_id_opt,
+            task_factory: self.task_factory,
+            config: self.config,
+            supports_ansi_color: self.supports_ansi_color,
+        }
+        .focus_deepest(display)
+    }
+
+    fn next_up(
+        &mut self,
+        display: &mut dyn SchronuWriter,
+        name: &str,
+        estimated_minutes: Option<i64>,
+    ) -> Result<(), ApplicationError> {
+        RuntimeTaskTreeCommandContext {
+            task_repository: self.task_repository,
+            free_time_manager: self.free_time_manager,
+            focused_task_id_opt: self.focused_task_id_opt,
+            task_factory: self.task_factory,
+            config: self.config,
+            supports_ansi_color: self.supports_ansi_color,
+        }
+        .next_up(display, name, estimated_minutes)
     }
 }

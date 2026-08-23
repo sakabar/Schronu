@@ -5,7 +5,7 @@ use super::command_context::*;
 use super::handler::{
     handle, handle_breakdown_split_command, handle_defer_command, handle_finish_placement_command,
     handle_project_command, handle_task_attribute_command, handle_task_tree_command,
-    CommandOutcome, ExternalRequest, FocusRequest,
+    CommandOutcome, ExternalRequest, FocusChange, FocusSelection, HandlerError,
 };
 #[cfg(test)]
 use super::handler::{
@@ -147,6 +147,15 @@ fn external_open_error(
 impl From<ApplicationError> for CommandError {
     fn from(error: ApplicationError) -> Self {
         Self::Application(error)
+    }
+}
+
+impl From<HandlerError> for CommandError {
+    fn from(error: HandlerError) -> Self {
+        match error {
+            HandlerError::Parse(error) => Self::Parse(error),
+            HandlerError::Application(error) => Self::Application(error),
+        }
     }
 }
 
@@ -295,11 +304,10 @@ impl std::error::Error for RunError {
     }
 }
 
-fn focus_selection_mode_from_request(request: FocusRequest) -> FocusSelectionMode {
-    match request {
-        FocusRequest::Clear => unreachable!("clear focus does not select a focus mode"),
-        FocusRequest::HighestPriority => FocusSelectionMode::HighestPriority,
-        FocusRequest::LowestPriority { recent_days } => {
+fn focus_selection_mode_from_selection(selection: FocusSelection) -> FocusSelectionMode {
+    match selection {
+        FocusSelection::HighestPriority => FocusSelectionMode::HighestPriority,
+        FocusSelection::LowestPriority { recent_days } => {
             FocusSelectionMode::LowestPriority { recent_days }
         }
     }
@@ -485,62 +493,9 @@ fn execute_parsed(
     let mut output = ErrorCapturingWriter::new(stdout);
     let mut next_id = Uuid::new_v4;
     let mut task_factory = TaskFactory::new(operation_now, &mut next_id);
-    let project_or_breakdown_outcome = {
-        let mut context = RuntimeProjectCommandContext {
-            task_repository,
-            focused_task_id_opt,
-            task_factory: &mut task_factory,
-        };
-        match handle_project_command(parsed_command, &mut context)? {
-            Some(outcome) => Some(outcome),
-            None => handle_breakdown_split_command(parsed_command, &mut context)?,
-        }
-    };
-    if let Some(outcome) = project_or_breakdown_outcome {
-        apply_command_outcome(
-            &mut output,
-            task_repository,
-            focused_task_id_opt,
-            OutcomeApplicationMode::Flushed,
-            outcome,
-            active_config(),
-        )?;
-    } else if let Some(outcome) = {
-        let mut context = RuntimeTaskAttributeCommandContext {
-            task_repository,
-            focused_task_id_opt,
-            focus_started_datetime,
-            config: active_config(),
-        };
-        handle_task_attribute_command(parsed_command, &mut context)?
-    } {
-        apply_command_outcome(
-            &mut output,
-            task_repository,
-            focused_task_id_opt,
-            OutcomeApplicationMode::Flushed,
-            outcome,
-            active_config(),
-        )?;
-    } else if let Some(outcome) = {
-        let mut context = RuntimeDeferCommandContext {
-            task_repository,
-            focused_task_id_opt,
-            config: active_config(),
-        };
-        handle_defer_command(parsed_command, &mut context)?
-    } {
-        apply_command_outcome(
-            &mut output,
-            task_repository,
-            focused_task_id_opt,
-            OutcomeApplicationMode::Flushed,
-            outcome,
-            active_config(),
-        )?;
-    } else if let Some(outcome) = {
+    let outcome = {
         let supports_ansi_color = output.supports_ansi_color();
-        let mut context = RuntimeFinishPlacementCommandContext {
+        let mut context = CliCommandContext {
             task_repository,
             free_time_manager,
             focused_task_id_opt,
@@ -549,37 +504,25 @@ fn execute_parsed(
             config: active_config(),
             supports_ansi_color,
         };
-        handle_finish_placement_command(parsed_command, &mut context)?
-    } {
-        apply_command_outcome(
-            &mut output,
-            task_repository,
-            focused_task_id_opt,
-            OutcomeApplicationMode::Flushed,
-            outcome,
-            active_config(),
-        )?;
-    } else if let Some(outcome) = {
-        let supports_ansi_color = output.supports_ansi_color();
-        let mut context = RuntimeTaskTreeCommandContext {
-            task_repository,
-            free_time_manager,
-            focused_task_id_opt,
-            task_factory: &mut task_factory,
-            config: active_config(),
-            supports_ansi_color,
+        let project_or_breakdown = match handle_project_command(parsed_command, &mut context)? {
+            Some(outcome) => Some(outcome),
+            None => handle_breakdown_split_command(parsed_command, &mut context)?,
         };
-        handle_task_tree_command(parsed_command, &mut context)?
-    } {
-        apply_command_outcome(
-            &mut output,
-            task_repository,
-            focused_task_id_opt,
-            OutcomeApplicationMode::Flushed,
-            outcome,
-            active_config(),
-        )?;
-    } else if let Some(outcome) = handle(parsed_command) {
+        match project_or_breakdown {
+            Some(outcome) => Some(outcome),
+            None => match handle_task_attribute_command(parsed_command, &mut context)? {
+                Some(outcome) => Some(outcome),
+                None => match handle_defer_command(parsed_command, &mut context)? {
+                    Some(outcome) => Some(outcome),
+                    None => match handle_finish_placement_command(parsed_command, &mut context)? {
+                        Some(outcome) => Some(outcome),
+                        None => handle_task_tree_command(parsed_command, &mut context)?,
+                    },
+                },
+            },
+        }
+    };
+    if let Some(outcome) = outcome.or_else(|| handle(parsed_command)) {
         apply_command_outcome(
             &mut output,
             task_repository,
@@ -638,19 +581,19 @@ fn apply_command_outcome(
         }
     }
 
-    if let Some(request) = outcome.focus_request {
-        match request {
-            FocusRequest::Clear => *focused_task_id_opt = None,
-            request => match &mut application_mode {
-                OutcomeApplicationMode::InteractiveUnflushed(focus_selection_mode) => {
-                    **focus_selection_mode = focus_selection_mode_from_request(request);
-                    *focused_task_id_opt = None;
-                }
-                OutcomeApplicationMode::Flushed => {
-                    unreachable!("focus mode request must use the interactive outcome path")
-                }
-            },
-        }
+    match outcome.focus_change {
+        FocusChange::Keep => {}
+        FocusChange::Clear => *focused_task_id_opt = None,
+        FocusChange::Set(task_id) => *focused_task_id_opt = Some(task_id),
+        FocusChange::SelectionMode(selection) => match &mut application_mode {
+            OutcomeApplicationMode::InteractiveUnflushed(focus_selection_mode) => {
+                **focus_selection_mode = focus_selection_mode_from_selection(selection);
+                *focused_task_id_opt = None;
+            }
+            OutcomeApplicationMode::Flushed => {
+                unreachable!("focus mode request must use the interactive outcome path")
+            }
+        },
     }
 
     if matches!(&application_mode, OutcomeApplicationMode::Flushed)
@@ -1088,7 +1031,8 @@ fn execute_interactive_command(
 ) -> Result<bool, CommandError> {
     let parsed_command =
         parse_command(command, ParseMode::Interactive).map_err(map_command_parse_error)?;
-    if let Some(outcome) = handle(&parsed_command).filter(|outcome| outcome.focus_request.is_some())
+    if let Some(outcome) =
+        handle(&parsed_command).filter(|outcome| outcome.focus_change != FocusChange::Keep)
     {
         apply_command_outcome(
             stdout,
