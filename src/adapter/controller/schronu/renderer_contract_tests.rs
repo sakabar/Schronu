@@ -1,9 +1,10 @@
 use super::renderer::{
     format_spreadsheet_task_row, format_task_list_columns, render_display_model, task_list_columns,
-    AncestorTreeRow, CalendarAlerts, CalendarDayRow, CalendarDisplay, CalendarSummary,
-    DebugTreeRow, DisplayFragment, DisplayModel, DisplayRecorder, ErrorCapturingWriter,
-    LeafTreeRow, MessageLevel, SchronuWriter, SpreadsheetTaskRow, TaskCategoryWorkSeconds,
-    TaskListDisplay, TaskListIconMode, TaskListRow, TaskListTaskRow, TreeDisplay,
+    AncestorTreeRow, BandDayRow, BandDisplay, BandDurations, CalendarAlerts, CalendarDayRow,
+    CalendarDisplay, CalendarSummary, DebugTreeRow, DisplayFragment, DisplayModel, DisplayRecorder,
+    ErrorCapturingWriter, LeafTreeRow, MessageLevel, SchronuWriter, SpreadsheetTaskRow,
+    TaskCategoryWorkSeconds, TaskListDisplay, TaskListIconMode, TaskListRow, TaskListTaskRow,
+    TreeDisplay,
 };
 use chrono::{Local, NaiveDate, TimeZone, Weekday};
 use schronu::entity::task::ProjectCategory;
@@ -526,6 +527,153 @@ fn calendar_displayは日別rowが空でもfooterとsummaryとhealthy_alertを�
             "newline:[Info] 順調です。突発タスクに対応したり1日の終わり際にタスクを新しく積んだりする余裕があります。ひとまずは脇道に逸れずに予定の遂行をしてください。",
             "newline:",
         ]
+    );
+}
+
+fn band_display_fixture() -> BandDisplay {
+    BandDisplay {
+        rows: vec![
+            BandDayRow {
+                date: NaiveDate::from_ymd_opt(2026, 8, 23).unwrap(),
+                accumulated_rho_diff_seconds: 62 * 60,
+                accumulated_free_diff_seconds: -(3 * 60 + 4) * 60,
+                durations: BandDurations {
+                    fixed_seconds: 15 * 60,
+                    elapsed_seconds: 30 * 60,
+                    repetitive_seconds: 45 * 60,
+                    non_repetitive_seconds: 60 * 60,
+                    rho_leeway_seconds: 75 * 60,
+                },
+            },
+            BandDayRow {
+                date: NaiveDate::from_ymd_opt(2026, 8, 24).unwrap(),
+                accumulated_rho_diff_seconds: -(7 * 60 + 8) * 60,
+                accumulated_free_diff_seconds: (46 * 60 + 9) * 60,
+                durations: BandDurations {
+                    fixed_seconds: 450 * 60,
+                    elapsed_seconds: 800 * 60,
+                    repetitive_seconds: 476 * 60,
+                    non_repetitive_seconds: 0,
+                    rho_leeway_seconds: 0,
+                },
+            },
+        ],
+        summary: CalendarSummary {
+            last_synced_date: NaiveDate::from_ymd_opt(2026, 8, 23).unwrap(),
+            first_caught_up_date: NaiveDate::from_ymd_opt(2026, 8, 25).unwrap(),
+            first_leeway_date: NaiveDate::from_ymd_opt(2026, 8, 26).unwrap(),
+            first_leeway_minutes: -90,
+            max_accumulated_free_diff_minutes: 125,
+            max_accumulated_free_diff_date: NaiveDate::from_ymd_opt(2026, 8, 24).unwrap(),
+            max_accumulated_rho_diff: 1.25,
+            max_accumulated_rho_diff_date: NaiveDate::from_ymd_opt(2026, 8, 24).unwrap(),
+        },
+        alerts: CalendarAlerts {
+            has_today_deadline_leeway: true,
+            has_today_freetime_leeway: true,
+            has_today_new_task_leeway: true,
+            has_tomorrow_deadline_leeway: true,
+            has_tomorrow_freetime_leeway: true,
+            has_weekly_deadline_leeway: true,
+            has_weekly_freetime_leeway: true,
+        },
+    }
+}
+
+#[test]
+fn band_displayは96segmentと超過と逆順と週区切りとsummary_alertを描画する() {
+    let display = DisplayModel::Band(band_display_fixture());
+    let mut writer = TraceWriter::default();
+
+    render_display_model(&mut writer, &display).unwrap();
+
+    assert_eq!(
+        writer.operations,
+        [
+            "newline:凡例: # 固定  x 経過済み  = 繰返  - 単発  : 余差  . 空き  > 超過  (1文字=15分)",
+            "newline:",
+            &format!(
+                "newline:2026-08-24(月) -07:08 +46:09 [{}{}{}]{}",
+                "#".repeat(30),
+                "x".repeat(53),
+                "=".repeat(13),
+                ">".repeat(22),
+            ),
+            "newline:",
+            &format!(
+                "newline:2026-08-23(日) +01:02 -03:04 [{}{}{}{}{}{}]",
+                "#".repeat(1),
+                "x".repeat(2),
+                "=".repeat(3),
+                "-".repeat(4),
+                ":".repeat(5),
+                ".".repeat(81),
+            ),
+            "newline:",
+            "newline:今のタスクが片付く日付: 2日後の2026-08-25",
+            "newline:最大の累積時間:  02時間05分 (2026-08-24), 最大のrhoの差: 1.25 (2026-08-24), 次にタスクを積める日付: 3日後の2026-08-26 (-1時間30分)",
+            "newline:",
+            "newline:[Info] 順調です。突発タスクに対応したり1日の終わり際にタスクを新しく積んだりする余裕があります。ひとまずは脇道に逸れずに予定の遂行をしてください。",
+            "newline:",
+        ]
+    );
+    let rows = &writer.operations[2..=4];
+    assert_eq!(rows[0].matches('[').count(), 1);
+    assert_eq!(
+        rows[2].split(['[', ']']).nth(1).unwrap().chars().count(),
+        96
+    );
+    assert!(!writer
+        .operations
+        .iter()
+        .any(|operation| operation.contains("\x1b[")));
+}
+
+#[test]
+fn band_displayはterminalで凡例と帯の7記号を既存ansi色で描画する() {
+    let display = DisplayModel::Band(band_display_fixture());
+    let mut writer = TraceWriter {
+        supports_ansi_color: true,
+        ..TraceWriter::default()
+    };
+    let color = |value: u8, symbols: &str| format!("\x1b[38;5;{value}m{symbols}\x1b[39m");
+
+    render_display_model(&mut writer, &display).unwrap();
+
+    assert_eq!(
+        writer.operations[0],
+        format!(
+            "newline:凡例: {} 固定  {} 経過済み  {} 繰返  {} 単発  {} 余差  {} 空き  {} 超過  (1文字=15分)",
+            color(110, "#"),
+            color(244, "x"),
+            color(33, "="),
+            color(208, "-"),
+            color(28, ":"),
+            color(34, "."),
+            color(196, ">"),
+        )
+    );
+    assert_eq!(
+        writer.operations[2],
+        format!(
+            "newline:2026-08-24(月) -07:08 +46:09 [{}{}{}]{}",
+            color(110, &"#".repeat(30)),
+            color(244, &"x".repeat(53)),
+            color(33, &"=".repeat(13)),
+            color(196, &">".repeat(22)),
+        )
+    );
+    assert_eq!(
+        writer.operations[4],
+        format!(
+            "newline:2026-08-23(日) +01:02 -03:04 [{}{}{}{}{}{}]",
+            color(110, "#"),
+            color(244, "xx"),
+            color(33, "==="),
+            color(208, "----"),
+            color(28, ":::::"),
+            color(34, &".".repeat(81)),
+        )
     );
 }
 
