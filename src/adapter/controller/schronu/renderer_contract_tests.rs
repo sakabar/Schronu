@@ -133,7 +133,7 @@ fn semantic_message_sequenceはlevelとwriter固有newlineの順序を保持す�
             "newline:plain",
             "newline:[Info] information",
             "newline:[Warn] warning",
-            "newline:[Critical] critical",
+            "newline:[Crit] critical",
             "newline:[Error] failure",
         ]
     );
