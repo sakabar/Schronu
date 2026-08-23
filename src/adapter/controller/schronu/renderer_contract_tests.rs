@@ -553,7 +553,7 @@ fn band_display_fixture() -> BandDisplay {
                     fixed_seconds: 450 * 60,
                     elapsed_seconds: 800 * 60,
                     repetitive_seconds: 476 * 60,
-                    non_repetitive_seconds: 0,
+                    non_repetitive_seconds: 40 * 60,
                     rho_leeway_seconds: 0,
                 },
             },
