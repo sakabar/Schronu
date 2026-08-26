@@ -149,6 +149,20 @@ pub(super) struct TaskListDisplay {
 }
 
 #[derive(Clone, Debug, PartialEq)]
+pub(super) struct TaskListMetricsDisplay {
+    pub(super) busy_minutes: i64,
+    pub(super) lambda_minutes: i64,
+    pub(super) estimated_finish_at: DateTime<Local>,
+    pub(super) non_repetitive_work_hours: f64,
+    pub(super) repetitive_work_hours: f64,
+    pub(super) free_hours: f64,
+    pub(super) rho: f64,
+    pub(super) non_repetitive_rho: f64,
+    pub(super) lq: Option<f64>,
+    pub(super) non_repetitive_lq: Option<f64>,
+}
+
+#[derive(Clone, Debug, PartialEq)]
 pub(super) struct CalendarDayRow {
     pub(super) date: NaiveDate,
     pub(super) free_time_minutes: i64,
@@ -305,6 +319,8 @@ pub(super) enum DisplayModel {
     },
     Tree(TreeDisplay),
     TaskList(TaskListDisplay),
+    #[allow(dead_code)] // The view constructs this after its dedicated integration contract.
+    TaskListMetrics(TaskListMetricsDisplay),
     Calendar(CalendarDisplay),
     Band(BandDisplay),
     Pack(PackDisplay),
@@ -342,6 +358,7 @@ impl DisplayModel {
             Self::Message { .. } => false,
             Self::Tree(_)
             | Self::TaskList(_)
+            | Self::TaskListMetrics(_)
             | Self::Calendar(_)
             | Self::Band(_)
             | Self::Pack(_)
@@ -358,6 +375,7 @@ impl DisplayModel {
             Self::Message { .. }
             | Self::Tree(_)
             | Self::TaskList(_)
+            | Self::TaskListMetrics(_)
             | Self::Calendar(_)
             | Self::Band(_)
             | Self::Pack(_)
@@ -375,6 +393,7 @@ impl DisplayModel {
             Self::Message { .. }
             | Self::Tree(_)
             | Self::TaskList(_)
+            | Self::TaskListMetrics(_)
             | Self::Calendar(_)
             | Self::Band(_)
             | Self::Pack(_)
@@ -469,6 +488,9 @@ pub(super) fn render_display_model(
         }
         DisplayModel::Tree(tree) => render_tree_display(writer, tree)?,
         DisplayModel::TaskList(task_list) => render_task_list_display(writer, task_list)?,
+        DisplayModel::TaskListMetrics(metrics) => {
+            render_task_list_metrics_display(writer, metrics)?
+        }
         DisplayModel::Calendar(calendar) => render_calendar_display(writer, calendar)?,
         DisplayModel::Band(band) => render_band_display(writer, band)?,
         DisplayModel::Pack(pack) => render_pack_display(writer, pack)?,
@@ -494,6 +516,60 @@ fn render_task_list_display(
     writer.writeln_newline(&format_task_category_summary(
         &display.category_work_seconds,
         display.category_denominator_seconds,
+    ))?;
+    writer.writeln_newline("")?;
+    Ok(())
+}
+
+fn render_task_list_metrics_display(
+    writer: &mut dyn SchronuWriter,
+    display: &TaskListMetricsDisplay,
+) -> Result<(), std::io::Error> {
+    let busy_hours = display.busy_minutes as f64 / 60.0;
+    writer.writeln_newline(&format!("残り拘束時間は{busy_hours:.1}時間です"))?;
+
+    let lambda_hours = display.lambda_minutes as f64 / 60.0;
+    writer.writeln_newline(&format!(
+        "完了見込み日時は{:.1}時間後の{}です",
+        lambda_hours,
+        display.estimated_finish_at.format("%Y/%m/%d %H:%M:%S")
+    ))?;
+
+    let free_hours_sign = if display.free_hours >= 0.0 { '+' } else { '-' };
+    let free_hours_hour = display.free_hours.abs().floor() as i64;
+    let free_hours_minute = ((display.free_hours.abs() - free_hours_hour as f64) * 60.0) as i64;
+    let lq = display.lq.map_or_else(
+        || "Lq = inf".to_string(),
+        |value| format!("Lq = {value:.1}"),
+    );
+    writer.writeln_newline(&format!(
+        "rep ρ = ({:.2} + {:.2}) / ({:.2} + {:.2} {} {} {} {}/60) = {:4.2}, {}",
+        display.non_repetitive_work_hours,
+        display.repetitive_work_hours,
+        display.non_repetitive_work_hours,
+        display.repetitive_work_hours,
+        free_hours_sign,
+        free_hours_hour,
+        free_hours_sign,
+        free_hours_minute,
+        display.rho,
+        lq,
+    ))?;
+
+    let non_repetitive_lq = display.non_repetitive_lq.map_or_else(
+        || "Lq = inf".to_string(),
+        |value| format!("Lq = {value:.1}"),
+    );
+    writer.writeln_newline(&format!(
+        "one ρ = ({:.2} + 0.00) / ({:.2} + 0.00 {} {} {} {}/60) = {:4.2}, {}",
+        display.non_repetitive_work_hours,
+        display.non_repetitive_work_hours,
+        free_hours_sign,
+        free_hours_hour,
+        free_hours_sign,
+        free_hours_minute,
+        display.non_repetitive_rho,
+        non_repetitive_lq,
     ))?;
     writer.writeln_newline("")?;
     Ok(())
