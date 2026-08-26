@@ -5272,6 +5272,88 @@ fn test_verifyのread_only_repository検査はruntimeが所有する() {
 }
 
 #[test]
+fn test_execute_verify_commandはsemantic_modelを製品writerへ描画する() {
+    struct AlwaysFailWriter;
+
+    impl Write for AlwaysFailWriter {
+        fn write(&mut self, _buffer: &[u8]) -> std::io::Result<usize> {
+            Err(std::io::Error::new(
+                std::io::ErrorKind::BrokenPipe,
+                "verify raw write failure",
+            ))
+        }
+
+        fn flush(&mut self) -> std::io::Result<()> {
+            Err(std::io::Error::other("verify flush failure"))
+        }
+    }
+
+    impl SchronuWriter for AlwaysFailWriter {
+        fn writeln_newline(&mut self, _message: &str) -> Result<(), std::io::Error> {
+            Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                "verify newline failure",
+            ))
+        }
+    }
+
+    fn execute_product_verify(
+        stdout: &mut dyn SchronuWriter,
+        repository: &mut dyn TaskRepositoryTrait,
+        operation_now: DateTime<Local>,
+    ) -> Result<(), RunError> {
+        execute_verify_command(stdout, repository, operation_now)
+    }
+
+    let operation_now = Local.with_ymd_and_hms(2026, 8, 26, 12, 0, 0).unwrap();
+    let storage_dir = TestStorageDir::new();
+    std::fs::create_dir_all(&storage_dir.path).unwrap();
+    let task = TaskHandle::with_identity(
+        "Verify semantic modelの製品経路",
+        next_test_task_id(),
+        operation_now,
+    )
+    .unwrap();
+    let mut repository =
+        TestTaskRepository::new(task, operation_now).with_storage_directory(&storage_dir.path);
+    let mut stdout = TestWriter::new_with_newline_prefix("<reset>");
+
+    execute_product_verify(&mut stdout, &mut repository, operation_now).unwrap();
+
+    assert_eq!(stdout.into_string(), "<reset>検証: OK\n");
+    assert_eq!(repository.reload_if_changed_attempt_count.get(), 1);
+    assert_eq!(repository.load_attempt_count.get(), 1);
+    assert_eq!(repository.save_attempt_count.get(), 0);
+
+    let failing_storage_dir = TestStorageDir::new();
+    std::fs::create_dir_all(&failing_storage_dir.path).unwrap();
+    let failing_task = TaskHandle::with_identity(
+        "Verify I/O errorの製品経路",
+        next_test_task_id(),
+        operation_now,
+    )
+    .unwrap();
+    let mut failing_repository = TestTaskRepository::new(failing_task, operation_now)
+        .with_storage_directory(&failing_storage_dir.path);
+    let mut failing_stdout = AlwaysFailWriter;
+
+    let error = execute_product_verify(
+        &mut failing_stdout,
+        &mut failing_repository,
+        operation_now,
+    )
+    .unwrap_err();
+
+    match error {
+        RunError::Command(CommandError::Output(error)) => {
+            assert_eq!(error.kind(), std::io::ErrorKind::InvalidData);
+            assert_eq!(error.to_string(), "verify newline failure");
+        }
+        unexpected => panic!("unexpected Verify output error: {unexpected:?}"),
+    }
+}
+
+#[test]
 fn test_execute_non_interactive_command_gatewayの変換errorをstderrへ表示する() {
     let storage_dir = TestStorageDir::new();
     let project_dir = storage_dir.path.join("broken-project");

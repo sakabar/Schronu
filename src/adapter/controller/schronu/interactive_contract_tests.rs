@@ -365,11 +365,17 @@ fn verify製品分岐は意味的modelをrendererへ渡す() {
     let (_, non_interactive_source) =
         unique_function_region(&product_sources, "execute_non_interactive_command_at")
             .unwrap_or_else(|error| panic!("{error}"));
+    assert!(non_interactive_source.contains("execute_verify_command("));
+    assert!(!non_interactive_source.contains("verify_display_model("));
+    assert!(!non_interactive_source.contains("render_display_model("));
+
+    let (_, verify_source) = unique_function_region(&product_sources, "execute_verify_command")
+        .expect("non-interactive Verify must have one private product I/O boundary");
     for required in ["verify_display_model(", "render_display_model("] {
-        assert!(
-            non_interactive_source.contains(required),
-            "non-interactive Verify must route success output through {required}"
-        );
+        assert!(verify_source.contains(required));
+    }
+    for forbidden in ["println!(", "eprintln!(", "render_verify_flush("] {
+        assert!(!verify_source.contains(forbidden));
     }
 
     let (_, interactive_source) =
