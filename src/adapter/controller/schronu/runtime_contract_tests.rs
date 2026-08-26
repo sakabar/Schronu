@@ -224,24 +224,15 @@ fn task_tree製品context_children複数はtyped_treeを返してfocusを維持�
     root.create_as_last_child(new_test_task_attr("second child"));
     let root_id = root.get_id().unwrap();
     let snapshot = root.snapshot().unwrap();
-    let mut repository = TestTaskRepository::new(root, now);
-    let mut free_time_manager = TestFreeTimeManager::default();
-    let mut focused_task_id_opt = Some(root_id);
-    let mut next_id = || Uuid::from_u128(9001);
-    let mut task_factory = TaskFactory::new(now, &mut next_id);
-    let mut context = RuntimeTaskTreeCommandContext {
-        task_repository: &mut repository,
-        free_time_manager: &mut free_time_manager,
-        focused_task_id_opt: &mut focused_task_id_opt,
-        task_factory: &mut task_factory,
-        config: active_config(),
-    };
-
-    let display = context.focus_children().unwrap();
+    let (actual, resulting_root, focused_task_id_opt, _identity_count) =
+        run_with_runtime_task_tree_context(root, now, Some(root_id), Uuid::from_u128(9001), |context| {
+            context.focus_children()
+        });
+    let display = actual.unwrap();
 
     assert!(matches!(display, Some(DisplayModel::Tree(_))));
     assert_eq!(focused_task_id_opt, Some(root_id));
-    assert_eq!(repository.task.snapshot().unwrap(), snapshot);
+    assert_eq!(resulting_root.snapshot().unwrap(), snapshot);
 }
 
 #[test]
@@ -254,24 +245,15 @@ fn task_tree製品context_deepest分岐はtyped_treeを返して分岐taskへfoc
     let root_id = root.get_id().unwrap();
     let branch_id = branch.get_id().unwrap();
     let snapshot = root.snapshot().unwrap();
-    let mut repository = TestTaskRepository::new(root, now);
-    let mut free_time_manager = TestFreeTimeManager::default();
-    let mut focused_task_id_opt = Some(root_id);
-    let mut next_id = || Uuid::from_u128(9002);
-    let mut task_factory = TaskFactory::new(now, &mut next_id);
-    let mut context = RuntimeTaskTreeCommandContext {
-        task_repository: &mut repository,
-        free_time_manager: &mut free_time_manager,
-        focused_task_id_opt: &mut focused_task_id_opt,
-        task_factory: &mut task_factory,
-        config: active_config(),
-    };
-
-    let display = context.focus_deepest().unwrap();
+    let (actual, resulting_root, focused_task_id_opt, _identity_count) =
+        run_with_runtime_task_tree_context(root, now, Some(root_id), Uuid::from_u128(9002), |context| {
+            context.focus_deepest()
+        });
+    let display = actual.unwrap();
 
     assert!(matches!(display, Some(DisplayModel::Tree(_))));
     assert_eq!(focused_task_id_opt, Some(branch_id));
-    assert_eq!(repository.task.snapshot().unwrap(), snapshot);
+    assert_eq!(resulting_root.snapshot().unwrap(), snapshot);
 }
 
 fn run_with_runtime_task_tree_context<T>(
@@ -436,24 +418,15 @@ fn task_tree製品context_next_up_errorはsemantic_errorを返して状態を維
         };
         let focused_id = focused.get_id().unwrap();
         let snapshot = root.snapshot().unwrap();
-        let mut repository = TestTaskRepository::new(root, now);
-        let mut free_time_manager = TestFreeTimeManager::default();
-        let mut focused_task_id_opt = Some(focused_id);
-        let id_generator_call_count = Cell::new(0);
-        let mut next_id = || {
-            id_generator_call_count.set(id_generator_call_count.get() + 1);
-            Uuid::from_u128(9003)
-        };
-        let mut task_factory = TaskFactory::new(now, &mut next_id);
-        let mut context = RuntimeTaskTreeCommandContext {
-            task_repository: &mut repository,
-            free_time_manager: &mut free_time_manager,
-            focused_task_id_opt: &mut focused_task_id_opt,
-            task_factory: &mut task_factory,
-            config: active_config(),
-        };
-
-        let display = context.next_up(name, Some(10)).unwrap();
+        let (actual, resulting_root, focused_task_id_opt, id_generator_call_count) =
+            run_with_runtime_task_tree_context(
+                root,
+                now,
+                Some(focused_id),
+                Uuid::from_u128(9003),
+                |context| context.next_up(name, Some(10)),
+            );
+        let display = actual.unwrap();
         let expected_text = CommandError::Application(expected_error).to_string();
 
         assert_eq!(
@@ -464,8 +437,8 @@ fn task_tree製品context_next_up_errorはsemantic_errorを返して状態を維
             })
         );
         assert_eq!(focused_task_id_opt, Some(focused_id));
-        assert_eq!(repository.task.snapshot().unwrap(), snapshot);
-        assert_eq!(id_generator_call_count.get(), 0);
+        assert_eq!(resulting_root.snapshot().unwrap(), snapshot);
+        assert_eq!(id_generator_call_count, 0);
     }
 }
 
