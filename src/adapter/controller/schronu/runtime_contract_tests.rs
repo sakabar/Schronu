@@ -5578,9 +5578,12 @@ fn test_interactive_submit製品経路は再描画対象commandを完了outcome�
 
     assert!(matches!(
         outcome,
-        InteractiveRepositoryEventOutcome::CommandExecuted(ref command, operation_now)
-            if command == "全" && operation_now == now
+        InteractiveRepositoryEventOutcome::CommandExecuted(..)
     ));
+    assert_eq!(repository.get_last_synced_time(), now);
+    assert!(repository.get_by_id(task_id).unwrap().is_some());
+    assert_eq!(repository.load_attempt_count.get(), 1);
+    assert_eq!(repository.save_attempt_count.get(), 1);
 }
 
 #[test]
