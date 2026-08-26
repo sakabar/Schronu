@@ -456,20 +456,20 @@ fn runtimeはio調停だけを所有する() {
     }
 
     let mut violations = Vec::new();
-    for item_prefix in ["trait FocusDisplaySource", "struct TaskFocusDisplaySource"] {
-        let runtime_item_offset_opt = top_level_item_definition_offsets(&runtime.text, item_prefix)
-            .into_iter()
-            .next();
-        let view_item_offset_opt = top_level_item_definition_offsets(&view.text, item_prefix)
-            .into_iter()
-            .next();
-        if runtime_item_offset_opt.is_some() || view_item_offset_opt.is_none() {
+    for item_prefix in [
+        "trait FocusDisplaySource",
+        "struct TaskFocusDisplaySource",
+        "impl FocusDisplaySource for TaskFocusDisplaySource",
+    ] {
+        let runtime_item_offsets = top_level_item_definition_offsets(&runtime.text, item_prefix);
+        let view_item_offsets = top_level_item_definition_offsets(&view.text, item_prefix);
+        if !runtime_item_offsets.is_empty() || view_item_offsets.len() != 1 {
             violations.push(format!(
-                "{item_prefix} must be owned by view.rs instead of runtime.rs"
+                "{item_prefix} must be owned exactly once by view.rs and absent from runtime.rs"
             ));
         }
-        if let Some(view_item_offset) = view_item_offset_opt {
-            let view_item = function_region_from_offset(&view.text, view_item_offset);
+        if let [view_item_offset] = view_item_offsets.as_slice() {
+            let view_item = function_region_from_offset(&view.text, *view_item_offset);
             for forbidden in ["SchronuWriter", "render_display_model(", ".flush("] {
                 if view_item.contains(forbidden) {
                     violations.push(format!(
@@ -523,33 +523,46 @@ fn top_level_item検出はnestedとtest専用と非codeを除外する() {
     let source = r##"
 #[cfg(test)]
 trait FocusDisplaySource {}
+#[cfg(test)]
+impl FocusDisplaySource for TaskFocusDisplaySource<'_> {}
 
 fn nested_owner() {
     trait FocusDisplaySource {}
     struct TaskFocusDisplaySource<'a> { value: &'a str }
+    impl FocusDisplaySource for TaskFocusDisplaySource<'_> {}
 }
 
 const RAW: &str = r#"
 trait FocusDisplaySource {}
 struct TaskFocusDisplaySource<'a> { value: &'a str }
+impl FocusDisplaySource for TaskFocusDisplaySource<'_> {}
 "#;
 
 /*
 trait FocusDisplaySource {}
 struct TaskFocusDisplaySource<'a> { value: &'a str }
+impl FocusDisplaySource for TaskFocusDisplaySource<'_> {}
 */
 
 pub(super) trait FocusDisplaySource {}
 pub(super) struct TaskFocusDisplaySource<'a> { value: &'a str }
+impl FocusDisplaySource for TaskFocusDisplaySource<'_> {}
 "##;
 
     let trait_offsets = top_level_item_definition_offsets(source, "trait FocusDisplaySource");
     let struct_offsets = top_level_item_definition_offsets(source, "struct TaskFocusDisplaySource");
+    let impl_offsets = top_level_item_definition_offsets(
+        source,
+        "impl FocusDisplaySource for TaskFocusDisplaySource",
+    );
 
     assert_eq!(trait_offsets.len(), 1);
     assert_eq!(struct_offsets.len(), 1);
+    assert_eq!(impl_offsets.len(), 1);
     assert!(source[trait_offsets[0]..].starts_with("pub(super) trait FocusDisplaySource"));
     assert!(source[struct_offsets[0]..].starts_with("pub(super) struct TaskFocusDisplaySource"));
+    assert!(source[impl_offsets[0]..]
+        .starts_with("impl FocusDisplaySource for TaskFocusDisplaySource<'_>"));
 }
 
 #[test]
