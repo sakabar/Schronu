@@ -396,10 +396,16 @@ fn contains_identifier(source: &str, identifier: &str) -> bool {
         .any(|token| token == identifier)
 }
 
-fn direct_impl_method_regions<'a>(implementation: &'a str, method_name: &str) -> Vec<&'a str> {
-    let code = code_only(implementation);
+struct DirectMethodLocation {
+    start: usize,
+    signature_end: usize,
+    body_end_opt: Option<usize>,
+}
+
+fn direct_method_locations(container: &str, method_name: &str) -> Vec<DirectMethodLocation> {
+    let code = code_only(container);
     let bytes = code.as_bytes();
-    let mut regions = Vec::new();
+    let mut locations = Vec::new();
     let mut brace_depth: usize = 0;
     let mut index = 0;
 
@@ -437,12 +443,24 @@ fn direct_impl_method_regions<'a>(implementation: &'a str, method_name: &str) ->
                 if &code[name_start..index] != method_name {
                     continue;
                 }
-                let Some(relative_body_start) =
-                    bytes[index..].iter().position(|byte| *byte == b'{')
+                let Some(relative_signature_end) = bytes[index..]
+                    .iter()
+                    .position(|byte| matches!(byte, b'{' | b';'))
                 else {
                     continue;
                 };
-                let body_start = index + relative_body_start;
+                let signature_end = index + relative_signature_end;
+                if bytes[signature_end] == b';' {
+                    locations.push(DirectMethodLocation {
+                        start: token_start,
+                        signature_end,
+                        body_end_opt: None,
+                    });
+                    index = signature_end + 1;
+                    continue;
+                }
+
+                let body_start = signature_end;
                 let mut body_depth = 1;
                 let mut body_end = body_start + 1;
                 while body_end < bytes.len() && body_depth > 0 {
@@ -454,72 +472,36 @@ fn direct_impl_method_regions<'a>(implementation: &'a str, method_name: &str) ->
                     body_end += 1;
                 }
                 if body_depth == 0 {
-                    regions.push(&implementation[token_start..body_end]);
+                    locations.push(DirectMethodLocation {
+                        start: token_start,
+                        signature_end,
+                        body_end_opt: Some(body_end),
+                    });
                     index = body_end;
                 }
             }
             _ => index += 1,
         }
     }
-    regions
+    locations
+}
+
+fn direct_impl_method_regions<'a>(implementation: &'a str, method_name: &str) -> Vec<&'a str> {
+    direct_method_locations(implementation, method_name)
+        .into_iter()
+        .filter_map(|location| {
+            location
+                .body_end_opt
+                .map(|body_end| &implementation[location.start..body_end])
+        })
+        .collect()
 }
 
 fn direct_method_signature_regions<'a>(container: &'a str, method_name: &str) -> Vec<&'a str> {
-    let code = code_only(container);
-    let bytes = code.as_bytes();
-    let mut regions = Vec::new();
-    let mut brace_depth: usize = 0;
-    let mut index = 0;
-
-    while index < bytes.len() {
-        match bytes[index] {
-            b'{' => {
-                brace_depth += 1;
-                index += 1;
-            }
-            b'}' => {
-                brace_depth = brace_depth.saturating_sub(1);
-                index += 1;
-            }
-            byte if brace_depth == 1 && (byte.is_ascii_alphabetic() || byte == b'_') => {
-                let token_start = index;
-                while bytes
-                    .get(index)
-                    .is_some_and(|byte| byte.is_ascii_alphanumeric() || *byte == b'_')
-                {
-                    index += 1;
-                }
-                if &code[token_start..index] != "fn" {
-                    continue;
-                }
-                while bytes.get(index).is_some_and(u8::is_ascii_whitespace) {
-                    index += 1;
-                }
-                let name_start = index;
-                while bytes
-                    .get(index)
-                    .is_some_and(|byte| byte.is_ascii_alphanumeric() || *byte == b'_')
-                {
-                    index += 1;
-                }
-                if &code[name_start..index] != method_name {
-                    continue;
-                }
-                let Some(relative_end) = bytes[index..]
-                    .iter()
-                    .position(|byte| matches!(byte, b'{' | b';'))
-                else {
-                    continue;
-                };
-                let signature_end = index + relative_end;
-                regions.push(&container[token_start..signature_end]);
-                index = signature_end;
-            }
-            _ => index += 1,
-        }
-    }
-
-    regions
+    direct_method_locations(container, method_name)
+        .into_iter()
+        .map(|location| &container[location.start..location.signature_end])
+        .collect()
 }
 
 fn compact_code(source: &str) -> String {
