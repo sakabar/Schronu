@@ -76,14 +76,16 @@
 | 31 | `CLI: Verify表示を意味的modelへ移す` | Verifyのread-only検査をruntimeに保ち、成功・error表示をrenderer経由へ統一 | 30 | renderer、runtime | 対象test後に全品質ゲート |
 | 32 | `Test: Runtime責務境界を固定する` | `FocusDisplaySource`と`TaskFocusDisplaySource`の表示source計算がruntimeではなくview所有となる境界をRedで固定 | 31 | runtime/view architecture | Focus source所有権の1理由でRedを確認してtestだけcommit |
 | 33 | `Refactor: Focus source計算をviewへ移す` | pureなFocus source/model構築だけを`view.rs`へ移し、writer・flush・renderer呼び出しはruntime調停に残す | 32 | focus、interactive、runtime architecture | 対象test後に全品質ゲート |
-| 34 | `Test: view modelのwriter非依存を固定する` | `view.rs`が`SchronuWriter`、`render_display_model`、flush、raw recorderに依存せずtyped `DisplayModel`を返す境界をRedで固定 | 33 | view architecture | viewの残存writer依存の1理由でRedを確認してtestだけcommit |
-| 35 | `CLI: view出力をtyped modelへ統一する` | viewに残るwriter出力とlegacy recordingをtyped model構築へ置き換え、描画はrenderer/runtimeへ戻す | 34 | view、handler、CLI表示契約 | 対象test後に全品質ゲート |
-| 36 | `Test: Runtime最終責務境界を固定する` | runtimeにcontext実装、command日時解釈、domain mutation、表示計算を残さず、製品moduleから`DisplayFragment`と`DisplayRecorder`を削除する最終境界をRedで固定 | 35 | runtime/renderer architecture | legacy recorderと最終runtime境界の1理由でRedを確認してtestだけcommit |
-| 37 | `Refactor: legacy display recorderを除去する` | legacy fragment/recorder、Focus表示計算の残存、不要helper/importを削除し、runtimeをI/O調停へ限定 | 36 | CLI全test、runtime architecture | 対象test後に全品質ゲート |
-| 38 | `Docs: CLI command境界を説明する` | READMEへparser→handler→view model→renderer→runtimeの責務を記録 | 37 | full suite | 全品質ゲート |
-| 39 | `Docs: TD-018の完了を記録する` | backlogへ完了日、実測件数、runtime行数、品質ゲートを記録 | 38 | full suite | 全品質ゲート |
+| 34 | `Test: Task list metrics表示modelを追加する` | `TaskListMetricsDisplay`と`DisplayModel::TaskListMetrics`のtyped field、既存4行と末尾空行のexact描画をRedで固定 | 33 | renderer | typed metrics type/variant欠如の1理由でRedを確認してtestだけcommit |
+| 35 | `CLI: Task list metrics rendererを実装する` | typed minutes、finish datetime、work/free hours、rho、finite/inf Lqから既存metrics文言と空行をrendererが生成 | 34 | renderer | 対象test後に全品質ゲート |
+| 36 | `Test: View表示計算をwriter非依存で固定する` | 製品view経路がtyped metrics payloadの実値を返し、legacyの`busy_s`・`s`・`s_for_rho1`・`s_for_non_repetitive_rho`を残さないことをRedで固定。全top-level function種別(`fn`/`async fn`/`unsafe fn`/`const fn`/`extern fn`)のsignatureで`SchronuWriter`・`Write`を拒否し、comment・string・`cfg(test)`を除いた製品codeの直接出力も拒否 | 35 | view integration/architecture、全/Today/Calendar/Band | typed metrics製品integrationとview writer依存の1sliceでRedを確認してtestだけcommit |
+| 37 | `CLI: View metrics出力をtyped modelへ移す` | viewのmetrics直接出力をtyped `DisplayModel` payload構築へ置き換え、描画はrenderer/runtimeへ戻す | 36 | view、handler、全/Today/Calendar/Band exact表示契約 | 対象test後に全品質ゲート |
+| 38 | `Test: Runtime最終責務境界を固定する` | runtimeにcontext実装、command日時解釈、domain mutation、表示計算を残さず、製品moduleから`DisplayFragment`と`DisplayRecorder`を削除する最終境界をRedで固定 | 37 | runtime/renderer architecture | legacy recorderと最終runtime境界の1理由でRedを確認してtestだけcommit |
+| 39 | `Refactor: legacy display recorderを除去する` | legacy fragment/recorder、Focus表示計算の残存、不要helper/importを削除し、runtimeをI/O調停へ限定 | 38 | CLI全test、runtime architecture | 対象test後に全品質ゲート |
+| 40 | `Docs: CLI command境界を説明する` | READMEへparser→handler→view model→renderer→runtimeの責務を記録 | 39 | full suite | 全品質ゲート |
+| 41 | `Docs: TD-018の完了を記録する` | backlogへ完了日、実測件数、runtime行数、品質ゲートを記録 | 40 | full suite | 全品質ゲート |
 
-計画本体は全39 commitとする。
+計画本体は全41 commitとする。
 
 順序6・7は機械移動のみとし、commit本文へ大規模になる理由、挙動変更なし、実行した品質ゲートを記録する。Red commit以外の全commitも、本文へ対象testと全品質ゲートの結果を残す。
 
