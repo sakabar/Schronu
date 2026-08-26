@@ -538,10 +538,7 @@ fn render_task_list_metrics_display(
     let free_hours_sign = if display.free_hours >= 0.0 { '+' } else { '-' };
     let free_hours_hour = display.free_hours.abs().floor() as i64;
     let free_hours_minute = ((display.free_hours.abs() - free_hours_hour as f64) * 60.0) as i64;
-    let lq = display.lq.map_or_else(
-        || "Lq = inf".to_string(),
-        |value| format!("Lq = {value:.1}"),
-    );
+    let lq = format_lq(display.lq);
     writer.writeln_newline(&format!(
         "rep ρ = ({:.2} + {:.2}) / ({:.2} + {:.2} {} {} {} {}/60) = {:4.2}, {}",
         display.non_repetitive_work_hours,
@@ -556,10 +553,7 @@ fn render_task_list_metrics_display(
         lq,
     ))?;
 
-    let non_repetitive_lq = display.non_repetitive_lq.map_or_else(
-        || "Lq = inf".to_string(),
-        |value| format!("Lq = {value:.1}"),
-    );
+    let non_repetitive_lq = format_lq(display.non_repetitive_lq);
     writer.writeln_newline(&format!(
         "one ρ = ({:.2} + 0.00) / ({:.2} + 0.00 {} {} {} {}/60) = {:4.2}, {}",
         display.non_repetitive_work_hours,
@@ -573,6 +567,13 @@ fn render_task_list_metrics_display(
     ))?;
     writer.writeln_newline("")?;
     Ok(())
+}
+
+fn format_lq(lq: Option<f64>) -> String {
+    lq.map_or_else(
+        || "Lq = inf".to_string(),
+        |value| format!("Lq = {value:.1}"),
+    )
 }
 
 fn render_calendar_display(
