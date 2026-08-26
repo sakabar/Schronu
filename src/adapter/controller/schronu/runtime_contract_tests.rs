@@ -1611,6 +1611,7 @@ fn task属性更新commandは製品経路で必ず1回flushする() {
             &mut focused_task_id_opt,
             &now,
             &parsed,
+            OutcomeApplicationMode::Flushed,
         )
         .unwrap();
 
@@ -1637,6 +1638,7 @@ fn task属性更新commandはflush_errorとbroken_pipeを製品経路で分類�
             &mut focused_task_id_opt,
             &now,
             &parsed,
+            OutcomeApplicationMode::Flushed,
         );
         (result, stdout.flush_count)
     };
@@ -3948,7 +3950,8 @@ fn runtime外部ioとoutcome調停は共通境界に集約する() {
     let mut focused_task_id_opt = Some(task_id);
 
     let open_command = parse_command("開", ParseMode::NonInteractive).unwrap();
-    let mut open_outcome = handle(&open_command).expect("open must be handler-owned");
+    let mut open_outcome =
+        super::handler::handle(&open_command).expect("open must be handler-owned");
     open_outcome.display = DisplayModel::Message {
         level: MessageLevel::Plain,
         text: "外部要求の前に表示".to_string(),
@@ -3972,7 +3975,7 @@ fn runtime外部ioとoutcome調停は共通境界に集約する() {
     assert_eq!(flushed_output.flush_count, 1);
 
     let noop_command = parse_command("", ParseMode::NonInteractive).unwrap();
-    let noop_outcome = handle(&noop_command).expect("noop must be handler-owned");
+    let noop_outcome = super::handler::handle(&noop_command).expect("noop must be handler-owned");
     let mut noop_output = FlushTrackingWriter::successful(false);
     apply_command_outcome(
         &mut noop_output,
@@ -3986,7 +3989,8 @@ fn runtime外部ioとoutcome調停は共通境界に集約する() {
     assert_eq!(noop_output.flush_count, 0);
 
     let focus_command = parse_command("高", ParseMode::Interactive).unwrap();
-    let focus_outcome = handle(&focus_command).expect("focus mode must be handler-owned");
+    let focus_outcome =
+        super::handler::handle(&focus_command).expect("focus mode must be handler-owned");
     let mut focus_output = FlushTrackingWriter::successful(false);
     let mut focus_selection_mode = FocusSelectionMode::Explicit;
     apply_command_outcome(
@@ -4009,7 +4013,8 @@ fn runtime外部ioとoutcome調停は共通境界に集約する() {
 
     focused_task_id_opt = Some(task_id);
     let clear_command = parse_command("外", ParseMode::Interactive).unwrap();
-    let clear_outcome = handle(&clear_command).expect("unfocus must be handler-owned");
+    let clear_outcome =
+        super::handler::handle(&clear_command).expect("unfocus must be handler-owned");
     let mut clear_output = FlushTrackingWriter::successful(false);
     let mut clear_selection_mode = FocusSelectionMode::LowestPriority { recent_days: 3 };
     apply_command_outcome(
@@ -4031,7 +4036,8 @@ fn runtime外部ioとoutcome調停は共通境界に集約する() {
 
     focused_task_id_opt = Some(task_id);
     let low_command = parse_command("低 3", ParseMode::Interactive).unwrap();
-    let low_outcome = handle(&low_command).expect("low focus mode must be handler-owned");
+    let low_outcome =
+        super::handler::handle(&low_command).expect("low focus mode must be handler-owned");
     let mut low_output = FlushTrackingWriter::successful(false);
     let mut low_selection_mode = FocusSelectionMode::Explicit;
     apply_command_outcome(
@@ -4074,6 +4080,7 @@ fn runtime外部ioとoutcome調停は共通境界に集約する() {
             &mut focused_task_id_opt,
             &now,
             &parsed,
+            OutcomeApplicationMode::Flushed,
         );
 
         if expects_success {

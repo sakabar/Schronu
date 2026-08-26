@@ -81,7 +81,7 @@ fn report_command_result(stdout: &mut dyn SchronuWriter, result: Result<(), Comm
 
 #[cfg(test)]
 fn focus_selection_mode_from_command(command: &Command) -> Option<FocusSelectionMode> {
-    handle(command)
+    super::handler::handle(command)
         .and_then(|outcome| match outcome.focus_change {
             FocusChange::SelectionMode(selection) => {
                 Some(focus_selection_mode_from_selection(selection))
@@ -850,6 +850,7 @@ fn execute(
         focused_task_id_opt,
         focus_started_datetime,
         &parsed_command,
+        OutcomeApplicationMode::Flushed,
     )
 }
 

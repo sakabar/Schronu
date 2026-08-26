@@ -31,7 +31,6 @@ pub(super) enum FocusSelection {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-#[allow(dead_code)] // The runtime adopts Set through handle_command in the next migration step.
 pub(super) enum FocusChange {
     Keep,
     Clear,
@@ -287,7 +286,6 @@ pub(super) fn handle(command: &Command) -> Option<CommandOutcome> {
     Some(outcome)
 }
 
-#[allow(dead_code)] // The contract precedes the runtime entrypoint migration by one commit.
 pub(super) fn handle_command<C: CommandContext + ?Sized>(
     command: &Command,
     context: &mut C,

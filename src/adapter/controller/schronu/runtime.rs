@@ -3,8 +3,7 @@
 use super::command::{parse_command, Command, CommandKind, CommandParseError, ParseMode};
 use super::command_context::*;
 use super::handler::{
-    handle, handle_command, handle_defer_command, CommandOutcome, ExternalRequest, FocusChange,
-    FocusSelection, HandlerError,
+    handle_command, CommandOutcome, ExternalRequest, FocusChange, FocusSelection, HandlerError,
 };
 #[cfg(test)]
 use super::handler::{
@@ -499,11 +498,11 @@ fn execute_parsed(
     focused_task_id_opt: &mut Option<Uuid>,
     focus_started_datetime: &DateTime<Local>,
     parsed_command: &Command,
+    application_mode: OutcomeApplicationMode<'_>,
 ) -> Result<(), CommandError> {
     validate_non_interactive_command(parsed_command)?;
     let operation_now = task_repository.get_last_synced_time();
     validate_contextual_task_attribute_command(parsed_command, operation_now, active_config())?;
-    let mut output = ErrorCapturingWriter::new(stdout);
     let mut next_id = Uuid::new_v4;
     let mut task_factory = TaskFactory::new(operation_now, &mut next_id);
     let outcome = {
@@ -518,15 +517,31 @@ fn execute_parsed(
         handle_command(parsed_command, &mut context)?
     }
     .unwrap_or_else(|| unreachable!("Verify must be handled before command execution"));
-    apply_command_outcome(
-        &mut output,
-        task_repository,
-        focused_task_id_opt,
-        OutcomeApplicationMode::Flushed,
-        outcome,
-        active_config(),
-    )?;
-    captured_output_result(&mut output)
+    match application_mode {
+        OutcomeApplicationMode::InteractiveUnflushed(focus_selection_mode) => {
+            apply_command_outcome(
+                stdout,
+                task_repository,
+                focused_task_id_opt,
+                OutcomeApplicationMode::InteractiveUnflushed(focus_selection_mode),
+                outcome,
+                active_config(),
+            )
+        }
+        application_mode @ (OutcomeApplicationMode::Flushed
+        | OutcomeApplicationMode::InteractiveFlushed(_)) => {
+            let mut output = ErrorCapturingWriter::new(stdout);
+            apply_command_outcome(
+                &mut output,
+                task_repository,
+                focused_task_id_opt,
+                application_mode,
+                outcome,
+                active_config(),
+            )?;
+            captured_output_result(&mut output)
+        }
+    }
 }
 
 fn captured_output_result(output: &mut ErrorCapturingWriter<'_>) -> Result<(), CommandError> {
@@ -572,9 +587,18 @@ fn apply_command_outcome(
     match outcome.focus_change {
         FocusChange::Keep => {}
         FocusChange::Clear => *focused_task_id_opt = None,
-        FocusChange::Set(task_id) => *focused_task_id_opt = Some(task_id),
+        FocusChange::Set(task_id) => {
+            *focused_task_id_opt = Some(task_id);
+            if let OutcomeApplicationMode::InteractiveFlushed(focus_selection_mode)
+            | OutcomeApplicationMode::InteractiveUnflushed(focus_selection_mode) =
+                &mut application_mode
+            {
+                **focus_selection_mode = FocusSelectionMode::Explicit;
+            }
+        }
         FocusChange::SelectionMode(selection) => match &mut application_mode {
-            OutcomeApplicationMode::InteractiveUnflushed(focus_selection_mode) => {
+            OutcomeApplicationMode::InteractiveFlushed(focus_selection_mode)
+            | OutcomeApplicationMode::InteractiveUnflushed(focus_selection_mode) => {
                 **focus_selection_mode = focus_selection_mode_from_selection(selection);
                 *focused_task_id_opt = None;
             }
@@ -584,8 +608,10 @@ fn apply_command_outcome(
         },
     }
 
-    if matches!(&application_mode, OutcomeApplicationMode::Flushed)
-        && outcome.kind != CommandKind::Noop
+    if matches!(
+        &application_mode,
+        OutcomeApplicationMode::Flushed | OutcomeApplicationMode::InteractiveFlushed(_)
+    ) && outcome.kind != CommandKind::Noop
     {
         render_display_model_with_mode(stdout, &DisplayModel::empty(), RenderMode::Flushed)
             .map_err(CommandError::Output)?;
@@ -595,7 +621,14 @@ fn apply_command_outcome(
 
 enum OutcomeApplicationMode<'a> {
     Flushed,
+    InteractiveFlushed(&'a mut FocusSelectionMode),
     InteractiveUnflushed(&'a mut FocusSelectionMode),
+}
+
+impl OutcomeApplicationMode<'_> {
+    fn propagates_error(&self) -> bool {
+        matches!(self, Self::InteractiveUnflushed(_))
+    }
 }
 
 // 削除できない時はNoneを返す。例えば、文字列が空の時
@@ -794,6 +827,7 @@ fn execute_non_interactive_command_at(
             &mut focused_task_id_opt,
             &focus_started_datetime,
             &parsed_command,
+            OutcomeApplicationMode::Flushed,
         )
     })?;
     Ok(())
@@ -995,6 +1029,23 @@ struct InteractiveCommandExecution {
     focus_changed: bool,
 }
 
+fn interactive_outcome_application_mode<'a>(
+    command: &Command,
+    focus_selection_mode: &'a mut FocusSelectionMode,
+) -> OutcomeApplicationMode<'a> {
+    if matches!(
+        command,
+        Command::Defer { .. } | Command::InteractiveShortcut(_)
+    ) || matches!(
+        command.kind(),
+        CommandKind::Unfocus | CommandKind::FocusHighest | CommandKind::FocusLowest
+    ) {
+        OutcomeApplicationMode::InteractiveUnflushed(focus_selection_mode)
+    } else {
+        OutcomeApplicationMode::InteractiveFlushed(focus_selection_mode)
+    }
+}
+
 #[allow(clippy::too_many_arguments, unused_must_use)]
 fn execute_interactive_command(
     stdout: &mut dyn SchronuWriter,
@@ -1009,43 +1060,23 @@ fn execute_interactive_command(
     let parsed_command =
         parse_command(command, ParseMode::Interactive).map_err(map_command_parse_error)?;
     let kind = parsed_command.kind();
-    if let Some(outcome) =
-        handle(&parsed_command).filter(|outcome| outcome.focus_change != FocusChange::Keep)
-    {
-        apply_command_outcome(
-            stdout,
-            task_repository,
-            focused_task_id_opt,
-            OutcomeApplicationMode::InteractiveUnflushed(focus_selection_mode),
-            outcome,
-            active_config(),
-        )?;
-    } else if matches!(
-        parsed_command,
-        Command::Defer { .. } | Command::InteractiveShortcut(_)
-    ) {
-        let mut context = RuntimeDeferCommandContext {
-            task_repository,
-            focused_task_id_opt,
-            config: active_config(),
-        };
-        let outcome = handle_defer_command(&parsed_command, &mut context)?
-            .expect("interactive defer command must be handler-owned");
-        apply_command_outcome(
-            stdout,
-            task_repository,
-            focused_task_id_opt,
-            OutcomeApplicationMode::InteractiveUnflushed(focus_selection_mode),
-            outcome,
-            active_config(),
-        )?;
+    let (command_result, propagates_error) = if kind == CommandKind::Verify {
+        let mut output = ErrorCapturingWriter::new(stdout);
+        (
+            render_display_model_with_mode(
+                &mut output,
+                &DisplayModel::empty(),
+                RenderMode::Flushed,
+            )
+            .map_err(CommandError::Output)
+            .and_then(|()| captured_output_result(&mut output)),
+            false,
+        )
     } else {
-        let command_result = if parsed_command.kind() == CommandKind::Verify {
-            let mut output = ErrorCapturingWriter::new(stdout);
-            render_display_model_with_mode(&mut output, &DisplayModel::empty(), RenderMode::Flushed)
-                .map_err(CommandError::Output)
-                .and_then(|()| captured_output_result(&mut output))
-        } else {
+        let application_mode =
+            interactive_outcome_application_mode(&parsed_command, focus_selection_mode);
+        let propagates_error = application_mode.propagates_error();
+        (
             execute_parsed(
                 stdout,
                 task_repository,
@@ -1053,16 +1084,17 @@ fn execute_interactive_command(
                 focused_task_id_opt,
                 focus_started_datetime,
                 &parsed_command,
-            )
-        };
-        if let Err(error) = command_result {
-            let _output_error = render_display_model(stdout, &error_display_model(&error))
-                .map_err(CommandError::Output);
+                application_mode,
+            ),
+            propagates_error,
+        )
+    };
+    if let Err(error) = command_result {
+        if propagates_error {
+            return Err(error);
         }
-        if matches!(parsed_command, Command::Focus { task_id } if *focused_task_id_opt == Some(task_id))
-        {
-            *focus_selection_mode = FocusSelectionMode::Explicit;
-        }
+        let _output_error = render_display_model(stdout, &error_display_model(&error))
+            .map_err(CommandError::Output);
     }
 
     task_repository.sync_clock(operation_now);
