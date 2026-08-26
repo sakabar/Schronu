@@ -188,6 +188,13 @@ fn error_display_model(error: &impl std::fmt::Display) -> DisplayModel {
     }
 }
 
+fn verify_display_model() -> DisplayModel {
+    DisplayModel::Message {
+        level: MessageLevel::Plain,
+        text: "検証: OK".to_string(),
+    }
+}
+
 pub(super) fn report_application_result<T>(
     stdout: &mut dyn SchronuWriter,
     result: Result<T, ApplicationError>,
@@ -532,12 +539,6 @@ fn captured_output_result(output: &mut ErrorCapturingWriter<'_>) -> Result<(), C
     }
 }
 
-fn render_verify_flush(stdout: &mut dyn SchronuWriter) -> Result<(), CommandError> {
-    let mut output = ErrorCapturingWriter::new(stdout);
-    render_display_model(&mut output, &DisplayModel::flush()).map_err(CommandError::Output)?;
-    captured_output_result(&mut output)
-}
-
 fn apply_command_outcome(
     stdout: &mut dyn SchronuWriter,
     task_repository: &mut dyn TaskRepositoryTrait,
@@ -612,6 +613,17 @@ fn reload_repository_for_cli(
         .reload_if_changed(now)
         .map_err(CliRepositoryTransactionError::Load)?;
     Ok(storage_lock)
+}
+
+fn execute_verify_command(
+    stdout: &mut dyn SchronuWriter,
+    task_repository: &mut dyn TaskRepositoryTrait,
+    operation_now: DateTime<Local>,
+) -> Result<(), RunError> {
+    let _storage_lock = reload_repository_for_cli(task_repository, operation_now)?;
+    render_display_model(stdout, &verify_display_model())
+        .map_err(CommandError::Output)
+        .map_err(RunError::Command)
 }
 
 fn run_cli_repository_transaction<T>(
@@ -760,9 +772,8 @@ fn execute_non_interactive_command_at(
         .map_err(RunError::Command)?;
     validate_non_interactive_command(&parsed_command).map_err(RunError::Command)?;
     if parsed_command.kind() == CommandKind::Verify {
-        let _storage_lock = reload_repository_for_cli(task_repository, operation_now)?;
-        println!("検証: OK");
-        return Ok(());
+        let mut stdout = stdout();
+        return execute_verify_command(&mut stdout, task_repository, operation_now);
     }
     free_time_manager.load_busy_time_slots_from_file(
         active_config()
@@ -1067,7 +1078,10 @@ fn execute_interactive_command(
         )?;
     } else {
         let command_result = if parsed_command.kind() == CommandKind::Verify {
-            render_verify_flush(stdout)
+            let mut output = ErrorCapturingWriter::new(stdout);
+            render_display_model(&mut output, &DisplayModel::flush())
+                .map_err(CommandError::Output)
+                .and_then(|()| captured_output_result(&mut output))
         } else {
             execute_parsed(
                 stdout,
