@@ -463,3 +463,118 @@ fn interactive_aliasは同じtyped_kindと再描画方針になる() {
             .all(should_suppress_leaf_tasks_after_command));
     }
 }
+
+#[test]
+fn interactive再描画分類は全command_kindを網羅する() {
+    let all_command_kinds = [
+        CommandKind::Noop,
+        CommandKind::NewProject,
+        CommandKind::HobbyProject,
+        CommandKind::UnplannedProject,
+        CommandKind::Sequential,
+        CommandKind::Repeat,
+        CommandKind::Appointment,
+        CommandKind::Start,
+        CommandKind::Tree,
+        CommandKind::Ancestor,
+        CommandKind::Root,
+        CommandKind::Leaves,
+        CommandKind::ShowAll,
+        CommandKind::Tail,
+        CommandKind::Today,
+        CommandKind::NonRepetitive,
+        CommandKind::Calendar,
+        CommandKind::Band,
+        CommandKind::Focus,
+        CommandKind::Pick,
+        CommandKind::Open,
+        CommandKind::Obsidian,
+        CommandKind::Unfocus,
+        CommandKind::Parent,
+        CommandKind::Children,
+        CommandKind::Deepest,
+        CommandKind::NextUp,
+        CommandKind::Breakdown,
+        CommandKind::Split,
+        CommandKind::Wait,
+        CommandKind::Deadline,
+        CommandKind::Estimate,
+        CommandKind::Arrange,
+        CommandKind::Actual,
+        CommandKind::Priority,
+        CommandKind::Category,
+        CommandKind::Work,
+        CommandKind::Defer,
+        CommandKind::DeferRoutines,
+        CommandKind::Escape,
+        CommandKind::Flatten,
+        CommandKind::Pack,
+        CommandKind::Extrude,
+        CommandKind::Clear,
+        CommandKind::Gather,
+        CommandKind::Finish,
+        CommandKind::FocusHighest,
+        CommandKind::FocusLowest,
+        CommandKind::Verify,
+    ];
+
+    for kind in all_command_kinds {
+        let expected = match kind {
+            CommandKind::NewProject
+            | CommandKind::UnplannedProject
+            | CommandKind::Tree
+            | CommandKind::Leaves
+            | CommandKind::ShowAll
+            | CommandKind::Tail
+            | CommandKind::Today
+            | CommandKind::Calendar
+            | CommandKind::Band
+            | CommandKind::DeferRoutines
+            | CommandKind::Flatten
+            | CommandKind::Pack => true,
+            CommandKind::Noop
+            | CommandKind::HobbyProject
+            | CommandKind::Sequential
+            | CommandKind::Repeat
+            | CommandKind::Appointment
+            | CommandKind::Start
+            | CommandKind::Ancestor
+            | CommandKind::Root
+            | CommandKind::NonRepetitive
+            | CommandKind::Focus
+            | CommandKind::Pick
+            | CommandKind::Open
+            | CommandKind::Obsidian
+            | CommandKind::Unfocus
+            | CommandKind::Parent
+            | CommandKind::Children
+            | CommandKind::Deepest
+            | CommandKind::NextUp
+            | CommandKind::Breakdown
+            | CommandKind::Split
+            | CommandKind::Wait
+            | CommandKind::Deadline
+            | CommandKind::Estimate
+            | CommandKind::Arrange
+            | CommandKind::Actual
+            | CommandKind::Priority
+            | CommandKind::Category
+            | CommandKind::Work
+            | CommandKind::Defer
+            | CommandKind::Escape
+            | CommandKind::Extrude
+            | CommandKind::Clear
+            | CommandKind::Gather
+            | CommandKind::Finish
+            | CommandKind::FocusHighest
+            | CommandKind::FocusLowest
+            | CommandKind::Verify => false,
+        };
+
+        assert_eq!(
+            should_suppress_leaf_tasks_after_command(kind),
+            expected,
+            "classification changed for {kind:?}"
+        );
+    }
+}
