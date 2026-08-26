@@ -464,11 +464,73 @@ fn direct_impl_method_regions<'a>(implementation: &'a str, method_name: &str) ->
     regions
 }
 
+fn direct_method_signature_regions<'a>(container: &'a str, method_name: &str) -> Vec<&'a str> {
+    let code = code_only(container);
+    let bytes = code.as_bytes();
+    let mut regions = Vec::new();
+    let mut brace_depth: usize = 0;
+    let mut index = 0;
+
+    while index < bytes.len() {
+        match bytes[index] {
+            b'{' => {
+                brace_depth += 1;
+                index += 1;
+            }
+            b'}' => {
+                brace_depth = brace_depth.saturating_sub(1);
+                index += 1;
+            }
+            byte if brace_depth == 1 && (byte.is_ascii_alphabetic() || byte == b'_') => {
+                let token_start = index;
+                while bytes
+                    .get(index)
+                    .is_some_and(|byte| byte.is_ascii_alphanumeric() || *byte == b'_')
+                {
+                    index += 1;
+                }
+                if &code[token_start..index] != "fn" {
+                    continue;
+                }
+                while bytes.get(index).is_some_and(u8::is_ascii_whitespace) {
+                    index += 1;
+                }
+                let name_start = index;
+                while bytes
+                    .get(index)
+                    .is_some_and(|byte| byte.is_ascii_alphanumeric() || *byte == b'_')
+                {
+                    index += 1;
+                }
+                if &code[name_start..index] != method_name {
+                    continue;
+                }
+                let Some(relative_end) = bytes[index..]
+                    .iter()
+                    .position(|byte| matches!(byte, b'{' | b';'))
+                else {
+                    continue;
+                };
+                let signature_end = index + relative_end;
+                regions.push(&container[token_start..signature_end]);
+                index = signature_end;
+            }
+            _ => index += 1,
+        }
+    }
+
+    regions
+}
+
 fn compact_code(source: &str) -> String {
     code_only(source)
         .chars()
         .filter(|character| !character.is_whitespace())
         .collect()
+}
+
+fn normalized_method_signature(source: &str) -> String {
+    compact_code(source).replace(",)", ")")
 }
 
 fn unique_top_level_item_region<'a>(source: &'a str, item_prefix: &str) -> Result<&'a str, String> {
@@ -496,16 +558,31 @@ fn task_tree_writer_free_boundary_violations(
                 return violations;
             }
         };
-    let trait_code = compact_code(trait_region);
-    for required in [
-        "fnfocus_children(&mutself)->Result<Option<DisplayModel>,ApplicationError>;",
-        "fnfocus_deepest(&mutself)->Result<Option<DisplayModel>,ApplicationError>;",
-        "fnnext_up(&mutself,name:&str,estimated_minutes:Option<i64>)->Result<Option<DisplayModel>,ApplicationError>;",
+    for (method_name, expected_signature) in [
+        (
+            "focus_children",
+            "fnfocus_children(&mutself)->Result<Option<DisplayModel>,ApplicationError>",
+        ),
+        (
+            "focus_deepest",
+            "fnfocus_deepest(&mutself)->Result<Option<DisplayModel>,ApplicationError>",
+        ),
+        (
+            "next_up",
+            "fnnext_up(&mutself,name:&str,estimated_minutes:Option<i64>)->Result<Option<DisplayModel>,ApplicationError>",
+        ),
     ] {
-        if !trait_code.contains(required) {
-            violations.push(format!("TaskTreeCommandContext missing {required}"));
+        let signatures = direct_method_signature_regions(trait_region, method_name);
+        if signatures.len() != 1
+            || normalized_method_signature(signatures.first().copied().unwrap_or_default())
+                != expected_signature
+        {
+            violations.push(format!(
+                "TaskTreeCommandContext::{method_name} must have signature {expected_signature}"
+            ));
         }
     }
+    let trait_code = compact_code(trait_region);
     for forbidden in ["SchronuWriter", "supports_ansi_color"] {
         if trait_code.contains(forbidden) {
             violations.push(format!("TaskTreeCommandContext retains {forbidden}"));
@@ -573,16 +650,16 @@ fn task_tree_writer_free_boundary_violations(
             }
         }
         for method_name in ["focus_children", "focus_deepest", "next_up"] {
-            let methods = direct_impl_method_regions(implementation, method_name);
-            if methods.len() != 1 {
+            let signatures = direct_method_signature_regions(implementation, method_name);
+            if signatures.len() != 1 {
                 violations.push(format!(
                     "{implementation_prefix} must define {method_name} exactly once; found {}",
-                    methods.len()
+                    signatures.len()
                 ));
                 continue;
             }
-            let method_code = compact_code(methods[0]);
-            if !method_code.contains("->Result<Option<DisplayModel>,ApplicationError>") {
+            let signature = normalized_method_signature(signatures[0]);
+            if !signature.ends_with("->Result<Option<DisplayModel>,ApplicationError>") {
                 violations.push(format!(
                     "{implementation_prefix}::{method_name} must return typed optional display"
                 ));
@@ -993,6 +1070,35 @@ impl UnrelatedContext {
         task_tree_writer_free_boundary_violations(&bad_handler, context_source)
             .iter()
             .any(|violation| violation.contains("&mutdisplay"))
+    );
+}
+
+#[test]
+fn task_tree_signature_scannerは整形と末尾commaに依存しない() {
+    let without_trailing_comma = r#"
+trait Context {
+    fn next_up(&mut self, name: &str, estimated_minutes: Option<i64>) -> Result<Option<DisplayModel>, ApplicationError>;
+}
+"#;
+    let with_trailing_comma = r#"
+trait Context {
+    fn next_up(
+        &mut self,
+        name: &str,
+        estimated_minutes: Option<i64>,
+    ) -> Result<Option<DisplayModel>, ApplicationError>;
+}
+"#;
+
+    let normalized = |source| {
+        let signatures = direct_method_signature_regions(source, "next_up");
+        assert_eq!(signatures.len(), 1);
+        normalized_method_signature(signatures[0])
+    };
+
+    assert_eq!(
+        normalized(without_trailing_comma),
+        normalized(with_trailing_comma)
     );
 }
 
