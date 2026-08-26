@@ -1,4 +1,4 @@
-use super::command::{parse_command, CommandKind, ParseMode};
+use super::command::{parse_command, representative_valid_commands, CommandKind, ParseMode};
 use super::interactive::should_suppress_leaf_tasks_after_command;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -502,57 +502,27 @@ fn interactive製品eventはtyped_classifierへ直接接続する() {
 
 #[test]
 fn interactive再描画分類は全command_kindを網羅する() {
-    let all_command_kinds = [
-        CommandKind::Noop,
-        CommandKind::NewProject,
-        CommandKind::HobbyProject,
-        CommandKind::UnplannedProject,
-        CommandKind::Sequential,
-        CommandKind::Repeat,
-        CommandKind::Appointment,
-        CommandKind::Start,
-        CommandKind::Tree,
-        CommandKind::Ancestor,
-        CommandKind::Root,
-        CommandKind::Leaves,
-        CommandKind::ShowAll,
-        CommandKind::Tail,
-        CommandKind::Today,
-        CommandKind::NonRepetitive,
-        CommandKind::Calendar,
-        CommandKind::Band,
-        CommandKind::Focus,
-        CommandKind::Pick,
-        CommandKind::Open,
-        CommandKind::Obsidian,
-        CommandKind::Unfocus,
-        CommandKind::Parent,
-        CommandKind::Children,
-        CommandKind::Deepest,
-        CommandKind::NextUp,
-        CommandKind::Breakdown,
-        CommandKind::Split,
-        CommandKind::Wait,
-        CommandKind::Deadline,
-        CommandKind::Estimate,
-        CommandKind::Arrange,
-        CommandKind::Actual,
-        CommandKind::Priority,
-        CommandKind::Category,
-        CommandKind::Work,
-        CommandKind::Defer,
-        CommandKind::DeferRoutines,
-        CommandKind::Escape,
-        CommandKind::Flatten,
-        CommandKind::Pack,
-        CommandKind::Extrude,
-        CommandKind::Clear,
-        CommandKind::Gather,
-        CommandKind::Finish,
-        CommandKind::FocusHighest,
-        CommandKind::FocusLowest,
-        CommandKind::Verify,
-    ];
+    let all_command_kinds = representative_valid_commands().into_iter().fold(
+        Vec::<CommandKind>::new(),
+        |mut kinds, command| {
+            let kind = command.kind();
+            if !kinds.contains(&kind) {
+                kinds.push(kind);
+            }
+            kinds
+        },
+    );
+    assert_eq!(
+        all_command_kinds.len(),
+        49,
+        "shared representative command fixture must cover every CommandKind"
+    );
+    for (index, kind) in all_command_kinds.iter().enumerate() {
+        assert!(
+            !all_command_kinds[..index].contains(kind),
+            "classification fixture must contain {kind:?} only once"
+        );
+    }
 
     for kind in all_command_kinds {
         let expected = match kind {
