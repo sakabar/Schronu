@@ -624,6 +624,227 @@ impl TaskTreeCommandContext for TraceTaskTreeContext {
     }
 }
 
+#[derive(Default)]
+struct WriterFreeTaskTreeContext {
+    base: TraceTaskTreeContext,
+    focused_task_id: Option<Uuid>,
+}
+
+impl TaskTreeCommandContext for WriterFreeTaskTreeContext {
+    fn supports_ansi_color(&self) -> bool {
+        true
+    }
+
+    fn show_tree(&mut self) -> Result<TreeDisplay, ApplicationError> {
+        self.base.show_tree()
+    }
+
+    fn show_ancestor(&mut self) -> Result<TreeDisplay, ApplicationError> {
+        self.base.show_ancestor()
+    }
+
+    fn focus_root(&mut self) -> Result<(), ApplicationError> {
+        self.base.focus_root()
+    }
+
+    fn show_leaves(&mut self) -> Result<TreeDisplay, ApplicationError> {
+        self.base.show_leaves()
+    }
+
+    fn show_task_list(
+        &mut self,
+        pattern: Option<&str>,
+        order: TaskListOrder,
+        resolve_pattern: bool,
+    ) -> Result<DisplayModel, ApplicationError> {
+        self.base.show_task_list(pattern, order, resolve_pattern)
+    }
+
+    fn focus(&mut self, task_id: Uuid) {
+        self.focused_task_id = Some(task_id);
+    }
+
+    fn pick(&mut self, task_id: Uuid) -> Result<(), ApplicationError> {
+        self.focused_task_id = Some(task_id);
+        Ok(())
+    }
+
+    fn focus_parent(&mut self) -> Result<(), ApplicationError> {
+        Ok(())
+    }
+
+    fn focus_children(&mut self) -> Result<Option<DisplayModel>, ApplicationError> {
+        self.focused_task_id = Some(Uuid::from_u128(101));
+        Ok(Some(ordered_task_tree_display("children")))
+    }
+
+    fn focus_deepest(&mut self) -> Result<Option<DisplayModel>, ApplicationError> {
+        self.focused_task_id = Some(Uuid::from_u128(202));
+        Ok(Some(ordered_task_tree_display("deepest")))
+    }
+
+    fn next_up(
+        &mut self,
+        name: &str,
+        estimated_minutes: Option<i64>,
+    ) -> Result<Option<DisplayModel>, ApplicationError> {
+        if name == "error" {
+            return Ok(Some(DisplayModel::Sequence(vec![
+                DisplayModel::Message {
+                    level: MessageLevel::Plain,
+                    text: "next-up:before-error".to_string(),
+                },
+                DisplayModel::Message {
+                    level: MessageLevel::Error,
+                    text: "操作エラー: injected next-up failure".to_string(),
+                },
+            ])));
+        }
+        self.focused_task_id = Some(Uuid::from_u128(303));
+        Ok(Some(DisplayModel::Sequence(vec![
+            DisplayModel::Message {
+                level: MessageLevel::Plain,
+                text: format!("next-up:{name}:{estimated_minutes:?}"),
+            },
+            DisplayModel::Message {
+                level: MessageLevel::Info,
+                text: "next-up:focused".to_string(),
+            },
+        ])))
+    }
+}
+
+fn ordered_task_tree_display(label: &str) -> DisplayModel {
+    DisplayModel::Sequence(vec![
+        DisplayModel::Tree(TreeDisplay::Debug {
+            rows: vec![DebugTreeRow {
+                debug: format!("{label}:tree"),
+            }],
+        }),
+        DisplayModel::Message {
+            level: MessageLevel::Info,
+            text: format!("{label}:message"),
+        },
+    ])
+}
+
+#[test]
+fn task_tree_contextはtyped_displayとfocus変更をhandler_outcomeへ返す() {
+    let cases = [
+        (
+            no_arguments(CommandKind::Children, "子"),
+            Some(Uuid::from_u128(101)),
+            vec![
+                "raw:\n",
+                "newline:children:tree",
+                "raw:\n",
+                "newline:[Info] children:message",
+            ],
+        ),
+        (
+            no_arguments(CommandKind::Deepest, "深"),
+            Some(Uuid::from_u128(202)),
+            vec![
+                "raw:\n",
+                "newline:deepest:tree",
+                "raw:\n",
+                "newline:[Info] deepest:message",
+            ],
+        ),
+        (
+            Command::Action(CommandAction::TaskWithEstimate {
+                kind: CommandKind::NextUp,
+                canonical_name: "上",
+                name: "typed".to_string(),
+                estimated_minutes: Some(15),
+            }),
+            Some(Uuid::from_u128(303)),
+            vec![
+                "newline:next-up:typed:Some(15)",
+                "newline:[Info] next-up:focused",
+            ],
+        ),
+    ];
+
+    for (command, expected_focus, expected_writes) in cases {
+        let mut context = WriterFreeTaskTreeContext::default();
+        let outcome = handle_task_tree_command(&command, &mut context)
+            .unwrap()
+            .expect("task-tree command must be handled");
+        let mut writer = TraceWriter::default();
+        render_display_model(&mut writer, &outcome.display).unwrap();
+
+        assert_eq!(context.focused_task_id, expected_focus, "{command:?}");
+        assert_eq!(writer.writes, expected_writes, "{command:?}");
+    }
+}
+
+#[test]
+fn task_tree_contextはerrorまでのtyped部分出力順を維持する() {
+    let command = Command::Action(CommandAction::TaskWithEstimate {
+        kind: CommandKind::NextUp,
+        canonical_name: "上",
+        name: "error".to_string(),
+        estimated_minutes: None,
+    });
+    let mut context = WriterFreeTaskTreeContext::default();
+
+    let outcome = handle_task_tree_command(&command, &mut context)
+        .unwrap()
+        .expect("next-up error display remains a handled outcome");
+    let mut writer = TraceWriter::default();
+    render_display_model(&mut writer, &outcome.display).unwrap();
+
+    assert_eq!(context.focused_task_id, None);
+    assert_eq!(
+        writer.writes,
+        [
+            "newline:next-up:before-error",
+            "newline:[Error] 操作エラー: injected next-up failure",
+        ]
+    );
+}
+
+#[test]
+fn task_tree_context製品interfaceはwriterを受け取らずhandlerがtyped表示をcomposeする() {
+    let handler_source = include_str!("handler.rs");
+    let trait_source = handler_source
+        .split_once("pub(super) trait TaskTreeCommandContext {")
+        .and_then(|(_, tail)| tail.split_once("\n}"))
+        .map(|(body, _)| body)
+        .expect("TaskTreeCommandContext trait must be uniquely extractable");
+    assert!(!trait_source.contains("SchronuWriter"));
+    for required in [
+        "fn focus_children(&mut self) -> Result<Option<DisplayModel>, ApplicationError>;",
+        "fn focus_deepest(&mut self) -> Result<Option<DisplayModel>, ApplicationError>;",
+        "fn next_up(\n        &mut self,\n        name: &str,\n        estimated_minutes: Option<i64>,\n    ) -> Result<Option<DisplayModel>, ApplicationError>;",
+    ] {
+        assert!(trait_source.contains(required), "missing typed interface: {required}");
+    }
+
+    let task_tree_handler = handler_source
+        .split_once("pub(super) fn handle_task_tree_command")
+        .and_then(|(_, tail)| tail.split_once("\npub(super) fn handle_project_command"))
+        .map(|(body, _)| body)
+        .expect("task-tree handler must be uniquely extractable");
+    for required in [
+        "semantic_display = context.focus_children()?",
+        "semantic_display = context.focus_deepest()?",
+        "semantic_display = context.next_up(name, *estimated_minutes)?",
+    ] {
+        assert!(
+            task_tree_handler.contains(required),
+            "handler must compose {required}"
+        );
+    }
+    for forbidden in ["&mut display", "DisplayRecorder::"] {
+        assert!(
+            !task_tree_handler.contains(forbidden),
+            "legacy handler path: {forbidden}"
+        );
+    }
+}
+
 #[test]
 fn task_tree表示commandはhandlerがtyped_fieldから表示modelと操作要求を作る() {
     let task_id = Uuid::parse_str("11111111-1111-1111-1111-111111111111").unwrap();
