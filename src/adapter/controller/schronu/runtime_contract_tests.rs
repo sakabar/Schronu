@@ -156,7 +156,6 @@ fn test_show_task_list_mmddの日時errorを伝搬して表示と状態を変更
         focused_task_id_opt: &mut focused_task_id_opt,
         task_factory: &mut task_factory,
         config: active_config(),
-        supports_ansi_color: false,
     };
 
     let actual = context.show_task_list(
@@ -195,7 +194,6 @@ fn test_show_task_listの不正な完全日付をerrorにして表示と状態�
         focused_task_id_opt: &mut focused_task_id_opt,
         task_factory: &mut task_factory,
         config: active_config(),
-        supports_ansi_color: false,
     };
 
     let actual = context.show_task_list(
@@ -2329,10 +2327,8 @@ fn test_execute_next_up_入力不正とfocusなしではidentityを消費しな�
             let mut factory = TaskFactory::new(operation_now, &mut next_id);
             let mut focused_task_id_opt =
                 focused_task_opt.as_ref().map(|task| task.get_id().unwrap());
-            let mut stdout = TestWriter::new();
 
             let actual = execute_next_up(
-                &mut stdout,
                 &mut focused_task_id_opt,
                 &focused_task_opt,
                 name,
@@ -2377,12 +2373,10 @@ fn test_execute_next_up_rootへの親追加失敗を構造化errorで返す() {
     };
     let mut factory = TaskFactory::new(operation_now, &mut next_id);
     let root = new_test_task_handle("root").unwrap();
-    let mut stdout = TestWriter::new();
     let mut focused_task_id_opt = Some(root.get_id().unwrap());
     let before_estimated_work_seconds = root.get_estimated_work_seconds().unwrap();
 
     let actual = execute_next_up(
-        &mut stdout,
         &mut focused_task_id_opt,
         &Some(root.clone()),
         "new parent",
@@ -2416,10 +2410,8 @@ fn test_execute_next_up_task生成contextと既存の親挿入契約を固定す
     let focused = root.create_as_last_child(new_test_task_attr("focused"));
     let focused_id = focused.get_id().unwrap();
     let mut focused_task_id_opt = Some(focused_id);
-    let mut stdout = TestWriter::new();
 
     let actual = execute_next_up(
-        &mut stdout,
         &mut focused_task_id_opt,
         &Some(focused),
         "new parent",

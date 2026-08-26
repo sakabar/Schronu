@@ -595,28 +595,33 @@ impl TaskTreeCommandContext for TraceTaskTreeContext {
         Ok(())
     }
 
-    fn focus_children(&mut self, display: &mut dyn SchronuWriter) -> Result<(), ApplicationError> {
+    fn focus_children(&mut self) -> Result<Option<DisplayModel>, ApplicationError> {
         self.calls.push("children".to_string());
-        display.write_all(b"children").unwrap();
-        Ok(())
+        Ok(Some(DisplayModel::Message {
+            level: MessageLevel::Plain,
+            text: "children".to_string(),
+        }))
     }
 
-    fn focus_deepest(&mut self, display: &mut dyn SchronuWriter) -> Result<(), ApplicationError> {
+    fn focus_deepest(&mut self) -> Result<Option<DisplayModel>, ApplicationError> {
         self.calls.push("deepest".to_string());
-        display.write_all(b"deepest").unwrap();
-        Ok(())
+        Ok(Some(DisplayModel::Message {
+            level: MessageLevel::Plain,
+            text: "deepest".to_string(),
+        }))
     }
 
     fn next_up(
         &mut self,
-        display: &mut dyn SchronuWriter,
         name: &str,
         estimated_minutes: Option<i64>,
-    ) -> Result<(), ApplicationError> {
+    ) -> Result<Option<DisplayModel>, ApplicationError> {
         self.calls
             .push(format!("next_up:{name}:{estimated_minutes:?}"));
-        display.write_all(b"next_up").unwrap();
-        Ok(())
+        Ok(Some(DisplayModel::Message {
+            level: MessageLevel::Plain,
+            text: "next_up".to_string(),
+        }))
     }
 }
 
@@ -1714,21 +1719,20 @@ impl TaskTreeCommandContext for CompositeTraceContext {
         self.task_tree.focus_parent()
     }
 
-    fn focus_children(&mut self, display: &mut dyn SchronuWriter) -> Result<(), ApplicationError> {
-        self.task_tree.focus_children(display)
+    fn focus_children(&mut self) -> Result<Option<DisplayModel>, ApplicationError> {
+        self.task_tree.focus_children()
     }
 
-    fn focus_deepest(&mut self, display: &mut dyn SchronuWriter) -> Result<(), ApplicationError> {
-        self.task_tree.focus_deepest(display)
+    fn focus_deepest(&mut self) -> Result<Option<DisplayModel>, ApplicationError> {
+        self.task_tree.focus_deepest()
     }
 
     fn next_up(
         &mut self,
-        display: &mut dyn SchronuWriter,
         name: &str,
         estimated_minutes: Option<i64>,
-    ) -> Result<(), ApplicationError> {
-        self.task_tree.next_up(display, name, estimated_minutes)
+    ) -> Result<Option<DisplayModel>, ApplicationError> {
+        self.task_tree.next_up(name, estimated_minutes)
     }
 }
 

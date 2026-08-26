@@ -3,8 +3,10 @@ use super::handler::{
     DeferCommandContext, DeferCommandError, FinishPlacementCommandContext, ProjectCommandContext,
     TaskAttributeCommandContext, TaskListOrder, TaskTreeCommandContext,
 };
-use super::renderer::{render_display_model, DisplayModel, SchronuWriter, TreeDisplay};
-use super::runtime::{command_parse_error, report_application_result, CommandError};
+use super::renderer::{
+    render_display_model, DisplayModel, MessageLevel, SchronuWriter, TreeDisplay,
+};
+use super::runtime::{command_parse_error, CommandError};
 use super::view::{
     build_ancestor_tree_display, build_leaf_tree_display, build_show_all_tasks_display_with_config,
     build_tree_display, get_weekday_jp, TaskListDisplayOrder,
@@ -432,7 +434,6 @@ fn execute_clear_or_gather(
 }
 
 pub(super) fn execute_next_up(
-    _stdout: &mut dyn SchronuWriter,
     focused_task_id_opt: &mut Option<Uuid>,
     focused_task_opt: &Option<TaskHandle>,
     new_task_name_str: &str,
@@ -1290,7 +1291,6 @@ pub(super) struct RuntimeTaskTreeCommandContext<'repository, 'factory, 'generato
     pub(super) focused_task_id_opt: &'repository mut Option<Uuid>,
     pub(super) task_factory: &'factory mut TaskFactory<'generator>,
     pub(super) config: &'repository SchronuConfig,
-    pub(super) supports_ansi_color: bool,
 }
 
 impl RuntimeTaskTreeCommandContext<'_, '_, '_> {
@@ -1306,10 +1306,6 @@ impl RuntimeTaskTreeCommandContext<'_, '_, '_> {
 }
 
 impl TaskTreeCommandContext for RuntimeTaskTreeCommandContext<'_, '_, '_> {
-    fn supports_ansi_color(&self) -> bool {
-        self.supports_ansi_color
-    }
-
     fn show_tree(&mut self) -> Result<TreeDisplay, ApplicationError> {
         build_tree_display(&self.focused_task()?)
     }
@@ -1387,7 +1383,7 @@ impl TaskTreeCommandContext for RuntimeTaskTreeCommandContext<'_, '_, '_> {
         Ok(())
     }
 
-    fn focus_children(&mut self, display: &mut dyn SchronuWriter) -> Result<(), ApplicationError> {
+    fn focus_children(&mut self) -> Result<Option<DisplayModel>, ApplicationError> {
         let focused_task_opt = self.focused_task()?;
         if let Some(focused_task) = focused_task_opt.as_ref() {
             let children = focused_task
@@ -1406,20 +1402,20 @@ impl TaskTreeCommandContext for RuntimeTaskTreeCommandContext<'_, '_, '_> {
                     *self.focused_task_id_opt =
                         Some(child.get_id().map_err(ApplicationError::TaskTree)?);
                 }
-                [_, _, ..] => render_display_model(
-                    display,
-                    &DisplayModel::Tree(build_tree_display(&focused_task_opt)?),
-                )
-                .unwrap(),
+                [_, _, ..] => {
+                    return Ok(Some(DisplayModel::Tree(build_tree_display(
+                        &focused_task_opt,
+                    )?)));
+                }
                 _ => {}
             }
         }
-        Ok(())
+        Ok(None)
     }
 
-    fn focus_deepest(&mut self, display: &mut dyn SchronuWriter) -> Result<(), ApplicationError> {
+    fn focus_deepest(&mut self) -> Result<Option<DisplayModel>, ApplicationError> {
         let Some(focused_task) = self.focused_task()? else {
-            return Ok(());
+            return Ok(None);
         };
         let mut deepest_task = focused_task;
         loop {
@@ -1447,32 +1443,33 @@ impl TaskTreeCommandContext for RuntimeTaskTreeCommandContext<'_, '_, '_> {
             .len()
             > 1
         {
-            render_display_model(
-                display,
-                &DisplayModel::Tree(build_tree_display(&Some(deepest_task))?),
-            )
-            .unwrap();
+            return Ok(Some(DisplayModel::Tree(build_tree_display(&Some(
+                deepest_task,
+            ))?)));
         }
-        Ok(())
+        Ok(None)
     }
 
     fn next_up(
         &mut self,
-        display: &mut dyn SchronuWriter,
         name: &str,
         estimated_minutes: Option<i64>,
-    ) -> Result<(), ApplicationError> {
+    ) -> Result<Option<DisplayModel>, ApplicationError> {
         let focused_task_opt = self.focused_task()?;
         let result = execute_next_up(
-            display,
             self.focused_task_id_opt,
             &focused_task_opt,
             name,
             &estimated_minutes,
             self.task_factory,
         );
-        report_application_result(display, result);
-        Ok(())
+        match result {
+            Ok(_) => Ok(None),
+            Err(error) => Ok(Some(DisplayModel::Message {
+                level: MessageLevel::Error,
+                text: CommandError::Application(error).to_string(),
+            })),
+        }
     }
 }
 
@@ -1765,10 +1762,6 @@ impl FinishPlacementCommandContext for CliCommandContext<'_, '_, '_> {
 }
 
 impl TaskTreeCommandContext for CliCommandContext<'_, '_, '_> {
-    fn supports_ansi_color(&self) -> bool {
-        self.supports_ansi_color
-    }
-
     fn show_tree(&mut self) -> Result<TreeDisplay, ApplicationError> {
         RuntimeTaskTreeCommandContext {
             task_repository: self.task_repository,
@@ -1776,7 +1769,6 @@ impl TaskTreeCommandContext for CliCommandContext<'_, '_, '_> {
             focused_task_id_opt: self.focused_task_id_opt,
             task_factory: self.task_factory,
             config: self.config,
-            supports_ansi_color: self.supports_ansi_color,
         }
         .show_tree()
     }
@@ -1788,7 +1780,6 @@ impl TaskTreeCommandContext for CliCommandContext<'_, '_, '_> {
             focused_task_id_opt: self.focused_task_id_opt,
             task_factory: self.task_factory,
             config: self.config,
-            supports_ansi_color: self.supports_ansi_color,
         }
         .show_ancestor()
     }
@@ -1800,7 +1791,6 @@ impl TaskTreeCommandContext for CliCommandContext<'_, '_, '_> {
             focused_task_id_opt: self.focused_task_id_opt,
             task_factory: self.task_factory,
             config: self.config,
-            supports_ansi_color: self.supports_ansi_color,
         }
         .focus_root()
     }
@@ -1812,7 +1802,6 @@ impl TaskTreeCommandContext for CliCommandContext<'_, '_, '_> {
             focused_task_id_opt: self.focused_task_id_opt,
             task_factory: self.task_factory,
             config: self.config,
-            supports_ansi_color: self.supports_ansi_color,
         }
         .show_leaves()
     }
@@ -1829,7 +1818,6 @@ impl TaskTreeCommandContext for CliCommandContext<'_, '_, '_> {
             focused_task_id_opt: self.focused_task_id_opt,
             task_factory: self.task_factory,
             config: self.config,
-            supports_ansi_color: self.supports_ansi_color,
         }
         .show_task_list(pattern, order, resolve_pattern)
     }
@@ -1845,7 +1833,6 @@ impl TaskTreeCommandContext for CliCommandContext<'_, '_, '_> {
             focused_task_id_opt: self.focused_task_id_opt,
             task_factory: self.task_factory,
             config: self.config,
-            supports_ansi_color: self.supports_ansi_color,
         }
         .pick(task_id)
     }
@@ -1857,49 +1844,44 @@ impl TaskTreeCommandContext for CliCommandContext<'_, '_, '_> {
             focused_task_id_opt: self.focused_task_id_opt,
             task_factory: self.task_factory,
             config: self.config,
-            supports_ansi_color: self.supports_ansi_color,
         }
         .focus_parent()
     }
 
-    fn focus_children(&mut self, display: &mut dyn SchronuWriter) -> Result<(), ApplicationError> {
+    fn focus_children(&mut self) -> Result<Option<DisplayModel>, ApplicationError> {
         RuntimeTaskTreeCommandContext {
             task_repository: self.task_repository,
             free_time_manager: self.free_time_manager,
             focused_task_id_opt: self.focused_task_id_opt,
             task_factory: self.task_factory,
             config: self.config,
-            supports_ansi_color: self.supports_ansi_color,
         }
-        .focus_children(display)
+        .focus_children()
     }
 
-    fn focus_deepest(&mut self, display: &mut dyn SchronuWriter) -> Result<(), ApplicationError> {
+    fn focus_deepest(&mut self) -> Result<Option<DisplayModel>, ApplicationError> {
         RuntimeTaskTreeCommandContext {
             task_repository: self.task_repository,
             free_time_manager: self.free_time_manager,
             focused_task_id_opt: self.focused_task_id_opt,
             task_factory: self.task_factory,
             config: self.config,
-            supports_ansi_color: self.supports_ansi_color,
         }
-        .focus_deepest(display)
+        .focus_deepest()
     }
 
     fn next_up(
         &mut self,
-        display: &mut dyn SchronuWriter,
         name: &str,
         estimated_minutes: Option<i64>,
-    ) -> Result<(), ApplicationError> {
+    ) -> Result<Option<DisplayModel>, ApplicationError> {
         RuntimeTaskTreeCommandContext {
             task_repository: self.task_repository,
             free_time_manager: self.free_time_manager,
             focused_task_id_opt: self.focused_task_id_opt,
             task_factory: self.task_factory,
             config: self.config,
-            supports_ansi_color: self.supports_ansi_color,
         }
-        .next_up(display, name, estimated_minutes)
+        .next_up(name, estimated_minutes)
     }
 }

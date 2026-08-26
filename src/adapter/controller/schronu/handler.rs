@@ -85,7 +85,6 @@ pub(super) enum TaskListOrder {
 }
 
 pub(super) trait TaskTreeCommandContext {
-    fn supports_ansi_color(&self) -> bool;
     fn show_tree(&mut self) -> Result<TreeDisplay, ApplicationError>;
     fn show_ancestor(&mut self) -> Result<TreeDisplay, ApplicationError>;
     fn focus_root(&mut self) -> Result<(), ApplicationError>;
@@ -99,14 +98,13 @@ pub(super) trait TaskTreeCommandContext {
     fn focus(&mut self, task_id: Uuid);
     fn pick(&mut self, task_id: Uuid) -> Result<(), ApplicationError>;
     fn focus_parent(&mut self) -> Result<(), ApplicationError>;
-    fn focus_children(&mut self, display: &mut dyn SchronuWriter) -> Result<(), ApplicationError>;
-    fn focus_deepest(&mut self, display: &mut dyn SchronuWriter) -> Result<(), ApplicationError>;
+    fn focus_children(&mut self) -> Result<Option<DisplayModel>, ApplicationError>;
+    fn focus_deepest(&mut self) -> Result<Option<DisplayModel>, ApplicationError>;
     fn next_up(
         &mut self,
-        display: &mut dyn SchronuWriter,
         name: &str,
         estimated_minutes: Option<i64>,
-    ) -> Result<(), ApplicationError>;
+    ) -> Result<Option<DisplayModel>, ApplicationError>;
 }
 
 pub(super) trait TaskAttributeCommandContext {
@@ -323,7 +321,6 @@ pub(super) fn handle_task_tree_command<C: TaskTreeCommandContext + ?Sized>(
     command: &Command,
     context: &mut C,
 ) -> Result<Option<CommandOutcome>, ApplicationError> {
-    let mut display = DisplayRecorder::with_ansi_color(context.supports_ansi_color());
     let mut semantic_display = None;
     let kind = command.kind();
 
@@ -411,22 +408,22 @@ pub(super) fn handle_task_tree_command<C: TaskTreeCommandContext + ?Sized>(
         Command::Action(CommandAction::NoArguments {
             kind: CommandKind::Children,
             ..
-        }) => context.focus_children(&mut display)?,
+        }) => semantic_display = context.focus_children()?,
         Command::Action(CommandAction::NoArguments {
             kind: CommandKind::Deepest,
             ..
-        }) => context.focus_deepest(&mut display)?,
+        }) => semantic_display = context.focus_deepest()?,
         Command::Action(CommandAction::TaskWithEstimate {
             kind: CommandKind::NextUp,
             name,
             estimated_minutes,
             ..
-        }) => context.next_up(&mut display, name, *estimated_minutes)?,
+        }) => semantic_display = context.next_up(name, *estimated_minutes)?,
         _ => return Ok(None),
     }
 
     let mut outcome = CommandOutcome::empty(kind);
-    outcome.display = semantic_display.unwrap_or_else(|| display.model().clone());
+    outcome.display = semantic_display.unwrap_or_default();
     Ok(Some(outcome))
 }
 
