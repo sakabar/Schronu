@@ -217,6 +217,128 @@ fn test_show_task_listの不正な完全日付をerrorにして表示と状態�
 }
 
 #[test]
+fn task_tree製品context_children複数はtyped_treeを返してfocusを維持する() {
+    let now = Local.with_ymd_and_hms(2026, 8, 27, 12, 0, 0).unwrap();
+    let root = new_test_task_handle("children root").unwrap();
+    root.create_as_last_child(new_test_task_attr("first child"));
+    root.create_as_last_child(new_test_task_attr("second child"));
+    let root_id = root.get_id().unwrap();
+    let snapshot = root.snapshot().unwrap();
+    let mut repository = TestTaskRepository::new(root, now);
+    let mut free_time_manager = TestFreeTimeManager::default();
+    let mut focused_task_id_opt = Some(root_id);
+    let mut next_id = || Uuid::from_u128(9001);
+    let mut task_factory = TaskFactory::new(now, &mut next_id);
+    let mut context = RuntimeTaskTreeCommandContext {
+        task_repository: &mut repository,
+        free_time_manager: &mut free_time_manager,
+        focused_task_id_opt: &mut focused_task_id_opt,
+        task_factory: &mut task_factory,
+        config: active_config(),
+        supports_ansi_color: false,
+    };
+
+    let display = context.focus_children().unwrap();
+
+    assert!(matches!(display, Some(DisplayModel::Tree(_))));
+    assert_eq!(focused_task_id_opt, Some(root_id));
+    assert_eq!(repository.task.snapshot().unwrap(), snapshot);
+}
+
+#[test]
+fn task_tree製品context_deepest分岐はtyped_treeを返して分岐taskへfocusする() {
+    let now = Local.with_ymd_and_hms(2026, 8, 27, 12, 0, 0).unwrap();
+    let root = new_test_task_handle("deepest root").unwrap();
+    let branch = root.create_as_last_child(new_test_task_attr("branch"));
+    branch.create_as_last_child(new_test_task_attr("first leaf"));
+    branch.create_as_last_child(new_test_task_attr("second leaf"));
+    let root_id = root.get_id().unwrap();
+    let branch_id = branch.get_id().unwrap();
+    let snapshot = root.snapshot().unwrap();
+    let mut repository = TestTaskRepository::new(root, now);
+    let mut free_time_manager = TestFreeTimeManager::default();
+    let mut focused_task_id_opt = Some(root_id);
+    let mut next_id = || Uuid::from_u128(9002);
+    let mut task_factory = TaskFactory::new(now, &mut next_id);
+    let mut context = RuntimeTaskTreeCommandContext {
+        task_repository: &mut repository,
+        free_time_manager: &mut free_time_manager,
+        focused_task_id_opt: &mut focused_task_id_opt,
+        task_factory: &mut task_factory,
+        config: active_config(),
+        supports_ansi_color: false,
+    };
+
+    let display = context.focus_deepest().unwrap();
+
+    assert!(matches!(display, Some(DisplayModel::Tree(_))));
+    assert_eq!(focused_task_id_opt, Some(branch_id));
+    assert_eq!(repository.task.snapshot().unwrap(), snapshot);
+}
+
+#[test]
+fn task_tree製品context_next_up_errorはsemantic_errorを返して状態を維持する() {
+    let now = Local.with_ymd_and_hms(2026, 8, 27, 12, 0, 0).unwrap();
+    for (root_focused, name, expected_error) in [
+        (
+            false,
+            "123",
+            ApplicationError::InvalidInput {
+                field: "name",
+                reason: "must not be an integer-only name",
+            },
+        ),
+        (
+            true,
+            "new parent",
+            ApplicationError::TaskTree(TaskTreeError::RootOperation),
+        ),
+    ] {
+        let root = new_test_task_handle("next-up root").unwrap();
+        let focused = if root_focused {
+            root.clone()
+        } else {
+            root.create_as_last_child(new_test_task_attr("focused child"))
+        };
+        let focused_id = focused.get_id().unwrap();
+        let snapshot = root.snapshot().unwrap();
+        let mut repository = TestTaskRepository::new(root, now);
+        let mut free_time_manager = TestFreeTimeManager::default();
+        let mut focused_task_id_opt = Some(focused_id);
+        let id_generator_call_count = Cell::new(0);
+        let mut next_id = || {
+            id_generator_call_count.set(id_generator_call_count.get() + 1);
+            Uuid::from_u128(9003)
+        };
+        let mut task_factory = TaskFactory::new(now, &mut next_id);
+        let mut context = RuntimeTaskTreeCommandContext {
+            task_repository: &mut repository,
+            free_time_manager: &mut free_time_manager,
+            focused_task_id_opt: &mut focused_task_id_opt,
+            task_factory: &mut task_factory,
+            config: active_config(),
+            supports_ansi_color: false,
+        };
+
+        let display = context.next_up(name, Some(10)).unwrap();
+        let expected_text = CommandError::Application(expected_error).to_string();
+
+        assert_eq!(
+            display,
+            Some(DisplayModel::Message {
+                level: MessageLevel::Error,
+                text: expected_text,
+            })
+        );
+        assert_eq!(focused_task_id_opt, Some(focused_id));
+        assert_eq!(repository.task.snapshot().unwrap(), snapshot);
+        if !root_focused {
+            assert_eq!(id_generator_call_count.get(), 0);
+        }
+    }
+}
+
+#[test]
 fn test_backward_width_正常系1() {
     let s = String::from("あ");
     let cursor_x = 1;
