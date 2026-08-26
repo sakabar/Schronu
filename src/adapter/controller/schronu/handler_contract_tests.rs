@@ -624,10 +624,26 @@ impl TaskTreeCommandContext for TraceTaskTreeContext {
     }
 }
 
-#[derive(Default)]
 struct WriterFreeTaskTreeContext {
     base: TraceTaskTreeContext,
     focused_task_id: Option<Uuid>,
+    children_display: bool,
+    children_focus: Option<Uuid>,
+    deepest_display: bool,
+    deepest_focus: Option<Uuid>,
+}
+
+impl Default for WriterFreeTaskTreeContext {
+    fn default() -> Self {
+        Self {
+            base: TraceTaskTreeContext::default(),
+            focused_task_id: None,
+            children_display: true,
+            children_focus: Some(Uuid::from_u128(101)),
+            deepest_display: true,
+            deepest_focus: Some(Uuid::from_u128(202)),
+        }
+    }
 }
 
 impl TaskTreeCommandContext for WriterFreeTaskTreeContext {
@@ -674,13 +690,17 @@ impl TaskTreeCommandContext for WriterFreeTaskTreeContext {
     }
 
     fn focus_children(&mut self) -> Result<Option<DisplayModel>, ApplicationError> {
-        self.focused_task_id = Some(Uuid::from_u128(101));
-        Ok(Some(ordered_task_tree_display("children")))
+        self.focused_task_id = self.children_focus;
+        Ok(self
+            .children_display
+            .then(|| ordered_task_tree_display("children")))
     }
 
     fn focus_deepest(&mut self) -> Result<Option<DisplayModel>, ApplicationError> {
-        self.focused_task_id = Some(Uuid::from_u128(202));
-        Ok(Some(ordered_task_tree_display("deepest")))
+        self.focused_task_id = self.deepest_focus;
+        Ok(self
+            .deepest_display
+            .then(|| ordered_task_tree_display("deepest")))
     }
 
     fn next_up(
@@ -700,17 +720,12 @@ impl TaskTreeCommandContext for WriterFreeTaskTreeContext {
                 },
             ])));
         }
+        if name == "no-focus" {
+            return Ok(None);
+        }
         self.focused_task_id = Some(Uuid::from_u128(303));
-        Ok(Some(DisplayModel::Sequence(vec![
-            DisplayModel::Message {
-                level: MessageLevel::Plain,
-                text: format!("next-up:{name}:{estimated_minutes:?}"),
-            },
-            DisplayModel::Message {
-                level: MessageLevel::Info,
-                text: "next-up:focused".to_string(),
-            },
-        ])))
+        let _ = estimated_minutes;
+        Ok(None)
     }
 }
 
@@ -751,19 +766,6 @@ fn task_tree_contextはtyped_displayとfocus変更をhandler_outcomeへ返す() 
                 "newline:[Info] deepest:message",
             ],
         ),
-        (
-            Command::Action(CommandAction::TaskWithEstimate {
-                kind: CommandKind::NextUp,
-                canonical_name: "上",
-                name: "typed".to_string(),
-                estimated_minutes: Some(15),
-            }),
-            Some(Uuid::from_u128(303)),
-            vec![
-                "newline:next-up:typed:Some(15)",
-                "newline:[Info] next-up:focused",
-            ],
-        ),
     ];
 
     for (command, expected_focus, expected_writes) in cases {
@@ -776,6 +778,72 @@ fn task_tree_contextはtyped_displayとfocus変更をhandler_outcomeへ返す() 
 
         assert_eq!(context.focused_task_id, expected_focus, "{command:?}");
         assert_eq!(writer.writes, expected_writes, "{command:?}");
+    }
+}
+
+#[test]
+fn task_tree_contextは表示なし分岐をempty_outcomeとして返す() {
+    let cases = [
+        (
+            no_arguments(CommandKind::Children, "子"),
+            WriterFreeTaskTreeContext {
+                children_display: false,
+                children_focus: None,
+                ..WriterFreeTaskTreeContext::default()
+            },
+            None,
+        ),
+        (
+            no_arguments(CommandKind::Children, "子"),
+            WriterFreeTaskTreeContext {
+                children_display: false,
+                children_focus: Some(Uuid::from_u128(111)),
+                ..WriterFreeTaskTreeContext::default()
+            },
+            Some(Uuid::from_u128(111)),
+        ),
+        (
+            no_arguments(CommandKind::Deepest, "深"),
+            WriterFreeTaskTreeContext {
+                deepest_display: false,
+                deepest_focus: Some(Uuid::from_u128(222)),
+                ..WriterFreeTaskTreeContext::default()
+            },
+            Some(Uuid::from_u128(222)),
+        ),
+        (
+            Command::Action(CommandAction::TaskWithEstimate {
+                kind: CommandKind::NextUp,
+                canonical_name: "上",
+                name: "no-focus".to_string(),
+                estimated_minutes: Some(15),
+            }),
+            WriterFreeTaskTreeContext::default(),
+            None,
+        ),
+        (
+            Command::Action(CommandAction::TaskWithEstimate {
+                kind: CommandKind::NextUp,
+                canonical_name: "上",
+                name: "success".to_string(),
+                estimated_minutes: Some(15),
+            }),
+            WriterFreeTaskTreeContext::default(),
+            Some(Uuid::from_u128(303)),
+        ),
+    ];
+
+    for (command, mut context, expected_focus) in cases {
+        let outcome = handle_task_tree_command(&command, &mut context)
+            .unwrap()
+            .expect("task-tree command must be handled");
+
+        assert!(
+            outcome.display.is_empty(),
+            "{command:?}: {:?}",
+            outcome.display
+        );
+        assert_eq!(context.focused_task_id, expected_focus, "{command:?}");
     }
 }
 
