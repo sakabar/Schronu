@@ -396,6 +396,74 @@ fn contains_identifier(source: &str, identifier: &str) -> bool {
         .any(|token| token == identifier)
 }
 
+fn direct_impl_method_regions<'a>(implementation: &'a str, method_name: &str) -> Vec<&'a str> {
+    let code = code_only(implementation);
+    let bytes = code.as_bytes();
+    let mut regions = Vec::new();
+    let mut brace_depth: usize = 0;
+    let mut index = 0;
+
+    while index < bytes.len() {
+        match bytes[index] {
+            b'{' => {
+                brace_depth += 1;
+                index += 1;
+            }
+            b'}' => {
+                brace_depth = brace_depth.saturating_sub(1);
+                index += 1;
+            }
+            byte if brace_depth == 1 && (byte.is_ascii_alphabetic() || byte == b'_') => {
+                let token_start = index;
+                while bytes
+                    .get(index)
+                    .is_some_and(|byte| byte.is_ascii_alphanumeric() || *byte == b'_')
+                {
+                    index += 1;
+                }
+                if &code[token_start..index] != "fn" {
+                    continue;
+                }
+                while bytes.get(index).is_some_and(u8::is_ascii_whitespace) {
+                    index += 1;
+                }
+                let name_start = index;
+                while bytes
+                    .get(index)
+                    .is_some_and(|byte| byte.is_ascii_alphanumeric() || *byte == b'_')
+                {
+                    index += 1;
+                }
+                if &code[name_start..index] != method_name {
+                    continue;
+                }
+                let Some(relative_body_start) =
+                    bytes[index..].iter().position(|byte| *byte == b'{')
+                else {
+                    continue;
+                };
+                let body_start = index + relative_body_start;
+                let mut body_depth = 1;
+                let mut body_end = body_start + 1;
+                while body_end < bytes.len() && body_depth > 0 {
+                    match bytes[body_end] {
+                        b'{' => body_depth += 1,
+                        b'}' => body_depth -= 1,
+                        _ => {}
+                    }
+                    body_end += 1;
+                }
+                if body_depth == 0 {
+                    regions.push(&implementation[token_start..body_end]);
+                    index = body_end;
+                }
+            }
+            _ => index += 1,
+        }
+    }
+    regions
+}
+
 fn view_writer_dependency_violations(source: &str) -> Vec<String> {
     let mut violations = Vec::new();
     for offset in top_level_product_function_offsets(source) {
@@ -712,9 +780,16 @@ fn command_contextの製品task_list経路はwriter_free_builderへ直接委譲�
         "runtime task-tree context must have one product implementation"
     );
     let implementation = function_region_from_offset(&command_context.text, impl_offsets[0]);
+    let methods = direct_impl_method_regions(implementation, "show_task_list");
+    assert_eq!(
+        methods.len(),
+        1,
+        "runtime task-tree context must have one direct show_task_list method"
+    );
+    let method_code = code_only(methods[0]);
 
     assert_eq!(
-        implementation
+        method_code
             .matches("build_show_all_tasks_display_with_config(")
             .count(),
         1,
@@ -726,9 +801,56 @@ fn command_contextの製品task_list経路はwriter_free_builderへ直接委譲�
         "legacy_display",
     ] {
         assert!(
-            !implementation.contains(forbidden),
+            !method_code.contains(forbidden),
             "product TaskTree context must not retain the parallel writer path: {forbidden}"
         );
+    }
+}
+
+#[test]
+fn method_region検出は対象methodのcodeだけを返す() {
+    let implementation = r###"
+impl TaskTreeCommandContext for RuntimeTaskTreeCommandContext<'_, '_, '_> {
+    fn other_method(&mut self) {
+        build_show_all_tasks_display_with_config(in_other_method);
+        execute_show_all_tasks_with_config(in_other_method);
+    }
+
+    fn show_task_list(&mut self) -> Result<DisplayModel, ApplicationError> {
+        let comment_shaped = "execute_show_all_tasks_with_config(DisplayRecorder::default())";
+        let raw = r#"legacy_display build_show_all_tasks_display_with_config(in_raw)"#;
+        // execute_show_all_tasks_with_config(in_comment);
+        /* DisplayRecorder::with_ansi_color(true); */
+        if ready() {
+            nested_call();
+        }
+        build_show_all_tasks_display_with_config(in_product_method)
+    }
+
+    fn trailing_method(&mut self) {
+        let legacy_display = DisplayRecorder::default();
+    }
+}
+"###;
+
+    let methods = direct_impl_method_regions(implementation, "show_task_list");
+
+    assert_eq!(methods.len(), 1);
+    let method_code = code_only(methods[0]);
+    assert_eq!(
+        method_code
+            .matches("build_show_all_tasks_display_with_config(")
+            .count(),
+        1
+    );
+    for excluded in [
+        "execute_show_all_tasks_with_config(",
+        "DisplayRecorder::",
+        "legacy_display",
+        "in_other_method",
+        "trailing_method",
+    ] {
+        assert!(!method_code.contains(excluded), "{excluded}: {method_code}");
     }
 }
 
