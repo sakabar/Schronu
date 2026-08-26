@@ -488,6 +488,71 @@ fn runtimeはio調停だけを所有する() {
 }
 
 #[test]
+fn view表示計算はwriterに依存しない() {
+    let product_sources = controller_product_sources();
+    let view = product_sources
+        .iter()
+        .find(|source| source.path.file_name().and_then(|name| name.to_str()) == Some("view.rs"))
+        .expect("view.rs must be a controller product module");
+
+    for typed_view_item in ["struct RhoMetrics", "struct TaskListDisplayRow"] {
+        assert_eq!(
+            top_level_item_definition_offsets(&view.text, typed_view_item).len(),
+            1,
+            "view.rs must retain typed calculation item {typed_view_item}"
+        );
+    }
+
+    let (_, show_all_source) =
+        unique_function_region(&product_sources, "execute_show_all_tasks_with_config")
+            .expect("view.rs must retain one typed task-list calculation entry");
+    let show_all_signature = show_all_source
+        .split_once('{')
+        .map_or(show_all_source, |(signature, _)| signature);
+
+    let mut violations = Vec::new();
+    for writer_type in ["SchronuWriter", "dyn Write"] {
+        if show_all_signature.contains(writer_type) {
+            violations.push(format!(
+                "execute_show_all_tasks_with_config signature depends on {writer_type}"
+            ));
+        }
+    }
+    for direct_output in ["writeln_newline(", "render_display_model(", ".flush("] {
+        if show_all_source.contains(direct_output) {
+            violations.push(format!(
+                "execute_show_all_tasks_with_config directly performs output via {direct_output}"
+            ));
+        }
+    }
+
+    for (import_prefix, writer_dependencies) in [
+        (
+            "use super::renderer",
+            &["SchronuWriter", "writeln_newline", "render_display_model"][..],
+        ),
+        ("use std::io", &["Write"][..]),
+    ] {
+        for offset in top_level_item_definition_offsets(&view.text, import_prefix) {
+            let import_region = function_region_from_offset(&view.text, offset);
+            for writer_dependency in writer_dependencies {
+                if import_region.contains(writer_dependency) {
+                    violations.push(format!(
+                        "view.rs imports output dependency {writer_dependency} through {import_prefix}"
+                    ));
+                }
+            }
+        }
+    }
+
+    assert!(
+        violations.is_empty(),
+        "view writer dependency violations:\n{}",
+        violations.join("\n")
+    );
+}
+
+#[test]
 fn function_regionはpub_superの次item前で切れる() {
     let source = "fn target() {\n    let raw = r#\"\nfn fake() {}\nstruct Fake;\n\"#;\n    shared_dispatch();\n}\npub(super) fn next() {\n    bypass();\n}\n";
     let sources = [ControllerProductSource {
