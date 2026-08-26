@@ -1688,71 +1688,6 @@ fn defer系commandはruntime_fallbackとinteractive特別経路に残さない()
 
 struct TraceFinishPlacementContext {
     now: chrono::DateTime<Local>,
-    focused_task: TaskHandle,
-    calls: Vec<String>,
-    completion_inputs: Vec<CompleteTaskInput>,
-}
-
-impl TraceFinishPlacementContext {
-    fn semantic_focused_tree(&mut self) -> TreeDisplay {
-        self.calls.push("show-focused-tree".to_string());
-        TreeDisplay::Debug {
-            rows: vec![DebugTreeRow {
-                debug: "finish target".to_string(),
-            }],
-        }
-    }
-}
-
-impl FinishPlacementCommandContext for TraceFinishPlacementContext {
-    fn last_synced_time(&self) -> chrono::DateTime<Local> {
-        self.now
-    }
-
-    fn focus_started_datetime(&self) -> chrono::DateTime<Local> {
-        self.now
-    }
-
-    fn focused_task(&self) -> Result<Option<TaskHandle>, ApplicationError> {
-        Ok(Some(self.focused_task.clone()))
-    }
-
-    fn show_focused_tree(&mut self) -> Result<TreeDisplay, ApplicationError> {
-        Ok(self.semantic_focused_tree())
-    }
-
-    fn complete_focused_task(
-        &mut self,
-        input: CompleteTaskInput,
-    ) -> Result<Option<Uuid>, ApplicationError> {
-        self.calls.push("complete".to_string());
-        self.completion_inputs.push(input);
-        Ok(Some(Uuid::from_u128(22)))
-    }
-
-    fn set_focused_task_id(&mut self, task_id_opt: Option<Uuid>) {
-        self.calls.push(format!("focus:{task_id_opt:?}"));
-    }
-
-    fn pack(&mut self) -> Result<PackResult, ApplicationError> {
-        self.calls.push("pack".to_string());
-        Ok(PackResult::default())
-    }
-
-    fn flatten(&mut self) -> Result<FlattenResult, ApplicationError> {
-        self.calls.push("flatten".to_string());
-        Ok(FlattenResult::default())
-    }
-}
-
-enum FinishCompletionResponse {
-    Success(Option<Uuid>),
-    HasUndoneChildren(Uuid),
-    OtherError,
-}
-
-struct SemanticFinishContext {
-    now: chrono::DateTime<Local>,
     focus_started_datetime: chrono::DateTime<Local>,
     focused_task: Option<TaskHandle>,
     tree_display: TreeDisplay,
@@ -1763,23 +1698,46 @@ struct SemanticFinishContext {
     focus_updates: Vec<Option<Uuid>>,
 }
 
-impl SemanticFinishContext {
+impl TraceFinishPlacementContext {
     fn new(now: chrono::DateTime<Local>, focused_task: TaskHandle) -> Self {
         Self {
             now,
             focus_started_datetime: now,
             focused_task: Some(focused_task),
-            tree_display: finish_tree_display(),
-            completion_response: FinishCompletionResponse::Success(Some(Uuid::from_u128(42))),
+            tree_display: TreeDisplay::Debug {
+                rows: vec![DebugTreeRow {
+                    debug: "finish target".to_string(),
+                }],
+            },
+            completion_response: FinishCompletionResponse::Success(Some(Uuid::from_u128(22))),
             show_tree_error: false,
             calls: Vec::new(),
             completion_inputs: Vec::new(),
             focus_updates: Vec::new(),
         }
     }
+
+    fn semantic(now: chrono::DateTime<Local>, focused_task: TaskHandle) -> Self {
+        Self {
+            tree_display: finish_tree_display(),
+            completion_response: FinishCompletionResponse::Success(Some(Uuid::from_u128(42))),
+            ..Self::new(now, focused_task)
+        }
+    }
+
+    fn show_focused_tree(&mut self) -> Result<TreeDisplay, ApplicationError> {
+        self.calls.push("show-focused-tree".to_string());
+        if self.show_tree_error {
+            return Err(ApplicationError::InvalidInput {
+                field: "tree",
+                reason: "injected finish tree failure",
+            });
+        }
+        Ok(self.tree_display.clone())
+    }
 }
 
-impl FinishPlacementCommandContext for SemanticFinishContext {
+impl FinishPlacementCommandContext for TraceFinishPlacementContext {
     fn last_synced_time(&self) -> chrono::DateTime<Local> {
         self.now
     }
@@ -1793,14 +1751,7 @@ impl FinishPlacementCommandContext for SemanticFinishContext {
     }
 
     fn show_focused_tree(&mut self) -> Result<TreeDisplay, ApplicationError> {
-        self.calls.push("show-focused-tree".to_string());
-        if self.show_tree_error {
-            return Err(ApplicationError::InvalidInput {
-                field: "tree",
-                reason: "injected finish tree failure",
-            });
-        }
-        Ok(self.tree_display.clone())
+        TraceFinishPlacementContext::show_focused_tree(self)
     }
 
     fn complete_focused_task(
@@ -1837,6 +1788,12 @@ impl FinishPlacementCommandContext for SemanticFinishContext {
     }
 }
 
+enum FinishCompletionResponse {
+    Success(Option<Uuid>),
+    HasUndoneChildren(Uuid),
+    OtherError,
+}
+
 fn finish_tree_display() -> TreeDisplay {
     TreeDisplay::Debug {
         rows: vec![
@@ -1860,7 +1817,7 @@ fn finish_command() -> Command {
 fn finish成功はsemantic_emptyとfocus変更を返す() {
     let now = Local.with_ymd_and_hms(2026, 8, 23, 12, 0, 0).unwrap();
     let task = TaskHandle::with_identity("finish target", Uuid::from_u128(21), now).unwrap();
-    let mut context = SemanticFinishContext::new(now, task);
+    let mut context = TraceFinishPlacementContext::semantic(now, task);
 
     let outcome = handle_finish_placement_command(&finish_command(), &mut context)
         .unwrap()
@@ -1882,7 +1839,7 @@ fn finishのfocusなしと不正時刻とその他completion_errorは表示とfo
     let now = Local.with_ymd_and_hms(2026, 8, 23, 12, 0, 0).unwrap();
     let task = TaskHandle::with_identity("finish target", Uuid::from_u128(21), now).unwrap();
 
-    let mut no_focus_context = SemanticFinishContext::new(now, task.clone());
+    let mut no_focus_context = TraceFinishPlacementContext::semantic(now, task.clone());
     no_focus_context.focused_task = None;
     let no_focus = handle_finish_placement_command(&finish_command(), &mut no_focus_context)
         .unwrap()
@@ -1894,7 +1851,7 @@ fn finishのfocusなしと不正時刻とその他completion_errorは表示とfo
     let invalid_command = Command::Action(CommandAction::Finish {
         values: vec!["invalid".to_string()],
     });
-    let mut invalid_context = SemanticFinishContext::new(now, task.clone());
+    let mut invalid_context = TraceFinishPlacementContext::semantic(now, task.clone());
     let invalid = handle_finish_placement_command(&invalid_command, &mut invalid_context)
         .unwrap()
         .expect("invalid finish time must remain a handled no-op");
@@ -1903,7 +1860,7 @@ fn finishのfocusなしと不正時刻とその他completion_errorは表示とfo
     assert!(invalid_context.completion_inputs.is_empty());
     assert!(invalid_context.focus_updates.is_empty());
 
-    let mut completion_error_context = SemanticFinishContext::new(now, task);
+    let mut completion_error_context = TraceFinishPlacementContext::semantic(now, task);
     completion_error_context.completion_response = FinishCompletionResponse::OtherError;
     let completion_error =
         handle_finish_placement_command(&finish_command(), &mut completion_error_context)
@@ -1927,7 +1884,7 @@ fn finishは未完了childrenと競合fallbackをtyped_treeとして順序どお
         ))
         .unwrap();
     let expected_display = DisplayModel::Tree(finish_tree_display());
-    let mut undone_context = SemanticFinishContext::new(now, parent);
+    let mut undone_context = TraceFinishPlacementContext::semantic(now, parent);
 
     let undone_outcome = handle_finish_placement_command(&finish_command(), &mut undone_context)
         .unwrap()
@@ -1938,7 +1895,7 @@ fn finishは未完了childrenと競合fallbackをtyped_treeとして順序どお
     assert!(undone_context.focus_updates.is_empty());
 
     let race_task = TaskHandle::with_identity("finish race", Uuid::from_u128(31), now).unwrap();
-    let mut fallback_context = SemanticFinishContext::new(now, race_task);
+    let mut fallback_context = TraceFinishPlacementContext::semantic(now, race_task);
     fallback_context.completion_response =
         FinishCompletionResponse::HasUndoneChildren(Uuid::from_u128(31));
 
@@ -1965,7 +1922,7 @@ fn finishのundone_tree取得errorは情報を保って伝播する() {
             now,
         ))
         .unwrap();
-    let mut context = SemanticFinishContext::new(now, parent);
+    let mut context = TraceFinishPlacementContext::semantic(now, parent);
     context.show_tree_error = true;
 
     let result = handle_finish_placement_command(&finish_command(), &mut context);
@@ -2047,7 +2004,7 @@ fn finish_typed_treeは途中出力とio_error分類をrendererで保持する()
             now,
         ))
         .unwrap();
-    let mut context = SemanticFinishContext::new(now, parent);
+    let mut context = TraceFinishPlacementContext::semantic(now, parent);
     let outcome = handle_finish_placement_command(&finish_command(), &mut context)
         .unwrap()
         .expect("finish with undone children must be handled");
@@ -2082,7 +2039,7 @@ fn packとflattenは既存semantic_modelを維持する() {
             CommandKind::Flatten,
         ),
     ] {
-        let mut context = SemanticFinishContext::new(now, task.clone());
+        let mut context = TraceFinishPlacementContext::semantic(now, task.clone());
         let outcome = handle_finish_placement_command(&command, &mut context)
             .unwrap()
             .expect("placement command must be handled");
@@ -2105,12 +2062,7 @@ fn 完了と配置commandはtyped値のままhandlerが所有してruntime_fallb
     let finish = Command::Action(CommandAction::Finish {
         values: vec!["09:45".to_string()],
     });
-    let mut finish_context = TraceFinishPlacementContext {
-        now,
-        focused_task: focused_task.clone(),
-        calls: Vec::new(),
-        completion_inputs: Vec::new(),
-    };
+    let mut finish_context = TraceFinishPlacementContext::new(now, focused_task.clone());
     let finish_outcome = handle_finish_placement_command(&finish, &mut finish_context)
         .unwrap()
         .expect("typed finish command must be owned by the handler");
@@ -2138,12 +2090,7 @@ fn 完了と配置commandはtyped値のままhandlerが所有してruntime_fallb
             "flatten",
         ),
     ] {
-        let mut context = TraceFinishPlacementContext {
-            now,
-            focused_task: focused_task.clone(),
-            calls: Vec::new(),
-            completion_inputs: Vec::new(),
-        };
+        let mut context = TraceFinishPlacementContext::new(now, focused_task.clone());
         let outcome = handle_finish_placement_command(&command, &mut context)
             .unwrap()
             .expect("typed finish or placement command must be owned by the handler");
@@ -2223,12 +2170,7 @@ impl CompositeTraceContext {
             task_tree: TraceTaskTreeContext::default(),
             task_attribute: TraceTaskAttributeContext::default(),
             defer: TraceDeferContext::default(),
-            finish_placement: TraceFinishPlacementContext {
-                now,
-                focused_task,
-                calls: Vec::new(),
-                completion_inputs: Vec::new(),
-            },
+            finish_placement: TraceFinishPlacementContext::new(now, focused_task),
         }
     }
 }
@@ -2417,7 +2359,7 @@ impl FinishPlacementCommandContext for CompositeTraceContext {
     }
 
     fn show_focused_tree(&mut self) -> Result<TreeDisplay, ApplicationError> {
-        Ok(self.finish_placement.semantic_focused_tree())
+        self.finish_placement.show_focused_tree()
     }
 
     fn complete_focused_task(
