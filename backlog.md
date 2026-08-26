@@ -313,9 +313,9 @@
 - 実測: TD-018実装開始時に4,892行だった`runtime.rs`は1,375行になった。lib 501 passed、1 ignored、CLI binary 431 passed、MCP binary 2 passed、MCP stdio 12 passed、Spreadsheet 4 passedで、合計950 passed、1 ignoredとなった。ignoredは既存の`benchmark_save_2172project中1件変更を2秒未満で処理する`のみである。
 - 品質ゲート: `git diff --check`、`cargo fmt --check`、`cargo clippy --locked --all-targets -- -D warnings`、`cargo test --locked`が成功した。製品公開API、command名・alias、CLI文言、Spreadsheet A-J列、YAML、MCP契約は変更していない。
 
-#### 現状と根拠
+#### 起票時の現状と根拠
 
-- `src/adapter/controller/schronu/runtime.rs`は11,477行あり、repository transactionと外部I/Oの調停に加えて、command固有helper、日時解釈、domain operationの組み立て、tree・calendar・band・focusなどの表示計算、246件のruntime testとfixtureを保持する。
+- TD-015によるtest分離前の起票時点では、`src/adapter/controller/schronu/runtime.rs`は11,477行あり、repository transactionと外部I/Oの調停に加えて、command固有helper、日時解釈、domain operationの組み立て、tree・calendar・band・focusなどの表示計算、246件のruntime testとfixtureを保持していた。TD-015完了後のTD-018実装開始時点では4,892行だった。
 - `handler.rs`はruntimeをimportせず、typed `Command`とprivateな`ProjectCommandContext`、`TaskTreeCommandContext`、`TaskAttributeCommandContext`、`DeferCommandContext`、`FinishPlacementCommandContext`を介して処理する。一方、それらcontextの製品実装と多数のcommand helperはruntimeに残る。
 - rendererの`DisplayModel`はraw fragment、writer固有改行、flushの順序を保持するrecording modelであり、表示対象の意味を型として表現していない。
 
