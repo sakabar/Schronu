@@ -86,12 +86,14 @@
 | 41 | `CLI: Project系context出力をsemantic modelへ移す` | project作成・breakdown・repetitionの`DisplayRecorder`をsemantic message/sequenceへ置換し、handler outcomeへcomposeする | 40 | handler、command context、renderer | 対象test後に全品質ゲート |
 | 42 | `Test: Finish contextをwriter非依存で固定する` | finish placementのrecorder経路をtyped model returnへ変え、既存完了文言・順序・途中errorまでの部分出力を保持するRed contract | 41 | FinishPlacement context、handler | finish typed interface欠如の1理由でRedを確認してtestだけcommit |
 | 43 | `CLI: Finish context出力をsemantic modelへ移す` | finish placementの`DisplayRecorder`をsemantic message/sequenceへ置換し、handler outcomeへcomposeする | 42 | handler、command context、renderer | 対象test後に全品質ゲート |
-| 44 | `Test: Runtime最終責務境界を固定する` | runtimeにcontext実装、command日時解釈、domain mutation、表示計算を残さず、全製品moduleに`DisplayFragment`・`DisplayRecorder`・`DisplayModel::Legacy`がない最終境界をRedで固定 | 43 | runtime/renderer architecture | 最終legacy type境界の1理由でRedを確認してtestだけcommit |
-| 45 | `Refactor: Renderer legacy recorderを除去する` | `DisplayFragment`・`DisplayRecorder`・`DisplayModel::Legacy`と不要helper/importを削除し、runtimeをI/O調停へ限定。既存output、I/O error分類、部分出力を維持 | 44 | CLI全test、runtime/renderer architecture | 対象test後に全品質ゲート |
-| 46 | `Docs: CLI command境界を説明する` | READMEへparser→handler→view model→renderer→runtimeの責務を記録 | 45 | full suite | 全品質ゲート |
-| 47 | `Docs: TD-018の完了を記録する` | backlogへ完了日、実測件数、runtime行数、品質ゲートを記録 | 46 | full suite | 全品質ゲート |
+| 44 | `Test: Renderer flush mode契約を固定する` | `RenderMode::{Flushed, Unflushed}`とmode-aware renderer APIをRedで固定し、本文描画、flush回数、flush errorまでの部分出力を保持する | 43 | renderer、runtime調停 | RenderMode interface欠如の1理由でRedを確認してtestだけcommit |
+| 45 | `CLI: Renderer flush modeを実装する` | rendererが本文描画後のflush有無を適用し、runtimeはinteractive/non-interactiveのmode選択だけを担当する。legacy recorder型は変更しない | 44 | renderer、runtime、interactive/non-interactive | 対象test後に全品質ゲート |
+| 46 | `Test: Runtime最終責務境界を固定する` | runtimeにcontext実装、command引数の日時解釈、domain mutation、表示計算を残さず、全製品moduleに`DisplayFragment`・`DisplayRecorder`・`DisplayModel::Legacy`がない最終境界をRedで固定する。削除対象legacy型だけを検証していた既存testは、同じ出力順・I/O error分類をsemantic modelで検証する正確な名前のtestへ置換する | 45 | runtime/renderer architecture | 最終legacy type境界の1理由でRedを確認してtestだけcommit |
+| 47 | `Refactor: Renderer legacy recorderを除去する` | `DisplayFragment`・`DisplayRecorder`・`DisplayModel::Legacy`と不要helper/importを削除し、runtimeをI/O調停へ限定。既存output、I/O error分類、部分出力を維持 | 46 | CLI全test、runtime/renderer architecture | 対象test後に全品質ゲート |
+| 48 | `Docs: CLI command境界を説明する` | READMEへparser→handler→view model→renderer→runtimeの責務を記録 | 47 | full suite | 全品質ゲート |
+| 49 | `Docs: TD-018の完了を記録する` | backlogへ完了日、実測件数、runtime行数、品質ゲートを記録 | 48 | full suite | 全品質ゲート |
 
-計画本体は全47 commitとする。
+計画本体は全49 commitとする。
 
 順序6・7は機械移動のみとし、commit本文へ大規模になる理由、挙動変更なし、実行した品質ゲートを記録する。Red commit以外の全commitも、本文へ対象testと全品質ゲートの結果を残す。
 
