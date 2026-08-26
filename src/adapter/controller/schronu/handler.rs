@@ -564,12 +564,7 @@ pub(super) fn handle_breakdown_split_command<C: ProjectCommandContext + ?Sized>(
             if !names.is_empty() && !names.iter().any(|name| name.parse::<i64>().is_ok()) {
                 let names = names.iter().map(String::as_str).collect::<Vec<_>>();
                 match execute_breakdown(context, &names, &None) {
-                    Ok(Some(child_ids)) => lines.extend(
-                        child_ids
-                            .iter()
-                            .zip(names.iter())
-                            .map(|(child_id, child_name)| format!("{child_id} {child_name}")),
-                    ),
+                    Ok(Some(child_ids)) => append_project_lines(&mut lines, &child_ids, &names),
                     Ok(None) => {}
                     Err(error) => reported_error = Some(error),
                 }
@@ -913,6 +908,15 @@ fn project_command_outcome(
     outcome
 }
 
+fn append_project_lines(lines: &mut Vec<String>, task_ids: &[Uuid], task_names: &[&str]) {
+    lines.extend(
+        task_ids
+            .iter()
+            .zip(task_names)
+            .map(|(task_id, task_name)| format!("{task_id} {task_name}")),
+    );
+}
+
 fn outcome_from_reported_defer_result(
     kind: CommandKind,
     result: Result<(), DeferCommandError>,
@@ -1104,12 +1108,7 @@ fn execute_create_repetition_task<C: ProjectCommandContext + ?Sized>(
     let Some(child_ids) = execute_breakdown(context, &[name], &None)? else {
         return Ok(None);
     };
-    lines.extend(
-        child_ids
-            .iter()
-            .zip(std::iter::once(name))
-            .map(|(child_id, child_name)| format!("{child_id} {child_name}")),
-    );
+    append_project_lines(lines, &child_ids, &[name]);
     let repetition_parent_task_opt = context.focused_task()?;
     if let Some(task_id) = repetition_parent_task_opt
         .map(|task| task.get_id())
@@ -1125,12 +1124,7 @@ fn execute_create_repetition_task<C: ProjectCommandContext + ?Sized>(
             let Some(child_ids) = execute_breakdown(context, &[name], &None)? else {
                 return Ok(None);
             };
-            lines.extend(
-                child_ids
-                    .iter()
-                    .zip(std::iter::once(name))
-                    .map(|(child_id, child_name)| format!("{child_id} {child_name}")),
-            );
+            append_project_lines(lines, &child_ids, &[name]);
             let child_task_opt = context.focused_task()?;
             if let Some(task_id) = child_task_opt
                 .map(|task| task.get_id())
