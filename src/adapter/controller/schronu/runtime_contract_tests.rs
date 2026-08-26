@@ -4886,9 +4886,12 @@ fn test_execute_band_全日空き差分と繰り返し判定を帯へ反映す�
 
 #[test]
 fn test_should_suppress_leaf_tasks_after_command_帯とbandでは葉を追加表示しない() {
-    assert!(should_suppress_leaf_tasks_after_command("帯"));
-    assert!(should_suppress_leaf_tasks_after_command("band"));
-    assert!(!should_suppress_leaf_tasks_after_command("見"));
+    assert!(interactive::should_suppress_leaf_tasks_after_command(
+        CommandKind::Band
+    ));
+    assert!(!interactive::should_suppress_leaf_tasks_after_command(
+        CommandKind::Focus
+    ));
 }
 
 #[test]
@@ -5527,7 +5530,7 @@ fn test_interactive_submitは製品event経路でload実行保存する() {
 
     assert!(matches!(
         outcome,
-        InteractiveRepositoryEventOutcome::CommandExecuted(ref command, _) if command == "予 45"
+        InteractiveRepositoryEventOutcome::CommandExecuted(CommandKind::Estimate, _)
     ));
     assert_eq!(repository.load_attempt_count.get(), 1);
     assert_eq!(repository.save_attempt_count.get(), 1);
@@ -5626,8 +5629,8 @@ fn test_interactive_verifyは出力errorを分類してtransactionを継続す�
 
         assert!(matches!(
             outcome,
-            InteractiveRepositoryEventOutcome::CommandExecuted(ref command, now)
-                if command == "検証" && now == operation_now
+            InteractiveRepositoryEventOutcome::CommandExecuted(CommandKind::Verify, now)
+                if now == operation_now
         ));
         assert_eq!(stdout.flush_count, 2);
         let output = String::from_utf8(stdout.buffer).unwrap();
@@ -5680,8 +5683,10 @@ fn test_interactive_submitとnoninteractive実行は共通command_transaction経
             );
             assert!(matches!(
                 outcome,
-                InteractiveRepositoryEventOutcome::CommandExecuted(ref command, operation_now)
-                    if command == "estimate 45" && operation_now == now
+                InteractiveRepositoryEventOutcome::CommandExecuted(
+                    CommandKind::Estimate,
+                    operation_now
+                ) if operation_now == now
             ));
         } else {
             execute_non_interactive_command_at(
@@ -5743,10 +5748,7 @@ fn test_interactive_submitはoperation時刻をcommandと直後renderへ共有�
         operation_now,
     );
     let render_now = match outcome {
-        InteractiveRepositoryEventOutcome::CommandExecuted(command, now) => {
-            assert_eq!(command, "新 interactive_snapshot 30");
-            now
-        }
+        InteractiveRepositoryEventOutcome::CommandExecuted(CommandKind::NewProject, now) => now,
         _ => panic!("固定時刻のSubmitはcommand実行に成功すべきです"),
     };
 

@@ -1016,27 +1016,9 @@ fn render_interactive_screen(
     );
 }
 
-fn should_suppress_leaf_tasks_after_command(line: &str) -> bool {
-    matches!(
-        line.chars().next(),
-        Some('新')
-            | Some('突')
-            | Some('全')
-            | Some('尾')
-            | Some('今')
-            | Some('明')
-            | Some('近')
-            | Some('週')
-            | Some('末')
-            | Some('翌')
-            | Some('暦')
-            | Some('帯')
-            | Some('平')
-            | Some('詰')
-            | Some('葉')
-            | Some('樹')
-            | Some('清')
-    ) || matches!(line.split_whitespace().next(), Some("band" | "pack"))
+struct InteractiveCommandExecution {
+    kind: CommandKind,
+    focus_changed: bool,
 }
 
 #[allow(clippy::too_many_arguments, unused_must_use)]
@@ -1049,9 +1031,10 @@ fn execute_interactive_command(
     focus_selection_mode: &mut FocusSelectionMode,
     operation_now: DateTime<Local>,
     command: &str,
-) -> Result<bool, CommandError> {
+) -> Result<InteractiveCommandExecution, CommandError> {
     let parsed_command =
         parse_command(command, ParseMode::Interactive).map_err(map_command_parse_error)?;
+    let kind = parsed_command.kind();
     if let Some(outcome) =
         handle(&parsed_command).filter(|outcome| outcome.focus_change != FocusChange::Keep)
     {
@@ -1106,8 +1089,13 @@ fn execute_interactive_command(
     }
 
     task_repository.sync_clock(operation_now);
-    reconcile_focus_after_reload(task_repository, focused_task_id_opt, focus_selection_mode)
-        .map_err(CommandError::from)
+    let focus_changed =
+        reconcile_focus_after_reload(task_repository, focused_task_id_opt, focus_selection_mode)
+            .map_err(CommandError::from)?;
+    Ok(InteractiveCommandExecution {
+        kind,
+        focus_changed,
+    })
 }
 
 struct InteractiveRepositoryState<'a> {
@@ -1128,7 +1116,7 @@ enum InteractiveRepositoryEvent<'a> {
 
 enum InteractiveRepositoryEventOutcome {
     Continue,
-    CommandExecuted(String, DateTime<Local>),
+    CommandExecuted(CommandKind, DateTime<Local>),
     Retry(CliRepositoryTransactionError),
     Exit,
     Fatal(RunError),
@@ -1161,7 +1149,7 @@ fn handle_interactive_submit_at(
             writeln_newline(stdout, "").unwrap();
             stdout.flush().unwrap();
 
-            if execute_interactive_command(
+            let execution = execute_interactive_command(
                 stdout,
                 task_repository,
                 free_time_manager,
@@ -1170,13 +1158,16 @@ fn handle_interactive_submit_at(
                 state.focus_selection_mode,
                 operation_now,
                 &command,
-            )? {
+            )?;
+            if execution.focus_changed {
                 *state.last_focused_task_id_opt = None;
             }
-            Ok(())
+            Ok(execution.kind)
         });
     match transaction_result {
-        Ok(()) => InteractiveRepositoryEventOutcome::CommandExecuted(command, operation_now),
+        Ok(command_kind) => {
+            InteractiveRepositoryEventOutcome::CommandExecuted(command_kind, operation_now)
+        }
         Err(error @ RunError::CliRepositoryTransaction(CliRepositoryTransactionError::Save(_))) => {
             InteractiveRepositoryEventOutcome::Fatal(error)
         }
@@ -1343,8 +1334,8 @@ fn interactive_application(
 
         match outcome {
             InteractiveRepositoryEventOutcome::Continue => interactive::DriverOutcome::Continue,
-            InteractiveRepositoryEventOutcome::CommandExecuted(command, operation_now) => {
-                if !should_suppress_leaf_tasks_after_command(&command) {
+            InteractiveRepositoryEventOutcome::CommandExecuted(command_kind, operation_now) => {
+                if !interactive::should_suppress_leaf_tasks_after_command(command_kind) {
                     let result = build_leaf_tree_display(task_repository).map(|tree| {
                         render_display_model(stdout, &DisplayModel::Tree(tree)).unwrap();
                     });
