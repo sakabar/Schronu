@@ -525,10 +525,6 @@ struct TraceTaskTreeContext {
 }
 
 impl TaskTreeCommandContext for TraceTaskTreeContext {
-    fn supports_ansi_color(&self) -> bool {
-        true
-    }
-
     fn show_tree(&mut self) -> Result<TreeDisplay, ApplicationError> {
         self.calls.push("tree".to_string());
         Ok(TreeDisplay::Debug {
@@ -647,10 +643,6 @@ impl Default for WriterFreeTaskTreeContext {
 }
 
 impl TaskTreeCommandContext for WriterFreeTaskTreeContext {
-    fn supports_ansi_color(&self) -> bool {
-        true
-    }
-
     fn show_tree(&mut self) -> Result<TreeDisplay, ApplicationError> {
         self.base.show_tree()
     }
@@ -901,6 +893,7 @@ fn task_tree_context製品interfaceはwriterを受け取らずhandlerがtyped表
         .map(|(body, _)| body)
         .expect("TaskTreeCommandContext trait must be uniquely extractable");
     assert!(!trait_source.contains("SchronuWriter"));
+    assert!(!trait_source.contains("supports_ansi_color"));
     for required in [
         "fn focus_children(&mut self) -> Result<Option<DisplayModel>, ApplicationError>;",
         "fn focus_deepest(&mut self) -> Result<Option<DisplayModel>, ApplicationError>;",
@@ -929,6 +922,28 @@ fn task_tree_context製品interfaceはwriterを受け取らずhandlerがtyped表
             !task_tree_handler.contains(forbidden),
             "legacy handler path: {forbidden}"
         );
+    }
+
+    let context_source = include_str!("command_context.rs");
+    let runtime_context = context_source
+        .split_once("pub(super) struct RuntimeTaskTreeCommandContext")
+        .and_then(|(_, tail)| {
+            tail.split_once("impl TaskTreeCommandContext for RuntimeTaskTreeCommandContext")
+        })
+        .map(|(body, _)| body)
+        .expect("runtime task-tree context must be uniquely extractable");
+    assert!(!runtime_context.contains("supports_ansi_color"));
+
+    for implementation in [
+        "impl TaskTreeCommandContext for RuntimeTaskTreeCommandContext",
+        "impl TaskTreeCommandContext for CliCommandContext",
+    ] {
+        let implementation_source = context_source
+            .split_once(implementation)
+            .and_then(|(_, tail)| tail.split_once("\n}"))
+            .map(|(body, _)| body)
+            .unwrap_or_else(|| panic!("{implementation} must be uniquely extractable"));
+        assert!(!implementation_source.contains("supports_ansi_color"));
     }
 }
 
@@ -1724,10 +1739,6 @@ impl ProjectCommandContext for CompositeTraceContext {
 }
 
 impl TaskTreeCommandContext for CompositeTraceContext {
-    fn supports_ansi_color(&self) -> bool {
-        self.task_tree.supports_ansi_color()
-    }
-
     fn show_tree(&mut self) -> Result<TreeDisplay, ApplicationError> {
         self.task_tree.show_tree()
     }
