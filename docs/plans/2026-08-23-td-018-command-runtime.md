@@ -90,10 +90,12 @@
 | 45 | `CLI: Renderer flush modeを実装する` | rendererが本文描画後のflush有無を適用し、runtimeはinteractive/non-interactiveのmode選択だけを担当する。legacy recorder型は変更しない | 44 | renderer、runtime、interactive/non-interactive | 対象test後に全品質ゲート |
 | 46 | `Test: Runtime最終責務境界を固定する` | runtimeにcontext実装、command引数の日時解釈、domain mutation、表示計算を残さず、全製品moduleに`DisplayFragment`・`DisplayRecorder`・`DisplayModel::Legacy`がない最終境界をRedで固定する。削除対象legacy型そのものだけを検証していた既存test 2件は、raw fragmentという廃止対象の内部表現を引き継がず、semantic modelからの本文順・writer固有改行・ANSI・flushを検証する正確な名前のtestへ置換する | 45 | runtime/renderer architecture | 最終legacy type境界の1理由でRedを確認してtestだけcommit |
 | 47 | `Refactor: Renderer legacy recorderを除去する` | `DisplayFragment`・`DisplayRecorder`・`DisplayModel::Legacy`と不要helper/importを削除し、runtimeをI/O調停へ限定。既存output、I/O error分類、部分出力を維持 | 46 | CLI全test、runtime/renderer architecture | 対象test後に全品質ゲート |
-| 48 | `Docs: CLI command境界を説明する` | READMEへparser→handler→view model→renderer→runtimeの責務を記録 | 47 | full suite | 全品質ゲート |
-| 49 | `Docs: TD-018の完了を記録する` | backlogへ完了日、実測件数、runtime行数、品質ゲートを記録 | 48 | full suite | 全品質ゲート |
+| 48 | `Test: Interactiveも統一handler入口を通ることを固定する` | interactiveのfocus mode、defer、shortcutを含むVerify以外の全commandが`handle_command`を通り、直接`handle`・`handle_defer_command`を呼ばないことをRedで固定する | 47 | handler、interactive、runtime | interactive製品経路の直接sub-handler呼出しという1理由でRedを確認してtestだけcommit |
+| 49 | `CLI: Interactiveを統一handler入口へ移す` | interactiveのspecial dispatchを除去し、non-interactiveと同じcontext構築・`handle_command`経路からoutcomeを受け、interactive用RenderModeで適用する。Verifyのread-only検査だけはruntimeに残す | 48 | handler、command context、runtime | 対象test後に全品質ゲート |
+| 50 | `Docs: CLI command境界を説明する` | READMEへparser→handler→view model→renderer→runtimeの責務を記録 | 49 | full suite | 全品質ゲート |
+| 51 | `Docs: TD-018の完了を記録する` | backlogへ完了日、実測件数、runtime行数、品質ゲートを記録 | 50 | full suite | 全品質ゲート |
 
-計画本体は全49 commitとする。
+計画本体は全51 commitとする。
 
 順序6・7は機械移動のみとし、commit本文へ大規模になる理由、挙動変更なし、実行した品質ゲートを記録する。Red commit以外の全commitも、本文へ対象testと全品質ゲートの結果を残す。
 
