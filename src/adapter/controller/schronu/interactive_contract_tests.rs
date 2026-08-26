@@ -973,7 +973,11 @@ fn verify製品分岐は意味的modelをrendererへ渡す() {
 
     let (_, verify_source) = unique_function_region(&product_sources, "execute_verify_command")
         .expect("non-interactive Verify must have one private product I/O boundary");
-    for required in ["verify_display_model(", "render_display_model("] {
+    for required in [
+        "verify_display_model(",
+        "render_display_model_with_mode(",
+        "RenderMode::Flushed",
+    ] {
         assert!(verify_source.contains(required));
     }
     for forbidden in ["println!(", "eprintln!(", "render_verify_flush("] {
@@ -983,8 +987,9 @@ fn verify製品分岐は意味的modelをrendererへ渡す() {
     let (_, interactive_source) =
         unique_function_region(&product_sources, "execute_interactive_command")
             .unwrap_or_else(|error| panic!("{error}"));
-    assert!(interactive_source.contains("DisplayModel::flush()"));
-    assert!(interactive_source.contains("render_display_model("));
+    assert!(interactive_source.contains("RenderMode::Flushed"));
+    assert!(interactive_source.contains("render_display_model_with_mode("));
+    assert!(!interactive_source.contains("DisplayModel::flush()"));
     assert!(
         !interactive_source.contains("verify_display_model(Ok"),
         "interactive Verify must not add a success body"

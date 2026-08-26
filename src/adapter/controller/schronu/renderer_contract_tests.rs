@@ -1,11 +1,12 @@
 use super::renderer::{
-    format_spreadsheet_task_row, format_task_list_columns, render_display_model, task_list_columns,
-    AncestorTreeRow, BandDayRow, BandDisplay, BandDurations, CalendarAlerts, CalendarDayRow,
-    CalendarDisplay, CalendarSummary, DebugTreeRow, DisplayFragment, DisplayModel, DisplayRecorder,
-    ErrorCapturingWriter, FlattenDisplay, FlattenReason, FlattenReasonSummary, FlattenRow,
-    FlattenUnresolvedDay, FocusDisplay, LeafTreeRow, MessageLevel, PackDisplay, PackRow,
-    SchronuWriter, SpreadsheetTaskRow, TaskCategoryWorkSeconds, TaskListDisplay, TaskListIconMode,
-    TaskListMetricsDisplay, TaskListRow, TaskListTaskRow, TreeDisplay,
+    format_spreadsheet_task_row, format_task_list_columns, render_display_model,
+    render_display_model_with_mode, task_list_columns, AncestorTreeRow, BandDayRow, BandDisplay,
+    BandDurations, CalendarAlerts, CalendarDayRow, CalendarDisplay, CalendarSummary, DebugTreeRow,
+    DisplayFragment, DisplayModel, DisplayRecorder, ErrorCapturingWriter, FlattenDisplay,
+    FlattenReason, FlattenReasonSummary, FlattenRow, FlattenUnresolvedDay, FocusDisplay,
+    LeafTreeRow, MessageLevel, PackDisplay, PackRow, RenderMode, SchronuWriter, SpreadsheetTaskRow,
+    TaskCategoryWorkSeconds, TaskListDisplay, TaskListIconMode, TaskListMetricsDisplay,
+    TaskListRow, TaskListTaskRow, TreeDisplay,
 };
 use chrono::{Local, NaiveDate, TimeZone, Weekday};
 use schronu::entity::task::{ProjectCategory, TaskAttr};
@@ -99,6 +100,84 @@ fn display_modelはrawとwriter固有newlineとansiとflushの順序を保持す
         ["raw:\x1b[31mraw", "newline:line", "raw:tail"]
     );
     assert_eq!(writer.flush_count, 1);
+}
+
+#[test]
+fn render_modeは本文を同じ順序で描画してflush有無だけを切り替える() {
+    let display = DisplayModel::Tree(TreeDisplay::Debug {
+        rows: vec![
+            DebugTreeRow {
+                debug: "\x1b[31mraw".to_string(),
+            },
+            DebugTreeRow {
+                debug: "line".to_string(),
+            },
+            DebugTreeRow {
+                debug: "tail".to_string(),
+            },
+        ],
+    });
+    let expected_operations = [
+        "raw:\n",
+        "newline:\x1b[31mraw",
+        "newline:line",
+        "newline:tail",
+        "raw:\n",
+    ];
+
+    let mut unflushed_writer = TraceWriter::default();
+    render_display_model_with_mode(&mut unflushed_writer, &display, RenderMode::Unflushed).unwrap();
+    assert_eq!(unflushed_writer.operations, expected_operations);
+    assert_eq!(unflushed_writer.flush_count, 0);
+
+    let mut flushed_writer = TraceWriter::default();
+    render_display_model_with_mode(&mut flushed_writer, &display, RenderMode::Flushed).unwrap();
+    assert_eq!(flushed_writer.operations, expected_operations);
+    assert_eq!(flushed_writer.flush_count, 1);
+}
+
+struct FlushFailingWriter {
+    operations: Vec<String>,
+}
+
+impl Write for FlushFailingWriter {
+    fn write(&mut self, buffer: &[u8]) -> std::io::Result<usize> {
+        self.operations
+            .push(format!("raw:{}", String::from_utf8_lossy(buffer)));
+        Ok(buffer.len())
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        Err(std::io::Error::new(
+            std::io::ErrorKind::BrokenPipe,
+            "render mode flush failure",
+        ))
+    }
+}
+
+impl SchronuWriter for FlushFailingWriter {
+    fn writeln_newline(&mut self, message: &str) -> std::io::Result<()> {
+        self.operations.push(format!("newline:{message}"));
+        Ok(())
+    }
+}
+
+#[test]
+fn render_modeは本文後のflush_errorと部分出力を保持する() {
+    let display = DisplayModel::Message {
+        level: MessageLevel::Plain,
+        text: "before flush".to_string(),
+    };
+    let mut writer = FlushFailingWriter {
+        operations: Vec::new(),
+    };
+
+    let error =
+        render_display_model_with_mode(&mut writer, &display, RenderMode::Flushed).unwrap_err();
+
+    assert_eq!(writer.operations, ["newline:before flush"]);
+    assert_eq!(error.kind(), std::io::ErrorKind::BrokenPipe);
+    assert_eq!(error.to_string(), "render mode flush failure");
 }
 
 #[test]
