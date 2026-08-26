@@ -1725,7 +1725,7 @@ impl TraceFinishPlacementContext {
         }
     }
 
-    fn show_focused_tree(&mut self) -> Result<TreeDisplay, ApplicationError> {
+    fn record_focused_tree(&mut self) -> Result<TreeDisplay, ApplicationError> {
         self.calls.push("show-focused-tree".to_string());
         if self.show_tree_error {
             return Err(ApplicationError::InvalidInput {
@@ -1751,7 +1751,7 @@ impl FinishPlacementCommandContext for TraceFinishPlacementContext {
     }
 
     fn show_focused_tree(&mut self) -> Result<TreeDisplay, ApplicationError> {
-        TraceFinishPlacementContext::show_focused_tree(self)
+        self.record_focused_tree()
     }
 
     fn complete_focused_task(
@@ -2359,7 +2359,7 @@ impl FinishPlacementCommandContext for CompositeTraceContext {
     }
 
     fn show_focused_tree(&mut self) -> Result<TreeDisplay, ApplicationError> {
-        self.finish_placement.show_focused_tree()
+        FinishPlacementCommandContext::show_focused_tree(&mut self.finish_placement)
     }
 
     fn complete_focused_task(
