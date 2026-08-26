@@ -291,6 +291,7 @@ struct TraceProjectContext {
     breakdowns: Vec<BreakdownTaskInput>,
     created_attr_names: Vec<String>,
     estimates: Vec<(Uuid, i64)>,
+    breakdown_error_after_successes: Option<usize>,
 }
 
 impl TraceProjectContext {
@@ -303,6 +304,7 @@ impl TraceProjectContext {
             breakdowns: Vec::new(),
             created_attr_names: Vec::new(),
             estimates: Vec::new(),
+            breakdown_error_after_successes: None,
         }
     }
 }
@@ -322,6 +324,12 @@ impl ProjectCommandContext for TraceProjectContext {
     }
 
     fn breakdown_task(&mut self, input: BreakdownTaskInput) -> Result<Vec<Uuid>, ApplicationError> {
+        if self.breakdown_error_after_successes == Some(self.breakdowns.len()) {
+            return Err(ApplicationError::InvalidInput {
+                field: "breakdown",
+                reason: "injected partial failure",
+            });
+        }
         self.breakdowns.push(input);
         Ok(vec![Uuid::from_u128(3), Uuid::from_u128(4)])
     }
@@ -343,6 +351,36 @@ impl ProjectCommandContext for TraceProjectContext {
     fn set_focused_task_id(&mut self, task_id_opt: Option<Uuid>) {
         self.focused_task_id = task_id_opt;
     }
+}
+
+fn semantic_project_display(
+    lines: &[String],
+    error_opt: Option<&ApplicationError>,
+) -> DisplayModel {
+    let mut messages = lines
+        .iter()
+        .map(|line| DisplayModel::Message {
+            level: MessageLevel::Plain,
+            text: line.clone(),
+        })
+        .collect::<Vec<_>>();
+    if let Some(error) = error_opt {
+        messages.push(DisplayModel::Message {
+            level: MessageLevel::Error,
+            text: format!("操作エラー: {error}"),
+        });
+    }
+    DisplayModel::Sequence(messages)
+}
+
+fn repeat_project_command() -> Command {
+    Command::Action(CommandAction::Repeat {
+        name: "typed routine".to_string(),
+        estimated_minutes: 15,
+        day: "月".to_string(),
+        start_time: "09:00".to_string(),
+        deadline_time: "10:00".to_string(),
+    })
 }
 
 #[test]
@@ -470,10 +508,13 @@ fn project作成commandはhandlerがtyped_fieldを直接matchして所有する(
         .iter()
         .all(|input| { input.names == ["typed routine"] && input.pending_until.is_none() }));
     assert_eq!(repeat_context.estimates, vec![(Uuid::from_u128(1), 15); 5]);
-    assert_eq!(repeat.display.fragments().len(), 5);
-    assert!(repeat.display.fragments().iter().all(|fragment| {
-        fragment == &DisplayFragment::Newline(format!("{} typed routine", Uuid::from_u128(3)))
-    }));
+    assert_eq!(
+        repeat.display,
+        semantic_project_display(
+            &vec![format!("{} typed routine", Uuid::from_u128(3)); 5],
+            None,
+        )
+    );
 
     let mut appointment_context = TraceProjectContext::new(now);
     appointment_context
@@ -517,6 +558,194 @@ fn project作成commandはhandlerがtyped_fieldを直接matchして所有する(
         start_context.focused_task.get_start_time().unwrap(),
         Local.with_ymd_and_hms(2026, 8, 23, 14, 30, 0).unwrap()
     );
+}
+
+#[test]
+fn project作成はlegacy_defaultでなくsemantic_emptyを返す() {
+    let now = Local.with_ymd_and_hms(2026, 8, 23, 12, 0, 0).unwrap();
+    let mut context = TraceProjectContext::new(now);
+    let command = Command::Action(CommandAction::NewProject {
+        kind: CommandKind::NewProject,
+        canonical_name: "新",
+        name: "semantic project".to_string(),
+        estimated_minutes: Some(30),
+    });
+
+    let outcome = handle_project_command(&command, &mut context)
+        .unwrap()
+        .expect("project creation must be handled");
+
+    assert_eq!(outcome.display, DisplayModel::Sequence(Vec::new()));
+    assert_eq!(context.focused_task_id, Some(Uuid::from_u128(2)));
+}
+
+#[test]
+fn breakdownとsplitはhandlerがplain_message_sequenceを構築する() {
+    let now = Local.with_ymd_and_hms(2026, 8, 23, 12, 0, 0).unwrap();
+    let mut breakdown_context = TraceProjectContext::new(now);
+    let breakdown = Command::Action(CommandAction::TaskNames {
+        names: vec!["first".to_string(), "second".to_string()],
+    });
+
+    let breakdown_outcome = handle_breakdown_split_command(&breakdown, &mut breakdown_context)
+        .unwrap()
+        .expect("breakdown must be handled");
+    assert_eq!(
+        breakdown_outcome.display,
+        semantic_project_display(
+            &[
+                format!("{} first", Uuid::from_u128(3)),
+                format!("{} second", Uuid::from_u128(4)),
+            ],
+            None,
+        )
+    );
+
+    let mut split_context = TraceProjectContext::new(now);
+    split_context
+        .focused_task
+        .set_estimated_work_seconds(30 * 60)
+        .unwrap();
+    let split = Command::Action(CommandAction::Split {
+        minutes: 5,
+        name: "typed split".to_string(),
+    });
+
+    let split_outcome = handle_breakdown_split_command(&split, &mut split_context)
+        .unwrap()
+        .expect("split must be handled");
+    assert_eq!(
+        split_outcome.display,
+        semantic_project_display(&[format!("{} typed split", Uuid::from_u128(5))], None,)
+    );
+}
+
+#[test]
+fn breakdown即時errorはhandlerがsemantic_errorを返し状態を変更しない() {
+    let now = Local.with_ymd_and_hms(2026, 8, 23, 12, 0, 0).unwrap();
+    let mut breakdown_context = TraceProjectContext::new(now);
+    breakdown_context.breakdown_error_after_successes = Some(0);
+    let breakdown_focus_before = breakdown_context.focused_task_id;
+    let breakdown_estimate_before = breakdown_context
+        .focused_task
+        .get_estimated_work_seconds()
+        .unwrap();
+    let breakdown_children_before = breakdown_context.focused_task.get_children().unwrap().len();
+    let breakdown = Command::Action(CommandAction::TaskNames {
+        names: vec!["rejected child".to_string()],
+    });
+
+    let breakdown_outcome = handle_breakdown_split_command(&breakdown, &mut breakdown_context)
+        .unwrap()
+        .expect("reported breakdown error must remain a handled outcome");
+    let breakdown_error = ApplicationError::InvalidInput {
+        field: "breakdown",
+        reason: "injected partial failure",
+    };
+    assert_eq!(
+        breakdown_outcome.display,
+        semantic_project_display(&[], Some(&breakdown_error))
+    );
+    assert_eq!(breakdown_context.focused_task_id, breakdown_focus_before);
+    assert_eq!(
+        breakdown_context
+            .focused_task
+            .get_estimated_work_seconds()
+            .unwrap(),
+        breakdown_estimate_before
+    );
+    assert_eq!(
+        breakdown_context.focused_task.get_children().unwrap().len(),
+        breakdown_children_before
+    );
+    assert!(breakdown_context.breakdowns.is_empty());
+    assert!(breakdown_context.created_attr_names.is_empty());
+}
+
+#[test]
+fn split検証errorはhandlerがsemantic_errorを返し状態を変更しない() {
+    let now = Local.with_ymd_and_hms(2026, 8, 23, 12, 0, 0).unwrap();
+    let mut split_context = TraceProjectContext::new(now);
+    split_context
+        .focused_task
+        .set_estimated_work_seconds(30 * 60)
+        .unwrap();
+    let split_focus_before = split_context.focused_task_id;
+    let split_estimate_before = split_context
+        .focused_task
+        .get_estimated_work_seconds()
+        .unwrap();
+    let split_children_before = split_context.focused_task.get_children().unwrap().len();
+    let split = Command::Action(CommandAction::Split {
+        minutes: 5,
+        name: "   ".to_string(),
+    });
+
+    let split_outcome = handle_breakdown_split_command(&split, &mut split_context)
+        .unwrap()
+        .expect("reported split validation error must remain a handled outcome");
+    let split_error = ApplicationError::InvalidInput {
+        field: "name",
+        reason: "must not be blank",
+    };
+    assert_eq!(
+        split_outcome.display,
+        semantic_project_display(&[], Some(&split_error))
+    );
+    assert_eq!(split_context.focused_task_id, split_focus_before);
+    assert_eq!(
+        split_context
+            .focused_task
+            .get_estimated_work_seconds()
+            .unwrap(),
+        split_estimate_before
+    );
+    assert_eq!(
+        split_context.focused_task.get_children().unwrap().len(),
+        split_children_before
+    );
+    assert!(split_context.breakdowns.is_empty());
+    assert!(split_context.created_attr_names.is_empty());
+}
+
+#[test]
+fn repetition成功はhandlerがplain_messageを順序どおりcomposeする() {
+    let now = Local.with_ymd_and_hms(2026, 8, 23, 12, 0, 0).unwrap();
+    let repeat = repeat_project_command();
+    let repeated_line = format!("{} typed routine", Uuid::from_u128(3));
+
+    let mut success_context = TraceProjectContext::new(now);
+    let success = handle_project_command(&repeat, &mut success_context)
+        .unwrap()
+        .expect("repetition must be handled");
+    assert_eq!(
+        success.display,
+        semantic_project_display(&vec![repeated_line.clone(); 5], None)
+    );
+}
+
+#[test]
+fn repetition途中errorはhandlerが先行messageとerrorを順序どおりcomposeする() {
+    let now = Local.with_ymd_and_hms(2026, 8, 23, 12, 0, 0).unwrap();
+    let repeat = repeat_project_command();
+    let repeated_line = format!("{} typed routine", Uuid::from_u128(3));
+    let mut partial_error_context = TraceProjectContext::new(now);
+    partial_error_context.breakdown_error_after_successes = Some(2);
+    let partial_error = handle_project_command(&repeat, &mut partial_error_context)
+        .unwrap()
+        .expect("reported repetition error must remain a handled outcome");
+    let expected_error = ApplicationError::InvalidInput {
+        field: "breakdown",
+        reason: "injected partial failure",
+    };
+    assert_eq!(
+        partial_error.display,
+        semantic_project_display(
+            &[repeated_line.clone(), repeated_line],
+            Some(&expected_error),
+        )
+    );
+    assert_eq!(partial_error_context.breakdowns.len(), 2);
 }
 
 #[derive(Default)]
@@ -1924,11 +2153,14 @@ fn 全command_groupは単一handler入口からtyped_contextへdispatchされる
     );
     assert_eq!(context.project.focused_task_id, Some(Uuid::from_u128(3)));
     assert_eq!(
-        outcomes[1].display.fragments(),
-        [
-            DisplayFragment::Newline(format!("{} typed first", Uuid::from_u128(3))),
-            DisplayFragment::Newline(format!("{} typed second", Uuid::from_u128(4))),
-        ]
+        outcomes[1].display,
+        semantic_project_display(
+            &[
+                format!("{} typed first", Uuid::from_u128(3)),
+                format!("{} typed second", Uuid::from_u128(4)),
+            ],
+            None,
+        )
     );
     assert_eq!(context.task_tree.calls, ["tree"]);
     assert_eq!(context.task_attribute.calls, ["estimate:30"]);

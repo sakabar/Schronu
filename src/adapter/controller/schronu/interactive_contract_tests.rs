@@ -659,40 +659,76 @@ fn task_tree_writer_free_boundary_violations(
     violations
 }
 
+fn project_recorder_dependency_violations(sources: &[ControllerProductSource]) -> Vec<String> {
+    let mut violations = Vec::new();
+    for function_name in [
+        "handle_project_command",
+        "handle_breakdown_split_command",
+        "execute_breakdown",
+        "execute_split",
+        "execute_create_repetition_task",
+    ] {
+        let (_, region) = match unique_function_region(sources, function_name) {
+            Ok(definition) => definition,
+            Err(error) => {
+                violations.push(error);
+                continue;
+            }
+        };
+        let code = code_only(region);
+        violations.extend(output_dependency_violations(function_name, region));
+        for forbidden in ["DisplayRecorder", "DisplayModel::Legacy", ".model()"] {
+            if code.contains(forbidden) {
+                violations.push(format!(
+                    "{function_name} retains legacy output: {forbidden}"
+                ));
+            }
+        }
+    }
+    violations
+}
+
+fn output_dependency_violations(region_name: &str, region: &str) -> Vec<String> {
+    let code = code_only(region);
+    let mut violations = Vec::new();
+    let signature = code.split_once('{').map_or(code.as_str(), |(head, _)| head);
+
+    if signature.contains("SchronuWriter")
+        || signature.contains("std::io::Write")
+        || contains_identifier(signature, "Write")
+    {
+        violations.push(format!("writer type in {region_name}"));
+    }
+
+    let compact_code = code
+        .chars()
+        .filter(|character| !character.is_whitespace())
+        .collect::<String>();
+    for forbidden in [
+        "print!(",
+        "println!(",
+        "eprintln!(",
+        "write!(",
+        "writeln!(",
+        ".write_all(",
+        ".flush(",
+        "writeln_newline(",
+        "render_display_model(",
+    ] {
+        if compact_code.contains(forbidden) {
+            violations.push(format!("{forbidden} in {region_name}"));
+        }
+    }
+
+    violations
+}
+
 fn view_writer_dependency_violations(source: &str) -> Vec<String> {
     let mut violations = Vec::new();
     for offset in top_level_product_function_offsets(source) {
         let region = function_region_from_offset(source, offset);
-        let code = code_only(region);
-        let signature = code.split_once('{').map_or(code.as_str(), |(head, _)| head);
         let first_line = region.lines().next().unwrap_or("<unknown function>");
-
-        if signature.contains("SchronuWriter")
-            || signature.contains("std::io::Write")
-            || contains_identifier(signature, "Write")
-        {
-            violations.push(format!("writer type in {first_line}"));
-        }
-
-        let compact_code = code
-            .chars()
-            .filter(|character| !character.is_whitespace())
-            .collect::<String>();
-        for forbidden in [
-            "print!(",
-            "println!(",
-            "eprintln!(",
-            "write!(",
-            "writeln!(",
-            ".write_all(",
-            ".flush(",
-            "writeln_newline(",
-            "render_display_model(",
-        ] {
-            if compact_code.contains(forbidden) {
-                violations.push(format!("{forbidden} in {first_line}"));
-            }
-        }
+        violations.extend(output_dependency_violations(first_line, region));
     }
     violations
 }
@@ -986,6 +1022,17 @@ fn task_tree製品境界はcode領域だけでwriter非依存を検証する() {
     assert!(
         violations.is_empty(),
         "TaskTree writer-free boundary violations:\n{}",
+        violations.join("\n")
+    );
+}
+
+#[test]
+fn project_breakdown_repetition製品経路はrecorderに依存しない() {
+    let violations = project_recorder_dependency_violations(&controller_product_sources());
+
+    assert!(
+        violations.is_empty(),
+        "Project/breakdown/repetition recorder dependency violations:\n{}",
         violations.join("\n")
     );
 }
