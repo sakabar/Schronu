@@ -235,7 +235,6 @@ fn task_tree製品context_children複数はtyped_treeを返してfocusを維持�
         focused_task_id_opt: &mut focused_task_id_opt,
         task_factory: &mut task_factory,
         config: active_config(),
-        supports_ansi_color: false,
     };
 
     let display = context.focus_children().unwrap();
@@ -266,7 +265,6 @@ fn task_tree製品context_deepest分岐はtyped_treeを返して分岐taskへfoc
         focused_task_id_opt: &mut focused_task_id_opt,
         task_factory: &mut task_factory,
         config: active_config(),
-        supports_ansi_color: false,
     };
 
     let display = context.focus_deepest().unwrap();
@@ -317,7 +315,6 @@ fn task_tree製品context_next_up_errorはsemantic_errorを返して状態を維
             focused_task_id_opt: &mut focused_task_id_opt,
             task_factory: &mut task_factory,
             config: active_config(),
-            supports_ansi_color: false,
         };
 
         let display = context.next_up(name, Some(10)).unwrap();
