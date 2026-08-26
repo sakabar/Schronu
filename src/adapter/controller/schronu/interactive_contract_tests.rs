@@ -1,3 +1,5 @@
+use super::command::CommandKind;
+use super::interactive::should_suppress_leaf_tasks_after_command;
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -406,4 +408,39 @@ fn unique_function_regionはpath単位の重複定義を拒否する() {
     assert!(error.contains("found 2"), "{error}");
     assert!(error.contains("a.rs"), "{error}");
     assert!(error.contains("b.rs"), "{error}");
+}
+
+#[test]
+fn interactive再描画判断はtyped_command_kindだけで決まる() {
+    for kind in [
+        CommandKind::NewProject,
+        CommandKind::UnplannedProject,
+        CommandKind::Tree,
+        CommandKind::Leaves,
+        CommandKind::ShowAll,
+        CommandKind::Tail,
+        CommandKind::Today,
+        CommandKind::Calendar,
+        CommandKind::Band,
+        CommandKind::DeferRoutines,
+        CommandKind::Flatten,
+        CommandKind::Pack,
+    ] {
+        assert!(
+            should_suppress_leaf_tasks_after_command(kind),
+            "{kind:?} must not append the leaf tree after its own display"
+        );
+    }
+
+    for kind in [
+        CommandKind::Estimate,
+        CommandKind::Focus,
+        CommandKind::Defer,
+        CommandKind::Finish,
+    ] {
+        assert!(
+            !should_suppress_leaf_tasks_after_command(kind),
+            "{kind:?} must refresh the leaf tree after mutation"
+        );
+    }
 }
