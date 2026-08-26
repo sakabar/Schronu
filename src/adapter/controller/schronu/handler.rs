@@ -465,7 +465,7 @@ pub(super) fn handle_project_command<C: ProjectCommandContext + ?Sized>(
                 _ => return Ok(None),
             };
             execute_start_new_project(context, name, defer_days_opt, *estimated_minutes)?;
-            Ok(Some(CommandOutcome::empty(*kind)))
+            Ok(Some(project_command_outcome(*kind, Vec::new(), None)))
         }
         CommandAction::Sequential {
             name,
@@ -477,10 +477,10 @@ pub(super) fn handle_project_command<C: ProjectCommandContext + ?Sized>(
             let (Ok(begin_index), Ok(end_index)) =
                 (u64::try_from(*begin_index), u64::try_from(*end_index))
             else {
-                return Ok(Some(CommandOutcome::empty(kind)));
+                return Ok(Some(project_command_outcome(kind, Vec::new(), None)));
             };
             if begin_index > end_index {
-                return Ok(Some(CommandOutcome::empty(kind)));
+                return Ok(Some(project_command_outcome(kind, Vec::new(), None)));
             }
             let focused_task_opt = context.focused_task()?;
             let suffix = suffix
@@ -495,7 +495,8 @@ pub(super) fn handle_project_command<C: ProjectCommandContext + ?Sized>(
                 end_index,
                 &suffix,
             );
-            Ok(Some(outcome_from_reported_result(kind, result)))
+            let error = result.err();
+            Ok(Some(project_command_outcome(kind, Vec::new(), error)))
         }
         CommandAction::Repeat {
             name,
@@ -504,20 +505,17 @@ pub(super) fn handle_project_command<C: ProjectCommandContext + ?Sized>(
             start_time,
             deadline_time,
         } => {
-            let mut display = DisplayRecorder::default();
+            let mut lines = Vec::new();
             let result = execute_create_repetition_task(
-                &mut display,
                 context,
                 name,
                 day,
                 *estimated_minutes,
                 start_time,
                 deadline_time,
+                &mut lines,
             );
-            report_result(&mut display, result);
-            let mut outcome = CommandOutcome::empty(kind);
-            outcome.display = display.model().clone();
-            Ok(Some(outcome))
+            Ok(Some(project_command_outcome(kind, lines, result.err())))
         }
         CommandAction::TimeExpression {
             kind: CommandKind::Appointment,
@@ -529,7 +527,7 @@ pub(super) fn handle_project_command<C: ProjectCommandContext + ?Sized>(
                 let focused_task_opt = context.focused_task()?;
                 execute_make_appointment(&focused_task_opt, start_time)?;
             }
-            Ok(Some(CommandOutcome::empty(kind)))
+            Ok(Some(project_command_outcome(kind, Vec::new(), None)))
         }
         CommandAction::TimeExpression {
             kind: CommandKind::Start,
@@ -543,7 +541,7 @@ pub(super) fn handle_project_command<C: ProjectCommandContext + ?Sized>(
                         .map_err(ApplicationError::TaskTree)?;
                 }
             }
-            Ok(Some(CommandOutcome::empty(kind)))
+            Ok(Some(project_command_outcome(kind, Vec::new(), None)))
         }
         _ => Ok(None),
     }
@@ -558,20 +556,32 @@ pub(super) fn handle_breakdown_split_command<C: ProjectCommandContext + ?Sized>(
         _ => return Ok(None),
     };
     let kind = command.kind();
-    let mut display = DisplayRecorder::default();
+    let mut lines = Vec::new();
+    let mut reported_error = None;
 
     match action {
         CommandAction::TaskNames { names } => {
             if !names.is_empty() && !names.iter().any(|name| name.parse::<i64>().is_ok()) {
                 let names = names.iter().map(String::as_str).collect::<Vec<_>>();
-                let result = execute_breakdown(&mut display, context, &names, &None);
-                report_result(&mut display, result);
+                match execute_breakdown(context, &names, &None) {
+                    Ok(Some(child_ids)) => lines.extend(
+                        child_ids
+                            .iter()
+                            .zip(names.iter())
+                            .map(|(child_id, child_name)| format!("{child_id} {child_name}")),
+                    ),
+                    Ok(None) => {}
+                    Err(error) => reported_error = Some(error),
+                }
             }
         }
         CommandAction::Split { minutes, name } => {
             let focused_task = context.focused_task()?;
-            let result = execute_split(context, &focused_task, name, *minutes, &mut display);
-            report_result(&mut display, result);
+            match execute_split(context, &focused_task, name, *minutes) {
+                Ok(Some(task_id)) => lines.push(format!("{task_id} {name}")),
+                Ok(None) => {}
+                Err(error) => reported_error = Some(error),
+            }
         }
         CommandAction::NoArguments {
             kind: CommandKind::Wait,
@@ -586,9 +596,7 @@ pub(super) fn handle_breakdown_split_command<C: ProjectCommandContext + ?Sized>(
         _ => return Ok(None),
     }
 
-    let mut outcome = CommandOutcome::empty(kind);
-    outcome.display = display.model().clone();
-    Ok(Some(outcome))
+    Ok(Some(project_command_outcome(kind, lines, reported_error)))
 }
 
 pub(super) fn handle_task_attribute_command<C: TaskAttributeCommandContext + ?Sized>(
@@ -881,25 +889,27 @@ pub(super) fn decide_finish_time_values(
     }
 }
 
-fn report_result<T>(display: &mut dyn SchronuWriter, result: Result<T, ApplicationError>) {
-    if let Err(error) = result {
-        display
-            .writeln_newline(&format!("[Error] 操作エラー: {error}"))
-            .expect("display recording is infallible");
-    }
-}
-
-fn outcome_from_reported_result<T>(
+fn project_command_outcome(
     kind: CommandKind,
-    result: Result<T, ApplicationError>,
+    lines: Vec<String>,
+    reported_error: Option<ApplicationError>,
 ) -> CommandOutcome {
-    let mut outcome = CommandOutcome::empty(kind);
-    if let Err(error) = result {
-        outcome.display = DisplayModel::Message {
+    let mut messages = lines
+        .into_iter()
+        .map(|text| DisplayModel::Message {
+            level: MessageLevel::Plain,
+            text,
+        })
+        .collect::<Vec<_>>();
+    if let Some(error) = reported_error {
+        messages.push(DisplayModel::Message {
             level: MessageLevel::Error,
             text: format!("操作エラー: {error}"),
-        };
+        });
     }
+
+    let mut outcome = CommandOutcome::empty(kind);
+    outcome.display = DisplayModel::Sequence(messages);
     outcome
 }
 
@@ -1004,7 +1014,6 @@ fn execute_breakdown_sequentially<C: ProjectCommandContext + ?Sized>(
 }
 
 fn execute_breakdown<C: ProjectCommandContext + ?Sized>(
-    stdout: &mut dyn SchronuWriter,
     context: &mut C,
     new_task_names: &[&str],
     pending_until_opt: &Option<DateTime<Local>>,
@@ -1021,11 +1030,6 @@ fn execute_breakdown<C: ProjectCommandContext + ?Sized>(
         names,
         pending_until: *pending_until_opt,
     })?;
-    for (child_id, child_name) in child_ids.iter().zip(new_task_names.iter()) {
-        stdout
-            .writeln_newline(&format!("{child_id} {child_name}"))
-            .expect("display recording is infallible");
-    }
     context.set_focused_task_id(child_ids.first().copied());
     Ok(Some(child_ids))
 }
@@ -1035,7 +1039,6 @@ fn execute_split<C: ProjectCommandContext + ?Sized>(
     focused_task_opt: &Option<TaskHandle>,
     new_task_name: &str,
     splitted_work_minutes: i64,
-    display: &mut dyn SchronuWriter,
 ) -> Result<Option<Uuid>, ApplicationError> {
     validate_task_name(new_task_name, "name")?;
 
@@ -1083,27 +1086,30 @@ fn execute_split<C: ProjectCommandContext + ?Sized>(
         .create_child(new_task_attr)
         .map_err(ApplicationError::TaskTree)?;
     let new_task_id = new_task.get_id().map_err(ApplicationError::TaskTree)?;
-    display
-        .writeln_newline(&format!("{new_task_id} {new_task_name}"))
-        .expect("display recording is infallible");
     context.set_focused_task_id(Some(new_task_id));
     Ok(Some(new_task_id))
 }
 
 #[allow(clippy::too_many_arguments)]
 fn execute_create_repetition_task<C: ProjectCommandContext + ?Sized>(
-    stdout: &mut dyn SchronuWriter,
     context: &mut C,
     name: &str,
     day: &str,
     estimated_work_minutes: i64,
     _start_time: &str,
     _deadline_time: &str,
+    lines: &mut Vec<String>,
 ) -> Result<Option<Uuid>, ApplicationError> {
     estimated_work_seconds_from_minutes(estimated_work_minutes)?;
-    let Some(_) = execute_breakdown(stdout, context, &[name], &None)? else {
+    let Some(child_ids) = execute_breakdown(context, &[name], &None)? else {
         return Ok(None);
     };
+    lines.extend(
+        child_ids
+            .iter()
+            .zip(std::iter::once(name))
+            .map(|(child_id, child_name)| format!("{child_id} {child_name}")),
+    );
     let repetition_parent_task_opt = context.focused_task()?;
     if let Some(task_id) = repetition_parent_task_opt
         .map(|task| task.get_id())
@@ -1116,9 +1122,15 @@ fn execute_create_repetition_task<C: ProjectCommandContext + ?Sized>(
     let task_num = if day == "毎" { 7 } else { 4 };
     if let Some(repetition_parent_task_id) = context.focused_task_id() {
         for _ in 0..task_num {
-            let Some(_) = execute_breakdown(stdout, context, &[name], &None)? else {
+            let Some(child_ids) = execute_breakdown(context, &[name], &None)? else {
                 return Ok(None);
             };
+            lines.extend(
+                child_ids
+                    .iter()
+                    .zip(std::iter::once(name))
+                    .map(|(child_id, child_name)| format!("{child_id} {child_name}")),
+            );
             let child_task_opt = context.focused_task()?;
             if let Some(task_id) = child_task_opt
                 .map(|task| task.get_id())
@@ -1407,9 +1419,8 @@ mod task_generation_context_tests {
         let root = task("root", 1, now);
         root.set_estimated_work_seconds(90 * 60).unwrap();
         let mut context = FixedIdentityProjectCommandContext::new(now, [child_id]);
-        let mut display = DisplayRecorder::default();
 
-        let actual = execute_split(&mut context, &Some(root.clone()), "child", 30, &mut display)
+        let actual = execute_split(&mut context, &Some(root.clone()), "child", 30)
             .expect("split must succeed")
             .expect("split must create a child");
 
