@@ -359,6 +359,45 @@ fn interactiveとnoninteractiveは単一のparsed_command_dispatcherを共有す
 }
 
 #[test]
+fn verify製品分岐は意味的modelをrendererへ渡す() {
+    let product_sources = controller_product_sources();
+
+    for entry_function in [
+        "execute_non_interactive_command_at",
+        "execute_interactive_command",
+    ] {
+        let (_, entry_source) = unique_function_region(&product_sources, entry_function)
+            .unwrap_or_else(|error| panic!("{error}"));
+        for required in ["verify_display_model(", "render_display_model("] {
+            assert!(
+                entry_source.contains(required),
+                "{entry_function} must route Verify output through {required}"
+            );
+        }
+        for forbidden in ["println!(", "eprintln!(", "render_verify_flush("] {
+            assert!(
+                !entry_source.contains(forbidden),
+                "{entry_function} must not retain raw Verify output via {forbidden}"
+            );
+        }
+    }
+
+    assert!(
+        product_sources.iter().all(|source| {
+            top_level_function_definition_offsets(&source.text, "render_verify_flush").is_empty()
+        }),
+        "legacy Verify flush helper must be removed after semantic renderer migration"
+    );
+
+    let (_, report_source) = unique_function_region(&product_sources, "report_run_result")
+        .expect("run-result reporter must remain the repository Verify error boundary");
+    assert!(report_source.contains("error_display_model("));
+    assert!(report_source.contains("render_plain_display_model("));
+    assert!(!report_source.contains("println!("));
+    assert!(!report_source.contains("eprintln!("));
+}
+
+#[test]
 fn function_regionはpub_superの次item前で切れる() {
     let source = "fn target() {\n    let raw = r#\"\nfn fake() {}\nstruct Fake;\n\"#;\n    shared_dispatch();\n}\npub(super) fn next() {\n    bypass();\n}\n";
     let sources = [ControllerProductSource {
