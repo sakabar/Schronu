@@ -1,4 +1,4 @@
-use super::command::CommandKind;
+use super::command::{parse_command, CommandKind, ParseMode};
 use super::interactive::should_suppress_leaf_tasks_after_command;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -442,5 +442,24 @@ fn interactive再描画判断はtyped_command_kindだけで決まる() {
             !should_suppress_leaf_tasks_after_command(kind),
             "{kind:?} must refresh the leaf tree after mutation"
         );
+    }
+}
+
+#[test]
+fn interactive_aliasは同じtyped_kindと再描画方針になる() {
+    for (aliases, expected_kind) in [
+        (["新 project 15", "new project 15"], CommandKind::NewProject),
+        (["全", "all"], CommandKind::ShowAll),
+    ] {
+        let kinds = aliases.map(|command| {
+            parse_command(command, ParseMode::Interactive)
+                .expect("alias fixture must parse")
+                .kind()
+        });
+
+        assert_eq!(kinds, [expected_kind, expected_kind]);
+        assert!(kinds
+            .into_iter()
+            .all(should_suppress_leaf_tasks_after_command));
     }
 }
