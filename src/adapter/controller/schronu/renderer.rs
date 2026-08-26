@@ -45,14 +45,6 @@ pub(super) trait SchronuWriter: Write {
     }
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub(super) enum DisplayFragment {
-    #[allow(dead_code)] // Removed with the legacy recorder in the dedicated cleanup commit.
-    Raw(Vec<u8>),
-    Newline(String),
-    Flush,
-}
-
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(super) enum MessageLevel {
     Plain,
@@ -311,13 +303,7 @@ pub(super) enum FocusDisplay {
 
 #[derive(Clone, Debug, PartialEq)]
 pub(super) enum DisplayModel {
-    Legacy {
-        fragments: Vec<DisplayFragment>,
-    },
-    Message {
-        level: MessageLevel,
-        text: String,
-    },
+    Message { level: MessageLevel, text: String },
     Tree(TreeDisplay),
     TaskList(TaskListDisplay),
     TaskListMetrics(TaskListMetricsDisplay),
@@ -326,15 +312,12 @@ pub(super) enum DisplayModel {
     Pack(PackDisplay),
     Flatten(FlattenDisplay),
     Focus(FocusDisplay),
-    #[allow(dead_code)] // Composition boundary for later typed display models.
     Sequence(Vec<DisplayModel>),
 }
 
 impl Default for DisplayModel {
     fn default() -> Self {
-        Self::Legacy {
-            fragments: Vec::new(),
-        }
+        Self::empty()
     }
 }
 
@@ -343,23 +326,8 @@ impl DisplayModel {
         Self::Sequence(Vec::new())
     }
 
-    #[allow(dead_code)] // Legacy callers remain covered until their dedicated migration commits.
-    pub(super) fn newline(message: impl Into<String>) -> Self {
-        Self::Legacy {
-            fragments: vec![DisplayFragment::Newline(message.into())],
-        }
-    }
-
-    #[allow(dead_code)] // Removed with legacy display fragments in the dedicated cleanup commit.
-    pub(super) fn flush() -> Self {
-        Self::Legacy {
-            fragments: vec![DisplayFragment::Flush],
-        }
-    }
-
     pub(super) fn is_empty(&self) -> bool {
         match self {
-            Self::Legacy { fragments } => fragments.is_empty(),
             Self::Message { .. } => false,
             Self::Tree(_)
             | Self::TaskList(_)
@@ -371,102 +339,6 @@ impl DisplayModel {
             | Self::Focus(_) => false,
             Self::Sequence(models) => models.iter().all(Self::is_empty),
         }
-    }
-
-    #[allow(dead_code)] // DisplayRecorder compatibility is retained during incremental migration.
-    pub(super) fn fragments(&self) -> &[DisplayFragment] {
-        match self {
-            Self::Legacy { fragments } => fragments,
-            Self::Message { .. }
-            | Self::Tree(_)
-            | Self::TaskList(_)
-            | Self::TaskListMetrics(_)
-            | Self::Calendar(_)
-            | Self::Band(_)
-            | Self::Pack(_)
-            | Self::Flatten(_)
-            | Self::Focus(_)
-            | Self::Sequence(_) => {
-                unreachable!("semantic display models do not expose legacy fragments")
-            }
-        }
-    }
-
-    #[allow(dead_code)] // Removed with the legacy recorder in the dedicated cleanup commit.
-    fn legacy_fragments_mut(&mut self) -> &mut Vec<DisplayFragment> {
-        match self {
-            Self::Legacy { fragments } => fragments,
-            Self::Message { .. }
-            | Self::Tree(_)
-            | Self::TaskList(_)
-            | Self::TaskListMetrics(_)
-            | Self::Calendar(_)
-            | Self::Band(_)
-            | Self::Pack(_)
-            | Self::Flatten(_)
-            | Self::Focus(_)
-            | Self::Sequence(_) => {
-                unreachable!("DisplayRecorder always owns a legacy display model")
-            }
-        }
-    }
-}
-
-#[allow(dead_code)] // Removed in the dedicated legacy-recorder cleanup commit.
-pub(super) struct DisplayRecorder {
-    model: DisplayModel,
-    supports_ansi_color: bool,
-}
-
-impl Default for DisplayRecorder {
-    fn default() -> Self {
-        Self {
-            model: DisplayModel::default(),
-            supports_ansi_color: true,
-        }
-    }
-}
-
-#[allow(dead_code)] // Removed in the dedicated legacy-recorder cleanup commit.
-impl DisplayRecorder {
-    pub(super) fn with_ansi_color(supports_ansi_color: bool) -> Self {
-        Self {
-            model: DisplayModel::default(),
-            supports_ansi_color,
-        }
-    }
-
-    pub(super) fn model(&self) -> &DisplayModel {
-        &self.model
-    }
-}
-
-impl Write for DisplayRecorder {
-    fn write(&mut self, buffer: &[u8]) -> std::io::Result<usize> {
-        self.model
-            .legacy_fragments_mut()
-            .push(DisplayFragment::Raw(buffer.to_vec()));
-        Ok(buffer.len())
-    }
-
-    fn flush(&mut self) -> std::io::Result<()> {
-        self.model
-            .legacy_fragments_mut()
-            .push(DisplayFragment::Flush);
-        Ok(())
-    }
-}
-
-impl SchronuWriter for DisplayRecorder {
-    fn writeln_newline(&mut self, message: &str) -> Result<(), std::io::Error> {
-        self.model
-            .legacy_fragments_mut()
-            .push(DisplayFragment::Newline(message.to_string()));
-        Ok(())
-    }
-
-    fn supports_ansi_color(&self) -> bool {
-        self.supports_ansi_color
     }
 }
 
@@ -493,15 +365,6 @@ pub(super) fn render_display_model(
     model: &DisplayModel,
 ) -> Result<(), std::io::Error> {
     match model {
-        DisplayModel::Legacy { fragments } => {
-            for fragment in fragments {
-                match fragment {
-                    DisplayFragment::Raw(buffer) => writer.write_all(buffer)?,
-                    DisplayFragment::Newline(message) => writer.writeln_newline(message)?,
-                    DisplayFragment::Flush => writer.flush()?,
-                }
-            }
-        }
         DisplayModel::Message { level, text } => {
             let prefix = match level {
                 MessageLevel::Plain => "",
