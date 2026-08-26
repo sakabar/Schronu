@@ -2,11 +2,11 @@ use super::renderer::{
     format_spreadsheet_task_row, format_task_list_columns, render_display_model,
     render_display_model_with_mode, task_list_columns, AncestorTreeRow, BandDayRow, BandDisplay,
     BandDurations, CalendarAlerts, CalendarDayRow, CalendarDisplay, CalendarSummary, DebugTreeRow,
-    DisplayFragment, DisplayModel, DisplayRecorder, ErrorCapturingWriter, FlattenDisplay,
-    FlattenReason, FlattenReasonSummary, FlattenRow, FlattenUnresolvedDay, FocusDisplay,
-    LeafTreeRow, MessageLevel, PackDisplay, PackRow, RenderMode, SchronuWriter, SpreadsheetTaskRow,
-    TaskCategoryWorkSeconds, TaskListDisplay, TaskListIconMode, TaskListMetricsDisplay,
-    TaskListRow, TaskListTaskRow, TreeDisplay,
+    DisplayModel, ErrorCapturingWriter, FlattenDisplay, FlattenReason, FlattenReasonSummary,
+    FlattenRow, FlattenUnresolvedDay, FocusDisplay, LeafTreeRow, MessageLevel, PackDisplay,
+    PackRow, RenderMode, SchronuWriter, SpreadsheetTaskRow, TaskCategoryWorkSeconds,
+    TaskListDisplay, TaskListIconMode, TaskListMetricsDisplay, TaskListRow, TaskListTaskRow,
+    TreeDisplay,
 };
 use chrono::{Local, NaiveDate, TimeZone, Weekday};
 use schronu::entity::task::{ProjectCategory, TaskAttr};
@@ -75,29 +75,32 @@ impl SchronuWriter for TraceWriter {
 }
 
 #[test]
-fn display_modelはrawとwriter固有newlineとansiとflushの順序を保持する() {
-    let mut recorder = DisplayRecorder::with_ansi_color(false);
-    assert!(!recorder.supports_ansi_color());
-    recorder.write_all(b"\x1b[31mraw").unwrap();
-    recorder.writeln_newline("line").unwrap();
-    recorder.write_all(b"tail").unwrap();
-    recorder.flush().unwrap();
-
-    assert_eq!(
-        recorder.model().fragments(),
-        &[
-            DisplayFragment::Raw(b"\x1b[31mraw".to_vec()),
-            DisplayFragment::Newline("line".to_string()),
-            DisplayFragment::Raw(b"tail".to_vec()),
-            DisplayFragment::Flush,
-        ]
-    );
-
+fn semantic_treeはraw改行とwriter固有newlineとansi文字列とflush順を保持する() {
+    let display = DisplayModel::Tree(TreeDisplay::Debug {
+        rows: vec![
+            DebugTreeRow {
+                debug: "\x1b[31mraw".to_string(),
+            },
+            DebugTreeRow {
+                debug: "line".to_string(),
+            },
+            DebugTreeRow {
+                debug: "tail".to_string(),
+            },
+        ],
+    });
     let mut writer = TraceWriter::default();
-    render_display_model(&mut writer, recorder.model()).unwrap();
+    assert!(!writer.supports_ansi_color());
+    render_display_model_with_mode(&mut writer, &display, RenderMode::Flushed).unwrap();
     assert_eq!(
         writer.operations,
-        ["raw:\x1b[31mraw", "newline:line", "raw:tail"]
+        [
+            "raw:\n",
+            "newline:\x1b[31mraw",
+            "newline:line",
+            "newline:tail",
+            "raw:\n",
+        ]
     );
     assert_eq!(writer.flush_count, 1);
 }
@@ -1199,7 +1202,10 @@ fn error_capturing_writerは最初のio_errorを保持して後続fragmentを処
 #[test]
 fn command_errorはdisplay_modelを経由してrendererへ渡される() {
     let error = std::io::Error::other("command failed");
-    let display = DisplayModel::newline(format!("[Error] {error}"));
+    let display = DisplayModel::Message {
+        level: MessageLevel::Error,
+        text: error.to_string(),
+    };
     let mut writer = TraceWriter::default();
 
     render_display_model(&mut writer, &display).unwrap();

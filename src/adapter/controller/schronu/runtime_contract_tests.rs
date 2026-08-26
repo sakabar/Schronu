@@ -3913,7 +3913,10 @@ fn runtime外部ioとoutcome調停は共通境界に集約する() {
 
     let open_command = parse_command("開", ParseMode::NonInteractive).unwrap();
     let mut open_outcome = handle(&open_command).expect("open must be handler-owned");
-    open_outcome.display = DisplayModel::newline("外部要求の前に表示");
+    open_outcome.display = DisplayModel::Message {
+        level: MessageLevel::Plain,
+        text: "外部要求の前に表示".to_string(),
+    };
     let mut flushed_output = FlushTrackingWriter::successful(false);
     apply_command_outcome(
         &mut flushed_output,

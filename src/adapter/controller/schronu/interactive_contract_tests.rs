@@ -862,6 +862,229 @@ fn strip_top_level_visibility(line: &str) -> &str {
     }
 }
 
+fn top_level_struct_name(region: &str) -> Option<&str> {
+    let declaration = strip_top_level_visibility(region.lines().next()?);
+    let rest = declaration.strip_prefix("struct ")?;
+    let name_end = rest
+        .find(|character: char| {
+            character.is_whitespace() || matches!(character, '<' | '(' | '{' | ';')
+        })
+        .unwrap_or(rest.len());
+    Some(&rest[..name_end])
+}
+
+const MOVED_DATETIME_INTERPRETATION_SYMBOLS: &[&str] = &[
+    "decide_time_values",
+    "decide_finish_time_values",
+    "decide_naive_datetime_values",
+    "resolve_date_and_time",
+    "resolve_upcoming_mmdd",
+    "resolve_deadline_date",
+    "resolve_deadline_time",
+    "resolve_show_all_pattern",
+    "resolve_upcoming_clear_or_gather_day",
+    "resolve_dated_clear_or_gather_end_naive",
+    "parse_clear_or_gather_defer_to_datetime",
+    "parse_dated_clear_or_gather_time_range",
+    "defer_business_day_target",
+    "seconds_until_next_business_day_start_with_offset",
+];
+
+const MOVED_DOMAIN_MUTATION_SYMBOLS: &[&str] = &[
+    "execute_start_new_project",
+    "execute_make_appointment",
+    "execute_breakdown_sequentially",
+    "execute_breakdown",
+    "execute_split",
+    "execute_create_repetition_task",
+    "execute_clear_or_gather",
+    "execute_next_up",
+    "execute_defer",
+    "execute_defer_expression",
+    "execute_extrude_with_config",
+    "execute_defer_routine",
+    "execute_defer_all_frequent_routines",
+    "execute_set_arrange_children_work_minutes",
+    "set_focused_task_actual_work_minutes",
+    "set_focused_task_priority",
+];
+
+const MOVED_DISPLAY_CALCULATION_SYMBOLS: &[&str] = &[
+    "get_weekday_jp",
+    "task_list_search_text",
+    "get_adjustable_prefix_label",
+    "calculate_daily_band_durations",
+    "replace_task_list_icon",
+    "project_category_summary_index",
+    "summarize_scheduled_work_seconds_by_project_category",
+    "format_scheduled_work_seconds_by_project_category",
+    "task_category_work_seconds",
+    "calculate_project_category_denominator_seconds",
+    "advance_display_datetime_cursor",
+    "sort_task_list_display_rows",
+    "mark_give_up_candidate_rows",
+    "mark_give_up_candidate_rows_by_date",
+    "calculate_rho_metrics",
+    "calculate_lq_opt",
+    "build_tree_display",
+    "build_ancestor_tree_display",
+    "build_show_all_tasks_display_with_config",
+    "build_focus_header_display",
+    "build_focus_timing_display",
+    "build_leaf_tree_display",
+];
+
+fn runtime_final_boundary_violations(sources: &[ControllerProductSource]) -> Vec<String> {
+    let mut violations = Vec::new();
+    let source_for = |file_name: &str| {
+        sources
+            .iter()
+            .find(|source| {
+                source.path.file_name().and_then(|name| name.to_str()) == Some(file_name)
+            })
+            .unwrap_or_else(|| panic!("missing controller product module: {file_name}"))
+    };
+    let runtime = source_for("runtime.rs");
+    let renderer = source_for("renderer.rs");
+
+    for offset in top_level_item_definition_offsets(&runtime.text, "struct") {
+        let region = function_region_from_offset(&runtime.text, offset);
+        if let Some(name) = top_level_struct_name(region) {
+            if name.ends_with("Context") {
+                violations.push(format!("runtime.rs owns Context-named struct {name}"));
+            }
+        }
+    }
+
+    for offset in top_level_item_definition_offsets(&runtime.text, "impl") {
+        let region = function_region_from_offset(&runtime.text, offset);
+        let code = code_only(region);
+        let signature = code.split_once('{').map_or(code.as_str(), |(head, _)| head);
+        if compact_code(signature).contains("CommandContextfor") {
+            violations.push(format!(
+                "runtime.rs owns CommandContext implementation: {}",
+                signature.trim()
+            ));
+        }
+    }
+
+    for (responsibility, function_names) in [
+        (
+            "command argument datetime interpretation",
+            MOVED_DATETIME_INTERPRETATION_SYMBOLS,
+        ),
+        ("domain mutation", MOVED_DOMAIN_MUTATION_SYMBOLS),
+        ("display calculation", MOVED_DISPLAY_CALCULATION_SYMBOLS),
+    ] {
+        for function_name in function_names {
+            if !top_level_function_definition_offsets(&runtime.text, function_name).is_empty() {
+                violations.push(format!(
+                    "runtime.rs regressed moved {responsibility} symbol {function_name}"
+                ));
+            }
+        }
+    }
+
+    let renderer_has_legacy_variant =
+        match unique_top_level_item_region(&renderer.text, "enum DisplayModel") {
+            Ok(display_model) => {
+                let code = compact_code(display_model);
+                code.contains("Legacy{") || code.contains("Legacy(")
+            }
+            Err(error) => {
+                violations.push(error);
+                false
+            }
+        };
+    for source in sources {
+        let code = code_only(&source.text);
+        let compact_product_code = compact_code(&code);
+        let mut legacy_markers = Vec::new();
+        for legacy_type in ["DisplayFragment", "DisplayRecorder"] {
+            if contains_identifier(&code, legacy_type) {
+                legacy_markers.push(legacy_type);
+            }
+        }
+        if compact_product_code.contains("DisplayModel::Legacy")
+            || (source.path.file_name().and_then(|name| name.to_str()) == Some("renderer.rs")
+                && renderer_has_legacy_variant)
+        {
+            legacy_markers.push("DisplayModel::Legacy");
+        }
+        if !legacy_markers.is_empty() {
+            violations.push(format!(
+                "{} retains legacy display boundary: {}",
+                source.path.display(),
+                legacy_markers.join(", ")
+            ));
+        }
+    }
+
+    match unique_function_region(sources, "apply_command_outcome") {
+        Ok((path, region)) => {
+            if path.file_name().and_then(|name| name.to_str()) != Some("runtime.rs") {
+                violations
+                    .push("apply_command_outcome must remain runtime I/O coordination".into());
+            }
+            let code = compact_code(region);
+            for required in [
+                "render_display_model_with_mode(",
+                "RenderMode::Flushed",
+                "RenderMode::Unflushed",
+            ] {
+                if !code.contains(required) {
+                    violations.push(format!(
+                        "runtime outcome coordination missing mode boundary {required}"
+                    ));
+                }
+            }
+            for forbidden in ["DisplayModel::flush()", "render_display_model(", ".flush("] {
+                if code.contains(forbidden) {
+                    violations.push(format!(
+                        "runtime outcome coordination performs renderer work via {forbidden}"
+                    ));
+                }
+            }
+        }
+        Err(error) => violations.push(error),
+    }
+
+    let render_mode_owners = sources
+        .iter()
+        .flat_map(|source| {
+            top_level_item_definition_offsets(&source.text, "enum RenderMode")
+                .into_iter()
+                .map(move |_| source.path.as_path())
+        })
+        .collect::<Vec<_>>();
+    if render_mode_owners.len() != 1
+        || render_mode_owners[0]
+            .file_name()
+            .and_then(|name| name.to_str())
+            != Some("renderer.rs")
+    {
+        violations.push("RenderMode must be defined exactly once by renderer.rs".to_string());
+    }
+    match unique_function_region(sources, "render_display_model_with_mode") {
+        Ok((path, region)) => {
+            if path.file_name().and_then(|name| name.to_str()) != Some("renderer.rs") {
+                violations.push("mode-aware rendering must be owned by renderer.rs".to_string());
+            }
+            let code = compact_code(region);
+            for required in ["render_display_model(", "RenderMode::Flushed", ".flush("] {
+                if !code.contains(required) {
+                    violations.push(format!(
+                        "renderer mode boundary missing rendering responsibility {required}"
+                    ));
+                }
+            }
+        }
+        Err(error) => violations.push(error),
+    }
+
+    violations
+}
+
 #[test]
 fn interactive_terminal_driver_is_isolated_from_runtime() {
     let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
@@ -1035,23 +1258,8 @@ fn runtimeはio調停だけを所有する() {
     };
     let runtime = source_for("runtime.rs");
     let view = source_for("view.rs");
-
-    for allowed_runtime_boundary in [
-        "run_repository_transaction(",
-        "StorageLock::",
-        "webbrowser::open(",
-        "process::Command::new(",
-        "fn interactive_application(",
-        "fn execute_verify_command(",
-        "fn render_focus_from_source(",
-    ] {
-        assert!(
-            runtime.text.contains(allowed_runtime_boundary),
-            "runtime.rs must retain I/O coordination through {allowed_runtime_boundary}"
-        );
-    }
-
     let mut violations = Vec::new();
+
     for item_prefix in [
         "trait FocusDisplaySource",
         "struct TaskFocusDisplaySource",
@@ -1066,8 +1274,9 @@ fn runtimeはio調停だけを所有する() {
         }
         if let [view_item_offset] = view_item_offsets.as_slice() {
             let view_item = function_region_from_offset(&view.text, *view_item_offset);
+            let code = compact_code(&code_only(view_item));
             for forbidden in ["SchronuWriter", "render_display_model(", ".flush("] {
-                if view_item.contains(forbidden) {
+                if code.contains(forbidden) {
                     violations.push(format!(
                         "{item_prefix} must remain a pure view source without {forbidden}"
                     ));
@@ -1080,6 +1289,149 @@ fn runtimeはio調停だけを所有する() {
         violations.is_empty(),
         "runtime Focus source ownership violations:\n{}",
         violations.join("\n")
+    );
+}
+
+#[test]
+fn runtime最終責務境界はsemantic_rendererとio調停を分離する() {
+    let violations = runtime_final_boundary_violations(&controller_product_sources());
+
+    assert!(
+        violations.is_empty(),
+        "runtime final responsibility boundary violations:\n{}",
+        violations.join("\n")
+    );
+}
+
+#[test]
+fn runtime最終責務scannerは任意名のio調停とnon_codeを許可する() {
+    let sources = vec![
+        ControllerProductSource {
+            path: PathBuf::from("runtime.rs"),
+            text: r#"
+struct InteractiveRepositoryState;
+struct FocusRenderState;
+const EXAMPLE: &str = "pub(crate) struct HiddenContext; DisplayRecorder; DisplayModel::Legacy";
+/*
+pub(super) struct BlockContext;
+impl ProjectCommandContext for BlockContext {}
+fn execute_breakdown() {}
+let display = DisplayModel::Legacy { fragments };
+*/
+fn arbitrary_external_io() {}
+fn coordinate_repository_transaction() {}
+fn apply_command_outcome() {
+    let mode = if interactive { RenderMode::Unflushed } else { RenderMode::Flushed };
+    render_display_model_with_mode(writer, model, mode);
+}
+"#
+            .to_string(),
+        },
+        ControllerProductSource {
+            path: PathBuf::from("renderer.rs"),
+            text: r#"
+enum DisplayModel { Message }
+enum RenderMode { Flushed, Unflushed }
+fn render_display_model() {}
+fn render_display_model_with_mode() {
+    render_display_model(writer, model);
+    if mode == RenderMode::Flushed { writer.flush(); }
+}
+"#
+            .to_string(),
+        },
+        ControllerProductSource {
+            path: PathBuf::from("handler.rs"),
+            text: "// enum RenderMode { Flushed, Unflushed }\n".to_string(),
+        },
+        ControllerProductSource {
+            path: PathBuf::from("view.rs"),
+            text: "const LEGACY: &str = \"DisplayModel::Legacy\";\n".to_string(),
+        },
+    ];
+
+    assert_eq!(
+        runtime_final_boundary_violations(&sources),
+        Vec::<String>::new()
+    );
+}
+
+#[test]
+fn runtime最終責務scannerはcontext命名structと移動済みsymbolとlegacyとmode違反を検出する() {
+    let sources = vec![
+        ControllerProductSource {
+            path: PathBuf::from("runtime.rs"),
+            text: r#"
+struct PrivateContext;
+pub struct PublicContext;
+pub(super) struct SuperContext;
+pub(crate) struct CrateContext;
+pub(in crate) struct InContext;
+impl ProjectCommandContext for PublicContext {}
+impl /* { non-code brace */ RepetitionCommandContext for SuperContext {}
+fn decide_time_values() {}
+fn execute_breakdown() {}
+fn build_tree_display() {}
+fn apply_command_outcome() {
+    render_display_model(writer, model);
+    writer.flush();
+}
+"#
+            .to_string(),
+        },
+        ControllerProductSource {
+            path: PathBuf::from("renderer.rs"),
+            text: r#"
+enum DisplayModel { Legacy { fragments: Vec<DisplayFragment> } }
+enum RenderMode { Flushed, Unflushed }
+struct DisplayRecorder;
+enum DisplayFragment { Flush }
+fn render_display_model() {}
+fn render_display_model_with_mode() {
+    render_display_model(writer, model);
+}
+"#
+            .to_string(),
+        },
+        ControllerProductSource {
+            path: PathBuf::from("handler.rs"),
+            text: "enum RenderMode { Flushed, Unflushed }\n".to_string(),
+        },
+        ControllerProductSource {
+            path: PathBuf::from("view.rs"),
+            text: "pub(crate) enum RenderMode { Flushed, Unflushed }\n".to_string(),
+        },
+    ];
+
+    let violations = runtime_final_boundary_violations(&sources).join("\n");
+    for expected in [
+        "Context-named struct PrivateContext",
+        "Context-named struct PublicContext",
+        "Context-named struct SuperContext",
+        "Context-named struct CrateContext",
+        "Context-named struct InContext",
+        "CommandContext implementation",
+        "regressed moved command argument datetime interpretation symbol decide_time_values",
+        "regressed moved domain mutation symbol execute_breakdown",
+        "regressed moved display calculation symbol build_tree_display",
+        "legacy display boundary: DisplayFragment, DisplayRecorder, DisplayModel::Legacy",
+        "RenderMode must be defined exactly once by renderer.rs",
+        "runtime outcome coordination missing mode boundary RenderMode::Flushed",
+        "runtime outcome coordination missing mode boundary RenderMode::Unflushed",
+        "runtime outcome coordination performs renderer work via render_display_model(",
+        "runtime outcome coordination performs renderer work via .flush(",
+        "renderer mode boundary missing rendering responsibility RenderMode::Flushed",
+        "renderer mode boundary missing rendering responsibility .flush(",
+    ] {
+        assert!(
+            violations.contains(expected),
+            "missing final-boundary mutation detection {expected}:\n{violations}"
+        );
+    }
+    assert_eq!(
+        violations.matches("CommandContext implementation").count(),
+        2,
+        "both plain and comment-brace CommandContext impls must be detected:\n{violations}"
     );
 }
 

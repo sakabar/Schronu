@@ -10,9 +10,9 @@ use super::handler::{
     TaskTreeCommandContext,
 };
 use super::renderer::{
-    render_display_model, AncestorTreeRow, DebugTreeRow, DisplayFragment, DisplayModel,
-    DisplayRecorder, LeafTreeRow, MessageLevel, SchronuWriter, TaskListDisplay, TaskListRow,
-    TreeDisplay,
+    render_display_model, render_display_model_with_mode, AncestorTreeRow, DebugTreeRow,
+    DisplayModel, LeafTreeRow, MessageLevel, RenderMode, SchronuWriter, TaskListDisplay,
+    TaskListRow, TreeDisplay,
 };
 use chrono::{Local, NaiveDate, TimeZone};
 use schronu::application::flatten_use_case::FlattenResult;
@@ -2593,28 +2593,30 @@ fn context_validation_errorは統一handler_errorとして呼び出し側へ返�
 }
 
 #[test]
-fn display_recorder_and_renderer_preserve_raw_newline_write_order_and_flush() {
-    let mut recorder = DisplayRecorder::default();
-    recorder.write_all(b"\x1b[1mraw").unwrap();
-    recorder.writeln_newline("line").unwrap();
-    recorder.write_all(b"tail").unwrap();
-    recorder.flush().unwrap();
-
-    assert_eq!(
-        recorder.model().fragments(),
-        &[
-            DisplayFragment::Raw(b"\x1b[1mraw".to_vec()),
-            DisplayFragment::Newline("line".to_string()),
-            DisplayFragment::Raw(b"tail".to_vec()),
-            DisplayFragment::Flush,
-        ]
-    );
-
+fn semantic_message_sequence_preserves_level_ansi_order_and_flush() {
+    let display = DisplayModel::Sequence(vec![
+        DisplayModel::Message {
+            level: MessageLevel::Plain,
+            text: "\x1b[1mraw".to_string(),
+        },
+        DisplayModel::Message {
+            level: MessageLevel::Info,
+            text: "line".to_string(),
+        },
+        DisplayModel::Message {
+            level: MessageLevel::Error,
+            text: "tail".to_string(),
+        },
+    ]);
     let mut writer = TraceWriter::default();
-    render_display_model(&mut writer, recorder.model()).unwrap();
+    render_display_model_with_mode(&mut writer, &display, RenderMode::Flushed).unwrap();
     assert_eq!(
         writer.writes,
-        ["raw:\x1b[1mraw", "newline:line", "raw:tail"]
+        [
+            "newline:\x1b[1mraw",
+            "newline:[Info] line",
+            "newline:[Error] tail",
+        ]
     );
     assert_eq!(writer.flush_count, 1);
 }
