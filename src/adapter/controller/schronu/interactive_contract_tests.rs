@@ -465,6 +465,42 @@ fn interactive_aliasは同じtyped_kindと再描画方針になる() {
 }
 
 #[test]
+fn interactive製品eventはtyped_classifierへ直接接続する() {
+    let product_sources = controller_product_sources();
+    let (classifier_path, classifier_source) =
+        unique_function_region(&product_sources, "should_suppress_leaf_tasks_after_command")
+            .expect("controller must define one interactive redraw classifier");
+    assert_eq!(
+        classifier_path.file_name().and_then(|name| name.to_str()),
+        Some("interactive.rs"),
+        "interactive driver must own the redraw classifier"
+    );
+    assert!(
+        classifier_source.contains("kind: CommandKind"),
+        "redraw classifier must accept the parsed command kind"
+    );
+    for forbidden in ["parse_command(", ".chars().next(", ".split_whitespace("] {
+        assert!(
+            !classifier_source.contains(forbidden),
+            "redraw classifier must not inspect raw command text with {forbidden}"
+        );
+    }
+
+    let (_, caller_source) = unique_function_region(&product_sources, "interactive_application")
+        .expect("interactive application entry must remain unique");
+    assert!(
+        caller_source.contains("should_suppress_leaf_tasks_after_command(command_kind)"),
+        "interactive command completion must pass its typed kind directly to the redraw classifier"
+    );
+    for forbidden in ["parse_command(", ".chars().next(", ".split_whitespace("] {
+        assert!(
+            !caller_source.contains(forbidden),
+            "interactive event caller must not recover command meaning with {forbidden}"
+        );
+    }
+}
+
+#[test]
 fn interactive再描画分類は全command_kindを網羅する() {
     let all_command_kinds = [
         CommandKind::Noop,

@@ -5547,7 +5547,7 @@ fn test_interactive_submitは製品event経路でload実行保存する() {
 }
 
 #[test]
-fn test_interactive_submit完了はtyped_kindを再描画判断へ渡す() {
+fn test_interactive_submit製品経路は再描画対象commandを完了outcomeへ渡す() {
     let storage_dir = TestStorageDir::new();
     std::fs::create_dir_all(&storage_dir.path).unwrap();
     let now = Local.with_ymd_and_hms(2026, 8, 26, 12, 0, 0).unwrap();
@@ -5576,16 +5576,10 @@ fn test_interactive_submit完了はtyped_kindを再描画判断へ渡す() {
         now,
     );
 
-    let command_kind = match outcome {
-        InteractiveRepositoryEventOutcome::CommandExecuted(command_kind, operation_now) => {
-            assert_eq!(operation_now, now);
-            command_kind
-        }
-        _ => panic!("interactive submit must complete with its typed command kind"),
-    };
-    assert_eq!(command_kind, CommandKind::ShowAll);
-    assert!(interactive::should_suppress_leaf_tasks_after_command(
-        command_kind
+    assert!(matches!(
+        outcome,
+        InteractiveRepositoryEventOutcome::CommandExecuted(ref command, operation_now)
+            if command == "全" && operation_now == now
     ));
 }
 
