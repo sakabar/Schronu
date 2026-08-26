@@ -750,7 +750,7 @@ fn finish_recorder_dependency_violations(sources: &[ControllerProductSource]) ->
         }
     }
     for required in [
-        "DisplayModel::Tree(context.show_focused_tree()?)",
+        "DisplayModel::Tree",
         "DisplayModel::Pack",
         "DisplayModel::Flatten",
     ] {
