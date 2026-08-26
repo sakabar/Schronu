@@ -709,16 +709,16 @@ impl TaskTreeCommandContext for WriterFreeTaskTreeContext {
         estimated_minutes: Option<i64>,
     ) -> Result<Option<DisplayModel>, ApplicationError> {
         if name == "error" {
-            return Ok(Some(DisplayModel::Sequence(vec![
-                DisplayModel::Message {
-                    level: MessageLevel::Plain,
-                    text: "next-up:before-error".to_string(),
-                },
-                DisplayModel::Message {
-                    level: MessageLevel::Error,
-                    text: "操作エラー: injected next-up failure".to_string(),
-                },
-            ])));
+            return Ok(Some(DisplayModel::Message {
+                level: MessageLevel::Error,
+                text: "操作エラー: injected next-up failure".to_string(),
+            }));
+        }
+        if name == "propagate-error" {
+            return Err(ApplicationError::InvalidInput {
+                field: "name",
+                reason: "injected propagated failure",
+            });
         }
         if name == "no-focus" {
             return Ok(None);
@@ -848,7 +848,7 @@ fn task_tree_contextは表示なし分岐をempty_outcomeとして返す() {
 }
 
 #[test]
-fn task_tree_contextはerrorまでのtyped部分出力順を維持する() {
+fn task_tree_contextはreported_errorを単独semantic_messageとして返す() {
     let command = Command::Action(CommandAction::TaskWithEstimate {
         kind: CommandKind::NextUp,
         canonical_name: "上",
@@ -866,11 +866,30 @@ fn task_tree_contextはerrorまでのtyped部分出力順を維持する() {
     assert_eq!(context.focused_task_id, None);
     assert_eq!(
         writer.writes,
-        [
-            "newline:next-up:before-error",
-            "newline:[Error] 操作エラー: injected next-up failure",
-        ]
+        ["newline:[Error] 操作エラー: injected next-up failure"]
     );
+}
+
+#[test]
+fn task_tree_contextは伝播application_errorをerrorのまま返す() {
+    let command = Command::Action(CommandAction::TaskWithEstimate {
+        kind: CommandKind::NextUp,
+        canonical_name: "上",
+        name: "propagate-error".to_string(),
+        estimated_minutes: None,
+    });
+    let mut context = WriterFreeTaskTreeContext::default();
+
+    let actual = handle_task_tree_command(&command, &mut context);
+
+    assert!(matches!(
+        actual,
+        Err(ApplicationError::InvalidInput {
+            field: "name",
+            reason: "injected propagated failure",
+        })
+    ));
+    assert_eq!(context.focused_task_id, None);
 }
 
 #[test]
