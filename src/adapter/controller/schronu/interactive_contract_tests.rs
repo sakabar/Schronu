@@ -362,18 +362,30 @@ fn interactiveとnoninteractiveは単一のparsed_command_dispatcherを共有す
 fn verify製品分岐は意味的modelをrendererへ渡す() {
     let product_sources = controller_product_sources();
 
-    for entry_function in [
-        "execute_non_interactive_command_at",
-        "execute_interactive_command",
-    ] {
-        let (_, entry_source) = unique_function_region(&product_sources, entry_function)
+    let (_, non_interactive_source) =
+        unique_function_region(&product_sources, "execute_non_interactive_command_at")
             .unwrap_or_else(|error| panic!("{error}"));
-        for required in ["verify_display_model(", "render_display_model("] {
-            assert!(
-                entry_source.contains(required),
-                "{entry_function} must route Verify output through {required}"
-            );
-        }
+    for required in ["verify_display_model(", "render_display_model("] {
+        assert!(
+            non_interactive_source.contains(required),
+            "non-interactive Verify must route success output through {required}"
+        );
+    }
+
+    let (_, interactive_source) =
+        unique_function_region(&product_sources, "execute_interactive_command")
+            .unwrap_or_else(|error| panic!("{error}"));
+    assert!(interactive_source.contains("DisplayModel::flush()"));
+    assert!(interactive_source.contains("render_display_model("));
+    assert!(
+        !interactive_source.contains("verify_display_model(Ok"),
+        "interactive Verify must not add a success body"
+    );
+
+    for (entry_function, entry_source) in [
+        ("execute_non_interactive_command_at", non_interactive_source),
+        ("execute_interactive_command", interactive_source),
+    ] {
         for forbidden in ["println!(", "eprintln!(", "render_verify_flush("] {
             assert!(
                 !entry_source.contains(forbidden),

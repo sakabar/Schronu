@@ -5742,6 +5742,34 @@ fn test_interactive_verifyは出力errorを分類してtransactionを継続す�
 }
 
 #[test]
+fn test_interactive_verifyは本文なしで1回だけflushする() {
+    let now = Local.with_ymd_and_hms(2026, 8, 26, 12, 0, 0).unwrap();
+    let task = new_test_task_handle("interactive検証対象").unwrap();
+    let task_id = task.get_id().unwrap();
+    let mut repository = TestTaskRepository::new(task, now);
+    let mut free_time_manager = TestFreeTimeManager::default();
+    let mut focused_task_id_opt = Some(task_id);
+    let mut focus_selection_mode = FocusSelectionMode::HighestPriority;
+    let mut stdout = FlushTrackingWriter::successful(true);
+
+    let execution = execute_interactive_command(
+        &mut stdout,
+        &mut repository,
+        &mut free_time_manager,
+        &mut focused_task_id_opt,
+        &now,
+        &mut focus_selection_mode,
+        now,
+        "検証",
+    )
+    .unwrap();
+
+    assert_eq!(execution.kind, CommandKind::Verify);
+    assert_eq!(String::from_utf8(stdout.buffer).unwrap(), "");
+    assert_eq!(stdout.flush_count, 1);
+}
+
+#[test]
 fn test_interactive_submitとnoninteractive実行は共通command_transaction経路を通る() {
     let now = Local.with_ymd_and_hms(2026, 8, 12, 12, 0, 0).unwrap();
     let mut traces = Vec::new();
