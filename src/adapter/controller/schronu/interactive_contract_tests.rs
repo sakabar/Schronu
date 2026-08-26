@@ -194,7 +194,12 @@ impl MultilineNonCodeState {
     }
 
     fn scan_line(&mut self, line: &str) {
-        let bytes = line.as_bytes();
+        let _ = self.code_mask(line);
+    }
+
+    fn code_mask(&mut self, source: &str) -> Vec<bool> {
+        let bytes = source.as_bytes();
+        let mut mask = vec![false; bytes.len()];
         let mut index = 0;
         while index < bytes.len() {
             if let Some(terminator) = self.raw_string_terminator_opt.as_ref() {
@@ -240,7 +245,7 @@ impl MultilineNonCodeState {
                 index += 2;
                 continue;
             }
-            if let Some((opener_length, terminator)) = raw_string_opener_at(line, index) {
+            if let Some((opener_length, terminator)) = raw_string_opener_at(source, index) {
                 self.raw_string_terminator_opt = Some(terminator);
                 index += opener_length;
                 continue;
@@ -250,10 +255,15 @@ impl MultilineNonCodeState {
             } else if bytes[index] == b'\'' {
                 if let Some(end) = char_literal_end_at(bytes, index) {
                     index = end;
+                } else {
+                    mask[index] = true;
                 }
+            } else {
+                mask[index] = true;
             }
             index += 1;
         }
+        mask
     }
 }
 
@@ -280,23 +290,30 @@ fn char_literal_end_at(bytes: &[u8], index: usize) -> Option<usize> {
     None
 }
 
-fn raw_string_opener_at(line: &str, index: usize) -> Option<(usize, String)> {
-    let bytes = line.as_bytes();
-    if bytes.get(index) != Some(&b'r') {
-        return None;
-    }
+fn raw_string_opener_at(source: &str, index: usize) -> Option<(usize, String)> {
+    let bytes = source.as_bytes();
     if index > 0 && (bytes[index - 1].is_ascii_alphanumeric() || bytes[index - 1] == b'_') {
         return None;
     }
-    let mut quote_index = index + 1;
+    let prefix_length = if bytes[index..].starts_with(b"br") {
+        2
+    } else if bytes.get(index) == Some(&b'r') {
+        1
+    } else {
+        return None;
+    };
+    let mut quote_index = index + prefix_length;
     while bytes.get(quote_index) == Some(&b'#') {
         quote_index += 1;
     }
     if bytes.get(quote_index) != Some(&b'"') {
         return None;
     }
-    let hash_count = quote_index - index - 1;
-    Some((hash_count + 2, format!("\"{}", "#".repeat(hash_count))))
+    let hash_count = quote_index - index - prefix_length;
+    Some((
+        prefix_length + hash_count + 1,
+        format!("\"{}", "#".repeat(hash_count)),
+    ))
 }
 
 fn is_top_level_rust_item(line: &str) -> bool {
@@ -338,78 +355,17 @@ fn is_top_level_rust_item(line: &str) -> bool {
 }
 
 fn code_only(source: &str) -> String {
-    let bytes = source.as_bytes();
-    let mut output = vec![b' '; bytes.len()];
-    let mut index = 0;
-    let mut raw_string_terminator_opt: Option<Vec<u8>> = None;
-    let mut block_comment_depth = 0;
-    let mut in_quoted_string = false;
-
-    while index < bytes.len() {
-        if bytes[index] == b'\n' {
-            output[index] = b'\n';
-        }
-        if let Some(terminator) = raw_string_terminator_opt.as_ref() {
-            if bytes[index..].starts_with(terminator) {
-                index += terminator.len();
-                raw_string_terminator_opt = None;
-            } else {
-                index += 1;
-            }
-            continue;
-        }
-        if block_comment_depth > 0 {
-            if bytes[index..].starts_with(b"/*") {
-                block_comment_depth += 1;
-                index += 2;
-            } else if bytes[index..].starts_with(b"*/") {
-                block_comment_depth -= 1;
-                index += 2;
-            } else {
-                index += 1;
-            }
-            continue;
-        }
-        if in_quoted_string {
-            if bytes[index] == b'\\' {
-                index = (index + 2).min(bytes.len());
-            } else if bytes[index] == b'"' {
-                in_quoted_string = false;
-                index += 1;
-            } else {
-                index += 1;
-            }
-            continue;
-        }
-        if bytes[index..].starts_with(b"//") {
-            while index < bytes.len() && bytes[index] != b'\n' {
-                index += 1;
-            }
-            continue;
-        }
-        if bytes[index..].starts_with(b"/*") {
-            block_comment_depth = 1;
-            index += 2;
-            continue;
-        }
-        if let Some((opener_length, terminator)) = raw_string_opener_at(source, index) {
-            raw_string_terminator_opt = Some(terminator.into_bytes());
-            index += opener_length;
-            continue;
-        }
-        if bytes[index] == b'"' {
-            in_quoted_string = true;
-            index += 1;
-            continue;
-        }
-        if bytes[index] == b'\'' {
-            if let Some(end) = char_literal_end_at(bytes, index) {
-                index = end + 1;
-                continue;
+    let mut output = vec![b' '; source.len()];
+    let mut state = MultilineNonCodeState::default();
+    let mut offset = 0;
+    for line in source.split_inclusive('\n') {
+        let mask = state.code_mask(line);
+        for (index, (byte, is_code)) in line.as_bytes().iter().zip(mask).enumerate() {
+            if is_code || *byte == b'\n' {
+                output[offset + index] = *byte;
             }
         }
-        output[index] = bytes[index];
-        index += 1;
+        offset += line.len();
     }
 
     String::from_utf8(output).expect("source code bytes remain valid UTF-8")
@@ -764,14 +720,24 @@ fn newline_call() { writeln_newline(writer, "bad"); }
 
 #[test]
 fn view_writer_scannerは非codeとtest専用functionを除外する() {
-    let source = r##"
+    let source = r#####"
 fn clean<'a>(value: &'a str) {
     let quote = '"';
     let apostrophe = '\'';
+    let byte_quote = b'"';
+    let byte_apostrophe = b'\'';
     let text = "println!(\"not code\") and dyn Write";
-    let raw = r#"writeln_newline(writer, "not code")"#;
+    let bytes = b"writer.flush() and impl Write and \\\"quoted\\\"";
+    let raw = r###"
+        writeln_newline(writer, "not code");
+    "###;
+    let byte_raw = br###"
+        sink.write_all(bytes);
+        fn fake(writer: impl Write) {}
+    "###;
     // render_display_model(writer, model);
     /*
+    /* nested println!("not code"); */
     unsafe extern "C" fn commented(writer: impl Write) {}
     */
 }
@@ -780,12 +746,18 @@ fn clean<'a>(value: &'a str) {
 fn test_only(writer: &mut dyn SchronuWriter) {
     writer.flush();
 }
-"##;
+"#####;
 
     assert_eq!(
         view_writer_dependency_violations(source),
         Vec::<String>::new()
     );
+}
+
+#[test]
+fn source_maskはrustで有効なbyte_raw_prefixだけを認識する() {
+    assert!(raw_string_opener_at("br###\"bytes\"###", 0).is_some());
+    assert!(raw_string_opener_at("rb###\"bytes\"###", 0).is_none());
 }
 
 #[test]
