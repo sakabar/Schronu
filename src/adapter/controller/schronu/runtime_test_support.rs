@@ -223,6 +223,7 @@ struct FailingNewlineWriter {
     buffer: Vec<u8>,
     failures_remaining: usize,
     newline_call_count: usize,
+    error_kind: std::io::ErrorKind,
 }
 
 #[cfg(test)]
@@ -232,6 +233,16 @@ impl FailingNewlineWriter {
             buffer: vec![],
             failures_remaining: 1,
             newline_call_count: 0,
+            error_kind: std::io::ErrorKind::Other,
+        }
+    }
+
+    fn always_failing(error_kind: std::io::ErrorKind) -> Self {
+        Self {
+            buffer: vec![],
+            failures_remaining: usize::MAX,
+            newline_call_count: 0,
+            error_kind,
         }
     }
 }
@@ -254,7 +265,10 @@ impl SchronuWriter for FailingNewlineWriter {
         self.newline_call_count += 1;
         if self.failures_remaining > 0 {
             self.failures_remaining -= 1;
-            return Err(std::io::Error::other("newline write failure"));
+            return Err(std::io::Error::new(
+                self.error_kind,
+                "newline write failure",
+            ));
         }
         writeln!(self, "<reset>{message}")
     }

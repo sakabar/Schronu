@@ -1085,6 +1085,93 @@ fn runtime_final_boundary_violations(sources: &[ControllerProductSource]) -> Vec
     violations
 }
 
+const COMPONENT_SUB_HANDLERS: &[&str] = &[
+    "handle",
+    "handle_project_command",
+    "handle_breakdown_split_command",
+    "handle_task_attribute_command",
+    "handle_defer_command",
+    "handle_finish_placement_command",
+    "handle_task_tree_command",
+];
+
+fn interactive_unified_handler_violations(
+    interactive_region: &str,
+    parsed_dispatcher_region: &str,
+) -> Vec<String> {
+    let mut legacy_dispatches = Vec::<String>::new();
+    let interactive_code = compact_code(interactive_region);
+    if !contains_direct_function_call(&interactive_code, "execute_parsed") {
+        legacy_dispatches.push("interactive missing execute_parsed(".to_string());
+    }
+    for sub_handler in COMPONENT_SUB_HANDLERS {
+        if contains_direct_function_call(&interactive_code, sub_handler) {
+            legacy_dispatches.push(format!("interactive direct {sub_handler}("));
+        }
+    }
+    if contains_identifier(&interactive_code, "RuntimeDeferCommandContext") {
+        legacy_dispatches.push("interactive direct RuntimeDeferCommandContext".to_string());
+    }
+
+    let dispatcher_code = compact_code(parsed_dispatcher_region);
+    if !contains_direct_function_call(&dispatcher_code, "handle_command") {
+        legacy_dispatches.push("execute_parsed missing handle_command(".to_string());
+    }
+    for sub_handler in COMPONENT_SUB_HANDLERS {
+        if contains_direct_function_call(&dispatcher_code, sub_handler) {
+            legacy_dispatches.push(format!("execute_parsed direct {sub_handler}("));
+        }
+    }
+    if contains_identifier(&dispatcher_code, "RuntimeDeferCommandContext") {
+        legacy_dispatches.push("execute_parsed direct RuntimeDeferCommandContext".to_string());
+    }
+
+    if legacy_dispatches.is_empty() {
+        Vec::new()
+    } else {
+        vec![format!(
+            "interactive Verify以外の製品経路が統一handle_commandを通らない: {}",
+            legacy_dispatches.join(", ")
+        )]
+    }
+}
+
+fn contains_direct_function_call(code: &str, function_name: &str) -> bool {
+    code.match_indices(function_name).any(|(offset, _)| {
+        let has_direct_call_prefix = code[..offset].chars().next_back().is_none_or(|character| {
+            character != '.' && !(character.is_ascii_alphanumeric() || character == '_')
+        });
+        if !has_direct_call_prefix {
+            return false;
+        }
+
+        let suffix = &code[offset + function_name.len()..];
+        if suffix.starts_with('(') {
+            return true;
+        }
+        let Some(generic_arguments) = suffix.strip_prefix("::<") else {
+            return false;
+        };
+        let mut angle_depth = 1usize;
+        for (index, byte) in generic_arguments.bytes().enumerate() {
+            match byte {
+                b'<' => angle_depth += 1,
+                b'>' => {
+                    if index > 0 && generic_arguments.as_bytes()[index - 1] == b'-' {
+                        continue;
+                    }
+                    angle_depth -= 1;
+                    if angle_depth == 0 {
+                        return generic_arguments.as_bytes().get(index + 1) == Some(&b'(');
+                    }
+                }
+                _ => {}
+            }
+        }
+        false
+    })
+}
+
 #[test]
 fn interactive_terminal_driver_is_isolated_from_runtime() {
     let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
@@ -1142,44 +1229,173 @@ fn interactiveとnoninteractiveは単一のtyped_parserを共有する() {
 #[test]
 fn interactiveとnoninteractiveは単一のparsed_command_dispatcherを共有する() {
     let product_sources = controller_product_sources();
-    unique_function_region(&product_sources, "execute_parsed")
+    let (_, parsed_dispatcher_region) = unique_function_region(&product_sources, "execute_parsed")
         .expect("controller must define exactly one shared parsed-command dispatcher");
-
-    for (entry_function, allowed_direct_dispatches) in [
-        (
-            "execute_non_interactive_command_at",
-            &["CommandKind::Verify"][..],
-        ),
-        (
-            "execute_interactive_command",
-            &[
-                "Command::Focus",
-                "Command::Defer",
-                "Command::InteractiveShortcut",
-                "CommandKind::Verify",
-            ][..],
-        ),
-    ] {
-        let (_, entry_source) = unique_function_region(&product_sources, entry_function)
+    let (_, interactive_region) =
+        unique_function_region(&product_sources, "execute_interactive_command")
             .unwrap_or_else(|error| panic!("{error}"));
-        assert!(
-            entry_source.contains("execute_parsed("),
-            "{entry_function} must route parsed commands through the shared dispatcher"
-        );
-        let mut source_without_allowed_dispatches = entry_source.to_string();
-        for allowed_direct_dispatch in allowed_direct_dispatches {
-            assert!(
-                entry_source.contains(allowed_direct_dispatch),
-                "{entry_function} must retain intentional direct dispatch {allowed_direct_dispatch}"
-            );
-            source_without_allowed_dispatches =
-                source_without_allowed_dispatches.replace(allowed_direct_dispatch, "");
+    let mut violations =
+        interactive_unified_handler_violations(interactive_region, parsed_dispatcher_region);
+
+    for entry_function in [
+        "execute_non_interactive_command_at",
+        "execute_interactive_command",
+    ] {
+        let (_, entry_region) = unique_function_region(&product_sources, entry_function)
+            .unwrap_or_else(|error| panic!("{error}"));
+        let code = compact_code(entry_region);
+        if !contains_direct_function_call(&code, "execute_parsed") {
+            violations.push(format!("{entry_function} missing execute_parsed("));
         }
-        assert!(
-            !source_without_allowed_dispatches.contains("Command::")
-                && !source_without_allowed_dispatches.contains("CommandKind::"),
-            "{entry_function} must not add a direct typed-command dispatch outside the allowlist"
+        if !code.contains("CommandKind::Verify") {
+            violations.push(format!(
+                "{entry_function} missing intentional Verify dispatch"
+            ));
+        }
+        let code_without_verify = code.replace("CommandKind::Verify", "");
+        if code_without_verify.contains("Command::")
+            || code_without_verify.contains("CommandKind::")
+        {
+            violations.push(format!(
+                "{entry_function} retains Verify以外のtyped command variant reference"
+            ));
+        }
+    }
+
+    assert!(
+        violations.is_empty(),
+        "shared parsed-command dispatcher violations:\n{}",
+        violations.join("\n")
+    );
+}
+
+#[test]
+fn interactive統一handler_scannerはcommentとstringを無視する() {
+    let interactive_fixture = r#"
+fn execute_interactive_command() {
+    let comment_shaped = "handle(&parsed); handle_defer_command(&parsed, context); RuntimeDeferCommandContext";
+    /* handle(&parsed); */
+    // handle_defer_command(&parsed, context);
+    driver.handle(&parsed);
+    execute_parsed::<C>(&parsed);
+}
+"#;
+    let dispatcher_fixture = r#"
+fn execute_parsed() {
+    let comment_shaped = "handle(&parsed); handle_defer_command(&parsed, context); RuntimeDeferCommandContext";
+    handle_command::<fn() -> bool>(&parsed, context);
+}
+"#;
+
+    assert_eq!(
+        interactive_unified_handler_violations(interactive_fixture, dispatcher_fixture),
+        Vec::<String>::new()
+    );
+}
+
+#[test]
+fn interactive統一handler_scannerはdirect_handleとdefer_sub_handlerを独立検出する() {
+    let direct_handle = r#"
+fn execute_interactive_command() {
+    execute_parsed(&parsed);
+    handle(&parsed);
+}
+"#;
+    let defer_sub_handler = r#"
+fn execute_interactive_command() {
+    execute_parsed(&parsed);
+    let mut context = RuntimeDeferCommandContext { repository };
+    handle_defer_command(&parsed, &mut context);
+}
+"#;
+    let valid_dispatcher = "fn execute_parsed() { handle_command(&parsed, context); }";
+
+    let direct_violations =
+        interactive_unified_handler_violations(direct_handle, valid_dispatcher).join("\n");
+    assert!(direct_violations.contains("interactive direct handle("));
+    assert!(!direct_violations.contains("handle_defer_command("));
+    assert!(!direct_violations.contains("RuntimeDeferCommandContext"));
+
+    let defer_violations =
+        interactive_unified_handler_violations(defer_sub_handler, valid_dispatcher).join("\n");
+    assert!(!defer_violations.contains("interactive direct handle("));
+    assert!(defer_violations.contains("interactive direct handle_defer_command("));
+    assert!(defer_violations.contains("interactive direct RuntimeDeferCommandContext"));
+}
+
+#[test]
+fn interactive統一handler_scannerは全7_component_sub_handlerのturbofish_callを個別検出する() {
+    let valid_dispatcher = "fn execute_parsed() { handle_command::<C>(&parsed, context); }";
+
+    for sub_handler in [
+        "handle",
+        "handle_project_command",
+        "handle_breakdown_split_command",
+        "handle_task_attribute_command",
+        "handle_defer_command",
+        "handle_finish_placement_command",
+        "handle_task_tree_command",
+    ] {
+        let interactive_fixture = format!(
+            "fn execute_interactive_command() {{ execute_parsed::<C>(&parsed); {sub_handler}::<C>(&parsed, context); }}"
         );
+        let violations =
+            interactive_unified_handler_violations(&interactive_fixture, valid_dispatcher)
+                .join("\n");
+        assert!(
+            violations.contains(&format!("interactive direct {sub_handler}(")),
+            "missing turbofish direct-call detection for {sub_handler}: {violations}"
+        );
+    }
+}
+
+#[test]
+fn interactive統一handler_scannerはmethodとprefixを必須callと誤認しない() {
+    let interactive_lookalikes = r#"
+fn execute_interactive_command() {
+    driver.execute_parsed::<C>(&parsed);
+    execute_parsed_wrapper::<C>(&parsed);
+}
+"#;
+    let dispatcher_lookalikes = r#"
+fn execute_parsed() {
+    driver.handle_command::<C>(&parsed, context);
+    handle_command_wrapper::<C>(&parsed, context);
+}
+"#;
+
+    let violations =
+        interactive_unified_handler_violations(interactive_lookalikes, dispatcher_lookalikes)
+            .join("\n");
+    assert!(violations.contains("interactive missing execute_parsed("));
+    assert!(violations.contains("execute_parsed missing handle_command("));
+}
+
+#[test]
+fn interactive統一handler_scannerはparsed_dispatcherのhandler欠如と直接sub_handlerを検出する() {
+    let valid_interactive = "fn execute_interactive_command() { execute_parsed(&parsed); }";
+    let missing_handler = "fn execute_parsed() {}";
+    let direct_sub_handlers = r#"
+fn execute_parsed() {
+    handle_command(&parsed, context);
+    handle(&parsed);
+    handle_defer_command(&parsed, context);
+    let context = RuntimeDeferCommandContext { repository };
+}
+"#;
+
+    let missing_violations =
+        interactive_unified_handler_violations(valid_interactive, missing_handler).join("\n");
+    assert!(missing_violations.contains("execute_parsed missing handle_command("));
+
+    let direct_violations =
+        interactive_unified_handler_violations(valid_interactive, direct_sub_handlers).join("\n");
+    for expected in [
+        "execute_parsed direct handle(",
+        "execute_parsed direct handle_defer_command(",
+        "execute_parsed direct RuntimeDeferCommandContext",
+    ] {
+        assert!(direct_violations.contains(expected));
     }
 }
 

@@ -1758,6 +1758,42 @@ fn interactive低優先度modeは共通outcome経路でfocusと表示を更新�
 }
 
 #[test]
+fn interactive高優先度modeはmessage出力失敗時に状態を変更せずerrorを返す() {
+    let now = Local.with_ymd_and_hms(2026, 8, 18, 12, 0, 0).unwrap();
+    let task = new_test_task_handle("高優先度出力失敗対象").unwrap();
+    let task_id = task.get_id().unwrap();
+
+    for error_kind in [
+        std::io::ErrorKind::Other,
+        std::io::ErrorKind::BrokenPipe,
+    ] {
+        let mut task_repository = TestTaskRepository::new(task.clone(), now);
+        let mut free_time_manager = TestFreeTimeManager::default();
+        let mut focused_task_id_opt = Some(task_id);
+        let mut focus_selection_mode = FocusSelectionMode::Explicit;
+        let mut stdout = FailingNewlineWriter::always_failing(error_kind);
+
+        let actual = execute_interactive_command(
+            &mut stdout,
+            &mut task_repository,
+            &mut free_time_manager,
+            &mut focused_task_id_opt,
+            &now,
+            &mut focus_selection_mode,
+            now,
+            "高",
+        );
+
+        assert!(matches!(
+            actual,
+            Err(CommandError::Output(error)) if error.kind() == error_kind
+        ));
+        assert_eq!(focused_task_id_opt, Some(task_id));
+        assert_eq!(focus_selection_mode, FocusSelectionMode::Explicit);
+    }
+}
+
+#[test]
 fn test_select_focus_task_id_高優先度modeでは最優先leafを返す() {
     let now = Local.with_ymd_and_hms(2026, 8, 11, 12, 0, 0).unwrap();
     let task = new_test_task_handle("タスク").unwrap();
