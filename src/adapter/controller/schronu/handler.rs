@@ -84,6 +84,12 @@ pub(super) enum TaskListOrder {
     LowPriorityTail,
 }
 
+#[derive(Debug)]
+pub(super) enum NextUpResult {
+    NoDisplay,
+    ReportedError(ApplicationError),
+}
+
 pub(super) trait TaskTreeCommandContext {
     fn show_tree(&mut self) -> Result<TreeDisplay, ApplicationError>;
     fn show_ancestor(&mut self) -> Result<TreeDisplay, ApplicationError>;
@@ -104,7 +110,7 @@ pub(super) trait TaskTreeCommandContext {
         &mut self,
         name: &str,
         estimated_minutes: Option<i64>,
-    ) -> Result<Option<DisplayModel>, ApplicationError>;
+    ) -> Result<NextUpResult, ApplicationError>;
 }
 
 pub(super) trait TaskAttributeCommandContext {
@@ -418,7 +424,15 @@ pub(super) fn handle_task_tree_command<C: TaskTreeCommandContext + ?Sized>(
             name,
             estimated_minutes,
             ..
-        }) => semantic_display = context.next_up(name, *estimated_minutes)?,
+        }) => {
+            semantic_display = match context.next_up(name, *estimated_minutes)? {
+                NextUpResult::NoDisplay => None,
+                NextUpResult::ReportedError(error) => Some(DisplayModel::Message {
+                    level: MessageLevel::Error,
+                    text: HandlerError::Application(error).to_string(),
+                }),
+            }
+        }
         _ => return Ok(None),
     }
 

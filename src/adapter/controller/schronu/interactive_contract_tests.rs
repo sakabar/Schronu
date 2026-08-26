@@ -569,7 +569,7 @@ fn task_tree_writer_free_boundary_violations(
         ),
         (
             "next_up",
-            "fnnext_up(&mutself,name:&str,estimated_minutes:Option<i64>)->Result<Option<DisplayModel>,ApplicationError>",
+            "fnnext_up(&mutself,name:&str,estimated_minutes:Option<i64>)->Result<NextUpResult,ApplicationError>",
         ),
     ] {
         let signatures = direct_method_signature_regions(trait_region, method_name);
@@ -604,7 +604,9 @@ fn task_tree_writer_free_boundary_violations(
         for required in [
             "semantic_display=context.focus_children()?",
             "semantic_display=context.focus_deepest()?",
-            "semantic_display=context.next_up(name,*estimated_minutes)?",
+            "matchcontext.next_up(name,*estimated_minutes)?",
+            "NextUpResult::ReportedError(error)=>Some(DisplayModel::Message",
+            "level:MessageLevel::Error",
         ] {
             if !handler_code.contains(required) {
                 violations.push(format!("task-tree handler missing {required}"));
@@ -659,7 +661,12 @@ fn task_tree_writer_free_boundary_violations(
                 continue;
             }
             let signature = normalized_method_signature(signatures[0]);
-            if !signature.ends_with("->Result<Option<DisplayModel>,ApplicationError>") {
+            let expected_return = if method_name == "next_up" {
+                "->Result<NextUpResult,ApplicationError>"
+            } else {
+                "->Result<Option<DisplayModel>,ApplicationError>"
+            };
+            if !signature.ends_with(expected_return) {
                 violations.push(format!(
                     "{implementation_prefix}::{method_name} must return typed optional display"
                 ));
@@ -1012,7 +1019,7 @@ pub(super) trait TaskTreeCommandContext {
         &mut self,
         name: &str,
         estimated_minutes: Option<i64>,
-    ) -> Result<Option<DisplayModel>, ApplicationError>;
+    ) -> Result<NextUpResult, ApplicationError>;
 }
 
 pub(super) fn handle_task_tree_command() {
@@ -1021,7 +1028,13 @@ pub(super) fn handle_task_tree_command() {
     /* context.focus_deepest(&mut display)?; */
     semantic_display = context.focus_children()?;
     semantic_display = context.focus_deepest()?;
-    semantic_display = context.next_up(name, *estimated_minutes)?;
+    semantic_display = match context.next_up(name, *estimated_minutes)? {
+        NextUpResult::NoDisplay => None,
+        NextUpResult::ReportedError(error) => Some(DisplayModel::Message {
+            level: MessageLevel::Error,
+            text: error.to_string(),
+        }),
+    };
 }
 
 fn unrelated_handler() {
@@ -1041,13 +1054,13 @@ impl TaskTreeCommandContext for RuntimeTaskTreeCommandContext<'_> {
         Ok(None)
     }
     fn focus_deepest(&mut self) -> Result<Option<DisplayModel>, ApplicationError> { Ok(None) }
-    fn next_up(&mut self, name: &str, estimated_minutes: Option<i64>) -> Result<Option<DisplayModel>, ApplicationError> { Ok(None) }
+    fn next_up(&mut self, name: &str, estimated_minutes: Option<i64>) -> Result<NextUpResult, ApplicationError> { Ok(NextUpResult::NoDisplay) }
 }
 
 impl TaskTreeCommandContext for CliCommandContext<'_> {
     fn focus_children(&mut self) -> Result<Option<DisplayModel>, ApplicationError> { Ok(None) }
     fn focus_deepest(&mut self) -> Result<Option<DisplayModel>, ApplicationError> { Ok(None) }
-    fn next_up(&mut self, name: &str, estimated_minutes: Option<i64>) -> Result<Option<DisplayModel>, ApplicationError> { Ok(None) }
+    fn next_up(&mut self, name: &str, estimated_minutes: Option<i64>) -> Result<NextUpResult, ApplicationError> { Ok(NextUpResult::NoDisplay) }
 }
 
 impl UnrelatedContext {

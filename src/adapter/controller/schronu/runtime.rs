@@ -8,7 +8,7 @@ use super::handler::{
 };
 #[cfg(test)]
 use super::handler::{
-    DeferCommandContext, DeferCommandError, TaskListOrder, TaskTreeCommandContext,
+    DeferCommandContext, DeferCommandError, NextUpResult, TaskListOrder, TaskTreeCommandContext,
 };
 use super::interactive;
 #[cfg(test)]

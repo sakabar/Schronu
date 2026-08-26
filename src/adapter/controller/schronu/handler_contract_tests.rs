@@ -6,7 +6,7 @@ use super::handler::{
     handle_command, handle_defer_command, handle_finish_placement_command, handle_project_command,
     handle_task_attribute_command, handle_task_tree_command, CommandContext, DeferCommandContext,
     DeferCommandError, ExternalRequest, FinishPlacementCommandContext, FocusChange, FocusSelection,
-    HandlerError, ProjectCommandContext, TaskAttributeCommandContext, TaskListOrder,
+    HandlerError, NextUpResult, ProjectCommandContext, TaskAttributeCommandContext, TaskListOrder,
     TaskTreeCommandContext,
 };
 use super::renderer::{
@@ -615,13 +615,10 @@ impl TaskTreeCommandContext for TraceTaskTreeContext {
         &mut self,
         name: &str,
         estimated_minutes: Option<i64>,
-    ) -> Result<Option<DisplayModel>, ApplicationError> {
+    ) -> Result<NextUpResult, ApplicationError> {
         self.calls
             .push(format!("next_up:{name}:{estimated_minutes:?}"));
-        Ok(Some(DisplayModel::Message {
-            level: MessageLevel::Plain,
-            text: "next_up".to_string(),
-        }))
+        Ok(NextUpResult::NoDisplay)
     }
 }
 
@@ -704,12 +701,14 @@ impl TaskTreeCommandContext for WriterFreeTaskTreeContext {
         &mut self,
         name: &str,
         estimated_minutes: Option<i64>,
-    ) -> Result<Option<DisplayModel>, ApplicationError> {
+    ) -> Result<NextUpResult, ApplicationError> {
         if name == "error" {
-            return Ok(Some(DisplayModel::Message {
-                level: MessageLevel::Error,
-                text: "操作エラー: injected next-up failure".to_string(),
-            }));
+            return Ok(NextUpResult::ReportedError(
+                ApplicationError::InvalidInput {
+                    field: "name",
+                    reason: "injected next-up failure",
+                },
+            ));
         }
         if name == "propagate-error" {
             return Err(ApplicationError::InvalidInput {
@@ -718,11 +717,11 @@ impl TaskTreeCommandContext for WriterFreeTaskTreeContext {
             });
         }
         if name == "no-focus" {
-            return Ok(None);
+            return Ok(NextUpResult::NoDisplay);
         }
         self.focused_task_id = Some(Uuid::from_u128(303));
         let _ = estimated_minutes;
-        Ok(None)
+        Ok(NextUpResult::NoDisplay)
     }
 }
 
@@ -863,7 +862,7 @@ fn task_tree_contextはreported_errorを単独semantic_messageとして返す() 
     assert_eq!(context.focused_task_id, None);
     assert_eq!(
         writer.writes,
-        ["newline:[Error] 操作エラー: injected next-up failure"]
+        ["newline:[Error] 操作エラー: invalid input for name: injected next-up failure"]
     );
 }
 
@@ -1000,7 +999,6 @@ fn task_tree表示commandはhandlerがtyped_fieldから表示modelと操作要�
                 | CommandKind::Band
                 | CommandKind::Children
                 | CommandKind::Deepest
-                | CommandKind::NextUp
         );
         assert_eq!(!outcome.display.is_empty(), expects_display);
     }
@@ -1731,7 +1729,7 @@ impl TaskTreeCommandContext for CompositeTraceContext {
         &mut self,
         name: &str,
         estimated_minutes: Option<i64>,
-    ) -> Result<Option<DisplayModel>, ApplicationError> {
+    ) -> Result<NextUpResult, ApplicationError> {
         self.task_tree.next_up(name, estimated_minutes)
     }
 }

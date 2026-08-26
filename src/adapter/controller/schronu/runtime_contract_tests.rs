@@ -357,7 +357,7 @@ fn task_tree製品context_next_upはfocusなしなら表示も状態変更もな
             context.next_up("new parent", Some(10))
         });
 
-    assert_eq!(actual, Ok(None));
+    assert!(matches!(actual, Ok(NextUpResult::NoDisplay)));
     assert_eq!(focused_task_id_opt, None);
     assert_eq!(resulting_root.snapshot().unwrap(), snapshot);
     assert_eq!(identity_count, 0);
@@ -376,7 +376,7 @@ fn task_tree製品context_next_up成功は表示せずparentを作成してfocus
             context.next_up("new parent", Some(10))
         });
 
-    assert_eq!(actual, Ok(None));
+    assert!(matches!(actual, Ok(NextUpResult::NoDisplay)));
     assert_eq!(focused_task_id_opt, Some(new_parent_id));
     assert_eq!(identity_count, 1);
     let children = resulting_root.get_children().unwrap();
@@ -391,7 +391,7 @@ fn task_tree製品context_next_up成功は表示せずparentを作成してfocus
 }
 
 #[test]
-fn task_tree製品context_next_up_errorはsemantic_errorを返して状態を維持する() {
+fn task_tree製品context_next_up_errorはreported_errorを返して状態を維持する() {
     let now = Local.with_ymd_and_hms(2026, 8, 27, 12, 0, 0).unwrap();
     for (root_focused, name, expected_error) in [
         (
@@ -424,16 +424,10 @@ fn task_tree製品context_next_up_errorはsemantic_errorを返して状態を維
                 Uuid::from_u128(9003),
                 |context| context.next_up(name, Some(10)),
             );
-        let display = actual.unwrap();
-        let expected_text = CommandError::Application(expected_error).to_string();
-
-        assert_eq!(
-            display,
-            Some(DisplayModel::Message {
-                level: MessageLevel::Error,
-                text: expected_text,
-            })
-        );
+        let NextUpResult::ReportedError(actual_error) = actual.unwrap() else {
+            panic!("next-up validation/root failure must be reported by the handler");
+        };
+        assert_eq!(actual_error, expected_error);
         assert_eq!(focused_task_id_opt, Some(focused_id));
         assert_eq!(resulting_root.snapshot().unwrap(), snapshot);
         assert_eq!(id_generator_call_count, 0);

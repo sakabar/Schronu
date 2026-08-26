@@ -1,11 +1,9 @@
 use super::command::{Command, CommandAction, CommandKind, CommandParseError};
 use super::handler::{
-    DeferCommandContext, DeferCommandError, FinishPlacementCommandContext, ProjectCommandContext,
-    TaskAttributeCommandContext, TaskListOrder, TaskTreeCommandContext,
+    DeferCommandContext, DeferCommandError, FinishPlacementCommandContext, NextUpResult,
+    ProjectCommandContext, TaskAttributeCommandContext, TaskListOrder, TaskTreeCommandContext,
 };
-use super::renderer::{
-    render_display_model, DisplayModel, MessageLevel, SchronuWriter, TreeDisplay,
-};
+use super::renderer::{render_display_model, DisplayModel, SchronuWriter, TreeDisplay};
 use super::runtime::{command_parse_error, CommandError};
 use super::view::{
     build_ancestor_tree_display, build_leaf_tree_display, build_show_all_tasks_display_with_config,
@@ -1454,7 +1452,7 @@ impl TaskTreeCommandContext for RuntimeTaskTreeCommandContext<'_, '_, '_> {
         &mut self,
         name: &str,
         estimated_minutes: Option<i64>,
-    ) -> Result<Option<DisplayModel>, ApplicationError> {
+    ) -> Result<NextUpResult, ApplicationError> {
         let focused_task_opt = self.focused_task()?;
         let result = execute_next_up(
             self.focused_task_id_opt,
@@ -1464,11 +1462,8 @@ impl TaskTreeCommandContext for RuntimeTaskTreeCommandContext<'_, '_, '_> {
             self.task_factory,
         );
         match result {
-            Ok(_) => Ok(None),
-            Err(error) => Ok(Some(DisplayModel::Message {
-                level: MessageLevel::Error,
-                text: CommandError::Application(error).to_string(),
-            })),
+            Ok(_) => Ok(NextUpResult::NoDisplay),
+            Err(error) => Ok(NextUpResult::ReportedError(error)),
         }
     }
 }
@@ -1874,7 +1869,7 @@ impl TaskTreeCommandContext for CliCommandContext<'_, '_, '_> {
         &mut self,
         name: &str,
         estimated_minutes: Option<i64>,
-    ) -> Result<Option<DisplayModel>, ApplicationError> {
+    ) -> Result<NextUpResult, ApplicationError> {
         RuntimeTaskTreeCommandContext {
             task_repository: self.task_repository,
             free_time_manager: self.free_time_manager,
