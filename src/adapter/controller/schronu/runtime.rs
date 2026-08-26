@@ -587,12 +587,8 @@ fn apply_command_outcome(
     if matches!(&application_mode, OutcomeApplicationMode::Flushed)
         && outcome.kind != CommandKind::Noop
     {
-        render_display_model_with_mode(
-            stdout,
-            &DisplayModel::Sequence(Vec::new()),
-            RenderMode::Flushed,
-        )
-        .map_err(CommandError::Output)?;
+        render_display_model_with_mode(stdout, &DisplayModel::empty(), RenderMode::Flushed)
+            .map_err(CommandError::Output)?;
     }
     Ok(())
 }
@@ -1046,13 +1042,9 @@ fn execute_interactive_command(
     } else {
         let command_result = if parsed_command.kind() == CommandKind::Verify {
             let mut output = ErrorCapturingWriter::new(stdout);
-            render_display_model_with_mode(
-                &mut output,
-                &DisplayModel::Sequence(Vec::new()),
-                RenderMode::Flushed,
-            )
-            .map_err(CommandError::Output)
-            .and_then(|()| captured_output_result(&mut output))
+            render_display_model_with_mode(&mut output, &DisplayModel::empty(), RenderMode::Flushed)
+                .map_err(CommandError::Output)
+                .and_then(|()| captured_output_result(&mut output))
         } else {
             execute_parsed(
                 stdout,

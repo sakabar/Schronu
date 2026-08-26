@@ -230,7 +230,7 @@ impl CommandOutcome {
 
     fn semantic_empty(kind: CommandKind) -> Self {
         let mut outcome = Self::empty(kind);
-        outcome.display = DisplayModel::Sequence(Vec::new());
+        outcome.display = DisplayModel::empty();
         outcome
     }
 }

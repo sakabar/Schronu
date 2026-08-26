@@ -339,6 +339,10 @@ impl Default for DisplayModel {
 }
 
 impl DisplayModel {
+    pub(super) fn empty() -> Self {
+        Self::Sequence(Vec::new())
+    }
+
     #[allow(dead_code)] // Legacy callers remain covered until their dedicated migration commits.
     pub(super) fn newline(message: impl Into<String>) -> Self {
         Self::Legacy {
