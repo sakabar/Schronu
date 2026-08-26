@@ -227,6 +227,12 @@ impl CommandOutcome {
             focus_change: FocusChange::Keep,
         }
     }
+
+    fn semantic_empty(kind: CommandKind) -> Self {
+        let mut outcome = Self::empty(kind);
+        outcome.display = DisplayModel::Sequence(Vec::new());
+        outcome
+    }
 }
 
 pub(super) fn handle(command: &Command) -> Option<CommandOutcome> {
@@ -433,7 +439,11 @@ pub(super) fn handle_task_tree_command<C: TaskTreeCommandContext + ?Sized>(
     }
 
     let mut outcome = CommandOutcome::empty(kind);
-    outcome.display = semantic_display.unwrap_or_else(|| DisplayModel::Sequence(Vec::new()));
+    if let Some(display) = semantic_display {
+        outcome.display = display;
+    } else {
+        return Ok(Some(CommandOutcome::semantic_empty(kind)));
+    }
     Ok(Some(outcome))
 }
 
@@ -699,9 +709,7 @@ pub(super) fn handle_finish_placement_command<C: FinishPlacementCommandContext +
     match command {
         Command::Action(CommandAction::Finish { values }) => {
             let Some(focused_task) = context.focused_task()? else {
-                let mut outcome = CommandOutcome::empty(kind);
-                outcome.display = DisplayModel::Sequence(Vec::new());
-                return Ok(Some(outcome));
+                return Ok(Some(CommandOutcome::semantic_empty(kind)));
             };
             if focused_task
                 .has_undone_children()
@@ -755,9 +763,14 @@ pub(super) fn handle_finish_placement_command<C: FinishPlacementCommandContext +
         _ => return Ok(None),
     }
 
-    let mut outcome = CommandOutcome::empty(kind);
-    outcome.display = semantic_display.unwrap_or_else(|| DisplayModel::Sequence(Vec::new()));
-    Ok(Some(outcome))
+    Ok(Some(match semantic_display {
+        Some(display) => {
+            let mut outcome = CommandOutcome::empty(kind);
+            outcome.display = display;
+            outcome
+        }
+        None => CommandOutcome::semantic_empty(kind),
+    }))
 }
 
 pub(super) fn pack_display(result: PackResult) -> PackDisplay {
