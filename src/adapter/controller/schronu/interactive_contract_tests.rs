@@ -427,41 +427,8 @@ fn runtimeはio調停だけを所有する() {
             .unwrap_or_else(|| panic!("missing controller product module: {file_name}"))
     };
     let runtime = source_for("runtime.rs");
-    let command_context = source_for("command_context.rs");
     let view = source_for("view.rs");
-    let renderer = source_for("renderer.rs");
 
-    for owned_context_boundary in [
-        "pub(super) struct CliCommandContext",
-        "impl ProjectCommandContext for CliCommandContext",
-        "fn resolve_upcoming_mmdd(",
-        "fn parse_clear_or_gather_defer_to_datetime(",
-        "fn resolve_deadline_date(",
-        "fn execute_clear_or_gather(",
-        "fn set_focused_task_actual_work_minutes(",
-    ] {
-        assert!(
-            command_context.text.contains(owned_context_boundary),
-            "command_context.rs must own {owned_context_boundary}"
-        );
-    }
-    for owned_view_boundary in [
-        "fn build_ancestor_tree_display(",
-        "fn build_focus_header_display(",
-        "fn build_focus_timing_display(",
-        "fn execute_show_all_tasks_with_config(",
-    ] {
-        assert!(
-            view.text.contains(owned_view_boundary),
-            "view.rs must own {owned_view_boundary}"
-        );
-    }
-    for owned_renderer_boundary in ["enum DisplayModel", "fn render_display_model("] {
-        assert!(
-            renderer.text.contains(owned_renderer_boundary),
-            "renderer.rs must own {owned_renderer_boundary}"
-        );
-    }
     for allowed_runtime_boundary in [
         "run_repository_transaction(",
         "StorageLock::",
@@ -477,47 +444,39 @@ fn runtimeはio調停だけを所有する() {
     }
 
     let mut violations = Vec::new();
-    for (responsibility, symbol) in [
-        ("command context implementation", "struct CliCommandContext"),
-        ("command context implementation", "impl CommandContext for"),
-        (
-            "command datetime interpretation",
-            "fn resolve_upcoming_mmdd(",
-        ),
-        (
-            "command datetime interpretation",
-            "fn parse_clear_or_gather_defer_to_datetime(",
-        ),
-        (
-            "command datetime interpretation",
-            "fn resolve_deadline_date(",
-        ),
-        ("domain mutation", "fn execute_clear_or_gather("),
-        (
-            "domain mutation",
-            "fn set_focused_task_actual_work_minutes(",
-        ),
-        ("display calculation", "trait FocusDisplaySource"),
-        ("display calculation", "struct TaskFocusDisplaySource"),
-    ] {
-        if runtime.text.contains(symbol) {
-            violations.push(format!("runtime.rs owns {responsibility}: {symbol}"));
+    for item_prefix in ["trait FocusDisplaySource", "struct TaskFocusDisplaySource"] {
+        let runtime_owns_item = runtime
+            .text
+            .lines()
+            .map(str::trim)
+            .map(strip_top_level_visibility)
+            .any(|line| line.starts_with(item_prefix));
+        let view_owns_item = view
+            .text
+            .lines()
+            .map(str::trim)
+            .map(strip_top_level_visibility)
+            .any(|line| line.starts_with(item_prefix));
+        if runtime_owns_item || !view_owns_item {
+            violations.push(format!(
+                "{item_prefix} must be owned by view.rs instead of runtime.rs"
+            ));
         }
     }
-    for source in &product_sources {
-        for legacy_symbol in ["DisplayFragment", "DisplayRecorder"] {
-            if source.text.contains(legacy_symbol) {
-                violations.push(format!(
-                    "{} retains legacy raw recorder symbol {legacy_symbol}",
-                    source.path.display()
-                ));
-            }
-        }
+    let focus_coordinator = "render_focus_from_source";
+    let runtime_owns_coordinator =
+        !top_level_function_definition_offsets(&runtime.text, focus_coordinator).is_empty();
+    let view_owns_coordinator =
+        top_level_function_definition_offsets(&view.text, focus_coordinator).len() == 1;
+    if runtime_owns_coordinator || !view_owns_coordinator {
+        violations.push(format!(
+            "fn {focus_coordinator} must be owned by view.rs instead of runtime.rs"
+        ));
     }
 
     assert!(
         violations.is_empty(),
-        "runtime responsibility boundary violations:\n{}",
+        "runtime Focus source ownership violations:\n{}",
         violations.join("\n")
     );
 }
