@@ -1,11 +1,11 @@
 use super::renderer::{
     format_spreadsheet_task_row, format_task_list_columns, render_display_model, task_list_columns,
-    AncestorTreeRow, BandDayRow, BandDisplay, BandDurations, CalendarAlerts, CalendarDayRow,
-    CalendarDisplay, CalendarSummary, DebugTreeRow, DisplayFragment, DisplayModel, DisplayRecorder,
-    ErrorCapturingWriter, FlattenDisplay, FlattenReason, FlattenReasonSummary, FlattenRow,
-    FlattenUnresolvedDay, FocusDisplay, LeafTreeRow, MessageLevel, PackDisplay, PackRow,
-    SchronuWriter, SpreadsheetTaskRow, TaskCategoryWorkSeconds, TaskListDisplay, TaskListIconMode,
-    TaskListRow, TaskListTaskRow, TreeDisplay,
+    verify_display_model, AncestorTreeRow, BandDayRow, BandDisplay, BandDurations, CalendarAlerts,
+    CalendarDayRow, CalendarDisplay, CalendarSummary, DebugTreeRow, DisplayFragment, DisplayModel,
+    DisplayRecorder, ErrorCapturingWriter, FlattenDisplay, FlattenReason, FlattenReasonSummary,
+    FlattenRow, FlattenUnresolvedDay, FocusDisplay, LeafTreeRow, MessageLevel, PackDisplay,
+    PackRow, SchronuWriter, SpreadsheetTaskRow, TaskCategoryWorkSeconds, TaskListDisplay,
+    TaskListIconMode, TaskListRow, TaskListTaskRow, TreeDisplay,
 };
 use chrono::{Local, NaiveDate, TimeZone, Weekday};
 use schronu::entity::task::{ProjectCategory, TaskAttr};
@@ -1063,6 +1063,30 @@ fn command_errorはdisplay_modelを経由してrendererへ渡される() {
 
     let mut broken_writer = AlwaysFailWriter;
     let error = render_display_model(&mut broken_writer, &display).unwrap_err();
+    assert_eq!(error.kind(), std::io::ErrorKind::InvalidData);
+    assert_eq!(error.to_string(), "later newline failure");
+}
+
+#[test]
+fn verify結果は意味的modelから既存文言とwriter固有newlineを描画する() {
+    for (result, expected_operation) in [
+        (Ok(()), "newline:検証: OK"),
+        (
+            Err("リポジトリエラー: repository Load failed".to_string()),
+            "newline:[Error] リポジトリエラー: repository Load failed",
+        ),
+    ] {
+        let display = verify_display_model(result);
+        let mut writer = TraceWriter::default();
+
+        render_display_model(&mut writer, &display).unwrap();
+
+        assert_eq!(writer.operations, [expected_operation]);
+    }
+
+    let display = verify_display_model(Err("repository Load failed".to_string()));
+    let mut writer = AlwaysFailWriter;
+    let error = render_display_model(&mut writer, &display).unwrap_err();
     assert_eq!(error.kind(), std::io::ErrorKind::InvalidData);
     assert_eq!(error.to_string(), "later newline failure");
 }

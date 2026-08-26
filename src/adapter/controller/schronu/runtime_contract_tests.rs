@@ -5178,6 +5178,40 @@ fn test_execute_non_interactive_command_検証はsaveとfree_time読込を行わ
 }
 
 #[test]
+fn test_verifyのread_only_repository検査はruntimeが所有する() {
+    let storage_dir = TestStorageDir::new();
+    std::fs::create_dir_all(&storage_dir.path).unwrap();
+    let now = Local.with_ymd_and_hms(2026, 8, 26, 12, 0, 0).unwrap();
+    let task = new_test_task_handle("read-only検証対象").unwrap();
+    let task_id = task.get_id().unwrap();
+    let original_estimated_work_seconds = task.get_estimated_work_seconds().unwrap();
+    let mut repository =
+        TestTaskRepository::new(task, now).with_storage_directory(&storage_dir.path);
+    let mut free_time_manager = TestFreeTimeManagerWithLoadError::default();
+
+    execute_non_interactive_command_at(
+        &mut repository,
+        &mut free_time_manager,
+        "検証",
+        now,
+    )
+    .unwrap();
+
+    assert_eq!(repository.reload_if_changed_attempt_count.get(), 1);
+    assert_eq!(repository.load_attempt_count.get(), 1);
+    assert_eq!(repository.save_attempt_count.get(), 0);
+    assert!(free_time_manager.loaded_path().is_none());
+    assert_eq!(
+        repository
+            .get_by_id(task_id)
+            .unwrap()
+            .get_estimated_work_seconds()
+            .unwrap(),
+        original_estimated_work_seconds
+    );
+}
+
+#[test]
 fn test_execute_non_interactive_command_gatewayの変換errorをstderrへ表示する() {
     let storage_dir = TestStorageDir::new();
     let project_dir = storage_dir.path.join("broken-project");
