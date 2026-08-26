@@ -100,6 +100,50 @@ fn top_level_function_definition_offsets(source: &str, function_name: &str) -> V
     top_level_item_definition_offsets(source, &format!("fn {function_name}"))
 }
 
+fn top_level_product_function_offsets(source: &str) -> Vec<usize> {
+    let mut offsets = Vec::new();
+    let mut line_start = 0;
+    let mut non_code_state = MultilineNonCodeState::default();
+    let mut cfg_test_attribute_pending = false;
+
+    for line in source.split_inclusive('\n') {
+        let source_line = line.trim_end_matches(['\r', '\n']);
+        if !non_code_state.starts_in_non_code()
+            && !source_line.chars().next().is_some_and(char::is_whitespace)
+        {
+            if source_line.starts_with("#[") {
+                cfg_test_attribute_pending |= source_line.contains("cfg(test)");
+            } else if is_top_level_rust_item(source_line) {
+                if !cfg_test_attribute_pending && is_top_level_function_declaration(source_line) {
+                    offsets.push(line_start);
+                }
+                cfg_test_attribute_pending = false;
+            }
+        }
+        non_code_state.scan_line(line);
+        line_start += line.len();
+    }
+    offsets
+}
+
+fn is_top_level_function_declaration(line: &str) -> bool {
+    let declaration = strip_top_level_visibility(line);
+    [
+        "fn ",
+        "async fn ",
+        "unsafe fn ",
+        "const fn ",
+        "extern \"C\" fn ",
+        "async unsafe fn ",
+        "unsafe extern \"C\" fn ",
+        "const unsafe fn ",
+        "const unsafe extern \"C\" fn ",
+        "async unsafe extern \"C\" fn ",
+    ]
+    .iter()
+    .any(|prefix| declaration.starts_with(prefix))
+}
+
 fn top_level_item_definition_offsets(source: &str, item_prefix: &str) -> Vec<usize> {
     let mut offsets = Vec::new();
     let mut line_start = 0;
@@ -203,10 +247,37 @@ impl MultilineNonCodeState {
             }
             if bytes[index] == b'"' {
                 self.in_quoted_string = true;
+            } else if bytes[index] == b'\'' {
+                if let Some(end) = char_literal_end_at(bytes, index) {
+                    index = end;
+                }
             }
             index += 1;
         }
     }
+}
+
+fn char_literal_end_at(bytes: &[u8], index: usize) -> Option<usize> {
+    if bytes
+        .get(index + 1)
+        .is_some_and(|byte| byte.is_ascii_alphabetic() || *byte == b'_')
+        && bytes.get(index + 2) != Some(&b'\'')
+    {
+        return None;
+    }
+    let mut cursor = index + 1;
+    let mut escaped = false;
+    while cursor < bytes.len() && bytes[cursor] != b'\n' {
+        if escaped {
+            escaped = false;
+        } else if bytes[cursor] == b'\\' {
+            escaped = true;
+        } else if bytes[cursor] == b'\'' {
+            return Some(cursor);
+        }
+        cursor += 1;
+    }
+    None
 }
 
 fn raw_string_opener_at(line: &str, index: usize) -> Option<(usize, String)> {
@@ -242,6 +313,13 @@ fn is_top_level_rust_item(line: &str) -> bool {
         "fn ",
         "async fn ",
         "unsafe fn ",
+        "const fn ",
+        "extern \"C\" fn ",
+        "async unsafe fn ",
+        "unsafe extern \"C\" fn ",
+        "const unsafe fn ",
+        "const unsafe extern \"C\" fn ",
+        "async unsafe extern \"C\" fn ",
         "struct ",
         "enum ",
         "union ",
@@ -257,6 +335,128 @@ fn is_top_level_rust_item(line: &str) -> bool {
     ]
     .iter()
     .any(|item_prefix| declaration.starts_with(item_prefix))
+}
+
+fn code_only(source: &str) -> String {
+    let bytes = source.as_bytes();
+    let mut output = vec![b' '; bytes.len()];
+    let mut index = 0;
+    let mut raw_string_terminator_opt: Option<Vec<u8>> = None;
+    let mut block_comment_depth = 0;
+    let mut in_quoted_string = false;
+
+    while index < bytes.len() {
+        if bytes[index] == b'\n' {
+            output[index] = b'\n';
+        }
+        if let Some(terminator) = raw_string_terminator_opt.as_ref() {
+            if bytes[index..].starts_with(terminator) {
+                index += terminator.len();
+                raw_string_terminator_opt = None;
+            } else {
+                index += 1;
+            }
+            continue;
+        }
+        if block_comment_depth > 0 {
+            if bytes[index..].starts_with(b"/*") {
+                block_comment_depth += 1;
+                index += 2;
+            } else if bytes[index..].starts_with(b"*/") {
+                block_comment_depth -= 1;
+                index += 2;
+            } else {
+                index += 1;
+            }
+            continue;
+        }
+        if in_quoted_string {
+            if bytes[index] == b'\\' {
+                index = (index + 2).min(bytes.len());
+            } else if bytes[index] == b'"' {
+                in_quoted_string = false;
+                index += 1;
+            } else {
+                index += 1;
+            }
+            continue;
+        }
+        if bytes[index..].starts_with(b"//") {
+            while index < bytes.len() && bytes[index] != b'\n' {
+                index += 1;
+            }
+            continue;
+        }
+        if bytes[index..].starts_with(b"/*") {
+            block_comment_depth = 1;
+            index += 2;
+            continue;
+        }
+        if let Some((opener_length, terminator)) = raw_string_opener_at(source, index) {
+            raw_string_terminator_opt = Some(terminator.into_bytes());
+            index += opener_length;
+            continue;
+        }
+        if bytes[index] == b'"' {
+            in_quoted_string = true;
+            index += 1;
+            continue;
+        }
+        if bytes[index] == b'\'' {
+            if let Some(end) = char_literal_end_at(bytes, index) {
+                index = end + 1;
+                continue;
+            }
+        }
+        output[index] = bytes[index];
+        index += 1;
+    }
+
+    String::from_utf8(output).expect("source code bytes remain valid UTF-8")
+}
+
+fn contains_identifier(source: &str, identifier: &str) -> bool {
+    source
+        .split(|character: char| !(character.is_ascii_alphanumeric() || character == '_'))
+        .any(|token| token == identifier)
+}
+
+fn view_writer_dependency_violations(source: &str) -> Vec<String> {
+    let mut violations = Vec::new();
+    for offset in top_level_product_function_offsets(source) {
+        let region = function_region_from_offset(source, offset);
+        let code = code_only(region);
+        let signature = code.split_once('{').map_or(code.as_str(), |(head, _)| head);
+        let first_line = region.lines().next().unwrap_or("<unknown function>");
+
+        if signature.contains("SchronuWriter")
+            || signature.contains("std::io::Write")
+            || contains_identifier(signature, "Write")
+        {
+            violations.push(format!("writer type in {first_line}"));
+        }
+
+        let compact_code = code
+            .chars()
+            .filter(|character| !character.is_whitespace())
+            .collect::<String>();
+        for forbidden in [
+            "print!(",
+            "println!(",
+            "eprintln!(",
+            "write!(",
+            "writeln!(",
+            ".write_all(",
+            ".flush(",
+            "writeln_newline(",
+            "render_display_model(",
+        ] {
+            if compact_code.contains(forbidden) {
+                violations.push(format!("{forbidden} in {first_line}"));
+            }
+        }
+    }
+    violations
 }
 
 fn strip_top_level_visibility(line: &str) -> &str {
@@ -484,6 +684,107 @@ fn runtimeはio調停だけを所有する() {
         violations.is_empty(),
         "runtime Focus source ownership violations:\n{}",
         violations.join("\n")
+    );
+}
+
+#[test]
+fn view表示計算はwriterと直接出力に依存しない() {
+    let product_sources = controller_product_sources();
+    let view = product_sources
+        .iter()
+        .find(|source| source.path.file_name().and_then(|name| name.to_str()) == Some("view.rs"))
+        .expect("view.rs must be a controller product module");
+    let violations = view_writer_dependency_violations(&view.text);
+
+    let (_, legacy_region) =
+        unique_function_region(&product_sources, "execute_show_all_tasks_with_config").unwrap();
+    for forbidden in [
+        "let busy_s",
+        "let s_for_rho1",
+        "let s_for_non_repetitive_rho",
+        "完了見込み日時は",
+    ] {
+        if legacy_region.contains(forbidden) {
+            panic!(
+                "execute_show_all_tasks_with_config must return typed metrics without legacy preformat: {forbidden}"
+            );
+        }
+    }
+
+    assert!(
+        violations.is_empty(),
+        "view.rs must return typed models without writer/output dependencies:\n{}",
+        violations.join("\n")
+    );
+}
+
+#[test]
+fn view_writer_scannerはrustのfunction修飾子とwriter型を網羅する() {
+    let source = r#"
+fn plain(writer: &mut dyn SchronuWriter) {}
+async fn asynchronous<W: Write>(writer: W) {}
+unsafe fn unsafe_output(writer: impl Write) {}
+extern "C" fn external(writer: &mut dyn std::io::Write) {}
+async unsafe fn async_unsafe() { println ! ("bad"); }
+unsafe extern "C" fn unsafe_external() { eprintln!("bad"); }
+const fn constant() { print!("bad"); }
+const unsafe fn constant_unsafe() { write ! (sink, "bad"); }
+const unsafe extern "C" fn constant_external() { writeln!(sink, "bad"); }
+async unsafe extern "C" fn combined() { sink.write_all(bytes); }
+pub(super) fn renderer_call() { render_display_model(writer, model); }
+fn flush_call() { writer.flush(); }
+fn newline_call() { writeln_newline(writer, "bad"); }
+"#;
+
+    let violations = view_writer_dependency_violations(source);
+
+    for function_name in [
+        "plain",
+        "asynchronous",
+        "unsafe_output",
+        "external",
+        "async_unsafe",
+        "unsafe_external",
+        "constant",
+        "constant_unsafe",
+        "constant_external",
+        "combined",
+        "renderer_call",
+        "flush_call",
+        "newline_call",
+    ] {
+        assert!(
+            violations
+                .iter()
+                .any(|violation| violation.contains(function_name)),
+            "scanner must reject {function_name}: {violations:?}"
+        );
+    }
+}
+
+#[test]
+fn view_writer_scannerは非codeとtest専用functionを除外する() {
+    let source = r##"
+fn clean<'a>(value: &'a str) {
+    let quote = '"';
+    let apostrophe = '\'';
+    let text = "println!(\"not code\") and dyn Write";
+    let raw = r#"writeln_newline(writer, "not code")"#;
+    // render_display_model(writer, model);
+    /*
+    unsafe extern "C" fn commented(writer: impl Write) {}
+    */
+}
+
+#[cfg(test)]
+fn test_only(writer: &mut dyn SchronuWriter) {
+    writer.flush();
+}
+"##;
+
+    assert_eq!(
+        view_writer_dependency_violations(source),
+        Vec::<String>::new()
     );
 }
 

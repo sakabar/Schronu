@@ -3477,6 +3477,64 @@ fn test_execute_today_今を絞る全経路で負荷指標を表示する() {
 }
 
 #[test]
+fn view_metricsは製品fixtureからtyped_sequenceと実値を返す() {
+    let now = Local.with_ymd_and_hms(2026, 8, 11, 12, 0, 0).unwrap();
+
+    for (pattern, expected_primary) in [("今", "task-list"), ("暦", "calendar"), ("帯", "band")]
+    {
+        let task = new_test_task_handle("typed metrics製品fixture").unwrap();
+        task.set_estimated_work_seconds(60 * 60);
+        task.set_start_time(now);
+        task.set_pending_until(now);
+        task.set_orig_status(Status::Pending);
+        let mut task_repository = TestTaskRepository::new(task, now);
+        let mut free_time_manager = TestFreeTimeManager::with_free_minutes(10 * 60);
+        let mut focused_task_id_opt = None;
+
+        let display = build_show_all_tasks_display_with_config(
+            &mut focused_task_id_opt,
+            &mut task_repository,
+            &mut free_time_manager,
+            &Some(pattern.to_string()),
+            TaskListDisplayOrder::ScheduledStartDesc,
+            &SchronuConfig::default(),
+        )
+        .unwrap();
+
+        let DisplayModel::Sequence(models) = display else {
+            panic!("{pattern} must return a typed display sequence: {display:?}");
+        };
+        assert_eq!(models.len(), 2, "{pattern}: {models:?}");
+        assert!(
+            matches!(
+                (&models[0], expected_primary),
+                (DisplayModel::TaskList(_), "task-list")
+                    | (DisplayModel::Calendar(_), "calendar")
+                    | (DisplayModel::Band(_), "band")
+            ),
+            "{pattern}: {models:?}"
+        );
+        let DisplayModel::TaskListMetrics(metrics) = &models[1] else {
+            panic!("{pattern} must append typed metrics: {models:?}");
+        };
+        assert_eq!(metrics.busy_minutes, 0, "{pattern}");
+        assert_eq!(metrics.lambda_minutes, 60, "{pattern}");
+        assert_eq!(
+            metrics.estimated_finish_at,
+            Local.with_ymd_and_hms(2026, 8, 11, 13, 0, 0).unwrap(),
+            "{pattern}"
+        );
+        assert_eq!(metrics.non_repetitive_work_hours, 1.0, "{pattern}");
+        assert_eq!(metrics.repetitive_work_hours, 0.0, "{pattern}");
+        assert_eq!(metrics.free_hours, 11.5, "{pattern}");
+        assert_eq!(metrics.rho, 0.08, "{pattern}");
+        assert_eq!(metrics.non_repetitive_rho, 0.08, "{pattern}");
+        assert_eq!(metrics.lq, Some(0.08 / 0.92), "{pattern}");
+        assert_eq!(metrics.non_repetitive_lq, Some(0.08 / 0.92), "{pattern}");
+    }
+}
+
+#[test]
 fn test_execute_set_project_category_表示記号でカテゴリを設定する() {
     let now = Local.with_ymd_and_hms(2026, 5, 17, 12, 0, 0).unwrap();
     let focus_started_datetime = now;
