@@ -46,7 +46,6 @@ pub(super) struct CommandOutcome {
     pub(super) focus_change: FocusChange,
 }
 
-#[allow(dead_code)] // The legacy runtime dispatch coexists until its dedicated migration commit.
 pub(super) trait CommandContext:
     ProjectCommandContext
     + TaskTreeCommandContext
