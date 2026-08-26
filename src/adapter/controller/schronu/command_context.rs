@@ -3,7 +3,7 @@ use super::handler::{
     DeferCommandContext, DeferCommandError, FinishPlacementCommandContext, NextUpResult,
     ProjectCommandContext, TaskAttributeCommandContext, TaskListOrder, TaskTreeCommandContext,
 };
-use super::renderer::{render_display_model, DisplayModel, SchronuWriter, TreeDisplay};
+use super::renderer::{DisplayModel, TreeDisplay};
 use super::runtime::{command_parse_error, CommandError};
 use super::view::{
     build_ancestor_tree_display, build_leaf_tree_display, build_show_all_tasks_display_with_config,
@@ -1475,7 +1475,6 @@ pub(super) struct CliCommandContext<'repository, 'factory, 'generator> {
     pub(super) task_factory: &'factory mut TaskFactory<'generator>,
     pub(super) focus_started_datetime: DateTime<Local>,
     pub(super) config: &'repository SchronuConfig,
-    pub(super) supports_ansi_color: bool,
 }
 
 impl ProjectCommandContext for CliCommandContext<'_, '_, '_> {
@@ -1691,10 +1690,6 @@ impl DeferCommandContext for CliCommandContext<'_, '_, '_> {
 }
 
 impl FinishPlacementCommandContext for CliCommandContext<'_, '_, '_> {
-    fn supports_ansi_color(&self) -> bool {
-        self.supports_ansi_color
-    }
-
     fn last_synced_time(&self) -> DateTime<Local> {
         self.task_repository.get_last_synced_time()
     }
@@ -1713,18 +1708,8 @@ impl FinishPlacementCommandContext for CliCommandContext<'_, '_, '_> {
         }
     }
 
-    fn show_focused_tree(
-        &mut self,
-        display: &mut dyn SchronuWriter,
-    ) -> Result<(), ApplicationError> {
-        render_display_model(
-            display,
-            &DisplayModel::Tree(build_tree_display(
-                &FinishPlacementCommandContext::focused_task(self)?,
-            )?),
-        )
-        .unwrap();
-        Ok(())
+    fn show_focused_tree(&mut self) -> Result<TreeDisplay, ApplicationError> {
+        build_tree_display(&FinishPlacementCommandContext::focused_task(self)?)
     }
 
     fn complete_focused_task(

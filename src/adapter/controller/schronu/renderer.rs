@@ -47,6 +47,7 @@ pub(super) trait SchronuWriter: Write {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(super) enum DisplayFragment {
+    #[allow(dead_code)] // Removed with the legacy recorder in the dedicated cleanup commit.
     Raw(Vec<u8>),
     Newline(String),
     Flush,
@@ -386,6 +387,7 @@ impl DisplayModel {
         }
     }
 
+    #[allow(dead_code)] // Removed with the legacy recorder in the dedicated cleanup commit.
     fn legacy_fragments_mut(&mut self) -> &mut Vec<DisplayFragment> {
         match self {
             Self::Legacy { fragments } => fragments,
@@ -405,6 +407,7 @@ impl DisplayModel {
     }
 }
 
+#[allow(dead_code)] // Removed in the dedicated legacy-recorder cleanup commit.
 pub(super) struct DisplayRecorder {
     model: DisplayModel,
     supports_ansi_color: bool,
@@ -419,6 +422,7 @@ impl Default for DisplayRecorder {
     }
 }
 
+#[allow(dead_code)] // Removed in the dedicated legacy-recorder cleanup commit.
 impl DisplayRecorder {
     pub(super) fn with_ansi_color(supports_ansi_color: bool) -> Self {
         Self {

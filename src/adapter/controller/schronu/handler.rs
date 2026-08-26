@@ -1,7 +1,7 @@
 use super::command::{Command, CommandAction, CommandKind, CommandParseError, InteractiveShortcut};
 use super::renderer::{
-    DisplayModel, DisplayRecorder, FlattenDisplay, FlattenReason, FlattenReasonSummary, FlattenRow,
-    FlattenUnresolvedDay, MessageLevel, PackDisplay, PackRow, SchronuWriter, TreeDisplay,
+    DisplayModel, FlattenDisplay, FlattenReason, FlattenReasonSummary, FlattenRow,
+    FlattenUnresolvedDay, MessageLevel, PackDisplay, PackRow, TreeDisplay,
 };
 use chrono::{DateTime, Datelike, Days, Duration, Local, NaiveDate, NaiveDateTime, NaiveTime};
 use regex::Regex;
@@ -145,14 +145,10 @@ pub(super) trait DeferCommandContext {
 }
 
 pub(super) trait FinishPlacementCommandContext {
-    fn supports_ansi_color(&self) -> bool;
     fn last_synced_time(&self) -> DateTime<Local>;
     fn focus_started_datetime(&self) -> DateTime<Local>;
     fn focused_task(&self) -> Result<Option<TaskHandle>, ApplicationError>;
-    fn show_focused_tree(
-        &mut self,
-        display: &mut dyn SchronuWriter,
-    ) -> Result<(), ApplicationError>;
+    fn show_focused_tree(&mut self) -> Result<TreeDisplay, ApplicationError>;
     fn complete_focused_task(
         &mut self,
         input: CompleteTaskInput,
@@ -698,19 +694,20 @@ pub(super) fn handle_finish_placement_command<C: FinishPlacementCommandContext +
     context: &mut C,
 ) -> Result<Option<CommandOutcome>, ApplicationError> {
     let kind = command.kind();
-    let mut display = DisplayRecorder::with_ansi_color(context.supports_ansi_color());
     let mut semantic_display = None;
 
     match command {
         Command::Action(CommandAction::Finish { values }) => {
             let Some(focused_task) = context.focused_task()? else {
-                return Ok(Some(CommandOutcome::empty(kind)));
+                let mut outcome = CommandOutcome::empty(kind);
+                outcome.display = DisplayModel::Sequence(Vec::new());
+                return Ok(Some(outcome));
             };
             if focused_task
                 .has_undone_children()
                 .map_err(ApplicationError::TaskTree)?
             {
-                context.show_focused_tree(&mut display)?;
+                semantic_display = Some(DisplayModel::Tree(context.show_focused_tree()?));
             } else {
                 let now = context.last_synced_time();
                 if let Some(finished_at) = decide_finish_time_values(values, &now)? {
@@ -735,7 +732,8 @@ pub(super) fn handle_finish_placement_command<C: FinishPlacementCommandContext +
                             context.set_focused_task_id(next_focus_task_id);
                         }
                         Err(ApplicationError::HasUndoneChildren(_)) => {
-                            context.show_focused_tree(&mut display)?;
+                            semantic_display =
+                                Some(DisplayModel::Tree(context.show_focused_tree()?));
                         }
                         Err(_) => {}
                     }
@@ -758,7 +756,7 @@ pub(super) fn handle_finish_placement_command<C: FinishPlacementCommandContext +
     }
 
     let mut outcome = CommandOutcome::empty(kind);
-    outcome.display = semantic_display.unwrap_or_else(|| display.model().clone());
+    outcome.display = semantic_display.unwrap_or_else(|| DisplayModel::Sequence(Vec::new()));
     Ok(Some(outcome))
 }
 

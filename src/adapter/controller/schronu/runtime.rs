@@ -507,7 +507,6 @@ fn execute_parsed(
     let mut next_id = Uuid::new_v4;
     let mut task_factory = TaskFactory::new(operation_now, &mut next_id);
     let outcome = {
-        let supports_ansi_color = output.supports_ansi_color();
         let mut context = CliCommandContext {
             task_repository,
             free_time_manager,
@@ -515,7 +514,6 @@ fn execute_parsed(
             task_factory: &mut task_factory,
             focus_started_datetime: *focus_started_datetime,
             config: active_config(),
-            supports_ansi_color,
         };
         handle_command(parsed_command, &mut context)?
     }
