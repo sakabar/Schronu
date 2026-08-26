@@ -436,6 +436,7 @@ fn runtimeはio調停だけを所有する() {
         "process::Command::new(",
         "fn interactive_application(",
         "fn execute_verify_command(",
+        "fn render_focus_from_source(",
     ] {
         assert!(
             runtime.text.contains(allowed_runtime_boundary),
@@ -445,33 +446,47 @@ fn runtimeはio調停だけを所有する() {
 
     let mut violations = Vec::new();
     for item_prefix in ["trait FocusDisplaySource", "struct TaskFocusDisplaySource"] {
-        let runtime_owns_item = runtime
+        let runtime_item_offset_opt = runtime
             .text
             .lines()
-            .map(str::trim)
-            .map(strip_top_level_visibility)
-            .any(|line| line.starts_with(item_prefix));
-        let view_owns_item = view
+            .scan(0, |offset, line| {
+                let current = *offset;
+                *offset += line.len() + 1;
+                Some((current, line))
+            })
+            .find_map(|(offset, line)| {
+                strip_top_level_visibility(line.trim())
+                    .starts_with(item_prefix)
+                    .then_some(offset)
+            });
+        let view_item_offset_opt = view
             .text
             .lines()
-            .map(str::trim)
-            .map(strip_top_level_visibility)
-            .any(|line| line.starts_with(item_prefix));
-        if runtime_owns_item || !view_owns_item {
+            .scan(0, |offset, line| {
+                let current = *offset;
+                *offset += line.len() + 1;
+                Some((current, line))
+            })
+            .find_map(|(offset, line)| {
+                strip_top_level_visibility(line.trim())
+                    .starts_with(item_prefix)
+                    .then_some(offset)
+            });
+        if runtime_item_offset_opt.is_some() || view_item_offset_opt.is_none() {
             violations.push(format!(
                 "{item_prefix} must be owned by view.rs instead of runtime.rs"
             ));
         }
-    }
-    let focus_coordinator = "render_focus_from_source";
-    let runtime_owns_coordinator =
-        !top_level_function_definition_offsets(&runtime.text, focus_coordinator).is_empty();
-    let view_owns_coordinator =
-        top_level_function_definition_offsets(&view.text, focus_coordinator).len() == 1;
-    if runtime_owns_coordinator || !view_owns_coordinator {
-        violations.push(format!(
-            "fn {focus_coordinator} must be owned by view.rs instead of runtime.rs"
-        ));
+        if let Some(view_item_offset) = view_item_offset_opt {
+            let view_item = function_region_from_offset(&view.text, view_item_offset);
+            for forbidden in ["SchronuWriter", "render_display_model(", ".flush("] {
+                if view_item.contains(forbidden) {
+                    violations.push(format!(
+                        "{item_prefix} must remain a pure view source without {forbidden}"
+                    ));
+                }
+            }
+        }
     }
 
     assert!(
