@@ -274,6 +274,142 @@ fn task_tree製品context_deepest分岐はtyped_treeを返して分岐taskへfoc
     assert_eq!(repository.task.snapshot().unwrap(), snapshot);
 }
 
+fn run_with_runtime_task_tree_context<T>(
+    root: TaskHandle,
+    now: DateTime<Local>,
+    focused_task_id_opt: Option<Uuid>,
+    generated_id: Uuid,
+    operation: impl FnOnce(&mut RuntimeTaskTreeCommandContext<'_, '_, '_>) -> T,
+) -> (T, TaskHandle, Option<Uuid>, usize) {
+    let mut repository = TestTaskRepository::new(root, now);
+    let mut free_time_manager = TestFreeTimeManager::default();
+    let mut focused_task_id_opt = focused_task_id_opt;
+    let id_generator_call_count = Cell::new(0);
+    let mut next_id = || {
+        id_generator_call_count.set(id_generator_call_count.get() + 1);
+        generated_id
+    };
+    let mut task_factory = TaskFactory::new(now, &mut next_id);
+    let actual = {
+        let mut context = RuntimeTaskTreeCommandContext {
+            task_repository: &mut repository,
+            free_time_manager: &mut free_time_manager,
+            focused_task_id_opt: &mut focused_task_id_opt,
+            task_factory: &mut task_factory,
+            config: active_config(),
+        };
+        operation(&mut context)
+    };
+
+    (
+        actual,
+        repository.task,
+        focused_task_id_opt,
+        id_generator_call_count.get(),
+    )
+}
+
+#[test]
+fn task_tree製品context_childrenが0件なら表示とfocus変更がない() {
+    let now = Local.with_ymd_and_hms(2026, 8, 27, 12, 0, 0).unwrap();
+    let root = new_test_task_handle("no children root").unwrap();
+    let root_id = root.get_id().unwrap();
+    let snapshot = root.snapshot().unwrap();
+
+    let (actual, resulting_root, focused_task_id_opt, identity_count) =
+        run_with_runtime_task_tree_context(root, now, Some(root_id), Uuid::from_u128(9100), |context| {
+            context.focus_children()
+        });
+
+    assert_eq!(actual, Ok(None));
+    assert_eq!(focused_task_id_opt, Some(root_id));
+    assert_eq!(resulting_root.snapshot().unwrap(), snapshot);
+    assert_eq!(identity_count, 0);
+}
+
+#[test]
+fn task_tree製品context_childrenが1件なら表示せずchildへfocusする() {
+    let now = Local.with_ymd_and_hms(2026, 8, 27, 12, 0, 0).unwrap();
+    let root = new_test_task_handle("one child root").unwrap();
+    let child = root.create_as_last_child(new_test_task_attr("only child"));
+    let root_id = root.get_id().unwrap();
+    let child_id = child.get_id().unwrap();
+    let snapshot = root.snapshot().unwrap();
+
+    let (actual, resulting_root, focused_task_id_opt, identity_count) =
+        run_with_runtime_task_tree_context(root, now, Some(root_id), Uuid::from_u128(9101), |context| {
+            context.focus_children()
+        });
+
+    assert_eq!(actual, Ok(None));
+    assert_eq!(focused_task_id_opt, Some(child_id));
+    assert_eq!(resulting_root.snapshot().unwrap(), snapshot);
+    assert_eq!(identity_count, 0);
+}
+
+#[test]
+fn task_tree製品context_deepestがleafなら表示せずfocusを維持する() {
+    let now = Local.with_ymd_and_hms(2026, 8, 27, 12, 0, 0).unwrap();
+    let root = new_test_task_handle("leaf root").unwrap();
+    let leaf = root.create_as_last_child(new_test_task_attr("focused leaf"));
+    let leaf_id = leaf.get_id().unwrap();
+    let snapshot = root.snapshot().unwrap();
+
+    let (actual, resulting_root, focused_task_id_opt, identity_count) =
+        run_with_runtime_task_tree_context(root, now, Some(leaf_id), Uuid::from_u128(9102), |context| {
+            context.focus_deepest()
+        });
+
+    assert_eq!(actual, Ok(None));
+    assert_eq!(focused_task_id_opt, Some(leaf_id));
+    assert_eq!(resulting_root.snapshot().unwrap(), snapshot);
+    assert_eq!(identity_count, 0);
+}
+
+#[test]
+fn task_tree製品context_next_upはfocusなしなら表示も状態変更もない() {
+    let now = Local.with_ymd_and_hms(2026, 8, 27, 12, 0, 0).unwrap();
+    let root = new_test_task_handle("unfocused root").unwrap();
+    let snapshot = root.snapshot().unwrap();
+
+    let (actual, resulting_root, focused_task_id_opt, identity_count) =
+        run_with_runtime_task_tree_context(root, now, None, Uuid::from_u128(9103), |context| {
+            context.next_up("new parent", Some(10))
+        });
+
+    assert_eq!(actual, Ok(None));
+    assert_eq!(focused_task_id_opt, None);
+    assert_eq!(resulting_root.snapshot().unwrap(), snapshot);
+    assert_eq!(identity_count, 0);
+}
+
+#[test]
+fn task_tree製品context_next_up成功は表示せずparentを作成してfocusする() {
+    let now = Local.with_ymd_and_hms(2026, 8, 27, 12, 0, 0).unwrap();
+    let root = new_test_task_handle("next-up success root").unwrap();
+    let focused = root.create_as_last_child(new_test_task_attr("focused child"));
+    let focused_id = focused.get_id().unwrap();
+    let new_parent_id = Uuid::from_u128(9104);
+
+    let (actual, resulting_root, focused_task_id_opt, identity_count) =
+        run_with_runtime_task_tree_context(root, now, Some(focused_id), new_parent_id, |context| {
+            context.next_up("new parent", Some(10))
+        });
+
+    assert_eq!(actual, Ok(None));
+    assert_eq!(focused_task_id_opt, Some(new_parent_id));
+    assert_eq!(identity_count, 1);
+    let children = resulting_root.get_children().unwrap();
+    assert_eq!(children.len(), 1);
+    let new_parent = &children[0];
+    assert_eq!(new_parent.get_id().unwrap(), new_parent_id);
+    assert_eq!(new_parent.get_name().unwrap(), "new parent");
+    assert_eq!(
+        new_parent.get_children().unwrap()[0].get_id().unwrap(),
+        focused_id
+    );
+}
+
 #[test]
 fn task_tree製品context_next_up_errorはsemantic_errorを返して状態を維持する() {
     let now = Local.with_ymd_and_hms(2026, 8, 27, 12, 0, 0).unwrap();
