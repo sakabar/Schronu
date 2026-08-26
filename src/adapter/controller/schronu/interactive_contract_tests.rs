@@ -101,6 +101,22 @@ fn top_level_function_definition_offsets(source: &str, function_name: &str) -> V
 }
 
 fn top_level_item_definition_offsets(source: &str, item_prefix: &str) -> Vec<usize> {
+    top_level_product_item_offsets(source)
+        .into_iter()
+        .filter(|offset| {
+            let source_line = source[*offset..].lines().next().unwrap_or_default();
+            let declaration = strip_top_level_visibility(source_line);
+            declaration.strip_prefix(item_prefix).is_some_and(|rest| {
+                rest.is_empty()
+                    || rest.chars().next().is_some_and(|character| {
+                        character.is_whitespace() || matches!(character, '<' | '(' | '{' | ':')
+                    })
+            })
+        })
+        .collect()
+}
+
+fn top_level_product_item_offsets(source: &str) -> Vec<usize> {
     let mut offsets = Vec::new();
     let mut line_start = 0;
     let mut non_code_state = MultilineNonCodeState::default();
@@ -111,19 +127,10 @@ fn top_level_item_definition_offsets(source: &str, item_prefix: &str) -> Vec<usi
         if !non_code_state.starts_in_non_code()
             && !source_line.chars().next().is_some_and(char::is_whitespace)
         {
-            if source_line.starts_with("#[") {
+            if source_line.starts_with("#[") || source_line.starts_with("#![") {
                 cfg_test_attribute_pending |= source_line.contains("cfg(test)");
             } else if is_top_level_rust_item(source_line) {
-                let declaration = strip_top_level_visibility(source_line);
-                if !cfg_test_attribute_pending
-                    && declaration.strip_prefix(item_prefix).is_some_and(|rest| {
-                        rest.is_empty()
-                            || rest.chars().next().is_some_and(|character| {
-                                character.is_whitespace()
-                                    || matches!(character, '<' | '(' | '{' | ':')
-                            })
-                    })
-                {
+                if !cfg_test_attribute_pending {
                     offsets.push(line_start);
                 }
                 cfg_test_attribute_pending = false;
@@ -133,6 +140,18 @@ fn top_level_item_definition_offsets(source: &str, item_prefix: &str) -> Vec<usi
         line_start += line.len();
     }
     offsets
+}
+
+fn product_code_without_non_code(source: &str) -> String {
+    let mut product_code = String::new();
+    for offset in top_level_product_item_offsets(source) {
+        let item_region = function_region_from_offset(source, offset);
+        let mut non_code_state = MultilineNonCodeState::default();
+        for line in item_region.split_inclusive('\n') {
+            product_code.push_str(&non_code_state.scan_line_with_code(line));
+        }
+    }
+    product_code
 }
 
 #[derive(Default)]
@@ -150,7 +169,12 @@ impl MultilineNonCodeState {
     }
 
     fn scan_line(&mut self, line: &str) {
+        let _ = self.scan_line_with_code(line);
+    }
+
+    fn scan_line_with_code(&mut self, line: &str) -> String {
         let bytes = line.as_bytes();
+        let mut code = Vec::with_capacity(bytes.len());
         let mut index = 0;
         while index < bytes.len() {
             if let Some(terminator) = self.raw_string_terminator_opt.as_ref() {
@@ -203,9 +227,16 @@ impl MultilineNonCodeState {
             }
             if bytes[index] == b'"' {
                 self.in_quoted_string = true;
+                index += 1;
+                continue;
             }
+            code.push(bytes[index]);
             index += 1;
         }
+        if line.ends_with('\n') && code.last() != Some(&b'\n') {
+            code.push(b'\n');
+        }
+        String::from_utf8_lossy(&code).into_owned()
     }
 }
 
@@ -506,9 +537,6 @@ fn view表示計算はwriterに依存しない() {
     let (_, show_all_source) =
         unique_function_region(&product_sources, "execute_show_all_tasks_with_config")
             .expect("view.rs must retain one typed task-list calculation entry");
-    let show_all_signature = show_all_source
-        .split_once('{')
-        .map_or(show_all_source, |(signature, _)| signature);
 
     let mut violations = Vec::new();
     for typed_metrics_construction in ["TaskListMetricsDisplay {", "DisplayModel::TaskListMetrics("]
@@ -519,17 +547,41 @@ fn view表示計算はwriterに依存しない() {
             ));
         }
     }
-    for writer_type in ["SchronuWriter", "dyn Write"] {
-        if show_all_signature.contains(writer_type) {
-            violations.push(format!(
-                "execute_show_all_tasks_with_config signature depends on {writer_type}"
-            ));
+    for offset in top_level_product_item_offsets(&view.text) {
+        let source_line = view.text[offset..].lines().next().unwrap_or_default();
+        if !strip_top_level_visibility(source_line).starts_with("fn ") {
+            continue;
+        }
+        let function_source = function_region_from_offset(&view.text, offset);
+        let signature = function_source
+            .split_once('{')
+            .map_or(function_source, |(signature, _)| signature);
+        for writer_type in ["SchronuWriter", "dyn Write"] {
+            if signature.contains(writer_type) {
+                violations.push(format!(
+                    "view function signature depends on {writer_type}: {source_line}"
+                ));
+            }
         }
     }
-    for direct_output in ["writeln_newline(", "render_display_model(", ".flush("] {
-        if show_all_source.contains(direct_output) {
+
+    let product_view_code = product_code_without_non_code(&view.text);
+    for direct_output in [
+        "print!(",
+        "println!(",
+        "eprintln!(",
+        "write!(",
+        "writeln!(",
+        ".write_all(",
+        "writeln_newline(",
+        "render_display_model(",
+        ".flush(",
+        "renderer::writeln_newline(",
+        "renderer::render_display_model(",
+    ] {
+        if product_view_code.contains(direct_output) {
             violations.push(format!(
-                "execute_show_all_tasks_with_config directly performs output via {direct_output}"
+                "view.rs product code directly performs output via {direct_output}"
             ));
         }
     }
@@ -636,6 +688,51 @@ impl FocusDisplaySource for TaskFocusDisplaySource<'_> {}
     assert!(source[struct_offsets[0]..].starts_with("pub(super) struct TaskFocusDisplaySource"));
     assert!(source[impl_offsets[0]..]
         .starts_with("impl FocusDisplaySource for TaskFocusDisplaySource<'_>"));
+}
+
+#[test]
+fn product_code検出はcommentとraw_stringとtest専用itemを除外する() {
+    let source = r##"
+#[cfg(test)]
+fn test_only_output(writer: &mut dyn SchronuWriter) {
+    println!("test");
+    writer.flush();
+}
+
+const RAW: &str = r#"
+eprintln!("raw");
+super::renderer::writeln_newline(writer, "raw");
+"#;
+
+fn pure_view() -> DisplayModel {
+    // println!("line comment");
+    /*
+    writeln!(writer, "block comment");
+    renderer::render_display_model(writer, &model);
+    */
+    let message = "write!(writer, ignored)";
+    DisplayModel::Message { level, text: message.to_string() }
+}
+"##;
+
+    let product_code = product_code_without_non_code(source);
+
+    assert!(product_code.contains("fn pure_view() -> DisplayModel"));
+    for false_positive in [
+        "SchronuWriter",
+        "println!(",
+        "eprintln!(",
+        "write!(",
+        "writeln!(",
+        ".flush(",
+        "renderer::writeln_newline(",
+        "renderer::render_display_model(",
+    ] {
+        assert!(
+            !product_code.contains(false_positive),
+            "non-product code must not expose {false_positive}: {product_code}"
+        );
+    }
 }
 
 #[test]
