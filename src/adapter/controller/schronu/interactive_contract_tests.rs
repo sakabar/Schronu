@@ -97,19 +97,37 @@ fn function_region_from_offset(source: &str, start: usize) -> &str {
 }
 
 fn top_level_function_definition_offsets(source: &str, function_name: &str) -> Vec<usize> {
-    let marker = format!("fn {function_name}(");
+    top_level_item_definition_offsets(source, &format!("fn {function_name}"))
+}
+
+fn top_level_item_definition_offsets(source: &str, item_prefix: &str) -> Vec<usize> {
     let mut offsets = Vec::new();
     let mut line_start = 0;
     let mut non_code_state = MultilineNonCodeState::default();
+    let mut cfg_test_attribute_pending = false;
 
     for line in source.split_inclusive('\n') {
+        let source_line = line.trim_end_matches(['\r', '\n']);
         if !non_code_state.starts_in_non_code()
-            && is_top_level_function_definition(line.trim_end(), function_name)
+            && !source_line.chars().next().is_some_and(char::is_whitespace)
         {
-            let marker_offset = line
-                .find(&marker)
-                .expect("matching function signature must contain its marker");
-            offsets.push(line_start + marker_offset);
+            if source_line.starts_with("#[") {
+                cfg_test_attribute_pending |= source_line.contains("cfg(test)");
+            } else if is_top_level_rust_item(source_line) {
+                let declaration = strip_top_level_visibility(source_line);
+                if !cfg_test_attribute_pending
+                    && declaration.strip_prefix(item_prefix).is_some_and(|rest| {
+                        rest.is_empty()
+                            || rest.chars().next().is_some_and(|character| {
+                                character.is_whitespace()
+                                    || matches!(character, '<' | '(' | '{' | ':')
+                            })
+                    })
+                {
+                    offsets.push(line_start);
+                }
+                cfg_test_attribute_pending = false;
+            }
         }
         non_code_state.scan_line(line);
         line_start += line.len();
@@ -251,13 +269,6 @@ fn strip_top_level_visibility(line: &str) -> &str {
     } else {
         line
     }
-}
-
-fn is_top_level_function_definition(line: &str, function_name: &str) -> bool {
-    if line.is_empty() || line.chars().next().is_some_and(char::is_whitespace) {
-        return false;
-    }
-    strip_top_level_visibility(line).starts_with(&format!("fn {function_name}("))
 }
 
 #[test]
@@ -446,32 +457,12 @@ fn runtimeはio調停だけを所有する() {
 
     let mut violations = Vec::new();
     for item_prefix in ["trait FocusDisplaySource", "struct TaskFocusDisplaySource"] {
-        let runtime_item_offset_opt = runtime
-            .text
-            .lines()
-            .scan(0, |offset, line| {
-                let current = *offset;
-                *offset += line.len() + 1;
-                Some((current, line))
-            })
-            .find_map(|(offset, line)| {
-                strip_top_level_visibility(line.trim())
-                    .starts_with(item_prefix)
-                    .then_some(offset)
-            });
-        let view_item_offset_opt = view
-            .text
-            .lines()
-            .scan(0, |offset, line| {
-                let current = *offset;
-                *offset += line.len() + 1;
-                Some((current, line))
-            })
-            .find_map(|(offset, line)| {
-                strip_top_level_visibility(line.trim())
-                    .starts_with(item_prefix)
-                    .then_some(offset)
-            });
+        let runtime_item_offset_opt = top_level_item_definition_offsets(&runtime.text, item_prefix)
+            .into_iter()
+            .next();
+        let view_item_offset_opt = top_level_item_definition_offsets(&view.text, item_prefix)
+            .into_iter()
+            .next();
         if runtime_item_offset_opt.is_some() || view_item_offset_opt.is_none() {
             violations.push(format!(
                 "{item_prefix} must be owned by view.rs instead of runtime.rs"
@@ -525,6 +516,40 @@ fn unique_function_regionはblock_comment内のraw_openerを無視する() {
 
     assert_eq!(path, Path::new("fixture.rs"));
     assert!(region.contains("shared_dispatch();"));
+}
+
+#[test]
+fn top_level_item検出はnestedとtest専用と非codeを除外する() {
+    let source = r##"
+#[cfg(test)]
+trait FocusDisplaySource {}
+
+fn nested_owner() {
+    trait FocusDisplaySource {}
+    struct TaskFocusDisplaySource<'a> { value: &'a str }
+}
+
+const RAW: &str = r#"
+trait FocusDisplaySource {}
+struct TaskFocusDisplaySource<'a> { value: &'a str }
+"#;
+
+/*
+trait FocusDisplaySource {}
+struct TaskFocusDisplaySource<'a> { value: &'a str }
+*/
+
+pub(super) trait FocusDisplaySource {}
+pub(super) struct TaskFocusDisplaySource<'a> { value: &'a str }
+"##;
+
+    let trait_offsets = top_level_item_definition_offsets(source, "trait FocusDisplaySource");
+    let struct_offsets = top_level_item_definition_offsets(source, "struct TaskFocusDisplaySource");
+
+    assert_eq!(trait_offsets.len(), 1);
+    assert_eq!(struct_offsets.len(), 1);
+    assert!(source[trait_offsets[0]..].starts_with("pub(super) trait FocusDisplaySource"));
+    assert!(source[struct_offsets[0]..].starts_with("pub(super) struct TaskFocusDisplaySource"));
 }
 
 #[test]
