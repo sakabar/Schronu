@@ -309,7 +309,7 @@
 - 優先度: `P1`
 - 概算規模: `XL`
 - 完了日: 2026-08-27
-- 対応: 通常commandの統合入口を`handler::handle_command`へ一本化し、privateな`CommandContext`の製品実装、日時解釈、domain mutationを`command_context.rs`へ分離した。tree、task list、calendar、band、focus、pack、flattenの表示計算を`view.rs`へ移し、rendererが意味的な`DisplayModel`から既存出力とflushを生成する構成にした。runtimeはrepository transaction、外部I/O、interactive調停、read-onlyな`Verify`検査へ限定し、`DisplayFragment`と`DisplayRecorder`を削除した。
+- 対応: 通常commandの統合入口を`handler::handle_command`へ一本化し、privateな`CommandContext`の製品実装、日時解釈、domain mutationを`command_context.rs`へ分離した。tree、task list、calendar、band、focusの表示計算を`view.rs`へ移し、pack、flattenを含む意味的な`DisplayModel`の組み立てをhandlerへ集約した。rendererはそのmodelから既存出力とflushを生成し、`DisplayFragment`と`DisplayRecorder`を削除した。runtimeはI/O調停だけを担う。
 - 実測: TD-018実装開始時に4,892行だった`runtime.rs`は1,375行になった。lib 501 passed、1 ignored、CLI binary 431 passed、MCP binary 2 passed、MCP stdio 12 passed、Spreadsheet 4 passedで、合計950 passed、1 ignoredとなった。ignoredは既存の`benchmark_save_2172project中1件変更を2秒未満で処理する`のみである。
 - 品質ゲート: `git diff --check`、`cargo fmt --check`、`cargo clippy --locked --all-targets -- -D warnings`、`cargo test --locked`が成功した。製品公開API、command名・alias、CLI文言、Spreadsheet A-J列、YAML、MCP契約は変更していない。
 
