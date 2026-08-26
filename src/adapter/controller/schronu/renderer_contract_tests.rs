@@ -172,6 +172,42 @@ fn task_list_metricsはtyped値から既存4行と末尾空行を生成する() 
 }
 
 #[test]
+fn task_list_metricsは余暇の正値とゼロを正符号で描画する() {
+    for (free_hours, expected_free_term) in [(11.5, "+ 11 + 30/60"), (0.0, "+ 0 + 0/60")] {
+        let display = DisplayModel::TaskListMetrics(TaskListMetricsDisplay {
+            busy_minutes: 60,
+            lambda_minutes: 120,
+            estimated_finish_at: Local.with_ymd_and_hms(2026, 8, 27, 3, 4, 5).unwrap(),
+            non_repetitive_work_hours: 2.0,
+            repetitive_work_hours: 1.0,
+            free_hours,
+            rho: 0.75,
+            non_repetitive_rho: 0.25,
+            lq: Some(1.5),
+            non_repetitive_lq: None,
+        });
+        let mut writer = TraceWriter::default();
+
+        render_display_model(&mut writer, &display).unwrap();
+
+        assert_eq!(
+            writer.operations,
+            [
+                "newline:残り拘束時間は1.0時間です".to_string(),
+                "newline:完了見込み日時は2.0時間後の2026/08/27 03:04:05です".to_string(),
+                format!(
+                    "newline:rep ρ = (2.00 + 1.00) / (2.00 + 1.00 {expected_free_term}) = 0.75, Lq = 1.5"
+                ),
+                format!(
+                    "newline:one ρ = (2.00 + 0.00) / (2.00 + 0.00 {expected_free_term}) = 0.25, Lq = inf"
+                ),
+                "newline:".to_string(),
+            ]
+        );
+    }
+}
+
+#[test]
 fn tree_displayはtyped_rowから既存のraw空行とwriter固有newlineを生成する() {
     let root_id = Uuid::parse_str("11111111-1111-1111-1111-111111111111").unwrap();
     let child_id = Uuid::parse_str("22222222-2222-2222-2222-222222222222").unwrap();
