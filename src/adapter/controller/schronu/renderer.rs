@@ -346,6 +346,7 @@ impl DisplayModel {
         }
     }
 
+    #[allow(dead_code)] // Removed with legacy display fragments in the dedicated cleanup commit.
     pub(super) fn flush() -> Self {
         Self::Legacy {
             fragments: vec![DisplayFragment::Flush],
@@ -463,6 +464,24 @@ impl SchronuWriter for DisplayRecorder {
     fn supports_ansi_color(&self) -> bool {
         self.supports_ansi_color
     }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(super) enum RenderMode {
+    Flushed,
+    Unflushed,
+}
+
+pub(super) fn render_display_model_with_mode(
+    writer: &mut dyn SchronuWriter,
+    model: &DisplayModel,
+    mode: RenderMode,
+) -> Result<(), std::io::Error> {
+    render_display_model(writer, model)?;
+    if mode == RenderMode::Flushed {
+        writer.flush()?;
+    }
+    Ok(())
 }
 
 pub(super) fn render_display_model(

@@ -17,8 +17,8 @@ use super::renderer::{
     BandDayRow, BandDurations, FocusDisplay, BAND_SEGMENTS,
 };
 use super::renderer::{
-    render_display_model, render_plain_display_model, writeln_newline, DisplayModel,
-    ErrorCapturingWriter, MessageLevel, SchronuWriter,
+    render_display_model, render_display_model_with_mode, render_plain_display_model,
+    writeln_newline, DisplayModel, ErrorCapturingWriter, MessageLevel, RenderMode, SchronuWriter,
 };
 use super::view::*;
 use chrono::{DateTime, Duration, Local};
@@ -546,7 +546,8 @@ fn apply_command_outcome(
     config: &SchronuConfig,
 ) -> Result<(), CommandError> {
     if !outcome.display.is_empty() {
-        render_display_model(stdout, &outcome.display).map_err(CommandError::Output)?;
+        render_display_model_with_mode(stdout, &outcome.display, RenderMode::Unflushed)
+            .map_err(CommandError::Output)?;
     }
 
     if let Some(request) = outcome.external_request {
@@ -586,7 +587,12 @@ fn apply_command_outcome(
     if matches!(&application_mode, OutcomeApplicationMode::Flushed)
         && outcome.kind != CommandKind::Noop
     {
-        render_display_model(stdout, &DisplayModel::flush()).map_err(CommandError::Output)?;
+        render_display_model_with_mode(
+            stdout,
+            &DisplayModel::Sequence(Vec::new()),
+            RenderMode::Flushed,
+        )
+        .map_err(CommandError::Output)?;
     }
     Ok(())
 }
@@ -619,7 +625,7 @@ fn execute_verify_command(
     operation_now: DateTime<Local>,
 ) -> Result<(), RunError> {
     let _storage_lock = reload_repository_for_cli(task_repository, operation_now)?;
-    render_display_model(stdout, &verify_display_model())
+    render_display_model_with_mode(stdout, &verify_display_model(), RenderMode::Flushed)
         .map_err(CommandError::Output)
         .map_err(RunError::Command)
 }
@@ -1040,9 +1046,13 @@ fn execute_interactive_command(
     } else {
         let command_result = if parsed_command.kind() == CommandKind::Verify {
             let mut output = ErrorCapturingWriter::new(stdout);
-            render_display_model(&mut output, &DisplayModel::flush())
-                .map_err(CommandError::Output)
-                .and_then(|()| captured_output_result(&mut output))
+            render_display_model_with_mode(
+                &mut output,
+                &DisplayModel::Sequence(Vec::new()),
+                RenderMode::Flushed,
+            )
+            .map_err(CommandError::Output)
+            .and_then(|()| captured_output_result(&mut output))
         } else {
             execute_parsed(
                 stdout,
