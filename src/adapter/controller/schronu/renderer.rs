@@ -48,11 +48,11 @@ pub(super) trait SchronuWriter: Write {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(super) enum MessageLevel {
     Plain,
-    #[allow(dead_code)] // Adopted by later display-model migrations.
+    #[allow(dead_code)] // Retained by the semantic message-level contract.
     Info,
-    #[allow(dead_code)] // Adopted by later display-model migrations.
+    #[allow(dead_code)] // Retained by the semantic message-level contract.
     Warn,
-    #[allow(dead_code)] // Adopted by later display-model migrations.
+    #[allow(dead_code)] // Retained by the semantic message-level contract.
     Critical,
     Error,
 }
