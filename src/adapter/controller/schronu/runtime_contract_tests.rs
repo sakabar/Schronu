@@ -5547,6 +5547,49 @@ fn test_interactive_submitは製品event経路でload実行保存する() {
 }
 
 #[test]
+fn test_interactive_submit完了はtyped_kindを再描画判断へ渡す() {
+    let storage_dir = TestStorageDir::new();
+    std::fs::create_dir_all(&storage_dir.path).unwrap();
+    let now = Local.with_ymd_and_hms(2026, 8, 26, 12, 0, 0).unwrap();
+    let task = new_test_task_handle("再描画判断対象").unwrap();
+    let task_id = task.get_id().unwrap();
+    let mut repository =
+        TestTaskRepository::new(task, now).with_storage_directory(&storage_dir.path);
+    let mut free_time_manager = TestFreeTimeManager::default();
+    let mut stdout = TestWriter::new();
+    let mut focused_task_id_opt = Some(task_id);
+    let mut last_focused_task_id_opt = Some(task_id);
+    let mut focus_started_datetime = now;
+    let mut focus_selection_mode = FocusSelectionMode::HighestPriority;
+
+    let outcome = handle_interactive_submit_at(
+        &mut stdout,
+        &mut repository,
+        &mut free_time_manager,
+        InteractiveRepositoryState {
+            focused_task_id_opt: &mut focused_task_id_opt,
+            last_focused_task_id_opt: &mut last_focused_task_id_opt,
+            focus_started_datetime: &mut focus_started_datetime,
+            focus_selection_mode: &mut focus_selection_mode,
+        },
+        "全",
+        now,
+    );
+
+    let command_kind = match outcome {
+        InteractiveRepositoryEventOutcome::CommandExecuted(command_kind, operation_now) => {
+            assert_eq!(operation_now, now);
+            command_kind
+        }
+        _ => panic!("interactive submit must complete with its typed command kind"),
+    };
+    assert_eq!(command_kind, CommandKind::ShowAll);
+    assert!(interactive::should_suppress_leaf_tasks_after_command(
+        command_kind
+    ));
+}
+
+#[test]
 fn test_interactive_verifyは出力errorを分類してtransactionを継続する() {
     let operation_now = Local.with_ymd_and_hms(2026, 8, 23, 12, 0, 0).unwrap();
 
