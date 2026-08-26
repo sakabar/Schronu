@@ -464,6 +464,135 @@ fn direct_impl_method_regions<'a>(implementation: &'a str, method_name: &str) ->
     regions
 }
 
+fn compact_code(source: &str) -> String {
+    code_only(source)
+        .chars()
+        .filter(|character| !character.is_whitespace())
+        .collect()
+}
+
+fn unique_top_level_item_region<'a>(source: &'a str, item_prefix: &str) -> Result<&'a str, String> {
+    let offsets = top_level_item_definition_offsets(source, item_prefix);
+    if offsets.len() != 1 {
+        return Err(format!(
+            "{item_prefix} must have exactly one product definition; found {}",
+            offsets.len()
+        ));
+    }
+    Ok(function_region_from_offset(source, offsets[0]))
+}
+
+fn task_tree_writer_free_boundary_violations(
+    handler_source: &str,
+    context_source: &str,
+) -> Vec<String> {
+    let mut violations = Vec::new();
+
+    let trait_region =
+        match unique_top_level_item_region(handler_source, "trait TaskTreeCommandContext") {
+            Ok(region) => region,
+            Err(error) => {
+                violations.push(error);
+                return violations;
+            }
+        };
+    let trait_code = compact_code(trait_region);
+    for required in [
+        "fnfocus_children(&mutself)->Result<Option<DisplayModel>,ApplicationError>;",
+        "fnfocus_deepest(&mutself)->Result<Option<DisplayModel>,ApplicationError>;",
+        "fnnext_up(&mutself,name:&str,estimated_minutes:Option<i64>)->Result<Option<DisplayModel>,ApplicationError>;",
+    ] {
+        if !trait_code.contains(required) {
+            violations.push(format!("TaskTreeCommandContext missing {required}"));
+        }
+    }
+    for forbidden in ["SchronuWriter", "supports_ansi_color"] {
+        if trait_code.contains(forbidden) {
+            violations.push(format!("TaskTreeCommandContext retains {forbidden}"));
+        }
+    }
+
+    let handler_offsets =
+        top_level_function_definition_offsets(handler_source, "handle_task_tree_command");
+    if handler_offsets.len() != 1 {
+        violations.push(format!(
+            "handle_task_tree_command must have exactly one product definition; found {}",
+            handler_offsets.len()
+        ));
+    } else {
+        let handler_code = compact_code(function_region_from_offset(
+            handler_source,
+            handler_offsets[0],
+        ));
+        for required in [
+            "semantic_display=context.focus_children()?",
+            "semantic_display=context.focus_deepest()?",
+            "semantic_display=context.next_up(name,*estimated_minutes)?",
+        ] {
+            if !handler_code.contains(required) {
+                violations.push(format!("task-tree handler missing {required}"));
+            }
+        }
+        for forbidden in ["&mutdisplay", "DisplayRecorder::", "supports_ansi_color"] {
+            if handler_code.contains(forbidden) {
+                violations.push(format!("task-tree handler retains {forbidden}"));
+            }
+        }
+    }
+
+    let runtime_struct = match unique_top_level_item_region(
+        context_source,
+        "struct RuntimeTaskTreeCommandContext",
+    ) {
+        Ok(region) => region,
+        Err(error) => {
+            violations.push(error);
+            return violations;
+        }
+    };
+    if compact_code(runtime_struct).contains("supports_ansi_color") {
+        violations.push("RuntimeTaskTreeCommandContext retains supports_ansi_color".to_string());
+    }
+
+    for implementation_prefix in [
+        "impl TaskTreeCommandContext for RuntimeTaskTreeCommandContext",
+        "impl TaskTreeCommandContext for CliCommandContext",
+    ] {
+        let implementation =
+            match unique_top_level_item_region(context_source, implementation_prefix) {
+                Ok(region) => region,
+                Err(error) => {
+                    violations.push(error);
+                    continue;
+                }
+            };
+        let implementation_code = compact_code(implementation);
+        for forbidden in ["SchronuWriter", "supports_ansi_color"] {
+            if implementation_code.contains(forbidden) {
+                violations.push(format!("{implementation_prefix} retains {forbidden}"));
+            }
+        }
+        for method_name in ["focus_children", "focus_deepest", "next_up"] {
+            let methods = direct_impl_method_regions(implementation, method_name);
+            if methods.len() != 1 {
+                violations.push(format!(
+                    "{implementation_prefix} must define {method_name} exactly once; found {}",
+                    methods.len()
+                ));
+                continue;
+            }
+            let method_code = compact_code(methods[0]);
+            if !method_code.contains("->Result<Option<DisplayModel>,ApplicationError>") {
+                violations.push(format!(
+                    "{implementation_prefix}::{method_name} must return typed optional display"
+                ));
+            }
+        }
+    }
+
+    violations
+}
+
 fn view_writer_dependency_violations(source: &str) -> Vec<String> {
     let mut violations = Vec::new();
     for offset in top_level_product_function_offsets(source) {
@@ -769,6 +898,101 @@ fn view表示計算はwriterと直接出力に依存しない() {
         violations.is_empty(),
         "view.rs must return typed models without writer/output dependencies:\n{}",
         violations.join("\n")
+    );
+}
+
+#[test]
+fn task_tree製品境界はcode領域だけでwriter非依存を検証する() {
+    let product_sources = controller_product_sources();
+    let source_for = |file_name: &str| {
+        product_sources
+            .iter()
+            .find(|source| {
+                source.path.file_name().and_then(|name| name.to_str()) == Some(file_name)
+            })
+            .unwrap_or_else(|| panic!("missing controller product module: {file_name}"))
+    };
+    let violations = task_tree_writer_free_boundary_violations(
+        &source_for("handler.rs").text,
+        &source_for("command_context.rs").text,
+    );
+
+    assert!(
+        violations.is_empty(),
+        "TaskTree writer-free boundary violations:\n{}",
+        violations.join("\n")
+    );
+}
+
+#[test]
+fn task_tree境界scannerは非codeと対象外itemを無視する() {
+    let handler_source = r###"
+pub(super) trait TaskTreeCommandContext {
+    // fn focus_children(&mut self, display: &mut dyn SchronuWriter);
+    fn focus_children(&mut self) -> Result<Option<DisplayModel>, ApplicationError>;
+    fn focus_deepest(&mut self) -> Result<Option<DisplayModel>, ApplicationError>;
+    fn next_up(
+        &mut self,
+        name: &str,
+        estimated_minutes: Option<i64>,
+    ) -> Result<Option<DisplayModel>, ApplicationError>;
+}
+
+pub(super) fn handle_task_tree_command() {
+    let quoted = "DisplayRecorder::with_ansi_color(context.supports_ansi_color())";
+    let raw = r#"context.focus_children(&mut display)?"#;
+    /* context.focus_deepest(&mut display)?; */
+    semantic_display = context.focus_children()?;
+    semantic_display = context.focus_deepest()?;
+    semantic_display = context.next_up(name, *estimated_minutes)?;
+}
+
+fn unrelated_handler() {
+    let mut display = DisplayRecorder::default();
+    context.focus_children(&mut display);
+}
+"###;
+    let context_source = r###"
+pub(super) struct RuntimeTaskTreeCommandContext {
+    value: bool,
+    /* supports_ansi_color: bool, */
+}
+
+impl TaskTreeCommandContext for RuntimeTaskTreeCommandContext<'_> {
+    fn focus_children(&mut self) -> Result<Option<DisplayModel>, ApplicationError> {
+        let raw = r#"SchronuWriter supports_ansi_color"#;
+        Ok(None)
+    }
+    fn focus_deepest(&mut self) -> Result<Option<DisplayModel>, ApplicationError> { Ok(None) }
+    fn next_up(&mut self, name: &str, estimated_minutes: Option<i64>) -> Result<Option<DisplayModel>, ApplicationError> { Ok(None) }
+}
+
+impl TaskTreeCommandContext for CliCommandContext<'_> {
+    fn focus_children(&mut self) -> Result<Option<DisplayModel>, ApplicationError> { Ok(None) }
+    fn focus_deepest(&mut self) -> Result<Option<DisplayModel>, ApplicationError> { Ok(None) }
+    fn next_up(&mut self, name: &str, estimated_minutes: Option<i64>) -> Result<Option<DisplayModel>, ApplicationError> { Ok(None) }
+}
+
+impl UnrelatedContext {
+    fn focus_children(&mut self, display: &mut dyn SchronuWriter) {
+        self.supports_ansi_color = true;
+    }
+}
+"###;
+
+    assert_eq!(
+        task_tree_writer_free_boundary_violations(handler_source, context_source),
+        Vec::<String>::new()
+    );
+
+    let bad_handler = handler_source.replace(
+        "semantic_display = context.focus_children()?;",
+        "semantic_display = context.focus_children(&mut display)?;",
+    );
+    assert!(
+        task_tree_writer_free_boundary_violations(&bad_handler, context_source)
+            .iter()
+            .any(|violation| violation.contains("&mutdisplay"))
     );
 }
 

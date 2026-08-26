@@ -885,69 +885,6 @@ fn task_tree_contextは伝播application_errorをerrorのまま返す() {
 }
 
 #[test]
-fn task_tree_context製品interfaceはwriterを受け取らずhandlerがtyped表示をcomposeする() {
-    let handler_source = include_str!("handler.rs");
-    let trait_source = handler_source
-        .split_once("pub(super) trait TaskTreeCommandContext {")
-        .and_then(|(_, tail)| tail.split_once("\n}"))
-        .map(|(body, _)| body)
-        .expect("TaskTreeCommandContext trait must be uniquely extractable");
-    assert!(!trait_source.contains("SchronuWriter"));
-    assert!(!trait_source.contains("supports_ansi_color"));
-    for required in [
-        "fn focus_children(&mut self) -> Result<Option<DisplayModel>, ApplicationError>;",
-        "fn focus_deepest(&mut self) -> Result<Option<DisplayModel>, ApplicationError>;",
-        "fn next_up(\n        &mut self,\n        name: &str,\n        estimated_minutes: Option<i64>,\n    ) -> Result<Option<DisplayModel>, ApplicationError>;",
-    ] {
-        assert!(trait_source.contains(required), "missing typed interface: {required}");
-    }
-
-    let task_tree_handler = handler_source
-        .split_once("pub(super) fn handle_task_tree_command")
-        .and_then(|(_, tail)| tail.split_once("\npub(super) fn handle_project_command"))
-        .map(|(body, _)| body)
-        .expect("task-tree handler must be uniquely extractable");
-    for required in [
-        "semantic_display = context.focus_children()?",
-        "semantic_display = context.focus_deepest()?",
-        "semantic_display = context.next_up(name, *estimated_minutes)?",
-    ] {
-        assert!(
-            task_tree_handler.contains(required),
-            "handler must compose {required}"
-        );
-    }
-    for forbidden in ["&mut display", "DisplayRecorder::"] {
-        assert!(
-            !task_tree_handler.contains(forbidden),
-            "legacy handler path: {forbidden}"
-        );
-    }
-
-    let context_source = include_str!("command_context.rs");
-    let runtime_context = context_source
-        .split_once("pub(super) struct RuntimeTaskTreeCommandContext")
-        .and_then(|(_, tail)| {
-            tail.split_once("impl TaskTreeCommandContext for RuntimeTaskTreeCommandContext")
-        })
-        .map(|(body, _)| body)
-        .expect("runtime task-tree context must be uniquely extractable");
-    assert!(!runtime_context.contains("supports_ansi_color"));
-
-    for implementation in [
-        "impl TaskTreeCommandContext for RuntimeTaskTreeCommandContext",
-        "impl TaskTreeCommandContext for CliCommandContext",
-    ] {
-        let implementation_source = context_source
-            .split_once(implementation)
-            .and_then(|(_, tail)| tail.split_once("\n}"))
-            .map(|(body, _)| body)
-            .unwrap_or_else(|| panic!("{implementation} must be uniquely extractable"));
-        assert!(!implementation_source.contains("supports_ansi_color"));
-    }
-}
-
-#[test]
 fn task_tree表示commandはhandlerがtyped_fieldから表示modelと操作要求を作る() {
     let task_id = Uuid::parse_str("11111111-1111-1111-1111-111111111111").unwrap();
     let commands = [
