@@ -74,12 +74,16 @@
 | 29 | `CLI: Interactive再描画をtyped commandへ統一する` | command文字列の再解析・先頭文字判定を除去 | 28 | interactive、runtime | 対象test後に全品質ゲート |
 | 30 | `Test: Verify表示を意味的modelで固定する` | Verifyの成功・error表示を意味的modelから生成するRed contract | 29 | renderer、runtime | 期待した1理由のRedを確認してtestだけcommit |
 | 31 | `CLI: Verify表示を意味的modelへ移す` | Verifyのread-only検査をruntimeに保ち、成功・error表示をrenderer経由へ統一 | 30 | renderer、runtime | 対象test後に全品質ゲート |
-| 32 | `Test: Runtime責務境界を固定する` | context、日時解釈、mutation、表示計算、raw recorderがruntimeにないことをRedで固定 | 31 | runtime architecture | 期待した1理由のRedを確認してtestだけcommit |
-| 33 | `Refactor: legacy display recorderを除去する` | legacy fragment/recorderと不要helper/importだけを挙動変更なしで削除し、runtimeをI/O調停へ限定 | 32 | CLI全test | 対象test後に全品質ゲート |
-| 34 | `Docs: CLI command境界を説明する` | READMEへparser→handler→view model→renderer→runtimeの責務を記録 | 33 | full suite | 全品質ゲート |
-| 35 | `Docs: TD-018の完了を記録する` | backlogへ完了日、実測件数、runtime行数、品質ゲートを記録 | 34 | full suite | 全品質ゲート |
+| 32 | `Test: Runtime責務境界を固定する` | `FocusDisplaySource`と`TaskFocusDisplaySource`の表示source計算がruntimeではなくview所有となる境界をRedで固定 | 31 | runtime/view architecture | Focus source所有権の1理由でRedを確認してtestだけcommit |
+| 33 | `Refactor: Focus source計算をviewへ移す` | pureなFocus source/model構築だけを`view.rs`へ移し、writer・flush・renderer呼び出しはruntime調停に残す | 32 | focus、interactive、runtime architecture | 対象test後に全品質ゲート |
+| 34 | `Test: view modelのwriter非依存を固定する` | `view.rs`が`SchronuWriter`、`render_display_model`、flush、raw recorderに依存せずtyped `DisplayModel`を返す境界をRedで固定 | 33 | view architecture | viewの残存writer依存の1理由でRedを確認してtestだけcommit |
+| 35 | `CLI: view出力をtyped modelへ統一する` | viewに残るwriter出力とlegacy recordingをtyped model構築へ置き換え、描画はrenderer/runtimeへ戻す | 34 | view、handler、CLI表示契約 | 対象test後に全品質ゲート |
+| 36 | `Test: Runtime最終責務境界を固定する` | runtimeにcontext実装、command日時解釈、domain mutation、表示計算を残さず、製品moduleから`DisplayFragment`と`DisplayRecorder`を削除する最終境界をRedで固定 | 35 | runtime/renderer architecture | legacy recorderと最終runtime境界の1理由でRedを確認してtestだけcommit |
+| 37 | `Refactor: legacy display recorderを除去する` | legacy fragment/recorder、Focus表示計算の残存、不要helper/importを削除し、runtimeをI/O調停へ限定 | 36 | CLI全test、runtime architecture | 対象test後に全品質ゲート |
+| 38 | `Docs: CLI command境界を説明する` | READMEへparser→handler→view model→renderer→runtimeの責務を記録 | 37 | full suite | 全品質ゲート |
+| 39 | `Docs: TD-018の完了を記録する` | backlogへ完了日、実測件数、runtime行数、品質ゲートを記録 | 38 | full suite | 全品質ゲート |
 
-計画本体は全35 commitとする。
+計画本体は全39 commitとする。
 
 順序6・7は機械移動のみとし、commit本文へ大規模になる理由、挙動変更なし、実行した品質ゲートを記録する。Red commit以外の全commitも、本文へ対象testと全品質ゲートの結果を残す。
 
