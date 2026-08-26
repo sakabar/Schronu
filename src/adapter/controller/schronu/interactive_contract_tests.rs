@@ -688,6 +688,123 @@ fn project_recorder_dependency_violations(sources: &[ControllerProductSource]) -
     violations
 }
 
+fn finish_recorder_dependency_violations(sources: &[ControllerProductSource]) -> Vec<String> {
+    let mut violations = Vec::new();
+    let source_for = |file_name: &str| {
+        sources
+            .iter()
+            .find(|source| {
+                source.path.file_name().and_then(|name| name.to_str()) == Some(file_name)
+            })
+            .unwrap_or_else(|| panic!("missing controller product module: {file_name}"))
+    };
+    let handler_source = &source_for("handler.rs").text;
+    let context_source = &source_for("command_context.rs").text;
+
+    let trait_region =
+        match unique_top_level_item_region(handler_source, "trait FinishPlacementCommandContext") {
+            Ok(region) => region,
+            Err(error) => {
+                violations.push(error);
+                return violations;
+            }
+        };
+    let trait_code = compact_code(trait_region);
+    for forbidden in ["SchronuWriter", "supports_ansi_color"] {
+        if trait_code.contains(forbidden) {
+            violations.push(format!("FinishPlacementCommandContext retains {forbidden}"));
+        }
+    }
+    let show_signatures = direct_method_signature_regions(trait_region, "show_focused_tree");
+    if show_signatures.len() != 1
+        || normalized_method_signature(show_signatures[0])
+            != "fnshow_focused_tree(&mutself)->Result<TreeDisplay,ApplicationError>"
+    {
+        violations.push(
+            "FinishPlacementCommandContext::show_focused_tree must return TreeDisplay".to_string(),
+        );
+    }
+
+    let (_, handler_region) =
+        match unique_function_region(sources, "handle_finish_placement_command") {
+            Ok(definition) => definition,
+            Err(error) => {
+                violations.push(error);
+                return violations;
+            }
+        };
+    violations.extend(output_dependency_violations(
+        "handle_finish_placement_command",
+        handler_region,
+    ));
+    let handler_code = compact_code(handler_region);
+    for forbidden in [
+        "DisplayRecorder",
+        "DisplayModel::Legacy",
+        "supports_ansi_color",
+        "&mutdisplay",
+        ".model()",
+    ] {
+        if handler_code.contains(forbidden) {
+            violations.push(format!("finish handler retains legacy output: {forbidden}"));
+        }
+    }
+    for required in [
+        "DisplayModel::Tree(context.show_focused_tree()?)",
+        "DisplayModel::Pack",
+        "DisplayModel::Flatten",
+    ] {
+        if !handler_code.contains(required) {
+            violations.push(format!("finish handler missing typed path: {required}"));
+        }
+    }
+
+    let context_impl = match unique_top_level_item_region(
+        context_source,
+        "impl FinishPlacementCommandContext for CliCommandContext",
+    ) {
+        Ok(region) => region,
+        Err(error) => {
+            violations.push(error);
+            return violations;
+        }
+    };
+    let context_impl_code = compact_code(context_impl);
+    for forbidden in [
+        "SchronuWriter",
+        "DisplayRecorder",
+        "render_display_model",
+        "supports_ansi_color",
+        ".flush(",
+    ] {
+        if context_impl_code.contains(forbidden) {
+            violations.push(format!("Finish context impl retains {forbidden}"));
+        }
+    }
+    let context_show_signatures =
+        direct_method_signature_regions(context_impl, "show_focused_tree");
+    if context_show_signatures.len() != 1
+        || normalized_method_signature(context_show_signatures[0])
+            != "fnshow_focused_tree(&mutself)->Result<TreeDisplay,ApplicationError>"
+    {
+        violations.push("CliCommandContext::show_focused_tree must return TreeDisplay".to_string());
+    }
+
+    let context_struct =
+        match unique_top_level_item_region(context_source, "struct CliCommandContext") {
+            Ok(region) => region,
+            Err(error) => {
+                violations.push(error);
+                return violations;
+            }
+        };
+    if compact_code(context_struct).contains("supports_ansi_color") {
+        violations.push("CliCommandContext retains finish ANSI capability".to_string());
+    }
+
+    violations
+}
+
 fn output_dependency_violations(region_name: &str, region: &str) -> Vec<String> {
     let code = code_only(region);
     let mut violations = Vec::new();
@@ -1033,6 +1150,17 @@ fn project_breakdown_repetition製品経路はrecorderに依存しない() {
     assert!(
         violations.is_empty(),
         "Project/breakdown/repetition recorder dependency violations:\n{}",
+        violations.join("\n")
+    );
+}
+
+#[test]
+fn finish製品経路はtyped_treeを返しrecorderに依存しない() {
+    let violations = finish_recorder_dependency_violations(&controller_product_sources());
+
+    assert!(
+        violations.is_empty(),
+        "Finish recorder dependency violations:\n{}",
         violations.join("\n")
     );
 }

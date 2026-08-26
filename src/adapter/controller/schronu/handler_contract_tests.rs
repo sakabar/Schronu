@@ -1693,11 +1693,18 @@ struct TraceFinishPlacementContext {
     completion_inputs: Vec<CompleteTaskInput>,
 }
 
-impl FinishPlacementCommandContext for TraceFinishPlacementContext {
-    fn supports_ansi_color(&self) -> bool {
-        false
+impl TraceFinishPlacementContext {
+    fn semantic_focused_tree(&mut self) -> TreeDisplay {
+        self.calls.push("show-focused-tree".to_string());
+        TreeDisplay::Debug {
+            rows: vec![DebugTreeRow {
+                debug: "finish target".to_string(),
+            }],
+        }
     }
+}
 
+impl FinishPlacementCommandContext for TraceFinishPlacementContext {
     fn last_synced_time(&self) -> chrono::DateTime<Local> {
         self.now
     }
@@ -1710,12 +1717,8 @@ impl FinishPlacementCommandContext for TraceFinishPlacementContext {
         Ok(Some(self.focused_task.clone()))
     }
 
-    fn show_focused_tree(
-        &mut self,
-        _display: &mut dyn SchronuWriter,
-    ) -> Result<(), ApplicationError> {
-        self.calls.push("show-focused-tree".to_string());
-        Ok(())
+    fn show_focused_tree(&mut self) -> Result<TreeDisplay, ApplicationError> {
+        Ok(self.semantic_focused_tree())
     }
 
     fn complete_focused_task(
@@ -1739,6 +1742,358 @@ impl FinishPlacementCommandContext for TraceFinishPlacementContext {
     fn flatten(&mut self) -> Result<FlattenResult, ApplicationError> {
         self.calls.push("flatten".to_string());
         Ok(FlattenResult::default())
+    }
+}
+
+enum FinishCompletionResponse {
+    Success(Option<Uuid>),
+    HasUndoneChildren(Uuid),
+    OtherError,
+}
+
+struct SemanticFinishContext {
+    now: chrono::DateTime<Local>,
+    focus_started_datetime: chrono::DateTime<Local>,
+    focused_task: Option<TaskHandle>,
+    tree_display: TreeDisplay,
+    completion_response: FinishCompletionResponse,
+    show_tree_error: bool,
+    calls: Vec<String>,
+    completion_inputs: Vec<CompleteTaskInput>,
+    focus_updates: Vec<Option<Uuid>>,
+}
+
+impl SemanticFinishContext {
+    fn new(now: chrono::DateTime<Local>, focused_task: TaskHandle) -> Self {
+        Self {
+            now,
+            focus_started_datetime: now,
+            focused_task: Some(focused_task),
+            tree_display: finish_tree_display(),
+            completion_response: FinishCompletionResponse::Success(Some(Uuid::from_u128(42))),
+            show_tree_error: false,
+            calls: Vec::new(),
+            completion_inputs: Vec::new(),
+            focus_updates: Vec::new(),
+        }
+    }
+}
+
+impl FinishPlacementCommandContext for SemanticFinishContext {
+    fn last_synced_time(&self) -> chrono::DateTime<Local> {
+        self.now
+    }
+
+    fn focus_started_datetime(&self) -> chrono::DateTime<Local> {
+        self.focus_started_datetime
+    }
+
+    fn focused_task(&self) -> Result<Option<TaskHandle>, ApplicationError> {
+        Ok(self.focused_task.clone())
+    }
+
+    fn show_focused_tree(&mut self) -> Result<TreeDisplay, ApplicationError> {
+        self.calls.push("show-focused-tree".to_string());
+        if self.show_tree_error {
+            return Err(ApplicationError::InvalidInput {
+                field: "tree",
+                reason: "injected finish tree failure",
+            });
+        }
+        Ok(self.tree_display.clone())
+    }
+
+    fn complete_focused_task(
+        &mut self,
+        input: CompleteTaskInput,
+    ) -> Result<Option<Uuid>, ApplicationError> {
+        self.calls.push("complete".to_string());
+        self.completion_inputs.push(input);
+        match self.completion_response {
+            FinishCompletionResponse::Success(next_focus) => Ok(next_focus),
+            FinishCompletionResponse::HasUndoneChildren(task_id) => {
+                Err(ApplicationError::HasUndoneChildren(task_id))
+            }
+            FinishCompletionResponse::OtherError => Err(ApplicationError::InvalidInput {
+                field: "finish",
+                reason: "injected completion failure",
+            }),
+        }
+    }
+
+    fn set_focused_task_id(&mut self, task_id_opt: Option<Uuid>) {
+        self.calls.push(format!("focus:{task_id_opt:?}"));
+        self.focus_updates.push(task_id_opt);
+    }
+
+    fn pack(&mut self) -> Result<PackResult, ApplicationError> {
+        self.calls.push("pack".to_string());
+        Ok(PackResult::default())
+    }
+
+    fn flatten(&mut self) -> Result<FlattenResult, ApplicationError> {
+        self.calls.push("flatten".to_string());
+        Ok(FlattenResult::default())
+    }
+}
+
+fn finish_tree_display() -> TreeDisplay {
+    TreeDisplay::Debug {
+        rows: vec![
+            DebugTreeRow {
+                debug: "[ ] finish parent".to_string(),
+            },
+            DebugTreeRow {
+                debug: "    [ ] undone child".to_string(),
+            },
+        ],
+    }
+}
+
+fn finish_command() -> Command {
+    Command::Action(CommandAction::Finish {
+        values: vec!["今".to_string()],
+    })
+}
+
+#[test]
+fn finish成功はsemantic_emptyとfocus変更を返す() {
+    let now = Local.with_ymd_and_hms(2026, 8, 23, 12, 0, 0).unwrap();
+    let task = TaskHandle::with_identity("finish target", Uuid::from_u128(21), now).unwrap();
+    let mut context = SemanticFinishContext::new(now, task);
+
+    let outcome = handle_finish_placement_command(&finish_command(), &mut context)
+        .unwrap()
+        .expect("finish must be handled");
+
+    assert_eq!(outcome.display, DisplayModel::Sequence(Vec::new()));
+    assert_eq!(
+        context.calls,
+        [
+            "complete",
+            "focus:Some(00000000-0000-0000-0000-00000000002a)"
+        ]
+    );
+    assert_eq!(context.focus_updates, [Some(Uuid::from_u128(42))]);
+}
+
+#[test]
+fn finishのfocusなしと不正時刻とその他completion_errorは表示とfocusを変更しない() {
+    let now = Local.with_ymd_and_hms(2026, 8, 23, 12, 0, 0).unwrap();
+    let task = TaskHandle::with_identity("finish target", Uuid::from_u128(21), now).unwrap();
+
+    let mut no_focus_context = SemanticFinishContext::new(now, task.clone());
+    no_focus_context.focused_task = None;
+    let no_focus = handle_finish_placement_command(&finish_command(), &mut no_focus_context)
+        .unwrap()
+        .expect("finish without focus must be handled");
+    assert_eq!(no_focus.display, DisplayModel::Sequence(Vec::new()));
+    assert!(no_focus_context.calls.is_empty());
+    assert!(no_focus_context.focus_updates.is_empty());
+
+    let invalid_command = Command::Action(CommandAction::Finish {
+        values: vec!["invalid".to_string()],
+    });
+    let mut invalid_context = SemanticFinishContext::new(now, task.clone());
+    let invalid = handle_finish_placement_command(&invalid_command, &mut invalid_context)
+        .unwrap()
+        .expect("invalid finish time must remain a handled no-op");
+    assert_eq!(invalid.display, DisplayModel::Sequence(Vec::new()));
+    assert!(invalid_context.calls.is_empty());
+    assert!(invalid_context.completion_inputs.is_empty());
+    assert!(invalid_context.focus_updates.is_empty());
+
+    let mut completion_error_context = SemanticFinishContext::new(now, task);
+    completion_error_context.completion_response = FinishCompletionResponse::OtherError;
+    let completion_error =
+        handle_finish_placement_command(&finish_command(), &mut completion_error_context)
+            .unwrap()
+            .expect("reported completion error must remain handled");
+    assert_eq!(completion_error.display, DisplayModel::Sequence(Vec::new()));
+    assert_eq!(completion_error_context.calls, ["complete"]);
+    assert_eq!(completion_error_context.completion_inputs.len(), 1);
+    assert!(completion_error_context.focus_updates.is_empty());
+}
+
+#[test]
+fn finishは未完了childrenと競合fallbackをtyped_treeとして順序どおり返す() {
+    let now = Local.with_ymd_and_hms(2026, 8, 23, 12, 0, 0).unwrap();
+    let parent = TaskHandle::with_identity("finish parent", Uuid::from_u128(21), now).unwrap();
+    parent
+        .create_child(TaskAttr::with_identity(
+            "undone child",
+            Uuid::from_u128(22),
+            now,
+        ))
+        .unwrap();
+    let expected_display = DisplayModel::Tree(finish_tree_display());
+    let mut undone_context = SemanticFinishContext::new(now, parent);
+
+    let undone_outcome = handle_finish_placement_command(&finish_command(), &mut undone_context)
+        .unwrap()
+        .expect("finish with undone children must be handled");
+    assert_eq!(undone_outcome.display, expected_display);
+    assert_eq!(undone_context.calls, ["show-focused-tree"]);
+    assert!(undone_context.completion_inputs.is_empty());
+    assert!(undone_context.focus_updates.is_empty());
+
+    let race_task = TaskHandle::with_identity("finish race", Uuid::from_u128(31), now).unwrap();
+    let mut fallback_context = SemanticFinishContext::new(now, race_task);
+    fallback_context.completion_response =
+        FinishCompletionResponse::HasUndoneChildren(Uuid::from_u128(31));
+
+    let fallback_outcome =
+        handle_finish_placement_command(&finish_command(), &mut fallback_context)
+            .unwrap()
+            .expect("finish fallback must be handled");
+    assert_eq!(
+        fallback_outcome.display,
+        DisplayModel::Tree(finish_tree_display())
+    );
+    assert_eq!(fallback_context.calls, ["complete", "show-focused-tree"]);
+    assert!(fallback_context.focus_updates.is_empty());
+}
+
+#[test]
+fn finishのundone_tree取得errorは情報を保って伝播する() {
+    let now = Local.with_ymd_and_hms(2026, 8, 23, 12, 0, 0).unwrap();
+    let parent = TaskHandle::with_identity("finish parent", Uuid::from_u128(21), now).unwrap();
+    parent
+        .create_child(TaskAttr::with_identity(
+            "undone child",
+            Uuid::from_u128(22),
+            now,
+        ))
+        .unwrap();
+    let mut context = SemanticFinishContext::new(now, parent);
+    context.show_tree_error = true;
+
+    let result = handle_finish_placement_command(&finish_command(), &mut context);
+
+    assert_eq!(
+        result,
+        Err(ApplicationError::InvalidInput {
+            field: "tree",
+            reason: "injected finish tree failure",
+        })
+    );
+    assert_eq!(context.calls, ["show-focused-tree"]);
+    assert!(context.completion_inputs.is_empty());
+    assert!(context.focus_updates.is_empty());
+}
+
+#[test]
+fn finish_typed_treeは既存改行順をrendererへ委譲する() {
+    let mut writer = TraceWriter::default();
+    render_display_model(&mut writer, &DisplayModel::Tree(finish_tree_display())).unwrap();
+
+    assert_eq!(
+        writer.writes,
+        [
+            "raw:\n",
+            "newline:[ ] finish parent",
+            "newline:    [ ] undone child",
+            "raw:\n",
+        ]
+    );
+    assert_eq!(writer.flush_count, 0);
+}
+
+struct FinishFailingWriter {
+    writes: Vec<String>,
+    successful_newlines: usize,
+    flush_count: usize,
+}
+
+impl Write for FinishFailingWriter {
+    fn write(&mut self, buffer: &[u8]) -> std::io::Result<usize> {
+        self.writes
+            .push(format!("raw:{}", String::from_utf8_lossy(buffer)));
+        Ok(buffer.len())
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        self.flush_count += 1;
+        Ok(())
+    }
+}
+
+impl SchronuWriter for FinishFailingWriter {
+    fn writeln_newline(&mut self, message: &str) -> Result<(), std::io::Error> {
+        if self.successful_newlines == 1 {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::BrokenPipe,
+                "injected finish output failure",
+            ));
+        }
+        self.successful_newlines += 1;
+        self.writes.push(format!("newline:{message}"));
+        Ok(())
+    }
+
+    fn supports_ansi_color(&self) -> bool {
+        false
+    }
+}
+
+#[test]
+fn finish_typed_treeは途中出力とio_error分類をrendererで保持する() {
+    let now = Local.with_ymd_and_hms(2026, 8, 23, 12, 0, 0).unwrap();
+    let parent = TaskHandle::with_identity("finish parent", Uuid::from_u128(21), now).unwrap();
+    parent
+        .create_child(TaskAttr::with_identity(
+            "undone child",
+            Uuid::from_u128(22),
+            now,
+        ))
+        .unwrap();
+    let mut context = SemanticFinishContext::new(now, parent);
+    let outcome = handle_finish_placement_command(&finish_command(), &mut context)
+        .unwrap()
+        .expect("finish with undone children must be handled");
+    let mut writer = FinishFailingWriter {
+        writes: Vec::new(),
+        successful_newlines: 0,
+        flush_count: 0,
+    };
+
+    let error = render_display_model(&mut writer, &outcome.display).unwrap_err();
+
+    assert_eq!(error.kind(), std::io::ErrorKind::BrokenPipe);
+    assert_eq!(error.to_string(), "injected finish output failure");
+    assert_eq!(writer.writes, ["raw:\n", "newline:[ ] finish parent"]);
+    assert_eq!(writer.flush_count, 0);
+}
+
+#[test]
+fn packとflattenは既存semantic_modelを維持する() {
+    let now = Local.with_ymd_and_hms(2026, 8, 23, 12, 0, 0).unwrap();
+    let task = TaskHandle::with_identity("placement target", Uuid::from_u128(21), now).unwrap();
+
+    for (command, expected_call, expected_variant) in [
+        (
+            no_arguments(CommandKind::Pack, "pack"),
+            "pack",
+            CommandKind::Pack,
+        ),
+        (
+            no_arguments(CommandKind::Flatten, "flatten"),
+            "flatten",
+            CommandKind::Flatten,
+        ),
+    ] {
+        let mut context = SemanticFinishContext::new(now, task.clone());
+        let outcome = handle_finish_placement_command(&command, &mut context)
+            .unwrap()
+            .expect("placement command must be handled");
+        assert_eq!(outcome.kind, expected_variant);
+        match expected_variant {
+            CommandKind::Pack => assert!(matches!(outcome.display, DisplayModel::Pack(_))),
+            CommandKind::Flatten => assert!(matches!(outcome.display, DisplayModel::Flatten(_))),
+            _ => unreachable!(),
+        }
+        assert_eq!(context.calls, [expected_call]);
+        assert!(context.focus_updates.is_empty());
     }
 }
 
@@ -2049,10 +2404,6 @@ impl DeferCommandContext for CompositeTraceContext {
 }
 
 impl FinishPlacementCommandContext for CompositeTraceContext {
-    fn supports_ansi_color(&self) -> bool {
-        self.finish_placement.supports_ansi_color()
-    }
-
     fn last_synced_time(&self) -> chrono::DateTime<Local> {
         self.finish_placement.last_synced_time()
     }
@@ -2065,11 +2416,8 @@ impl FinishPlacementCommandContext for CompositeTraceContext {
         self.finish_placement.focused_task()
     }
 
-    fn show_focused_tree(
-        &mut self,
-        display: &mut dyn SchronuWriter,
-    ) -> Result<(), ApplicationError> {
-        self.finish_placement.show_focused_tree(display)
+    fn show_focused_tree(&mut self) -> Result<TreeDisplay, ApplicationError> {
+        Ok(self.finish_placement.semantic_focused_tree())
     }
 
     fn complete_focused_task(
