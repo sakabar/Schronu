@@ -416,6 +416,113 @@ fn verify製品分岐は意味的modelをrendererへ渡す() {
 }
 
 #[test]
+fn runtimeはio調停だけを所有する() {
+    let product_sources = controller_product_sources();
+    let source_for = |file_name: &str| {
+        product_sources
+            .iter()
+            .find(|source| {
+                source.path.file_name().and_then(|name| name.to_str()) == Some(file_name)
+            })
+            .unwrap_or_else(|| panic!("missing controller product module: {file_name}"))
+    };
+    let runtime = source_for("runtime.rs");
+    let command_context = source_for("command_context.rs");
+    let view = source_for("view.rs");
+    let renderer = source_for("renderer.rs");
+
+    for owned_context_boundary in [
+        "pub(super) struct CliCommandContext",
+        "impl ProjectCommandContext for CliCommandContext",
+        "fn resolve_upcoming_mmdd(",
+        "fn parse_clear_or_gather_defer_to_datetime(",
+        "fn resolve_deadline_date(",
+        "fn execute_clear_or_gather(",
+        "fn set_focused_task_actual_work_minutes(",
+    ] {
+        assert!(
+            command_context.text.contains(owned_context_boundary),
+            "command_context.rs must own {owned_context_boundary}"
+        );
+    }
+    for owned_view_boundary in [
+        "fn build_ancestor_tree_display(",
+        "fn build_focus_header_display(",
+        "fn build_focus_timing_display(",
+        "fn execute_show_all_tasks_with_config(",
+    ] {
+        assert!(
+            view.text.contains(owned_view_boundary),
+            "view.rs must own {owned_view_boundary}"
+        );
+    }
+    for owned_renderer_boundary in ["enum DisplayModel", "fn render_display_model("] {
+        assert!(
+            renderer.text.contains(owned_renderer_boundary),
+            "renderer.rs must own {owned_renderer_boundary}"
+        );
+    }
+    for allowed_runtime_boundary in [
+        "run_repository_transaction(",
+        "StorageLock::",
+        "webbrowser::open(",
+        "process::Command::new(",
+        "fn interactive_application(",
+        "fn execute_verify_command(",
+    ] {
+        assert!(
+            runtime.text.contains(allowed_runtime_boundary),
+            "runtime.rs must retain I/O coordination through {allowed_runtime_boundary}"
+        );
+    }
+
+    let mut violations = Vec::new();
+    for (responsibility, symbol) in [
+        ("command context implementation", "struct CliCommandContext"),
+        ("command context implementation", "impl CommandContext for"),
+        (
+            "command datetime interpretation",
+            "fn resolve_upcoming_mmdd(",
+        ),
+        (
+            "command datetime interpretation",
+            "fn parse_clear_or_gather_defer_to_datetime(",
+        ),
+        (
+            "command datetime interpretation",
+            "fn resolve_deadline_date(",
+        ),
+        ("domain mutation", "fn execute_clear_or_gather("),
+        (
+            "domain mutation",
+            "fn set_focused_task_actual_work_minutes(",
+        ),
+        ("display calculation", "trait FocusDisplaySource"),
+        ("display calculation", "struct TaskFocusDisplaySource"),
+    ] {
+        if runtime.text.contains(symbol) {
+            violations.push(format!("runtime.rs owns {responsibility}: {symbol}"));
+        }
+    }
+    for source in &product_sources {
+        for legacy_symbol in ["DisplayFragment", "DisplayRecorder"] {
+            if source.text.contains(legacy_symbol) {
+                violations.push(format!(
+                    "{} retains legacy raw recorder symbol {legacy_symbol}",
+                    source.path.display()
+                ));
+            }
+        }
+    }
+
+    assert!(
+        violations.is_empty(),
+        "runtime responsibility boundary violations:\n{}",
+        violations.join("\n")
+    );
+}
+
+#[test]
 fn function_regionはpub_superの次item前で切れる() {
     let source = "fn target() {\n    let raw = r#\"\nfn fake() {}\nstruct Fake;\n\"#;\n    shared_dispatch();\n}\npub(super) fn next() {\n    bypass();\n}\n";
     let sources = [ControllerProductSource {
