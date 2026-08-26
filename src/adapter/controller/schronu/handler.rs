@@ -437,7 +437,7 @@ pub(super) fn handle_task_tree_command<C: TaskTreeCommandContext + ?Sized>(
     }
 
     let mut outcome = CommandOutcome::empty(kind);
-    outcome.display = semantic_display.unwrap_or_default();
+    outcome.display = semantic_display.unwrap_or_else(|| DisplayModel::Sequence(Vec::new()));
     Ok(Some(outcome))
 }
 

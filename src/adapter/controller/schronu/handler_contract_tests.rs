@@ -839,6 +839,11 @@ fn task_tree_contextは表示なし分岐をempty_outcomeとして返す() {
             "{command:?}: {:?}",
             outcome.display
         );
+        assert_eq!(
+            outcome.display,
+            DisplayModel::Sequence(Vec::new()),
+            "{command:?} must use the semantic empty model"
+        );
         assert_eq!(context.focused_task_id, expected_focus, "{command:?}");
     }
 }
