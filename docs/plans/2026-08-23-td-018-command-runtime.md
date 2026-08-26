@@ -80,12 +80,18 @@
 | 35 | `CLI: Task list metrics rendererを実装する` | typed minutes、finish datetime、work/free hours、rho、finite/inf Lqから既存metrics文言と空行をrendererが生成 | 34 | renderer | 対象test後に全品質ゲート |
 | 36 | `Test: View表示計算をwriter非依存で固定する` | 製品view経路がtyped metrics payloadの実値を返すことをRedで固定。legacy検査は`execute_show_all_tasks_with_config`のfunction regionに限定し、metrics用declarationの`busy_s`・`s_for_rho1`・`s_for_non_repetitive_rho`と、`"完了見込み日時は"`を構築する局所`s`(または後続の意味的formatter変数)の不在だけを確認し、無関係な`let s`は対象外とする。signature scannerは有効なRust構文の`fn`、`async fn`、`unsafe fn`、`extern "C" fn`、`async unsafe fn`、`unsafe extern "C" fn`などmodifierの組合せを全て対象とし、`SchronuWriter`、generic `W: Write`、`impl Write`、fully-qualified `std::io::Write`を拒否する。comment・string・`cfg(test)`と、double quoteを含むchar literalをnon-code stateで誤認しないfixtureを持ち、製品codeの直接出力も拒否 | 35 | view integration/architecture、全/Today/Calendar/Band | typed metrics製品integrationとview writer依存の1sliceでRedを確認してtestだけcommit |
 | 37 | `CLI: View metrics出力をtyped modelへ移す` | viewのmetrics直接出力をtyped `DisplayModel` payload構築へ置き換え、描画はrenderer/runtimeへ戻す | 36 | view、handler、全/Today/Calendar/Band exact表示契約 | 対象test後に全品質ゲート |
-| 38 | `Test: Runtime最終責務境界を固定する` | runtimeにcontext実装、command日時解釈、domain mutation、表示計算を残さず、製品moduleから`DisplayFragment`と`DisplayRecorder`を削除する最終境界をRedで固定 | 37 | runtime/renderer architecture | legacy recorderと最終runtime境界の1理由でRedを確認してtestだけcommit |
-| 39 | `Refactor: legacy display recorderを除去する` | legacy fragment/recorder、Focus表示計算の残存、不要helper/importを削除し、runtimeをI/O調停へ限定 | 38 | CLI全test、runtime architecture | 対象test後に全品質ゲート |
-| 40 | `Docs: CLI command境界を説明する` | READMEへparser→handler→view model→renderer→runtimeの責務を記録 | 39 | full suite | 全品質ゲート |
-| 41 | `Docs: TD-018の完了を記録する` | backlogへ完了日、実測件数、runtime行数、品質ゲートを記録 | 40 | full suite | 全品質ゲート |
+| 38 | `Test: Task tree contextをwriter非依存で固定する` | `TaskTreeCommandContext`のfocus children/deepest/next-upをtyped `DisplayModel` returnへ変え、既存tree・message順、focus mutation、途中errorまでの部分出力を保持するRed contract | 37 | handler、TaskTree context、tree/focus contract | writer-free trait interface欠如の1理由でRedを確認してtestだけcommit |
+| 39 | `CLI: Task tree context出力をtyped modelへ移す` | TaskTree contextからwriterを除き、handlerがtyped tree/messageを`CommandOutcome`へ順序どおりcomposeする。focus mutationと途中error分類・部分出力を維持 | 38 | handler、command context、tree/focus runtime | 対象test後に全品質ゲート |
+| 40 | `Test: Project系contextをwriter非依存で固定する` | project作成・breakdown・repetitionのrecorder経路をtyped model returnへ変え、既存文言・順序・途中errorまでの部分出力を保持するRed contract | 39 | Project/TaskAttribute context、handler | project系typed interface欠如の1理由でRedを確認してtestだけcommit |
+| 41 | `CLI: Project系context出力をsemantic modelへ移す` | project作成・breakdown・repetitionの`DisplayRecorder`をsemantic message/sequenceへ置換し、handler outcomeへcomposeする | 40 | handler、command context、renderer | 対象test後に全品質ゲート |
+| 42 | `Test: Finish contextをwriter非依存で固定する` | finish placementのrecorder経路をtyped model returnへ変え、既存完了文言・順序・途中errorまでの部分出力を保持するRed contract | 41 | FinishPlacement context、handler | finish typed interface欠如の1理由でRedを確認してtestだけcommit |
+| 43 | `CLI: Finish context出力をsemantic modelへ移す` | finish placementの`DisplayRecorder`をsemantic message/sequenceへ置換し、handler outcomeへcomposeする | 42 | handler、command context、renderer | 対象test後に全品質ゲート |
+| 44 | `Test: Runtime最終責務境界を固定する` | runtimeにcontext実装、command日時解釈、domain mutation、表示計算を残さず、全製品moduleに`DisplayFragment`・`DisplayRecorder`・`DisplayModel::Legacy`がない最終境界をRedで固定 | 43 | runtime/renderer architecture | 最終legacy type境界の1理由でRedを確認してtestだけcommit |
+| 45 | `Refactor: Renderer legacy recorderを除去する` | `DisplayFragment`・`DisplayRecorder`・`DisplayModel::Legacy`と不要helper/importを削除し、runtimeをI/O調停へ限定。既存output、I/O error分類、部分出力を維持 | 44 | CLI全test、runtime/renderer architecture | 対象test後に全品質ゲート |
+| 46 | `Docs: CLI command境界を説明する` | READMEへparser→handler→view model→renderer→runtimeの責務を記録 | 45 | full suite | 全品質ゲート |
+| 47 | `Docs: TD-018の完了を記録する` | backlogへ完了日、実測件数、runtime行数、品質ゲートを記録 | 46 | full suite | 全品質ゲート |
 
-計画本体は全41 commitとする。
+計画本体は全47 commitとする。
 
 順序6・7は機械移動のみとし、commit本文へ大規模になる理由、挙動変更なし、実行した品質ゲートを記録する。Red commit以外の全commitも、本文へ対象testと全品質ゲートの結果を残す。
 
