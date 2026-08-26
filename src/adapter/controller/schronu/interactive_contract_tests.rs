@@ -511,6 +511,14 @@ fn view表示計算はwriterに依存しない() {
         .map_or(show_all_source, |(signature, _)| signature);
 
     let mut violations = Vec::new();
+    for typed_metrics_construction in ["TaskListMetricsDisplay {", "DisplayModel::TaskListMetrics("]
+    {
+        if !show_all_source.contains(typed_metrics_construction) {
+            violations.push(format!(
+                "execute_show_all_tasks_with_config must construct {typed_metrics_construction}"
+            ));
+        }
+    }
     for writer_type in ["SchronuWriter", "dyn Write"] {
         if show_all_signature.contains(writer_type) {
             violations.push(format!(

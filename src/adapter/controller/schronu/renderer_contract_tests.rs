@@ -5,7 +5,7 @@ use super::renderer::{
     ErrorCapturingWriter, FlattenDisplay, FlattenReason, FlattenReasonSummary, FlattenRow,
     FlattenUnresolvedDay, FocusDisplay, LeafTreeRow, MessageLevel, PackDisplay, PackRow,
     SchronuWriter, SpreadsheetTaskRow, TaskCategoryWorkSeconds, TaskListDisplay, TaskListIconMode,
-    TaskListRow, TaskListTaskRow, TreeDisplay,
+    TaskListMetricsDisplay, TaskListRow, TaskListTaskRow, TreeDisplay,
 };
 use chrono::{Local, NaiveDate, TimeZone, Weekday};
 use schronu::entity::task::{ProjectCategory, TaskAttr};
@@ -137,6 +137,36 @@ fn semantic_message_sequenceはlevelとwriter固有newlineの順序を保持す�
             "newline:[Warn] warning",
             "newline:[Crit] critical",
             "newline:[Error] failure",
+        ]
+    );
+}
+
+#[test]
+fn task_list_metricsはtyped値から既存4行と末尾空行を生成する() {
+    let display = DisplayModel::TaskListMetrics(TaskListMetricsDisplay {
+        busy_minutes: 95,
+        lambda_minutes: 155,
+        estimated_finish_at: Local.with_ymd_and_hms(2026, 8, 27, 1, 2, 3).unwrap(),
+        non_repetitive_work_hours: 1.25,
+        repetitive_work_hours: 0.75,
+        free_hours: -2.5,
+        rho: 1.25,
+        non_repetitive_rho: 0.50,
+        lq: None,
+        non_repetitive_lq: Some(2.0),
+    });
+    let mut writer = TraceWriter::default();
+
+    render_display_model(&mut writer, &display).unwrap();
+
+    assert_eq!(
+        writer.operations,
+        [
+            "newline:残り拘束時間は1.6時間です",
+            "newline:完了見込み日時は2.6時間後の2026/08/27 01:02:03です",
+            "newline:rep ρ = (1.25 + 0.75) / (1.25 + 0.75 - 2 - 30/60) = 1.25, Lq = inf",
+            "newline:one ρ = (1.25 + 0.00) / (1.25 + 0.00 - 2 - 30/60) = 0.50, Lq = 2.0",
+            "newline:",
         ]
     );
 }
