@@ -128,20 +128,45 @@ fn top_level_product_function_offsets(source: &str) -> Vec<usize> {
 
 fn is_top_level_function_declaration(line: &str) -> bool {
     let declaration = strip_top_level_visibility(line);
-    [
-        "fn ",
-        "async fn ",
-        "unsafe fn ",
-        "const fn ",
-        "extern \"C\" fn ",
-        "async unsafe fn ",
-        "unsafe extern \"C\" fn ",
-        "const unsafe fn ",
-        "const unsafe extern \"C\" fn ",
-        "async unsafe extern \"C\" fn ",
-    ]
-    .iter()
-    .any(|prefix| declaration.starts_with(prefix))
+    let bytes = declaration.as_bytes();
+    let mut index = 0;
+
+    loop {
+        while bytes.get(index).is_some_and(u8::is_ascii_whitespace) {
+            index += 1;
+        }
+        let token_start = index;
+        while bytes
+            .get(index)
+            .is_some_and(|byte| byte.is_ascii_alphanumeric() || *byte == b'_')
+        {
+            index += 1;
+        }
+        let token = &declaration[token_start..index];
+        if token == "fn" {
+            return bytes.get(index).is_some_and(u8::is_ascii_whitespace);
+        }
+        if !matches!(token, "async" | "const" | "unsafe" | "extern") {
+            return false;
+        }
+        while bytes.get(index).is_some_and(u8::is_ascii_whitespace) {
+            index += 1;
+        }
+        if token == "extern" && bytes.get(index) == Some(&b'"') {
+            index += 1;
+            let mut escaped = false;
+            while let Some(byte) = bytes.get(index) {
+                index += 1;
+                if escaped {
+                    escaped = false;
+                } else if *byte == b'\\' {
+                    escaped = true;
+                } else if *byte == b'"' {
+                    break;
+                }
+            }
+        }
+    }
 }
 
 fn top_level_item_definition_offsets(source: &str, item_prefix: &str) -> Vec<usize> {
@@ -326,17 +351,11 @@ fn is_top_level_rust_item(line: &str) -> bool {
 
     let declaration = strip_top_level_visibility(line);
 
+    if is_top_level_function_declaration(line) {
+        return true;
+    }
+
     [
-        "fn ",
-        "async fn ",
-        "unsafe fn ",
-        "const fn ",
-        "extern \"C\" fn ",
-        "async unsafe fn ",
-        "unsafe extern \"C\" fn ",
-        "const unsafe fn ",
-        "const unsafe extern \"C\" fn ",
-        "async unsafe extern \"C\" fn ",
         "struct ",
         "enum ",
         "union ",
@@ -719,13 +738,15 @@ fn view_writer_scannerはrustのfunction修飾子とwriter型を網羅する() {
 fn plain(writer: &mut dyn SchronuWriter) {}
 async fn asynchronous<W: Write>(writer: W) {}
 unsafe fn unsafe_output(writer: impl Write) {}
-extern "C" fn external(writer: &mut dyn std::io::Write) {}
+extern fn bare_external(writer: &mut dyn std::io::Write) {}
+extern "system" fn system_external(writer: impl Write) {}
+unsafe extern "C-unwind" fn unwind_external(writer: impl Write) {}
 async unsafe fn async_unsafe() { println ! ("bad"); }
 unsafe extern "C" fn unsafe_external() { eprintln!("bad"); }
 const fn constant() { print!("bad"); }
 const unsafe fn constant_unsafe() { write ! (sink, "bad"); }
-const unsafe extern "C" fn constant_external() { writeln!(sink, "bad"); }
-async unsafe extern "C" fn combined() { sink.write_all(bytes); }
+pub(crate) const unsafe extern "system" fn constant_external() { writeln!(sink, "bad"); }
+pub(in crate) async unsafe extern "C-unwind" fn combined() { sink.write_all(bytes); }
 pub(super) fn renderer_call() { render_display_model(writer, model); }
 fn flush_call() { writer.flush(); }
 fn newline_call() { writeln_newline(writer, "bad"); }
@@ -737,7 +758,9 @@ fn newline_call() { writeln_newline(writer, "bad"); }
         "plain",
         "asynchronous",
         "unsafe_output",
-        "external",
+        "bare_external",
+        "system_external",
+        "unwind_external",
         "async_unsafe",
         "unsafe_external",
         "constant",
