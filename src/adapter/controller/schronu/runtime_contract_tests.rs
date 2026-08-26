@@ -465,9 +465,7 @@ fn task_tree製品context_next_up_errorはsemantic_errorを返して状態を維
         );
         assert_eq!(focused_task_id_opt, Some(focused_id));
         assert_eq!(repository.task.snapshot().unwrap(), snapshot);
-        if !root_focused {
-            assert_eq!(id_generator_call_count.get(), 0);
-        }
+        assert_eq!(id_generator_call_count.get(), 0);
     }
 }
 
