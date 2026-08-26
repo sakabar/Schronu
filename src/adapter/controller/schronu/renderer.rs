@@ -319,7 +319,6 @@ pub(super) enum DisplayModel {
     },
     Tree(TreeDisplay),
     TaskList(TaskListDisplay),
-    #[allow(dead_code)] // The view constructs this after its dedicated integration contract.
     TaskListMetrics(TaskListMetricsDisplay),
     Calendar(CalendarDisplay),
     Band(BandDisplay),

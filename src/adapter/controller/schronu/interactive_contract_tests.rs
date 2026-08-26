@@ -739,20 +739,31 @@ fn view表示計算はwriterと直接出力に依存しない() {
         .expect("view.rs must be a controller product module");
     let violations = view_writer_dependency_violations(&view.text);
 
-    let (_, legacy_region) =
-        unique_function_region(&product_sources, "execute_show_all_tasks_with_config").unwrap();
+    let (_, builder_region) =
+        unique_function_region(&product_sources, "build_show_all_tasks_display_with_config")
+            .unwrap();
     for forbidden in [
         "let busy_s",
         "let s_for_rho1",
         "let s_for_non_repetitive_rho",
         "完了見込み日時は",
     ] {
-        if legacy_region.contains(forbidden) {
+        if builder_region.contains(forbidden) {
             panic!(
-                "execute_show_all_tasks_with_config must return typed metrics without legacy preformat: {forbidden}"
+                "build_show_all_tasks_display_with_config must return typed metrics without legacy preformat: {forbidden}"
             );
         }
     }
+    assert!(
+        product_sources.iter().all(|source| {
+            top_level_function_definition_offsets(
+                &source.text,
+                "execute_show_all_tasks_with_config",
+            )
+            .is_empty()
+        }),
+        "the legacy writer-based show-all view function must be removed"
+    );
 
     assert!(
         violations.is_empty(),

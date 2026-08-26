@@ -3,13 +3,11 @@ use super::handler::{
     DeferCommandContext, DeferCommandError, FinishPlacementCommandContext, ProjectCommandContext,
     TaskAttributeCommandContext, TaskListOrder, TaskTreeCommandContext,
 };
-use super::renderer::{
-    render_display_model, DisplayModel, DisplayRecorder, SchronuWriter, TreeDisplay,
-};
+use super::renderer::{render_display_model, DisplayModel, SchronuWriter, TreeDisplay};
 use super::runtime::{command_parse_error, report_application_result, CommandError};
 use super::view::{
-    build_ancestor_tree_display, build_leaf_tree_display, build_tree_display,
-    execute_show_all_tasks_with_config, get_weekday_jp, TaskListDisplayOrder,
+    build_ancestor_tree_display, build_leaf_tree_display, build_show_all_tasks_display_with_config,
+    build_tree_display, get_weekday_jp, TaskListDisplayOrder,
 };
 use chrono::{DateTime, Datelike, Duration, Local, NaiveDate, NaiveDateTime, NaiveTime};
 use regex::Regex;
@@ -1352,22 +1350,14 @@ impl TaskTreeCommandContext for RuntimeTaskTreeCommandContext<'_, '_, '_> {
             TaskListOrder::ScheduledStartDesc => TaskListDisplayOrder::ScheduledStartDesc,
             TaskListOrder::LowPriorityTail => TaskListDisplayOrder::LowPriorityTail,
         };
-        let mut legacy_display = DisplayRecorder::with_ansi_color(self.supports_ansi_color);
-        let task_list = execute_show_all_tasks_with_config(
-            &mut legacy_display,
+        build_show_all_tasks_display_with_config(
             self.focused_task_id_opt,
             self.task_repository,
             self.free_time_manager,
             &pattern,
             order,
             self.config,
-        )?;
-        let legacy_display = legacy_display.model().clone();
-        Ok(match (task_list, legacy_display.is_empty()) {
-            (Some(display), true) => display,
-            (Some(display), false) => DisplayModel::Sequence(vec![display, legacy_display]),
-            (None, _) => legacy_display,
-        })
+        )
     }
 
     fn focus(&mut self, task_id: Uuid) {

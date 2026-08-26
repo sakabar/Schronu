@@ -3,10 +3,10 @@ pub(super) use super::renderer::project_category_symbol;
 #[cfg(test)]
 use super::renderer::{format_task_category_summary, format_task_list_row};
 use super::renderer::{
-    format_task_list_columns, task_list_columns, weekday_jp, writeln_newline, AncestorTreeRow,
-    BandDayRow, BandDisplay, BandDurations, CalendarAlerts, CalendarDayRow, CalendarDisplay,
-    CalendarSummary, DebugTreeRow, DisplayModel, FocusDisplay, LeafTreeRow, SchronuWriter,
-    TaskCategoryWorkSeconds, TaskListDisplay, TaskListIconMode, TaskListRow, TaskListTaskRow,
+    format_task_list_columns, task_list_columns, weekday_jp, AncestorTreeRow, BandDayRow,
+    BandDisplay, BandDurations, CalendarAlerts, CalendarDayRow, CalendarDisplay, CalendarSummary,
+    DebugTreeRow, DisplayModel, FocusDisplay, LeafTreeRow, MessageLevel, TaskCategoryWorkSeconds,
+    TaskListDisplay, TaskListIconMode, TaskListMetricsDisplay, TaskListRow, TaskListTaskRow,
     TreeDisplay, BAND_SECONDS_PER_DAY,
 };
 use chrono::{DateTime, Datelike, Duration, Local, NaiveDate};
@@ -618,15 +618,14 @@ pub(super) fn build_leaf_tree_display(
 
 // 集計用タプルはこの関数内だけで使用し、意味を持つ公開型を増やさない。
 #[allow(clippy::type_complexity)]
-pub(super) fn execute_show_all_tasks_with_config(
-    stdout: &mut dyn SchronuWriter,
+pub(super) fn build_show_all_tasks_display_with_config(
     focused_task_id_opt: &mut Option<Uuid>,
     task_repository: &mut dyn TaskRepositoryTrait,
     free_time_manager: &mut dyn FreeTimeManagerTrait,
     pattern_opt: &Option<String>,
     display_order: TaskListDisplayOrder,
     config: &SchronuConfig,
-) -> Result<Option<DisplayModel>, ApplicationError> {
+) -> Result<DisplayModel, ApplicationError> {
     let yyyymmdd_reg = Regex::new(r"^(\d{4})/(\d{2})/(\d{2})$").unwrap();
     let yyyymmdd_pattern_date = pattern_opt
         .as_ref()
@@ -1158,9 +1157,6 @@ pub(super) fn execute_show_all_tasks_with_config(
         0,
         free_time_manager.get_busy_minutes(&last_synced_time, &eod),
     );
-    let busy_hours = busy_minutes as f64 / 60.0;
-    let busy_s = format!("残り拘束時間は{:.1}時間です", busy_hours);
-
     let naive_dt_today = last_synced_subjective_date;
     let today_total_deadline_estimated_work_seconds =
         *total_estimated_work_seconds_of_the_date_counter
@@ -1169,14 +1165,7 @@ pub(super) fn execute_show_all_tasks_with_config(
     let today_total_deadline_estimated_work_minutes =
         (today_total_deadline_estimated_work_seconds as f64 / 60.0).ceil() as i64;
     let lambda_minutes = today_total_deadline_estimated_work_minutes + busy_minutes;
-    let lambda_hours = lambda_minutes as f64 / 60.0;
-
-    let estimated_finish_dt = last_synced_time + Duration::minutes(lambda_minutes);
-    let s = format!(
-        "完了見込み日時は{:.1}時間後の{}です",
-        lambda_hours,
-        estimated_finish_dt.format("%Y/%m/%d %H:%M:%S")
-    );
+    let estimated_finish_at = last_synced_time + Duration::minutes(lambda_minutes);
 
     let mu_minutes = max(0, (eod - last_synced_time).num_minutes());
     let today_total_repetitive_estimated_work_seconds = *repetitive_task_estimated_work_seconds_map
@@ -1188,50 +1177,8 @@ pub(super) fn execute_show_all_tasks_with_config(
         today_total_repetitive_estimated_work_seconds,
         available_minutes,
     );
-    let lq1_opt = calculate_lq_opt(rho_metrics.rho);
+    let lq = calculate_lq_opt(rho_metrics.rho);
     let non_repetitive_lq_opt = calculate_lq_opt(rho_metrics.non_repetitive_rho);
-
-    let free_hours = rho_metrics.free_hours;
-    let free_hours_sign = if free_hours >= 0.0 { '+' } else { '-' };
-    let free_hours_hour: i64 = free_hours.abs().floor() as i64;
-    let free_hours_minute: i64 = ((free_hours.abs() - free_hours_hour as f64) * 60.0) as i64;
-
-    let non_repetitive_rho_msg = format!(
-        "one ρ = ({:.2} + 0.00) / ({:.2} + 0.00 {} {} {} {}/60) = {:4.2}",
-        rho_metrics.non_repetitive_work_hours,
-        rho_metrics.non_repetitive_work_hours,
-        free_hours_sign,
-        free_hours_hour,
-        free_hours_sign,
-        free_hours_minute,
-        rho_metrics.non_repetitive_rho,
-    );
-    let non_repetitive_lq_msg = match non_repetitive_lq_opt {
-        Some(non_repetitive_lq) => format!("Lq = {:.1}", non_repetitive_lq),
-        None => "Lq = inf".to_string(),
-    };
-
-    let s_for_non_repetitive_rho = format!("{}, {}", non_repetitive_rho_msg, non_repetitive_lq_msg);
-
-    let rho1_msg = format!(
-        "rep ρ = ({:.2} + {:.2}) / ({:.2} + {:.2} {} {} {} {}/60) = {:4.2}",
-        rho_metrics.non_repetitive_work_hours,
-        rho_metrics.repetitive_work_hours,
-        rho_metrics.non_repetitive_work_hours,
-        rho_metrics.repetitive_work_hours,
-        free_hours_sign,
-        free_hours_hour,
-        free_hours_sign,
-        free_hours_minute,
-        rho_metrics.rho,
-    );
-
-    let lq_msg = match lq1_opt {
-        Some(lq1) => format!("Lq = {:.1}", lq1),
-        None => "Lq = inf".to_string(),
-    };
-
-    let s_for_rho1 = format!("{}, {}", rho1_msg, lq_msg);
 
     // 日付の小さい順にソートする
     let mut counter_arr: Vec<(&NaiveDate, &usize)> = counter.iter().collect();
@@ -1582,13 +1529,31 @@ pub(super) fn execute_show_all_tasks_with_config(
         })
     });
 
-    if is_today_func || is_calendar_func || is_band_func {
-        writeln_newline(stdout, &busy_s).unwrap();
-        writeln_newline(stdout, &s).unwrap();
-        writeln_newline(stdout, &s_for_rho1).unwrap();
-        writeln_newline(stdout, &s_for_non_repetitive_rho).unwrap();
-    }
-
-    writeln_newline(stdout, "").unwrap();
-    Ok(task_list_display.or(calendar_display).or(band_display))
+    let primary_display = task_list_display
+        .or(calendar_display)
+        .or(band_display)
+        .expect("show-all view always builds one primary display");
+    let trailing_display = if is_today_func || is_calendar_func || is_band_func {
+        DisplayModel::TaskListMetrics(TaskListMetricsDisplay {
+            busy_minutes,
+            lambda_minutes,
+            estimated_finish_at,
+            non_repetitive_work_hours: rho_metrics.non_repetitive_work_hours,
+            repetitive_work_hours: rho_metrics.repetitive_work_hours,
+            free_hours: rho_metrics.free_hours,
+            rho: rho_metrics.rho,
+            non_repetitive_rho: rho_metrics.non_repetitive_rho,
+            lq,
+            non_repetitive_lq: non_repetitive_lq_opt,
+        })
+    } else {
+        DisplayModel::Message {
+            level: MessageLevel::Plain,
+            text: String::new(),
+        }
+    };
+    Ok(DisplayModel::Sequence(vec![
+        primary_display,
+        trailing_display,
+    ]))
 }

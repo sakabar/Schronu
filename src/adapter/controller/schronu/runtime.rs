@@ -18,7 +18,7 @@ use super::renderer::{
 };
 use super::renderer::{
     render_display_model, render_plain_display_model, writeln_newline, DisplayModel,
-    DisplayRecorder, ErrorCapturingWriter, MessageLevel, SchronuWriter,
+    ErrorCapturingWriter, MessageLevel, SchronuWriter,
 };
 use super::view::*;
 use chrono::{DateTime, Duration, Local};
@@ -879,9 +879,7 @@ fn render_interactive_band(
     task_repository: &mut dyn TaskRepositoryTrait,
     free_time_manager: &mut dyn FreeTimeManagerTrait,
 ) {
-    let mut recorder = DisplayRecorder::with_ansi_color(stdout.supports_ansi_color());
-    let result = execute_show_all_tasks_with_config(
-        &mut recorder,
+    let result = build_show_all_tasks_display_with_config(
         focused_task_id_opt,
         task_repository,
         free_time_manager,
@@ -889,16 +887,9 @@ fn render_interactive_band(
         TaskListDisplayOrder::ScheduledStartDesc,
         active_config(),
     );
-    let legacy_display = recorder.model().clone();
     match result {
-        Ok(Some(display)) => render_display_model(
-            stdout,
-            &DisplayModel::Sequence(vec![display, legacy_display]),
-        )
-        .unwrap(),
-        Ok(None) => render_display_model(stdout, &legacy_display).unwrap(),
+        Ok(display) => render_display_model(stdout, &display).unwrap(),
         Err(error) => {
-            render_display_model(stdout, &legacy_display).unwrap();
             report_application_result::<()>(stdout, Err(error));
         }
     }
