@@ -532,6 +532,34 @@ pub(super) fn build_focus_timing_display(
     })
 }
 
+pub(super) trait FocusDisplaySource {
+    fn build_ancestors(&self) -> Result<DisplayModel, ApplicationError>;
+    fn build_header(&self) -> Option<Result<FocusDisplay, ApplicationError>>;
+    fn build_timing(&self) -> Option<Result<FocusDisplay, ApplicationError>>;
+}
+
+pub(super) struct TaskFocusDisplaySource<'a> {
+    pub(super) focused_task_opt: Option<&'a TaskHandle>,
+    pub(super) focus_started_datetime: &'a DateTime<Local>,
+    pub(super) now: DateTime<Local>,
+}
+
+impl FocusDisplaySource for TaskFocusDisplaySource<'_> {
+    fn build_ancestors(&self) -> Result<DisplayModel, ApplicationError> {
+        build_ancestor_tree_display(&self.focused_task_opt.cloned()).map(DisplayModel::Tree)
+    }
+
+    fn build_header(&self) -> Option<Result<FocusDisplay, ApplicationError>> {
+        self.focused_task_opt.map(build_focus_header_display)
+    }
+
+    fn build_timing(&self) -> Option<Result<FocusDisplay, ApplicationError>> {
+        self.focused_task_opt.map(|focused_task| {
+            build_focus_timing_display(focused_task, self.focus_started_datetime, &self.now)
+        })
+    }
+}
+
 pub(super) fn build_leaf_tree_display(
     task_repository: &mut dyn TaskRepositoryTrait,
 ) -> Result<TreeDisplay, ApplicationError> {

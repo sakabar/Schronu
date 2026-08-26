@@ -14,11 +14,11 @@ use super::interactive;
 #[cfg(test)]
 use super::renderer::{
     format_band_day_row, format_focus_progress, format_focused_task_header, format_signed_seconds,
-    BandDayRow, BandDurations, BAND_SEGMENTS,
+    BandDayRow, BandDurations, FocusDisplay, BAND_SEGMENTS,
 };
 use super::renderer::{
     render_display_model, render_plain_display_model, writeln_newline, DisplayModel,
-    DisplayRecorder, ErrorCapturingWriter, FocusDisplay, MessageLevel, SchronuWriter,
+    DisplayRecorder, ErrorCapturingWriter, MessageLevel, SchronuWriter,
 };
 use super::view::*;
 use chrono::{DateTime, Duration, Local};
@@ -901,34 +901,6 @@ fn render_interactive_band(
             render_display_model(stdout, &legacy_display).unwrap();
             report_application_result::<()>(stdout, Err(error));
         }
-    }
-}
-
-trait FocusDisplaySource {
-    fn build_ancestors(&self) -> Result<DisplayModel, ApplicationError>;
-    fn build_header(&self) -> Option<Result<FocusDisplay, ApplicationError>>;
-    fn build_timing(&self) -> Option<Result<FocusDisplay, ApplicationError>>;
-}
-
-struct TaskFocusDisplaySource<'a> {
-    focused_task_opt: Option<&'a TaskHandle>,
-    focus_started_datetime: &'a DateTime<Local>,
-    now: DateTime<Local>,
-}
-
-impl FocusDisplaySource for TaskFocusDisplaySource<'_> {
-    fn build_ancestors(&self) -> Result<DisplayModel, ApplicationError> {
-        build_ancestor_tree_display(&self.focused_task_opt.cloned()).map(DisplayModel::Tree)
-    }
-
-    fn build_header(&self) -> Option<Result<FocusDisplay, ApplicationError>> {
-        self.focused_task_opt.map(build_focus_header_display)
-    }
-
-    fn build_timing(&self) -> Option<Result<FocusDisplay, ApplicationError>> {
-        self.focused_task_opt.map(|focused_task| {
-            build_focus_timing_display(focused_task, self.focus_started_datetime, &self.now)
-        })
     }
 }
 
