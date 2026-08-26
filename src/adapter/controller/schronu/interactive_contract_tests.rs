@@ -675,6 +675,45 @@ fn view表示計算はwriterと直接出力に依存しない() {
 }
 
 #[test]
+fn command_contextの製品task_list経路はwriter_free_builderへ直接委譲する() {
+    let product_sources = controller_product_sources();
+    let command_context = product_sources
+        .iter()
+        .find(|source| {
+            source.path.file_name().and_then(|name| name.to_str()) == Some("command_context.rs")
+        })
+        .expect("command_context.rs must be a controller product module");
+    let impl_offsets = top_level_item_definition_offsets(
+        &command_context.text,
+        "impl TaskTreeCommandContext for RuntimeTaskTreeCommandContext",
+    );
+    assert_eq!(
+        impl_offsets.len(),
+        1,
+        "runtime task-tree context must have one product implementation"
+    );
+    let implementation = function_region_from_offset(&command_context.text, impl_offsets[0]);
+
+    assert_eq!(
+        implementation
+            .matches("build_show_all_tasks_display_with_config(")
+            .count(),
+        1,
+        "product TaskTree context must call the writer-free view builder directly"
+    );
+    for forbidden in [
+        "execute_show_all_tasks_with_config(",
+        "DisplayRecorder::",
+        "legacy_display",
+    ] {
+        assert!(
+            !implementation.contains(forbidden),
+            "product TaskTree context must not retain the parallel writer path: {forbidden}"
+        );
+    }
+}
+
+#[test]
 fn view_writer_scannerはrustのfunction修飾子とwriter型を網羅する() {
     let source = r#"
 fn plain(writer: &mut dyn SchronuWriter) {}
