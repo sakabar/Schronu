@@ -1,5 +1,11 @@
-use super::command::{Command, CommandAction, CommandKind, CommandParseError, InteractiveShortcut};
-use super::renderer::{DisplayModel, DisplayRecorder, SchronuWriter};
+use super::command::{
+    validate_command_input, Command, CommandAction, CommandKind, CommandParseError,
+    CommandValidationError, InteractiveShortcut,
+};
+use super::renderer::{
+    DisplayModel, FlattenDisplay, FlattenReason, FlattenReasonSummary, FlattenRow,
+    FlattenUnresolvedDay, MessageLevel, PackDisplay, PackRow, TreeDisplay,
+};
 use chrono::{DateTime, Datelike, Days, Duration, Local, NaiveDate, NaiveDateTime, NaiveTime};
 use regex::Regex;
 use schronu::application::daily_capacity::{
@@ -22,18 +28,52 @@ pub(super) enum ExternalRequest {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(super) enum FocusRequest {
-    Clear,
+pub(super) enum FocusSelection {
     HighestPriority,
     LowestPriority { recent_days: i64 },
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(super) enum FocusChange {
+    Keep,
+    Clear,
+    Set(Uuid),
+    SelectionMode(FocusSelection),
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(super) enum FocusSessionEffect {
+    Keep,
+    TuckAway,
+    RestoreSelectionIfFocusChanged,
+}
+
+#[derive(Clone, Debug, PartialEq)]
 pub(super) struct CommandOutcome {
     pub(super) kind: CommandKind,
     pub(super) display: DisplayModel,
     pub(super) external_request: Option<ExternalRequest>,
-    pub(super) focus_request: Option<FocusRequest>,
+    pub(super) focus_change: FocusChange,
+    pub(super) focus_session_effect: FocusSessionEffect,
+}
+
+pub(super) trait CommandContext:
+    ProjectCommandContext
+    + TaskTreeCommandContext
+    + TaskAttributeCommandContext
+    + DeferCommandContext
+    + FinishPlacementCommandContext
+{
+}
+
+impl<T> CommandContext for T where
+    T: ProjectCommandContext
+        + TaskTreeCommandContext
+        + TaskAttributeCommandContext
+        + DeferCommandContext
+        + FinishPlacementCommandContext
+        + ?Sized
+{
 }
 
 pub(super) trait ProjectCommandContext {
@@ -53,34 +93,37 @@ pub(super) enum TaskListOrder {
     LowPriorityTail,
 }
 
+#[derive(Debug)]
+pub(super) enum NextUpResult {
+    NoDisplay,
+    ReportedError(ApplicationError),
+}
+
 pub(super) trait TaskTreeCommandContext {
-    fn supports_ansi_color(&self) -> bool;
-    fn show_tree(&mut self, display: &mut dyn SchronuWriter) -> Result<(), ApplicationError>;
-    fn show_ancestor(&mut self, display: &mut dyn SchronuWriter) -> Result<(), ApplicationError>;
+    fn show_tree(&mut self) -> Result<TreeDisplay, ApplicationError>;
+    fn show_ancestor(&mut self) -> Result<TreeDisplay, ApplicationError>;
     fn focus_root(&mut self) -> Result<(), ApplicationError>;
-    fn show_leaves(&mut self, display: &mut dyn SchronuWriter) -> Result<(), ApplicationError>;
+    fn show_leaves(&mut self) -> Result<TreeDisplay, ApplicationError>;
     fn show_task_list(
         &mut self,
-        display: &mut dyn SchronuWriter,
         pattern: Option<&str>,
         order: TaskListOrder,
         resolve_pattern: bool,
-    ) -> Result<(), ApplicationError>;
+    ) -> Result<DisplayModel, ApplicationError>;
     fn focus(&mut self, task_id: Uuid);
     fn pick(&mut self, task_id: Uuid) -> Result<(), ApplicationError>;
     fn focus_parent(&mut self) -> Result<(), ApplicationError>;
-    fn focus_children(&mut self, display: &mut dyn SchronuWriter) -> Result<(), ApplicationError>;
-    fn focus_deepest(&mut self, display: &mut dyn SchronuWriter) -> Result<(), ApplicationError>;
+    fn focus_children(&mut self) -> Result<Option<DisplayModel>, ApplicationError>;
+    fn focus_deepest(&mut self) -> Result<Option<DisplayModel>, ApplicationError>;
     fn next_up(
         &mut self,
-        display: &mut dyn SchronuWriter,
         name: &str,
         estimated_minutes: Option<i64>,
-    ) -> Result<(), ApplicationError>;
+    ) -> Result<NextUpResult, ApplicationError>;
 }
 
 pub(super) trait TaskAttributeCommandContext {
-    fn set_deadline(&mut self, value: &str) -> Result<(), ApplicationError>;
+    fn set_deadline(&mut self, value: &str) -> Result<(), HandlerError>;
     fn set_estimate(&mut self, minutes: i64) -> Result<(), ApplicationError>;
     fn arrange(
         &mut self,
@@ -89,7 +132,7 @@ pub(super) trait TaskAttributeCommandContext {
     ) -> Result<(), ApplicationError>;
     fn set_actual(&mut self, minutes: i64) -> Result<(), ApplicationError>;
     fn set_priority(&mut self, priority: i64) -> Result<(), ApplicationError>;
-    fn set_category(&mut self, value: &str) -> Result<(), ApplicationError>;
+    fn set_category(&mut self, value: &str) -> Result<(), HandlerError>;
     fn add_work(&mut self, minutes: Option<i64>) -> Result<(), ApplicationError>;
 }
 
@@ -111,14 +154,10 @@ pub(super) trait DeferCommandContext {
 }
 
 pub(super) trait FinishPlacementCommandContext {
-    fn supports_ansi_color(&self) -> bool;
     fn last_synced_time(&self) -> DateTime<Local>;
     fn focus_started_datetime(&self) -> DateTime<Local>;
     fn focused_task(&self) -> Result<Option<TaskHandle>, ApplicationError>;
-    fn show_focused_tree(
-        &mut self,
-        display: &mut dyn SchronuWriter,
-    ) -> Result<(), ApplicationError>;
+    fn show_focused_tree(&mut self) -> Result<TreeDisplay, ApplicationError>;
     fn complete_focused_task(
         &mut self,
         input: CompleteTaskInput,
@@ -132,6 +171,54 @@ pub(super) trait FinishPlacementCommandContext {
 pub(super) enum DeferCommandError {
     Parse(CommandParseError),
     Application(ApplicationError),
+}
+
+#[derive(Debug)]
+pub(super) enum HandlerError {
+    Parse(CommandParseError),
+    Application(ApplicationError),
+}
+
+impl std::fmt::Display for HandlerError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Parse(error) => error.fmt(formatter),
+            Self::Application(error) => write!(formatter, "操作エラー: {error}"),
+        }
+    }
+}
+
+impl std::error::Error for HandlerError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::Parse(error) => Some(error),
+            Self::Application(error) => Some(error),
+        }
+    }
+}
+
+impl From<ApplicationError> for HandlerError {
+    fn from(error: ApplicationError) -> Self {
+        Self::Application(error)
+    }
+}
+
+impl From<CommandValidationError> for HandlerError {
+    fn from(error: CommandValidationError) -> Self {
+        match error {
+            CommandValidationError::Parse(error) => Self::Parse(error),
+            CommandValidationError::Application(error) => Self::Application(error),
+        }
+    }
+}
+
+impl From<DeferCommandError> for HandlerError {
+    fn from(error: DeferCommandError) -> Self {
+        match error {
+            DeferCommandError::Parse(error) => Self::Parse(error),
+            DeferCommandError::Application(error) => Self::Application(error),
+        }
+    }
 }
 
 impl std::fmt::Display for DeferCommandError {
@@ -155,8 +242,15 @@ impl CommandOutcome {
             kind,
             display: DisplayModel::default(),
             external_request: None,
-            focus_request: None,
+            focus_change: FocusChange::Keep,
+            focus_session_effect: FocusSessionEffect::Keep,
         }
+    }
+
+    fn semantic_empty(kind: CommandKind) -> Self {
+        let mut outcome = Self::empty(kind);
+        outcome.display = DisplayModel::empty();
+        outcome
     }
 }
 
@@ -165,7 +259,8 @@ pub(super) fn handle(command: &Command) -> Option<CommandOutcome> {
     let mut outcome = CommandOutcome::empty(kind);
 
     match command {
-        Command::Noop | Command::TuckAway => {}
+        Command::Noop => {}
+        Command::TuckAway => outcome.focus_session_effect = FocusSessionEffect::TuckAway,
         Command::Action(CommandAction::NoArguments {
             kind: CommandKind::Open,
             ..
@@ -177,13 +272,16 @@ pub(super) fn handle(command: &Command) -> Option<CommandOutcome> {
         Command::Action(CommandAction::NoArguments {
             kind: CommandKind::Unfocus,
             ..
-        }) => outcome.focus_request = Some(FocusRequest::Clear),
+        }) => outcome.focus_change = FocusChange::Clear,
         Command::Action(CommandAction::FocusMode {
             kind: CommandKind::FocusHighest,
             ..
         }) => {
-            outcome.focus_request = Some(FocusRequest::HighestPriority);
-            outcome.display = DisplayModel::newline("フォーカス選択モード: 高");
+            outcome.focus_change = FocusChange::SelectionMode(FocusSelection::HighestPriority);
+            outcome.display = DisplayModel::Message {
+                level: MessageLevel::Plain,
+                text: "フォーカス選択モード: 高".to_string(),
+            };
         }
         Command::Action(CommandAction::FocusMode {
             kind: CommandKind::FocusLowest,
@@ -191,17 +289,17 @@ pub(super) fn handle(command: &Command) -> Option<CommandOutcome> {
             ..
         }) => {
             let recent_days = recent_days.unwrap_or(0);
-            outcome.focus_request = Some(FocusRequest::LowestPriority { recent_days });
+            outcome.focus_change =
+                FocusChange::SelectionMode(FocusSelection::LowestPriority { recent_days });
             let label = if recent_days == 0 {
                 "低".to_string()
             } else {
                 format!("低 {recent_days}")
             };
-            let mut display = DisplayRecorder::default();
-            display
-                .writeln_newline(&format!("フォーカス選択モード: {label}"))
-                .expect("display recording is infallible");
-            outcome.display = display.model().clone();
+            outcome.display = DisplayModel::Message {
+                level: MessageLevel::Plain,
+                text: format!("フォーカス選択モード: {label}"),
+            };
         }
         _ => return None,
     }
@@ -209,29 +307,68 @@ pub(super) fn handle(command: &Command) -> Option<CommandOutcome> {
     Some(outcome)
 }
 
-pub(super) fn handle_task_tree_command(
+pub(super) fn handle_command<C: CommandContext + ?Sized>(
     command: &Command,
-    context: &mut dyn TaskTreeCommandContext,
+    context: &mut C,
+) -> Result<Option<CommandOutcome>, HandlerError> {
+    validate_command_input(command)?;
+    if command.kind() == CommandKind::Verify {
+        return Ok(None);
+    }
+    if let Command::Focus { task_id } = command {
+        let mut outcome = CommandOutcome::empty(CommandKind::Focus);
+        outcome.focus_change = FocusChange::Set(*task_id);
+        return Ok(Some(outcome));
+    }
+    if let Some(outcome) = handle(command) {
+        return Ok(Some(outcome));
+    }
+    if let Some(outcome) = handle_project_command(command, context)? {
+        return Ok(Some(outcome));
+    }
+    if let Some(outcome) = handle_breakdown_split_command(command, context)? {
+        return Ok(Some(outcome));
+    }
+    if let Some(outcome) = handle_task_attribute_command(command, context)? {
+        return Ok(Some(outcome));
+    }
+    if let Some(outcome) = handle_defer_command(command, context)? {
+        return Ok(Some(outcome));
+    }
+    if let Some(outcome) = handle_finish_placement_command(command, context)? {
+        return Ok(Some(outcome));
+    }
+    if let Some(outcome) = handle_task_tree_command(command, context)? {
+        return Ok(Some(outcome));
+    }
+
+    Ok(None)
+}
+
+pub(super) fn handle_task_tree_command<C: TaskTreeCommandContext + ?Sized>(
+    command: &Command,
+    context: &mut C,
 ) -> Result<Option<CommandOutcome>, ApplicationError> {
-    let mut display = DisplayRecorder::with_ansi_color(context.supports_ansi_color());
+    let mut semantic_display = None;
     let kind = command.kind();
 
     match command {
-        Command::ShowAll { pattern } => context.show_task_list(
-            &mut display,
-            pattern.as_deref(),
-            TaskListOrder::ScheduledStartDesc,
-            true,
-        )?,
+        Command::ShowAll { pattern } => {
+            semantic_display = Some(context.show_task_list(
+                pattern.as_deref(),
+                TaskListOrder::ScheduledStartDesc,
+                true,
+            )?)
+        }
         Command::Focus { task_id } => context.focus(*task_id),
         Command::Action(CommandAction::NoArguments {
             kind: CommandKind::Tree,
             ..
-        }) => context.show_tree(&mut display)?,
+        }) => semantic_display = Some(DisplayModel::Tree(context.show_tree()?)),
         Command::Action(CommandAction::NoArguments {
             kind: CommandKind::Ancestor,
             ..
-        }) => context.show_ancestor(&mut display)?,
+        }) => semantic_display = Some(DisplayModel::Tree(context.show_ancestor()?)),
         Command::Action(CommandAction::NoArguments {
             kind: CommandKind::Root,
             ..
@@ -239,53 +376,58 @@ pub(super) fn handle_task_tree_command(
         Command::Action(CommandAction::NoArguments {
             kind: CommandKind::Leaves,
             ..
-        }) => context.show_leaves(&mut display)?,
+        }) => semantic_display = Some(DisplayModel::Tree(context.show_leaves()?)),
         Command::Action(CommandAction::OptionalPattern {
             kind: CommandKind::Tail,
             pattern,
             ..
-        }) => context.show_task_list(
-            &mut display,
-            Some(pattern.as_deref().unwrap_or("今")),
-            TaskListOrder::LowPriorityTail,
-            false,
-        )?,
+        }) => {
+            semantic_display = Some(context.show_task_list(
+                Some(pattern.as_deref().unwrap_or("今")),
+                TaskListOrder::LowPriorityTail,
+                false,
+            )?)
+        }
         Command::Action(CommandAction::NoArguments {
             kind: CommandKind::Today,
             ..
-        }) => context.show_task_list(
-            &mut display,
-            Some("今"),
-            TaskListOrder::ScheduledStartDesc,
-            false,
-        )?,
+        }) => {
+            semantic_display = Some(context.show_task_list(
+                Some("今"),
+                TaskListOrder::ScheduledStartDesc,
+                false,
+            )?)
+        }
         Command::Action(CommandAction::NoArguments {
             kind: CommandKind::NonRepetitive,
             ..
-        }) => context.show_task_list(
-            &mut display,
-            Some("単"),
-            TaskListOrder::ScheduledStartDesc,
-            false,
-        )?,
+        }) => {
+            semantic_display = Some(context.show_task_list(
+                Some("単"),
+                TaskListOrder::ScheduledStartDesc,
+                false,
+            )?)
+        }
         Command::Action(CommandAction::NoArguments {
             kind: CommandKind::Calendar,
             ..
-        }) => context.show_task_list(
-            &mut display,
-            Some("暦"),
-            TaskListOrder::ScheduledStartDesc,
-            false,
-        )?,
+        }) => {
+            semantic_display = Some(context.show_task_list(
+                Some("暦"),
+                TaskListOrder::ScheduledStartDesc,
+                false,
+            )?)
+        }
         Command::Action(CommandAction::NoArguments {
             kind: CommandKind::Band,
             ..
-        }) => context.show_task_list(
-            &mut display,
-            Some("帯"),
-            TaskListOrder::ScheduledStartDesc,
-            false,
-        )?,
+        }) => {
+            semantic_display = Some(context.show_task_list(
+                Some("帯"),
+                TaskListOrder::ScheduledStartDesc,
+                false,
+            )?)
+        }
         Command::Action(CommandAction::Pick { task_id }) => context.pick(*task_id)?,
         Command::Action(CommandAction::NoArguments {
             kind: CommandKind::Parent,
@@ -294,28 +436,40 @@ pub(super) fn handle_task_tree_command(
         Command::Action(CommandAction::NoArguments {
             kind: CommandKind::Children,
             ..
-        }) => context.focus_children(&mut display)?,
+        }) => semantic_display = context.focus_children()?,
         Command::Action(CommandAction::NoArguments {
             kind: CommandKind::Deepest,
             ..
-        }) => context.focus_deepest(&mut display)?,
+        }) => semantic_display = context.focus_deepest()?,
         Command::Action(CommandAction::TaskWithEstimate {
             kind: CommandKind::NextUp,
             name,
             estimated_minutes,
             ..
-        }) => context.next_up(&mut display, name, *estimated_minutes)?,
+        }) => {
+            semantic_display = match context.next_up(name, *estimated_minutes)? {
+                NextUpResult::NoDisplay => None,
+                NextUpResult::ReportedError(error) => Some(DisplayModel::Message {
+                    level: MessageLevel::Error,
+                    text: HandlerError::Application(error).to_string(),
+                }),
+            }
+        }
         _ => return Ok(None),
     }
 
     let mut outcome = CommandOutcome::empty(kind);
-    outcome.display = display.model().clone();
+    if let Some(display) = semantic_display {
+        outcome.display = display;
+    } else {
+        return Ok(Some(CommandOutcome::semantic_empty(kind)));
+    }
     Ok(Some(outcome))
 }
 
-pub(super) fn handle_project_command(
+pub(super) fn handle_project_command<C: ProjectCommandContext + ?Sized>(
     command: &Command,
-    context: &mut dyn ProjectCommandContext,
+    context: &mut C,
 ) -> Result<Option<CommandOutcome>, ApplicationError> {
     let action = match command {
         Command::Action(action) => action,
@@ -337,7 +491,7 @@ pub(super) fn handle_project_command(
                 _ => return Ok(None),
             };
             execute_start_new_project(context, name, defer_days_opt, *estimated_minutes)?;
-            Ok(Some(CommandOutcome::empty(*kind)))
+            Ok(Some(project_command_outcome(*kind, Vec::new(), None)))
         }
         CommandAction::Sequential {
             name,
@@ -349,10 +503,10 @@ pub(super) fn handle_project_command(
             let (Ok(begin_index), Ok(end_index)) =
                 (u64::try_from(*begin_index), u64::try_from(*end_index))
             else {
-                return Ok(Some(CommandOutcome::empty(kind)));
+                return Ok(Some(project_command_outcome(kind, Vec::new(), None)));
             };
             if begin_index > end_index {
-                return Ok(Some(CommandOutcome::empty(kind)));
+                return Ok(Some(project_command_outcome(kind, Vec::new(), None)));
             }
             let focused_task_opt = context.focused_task()?;
             let suffix = suffix
@@ -367,7 +521,8 @@ pub(super) fn handle_project_command(
                 end_index,
                 &suffix,
             );
-            Ok(Some(outcome_from_reported_result(kind, result)))
+            let error = result.err();
+            Ok(Some(project_command_outcome(kind, Vec::new(), error)))
         }
         CommandAction::Repeat {
             name,
@@ -376,20 +531,17 @@ pub(super) fn handle_project_command(
             start_time,
             deadline_time,
         } => {
-            let mut display = DisplayRecorder::default();
+            let mut lines = Vec::new();
             let result = execute_create_repetition_task(
-                &mut display,
                 context,
                 name,
                 day,
                 *estimated_minutes,
                 start_time,
                 deadline_time,
+                &mut lines,
             );
-            report_result(&mut display, result);
-            let mut outcome = CommandOutcome::empty(kind);
-            outcome.display = display.model().clone();
-            Ok(Some(outcome))
+            Ok(Some(project_command_outcome(kind, lines, result.err())))
         }
         CommandAction::TimeExpression {
             kind: CommandKind::Appointment,
@@ -401,7 +553,7 @@ pub(super) fn handle_project_command(
                 let focused_task_opt = context.focused_task()?;
                 execute_make_appointment(&focused_task_opt, start_time)?;
             }
-            Ok(Some(CommandOutcome::empty(kind)))
+            Ok(Some(project_command_outcome(kind, Vec::new(), None)))
         }
         CommandAction::TimeExpression {
             kind: CommandKind::Start,
@@ -415,35 +567,42 @@ pub(super) fn handle_project_command(
                         .map_err(ApplicationError::TaskTree)?;
                 }
             }
-            Ok(Some(CommandOutcome::empty(kind)))
+            Ok(Some(project_command_outcome(kind, Vec::new(), None)))
         }
         _ => Ok(None),
     }
 }
 
-pub(super) fn handle_breakdown_split_command(
+pub(super) fn handle_breakdown_split_command<C: ProjectCommandContext + ?Sized>(
     command: &Command,
-    context: &mut dyn ProjectCommandContext,
+    context: &mut C,
 ) -> Result<Option<CommandOutcome>, ApplicationError> {
     let action = match command {
         Command::Action(action) => action,
         _ => return Ok(None),
     };
     let kind = command.kind();
-    let mut display = DisplayRecorder::default();
+    let mut lines = Vec::new();
+    let mut reported_error = None;
 
     match action {
         CommandAction::TaskNames { names } => {
             if !names.is_empty() && !names.iter().any(|name| name.parse::<i64>().is_ok()) {
                 let names = names.iter().map(String::as_str).collect::<Vec<_>>();
-                let result = execute_breakdown(&mut display, context, &names, &None);
-                report_result(&mut display, result);
+                match execute_breakdown(context, &names, &None) {
+                    Ok(Some(child_ids)) => append_project_lines(&mut lines, &child_ids, &names),
+                    Ok(None) => {}
+                    Err(error) => reported_error = Some(error),
+                }
             }
         }
         CommandAction::Split { minutes, name } => {
             let focused_task = context.focused_task()?;
-            let result = execute_split(context, &focused_task, name, *minutes, &mut display);
-            report_result(&mut display, result);
+            match execute_split(context, &focused_task, name, *minutes) {
+                Ok(Some(task_id)) => lines.push(format!("{task_id} {name}")),
+                Ok(None) => {}
+                Err(error) => reported_error = Some(error),
+            }
         }
         CommandAction::NoArguments {
             kind: CommandKind::Wait,
@@ -458,15 +617,13 @@ pub(super) fn handle_breakdown_split_command(
         _ => return Ok(None),
     }
 
-    let mut outcome = CommandOutcome::empty(kind);
-    outcome.display = display.model().clone();
-    Ok(Some(outcome))
+    Ok(Some(project_command_outcome(kind, lines, reported_error)))
 }
 
-pub(super) fn handle_task_attribute_command(
+pub(super) fn handle_task_attribute_command<C: TaskAttributeCommandContext + ?Sized>(
     command: &Command,
-    context: &mut dyn TaskAttributeCommandContext,
-) -> Result<Option<CommandOutcome>, ApplicationError> {
+    context: &mut C,
+) -> Result<Option<CommandOutcome>, HandlerError> {
     let kind = command.kind();
 
     match command {
@@ -506,9 +663,9 @@ pub(super) fn handle_task_attribute_command(
     Ok(Some(CommandOutcome::empty(kind)))
 }
 
-pub(super) fn handle_defer_command(
+pub(super) fn handle_defer_command<C: DeferCommandContext + ?Sized>(
     command: &Command,
-    context: &mut dyn DeferCommandContext,
+    context: &mut C,
 ) -> Result<Option<CommandOutcome>, ApplicationError> {
     let kind = command.kind();
     let reported_result = match command {
@@ -562,23 +719,23 @@ pub(super) fn handle_defer_command(
     Ok(reported_result.map(|result| outcome_from_reported_defer_result(kind, result)))
 }
 
-pub(super) fn handle_finish_placement_command(
+pub(super) fn handle_finish_placement_command<C: FinishPlacementCommandContext + ?Sized>(
     command: &Command,
-    context: &mut dyn FinishPlacementCommandContext,
+    context: &mut C,
 ) -> Result<Option<CommandOutcome>, ApplicationError> {
     let kind = command.kind();
-    let mut display = DisplayRecorder::with_ansi_color(context.supports_ansi_color());
+    let mut semantic_display = None;
 
     match command {
         Command::Action(CommandAction::Finish { values }) => {
             let Some(focused_task) = context.focused_task()? else {
-                return Ok(Some(CommandOutcome::empty(kind)));
+                return Ok(Some(CommandOutcome::semantic_empty(kind)));
             };
             if focused_task
                 .has_undone_children()
                 .map_err(ApplicationError::TaskTree)?
             {
-                context.show_focused_tree(&mut display)?;
+                semantic_display = Some(DisplayModel::Tree(context.show_focused_tree()?));
             } else {
                 let now = context.last_synced_time();
                 if let Some(finished_at) = decide_finish_time_values(values, &now)? {
@@ -603,7 +760,8 @@ pub(super) fn handle_finish_placement_command(
                             context.set_focused_task_id(next_focus_task_id);
                         }
                         Err(ApplicationError::HasUndoneChildren(_)) => {
-                            context.show_focused_tree(&mut display)?;
+                            semantic_display =
+                                Some(DisplayModel::Tree(context.show_focused_tree()?));
                         }
                         Err(_) => {}
                     }
@@ -613,17 +771,97 @@ pub(super) fn handle_finish_placement_command(
         Command::Action(CommandAction::NoArguments {
             kind: CommandKind::Pack,
             ..
-        }) => write_pack_result(&mut display, &context.pack()?),
+        }) => {
+            semantic_display = Some(DisplayModel::Pack(pack_display(context.pack()?)));
+        }
         Command::Action(CommandAction::NoArguments {
             kind: CommandKind::Flatten,
             ..
-        }) => write_flatten_result(&mut display, &context.flatten()?),
+        }) => {
+            semantic_display = Some(DisplayModel::Flatten(flatten_display(context.flatten()?)));
+        }
         _ => return Ok(None),
     }
 
-    let mut outcome = CommandOutcome::empty(kind);
-    outcome.display = display.model().clone();
+    let mut outcome = match semantic_display {
+        Some(display) => {
+            let mut outcome = CommandOutcome::empty(kind);
+            outcome.display = display;
+            outcome
+        }
+        None => CommandOutcome::semantic_empty(kind),
+    };
+    if matches!(command, Command::Action(CommandAction::Finish { .. })) {
+        outcome.focus_session_effect = FocusSessionEffect::RestoreSelectionIfFocusChanged;
+    }
     Ok(Some(outcome))
+}
+
+pub(super) fn pack_display(result: PackResult) -> PackDisplay {
+    PackDisplay {
+        rows: result
+            .packed_tasks
+            .into_iter()
+            .map(|packed| PackRow {
+                source_date: packed.source_date,
+                target_date: packed.target_date,
+                work_seconds: packed.work_seconds,
+                priority: packed.priority,
+                task_id: packed.task_id,
+                name: packed.name,
+            })
+            .collect(),
+        skipped_count: result.skipped_tasks.len(),
+    }
+}
+
+fn flatten_display(result: FlattenResult) -> FlattenDisplay {
+    FlattenDisplay {
+        rows: result
+            .flattened_tasks
+            .into_iter()
+            .map(|flattened| FlattenRow {
+                source_date: flattened.source_date,
+                target_date: flattened.target_date,
+                work_seconds: flattened.work_seconds,
+                priority: flattened.priority,
+                task_id: flattened.task_id,
+                name: flattened.name,
+            })
+            .collect(),
+        overflowed_task_count: result.overflowed_task_count,
+        overflowed_work_seconds: result.overflowed_work_seconds,
+        had_overload: result.had_overload,
+        unresolved_days: result
+            .unresolved_overloads
+            .into_iter()
+            .map(|unresolved| FlattenUnresolvedDay {
+                date: unresolved.date,
+                excess_work_seconds: unresolved.excess_work_seconds,
+                reasons: unresolved
+                    .reasons
+                    .into_iter()
+                    .map(|summary| FlattenReasonSummary {
+                        reason: match summary.reason {
+                            UnresolvedReason::OnOtherSide => FlattenReason::OnOtherSide,
+                            UnresolvedReason::CrossesBusinessDay => {
+                                FlattenReason::CrossesBusinessDay
+                            }
+                            UnresolvedReason::ExceedsDailyCapacity => {
+                                FlattenReason::ExceedsDailyCapacity
+                            }
+                            UnresolvedReason::OwnDeadline => FlattenReason::OwnDeadline,
+                            UnresolvedReason::RelatedDeadline => FlattenReason::RelatedDeadline,
+                            UnresolvedReason::Other => FlattenReason::Other,
+                        },
+                        task_count: summary.task_count,
+                        representative_task_id: summary.representative_task_id,
+                        representative_task_name: summary.representative_task_name,
+                    })
+                    .collect(),
+            })
+            .collect(),
+    }
 }
 
 pub(super) fn decide_finish_time_values(
@@ -681,159 +919,37 @@ pub(super) fn decide_finish_time_values(
     }
 }
 
-pub(super) fn write_pack_result(display: &mut dyn SchronuWriter, result: &PackResult) {
-    let total_work_seconds = result
-        .packed_tasks
-        .iter()
-        .map(|packed| packed.work_seconds)
-        .sum::<i64>();
-
-    for packed in &result.packed_tasks {
-        display
-            .writeln_newline(&format!(
-                "詰\t{}\t{}\t{}\t優先度{}\t{}\t{}",
-                packed.source_date,
-                packed.target_date,
-                format_work_seconds_as_hours_minutes(packed.work_seconds),
-                packed.priority,
-                packed.task_id,
-                packed.name,
-            ))
-            .expect("display recording is infallible");
-    }
-    if result.packed_tasks.is_empty() && result.skipped_tasks.is_empty() {
-        display
-            .writeln_newline("[Info] 詰められるタスクはありません。")
-            .expect("display recording is infallible");
-    } else {
-        display
-            .writeln_newline(&format!(
-                "詰: {}件 {} (スキップ{}件)",
-                result.packed_tasks.len(),
-                format_work_seconds_as_hours_minutes(total_work_seconds),
-                result.skipped_tasks.len(),
-            ))
-            .expect("display recording is infallible");
-    }
-}
-
-fn write_flatten_result(display: &mut dyn SchronuWriter, result: &FlattenResult) {
-    let total_work_seconds = result
-        .flattened_tasks
-        .iter()
-        .map(|flattened| flattened.work_seconds)
-        .sum::<i64>();
-
-    for flattened in &result.flattened_tasks {
-        display
-            .writeln_newline(&format!(
-                "平\t{}\t{}\t{}\t優先度{}\t{}\t{}",
-                flattened.source_date,
-                flattened.target_date,
-                format_work_seconds_as_hours_minutes(flattened.work_seconds),
-                flattened.priority,
-                flattened.task_id,
-                flattened.name,
-            ))
-            .expect("display recording is infallible");
-    }
-
-    if !result.had_overload {
-        display
-            .writeln_newline("[Info] 100%を超過している日はありません。")
-            .expect("display recording is infallible");
-    } else {
-        display
-            .writeln_newline(&format!(
-                "平: {}件 {}{}",
-                result.flattened_tasks.len(),
-                format_work_seconds_as_hours_minutes(total_work_seconds),
-                if result.unresolved_overloads.is_empty() {
-                    String::new()
-                } else {
-                    format!(" (未解消{}日)", result.unresolved_overloads.len())
-                },
-            ))
-            .expect("display recording is infallible");
-        if result.overflowed_task_count > 0 {
-            display
-                .writeln_newline(&format!(
-                    "[Warn] 35日後の退避先は日次容量の上限を適用していません: {}件 {}",
-                    result.overflowed_task_count,
-                    format_work_seconds_as_hours_minutes(result.overflowed_work_seconds),
-                ))
-                .expect("display recording is infallible");
-        }
-        for unresolved in &result.unresolved_overloads {
-            display
-                .writeln_newline(&format!(
-                    "[Warn] 平\t{}\t未解消 {}",
-                    unresolved.date,
-                    format_work_seconds_as_hours_minutes_rounded_up(
-                        unresolved.excess_work_seconds,
-                    ),
-                ))
-                .expect("display recording is infallible");
-            for summary in &unresolved.reasons {
-                display
-                    .writeln_newline(&format!(
-                        "  {}: {}件",
-                        unresolved_reason_label(summary.reason),
-                        summary.task_count,
-                    ))
-                    .expect("display recording is infallible");
-                if let (Some(task_id), Some(task_name)) = (
-                    summary.representative_task_id,
-                    summary.representative_task_name.as_deref(),
-                ) {
-                    display
-                        .writeln_newline(&format!("    {task_id}\t{task_name}"))
-                        .expect("display recording is infallible");
-                }
-            }
-        }
-    }
-}
-
-fn format_work_seconds_as_hours_minutes(work_seconds: i64) -> String {
-    let total_minutes = work_seconds.max(0) / 60;
-    format!("{:02}:{:02}", total_minutes / 60, total_minutes % 60)
-}
-
-fn format_work_seconds_as_hours_minutes_rounded_up(work_seconds: i64) -> String {
-    let positive_seconds = work_seconds.max(0);
-    let total_minutes = (positive_seconds + 59) / 60;
-    format!("{:02}:{:02}", total_minutes / 60, total_minutes % 60)
-}
-
-fn unresolved_reason_label(reason: UnresolvedReason) -> &'static str {
-    match reason {
-        UnresolvedReason::OnOtherSide => "相手待ち",
-        UnresolvedReason::CrossesBusinessDay => "業務日境界をまたぐ",
-        UnresolvedReason::ExceedsDailyCapacity => "1日の最大容量を超える",
-        UnresolvedReason::OwnDeadline => "自身の期限により翌日06:00を維持できない",
-        UnresolvedReason::RelatedDeadline => "仮延期によって関連taskの期限を超える",
-        UnresolvedReason::Other => "その他",
-    }
-}
-
-fn report_result<T>(display: &mut dyn SchronuWriter, result: Result<T, ApplicationError>) {
-    if let Err(error) = result {
-        display
-            .writeln_newline(&format!("[Error] 操作エラー: {error}"))
-            .expect("display recording is infallible");
-    }
-}
-
-fn outcome_from_reported_result<T>(
+fn project_command_outcome(
     kind: CommandKind,
-    result: Result<T, ApplicationError>,
+    lines: Vec<String>,
+    reported_error: Option<ApplicationError>,
 ) -> CommandOutcome {
+    let mut messages = lines
+        .into_iter()
+        .map(|text| DisplayModel::Message {
+            level: MessageLevel::Plain,
+            text,
+        })
+        .collect::<Vec<_>>();
+    if let Some(error) = reported_error {
+        messages.push(DisplayModel::Message {
+            level: MessageLevel::Error,
+            text: format!("操作エラー: {error}"),
+        });
+    }
+
     let mut outcome = CommandOutcome::empty(kind);
-    let mut display = DisplayRecorder::default();
-    report_result(&mut display, result);
-    outcome.display = display.model().clone();
+    outcome.display = DisplayModel::Sequence(messages);
     outcome
+}
+
+fn append_project_lines(lines: &mut Vec<String>, task_ids: &[Uuid], task_names: &[&str]) {
+    lines.extend(
+        task_ids
+            .iter()
+            .zip(task_names)
+            .map(|(task_id, task_name)| format!("{task_id} {task_name}")),
+    );
 }
 
 fn outcome_from_reported_defer_result(
@@ -842,17 +958,16 @@ fn outcome_from_reported_defer_result(
 ) -> CommandOutcome {
     let mut outcome = CommandOutcome::empty(kind);
     if let Err(error) = result {
-        let mut display = DisplayRecorder::default();
-        display
-            .writeln_newline(&format!("[Error] {error}"))
-            .expect("display recording is infallible");
-        outcome.display = display.model().clone();
+        outcome.display = DisplayModel::Message {
+            level: MessageLevel::Error,
+            text: error.to_string(),
+        };
     }
     outcome
 }
 
-fn execute_start_new_project(
-    context: &mut dyn ProjectCommandContext,
+fn execute_start_new_project<C: ProjectCommandContext + ?Sized>(
+    context: &mut C,
     name: &str,
     defer_days_opt: Option<i64>,
     estimated_work_minutes_opt: Option<i64>,
@@ -905,8 +1020,8 @@ fn execute_make_appointment(
     Ok(())
 }
 
-fn execute_breakdown_sequentially(
-    context: &mut dyn ProjectCommandContext,
+fn execute_breakdown_sequentially<C: ProjectCommandContext + ?Sized>(
+    context: &mut C,
     focused_task_opt: &Option<TaskHandle>,
     name: &str,
     estimated_work_minutes: i64,
@@ -937,9 +1052,8 @@ fn execute_breakdown_sequentially(
     Ok(None)
 }
 
-fn execute_breakdown(
-    stdout: &mut dyn SchronuWriter,
-    context: &mut dyn ProjectCommandContext,
+fn execute_breakdown<C: ProjectCommandContext + ?Sized>(
+    context: &mut C,
     new_task_names: &[&str],
     pending_until_opt: &Option<DateTime<Local>>,
 ) -> Result<Option<Vec<Uuid>>, ApplicationError> {
@@ -955,21 +1069,15 @@ fn execute_breakdown(
         names,
         pending_until: *pending_until_opt,
     })?;
-    for (child_id, child_name) in child_ids.iter().zip(new_task_names.iter()) {
-        stdout
-            .writeln_newline(&format!("{child_id} {child_name}"))
-            .expect("display recording is infallible");
-    }
     context.set_focused_task_id(child_ids.first().copied());
     Ok(Some(child_ids))
 }
 
-fn execute_split(
-    context: &mut dyn ProjectCommandContext,
+fn execute_split<C: ProjectCommandContext + ?Sized>(
+    context: &mut C,
     focused_task_opt: &Option<TaskHandle>,
     new_task_name: &str,
     splitted_work_minutes: i64,
-    display: &mut dyn SchronuWriter,
 ) -> Result<Option<Uuid>, ApplicationError> {
     validate_task_name(new_task_name, "name")?;
 
@@ -1017,27 +1125,25 @@ fn execute_split(
         .create_child(new_task_attr)
         .map_err(ApplicationError::TaskTree)?;
     let new_task_id = new_task.get_id().map_err(ApplicationError::TaskTree)?;
-    display
-        .writeln_newline(&format!("{new_task_id} {new_task_name}"))
-        .expect("display recording is infallible");
     context.set_focused_task_id(Some(new_task_id));
     Ok(Some(new_task_id))
 }
 
 #[allow(clippy::too_many_arguments)]
-fn execute_create_repetition_task(
-    stdout: &mut dyn SchronuWriter,
-    context: &mut dyn ProjectCommandContext,
+fn execute_create_repetition_task<C: ProjectCommandContext + ?Sized>(
+    context: &mut C,
     name: &str,
     day: &str,
     estimated_work_minutes: i64,
     _start_time: &str,
     _deadline_time: &str,
+    lines: &mut Vec<String>,
 ) -> Result<Option<Uuid>, ApplicationError> {
     estimated_work_seconds_from_minutes(estimated_work_minutes)?;
-    let Some(_) = execute_breakdown(stdout, context, &[name], &None)? else {
+    let Some(child_ids) = execute_breakdown(context, &[name], &None)? else {
         return Ok(None);
     };
+    append_project_lines(lines, &child_ids, &[name]);
     let repetition_parent_task_opt = context.focused_task()?;
     if let Some(task_id) = repetition_parent_task_opt
         .map(|task| task.get_id())
@@ -1050,9 +1156,10 @@ fn execute_create_repetition_task(
     let task_num = if day == "毎" { 7 } else { 4 };
     if let Some(repetition_parent_task_id) = context.focused_task_id() {
         for _ in 0..task_num {
-            let Some(_) = execute_breakdown(stdout, context, &[name], &None)? else {
+            let Some(child_ids) = execute_breakdown(context, &[name], &None)? else {
                 return Ok(None);
             };
+            append_project_lines(lines, &child_ids, &[name]);
             let child_task_opt = context.focused_task()?;
             if let Some(task_id) = child_task_opt
                 .map(|task| task.get_id())
@@ -1341,9 +1448,8 @@ mod task_generation_context_tests {
         let root = task("root", 1, now);
         root.set_estimated_work_seconds(90 * 60).unwrap();
         let mut context = FixedIdentityProjectCommandContext::new(now, [child_id]);
-        let mut display = DisplayRecorder::default();
 
-        let actual = execute_split(&mut context, &Some(root.clone()), "child", 30, &mut display)
+        let actual = execute_split(&mut context, &Some(root.clone()), "child", 30)
             .expect("split must succeed")
             .expect("split must create a child");
 

@@ -1,5 +1,5 @@
 #[cfg(test)]
-use super::handler::{decide_finish_time_values, decide_time_values, write_pack_result};
+use super::handler::{decide_finish_time_values, decide_time_values, pack_display};
 
 #[cfg(test)]
 use super::interactive::{
@@ -81,9 +81,13 @@ fn report_command_result(stdout: &mut dyn SchronuWriter, result: Result<(), Comm
 
 #[cfg(test)]
 fn focus_selection_mode_from_command(command: &Command) -> Option<FocusSelectionMode> {
-    handle(command)
-        .and_then(|outcome| outcome.focus_request)
-        .map(focus_selection_mode_from_request)
+    super::handler::handle(command)
+        .and_then(|outcome| match outcome.focus_change {
+            FocusChange::SelectionMode(selection) => {
+                Some(focus_selection_mode_from_selection(selection))
+            }
+            FocusChange::Keep | FocusChange::Clear | FocusChange::Set(_) => None,
+        })
 }
 
 #[cfg(test)]
@@ -219,6 +223,7 @@ struct FailingNewlineWriter {
     buffer: Vec<u8>,
     failures_remaining: usize,
     newline_call_count: usize,
+    error_kind: std::io::ErrorKind,
 }
 
 #[cfg(test)]
@@ -228,6 +233,16 @@ impl FailingNewlineWriter {
             buffer: vec![],
             failures_remaining: 1,
             newline_call_count: 0,
+            error_kind: std::io::ErrorKind::Other,
+        }
+    }
+
+    fn always_failing(error_kind: std::io::ErrorKind) -> Self {
+        Self {
+            buffer: vec![],
+            failures_remaining: usize::MAX,
+            newline_call_count: 0,
+            error_kind,
         }
     }
 }
@@ -250,7 +265,10 @@ impl SchronuWriter for FailingNewlineWriter {
         self.newline_call_count += 1;
         if self.failures_remaining > 0 {
             self.failures_remaining -= 1;
-            return Err(std::io::Error::other("newline write failure"));
+            return Err(std::io::Error::new(
+                self.error_kind,
+                "newline write failure",
+            ));
         }
         writeln!(self, "<reset>{message}")
     }
@@ -260,7 +278,8 @@ impl SchronuWriter for FailingNewlineWriter {
 struct FlushTrackingWriter {
     buffer: Vec<u8>,
     flush_count: usize,
-    flush_error_kind: Option<std::io::ErrorKind>,
+    flush_buffer_lengths: Vec<usize>,
+    flush_error: Option<(usize, std::io::ErrorKind)>,
     supports_ansi_color: bool,
 }
 
@@ -270,7 +289,8 @@ impl FlushTrackingWriter {
         Self {
             buffer: vec![],
             flush_count: 0,
-            flush_error_kind: None,
+            flush_buffer_lengths: vec![],
+            flush_error: None,
             supports_ansi_color,
         }
     }
@@ -279,7 +299,18 @@ impl FlushTrackingWriter {
         Self {
             buffer: vec![],
             flush_count: 0,
-            flush_error_kind: Some(error_kind),
+            flush_buffer_lengths: vec![],
+            flush_error: Some((1, error_kind)),
+            supports_ansi_color: true,
+        }
+    }
+
+    fn failing_on_nth_flush(flush_count: usize, error_kind: std::io::ErrorKind) -> Self {
+        Self {
+            buffer: vec![],
+            flush_count: 0,
+            flush_buffer_lengths: vec![],
+            flush_error: Some((flush_count, error_kind)),
             supports_ansi_color: true,
         }
     }
@@ -294,9 +325,12 @@ impl Write for FlushTrackingWriter {
 
     fn flush(&mut self) -> std::io::Result<()> {
         self.flush_count += 1;
-        match self.flush_error_kind {
-            Some(kind) => Err(std::io::Error::new(kind, "flush failure")),
-            None => Ok(()),
+        self.flush_buffer_lengths.push(self.buffer.len());
+        match self.flush_error {
+            Some((failure_count, kind)) if self.flush_count == failure_count => {
+                Err(std::io::Error::new(kind, "flush failure"))
+            }
+            Some(_) | None => Ok(()),
         }
     }
 }
@@ -331,9 +365,11 @@ struct TestTaskRepository {
     load_should_fail: bool,
     load_attempt_count: Cell<usize>,
     reload_if_changed_attempt_count: Cell<usize>,
+    get_by_id_attempt_count: Cell<usize>,
     save_failures_remaining: Cell<usize>,
     save_attempt_count: Cell<usize>,
     has_pending_changes: Cell<bool>,
+    operation_trace: RefCell<Vec<&'static str>>,
 }
 
 #[cfg(test)]
@@ -388,15 +424,21 @@ impl TestTaskRepository {
             load_should_fail: false,
             load_attempt_count: Cell::new(0),
             reload_if_changed_attempt_count: Cell::new(0),
+            get_by_id_attempt_count: Cell::new(0),
             save_failures_remaining: Cell::new(0),
             save_attempt_count: Cell::new(0),
             has_pending_changes: Cell::new(true),
+            operation_trace: RefCell::new(Vec::new()),
         }
     }
 
     fn with_storage_directory(mut self, storage_directory: &std::path::Path) -> Self {
         self.storage_directory = storage_directory.to_str().unwrap().to_string();
         self
+    }
+
+    fn operation_trace(&self) -> Vec<&'static str> {
+        self.operation_trace.borrow().clone()
     }
 }
 
@@ -411,6 +453,7 @@ impl TaskRepositoryTrait for TestTaskRepository {
     }
 
     fn load(&mut self) -> Result<(), schronu::application::interface::TaskRepositoryError> {
+        self.operation_trace.borrow_mut().push("load");
         self.load_attempt_count
             .set(self.load_attempt_count.get() + 1);
         if self.load_should_fail {
@@ -430,6 +473,9 @@ impl TaskRepositoryTrait for TestTaskRepository {
         &mut self,
         now: DateTime<Local>,
     ) -> Result<RepositoryReloadOutcome, TaskRepositoryError> {
+        self.operation_trace
+            .borrow_mut()
+            .push("reload_if_changed");
         self.reload_if_changed_attempt_count
             .set(self.reload_if_changed_attempt_count.get() + 1);
         self.sync_clock(now)
@@ -439,6 +485,7 @@ impl TaskRepositoryTrait for TestTaskRepository {
     }
 
     fn save(&self) -> Result<(), schronu::application::interface::TaskRepositoryError> {
+        self.operation_trace.borrow_mut().push("save");
         self.save_attempt_count
             .set(self.save_attempt_count.get() + 1);
         let failures_remaining = self.save_failures_remaining.get();
@@ -457,6 +504,9 @@ impl TaskRepositoryTrait for TestTaskRepository {
     }
 
     fn has_pending_changes(&self) -> Result<bool, TaskTreeError> {
+        self.operation_trace
+            .borrow_mut()
+            .push("has_pending_changes");
         Ok(self.has_pending_changes.get())
     }
 
@@ -502,6 +552,8 @@ impl TaskRepositoryTrait for TestTaskRepository {
     }
 
     fn get_by_id(&self, id: Uuid) -> Result<Option<TaskHandle>, TaskTreeError> {
+        self.get_by_id_attempt_count
+            .set(self.get_by_id_attempt_count.get() + 1);
         self.task.get_by_id(id)
     }
 
@@ -793,7 +845,7 @@ fn execute_pack(
         active_config().end_of_day_offset_minutes,
     )
     .unwrap();
-    write_pack_result(stdout, &result);
+    render_display_model(stdout, &DisplayModel::Pack(pack_display(result))).unwrap();
 }
 
 #[cfg(test)]
@@ -813,8 +865,8 @@ fn execute(
         free_time_manager,
         focused_task_id_opt,
         focus_started_datetime,
-        untrimmed_line,
         &parsed_command,
+        OutcomeApplicationMode::Flushed,
     )
 }
 
@@ -849,6 +901,22 @@ fn execute_calendar_command_for_test(
     free_minutes: i64,
 ) -> String {
     execute_calendar_command_with_ansi_color_for_test(command, now, task, free_minutes, true)
+}
+
+#[cfg(test)]
+fn rendered_focus_messages_for_test(
+    focused_task: &TaskHandle,
+    focus_started_datetime: &DateTime<Local>,
+    now: &DateTime<Local>,
+) -> [String; 2] {
+    let display = build_focus_timing_display(focused_task, focus_started_datetime, now).unwrap();
+    let mut writer = TestWriter::new_for_pipe();
+    render_display_model(&mut writer, &DisplayModel::Focus(display)).unwrap();
+    let output = writer.into_string();
+    let mut lines = output.lines().rev();
+    let progress = lines.next().unwrap().to_string();
+    let summary = lines.next().unwrap().to_string();
+    [summary, progress]
 }
 
 #[cfg(test)]
@@ -950,33 +1018,45 @@ fn execute_flatten_command_for_test(
 
 #[cfg(test)]
 impl TaskListDisplayRow {
-    // 表示行の全属性を呼び出し側で確定させるため、引数を個別に受け取る。
+    // sort・give-up判定に必要な属性を呼び出し側で確定し、表示専用値は製品型で補う。
     #[cfg(test)]
     #[allow(clippy::too_many_arguments)]
     fn new_task(
         scheduled_start: DateTime<Local>,
         subjective_naive_date: NaiveDate,
-        rank: usize,
+        priority_rank: usize,
         id: Uuid,
         priority: i64,
         work_seconds: i64,
         project_category_opt: Option<ProjectCategory>,
-        message_prefix: String,
         task_name: String,
     ) -> Self {
         TaskListDisplayRow {
             scheduled_start,
             subjective_naive_date_opt: Some(subjective_naive_date),
-            rank,
+            rank: priority_rank,
             id,
             priority,
             work_seconds,
             project_category_opt,
             is_real_task: true,
             give_up_candidate: false,
-            message_prefix,
-            task_name,
-            message: String::new(),
+            display_row: super::renderer::TaskListRow::Task(
+                super::renderer::TaskListTaskRow {
+                    rank: 0,
+                    task_id: id,
+                    icon: "/".to_string(),
+                    remaining_time: "____/__/__".to_string(),
+                    scheduled_start,
+                    scheduled_end: scheduled_start + Duration::seconds(work_seconds),
+                    priority_rank,
+                    estimated_minutes: schronu::entity::task::round_up_sec_as_minute(work_seconds),
+                    project_number_priority: priority,
+                    project_category: project_category_opt,
+                    task_name,
+                    give_up_candidate: false,
+                },
+            ),
         }
     }
 }
