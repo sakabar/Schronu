@@ -1,6 +1,9 @@
 #[path = "schronu/command.rs"]
 mod command;
 
+#[path = "schronu/command_context.rs"]
+mod command_context;
+
 #[path = "schronu/handler.rs"]
 mod handler;
 
@@ -12,6 +15,9 @@ mod renderer;
 
 #[path = "schronu/runtime.rs"]
 mod runtime;
+
+#[path = "schronu/view.rs"]
+mod view;
 
 #[cfg(test)]
 #[path = "schronu/command_contract_tests.rs"]

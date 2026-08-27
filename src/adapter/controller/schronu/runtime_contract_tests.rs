@@ -139,7 +139,7 @@ fn test_resolve_show_all_pattern_完全日付と検索語は変更しない() {
 }
 
 #[test]
-fn test_show_task_list_mmddの日時errorを伝搬して表示と状態を変更しない() {
+fn test_show_task_list_mmddの日時errorを伝搬して成功表示を返さず状態を変更しない() {
     let now = maximum_local_datetime();
     let task = new_test_task_handle("show all日時範囲外対象").unwrap();
     let task_id = task.get_id().unwrap();
@@ -147,7 +147,6 @@ fn test_show_task_list_mmddの日時errorを伝搬して表示と状態を変更
     let mut task_repository = TestTaskRepository::new(task, now);
     let mut free_time_manager = TestFreeTimeManager::default();
     let mut focused_task_id_opt = Some(task_id);
-    let mut display = TestWriter::new();
     let mut next_id = || Uuid::nil();
     let mut task_factory = TaskFactory::new(now, &mut next_id);
     let mut context = RuntimeTaskTreeCommandContext {
@@ -156,11 +155,9 @@ fn test_show_task_list_mmddの日時errorを伝搬して表示と状態を変更
         focused_task_id_opt: &mut focused_task_id_opt,
         task_factory: &mut task_factory,
         config: active_config(),
-        supports_ansi_color: false,
     };
 
     let actual = context.show_task_list(
-        &mut display,
         Some("12/31"),
         TaskListOrder::ScheduledStartDesc,
         true,
@@ -175,11 +172,10 @@ fn test_show_task_list_mmddの日時errorを伝搬して表示と状態を変更
     ));
     assert_eq!(task_repository.task.snapshot().unwrap(), original_snapshot);
     assert_eq!(focused_task_id_opt, Some(task_id));
-    assert!(display.into_string().is_empty());
 }
 
 #[test]
-fn test_show_task_listの不正な完全日付をerrorにして表示と状態を変更しない() {
+fn test_show_task_listの不正な完全日付をerrorにして成功表示を返さず状態を変更しない() {
     let now = Local.with_ymd_and_hms(2026, 8, 11, 12, 0, 0).unwrap();
     let task = new_test_task_handle("show all不正日付対象").unwrap();
     let task_id = task.get_id().unwrap();
@@ -187,7 +183,6 @@ fn test_show_task_listの不正な完全日付をerrorにして表示と状態�
     let mut task_repository = TestTaskRepository::new(task, now);
     let mut free_time_manager = TestFreeTimeManager::default();
     let mut focused_task_id_opt = Some(task_id);
-    let mut display = TestWriter::new();
     let mut next_id = || Uuid::nil();
     let mut task_factory = TaskFactory::new(now, &mut next_id);
     let mut context = RuntimeTaskTreeCommandContext {
@@ -196,11 +191,9 @@ fn test_show_task_listの不正な完全日付をerrorにして表示と状態�
         focused_task_id_opt: &mut focused_task_id_opt,
         task_factory: &mut task_factory,
         config: active_config(),
-        supports_ansi_color: false,
     };
 
     let actual = context.show_task_list(
-        &mut display,
         Some("2026/02/30"),
         TaskListOrder::ScheduledStartDesc,
         true,
@@ -215,7 +208,226 @@ fn test_show_task_listの不正な完全日付をerrorにして表示と状態�
     );
     assert_eq!(task_repository.task.snapshot().unwrap(), original_snapshot);
     assert_eq!(focused_task_id_opt, Some(task_id));
-    assert!(display.into_string().is_empty());
+}
+
+#[test]
+fn task_tree製品context_children複数はtyped_treeを返してfocusを維持する() {
+    let now = Local.with_ymd_and_hms(2026, 8, 27, 12, 0, 0).unwrap();
+    let root = new_test_task_handle("children root").unwrap();
+    root.create_as_last_child(new_test_task_attr("first child"));
+    root.create_as_last_child(new_test_task_attr("second child"));
+    let root_id = root.get_id().unwrap();
+    let snapshot = root.snapshot().unwrap();
+    let (actual, resulting_root, focused_task_id_opt, _identity_count) =
+        run_with_runtime_task_tree_context(root, now, Some(root_id), Uuid::from_u128(9001), |context| {
+            context.focus_children()
+        });
+    let display = actual.unwrap();
+
+    assert!(matches!(display, Some(DisplayModel::Tree(_))));
+    assert_eq!(focused_task_id_opt, Some(root_id));
+    assert_eq!(resulting_root.snapshot().unwrap(), snapshot);
+}
+
+#[test]
+fn task_tree製品context_deepest分岐はtyped_treeを返して分岐taskへfocusする() {
+    let now = Local.with_ymd_and_hms(2026, 8, 27, 12, 0, 0).unwrap();
+    let root = new_test_task_handle("deepest root").unwrap();
+    let branch = root.create_as_last_child(new_test_task_attr("branch"));
+    branch.create_as_last_child(new_test_task_attr("first leaf"));
+    branch.create_as_last_child(new_test_task_attr("second leaf"));
+    let root_id = root.get_id().unwrap();
+    let branch_id = branch.get_id().unwrap();
+    let snapshot = root.snapshot().unwrap();
+    let (actual, resulting_root, focused_task_id_opt, _identity_count) =
+        run_with_runtime_task_tree_context(root, now, Some(root_id), Uuid::from_u128(9002), |context| {
+            context.focus_deepest()
+        });
+    let display = actual.unwrap();
+
+    assert!(matches!(display, Some(DisplayModel::Tree(_))));
+    assert_eq!(focused_task_id_opt, Some(branch_id));
+    assert_eq!(resulting_root.snapshot().unwrap(), snapshot);
+}
+
+fn run_with_runtime_task_tree_context<T>(
+    root: TaskHandle,
+    now: DateTime<Local>,
+    focused_task_id_opt: Option<Uuid>,
+    generated_id: Uuid,
+    operation: impl FnOnce(&mut RuntimeTaskTreeCommandContext<'_, '_, '_>) -> T,
+) -> (T, TaskHandle, Option<Uuid>, usize) {
+    let mut repository = TestTaskRepository::new(root, now);
+    let mut free_time_manager = TestFreeTimeManager::default();
+    let mut focused_task_id_opt = focused_task_id_opt;
+    let id_generator_call_count = Cell::new(0);
+    let mut next_id = || {
+        id_generator_call_count.set(id_generator_call_count.get() + 1);
+        generated_id
+    };
+    let mut task_factory = TaskFactory::new(now, &mut next_id);
+    let actual = {
+        let mut context = RuntimeTaskTreeCommandContext {
+            task_repository: &mut repository,
+            free_time_manager: &mut free_time_manager,
+            focused_task_id_opt: &mut focused_task_id_opt,
+            task_factory: &mut task_factory,
+            config: active_config(),
+        };
+        operation(&mut context)
+    };
+
+    (
+        actual,
+        repository.task,
+        focused_task_id_opt,
+        id_generator_call_count.get(),
+    )
+}
+
+#[test]
+fn task_tree製品context_childrenが0件なら表示とfocus変更がない() {
+    let now = Local.with_ymd_and_hms(2026, 8, 27, 12, 0, 0).unwrap();
+    let root = new_test_task_handle("no children root").unwrap();
+    let root_id = root.get_id().unwrap();
+    let snapshot = root.snapshot().unwrap();
+
+    let (actual, resulting_root, focused_task_id_opt, identity_count) =
+        run_with_runtime_task_tree_context(root, now, Some(root_id), Uuid::from_u128(9100), |context| {
+            context.focus_children()
+        });
+
+    assert_eq!(actual, Ok(None));
+    assert_eq!(focused_task_id_opt, Some(root_id));
+    assert_eq!(resulting_root.snapshot().unwrap(), snapshot);
+    assert_eq!(identity_count, 0);
+}
+
+#[test]
+fn task_tree製品context_childrenが1件なら表示せずchildへfocusする() {
+    let now = Local.with_ymd_and_hms(2026, 8, 27, 12, 0, 0).unwrap();
+    let root = new_test_task_handle("one child root").unwrap();
+    let child = root.create_as_last_child(new_test_task_attr("only child"));
+    let root_id = root.get_id().unwrap();
+    let child_id = child.get_id().unwrap();
+    let snapshot = root.snapshot().unwrap();
+
+    let (actual, resulting_root, focused_task_id_opt, identity_count) =
+        run_with_runtime_task_tree_context(root, now, Some(root_id), Uuid::from_u128(9101), |context| {
+            context.focus_children()
+        });
+
+    assert_eq!(actual, Ok(None));
+    assert_eq!(focused_task_id_opt, Some(child_id));
+    assert_eq!(resulting_root.snapshot().unwrap(), snapshot);
+    assert_eq!(identity_count, 0);
+}
+
+#[test]
+fn task_tree製品context_deepestがleafなら表示せずfocusを維持する() {
+    let now = Local.with_ymd_and_hms(2026, 8, 27, 12, 0, 0).unwrap();
+    let root = new_test_task_handle("leaf root").unwrap();
+    let leaf = root.create_as_last_child(new_test_task_attr("focused leaf"));
+    let leaf_id = leaf.get_id().unwrap();
+    let snapshot = root.snapshot().unwrap();
+
+    let (actual, resulting_root, focused_task_id_opt, identity_count) =
+        run_with_runtime_task_tree_context(root, now, Some(leaf_id), Uuid::from_u128(9102), |context| {
+            context.focus_deepest()
+        });
+
+    assert_eq!(actual, Ok(None));
+    assert_eq!(focused_task_id_opt, Some(leaf_id));
+    assert_eq!(resulting_root.snapshot().unwrap(), snapshot);
+    assert_eq!(identity_count, 0);
+}
+
+#[test]
+fn task_tree製品context_next_upはfocusなしなら表示も状態変更もない() {
+    let now = Local.with_ymd_and_hms(2026, 8, 27, 12, 0, 0).unwrap();
+    let root = new_test_task_handle("unfocused root").unwrap();
+    let snapshot = root.snapshot().unwrap();
+
+    let (actual, resulting_root, focused_task_id_opt, identity_count) =
+        run_with_runtime_task_tree_context(root, now, None, Uuid::from_u128(9103), |context| {
+            context.next_up("new parent", Some(10))
+        });
+
+    assert!(matches!(actual, Ok(NextUpResult::NoDisplay)));
+    assert_eq!(focused_task_id_opt, None);
+    assert_eq!(resulting_root.snapshot().unwrap(), snapshot);
+    assert_eq!(identity_count, 0);
+}
+
+#[test]
+fn task_tree製品context_next_up成功は表示せずparentを作成してfocusする() {
+    let now = Local.with_ymd_and_hms(2026, 8, 27, 12, 0, 0).unwrap();
+    let root = new_test_task_handle("next-up success root").unwrap();
+    let focused = root.create_as_last_child(new_test_task_attr("focused child"));
+    let focused_id = focused.get_id().unwrap();
+    let new_parent_id = Uuid::from_u128(9104);
+
+    let (actual, resulting_root, focused_task_id_opt, identity_count) =
+        run_with_runtime_task_tree_context(root, now, Some(focused_id), new_parent_id, |context| {
+            context.next_up("new parent", Some(10))
+        });
+
+    assert!(matches!(actual, Ok(NextUpResult::NoDisplay)));
+    assert_eq!(focused_task_id_opt, Some(new_parent_id));
+    assert_eq!(identity_count, 1);
+    let children = resulting_root.get_children().unwrap();
+    assert_eq!(children.len(), 1);
+    let new_parent = &children[0];
+    assert_eq!(new_parent.get_id().unwrap(), new_parent_id);
+    assert_eq!(new_parent.get_name().unwrap(), "new parent");
+    assert_eq!(
+        new_parent.get_children().unwrap()[0].get_id().unwrap(),
+        focused_id
+    );
+}
+
+#[test]
+fn task_tree製品context_next_up_errorはreported_errorを返して状態を維持する() {
+    let now = Local.with_ymd_and_hms(2026, 8, 27, 12, 0, 0).unwrap();
+    for (root_focused, name, expected_error) in [
+        (
+            false,
+            "123",
+            ApplicationError::InvalidInput {
+                field: "name",
+                reason: "must not be an integer-only name",
+            },
+        ),
+        (
+            true,
+            "new parent",
+            ApplicationError::TaskTree(TaskTreeError::RootOperation),
+        ),
+    ] {
+        let root = new_test_task_handle("next-up root").unwrap();
+        let focused = if root_focused {
+            root.clone()
+        } else {
+            root.create_as_last_child(new_test_task_attr("focused child"))
+        };
+        let focused_id = focused.get_id().unwrap();
+        let snapshot = root.snapshot().unwrap();
+        let (actual, resulting_root, focused_task_id_opt, id_generator_call_count) =
+            run_with_runtime_task_tree_context(
+                root,
+                now,
+                Some(focused_id),
+                Uuid::from_u128(9003),
+                |context| context.next_up(name, Some(10)),
+            );
+        let NextUpResult::ReportedError(actual_error) = actual.unwrap() else {
+            panic!("next-up validation/root failure must be reported by the handler");
+        };
+        assert_eq!(actual_error, expected_error);
+        assert_eq!(focused_task_id_opt, Some(focused_id));
+        assert_eq!(resulting_root.snapshot().unwrap(), snapshot);
+        assert_eq!(id_generator_call_count, 0);
+    }
 }
 
 #[test]
@@ -546,6 +758,25 @@ fn test_report_command_resultはtask_tree_errorを既存の操作エラー形式
         stdout.into_string(),
         "[Error] 操作エラー: task tree operation failed: cannot borrow task tree data\n"
     );
+}
+
+#[test]
+fn test_error_display_modelはcommand_errorをwriter固有newlineで表示する() {
+    let error = CommandError::Application(ApplicationError::TaskTree(TaskTreeError::Borrow));
+    let display = error_display_model(&error);
+    let mut stdout = TestWriter::new_with_newline_prefix("<reset>");
+
+    render_display_model(&mut stdout, &display).unwrap();
+
+    assert_eq!(
+        stdout.into_string(),
+        "<reset>[Error] 操作エラー: task tree operation failed: cannot borrow task tree data\n"
+    );
+
+    let mut failing_stdout = FailingNewlineWriter::fail_once();
+    let output_error = render_display_model(&mut failing_stdout, &display).unwrap_err();
+    assert_eq!(output_error.kind(), std::io::ErrorKind::Other);
+    assert_eq!(output_error.to_string(), "newline write failure");
 }
 
 #[test]
@@ -1375,8 +1606,8 @@ fn task属性更新commandは製品経路で必ず1回flushする() {
             &mut free_time_manager,
             &mut focused_task_id_opt,
             &now,
-            command,
             &parsed,
+            OutcomeApplicationMode::Flushed,
         )
         .unwrap();
 
@@ -1402,8 +1633,8 @@ fn task属性更新commandはflush_errorとbroken_pipeを製品経路で分類�
             &mut free_time_manager,
             &mut focused_task_id_opt,
             &now,
-            "予 15",
             &parsed,
+            OutcomeApplicationMode::Flushed,
         );
         (result, stdout.flush_count)
     };
@@ -1522,6 +1753,42 @@ fn interactive低優先度modeは共通outcome経路でfocusと表示を更新�
     assert!(String::from_utf8(stdout.buffer)
         .unwrap()
         .contains("フォーカス選択モード: 低 3"));
+}
+
+#[test]
+fn interactive高優先度modeはmessage出力失敗時に状態を変更せずerrorを返す() {
+    let now = Local.with_ymd_and_hms(2026, 8, 18, 12, 0, 0).unwrap();
+    let task = new_test_task_handle("高優先度出力失敗対象").unwrap();
+    let task_id = task.get_id().unwrap();
+
+    for error_kind in [
+        std::io::ErrorKind::Other,
+        std::io::ErrorKind::BrokenPipe,
+    ] {
+        let mut task_repository = TestTaskRepository::new(task.clone(), now);
+        let mut free_time_manager = TestFreeTimeManager::default();
+        let mut focused_task_id_opt = Some(task_id);
+        let mut focus_selection_mode = FocusSelectionMode::Explicit;
+        let mut stdout = FailingNewlineWriter::always_failing(error_kind);
+
+        let actual = execute_interactive_command(
+            &mut stdout,
+            &mut task_repository,
+            &mut free_time_manager,
+            &mut focused_task_id_opt,
+            &now,
+            &mut focus_selection_mode,
+            now,
+            "高",
+        );
+
+        assert!(matches!(
+            actual,
+            Err(CommandError::Output(error)) if error.kind() == error_kind
+        ));
+        assert_eq!(focused_task_id_opt, Some(task_id));
+        assert_eq!(focus_selection_mode, FocusSelectionMode::Explicit);
+    }
 }
 
 #[test]
@@ -1673,6 +1940,104 @@ fn test_execute_allはspreadsheet_a_j列を製品formatterで出力する() {
 #[test]
 fn show_allの製品経路はspreadsheet_formatterを使う() {
     assert_show_all_spreadsheet_formatter_contract();
+}
+
+#[test]
+fn task_list通常表示はcategory集計後の2空行をwriter固有newlineで維持する() {
+    let now = Local.with_ymd_and_hms(2026, 8, 11, 12, 0, 0).unwrap();
+    let task = new_test_task_handle("末尾空行確認用タスク").unwrap();
+    task.set_estimated_work_seconds(30 * 60);
+    task.set_start_time(now);
+    task.set_pending_until(now);
+    task.set_orig_status(Status::Pending);
+
+    for command in ["全", "尾 単", "単"] {
+        let mut task_repository = TestTaskRepository::new(task.clone(), now);
+        let mut free_time_manager = TestFreeTimeManager::with_free_minutes(60);
+        let mut focused_task_id_opt = None;
+        let mut stdout = TestWriter::new_with_newline_prefix("<newline>");
+
+        execute(
+            &mut stdout,
+            &mut task_repository,
+            &mut free_time_manager,
+            &mut focused_task_id_opt,
+            &now,
+            command,
+        )
+        .unwrap();
+
+        let output = stdout.into_string();
+        let lines = output.lines().collect::<Vec<_>>();
+        assert!(
+            lines[lines.len() - 3].starts_with("<newline>予定カテゴリ:"),
+            "{command}: {output}"
+        );
+        assert_eq!(
+            &lines[lines.len() - 2..],
+            ["<newline>", "<newline>"],
+            "{command}: category summary後は2空行"
+        );
+    }
+}
+
+#[test]
+fn 単発filterはtask名の繰返表示文字列ではなくtyped反復属性を使う() {
+    let now = Local.with_ymd_and_hms(2026, 8, 11, 12, 0, 0).unwrap();
+    let task = new_test_task_handle("名前に【繰】を含む単発task").unwrap();
+    task.set_estimated_work_seconds(30 * 60);
+    task.set_start_time(now);
+    task.set_pending_until(now);
+    task.set_orig_status(Status::Pending);
+
+    let result = execute_command_for_test(task, now, None, "単");
+
+    assert!(
+        result.output.contains("名前に【繰】を含む単発task"),
+        "typed反復属性がないtaskは名前に表示markerを含んでも単発として表示する: {}",
+        result.output
+    );
+}
+
+#[test]
+fn task_list検索はtyped_a_i列と名前の代表patternを製品経路で照合する() {
+    let now = Local.with_ymd_and_hms(2026, 8, 11, 12, 0, 0).unwrap();
+    let task = new_test_task_handle("typed検索対象task").unwrap();
+    task.set_project_category_opt(Some(ProjectCategory::Sustaining));
+    task.set_estimated_work_seconds(30 * 60);
+    task.set_start_time(now);
+    task.set_pending_until(now);
+    task.set_orig_status(Status::Pending);
+    let task_id = task.get_id().unwrap();
+
+    for pattern in [task_id.to_string(), "維".to_string(), "検索対象".to_string()] {
+        let command = format!("全 {pattern}");
+        let result = execute_command_for_test(task.clone(), now, None, &command);
+        assert!(
+            result.output.contains("typed検索対象task"),
+            "{pattern}: {}",
+            result.output
+        );
+    }
+}
+
+#[test]
+fn task_list数値filterはtyped待ち属性のtaskを候補から除外する() {
+    let now = Local.with_ymd_and_hms(2026, 8, 11, 12, 0, 0).unwrap();
+    let waiting_task = new_test_task_handle("数値filter待ちtask").unwrap();
+    waiting_task.set_is_on_other_side(true).unwrap();
+    waiting_task.set_estimated_work_seconds(30 * 60);
+    waiting_task.set_start_time(now);
+    waiting_task.set_pending_until(now);
+    waiting_task.set_orig_status(Status::Pending);
+
+    let result = execute_command_for_test(waiting_task, now, None, "全 60");
+
+    assert!(
+        !result.output.contains("数値filter待ちtask"),
+        "typed待ち属性のtaskは空き時間候補へ含めない: {}",
+        result.output
+    );
 }
 
 #[test]
@@ -1990,10 +2355,8 @@ fn test_execute_next_up_入力不正とfocusなしではidentityを消費しな�
             let mut factory = TaskFactory::new(operation_now, &mut next_id);
             let mut focused_task_id_opt =
                 focused_task_opt.as_ref().map(|task| task.get_id().unwrap());
-            let mut stdout = TestWriter::new();
 
             let actual = execute_next_up(
-                &mut stdout,
                 &mut focused_task_id_opt,
                 &focused_task_opt,
                 name,
@@ -2038,12 +2401,10 @@ fn test_execute_next_up_rootへの親追加失敗を構造化errorで返す() {
     };
     let mut factory = TaskFactory::new(operation_now, &mut next_id);
     let root = new_test_task_handle("root").unwrap();
-    let mut stdout = TestWriter::new();
     let mut focused_task_id_opt = Some(root.get_id().unwrap());
     let before_estimated_work_seconds = root.get_estimated_work_seconds().unwrap();
 
     let actual = execute_next_up(
-        &mut stdout,
         &mut focused_task_id_opt,
         &Some(root.clone()),
         "new parent",
@@ -2077,10 +2438,8 @@ fn test_execute_next_up_task生成contextと既存の親挿入契約を固定す
     let focused = root.create_as_last_child(new_test_task_attr("focused"));
     let focused_id = focused.get_id().unwrap();
     let mut focused_task_id_opt = Some(focused_id);
-    let mut stdout = TestWriter::new();
 
     let actual = execute_next_up(
-        &mut stdout,
         &mut focused_task_id_opt,
         &Some(focused),
         "new parent",
@@ -2602,7 +2961,7 @@ fn test_resolve_deadline_date_曜日の範囲外を曜日計算errorにする() 
 
     assert!(matches!(
         resolve_deadline_date("月", now),
-        Err(CommandError::Application(
+        Err(HandlerError::Application(
             ApplicationError::SubjectiveDateOutOfRange {
                 operation: "deadline_weekday_date",
                 datetime,
@@ -2663,7 +3022,7 @@ fn test_resolve_deadline_date_mmddの翌年範囲外を情報付きerrorにす�
 
     assert!(matches!(
         resolve_deadline_date("12/31", now),
-        Err(CommandError::Application(
+        Err(HandlerError::Application(
             ApplicationError::SubjectiveDateOutOfRange {
                 operation: "deadline_calendar_date",
                 datetime,
@@ -3364,6 +3723,64 @@ fn test_execute_today_今を絞る全経路で負荷指標を表示する() {
 }
 
 #[test]
+fn view_metricsは製品fixtureからtyped_sequenceと実値を返す() {
+    let now = Local.with_ymd_and_hms(2026, 8, 11, 12, 0, 0).unwrap();
+
+    for (pattern, expected_primary) in [("今", "task-list"), ("暦", "calendar"), ("帯", "band")]
+    {
+        let task = new_test_task_handle("typed metrics製品fixture").unwrap();
+        task.set_estimated_work_seconds(60 * 60);
+        task.set_start_time(now);
+        task.set_pending_until(now);
+        task.set_orig_status(Status::Pending);
+        let mut task_repository = TestTaskRepository::new(task, now);
+        let mut free_time_manager = TestFreeTimeManager::with_free_minutes(10 * 60);
+        let mut focused_task_id_opt = None;
+
+        let display = build_show_all_tasks_display_with_config(
+            &mut focused_task_id_opt,
+            &mut task_repository,
+            &mut free_time_manager,
+            &Some(pattern.to_string()),
+            TaskListDisplayOrder::ScheduledStartDesc,
+            &SchronuConfig::default(),
+        )
+        .unwrap();
+
+        let DisplayModel::Sequence(models) = display else {
+            panic!("{pattern} must return a typed display sequence: {display:?}");
+        };
+        assert_eq!(models.len(), 2, "{pattern}: {models:?}");
+        assert!(
+            matches!(
+                (&models[0], expected_primary),
+                (DisplayModel::TaskList(_), "task-list")
+                    | (DisplayModel::Calendar(_), "calendar")
+                    | (DisplayModel::Band(_), "band")
+            ),
+            "{pattern}: {models:?}"
+        );
+        let DisplayModel::TaskListMetrics(metrics) = &models[1] else {
+            panic!("{pattern} must append typed metrics: {models:?}");
+        };
+        assert_eq!(metrics.busy_minutes, 0, "{pattern}");
+        assert_eq!(metrics.lambda_minutes, 60, "{pattern}");
+        assert_eq!(
+            metrics.estimated_finish_at,
+            Local.with_ymd_and_hms(2026, 8, 11, 13, 0, 0).unwrap(),
+            "{pattern}"
+        );
+        assert_eq!(metrics.non_repetitive_work_hours, 1.0, "{pattern}");
+        assert_eq!(metrics.repetitive_work_hours, 0.0, "{pattern}");
+        assert_eq!(metrics.free_hours, 11.5, "{pattern}");
+        assert_eq!(metrics.rho, 0.08, "{pattern}");
+        assert_eq!(metrics.non_repetitive_rho, 0.08, "{pattern}");
+        assert_eq!(metrics.lq, Some(0.08 / 0.92), "{pattern}");
+        assert_eq!(metrics.non_repetitive_lq, Some(0.08 / 0.92), "{pattern}");
+    }
+}
+
+#[test]
 fn test_execute_set_project_category_表示記号でカテゴリを設定する() {
     let now = Local.with_ymd_and_hms(2026, 5, 17, 12, 0, 0).unwrap();
     let focus_started_datetime = now;
@@ -3522,64 +3939,158 @@ fn test_execute_category_不正値はfield付き入力エラーを表示して�
 
 #[test]
 fn runtime外部ioとoutcome調停は共通境界に集約する() {
-    let runtime_source = include_str!("runtime.rs");
-    let apply_source = runtime_source
-        .split_once("\nfn apply_command_outcome(")
-        .expect("runtime must define the shared apply_command_outcome boundary")
-        .1
-        .split_once("\nenum OutcomeApplicationMode")
-        .expect("outcome boundary must remain bounded")
-        .0;
+    let now = Local.with_ymd_and_hms(2026, 8, 23, 12, 0, 0).unwrap();
+    let task = new_test_task_handle("外部要求の参照対象").unwrap();
+    let task_id = task.get_id().unwrap();
+    let mut task_repository = TestTaskRepository::new(task, now);
+    let mut focused_task_id_opt = Some(task_id);
 
-    for required in [
-        "render_display_model",
-        "ExternalRequest::OpenFocusedLink",
-        "execute_open_link",
-        "ExternalRequest::OpenObsidianRootSearch",
-        "execute_open_obsidian_root_task_search_with_config",
-        "FocusRequest::Clear",
-        "focus_selection_mode_from_request",
-        "CommandError::Output",
+    let open_command = parse_command("開", ParseMode::NonInteractive).unwrap();
+    let mut open_outcome =
+        super::handler::handle(&open_command).expect("open must be handler-owned");
+    open_outcome.display = DisplayModel::Message {
+        level: MessageLevel::Plain,
+        text: "外部要求の前に表示".to_string(),
+    };
+    let mut flushed_output = FlushTrackingWriter::successful(false);
+    apply_command_outcome(
+        &mut flushed_output,
+        &mut task_repository,
+        &mut focused_task_id_opt,
+        OutcomeApplicationMode::Flushed,
+        open_outcome,
+        active_config(),
+    )
+    .unwrap();
+
+    assert_eq!(
+        String::from_utf8(flushed_output.buffer).unwrap(),
+        "外部要求の前に表示\n"
+    );
+    assert_eq!(task_repository.get_by_id_attempt_count.get(), 1);
+    assert_eq!(flushed_output.flush_count, 1);
+
+    let noop_command = parse_command("", ParseMode::NonInteractive).unwrap();
+    let noop_outcome = super::handler::handle(&noop_command).expect("noop must be handler-owned");
+    let mut noop_output = FlushTrackingWriter::successful(false);
+    apply_command_outcome(
+        &mut noop_output,
+        &mut task_repository,
+        &mut focused_task_id_opt,
+        OutcomeApplicationMode::Flushed,
+        noop_outcome,
+        active_config(),
+    )
+    .unwrap();
+    assert_eq!(noop_output.flush_count, 0);
+
+    let focus_command = parse_command("高", ParseMode::Interactive).unwrap();
+    let focus_outcome =
+        super::handler::handle(&focus_command).expect("focus mode must be handler-owned");
+    let mut focus_output = FlushTrackingWriter::successful(false);
+    let mut focus_selection_mode = FocusSelectionMode::Explicit;
+    apply_command_outcome(
+        &mut focus_output,
+        &mut task_repository,
+        &mut focused_task_id_opt,
+        OutcomeApplicationMode::InteractiveUnflushed(&mut focus_selection_mode),
+        focus_outcome,
+        active_config(),
+    )
+    .unwrap();
+
+    assert_eq!(
+        String::from_utf8(focus_output.buffer).unwrap(),
+        "フォーカス選択モード: 高\n"
+    );
+    assert_eq!(focus_selection_mode, FocusSelectionMode::HighestPriority);
+    assert_eq!(focused_task_id_opt, None);
+    assert_eq!(focus_output.flush_count, 0);
+
+    focused_task_id_opt = Some(task_id);
+    let clear_command = parse_command("外", ParseMode::Interactive).unwrap();
+    let clear_outcome =
+        super::handler::handle(&clear_command).expect("unfocus must be handler-owned");
+    let mut clear_output = FlushTrackingWriter::successful(false);
+    let mut clear_selection_mode = FocusSelectionMode::LowestPriority { recent_days: 3 };
+    apply_command_outcome(
+        &mut clear_output,
+        &mut task_repository,
+        &mut focused_task_id_opt,
+        OutcomeApplicationMode::InteractiveUnflushed(&mut clear_selection_mode),
+        clear_outcome,
+        active_config(),
+    )
+    .unwrap();
+
+    assert_eq!(
+        clear_selection_mode,
+        FocusSelectionMode::LowestPriority { recent_days: 3 }
+    );
+    assert_eq!(focused_task_id_opt, None);
+    assert_eq!(clear_output.flush_count, 0);
+
+    focused_task_id_opt = Some(task_id);
+    let low_command = parse_command("低 3", ParseMode::Interactive).unwrap();
+    let low_outcome =
+        super::handler::handle(&low_command).expect("low focus mode must be handler-owned");
+    let mut low_output = FlushTrackingWriter::successful(false);
+    let mut low_selection_mode = FocusSelectionMode::Explicit;
+    apply_command_outcome(
+        &mut low_output,
+        &mut task_repository,
+        &mut focused_task_id_opt,
+        OutcomeApplicationMode::InteractiveUnflushed(&mut low_selection_mode),
+        low_outcome,
+        active_config(),
+    )
+    .unwrap();
+
+    assert_eq!(
+        String::from_utf8(low_output.buffer).unwrap(),
+        "フォーカス選択モード: 低 3\n"
+    );
+    assert_eq!(
+        low_selection_mode,
+        FocusSelectionMode::LowestPriority { recent_days: 3 }
+    );
+    assert_eq!(focused_task_id_opt, None);
+    assert_eq!(low_output.flush_count, 0);
+
+    for (error_kind, expects_success) in [
+        (std::io::ErrorKind::BrokenPipe, true),
+        (std::io::ErrorKind::Other, false),
     ] {
-        assert!(
-            apply_source.contains(required),
-            "shared outcome boundary must coordinate {required}"
+        let task = new_test_task_handle("出力errorの対象").unwrap();
+        let task_id = task.get_id().unwrap();
+        let mut task_repository = TestTaskRepository::new(task, now);
+        let mut free_time_manager = TestFreeTimeManager::default();
+        let mut focused_task_id_opt = Some(task_id);
+        let parsed = parse_command("予 15", ParseMode::NonInteractive).unwrap();
+        let mut output = FlushTrackingWriter::failing(error_kind);
+
+        let result = execute_parsed(
+            &mut output,
+            &mut task_repository,
+            &mut free_time_manager,
+            &mut focused_task_id_opt,
+            &now,
+            &parsed,
+            OutcomeApplicationMode::Flushed,
         );
+
+        if expects_success {
+            assert!(result.is_ok());
+        } else {
+            assert!(matches!(
+                result,
+                Err(CommandError::Output(error)) if error.kind() == std::io::ErrorKind::Other
+            ));
+        }
+        assert_eq!(output.flush_count, 1);
     }
 
-    let execute_parsed_source = runtime_source
-        .split_once("fn execute_parsed(")
-        .expect("non-interactive command path must exist")
-        .1
-        .split_once("struct RuntimeProjectCommandContext")
-        .expect("non-interactive command path must remain bounded")
-        .0;
-    assert!(
-        execute_parsed_source.contains("apply_command_outcome("),
-        "non-interactive outcomes must use the shared boundary"
-    );
-
-    let interactive_source = runtime_source
-        .split_once("\nfn execute_interactive_command(")
-        .expect("interactive command path must exist")
-        .1
-        .split_once("struct InteractiveRepositoryState")
-        .expect("interactive command path must remain bounded")
-        .0;
-    let (focus_branch, after_focus_branch) = interactive_source
-        .split_once("    } else if matches!(")
-        .expect("interactive focus branch must remain distinct");
-    let (shortcut_branch, _) = after_focus_branch
-        .split_once("    } else {")
-        .expect("interactive shortcut branch must remain distinct");
-    assert!(
-        focus_branch.contains("apply_command_outcome("),
-        "interactive focus outcomes must use the shared boundary"
-    );
-    assert!(
-        shortcut_branch.contains("apply_command_outcome("),
-        "interactive shortcut outcomes must use the shared boundary"
-    );
+    let runtime_source = include_str!("runtime.rs");
     assert!(
         !runtime_source.contains("\nfn execute_handler_outcome("),
         "the superseded outcome coordinator must be removed"
@@ -3601,6 +4112,41 @@ fn runtime外部ioとoutcome調停は共通境界に集約する() {
             );
         }
     }
+}
+
+#[test]
+fn external_requestは副作用なしでtyped_targetへ解決する() {
+    let root = new_test_task_handle("root https://example.com/tasks/42").unwrap();
+    let root_id = root.get_id().unwrap();
+    let focused_task = root.create_as_last_child(new_test_task_attr("focused task"));
+    let focused_task_opt = Some(focused_task);
+    let config = SchronuConfig {
+        obsidian_vault_name: "Work & Notes".to_string(),
+        ..SchronuConfig::default()
+    };
+
+    assert_eq!(
+        resolve_external_request(
+            ExternalRequest::OpenFocusedLink,
+            &focused_task_opt,
+            &config,
+        )
+        .unwrap(),
+        Some(ResolvedExternalRequest::BrowserUrl(
+            "https://example.com/tasks/42".to_string()
+        ))
+    );
+    assert_eq!(
+        resolve_external_request(
+            ExternalRequest::OpenObsidianRootSearch,
+            &focused_task_opt,
+            &config,
+        )
+        .unwrap(),
+        Some(ResolvedExternalRequest::ObsidianUrl(format!(
+            "obsidian://search?vault=Work%20%26%20Notes&query={root_id}"
+        )))
+    );
 }
 
 #[test]
@@ -4336,6 +4882,39 @@ fn test_execute_calendar_現行出力を固定する() {
 }
 
 #[test]
+fn test_execute_calendar_単発余暇zeroは正符号で表示する() {
+    let now = Local.with_ymd_and_hms(2026, 8, 11, 12, 0, 0).unwrap();
+    let root = new_test_task_handle("単発余暇zero fixture").unwrap();
+    root.set_estimated_work_seconds(0);
+    root.set_repetition_interval_days_opt(Some(7)).unwrap();
+    add_scheduled_child_for_test(&root, "繰り返しタスク", now, 60);
+
+    let actual = execute_calendar_command_for_test("暦", now, root, 60);
+
+    assert!(
+        actual.contains("\t 00時間00分\t"),
+        "zeroの単発余暇は旧表示どおり正符号である必要があります: {actual}"
+    );
+}
+
+#[test]
+fn test_execute_calendar_余差59点5分以上は0時間60分で表示する() {
+    let now = Local.with_ymd_and_hms(2026, 8, 11, 12, 0, 0).unwrap();
+    let task = new_test_task_handle("余差の分境界fixture").unwrap();
+    task.set_estimated_work_seconds(7_799);
+    task.set_start_time(now);
+    task.set_pending_until(now);
+    task.set_orig_status(Status::Pending);
+
+    let actual = execute_calendar_command_for_test("暦", now, task, 100);
+
+    assert!(
+        actual.contains("\t 0時間60分\t"),
+        "59.5分以上60分未満の余差は旧表示どおり0時間60分である必要があります: {actual}"
+    );
+}
+
+#[test]
 fn test_execute_calendar_日付逆順と週区切りと28日境界を固定する() {
     let now = Local.with_ymd_and_hms(2026, 8, 11, 12, 0, 0).unwrap();
     let root = new_test_task_handle("暦複数日fixture").unwrap();
@@ -4384,17 +4963,20 @@ fn test_execute_calendar_日付逆順と週区切りと28日境界を固定す�
 #[test]
 fn test_format_daily_band_累積境界で端数を丸めて96文字にする() {
     let date = NaiveDate::from_ymd_opt(2026, 8, 15).unwrap();
-    let actual = format_daily_band(
-        date,
-        "土",
-        Duration::hours(46) + Duration::minutes(9),
-        -Duration::hours(7) - Duration::minutes(8),
-        &DailyBandDurations {
+    let actual = format_band_day_row(
+        &BandDayRow {
+            date,
+            accumulated_rho_diff_seconds: (-Duration::hours(7) - Duration::minutes(8))
+                .num_seconds(),
+            accumulated_free_diff_seconds: (Duration::hours(46) + Duration::minutes(9))
+                .num_seconds(),
+            durations: BandDurations {
             fixed_seconds: 450 * 60,
             elapsed_seconds: 0,
             repetitive_seconds: 855 * 60,
             non_repetitive_seconds: 71 * 60,
             rho_leeway_seconds: 24 * 60,
+            },
         },
         true,
     );
@@ -4425,13 +5007,13 @@ fn test_calculate_daily_band_durations_経過した空き時間を当日だけ�
 
 #[test]
 fn test_format_signed_hours_minutes_符号付きで時分を2桁ゼロ埋めする() {
-    assert_eq!(format_signed_hours_minutes(Duration::zero()), "+00:00");
+    assert_eq!(format_signed_seconds(Duration::zero().num_seconds()), "+00:00");
     assert_eq!(
-        format_signed_hours_minutes(Duration::hours(6) + Duration::minutes(5)),
+        format_signed_seconds((Duration::hours(6) + Duration::minutes(5)).num_seconds()),
         "+06:05"
     );
     assert_eq!(
-        format_signed_hours_minutes(-Duration::hours(6) - Duration::minutes(5)),
+        format_signed_seconds((-Duration::hours(6) - Duration::minutes(5)).num_seconds()),
         "-06:05"
     );
 }
@@ -4439,17 +5021,20 @@ fn test_format_signed_hours_minutes_符号付きで時分を2桁ゼロ埋めす�
 #[test]
 fn test_format_daily_band_当日経過と24時間超過を表示する() {
     let date = NaiveDate::from_ymd_opt(2026, 8, 11).unwrap();
-    let actual = format_daily_band(
-        date,
-        "火",
-        -Duration::hours(3) - Duration::minutes(4),
-        Duration::hours(5) + Duration::minutes(6),
-        &DailyBandDurations {
+    let actual = format_band_day_row(
+        &BandDayRow {
+            date,
+            accumulated_rho_diff_seconds: (Duration::hours(5) + Duration::minutes(6))
+                .num_seconds(),
+            accumulated_free_diff_seconds: (-Duration::hours(3) - Duration::minutes(4))
+                .num_seconds(),
+            durations: BandDurations {
             fixed_seconds: 450 * 60,
             elapsed_seconds: 800 * 60,
             repetitive_seconds: 476 * 60,
             non_repetitive_seconds: 40 * 60,
             rho_leeway_seconds: 0,
+            },
         },
         true,
     );
@@ -4613,9 +5198,12 @@ fn test_execute_band_全日空き差分と繰り返し判定を帯へ反映す�
 
 #[test]
 fn test_should_suppress_leaf_tasks_after_command_帯とbandでは葉を追加表示しない() {
-    assert!(should_suppress_leaf_tasks_after_command("帯"));
-    assert!(should_suppress_leaf_tasks_after_command("band"));
-    assert!(!should_suppress_leaf_tasks_after_command("見"));
+    assert!(interactive::should_suppress_leaf_tasks_after_command(
+        CommandKind::Band
+    ));
+    assert!(!interactive::should_suppress_leaf_tasks_after_command(
+        CommandKind::Focus
+    ));
 }
 
 #[test]
@@ -4742,6 +5330,29 @@ fn test_parse_non_interactive_command_複数引数を1コマンドにする() {
     let expected = Some("尾 週".to_string());
 
     assert_eq!(actual, expected);
+}
+
+#[test]
+fn test_non_interactiveの不正属性値はbusy_time読込前に拒否する() {
+    let now = Local.with_ymd_and_hms(2026, 8, 27, 12, 0, 0).unwrap();
+
+    for command in ["予 -1", "類 invalid", "〆 invalid"] {
+        let mut repository = TestTaskRepository::new(new_test_task_handle("既存").unwrap(), now);
+        let mut free_time_manager = TestFreeTimeManagerWithLoadError::default();
+
+        let result = execute_non_interactive_command_at(
+            &mut repository,
+            &mut free_time_manager,
+            command,
+            now,
+        );
+
+        assert!(
+            matches!(result, Err(RunError::Command(_))),
+            "input error must win before busy-time I/O: {command}: {result:?}"
+        );
+        assert_eq!(free_time_manager.loaded_path(), None, "{command}");
+    }
 }
 
 #[test]
@@ -4899,6 +5510,182 @@ fn test_execute_non_interactive_command_検証はsaveとfree_time読込を行わ
     execute_non_interactive_command(&mut task_repository, &mut free_time_manager, "検証").unwrap();
 
     assert_eq!(task_repository.save_attempt_count.get(), 0);
+}
+
+#[test]
+fn test_verifyのread_only_repository検査はruntimeが所有する() {
+    fn complete_task_tree_snapshot(root: &TaskHandle) -> Vec<String> {
+        fn append(task: &TaskHandle, path: &str, rows: &mut Vec<String>) {
+            let attr = task.get_attr().unwrap();
+            let children = task.get_children().unwrap();
+            rows.push(format!(
+                "{path}|id={:?}|name={:?}|orig_status={:?}|status={:?}|other_side={:?}|atomic={:?}|pending_until={:?}|last_synced={:?}|priority={:?}|create={:?}|start={:?}|end={:?}|deadline={:?}|estimated={:?}|actual={:?}|repetition_interval={:?}|repetition_anchor={:?}|days_in_advance={:?}|category={:?}|children={}",
+                attr.get_id(),
+                attr.get_name(),
+                attr.get_orig_status(),
+                attr.get_status(),
+                attr.get_is_on_other_side(),
+                attr.get_atomic(),
+                attr.get_pending_until(),
+                attr.get_last_synced_time(),
+                attr.get_priority(),
+                attr.get_create_time(),
+                attr.get_start_time(),
+                attr.get_end_time_opt(),
+                attr.get_deadline_time_opt(),
+                attr.get_estimated_work_seconds(),
+                attr.get_actual_work_seconds(),
+                attr.get_repetition_interval_days_opt(),
+                attr.get_repetition_anchor(),
+                attr.get_days_in_advance(),
+                attr.get_project_category_opt(),
+                children.len(),
+            ));
+            for (index, child) in children.iter().enumerate() {
+                append(child, &format!("{path}.{index}"), rows);
+            }
+        }
+
+        let mut rows = Vec::new();
+        append(root, "root", &mut rows);
+        rows
+    }
+
+    let storage_dir = TestStorageDir::new();
+    std::fs::create_dir_all(&storage_dir.path).unwrap();
+    let now = Local.with_ymd_and_hms(2026, 8, 26, 12, 0, 0).unwrap();
+    let task = TaskHandle::with_identity("read-only検証対象", next_test_task_id(), now).unwrap();
+    let first_child = task.create_as_last_child(TaskAttr::with_identity(
+        "最初の子",
+        next_test_task_id(),
+        now,
+    ));
+    first_child.set_priority(7).unwrap();
+    first_child
+        .set_deadline_time_opt(Some(now + chrono::Duration::days(2)))
+        .unwrap();
+    first_child.set_estimated_work_seconds(45 * 60).unwrap();
+    first_child.set_actual_work_seconds(15 * 60).unwrap();
+    first_child
+        .set_project_category_opt(Some(ProjectCategory::Investment))
+        .unwrap();
+    let grandchild = first_child.create_as_last_child(TaskAttr::with_identity(
+        "孫",
+        next_test_task_id(),
+        now,
+    ));
+    grandchild.set_atomic(true).unwrap();
+    grandchild.set_is_on_other_side(true).unwrap();
+    let second_child = task.create_as_last_child(TaskAttr::with_identity(
+        "二番目の子",
+        next_test_task_id(),
+        now,
+    ));
+    second_child.set_orig_status(Status::Done).unwrap();
+    second_child.set_end_time_opt(Some(now)).unwrap();
+    let original_snapshot = complete_task_tree_snapshot(&task);
+    let mut repository =
+        TestTaskRepository::new(task, now).with_storage_directory(&storage_dir.path);
+    let mut free_time_manager = TestFreeTimeManagerWithLoadError::default();
+
+    execute_non_interactive_command_at(
+        &mut repository,
+        &mut free_time_manager,
+        "検証",
+        now,
+    )
+    .unwrap();
+
+    assert_eq!(repository.reload_if_changed_attempt_count.get(), 1);
+    assert_eq!(repository.load_attempt_count.get(), 1);
+    assert_eq!(repository.save_attempt_count.get(), 0);
+    assert!(free_time_manager.loaded_path().is_none());
+    assert_eq!(
+        complete_task_tree_snapshot(&repository.task),
+        original_snapshot
+    );
+}
+
+#[test]
+fn test_execute_verify_commandはsemantic_modelを製品writerへ描画する() {
+    struct AlwaysFailWriter;
+
+    impl Write for AlwaysFailWriter {
+        fn write(&mut self, _buffer: &[u8]) -> std::io::Result<usize> {
+            Err(std::io::Error::new(
+                std::io::ErrorKind::BrokenPipe,
+                "verify raw write failure",
+            ))
+        }
+
+        fn flush(&mut self) -> std::io::Result<()> {
+            Err(std::io::Error::other("verify flush failure"))
+        }
+    }
+
+    impl SchronuWriter for AlwaysFailWriter {
+        fn writeln_newline(&mut self, _message: &str) -> Result<(), std::io::Error> {
+            Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                "verify newline failure",
+            ))
+        }
+    }
+
+    fn execute_product_verify(
+        stdout: &mut dyn SchronuWriter,
+        repository: &mut dyn TaskRepositoryTrait,
+        operation_now: DateTime<Local>,
+    ) -> Result<(), RunError> {
+        execute_verify_command(stdout, repository, operation_now)
+    }
+
+    let operation_now = Local.with_ymd_and_hms(2026, 8, 26, 12, 0, 0).unwrap();
+    let storage_dir = TestStorageDir::new();
+    std::fs::create_dir_all(&storage_dir.path).unwrap();
+    let task = TaskHandle::with_identity(
+        "Verify semantic modelの製品経路",
+        next_test_task_id(),
+        operation_now,
+    )
+    .unwrap();
+    let mut repository =
+        TestTaskRepository::new(task, operation_now).with_storage_directory(&storage_dir.path);
+    let mut stdout = TestWriter::new_with_newline_prefix("<reset>");
+
+    execute_product_verify(&mut stdout, &mut repository, operation_now).unwrap();
+
+    assert_eq!(stdout.into_string(), "<reset>検証: OK\n");
+    assert_eq!(repository.reload_if_changed_attempt_count.get(), 1);
+    assert_eq!(repository.load_attempt_count.get(), 1);
+    assert_eq!(repository.save_attempt_count.get(), 0);
+
+    let failing_storage_dir = TestStorageDir::new();
+    std::fs::create_dir_all(&failing_storage_dir.path).unwrap();
+    let failing_task = TaskHandle::with_identity(
+        "Verify I/O errorの製品経路",
+        next_test_task_id(),
+        operation_now,
+    )
+    .unwrap();
+    let mut failing_repository = TestTaskRepository::new(failing_task, operation_now)
+        .with_storage_directory(&failing_storage_dir.path);
+    let mut failing_stdout = AlwaysFailWriter;
+
+    let error = execute_product_verify(
+        &mut failing_stdout,
+        &mut failing_repository,
+        operation_now,
+    )
+    .unwrap_err();
+
+    match error {
+        RunError::Command(CommandError::Output(error)) => {
+            assert_eq!(error.kind(), std::io::ErrorKind::InvalidData);
+            assert_eq!(error.to_string(), "verify newline failure");
+        }
+        unexpected => panic!("unexpected Verify output error: {unexpected:?}"),
+    }
 }
 
 #[test]
@@ -5254,10 +6041,14 @@ fn test_interactive_submitは製品event経路でload実行保存する() {
 
     assert!(matches!(
         outcome,
-        InteractiveRepositoryEventOutcome::CommandExecuted(ref command, _) if command == "予 45"
+        InteractiveRepositoryEventOutcome::CommandExecuted(CommandKind::Estimate, _)
     ));
     assert_eq!(repository.load_attempt_count.get(), 1);
     assert_eq!(repository.save_attempt_count.get(), 1);
+    assert_eq!(
+        repository.operation_trace(),
+        ["reload_if_changed", "load", "has_pending_changes", "save"]
+    );
     assert_eq!(
         repository
             .get_by_id(task_id)
@@ -5267,6 +6058,202 @@ fn test_interactive_submitは製品event経路でload実行保存する() {
         45 * 60
     );
     assert!(StorageLock::acquire(&storage_dir.path, LockMode::Mcp).is_ok());
+}
+
+#[test]
+fn test_interactive_submit製品経路は再描画対象commandを完了outcomeへ渡す() {
+    let storage_dir = TestStorageDir::new();
+    std::fs::create_dir_all(&storage_dir.path).unwrap();
+    let now = Local.with_ymd_and_hms(2026, 8, 26, 12, 0, 0).unwrap();
+    let task = new_test_task_handle("再描画判断対象").unwrap();
+    let task_id = task.get_id().unwrap();
+    let mut repository =
+        TestTaskRepository::new(task, now).with_storage_directory(&storage_dir.path);
+    let mut free_time_manager = TestFreeTimeManager::default();
+    let mut stdout = TestWriter::new();
+    let mut focused_task_id_opt = Some(task_id);
+    let mut last_focused_task_id_opt = Some(task_id);
+    let mut focus_started_datetime = now;
+    let mut focus_selection_mode = FocusSelectionMode::HighestPriority;
+
+    let outcome = handle_interactive_submit_at(
+        &mut stdout,
+        &mut repository,
+        &mut free_time_manager,
+        InteractiveRepositoryState {
+            focused_task_id_opt: &mut focused_task_id_opt,
+            last_focused_task_id_opt: &mut last_focused_task_id_opt,
+            focus_started_datetime: &mut focus_started_datetime,
+            focus_selection_mode: &mut focus_selection_mode,
+        },
+        "全",
+        now,
+    );
+
+    assert!(matches!(
+        outcome,
+        InteractiveRepositoryEventOutcome::CommandExecuted(..)
+    ));
+    assert_eq!(repository.get_last_synced_time(), now);
+    assert!(repository.get_by_id(task_id).unwrap().is_some());
+    assert_eq!(repository.load_attempt_count.get(), 1);
+    assert_eq!(repository.save_attempt_count.get(), 1);
+}
+
+#[test]
+fn test_interactive_verifyは出力errorを分類してtransactionを継続する() {
+    let operation_now = Local.with_ymd_and_hms(2026, 8, 23, 12, 0, 0).unwrap();
+
+    for error_kind in [
+        std::io::ErrorKind::BrokenPipe,
+        std::io::ErrorKind::Other,
+    ] {
+        let storage_dir = TestStorageDir::new();
+        std::fs::create_dir_all(&storage_dir.path).unwrap();
+        let task = new_test_task_handle("検証対象").unwrap();
+        let task_id = task.get_id().unwrap();
+        let mut repository = TestTaskRepository::new(
+            task,
+            operation_now - chrono::Duration::hours(1),
+        )
+        .with_storage_directory(&storage_dir.path);
+        let mut free_time_manager = TestFreeTimeManager::default();
+        let mut stdout = FlushTrackingWriter::failing_on_nth_flush(2, error_kind);
+        let mut focused_task_id_opt = Some(task_id);
+        let mut last_focused_task_id_opt = Some(task_id);
+        let mut focus_started_datetime = operation_now;
+        let mut focus_selection_mode = FocusSelectionMode::HighestPriority;
+
+        let outcome = handle_interactive_submit_at(
+            &mut stdout,
+            &mut repository,
+            &mut free_time_manager,
+            InteractiveRepositoryState {
+                focused_task_id_opt: &mut focused_task_id_opt,
+                last_focused_task_id_opt: &mut last_focused_task_id_opt,
+                focus_started_datetime: &mut focus_started_datetime,
+                focus_selection_mode: &mut focus_selection_mode,
+            },
+            "検証",
+            operation_now,
+        );
+
+        assert!(matches!(
+            outcome,
+            InteractiveRepositoryEventOutcome::CommandExecuted(CommandKind::Verify, now)
+                if now == operation_now
+        ));
+        assert_eq!(stdout.flush_count, 2);
+        let output = String::from_utf8(stdout.buffer).unwrap();
+        assert_eq!(
+            output.contains("[Error] 出力エラー: flush failure"),
+            error_kind == std::io::ErrorKind::Other
+        );
+        assert_eq!(repository.get_last_synced_time(), operation_now);
+        assert_eq!(repository.save_attempt_count.get(), 1);
+        assert_eq!(
+            repository.operation_trace(),
+            ["reload_if_changed", "load", "has_pending_changes", "save"]
+        );
+    }
+}
+
+#[test]
+fn test_interactive_verifyは本文なしで1回だけflushする() {
+    let now = Local.with_ymd_and_hms(2026, 8, 26, 12, 0, 0).unwrap();
+    let task = new_test_task_handle("interactive検証対象").unwrap();
+    let task_id = task.get_id().unwrap();
+    let mut repository = TestTaskRepository::new(task, now);
+    let mut free_time_manager = TestFreeTimeManager::default();
+    let mut focused_task_id_opt = Some(task_id);
+    let mut focus_selection_mode = FocusSelectionMode::HighestPriority;
+    let mut stdout = FlushTrackingWriter::successful(true);
+
+    let execution = execute_interactive_command(
+        &mut stdout,
+        &mut repository,
+        &mut free_time_manager,
+        &mut focused_task_id_opt,
+        &now,
+        &mut focus_selection_mode,
+        now,
+        "検証",
+    )
+    .unwrap();
+
+    assert_eq!(execution.kind, CommandKind::Verify);
+    assert_eq!(String::from_utf8(stdout.buffer).unwrap(), "");
+    assert_eq!(stdout.flush_count, 1);
+}
+
+#[test]
+fn test_interactive_submitとnoninteractive実行は共通command_transaction経路を通る() {
+    let now = Local.with_ymd_and_hms(2026, 8, 12, 12, 0, 0).unwrap();
+    let mut traces = Vec::new();
+
+    for is_interactive in [false, true] {
+        let storage_dir = TestStorageDir::new();
+        std::fs::create_dir_all(&storage_dir.path).unwrap();
+        let task = new_test_task_handle("更新対象").unwrap();
+        let task_id = task.get_id().unwrap();
+        let mut repository =
+            TestTaskRepository::new(task, now).with_storage_directory(&storage_dir.path);
+        let mut free_time_manager = TestFreeTimeManager::default();
+
+        if is_interactive {
+            let mut stdout = TestWriter::new();
+            let mut focused_task_id_opt = Some(task_id);
+            let mut last_focused_task_id_opt = Some(task_id);
+            let mut focus_started_datetime = now;
+            let mut focus_selection_mode = FocusSelectionMode::HighestPriority;
+
+            let outcome = handle_interactive_submit_at(
+                &mut stdout,
+                &mut repository,
+                &mut free_time_manager,
+                InteractiveRepositoryState {
+                    focused_task_id_opt: &mut focused_task_id_opt,
+                    last_focused_task_id_opt: &mut last_focused_task_id_opt,
+                    focus_started_datetime: &mut focus_started_datetime,
+                    focus_selection_mode: &mut focus_selection_mode,
+                },
+                " estimate 45 ",
+                now,
+            );
+            assert!(matches!(
+                outcome,
+                InteractiveRepositoryEventOutcome::CommandExecuted(
+                    CommandKind::Estimate,
+                    operation_now
+                ) if operation_now == now
+            ));
+        } else {
+            execute_non_interactive_command_at(
+                &mut repository,
+                &mut free_time_manager,
+                "estimate 45",
+                now,
+            )
+            .unwrap();
+        }
+
+        assert_eq!(
+            repository
+                .get_by_id(task_id)
+                .unwrap()
+                .unwrap()
+                .get_estimated_work_seconds()
+                .unwrap(),
+            45 * 60
+        );
+        traces.push(repository.operation_trace());
+    }
+
+    assert_eq!(traces[0], traces[1]);
+    assert_eq!(
+        traces[0],
+        ["reload_if_changed", "load", "has_pending_changes", "save"]
+    );
 }
 
 #[test]
@@ -5300,10 +6287,7 @@ fn test_interactive_submitはoperation時刻をcommandと直後renderへ共有�
         operation_now,
     );
     let render_now = match outcome {
-        InteractiveRepositoryEventOutcome::CommandExecuted(command, now) => {
-            assert_eq!(command, "新 interactive_snapshot 30");
-            now
-        }
+        InteractiveRepositoryEventOutcome::CommandExecuted(CommandKind::NewProject, now) => now,
         _ => panic!("固定時刻のSubmitはcommand実行に成功すべきです"),
     };
 
@@ -5586,6 +6570,14 @@ fn test_interactive_submitはload失敗ならretryしsave失敗ならfatalにす
             repository.save_attempt_count.get(),
             usize::from(!load_should_fail)
         );
+        assert_eq!(
+            repository.operation_trace(),
+            if load_should_fail {
+                vec!["reload_if_changed", "load"]
+            } else {
+                vec!["reload_if_changed", "load", "has_pending_changes", "save"]
+            }
+        );
     }
 }
 
@@ -5625,6 +6617,10 @@ fn test_interactive_refreshは再読込後にlockを解放する() {
     assert_eq!(repository.load_attempt_count.get(), 1);
     assert_eq!(repository.reload_if_changed_attempt_count.get(), 1);
     assert_eq!(repository.save_attempt_count.get(), 0);
+    assert_eq!(
+        repository.operation_trace(),
+        ["reload_if_changed", "load"]
+    );
     assert!(StorageLock::acquire(&storage_dir.path, LockMode::Mcp).is_ok());
 }
 
@@ -5863,7 +6859,7 @@ fn test_make_messages_about_focus_既存実績と表示中の作業時間から�
     task.set_estimated_work_seconds(60 * 60);
     task.set_actual_work_seconds(10 * 60);
 
-    let actual = make_messages_about_focus(&task, &focus_started_datetime, &now).unwrap();
+    let actual = rendered_focus_messages_for_test(&task, &focus_started_datetime, &now);
 
     assert!(actual[0].ends_with("focusing for 20 minutes"));
     assert_eq!(
@@ -5880,7 +6876,7 @@ fn test_make_messages_about_focus_バーを1パーセント単位で表示する
     task.set_estimated_work_seconds(100 * 60);
     task.set_actual_work_seconds(39 * 60);
 
-    let actual = make_messages_about_focus(&task, &focus_started_datetime, &now).unwrap();
+    let actual = rendered_focus_messages_for_test(&task, &focus_started_datetime, &now);
 
     assert!(actual[0].ends_with("focusing for 20 minutes"));
     assert_eq!(
@@ -5897,7 +6893,7 @@ fn test_make_messages_about_focus_見積時間超過時はバーだけ100パー�
     task.set_estimated_work_seconds(100 * 60);
     task.set_actual_work_seconds(57 * 60);
 
-    let actual = make_messages_about_focus(&task, &focus_started_datetime, &now).unwrap();
+    let actual = rendered_focus_messages_for_test(&task, &focus_started_datetime, &now);
 
     assert!(actual[0].ends_with("focusing for 60 minutes"));
     assert_eq!(
@@ -5914,10 +6910,219 @@ fn test_make_messages_about_focus_見積時間が0なら進捗を未算定とし
     task.set_estimated_work_seconds(0);
     task.set_actual_work_seconds(10 * 60);
 
-    let actual = make_messages_about_focus(&task, &focus_started_datetime, &now).unwrap();
+    let actual = rendered_focus_messages_for_test(&task, &focus_started_datetime, &now);
 
     assert!(actual[0].ends_with("focusing for 20 minutes"));
     assert_eq!(actual[1], format!("[{}] --%", "-".repeat(100)));
+}
+
+#[derive(Clone, Copy, Eq, PartialEq)]
+enum FocusStageFailure {
+    Ancestors,
+    Category,
+    Attr,
+    Timing,
+}
+
+struct CharacterizationFocusDisplaySource {
+    failure: FocusStageFailure,
+    has_focused_task: bool,
+    focus_started_at: DateTime<Local>,
+    now: DateTime<Local>,
+}
+
+impl FocusDisplaySource for CharacterizationFocusDisplaySource {
+    fn build_ancestors(&self) -> Result<DisplayModel, ApplicationError> {
+        if self.failure == FocusStageFailure::Ancestors {
+            Err(ApplicationError::TaskTree(TaskTreeError::Borrow))
+        } else {
+            Ok(DisplayModel::Tree(super::renderer::TreeDisplay::Ancestors {
+                rows: vec![],
+            }))
+        }
+    }
+
+    fn build_header(&self) -> Option<Result<FocusDisplay, ApplicationError>> {
+        self.has_focused_task.then(|| {
+            if self.failure == FocusStageFailure::Category {
+                Err(ApplicationError::TaskTree(TaskTreeError::Borrow))
+            } else {
+                Ok(FocusDisplay::Header {
+                    project_category: Some(ProjectCategory::Investment),
+                    task_attr: if self.failure == FocusStageFailure::Attr {
+                        Err(TaskTreeError::Borrow)
+                    } else {
+                        Ok(TaskAttr::with_identity(
+                            "部分表示対象",
+                            Uuid::from_u128(42),
+                            self.focus_started_at,
+                        ))
+                    },
+                })
+            }
+        })
+    }
+
+    fn build_timing(&self) -> Option<Result<FocusDisplay, ApplicationError>> {
+        self.has_focused_task.then(|| {
+            if self.failure == FocusStageFailure::Timing {
+                Err(ApplicationError::TaskTree(TaskTreeError::Borrow))
+            } else {
+                Ok(FocusDisplay::Timing {
+                    estimated_work_seconds: 60 * 60,
+                    actual_work_seconds: 10 * 60,
+                    focus_started_at: self.focus_started_at,
+                    now: self.now,
+                })
+            }
+        })
+    }
+}
+
+fn focus_stage_source(failure: FocusStageFailure) -> CharacterizationFocusDisplaySource {
+    CharacterizationFocusDisplaySource {
+        failure,
+        has_focused_task: true,
+        focus_started_at: Local.with_ymd_and_hms(2026, 8, 23, 12, 0, 0).unwrap(),
+        now: Local.with_ymd_and_hms(2026, 8, 23, 12, 20, 0).unwrap(),
+    }
+}
+
+fn assert_fragments_in_order(output: &str, fragments: &[&str]) {
+    let mut remaining = output;
+    for fragment in fragments {
+        let index = remaining
+            .find(fragment)
+            .unwrap_or_else(|| panic!("missing fragment {fragment:?} in {output:?}"));
+        remaining = &remaining[index + fragment.len()..];
+    }
+}
+
+#[test]
+fn test_render_focus_from_source_ancestor_error後もfocus詳細を描画してflushする() {
+    let mut writer = FlushTrackingWriter::successful(false);
+
+    render_focus_from_source(
+        &mut writer,
+        &focus_stage_source(FocusStageFailure::Ancestors),
+    );
+
+    let output = String::from_utf8(writer.buffer.clone()).unwrap();
+    assert_fragments_in_order(
+        &output,
+        &[
+            "[Error] 操作エラー: task tree operation failed: cannot borrow task tree data",
+            "focused task is: project_category=資",
+            "Ok( {",
+            "minutes left",
+            "] 50%",
+        ],
+    );
+    assert_eq!(writer.flush_count, 1);
+    assert_eq!(writer.flush_buffer_lengths, [writer.buffer.len()]);
+}
+
+#[test]
+fn test_render_focus_from_source_categoryとgetterのerror時もそれ以前の出力を保持する() {
+    let mut category_error_writer = FlushTrackingWriter::successful(false);
+    render_focus_from_source(
+        &mut category_error_writer,
+        &focus_stage_source(FocusStageFailure::Category),
+    );
+    let category_error_output = String::from_utf8(category_error_writer.buffer.clone()).unwrap();
+    assert!(category_error_output.starts_with("\n\n[Error] 操作エラー:"));
+    assert!(!category_error_output.contains("focused task is:"));
+    assert_eq!(category_error_writer.flush_count, 0);
+
+    let mut attr_error_writer = FlushTrackingWriter::successful(false);
+    render_focus_from_source(
+        &mut attr_error_writer,
+        &focus_stage_source(FocusStageFailure::Attr),
+    );
+    let attr_error_output = String::from_utf8(attr_error_writer.buffer.clone()).unwrap();
+    assert_fragments_in_order(
+        &attr_error_output,
+        &[
+            "\n\nfocused task is: project_category=資",
+            "Err(Borrow)",
+            "minutes left",
+            "] 50%",
+        ],
+    );
+    assert_eq!(attr_error_writer.flush_count, 1);
+    assert_eq!(
+        attr_error_writer.flush_buffer_lengths,
+        [attr_error_writer.buffer.len()]
+    );
+
+    let mut timing_error_writer = FlushTrackingWriter::successful(false);
+    render_focus_from_source(
+        &mut timing_error_writer,
+        &focus_stage_source(FocusStageFailure::Timing),
+    );
+    let timing_error_output = String::from_utf8(timing_error_writer.buffer.clone()).unwrap();
+    assert_fragments_in_order(
+        &timing_error_output,
+        &[
+            "\n\nfocused task is: project_category=資",
+            "Ok( {",
+            "[Error] 操作エラー: task tree operation failed: cannot borrow task tree data",
+        ],
+    );
+    assert!(!timing_error_output.contains("minutes left"));
+    assert_eq!(timing_error_writer.flush_count, 0);
+}
+
+#[test]
+fn test_render_focused_task_repositoryにfocus対象が無くても空ancestorだけ描画する() {
+    let now = Local.with_ymd_and_hms(2026, 8, 23, 12, 20, 0).unwrap();
+    let repository = TestTaskRepository::new(new_test_task_handle("別task").unwrap(), now);
+    let mut writer = FlushTrackingWriter::successful(false);
+    let missing_id = Uuid::from_u128(999);
+    let mut last_focused_task_id_opt = None;
+    let mut focus_started_datetime = now - Duration::minutes(10);
+
+    render_focused_task(
+        &mut writer,
+        &repository,
+        Some(missing_id),
+        &mut last_focused_task_id_opt,
+        &mut focus_started_datetime,
+        now,
+    );
+
+    assert_eq!(writer.buffer, b"\n\n");
+    assert_eq!(writer.flush_count, 0);
+}
+
+#[test]
+fn test_render_focused_task_focus描画後に1回flushする() {
+    let now = Local.with_ymd_and_hms(2026, 8, 23, 12, 20, 0).unwrap();
+    let focus_started_datetime = Local.with_ymd_and_hms(2026, 8, 23, 12, 0, 0).unwrap();
+    let task = new_test_task_handle("flush契約のFocus").unwrap();
+    task.set_estimated_work_seconds(60 * 60);
+    task.set_actual_work_seconds(10 * 60);
+    let expected_attr_debug = format!("{:?}", task.get_attr());
+    let task_id = task.get_id().unwrap();
+    let repository = TestTaskRepository::new(task, now);
+    let mut writer = FlushTrackingWriter::successful(false);
+    let mut last_focused_task_id_opt = None;
+    let mut actual_focus_started_datetime = focus_started_datetime;
+
+    render_focused_task(
+        &mut writer,
+        &repository,
+        Some(task_id),
+        &mut last_focused_task_id_opt,
+        &mut actual_focus_started_datetime,
+        now,
+    );
+
+    let output = String::from_utf8(writer.buffer.clone()).unwrap();
+    assert!(output.contains("focused task is:"));
+    assert!(output.lines().any(|line| line == expected_attr_debug));
+    assert_eq!(writer.flush_count, 1);
+    assert_eq!(writer.flush_buffer_lengths, [writer.buffer.len()]);
 }
 
 #[test]
@@ -5960,7 +7165,7 @@ fn test_render_interactive_screen_起動時と自動更新時の既定表示は�
         .expect("日次帯は角括弧内に表示する");
     assert_eq!(
         strip_ansi_escape_sequences(band).chars().count(),
-        DAILY_BAND_SEGMENTS
+        BAND_SEGMENTS
     );
     assert!(!output.contains("日          \t空          \t空差"));
 }
@@ -6016,7 +7221,7 @@ fn test_try_save_before_exit_保存失敗ならerrorを表示して終了を止�
     let task_id = task.get_id().unwrap();
     let task_repository = TestTaskRepository::new(task, now);
     task_repository.save_failures_remaining.set(1);
-    let mut stdout = TestWriter::new();
+    let mut stdout = FlushTrackingWriter::successful(true);
 
     let actual = try_save_before_exit(&mut stdout, &task_repository);
 
@@ -6029,7 +7234,8 @@ fn test_try_save_before_exit_保存失敗ならerrorを表示して終了を止�
             .unwrap(),
         "memoryに残すtask"
     );
-    let output = stdout.into_string();
+    assert_eq!(stdout.flush_count, 1);
+    let output = String::from_utf8(stdout.buffer).unwrap();
     assert!(output.contains("[Error]"));
     assert!(output.contains("WriteFile"));
     assert!(output.contains("/test/project.yaml"));

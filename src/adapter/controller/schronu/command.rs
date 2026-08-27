@@ -1,3 +1,7 @@
+use regex::Regex;
+use schronu::application::task_use_case::{estimated_work_seconds_from_minutes, ApplicationError};
+use schronu::entity::datetime::parse_local_datetime;
+use schronu::entity::task::{read_project_category, ProjectCategory};
 use uuid::Uuid;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -245,18 +249,22 @@ impl CommandParseError {
         }
     }
 
+    #[cfg(test)]
     pub(super) fn command(&self) -> &'static str {
         self.command
     }
 
+    #[cfg(test)]
     pub(super) fn field(&self) -> &'static str {
         self.field
     }
 
+    #[cfg(test)]
     pub(super) fn reason(&self) -> &'static str {
         self.reason
     }
 
+    #[cfg(test)]
     pub(super) fn usage(&self) -> &'static str {
         self.usage
     }
@@ -273,6 +281,76 @@ impl std::fmt::Display for CommandParseError {
 }
 
 impl std::error::Error for CommandParseError {}
+
+#[derive(Debug)]
+pub(super) enum CommandValidationError {
+    Parse(CommandParseError),
+    Application(ApplicationError),
+}
+
+impl From<ApplicationError> for CommandValidationError {
+    fn from(error: ApplicationError) -> Self {
+        Self::Application(error)
+    }
+}
+
+pub(super) fn parse_project_category_input(
+    value: &str,
+) -> Result<Option<ProjectCategory>, CommandParseError> {
+    match value.to_lowercase().as_str() {
+        "_" | "none" | "clear" => Ok(None),
+        _ => read_project_category(value).map(Some).ok_or_else(|| {
+            CommandParseError::new("類", "category", "カテゴリが不正です", "類 <カテゴリ>")
+        }),
+    }
+}
+
+pub(super) fn validate_command_input(command: &Command) -> Result<(), CommandValidationError> {
+    match command {
+        Command::Estimate { minutes } => {
+            estimated_work_seconds_from_minutes(*minutes)?;
+            Ok(())
+        }
+        Command::Action(CommandAction::StringValue {
+            kind: CommandKind::Category,
+            value,
+            ..
+        }) => {
+            parse_project_category_input(value).map_err(CommandValidationError::Parse)?;
+            Ok(())
+        }
+        Command::Action(CommandAction::StringValue {
+            kind: CommandKind::Deadline,
+            value,
+            ..
+        }) => {
+            if value.starts_with('今')
+                || value.starts_with('明')
+                || matches!(
+                    value.as_str(),
+                    "消" | "月" | "火" | "水" | "木" | "金" | "土" | "日"
+                )
+                || Regex::new(r"^\d{1,2}/\d{1,2}$")
+                    .expect("valid regex")
+                    .is_match(value)
+                || Regex::new(r"^\d{1,2}:\d{1,2}$")
+                    .expect("valid regex")
+                    .is_match(value)
+                || parse_local_datetime(&format!("{} 23:59:59", value), "%Y/%m/%d %H:%M:%S").is_ok()
+            {
+                Ok(())
+            } else {
+                Err(CommandValidationError::Parse(CommandParseError::new(
+                    "〆",
+                    "deadline",
+                    "日時が不正です",
+                    "〆 <日付または時刻>",
+                )))
+            }
+        }
+        _ => Ok(()),
+    }
+}
 
 pub(super) fn parse_command(input: &str, mode: ParseMode) -> Result<Command, CommandParseError> {
     let normalized = input.split_whitespace().collect::<Vec<_>>().join(" ");
@@ -763,4 +841,51 @@ fn known_command(name: &str) -> Option<(CommandKind, &'static str)> {
         _ => return None,
     };
     Some(command)
+}
+
+#[cfg(test)]
+pub(super) fn command_with_minimum_valid_arguments(command: &str) -> String {
+    let arguments = match command {
+        "新" | "new" | "遊" | "hobby" | "突" | "unplanned" => " project 15",
+        "連" | "sequential" | "seq" => " task 15 1 2",
+        "繰" | "repeat" => " task 15 月 09:00 10:00",
+        "約" | "appointment" | "始" | "start" => " 今",
+        "見" | "focus" | "fc" | "選" | "pick" => " 00000000-0000-0000-0000-000000000001",
+        "上" | "nextup" | "nu" | "下" | "breakdown" | "bd" => " task 15",
+        "割" | "split" | "sp" => " 15 child",
+        "〆" | "締" | "deadline" => " 今",
+        "予" | "estimate" | "es" | "揃" | "arrange" | "arr" | "実" | "actual" | "ac" | "重"
+        | "priority" | "pr" | "働" | "work" | "wk" | "押" | "extrude" => " 15",
+        "類" | "category" | "cat" => " 資",
+        "後" | "defer" | "逃" | "escape" | "esc" => " 1 秒",
+        "空" | "clear" | "集" | "gather" => " 明",
+        "終" | "finish" | "fin" => " 今",
+        _ => "",
+    };
+    format!("{command}{arguments}")
+}
+
+#[cfg(test)]
+pub(super) fn representative_valid_commands() -> Vec<Command> {
+    let names = [
+        "新", "遊", "突", "連", "繰", "約", "始", "樹", "条", "根", "葉", "全", "尾", "今", "単",
+        "暦", "帯", "見", "選", "開", "黒", "外", "親", "子", "深", "上", "下", "割", "待", "〆",
+        "予", "揃", "実", "重", "類", "働", "後", "清", "逃", "平", "詰", "押", "空", "集", "終",
+        "高", "低", "検証",
+    ];
+    let mut commands = vec![Command::Noop];
+    commands.extend(names.into_iter().map(|name| {
+        let mode = if matches!(name, "高" | "低") {
+            ParseMode::Interactive
+        } else {
+            ParseMode::NonInteractive
+        };
+        parse_command(&command_with_minimum_valid_arguments(name), mode)
+            .expect("representative command must parse")
+    }));
+    commands.extend(["t", "d", "w", "W", "y"].map(|shortcut| {
+        parse_command(shortcut, ParseMode::Interactive)
+            .expect("representative interactive shortcut must parse")
+    }));
+    commands
 }

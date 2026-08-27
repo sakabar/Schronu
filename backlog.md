@@ -53,7 +53,7 @@
 | TD-015 | P2 | 完了 | L | テストが巨大な製品ファイルへ混在し、fixtureも重複している |
 | TD-016 | P3 | 未着手 | M | マジック値、未使用フィールド、古いコメントが意図を曖昧にしている |
 | TD-017 | P1 | 完了 | XL | `TaskHandle`の既存infallible APIが内部不変条件の破れをpanicとして扱う |
-| TD-018 | P1 | 未着手 | XL | CLI runtimeにcommand orchestrationと表示計算が残っている |
+| TD-018 | P1 | 完了 | XL | CLI runtimeにcommand orchestrationと表示計算が残っている |
 
 ## 詳細
 
@@ -308,10 +308,14 @@
 
 - 優先度: `P1`
 - 概算規模: `XL`
+- 完了日: 2026-08-27
+- 対応: 通常commandの統合入口を`handler::handle_command`へ一本化し、privateな`CommandContext`の製品実装、日時解釈、domain mutationを`command_context.rs`へ分離した。tree、task list、calendar、band、focusの表示計算を`view.rs`へ移し、pack、flattenを含む意味的な`DisplayModel`の組み立てをhandlerへ集約した。rendererはそのmodelから既存出力とflushを生成し、`DisplayFragment`と`DisplayRecorder`を削除した。runtimeは依存構築、repository transaction、`Verify`のread-only検査、外部URL起動、interactive/non-interactive調停、focus変更と描画要求の適用、終了code変換だけを担う。
+- 実測: TD-018実装開始時に4,892行だった`runtime.rs`は1,377行になった。lib 501 passed、1 ignored、CLI binary 434 passed、MCP binary 2 passed、MCP stdio 12 passed、Spreadsheet 4 passedで、合計953 passed、1 ignoredとなった。ignoredは既存の`benchmark_save_2172project中1件変更を2秒未満で処理する`のみである。
+- 品質ゲート: `git diff --check`、`cargo fmt --check`、`cargo clippy --locked --all-targets -- -D warnings`、`cargo test --locked`が成功した。製品公開API、command名・alias、CLI文言、YAML、MCP、shell・Apps Scriptを含むSpreadsheet A-J列連携の契約は変更していない。
 
-#### 現状と根拠
+#### 起票時の現状と根拠
 
-- `src/adapter/controller/schronu/runtime.rs`は11,477行あり、repository transactionと外部I/Oの調停に加えて、command固有helper、日時解釈、domain operationの組み立て、tree・calendar・band・focusなどの表示計算、246件のruntime testとfixtureを保持する。
+- TD-015によるtest分離前の起票時点では、`src/adapter/controller/schronu/runtime.rs`は11,477行あり、repository transactionと外部I/Oの調停に加えて、command固有helper、日時解釈、domain operationの組み立て、tree・calendar・band・focusなどの表示計算、246件のruntime testとfixtureを保持していた。TD-015完了後のTD-018実装開始時点では4,892行だった。
 - `handler.rs`はruntimeをimportせず、typed `Command`とprivateな`ProjectCommandContext`、`TaskTreeCommandContext`、`TaskAttributeCommandContext`、`DeferCommandContext`、`FinishPlacementCommandContext`を介して処理する。一方、それらcontextの製品実装と多数のcommand helperはruntimeに残る。
 - rendererの`DisplayModel`はraw fragment、writer固有改行、flushの順序を保持するrecording modelであり、表示対象の意味を型として表現していない。
 

@@ -1,3 +1,4 @@
+use super::command::CommandKind;
 use super::renderer::{writeln_newline, SchronuWriter, MAX_COL};
 use chrono::{DateTime, Local};
 use std::fmt::Display;
@@ -139,6 +140,24 @@ pub(super) fn idle_refresh_deadline(now: Instant) -> Instant {
 
 pub(super) fn idle_wait_duration(deadline: Instant, now: Instant) -> Duration {
     deadline.saturating_duration_since(now)
+}
+
+pub(super) fn should_suppress_leaf_tasks_after_command(kind: CommandKind) -> bool {
+    matches!(
+        kind,
+        CommandKind::NewProject
+            | CommandKind::UnplannedProject
+            | CommandKind::Tree
+            | CommandKind::Leaves
+            | CommandKind::ShowAll
+            | CommandKind::Tail
+            | CommandKind::Today
+            | CommandKind::Calendar
+            | CommandKind::Band
+            | CommandKind::DeferRoutines
+            | CommandKind::Flatten
+            | CommandKind::Pack
+    )
 }
 
 pub(super) fn render_prompt(

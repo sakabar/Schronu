@@ -28,6 +28,18 @@ application contract testはfilesystemやterminalを介さずuse caseの契約�
 
 test supportは`#[cfg(test)]`の範囲内またはprivateに保ち、製品向けpublic APIを追加しません。
 
+### CLI command境界
+
+CLI commandは、入力から副作用までを次のprivate境界で処理します。
+
+1. `command.rs`がinteractive/non-interactive共通のparserで入力をtyped `Command`へ変換する。
+2. `handler.rs`の`handle_command`がVerify以外の唯一のcommand orchestration入口となる。`handler.rs`が定義するprivate context traitを`command_context.rs`の製品contextが実装し、日時解釈とdomain operationを提供する。
+3. `view.rs`がtree、task list、calendar、band、focusなどのtyped表示値を組み立て、handlerが意味的な`DisplayModel`を返す。
+4. `renderer.rs`が`DisplayModel`を既存CLI文字列へ変換し、writer固有改行、ANSI、Spreadsheet A-J列の整形、flush modeを扱う。
+5. `runtime.rs`は依存構築、repository transaction、Verifyのread-only repository検査、外部URL起動、interactive/non-interactive調停、focus変更と描画要求の適用、終了code変換だけを担う。
+
+この境界はprivateな実装構造です。command名とalias、CLI文言、YAML、MCP、Spreadsheetの公開契約は変更しません。
+
 保存性能を測定するignored testは、2172 projectを含むtask storageのコピー元を`SCHRONU_BENCHMARK_STORAGE`へ指定して手動実行します。外部fixtureと実行環境に依存するため、CIでは実行しません。
 
 ```shell
