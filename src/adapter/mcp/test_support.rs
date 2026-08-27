@@ -175,6 +175,7 @@ impl TaskRepositoryTrait for RecordingRepository {
 
     fn get_highest_priority_leaf_task_id(
         &mut self,
+        _excluded_task_ids: &[Uuid],
     ) -> Result<Option<Uuid>, crate::entity::task::TaskTreeError> {
         Ok(self.focus_task_id)
     }
@@ -182,6 +183,7 @@ impl TaskRepositoryTrait for RecordingRepository {
     fn get_defer_candidate_leaf_task_id(
         &mut self,
         _recent_threshold: DateTime<Local>,
+        _excluded_task_ids: &[Uuid],
     ) -> Result<Option<Uuid>, crate::entity::task::TaskTreeError> {
         Ok(None)
     }

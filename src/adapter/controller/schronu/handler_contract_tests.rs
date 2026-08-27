@@ -6,8 +6,8 @@ use super::handler::{
     handle_command, handle_defer_command, handle_finish_placement_command, handle_project_command,
     handle_task_attribute_command, handle_task_tree_command, CommandContext, DeferCommandContext,
     DeferCommandError, ExternalRequest, FinishPlacementCommandContext, FocusChange, FocusSelection,
-    HandlerError, NextUpResult, ProjectCommandContext, TaskAttributeCommandContext, TaskListOrder,
-    TaskTreeCommandContext,
+    FocusSessionEffect, HandlerError, NextUpResult, ProjectCommandContext,
+    TaskAttributeCommandContext, TaskListOrder, TaskTreeCommandContext,
 };
 use super::renderer::{
     render_display_model, render_display_model_with_mode, AncestorTreeRow, DebugTreeRow,
@@ -236,6 +236,9 @@ fn handler_owns_noop_but_leaves_unmigrated_commands_to_runtime() {
     assert!(noop.display.is_empty());
     assert_eq!(noop.external_request, None);
     assert_eq!(noop.focus_change, FocusChange::Keep);
+
+    let tuck_away = handle(&Command::TuckAway).expect("TuckAway has a structured outcome");
+    assert_eq!(tuck_away.focus_session_effect, FocusSessionEffect::TuckAway);
 
     assert_eq!(handle(&Command::Estimate { minutes: 15 }), None);
 }
@@ -2114,6 +2117,10 @@ fn 完了と配置commandはtyped値のままhandlerが所有してruntime_fallb
         .unwrap()
         .expect("typed finish command must be owned by the handler");
     assert_eq!(finish_outcome.kind, CommandKind::Finish);
+    assert_eq!(
+        finish_outcome.focus_session_effect,
+        FocusSessionEffect::RestoreSelectionIfFocusChanged
+    );
     assert_eq!(
         finish_context.calls,
         [

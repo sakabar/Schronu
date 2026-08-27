@@ -523,15 +523,31 @@ impl TaskRepositoryTrait for TestTaskRepository {
         Some(&self.task)
     }
 
-    fn get_highest_priority_leaf_task_id(&mut self) -> Result<Option<Uuid>, TaskTreeError> {
+    fn get_highest_priority_leaf_task_id(
+        &mut self,
+        excluded_task_ids: &[Uuid],
+    ) -> Result<Option<Uuid>, TaskTreeError> {
+        if self
+            .highest_priority_leaf_task_id_opt
+            .is_some_and(|id| excluded_task_ids.contains(&id))
+        {
+            return Ok(None);
+        }
         Ok(self.highest_priority_leaf_task_id_opt)
     }
 
     fn get_defer_candidate_leaf_task_id(
         &mut self,
         recent_threshold: DateTime<Local>,
+        excluded_task_ids: &[Uuid],
     ) -> Result<Option<Uuid>, TaskTreeError> {
         self.last_defer_candidate_recent_threshold_opt = Some(recent_threshold);
+        if self
+            .defer_candidate_leaf_task_id_opt
+            .is_some_and(|id| excluded_task_ids.contains(&id))
+        {
+            return Ok(None);
+        }
         Ok(self.defer_candidate_leaf_task_id_opt)
     }
 

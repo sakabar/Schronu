@@ -630,7 +630,10 @@ impl TaskRepositoryTrait for TaskRepository {
         self.projects.last().map(|project| &project.root_task)
     }
 
-    fn get_highest_priority_leaf_task_id(&mut self) -> Result<Option<Uuid>, TaskTreeError> {
+    fn get_highest_priority_leaf_task_id(
+        &mut self,
+        excluded_task_ids: &[Uuid],
+    ) -> Result<Option<Uuid>, TaskTreeError> {
         // 副作用として、projectsを優先度の低い順に破壊的にソートする
         // 葉ノードを出力する際に優先度が高いものが下となり優先度が低いものが画面外(上)になるように、projectsは低い順に保持する
         // 最も優先度が高いprojectsが必要な場合はlast()で取得する
@@ -648,6 +651,9 @@ impl TaskRepositoryTrait for TaskRepository {
                 let deadline_time_opt = leaf_task.get_deadline_time_opt()?;
                 let neg_priority = !leaf_task.get_priority()?;
                 let id = leaf_task.get_id()?;
+                if excluded_task_ids.contains(&id) {
+                    continue;
+                }
 
                 let tpl = (
                     deadline_time_opt.is_none(),
@@ -669,6 +675,7 @@ impl TaskRepositoryTrait for TaskRepository {
     fn get_defer_candidate_leaf_task_id(
         &mut self,
         recent_threshold: DateTime<Local>,
+        excluded_task_ids: &[Uuid],
     ) -> Result<Option<Uuid>, TaskTreeError> {
         // 副作用として、projectsを優先度の低い順に破壊的にソートする
         self.projects.sort_by_key(|a| a.priority);
@@ -693,6 +700,9 @@ impl TaskRepositoryTrait for TaskRepository {
                 let is_recent = first_available_time < recent_threshold;
                 let neg_priority = !leaf_task.get_priority()?;
                 let id = leaf_task.get_id()?;
+                if excluded_task_ids.contains(&id) {
+                    continue;
+                }
 
                 // 優先度が低いほど大さい値になる
                 let tpl = (

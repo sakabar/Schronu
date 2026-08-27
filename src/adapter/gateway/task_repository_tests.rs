@@ -1117,9 +1117,27 @@ fn test_get_highest_priority_leaf_task_id_締切なし同士では優先度が�
     add_project(&mut task_repository, high_priority_task);
     add_project(&mut task_repository, low_priority_task);
 
-    let actual = task_repository.get_highest_priority_leaf_task_id();
+    let actual = task_repository.get_highest_priority_leaf_task_id(&[]);
 
     assert_eq!(actual.unwrap(), Some(high_priority_task_id));
+}
+
+#[test]
+fn test_get_highest_priority_leaf_task_id_伏せたtaskを除外して次候補を返す() {
+    let mut task_repository = TaskRepository::new("");
+    let lower = crate::test_support::new_task_handle("次候補").unwrap();
+    lower.set_priority(1).unwrap();
+    let tucked = crate::test_support::new_task_handle("伏せる最優先候補").unwrap();
+    tucked.set_priority(9).unwrap();
+    let lower_id = lower.get_id().unwrap();
+    let tucked_id = tucked.get_id().unwrap();
+
+    add_project(&mut task_repository, tucked);
+    add_project(&mut task_repository, lower);
+
+    let actual = task_repository.get_highest_priority_leaf_task_id(&[tucked_id]);
+
+    assert_eq!(actual.unwrap(), Some(lower_id));
 }
 
 #[test]
@@ -1138,7 +1156,7 @@ fn test_get_highest_priority_leaf_task_id_pending中のタスクは選ばない(
     add_project(&mut task_repository, active_task);
     add_project(&mut task_repository, pending_task);
 
-    let actual = task_repository.get_highest_priority_leaf_task_id();
+    let actual = task_repository.get_highest_priority_leaf_task_id(&[]);
 
     assert_eq!(actual.unwrap(), Some(active_task_id));
 }
@@ -1164,7 +1182,7 @@ fn test_get_highest_priority_leaf_task_id_締切あり同士では優先度よ�
     add_project(&mut task_repository, high_priority_late_deadline_task);
     add_project(&mut task_repository, low_priority_early_deadline_task);
 
-    let actual = task_repository.get_highest_priority_leaf_task_id();
+    let actual = task_repository.get_highest_priority_leaf_task_id(&[]);
 
     assert_eq!(actual.unwrap(), Some(low_priority_early_deadline_task_id));
 }
@@ -1189,9 +1207,30 @@ fn test_get_defer_candidate_leaf_task_id_完成閾値より前だけrecent扱い
     add_project(&mut task_repository, recent_task);
 
     let recent_threshold = Local.with_ymd_and_hms(2026, 5, 11, 6, 0, 0).unwrap();
-    let actual = task_repository.get_defer_candidate_leaf_task_id(recent_threshold);
+    let actual = task_repository.get_defer_candidate_leaf_task_id(recent_threshold, &[]);
 
     assert_eq!(actual.unwrap(), Some(recent_task_id));
+}
+
+#[test]
+fn test_get_defer_candidate_leaf_task_id_伏せたtaskを除外して次候補を返す() {
+    let now = Local.with_ymd_and_hms(2026, 5, 10, 12, 0, 0).unwrap();
+    let mut task_repository = TaskRepository::new("");
+    task_repository.sync_clock(now).unwrap();
+    let tucked = task_with_start_time("伏せる最低優先度候補", now);
+    tucked.set_priority(1).unwrap();
+    let higher = task_with_start_time("次候補", now);
+    higher.set_priority(9).unwrap();
+    let tucked_id = tucked.get_id().unwrap();
+    let higher_id = higher.get_id().unwrap();
+
+    add_project(&mut task_repository, tucked);
+    add_project(&mut task_repository, higher);
+
+    let recent_threshold = Local.with_ymd_and_hms(2026, 5, 11, 6, 0, 0).unwrap();
+    let actual = task_repository.get_defer_candidate_leaf_task_id(recent_threshold, &[tucked_id]);
+
+    assert_eq!(actual.unwrap(), Some(higher_id));
 }
 
 #[test]
@@ -1214,7 +1253,7 @@ fn test_get_defer_candidate_leaf_task_id_10日後相当の完成閾値を使用�
     add_project(&mut task_repository, recent_task);
 
     let recent_threshold = Local.with_ymd_and_hms(2026, 5, 21, 6, 0, 0).unwrap();
-    let actual = task_repository.get_defer_candidate_leaf_task_id(recent_threshold);
+    let actual = task_repository.get_defer_candidate_leaf_task_id(recent_threshold, &[]);
 
     assert_eq!(actual.unwrap(), Some(recent_task_id));
 }
@@ -1239,7 +1278,7 @@ fn test_get_defer_candidate_leaf_task_id_対象範囲外までpending済みの�
     add_project(&mut task_repository, todo_task);
 
     let recent_threshold = Local.with_ymd_and_hms(2026, 5, 11, 6, 0, 0).unwrap();
-    let actual = task_repository.get_defer_candidate_leaf_task_id(recent_threshold);
+    let actual = task_repository.get_defer_candidate_leaf_task_id(recent_threshold, &[]);
 
     assert_eq!(actual.unwrap(), Some(todo_task_id));
 }
@@ -1264,7 +1303,7 @@ fn test_get_defer_candidate_leaf_task_id_対象範囲外のstart_timeを持つ�
     add_project(&mut task_repository, todo_task);
 
     let recent_threshold = Local.with_ymd_and_hms(2026, 5, 11, 6, 0, 0).unwrap();
-    let actual = task_repository.get_defer_candidate_leaf_task_id(recent_threshold);
+    let actual = task_repository.get_defer_candidate_leaf_task_id(recent_threshold, &[]);
 
     assert_eq!(actual.unwrap(), Some(todo_task_id));
 }
@@ -1283,7 +1322,7 @@ fn test_get_defer_candidate_leaf_task_id_対象範囲外までpending済みの�
     add_project(&mut task_repository, pending_task);
 
     let recent_threshold = Local.with_ymd_and_hms(2026, 5, 11, 6, 0, 0).unwrap();
-    let actual = task_repository.get_defer_candidate_leaf_task_id(recent_threshold);
+    let actual = task_repository.get_defer_candidate_leaf_task_id(recent_threshold, &[]);
 
     assert_eq!(actual.unwrap(), None);
 }
@@ -1303,7 +1342,7 @@ fn test_get_defer_candidate_leaf_task_id_対象範囲外のstart_timeを持つ�
     add_project(&mut task_repository, future_task);
 
     let recent_threshold = Local.with_ymd_and_hms(2026, 5, 11, 6, 0, 0).unwrap();
-    let actual = task_repository.get_defer_candidate_leaf_task_id(recent_threshold);
+    let actual = task_repository.get_defer_candidate_leaf_task_id(recent_threshold, &[]);
 
     assert_eq!(actual.unwrap(), None);
 }
@@ -1323,7 +1362,7 @@ fn test_get_defer_candidate_leaf_task_id_pending_untilが閾値より前なら�
     add_project(&mut task_repository, pending_task);
 
     let recent_threshold = Local.with_ymd_and_hms(2026, 5, 11, 6, 0, 0).unwrap();
-    let actual = task_repository.get_defer_candidate_leaf_task_id(recent_threshold);
+    let actual = task_repository.get_defer_candidate_leaf_task_id(recent_threshold, &[]);
 
     assert_eq!(actual.unwrap(), Some(pending_task_id));
 }
@@ -1342,7 +1381,7 @@ fn test_get_defer_candidate_leaf_task_id_pending_untilが閾値ちょうどな�
     add_project(&mut task_repository, pending_task);
 
     let recent_threshold = Local.with_ymd_and_hms(2026, 5, 11, 6, 0, 0).unwrap();
-    let actual = task_repository.get_defer_candidate_leaf_task_id(recent_threshold);
+    let actual = task_repository.get_defer_candidate_leaf_task_id(recent_threshold, &[]);
 
     assert_eq!(actual.unwrap(), None);
 }

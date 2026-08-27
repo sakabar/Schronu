@@ -105,13 +105,17 @@ impl TaskRepositoryTrait for TestTaskRepository {
         self.projects.first()
     }
 
-    fn get_highest_priority_leaf_task_id(&mut self) -> Result<Option<Uuid>, TaskTreeError> {
+    fn get_highest_priority_leaf_task_id(
+        &mut self,
+        _excluded_task_ids: &[Uuid],
+    ) -> Result<Option<Uuid>, TaskTreeError> {
         Ok(self.highest_priority_leaf_task_id)
     }
 
     fn get_defer_candidate_leaf_task_id(
         &mut self,
         _recent_threshold: DateTime<Local>,
+        _excluded_task_ids: &[Uuid],
     ) -> Result<Option<Uuid>, TaskTreeError> {
         Ok(None)
     }

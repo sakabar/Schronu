@@ -41,12 +41,20 @@ pub(super) enum FocusChange {
     SelectionMode(FocusSelection),
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(super) enum FocusSessionEffect {
+    Keep,
+    TuckAway,
+    RestoreSelectionIfFocusChanged,
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub(super) struct CommandOutcome {
     pub(super) kind: CommandKind,
     pub(super) display: DisplayModel,
     pub(super) external_request: Option<ExternalRequest>,
     pub(super) focus_change: FocusChange,
+    pub(super) focus_session_effect: FocusSessionEffect,
 }
 
 pub(super) trait CommandContext:
@@ -235,6 +243,7 @@ impl CommandOutcome {
             display: DisplayModel::default(),
             external_request: None,
             focus_change: FocusChange::Keep,
+            focus_session_effect: FocusSessionEffect::Keep,
         }
     }
 
@@ -251,6 +260,7 @@ pub(super) fn handle(command: &Command) -> Option<CommandOutcome> {
 
     match command {
         Command::Noop => {}
+        Command::TuckAway => outcome.focus_session_effect = FocusSessionEffect::TuckAway,
         Command::Action(CommandAction::NoArguments {
             kind: CommandKind::Open,
             ..
@@ -773,14 +783,18 @@ pub(super) fn handle_finish_placement_command<C: FinishPlacementCommandContext +
         _ => return Ok(None),
     }
 
-    Ok(Some(match semantic_display {
+    let mut outcome = match semantic_display {
         Some(display) => {
             let mut outcome = CommandOutcome::empty(kind);
             outcome.display = display;
             outcome
         }
         None => CommandOutcome::semantic_empty(kind),
-    }))
+    };
+    if matches!(command, Command::Action(CommandAction::Finish { .. })) {
+        outcome.focus_session_effect = FocusSessionEffect::RestoreSelectionIfFocusChanged;
+    }
+    Ok(Some(outcome))
 }
 
 pub(super) fn pack_display(result: PackResult) -> PackDisplay {

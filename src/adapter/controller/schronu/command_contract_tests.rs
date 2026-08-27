@@ -141,14 +141,18 @@ fn parser_distinguishes_noop_search_fallback_and_interactive_shortcuts() {
         }
     );
 
+    for input in ["tuck", "伏", "t"] {
+        assert_eq!(
+            parse_command(input, ParseMode::Interactive).unwrap(),
+            Command::TuckAway
+        );
+        let error = parse_command(input, ParseMode::NonInteractive).unwrap_err();
+        assert_eq!(error.command(), "tuck");
+        assert_eq!(error.field(), "mode");
+        assert_eq!(error.usage(), "tuck");
+    }
+
     let shortcuts = [
-        (
-            "t",
-            Command::Defer {
-                amount: 1,
-                unit: "秒".to_string(),
-            },
-        ),
         (
             "h",
             Command::Defer {
@@ -189,9 +193,17 @@ fn parser_distinguishes_noop_search_fallback_and_interactive_shortcuts() {
             parse_command(input, ParseMode::NonInteractive).unwrap(),
             Command::ShowAll {
                 pattern: Some(input.to_string())
-            },
+            }
         );
     }
+
+    assert_eq!(
+        parse_command("後 1 秒", ParseMode::Interactive).unwrap(),
+        Command::Defer {
+            amount: 1,
+            unit: "秒".to_string()
+        }
+    );
 }
 
 #[test]
