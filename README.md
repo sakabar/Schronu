@@ -68,7 +68,7 @@ SCHRONU_BENCHMARK_STORAGE=/absolute/path/to/task-storage-copy \
 
 ## MCP server
 
-Schronuは、ローカルのMCP clientから9個のtask toolを利用できるstdio serverを提供します。network transportや認証機能は持ちません。
+Schronuは、ローカルのMCP clientから10個のtask toolを利用できるstdio serverを提供します。network transportや認証機能は持ちません。
 
 ### buildと起動
 
@@ -155,6 +155,7 @@ clientごとの設定形式に合わせて、commandと環境変数を次のよ�
 | `create_task` | `name`、optional: `estimated_work_minutes`、`pending_until` | 新規projectを作成する |
 | `breakdown_task` | `parent_id`、`names`、optional: `pending_until` | 入力順に子taskを追加する |
 | `defer_task` | `task_id`、`pending_until` | 絶対時刻までtaskを延期する |
+| `defer_routine_task` | `task_id` | 親の反復間隔に従ってtaskを次周期へ延期する |
 | `complete_task` | `task_id`、optional: `finished_at`、`additional_actual_work_seconds` | taskを完了する |
 | `update_task` | `task_id`と、`estimated_work_minutes`、`deadline_time`、`category`のうち1つ以上 | 見積もり・締切・categoryを更新する |
 
