@@ -111,7 +111,7 @@ pub(super) trait TaskTreeCommandContext {
         resolve_pattern: bool,
     ) -> Result<DisplayModel, ApplicationError>;
     fn focus(&mut self, task_id: Uuid);
-    fn pick(&mut self, task_id: Uuid) -> Result<(), ApplicationError>;
+    fn pick(&mut self, task_id: Option<Uuid>) -> Result<(), ApplicationError>;
     fn focus_parent(&mut self) -> Result<(), ApplicationError>;
     fn focus_children(&mut self) -> Result<Option<DisplayModel>, ApplicationError>;
     fn focus_deepest(&mut self) -> Result<Option<DisplayModel>, ApplicationError>;

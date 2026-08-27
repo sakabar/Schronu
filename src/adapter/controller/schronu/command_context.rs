@@ -1292,7 +1292,10 @@ impl TaskTreeCommandContext for RuntimeTaskTreeCommandContext<'_, '_, '_> {
         *self.focused_task_id_opt = Some(task_id);
     }
 
-    fn pick(&mut self, task_id: Uuid) -> Result<(), ApplicationError> {
+    fn pick(&mut self, task_id: Option<Uuid>) -> Result<(), ApplicationError> {
+        let Some(task_id) = task_id.or(*self.focused_task_id_opt) else {
+            return Ok(());
+        };
         *self.focused_task_id_opt = Some(task_id);
         if let Some(task) = self
             .task_repository
@@ -1740,7 +1743,7 @@ impl TaskTreeCommandContext for CliCommandContext<'_, '_, '_> {
         *self.focused_task_id_opt = Some(task_id);
     }
 
-    fn pick(&mut self, task_id: Uuid) -> Result<(), ApplicationError> {
+    fn pick(&mut self, task_id: Option<Uuid>) -> Result<(), ApplicationError> {
         RuntimeTaskTreeCommandContext {
             task_repository: self.task_repository,
             free_time_manager: self.free_time_manager,

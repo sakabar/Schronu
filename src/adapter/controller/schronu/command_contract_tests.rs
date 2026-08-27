@@ -111,6 +111,29 @@ fn parser_converts_command_fields_to_typed_values() {
 }
 
 #[test]
+fn pick_accepts_an_omitted_task_id() {
+    for input in ["選", "pick"] {
+        assert_eq!(
+            parse_command(input, ParseMode::NonInteractive).unwrap(),
+            Command::Action(CommandAction::Pick { task_id: None }),
+            "input: {input}"
+        );
+    }
+
+    let task_id = Uuid::new_v4();
+    assert_eq!(
+        parse_command(&format!("選 {task_id}"), ParseMode::NonInteractive).unwrap(),
+        Command::Action(CommandAction::Pick {
+            task_id: Some(task_id)
+        })
+    );
+
+    let error = parse_command("選 invalid", ParseMode::NonInteractive).unwrap_err();
+    assert_eq!(error.field(), "task_id");
+    assert_eq!(error.reason(), "UUIDで指定してください");
+}
+
+#[test]
 fn parser_distinguishes_noop_search_fallback_and_interactive_shortcuts() {
     assert_eq!(
         parse_command("", ParseMode::NonInteractive).unwrap(),

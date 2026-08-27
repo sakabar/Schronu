@@ -1436,6 +1436,55 @@ fn calendarとbandは製品経路で代表出力とansi_capabilityを維持す�
 }
 
 #[test]
+fn test_execute_選_task_id省略時はfocus中taskをtodoに戻す() {
+    let now = Local.with_ymd_and_hms(2026, 8, 28, 12, 0, 0).unwrap();
+    let task = new_test_task_handle("focus対象").unwrap();
+    task.set_orig_status(Status::Pending).unwrap();
+    let task_id = task.get_id().unwrap();
+    let mut task_repository = TestTaskRepository::new(task.clone(), now);
+    let mut free_time_manager = TestFreeTimeManager::default();
+    let mut focused_task_id_opt = Some(task_id);
+    let mut stdout = TestWriter::new();
+
+    execute(
+        &mut stdout,
+        &mut task_repository,
+        &mut free_time_manager,
+        &mut focused_task_id_opt,
+        &now,
+        "選",
+    )
+    .unwrap();
+
+    assert_eq!(focused_task_id_opt, Some(task_id));
+    assert_eq!(task.get_orig_status().unwrap(), Status::Todo);
+}
+
+#[test]
+fn test_execute_選_task_id省略時にfocusがなければ何も変更しない() {
+    let now = Local.with_ymd_and_hms(2026, 8, 28, 12, 0, 0).unwrap();
+    let task = new_test_task_handle("非focus対象").unwrap();
+    task.set_orig_status(Status::Pending).unwrap();
+    let mut task_repository = TestTaskRepository::new(task.clone(), now);
+    let mut free_time_manager = TestFreeTimeManager::default();
+    let mut focused_task_id_opt = None;
+    let mut stdout = TestWriter::new();
+
+    execute(
+        &mut stdout,
+        &mut task_repository,
+        &mut free_time_manager,
+        &mut focused_task_id_opt,
+        &now,
+        "選",
+    )
+    .unwrap();
+
+    assert_eq!(focused_task_id_opt, None);
+    assert_eq!(task.get_orig_status().unwrap(), Status::Pending);
+}
+
+#[test]
 fn task_tree表示commandは製品経路で必ず1回flushする() {
     let now = Local.with_ymd_and_hms(2026, 8, 11, 12, 0, 0).unwrap();
     let task = new_test_task_handle("flush対象").unwrap();
