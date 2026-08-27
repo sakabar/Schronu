@@ -1399,32 +1399,47 @@ impl TaskAttributeCommandContext for TraceTaskAttributeContext {
 #[test]
 fn handler入口は直接構築された不正属性値をcontext実行前に拒否する() {
     let now = Local.with_ymd_and_hms(2026, 8, 27, 12, 0, 0).unwrap();
-    let commands = [
-        Command::Estimate { minutes: -1 },
-        Command::Action(CommandAction::StringValue {
-            kind: CommandKind::Category,
-            canonical_name: "類",
-            value: "invalid".to_string(),
-        }),
-        Command::Action(CommandAction::StringValue {
-            kind: CommandKind::Deadline,
-            canonical_name: "〆",
-            value: "invalid".to_string(),
-        }),
-    ];
+    let mut estimate_context = CompositeTraceContext::new(now);
+    let estimate = handle_command(&Command::Estimate { minutes: -1 }, &mut estimate_context);
+    assert!(matches!(
+        estimate,
+        Err(HandlerError::Application(ApplicationError::InvalidInput {
+            field: "estimated_work_minutes",
+            reason: "must not be negative",
+        }))
+    ));
+    assert!(estimate_context.task_attribute.calls.is_empty());
 
-    for command in commands {
+    for (kind, canonical_name, field, reason, usage) in [
+        (
+            CommandKind::Category,
+            "類",
+            "category",
+            "カテゴリが不正です",
+            "類 <カテゴリ>",
+        ),
+        (
+            CommandKind::Deadline,
+            "〆",
+            "deadline",
+            "日時が不正です",
+            "〆 <日付または時刻>",
+        ),
+    ] {
+        let command = Command::Action(CommandAction::StringValue {
+            kind,
+            canonical_name,
+            value: "invalid".to_string(),
+        });
         let mut context = CompositeTraceContext::new(now);
-        let result = handle_command(&command, &mut context);
-
-        assert!(matches!(
-            result,
-            Err(HandlerError::Parse(_)) | Err(HandlerError::Application(_))
-        ));
-        assert!(
-            context.task_attribute.calls.is_empty(),
-            "invalid typed input must be rejected before the product context mutates state: {command:?}"
-        );
+        let Err(HandlerError::Parse(error)) = handle_command(&command, &mut context) else {
+            panic!("{canonical_name} must preserve its parse-error classification");
+        };
+        assert_eq!(error.command(), canonical_name);
+        assert_eq!(error.field(), field);
+        assert_eq!(error.reason(), reason);
+        assert_eq!(error.usage(), usage);
+        assert!(context.task_attribute.calls.is_empty());
     }
 }
 
