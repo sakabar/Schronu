@@ -6949,6 +6949,7 @@ impl FocusDisplaySource for CharacterizationFocusDisplaySource {
             } else {
                 Ok(FocusDisplay::Header {
                     project_category: Some(ProjectCategory::Investment),
+                    project_priority: 13,
                     task_attr: if self.failure == FocusStageFailure::Attr {
                         Err(TaskTreeError::Borrow)
                     } else {
@@ -7012,7 +7013,7 @@ fn test_render_focus_from_source_ancestor_error後もfocus詳細を描画してf
         &output,
         &[
             "[Error] 操作エラー: task tree operation failed: cannot borrow task tree data",
-            "focused task is: project_category=資",
+            "focused task is: project_category=資 project_priority=13",
             "Ok( {",
             "minutes left",
             "] 50%",
@@ -7043,7 +7044,7 @@ fn test_render_focus_from_source_categoryとgetterのerror時もそれ以前の�
     assert_fragments_in_order(
         &attr_error_output,
         &[
-            "\n\nfocused task is: project_category=資",
+            "\n\nfocused task is: project_category=資 project_priority=13",
             "Err(Borrow)",
             "minutes left",
             "] 50%",
@@ -7064,7 +7065,7 @@ fn test_render_focus_from_source_categoryとgetterのerror時もそれ以前の�
     assert_fragments_in_order(
         &timing_error_output,
         &[
-            "\n\nfocused task is: project_category=資",
+            "\n\nfocused task is: project_category=資 project_priority=13",
             "Ok( {",
             "[Error] 操作エラー: task tree operation failed: cannot borrow task tree data",
         ],

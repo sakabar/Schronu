@@ -1060,6 +1060,7 @@ fn focus_displayはtyped属性からancestorと残り時間とprogress境界を�
         }),
         DisplayModel::Focus(FocusDisplay::Header {
             project_category: Some(ProjectCategory::Investment),
+            project_priority: 13,
             task_attr: Ok(task_attr),
         }),
         DisplayModel::Focus(FocusDisplay::Timing {
@@ -1080,7 +1081,7 @@ fn focus_displayはtyped属性からancestorと残り時間とprogress境界を�
             "newline:11111111-1111-1111-1111-111111111111 [2026/07/25] 60m フォーカス対象"
                 .to_string(),
             "newline:".to_string(),
-            "newline:focused task is: project_category=資".to_string(),
+            "newline:focused task is: project_category=資 project_priority=13".to_string(),
             format!("newline:{task_debug}"),
             "newline:31 minutes left (since 12:00:00 until 12:50:00) focusing for 20 minutes"
                 .to_string(),
@@ -1137,6 +1138,7 @@ fn focus_displayはtyped属性からancestorと残り時間とprogress境界を�
                 DisplayModel::Tree(TreeDisplay::Ancestors { rows: vec![] }),
                 DisplayModel::Focus(FocusDisplay::Header {
                     project_category: None,
+                    project_priority: 0,
                     task_attr: Ok(task_attr),
                 }),
                 DisplayModel::Focus(FocusDisplay::Timing {
@@ -1153,7 +1155,7 @@ fn focus_displayはtyped属性からancestorと残り時間とprogress境界を�
             [
                 "raw:\n".to_string(),
                 "newline:".to_string(),
-                "newline:focused task is: project_category=_".to_string(),
+                "newline:focused task is: project_category=_ project_priority=0".to_string(),
                 expected_debug,
                 format!("newline:{expected_summary}"),
                 format!("newline:{expected_progress}"),

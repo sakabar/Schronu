@@ -779,12 +779,12 @@ fn test_project_category_symbol_カテゴリ表示記号を返す() {
 #[test]
 fn test_format_focused_task_header_project_categoryを表示する() {
     assert_eq!(
-        format_focused_task_header(Some(ProjectCategory::Investment)),
-        "focused task is: project_category=資"
+        format_focused_task_header(Some(ProjectCategory::Investment), 13),
+        "focused task is: project_category=資 project_priority=13"
     );
     assert_eq!(
-        format_focused_task_header(None),
-        "focused task is: project_category=_"
+        format_focused_task_header(None, 0),
+        "focused task is: project_category=_ project_priority=0"
     );
 }
 
