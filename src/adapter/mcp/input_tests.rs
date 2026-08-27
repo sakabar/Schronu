@@ -209,12 +209,7 @@ fn defer_routine_task_input_schemaとdecode契約が一致する() {
         }),
         vec![
             valid_case("required task id", json!({"task_id": task_id})),
-            schema_case(
-                "missing task id",
-                json!({}),
-                "task_id",
-                "field is required",
-            ),
+            schema_case("missing task id", json!({}), "task_id", "field is required"),
             schema_case(
                 "task id has wrong type",
                 json!({"task_id": 42}),
