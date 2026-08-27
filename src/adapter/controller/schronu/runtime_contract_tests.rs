@@ -7202,7 +7202,7 @@ fn test_try_save_before_exit_保存失敗ならerrorを表示して終了を止�
     let task_id = task.get_id().unwrap();
     let task_repository = TestTaskRepository::new(task, now);
     task_repository.save_failures_remaining.set(1);
-    let mut stdout = TestWriter::new();
+    let mut stdout = FlushTrackingWriter::successful(true);
 
     let actual = try_save_before_exit(&mut stdout, &task_repository);
 
@@ -7215,7 +7215,8 @@ fn test_try_save_before_exit_保存失敗ならerrorを表示して終了を止�
             .unwrap(),
         "memoryに残すtask"
     );
-    let output = stdout.into_string();
+    assert_eq!(stdout.flush_count, 1);
+    let output = String::from_utf8(stdout.buffer).unwrap();
     assert!(output.contains("[Error]"));
     assert!(output.contains("WriteFile"));
     assert!(output.contains("/test/project.yaml"));

@@ -1510,7 +1510,30 @@ fn runtimeはio調停だけを所有する() {
 
 #[test]
 fn runtime最終責務境界はsemantic_rendererとio調停を分離する() {
-    let violations = runtime_final_boundary_violations(&controller_product_sources());
+    let product_sources = controller_product_sources();
+    let mut violations = runtime_final_boundary_violations(&product_sources);
+    let (_, save_before_exit_source) =
+        unique_function_region(&product_sources, "try_save_before_exit")
+            .expect("interactive exit save must remain a unique runtime boundary");
+    let save_before_exit_code = compact_code(&code_only(save_before_exit_source));
+    for required in [
+        "error_display_model(",
+        "render_display_model_with_mode(",
+        "RenderMode::Flushed",
+    ] {
+        if !save_before_exit_code.contains(required) {
+            violations.push(format!(
+                "interactive exit save error must use semantic renderer boundary {required}"
+            ));
+        }
+    }
+    for forbidden in ["writeln_newline(", ".flush("] {
+        if save_before_exit_code.contains(forbidden) {
+            violations.push(format!(
+                "interactive exit save must not own presentation operation {forbidden}"
+            ));
+        }
+    }
 
     assert!(
         violations.is_empty(),

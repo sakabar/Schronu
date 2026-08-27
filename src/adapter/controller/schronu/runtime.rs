@@ -840,8 +840,12 @@ fn try_save_before_exit(
     match task_repository.save() {
         Ok(()) => true,
         Err(error) => {
-            writeln_newline(stdout, &format!("[Error] {error}")).unwrap();
-            stdout.flush().unwrap();
+            render_display_model_with_mode(
+                stdout,
+                &error_display_model(&error),
+                RenderMode::Flushed,
+            )
+            .unwrap();
             false
         }
     }
