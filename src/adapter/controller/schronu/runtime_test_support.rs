@@ -1002,33 +1002,45 @@ fn execute_flatten_command_for_test(
 
 #[cfg(test)]
 impl TaskListDisplayRow {
-    // 表示行の全属性を呼び出し側で確定させるため、引数を個別に受け取る。
+    // sort・give-up判定に必要な属性を呼び出し側で確定し、表示専用値は製品型で補う。
     #[cfg(test)]
     #[allow(clippy::too_many_arguments)]
     fn new_task(
         scheduled_start: DateTime<Local>,
         subjective_naive_date: NaiveDate,
-        rank: usize,
+        priority_rank: usize,
         id: Uuid,
         priority: i64,
         work_seconds: i64,
         project_category_opt: Option<ProjectCategory>,
-        message_prefix: String,
         task_name: String,
     ) -> Self {
         TaskListDisplayRow {
             scheduled_start,
             subjective_naive_date_opt: Some(subjective_naive_date),
-            rank,
+            rank: priority_rank,
             id,
             priority,
             work_seconds,
             project_category_opt,
             is_real_task: true,
             give_up_candidate: false,
-            display_row: super::renderer::TaskListRow::Message {
-                text: format!("{message_prefix}{task_name}"),
-            },
+            display_row: super::renderer::TaskListRow::Task(
+                super::renderer::TaskListTaskRow {
+                    rank: 0,
+                    task_id: id,
+                    icon: "/".to_string(),
+                    remaining_time: "____/__/__".to_string(),
+                    scheduled_start,
+                    scheduled_end: scheduled_start + Duration::seconds(work_seconds),
+                    priority_rank,
+                    estimated_minutes: schronu::entity::task::round_up_sec_as_minute(work_seconds),
+                    project_number_priority: priority,
+                    project_category: project_category_opt,
+                    task_name,
+                    give_up_candidate: false,
+                },
+            ),
         }
     }
 }

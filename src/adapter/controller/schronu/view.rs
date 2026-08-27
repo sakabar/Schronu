@@ -1,7 +1,7 @@
 #[cfg(test)]
-pub(super) use super::renderer::project_category_symbol;
+use super::renderer::format_task_category_summary;
 #[cfg(test)]
-use super::renderer::{format_task_category_summary, format_task_list_row};
+pub(super) use super::renderer::project_category_symbol;
 use super::renderer::{
     format_task_list_columns, task_list_columns, weekday_jp, AncestorTreeRow, BandDayRow,
     BandDisplay, BandDurations, CalendarAlerts, CalendarDayRow, CalendarDisplay, CalendarSummary,
@@ -181,56 +181,12 @@ impl TaskListDisplayRow {
         }
     }
 
-    #[cfg(test)]
-    pub(super) fn render_message(&self) -> String {
-        let mut display_row = self.display_row.clone();
-        if let TaskListRow::Task(task_row) = &mut display_row {
-            task_row.give_up_candidate = self.give_up_candidate;
-        } else if self.is_real_task && self.give_up_candidate {
-            if let TaskListRow::Message { text } = &mut display_row {
-                *text = replace_task_list_icon(text, "A");
-            }
-        }
-        format_task_list_row(&display_row)
-    }
-
-    fn into_display_row(mut self) -> TaskListRow {
+    pub(super) fn into_display_row(mut self) -> TaskListRow {
         if let TaskListRow::Task(task_row) = &mut self.display_row {
             task_row.give_up_candidate = self.give_up_candidate;
         }
         self.display_row
     }
-}
-
-#[cfg(test)]
-pub(super) fn replace_task_list_icon(message_prefix: &str, icon: &str) -> String {
-    let mut token_ranges = message_prefix
-        .char_indices()
-        .filter(|(_, character)| !character.is_whitespace())
-        .map(|(index, _)| index)
-        .scan(None, |previous_index, index| {
-            let starts_token = previous_index.is_none_or(|previous_index| {
-                message_prefix[previous_index..index]
-                    .chars()
-                    .any(char::is_whitespace)
-            });
-            *previous_index = Some(index);
-            Some(starts_token.then_some(index))
-        })
-        .flatten();
-    let Some(icon_start) = token_ranges.nth(2) else {
-        return message_prefix.to_string();
-    };
-    let icon_end = message_prefix[icon_start..]
-        .find(char::is_whitespace)
-        .map_or(message_prefix.len(), |offset| icon_start + offset);
-
-    format!(
-        "{}{}{}",
-        &message_prefix[..icon_start],
-        icon,
-        &message_prefix[icon_end..]
-    )
 }
 
 pub(super) const PROJECT_CATEGORY_SUMMARY_LEN: usize = 6;

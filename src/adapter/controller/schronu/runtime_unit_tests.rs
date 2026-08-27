@@ -332,7 +332,6 @@ fn test_sort_task_list_display_rows_通常表示は予定時刻の逆順にす�
             10,
             60,
             None,
-            "".to_string(),
             "early".to_string(),
         ),
         TaskListDisplayRow::new_task(
@@ -343,7 +342,6 @@ fn test_sort_task_list_display_rows_通常表示は予定時刻の逆順にす�
             1,
             60,
             None,
-            "".to_string(),
             "late".to_string(),
         ),
     ];
@@ -370,7 +368,6 @@ fn test_sort_task_list_display_rows_尾表示は低優先度を下側にする()
             10,
             60,
             None,
-            "".to_string(),
             "high".to_string(),
         ),
         TaskListDisplayRow::new_task(
@@ -381,7 +378,6 @@ fn test_sort_task_list_display_rows_尾表示は低優先度を下側にする()
             1,
             60,
             None,
-            "".to_string(),
             "low".to_string(),
         ),
     ];
@@ -408,7 +404,6 @@ fn test_sort_task_list_display_rows_尾表示で同じ優先度なら予定時�
             1,
             60,
             None,
-            "".to_string(),
             "early".to_string(),
         ),
         TaskListDisplayRow::new_task(
@@ -419,7 +414,6 @@ fn test_sort_task_list_display_rows_尾表示で同じ優先度なら予定時�
             1,
             60,
             None,
-            "".to_string(),
             "late".to_string(),
         ),
     ];
@@ -451,7 +445,6 @@ fn test_mark_give_up_candidate_rows_低優先度側から不足時間を満た�
             89,
             120 * 60,
             None,
-            "prefix ".to_string(),
             "high".to_string(),
         ),
         TaskListDisplayRow::new_task(
@@ -462,8 +455,6 @@ fn test_mark_give_up_candidate_rows_低優先度側から不足時間を満た�
             5,
             19 * 60,
             None,
-            "0001 00000000-0000-0000-0000-000000000000 / ____/__/__ 05/10(日)-23:11~23:30 0 19 05 "
-                .to_string(),
             "<19/60>レビュー".to_string(),
         ),
         TaskListDisplayRow::new_task(
@@ -474,7 +465,6 @@ fn test_mark_give_up_candidate_rows_低優先度側から不足時間を満た�
             5,
             20 * 60,
             None,
-            "prefix ".to_string(),
             "回収する".to_string(),
         ),
         TaskListDisplayRow::new_task(
@@ -485,7 +475,6 @@ fn test_mark_give_up_candidate_rows_低優先度側から不足時間を満た�
             5,
             15 * 60,
             None,
-            "prefix ".to_string(),
             "心当たりがある店に電話して確認".to_string(),
         ),
         TaskListDisplayRow::new_task(
@@ -496,7 +485,6 @@ fn test_mark_give_up_candidate_rows_低優先度側から不足時間を満た�
             5,
             6 * 60,
             None,
-            "prefix ".to_string(),
             "日から土までの実績を確認する".to_string(),
         ),
         TaskListDisplayRow::new_task(
@@ -507,7 +495,6 @@ fn test_mark_give_up_candidate_rows_低優先度側から不足時間を満た�
             5,
             13 * 60,
             None,
-            "prefix ".to_string(),
             "<13/30>一次レビュー".to_string(),
         ),
         TaskListDisplayRow::new_task(
@@ -518,7 +505,6 @@ fn test_mark_give_up_candidate_rows_低優先度側から不足時間を満た�
             5,
             18 * 60,
             None,
-            "prefix ".to_string(),
             "<18/30>一次レビュー".to_string(),
         ),
     ];
@@ -547,11 +533,14 @@ fn test_mark_give_up_candidate_rows_低優先度側から不足時間を満た�
             eighteen_min_id
         ]
     );
-    let rendered = rows
-        .iter()
-        .find(|row| row.id == nineteen_min_id)
-        .unwrap()
-        .render_message();
+    let rendered = super::super::renderer::format_task_list_row(
+        &rows
+            .iter()
+            .find(|row| row.id == nineteen_min_id)
+            .unwrap()
+            .clone()
+            .into_display_row(),
+    );
     assert!(rendered.contains(" A "));
     assert!(rendered.ends_with("<19/60>レビュー"));
     assert!(
@@ -586,7 +575,6 @@ fn test_mark_give_up_candidate_rows_空き時間行と別日は候補にしな�
             1,
             60 * 60,
             None,
-            "".to_string(),
             "tomorrow".to_string(),
         ),
         TaskListDisplayRow::new_task(
@@ -597,7 +585,6 @@ fn test_mark_give_up_candidate_rows_空き時間行と別日は候補にしな�
             10,
             30 * 60,
             None,
-            "".to_string(),
             "today".to_string(),
         ),
     ];
@@ -638,7 +625,6 @@ fn test_mark_give_up_candidate_rows_不足なしなら印を付けない() {
         1,
         60 * 60,
         None,
-        "".to_string(),
         "task".to_string(),
     )];
 
@@ -664,7 +650,6 @@ fn test_mark_give_up_candidate_rows_by_date_未来日にも空差累に応じて
             1,
             60 * 60,
             None,
-            "prefix ".to_string(),
             "today".to_string(),
         ),
         TaskListDisplayRow::new_task(
@@ -675,7 +660,6 @@ fn test_mark_give_up_candidate_rows_by_date_未来日にも空差累に応じて
             10,
             60 * 60,
             None,
-            "prefix ".to_string(),
             "tomorrow high".to_string(),
         ),
         TaskListDisplayRow::new_task(
@@ -686,7 +670,6 @@ fn test_mark_give_up_candidate_rows_by_date_未来日にも空差累に応じて
             1,
             45 * 60,
             None,
-            "prefix ".to_string(),
             "tomorrow low late".to_string(),
         ),
         TaskListDisplayRow::new_task(
@@ -697,7 +680,6 @@ fn test_mark_give_up_candidate_rows_by_date_未来日にも空差累に応じて
             1,
             30 * 60,
             None,
-            "prefix ".to_string(),
             "tomorrow low early".to_string(),
         ),
     ];
@@ -740,14 +722,32 @@ fn test_mark_give_up_candidate_rows_by_date_未来日にも空差累に応じて
 
 #[test]
 fn test_replace_task_list_icon_アイコン列だけを置き換える() {
-    let message_prefix =
-        "0028 task-id / ____/__/__ 06/28(日)-23:11~23:30 0 19 05 資 夕食  の 準備".to_string();
+    let mut row = super::super::renderer::TaskListTaskRow {
+        rank: 28,
+        task_id: Uuid::parse_str("11111111-1111-1111-1111-111111111111").unwrap(),
+        icon: "/".to_string(),
+        remaining_time: "____/__/__".to_string(),
+        scheduled_start: Local.with_ymd_and_hms(2026, 6, 28, 23, 11, 0).unwrap(),
+        scheduled_end: Local.with_ymd_and_hms(2026, 6, 28, 23, 30, 0).unwrap(),
+        priority_rank: 0,
+        estimated_minutes: 19,
+        project_number_priority: 5,
+        project_category: Some(ProjectCategory::Investment),
+        task_name: "夕食  の 準備".to_string(),
+        give_up_candidate: false,
+    };
 
-    let actual = replace_task_list_icon(&message_prefix, "A");
+    let original = super::super::renderer::format_task_list_task_row(&row);
+    row.give_up_candidate = true;
+    let actual = super::super::renderer::format_task_list_task_row(&row);
 
     assert_eq!(
+        original,
+        "0028 11111111-1111-1111-1111-111111111111 / ____/__/__ 06/28(日)-23:11~23:30 0 19 05 資 夕食  の 準備"
+    );
+    assert_eq!(
         actual,
-        "0028 task-id A ____/__/__ 06/28(日)-23:11~23:30 0 19 05 資 夕食  の 準備"
+        "0028 11111111-1111-1111-1111-111111111111 A ____/__/__ 06/28(日)-23:11~23:30 0 19 05 資 夕食  の 準備"
     );
 }
 
@@ -835,7 +835,6 @@ fn test_summarize_scheduled_work_seconds_by_project_category_実タスクだけ�
             1,
             60 * 60,
             Some(ProjectCategory::Earning),
-            "".to_string(),
             "earning".to_string(),
         ),
         TaskListDisplayRow::new_task(
@@ -846,7 +845,6 @@ fn test_summarize_scheduled_work_seconds_by_project_category_実タスクだけ�
             1,
             30 * 60,
             Some(ProjectCategory::Investment),
-            "".to_string(),
             "investment".to_string(),
         ),
         TaskListDisplayRow::new_task(
@@ -857,7 +855,6 @@ fn test_summarize_scheduled_work_seconds_by_project_category_実タスクだけ�
             1,
             30 * 60,
             None,
-            "".to_string(),
             "uncategorized".to_string(),
         ),
         TaskListDisplayRow::new_message(
