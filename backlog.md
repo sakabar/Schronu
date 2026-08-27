@@ -311,7 +311,7 @@
 - 完了日: 2026-08-27
 - 対応: 通常commandの統合入口を`handler::handle_command`へ一本化し、privateな`CommandContext`の製品実装、日時解釈、domain mutationを`command_context.rs`へ分離した。tree、task list、calendar、band、focusの表示計算を`view.rs`へ移し、pack、flattenを含む意味的な`DisplayModel`の組み立てをhandlerへ集約した。rendererはそのmodelから既存出力とflushを生成し、`DisplayFragment`と`DisplayRecorder`を削除した。runtimeは依存構築、repository transaction、`Verify`のread-only検査、外部URL起動、interactive/non-interactive調停、focus変更と描画要求の適用、終了code変換だけを担う。
 - 実測: TD-018実装開始時に4,892行だった`runtime.rs`は1,375行になった。lib 501 passed、1 ignored、CLI binary 431 passed、MCP binary 2 passed、MCP stdio 12 passed、Spreadsheet 4 passedで、合計950 passed、1 ignoredとなった。ignoredは既存の`benchmark_save_2172project中1件変更を2秒未満で処理する`のみである。
-- 品質ゲート: `git diff --check`、`cargo fmt --check`、`cargo clippy --locked --all-targets -- -D warnings`、`cargo test --locked`が成功した。製品公開API、command名・alias、CLI文言、Spreadsheet A-J列、YAML、MCP契約は変更していない。
+- 品質ゲート: `git diff --check`、`cargo fmt --check`、`cargo clippy --locked --all-targets -- -D warnings`、`cargo test --locked`が成功した。製品公開API、command名・alias、CLI文言、YAML、MCP、shell・Apps Scriptを含むSpreadsheet A-J列連携の契約は変更していない。
 
 #### 起票時の現状と根拠
 
