@@ -77,14 +77,9 @@ fn unique_function_region<'a>(
     ))
 }
 
-fn module_uses_dependency(source: &str, module_name: &str) -> bool {
-    code_only(source).split(';').any(|statement| {
-        let tokens = statement
-            .split(|character: char| !(character.is_ascii_alphanumeric() || character == '_'))
-            .filter(|token| !token.is_empty())
-            .collect::<Vec<_>>();
-        tokens.contains(&"use") && tokens.contains(&module_name)
-    })
+fn source_depends_on_module(source: &str, module_name: &str) -> bool {
+    let code = compact_code(&code_only(source));
+    code.contains(&format!("::{module_name}")) || code.contains(&format!("{module_name}::"))
 }
 
 fn handler_entry_boundary_violations(sources: &[ControllerProductSource]) -> Vec<String> {
@@ -94,7 +89,7 @@ fn handler_entry_boundary_violations(sources: &[ControllerProductSource]) -> Vec
     }) else {
         return vec!["command_context.rs must remain a product module".into()];
     };
-    if module_uses_dependency(&command_context.text, "runtime") {
+    if source_depends_on_module(&command_context.text, "runtime") {
         violations
             .push("command_context.rs must not depend on its outer runtime coordinator".into());
     }
@@ -112,7 +107,28 @@ fn handler_entry_boundary_violations(sources: &[ControllerProductSource]) -> Vec
         violations.push("parsed-command coordinator must call the unified handler".into());
         return violations;
     };
-    if execute_parsed_code[body_start + 1..handler_offset].contains("parsed_command") {
+    let signature = &execute_parsed_code[..body_start];
+    let Some(command_type_offset) = signature.find(":&Command") else {
+        violations
+            .push("parsed-command coordinator must accept one typed Command reference".into());
+        return violations;
+    };
+    let command_parameter = signature[..command_type_offset]
+        .chars()
+        .rev()
+        .take_while(|character| character.is_ascii_alphanumeric() || *character == '_')
+        .collect::<String>()
+        .chars()
+        .rev()
+        .collect::<String>();
+    if command_parameter.is_empty() {
+        violations.push("parsed-command coordinator must name its typed Command parameter".into());
+        return violations;
+    }
+    if contains_identifier(
+        &execute_parsed_code[body_start + 1..handler_offset],
+        &command_parameter,
+    ) {
         violations.push(
             "runtime must not inspect or delegate the typed command before handle_command".into(),
         );
@@ -1592,6 +1608,8 @@ fn handler入口境界scannerはruntime依存のuse表現とhelper迂回を検�
         "use super::{runtime::CommandError};",
         "use crate::adapter::controller::schronu::runtime::CommandError as OuterError;",
         "use super::runtime as outer;",
+        "type OuterError = super::runtime::CommandError;",
+        "fn convert(error: super::runtime::CommandError) {}",
     ] {
         let sources = vec![
             ControllerProductSource {
@@ -1617,9 +1635,9 @@ fn handler入口境界scannerはruntime依存のuse表現とhelper迂回を検�
         ControllerProductSource {
             path: PathBuf::from("runtime.rs"),
             text: r#"
-fn execute_parsed(parsed_command: &Command) {
-    check_input(parsed_command);
-    handle_command(parsed_command);
+fn execute_parsed(command: &Command) {
+    check_input(command);
+    handle_command(command);
 }
 "#
             .to_string(),
