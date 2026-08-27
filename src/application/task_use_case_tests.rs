@@ -666,9 +666,8 @@ fn defer_routine_task_deadline伝搬失敗でも変更しない() {
     let revision = child.get_persistent_mutation_revision().unwrap();
     let mut repository = TestTaskRepository::new(vec![parent], fixed_now());
 
-    let actual = descendant.with_exclusive_data_borrow_for_test(|| {
-        defer_routine_task(&mut repository, child_id)
-    });
+    let actual = descendant
+        .with_exclusive_data_borrow_for_test(|| defer_routine_task(&mut repository, child_id));
 
     assert_eq!(
         actual,

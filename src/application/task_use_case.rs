@@ -438,9 +438,7 @@ pub fn defer_routine_task(
         .checked_add_signed(start_offset)
         .ok_or_else(start_out_of_range)?;
 
-    task.unset_deadline_time_opt()
-        .map_err(ApplicationError::TaskTree)?;
-    task.set_deadline_time_opt(Some(new_deadline_time))
+    task.replace_deadline_time(new_deadline_time)
         .map_err(ApplicationError::TaskTree)?;
     task.set_orig_status(Status::Todo)
         .map_err(ApplicationError::TaskTree)?;
