@@ -1211,7 +1211,22 @@ impl TaskHandle {
     ) -> Result<(), TaskTreeError> {
         let root = self.root()?;
         let mut updates = Vec::new();
-        self.collect_deadline_updates(Some(deadline_time), Some(None), &mut updates)?;
+        let current_deadline = self
+            .node
+            .try_borrow_data()
+            .map_err(|_| TaskTreeError::Borrow)?
+            .get_deadline_time_opt()
+            .to_owned();
+        if current_deadline != Some(deadline_time) {
+            updates.push((self.node.clone(), deadline_time));
+        }
+        for child in self.node.children() {
+            Self { node: child }.collect_deadline_updates(
+                Some(deadline_time),
+                None,
+                &mut updates,
+            )?;
+        }
         root.node
             .try_borrow_data_mut()
             .map_err(|_| TaskTreeError::Borrow)?;
