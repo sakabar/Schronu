@@ -94,8 +94,10 @@
 | 49 | `CLI: Interactiveを統一handler入口へ移す` | interactiveのspecial dispatchを除去し、non-interactiveと同じcontext構築・`handle_command`経路からoutcomeを受け、interactive用RenderModeで適用する。Verifyのread-only検査だけはruntimeに残す | 48 | handler、command context、runtime | 対象test後に全品質ゲート |
 | 50 | `Docs: CLI command境界を説明する` | READMEへparser→handler→view model→renderer→runtimeの責務を記録 | 49 | full suite | 全品質ゲート |
 | 51 | `Docs: TD-018の完了を記録する` | backlogへ完了日、実測件数、runtime行数、品質ゲートを記録 | 50 | full suite | 全品質ゲート |
+| 52 | `Test: Handler内の入力validation境界を固定する` | 直接構築したtyped commandも`handle_command`がpanicせず構造化errorへ変換し、runtimeがcommand固有validationを所有せず、`command_context`がruntimeへ逆依存しないことをRedで固定 | 51 | handler、runtime architecture | handler入口のvalidation欠如という1理由でRedを確認してtestだけcommit |
+| 53 | `CLI: 入力validationをparserとhandlerへ移す` | parser段階の早期validationで既存error順を保ち、handlerと製品contextでも同じvalidationを自己完結させる。runtimeの事前dispatchと`command_context -> runtime`依存を除去 | 52 | command、handler、command context、runtime | 対象test後に全品質ゲート |
 
-計画本体は全51 commitとする。
+計画本体は全53 commitとする。順序52・53は最終reviewで検出したhandler入口の自己完結性不足を解消する追加cycleである。
 
 順序6・7は機械移動のみとし、commit本文へ大規模になる理由、挙動変更なし、実行した品質ゲートを記録する。Red commit以外の全commitも、本文へ対象testと全品質ゲートの結果を残す。
 
