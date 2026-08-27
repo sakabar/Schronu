@@ -678,6 +678,27 @@ fn defer_routine_task_deadline伝搬失敗でも変更しない() {
 }
 
 #[test]
+fn defer_routine_task_完了済みtaskもdeadlineを更新してtodoへ戻す() {
+    let deadline = Local.with_ymd_and_hms(2026, 8, 13, 10, 0, 0).unwrap();
+    let parent = crate::test_support::new_task_handle("ルーチン").unwrap();
+    parent.set_repetition_interval_days_opt(Some(7)).unwrap();
+    let mut child_attr = crate::test_support::new_task_attr("完了済み延期対象");
+    child_attr.set_deadline_time_opt(Some(deadline));
+    child_attr.set_orig_status(Status::Done);
+    let child = parent.create_as_last_child(child_attr);
+    let child_id = child.get_id().unwrap();
+    let mut repository = TestTaskRepository::new(vec![parent], fixed_now());
+
+    defer_routine_task(&mut repository, child_id).unwrap();
+
+    assert_eq!(
+        child.get_deadline_time_opt().unwrap(),
+        Some(Local.with_ymd_and_hms(2026, 8, 20, 10, 0, 0).unwrap())
+    );
+    assert_eq!(child.get_orig_status().unwrap(), Status::Todo);
+}
+
+#[test]
 fn complete_task_未完了の子があれば変更しない() {
     let task = crate::test_support::new_task_handle("親").unwrap();
     task.create_as_last_child(crate::test_support::new_task_attr("未完了"));
