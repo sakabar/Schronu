@@ -139,7 +139,7 @@ fn test_resolve_show_all_pattern_完全日付と検索語は変更しない() {
 }
 
 #[test]
-fn test_show_task_list_mmddの日時errorを伝搬して表示と状態を変更しない() {
+fn test_show_task_list_mmddの日時errorを伝搬して成功表示を返さず状態を変更しない() {
     let now = maximum_local_datetime();
     let task = new_test_task_handle("show all日時範囲外対象").unwrap();
     let task_id = task.get_id().unwrap();
@@ -147,7 +147,6 @@ fn test_show_task_list_mmddの日時errorを伝搬して表示と状態を変更
     let mut task_repository = TestTaskRepository::new(task, now);
     let mut free_time_manager = TestFreeTimeManager::default();
     let mut focused_task_id_opt = Some(task_id);
-    let display = TestWriter::new();
     let mut next_id = || Uuid::nil();
     let mut task_factory = TaskFactory::new(now, &mut next_id);
     let mut context = RuntimeTaskTreeCommandContext {
@@ -173,11 +172,10 @@ fn test_show_task_list_mmddの日時errorを伝搬して表示と状態を変更
     ));
     assert_eq!(task_repository.task.snapshot().unwrap(), original_snapshot);
     assert_eq!(focused_task_id_opt, Some(task_id));
-    assert!(display.into_string().is_empty());
 }
 
 #[test]
-fn test_show_task_listの不正な完全日付をerrorにして表示と状態を変更しない() {
+fn test_show_task_listの不正な完全日付をerrorにして成功表示を返さず状態を変更しない() {
     let now = Local.with_ymd_and_hms(2026, 8, 11, 12, 0, 0).unwrap();
     let task = new_test_task_handle("show all不正日付対象").unwrap();
     let task_id = task.get_id().unwrap();
@@ -185,7 +183,6 @@ fn test_show_task_listの不正な完全日付をerrorにして表示と状態�
     let mut task_repository = TestTaskRepository::new(task, now);
     let mut free_time_manager = TestFreeTimeManager::default();
     let mut focused_task_id_opt = Some(task_id);
-    let display = TestWriter::new();
     let mut next_id = || Uuid::nil();
     let mut task_factory = TaskFactory::new(now, &mut next_id);
     let mut context = RuntimeTaskTreeCommandContext {
@@ -211,7 +208,6 @@ fn test_show_task_listの不正な完全日付をerrorにして表示と状態�
     );
     assert_eq!(task_repository.task.snapshot().unwrap(), original_snapshot);
     assert_eq!(focused_task_id_opt, Some(task_id));
-    assert!(display.into_string().is_empty());
 }
 
 #[test]
