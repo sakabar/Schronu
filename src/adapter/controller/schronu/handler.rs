@@ -111,7 +111,7 @@ pub(super) trait TaskTreeCommandContext {
         resolve_pattern: bool,
     ) -> Result<DisplayModel, ApplicationError>;
     fn focus(&mut self, task_id: Uuid);
-    fn pick(&mut self, task_id: Uuid) -> Result<(), ApplicationError>;
+    fn pick(&mut self, task_id: Option<Uuid>) -> Result<(), ApplicationError>;
     fn focus_parent(&mut self) -> Result<(), ApplicationError>;
     fn focus_children(&mut self) -> Result<Option<DisplayModel>, ApplicationError>;
     fn focus_deepest(&mut self) -> Result<Option<DisplayModel>, ApplicationError>;
@@ -428,11 +428,7 @@ pub(super) fn handle_task_tree_command<C: TaskTreeCommandContext + ?Sized>(
                 false,
             )?)
         }
-        Command::Action(CommandAction::Pick { task_id }) => {
-            if let Some(task_id) = task_id {
-                context.pick(*task_id)?;
-            }
-        }
+        Command::Action(CommandAction::Pick { task_id }) => context.pick(*task_id)?,
         Command::Action(CommandAction::NoArguments {
             kind: CommandKind::Parent,
             ..

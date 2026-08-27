@@ -817,8 +817,8 @@ impl TaskTreeCommandContext for TraceTaskTreeContext {
         self.calls.push(format!("focus:{task_id}"));
     }
 
-    fn pick(&mut self, task_id: Uuid) -> Result<(), ApplicationError> {
-        self.calls.push(format!("pick:{task_id}"));
+    fn pick(&mut self, task_id: Option<Uuid>) -> Result<(), ApplicationError> {
+        self.calls.push(format!("pick:{task_id:?}"));
         Ok(())
     }
 
@@ -906,8 +906,8 @@ impl TaskTreeCommandContext for WriterFreeTaskTreeContext {
         self.focused_task_id = Some(task_id);
     }
 
-    fn pick(&mut self, task_id: Uuid) -> Result<(), ApplicationError> {
-        self.focused_task_id = Some(task_id);
+    fn pick(&mut self, task_id: Option<Uuid>) -> Result<(), ApplicationError> {
+        self.focused_task_id = task_id;
         Ok(())
     }
 
@@ -1149,6 +1149,7 @@ fn task_tree表示commandはhandlerがtyped_fieldから表示modelと操作要�
         Command::Action(CommandAction::Pick {
             task_id: Some(task_id),
         }),
+        Command::Action(CommandAction::Pick { task_id: None }),
         no_arguments(CommandKind::Parent, "親"),
         no_arguments(CommandKind::Children, "子"),
         no_arguments(CommandKind::Deepest, "深"),
@@ -1171,7 +1172,8 @@ fn task_tree表示commandはhandlerがtyped_fieldから表示modelと操作要�
         "list:Some(\"暦\"):ScheduledStartDesc:resolve=false",
         "list:Some(\"帯\"):ScheduledStartDesc:resolve=false",
         "focus:11111111-1111-1111-1111-111111111111",
-        "pick:11111111-1111-1111-1111-111111111111",
+        "pick:Some(11111111-1111-1111-1111-111111111111)",
+        "pick:None",
         "parent",
         "children",
         "deepest",
@@ -1264,7 +1266,7 @@ fn task_tree表示commandはruntime_fallbackに残さない() {
     let expected_calls = [
         "list:Some(\"typed pattern\"):ScheduledStartDesc:resolve=true".to_string(),
         format!("focus:{task_id}"),
-        format!("pick:{task_id}"),
+        format!("pick:Some({task_id})"),
         "next_up:typed task:Some(20)".to_string(),
     ];
 
@@ -2298,7 +2300,7 @@ impl TaskTreeCommandContext for CompositeTraceContext {
         self.task_tree.focus(task_id);
     }
 
-    fn pick(&mut self, task_id: Uuid) -> Result<(), ApplicationError> {
+    fn pick(&mut self, task_id: Option<Uuid>) -> Result<(), ApplicationError> {
         self.task_tree.pick(task_id)
     }
 
