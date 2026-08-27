@@ -428,7 +428,11 @@ pub(super) fn handle_task_tree_command<C: TaskTreeCommandContext + ?Sized>(
                 false,
             )?)
         }
-        Command::Action(CommandAction::Pick { task_id }) => context.pick(*task_id)?,
+        Command::Action(CommandAction::Pick { task_id }) => {
+            if let Some(task_id) = task_id {
+                context.pick(*task_id)?;
+            }
+        }
         Command::Action(CommandAction::NoArguments {
             kind: CommandKind::Parent,
             ..

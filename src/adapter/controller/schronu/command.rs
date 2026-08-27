@@ -134,7 +134,7 @@ pub(super) enum CommandAction {
         pattern: Option<String>,
     },
     Pick {
-        task_id: Uuid,
+        task_id: Option<Uuid>,
     },
     TaskWithEstimate {
         kind: CommandKind,
@@ -565,14 +565,16 @@ fn parse_action(
             canonical_name,
             pattern: arguments.first().cloned(),
         },
-        CommandKind::Pick => {
-            let value = required_argument(arguments, "選", "task_id", "選 <task_id>")?;
-            CommandAction::Pick {
-                task_id: Uuid::parse_str(value).map_err(|_| {
-                    parse_error("選", "task_id", "UUIDで指定してください", "選 <task_id>")
-                })?,
-            }
-        }
+        CommandKind::Pick => CommandAction::Pick {
+            task_id: arguments
+                .first()
+                .map(|value| {
+                    Uuid::parse_str(value).map_err(|_| {
+                        parse_error("選", "task_id", "UUIDで指定してください", "選 [task_id]")
+                    })
+                })
+                .transpose()?,
+        },
         CommandKind::NextUp => {
             let name = required_argument(arguments, "上", "task_name", "上 <name> [minutes]")?;
             CommandAction::TaskWithEstimate {

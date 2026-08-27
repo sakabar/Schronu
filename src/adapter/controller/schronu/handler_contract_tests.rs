@@ -1146,7 +1146,9 @@ fn task_tree表示commandはhandlerがtyped_fieldから表示modelと操作要�
         no_arguments(CommandKind::Calendar, "暦"),
         no_arguments(CommandKind::Band, "帯"),
         Command::Focus { task_id },
-        Command::Action(CommandAction::Pick { task_id }),
+        Command::Action(CommandAction::Pick {
+            task_id: Some(task_id),
+        }),
         no_arguments(CommandKind::Parent, "親"),
         no_arguments(CommandKind::Children, "子"),
         no_arguments(CommandKind::Deepest, "深"),
@@ -1249,7 +1251,9 @@ fn task_tree表示commandはruntime_fallbackに残さない() {
             pattern: Some("typed pattern".to_string()),
         },
         Command::Focus { task_id },
-        Command::Action(CommandAction::Pick { task_id }),
+        Command::Action(CommandAction::Pick {
+            task_id: Some(task_id),
+        }),
         Command::Action(CommandAction::TaskWithEstimate {
             kind: CommandKind::NextUp,
             canonical_name: "ignored alias",
