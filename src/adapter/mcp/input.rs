@@ -437,6 +437,20 @@ impl DeferTaskInput {
 
 #[derive(Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
+#[allow(dead_code)]
+pub(super) struct DeferRoutineTaskInput {
+    pub(super) task_id: UuidValue,
+}
+
+#[allow(dead_code)]
+impl DeferRoutineTaskInput {
+    pub(super) fn into_task_id(self) -> Uuid {
+        self.task_id.0
+    }
+}
+
+#[derive(Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub(super) struct CompleteTaskInput {
     pub(super) task_id: UuidValue,
     #[serde(default)]
