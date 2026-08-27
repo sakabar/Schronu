@@ -77,6 +77,49 @@ fn unique_function_region<'a>(
     ))
 }
 
+fn module_uses_dependency(source: &str, module_name: &str) -> bool {
+    code_only(source).split(';').any(|statement| {
+        let tokens = statement
+            .split(|character: char| !(character.is_ascii_alphanumeric() || character == '_'))
+            .filter(|token| !token.is_empty())
+            .collect::<Vec<_>>();
+        tokens.contains(&"use") && tokens.contains(&module_name)
+    })
+}
+
+fn handler_entry_boundary_violations(sources: &[ControllerProductSource]) -> Vec<String> {
+    let mut violations = Vec::new();
+    let Some(command_context) = sources.iter().find(|source| {
+        source.path.file_name().and_then(|name| name.to_str()) == Some("command_context.rs")
+    }) else {
+        return vec!["command_context.rs must remain a product module".into()];
+    };
+    if module_uses_dependency(&command_context.text, "runtime") {
+        violations
+            .push("command_context.rs must not depend on its outer runtime coordinator".into());
+    }
+
+    let Ok((_, execute_parsed_source)) = unique_function_region(sources, "execute_parsed") else {
+        violations.push("runtime must keep exactly one parsed-command coordinator".into());
+        return violations;
+    };
+    let execute_parsed_code = compact_code(&code_only(execute_parsed_source));
+    let Some(body_start) = execute_parsed_code.find('{') else {
+        violations.push("parsed-command coordinator must have a function body".into());
+        return violations;
+    };
+    let Some(handler_offset) = execute_parsed_code.find("handle_command(") else {
+        violations.push("parsed-command coordinator must call the unified handler".into());
+        return violations;
+    };
+    if execute_parsed_code[body_start + 1..handler_offset].contains("parsed_command") {
+        violations.push(
+            "runtime must not inspect or delegate the typed command before handle_command".into(),
+        );
+    }
+    violations
+}
+
 fn function_region_from_offset(source: &str, start: usize) -> &str {
     let tail = &source[start..];
     let signature_end = tail.find('\n').map_or(tail.len(), |offset| offset + 1);
@@ -1512,30 +1555,7 @@ fn runtimeはio調停だけを所有する() {
 fn runtime最終責務境界はsemantic_rendererとio調停を分離する() {
     let product_sources = controller_product_sources();
     let mut violations = runtime_final_boundary_violations(&product_sources);
-    let command_context = product_sources
-        .iter()
-        .find(|source| {
-            source.path.file_name().and_then(|name| name.to_str()) == Some("command_context.rs")
-        })
-        .expect("command_context.rs must remain a product module");
-    if code_only(&command_context.text).contains("super::runtime") {
-        violations
-            .push("command_context.rs must not depend on its outer runtime coordinator".into());
-    }
-    let (_, execute_parsed_source) = unique_function_region(&product_sources, "execute_parsed")
-        .expect("runtime must keep exactly one parsed-command coordinator");
-    let execute_parsed_code = compact_code(&code_only(execute_parsed_source));
-    let handler_offset = execute_parsed_code
-        .find("handle_command(")
-        .expect("parsed-command coordinator must call the unified handler");
-    let before_handler = &execute_parsed_code[..handler_offset];
-    for forbidden in ["Command::", "CommandKind::", ".kind()", "validate_"] {
-        if before_handler.contains(forbidden) {
-            violations.push(format!(
-                "runtime must not dispatch or validate typed commands before handle_command: {forbidden}"
-            ));
-        }
-    }
+    violations.extend(handler_entry_boundary_violations(&product_sources));
     let (_, save_before_exit_source) =
         unique_function_region(&product_sources, "try_save_before_exit")
             .expect("interactive exit save must remain a unique runtime boundary");
@@ -1564,6 +1584,50 @@ fn runtime最終責務境界はsemantic_rendererとio調停を分離する() {
         "runtime final responsibility boundary violations:\n{}",
         violations.join("\n")
     );
+}
+
+#[test]
+fn handler入口境界scannerはruntime依存のuse表現とhelper迂回を検出する() {
+    for dependency in [
+        "use super::{runtime::CommandError};",
+        "use crate::adapter::controller::schronu::runtime::CommandError as OuterError;",
+        "use super::runtime as outer;",
+    ] {
+        let sources = vec![
+            ControllerProductSource {
+                path: PathBuf::from("command_context.rs"),
+                text: dependency.to_string(),
+            },
+            ControllerProductSource {
+                path: PathBuf::from("runtime.rs"),
+                text: "fn execute_parsed(parsed_command: &Command) { handle_command(parsed_command); }"
+                    .to_string(),
+            },
+        ];
+        assert!(handler_entry_boundary_violations(&sources)
+            .join("\n")
+            .contains("must not depend"));
+    }
+
+    let sources = vec![
+        ControllerProductSource {
+            path: PathBuf::from("command_context.rs"),
+            text: "use super::handler::HandlerError;".to_string(),
+        },
+        ControllerProductSource {
+            path: PathBuf::from("runtime.rs"),
+            text: r#"
+fn execute_parsed(parsed_command: &Command) {
+    check_input(parsed_command);
+    handle_command(parsed_command);
+}
+"#
+            .to_string(),
+        },
+    ];
+    assert!(handler_entry_boundary_violations(&sources)
+        .join("\n")
+        .contains("must not inspect or delegate"));
 }
 
 #[test]
