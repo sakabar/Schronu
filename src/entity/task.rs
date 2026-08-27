@@ -1143,9 +1143,16 @@ impl TaskHandle {
         &self,
         deadline_time_opt: Option<DateTime<Local>>,
     ) -> Result<(), TaskTreeError> {
-        let root = self.root()?;
         let mut updates = Vec::new();
         self.collect_deadline_updates(deadline_time_opt, None, &mut updates)?;
+        self.apply_deadline_updates(updates)
+    }
+
+    fn apply_deadline_updates(
+        &self,
+        updates: Vec<(Node<TaskAttr>, DateTime<Local>)>,
+    ) -> Result<(), TaskTreeError> {
+        let root = self.root()?;
         root.node
             .try_borrow_data_mut()
             .map_err(|_| TaskTreeError::Borrow)?;
@@ -1209,7 +1216,6 @@ impl TaskHandle {
         &self,
         deadline_time: DateTime<Local>,
     ) -> Result<(), TaskTreeError> {
-        let root = self.root()?;
         let mut updates = Vec::new();
         let current_deadline = self
             .node
@@ -1227,22 +1233,7 @@ impl TaskHandle {
                 &mut updates,
             )?;
         }
-        root.node
-            .try_borrow_data_mut()
-            .map_err(|_| TaskTreeError::Borrow)?;
-        for (node, _) in &updates {
-            node.try_borrow_data_mut()
-                .map_err(|_| TaskTreeError::Borrow)?;
-        }
-        for (node, deadline) in &updates {
-            node.try_borrow_data_mut()
-                .map_err(|_| TaskTreeError::Borrow)?
-                .set_deadline_time_opt(Some(*deadline));
-        }
-        if !updates.is_empty() {
-            root.mark_persistent_mutation()?;
-        }
-        Ok(())
+        self.apply_deadline_updates(updates)
     }
 
     pub fn get_deadline_time_opt(&self) -> Result<Option<DateTime<Local>>, TaskTreeError> {
