@@ -111,6 +111,14 @@ fn parser_converts_command_fields_to_typed_values() {
 }
 
 #[test]
+fn pick_accepts_an_omitted_task_id() {
+    for input in ["選", "pick"] {
+        let command = parse_command(input, ParseMode::NonInteractive);
+        assert!(command.is_ok(), "input: {input}, actual: {command:?}");
+    }
+}
+
+#[test]
 fn parser_distinguishes_noop_search_fallback_and_interactive_shortcuts() {
     assert_eq!(
         parse_command("", ParseMode::NonInteractive).unwrap(),
