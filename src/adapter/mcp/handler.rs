@@ -85,6 +85,13 @@ pub(super) fn call_tool<R: TaskRepositoryTrait>(
             };
             call_defer_task(repository, id, input)
         }
+        Some("defer_routine_task") => {
+            let input = match decode_input::<DeferRoutineTaskInput>(&params["arguments"]) {
+                Ok(input) => input,
+                Err(error) => return tool_input_error_response(id, error),
+            };
+            call_defer_routine_task(repository, id, input)
+        }
         Some("complete_task") => {
             let input = match decode_input::<CompleteTaskInput>(&params["arguments"]) {
                 Ok(input) => input,
@@ -246,7 +253,6 @@ fn call_defer_task<R: TaskRepositoryTrait>(
     tool_result_response(id, json!({"task_id": task_id.to_string()}), false)
 }
 
-#[allow(dead_code)]
 fn call_defer_routine_task<R: TaskRepositoryTrait>(
     repository: &mut R,
     id: Value,
@@ -334,7 +340,14 @@ fn call_update_task<R: TaskRepositoryTrait>(
 pub(super) fn tool_call_succeeded_with_mutation(request: &Value, response: &Value) -> bool {
     matches!(
         request["params"]["name"].as_str(),
-        Some("create_task" | "breakdown_task" | "defer_task" | "complete_task" | "update_task")
+        Some(
+            "create_task"
+                | "breakdown_task"
+                | "defer_task"
+                | "defer_routine_task"
+                | "complete_task"
+                | "update_task"
+        )
     ) && response.get("error").is_none()
         && response["result"]["isError"] != Value::Bool(true)
 }
