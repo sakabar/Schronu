@@ -2917,6 +2917,48 @@ fn test_execute_defer_routine_親の反復間隔と任意deadline時刻で延期
 }
 
 #[test]
+fn test_execute_defer_routine_対象不成立ならtaskとfocusを変更しない() {
+    let now = Local.with_ymd_and_hms(2026, 8, 14, 12, 0, 0).unwrap();
+    let deadline = Local.with_ymd_and_hms(2026, 8, 13, 10, 0, 0).unwrap();
+    let assert_noop = |root: TaskHandle, focused_task_id_opt: Option<Uuid>| {
+        let snapshot = root.snapshot().unwrap();
+        let mut task_repository = TestTaskRepository::new(root.clone(), now);
+        let mut actual_focus = focused_task_id_opt;
+        let mut context = RuntimeDeferCommandContext {
+            task_repository: &mut task_repository,
+            focused_task_id_opt: &mut actual_focus,
+            config: active_config(),
+        };
+
+        assert_eq!(context.defer_routine(), Ok(()));
+        assert_eq!(root.snapshot().unwrap(), snapshot);
+        assert_eq!(actual_focus, focused_task_id_opt);
+    };
+
+    let task = new_test_task_handle("focusなし").unwrap();
+    assert_noop(task, None);
+
+    let task = new_test_task_handle("未知focus").unwrap();
+    assert_noop(task, Some(Uuid::new_v4()));
+
+    let parent = new_test_task_handle("deadlineなしの親").unwrap();
+    parent.set_repetition_interval_days_opt(Some(7)).unwrap();
+    let child = parent.create_as_last_child(new_test_task_attr("deadlineなし"));
+    assert_noop(parent, Some(child.get_id().unwrap()));
+
+    let root = new_test_task_handle("親なし").unwrap();
+    root.set_deadline_time_opt(Some(deadline)).unwrap();
+    let root_id = root.get_id().unwrap();
+    assert_noop(root, Some(root_id));
+
+    let parent = new_test_task_handle("反復間隔なしの親").unwrap();
+    let mut child_attr = new_test_task_attr("反復間隔なし");
+    child_attr.set_deadline_time_opt(Some(deadline));
+    let child = parent.create_as_last_child(child_attr);
+    assert_noop(parent, Some(child.get_id().unwrap()));
+}
+
+#[test]
 fn test_execute_deadline_翌朝計算不能を情報付きerrorにして状態を変更しない() {
     let now = maximum_local_datetime();
     let task = new_test_task_handle("日時範囲外のdeadline対象").unwrap();
