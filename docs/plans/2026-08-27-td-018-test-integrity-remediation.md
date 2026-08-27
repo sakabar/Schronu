@@ -55,7 +55,7 @@ cargo test --locked
 cargo test --locked --bin schronu mark_give_up_candidate_rows
 cargo test --locked --bin schronu test_replace_task_list_icon
 cargo test --locked --bin schronu task_list_icon_mode
-cargo test --locked --bin schronu test_show_task_list_
+cargo test --locked --bin schronu test_show_task_list
 cargo test --locked --test spreadsheet_contract
 ```
 
@@ -70,3 +70,12 @@ cargo test --locked --test spreadsheet_contract
 - 独立subagentがコード差分とcommit履歴をreviewし、test専用分岐・無効assertion・契約緩和の重大指摘がない。
 
 既存2 testの改名は契約緩和ではなく、writerを受け取らない現在のinterfaceへ名称を正確化するための明示的な例外とする。
+
+## Completion (2026-08-27)
+
+- `2ec408f`: real task fixtureをtyped rowへ移し、製品のrow変換・formatter経路へ統一した。test専用`render_message`と`replace_task_list_icon`を削除した。
+- `fcb85dd`: 未接続`TestWriter`と常時成功する2 assertionを削除し、具体的な`Err`、repository snapshot、focus不変を維持した。
+- 計画時の`test_show_task_list_` filterは1件だけに一致したため、実行時は`test_show_task_list`へ補正して2件を検証した。
+- 実測: lib 501 passed・1 ignored、CLI 434 passed、MCP binary 2 passed、MCP stdio 12 passed、Spreadsheet 4 passed。合計953 passed・1 ignored。
+- `git diff --check`、`cargo fmt --check`、`cargo clippy --locked --all-targets -- -D warnings`、`cargo test --locked`を通過した。
+- コード差分とcommit履歴を別々のsubagentが監査し、test専用分岐、無効assertion、契約緩和、commit分割に残存findingがないことを確認した。
