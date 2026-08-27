@@ -1512,6 +1512,30 @@ fn runtimeはio調停だけを所有する() {
 fn runtime最終責務境界はsemantic_rendererとio調停を分離する() {
     let product_sources = controller_product_sources();
     let mut violations = runtime_final_boundary_violations(&product_sources);
+    let command_context = product_sources
+        .iter()
+        .find(|source| {
+            source.path.file_name().and_then(|name| name.to_str()) == Some("command_context.rs")
+        })
+        .expect("command_context.rs must remain a product module");
+    if code_only(&command_context.text).contains("super::runtime") {
+        violations
+            .push("command_context.rs must not depend on its outer runtime coordinator".into());
+    }
+    let (_, execute_parsed_source) = unique_function_region(&product_sources, "execute_parsed")
+        .expect("runtime must keep exactly one parsed-command coordinator");
+    let execute_parsed_code = compact_code(&code_only(execute_parsed_source));
+    let handler_offset = execute_parsed_code
+        .find("handle_command(")
+        .expect("parsed-command coordinator must call the unified handler");
+    let before_handler = &execute_parsed_code[..handler_offset];
+    for forbidden in ["Command::", "CommandKind::", ".kind()", "validate_"] {
+        if before_handler.contains(forbidden) {
+            violations.push(format!(
+                "runtime must not dispatch or validate typed commands before handle_command: {forbidden}"
+            ));
+        }
+    }
     let (_, save_before_exit_source) =
         unique_function_region(&product_sources, "try_save_before_exit")
             .expect("interactive exit save must remain a unique runtime boundary");

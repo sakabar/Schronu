@@ -1355,7 +1355,7 @@ struct TraceTaskAttributeContext {
 }
 
 impl TaskAttributeCommandContext for TraceTaskAttributeContext {
-    fn set_deadline(&mut self, value: &str) -> Result<(), ApplicationError> {
+    fn set_deadline(&mut self, value: &str) -> Result<(), HandlerError> {
         self.calls.push(format!("deadline:{value}"));
         Ok(())
     }
@@ -1385,7 +1385,7 @@ impl TaskAttributeCommandContext for TraceTaskAttributeContext {
         Ok(())
     }
 
-    fn set_category(&mut self, value: &str) -> Result<(), ApplicationError> {
+    fn set_category(&mut self, value: &str) -> Result<(), HandlerError> {
         self.calls.push(format!("category:{value}"));
         Ok(())
     }
@@ -1393,6 +1393,38 @@ impl TaskAttributeCommandContext for TraceTaskAttributeContext {
     fn add_work(&mut self, minutes: Option<i64>) -> Result<(), ApplicationError> {
         self.calls.push(format!("work:{minutes:?}"));
         Ok(())
+    }
+}
+
+#[test]
+fn handler入口は直接構築された不正属性値をcontext実行前に拒否する() {
+    let now = Local.with_ymd_and_hms(2026, 8, 27, 12, 0, 0).unwrap();
+    let commands = [
+        Command::Estimate { minutes: -1 },
+        Command::Action(CommandAction::StringValue {
+            kind: CommandKind::Category,
+            canonical_name: "類",
+            value: "invalid".to_string(),
+        }),
+        Command::Action(CommandAction::StringValue {
+            kind: CommandKind::Deadline,
+            canonical_name: "〆",
+            value: "invalid".to_string(),
+        }),
+    ];
+
+    for command in commands {
+        let mut context = CompositeTraceContext::new(now);
+        let result = handle_command(&command, &mut context);
+
+        assert!(matches!(
+            result,
+            Err(HandlerError::Parse(_)) | Err(HandlerError::Application(_))
+        ));
+        assert!(
+            context.task_attribute.calls.is_empty(),
+            "invalid typed input must be rejected before the product context mutates state: {command:?}"
+        );
     }
 }
 
@@ -2266,7 +2298,7 @@ impl TaskTreeCommandContext for CompositeTraceContext {
 }
 
 impl TaskAttributeCommandContext for CompositeTraceContext {
-    fn set_deadline(&mut self, value: &str) -> Result<(), ApplicationError> {
+    fn set_deadline(&mut self, value: &str) -> Result<(), HandlerError> {
         self.task_attribute.set_deadline(value)
     }
 
@@ -2290,7 +2322,7 @@ impl TaskAttributeCommandContext for CompositeTraceContext {
         self.task_attribute.set_priority(priority)
     }
 
-    fn set_category(&mut self, value: &str) -> Result<(), ApplicationError> {
+    fn set_category(&mut self, value: &str) -> Result<(), HandlerError> {
         self.task_attribute.set_category(value)
     }
 
