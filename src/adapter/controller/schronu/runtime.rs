@@ -1,6 +1,9 @@
 #![allow(unused_must_use)]
 
-use super::command::{parse_command, Command, CommandKind, CommandParseError, ParseMode};
+use super::command::{
+    parse_command, validate_command_input, Command, CommandKind, CommandParseError,
+    CommandValidationError, ParseMode,
+};
 use super::command_context::*;
 use super::handler::{
     handle_command, CommandOutcome, ExternalRequest, FocusChange, FocusSelection, HandlerError,
@@ -162,22 +165,17 @@ impl From<HandlerError> for CommandError {
     }
 }
 
-pub(super) fn command_parse_error(
-    command: &'static str,
-    field: &'static str,
-    reason: &'static str,
-    usage: &'static str,
-) -> CommandError {
-    CommandError::Parse(CommandParseError::new(command, field, reason, usage))
+impl From<CommandValidationError> for CommandError {
+    fn from(error: CommandValidationError) -> Self {
+        match error {
+            CommandValidationError::Parse(error) => Self::Parse(error),
+            CommandValidationError::Application(error) => Self::Application(error),
+        }
+    }
 }
 
 fn map_command_parse_error(error: CommandParseError) -> CommandError {
-    command_parse_error(
-        error.command(),
-        error.field(),
-        error.reason(),
-        error.usage(),
-    )
+    CommandError::Parse(error)
 }
 
 fn error_display_model(error: &impl std::fmt::Display) -> DisplayModel {
@@ -500,9 +498,7 @@ fn execute_parsed(
     parsed_command: &Command,
     application_mode: OutcomeApplicationMode<'_>,
 ) -> Result<(), CommandError> {
-    validate_non_interactive_command(parsed_command)?;
     let operation_now = task_repository.get_last_synced_time();
-    validate_contextual_task_attribute_command(parsed_command, operation_now, active_config())?;
     let mut next_id = Uuid::new_v4;
     let mut task_factory = TaskFactory::new(operation_now, &mut next_id);
     let outcome = {
@@ -803,7 +799,9 @@ fn execute_non_interactive_command_at(
     let parsed_command = parse_command(command, ParseMode::NonInteractive)
         .map_err(map_command_parse_error)
         .map_err(RunError::Command)?;
-    validate_non_interactive_command(&parsed_command).map_err(RunError::Command)?;
+    validate_command_input(&parsed_command)
+        .map_err(CommandError::from)
+        .map_err(RunError::Command)?;
     if parsed_command.kind() == CommandKind::Verify {
         let mut stdout = stdout();
         return execute_verify_command(&mut stdout, task_repository, operation_now);

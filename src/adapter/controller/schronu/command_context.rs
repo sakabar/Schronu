@@ -1,10 +1,10 @@
-use super::command::{Command, CommandAction, CommandKind, CommandParseError};
+use super::command::{parse_project_category_input, CommandKind, CommandParseError};
 use super::handler::{
-    DeferCommandContext, DeferCommandError, FinishPlacementCommandContext, NextUpResult,
-    ProjectCommandContext, TaskAttributeCommandContext, TaskListOrder, TaskTreeCommandContext,
+    DeferCommandContext, DeferCommandError, FinishPlacementCommandContext, HandlerError,
+    NextUpResult, ProjectCommandContext, TaskAttributeCommandContext, TaskListOrder,
+    TaskTreeCommandContext,
 };
 use super::renderer::{DisplayModel, TreeDisplay};
-use super::runtime::{command_parse_error, CommandError};
 use super::view::{
     build_ancestor_tree_display, build_leaf_tree_display, build_show_all_tasks_display_with_config,
     build_tree_display, get_weekday_jp, TaskListDisplayOrder,
@@ -27,80 +27,14 @@ use schronu::application::task_use_case::{
     set_category, set_deadline, set_estimate, validate_task_name, ApplicationError,
     BreakdownTaskInput, CompleteTaskInput, CreateTaskInput, TaskFactory,
 };
-use schronu::entity::datetime::parse_local_datetime;
 use schronu::entity::task::{
-    extract_leaf_tasks_from_project, extract_leaf_tasks_from_project_with_pending,
-    read_project_category, ProjectCategory, Status, TaskAttr, TaskHandle, TaskTreeError,
+    extract_leaf_tasks_from_project, extract_leaf_tasks_from_project_with_pending, Status,
+    TaskAttr, TaskHandle, TaskTreeError,
 };
 use std::collections::{HashMap, HashSet};
 use uuid::Uuid;
 
 const MAX_ARRANGE_ESTIMATED_WORK_MINUTES: i64 = 1439;
-
-pub(super) fn validate_non_interactive_command(command: &Command) -> Result<(), CommandError> {
-    match command {
-        Command::Estimate { minutes } => {
-            estimated_work_seconds_from_minutes(*minutes)?;
-            Ok(())
-        }
-        Command::Action(CommandAction::StringValue {
-            kind: CommandKind::Category,
-            value,
-            ..
-        }) => {
-            read_project_category_command_arg(value).ok_or_else(|| {
-                command_parse_error("類", "category", "カテゴリが不正です", "類 <カテゴリ>")
-            })?;
-            Ok(())
-        }
-        Command::Action(CommandAction::StringValue {
-            kind: CommandKind::Deadline,
-            value,
-            ..
-        }) => {
-            if value.starts_with('今')
-                || value.starts_with('明')
-                || matches!(
-                    value.as_str(),
-                    "消" | "月" | "火" | "水" | "木" | "金" | "土" | "日"
-                )
-                || Regex::new(r"^\d{1,2}/\d{1,2}$")
-                    .expect("valid regex")
-                    .is_match(value)
-                || Regex::new(r"^\d{1,2}:\d{1,2}$")
-                    .expect("valid regex")
-                    .is_match(value)
-                || parse_local_datetime(&format!("{} 23:59:59", value), "%Y/%m/%d %H:%M:%S").is_ok()
-            {
-                Ok(())
-            } else {
-                Err(command_parse_error(
-                    "〆",
-                    "deadline",
-                    "日時が不正です",
-                    "〆 <日付または時刻>",
-                ))
-            }
-        }
-        _ => Ok(()),
-    }
-}
-
-pub(super) fn validate_contextual_task_attribute_command(
-    command: &Command,
-    now: DateTime<Local>,
-    config: &SchronuConfig,
-) -> Result<(), CommandError> {
-    if let Command::Action(CommandAction::StringValue {
-        kind: CommandKind::Deadline,
-        value,
-        ..
-    }) = command
-    {
-        resolve_deadline_time(value, now, config)?;
-    }
-    Ok(())
-}
 
 pub(super) fn resolve_upcoming_mmdd(
     mmdd: &str,
@@ -898,10 +832,19 @@ pub(super) fn execute_defer_all_frequent_routines(
     Ok(())
 }
 
+fn command_parse_error(
+    command: &'static str,
+    field: &'static str,
+    reason: &'static str,
+    usage: &'static str,
+) -> HandlerError {
+    HandlerError::Parse(CommandParseError::new(command, field, reason, usage))
+}
+
 pub(super) fn resolve_deadline_date(
     value: &str,
     now: DateTime<Local>,
-) -> Result<String, CommandError> {
+) -> Result<String, HandlerError> {
     if value == "消" {
         return Ok(value.to_string());
     }
@@ -978,7 +921,7 @@ fn resolve_deadline_time(
     deadline_value: &str,
     now: DateTime<Local>,
     config: &SchronuConfig,
-) -> Result<Option<DateTime<Local>>, CommandError> {
+) -> Result<Option<DateTime<Local>>, HandlerError> {
     let deadline_date_str = resolve_deadline_date(deadline_value, now)?;
     if deadline_date_str == "消" {
         return Ok(None);
@@ -1078,13 +1021,6 @@ pub(super) fn set_focused_task_priority(
     Ok(())
 }
 
-pub(super) fn read_project_category_command_arg(s: &str) -> Option<Option<ProjectCategory>> {
-    match s.to_lowercase().as_str() {
-        "_" | "none" | "clear" => Some(None),
-        _ => read_project_category(s).map(Some),
-    }
-}
-
 pub(super) struct RuntimeTaskAttributeCommandContext<'a> {
     pub(super) task_repository: &'a mut dyn TaskRepositoryTrait,
     pub(super) focused_task_id_opt: &'a mut Option<Uuid>,
@@ -1105,13 +1041,12 @@ impl RuntimeTaskAttributeCommandContext<'_> {
 }
 
 impl TaskAttributeCommandContext for RuntimeTaskAttributeCommandContext<'_> {
-    fn set_deadline(&mut self, value: &str) -> Result<(), ApplicationError> {
+    fn set_deadline(&mut self, value: &str) -> Result<(), HandlerError> {
         let deadline_time = resolve_deadline_time(
             value,
             self.task_repository.get_last_synced_time(),
             self.config,
-        )
-        .expect("task attribute command must be contextually validated before handling");
+        )?;
         if let Some(task_id) = *self.focused_task_id_opt {
             set_deadline(self.task_repository, task_id, deadline_time)?;
         }
@@ -1145,9 +1080,8 @@ impl TaskAttributeCommandContext for RuntimeTaskAttributeCommandContext<'_> {
         set_focused_task_priority(&self.focused_task()?, priority)
     }
 
-    fn set_category(&mut self, value: &str) -> Result<(), ApplicationError> {
-        let project_category = read_project_category_command_arg(value)
-            .expect("task attribute command must be validated before handling");
+    fn set_category(&mut self, value: &str) -> Result<(), HandlerError> {
+        let project_category = parse_project_category_input(value).map_err(HandlerError::Parse)?;
         if let Some(task_id) = *self.focused_task_id_opt {
             set_category(self.task_repository, task_id, project_category)?;
         }
@@ -1518,7 +1452,7 @@ impl ProjectCommandContext for CliCommandContext<'_, '_, '_> {
 }
 
 impl TaskAttributeCommandContext for CliCommandContext<'_, '_, '_> {
-    fn set_deadline(&mut self, value: &str) -> Result<(), ApplicationError> {
+    fn set_deadline(&mut self, value: &str) -> Result<(), HandlerError> {
         let mut context = RuntimeTaskAttributeCommandContext {
             task_repository: self.task_repository,
             focused_task_id_opt: self.focused_task_id_opt,
@@ -1572,7 +1506,7 @@ impl TaskAttributeCommandContext for CliCommandContext<'_, '_, '_> {
         context.set_priority(priority)
     }
 
-    fn set_category(&mut self, value: &str) -> Result<(), ApplicationError> {
+    fn set_category(&mut self, value: &str) -> Result<(), HandlerError> {
         let mut context = RuntimeTaskAttributeCommandContext {
             task_repository: self.task_repository,
             focused_task_id_opt: self.focused_task_id_opt,

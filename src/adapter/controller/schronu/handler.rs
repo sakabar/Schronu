@@ -1,4 +1,7 @@
-use super::command::{Command, CommandAction, CommandKind, CommandParseError, InteractiveShortcut};
+use super::command::{
+    validate_command_input, Command, CommandAction, CommandKind, CommandParseError,
+    CommandValidationError, InteractiveShortcut,
+};
 use super::renderer::{
     DisplayModel, FlattenDisplay, FlattenReason, FlattenReasonSummary, FlattenRow,
     FlattenUnresolvedDay, MessageLevel, PackDisplay, PackRow, TreeDisplay,
@@ -112,7 +115,7 @@ pub(super) trait TaskTreeCommandContext {
 }
 
 pub(super) trait TaskAttributeCommandContext {
-    fn set_deadline(&mut self, value: &str) -> Result<(), ApplicationError>;
+    fn set_deadline(&mut self, value: &str) -> Result<(), HandlerError>;
     fn set_estimate(&mut self, minutes: i64) -> Result<(), ApplicationError>;
     fn arrange(
         &mut self,
@@ -121,7 +124,7 @@ pub(super) trait TaskAttributeCommandContext {
     ) -> Result<(), ApplicationError>;
     fn set_actual(&mut self, minutes: i64) -> Result<(), ApplicationError>;
     fn set_priority(&mut self, priority: i64) -> Result<(), ApplicationError>;
-    fn set_category(&mut self, value: &str) -> Result<(), ApplicationError>;
+    fn set_category(&mut self, value: &str) -> Result<(), HandlerError>;
     fn add_work(&mut self, minutes: Option<i64>) -> Result<(), ApplicationError>;
 }
 
@@ -189,6 +192,15 @@ impl std::error::Error for HandlerError {
 impl From<ApplicationError> for HandlerError {
     fn from(error: ApplicationError) -> Self {
         Self::Application(error)
+    }
+}
+
+impl From<CommandValidationError> for HandlerError {
+    fn from(error: CommandValidationError) -> Self {
+        match error {
+            CommandValidationError::Parse(error) => Self::Parse(error),
+            CommandValidationError::Application(error) => Self::Application(error),
+        }
     }
 }
 
@@ -289,6 +301,7 @@ pub(super) fn handle_command<C: CommandContext + ?Sized>(
     command: &Command,
     context: &mut C,
 ) -> Result<Option<CommandOutcome>, HandlerError> {
+    validate_command_input(command)?;
     if command.kind() == CommandKind::Verify {
         return Ok(None);
     }
@@ -600,7 +613,7 @@ pub(super) fn handle_breakdown_split_command<C: ProjectCommandContext + ?Sized>(
 pub(super) fn handle_task_attribute_command<C: TaskAttributeCommandContext + ?Sized>(
     command: &Command,
     context: &mut C,
-) -> Result<Option<CommandOutcome>, ApplicationError> {
+) -> Result<Option<CommandOutcome>, HandlerError> {
     let kind = command.kind();
 
     match command {

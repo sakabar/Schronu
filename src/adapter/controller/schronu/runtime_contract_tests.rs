@@ -2965,7 +2965,7 @@ fn test_resolve_deadline_date_曜日の範囲外を曜日計算errorにする() 
 
     assert!(matches!(
         resolve_deadline_date("月", now),
-        Err(CommandError::Application(
+        Err(HandlerError::Application(
             ApplicationError::SubjectiveDateOutOfRange {
                 operation: "deadline_weekday_date",
                 datetime,
@@ -3026,7 +3026,7 @@ fn test_resolve_deadline_date_mmddの翌年範囲外を情報付きerrorにす�
 
     assert!(matches!(
         resolve_deadline_date("12/31", now),
-        Err(CommandError::Application(
+        Err(HandlerError::Application(
             ApplicationError::SubjectiveDateOutOfRange {
                 operation: "deadline_calendar_date",
                 datetime,
@@ -5334,6 +5334,29 @@ fn test_parse_non_interactive_command_複数引数を1コマンドにする() {
     let expected = Some("尾 週".to_string());
 
     assert_eq!(actual, expected);
+}
+
+#[test]
+fn test_non_interactiveの不正属性値はbusy_time読込前に拒否する() {
+    let now = Local.with_ymd_and_hms(2026, 8, 27, 12, 0, 0).unwrap();
+
+    for command in ["予 -1", "類 invalid", "〆 invalid"] {
+        let mut repository = TestTaskRepository::new(new_test_task_handle("既存").unwrap(), now);
+        let mut free_time_manager = TestFreeTimeManagerWithLoadError::default();
+
+        let result = execute_non_interactive_command_at(
+            &mut repository,
+            &mut free_time_manager,
+            command,
+            now,
+        );
+
+        assert!(
+            matches!(result, Err(RunError::Command(_))),
+            "input error must win before busy-time I/O: {command}: {result:?}"
+        );
+        assert_eq!(free_time_manager.loaded_path(), None, "{command}");
+    }
 }
 
 #[test]
