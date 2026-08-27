@@ -1,4 +1,4 @@
-use crate::application::daily_capacity::try_next_business_day_start;
+use crate::application::daily_capacity::{try_local_date_and_time, try_next_business_day_start};
 use crate::application::interface::TaskRepositoryTrait;
 use crate::application::schedule_use_case::get_schedule;
 pub use crate::application::task_view::TaskView;
@@ -371,6 +371,80 @@ pub fn defer_task(
     task.set_pending_until(pending_until)
         .map_err(ApplicationError::TaskTree)?;
     task.set_orig_status(Status::Pending)
+        .map_err(ApplicationError::TaskTree)?;
+    Ok(())
+}
+
+pub fn defer_routine_task(
+    repository: &mut dyn TaskRepositoryTrait,
+    task_id: Uuid,
+) -> Result<(), ApplicationError> {
+    let task = find_task(repository, task_id)?;
+    let orig_deadline_time = task
+        .get_deadline_time_opt()
+        .map_err(ApplicationError::TaskTree)?
+        .ok_or(ApplicationError::InvalidInput {
+            field: "task_id",
+            reason: "task must have a deadline",
+        })?;
+    let parent_task = task.parent().map_err(ApplicationError::TaskTree)?.ok_or(
+        ApplicationError::InvalidInput {
+            field: "task_id",
+            reason: "task must have a parent",
+        },
+    )?;
+    let repetition_interval_days = parent_task
+        .get_repetition_interval_days_opt()
+        .map_err(ApplicationError::TaskTree)?
+        .ok_or(ApplicationError::InvalidInput {
+            field: "task_id",
+            reason: "parent task must have a repetition interval",
+        })?;
+    let parent_deadline_time_opt = parent_task
+        .get_deadline_time_opt()
+        .map_err(ApplicationError::TaskTree)?;
+    let orig_start_time = task.get_start_time().map_err(ApplicationError::TaskTree)?;
+
+    let deadline_out_of_range = || ApplicationError::SubjectiveDateOutOfRange {
+        operation: "defer_routine_deadline",
+        datetime: orig_deadline_time,
+    };
+    let new_deadline_time = if let Some(parent_deadline_time) = parent_deadline_time_opt {
+        let first_business_day_start = try_next_business_day_start(orig_deadline_time)?;
+        let additional_days = repetition_interval_days
+            .checked_sub(1)
+            .ok_or_else(deadline_out_of_range)?;
+        let additional_duration =
+            Duration::try_days(additional_days).ok_or_else(deadline_out_of_range)?;
+        let target_date = first_business_day_start
+            .date_naive()
+            .checked_add_signed(additional_duration)
+            .ok_or_else(deadline_out_of_range)?;
+        try_local_date_and_time(target_date, parent_deadline_time.time())?
+    } else {
+        let duration =
+            Duration::try_days(repetition_interval_days).ok_or_else(deadline_out_of_range)?;
+        orig_deadline_time
+            .checked_add_signed(duration)
+            .ok_or_else(deadline_out_of_range)?
+    };
+    let start_out_of_range = || ApplicationError::SubjectiveDateOutOfRange {
+        operation: "defer_routine_start",
+        datetime: orig_start_time,
+    };
+    let start_offset_days = (new_deadline_time - orig_deadline_time).num_days();
+    let start_offset = Duration::try_days(start_offset_days).ok_or_else(start_out_of_range)?;
+    let new_start_time = orig_start_time
+        .checked_add_signed(start_offset)
+        .ok_or_else(start_out_of_range)?;
+
+    task.unset_deadline_time_opt()
+        .map_err(ApplicationError::TaskTree)?;
+    task.set_deadline_time_opt(Some(new_deadline_time))
+        .map_err(ApplicationError::TaskTree)?;
+    task.set_orig_status(Status::Todo)
+        .map_err(ApplicationError::TaskTree)?;
+    task.set_start_time(new_start_time)
         .map_err(ApplicationError::TaskTree)?;
     Ok(())
 }
