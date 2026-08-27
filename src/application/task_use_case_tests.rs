@@ -653,6 +653,32 @@ fn defer_routine_task_日時計算不能なら変更しない() {
 }
 
 #[test]
+fn defer_routine_task_deadline伝搬失敗でも変更しない() {
+    let deadline = Local.with_ymd_and_hms(2026, 8, 13, 10, 0, 0).unwrap();
+    let parent = crate::test_support::new_task_handle("ルーチン").unwrap();
+    parent.set_repetition_interval_days_opt(Some(7)).unwrap();
+    let mut child_attr = crate::test_support::new_task_attr("延期対象");
+    child_attr.set_deadline_time_opt(Some(deadline));
+    let child = parent.create_as_last_child(child_attr);
+    let descendant = child.create_as_last_child(crate::test_support::new_task_attr("子孫"));
+    let child_id = child.get_id().unwrap();
+    let snapshot = child.snapshot().unwrap();
+    let revision = child.get_persistent_mutation_revision().unwrap();
+    let mut repository = TestTaskRepository::new(vec![parent], fixed_now());
+
+    let actual = descendant.with_exclusive_data_borrow_for_test(|| {
+        defer_routine_task(&mut repository, child_id)
+    });
+
+    assert_eq!(
+        actual,
+        Err(ApplicationError::TaskTree(TaskTreeError::Borrow))
+    );
+    assert_eq!(child.snapshot().unwrap(), snapshot);
+    assert_eq!(child.get_persistent_mutation_revision().unwrap(), revision);
+}
+
+#[test]
 fn complete_task_未完了の子があれば変更しない() {
     let task = crate::test_support::new_task_handle("親").unwrap();
     task.create_as_last_child(crate::test_support::new_task_attr("未完了"));
