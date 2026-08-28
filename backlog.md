@@ -51,7 +51,7 @@
 | TD-013 | P2 | 完了 | M | Spreadsheetの列契約が複数言語・文書へ重複している |
 | TD-014 | P2 | 完了 | M | 実環境計測で同期処理に有意な高速化の見込みがないことを確認した |
 | TD-015 | P2 | 完了 | L | テストが巨大な製品ファイルへ混在し、fixtureも重複している |
-| TD-016 | P3 | 未着手 | M | マジック値、未使用フィールド、古いコメントが意図を曖昧にしている |
+| TD-016 | P3 | 完了 | M | マジック値、未使用フィールド、古いコメントが意図を曖昧にしている |
 | TD-017 | P1 | 完了 | XL | `TaskHandle`の既存infallible APIが内部不変条件の破れをpanicとして扱う |
 | TD-018 | P1 | 完了 | XL | CLI runtimeにcommand orchestrationと表示計算が残っている |
 
@@ -748,6 +748,9 @@
 
 - 優先度: `P3`
 - 概算規模: `M`
+- 完了日: 2026-08-29
+- 対応: TD-001、TD-010等で既に06:00の業務日境界、5分・60分のdeadline buffer、30分の日次終端offset、28日・35日のflatten範囲をpolicy化し、busy-timeの70日限定展開を解消していた。今回、1400日のproject延期、一覧表示の28日・幅70・fallback日付、日次1440分を意味付きpolicyへ集約した。`BusyTimeSlot`をcrate内部APIへ限定して未使用のname保持を除去し、YAMLの`name`必須・文字列validationは維持した。古いcommented code、疑問形コメント、FIXME、task statusを指す`TODO`表記を整理した。CLI、YAML、MCP、Spreadsheetの挙動は変更していない。
+- 検証: `cargo fmt --check`、`cargo clippy --locked --all-targets -- -D warnings`、`cargo test --locked`、`git diff --check`に成功した。testは982件成功、1件ignored、失敗0件だった。
 
 #### 現状と根拠
 
@@ -792,7 +795,7 @@
 6. TD-010、TD-009、TD-004はいずれも完了済みである。domain境界の縮小とtree実装の全面変更は、それぞれ独立した段階として実施した。
 7. TD-011、TD-015を独立して進める。TD-015のCLI fixture分離はTD-018の製品コード移動とcommitを分ける。
 8. TD-012はbenchmark結果を取得してから最適化範囲を決める。
-9. TD-016は関連する上位項目の完了時に、小さいcleanup commitとして解消する。
+9. TD-016は関連する上位項目の完了後、小さいcleanup commitへ分割して解消した。
 
 ## まとめて実施しない変更
 
