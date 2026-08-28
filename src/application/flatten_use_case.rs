@@ -206,23 +206,32 @@ fn flatten_tasks_with_end_of_day_offset_minutes_and_metrics(
                 rejected.push((candidate, UnresolvedReason::OwnDeadline));
                 continue;
             }
-            metrics.record_override_clone(overrides.len());
-            let mut trial_overrides = overrides.clone();
-            trial_overrides.insert(candidate.task_id, target_datetime);
-            let trial_schedule = get_schedule_with_first_available_time_overrides_and_metrics(
-                repository,
-                &trial_overrides,
-                &mut metrics.schedule,
-            )?;
+            metrics.record_override_clone(0);
+            let previous_override = overrides.insert(candidate.task_id, target_datetime);
+            let trial_schedule_result =
+                get_schedule_with_first_available_time_overrides_and_metrics(
+                    repository,
+                    &overrides,
+                    &mut metrics.schedule,
+                );
+            match previous_override {
+                Some(previous) => {
+                    overrides.insert(candidate.task_id, previous);
+                }
+                None => {
+                    overrides.remove(&candidate.task_id);
+                }
+            }
+            let trial_schedule = trial_schedule_result?;
             if introduces_deadline_violation(&schedule, &trial_schedule, metrics) {
                 rejected.push((candidate, UnresolvedReason::RelatedDeadline));
                 continue;
             }
-            accepted = Some((candidate, trial_overrides, trial_schedule));
+            accepted = Some((candidate, target_datetime, trial_schedule));
             break;
         }
 
-        let Some((candidate, trial_overrides, trial_schedule)) = accepted else {
+        let Some((candidate, target_datetime, trial_schedule)) = accepted else {
             let excess_work_seconds = usage.get(&overload_date).copied().unwrap_or(0)
                 - capacities.get(&overload_date).copied().unwrap_or(0);
             unresolved_overloads.push(summarize_unresolved_overload(
@@ -236,7 +245,7 @@ fn flatten_tasks_with_end_of_day_offset_minutes_and_metrics(
         if movement_ids.insert(candidate.task_id) {
             movement_order.push(candidate.task_id);
         }
-        overrides = trial_overrides;
+        overrides.insert(candidate.task_id, target_datetime);
         schedule = trial_schedule;
     }
 
