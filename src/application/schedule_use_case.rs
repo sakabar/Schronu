@@ -251,21 +251,22 @@ fn find_earliest_non_overlapping_start(
 ) -> DateTime<Local> {
     let duration = Duration::seconds(remaining_seconds);
     let mut start = first_available_time;
-    loop {
+    let mut index = occupied_slots.partition_point(|(_, occupied_end)| {
+        metrics.record_occupied_slot_probe();
+        *occupied_end <= start
+    });
+    while let Some((occupied_start, occupied_end)) = occupied_slots.get(index) {
         let end = start + duration;
-        let mut shifted = false;
-        for (occupied_start, occupied_end) in occupied_slots {
-            metrics.record_occupied_slot_probe();
-            if start < *occupied_end && *occupied_start < end {
-                start = *occupied_end;
-                shifted = true;
-                break;
-            }
+        metrics.record_occupied_slot_probe();
+        if end <= *occupied_start {
+            break;
         }
-        if !shifted {
-            return start;
+        if start < *occupied_end && *occupied_start < end {
+            start = *occupied_end;
         }
+        index += 1;
     }
+    start
 }
 
 fn find_next_occupied_slot(
@@ -273,13 +274,65 @@ fn find_next_occupied_slot(
     occupied_slots: &[(DateTime<Local>, DateTime<Local>)],
     metrics: &mut ScheduleMetrics,
 ) -> Option<(DateTime<Local>, DateTime<Local>)> {
+    let index = occupied_slots.partition_point(|(occupied_start, _)| {
+        metrics.record_occupied_slot_probe();
+        *occupied_start < start
+    });
     occupied_slots
-        .iter()
-        .find(|(occupied_start, occupied_end)| {
+        .get(index)
+        .filter(|(occupied_start, occupied_end)| {
             metrics.record_occupied_slot_probe();
             start < *occupied_end && start <= *occupied_start
         })
         .copied()
+}
+
+fn find_occupied_slot_containing(
+    datetime: DateTime<Local>,
+    occupied_slots: &[(DateTime<Local>, DateTime<Local>)],
+    metrics: &mut ScheduleMetrics,
+) -> Option<(DateTime<Local>, DateTime<Local>)> {
+    let index = occupied_slots.partition_point(|(_, occupied_end)| {
+        metrics.record_occupied_slot_probe();
+        *occupied_end <= datetime
+    });
+    occupied_slots
+        .get(index)
+        .filter(|(occupied_start, occupied_end)| {
+            metrics.record_occupied_slot_probe();
+            datetime >= *occupied_start && datetime < *occupied_end
+        })
+        .copied()
+}
+
+fn find_occupied_slot_starting_at(
+    datetime: DateTime<Local>,
+    occupied_slots: &[(DateTime<Local>, DateTime<Local>)],
+    metrics: &mut ScheduleMetrics,
+) -> Option<(DateTime<Local>, DateTime<Local>)> {
+    let index = occupied_slots.partition_point(|(occupied_start, _)| {
+        metrics.record_occupied_slot_probe();
+        *occupied_start < datetime
+    });
+    occupied_slots
+        .get(index)
+        .filter(|(occupied_start, _)| {
+            metrics.record_occupied_slot_probe();
+            *occupied_start == datetime
+        })
+        .copied()
+}
+
+fn insert_occupied_slot(
+    occupied_slots: &mut Vec<(DateTime<Local>, DateTime<Local>)>,
+    slot: (DateTime<Local>, DateTime<Local>),
+    metrics: &mut ScheduleMetrics,
+) {
+    let index = occupied_slots.partition_point(|existing| {
+        metrics.record_occupied_slot_probe();
+        *existing <= slot
+    });
+    occupied_slots.insert(index, slot);
 }
 
 #[cfg(test)]
@@ -380,9 +433,7 @@ fn schedule_tasks_by_priority_with_metrics(
                 remaining_seconds,
                 total_work_seconds,
             ));
-            occupied_slots.push((start, end));
-            metrics.record_sort();
-            occupied_slots.sort();
+            insert_occupied_slot(&mut occupied_slots, (start, end), metrics);
             candidate_scheduled_end = end;
         } else {
             while remaining_seconds > 0 {
@@ -398,14 +449,10 @@ fn schedule_tasks_by_priority_with_metrics(
                     };
                 let work_seconds = (segment_end - segment_start).num_seconds();
                 if work_seconds <= 0 {
-                    segment_start = occupied_slots
-                        .iter()
-                        .find(|(start, end)| {
-                            metrics.record_occupied_slot_probe();
-                            segment_start >= *start && segment_start < *end
-                        })
-                        .map(|(_, end)| *end)
-                        .unwrap_or(segment_start + Duration::seconds(1));
+                    segment_start =
+                        find_occupied_slot_containing(segment_start, &occupied_slots, metrics)
+                            .map(|(_, end)| end)
+                            .unwrap_or(segment_start + Duration::seconds(1));
                     continue;
                 }
                 let after_split = remaining_seconds - work_seconds;
@@ -413,14 +460,10 @@ fn schedule_tasks_by_priority_with_metrics(
                     && (work_seconds <= MIN_SPLIT_SEGMENT_SECONDS
                         || after_split <= MIN_SPLIT_SEGMENT_SECONDS)
                 {
-                    segment_start = occupied_slots
-                        .iter()
-                        .find(|(start, _)| {
-                            metrics.record_occupied_slot_probe();
-                            *start == segment_end
-                        })
-                        .map(|(_, end)| *end)
-                        .unwrap_or(segment_end);
+                    segment_start =
+                        find_occupied_slot_starting_at(segment_end, &occupied_slots, metrics)
+                            .map(|(_, end)| end)
+                            .unwrap_or(segment_end);
                     continue;
                 }
                 metrics.record_segment();
@@ -431,9 +474,7 @@ fn schedule_tasks_by_priority_with_metrics(
                     work_seconds,
                     total_work_seconds,
                 ));
-                occupied_slots.push((segment_start, segment_end));
-                metrics.record_sort();
-                occupied_slots.sort();
+                insert_occupied_slot(&mut occupied_slots, (segment_start, segment_end), metrics);
                 remaining_seconds -= work_seconds;
                 candidate_scheduled_end = segment_end;
                 segment_start = segment_end;
