@@ -334,7 +334,7 @@ fn test_project_yaml_strict_round_tripは子のpriority_category以外の全永�
     assert_eq!(actual_children.len(), 2);
     let actual_child = &actual_children[0];
     let expected_child = &expected_children[0];
-    assert_yaml_persisted_task_fields(&actual_child, &expected_child).unwrap();
+    assert_yaml_persisted_task_fields(actual_child, expected_child).unwrap();
     let actual_child_attr = actual_child.get_attr().unwrap();
     assert_eq!(actual_child_attr.get_priority(), 0);
     assert_eq!(actual_child_attr.get_project_category_opt(), None);
