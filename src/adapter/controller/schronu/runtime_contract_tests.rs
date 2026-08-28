@@ -2055,6 +2055,45 @@ fn 単発filterはtask名の繰返表示文字列ではなくtyped反復属性�
 }
 
 #[test]
+fn task_listはtask名の表示幅境界を維持する() {
+    let now = Local.with_ymd_and_hms(2026, 8, 11, 12, 0, 0).unwrap();
+    let width_70_name = "a".repeat(70);
+    let width_70_task = new_test_task_handle(&width_70_name).unwrap();
+    width_70_task.set_estimated_work_seconds(30 * 60);
+    width_70_task.set_start_time(now);
+    width_70_task.set_pending_until(now);
+    width_70_task.set_orig_status(Status::Pending);
+
+    let width_71_name = "b".repeat(71);
+    let width_71_task = new_test_task_handle(&width_71_name).unwrap();
+    width_71_task.set_estimated_work_seconds(30 * 60);
+    width_71_task.set_start_time(now);
+    width_71_task.set_pending_until(now);
+    width_71_task.set_orig_status(Status::Pending);
+
+    let width_70_result = execute_command_for_test(width_70_task, now, None, "全");
+    let width_71_result = execute_command_for_test(width_71_task, now, None, "全");
+
+    assert!(
+        width_70_result.output.contains(&width_70_name),
+        "表示幅70のtask名は省略しない: {}",
+        width_70_result.output
+    );
+    assert!(
+        !width_70_result
+            .output
+            .contains(&format!("{width_70_name}...")),
+        "表示幅70のtask名には省略記号を付けない: {}",
+        width_70_result.output
+    );
+    assert!(
+        width_71_result.output.contains(&format!("{width_71_name}...")),
+        "表示幅70を超えた最初の文字まで表示して省略記号を付ける: {}",
+        width_71_result.output
+    );
+}
+
+#[test]
 fn task_list検索はtyped_a_i列と名前の代表patternを製品経路で照合する() {
     let now = Local.with_ymd_and_hms(2026, 8, 11, 12, 0, 0).unwrap();
     let task = new_test_task_handle("typed検索対象task").unwrap();
