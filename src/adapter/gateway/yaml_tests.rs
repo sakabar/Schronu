@@ -38,7 +38,8 @@ fn test_task_to_yaml_正常系1_デフォルトの値と同じ場合は出力し
     let now = Local.with_ymd_and_hms(2023, 5, 19, 1, 23, 45).unwrap();
     task.set_create_time(now).unwrap();
     task.set_start_time(now).unwrap();
-    let actual = task_to_yaml(&task).unwrap();
+    let snapshot = task.snapshot().unwrap();
+    let actual = task_snapshot_to_yaml(&snapshot);
 
     let s = "
 name: 'タスク1'
@@ -84,7 +85,8 @@ fn test_task_to_yaml_正常系2_再帰() {
     task.create_as_last_child(task_attr_child_1);
     task.create_as_last_child(task_attr_child_2);
 
-    let actual = task_to_yaml(&task).unwrap();
+    let snapshot = task.snapshot().unwrap();
+    let actual = task_snapshot_to_yaml(&snapshot);
 
     let s = "
 name: '親タスク1'
@@ -176,7 +178,8 @@ fn test_task_to_yaml_ユニークキー() {
     let now = Local.with_ymd_and_hms(2023, 5, 19, 1, 23, 45).unwrap();
     task.set_create_time(now).unwrap();
     task.set_start_time(now).unwrap();
-    let actual = task_to_yaml(&task).unwrap();
+    let snapshot = task.snapshot().unwrap();
+    let actual = task_snapshot_to_yaml(&snapshot);
 
     let s = "
 name: 'タスク1'
@@ -200,7 +203,8 @@ fn test_task_to_yaml_project_category() {
     let now = Local.with_ymd_and_hms(2023, 5, 19, 1, 23, 45).unwrap();
     task.set_create_time(now).unwrap();
     task.set_start_time(now).unwrap();
-    let actual = task_to_yaml(&task).unwrap();
+    let snapshot = task.snapshot().unwrap();
+    let actual = task_snapshot_to_yaml(&snapshot);
 
     let s = "
 name: 'タスク1'
@@ -232,7 +236,8 @@ fn test_task_to_yaml_project_categoryは子タスクには出力しない() {
 
     task.create_as_last_child(task_attr_child);
 
-    let actual = task_to_yaml(&task).unwrap();
+    let snapshot = task.snapshot().unwrap();
+    let actual = task_snapshot_to_yaml(&snapshot);
 
     let s = "
 name: '親タスク'
@@ -260,7 +265,8 @@ fn test_task_to_yaml_is_on_other_side() {
     let now = Local.with_ymd_and_hms(2023, 5, 19, 1, 23, 45).unwrap();
     task.set_create_time(now).unwrap();
     task.set_start_time(now).unwrap();
-    let actual = task_to_yaml(&task).unwrap();
+    let snapshot = task.snapshot().unwrap();
+    let actual = task_snapshot_to_yaml(&snapshot);
 
     let s = "
 name: 'タスク1'
@@ -284,7 +290,8 @@ fn test_task_to_yaml_atomic() {
     let now = Local.with_ymd_and_hms(2023, 5, 19, 1, 23, 45).unwrap();
     task.set_create_time(now).unwrap();
     task.set_start_time(now).unwrap();
-    let actual = task_to_yaml(&task).unwrap();
+    let snapshot = task.snapshot().unwrap();
+    let actual = task_snapshot_to_yaml(&snapshot);
 
     let s = "
 name: 'タスク1'
@@ -311,7 +318,8 @@ fn test_task_to_yaml_end_time_opt() {
         .unwrap();
     task.set_end_time_opt(Some(Local.with_ymd_and_hms(2023, 5, 19, 3, 45, 6).unwrap()))
         .unwrap();
-    let actual = task_to_yaml(&task).unwrap();
+    let snapshot = task.snapshot().unwrap();
+    let actual = task_snapshot_to_yaml(&snapshot);
 
     let s = "
 name: 'タスク1'
@@ -339,7 +347,8 @@ fn test_task_to_yaml_deadline_time_opt() {
         .unwrap();
     task.set_deadline_time_opt(Some(Local.with_ymd_and_hms(2023, 5, 19, 3, 45, 6).unwrap()))
         .unwrap();
-    let actual = task_to_yaml(&task).unwrap();
+    let snapshot = task.snapshot().unwrap();
+    let actual = task_snapshot_to_yaml(&snapshot);
 
     let s = "
 name: 'タスク1'
@@ -366,7 +375,8 @@ fn test_task_to_yaml_estimated_work_seconds() {
     task.set_start_time(Local.with_ymd_and_hms(2023, 5, 19, 2, 34, 56).unwrap())
         .unwrap();
     task.set_estimated_work_seconds(1).unwrap();
-    let actual = task_to_yaml(&task).unwrap();
+    let snapshot = task.snapshot().unwrap();
+    let actual = task_snapshot_to_yaml(&snapshot);
 
     let s = "
 name: 'タスク1'
@@ -393,7 +403,8 @@ fn test_task_to_yaml_actual_work_seconds() {
     task.set_start_time(Local.with_ymd_and_hms(2023, 5, 19, 2, 34, 56).unwrap())
         .unwrap();
     task.set_actual_work_seconds(1).unwrap();
-    let actual = task_to_yaml(&task).unwrap();
+    let snapshot = task.snapshot().unwrap();
+    let actual = task_snapshot_to_yaml(&snapshot);
 
     let s = "
 name: 'タスク1'
@@ -418,7 +429,8 @@ fn test_task_to_yaml_repetition_interval() {
     let now = Local.with_ymd_and_hms(2023, 5, 19, 1, 23, 45).unwrap();
     task.set_create_time(now).unwrap();
     task.set_start_time(now).unwrap();
-    let actual = task_to_yaml(&task).unwrap();
+    let snapshot = task.snapshot().unwrap();
+    let actual = task_snapshot_to_yaml(&snapshot);
 
     let s = "
 name: 'タスク1'
@@ -443,7 +455,8 @@ fn test_task_to_yaml_repetition_anchor_completion() {
     let now = Local.with_ymd_and_hms(2023, 5, 19, 1, 23, 45).unwrap();
     task.set_create_time(now).unwrap();
     task.set_start_time(now).unwrap();
-    let actual = task_to_yaml(&task).unwrap();
+    let snapshot = task.snapshot().unwrap();
+    let actual = task_snapshot_to_yaml(&snapshot);
 
     let s = "
 name: 'タスク1'
@@ -468,7 +481,8 @@ fn test_task_to_yaml_repetition_anchor_deadlineは出力しない() {
     let now = Local.with_ymd_and_hms(2023, 5, 19, 1, 23, 45).unwrap();
     task.set_create_time(now).unwrap();
     task.set_start_time(now).unwrap();
-    let actual = task_to_yaml(&task).unwrap();
+    let snapshot = task.snapshot().unwrap();
+    let actual = task_snapshot_to_yaml(&snapshot);
 
     let s = "
 name: 'タスク1'
@@ -491,7 +505,8 @@ fn test_task_to_yaml_days_in_advance() {
     let now = Local.with_ymd_and_hms(2023, 5, 19, 1, 23, 45).unwrap();
     task.set_create_time(now).unwrap();
     task.set_start_time(now).unwrap();
-    let actual = task_to_yaml(&task).unwrap();
+    let snapshot = task.snapshot().unwrap();
+    let actual = task_snapshot_to_yaml(&snapshot);
 
     let s = "
 name: 'タスク1'

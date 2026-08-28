@@ -1420,12 +1420,6 @@ impl TaskHandle {
         Ok(false)
     }
 
-    // 外から見て、ダミーノードのことは考慮させないように、ダミーノードの子で評価
-    pub(crate) fn is_root(&self) -> Result<bool, TaskTreeError> {
-        let root = self.root()?;
-        Ok(self.node.ptr_eq(&root.node))
-    }
-
     pub fn tree_debug_pretty_print(&self) -> Result<String, TaskTreeError> {
         self.get_attr()?;
         Ok(format!("{:?}", self.node.tree().debug_pretty_print()))

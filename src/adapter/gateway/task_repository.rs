@@ -1,4 +1,4 @@
-use crate::adapter::gateway::yaml::{task_to_yaml, yaml_to_task};
+use crate::adapter::gateway::yaml::{task_snapshot_to_yaml, yaml_to_task};
 use crate::application::interface::{
     RepositoryReloadOutcome, TaskRepositoryError,
     TaskRepositoryOperation as ApplicationRepositoryOperation, TaskRepositoryTrait,
@@ -325,9 +325,10 @@ impl TaskRepository {
     }
 
     fn serialize_project(project: &Project) -> Result<Vec<u8>, TaskRepositoryError> {
-        let task_yaml = task_to_yaml(&project.root_task).map_err(|error| {
+        let snapshot = project.root_task.snapshot().map_err(|error| {
             TaskRepositoryError::new(ApplicationRepositoryOperation::Save, error)
         })?;
+        let task_yaml = task_snapshot_to_yaml(&snapshot);
         let mut project_hash = LinkedHashMap::new();
         project_hash.insert(Yaml::String(String::from("project")), task_yaml);
         let doc = Yaml::Hash(project_hash);
