@@ -453,7 +453,7 @@ pub(super) fn execute_defer(
         datetime: now,
     };
     let duration = match unit_str.chars().next() {
-        // 24時間単位ではなく、next_monring単位とする
+        // 日単位の延期は固定24時間ではなく、次の業務日開始を基準にする
         Some('日') | Some('d') => {
             let target = defer_business_day_target(now, amount)?;
             target - now
@@ -714,8 +714,8 @@ pub(super) fn execute_defer_routine(
     Ok(())
 }
 
-// 何日もSchronuを開いていなくてあまりにもTODOがたまってしまった場合に、repetition_intervalが7日以内のルーチンタスクを自動的に先送りする
-// 7日よりも大きい場合は、1年に1回のような重要なタスクである可能性があるため、何もしない
+// 長期間未起動時に蓄積した未完了taskのうち、短周期(7日以内)かつ締切から24時間以上経過したroutineを自動的に先送りする
+// 長周期のroutineは年次taskなど重要な予定を含み得るため、自動的には先送りしない
 pub(super) fn execute_defer_all_frequent_routines(
     task_repository: &mut dyn TaskRepositoryTrait,
     focused_task_id_opt: &mut Option<Uuid>,
@@ -724,8 +724,6 @@ pub(super) fn execute_defer_all_frequent_routines(
     const MAX_REPETITION_INTERVAL_DAYS: i64 = 7;
     const MIN_OVERDUE_HOURS: i64 = 24;
     let now = task_repository.get_last_synced_time();
-    // let mut cnt = 0;
-
     loop {
         let mut any_is_changed = false;
 
@@ -763,7 +761,7 @@ pub(super) fn execute_defer_all_frequent_routines(
             ids
         };
 
-        // TODOの葉タスクについて、条件を満たす限りexecute_defer_routine()を適用し続ける
+        // 条件を満たす未完了の葉taskがなくなるまで、routineの先送りを適用する
         for task_id in candidate_task_ids.into_iter() {
             *focused_task_id_opt = Some(task_id);
             let orig_focused_task_id_opt = *focused_task_id_opt;
@@ -772,7 +770,6 @@ pub(super) fn execute_defer_all_frequent_routines(
             // deferが成功してフォーカスが移ったら記録しておく
             if orig_focused_task_id_opt != *focused_task_id_opt {
                 any_is_changed = true;
-                // cnt +=  1;
             }
         }
 
@@ -780,8 +777,6 @@ pub(super) fn execute_defer_all_frequent_routines(
             break;
         }
     }
-
-    // println!("{:?}", cnt );
     Ok(())
 }
 

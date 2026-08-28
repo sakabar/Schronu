@@ -662,8 +662,7 @@ pub(super) fn build_show_all_tasks_display_with_config(
 
     let mut repetitive_task_estimated_work_seconds_map: HashMap<NaiveDate, i64> = HashMap::new();
 
-    // 日ごとの、前倒し可能なタスクの見積もりの和
-    // 前倒し可能という決め方だと、何日まで前倒しできるのか曖昧性が発生する?
+    // 日ごとの、前倒し可能なtaskの見積もりの和
     let mut adjustable_estimated_work_seconds_map: HashMap<NaiveDate, i64> = HashMap::new();
 
     // タスク一覧で、どのタスクをいつやる見込みかを表示するために、「現在時刻」をズラして見ていく
@@ -947,7 +946,6 @@ pub(super) fn build_show_all_tasks_display_with_config(
 
             match pattern_opt {
                 Some(pattern) => {
-                    // FIXME 文字列マッチの絞り込み機能とその他の属性による絞り込みを機能を分ける
                     if pattern == "葉" {
                         if rank == &0
                             || task_deadline_time_opt.is_some()
@@ -989,7 +987,7 @@ pub(super) fn build_show_all_tasks_display_with_config(
                             task_list_display_rows.push(task_list_display_row.clone());
                         }
                     } else if pattern == "単" {
-                        // non_repetitive (単発) のタスクのみを表示する
+                        // 「単」はtask名ではなく、継承済みの繰り返し間隔の有無で単発taskを判定する
                         if inherited_repetition_interval_days_opt.is_none() {
                             task_list_display_rows.push(task_list_display_row.clone());
                         }
