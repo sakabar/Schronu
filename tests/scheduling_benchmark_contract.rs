@@ -94,6 +94,22 @@ fn pack診断は通常経路と同じ結果を返しschedule再構築を計数�
 }
 
 #[test]
+fn packは同一candidateの現在位置と日別余力に同じscheduleを使う() {
+    let repository = small_repository();
+    let mut free_time = SchedulingFreeTimeManager::new(DAILY_FREE_MINUTES);
+
+    let (_, metrics) = pack_tasks_diagnostics(&repository, &mut free_time).unwrap();
+
+    let rebuild_limit = 1 + metrics.candidate_count + metrics.placement_trial_count;
+    assert!(
+        metrics.schedule.schedule_rebuild_count <= rebuild_limit,
+        "schedule rebuilds exceeded the per-candidate limit: {} > {}",
+        metrics.schedule.schedule_rebuild_count,
+        rebuild_limit
+    );
+}
+
+#[test]
 fn flatten診断は通常経路と同じ結果を返しschedule走査を計数する() {
     let expected_repository = small_repository();
     let mut expected_free_time = SchedulingFreeTimeManager::new(15);
