@@ -47,7 +47,7 @@
 | TD-009 | P2 | 完了 | L | entity層がYAML形式へ依存している |
 | TD-010 | P2 | 完了 | L | 現在時刻、UUID、業務日境界がドメイン内部へ埋め込まれている |
 | TD-011 | P2 | 完了 | L | MCPのschema、入力検証、Rust入力型、JSON出力が重複している |
-| TD-012 | P2 | 未着手 | L | flatten・pack・scheduleの再計算コストに性能上限が定義されていない |
+| TD-012 | P2 | 完了 | L | flatten・pack・scheduleの再計算コストに性能上限が定義されていない |
 | TD-013 | P2 | 完了 | M | Spreadsheetの列契約が複数言語・文書へ重複している |
 | TD-014 | P2 | 完了 | M | 実環境計測で同期処理に有意な高速化の見込みがないことを確認した |
 | TD-015 | P2 | 完了 | L | テストが巨大な製品ファイルへ混在し、fixtureも重複している |
@@ -600,6 +600,10 @@
 
 - 優先度: `P2`
 - 概算規模: `L`
+- 完了日: 2026-08-29
+- 対応: 指定storageをread-only集計し、識別情報と実日付を含まないsmall、typical、stress固定seed fixtureを追加した。通常APIを変えず、schedule、pack、flattenの内部処理をbenchmarking featureで計数する。occupied intervalの二分探索と隣接区間union、packのschedule snapshot再利用、flattenのoverride挿入・復元とcandidate context再利用、依存候補のready heap化により支配的な再計算を削減した。
+- 性能契約: 通常CIはtypical/stressの決定論的counter上限を検査する。週次・手動CIはRust 1.97.1、release build、`Asia/Tokyo`、GitHub Actions Ubuntu runnerで3回medianを測り、typical 500ms、stress 5,000msを上限とする。初回ローカルbaseline(Darwin arm64)はtypicalがschedule 6.930ms、pack 6.420ms、flatten 72.900ms、stressがschedule 29.172ms、pack 35.551ms、flatten 403.322msだった。
+- 検証: fixtureはtypical 2,213 project・26,378 task・691 active leaf、stress 8,852 project・105,512 task・2,764 active leafを固定する。通常経路と診断経路の結果、task状態、deadline、segment、`PackResult`、`FlattenResult`を照合し、既存schedule契約を緩和していない。`cargo fmt --check`、default/benchmarking双方のClippyと全test、6つのrelease wall-clock gate、`git diff --check`に成功した。
 
 #### 現状と根拠
 
