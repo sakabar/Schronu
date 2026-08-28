@@ -412,6 +412,7 @@ fn schedule_tasks_by_priority_with_metrics(
         let index = pending_candidates
             .iter()
             .position(|candidate| {
+                metrics.record_dependency_candidate_probe();
                 candidate
                     .dependency_ids
                     .iter()

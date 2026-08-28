@@ -15,6 +15,7 @@ pub struct ScheduleMetrics {
     pub candidate_count: usize,
     pub segment_count: usize,
     pub occupied_slot_probe_count: usize,
+    pub dependency_candidate_probe_count: usize,
     pub sort_count: usize,
     pub schedule_rebuild_count: usize,
 }
@@ -68,6 +69,7 @@ impl From<InternalScheduleMetrics> for ScheduleMetrics {
             candidate_count: metrics.candidate_count,
             segment_count: metrics.segment_count,
             occupied_slot_probe_count: metrics.occupied_slot_probe_count,
+            dependency_candidate_probe_count: metrics.dependency_candidate_probe_count,
             sort_count: metrics.sort_count,
             schedule_rebuild_count: metrics.schedule_rebuild_count,
         }

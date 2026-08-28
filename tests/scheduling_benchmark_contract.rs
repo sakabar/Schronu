@@ -45,6 +45,7 @@ fn schedule診断は通常経路と同じ結果を返し内部処理を計数す
     assert_eq!(actual, expected);
     assert_eq!(metrics.schedule_rebuild_count, 1);
     assert!(metrics.candidate_count > 0);
+    assert!(metrics.dependency_candidate_probe_count > 0);
     assert_eq!(metrics.segment_count, actual.len());
     assert!(metrics.sort_count >= 3);
 }

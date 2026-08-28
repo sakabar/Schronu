@@ -3,6 +3,7 @@ pub(crate) struct ScheduleMetrics {
     pub candidate_count: usize,
     pub segment_count: usize,
     pub occupied_slot_probe_count: usize,
+    pub dependency_candidate_probe_count: usize,
     pub sort_count: usize,
     pub schedule_rebuild_count: usize,
 }
@@ -48,6 +49,14 @@ impl ScheduleMetrics {
         #[cfg(feature = "benchmarking")]
         {
             self.occupied_slot_probe_count += 1;
+        }
+    }
+
+    #[inline(always)]
+    pub fn record_dependency_candidate_probe(&mut self) {
+        #[cfg(feature = "benchmarking")]
+        {
+            self.dependency_candidate_probe_count += 1;
         }
     }
 
