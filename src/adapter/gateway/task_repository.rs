@@ -1,11 +1,11 @@
-use crate::adapter::gateway::yaml::yaml_to_task;
+use crate::adapter::gateway::yaml::{task_to_yaml, yaml_to_task};
 use crate::application::interface::{
     RepositoryReloadOutcome, TaskRepositoryError,
     TaskRepositoryOperation as ApplicationRepositoryOperation, TaskRepositoryTrait,
 };
 use crate::entity::task::extract_leaf_tasks_from_project;
 use crate::entity::task::extract_leaf_tasks_from_project_with_pending;
-use crate::entity::task::{task_to_yaml, Status, TaskHandle, TaskTreeError};
+use crate::entity::task::{Status, TaskHandle, TaskTreeError};
 use chrono::{DateTime, Local};
 use linked_hash_map::LinkedHashMap;
 use regex::Regex;

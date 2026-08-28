@@ -8,9 +8,6 @@ use crate::entity::task::assert_task;
 use crate::entity::task::ProjectCategory;
 
 #[cfg(test)]
-use crate::entity::task::{task_to_yaml, TaskAttr};
-
-#[cfg(test)]
 use uuid::uuid;
 
 #[cfg(test)]
