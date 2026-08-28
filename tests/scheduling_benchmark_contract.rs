@@ -110,6 +110,22 @@ fn packは同一candidateの現在位置と日別余力に同じscheduleを使�
 }
 
 #[test]
+fn packはrepository未変更ならcandidate間でscheduleを再利用する() {
+    let repository = small_repository();
+    let mut no_free_time = SchedulingFreeTimeManager::new(0);
+
+    let (result, metrics) = pack_tasks_diagnostics(&repository, &mut no_free_time).unwrap();
+
+    assert!(result.packed_tasks.is_empty());
+    assert!(result.skipped_tasks.len() > 1);
+    assert_eq!(metrics.placement_trial_count, 0);
+    assert_eq!(
+        metrics.schedule.schedule_rebuild_count, 1,
+        "an unchanged repository should reuse one schedule snapshot"
+    );
+}
+
+#[test]
 fn flatten診断は通常経路と同じ結果を返しschedule走査を計数する() {
     let expected_repository = small_repository();
     let mut expected_free_time = SchedulingFreeTimeManager::new(15);
