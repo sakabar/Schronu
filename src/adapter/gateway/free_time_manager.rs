@@ -11,6 +11,8 @@ use yaml_rust::{Yaml, YamlLoader};
 
 use chrono::TimeZone;
 
+const MINUTES_PER_DAY: i64 = 24 * 60;
+
 // Scheduleをどう持つか: 日付をキーとする辞書
 pub struct FreeTimeManager {
     weekly_busy_time_slots: HashMap<Weekday, Vec<BusyTimeSlot>>,
@@ -174,7 +176,7 @@ impl FreeTimeManager {
                     )
                 })?;
                 let name_yaml = &slot["name"];
-                let name = name_yaml.as_str().ok_or_else(|| {
+                let _ = name_yaml.as_str().ok_or_else(|| {
                     invalid(
                         path,
                         &format!("{slot_path}.name"),
@@ -194,7 +196,7 @@ impl FreeTimeManager {
                     .checked_mul(60)
                     .and_then(|minutes| minutes.checked_add(i64::from(minute)))
                     .and_then(|minutes| minutes.checked_add(duration));
-                if duration < 0 || end_minutes.is_none_or(|minutes| minutes >= 24 * 60) {
+                if duration < 0 || end_minutes.is_none_or(|minutes| minutes >= MINUTES_PER_DAY) {
                     return Err(invalid(
                         path,
                         &format!("{slot_path}.duration_minutes"),
@@ -202,7 +204,7 @@ impl FreeTimeManager {
                         "invalid slot range",
                     ));
                 }
-                busy_time_slots.push(BusyTimeSlot::new(hour, minute, duration, name.into()));
+                busy_time_slots.push(BusyTimeSlot::new(hour, minute, duration));
             }
             day_of_week_map.insert(day_of_week, busy_time_slots);
         }
@@ -218,7 +220,7 @@ impl FreeTimeManager {
     }
 
     fn get_free_time_slot(&self, date: NaiveDate) -> Vec<i64> {
-        let mut free_time_slot = vec![1; 24 * 60];
+        let mut free_time_slot = vec![1; MINUTES_PER_DAY as usize];
 
         if let Some(busy_time_slots) = self.weekly_busy_time_slots.get(&date.weekday()) {
             for busy_time_slot in busy_time_slots {
@@ -259,9 +261,9 @@ fn yaml_error_value(value: &Yaml) -> Option<String> {
 fn mark_busy_time_slot(free_time_slot: &mut [i64], busy_time_slot: &BusyTimeSlot) {
     let start_index =
         (busy_time_slot.get_start_time_hour() * 60 + busy_time_slot.get_start_time_minute()) as i64;
-    let end_index = (start_index + busy_time_slot.get_duration_minutes()).clamp(0, 24 * 60);
+    let end_index = (start_index + busy_time_slot.get_duration_minutes()).clamp(0, MINUTES_PER_DAY);
 
-    for index in start_index.clamp(0, 24 * 60)..end_index {
+    for index in start_index.clamp(0, MINUTES_PER_DAY)..end_index {
         free_time_slot[index as usize] = 0;
     }
 }
@@ -296,7 +298,7 @@ impl FreeTimeManagerTrait for FreeTimeManager {
             let end_index = if current.date_naive() == segment_end.date_naive() {
                 segment_end.hour() * 60 + segment_end.minute()
             } else {
-                24 * 60
+                MINUTES_PER_DAY as u32
             };
 
             for index in start_index..end_index {
@@ -314,8 +316,7 @@ impl FreeTimeManagerTrait for FreeTimeManager {
         (*end - *start).num_minutes() - free_minutes
     }
 
-    // [start, end)
-    // TODO: エラー処理
+    // 同日内の半開区間[start, end)だけを登録する。
     fn register_busy_time_slot(
         &mut self,
         start: &DateTime<Local>,
@@ -329,7 +330,7 @@ impl FreeTimeManagerTrait for FreeTimeManager {
         let free_time_slot = self
             .registered_busy_time_slots_map
             .entry(date)
-            .or_insert(vec![1; 24 * 60]);
+            .or_insert(vec![1; MINUTES_PER_DAY as usize]);
 
         let start_index = start.hour() * 60 + start.minute();
         let end_index = end.hour() * 60 + end.minute();

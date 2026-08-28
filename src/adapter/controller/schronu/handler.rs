@@ -21,6 +21,9 @@ use schronu::entity::task::{TaskAttr, TaskHandle};
 use std::cmp::min;
 use uuid::Uuid;
 
+const NEW_PROJECT_INITIAL_DEFER_DAYS: i64 = 1;
+const HOBBY_PROJECT_INITIAL_DEFER_DAYS: i64 = 1400;
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(super) enum ExternalRequest {
     OpenFocusedLink,
@@ -485,8 +488,8 @@ pub(super) fn handle_project_command<C: ProjectCommandContext + ?Sized>(
             ..
         } => {
             let defer_days_opt = match kind {
-                CommandKind::NewProject => Some(1),
-                CommandKind::HobbyProject => Some(1400),
+                CommandKind::NewProject => Some(NEW_PROJECT_INITIAL_DEFER_DAYS),
+                CommandKind::HobbyProject => Some(HOBBY_PROJECT_INITIAL_DEFER_DAYS),
                 CommandKind::UnplannedProject => None,
                 _ => return Ok(None),
             };

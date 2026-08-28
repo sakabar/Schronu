@@ -172,8 +172,7 @@ impl ImmutableTask {
         status: Status,
         children: Vec<ImmutableTask>,
     ) -> Self {
-        // 期限なしPendingはタスクやり忘れの元なので、自動的に1970とする
-        // ちょっと迷い中。2037の方がよいのか?
+        // 期限未指定のPendingは次回の時刻評価で即座にTodoとなるよう、最小時刻を使う。
         Self {
             name,
             status,
@@ -310,40 +309,6 @@ fn extract_leaf_tasks_from_project_rec(
 pub fn round_up_sec_as_minute(seconds: i64) -> i64 {
     seconds / 60 + if seconds % 60 == 0 { 0 } else { 1 }
 }
-
-// pub fn extract_leaf_tasks_from_project_ref(task: &TaskHandle) -> Vec<&TaskAttr> {
-//     extract_leaf_tasks_from_project_ref_private(&task.node)
-// }
-
-// fn extract_leaf_tasks_from_project_ref_private(node: &Node<TaskAttr>) -> Vec<&TaskAttr> {
-//     let children_are_all_done = node
-//         .children()
-//         .all(|child_node| child_node.borrow_data().get_status() == &Status::Done);
-
-//     let task_attr = node.borrow_data();
-//     if task_attr.get_status() == &Status::Todo && (!node.has_children() || children_are_all_done) {
-//         return vec![&task_attr];
-//     }
-
-//     let mut ans: Vec<&TaskAttr> = vec![];
-
-//     // 深さ優先
-//     for child_node in node.children() {
-//         if child_node.borrow_data().get_status() != &Status::Done {
-//             let leaves_with_pending: Vec<&TaskAttr> =
-//                 extract_leaf_tasks_from_project_ref_private(&child_node);
-
-//             let mut leaves = leaves_with_pending
-//                 .iter()
-//                 .filter(|&leaf| leaf.get_status() != &Status::Pending)
-//                 .map(|&leaf| leaf)
-//                 .collect::<Vec<_>>();
-//             ans.append(&mut leaves);
-//         }
-//     }
-
-//     return ans;
-// }
 
 #[derive(Clone)]
 pub struct TaskAttr {
@@ -1133,10 +1098,8 @@ impl TaskHandle {
             .map_err(|_| TaskTreeError::Borrow)
     }
 
-    // 親タスクと子タスクの〆切のうち、早いほうが子タスクの〆切となる
-    // 〆切を設定する時には、子タスクに伝搬させていく
-    // Noneの扱いが難しい。Noneを子に伝搬させても子の値に勝てないので、意味ないのでは?
-    // 「親が〆切を持っている時は、子も必ず〆切を持っており、それは親より早いか等しい」という制約を維持させたい
+    // Someの〆切は未完了の子孫へ伝搬し、子の〆切が親より遅くならない不変条件を維持する。
+    // Noneは伝搬更新を行わない。現在のtaskの〆切を解除する場合はunset_deadline_time_optを使う。
     pub fn set_deadline_time_opt(
         &self,
         deadline_time_opt: Option<DateTime<Local>>,
@@ -1447,13 +1410,6 @@ impl TaskHandle {
 
         // 子あり
         for child_node in node.children() {
-            // let child_task = TaskHandle { node: child_node };
-
-            // let child_task_found_opt =  child_task.get_by_id(id);
-            // if  child_task_found_opt.is_some()   {
-            //     return  child_task_found_opt;
-            // }
-
             let child_task_found_opt = Self::get_by_id_private(&child_node, id)?;
             if child_task_found_opt.is_some() {
                 return Ok(child_task_found_opt);

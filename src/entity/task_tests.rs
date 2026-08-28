@@ -127,69 +127,6 @@ pub fn test_new_with_current_time_現在時刻がpending_until以前でPending�
     assert_eq!(actual, expected);
 }
 
-////////////////// ここから要テスト
-
-// #[test]
-// fn test_extract_leaf_tasks_from_project_done状態のタスクとその子孫は全て無視されること() {
-//     /*
-//      parent_task_1
-//        - child_task_1 (Done)
-//          - grand_child_task (todo, だが親がdoneなので無視される)
-//        - child_task_2
-//     */
-//     let grand_child_task_1 = TaskHandle::new_with_name("孫タスク1".to_string());
-//     let child_task_1 = TaskHandle::new_with_name_status_children(
-//         "子タスク1".to_string(),
-//         Status::Done,
-//         vec![grand_child_task_1],
-//     );
-
-//     let child_task_2 = TaskHandle::new_with_name("子タスク2".to_string());
-
-//     let parent_task_1 = TaskHandle::new_with_name_children(
-//         "親タスク1".to_string(),
-//         vec![child_task_1, child_task_2],
-//     );
-
-//     let actual = extract_leaf_tasks_from_project(&parent_task_1);
-//     let expected_child_task_2 = TaskHandle::new_with_name("子タスク2".to_string());
-//     let expected = vec![&expected_child_task_2];
-//     assert_eq!(actual, expected);
-// }
-
-// #[test]
-// fn test_extract_leaf_tasks_from_project_途中にpending状態のタスクがあった場合は子孫を辿るが_葉がpending状態の場合は結果に入らないこと(
-// ) {
-//     /*
-//      parent_task_1
-//        - child_task_1 (Pending)
-//          - grand_child_task (todo、親がPendingだがそれは関係なく結果として返る)
-//        - child_task_2 (Pendingの葉なので結果に入らない)
-//     */
-//     let grand_child_task_1 = TaskHandle::new_with_name("孫タスク1".to_string());
-//     let child_task_1 = TaskHandle::new_with_name_status_children(
-//         "子タスク1".to_string(),
-//         Status::Pending,
-//         vec![grand_child_task_1],
-//     );
-
-//     let child_task_2 = TaskHandle::new_with_name_status_children(
-//         "子タスク2".to_string(),
-//         Status::Pending,
-//         vec![],
-//     );
-
-//     let parent_task_1 = TaskHandle::new_with_name_children(
-//         "親タスク1".to_string(),
-//         vec![child_task_1, child_task_2],
-//     );
-
-//     let actual = extract_leaf_tasks_from_project(&parent_task_1);
-//     let expected_grand_child_task_1 = TaskHandle::new_with_name("孫タスク1".to_string());
-//     let expected = vec![&expected_grand_child_task_1];
-//     assert_eq!(actual, expected);
-// }
-
 #[test]
 #[allow(non_snake_case)]
 pub fn test_new_with_current_time_現在時刻がpending_until以降の場合Todo状態となること() {
