@@ -60,7 +60,7 @@ fn typical_scheduleはslot探索とsortの上限内に収まる() {
     assert_eq!(metrics.segment_count, 1_762);
     assert_eq!(metrics.schedule_rebuild_count, 1);
     assert!(
-        metrics.occupied_slot_probe_count <= 20_000_000,
+        metrics.occupied_slot_probe_count <= 100_000,
         "occupied slot probes exceeded the deterministic limit: {}",
         metrics.occupied_slot_probe_count
     );
