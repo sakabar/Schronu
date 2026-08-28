@@ -147,6 +147,11 @@ fn flatten診断は通常経路と同じ結果を返しschedule走査を計数�
         metrics.schedule.candidate_count, 5,
         "flatten should build immutable schedule candidates once"
     );
+    assert!(
+        metrics.schedule.dependency_candidate_probe_count
+            <= metrics.schedule.candidate_count * metrics.schedule.schedule_rebuild_count,
+        "dependency readiness should inspect each candidate at most once per rebuild"
+    );
     assert!(metrics.full_schedule_scan_element_count > 0);
     assert!(metrics.overload_iteration_count > 0);
     assert!(metrics.candidate_trial_count > 0);

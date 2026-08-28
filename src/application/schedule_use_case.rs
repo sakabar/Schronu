@@ -8,8 +8,8 @@ use crate::entity::task::{
 };
 use chrono::{DateTime, Duration, Local};
 use serde::Serialize;
-use std::cmp::max;
-use std::collections::HashMap;
+use std::cmp::{max, Reverse};
+use std::collections::{BinaryHeap, HashMap};
 use uuid::Uuid;
 
 const MIN_SPLIT_SEGMENT_SECONDS: i64 = 5 * 60;
@@ -404,22 +404,47 @@ fn schedule_tasks_by_priority_with_metrics(
             ))
     });
 
+    let candidate_index_by_id = pending_candidates
+        .iter()
+        .enumerate()
+        .map(|(index, candidate)| (candidate.id, index))
+        .collect::<HashMap<_, _>>();
+    let mut dependent_indices_by_id = HashMap::<Uuid, Vec<usize>>::new();
+    let mut unresolved_dependency_counts = Vec::with_capacity(pending_candidates.len());
+    let mut ready_indices = BinaryHeap::<Reverse<usize>>::new();
+    for (index, candidate) in pending_candidates.iter().enumerate() {
+        metrics.record_dependency_candidate_probe();
+        let unresolved_count = candidate.dependency_ids.len();
+        unresolved_dependency_counts.push(unresolved_count);
+        if unresolved_count == 0 {
+            ready_indices.push(Reverse(index));
+        }
+        for dependency_id in &candidate.dependency_ids {
+            if candidate_index_by_id.contains_key(dependency_id) {
+                dependent_indices_by_id
+                    .entry(*dependency_id)
+                    .or_default()
+                    .push(index);
+            }
+        }
+    }
+    let mut pending_candidates = pending_candidates.into_iter().map(Some).collect::<Vec<_>>();
+    let mut remaining_candidate_count = pending_candidates.len();
     let mut occupied_slots = Vec::new();
     let mut scheduled_tasks = Vec::new();
     let mut scheduled_end_by_id = HashMap::new();
 
-    while !pending_candidates.is_empty() {
-        let index = pending_candidates
-            .iter()
-            .position(|candidate| {
-                metrics.record_dependency_candidate_probe();
-                candidate
-                    .dependency_ids
-                    .iter()
-                    .all(|id| scheduled_end_by_id.contains_key(id))
-            })
-            .unwrap_or(0);
-        let candidate = pending_candidates.remove(index);
+    while remaining_candidate_count > 0 {
+        let index = ready_indices
+            .pop()
+            .map(|Reverse(index)| index)
+            .filter(|index| pending_candidates[*index].is_some())
+            .or_else(|| pending_candidates.iter().position(Option::is_some))
+            .expect("remaining candidate count guarantees a pending candidate");
+        let candidate = pending_candidates[index]
+            .take()
+            .expect("ready candidate is pending");
+        remaining_candidate_count -= 1;
         let dependency_end = candidate
             .dependency_ids
             .iter()
@@ -513,6 +538,15 @@ fn schedule_tasks_by_priority_with_metrics(
             }
         }
         scheduled_end_by_id.insert(candidate.id, candidate_scheduled_end);
+        if let Some(dependent_indices) = dependent_indices_by_id.get(&candidate.id) {
+            for dependent_index in dependent_indices {
+                let unresolved_count = &mut unresolved_dependency_counts[*dependent_index];
+                *unresolved_count = unresolved_count.saturating_sub(1);
+                if *unresolved_count == 0 && pending_candidates[*dependent_index].is_some() {
+                    ready_indices.push(Reverse(*dependent_index));
+                }
+            }
+        }
     }
 
     metrics.record_sort();
