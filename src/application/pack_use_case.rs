@@ -134,20 +134,20 @@ fn pack_tasks_with_end_of_day_offset_minutes_and_metrics(
     let mut result = PackResult::default();
     for candidate in candidates {
         let mut packed_task_opt = None;
-        let current_planned_start_opt =
-            get_schedule_with_metrics(repository, &mut metrics.schedule)?
-                .into_iter()
-                .find(|scheduled| scheduled.task.id == candidate.task_id)
-                .map(|scheduled| scheduled.scheduled_start);
+        let current_schedule = get_schedule_with_metrics(repository, &mut metrics.schedule)?;
+        let current_planned_start_opt = current_schedule
+            .iter()
+            .find(|scheduled| scheduled.task.id == candidate.task_id)
+            .map(|scheduled| scheduled.scheduled_start);
         let Some(current_planned_start) = current_planned_start_opt else {
             continue;
         };
         let daily_leeway = calculate_daily_leeway(
             repository,
             free_time_manager,
+            &current_schedule,
             &target_dates,
             end_of_day_offset_minutes,
-            metrics,
         )?;
 
         for target_date in &target_dates {
@@ -350,14 +350,14 @@ fn collect_candidates(
 fn calculate_daily_leeway(
     repository: &dyn TaskRepositoryTrait,
     free_time_manager: &mut dyn FreeTimeManagerTrait,
+    schedule: &[ScheduledTaskView],
     target_dates: &[NaiveDate],
     end_of_day_offset_minutes: i64,
-    metrics: &mut PackMetrics,
 ) -> Result<HashMap<NaiveDate, i64>, ApplicationError> {
     let mut total_work_seconds = HashMap::<NaiveDate, i64>::new();
     let mut repetitive_work_seconds = HashMap::<NaiveDate, i64>::new();
 
-    for scheduled in get_schedule_with_metrics(repository, &mut metrics.schedule)? {
+    for scheduled in schedule {
         let date = try_subjective_date(scheduled.scheduled_start)?;
         if !target_dates.contains(&date) {
             continue;
