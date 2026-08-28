@@ -38,6 +38,11 @@ struct TaskScheduleCandidate {
     atomic: bool,
 }
 
+pub(crate) struct ScheduleContext {
+    candidates: Vec<TaskScheduleCandidate>,
+    last_synced_time: DateTime<Local>,
+}
+
 struct TaskScheduleAttributes {
     first_available_time: DateTime<Local>,
     neg_priority: i64,
@@ -98,26 +103,42 @@ pub(crate) fn get_schedule_with_first_available_time_overrides_and_metrics(
     first_available_time_overrides: &HashMap<Uuid, DateTime<Local>>,
     metrics: &mut ScheduleMetrics,
 ) -> Result<Vec<ScheduledTaskView>, ApplicationError> {
-    metrics.record_rebuild();
+    let context = build_schedule_context_with_metrics(repository, metrics)?;
+    get_schedule_from_context_with_overrides_and_metrics(
+        &context,
+        first_available_time_overrides,
+        metrics,
+    )
+}
+
+pub(crate) fn build_schedule_context_with_metrics(
+    repository: &dyn TaskRepositoryTrait,
+    metrics: &mut ScheduleMetrics,
+) -> Result<ScheduleContext, ApplicationError> {
     for project_root in repository.get_all_projects() {
         project_root
             .snapshot()
             .map_err(ApplicationError::TaskTree)?;
     }
+    Ok(ScheduleContext {
+        candidates: build_schedule_candidates(repository, metrics)?,
+        last_synced_time: repository.get_last_synced_time(),
+    })
+}
 
-    let mut candidates = build_schedule_candidates(repository, metrics)?;
+pub(crate) fn get_schedule_from_context_with_overrides_and_metrics(
+    context: &ScheduleContext,
+    first_available_time_overrides: &HashMap<Uuid, DateTime<Local>>,
+    metrics: &mut ScheduleMetrics,
+) -> Result<Vec<ScheduledTaskView>, ApplicationError> {
+    metrics.record_rebuild();
+    let mut candidates = context.candidates.clone();
     for candidate in &mut candidates {
-        if let Some(first_available_time) = first_available_time_overrides.get(
-            &candidate
-                .task
-                .get_id()
-                .map_err(ApplicationError::TaskTree)?,
-        ) {
-            candidate.first_available_time =
-                max(*first_available_time, repository.get_last_synced_time());
+        if let Some(first_available_time) = first_available_time_overrides.get(&candidate.id) {
+            candidate.first_available_time = max(*first_available_time, context.last_synced_time);
         }
     }
-    schedule_tasks_by_priority_with_metrics(&candidates, repository.get_last_synced_time(), metrics)
+    schedule_tasks_by_priority_with_metrics(&candidates, context.last_synced_time, metrics)
         .map_err(ApplicationError::TaskTree)?
         .into_iter()
         .map(|scheduled| {
