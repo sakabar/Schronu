@@ -714,7 +714,8 @@ pub(super) fn execute_defer_routine(
     Ok(())
 }
 
-// 長期間未起動時に蓄積した未完了taskのうち、短周期(7日以内)かつ締切から24時間以上経過したroutineを自動的に先送りする
+// 長期間未起動時に蓄積した未完了taskのうち、短周期(7日以内)のroutineを自動的に先送りする
+// 24時間の閾値により締切直後のroutineを対象外とし、1日以上滞留したものだけに限定する
 // 長周期のroutineは年次taskなど重要な予定を含み得るため、自動的には先送りしない
 pub(super) fn execute_defer_all_frequent_routines(
     task_repository: &mut dyn TaskRepositoryTrait,
