@@ -114,6 +114,61 @@ children:
 }
 
 #[test]
+fn test_task_snapshot_to_yaml_root限定fieldとchildren順を保つ() {
+    let now = Local.with_ymd_and_hms(2023, 5, 19, 1, 23, 45).unwrap();
+    let mut task = new_test_task_handle("親タスク").unwrap();
+    task.set_id(uuid!("67e55044-10b1-426f-9247-bb680e5fe0c8"))
+        .unwrap();
+    task.set_priority(5).unwrap();
+    task.set_project_category_opt(Some(ProjectCategory::Sustaining))
+        .unwrap();
+    task.set_create_time(now).unwrap();
+    task.set_start_time(now).unwrap();
+
+    let mut first_child = new_test_task_attr("子タスク1");
+    first_child.set_id(uuid!("0aaee735-3e22-4216-8b59-d56d5caf29ee"));
+    first_child.set_priority(4);
+    first_child.set_project_category_opt(Some(ProjectCategory::Sustaining));
+    first_child.set_create_time(now);
+    first_child.set_start_time(now);
+
+    let mut second_child = new_test_task_attr("子タスク2");
+    second_child.set_id(uuid!("7ffcba2f-80e0-4a44-aee9-d68e0d2d1256"));
+    second_child.set_priority(3);
+    second_child.set_project_category_opt(Some(ProjectCategory::Sustaining));
+    second_child.set_create_time(now);
+    second_child.set_start_time(now);
+
+    task.create_as_last_child(first_child);
+    task.create_as_last_child(second_child);
+
+    let snapshot = task.snapshot().unwrap();
+    let actual = task_snapshot_to_yaml(&snapshot);
+
+    let s = "
+name: '親タスク'
+id: 67e55044-10b1-426f-9247-bb680e5fe0c8
+priority: 5
+category: sustaining
+create_time: '2023/05/19 01:23:45'
+start_time: '2023/05/19 01:23:45'
+children:
+  - name: '子タスク1'
+    id: 0aaee735-3e22-4216-8b59-d56d5caf29ee
+    create_time: '2023/05/19 01:23:45'
+    start_time: '2023/05/19 01:23:45'
+  - name: '子タスク2'
+    id: 7ffcba2f-80e0-4a44-aee9-d68e0d2d1256
+    create_time: '2023/05/19 01:23:45'
+    start_time: '2023/05/19 01:23:45'
+";
+    let docs = YamlLoader::load_from_str(s).unwrap();
+    let expected_yaml: &Yaml = &docs[0];
+
+    assert_eq!(&actual, expected_yaml);
+}
+
+#[test]
 fn test_task_to_yaml_ユニークキー() {
     let mut task = new_test_task_handle("タスク1").unwrap();
     let id: Uuid = uuid!("67e55044-10b1-426f-9247-bb680e5fe0c8");
