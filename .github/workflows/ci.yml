@@ -28,6 +28,9 @@ jobs:
       - name: Run tests
         run: cargo test --locked
 
+      - name: Check scheduling operation limits
+        run: cargo test --locked --features benchmarking --test scheduling_benchmark_contract
+
       - name: Check formatting
         run: cargo fmt --check
 
