@@ -21,6 +21,33 @@ fn candidate(
     }
 }
 
+#[cfg(feature = "benchmarking")]
+#[test]
+fn schedule_tasks_by_priorityは依存待ちcandidateを毎回走査しない() {
+    let now = Local.with_ymd_and_hms(2026, 5, 10, 12, 0, 0).unwrap();
+    let child = candidate("child", now, -1, 60);
+    let child_id = child.id;
+    let mut candidates = (0..100)
+        .map(|index| {
+            let mut parent = candidate(&format!("parent-{index}"), now, -99, 0);
+            parent.rank = 1;
+            parent.dependency_ids = vec![child_id];
+            parent
+        })
+        .collect::<Vec<_>>();
+    candidates.push(child);
+    let mut metrics = ScheduleMetrics::default();
+
+    schedule_tasks_by_priority_with_metrics(&candidates, now, &mut metrics).unwrap();
+
+    assert!(
+        metrics.dependency_candidate_probe_count <= candidates.len(),
+        "dependency readiness probes exceeded one per candidate: {} > {}",
+        metrics.dependency_candidate_probe_count,
+        candidates.len()
+    );
+}
+
 #[test]
 fn schedule_tasks_by_priority_5分以下の空き時間には分割しない() {
     let now = Local.with_ymd_and_hms(2026, 5, 10, 12, 0, 0).unwrap();
