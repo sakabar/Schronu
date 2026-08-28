@@ -142,6 +142,10 @@ fn flatten診断は通常経路と同じ結果を返しschedule走査を計数�
         expected_repository.task_states().unwrap()
     );
     assert!(metrics.schedule.schedule_rebuild_count > 0);
+    assert_eq!(
+        metrics.schedule.candidate_count, 5,
+        "flatten should build immutable schedule candidates once"
+    );
     assert!(metrics.full_schedule_scan_element_count > 0);
     assert!(metrics.overload_iteration_count > 0);
     assert!(metrics.candidate_trial_count > 0);
