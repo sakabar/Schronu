@@ -1,11 +1,11 @@
-use crate::adapter::gateway::yaml::yaml_to_task;
+use crate::adapter::gateway::yaml::{task_snapshot_to_yaml, yaml_to_task};
 use crate::application::interface::{
     RepositoryReloadOutcome, TaskRepositoryError,
     TaskRepositoryOperation as ApplicationRepositoryOperation, TaskRepositoryTrait,
 };
 use crate::entity::task::extract_leaf_tasks_from_project;
 use crate::entity::task::extract_leaf_tasks_from_project_with_pending;
-use crate::entity::task::{task_to_yaml, Status, TaskHandle, TaskTreeError};
+use crate::entity::task::{Status, TaskHandle, TaskTreeError};
 use chrono::{DateTime, Local};
 use linked_hash_map::LinkedHashMap;
 use regex::Regex;
@@ -325,9 +325,10 @@ impl TaskRepository {
     }
 
     fn serialize_project(project: &Project) -> Result<Vec<u8>, TaskRepositoryError> {
-        let task_yaml = task_to_yaml(&project.root_task).map_err(|error| {
+        let snapshot = project.root_task.snapshot().map_err(|error| {
             TaskRepositoryError::new(ApplicationRepositoryOperation::Save, error)
         })?;
+        let task_yaml = task_snapshot_to_yaml(&snapshot);
         let mut project_hash = LinkedHashMap::new();
         project_hash.insert(Yaml::String(String::from("project")), task_yaml);
         let doc = Yaml::Hash(project_hash);

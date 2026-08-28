@@ -15,6 +15,512 @@ fn yaml_test_now() -> DateTime<Local> {
     Local.with_ymd_and_hms(2026, 8, 20, 12, 0, 0).unwrap()
 }
 
+#[cfg(test)]
+fn yaml_encode_test_now() -> DateTime<Local> {
+    Local.with_ymd_and_hms(2026, 8, 19, 0, 0, 0).unwrap()
+}
+
+#[cfg(test)]
+fn new_test_task_attr(name: &str) -> TaskAttr {
+    crate::test_support::new_task_attr_at(name, yaml_encode_test_now())
+}
+
+#[cfg(test)]
+fn new_test_task_handle(name: &str) -> Result<TaskHandle, TaskTreeError> {
+    crate::test_support::new_task_handle_at(name, yaml_encode_test_now())
+}
+
+#[test]
+fn test_task_to_yaml_正常系1_デフォルトの値と同じ場合は出力しない() {
+    let mut task = new_test_task_handle("タスク1").unwrap();
+    let id: Uuid = uuid!("67e55044-10b1-426f-9247-bb680e5fe0c8");
+    task.set_id(id).unwrap();
+    let now = Local.with_ymd_and_hms(2023, 5, 19, 1, 23, 45).unwrap();
+    task.set_create_time(now).unwrap();
+    task.set_start_time(now).unwrap();
+    let snapshot = task.snapshot().unwrap();
+    let actual = task_snapshot_to_yaml(&snapshot);
+
+    let s = "
+name: 'タスク1'
+id: 67e55044-10b1-426f-9247-bb680e5fe0c8
+create_time: '2023/05/19 01:23:45'
+start_time: '2023/05/19 01:23:45'
+";
+
+    let docs = YamlLoader::load_from_str(s).unwrap();
+    let expected_yaml: &Yaml = &docs[0];
+
+    assert_eq!(&actual, expected_yaml);
+}
+
+#[test]
+fn test_task_to_yaml_正常系2_再帰() {
+    let now = Local.with_ymd_and_hms(2023, 5, 19, 1, 23, 45).unwrap();
+    let mut task = new_test_task_handle("親タスク1").unwrap();
+    task.set_orig_status(Status::Pending).unwrap();
+    task.set_pending_until(Local.with_ymd_and_hms(2023, 4, 1, 12, 0, 0).unwrap())
+        .unwrap();
+    task.set_create_time(now).unwrap();
+    task.set_start_time(now).unwrap();
+    let id: Uuid = uuid!("67e55044-10b1-426f-9247-bb680e5fe0c8");
+    task.set_id(id).unwrap();
+
+    let mut task_attr_child_1 = new_test_task_attr("子タスク1");
+    task_attr_child_1.set_orig_status(Status::Pending);
+    task_attr_child_1.set_pending_until(Local.with_ymd_and_hms(2023, 4, 1, 12, 0, 0).unwrap());
+    task_attr_child_1.set_create_time(now);
+    task_attr_child_1.set_start_time(now);
+    let id_child_1: Uuid = uuid!("0aaee735-3e22-4216-8b59-d56d5caf29ee");
+    task_attr_child_1.set_id(id_child_1);
+
+    let mut task_attr_child_2 = new_test_task_attr("子タスク2");
+    task_attr_child_2.set_orig_status(Status::Pending);
+    task_attr_child_2.set_pending_until(Local.with_ymd_and_hms(2023, 4, 1, 12, 0, 0).unwrap());
+    task_attr_child_2.set_create_time(now);
+    task_attr_child_2.set_start_time(now);
+    let id_child_2: Uuid = uuid!("7ffcba2f-80e0-4a44-aee9-d68e0d2d1256");
+    task_attr_child_2.set_id(id_child_2);
+
+    task.create_as_last_child(task_attr_child_1);
+    task.create_as_last_child(task_attr_child_2);
+
+    let snapshot = task.snapshot().unwrap();
+    let actual = task_snapshot_to_yaml(&snapshot);
+
+    let s = "
+name: '親タスク1'
+id: 67e55044-10b1-426f-9247-bb680e5fe0c8
+status: pending
+pending_until: '2023/04/01 12:00:00'
+create_time: '2023/05/19 01:23:45'
+start_time: '2023/05/19 01:23:45'
+children:
+  - name: '子タスク1'
+    id: 0aaee735-3e22-4216-8b59-d56d5caf29ee
+    status: pending
+    pending_until: '2023/04/01 12:00:00'
+    create_time: '2023/05/19 01:23:45'
+    start_time: '2023/05/19 01:23:45'
+  - name: '子タスク2'
+    id: 7ffcba2f-80e0-4a44-aee9-d68e0d2d1256
+    status: pending
+    pending_until: '2023/04/01 12:00:00'
+    create_time: '2023/05/19 01:23:45'
+    start_time: '2023/05/19 01:23:45'
+";
+    let docs = YamlLoader::load_from_str(s).unwrap();
+    let expected_yaml: &Yaml = &docs[0];
+
+    assert_eq!(&actual, expected_yaml);
+}
+
+#[test]
+fn test_task_snapshot_to_yaml_root限定fieldとchildren順を保つ() {
+    let now = Local.with_ymd_and_hms(2023, 5, 19, 1, 23, 45).unwrap();
+    let mut task = new_test_task_handle("親タスク").unwrap();
+    task.set_id(uuid!("67e55044-10b1-426f-9247-bb680e5fe0c8"))
+        .unwrap();
+    task.set_priority(5).unwrap();
+    task.set_project_category_opt(Some(ProjectCategory::Sustaining))
+        .unwrap();
+    task.set_create_time(now).unwrap();
+    task.set_start_time(now).unwrap();
+
+    let mut first_child = new_test_task_attr("子タスク1");
+    first_child.set_id(uuid!("0aaee735-3e22-4216-8b59-d56d5caf29ee"));
+    first_child.set_priority(4);
+    first_child.set_project_category_opt(Some(ProjectCategory::Sustaining));
+    first_child.set_create_time(now);
+    first_child.set_start_time(now);
+
+    let mut second_child = new_test_task_attr("子タスク2");
+    second_child.set_id(uuid!("7ffcba2f-80e0-4a44-aee9-d68e0d2d1256"));
+    second_child.set_priority(3);
+    second_child.set_project_category_opt(Some(ProjectCategory::Sustaining));
+    second_child.set_create_time(now);
+    second_child.set_start_time(now);
+
+    task.create_as_last_child(first_child);
+    task.create_as_last_child(second_child);
+
+    let snapshot = task.snapshot().unwrap();
+    let actual = task_snapshot_to_yaml(&snapshot);
+
+    let s = "
+name: '親タスク'
+id: 67e55044-10b1-426f-9247-bb680e5fe0c8
+priority: 5
+category: sustaining
+create_time: '2023/05/19 01:23:45'
+start_time: '2023/05/19 01:23:45'
+children:
+  - name: '子タスク1'
+    id: 0aaee735-3e22-4216-8b59-d56d5caf29ee
+    create_time: '2023/05/19 01:23:45'
+    start_time: '2023/05/19 01:23:45'
+  - name: '子タスク2'
+    id: 7ffcba2f-80e0-4a44-aee9-d68e0d2d1256
+    create_time: '2023/05/19 01:23:45'
+    start_time: '2023/05/19 01:23:45'
+";
+    let docs = YamlLoader::load_from_str(s).unwrap();
+    let expected_yaml: &Yaml = &docs[0];
+
+    assert_eq!(&actual, expected_yaml);
+}
+
+#[test]
+fn test_task_to_yaml_ユニークキー() {
+    let mut task = new_test_task_handle("タスク1").unwrap();
+    let id: Uuid = uuid!("67e55044-10b1-426f-9247-bb680e5fe0c8");
+    task.set_id(id).unwrap();
+    let now = Local.with_ymd_and_hms(2023, 5, 19, 1, 23, 45).unwrap();
+    task.set_create_time(now).unwrap();
+    task.set_start_time(now).unwrap();
+    let snapshot = task.snapshot().unwrap();
+    let actual = task_snapshot_to_yaml(&snapshot);
+
+    let s = "
+name: 'タスク1'
+id: 67e55044-10b1-426f-9247-bb680e5fe0c8
+create_time: '2023/05/19 01:23:45'
+start_time: '2023/05/19 01:23:45'
+";
+    let docs = YamlLoader::load_from_str(s).unwrap();
+    let expected_yaml: &Yaml = &docs[0];
+
+    assert_eq!(&actual, expected_yaml);
+}
+
+#[test]
+fn test_task_to_yaml_project_category() {
+    let mut task = new_test_task_handle("タスク1").unwrap();
+    let id: Uuid = uuid!("67e55044-10b1-426f-9247-bb680e5fe0c8");
+    task.set_id(id).unwrap();
+    task.set_project_category_opt(Some(ProjectCategory::Sustaining))
+        .unwrap();
+    let now = Local.with_ymd_and_hms(2023, 5, 19, 1, 23, 45).unwrap();
+    task.set_create_time(now).unwrap();
+    task.set_start_time(now).unwrap();
+    let snapshot = task.snapshot().unwrap();
+    let actual = task_snapshot_to_yaml(&snapshot);
+
+    let s = "
+name: 'タスク1'
+id: 67e55044-10b1-426f-9247-bb680e5fe0c8
+category: sustaining
+create_time: '2023/05/19 01:23:45'
+start_time: '2023/05/19 01:23:45'
+";
+    let docs = YamlLoader::load_from_str(s).unwrap();
+    let expected_yaml: &Yaml = &docs[0];
+
+    assert_eq!(&actual, expected_yaml);
+}
+
+#[test]
+fn test_task_to_yaml_project_categoryは子タスクには出力しない() {
+    let now = Local.with_ymd_and_hms(2023, 5, 19, 1, 23, 45).unwrap();
+    let mut task = new_test_task_handle("親タスク").unwrap();
+    task.set_id(uuid!("67e55044-10b1-426f-9247-bb680e5fe0c8"))
+        .unwrap();
+    task.set_create_time(now).unwrap();
+    task.set_start_time(now).unwrap();
+
+    let mut task_attr_child = new_test_task_attr("子タスク");
+    task_attr_child.set_id(uuid!("0aaee735-3e22-4216-8b59-d56d5caf29ee"));
+    task_attr_child.set_create_time(now);
+    task_attr_child.set_start_time(now);
+    task_attr_child.set_project_category_opt(Some(ProjectCategory::Sustaining));
+
+    task.create_as_last_child(task_attr_child);
+
+    let snapshot = task.snapshot().unwrap();
+    let actual = task_snapshot_to_yaml(&snapshot);
+
+    let s = "
+name: '親タスク'
+id: 67e55044-10b1-426f-9247-bb680e5fe0c8
+create_time: '2023/05/19 01:23:45'
+start_time: '2023/05/19 01:23:45'
+children:
+  - name: '子タスク'
+    id: 0aaee735-3e22-4216-8b59-d56d5caf29ee
+    create_time: '2023/05/19 01:23:45'
+    start_time: '2023/05/19 01:23:45'
+";
+    let docs = YamlLoader::load_from_str(s).unwrap();
+    let expected_yaml: &Yaml = &docs[0];
+
+    assert_eq!(&actual, expected_yaml);
+}
+
+#[test]
+fn test_task_to_yaml_is_on_other_side() {
+    let mut task = new_test_task_handle("タスク1").unwrap();
+    let id: Uuid = uuid!("67e55044-10b1-426f-9247-bb680e5fe0c8");
+    task.set_id(id).unwrap();
+    task.set_is_on_other_side(true).unwrap();
+    let now = Local.with_ymd_and_hms(2023, 5, 19, 1, 23, 45).unwrap();
+    task.set_create_time(now).unwrap();
+    task.set_start_time(now).unwrap();
+    let snapshot = task.snapshot().unwrap();
+    let actual = task_snapshot_to_yaml(&snapshot);
+
+    let s = "
+name: 'タスク1'
+id: 67e55044-10b1-426f-9247-bb680e5fe0c8
+is_on_other_side: true
+create_time: '2023/05/19 01:23:45'
+start_time: '2023/05/19 01:23:45'
+";
+    let docs = YamlLoader::load_from_str(s).unwrap();
+    let expected_yaml: &Yaml = &docs[0];
+
+    assert_eq!(&actual, expected_yaml);
+}
+
+#[test]
+fn test_task_to_yaml_atomic() {
+    let mut task = new_test_task_handle("タスク1").unwrap();
+    let id: Uuid = uuid!("67e55044-10b1-426f-9247-bb680e5fe0c8");
+    task.set_id(id).unwrap();
+    task.set_atomic(true).unwrap();
+    let now = Local.with_ymd_and_hms(2023, 5, 19, 1, 23, 45).unwrap();
+    task.set_create_time(now).unwrap();
+    task.set_start_time(now).unwrap();
+    let snapshot = task.snapshot().unwrap();
+    let actual = task_snapshot_to_yaml(&snapshot);
+
+    let s = "
+name: 'タスク1'
+id: 67e55044-10b1-426f-9247-bb680e5fe0c8
+atomic: true
+create_time: '2023/05/19 01:23:45'
+start_time: '2023/05/19 01:23:45'
+";
+    let docs = YamlLoader::load_from_str(s).unwrap();
+    let expected_yaml: &Yaml = &docs[0];
+
+    assert_eq!(&actual, expected_yaml);
+}
+
+#[test]
+fn test_task_to_yaml_end_time_opt() {
+    let mut task = new_test_task_handle("タスク1").unwrap();
+    let id: Uuid = uuid!("67e55044-10b1-426f-9247-bb680e5fe0c8");
+    task.set_id(id).unwrap();
+    task.set_is_on_other_side(true).unwrap();
+    task.set_create_time(Local.with_ymd_and_hms(2023, 5, 19, 1, 23, 45).unwrap())
+        .unwrap();
+    task.set_start_time(Local.with_ymd_and_hms(2023, 5, 19, 2, 34, 56).unwrap())
+        .unwrap();
+    task.set_end_time_opt(Some(Local.with_ymd_and_hms(2023, 5, 19, 3, 45, 6).unwrap()))
+        .unwrap();
+    let snapshot = task.snapshot().unwrap();
+    let actual = task_snapshot_to_yaml(&snapshot);
+
+    let s = "
+name: 'タスク1'
+id: 67e55044-10b1-426f-9247-bb680e5fe0c8
+is_on_other_side: true
+create_time: '2023/05/19 01:23:45'
+start_time: '2023/05/19 02:34:56'
+end_time: '2023/05/19 03:45:06'
+";
+    let docs = YamlLoader::load_from_str(s).unwrap();
+    let expected_yaml: &Yaml = &docs[0];
+
+    assert_eq!(&actual, expected_yaml);
+}
+
+#[test]
+fn test_task_to_yaml_deadline_time_opt() {
+    let mut task = new_test_task_handle("タスク1").unwrap();
+    let id: Uuid = uuid!("67e55044-10b1-426f-9247-bb680e5fe0c8");
+    task.set_id(id).unwrap();
+    task.set_is_on_other_side(true).unwrap();
+    task.set_create_time(Local.with_ymd_and_hms(2023, 5, 19, 1, 23, 45).unwrap())
+        .unwrap();
+    task.set_start_time(Local.with_ymd_and_hms(2023, 5, 19, 2, 34, 56).unwrap())
+        .unwrap();
+    task.set_deadline_time_opt(Some(Local.with_ymd_and_hms(2023, 5, 19, 3, 45, 6).unwrap()))
+        .unwrap();
+    let snapshot = task.snapshot().unwrap();
+    let actual = task_snapshot_to_yaml(&snapshot);
+
+    let s = "
+name: 'タスク1'
+id: 67e55044-10b1-426f-9247-bb680e5fe0c8
+is_on_other_side: true
+create_time: '2023/05/19 01:23:45'
+start_time: '2023/05/19 02:34:56'
+deadline_time: '2023/05/19 03:45:06'
+";
+    let docs = YamlLoader::load_from_str(s).unwrap();
+    let expected_yaml: &Yaml = &docs[0];
+
+    assert_eq!(&actual, expected_yaml);
+}
+
+#[test]
+fn test_task_to_yaml_estimated_work_seconds() {
+    let mut task = new_test_task_handle("タスク1").unwrap();
+    let id: Uuid = uuid!("67e55044-10b1-426f-9247-bb680e5fe0c8");
+    task.set_id(id).unwrap();
+    task.set_is_on_other_side(true).unwrap();
+    task.set_create_time(Local.with_ymd_and_hms(2023, 5, 19, 1, 23, 45).unwrap())
+        .unwrap();
+    task.set_start_time(Local.with_ymd_and_hms(2023, 5, 19, 2, 34, 56).unwrap())
+        .unwrap();
+    task.set_estimated_work_seconds(1).unwrap();
+    let snapshot = task.snapshot().unwrap();
+    let actual = task_snapshot_to_yaml(&snapshot);
+
+    let s = "
+name: 'タスク1'
+id: 67e55044-10b1-426f-9247-bb680e5fe0c8
+is_on_other_side: true
+create_time: '2023/05/19 01:23:45'
+start_time: '2023/05/19 02:34:56'
+estimated_work_seconds: 1
+";
+    let docs = YamlLoader::load_from_str(s).unwrap();
+    let expected_yaml: &Yaml = &docs[0];
+
+    assert_eq!(&actual, expected_yaml);
+}
+
+#[test]
+fn test_task_to_yaml_actual_work_seconds() {
+    let mut task = new_test_task_handle("タスク1").unwrap();
+    let id: Uuid = uuid!("67e55044-10b1-426f-9247-bb680e5fe0c8");
+    task.set_id(id).unwrap();
+    task.set_is_on_other_side(true).unwrap();
+    task.set_create_time(Local.with_ymd_and_hms(2023, 5, 19, 1, 23, 45).unwrap())
+        .unwrap();
+    task.set_start_time(Local.with_ymd_and_hms(2023, 5, 19, 2, 34, 56).unwrap())
+        .unwrap();
+    task.set_actual_work_seconds(1).unwrap();
+    let snapshot = task.snapshot().unwrap();
+    let actual = task_snapshot_to_yaml(&snapshot);
+
+    let s = "
+name: 'タスク1'
+id: 67e55044-10b1-426f-9247-bb680e5fe0c8
+is_on_other_side: true
+create_time: '2023/05/19 01:23:45'
+start_time: '2023/05/19 02:34:56'
+actual_work_seconds: 1
+";
+    let docs = YamlLoader::load_from_str(s).unwrap();
+    let expected_yaml: &Yaml = &docs[0];
+
+    assert_eq!(&actual, expected_yaml);
+}
+
+#[test]
+fn test_task_to_yaml_repetition_interval() {
+    let mut task = new_test_task_handle("タスク1").unwrap();
+    let id: Uuid = uuid!("67e55044-10b1-426f-9247-bb680e5fe0c8");
+    task.set_id(id).unwrap();
+    task.set_repetition_interval_days_opt(Some(7)).unwrap();
+    let now = Local.with_ymd_and_hms(2023, 5, 19, 1, 23, 45).unwrap();
+    task.set_create_time(now).unwrap();
+    task.set_start_time(now).unwrap();
+    let snapshot = task.snapshot().unwrap();
+    let actual = task_snapshot_to_yaml(&snapshot);
+
+    let s = "
+name: 'タスク1'
+id: 67e55044-10b1-426f-9247-bb680e5fe0c8
+create_time: '2023/05/19 01:23:45'
+start_time: '2023/05/19 01:23:45'
+repetition_interval_days: 7
+";
+    let docs = YamlLoader::load_from_str(s).unwrap();
+    let expected_yaml: &Yaml = &docs[0];
+
+    assert_eq!(&actual, expected_yaml);
+}
+
+#[test]
+fn test_task_to_yaml_repetition_anchor_completion() {
+    let mut task = new_test_task_handle("タスク1").unwrap();
+    let id: Uuid = uuid!("67e55044-10b1-426f-9247-bb680e5fe0c8");
+    task.set_id(id).unwrap();
+    task.set_repetition_anchor(RepetitionAnchor::Completion)
+        .unwrap();
+    let now = Local.with_ymd_and_hms(2023, 5, 19, 1, 23, 45).unwrap();
+    task.set_create_time(now).unwrap();
+    task.set_start_time(now).unwrap();
+    let snapshot = task.snapshot().unwrap();
+    let actual = task_snapshot_to_yaml(&snapshot);
+
+    let s = "
+name: 'タスク1'
+id: 67e55044-10b1-426f-9247-bb680e5fe0c8
+create_time: '2023/05/19 01:23:45'
+start_time: '2023/05/19 01:23:45'
+repetition_anchor: completion
+";
+    let docs = YamlLoader::load_from_str(s).unwrap();
+    let expected_yaml: &Yaml = &docs[0];
+
+    assert_eq!(&actual, expected_yaml);
+}
+
+#[test]
+fn test_task_to_yaml_repetition_anchor_deadlineは出力しない() {
+    let mut task = new_test_task_handle("タスク1").unwrap();
+    let id: Uuid = uuid!("67e55044-10b1-426f-9247-bb680e5fe0c8");
+    task.set_id(id).unwrap();
+    task.set_repetition_anchor(RepetitionAnchor::Deadline)
+        .unwrap();
+    let now = Local.with_ymd_and_hms(2023, 5, 19, 1, 23, 45).unwrap();
+    task.set_create_time(now).unwrap();
+    task.set_start_time(now).unwrap();
+    let snapshot = task.snapshot().unwrap();
+    let actual = task_snapshot_to_yaml(&snapshot);
+
+    let s = "
+name: 'タスク1'
+id: 67e55044-10b1-426f-9247-bb680e5fe0c8
+create_time: '2023/05/19 01:23:45'
+start_time: '2023/05/19 01:23:45'
+";
+    let docs = YamlLoader::load_from_str(s).unwrap();
+    let expected_yaml: &Yaml = &docs[0];
+
+    assert_eq!(&actual, expected_yaml);
+}
+
+#[test]
+fn test_task_to_yaml_days_in_advance() {
+    let mut task = new_test_task_handle("タスク1").unwrap();
+    let id: Uuid = uuid!("67e55044-10b1-426f-9247-bb680e5fe0c8");
+    task.set_id(id).unwrap();
+    task.set_days_in_advance(1).unwrap();
+    let now = Local.with_ymd_and_hms(2023, 5, 19, 1, 23, 45).unwrap();
+    task.set_create_time(now).unwrap();
+    task.set_start_time(now).unwrap();
+    let snapshot = task.snapshot().unwrap();
+    let actual = task_snapshot_to_yaml(&snapshot);
+
+    let s = "
+name: 'タスク1'
+id: 67e55044-10b1-426f-9247-bb680e5fe0c8
+create_time: '2023/05/19 01:23:45'
+start_time: '2023/05/19 01:23:45'
+days_in_advance: 1
+";
+    let docs = YamlLoader::load_from_str(s).unwrap();
+    let expected_yaml: &Yaml = &docs[0];
+
+    assert_eq!(&actual, expected_yaml);
+}
+
 #[test]
 fn test_yaml_to_immutable_task_childrenキーが存在しない場合は空配列として登録されること() {
     let s = "

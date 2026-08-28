@@ -1,11 +1,9 @@
 use chrono::{DateTime, Duration, Local};
 use dendron::{HotNode, InsertAs, Node};
-use linked_hash_map::LinkedHashMap;
 use serde::Serialize;
 use std::cmp::{max, min};
 use std::fmt;
 use uuid::Uuid;
-use yaml_rust::Yaml;
 
 use crate::entity::datetime::{BusinessDateTimePolicy, DEFAULT_END_OF_DAY_OFFSET_MINUTES};
 
@@ -1422,12 +1420,6 @@ impl TaskHandle {
         Ok(false)
     }
 
-    // 外から見て、ダミーノードのことは考慮させないように、ダミーノードの子で評価
-    fn is_root(&self) -> Result<bool, TaskTreeError> {
-        let root = self.root()?;
-        Ok(self.node.ptr_eq(&root.node))
-    }
-
     pub fn tree_debug_pretty_print(&self) -> Result<String, TaskTreeError> {
         self.get_attr()?;
         Ok(format!("{:?}", self.node.tree().debug_pretty_print()))
@@ -1581,162 +1573,6 @@ impl TaskHandle {
 
         Ok(ans)
     }
-}
-
-// 詳細な構造を知っていたほうが構築しやすいので、gatewayではなくtaskの中で定義する
-pub fn task_to_yaml(task: &TaskHandle) -> Result<Yaml, TaskTreeError> {
-    let default_attr = TaskAttr::with_identity(
-        "デフォルト用",
-        Uuid::nil(),
-        DateTime::<Local>::MIN_UTC.into(),
-    );
-
-    let mut task_hash = LinkedHashMap::new();
-
-    task_hash.insert(
-        Yaml::String(String::from("name")),
-        Yaml::String(task.get_name()?),
-    );
-
-    task_hash.insert(
-        Yaml::String(String::from("id")),
-        Yaml::String(task.get_id()?.to_string()),
-    );
-
-    let orig_status = task.get_orig_status()?;
-    if orig_status != *default_attr.get_orig_status() {
-        task_hash.insert(
-            Yaml::String(String::from("status")),
-            Yaml::String(orig_status.to_string()),
-        );
-    }
-
-    let is_on_other_side = task.get_is_on_other_side()?;
-    if is_on_other_side != *default_attr.get_is_on_other_side() {
-        task_hash.insert(
-            Yaml::String(String::from("is_on_other_side")),
-            Yaml::Boolean(is_on_other_side),
-        );
-    }
-
-    let atomic = task.get_atomic()?;
-    if atomic != default_attr.get_atomic() {
-        task_hash.insert(Yaml::String(String::from("atomic")), Yaml::Boolean(atomic));
-    }
-
-    let pending_until = task.get_pending_until()?;
-    if pending_until != *default_attr.get_pending_until() {
-        let pending_until_string = pending_until.format("%Y/%m/%d %H:%M:%S").to_string();
-        task_hash.insert(
-            Yaml::String(String::from("pending_until")),
-            Yaml::String(pending_until_string),
-        );
-    }
-
-    let priority = task.get_priority()?;
-    if task.is_root()? && priority != default_attr.get_priority() {
-        task_hash.insert(
-            Yaml::String(String::from("priority")),
-            Yaml::Integer(priority),
-        );
-    }
-
-    if task.is_root()? {
-        if let Some(project_category) = task.get_project_category_opt()? {
-            task_hash.insert(
-                Yaml::String(String::from("category")),
-                Yaml::String(project_category.to_string()),
-            );
-        }
-    }
-
-    let create_time = task.get_create_time()?;
-    let create_time_string = create_time.format("%Y/%m/%d %H:%M:%S").to_string();
-    task_hash.insert(
-        Yaml::String(String::from("create_time")),
-        Yaml::String(create_time_string),
-    );
-
-    let start_time = task.get_start_time()?;
-    let start_time_string = start_time.format("%Y/%m/%d %H:%M:%S").to_string();
-    task_hash.insert(
-        Yaml::String(String::from("start_time")),
-        Yaml::String(start_time_string),
-    );
-
-    let end_time_opt = task.get_end_time_opt()?;
-    if let Some(end_time) = end_time_opt {
-        let end_time_string = end_time.format("%Y/%m/%d %H:%M:%S").to_string();
-        task_hash.insert(
-            Yaml::String(String::from("end_time")),
-            Yaml::String(end_time_string),
-        );
-    }
-
-    let deadline_time_opt = task.get_deadline_time_opt()?;
-    if let Some(deadline_time) = deadline_time_opt {
-        let deadline_time_string = deadline_time.format("%Y/%m/%d %H:%M:%S").to_string();
-        task_hash.insert(
-            Yaml::String(String::from("deadline_time")),
-            Yaml::String(deadline_time_string),
-        );
-    }
-
-    let estimated_work_seconds = task.get_estimated_work_seconds()?;
-    if estimated_work_seconds != default_attr.get_estimated_work_seconds() {
-        task_hash.insert(
-            Yaml::String(String::from("estimated_work_seconds")),
-            Yaml::Integer(estimated_work_seconds),
-        );
-    }
-
-    let actual_work_seconds = task.get_actual_work_seconds()?;
-    if actual_work_seconds != default_attr.get_actual_work_seconds() {
-        task_hash.insert(
-            Yaml::String(String::from("actual_work_seconds")),
-            Yaml::Integer(actual_work_seconds),
-        );
-    }
-
-    let repetition_interval_days_opt = task.get_repetition_interval_days_opt()?;
-    if let Some(repetition_interval_days) = repetition_interval_days_opt {
-        task_hash.insert(
-            Yaml::String(String::from("repetition_interval_days")),
-            Yaml::Integer(repetition_interval_days),
-        );
-    }
-
-    let repetition_anchor = task.get_repetition_anchor()?;
-    if repetition_anchor != default_attr.get_repetition_anchor() {
-        task_hash.insert(
-            Yaml::String(String::from("repetition_anchor")),
-            Yaml::String(repetition_anchor.to_string()),
-        );
-    }
-
-    let days_in_advance = task.get_days_in_advance()?;
-    if days_in_advance != default_attr.get_days_in_advance() {
-        task_hash.insert(
-            Yaml::String(String::from("days_in_advance")),
-            Yaml::Integer(days_in_advance),
-        );
-    }
-
-    let mut children = vec![];
-    for child_node in task.node.children() {
-        let child_task = TaskHandle { node: child_node };
-        let child_yaml = task_to_yaml(&child_task)?;
-        children.push(child_yaml);
-    }
-
-    if !children.is_empty() {
-        task_hash.insert(
-            Yaml::String(String::from("children")),
-            Yaml::Array(children),
-        );
-    }
-
-    Ok(Yaml::Hash(task_hash))
 }
 
 #[cfg(test)]

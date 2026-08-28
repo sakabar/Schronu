@@ -44,7 +44,7 @@
 | TD-006 | P1 | 完了 | L | CLIの入力・application・出力エラーが握り潰される |
 | TD-007 | P1 | 完了 | L | CLIとMCPでrepository transactionが別々に組み立てられている |
 | TD-008 | P1 | 完了 | M | CIがリポジトリ規約を満たさず、ビルド再現性も固定されていない |
-| TD-009 | P2 | 未着手 | L | entity層がYAML形式へ依存している |
+| TD-009 | P2 | 完了 | L | entity層がYAML形式へ依存している |
 | TD-010 | P2 | 完了 | L | 現在時刻、UUID、業務日境界がドメイン内部へ埋め込まれている |
 | TD-011 | P2 | 完了 | L | MCPのschema、入力検証、Rust入力型、JSON出力が重複している |
 | TD-012 | P2 | 未着手 | L | flatten・pack・scheduleの再計算コストに性能上限が定義されていない |
@@ -469,6 +469,9 @@
 
 - 優先度: `P2`
 - 概算規模: `L`
+- 完了日: 2026-08-28
+- 対応: YAML encodeとその契約testをgatewayへ集約した。repositoryは`TaskHandle`から`TaskSnapshot`を1回だけ取得し、pure encoderがsnapshotからproject YAMLを生成する。entityから`yaml_rust`、`LinkedHashMap`、永続化encoderを除去し、既存format、key順、既定field省略、root限定の`priority` / `category`を維持した。保存bytesとstrict decodeとのround-tripも契約testで固定した。
+- 検証: `cargo fmt --check`、`cargo clippy --locked --all-targets -- -D warnings`、`cargo test --locked`に成功した。testはlib 519件成功、1件ignored、CLI binary 443件、MCP binary 2件、MCP stdio 13件、Spreadsheet 4件が成功し、失敗は0件だった。`rg -n 'yaml_rust|LinkedHashMap|task_to_yaml' src/entity`が0件であることも静的監査した。
 
 #### 現状と根拠
 
@@ -786,7 +789,7 @@
 3. TD-003で永続化データのsilent fallbackを止める。厳格化前に既存データのdry-run検査を行う。
 4. TD-006とTD-007でerror・transaction境界を整え、adapter間の挙動を統一する。
 5. TD-013でSpreadsheet互換fixtureを固定してからTD-005のCLI境界分割を行う。その後、TD-015のCLI characterization testと`test_support`分離を先行し、残るruntime縮小と意味的表示model分離をTD-018で進める。
-6. TD-010、TD-009、TD-004の順でdomain境界を狭める。tree実装の全面変更は最後の独立段階にする。
+6. TD-010、TD-009、TD-004はいずれも完了済みである。domain境界の縮小とtree実装の全面変更は、それぞれ独立した段階として実施した。
 7. TD-011、TD-015を独立して進める。TD-015のCLI fixture分離はTD-018の製品コード移動とcommitを分ける。
 8. TD-012はbenchmark結果を取得してから最適化範囲を決める。
 9. TD-016は関連する上位項目の完了時に、小さいcleanup commitとして解消する。

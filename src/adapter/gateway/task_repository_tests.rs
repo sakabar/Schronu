@@ -194,6 +194,161 @@ fn test_save_新規projectのdirectoryとyamlを作る() {
     assert_eq!(loaded_task.get_name().unwrap(), "保存対象");
 }
 
+fn project_with_all_persisted_yaml_fields() -> Project {
+    let now = Local.with_ymd_and_hms(2026, 8, 28, 12, 0, 0).unwrap();
+    let create_time = Local.with_ymd_and_hms(2024, 1, 2, 3, 4, 5).unwrap();
+    let start_time = Local.with_ymd_and_hms(2025, 2, 3, 4, 5, 6).unwrap();
+    let end_time = Local.with_ymd_and_hms(2025, 3, 4, 5, 6, 7).unwrap();
+    let pending_until = Local.with_ymd_and_hms(2037, 12, 31, 23, 59, 59).unwrap();
+    let deadline_time = Local.with_ymd_and_hms(2040, 4, 5, 6, 7, 8).unwrap();
+    let root_task = TaskHandle::with_identity(
+        "root task",
+        uuid::uuid!("67e55044-10b1-426f-9247-bb680e5fe0c8"),
+        now,
+    )
+    .unwrap();
+    root_task.set_orig_status(Status::Pending).unwrap();
+    root_task.set_is_on_other_side(true).unwrap();
+    root_task.set_atomic(true).unwrap();
+    root_task.set_pending_until(pending_until).unwrap();
+    root_task.set_priority(8).unwrap();
+    root_task
+        .set_project_category_opt(Some(crate::entity::task::ProjectCategory::Investment))
+        .unwrap();
+    root_task.set_create_time(create_time).unwrap();
+    root_task.set_start_time(start_time).unwrap();
+    root_task.set_end_time_opt(Some(end_time)).unwrap();
+    root_task
+        .set_deadline_time_opt(Some(deadline_time))
+        .unwrap();
+    root_task.set_estimated_work_seconds(3600).unwrap();
+    root_task.set_actual_work_seconds(120).unwrap();
+    root_task.set_repetition_interval_days_opt(Some(7)).unwrap();
+    root_task
+        .set_repetition_anchor(crate::entity::task::RepetitionAnchor::Completion)
+        .unwrap();
+    root_task.set_days_in_advance(3).unwrap();
+
+    let mut child_attr = crate::entity::task::TaskAttr::with_identity(
+        "child task",
+        uuid::uuid!("0aaee735-3e22-4216-8b59-d56d5caf29ee"),
+        now,
+    );
+    child_attr.set_orig_status(Status::Pending);
+    child_attr.set_is_on_other_side(true);
+    child_attr.set_atomic(true);
+    child_attr.set_pending_until(pending_until);
+    child_attr.set_priority(99);
+    child_attr.set_project_category_opt(Some(crate::entity::task::ProjectCategory::Consumption));
+    child_attr.set_create_time(create_time);
+    child_attr.set_start_time(start_time);
+    child_attr.set_end_time_opt(Some(end_time));
+    child_attr.set_deadline_time_opt(Some(deadline_time));
+    child_attr.set_estimated_work_seconds(1800);
+    child_attr.set_actual_work_seconds(60);
+    child_attr.set_repetition_interval_days_opt(Some(2));
+    child_attr.set_repetition_anchor(crate::entity::task::RepetitionAnchor::Completion);
+    child_attr.set_days_in_advance(1);
+    root_task.create_as_last_child(child_attr);
+    let default_child_attr = crate::entity::task::TaskAttr::with_identity(
+        "default child",
+        uuid::uuid!("7ffcba2f-80e0-4a44-aee9-d68e0d2d1256"),
+        now,
+    );
+    root_task.create_as_last_child(default_child_attr);
+
+    Project::new(root_task, "", "project.yaml", 8)
+}
+
+#[test]
+fn test_project_yaml保存bytesはkey順_既定値省略_root限定field_children_末尾改行を保つ() {
+    let project = project_with_all_persisted_yaml_fields();
+
+    let actual = TaskRepository::serialize_project(&project).unwrap();
+
+    let expected = b"---\nproject:\n  name: root task\n  id: 67e55044-10b1-426f-9247-bb680e5fe0c8\n  status: pending\n  is_on_other_side: true\n  atomic: true\n  pending_until: \"2037/12/31 23:59:59\"\n  priority: 8\n  category: investment\n  create_time: \"2024/01/02 03:04:05\"\n  start_time: \"2025/02/03 04:05:06\"\n  end_time: \"2025/03/04 05:06:07\"\n  deadline_time: \"2040/04/05 06:07:08\"\n  estimated_work_seconds: 3600\n  actual_work_seconds: 120\n  repetition_interval_days: 7\n  repetition_anchor: completion\n  days_in_advance: 3\n  children:\n    - name: child task\n      id: 0aaee735-3e22-4216-8b59-d56d5caf29ee\n      status: pending\n      is_on_other_side: true\n      atomic: true\n      pending_until: \"2037/12/31 23:59:59\"\n      create_time: \"2024/01/02 03:04:05\"\n      start_time: \"2025/02/03 04:05:06\"\n      end_time: \"2025/03/04 05:06:07\"\n      deadline_time: \"2040/04/05 06:07:08\"\n      estimated_work_seconds: 1800\n      actual_work_seconds: 60\n      repetition_interval_days: 2\n      repetition_anchor: completion\n      days_in_advance: 1\n    - name: default child\n      id: 7ffcba2f-80e0-4a44-aee9-d68e0d2d1256\n      create_time: \"2026/08/28 12:00:00\"\n      start_time: \"2026/08/28 12:00:00\"\n";
+    assert_eq!(actual, expected);
+    assert_eq!(actual.last(), Some(&b'\n'));
+}
+
+fn assert_yaml_persisted_task_fields(
+    actual: &TaskHandle,
+    expected: &TaskHandle,
+) -> Result<(), TaskTreeError> {
+    let actual = actual.get_attr()?;
+    let expected = expected.get_attr()?;
+    assert_eq!(actual.get_id(), expected.get_id());
+    assert_eq!(actual.get_name(), expected.get_name());
+    assert_eq!(actual.get_orig_status(), expected.get_orig_status());
+    assert_eq!(
+        actual.get_is_on_other_side(),
+        expected.get_is_on_other_side()
+    );
+    assert_eq!(actual.get_atomic(), expected.get_atomic());
+    assert_eq!(actual.get_pending_until(), expected.get_pending_until());
+    assert_eq!(actual.get_create_time(), expected.get_create_time());
+    assert_eq!(actual.get_start_time(), expected.get_start_time());
+    assert_eq!(actual.get_end_time_opt(), expected.get_end_time_opt());
+    assert_eq!(
+        actual.get_deadline_time_opt(),
+        expected.get_deadline_time_opt()
+    );
+    assert_eq!(
+        actual.get_estimated_work_seconds(),
+        expected.get_estimated_work_seconds()
+    );
+    assert_eq!(
+        actual.get_actual_work_seconds(),
+        expected.get_actual_work_seconds()
+    );
+    assert_eq!(
+        actual.get_repetition_interval_days_opt(),
+        expected.get_repetition_interval_days_opt()
+    );
+    assert_eq!(
+        actual.get_repetition_anchor(),
+        expected.get_repetition_anchor()
+    );
+    assert_eq!(actual.get_days_in_advance(), expected.get_days_in_advance());
+    Ok(())
+}
+
+#[test]
+fn test_project_yaml_strict_round_tripは子のpriority_category以外の全永続fieldとuuidを保つ() {
+    let project = project_with_all_persisted_yaml_fields();
+    let bytes = TaskRepository::serialize_project(&project).unwrap();
+    let text = std::str::from_utf8(&bytes).unwrap();
+    let docs = YamlLoader::load_from_str(text).unwrap();
+    let now = Local.with_ymd_and_hms(2026, 8, 28, 12, 0, 0).unwrap();
+
+    let actual = yaml_to_task(&docs[0]["project"], now).unwrap();
+
+    assert_yaml_persisted_task_fields(&actual, &project.root_task).unwrap();
+    assert_eq!(actual.get_priority().unwrap(), 8);
+    assert_eq!(
+        actual.get_project_category_opt().unwrap(),
+        Some(crate::entity::task::ProjectCategory::Investment)
+    );
+    let actual_children = actual.get_children().unwrap();
+    let expected_children = project.root_task.get_children().unwrap();
+    assert_eq!(actual_children.len(), 2);
+    let actual_child = &actual_children[0];
+    let expected_child = &expected_children[0];
+    assert_yaml_persisted_task_fields(actual_child, expected_child).unwrap();
+    let actual_child_attr = actual_child.get_attr().unwrap();
+    assert_eq!(actual_child_attr.get_priority(), 0);
+    assert_eq!(actual_child_attr.get_project_category_opt(), None);
+    assert_eq!(expected_child.get_attr().unwrap().get_priority(), 99);
+    assert_eq!(
+        expected_child
+            .get_attr()
+            .unwrap()
+            .get_project_category_opt(),
+        Some(crate::entity::task::ProjectCategory::Consumption)
+    );
+    assert_yaml_persisted_task_fields(&actual_children[1], &expected_children[1]).unwrap();
+}
+
 #[test]
 fn test_save_directory作成失敗を型付きerrorで返す() {
     let storage_dir = TestStorageDir::new();
