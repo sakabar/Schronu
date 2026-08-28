@@ -749,7 +749,7 @@
 - 優先度: `P3`
 - 概算規模: `M`
 - 完了日: 2026-08-29
-- 対応: TD-001、TD-010等で既に06:00の業務日境界、5分・60分のdeadline buffer、30分の日次終端offset、28日・35日のflatten範囲をpolicy化し、busy-timeの70日限定展開を解消していた。今回、1400日のproject延期、一覧表示の28日・幅70・fallback日付、日次1440分を意味付きpolicyへ集約した。`BusyTimeSlot`をcrate内部APIへ限定して未使用のname保持を除去し、YAMLの`name`必須・文字列validationは維持した。古いcommented code、疑問形コメント、FIXME、task statusを指す`TODO`表記を整理した。CLI、YAML、MCP、Spreadsheetの挙動は変更していない。
+- 対応: TD-001、TD-010等で既に06:00の業務日境界、5分・60分のdeadline buffer、30分の日次終端offset、28日・35日のflatten範囲をpolicy化し、busy-timeの70日限定展開を解消していた。今回、1日・1400日のproject初期延期、一覧表示の28日・幅70・fallback日付、日次1440分を意味付きpolicyへ集約した。`BusyTimeSlot`をcrate内部APIへ限定して未使用のname保持を除去し、YAMLの`name`必須・文字列validationは維持した。古いcommented code、疑問形コメント、FIXME、task statusを指す`TODO`表記を整理した。CLI、YAML、MCP、Spreadsheetの挙動は変更していない。
 - 検証: `cargo fmt --check`、`cargo clippy --locked --all-targets -- -D warnings`、`cargo test --locked`、`git diff --check`に成功した。testは982件成功、1件ignored、失敗0件だった。
 
 #### 現状と根拠
