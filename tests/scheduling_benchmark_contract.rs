@@ -1,10 +1,13 @@
 #![cfg(feature = "benchmarking")]
 
+#[path = "support/scheduling_benchmark_limits.rs"]
+mod scheduling_benchmark_limits;
 #[path = "support/scheduling_fixture.rs"]
 mod scheduling_fixture;
 #[path = "support/scheduling_harness.rs"]
 mod scheduling_harness;
 
+use scheduling_benchmark_limits::FLATTEN_BENCHMARK_CAPACITY_MINUTES;
 use scheduling_fixture::{FixtureSize, SchedulingFixture};
 use scheduling_harness::{SchedulingFreeTimeManager, SchedulingRepository};
 use schronu::application::benchmarking::{
@@ -166,4 +169,48 @@ fn pack診断はatomic探索の1分前進量を計数する() {
     let (_, metrics) = pack_tasks_diagnostics(&repository, &mut no_free_time).unwrap();
 
     assert!(metrics.cursor_minute_advance_count > 0);
+}
+
+#[test]
+fn typicalとstressは決定論的な処理回数上限内に収まる() {
+    for size in [FixtureSize::Typical, FixtureSize::Stress] {
+        assert_fixture_counter_bounds(size);
+    }
+}
+
+fn assert_fixture_counter_bounds(size: FixtureSize) {
+    let fixture = SchedulingFixture::build(size).unwrap();
+    let repository = SchedulingRepository::new(fixture.projects, fixture.now);
+    let (_, schedule) = get_schedule_diagnostics(&repository).unwrap();
+    assert!(schedule.occupied_slot_probe_count <= schedule.candidate_count * 20);
+    assert!(schedule.dependency_candidate_probe_count <= schedule.candidate_count);
+    assert!(schedule.sort_count <= 4);
+
+    let fixture = SchedulingFixture::build(size).unwrap();
+    let repository = SchedulingRepository::new(fixture.projects, fixture.now);
+    let mut pack_free_time = SchedulingFreeTimeManager::new(DAILY_FREE_MINUTES);
+    let (pack_result, pack) = pack_tasks_diagnostics(&repository, &mut pack_free_time).unwrap();
+    assert!(
+        pack.schedule.schedule_rebuild_count
+            <= 1 + pack_result.packed_tasks.len() + pack.placement_trial_count
+    );
+
+    let fixture = SchedulingFixture::build(size).unwrap();
+    let repository = SchedulingRepository::new(fixture.projects, fixture.now);
+    let mut flatten_free_time = SchedulingFreeTimeManager::new(FLATTEN_BENCHMARK_CAPACITY_MINUTES);
+    let (_, flatten) = flatten_tasks_diagnostics(&repository, &mut flatten_free_time).unwrap();
+    assert!(flatten.overload_iteration_count > 0);
+    assert!(flatten.overload_iteration_count <= 64);
+    assert!(flatten.candidate_trial_count <= 128);
+    assert_eq!(flatten.override_clone_element_count, 0);
+    assert_eq!(flatten.schedule.candidate_count, schedule.candidate_count);
+    assert!(
+        flatten.schedule.dependency_candidate_probe_count
+            <= flatten.schedule.candidate_count * flatten.schedule.schedule_rebuild_count
+    );
+    assert!(
+        flatten.schedule.occupied_slot_probe_count
+            <= flatten.schedule.candidate_count * flatten.schedule.schedule_rebuild_count * 20
+    );
+    assert!(flatten.full_schedule_scan_element_count <= flatten.schedule.segment_count * 6);
 }
