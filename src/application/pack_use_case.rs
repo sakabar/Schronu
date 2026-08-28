@@ -121,7 +121,8 @@ fn pack_tasks_with_end_of_day_offset_minutes_and_metrics(
             )
         })
         .collect::<Result<Vec<_>, _>>()?;
-    let mut candidates = collect_candidates(repository, &target_dates, metrics)?;
+    let mut current_schedule = get_schedule_with_metrics(repository, &mut metrics.schedule)?;
+    let mut candidates = collect_candidates(&current_schedule, &target_dates)?;
     metrics.record_candidate_count(candidates.len());
     candidates.sort_by_key(|candidate| {
         (
@@ -132,9 +133,15 @@ fn pack_tasks_with_end_of_day_offset_minutes_and_metrics(
     });
 
     let mut result = PackResult::default();
+    let mut daily_leeway_opt = None;
+    let mut schedule_dirty = false;
     for candidate in candidates {
         let mut packed_task_opt = None;
-        let current_schedule = get_schedule_with_metrics(repository, &mut metrics.schedule)?;
+        if schedule_dirty {
+            current_schedule = get_schedule_with_metrics(repository, &mut metrics.schedule)?;
+            daily_leeway_opt = None;
+            schedule_dirty = false;
+        }
         let current_planned_start_opt = current_schedule
             .iter()
             .find(|scheduled| scheduled.task.id == candidate.task_id)
@@ -142,13 +149,18 @@ fn pack_tasks_with_end_of_day_offset_minutes_and_metrics(
         let Some(current_planned_start) = current_planned_start_opt else {
             continue;
         };
-        let daily_leeway = calculate_daily_leeway(
-            repository,
-            free_time_manager,
-            &current_schedule,
-            &target_dates,
-            end_of_day_offset_minutes,
-        )?;
+        if daily_leeway_opt.is_none() {
+            daily_leeway_opt = Some(calculate_daily_leeway(
+                repository,
+                free_time_manager,
+                &current_schedule,
+                &target_dates,
+                end_of_day_offset_minutes,
+            )?);
+        }
+        let daily_leeway = daily_leeway_opt
+            .as_ref()
+            .expect("daily leeway is initialized above");
 
         for target_date in &target_dates {
             if try_subjective_date(current_planned_start)? <= *target_date
@@ -192,6 +204,7 @@ fn pack_tasks_with_end_of_day_offset_minutes_and_metrics(
                 let source_date = try_subjective_date(current_planned_start)?;
                 task.set_pending_until(placement_start)
                     .map_err(ApplicationError::TaskTree)?;
+                schedule_dirty = true;
                 packed_task_opt = Some(PackedTask {
                     task_id: candidate.task_id,
                     name: candidate.name.clone(),
@@ -311,11 +324,9 @@ fn find_next_continuous_free_time(
 }
 
 fn collect_candidates(
-    repository: &dyn TaskRepositoryTrait,
+    schedule: &[ScheduledTaskView],
     target_dates: &[NaiveDate],
-    metrics: &mut PackMetrics,
 ) -> Result<Vec<PackCandidate>, ApplicationError> {
-    let schedule = get_schedule_with_metrics(repository, &mut metrics.schedule)?;
     let mut seen_ids = HashSet::new();
     let mut candidates = Vec::new();
     for scheduled in schedule {
@@ -337,7 +348,7 @@ fn collect_candidates(
         {
             candidates.push(PackCandidate {
                 task_id: scheduled.task.id,
-                name: scheduled.task.name,
+                name: scheduled.task.name.clone(),
                 priority: scheduled.task.priority,
                 planned_start: scheduled.scheduled_start,
                 work_seconds: scheduled.total_work_seconds,
