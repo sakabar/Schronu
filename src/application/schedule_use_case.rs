@@ -325,14 +325,24 @@ fn find_occupied_slot_starting_at(
 
 fn insert_occupied_slot(
     occupied_slots: &mut Vec<(DateTime<Local>, DateTime<Local>)>,
-    slot: (DateTime<Local>, DateTime<Local>),
+    mut slot: (DateTime<Local>, DateTime<Local>),
     metrics: &mut ScheduleMetrics,
 ) {
-    let index = occupied_slots.partition_point(|existing| {
+    let first_merged = occupied_slots.partition_point(|(_, existing_end)| {
         metrics.record_occupied_slot_probe();
-        *existing <= slot
+        *existing_end < slot.0
     });
-    occupied_slots.insert(index, slot);
+    let mut past_merged = first_merged;
+    while let Some((existing_start, existing_end)) = occupied_slots.get(past_merged) {
+        metrics.record_occupied_slot_probe();
+        if *existing_start > slot.1 {
+            break;
+        }
+        slot.0 = slot.0.min(*existing_start);
+        slot.1 = slot.1.max(*existing_end);
+        past_merged += 1;
+    }
+    occupied_slots.splice(first_merged..past_merged, [slot]);
 }
 
 #[cfg(test)]
