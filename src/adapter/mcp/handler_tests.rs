@@ -1,14 +1,16 @@
 use super::{
     call_breakdown_task as call_breakdown_task_with_factory,
     call_complete_task as call_complete_task_with_factory,
-    call_create_task as call_create_task_with_factory, call_defer_task, call_get_focus,
-    call_get_schedule, call_get_task, call_list_tasks, call_update_task, tool_input_error_response,
+    call_create_task as call_create_task_with_factory, call_defer_routine_task, call_defer_task,
+    call_get_focus, call_get_schedule, call_get_task, call_list_tasks, call_update_task,
+    tool_input_error_response,
 };
 use crate::adapter::mcp::input::{
-    BreakdownTaskInput, CompleteTaskInput, CreateTaskInput, DeferTaskInput, GetFocusInput,
-    GetScheduleInput, GetTaskInput, IsoDate, ListTasksInput, NonEmptyString, NonEmptyVec,
-    NonNegativeI64, NullablePatch, OptionalValue, ProjectCategoryValue, Rfc3339DateTime,
-    StatusValue, TaskPeriodFieldValue, TaskPeriodInput, ToolInputError, UpdateTaskInput, UuidValue,
+    BreakdownTaskInput, CompleteTaskInput, CreateTaskInput, DeferRoutineTaskInput, DeferTaskInput,
+    GetFocusInput, GetScheduleInput, GetTaskInput, IsoDate, ListTasksInput, NonEmptyString,
+    NonEmptyVec, NonNegativeI64, NullablePatch, OptionalValue, ProjectCategoryValue,
+    Rfc3339DateTime, StatusValue, TaskPeriodFieldValue, TaskPeriodInput, ToolInputError,
+    UpdateTaskInput, UuidValue,
 };
 use crate::adapter::mcp::test_support::{
     assert_tool_result_content_matches_structured, fixed_now, new_task_handle, task_for_list,
@@ -681,6 +683,155 @@ fn defer_task_handlerはtyped_uuidと時刻をapplication入力へ変換する()
     assert_eq!(task_observer.get_orig_status().unwrap(), Status::Pending);
     assert_eq!(task_observer.get_pending_until().unwrap(), pending_until);
     assert_eq!(save_count.get(), 0);
+}
+
+#[test]
+fn defer_routine_task_handlerはtyped_uuidで次周期へ延期する() {
+    let deadline = fixed_now() + Duration::hours(2);
+    let parent = new_task_handle("routine parent").unwrap();
+    parent.set_repetition_interval_days_opt(Some(7)).unwrap();
+    let mut child_attr = crate::test_support::new_task_attr("routine child");
+    child_attr.set_deadline_time_opt(Some(deadline));
+    child_attr.set_orig_status(Status::Pending);
+    let child = parent.create_as_last_child(child_attr);
+    let task_id = child.get_id().unwrap();
+    let repository = RecordingRepository::new(vec![parent]);
+    let save_count = Rc::clone(&repository.save_count);
+    let mut repository = repository;
+
+    let response = call_defer_routine_task(
+        &mut repository,
+        json!("typed-defer-routine"),
+        DeferRoutineTaskInput {
+            task_id: UuidValue(task_id),
+        },
+    );
+
+    assert_eq!(response["result"]["isError"], false);
+    assert_tool_result_content_matches_structured(&response);
+    assert_eq!(
+        response["result"]["structuredContent"],
+        json!({"task_id": task_id.to_string()})
+    );
+    assert_eq!(
+        child.get_deadline_time_opt().unwrap(),
+        Some(deadline + Duration::days(7))
+    );
+    assert_eq!(child.get_orig_status().unwrap(), Status::Todo);
+    assert_eq!(save_count.get(), 0);
+}
+
+#[test]
+fn defer_routine_task_handlerは未知taskと対象不成立をstructured_errorにする() {
+    let missing_id = Uuid::new_v4();
+    let mut repository = RecordingRepository::new(vec![]);
+    let missing = call_defer_routine_task(
+        &mut repository,
+        json!("missing-routine"),
+        DeferRoutineTaskInput {
+            task_id: UuidValue(missing_id),
+        },
+    );
+    let missing_error = &missing["result"]["structuredContent"]["error"];
+    assert_eq!(missing_error["code"], "task_not_found");
+    assert_eq!(missing_error["field"], "task_id");
+    assert_eq!(missing_error["task_id"], missing_id.to_string());
+
+    let cases = [
+        (false, false, "task must have a deadline"),
+        (true, false, "task must have a parent"),
+    ];
+    for (has_deadline, has_parent, reason) in cases {
+        let task = new_task_handle("not routine").unwrap();
+        if has_deadline {
+            task.set_deadline_time_opt(Some(fixed_now() + Duration::days(1)))
+                .unwrap();
+        }
+        let (root, observed) = if has_parent {
+            let parent = new_task_handle("parent without interval").unwrap();
+            let child = parent.create_as_last_child(task.snapshot().unwrap().attr().clone());
+            (parent, child)
+        } else {
+            (task.clone(), task)
+        };
+        let task_id = observed.get_id().unwrap();
+        let snapshot = observed.snapshot().unwrap();
+        let mut repository = RecordingRepository::new(vec![root]);
+        let invalid = call_defer_routine_task(
+            &mut repository,
+            json!("invalid-routine"),
+            DeferRoutineTaskInput {
+                task_id: UuidValue(task_id),
+            },
+        );
+        let invalid_error = &invalid["result"]["structuredContent"]["error"];
+        assert_eq!(invalid_error["code"], "invalid_input");
+        assert_eq!(invalid_error["field"], "task_id");
+        assert_eq!(invalid_error["message"], reason);
+        assert_eq!(observed.snapshot().unwrap(), snapshot);
+    }
+
+    let parent = new_task_handle("parent without interval").unwrap();
+    let mut child_attr = crate::test_support::new_task_attr("routine child");
+    child_attr.set_deadline_time_opt(Some(fixed_now() + Duration::days(1)));
+    let child = parent.create_as_last_child(child_attr);
+    let task_id = child.get_id().unwrap();
+    let snapshot = child.snapshot().unwrap();
+    let mut repository = RecordingRepository::new(vec![parent]);
+    let invalid = call_defer_routine_task(
+        &mut repository,
+        json!("missing-interval"),
+        DeferRoutineTaskInput {
+            task_id: UuidValue(task_id),
+        },
+    );
+    let invalid_error = &invalid["result"]["structuredContent"]["error"];
+    assert_eq!(invalid_error["code"], "invalid_input");
+    assert_eq!(invalid_error["field"], "task_id");
+    assert_eq!(
+        invalid_error["message"],
+        "parent task must have a repetition interval"
+    );
+    assert_eq!(child.snapshot().unwrap(), snapshot);
+}
+
+#[test]
+fn defer_routine_task_handlerは日時error情報を保持して変更しない() {
+    let deadline = DateTime::<Local>::from_naive_utc_and_offset(
+        NaiveDate::MAX.and_hms_opt(6, 0, 0).unwrap(),
+        FixedOffset::east_opt(0).unwrap(),
+    );
+    let parent = new_task_handle("routine parent").unwrap();
+    parent.set_repetition_interval_days_opt(Some(7)).unwrap();
+    let mut child_attr = crate::test_support::new_task_attr("routine child");
+    child_attr.set_deadline_time_opt(Some(deadline));
+    let child = parent.create_as_last_child(child_attr);
+    let task_id = child.get_id().unwrap();
+    let snapshot = child.snapshot().unwrap();
+    let mut repository = RecordingRepository::new(vec![parent]);
+
+    let response = call_defer_routine_task(
+        &mut repository,
+        json!("datetime-error"),
+        DeferRoutineTaskInput {
+            task_id: UuidValue(task_id),
+        },
+    );
+
+    let expected = ApplicationError::SubjectiveDateOutOfRange {
+        operation: "defer_routine_deadline",
+        datetime: deadline,
+    };
+    assert_eq!(response["result"]["isError"], true);
+    assert_eq!(
+        response["result"]["structuredContent"]["error"]["code"],
+        "internal_error"
+    );
+    assert_eq!(
+        response["result"]["structuredContent"]["error"]["message"],
+        expected.to_string()
+    );
+    assert_eq!(child.snapshot().unwrap(), snapshot);
 }
 
 #[test]

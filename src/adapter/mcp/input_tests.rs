@@ -1,7 +1,7 @@
 use super::{
     common_input_contract, decode_input, generated_input_schema, BreakdownTaskInput,
-    CompleteTaskInput, CreateTaskInput, DeferTaskInput, GetFocusInput, GetScheduleInput,
-    GetTaskInput, ListTasksInput, NonNegativeI64, NullablePatch, OptionalValue,
+    CompleteTaskInput, CreateTaskInput, DeferRoutineTaskInput, DeferTaskInput, GetFocusInput,
+    GetScheduleInput, GetTaskInput, ListTasksInput, NonNegativeI64, NullablePatch, OptionalValue,
     ProjectCategoryValue, Rfc3339DateTime, ToolInputError, UpdateTaskInput,
 };
 use crate::application::task_use_case::ApplicationError;
@@ -192,6 +192,54 @@ fn state_change_tool_inputs_match_public_schema_and_decode_contract() {
         public_tool_schema("update_task"),
         update_task_input_cases(),
     );
+}
+
+#[test]
+fn defer_routine_task_input_schemaとdecode契約が一致する() {
+    let task_id = "80d7db87-324e-4e8d-a5b7-ff78cd5bf39a";
+    assert_reference_input_contract::<DeferRoutineTaskInput>(
+        "defer_routine_task",
+        json!({
+            "type": "object",
+            "properties": {
+                "task_id": {"type": "string", "format": "uuid"}
+            },
+            "required": ["task_id"],
+            "additionalProperties": false
+        }),
+        vec![
+            valid_case("required task id", json!({"task_id": task_id})),
+            schema_case("missing task id", json!({}), "task_id", "field is required"),
+            schema_case(
+                "task id has wrong type",
+                json!({"task_id": 42}),
+                "task_id",
+                "must be a string",
+            ),
+            semantic_case(
+                "task id is invalid",
+                json!({"task_id": "not-a-uuid"}),
+                "task_id",
+                "must be a valid UUID",
+            ),
+            schema_case(
+                "unknown field",
+                json!({"task_id": task_id, "extra": true}),
+                "arguments.extra",
+                "additional property is not allowed",
+            ),
+            schema_case(
+                "arguments has wrong type",
+                json!(42),
+                "arguments",
+                "must be an object",
+            ),
+        ],
+    );
+
+    let input = decode_input::<DeferRoutineTaskInput>(&json!({"task_id": task_id}))
+        .unwrap_or_else(|_| panic!("defer routine task payload must decode"));
+    assert_eq!(input.task_id.0.to_string(), task_id);
 }
 
 #[test]

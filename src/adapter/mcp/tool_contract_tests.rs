@@ -1718,6 +1718,260 @@ fn defer_task_save失敗を成功扱いしない() {
     );
 }
 
+fn routine_task_fixture(
+    repetition_interval_days: Option<i64>,
+    deadline: Option<DateTime<Local>>,
+) -> (TaskHandle, TaskHandle) {
+    let parent = new_task_handle("routine parent").unwrap();
+    parent
+        .set_repetition_interval_days_opt(repetition_interval_days)
+        .unwrap();
+    let mut child_attr = new_task_attr("routine child");
+    child_attr.set_deadline_time_opt(deadline);
+    let child = parent.create_as_last_child(child_attr);
+    (parent, child)
+}
+
+#[test]
+fn defer_routine_task_次周期へ延期して1回saveする() {
+    let deadline = fixed_now() + Duration::hours(2);
+    let start = fixed_now() - Duration::days(1);
+    let pending_until = fixed_now() + Duration::hours(1);
+    let (parent, child) = routine_task_fixture(Some(7), Some(deadline));
+    child.set_start_time(start).unwrap();
+    child.set_orig_status(Status::Pending).unwrap();
+    child.set_pending_until(pending_until).unwrap();
+    let task_id = child.get_id().unwrap();
+    let child_observer = child.clone();
+    let repository = RecordingRepository::new(vec![parent]);
+    let save_count = Rc::clone(&repository.save_count);
+    let mut server = initialized_server(repository);
+
+    let response = server
+        .handle_request(tool_call_request(
+            "defer-routine-task",
+            "defer_routine_task",
+            json!({"task_id": task_id.to_string()}),
+        ))
+        .unwrap();
+
+    assert_eq!(response["jsonrpc"], "2.0");
+    assert_eq!(response["id"], "defer-routine-task");
+    assert_eq!(response["result"]["isError"], false);
+    assert_tool_result_content_matches_structured(&response);
+    assert_eq!(
+        response["result"]["structuredContent"],
+        json!({"task_id": task_id.to_string()})
+    );
+    assert_eq!(save_count.get(), 1);
+    assert_eq!(
+        child_observer.get_deadline_time_opt().unwrap(),
+        Some(deadline + Duration::days(7))
+    );
+    assert_eq!(
+        child_observer.get_start_time().unwrap(),
+        start + Duration::days(7)
+    );
+    assert_eq!(child_observer.get_orig_status().unwrap(), Status::Todo);
+    assert_eq!(child_observer.get_pending_until().unwrap(), pending_until);
+}
+
+#[test]
+fn defer_routine_task_入力不正と対象不成立では変更もsaveもしない() {
+    let deadline = fixed_now() + Duration::days(1);
+    let unchanged = new_task_handle("unchanged task").unwrap();
+    let unchanged_id = unchanged.get_id().unwrap();
+    let schema_error_cases = [
+        ("missing-task-id", json!({}), "task_id"),
+        ("task-id-type", json!({"task_id": 1}), "task_id"),
+        (
+            "unknown-field",
+            json!({"task_id": unchanged_id.to_string(), "extra": true}),
+            "arguments.extra",
+        ),
+    ];
+    for (id, arguments, field) in schema_error_cases {
+        let repository = RecordingRepository::new(vec![unchanged.clone()]);
+        let save_count = Rc::clone(&repository.save_count);
+        let mut server = initialized_server(repository);
+        let response = server
+            .handle_request(tool_call_request(id, "defer_routine_task", arguments))
+            .unwrap();
+
+        assert_eq!(response["id"], id, "case: {id}");
+        assert_eq!(response["error"]["code"], -32602, "case: {id}");
+        assert_eq!(response["error"]["message"], "Invalid params", "case: {id}");
+        assert_eq!(
+            response["error"]["data"]["code"], "invalid_input",
+            "case: {id}"
+        );
+        assert_eq!(response["error"]["data"]["field"], field, "case: {id}");
+        assert_eq!(save_count.get(), 0, "case: {id}");
+    }
+
+    let repository = RecordingRepository::new(vec![unchanged.clone()]);
+    let save_count = Rc::clone(&repository.save_count);
+    let mut server = initialized_server(repository);
+    let invalid_uuid = server
+        .handle_request(tool_call_request(
+            "invalid-task-id",
+            "defer_routine_task",
+            json!({"task_id": "invalid"}),
+        ))
+        .unwrap();
+    assert_eq!(invalid_uuid["result"]["isError"], true);
+    let invalid_uuid_error = &invalid_uuid["result"]["structuredContent"]["error"];
+    assert_eq!(invalid_uuid_error["code"], "invalid_input");
+    assert_eq!(invalid_uuid_error["field"], "task_id");
+    assert_eq!(save_count.get(), 0);
+
+    let missing_id = Uuid::new_v4();
+    let repository = RecordingRepository::new(vec![unchanged.clone()]);
+    let save_count = Rc::clone(&repository.save_count);
+    let mut server = initialized_server(repository);
+    let missing = server
+        .handle_request(tool_call_request(
+            "missing-task",
+            "defer_routine_task",
+            json!({"task_id": missing_id.to_string()}),
+        ))
+        .unwrap();
+    let missing_error = &missing["result"]["structuredContent"]["error"];
+    assert_eq!(missing_error["code"], "task_not_found");
+    assert_eq!(missing_error["field"], "task_id");
+    assert_eq!(save_count.get(), 0);
+
+    let no_deadline = new_task_handle("no deadline").unwrap();
+    let no_deadline_id = no_deadline.get_id().unwrap();
+    let no_deadline_snapshot = no_deadline.snapshot().unwrap();
+    let repository = RecordingRepository::new(vec![no_deadline.clone()]);
+    let save_count = Rc::clone(&repository.save_count);
+    let mut server = initialized_server(repository);
+    let invalid = server
+        .handle_request(tool_call_request(
+            "no-deadline",
+            "defer_routine_task",
+            json!({"task_id": no_deadline_id.to_string()}),
+        ))
+        .unwrap();
+    assert_eq!(invalid["result"]["isError"], true);
+    assert_eq!(
+        invalid["result"]["structuredContent"]["error"]["code"],
+        "invalid_input"
+    );
+    assert_eq!(
+        invalid["result"]["structuredContent"]["error"]["field"],
+        "task_id"
+    );
+    assert_eq!(
+        invalid["result"]["structuredContent"]["error"]["message"],
+        "task must have a deadline"
+    );
+    assert_eq!(no_deadline.snapshot().unwrap(), no_deadline_snapshot);
+    assert_eq!(save_count.get(), 0);
+
+    let no_parent = new_task_handle("no parent").unwrap();
+    no_parent.set_deadline_time_opt(Some(deadline)).unwrap();
+    let no_parent_id = no_parent.get_id().unwrap();
+    let no_parent_snapshot = no_parent.snapshot().unwrap();
+    let repository = RecordingRepository::new(vec![no_parent.clone()]);
+    let save_count = Rc::clone(&repository.save_count);
+    let mut server = initialized_server(repository);
+    let invalid = server
+        .handle_request(tool_call_request(
+            "no-parent",
+            "defer_routine_task",
+            json!({"task_id": no_parent_id.to_string()}),
+        ))
+        .unwrap();
+    assert_eq!(invalid["result"]["isError"], true);
+    assert_eq!(
+        invalid["result"]["structuredContent"]["error"]["code"],
+        "invalid_input"
+    );
+    assert_eq!(
+        invalid["result"]["structuredContent"]["error"]["field"],
+        "task_id"
+    );
+    assert_eq!(
+        invalid["result"]["structuredContent"]["error"]["message"],
+        "task must have a parent"
+    );
+    assert_eq!(no_parent.snapshot().unwrap(), no_parent_snapshot);
+    assert_eq!(save_count.get(), 0);
+
+    let (parent, no_interval) = routine_task_fixture(None, Some(deadline));
+    let no_interval_id = no_interval.get_id().unwrap();
+    let no_interval_snapshot = no_interval.snapshot().unwrap();
+    let repository = RecordingRepository::new(vec![parent]);
+    let save_count = Rc::clone(&repository.save_count);
+    let mut server = initialized_server(repository);
+    let invalid = server
+        .handle_request(tool_call_request(
+            "no-interval",
+            "defer_routine_task",
+            json!({"task_id": no_interval_id.to_string()}),
+        ))
+        .unwrap();
+    assert_eq!(invalid["result"]["isError"], true);
+    assert_eq!(
+        invalid["result"]["structuredContent"]["error"]["code"],
+        "invalid_input"
+    );
+    assert_eq!(
+        invalid["result"]["structuredContent"]["error"]["field"],
+        "task_id"
+    );
+    assert_eq!(
+        invalid["result"]["structuredContent"]["error"]["message"],
+        "parent task must have a repetition interval"
+    );
+    assert_eq!(no_interval.snapshot().unwrap(), no_interval_snapshot);
+    assert_eq!(save_count.get(), 0);
+}
+
+#[test]
+fn defer_routine_task_save失敗を成功扱いしない() {
+    let deadline = fixed_now() + Duration::hours(2);
+    let (parent, child) = routine_task_fixture(Some(7), Some(deadline));
+    let task_id = child.get_id().unwrap();
+    let child_observer = child.clone();
+    let repository = RecordingRepository::new(vec![parent]).with_save_failure();
+    let save_count = Rc::clone(&repository.save_count);
+    let mut server = initialized_server(repository);
+
+    let response = server
+        .handle_request(tool_call_request(
+            "defer-routine-save-failure",
+            "defer_routine_task",
+            json!({"task_id": task_id.to_string()}),
+        ))
+        .unwrap();
+
+    assert_eq!(response["id"], "defer-routine-save-failure");
+    assert_eq!(response["result"]["isError"], true);
+    assert_tool_result_content_matches_structured(&response);
+    assert_eq!(
+        response["result"]["structuredContent"]["error"]["code"],
+        "repository_save_failed"
+    );
+    assert_eq!(save_count.get(), 1);
+    assert_eq!(
+        child_observer.get_deadline_time_opt().unwrap(),
+        Some(deadline + Duration::days(7))
+    );
+
+    let later = server
+        .handle_request(tool_call_request(
+            "after-routine-save-failure",
+            "get_task",
+            json!({"task_id": task_id.to_string()}),
+        ))
+        .unwrap();
+    assert_repository_state_uncertain_response(&later, &json!("after-routine-save-failure"));
+    assert_eq!(save_count.get(), 1);
+}
+
 #[test]
 fn complete_task_完了と実績を反映して1回saveする() {
     let finished_at = fixed_now() + Duration::hours(1);

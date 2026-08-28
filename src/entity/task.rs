@@ -1143,9 +1143,16 @@ impl TaskHandle {
         &self,
         deadline_time_opt: Option<DateTime<Local>>,
     ) -> Result<(), TaskTreeError> {
-        let root = self.root()?;
         let mut updates = Vec::new();
         self.collect_deadline_updates(deadline_time_opt, None, &mut updates)?;
+        self.apply_deadline_updates(updates)
+    }
+
+    fn apply_deadline_updates(
+        &self,
+        updates: Vec<(Node<TaskAttr>, DateTime<Local>)>,
+    ) -> Result<(), TaskTreeError> {
+        let root = self.root()?;
         root.node
             .try_borrow_data_mut()
             .map_err(|_| TaskTreeError::Borrow)?;
@@ -1203,6 +1210,30 @@ impl TaskHandle {
                 true
             }
         })
+    }
+
+    pub(crate) fn replace_deadline_time(
+        &self,
+        deadline_time: DateTime<Local>,
+    ) -> Result<(), TaskTreeError> {
+        let mut updates = Vec::new();
+        let current_deadline = self
+            .node
+            .try_borrow_data()
+            .map_err(|_| TaskTreeError::Borrow)?
+            .get_deadline_time_opt()
+            .to_owned();
+        if current_deadline != Some(deadline_time) {
+            updates.push((self.node.clone(), deadline_time));
+        }
+        for child in self.node.children() {
+            Self { node: child }.collect_deadline_updates(
+                Some(deadline_time),
+                None,
+                &mut updates,
+            )?;
+        }
+        self.apply_deadline_updates(updates)
     }
 
     pub fn get_deadline_time_opt(&self) -> Result<Option<DateTime<Local>>, TaskTreeError> {

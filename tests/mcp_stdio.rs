@@ -4,7 +4,7 @@ use chrono::{DateTime, Local, TimeZone, Timelike};
 use schronu::adapter::gateway::storage_lock::{LockMode, StorageLock};
 use schronu::adapter::gateway::task_repository::TaskRepository;
 use schronu::application::interface::TaskRepositoryTrait;
-use schronu::entity::task::{Status, TaskHandle};
+use schronu::entity::task::{Status, TaskAttr, TaskHandle};
 use serde_json::{json, Value};
 use std::fs;
 use std::io::{BufRead, BufReader, Write};
@@ -22,6 +22,29 @@ fn new_test_task_handle(name: &str) -> TaskHandle {
     let id = Uuid::from_u128(u128::from(SEQUENCE.fetch_add(1, Ordering::Relaxed)));
     let now: DateTime<Local> = Local.with_ymd_and_hms(2026, 8, 19, 0, 0, 0).unwrap();
     TaskHandle::with_identity(name, id, now).unwrap()
+}
+
+fn seed_routine_task(storage_directory: &Path) -> (String, DateTime<Local>, DateTime<Local>) {
+    let now = Local::now().with_nanosecond(0).unwrap();
+    let deadline = now + chrono::Duration::days(10);
+    let start = now - chrono::Duration::days(1);
+    let parent_id = Uuid::new_v4();
+    let parent = TaskHandle::with_identity("stdio routine parent", parent_id, now).unwrap();
+    parent.set_repetition_interval_days_opt(Some(7)).unwrap();
+    let child_id = Uuid::new_v4();
+    let mut child_attr = TaskAttr::with_identity("stdio routine child", child_id, now);
+    child_attr.set_deadline_time_opt(Some(deadline));
+    child_attr.set_start_time(start);
+    child_attr.set_orig_status(Status::Pending);
+    parent.create_child(child_attr).unwrap();
+
+    let mut repository = TaskRepository::new(storage_directory.to_str().unwrap());
+    repository.sync_clock(now).unwrap();
+    repository.load().unwrap();
+    repository.start_new_project(parent).unwrap();
+    repository.save().unwrap();
+
+    (child_id.to_string(), deadline, start)
 }
 
 struct TestStorageDirectory {
@@ -123,7 +146,10 @@ fn mcp_stdio_stdoutにinitializeとtools_listのjson_rpc応答だけを出力す
     assert_eq!(responses[0]["result"]["protocolVersion"], "2025-06-18");
     assert_eq!(responses[1]["jsonrpc"], "2.0");
     assert_eq!(responses[1]["id"], "tools-list");
-    assert_eq!(responses[1]["result"]["tools"].as_array().unwrap().len(), 9);
+    assert_eq!(
+        responses[1]["result"]["tools"].as_array().unwrap().len(),
+        10
+    );
 }
 
 #[test]
@@ -224,7 +250,10 @@ fn mcp_stdio_不正なinitialize_request後も同一processで正常に初期化
     assert_eq!(responses[1]["id"], "valid-initialize");
     assert_eq!(responses[1]["result"]["protocolVersion"], "2025-06-18");
     assert_eq!(responses[2]["id"], "tools-after-valid-initialize");
-    assert_eq!(responses[2]["result"]["tools"].as_array().unwrap().len(), 9);
+    assert_eq!(
+        responses[2]["result"]["tools"].as_array().unwrap().len(),
+        10
+    );
 }
 
 #[test]
@@ -356,7 +385,7 @@ fn mcp_stdio_lock_symlinkはcallでstructured_errorとなり参照先を変更�
 }
 
 #[test]
-fn mcp_stdio_9つのtoolをfilesystem上のrepositoryで実行し再起動後も保存内容を読む() {
+fn mcp_stdio_10個のtoolをfilesystem上のrepositoryで実行し再起動後も保存内容を読む() {
     let storage = TestStorageDirectory::new();
     let create = call_tool(
         storage.path(),
@@ -460,6 +489,15 @@ fn mcp_stdio_9つのtoolをfilesystem上のrepositoryで実行し再起動後も
     );
     assert_eq!(reloaded_child["project_category"], "recovery");
 
+    let (routine_task_id, _, _) = seed_routine_task(storage.path());
+    let routine_deferred = call_tool(
+        storage.path(),
+        "defer-routine",
+        "defer_routine_task",
+        Some(json!({"task_id": routine_task_id})),
+    );
+    assert_eq!(routine_deferred["result"]["isError"], false);
+
     let child_completed = call_tool(
         storage.path(),
         "complete-child",
@@ -484,6 +522,37 @@ fn mcp_stdio_9つのtoolをfilesystem上のrepositoryで実行し再起動後も
     assert_eq!(
         reloaded["result"]["structuredContent"]["task"]["original_status"],
         "done"
+    );
+}
+
+#[test]
+fn mcp_stdio_defer_routine_taskは再起動後も延期日時を保持する() {
+    let storage = TestStorageDirectory::new();
+    let (task_id, deadline, start) = seed_routine_task(storage.path());
+
+    let deferred = call_tool(
+        storage.path(),
+        "defer-routine",
+        "defer_routine_task",
+        Some(json!({"task_id": task_id})),
+    );
+    assert_eq!(deferred["result"]["isError"], false);
+
+    let reloaded = call_tool(
+        storage.path(),
+        "routine-reloaded",
+        "get_task",
+        Some(json!({"task_id": task_id})),
+    );
+    let reloaded = &reloaded["result"]["structuredContent"]["task"];
+    assert_eq!(reloaded["original_status"], "todo");
+    assert_eq!(
+        chrono::DateTime::parse_from_rfc3339(reloaded["deadline_time"].as_str().unwrap()).unwrap(),
+        deadline.fixed_offset() + chrono::Duration::days(7)
+    );
+    assert_eq!(
+        chrono::DateTime::parse_from_rfc3339(reloaded["start_time"].as_str().unwrap()).unwrap(),
+        start.fixed_offset() + chrono::Duration::days(7)
     );
 }
 

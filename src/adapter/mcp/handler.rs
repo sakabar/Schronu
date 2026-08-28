@@ -1,6 +1,7 @@
 use super::input::{
-    decode_input, BreakdownTaskInput, CompleteTaskInput, CreateTaskInput, DeferTaskInput,
-    GetFocusInput, GetScheduleInput, GetTaskInput, ListTasksInput, ToolInputError, UpdateTaskInput,
+    decode_input, BreakdownTaskInput, CompleteTaskInput, CreateTaskInput, DeferRoutineTaskInput,
+    DeferTaskInput, GetFocusInput, GetScheduleInput, GetTaskInput, ListTasksInput, ToolInputError,
+    UpdateTaskInput,
 };
 use super::internal_error_response;
 use super::output::{scheduled_task_view_json, task_view_json};
@@ -9,8 +10,9 @@ use crate::application::interface::TaskRepositoryTrait;
 use crate::application::schedule_use_case::get_schedule;
 use crate::application::task_use_case::{
     breakdown_task as breakdown_task_use_case, complete_task as complete_task_use_case,
-    create_task as create_task_use_case, defer_task as defer_task_use_case, get_focus, get_task,
-    list_tasks, set_category, set_deadline, set_estimate, ApplicationError, TaskFactory,
+    create_task as create_task_use_case, defer_routine_task as defer_routine_task_use_case,
+    defer_task as defer_task_use_case, get_focus, get_task, list_tasks, set_category, set_deadline,
+    set_estimate, ApplicationError, TaskFactory,
 };
 use chrono::{DateTime, Local};
 use serde_json::{json, Value};
@@ -82,6 +84,13 @@ pub(super) fn call_tool<R: TaskRepositoryTrait>(
                 Err(error) => return tool_input_error_response(id, error),
             };
             call_defer_task(repository, id, input)
+        }
+        Some("defer_routine_task") => {
+            let input = match decode_input::<DeferRoutineTaskInput>(&params["arguments"]) {
+                Ok(input) => input,
+                Err(error) => return tool_input_error_response(id, error),
+            };
+            call_defer_routine_task(repository, id, input)
         }
         Some("complete_task") => {
             let input = match decode_input::<CompleteTaskInput>(&params["arguments"]) {
@@ -244,6 +253,27 @@ fn call_defer_task<R: TaskRepositoryTrait>(
     tool_result_response(id, json!({"task_id": task_id.to_string()}), false)
 }
 
+fn call_defer_routine_task<R: TaskRepositoryTrait>(
+    repository: &mut R,
+    id: Value,
+    input: DeferRoutineTaskInput,
+) -> Value {
+    let task_id = input.into_task_id();
+
+    match defer_routine_task_use_case(repository, task_id) {
+        Ok(()) => {}
+        Err(ApplicationError::TaskNotFound(task_id)) => {
+            return task_not_found_response(id, task_id, Some("task_id"))
+        }
+        Err(ApplicationError::InvalidInput { field, reason }) => {
+            return invalid_input_response(id, field, reason)
+        }
+        Err(error) => return internal_error_response(id, &error.to_string()),
+    }
+
+    tool_result_response(id, json!({"task_id": task_id.to_string()}), false)
+}
+
 fn call_complete_task<R: TaskRepositoryTrait>(
     repository: &mut R,
     id: Value,
@@ -310,7 +340,14 @@ fn call_update_task<R: TaskRepositoryTrait>(
 pub(super) fn tool_call_succeeded_with_mutation(request: &Value, response: &Value) -> bool {
     matches!(
         request["params"]["name"].as_str(),
-        Some("create_task" | "breakdown_task" | "defer_task" | "complete_task" | "update_task")
+        Some(
+            "create_task"
+                | "breakdown_task"
+                | "defer_task"
+                | "defer_routine_task"
+                | "complete_task"
+                | "update_task"
+        )
     ) && response.get("error").is_none()
         && response["result"]["isError"] != Value::Bool(true)
 }

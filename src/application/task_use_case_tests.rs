@@ -528,6 +528,177 @@ fn defer_task_絶対時刻までpendingにする() {
 }
 
 #[test]
+fn defer_routine_task_親deadlineの有無に応じて次周期へ延期する() {
+    let orig_deadline = Local.with_ymd_and_hms(2026, 8, 13, 10, 0, 0).unwrap();
+    let orig_start = Local.with_ymd_and_hms(2026, 8, 10, 9, 0, 0).unwrap();
+    let expected_start = Local.with_ymd_and_hms(2026, 8, 17, 9, 0, 0).unwrap();
+
+    for (parent_deadline, expected_deadline) in [
+        (
+            Some(Local.with_ymd_and_hms(2026, 8, 20, 18, 0, 0).unwrap()),
+            Local.with_ymd_and_hms(2026, 8, 20, 18, 0, 0).unwrap(),
+        ),
+        (None, Local.with_ymd_and_hms(2026, 8, 20, 10, 0, 0).unwrap()),
+    ] {
+        let parent = crate::test_support::new_task_handle("ルーチン").unwrap();
+        parent.set_repetition_interval_days_opt(Some(7)).unwrap();
+        parent.set_deadline_time_opt(parent_deadline).unwrap();
+        let mut child_attr = crate::test_support::new_task_attr("延期対象");
+        child_attr.set_deadline_time_opt(Some(orig_deadline));
+        child_attr.set_start_time(orig_start);
+        child_attr.set_orig_status(Status::Pending);
+        child_attr.set_pending_until(fixed_now() + Duration::hours(2));
+        let child = parent.create_as_last_child(child_attr);
+        let child_id = child.get_id().unwrap();
+        let pending_until = child.get_pending_until().unwrap();
+        let mut repository = TestTaskRepository::new(vec![parent], fixed_now());
+
+        defer_routine_task(&mut repository, child_id).unwrap();
+
+        assert_eq!(
+            child.get_deadline_time_opt().unwrap(),
+            Some(expected_deadline)
+        );
+        assert_eq!(child.get_start_time().unwrap(), expected_start);
+        assert_eq!(child.get_orig_status().unwrap(), Status::Todo);
+        assert_eq!(child.get_pending_until().unwrap(), pending_until);
+    }
+}
+
+#[test]
+fn defer_routine_task_未知taskを区別して変更しない() {
+    let task_id = Uuid::new_v4();
+    let mut repository = TestTaskRepository::new(vec![], fixed_now());
+
+    assert_eq!(
+        defer_routine_task(&mut repository, task_id),
+        Err(ApplicationError::TaskNotFound(task_id))
+    );
+}
+
+#[test]
+fn defer_routine_task_対象条件を満たさなければ理由を区別して変更しない() {
+    let deadline = Local.with_ymd_and_hms(2026, 8, 13, 10, 0, 0).unwrap();
+    let cases = [
+        (false, true, true, "task must have a deadline"),
+        (true, false, false, "task must have a parent"),
+        (
+            true,
+            true,
+            false,
+            "parent task must have a repetition interval",
+        ),
+    ];
+
+    for (has_deadline, has_parent, has_interval, reason) in cases {
+        let task = crate::test_support::new_task_handle("対象").unwrap();
+        if has_deadline {
+            task.set_deadline_time_opt(Some(deadline)).unwrap();
+        }
+        let (root, observed) = if has_parent {
+            let parent = crate::test_support::new_task_handle("親").unwrap();
+            if has_interval {
+                parent.set_repetition_interval_days_opt(Some(7)).unwrap();
+            }
+            let child = parent.create_as_last_child(task.snapshot().unwrap().attr().clone());
+            (parent, child)
+        } else {
+            (task.clone(), task)
+        };
+        let task_id = observed.get_id().unwrap();
+        let snapshot = observed.snapshot().unwrap();
+        let revision = observed.get_persistent_mutation_revision().unwrap();
+        let mut repository = TestTaskRepository::new(vec![root], fixed_now());
+
+        assert_eq!(
+            defer_routine_task(&mut repository, task_id),
+            Err(ApplicationError::InvalidInput {
+                field: "task_id",
+                reason,
+            })
+        );
+        assert_eq!(observed.snapshot().unwrap(), snapshot);
+        assert_eq!(
+            observed.get_persistent_mutation_revision().unwrap(),
+            revision
+        );
+    }
+}
+
+#[test]
+fn defer_routine_task_日時計算不能なら変更しない() {
+    let orig_deadline = DateTime::<Local>::from_naive_utc_and_offset(
+        NaiveDate::MAX.and_hms_opt(6, 0, 0).unwrap(),
+        chrono::FixedOffset::east_opt(0).unwrap(),
+    );
+    let parent = crate::test_support::new_task_handle("ルーチン").unwrap();
+    parent.set_repetition_interval_days_opt(Some(7)).unwrap();
+    let mut child_attr = crate::test_support::new_task_attr("延期対象");
+    child_attr.set_deadline_time_opt(Some(orig_deadline));
+    let child = parent.create_as_last_child(child_attr);
+    let child_id = child.get_id().unwrap();
+    let snapshot = child.snapshot().unwrap();
+    let revision = child.get_persistent_mutation_revision().unwrap();
+    let mut repository = TestTaskRepository::new(vec![parent], fixed_now());
+
+    assert_eq!(
+        defer_routine_task(&mut repository, child_id),
+        Err(ApplicationError::SubjectiveDateOutOfRange {
+            operation: "defer_routine_deadline",
+            datetime: orig_deadline,
+        })
+    );
+    assert_eq!(child.snapshot().unwrap(), snapshot);
+    assert_eq!(child.get_persistent_mutation_revision().unwrap(), revision);
+}
+
+#[test]
+fn defer_routine_task_deadline伝搬失敗でも変更しない() {
+    let deadline = Local.with_ymd_and_hms(2026, 8, 13, 10, 0, 0).unwrap();
+    let parent = crate::test_support::new_task_handle("ルーチン").unwrap();
+    parent.set_repetition_interval_days_opt(Some(7)).unwrap();
+    let mut child_attr = crate::test_support::new_task_attr("延期対象");
+    child_attr.set_deadline_time_opt(Some(deadline));
+    let child = parent.create_as_last_child(child_attr);
+    let descendant = child.create_as_last_child(crate::test_support::new_task_attr("子孫"));
+    let child_id = child.get_id().unwrap();
+    let snapshot = child.snapshot().unwrap();
+    let revision = child.get_persistent_mutation_revision().unwrap();
+    let mut repository = TestTaskRepository::new(vec![parent], fixed_now());
+
+    let actual = descendant
+        .with_exclusive_data_borrow_for_test(|| defer_routine_task(&mut repository, child_id));
+
+    assert_eq!(
+        actual,
+        Err(ApplicationError::TaskTree(TaskTreeError::Borrow))
+    );
+    assert_eq!(child.snapshot().unwrap(), snapshot);
+    assert_eq!(child.get_persistent_mutation_revision().unwrap(), revision);
+}
+
+#[test]
+fn defer_routine_task_完了済みtaskもdeadlineを更新してtodoへ戻す() {
+    let deadline = Local.with_ymd_and_hms(2026, 8, 13, 10, 0, 0).unwrap();
+    let parent = crate::test_support::new_task_handle("ルーチン").unwrap();
+    parent.set_repetition_interval_days_opt(Some(7)).unwrap();
+    let mut child_attr = crate::test_support::new_task_attr("完了済み延期対象");
+    child_attr.set_deadline_time_opt(Some(deadline));
+    child_attr.set_orig_status(Status::Done);
+    let child = parent.create_as_last_child(child_attr);
+    let child_id = child.get_id().unwrap();
+    let mut repository = TestTaskRepository::new(vec![parent], fixed_now());
+
+    defer_routine_task(&mut repository, child_id).unwrap();
+
+    assert_eq!(
+        child.get_deadline_time_opt().unwrap(),
+        Some(Local.with_ymd_and_hms(2026, 8, 20, 10, 0, 0).unwrap())
+    );
+    assert_eq!(child.get_orig_status().unwrap(), Status::Todo);
+}
+
+#[test]
 fn complete_task_未完了の子があれば変更しない() {
     let task = crate::test_support::new_task_handle("親").unwrap();
     task.create_as_last_child(crate::test_support::new_task_attr("未完了"));

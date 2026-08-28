@@ -886,7 +886,7 @@ fn tools_list_initialized通知前は拒否する() {
 }
 
 #[test]
-fn tools_list_initialized通知後に9つのtoolのschemaを返す() {
+fn tools_list_initialized通知後に10個のtoolのschemaを返す() {
     let mut server = McpServer::new(TaskRepository::new(""));
     server.handle_request(initialize_request()).unwrap();
     assert_eq!(
@@ -928,6 +928,7 @@ fn tools_list_initialized通知後に9つのtoolのschemaを返す() {
         "create_task",
         "breakdown_task",
         "defer_task",
+        "defer_routine_task",
         "complete_task",
         "update_task",
     ];
@@ -962,6 +963,7 @@ fn tools_list_initialized通知後に9つのtoolのschemaを返す() {
         property_names(tools, "defer_task"),
         vec!["pending_until", "task_id"]
     );
+    assert_eq!(property_names(tools, "defer_routine_task"), vec!["task_id"]);
     assert_eq!(
         property_names(tools, "complete_task"),
         vec!["additional_actual_work_seconds", "finished_at", "task_id"]
@@ -989,6 +991,10 @@ fn tools_list_initialized通知後に9つのtoolのschemaを返す() {
         required_fields(tools, "defer_task"),
         vec!["pending_until", "task_id"]
     );
+    assert_eq!(
+        required_fields(tools, "defer_routine_task"),
+        vec!["task_id"]
+    );
     assert_eq!(required_fields(tools, "complete_task"), vec!["task_id"]);
     assert_eq!(required_fields(tools, "update_task"), vec!["task_id"]);
 
@@ -1008,6 +1014,7 @@ fn tools_list_initialized通知後に9つのtoolのschemaを返す() {
     assert_string_property(tools, "breakdown_task", "pending_until", Some("date-time"));
     assert_string_property(tools, "defer_task", "task_id", Some("uuid"));
     assert_string_property(tools, "defer_task", "pending_until", Some("date-time"));
+    assert_string_property(tools, "defer_routine_task", "task_id", Some("uuid"));
     assert_string_property(tools, "complete_task", "task_id", Some("uuid"));
     assert_string_property(tools, "complete_task", "finished_at", Some("date-time"));
     assert_non_negative_integer_property(tools, "complete_task", "additional_actual_work_seconds");

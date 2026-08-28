@@ -193,6 +193,23 @@
     "name": "defer_task"
   },
   {
+    "description": "Defer a routine task to its next repetition cycle.",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "task_id": {
+          "format": "uuid",
+          "type": "string"
+        }
+      },
+      "required": [
+        "task_id"
+      ],
+      "type": "object"
+    },
+    "name": "defer_routine_task"
+  },
+  {
     "description": "Complete a task, optionally recording finish time and work seconds.",
     "inputSchema": {
       "additionalProperties": false,

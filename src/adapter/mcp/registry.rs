@@ -1,6 +1,7 @@
 use super::input::{
-    generated_input_schema, BreakdownTaskInput, CompleteTaskInput, CreateTaskInput, DeferTaskInput,
-    GetFocusInput, GetScheduleInput, GetTaskInput, ListTasksInput, UpdateTaskInput,
+    generated_input_schema, BreakdownTaskInput, CompleteTaskInput, CreateTaskInput,
+    DeferRoutineTaskInput, DeferTaskInput, GetFocusInput, GetScheduleInput, GetTaskInput,
+    ListTasksInput, UpdateTaskInput,
 };
 use serde_json::{json, Value};
 
@@ -40,6 +41,11 @@ pub(super) fn tool_definitions() -> Vec<Value> {
             "name": "defer_task",
             "description": "Defer a task until an absolute date and time.",
             "inputSchema": generated_input_schema::<DeferTaskInput>()
+        }),
+        json!({
+            "name": "defer_routine_task",
+            "description": "Defer a routine task to its next repetition cycle.",
+            "inputSchema": generated_input_schema::<DeferRoutineTaskInput>()
         }),
         json!({
             "name": "complete_task",
