@@ -190,10 +190,36 @@ fn assert_fixture_counter_bounds(size: FixtureSize) {
     let repository = SchedulingRepository::new(fixture.projects, fixture.now);
     let mut pack_free_time = SchedulingFreeTimeManager::new(DAILY_FREE_MINUTES);
     let (pack_result, pack) = pack_tasks_diagnostics(&repository, &mut pack_free_time).unwrap();
-    assert!(
-        pack.schedule.schedule_rebuild_count
-            <= 1 + pack_result.packed_tasks.len() + pack.placement_trial_count
-    );
+    let mut packed_count = pack_result.packed_tasks.len();
+    let mut placement_trial_count = pack.placement_trial_count;
+    let mut cursor_minute_advance_count = pack.cursor_minute_advance_count;
+    let mut schedule_rebuild_count = pack.schedule.schedule_rebuild_count;
+    for _ in 0..pack_probe_scale(size) {
+        let fixture = SchedulingFixture::build(FixtureSize::Small).unwrap();
+        let repository = SchedulingRepository::new(fixture.projects, fixture.now);
+        let mut free_time = SchedulingFreeTimeManager::new(DAILY_FREE_MINUTES);
+        let (result, metrics) = pack_tasks_diagnostics(&repository, &mut free_time).unwrap();
+        packed_count += result.packed_tasks.len();
+        placement_trial_count += metrics.placement_trial_count;
+        cursor_minute_advance_count += metrics.cursor_minute_advance_count;
+        schedule_rebuild_count += metrics.schedule.schedule_rebuild_count;
+
+        let fixture = SchedulingFixture::build(FixtureSize::Small).unwrap();
+        let repository = SchedulingRepository::new(fixture.projects, fixture.now);
+        let mut no_continuous_free_time =
+            SchedulingFreeTimeManager::without_continuous_free_time(DAILY_FREE_MINUTES);
+        let (result, metrics) =
+            pack_tasks_diagnostics(&repository, &mut no_continuous_free_time).unwrap();
+        packed_count += result.packed_tasks.len();
+        placement_trial_count += metrics.placement_trial_count;
+        cursor_minute_advance_count += metrics.cursor_minute_advance_count;
+        schedule_rebuild_count += metrics.schedule.schedule_rebuild_count;
+    }
+    let probe_scale = pack_probe_scale(size);
+    assert!((probe_scale..=probe_scale * 4).contains(&packed_count));
+    assert!((probe_scale * 2..=probe_scale * 4).contains(&placement_trial_count));
+    assert!((1..=probe_scale * 1_000).contains(&cursor_minute_advance_count));
+    assert!(schedule_rebuild_count <= 1 + probe_scale * 6);
 
     let fixture = SchedulingFixture::build(size).unwrap();
     let repository = SchedulingRepository::new(fixture.projects, fixture.now);
@@ -213,4 +239,11 @@ fn assert_fixture_counter_bounds(size: FixtureSize) {
             <= flatten.schedule.candidate_count * flatten.schedule.schedule_rebuild_count * 20
     );
     assert!(flatten.full_schedule_scan_element_count <= flatten.schedule.segment_count * 6);
+}
+
+fn pack_probe_scale(size: FixtureSize) -> usize {
+    match size {
+        FixtureSize::Small | FixtureSize::Typical => 1,
+        FixtureSize::Stress => 4,
+    }
 }

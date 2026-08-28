@@ -10,7 +10,8 @@ use scheduling_benchmark_limits::FLATTEN_BENCHMARK_CAPACITY_MINUTES;
 use scheduling_fixture::{FixtureSize, SchedulingFixture};
 use scheduling_harness::{SchedulingFreeTimeManager, SchedulingRepository};
 use schronu::application::benchmarking::{
-    flatten_tasks_diagnostics, get_schedule_diagnostics, pack_tasks_diagnostics,
+    flatten_tasks_diagnostics, get_schedule_diagnostics, pack_tasks_diagnostics, PackMetrics,
+    ScheduleMetrics,
 };
 use std::env;
 use std::process::ExitCode;
@@ -156,23 +157,78 @@ fn run_pack(configuration: Configuration) -> Result<(), String> {
         let fixture = SchedulingFixture::build(configuration.size).map_err(|e| e.to_string())?;
         let repository = SchedulingRepository::new(fixture.projects, fixture.now);
         let mut free_time_manager = SchedulingFreeTimeManager::new(DAILY_FREE_MINUTES);
-        let started = Instant::now();
-        let output = pack_tasks_diagnostics(&repository, &mut free_time_manager)
+        let mut placement_probes = (0..pack_probe_scale(configuration.size))
+            .map(|_| {
+                let fixture = SchedulingFixture::build(FixtureSize::Small)?;
+                Ok((
+                    SchedulingRepository::new(fixture.projects, fixture.now),
+                    SchedulingFreeTimeManager::new(DAILY_FREE_MINUTES),
+                ))
+            })
+            .collect::<Result<Vec<_>, schronu::entity::task::TaskTreeError>>()
             .map_err(|error| error.to_string())?;
+        let mut cursor_probes = (0..pack_probe_scale(configuration.size))
+            .map(|_| {
+                let fixture = SchedulingFixture::build(FixtureSize::Small)?;
+                Ok((
+                    SchedulingRepository::new(fixture.projects, fixture.now),
+                    SchedulingFreeTimeManager::without_continuous_free_time(DAILY_FREE_MINUTES),
+                ))
+            })
+            .collect::<Result<Vec<_>, schronu::entity::task::TaskTreeError>>()
+            .map_err(|error| error.to_string())?;
+        let started = Instant::now();
+        let (result, mut metrics) = pack_tasks_diagnostics(&repository, &mut free_time_manager)
+            .map_err(|error| error.to_string())?;
+        let mut packed_count = result.packed_tasks.len();
+        let mut skipped_count = result.skipped_tasks.len();
+        for (probe_repository, probe_free_time) in
+            placement_probes.iter_mut().chain(cursor_probes.iter_mut())
+        {
+            let (probe_result, probe_metrics) =
+                pack_tasks_diagnostics(probe_repository, probe_free_time)
+                    .map_err(|error| error.to_string())?;
+            packed_count += probe_result.packed_tasks.len();
+            skipped_count += probe_result.skipped_tasks.len();
+            merge_pack_metrics(&mut metrics, probe_metrics);
+        }
         samples.push(started.elapsed());
-        last_output = Some(output);
+        last_output = Some((packed_count, skipped_count, metrics));
     }
     let elapsed = median(&mut samples);
     check_limit(configuration, elapsed)?;
-    let (result, metrics) = last_output.expect("sample count is positive");
+    let (packed_count, skipped_count, metrics) = last_output.expect("sample count is positive");
     println!(
         "pack median_ms={:.3} samples={} packed={} skipped={} metrics={metrics:?}",
         elapsed.as_secs_f64() * 1_000.0,
         SAMPLE_COUNT,
-        result.packed_tasks.len(),
-        result.skipped_tasks.len()
+        packed_count,
+        skipped_count
     );
     Ok(())
+}
+
+fn merge_pack_metrics(target: &mut PackMetrics, source: PackMetrics) {
+    merge_schedule_metrics(&mut target.schedule, source.schedule);
+    target.candidate_count += source.candidate_count;
+    target.placement_trial_count += source.placement_trial_count;
+    target.cursor_minute_advance_count += source.cursor_minute_advance_count;
+}
+
+fn merge_schedule_metrics(target: &mut ScheduleMetrics, source: ScheduleMetrics) {
+    target.candidate_count += source.candidate_count;
+    target.segment_count += source.segment_count;
+    target.occupied_slot_probe_count += source.occupied_slot_probe_count;
+    target.dependency_candidate_probe_count += source.dependency_candidate_probe_count;
+    target.sort_count += source.sort_count;
+    target.schedule_rebuild_count += source.schedule_rebuild_count;
+}
+
+fn pack_probe_scale(size: FixtureSize) -> usize {
+    match size {
+        FixtureSize::Small | FixtureSize::Typical => 1,
+        FixtureSize::Stress => 4,
+    }
 }
 
 fn run_flatten(configuration: Configuration) -> Result<(), String> {

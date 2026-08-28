@@ -58,7 +58,7 @@ SCHRONU_BENCHMARK_STORAGE=/absolute/path/to/task-storage \
   -- --ignored --nocapture
 ```
 
-fixture規模は次のとおりです。stressはtypicalのproject、task、active leaf、競合候補を固定seedで4倍にします。flatten benchmarkの固定capacityは1,500分で、過負荷経路を決定論的に発生させるための合成負荷係数です。実際の1日の空き時間を表す設定ではありません。
+fixture規模は次のとおりです。stressはtypicalのproject、task、active leaf、競合候補を固定seedで4倍にします。pack benchmarkはprofile全体の走査に加え、typicalで1組、stressで4組の固定small probeを同じ計測区間内で実行し、通常配置とatomicの1分cursor前進を必ず通します。flatten benchmarkの固定capacityは1,500分で、過負荷経路を決定論的に発生させるための合成負荷係数です。実際の1日の空き時間を表す設定ではありません。
 
 | fixture | project | task | active leaf |
 | --- | ---: | ---: | ---: |
@@ -82,7 +82,7 @@ cargo bench --locked --features benchmarking --bench scheduling -- stress flatte
 | use case | typical | stress |
 | --- | ---: | ---: |
 | schedule | 6.930ms | 29.172ms |
-| pack | 6.420ms | 35.551ms |
+| pack | 8.046ms | 35.296ms |
 | flatten | 72.900ms | 403.322ms |
 
 探索時の旧実装ではtypical scheduleが約1,070ms、packが20秒超でした。支配要因はoccupied intervalの反復走査、packの未変更schedule再構築、flattenのoverride全cloneとcandidate再構築、依存待ちcandidateの反復走査でした。最適化後も通常API、task順序、segment、deadline判定、`PackResult`、`FlattenResult`、`pending_until`のcharacterization contractを維持します。
