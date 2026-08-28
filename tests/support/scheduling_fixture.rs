@@ -81,14 +81,17 @@ fn build_small() -> Result<SchedulingFixture, TaskTreeError> {
     atomic.set_estimated_work_seconds(60 * 60);
     atomic.set_deadline_time_opt(Some(now + Duration::days(1)));
     atomic.set_start_time(now + Duration::hours(1));
+    atomic.set_pending_until(now + Duration::days(7));
+    atomic.set_orig_status(Status::Pending);
     root.create_child(atomic)?;
 
     let mut pending = new_attr("fixture-task-0003", &mut sequence, now, Status::Pending);
     pending.set_pending_until(now + Duration::days(7));
     root.create_child(pending)?;
 
-    let done = new_attr("fixture-task-0004", &mut sequence, now, Status::Done);
-    root.create_child(done)?;
+    let mut additional = new_attr("fixture-task-0004", &mut sequence, now, Status::Todo);
+    additional.set_estimated_work_seconds(15 * 60);
+    root.create_child(additional)?;
 
     let completed = new_task("fixture-project-0001", &mut sequence, now, Status::Done)?;
 

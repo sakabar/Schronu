@@ -1,5 +1,6 @@
 use crate::application::daily_capacity::try_next_business_day_start;
 use crate::application::interface::TaskRepositoryTrait;
+use crate::application::scheduling_metrics::ScheduleMetrics;
 use crate::application::task_use_case::ApplicationError;
 use crate::application::task_view::TaskView;
 use crate::entity::task::{
@@ -61,31 +62,50 @@ struct ScheduledTask {
 pub fn get_schedule(
     repository: &dyn TaskRepositoryTrait,
 ) -> Result<Vec<ScheduledTaskView>, ApplicationError> {
-    get_schedule_with_first_available_time_overrides(repository, &HashMap::new())
-}
-
-pub(crate) fn get_schedule_with_task_first_available_time(
-    repository: &dyn TaskRepositoryTrait,
-    task_id: Uuid,
-    first_available_time: DateTime<Local>,
-) -> Result<Vec<ScheduledTaskView>, ApplicationError> {
-    get_schedule_with_first_available_time_overrides(
+    get_schedule_with_first_available_time_overrides_and_metrics(
         repository,
-        &HashMap::from([(task_id, first_available_time)]),
+        &HashMap::new(),
+        &mut ScheduleMetrics::default(),
     )
 }
 
-pub(crate) fn get_schedule_with_first_available_time_overrides(
+pub(crate) fn get_schedule_with_metrics(
+    repository: &dyn TaskRepositoryTrait,
+    metrics: &mut ScheduleMetrics,
+) -> Result<Vec<ScheduledTaskView>, ApplicationError> {
+    get_schedule_with_first_available_time_overrides_and_metrics(
+        repository,
+        &HashMap::new(),
+        metrics,
+    )
+}
+
+pub(crate) fn get_schedule_with_task_first_available_time_and_metrics(
+    repository: &dyn TaskRepositoryTrait,
+    task_id: Uuid,
+    first_available_time: DateTime<Local>,
+    metrics: &mut ScheduleMetrics,
+) -> Result<Vec<ScheduledTaskView>, ApplicationError> {
+    get_schedule_with_first_available_time_overrides_and_metrics(
+        repository,
+        &HashMap::from([(task_id, first_available_time)]),
+        metrics,
+    )
+}
+
+pub(crate) fn get_schedule_with_first_available_time_overrides_and_metrics(
     repository: &dyn TaskRepositoryTrait,
     first_available_time_overrides: &HashMap<Uuid, DateTime<Local>>,
+    metrics: &mut ScheduleMetrics,
 ) -> Result<Vec<ScheduledTaskView>, ApplicationError> {
+    metrics.record_rebuild();
     for project_root in repository.get_all_projects() {
         project_root
             .snapshot()
             .map_err(ApplicationError::TaskTree)?;
     }
 
-    let mut candidates = build_schedule_candidates(repository)?;
+    let mut candidates = build_schedule_candidates(repository, metrics)?;
     for candidate in &mut candidates {
         if let Some(first_available_time) = first_available_time_overrides.get(
             &candidate
@@ -97,7 +117,7 @@ pub(crate) fn get_schedule_with_first_available_time_overrides(
                 max(*first_available_time, repository.get_last_synced_time());
         }
     }
-    schedule_tasks_by_priority(&candidates, repository.get_last_synced_time())
+    schedule_tasks_by_priority_with_metrics(&candidates, repository.get_last_synced_time(), metrics)
         .map_err(ApplicationError::TaskTree)?
         .into_iter()
         .map(|scheduled| {
@@ -116,6 +136,7 @@ pub(crate) fn get_schedule_with_first_available_time_overrides(
 
 fn build_schedule_candidates(
     repository: &dyn TaskRepositoryTrait,
+    metrics: &mut ScheduleMetrics,
 ) -> Result<Vec<TaskScheduleCandidate>, ApplicationError> {
     let last_synced_time = repository.get_last_synced_time();
     let mut task_schedule_attributes: HashMap<Uuid, TaskScheduleAttributes> = HashMap::new();
@@ -159,6 +180,7 @@ fn build_schedule_candidates(
     }
 
     let mut attributes = task_schedule_attributes.into_iter().collect::<Vec<_>>();
+    metrics.record_sort();
     attributes.sort_by_key(|(id, _)| *id);
     let mut attributes = attributes
         .into_iter()
@@ -183,6 +205,7 @@ fn build_schedule_candidates(
             Ok((sort_key, (id, attributes)))
         })
         .collect::<Result<Vec<_>, ApplicationError>>()?;
+    metrics.record_sort();
     attributes.sort_by_key(|entry| entry.0);
 
     let mut candidates = Vec::new();
@@ -206,6 +229,7 @@ fn build_schedule_candidates(
             deadline_time: attributes.deadline_time,
         });
     }
+    metrics.record_candidates(candidates.len());
     Ok(candidates)
 }
 
@@ -223,6 +247,7 @@ fn find_earliest_non_overlapping_start(
     first_available_time: DateTime<Local>,
     remaining_seconds: i64,
     occupied_slots: &[(DateTime<Local>, DateTime<Local>)],
+    metrics: &mut ScheduleMetrics,
 ) -> DateTime<Local> {
     let duration = Duration::seconds(remaining_seconds);
     let mut start = first_available_time;
@@ -230,6 +255,7 @@ fn find_earliest_non_overlapping_start(
         let end = start + duration;
         let mut shifted = false;
         for (occupied_start, occupied_end) in occupied_slots {
+            metrics.record_occupied_slot_probe();
             if start < *occupied_end && *occupied_start < end {
                 start = *occupied_end;
                 shifted = true;
@@ -245,18 +271,36 @@ fn find_earliest_non_overlapping_start(
 fn find_next_occupied_slot(
     start: DateTime<Local>,
     occupied_slots: &[(DateTime<Local>, DateTime<Local>)],
+    metrics: &mut ScheduleMetrics,
 ) -> Option<(DateTime<Local>, DateTime<Local>)> {
     occupied_slots
         .iter()
-        .find(|(occupied_start, occupied_end)| start < *occupied_end && start <= *occupied_start)
+        .find(|(occupied_start, occupied_end)| {
+            metrics.record_occupied_slot_probe();
+            start < *occupied_end && start <= *occupied_start
+        })
         .copied()
 }
 
+#[cfg(test)]
 fn schedule_tasks_by_priority(
     candidates: &[TaskScheduleCandidate],
     last_synced_time: DateTime<Local>,
 ) -> Result<Vec<ScheduledTask>, TaskTreeError> {
+    schedule_tasks_by_priority_with_metrics(
+        candidates,
+        last_synced_time,
+        &mut ScheduleMetrics::default(),
+    )
+}
+
+fn schedule_tasks_by_priority_with_metrics(
+    candidates: &[TaskScheduleCandidate],
+    last_synced_time: DateTime<Local>,
+    metrics: &mut ScheduleMetrics,
+) -> Result<Vec<ScheduledTask>, TaskTreeError> {
     let mut pending_candidates = candidates.to_vec();
+    metrics.record_sort();
     pending_candidates.sort_by(|a, b| {
         (
             a.deadline_time.is_none(),
@@ -305,12 +349,14 @@ fn schedule_tasks_by_priority(
             ),
             0,
             &occupied_slots,
+            metrics,
         );
         let mut remaining_seconds = candidate.remaining_seconds;
         let total_work_seconds = remaining_seconds;
         let mut candidate_scheduled_end = segment_start;
 
         if remaining_seconds == 0 {
+            metrics.record_segment();
             scheduled_tasks.push(to_scheduled_task(
                 &candidate,
                 segment_start,
@@ -323,8 +369,10 @@ fn schedule_tasks_by_priority(
                 segment_start,
                 remaining_seconds,
                 &occupied_slots,
+                metrics,
             );
             let end = start + Duration::seconds(remaining_seconds);
+            metrics.record_segment();
             scheduled_tasks.push(to_scheduled_task(
                 &candidate,
                 start,
@@ -333,24 +381,29 @@ fn schedule_tasks_by_priority(
                 total_work_seconds,
             ));
             occupied_slots.push((start, end));
+            metrics.record_sort();
             occupied_slots.sort();
             candidate_scheduled_end = end;
         } else {
             while remaining_seconds > 0 {
                 segment_start =
-                    find_earliest_non_overlapping_start(segment_start, 0, &occupied_slots);
+                    find_earliest_non_overlapping_start(segment_start, 0, &occupied_slots, metrics);
                 let uninterrupted_end = segment_start + Duration::seconds(remaining_seconds);
-                let segment_end = match find_next_occupied_slot(segment_start, &occupied_slots) {
-                    Some((occupied_start, _)) if occupied_start < uninterrupted_end => {
-                        occupied_start
-                    }
-                    _ => uninterrupted_end,
-                };
+                let segment_end =
+                    match find_next_occupied_slot(segment_start, &occupied_slots, metrics) {
+                        Some((occupied_start, _)) if occupied_start < uninterrupted_end => {
+                            occupied_start
+                        }
+                        _ => uninterrupted_end,
+                    };
                 let work_seconds = (segment_end - segment_start).num_seconds();
                 if work_seconds <= 0 {
                     segment_start = occupied_slots
                         .iter()
-                        .find(|(start, end)| segment_start >= *start && segment_start < *end)
+                        .find(|(start, end)| {
+                            metrics.record_occupied_slot_probe();
+                            segment_start >= *start && segment_start < *end
+                        })
                         .map(|(_, end)| *end)
                         .unwrap_or(segment_start + Duration::seconds(1));
                     continue;
@@ -362,11 +415,15 @@ fn schedule_tasks_by_priority(
                 {
                     segment_start = occupied_slots
                         .iter()
-                        .find(|(start, _)| *start == segment_end)
+                        .find(|(start, _)| {
+                            metrics.record_occupied_slot_probe();
+                            *start == segment_end
+                        })
                         .map(|(_, end)| *end)
                         .unwrap_or(segment_end);
                     continue;
                 }
+                metrics.record_segment();
                 scheduled_tasks.push(to_scheduled_task(
                     &candidate,
                     segment_start,
@@ -375,6 +432,7 @@ fn schedule_tasks_by_priority(
                     total_work_seconds,
                 ));
                 occupied_slots.push((segment_start, segment_end));
+                metrics.record_sort();
                 occupied_slots.sort();
                 remaining_seconds -= work_seconds;
                 candidate_scheduled_end = segment_end;
@@ -384,6 +442,7 @@ fn schedule_tasks_by_priority(
         scheduled_end_by_id.insert(candidate.id, candidate_scheduled_end);
     }
 
+    metrics.record_sort();
     scheduled_tasks.sort_by(|a, b| {
         (
             a.scheduled_start,

@@ -6,8 +6,10 @@ use super::daily_capacity::{
 };
 use super::interface::{FreeTimeManagerTrait, TaskRepositoryTrait};
 use super::schedule_use_case::{
-    get_schedule, get_schedule_with_task_first_available_time, ScheduledTaskView,
+    get_schedule_with_metrics, get_schedule_with_task_first_available_time_and_metrics,
+    ScheduledTaskView,
 };
+use super::scheduling_metrics::PackMetrics;
 use super::task_use_case::ApplicationError;
 use crate::entity::task::Status;
 use chrono::{DateTime, Duration, Local, NaiveDate};
@@ -56,6 +58,13 @@ struct PackTargetDay {
     end: DateTime<Local>,
 }
 
+#[derive(Clone, Copy)]
+struct PlacementRequest {
+    task_id: Uuid,
+    work_seconds: i64,
+    atomic: bool,
+}
+
 pub fn pack_tasks(
     repository: &dyn TaskRepositoryTrait,
     free_time_manager: &mut dyn FreeTimeManagerTrait,
@@ -72,6 +81,34 @@ pub fn pack_tasks_with_end_of_day_offset_minutes(
     free_time_manager: &mut dyn FreeTimeManagerTrait,
     end_of_day_offset_minutes: i64,
 ) -> Result<PackResult, ApplicationError> {
+    pack_tasks_with_end_of_day_offset_minutes_and_metrics(
+        repository,
+        free_time_manager,
+        end_of_day_offset_minutes,
+        &mut PackMetrics::default(),
+    )
+}
+
+#[cfg(feature = "benchmarking")]
+pub(crate) fn pack_tasks_with_metrics(
+    repository: &dyn TaskRepositoryTrait,
+    free_time_manager: &mut dyn FreeTimeManagerTrait,
+    metrics: &mut PackMetrics,
+) -> Result<PackResult, ApplicationError> {
+    pack_tasks_with_end_of_day_offset_minutes_and_metrics(
+        repository,
+        free_time_manager,
+        END_OF_DAY_OFFSET_MINUTES,
+        metrics,
+    )
+}
+
+fn pack_tasks_with_end_of_day_offset_minutes_and_metrics(
+    repository: &dyn TaskRepositoryTrait,
+    free_time_manager: &mut dyn FreeTimeManagerTrait,
+    end_of_day_offset_minutes: i64,
+    metrics: &mut PackMetrics,
+) -> Result<PackResult, ApplicationError> {
     let now = repository.get_last_synced_time();
     let first_date = try_subjective_date(now)?;
     let target_dates = (0..PACK_TARGET_DAYS)
@@ -84,7 +121,8 @@ pub fn pack_tasks_with_end_of_day_offset_minutes(
             )
         })
         .collect::<Result<Vec<_>, _>>()?;
-    let mut candidates = collect_candidates(repository, &target_dates)?;
+    let mut candidates = collect_candidates(repository, &target_dates, metrics)?;
+    metrics.record_candidate_count(candidates.len());
     candidates.sort_by_key(|candidate| {
         (
             Reverse(candidate.priority),
@@ -96,10 +134,11 @@ pub fn pack_tasks_with_end_of_day_offset_minutes(
     let mut result = PackResult::default();
     for candidate in candidates {
         let mut packed_task_opt = None;
-        let current_planned_start_opt = get_schedule(repository)?
-            .into_iter()
-            .find(|scheduled| scheduled.task.id == candidate.task_id)
-            .map(|scheduled| scheduled.scheduled_start);
+        let current_planned_start_opt =
+            get_schedule_with_metrics(repository, &mut metrics.schedule)?
+                .into_iter()
+                .find(|scheduled| scheduled.task.id == candidate.task_id)
+                .map(|scheduled| scheduled.scheduled_start);
         let Some(current_planned_start) = current_planned_start_opt else {
             continue;
         };
@@ -108,6 +147,7 @@ pub fn pack_tasks_with_end_of_day_offset_minutes(
             free_time_manager,
             &target_dates,
             end_of_day_offset_minutes,
+            metrics,
         )?;
 
         for target_date in &target_dates {
@@ -136,11 +176,14 @@ pub fn pack_tasks_with_end_of_day_offset_minutes(
             let placement_start_opt = find_placement_start(
                 repository,
                 free_time_manager,
-                candidate.task_id,
                 target_datetime,
                 target_day,
-                candidate.work_seconds,
-                task.get_atomic().map_err(ApplicationError::TaskTree)?,
+                PlacementRequest {
+                    task_id: candidate.task_id,
+                    work_seconds: candidate.work_seconds,
+                    atomic: task.get_atomic().map_err(ApplicationError::TaskTree)?,
+                },
+                metrics,
             )?;
 
             if let Some(placement_start) =
@@ -180,39 +223,44 @@ pub fn pack_tasks_with_end_of_day_offset_minutes(
 fn find_placement_start(
     repository: &dyn TaskRepositoryTrait,
     free_time_manager: &mut dyn FreeTimeManagerTrait,
-    task_id: Uuid,
     first_available_time: DateTime<Local>,
     target_day: PackTargetDay,
-    work_seconds: i64,
-    atomic: bool,
+    request: PlacementRequest,
+    metrics: &mut PackMetrics,
 ) -> Result<Option<DateTime<Local>>, ApplicationError> {
     let target_end = target_day.end;
     let mut trial_time = first_available_time.max(repository.get_last_synced_time());
 
-    while trial_time + Duration::seconds(work_seconds) <= target_end {
-        if atomic {
+    while trial_time + Duration::seconds(request.work_seconds) <= target_end {
+        if request.atomic {
             let Some(next_free_time) = find_next_continuous_free_time(
                 free_time_manager,
                 trial_time,
                 target_end,
-                work_seconds,
+                request.work_seconds,
+                metrics,
             ) else {
                 return Ok(None);
             };
             trial_time = next_free_time;
         }
-        let schedule =
-            get_schedule_with_task_first_available_time(repository, task_id, trial_time)?;
+        metrics.record_placement_trial();
+        let schedule = get_schedule_with_task_first_available_time_and_metrics(
+            repository,
+            request.task_id,
+            trial_time,
+            &mut metrics.schedule,
+        )?;
         let task_segments = schedule
             .iter()
-            .filter(|scheduled| scheduled.task.id == task_id)
+            .filter(|scheduled| scheduled.task.id == request.task_id)
             .collect::<Vec<_>>();
 
         if placement_fits_target_day(
             &task_segments,
             target_day,
-            work_seconds,
-            atomic,
+            request.work_seconds,
+            request.atomic,
             free_time_manager,
         )? {
             return Ok(task_segments
@@ -220,15 +268,20 @@ fn find_placement_start(
                 .map(|scheduled| scheduled.scheduled_start));
         }
 
-        if !atomic {
+        if !request.atomic {
             return Ok(None);
         }
-        trial_time = task_segments
-            .first()
-            .map_or(trial_time + Duration::minutes(1), |scheduled| {
-                (trial_time + Duration::minutes(1))
-                    .max(scheduled.scheduled_start + Duration::minutes(1))
-            });
+        let next_trial_time =
+            task_segments
+                .first()
+                .map_or(trial_time + Duration::minutes(1), |scheduled| {
+                    (trial_time + Duration::minutes(1))
+                        .max(scheduled.scheduled_start + Duration::minutes(1))
+                });
+        metrics.record_cursor_minute_advance(
+            (next_trial_time - trial_time).num_minutes().max(0) as usize
+        );
+        trial_time = next_trial_time;
     }
 
     Ok(None)
@@ -239,6 +292,7 @@ fn find_next_continuous_free_time(
     mut cursor: DateTime<Local>,
     target_end: DateTime<Local>,
     work_seconds: i64,
+    metrics: &mut PackMetrics,
 ) -> Option<DateTime<Local>> {
     let required_minutes = (work_seconds + 59) / 60;
     let check_duration = Duration::minutes(required_minutes);
@@ -250,6 +304,7 @@ fn find_next_continuous_free_time(
             return Some(cursor);
         }
         cursor += Duration::minutes(1);
+        metrics.record_cursor_minute_advance(1);
     }
 
     None
@@ -258,8 +313,9 @@ fn find_next_continuous_free_time(
 fn collect_candidates(
     repository: &dyn TaskRepositoryTrait,
     target_dates: &[NaiveDate],
+    metrics: &mut PackMetrics,
 ) -> Result<Vec<PackCandidate>, ApplicationError> {
-    let schedule = get_schedule(repository)?;
+    let schedule = get_schedule_with_metrics(repository, &mut metrics.schedule)?;
     let mut seen_ids = HashSet::new();
     let mut candidates = Vec::new();
     for scheduled in schedule {
@@ -296,11 +352,12 @@ fn calculate_daily_leeway(
     free_time_manager: &mut dyn FreeTimeManagerTrait,
     target_dates: &[NaiveDate],
     end_of_day_offset_minutes: i64,
+    metrics: &mut PackMetrics,
 ) -> Result<HashMap<NaiveDate, i64>, ApplicationError> {
     let mut total_work_seconds = HashMap::<NaiveDate, i64>::new();
     let mut repetitive_work_seconds = HashMap::<NaiveDate, i64>::new();
 
-    for scheduled in get_schedule(repository)? {
+    for scheduled in get_schedule_with_metrics(repository, &mut metrics.schedule)? {
         let date = try_subjective_date(scheduled.scheduled_start)?;
         if !target_dates.contains(&date) {
             continue;
