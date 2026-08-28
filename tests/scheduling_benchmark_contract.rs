@@ -50,6 +50,28 @@ fn schedule診断は通常経路と同じ結果を返し内部処理を計数す
 }
 
 #[test]
+fn typical_scheduleはslot探索とsortの上限内に収まる() {
+    let fixture = SchedulingFixture::build(FixtureSize::Typical).unwrap();
+    let repository = SchedulingRepository::new(fixture.projects, fixture.now);
+
+    let (_, metrics) = get_schedule_diagnostics(&repository).unwrap();
+
+    assert_eq!(metrics.candidate_count, 1_755);
+    assert_eq!(metrics.segment_count, 1_762);
+    assert_eq!(metrics.schedule_rebuild_count, 1);
+    assert!(
+        metrics.occupied_slot_probe_count <= 20_000_000,
+        "occupied slot probes exceeded the deterministic limit: {}",
+        metrics.occupied_slot_probe_count
+    );
+    assert!(
+        metrics.sort_count <= 4,
+        "sorts exceeded the deterministic limit: {}",
+        metrics.sort_count
+    );
+}
+
+#[test]
 fn pack診断は通常経路と同じ結果を返しschedule再構築を計数する() {
     let expected_repository = small_repository();
     let mut expected_free_time = SchedulingFreeTimeManager::new(DAILY_FREE_MINUTES);
