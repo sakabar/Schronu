@@ -145,7 +145,7 @@ fn flatten診断は通常経路と同じ結果を返しschedule走査を計数�
     assert!(metrics.full_schedule_scan_element_count > 0);
     assert!(metrics.overload_iteration_count > 0);
     assert!(metrics.candidate_trial_count > 0);
-    assert!(metrics.override_clone_element_count > 0);
+    assert_eq!(metrics.override_clone_element_count, 0);
 }
 
 #[test]
