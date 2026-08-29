@@ -55,7 +55,7 @@ fn task_with_schedule(
 }
 
 #[test]
-fn get_schedule_締切を優先しdoneを除外してtask_viewを返す() {
+fn get_schedule_slackに余裕があればpriorityを優先しdoneを除外する() {
     let now = fixed_now();
     let deadline_task = task_with_schedule("締切あり", now, 15 * 60, 1);
     deadline_task
@@ -85,15 +85,15 @@ fn get_schedule_締切を優先しdoneを除外してtask_viewを返す() {
     let actual = get_schedule(&repository).unwrap();
 
     assert_eq!(actual.len(), 2);
-    assert_eq!(actual[0].task.id, deadline_task.get_id().unwrap());
-    assert_eq!(actual[0].task.name, "締切あり");
+    assert_eq!(actual[0].task.id, high_priority_task.get_id().unwrap());
+    assert_eq!(actual[0].task.name, "高優先度");
     assert_eq!(actual[0].scheduled_start, now);
-    assert_eq!(actual[0].scheduled_end, now + Duration::minutes(15));
-    assert_eq!(actual[0].scheduled_work_seconds, 15 * 60);
-    assert_eq!(actual[0].total_work_seconds, 15 * 60);
+    assert_eq!(actual[0].scheduled_end, now + Duration::minutes(30));
+    assert_eq!(actual[0].scheduled_work_seconds, 30 * 60);
+    assert_eq!(actual[0].total_work_seconds, 30 * 60);
     assert_eq!(actual[0].rank, 0);
-    assert_eq!(actual[1].task.id, high_priority_task.get_id().unwrap());
-    assert_eq!(actual[1].scheduled_start, now + Duration::minutes(15));
+    assert_eq!(actual[1].task.id, deadline_task.get_id().unwrap());
+    assert_eq!(actual[1].scheduled_start, now + Duration::minutes(30));
     assert!(!actual
         .iter()
         .any(|entry| entry.task.id == done_task.get_id().unwrap()));

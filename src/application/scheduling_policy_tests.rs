@@ -610,3 +610,209 @@ fn schedule_tasks_by_priority_親は子の実schedule終了後に配置する() 
         Local.with_ymd_and_hms(2026, 5, 10, 15, 1, 0).unwrap()
     );
 }
+
+#[test]
+fn deadline_slackに余裕がある間は高priorityの長時間taskを先行する() {
+    let now = Local.with_ymd_and_hms(2026, 9, 1, 9, 0, 0).unwrap();
+    let mut deadline = candidate("deadline", now, 1, 60 * 60);
+    deadline.deadline_time = Some(now + Duration::hours(4));
+    let deadline_id = deadline.id;
+    let important = candidate("important", now, 99, 2 * 60 * 60);
+    let important_id = important.id;
+
+    let scheduled = schedule_tasks_by_priority(&[deadline, important], now).unwrap();
+
+    assert_eq!(scheduled_start(&scheduled, important_id), now);
+    assert_eq!(
+        scheduled_start(&scheduled, deadline_id),
+        now + Duration::hours(2)
+    );
+}
+
+#[test]
+fn deadline_slackが0になる境界でdeadline_taskへ切り替える() {
+    let now = Local.with_ymd_and_hms(2026, 9, 1, 9, 0, 0).unwrap();
+    let mut deadline = candidate("deadline", now, 1, 60 * 60);
+    deadline.deadline_time = Some(now + Duration::hours(3));
+    let deadline_id = deadline.id;
+    let important = candidate("important", now, 99, 4 * 60 * 60);
+    let important_id = important.id;
+
+    let scheduled = schedule_tasks_by_priority(&[deadline, important], now).unwrap();
+    let important_segments = segments_for(&scheduled, important_id);
+
+    assert_eq!(important_segments.len(), 2);
+    assert_eq!(important_segments[0].scheduled_start, now);
+    assert_eq!(
+        important_segments[0].scheduled_end,
+        now + Duration::hours(2)
+    );
+    assert_eq!(
+        scheduled_start(&scheduled, deadline_id),
+        now + Duration::hours(2)
+    );
+}
+
+#[test]
+fn deadline_slackは早いdeadlineまでの需要を後続deadlineへ累積する() {
+    let now = Local.with_ymd_and_hms(2026, 9, 1, 9, 0, 0).unwrap();
+    let mut first = candidate("first-deadline", now, 1, 60 * 60);
+    first.deadline_time = Some(now + Duration::hours(3));
+    let first_id = first.id;
+    let mut second = candidate("second-deadline", now, 2, 2 * 60 * 60);
+    second.deadline_time = Some(now + Duration::hours(4));
+    let second_id = second.id;
+    let important = candidate("important", now, 99, 3 * 60 * 60);
+    let important_id = important.id;
+
+    let scheduled = schedule_tasks_by_priority(&[second, important, first], now).unwrap();
+
+    assert_eq!(scheduled_start(&scheduled, important_id), now);
+    assert_eq!(
+        scheduled_start(&scheduled, first_id),
+        now + Duration::hours(1)
+    );
+    assert_eq!(
+        scheduled_start(&scheduled, second_id),
+        now + Duration::hours(2)
+    );
+}
+
+#[test]
+fn future_candidateのrelease時刻でsegmentを切り再選択する() {
+    let now = Local.with_ymd_and_hms(2026, 9, 1, 9, 0, 0).unwrap();
+    let mut deadline = candidate("deadline", now, 1, 60 * 60);
+    deadline.deadline_time = Some(now + Duration::hours(3));
+    let deadline_id = deadline.id;
+    let running = candidate("running", now, 50, 3 * 60 * 60);
+    let running_id = running.id;
+    let released = candidate("released", now + Duration::hours(1), 99, 60 * 60);
+    let released_id = released.id;
+
+    let scheduled = schedule_tasks_by_priority(&[deadline, released, running], now).unwrap();
+    let running_segments = segments_for(&scheduled, running_id);
+
+    assert_eq!(running_segments[0].scheduled_start, now);
+    assert_eq!(running_segments[0].scheduled_end, now + Duration::hours(1));
+    assert_eq!(
+        scheduled_start(&scheduled, released_id),
+        now + Duration::hours(1)
+    );
+    assert_eq!(
+        scheduled_start(&scheduled, deadline_id),
+        now + Duration::hours(2)
+    );
+}
+
+#[test]
+fn fixedの全transitive_dependencyへ開始時刻をeffective_deadlineとして伝搬する() {
+    let now = Local.with_ymd_and_hms(2026, 9, 1, 9, 0, 0).unwrap();
+    let dependency = candidate("dependency", now, 1, 60 * 60);
+    let dependency_id = dependency.id;
+    let mut intermediate = candidate("intermediate", now, 1, 0);
+    intermediate.dependency_ids = vec![dependency_id];
+    let intermediate_id = intermediate.id;
+    let mut fixed = fixed_candidate("fixed", now + Duration::hours(2), 60 * 60, 60 * 60);
+    fixed.dependency_ids = vec![intermediate_id];
+    let important = candidate("important", now, 99, 3 * 60 * 60);
+    let important_id = important.id;
+
+    let scheduled =
+        schedule_tasks_by_priority(&[fixed, important, intermediate, dependency], now).unwrap();
+
+    assert_eq!(scheduled_start(&scheduled, important_id), now);
+    assert_eq!(
+        scheduled_start(&scheduled, dependency_id),
+        now + Duration::hours(1)
+    );
+}
+
+#[test]
+fn priority_tieはeffective_deadline_rank_uuidで入力順に依存せず決定する() {
+    let now = Local.with_ymd_and_hms(2026, 9, 1, 9, 0, 0).unwrap();
+    let mut earlier = candidate("earlier", now, 50, 60);
+    earlier.id = Uuid::from_u128(2);
+    earlier.deadline_time = Some(now + Duration::hours(10));
+    let mut later = candidate("later", now, 50, 60);
+    later.id = Uuid::from_u128(1);
+    later.deadline_time = Some(now + Duration::hours(11));
+
+    let forward = schedule_tasks_by_priority(&[later.clone(), earlier.clone()], now).unwrap();
+    let reverse = schedule_tasks_by_priority(&[earlier, later], now).unwrap();
+
+    assert_eq!(forward[0].id, Uuid::from_u128(2));
+    assert_eq!(
+        forward
+            .iter()
+            .map(|segment| (segment.id, segment.scheduled_start, segment.scheduled_end))
+            .collect::<Vec<_>>(),
+        reverse
+            .iter()
+            .map(|segment| (segment.id, segment.scheduled_start, segment.scheduled_end))
+            .collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn atomicが次eventまでに入らなければ入るready候補を先に配置する() {
+    let now = Local.with_ymd_and_hms(2026, 9, 1, 9, 0, 0).unwrap();
+    let mut atomic = candidate("atomic", now, 99, 2 * 60 * 60);
+    atomic.atomic = true;
+    let atomic_id = atomic.id;
+    let flexible = candidate("flexible", now, 1, 30 * 60);
+    let flexible_id = flexible.id;
+    let fixed = fixed_candidate("fixed", now + Duration::hours(1), 60 * 60, 60 * 60);
+
+    let scheduled = schedule_tasks_by_priority(&[fixed, flexible, atomic], now).unwrap();
+
+    assert_eq!(scheduled_start(&scheduled, flexible_id), now);
+    assert_eq!(
+        scheduled_start(&scheduled, atomic_id),
+        now + Duration::hours(2)
+    );
+    assert_eq!(segments_for(&scheduled, atomic_id).len(), 1);
+}
+
+#[test]
+fn 実現不能なdeadlineでも決定的に期限超過scheduleを返す() {
+    let now = Local.with_ymd_and_hms(2026, 9, 1, 9, 0, 0).unwrap();
+    let mut impossible = candidate("impossible", now, 1, 2 * 60 * 60);
+    impossible.deadline_time = Some(now + Duration::hours(1));
+    impossible.id = Uuid::from_u128(1);
+
+    let first = schedule_tasks_by_priority(std::slice::from_ref(&impossible), now).unwrap();
+    let second = schedule_tasks_by_priority(&[impossible], now).unwrap();
+
+    assert_eq!(first[0].scheduled_start, now);
+    assert_eq!(first[0].scheduled_end, now + Duration::hours(2));
+    assert!(first[0].scheduled_end > first[0].deadline_time.unwrap());
+    assert_eq!(first[0].scheduled_start, second[0].scheduled_start);
+    assert_eq!(first[0].scheduled_end, second[0].scheduled_end);
+}
+
+#[test]
+fn preemptionとfixed衝突後もtaskごとの作業秒数を保存する() {
+    let now = Local.with_ymd_and_hms(2026, 9, 1, 9, 0, 0).unwrap();
+    let mut deadline = candidate("deadline", now, 1, 60 * 60);
+    deadline.deadline_time = Some(now + Duration::hours(4));
+    let important = candidate("important", now, 99, 4 * 60 * 60);
+    let fixed = fixed_candidate("fixed", now + Duration::hours(2), 60 * 60, 60 * 60);
+    let expected = [
+        (deadline.id, deadline.remaining_seconds),
+        (important.id, important.remaining_seconds),
+        (fixed.id, fixed.remaining_seconds),
+    ];
+
+    let scheduled = schedule_tasks_by_priority(&[deadline, important, fixed], now).unwrap();
+
+    for (id, expected_seconds) in expected {
+        assert_eq!(
+            segments_for(&scheduled, id)
+                .iter()
+                .map(|segment| segment.scheduled_work_seconds)
+                .sum::<i64>(),
+            expected_seconds,
+            "work seconds changed for {id}"
+        );
+    }
+}
