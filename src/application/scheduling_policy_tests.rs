@@ -148,6 +148,41 @@ fn fixed予定はdependencyが未完了でも指定時刻を動かさない() {
 }
 
 #[test]
+fn fixed超過分は元dependency完了後に下流を解放する() {
+    let now = Local.with_ymd_and_hms(2026, 8, 11, 12, 0, 0).unwrap();
+    let child = candidate("child", now, 0, 3 * 60 * 60);
+    let child_id = child.id;
+    let mut fixed = fixed_candidate(
+        "fixed-excess",
+        now + Duration::hours(1),
+        60 * 60,
+        2 * 60 * 60,
+    );
+    fixed.dependency_ids = vec![child_id];
+    let fixed_id = fixed.id;
+    let mut grandparent = candidate("grandparent", now, 99, 60 * 60);
+    grandparent.dependency_ids = vec![fixed_id];
+    let grandparent_id = grandparent.id;
+
+    let scheduled = schedule_tasks_by_priority(&[grandparent, fixed, child], now).unwrap();
+    let fixed_segments = segments_for(&scheduled, fixed_id);
+    let child_completion = segments_for(&scheduled, child_id)
+        .iter()
+        .map(|segment| segment.scheduled_end)
+        .max()
+        .unwrap();
+    let fixed_completion = fixed_segments
+        .iter()
+        .map(|segment| segment.scheduled_end)
+        .max()
+        .unwrap();
+
+    assert_eq!(fixed_segments.len(), 2);
+    assert!(fixed_segments[1].scheduled_start >= child_completion);
+    assert!(scheduled_start(&scheduled, grandparent_id) >= fixed_completion);
+}
+
+#[test]
 fn zero_remainingのfixed予定は指定時刻に決定的な点を返す() {
     let now = Local.with_ymd_and_hms(2026, 8, 11, 12, 0, 0).unwrap();
     let start = now + Duration::hours(1);
@@ -219,6 +254,33 @@ fn flexibleとatomicの終了が日時範囲外なら入力値を保持するerr
             "atomic={atomic}"
         );
     }
+}
+
+#[test]
+fn fixed完了はdependency完了後にgrandparentを解放する() {
+    let now = Local.with_ymd_and_hms(2026, 8, 11, 12, 0, 0).unwrap();
+    let child = candidate("child", now, 0, 3 * 60 * 60);
+    let child_id = child.id;
+    let mut fixed = fixed_candidate("fixed", now + Duration::hours(1), 60 * 60, 60 * 60);
+    fixed.dependency_ids = vec![child_id];
+    let fixed_id = fixed.id;
+    let mut grandparent = candidate("grandparent", now, 99, 60 * 60);
+    grandparent.dependency_ids = vec![fixed_id];
+    let grandparent_id = grandparent.id;
+
+    let scheduled = schedule_tasks_by_priority(&[grandparent, fixed, child], now).unwrap();
+    let fixed_segment = segments_for(&scheduled, fixed_id)[0];
+    let child_completion = segments_for(&scheduled, child_id)
+        .iter()
+        .map(|segment| segment.scheduled_end)
+        .max()
+        .unwrap();
+    let grandparent_start = scheduled_start(&scheduled, grandparent_id);
+
+    assert_eq!(fixed_segment.scheduled_start, now + Duration::hours(1));
+    assert_eq!(fixed_segment.scheduled_end, now + Duration::hours(2));
+    assert!(grandparent_start >= child_completion);
+    assert!(grandparent_start >= fixed_segment.scheduled_end);
 }
 
 #[cfg(feature = "benchmarking")]
