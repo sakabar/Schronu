@@ -268,6 +268,11 @@ struct SpeculativeSlackChange {
     deactivated: Vec<(usize, i64)>,
 }
 
+struct SpeculativeBoundarySelection {
+    selection: Option<Selection>,
+    slack_change: SpeculativeSlackChange,
+}
+
 const INACTIVE_SLACK: i64 = i64::MAX / 4;
 
 /// active deadline groupのslack最小値をrange加算しながら保持する。
@@ -1641,6 +1646,41 @@ fn select_next_candidate(
     Ok(None)
 }
 
+/// release境界の仮想状態で選択し、成功時はslack差分だけをcallerへ渡す。
+/// error時はfrontierとslackを双方とも復元し、部分的な仮想状態を残さない。
+fn select_at_speculative_boundary(
+    states: &[FlexibleState],
+    old_now: DateTime<Local>,
+    boundary: DateTime<Local>,
+    fixed_slots: &[(DateTime<Local>, DateTime<Local>)],
+    frontier: &mut SchedulerFrontier,
+    slack_index: &mut SlackDemandIndex,
+    metrics: &mut ScheduleMetrics,
+) -> Result<SpeculativeBoundarySelection, SchedulingPolicyError> {
+    let speculative_releases = frontier.begin_speculative_releases(boundary, states, metrics);
+    let slack_change = slack_index.begin_speculative_idle(old_now, boundary, metrics);
+    let selection = select_next_candidate(
+        states,
+        &[],
+        boundary,
+        fixed_slots,
+        Some(frontier),
+        Some(slack_index),
+        metrics,
+    );
+    frontier.restore_speculative_releases(speculative_releases, states);
+    match selection {
+        Ok(selection) => Ok(SpeculativeBoundarySelection {
+            selection,
+            slack_change,
+        }),
+        Err(error) => {
+            slack_index.restore_speculative_idle(old_now, boundary, slack_change, metrics);
+            Err(error)
+        }
+    }
+}
+
 #[cfg(test)]
 fn schedule_tasks_by_priority(
     candidates: &[TaskScheduleCandidate],
@@ -1884,20 +1924,18 @@ fn schedule_selected_segment(
     {
         let fixed_boundary = next_fixed_start(*now, fixed_slots) == Some(boundary);
         let guard_boundary = slack_guard == Some(boundary);
-        let speculative_releases = frontier.begin_speculative_releases(boundary, states, metrics);
-        let speculative_slack = slack_index.begin_speculative_idle(*now, boundary, metrics);
-        let speculative_selection = select_next_candidate(
+        let speculative = select_at_speculative_boundary(
             states,
-            &[],
+            *now,
             boundary,
             fixed_slots,
-            Some(frontier),
-            Some(slack_index),
+            frontier,
+            slack_index,
             metrics,
-        );
-        frontier.restore_speculative_releases(speculative_releases, states);
-        let release_preempts =
-            speculative_selection?.is_some_and(|selection| selection.index != selected_index);
+        )?;
+        let release_preempts = speculative
+            .selection
+            .is_some_and(|selection| selection.index != selected_index);
         let release_boundary = frontier.next_release() == Some(boundary);
         let guard_releases_protected_task = guard_boundary && release_boundary && release_preempts;
         if fixed_boundary
@@ -1908,7 +1946,7 @@ fn schedule_selected_segment(
             *now = boundary;
             return Ok(());
         }
-        slack_index.restore_speculative_idle(*now, boundary, speculative_slack, metrics);
+        slack_index.restore_speculative_idle(*now, boundary, speculative.slack_change, metrics);
         if guard_releases_protected_task {
             // 保護taskがguard時刻までreleaseされない場合、それより前に切り替える
             // 選択肢はない。使える時間をidleにするより、境界までの作業を保存する。
