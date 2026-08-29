@@ -276,8 +276,8 @@ fn list_ancestor_schedule_times_checked(
             if let Some(adjusted_start) = adjusted_start {
                 *rough_start = adjusted_start;
             } else {
-                let work_seconds = calculate_remaining_work_seconds(current)
-                    .map_err(ApplicationError::TaskTree)?;
+                let work_seconds =
+                    calculate_ancestry_work_seconds(current).map_err(ApplicationError::TaskTree)?;
                 return Err(map_scheduling_policy_error(schedule_time_out_of_range(
                     current,
                     *rough_start,
@@ -315,8 +315,7 @@ fn checked_candidate_end(
     task: &TaskHandle,
     start_time: DateTime<Local>,
 ) -> Result<DateTime<Local>, ApplicationError> {
-    let work_seconds =
-        calculate_remaining_work_seconds(task).map_err(ApplicationError::TaskTree)?;
+    let work_seconds = calculate_ancestry_work_seconds(task).map_err(ApplicationError::TaskTree)?;
     if let Some(end) = Duration::try_seconds(work_seconds)
         .and_then(|duration| start_time.checked_add_signed(duration))
     {
@@ -358,4 +357,13 @@ fn calculate_remaining_work_seconds(task: &TaskHandle) -> Result<i64, TaskTreeEr
     } else {
         Ok(max(0, estimated_work_seconds * 2 - actual_work_seconds))
     }
+}
+
+fn calculate_ancestry_work_seconds(task: &TaskHandle) -> Result<i64, TaskTreeError> {
+    // 祖先時刻は置換前entity契約を維持し、見積超過済みなら追加時間を要求しない。
+    // candidate自身の再見積規則とは目的が異なるため、同じ残秒helperを流用しない。
+    Ok(task
+        .get_estimated_work_seconds()?
+        .saturating_sub(task.get_actual_work_seconds()?)
+        .max(0))
 }
