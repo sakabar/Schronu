@@ -436,7 +436,7 @@ fn next_preempting_release(
     states: &[FlexibleState],
     now: DateTime<Local>,
     fixed_slots: &[(DateTime<Local>, DateTime<Local>)],
-) -> Option<DateTime<Local>> {
+) -> Result<Option<DateTime<Local>>, SchedulingPolicyError> {
     let mut releases = states
         .iter()
         .filter(|state| state.completion_time.is_none())
@@ -445,22 +445,51 @@ fn next_preempting_release(
         .collect::<Vec<_>>();
     releases.sort_unstable();
     releases.dedup();
-    releases.into_iter().find(|release| {
+    for release in releases {
         let ready = states
             .iter()
             .enumerate()
             .filter(|(_, state)| state.completion_time.is_none() && state.remaining_seconds > 0)
             .filter(|(_, state)| {
                 release_time(state, states)
-                    .is_some_and(|candidate_release| candidate_release <= *release)
+                    .is_some_and(|candidate_release| candidate_release <= release)
             })
             .map(|(index, _)| index)
             .collect::<Vec<_>>();
-        let slacks = deadline_slacks(states, *release, fixed_slots);
-        ordered_ready_candidates(states, &ready, critical_deadline(&slacks))
-            .first()
-            .is_some_and(|index| states[*index].candidate.id != selected.candidate.id)
-    })
+        let slacks = deadline_slacks(states, release, fixed_slots);
+        for index in ordered_ready_candidates(states, &ready, critical_deadline(&slacks)) {
+            if candidate_fits_without_future_release(&states[index], release, fixed_slots, &slacks)?
+            {
+                if states[index].candidate.id != selected.candidate.id {
+                    return Ok(Some(release));
+                }
+                break;
+            }
+        }
+    }
+    Ok(None)
+}
+
+/// release時点で候補が実際に選択可能かを判定する。さらに未来のreleaseまで
+/// 再帰的に追うと選択判定が循環するため、fixedとslackの硬い境界だけを見る。
+fn candidate_fits_without_future_release(
+    candidate: &FlexibleState,
+    now: DateTime<Local>,
+    fixed_slots: &[(DateTime<Local>, DateTime<Local>)],
+    slacks: &[(DateTime<Local>, i64)],
+) -> Result<bool, SchedulingPolicyError> {
+    if !candidate.candidate.atomic {
+        return Ok(true);
+    }
+    let completion = checked_segment_end(candidate.candidate.id, now, candidate.remaining_seconds)?;
+    let hard_boundary = [
+        next_fixed_start(now, fixed_slots),
+        slack_boundary(candidate, slacks, now),
+    ]
+    .into_iter()
+    .flatten()
+    .min();
+    Ok(hard_boundary.is_none_or(|boundary| completion <= boundary))
 }
 
 /// 選択taskがdeadline保護対象外なら、最小の正slackが0になる時刻を返す。
@@ -490,7 +519,7 @@ fn segment_boundary(
 ) -> Result<DateTime<Local>, SchedulingPolicyError> {
     let completion = checked_segment_end(selected.candidate.id, now, selected.remaining_seconds)?;
     let release = if selected.candidate.atomic {
-        next_preempting_release(selected, states, now, fixed_slots)
+        next_preempting_release(selected, states, now, fixed_slots)?
     } else {
         next_release_event(states, now)
     };
