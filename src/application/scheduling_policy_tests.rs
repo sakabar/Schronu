@@ -649,6 +649,28 @@ fn deadline_slackに余裕がある間は高priorityの長時間taskを先行す
 }
 
 #[test]
+fn 完了済みdeadlineは後続のdeadlineなしtaskを分割しない() {
+    let now = Local.with_ymd_and_hms(2026, 9, 1, 9, 0, 0).unwrap();
+    let mut deadline = candidate("deadline", now, 99, 10 * 60);
+    deadline.deadline_time = Some(now + Duration::hours(1));
+    let flexible = candidate("flexible", now, 1, 2 * 60 * 60);
+    let flexible_id = flexible.id;
+
+    let scheduled = schedule_tasks_by_priority(&[deadline, flexible], now).unwrap();
+    let flexible_segments = segments_for(&scheduled, flexible_id);
+
+    assert_eq!(flexible_segments.len(), 1);
+    assert_eq!(
+        flexible_segments[0].scheduled_start,
+        now + Duration::minutes(10)
+    );
+    assert_eq!(
+        flexible_segments[0].scheduled_end,
+        now + Duration::minutes(130)
+    );
+}
+
+#[test]
 fn deadline_slackが0になる境界でdeadline_taskへ切り替える() {
     let now = Local.with_ymd_and_hms(2026, 9, 1, 9, 0, 0).unwrap();
     let mut deadline = candidate("deadline", now, 1, 60 * 60);
