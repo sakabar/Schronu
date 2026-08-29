@@ -233,10 +233,14 @@ fn flatten_tasks_with_end_of_day_offset_minutes_and_metrics(
                 .filter(|scheduled| scheduled.task.id == candidate.task_id)
                 .map(|scheduled| scheduled.scheduled_start)
                 .min();
-            if trial_scheduled_start != Some(target_datetime) {
-                // overrideが実scheduleを動かさない候補をacceptすると、同一scheduleのまま
-                // overload loopへ戻り続ける。fixed以外の将来policy変更にも備えて実測する。
-                rejected.push((candidate, UnresolvedReason::FixedStart));
+            let made_progress = trial_scheduled_start.is_some_and(|scheduled_start| {
+                scheduled_start >= target_datetime && scheduled_start > candidate.scheduled_start
+            });
+            if !made_progress {
+                // targetとの完全一致ではなく実際の後方移動をprogressとする。先行予約で
+                // 07:00等へずれる正常配置は受け入れ、同一scheduleへ戻るloopだけを防ぐ。
+                // fixedはprecheck済みなので、非fixedの進捗不能は一般理由として報告する。
+                rejected.push((candidate, UnresolvedReason::Other));
                 continue;
             }
             if introduces_deadline_violation(&schedule, &trial_schedule, metrics) {
