@@ -655,6 +655,42 @@ mod tests {
     }
 
     #[test]
+    fn 平は延期先logical_day_startの先行fixed予定後へ移動する() {
+        let now = Local.with_ymd_and_hms(2026, 8, 11, 12, 0, 0).unwrap();
+        let source_fixed = new_task_handle("source-fixed").unwrap();
+        source_fixed.sync_clock(now).unwrap();
+        source_fixed.set_start_time(now).unwrap();
+        source_fixed
+            .set_estimated_work_seconds(2 * 60 * 60)
+            .unwrap();
+        source_fixed.set_fixed_start(true).unwrap();
+        let flexible = new_task_handle("flexible").unwrap();
+        flexible.sync_clock(now).unwrap();
+        flexible.set_start_time(now).unwrap();
+        flexible.set_estimated_work_seconds(60 * 60).unwrap();
+        let flexible_id = flexible.get_id().unwrap();
+        let target_start = Local.with_ymd_and_hms(2026, 8, 12, 6, 0, 0).unwrap();
+        let target_fixed = new_task_handle("target-fixed").unwrap();
+        target_fixed.sync_clock(now).unwrap();
+        target_fixed.set_start_time(target_start).unwrap();
+        target_fixed.set_estimated_work_seconds(60 * 60).unwrap();
+        target_fixed.set_fixed_start(true).unwrap();
+        let repository =
+            TestTaskRepository::new(vec![source_fixed, flexible.clone(), target_fixed], now);
+        let mut free_time_manager = TestFreeTimeManager::new(2 * 60);
+
+        let result = flatten_tasks(&repository, &mut free_time_manager).unwrap();
+
+        assert_eq!(result.flattened_tasks.len(), 1);
+        assert_eq!(result.flattened_tasks[0].task_id, flexible_id);
+        assert_eq!(
+            result.flattened_tasks[0].target_date,
+            NaiveDate::from_ymd_opt(2026, 8, 12).unwrap()
+        );
+        assert_eq!(flexible.get_pending_until().unwrap(), target_start);
+    }
+
+    #[test]
     fn flatten_tasksはoperation時刻のlogical_date計算不能を伝搬しtaskを変更しない() {
         let local_datetime = NaiveDate::MIN.and_hms_opt(5, 59, 0).unwrap();
         let now = DateTime::<Local>::from_naive_utc_and_offset(
