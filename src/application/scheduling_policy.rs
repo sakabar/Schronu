@@ -809,6 +809,18 @@ impl SlackDemandIndex {
 }
 
 impl SchedulerFrontier {
+    fn clone_element_count(&self) -> usize {
+        self.normal_ready.len()
+            + self.protected_ready.len()
+            + self.zero_ready.len()
+            + self.release_events.values().map(Vec::len).sum::<usize>()
+            + self.unresolved_dependencies.len()
+            + self.dependency_end.len()
+            + self.dependents.len()
+            + self.dependents.iter().map(Vec::len).sum::<usize>()
+            + self.ready.len()
+    }
+
     fn new(states: &[FlexibleState]) -> Self {
         let mut unresolved_dependencies = vec![0; states.len()];
         let mut dependents = vec![Vec::new(); states.len()];
@@ -1821,6 +1833,7 @@ fn schedule_selected_segment(
     {
         let fixed_boundary = next_fixed_start(*now, fixed_slots) == Some(boundary);
         let guard_boundary = slack_guard == Some(boundary);
+        metrics.record_frontier_clone_elements(frontier.clone_element_count());
         let mut boundary_frontier = frontier.clone();
         boundary_frontier.promote_releases(boundary, states, metrics);
         let speculative_slack = slack_index.begin_speculative_idle(*now, boundary, metrics);
