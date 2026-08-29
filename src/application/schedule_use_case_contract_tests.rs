@@ -593,6 +593,40 @@ fn scheduling_policyの単一入口と選択責務を固定する() {
 }
 
 #[test]
+fn scheduling_policyのindexed経路を唯一にする() {
+    let policy_source = include_str!("scheduling_policy.rs");
+    let selection_source = policy_source
+        .split_once("fn select_next_candidate(")
+        .expect("scheduling policy must retain candidate selection")
+        .1
+        .split_once("fn select_at_speculative_boundary(")
+        .expect("candidate selection must remain bounded by speculative selection")
+        .0;
+
+    for forbidden_fallback_marker in [
+        "frontier: Option",
+        "slack_index: Option",
+        "fn deadline_slacks(",
+        "fn ordered_ready_candidates(",
+        "fn next_release_event(",
+        "fallback_slacks",
+    ] {
+        assert!(
+            !policy_source.contains(forbidden_fallback_marker),
+            "production scheduling policy must not retain full-scan fallback marker: {forbidden_fallback_marker}"
+        );
+    }
+    assert!(
+        selection_source.contains("frontier: &SchedulerFrontier"),
+        "candidate selection must require the indexed scheduler frontier"
+    );
+    assert!(
+        selection_source.contains("slack_index: &SlackDemandIndex"),
+        "candidate selection must require the indexed slack demand index"
+    );
+}
+
+#[test]
 fn policy入口検出はvisibilityとfunction修飾を独立に扱う() {
     for declaration in [
         "pub fn direct() {}",
