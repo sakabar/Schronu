@@ -263,6 +263,7 @@
       "properties": {
         "additional_actual_work_seconds": {
           "default": 0,
+          "description": "A non-negative integer.",
           "minimum": 0,
           "type": "integer"
         },

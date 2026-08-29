@@ -1018,6 +1018,10 @@ fn tools_list_initialized通知後に10個のtoolのschemaを返す() {
     assert_string_property(tools, "complete_task", "task_id", Some("uuid"));
     assert_string_property(tools, "complete_task", "finished_at", Some("date-time"));
     assert_non_negative_integer_property(tools, "complete_task", "additional_actual_work_seconds");
+    assert_eq!(
+        property(tools, "complete_task", "additional_actual_work_seconds")["description"],
+        "A non-negative integer."
+    );
     assert_string_property(tools, "update_task", "task_id", Some("uuid"));
     assert_non_negative_integer_property(tools, "update_task", "estimated_work_minutes");
     assert_nullable_string_property(tools, "update_task", "deadline_time", Some("date-time"));

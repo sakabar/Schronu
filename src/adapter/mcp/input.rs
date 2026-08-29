@@ -501,8 +501,12 @@ fn zero_non_negative() -> NonNegativeI64 {
     NonNegativeI64(0)
 }
 
-fn additional_work_seconds_schema(_generator: &mut SchemaGenerator) -> Schema {
-    json_schema!({"type": "integer", "minimum": 0, "default": 0})
+fn additional_work_seconds_schema(generator: &mut SchemaGenerator) -> Schema {
+    let mut schema = generator.subschema_for::<NonNegativeI64>();
+    schema
+        .ensure_object()
+        .insert("default".to_string(), Value::from(0));
+    schema
 }
 
 #[derive(Clone, Copy)]
