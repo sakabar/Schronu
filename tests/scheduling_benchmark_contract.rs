@@ -107,10 +107,11 @@ fn atomic_release探索はready候補とfuture_releaseの直積にならない()
     let fixture =
         SchedulingFixture::atomic_release_adversarial(READY_ATOMIC_COUNT, FUTURE_RELEASE_COUNT)
             .unwrap();
+    let now = fixture.now;
     let repository = SchedulingRepository::new(fixture.projects, fixture.now);
 
     let started = Instant::now();
-    let (_, metrics) = get_schedule_diagnostics(&repository).unwrap();
+    let (schedule, metrics) = get_schedule_diagnostics(&repository).unwrap();
     let elapsed = started.elapsed();
     let candidate_count = READY_ATOMIC_COUNT + FUTURE_RELEASE_COUNT;
 
@@ -123,6 +124,27 @@ fn atomic_release探索はready候補とfuture_releaseの直積にならない()
     assert!(
         elapsed <= Duration::from_secs(2),
         "atomic release adversarial fixture exceeded wall limit: {elapsed:?}"
+    );
+    assert_eq!(schedule.len(), candidate_count + 1);
+    assert_eq!(
+        schedule
+            .iter()
+            .map(|task| task.scheduled_work_seconds)
+            .sum::<i64>(),
+        candidate_count as i64 * 8 * 60 * 60 + 60 * 60
+    );
+    let fixed = schedule
+        .iter()
+        .find(|task| task.task.fixed_start)
+        .expect("the adversarial fixture contains one fixed boundary");
+    assert_eq!(fixed.scheduled_start, now + chrono::Duration::hours(4));
+    assert_eq!(fixed.scheduled_end, now + chrono::Duration::hours(5));
+    assert!(
+        schedule
+            .iter()
+            .filter(|task| !task.task.fixed_start)
+            .all(|task| task.scheduled_start >= fixed.scheduled_end),
+        "atomic work must not be lost or placed across the fixed boundary"
     );
 }
 
