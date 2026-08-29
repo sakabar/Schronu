@@ -149,6 +149,52 @@ fn atomic_release探索はready候補とfuture_releaseの直積にならない()
 }
 
 #[test]
+fn atomic候補間でrelease予測を共有する() {
+    const READY_ATOMIC_COUNT: usize = 64;
+    const FUTURE_RELEASE_COUNT: usize = 32;
+    let fixture = SchedulingFixture::atomic_release_prediction_adversarial(
+        READY_ATOMIC_COUNT,
+        FUTURE_RELEASE_COUNT,
+    )
+    .unwrap();
+    let now = fixture.now;
+    let repository = SchedulingRepository::new(fixture.projects, fixture.now);
+
+    let started = Instant::now();
+    let (schedule, metrics) = get_schedule_diagnostics(&repository).unwrap();
+    let elapsed = started.elapsed();
+    let candidate_count = READY_ATOMIC_COUNT + FUTURE_RELEASE_COUNT;
+    let probe_limit = candidate_count * FUTURE_RELEASE_COUNT;
+
+    assert!(
+        metrics.release_candidate_probe_count <= probe_limit,
+        "atomic prediction probes exceeded the shared-timeline limit: {} > {}",
+        metrics.release_candidate_probe_count,
+        probe_limit
+    );
+    assert!(
+        elapsed <= Duration::from_secs(2),
+        "atomic prediction adversarial fixture exceeded wall limit: {elapsed:?}"
+    );
+    assert_eq!(schedule.len(), candidate_count);
+    assert_eq!(
+        schedule
+            .iter()
+            .map(|task| task.scheduled_work_seconds)
+            .sum::<i64>(),
+        candidate_count as i64 * 60 * 60
+    );
+    let preemptor = schedule
+        .iter()
+        .find(|task| task.task.name == "fixture-prediction-future-0031")
+        .expect("the last future release is the common preemptor");
+    assert_eq!(
+        preemptor.scheduled_start,
+        now + chrono::Duration::seconds(FUTURE_RELEASE_COUNT as i64)
+    );
+}
+
+#[test]
 fn 短fragment判定はfrontier全体を複製しない() {
     const FRAGMENT_COUNT: usize = 128;
     let fixture = SchedulingFixture::short_fragment_frontier_adversarial(FRAGMENT_COUNT).unwrap();

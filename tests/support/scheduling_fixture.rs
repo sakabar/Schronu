@@ -166,6 +166,54 @@ impl SchedulingFixture {
     }
 
     #[allow(dead_code)]
+    pub fn atomic_release_prediction_adversarial(
+        ready_atomic_count: usize,
+        future_release_count: usize,
+    ) -> Result<Self, TaskTreeError> {
+        assert!(future_release_count >= 2);
+        let now = fixed_now();
+        let mut sequence = 0_u64;
+        let mut projects = Vec::with_capacity(ready_atomic_count + future_release_count);
+
+        for index in 0..ready_atomic_count {
+            let task = new_task(
+                &format!("fixture-prediction-ready-{index:04}"),
+                &mut sequence,
+                now,
+                Status::Todo,
+            )?;
+            task.set_atomic(true)?;
+            task.set_estimated_work_seconds(60 * 60)?;
+            task.set_priority((ready_atomic_count - index) as i64)?;
+            projects.push(task);
+        }
+
+        for index in 0..future_release_count {
+            let task = new_task(
+                &format!("fixture-prediction-future-{index:04}"),
+                &mut sequence,
+                now,
+                Status::Todo,
+            )?;
+            task.set_atomic(true)?;
+            task.set_estimated_work_seconds(60 * 60)?;
+            task.set_start_time(now + Duration::seconds((index + 1) as i64))?;
+            task.set_priority(if index + 1 == future_release_count {
+                10_000
+            } else {
+                -1 - index as i64
+            })?;
+            projects.push(task);
+        }
+
+        Ok(Self {
+            projects,
+            now,
+            seed: STRESS_SEED,
+        })
+    }
+
+    #[allow(dead_code)]
     pub fn short_fragment_frontier_adversarial(
         fragment_count: usize,
     ) -> Result<Self, TaskTreeError> {
