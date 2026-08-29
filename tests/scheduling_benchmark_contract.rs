@@ -164,7 +164,7 @@ fn atomic候補間でrelease予測を共有する() {
     let (schedule, metrics) = get_schedule_diagnostics(&repository).unwrap();
     let elapsed = started.elapsed();
     let candidate_count = READY_ATOMIC_COUNT + FUTURE_RELEASE_COUNT;
-    let probe_limit = candidate_count * FUTURE_RELEASE_COUNT;
+    let probe_limit = candidate_count * 12;
 
     assert!(
         metrics.release_candidate_probe_count <= probe_limit,
