@@ -1,6 +1,6 @@
 use super::daily_capacity::{
     calculate_free_time_minutes_for_logical_date_with_end_of_day_offset_minutes, try_logical_date,
-    try_logical_date_end, try_logical_date_start, END_OF_DAY_OFFSET_MINUTES,
+    try_logical_date_start, try_next_logical_date_start, END_OF_DAY_OFFSET_MINUTES,
 };
 use super::interface::{FreeTimeManagerTrait, TaskRepositoryTrait};
 use super::schedule_use_case::{
@@ -188,8 +188,7 @@ fn flatten_tasks_with_end_of_day_offset_minutes_and_metrics(
                 },
             )?
         };
-        let mut candidates =
-            collect_candidates(&schedule, overload_date, end_of_day_offset_minutes, metrics)?;
+        let mut candidates = collect_candidates(&schedule, overload_date, metrics)?;
         sort_candidates_for_deferral(&mut candidates);
 
         let mut accepted = None;
@@ -326,7 +325,6 @@ fn collect_original_task_details(
 fn collect_candidates(
     schedule: &[ScheduledTaskView],
     overload_date: NaiveDate,
-    end_of_day_offset_minutes: i64,
     metrics: &mut FlattenMetrics,
 ) -> Result<Vec<FlattenCandidate>, ApplicationError> {
     let mut segments_by_task = HashMap::<Uuid, Vec<&ScheduledTaskView>>::new();
@@ -343,30 +341,22 @@ fn collect_candidates(
         let Some(first) = segments.first().copied() else {
             continue;
         };
-        if first.total_work_seconds <= 0
-            || !segments
-                .iter()
-                .map(|segment| {
-                    segment_overlaps_date(segment, overload_date, end_of_day_offset_minutes)
-                })
-                .collect::<Result<Vec<_>, _>>()?
-                .into_iter()
-                .any(|overlaps| overlaps)
-        {
+        let segment_dates = segments
+            .iter()
+            .map(|segment| try_logical_date(segment.scheduled_start))
+            .collect::<Result<Vec<_>, _>>()?;
+        if first.total_work_seconds <= 0 || !segment_dates.contains(&overload_date) {
             continue;
         }
         let Some(scheduled_start) = segments.iter().map(|segment| segment.scheduled_start).min()
         else {
             continue;
         };
-        let overload_date_end = try_logical_date_end(overload_date, end_of_day_offset_minutes)?;
-        let segment_dates = segments
-            .iter()
-            .map(|segment| try_logical_date(segment.scheduled_start))
-            .collect::<Result<Vec<_>, _>>()?;
+        let next_logical_date_start =
+            try_next_logical_date_start(try_logical_date_start(overload_date)?)?;
         let all_work_is_on_overload_date =
             segments.iter().zip(segment_dates).all(|(segment, date)| {
-                date == overload_date && segment.scheduled_end <= overload_date_end
+                date == overload_date && segment.scheduled_end <= next_logical_date_start
             });
         candidates.push(FlattenCandidate {
             task_id: first.task.id,
@@ -382,16 +372,6 @@ fn collect_candidates(
         });
     }
     Ok(candidates)
-}
-
-fn segment_overlaps_date(
-    segment: &ScheduledTaskView,
-    date: NaiveDate,
-    end_of_day_offset_minutes: i64,
-) -> Result<bool, ApplicationError> {
-    let date_start = try_logical_date_start(date)?;
-    let date_end = try_logical_date_end(date, end_of_day_offset_minutes)?;
-    Ok(segment.scheduled_start < date_end && date_start < segment.scheduled_end)
 }
 
 fn candidate_precheck_reason(
