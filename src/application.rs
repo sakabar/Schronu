@@ -1,9 +1,13 @@
+#[cfg(feature = "benchmarking")]
+#[doc(hidden)]
+pub mod benchmarking;
 pub mod daily_capacity;
 pub mod flatten_use_case;
 pub mod interface;
 pub mod pack_use_case;
 pub mod repository_transaction;
 pub mod schedule_use_case;
+mod scheduling_metrics;
 pub mod task_use_case;
 mod task_view;
 

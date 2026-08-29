@@ -47,6 +47,46 @@ SCHRONU_BENCHMARK_STORAGE=/absolute/path/to/task-storage-copy \
   cargo test benchmark_save_2172project中1件変更を2秒未満で処理する -- --ignored --nocapture
 ```
 
+### scheduling性能契約
+
+`schedule`、`pack`、`flatten`は、匿名化した固定seed fixtureで性能退行を検出します。元storageは集計時だけread-onlyで開き、名前、UUID、本文、実日付、絶対pathはfixtureへ保存しません。`SCHRONU_BENCHMARK_STORAGE`はアプリケーションの恒久設定ではなく、次の手動集計だけにinline指定します。
+
+```shell
+SCHRONU_BENCHMARK_STORAGE=/absolute/path/to/task-storage \
+  cargo test --locked --test scheduling_fixture_contract \
+  指定storageの匿名化集計はtypical_fixture契約と一致する \
+  -- --ignored --nocapture
+```
+
+fixture規模は次のとおりです。stressはtypicalのproject、task、active leaf、競合候補を固定seedで4倍にします。pack benchmarkはprofile全体の走査に加え、typicalで1組、stressで4組の固定small probeを同じ計測区間内で実行し、通常配置とatomicの1分cursor前進を必ず通します。flatten benchmarkの固定capacityは1,500分で、過負荷経路を決定論的に発生させるための合成負荷係数です。実際の1日の空き時間を表す設定ではありません。
+
+| fixture | project | task | active leaf |
+| --- | ---: | ---: | ---: |
+| typical | 2,213 | 26,378 | 691 |
+| stress | 8,852 | 105,512 | 2,764 |
+
+通常CIはwall-clockではなく、candidate、segment、occupied slot探索、依存候補走査、sort、schedule再構築、配置試行、cursor前進、overload反復、override clone、全schedule走査の上限を検査します。週次・手動CIはRust 1.97.1、release build、`Asia/Tokyo`、GitHub Actions Ubuntu runnerで3回のmedianを測り、typical 500ms、stress 5,000msを上限とします。
+
+```shell
+cargo test --locked --features benchmarking --test scheduling_benchmark_contract
+cargo bench --locked --features benchmarking --bench scheduling -- typical schedule check
+cargo bench --locked --features benchmarking --bench scheduling -- typical pack check
+cargo bench --locked --features benchmarking --bench scheduling -- typical flatten check
+cargo bench --locked --features benchmarking --bench scheduling -- stress schedule check
+cargo bench --locked --features benchmarking --bench scheduling -- stress pack check
+cargo bench --locked --features benchmarking --bench scheduling -- stress flatten check
+```
+
+初回ローカルbaselineはRust 1.97.1、release build、`Asia/Tokyo`、Darwin arm64で次のmedianでした。CI上限にはrunner差を見込んだ余裕を持たせています。
+
+| use case | typical | stress |
+| --- | ---: | ---: |
+| schedule | 6.930ms | 29.172ms |
+| pack | 8.046ms | 35.296ms |
+| flatten | 72.900ms | 403.322ms |
+
+探索時の旧実装ではtypical scheduleが約1,070ms、packが20秒超でした。支配要因はoccupied intervalの反復走査、packの未変更schedule再構築、flattenのoverride全cloneとcandidate再構築、依存待ちcandidateの反復走査でした。最適化後も通常API、task順序、segment、deadline判定、`PackResult`、`FlattenResult`、`pending_until`のcharacterization contractを維持します。
+
 ## Schronuが対象とすること
 
 * あなた1人が持っているタスクの抵抗感を小さくし、スムーズに進めるようにすること

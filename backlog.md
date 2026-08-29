@@ -47,13 +47,14 @@
 | TD-009 | P2 | 完了 | L | entity層がYAML形式へ依存している |
 | TD-010 | P2 | 完了 | L | 現在時刻、UUID、業務日境界がドメイン内部へ埋め込まれている |
 | TD-011 | P2 | 完了 | L | MCPのschema、入力検証、Rust入力型、JSON出力が重複している |
-| TD-012 | P2 | 未着手 | L | flatten・pack・scheduleの再計算コストに性能上限が定義されていない |
+| TD-012 | P2 | 完了 | L | flatten・pack・scheduleの再計算コストに性能上限が定義されていない |
 | TD-013 | P2 | 完了 | M | Spreadsheetの列契約が複数言語・文書へ重複している |
 | TD-014 | P2 | 完了 | M | 実環境計測で同期処理に有意な高速化の見込みがないことを確認した |
 | TD-015 | P2 | 完了 | L | テストが巨大な製品ファイルへ混在し、fixtureも重複している |
 | TD-016 | P3 | 完了 | M | マジック値、未使用フィールド、古いコメントが意図を曖昧にしている |
 | TD-017 | P1 | 完了 | XL | `TaskHandle`の既存infallible APIが内部不変条件の破れをpanicとして扱う |
 | TD-018 | P1 | 完了 | XL | CLI runtimeにcommand orchestrationと表示計算が残っている |
+| TD-019 | P2 | 未着手 | L | scheduling性能計測の状態がapplicationの業務ロジックへ伝播している |
 
 ## 詳細
 
@@ -600,6 +601,10 @@
 
 - 優先度: `P2`
 - 概算規模: `L`
+- 完了日: 2026-08-29
+- 対応: 指定storageをread-only集計し、識別情報と実日付を含まないsmall、typical、stress固定seed fixtureを追加した。通常APIを変えず、schedule、pack、flattenの内部処理をbenchmarking featureで計数する。occupied intervalの二分探索と隣接区間union、packのschedule snapshot再利用、flattenのoverride挿入・復元とcandidate context再利用、依存候補のready heap化により支配的な再計算を削減した。
+- 性能契約: 通常CIはtypical/stressの決定論的counter上限を検査する。packはprofile全体に固定small配置・atomic cursor probeをtypicalで1組、stressで4組加える。週次・手動CIはRust 1.97.1、release build、`Asia/Tokyo`、GitHub Actions Ubuntu runnerで3回medianを測り、typical 500ms、stress 5,000msを上限とする。初回ローカルbaseline(Darwin arm64)はtypicalがschedule 6.930ms、pack 8.046ms、flatten 72.900ms、stressがschedule 29.172ms、pack 35.296ms、flatten 403.322msだった。
+- 検証: fixtureはtypical 2,213 project・26,378 task・691 active leaf、stress 8,852 project・105,512 task・2,764 active leafを固定する。通常経路と診断経路の結果、task状態、deadline、segment、`PackResult`、`FlattenResult`を照合し、既存schedule契約を緩和していない。`cargo fmt --check`、default/benchmarking双方のClippyと全test、6つのrelease wall-clock gate、`git diff --check`に成功した。
 
 #### 現状と根拠
 
@@ -785,6 +790,48 @@
 - TD-001、TD-005、TD-010でpolicy境界が確定してから段階的に整理する。
 - 独立したcleanupを機能変更と同じcommitへ混ぜない。
 
+### TD-019: scheduling性能計測の状態がapplicationの業務ロジックへ伝播している
+
+- 優先度: `P2`
+- 概算規模: `L`
+- 調査revision: `91afef6`
+
+#### 現状と根拠
+
+- concreteな`ScheduleMetrics`、`PackMetrics`、`FlattenMetrics`が、`schedule_use_case.rs`の12関数、`pack_use_case.rs`の4関数、`flatten_use_case.rs`の7関数、合計23関数の引数へ伝播している。
+- 3つの通常entrypointも空のmetricsを生成し、`*_with_metrics`または`*_and_metrics`経路を呼んでいる。
+- `benchmarking` featureで除外されるのは診断entrypointとcounter更新本体であり、metrics型、関数引数、呼出経路、38か所の計測参照は通常buildにも残る。
+- 計測値は判定、戻り値、task変更内容には使用されておらず、現在の業務結果との意味的な結合はない。
+- `application/benchmarking.rs`は公開用metrics型と内部用metrics型を重複定義し、診断結果を変換している。
+- `benches/`、benchmark fixture、CI、feature限定の診断APIは適切に分離されている。CLIの`RhoMetrics`と保存時間のignored testは製品表示または独立したtestであり、本項目の対象外とする。
+
+#### 影響
+
+- schedulingの業務規則を変更する際にも計測用引数とcounter更新箇所を追従させる必要があり、use caseの可読性と変更局所性を損なう。
+- benchmarkの都合で`*_with_metrics`と`*_and_metrics`という内部APIが増え、通常経路と診断経路の対応関係を追いにくい。
+- default featureでも不要な計測stateを生成して渡す構造になり、最適化による除去を前提にしている。
+- 計測経路だけを分離しようとしてalgorithmを複製すると、通常経路とbenchmark結果が乖離する危険がある。
+
+#### 推奨する改善方針
+
+- concreteなbenchmark metricsを業務関数の引数から除去し、scheduling実行contextと中立な非公開instrumentation境界を設ける。
+- 通常経路は結果へ影響しないno-op実装を使い、`benchmarking` featureだけが計数実装と診断用metrics型を提供する。
+- 診断経路は通常経路と同じalgorithmを通し、benchmark専用algorithmを複製しない。
+- schedule、pack、flattenを契約単位に分け、通常経路と診断経路の同値性を固定してから段階的に境界を置換する。
+
+#### 完了条件
+
+- schedule、pack、flattenのuse caseがconcreteなbenchmark metricsをimportまたは生成しない。
+- `_with_metrics`または`_and_metrics`という計測都合の並行経路が残らない。
+- 公開API、task順序、segment、deadline判定、`PackResult`、`FlattenResult`、反映後のtask変更内容が置換前後で一致する。
+- TD-012で導入した決定論的counter契約とwall-clock gateが維持される。
+- default featureの製品buildへ計数用stateを含めない。
+
+#### 依存関係
+
+- TD-012で性能契約と診断経路が固定された後の負債として扱う。
+- 今後のscheduling algorithm変更より先に計測境界を整理し、境界変更とalgorithm変更を同じcommitへ混ぜない。
+
 ## 推奨着手順
 
 1. TD-008のうち`Cargo.lock`追跡と既存clippy違反の解消を行い、以後の変更に品質ゲートを設ける。
@@ -794,7 +841,7 @@
 5. TD-013でSpreadsheet互換fixtureを固定してからTD-005のCLI境界分割を行う。その後、TD-015のCLI characterization testと`test_support`分離を先行し、残るruntime縮小と意味的表示model分離をTD-018で進める。
 6. TD-010、TD-009、TD-004はいずれも完了済みである。domain境界の縮小とtree実装の全面変更は、それぞれ独立した段階として実施した。
 7. TD-011、TD-015を独立して進める。TD-015のCLI fixture分離はTD-018の製品コード移動とcommitを分ける。
-8. TD-012はbenchmark結果を取得してから最適化範囲を決める。
+8. TD-012は完了済みである。次のscheduling algorithm変更前にTD-019で計測境界を整理する。
 9. TD-016は関連する上位項目の完了後、小さいcleanup commitへ分割して解消した。
 
 ## まとめて実施しない変更

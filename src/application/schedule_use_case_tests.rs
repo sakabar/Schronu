@@ -21,6 +21,96 @@ fn candidate(
     }
 }
 
+#[cfg(feature = "benchmarking")]
+#[test]
+fn schedule_tasks_by_priorityは依存待ちcandidateを毎回走査しない() {
+    let now = Local.with_ymd_and_hms(2026, 5, 10, 12, 0, 0).unwrap();
+    let child = candidate("child", now, -1, 60);
+    let child_id = child.id;
+    let mut candidates = (0..100)
+        .map(|index| {
+            let mut parent = candidate(&format!("parent-{index}"), now, -99, 0);
+            parent.rank = 1;
+            parent.dependency_ids = vec![child_id];
+            parent
+        })
+        .collect::<Vec<_>>();
+    candidates.push(child);
+    let mut metrics = ScheduleMetrics::default();
+
+    schedule_tasks_by_priority_with_metrics(&candidates, now, &mut metrics).unwrap();
+
+    assert!(
+        metrics.dependency_candidate_probe_count <= candidates.len(),
+        "dependency readiness probes exceeded one per candidate: {} > {}",
+        metrics.dependency_candidate_probe_count,
+        candidates.len()
+    );
+}
+
+#[test]
+fn schedule_tasks_by_priorityはmissing_dependencyをready候補の後にfallback配置する() {
+    let now = Local.with_ymd_and_hms(2026, 5, 10, 12, 0, 0).unwrap();
+    let ready = candidate("ready", now, -1, 60);
+    let ready_id = ready.id;
+    let mut blocked = candidate("blocked", now, -99, 60);
+    blocked.dependency_ids = vec![Uuid::nil()];
+    let blocked_id = blocked.id;
+
+    let scheduled = schedule_tasks_by_priority(&[blocked, ready], now).unwrap();
+
+    assert_eq!(scheduled_start(&scheduled, ready_id), now);
+    assert_eq!(
+        scheduled_start(&scheduled, blocked_id),
+        now + Duration::seconds(60)
+    );
+}
+
+#[test]
+fn schedule_tasks_by_priorityは重複dependencyを1回の完了で解決する() {
+    let now = Local.with_ymd_and_hms(2026, 5, 10, 12, 0, 0).unwrap();
+    let child = candidate("child", now, -1, 60);
+    let child_id = child.id;
+    let mut parent = candidate("parent", now, -99, 60);
+    parent.dependency_ids = vec![child_id, child_id];
+    let parent_id = parent.id;
+
+    let scheduled = schedule_tasks_by_priority(&[parent, child], now).unwrap();
+
+    assert_eq!(scheduled_start(&scheduled, child_id), now);
+    assert_eq!(
+        scheduled_start(&scheduled, parent_id),
+        now + Duration::seconds(60)
+    );
+}
+
+#[test]
+fn schedule_tasks_by_priorityはcycle時にsort順先頭からfallback配置する() {
+    let now = Local.with_ymd_and_hms(2026, 5, 10, 12, 0, 0).unwrap();
+    let mut first = candidate("first", now, -99, 60);
+    let mut second = candidate("second", now, -1, 60);
+    first.dependency_ids = vec![second.id];
+    second.dependency_ids = vec![first.id];
+    let first_id = first.id;
+    let second_id = second.id;
+
+    let scheduled = schedule_tasks_by_priority(&[second, first], now).unwrap();
+
+    assert_eq!(scheduled_start(&scheduled, first_id), now);
+    assert_eq!(
+        scheduled_start(&scheduled, second_id),
+        now + Duration::seconds(60)
+    );
+}
+
+fn scheduled_start(scheduled: &[ScheduledTask], task_id: Uuid) -> DateTime<Local> {
+    scheduled
+        .iter()
+        .find(|task| task.id == task_id)
+        .expect("candidate is scheduled")
+        .scheduled_start
+}
+
 #[test]
 fn schedule_tasks_by_priority_5分以下の空き時間には分割しない() {
     let now = Local.with_ymd_and_hms(2026, 5, 10, 12, 0, 0).unwrap();

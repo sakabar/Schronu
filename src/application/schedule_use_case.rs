@@ -1,5 +1,6 @@
 use crate::application::daily_capacity::try_next_business_day_start;
 use crate::application::interface::TaskRepositoryTrait;
+use crate::application::scheduling_metrics::ScheduleMetrics;
 use crate::application::task_use_case::ApplicationError;
 use crate::application::task_view::TaskView;
 use crate::entity::task::{
@@ -7,8 +8,8 @@ use crate::entity::task::{
 };
 use chrono::{DateTime, Duration, Local};
 use serde::Serialize;
-use std::cmp::max;
-use std::collections::HashMap;
+use std::cmp::{max, Reverse};
+use std::collections::{BinaryHeap, HashMap};
 use uuid::Uuid;
 
 const MIN_SPLIT_SEGMENT_SECONDS: i64 = 5 * 60;
@@ -37,6 +38,11 @@ struct TaskScheduleCandidate {
     atomic: bool,
 }
 
+pub(crate) struct ScheduleContext {
+    candidates: Vec<TaskScheduleCandidate>,
+    last_synced_time: DateTime<Local>,
+}
+
 struct TaskScheduleAttributes {
     first_available_time: DateTime<Local>,
     neg_priority: i64,
@@ -61,43 +67,78 @@ struct ScheduledTask {
 pub fn get_schedule(
     repository: &dyn TaskRepositoryTrait,
 ) -> Result<Vec<ScheduledTaskView>, ApplicationError> {
-    get_schedule_with_first_available_time_overrides(repository, &HashMap::new())
-}
-
-pub(crate) fn get_schedule_with_task_first_available_time(
-    repository: &dyn TaskRepositoryTrait,
-    task_id: Uuid,
-    first_available_time: DateTime<Local>,
-) -> Result<Vec<ScheduledTaskView>, ApplicationError> {
-    get_schedule_with_first_available_time_overrides(
+    get_schedule_with_first_available_time_overrides_and_metrics(
         repository,
-        &HashMap::from([(task_id, first_available_time)]),
+        &HashMap::new(),
+        &mut ScheduleMetrics::default(),
     )
 }
 
-pub(crate) fn get_schedule_with_first_available_time_overrides(
+pub(crate) fn get_schedule_with_metrics(
+    repository: &dyn TaskRepositoryTrait,
+    metrics: &mut ScheduleMetrics,
+) -> Result<Vec<ScheduledTaskView>, ApplicationError> {
+    get_schedule_with_first_available_time_overrides_and_metrics(
+        repository,
+        &HashMap::new(),
+        metrics,
+    )
+}
+
+pub(crate) fn get_schedule_with_task_first_available_time_and_metrics(
+    repository: &dyn TaskRepositoryTrait,
+    task_id: Uuid,
+    first_available_time: DateTime<Local>,
+    metrics: &mut ScheduleMetrics,
+) -> Result<Vec<ScheduledTaskView>, ApplicationError> {
+    get_schedule_with_first_available_time_overrides_and_metrics(
+        repository,
+        &HashMap::from([(task_id, first_available_time)]),
+        metrics,
+    )
+}
+
+pub(crate) fn get_schedule_with_first_available_time_overrides_and_metrics(
     repository: &dyn TaskRepositoryTrait,
     first_available_time_overrides: &HashMap<Uuid, DateTime<Local>>,
+    metrics: &mut ScheduleMetrics,
 ) -> Result<Vec<ScheduledTaskView>, ApplicationError> {
+    let context = build_schedule_context_with_metrics(repository, metrics)?;
+    get_schedule_from_context_with_overrides_and_metrics(
+        &context,
+        first_available_time_overrides,
+        metrics,
+    )
+}
+
+pub(crate) fn build_schedule_context_with_metrics(
+    repository: &dyn TaskRepositoryTrait,
+    metrics: &mut ScheduleMetrics,
+) -> Result<ScheduleContext, ApplicationError> {
     for project_root in repository.get_all_projects() {
         project_root
             .snapshot()
             .map_err(ApplicationError::TaskTree)?;
     }
+    Ok(ScheduleContext {
+        candidates: build_schedule_candidates(repository, metrics)?,
+        last_synced_time: repository.get_last_synced_time(),
+    })
+}
 
-    let mut candidates = build_schedule_candidates(repository)?;
+pub(crate) fn get_schedule_from_context_with_overrides_and_metrics(
+    context: &ScheduleContext,
+    first_available_time_overrides: &HashMap<Uuid, DateTime<Local>>,
+    metrics: &mut ScheduleMetrics,
+) -> Result<Vec<ScheduledTaskView>, ApplicationError> {
+    metrics.record_rebuild();
+    let mut candidates = context.candidates.clone();
     for candidate in &mut candidates {
-        if let Some(first_available_time) = first_available_time_overrides.get(
-            &candidate
-                .task
-                .get_id()
-                .map_err(ApplicationError::TaskTree)?,
-        ) {
-            candidate.first_available_time =
-                max(*first_available_time, repository.get_last_synced_time());
+        if let Some(first_available_time) = first_available_time_overrides.get(&candidate.id) {
+            candidate.first_available_time = max(*first_available_time, context.last_synced_time);
         }
     }
-    schedule_tasks_by_priority(&candidates, repository.get_last_synced_time())
+    schedule_tasks_by_priority_with_metrics(&candidates, context.last_synced_time, metrics)
         .map_err(ApplicationError::TaskTree)?
         .into_iter()
         .map(|scheduled| {
@@ -116,6 +157,7 @@ pub(crate) fn get_schedule_with_first_available_time_overrides(
 
 fn build_schedule_candidates(
     repository: &dyn TaskRepositoryTrait,
+    metrics: &mut ScheduleMetrics,
 ) -> Result<Vec<TaskScheduleCandidate>, ApplicationError> {
     let last_synced_time = repository.get_last_synced_time();
     let mut task_schedule_attributes: HashMap<Uuid, TaskScheduleAttributes> = HashMap::new();
@@ -159,6 +201,7 @@ fn build_schedule_candidates(
     }
 
     let mut attributes = task_schedule_attributes.into_iter().collect::<Vec<_>>();
+    metrics.record_sort();
     attributes.sort_by_key(|(id, _)| *id);
     let mut attributes = attributes
         .into_iter()
@@ -183,6 +226,7 @@ fn build_schedule_candidates(
             Ok((sort_key, (id, attributes)))
         })
         .collect::<Result<Vec<_>, ApplicationError>>()?;
+    metrics.record_sort();
     attributes.sort_by_key(|entry| entry.0);
 
     let mut candidates = Vec::new();
@@ -206,6 +250,7 @@ fn build_schedule_candidates(
             deadline_time: attributes.deadline_time,
         });
     }
+    metrics.record_candidates(candidates.len());
     Ok(candidates)
 }
 
@@ -223,40 +268,123 @@ fn find_earliest_non_overlapping_start(
     first_available_time: DateTime<Local>,
     remaining_seconds: i64,
     occupied_slots: &[(DateTime<Local>, DateTime<Local>)],
+    metrics: &mut ScheduleMetrics,
 ) -> DateTime<Local> {
     let duration = Duration::seconds(remaining_seconds);
     let mut start = first_available_time;
-    loop {
+    let mut index = occupied_slots.partition_point(|(_, occupied_end)| {
+        metrics.record_occupied_slot_probe();
+        *occupied_end <= start
+    });
+    while let Some((occupied_start, occupied_end)) = occupied_slots.get(index) {
         let end = start + duration;
-        let mut shifted = false;
-        for (occupied_start, occupied_end) in occupied_slots {
-            if start < *occupied_end && *occupied_start < end {
-                start = *occupied_end;
-                shifted = true;
-                break;
-            }
+        metrics.record_occupied_slot_probe();
+        if end <= *occupied_start {
+            break;
         }
-        if !shifted {
-            return start;
+        if start < *occupied_end && *occupied_start < end {
+            start = *occupied_end;
         }
+        index += 1;
     }
+    start
 }
 
 fn find_next_occupied_slot(
     start: DateTime<Local>,
     occupied_slots: &[(DateTime<Local>, DateTime<Local>)],
+    metrics: &mut ScheduleMetrics,
 ) -> Option<(DateTime<Local>, DateTime<Local>)> {
+    let index = occupied_slots.partition_point(|(occupied_start, _)| {
+        metrics.record_occupied_slot_probe();
+        *occupied_start < start
+    });
     occupied_slots
-        .iter()
-        .find(|(occupied_start, occupied_end)| start < *occupied_end && start <= *occupied_start)
+        .get(index)
+        .filter(|(occupied_start, occupied_end)| {
+            metrics.record_occupied_slot_probe();
+            start < *occupied_end && start <= *occupied_start
+        })
         .copied()
 }
 
+fn find_occupied_slot_containing(
+    datetime: DateTime<Local>,
+    occupied_slots: &[(DateTime<Local>, DateTime<Local>)],
+    metrics: &mut ScheduleMetrics,
+) -> Option<(DateTime<Local>, DateTime<Local>)> {
+    let index = occupied_slots.partition_point(|(_, occupied_end)| {
+        metrics.record_occupied_slot_probe();
+        *occupied_end <= datetime
+    });
+    occupied_slots
+        .get(index)
+        .filter(|(occupied_start, occupied_end)| {
+            metrics.record_occupied_slot_probe();
+            datetime >= *occupied_start && datetime < *occupied_end
+        })
+        .copied()
+}
+
+fn find_occupied_slot_starting_at(
+    datetime: DateTime<Local>,
+    occupied_slots: &[(DateTime<Local>, DateTime<Local>)],
+    metrics: &mut ScheduleMetrics,
+) -> Option<(DateTime<Local>, DateTime<Local>)> {
+    let index = occupied_slots.partition_point(|(occupied_start, _)| {
+        metrics.record_occupied_slot_probe();
+        *occupied_start < datetime
+    });
+    occupied_slots
+        .get(index)
+        .filter(|(occupied_start, _)| {
+            metrics.record_occupied_slot_probe();
+            *occupied_start == datetime
+        })
+        .copied()
+}
+
+fn insert_occupied_slot(
+    occupied_slots: &mut Vec<(DateTime<Local>, DateTime<Local>)>,
+    mut slot: (DateTime<Local>, DateTime<Local>),
+    metrics: &mut ScheduleMetrics,
+) {
+    let first_merged = occupied_slots.partition_point(|(_, existing_end)| {
+        metrics.record_occupied_slot_probe();
+        *existing_end < slot.0
+    });
+    let mut past_merged = first_merged;
+    while let Some((existing_start, existing_end)) = occupied_slots.get(past_merged) {
+        metrics.record_occupied_slot_probe();
+        if *existing_start > slot.1 {
+            break;
+        }
+        slot.0 = slot.0.min(*existing_start);
+        slot.1 = slot.1.max(*existing_end);
+        past_merged += 1;
+    }
+    occupied_slots.splice(first_merged..past_merged, [slot]);
+}
+
+#[cfg(test)]
 fn schedule_tasks_by_priority(
     candidates: &[TaskScheduleCandidate],
     last_synced_time: DateTime<Local>,
 ) -> Result<Vec<ScheduledTask>, TaskTreeError> {
+    schedule_tasks_by_priority_with_metrics(
+        candidates,
+        last_synced_time,
+        &mut ScheduleMetrics::default(),
+    )
+}
+
+fn schedule_tasks_by_priority_with_metrics(
+    candidates: &[TaskScheduleCandidate],
+    last_synced_time: DateTime<Local>,
+    metrics: &mut ScheduleMetrics,
+) -> Result<Vec<ScheduledTask>, TaskTreeError> {
     let mut pending_candidates = candidates.to_vec();
+    metrics.record_sort();
     pending_candidates.sort_by(|a, b| {
         (
             a.deadline_time.is_none(),
@@ -276,21 +404,47 @@ fn schedule_tasks_by_priority(
             ))
     });
 
+    let candidate_index_by_id = pending_candidates
+        .iter()
+        .enumerate()
+        .map(|(index, candidate)| (candidate.id, index))
+        .collect::<HashMap<_, _>>();
+    let mut dependent_indices_by_id = HashMap::<Uuid, Vec<usize>>::new();
+    let mut unresolved_dependency_counts = Vec::with_capacity(pending_candidates.len());
+    let mut ready_indices = BinaryHeap::<Reverse<usize>>::new();
+    for (index, candidate) in pending_candidates.iter().enumerate() {
+        metrics.record_dependency_candidate_probe();
+        let unresolved_count = candidate.dependency_ids.len();
+        unresolved_dependency_counts.push(unresolved_count);
+        if unresolved_count == 0 {
+            ready_indices.push(Reverse(index));
+        }
+        for dependency_id in &candidate.dependency_ids {
+            if candidate_index_by_id.contains_key(dependency_id) {
+                dependent_indices_by_id
+                    .entry(*dependency_id)
+                    .or_default()
+                    .push(index);
+            }
+        }
+    }
+    let mut pending_candidates = pending_candidates.into_iter().map(Some).collect::<Vec<_>>();
+    let mut remaining_candidate_count = pending_candidates.len();
     let mut occupied_slots = Vec::new();
     let mut scheduled_tasks = Vec::new();
     let mut scheduled_end_by_id = HashMap::new();
 
-    while !pending_candidates.is_empty() {
-        let index = pending_candidates
-            .iter()
-            .position(|candidate| {
-                candidate
-                    .dependency_ids
-                    .iter()
-                    .all(|id| scheduled_end_by_id.contains_key(id))
-            })
-            .unwrap_or(0);
-        let candidate = pending_candidates.remove(index);
+    while remaining_candidate_count > 0 {
+        let index = ready_indices
+            .pop()
+            .map(|Reverse(index)| index)
+            .filter(|index| pending_candidates[*index].is_some())
+            .or_else(|| pending_candidates.iter().position(Option::is_some))
+            .expect("remaining candidate count guarantees a pending candidate");
+        let candidate = pending_candidates[index]
+            .take()
+            .expect("ready candidate is pending");
+        remaining_candidate_count -= 1;
         let dependency_end = candidate
             .dependency_ids
             .iter()
@@ -305,12 +459,14 @@ fn schedule_tasks_by_priority(
             ),
             0,
             &occupied_slots,
+            metrics,
         );
         let mut remaining_seconds = candidate.remaining_seconds;
         let total_work_seconds = remaining_seconds;
         let mut candidate_scheduled_end = segment_start;
 
         if remaining_seconds == 0 {
+            metrics.record_segment();
             scheduled_tasks.push(to_scheduled_task(
                 &candidate,
                 segment_start,
@@ -323,8 +479,10 @@ fn schedule_tasks_by_priority(
                 segment_start,
                 remaining_seconds,
                 &occupied_slots,
+                metrics,
             );
             let end = start + Duration::seconds(remaining_seconds);
+            metrics.record_segment();
             scheduled_tasks.push(to_scheduled_task(
                 &candidate,
                 start,
@@ -332,27 +490,26 @@ fn schedule_tasks_by_priority(
                 remaining_seconds,
                 total_work_seconds,
             ));
-            occupied_slots.push((start, end));
-            occupied_slots.sort();
+            insert_occupied_slot(&mut occupied_slots, (start, end), metrics);
             candidate_scheduled_end = end;
         } else {
             while remaining_seconds > 0 {
                 segment_start =
-                    find_earliest_non_overlapping_start(segment_start, 0, &occupied_slots);
+                    find_earliest_non_overlapping_start(segment_start, 0, &occupied_slots, metrics);
                 let uninterrupted_end = segment_start + Duration::seconds(remaining_seconds);
-                let segment_end = match find_next_occupied_slot(segment_start, &occupied_slots) {
-                    Some((occupied_start, _)) if occupied_start < uninterrupted_end => {
-                        occupied_start
-                    }
-                    _ => uninterrupted_end,
-                };
+                let segment_end =
+                    match find_next_occupied_slot(segment_start, &occupied_slots, metrics) {
+                        Some((occupied_start, _)) if occupied_start < uninterrupted_end => {
+                            occupied_start
+                        }
+                        _ => uninterrupted_end,
+                    };
                 let work_seconds = (segment_end - segment_start).num_seconds();
                 if work_seconds <= 0 {
-                    segment_start = occupied_slots
-                        .iter()
-                        .find(|(start, end)| segment_start >= *start && segment_start < *end)
-                        .map(|(_, end)| *end)
-                        .unwrap_or(segment_start + Duration::seconds(1));
+                    segment_start =
+                        find_occupied_slot_containing(segment_start, &occupied_slots, metrics)
+                            .map(|(_, end)| end)
+                            .unwrap_or(segment_start + Duration::seconds(1));
                     continue;
                 }
                 let after_split = remaining_seconds - work_seconds;
@@ -360,13 +517,13 @@ fn schedule_tasks_by_priority(
                     && (work_seconds <= MIN_SPLIT_SEGMENT_SECONDS
                         || after_split <= MIN_SPLIT_SEGMENT_SECONDS)
                 {
-                    segment_start = occupied_slots
-                        .iter()
-                        .find(|(start, _)| *start == segment_end)
-                        .map(|(_, end)| *end)
-                        .unwrap_or(segment_end);
+                    segment_start =
+                        find_occupied_slot_starting_at(segment_end, &occupied_slots, metrics)
+                            .map(|(_, end)| end)
+                            .unwrap_or(segment_end);
                     continue;
                 }
+                metrics.record_segment();
                 scheduled_tasks.push(to_scheduled_task(
                     &candidate,
                     segment_start,
@@ -374,16 +531,25 @@ fn schedule_tasks_by_priority(
                     work_seconds,
                     total_work_seconds,
                 ));
-                occupied_slots.push((segment_start, segment_end));
-                occupied_slots.sort();
+                insert_occupied_slot(&mut occupied_slots, (segment_start, segment_end), metrics);
                 remaining_seconds -= work_seconds;
                 candidate_scheduled_end = segment_end;
                 segment_start = segment_end;
             }
         }
         scheduled_end_by_id.insert(candidate.id, candidate_scheduled_end);
+        if let Some(dependent_indices) = dependent_indices_by_id.get(&candidate.id) {
+            for dependent_index in dependent_indices {
+                let unresolved_count = &mut unresolved_dependency_counts[*dependent_index];
+                *unresolved_count = unresolved_count.saturating_sub(1);
+                if *unresolved_count == 0 && pending_candidates[*dependent_index].is_some() {
+                    ready_indices.push(Reverse(*dependent_index));
+                }
+            }
+        }
     }
 
+    metrics.record_sort();
     scheduled_tasks.sort_by(|a, b| {
         (
             a.scheduled_start,

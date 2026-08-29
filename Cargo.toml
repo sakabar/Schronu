@@ -3,6 +3,9 @@ name = "schronu"
 version = "0.1.0"
 edition = "2021"
 
+[features]
+benchmarking = []
+
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
@@ -37,3 +40,8 @@ path = "src/adapter/controller/schronu.rs"
 [[bin]]
 name = "schronu-mcp"
 path = "src/adapter/controller/schronu_mcp.rs"
+
+[[bench]]
+name = "scheduling"
+harness = false
+required-features = ["benchmarking"]
