@@ -344,6 +344,51 @@ fn get_scheduleは表現不能なfixed_flexible_atomic終了時刻を構造化er
 }
 
 #[test]
+fn get_scheduleはpending中fixedの日時範囲errorに指定開始を保持する() {
+    let now = fixed_now();
+    let fixed_start = now + Duration::hours(1);
+    let task = task_with_schedule("pending-fixed", fixed_start, i64::MAX, 0);
+    task.set_fixed_start(true).unwrap();
+    task.set_pending_until(fixed_start + Duration::hours(4))
+        .unwrap();
+    task.set_orig_status(Status::Pending).unwrap();
+    let task_id = task.get_id().unwrap();
+    let repository = TestTaskRepository::new(vec![task], now);
+
+    assert_eq!(
+        get_schedule(&repository),
+        Err(super::task_use_case::ApplicationError::ScheduleTimeOutOfRange {
+            task_id,
+            start_time: fixed_start,
+            work_seconds: i64::MAX,
+        })
+    );
+}
+
+#[test]
+fn get_scheduleはdependencyを持つfixedの日時範囲errorに指定開始を保持する() {
+    let now = fixed_now();
+    let fixed_start = now + Duration::hours(1);
+    let parent = task_with_schedule("fixed-parent", fixed_start, i64::MAX, 0);
+    parent.set_fixed_start(true).unwrap();
+    let parent_id = parent.get_id().unwrap();
+    let mut child_attr = crate::test_support::new_task_attr("dependency");
+    child_attr.set_start_time(now);
+    child_attr.set_estimated_work_seconds(2 * 60 * 60);
+    parent.create_as_last_child(child_attr);
+    let repository = TestTaskRepository::new(vec![parent], now);
+
+    assert_eq!(
+        get_schedule(&repository),
+        Err(super::task_use_case::ApplicationError::ScheduleTimeOutOfRange {
+            task_id: parent_id,
+            start_time: fixed_start,
+            work_seconds: i64::MAX,
+        })
+    );
+}
+
+#[test]
 fn scheduling_policyの単一入口と選択責務を固定する() {
     let policy_source = include_str!("scheduling_policy.rs");
     let use_case_source = include_str!("schedule_use_case.rs");
