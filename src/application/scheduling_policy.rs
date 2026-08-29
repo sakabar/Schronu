@@ -246,8 +246,8 @@ struct BoundaryContext<'a> {
     states: &'a [FlexibleState],
     fixed_slots: &'a [(DateTime<Local>, DateTime<Local>)],
     next_release: Option<DateTime<Local>>,
-    frontier: Option<&'a SchedulerFrontier>,
-    slack_index: Option<&'a SlackDemandIndex>,
+    frontier: &'a SchedulerFrontier,
+    slack_index: &'a SlackDemandIndex,
     atomic_release_predictions: Option<&'a RefCell<AtomicReleasePredictionCache>>,
     event_atomic_release_predictions: Option<&'a RefCell<Vec<AtomicReleasePrediction>>>,
 }
@@ -1132,33 +1132,6 @@ fn effective_deadlines(
     deadlines
 }
 
-fn dependencies_complete(state: &FlexibleState, states: &[FlexibleState]) -> bool {
-    state.dependency_indices.iter().all(|dependency_index| {
-        dependency_index
-            .and_then(|index| states[index].completion_time)
-            .is_some()
-    })
-}
-
-fn dependency_end(state: &FlexibleState, states: &[FlexibleState]) -> Option<DateTime<Local>> {
-    state
-        .dependency_indices
-        .iter()
-        .filter_map(|dependency_index| {
-            dependency_index.and_then(|index| states[index].completion_time)
-        })
-        .max()
-}
-
-fn release_time(state: &FlexibleState, states: &[FlexibleState]) -> Option<DateTime<Local>> {
-    dependencies_complete(state, states).then(|| {
-        max(
-            state.candidate.first_available_time,
-            dependency_end(state, states).unwrap_or(state.candidate.first_available_time),
-        )
-    })
-}
-
 /// `[start, deadline)`からfixed予約のunionを差し引いた秒数を返す。
 fn available_seconds_until(
     start: DateTime<Local>,
@@ -1179,48 +1152,6 @@ fn available_seconds_until(
         })
         .sum::<i64>();
     (deadline - start).num_seconds().saturating_sub(reserved)
-}
-
-/// deadlineごとの累積需要を引い、容量が尽きる最初のdeadlineを返す。
-fn deadline_slacks(
-    states: &[FlexibleState],
-    now: DateTime<Local>,
-    fixed_slots: &[(DateTime<Local>, DateTime<Local>)],
-    metrics: &mut ScheduleMetrics,
-) -> Vec<(DateTime<Local>, i64)> {
-    let mut demand_by_deadline = states
-        .iter()
-        .inspect(|_| metrics.record_slack_probes(1))
-        .filter(|state| state.remaining_seconds > 0)
-        .filter_map(|state| {
-            state
-                .effective_deadline
-                .map(|deadline| (deadline, state.remaining_seconds))
-        })
-        .collect::<Vec<_>>();
-    demand_by_deadline.sort_unstable_by_key(|(deadline, _)| *deadline);
-
-    // deadlineごとの全候補再走査はtask数の2乗になる。sort後のprefix sumなら
-    // 同じ累積需要を1回の走査で得られ、数式の意味もそのまま読める。
-    let mut result = Vec::new();
-    let mut cumulative_demand = 0_i64;
-    let mut index = 0;
-    while let Some((deadline, _)) = demand_by_deadline.get(index).copied() {
-        metrics.record_slack_probes(1);
-        while let Some((same_deadline, seconds)) = demand_by_deadline.get(index).copied() {
-            if same_deadline != deadline {
-                break;
-            }
-            cumulative_demand = cumulative_demand.saturating_add(seconds);
-            index += 1;
-        }
-        result.push((
-            deadline,
-            available_seconds_until(now, deadline, fixed_slots, metrics)
-                .saturating_sub(cumulative_demand),
-        ));
-    }
-    result
 }
 
 fn normal_selection_key(
@@ -1266,49 +1197,6 @@ fn next_fixed_start(
         .find(|start| *start > now)
 }
 
-fn next_release_event(states: &[FlexibleState], now: DateTime<Local>) -> Option<DateTime<Local>> {
-    states
-        .iter()
-        .filter(|state| state.completion_time.is_none())
-        .filter_map(|state| release_time(state, states))
-        .filter(|release| *release > now)
-        .min()
-}
-
-fn critical_deadline(slacks: &[(DateTime<Local>, i64)]) -> Option<DateTime<Local>> {
-    slacks
-        .iter()
-        .find(|(_, slack)| *slack <= 0)
-        .map(|(deadline, _)| *deadline)
-}
-
-fn ordered_ready_candidates(
-    states: &[FlexibleState],
-    ready_indices: &[usize],
-    critical_deadline: Option<DateTime<Local>>,
-) -> Vec<usize> {
-    let mut ordered = ready_indices.to_vec();
-    let protected_ready = critical_deadline.is_some_and(|critical| {
-        ordered.iter().any(|index| {
-            states[*index]
-                .effective_deadline
-                .is_some_and(|deadline| deadline <= critical)
-        })
-    });
-    if protected_ready {
-        let critical = critical_deadline.expect("protected mode requires a critical deadline");
-        ordered.retain(|index| {
-            states[*index]
-                .effective_deadline
-                .is_some_and(|deadline| deadline <= critical)
-        });
-        ordered.sort_by_key(|index| protected_selection_key(&states[*index]));
-    } else {
-        ordered.sort_by_key(|index| normal_selection_key(&states[*index]));
-    }
-    ordered
-}
-
 /// atomicを実際に中断する候補がreleaseされる最初の時刻を返す。
 fn next_preempting_release(
     selected_index: usize,
@@ -1320,177 +1208,118 @@ fn next_preempting_release(
 ) -> Result<Option<DateTime<Local>>, SchedulingPolicyError> {
     let states = context.states;
     let fixed_slots = context.fixed_slots;
-    if let (Some(frontier), Some(slack_index)) = (context.frontier, context.slack_index) {
-        if let Some(release) =
-            cached_preempting_release(selected_index, selected, now, slack_guard, context, metrics)?
-        {
-            return Ok(Some(release));
-        }
-        let mut additional_normal = BTreeSet::new();
-        let mut additional_protected = BTreeSet::new();
-        for (release, released_indices) in frontier.release_events.range(now..) {
-            if slack_guard.is_some_and(|guard| *release >= guard) {
-                // current guardへ先に到達するatomicは、その時点で再選択される。
-                // guard後のreleaseを仮想評価すると、既にcriticalへ移るgroupを
-                // active treeへ残したまま扱うことになり、存在しない境界を作る。
-                return Ok(None);
-            }
-            for index in released_indices {
-                metrics.record_release_candidate_probe();
-                if states[*index].remaining_seconds == 0 {
-                    continue;
-                }
-                additional_normal.insert((normal_selection_key(&states[*index]), *index));
-                if states[*index].effective_deadline.is_some() {
-                    additional_protected.insert((protected_selection_key(&states[*index]), *index));
-                }
-            }
-            let worked = (*release - now)
-                .num_seconds()
-                .max(0)
-                .min(selected.remaining_seconds);
-            if worked == selected.remaining_seconds {
-                return Ok(None);
-            }
-            let critical =
-                slack_index.critical_deadline_after_work(selected_index, worked, metrics);
-            let protected_ready = critical.is_some_and(|critical| {
-                frontier
-                    .protected_ready
-                    .union(&additional_protected)
-                    .next()
-                    .is_some_and(|((deadline, ..), _)| *deadline <= critical)
-            });
-            let mut virtual_selected = selected.clone();
-            virtual_selected.remaining_seconds -= worked;
-            if protected_ready {
-                let critical = critical.expect("protected deadline exists");
-                for (_, index) in frontier
-                    .protected_ready
-                    .union(&additional_protected)
-                    .take_while(|((deadline, ..), _)| *deadline <= critical)
-                {
-                    metrics.record_selection_candidate_probe();
-                    let candidate = if *index == selected_index {
-                        &virtual_selected
-                    } else {
-                        &states[*index]
-                    };
-                    let slack_guard = slack_index.slack_boundary_after_work(
-                        *index,
-                        *release,
-                        selected_index,
-                        worked,
-                        metrics,
-                    );
-                    if candidate_fits_without_future_release(
-                        candidate,
-                        *release,
-                        fixed_slots,
-                        slack_guard,
-                    )? {
-                        if *index != selected_index {
-                            cache_atomic_release_prediction(
-                                context,
-                                *release,
-                                *index,
-                                Some(critical),
-                                true,
-                                metrics,
-                            );
-                            return Ok(Some(*release));
-                        }
-                        break;
-                    }
-                }
-            } else {
-                for (_, index) in frontier.normal_ready.union(&additional_normal) {
-                    metrics.record_selection_candidate_probe();
-                    let candidate = if *index == selected_index {
-                        &virtual_selected
-                    } else {
-                        &states[*index]
-                    };
-                    let slack_guard = slack_index.slack_boundary_after_work(
-                        *index,
-                        *release,
-                        selected_index,
-                        worked,
-                        metrics,
-                    );
-                    if candidate_fits_without_future_release(
-                        candidate,
-                        *release,
-                        fixed_slots,
-                        slack_guard,
-                    )? {
-                        if *index != selected_index {
-                            cache_atomic_release_prediction(
-                                context, *release, *index, critical, false, metrics,
-                            );
-                            return Ok(Some(*release));
-                        }
-                        break;
-                    }
-                }
-            }
-        }
-        return Ok(None);
+    let frontier = context.frontier;
+    let slack_index = context.slack_index;
+    if let Some(release) =
+        cached_preempting_release(selected_index, selected, now, slack_guard, context, metrics)?
+    {
+        return Ok(Some(release));
     }
-
-    let mut releases = states
-        .iter()
-        .inspect(|_| metrics.record_release_candidate_probe())
-        .filter(|state| state.completion_time.is_none())
-        .filter_map(|state| release_time(state, states))
-        .filter(|release| *release > now)
-        .collect::<Vec<_>>();
-    releases.sort_unstable();
-    releases.dedup();
-    for release in releases {
-        if slack_guard.is_some_and(|guard| release >= guard) {
+    let mut additional_normal = BTreeSet::new();
+    let mut additional_protected = BTreeSet::new();
+    for (release, released_indices) in frontier.release_events.range(now..) {
+        if slack_guard.is_some_and(|guard| *release >= guard) {
+            // current guardへ先に到達するatomicは、その時点で再選択される。
+            // guard後のreleaseを仮想評価すると、既にcriticalへ移るgroupを
+            // active treeへ残したまま扱うことになり、存在しない境界を作る。
             return Ok(None);
         }
-        let mut virtual_states = states.to_vec();
-        let elapsed_work_seconds = (release - now).num_seconds().max(0);
-        if let Some(running) = virtual_states
-            .iter_mut()
-            .find(|state| state.candidate.id == selected.candidate.id)
-        {
-            let worked = elapsed_work_seconds.min(running.remaining_seconds);
-            running.remaining_seconds -= worked;
-            if running.remaining_seconds == 0 {
-                running.completion_time =
-                    Some(checked_segment_end(running.candidate.id, now, worked)?);
+        for index in released_indices {
+            metrics.record_release_candidate_probe();
+            if states[*index].remaining_seconds == 0 {
+                continue;
+            }
+            additional_normal.insert((normal_selection_key(&states[*index]), *index));
+            if states[*index].effective_deadline.is_some() {
+                additional_protected.insert((protected_selection_key(&states[*index]), *index));
             }
         }
-
-        // release時点までcurrent atomicが継続した仮想状態で再選択する。
-        // 開始時の全残秒のままでは、実際は完走できるatomicを誤って延期する。
-        let ready = virtual_states
-            .iter()
-            .inspect(|_| metrics.record_release_candidate_probe())
-            .enumerate()
-            .filter(|(_, state)| state.completion_time.is_none() && state.remaining_seconds > 0)
-            .filter(|(_, state)| {
-                release_time(state, &virtual_states)
-                    .is_some_and(|candidate_release| candidate_release <= release)
-            })
-            .map(|(index, _)| index)
-            .collect::<Vec<_>>();
-        let slacks = deadline_slacks(&virtual_states, release, fixed_slots, metrics);
-        for index in ordered_ready_candidates(&virtual_states, &ready, critical_deadline(&slacks)) {
-            metrics.record_selection_candidate_probe();
-            if candidate_fits_without_future_release(
-                &virtual_states[index],
-                release,
-                fixed_slots,
-                slack_boundary(&virtual_states[index], &slacks, release),
-            )? {
-                if virtual_states[index].candidate.id != selected.candidate.id {
-                    return Ok(Some(release));
+        let worked = (*release - now)
+            .num_seconds()
+            .max(0)
+            .min(selected.remaining_seconds);
+        if worked == selected.remaining_seconds {
+            return Ok(None);
+        }
+        let critical = slack_index.critical_deadline_after_work(selected_index, worked, metrics);
+        let protected_ready = critical.is_some_and(|critical| {
+            frontier
+                .protected_ready
+                .union(&additional_protected)
+                .next()
+                .is_some_and(|((deadline, ..), _)| *deadline <= critical)
+        });
+        let mut virtual_selected = selected.clone();
+        virtual_selected.remaining_seconds -= worked;
+        if protected_ready {
+            let critical = critical.expect("protected deadline exists");
+            for (_, index) in frontier
+                .protected_ready
+                .union(&additional_protected)
+                .take_while(|((deadline, ..), _)| *deadline <= critical)
+            {
+                metrics.record_selection_candidate_probe();
+                let candidate = if *index == selected_index {
+                    &virtual_selected
+                } else {
+                    &states[*index]
+                };
+                let slack_guard = slack_index.slack_boundary_after_work(
+                    *index,
+                    *release,
+                    selected_index,
+                    worked,
+                    metrics,
+                );
+                if candidate_fits_without_future_release(
+                    candidate,
+                    *release,
+                    fixed_slots,
+                    slack_guard,
+                )? {
+                    if *index != selected_index {
+                        cache_atomic_release_prediction(
+                            context,
+                            *release,
+                            *index,
+                            Some(critical),
+                            true,
+                            metrics,
+                        );
+                        return Ok(Some(*release));
+                    }
+                    break;
                 }
-                break;
+            }
+        } else {
+            for (_, index) in frontier.normal_ready.union(&additional_normal) {
+                metrics.record_selection_candidate_probe();
+                let candidate = if *index == selected_index {
+                    &virtual_selected
+                } else {
+                    &states[*index]
+                };
+                let slack_guard = slack_index.slack_boundary_after_work(
+                    *index,
+                    *release,
+                    selected_index,
+                    worked,
+                    metrics,
+                );
+                if candidate_fits_without_future_release(
+                    candidate,
+                    *release,
+                    fixed_slots,
+                    slack_guard,
+                )? {
+                    if *index != selected_index {
+                        cache_atomic_release_prediction(
+                            context, *release, *index, critical, false, metrics,
+                        );
+                        return Ok(Some(*release));
+                    }
+                    break;
+                }
             }
         }
     }
@@ -1510,7 +1339,7 @@ fn cache_atomic_release_prediction(
         preemptor_index,
         critical_deadline,
         protected_mode,
-        frontier_generation: context.frontier.map_or(0, |frontier| frontier.generation),
+        frontier_generation: context.frontier.generation,
     };
     if let Some(cache) = context.atomic_release_predictions {
         cache.borrow_mut().insert(prediction, metrics);
@@ -1540,12 +1369,10 @@ fn cached_preempting_release(
     context: &BoundaryContext<'_>,
     metrics: &mut ScheduleMetrics,
 ) -> Result<Option<DateTime<Local>>, SchedulingPolicyError> {
-    let (Some(event_predictions), Some(slack_index)) = (
-        context.event_atomic_release_predictions,
-        context.slack_index,
-    ) else {
+    let Some(event_predictions) = context.event_atomic_release_predictions else {
         return Ok(None);
     };
+    let slack_index = context.slack_index;
     for prediction in event_predictions.borrow().iter().copied() {
         // release timelineを再走査せず、index済みpreemptor 1件だけを通常の
         // selection candidateとして再検証する。
@@ -1619,24 +1446,6 @@ fn candidate_fits_without_future_release(
         .flatten()
         .min();
     Ok(hard_boundary.is_none_or(|boundary| completion <= boundary))
-}
-
-/// 選択taskがdeadline保護対象外なら、最小の正slackが0になる時刻を返す。
-fn slack_boundary(
-    selected: &FlexibleState,
-    slacks: &[(DateTime<Local>, i64)],
-    now: DateTime<Local>,
-) -> Option<DateTime<Local>> {
-    slacks
-        .iter()
-        .filter(|(deadline, slack)| {
-            *slack > 0
-                && selected
-                    .effective_deadline
-                    .is_none_or(|selected_deadline| selected_deadline > *deadline)
-        })
-        .filter_map(|(_, slack)| checked_segment_end(selected.candidate.id, now, *slack).ok())
-        .min()
 }
 
 fn segment_boundary(
@@ -1734,34 +1543,14 @@ fn select_next_candidate(
     states: &[FlexibleState],
     now: DateTime<Local>,
     fixed_slots: &[(DateTime<Local>, DateTime<Local>)],
-    frontier: Option<&SchedulerFrontier>,
-    slack_index: Option<&SlackDemandIndex>,
+    frontier: &SchedulerFrontier,
+    slack_index: &SlackDemandIndex,
     atomic_release_predictions: &RefCell<AtomicReleasePredictionCache>,
     metrics: &mut ScheduleMetrics,
 ) -> Result<Option<Selection>, SchedulingPolicyError> {
     metrics.record_selection_event();
-    let fallback_slacks = slack_index
-        .is_none()
-        .then(|| deadline_slacks(states, now, fixed_slots, metrics));
-    let critical = match slack_index {
-        Some(index) => index.critical_deadline(metrics),
-        None => critical_deadline(
-            fallback_slacks
-                .as_deref()
-                .expect("fallback slacks exist without an index"),
-        ),
-    };
-    if let Some(index) = slack_index {
-        debug_assert_eq!(index.current_time, now, "slack index time diverged");
-    }
-    let next_release = frontier
-        .and_then(SchedulerFrontier::next_release)
-        .or_else(|| {
-            frontier
-                .is_none()
-                .then(|| next_release_event(states, now))
-                .flatten()
-        });
+    let critical = slack_index.critical_deadline(metrics);
+    debug_assert_eq!(slack_index.current_time, now, "slack index time diverged");
     // persistent cacheはevent開始時に一度だけ読む。同じevent内のatomic候補は
     // この差分viewを共有し、候補ごとにpersistent cacheを再探索しない。
     let event_atomic_release_predictions = RefCell::new({
@@ -1776,86 +1565,54 @@ fn select_next_candidate(
     let boundary_context = BoundaryContext {
         states,
         fixed_slots,
-        next_release,
+        next_release: frontier.next_release(),
         frontier,
         slack_index,
         atomic_release_predictions: Some(atomic_release_predictions),
         event_atomic_release_predictions: Some(&event_atomic_release_predictions),
     };
-    if let Some(frontier) = frontier {
-        let protected_ready = critical.is_some_and(|critical| {
-            frontier
-                .protected_ready
-                .first()
-                .is_some_and(|((deadline, ..), _)| *deadline <= critical)
-        });
-        if protected_ready {
-            let critical = critical.expect("protected mode requires a critical deadline");
-            for ((deadline, ..), index) in &frontier.protected_ready {
-                if *deadline > critical {
-                    break;
-                }
-                metrics.record_selection_candidate_probe();
-                let slack_guard =
-                    slack_index.and_then(|indexer| indexer.slack_boundary(*index, now, metrics));
-                if fits_split_contract(
-                    *index,
-                    &states[*index],
-                    now,
-                    slack_guard,
-                    &boundary_context,
-                    metrics,
-                )? {
-                    return Ok(Some(Selection {
-                        index: *index,
-                        slack_boundary: slack_guard,
-                    }));
-                }
+    let protected_ready = critical.is_some_and(|critical| {
+        frontier
+            .protected_ready
+            .first()
+            .is_some_and(|((deadline, ..), _)| *deadline <= critical)
+    });
+    if protected_ready {
+        let critical = critical.expect("protected mode requires a critical deadline");
+        for ((deadline, ..), index) in &frontier.protected_ready {
+            if *deadline > critical {
+                break;
             }
-        } else {
-            for (_, index) in &frontier.normal_ready {
-                metrics.record_selection_candidate_probe();
-                let slack_guard =
-                    slack_index.and_then(|indexer| indexer.slack_boundary(*index, now, metrics));
-                if fits_split_contract(
-                    *index,
-                    &states[*index],
-                    now,
-                    slack_guard,
-                    &boundary_context,
-                    metrics,
-                )? {
-                    return Ok(Some(Selection {
-                        index: *index,
-                        slack_boundary: slack_guard,
-                    }));
-                }
-            }
-        }
-    } else {
-        let ready_indices = states
-            .iter()
-            .enumerate()
-            .filter(|(_, state)| state.completion_time.is_none() && state.remaining_seconds > 0)
-            .filter(|(_, state)| release_time(state, states).is_some_and(|release| release <= now))
-            .map(|(index, _)| index)
-            .collect::<Vec<_>>();
-        for index in ordered_ready_candidates(states, &ready_indices, critical) {
             metrics.record_selection_candidate_probe();
-            let fallback_slacks = fallback_slacks
-                .as_deref()
-                .expect("fallback selection has calculated slacks");
-            let slack_guard = slack_boundary(&states[index], fallback_slacks, now);
+            let slack_guard = slack_index.slack_boundary(*index, now, metrics);
             if fits_split_contract(
-                index,
-                &states[index],
+                *index,
+                &states[*index],
                 now,
                 slack_guard,
                 &boundary_context,
                 metrics,
             )? {
                 return Ok(Some(Selection {
-                    index,
+                    index: *index,
+                    slack_boundary: slack_guard,
+                }));
+            }
+        }
+    } else {
+        for (_, index) in &frontier.normal_ready {
+            metrics.record_selection_candidate_probe();
+            let slack_guard = slack_index.slack_boundary(*index, now, metrics);
+            if fits_split_contract(
+                *index,
+                &states[*index],
+                now,
+                slack_guard,
+                &boundary_context,
+                metrics,
+            )? {
+                return Ok(Some(Selection {
+                    index: *index,
                     slack_boundary: slack_guard,
                 }));
             }
@@ -1882,8 +1639,8 @@ fn select_at_speculative_boundary(
         states,
         boundary,
         fixed_slots,
-        Some(frontier),
-        Some(slack_index),
+        frontier,
+        slack_index,
         &atomic_release_predictions,
         metrics,
     );
@@ -2011,8 +1768,8 @@ pub(super) fn schedule_tasks_by_priority_with_metrics(
             &states,
             now,
             &fixed_slots,
-            Some(&frontier),
-            Some(&slack_index),
+            &frontier,
+            &slack_index,
             &atomic_release_predictions,
             metrics,
         )?;
@@ -2127,8 +1884,8 @@ fn schedule_selected_segment(
         states,
         fixed_slots,
         next_release: frontier.next_release(),
-        frontier: Some(frontier),
-        slack_index: Some(slack_index),
+        frontier,
+        slack_index,
         atomic_release_predictions: None,
         event_atomic_release_predictions: None,
     };
