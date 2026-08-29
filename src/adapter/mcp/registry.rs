@@ -29,12 +29,12 @@ pub(super) fn tool_definitions() -> Vec<Value> {
         }),
         json!({
             "name": "create_task",
-            "description": "Create a new root project task. The task starts as Todo unless pending_until is provided, in which case it starts as Pending.",
+            "description": "Create a new root project task. Its original status is Todo when pending_until is omitted and Pending when provided; if that time is not in the future, its effective status can be Todo.",
             "inputSchema": generated_input_schema::<CreateTaskInput>()
         }),
         json!({
             "name": "breakdown_task",
-            "description": "Add child tasks to an existing parent task in the order supplied. Every child inherits the parent's deadline when it has one, and starts as Todo unless pending_until is provided, in which case every child starts as Pending.",
+            "description": "Add child tasks to an existing parent task in the order supplied. Each child inherits the parent's deadline when present. Its original status is Todo when pending_until is omitted and Pending when provided; its effective status can be Todo if that time is not in the future, and deadline policy can move pending_until earlier.",
             "inputSchema": generated_input_schema::<BreakdownTaskInput>()
         }),
         json!({

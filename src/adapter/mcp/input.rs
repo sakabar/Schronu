@@ -404,7 +404,7 @@ pub(super) struct CreateTaskInput {
     /// The estimated work duration as a non-negative integer number of minutes. When provided, it is converted to seconds; when omitted, the task keeps the default estimate of 15 minutes.
     #[serde(default)]
     pub(super) estimated_work_minutes: OptionalValue<NonNegativeI64>,
-    /// The time until which the task remains Pending, as an RFC 3339 date-time string with Z or a numeric UTC offset. When omitted, the task starts as Todo.
+    /// An RFC 3339 date-time with Z or a numeric UTC offset. Providing it sets the original status to Pending, but the effective status can be Todo when the time is not in the future. Omit it for an original status of Todo.
     #[serde(default)]
     pub(super) pending_until: OptionalValue<Rfc3339DateTime>,
 }
@@ -435,7 +435,7 @@ pub(super) struct BreakdownTaskInput {
     /// One or more child task names, added to the parent in this array order.
     #[schemars(schema_with = "child_task_names_schema")]
     pub(super) names: NonEmptyVec<NonEmptyString>,
-    /// The common time until which every created child remains Pending, as an RFC 3339 date-time string with Z or a numeric UTC offset. When omitted, every child starts as Todo.
+    /// A common RFC 3339 date-time with Z or a numeric UTC offset. Providing it sets every child's original status to Pending, but the effective status can be Todo when the time is not in the future. Inheriting the parent's deadline can move this time earlier. Omit it for an original status of Todo.
     #[serde(default)]
     pub(super) pending_until: OptionalValue<Rfc3339DateTime>,
 }

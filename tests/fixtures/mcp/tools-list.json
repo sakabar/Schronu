@@ -142,7 +142,7 @@
     "name": "get_schedule"
   },
   {
-    "description": "Create a new root project task. The task starts as Todo unless pending_until is provided, in which case it starts as Pending.",
+    "description": "Create a new root project task. Its original status is Todo when pending_until is omitted and Pending when provided; if that time is not in the future, its effective status can be Todo.",
     "inputSchema": {
       "additionalProperties": false,
       "properties": {
@@ -157,7 +157,7 @@
           "type": "string"
         },
         "pending_until": {
-          "description": "The time until which the task remains Pending, as an RFC 3339 date-time string with Z or a numeric UTC offset. When omitted, the task starts as Todo.",
+          "description": "An RFC 3339 date-time with Z or a numeric UTC offset. Providing it sets the original status to Pending, but the effective status can be Todo when the time is not in the future. Omit it for an original status of Todo.",
           "examples": [
             "2026-08-29T10:00:00+09:00",
             "2026-08-29T01:00:00Z"
@@ -174,7 +174,7 @@
     "name": "create_task"
   },
   {
-    "description": "Add child tasks to an existing parent task in the order supplied. Every child inherits the parent's deadline when it has one, and starts as Todo unless pending_until is provided, in which case every child starts as Pending.",
+    "description": "Add child tasks to an existing parent task in the order supplied. Each child inherits the parent's deadline when present. Its original status is Todo when pending_until is omitted and Pending when provided; its effective status can be Todo if that time is not in the future, and deadline policy can move pending_until earlier.",
     "inputSchema": {
       "additionalProperties": false,
       "properties": {
@@ -197,7 +197,7 @@
           "type": "string"
         },
         "pending_until": {
-          "description": "The common time until which every created child remains Pending, as an RFC 3339 date-time string with Z or a numeric UTC offset. When omitted, every child starts as Todo.",
+          "description": "A common RFC 3339 date-time with Z or a numeric UTC offset. Providing it sets every child's original status to Pending, but the effective status can be Todo when the time is not in the future. Inheriting the parent's deadline can move this time earlier. Omit it for an original status of Todo.",
           "examples": [
             "2026-08-29T10:00:00+09:00",
             "2026-08-29T01:00:00Z"
