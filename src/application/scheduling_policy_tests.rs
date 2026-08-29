@@ -365,6 +365,25 @@ fn schedule_tasks_by_priorityはcycle時にsort順先頭からfallback配置す�
     );
 }
 
+#[test]
+fn zero_workだけのdependency_cycleも決定的な完了点を返す() {
+    let now = Local.with_ymd_and_hms(2026, 5, 10, 12, 0, 0).unwrap();
+    let mut first = candidate("first", now, 98, 0);
+    let mut second = candidate("second", now, 0, 0);
+    first.id = Uuid::from_u128(1);
+    second.id = Uuid::from_u128(2);
+    first.dependency_ids = vec![second.id];
+    second.dependency_ids = vec![first.id];
+
+    let scheduled = schedule_tasks_by_priority(&[second, first], now).unwrap();
+
+    assert_eq!(scheduled.len(), 2);
+    assert_eq!(scheduled[0].id, Uuid::from_u128(1));
+    assert_eq!(scheduled[0].scheduled_start, now);
+    assert_eq!(scheduled[1].id, Uuid::from_u128(2));
+    assert_eq!(scheduled[1].scheduled_start, now);
+}
+
 fn scheduled_start(scheduled: &[ScheduledTask], task_id: Uuid) -> DateTime<Local> {
     scheduled
         .iter()
