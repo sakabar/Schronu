@@ -2,7 +2,7 @@ use crate::application::daily_capacity::try_next_logical_date_start;
 use crate::application::interface::TaskRepositoryTrait;
 use crate::application::scheduling_metrics::ScheduleMetrics;
 use crate::application::scheduling_policy::{
-    schedule_tasks_by_priority_with_metrics, TaskScheduleCandidate,
+    schedule_tasks_by_priority_with_metrics, SchedulingPolicyError, TaskScheduleCandidate,
 };
 use crate::application::task_use_case::ApplicationError;
 use crate::application::task_view::TaskView;
@@ -113,7 +113,7 @@ pub(crate) fn get_schedule_from_context_with_overrides_and_metrics(
         }
     }
     schedule_tasks_by_priority_with_metrics(&candidates, context.last_synced_time, metrics)
-        .map_err(ApplicationError::TaskTree)?
+        .map_err(map_scheduling_policy_error)?
         .into_iter()
         .map(|scheduled| {
             Ok(ScheduledTaskView {
@@ -141,6 +141,7 @@ fn build_schedule_candidates(
         for leaf in extract_leaf_tasks_from_project_with_pending(project_root)
             .map_err(ApplicationError::TaskTree)?
         {
+            validate_ancestry_schedule_range(&leaf)?;
             let ancestors = leaf
                 .list_all_parent_tasks_with_first_available_time()
                 .map_err(ApplicationError::TaskTree)?;
@@ -215,6 +216,44 @@ fn build_schedule_candidates(
     }
     metrics.record_candidates(candidates.len());
     Ok(candidates)
+}
+
+fn validate_ancestry_schedule_range(leaf: &TaskHandle) -> Result<(), ApplicationError> {
+    // entityのancestor計算は各taskの終了時刻を使うため、その内部へ入る前に同じ子→親順で
+    // 表現可能性を検査する。これによりchronoのpanicへ情報を失わず、schedule固有errorへ
+    // task idと原因のsegmentを保持できる。
+    let mut task = Some(leaf.clone());
+    let mut previous_end = DateTime::<Local>::MIN_UTC.with_timezone(&Local);
+    while let Some(current) = task {
+        let start_time = max(
+            previous_end,
+            current
+                .first_available_time()
+                .map_err(ApplicationError::TaskTree)?,
+        );
+        let work_seconds =
+            calculate_remaining_work_seconds(&current).map_err(ApplicationError::TaskTree)?;
+        let task_id = current.get_id().map_err(ApplicationError::TaskTree)?;
+        previous_end = Duration::try_seconds(work_seconds)
+            .and_then(|duration| start_time.checked_add_signed(duration))
+            .ok_or_else(|| {
+                map_scheduling_policy_error(SchedulingPolicyError {
+                    task_id,
+                    start_time,
+                    work_seconds,
+                })
+            })?;
+        task = current.parent().map_err(ApplicationError::TaskTree)?;
+    }
+    Ok(())
+}
+
+fn map_scheduling_policy_error(error: SchedulingPolicyError) -> ApplicationError {
+    ApplicationError::ScheduleTimeOutOfRange {
+        task_id: error.task_id,
+        start_time: error.start_time,
+        work_seconds: error.work_seconds,
+    }
 }
 
 fn calculate_remaining_work_seconds(task: &TaskHandle) -> Result<i64, TaskTreeError> {

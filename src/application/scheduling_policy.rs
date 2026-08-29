@@ -6,7 +6,7 @@
 //! window内の作業と後続の超過分へ分けるが、両者の作業秒数の合計は必ず元の残秒とする。
 
 use crate::application::scheduling_metrics::ScheduleMetrics;
-use crate::entity::task::{TaskHandle, TaskTreeError};
+use crate::entity::task::TaskHandle;
 use chrono::{DateTime, Duration, Local};
 use std::cmp::{max, Reverse};
 use std::collections::{BinaryHeap, HashMap};
@@ -44,6 +44,13 @@ pub(super) struct ScheduledTask {
     pub(super) deadline_time: Option<DateTime<Local>>,
 }
 
+#[derive(Clone, Debug, PartialEq)]
+pub(super) struct SchedulingPolicyError {
+    pub(super) task_id: Uuid,
+    pub(super) start_time: DateTime<Local>,
+    pub(super) work_seconds: i64,
+}
+
 struct PreparedCandidates {
     pending: Vec<TaskScheduleCandidate>,
     scheduled_fixed: Vec<ScheduledTask>,
@@ -61,7 +68,7 @@ fn classify_fixed_candidates(
     candidates: &[TaskScheduleCandidate],
     last_synced_time: DateTime<Local>,
     metrics: &mut ScheduleMetrics,
-) -> PreparedCandidates {
+) -> Result<PreparedCandidates, SchedulingPolicyError> {
     let mut pending = Vec::with_capacity(candidates.len());
     let mut scheduled_fixed = Vec::new();
     let mut occupied_fixed = Vec::new();
@@ -77,19 +84,21 @@ fn classify_fixed_candidates(
         let total_work_seconds = candidate.remaining_seconds.max(0);
         total_work_seconds_by_id.insert(candidate.id, total_work_seconds);
         let fixed_segment_start = max(candidate.fixed_start_time, last_synced_time);
-        let original_window_end = Duration::try_seconds(candidate.estimated_work_seconds.max(0))
-            .and_then(|duration| candidate.fixed_start_time.checked_add_signed(duration));
-        let fixed_capacity_seconds = original_window_end
-            .filter(|end| *end > fixed_segment_start)
-            .map(|end| (end - fixed_segment_start).num_seconds())
-            .unwrap_or(0);
+        let original_window_end = checked_segment_end(
+            candidate.id,
+            candidate.fixed_start_time,
+            candidate.estimated_work_seconds.max(0),
+        )?;
+        let fixed_capacity_seconds = if original_window_end > fixed_segment_start {
+            (original_window_end - fixed_segment_start).num_seconds()
+        } else {
+            0
+        };
         let fixed_work_seconds = total_work_seconds.min(fixed_capacity_seconds);
 
         // 表示区間と衝突判定区間を同じ予約windowにする。作業済みのmeetingでも予約は
         // 消えず、実作業量はscheduled_work_secondsとして区間長と独立に保持される。
-        if let Some(original_window_end) =
-            original_window_end.filter(|end| *end > fixed_segment_start)
-        {
+        if original_window_end > fixed_segment_start {
             insert_occupied_slot(
                 &mut occupied_fixed,
                 (fixed_segment_start, original_window_end),
@@ -120,17 +129,10 @@ fn classify_fixed_candidates(
             let mut excess = candidate.clone();
             excess.remaining_seconds = excess_seconds;
             excess.fixed_start = false;
-            excess.first_available_time = max(
-                original_window_end.unwrap_or(fixed_segment_start),
-                last_synced_time,
-            );
+            excess.first_available_time = max(original_window_end, last_synced_time);
             // fixed本体は依存完了を待って移動できない。依存は後続のslack policy側で
             // 実効deadlineを与える対象とし、超過分の開始条件にはしない。
             excess.dependency_ids.clear();
-            if original_window_end.is_none() {
-                // 表現不能なwindowでは分割loopを進められないため、1segmentへ退避する。
-                excess.atomic = true;
-            }
             pending.push(excess);
         } else {
             let completed_at = scheduled_fixed
@@ -143,31 +145,44 @@ fn classify_fixed_candidates(
         }
     }
 
-    PreparedCandidates {
+    Ok(PreparedCandidates {
         pending,
         scheduled_fixed,
         occupied_fixed,
         completed_fixed_end_by_id,
         total_work_seconds_by_id,
-    }
+    })
+}
+
+/// segment終了を表現できない場合に、taskと原因となる開始・秒数を失わず返す。
+fn checked_segment_end(
+    task_id: Uuid,
+    start_time: DateTime<Local>,
+    work_seconds: i64,
+) -> Result<DateTime<Local>, SchedulingPolicyError> {
+    Duration::try_seconds(work_seconds)
+        .and_then(|duration| start_time.checked_add_signed(duration))
+        .ok_or(SchedulingPolicyError {
+            task_id,
+            start_time,
+            work_seconds,
+        })
 }
 
 fn find_earliest_non_overlapping_start(
+    task_id: Uuid,
     first_available_time: DateTime<Local>,
     remaining_seconds: i64,
     occupied_slots: &[(DateTime<Local>, DateTime<Local>)],
     metrics: &mut ScheduleMetrics,
-) -> DateTime<Local> {
-    let Some(duration) = Duration::try_seconds(remaining_seconds) else {
-        return first_available_time;
-    };
+) -> Result<DateTime<Local>, SchedulingPolicyError> {
     let mut start = first_available_time;
     let mut index = occupied_slots.partition_point(|(_, occupied_end)| {
         metrics.record_occupied_slot_probe();
         *occupied_end <= start
     });
     while let Some((occupied_start, occupied_end)) = occupied_slots.get(index) {
-        let end = start + duration;
+        let end = checked_segment_end(task_id, start, remaining_seconds)?;
         metrics.record_occupied_slot_probe();
         if end <= *occupied_start {
             break;
@@ -177,7 +192,7 @@ fn find_earliest_non_overlapping_start(
         }
         index += 1;
     }
-    start
+    Ok(start)
 }
 
 fn find_next_occupied_slot(
@@ -260,7 +275,7 @@ fn insert_occupied_slot(
 fn schedule_tasks_by_priority(
     candidates: &[TaskScheduleCandidate],
     last_synced_time: DateTime<Local>,
-) -> Result<Vec<ScheduledTask>, TaskTreeError> {
+) -> Result<Vec<ScheduledTask>, SchedulingPolicyError> {
     schedule_tasks_by_priority_with_metrics(
         candidates,
         last_synced_time,
@@ -272,9 +287,9 @@ pub(super) fn schedule_tasks_by_priority_with_metrics(
     candidates: &[TaskScheduleCandidate],
     last_synced_time: DateTime<Local>,
     metrics: &mut ScheduleMetrics,
-) -> Result<Vec<ScheduledTask>, TaskTreeError> {
+) -> Result<Vec<ScheduledTask>, SchedulingPolicyError> {
     // fixed区間を先に予約しなければ、通常候補の処理順が約束時刻を動かしてしまう。
-    let prepared = classify_fixed_candidates(candidates, last_synced_time, metrics);
+    let prepared = classify_fixed_candidates(candidates, last_synced_time, metrics)?;
     let mut pending_candidates = prepared.pending;
     metrics.record_sort();
     pending_candidates.sort_by(|a, b| {
@@ -357,6 +372,7 @@ pub(super) fn schedule_tasks_by_priority_with_metrics(
             .copied()
             .unwrap_or(last_synced_time);
         let mut segment_start = find_earliest_non_overlapping_start(
+            candidate.id,
             max(
                 max(candidate.first_available_time, last_synced_time),
                 dependency_end,
@@ -364,7 +380,7 @@ pub(super) fn schedule_tasks_by_priority_with_metrics(
             0,
             &occupied_slots,
             metrics,
-        );
+        )?;
         let mut remaining_seconds = candidate.remaining_seconds;
         let total_work_seconds = prepared
             .total_work_seconds_by_id
@@ -384,14 +400,13 @@ pub(super) fn schedule_tasks_by_priority_with_metrics(
             ));
         } else if candidate.atomic {
             let start = find_earliest_non_overlapping_start(
+                candidate.id,
                 segment_start,
                 remaining_seconds,
                 &occupied_slots,
                 metrics,
-            );
-            let end = Duration::try_seconds(remaining_seconds)
-                .and_then(|duration| start.checked_add_signed(duration))
-                .unwrap_or_else(|| DateTime::<Local>::MAX_UTC.with_timezone(&Local));
+            )?;
+            let end = checked_segment_end(candidate.id, start, remaining_seconds)?;
             metrics.record_segment();
             scheduled_tasks.push(to_scheduled_task(
                 &candidate,
@@ -404,9 +419,15 @@ pub(super) fn schedule_tasks_by_priority_with_metrics(
             candidate_scheduled_end = end;
         } else {
             while remaining_seconds > 0 {
-                segment_start =
-                    find_earliest_non_overlapping_start(segment_start, 0, &occupied_slots, metrics);
-                let uninterrupted_end = segment_start + Duration::seconds(remaining_seconds);
+                segment_start = find_earliest_non_overlapping_start(
+                    candidate.id,
+                    segment_start,
+                    0,
+                    &occupied_slots,
+                    metrics,
+                )?;
+                let uninterrupted_end =
+                    checked_segment_end(candidate.id, segment_start, remaining_seconds)?;
                 let segment_end =
                     match find_next_occupied_slot(segment_start, &occupied_slots, metrics) {
                         Some((occupied_start, _)) if occupied_start < uninterrupted_end => {
@@ -419,7 +440,10 @@ pub(super) fn schedule_tasks_by_priority_with_metrics(
                     segment_start =
                         find_occupied_slot_containing(segment_start, &occupied_slots, metrics)
                             .map(|(_, end)| end)
-                            .unwrap_or(segment_start + Duration::seconds(1));
+                            .map(Ok)
+                            .unwrap_or_else(|| {
+                                checked_segment_end(candidate.id, segment_start, 1)
+                            })?;
                     continue;
                 }
                 let after_split = remaining_seconds - work_seconds;

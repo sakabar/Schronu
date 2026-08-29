@@ -42,6 +42,11 @@ pub enum ApplicationError {
         date: NaiveDate,
         end_of_day_offset_minutes: i64,
     },
+    ScheduleTimeOutOfRange {
+        task_id: Uuid,
+        start_time: DateTime<Local>,
+        work_seconds: i64,
+    },
 }
 
 impl fmt::Display for ApplicationError {
@@ -83,6 +88,14 @@ impl fmt::Display for ApplicationError {
             } => write!(
                 formatter,
                 "logical date end is outside the supported range: date={date}, end_of_day_offset_minutes={end_of_day_offset_minutes}"
+            ),
+            Self::ScheduleTimeOutOfRange {
+                task_id,
+                start_time,
+                work_seconds,
+            } => write!(
+                formatter,
+                "schedule end is outside the supported range: task_id={task_id}, start_time={start_time}, work_seconds={work_seconds}"
             ),
         }
     }
