@@ -4655,6 +4655,29 @@ fn test_execute_flatten_日次終端前後に分割されたtaskを丸ごと翌�
     fixed.set_deadline_time_opt(Some(
         Local.with_ymd_and_hms(2026, 8, 14, 0, 45, 0).unwrap(),
     ));
+    let schedule_repository = TestTaskRepository::new(root.clone(), now);
+    let target_segments = schronu::application::schedule_use_case::get_schedule(
+        &schedule_repository,
+    )
+    .unwrap()
+    .into_iter()
+    .filter(|scheduled| scheduled.task.id == target.get_id().unwrap())
+    .map(|scheduled| (scheduled.scheduled_start, scheduled.scheduled_end))
+    .collect::<Vec<_>>();
+
+    assert_eq!(
+        target_segments,
+        vec![
+            (
+                Local.with_ymd_and_hms(2026, 8, 14, 0, 20, 0).unwrap(),
+                Local.with_ymd_and_hms(2026, 8, 14, 0, 30, 0).unwrap(),
+            ),
+            (
+                Local.with_ymd_and_hms(2026, 8, 14, 0, 40, 0).unwrap(),
+                Local.with_ymd_and_hms(2026, 8, 14, 0, 50, 0).unwrap(),
+            ),
+        ]
+    );
 
     let result = execute_flatten_command_for_test(
         "平",
