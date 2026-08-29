@@ -90,16 +90,6 @@ impl ScheduleMetrics {
     }
 
     #[inline(always)]
-    pub fn record_frontier_clone_elements(&mut self, count: usize) {
-        #[cfg(feature = "benchmarking")]
-        {
-            self.frontier_clone_element_count += count;
-        }
-        #[cfg(not(feature = "benchmarking"))]
-        let _ = count;
-    }
-
-    #[inline(always)]
     pub fn record_slack_probes(&mut self, count: usize) {
         #[cfg(feature = "benchmarking")]
         {

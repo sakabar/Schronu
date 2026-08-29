@@ -230,7 +230,6 @@ type NormalReadyKey = (Reverse<i64>, bool, Option<DateTime<Local>>, usize, Uuid)
 type ProtectedReadyKey = (DateTime<Local>, Reverse<i64>, usize, Uuid);
 
 /// releaseとdependency完了を差分反映し、eventごとの全state走査を避ける。
-#[derive(Clone)]
 struct SchedulerFrontier {
     normal_ready: BTreeSet<(NormalReadyKey, usize)>,
     protected_ready: BTreeSet<(ProtectedReadyKey, usize)>,
@@ -241,6 +240,14 @@ struct SchedulerFrontier {
     dependents: Vec<Vec<usize>>,
     ready: Vec<bool>,
     incomplete_count: usize,
+}
+
+/// speculative releaseで変更したready集合だけを元へ戻すための差分。
+///
+/// dependency graph全体を複製せず、実際に跨いだrelease batchだけを所有する。
+struct SpeculativeReleasePromotion {
+    removed_events: Vec<(DateTime<Local>, Vec<usize>)>,
+    activated_indices: Vec<usize>,
 }
 
 /// deadline需要を初期構築とsegment差分だけで維持する。
@@ -809,18 +816,6 @@ impl SlackDemandIndex {
 }
 
 impl SchedulerFrontier {
-    fn clone_element_count(&self) -> usize {
-        self.normal_ready.len()
-            + self.protected_ready.len()
-            + self.zero_ready.len()
-            + self.release_events.values().map(Vec::len).sum::<usize>()
-            + self.unresolved_dependencies.len()
-            + self.dependency_end.len()
-            + self.dependents.len()
-            + self.dependents.iter().map(Vec::len).sum::<usize>()
-            + self.ready.len()
-    }
-
     fn new(states: &[FlexibleState]) -> Self {
         let mut unresolved_dependencies = vec![0; states.len()];
         let mut dependents = vec![Vec::new(); states.len()];
@@ -885,6 +880,62 @@ impl SchedulerFrontier {
                     }
                 }
             }
+        }
+    }
+
+    fn begin_speculative_releases(
+        &mut self,
+        now: DateTime<Local>,
+        states: &[FlexibleState],
+        metrics: &mut ScheduleMetrics,
+    ) -> SpeculativeReleasePromotion {
+        let mut change = SpeculativeReleasePromotion {
+            removed_events: Vec::new(),
+            activated_indices: Vec::new(),
+        };
+        while self
+            .release_events
+            .first_key_value()
+            .is_some_and(|(release, _)| *release <= now)
+        {
+            let (release, indices) = self
+                .release_events
+                .pop_first()
+                .expect("a checked speculative release event exists");
+            for index in &indices {
+                metrics.record_release_candidate_probe();
+                if states[*index].completion_time.is_some() || self.ready[*index] {
+                    continue;
+                }
+                self.ready[*index] = true;
+                let normal_key = normal_selection_key(&states[*index]);
+                if states[*index].remaining_seconds == 0 {
+                    self.zero_ready.insert((normal_key, *index));
+                } else {
+                    self.normal_ready.insert((normal_key, *index));
+                    if states[*index].effective_deadline.is_some() {
+                        self.protected_ready
+                            .insert((protected_selection_key(&states[*index]), *index));
+                    }
+                }
+                change.activated_indices.push(*index);
+            }
+            change.removed_events.push((release, indices));
+        }
+        change
+    }
+
+    fn restore_speculative_releases(
+        &mut self,
+        change: SpeculativeReleasePromotion,
+        states: &[FlexibleState],
+    ) {
+        for index in change.activated_indices.into_iter().rev() {
+            self.remove_ready(index, &states[index]);
+        }
+        for (release, indices) in change.removed_events {
+            let previous = self.release_events.insert(release, indices);
+            debug_assert!(previous.is_none(), "speculative release must restore once");
         }
     }
 
@@ -1833,20 +1884,20 @@ fn schedule_selected_segment(
     {
         let fixed_boundary = next_fixed_start(*now, fixed_slots) == Some(boundary);
         let guard_boundary = slack_guard == Some(boundary);
-        metrics.record_frontier_clone_elements(frontier.clone_element_count());
-        let mut boundary_frontier = frontier.clone();
-        boundary_frontier.promote_releases(boundary, states, metrics);
+        let speculative_releases = frontier.begin_speculative_releases(boundary, states, metrics);
         let speculative_slack = slack_index.begin_speculative_idle(*now, boundary, metrics);
-        let release_preempts = select_next_candidate(
+        let speculative_selection = select_next_candidate(
             states,
             &[],
             boundary,
             fixed_slots,
-            Some(&boundary_frontier),
+            Some(frontier),
             Some(slack_index),
             metrics,
-        )?
-        .is_some_and(|selection| selection.index != selected_index);
+        );
+        frontier.restore_speculative_releases(speculative_releases, states);
+        let release_preempts =
+            speculative_selection?.is_some_and(|selection| selection.index != selected_index);
         let release_boundary = frontier.next_release() == Some(boundary);
         let guard_releases_protected_task = guard_boundary && release_boundary && release_preempts;
         if fixed_boundary
