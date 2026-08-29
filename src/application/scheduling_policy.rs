@@ -818,19 +818,28 @@ fn schedule_selected_segment(
         let release_preempts =
             select_next_candidate(states, &ready_at_boundary, boundary, fixed_slots)?
                 .is_some_and(|selection| selection.index != selected_index);
-        if fixed_boundary || guard_boundary || release_preempts {
+        let release_boundary = next_release_event(states, *now) == Some(boundary);
+        let guard_releases_protected_task = guard_boundary && release_boundary && release_preempts;
+        if fixed_boundary
+            || (!guard_releases_protected_task && (guard_boundary || release_preempts))
+        {
             // fixed、deadline guard、より優先されるreleaseは越えない。短い
             // fragmentは作らず、event後に再配置する。
             *now = boundary;
             return Ok(());
         }
-        // release後も同じtaskが選ばれるなら、見かけだけの数分segmentを
-        // 作らず、そのまま完了させる。
-        boundary = checked_segment_end(
-            states[selected_index].candidate.id,
-            *now,
-            states[selected_index].remaining_seconds,
-        )?;
+        if guard_releases_protected_task {
+            // 保護taskがguard時刻までreleaseされない場合、それより前に切り替える
+            // 選択肢はない。使える時間をidleにするより、境界までの作業を保存する。
+        } else {
+            // release後も同じtaskが選ばれるなら、見かけだけの数分segmentを
+            // 作らず、そのまま完了させる。
+            boundary = checked_segment_end(
+                states[selected_index].candidate.id,
+                *now,
+                states[selected_index].remaining_seconds,
+            )?;
+        }
     }
 
     let work_seconds = (boundary - *now).num_seconds();
