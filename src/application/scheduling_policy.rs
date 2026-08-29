@@ -85,27 +85,21 @@ fn classify_fixed_candidates(
             .unwrap_or(0);
         let fixed_work_seconds = total_work_seconds.min(fixed_capacity_seconds);
 
-        // 予定の占有は未作業量ではなく約束したwindowで決まる。作業済みのmeetingでも
-        // flexible taskを同じ時刻へ入れないため、未来に残るwindow全体を予約する。
-        if let Some(original_window_end) = original_window_end {
-            if fixed_segment_start < original_window_end {
-                insert_occupied_slot(
-                    &mut occupied_fixed,
-                    (fixed_segment_start, original_window_end),
-                    metrics,
-                );
-            }
-        }
-
-        if fixed_work_seconds > 0 {
-            let fixed_segment_end = fixed_segment_start
-                .checked_add_signed(Duration::seconds(fixed_work_seconds))
-                .expect("fixed work is bounded by a representable window");
+        // 表示区間と衝突判定区間を同じ予約windowにする。作業済みのmeetingでも予約は
+        // 消えず、実作業量はscheduled_work_secondsとして区間長と独立に保持される。
+        if let Some(original_window_end) =
+            original_window_end.filter(|end| *end > fixed_segment_start)
+        {
+            insert_occupied_slot(
+                &mut occupied_fixed,
+                (fixed_segment_start, original_window_end),
+                metrics,
+            );
             metrics.record_segment();
             scheduled_fixed.push(to_scheduled_task(
                 candidate,
                 fixed_segment_start,
-                fixed_segment_end,
+                original_window_end,
                 fixed_work_seconds,
                 total_work_seconds,
             ));

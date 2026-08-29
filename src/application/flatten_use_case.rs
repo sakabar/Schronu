@@ -516,6 +516,7 @@ fn calculate_scheduled_work_seconds_by_date(
             &mut usage,
             scheduled.scheduled_start,
             scheduled.scheduled_end,
+            scheduled.scheduled_work_seconds,
         )?;
     }
     Ok(usage)
@@ -524,11 +525,13 @@ fn calculate_scheduled_work_seconds_by_date(
 fn add_scheduled_work_seconds_by_date(
     scheduled_work_seconds_by_date: &mut HashMap<NaiveDate, i64>,
     scheduled_start: DateTime<Local>,
-    scheduled_end: DateTime<Local>,
+    _scheduled_end: DateTime<Local>,
+    scheduled_work_seconds: i64,
 ) -> Result<(), ApplicationError> {
     let date = try_logical_date(scheduled_start)?;
-    *scheduled_work_seconds_by_date.entry(date).or_default() +=
-        (scheduled_end - scheduled_start).num_seconds();
+    // fixed予定では予約区間と未作業量が異なる。packと同じく、容量計算にはpolicyが
+    // 明示した作業秒数を使い、予約時間を作業量として二重計上しない。
+    *scheduled_work_seconds_by_date.entry(date).or_default() += scheduled_work_seconds;
     Ok(())
 }
 
@@ -543,15 +546,13 @@ mod tests {
         let start = Local.with_ymd_and_hms(2026, 8, 11, 12, 0, 0).unwrap();
         let mut usage = HashMap::new();
 
-        add_scheduled_work_seconds_by_date(
-            &mut usage,
-            start,
-            start + Duration::hours(1),
-            15 * 60,
-        )
-        .unwrap();
+        add_scheduled_work_seconds_by_date(&mut usage, start, start + Duration::hours(1), 15 * 60)
+            .unwrap();
 
-        assert_eq!(usage.get(&try_logical_date(start).unwrap()), Some(&(15 * 60)));
+        assert_eq!(
+            usage.get(&try_logical_date(start).unwrap()),
+            Some(&(15 * 60))
+        );
     }
 
     #[test]
