@@ -542,6 +542,27 @@ mod tests {
     use chrono::{FixedOffset, TimeZone};
 
     #[test]
+    fn 平はdeadlineなしfixed予定を延期候補にせず未解決理由を返す() {
+        let now = Local.with_ymd_and_hms(2026, 8, 11, 12, 0, 0).unwrap();
+        let task = new_task_handle("fixed-overload").unwrap();
+        task.sync_clock(now).unwrap();
+        task.set_start_time(now).unwrap();
+        task.set_estimated_work_seconds(60 * 60).unwrap();
+        task.set_fixed_start(true).unwrap();
+        let task_id = task.get_id().unwrap();
+        let repository = TestTaskRepository::new(vec![task], now);
+        let mut free_time_manager = TestFreeTimeManager::new(0);
+
+        let result = flatten_tasks(&repository, &mut free_time_manager).unwrap();
+
+        assert!(result.flattened_tasks.is_empty());
+        assert_eq!(result.unresolved_overloads.len(), 1);
+        let reason = &result.unresolved_overloads[0].reasons[0];
+        assert_eq!(format!("{:?}", reason.reason), "FixedStart");
+        assert_eq!(reason.representative_task_id, Some(task_id));
+    }
+
+    #[test]
     fn 日次使用量は予約区間ではなくscheduled_work_secondsを集計する() {
         let start = Local.with_ymd_and_hms(2026, 8, 11, 12, 0, 0).unwrap();
         let mut usage = HashMap::new();
