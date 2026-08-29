@@ -20,6 +20,7 @@
 use crate::application::scheduling_metrics::ScheduleMetrics;
 use crate::entity::task::TaskHandle;
 use chrono::{DateTime, Duration, Local};
+use std::cell::RefCell;
 use std::cmp::{max, Reverse};
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use uuid::Uuid;
@@ -224,6 +225,20 @@ struct BoundaryContext<'a> {
     next_release: Option<DateTime<Local>>,
     frontier: Option<&'a SchedulerFrontier>,
     slack_index: Option<&'a SlackDemandIndex>,
+    atomic_release_predictions: Option<&'a RefCell<AtomicReleasePredictionCache>>,
+}
+
+#[derive(Default)]
+struct AtomicReleasePredictionCache {
+    entries: Vec<AtomicReleasePrediction>,
+}
+
+#[derive(Clone, Copy)]
+struct AtomicReleasePrediction {
+    release: DateTime<Local>,
+    preemptor_index: usize,
+    critical_deadline: Option<DateTime<Local>>,
+    protected_mode: bool,
 }
 
 type NormalReadyKey = (Reverse<i64>, bool, Option<DateTime<Local>>, usize, Uuid);
@@ -1244,6 +1259,11 @@ fn next_preempting_release(
     let states = context.states;
     let fixed_slots = context.fixed_slots;
     if let (Some(frontier), Some(slack_index)) = (context.frontier, context.slack_index) {
+        if let Some(release) =
+            cached_preempting_release(selected_index, selected, now, slack_guard, context, metrics)?
+        {
+            return Ok(Some(release));
+        }
         let mut additional_normal = BTreeSet::new();
         let mut additional_protected = BTreeSet::new();
         for (release, released_indices) in frontier.release_events.range(now..) {
@@ -1308,6 +1328,13 @@ fn next_preempting_release(
                         slack_guard,
                     )? {
                         if *index != selected_index {
+                            cache_atomic_release_prediction(
+                                context,
+                                *release,
+                                *index,
+                                Some(critical),
+                                true,
+                            );
                             return Ok(Some(*release));
                         }
                         break;
@@ -1335,6 +1362,9 @@ fn next_preempting_release(
                         slack_guard,
                     )? {
                         if *index != selected_index {
+                            cache_atomic_release_prediction(
+                                context, *release, *index, critical, false,
+                            );
                             return Ok(Some(*release));
                         }
                         break;
@@ -1399,6 +1429,96 @@ fn next_preempting_release(
                 }
                 break;
             }
+        }
+    }
+    Ok(None)
+}
+
+fn cache_atomic_release_prediction(
+    context: &BoundaryContext<'_>,
+    release: DateTime<Local>,
+    preemptor_index: usize,
+    critical_deadline: Option<DateTime<Local>>,
+    protected_mode: bool,
+) {
+    if let Some(cache) = context.atomic_release_predictions {
+        cache.borrow_mut().entries.push(AtomicReleasePrediction {
+            release,
+            preemptor_index,
+            critical_deadline,
+            protected_mode,
+        });
+    }
+}
+
+/// 同じselection eventで実証済みのpreemptorを、現在候補にも適用できるか確認する。
+///
+/// release時刻だけのmemoizationではslackやprotected modeを壊すため、projected
+/// critical deadline、ordering、連続配置可能性を候補ごとに再検証する。
+fn cached_preempting_release(
+    selected_index: usize,
+    selected: &FlexibleState,
+    now: DateTime<Local>,
+    slack_guard: Option<DateTime<Local>>,
+    context: &BoundaryContext<'_>,
+    metrics: &mut ScheduleMetrics,
+) -> Result<Option<DateTime<Local>>, SchedulingPolicyError> {
+    let (Some(cache), Some(slack_index)) =
+        (context.atomic_release_predictions, context.slack_index)
+    else {
+        return Ok(None);
+    };
+    for prediction in cache.borrow().entries.iter().copied() {
+        // release timelineを再走査せず、index済みpreemptor 1件だけを通常の
+        // selection candidateとして再検証する。
+        metrics.record_selection_candidate_probe();
+        if prediction.preemptor_index == selected_index
+            || slack_guard.is_some_and(|guard| prediction.release >= guard)
+        {
+            continue;
+        }
+        let worked = (prediction.release - now)
+            .num_seconds()
+            .max(0)
+            .min(selected.remaining_seconds);
+        if worked == selected.remaining_seconds {
+            continue;
+        }
+        let critical = slack_index.critical_deadline_after_work(selected_index, worked, metrics);
+        if critical != prediction.critical_deadline {
+            continue;
+        }
+        let preemptor = &context.states[prediction.preemptor_index];
+        let preemptor_outranks = if prediction.protected_mode {
+            critical.is_some_and(|critical| {
+                preemptor
+                    .effective_deadline
+                    .is_some_and(|deadline| deadline <= critical)
+                    && (selected
+                        .effective_deadline
+                        .is_none_or(|deadline| deadline > critical)
+                        || protected_selection_key(preemptor) < protected_selection_key(selected))
+            })
+        } else {
+            normal_selection_key(preemptor) < normal_selection_key(selected)
+        };
+        if !preemptor_outranks {
+            continue;
+        }
+        let preemptor_slack = slack_index.slack_boundary_after_work(
+            prediction.preemptor_index,
+            prediction.release,
+            selected_index,
+            worked,
+            metrics,
+        );
+        if candidate_fits_without_future_release(
+            preemptor,
+            prediction.release,
+            context.fixed_slots,
+            preemptor_slack,
+        )? {
+            return Ok(Some(prediction.release));
         }
     }
     Ok(None)
@@ -1564,12 +1684,14 @@ fn select_next_candidate(
                 .then(|| next_release_event(states, now))
                 .flatten()
         });
+    let atomic_release_predictions = RefCell::new(AtomicReleasePredictionCache::default());
     let boundary_context = BoundaryContext {
         states,
         fixed_slots,
         next_release,
         frontier,
         slack_index,
+        atomic_release_predictions: Some(&atomic_release_predictions),
     };
     if let Some(frontier) = frontier {
         let protected_ready = critical.is_some_and(|critical| {
@@ -1897,6 +2019,7 @@ fn schedule_selected_segment(
         next_release: frontier.next_release(),
         frontier: Some(frontier),
         slack_index: Some(slack_index),
+        atomic_release_predictions: None,
     };
     let mut boundary = segment_boundary(
         selected_index,
