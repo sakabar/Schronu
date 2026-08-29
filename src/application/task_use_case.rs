@@ -1,4 +1,4 @@
-use crate::application::daily_capacity::{try_local_date_and_time, try_next_business_day_start};
+use crate::application::daily_capacity::{try_local_date_and_time, try_next_logical_date_start};
 use crate::application::interface::TaskRepositoryTrait;
 use crate::application::schedule_use_case::get_schedule;
 pub use crate::application::task_view::TaskView;
@@ -31,14 +31,14 @@ pub enum ApplicationError {
     NonexistentLocalDateTime {
         local_datetime: NaiveDateTime,
     },
-    SubjectiveDateOutOfRange {
+    LogicalDateOutOfRange {
         operation: &'static str,
         datetime: DateTime<Local>,
     },
-    SubjectiveDateStartOutOfRange {
+    LogicalDateStartOutOfRange {
         date: NaiveDate,
     },
-    SubjectiveDateEndOutOfRange {
+    LogicalDateEndOutOfRange {
         date: NaiveDate,
         end_of_day_offset_minutes: i64,
     },
@@ -66,23 +66,23 @@ impl fmt::Display for ApplicationError {
             Self::NonexistentLocalDateTime { local_datetime } => {
                 write!(formatter, "nonexistent local datetime: {local_datetime}")
             }
-            Self::SubjectiveDateOutOfRange {
+            Self::LogicalDateOutOfRange {
                 operation,
                 datetime,
             } => write!(
                 formatter,
-                "subjective date operation {operation} is outside the supported range: {datetime}"
+                "logical date operation {operation} is outside the supported range: {datetime}"
             ),
-            Self::SubjectiveDateStartOutOfRange { date } => write!(
+            Self::LogicalDateStartOutOfRange { date } => write!(
                 formatter,
-                "subjective date start is outside the supported range: date={date}"
+                "logical date start is outside the supported range: date={date}"
             ),
-            Self::SubjectiveDateEndOutOfRange {
+            Self::LogicalDateEndOutOfRange {
                 date,
                 end_of_day_offset_minutes,
             } => write!(
                 formatter,
-                "subjective date end is outside the supported range: date={date}, end_of_day_offset_minutes={end_of_day_offset_minutes}"
+                "logical date end is outside the supported range: date={date}, end_of_day_offset_minutes={end_of_day_offset_minutes}"
             ),
         }
     }
@@ -405,18 +405,18 @@ pub fn defer_routine_task(
         .map_err(ApplicationError::TaskTree)?;
     let orig_start_time = task.get_start_time().map_err(ApplicationError::TaskTree)?;
 
-    let deadline_out_of_range = || ApplicationError::SubjectiveDateOutOfRange {
+    let deadline_out_of_range = || ApplicationError::LogicalDateOutOfRange {
         operation: "defer_routine_deadline",
         datetime: orig_deadline_time,
     };
     let new_deadline_time = if let Some(parent_deadline_time) = parent_deadline_time_opt {
-        let first_business_day_start = try_next_business_day_start(orig_deadline_time)?;
+        let first_logical_date_start = try_next_logical_date_start(orig_deadline_time)?;
         let additional_days = repetition_interval_days
             .checked_sub(1)
             .ok_or_else(deadline_out_of_range)?;
         let additional_duration =
             Duration::try_days(additional_days).ok_or_else(deadline_out_of_range)?;
-        let target_date = first_business_day_start
+        let target_date = first_logical_date_start
             .date_naive()
             .checked_add_signed(additional_duration)
             .ok_or_else(deadline_out_of_range)?;
@@ -428,7 +428,7 @@ pub fn defer_routine_task(
             .checked_add_signed(duration)
             .ok_or_else(deadline_out_of_range)?
     };
-    let start_out_of_range = || ApplicationError::SubjectiveDateOutOfRange {
+    let start_out_of_range = || ApplicationError::LogicalDateOutOfRange {
         operation: "defer_routine_start",
         datetime: orig_start_time,
     };
@@ -719,7 +719,7 @@ fn apply_time_template(
         time_template.minute(),
         time_template.second(),
     )
-    .ok_or(ApplicationError::SubjectiveDateOutOfRange {
+    .ok_or(ApplicationError::LogicalDateOutOfRange {
         operation: "apply_time_template",
         datetime: time_template,
     })?;
@@ -766,34 +766,35 @@ fn build_next_repetition_task_attr(
         .get_atomic()
         .map_err(ApplicationError::TaskTree)?;
 
-    let next_business_day_start = try_next_business_day_start(occurrence_anchor)?;
-    let repetition_offset_days = repetition_interval_days.checked_sub(1).ok_or(
-        ApplicationError::SubjectiveDateOutOfRange {
-            operation: "next_business_day_start",
-            datetime: occurrence_anchor,
-        },
-    )?;
+    let next_logical_date_start = try_next_logical_date_start(occurrence_anchor)?;
+    let repetition_offset_days =
+        repetition_interval_days
+            .checked_sub(1)
+            .ok_or(ApplicationError::LogicalDateOutOfRange {
+                operation: "next_logical_date_start",
+                datetime: occurrence_anchor,
+            })?;
     let repetition_offset = Duration::try_days(repetition_offset_days).ok_or(
-        ApplicationError::SubjectiveDateOutOfRange {
-            operation: "next_business_day_start",
+        ApplicationError::LogicalDateOutOfRange {
+            operation: "next_logical_date_start",
             datetime: occurrence_anchor,
         },
     )?;
-    let next_occurrence_day = next_business_day_start
+    let next_occurrence_day = next_logical_date_start
         .checked_add_signed(repetition_offset)
-        .ok_or(ApplicationError::SubjectiveDateOutOfRange {
-            operation: "next_business_day_start",
+        .ok_or(ApplicationError::LogicalDateOutOfRange {
+            operation: "next_logical_date_start",
             datetime: occurrence_anchor,
         })?;
     let occurrence_start_time = apply_time_template(next_occurrence_day, parent_start_time)?;
     let days_in_advance =
-        Duration::try_days(days_in_advance).ok_or(ApplicationError::SubjectiveDateOutOfRange {
+        Duration::try_days(days_in_advance).ok_or(ApplicationError::LogicalDateOutOfRange {
             operation: "repetition_start_time",
             datetime: occurrence_start_time,
         })?;
     let task_start_time = occurrence_start_time
         .checked_sub_signed(days_in_advance)
-        .ok_or(ApplicationError::SubjectiveDateOutOfRange {
+        .ok_or(ApplicationError::LogicalDateOutOfRange {
             operation: "repetition_start_time",
             datetime: occurrence_start_time,
         })?;
@@ -803,7 +804,7 @@ fn build_next_repetition_task_attr(
         }
         None => {
             let end_of_day = NaiveTime::from_hms_opt(23, 59, 59).ok_or(
-                ApplicationError::SubjectiveDateOutOfRange {
+                ApplicationError::LogicalDateOutOfRange {
                     operation: "repetition_deadline_time",
                     datetime: next_occurrence_day,
                 },

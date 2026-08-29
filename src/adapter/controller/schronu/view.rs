@@ -14,9 +14,9 @@ use regex::Regex;
 use schronu::adapter::gateway::schronu_config::SchronuConfig;
 use schronu::application::daily_capacity::{
     calculate_daily_rho_diff_hours,
-    calculate_free_time_minutes_for_subjective_date_with_end_of_day_offset_minutes,
-    calculate_full_day_free_time_minutes_for_subjective_date_with_end_of_day_offset_minutes,
-    try_next_business_day_start, try_subjective_date, try_subjective_date_end, RHO_GOAL,
+    calculate_free_time_minutes_for_logical_date_with_end_of_day_offset_minutes,
+    calculate_full_day_free_time_minutes_for_logical_date_with_end_of_day_offset_minutes,
+    try_logical_date, try_logical_date_end, try_next_logical_date_start, RHO_GOAL,
 };
 use schronu::application::interface::{FreeTimeManagerTrait, TaskRepositoryTrait};
 use schronu::application::schedule_use_case::get_schedule;
@@ -71,12 +71,12 @@ pub(super) fn get_adjustable_prefix_label(
         return Ok("".to_string());
     }
 
-    let planned_date = try_subjective_date(dt)?;
+    let planned_date = try_logical_date(dt)?;
     let available_datetime = max(
         task.get_start_time().map_err(ApplicationError::TaskTree)?,
         last_synced_time,
     );
-    let available_date = try_subjective_date(available_datetime)?;
+    let available_date = try_logical_date(available_datetime)?;
     let advance_days = (planned_date - available_date).num_days();
 
     if advance_days > 0 {
@@ -131,7 +131,7 @@ pub(super) fn calculate_daily_band_durations(
 #[derive(Clone)]
 pub(super) struct TaskListDisplayRow {
     pub(super) scheduled_start: DateTime<Local>,
-    pub(super) subjective_naive_date_opt: Option<NaiveDate>,
+    pub(super) logical_naive_date_opt: Option<NaiveDate>,
     pub(super) rank: usize,
     pub(super) id: Uuid,
     pub(super) priority: i64,
@@ -152,7 +152,7 @@ impl TaskListDisplayRow {
     ) -> Self {
         TaskListDisplayRow {
             scheduled_start,
-            subjective_naive_date_opt: None,
+            logical_naive_date_opt: None,
             rank,
             id,
             priority,
@@ -179,7 +179,7 @@ impl TaskListDisplayRow {
     #[allow(clippy::too_many_arguments)]
     fn new_spreadsheet_task(
         scheduled_start: DateTime<Local>,
-        subjective_naive_date: NaiveDate,
+        logical_naive_date: NaiveDate,
         rank: usize,
         id: Uuid,
         priority: i64,
@@ -189,7 +189,7 @@ impl TaskListDisplayRow {
     ) -> Self {
         TaskListDisplayRow {
             scheduled_start,
-            subjective_naive_date_opt: Some(subjective_naive_date),
+            logical_naive_date_opt: Some(logical_naive_date),
             rank,
             id,
             priority,
@@ -272,13 +272,13 @@ fn calculate_project_category_denominator_seconds(
     let mut dates = rows
         .iter()
         .filter(|row| row.is_real_task)
-        .filter_map(|row| row.subjective_naive_date_opt)
+        .filter_map(|row| row.logical_naive_date_opt)
         .collect::<Vec<_>>();
     dates.sort();
     dates.dedup();
 
     dates.iter().try_fold(0, |total, date| {
-        calculate_free_time_minutes_for_subjective_date_with_end_of_day_offset_minutes(
+        calculate_free_time_minutes_for_logical_date_with_end_of_day_offset_minutes(
             date,
             last_synced_time,
             free_time_manager,
@@ -330,7 +330,7 @@ pub(super) fn mark_give_up_candidate_rows(
         .filter_map(|(index, row)| {
             if row.is_real_task
                 && row.work_seconds > 0
-                && row.subjective_naive_date_opt == Some(target_date)
+                && row.logical_naive_date_opt == Some(target_date)
             {
                 Some(index)
             } else {
@@ -633,13 +633,10 @@ pub(super) fn build_show_all_tasks_display_with_config(
 
     // ここからρ計算用
     let last_synced_time = task_repository.get_last_synced_time();
-    let last_synced_subjective_date = try_subjective_date(last_synced_time)?;
-    let next_business_day_start = try_next_business_day_start(last_synced_time)?;
+    let last_synced_logical_date = try_logical_date(last_synced_time)?;
+    let next_logical_date_start = try_next_logical_date_start(last_synced_time)?;
 
-    let eod = try_subjective_date_end(
-        last_synced_subjective_date,
-        config.end_of_day_offset_minutes,
-    )?;
+    let eod = try_logical_date_end(last_synced_logical_date, config.end_of_day_offset_minutes)?;
     // ここまでρ計算用
 
     let is_calendar_func = pattern_opt
@@ -679,7 +676,7 @@ pub(super) fn build_show_all_tasks_display_with_config(
         let rank = &scheduled_task.rank;
         let deadline_time_opt = &scheduled_task.task.deadline_time;
         let id = &scheduled_task.task.id;
-        let subjective_naive_date = try_subjective_date(*scheduled_start)?;
+        let logical_naive_date = try_logical_date(*scheduled_start)?;
         let needs_scheduled_boundary = pattern_opt.as_ref().is_some_and(|pattern| {
             pattern == "今"
                 || pattern == "明"
@@ -691,21 +688,21 @@ pub(super) fn build_show_all_tasks_display_with_config(
                 || pattern == "翌"
                 || days_of_week.contains(&pattern.as_str())
         });
-        let scheduled_next_business_day_start = needs_scheduled_boundary
-            .then(|| try_next_business_day_start(*scheduled_start))
+        let scheduled_next_logical_date_start = needs_scheduled_boundary
+            .then(|| try_next_logical_date_start(*scheduled_start))
             .transpose()?;
 
         // 表示期間を過ぎた未来task以降は一覧へ含めない
         if let Some(valid_days) = pattern_opt.as_deref().and_then(task_list_horizon_days) {
-            if let Some(scheduled_boundary) = scheduled_next_business_day_start {
-                if scheduled_boundary - next_business_day_start > Duration::days(valid_days) {
+            if let Some(scheduled_boundary) = scheduled_next_logical_date_start {
+                if scheduled_boundary - next_logical_date_start > Duration::days(valid_days) {
                     break;
                 }
             }
         }
 
         counter
-            .entry(subjective_naive_date)
+            .entry(logical_naive_date)
             .and_modify(|cnt| *cnt += 1)
             .or_insert(1);
 
@@ -748,7 +745,7 @@ pub(super) fn build_show_all_tasks_display_with_config(
 
             if !adjustable_prefix_label.is_empty() {
                 adjustable_estimated_work_seconds_map
-                    .entry(subjective_naive_date)
+                    .entry(logical_naive_date)
                     .and_modify(|estimated_work_seconds_val| {
                         *estimated_work_seconds_val += task_estimated_work_seconds
                     })
@@ -806,7 +803,7 @@ pub(super) fn build_show_all_tasks_display_with_config(
             // 残りの見積もりを0とはせず、安全に倒して元々の見積もりの2倍として扱う
             let estimated_work_seconds = scheduled_work_seconds;
             if let Some(deadline_time) = deadline_time_opt {
-                let deadline_naive_date = try_subjective_date(*deadline_time)?;
+                let deadline_naive_date = try_logical_date(*deadline_time)?;
 
                 deadline_estimated_work_seconds_map
                     .entry(deadline_naive_date)
@@ -818,7 +815,7 @@ pub(super) fn build_show_all_tasks_display_with_config(
 
             if inherited_repetition_interval_days_opt.is_some() {
                 repetitive_task_estimated_work_seconds_map
-                    .entry(subjective_naive_date)
+                    .entry(logical_naive_date)
                     .and_modify(|repetitive_task_estimated_work_seconds| {
                         *repetitive_task_estimated_work_seconds += estimated_work_seconds
                     })
@@ -834,12 +831,12 @@ pub(super) fn build_show_all_tasks_display_with_config(
                 let tmp_id = Uuid::new_v4();
 
                 if let Some(pattern) = pattern_opt {
-                    if (pattern == "今" && *scheduled_start < next_business_day_start)
+                    if (pattern == "今" && *scheduled_start < next_logical_date_start)
                         || (pattern == "明"
-                            && *current_datetime_cursor_clone >= next_business_day_start
-                            && (*scheduled_start - next_business_day_start) < Duration::days(1))
+                            && *current_datetime_cursor_clone >= next_logical_date_start
+                            && (*scheduled_start - next_logical_date_start) < Duration::days(1))
                         || (pattern == "近"
-                            && (*scheduled_start - next_business_day_start) < Duration::days(1))
+                            && (*scheduled_start - next_logical_date_start) < Duration::days(1))
                     {
                         task_list_display_rows.push(TaskListDisplayRow::new_gap(
                             *current_datetime_cursor_clone,
@@ -857,7 +854,7 @@ pub(super) fn build_show_all_tasks_display_with_config(
                 advance_display_datetime_cursor(current_datetime_cursor, end_datetime);
 
             total_estimated_work_seconds_of_the_date_counter
-                .entry(subjective_naive_date)
+                .entry(logical_naive_date)
                 .and_modify(|estimated_work_seconds_val| {
                     *estimated_work_seconds_val += estimated_work_seconds
                 })
@@ -873,12 +870,12 @@ pub(super) fn build_show_all_tasks_display_with_config(
             let today_leaf_icon: String = "/".to_string();
 
             let icon = if task_deadline_time_opt.is_some()
-                && task_deadline_time_opt.unwrap() < next_business_day_start
+                && task_deadline_time_opt.unwrap() < next_logical_date_start
                 && task_deadline_time_opt.unwrap() < end_datetime
             {
                 &breaking_deadline_icon
             } else if task_deadline_time_opt.is_some()
-                && task_deadline_time_opt.unwrap() < next_business_day_start
+                && task_deadline_time_opt.unwrap() < next_logical_date_start
             {
                 &deadline_icon
             } else if rank == &0 && scheduled_start < &eod {
@@ -889,7 +886,7 @@ pub(super) fn build_show_all_tasks_display_with_config(
             };
 
             let deadline_string = if let Some(deadline_time) = deadline_time_opt {
-                if *deadline_time < next_business_day_start {
+                if *deadline_time < next_logical_date_start {
                     let breaking_minutes = (end_datetime - deadline_time).num_minutes().abs();
                     let breaking_hh = breaking_minutes / 60;
                     let breaking_mm = breaking_minutes % 60;
@@ -933,7 +930,7 @@ pub(super) fn build_show_all_tasks_display_with_config(
             let task_search_text = task_list_search_text(&task_row);
             let task_list_display_row = TaskListDisplayRow::new_spreadsheet_task(
                 *scheduled_start,
-                subjective_naive_date,
+                logical_naive_date,
                 *rank,
                 *id,
                 task_priority,
@@ -949,7 +946,7 @@ pub(super) fn build_show_all_tasks_display_with_config(
                     if pattern == "葉" {
                         if rank == &0
                             || task_deadline_time_opt.is_some()
-                                && task_deadline_time_opt.unwrap() < next_business_day_start
+                                && task_deadline_time_opt.unwrap() < next_logical_date_start
                         {
                             task_list_display_rows.push(task_list_display_row.clone());
                         }
@@ -968,20 +965,20 @@ pub(super) fn build_show_all_tasks_display_with_config(
                     } else if is_daily_summary_func {
                         // カレンダー表示機能を使う時には、タスク一覧は表示しない。
                     } else if pattern == "今" {
-                        if scheduled_next_business_day_start.is_some_and(|scheduled_boundary| {
-                            scheduled_boundary == next_business_day_start
+                        if scheduled_next_logical_date_start.is_some_and(|scheduled_boundary| {
+                            scheduled_boundary == next_logical_date_start
                         }) {
                             task_list_display_rows.push(task_list_display_row.clone());
                         }
                     } else if pattern == "明" {
-                        if scheduled_next_business_day_start.is_some_and(|scheduled_boundary| {
-                            scheduled_boundary - next_business_day_start == Duration::days(1)
+                        if scheduled_next_logical_date_start.is_some_and(|scheduled_boundary| {
+                            scheduled_boundary - next_logical_date_start == Duration::days(1)
                         }) {
                             task_list_display_rows.push(task_list_display_row.clone());
                         }
                     } else if pattern == "近" {
-                        if scheduled_next_business_day_start.is_some_and(|scheduled_boundary| {
-                            let diff = scheduled_boundary - next_business_day_start;
+                        if scheduled_next_logical_date_start.is_some_and(|scheduled_boundary| {
+                            let diff = scheduled_boundary - next_logical_date_start;
                             diff == Duration::zero() || diff == Duration::days(1)
                         }) {
                             task_list_display_rows.push(task_list_display_row.clone());
@@ -993,7 +990,7 @@ pub(super) fn build_show_all_tasks_display_with_config(
                         }
                     } else if days_of_week.contains(&pattern.as_str()) {
                         // 月 火 水 木 金 土 日 が指定された時は、明日以降で、直近のその曜日のタスクを表示する
-                        let now_weekday_jp = get_weekday_jp(&last_synced_subjective_date);
+                        let now_weekday_jp = get_weekday_jp(&last_synced_logical_date);
 
                         let now_days_of_week_ind = days_of_week
                             .iter()
@@ -1009,21 +1006,21 @@ pub(super) fn build_show_all_tasks_display_with_config(
                         // 今日のデータについては「全 今」で表示できるので、その代わりに、1週間後の同じ曜日の情報を表示するようにする
                         let days: i64 = if ind_diff == 0 { 7 } else { ind_diff as i64 };
 
-                        if scheduled_next_business_day_start.is_some_and(|scheduled_boundary| {
-                            scheduled_boundary - next_business_day_start == Duration::days(days)
+                        if scheduled_next_logical_date_start.is_some_and(|scheduled_boundary| {
+                            scheduled_boundary - next_logical_date_start == Duration::days(days)
                         }) {
                             task_list_display_rows.push(task_list_display_row.clone());
                         }
                     } else if pattern == "週" {
                         // 今日を含む直近1週間のタスクを表示する
-                        if scheduled_next_business_day_start.is_some_and(|scheduled_boundary| {
-                            scheduled_boundary - next_business_day_start < Duration::days(7)
+                        if scheduled_next_logical_date_start.is_some_and(|scheduled_boundary| {
+                            scheduled_boundary - next_logical_date_start < Duration::days(7)
                         }) {
                             task_list_display_rows.push(task_list_display_row.clone());
                         }
                     } else if pattern == "末" {
                         // 週末までのタスクを表示する
-                        let now_weekday_jp = get_weekday_jp(&last_synced_subjective_date);
+                        let now_weekday_jp = get_weekday_jp(&last_synced_logical_date);
 
                         let now_days_of_week_ind = days_of_week
                             .iter()
@@ -1034,15 +1031,15 @@ pub(super) fn build_show_all_tasks_display_with_config(
 
                         let days_diff = (7 + target_days_of_week_ind - now_days_of_week_ind) % 7;
 
-                        if scheduled_next_business_day_start.is_some_and(|scheduled_boundary| {
-                            scheduled_boundary - next_business_day_start
+                        if scheduled_next_logical_date_start.is_some_and(|scheduled_boundary| {
+                            scheduled_boundary - next_logical_date_start
                                 <= Duration::days(days_diff as i64)
                         }) {
                             task_list_display_rows.push(task_list_display_row.clone());
                         }
                     } else if pattern == "翌" {
                         // 翌週末までのタスクを表示する
-                        let now_weekday_jp = get_weekday_jp(&last_synced_subjective_date);
+                        let now_weekday_jp = get_weekday_jp(&last_synced_logical_date);
 
                         let now_days_of_week_ind = days_of_week
                             .iter()
@@ -1054,15 +1051,15 @@ pub(super) fn build_show_all_tasks_display_with_config(
                         let days_diff =
                             ((7 + target_days_of_week_ind - now_days_of_week_ind) % 7) as i64;
 
-                        if scheduled_next_business_day_start.is_some_and(|scheduled_boundary| {
-                            let diff = scheduled_boundary - next_business_day_start;
+                        if scheduled_next_logical_date_start.is_some_and(|scheduled_boundary| {
+                            let diff = scheduled_boundary - next_logical_date_start;
                             Duration::days(days_diff) < diff
                                 && diff <= Duration::days(days_diff + 7)
                         }) {
                             task_list_display_rows.push(task_list_display_row.clone());
                         }
                     } else if let Some(pattern_date) = yyyymmdd_pattern_date {
-                        if pattern_date == subjective_naive_date {
+                        if pattern_date == logical_naive_date {
                             task_list_display_rows.push(task_list_display_row.clone());
                         }
                     } else if integer_reg.is_match(pattern) {
@@ -1070,7 +1067,7 @@ pub(super) fn build_show_all_tasks_display_with_config(
                         let input_minute: i64 = caps[0].parse().unwrap();
                         let target_free_time_seconds = input_minute * 60;
 
-                        if *scheduled_start > next_business_day_start
+                        if *scheduled_start > next_logical_date_start
                             || last_synced_time
                                 < task.get_start_time().map_err(ApplicationError::TaskTree)?
                         {
@@ -1109,7 +1106,7 @@ pub(super) fn build_show_all_tasks_display_with_config(
         0,
         free_time_manager.get_busy_minutes(&last_synced_time, &eod),
     );
-    let naive_dt_today = last_synced_subjective_date;
+    let naive_dt_today = last_synced_logical_date;
     let today_total_deadline_estimated_work_seconds =
         *total_estimated_work_seconds_of_the_date_counter
             .get(&naive_dt_today)
@@ -1192,7 +1189,7 @@ pub(super) fn build_show_all_tasks_display_with_config(
         let cnt_of_the_date = *counter.get(date).unwrap_or(&0);
 
         let free_time_minutes =
-            calculate_free_time_minutes_for_subjective_date_with_end_of_day_offset_minutes(
+            calculate_free_time_minutes_for_logical_date_with_end_of_day_offset_minutes(
                 date,
                 last_synced_time,
                 free_time_manager,
@@ -1200,7 +1197,7 @@ pub(super) fn build_show_all_tasks_display_with_config(
             )?;
         let full_day_free_time_minutes_opt = if is_band_func {
             Some(
-                calculate_full_day_free_time_minutes_for_subjective_date_with_end_of_day_offset_minutes(
+                calculate_full_day_free_time_minutes_for_logical_date_with_end_of_day_offset_minutes(
                     date,
                     free_time_manager,
                     config.end_of_day_offset_minutes,

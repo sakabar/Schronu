@@ -1760,7 +1760,7 @@ fn describe_decode(result: Result<(), ToolInputError>) -> String {
     }
 }
 
-fn maximum_business_day_start() -> DateTime<Local> {
+fn maximum_logical_date_start() -> DateTime<Local> {
     DateTime::<Local>::from_naive_utc_and_offset(
         NaiveDate::MAX.and_hms_opt(6, 0, 0).unwrap(),
         FixedOffset::east_opt(0).unwrap(),
@@ -1768,8 +1768,8 @@ fn maximum_business_day_start() -> DateTime<Local> {
 }
 
 #[test]
-fn schedule_periodは引数なしの次業務日境界errorを保持する() {
-    let now = maximum_business_day_start();
+fn schedule_periodは引数なしの次論理日境界errorを保持する() {
+    let now = maximum_logical_date_start();
     let result = GetScheduleInput {
         from: OptionalValue::Missing,
         until: OptionalValue::Missing,
@@ -1779,8 +1779,8 @@ fn schedule_periodは引数なしの次業務日境界errorを保持する() {
     match result {
         Err(ToolInputError::Application(error)) => assert_eq!(
             error,
-            ApplicationError::SubjectiveDateOutOfRange {
-                operation: "next_business_day_start",
+            ApplicationError::LogicalDateOutOfRange {
+                operation: "next_logical_date_start",
                 datetime: now,
             }
         ),
@@ -1789,7 +1789,7 @@ fn schedule_periodは引数なしの次業務日境界errorを保持する() {
 }
 
 #[test]
-fn schedule_periodはfromのみの次業務日境界errorを保持する() {
+fn schedule_periodはfromのみの次論理日境界errorを保持する() {
     let from = match super::schedule_day_start(super::IsoDate(NaiveDate::MAX), "from") {
         Ok(from) => from,
         Err(_) => panic!("expected the maximum date to resolve to a local datetime"),
@@ -1798,13 +1798,13 @@ fn schedule_periodはfromのみの次業務日境界errorを保持する() {
         from: OptionalValue::Value(super::IsoDate(NaiveDate::MAX)),
         until: OptionalValue::Missing,
     }
-    .into_period(maximum_business_day_start());
+    .into_period(maximum_logical_date_start());
 
     match result {
         Err(ToolInputError::Application(error)) => assert_eq!(
             error,
-            ApplicationError::SubjectiveDateOutOfRange {
-                operation: "next_business_day_start",
+            ApplicationError::LogicalDateOutOfRange {
+                operation: "next_logical_date_start",
                 datetime: from,
             }
         ),

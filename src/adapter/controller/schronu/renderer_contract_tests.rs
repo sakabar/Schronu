@@ -955,7 +955,7 @@ fn flatten_displayはtyped移動rowと超過warningと未解消理由を既存�
                         representative_task_name: Some("代表task".to_string()),
                     },
                     FlattenReasonSummary {
-                        reason: FlattenReason::CrossesBusinessDay,
+                        reason: FlattenReason::CrossesLogicalDate,
                         task_count: 2,
                         representative_task_id: Some(representative_id),
                         representative_task_name: None,

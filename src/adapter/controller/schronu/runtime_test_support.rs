@@ -1023,7 +1023,7 @@ impl TaskListDisplayRow {
     #[allow(clippy::too_many_arguments)]
     fn new_task(
         scheduled_start: DateTime<Local>,
-        subjective_naive_date: NaiveDate,
+        logical_naive_date: NaiveDate,
         priority_rank: usize,
         id: Uuid,
         priority: i64,
@@ -1033,7 +1033,7 @@ impl TaskListDisplayRow {
     ) -> Self {
         TaskListDisplayRow {
             scheduled_start,
-            subjective_naive_date_opt: Some(subjective_naive_date),
+            logical_naive_date_opt: Some(logical_naive_date),
             rank: priority_rank,
             id,
             priority,

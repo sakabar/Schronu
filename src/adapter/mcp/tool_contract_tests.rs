@@ -839,7 +839,7 @@ fn get_scheduleは予定をScheduledTaskViewの全field付きで返しrepository
 }
 
 #[test]
-fn get_scheduleは引数なしで現在から次の業務日境界までの予定だけを返す() {
+fn get_scheduleは引数なしで現在から次の論理日境界までの予定だけを返す() {
     let now = Local::now();
     let current_task = new_task_handle("current task").unwrap();
     current_task.set_start_time(now).unwrap();
@@ -847,7 +847,7 @@ fn get_scheduleは引数なしで現在から次の業務日境界までの予�
 
     let future_task = new_task_handle("future task").unwrap();
     future_task
-        .set_start_time(try_next_business_day_start(now).unwrap() + Duration::hours(1))
+        .set_start_time(try_next_logical_date_start(now).unwrap() + Duration::hours(1))
         .unwrap();
     future_task.set_estimated_work_seconds(15 * 60).unwrap();
 
@@ -872,8 +872,8 @@ fn get_scheduleは引数なしで現在から次の業務日境界までの予�
 #[test]
 fn get_scheduleは日付範囲と片方の日付指定で重なる予定を返す() {
     let now = Local::now();
-    let from_boundary = try_next_business_day_start(now).unwrap();
-    let until_boundary = try_next_business_day_start(from_boundary).unwrap();
+    let from_boundary = try_next_logical_date_start(now).unwrap();
+    let until_boundary = try_next_logical_date_start(from_boundary).unwrap();
 
     let crossing_task = new_task_handle("crossing task").unwrap();
     crossing_task
@@ -2813,8 +2813,8 @@ fn get_scheduleは日時application_errorを情報付きinternal_errorとして�
         operation_now,
         tool_call_request("datetime-error", "get_schedule", json!({})),
     );
-    let expected = crate::application::task_use_case::ApplicationError::SubjectiveDateOutOfRange {
-        operation: "next_business_day_start",
+    let expected = crate::application::task_use_case::ApplicationError::LogicalDateOutOfRange {
+        operation: "next_logical_date_start",
         datetime: operation_now,
     };
 

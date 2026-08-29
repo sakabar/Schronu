@@ -945,8 +945,8 @@ const MOVED_DATETIME_INTERPRETATION_SYMBOLS: &[&str] = &[
     "resolve_dated_clear_or_gather_end_naive",
     "parse_clear_or_gather_defer_to_datetime",
     "parse_dated_clear_or_gather_time_range",
-    "defer_business_day_target",
-    "seconds_until_next_business_day_start_with_offset",
+    "defer_logical_date_target",
+    "seconds_until_next_logical_date_start_with_offset",
 ];
 
 const MOVED_DOMAIN_MUTATION_SYMBOLS: &[&str] = &[

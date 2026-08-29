@@ -5,7 +5,7 @@ use std::cmp::{max, min};
 use std::fmt;
 use uuid::Uuid;
 
-use crate::entity::datetime::{BusinessDateTimePolicy, DEFAULT_END_OF_DAY_OFFSET_MINUTES};
+use crate::entity::datetime::{LogicalDateTimePolicy, DEFAULT_END_OF_DAY_OFFSET_MINUTES};
 
 #[derive(Copy, Clone, Debug, PartialEq, Serialize)]
 pub enum Status {
@@ -439,7 +439,7 @@ impl TaskAttr {
 
     pub fn set_orig_status(&mut self, orig_status: Status) {
         self.orig_status = orig_status;
-        let datetime_policy = BusinessDateTimePolicy::new(DEFAULT_END_OF_DAY_OFFSET_MINUTES);
+        let datetime_policy = LogicalDateTimePolicy::new(DEFAULT_END_OF_DAY_OFFSET_MINUTES);
 
         // pending_untilが〆切よりも後ろになってしまっている場合はpending_untilを調整する
         if let Some(deadline_time) = self

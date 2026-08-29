@@ -44,27 +44,27 @@ fn calculate_daily_rho_diff_hours_反復時間を分子と分母から除いて�
 }
 
 #[test]
-fn subjective_date_06時より前は前日として扱う() {
+fn logical_date_06時より前は前日として扱う() {
     let datetime = Local.with_ymd_and_hms(2026, 8, 12, 1, 0, 0).unwrap();
 
     assert_eq!(
-        try_subjective_date(datetime).unwrap(),
+        try_logical_date(datetime).unwrap(),
         NaiveDate::from_ymd_opt(2026, 8, 11).unwrap()
     );
 }
 
 #[test]
-fn try_subjective_dateは通常値をpolicyと同じ日付へ変換する() {
+fn try_logical_dateは通常値をpolicyと同じ日付へ変換する() {
     let datetime = Local.with_ymd_and_hms(2026, 8, 12, 5, 59, 0).unwrap();
-    let expected = BusinessDateTimePolicy::new(END_OF_DAY_OFFSET_MINUTES)
-        .subjective_date(datetime)
+    let expected = LogicalDateTimePolicy::new(END_OF_DAY_OFFSET_MINUTES)
+        .logical_date(datetime)
         .unwrap();
 
-    assert_eq!(try_subjective_date(datetime), Ok(expected));
+    assert_eq!(try_logical_date(datetime), Ok(expected));
 }
 
 #[test]
-fn try_subjective_dateは日付減算不能の操作と入力日時を保持する() {
+fn try_logical_dateは日付減算不能の操作と入力日時を保持する() {
     let local_datetime = NaiveDate::MIN.and_hms_opt(5, 59, 0).unwrap();
     let datetime = DateTime::<Local>::from_naive_utc_and_offset(
         local_datetime,
@@ -72,38 +72,38 @@ fn try_subjective_dateは日付減算不能の操作と入力日時を保持す�
     );
 
     assert_eq!(
-        try_subjective_date(datetime),
-        Err(ApplicationError::SubjectiveDateOutOfRange {
-            operation: "subjective_date",
+        try_logical_date(datetime),
+        Err(ApplicationError::LogicalDateOutOfRange {
+            operation: "logical_date",
             datetime,
         })
     );
 }
 
 #[test]
-fn try_subjective_date_startは通常値をpolicyと同じ日時へ変換する() {
+fn try_logical_date_startは通常値をpolicyと同じ日時へ変換する() {
     let date = NaiveDate::from_ymd_opt(2026, 8, 12).unwrap();
-    let expected = try_subjective_date_start(date).unwrap();
+    let expected = try_logical_date_start(date).unwrap();
 
-    assert_eq!(try_subjective_date_start(date), Ok(expected));
+    assert_eq!(try_logical_date_start(date), Ok(expected));
 }
 
 #[test]
-fn try_subjective_date_endは通常値をpolicyと同じ日時へ変換する() {
+fn try_logical_date_endは通常値をpolicyと同じ日時へ変換する() {
     let date = NaiveDate::from_ymd_opt(2026, 8, 12).unwrap();
-    let expected = try_subjective_date_end(date, END_OF_DAY_OFFSET_MINUTES).unwrap();
+    let expected = try_logical_date_end(date, END_OF_DAY_OFFSET_MINUTES).unwrap();
 
     assert_eq!(
-        try_subjective_date_end(date, END_OF_DAY_OFFSET_MINUTES),
+        try_logical_date_end(date, END_OF_DAY_OFFSET_MINUTES),
         Ok(expected)
     );
 }
 
 #[test]
-fn try_subjective_date_endは最大日の終端計算不能をdateとoffset付きで返す() {
+fn try_logical_date_endは最大日の終端計算不能をdateとoffset付きで返す() {
     assert_eq!(
-        try_subjective_date_end(NaiveDate::MAX, END_OF_DAY_OFFSET_MINUTES),
-        Err(ApplicationError::SubjectiveDateEndOutOfRange {
+        try_logical_date_end(NaiveDate::MAX, END_OF_DAY_OFFSET_MINUTES),
+        Err(ApplicationError::LogicalDateEndOutOfRange {
             date: NaiveDate::MAX,
             end_of_day_offset_minutes: END_OF_DAY_OFFSET_MINUTES,
         })
@@ -111,12 +111,12 @@ fn try_subjective_date_endは最大日の終端計算不能をdateとoffset付�
 }
 
 #[test]
-fn try_subjective_date_endは極端なoffsetによる計算不能をdateとoffset付きで返す() {
+fn try_logical_date_endは極端なoffsetによる計算不能をdateとoffset付きで返す() {
     let date = NaiveDate::from_ymd_opt(2026, 8, 12).unwrap();
 
     assert_eq!(
-        try_subjective_date_end(date, i64::MAX),
-        Err(ApplicationError::SubjectiveDateEndOutOfRange {
+        try_logical_date_end(date, i64::MAX),
+        Err(ApplicationError::LogicalDateEndOutOfRange {
             date,
             end_of_day_offset_minutes: i64::MAX,
         })
@@ -129,7 +129,7 @@ fn end_of_day_offset_minutesがマイナスなら22時を日次終端にする()
     let mut free_time_manager = DurationFreeTimeManager;
 
     let actual =
-        calculate_full_day_free_time_minutes_for_subjective_date_with_end_of_day_offset_minutes(
+        calculate_full_day_free_time_minutes_for_logical_date_with_end_of_day_offset_minutes(
             &date,
             &mut free_time_manager,
             -120,
@@ -143,7 +143,7 @@ fn full_day_free_timeは最大日の終端計算不能をdateとoffset付きで�
     let mut free_time_manager = DurationFreeTimeManager;
 
     let actual =
-        calculate_full_day_free_time_minutes_for_subjective_date_with_end_of_day_offset_minutes(
+        calculate_full_day_free_time_minutes_for_logical_date_with_end_of_day_offset_minutes(
             &NaiveDate::MAX,
             &mut free_time_manager,
             END_OF_DAY_OFFSET_MINUTES,
@@ -151,7 +151,7 @@ fn full_day_free_timeは最大日の終端計算不能をdateとoffset付きで�
 
     assert_eq!(
         actual,
-        Err(ApplicationError::SubjectiveDateEndOutOfRange {
+        Err(ApplicationError::LogicalDateEndOutOfRange {
             date: NaiveDate::MAX,
             end_of_day_offset_minutes: END_OF_DAY_OFFSET_MINUTES,
         })
@@ -164,7 +164,7 @@ fn free_timeは極端なoffsetの終端計算不能をdateとoffset付きで返�
     let last_synced_time = Local.with_ymd_and_hms(2026, 8, 12, 12, 0, 0).unwrap();
     let mut free_time_manager = DurationFreeTimeManager;
 
-    let actual = calculate_free_time_minutes_for_subjective_date_with_end_of_day_offset_minutes(
+    let actual = calculate_free_time_minutes_for_logical_date_with_end_of_day_offset_minutes(
         &date,
         last_synced_time,
         &mut free_time_manager,
@@ -173,7 +173,7 @@ fn free_timeは極端なoffsetの終端計算不能をdateとoffset付きで返�
 
     assert_eq!(
         actual,
-        Err(ApplicationError::SubjectiveDateEndOutOfRange {
+        Err(ApplicationError::LogicalDateEndOutOfRange {
             date,
             end_of_day_offset_minutes: i64::MAX,
         })

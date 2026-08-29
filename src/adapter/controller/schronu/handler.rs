@@ -9,7 +9,7 @@ use super::renderer::{
 use chrono::{DateTime, Datelike, Days, Duration, Local, NaiveDate, NaiveDateTime, NaiveTime};
 use regex::Regex;
 use schronu::application::daily_capacity::{
-    try_local_date_and_time, try_next_business_day_start, try_subjective_date,
+    try_local_date_and_time, try_logical_date, try_next_logical_date_start,
 };
 use schronu::application::flatten_use_case::{FlattenResult, UnresolvedReason};
 use schronu::application::pack_use_case::PackResult;
@@ -847,8 +847,8 @@ fn flatten_display(result: FlattenResult) -> FlattenDisplay {
                     .map(|summary| FlattenReasonSummary {
                         reason: match summary.reason {
                             UnresolvedReason::OnOtherSide => FlattenReason::OnOtherSide,
-                            UnresolvedReason::CrossesBusinessDay => {
-                                FlattenReason::CrossesBusinessDay
+                            UnresolvedReason::CrossesLogicalDate => {
+                                FlattenReason::CrossesLogicalDate
                             }
                             UnresolvedReason::ExceedsDailyCapacity => {
                                 FlattenReason::ExceedsDailyCapacity
@@ -981,22 +981,22 @@ fn execute_start_new_project<C: ProjectCommandContext + ?Sized>(
     }
     let pending_until = if let Some(defer_days) = defer_days_opt {
         let now = context.last_synced_time();
-        let next_business_day_start = try_next_business_day_start(now)?;
+        let next_logical_date_start = try_next_logical_date_start(now)?;
         let offset_days =
             defer_days
                 .checked_sub(1)
-                .ok_or(ApplicationError::SubjectiveDateOutOfRange {
-                    operation: "next_business_day_start",
+                .ok_or(ApplicationError::LogicalDateOutOfRange {
+                    operation: "next_logical_date_start",
                     datetime: now,
                 })?;
         let offset =
-            Duration::try_days(offset_days).ok_or(ApplicationError::SubjectiveDateOutOfRange {
-                operation: "next_business_day_start",
+            Duration::try_days(offset_days).ok_or(ApplicationError::LogicalDateOutOfRange {
+                operation: "next_logical_date_start",
                 datetime: now,
             })?;
-        Some(next_business_day_start.checked_add_signed(offset).ok_or(
-            ApplicationError::SubjectiveDateOutOfRange {
-                operation: "next_business_day_start",
+        Some(next_logical_date_start.checked_add_signed(offset).ok_or(
+            ApplicationError::LogicalDateOutOfRange {
+                operation: "next_logical_date_start",
                 datetime: now,
             },
         )?)
@@ -1247,7 +1247,7 @@ fn decide_naive_datetime_values(
             let next_year =
                 now.year()
                     .checked_add(1)
-                    .ok_or(ApplicationError::SubjectiveDateOutOfRange {
+                    .ok_or(ApplicationError::LogicalDateOutOfRange {
                         operation: "upcoming_calendar_date",
                         datetime: *now,
                     })?;
@@ -1260,14 +1260,14 @@ fn decide_naive_datetime_values(
         return Ok(Some(answer));
     }
     if start_date_str.starts_with('明') {
-        let next_day = try_next_business_day_start(*now)?;
+        let next_day = try_next_logical_date_start(*now)?;
         return Ok(Some(next_day.date_naive().and_time(time)));
     }
     let days_of_week = ["月", "火", "水", "木", "金", "土", "日"];
     if days_of_week.contains(&start_date_str) {
-        let next_business_day_start = try_next_business_day_start(*now)?;
-        let subjective_date = try_subjective_date(*now)?;
-        let current_index = subjective_date.weekday().num_days_from_monday() as usize;
+        let next_logical_date_start = try_next_logical_date_start(*now)?;
+        let logical_date = try_logical_date(*now)?;
+        let current_index = logical_date.weekday().num_days_from_monday() as usize;
         let target_index = days_of_week
             .iter()
             .position(|day| day == &start_date_str)
@@ -1278,11 +1278,11 @@ fn decide_naive_datetime_values(
         } else {
             difference as i64
         };
-        let Some(target_date) = next_business_day_start
+        let Some(target_date) = next_logical_date_start
             .date_naive()
             .checked_add_days(Days::new((days - 1) as u64))
         else {
-            return Err(ApplicationError::SubjectiveDateOutOfRange {
+            return Err(ApplicationError::LogicalDateOutOfRange {
                 operation: "weekday_date",
                 datetime: *now,
             });
@@ -1411,7 +1411,7 @@ mod task_generation_context_tests {
     }
 
     #[test]
-    fn project作成は次の業務日境界を算出できない場合に副作用なくerrorを返す() {
+    fn project作成は次の論理日境界を算出できない場合に副作用なくerrorを返す() {
         let local_datetime = chrono::NaiveDate::MAX
             .and_hms_opt(6, 0, 0)
             .expect("maximum date at 06:00 must be valid");
@@ -1432,8 +1432,8 @@ mod task_generation_context_tests {
 
         assert_eq!(
             actual,
-            Err(ApplicationError::SubjectiveDateOutOfRange {
-                operation: "next_business_day_start",
+            Err(ApplicationError::LogicalDateOutOfRange {
+                operation: "next_logical_date_start",
                 datetime: now,
             })
         );

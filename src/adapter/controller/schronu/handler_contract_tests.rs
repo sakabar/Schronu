@@ -30,7 +30,7 @@ fn no_arguments(kind: CommandKind, canonical_name: &'static str) -> Command {
     })
 }
 
-fn maximum_local_business_day_start() -> chrono::DateTime<Local> {
+fn maximum_local_logical_date_start() -> chrono::DateTime<Local> {
     let local_datetime = NaiveDate::MAX
         .and_hms_opt(6, 0, 0)
         .expect("maximum date at 06:00 must be valid");
@@ -102,14 +102,14 @@ fn assert_runtime_routes_to_handler(handler_call: &str, forbidden_fallback_token
 }
 
 #[test]
-fn 明日と曜日の日時指定は次の業務日境界errorを保持する() {
-    let now = maximum_local_business_day_start();
+fn 明日と曜日の日時指定は次の論理日境界errorを保持する() {
+    let now = maximum_local_logical_date_start();
 
     for date_expression in ["明", "月"] {
         assert_eq!(
             decide_time_values(&["09:30".to_string(), date_expression.to_string()], &now),
-            Err(ApplicationError::SubjectiveDateOutOfRange {
-                operation: "next_business_day_start",
+            Err(ApplicationError::LogicalDateOutOfRange {
+                operation: "next_logical_date_start",
                 datetime: now,
             })
         );
@@ -147,7 +147,7 @@ fn 不正な時刻構文は正午へ補正せずnoneにする() {
 
 #[test]
 fn 完了時刻指定は日時errorを保持し省略と今と不正構文を区別する() {
-    let now = maximum_local_business_day_start();
+    let now = maximum_local_logical_date_start();
 
     assert_eq!(decide_finish_time_values(&[], &now), Ok(Some(now)));
     assert_eq!(
@@ -160,8 +160,8 @@ fn 完了時刻指定は日時errorを保持し省略と今と不正構文を区
     );
     assert_eq!(
         decide_finish_time_values(&["09:30".to_string(), "明".to_string()], &now),
-        Err(ApplicationError::SubjectiveDateOutOfRange {
-            operation: "next_business_day_start",
+        Err(ApplicationError::LogicalDateOutOfRange {
+            operation: "next_logical_date_start",
             datetime: now,
         })
     );

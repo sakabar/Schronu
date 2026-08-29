@@ -14,7 +14,7 @@ fn logical_date_errorは論理日用語で表示する() {
     let date = datetime.date_naive();
 
     assert_eq!(
-        ApplicationError::SubjectiveDateOutOfRange {
+        ApplicationError::LogicalDateOutOfRange {
             operation: "logical_date",
             datetime,
         }
@@ -22,11 +22,11 @@ fn logical_date_errorは論理日用語で表示する() {
         format!("logical date operation logical_date is outside the supported range: {datetime}")
     );
     assert_eq!(
-        ApplicationError::SubjectiveDateStartOutOfRange { date }.to_string(),
+        ApplicationError::LogicalDateStartOutOfRange { date }.to_string(),
         format!("logical date start is outside the supported range: date={date}")
     );
     assert_eq!(
-        ApplicationError::SubjectiveDateEndOutOfRange {
+        ApplicationError::LogicalDateEndOutOfRange {
             date,
             end_of_day_offset_minutes: 30,
         }
@@ -672,7 +672,7 @@ fn defer_routine_task_日時計算不能なら変更しない() {
 
     assert_eq!(
         defer_routine_task(&mut repository, child_id),
-        Err(ApplicationError::SubjectiveDateOutOfRange {
+        Err(ApplicationError::LogicalDateOutOfRange {
             operation: "defer_routine_deadline",
             datetime: orig_deadline,
         })
@@ -813,7 +813,7 @@ fn create_next_repetition_taskは構造化errorを返せるresultを維持する
 }
 
 #[test]
-fn complete_task_反復anchorの次業務日計算不能をerrorにして変更しない() {
+fn complete_task_反復anchorの次論理日計算不能をerrorにして変更しない() {
     let occurrence_anchor = DateTime::<Local>::from_naive_utc_and_offset(
         NaiveDate::MAX.and_hms_opt(6, 0, 0).unwrap(),
         chrono::FixedOffset::east_opt(0).unwrap(),
@@ -864,8 +864,8 @@ fn complete_task_反復anchorの次業務日計算不能をerrorにして変更�
     let actual = actual.expect("complete_task must return an error instead of panicking");
     assert_eq!(
         actual,
-        Err(ApplicationError::SubjectiveDateOutOfRange {
-            operation: "next_business_day_start",
+        Err(ApplicationError::LogicalDateOutOfRange {
+            operation: "next_logical_date_start",
             datetime: occurrence_anchor,
         })
     );

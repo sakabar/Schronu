@@ -1,7 +1,6 @@
 use super::daily_capacity::{
-    calculate_free_time_minutes_for_subjective_date_with_end_of_day_offset_minutes,
-    try_subjective_date, try_subjective_date_end, try_subjective_date_start,
-    END_OF_DAY_OFFSET_MINUTES,
+    calculate_free_time_minutes_for_logical_date_with_end_of_day_offset_minutes, try_logical_date,
+    try_logical_date_end, try_logical_date_start, END_OF_DAY_OFFSET_MINUTES,
 };
 use super::interface::{FreeTimeManagerTrait, TaskRepositoryTrait};
 use super::schedule_use_case::{
@@ -10,7 +9,7 @@ use super::schedule_use_case::{
 };
 use super::scheduling_metrics::FlattenMetrics;
 use super::task_use_case::ApplicationError;
-use crate::entity::datetime::BusinessDateTimePolicy;
+use crate::entity::datetime::LogicalDateTimePolicy;
 use crate::entity::task::Status;
 use chrono::{DateTime, Duration, Local, NaiveDate};
 use std::collections::{HashMap, HashSet};
@@ -32,7 +31,7 @@ pub struct FlattenedTask {
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub enum UnresolvedReason {
     OnOtherSide,
-    CrossesBusinessDay,
+    CrossesLogicalDate,
     ExceedsDailyCapacity,
     OwnDeadline,
     RelatedDeadline,
@@ -122,10 +121,10 @@ fn flatten_tasks_with_end_of_day_offset_minutes_and_metrics(
     metrics: &mut FlattenMetrics,
 ) -> Result<FlattenResult, ApplicationError> {
     let operation_datetime = repository.get_last_synced_time();
-    let today = try_subjective_date(operation_datetime)?;
+    let today = try_logical_date(operation_datetime)?;
     let checked_target_date = |days| {
         today.checked_add_signed(Duration::days(days)).ok_or(
-            ApplicationError::SubjectiveDateOutOfRange {
+            ApplicationError::LogicalDateOutOfRange {
                 operation: "flatten_target_dates",
                 datetime: operation_datetime,
             },
@@ -141,7 +140,7 @@ fn flatten_tasks_with_end_of_day_offset_minutes_and_metrics(
         .map(|date| {
             Ok((
                 *date,
-                calculate_free_time_minutes_for_subjective_date_with_end_of_day_offset_minutes(
+                calculate_free_time_minutes_for_logical_date_with_end_of_day_offset_minutes(
                     date,
                     operation_datetime,
                     free_time_manager,
@@ -183,7 +182,7 @@ fn flatten_tasks_with_end_of_day_offset_minutes_and_metrics(
             overflow_date
         } else {
             overload_date.checked_add_signed(Duration::days(1)).ok_or(
-                ApplicationError::SubjectiveDateOutOfRange {
+                ApplicationError::LogicalDateOutOfRange {
                     operation: "flatten_target_date",
                     datetime: operation_datetime,
                 },
@@ -201,7 +200,7 @@ fn flatten_tasks_with_end_of_day_offset_minutes_and_metrics(
                 rejected.push((candidate, reason));
                 continue;
             }
-            let target_datetime = try_subjective_date_start(target_date)?;
+            let target_datetime = try_logical_date_start(target_date)?;
             if effective_pending_until(
                 target_datetime,
                 candidate.deadline_time,
@@ -267,7 +266,7 @@ fn flatten_tasks_with_end_of_day_offset_minutes_and_metrics(
         else {
             continue;
         };
-        let target_date = try_subjective_date(target_datetime)?;
+        let target_date = try_logical_date(target_datetime)?;
         let Some(task) = repository
             .get_by_id(task_id)
             .map_err(ApplicationError::TaskTree)?
@@ -316,7 +315,7 @@ fn collect_original_task_details(
             entry.insert((
                 scheduled.task.name.clone(),
                 scheduled.task.priority,
-                try_subjective_date(scheduled.scheduled_start)?,
+                try_logical_date(scheduled.scheduled_start)?,
                 scheduled.total_work_seconds,
             ));
         }
@@ -360,10 +359,10 @@ fn collect_candidates(
         else {
             continue;
         };
-        let overload_date_end = try_subjective_date_end(overload_date, end_of_day_offset_minutes)?;
+        let overload_date_end = try_logical_date_end(overload_date, end_of_day_offset_minutes)?;
         let segment_dates = segments
             .iter()
-            .map(|segment| try_subjective_date(segment.scheduled_start))
+            .map(|segment| try_logical_date(segment.scheduled_start))
             .collect::<Result<Vec<_>, _>>()?;
         let all_work_is_on_overload_date =
             segments.iter().zip(segment_dates).all(|(segment, date)| {
@@ -390,8 +389,8 @@ fn segment_overlaps_date(
     date: NaiveDate,
     end_of_day_offset_minutes: i64,
 ) -> Result<bool, ApplicationError> {
-    let date_start = try_subjective_date_start(date)?;
-    let date_end = try_subjective_date_end(date, end_of_day_offset_minutes)?;
+    let date_start = try_logical_date_start(date)?;
+    let date_end = try_logical_date_end(date, end_of_day_offset_minutes)?;
     Ok(segment.scheduled_start < date_end && date_start < segment.scheduled_end)
 }
 
@@ -402,7 +401,7 @@ fn candidate_precheck_reason(
     if candidate.is_on_other_side {
         Some(UnresolvedReason::OnOtherSide)
     } else if !candidate.all_work_is_on_overload_date {
-        Some(UnresolvedReason::CrossesBusinessDay)
+        Some(UnresolvedReason::CrossesLogicalDate)
     } else if candidate.total_work_seconds > maximum_daily_capacity {
         Some(UnresolvedReason::ExceedsDailyCapacity)
     } else {
@@ -415,7 +414,7 @@ fn effective_pending_until(
     deadline_time: Option<DateTime<Local>>,
     estimated_work_seconds: i64,
 ) -> DateTime<Local> {
-    let datetime_policy = BusinessDateTimePolicy::new(END_OF_DAY_OFFSET_MINUTES);
+    let datetime_policy = LogicalDateTimePolicy::new(END_OF_DAY_OFFSET_MINUTES);
     deadline_time.map_or(requested, |deadline| {
         requested.min(datetime_policy.deadline_pending_limit(deadline, estimated_work_seconds))
     })
@@ -477,7 +476,7 @@ fn summarize_unresolved_overload(
     let mut summaries = Vec::<UnresolvedReasonSummary>::new();
     for reason in [
         UnresolvedReason::OnOtherSide,
-        UnresolvedReason::CrossesBusinessDay,
+        UnresolvedReason::CrossesLogicalDate,
         UnresolvedReason::ExceedsDailyCapacity,
         UnresolvedReason::OwnDeadline,
         UnresolvedReason::RelatedDeadline,
@@ -537,7 +536,7 @@ fn add_scheduled_work_seconds_by_date(
     scheduled_start: DateTime<Local>,
     scheduled_end: DateTime<Local>,
 ) -> Result<(), ApplicationError> {
-    let date = try_subjective_date(scheduled_start)?;
+    let date = try_logical_date(scheduled_start)?;
     *scheduled_work_seconds_by_date.entry(date).or_default() +=
         (scheduled_end - scheduled_start).num_seconds();
     Ok(())
@@ -550,7 +549,7 @@ mod tests {
     use chrono::FixedOffset;
 
     #[test]
-    fn flatten_tasksはoperation時刻のsubjective_date計算不能を伝搬しtaskを変更しない() {
+    fn flatten_tasksはoperation時刻のlogical_date計算不能を伝搬しtaskを変更しない() {
         let local_datetime = NaiveDate::MIN.and_hms_opt(5, 59, 0).unwrap();
         let now = DateTime::<Local>::from_naive_utc_and_offset(
             local_datetime,
@@ -569,8 +568,8 @@ mod tests {
 
         assert_eq!(
             actual,
-            Err(ApplicationError::SubjectiveDateOutOfRange {
-                operation: "subjective_date",
+            Err(ApplicationError::LogicalDateOutOfRange {
+                operation: "logical_date",
                 datetime: now,
             })
         );

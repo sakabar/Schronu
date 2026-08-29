@@ -13,8 +13,7 @@ use chrono::{DateTime, Datelike, Duration, Local, NaiveDate, NaiveDateTime, Naiv
 use regex::Regex;
 use schronu::adapter::gateway::schronu_config::SchronuConfig;
 use schronu::application::daily_capacity::{
-    try_local_date_and_time, try_next_business_day_start, try_subjective_date,
-    try_subjective_date_start,
+    try_local_date_and_time, try_logical_date, try_logical_date_start, try_next_logical_date_start,
 };
 use schronu::application::flatten_use_case::{
     flatten_tasks_with_end_of_day_offset_minutes, FlattenResult,
@@ -54,13 +53,13 @@ pub(super) fn resolve_upcoming_mmdd(
     if NaiveDate::from_ymd_opt(validation_year, month, day).is_none() {
         return Ok(None);
     }
-    let out_of_range = || ApplicationError::SubjectiveDateOutOfRange {
+    let out_of_range = || ApplicationError::LogicalDateOutOfRange {
         operation: "upcoming_calendar_date",
         datetime: now,
     };
     let current_year_date =
         NaiveDate::from_ymd_opt(now.year(), month, day).ok_or_else(out_of_range)?;
-    let current_year_start = try_subjective_date_start(current_year_date)?;
+    let current_year_start = try_logical_date_start(current_year_date)?;
     if current_year_start >= now {
         return Ok(Some(current_year_start));
     }
@@ -71,7 +70,7 @@ pub(super) fn resolve_upcoming_mmdd(
         return Ok(None);
     }
     let next_year_date = NaiveDate::from_ymd_opt(next_year, month, day).ok_or_else(out_of_range)?;
-    Ok(Some(try_subjective_date_start(next_year_date)?))
+    Ok(Some(try_logical_date_start(next_year_date)?))
 }
 
 pub(super) fn resolve_upcoming_clear_or_gather_day(
@@ -79,16 +78,16 @@ pub(super) fn resolve_upcoming_clear_or_gather_day(
     now: DateTime<Local>,
 ) -> Result<Option<DateTime<Local>>, ApplicationError> {
     if date == "明" {
-        return Ok(Some(try_next_business_day_start(now)?));
+        return Ok(Some(try_next_logical_date_start(now)?));
     }
 
     let days_of_week = ["月", "火", "水", "木", "金", "土", "日"];
     if let Some(target_days_of_week_ind) = days_of_week.iter().position(|day| *day == date) {
-        let subjective_date = try_subjective_date(now)?;
+        let logical_date = try_logical_date(now)?;
         let now_days_of_week_ind = days_of_week
             .iter()
-            .position(|day| *day == get_weekday_jp(&subjective_date))
-            .expect("subjective weekday must be in the Japanese weekday table");
+            .position(|day| *day == get_weekday_jp(&logical_date))
+            .expect("logical weekday must be in the Japanese weekday table");
         let days_until_target =
             (7 + target_days_of_week_ind - now_days_of_week_ind) % days_of_week.len();
         let days = if days_until_target == 0 {
@@ -97,13 +96,13 @@ pub(super) fn resolve_upcoming_clear_or_gather_day(
             days_until_target
         };
 
-        let target_date = subjective_date
+        let target_date = logical_date
             .checked_add_signed(Duration::days(days as i64))
-            .ok_or(ApplicationError::SubjectiveDateOutOfRange {
+            .ok_or(ApplicationError::LogicalDateOutOfRange {
                 operation: "weekday_date",
                 datetime: now,
             })?;
-        let target_datetime = try_subjective_date_start(target_date)?;
+        let target_datetime = try_logical_date_start(target_date)?;
         return Ok(Some(target_datetime));
     }
 
@@ -134,10 +133,10 @@ pub(super) fn parse_clear_or_gather_defer_to_datetime(
         let Some(calendar_time) = NaiveTime::from_hms_opt(hour % 24, minute, 0) else {
             return Ok(None);
         };
-        let subjective_date = try_subjective_date(now)?;
-        let target_date = subjective_date
+        let logical_date = try_logical_date(now)?;
+        let target_date = logical_date
             .checked_add_signed(Duration::days(i64::from(hour / 24)))
-            .ok_or(ApplicationError::SubjectiveDateOutOfRange {
+            .ok_or(ApplicationError::LogicalDateOutOfRange {
                 operation: "clear_or_gather_time",
                 datetime: now,
             })?;
@@ -151,7 +150,7 @@ pub(super) fn parse_clear_or_gather_defer_to_datetime(
         };
         let defer_to_datetime = Duration::try_minutes(minutes)
             .and_then(|duration| now.checked_add_signed(duration))
-            .ok_or(ApplicationError::SubjectiveDateOutOfRange {
+            .ok_or(ApplicationError::LogicalDateOutOfRange {
                 operation: "clear_or_gather_minutes",
                 datetime: now,
             })?;
@@ -227,7 +226,7 @@ fn scheduled_leaf_starts_on_schronu_day(
             continue;
         }
         let scheduled_day_start =
-            try_subjective_date_start(try_subjective_date(scheduled.scheduled_start)?)?;
+            try_logical_date_start(try_logical_date(scheduled.scheduled_start)?)?;
         if scheduled_day_start != schronu_day_start {
             continue;
         }
@@ -448,14 +447,14 @@ pub(super) fn execute_defer(
     unit_str: &str,
 ) -> Result<(), ApplicationError> {
     let now = task_repository.get_last_synced_time();
-    let duration_out_of_range = || ApplicationError::SubjectiveDateOutOfRange {
+    let duration_out_of_range = || ApplicationError::LogicalDateOutOfRange {
         operation: "defer_pending_until",
         datetime: now,
     };
     let duration = match unit_str.chars().next() {
         // 日単位の延期は固定24時間ではなく、次の業務日開始を基準にする
         Some('日') | Some('d') => {
-            let target = defer_business_day_target(now, amount)?;
+            let target = defer_logical_date_target(now, amount)?;
             target - now
         }
         Some('時') | Some('h') => Duration::try_hours(amount).ok_or_else(duration_out_of_range)?,
@@ -477,7 +476,7 @@ pub(super) fn execute_defer(
     Ok(())
 }
 
-pub(super) fn defer_business_day_target(
+pub(super) fn defer_logical_date_target(
     now: DateTime<Local>,
     amount: i64,
 ) -> Result<DateTime<Local>, ApplicationError> {
@@ -485,30 +484,30 @@ pub(super) fn defer_business_day_target(
         return Ok(now);
     }
 
-    let first_business_day_start = try_next_business_day_start(now)?;
-    let out_of_range = || ApplicationError::SubjectiveDateOutOfRange {
-        operation: "defer_business_days",
+    let first_logical_date_start = try_next_logical_date_start(now)?;
+    let out_of_range = || ApplicationError::LogicalDateOutOfRange {
+        operation: "defer_logical_dates",
         datetime: now,
     };
     let additional_days = amount.checked_sub(1).ok_or_else(out_of_range)?;
     let additional_duration = Duration::try_days(additional_days).ok_or_else(out_of_range)?;
-    let target_date = first_business_day_start
+    let target_date = first_logical_date_start
         .date_naive()
         .checked_add_signed(additional_duration)
         .ok_or_else(out_of_range)?;
-    try_subjective_date_start(target_date)
+    try_logical_date_start(target_date)
 }
 
-fn seconds_until_next_business_day_start_with_offset(
+fn seconds_until_next_logical_date_start_with_offset(
     now: DateTime<Local>,
     offset_seconds: i64,
 ) -> Result<i64, ApplicationError> {
-    let next_business_day_start = try_next_business_day_start(now)?;
-    (next_business_day_start - now)
+    let next_logical_date_start = try_next_logical_date_start(now)?;
+    (next_logical_date_start - now)
         .num_seconds()
         .checked_add(offset_seconds)
-        .ok_or(ApplicationError::SubjectiveDateOutOfRange {
-            operation: "next_business_day_start",
+        .ok_or(ApplicationError::LogicalDateOutOfRange {
+            operation: "next_logical_date_start",
             datetime: now,
         })
 }
@@ -543,9 +542,9 @@ pub(super) fn execute_defer_expression(
             let seconds = if yyyymmdd_reg.is_match(value) {
                 match NaiveDate::parse_from_str(value, "%Y/%m/%d") {
                     Ok(date) => {
-                        let defer_dst_time = try_subjective_date_start(date)?;
+                        let defer_dst_time = try_logical_date_start(date)?;
                         Some((defer_dst_time - now).num_seconds().checked_add(1).ok_or(
-                            ApplicationError::SubjectiveDateOutOfRange {
+                            ApplicationError::LogicalDateOutOfRange {
                                 operation: "defer_date",
                                 datetime: now,
                             },
@@ -569,7 +568,7 @@ pub(super) fn execute_defer_expression(
                 let Some(calendar_time) = NaiveTime::from_hms_opt(calendar_hour, minute, 0) else {
                     return Ok(());
                 };
-                let out_of_range = || ApplicationError::SubjectiveDateOutOfRange {
+                let out_of_range = || ApplicationError::LogicalDateOutOfRange {
                     operation: "defer_time",
                     datetime: now,
                 };
@@ -586,7 +585,7 @@ pub(super) fn execute_defer_expression(
                 (seconds > 0).then_some(seconds)
             } else if ["月", "火", "水", "木", "金", "土", "日"].contains(&value.as_str()) {
                 let days_of_week = ["月", "火", "水", "木", "金", "土", "日"];
-                let today = try_subjective_date(now)?;
+                let today = try_logical_date(now)?;
                 let current_index = days_of_week
                     .iter()
                     .position(|day| *day == get_weekday_jp(&today))
@@ -602,11 +601,11 @@ pub(super) fn execute_defer_expression(
                     .checked_sub(1)
                     .and_then(|days| days.checked_mul(86_400))
                     .and_then(|seconds| seconds.checked_add(1))
-                    .ok_or(ApplicationError::SubjectiveDateOutOfRange {
-                        operation: "next_business_day_start",
+                    .ok_or(ApplicationError::LogicalDateOutOfRange {
+                        operation: "next_logical_date_start",
                         datetime: now,
                     })?;
-                Some(seconds_until_next_business_day_start_with_offset(
+                Some(seconds_until_next_logical_date_start_with_offset(
                     now,
                     offset_seconds,
                 )?)
@@ -798,17 +797,17 @@ pub(super) fn resolve_deadline_date(
         return Ok(value.to_string());
     }
     if value.starts_with('今') {
-        return Ok(try_subjective_date(now)?.format("%Y/%m/%d").to_string());
+        return Ok(try_logical_date(now)?.format("%Y/%m/%d").to_string());
     }
     if value.starts_with('明') {
-        return Ok(try_next_business_day_start(now)?
+        return Ok(try_next_logical_date_start(now)?
             .format("%Y/%m/%d")
             .to_string());
     }
 
     let days_of_week = ["月", "火", "水", "木", "金", "土", "日"];
     if days_of_week.contains(&value) {
-        let today = try_subjective_date(now)?;
+        let today = try_logical_date(now)?;
         let current_index = days_of_week
             .iter()
             .position(|day| *day == get_weekday_jp(&today))
@@ -824,7 +823,7 @@ pub(super) fn resolve_deadline_date(
             difference as i64
         };
         let deadline_date = today.checked_add_signed(Duration::days(days)).ok_or(
-            ApplicationError::SubjectiveDateOutOfRange {
+            ApplicationError::LogicalDateOutOfRange {
                 operation: "deadline_weekday_date",
                 datetime: now,
             },
@@ -842,7 +841,7 @@ pub(super) fn resolve_deadline_date(
         if NaiveDate::from_ymd_opt(validation_year, month, day).is_none() {
             return Err(invalid_deadline());
         }
-        let out_of_range = || ApplicationError::SubjectiveDateOutOfRange {
+        let out_of_range = || ApplicationError::LogicalDateOutOfRange {
             operation: "deadline_calendar_date",
             datetime: now,
         };
@@ -1091,13 +1090,13 @@ impl DeferCommandContext for RuntimeDeferCommandContext<'_> {
 
     fn defer_next_morning(&mut self) -> Result<(), DeferCommandError> {
         let now = self.task_repository.get_last_synced_time();
-        let seconds = seconds_until_next_business_day_start_with_offset(now, 1)?;
+        let seconds = seconds_until_next_logical_date_start_with_offset(now, 1)?;
         self.defer(seconds, "秒")
     }
 
     fn defer_next_week(&mut self) -> Result<(), DeferCommandError> {
         let now = self.task_repository.get_last_synced_time();
-        let seconds = seconds_until_next_business_day_start_with_offset(now, 86400 * 6 + 1)?;
+        let seconds = seconds_until_next_logical_date_start_with_offset(now, 86400 * 6 + 1)?;
         self.defer(seconds, "秒")
     }
 
@@ -1108,7 +1107,7 @@ impl DeferCommandContext for RuntimeDeferCommandContext<'_> {
     fn defer_five_years(&mut self) -> Result<(), DeferCommandError> {
         let now = self.task_repository.get_last_synced_time();
         let seconds =
-            seconds_until_next_business_day_start_with_offset(now, 86400 * (7 * 52 * 5 - 1) + 1)?;
+            seconds_until_next_logical_date_start_with_offset(now, 86400 * (7 * 52 * 5 - 1) + 1)?;
         self.defer(seconds, "秒")
     }
 
