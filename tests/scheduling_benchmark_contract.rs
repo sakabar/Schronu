@@ -49,8 +49,10 @@ fn schedule診断は通常経路と同じ結果を返し内部処理を計数す
     assert_eq!(metrics.schedule_rebuild_count, 1);
     assert!(metrics.candidate_count > 0);
     assert!(metrics.dependency_candidate_probe_count > 0);
+    assert!(metrics.selection_event_count > 0);
+    assert!(metrics.slack_probe_count > 0);
     assert_eq!(metrics.segment_count, actual.len());
-    assert!(metrics.sort_count >= 3);
+    assert_eq!(metrics.sort_count, 2);
 }
 
 #[test]
@@ -61,7 +63,8 @@ fn typical_scheduleはslot探索とsortの上限内に収まる() {
     let (_, metrics) = get_schedule_diagnostics(&repository).unwrap();
 
     assert_eq!(metrics.candidate_count, 1_755);
-    assert_eq!(metrics.segment_count, 1_762);
+    // fixed windowとslack/release境界による分割を含む現在のpolicy出力を固定する。
+    assert_eq!(metrics.segment_count, 1_777);
     assert_eq!(metrics.schedule_rebuild_count, 1);
     assert!(
         metrics.occupied_slot_probe_count <= 100_000,
@@ -69,7 +72,7 @@ fn typical_scheduleはslot探索とsortの上限内に収まる() {
         metrics.occupied_slot_probe_count
     );
     assert!(
-        metrics.sort_count <= 4,
+        metrics.sort_count == 2,
         "sorts exceeded the deterministic limit: {}",
         metrics.sort_count
     );
@@ -184,7 +187,19 @@ fn assert_fixture_counter_bounds(size: FixtureSize) {
     let (_, schedule) = get_schedule_diagnostics(&repository).unwrap();
     assert!(schedule.occupied_slot_probe_count <= schedule.candidate_count * 20);
     assert!(schedule.dependency_candidate_probe_count <= schedule.candidate_count);
-    assert!(schedule.sort_count <= 4);
+    assert_eq!(schedule.sort_count, 2);
+    assert!(
+        schedule.selection_event_count <= schedule.segment_count * 3,
+        "selection events exceeded the per-segment limit: {} > {}",
+        schedule.selection_event_count,
+        schedule.segment_count * 3
+    );
+    assert!(
+        schedule.slack_probe_count <= schedule.candidate_count * 8,
+        "slack probes exceeded the linear input limit: {} > {}",
+        schedule.slack_probe_count,
+        schedule.candidate_count * 8
+    );
 
     let fixture = SchedulingFixture::build(size).unwrap();
     let repository = SchedulingRepository::new(fixture.projects, fixture.now);
