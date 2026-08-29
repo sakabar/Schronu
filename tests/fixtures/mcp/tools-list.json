@@ -142,22 +142,22 @@
     "name": "get_schedule"
   },
   {
-    "description": "Create a new root project task.",
+    "description": "Create a new root project task. The task starts as Todo unless pending_until is provided, in which case it starts as Pending.",
     "inputSchema": {
       "additionalProperties": false,
       "properties": {
         "estimated_work_minutes": {
-          "description": "A non-negative integer.",
+          "description": "The estimated work duration as a non-negative integer number of minutes. When provided, it is converted to seconds; when omitted, the task keeps the default estimate of 15 minutes.",
           "minimum": 0,
           "type": "integer"
         },
         "name": {
-          "description": "A non-empty string.",
+          "description": "The task name. After trimming surrounding whitespace, it must not be blank or consist only of an optionally signed integer.",
           "minLength": 1,
           "type": "string"
         },
         "pending_until": {
-          "description": "An RFC 3339 date-time string with Z or a numeric UTC offset.",
+          "description": "The time until which the task remains Pending, as an RFC 3339 date-time string with Z or a numeric UTC offset. When omitted, the task starts as Todo.",
           "examples": [
             "2026-08-29T10:00:00+09:00",
             "2026-08-29T01:00:00Z"
@@ -174,13 +174,14 @@
     "name": "create_task"
   },
   {
-    "description": "Add child tasks to an existing task.",
+    "description": "Add child tasks to an existing parent task in the order supplied. Every child inherits the parent's deadline when it has one, and starts as Todo unless pending_until is provided, in which case every child starts as Pending.",
     "inputSchema": {
       "additionalProperties": false,
       "properties": {
         "names": {
+          "description": "One or more child task names, added to the parent in this array order.",
           "items": {
-            "description": "A non-empty string.",
+            "description": "A child task name. After trimming surrounding whitespace, it must not be blank or consist only of an optionally signed integer.",
             "minLength": 1,
             "type": "string"
           },
@@ -188,7 +189,7 @@
           "type": "array"
         },
         "parent_id": {
-          "description": "A valid UUID string.",
+          "description": "The UUID of the existing parent task to which the children are added.",
           "examples": [
             "80d7db87-324e-4e8d-a5b7-ff78cd5bf39a"
           ],
@@ -196,7 +197,7 @@
           "type": "string"
         },
         "pending_until": {
-          "description": "An RFC 3339 date-time string with Z or a numeric UTC offset.",
+          "description": "The common time until which every created child remains Pending, as an RFC 3339 date-time string with Z or a numeric UTC offset. When omitted, every child starts as Todo.",
           "examples": [
             "2026-08-29T10:00:00+09:00",
             "2026-08-29T01:00:00Z"

@@ -96,7 +96,7 @@ fn common_input_schema_describes_public_value_formats() {
         json!({
             "type": "string",
             "minLength": 1,
-            "description": "A non-empty string."
+            "description": "A child task name. After trimming surrounding whitespace, it must not be blank or consist only of an optionally signed integer."
         })
     );
 }
