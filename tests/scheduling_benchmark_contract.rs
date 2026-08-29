@@ -165,6 +165,19 @@ fn flatten診断は通常経路と同じ結果を返しschedule走査を計数�
 }
 
 #[test]
+fn flatten性能契約は専用過負荷fixtureで移動経路を実行する() {
+    let repository = small_repository();
+    let mut constrained_free_time = SchedulingFreeTimeManager::new(15);
+
+    let (result, metrics) =
+        flatten_tasks_diagnostics(&repository, &mut constrained_free_time).unwrap();
+
+    assert!(metrics.overload_iteration_count > 0);
+    assert!(metrics.candidate_trial_count > 0);
+    assert!(!result.flattened_tasks.is_empty() || !result.unresolved_overloads.is_empty());
+}
+
+#[test]
 fn pack診断はatomic探索の1分前進量を計数する() {
     let repository = small_repository();
     let mut no_free_time = SchedulingFreeTimeManager::without_continuous_free_time(8 * 60);
@@ -240,7 +253,7 @@ fn assert_fixture_counter_bounds(size: FixtureSize) {
     let repository = SchedulingRepository::new(fixture.projects, fixture.now);
     let mut flatten_free_time = SchedulingFreeTimeManager::new(FLATTEN_BENCHMARK_CAPACITY_MINUTES);
     let (_, flatten) = flatten_tasks_diagnostics(&repository, &mut flatten_free_time).unwrap();
-    assert!(flatten.overload_iteration_count > 0);
+    // 過負荷分岐そのものは専用fixtureで固定し、規模fixtureでは上限だけを測る。
     assert!(flatten.overload_iteration_count <= 64);
     assert!(flatten.candidate_trial_count <= 128);
     assert_eq!(flatten.override_clone_element_count, 0);
