@@ -228,7 +228,7 @@ impl JsonSchema for NonEmptyString {
         json_schema!({
             "type": "string",
             "minLength": 1,
-            "description": "A non-empty string."
+            "description": "A child task name. After trimming surrounding whitespace, it must not be blank or consist only of an optionally signed integer."
         })
     }
 }
@@ -399,9 +399,12 @@ pub(super) struct GetTaskInput {
 #[derive(Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub(super) struct CreateTaskInput {
+    /// The task name. After trimming surrounding whitespace, it must not be blank or consist only of an optionally signed integer.
     pub(super) name: NonEmptyString,
+    /// The estimated work duration as a non-negative integer number of minutes. When provided, it is converted to seconds; when omitted, the task keeps the default estimate of 15 minutes.
     #[serde(default)]
     pub(super) estimated_work_minutes: OptionalValue<NonNegativeI64>,
+    /// The time until which the task remains Pending, as an RFC 3339 date-time string with Z or a numeric UTC offset. When omitted, the task starts as Todo.
     #[serde(default)]
     pub(super) pending_until: OptionalValue<Rfc3339DateTime>,
 }
@@ -427,8 +430,11 @@ impl CreateTaskInput {
 #[derive(Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub(super) struct BreakdownTaskInput {
+    /// The UUID of the existing parent task to which the children are added.
     pub(super) parent_id: UuidValue,
+    /// One or more child task names, added to the parent in this array order.
     pub(super) names: NonEmptyVec<NonEmptyString>,
+    /// The common time until which every created child remains Pending, as an RFC 3339 date-time string with Z or a numeric UTC offset. When omitted, every child starts as Todo.
     #[serde(default)]
     pub(super) pending_until: OptionalValue<Rfc3339DateTime>,
 }
