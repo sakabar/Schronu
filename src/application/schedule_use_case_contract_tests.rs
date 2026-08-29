@@ -357,11 +357,13 @@ fn get_scheduleはpending中fixedの日時範囲errorに指定開始を保持す
 
     assert_eq!(
         get_schedule(&repository),
-        Err(super::task_use_case::ApplicationError::ScheduleTimeOutOfRange {
-            task_id,
-            start_time: fixed_start,
-            work_seconds: i64::MAX,
-        })
+        Err(
+            super::task_use_case::ApplicationError::ScheduleTimeOutOfRange {
+                task_id,
+                start_time: fixed_start,
+                work_seconds: i64::MAX,
+            }
+        )
     );
 }
 
@@ -380,11 +382,13 @@ fn get_scheduleはdependencyを持つfixedの日時範囲errorに指定開始を
 
     assert_eq!(
         get_schedule(&repository),
-        Err(super::task_use_case::ApplicationError::ScheduleTimeOutOfRange {
-            task_id: parent_id,
-            start_time: fixed_start,
-            work_seconds: i64::MAX,
-        })
+        Err(
+            super::task_use_case::ApplicationError::ScheduleTimeOutOfRange {
+                task_id: parent_id,
+                start_time: fixed_start,
+                work_seconds: i64::MAX,
+            }
+        )
     );
 }
 
