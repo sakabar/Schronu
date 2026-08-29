@@ -32,9 +32,9 @@ use schronu::adapter::gateway::free_time_manager::FreeTimeManager;
 use schronu::adapter::gateway::schronu_config::{load_schronu_config, SchronuConfig};
 use schronu::adapter::gateway::storage_lock::{LockMode, StorageLock, StorageLockError};
 use schronu::adapter::gateway::task_repository::TaskRepository;
-use schronu::application::daily_capacity::try_next_business_day_start;
 #[cfg(test)]
-use schronu::application::daily_capacity::try_subjective_date_start;
+use schronu::application::daily_capacity::try_logical_date_start;
+use schronu::application::daily_capacity::try_next_logical_date_start;
 use schronu::application::interface::{BusyTimeSlotLoadError, FreeTimeManagerTrait};
 use schronu::application::interface::{TaskRepositoryError, TaskRepositoryTrait};
 #[cfg(test)]
@@ -391,14 +391,14 @@ fn select_focus_task_id(
             ..
         } => {
             let now = task_repository.get_last_synced_time();
-            let first_business_day_start = try_next_business_day_start(now)?;
-            let threshold_out_of_range = || ApplicationError::SubjectiveDateOutOfRange {
+            let first_logical_date_start = try_next_logical_date_start(now)?;
+            let threshold_out_of_range = || ApplicationError::LogicalDateOutOfRange {
                 operation: "defer_candidate_threshold",
                 datetime: now,
             };
             let recent_duration =
                 Duration::try_days(*recent_days).ok_or_else(threshold_out_of_range)?;
-            let recent_threshold = first_business_day_start
+            let recent_threshold = first_logical_date_start
                 .checked_add_signed(recent_duration)
                 .ok_or_else(threshold_out_of_range)?;
             task_repository

@@ -1,5 +1,5 @@
 use super::error::InvalidParams;
-use crate::application::daily_capacity::{try_next_business_day_start, try_subjective_date_start};
+use crate::application::daily_capacity::{try_logical_date_start, try_next_logical_date_start};
 use crate::application::task_use_case::{
     ApplicationError, BreakdownTaskInput as ApplicationBreakdownTaskInput,
     CompleteTaskInput as ApplicationCompleteTaskInput,
@@ -856,12 +856,12 @@ impl GetScheduleInput {
             (Some(from), Some(until)) => (from, until),
             (Some(from), None) => (
                 from,
-                try_next_business_day_start(from).map_err(ToolInputError::Application)?,
+                try_next_logical_date_start(from).map_err(ToolInputError::Application)?,
             ),
             (None, Some(until)) => (now, until),
             (None, None) => (
                 now,
-                try_next_business_day_start(now).map_err(ToolInputError::Application)?,
+                try_next_logical_date_start(now).map_err(ToolInputError::Application)?,
             ),
         };
         if from >= until {
@@ -879,7 +879,7 @@ fn schedule_day_start(
     date: IsoDate,
     _field: &'static str,
 ) -> Result<DateTime<Local>, ToolInputError> {
-    try_subjective_date_start(date.0).map_err(ToolInputError::Application)
+    try_logical_date_start(date.0).map_err(ToolInputError::Application)
 }
 
 pub(super) fn generated_input_schema<T: JsonSchema>() -> Value {

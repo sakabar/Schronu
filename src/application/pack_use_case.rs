@@ -1,8 +1,7 @@
 use super::daily_capacity::{
     calculate_daily_leeway_seconds,
-    calculate_free_time_minutes_for_subjective_date_with_end_of_day_offset_minutes,
-    try_subjective_date, try_subjective_date_end, try_subjective_date_start,
-    END_OF_DAY_OFFSET_MINUTES,
+    calculate_free_time_minutes_for_logical_date_with_end_of_day_offset_minutes, try_logical_date,
+    try_logical_date_end, try_logical_date_start, END_OF_DAY_OFFSET_MINUTES,
 };
 use super::interface::{FreeTimeManagerTrait, TaskRepositoryTrait};
 use super::schedule_use_case::{
@@ -110,11 +109,11 @@ fn pack_tasks_with_end_of_day_offset_minutes_and_metrics(
     metrics: &mut PackMetrics,
 ) -> Result<PackResult, ApplicationError> {
     let now = repository.get_last_synced_time();
-    let first_date = try_subjective_date(now)?;
+    let first_date = try_logical_date(now)?;
     let target_dates = (0..PACK_TARGET_DAYS)
         .map(|days| {
             first_date.checked_add_signed(Duration::days(days)).ok_or(
-                ApplicationError::SubjectiveDateOutOfRange {
+                ApplicationError::LogicalDateOutOfRange {
                     operation: "pack_target_dates",
                     datetime: now,
                 },
@@ -163,7 +162,7 @@ fn pack_tasks_with_end_of_day_offset_minutes_and_metrics(
             .expect("daily leeway is initialized above");
 
         for target_date in &target_dates {
-            if try_subjective_date(current_planned_start)? <= *target_date
+            if try_logical_date(current_planned_start)? <= *target_date
                 || daily_leeway.get(target_date).copied().unwrap_or(0) < candidate.work_seconds
             {
                 continue;
@@ -175,15 +174,15 @@ fn pack_tasks_with_end_of_day_offset_minutes_and_metrics(
             else {
                 continue;
             };
-            let target_datetime = try_subjective_date_start(*target_date)?
+            let target_datetime = try_logical_date_start(*target_date)?
                 .max(task.get_start_time().map_err(ApplicationError::TaskTree)?);
-            if try_subjective_date(target_datetime)? != *target_date {
+            if try_logical_date(target_datetime)? != *target_date {
                 continue;
             }
 
             let target_day = PackTargetDay {
                 date: *target_date,
-                end: try_subjective_date_end(*target_date, end_of_day_offset_minutes)?,
+                end: try_logical_date_end(*target_date, end_of_day_offset_minutes)?,
             };
             let placement_start_opt = find_placement_start(
                 repository,
@@ -201,7 +200,7 @@ fn pack_tasks_with_end_of_day_offset_minutes_and_metrics(
             if let Some(placement_start) =
                 placement_start_opt.filter(|start| *start < current_planned_start)
             {
-                let source_date = try_subjective_date(current_planned_start)?;
+                let source_date = try_logical_date(current_planned_start)?;
                 task.set_pending_until(placement_start)
                     .map_err(ApplicationError::TaskTree)?;
                 schedule_dirty = true;
@@ -340,8 +339,8 @@ fn collect_candidates(
         {
             continue;
         }
-        let scheduled_date = try_subjective_date(scheduled.scheduled_start)?;
-        let task_start_date = try_subjective_date(scheduled.task.start_time)?;
+        let scheduled_date = try_logical_date(scheduled.scheduled_start)?;
+        let task_start_date = try_logical_date(scheduled.task.start_time)?;
         if target_dates
             .iter()
             .any(|target_date| *target_date < scheduled_date && task_start_date <= *target_date)
@@ -369,7 +368,7 @@ fn calculate_daily_leeway(
     let mut repetitive_work_seconds = HashMap::<NaiveDate, i64>::new();
 
     for scheduled in schedule {
-        let date = try_subjective_date(scheduled.scheduled_start)?;
+        let date = try_logical_date(scheduled.scheduled_start)?;
         if !target_dates.contains(&date) {
             continue;
         }
@@ -393,7 +392,7 @@ fn calculate_daily_leeway(
         .iter()
         .map(|date| {
             let free_time_minutes =
-                calculate_free_time_minutes_for_subjective_date_with_end_of_day_offset_minutes(
+                calculate_free_time_minutes_for_logical_date_with_end_of_day_offset_minutes(
                     date,
                     repository.get_last_synced_time(),
                     free_time_manager,
@@ -419,7 +418,7 @@ fn placement_fits_target_day(
     let target_end = target_day.end;
     let scheduled_dates = task_segments
         .iter()
-        .map(|scheduled| try_subjective_date(scheduled.scheduled_start))
+        .map(|scheduled| try_logical_date(scheduled.scheduled_start))
         .collect::<Result<Vec<_>, _>>()?;
     let fits_in_day = !task_segments.is_empty()
         && task_segments

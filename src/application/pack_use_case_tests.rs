@@ -26,7 +26,7 @@ fn pending_task(
 }
 
 #[test]
-fn pack_tasksはoperation時刻のsubjective_date計算不能を伝搬しtaskを変更しない() {
+fn pack_tasksはoperation時刻のlogical_date計算不能を伝搬しtaskを変更しない() {
     let local_datetime = NaiveDate::MIN.and_hms_opt(5, 59, 0).unwrap();
     let now = DateTime::<Local>::from_naive_utc_and_offset(
         local_datetime,
@@ -45,8 +45,8 @@ fn pack_tasksはoperation時刻のsubjective_date計算不能を伝搬しtaskを
 
     assert_eq!(
         actual,
-        Err(ApplicationError::SubjectiveDateOutOfRange {
-            operation: "subjective_date",
+        Err(ApplicationError::LogicalDateOutOfRange {
+            operation: "logical_date",
             datetime: now,
         })
     );

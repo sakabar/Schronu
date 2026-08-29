@@ -1,4 +1,4 @@
-use crate::application::daily_capacity::try_next_business_day_start;
+use crate::application::daily_capacity::try_next_logical_date_start;
 use crate::application::interface::TaskRepositoryTrait;
 use crate::application::scheduling_metrics::ScheduleMetrics;
 use crate::application::task_use_case::ApplicationError;
@@ -207,15 +207,15 @@ fn build_schedule_candidates(
         .into_iter()
         .map(|(id, attributes)| {
             let first_available_time = attributes.first_available_time;
-            let subjective_date = try_next_business_day_start(first_available_time)?
+            let logical_date = try_next_logical_date_start(first_available_time)?
                 .checked_sub_signed(Duration::days(1))
                 .map(|datetime| datetime.date_naive())
-                .ok_or(ApplicationError::SubjectiveDateOutOfRange {
-                    operation: "subjective_date",
+                .ok_or(ApplicationError::LogicalDateOutOfRange {
+                    operation: "logical_date",
                     datetime: first_available_time,
                 })?;
             let sort_key = (
-                subjective_date,
+                logical_date,
                 attributes.deadline_time.is_none(),
                 first_available_time,
                 attributes.neg_priority,

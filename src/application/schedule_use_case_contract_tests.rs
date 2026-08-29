@@ -108,7 +108,7 @@ fn get_schedule_i64最小値付近でも優先度の高いtaskを先に配置す
 }
 
 #[test]
-fn get_scheduleは候補の次業務日開始計算不能を伝搬しtaskを変更しない() {
+fn get_scheduleは候補の次論理日開始計算不能を伝搬しtaskを変更しない() {
     let local_datetime = NaiveDate::MAX.and_hms_opt(6, 0, 0).unwrap();
     let out_of_range_start = DateTime::<Local>::from_naive_utc_and_offset(
         local_datetime,
@@ -137,8 +137,8 @@ fn get_scheduleは候補の次業務日開始計算不能を伝搬しtaskを変�
     assert_eq!(
         actual,
         Err(
-            super::task_use_case::ApplicationError::SubjectiveDateOutOfRange {
-                operation: "next_business_day_start",
+            super::task_use_case::ApplicationError::LogicalDateOutOfRange {
+                operation: "next_logical_date_start",
                 datetime: out_of_range_start,
             }
         )
@@ -185,8 +185,8 @@ fn get_scheduleは複数の日時errorからuuid順先頭候補を決定的に�
     higher_id_task.set_estimated_work_seconds(15 * 60).unwrap();
     let repository = TestTaskRepository::new(vec![higher_id_task, lower_id_task], fixed_now());
     let expected = Err(
-        super::task_use_case::ApplicationError::SubjectiveDateOutOfRange {
-            operation: "next_business_day_start",
+        super::task_use_case::ApplicationError::LogicalDateOutOfRange {
+            operation: "next_logical_date_start",
             datetime: lower_id_datetime,
         },
     );

@@ -166,7 +166,7 @@ fn cli出力からspreadsheetを経由してコマンド生成まで列契約を
 }
 
 #[test]
-fn copy_for_spreadsheetは新しい業務日の最初のp列へ睡眠420分を算入する() {
+fn copy_for_spreadsheetは新しい論理日の最初のp列へ睡眠420分を算入する() {
     let cli_output = fs::read_to_string(repository_path(
         "tests/fixtures/spreadsheet/sleep-boundary-cli-output.txt",
     ))

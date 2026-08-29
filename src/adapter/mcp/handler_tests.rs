@@ -14,7 +14,7 @@ use crate::adapter::mcp::input::{
 };
 use crate::adapter::mcp::test_support::{
     assert_tool_result_content_matches_structured, fixed_now, new_task_handle, task_for_list,
-    try_next_business_day_start, Duration, Local, ProjectCategory, RecordingRepository, Status,
+    try_next_logical_date_start, Duration, Local, ProjectCategory, RecordingRepository, Status,
     TimeZone,
 };
 use crate::application::task_use_case::{ApplicationError, TaskFactory};
@@ -439,7 +439,7 @@ fn get_schedule_handlerはtyped日付範囲で予定を絞りrepositoryを変更
 }
 
 #[test]
-fn get_schedule_handlerはtyped_missingで現在から次の業務日境界までを既定とする() {
+fn get_schedule_handlerはtyped_missingで現在から次の論理日境界までを既定とする() {
     let past = new_task_handle("past task").unwrap();
     past.set_start_time(fixed_now() - Duration::hours(1))
         .unwrap();
@@ -450,7 +450,7 @@ fn get_schedule_handlerはtyped_missingで現在から次の業務日境界ま�
     current.set_estimated_work_seconds(15 * 60).unwrap();
     let future = new_task_handle("future task").unwrap();
     future
-        .set_start_time(try_next_business_day_start(fixed_now()).unwrap() + Duration::hours(1))
+        .set_start_time(try_next_logical_date_start(fixed_now()).unwrap() + Duration::hours(1))
         .unwrap();
     future.set_estimated_work_seconds(15 * 60).unwrap();
     let repository = RecordingRepository::new(vec![past, current, future]);
@@ -818,7 +818,7 @@ fn defer_routine_task_handlerは日時error情報を保持して変更しない(
         },
     );
 
-    let expected = ApplicationError::SubjectiveDateOutOfRange {
+    let expected = ApplicationError::LogicalDateOutOfRange {
         operation: "defer_routine_deadline",
         datetime: deadline,
     };

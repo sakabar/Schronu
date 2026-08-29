@@ -1,6 +1,6 @@
 use super::McpServer;
 pub(super) use crate::adapter::gateway::task_repository::TaskRepository;
-pub(super) use crate::application::daily_capacity::try_next_business_day_start;
+pub(super) use crate::application::daily_capacity::try_next_logical_date_start;
 pub(super) use crate::application::interface::{
     RepositoryReloadOutcome, TaskRepositoryError, TaskRepositoryOperation, TaskRepositoryTrait,
 };

@@ -2,7 +2,7 @@
 fn test_resolve_upcoming_mmdd_未来の日付は現在年を使う() {
     let now = Local.with_ymd_and_hms(2026, 8, 11, 12, 0, 0).unwrap();
     let target_date = Local.with_ymd_and_hms(2026, 9, 26, 12, 0, 0).unwrap();
-    let expected = try_next_business_day_start(target_date).unwrap() - Duration::days(1);
+    let expected = try_next_logical_date_start(target_date).unwrap() - Duration::days(1);
 
     assert_eq!(resolve_upcoming_mmdd("9/26", now), Ok(Some(expected)));
 }
@@ -11,7 +11,7 @@ fn test_resolve_upcoming_mmdd_未来の日付は現在年を使う() {
 fn test_resolve_upcoming_mmdd_過去の日付は翌年を使う() {
     let now = Local.with_ymd_and_hms(2026, 10, 1, 12, 0, 0).unwrap();
     let target_date = Local.with_ymd_and_hms(2027, 9, 26, 12, 0, 0).unwrap();
-    let expected = try_next_business_day_start(target_date).unwrap() - Duration::days(1);
+    let expected = try_next_logical_date_start(target_date).unwrap() - Duration::days(1);
 
     assert_eq!(resolve_upcoming_mmdd("09/26", now), Ok(Some(expected)));
 }
@@ -19,13 +19,13 @@ fn test_resolve_upcoming_mmdd_過去の日付は翌年を使う() {
 #[test]
 fn test_resolve_upcoming_mmdd_当日の境界時刻は現在年を使う() {
     let target_date = Local.with_ymd_and_hms(2026, 9, 26, 12, 0, 0).unwrap();
-    let now = try_next_business_day_start(target_date).unwrap() - Duration::days(1);
+    let now = try_next_logical_date_start(target_date).unwrap() - Duration::days(1);
 
     assert_eq!(resolve_upcoming_mmdd("9/26", now), Ok(Some(now)));
 }
 
 #[test]
-fn test_resolve_upcoming_clear_or_gather_day_明は次の業務日を返す() {
+fn test_resolve_upcoming_clear_or_gather_day_明は次の論理日を返す() {
     let now = Local.with_ymd_and_hms(2026, 8, 14, 12, 0, 0).unwrap();
 
     assert_eq!(
@@ -66,13 +66,13 @@ fn test_resolve_upcoming_clear_or_gather_day_午前6時前の明と不正値を�
 }
 
 #[test]
-fn test_resolve_upcoming_clear_or_gather_day_業務日計算不能を情報付きerrorにする() {
+fn test_resolve_upcoming_clear_or_gather_day_論理日計算不能を情報付きerrorにする() {
     let now = maximum_local_datetime();
 
     assert_eq!(
         resolve_upcoming_clear_or_gather_day("明", now),
-        Err(ApplicationError::SubjectiveDateOutOfRange {
-            operation: "next_business_day_start",
+        Err(ApplicationError::LogicalDateOutOfRange {
+            operation: "next_logical_date_start",
             datetime: now,
         })
     );
@@ -84,7 +84,7 @@ fn test_resolve_upcoming_clear_or_gather_day_曜日範囲外は曜日計算error
 
     assert_eq!(
         resolve_upcoming_clear_or_gather_day("月", now),
-        Err(ApplicationError::SubjectiveDateOutOfRange {
+        Err(ApplicationError::LogicalDateOutOfRange {
             operation: "weekday_date",
             datetime: now,
         })
@@ -97,7 +97,7 @@ fn test_resolve_upcoming_clear_or_gather_day_mmddの翌年計算不能を情報�
 
     assert_eq!(
         resolve_upcoming_clear_or_gather_day("12/31", now),
-        Err(ApplicationError::SubjectiveDateOutOfRange {
+        Err(ApplicationError::LogicalDateOutOfRange {
             operation: "upcoming_calendar_date",
             datetime: now,
         })
@@ -165,7 +165,7 @@ fn test_show_task_list_mmddの日時errorを伝搬して成功表示を返さず
 
     assert!(matches!(
         actual,
-        Err(ApplicationError::SubjectiveDateOutOfRange {
+        Err(ApplicationError::LogicalDateOutOfRange {
             operation: "upcoming_calendar_date",
             datetime,
         }) if datetime == now
@@ -800,7 +800,7 @@ fn test_execute_空_日付指定は指定日の予定開始時刻でtodoをpendi
 }
 
 #[test]
-fn test_execute_空_明指定は次の業務日の予定をpendingにする() {
+fn test_execute_空_明指定は次の論理日の予定をpendingにする() {
     let now = Local.with_ymd_and_hms(2026, 8, 14, 12, 0, 0).unwrap();
     let schronu_day_start = Local.with_ymd_and_hms(2026, 8, 15, 6, 0, 0).unwrap();
     let task = new_test_task_handle("明指定の空対象").unwrap();
@@ -818,7 +818,7 @@ fn test_execute_空_明指定は次の業務日の予定をpendingにする() {
 }
 
 #[test]
-fn test_execute_空_日付selectorの業務日計算不能を情報付きerrorにして変更しない() {
+fn test_execute_空_日付selectorの論理日計算不能を情報付きerrorにして変更しない() {
     let now = maximum_local_datetime();
     let task = new_test_task_handle("日時範囲外の空対象").unwrap();
     let task_id = task.get_id().unwrap();
@@ -840,8 +840,8 @@ fn test_execute_空_日付selectorの業務日計算不能を情報付きerror�
     assert!(matches!(
         actual,
         Err(CommandError::Application(
-            ApplicationError::SubjectiveDateOutOfRange {
-                operation: "next_business_day_start",
+            ApplicationError::LogicalDateOutOfRange {
+                operation: "next_logical_date_start",
                 datetime,
             }
         )) if datetime == now
@@ -874,7 +874,7 @@ fn test_execute_空_mmddの翌年計算不能を情報付きerrorにして変更
     assert!(matches!(
         actual,
         Err(CommandError::Application(
-            ApplicationError::SubjectiveDateOutOfRange {
+            ApplicationError::LogicalDateOutOfRange {
                 operation: "upcoming_calendar_date",
                 datetime,
             }
@@ -886,7 +886,7 @@ fn test_execute_空_mmddの翌年計算不能を情報付きerrorにして変更
 }
 
 #[test]
-fn test_execute_集_日付指定はpendingを業務日開始へ集める() {
+fn test_execute_集_日付指定はpendingを論理日開始へ集める() {
     let now = Local.with_ymd_and_hms(2026, 8, 14, 12, 0, 0).unwrap();
     let schronu_day_start = Local.with_ymd_and_hms(2026, 8, 15, 6, 0, 0).unwrap();
     let task = new_test_task_handle("日付指定の集対象").unwrap();
@@ -905,7 +905,7 @@ fn test_execute_集_日付指定はpendingを業務日開始へ集める() {
 }
 
 #[test]
-fn test_execute_集_曜日指定は次に来る曜日の業務日開始へ集める() {
+fn test_execute_集_曜日指定は次に来る曜日の論理日開始へ集める() {
     let now = Local.with_ymd_and_hms(2026, 8, 14, 12, 0, 0).unwrap();
     let schronu_day_start = Local.with_ymd_and_hms(2026, 8, 17, 6, 0, 0).unwrap();
     let task = new_test_task_handle("曜日指定の集対象").unwrap();
@@ -944,7 +944,7 @@ fn test_execute_集_曜日selector範囲外を情報付きerrorにして変更�
     assert!(matches!(
         actual,
         Err(CommandError::Application(
-            ApplicationError::SubjectiveDateOutOfRange {
+            ApplicationError::LogicalDateOutOfRange {
                 operation: "weekday_date",
                 datetime,
             }
@@ -1133,7 +1133,7 @@ fn test_execute_空と集_minutesの日時範囲外を情報付きerrorにして
         assert!(matches!(
             actual,
             Err(CommandError::Application(
-                ApplicationError::SubjectiveDateOutOfRange {
+                ApplicationError::LogicalDateOutOfRange {
                     operation: "clear_or_gather_minutes",
                     datetime,
                 }
@@ -1899,7 +1899,7 @@ fn test_select_focus_task_id_延期候補の日数範囲外を閾値errorにす�
 
     assert!(matches!(
         actual,
-        Err(ApplicationError::SubjectiveDateOutOfRange {
+        Err(ApplicationError::LogicalDateOutOfRange {
             operation: "defer_candidate_threshold",
             datetime,
         }) if datetime == now
@@ -1926,8 +1926,8 @@ fn test_select_focus_task_id_延期候補の日時閾値errorを伝搬して状�
 
     assert!(matches!(
         actual,
-        Err(ApplicationError::SubjectiveDateOutOfRange {
-            operation: "next_business_day_start",
+        Err(ApplicationError::LogicalDateOutOfRange {
+            operation: "next_logical_date_start",
             datetime,
         }) if datetime == now
     ));
@@ -2201,7 +2201,7 @@ fn test_execute_new_新規projectを翌朝までpendingで作成する() {
     assert_eq!(result.task.get_orig_status().unwrap(), Status::Pending);
     assert_eq!(
         result.task.get_pending_until().unwrap(),
-        try_next_business_day_start(now).unwrap()
+        try_next_logical_date_start(now).unwrap()
     );
     assert_eq!(
         result.focused_task_id_opt,
@@ -2260,7 +2260,7 @@ fn test_project作成commandの製品handler経路がtyped_fieldと表示とfocu
     assert_eq!(hobby_result.task.get_name().unwrap(), "趣味");
     assert_eq!(
         hobby_result.task.get_pending_until().unwrap(),
-        try_next_business_day_start(now).unwrap() + Duration::days(1399)
+        try_next_logical_date_start(now).unwrap() + Duration::days(1399)
     );
 
     let unplanned_root = new_test_task_handle("既存").unwrap();
@@ -2712,8 +2712,8 @@ fn test_execute_defer_翌朝計算不能を情報付きerrorにして状態を�
 
     assert_eq!(
         actual,
-        Err(ApplicationError::SubjectiveDateOutOfRange {
-            operation: "next_business_day_start",
+        Err(ApplicationError::LogicalDateOutOfRange {
+            operation: "next_logical_date_start",
             datetime: now,
         })
     );
@@ -2724,12 +2724,12 @@ fn test_execute_defer_翌朝計算不能を情報付きerrorにして状態を�
 #[test]
 fn test_execute_defer_巨大な日数を即座に情報付きerrorにして状態を変更しない() {
     let now = Local.with_ymd_and_hms(2026, 8, 21, 12, 0, 0).unwrap();
-    assert_eq!(defer_business_day_target(now, 0), Ok(now));
-    assert_eq!(defer_business_day_target(now, -1), Ok(now));
+    assert_eq!(defer_logical_date_target(now, 0), Ok(now));
+    assert_eq!(defer_logical_date_target(now, -1), Ok(now));
     assert_eq!(
-        defer_business_day_target(now, i64::MAX),
-        Err(ApplicationError::SubjectiveDateOutOfRange {
-            operation: "defer_business_days",
+        defer_logical_date_target(now, i64::MAX),
+        Err(ApplicationError::LogicalDateOutOfRange {
+            operation: "defer_logical_dates",
             datetime: now,
         })
     );
@@ -2748,8 +2748,8 @@ fn test_execute_defer_巨大な日数を即座に情報付きerrorにして状�
 
     assert_eq!(
         actual,
-        Err(ApplicationError::SubjectiveDateOutOfRange {
-            operation: "defer_business_days",
+        Err(ApplicationError::LogicalDateOutOfRange {
+            operation: "defer_logical_dates",
             datetime: now,
         })
     );
@@ -2782,8 +2782,8 @@ fn test_runtime_defer_shortcut_翌朝計算不能を情報付きerrorにして�
         assert!(matches!(
             actual,
             Err(DeferCommandError::Application(
-                ApplicationError::SubjectiveDateOutOfRange {
-                    operation: "next_business_day_start",
+                ApplicationError::LogicalDateOutOfRange {
+                    operation: "next_logical_date_start",
                     datetime,
                 }
             )) if datetime == now
@@ -2794,7 +2794,7 @@ fn test_runtime_defer_shortcut_翌朝計算不能を情報付きerrorにして�
 }
 
 #[test]
-fn test_execute_defer_expression_曜日の業務日計算不能を情報付きerrorにして状態を変更しない() {
+fn test_execute_defer_expression_曜日の論理日計算不能を情報付きerrorにして状態を変更しない() {
     let now = maximum_local_datetime();
     let task = new_test_task_handle("日時範囲外の曜日延期対象").unwrap();
     let task_id = task.get_id().unwrap();
@@ -2812,8 +2812,8 @@ fn test_execute_defer_expression_曜日の業務日計算不能を情報付きer
     assert!(matches!(
         actual,
         Err(DeferCommandError::Application(
-            ApplicationError::SubjectiveDateOutOfRange {
-                operation: "next_business_day_start",
+            ApplicationError::LogicalDateOutOfRange {
+                operation: "next_logical_date_start",
                 datetime,
             }
         )) if datetime == now
@@ -2842,7 +2842,7 @@ fn test_execute_defer_expression_mmddの日時errorを伝搬して状態を変�
     assert!(matches!(
         actual,
         Err(DeferCommandError::Application(
-            ApplicationError::SubjectiveDateOutOfRange {
+            ApplicationError::LogicalDateOutOfRange {
                 operation: "upcoming_calendar_date",
                 datetime,
             }
@@ -2941,8 +2941,8 @@ fn test_execute_defer_routine_翌朝計算不能を情報付きerrorにして親
 
     assert_eq!(
         actual,
-        Err(ApplicationError::SubjectiveDateOutOfRange {
-            operation: "next_business_day_start",
+        Err(ApplicationError::LogicalDateOutOfRange {
+            operation: "next_logical_date_start",
             datetime: orig_deadline,
         })
     );
@@ -3069,8 +3069,8 @@ fn test_execute_deadline_翌朝計算不能を情報付きerrorにして状態�
     assert!(matches!(
         actual,
         Err(CommandError::Application(
-            ApplicationError::SubjectiveDateOutOfRange {
-                operation: "next_business_day_start",
+            ApplicationError::LogicalDateOutOfRange {
+                operation: "next_logical_date_start",
                 datetime,
             }
         )) if datetime == now
@@ -3098,7 +3098,7 @@ fn test_resolve_deadline_date_曜日の範囲外を曜日計算errorにする() 
     assert!(matches!(
         resolve_deadline_date("月", now),
         Err(HandlerError::Application(
-            ApplicationError::SubjectiveDateOutOfRange {
+            ApplicationError::LogicalDateOutOfRange {
                 operation: "deadline_weekday_date",
                 datetime,
             }
@@ -3159,7 +3159,7 @@ fn test_resolve_deadline_date_mmddの翌年範囲外を情報付きerrorにす�
     assert!(matches!(
         resolve_deadline_date("12/31", now),
         Err(HandlerError::Application(
-            ApplicationError::SubjectiveDateOutOfRange {
+            ApplicationError::LogicalDateOutOfRange {
                 operation: "deadline_calendar_date",
                 datetime,
             }
@@ -4326,7 +4326,7 @@ fn test_execute_flatten_過負荷日では葉より親を先に翌日へ延期�
             .unwrap()
             .get_pending_until()
             .unwrap(),
-        try_subjective_date_start(today + Duration::days(1)).unwrap()
+        try_logical_date_start(today + Duration::days(1)).unwrap()
     );
     assert_eq!(
         result
@@ -4369,7 +4369,7 @@ fn test_execute_flatten_多階層ではrankが大きい親から延期する() {
             .unwrap()
             .get_pending_until()
             .unwrap(),
-        try_subjective_date_start(today + Duration::days(1)).unwrap()
+        try_logical_date_start(today + Duration::days(1)).unwrap()
     );
     assert_eq!(
         result
@@ -4378,7 +4378,7 @@ fn test_execute_flatten_多階層ではrankが大きい親から延期する() {
             .unwrap()
             .get_pending_until()
             .unwrap(),
-        try_subjective_date_start(today + Duration::days(1)).unwrap()
+        try_logical_date_start(today + Duration::days(1)).unwrap()
     );
     let root_position = result.output.find("\t平テスト\n").unwrap();
     let middle_position = result.output.find("\t中間親\n").unwrap();
@@ -4416,7 +4416,7 @@ fn test_execute_flatten_親だけで解消できなければ低優先度の葉�
             .unwrap()
             .get_pending_until()
             .unwrap(),
-        try_subjective_date_start(today + Duration::days(2)).unwrap()
+        try_logical_date_start(today + Duration::days(2)).unwrap()
     );
     assert_eq!(
         result
@@ -4425,7 +4425,7 @@ fn test_execute_flatten_親だけで解消できなければ低優先度の葉�
             .unwrap()
             .get_pending_until()
             .unwrap(),
-        try_subjective_date_start(today + Duration::days(2)).unwrap()
+        try_logical_date_start(today + Duration::days(2)).unwrap()
     );
     assert_eq!(
         result
@@ -4483,7 +4483,7 @@ fn test_execute_flatten_28日境界の超過を29日から34日を飛ばして35
     let overflow_date = today + Duration::days(35);
     let root = new_test_task_handle("平テスト").unwrap();
     root.set_estimated_work_seconds(0);
-    let boundary_start = try_subjective_date_start(boundary_date).unwrap();
+    let boundary_start = try_logical_date_start(boundary_date).unwrap();
     let keeper = add_scheduled_child_for_test(&root, "境界に残す", boundary_start, 30);
     let first = add_scheduled_child_for_test(
         &root,
@@ -4508,7 +4508,7 @@ fn test_execute_flatten_28日境界の超過を29日から34日を飛ばして35
             .unwrap()
             .get_pending_until()
             .unwrap(),
-        try_subjective_date_start(boundary_date).unwrap()
+        try_logical_date_start(boundary_date).unwrap()
     );
     assert_eq!(
         result
@@ -4517,7 +4517,7 @@ fn test_execute_flatten_28日境界の超過を29日から34日を飛ばして35
             .unwrap()
             .get_pending_until()
             .unwrap(),
-        try_subjective_date_start(overflow_date).unwrap()
+        try_logical_date_start(overflow_date).unwrap()
     );
     assert_eq!(
         result
@@ -4526,7 +4526,7 @@ fn test_execute_flatten_28日境界の超過を29日から34日を飛ばして35
             .unwrap()
             .get_pending_until()
             .unwrap(),
-        try_subjective_date_start(overflow_date).unwrap()
+        try_logical_date_start(overflow_date).unwrap()
     );
     assert_eq!(
         result
@@ -4597,7 +4597,7 @@ fn test_execute_flatten_未解消の超過が1分未満でも切り上げて表�
 }
 
 #[test]
-fn test_execute_flatten_業務日境界をまたぐtaskは延期しない() {
+fn test_execute_flatten_論理日境界をまたぐtaskは延期しない() {
     let now = Local.with_ymd_and_hms(2026, 8, 13, 6, 0, 0).unwrap();
     let today = now.date_naive();
     let root = new_test_task_handle("平テスト").unwrap();
@@ -4620,14 +4620,14 @@ fn test_execute_flatten_業務日境界をまたぐtaskは延期しない() {
             .unwrap(),
         now
     );
-    assert!(result.output.contains("業務日境界をまたぐ: 1件"));
+    assert!(result.output.contains("論理日境界をまたぐ: 1件"));
     assert!(result
         .output
         .contains(&format!("{}\t境界をまたぐ", target.get_id().unwrap())));
 }
 
 #[test]
-fn test_execute_flatten_業務日境界をまたぐtaskの全作業時間を開始日の業務日に計上する() {
+fn test_execute_flatten_論理日境界をまたぐtaskの全作業時間を開始日の論理日に計上する() {
     let now = Local.with_ymd_and_hms(2026, 8, 13, 6, 0, 0).unwrap();
     let today = now.date_naive();
     let root = new_test_task_handle("平テスト").unwrap();
@@ -4645,7 +4645,7 @@ fn test_execute_flatten_業務日境界をまたぐtaskの全作業時間を開�
     assert!(result
         .output
         .contains(&format!("[Warn] 平\t{}\t未解消 01:00", today)));
-    assert!(result.output.contains("業務日境界をまたぐ: 1件"));
+    assert!(result.output.contains("論理日境界をまたぐ: 1件"));
 }
 
 #[test]
@@ -4655,7 +4655,7 @@ fn test_execute_flatten_終了時刻が期限と等しいtaskは延期できる(
     let root = new_test_task_handle("平テスト").unwrap();
     root.set_estimated_work_seconds(0);
     root.set_deadline_time_opt(Some(
-        try_subjective_date_start(today + Duration::days(1)).unwrap() + Duration::minutes(30),
+        try_logical_date_start(today + Duration::days(1)).unwrap() + Duration::minutes(30),
     ));
     let target = add_scheduled_child_for_test(&root, "期限ちょうど", now, 30);
 
@@ -4673,7 +4673,7 @@ fn test_execute_flatten_終了時刻が期限と等しいtaskは延期できる(
             .unwrap()
             .get_pending_until()
             .unwrap(),
-        try_subjective_date_start(today + Duration::days(1)).unwrap()
+        try_logical_date_start(today + Duration::days(1)).unwrap()
     );
 }
 
@@ -4685,7 +4685,7 @@ fn test_execute_flatten_延期対象自身の期限補正で翌日06時を維持
     root.set_estimated_work_seconds(0);
     let target = add_scheduled_child_for_test(&root, "平日を表すダミータスク(8/21)", now, 30);
     target.set_deadline_time_opt(Some(
-        try_subjective_date_start(today + Duration::days(1)).unwrap() + Duration::minutes(30),
+        try_logical_date_start(today + Duration::days(1)).unwrap() + Duration::minutes(30),
     ));
 
     let result = execute_flatten_command_for_test(
@@ -4738,7 +4738,7 @@ fn test_execute_flatten_待機taskと残作業0を延期候補から除外する
             .unwrap()
             .get_pending_until()
             .unwrap(),
-        try_subjective_date_start(today + Duration::days(1)).unwrap()
+        try_logical_date_start(today + Duration::days(1)).unwrap()
     );
     for unchanged in [waiting.get_id().unwrap(), zero.get_id().unwrap()] {
         assert_eq!(
@@ -4760,16 +4760,16 @@ fn test_execute_flatten_35日後への退避で親の期限を超えるなら未
     let boundary_date = today + Duration::days(28);
     let root = new_test_task_handle("期限のある親").unwrap();
     root.set_estimated_work_seconds(30 * 60);
-    root.set_start_time(try_subjective_date_start(boundary_date).unwrap());
-    root.set_pending_until(try_subjective_date_start(boundary_date).unwrap());
+    root.set_start_time(try_logical_date_start(boundary_date).unwrap());
+    root.set_pending_until(try_logical_date_start(boundary_date).unwrap());
     root.set_orig_status(Status::Pending);
     root.set_deadline_time_opt(Some(
-        try_subjective_date_start(today + Duration::days(35)).unwrap(),
+        try_logical_date_start(today + Duration::days(35)).unwrap(),
     ));
     let child = add_scheduled_child_for_test(
         &root,
         "境界の葉",
-        try_subjective_date_start(boundary_date).unwrap(),
+        try_logical_date_start(boundary_date).unwrap(),
         60,
     );
 
@@ -4787,7 +4787,7 @@ fn test_execute_flatten_35日後への退避で親の期限を超えるなら未
             .unwrap()
             .get_pending_until()
             .unwrap(),
-        try_subjective_date_start(boundary_date).unwrap()
+        try_logical_date_start(boundary_date).unwrap()
     );
     assert_eq!(
         result
@@ -4796,7 +4796,7 @@ fn test_execute_flatten_35日後への退避で親の期限を超えるなら未
             .unwrap()
             .get_pending_until()
             .unwrap(),
-        try_subjective_date_start(boundary_date).unwrap()
+        try_logical_date_start(boundary_date).unwrap()
     );
     assert!(result.output.contains("平: 0件 00:00 (未解消1日)"));
     assert!(result
@@ -4812,7 +4812,7 @@ fn test_execute_flatten_延期不能日を飛ばして翌日以降の平坦化�
     let root = new_test_task_handle("平テスト").unwrap();
     root.set_estimated_work_seconds(0);
     let blocked = add_scheduled_child_for_test(&root, "今日の固定負荷", now, 90);
-    let tomorrow_start = try_subjective_date_start(today + Duration::days(1)).unwrap();
+    let tomorrow_start = try_logical_date_start(today + Duration::days(1)).unwrap();
     let tomorrow_first = add_scheduled_child_for_test(&root, "翌日の先行", tomorrow_start, 30);
     let tomorrow_late = add_scheduled_child_for_test(
         &root,
@@ -4857,7 +4857,7 @@ fn test_execute_flatten_延期不能日を飛ばして翌日以降の平坦化�
             .unwrap()
             .get_pending_until()
             .unwrap(),
-        try_subjective_date_start(today + Duration::days(2)).unwrap()
+        try_logical_date_start(today + Duration::days(2)).unwrap()
     );
     assert!(result.output.contains("平: 1件 00:30 (未解消1日)"));
     assert_eq!(result.output.matches("[Warn] 平\t2026-08-13").count(), 1);
@@ -4873,7 +4873,7 @@ fn test_execute_flatten_未解消理由を固定順で表示して同じtaskを�
     waiting.set_is_on_other_side(true);
     let own_deadline = add_scheduled_child_for_test(&root, "自身に期限", now, 30);
     own_deadline.set_deadline_time_opt(Some(
-        try_subjective_date_start(today + Duration::days(1)).unwrap() + Duration::minutes(30),
+        try_logical_date_start(today + Duration::days(1)).unwrap() + Duration::minutes(30),
     ));
 
     let result = execute_flatten_command_for_test(
@@ -4905,7 +4905,7 @@ fn test_execute_flatten_28日目は延期可能分を35日目へ退避して固�
     let today = now.date_naive();
     let boundary_date = today + Duration::days(28);
     let overflow_date = today + Duration::days(35);
-    let boundary_start = try_subjective_date_start(boundary_date).unwrap();
+    let boundary_start = try_logical_date_start(boundary_date).unwrap();
     let root = new_test_task_handle("平テスト").unwrap();
     root.set_estimated_work_seconds(0);
     let waiting = add_scheduled_child_for_test(&root, "境界の待機", boundary_start, 30);
@@ -4934,7 +4934,7 @@ fn test_execute_flatten_28日目は延期可能分を35日目へ退避して固�
             .unwrap()
             .get_pending_until()
             .unwrap(),
-        try_subjective_date_start(overflow_date).unwrap()
+        try_logical_date_start(overflow_date).unwrap()
     );
     assert!(result.output.contains("平: 1件 00:30 (未解消1日)"));
     assert!(result
@@ -4954,7 +4954,7 @@ fn test_execute_flatten_各aliasで未解消日を飛ばして後続を延期す
         let root = new_test_task_handle("平テスト").unwrap();
         root.set_estimated_work_seconds(0);
         add_scheduled_child_for_test(&root, "固定負荷", now, 90);
-        let tomorrow = try_subjective_date_start(today + Duration::days(1)).unwrap();
+        let tomorrow = try_logical_date_start(today + Duration::days(1)).unwrap();
         add_scheduled_child_for_test(&root, "翌日の先行", tomorrow, 30);
         let movable = add_scheduled_child_for_test(
             &root,
@@ -4981,7 +4981,7 @@ fn test_execute_flatten_各aliasで未解消日を飛ばして後続を延期す
                 .unwrap()
                 .get_pending_until()
                 .unwrap(),
-            try_subjective_date_start(today + Duration::days(2)).unwrap()
+            try_logical_date_start(today + Duration::days(2)).unwrap()
         );
         assert!(result.output.contains("平: 1件 00:30 (未解消1日)"));
     }

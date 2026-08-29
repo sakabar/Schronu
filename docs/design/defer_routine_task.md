@@ -30,7 +30,7 @@
     - `repetition_interval_days` 未設定: `InvalidInput`
   - 締切計算:
     - 親 `deadline_time` あり:
-      - `try_next_business_day_start(orig_deadline)` を基点に、`repetition_interval_days - 1` 日進めた日付へ
+      - `try_next_logical_date_start(orig_deadline)` を基点に、`repetition_interval_days - 1` 日進めた日付へ
       - 時刻は親の `deadline_time.time()` を採用
     - 親 `deadline_time` なし:
       - `orig_deadline + repetition_interval_days`

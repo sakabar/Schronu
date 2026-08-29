@@ -135,7 +135,7 @@ fn test_parse_clear_or_gather_defer_to_datetime_minutesの日時範囲外を情�
 
     assert_eq!(
         parse_clear_or_gather_defer_to_datetime("空", "9223372036854775807", now),
-        Err(ApplicationError::SubjectiveDateOutOfRange {
+        Err(ApplicationError::LogicalDateOutOfRange {
             operation: "clear_or_gather_minutes",
             datetime: now,
         })
@@ -143,7 +143,7 @@ fn test_parse_clear_or_gather_defer_to_datetime_minutesの日時範囲外を情�
 }
 
 #[test]
-fn test_parse_dated_clear_or_gather_time_range_深夜と24時以降を指定業務日へ対応付ける() {
+fn test_parse_dated_clear_or_gather_time_range_深夜と24時以降を指定論理日へ対応付ける() {
     let now = Local.with_ymd_and_hms(2026, 8, 14, 12, 0, 0).unwrap();
     let start = Local.with_ymd_and_hms(2026, 8, 15, 6, 0, 0).unwrap();
 
