@@ -115,10 +115,10 @@ fn atomic_release探索はready候補とfuture_releaseの直積にならない()
     let candidate_count = READY_ATOMIC_COUNT + FUTURE_RELEASE_COUNT;
 
     assert!(
-        metrics.release_candidate_probe_count <= candidate_count * 16,
+        metrics.release_candidate_probe_count <= candidate_count * 4,
         "atomic release probes exceeded the linear limit: {} > {}",
         metrics.release_candidate_probe_count,
-        candidate_count * 16
+        candidate_count * 4
     );
     assert!(
         elapsed <= Duration::from_secs(2),
