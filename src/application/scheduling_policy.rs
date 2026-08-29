@@ -234,11 +234,18 @@ struct AtomicReleasePredictionCache {
 }
 
 impl AtomicReleasePredictionCache {
-    fn retain_future_preemptors(&mut self, now: DateTime<Local>, states: &[FlexibleState]) {
+    fn retain_future_preemptors_for_generation(
+        &mut self,
+        now: DateTime<Local>,
+        states: &[FlexibleState],
+        frontier_generation: Option<u64>,
+    ) {
         self.entries.retain(|prediction| {
             prediction.release > now
                 && states[prediction.preemptor_index].completion_time.is_none()
                 && states[prediction.preemptor_index].remaining_seconds > 0
+                && frontier_generation
+                    .is_none_or(|generation| prediction.frontier_generation == generation)
         });
     }
 
@@ -260,6 +267,7 @@ struct AtomicReleasePrediction {
     preemptor_index: usize,
     critical_deadline: Option<DateTime<Local>>,
     protected_mode: bool,
+    frontier_generation: u64,
 }
 
 type NormalReadyKey = (Reverse<i64>, bool, Option<DateTime<Local>>, usize, Uuid);
@@ -276,6 +284,7 @@ struct SchedulerFrontier {
     dependents: Vec<Vec<usize>>,
     ready: Vec<bool>,
     incomplete_count: usize,
+    generation: u64,
 }
 
 /// speculative releaseで変更したready集合だけを元へ戻すための差分。
@@ -876,6 +885,7 @@ impl SchedulerFrontier {
             dependents,
             ready: vec![false; states.len()],
             incomplete_count: states.len(),
+            generation: 0,
         };
         for (index, state) in states.iter().enumerate() {
             if frontier.unresolved_dependencies[index] == 0 {
@@ -1011,6 +1021,9 @@ impl SchedulerFrontier {
     ) {
         self.remove_ready(index, &states[index]);
         self.incomplete_count = self.incomplete_count.saturating_sub(1);
+        // ready/release overlayの構成要素が消えるため、future predictionは
+        // dependency追加の有無にかかわらずこの世代を跨いで再利用しない。
+        self.generation = self.generation.wrapping_add(1);
         for dependent in self.dependents[index].iter().copied() {
             metrics.record_release_candidate_probe();
             if self.unresolved_dependencies[dependent] == 0 {
@@ -1468,6 +1481,7 @@ fn cache_atomic_release_prediction(
             preemptor_index,
             critical_deadline,
             protected_mode,
+            frontier_generation: context.frontier.map_or(0, |frontier| frontier.generation),
         });
     }
 }
@@ -1904,7 +1918,7 @@ pub(super) fn schedule_tasks_by_priority_with_metrics(
         frontier.promote_releases(now, &states, metrics);
         atomic_release_predictions
             .borrow_mut()
-            .retain_future_preemptors(now, &states);
+            .retain_future_preemptors_for_generation(now, &states, Some(frontier.generation));
         if let Some((_, fixed_end)) = fixed_slot_containing(now, &fixed_slots) {
             slack_index.record_fixed_skip(fixed_end);
             now = fixed_end;
