@@ -39,22 +39,22 @@ pub(super) fn tool_definitions() -> Vec<Value> {
         }),
         json!({
             "name": "defer_task",
-            "description": "Defer a task until an absolute date and time.",
+            "description": "Set an existing task's pending-until time and original status to Pending. Its effective status can be Todo when the time is not in the future, and the existing deadline policy can move the pending-until time earlier.",
             "inputSchema": generated_input_schema::<DeferTaskInput>()
         }),
         json!({
             "name": "defer_routine_task",
-            "description": "Defer a routine task to its next repetition cycle.",
+            "description": "Move an existing routine task to its next repetition cycle by shifting its deadline and start time, then restore its original status to Todo. The task must have a deadline and a parent whose repetition interval is set.",
             "inputSchema": generated_input_schema::<DeferRoutineTaskInput>()
         }),
         json!({
             "name": "complete_task",
-            "description": "Complete a task, optionally recording finish time and work seconds.",
+            "description": "Complete an existing task that has no unfinished children. This records an end time and can add work seconds; completing a child of a routine parent can create the next occurrence and adjust the parent's estimate.",
             "inputSchema": generated_input_schema::<CompleteTaskInput>()
         }),
         json!({
             "name": "update_task",
-            "description": "Update a task's estimate, deadline, or category.",
+            "description": "Update an existing task's estimate, deadline, or project category. Include at least one update field; when multiple fields are supplied, they are applied in estimate, deadline, then category order.",
             "inputSchema": generated_input_schema::<UpdateTaskInput>()
         }),
     ]

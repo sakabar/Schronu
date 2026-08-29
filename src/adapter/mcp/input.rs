@@ -472,7 +472,9 @@ impl BreakdownTaskInput {
 #[derive(Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub(super) struct DeferTaskInput {
+    /// The UUID of the existing task to defer.
     pub(super) task_id: UuidValue,
+    /// The requested pending-until time as an RFC 3339 date-time with Z or a numeric UTC offset. The existing deadline policy can move it earlier.
     pub(super) pending_until: Rfc3339DateTime,
 }
 
@@ -485,6 +487,7 @@ impl DeferTaskInput {
 #[derive(Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub(super) struct DeferRoutineTaskInput {
+    /// The UUID of the existing routine task to defer. The task must have its own deadline and a parent whose repetition interval is set.
     pub(super) task_id: UuidValue,
 }
 
@@ -497,9 +500,12 @@ impl DeferRoutineTaskInput {
 #[derive(Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub(super) struct CompleteTaskInput {
+    /// The UUID of the existing task to complete. A task with any unfinished direct child cannot be completed.
     pub(super) task_id: UuidValue,
+    /// The completion and end time as an RFC 3339 date-time with Z or a numeric UTC offset. Omit it to use the operation time.
     #[serde(default)]
     pub(super) finished_at: OptionalValue<Rfc3339DateTime>,
+    /// A non-negative number of seconds to add to the task's existing actual work. Omit it to add 0; the request fails if the resulting total overflows the supported integer range.
     #[serde(default = "zero_non_negative")]
     #[schemars(schema_with = "additional_work_seconds_schema")]
     pub(super) additional_actual_work_seconds: NonNegativeI64,
@@ -613,11 +619,15 @@ impl UpdateTaskInput {
 #[serde(deny_unknown_fields)]
 #[schemars(transform = require_update_task_field)]
 struct UpdateTaskInputFields {
+    /// The UUID of the existing task to update.
     task_id: UuidValue,
+    /// Set the estimated work duration from a non-negative integer number of minutes, converted to seconds. Omit this field to leave the estimate unchanged; the request fails if conversion to seconds overflows.
     #[serde(default)]
     estimated_work_minutes: OptionalValue<NonNegativeI64>,
+    /// Set the task's deadline from an RFC 3339 date-time with Z or a numeric UTC offset, or pass null to clear only this task's deadline. A set deadline is propagated as an upper bound to unfinished descendants. Omit this field to leave the deadline unchanged.
     #[serde(default)]
     deadline_time: NullablePatch<Rfc3339DateTime>,
+    /// Set the root project's category to one of the supported values, or pass null to clear it. Omit this field to leave the category unchanged.
     #[serde(default)]
     category: NullablePatch<ProjectCategoryValue>,
 }
