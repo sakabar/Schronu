@@ -33,7 +33,7 @@ pub(crate) struct ScheduleContext {
 
 struct TaskScheduleAttributes {
     first_available_time: DateTime<Local>,
-    neg_priority: i64,
+    priority: i64,
     rank: usize,
     deadline_time: Option<DateTime<Local>>,
 }
@@ -164,7 +164,7 @@ fn build_schedule_candidates(
                     })
                     .or_insert(TaskScheduleAttributes {
                         first_available_time,
-                        neg_priority: !task.get_priority().map_err(ApplicationError::TaskTree)?,
+                        priority: task.get_priority().map_err(ApplicationError::TaskTree)?,
                         rank,
                         deadline_time: task
                             .get_deadline_time_opt()
@@ -177,34 +177,18 @@ fn build_schedule_candidates(
     let mut attributes = task_schedule_attributes.into_iter().collect::<Vec<_>>();
     metrics.record_sort();
     attributes.sort_by_key(|(id, _)| *id);
-    let mut attributes = attributes
-        .into_iter()
-        .map(|(id, attributes)| {
-            let first_available_time = attributes.first_available_time;
-            let logical_date = try_next_logical_date_start(first_available_time)?
-                .checked_sub_signed(Duration::days(1))
-                .map(|datetime| datetime.date_naive())
-                .ok_or(ApplicationError::LogicalDateOutOfRange {
-                    operation: "logical_date",
-                    datetime: first_available_time,
-                })?;
-            let sort_key = (
-                logical_date,
-                attributes.deadline_time.is_none(),
-                first_available_time,
-                attributes.neg_priority,
-                attributes.rank,
-                attributes.deadline_time,
-                id,
-            );
-            Ok((sort_key, (id, attributes)))
-        })
-        .collect::<Result<Vec<_>, ApplicationError>>()?;
-    metrics.record_sort();
-    attributes.sort_by_key(|entry| entry.0);
 
     let mut candidates = Vec::new();
-    for (_, (id, attributes)) in attributes {
+    for (id, attributes) in attributes {
+        let first_available_time = attributes.first_available_time;
+        // 候補の並べ替えには使わないが、従来どおりUUID順で日時を検証する。
+        // これにより、複数候補が範囲外でも返すerrorが入力順へ依存しない。
+        try_next_logical_date_start(first_available_time)?
+            .checked_sub_signed(Duration::days(1))
+            .ok_or(ApplicationError::LogicalDateOutOfRange {
+                operation: "logical_date",
+                datetime: first_available_time,
+            })?;
         let Some(task) = repository
             .get_by_id(id)
             .map_err(ApplicationError::TaskTree)?
@@ -219,7 +203,7 @@ fn build_schedule_candidates(
             atomic: task.get_atomic().map_err(ApplicationError::TaskTree)?,
             task,
             first_available_time: attributes.first_available_time,
-            neg_priority: attributes.neg_priority,
+            priority: attributes.priority,
             rank: attributes.rank,
             deadline_time: attributes.deadline_time,
         });

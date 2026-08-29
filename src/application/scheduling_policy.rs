@@ -12,7 +12,7 @@ pub(super) struct TaskScheduleCandidate {
     pub(super) id: Uuid,
     pub(super) task: TaskHandle,
     pub(super) first_available_time: DateTime<Local>,
-    pub(super) neg_priority: i64,
+    pub(super) priority: i64,
     pub(super) rank: usize,
     pub(super) deadline_time: Option<DateTime<Local>>,
     pub(super) remaining_seconds: i64,
@@ -29,7 +29,7 @@ pub(super) struct ScheduledTask {
     pub(super) scheduled_end: DateTime<Local>,
     pub(super) scheduled_work_seconds: i64,
     pub(super) total_work_seconds: i64,
-    pub(super) neg_priority: i64,
+    pub(super) priority: i64,
     pub(super) rank: usize,
     pub(super) deadline_time: Option<DateTime<Local>>,
 }
@@ -148,7 +148,7 @@ fn schedule_tasks_by_priority(
     )
 }
 
-pub(crate) fn schedule_tasks_by_priority_with_metrics(
+pub(super) fn schedule_tasks_by_priority_with_metrics(
     candidates: &[TaskScheduleCandidate],
     last_synced_time: DateTime<Local>,
     metrics: &mut ScheduleMetrics,
@@ -159,7 +159,7 @@ pub(crate) fn schedule_tasks_by_priority_with_metrics(
         (
             a.deadline_time.is_none(),
             a.deadline_time,
-            a.neg_priority,
+            Reverse(a.priority),
             a.first_available_time,
             a.rank,
             a.id,
@@ -167,7 +167,7 @@ pub(crate) fn schedule_tasks_by_priority_with_metrics(
             .cmp(&(
                 b.deadline_time.is_none(),
                 b.deadline_time,
-                b.neg_priority,
+                Reverse(b.priority),
                 b.first_available_time,
                 b.rank,
                 b.id,
@@ -324,14 +324,14 @@ pub(crate) fn schedule_tasks_by_priority_with_metrics(
         (
             a.scheduled_start,
             a.deadline_time.is_none(),
-            a.neg_priority,
+            Reverse(a.priority),
             a.rank,
             a.id,
         )
             .cmp(&(
                 b.scheduled_start,
                 b.deadline_time.is_none(),
-                b.neg_priority,
+                Reverse(b.priority),
                 b.rank,
                 b.id,
             ))
@@ -354,7 +354,7 @@ fn to_scheduled_task(
         scheduled_end,
         scheduled_work_seconds,
         total_work_seconds,
-        neg_priority: candidate.neg_priority,
+        priority: candidate.priority,
         rank: candidate.rank,
         deadline_time: candidate.deadline_time,
     }

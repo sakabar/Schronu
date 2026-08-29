@@ -4,7 +4,7 @@ use chrono::TimeZone;
 fn candidate(
     name: &str,
     first_available_time: DateTime<Local>,
-    neg_priority: i64,
+    priority: i64,
     remaining_seconds: i64,
 ) -> TaskScheduleCandidate {
     let task = crate::test_support::new_task_handle(name).unwrap();
@@ -12,7 +12,7 @@ fn candidate(
         id: task.get_id().unwrap(),
         task,
         first_available_time,
-        neg_priority,
+        priority,
         rank: 0,
         deadline_time: None,
         remaining_seconds,
@@ -25,11 +25,11 @@ fn candidate(
 #[test]
 fn schedule_tasks_by_priorityは依存待ちcandidateを毎回走査しない() {
     let now = Local.with_ymd_and_hms(2026, 5, 10, 12, 0, 0).unwrap();
-    let child = candidate("child", now, -1, 60);
+    let child = candidate("child", now, 0, 60);
     let child_id = child.id;
     let mut candidates = (0..100)
         .map(|index| {
-            let mut parent = candidate(&format!("parent-{index}"), now, -99, 0);
+            let mut parent = candidate(&format!("parent-{index}"), now, 98, 0);
             parent.rank = 1;
             parent.dependency_ids = vec![child_id];
             parent
@@ -51,9 +51,9 @@ fn schedule_tasks_by_priorityは依存待ちcandidateを毎回走査しない() 
 #[test]
 fn schedule_tasks_by_priorityはmissing_dependencyをready候補の後にfallback配置する() {
     let now = Local.with_ymd_and_hms(2026, 5, 10, 12, 0, 0).unwrap();
-    let ready = candidate("ready", now, -1, 60);
+    let ready = candidate("ready", now, 0, 60);
     let ready_id = ready.id;
-    let mut blocked = candidate("blocked", now, -99, 60);
+    let mut blocked = candidate("blocked", now, 98, 60);
     blocked.dependency_ids = vec![Uuid::nil()];
     let blocked_id = blocked.id;
 
@@ -69,9 +69,9 @@ fn schedule_tasks_by_priorityはmissing_dependencyをready候補の後にfallbac
 #[test]
 fn schedule_tasks_by_priorityは重複dependencyを1回の完了で解決する() {
     let now = Local.with_ymd_and_hms(2026, 5, 10, 12, 0, 0).unwrap();
-    let child = candidate("child", now, -1, 60);
+    let child = candidate("child", now, 0, 60);
     let child_id = child.id;
-    let mut parent = candidate("parent", now, -99, 60);
+    let mut parent = candidate("parent", now, 98, 60);
     parent.dependency_ids = vec![child_id, child_id];
     let parent_id = parent.id;
 
@@ -87,8 +87,8 @@ fn schedule_tasks_by_priorityは重複dependencyを1回の完了で解決する(
 #[test]
 fn schedule_tasks_by_priorityはcycle時にsort順先頭からfallback配置する() {
     let now = Local.with_ymd_and_hms(2026, 5, 10, 12, 0, 0).unwrap();
-    let mut first = candidate("first", now, -99, 60);
-    let mut second = candidate("second", now, -1, 60);
+    let mut first = candidate("first", now, 98, 60);
+    let mut second = candidate("second", now, 0, 60);
     first.dependency_ids = vec![second.id];
     second.dependency_ids = vec![first.id];
     let first_id = first.id;
@@ -117,14 +117,14 @@ fn schedule_tasks_by_priority_5分以下の空き時間には分割しない() {
     let low = candidate(
         "低優先度",
         Local.with_ymd_and_hms(2026, 5, 10, 13, 0, 0).unwrap(),
-        -88,
+        87,
         20 * 60,
     );
     let low_id = low.task.get_id().unwrap();
     let high = candidate(
         "高優先度",
         Local.with_ymd_and_hms(2026, 5, 10, 13, 5, 0).unwrap(),
-        -89,
+        88,
         60 * 60,
     );
 
@@ -148,14 +148,14 @@ fn schedule_tasks_by_priority_6分の空き時間には分割する() {
     let low = candidate(
         "低優先度",
         Local.with_ymd_and_hms(2026, 5, 10, 13, 0, 0).unwrap(),
-        -88,
+        87,
         20 * 60,
     );
     let low_id = low.task.get_id().unwrap();
     let high = candidate(
         "高優先度",
         Local.with_ymd_and_hms(2026, 5, 10, 13, 6, 0).unwrap(),
-        -89,
+        88,
         60 * 60,
     );
 
@@ -184,14 +184,14 @@ fn schedule_tasks_by_priority_後半が5分以下になる分割はしない() {
     let low = candidate(
         "低優先度",
         Local.with_ymd_and_hms(2026, 5, 10, 13, 0, 0).unwrap(),
-        -88,
+        87,
         20 * 60,
     );
     let low_id = low.task.get_id().unwrap();
     let high = candidate(
         "高優先度",
         Local.with_ymd_and_hms(2026, 5, 10, 13, 15, 0).unwrap(),
-        -89,
+        88,
         60 * 60,
     );
 
@@ -212,11 +212,11 @@ fn schedule_tasks_by_priority_後半が5分以下になる分割はしない() {
 #[test]
 fn schedule_tasks_by_priority_残り5分以下のtask自体は配置する() {
     let now = Local.with_ymd_and_hms(2026, 5, 10, 12, 0, 0).unwrap();
-    let blocker = candidate("blocker", now, -89, 60 * 60);
+    let blocker = candidate("blocker", now, 88, 60 * 60);
     let task = candidate(
         "5分task",
         Local.with_ymd_and_hms(2026, 5, 10, 12, 55, 0).unwrap(),
-        -88,
+        87,
         5 * 60,
     );
     let task_id = task.task.get_id().unwrap();
@@ -237,15 +237,15 @@ fn schedule_tasks_by_priority_残り5分以下のtask自体は配置する() {
 #[test]
 fn schedule_tasks_by_priority_atomic_taskは依存終了後の連続枠に配置する() {
     let now = Local.with_ymd_and_hms(2026, 5, 10, 12, 0, 0).unwrap();
-    let child = candidate("子", now, -99, 60 * 60);
+    let child = candidate("子", now, 98, 60 * 60);
     let child_id = child.task.get_id().unwrap();
     let blocker = candidate(
         "blocker",
         Local.with_ymd_and_hms(2026, 5, 10, 13, 30, 0).unwrap(),
-        -98,
+        97,
         60 * 60,
     );
-    let mut parent = candidate("atomic親", now, -90, 2 * 60 * 60);
+    let mut parent = candidate("atomic親", now, 89, 2 * 60 * 60);
     parent.rank = 1;
     parent.atomic = true;
     parent.dependency_ids = vec![child_id];
@@ -270,26 +270,26 @@ fn schedule_tasks_by_priority_atomic_taskは依存終了後の連続枠に配置
 #[test]
 fn schedule_tasks_by_priority_高優先度task間の隙間を優先度順に埋める() {
     let now = Local.with_ymd_and_hms(2026, 5, 10, 12, 0, 0).unwrap();
-    let lunch = candidate("昼食", now, -89, 60 * 60);
+    let lunch = candidate("昼食", now, 88, 60 * 60);
     let lunch_id = lunch.task.get_id().unwrap();
     let priority_88 = candidate(
         "優先度88",
         Local.with_ymd_and_hms(2026, 5, 10, 13, 0, 0).unwrap(),
-        -88,
+        87,
         4 * 60 * 60,
     );
     let priority_88_id = priority_88.task.get_id().unwrap();
     let priority_87 = candidate(
         "優先度87",
         Local.with_ymd_and_hms(2026, 5, 10, 13, 0, 0).unwrap(),
-        -87,
+        86,
         60 * 60,
     );
     let priority_87_id = priority_87.task.get_id().unwrap();
     let dinner = candidate(
         "夕食",
         Local.with_ymd_and_hms(2026, 5, 10, 18, 0, 0).unwrap(),
-        -89,
+        88,
         60 * 60,
     );
     let dinner_id = dinner.task.get_id().unwrap();
@@ -322,10 +322,10 @@ fn schedule_tasks_by_priority_高優先度task間の隙間を優先度順に埋�
 #[test]
 fn schedule_tasks_by_priority_親は子の実schedule終了後に配置する() {
     let now = Local.with_ymd_and_hms(2026, 5, 10, 14, 0, 0).unwrap();
-    let blocker = candidate("blocker", now, -90, 60 * 60);
-    let child = candidate("子", now, -1, 60);
+    let blocker = candidate("blocker", now, 89, 60 * 60);
+    let child = candidate("子", now, 0, 60);
     let child_id = child.task.get_id().unwrap();
-    let mut parent = candidate("親", now, -99, 0);
+    let mut parent = candidate("親", now, 98, 0);
     parent.rank = 1;
     parent.dependency_ids = vec![child_id];
     let parent_id = parent.task.get_id().unwrap();
