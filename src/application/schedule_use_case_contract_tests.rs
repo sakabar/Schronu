@@ -333,11 +333,13 @@ fn get_scheduleは表現不能なfixed_flexible_atomic終了時刻を構造化er
 
         assert_eq!(
             get_schedule(&repository),
-            Err(super::task_use_case::ApplicationError::ScheduleTimeOutOfRange {
-                task_id,
-                start_time: now,
-                work_seconds: i64::MAX,
-            }),
+            Err(
+                super::task_use_case::ApplicationError::ScheduleTimeOutOfRange {
+                    task_id,
+                    start_time: now,
+                    work_seconds: i64::MAX,
+                }
+            ),
             "{name} must report an out-of-range schedule segment"
         );
     }
