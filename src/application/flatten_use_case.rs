@@ -337,23 +337,33 @@ fn collect_candidates(
     }
 
     let mut candidates = Vec::new();
+    let mut next_logical_date_start_opt = None;
     for segments in segments_by_task.into_values() {
         let Some(first) = segments.first().copied() else {
             continue;
         };
+        if first.total_work_seconds <= 0 {
+            continue;
+        }
         let segment_dates = segments
             .iter()
             .map(|segment| try_logical_date(segment.scheduled_start))
             .collect::<Result<Vec<_>, _>>()?;
-        if first.total_work_seconds <= 0 || !segment_dates.contains(&overload_date) {
+        if !segment_dates.contains(&overload_date) {
             continue;
         }
         let Some(scheduled_start) = segments.iter().map(|segment| segment.scheduled_start).min()
         else {
             continue;
         };
-        let next_logical_date_start =
-            try_next_logical_date_start(try_logical_date_start(overload_date)?)?;
+        let next_logical_date_start = match next_logical_date_start_opt {
+            Some(datetime) => datetime,
+            None => {
+                let datetime = try_next_logical_date_start(try_logical_date_start(overload_date)?)?;
+                next_logical_date_start_opt = Some(datetime);
+                datetime
+            }
+        };
         let all_work_is_on_overload_date =
             segments.iter().zip(segment_dates).all(|(segment, date)| {
                 date == overload_date && segment.scheduled_end <= next_logical_date_start
