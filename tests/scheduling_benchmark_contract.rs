@@ -180,6 +180,19 @@ fn flatten性能契約は専用過負荷fixtureで移動経路を実行する() 
 }
 
 #[test]
+fn stress_flattenはstress規模の過負荷経路を実行する() {
+    let fixture = SchedulingFixture::stress_flatten().unwrap();
+    assert!(fixture.summary().unwrap().tasks >= 105_512);
+    let repository = SchedulingRepository::new(fixture.projects, fixture.now);
+    let mut free_time = SchedulingFreeTimeManager::new(FLATTEN_BENCHMARK_CAPACITY_MINUTES);
+
+    let (_, metrics) = flatten_tasks_diagnostics(&repository, &mut free_time).unwrap();
+
+    assert!(metrics.overload_iteration_count > 0);
+    assert!(metrics.candidate_trial_count > 0);
+}
+
+#[test]
 fn pack診断はatomic探索の1分前進量を計数する() {
     let repository = small_repository();
     let mut no_free_time = SchedulingFreeTimeManager::without_continuous_free_time(8 * 60);
