@@ -446,21 +446,41 @@ fn next_preempting_release(
     releases.sort_unstable();
     releases.dedup();
     for release in releases {
-        let ready = states
+        let mut virtual_states = states.to_vec();
+        let elapsed_work_seconds = (release - now).num_seconds().max(0);
+        if let Some(running) = virtual_states
+            .iter_mut()
+            .find(|state| state.candidate.id == selected.candidate.id)
+        {
+            let worked = elapsed_work_seconds.min(running.remaining_seconds);
+            running.remaining_seconds -= worked;
+            if running.remaining_seconds == 0 {
+                running.completion_time =
+                    Some(checked_segment_end(running.candidate.id, now, worked)?);
+            }
+        }
+
+        // release時点までcurrent atomicが継続した仮想状態で再選択する。
+        // 開始時の全残秒のままでは、実際は完走できるatomicを誤って延期する。
+        let ready = virtual_states
             .iter()
             .enumerate()
             .filter(|(_, state)| state.completion_time.is_none() && state.remaining_seconds > 0)
             .filter(|(_, state)| {
-                release_time(state, states)
+                release_time(state, &virtual_states)
                     .is_some_and(|candidate_release| candidate_release <= release)
             })
             .map(|(index, _)| index)
             .collect::<Vec<_>>();
-        let slacks = deadline_slacks(states, release, fixed_slots);
-        for index in ordered_ready_candidates(states, &ready, critical_deadline(&slacks)) {
-            if candidate_fits_without_future_release(&states[index], release, fixed_slots, &slacks)?
-            {
-                if states[index].candidate.id != selected.candidate.id {
+        let slacks = deadline_slacks(&virtual_states, release, fixed_slots);
+        for index in ordered_ready_candidates(&virtual_states, &ready, critical_deadline(&slacks)) {
+            if candidate_fits_without_future_release(
+                &virtual_states[index],
+                release,
+                fixed_slots,
+                &slacks,
+            )? {
+                if virtual_states[index].candidate.id != selected.candidate.id {
                     return Ok(Some(release));
                 }
                 break;
