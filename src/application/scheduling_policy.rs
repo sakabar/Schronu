@@ -239,8 +239,10 @@ impl AtomicReleasePredictionCache {
         now: DateTime<Local>,
         states: &[FlexibleState],
         frontier_generation: Option<u64>,
+        metrics: &mut ScheduleMetrics,
     ) {
         self.entries.retain(|prediction| {
+            metrics.record_atomic_release_cache_probe();
             prediction.release > now
                 && states[prediction.preemptor_index].completion_time.is_none()
                 && states[prediction.preemptor_index].remaining_seconds > 0
@@ -249,8 +251,9 @@ impl AtomicReleasePredictionCache {
         });
     }
 
-    fn insert(&mut self, prediction: AtomicReleasePrediction) {
+    fn insert(&mut self, prediction: AtomicReleasePrediction, metrics: &mut ScheduleMetrics) {
         if !self.entries.iter().any(|existing| {
+            metrics.record_atomic_release_cache_probe();
             existing.release == prediction.release
                 && existing.preemptor_index == prediction.preemptor_index
                 && existing.critical_deadline == prediction.critical_deadline
@@ -258,6 +261,7 @@ impl AtomicReleasePredictionCache {
         }) {
             self.entries.push(prediction);
         }
+        metrics.record_atomic_release_cache_entries(self.entries.len());
     }
 }
 
@@ -1368,6 +1372,7 @@ fn next_preempting_release(
                                 *index,
                                 Some(critical),
                                 true,
+                                metrics,
                             );
                             return Ok(Some(*release));
                         }
@@ -1397,7 +1402,7 @@ fn next_preempting_release(
                     )? {
                         if *index != selected_index {
                             cache_atomic_release_prediction(
-                                context, *release, *index, critical, false,
+                                context, *release, *index, critical, false, metrics,
                             );
                             return Ok(Some(*release));
                         }
@@ -1474,15 +1479,19 @@ fn cache_atomic_release_prediction(
     preemptor_index: usize,
     critical_deadline: Option<DateTime<Local>>,
     protected_mode: bool,
+    metrics: &mut ScheduleMetrics,
 ) {
     if let Some(cache) = context.atomic_release_predictions {
-        cache.borrow_mut().insert(AtomicReleasePrediction {
-            release,
-            preemptor_index,
-            critical_deadline,
-            protected_mode,
-            frontier_generation: context.frontier.map_or(0, |frontier| frontier.generation),
-        });
+        cache.borrow_mut().insert(
+            AtomicReleasePrediction {
+                release,
+                preemptor_index,
+                critical_deadline,
+                protected_mode,
+                frontier_generation: context.frontier.map_or(0, |frontier| frontier.generation),
+            },
+            metrics,
+        );
     }
 }
 
@@ -1504,6 +1513,7 @@ fn cached_preempting_release(
         return Ok(None);
     };
     for prediction in cache.borrow().entries.iter().copied() {
+        metrics.record_atomic_release_cache_probe();
         // release timelineを再走査せず、index済みpreemptor 1件だけを通常の
         // selection candidateとして再検証する。
         metrics.record_selection_candidate_probe();
@@ -1918,7 +1928,12 @@ pub(super) fn schedule_tasks_by_priority_with_metrics(
         frontier.promote_releases(now, &states, metrics);
         atomic_release_predictions
             .borrow_mut()
-            .retain_future_preemptors_for_generation(now, &states, Some(frontier.generation));
+            .retain_future_preemptors_for_generation(
+                now,
+                &states,
+                Some(frontier.generation),
+                metrics,
+            );
         if let Some((_, fixed_end)) = fixed_slot_containing(now, &fixed_slots) {
             slack_index.record_fixed_skip(fixed_end);
             now = fixed_end;

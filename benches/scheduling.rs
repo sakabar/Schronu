@@ -223,6 +223,10 @@ fn merge_schedule_metrics(target: &mut ScheduleMetrics, source: ScheduleMetrics)
     target.selection_event_count += source.selection_event_count;
     target.selection_candidate_probe_count += source.selection_candidate_probe_count;
     target.release_candidate_probe_count += source.release_candidate_probe_count;
+    target.atomic_release_cache_probe_count += source.atomic_release_cache_probe_count;
+    target.atomic_release_cache_peak_entry_count = target
+        .atomic_release_cache_peak_entry_count
+        .max(source.atomic_release_cache_peak_entry_count);
     target.slack_probe_count += source.slack_probe_count;
     target.sort_count += source.sort_count;
     target.schedule_rebuild_count += source.schedule_rebuild_count;

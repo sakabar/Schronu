@@ -7,6 +7,8 @@ pub(crate) struct ScheduleMetrics {
     pub selection_event_count: usize,
     pub selection_candidate_probe_count: usize,
     pub release_candidate_probe_count: usize,
+    pub atomic_release_cache_probe_count: usize,
+    pub atomic_release_cache_peak_entry_count: usize,
     pub slack_probe_count: usize,
     pub sort_count: usize,
     pub schedule_rebuild_count: usize,
@@ -86,6 +88,25 @@ impl ScheduleMetrics {
         {
             self.release_candidate_probe_count += 1;
         }
+    }
+
+    #[inline(always)]
+    pub fn record_atomic_release_cache_probe(&mut self) {
+        #[cfg(feature = "benchmarking")]
+        {
+            self.atomic_release_cache_probe_count += 1;
+        }
+    }
+
+    #[inline(always)]
+    pub fn record_atomic_release_cache_entries(&mut self, count: usize) {
+        #[cfg(feature = "benchmarking")]
+        {
+            self.atomic_release_cache_peak_entry_count =
+                self.atomic_release_cache_peak_entry_count.max(count);
+        }
+        #[cfg(not(feature = "benchmarking"))]
+        let _ = count;
     }
 
     #[inline(always)]

@@ -384,16 +384,24 @@ fn task完了でfrontier世代が変わるとatomic予測cacheを無効化する
     let mut frontier = SchedulerFrontier::new(&states);
     frontier.promote_releases(now, &states, &mut metrics);
     let mut cache = AtomicReleasePredictionCache::default();
-    cache.insert(AtomicReleasePrediction {
-        release: now + Duration::hours(1),
-        preemptor_index: 2,
-        critical_deadline: None,
-        protected_mode: false,
-        frontier_generation: frontier.generation,
-    });
+    cache.insert(
+        AtomicReleasePrediction {
+            release: now + Duration::hours(1),
+            preemptor_index: 2,
+            critical_deadline: None,
+            protected_mode: false,
+            frontier_generation: frontier.generation,
+        },
+        &mut metrics,
+    );
 
     frontier.complete(0, now + Duration::minutes(1), &states, &mut metrics);
-    cache.retain_future_preemptors_for_generation(now, &states, Some(frontier.generation));
+    cache.retain_future_preemptors_for_generation(
+        now,
+        &states,
+        Some(frontier.generation),
+        &mut metrics,
+    );
 
     assert!(cache.entries.is_empty());
     assert_eq!(
