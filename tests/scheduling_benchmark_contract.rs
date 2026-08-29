@@ -203,14 +203,15 @@ fn atomic_release予測をevent間で再利用する() {
         )
         .unwrap();
         let repository = SchedulingRepository::new(fixture.projects, fixture.now);
-        get_schedule_diagnostics(&repository)
-            .unwrap()
-            .1
-            .release_candidate_probe_count
+        let started = Instant::now();
+        let metrics = get_schedule_diagnostics(&repository).unwrap().1;
+        (metrics, started.elapsed())
     };
 
-    let small_probes = measure(64, 32);
-    let large_probes = measure(256, 128);
+    let (small_metrics, _) = measure(64, 32);
+    let (large_metrics, large_elapsed) = measure(256, 128);
+    let small_probes = small_metrics.release_candidate_probe_count;
+    let large_probes = large_metrics.release_candidate_probe_count;
     let large_candidate_count = 256 + 128;
 
     assert!(
@@ -222,6 +223,21 @@ fn atomic_release予測をevent間で再利用する() {
         large_probes <= large_candidate_count * 12,
         "large event-scale release probes exceeded the linear limit: {large_probes} > {}",
         large_candidate_count * 12
+    );
+    assert_eq!(small_metrics.atomic_release_cache_peak_entry_count, 1);
+    assert_eq!(large_metrics.atomic_release_cache_peak_entry_count, 1);
+    assert!(small_metrics.atomic_release_cache_probe_count > 0);
+    assert!(
+        large_metrics.atomic_release_cache_probe_count
+            <= large_metrics.selection_candidate_probe_count
+                + large_metrics.selection_event_count * 2,
+        "cache bookkeeping exceeded candidate/event work: {} > {}",
+        large_metrics.atomic_release_cache_probe_count,
+        large_metrics.selection_candidate_probe_count + large_metrics.selection_event_count * 2
+    );
+    assert!(
+        large_elapsed <= Duration::from_secs(2),
+        "large event-scale fixture exceeded wall limit: {large_elapsed:?}"
     );
 }
 
