@@ -572,6 +572,24 @@ fn scheduling_policyの単一入口と選択責務を固定する() {
             "schedule use case must not own scheduling selection marker: {forbidden_selection_marker}"
         );
     }
+    assert!(
+        !policy_source.contains("#[derive(Clone)]\nstruct SchedulerFrontier"),
+        "SchedulerFrontier must not regain whole-state Clone"
+    );
+    assert!(
+        !policy_source.contains("frontier.clone()"),
+        "speculative scheduling must not clone the complete frontier"
+    );
+    for rollback_marker in [
+        "struct SpeculativeReleasePromotion",
+        "frontier.begin_speculative_releases(",
+        "frontier.restore_speculative_releases(",
+    ] {
+        assert!(
+            policy_source.contains(rollback_marker),
+            "speculative scheduling must retain rollback-token boundary: {rollback_marker}"
+        );
+    }
 }
 
 #[test]

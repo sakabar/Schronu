@@ -7,7 +7,6 @@ pub(crate) struct ScheduleMetrics {
     pub selection_event_count: usize,
     pub selection_candidate_probe_count: usize,
     pub release_candidate_probe_count: usize,
-    pub frontier_clone_element_count: usize,
     pub slack_probe_count: usize,
     pub sort_count: usize,
     pub schedule_rebuild_count: usize,
