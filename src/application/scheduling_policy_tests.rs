@@ -1,6 +1,32 @@
 use super::*;
 use chrono::TimeZone;
 
+#[test]
+fn slack境界queryは正負交互でもdeadline数を走査しない() {
+    const DEADLINE_COUNT: usize = 512;
+    let values = (0..DEADLINE_COUNT)
+        .map(|index| {
+            let magnitude = i64::try_from(index + 1).unwrap();
+            Some(if index % 2 == 0 {
+                magnitude.saturating_neg()
+            } else {
+                magnitude
+            })
+        })
+        .collect::<Vec<_>>();
+    let tree = SlackRangeTree::new(&values);
+    let mut metrics = ScheduleMetrics::default();
+
+    let minimum = tree.range_min(0..DEADLINE_COUNT, &mut metrics);
+
+    assert_eq!(minimum, Some(-511));
+    assert!(
+        metrics.slack_probe_count <= 32,
+        "alternating slack query visited too many nodes: {}",
+        metrics.slack_probe_count
+    );
+}
+
 fn candidate(
     name: &str,
     first_available_time: DateTime<Local>,
