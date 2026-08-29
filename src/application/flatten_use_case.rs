@@ -536,7 +536,23 @@ fn add_scheduled_work_seconds_by_date(
 mod tests {
     use super::*;
     use crate::test_support::{new_task_handle, TestFreeTimeManager, TestTaskRepository};
-    use chrono::FixedOffset;
+    use chrono::{FixedOffset, TimeZone};
+
+    #[test]
+    fn 日次使用量は予約区間ではなくscheduled_work_secondsを集計する() {
+        let start = Local.with_ymd_and_hms(2026, 8, 11, 12, 0, 0).unwrap();
+        let mut usage = HashMap::new();
+
+        add_scheduled_work_seconds_by_date(
+            &mut usage,
+            start,
+            start + Duration::hours(1),
+            15 * 60,
+        )
+        .unwrap();
+
+        assert_eq!(usage.get(&try_logical_date(start).unwrap()), Some(&(15 * 60)));
+    }
 
     #[test]
     fn flatten_tasksはoperation時刻のlogical_date計算不能を伝搬しtaskを変更しない() {

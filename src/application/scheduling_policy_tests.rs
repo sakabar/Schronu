@@ -100,14 +100,8 @@ fn flexible予定はfixed区間のunionを避ける() {
     assert_eq!(segments.len(), 2);
     assert_eq!(segments[0].scheduled_start, now);
     assert_eq!(segments[0].scheduled_end, now + Duration::hours(1));
-    assert_eq!(
-        segments[1].scheduled_start,
-        now + Duration::minutes(150)
-    );
-    assert_eq!(
-        segments[1].scheduled_end,
-        now + Duration::minutes(210)
-    );
+    assert_eq!(segments[1].scheduled_start, now + Duration::minutes(150));
+    assert_eq!(segments[1].scheduled_end, now + Duration::minutes(210));
 }
 
 #[test]
@@ -151,6 +145,43 @@ fn fixed予定はdependencyが未完了でも指定時刻を動かさない() {
         scheduled_start(&scheduled, fixed_id),
         now + Duration::hours(1)
     );
+}
+
+#[test]
+fn zero_remainingのfixed予定は指定時刻に決定的な点を返す() {
+    let now = Local.with_ymd_and_hms(2026, 8, 11, 12, 0, 0).unwrap();
+    let start = now + Duration::hours(1);
+    let fixed = fixed_candidate("done-fixed", start, 60 * 60, 0);
+    let fixed_id = fixed.id;
+
+    let first = schedule_tasks_by_priority(std::slice::from_ref(&fixed), now).unwrap();
+    let second = schedule_tasks_by_priority(&[fixed], now).unwrap();
+
+    assert_eq!(segments_for(&first, fixed_id).len(), 1);
+    assert_eq!(segments_for(&first, fixed_id)[0].scheduled_start, start);
+    assert_eq!(
+        segments_for(&first, fixed_id)[0].scheduled_end,
+        start + Duration::hours(1)
+    );
+    assert_eq!(segments_for(&first, fixed_id)[0].scheduled_work_seconds, 0);
+    assert_eq!(first[0].scheduled_start, second[0].scheduled_start);
+    assert_eq!(first[0].scheduled_end, second[0].scheduled_end);
+}
+
+#[test]
+fn fixed予定は残作業がwindowより短くても予約区間全体を可視化する() {
+    let now = Local.with_ymd_and_hms(2026, 8, 11, 12, 0, 0).unwrap();
+    let start = now + Duration::hours(1);
+    let fixed = fixed_candidate("partly-done", start, 60 * 60, 15 * 60);
+    let fixed_id = fixed.id;
+
+    let scheduled = schedule_tasks_by_priority(&[fixed], now).unwrap();
+    let segment = segments_for(&scheduled, fixed_id)[0];
+
+    assert_eq!(segment.scheduled_start, start);
+    assert_eq!(segment.scheduled_end, start + Duration::hours(1));
+    assert_eq!(segment.scheduled_work_seconds, 15 * 60);
+    assert_eq!(segment.total_work_seconds, 15 * 60);
 }
 
 #[cfg(feature = "benchmarking")]
