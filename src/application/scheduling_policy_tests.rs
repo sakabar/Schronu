@@ -691,6 +691,36 @@ fn slack境界が5分の後半fragmentを作る場合はdeadline_taskを先行�
 }
 
 #[test]
+fn slack境界とdeadline_releaseが同時でも境界までの作業を捨てない() {
+    let now = Local.with_ymd_and_hms(2026, 9, 1, 9, 0, 0).unwrap();
+    let mut deadline = candidate("deadline", now + Duration::hours(2), 1, 60 * 60);
+    deadline.deadline_time = Some(now + Duration::hours(3));
+    let deadline_id = deadline.id;
+    let important = candidate("important", now, 99, 2 * 60 * 60 + 5 * 60);
+    let important_id = important.id;
+
+    let scheduled = schedule_tasks_by_priority(&[deadline, important], now).unwrap();
+    let important_segments = segments_for(&scheduled, important_id);
+
+    assert_eq!(important_segments[0].scheduled_start, now);
+    assert_eq!(
+        important_segments[0].scheduled_end,
+        now + Duration::hours(2)
+    );
+    assert_eq!(
+        scheduled_start(&scheduled, deadline_id),
+        now + Duration::hours(2)
+    );
+    assert_eq!(
+        important_segments
+            .iter()
+            .map(|segment| segment.scheduled_work_seconds)
+            .sum::<i64>(),
+        2 * 60 * 60 + 5 * 60
+    );
+}
+
+#[test]
 fn deadline_slackは早いdeadlineまでの需要を後続deadlineへ累積する() {
     let now = Local.with_ymd_and_hms(2026, 9, 1, 9, 0, 0).unwrap();
     let mut first = candidate("first-deadline", now, 1, 60 * 60);
