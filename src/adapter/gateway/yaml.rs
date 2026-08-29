@@ -283,8 +283,8 @@ fn matches_legacy_fixed_start_shape(
     deadline_time: Option<DateTime<Local>>,
     estimated_work_seconds: i64,
 ) -> bool {
-    start_time
-        .checked_add_signed(Duration::seconds(estimated_work_seconds))
+    Duration::try_seconds(estimated_work_seconds)
+        .and_then(|duration| start_time.checked_add_signed(duration))
         .is_some_and(|expected_deadline| deadline_time == Some(expected_deadline))
 }
 
