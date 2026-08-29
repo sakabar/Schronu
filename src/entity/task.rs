@@ -1403,7 +1403,16 @@ impl TaskHandle {
 
         let root = self.root()?;
         let mut deadline_updates = Vec::new();
-        self.collect_deadline_updates(Some(deadline_time), Some(None), &mut deadline_updates)?;
+        // 完了済みtaskを境界としてdeadline伝搬を止める既存の不変条件を守る。
+        if self.get_status()? != Status::Done {
+            for child in self.node.children() {
+                Self { node: child }.collect_deadline_updates(
+                    Some(deadline_time),
+                    None,
+                    &mut deadline_updates,
+                )?;
+            }
+        }
 
         // Every borrow is checked before the first write. This makes the appointment
         // fields and descendant deadline propagation a single all-or-nothing mutation.
