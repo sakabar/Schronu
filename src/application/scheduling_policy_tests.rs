@@ -673,6 +673,24 @@ fn deadline_slackが0になる境界でdeadline_taskへ切り替える() {
 }
 
 #[test]
+fn slack境界が5分の後半fragmentを作る場合はdeadline_taskを先行する() {
+    let now = Local.with_ymd_and_hms(2026, 9, 1, 9, 0, 0).unwrap();
+    let mut deadline = candidate("deadline", now, 1, 60 * 60);
+    deadline.deadline_time = Some(now + Duration::hours(3));
+    let deadline_id = deadline.id;
+    let important = candidate("important", now, 99, 2 * 60 * 60 + 5 * 60);
+    let important_id = important.id;
+
+    let scheduled = schedule_tasks_by_priority(&[important, deadline], now).unwrap();
+
+    assert_eq!(scheduled_start(&scheduled, deadline_id), now);
+    assert_eq!(
+        scheduled_start(&scheduled, important_id),
+        now + Duration::hours(1)
+    );
+}
+
+#[test]
 fn deadline_slackは早いdeadlineまでの需要を後続deadlineへ累積する() {
     let now = Local.with_ymd_and_hms(2026, 9, 1, 9, 0, 0).unwrap();
     let mut first = candidate("first-deadline", now, 1, 60 * 60);
