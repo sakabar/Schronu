@@ -9,7 +9,7 @@ use crate::application::scheduling_metrics::ScheduleMetrics;
 use crate::entity::task::TaskHandle;
 use chrono::{DateTime, Duration, Local};
 use std::cmp::{max, Reverse};
-use std::collections::{BinaryHeap, HashMap};
+use std::collections::{BinaryHeap, HashMap, HashSet};
 use uuid::Uuid;
 
 const MIN_SPLIT_SEGMENT_SECONDS: i64 = 5 * 60;
@@ -55,7 +55,7 @@ struct PreparedCandidates {
     pending: Vec<TaskScheduleCandidate>,
     scheduled_fixed: Vec<ScheduledTask>,
     occupied_fixed: Vec<(DateTime<Local>, DateTime<Local>)>,
-    completed_fixed_end_by_id: HashMap<Uuid, DateTime<Local>>,
+    completion_gate_ids: HashSet<Uuid>,
     total_work_seconds_by_id: HashMap<Uuid, i64>,
 }
 
@@ -72,7 +72,7 @@ fn classify_fixed_candidates(
     let mut pending = Vec::with_capacity(candidates.len());
     let mut scheduled_fixed = Vec::new();
     let mut occupied_fixed = Vec::new();
-    let mut completed_fixed_end_by_id = HashMap::new();
+    let mut completion_gate_ids = HashSet::new();
     let mut total_work_seconds_by_id = HashMap::new();
 
     for candidate in candidates {
@@ -130,18 +130,16 @@ fn classify_fixed_candidates(
             excess.remaining_seconds = excess_seconds;
             excess.fixed_start = false;
             excess.first_available_time = max(original_window_end, last_synced_time);
-            // fixed本体は依存完了を待って移動できない。依存は後続のslack policy側で
-            // 実効deadlineを与える対象とし、超過分の開始条件にはしない。
-            excess.dependency_ids.clear();
             pending.push(excess);
         } else {
-            let completed_at = scheduled_fixed
-                .iter()
-                .rev()
-                .find(|scheduled| scheduled.id == candidate.id)
-                .map(|scheduled| scheduled.scheduled_end)
-                .unwrap_or(fixed_segment_start);
-            completed_fixed_end_by_id.insert(candidate.id, completed_at);
+            // 表示windowは先に確定しても、下流dependencyの解放は上流完了後である。
+            // 0秒gateをpendingへ残し、segmentを追加表示せずcompletionだけを伝える。
+            let mut completion_gate = candidate.clone();
+            completion_gate.remaining_seconds = 0;
+            completion_gate.fixed_start = false;
+            completion_gate.first_available_time = max(original_window_end, last_synced_time);
+            completion_gate_ids.insert(candidate.id);
+            pending.push(completion_gate);
         }
     }
 
@@ -149,7 +147,7 @@ fn classify_fixed_candidates(
         pending,
         scheduled_fixed,
         occupied_fixed,
-        completed_fixed_end_by_id,
+        completion_gate_ids,
         total_work_seconds_by_id,
     })
 }
@@ -321,24 +319,12 @@ pub(super) fn schedule_tasks_by_priority_with_metrics(
     let mut ready_indices = BinaryHeap::<Reverse<usize>>::new();
     for (index, candidate) in pending_candidates.iter().enumerate() {
         metrics.record_dependency_candidate_probe();
-        let unresolved_count = candidate
-            .dependency_ids
-            .iter()
-            .filter(|dependency_id| {
-                !prepared
-                    .completed_fixed_end_by_id
-                    .contains_key(dependency_id)
-            })
-            .count();
+        let unresolved_count = candidate.dependency_ids.len();
         unresolved_dependency_counts.push(unresolved_count);
         if unresolved_count == 0 {
             ready_indices.push(Reverse(index));
         }
-        for dependency_id in candidate.dependency_ids.iter().filter(|dependency_id| {
-            !prepared
-                .completed_fixed_end_by_id
-                .contains_key(dependency_id)
-        }) {
+        for dependency_id in &candidate.dependency_ids {
             if candidate_index_by_id.contains_key(dependency_id) {
                 dependent_indices_by_id
                     .entry(*dependency_id)
@@ -351,7 +337,7 @@ pub(super) fn schedule_tasks_by_priority_with_metrics(
     let mut remaining_candidate_count = pending_candidates.len();
     let mut occupied_slots = prepared.occupied_fixed;
     let mut scheduled_tasks = prepared.scheduled_fixed;
-    let mut scheduled_end_by_id = prepared.completed_fixed_end_by_id;
+    let mut scheduled_end_by_id = HashMap::new();
 
     while remaining_candidate_count > 0 {
         let index = ready_indices
@@ -390,14 +376,16 @@ pub(super) fn schedule_tasks_by_priority_with_metrics(
         let mut candidate_scheduled_end = segment_start;
 
         if remaining_seconds == 0 {
-            metrics.record_segment();
-            scheduled_tasks.push(to_scheduled_task(
-                &candidate,
-                segment_start,
-                segment_start,
-                0,
-                total_work_seconds,
-            ));
+            if !prepared.completion_gate_ids.contains(&candidate.id) {
+                metrics.record_segment();
+                scheduled_tasks.push(to_scheduled_task(
+                    &candidate,
+                    segment_start,
+                    segment_start,
+                    0,
+                    total_work_seconds,
+                ));
+            }
         } else if candidate.atomic {
             let start = find_earliest_non_overlapping_start(
                 candidate.id,
