@@ -393,6 +393,58 @@ fn get_scheduleはdependencyを持つfixedの日時範囲errorに指定開始を
 }
 
 #[test]
+fn get_scheduleはfixedで未使用のpending近傍時刻を加算せず指定windowを返す() {
+    let now = fixed_now();
+    let fixed_start = now + Duration::hours(1);
+    let task = task_with_schedule("pending-fixed", fixed_start, 60 * 60, 0);
+    task.set_fixed_start(true).unwrap();
+    task.set_pending_until(
+        DateTime::<Local>::MAX_UTC
+            .with_timezone(&Local)
+            .checked_sub_signed(Duration::minutes(30))
+            .unwrap(),
+    )
+    .unwrap();
+    task.set_orig_status(Status::Pending).unwrap();
+    let task_id = task.get_id().unwrap();
+    let repository = TestTaskRepository::new(vec![task], now);
+
+    let schedule = get_schedule(&repository).unwrap();
+    let fixed = schedule
+        .iter()
+        .find(|segment| segment.task.id == task_id)
+        .unwrap();
+
+    assert_eq!(fixed.scheduled_start, fixed_start);
+    assert_eq!(fixed.scheduled_end, fixed_start + Duration::hours(1));
+}
+
+#[test]
+fn get_scheduleはfixedで未使用のdependency近傍時刻を加算せず指定windowを返す() {
+    let now = fixed_now();
+    let fixed_start = now + Duration::hours(1);
+    let parent = task_with_schedule("fixed-parent", fixed_start, 3 * 24 * 60 * 60, 0);
+    parent.set_fixed_start(true).unwrap();
+    let parent_id = parent.get_id().unwrap();
+    let maximum = DateTime::<Local>::MAX_UTC.with_timezone(&Local);
+    let child_start = maximum.checked_sub_signed(Duration::days(3)).unwrap();
+    let mut child_attr = crate::test_support::new_task_attr("far-dependency");
+    child_attr.set_start_time(child_start);
+    child_attr.set_estimated_work_seconds(24 * 60 * 60);
+    parent.create_as_last_child(child_attr);
+    let repository = TestTaskRepository::new(vec![parent], now);
+
+    let schedule = get_schedule(&repository).unwrap();
+    let fixed = schedule
+        .iter()
+        .find(|segment| segment.task.id == parent_id)
+        .unwrap();
+
+    assert_eq!(fixed.scheduled_start, fixed_start);
+    assert_eq!(fixed.scheduled_end, fixed_start + Duration::days(3));
+}
+
+#[test]
 fn scheduling_policyの単一入口と選択責務を固定する() {
     let policy_source = include_str!("scheduling_policy.rs");
     let use_case_source = include_str!("schedule_use_case.rs");
