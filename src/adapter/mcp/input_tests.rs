@@ -70,8 +70,8 @@ fn common_input_schema_describes_public_value_formats() {
         json!({
             "type": "string",
             "format": "date-time",
-            "description": "An RFC 3339 date-time string with a UTC offset.",
-            "examples": ["2026-08-29T10:00:00+09:00"]
+            "description": "An RFC 3339 date-time string with Z or a numeric UTC offset.",
+            "examples": ["2026-08-29T10:00:00+09:00", "2026-08-29T01:00:00Z"]
         })
     );
     assert_eq!(
@@ -1430,6 +1430,16 @@ fn common_input_cases() -> Vec<ContractCase> {
         ContractCase {
             name: "valid values",
             input: valid_input(),
+            schema_accepts: true,
+            decode: ExpectedDecode::Valid,
+        },
+        ContractCase {
+            name: "RFC 3339 date-time with Z",
+            input: with_field(
+                valid_input(),
+                "pending_until",
+                json!("2026-08-29T01:00:00Z"),
+            ),
             schema_accepts: true,
             decode: ExpectedDecode::Valid,
         },

@@ -88,8 +88,8 @@ impl JsonSchema for Rfc3339DateTime {
         json_schema!({
             "type": "string",
             "format": "date-time",
-            "description": "An RFC 3339 date-time string with a UTC offset.",
-            "examples": ["2026-08-29T10:00:00+09:00"]
+            "description": "An RFC 3339 date-time string with Z or a numeric UTC offset.",
+            "examples": ["2026-08-29T10:00:00+09:00", "2026-08-29T01:00:00Z"]
         })
     }
 }
@@ -675,9 +675,9 @@ impl ListTasksInput {
 pub(super) struct TaskPeriodInput {
     /// The task date-time field to filter. scheduled_start selects tasks whose scheduled start is within the range; created_at, deadline, and completed_at select their corresponding timestamps.
     pub(super) field: TaskPeriodFieldValue,
-    /// The inclusive start of the period as an RFC 3339 date-time string with a UTC offset. Must be earlier than until.
+    /// The inclusive start of the period as an RFC 3339 date-time string with Z or a numeric UTC offset. Must be earlier than until.
     pub(super) from: Rfc3339DateTime,
-    /// The exclusive end of the period as an RFC 3339 date-time string with a UTC offset. Must be later than from.
+    /// The exclusive end of the period as an RFC 3339 date-time string with Z or a numeric UTC offset. Must be later than from.
     pub(super) until: Rfc3339DateTime,
 }
 

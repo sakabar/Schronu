@@ -71,17 +71,19 @@
               "type": "string"
             },
             "from": {
-              "description": "The inclusive start of the period as an RFC 3339 date-time string with a UTC offset. Must be earlier than until.",
+              "description": "The inclusive start of the period as an RFC 3339 date-time string with Z or a numeric UTC offset. Must be earlier than until.",
               "examples": [
-                "2026-08-29T10:00:00+09:00"
+                "2026-08-29T10:00:00+09:00",
+                "2026-08-29T01:00:00Z"
               ],
               "format": "date-time",
               "type": "string"
             },
             "until": {
-              "description": "The exclusive end of the period as an RFC 3339 date-time string with a UTC offset. Must be later than from.",
+              "description": "The exclusive end of the period as an RFC 3339 date-time string with Z or a numeric UTC offset. Must be later than from.",
               "examples": [
-                "2026-08-29T10:00:00+09:00"
+                "2026-08-29T10:00:00+09:00",
+                "2026-08-29T01:00:00Z"
               ],
               "format": "date-time",
               "type": "string"
@@ -155,9 +157,10 @@
           "type": "string"
         },
         "pending_until": {
-          "description": "An RFC 3339 date-time string with a UTC offset.",
+          "description": "An RFC 3339 date-time string with Z or a numeric UTC offset.",
           "examples": [
-            "2026-08-29T10:00:00+09:00"
+            "2026-08-29T10:00:00+09:00",
+            "2026-08-29T01:00:00Z"
           ],
           "format": "date-time",
           "type": "string"
@@ -193,9 +196,10 @@
           "type": "string"
         },
         "pending_until": {
-          "description": "An RFC 3339 date-time string with a UTC offset.",
+          "description": "An RFC 3339 date-time string with Z or a numeric UTC offset.",
           "examples": [
-            "2026-08-29T10:00:00+09:00"
+            "2026-08-29T10:00:00+09:00",
+            "2026-08-29T01:00:00Z"
           ],
           "format": "date-time",
           "type": "string"
@@ -215,9 +219,10 @@
       "additionalProperties": false,
       "properties": {
         "pending_until": {
-          "description": "An RFC 3339 date-time string with a UTC offset.",
+          "description": "An RFC 3339 date-time string with Z or a numeric UTC offset.",
           "examples": [
-            "2026-08-29T10:00:00+09:00"
+            "2026-08-29T10:00:00+09:00",
+            "2026-08-29T01:00:00Z"
           ],
           "format": "date-time",
           "type": "string"
@@ -272,9 +277,10 @@
           "type": "integer"
         },
         "finished_at": {
-          "description": "An RFC 3339 date-time string with a UTC offset.",
+          "description": "An RFC 3339 date-time string with Z or a numeric UTC offset.",
           "examples": [
-            "2026-08-29T10:00:00+09:00"
+            "2026-08-29T10:00:00+09:00",
+            "2026-08-29T01:00:00Z"
           ],
           "format": "date-time",
           "type": "string"
@@ -337,9 +343,10 @@
         "deadline_time": {
           "anyOf": [
             {
-              "description": "An RFC 3339 date-time string with a UTC offset.",
+              "description": "An RFC 3339 date-time string with Z or a numeric UTC offset.",
               "examples": [
-                "2026-08-29T10:00:00+09:00"
+                "2026-08-29T10:00:00+09:00",
+                "2026-08-29T01:00:00Z"
               ],
               "format": "date-time",
               "type": "string"
