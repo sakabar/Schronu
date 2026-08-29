@@ -161,6 +161,31 @@ fn pack_tasks_配置ごとに余差を再計算して収まらないtaskをス�
 }
 
 #[test]
+fn pack_tasksはpartly_doneとzero_workのfixed予約全体を日次容量へ計上する() {
+    let now = fixed_now();
+
+    for actual_work_seconds in [45 * 60, 60 * 60] {
+        let fixed = crate::test_support::new_task_handle("fixed-reservation").unwrap();
+        fixed.sync_clock(now).unwrap();
+        fixed.set_start_time(now).unwrap();
+        fixed.set_estimated_work_seconds(60 * 60).unwrap();
+        fixed.set_actual_work_seconds(actual_work_seconds).unwrap();
+        fixed.set_fixed_start(true).unwrap();
+        let candidate = pending_task("candidate", now, now + Duration::days(1), 30, 1);
+        let repository = TestTaskRepository::new(vec![fixed, candidate.clone()], now);
+        let mut free_time_manager = TestFreeTimeManager::new(60);
+
+        let result = pack_tasks(&repository, &mut free_time_manager).unwrap();
+
+        assert!(
+            result.packed_tasks.is_empty(),
+            "actual={actual_work_seconds}"
+        );
+        assert_eq!(result.skipped_tasks[0].task_id, candidate.get_id().unwrap());
+    }
+}
+
+#[test]
 fn pack_tasks_先行配置後の最新予定で後続taskの前倒し可否を判定する() {
     let now = Local.with_ymd_and_hms(2026, 8, 11, 6, 0, 0).unwrap();
     let first = pending_task("18時間20分", now, now + Duration::days(1), 18 * 60 + 20, 9);

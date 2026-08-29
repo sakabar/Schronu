@@ -580,7 +580,7 @@ mod tests {
     }
 
     #[test]
-    fn 日次使用量は予約区間ではなくscheduled_work_secondsを集計する() {
+    fn fixedの日次使用量はscheduled_work_secondsでなく予約区間を集計する() {
         let start = Local.with_ymd_and_hms(2026, 8, 11, 12, 0, 0).unwrap();
         let mut usage = HashMap::new();
 
@@ -589,8 +589,30 @@ mod tests {
 
         assert_eq!(
             usage.get(&try_logical_date(start).unwrap()),
-            Some(&(15 * 60))
+            Some(&(60 * 60))
         );
+    }
+
+    #[test]
+    fn 平はpartly_doneとzero_workのfixed予約全体を日次容量へ計上する() {
+        let now = Local.with_ymd_and_hms(2026, 8, 11, 12, 0, 0).unwrap();
+
+        for actual_work_seconds in [45 * 60, 60 * 60] {
+            let task = new_task_handle("fixed-reservation").unwrap();
+            task.sync_clock(now).unwrap();
+            task.set_start_time(now).unwrap();
+            task.set_estimated_work_seconds(60 * 60).unwrap();
+            task.set_actual_work_seconds(actual_work_seconds).unwrap();
+            task.set_fixed_start(true).unwrap();
+            let repository = TestTaskRepository::new(vec![task], now);
+            let mut free_time_manager = TestFreeTimeManager::new(30);
+
+            let result = flatten_tasks(&repository, &mut free_time_manager).unwrap();
+
+            assert!(result.had_overload, "actual={actual_work_seconds}");
+            assert_eq!(result.unresolved_overloads.len(), 1);
+            assert_eq!(result.unresolved_overloads[0].excess_work_seconds, 30 * 60);
+        }
     }
 
     #[test]
