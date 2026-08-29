@@ -595,12 +595,26 @@ pub(super) fn schedule_tasks_by_priority_with_metrics(
             let fallback = states
                 .iter()
                 .enumerate()
-                .filter(|(_, state)| state.completion_time.is_none() && state.remaining_seconds > 0)
+                .filter(|(_, state)| state.completion_time.is_none())
                 .min_by_key(|(_, state)| normal_selection_key(state))
                 .map(|(index, _)| index);
             if let Some(index) = fallback {
                 let release = states[index].candidate.first_available_time;
                 now = max(now, release);
+                if states[index].remaining_seconds == 0 {
+                    if !states[index].completion_gate {
+                        metrics.record_segment();
+                        scheduled_tasks.push(to_scheduled_task(
+                            &states[index].candidate,
+                            now,
+                            now,
+                            0,
+                            states[index].total_work_seconds,
+                        ));
+                    }
+                    states[index].completion_time = Some(now);
+                    continue;
+                }
                 let fallback_slacks = deadline_slacks(&states, now, &fixed_slots);
                 schedule_selected_segment(
                     index,
