@@ -5,6 +5,22 @@ use crate::test_support::TestTaskRepository;
 use chrono::{DateTime, Duration, FixedOffset, Local, NaiveDate, TimeZone};
 use uuid::Uuid;
 
+fn is_externally_visible_function_declaration(source_line: &str) -> bool {
+    let line = source_line.trim_start();
+    let declaration = if let Some(declaration) = line.strip_prefix("pub ") {
+        declaration
+    } else if let Some(scoped_visibility) = line.strip_prefix("pub(") {
+        let Some((_, declaration)) = scoped_visibility.split_once(") ") else {
+            return false;
+        };
+        declaration
+    } else {
+        return false;
+    };
+
+    declaration.starts_with("fn ") || declaration.contains(" fn ")
+}
+
 fn fixed_now() -> DateTime<Local> {
     Local.with_ymd_and_hms(2026, 8, 11, 12, 0, 0).unwrap()
 }
@@ -276,4 +292,98 @@ fn get_schedule_atomic_taskを分割せず連続枠へ配置する() {
     assert_eq!(atomic_segments.len(), 1);
     assert_eq!(atomic_segments[0].scheduled_start, now + Duration::hours(7));
     assert_eq!(atomic_segments[0].scheduled_end, now + Duration::hours(17));
+}
+
+#[test]
+fn scheduling_policyの単一入口と選択責務を固定する() {
+    let policy_source = include_str!("scheduling_policy.rs");
+    let use_case_source = include_str!("schedule_use_case.rs");
+    let externally_visible_policy_functions = policy_source
+        .lines()
+        .map(str::trim_start)
+        .filter(|line| is_externally_visible_function_declaration(line))
+        .collect::<Vec<_>>();
+    let candidate_builder = use_case_source
+        .split_once("fn build_schedule_candidates(")
+        .expect("schedule use case must retain candidate construction")
+        .1
+        .split_once("fn calculate_remaining_work_seconds(")
+        .expect("candidate construction must remain bounded by remaining work calculation")
+        .0;
+
+    assert_eq!(
+        externally_visible_policy_functions,
+        ["pub(super) fn schedule_tasks_by_priority_with_metrics("],
+        "scheduling policy must expose only its minimum-visibility production entrypoint"
+    );
+    assert!(
+        !policy_source.lines().map(str::trim_start).any(|line| {
+            (line.starts_with("pub use ")
+                || line.starts_with("pub(crate) use ")
+                || line.starts_with("pub(super) use ")
+                || line.starts_with("pub(in "))
+                && line.contains(" use ")
+        }),
+        "scheduling policy must not expose a second entrypoint through a re-export"
+    );
+    assert!(
+        policy_source.contains("pub(super) fn schedule_tasks_by_priority_with_metrics("),
+        "scheduling policy must retain its single production entrypoint"
+    );
+    assert!(
+        use_case_source.contains("schedule_tasks_by_priority_with_metrics(&candidates"),
+        "schedule use case must delegate placement to the scheduling policy entrypoint"
+    );
+    assert!(
+        candidate_builder.contains("attributes.sort_by_key(|(id, _)| *id);"),
+        "candidate construction must retain deterministic UUID error selection"
+    );
+    assert_eq!(
+        use_case_source.matches(".sort_by").count(),
+        1,
+        "schedule use case must not add a selection-order sort"
+    );
+    for forbidden_selection_marker in [
+        "let sort_key",
+        "sort_by(|",
+        "deadline_time.is_none()",
+        "Reverse(",
+        "!task.get_priority()",
+    ] {
+        assert!(
+            !use_case_source.contains(forbidden_selection_marker),
+            "schedule use case must not own scheduling selection marker: {forbidden_selection_marker}"
+        );
+    }
+}
+
+#[test]
+fn policy入口検出はvisibilityとfunction修飾を独立に扱う() {
+    for declaration in [
+        "pub fn direct() {}",
+        "pub async fn asynchronous() {}",
+        "pub const fn constant() {}",
+        "pub unsafe fn unsafe_entry() {}",
+        "pub extern \"C\" fn external() {}",
+        "pub(crate) async fn crate_asynchronous() {}",
+        "pub(super) const fn parent_constant() {}",
+        "pub(in crate::application) unsafe fn scoped_unsafe() {}",
+    ] {
+        assert!(
+            is_externally_visible_function_declaration(declaration),
+            "externally visible function declaration must be detected: {declaration}"
+        );
+    }
+
+    for declaration in [
+        "fn private() {}",
+        "async fn private_asynchronous() {}",
+        "pub struct NotAFunction;",
+        "pub(crate) const NOT_A_FUNCTION: i64 = 0;",
+    ] {
+        assert!(
+            !is_externally_visible_function_declaration(declaration),
+            "non-entrypoint declaration must not be detected: {declaration}"
+        );
+    }
 }
