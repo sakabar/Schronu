@@ -852,6 +852,7 @@ fn test_make_appointment_正常系1() {
 
     task.set_estimated_work_seconds(3600).unwrap();
     let appointment_start_time = Local.with_ymd_and_hms(2023, 5, 19, 1, 23, 45).unwrap();
+    let before_revision = root_task.get_persistent_mutation_revision().unwrap();
 
     task.make_appointment(appointment_start_time).unwrap();
 
@@ -862,6 +863,48 @@ fn test_make_appointment_正常系1() {
     assert_eq!(
         &task.get_deadline_time_opt().unwrap(),
         &Some(Local.with_ymd_and_hms(2023, 5, 19, 2, 23, 45).unwrap())
+    );
+    assert!(task.get_fixed_start().unwrap());
+    assert_eq!(
+        root_task.get_persistent_mutation_revision().unwrap(),
+        before_revision + 1
+    );
+}
+
+#[test]
+fn test_set_flexible_start_timeは開始時刻とfixed_startを1回の更新で変更する() {
+    let task = new_test_task_handle("通常task").unwrap();
+    task.set_fixed_start(true).unwrap();
+    let start_time = Local.with_ymd_and_hms(2026, 8, 21, 9, 0, 0).unwrap();
+    let before_revision = task.get_persistent_mutation_revision().unwrap();
+
+    task.set_flexible_start_time(start_time).unwrap();
+
+    assert_eq!(task.get_start_time().unwrap(), start_time);
+    assert!(!task.get_fixed_start().unwrap());
+    assert_eq!(
+        task.get_persistent_mutation_revision().unwrap(),
+        before_revision + 1
+    );
+}
+
+#[test]
+fn test_set_flexible_start_timeは借用競合時に部分更新とrevision更新をしない() {
+    let task = new_test_task_handle("通常task").unwrap();
+    task.set_fixed_start(true).unwrap();
+    let before_snapshot = task.snapshot().unwrap();
+    let before_revision = task.get_persistent_mutation_revision().unwrap();
+    let new_start_time = Local.with_ymd_and_hms(2026, 8, 21, 9, 0, 0).unwrap();
+
+    let actual = task.with_shared_data_borrow_for_test(|| {
+        task.set_flexible_start_time(new_start_time)
+    });
+
+    assert_eq!(actual, Err(TaskTreeError::Borrow));
+    assert_eq!(task.snapshot().unwrap(), before_snapshot);
+    assert_eq!(
+        task.get_persistent_mutation_revision().unwrap(),
+        before_revision
     );
 }
 

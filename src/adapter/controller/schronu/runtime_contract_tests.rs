@@ -1021,6 +1021,7 @@ fn test_execute_始と約の不正時刻はtask日時を変更しない() {
         let task = new_test_task_handle("不正時刻対象").unwrap();
         task.set_start_time(original_start);
         task.set_deadline_time_opt(Some(original_deadline));
+        task.set_fixed_start(true).unwrap();
         let task_id = task.get_id().unwrap();
 
         let result = execute_command_for_test(task, now, Some(task_id), command);
@@ -1030,6 +1031,7 @@ fn test_execute_始と約の不正時刻はtask日時を変更しない() {
             result.task.get_deadline_time_opt().unwrap(),
             Some(original_deadline)
         );
+        assert!(result.task.get_fixed_start().unwrap());
         assert_eq!(result.focused_task_id_opt, Some(task_id));
     }
 }
@@ -2312,15 +2314,18 @@ fn test_project作成commandの製品handler経路がtyped_fieldと表示とfocu
         appointment_result.task.get_start_time().unwrap(),
         Local.with_ymd_and_hms(2026, 8, 12, 14, 30, 0).unwrap()
     );
+    assert!(appointment_result.task.get_fixed_start().unwrap());
     assert_eq!(appointment_result.focused_task_id_opt, Some(appointment_id));
 
     let start_task = new_test_task_handle("開始").unwrap();
+    start_task.set_fixed_start(true).unwrap();
     let start_id = start_task.get_id().unwrap();
     let start_result = execute_command_for_test(start_task, now, Some(start_id), "始 16:45 8/13");
     assert_eq!(
         start_result.task.get_start_time().unwrap(),
         Local.with_ymd_and_hms(2026, 8, 13, 16, 45, 0).unwrap()
     );
+    assert!(!start_result.task.get_fixed_start().unwrap());
 
     for invalid_command in ["新 123 10", "連 手順 -1 1 2", "繰 習慣 -1 毎 09:00 10:00"] {
         let task = new_test_task_handle("変更なし").unwrap();
