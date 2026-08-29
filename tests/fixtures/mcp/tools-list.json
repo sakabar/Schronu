@@ -1,6 +1,6 @@
 [
   {
-    "description": "Get the task that should be worked on now.",
+    "description": "Return the task Schronu currently recommends working on, or null when no task is available.",
     "inputSchema": {
       "additionalProperties": false,
       "properties": {},
@@ -10,12 +10,12 @@
     "name": "get_focus"
   },
   {
-    "description": "Get one task by UUID.",
+    "description": "Return an existing task by its UUID.",
     "inputSchema": {
       "additionalProperties": false,
       "properties": {
         "task_id": {
-          "description": "A valid UUID string.",
+          "description": "The UUID of the existing task to return.",
           "examples": [
             "80d7db87-324e-4e8d-a5b7-ff78cd5bf39a"
           ],
@@ -31,11 +31,12 @@
     "name": "get_task"
   },
   {
-    "description": "List tasks filtered by period, status, and category.",
+    "description": "List tasks in project-tree pre-order, optionally filtered by period, effective status, and category. Different filters are combined using AND.",
     "inputSchema": {
       "additionalProperties": false,
       "properties": {
         "categories": {
+          "description": "Categories to include. Values within the array are combined using OR, and null selects uncategorized tasks. Omit this field or pass an empty array to skip category filtering.",
           "items": {
             "anyOf": [
               {
@@ -57,8 +58,10 @@
         },
         "period": {
           "additionalProperties": false,
+          "description": "A half-open RFC 3339 date-time range [from, until) applied to the selected task field. This filter is combined with status and category filters using AND. Omit this field to skip period filtering.",
           "properties": {
             "field": {
+              "description": "The task date-time field to filter. scheduled_start selects tasks whose scheduled start is within the range; created_at, deadline, and completed_at select their corresponding timestamps.",
               "enum": [
                 "scheduled_start",
                 "created_at",
@@ -68,7 +71,7 @@
               "type": "string"
             },
             "from": {
-              "description": "An RFC 3339 date-time string with a UTC offset.",
+              "description": "The inclusive start of the period as an RFC 3339 date-time string with a UTC offset. Must be earlier than until.",
               "examples": [
                 "2026-08-29T10:00:00+09:00"
               ],
@@ -76,7 +79,7 @@
               "type": "string"
             },
             "until": {
-              "description": "An RFC 3339 date-time string with a UTC offset.",
+              "description": "The exclusive end of the period as an RFC 3339 date-time string with a UTC offset. Must be later than from.",
               "examples": [
                 "2026-08-29T10:00:00+09:00"
               ],
@@ -92,6 +95,7 @@
           "type": "object"
         },
         "statuses": {
+          "description": "Effective task statuses to include. Values within the array are combined using OR. Omit this field or pass an empty array to skip status filtering.",
           "items": {
             "enum": [
               "todo",
@@ -109,12 +113,12 @@
     "name": "list_tasks"
   },
   {
-    "description": "Get Schronu's calculated task schedule for a date range.",
+    "description": "Return calculated schedule segments whose intervals overlap the selected range of local logical days. Logical days start at 06:00 local time.",
     "inputSchema": {
       "additionalProperties": false,
       "properties": {
         "from": {
-          "description": "A calendar date in YYYY-MM-DD format without a time or time zone.",
+          "description": "The logical date at the inclusive start of the range, in YYYY-MM-DD format without a time or time zone. Its boundary is 06:00 local time. With no until, selects this one logical day; with no from or until, the range starts now.",
           "examples": [
             "2026-08-29"
           ],
@@ -122,7 +126,7 @@
           "type": "string"
         },
         "until": {
-          "description": "A calendar date in YYYY-MM-DD format without a time or time zone.",
+          "description": "The logical date at the exclusive end of the range, in YYYY-MM-DD format without a time or time zone. Its boundary is 06:00 local time. With no from, the range starts now; with neither bound, it ends at the next 06:00 boundary.",
           "examples": [
             "2026-08-29"
           ],
