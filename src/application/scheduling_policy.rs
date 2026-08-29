@@ -1,21 +1,44 @@
 //! Schronuの予定配置policy。
 //!
+//! # Policy
+//!
 //! Schronuは「重要なtaskを先に進める」ことと「締切までに必要な容量を残す」
-//! ことを分けて扱う。flexible taskは通常priority順だが、deadline `D`のslackが
-//! 0以下になった時だけ、そのdeadline groupを保護する。
+//! ことを分けて扱う。flexible taskは通常priority順だが、effective deadline `D`の
+//! slackが0以下になった時だけ、最も早いcritical groupを保護する。
 //!
-//! `slack(D, t) = fixed予約を除く[t, D)の空き秒 - deadlineがD以下の未完了残秒`
+//! `slack(D,t)=fixed予約を除く[t,D)の空き秒 - effective deadline<=Dのunfinished flexible残秒`
 //!
-//! 用語:
+//! 通常選択はpriority降順、effective deadline、rank、UUIDの順、保護選択は
+//! effective deadline昇順、priority降順、rank、UUIDの順で決定する。
+//!
+//! # Glossary
+//!
 //! - fixed: 指定開始を動かさず、flexibleに対しては予約区間となる予定。
+//! - flexible: fixed予約と各eventの間に、選択policyで配置するtask。
+//! - release: `start_time`、`pending_until`、dependency完了をすべて満たす最早時刻。
 //! - effective deadline: 明示deadlineと、依存先fixedの開始時刻のうち早い方。
-//! - event: task完了、fixed開始、candidate release、またはslackが0になる時点。
+//! - cumulative demand: effective deadlineが`D`以下のunfinished flexible残秒の合計。
+//! - slack: `D`までのfree capacityからcumulative demandを引いた秒数。
+//! - atomic: 中断せず1segmentで完了できる枠がある時だけ開始するtask。
+//! - completion gate: window内で作業が完了するfixedの表示予約を先に確定しつつ、
+//!   dependencyには元window終了後の完了だけを通知する0秒の内部candidate。
 //!
-//! 入口関数は4 phase(分類、effective deadline計算、event駆動配置、表示sort)を
-//! その順に読める形に保つ。主な不変条件はfixedを動かさないこと、fixed同士の
-//! 重複を隠さないこと、作業秒を欠落・重複させないこと、依存完了前に着手しない
-//! ことである。deadlineまたは依存が実現不能でもloopせず、決定的なfallback配置を
-//! 返す。これにより上位層が既存の期限超過表示を行える。
+//! # Four phases
+//!
+//! 1. fixedとflexibleを分類する。fixed同士は重複しても動かさない。
+//! 2. fixed予約をunion化し、dependencyのsynthetic effective deadlineとcompletion gateを作る。
+//! 3. task完了、fixed境界、release、slackが0になる時刻ごとに再選択する。
+//! 4. 選択順とは別のkeyで表示結果を決定的にsortする。
+//!
+//! # Invariants and fallback
+//!
+//! scheduled workの合計は各taskの残作業量と一致し、fixedは移動せず、flexibleは
+//! fixed予約とも他のflexible segmentとも重ならず、dependency完了前には着手しない。
+//! 同じ入力の結果は常に同じであり、日時加算不能はtask ID、開始、秒数を保持したerrorに
+//! する。deadline、missing dependency、cycleが実現不能でもloopやtask消失を起こさず、
+//! 決定的なfallback配置を返すため、上位層が期限超過を可視化できる。
+//!
+//! 詳しい例と実装上の理由は`docs/design/scheduling_policy.md`を参照する。
 
 use crate::application::scheduling_metrics::ScheduleMetrics;
 use crate::entity::task::TaskHandle;
@@ -1889,6 +1912,10 @@ fn schedule_tasks_by_priority(
     )
 }
 
+/// 予定配置policyの唯一の入口。
+///
+/// phase順を保つことで、fixed予約、容量保護、実作業、表示順の責務が混ざらない。
+/// helperはこのmodule内に閉じ、上位use caseが別の選択規則を持たないようにする。
 pub(super) fn schedule_tasks_by_priority_with_metrics(
     candidates: &[TaskScheduleCandidate],
     last_synced_time: DateTime<Local>,
