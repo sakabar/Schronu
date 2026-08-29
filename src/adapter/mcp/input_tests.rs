@@ -147,7 +147,7 @@ fn reference_tool_inputs_match_public_schema_and_decode_contract() {
                 "task_id": {
                     "type": "string",
                     "format": "uuid",
-                    "description": "A valid UUID string.",
+                    "description": "The UUID of the existing task to return.",
                     "examples": ["80d7db87-324e-4e8d-a5b7-ff78cd5bf39a"]
                 }
             },

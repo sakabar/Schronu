@@ -9,22 +9,22 @@ pub(super) fn tool_definitions() -> Vec<Value> {
     vec![
         json!({
             "name": "get_focus",
-            "description": "Get the task that should be worked on now.",
+            "description": "Return the task Schronu currently recommends working on, or null when no task is available.",
             "inputSchema": generated_input_schema::<GetFocusInput>()
         }),
         json!({
             "name": "get_task",
-            "description": "Get one task by UUID.",
+            "description": "Return an existing task by its UUID.",
             "inputSchema": generated_input_schema::<GetTaskInput>()
         }),
         json!({
             "name": "list_tasks",
-            "description": "List tasks filtered by period, status, and category.",
+            "description": "List tasks in project-tree pre-order, optionally filtered by period, effective status, and category. Different filters are combined using AND.",
             "inputSchema": generated_input_schema::<ListTasksInput>()
         }),
         json!({
             "name": "get_schedule",
-            "description": "Get Schronu's calculated task schedule for a date range.",
+            "description": "Return calculated schedule segments whose intervals overlap the selected range of local logical days. Logical days start at 06:00 local time.",
             "inputSchema": generated_input_schema::<GetScheduleInput>()
         }),
         json!({

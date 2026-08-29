@@ -392,6 +392,7 @@ pub(super) struct GetFocusInput {}
 #[derive(Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub(super) struct GetTaskInput {
+    /// The UUID of the existing task to return.
     pub(super) task_id: UuidValue,
 }
 
@@ -633,10 +634,13 @@ fn require_update_task_field(schema: &mut Schema) {
 #[derive(Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub(super) struct ListTasksInput {
+    /// A half-open RFC 3339 date-time range [from, until) applied to the selected task field. This filter is combined with status and category filters using AND. Omit this field to skip period filtering.
     #[serde(default)]
     pub(super) period: OptionalValue<TaskPeriodInput>,
+    /// Effective task statuses to include. Values within the array are combined using OR. Omit this field or pass an empty array to skip status filtering.
     #[serde(default)]
     pub(super) statuses: OptionalValue<Vec<StatusValue>>,
+    /// Categories to include. Values within the array are combined using OR, and null selects uncategorized tasks. Omit this field or pass an empty array to skip category filtering.
     #[serde(default)]
     #[schemars(schema_with = "categories_schema")]
     pub(super) categories: OptionalValue<Vec<Option<ProjectCategoryValue>>>,
@@ -669,8 +673,11 @@ impl ListTasksInput {
 #[derive(Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub(super) struct TaskPeriodInput {
+    /// The task date-time field to filter. scheduled_start selects tasks whose scheduled start is within the range; created_at, deadline, and completed_at select their corresponding timestamps.
     pub(super) field: TaskPeriodFieldValue,
+    /// The inclusive start of the period as an RFC 3339 date-time string with a UTC offset. Must be earlier than until.
     pub(super) from: Rfc3339DateTime,
+    /// The exclusive end of the period as an RFC 3339 date-time string with a UTC offset. Must be later than from.
     pub(super) until: Rfc3339DateTime,
 }
 
@@ -859,8 +866,10 @@ fn categories_schema(generator: &mut SchemaGenerator) -> Schema {
 #[derive(Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub(super) struct GetScheduleInput {
+    /// The logical date at the inclusive start of the range, in YYYY-MM-DD format without a time or time zone. Its boundary is 06:00 local time. With no until, selects this one logical day; with no from or until, the range starts now.
     #[serde(default)]
     pub(super) from: OptionalValue<IsoDate>,
+    /// The logical date at the exclusive end of the range, in YYYY-MM-DD format without a time or time zone. Its boundary is 06:00 local time. With no from, the range starts now; with neither bound, it ends at the next 06:00 boundary.
     #[serde(default)]
     pub(super) until: OptionalValue<IsoDate>,
 }
