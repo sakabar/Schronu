@@ -45,7 +45,7 @@
 | TD-007 | P1 | 完了 | L | CLIとMCPでrepository transactionが別々に組み立てられている |
 | TD-008 | P1 | 完了 | M | CIがリポジトリ規約を満たさず、ビルド再現性も固定されていない |
 | TD-009 | P2 | 完了 | L | entity層がYAML形式へ依存している |
-| TD-010 | P2 | 完了 | L | 現在時刻、UUID、業務日境界がドメイン内部へ埋め込まれている |
+| TD-010 | P2 | 完了 | L | 現在時刻、UUID、論理日境界がドメイン内部へ埋め込まれている |
 | TD-011 | P2 | 完了 | L | MCPのschema、入力検証、Rust入力型、JSON出力が重複している |
 | TD-012 | P2 | 完了 | L | flatten・pack・scheduleの再計算コストに性能上限が定義されていない |
 | TD-013 | P2 | 完了 | M | Spreadsheetの列契約が複数言語・文書へ重複している |
@@ -84,7 +84,7 @@
 
 - 曜日ごとの定期ルールをsource of truthとして保持し、問い合わせ区間をローカル日付境界で分割して各日にルールを適用する。
 - 日付別mapは明示的に登録した例外や計算cacheだけに限定し、固定の70日展開へ正確性を依存させない。
-- 半開区間`[start, end)`、23:59-翌00:00、複数日、70日超、業務日境界06:00の扱いを契約として固定する。
+- 半開区間`[start, end)`、23:59-翌00:00、複数日、70日超、論理日境界06:00の扱いを契約として固定する。
 - `end_of_day_hour`と`end_of_day_minute`を利用するなら正しいkeyと有効範囲を検証し、不要ならschemaとdomain modelから同時に除去する。
 
 #### 完了条件
@@ -505,12 +505,12 @@
 - TD-003のstrict decodeを先行する。
 - TD-004のtree model全面変更とは分離し、現在のsnapshot APIから移動を始める。
 
-### TD-010: 現在時刻、UUID、業務日境界がドメイン内部へ埋め込まれている
+### TD-010: 現在時刻、UUID、論理日境界がドメイン内部へ埋め込まれている
 
 - 優先度: `P2`
 - 概算規模: `L`
 - 完了日: 2026-08-21
-- 対応: entityのtask生成からsystem clockとUUID生成を除去し、operation固定時刻と注入可能なUUID生成器を持つ`TaskFactory`へ集約した。06:00の業務日境界、subjective date、日次終端offset、deadline bufferを`BusinessDateTimePolicy`へ統合し、曖昧・不存在local timeは情報付き`ApplicationError`として伝搬する。CLI、MCP、YAML decodeはoperation入口の同一時刻snapshotをreload、入力既定値、task生成へ共有する。
+- 対応: entityのtask生成からsystem clockとUUID生成を除去し、operation固定時刻と注入可能なUUID生成器を持つ`TaskFactory`へ集約した。06:00の論理日境界、logical date、日次終端offset、deadline bufferを`LogicalDateTimePolicy`へ統合し、曖昧・不存在local timeは情報付き`ApplicationError`として伝搬する。CLI、MCP、YAML decodeはoperation入口の同一時刻snapshotをreload、入力既定値、task生成へ共有する。
 - 検証: `cargo fmt --check`、`cargo clippy --locked --all-targets -- -D warnings`、`cargo test --locked`、`git diff --check`に成功した。testは813件成功、1件ignored、失敗0件(entity/applicationを含むlib 465件、CLI 331件、MCP 2件、MCP stdio 12件、Spreadsheet 3件)。entity production codeの`Local::now()` / `Uuid::new_v4()`と旧暗黙constructorが0件であることも静的監査した。
 
 #### 現状と根拠
@@ -520,7 +520,7 @@
 - `src/application/daily_capacity.rs:109-124`は日付を`Local::now().timezone()`でlocal datetimeへ変換する。
 - `src/entity/datetime.rs:12-25`は06:00を直接埋め込み、`LocalResult`を`unwrap`する。
 - MCPにもreload時刻や省略時の完了時刻として`Local::now()`があり、呼出し単位で時刻snapshotが統一されない可能性がある。
-- deadline bufferの5分・60分や業務日終端offsetは複数層で扱われる。
+- deadline bufferの5分・60分や論理日終端offsetは複数層で扱われる。
 
 #### 影響
 
@@ -532,7 +532,7 @@
 
 - application operationの入口で`now`を1回取得し、entityとgatewayへ明示的に渡す。
 - ID生成もapplication境界のfactoryへ置き、productionはUUID v4、testは固定列を使う。
-- 06:00境界、subjective date start/end、deadline bufferを1つの日時ポリシーへ集約する。
+- 06:00境界、logical date start/end、deadline bufferを1つの日時ポリシーへ集約する。
 - local datetime変換は`LocalResult`の`Single`のみを採用し、`Ambiguous`と`None`を情報付きエラーにする。
 
 #### 完了条件
@@ -754,12 +754,12 @@
 - 優先度: `P3`
 - 概算規模: `M`
 - 完了日: 2026-08-29
-- 対応: TD-001、TD-010等で既に06:00の業務日境界、5分・60分のdeadline buffer、30分の日次終端offset、28日・35日のflatten範囲をpolicy化し、busy-timeの70日限定展開を解消していた。今回、1日・1400日のproject初期延期、一覧表示の28日・幅70・fallback日付、日次1440分を意味付きpolicyへ集約した。`BusyTimeSlot`をcrate内部APIへ限定して未使用のname保持を除去し、YAMLの`name`必須・文字列validationは維持した。古いcommented code、疑問形コメント、FIXME、task statusを指す`TODO`表記を整理した。CLI、YAML、MCP、Spreadsheetの挙動は変更していない。
+- 対応: TD-001、TD-010等で既に06:00の論理日境界、5分・60分のdeadline buffer、30分の日次終端offset、28日・35日のflatten範囲をpolicy化し、busy-timeの70日限定展開を解消していた。今回、1日・1400日のproject初期延期、一覧表示の28日・幅70・fallback日付、日次1440分を意味付きpolicyへ集約した。`BusyTimeSlot`をcrate内部APIへ限定して未使用のname保持を除去し、YAMLの`name`必須・文字列validationは維持した。古いcommented code、疑問形コメント、FIXME、task statusを指す`TODO`表記を整理した。CLI、YAML、MCP、Spreadsheetの挙動は変更していない。
 - 検証: `cargo fmt --check`、`cargo clippy --locked --all-targets -- -D warnings`、`cargo test --locked`、`git diff --check`に成功した。testは982件成功、1件ignored、失敗0件だった。
 
 #### 対応前の現状と根拠
 
-- 06:00の業務日境界、5分のsplit/deadline buffer、30分の日次終端offset、28日・35日のflatten範囲、70日のbusy-time展開、1400日のhobby延期などが複数moduleやcommand branchへ直接埋め込まれる。
+- 06:00の論理日境界、5分のsplit/deadline buffer、30分の日次終端offset、28日・35日のflatten範囲、70日のbusy-time展開、1400日のhobby延期などが複数moduleやcommand branchへ直接埋め込まれる。
 - `src/entity/busy_time_slot.rs`の曜日と日次終了時刻は`_`付きfieldとして保持されるが利用されない。
 - `src/entity/task.rs:580`付近などに大きなコメントアウト済み実装が残る。
 - `src/entity/task.rs:1241`付近の「cloneして大丈夫か?」、`1559`付近の未完了テストコメント、controller内の重複を示すFIXMEなど、設計判断が未確定のまま残る。
@@ -773,7 +773,7 @@
 
 #### 推奨する改善方針
 
-- 値を単に共通定数へ移すのではなく、業務日、split、deadline、flatten horizonなど意味のあるpolicy単位へ集約する。
+- 値を単に共通定数へ移すのではなく、論理日、split、deadline、flatten horizonなど意味のあるpolicy単位へ集約する。
 - 未使用fieldは契約と履歴を確認し、使用する項目と削除する項目を分ける。
 - コメントアウトコードはversion controlへ委ねて除去する。
 - 未解決コメントは背景、選択肢、完了条件を持つbacklog itemへ移し、コード内には現在の理由だけを残す。

@@ -452,7 +452,7 @@ pub(super) fn execute_defer(
         datetime: now,
     };
     let duration = match unit_str.chars().next() {
-        // 日単位の延期は固定24時間ではなく、次の業務日開始を基準にする
+        // 日単位の延期は固定24時間ではなく、次の論理日開始を基準にする
         Some('日') | Some('d') => {
             let target = defer_logical_date_target(now, amount)?;
             target - now
