@@ -49,7 +49,7 @@ pub(super) fn tool_definitions() -> Vec<Value> {
         }),
         json!({
             "name": "complete_task",
-            "description": "Complete an existing task that has no unfinished children. This records an end time and can add work seconds; completing a child of a routine parent can create the next occurrence and adjust the parent's estimate.",
+            "description": "Complete an existing task that has no unfinished children. This records an end time and can add work seconds; completing a child of a routine parent can create the next occurrence and adjust the parent's estimate. This operation is not idempotent: calling it again for an already completed task adds the requested work again and can create another routine occurrence.",
             "inputSchema": generated_input_schema::<CompleteTaskInput>()
         }),
         json!({
