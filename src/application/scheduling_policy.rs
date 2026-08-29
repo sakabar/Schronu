@@ -361,5 +361,5 @@ fn to_scheduled_task(
 }
 
 #[cfg(test)]
-#[path = "schedule_use_case_tests.rs"]
+#[path = "scheduling_policy_tests.rs"]
 mod tests;
