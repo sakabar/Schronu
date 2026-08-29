@@ -81,6 +81,25 @@ fn typical_scheduleはslot探索とsortの上限内に収まる() {
 }
 
 #[test]
+fn distinct_deadline_scheduleはdeadline_groupを対数探索する() {
+    const CANDIDATE_COUNT: usize = 512;
+    let fixture = SchedulingFixture::distinct_deadlines(CANDIDATE_COUNT).unwrap();
+    let repository = SchedulingRepository::new(fixture.projects, fixture.now);
+
+    let (schedule, metrics) = get_schedule_diagnostics(&repository).unwrap();
+
+    assert_eq!(metrics.candidate_count, CANDIDATE_COUNT);
+    assert_eq!(schedule.len(), CANDIDATE_COUNT);
+    assert!(metrics.selection_event_count >= CANDIDATE_COUNT);
+    assert!(
+        metrics.slack_probe_count <= CANDIDATE_COUNT * 128,
+        "distinct deadline probes exceeded the logarithmic index limit: {} > {}",
+        metrics.slack_probe_count,
+        CANDIDATE_COUNT * 128
+    );
+}
+
+#[test]
 fn pack診断は通常経路と同じ結果を返しschedule再構築を計数する() {
     let expected_repository = small_repository();
     let mut expected_free_time = SchedulingFreeTimeManager::new(DAILY_FREE_MINUTES);

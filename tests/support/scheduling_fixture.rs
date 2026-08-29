@@ -84,6 +84,30 @@ impl SchedulingFixture {
         fixture.projects.push(flexible);
         Ok(fixture)
     }
+
+    pub fn distinct_deadlines(count: usize) -> Result<Self, TaskTreeError> {
+        let now = fixed_now();
+        let mut sequence = 0_u64;
+        let mut projects = Vec::with_capacity(count);
+        for index in 0..count {
+            let task = new_task(
+                &format!("fixture-project-distinct-deadline-{index:04}"),
+                &mut sequence,
+                now,
+                Status::Todo,
+            )?;
+            task.set_estimated_work_seconds(60)?;
+            task.set_deadline_time_opt(Some(
+                now + Duration::seconds((count + index + 1) as i64 * 60),
+            ))?;
+            projects.push(task);
+        }
+        Ok(Self {
+            projects,
+            now,
+            seed: TYPICAL_SEED,
+        })
+    }
 }
 
 fn fixed_now() -> DateTime<Local> {
