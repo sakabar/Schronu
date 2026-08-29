@@ -1012,7 +1012,7 @@ fn flatten_displayはtyped移動rowと超過warningと未解消理由を既存�
             "newline:[Warn] 平\t2026-08-27\t未解消 00:01",
             "newline:  相手待ち: 1件",
             "newline:    aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa\t代表task",
-            "newline:  業務日境界をまたぐ: 2件",
+            "newline:  論理日境界をまたぐ: 2件",
             "newline:  1日の最大容量を超える: 3件",
             "newline:  自身の期限により翌日06:00を維持できない: 4件",
             "newline:  仮延期によって関連taskの期限を超える: 5件",

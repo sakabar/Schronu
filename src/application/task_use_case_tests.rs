@@ -8,6 +8,35 @@ fn fixed_now() -> DateTime<Local> {
     Local.with_ymd_and_hms(2026, 8, 11, 12, 0, 0).unwrap()
 }
 
+#[test]
+fn logical_date_errorは論理日用語で表示する() {
+    let datetime = fixed_now();
+    let date = datetime.date_naive();
+
+    assert_eq!(
+        ApplicationError::SubjectiveDateOutOfRange {
+            operation: "logical_date",
+            datetime,
+        }
+        .to_string(),
+        format!("logical date operation logical_date is outside the supported range: {datetime}")
+    );
+    assert_eq!(
+        ApplicationError::SubjectiveDateStartOutOfRange { date }.to_string(),
+        format!("logical date start is outside the supported range: date={date}")
+    );
+    assert_eq!(
+        ApplicationError::SubjectiveDateEndOutOfRange {
+            date,
+            end_of_day_offset_minutes: 30,
+        }
+        .to_string(),
+        format!(
+            "logical date end is outside the supported range: date={date}, end_of_day_offset_minutes=30"
+        )
+    );
+}
+
 fn create_task_with_fresh_factory(
     repository: &mut dyn TaskRepositoryTrait,
     input: CreateTaskInput,
