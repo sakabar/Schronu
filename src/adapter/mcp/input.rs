@@ -50,7 +50,12 @@ impl JsonSchema for UuidValue {
     }
 
     fn json_schema(_generator: &mut SchemaGenerator) -> Schema {
-        json_schema!({"type": "string", "format": "uuid"})
+        json_schema!({
+            "type": "string",
+            "format": "uuid",
+            "description": "A valid UUID string.",
+            "examples": ["80d7db87-324e-4e8d-a5b7-ff78cd5bf39a"]
+        })
     }
 }
 
@@ -80,7 +85,12 @@ impl JsonSchema for Rfc3339DateTime {
     }
 
     fn json_schema(_generator: &mut SchemaGenerator) -> Schema {
-        json_schema!({"type": "string", "format": "date-time"})
+        json_schema!({
+            "type": "string",
+            "format": "date-time",
+            "description": "An RFC 3339 date-time string with a UTC offset.",
+            "examples": ["2026-08-29T10:00:00+09:00"]
+        })
     }
 }
 
@@ -94,14 +104,14 @@ impl<'de> Deserialize<'de> for IsoDate {
         let value = Value::deserialize(deserializer)?;
         let Value::String(value) = value else {
             return Err(serde::de::Error::custom(format!(
-                "{SCHEMA_ERROR_PREFIX}must be a date string"
+                "{SCHEMA_ERROR_PREFIX}must be a YYYY-MM-DD date string"
             )));
         };
         NaiveDate::parse_from_str(&value, "%Y-%m-%d")
             .map(Self)
             .map_err(|_| {
                 serde::de::Error::custom(format!(
-                    "{SEMANTIC_ERROR_PREFIX}must be a valid ISO 8601 date"
+                    "{SEMANTIC_ERROR_PREFIX}must be a valid calendar date in YYYY-MM-DD format"
                 ))
             })
     }
@@ -117,7 +127,12 @@ impl JsonSchema for IsoDate {
     }
 
     fn json_schema(_generator: &mut SchemaGenerator) -> Schema {
-        json_schema!({"type": "string", "format": "date"})
+        json_schema!({
+            "type": "string",
+            "format": "date",
+            "description": "A calendar date in YYYY-MM-DD format without a time or time zone.",
+            "examples": ["2026-08-29"]
+        })
     }
 }
 
@@ -174,7 +189,11 @@ impl JsonSchema for NonNegativeI64 {
     }
 
     fn json_schema(_generator: &mut SchemaGenerator) -> Schema {
-        json_schema!({"type": "integer", "minimum": 0})
+        json_schema!({
+            "type": "integer",
+            "minimum": 0,
+            "description": "A non-negative integer."
+        })
     }
 }
 
@@ -206,7 +225,11 @@ impl JsonSchema for NonEmptyString {
     }
 
     fn json_schema(_generator: &mut SchemaGenerator) -> Schema {
-        json_schema!({"type": "string", "minLength": 1})
+        json_schema!({
+            "type": "string",
+            "minLength": 1,
+            "description": "A non-empty string."
+        })
     }
 }
 
@@ -1015,7 +1038,9 @@ fn semantic_reason(reason: &str) -> &'static str {
     match reason {
         "must be a valid UUID" => "must be a valid UUID",
         "must be a valid RFC 3339 date-time" => "must be a valid RFC 3339 date-time",
-        "must be a valid ISO 8601 date" => "must be a valid ISO 8601 date",
+        "must be a valid calendar date in YYYY-MM-DD format" => {
+            "must be a valid calendar date in YYYY-MM-DD format"
+        }
         "is outside the supported integer range" => "is outside the supported integer range",
         _ => "contains an invalid value",
     }
@@ -1027,7 +1052,7 @@ fn schema_reason(reason: &str) -> &'static str {
         "must not be empty" => "must not be empty",
         "must contain at least one item" => "must contain at least one item",
         "must be a string or null" => "must be a string or null",
-        "must be a date string" => "must be a date string",
+        "must be a YYYY-MM-DD date string" => "must be a YYYY-MM-DD date string",
         "must be a supported period field" => "must be a supported period field",
         "must be todo, pending, or done" => "must be todo, pending, or done",
         "must be a supported category or null" => "must be a supported category or null",
