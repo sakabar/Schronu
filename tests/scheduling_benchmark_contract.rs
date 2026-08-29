@@ -152,6 +152,7 @@ fn atomic_release探索はready候補とfuture_releaseの直積にならない()
 fn 短fragment判定はfrontier全体を複製しない() {
     const FRAGMENT_COUNT: usize = 128;
     let fixture = SchedulingFixture::short_fragment_frontier_adversarial(FRAGMENT_COUNT).unwrap();
+    let now = fixture.now;
     let repository = SchedulingRepository::new(fixture.projects, fixture.now);
 
     let started = Instant::now();
@@ -159,6 +160,30 @@ fn 短fragment判定はfrontier全体を複製しない() {
     let elapsed = started.elapsed();
 
     assert_eq!(schedule.len(), FRAGMENT_COUNT + 1);
+    assert_eq!(
+        schedule
+            .iter()
+            .map(|task| task.scheduled_work_seconds)
+            .sum::<i64>(),
+        (FRAGMENT_COUNT as i64 * 2 + 1) * 60,
+        "speculative promotion must neither lose nor duplicate work"
+    );
+    assert!(
+        schedule
+            .iter()
+            .filter(|task| task.task.name.starts_with("fixture-fragment-release-"))
+            .all(|task| task.scheduled_start == task.first_available_time),
+        "each released high-priority task must be selected at its release"
+    );
+    let long = schedule
+        .iter()
+        .find(|task| task.task.name == "fixture-fragment-long")
+        .expect("the adversarial fixture contains the long task");
+    assert_eq!(
+        long.scheduled_start,
+        now + chrono::Duration::seconds(FRAGMENT_COUNT as i64 * 2 * 60 + 60),
+        "restored releases must be promoted exactly once before the long task"
+    );
     assert_eq!(
         metrics.frontier_clone_element_count, 0,
         "speculative selection must not clone frontier elements"
