@@ -849,6 +849,10 @@ fn test_yaml_to_task_存在する型違いと不正enumはerrorを返す() {
             "project.atomic: must be a boolean",
         ),
         (
+            "name: task\nfixed_start: nope",
+            "project.fixed_start: must be a boolean",
+        ),
+        (
             "name: task\nstatus: unknown",
             "project.status: must be one of todo, pending, done",
         ),
