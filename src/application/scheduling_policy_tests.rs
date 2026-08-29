@@ -309,6 +309,55 @@ fn fixed完了はdependency完了後にgrandparentを解放する() {
     assert!(grandparent_start >= fixed_segment.scheduled_end);
 }
 
+#[test]
+fn speculative選択errorはfrontierとslackを双方復元する() {
+    let now = Local.with_ymd_and_hms(2026, 8, 11, 12, 0, 0).unwrap();
+    let boundary = now + Duration::minutes(1);
+    let selected = candidate("selected", now, 0, 10 * 60);
+    let mut overflowing = candidate("overflowing", boundary, 1, i64::MAX);
+    overflowing.atomic = true;
+    let overflow_id = overflowing.id;
+    let states = [selected, overflowing]
+        .into_iter()
+        .map(|candidate| FlexibleState {
+            total_work_seconds: candidate.remaining_seconds,
+            effective_deadline: None,
+            completion_gate: false,
+            remaining_seconds: candidate.remaining_seconds,
+            candidate,
+            dependency_indices: Vec::new(),
+            completion_time: None,
+        })
+        .collect::<Vec<_>>();
+    let mut metrics = ScheduleMetrics::default();
+    let mut frontier = SchedulerFrontier::new(&states);
+    frontier.promote_releases(now, &states, &mut metrics);
+    let mut slack_index = SlackDemandIndex::new(&states, now, &[], &mut metrics);
+
+    let error = select_at_speculative_boundary(
+        &states,
+        now,
+        boundary,
+        &[],
+        &mut frontier,
+        &mut slack_index,
+        &mut metrics,
+    )
+    .err();
+
+    assert_eq!(
+        error,
+        Some(SchedulingPolicyError {
+            task_id: overflow_id,
+            start_time: boundary,
+            work_seconds: i64::MAX,
+        })
+    );
+    assert_eq!(slack_index.current_time, now);
+    assert_eq!(frontier.next_release(), Some(boundary));
+    assert!(!frontier.ready[1]);
+}
+
 #[cfg(feature = "benchmarking")]
 #[test]
 fn schedule_tasks_by_priorityは依存待ちcandidateを毎回走査しない() {
