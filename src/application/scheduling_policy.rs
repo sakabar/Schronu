@@ -226,6 +226,7 @@ struct BoundaryContext<'a> {
     frontier: Option<&'a SchedulerFrontier>,
     slack_index: Option<&'a SlackDemandIndex>,
     atomic_release_predictions: Option<&'a RefCell<AtomicReleasePredictionCache>>,
+    event_atomic_release_predictions: Option<&'a RefCell<Vec<AtomicReleasePrediction>>>,
 }
 
 #[derive(Default)]
@@ -1481,17 +1482,26 @@ fn cache_atomic_release_prediction(
     protected_mode: bool,
     metrics: &mut ScheduleMetrics,
 ) {
+    let prediction = AtomicReleasePrediction {
+        release,
+        preemptor_index,
+        critical_deadline,
+        protected_mode,
+        frontier_generation: context.frontier.map_or(0, |frontier| frontier.generation),
+    };
     if let Some(cache) = context.atomic_release_predictions {
-        cache.borrow_mut().insert(
-            AtomicReleasePrediction {
-                release,
-                preemptor_index,
-                critical_deadline,
-                protected_mode,
-                frontier_generation: context.frontier.map_or(0, |frontier| frontier.generation),
-            },
-            metrics,
-        );
+        cache.borrow_mut().insert(prediction, metrics);
+    }
+    if let Some(event_predictions) = context.event_atomic_release_predictions {
+        let mut event_predictions = event_predictions.borrow_mut();
+        if !event_predictions.iter().any(|existing| {
+            existing.release == prediction.release
+                && existing.preemptor_index == prediction.preemptor_index
+                && existing.critical_deadline == prediction.critical_deadline
+                && existing.protected_mode == prediction.protected_mode
+        }) {
+            event_predictions.push(prediction);
+        }
     }
 }
 
@@ -1507,13 +1517,13 @@ fn cached_preempting_release(
     context: &BoundaryContext<'_>,
     metrics: &mut ScheduleMetrics,
 ) -> Result<Option<DateTime<Local>>, SchedulingPolicyError> {
-    let (Some(cache), Some(slack_index)) =
-        (context.atomic_release_predictions, context.slack_index)
-    else {
+    let (Some(event_predictions), Some(slack_index)) = (
+        context.event_atomic_release_predictions,
+        context.slack_index,
+    ) else {
         return Ok(None);
     };
-    for prediction in cache.borrow().entries.iter().copied() {
-        metrics.record_atomic_release_cache_probe();
+    for prediction in event_predictions.borrow().iter().copied() {
         // release timelineを再走査せず、index済みpreemptor 1件だけを通常の
         // selection candidateとして再検証する。
         metrics.record_selection_candidate_probe();
@@ -1729,6 +1739,17 @@ fn select_next_candidate(
                 .then(|| next_release_event(states, now))
                 .flatten()
         });
+    // persistent cacheはevent開始時に一度だけ読む。同じevent内のatomic候補は
+    // この差分viewを共有し、候補ごとにpersistent cacheを再探索しない。
+    let event_atomic_release_predictions = RefCell::new({
+        let cache = atomic_release_predictions.borrow();
+        cache
+            .entries
+            .iter()
+            .inspect(|_| metrics.record_atomic_release_cache_probe())
+            .copied()
+            .collect::<Vec<_>>()
+    });
     let boundary_context = BoundaryContext {
         states,
         fixed_slots,
@@ -1736,6 +1757,7 @@ fn select_next_candidate(
         frontier,
         slack_index,
         atomic_release_predictions: Some(atomic_release_predictions),
+        event_atomic_release_predictions: Some(&event_atomic_release_predictions),
     };
     if let Some(frontier) = frontier {
         let protected_ready = critical.is_some_and(|critical| {
@@ -2081,6 +2103,7 @@ fn schedule_selected_segment(
         frontier: Some(frontier),
         slack_index: Some(slack_index),
         atomic_release_predictions: None,
+        event_atomic_release_predictions: None,
     };
     let mut boundary = segment_boundary(
         selected_index,
