@@ -195,6 +195,37 @@ fn atomic候補間でrelease予測を共有する() {
 }
 
 #[test]
+fn atomic_release予測をevent間で再利用する() {
+    let measure = |ready_atomic_count, future_release_count| {
+        let fixture = SchedulingFixture::atomic_release_prediction_adversarial(
+            ready_atomic_count,
+            future_release_count,
+        )
+        .unwrap();
+        let repository = SchedulingRepository::new(fixture.projects, fixture.now);
+        get_schedule_diagnostics(&repository)
+            .unwrap()
+            .1
+            .release_candidate_probe_count
+    };
+
+    let small_probes = measure(64, 32);
+    let large_probes = measure(256, 128);
+    let large_candidate_count = 256 + 128;
+
+    assert!(
+        large_probes <= small_probes * 6,
+        "event-scale release probes grew faster than the input: {large_probes} > {}",
+        small_probes * 6
+    );
+    assert!(
+        large_probes <= large_candidate_count * 12,
+        "large event-scale release probes exceeded the linear limit: {large_probes} > {}",
+        large_candidate_count * 12
+    );
+}
+
+#[test]
 fn 短fragment判定はfrontier全体を複製しない() {
     const FRAGMENT_COUNT: usize = 128;
     let fixture = SchedulingFixture::short_fragment_frontier_adversarial(FRAGMENT_COUNT).unwrap();
