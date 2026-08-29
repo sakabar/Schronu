@@ -9,7 +9,7 @@ pub(super) fn tool_definitions() -> Vec<Value> {
     vec![
         json!({
             "name": "get_focus",
-            "description": "Return the task Schronu currently recommends working on, or null when no task is available.",
+            "description": "Return the task Schronu currently recommends working on in the task field; task is null when no task is available.",
             "inputSchema": generated_input_schema::<GetFocusInput>()
         }),
         json!({
