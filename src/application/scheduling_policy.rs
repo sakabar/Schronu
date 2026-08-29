@@ -521,6 +521,37 @@ fn atomic_fits(
     Ok(completion == segment_boundary(selected, states, now, fixed_slots, slacks)?)
 }
 
+/// slack guardで極端に短いfragmentができる候補は、時間を捨ててから
+/// 切り替えるのではなく、この選択時点で後順に送る。
+fn fits_split_contract(
+    selected: &FlexibleState,
+    states: &[FlexibleState],
+    now: DateTime<Local>,
+    fixed_slots: &[(DateTime<Local>, DateTime<Local>)],
+    slacks: &[(DateTime<Local>, i64)],
+) -> Result<bool, SchedulingPolicyError> {
+    if selected.candidate.atomic {
+        return atomic_fits(selected, states, now, fixed_slots, slacks);
+    }
+    let Some(guard) = slack_boundary(selected, slacks, now) else {
+        return Ok(true);
+    };
+    if next_fixed_start(now, fixed_slots).is_some_and(|event| event <= guard)
+        || next_release_event(states, now).is_some_and(|event| event <= guard)
+    {
+        // guardより前のeventで必ず再選択する。その手前で作れる有用な
+        // segmentを、将来のguardの形だけを理由に捨ててはならない。
+        return Ok(true);
+    }
+    let completion = checked_segment_end(selected.candidate.id, now, selected.remaining_seconds)?;
+    if guard >= completion {
+        return Ok(true);
+    }
+    let before_guard = (guard - now).num_seconds();
+    let after_guard = selected.remaining_seconds.saturating_sub(before_guard);
+    Ok(before_guard > MIN_SPLIT_SEGMENT_SECONDS && after_guard > MIN_SPLIT_SEGMENT_SECONDS)
+}
+
 /// ready候補の選択規則を唯一の場所に集約する。
 ///
 /// 最早のcritical deadlineがあればそこまでの候補を保護し、それ以外は
@@ -535,7 +566,7 @@ fn select_next_candidate(
     let ordered = ordered_ready_candidates(states, ready_indices, critical_deadline(&slacks));
 
     for index in ordered {
-        if atomic_fits(&states[index], states, now, fixed_slots, &slacks)? {
+        if fits_split_contract(&states[index], states, now, fixed_slots, &slacks)? {
             return Ok(Some(Selection { index, slacks }));
         }
     }
