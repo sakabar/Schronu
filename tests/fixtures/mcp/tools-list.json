@@ -215,12 +215,12 @@
     "name": "breakdown_task"
   },
   {
-    "description": "Defer a task until an absolute date and time.",
+    "description": "Set an existing task's pending-until time and original status to Pending. Its effective status can be Todo when the time is not in the future, and the existing deadline policy can move the pending-until time earlier.",
     "inputSchema": {
       "additionalProperties": false,
       "properties": {
         "pending_until": {
-          "description": "An RFC 3339 date-time string with Z or a numeric UTC offset.",
+          "description": "The requested pending-until time as an RFC 3339 date-time with Z or a numeric UTC offset. The existing deadline policy can move it earlier.",
           "examples": [
             "2026-08-29T10:00:00+09:00",
             "2026-08-29T01:00:00Z"
@@ -229,7 +229,7 @@
           "type": "string"
         },
         "task_id": {
-          "description": "A valid UUID string.",
+          "description": "The UUID of the existing task to defer.",
           "examples": [
             "80d7db87-324e-4e8d-a5b7-ff78cd5bf39a"
           ],
@@ -246,12 +246,12 @@
     "name": "defer_task"
   },
   {
-    "description": "Defer a routine task to its next repetition cycle.",
+    "description": "Move an existing routine task to its next repetition cycle by shifting its deadline and start time, then restore its original status to Todo. The task must have a deadline and a parent whose repetition interval is set.",
     "inputSchema": {
       "additionalProperties": false,
       "properties": {
         "task_id": {
-          "description": "A valid UUID string.",
+          "description": "The UUID of the existing routine task to defer. The task must have its own deadline and a parent whose repetition interval is set.",
           "examples": [
             "80d7db87-324e-4e8d-a5b7-ff78cd5bf39a"
           ],
@@ -267,18 +267,18 @@
     "name": "defer_routine_task"
   },
   {
-    "description": "Complete a task, optionally recording finish time and work seconds.",
+    "description": "Complete an existing task that has no unfinished children. This records an end time and can add work seconds; completing a child of a routine parent can create the next occurrence and adjust the parent's estimate.",
     "inputSchema": {
       "additionalProperties": false,
       "properties": {
         "additional_actual_work_seconds": {
           "default": 0,
-          "description": "A non-negative integer.",
+          "description": "A non-negative number of seconds to add to the task's existing actual work. Omit it to add 0; the request fails if the resulting total overflows the supported integer range.",
           "minimum": 0,
           "type": "integer"
         },
         "finished_at": {
-          "description": "An RFC 3339 date-time string with Z or a numeric UTC offset.",
+          "description": "The completion and end time as an RFC 3339 date-time with Z or a numeric UTC offset. Omit it to use the operation time.",
           "examples": [
             "2026-08-29T10:00:00+09:00",
             "2026-08-29T01:00:00Z"
@@ -287,7 +287,7 @@
           "type": "string"
         },
         "task_id": {
-          "description": "A valid UUID string.",
+          "description": "The UUID of the existing task to complete. A task with any unfinished direct child cannot be completed.",
           "examples": [
             "80d7db87-324e-4e8d-a5b7-ff78cd5bf39a"
           ],
@@ -303,7 +303,7 @@
     "name": "complete_task"
   },
   {
-    "description": "Update a task's estimate, deadline, or category.",
+    "description": "Update an existing task's estimate, deadline, or project category. Include at least one update field; when multiple fields are supplied, they are applied in estimate, deadline, then category order.",
     "inputSchema": {
       "additionalProperties": false,
       "anyOf": [
@@ -325,6 +325,7 @@
       ],
       "properties": {
         "category": {
+          "description": "Set the root project's category to one of the supported values, or pass null to clear it. Omit this field to leave the category unchanged.",
           "anyOf": [
             {
               "enum": [
@@ -342,6 +343,7 @@
           ]
         },
         "deadline_time": {
+          "description": "Set the task's deadline from an RFC 3339 date-time with Z or a numeric UTC offset, or pass null to clear only this task's deadline. A set deadline is propagated as an upper bound to unfinished descendants. Omit this field to leave the deadline unchanged.",
           "anyOf": [
             {
               "description": "An RFC 3339 date-time string with Z or a numeric UTC offset.",
@@ -358,12 +360,12 @@
           ]
         },
         "estimated_work_minutes": {
-          "description": "A non-negative integer.",
+          "description": "Set the estimated work duration from a non-negative integer number of minutes, converted to seconds. Omit this field to leave the estimate unchanged; the request fails if conversion to seconds overflows.",
           "minimum": 0,
           "type": "integer"
         },
         "task_id": {
-          "description": "A valid UUID string.",
+          "description": "The UUID of the existing task to update.",
           "examples": [
             "80d7db87-324e-4e8d-a5b7-ff78cd5bf39a"
           ],

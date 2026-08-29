@@ -262,7 +262,7 @@ fn defer_routine_task_input_schemaとdecode契約が一致する() {
                 "task_id": {
                     "type": "string",
                     "format": "uuid",
-                    "description": "A valid UUID string.",
+                    "description": "The UUID of the existing routine task to defer. The task must have its own deadline and a parent whose repetition interval is set.",
                     "examples": ["80d7db87-324e-4e8d-a5b7-ff78cd5bf39a"]
                 }
             },

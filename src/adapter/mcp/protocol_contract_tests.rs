@@ -1020,7 +1020,7 @@ fn tools_list_initialized通知後に10個のtoolのschemaを返す() {
     assert_non_negative_integer_property(tools, "complete_task", "additional_actual_work_seconds");
     assert_eq!(
         property(tools, "complete_task", "additional_actual_work_seconds")["description"],
-        "A non-negative integer."
+        "A non-negative number of seconds to add to the task's existing actual work. Omit it to add 0; the request fails if the resulting total overflows the supported integer range."
     );
     assert_string_property(tools, "update_task", "task_id", Some("uuid"));
     assert_non_negative_integer_property(tools, "update_task", "estimated_work_minutes");
