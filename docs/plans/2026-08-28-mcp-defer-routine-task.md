@@ -26,7 +26,7 @@
 - 成功: `{"task_id":"<uuid>"}`
 - 対象条件: task自身のdeadline、直接の親、親自身の`repetition_interval_days`が存在すること。
 - MCPの対象不成立: `task_not_found`または`invalid_input`。CLIでは従来どおりno-op。
-- 親deadlineありの場合は次業務日境界から`interval - 1`日後の日付へ親deadline時刻を適用する。なしの場合は元deadlineへ`interval`日を加える。
+- 親deadlineありの場合は次論理日境界から`interval - 1`日後の日付へ親deadline時刻を適用する。なしの場合は元deadlineへ`interval`日を加える。
 - startは新旧deadline差の整数日だけ移動し、`orig_status`を`Todo`へ戻す。`pending_until`は変更しない。
 
 ## 品質ゲート
