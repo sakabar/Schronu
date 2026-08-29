@@ -872,6 +872,27 @@ fn test_make_appointment_正常系1() {
 }
 
 #[test]
+fn test_make_appointmentは完了済みtaskから子孫へdeadlineを伝搬しない() {
+    let root = new_test_task_handle("完了済み予定").unwrap();
+    let child = root.create_child(new_test_task_attr("未完了の子")).unwrap();
+    root.set_orig_status(Status::Done).unwrap();
+    root.set_estimated_work_seconds(60 * 60).unwrap();
+    let original_child_deadline = Local.with_ymd_and_hms(2026, 8, 22, 18, 0, 0).unwrap();
+    child
+        .set_deadline_time_opt(Some(original_child_deadline))
+        .unwrap();
+    let appointment_start = Local.with_ymd_and_hms(2026, 8, 21, 9, 0, 0).unwrap();
+
+    root.make_appointment(appointment_start).unwrap();
+
+    assert_eq!(
+        child.get_deadline_time_opt().unwrap(),
+        Some(original_child_deadline)
+    );
+    assert!(root.get_fixed_start().unwrap());
+}
+
+#[test]
 fn test_set_flexible_start_timeは開始時刻とfixed_startを1回の更新で変更する() {
     let task = new_test_task_handle("通常task").unwrap();
     task.set_fixed_start(true).unwrap();
