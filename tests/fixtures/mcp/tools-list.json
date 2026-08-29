@@ -343,7 +343,7 @@
           ]
         },
         "deadline_time": {
-          "description": "For a non-null RFC 3339 date-time with Z or a numeric UTC offset, apply it as a deadline upper bound to the unfinished target and its unfinished descendants; existing earlier deadlines are preserved, and a completed target is unchanged. Pass null to clear only the selected task's deadline. Omit this field to leave the deadline unchanged.",
+          "description": "For a non-null RFC 3339 date-time with Z or a numeric UTC offset, apply it as a deadline upper bound to the unfinished target and its unfinished descendants; existing earlier deadlines are preserved. If the selected target is completed, neither it nor any descendants are changed. Pass null to clear only the selected task's deadline. Omit this field to leave the deadline unchanged.",
           "anyOf": [
             {
               "description": "An RFC 3339 date-time string with Z or a numeric UTC offset.",
