@@ -239,7 +239,12 @@ fn run_flatten(configuration: Configuration) -> Result<(), String> {
     let mut samples = Vec::with_capacity(SAMPLE_COUNT);
     let mut last_output = None;
     for _ in 0..SAMPLE_COUNT {
-        let fixture = SchedulingFixture::build(configuration.size).map_err(|e| e.to_string())?;
+        let fixture = if configuration.size == FixtureSize::Stress {
+            SchedulingFixture::stress_flatten()
+        } else {
+            SchedulingFixture::build(configuration.size)
+        }
+        .map_err(|e| e.to_string())?;
         let repository = SchedulingRepository::new(fixture.projects, fixture.now);
         let mut free_time_manager =
             SchedulingFreeTimeManager::new(FLATTEN_BENCHMARK_CAPACITY_MINUTES);

@@ -58,6 +58,32 @@ impl SchedulingFixture {
         }
         Ok(digest.finish())
     }
+    pub fn stress_flatten() -> Result<Self, TaskTreeError> {
+        let mut fixture = build_profile(4, STRESS_SEED)?;
+        let mut sequence = fixture.summary()?.tasks as u64;
+        // 同じ16時間windowを重ね、stress規模を保ったまま1 logical dayの使用量を
+        // 容量超過にする。flexible taskを残すためflattenのcandidate trialも通る。
+        for index in 0..2 {
+            let fixed = new_task(
+                &format!("fixture-project-stress-flatten-fixed-{index}"),
+                &mut sequence,
+                fixture.now,
+                Status::Todo,
+            )?;
+            fixed.set_estimated_work_seconds(16 * 60 * 60)?;
+            fixed.set_fixed_start(true)?;
+            fixture.projects.push(fixed);
+        }
+        let flexible = new_task(
+            "fixture-project-stress-flatten-flexible",
+            &mut sequence,
+            fixture.now,
+            Status::Todo,
+        )?;
+        flexible.set_estimated_work_seconds(10 * 60 * 60)?;
+        fixture.projects.push(flexible);
+        Ok(fixture)
+    }
 }
 
 fn fixed_now() -> DateTime<Local> {
