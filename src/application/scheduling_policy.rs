@@ -21,7 +21,7 @@ use crate::application::scheduling_metrics::ScheduleMetrics;
 use crate::entity::task::TaskHandle;
 use chrono::{DateTime, Duration, Local};
 use std::cmp::{max, Reverse};
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeSet, HashMap, HashSet};
 use uuid::Uuid;
 
 const MIN_SPLIT_SEGMENT_SECONDS: i64 = 5 * 60;
@@ -204,6 +204,7 @@ fn insert_occupied_slot(
 #[derive(Clone)]
 struct FlexibleState {
     candidate: TaskScheduleCandidate,
+    dependency_indices: Vec<Option<usize>>,
     remaining_seconds: i64,
     total_work_seconds: i64,
     effective_deadline: Option<DateTime<Local>>,
@@ -214,6 +215,113 @@ struct FlexibleState {
 struct Selection {
     index: usize,
     slacks: Vec<(DateTime<Local>, i64)>,
+}
+
+/// 選択keyは実行中に変化しないため、eventごとの再sortを避けて1度だけ固定する。
+struct CandidateOrders {
+    normal: Vec<usize>,
+    protected: Vec<usize>,
+}
+
+/// deadline需要を初期構築とsegment差分だけで維持する。
+///
+/// eventごとに全candidateから需要を作り直すと、segment数に比例して2乗走査へ
+/// 戻る。group内残秒だけを更新し、slack式のprefix sumはdeadline数に限定する。
+struct SlackDemandIndex {
+    deadlines: Vec<DateTime<Local>>,
+    remaining_by_group: Vec<i64>,
+    group_by_state: Vec<Option<usize>>,
+}
+
+impl SlackDemandIndex {
+    fn new(states: &[FlexibleState], metrics: &mut ScheduleMetrics) -> Self {
+        let mut deadlines = states
+            .iter()
+            .filter_map(|state| state.effective_deadline)
+            .collect::<Vec<_>>();
+        deadlines.sort_unstable();
+        deadlines.dedup();
+        let mut remaining_by_group = vec![0_i64; deadlines.len()];
+        let group_by_state = states
+            .iter()
+            .map(|state| {
+                state.effective_deadline.map(|deadline| {
+                    metrics.record_slack_probes(1);
+                    let group = deadlines
+                        .binary_search(&deadline)
+                        .expect("effective deadline was collected into the index");
+                    remaining_by_group[group] =
+                        remaining_by_group[group].saturating_add(state.remaining_seconds.max(0));
+                    group
+                })
+            })
+            .collect();
+        Self {
+            deadlines,
+            remaining_by_group,
+            group_by_state,
+        }
+    }
+
+    fn slacks(
+        &self,
+        now: DateTime<Local>,
+        fixed_slots: &[(DateTime<Local>, DateTime<Local>)],
+    ) -> Vec<(DateTime<Local>, i64)> {
+        let mut cumulative_demand = 0_i64;
+        self.deadlines
+            .iter()
+            .copied()
+            .zip(self.remaining_by_group.iter().copied())
+            .filter(|(_, remaining)| *remaining > 0)
+            .map(|(deadline, remaining)| {
+                cumulative_demand = cumulative_demand.saturating_add(remaining);
+                (
+                    deadline,
+                    available_seconds_until(now, deadline, fixed_slots)
+                        .saturating_sub(cumulative_demand),
+                )
+            })
+            .collect()
+    }
+
+    fn record_work(
+        &mut self,
+        state_index: usize,
+        work_seconds: i64,
+        metrics: &mut ScheduleMetrics,
+    ) {
+        if let Some(group) = self.group_by_state[state_index] {
+            metrics.record_slack_probes(1);
+            self.remaining_by_group[group] =
+                self.remaining_by_group[group].saturating_sub(work_seconds);
+        }
+    }
+}
+
+impl CandidateOrders {
+    fn new(states: &[FlexibleState]) -> Self {
+        // BTree indexとして構築するため、diagnosticのsort回数を水増しせず、
+        // eventごとの全candidate sortも発生させない。
+        let normal = states
+            .iter()
+            .enumerate()
+            .map(|(index, state)| (normal_selection_key(state), index))
+            .collect::<BTreeSet<_>>()
+            .into_iter()
+            .map(|(_, index)| index)
+            .collect();
+        let protected = states
+            .iter()
+            .enumerate()
+            .filter(|(_, state)| state.effective_deadline.is_some())
+            .map(|(index, state)| (protected_selection_key(state), index))
+            .collect::<BTreeSet<_>>()
+            .into_iter()
+            .map(|(_, index)| index)
+            .collect();
+        Self { normal, protected }
+    }
 }
 
 /// fixed開始をすべてのtransitive dependencyへ逆伝搬する。
@@ -254,25 +362,19 @@ fn effective_deadlines(
 }
 
 fn dependencies_complete(state: &FlexibleState, states: &[FlexibleState]) -> bool {
-    state.candidate.dependency_ids.iter().all(|dependency_id| {
-        states
-            .iter()
-            .find(|dependency| dependency.candidate.id == *dependency_id)
-            .and_then(|dependency| dependency.completion_time)
+    state.dependency_indices.iter().all(|dependency_index| {
+        dependency_index
+            .and_then(|index| states[index].completion_time)
             .is_some()
     })
 }
 
 fn dependency_end(state: &FlexibleState, states: &[FlexibleState]) -> Option<DateTime<Local>> {
     state
-        .candidate
-        .dependency_ids
+        .dependency_indices
         .iter()
-        .filter_map(|dependency_id| {
-            states
-                .iter()
-                .find(|dependency| dependency.candidate.id == *dependency_id)
-                .and_then(|dependency| dependency.completion_time)
+        .filter_map(|dependency_index| {
+            dependency_index.and_then(|index| states[index].completion_time)
         })
         .max()
 }
@@ -428,6 +530,47 @@ fn ordered_ready_candidates(
         ordered.sort_by_key(|index| normal_selection_key(&states[*index]));
     }
     ordered
+}
+
+fn preordered_ready_candidates(
+    states: &[FlexibleState],
+    ready_indices: &[usize],
+    critical_deadline: Option<DateTime<Local>>,
+    orders: &CandidateOrders,
+) -> Vec<usize> {
+    let mut ready = vec![false; states.len()];
+    for index in ready_indices {
+        ready[*index] = true;
+    }
+    let protected_ready = critical_deadline.is_some_and(|critical| {
+        orders.protected.iter().any(|index| {
+            ready[*index]
+                && states[*index]
+                    .effective_deadline
+                    .is_some_and(|deadline| deadline <= critical)
+        })
+    });
+    if protected_ready {
+        let critical = critical_deadline.expect("protected mode requires a critical deadline");
+        orders
+            .protected
+            .iter()
+            .copied()
+            .filter(|index| {
+                ready[*index]
+                    && states[*index]
+                        .effective_deadline
+                        .is_some_and(|deadline| deadline <= critical)
+            })
+            .collect()
+    } else {
+        orders
+            .normal
+            .iter()
+            .copied()
+            .filter(|index| ready[*index])
+            .collect()
+    }
 }
 
 /// atomicを実際に中断する候補がreleaseされる最初の時刻を返す。
@@ -610,9 +753,20 @@ fn select_next_candidate(
     ready_indices: &[usize],
     now: DateTime<Local>,
     fixed_slots: &[(DateTime<Local>, DateTime<Local>)],
+    orders: Option<&CandidateOrders>,
+    slack_index: Option<&SlackDemandIndex>,
+    metrics: &mut ScheduleMetrics,
 ) -> Result<Option<Selection>, SchedulingPolicyError> {
-    let slacks = deadline_slacks(states, now, fixed_slots);
-    let ordered = ordered_ready_candidates(states, ready_indices, critical_deadline(&slacks));
+    metrics.record_selection_event();
+    let slacks = slack_index.map_or_else(
+        || deadline_slacks(states, now, fixed_slots),
+        |index| index.slacks(now, fixed_slots),
+    );
+    let critical = critical_deadline(&slacks);
+    let ordered = orders.map_or_else(
+        || ordered_ready_candidates(states, ready_indices, critical),
+        |orders| preordered_ready_candidates(states, ready_indices, critical, orders),
+    );
 
     for index in ordered {
         if fits_split_contract(&states[index], states, now, fixed_slots, &slacks)? {
@@ -664,14 +818,30 @@ pub(super) fn schedule_tasks_by_priority_with_metrics(
                     .flatten(),
                 completion_gate: prepared.completion_gate_ids.contains(&candidate.id),
                 candidate,
+                dependency_indices: Vec::new(),
                 remaining_seconds,
                 completion_time: None,
             }
         })
         .collect::<Vec<_>>();
+    let index_by_id = states
+        .iter()
+        .enumerate()
+        .map(|(index, state)| (state.candidate.id, index))
+        .collect::<HashMap<_, _>>();
+    for state in &mut states {
+        state.dependency_indices = state
+            .candidate
+            .dependency_ids
+            .iter()
+            .map(|dependency_id| index_by_id.get(dependency_id).copied())
+            .collect();
+    }
     let fixed_slots = prepared.occupied_fixed;
     let mut scheduled_tasks = prepared.scheduled_fixed;
     let mut now = last_synced_time;
+    let candidate_orders = CandidateOrders::new(&states);
+    let mut slack_index = SlackDemandIndex::new(&states, metrics);
 
     // Phase 3: eventとeventの間だけを配置し、releaseやslack境界で必ず再選択する。
     while states.iter().any(|state| state.completion_time.is_none()) {
@@ -711,7 +881,15 @@ pub(super) fn schedule_tasks_by_priority_with_metrics(
             .map(|(index, _)| index)
             .collect::<Vec<_>>();
 
-        let selection = select_next_candidate(&states, &ready_indices, now, &fixed_slots)?;
+        let selection = select_next_candidate(
+            &states,
+            &ready_indices,
+            now,
+            &fixed_slots,
+            Some(&candidate_orders),
+            Some(&slack_index),
+            metrics,
+        )?;
         let Some(selection) = selection else {
             let next_release = next_release_event(&states, now);
             let next_fixed = next_fixed_start(now, &fixed_slots);
@@ -755,6 +933,8 @@ pub(super) fn schedule_tasks_by_priority_with_metrics(
                     &fallback_slacks,
                     metrics,
                     true,
+                    &candidate_orders,
+                    &mut slack_index,
                 )?;
                 continue;
             }
@@ -770,6 +950,8 @@ pub(super) fn schedule_tasks_by_priority_with_metrics(
             &selection.slacks,
             metrics,
             false,
+            &candidate_orders,
+            &mut slack_index,
         )?;
     }
 
@@ -804,6 +986,8 @@ fn schedule_selected_segment(
     slacks: &[(DateTime<Local>, i64)],
     metrics: &mut ScheduleMetrics,
     ignore_dependencies: bool,
+    candidate_orders: &CandidateOrders,
+    slack_index: &mut SlackDemandIndex,
 ) -> Result<(), SchedulingPolicyError> {
     let mut boundary =
         segment_boundary(&states[selected_index], states, *now, fixed_slots, slacks)?;
@@ -835,9 +1019,16 @@ fn schedule_selected_segment(
             })
             .map(|(index, _)| index)
             .collect::<Vec<_>>();
-        let release_preempts =
-            select_next_candidate(states, &ready_at_boundary, boundary, fixed_slots)?
-                .is_some_and(|selection| selection.index != selected_index);
+        let release_preempts = select_next_candidate(
+            states,
+            &ready_at_boundary,
+            boundary,
+            fixed_slots,
+            Some(candidate_orders),
+            Some(slack_index),
+            metrics,
+        )?
+        .is_some_and(|selection| selection.index != selected_index);
         let release_boundary = next_release_event(states, *now) == Some(boundary);
         let guard_releases_protected_task = guard_boundary && release_boundary && release_preempts;
         if fixed_boundary
@@ -875,12 +1066,14 @@ fn schedule_selected_segment(
         total_work_seconds,
     ));
     states[selected_index].remaining_seconds -= work_seconds;
+    slack_index.record_work(selected_index, work_seconds, metrics);
     *now = boundary;
     if states[selected_index].remaining_seconds == 0 {
         states[selected_index].completion_time = Some(boundary);
     } else if ignore_dependencies {
         // fallbackは1segment進めることでcycleを解く。残作業は通常event loopへ戻す。
         states[selected_index].candidate.dependency_ids.clear();
+        states[selected_index].dependency_indices.clear();
     }
     Ok(())
 }
