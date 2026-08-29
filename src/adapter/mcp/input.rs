@@ -228,7 +228,7 @@ impl JsonSchema for NonEmptyString {
         json_schema!({
             "type": "string",
             "minLength": 1,
-            "description": "A child task name. After trimming surrounding whitespace, it must not be blank or consist only of an optionally signed integer."
+            "description": "A non-empty string."
         })
     }
 }
@@ -433,10 +433,27 @@ pub(super) struct BreakdownTaskInput {
     /// The UUID of the existing parent task to which the children are added.
     pub(super) parent_id: UuidValue,
     /// One or more child task names, added to the parent in this array order.
+    #[schemars(schema_with = "child_task_names_schema")]
     pub(super) names: NonEmptyVec<NonEmptyString>,
     /// The common time until which every created child remains Pending, as an RFC 3339 date-time string with Z or a numeric UTC offset. When omitted, every child starts as Todo.
     #[serde(default)]
     pub(super) pending_until: OptionalValue<Rfc3339DateTime>,
+}
+
+fn child_task_names_schema(generator: &mut SchemaGenerator) -> Schema {
+    let mut schema = generator.subschema_for::<NonEmptyVec<NonEmptyString>>();
+    let item_schema = schema
+        .ensure_object()
+        .get_mut("items")
+        .and_then(Value::as_object_mut)
+        .expect("NonEmptyVec schema must define an object item schema");
+    item_schema.insert(
+        "description".to_string(),
+        Value::from(
+            "A child task name. After trimming surrounding whitespace, it must not be blank or consist only of an optionally signed integer.",
+        ),
+    );
+    schema
 }
 
 impl BreakdownTaskInput {
