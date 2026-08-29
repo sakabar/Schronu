@@ -201,6 +201,11 @@ fn build_schedule_candidates(
                 .map_err(ApplicationError::TaskTree)?,
             dependency_ids: child_ids_by_parent_id.remove(&id).unwrap_or_default(),
             atomic: task.get_atomic().map_err(ApplicationError::TaskTree)?,
+            fixed_start: task.get_fixed_start().map_err(ApplicationError::TaskTree)?,
+            fixed_start_time: task.get_start_time().map_err(ApplicationError::TaskTree)?,
+            estimated_work_seconds: task
+                .get_estimated_work_seconds()
+                .map_err(ApplicationError::TaskTree)?,
             task,
             first_available_time: attributes.first_available_time,
             priority: attributes.priority,
