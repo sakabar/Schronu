@@ -29,6 +29,26 @@ use std::collections::HashMap;
 use unicode_width::UnicodeWidthChar;
 use uuid::Uuid;
 
+const DAILY_SUMMARY_HORIZON_DAYS: usize = 28;
+const TASK_NAME_DISPLAY_WIDTH_LIMIT: usize = 70;
+
+fn unreached_daily_summary_date() -> NaiveDate {
+    NaiveDate::from_ymd_opt(2037, 12, 31).expect("daily summary fallback date must be valid")
+}
+
+fn unobserved_daily_summary_metric_date() -> NaiveDate {
+    NaiveDate::from_ymd_opt(1900, 1, 1).expect("daily summary fallback date must be valid")
+}
+
+fn task_list_horizon_days(pattern: &str) -> Option<i64> {
+    match pattern {
+        "今" => Some(0),
+        "明" | "近" => Some(1),
+        "暦" | "帯" => Some(DAILY_SUMMARY_HORIZON_DAYS as i64),
+        _ => None,
+    }
+}
+
 pub(super) fn get_weekday_jp(date: &NaiveDate) -> &str {
     weekday_jp(date.weekday())
 }
@@ -642,12 +662,8 @@ pub(super) fn build_show_all_tasks_display_with_config(
 
     let mut repetitive_task_estimated_work_seconds_map: HashMap<NaiveDate, i64> = HashMap::new();
 
-    // 日ごとの、前倒し可能なタスクの見積もりの和
-    // 前倒し可能という決め方だと、何日まで前倒しできるのか曖昧性が発生する?
+    // 日ごとの、前倒し可能なtaskの見積もりの和
     let mut adjustable_estimated_work_seconds_map: HashMap<NaiveDate, i64> = HashMap::new();
-
-    // 「暦」コマンドで、未来のサマリは見ても仕方ないので、直近の28日ぶん(配列の末尾)に絞る
-    const SUMMARY_DAYS: usize = 28;
 
     // タスク一覧で、どのタスクをいつやる見込みかを表示するために、「現在時刻」をズラして見ていく
     let mut current_datetime_cursor = task_repository.get_last_synced_time();
@@ -679,29 +695,11 @@ pub(super) fn build_show_all_tasks_display_with_config(
             .then(|| try_next_business_day_start(*scheduled_start))
             .transpose()?;
 
-        // 「今」「明」コマンドの場合は未来の情報には興味がないので、スキップする
-        if let Some(pattern) = pattern_opt {
-            if pattern == "今"
-                || pattern == "明"
-                || pattern == "近"
-                || pattern == "暦"
-                || pattern == "帯"
-            {
-                let valid_days = if pattern == "今" {
-                    0
-                } else if pattern == "明" || pattern == "近" {
-                    1
-                } else if pattern == "暦" || pattern == "帯" {
-                    SUMMARY_DAYS as i64
-                } else {
-                    // 事前にif文で囲ってあるので、通常はこのケースに入ることはない
-                    9999
-                };
-
-                if let Some(scheduled_boundary) = scheduled_next_business_day_start {
-                    if scheduled_boundary - next_business_day_start > Duration::days(valid_days) {
-                        break;
-                    }
+        // 表示期間を過ぎた未来task以降は一覧へ含めない
+        if let Some(valid_days) = pattern_opt.as_deref().and_then(task_list_horizon_days) {
+            if let Some(scheduled_boundary) = scheduled_next_business_day_start {
+                if scheduled_boundary - next_business_day_start > Duration::days(valid_days) {
+                    break;
                 }
             }
         }
@@ -721,7 +719,6 @@ pub(super) fn build_show_all_tasks_display_with_config(
             let mut repetition_prefix_label = "".to_string();
 
             if let Some(repetition_interval_days) = inherited_repetition_interval_days_opt {
-                // FIXME 【繰】というマジックナンバーが2ヶ所に登場していて危ない
                 repetition_prefix_label = format!(
                     "{}【繰】({})",
                     repetition_prefix_label, repetition_interval_days
@@ -765,7 +762,6 @@ pub(super) fn build_show_all_tasks_display_with_config(
                 task.get_name().map_err(ApplicationError::TaskTree)?
             );
             let chars_vec: Vec<char> = name.chars().collect();
-            let max_len: usize = 70;
 
             let chars_width_acc: Vec<usize> = chars_vec
                 .iter()
@@ -780,15 +776,13 @@ pub(super) fn build_show_all_tasks_display_with_config(
                 chars_width_acc
                     .iter()
                     .enumerate()
-                    .find_map(
-                        |(index, &value)| {
-                            if value > max_len {
-                                Some(index)
-                            } else {
-                                None
-                            }
-                        },
-                    );
+                    .find_map(|(index, &value)| {
+                        if value > TASK_NAME_DISPLAY_WIDTH_LIMIT {
+                            Some(index)
+                        } else {
+                            None
+                        }
+                    });
 
             let mut shorten_name: String = if let Some(latest_index) = latest_index_opt {
                 format!(
@@ -952,7 +946,6 @@ pub(super) fn build_show_all_tasks_display_with_config(
 
             match pattern_opt {
                 Some(pattern) => {
-                    // FIXME 文字列マッチの絞り込み機能とその他の属性による絞り込みを機能を分ける
                     if pattern == "葉" {
                         if rank == &0
                             || task_deadline_time_opt.is_some()
@@ -994,7 +987,7 @@ pub(super) fn build_show_all_tasks_display_with_config(
                             task_list_display_rows.push(task_list_display_row.clone());
                         }
                     } else if pattern == "単" {
-                        // non_repetitive (単発) のタスクのみを表示する
+                        // 「単」はtask名ではなく、継承済みの繰り返し間隔の有無で単発taskを判定する
                         if inherited_repetition_interval_days_opt.is_none() {
                             task_list_display_rows.push(task_list_display_row.clone());
                         }
@@ -1168,19 +1161,18 @@ pub(super) fn build_show_all_tasks_display_with_config(
     // 「それぞれの日の自由時間との差」の累積和
     let mut accumulate_duration_diff_to_limit = Duration::minutes(0);
 
-    let mut first_caught_up_date = NaiveDate::from_ymd_opt(2037, 12, 31).unwrap();
+    let mut first_caught_up_date = unreached_daily_summary_date();
 
-    let mut first_leeway_date = NaiveDate::from_ymd_opt(2037, 12, 31).unwrap();
+    let mut first_leeway_date = unreached_daily_summary_date();
     let mut first_leeway_duration = Duration::seconds(0);
 
     let mut max_accumulate_duration_diff_to_limit = -Duration::hours(24);
-    let mut max_accumulate_duration_diff_to_limit_date =
-        NaiveDate::from_ymd_opt(1900, 1, 1).unwrap();
+    let mut max_accumulate_duration_diff_to_limit_date = unobserved_daily_summary_metric_date();
 
     let mut max_accumulated_rho_diff: f64 = -1.0;
-    let mut max_accumulated_rho_diff_date = NaiveDate::from_ymd_opt(1900, 1, 1).unwrap();
+    let mut max_accumulated_rho_diff_date = unobserved_daily_summary_metric_date();
 
-    let max_counter_days = min(counter_arr.len(), SUMMARY_DAYS);
+    let max_counter_days = min(counter_arr.len(), DAILY_SUMMARY_HORIZON_DAYS);
 
     for (date, _cnt) in &counter_arr[0..max_counter_days] {
         let total_estimated_work_seconds_of_the_date: i64 =
