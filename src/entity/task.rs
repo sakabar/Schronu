@@ -1402,9 +1402,10 @@ impl TaskHandle {
             appointment_start_time + Duration::seconds(self.get_estimated_work_seconds()?);
 
         let root = self.root()?;
+        let is_done = self.get_status()? == Status::Done;
         let mut deadline_updates = Vec::new();
         // 完了済みtaskを境界としてdeadline伝搬を止める既存の不変条件を守る。
-        if self.get_status()? != Status::Done {
+        if !is_done {
             for child in self.node.children() {
                 Self { node: child }.collect_deadline_updates(
                     Some(deadline_time),
@@ -1442,7 +1443,8 @@ impl TaskHandle {
             *attr.get_deadline_time_opt(),
             attr.get_fixed_start(),
         );
-        attr.set_deadline_time_opt(Some(deadline_time));
+        // 完了済みtaskは旧約実装と同じく自己deadlineを解除したままにする。
+        attr.set_deadline_time_opt((!is_done).then_some(deadline_time));
         attr.set_start_time(appointment_start_time);
         attr.set_fixed_start(true);
         let changed = !deadline_updates.is_empty()
