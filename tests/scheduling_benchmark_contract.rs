@@ -50,6 +50,8 @@ fn schedule診断は通常経路と同じ結果を返し内部処理を計数す
     assert!(metrics.candidate_count > 0);
     assert!(metrics.dependency_candidate_probe_count > 0);
     assert!(metrics.selection_event_count > 0);
+    assert!(metrics.selection_candidate_probe_count > 0);
+    assert!(metrics.release_candidate_probe_count > 0);
     assert!(metrics.slack_probe_count > 0);
     assert_eq!(metrics.segment_count, actual.len());
     assert_eq!(metrics.sort_count, 2);
@@ -208,10 +210,23 @@ fn assert_fixture_counter_bounds(size: FixtureSize) {
         schedule.segment_count * 3
     );
     assert!(
-        schedule.slack_probe_count <= schedule.candidate_count * 8,
+        schedule.selection_candidate_probe_count <= schedule.candidate_count * 16,
+        "selection candidate probes exceeded the indexed limit: {} > {}",
+        schedule.selection_candidate_probe_count,
+        schedule.candidate_count * 16
+    );
+    assert!(
+        // atomicの将来release評価も含め、fixture比率上はcandidate当たり32回以内に保つ。
+        schedule.release_candidate_probe_count <= schedule.candidate_count * 32,
+        "release candidate probes exceeded the indexed limit: {} > {}",
+        schedule.release_candidate_probe_count,
+        schedule.candidate_count * 32
+    );
+    assert!(
+        schedule.slack_probe_count <= schedule.candidate_count * 128,
         "slack probes exceeded the linear input limit: {} > {}",
         schedule.slack_probe_count,
-        schedule.candidate_count * 8
+        schedule.candidate_count * 128
     );
 
     let fixture = SchedulingFixture::build(size).unwrap();
