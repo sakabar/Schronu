@@ -893,6 +893,27 @@ fn test_make_appointmentは完了済みtaskから子孫へdeadlineを伝搬し�
 }
 
 #[test]
+fn test_make_appointmentは完了済みtaskの自己deadlineを解除する() {
+    let task = new_test_task_handle("完了済み予定").unwrap();
+    let original_deadline = Local.with_ymd_and_hms(2026, 8, 20, 18, 0, 0).unwrap();
+    task.set_deadline_time_opt(Some(original_deadline)).unwrap();
+    task.set_orig_status(Status::Done).unwrap();
+    task.set_estimated_work_seconds(60 * 60).unwrap();
+    let appointment_start = Local.with_ymd_and_hms(2026, 8, 21, 9, 0, 0).unwrap();
+    let before_revision = task.get_persistent_mutation_revision().unwrap();
+
+    task.make_appointment(appointment_start).unwrap();
+
+    assert_eq!(task.get_start_time().unwrap(), appointment_start);
+    assert_eq!(task.get_deadline_time_opt().unwrap(), None);
+    assert!(task.get_fixed_start().unwrap());
+    assert_eq!(
+        task.get_persistent_mutation_revision().unwrap(),
+        before_revision + 1
+    );
+}
+
+#[test]
 fn test_set_flexible_start_timeは開始時刻とfixed_startを1回の更新で変更する() {
     let task = new_test_task_handle("通常task").unwrap();
     task.set_fixed_start(true).unwrap();
