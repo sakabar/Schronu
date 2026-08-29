@@ -11,7 +11,7 @@ use crate::entity::task::{
 };
 use chrono::{DateTime, Duration, Local};
 use serde::Serialize;
-use std::cmp::max;
+use std::cmp::{max, min};
 use std::collections::HashMap;
 use uuid::Uuid;
 
@@ -141,10 +141,7 @@ fn build_schedule_candidates(
         for leaf in extract_leaf_tasks_from_project_with_pending(project_root)
             .map_err(ApplicationError::TaskTree)?
         {
-            validate_ancestry_schedule_range(&leaf, last_synced_time)?;
-            let ancestors = leaf
-                .list_all_parent_tasks_with_first_available_time()
-                .map_err(ApplicationError::TaskTree)?;
+            let ancestors = list_ancestor_schedule_times_checked(&leaf)?;
             for pair in ancestors.windows(2) {
                 let child_id = pair[0].1.get_id().map_err(ApplicationError::TaskTree)?;
                 let parent_id = pair[1].1.get_id().map_err(ApplicationError::TaskTree)?;
@@ -218,51 +215,131 @@ fn build_schedule_candidates(
     Ok(candidates)
 }
 
-fn validate_ancestry_schedule_range(
+/// schedule候補専用に、leafから祖先までの着手可能時刻をchecked計算する。
+///
+/// entityの汎用APIはfixedという配置規則を知らず、使わないpending/dependency時刻へ
+/// 見積時間を加算し得る。schedule経路ではこのhelperだけを使い、fixedは指定開始を
+/// 保持しつつ、flexibleには従来のdeadline補正と祖先順序をそのまま適用する。
+fn list_ancestor_schedule_times_checked(
     leaf: &TaskHandle,
-    last_synced_time: DateTime<Local>,
-) -> Result<(), ApplicationError> {
-    // entityのancestor計算は各taskの終了時刻を使うため、その内部へ入る前に同じ子→親順で
-    // 表現可能性を検査する。これによりchronoのpanicへ情報を失わず、schedule固有errorへ
-    // task idと原因のsegmentを保持できる。
+) -> Result<Vec<(DateTime<Local>, TaskHandle)>, ApplicationError> {
+    let mut ancestors = Vec::new();
+    let mut child_finish = DateTime::<Local>::MIN_UTC.with_timezone(&Local);
     let mut task = Some(leaf.clone());
-    let mut previous_end = DateTime::<Local>::MIN_UTC.with_timezone(&Local);
+
+    // Phase 1: 子の終了を親の開始下限にする。ただしfixedはdependencyで動かさない。
     while let Some(current) = task {
-        let start_time = if current
+        let fixed = current
+            .get_fixed_start()
+            .map_err(ApplicationError::TaskTree)?;
+        let own_start = if fixed {
+            current
+                .get_start_time()
+                .map_err(ApplicationError::TaskTree)?
+        } else {
+            current
+                .first_available_time()
+                .map_err(ApplicationError::TaskTree)?
+        };
+        let start = if fixed {
+            own_start
+        } else {
+            max(child_finish, own_start)
+        };
+        child_finish = checked_candidate_end(&current, start)?;
+        ancestors.push((start, current.clone()));
+        task = current.parent().map_err(ApplicationError::TaskTree)?;
+    }
+
+    // Phase 2: 親側のdeadlineから必要開始時刻を子へ伝える。fixedは動かさず、
+    // その指定開始をdependency側の必要時刻として伝える。
+    let mut parent_required_start = DateTime::<Local>::MAX_UTC.with_timezone(&Local);
+    for (rough_start, current) in ancestors.iter_mut().rev() {
+        if current
             .get_fixed_start()
             .map_err(ApplicationError::TaskTree)?
         {
-            // fixedはpendingやdependencyで移動しない。policyの実配置と同じ開始時刻で
-            // 検証しなければ、errorが実際には使わない日時を原因として報告してしまう。
-            max(
-                current
-                    .get_start_time()
-                    .map_err(ApplicationError::TaskTree)?,
-                last_synced_time,
-            )
-        } else {
-            max(
-                previous_end,
-                current
-                    .first_available_time()
-                    .map_err(ApplicationError::TaskTree)?,
-            )
-        };
-        let work_seconds =
-            calculate_remaining_work_seconds(&current).map_err(ApplicationError::TaskTree)?;
-        let task_id = current.get_id().map_err(ApplicationError::TaskTree)?;
-        previous_end = Duration::try_seconds(work_seconds)
-            .and_then(|duration| start_time.checked_add_signed(duration))
-            .ok_or_else(|| {
-                map_scheduling_policy_error(SchedulingPolicyError {
-                    task_id,
-                    start_time,
+            parent_required_start = min(parent_required_start, *rough_start);
+            continue;
+        }
+        let mut required_start = parent_required_start;
+        if let Some(deadline) = current
+            .get_deadline_time_opt()
+            .map_err(ApplicationError::TaskTree)?
+        {
+            required_start = min(required_start, deadline);
+        }
+        let finish = checked_candidate_end(current, *rough_start)?;
+        if finish >= required_start {
+            let lateness = finish.signed_duration_since(required_start);
+            let adjusted_start = rough_start.checked_sub_signed(lateness);
+            if let Some(adjusted_start) = adjusted_start {
+                *rough_start = adjusted_start;
+            } else {
+                let work_seconds = calculate_remaining_work_seconds(current)
+                    .map_err(ApplicationError::TaskTree)?;
+                return Err(map_scheduling_policy_error(schedule_time_out_of_range(
+                    current,
+                    *rough_start,
                     work_seconds,
-                })
-            })?;
-        task = current.parent().map_err(ApplicationError::TaskTree)?;
+                )?));
+            }
+            parent_required_start = *rough_start;
+        }
     }
-    Ok(())
+
+    // Phase 3: deadline補正後もflexibleの祖先順を維持する。fixedだけは子の終了より
+    // 前であっても指定開始を保持し、dependency edge自体は候補生成側へ残す。
+    child_finish = DateTime::<Local>::MIN_UTC.with_timezone(&Local);
+    for (start, current) in &mut ancestors {
+        if current
+            .get_fixed_start()
+            .map_err(ApplicationError::TaskTree)?
+        {
+            *start = current
+                .get_start_time()
+                .map_err(ApplicationError::TaskTree)?;
+        } else {
+            let own_start = current
+                .first_available_time()
+                .map_err(ApplicationError::TaskTree)?;
+            *start = max(min(*start, own_start), child_finish);
+        }
+        child_finish = checked_candidate_end(current, *start)?;
+    }
+
+    Ok(ancestors)
+}
+
+fn checked_candidate_end(
+    task: &TaskHandle,
+    start_time: DateTime<Local>,
+) -> Result<DateTime<Local>, ApplicationError> {
+    let work_seconds =
+        calculate_remaining_work_seconds(task).map_err(ApplicationError::TaskTree)?;
+    if let Some(end) = Duration::try_seconds(work_seconds)
+        .and_then(|duration| start_time.checked_add_signed(duration))
+    {
+        Ok(end)
+    } else {
+        Err(map_scheduling_policy_error(schedule_time_out_of_range(
+            task,
+            start_time,
+            work_seconds,
+        )?))
+    }
+}
+
+fn schedule_time_out_of_range(
+    task: &TaskHandle,
+    start_time: DateTime<Local>,
+    work_seconds: i64,
+) -> Result<SchedulingPolicyError, ApplicationError> {
+    Ok(SchedulingPolicyError {
+        task_id: task.get_id().map_err(ApplicationError::TaskTree)?,
+        start_time,
+        work_seconds,
+    })
 }
 
 fn map_scheduling_policy_error(error: SchedulingPolicyError) -> ApplicationError {
