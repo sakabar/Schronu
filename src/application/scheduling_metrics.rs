@@ -5,6 +5,8 @@ pub(crate) struct ScheduleMetrics {
     pub occupied_slot_probe_count: usize,
     pub dependency_candidate_probe_count: usize,
     pub selection_event_count: usize,
+    pub selection_candidate_probe_count: usize,
+    pub release_candidate_probe_count: usize,
     pub slack_probe_count: usize,
     pub sort_count: usize,
     pub schedule_rebuild_count: usize,
@@ -67,6 +69,22 @@ impl ScheduleMetrics {
         #[cfg(feature = "benchmarking")]
         {
             self.selection_event_count += 1;
+        }
+    }
+
+    #[inline(always)]
+    pub fn record_selection_candidate_probe(&mut self) {
+        #[cfg(feature = "benchmarking")]
+        {
+            self.selection_candidate_probe_count += 1;
+        }
+    }
+
+    #[inline(always)]
+    pub fn record_release_candidate_probe(&mut self) {
+        #[cfg(feature = "benchmarking")]
+        {
+            self.release_candidate_probe_count += 1;
         }
     }
 
