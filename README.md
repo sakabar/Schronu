@@ -203,7 +203,7 @@ clientごとの設定形式に合わせて、commandと環境変数を次のよ�
 
 `get_schedule.from`と`get_schedule.until`は、ローカル時刻06:00を境界とする論理日の日付です。両方指定すると`from`の06:00以上`until`の06:00未満、`from`だけならその1論理日、`until`だけなら現在以上`until`の06:00未満、両方省略なら現在以上次の06:00未満を対象にします。schedule segmentは開始時刻だけでなく、その区間が対象範囲と重なるかどうかで選ばれます。
 
-`create_task.name`と`breakdown_task.names`の各要素は、前後の空白を除いて空でなく、符号付き整数だけの名前でもない文字列にします。`estimated_work_minutes`は非負整数で、`create_task`では省略時に既定の15分です。`pending_until`を省略するとoriginal statusはTodo、指定するとPendingです。ただし指定時刻が未来でなければ実効statusはTodoになり得ます。`breakdown_task`では全childへ同じ`pending_until`を設定し、親のdeadline継承によってその時刻が早まる場合があります。
+`create_task.name`と`breakdown_task.names`の各要素は、前後の空白を除いて空でない文字列にします。`123`、`+123`、`-123`のように、数字だけ、または先頭の`+`か`-`と数字だけからなる名前は指定できません。`estimated_work_minutes`は非負整数で、`create_task`では省略時に既定の15分です。`pending_until`を省略するとoriginal statusはTodo、指定するとPendingです。ただし指定時刻が未来でなければ実効statusはTodoになり得ます。`breakdown_task`では全childへ同じ`pending_until`を設定し、親のdeadline継承によってその時刻が早まる場合があります。
 
 `defer_task`でも、指定した`pending_until`がdeadline policyによって早まる場合があり、時刻が未来でなければ実効statusはTodoになり得ます。`defer_routine_task`の対象には自身のdeadlineと親の反復間隔が必要で、移動後の開始時刻が未来なら実効statusはPendingになり得ます。`complete_task.finished_at`の省略時は操作時刻を使い、`additional_actual_work_seconds`の省略時は0を加算します。routine親のchildを完了すると次のoccurrenceを作成して親の見積もりを調整する場合があります。`complete_task`は非idempotentであり、完了済みtaskへの再実行でも実作業秒数を再加算し、routine occurrenceを再作成する場合があります。
 
