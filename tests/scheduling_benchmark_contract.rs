@@ -149,6 +149,27 @@ fn atomic_release探索はready候補とfuture_releaseの直積にならない()
 }
 
 #[test]
+fn 短fragment判定はfrontier全体を複製しない() {
+    const FRAGMENT_COUNT: usize = 128;
+    let fixture = SchedulingFixture::short_fragment_frontier_adversarial(FRAGMENT_COUNT).unwrap();
+    let repository = SchedulingRepository::new(fixture.projects, fixture.now);
+
+    let started = Instant::now();
+    let (schedule, metrics) = get_schedule_diagnostics(&repository).unwrap();
+    let elapsed = started.elapsed();
+
+    assert_eq!(schedule.len(), FRAGMENT_COUNT + 1);
+    assert_eq!(
+        metrics.frontier_clone_element_count, 0,
+        "speculative selection must not clone frontier elements"
+    );
+    assert!(
+        elapsed <= Duration::from_secs(2),
+        "short fragment adversarial fixture exceeded wall limit: {elapsed:?}"
+    );
+}
+
+#[test]
 fn pack診断は通常経路と同じ結果を返しschedule再構築を計数する() {
     let expected_repository = small_repository();
     let mut expected_free_time = SchedulingFreeTimeManager::new(DAILY_FREE_MINUTES);

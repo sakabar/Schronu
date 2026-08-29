@@ -164,6 +164,40 @@ impl SchedulingFixture {
             seed: TYPICAL_SEED,
         })
     }
+
+    #[allow(dead_code)]
+    pub fn short_fragment_frontier_adversarial(
+        fragment_count: usize,
+    ) -> Result<Self, TaskTreeError> {
+        let now = fixed_now();
+        let mut sequence = 0_u64;
+        let mut projects = Vec::with_capacity(fragment_count + 1);
+
+        let long = new_task("fixture-fragment-long", &mut sequence, now, Status::Todo)?;
+        long.set_estimated_work_seconds((fragment_count as i64 + 1) * 60)?;
+        projects.push(long);
+
+        for index in 0..fragment_count {
+            let task = new_task(
+                &format!("fixture-fragment-release-{index:04}"),
+                &mut sequence,
+                now,
+                Status::Todo,
+            )?;
+            task.set_priority((fragment_count - index) as i64)?;
+            task.set_estimated_work_seconds(60)?;
+            // 1分taskの後に1分gapを残し、長時間taskが次releaseの直前で
+            // 毎回short-fragment判定を通るようにする。
+            task.set_start_time(now + Duration::seconds((index + 1) as i64 * 2 * 60))?;
+            projects.push(task);
+        }
+
+        Ok(Self {
+            projects,
+            now,
+            seed: STRESS_SEED,
+        })
+    }
 }
 
 fn fixed_now() -> DateTime<Local> {
