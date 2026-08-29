@@ -1213,6 +1213,20 @@ fn test_yaml_to_task_fixed_start未指定なら旧約の完全一致式だけで
 }
 
 #[test]
+fn test_yaml_to_task_fixed_start旧推定は最大見積時間でpanicしない() {
+    let source = format!(
+        "name: '最大見積'\nstart_time: '2026/08/20 13:00:00'\ndeadline_time: '2026/08/20 13:15:00'\nestimated_work_seconds: {}\n",
+        i64::MAX
+    );
+    let docs = YamlLoader::load_from_str(&source).unwrap();
+
+    let operation_now = Local.with_ymd_and_hms(2026, 8, 20, 13, 0, 0).unwrap();
+    let actual = yaml_to_task(&docs[0], operation_now).unwrap();
+
+    assert!(!actual.get_fixed_start().unwrap());
+}
+
+#[test]
 fn test_task_snapshot_to_yaml_fixed_startの推定済みtrueを確定値として保存する() {
     let docs = YamlLoader::load_from_str(
         "name: '旧約'\nstart_time: '2026/08/20 13:00:00'\ndeadline_time: '2026/08/20 13:15:00'\nestimated_work_seconds: 900\n",
