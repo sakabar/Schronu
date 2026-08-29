@@ -50,7 +50,12 @@ impl JsonSchema for UuidValue {
     }
 
     fn json_schema(_generator: &mut SchemaGenerator) -> Schema {
-        json_schema!({"type": "string", "format": "uuid"})
+        json_schema!({
+            "type": "string",
+            "format": "uuid",
+            "description": "A valid UUID string.",
+            "examples": ["80d7db87-324e-4e8d-a5b7-ff78cd5bf39a"]
+        })
     }
 }
 
@@ -80,7 +85,12 @@ impl JsonSchema for Rfc3339DateTime {
     }
 
     fn json_schema(_generator: &mut SchemaGenerator) -> Schema {
-        json_schema!({"type": "string", "format": "date-time"})
+        json_schema!({
+            "type": "string",
+            "format": "date-time",
+            "description": "An RFC 3339 date-time string with Z or a numeric UTC offset.",
+            "examples": ["2026-08-29T10:00:00+09:00", "2026-08-29T01:00:00Z"]
+        })
     }
 }
 
@@ -94,14 +104,14 @@ impl<'de> Deserialize<'de> for IsoDate {
         let value = Value::deserialize(deserializer)?;
         let Value::String(value) = value else {
             return Err(serde::de::Error::custom(format!(
-                "{SCHEMA_ERROR_PREFIX}must be a date string"
+                "{SCHEMA_ERROR_PREFIX}must be a YYYY-MM-DD date string"
             )));
         };
         NaiveDate::parse_from_str(&value, "%Y-%m-%d")
             .map(Self)
             .map_err(|_| {
                 serde::de::Error::custom(format!(
-                    "{SEMANTIC_ERROR_PREFIX}must be a valid ISO 8601 date"
+                    "{SEMANTIC_ERROR_PREFIX}must be a valid calendar date in YYYY-MM-DD format"
                 ))
             })
     }
@@ -117,7 +127,12 @@ impl JsonSchema for IsoDate {
     }
 
     fn json_schema(_generator: &mut SchemaGenerator) -> Schema {
-        json_schema!({"type": "string", "format": "date"})
+        json_schema!({
+            "type": "string",
+            "format": "date",
+            "description": "A calendar date in YYYY-MM-DD format without a time or time zone.",
+            "examples": ["2026-08-29"]
+        })
     }
 }
 
@@ -174,7 +189,11 @@ impl JsonSchema for NonNegativeI64 {
     }
 
     fn json_schema(_generator: &mut SchemaGenerator) -> Schema {
-        json_schema!({"type": "integer", "minimum": 0})
+        json_schema!({
+            "type": "integer",
+            "minimum": 0,
+            "description": "A non-negative integer."
+        })
     }
 }
 
@@ -206,7 +225,11 @@ impl JsonSchema for NonEmptyString {
     }
 
     fn json_schema(_generator: &mut SchemaGenerator) -> Schema {
-        json_schema!({"type": "string", "minLength": 1})
+        json_schema!({
+            "type": "string",
+            "minLength": 1,
+            "description": "A non-empty string."
+        })
     }
 }
 
@@ -369,15 +392,19 @@ pub(super) struct GetFocusInput {}
 #[derive(Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub(super) struct GetTaskInput {
+    /// The UUID of the existing task to return.
     pub(super) task_id: UuidValue,
 }
 
 #[derive(Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub(super) struct CreateTaskInput {
+    /// The task name. After trimming surrounding whitespace, it must not be blank or consist only of an optionally signed integer.
     pub(super) name: NonEmptyString,
+    /// The estimated work duration as a non-negative integer number of minutes. When provided, it is converted to seconds; when omitted, the task keeps the default estimate of 15 minutes.
     #[serde(default)]
     pub(super) estimated_work_minutes: OptionalValue<NonNegativeI64>,
+    /// An RFC 3339 date-time with Z or a numeric UTC offset. Providing it sets the original status to Pending, but the effective status can be Todo when the time is not in the future. Omit it for an original status of Todo.
     #[serde(default)]
     pub(super) pending_until: OptionalValue<Rfc3339DateTime>,
 }
@@ -403,10 +430,30 @@ impl CreateTaskInput {
 #[derive(Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub(super) struct BreakdownTaskInput {
+    /// The UUID of the existing parent task to which the children are added.
     pub(super) parent_id: UuidValue,
+    /// One or more child task names, added to the parent in this array order.
+    #[schemars(schema_with = "child_task_names_schema")]
     pub(super) names: NonEmptyVec<NonEmptyString>,
+    /// A common RFC 3339 date-time with Z or a numeric UTC offset. Providing it sets every child's original status to Pending, but the effective status can be Todo when the time is not in the future. Inheriting the parent's deadline can move this time earlier. Omit it for an original status of Todo.
     #[serde(default)]
     pub(super) pending_until: OptionalValue<Rfc3339DateTime>,
+}
+
+fn child_task_names_schema(generator: &mut SchemaGenerator) -> Schema {
+    let mut schema = generator.subschema_for::<NonEmptyVec<NonEmptyString>>();
+    let item_schema = schema
+        .ensure_object()
+        .get_mut("items")
+        .and_then(Value::as_object_mut)
+        .expect("NonEmptyVec schema must define an object item schema");
+    item_schema.insert(
+        "description".to_string(),
+        Value::from(
+            "A child task name. After trimming surrounding whitespace, it must not be blank or consist only of an optionally signed integer.",
+        ),
+    );
+    schema
 }
 
 impl BreakdownTaskInput {
@@ -425,7 +472,9 @@ impl BreakdownTaskInput {
 #[derive(Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub(super) struct DeferTaskInput {
+    /// The UUID of the existing task to defer.
     pub(super) task_id: UuidValue,
+    /// The requested pending-until time as an RFC 3339 date-time with Z or a numeric UTC offset. The existing deadline policy can move it earlier.
     pub(super) pending_until: Rfc3339DateTime,
 }
 
@@ -438,6 +487,7 @@ impl DeferTaskInput {
 #[derive(Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub(super) struct DeferRoutineTaskInput {
+    /// The UUID of the existing routine task to defer. The task must have its own deadline and a parent whose repetition interval is set.
     pub(super) task_id: UuidValue,
 }
 
@@ -450,9 +500,12 @@ impl DeferRoutineTaskInput {
 #[derive(Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub(super) struct CompleteTaskInput {
+    /// The UUID of the existing task to complete. A task with any unfinished direct child cannot be completed.
     pub(super) task_id: UuidValue,
+    /// The completion and end time as an RFC 3339 date-time with Z or a numeric UTC offset. Omit it to use the operation time.
     #[serde(default)]
     pub(super) finished_at: OptionalValue<Rfc3339DateTime>,
+    /// A non-negative number of seconds to add to the task's existing actual work. Omit it to add 0; the request fails if the resulting total overflows the supported integer range.
     #[serde(default = "zero_non_negative")]
     #[schemars(schema_with = "additional_work_seconds_schema")]
     pub(super) additional_actual_work_seconds: NonNegativeI64,
@@ -478,8 +531,12 @@ fn zero_non_negative() -> NonNegativeI64 {
     NonNegativeI64(0)
 }
 
-fn additional_work_seconds_schema(_generator: &mut SchemaGenerator) -> Schema {
-    json_schema!({"type": "integer", "minimum": 0, "default": 0})
+fn additional_work_seconds_schema(generator: &mut SchemaGenerator) -> Schema {
+    let mut schema = generator.subschema_for::<NonNegativeI64>();
+    schema
+        .ensure_object()
+        .insert("default".to_string(), Value::from(0));
+    schema
 }
 
 #[derive(Clone, Copy)]
@@ -562,11 +619,15 @@ impl UpdateTaskInput {
 #[serde(deny_unknown_fields)]
 #[schemars(transform = require_update_task_field)]
 struct UpdateTaskInputFields {
+    /// The UUID of the existing task to update.
     task_id: UuidValue,
+    /// Set the estimated work duration from a non-negative integer number of minutes, converted to seconds. Omit this field to leave the estimate unchanged; the request fails if conversion to seconds overflows.
     #[serde(default)]
     estimated_work_minutes: OptionalValue<NonNegativeI64>,
+    /// For a non-null RFC 3339 date-time with Z or a numeric UTC offset, apply it as a deadline upper bound to the unfinished target and its unfinished descendants; existing earlier deadlines are preserved. If the selected target is completed, neither it nor any descendants are changed. Pass null to clear only the selected task's deadline. Omit this field to leave the deadline unchanged.
     #[serde(default)]
     deadline_time: NullablePatch<Rfc3339DateTime>,
+    /// Set the root project's category to one of the supported values, or pass null to clear it. Omit this field to leave the category unchanged.
     #[serde(default)]
     category: NullablePatch<ProjectCategoryValue>,
 }
@@ -606,10 +667,13 @@ fn require_update_task_field(schema: &mut Schema) {
 #[derive(Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub(super) struct ListTasksInput {
+    /// A half-open RFC 3339 date-time range [from, until) applied to the selected task field. This filter is combined with status and category filters using AND. Omit this field to skip period filtering.
     #[serde(default)]
     pub(super) period: OptionalValue<TaskPeriodInput>,
+    /// Effective task statuses to include. Values within the array are combined using OR. Omit this field or pass an empty array to skip status filtering.
     #[serde(default)]
     pub(super) statuses: OptionalValue<Vec<StatusValue>>,
+    /// Categories to include. Values within the array are combined using OR, and null selects uncategorized tasks. Omit this field or pass an empty array to skip category filtering.
     #[serde(default)]
     #[schemars(schema_with = "categories_schema")]
     pub(super) categories: OptionalValue<Vec<Option<ProjectCategoryValue>>>,
@@ -642,8 +706,11 @@ impl ListTasksInput {
 #[derive(Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub(super) struct TaskPeriodInput {
+    /// The task date-time field to filter. scheduled_start selects tasks with at least one calculated schedule segment whose start is within the range; created_at, deadline, and completed_at select their corresponding timestamps.
     pub(super) field: TaskPeriodFieldValue,
+    /// The inclusive start of the period as an RFC 3339 date-time string with Z or a numeric UTC offset. Must be earlier than until.
     pub(super) from: Rfc3339DateTime,
+    /// The exclusive end of the period as an RFC 3339 date-time string with Z or a numeric UTC offset. Must be later than from.
     pub(super) until: Rfc3339DateTime,
 }
 
@@ -832,8 +899,10 @@ fn categories_schema(generator: &mut SchemaGenerator) -> Schema {
 #[derive(Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub(super) struct GetScheduleInput {
+    /// The logical date at the inclusive start of the range, in YYYY-MM-DD format without a time or time zone. Its boundary is 06:00 local time. With no until, selects this one logical day; with no from or until, the range starts now.
     #[serde(default)]
     pub(super) from: OptionalValue<IsoDate>,
+    /// The logical date at the exclusive end of the range, in YYYY-MM-DD format without a time or time zone. Its boundary is 06:00 local time. With no from, the range starts now; with neither bound, it ends at the next 06:00 boundary.
     #[serde(default)]
     pub(super) until: OptionalValue<IsoDate>,
 }
@@ -1015,7 +1084,9 @@ fn semantic_reason(reason: &str) -> &'static str {
     match reason {
         "must be a valid UUID" => "must be a valid UUID",
         "must be a valid RFC 3339 date-time" => "must be a valid RFC 3339 date-time",
-        "must be a valid ISO 8601 date" => "must be a valid ISO 8601 date",
+        "must be a valid calendar date in YYYY-MM-DD format" => {
+            "must be a valid calendar date in YYYY-MM-DD format"
+        }
         "is outside the supported integer range" => "is outside the supported integer range",
         _ => "contains an invalid value",
     }
@@ -1027,7 +1098,7 @@ fn schema_reason(reason: &str) -> &'static str {
         "must not be empty" => "must not be empty",
         "must contain at least one item" => "must contain at least one item",
         "must be a string or null" => "must be a string or null",
-        "must be a date string" => "must be a date string",
+        "must be a YYYY-MM-DD date string" => "must be a YYYY-MM-DD date string",
         "must be a supported period field" => "must be a supported period field",
         "must be todo, pending, or done" => "must be todo, pending, or done",
         "must be a supported category or null" => "must be a supported category or null",

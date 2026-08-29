@@ -1,6 +1,6 @@
 [
   {
-    "description": "Get the task that should be worked on now.",
+    "description": "Return the task Schronu currently recommends working on in the task field; task is null when no task is available.",
     "inputSchema": {
       "additionalProperties": false,
       "properties": {},
@@ -10,11 +10,15 @@
     "name": "get_focus"
   },
   {
-    "description": "Get one task by UUID.",
+    "description": "Return an existing task by its UUID.",
     "inputSchema": {
       "additionalProperties": false,
       "properties": {
         "task_id": {
+          "description": "The UUID of the existing task to return.",
+          "examples": [
+            "80d7db87-324e-4e8d-a5b7-ff78cd5bf39a"
+          ],
           "format": "uuid",
           "type": "string"
         }
@@ -27,11 +31,12 @@
     "name": "get_task"
   },
   {
-    "description": "List tasks filtered by period, status, and category.",
+    "description": "List tasks in project-tree pre-order, optionally filtered by period, effective status, and category. Different filters are combined using AND.",
     "inputSchema": {
       "additionalProperties": false,
       "properties": {
         "categories": {
+          "description": "Categories to include. Values within the array are combined using OR, and null selects uncategorized tasks. Omit this field or pass an empty array to skip category filtering.",
           "items": {
             "anyOf": [
               {
@@ -53,8 +58,10 @@
         },
         "period": {
           "additionalProperties": false,
+          "description": "A half-open RFC 3339 date-time range [from, until) applied to the selected task field. This filter is combined with status and category filters using AND. Omit this field to skip period filtering.",
           "properties": {
             "field": {
+              "description": "The task date-time field to filter. scheduled_start selects tasks with at least one calculated schedule segment whose start is within the range; created_at, deadline, and completed_at select their corresponding timestamps.",
               "enum": [
                 "scheduled_start",
                 "created_at",
@@ -64,10 +71,20 @@
               "type": "string"
             },
             "from": {
+              "description": "The inclusive start of the period as an RFC 3339 date-time string with Z or a numeric UTC offset. Must be earlier than until.",
+              "examples": [
+                "2026-08-29T10:00:00+09:00",
+                "2026-08-29T01:00:00Z"
+              ],
               "format": "date-time",
               "type": "string"
             },
             "until": {
+              "description": "The exclusive end of the period as an RFC 3339 date-time string with Z or a numeric UTC offset. Must be later than from.",
+              "examples": [
+                "2026-08-29T10:00:00+09:00",
+                "2026-08-29T01:00:00Z"
+              ],
               "format": "date-time",
               "type": "string"
             }
@@ -80,6 +97,7 @@
           "type": "object"
         },
         "statuses": {
+          "description": "Effective task statuses to include. Values within the array are combined using OR. Omit this field or pass an empty array to skip status filtering.",
           "items": {
             "enum": [
               "todo",
@@ -97,15 +115,23 @@
     "name": "list_tasks"
   },
   {
-    "description": "Get Schronu's calculated task schedule for a date range.",
+    "description": "Return calculated schedule segments whose intervals overlap the selected range of local logical days. Logical days start at 06:00 local time.",
     "inputSchema": {
       "additionalProperties": false,
       "properties": {
         "from": {
+          "description": "The logical date at the inclusive start of the range, in YYYY-MM-DD format without a time or time zone. Its boundary is 06:00 local time. With no until, selects this one logical day; with no from or until, the range starts now.",
+          "examples": [
+            "2026-08-29"
+          ],
           "format": "date",
           "type": "string"
         },
         "until": {
+          "description": "The logical date at the exclusive end of the range, in YYYY-MM-DD format without a time or time zone. Its boundary is 06:00 local time. With no from, the range starts now; with neither bound, it ends at the next 06:00 boundary.",
+          "examples": [
+            "2026-08-29"
+          ],
           "format": "date",
           "type": "string"
         }
@@ -116,19 +142,26 @@
     "name": "get_schedule"
   },
   {
-    "description": "Create a new root project task.",
+    "description": "Create a new root project task. Its original status is Todo when pending_until is omitted and Pending when provided; if that time is not in the future, its effective status can be Todo.",
     "inputSchema": {
       "additionalProperties": false,
       "properties": {
         "estimated_work_minutes": {
+          "description": "The estimated work duration as a non-negative integer number of minutes. When provided, it is converted to seconds; when omitted, the task keeps the default estimate of 15 minutes.",
           "minimum": 0,
           "type": "integer"
         },
         "name": {
+          "description": "The task name. After trimming surrounding whitespace, it must not be blank or consist only of an optionally signed integer.",
           "minLength": 1,
           "type": "string"
         },
         "pending_until": {
+          "description": "An RFC 3339 date-time with Z or a numeric UTC offset. Providing it sets the original status to Pending, but the effective status can be Todo when the time is not in the future. Omit it for an original status of Todo.",
+          "examples": [
+            "2026-08-29T10:00:00+09:00",
+            "2026-08-29T01:00:00Z"
+          ],
           "format": "date-time",
           "type": "string"
         }
@@ -141,12 +174,14 @@
     "name": "create_task"
   },
   {
-    "description": "Add child tasks to an existing task.",
+    "description": "Add child tasks to an existing parent task in the order supplied. Each child inherits the parent's deadline when present. Its original status is Todo when pending_until is omitted and Pending when provided; its effective status can be Todo if that time is not in the future, and deadline policy can move pending_until earlier.",
     "inputSchema": {
       "additionalProperties": false,
       "properties": {
         "names": {
+          "description": "One or more child task names, added to the parent in this array order.",
           "items": {
+            "description": "A child task name. After trimming surrounding whitespace, it must not be blank or consist only of an optionally signed integer.",
             "minLength": 1,
             "type": "string"
           },
@@ -154,10 +189,19 @@
           "type": "array"
         },
         "parent_id": {
+          "description": "The UUID of the existing parent task to which the children are added.",
+          "examples": [
+            "80d7db87-324e-4e8d-a5b7-ff78cd5bf39a"
+          ],
           "format": "uuid",
           "type": "string"
         },
         "pending_until": {
+          "description": "A common RFC 3339 date-time with Z or a numeric UTC offset. Providing it sets every child's original status to Pending, but the effective status can be Todo when the time is not in the future. Inheriting the parent's deadline can move this time earlier. Omit it for an original status of Todo.",
+          "examples": [
+            "2026-08-29T10:00:00+09:00",
+            "2026-08-29T01:00:00Z"
+          ],
           "format": "date-time",
           "type": "string"
         }
@@ -171,15 +215,24 @@
     "name": "breakdown_task"
   },
   {
-    "description": "Defer a task until an absolute date and time.",
+    "description": "Set an existing task's pending-until time and original status to Pending. Its effective status can be Todo when the time is not in the future, and the existing deadline policy can move the pending-until time earlier.",
     "inputSchema": {
       "additionalProperties": false,
       "properties": {
         "pending_until": {
+          "description": "The requested pending-until time as an RFC 3339 date-time with Z or a numeric UTC offset. The existing deadline policy can move it earlier.",
+          "examples": [
+            "2026-08-29T10:00:00+09:00",
+            "2026-08-29T01:00:00Z"
+          ],
           "format": "date-time",
           "type": "string"
         },
         "task_id": {
+          "description": "The UUID of the existing task to defer.",
+          "examples": [
+            "80d7db87-324e-4e8d-a5b7-ff78cd5bf39a"
+          ],
           "format": "uuid",
           "type": "string"
         }
@@ -193,11 +246,15 @@
     "name": "defer_task"
   },
   {
-    "description": "Defer a routine task to its next repetition cycle.",
+    "description": "Move an existing routine task to its next repetition cycle by shifting its deadline and start time, then restore its original status to Todo. Its effective status can be Pending when the shifted start time is in the future. The task must have a deadline and a parent whose repetition interval is set.",
     "inputSchema": {
       "additionalProperties": false,
       "properties": {
         "task_id": {
+          "description": "The UUID of the existing routine task to defer. The task must have its own deadline and a parent whose repetition interval is set.",
+          "examples": [
+            "80d7db87-324e-4e8d-a5b7-ff78cd5bf39a"
+          ],
           "format": "uuid",
           "type": "string"
         }
@@ -210,20 +267,30 @@
     "name": "defer_routine_task"
   },
   {
-    "description": "Complete a task, optionally recording finish time and work seconds.",
+    "description": "Complete an existing task that has no unfinished children. This records an end time and can add work seconds; completing a child of a routine parent can create the next occurrence and adjust the parent's estimate. This operation is not idempotent: calling it again for an already completed task adds the requested work again and can create another routine occurrence.",
     "inputSchema": {
       "additionalProperties": false,
       "properties": {
         "additional_actual_work_seconds": {
           "default": 0,
+          "description": "A non-negative number of seconds to add to the task's existing actual work. Omit it to add 0; the request fails if the resulting total overflows the supported integer range.",
           "minimum": 0,
           "type": "integer"
         },
         "finished_at": {
+          "description": "The completion and end time as an RFC 3339 date-time with Z or a numeric UTC offset. Omit it to use the operation time.",
+          "examples": [
+            "2026-08-29T10:00:00+09:00",
+            "2026-08-29T01:00:00Z"
+          ],
           "format": "date-time",
           "type": "string"
         },
         "task_id": {
+          "description": "The UUID of the existing task to complete. A task with any unfinished direct child cannot be completed.",
+          "examples": [
+            "80d7db87-324e-4e8d-a5b7-ff78cd5bf39a"
+          ],
           "format": "uuid",
           "type": "string"
         }
@@ -236,7 +303,7 @@
     "name": "complete_task"
   },
   {
-    "description": "Update a task's estimate, deadline, or category.",
+    "description": "Update an existing task's estimate, deadline, or project category. Include at least one update field; when multiple fields are supplied, they are applied in estimate, deadline, then category order.",
     "inputSchema": {
       "additionalProperties": false,
       "anyOf": [
@@ -258,6 +325,7 @@
       ],
       "properties": {
         "category": {
+          "description": "Set the root project's category to one of the supported values, or pass null to clear it. Omit this field to leave the category unchanged.",
           "anyOf": [
             {
               "enum": [
@@ -275,8 +343,14 @@
           ]
         },
         "deadline_time": {
+          "description": "For a non-null RFC 3339 date-time with Z or a numeric UTC offset, apply it as a deadline upper bound to the unfinished target and its unfinished descendants; existing earlier deadlines are preserved. If the selected target is completed, neither it nor any descendants are changed. Pass null to clear only the selected task's deadline. Omit this field to leave the deadline unchanged.",
           "anyOf": [
             {
+              "description": "An RFC 3339 date-time string with Z or a numeric UTC offset.",
+              "examples": [
+                "2026-08-29T10:00:00+09:00",
+                "2026-08-29T01:00:00Z"
+              ],
               "format": "date-time",
               "type": "string"
             },
@@ -286,10 +360,15 @@
           ]
         },
         "estimated_work_minutes": {
+          "description": "Set the estimated work duration from a non-negative integer number of minutes, converted to seconds. Omit this field to leave the estimate unchanged; the request fails if conversion to seconds overflows.",
           "minimum": 0,
           "type": "integer"
         },
         "task_id": {
+          "description": "The UUID of the existing task to update.",
+          "examples": [
+            "80d7db87-324e-4e8d-a5b7-ff78cd5bf39a"
+          ],
           "format": "uuid",
           "type": "string"
         }
