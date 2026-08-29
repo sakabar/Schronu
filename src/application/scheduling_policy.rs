@@ -396,6 +396,73 @@ fn next_release_event(states: &[FlexibleState], now: DateTime<Local>) -> Option<
         .min()
 }
 
+fn critical_deadline(slacks: &[(DateTime<Local>, i64)]) -> Option<DateTime<Local>> {
+    slacks
+        .iter()
+        .find(|(_, slack)| *slack <= 0)
+        .map(|(deadline, _)| *deadline)
+}
+
+fn ordered_ready_candidates(
+    states: &[FlexibleState],
+    ready_indices: &[usize],
+    critical_deadline: Option<DateTime<Local>>,
+) -> Vec<usize> {
+    let mut ordered = ready_indices.to_vec();
+    let protected_ready = critical_deadline.is_some_and(|critical| {
+        ordered.iter().any(|index| {
+            states[*index]
+                .effective_deadline
+                .is_some_and(|deadline| deadline <= critical)
+        })
+    });
+    if protected_ready {
+        let critical = critical_deadline.expect("protected mode requires a critical deadline");
+        ordered.retain(|index| {
+            states[*index]
+                .effective_deadline
+                .is_some_and(|deadline| deadline <= critical)
+        });
+        ordered.sort_by_key(|index| protected_selection_key(&states[*index]));
+    } else {
+        ordered.sort_by_key(|index| normal_selection_key(&states[*index]));
+    }
+    ordered
+}
+
+/// atomicを実際に中断する候補がreleaseされる最初の時刻を返す。
+fn next_preempting_release(
+    selected: &FlexibleState,
+    states: &[FlexibleState],
+    now: DateTime<Local>,
+    fixed_slots: &[(DateTime<Local>, DateTime<Local>)],
+) -> Option<DateTime<Local>> {
+    let mut releases = states
+        .iter()
+        .filter(|state| state.completion_time.is_none())
+        .filter_map(|state| release_time(state, states))
+        .filter(|release| *release > now)
+        .collect::<Vec<_>>();
+    releases.sort_unstable();
+    releases.dedup();
+    releases.into_iter().find(|release| {
+        let ready = states
+            .iter()
+            .enumerate()
+            .filter(|(_, state)| state.completion_time.is_none() && state.remaining_seconds > 0)
+            .filter(|(_, state)| {
+                release_time(state, states)
+                    .is_some_and(|candidate_release| candidate_release <= *release)
+            })
+            .map(|(index, _)| index)
+            .collect::<Vec<_>>();
+        let slacks = deadline_slacks(states, *release, fixed_slots);
+        ordered_ready_candidates(states, &ready, critical_deadline(&slacks))
+            .first()
+            .is_some_and(|index| states[*index].candidate.id != selected.candidate.id)
+    })
+}
+
 /// 選択taskがdeadline保護対象外なら、最小の正slackが0になる時刻を返す。
 fn slack_boundary(
     selected: &FlexibleState,
@@ -422,10 +489,15 @@ fn segment_boundary(
     slacks: &[(DateTime<Local>, i64)],
 ) -> Result<DateTime<Local>, SchedulingPolicyError> {
     let completion = checked_segment_end(selected.candidate.id, now, selected.remaining_seconds)?;
+    let release = if selected.candidate.atomic {
+        next_preempting_release(selected, states, now, fixed_slots)
+    } else {
+        next_release_event(states, now)
+    };
     Ok([
         Some(completion),
         next_fixed_start(now, fixed_slots),
-        next_release_event(states, now),
+        release,
         slack_boundary(selected, slacks, now),
     ]
     .into_iter()
@@ -460,29 +532,7 @@ fn select_next_candidate(
     fixed_slots: &[(DateTime<Local>, DateTime<Local>)],
 ) -> Result<Option<Selection>, SchedulingPolicyError> {
     let slacks = deadline_slacks(states, now, fixed_slots);
-    let critical_deadline = slacks
-        .iter()
-        .find(|(_, slack)| *slack <= 0)
-        .map(|(deadline, _)| *deadline);
-    let mut ordered = ready_indices.to_vec();
-    let protected_ready = critical_deadline.is_some_and(|critical| {
-        ordered.iter().any(|index| {
-            states[*index]
-                .effective_deadline
-                .is_some_and(|deadline| deadline <= critical)
-        })
-    });
-    if protected_ready {
-        let critical = critical_deadline.expect("protected mode requires a critical deadline");
-        ordered.retain(|index| {
-            states[*index]
-                .effective_deadline
-                .is_some_and(|deadline| deadline <= critical)
-        });
-        ordered.sort_by_key(|index| protected_selection_key(&states[*index]));
-    } else {
-        ordered.sort_by_key(|index| normal_selection_key(&states[*index]));
-    }
+    let ordered = ordered_ready_candidates(states, ready_indices, critical_deadline(&slacks));
 
     for index in ordered {
         if atomic_fits(&states[index], states, now, fixed_slots, &slacks)? {
