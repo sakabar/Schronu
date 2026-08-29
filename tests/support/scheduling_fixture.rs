@@ -58,6 +58,33 @@ impl SchedulingFixture {
         }
         Ok(digest.finish())
     }
+
+    #[allow(dead_code)]
+    pub fn distinct_deadlines(count: usize) -> Result<Self, TaskTreeError> {
+        let now = fixed_now();
+        let mut sequence = 0_u64;
+        let mut projects = Vec::with_capacity(count);
+        for index in 0..count {
+            let task = new_task(
+                &format!("fixture-project-distinct-deadline-{index:04}"),
+                &mut sequence,
+                now,
+                Status::Todo,
+            )?;
+            task.set_estimated_work_seconds(60)?;
+            task.set_deadline_time_opt(Some(
+                now + Duration::seconds((count + index + 1) as i64 * 60),
+            ))?;
+            projects.push(task);
+        }
+        Ok(Self {
+            projects,
+            now,
+            seed: TYPICAL_SEED,
+        })
+    }
+
+    #[allow(dead_code)]
     pub fn stress_flatten() -> Result<Self, TaskTreeError> {
         let mut fixture = build_profile(4, STRESS_SEED)?;
         let mut sequence = fixture.summary()?.tasks as u64;
@@ -83,30 +110,6 @@ impl SchedulingFixture {
         flexible.set_estimated_work_seconds(10 * 60 * 60)?;
         fixture.projects.push(flexible);
         Ok(fixture)
-    }
-
-    pub fn distinct_deadlines(count: usize) -> Result<Self, TaskTreeError> {
-        let now = fixed_now();
-        let mut sequence = 0_u64;
-        let mut projects = Vec::with_capacity(count);
-        for index in 0..count {
-            let task = new_task(
-                &format!("fixture-project-distinct-deadline-{index:04}"),
-                &mut sequence,
-                now,
-                Status::Todo,
-            )?;
-            task.set_estimated_work_seconds(60)?;
-            task.set_deadline_time_opt(Some(
-                now + Duration::seconds((count + index + 1) as i64 * 60),
-            ))?;
-            projects.push(task);
-        }
-        Ok(Self {
-            projects,
-            now,
-            seed: TYPICAL_SEED,
-        })
     }
 
     #[allow(dead_code)]
