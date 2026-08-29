@@ -30,6 +30,7 @@ pub struct FlattenedTask {
 
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub enum UnresolvedReason {
+    FixedStart,
     OnOtherSide,
     CrossesLogicalDate,
     ExceedsDailyCapacity,
@@ -74,6 +75,7 @@ struct FlattenCandidate {
     total_work_seconds: i64,
     is_on_other_side: bool,
     all_work_is_on_overload_date: bool,
+    fixed_start: bool,
 }
 
 pub fn flatten_tasks(
@@ -225,6 +227,17 @@ fn flatten_tasks_with_end_of_day_offset_minutes_and_metrics(
                 }
             }
             let trial_schedule = trial_schedule_result?;
+            let trial_scheduled_start = trial_schedule
+                .iter()
+                .filter(|scheduled| scheduled.task.id == candidate.task_id)
+                .map(|scheduled| scheduled.scheduled_start)
+                .min();
+            if trial_scheduled_start != Some(target_datetime) {
+                // overrideが実scheduleを動かさない候補をacceptすると、同一scheduleのまま
+                // overload loopへ戻り続ける。fixed以外の将来policy変更にも備えて実測する。
+                rejected.push((candidate, UnresolvedReason::FixedStart));
+                continue;
+            }
             if introduces_deadline_violation(&schedule, &trial_schedule, metrics) {
                 rejected.push((candidate, UnresolvedReason::RelatedDeadline));
                 continue;
@@ -379,6 +392,7 @@ fn collect_candidates(
             total_work_seconds: first.total_work_seconds,
             is_on_other_side: first.task.is_on_other_side,
             all_work_is_on_overload_date,
+            fixed_start: first.task.fixed_start,
         });
     }
     Ok(candidates)
@@ -388,7 +402,9 @@ fn candidate_precheck_reason(
     candidate: &FlattenCandidate,
     maximum_daily_capacity: i64,
 ) -> Option<UnresolvedReason> {
-    if candidate.is_on_other_side {
+    if candidate.fixed_start {
+        Some(UnresolvedReason::FixedStart)
+    } else if candidate.is_on_other_side {
         Some(UnresolvedReason::OnOtherSide)
     } else if !candidate.all_work_is_on_overload_date {
         Some(UnresolvedReason::CrossesLogicalDate)
@@ -465,6 +481,7 @@ fn summarize_unresolved_overload(
 ) -> UnresolvedOverload {
     let mut summaries = Vec::<UnresolvedReasonSummary>::new();
     for reason in [
+        UnresolvedReason::FixedStart,
         UnresolvedReason::OnOtherSide,
         UnresolvedReason::CrossesLogicalDate,
         UnresolvedReason::ExceedsDailyCapacity,

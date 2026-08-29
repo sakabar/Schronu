@@ -846,6 +846,7 @@ fn flatten_display(result: FlattenResult) -> FlattenDisplay {
                     .into_iter()
                     .map(|summary| FlattenReasonSummary {
                         reason: match summary.reason {
+                            UnresolvedReason::FixedStart => FlattenReason::FixedStart,
                             UnresolvedReason::OnOtherSide => FlattenReason::OnOtherSide,
                             UnresolvedReason::CrossesLogicalDate => {
                                 FlattenReason::CrossesLogicalDate

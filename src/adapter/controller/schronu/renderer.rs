@@ -255,6 +255,7 @@ pub(super) struct FlattenRow {
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(super) enum FlattenReason {
+    FixedStart,
     OnOtherSide,
     CrossesLogicalDate,
     ExceedsDailyCapacity,
@@ -704,6 +705,7 @@ fn format_work_seconds_as_hours_minutes_rounded_up(work_seconds: i64) -> String 
 
 fn flatten_reason_label(reason: FlattenReason) -> &'static str {
     match reason {
+        FlattenReason::FixedStart => "開始時刻固定",
         FlattenReason::OnOtherSide => "相手待ち",
         FlattenReason::CrossesLogicalDate => "論理日境界をまたぐ",
         FlattenReason::ExceedsDailyCapacity => "1日の最大容量を超える",
