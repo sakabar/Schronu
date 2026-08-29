@@ -624,7 +624,7 @@ struct UpdateTaskInputFields {
     /// Set the estimated work duration from a non-negative integer number of minutes, converted to seconds. Omit this field to leave the estimate unchanged; the request fails if conversion to seconds overflows.
     #[serde(default)]
     estimated_work_minutes: OptionalValue<NonNegativeI64>,
-    /// Set the task's deadline from an RFC 3339 date-time with Z or a numeric UTC offset, or pass null to clear only this task's deadline. A set deadline is propagated as an upper bound to unfinished descendants. Omit this field to leave the deadline unchanged.
+    /// For a non-null RFC 3339 date-time with Z or a numeric UTC offset, apply it as a deadline upper bound to the unfinished target and its unfinished descendants; existing earlier deadlines are preserved, and a completed target is unchanged. Pass null to clear only the selected task's deadline. Omit this field to leave the deadline unchanged.
     #[serde(default)]
     deadline_time: NullablePatch<Rfc3339DateTime>,
     /// Set the root project's category to one of the supported values, or pass null to clear it. Omit this field to leave the category unchanged.
