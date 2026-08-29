@@ -184,22 +184,30 @@ clientごとの設定形式に合わせて、commandと環境変数を次のよ�
 
 ### 利用可能なtool
 
-日時はRFC 3339、task IDはUUIDで指定します。categoryは`earning`、`sustaining`、`recovery`、`investment`、`consumption`のいずれかです。
+一般の日時fieldは、`2026-08-29T10:00:00+09:00`または`2026-08-29T01:00:00Z`のように、numeric UTC offsetまたは`Z`を含むRFC 3339で指定します。例外として、`get_schedule.from`と`get_schedule.until`だけは、時刻やtimezoneを含まない`YYYY-MM-DD`形式の日付です。task IDはUUID(例: `80d7db87-324e-4e8d-a5b7-ff78cd5bf39a`)で指定します。categoryは`earning`、`sustaining`、`recovery`、`investment`、`consumption`のいずれかです。
 
 | tool | 主な入力 | 動作 |
 | --- | --- | --- |
 | `get_focus` | なし | 現在着手すべきtaskを返す。候補がなければ`task: null` |
-| `get_task` | `task_id` | task詳細を返す |
-| `list_tasks` | optional: `period`、`statuses`、`categories` | taskを絞り込んでpre-orderで返す |
-| `get_schedule` | optional: `from`、`until` | 日付範囲でSchronuの予定計算結果を返す |
-| `create_task` | `name`、optional: `estimated_work_minutes`、`pending_until` | 新規projectを作成する |
-| `breakdown_task` | `parent_id`、`names`、optional: `pending_until` | 入力順に子taskを追加する |
-| `defer_task` | `task_id`、`pending_until` | 絶対時刻までtaskを延期する |
-| `defer_routine_task` | `task_id` | 親の反復間隔に従ってtaskを次周期へ延期する |
-| `complete_task` | `task_id`、optional: `finished_at`、`additional_actual_work_seconds` | taskを完了する |
-| `update_task` | `task_id`と、`estimated_work_minutes`、`deadline_time`、`category`のうち1つ以上 | 見積もり・締切・categoryを更新する |
+| `get_task` | `task_id` | UUIDで指定した既存taskの詳細を返す |
+| `list_tasks` | optional: `period`、`statuses`、`categories` | project treeのpre-orderでtaskを返し、指定したfilterで絞り込む |
+| `get_schedule` | optional: `from`、`until` | 06:00開始のローカル論理日範囲と重なるschedule segmentを返す |
+| `create_task` | `name`、optional: `estimated_work_minutes`、`pending_until` | root project taskを作成する。見積もり省略時は15分 |
+| `breakdown_task` | `parent_id`、`names`、optional: `pending_until` | 入力順に子taskを追加し、親のdeadlineがあれば継承する |
+| `defer_task` | `task_id`、`pending_until` | original statusをPendingにして延期する。deadline policyにより指定時刻が早まる場合がある |
+| `defer_routine_task` | `task_id` | 親の反復間隔に従ってdeadlineと開始時刻を次周期へ移し、original statusをTodoへ戻す |
+| `complete_task` | `task_id`、optional: `finished_at`、`additional_actual_work_seconds` | 未完了の直接の子を持たないtaskを完了し、既存の実作業秒数へ指定値を加算する |
+| `update_task` | `task_id`と、`estimated_work_minutes`、`deadline_time`、`category`のうち1つ以上 | 見積もり・deadline・root projectのcategoryを更新する |
 
-`deadline_time`と`category`は`null`で解除できます。`list_tasks.period.field`は`scheduled_start`、`created_at`、`deadline`、`completed_at`のいずれかで、`from`以上`until`未満の半開区間です。`statuses`は`todo`、`pending`、`done`、`categories`は上記categoryまたは`null`を配列で指定します。同じ`statuses`内と同じ`categories`内はOR、period・status・categoryの間はANDです。statusは現在時刻を反映した実効statusで判定します。配列の省略または空配列は、その項目で絞り込みません。`get_schedule.from`と`get_schedule.until`は`YYYY-MM-DD`の日付で、`from`以上`until`未満の範囲を指定します。`from`のみはその日、`until`のみは現在から指定日までです。両方省略時は、現在からSchronuの次の論理日境界までを返します。
+`list_tasks.period`は必須の`field`、`from`、`until`からなり、RFC 3339日時の`from`以上`until`未満の半開区間です。`field`は`scheduled_start`、`created_at`、`deadline`、`completed_at`のいずれかです。`scheduled_start`では、計算されたschedule segmentの開始時刻が1つ以上この範囲に入るtaskを選びます。`statuses`は`todo`、`pending`、`done`、`categories`は上記categoryまたは未分類を表す`null`を配列で指定します。statusは現在時刻を反映した実効statusで判定します。同じ配列内の値はOR、period・status・categoryの各filter間はANDです。`period`の省略、または`statuses`、`categories`の省略・空配列は、その項目では絞り込みません。
+
+`get_schedule.from`と`get_schedule.until`は、ローカル時刻06:00を境界とする論理日の日付です。両方指定すると`from`の06:00以上`until`の06:00未満、`from`だけならその1論理日、`until`だけなら現在以上`until`の06:00未満、両方省略なら現在以上次の06:00未満を対象にします。schedule segmentは開始時刻だけでなく、その区間が対象範囲と重なるかどうかで選ばれます。
+
+`create_task.name`と`breakdown_task.names`の各要素は、前後の空白を除いて空でなく、符号付き整数だけの名前でもない文字列にします。`estimated_work_minutes`は非負整数で、`create_task`では省略時に既定の15分です。`pending_until`を省略するとoriginal statusはTodo、指定するとPendingです。ただし指定時刻が未来でなければ実効statusはTodoになり得ます。`breakdown_task`では全childへ同じ`pending_until`を設定し、親のdeadline継承によってその時刻が早まる場合があります。
+
+`defer_task`でも、指定した`pending_until`がdeadline policyによって早まる場合があり、時刻が未来でなければ実効statusはTodoになり得ます。`defer_routine_task`の対象には自身のdeadlineと親の反復間隔が必要で、移動後の開始時刻が未来なら実効statusはPendingになり得ます。`complete_task.finished_at`の省略時は操作時刻を使い、`additional_actual_work_seconds`の省略時は0を加算します。routine親のchildを完了すると次のoccurrenceを作成して親の見積もりを調整する場合があります。`complete_task`は非idempotentであり、完了済みtaskへの再実行でも実作業秒数を再加算し、routine occurrenceを再作成する場合があります。
+
+`update_task`へ複数の更新fieldを渡した場合は、見積もり、deadline、categoryの順に適用します。非`null`の`deadline_time`は、未完了の対象taskと未完了の子孫に上限として適用し、既存のより早いdeadlineは維持します。対象taskが完了済みなら、対象と子孫のdeadlineを変更しません。`deadline_time: null`は対象taskだけのdeadlineを解除します。`category`は対象taskが属するroot projectへ設定され、`category: null`で解除できます。各fieldの省略時はその値を変更しません。
 
 例:
 
@@ -220,6 +228,29 @@ clientごとの設定形式に合わせて、commandと環境変数を次のよ�
   "arguments": {
     "statuses": ["todo", "pending"],
     "categories": ["recovery", null]
+  }
+}
+```
+
+```json
+{
+  "name": "list_tasks",
+  "arguments": {
+    "period": {
+      "field": "scheduled_start",
+      "from": "2026-08-29T06:00:00+09:00",
+      "until": "2026-08-30T06:00:00+09:00"
+    }
+  }
+}
+```
+
+```json
+{
+  "name": "get_schedule",
+  "arguments": {
+    "from": "2026-08-29",
+    "until": "2026-08-31"
   }
 }
 ```
