@@ -233,6 +233,27 @@ struct AtomicReleasePredictionCache {
     entries: Vec<AtomicReleasePrediction>,
 }
 
+impl AtomicReleasePredictionCache {
+    fn retain_future_preemptors(&mut self, now: DateTime<Local>, states: &[FlexibleState]) {
+        self.entries.retain(|prediction| {
+            prediction.release > now
+                && states[prediction.preemptor_index].completion_time.is_none()
+                && states[prediction.preemptor_index].remaining_seconds > 0
+        });
+    }
+
+    fn insert(&mut self, prediction: AtomicReleasePrediction) {
+        if !self.entries.iter().any(|existing| {
+            existing.release == prediction.release
+                && existing.preemptor_index == prediction.preemptor_index
+                && existing.critical_deadline == prediction.critical_deadline
+                && existing.protected_mode == prediction.protected_mode
+        }) {
+            self.entries.push(prediction);
+        }
+    }
+}
+
 #[derive(Clone, Copy)]
 struct AtomicReleasePrediction {
     release: DateTime<Local>,
@@ -1442,7 +1463,7 @@ fn cache_atomic_release_prediction(
     protected_mode: bool,
 ) {
     if let Some(cache) = context.atomic_release_predictions {
-        cache.borrow_mut().entries.push(AtomicReleasePrediction {
+        cache.borrow_mut().insert(AtomicReleasePrediction {
             release,
             preemptor_index,
             critical_deadline,
@@ -1654,11 +1675,11 @@ fn fits_split_contract(
 /// priorityを最優先する。先頭atomicが入らない場合は、入る候補まで決定的に送る。
 fn select_next_candidate(
     states: &[FlexibleState],
-    ready_indices: &[usize],
     now: DateTime<Local>,
     fixed_slots: &[(DateTime<Local>, DateTime<Local>)],
     frontier: Option<&SchedulerFrontier>,
     slack_index: Option<&SlackDemandIndex>,
+    atomic_release_predictions: &RefCell<AtomicReleasePredictionCache>,
     metrics: &mut ScheduleMetrics,
 ) -> Result<Option<Selection>, SchedulingPolicyError> {
     metrics.record_selection_event();
@@ -1684,14 +1705,13 @@ fn select_next_candidate(
                 .then(|| next_release_event(states, now))
                 .flatten()
         });
-    let atomic_release_predictions = RefCell::new(AtomicReleasePredictionCache::default());
     let boundary_context = BoundaryContext {
         states,
         fixed_slots,
         next_release,
         frontier,
         slack_index,
-        atomic_release_predictions: Some(&atomic_release_predictions),
+        atomic_release_predictions: Some(atomic_release_predictions),
     };
     if let Some(frontier) = frontier {
         let protected_ready = critical.is_some_and(|critical| {
@@ -1744,7 +1764,14 @@ fn select_next_candidate(
             }
         }
     } else {
-        for index in ordered_ready_candidates(states, ready_indices, critical) {
+        let ready_indices = states
+            .iter()
+            .enumerate()
+            .filter(|(_, state)| state.completion_time.is_none() && state.remaining_seconds > 0)
+            .filter(|(_, state)| release_time(state, states).is_some_and(|release| release <= now))
+            .map(|(index, _)| index)
+            .collect::<Vec<_>>();
+        for index in ordered_ready_candidates(states, &ready_indices, critical) {
             metrics.record_selection_candidate_probe();
             let fallback_slacks = fallback_slacks
                 .as_deref()
@@ -1781,13 +1808,14 @@ fn select_at_speculative_boundary(
 ) -> Result<SpeculativeBoundarySelection, SchedulingPolicyError> {
     let speculative_releases = frontier.begin_speculative_releases(boundary, states, metrics);
     let slack_change = slack_index.begin_speculative_idle(old_now, boundary, metrics);
+    let atomic_release_predictions = RefCell::new(AtomicReleasePredictionCache::default());
     let selection = select_next_candidate(
         states,
-        &[],
         boundary,
         fixed_slots,
         Some(frontier),
         Some(slack_index),
+        &atomic_release_predictions,
         metrics,
     );
     frontier.restore_speculative_releases(speculative_releases, states);
@@ -1869,10 +1897,14 @@ pub(super) fn schedule_tasks_by_priority_with_metrics(
     let mut now = last_synced_time;
     let mut slack_index = SlackDemandIndex::new(&states, now, &fixed_slots, metrics);
     let mut frontier = SchedulerFrontier::new(&states);
+    let atomic_release_predictions = RefCell::new(AtomicReleasePredictionCache::default());
 
     // Phase 3: eventとeventの間だけを配置し、releaseやslack境界で必ず再選択する。
     while frontier.incomplete_count > 0 {
         frontier.promote_releases(now, &states, metrics);
+        atomic_release_predictions
+            .borrow_mut()
+            .retain_future_preemptors(now, &states);
         if let Some((_, fixed_end)) = fixed_slot_containing(now, &fixed_slots) {
             slack_index.record_fixed_skip(fixed_end);
             now = fixed_end;
@@ -1899,11 +1931,11 @@ pub(super) fn schedule_tasks_by_priority_with_metrics(
 
         let selection = select_next_candidate(
             &states,
-            &[],
             now,
             &fixed_slots,
             Some(&frontier),
             Some(&slack_index),
+            &atomic_release_predictions,
             metrics,
         )?;
         let Some(selection) = selection else {
