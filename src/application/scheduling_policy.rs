@@ -254,6 +254,11 @@ struct SlackDemandIndex {
     remaining_by_group: Vec<i64>,
     group_by_state: Vec<Option<usize>>,
     slack_tree: SlackRangeTree,
+    critical_groups: BTreeSet<usize>,
+}
+
+struct SpeculativeSlackChange {
+    deactivated: Vec<(usize, i64)>,
 }
 
 const INACTIVE_SLACK: i64 = i64::MAX / 4;
@@ -267,7 +272,6 @@ const INACTIVE_SLACK: i64 = i64::MAX / 4;
 struct SlackRangeTree {
     len: usize,
     min: Vec<i64>,
-    max: Vec<i64>,
     lazy: Vec<i64>,
 }
 
@@ -278,7 +282,6 @@ impl SlackRangeTree {
         let mut tree = Self {
             len,
             min: vec![INACTIVE_SLACK; capacity],
-            max: vec![-INACTIVE_SLACK; capacity],
             lazy: vec![0; capacity],
         };
         if len > 0 {
@@ -291,7 +294,6 @@ impl SlackRangeTree {
         if right - left == 1 {
             if let Some(value) = values[left] {
                 self.min[node] = value;
-                self.max[node] = value;
             }
             return;
         }
@@ -361,6 +363,39 @@ impl SlackRangeTree {
         }
     }
 
+    fn activate(&mut self, index: usize, value: i64, metrics: &mut ScheduleMetrics) {
+        self.activate_inner(1, 0, self.len, index, value, metrics);
+    }
+
+    fn activate_inner(
+        &mut self,
+        node: usize,
+        left: usize,
+        right: usize,
+        index: usize,
+        value: i64,
+        metrics: &mut ScheduleMetrics,
+    ) {
+        metrics.record_slack_probes(1);
+        if right - left == 1 {
+            self.min[node] = value;
+            self.lazy[node] = 0;
+            return;
+        }
+        self.push(node);
+        let middle = (left + right) / 2;
+        if index < middle {
+            self.activate_inner(node * 2, left, middle, index, value, metrics);
+        } else {
+            self.activate_inner(node * 2 + 1, middle, right, index, value, metrics);
+        }
+        self.pull(node);
+    }
+
+    fn point_value(&self, index: usize, metrics: &mut ScheduleMetrics) -> Option<i64> {
+        self.range_min(index..index + 1, metrics)
+    }
+
     fn deactivate_inner(
         &mut self,
         node: usize,
@@ -372,7 +407,6 @@ impl SlackRangeTree {
         metrics.record_slack_probes(1);
         if right - left == 1 {
             self.min[node] = INACTIVE_SLACK;
-            self.max[node] = -INACTIVE_SLACK;
             self.lazy[node] = 0;
             return;
         }
@@ -443,78 +477,48 @@ impl SlackRangeTree {
         })
     }
 
-    fn min_positive(
+    fn range_min(
         &self,
         range: std::ops::Range<usize>,
-        adjustment: i64,
         metrics: &mut ScheduleMetrics,
     ) -> Option<i64> {
         if range.start >= range.end || self.len == 0 {
             return None;
         }
-        self.min_positive_inner(1, 0, self.len, &range, adjustment, 0, metrics)
+        let minimum = self.range_min_inner(1, 0, self.len, &range, 0, metrics);
+        (minimum < INACTIVE_SLACK / 2).then_some(minimum)
     }
 
-    #[allow(clippy::too_many_arguments)]
-    fn min_positive_inner(
+    fn range_min_inner(
         &self,
         node: usize,
         left: usize,
         right: usize,
         range: &std::ops::Range<usize>,
-        adjustment: i64,
         inherited_lazy: i64,
         metrics: &mut ScheduleMetrics,
-    ) -> Option<i64> {
+    ) -> i64 {
         metrics.record_slack_probes(1);
         if range.end <= left || right <= range.start {
-            return None;
+            return INACTIVE_SLACK;
         }
-        let min = self.min[node]
-            .saturating_add(inherited_lazy)
-            .saturating_add(adjustment);
-        let max = self.max[node]
-            .saturating_add(inherited_lazy)
-            .saturating_add(adjustment);
-        if max <= 0 || min >= INACTIVE_SLACK / 2 {
-            return None;
-        }
-        if range.start <= left && right <= range.end && min > 0 {
-            return Some(min);
+        if range.start <= left && right <= range.end {
+            return self.min[node].saturating_add(inherited_lazy);
         }
         if right - left == 1 {
-            return (min > 0).then_some(min);
+            return INACTIVE_SLACK;
         }
         let inherited_lazy = inherited_lazy.saturating_add(self.lazy[node]);
         let middle = (left + right) / 2;
-        let left_min = self.min_positive_inner(
-            node * 2,
-            left,
-            middle,
-            range,
-            adjustment,
-            inherited_lazy,
-            metrics,
-        );
-        let right_min = self.min_positive_inner(
-            node * 2 + 1,
-            middle,
-            right,
-            range,
-            adjustment,
-            inherited_lazy,
-            metrics,
-        );
-        match (left_min, right_min) {
-            (Some(left), Some(right)) => Some(left.min(right)),
-            (left, right) => left.or(right),
-        }
+        let left_min = self.range_min_inner(node * 2, left, middle, range, inherited_lazy, metrics);
+        let right_min =
+            self.range_min_inner(node * 2 + 1, middle, right, range, inherited_lazy, metrics);
+        left_min.min(right_min)
     }
 
     fn apply(&mut self, node: usize, delta: i64) {
         if self.min[node] < INACTIVE_SLACK / 2 {
             self.min[node] = self.min[node].saturating_add(delta);
-            self.max[node] = self.max[node].saturating_add(delta);
             self.lazy[node] = self.lazy[node].saturating_add(delta);
         }
     }
@@ -530,7 +534,6 @@ impl SlackRangeTree {
 
     fn pull(&mut self, node: usize) {
         self.min[node] = self.min[node * 2].min(self.min[node * 2 + 1]);
-        self.max[node] = self.max[node * 2].max(self.max[node * 2 + 1]);
     }
 }
 
@@ -563,7 +566,7 @@ impl SlackDemandIndex {
             })
             .collect();
         let mut cumulative_demand = 0_i64;
-        let slack_values = deadlines
+        let raw_slacks = deadlines
             .iter()
             .enumerate()
             .map(|(group, deadline)| {
@@ -574,19 +577,30 @@ impl SlackDemandIndex {
                 })
             })
             .collect::<Vec<_>>();
+        let critical_groups = raw_slacks
+            .iter()
+            .enumerate()
+            .filter_map(|(group, slack)| slack.is_some_and(|slack| slack <= 0).then_some(group))
+            .collect();
+        let slack_values = raw_slacks
+            .into_iter()
+            .map(|slack| slack.filter(|slack| *slack > 0))
+            .collect::<Vec<_>>();
         Self {
             current_time: now,
             deadlines,
             remaining_by_group,
             group_by_state,
             slack_tree: SlackRangeTree::new(&slack_values),
+            critical_groups,
         }
     }
 
     fn critical_deadline(&self, metrics: &mut ScheduleMetrics) -> Option<DateTime<Local>> {
-        self.slack_tree
-            .first_at_most(0..self.deadlines.len(), 0, metrics)
-            .map(|group| self.deadlines[group])
+        metrics.record_slack_probes(1);
+        self.critical_groups
+            .first()
+            .map(|group| self.deadlines[*group])
     }
 
     /// `worked`を仮に進めた時点の最早critical deadlineを、indexを変更せず返す。
@@ -597,15 +611,13 @@ impl SlackDemandIndex {
         metrics: &mut ScheduleMetrics,
     ) -> Option<DateTime<Local>> {
         let changed_end = self.group_by_state[state_index].unwrap_or(self.deadlines.len());
-        let changed = self
+        let newly_critical = self
             .slack_tree
             .first_at_most(0..changed_end, worked_seconds, metrics);
-        let unchanged =
-            self.slack_tree
-                .first_at_most(changed_end..self.deadlines.len(), 0, metrics);
-        changed
+        metrics.record_slack_probes(1);
+        newly_critical
             .into_iter()
-            .chain(unchanged)
+            .chain(self.critical_groups.first().copied())
             .min()
             .map(|group| self.deadlines[group])
     }
@@ -642,22 +654,52 @@ impl SlackDemandIndex {
     ) -> Option<i64> {
         let boundary_end = self.group_by_state[state_index].unwrap_or(self.deadlines.len());
         let Some((worked_state, worked_seconds)) = worked else {
-            return self.slack_tree.min_positive(0..boundary_end, 0, metrics);
+            return self.slack_tree.range_min(0..boundary_end, metrics);
         };
         let changed_end = self.group_by_state[worked_state].unwrap_or(self.deadlines.len());
         let changed_overlap = boundary_end.min(changed_end);
-        let changed = self.slack_tree.min_positive(
-            0..changed_overlap,
-            worked_seconds.saturating_neg(),
-            metrics,
-        );
+        let changed = self
+            .slack_tree
+            .range_min(0..changed_overlap, metrics)
+            .map(|slack| slack.saturating_sub(worked_seconds));
         let unchanged = self
             .slack_tree
-            .min_positive(changed_overlap..boundary_end, 0, metrics);
-        match (changed, unchanged) {
+            .range_min(changed_overlap..boundary_end, metrics);
+        let minimum = match (changed, unchanged) {
             (Some(changed), Some(unchanged)) => Some(changed.min(unchanged)),
             (changed, unchanged) => changed.or(unchanged),
+        };
+        // 選択済みatomicはguardより前のreleaseだけを仮想評価するため、この差分で
+        // 新たなcritical groupを跨がない。
+        debug_assert!(minimum.is_none_or(|slack| slack > 0));
+        minimum.filter(|slack| *slack > 0)
+    }
+
+    /// slackはscheduleの進行中に増えない。0へ達したgroupをactive treeから外すと、
+    /// 最小の正slackは符号分布に関係なく通常のrange minimumで得られる。各groupの
+    /// 移動は高々1回なので、全deactivateの総計はO(N log N)である。
+    fn decrease_range(
+        &mut self,
+        range: std::ops::Range<usize>,
+        seconds: i64,
+        metrics: &mut ScheduleMetrics,
+    ) -> Vec<(usize, i64)> {
+        if range.start >= range.end || seconds == 0 {
+            return Vec::new();
         }
+        self.slack_tree
+            .range_add(range.clone(), seconds.saturating_neg(), metrics);
+        let mut deactivated = Vec::new();
+        while let Some(group) = self.slack_tree.first_at_most(range.clone(), 0, metrics) {
+            let current = self
+                .slack_tree
+                .point_value(group, metrics)
+                .expect("critical group is active before deactivation");
+            deactivated.push((group, current.saturating_add(seconds)));
+            self.slack_tree.deactivate(group, metrics);
+            self.critical_groups.insert(group);
+        }
+        deactivated
     }
 
     /// 実作業ではcapacity減と、そのtaskを含むdeadline需要減が相殺される。
@@ -670,13 +712,13 @@ impl SlackDemandIndex {
     ) {
         self.current_time += Duration::seconds(work_seconds);
         let changed_end = self.group_by_state[state_index].unwrap_or(self.deadlines.len());
-        self.slack_tree
-            .range_add(0..changed_end, work_seconds.saturating_neg(), metrics);
+        self.decrease_range(0..changed_end, work_seconds, metrics);
         if let Some(group) = self.group_by_state[state_index] {
             self.remaining_by_group[group] =
                 self.remaining_by_group[group].saturating_sub(work_seconds);
             if self.remaining_by_group[group] == 0 {
                 self.slack_tree.deactivate(group, metrics);
+                self.critical_groups.remove(&group);
             }
         }
     }
@@ -689,27 +731,27 @@ impl SlackDemandIndex {
         new_now: DateTime<Local>,
         metrics: &mut ScheduleMetrics,
     ) {
-        self.apply_idle_delta(old_now, new_now, -1, metrics);
+        self.apply_idle_decrease(old_now, new_now, metrics);
         self.current_time = new_now;
     }
 
-    fn restore_speculative_idle(
+    fn begin_speculative_idle(
         &mut self,
         old_now: DateTime<Local>,
         new_now: DateTime<Local>,
         metrics: &mut ScheduleMetrics,
-    ) {
-        self.apply_idle_delta(old_now, new_now, 1, metrics);
-        self.current_time = old_now;
+    ) -> SpeculativeSlackChange {
+        let deactivated = self.apply_idle_decrease(old_now, new_now, metrics);
+        self.current_time = new_now;
+        SpeculativeSlackChange { deactivated }
     }
 
-    fn apply_idle_delta(
+    fn apply_idle_decrease(
         &mut self,
         old_now: DateTime<Local>,
         new_now: DateTime<Local>,
-        direction: i64,
         metrics: &mut ScheduleMetrics,
-    ) {
+    ) -> Vec<(usize, i64)> {
         let elapsed = (new_now - old_now).num_seconds().max(0);
         let first_after_old = self
             .deadlines
@@ -720,18 +762,45 @@ impl SlackDemandIndex {
         // jump中にdeadlineを越えたgroupは、そのdeadlineまでのcapacity差分だけを
         // 反映する。各deadlineを越えるのはschedule全体で1回なので、このpoint更新を
         // 加えても総計はO(deadline数 log deadline数)に収まる。
+        let mut deactivated = Vec::new();
         for group in first_after_old..first_future {
-            let delta = (self.deadlines[group] - old_now)
-                .num_seconds()
-                .max(0)
-                .saturating_mul(direction);
-            self.slack_tree.range_add(group..group + 1, delta, metrics);
+            let seconds = (self.deadlines[group] - old_now).num_seconds().max(0);
+            deactivated.extend(self.decrease_range(group..group + 1, seconds, metrics));
         }
-        self.slack_tree.range_add(
+        deactivated.extend(self.decrease_range(
             first_future..self.deadlines.len(),
-            elapsed.saturating_mul(direction),
+            elapsed,
             metrics,
-        );
+        ));
+        deactivated
+    }
+
+    fn restore_speculative_idle(
+        &mut self,
+        old_now: DateTime<Local>,
+        new_now: DateTime<Local>,
+        change: SpeculativeSlackChange,
+        metrics: &mut ScheduleMetrics,
+    ) {
+        let elapsed = (new_now - old_now).num_seconds().max(0);
+        let first_after_old = self
+            .deadlines
+            .partition_point(|deadline| *deadline <= old_now);
+        let first_future = self
+            .deadlines
+            .partition_point(|deadline| *deadline <= new_now);
+        for group in first_after_old..first_future {
+            let seconds = (self.deadlines[group] - old_now).num_seconds().max(0);
+            self.slack_tree
+                .range_add(group..group + 1, seconds, metrics);
+        }
+        self.slack_tree
+            .range_add(first_future..self.deadlines.len(), elapsed, metrics);
+        for (group, original_slack) in change.deactivated {
+            self.critical_groups.remove(&group);
+            self.slack_tree.activate(group, original_slack, metrics);
+        }
+        self.current_time = old_now;
     }
 
     fn record_fixed_skip(&mut self, new_now: DateTime<Local>) {
@@ -1100,6 +1169,7 @@ fn next_preempting_release(
     selected_index: usize,
     selected: &FlexibleState,
     now: DateTime<Local>,
+    slack_guard: Option<DateTime<Local>>,
     context: &BoundaryContext<'_>,
     metrics: &mut ScheduleMetrics,
 ) -> Result<Option<DateTime<Local>>, SchedulingPolicyError> {
@@ -1109,6 +1179,12 @@ fn next_preempting_release(
         let mut additional_normal = BTreeSet::new();
         let mut additional_protected = BTreeSet::new();
         for (release, released_indices) in frontier.release_events.range(now..) {
+            if slack_guard.is_some_and(|guard| *release >= guard) {
+                // current guardへ先に到達するatomicは、その時点で再選択される。
+                // guard後のreleaseを仮想評価すると、既にcriticalへ移るgroupを
+                // active treeへ残したまま扱うことになり、存在しない境界を作る。
+                return Ok(None);
+            }
             for index in released_indices {
                 metrics.record_release_candidate_probe();
                 if states[*index].remaining_seconds == 0 {
@@ -1211,6 +1287,9 @@ fn next_preempting_release(
     releases.sort_unstable();
     releases.dedup();
     for release in releases {
+        if slack_guard.is_some_and(|guard| release >= guard) {
+            return Ok(None);
+        }
         let mut virtual_states = states.to_vec();
         let elapsed_work_seconds = (release - now).num_seconds().max(0);
         if let Some(running) = virtual_states
@@ -1304,7 +1383,7 @@ fn segment_boundary(
 ) -> Result<DateTime<Local>, SchedulingPolicyError> {
     let completion = checked_segment_end(selected.candidate.id, now, selected.remaining_seconds)?;
     let release = if selected.candidate.atomic {
-        next_preempting_release(selected_index, selected, now, context, metrics)?
+        next_preempting_release(selected_index, selected, now, slack_guard, context, metrics)?
     } else {
         context.next_release
     };
@@ -1732,7 +1811,7 @@ fn schedule_selected_segment(
         let guard_boundary = slack_guard == Some(boundary);
         let mut boundary_frontier = frontier.clone();
         boundary_frontier.promote_releases(boundary, states, metrics);
-        slack_index.record_idle(*now, boundary, metrics);
+        let speculative_slack = slack_index.begin_speculative_idle(*now, boundary, metrics);
         let release_preempts = select_next_candidate(
             states,
             &[],
@@ -1753,7 +1832,7 @@ fn schedule_selected_segment(
             *now = boundary;
             return Ok(());
         }
-        slack_index.restore_speculative_idle(*now, boundary, metrics);
+        slack_index.restore_speculative_idle(*now, boundary, speculative_slack, metrics);
         if guard_releases_protected_task {
             // 保護taskがguard時刻までreleaseされない場合、それより前に切り替える
             // 選択肢はない。使える時間をidleにするより、境界までの作業を保存する。
