@@ -445,6 +445,37 @@ fn get_scheduleはfixedで未使用のdependency近傍時刻を加算せず指�
 }
 
 #[test]
+fn get_scheduleはflexible祖先のdeadline補正と子から親の順序を維持する() {
+    let now = fixed_now();
+    let parent = task_with_schedule("flexible-parent", now, 60 * 60, 0);
+    parent
+        .set_deadline_time_opt(Some(now + Duration::hours(2)))
+        .unwrap();
+    let parent_id = parent.get_id().unwrap();
+    let mut child_attr = crate::test_support::new_task_attr("flexible-child");
+    child_attr.set_start_time(now + Duration::hours(2));
+    child_attr.set_estimated_work_seconds(60 * 60);
+    let child = parent.create_as_last_child(child_attr);
+    let child_id = child.get_id().unwrap();
+    let repository = TestTaskRepository::new(vec![parent], now);
+
+    let schedule = get_schedule(&repository).unwrap();
+    let child_segment = schedule
+        .iter()
+        .find(|segment| segment.task.id == child_id)
+        .unwrap();
+    let parent_segment = schedule
+        .iter()
+        .find(|segment| segment.task.id == parent_id)
+        .unwrap();
+
+    assert_eq!(child_segment.scheduled_start, now);
+    assert_eq!(child_segment.scheduled_end, now + Duration::hours(1));
+    assert_eq!(parent_segment.scheduled_start, child_segment.scheduled_end);
+    assert_eq!(parent_segment.scheduled_end, now + Duration::hours(2));
+}
+
+#[test]
 fn scheduling_policyの単一入口と選択責務を固定する() {
     let policy_source = include_str!("scheduling_policy.rs");
     let use_case_source = include_str!("schedule_use_case.rs");
