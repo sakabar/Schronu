@@ -566,7 +566,7 @@ pub(super) fn handle_project_command<C: ProjectCommandContext + ?Sized>(
             let now = context.last_synced_time();
             if let Some(start_time) = decide_time_values(values, &now)? {
                 if let Some(task) = context.focused_task()? {
-                    task.set_start_time(start_time)
+                    task.set_flexible_start_time(start_time)
                         .map_err(ApplicationError::TaskTree)?;
                 }
             }

@@ -1099,6 +1099,32 @@ impl TaskHandle {
         })
     }
 
+    /// Sets a movable start time in one persistent mutation.
+    ///
+    /// A start set through the `始` command is an availability constraint, not an
+    /// appointment. Updating both fields together prevents a failed second write from
+    /// leaving a task with a new start time that is still fixed.
+    pub fn set_flexible_start_time(
+        &self,
+        start_time: DateTime<Local>,
+    ) -> Result<(), TaskTreeError> {
+        self.update(|attr| {
+            let before = (
+                *attr.get_start_time(),
+                *attr.get_pending_until(),
+                attr.get_fixed_start(),
+            );
+            attr.set_start_time(start_time);
+            attr.set_fixed_start(false);
+            before
+                != (
+                    *attr.get_start_time(),
+                    *attr.get_pending_until(),
+                    attr.get_fixed_start(),
+                )
+        })
+    }
+
     pub fn get_start_time(&self) -> Result<DateTime<Local>, TaskTreeError> {
         self.node
             .try_borrow_data()
@@ -1372,13 +1398,15 @@ impl TaskHandle {
         &self,
         appointment_start_time: DateTime<Local>,
     ) -> Result<(), TaskTreeError> {
-        // 〆切については、子タスク全体に掛かるようにする
         let deadline_time =
             appointment_start_time + Duration::seconds(self.get_estimated_work_seconds()?);
 
         let root = self.root()?;
         let mut deadline_updates = Vec::new();
         self.collect_deadline_updates(Some(deadline_time), Some(None), &mut deadline_updates)?;
+
+        // Every borrow is checked before the first write. This makes the appointment
+        // fields and descendant deadline propagation a single all-or-nothing mutation.
         root.node
             .try_borrow_data_mut()
             .map_err(|_| TaskTreeError::Borrow)?;
@@ -1390,10 +1418,38 @@ impl TaskHandle {
                 .map_err(|_| TaskTreeError::Borrow)?;
         }
 
-        self.unset_deadline_time_opt()?;
-        self.set_deadline_time_opt(Some(deadline_time))?;
+        for (node, deadline) in &deadline_updates {
+            node.try_borrow_data_mut()
+                .map_err(|_| TaskTreeError::Borrow)?
+                .set_deadline_time_opt(Some(*deadline));
+        }
+        let mut attr = self
+            .node
+            .try_borrow_data_mut()
+            .map_err(|_| TaskTreeError::Borrow)?;
+        let before = (
+            *attr.get_start_time(),
+            *attr.get_pending_until(),
+            *attr.get_deadline_time_opt(),
+            attr.get_fixed_start(),
+        );
+        attr.set_deadline_time_opt(Some(deadline_time));
+        attr.set_start_time(appointment_start_time);
+        attr.set_fixed_start(true);
+        let changed = !deadline_updates.is_empty()
+            || before
+                != (
+                    *attr.get_start_time(),
+                    *attr.get_pending_until(),
+                    *attr.get_deadline_time_opt(),
+                    attr.get_fixed_start(),
+                );
+        drop(attr);
 
-        self.set_start_time(appointment_start_time)
+        if changed {
+            root.mark_persistent_mutation()?;
+        }
+        Ok(())
     }
 
     pub fn num_children(&self) -> Result<usize, TaskTreeError> {
