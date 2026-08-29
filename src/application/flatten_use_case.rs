@@ -360,7 +360,9 @@ fn collect_candidates(
         let Some(first) = segments.first().copied() else {
             continue;
         };
-        if first.total_work_seconds <= 0 {
+        // 通常のzero-work taskは延期対象外だが、fixedは予約容量だけで過負荷を作る。
+        // 候補へ残してFixedStart理由と代表taskを未解決結果へ伝える。
+        if first.total_work_seconds <= 0 && !first.task.fixed_start {
             continue;
         }
         let segment_dates = segments
