@@ -50,6 +50,58 @@ fn common_input_constraints_are_checked_against_the_same_case_set() {
 }
 
 #[test]
+fn common_input_schema_describes_public_value_formats() {
+    let contract = common_input_contract();
+    let properties = contract.schema()["properties"]
+        .as_object()
+        .expect("common input schema must define properties");
+
+    assert_eq!(
+        properties["task_id"],
+        json!({
+            "type": "string",
+            "format": "uuid",
+            "description": "A valid UUID string.",
+            "examples": ["80d7db87-324e-4e8d-a5b7-ff78cd5bf39a"]
+        })
+    );
+    assert_eq!(
+        properties["pending_until"],
+        json!({
+            "type": "string",
+            "format": "date-time",
+            "description": "An RFC 3339 date-time string with a UTC offset.",
+            "examples": ["2026-08-29T10:00:00+09:00"]
+        })
+    );
+    assert_eq!(
+        properties["date"],
+        json!({
+            "type": "string",
+            "format": "date",
+            "description": "A calendar date in YYYY-MM-DD format without a time or time zone.",
+            "examples": ["2026-08-29"]
+        })
+    );
+    assert_eq!(
+        properties["work_seconds"],
+        json!({
+            "type": "integer",
+            "minimum": 0,
+            "description": "A non-negative integer."
+        })
+    );
+    assert_eq!(
+        properties["name"],
+        json!({
+            "type": "string",
+            "minLength": 1,
+            "description": "A non-empty string."
+        })
+    );
+}
+
+#[test]
 fn reference_tool_inputs_match_public_schema_and_decode_contract() {
     assert_reference_input_contract::<GetFocusInput>(
         "get_focus",
@@ -92,7 +144,12 @@ fn reference_tool_inputs_match_public_schema_and_decode_contract() {
         json!({
             "type": "object",
             "properties": {
-                "task_id": {"type": "string", "format": "uuid"}
+                "task_id": {
+                    "type": "string",
+                    "format": "uuid",
+                    "description": "A valid UUID string.",
+                    "examples": ["80d7db87-324e-4e8d-a5b7-ff78cd5bf39a"]
+                }
             },
             "required": ["task_id"],
             "additionalProperties": false
@@ -202,7 +259,12 @@ fn defer_routine_task_input_schemaとdecode契約が一致する() {
         json!({
             "type": "object",
             "properties": {
-                "task_id": {"type": "string", "format": "uuid"}
+                "task_id": {
+                    "type": "string",
+                    "format": "uuid",
+                    "description": "A valid UUID string.",
+                    "examples": ["80d7db87-324e-4e8d-a5b7-ff78cd5bf39a"]
+                }
             },
             "required": ["task_id"],
             "additionalProperties": false
@@ -1269,7 +1331,7 @@ fn get_schedule_input_cases() -> Vec<ContractCase> {
             schema_accepts: false,
             decode: ExpectedDecode::Schema {
                 field: "from",
-                reason: "must be a date string",
+                reason: "must be a YYYY-MM-DD date string",
             },
         },
         ContractCase {
@@ -1278,7 +1340,7 @@ fn get_schedule_input_cases() -> Vec<ContractCase> {
             schema_accepts: false,
             decode: ExpectedDecode::Schema {
                 field: "until",
-                reason: "must be a date string",
+                reason: "must be a YYYY-MM-DD date string",
             },
         },
         ContractCase {
@@ -1287,7 +1349,7 @@ fn get_schedule_input_cases() -> Vec<ContractCase> {
             schema_accepts: false,
             decode: ExpectedDecode::Semantic {
                 field: "from",
-                reason: "must be a valid ISO 8601 date",
+                reason: "must be a valid calendar date in YYYY-MM-DD format",
             },
         },
         ContractCase {
@@ -1446,7 +1508,7 @@ fn common_input_cases() -> Vec<ContractCase> {
             schema_accepts: false,
             decode: ExpectedDecode::Semantic {
                 field: "date",
-                reason: "must be a valid ISO 8601 date",
+                reason: "must be a valid calendar date in YYYY-MM-DD format",
             },
         },
         ContractCase {

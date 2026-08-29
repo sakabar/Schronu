@@ -15,6 +15,10 @@
       "additionalProperties": false,
       "properties": {
         "task_id": {
+          "description": "A valid UUID string.",
+          "examples": [
+            "80d7db87-324e-4e8d-a5b7-ff78cd5bf39a"
+          ],
           "format": "uuid",
           "type": "string"
         }
@@ -64,10 +68,18 @@
               "type": "string"
             },
             "from": {
+              "description": "An RFC 3339 date-time string with a UTC offset.",
+              "examples": [
+                "2026-08-29T10:00:00+09:00"
+              ],
               "format": "date-time",
               "type": "string"
             },
             "until": {
+              "description": "An RFC 3339 date-time string with a UTC offset.",
+              "examples": [
+                "2026-08-29T10:00:00+09:00"
+              ],
               "format": "date-time",
               "type": "string"
             }
@@ -102,10 +114,18 @@
       "additionalProperties": false,
       "properties": {
         "from": {
+          "description": "A calendar date in YYYY-MM-DD format without a time or time zone.",
+          "examples": [
+            "2026-08-29"
+          ],
           "format": "date",
           "type": "string"
         },
         "until": {
+          "description": "A calendar date in YYYY-MM-DD format without a time or time zone.",
+          "examples": [
+            "2026-08-29"
+          ],
           "format": "date",
           "type": "string"
         }
@@ -121,14 +141,20 @@
       "additionalProperties": false,
       "properties": {
         "estimated_work_minutes": {
+          "description": "A non-negative integer.",
           "minimum": 0,
           "type": "integer"
         },
         "name": {
+          "description": "A non-empty string.",
           "minLength": 1,
           "type": "string"
         },
         "pending_until": {
+          "description": "An RFC 3339 date-time string with a UTC offset.",
+          "examples": [
+            "2026-08-29T10:00:00+09:00"
+          ],
           "format": "date-time",
           "type": "string"
         }
@@ -147,6 +173,7 @@
       "properties": {
         "names": {
           "items": {
+            "description": "A non-empty string.",
             "minLength": 1,
             "type": "string"
           },
@@ -154,10 +181,18 @@
           "type": "array"
         },
         "parent_id": {
+          "description": "A valid UUID string.",
+          "examples": [
+            "80d7db87-324e-4e8d-a5b7-ff78cd5bf39a"
+          ],
           "format": "uuid",
           "type": "string"
         },
         "pending_until": {
+          "description": "An RFC 3339 date-time string with a UTC offset.",
+          "examples": [
+            "2026-08-29T10:00:00+09:00"
+          ],
           "format": "date-time",
           "type": "string"
         }
@@ -176,10 +211,18 @@
       "additionalProperties": false,
       "properties": {
         "pending_until": {
+          "description": "An RFC 3339 date-time string with a UTC offset.",
+          "examples": [
+            "2026-08-29T10:00:00+09:00"
+          ],
           "format": "date-time",
           "type": "string"
         },
         "task_id": {
+          "description": "A valid UUID string.",
+          "examples": [
+            "80d7db87-324e-4e8d-a5b7-ff78cd5bf39a"
+          ],
           "format": "uuid",
           "type": "string"
         }
@@ -198,6 +241,10 @@
       "additionalProperties": false,
       "properties": {
         "task_id": {
+          "description": "A valid UUID string.",
+          "examples": [
+            "80d7db87-324e-4e8d-a5b7-ff78cd5bf39a"
+          ],
           "format": "uuid",
           "type": "string"
         }
@@ -220,10 +267,18 @@
           "type": "integer"
         },
         "finished_at": {
+          "description": "An RFC 3339 date-time string with a UTC offset.",
+          "examples": [
+            "2026-08-29T10:00:00+09:00"
+          ],
           "format": "date-time",
           "type": "string"
         },
         "task_id": {
+          "description": "A valid UUID string.",
+          "examples": [
+            "80d7db87-324e-4e8d-a5b7-ff78cd5bf39a"
+          ],
           "format": "uuid",
           "type": "string"
         }
@@ -277,6 +332,10 @@
         "deadline_time": {
           "anyOf": [
             {
+              "description": "An RFC 3339 date-time string with a UTC offset.",
+              "examples": [
+                "2026-08-29T10:00:00+09:00"
+              ],
               "format": "date-time",
               "type": "string"
             },
@@ -286,10 +345,15 @@
           ]
         },
         "estimated_work_minutes": {
+          "description": "A non-negative integer.",
           "minimum": 0,
           "type": "integer"
         },
         "task_id": {
+          "description": "A valid UUID string.",
+          "examples": [
+            "80d7db87-324e-4e8d-a5b7-ff78cd5bf39a"
+          ],
           "format": "uuid",
           "type": "string"
         }
