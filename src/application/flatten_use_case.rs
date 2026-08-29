@@ -632,6 +632,30 @@ mod tests {
     }
 
     #[test]
+    fn 平はzero_work_fixedを固定理由と代表task付きで報告する() {
+        let now = Local.with_ymd_and_hms(2026, 8, 11, 12, 0, 0).unwrap();
+        let task = new_task_handle("zero-fixed").unwrap();
+        task.sync_clock(now).unwrap();
+        task.set_start_time(now).unwrap();
+        task.set_estimated_work_seconds(60 * 60).unwrap();
+        task.set_actual_work_seconds(60 * 60).unwrap();
+        task.set_fixed_start(true).unwrap();
+        let task_id = task.get_id().unwrap();
+        let repository = TestTaskRepository::new(vec![task], now);
+        let mut free_time_manager = TestFreeTimeManager::new(30);
+
+        let result = flatten_tasks(&repository, &mut free_time_manager).unwrap();
+        let reason = &result.unresolved_overloads[0].reasons[0];
+
+        assert_eq!(reason.reason, UnresolvedReason::FixedStart);
+        assert_eq!(reason.representative_task_id, Some(task_id));
+        assert_eq!(
+            reason.representative_task_name.as_deref(),
+            Some("zero-fixed")
+        );
+    }
+
+    #[test]
     fn 平は重複fixed予約を個別加算して過負荷を可視化する() {
         let now = Local.with_ymd_and_hms(2026, 8, 11, 12, 0, 0).unwrap();
         let first = new_task_handle("fixed-first").unwrap();
