@@ -4597,6 +4597,117 @@ fn test_execute_flatten_未解消の超過が1分未満でも切り上げて表�
 }
 
 #[test]
+fn test_execute_flatten_日次終端後でも次の06時前のtaskは翌論理日へ延期する() {
+    let now = Local.with_ymd_and_hms(2026, 8, 13, 6, 0, 0).unwrap();
+    let today = now.date_naive();
+    let tomorrow = today + Duration::days(1);
+    let root = new_test_task_handle("平テスト").unwrap();
+    root.set_estimated_work_seconds(0);
+    let target = add_scheduled_child_for_test(
+        &root,
+        "日次終端後",
+        Local.with_ymd_and_hms(2026, 8, 14, 0, 55, 0).unwrap(),
+        10,
+    );
+
+    let result = execute_flatten_command_for_test(
+        "平",
+        now,
+        root,
+        HashMap::from([(today, 0), (tomorrow, 60)]),
+    );
+
+    assert_eq!(
+        result
+            .task
+            .get_by_id(target.get_id().unwrap())
+            .unwrap()
+            .get_pending_until()
+            .unwrap(),
+        try_logical_date_start(tomorrow).unwrap()
+    );
+    assert!(result.output.contains("平: 1件 00:10"));
+    assert!(result.output.contains(&format!(
+        "平\t{}\t{}\t00:10",
+        today, tomorrow
+    )));
+}
+
+#[test]
+fn test_execute_flatten_日次終端前後に分割されたtaskを丸ごと翌論理日へ延期する() {
+    let now = Local.with_ymd_and_hms(2026, 8, 13, 6, 0, 0).unwrap();
+    let today = now.date_naive();
+    let tomorrow = today + Duration::days(1);
+    let root = new_test_task_handle("平テスト").unwrap();
+    root.set_estimated_work_seconds(0);
+    let target = add_scheduled_child_for_test(
+        &root,
+        "日次終端前後",
+        Local.with_ymd_and_hms(2026, 8, 14, 0, 20, 0).unwrap(),
+        20,
+    );
+    let fixed = add_scheduled_child_for_test(
+        &root,
+        "日次終端の固定予定",
+        Local.with_ymd_and_hms(2026, 8, 14, 0, 30, 0).unwrap(),
+        10,
+    );
+    fixed.set_deadline_time_opt(Some(
+        Local.with_ymd_and_hms(2026, 8, 14, 0, 45, 0).unwrap(),
+    ));
+    let schedule_repository = TestTaskRepository::new(root.clone(), now);
+    let target_segments = schronu::application::schedule_use_case::get_schedule(
+        &schedule_repository,
+    )
+    .unwrap()
+    .into_iter()
+    .filter(|scheduled| scheduled.task.id == target.get_id().unwrap())
+    .map(|scheduled| (scheduled.scheduled_start, scheduled.scheduled_end))
+    .collect::<Vec<_>>();
+
+    assert_eq!(
+        target_segments,
+        vec![
+            (
+                Local.with_ymd_and_hms(2026, 8, 14, 0, 20, 0).unwrap(),
+                Local.with_ymd_and_hms(2026, 8, 14, 0, 30, 0).unwrap(),
+            ),
+            (
+                Local.with_ymd_and_hms(2026, 8, 14, 0, 40, 0).unwrap(),
+                Local.with_ymd_and_hms(2026, 8, 14, 0, 50, 0).unwrap(),
+            ),
+        ]
+    );
+
+    let result = execute_flatten_command_for_test(
+        "平",
+        now,
+        root,
+        HashMap::from([(today, 10), (tomorrow, 60)]),
+    );
+
+    assert_eq!(
+        result
+            .task
+            .get_by_id(target.get_id().unwrap())
+            .unwrap()
+            .get_pending_until()
+            .unwrap(),
+        try_logical_date_start(tomorrow).unwrap()
+    );
+    assert_eq!(
+        result
+            .task
+            .get_by_id(fixed.get_id().unwrap())
+            .unwrap()
+            .get_pending_until()
+            .unwrap(),
+        Local.with_ymd_and_hms(2026, 8, 14, 0, 30, 0).unwrap()
+    );
+    assert!(result.output.contains("平: 1件 00:20"));
+}
+
+#[test]
 fn test_execute_flatten_論理日境界をまたぐtaskは延期しない() {
     let now = Local.with_ymd_and_hms(2026, 8, 13, 6, 0, 0).unwrap();
     let today = now.date_naive();
