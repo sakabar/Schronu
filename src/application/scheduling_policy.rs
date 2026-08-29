@@ -1412,6 +1412,18 @@ fn atomic_fits(
         return Ok(true);
     }
     let completion = checked_segment_end(selected.candidate.id, now, selected.remaining_seconds)?;
+
+    // fixed/slackはfuture releaseより強い境界であり、ここを越えるatomicは
+    // release予測の結果にかかわらず開始できない。候補ごとに同じrelease timelineを
+    // 仮想走査する前に棄却し、ready atomic × future releaseの直積を作らない。
+    let hard_boundary = [next_fixed_start(now, context.fixed_slots), slack_guard]
+        .into_iter()
+        .flatten()
+        .min();
+    if hard_boundary.is_some_and(|boundary| completion > boundary) {
+        return Ok(false);
+    }
+
     Ok(completion
         == segment_boundary(selected_index, selected, now, slack_guard, context, metrics)?)
 }
