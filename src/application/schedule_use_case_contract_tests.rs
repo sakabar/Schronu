@@ -317,6 +317,33 @@ fn get_scheduleはfixed_start属性をpolicyへ渡し指定開始を保持する
 }
 
 #[test]
+fn get_scheduleは表現不能なfixed_flexible_atomic終了時刻を構造化errorにする() {
+    let now = fixed_now();
+
+    for (name, fixed_start, atomic) in [
+        ("fixed", true, false),
+        ("flexible", false, false),
+        ("atomic", false, true),
+    ] {
+        let task = task_with_schedule(name, now, i64::MAX, 0);
+        task.set_fixed_start(fixed_start).unwrap();
+        task.set_atomic(atomic).unwrap();
+        let task_id = task.get_id().unwrap();
+        let repository = TestTaskRepository::new(vec![task], now);
+
+        assert_eq!(
+            get_schedule(&repository),
+            Err(super::task_use_case::ApplicationError::ScheduleTimeOutOfRange {
+                task_id,
+                start_time: now,
+                work_seconds: i64::MAX,
+            }),
+            "{name} must report an out-of-range schedule segment"
+        );
+    }
+}
+
+#[test]
 fn scheduling_policyの単一入口と選択責務を固定する() {
     let policy_source = include_str!("scheduling_policy.rs");
     let use_case_source = include_str!("schedule_use_case.rs");

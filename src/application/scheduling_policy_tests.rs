@@ -184,6 +184,43 @@ fn fixed予定は残作業がwindowより短くても予約区間全体を可視
     assert_eq!(segment.total_work_seconds, 15 * 60);
 }
 
+#[test]
+fn fixed_window終了が日時範囲外ならtaskと入力値を保持するerrorを返す() {
+    let now = Local.with_ymd_and_hms(2026, 8, 11, 12, 0, 0).unwrap();
+    let fixed = fixed_candidate("overflow", now, i64::MAX, i64::MAX);
+    let fixed_id = fixed.id;
+
+    assert_eq!(
+        schedule_tasks_by_priority(&[fixed], now).err(),
+        Some(SchedulingPolicyError {
+            task_id: fixed_id,
+            start_time: now,
+            work_seconds: i64::MAX,
+        })
+    );
+}
+
+#[test]
+fn flexibleとatomicの終了が日時範囲外なら入力値を保持するerrorを返す() {
+    let now = Local.with_ymd_and_hms(2026, 8, 11, 12, 0, 0).unwrap();
+
+    for atomic in [false, true] {
+        let mut candidate = candidate("overflow", now, 0, i64::MAX);
+        candidate.atomic = atomic;
+        let task_id = candidate.id;
+
+        assert_eq!(
+            schedule_tasks_by_priority(&[candidate], now).err(),
+            Some(SchedulingPolicyError {
+                task_id,
+                start_time: now,
+                work_seconds: i64::MAX,
+            }),
+            "atomic={atomic}"
+        );
+    }
+}
+
 #[cfg(feature = "benchmarking")]
 #[test]
 fn schedule_tasks_by_priorityは依存待ちcandidateを毎回走査しない() {
