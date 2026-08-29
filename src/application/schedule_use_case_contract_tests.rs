@@ -295,6 +295,28 @@ fn get_schedule_atomic_taskを分割せず連続枠へ配置する() {
 }
 
 #[test]
+fn get_scheduleはfixed_start属性をpolicyへ渡し指定開始を保持する() {
+    let now = fixed_now();
+    let flexible = task_with_schedule("flexible", now, 2 * 60 * 60, 99);
+    let fixed_start = now + Duration::hours(1);
+    let fixed = task_with_schedule("fixed", fixed_start, 60 * 60, 0);
+    fixed.set_fixed_start(true).unwrap();
+    let repository = TestTaskRepository::new(vec![flexible, fixed.clone()], now);
+
+    let scheduled = get_schedule(&repository).unwrap();
+    let fixed_segment = scheduled
+        .iter()
+        .find(|segment| segment.task.id == fixed.get_id().unwrap())
+        .unwrap();
+
+    assert_eq!(fixed_segment.scheduled_start, fixed_start);
+    assert_eq!(
+        fixed_segment.scheduled_end,
+        fixed_start + Duration::hours(1)
+    );
+}
+
+#[test]
 fn scheduling_policyの単一入口と選択責務を固定する() {
     let policy_source = include_str!("scheduling_policy.rs");
     let use_case_source = include_str!("schedule_use_case.rs");

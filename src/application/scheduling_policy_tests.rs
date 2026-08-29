@@ -18,7 +18,139 @@ fn candidate(
         remaining_seconds,
         dependency_ids: vec![],
         atomic: false,
+        fixed_start: false,
+        fixed_start_time: first_available_time,
+        estimated_work_seconds: remaining_seconds,
     }
+}
+
+fn fixed_candidate(
+    name: &str,
+    fixed_start_time: DateTime<Local>,
+    estimated_work_seconds: i64,
+    remaining_seconds: i64,
+) -> TaskScheduleCandidate {
+    let mut candidate = candidate(name, fixed_start_time, 0, remaining_seconds);
+    candidate.fixed_start = true;
+    candidate.fixed_start_time = fixed_start_time;
+    candidate.estimated_work_seconds = estimated_work_seconds;
+    candidate
+}
+
+fn segments_for(scheduled: &[ScheduledTask], task_id: Uuid) -> Vec<&ScheduledTask> {
+    scheduled
+        .iter()
+        .filter(|segment| segment.id == task_id)
+        .collect()
+}
+
+#[test]
+fn fixed予定同士は重複しても双方の指定時刻を保持する() {
+    let now = Local.with_ymd_and_hms(2026, 8, 11, 12, 0, 0).unwrap();
+    let first_start = now + Duration::hours(1);
+    let second_start = now + Duration::minutes(90);
+    let first = fixed_candidate("first", first_start, 60 * 60, 60 * 60);
+    let second = fixed_candidate("second", second_start, 60 * 60, 60 * 60);
+    let first_id = first.id;
+    let second_id = second.id;
+
+    let scheduled = schedule_tasks_by_priority(&[second, first], now).unwrap();
+
+    assert_eq!(scheduled_start(&scheduled, first_id), first_start);
+    assert_eq!(scheduled_start(&scheduled, second_id), second_start);
+}
+
+#[test]
+fn 過去開始のfixed予定は元window内へ残作業を置き超過分を後続へ置く() {
+    let now = Local.with_ymd_and_hms(2026, 8, 11, 12, 0, 0).unwrap();
+    let start = now - Duration::hours(1);
+    let fixed = fixed_candidate("past", start, 2 * 60 * 60, 2 * 60 * 60);
+    let fixed_id = fixed.id;
+
+    let scheduled = schedule_tasks_by_priority(&[fixed], now).unwrap();
+    let segments = segments_for(&scheduled, fixed_id);
+
+    assert_eq!(segments.len(), 2);
+    assert_eq!(segments[0].scheduled_start, now);
+    assert_eq!(segments[0].scheduled_end, now + Duration::hours(1));
+    assert_eq!(segments[0].scheduled_work_seconds, 60 * 60);
+    assert_eq!(segments[1].scheduled_start, now + Duration::hours(1));
+    assert_eq!(segments[1].scheduled_end, now + Duration::hours(2));
+    assert_eq!(segments[1].scheduled_work_seconds, 60 * 60);
+    assert_eq!(segments[0].total_work_seconds, 2 * 60 * 60);
+    assert_eq!(segments[1].total_work_seconds, 2 * 60 * 60);
+}
+
+#[test]
+fn flexible予定はfixed区間のunionを避ける() {
+    let now = Local.with_ymd_and_hms(2026, 8, 11, 12, 0, 0).unwrap();
+    let first = fixed_candidate("fixed-first", now + Duration::hours(1), 60 * 60, 60 * 60);
+    let second = fixed_candidate(
+        "fixed-second",
+        now + Duration::minutes(90),
+        60 * 60,
+        60 * 60,
+    );
+    let flexible = candidate("flexible", now, 99, 2 * 60 * 60);
+    let flexible_id = flexible.id;
+
+    let scheduled = schedule_tasks_by_priority(&[flexible, second, first], now).unwrap();
+    let segments = segments_for(&scheduled, flexible_id);
+
+    assert_eq!(segments.len(), 2);
+    assert_eq!(segments[0].scheduled_start, now);
+    assert_eq!(segments[0].scheduled_end, now + Duration::hours(1));
+    assert_eq!(
+        segments[1].scheduled_start,
+        now + Duration::minutes(150)
+    );
+    assert_eq!(
+        segments[1].scheduled_end,
+        now + Duration::minutes(210)
+    );
+}
+
+#[test]
+fn future_fixedの元window超過分も作業秒数を欠落重複なく後続配置する() {
+    let now = Local.with_ymd_and_hms(2026, 8, 11, 12, 0, 0).unwrap();
+    let start = now + Duration::hours(1);
+    let fixed = fixed_candidate("excess", start, 60 * 60, 2 * 60 * 60);
+    let fixed_id = fixed.id;
+
+    let scheduled = schedule_tasks_by_priority(&[fixed], now).unwrap();
+    let segments = segments_for(&scheduled, fixed_id);
+
+    assert_eq!(segments.len(), 2);
+    assert_eq!(segments[0].scheduled_start, start);
+    assert_eq!(segments[0].scheduled_end, start + Duration::hours(1));
+    assert_eq!(segments[1].scheduled_start, start + Duration::hours(1));
+    assert_eq!(segments[1].scheduled_end, start + Duration::hours(2));
+    assert_eq!(
+        segments
+            .iter()
+            .map(|segment| segment.scheduled_work_seconds)
+            .sum::<i64>(),
+        2 * 60 * 60
+    );
+    assert!(segments
+        .iter()
+        .all(|segment| segment.total_work_seconds == 2 * 60 * 60));
+}
+
+#[test]
+fn fixed予定はdependencyが未完了でも指定時刻を動かさない() {
+    let now = Local.with_ymd_and_hms(2026, 8, 11, 12, 0, 0).unwrap();
+    let child = candidate("dependency", now, 99, 2 * 60 * 60);
+    let mut fixed = fixed_candidate("fixed-parent", now + Duration::hours(1), 60 * 60, 60 * 60);
+    fixed.dependency_ids = vec![child.id];
+    let fixed_id = fixed.id;
+
+    let scheduled = schedule_tasks_by_priority(&[fixed, child], now).unwrap();
+
+    assert_eq!(
+        scheduled_start(&scheduled, fixed_id),
+        now + Duration::hours(1)
+    );
 }
 
 #[cfg(feature = "benchmarking")]
