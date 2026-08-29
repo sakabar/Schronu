@@ -829,6 +829,26 @@ fn 低priority_candidateのfuture_releaseは高priority_atomicを延期しない
 }
 
 #[test]
+fn 連続枠に入らないfuture_atomicは実行中atomicを中断しない() {
+    let now = Local.with_ymd_and_hms(2026, 9, 1, 9, 0, 0).unwrap();
+    let mut running = candidate("running", now, 50, 60 * 60);
+    running.atomic = true;
+    let running_id = running.id;
+    let mut released = candidate("released", now + Duration::minutes(30), 99, 2 * 60 * 60);
+    released.atomic = true;
+    let released_id = released.id;
+    let fixed = fixed_candidate("fixed", now + Duration::hours(1), 60 * 60, 60 * 60);
+
+    let scheduled = schedule_tasks_by_priority(&[fixed, released, running], now).unwrap();
+
+    assert_eq!(scheduled_start(&scheduled, running_id), now);
+    assert_eq!(
+        scheduled_start(&scheduled, released_id),
+        now + Duration::hours(2)
+    );
+}
+
+#[test]
 fn 実現不能なdeadlineでも決定的に期限超過scheduleを返す() {
     let now = Local.with_ymd_and_hms(2026, 9, 1, 9, 0, 0).unwrap();
     let mut impossible = candidate("impossible", now, 1, 2 * 60 * 60);
