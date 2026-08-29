@@ -14,6 +14,7 @@ pub struct TaskView {
     pub original_status: Status,
     pub is_on_other_side: bool,
     pub atomic: bool,
+    pub fixed_start: bool,
     pub pending_until: Option<DateTime<Local>>,
     pub priority: i64,
     pub create_time: DateTime<Local>,
@@ -55,6 +56,7 @@ impl TryFrom<&TaskHandle> for TaskView {
             original_status: *attr.get_orig_status(),
             is_on_other_side: *attr.get_is_on_other_side(),
             atomic: attr.get_atomic(),
+            fixed_start: attr.get_fixed_start(),
             pending_until: (*attr.get_orig_status() == Status::Pending)
                 .then(|| *attr.get_pending_until()),
             priority: root_attr.get_priority(),

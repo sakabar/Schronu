@@ -204,6 +204,7 @@ fn get_taskはTaskViewをstructured_contentで返してsaveしない() {
     root.set_estimated_work_seconds(1_800).unwrap();
     root.set_actual_work_seconds(900).unwrap();
     root.set_atomic(true).unwrap();
+    root.set_fixed_start(true).unwrap();
     root.set_is_on_other_side(true).unwrap();
     root.set_repetition_interval_days_opt(Some(7)).unwrap();
     root.set_repetition_anchor(RepetitionAnchor::Completion)
@@ -244,6 +245,7 @@ fn get_taskはTaskViewをstructured_contentで返してsaveしない() {
             "deadline_time",
             "end_time",
             "estimated_work_seconds",
+            "fixed_start",
             "id",
             "is_on_other_side",
             "name",

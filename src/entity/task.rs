@@ -318,6 +318,7 @@ pub struct TaskAttr {
     status: Status, // 評価後のステータス。pendingはpending_untilを加味して評価され、Todo扱いとなる
     is_on_other_side: bool, // 相手ボールか?
     atomic: bool,   // 分割できないタスクか?
+    fixed_start: bool, // 開始時刻をスケジューラが動かしてはならないか?
     pending_until: DateTime<Local>,
     last_synced_time: DateTime<Local>,
 
@@ -347,6 +348,7 @@ impl PartialEq for TaskAttr {
             && self.status == other.status
             && self.is_on_other_side == other.is_on_other_side
             && self.atomic == other.atomic
+            && self.fixed_start == other.fixed_start
             && self.pending_until == other.pending_until
             && self.last_synced_time == other.last_synced_time
             && self.priority == other.priority
@@ -408,6 +410,7 @@ impl TaskAttr {
             status: Status::Todo,
             is_on_other_side: false,
             atomic: false,
+            fixed_start: false,
             pending_until: DateTime::<Local>::MIN_UTC.into(),
             last_synced_time: DateTime::<Local>::MIN_UTC.into(),
             priority: 0,
@@ -507,6 +510,14 @@ impl TaskAttr {
 
     pub fn set_atomic(&mut self, atomic: bool) {
         self.atomic = atomic;
+    }
+
+    pub fn get_fixed_start(&self) -> bool {
+        self.fixed_start
+    }
+
+    pub fn set_fixed_start(&mut self, fixed_start: bool) {
+        self.fixed_start = fixed_start;
     }
 
     // 時刻を入力し、その時刻を用いてpending判定を行う。
@@ -989,6 +1000,24 @@ impl TaskHandle {
                 false
             } else {
                 attr.set_atomic(atomic);
+                true
+            }
+        })
+    }
+
+    pub fn get_fixed_start(&self) -> Result<bool, TaskTreeError> {
+        self.node
+            .try_borrow_data()
+            .map(|attr| attr.get_fixed_start())
+            .map_err(|_| TaskTreeError::Borrow)
+    }
+
+    pub fn set_fixed_start(&self, fixed_start: bool) -> Result<(), TaskTreeError> {
+        self.update(|attr| {
+            if attr.get_fixed_start() == fixed_start {
+                false
+            } else {
+                attr.set_fixed_start(fixed_start);
                 true
             }
         })
