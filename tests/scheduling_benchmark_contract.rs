@@ -16,6 +16,7 @@ use schronu::application::benchmarking::{
 use schronu::application::flatten_use_case::flatten_tasks;
 use schronu::application::pack_use_case::pack_tasks;
 use schronu::application::schedule_use_case::get_schedule;
+use std::time::{Duration, Instant};
 
 const DAILY_FREE_MINUTES: i64 = 8 * 60;
 
@@ -96,6 +97,32 @@ fn distinct_deadline_scheduleはdeadline_groupを対数探索する() {
         "distinct deadline probes exceeded the logarithmic index limit: {} > {}",
         metrics.slack_probe_count,
         CANDIDATE_COUNT * 128
+    );
+}
+
+#[test]
+fn atomic_release探索はready候補とfuture_releaseの直積にならない() {
+    const READY_ATOMIC_COUNT: usize = 32;
+    const FUTURE_RELEASE_COUNT: usize = 32;
+    let fixture =
+        SchedulingFixture::atomic_release_adversarial(READY_ATOMIC_COUNT, FUTURE_RELEASE_COUNT)
+            .unwrap();
+    let repository = SchedulingRepository::new(fixture.projects, fixture.now);
+
+    let started = Instant::now();
+    let (_, metrics) = get_schedule_diagnostics(&repository).unwrap();
+    let elapsed = started.elapsed();
+    let candidate_count = READY_ATOMIC_COUNT + FUTURE_RELEASE_COUNT;
+
+    assert!(
+        metrics.release_candidate_probe_count <= candidate_count * 16,
+        "atomic release probes exceeded the linear limit: {} > {}",
+        metrics.release_candidate_probe_count,
+        candidate_count * 16
+    );
+    assert!(
+        elapsed <= Duration::from_secs(2),
+        "atomic release adversarial fixture exceeded wall limit: {elapsed:?}"
     );
 }
 

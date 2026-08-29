@@ -108,6 +108,62 @@ impl SchedulingFixture {
             seed: TYPICAL_SEED,
         })
     }
+
+    #[allow(dead_code)]
+    pub fn atomic_release_adversarial(
+        ready_atomic_count: usize,
+        future_release_count: usize,
+    ) -> Result<Self, TaskTreeError> {
+        let now = fixed_now();
+        let mut sequence = 0_u64;
+        let mut projects = Vec::with_capacity(ready_atomic_count + future_release_count + 1);
+
+        for index in 0..ready_atomic_count {
+            let task = new_task(
+                &format!("fixture-atomic-ready-{index:04}"),
+                &mut sequence,
+                now,
+                Status::Todo,
+            )?;
+            task.set_atomic(true)?;
+            task.set_estimated_work_seconds(8 * 60 * 60)?;
+            task.set_priority((ready_atomic_count - index) as i64)?;
+            projects.push(task);
+        }
+
+        for index in 0..future_release_count {
+            let task = new_task(
+                &format!("fixture-atomic-future-{index:04}"),
+                &mut sequence,
+                now,
+                Status::Todo,
+            )?;
+            task.set_atomic(true)?;
+            task.set_estimated_work_seconds(8 * 60 * 60)?;
+            task.set_priority((ready_atomic_count + future_release_count - index) as i64)?;
+            task.set_start_time(now + Duration::seconds((index + 1) as i64))?;
+            projects.push(task);
+        }
+
+        // 全atomicがこの直前では収まらないようにする。release予測を候補ごとに
+        // 再構築する実装では、同じfuture release列を直積で走査してしまう。
+        let fixed = new_task(
+            "fixture-atomic-fixed-boundary",
+            &mut sequence,
+            now,
+            Status::Todo,
+        )?;
+        fixed.set_start_time(now + Duration::hours(4))?;
+        fixed.set_estimated_work_seconds(60 * 60)?;
+        fixed.set_fixed_start(true)?;
+        projects.push(fixed);
+
+        Ok(Self {
+            projects,
+            now,
+            seed: TYPICAL_SEED,
+        })
+    }
 }
 
 fn fixed_now() -> DateTime<Local> {
