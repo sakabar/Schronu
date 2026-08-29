@@ -358,6 +358,51 @@ fn speculative選択errorはfrontierとslackを双方復元する() {
     assert!(!frontier.ready[1]);
 }
 
+#[test]
+fn task完了でfrontier世代が変わるとatomic予測cacheを無効化する() {
+    let now = Local.with_ymd_and_hms(2026, 8, 11, 12, 0, 0).unwrap();
+    let child = candidate("child", now, 2, 60);
+    let child_id = child.id;
+    let mut dependent = candidate("dependent", now, 1, 60);
+    dependent.dependency_ids = vec![child_id];
+    let preemptor = candidate("preemptor", now + Duration::hours(1), 3, 60);
+    let states = [child, dependent, preemptor]
+        .into_iter()
+        .map(|candidate| FlexibleState {
+            total_work_seconds: candidate.remaining_seconds,
+            effective_deadline: None,
+            completion_gate: false,
+            remaining_seconds: candidate.remaining_seconds,
+            candidate,
+            dependency_indices: Vec::new(),
+            completion_time: None,
+        })
+        .collect::<Vec<_>>();
+    let mut states = states;
+    states[1].dependency_indices = vec![Some(0)];
+    let mut metrics = ScheduleMetrics::default();
+    let mut frontier = SchedulerFrontier::new(&states);
+    frontier.promote_releases(now, &states, &mut metrics);
+    let mut cache = AtomicReleasePredictionCache::default();
+    cache.insert(AtomicReleasePrediction {
+        release: now + Duration::hours(1),
+        preemptor_index: 2,
+        critical_deadline: None,
+        protected_mode: false,
+        frontier_generation: frontier.generation,
+    });
+
+    frontier.complete(0, now + Duration::minutes(1), &states, &mut metrics);
+    cache.retain_future_preemptors_for_generation(now, &states, Some(frontier.generation));
+
+    assert!(cache.entries.is_empty());
+    assert_eq!(
+        frontier.next_release(),
+        Some(now + Duration::minutes(1)),
+        "dependency completion must add a new release overlay"
+    );
+}
+
 #[cfg(feature = "benchmarking")]
 #[test]
 fn schedule_tasks_by_priorityは依存待ちcandidateを毎回走査しない() {
