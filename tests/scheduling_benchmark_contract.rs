@@ -229,6 +229,19 @@ fn atomic_release予測をevent間で再利用する() {
     assert!(small_metrics.atomic_release_cache_probe_count > 0);
     assert!(
         large_metrics.atomic_release_cache_probe_count
+            <= small_metrics.atomic_release_cache_probe_count * 6,
+        "event-scale cache probes grew faster than the input: {} > {}",
+        large_metrics.atomic_release_cache_probe_count,
+        small_metrics.atomic_release_cache_probe_count * 6
+    );
+    assert!(
+        large_metrics.atomic_release_cache_probe_count <= large_candidate_count * 12,
+        "large event-scale cache probes exceeded the linear limit: {} > {}",
+        large_metrics.atomic_release_cache_probe_count,
+        large_candidate_count * 12
+    );
+    assert!(
+        large_metrics.atomic_release_cache_probe_count
             <= large_metrics.selection_candidate_probe_count
                 + large_metrics.selection_event_count * 2,
         "cache bookkeeping exceeded candidate/event work: {} > {}",
