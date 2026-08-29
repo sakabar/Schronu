@@ -9,6 +9,7 @@
   "deadline_time": "{{deadline_time}}",
   "end_time": null,
   "estimated_work_seconds": 1800,
+  "fixed_start": true,
   "id": "{{task_id}}",
   "is_on_other_side": true,
   "name": "MCP task",

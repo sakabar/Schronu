@@ -1172,6 +1172,77 @@ name: 'タスク1'
 }
 
 #[test]
+fn test_yaml_to_task_fixed_start明示値を旧判定式より優先する() {
+    let start_time = "2026/08/20 13:00:00";
+    let deadline_time = "2026/08/20 13:15:00";
+    for (fixed_start, expected) in [("true", true), ("false", false)] {
+        let source = format!(
+            "name: 'タスク1'\nstart_time: '{start_time}'\ndeadline_time: '{deadline_time}'\nestimated_work_seconds: 900\nfixed_start: {fixed_start}\n"
+        );
+        let docs = YamlLoader::load_from_str(&source).unwrap();
+
+        let actual = yaml_to_task(&docs[0], yaml_test_now()).unwrap();
+
+        assert_eq!(actual.get_fixed_start().unwrap(), expected);
+    }
+}
+
+#[test]
+fn test_yaml_to_task_fixed_start未指定なら旧約の完全一致式だけで推定する() {
+    let matching = YamlLoader::load_from_str(
+        "name: '一致'\nstart_time: '2026/08/20 13:00:00'\ndeadline_time: '2026/08/20 13:15:00'\nestimated_work_seconds: 900\n",
+    )
+    .unwrap();
+    let not_matching = YamlLoader::load_from_str(
+        "name: '不一致'\nstart_time: '2026/08/20 13:00:00'\ndeadline_time: '2026/08/20 13:15:01'\nestimated_work_seconds: 900\n",
+    )
+    .unwrap();
+
+    assert!(
+        yaml_to_task(&matching[0], yaml_test_now())
+            .unwrap()
+            .get_fixed_start()
+            .unwrap()
+    );
+    assert!(
+        !yaml_to_task(&not_matching[0], yaml_test_now())
+            .unwrap()
+            .get_fixed_start()
+            .unwrap()
+    );
+}
+
+#[test]
+fn test_task_snapshot_to_yaml_fixed_startの推定済みtrueを確定値として保存する() {
+    let docs = YamlLoader::load_from_str(
+        "name: '旧約'\nstart_time: '2026/08/20 13:00:00'\ndeadline_time: '2026/08/20 13:15:00'\nestimated_work_seconds: 900\n",
+    )
+    .unwrap();
+    let task = yaml_to_task(&docs[0], yaml_test_now()).unwrap();
+
+    let saved = task_snapshot_to_yaml(&task.snapshot().unwrap());
+
+    assert_eq!(saved["fixed_start"].as_bool(), Some(true));
+    let reloaded = yaml_to_task(&saved, yaml_test_now()).unwrap();
+    assert!(reloaded.get_fixed_start().unwrap());
+}
+
+#[test]
+fn test_task_snapshot_to_yaml_fixed_startの明示falseを再推定されないよう保存する() {
+    let docs = YamlLoader::load_from_str(
+        "name: '通常task'\nstart_time: '2026/08/20 13:00:00'\ndeadline_time: '2026/08/20 13:15:00'\nestimated_work_seconds: 900\nfixed_start: false\n",
+    )
+    .unwrap();
+    let task = yaml_to_task(&docs[0], yaml_test_now()).unwrap();
+
+    let saved = task_snapshot_to_yaml(&task.snapshot().unwrap());
+
+    assert_eq!(saved["fixed_start"].as_bool(), Some(false));
+    let reloaded = yaml_to_task(&saved, yaml_test_now()).unwrap();
+    assert!(!reloaded.get_fixed_start().unwrap());
+}
+
+#[test]
 fn test_yaml_to_task_create_time_正常系() {
     let s = "
 id: 67e55044-10b1-426f-9247-bb680e5fe0c8

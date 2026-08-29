@@ -13,6 +13,7 @@
     "deadline_time": null,
     "end_time": null,
     "estimated_work_seconds": 900,
+    "fixed_start": false,
     "id": "{{task_id}}",
     "is_on_other_side": false,
     "name": "scheduled task",
