@@ -1,15 +1,27 @@
 //! Schronuの予定配置policy。
 //!
-//! fixed予定を通常候補と同じ順序で処理すると、先に配置されたtaskによって約束の
-//! 開始時刻が動いてしまう。このmoduleではfixed区間を最初に予約し、残りの候補だけを
-//! 従来のdeadline・priority順で配置する。fixed予定が元windowへ収まらない場合は、
-//! window内の作業と後続の超過分へ分けるが、両者の作業秒数の合計は必ず元の残秒とする。
+//! Schronuは「重要なtaskを先に進める」ことと「締切までに必要な容量を残す」
+//! ことを分けて扱う。flexible taskは通常priority順だが、deadline `D`のslackが
+//! 0以下になった時だけ、そのdeadline groupを保護する。
+//!
+//! `slack(D, t) = fixed予約を除く[t, D)の空き秒 - deadlineがD以下の未完了残秒`
+//!
+//! 用語:
+//! - fixed: 指定開始を動かさず、flexibleに対しては予約区間となる予定。
+//! - effective deadline: 明示deadlineと、依存先fixedの開始時刻のうち早い方。
+//! - event: task完了、fixed開始、candidate release、またはslackが0になる時点。
+//!
+//! 入口関数は4 phase(分類、effective deadline計算、event駆動配置、表示sort)を
+//! その順に読める形に保つ。主な不変条件はfixedを動かさないこと、fixed同士の
+//! 重複を隠さないこと、作業秒を欠落・重複させないこと、依存完了前に着手しない
+//! ことである。deadlineまたは依存が実現不能でもloopせず、決定的なfallback配置を
+//! 返す。これにより上位層が既存の期限超過表示を行える。
 
 use crate::application::scheduling_metrics::ScheduleMetrics;
 use crate::entity::task::TaskHandle;
 use chrono::{DateTime, Duration, Local};
 use std::cmp::{max, Reverse};
-use std::collections::{BinaryHeap, HashMap, HashSet};
+use std::collections::{HashMap, HashSet};
 use uuid::Uuid;
 
 const MIN_SPLIT_SEGMENT_SECONDS: i64 = 5 * 60;
@@ -167,86 +179,6 @@ fn checked_segment_end(
         })
 }
 
-fn find_earliest_non_overlapping_start(
-    task_id: Uuid,
-    first_available_time: DateTime<Local>,
-    remaining_seconds: i64,
-    occupied_slots: &[(DateTime<Local>, DateTime<Local>)],
-    metrics: &mut ScheduleMetrics,
-) -> Result<DateTime<Local>, SchedulingPolicyError> {
-    let mut start = first_available_time;
-    let mut index = occupied_slots.partition_point(|(_, occupied_end)| {
-        metrics.record_occupied_slot_probe();
-        *occupied_end <= start
-    });
-    while let Some((occupied_start, occupied_end)) = occupied_slots.get(index) {
-        let end = checked_segment_end(task_id, start, remaining_seconds)?;
-        metrics.record_occupied_slot_probe();
-        if end <= *occupied_start {
-            break;
-        }
-        if start < *occupied_end && *occupied_start < end {
-            start = *occupied_end;
-        }
-        index += 1;
-    }
-    Ok(start)
-}
-
-fn find_next_occupied_slot(
-    start: DateTime<Local>,
-    occupied_slots: &[(DateTime<Local>, DateTime<Local>)],
-    metrics: &mut ScheduleMetrics,
-) -> Option<(DateTime<Local>, DateTime<Local>)> {
-    let index = occupied_slots.partition_point(|(occupied_start, _)| {
-        metrics.record_occupied_slot_probe();
-        *occupied_start < start
-    });
-    occupied_slots
-        .get(index)
-        .filter(|(occupied_start, occupied_end)| {
-            metrics.record_occupied_slot_probe();
-            start < *occupied_end && start <= *occupied_start
-        })
-        .copied()
-}
-
-fn find_occupied_slot_containing(
-    datetime: DateTime<Local>,
-    occupied_slots: &[(DateTime<Local>, DateTime<Local>)],
-    metrics: &mut ScheduleMetrics,
-) -> Option<(DateTime<Local>, DateTime<Local>)> {
-    let index = occupied_slots.partition_point(|(_, occupied_end)| {
-        metrics.record_occupied_slot_probe();
-        *occupied_end <= datetime
-    });
-    occupied_slots
-        .get(index)
-        .filter(|(occupied_start, occupied_end)| {
-            metrics.record_occupied_slot_probe();
-            datetime >= *occupied_start && datetime < *occupied_end
-        })
-        .copied()
-}
-
-fn find_occupied_slot_starting_at(
-    datetime: DateTime<Local>,
-    occupied_slots: &[(DateTime<Local>, DateTime<Local>)],
-    metrics: &mut ScheduleMetrics,
-) -> Option<(DateTime<Local>, DateTime<Local>)> {
-    let index = occupied_slots.partition_point(|(occupied_start, _)| {
-        metrics.record_occupied_slot_probe();
-        *occupied_start < datetime
-    });
-    occupied_slots
-        .get(index)
-        .filter(|(occupied_start, _)| {
-            metrics.record_occupied_slot_probe();
-            *occupied_start == datetime
-        })
-        .copied()
-}
-
 fn insert_occupied_slot(
     occupied_slots: &mut Vec<(DateTime<Local>, DateTime<Local>)>,
     mut slot: (DateTime<Local>, DateTime<Local>),
@@ -269,6 +201,297 @@ fn insert_occupied_slot(
     occupied_slots.splice(first_merged..past_merged, [slot]);
 }
 
+#[derive(Clone)]
+struct FlexibleState {
+    candidate: TaskScheduleCandidate,
+    remaining_seconds: i64,
+    total_work_seconds: i64,
+    effective_deadline: Option<DateTime<Local>>,
+    completion_time: Option<DateTime<Local>>,
+    completion_gate: bool,
+}
+
+struct Selection {
+    index: usize,
+    slacks: Vec<(DateTime<Local>, i64)>,
+}
+
+/// fixed開始をすべてのtransitive dependencyへ逆伝搬する。
+///
+/// ここでは開始時刻を変更せず、容量保護に使う内部deadlineだけを作る。
+fn effective_deadlines(
+    candidates: &[TaskScheduleCandidate],
+) -> HashMap<Uuid, Option<DateTime<Local>>> {
+    let candidates_by_id = candidates
+        .iter()
+        .map(|candidate| (candidate.id, candidate))
+        .collect::<HashMap<_, _>>();
+    let mut deadlines = candidates
+        .iter()
+        .map(|candidate| (candidate.id, candidate.deadline_time))
+        .collect::<HashMap<_, _>>();
+
+    for fixed in candidates.iter().filter(|candidate| candidate.fixed_start) {
+        let mut stack = fixed.dependency_ids.clone();
+        let mut visited = HashSet::new();
+        while let Some(dependency_id) = stack.pop() {
+            if !visited.insert(dependency_id) {
+                continue;
+            }
+            deadlines.entry(dependency_id).and_modify(|deadline| {
+                *deadline = Some(
+                    deadline
+                        .map(|explicit| explicit.min(fixed.fixed_start_time))
+                        .unwrap_or(fixed.fixed_start_time),
+                );
+            });
+            if let Some(dependency) = candidates_by_id.get(&dependency_id) {
+                stack.extend(dependency.dependency_ids.iter().copied());
+            }
+        }
+    }
+    deadlines
+}
+
+fn dependencies_complete(state: &FlexibleState, states: &[FlexibleState]) -> bool {
+    state.candidate.dependency_ids.iter().all(|dependency_id| {
+        states
+            .iter()
+            .find(|dependency| dependency.candidate.id == *dependency_id)
+            .and_then(|dependency| dependency.completion_time)
+            .is_some()
+    })
+}
+
+fn dependency_end(state: &FlexibleState, states: &[FlexibleState]) -> Option<DateTime<Local>> {
+    state
+        .candidate
+        .dependency_ids
+        .iter()
+        .filter_map(|dependency_id| {
+            states
+                .iter()
+                .find(|dependency| dependency.candidate.id == *dependency_id)
+                .and_then(|dependency| dependency.completion_time)
+        })
+        .max()
+}
+
+fn release_time(state: &FlexibleState, states: &[FlexibleState]) -> Option<DateTime<Local>> {
+    dependencies_complete(state, states).then(|| {
+        max(
+            state.candidate.first_available_time,
+            dependency_end(state, states).unwrap_or(state.candidate.first_available_time),
+        )
+    })
+}
+
+/// `[start, deadline)`からfixed予約のunionを差し引いた秒数を返す。
+fn available_seconds_until(
+    start: DateTime<Local>,
+    deadline: DateTime<Local>,
+    fixed_slots: &[(DateTime<Local>, DateTime<Local>)],
+) -> i64 {
+    if deadline <= start {
+        return 0;
+    }
+    let reserved = fixed_slots
+        .iter()
+        .map(|(fixed_start, fixed_end)| {
+            let overlap_start = max(start, *fixed_start);
+            let overlap_end = deadline.min(*fixed_end);
+            (overlap_end - overlap_start).num_seconds().max(0)
+        })
+        .sum::<i64>();
+    (deadline - start).num_seconds().saturating_sub(reserved)
+}
+
+/// deadlineごとの累積需要を引い、容量が尽きる最初のdeadlineを返す。
+fn deadline_slacks(
+    states: &[FlexibleState],
+    now: DateTime<Local>,
+    fixed_slots: &[(DateTime<Local>, DateTime<Local>)],
+) -> Vec<(DateTime<Local>, i64)> {
+    let mut demand_by_deadline = states
+        .iter()
+        .filter(|state| state.remaining_seconds > 0)
+        .filter_map(|state| {
+            state
+                .effective_deadline
+                .map(|deadline| (deadline, state.remaining_seconds))
+        })
+        .collect::<Vec<_>>();
+    demand_by_deadline.sort_unstable_by_key(|(deadline, _)| *deadline);
+
+    // deadlineごとの全候補再走査はtask数の2乗になる。sort後のprefix sumなら
+    // 同じ累積需要を1回の走査で得られ、数式の意味もそのまま読める。
+    let mut result = Vec::new();
+    let mut cumulative_demand = 0_i64;
+    let mut index = 0;
+    while let Some((deadline, _)) = demand_by_deadline.get(index).copied() {
+        while let Some((same_deadline, seconds)) = demand_by_deadline.get(index).copied() {
+            if same_deadline != deadline {
+                break;
+            }
+            cumulative_demand = cumulative_demand.saturating_add(seconds);
+            index += 1;
+        }
+        result.push((
+            deadline,
+            available_seconds_until(now, deadline, fixed_slots).saturating_sub(cumulative_demand),
+        ));
+    }
+    result
+}
+
+fn normal_selection_key(
+    state: &FlexibleState,
+) -> (Reverse<i64>, bool, Option<DateTime<Local>>, usize, Uuid) {
+    (
+        Reverse(state.candidate.priority),
+        state.effective_deadline.is_none(),
+        state.effective_deadline,
+        state.candidate.rank,
+        state.candidate.id,
+    )
+}
+
+fn protected_selection_key(state: &FlexibleState) -> (DateTime<Local>, Reverse<i64>, usize, Uuid) {
+    (
+        state
+            .effective_deadline
+            .expect("protected group always has an effective deadline"),
+        Reverse(state.candidate.priority),
+        state.candidate.rank,
+        state.candidate.id,
+    )
+}
+
+fn fixed_slot_containing(
+    now: DateTime<Local>,
+    fixed_slots: &[(DateTime<Local>, DateTime<Local>)],
+) -> Option<(DateTime<Local>, DateTime<Local>)> {
+    fixed_slots
+        .iter()
+        .find(|(start, end)| *start <= now && now < *end)
+        .copied()
+}
+
+fn next_fixed_start(
+    now: DateTime<Local>,
+    fixed_slots: &[(DateTime<Local>, DateTime<Local>)],
+) -> Option<DateTime<Local>> {
+    fixed_slots
+        .iter()
+        .map(|(start, _)| *start)
+        .find(|start| *start > now)
+}
+
+fn next_release_event(states: &[FlexibleState], now: DateTime<Local>) -> Option<DateTime<Local>> {
+    states
+        .iter()
+        .filter(|state| state.completion_time.is_none())
+        .filter_map(|state| release_time(state, states))
+        .filter(|release| *release > now)
+        .min()
+}
+
+/// 選択taskがdeadline保護対象外なら、最小の正slackが0になる時刻を返す。
+fn slack_boundary(
+    selected: &FlexibleState,
+    slacks: &[(DateTime<Local>, i64)],
+    now: DateTime<Local>,
+) -> Option<DateTime<Local>> {
+    slacks
+        .iter()
+        .filter(|(deadline, slack)| {
+            *slack > 0
+                && selected
+                    .effective_deadline
+                    .is_none_or(|selected_deadline| selected_deadline > *deadline)
+        })
+        .filter_map(|(_, slack)| checked_segment_end(selected.candidate.id, now, *slack).ok())
+        .min()
+}
+
+fn segment_boundary(
+    selected: &FlexibleState,
+    states: &[FlexibleState],
+    now: DateTime<Local>,
+    fixed_slots: &[(DateTime<Local>, DateTime<Local>)],
+    slacks: &[(DateTime<Local>, i64)],
+) -> Result<DateTime<Local>, SchedulingPolicyError> {
+    let completion = checked_segment_end(selected.candidate.id, now, selected.remaining_seconds)?;
+    Ok([
+        Some(completion),
+        next_fixed_start(now, fixed_slots),
+        next_release_event(states, now),
+        slack_boundary(selected, slacks, now),
+    ]
+    .into_iter()
+    .flatten()
+    .min()
+    .expect("task completion is always a boundary"))
+}
+
+/// atomicは途中eventを跨がず、1segmentで完了できる場合だけ開始する。
+fn atomic_fits(
+    selected: &FlexibleState,
+    states: &[FlexibleState],
+    now: DateTime<Local>,
+    fixed_slots: &[(DateTime<Local>, DateTime<Local>)],
+    slacks: &[(DateTime<Local>, i64)],
+) -> Result<bool, SchedulingPolicyError> {
+    if !selected.candidate.atomic {
+        return Ok(true);
+    }
+    let completion = checked_segment_end(selected.candidate.id, now, selected.remaining_seconds)?;
+    Ok(completion == segment_boundary(selected, states, now, fixed_slots, slacks)?)
+}
+
+/// ready候補の選択規則を唯一の場所に集約する。
+///
+/// 最早のcritical deadlineがあればそこまでの候補を保護し、それ以外は
+/// priorityを最優先する。先頭atomicが入らない場合は、入る候補まで決定的に送る。
+fn select_next_candidate(
+    states: &[FlexibleState],
+    ready_indices: &[usize],
+    now: DateTime<Local>,
+    fixed_slots: &[(DateTime<Local>, DateTime<Local>)],
+) -> Result<Option<Selection>, SchedulingPolicyError> {
+    let slacks = deadline_slacks(states, now, fixed_slots);
+    let critical_deadline = slacks
+        .iter()
+        .find(|(_, slack)| *slack <= 0)
+        .map(|(deadline, _)| *deadline);
+    let mut ordered = ready_indices.to_vec();
+    let protected_ready = critical_deadline.is_some_and(|critical| {
+        ordered.iter().any(|index| {
+            states[*index]
+                .effective_deadline
+                .is_some_and(|deadline| deadline <= critical)
+        })
+    });
+    if protected_ready {
+        let critical = critical_deadline.expect("protected mode requires a critical deadline");
+        ordered.retain(|index| {
+            states[*index]
+                .effective_deadline
+                .is_some_and(|deadline| deadline <= critical)
+        });
+        ordered.sort_by_key(|index| protected_selection_key(&states[*index]));
+    } else {
+        ordered.sort_by_key(|index| normal_selection_key(&states[*index]));
+    }
+
+    for index in ordered {
+        if atomic_fits(&states[index], states, now, fixed_slots, &slacks)? {
+            return Ok(Some(Selection { index, slacks }));
+        }
+    }
+    Ok(None)
+}
+
 #[cfg(test)]
 fn schedule_tasks_by_priority(
     candidates: &[TaskScheduleCandidate],
@@ -286,191 +509,127 @@ pub(super) fn schedule_tasks_by_priority_with_metrics(
     last_synced_time: DateTime<Local>,
     metrics: &mut ScheduleMetrics,
 ) -> Result<Vec<ScheduledTask>, SchedulingPolicyError> {
-    // fixed区間を先に予約しなければ、通常候補の処理順が約束時刻を動かしてしまう。
+    // Phase 1: fixedを先に分類し、約束時刻がflexibleの選択結果に影響されない
+    // 形で予約する。
     let prepared = classify_fixed_candidates(candidates, last_synced_time, metrics)?;
-    let mut pending_candidates = prepared.pending;
-    metrics.record_sort();
-    pending_candidates.sort_by(|a, b| {
-        (
-            a.deadline_time.is_none(),
-            a.deadline_time,
-            Reverse(a.priority),
-            a.first_available_time,
-            a.rank,
-            a.id,
-        )
-            .cmp(&(
-                b.deadline_time.is_none(),
-                b.deadline_time,
-                Reverse(b.priority),
-                b.first_available_time,
-                b.rank,
-                b.id,
-            ))
-    });
 
-    let candidate_index_by_id = pending_candidates
-        .iter()
-        .enumerate()
-        .map(|(index, candidate)| (candidate.id, index))
-        .collect::<HashMap<_, _>>();
-    let mut dependent_indices_by_id = HashMap::<Uuid, Vec<usize>>::new();
-    let mut unresolved_dependency_counts = Vec::with_capacity(pending_candidates.len());
-    let mut ready_indices = BinaryHeap::<Reverse<usize>>::new();
-    for (index, candidate) in pending_candidates.iter().enumerate() {
-        metrics.record_dependency_candidate_probe();
-        let unresolved_count = candidate.dependency_ids.len();
-        unresolved_dependency_counts.push(unresolved_count);
-        if unresolved_count == 0 {
-            ready_indices.push(Reverse(index));
-        }
-        for dependency_id in &candidate.dependency_ids {
-            if candidate_index_by_id.contains_key(dependency_id) {
-                dependent_indices_by_id
-                    .entry(*dependency_id)
-                    .or_default()
-                    .push(index);
+    // Phase 2: fixed開始をdependencyのeffective deadlineにすることで、fixed本体を
+    // 動かさずにその準備容量だけを保護する。
+    let effective_deadlines_by_id = effective_deadlines(candidates);
+    let mut states = prepared
+        .pending
+        .into_iter()
+        .map(|candidate| {
+            metrics.record_dependency_candidate_probe();
+            let remaining_seconds = candidate.remaining_seconds.max(0);
+            FlexibleState {
+                total_work_seconds: prepared
+                    .total_work_seconds_by_id
+                    .get(&candidate.id)
+                    .copied()
+                    .unwrap_or(remaining_seconds),
+                effective_deadline: effective_deadlines_by_id
+                    .get(&candidate.id)
+                    .copied()
+                    .flatten(),
+                completion_gate: prepared.completion_gate_ids.contains(&candidate.id),
+                candidate,
+                remaining_seconds,
+                completion_time: None,
             }
-        }
-    }
-    let mut pending_candidates = pending_candidates.into_iter().map(Some).collect::<Vec<_>>();
-    let mut remaining_candidate_count = pending_candidates.len();
-    let mut occupied_slots = prepared.occupied_fixed;
+        })
+        .collect::<Vec<_>>();
+    let fixed_slots = prepared.occupied_fixed;
     let mut scheduled_tasks = prepared.scheduled_fixed;
-    let mut scheduled_end_by_id = HashMap::new();
+    let mut now = last_synced_time;
 
-    while remaining_candidate_count > 0 {
-        let index = ready_indices
-            .pop()
-            .map(|Reverse(index)| index)
-            .filter(|index| pending_candidates[*index].is_some())
-            .or_else(|| pending_candidates.iter().position(Option::is_some))
-            .expect("remaining candidate count guarantees a pending candidate");
-        let candidate = pending_candidates[index]
-            .take()
-            .expect("ready candidate is pending");
-        remaining_candidate_count -= 1;
-        let dependency_end = candidate
-            .dependency_ids
+    // Phase 3: eventとeventの間だけを配置し、releaseやslack境界で必ず再選択する。
+    while states.iter().any(|state| state.completion_time.is_none()) {
+        if let Some((_, fixed_end)) = fixed_slot_containing(now, &fixed_slots) {
+            now = fixed_end;
+            continue;
+        }
+
+        // 0秒taskもdependencyのcompletion gateとして意味があるため、選択前に
+        // 固定点で完了させる。
+        let zero_ready = states.iter().enumerate().find_map(|(index, state)| {
+            (state.completion_time.is_none()
+                && state.remaining_seconds == 0
+                && release_time(state, &states).is_some_and(|release| release <= now))
+            .then_some(index)
+        });
+        if let Some(index) = zero_ready {
+            if !states[index].completion_gate {
+                metrics.record_segment();
+                scheduled_tasks.push(to_scheduled_task(
+                    &states[index].candidate,
+                    now,
+                    now,
+                    0,
+                    states[index].total_work_seconds,
+                ));
+            }
+            states[index].completion_time = Some(now);
+            continue;
+        }
+
+        let ready_indices = states
             .iter()
-            .filter_map(|id| scheduled_end_by_id.get(id))
-            .max()
-            .copied()
-            .unwrap_or(last_synced_time);
-        let mut segment_start = find_earliest_non_overlapping_start(
-            candidate.id,
-            max(
-                max(candidate.first_available_time, last_synced_time),
-                dependency_end,
-            ),
-            0,
-            &occupied_slots,
-            metrics,
-        )?;
-        let mut remaining_seconds = candidate.remaining_seconds;
-        let total_work_seconds = prepared
-            .total_work_seconds_by_id
-            .get(&candidate.id)
-            .copied()
-            .unwrap_or(remaining_seconds);
-        let mut candidate_scheduled_end = segment_start;
+            .enumerate()
+            .filter(|(_, state)| state.completion_time.is_none() && state.remaining_seconds > 0)
+            .filter(|(_, state)| release_time(state, &states).is_some_and(|release| release <= now))
+            .map(|(index, _)| index)
+            .collect::<Vec<_>>();
 
-        if remaining_seconds == 0 {
-            if !prepared.completion_gate_ids.contains(&candidate.id) {
-                metrics.record_segment();
-                scheduled_tasks.push(to_scheduled_task(
-                    &candidate,
-                    segment_start,
-                    segment_start,
-                    0,
-                    total_work_seconds,
-                ));
+        let selection = select_next_candidate(&states, &ready_indices, now, &fixed_slots)?;
+        let Some(selection) = selection else {
+            let next_release = next_release_event(&states, now);
+            let next_fixed = next_fixed_start(now, &fixed_slots);
+            if let Some(next_event) = [next_release, next_fixed].into_iter().flatten().min() {
+                now = next_event;
+                continue;
             }
-        } else if candidate.atomic {
-            let start = find_earliest_non_overlapping_start(
-                candidate.id,
-                segment_start,
-                remaining_seconds,
-                &occupied_slots,
-                metrics,
-            )?;
-            let end = checked_segment_end(candidate.id, start, remaining_seconds)?;
-            metrics.record_segment();
-            scheduled_tasks.push(to_scheduled_task(
-                &candidate,
-                start,
-                end,
-                remaining_seconds,
-                total_work_seconds,
-            ));
-            insert_occupied_slot(&mut occupied_slots, (start, end), metrics);
-            candidate_scheduled_end = end;
-        } else {
-            while remaining_seconds > 0 {
-                segment_start = find_earliest_non_overlapping_start(
-                    candidate.id,
-                    segment_start,
-                    0,
-                    &occupied_slots,
+
+            // missing dependencyやcycleでも、上位層が問題を可視化できるscheduleを
+            // 返す。UUID順入力に依らない通常選択がfallback順となる。
+            let fallback = states
+                .iter()
+                .enumerate()
+                .filter(|(_, state)| state.completion_time.is_none() && state.remaining_seconds > 0)
+                .min_by_key(|(_, state)| normal_selection_key(state))
+                .map(|(index, _)| index);
+            if let Some(index) = fallback {
+                let release = states[index].candidate.first_available_time;
+                now = max(now, release);
+                let fallback_slacks = deadline_slacks(&states, now, &fixed_slots);
+                schedule_selected_segment(
+                    index,
+                    &mut states,
+                    &mut scheduled_tasks,
+                    &mut now,
+                    &fixed_slots,
+                    &fallback_slacks,
                     metrics,
+                    true,
                 )?;
-                let uninterrupted_end =
-                    checked_segment_end(candidate.id, segment_start, remaining_seconds)?;
-                let segment_end =
-                    match find_next_occupied_slot(segment_start, &occupied_slots, metrics) {
-                        Some((occupied_start, _)) if occupied_start < uninterrupted_end => {
-                            occupied_start
-                        }
-                        _ => uninterrupted_end,
-                    };
-                let work_seconds = (segment_end - segment_start).num_seconds();
-                if work_seconds <= 0 {
-                    segment_start =
-                        find_occupied_slot_containing(segment_start, &occupied_slots, metrics)
-                            .map(|(_, end)| end)
-                            .map(Ok)
-                            .unwrap_or_else(|| {
-                                checked_segment_end(candidate.id, segment_start, 1)
-                            })?;
-                    continue;
-                }
-                let after_split = remaining_seconds - work_seconds;
-                if segment_end < uninterrupted_end
-                    && (work_seconds <= MIN_SPLIT_SEGMENT_SECONDS
-                        || after_split <= MIN_SPLIT_SEGMENT_SECONDS)
-                {
-                    segment_start =
-                        find_occupied_slot_starting_at(segment_end, &occupied_slots, metrics)
-                            .map(|(_, end)| end)
-                            .unwrap_or(segment_end);
-                    continue;
-                }
-                metrics.record_segment();
-                scheduled_tasks.push(to_scheduled_task(
-                    &candidate,
-                    segment_start,
-                    segment_end,
-                    work_seconds,
-                    total_work_seconds,
-                ));
-                insert_occupied_slot(&mut occupied_slots, (segment_start, segment_end), metrics);
-                remaining_seconds -= work_seconds;
-                candidate_scheduled_end = segment_end;
-                segment_start = segment_end;
+                continue;
             }
-        }
-        scheduled_end_by_id.insert(candidate.id, candidate_scheduled_end);
-        if let Some(dependent_indices) = dependent_indices_by_id.get(&candidate.id) {
-            for dependent_index in dependent_indices {
-                let unresolved_count = &mut unresolved_dependency_counts[*dependent_index];
-                *unresolved_count = unresolved_count.saturating_sub(1);
-                if *unresolved_count == 0 && pending_candidates[*dependent_index].is_some() {
-                    ready_indices.push(Reverse(*dependent_index));
-                }
-            }
-        }
+            break;
+        };
+
+        schedule_selected_segment(
+            selection.index,
+            &mut states,
+            &mut scheduled_tasks,
+            &mut now,
+            &fixed_slots,
+            &selection.slacks,
+            metrics,
+            false,
+        )?;
     }
 
+    // Phase 4: 表示順は選択policyと分離し、同一入力から常に同一結果を返す。
     metrics.record_sort();
     scheduled_tasks.sort_by(|a, b| {
         (
@@ -489,6 +648,88 @@ pub(super) fn schedule_tasks_by_priority_with_metrics(
             ))
     });
     Ok(scheduled_tasks)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn schedule_selected_segment(
+    selected_index: usize,
+    states: &mut [FlexibleState],
+    scheduled_tasks: &mut Vec<ScheduledTask>,
+    now: &mut DateTime<Local>,
+    fixed_slots: &[(DateTime<Local>, DateTime<Local>)],
+    slacks: &[(DateTime<Local>, i64)],
+    metrics: &mut ScheduleMetrics,
+    ignore_dependencies: bool,
+) -> Result<(), SchedulingPolicyError> {
+    let mut boundary =
+        segment_boundary(&states[selected_index], states, *now, fixed_slots, slacks)?;
+    if states[selected_index].candidate.atomic {
+        boundary = checked_segment_end(
+            states[selected_index].candidate.id,
+            *now,
+            states[selected_index].remaining_seconds,
+        )?;
+    }
+    let work_seconds_before_boundary_adjustment = (boundary - *now).num_seconds();
+    let after_split = states[selected_index]
+        .remaining_seconds
+        .saturating_sub(work_seconds_before_boundary_adjustment);
+    if !states[selected_index].candidate.atomic
+        && after_split > 0
+        && (work_seconds_before_boundary_adjustment <= MIN_SPLIT_SEGMENT_SECONDS
+            || after_split <= MIN_SPLIT_SEGMENT_SECONDS)
+    {
+        let fixed_boundary = next_fixed_start(*now, fixed_slots) == Some(boundary);
+        let guard_boundary =
+            slack_boundary(&states[selected_index], slacks, *now) == Some(boundary);
+        let ready_at_boundary = states
+            .iter()
+            .enumerate()
+            .filter(|(_, state)| state.completion_time.is_none() && state.remaining_seconds > 0)
+            .filter(|(_, state)| {
+                release_time(state, states).is_some_and(|release| release <= boundary)
+            })
+            .map(|(index, _)| index)
+            .collect::<Vec<_>>();
+        let release_preempts =
+            select_next_candidate(states, &ready_at_boundary, boundary, fixed_slots)?
+                .is_some_and(|selection| selection.index != selected_index);
+        if fixed_boundary || guard_boundary || release_preempts {
+            // fixed、deadline guard、より優先されるreleaseは越えない。短い
+            // fragmentは作らず、event後に再配置する。
+            *now = boundary;
+            return Ok(());
+        }
+        // release後も同じtaskが選ばれるなら、見かけだけの数分segmentを
+        // 作らず、そのまま完了させる。
+        boundary = checked_segment_end(
+            states[selected_index].candidate.id,
+            *now,
+            states[selected_index].remaining_seconds,
+        )?;
+    }
+
+    let work_seconds = (boundary - *now).num_seconds();
+    let scheduled_start = *now;
+    let total_work_seconds = states[selected_index].total_work_seconds;
+    let candidate = states[selected_index].candidate.clone();
+    metrics.record_segment();
+    scheduled_tasks.push(to_scheduled_task(
+        &candidate,
+        scheduled_start,
+        boundary,
+        work_seconds,
+        total_work_seconds,
+    ));
+    states[selected_index].remaining_seconds -= work_seconds;
+    *now = boundary;
+    if states[selected_index].remaining_seconds == 0 {
+        states[selected_index].completion_time = Some(boundary);
+    } else if ignore_dependencies {
+        // fallbackは1segment進めることでcycleを解く。残作業は通常event loopへ戻す。
+        states[selected_index].candidate.dependency_ids.clear();
+    }
+    Ok(())
 }
 
 fn to_scheduled_task(
