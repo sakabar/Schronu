@@ -246,7 +246,7 @@
     "name": "defer_task"
   },
   {
-    "description": "Move an existing routine task to its next repetition cycle by shifting its deadline and start time, then restore its original status to Todo. The task must have a deadline and a parent whose repetition interval is set.",
+    "description": "Move an existing routine task to its next repetition cycle by shifting its deadline and start time, then restore its original status to Todo. Its effective status can be Pending when the shifted start time is in the future. The task must have a deadline and a parent whose repetition interval is set.",
     "inputSchema": {
       "additionalProperties": false,
       "properties": {
