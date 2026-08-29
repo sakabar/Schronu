@@ -61,7 +61,7 @@
           "description": "A half-open RFC 3339 date-time range [from, until) applied to the selected task field. This filter is combined with status and category filters using AND. Omit this field to skip period filtering.",
           "properties": {
             "field": {
-              "description": "The task date-time field to filter. scheduled_start selects tasks whose scheduled start is within the range; created_at, deadline, and completed_at select their corresponding timestamps.",
+              "description": "The task date-time field to filter. scheduled_start selects tasks with at least one calculated schedule segment whose start is within the range; created_at, deadline, and completed_at select their corresponding timestamps.",
               "enum": [
                 "scheduled_start",
                 "created_at",

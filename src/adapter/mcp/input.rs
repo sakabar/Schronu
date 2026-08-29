@@ -673,7 +673,7 @@ impl ListTasksInput {
 #[derive(Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub(super) struct TaskPeriodInput {
-    /// The task date-time field to filter. scheduled_start selects tasks whose scheduled start is within the range; created_at, deadline, and completed_at select their corresponding timestamps.
+    /// The task date-time field to filter. scheduled_start selects tasks with at least one calculated schedule segment whose start is within the range; created_at, deadline, and completed_at select their corresponding timestamps.
     pub(super) field: TaskPeriodFieldValue,
     /// The inclusive start of the period as an RFC 3339 date-time string with Z or a numeric UTC offset. Must be earlier than until.
     pub(super) from: Rfc3339DateTime,
