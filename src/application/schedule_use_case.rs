@@ -141,7 +141,7 @@ fn build_schedule_candidates(
         for leaf in extract_leaf_tasks_from_project_with_pending(project_root)
             .map_err(ApplicationError::TaskTree)?
         {
-            validate_ancestry_schedule_range(&leaf)?;
+            validate_ancestry_schedule_range(&leaf, last_synced_time)?;
             let ancestors = leaf
                 .list_all_parent_tasks_with_first_available_time()
                 .map_err(ApplicationError::TaskTree)?;
@@ -218,19 +218,36 @@ fn build_schedule_candidates(
     Ok(candidates)
 }
 
-fn validate_ancestry_schedule_range(leaf: &TaskHandle) -> Result<(), ApplicationError> {
+fn validate_ancestry_schedule_range(
+    leaf: &TaskHandle,
+    last_synced_time: DateTime<Local>,
+) -> Result<(), ApplicationError> {
     // entityのancestor計算は各taskの終了時刻を使うため、その内部へ入る前に同じ子→親順で
     // 表現可能性を検査する。これによりchronoのpanicへ情報を失わず、schedule固有errorへ
     // task idと原因のsegmentを保持できる。
     let mut task = Some(leaf.clone());
     let mut previous_end = DateTime::<Local>::MIN_UTC.with_timezone(&Local);
     while let Some(current) = task {
-        let start_time = max(
-            previous_end,
-            current
-                .first_available_time()
-                .map_err(ApplicationError::TaskTree)?,
-        );
+        let start_time = if current
+            .get_fixed_start()
+            .map_err(ApplicationError::TaskTree)?
+        {
+            // fixedはpendingやdependencyで移動しない。policyの実配置と同じ開始時刻で
+            // 検証しなければ、errorが実際には使わない日時を原因として報告してしまう。
+            max(
+                current
+                    .get_start_time()
+                    .map_err(ApplicationError::TaskTree)?,
+                last_synced_time,
+            )
+        } else {
+            max(
+                previous_end,
+                current
+                    .first_available_time()
+                    .map_err(ApplicationError::TaskTree)?,
+            )
+        };
         let work_seconds =
             calculate_remaining_work_seconds(&current).map_err(ApplicationError::TaskTree)?;
         let task_id = current.get_id().map_err(ApplicationError::TaskTree)?;
