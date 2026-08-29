@@ -8,6 +8,7 @@ use super::schedule_use_case::{
     get_schedule_with_metrics, get_schedule_with_task_first_available_time_and_metrics,
     ScheduledTaskView,
 };
+use super::scheduled_capacity::scheduled_capacity_seconds;
 use super::scheduling_metrics::PackMetrics;
 use super::task_use_case::ApplicationError;
 use crate::entity::task::Status;
@@ -372,7 +373,13 @@ fn calculate_daily_leeway(
         if !target_dates.contains(&date) {
             continue;
         }
-        *total_work_seconds.entry(date).or_default() += scheduled.scheduled_work_seconds;
+        let capacity_seconds = scheduled_capacity_seconds(
+            scheduled.task.fixed_start,
+            scheduled.scheduled_start,
+            scheduled.scheduled_end,
+            scheduled.scheduled_work_seconds,
+        );
+        *total_work_seconds.entry(date).or_default() += capacity_seconds;
         if repository
             .get_by_id(scheduled.task.id)
             .map_err(ApplicationError::TaskTree)?
@@ -384,7 +391,7 @@ fn calculate_daily_leeway(
             .map_err(ApplicationError::TaskTree)?
             .unwrap_or(false)
         {
-            *repetitive_work_seconds.entry(date).or_default() += scheduled.scheduled_work_seconds;
+            *repetitive_work_seconds.entry(date).or_default() += capacity_seconds;
         }
     }
 

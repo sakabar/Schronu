@@ -7,6 +7,7 @@ use super::schedule_use_case::{
     build_schedule_context_with_metrics, get_schedule_from_context_with_overrides_and_metrics,
     ScheduledTaskView,
 };
+use super::scheduled_capacity::scheduled_capacity_seconds;
 use super::scheduling_metrics::FlattenMetrics;
 use super::task_use_case::ApplicationError;
 use crate::entity::datetime::LogicalDateTimePolicy;
@@ -531,6 +532,7 @@ fn calculate_scheduled_work_seconds_by_date(
         metrics.record_full_schedule_scan(1);
         add_scheduled_work_seconds_by_date(
             &mut usage,
+            scheduled.task.fixed_start,
             scheduled.scheduled_start,
             scheduled.scheduled_end,
             scheduled.scheduled_work_seconds,
@@ -541,14 +543,18 @@ fn calculate_scheduled_work_seconds_by_date(
 
 fn add_scheduled_work_seconds_by_date(
     scheduled_work_seconds_by_date: &mut HashMap<NaiveDate, i64>,
+    fixed_start: bool,
     scheduled_start: DateTime<Local>,
-    _scheduled_end: DateTime<Local>,
+    scheduled_end: DateTime<Local>,
     scheduled_work_seconds: i64,
 ) -> Result<(), ApplicationError> {
     let date = try_logical_date(scheduled_start)?;
-    // fixed予定では予約区間と未作業量が異なる。packと同じく、容量計算にはpolicyが
-    // 明示した作業秒数を使い、予約時間を作業量として二重計上しない。
-    *scheduled_work_seconds_by_date.entry(date).or_default() += scheduled_work_seconds;
+    *scheduled_work_seconds_by_date.entry(date).or_default() += scheduled_capacity_seconds(
+        fixed_start,
+        scheduled_start,
+        scheduled_end,
+        scheduled_work_seconds,
+    );
     Ok(())
 }
 
@@ -584,8 +590,14 @@ mod tests {
         let start = Local.with_ymd_and_hms(2026, 8, 11, 12, 0, 0).unwrap();
         let mut usage = HashMap::new();
 
-        add_scheduled_work_seconds_by_date(&mut usage, start, start + Duration::hours(1), 15 * 60)
-            .unwrap();
+        add_scheduled_work_seconds_by_date(
+            &mut usage,
+            true,
+            start,
+            start + Duration::hours(1),
+            15 * 60,
+        )
+        .unwrap();
 
         assert_eq!(
             usage.get(&try_logical_date(start).unwrap()),
@@ -613,6 +625,33 @@ mod tests {
             assert_eq!(result.unresolved_overloads.len(), 1);
             assert_eq!(result.unresolved_overloads[0].excess_work_seconds, 30 * 60);
         }
+    }
+
+    #[test]
+    fn 平は重複fixed予約を個別加算して過負荷を可視化する() {
+        let now = Local.with_ymd_and_hms(2026, 8, 11, 12, 0, 0).unwrap();
+        let first = new_task_handle("fixed-first").unwrap();
+        first.sync_clock(now).unwrap();
+        first.set_start_time(now).unwrap();
+        first.set_estimated_work_seconds(60 * 60).unwrap();
+        first.set_fixed_start(true).unwrap();
+        let second = new_task_handle("fixed-second").unwrap();
+        second.sync_clock(now).unwrap();
+        second.set_start_time(now + Duration::minutes(30)).unwrap();
+        second.set_estimated_work_seconds(60 * 60).unwrap();
+        second.set_fixed_start(true).unwrap();
+        let repository = TestTaskRepository::new(vec![first, second], now);
+        let mut free_time_manager = TestFreeTimeManager::new(90);
+
+        let result = flatten_tasks(&repository, &mut free_time_manager).unwrap();
+
+        assert!(result.had_overload);
+        assert_eq!(result.unresolved_overloads[0].excess_work_seconds, 30 * 60);
+        assert_eq!(
+            result.unresolved_overloads[0].reasons[0].reason,
+            UnresolvedReason::FixedStart
+        );
+        assert_eq!(result.unresolved_overloads[0].reasons[0].task_count, 2);
     }
 
     #[test]
