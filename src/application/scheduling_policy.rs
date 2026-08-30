@@ -1117,27 +1117,98 @@ impl SchedulerFrontier {
         states: &[FlexibleState],
         metrics: &mut ScheduleMetrics,
     ) -> Vec<(DateTime<Local>, Vec<usize>)> {
+        let mut actual_releases = self.release_events.range(now..).peekable();
+        let mut derived_releases = BTreeMap::<DateTime<Local>, Vec<DependencyNode>>::new();
+        let mut unresolved = HashMap::<usize, usize>::new();
+        let mut dependency_end = HashMap::<usize, Option<DateTime<Local>>>::new();
+        let mut completed = HashSet::<usize>::new();
         let mut batches = Vec::new();
-        for (release, nodes) in self.release_events.range(now..) {
-            if *release >= until {
+
+        loop {
+            let next_release = [
+                actual_releases.peek().map(|(time, _)| **time),
+                derived_releases.first_key_value().map(|(time, _)| *time),
+            ]
+            .into_iter()
+            .flatten()
+            .min();
+            let Some(release) = next_release else {
+                break;
+            };
+            if release >= until {
                 break;
             }
-            let mut released_tasks = nodes
-                .iter()
-                .filter_map(|node| {
-                    metrics.record_release_candidate_probe();
-                    let DependencyNode::Task(index) = *node else {
-                        return None;
-                    };
-                    (states[index].completion_time.is_none() && states[index].remaining_seconds > 0)
-                        .then_some(index)
-                })
-                .collect::<Vec<_>>();
-            if !released_tasks.is_empty() {
+            let mut nodes = Vec::new();
+            if actual_releases
+                .peek()
+                .is_some_and(|(time, _)| **time == release)
+            {
+                let (_, actual_nodes) = actual_releases
+                    .next()
+                    .expect("a checked future release exists");
+                nodes.extend(actual_nodes.iter().copied());
+            }
+            if derived_releases
+                .first_key_value()
+                .is_some_and(|(time, _)| *time == release)
+            {
+                let (_, derived_nodes) = derived_releases
+                    .pop_first()
+                    .expect("a checked derived future release exists");
+                nodes.extend(derived_nodes);
+            }
+
+            let mut released_tasks = Vec::new();
+            for node in nodes {
                 metrics.record_release_candidate_probe();
+                let completes_immediately = match node {
+                    DependencyNode::Task(index) => {
+                        if states[index].completion_time.is_some() {
+                            false
+                        } else if states[index].remaining_seconds == 0 {
+                            true
+                        } else {
+                            released_tasks.push(index);
+                            false
+                        }
+                    }
+                    DependencyNode::Completion(_) => true,
+                };
+                if completes_immediately {
+                    let node_offset = Self::node_offset(node, self.task_count);
+                    if self.completed_nodes[node_offset] || !completed.insert(node_offset) {
+                        continue;
+                    }
+                    for dependent in &self.dependents[node_offset] {
+                        metrics.record_release_candidate_probe();
+                        let dependent_offset = Self::node_offset(*dependent, self.task_count);
+                        let unresolved_count = unresolved
+                            .entry(dependent_offset)
+                            .or_insert(self.unresolved_dependencies[dependent_offset]);
+                        if *unresolved_count == 0 {
+                            continue;
+                        }
+                        *unresolved_count -= 1;
+                        let end = dependency_end
+                            .entry(dependent_offset)
+                            .or_insert(self.dependency_end[dependent_offset]);
+                        *end = Some(end.map(|current| current.max(release)).unwrap_or(release));
+                        if *unresolved_count == 0 {
+                            let derived_release = self
+                                .release_time(*dependent, states)
+                                .max(end.unwrap_or(release));
+                            derived_releases
+                                .entry(derived_release)
+                                .or_default()
+                                .push(*dependent);
+                        }
+                    }
+                }
+            }
+            if !released_tasks.is_empty() {
                 released_tasks.sort_unstable();
                 released_tasks.dedup();
-                batches.push((*release, released_tasks));
+                batches.push((release, released_tasks));
             }
         }
         batches
