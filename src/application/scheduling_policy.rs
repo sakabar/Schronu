@@ -49,7 +49,7 @@ use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::ops::ControlFlow;
 use uuid::Uuid;
 
-const MIN_SPLIT_SEGMENT_SECONDS: i64 = 5 * 60;
+const MIN_SPLIT_SEGMENT_SECONDS: i64 = 15 * 60;
 
 #[derive(Clone)]
 pub(super) struct TaskScheduleCandidate {
