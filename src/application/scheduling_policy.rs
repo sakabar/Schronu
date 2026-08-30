@@ -336,6 +336,17 @@ struct SchedulerFrontier {
 struct SpeculativeReleasePromotion {
     removed_events: Vec<(DateTime<Local>, Vec<DependencyNode>)>,
     activated_indices: Vec<usize>,
+    node_mutations: Vec<SpeculativeNodeMutation>,
+    recorded_node_offsets: HashSet<usize>,
+    previous_incomplete_count: usize,
+    previous_generation: u64,
+}
+
+struct SpeculativeNodeMutation {
+    offset: usize,
+    unresolved_dependencies: usize,
+    dependency_end: Option<DateTime<Local>>,
+    completed: bool,
 }
 
 /// deadline需要を初期構築とsegment差分だけで維持する。
@@ -1051,40 +1062,82 @@ impl SchedulerFrontier {
         let mut change = SpeculativeReleasePromotion {
             removed_events: Vec::new(),
             activated_indices: Vec::new(),
+            node_mutations: Vec::new(),
+            recorded_node_offsets: HashSet::new(),
+            previous_incomplete_count: self.incomplete_count,
+            previous_generation: self.generation,
         };
-        while self
-            .release_events
-            .first_key_value()
-            .is_some_and(|(release, _)| *release <= now)
-        {
-            let (release, nodes) = self
+        let mut derived_releases = BTreeMap::<DateTime<Local>, Vec<DependencyNode>>::new();
+        loop {
+            let next_release = [
+                self.release_events.first_key_value().map(|(time, _)| *time),
+                derived_releases.first_key_value().map(|(time, _)| *time),
+            ]
+            .into_iter()
+            .flatten()
+            .min();
+            let Some(release) = next_release.filter(|release| *release <= now) else {
+                break;
+            };
+            let mut nodes = Vec::new();
+            if self
                 .release_events
-                .pop_first()
-                .expect("a checked speculative release event exists");
-            for node in &nodes {
+                .first_key_value()
+                .is_some_and(|(time, _)| *time == release)
+            {
+                let (_, original_nodes) = self
+                    .release_events
+                    .pop_first()
+                    .expect("a checked speculative release event exists");
+                nodes.extend(original_nodes.iter().copied());
+                change.removed_events.push((release, original_nodes));
+            }
+            if derived_releases
+                .first_key_value()
+                .is_some_and(|(time, _)| *time == release)
+            {
+                let (_, derived_nodes) = derived_releases
+                    .pop_first()
+                    .expect("a checked derived release exists");
+                nodes.extend(derived_nodes);
+            }
+            for node in nodes {
                 metrics.record_release_candidate_probe();
-                match *node {
+                match node {
                     DependencyNode::Task(index) => {
                         if states[index].completion_time.is_some() || self.ready[index] {
                             continue;
                         }
+                        if states[index].remaining_seconds == 0 {
+                            self.complete_node_speculatively(
+                                node,
+                                release,
+                                states,
+                                metrics,
+                                &mut derived_releases,
+                                &mut change,
+                            );
+                            continue;
+                        }
                         self.ready[index] = true;
                         let normal_key = normal_selection_key(&states[index]);
-                        if states[index].remaining_seconds == 0 {
-                            self.zero_ready.insert((normal_key, index));
-                        } else {
-                            self.normal_ready.insert((normal_key, index));
-                            if states[index].effective_deadline.is_some() {
-                                self.protected_ready
-                                    .insert((protected_selection_key(&states[index]), index));
-                            }
+                        self.normal_ready.insert((normal_key, index));
+                        if states[index].effective_deadline.is_some() {
+                            self.protected_ready
+                                .insert((protected_selection_key(&states[index]), index));
                         }
                         change.activated_indices.push(index);
                     }
-                    DependencyNode::Completion(_) => {}
+                    DependencyNode::Completion(_) => self.complete_node_speculatively(
+                        node,
+                        release,
+                        states,
+                        metrics,
+                        &mut derived_releases,
+                        &mut change,
+                    ),
                 }
             }
-            change.removed_events.push((release, nodes));
         }
         change
     }
@@ -1101,6 +1154,13 @@ impl SchedulerFrontier {
             let previous = self.release_events.insert(release, indices);
             debug_assert!(previous.is_none(), "speculative release must restore once");
         }
+        for mutation in change.node_mutations.into_iter().rev() {
+            self.unresolved_dependencies[mutation.offset] = mutation.unresolved_dependencies;
+            self.dependency_end[mutation.offset] = mutation.dependency_end;
+            self.completed_nodes[mutation.offset] = mutation.completed;
+        }
+        self.incomplete_count = change.previous_incomplete_count;
+        self.generation = change.previous_generation;
     }
 
     fn next_release(&self) -> Option<DateTime<Local>> {
@@ -1286,6 +1346,63 @@ impl SchedulerFrontier {
                     .push(dependent);
             }
         }
+    }
+
+    fn complete_node_speculatively(
+        &mut self,
+        node: DependencyNode,
+        completion_time: DateTime<Local>,
+        states: &[FlexibleState],
+        metrics: &mut ScheduleMetrics,
+        derived_releases: &mut BTreeMap<DateTime<Local>, Vec<DependencyNode>>,
+        change: &mut SpeculativeReleasePromotion,
+    ) {
+        let node_offset = Self::node_offset(node, self.task_count);
+        if self.completed_nodes[node_offset] {
+            return;
+        }
+        self.record_speculative_node_mutation(node_offset, change);
+        self.completed_nodes[node_offset] = true;
+        self.incomplete_count = self.incomplete_count.saturating_sub(1);
+        self.generation = self.generation.wrapping_add(1);
+
+        for dependent_index in 0..self.dependents[node_offset].len() {
+            let dependent = self.dependents[node_offset][dependent_index];
+            metrics.record_release_candidate_probe();
+            let dependent_offset = Self::node_offset(dependent, self.task_count);
+            if self.unresolved_dependencies[dependent_offset] == 0 {
+                continue;
+            }
+            self.record_speculative_node_mutation(dependent_offset, change);
+            self.unresolved_dependencies[dependent_offset] -= 1;
+            self.dependency_end[dependent_offset] = Some(
+                self.dependency_end[dependent_offset]
+                    .map(|current| current.max(completion_time))
+                    .unwrap_or(completion_time),
+            );
+            if self.unresolved_dependencies[dependent_offset] == 0 {
+                let release = self
+                    .release_time(dependent, states)
+                    .max(self.dependency_end[dependent_offset].unwrap_or(completion_time));
+                derived_releases.entry(release).or_default().push(dependent);
+            }
+        }
+    }
+
+    fn record_speculative_node_mutation(
+        &self,
+        offset: usize,
+        change: &mut SpeculativeReleasePromotion,
+    ) {
+        if !change.recorded_node_offsets.insert(offset) {
+            return;
+        }
+        change.node_mutations.push(SpeculativeNodeMutation {
+            offset,
+            unresolved_dependencies: self.unresolved_dependencies[offset],
+            dependency_end: self.dependency_end[offset],
+            completed: self.completed_nodes[offset],
+        });
     }
 
     fn force_ready(&mut self, index: usize, state: &FlexibleState) {
