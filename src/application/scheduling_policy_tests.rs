@@ -98,6 +98,60 @@ fn window内で完了するfixedはtyped_completion_eventへ分類する() {
 }
 
 #[test]
+fn fixed_completion_eventが解放する高priority_taskをatomicより先に配置する() {
+    let now = Local.with_ymd_and_hms(2026, 8, 11, 12, 0, 0).unwrap();
+    let fixed_start = now + Duration::minutes(10);
+    let fixed = fixed_candidate("fixed", fixed_start, 0, 0);
+    let fixed_id = fixed.id;
+
+    let mut preemptor = candidate("preemptor", now, 10, 60);
+    preemptor.dependency_ids = vec![fixed_id];
+    let preemptor_id = preemptor.id;
+
+    let mut atomic = candidate("atomic", now, 1, 20 * 60);
+    atomic.atomic = true;
+    let atomic_id = atomic.id;
+
+    let scheduled = schedule_tasks_by_priority(&[atomic, preemptor, fixed], now).unwrap();
+
+    assert_eq!(scheduled_start(&scheduled, preemptor_id), fixed_start);
+    assert_eq!(
+        scheduled_start(&scheduled, atomic_id),
+        fixed_start + Duration::minutes(1)
+    );
+}
+
+#[test]
+fn fixed_completion_eventからzero_work経由で解放するtaskをatomicより先に配置する() {
+    let now = Local.with_ymd_and_hms(2026, 8, 11, 12, 0, 0).unwrap();
+    let fixed_start = now + Duration::minutes(10);
+    let fixed = fixed_candidate("fixed", fixed_start, 0, 0);
+    let fixed_id = fixed.id;
+
+    let mut zero_work = candidate("zero", now, 5, 0);
+    zero_work.dependency_ids = vec![fixed_id];
+    let zero_work_id = zero_work.id;
+
+    let mut preemptor = candidate("preemptor", now, 10, 60);
+    preemptor.dependency_ids = vec![zero_work_id];
+    let preemptor_id = preemptor.id;
+
+    let mut atomic = candidate("atomic", now, 1, 20 * 60);
+    atomic.atomic = true;
+    let atomic_id = atomic.id;
+
+    let scheduled =
+        schedule_tasks_by_priority(&[atomic, preemptor, zero_work, fixed], now).unwrap();
+
+    assert_eq!(scheduled_start(&scheduled, zero_work_id), fixed_start);
+    assert_eq!(scheduled_start(&scheduled, preemptor_id), fixed_start);
+    assert_eq!(
+        scheduled_start(&scheduled, atomic_id),
+        fixed_start + Duration::minutes(1)
+    );
+}
+
+#[test]
 fn fixed予定同士は重複しても双方の指定時刻を保持する() {
     let now = Local.with_ymd_and_hms(2026, 8, 11, 12, 0, 0).unwrap();
     let first_start = now + Duration::hours(1);
