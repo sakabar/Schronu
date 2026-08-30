@@ -20,13 +20,13 @@
 //! - cumulative demand: effective deadlineが`D`以下のunfinished flexible残秒の合計。
 //! - slack: `D`までのfree capacityからcumulative demandを引いた秒数。
 //! - atomic: 中断せず1segmentで完了できる枠がある時だけ開始するtask。
-//! - completion gate: window内で作業が完了するfixedの表示予約を先に確定しつつ、
-//!   dependencyには元window終了後の完了だけを通知する0秒の内部candidate。
+//! - completion event: window内で作業が完了するfixedについて、通常経路では元window終了と
+//!   dependency完了の双方を待ってdependentを解放するscheduler内部のevent。
 //!
 //! # Four phases
 //!
 //! 1. fixedとflexibleを分類する。fixed同士は重複しても動かさない。
-//! 2. fixed予約をunion化し、dependencyのsynthetic effective deadlineとcompletion gateを作る。
+//! 2. fixed予約をunion化し、dependencyのsynthetic effective deadlineとcompletion eventを作る。
 //! 3. task完了、fixed境界、release、slackが0になる時刻ごとに再選択する。
 //! 4. 選択順とは別のkeyで表示結果を決定的にsortする。
 //!
@@ -101,6 +101,11 @@ enum SchedulingItem {
 }
 
 #[derive(Clone, Debug, PartialEq)]
+/// fixedの表示予約とは独立に、dependency上の完了時刻を通知するprivate event。
+///
+/// task ID、最早発生時刻、dependency IDsだけを持ち、作業量、slack、priority、schedule出力には
+/// 関与しない。処理時に変更するのはscheduler内の依存graphだけで、永続的な`Task`状態は
+/// 変更しない。missing dependencyまたはcycleでは決定論的なfallbackで内部完了扱いにする。
 struct CompletionEvent {
     task_id: Uuid,
     earliest_occurrence: DateTime<Local>,

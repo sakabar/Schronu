@@ -17,7 +17,7 @@ Schronuは、締切が近いtaskを無条件で先に並べません。通常は
 | cumulative demand | effective deadlineが`D`以下であるunfinished flexible taskの残作業秒数の合計 |
 | slack | deadlineまでのfree capacityからcumulative demandを引いた秒数 |
 | atomic | 中断せず1segmentで完了できる時だけ開始するtask |
-| completion gate | window内で作業が完了するfixedの表示予約とdependency上の完了を分離する0秒の内部candidate |
+| completion event | window内で作業が完了するfixedについて、通常は元window終了とdependency完了の双方を待ってdependentを解放するscheduler内部のevent |
 
 ## Policyの4 phase
 
@@ -27,13 +27,15 @@ fixedは指定開始時刻と元の見積時間から予約windowを作ります
 
 flexible taskと、fixed windowに収まらなかった残作業はevent loopの候補にします。
 
-### 2. 予約unionとcompletion gateの構築
+### 2. 予約unionとcompletion eventの構築
 
 flexible taskから見たfixed予約はunion化します。これにより、重なったfixedの時間を空き時間から二重に差し引きません。一方、表示では各fixedを個別に残します。
 
 fixedの表示window長と実際に残っている作業秒数は別の値です。完了済みの作業があっても予約windowは消さず、window内で実行する残作業だけを`scheduled_work_seconds`として記録します。windowに収まらない残作業は、元window終了後にflexibleとして続行します。
 
-fixedを必要とするtransitive dependencyには、fixed開始をsynthetic effective deadlineとして逆伝搬します。fixed自体を動かすのではなく、その準備に必要な容量をslack guardで保護するためです。fixedの表示予約を先に作ってもdependencyを早く解放しないよう、window内で残作業が完了するfixedには元window終了時刻のcompletion gateを置きます。超過作業がある場合は、その後続作業自体が完了するまでdependent taskを解放しません。
+fixedを必要とするtransitive dependencyには、fixed開始をsynthetic effective deadlineとして逆伝搬します。fixed自体を動かすのではなく、その準備に必要な容量をslack guardで保護するためです。
+
+window内で残作業が完了するfixedには、task ID、最早発生時刻、dependency IDsだけを持つprivateな`CompletionEvent`を作ります。通常経路では元window終了とdependency完了の双方を待ってからdependentを解放します。missing dependencyまたはcycleでは、loopやevent消失を避ける決定論的なfallbackによって内部完了扱いにします。いずれもscheduler内の依存graphだけを進め、永続的な`Task`状態は変更しません。このeventは作業量を持たず、slack需要、priority選択、schedule出力には入りません。windowを超える残作業がある場合はeventへ置き換えず、実作業を持つflexible taskとして続行し、その完了後にdependentを解放します。
 
 ### 3. Event loop
 
@@ -63,7 +65,7 @@ segmentは次の最も早いeventで閉じます。
 - fixed同士の重複はそのまま表示します。flexible taskは重複区間のunionを避けます。
 - fixed開始が現在より過去なら、現在から元window終了までを見える予約として残します。
 - 元windowへ収まらない残作業は元window終了後のflexible taskとなります。予約windowと後続作業を合わせた作業秒数は元の残作業量と一致します。
-- fixed開始をsynthetic effective deadlineとしてdependencyへ伝えます。window内で完了する場合はcompletion gateが元window終了前の依存解放を防ぎ、超過する場合は後続作業の完了まで解放しません。
+- fixed開始をsynthetic effective deadlineとしてdependencyへ伝えます。window内で完了する場合、completion eventは通常経路で元window終了とdependency完了の双方を待ちます。missing dependencyまたはcycleでは上記fallbackを使います。超過する場合は後続の実作業が完了するまでdependentを解放しません。
 
 `約`または`appointment`は開始時刻を設定して`fixed_start = true`にします。`始`または`start`は開始時刻を設定して`fixed_start = false`に戻します。
 
