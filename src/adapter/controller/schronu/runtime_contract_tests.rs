@@ -4639,7 +4639,7 @@ fn test_execute_flatten_日次終端後でも次の06時前のtaskは翌論理�
 }
 
 #[test]
-fn test_execute_flatten_日次終端前後に分割されたtaskを丸ごと翌論理日へ延期する() {
+fn test_execute_flatten_15分以下fragmentを避けたtaskを丸ごと翌論理日へ延期する() {
     let now = Local.with_ymd_and_hms(2026, 8, 13, 6, 0, 0).unwrap();
     let today = now.date_naive();
     let tomorrow = today + Duration::days(1);
@@ -4672,16 +4672,10 @@ fn test_execute_flatten_日次終端前後に分割されたtaskを丸ごと翌�
 
     assert_eq!(
         target_segments,
-        vec![
-            (
-                Local.with_ymd_and_hms(2026, 8, 14, 0, 20, 0).unwrap(),
-                Local.with_ymd_and_hms(2026, 8, 14, 0, 30, 0).unwrap(),
-            ),
-            (
-                Local.with_ymd_and_hms(2026, 8, 14, 0, 40, 0).unwrap(),
-                Local.with_ymd_and_hms(2026, 8, 14, 0, 50, 0).unwrap(),
-            ),
-        ]
+        vec![(
+            Local.with_ymd_and_hms(2026, 8, 14, 0, 40, 0).unwrap(),
+            Local.with_ymd_and_hms(2026, 8, 14, 1, 0, 0).unwrap(),
+        )]
     );
 
     let result = execute_flatten_command_for_test(

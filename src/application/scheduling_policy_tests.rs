@@ -660,80 +660,13 @@ fn scheduled_start(scheduled: &[ScheduledTask], task_id: Uuid) -> DateTime<Local
 }
 
 #[test]
-fn schedule_tasks_by_priority_5分以下の空き時間には分割しない() {
+fn schedule_tasks_by_priority_15分以下の空き時間には分割しない() {
     let now = Local.with_ymd_and_hms(2026, 5, 10, 12, 0, 0).unwrap();
     let low = candidate(
         "低優先度",
         Local.with_ymd_and_hms(2026, 5, 10, 13, 0, 0).unwrap(),
         87,
-        20 * 60,
-    );
-    let low_id = low.task.get_id().unwrap();
-    let high = candidate(
-        "高優先度",
-        Local.with_ymd_and_hms(2026, 5, 10, 13, 5, 0).unwrap(),
-        88,
-        60 * 60,
-    );
-
-    let actual = schedule_tasks_by_priority(&[low, high], now).unwrap();
-    let low_segments = actual
-        .iter()
-        .filter(|scheduled| scheduled.task.get_id().unwrap() == low_id)
-        .collect::<Vec<_>>();
-
-    assert_eq!(low_segments.len(), 1);
-    assert_eq!(
-        low_segments[0].scheduled_start,
-        Local.with_ymd_and_hms(2026, 5, 10, 14, 5, 0).unwrap()
-    );
-    assert_eq!(low_segments[0].scheduled_work_seconds, 20 * 60);
-}
-
-#[test]
-fn schedule_tasks_by_priority_6分の空き時間には分割する() {
-    let now = Local.with_ymd_and_hms(2026, 5, 10, 12, 0, 0).unwrap();
-    let low = candidate(
-        "低優先度",
-        Local.with_ymd_and_hms(2026, 5, 10, 13, 0, 0).unwrap(),
-        87,
-        20 * 60,
-    );
-    let low_id = low.task.get_id().unwrap();
-    let high = candidate(
-        "高優先度",
-        Local.with_ymd_and_hms(2026, 5, 10, 13, 6, 0).unwrap(),
-        88,
-        60 * 60,
-    );
-
-    let actual = schedule_tasks_by_priority(&[low, high], now).unwrap();
-    let low_segments = actual
-        .iter()
-        .filter(|scheduled| scheduled.task.get_id().unwrap() == low_id)
-        .collect::<Vec<_>>();
-
-    assert_eq!(low_segments.len(), 2);
-    assert_eq!(
-        low_segments[0].scheduled_start,
-        Local.with_ymd_and_hms(2026, 5, 10, 13, 0, 0).unwrap()
-    );
-    assert_eq!(low_segments[0].scheduled_work_seconds, 6 * 60);
-    assert_eq!(
-        low_segments[1].scheduled_start,
-        Local.with_ymd_and_hms(2026, 5, 10, 14, 6, 0).unwrap()
-    );
-    assert_eq!(low_segments[1].scheduled_work_seconds, 14 * 60);
-}
-
-#[test]
-fn schedule_tasks_by_priority_後半が5分以下になる分割はしない() {
-    let now = Local.with_ymd_and_hms(2026, 5, 10, 12, 0, 0).unwrap();
-    let low = candidate(
-        "低優先度",
-        Local.with_ymd_and_hms(2026, 5, 10, 13, 0, 0).unwrap(),
-        87,
-        20 * 60,
+        40 * 60,
     );
     let low_id = low.task.get_id().unwrap();
     let high = candidate(
@@ -754,7 +687,74 @@ fn schedule_tasks_by_priority_後半が5分以下になる分割はしない() {
         low_segments[0].scheduled_start,
         Local.with_ymd_and_hms(2026, 5, 10, 14, 15, 0).unwrap()
     );
-    assert_eq!(low_segments[0].scheduled_work_seconds, 20 * 60);
+    assert_eq!(low_segments[0].scheduled_work_seconds, 40 * 60);
+}
+
+#[test]
+fn schedule_tasks_by_priority_16分の空き時間には分割する() {
+    let now = Local.with_ymd_and_hms(2026, 5, 10, 12, 0, 0).unwrap();
+    let low = candidate(
+        "低優先度",
+        Local.with_ymd_and_hms(2026, 5, 10, 13, 0, 0).unwrap(),
+        87,
+        40 * 60,
+    );
+    let low_id = low.task.get_id().unwrap();
+    let high = candidate(
+        "高優先度",
+        Local.with_ymd_and_hms(2026, 5, 10, 13, 16, 0).unwrap(),
+        88,
+        60 * 60,
+    );
+
+    let actual = schedule_tasks_by_priority(&[low, high], now).unwrap();
+    let low_segments = actual
+        .iter()
+        .filter(|scheduled| scheduled.task.get_id().unwrap() == low_id)
+        .collect::<Vec<_>>();
+
+    assert_eq!(low_segments.len(), 2);
+    assert_eq!(
+        low_segments[0].scheduled_start,
+        Local.with_ymd_and_hms(2026, 5, 10, 13, 0, 0).unwrap()
+    );
+    assert_eq!(low_segments[0].scheduled_work_seconds, 16 * 60);
+    assert_eq!(
+        low_segments[1].scheduled_start,
+        Local.with_ymd_and_hms(2026, 5, 10, 14, 16, 0).unwrap()
+    );
+    assert_eq!(low_segments[1].scheduled_work_seconds, 24 * 60);
+}
+
+#[test]
+fn schedule_tasks_by_priority_後半が15分以下になる分割はしない() {
+    let now = Local.with_ymd_and_hms(2026, 5, 10, 12, 0, 0).unwrap();
+    let low = candidate(
+        "低優先度",
+        Local.with_ymd_and_hms(2026, 5, 10, 13, 0, 0).unwrap(),
+        87,
+        35 * 60,
+    );
+    let low_id = low.task.get_id().unwrap();
+    let high = candidate(
+        "高優先度",
+        Local.with_ymd_and_hms(2026, 5, 10, 13, 20, 0).unwrap(),
+        88,
+        60 * 60,
+    );
+
+    let actual = schedule_tasks_by_priority(&[low, high], now).unwrap();
+    let low_segments = actual
+        .iter()
+        .filter(|scheduled| scheduled.task.get_id().unwrap() == low_id)
+        .collect::<Vec<_>>();
+
+    assert_eq!(low_segments.len(), 1);
+    assert_eq!(
+        low_segments[0].scheduled_start,
+        Local.with_ymd_and_hms(2026, 5, 10, 14, 20, 0).unwrap()
+    );
+    assert_eq!(low_segments[0].scheduled_work_seconds, 35 * 60);
 }
 
 #[test]
@@ -962,12 +962,12 @@ fn deadline_slackが0になる境界でdeadline_taskへ切り替える() {
 }
 
 #[test]
-fn slack境界が5分の後半fragmentを作る場合はdeadline_taskを先行する() {
+fn slack境界が15分の後半fragmentを作る場合はdeadline_taskを先行する() {
     let now = Local.with_ymd_and_hms(2026, 9, 1, 9, 0, 0).unwrap();
     let mut deadline = candidate("deadline", now, 1, 60 * 60);
     deadline.deadline_time = Some(now + Duration::hours(3));
     let deadline_id = deadline.id;
-    let important = candidate("important", now, 99, 2 * 60 * 60 + 5 * 60);
+    let important = candidate("important", now, 99, 2 * 60 * 60 + 15 * 60);
     let important_id = important.id;
 
     let scheduled = schedule_tasks_by_priority(&[important, deadline], now).unwrap();
