@@ -46,6 +46,7 @@ use chrono::{DateTime, Duration, Local};
 use std::cell::RefCell;
 use std::cmp::{max, Reverse};
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
+use std::ops::ControlFlow;
 use uuid::Uuid;
 
 const MIN_SPLIT_SEGMENT_SECONDS: i64 = 5 * 60;
@@ -2125,6 +2126,87 @@ fn initialize_policy_state(
     }
 }
 
+/// 選択可能なtaskがない時だけ、次eventへの移動または決定論的fallbackを行う。
+///
+/// `Continue`はstateを1event以上進めたこと、`Break`はfallback対象のtaskもcompletion
+/// eventもないことを表す。missing dependencyとcycleでは通常選択keyの先頭taskを
+/// 1segmentだけ強制配置し、dependency graphを進められる状態へ戻す。
+fn advance_without_selection(
+    state: &mut PolicyState,
+    metrics: &mut ScheduleMetrics,
+) -> Result<ControlFlow<()>, SchedulingPolicyError> {
+    let next_release = state.frontier.next_release();
+    let next_fixed = next_fixed_start(state.now, &state.fixed_slots);
+    if let Some(next_event) = [next_release, next_fixed].into_iter().flatten().min() {
+        state
+            .slack_index
+            .record_idle(state.now, next_event, metrics);
+        state.now = next_event;
+        return Ok(ControlFlow::Continue(()));
+    }
+
+    // missing dependencyやcycleでも、上位層が問題を可視化できるscheduleを
+    // 返す。UUID順入力に依らない通常選択がfallback順となる。
+    let fallback = state
+        .states
+        .iter()
+        .enumerate()
+        .filter(|(_, state)| {
+            metrics.record_selection_candidate_probe();
+            state.completion_time.is_none()
+        })
+        .min_by_key(|(_, state)| normal_selection_key(state))
+        .map(|(index, _)| index);
+    if let Some(index) = fallback {
+        let release = state.states[index].candidate.first_available_time;
+        let fallback_start = max(state.now, release);
+        state
+            .slack_index
+            .record_idle(state.now, fallback_start, metrics);
+        state.now = fallback_start;
+        state.frontier.force_ready(index, &state.states[index]);
+        if state.states[index].remaining_seconds == 0 {
+            metrics.record_segment();
+            state.scheduled_tasks.push(to_scheduled_task(
+                &state.states[index].candidate,
+                state.now,
+                state.now,
+                0,
+                state.states[index].total_work_seconds,
+            ));
+            state.states[index].completion_time = Some(state.now);
+            state
+                .frontier
+                .complete(index, state.now, &state.states, metrics);
+            return Ok(ControlFlow::Continue(()));
+        }
+        let fallback_guard = state.slack_index.slack_boundary(index, state.now, metrics);
+        schedule_selected_segment(
+            index,
+            &mut state.states,
+            &mut state.scheduled_tasks,
+            &mut state.now,
+            &state.fixed_slots,
+            fallback_guard,
+            metrics,
+            true,
+            &mut state.slack_index,
+            &mut state.frontier,
+        )?;
+        return Ok(ControlFlow::Continue(()));
+    }
+    if let Some(index) = state.frontier.first_incomplete_completion() {
+        let next =
+            state
+                .frontier
+                .force_complete_completion(index, state.now, &state.states, metrics);
+        state.slack_index.record_idle(state.now, next, metrics);
+        state.now = next;
+        return Ok(ControlFlow::Continue(()));
+    }
+    Ok(ControlFlow::Break(()))
+}
+
 /// 予定配置policyの唯一の入口。
 ///
 /// phase順を保つことで、fixed予約、容量保護、実作業、表示順の責務が混ざらない。
@@ -2195,78 +2277,10 @@ pub(super) fn schedule_tasks_by_priority_with_metrics(
             metrics,
         )?;
         let Some(selection) = selection else {
-            let next_release = state.frontier.next_release();
-            let next_fixed = next_fixed_start(state.now, &state.fixed_slots);
-            if let Some(next_event) = [next_release, next_fixed].into_iter().flatten().min() {
-                state
-                    .slack_index
-                    .record_idle(state.now, next_event, metrics);
-                state.now = next_event;
-                continue;
+            match advance_without_selection(&mut state, metrics)? {
+                ControlFlow::Continue(()) => continue,
+                ControlFlow::Break(()) => break,
             }
-
-            // missing dependencyやcycleでも、上位層が問題を可視化できるscheduleを
-            // 返す。UUID順入力に依らない通常選択がfallback順となる。
-            let fallback = state
-                .states
-                .iter()
-                .enumerate()
-                .filter(|(_, state)| {
-                    metrics.record_selection_candidate_probe();
-                    state.completion_time.is_none()
-                })
-                .min_by_key(|(_, state)| normal_selection_key(state))
-                .map(|(index, _)| index);
-            if let Some(index) = fallback {
-                let release = state.states[index].candidate.first_available_time;
-                let fallback_start = max(state.now, release);
-                state
-                    .slack_index
-                    .record_idle(state.now, fallback_start, metrics);
-                state.now = fallback_start;
-                state.frontier.force_ready(index, &state.states[index]);
-                if state.states[index].remaining_seconds == 0 {
-                    metrics.record_segment();
-                    state.scheduled_tasks.push(to_scheduled_task(
-                        &state.states[index].candidate,
-                        state.now,
-                        state.now,
-                        0,
-                        state.states[index].total_work_seconds,
-                    ));
-                    state.states[index].completion_time = Some(state.now);
-                    state
-                        .frontier
-                        .complete(index, state.now, &state.states, metrics);
-                    continue;
-                }
-                let fallback_guard = state.slack_index.slack_boundary(index, state.now, metrics);
-                schedule_selected_segment(
-                    index,
-                    &mut state.states,
-                    &mut state.scheduled_tasks,
-                    &mut state.now,
-                    &state.fixed_slots,
-                    fallback_guard,
-                    metrics,
-                    true,
-                    &mut state.slack_index,
-                    &mut state.frontier,
-                )?;
-                continue;
-            }
-            if let Some(index) = state.frontier.first_incomplete_completion() {
-                let next = state.frontier.force_complete_completion(
-                    index,
-                    state.now,
-                    &state.states,
-                    metrics,
-                );
-                state.slack_index.record_idle(state.now, next, metrics);
-                state.now = next;
-                continue;
-            }
-            break;
         };
 
         schedule_selected_segment(
