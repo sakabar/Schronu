@@ -88,11 +88,23 @@ pub(super) struct SchedulingPolicyError {
 }
 
 struct PreparedCandidates {
-    pending: Vec<TaskScheduleCandidate>,
+    pending: Vec<SchedulingItem>,
     scheduled_fixed: Vec<ScheduledTask>,
     occupied_fixed: Vec<(DateTime<Local>, DateTime<Local>)>,
-    completion_gate_ids: HashSet<Uuid>,
     total_work_seconds_by_id: HashMap<Uuid, i64>,
+}
+
+#[derive(Clone)]
+enum SchedulingItem {
+    Task(TaskScheduleCandidate),
+    Completion(CompletionEvent),
+}
+
+#[derive(Clone, Debug, PartialEq)]
+struct CompletionEvent {
+    task_id: Uuid,
+    earliest_occurrence: DateTime<Local>,
+    dependency_ids: Vec<Uuid>,
 }
 
 /// fixed候補を元window内の作業と後続の超過分へ分類する。
@@ -108,12 +120,11 @@ fn classify_fixed_candidates(
     let mut pending = Vec::with_capacity(candidates.len());
     let mut scheduled_fixed = Vec::new();
     let mut occupied_fixed = Vec::new();
-    let mut completion_gate_ids = HashSet::new();
     let mut total_work_seconds_by_id = HashMap::new();
 
     for candidate in candidates {
         if !candidate.fixed_start {
-            pending.push(candidate.clone());
+            pending.push(SchedulingItem::Task(candidate.clone()));
             continue;
         }
 
@@ -166,16 +177,13 @@ fn classify_fixed_candidates(
             excess.remaining_seconds = excess_seconds;
             excess.fixed_start = false;
             excess.first_available_time = max(original_window_end, last_synced_time);
-            pending.push(excess);
+            pending.push(SchedulingItem::Task(excess));
         } else {
-            // 表示windowは先に確定しても、下流dependencyの解放は上流完了後である。
-            // 0秒gateをpendingへ残し、segmentを追加表示せずcompletionだけを伝える。
-            let mut completion_gate = candidate.clone();
-            completion_gate.remaining_seconds = 0;
-            completion_gate.fixed_start = false;
-            completion_gate.first_available_time = max(original_window_end, last_synced_time);
-            completion_gate_ids.insert(candidate.id);
-            pending.push(completion_gate);
+            pending.push(SchedulingItem::Completion(CompletionEvent {
+                task_id: candidate.id,
+                earliest_occurrence: max(original_window_end, last_synced_time),
+                dependency_ids: candidate.dependency_ids.clone(),
+            }));
         }
     }
 
@@ -183,7 +191,6 @@ fn classify_fixed_candidates(
         pending,
         scheduled_fixed,
         occupied_fixed,
-        completion_gate_ids,
         total_work_seconds_by_id,
     })
 }
@@ -228,12 +235,17 @@ fn insert_occupied_slot(
 #[derive(Clone)]
 struct FlexibleState {
     candidate: TaskScheduleCandidate,
-    dependency_indices: Vec<Option<usize>>,
+    dependency_indices: Vec<Option<DependencyNode>>,
     remaining_seconds: i64,
     total_work_seconds: i64,
     effective_deadline: Option<DateTime<Local>>,
     completion_time: Option<DateTime<Local>>,
-    completion_gate: bool,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum DependencyNode {
+    Task(usize),
+    Completion(usize),
 }
 
 struct Selection {
@@ -306,10 +318,13 @@ struct SchedulerFrontier {
     normal_ready: BTreeSet<(NormalReadyKey, usize)>,
     protected_ready: BTreeSet<(ProtectedReadyKey, usize)>,
     zero_ready: BTreeSet<(NormalReadyKey, usize)>,
-    release_events: BTreeMap<DateTime<Local>, Vec<usize>>,
+    release_events: BTreeMap<DateTime<Local>, Vec<DependencyNode>>,
     unresolved_dependencies: Vec<usize>,
     dependency_end: Vec<Option<DateTime<Local>>>,
-    dependents: Vec<Vec<usize>>,
+    dependents: Vec<Vec<DependencyNode>>,
+    completion_events: Vec<CompletionEvent>,
+    completed_nodes: Vec<bool>,
+    task_count: usize,
     ready: Vec<bool>,
     incomplete_count: usize,
     generation: u64,
@@ -319,7 +334,7 @@ struct SchedulerFrontier {
 ///
 /// dependency graph全体を複製せず、実際に跨いだrelease batchだけを所有する。
 struct SpeculativeReleasePromotion {
-    removed_events: Vec<(DateTime<Local>, Vec<usize>)>,
+    removed_events: Vec<(DateTime<Local>, Vec<DependencyNode>)>,
     activated_indices: Vec<usize>,
 }
 
@@ -894,13 +909,45 @@ impl SlackDemandIndex {
 }
 
 impl SchedulerFrontier {
+    #[cfg(test)]
     fn new(states: &[FlexibleState]) -> Self {
-        let mut unresolved_dependencies = vec![0; states.len()];
-        let mut dependents = vec![Vec::new(); states.len()];
+        Self::with_completion_events(states, Vec::new())
+    }
+
+    fn with_completion_events(
+        states: &[FlexibleState],
+        completion_events: Vec<CompletionEvent>,
+    ) -> Self {
+        let task_count = states.len();
+        let node_count = task_count + completion_events.len();
+        let mut unresolved_dependencies = vec![0; node_count];
+        let mut dependents = vec![Vec::new(); node_count];
         for (index, state) in states.iter().enumerate() {
             unresolved_dependencies[index] = state.dependency_indices.len();
             for dependency in state.dependency_indices.iter().flatten() {
-                dependents[*dependency].push(index);
+                dependents[Self::node_offset(*dependency, task_count)]
+                    .push(DependencyNode::Task(index));
+            }
+        }
+        let index_by_id = states
+            .iter()
+            .enumerate()
+            .map(|(index, state)| (state.candidate.id, DependencyNode::Task(index)))
+            .chain(
+                completion_events
+                    .iter()
+                    .enumerate()
+                    .map(|(index, event)| (event.task_id, DependencyNode::Completion(index))),
+            )
+            .collect::<HashMap<_, _>>();
+        for (event_index, event) in completion_events.iter().enumerate() {
+            let node_offset = task_count + event_index;
+            unresolved_dependencies[node_offset] = event.dependency_ids.len();
+            for dependency in &event.dependency_ids {
+                if let Some(dependency) = index_by_id.get(dependency) {
+                    dependents[Self::node_offset(*dependency, task_count)]
+                        .push(DependencyNode::Completion(event_index));
+                }
             }
         }
         let mut frontier = Self {
@@ -909,10 +956,13 @@ impl SchedulerFrontier {
             zero_ready: BTreeSet::new(),
             release_events: BTreeMap::new(),
             unresolved_dependencies,
-            dependency_end: vec![None; states.len()],
+            dependency_end: vec![None; node_count],
             dependents,
+            completion_events,
+            completed_nodes: vec![false; node_count],
+            task_count,
             ready: vec![false; states.len()],
-            incomplete_count: states.len(),
+            incomplete_count: node_count,
             generation: 0,
         };
         for (index, state) in states.iter().enumerate() {
@@ -921,10 +971,33 @@ impl SchedulerFrontier {
                     .release_events
                     .entry(state.candidate.first_available_time)
                     .or_default()
-                    .push(index);
+                    .push(DependencyNode::Task(index));
+            }
+        }
+        for (index, event) in frontier.completion_events.iter().enumerate() {
+            if frontier.unresolved_dependencies[task_count + index] == 0 {
+                frontier
+                    .release_events
+                    .entry(event.earliest_occurrence)
+                    .or_default()
+                    .push(DependencyNode::Completion(index));
             }
         }
         frontier
+    }
+
+    fn node_offset(node: DependencyNode, task_count: usize) -> usize {
+        match node {
+            DependencyNode::Task(index) => index,
+            DependencyNode::Completion(index) => task_count + index,
+        }
+    }
+
+    fn release_time(&self, node: DependencyNode, states: &[FlexibleState]) -> DateTime<Local> {
+        match node {
+            DependencyNode::Task(index) => states[index].candidate.first_available_time,
+            DependencyNode::Completion(index) => self.completion_events[index].earliest_occurrence,
+        }
     }
 
     fn promote_releases(
@@ -938,24 +1011,31 @@ impl SchedulerFrontier {
             .first_key_value()
             .is_some_and(|(release, _)| *release <= now)
         {
-            let (_, indices) = self
+            let (release, nodes) = self
                 .release_events
                 .pop_first()
                 .expect("a checked release event exists");
-            for index in indices {
+            for node in nodes {
                 metrics.record_release_candidate_probe();
-                if states[index].completion_time.is_some() || self.ready[index] {
-                    continue;
-                }
-                self.ready[index] = true;
-                let normal_key = normal_selection_key(&states[index]);
-                if states[index].remaining_seconds == 0 {
-                    self.zero_ready.insert((normal_key, index));
-                } else {
-                    self.normal_ready.insert((normal_key, index));
-                    if states[index].effective_deadline.is_some() {
-                        self.protected_ready
-                            .insert((protected_selection_key(&states[index]), index));
+                match node {
+                    DependencyNode::Task(index) => {
+                        if states[index].completion_time.is_some() || self.ready[index] {
+                            continue;
+                        }
+                        self.ready[index] = true;
+                        let normal_key = normal_selection_key(&states[index]);
+                        if states[index].remaining_seconds == 0 {
+                            self.zero_ready.insert((normal_key, index));
+                        } else {
+                            self.normal_ready.insert((normal_key, index));
+                            if states[index].effective_deadline.is_some() {
+                                self.protected_ready
+                                    .insert((protected_selection_key(&states[index]), index));
+                            }
+                        }
+                    }
+                    DependencyNode::Completion(_) => {
+                        self.complete_node(node, release, states, metrics);
                     }
                 }
             }
@@ -977,29 +1057,34 @@ impl SchedulerFrontier {
             .first_key_value()
             .is_some_and(|(release, _)| *release <= now)
         {
-            let (release, indices) = self
+            let (release, nodes) = self
                 .release_events
                 .pop_first()
                 .expect("a checked speculative release event exists");
-            for index in &indices {
+            for node in &nodes {
                 metrics.record_release_candidate_probe();
-                if states[*index].completion_time.is_some() || self.ready[*index] {
-                    continue;
-                }
-                self.ready[*index] = true;
-                let normal_key = normal_selection_key(&states[*index]);
-                if states[*index].remaining_seconds == 0 {
-                    self.zero_ready.insert((normal_key, *index));
-                } else {
-                    self.normal_ready.insert((normal_key, *index));
-                    if states[*index].effective_deadline.is_some() {
-                        self.protected_ready
-                            .insert((protected_selection_key(&states[*index]), *index));
+                match *node {
+                    DependencyNode::Task(index) => {
+                        if states[index].completion_time.is_some() || self.ready[index] {
+                            continue;
+                        }
+                        self.ready[index] = true;
+                        let normal_key = normal_selection_key(&states[index]);
+                        if states[index].remaining_seconds == 0 {
+                            self.zero_ready.insert((normal_key, index));
+                        } else {
+                            self.normal_ready.insert((normal_key, index));
+                            if states[index].effective_deadline.is_some() {
+                                self.protected_ready
+                                    .insert((protected_selection_key(&states[index]), index));
+                            }
+                        }
+                        change.activated_indices.push(index);
                     }
+                    DependencyNode::Completion(_) => {}
                 }
-                change.activated_indices.push(*index);
             }
-            change.removed_events.push((release, indices));
+            change.removed_events.push((release, nodes));
         }
         change
     }
@@ -1020,6 +1105,42 @@ impl SchedulerFrontier {
 
     fn next_release(&self) -> Option<DateTime<Local>> {
         self.release_events.first_key_value().map(|(time, _)| *time)
+    }
+
+    /// future completion eventを依存graphへ仮想適用し、その結果releaseされるtaskを返す。
+    ///
+    /// frontier本体は変更せず、実際に触れたnodeの差分だけをoverlayへ保持する。
+    fn future_task_release_batches(
+        &self,
+        now: DateTime<Local>,
+        until: DateTime<Local>,
+        states: &[FlexibleState],
+        metrics: &mut ScheduleMetrics,
+    ) -> Vec<(DateTime<Local>, Vec<usize>)> {
+        let mut batches = Vec::new();
+        for (release, nodes) in self.release_events.range(now..) {
+            if *release >= until {
+                break;
+            }
+            let mut released_tasks = nodes
+                .iter()
+                .filter_map(|node| {
+                    metrics.record_release_candidate_probe();
+                    let DependencyNode::Task(index) = *node else {
+                        return None;
+                    };
+                    (states[index].completion_time.is_none() && states[index].remaining_seconds > 0)
+                        .then_some(index)
+                })
+                .collect::<Vec<_>>();
+            if !released_tasks.is_empty() {
+                metrics.record_release_candidate_probe();
+                released_tasks.sort_unstable();
+                released_tasks.dedup();
+                batches.push((*release, released_tasks));
+            }
+        }
+        batches
     }
 
     fn first_zero(&self) -> Option<usize> {
@@ -1048,26 +1169,46 @@ impl SchedulerFrontier {
         metrics: &mut ScheduleMetrics,
     ) {
         self.remove_ready(index, &states[index]);
+        self.complete_node(
+            DependencyNode::Task(index),
+            completion_time,
+            states,
+            metrics,
+        );
+    }
+
+    fn complete_node(
+        &mut self,
+        node: DependencyNode,
+        completion_time: DateTime<Local>,
+        states: &[FlexibleState],
+        metrics: &mut ScheduleMetrics,
+    ) {
+        let node_offset = Self::node_offset(node, self.task_count);
+        if self.completed_nodes[node_offset] {
+            return;
+        }
+        self.completed_nodes[node_offset] = true;
         self.incomplete_count = self.incomplete_count.saturating_sub(1);
         // ready/release overlayの構成要素が消えるため、future predictionは
         // dependency追加の有無にかかわらずこの世代を跨いで再利用しない。
         self.generation = self.generation.wrapping_add(1);
-        for dependent in self.dependents[index].iter().copied() {
+        for dependent in std::mem::take(&mut self.dependents[node_offset]) {
             metrics.record_release_candidate_probe();
-            if self.unresolved_dependencies[dependent] == 0 {
+            let dependent_offset = Self::node_offset(dependent, self.task_count);
+            if self.unresolved_dependencies[dependent_offset] == 0 {
                 continue;
             }
-            self.unresolved_dependencies[dependent] -= 1;
-            self.dependency_end[dependent] = Some(
-                self.dependency_end[dependent]
+            self.unresolved_dependencies[dependent_offset] -= 1;
+            self.dependency_end[dependent_offset] = Some(
+                self.dependency_end[dependent_offset]
                     .map(|current| current.max(completion_time))
                     .unwrap_or(completion_time),
             );
-            if self.unresolved_dependencies[dependent] == 0 {
-                let release = states[dependent]
-                    .candidate
-                    .first_available_time
-                    .max(self.dependency_end[dependent].unwrap_or(completion_time));
+            if self.unresolved_dependencies[dependent_offset] == 0 {
+                let release = self
+                    .release_time(dependent, states)
+                    .max(self.dependency_end[dependent_offset].unwrap_or(completion_time));
                 self.release_events
                     .entry(release)
                     .or_default()
@@ -1092,6 +1233,32 @@ impl SchedulerFrontier {
                     .insert((protected_selection_key(state), index));
             }
         }
+    }
+
+    fn first_incomplete_completion(&self) -> Option<usize> {
+        self.completion_events
+            .iter()
+            .enumerate()
+            .filter(|(index, _)| !self.completed_nodes[self.task_count + index])
+            .min_by_key(|(_, event)| (event.earliest_occurrence, event.task_id))
+            .map(|(index, _)| index)
+    }
+
+    fn force_complete_completion(
+        &mut self,
+        index: usize,
+        now: DateTime<Local>,
+        states: &[FlexibleState],
+        metrics: &mut ScheduleMetrics,
+    ) -> DateTime<Local> {
+        let completion_time = now.max(self.completion_events[index].earliest_occurrence);
+        self.complete_node(
+            DependencyNode::Completion(index),
+            completion_time,
+            states,
+            metrics,
+        );
+        completion_time
     }
 }
 
@@ -1217,24 +1384,29 @@ fn next_preempting_release(
     }
     let mut additional_normal = BTreeSet::new();
     let mut additional_protected = BTreeSet::new();
-    for (release, released_indices) in frontier.release_events.range(now..) {
-        if slack_guard.is_some_and(|guard| *release >= guard) {
+    let completion = checked_segment_end(selected.candidate.id, now, selected.remaining_seconds)?;
+    let evaluation_end = slack_guard
+        .map(|guard| guard.min(completion))
+        .unwrap_or(completion);
+    for (release, released_indices) in
+        frontier.future_task_release_batches(now, evaluation_end, states, metrics)
+    {
+        if slack_guard.is_some_and(|guard| release >= guard) {
             // current guardへ先に到達するatomicは、その時点で再選択される。
             // guard後のreleaseを仮想評価すると、既にcriticalへ移るgroupを
             // active treeへ残したまま扱うことになり、存在しない境界を作る。
             return Ok(None);
         }
         for index in released_indices {
-            metrics.record_release_candidate_probe();
-            if states[*index].remaining_seconds == 0 {
+            if states[index].remaining_seconds == 0 {
                 continue;
             }
-            additional_normal.insert((normal_selection_key(&states[*index]), *index));
-            if states[*index].effective_deadline.is_some() {
-                additional_protected.insert((protected_selection_key(&states[*index]), *index));
+            additional_normal.insert((normal_selection_key(&states[index]), index));
+            if states[index].effective_deadline.is_some() {
+                additional_protected.insert((protected_selection_key(&states[index]), index));
             }
         }
-        let worked = (*release - now)
+        let worked = (release - now)
             .num_seconds()
             .max(0)
             .min(selected.remaining_seconds);
@@ -1266,27 +1438,27 @@ fn next_preempting_release(
                 };
                 let slack_guard = slack_index.slack_boundary_after_work(
                     *index,
-                    *release,
+                    release,
                     selected_index,
                     worked,
                     metrics,
                 );
                 if candidate_fits_without_future_release(
                     candidate,
-                    *release,
+                    release,
                     fixed_slots,
                     slack_guard,
                 )? {
                     if *index != selected_index {
                         cache_atomic_release_prediction(
                             context,
-                            *release,
+                            release,
                             *index,
                             Some(critical),
                             true,
                             metrics,
                         );
-                        return Ok(Some(*release));
+                        return Ok(Some(release));
                     }
                     break;
                 }
@@ -1301,22 +1473,22 @@ fn next_preempting_release(
                 };
                 let slack_guard = slack_index.slack_boundary_after_work(
                     *index,
-                    *release,
+                    release,
                     selected_index,
                     worked,
                     metrics,
                 );
                 if candidate_fits_without_future_release(
                     candidate,
-                    *release,
+                    release,
                     fixed_slots,
                     slack_guard,
                 )? {
                     if *index != selected_index {
                         cache_atomic_release_prediction(
-                            context, *release, *index, critical, false, metrics,
+                            context, release, *index, critical, false, metrics,
                         );
-                        return Ok(Some(*release));
+                        return Ok(Some(release));
                     }
                     break;
                 }
@@ -1685,8 +1857,15 @@ pub(super) fn schedule_tasks_by_priority_with_metrics(
     // Phase 2: fixed開始をdependencyのeffective deadlineにすることで、fixed本体を
     // 動かさずにその準備容量だけを保護する。
     let effective_deadlines_by_id = effective_deadlines(candidates);
-    let mut states = prepared
-        .pending
+    let mut task_candidates = Vec::new();
+    let mut completion_events = Vec::new();
+    for item in prepared.pending {
+        match item {
+            SchedulingItem::Task(candidate) => task_candidates.push(candidate),
+            SchedulingItem::Completion(event) => completion_events.push(event),
+        }
+    }
+    let mut states = task_candidates
         .into_iter()
         .map(|candidate| {
             metrics.record_dependency_candidate_probe();
@@ -1701,7 +1880,6 @@ pub(super) fn schedule_tasks_by_priority_with_metrics(
                     .get(&candidate.id)
                     .copied()
                     .flatten(),
-                completion_gate: prepared.completion_gate_ids.contains(&candidate.id),
                 candidate,
                 dependency_indices: Vec::new(),
                 remaining_seconds,
@@ -1712,7 +1890,13 @@ pub(super) fn schedule_tasks_by_priority_with_metrics(
     let index_by_id = states
         .iter()
         .enumerate()
-        .map(|(index, state)| (state.candidate.id, index))
+        .map(|(index, state)| (state.candidate.id, DependencyNode::Task(index)))
+        .chain(
+            completion_events
+                .iter()
+                .enumerate()
+                .map(|(index, event)| (event.task_id, DependencyNode::Completion(index))),
+        )
         .collect::<HashMap<_, _>>();
     for state in &mut states {
         state.dependency_indices = state
@@ -1726,7 +1910,7 @@ pub(super) fn schedule_tasks_by_priority_with_metrics(
     let mut scheduled_tasks = prepared.scheduled_fixed;
     let mut now = last_synced_time;
     let mut slack_index = SlackDemandIndex::new(&states, now, &fixed_slots, metrics);
-    let mut frontier = SchedulerFrontier::new(&states);
+    let mut frontier = SchedulerFrontier::with_completion_events(&states, completion_events);
     let atomic_release_predictions = RefCell::new(AtomicReleasePredictionCache::default());
 
     // Phase 3: eventとeventの間だけを配置し、releaseやslack境界で必ず再選択する。
@@ -1746,19 +1930,16 @@ pub(super) fn schedule_tasks_by_priority_with_metrics(
             continue;
         }
 
-        // 0秒taskもdependencyのcompletion gateとして意味があるため、選択前に
-        // 固定点で完了させる。
+        // 本当に作業量が0秒のtaskも、表示とdependency解放の決定的な点を持つ。
         if let Some(index) = frontier.first_zero() {
-            if !states[index].completion_gate {
-                metrics.record_segment();
-                scheduled_tasks.push(to_scheduled_task(
-                    &states[index].candidate,
-                    now,
-                    now,
-                    0,
-                    states[index].total_work_seconds,
-                ));
-            }
+            metrics.record_segment();
+            scheduled_tasks.push(to_scheduled_task(
+                &states[index].candidate,
+                now,
+                now,
+                0,
+                states[index].total_work_seconds,
+            ));
             states[index].completion_time = Some(now);
             frontier.complete(index, now, &states, metrics);
             continue;
@@ -1800,16 +1981,14 @@ pub(super) fn schedule_tasks_by_priority_with_metrics(
                 now = fallback_start;
                 frontier.force_ready(index, &states[index]);
                 if states[index].remaining_seconds == 0 {
-                    if !states[index].completion_gate {
-                        metrics.record_segment();
-                        scheduled_tasks.push(to_scheduled_task(
-                            &states[index].candidate,
-                            now,
-                            now,
-                            0,
-                            states[index].total_work_seconds,
-                        ));
-                    }
+                    metrics.record_segment();
+                    scheduled_tasks.push(to_scheduled_task(
+                        &states[index].candidate,
+                        now,
+                        now,
+                        0,
+                        states[index].total_work_seconds,
+                    ));
                     states[index].completion_time = Some(now);
                     frontier.complete(index, now, &states, metrics);
                     continue;
@@ -1827,6 +2006,12 @@ pub(super) fn schedule_tasks_by_priority_with_metrics(
                     &mut slack_index,
                     &mut frontier,
                 )?;
+                continue;
+            }
+            if let Some(index) = frontier.first_incomplete_completion() {
+                let next = frontier.force_complete_completion(index, now, &states, metrics);
+                slack_index.record_idle(now, next, metrics);
+                now = next;
                 continue;
             }
             break;

@@ -349,7 +349,6 @@ fn speculative選択errorはfrontierとslackを双方復元する() {
         .map(|candidate| FlexibleState {
             total_work_seconds: candidate.remaining_seconds,
             effective_deadline: None,
-            completion_gate: false,
             remaining_seconds: candidate.remaining_seconds,
             candidate,
             dependency_indices: Vec::new(),
@@ -398,7 +397,6 @@ fn task完了でfrontier世代が変わるとatomic予測cacheを無効化する
         .map(|candidate| FlexibleState {
             total_work_seconds: candidate.remaining_seconds,
             effective_deadline: None,
-            completion_gate: false,
             remaining_seconds: candidate.remaining_seconds,
             candidate,
             dependency_indices: Vec::new(),
@@ -406,7 +404,7 @@ fn task完了でfrontier世代が変わるとatomic予測cacheを無効化する
         })
         .collect::<Vec<_>>();
     let mut states = states;
-    states[1].dependency_indices = vec![Some(0)];
+    states[1].dependency_indices = vec![Some(DependencyNode::Task(0))];
     let mut metrics = ScheduleMetrics::default();
     let mut frontier = SchedulerFrontier::new(&states);
     frontier.promote_releases(now, &states, &mut metrics);
