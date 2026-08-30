@@ -2034,25 +2034,36 @@ fn schedule_tasks_by_priority(
     )
 }
 
-/// 予定配置policyの唯一の入口。
+/// event loopが所有する可変状態を、候補の前処理結果から一度だけ構築する。
 ///
-/// phase順を保つことで、fixed予約、容量保護、実作業、表示順の責務が混ざらない。
-/// helperはこのmodule内に閉じ、上位use caseが別の選択規則を持たないようにする。
-pub(super) fn schedule_tasks_by_priority_with_metrics(
-    candidates: &[TaskScheduleCandidate],
+/// 入力はfixed分類済みの候補とtask別effective deadline、出力は配置中に更新する
+/// state一式である。解決可能なdependency IDはこの時点で内部nodeへ解決され、以後の
+/// loopではcandidate全体を再走査してgraphを組み立てない。
+struct PolicyState {
+    states: Vec<FlexibleState>,
+    fixed_slots: Vec<(DateTime<Local>, DateTime<Local>)>,
+    scheduled_tasks: Vec<ScheduledTask>,
+    now: DateTime<Local>,
+    slack_index: SlackDemandIndex,
+    frontier: SchedulerFrontier,
+    atomic_release_predictions: RefCell<AtomicReleasePredictionCache>,
+}
+
+fn initialize_policy_state(
+    prepared: PreparedCandidates,
+    effective_deadlines_by_id: &HashMap<Uuid, Option<DateTime<Local>>>,
     last_synced_time: DateTime<Local>,
     metrics: &mut ScheduleMetrics,
-) -> Result<Vec<ScheduledTask>, SchedulingPolicyError> {
-    // Phase 1: fixedを先に分類し、約束時刻がflexibleの選択結果に影響されない
-    // 形で予約する。
-    let prepared = classify_fixed_candidates(candidates, last_synced_time, metrics)?;
-
-    // Phase 2: fixed開始をdependencyのeffective deadlineにすることで、fixed本体を
-    // 動かさずにその準備容量だけを保護する。
-    let effective_deadlines_by_id = effective_deadlines(candidates);
+) -> PolicyState {
+    let PreparedCandidates {
+        pending,
+        scheduled_fixed,
+        occupied_fixed,
+        total_work_seconds_by_id,
+    } = prepared;
     let mut task_candidates = Vec::new();
     let mut completion_events = Vec::new();
-    for item in prepared.pending {
+    for item in pending {
         match item {
             SchedulingItem::Task(candidate) => task_candidates.push(candidate),
             SchedulingItem::Completion(event) => completion_events.push(event),
@@ -2064,8 +2075,7 @@ pub(super) fn schedule_tasks_by_priority_with_metrics(
             metrics.record_dependency_candidate_probe();
             let remaining_seconds = candidate.remaining_seconds.max(0);
             FlexibleState {
-                total_work_seconds: prepared
-                    .total_work_seconds_by_id
+                total_work_seconds: total_work_seconds_by_id
                     .get(&candidate.id)
                     .copied()
                     .unwrap_or(remaining_seconds),
@@ -2099,66 +2109,106 @@ pub(super) fn schedule_tasks_by_priority_with_metrics(
             .map(|dependency_id| index_by_id.get(dependency_id).copied())
             .collect();
     }
-    let fixed_slots = prepared.occupied_fixed;
-    let mut scheduled_tasks = prepared.scheduled_fixed;
-    let mut now = last_synced_time;
-    let mut slack_index = SlackDemandIndex::new(&states, now, &fixed_slots, metrics);
-    let mut frontier = SchedulerFrontier::with_completion_events(&states, completion_events);
-    let atomic_release_predictions = RefCell::new(AtomicReleasePredictionCache::default());
+
+    let fixed_slots = occupied_fixed;
+    let now = last_synced_time;
+    let slack_index = SlackDemandIndex::new(&states, now, &fixed_slots, metrics);
+    let frontier = SchedulerFrontier::with_completion_events(&states, completion_events);
+    PolicyState {
+        states,
+        fixed_slots,
+        scheduled_tasks: scheduled_fixed,
+        now,
+        slack_index,
+        frontier,
+        atomic_release_predictions: RefCell::new(AtomicReleasePredictionCache::default()),
+    }
+}
+
+/// 予定配置policyの唯一の入口。
+///
+/// phase順を保つことで、fixed予約、容量保護、実作業、表示順の責務が混ざらない。
+/// helperはこのmodule内に閉じ、上位use caseが別の選択規則を持たないようにする。
+pub(super) fn schedule_tasks_by_priority_with_metrics(
+    candidates: &[TaskScheduleCandidate],
+    last_synced_time: DateTime<Local>,
+    metrics: &mut ScheduleMetrics,
+) -> Result<Vec<ScheduledTask>, SchedulingPolicyError> {
+    // Phase 1: fixedを先に分類し、約束時刻がflexibleの選択結果に影響されない
+    // 形で予約する。
+    let prepared = classify_fixed_candidates(candidates, last_synced_time, metrics)?;
+
+    // Phase 2: fixed開始をdependencyのeffective deadlineにすることで、fixed本体を
+    // 動かさずにその準備容量だけを保護する。
+    let effective_deadlines_by_id = effective_deadlines(candidates);
+    let mut state = initialize_policy_state(
+        prepared,
+        &effective_deadlines_by_id,
+        last_synced_time,
+        metrics,
+    );
 
     // Phase 3: eventとeventの間だけを配置し、releaseやslack境界で必ず再選択する。
-    while frontier.incomplete_count > 0 {
-        frontier.promote_releases(now, &states, metrics);
-        atomic_release_predictions
+    while state.frontier.incomplete_count > 0 {
+        state
+            .frontier
+            .promote_releases(state.now, &state.states, metrics);
+        state
+            .atomic_release_predictions
             .borrow_mut()
             .retain_future_preemptors_for_generation(
-                now,
-                &states,
-                Some(frontier.generation),
+                state.now,
+                &state.states,
+                Some(state.frontier.generation),
                 metrics,
             );
-        if let Some((_, fixed_end)) = fixed_slot_containing(now, &fixed_slots) {
-            slack_index.record_fixed_skip(fixed_end);
-            now = fixed_end;
+        if let Some((_, fixed_end)) = fixed_slot_containing(state.now, &state.fixed_slots) {
+            state.slack_index.record_fixed_skip(fixed_end);
+            state.now = fixed_end;
             continue;
         }
 
         // 本当に作業量が0秒のtaskも、表示とdependency解放の決定的な点を持つ。
-        if let Some(index) = frontier.first_zero() {
+        if let Some(index) = state.frontier.first_zero() {
             metrics.record_segment();
-            scheduled_tasks.push(to_scheduled_task(
-                &states[index].candidate,
-                now,
-                now,
+            state.scheduled_tasks.push(to_scheduled_task(
+                &state.states[index].candidate,
+                state.now,
+                state.now,
                 0,
-                states[index].total_work_seconds,
+                state.states[index].total_work_seconds,
             ));
-            states[index].completion_time = Some(now);
-            frontier.complete(index, now, &states, metrics);
+            state.states[index].completion_time = Some(state.now);
+            state
+                .frontier
+                .complete(index, state.now, &state.states, metrics);
             continue;
         }
 
         let selection = select_next_candidate(
-            &states,
-            now,
-            &fixed_slots,
-            &frontier,
-            &slack_index,
-            &atomic_release_predictions,
+            &state.states,
+            state.now,
+            &state.fixed_slots,
+            &state.frontier,
+            &state.slack_index,
+            &state.atomic_release_predictions,
             metrics,
         )?;
         let Some(selection) = selection else {
-            let next_release = frontier.next_release();
-            let next_fixed = next_fixed_start(now, &fixed_slots);
+            let next_release = state.frontier.next_release();
+            let next_fixed = next_fixed_start(state.now, &state.fixed_slots);
             if let Some(next_event) = [next_release, next_fixed].into_iter().flatten().min() {
-                slack_index.record_idle(now, next_event, metrics);
-                now = next_event;
+                state
+                    .slack_index
+                    .record_idle(state.now, next_event, metrics);
+                state.now = next_event;
                 continue;
             }
 
             // missing dependencyやcycleでも、上位層が問題を可視化できるscheduleを
             // 返す。UUID順入力に依らない通常選択がfallback順となる。
-            let fallback = states
+            let fallback = state
+                .states
                 .iter()
                 .enumerate()
                 .filter(|(_, state)| {
@@ -2168,43 +2218,52 @@ pub(super) fn schedule_tasks_by_priority_with_metrics(
                 .min_by_key(|(_, state)| normal_selection_key(state))
                 .map(|(index, _)| index);
             if let Some(index) = fallback {
-                let release = states[index].candidate.first_available_time;
-                let fallback_start = max(now, release);
-                slack_index.record_idle(now, fallback_start, metrics);
-                now = fallback_start;
-                frontier.force_ready(index, &states[index]);
-                if states[index].remaining_seconds == 0 {
+                let release = state.states[index].candidate.first_available_time;
+                let fallback_start = max(state.now, release);
+                state
+                    .slack_index
+                    .record_idle(state.now, fallback_start, metrics);
+                state.now = fallback_start;
+                state.frontier.force_ready(index, &state.states[index]);
+                if state.states[index].remaining_seconds == 0 {
                     metrics.record_segment();
-                    scheduled_tasks.push(to_scheduled_task(
-                        &states[index].candidate,
-                        now,
-                        now,
+                    state.scheduled_tasks.push(to_scheduled_task(
+                        &state.states[index].candidate,
+                        state.now,
+                        state.now,
                         0,
-                        states[index].total_work_seconds,
+                        state.states[index].total_work_seconds,
                     ));
-                    states[index].completion_time = Some(now);
-                    frontier.complete(index, now, &states, metrics);
+                    state.states[index].completion_time = Some(state.now);
+                    state
+                        .frontier
+                        .complete(index, state.now, &state.states, metrics);
                     continue;
                 }
-                let fallback_guard = slack_index.slack_boundary(index, now, metrics);
+                let fallback_guard = state.slack_index.slack_boundary(index, state.now, metrics);
                 schedule_selected_segment(
                     index,
-                    &mut states,
-                    &mut scheduled_tasks,
-                    &mut now,
-                    &fixed_slots,
+                    &mut state.states,
+                    &mut state.scheduled_tasks,
+                    &mut state.now,
+                    &state.fixed_slots,
                     fallback_guard,
                     metrics,
                     true,
-                    &mut slack_index,
-                    &mut frontier,
+                    &mut state.slack_index,
+                    &mut state.frontier,
                 )?;
                 continue;
             }
-            if let Some(index) = frontier.first_incomplete_completion() {
-                let next = frontier.force_complete_completion(index, now, &states, metrics);
-                slack_index.record_idle(now, next, metrics);
-                now = next;
+            if let Some(index) = state.frontier.first_incomplete_completion() {
+                let next = state.frontier.force_complete_completion(
+                    index,
+                    state.now,
+                    &state.states,
+                    metrics,
+                );
+                state.slack_index.record_idle(state.now, next, metrics);
+                state.now = next;
                 continue;
             }
             break;
@@ -2212,21 +2271,21 @@ pub(super) fn schedule_tasks_by_priority_with_metrics(
 
         schedule_selected_segment(
             selection.index,
-            &mut states,
-            &mut scheduled_tasks,
-            &mut now,
-            &fixed_slots,
+            &mut state.states,
+            &mut state.scheduled_tasks,
+            &mut state.now,
+            &state.fixed_slots,
             selection.slack_boundary,
             metrics,
             false,
-            &mut slack_index,
-            &mut frontier,
+            &mut state.slack_index,
+            &mut state.frontier,
         )?;
     }
 
     // Phase 4: 表示順は選択policyと分離し、同一入力から常に同一結果を返す。
     metrics.record_sort();
-    scheduled_tasks.sort_by(|a, b| {
+    state.scheduled_tasks.sort_by(|a, b| {
         (
             a.scheduled_start,
             a.deadline_time.is_none(),
@@ -2242,7 +2301,7 @@ pub(super) fn schedule_tasks_by_priority_with_metrics(
                 b.id,
             ))
     });
-    Ok(scheduled_tasks)
+    Ok(state.scheduled_tasks)
 }
 
 #[allow(clippy::too_many_arguments)]
