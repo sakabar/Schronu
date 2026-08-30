@@ -2207,6 +2207,31 @@ fn advance_without_selection(
     Ok(ControlFlow::Break(()))
 }
 
+/// 配置済みtaskを表示順へ並べ、表示sortを1回だけmetricsへ記録する。
+///
+/// 配置を終えた全segmentのsliceを、in-placeで決定論的に並べ替える。
+/// 配置policyには影響せず、同一開始時刻ではdeadline有無、priority降順、rank、UUIDの
+/// 順で同率を解消する。
+fn sort_schedule_for_display(scheduled_tasks: &mut [ScheduledTask], metrics: &mut ScheduleMetrics) {
+    metrics.record_sort();
+    scheduled_tasks.sort_by(|a, b| {
+        (
+            a.scheduled_start,
+            a.deadline_time.is_none(),
+            Reverse(a.priority),
+            a.rank,
+            a.id,
+        )
+            .cmp(&(
+                b.scheduled_start,
+                b.deadline_time.is_none(),
+                Reverse(b.priority),
+                b.rank,
+                b.id,
+            ))
+    });
+}
+
 /// 予定配置policyの唯一の入口。
 ///
 /// phase順を保つことで、fixed予約、容量保護、実作業、表示順の責務が混ざらない。
@@ -2298,23 +2323,7 @@ pub(super) fn schedule_tasks_by_priority_with_metrics(
     }
 
     // Phase 4: 表示順は選択policyと分離し、同一入力から常に同一結果を返す。
-    metrics.record_sort();
-    state.scheduled_tasks.sort_by(|a, b| {
-        (
-            a.scheduled_start,
-            a.deadline_time.is_none(),
-            Reverse(a.priority),
-            a.rank,
-            a.id,
-        )
-            .cmp(&(
-                b.scheduled_start,
-                b.deadline_time.is_none(),
-                Reverse(b.priority),
-                b.rank,
-                b.id,
-            ))
-    });
+    sort_schedule_for_display(&mut state.scheduled_tasks, metrics);
     Ok(state.scheduled_tasks)
 }
 
