@@ -439,6 +439,66 @@ fn speculative選択errorはfrontierとslackを双方復元する() {
 }
 
 #[test]
+fn speculative_completion_event適用後にfrontier全状態を復元する() {
+    let now = Local.with_ymd_and_hms(2026, 8, 11, 12, 0, 0).unwrap();
+    let release = now + Duration::minutes(10);
+    let completion_id = Uuid::new_v4();
+    let mut zero_work = candidate("zero", now, 5, 0);
+    zero_work.dependency_ids = vec![completion_id];
+    let zero_work_id = zero_work.id;
+    let mut dependent = candidate("dependent", now, 10, 60);
+    dependent.dependency_ids = vec![zero_work_id];
+    let states = vec![
+        FlexibleState {
+            total_work_seconds: 0,
+            effective_deadline: None,
+            remaining_seconds: 0,
+            candidate: zero_work,
+            dependency_indices: vec![Some(DependencyNode::Completion(0))],
+            completion_time: None,
+        },
+        FlexibleState {
+            total_work_seconds: dependent.remaining_seconds,
+            effective_deadline: None,
+            remaining_seconds: dependent.remaining_seconds,
+            candidate: dependent,
+            dependency_indices: vec![Some(DependencyNode::Task(0))],
+            completion_time: None,
+        },
+    ];
+    let event = CompletionEvent {
+        task_id: completion_id,
+        earliest_occurrence: release,
+        dependency_ids: Vec::new(),
+    };
+    let mut frontier = SchedulerFrontier::with_completion_events(&states, vec![event]);
+    let mut metrics = ScheduleMetrics::default();
+
+    let change = frontier.begin_speculative_releases(release, &states, &mut metrics);
+
+    assert!(frontier.completed_nodes[2]);
+    assert!(frontier.completed_nodes[0]);
+    assert!(frontier.ready[1]);
+    assert_eq!(frontier.unresolved_dependencies[2], 0);
+    assert_eq!(frontier.unresolved_dependencies[0], 0);
+    assert_eq!(frontier.unresolved_dependencies[1], 0);
+    assert_eq!(frontier.incomplete_count, 1);
+
+    frontier.restore_speculative_releases(change, &states);
+
+    assert!(!frontier.completed_nodes[2]);
+    assert!(!frontier.completed_nodes[0]);
+    assert!(!frontier.ready[1]);
+    assert_eq!(frontier.unresolved_dependencies[0], 1);
+    assert_eq!(frontier.unresolved_dependencies[1], 1);
+    assert_eq!(frontier.dependency_end[0], None);
+    assert_eq!(frontier.dependency_end[1], None);
+    assert_eq!(frontier.incomplete_count, 3);
+    assert_eq!(frontier.generation, 0);
+    assert_eq!(frontier.next_release(), Some(release));
+}
+
+#[test]
 fn task完了でfrontier世代が変わるとatomic予測cacheを無効化する() {
     let now = Local.with_ymd_and_hms(2026, 8, 11, 12, 0, 0).unwrap();
     let child = candidate("child", now, 2, 60);
