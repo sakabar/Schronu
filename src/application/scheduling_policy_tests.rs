@@ -71,6 +71,33 @@ fn segments_for(scheduled: &[ScheduledTask], task_id: Uuid) -> Vec<&ScheduledTas
 }
 
 #[test]
+fn window内で完了するfixedはtyped_completion_eventへ分類する() {
+    let now = Local.with_ymd_and_hms(2026, 8, 11, 12, 0, 0).unwrap();
+    let fixed_start = now + Duration::hours(1);
+    let window_end = fixed_start + Duration::minutes(30);
+    let dependency_ids = vec![Uuid::new_v4(), Uuid::new_v4()];
+    let mut fixed = fixed_candidate("fixed", fixed_start, 30 * 60, 10 * 60);
+    fixed.dependency_ids = dependency_ids.clone();
+    let task_id = fixed.id;
+    let mut metrics = ScheduleMetrics::default();
+
+    let prepared = classify_fixed_candidates(&[fixed], now, &mut metrics).unwrap();
+
+    assert_eq!(prepared.pending.len(), 1);
+    let SchedulingItem::Completion(event) = &prepared.pending[0] else {
+        panic!("window内で完了するfixedをtask候補として残してはならない");
+    };
+    assert_eq!(
+        event,
+        &CompletionEvent {
+            task_id,
+            earliest_occurrence: window_end,
+            dependency_ids,
+        }
+    );
+}
+
+#[test]
 fn fixed予定同士は重複しても双方の指定時刻を保持する() {
     let now = Local.with_ymd_and_hms(2026, 8, 11, 12, 0, 0).unwrap();
     let first_start = now + Duration::hours(1);
