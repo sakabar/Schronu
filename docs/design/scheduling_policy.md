@@ -54,7 +54,7 @@ segmentは次の最も早いeventで閉じます。
 - non-atomic taskでは次のcandidate release。atomic taskでは実際にpreemptionを起こすcandidate release
 - 保護対象外の作業によってslackが0になる時刻
 
-この分割で前半または後半が5分以下になる場合は、無益な短時間segmentを避けます。ただしfixed境界は越えず、deadline保護taskがその境界でreleaseされる場合は、必要な前半segmentを保持します。
+この分割で前半または後半が15分以下になる場合は、無益な短時間segmentを避けます。ただしfixed境界は越えず、deadline保護taskがその境界でreleaseされる場合は、必要な前半segmentを保持します。
 
 ### 4. 決定論的な表示sort
 
