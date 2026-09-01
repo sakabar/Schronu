@@ -66,7 +66,7 @@ fn typical_scheduleはslot探索とsortの上限内に収まる() {
     let (_, metrics) = get_schedule_diagnostics(&repository).unwrap();
 
     assert_eq!(metrics.candidate_count, 1_755);
-    // fixed windowとslack/release境界による15分超のfragment分割を含む出力を固定する。
+    // fixed windowとslack/実preemption境界による15分超のfragment分割を含む出力を固定する。
     assert_eq!(metrics.segment_count, 1_768);
     assert_eq!(metrics.schedule_rebuild_count, 1);
     assert!(

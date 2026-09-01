@@ -65,7 +65,7 @@ fixture規模は次のとおりです。stressはtypicalのproject、task、acti
 | typical | 2,213 | 26,378 | 691 |
 | stress | 8,852 | 105,512 | 2,764 |
 
-通常CIはwall-clockではなく、candidate、segment、occupied slot探索、依存候補走査、sort、schedule再構築、配置試行、cursor前進、overload反復、override clone、全schedule走査の上限を検査します。週次・手動CIはRust 1.97.1、release build、`Asia/Tokyo`、GitHub Actions Ubuntu runnerで3回のmedianを測り、typical 500ms、stress 5,000msを上限とします。
+通常CIはwall-clockではなく、candidate、segment、occupied slot探索、依存候補走査、sort、schedule再構築、配置試行、cursor前進、overload反復、override clone、全schedule走査の上限を検査します。週次・手動CIはRust 1.97.1、release build、`Asia/Tokyo`、GitHub Actions Ubuntu runnerで3回のmedianを測り、typical 500ms、stress 5,000msを上限とします。ただし、全scheduleを333回再構築するstress flattenは8,000msを上限とします。
 
 ```shell
 cargo test --locked --features benchmarking --test scheduling_benchmark_contract
@@ -571,7 +571,7 @@ SpreadsheetのA-S列は[spreadsheet_columns.tsv](spreadsheet_columns.tsv)を正�
 
 親タスクは、子タスクが実際に割り当てられた作業予定時刻で完了した後にのみ配置されます。つまり、子タスクが他のタスクとの衝突回避によって後ろにずれた場合、親タスクもその子タスクの実際の完了予定時刻以降にずれます。
 
-長いタスクは、fixed予定の開始、別taskの着手可能時刻、またはslackが0になる時刻で再選択するため、表示上の複数セグメントに分かれる場合があります。分割された各セグメントの合計時間は元タスクの残作業時間と一致し、fixed予約や実際に保護が必要になった締切taskを押し出しません。原則として、分割後の前半または後半のどちらかが15分以下になる分割は避け、次の十分な空き時間で再評価します。ただし、slack guardで保護するtaskがその境界で着手可能になる場合は、締切容量を失わないために境界までの短いsegmentを残します。
+長いタスクは、fixed予定の開始、別taskがreleaseされて実際に選択が切り替わる時刻、またはslackが0になる時刻で再選択するため、表示上の複数セグメントに分かれる場合があります。現在taskに勝たない候補の着手可能時刻は分割境界にならず、60分ごとに分割する規則もありません。分割された各セグメントの合計時間は元タスクの残作業時間と一致し、fixed予約や実際に保護が必要になった締切taskを押し出しません。原則として、分割後の前半または後半のどちらかが15分以下になる分割は避け、次の十分な空き時間で再評価します。ただし、slack guardで保護するtaskがその境界で着手可能になる場合は、締切容量を失わないために境界までの短いsegmentを残します。
 
 #### タスクの深さ
 

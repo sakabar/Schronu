@@ -27,7 +27,7 @@
 //!
 //! 1. fixedとflexibleを分類する。fixed同士は重複しても動かさない。
 //! 2. fixed予約をunion化し、dependencyのsynthetic effective deadlineとcompletion eventを作る。
-//! 3. task完了、fixed境界、release、slackが0になる時刻ごとに再選択する。
+//! 3. task完了、fixed境界、実preemptionを起こすrelease、slackが0になる時刻ごとに再選択する。
 //! 4. 選択順とは別のkeyで表示結果を決定的にsortする。
 //!
 //! # Invariants and fallback

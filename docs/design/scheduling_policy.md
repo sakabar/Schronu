@@ -51,10 +51,12 @@ segmentは次の最も早いeventで閉じます。
 
 - 選択taskの完了
 - fixed予約の開始
-- non-atomic taskでは次のcandidate release。atomic taskでは実際にpreemptionを起こすcandidate release
+- release時点のpriority・deadline保護選択を仮想評価し、現在taskから別taskへ実際に切り替わる最初のcandidate release
 - 保護対象外の作業によってslackが0になる時刻
 
 この分割で前半または後半が15分以下になる場合は、無益な短時間segmentを避けます。ただしfixed境界は越えず、deadline保護taskがその境界でreleaseされる場合は、必要な前半segmentを保持します。
+
+単にreleaseされた候補が現在taskに勝たなければ、frontier上のeventはそのまま保持し、次の実境界でまとめてpromoteします。そのため、固定の60分幅でtaskをsliceする規則はありません。
 
 ### 4. 決定論的な表示sort
 
