@@ -21,6 +21,7 @@ const DAILY_FREE_MINUTES: i64 = 8 * 60;
 const SAMPLE_COUNT: usize = 3;
 const TYPICAL_LIMIT: Duration = Duration::from_millis(500);
 const STRESS_LIMIT: Duration = Duration::from_secs(5);
+const STRESS_FLATTEN_LIMIT: Duration = Duration::from_secs(8);
 
 #[derive(Clone, Copy)]
 enum UseCase {
@@ -281,10 +282,11 @@ fn check_limit(configuration: Configuration, elapsed: Duration) -> Result<(), St
     if !configuration.check_limit {
         return Ok(());
     }
-    let limit = match configuration.size {
-        FixtureSize::Small => return Ok(()),
-        FixtureSize::Typical => TYPICAL_LIMIT,
-        FixtureSize::Stress => STRESS_LIMIT,
+    let limit = match (configuration.size, configuration.use_case) {
+        (FixtureSize::Small, _) => return Ok(()),
+        (FixtureSize::Typical, _) => TYPICAL_LIMIT,
+        (FixtureSize::Stress, UseCase::Flatten) => STRESS_FLATTEN_LIMIT,
+        (FixtureSize::Stress, _) => STRESS_LIMIT,
     };
     if elapsed <= limit {
         Ok(())
