@@ -1010,6 +1010,37 @@ fn slack境界とdeadline_releaseが同時でも境界までの作業を捨て�
 }
 
 #[test]
+fn 通過済みreleaseがあってもdeadline_preemptionまでの作業を捨てない() {
+    let now = Local.with_ymd_and_hms(2026, 9, 1, 9, 0, 0).unwrap();
+    let mut deadline = candidate("deadline", now + Duration::hours(2), 1, 60 * 60);
+    deadline.deadline_time = Some(now + Duration::hours(3));
+    let deadline_id = deadline.id;
+    let important = candidate("important", now, 99, 2 * 60 * 60 + 5 * 60);
+    let important_id = important.id;
+    let irrelevant = candidate("irrelevant", now + Duration::hours(1), 0, 60);
+
+    let scheduled = schedule_tasks_by_priority(&[irrelevant, deadline, important], now).unwrap();
+    let important_segments = segments_for(&scheduled, important_id);
+
+    assert_eq!(important_segments[0].scheduled_start, now);
+    assert_eq!(
+        important_segments[0].scheduled_end,
+        now + Duration::hours(2)
+    );
+    assert_eq!(
+        scheduled_start(&scheduled, deadline_id),
+        now + Duration::hours(2)
+    );
+    assert_eq!(
+        important_segments
+            .iter()
+            .map(|segment| segment.scheduled_work_seconds)
+            .sum::<i64>(),
+        2 * 60 * 60 + 5 * 60
+    );
+}
+
+#[test]
 fn deadline_slackは早いdeadlineまでの需要を後続deadlineへ累積する() {
     let now = Local.with_ymd_and_hms(2026, 9, 1, 9, 0, 0).unwrap();
     let mut first = candidate("first-deadline", now, 1, 60 * 60);
@@ -1057,6 +1088,70 @@ fn future_candidateのrelease時刻でsegmentを切り再選択する() {
     assert_eq!(
         scheduled_start(&scheduled, deadline_id),
         now + Duration::hours(2)
+    );
+}
+
+#[test]
+fn 現在taskに勝たないreleaseは連続作業を分割しない() {
+    let now = Local.with_ymd_and_hms(2026, 9, 1, 9, 0, 0).unwrap();
+    let running = candidate("running", now, 99, 213 * 60);
+    let running_id = running.id;
+    let first = candidate("first", now + Duration::minutes(60), 3, 60);
+    let second = candidate("second", now + Duration::minutes(120), 2, 60);
+    let third = candidate("third", now + Duration::minutes(148), 1, 60);
+
+    let scheduled = schedule_tasks_by_priority(&[third, running, first, second], now).unwrap();
+    let running_segments = segments_for(&scheduled, running_id);
+
+    assert_eq!(running_segments.len(), 1);
+    assert_eq!(running_segments[0].scheduled_start, now);
+    assert_eq!(
+        running_segments[0].scheduled_end,
+        now + Duration::minutes(213)
+    );
+    assert_eq!(running_segments[0].scheduled_work_seconds, 213 * 60);
+}
+
+#[test]
+fn 同順位で現在taskに勝たないreleaseは境界にしない() {
+    let now = Local.with_ymd_and_hms(2026, 9, 1, 9, 0, 0).unwrap();
+    let mut running = candidate("running", now, 50, 2 * 60 * 60);
+    running.id = Uuid::from_u128(1);
+    let running_id = running.id;
+    let mut released = candidate("released", now + Duration::hours(1), 50, 60);
+    released.id = Uuid::from_u128(2);
+
+    let scheduled = schedule_tasks_by_priority(&[released, running], now).unwrap();
+    let running_segments = segments_for(&scheduled, running_id);
+
+    assert_eq!(running_segments.len(), 1);
+    assert_eq!(running_segments[0].scheduled_start, now);
+    assert_eq!(running_segments[0].scheduled_end, now + Duration::hours(2));
+}
+
+#[test]
+fn zero_work依存鎖から現れる高priority_taskはrelease境界で切り替える() {
+    let now = Local.with_ymd_and_hms(2026, 9, 1, 9, 0, 0).unwrap();
+    let running = candidate("running", now, 50, 2 * 60 * 60);
+    let running_id = running.id;
+    let zero_work = candidate("zero", now + Duration::hours(1), 1, 0);
+    let zero_work_id = zero_work.id;
+    let mut released = candidate("released", now, 99, 60);
+    released.dependency_ids = vec![zero_work_id];
+    let released_id = released.id;
+
+    let scheduled = schedule_tasks_by_priority(&[released, running, zero_work], now).unwrap();
+    let running_segments = segments_for(&scheduled, running_id);
+
+    assert_eq!(running_segments[0].scheduled_start, now);
+    assert_eq!(running_segments[0].scheduled_end, now + Duration::hours(1));
+    assert_eq!(
+        scheduled_start(&scheduled, zero_work_id),
+        now + Duration::hours(1)
+    );
+    assert_eq!(
+        scheduled_start(&scheduled, released_id),
+        now + Duration::hours(1)
     );
 }
 
