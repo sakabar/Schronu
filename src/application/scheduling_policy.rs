@@ -259,11 +259,15 @@ struct Selection {
     slack_boundary: Option<DateTime<Local>>,
 }
 
+struct SegmentBoundary {
+    time: DateTime<Local>,
+    preempting_release: Option<DateTime<Local>>,
+}
+
 /// 1回の候補評価で共有する、時刻境界のread-only view。
 struct BoundaryContext<'a> {
     states: &'a [FlexibleState],
     fixed_slots: &'a [(DateTime<Local>, DateTime<Local>)],
-    next_release: Option<DateTime<Local>>,
     frontier: &'a SchedulerFrontier,
     slack_index: &'a SlackDemandIndex,
     atomic_release_predictions: Option<&'a RefCell<AtomicReleasePredictionCache>>,
@@ -1201,7 +1205,7 @@ impl SchedulerFrontier {
             let Some(release) = next_release else {
                 break;
             };
-            if release >= until {
+            if release > until {
                 break;
             }
             let mut nodes = Vec::new();
@@ -1558,7 +1562,7 @@ fn next_fixed_start(
         .find(|start| *start > now)
 }
 
-/// atomicを実際に中断する候補がreleaseされる最初の時刻を返す。
+/// 選択中taskを実際にpreemptする候補がreleaseされる最初の時刻を返す。
 fn next_preempting_release(
     selected_index: usize,
     selected: &FlexibleState,
@@ -1571,6 +1575,16 @@ fn next_preempting_release(
     let fixed_slots = context.fixed_slots;
     let frontier = context.frontier;
     let slack_index = context.slack_index;
+    let completion = checked_segment_end(selected.candidate.id, now, selected.remaining_seconds)?;
+    let evaluation_end = slack_guard
+        .map(|guard| guard.min(completion))
+        .unwrap_or(completion);
+    if frontier
+        .next_release()
+        .is_none_or(|release| release > evaluation_end)
+    {
+        return Ok(None);
+    }
     if let Some(release) =
         cached_preempting_release(selected_index, selected, now, slack_guard, context, metrics)?
     {
@@ -1578,19 +1592,9 @@ fn next_preempting_release(
     }
     let mut additional_normal = BTreeSet::new();
     let mut additional_protected = BTreeSet::new();
-    let completion = checked_segment_end(selected.candidate.id, now, selected.remaining_seconds)?;
-    let evaluation_end = slack_guard
-        .map(|guard| guard.min(completion))
-        .unwrap_or(completion);
     for (release, released_indices) in
         frontier.future_task_release_batches(now, evaluation_end, states, metrics)
     {
-        if slack_guard.is_some_and(|guard| release >= guard) {
-            // current guardへ先に到達するatomicは、その時点で再選択される。
-            // guard後のreleaseを仮想評価すると、既にcriticalへ移るgroupを
-            // active treeへ残したまま扱うことになり、存在しない境界を作る。
-            return Ok(None);
-        }
         for index in released_indices {
             if states[index].remaining_seconds == 0 {
                 continue;
@@ -1744,7 +1748,7 @@ fn cached_preempting_release(
         // selection candidateとして再検証する。
         metrics.record_selection_candidate_probe();
         if prediction.preemptor_index == selected_index
-            || slack_guard.is_some_and(|guard| prediction.release >= guard)
+            || slack_guard.is_some_and(|guard| prediction.release > guard)
         {
             continue;
         }
@@ -1821,23 +1825,24 @@ fn segment_boundary(
     slack_guard: Option<DateTime<Local>>,
     context: &BoundaryContext<'_>,
     metrics: &mut ScheduleMetrics,
-) -> Result<DateTime<Local>, SchedulingPolicyError> {
+) -> Result<SegmentBoundary, SchedulingPolicyError> {
     let completion = checked_segment_end(selected.candidate.id, now, selected.remaining_seconds)?;
-    let release = if selected.candidate.atomic {
-        next_preempting_release(selected_index, selected, now, slack_guard, context, metrics)?
-    } else {
-        context.next_release
-    };
-    Ok([
+    let preempting_release =
+        next_preempting_release(selected_index, selected, now, slack_guard, context, metrics)?;
+    let time = [
         Some(completion),
         next_fixed_start(now, context.fixed_slots),
-        release,
+        preempting_release,
         slack_guard,
     ]
     .into_iter()
     .flatten()
     .min()
-    .expect("task completion is always a boundary"))
+    .expect("task completion is always a boundary");
+    Ok(SegmentBoundary {
+        time,
+        preempting_release,
+    })
 }
 
 /// atomicは途中eventを跨がず、1segmentで完了できる場合だけ開始する。
@@ -1866,7 +1871,7 @@ fn atomic_fits(
     }
 
     Ok(completion
-        == segment_boundary(selected_index, selected, now, slack_guard, context, metrics)?)
+        == segment_boundary(selected_index, selected, now, slack_guard, context, metrics)?.time)
 }
 
 /// slack guardで極端に短いfragmentができる候補は、時間を捨ててから
@@ -1885,8 +1890,10 @@ fn fits_split_contract(
     let Some(guard) = slack_guard else {
         return Ok(true);
     };
+    let preempting_release =
+        next_preempting_release(selected_index, selected, now, slack_guard, context, metrics)?;
     if next_fixed_start(now, context.fixed_slots).is_some_and(|event| event <= guard)
-        || context.next_release.is_some_and(|event| event <= guard)
+        || preempting_release.is_some_and(|event| event <= guard)
     {
         // guardより前のeventで必ず再選択する。その手前で作れる有用な
         // segmentを、将来のguardの形だけを理由に捨ててはならない。
@@ -1931,7 +1938,6 @@ fn select_next_candidate(
     let boundary_context = BoundaryContext {
         states,
         fixed_slots,
-        next_release: frontier.next_release(),
         frontier,
         slack_index,
         atomic_release_predictions: Some(atomic_release_predictions),
@@ -2343,13 +2349,12 @@ fn schedule_selected_segment(
     let boundary_context = BoundaryContext {
         states,
         fixed_slots,
-        next_release: frontier.next_release(),
         frontier,
         slack_index,
         atomic_release_predictions: None,
         event_atomic_release_predictions: None,
     };
-    let mut boundary = segment_boundary(
+    let segment_boundary = segment_boundary(
         selected_index,
         &states[selected_index],
         *now,
@@ -2357,6 +2362,7 @@ fn schedule_selected_segment(
         &boundary_context,
         metrics,
     )?;
+    let mut boundary = segment_boundary.time;
     if states[selected_index].candidate.atomic {
         boundary = checked_segment_end(
             states[selected_index].candidate.id,
@@ -2387,7 +2393,7 @@ fn schedule_selected_segment(
         let release_preempts = speculative
             .selection
             .is_some_and(|selection| selection.index != selected_index);
-        let release_boundary = frontier.next_release() == Some(boundary);
+        let release_boundary = segment_boundary.preempting_release == Some(boundary);
         let guard_releases_protected_task = guard_boundary && release_boundary && release_preempts;
         if fixed_boundary
             || (!guard_releases_protected_task && (guard_boundary || release_preempts))
