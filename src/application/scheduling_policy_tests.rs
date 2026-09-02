@@ -15,16 +15,23 @@ fn slack境界queryは正負交互でもdeadline数を走査しない() {
         })
         .collect::<Vec<_>>();
     let tree = SlackRangeTree::new(&values);
-    let mut metrics = ScheduleMetrics::default();
-
-    let minimum = tree.range_min(0..DEADLINE_COUNT, &mut metrics);
+    let mut instrumentation = SchedulingInstrumentation;
+    let minimum = tree.range_min(0..DEADLINE_COUNT, &mut instrumentation);
 
     assert_eq!(minimum, Some(-511));
-    assert!(
-        metrics.slack_probe_count <= 32,
-        "alternating slack query visited too many nodes: {}",
-        metrics.slack_probe_count
-    );
+    #[cfg(feature = "benchmarking")]
+    {
+        let (_, metrics) =
+            crate::application::scheduling_instrumentation::capture_schedule_metrics(|| {
+                let mut instrumentation = SchedulingInstrumentation;
+                tree.range_min(0..DEADLINE_COUNT, &mut instrumentation)
+            });
+        assert!(
+            metrics.slack_probe_count <= 32,
+            "alternating slack query visited too many nodes: {}",
+            metrics.slack_probe_count
+        );
+    }
 }
 
 fn candidate(
@@ -79,9 +86,9 @@ fn window内で完了するfixedはtyped_completion_eventへ分類する() {
     let mut fixed = fixed_candidate("fixed", fixed_start, 30 * 60, 10 * 60);
     fixed.dependency_ids = dependency_ids.clone();
     let task_id = fixed.id;
-    let mut metrics = ScheduleMetrics::default();
+    let mut instrumentation = SchedulingInstrumentation;
 
-    let prepared = classify_fixed_candidates(&[fixed], now, &mut metrics).unwrap();
+    let prepared = classify_fixed_candidates(&[fixed], now, &mut instrumentation).unwrap();
 
     assert_eq!(prepared.pending.len(), 1);
     let SchedulingItem::Completion(event) = &prepared.pending[0] else {
@@ -409,10 +416,10 @@ fn speculative選択errorはfrontierとslackを双方復元する() {
             completion_time: None,
         })
         .collect::<Vec<_>>();
-    let mut metrics = ScheduleMetrics::default();
+    let mut instrumentation = SchedulingInstrumentation;
     let mut frontier = SchedulerFrontier::new(&states);
-    frontier.promote_releases(now, &states, &mut metrics);
-    let mut slack_index = SlackDemandIndex::new(&states, now, &[], &mut metrics);
+    frontier.promote_releases(now, &states, &mut instrumentation);
+    let mut slack_index = SlackDemandIndex::new(&states, now, &[], &mut instrumentation);
 
     let error = select_at_speculative_boundary(
         &states,
@@ -421,7 +428,7 @@ fn speculative選択errorはfrontierとslackを双方復元する() {
         &[],
         &mut frontier,
         &mut slack_index,
-        &mut metrics,
+        &mut instrumentation,
     )
     .err();
 
@@ -472,9 +479,9 @@ fn speculative_completion_event適用後にfrontier全状態を復元する() {
         dependency_ids: Vec::new(),
     };
     let mut frontier = SchedulerFrontier::with_completion_events(&states, vec![event]);
-    let mut metrics = ScheduleMetrics::default();
+    let mut instrumentation = SchedulingInstrumentation;
 
-    let change = frontier.begin_speculative_releases(release, &states, &mut metrics);
+    let change = frontier.begin_speculative_releases(release, &states, &mut instrumentation);
 
     assert!(frontier.completed_nodes[2]);
     assert!(frontier.completed_nodes[0]);
@@ -519,9 +526,9 @@ fn task完了でfrontier世代が変わるとatomic予測cacheを無効化する
         .collect::<Vec<_>>();
     let mut states = states;
     states[1].dependency_indices = vec![Some(DependencyNode::Task(0))];
-    let mut metrics = ScheduleMetrics::default();
+    let mut instrumentation = SchedulingInstrumentation;
     let mut frontier = SchedulerFrontier::new(&states);
-    frontier.promote_releases(now, &states, &mut metrics);
+    frontier.promote_releases(now, &states, &mut instrumentation);
     let mut cache = AtomicReleasePredictionCache::default();
     cache.insert(
         AtomicReleasePrediction {
@@ -531,15 +538,15 @@ fn task完了でfrontier世代が変わるとatomic予測cacheを無効化する
             protected_mode: false,
             frontier_generation: frontier.generation,
         },
-        &mut metrics,
+        &mut instrumentation,
     );
 
-    frontier.complete(0, now + Duration::minutes(1), &states, &mut metrics);
+    frontier.complete(0, now + Duration::minutes(1), &states, &mut instrumentation);
     cache.retain_future_preemptors_for_generation(
         now,
         &states,
         Some(frontier.generation),
-        &mut metrics,
+        &mut instrumentation,
     );
 
     assert!(cache.entries.is_empty());
@@ -565,9 +572,10 @@ fn schedule_tasks_by_priorityは依存待ちcandidateを毎回走査しない() 
         })
         .collect::<Vec<_>>();
     candidates.push(child);
-    let mut metrics = ScheduleMetrics::default();
-
-    schedule_tasks_by_priority_with_metrics(&candidates, now, &mut metrics).unwrap();
+    let (_, metrics) =
+        crate::application::scheduling_instrumentation::capture_schedule_metrics(|| {
+            schedule_tasks_by_priority(&candidates, now).unwrap()
+        });
 
     assert!(
         metrics.dependency_candidate_probe_count <= candidates.len(),

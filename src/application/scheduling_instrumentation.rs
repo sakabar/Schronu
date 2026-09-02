@@ -31,6 +31,87 @@ pub(crate) enum FlattenEvent {
     FullScheduleScan(usize),
 }
 
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub(crate) struct SchedulingInstrumentation;
+
+impl SchedulingInstrumentation {
+    pub(crate) fn record_candidates(&mut self, count: usize) {
+        record_schedule(ScheduleEvent::Candidates(count));
+    }
+
+    pub(crate) fn record_segment(&mut self) {
+        record_schedule(ScheduleEvent::Segment);
+    }
+
+    pub(crate) fn record_occupied_slot_probe(&mut self) {
+        record_schedule(ScheduleEvent::OccupiedSlotProbe);
+    }
+
+    pub(crate) fn record_dependency_candidate_probe(&mut self) {
+        record_schedule(ScheduleEvent::DependencyCandidateProbe);
+    }
+
+    pub(crate) fn record_selection_event(&mut self) {
+        record_schedule(ScheduleEvent::Selection);
+    }
+
+    pub(crate) fn record_selection_candidate_probe(&mut self) {
+        record_schedule(ScheduleEvent::SelectionCandidateProbe);
+    }
+
+    pub(crate) fn record_release_candidate_probe(&mut self) {
+        record_schedule(ScheduleEvent::ReleaseCandidateProbe);
+    }
+
+    pub(crate) fn record_atomic_release_cache_probe(&mut self) {
+        record_schedule(ScheduleEvent::AtomicReleaseCacheProbe);
+    }
+
+    pub(crate) fn record_atomic_release_cache_entries(&mut self, count: usize) {
+        record_schedule(ScheduleEvent::AtomicReleaseCacheEntries(count));
+    }
+
+    pub(crate) fn record_slack_probes(&mut self, count: usize) {
+        record_schedule(ScheduleEvent::SlackProbes(count));
+    }
+
+    pub(crate) fn record_sort(&mut self) {
+        record_schedule(ScheduleEvent::Sort);
+    }
+
+    pub(crate) fn record_rebuild(&mut self) {
+        record_schedule(ScheduleEvent::Rebuild);
+    }
+
+    pub(crate) fn record_pack_candidates(&mut self, count: usize) {
+        record_pack(PackEvent::Candidates(count));
+    }
+
+    pub(crate) fn record_placement_trial(&mut self) {
+        record_pack(PackEvent::PlacementTrial);
+    }
+
+    pub(crate) fn record_cursor_minute_advance(&mut self, minutes: usize) {
+        record_pack(PackEvent::CursorMinuteAdvance(minutes));
+    }
+
+    pub(crate) fn record_overload_iteration(&mut self) {
+        record_flatten(FlattenEvent::OverloadIteration);
+    }
+
+    pub(crate) fn record_candidate_trial(&mut self) {
+        record_flatten(FlattenEvent::CandidateTrial);
+    }
+
+    pub(crate) fn record_override_clone(&mut self, elements: usize) {
+        record_flatten(FlattenEvent::OverrideClone(elements));
+    }
+
+    pub(crate) fn record_full_schedule_scan(&mut self, elements: usize) {
+        record_flatten(FlattenEvent::FullScheduleScan(elements));
+    }
+}
+
 #[inline(always)]
 pub(crate) fn record_schedule(event: ScheduleEvent) {
     #[cfg(feature = "benchmarking")]

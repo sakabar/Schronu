@@ -532,7 +532,7 @@ fn scheduling_policyの単一入口と選択責務を固定する() {
 
     assert_eq!(
         externally_visible_policy_functions,
-        ["pub(super) fn schedule_tasks_by_priority_with_metrics("],
+        ["pub(super) fn schedule_tasks_by_priority("],
         "scheduling policy must expose only its minimum-visibility production entrypoint"
     );
     assert!(
@@ -546,11 +546,11 @@ fn scheduling_policyの単一入口と選択責務を固定する() {
         "scheduling policy must not expose a second entrypoint through a re-export"
     );
     assert!(
-        policy_source.contains("pub(super) fn schedule_tasks_by_priority_with_metrics("),
+        policy_source.contains("pub(super) fn schedule_tasks_by_priority("),
         "scheduling policy must retain its single production entrypoint"
     );
     assert!(
-        use_case_source.contains("schedule_tasks_by_priority_with_metrics(&candidates"),
+        use_case_source.contains("schedule_tasks_by_priority(&candidates"),
         "schedule use case must delegate placement to the scheduling policy entrypoint"
     );
     assert!(

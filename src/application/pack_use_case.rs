@@ -5,8 +5,7 @@ use super::daily_capacity::{
 };
 use super::interface::{FreeTimeManagerTrait, TaskRepositoryTrait};
 use super::schedule_use_case::{
-    get_schedule_with_metrics, get_schedule_with_task_first_available_time_and_metrics,
-    ScheduledTaskView,
+    get_schedule, get_schedule_with_task_first_available_time, ScheduledTaskView,
 };
 use super::scheduled_capacity::scheduled_capacity_seconds;
 use super::scheduling_metrics::PackMetrics;
@@ -121,7 +120,7 @@ fn pack_tasks_with_end_of_day_offset_minutes_and_metrics(
             )
         })
         .collect::<Result<Vec<_>, _>>()?;
-    let mut current_schedule = get_schedule_with_metrics(repository, &mut metrics.schedule)?;
+    let mut current_schedule = get_schedule(repository)?;
     let mut candidates = collect_candidates(&current_schedule, &target_dates)?;
     metrics.record_candidate_count(candidates.len());
     candidates.sort_by_key(|candidate| {
@@ -138,7 +137,7 @@ fn pack_tasks_with_end_of_day_offset_minutes_and_metrics(
     for candidate in candidates {
         let mut packed_task_opt = None;
         if schedule_dirty {
-            current_schedule = get_schedule_with_metrics(repository, &mut metrics.schedule)?;
+            current_schedule = get_schedule(repository)?;
             daily_leeway_opt = None;
             schedule_dirty = false;
         }
@@ -258,12 +257,8 @@ fn find_placement_start(
             trial_time = next_free_time;
         }
         metrics.record_placement_trial();
-        let schedule = get_schedule_with_task_first_available_time_and_metrics(
-            repository,
-            request.task_id,
-            trial_time,
-            &mut metrics.schedule,
-        )?;
+        let schedule =
+            get_schedule_with_task_first_available_time(repository, request.task_id, trial_time)?;
         let task_segments = schedule
             .iter()
             .filter(|scheduled| scheduled.task.id == request.task_id)

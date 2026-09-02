@@ -3,28 +3,13 @@
 use super::flatten_use_case::{flatten_tasks_with_metrics, FlattenResult};
 use super::interface::{FreeTimeManagerTrait, TaskRepositoryTrait};
 use super::pack_use_case::{pack_tasks_with_metrics, PackResult};
-use super::schedule_use_case::{get_schedule_with_metrics, ScheduledTaskView};
-use super::scheduling_metrics::ScheduleMetrics as InternalScheduleMetrics;
+use super::schedule_use_case::{get_schedule, ScheduledTaskView};
+use super::scheduling_instrumentation::capture_schedule_metrics;
+pub use super::scheduling_instrumentation::ScheduleMetrics;
 use super::scheduling_metrics::{
     FlattenMetrics as InternalFlattenMetrics, PackMetrics as InternalPackMetrics,
 };
 use super::task_use_case::ApplicationError;
-
-#[derive(Clone, Debug, Default, Eq, PartialEq)]
-pub struct ScheduleMetrics {
-    pub candidate_count: usize,
-    pub segment_count: usize,
-    pub occupied_slot_probe_count: usize,
-    pub dependency_candidate_probe_count: usize,
-    pub selection_event_count: usize,
-    pub selection_candidate_probe_count: usize,
-    pub release_candidate_probe_count: usize,
-    pub atomic_release_cache_probe_count: usize,
-    pub atomic_release_cache_peak_entry_count: usize,
-    pub slack_probe_count: usize,
-    pub sort_count: usize,
-    pub schedule_rebuild_count: usize,
-}
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct PackMetrics {
@@ -46,9 +31,8 @@ pub struct FlattenMetrics {
 pub fn get_schedule_diagnostics(
     repository: &dyn TaskRepositoryTrait,
 ) -> Result<(Vec<ScheduledTaskView>, ScheduleMetrics), ApplicationError> {
-    let mut metrics = InternalScheduleMetrics::default();
-    let result = get_schedule_with_metrics(repository, &mut metrics)?;
-    Ok((result, metrics.into()))
+    let (result, metrics) = capture_schedule_metrics(|| get_schedule(repository));
+    Ok((result?, metrics))
 }
 
 pub fn pack_tasks_diagnostics(
@@ -56,8 +40,12 @@ pub fn pack_tasks_diagnostics(
     free_time_manager: &mut dyn FreeTimeManagerTrait,
 ) -> Result<(PackResult, PackMetrics), ApplicationError> {
     let mut metrics = InternalPackMetrics::default();
-    let result = pack_tasks_with_metrics(repository, free_time_manager, &mut metrics)?;
-    Ok((result, metrics.into()))
+    let (result, schedule_metrics) = capture_schedule_metrics(|| {
+        pack_tasks_with_metrics(repository, free_time_manager, &mut metrics)
+    });
+    let mut metrics = PackMetrics::from(metrics);
+    metrics.schedule = schedule_metrics;
+    Ok((result?, metrics))
 }
 
 pub fn flatten_tasks_diagnostics(
@@ -65,33 +53,18 @@ pub fn flatten_tasks_diagnostics(
     free_time_manager: &mut dyn FreeTimeManagerTrait,
 ) -> Result<(FlattenResult, FlattenMetrics), ApplicationError> {
     let mut metrics = InternalFlattenMetrics::default();
-    let result = flatten_tasks_with_metrics(repository, free_time_manager, &mut metrics)?;
-    Ok((result, metrics.into()))
-}
-
-impl From<InternalScheduleMetrics> for ScheduleMetrics {
-    fn from(metrics: InternalScheduleMetrics) -> Self {
-        Self {
-            candidate_count: metrics.candidate_count,
-            segment_count: metrics.segment_count,
-            occupied_slot_probe_count: metrics.occupied_slot_probe_count,
-            dependency_candidate_probe_count: metrics.dependency_candidate_probe_count,
-            selection_event_count: metrics.selection_event_count,
-            selection_candidate_probe_count: metrics.selection_candidate_probe_count,
-            release_candidate_probe_count: metrics.release_candidate_probe_count,
-            atomic_release_cache_probe_count: metrics.atomic_release_cache_probe_count,
-            atomic_release_cache_peak_entry_count: metrics.atomic_release_cache_peak_entry_count,
-            slack_probe_count: metrics.slack_probe_count,
-            sort_count: metrics.sort_count,
-            schedule_rebuild_count: metrics.schedule_rebuild_count,
-        }
-    }
+    let (result, schedule_metrics) = capture_schedule_metrics(|| {
+        flatten_tasks_with_metrics(repository, free_time_manager, &mut metrics)
+    });
+    let mut metrics = FlattenMetrics::from(metrics);
+    metrics.schedule = schedule_metrics;
+    Ok((result?, metrics))
 }
 
 impl From<InternalPackMetrics> for PackMetrics {
     fn from(metrics: InternalPackMetrics) -> Self {
         Self {
-            schedule: metrics.schedule.into(),
+            schedule: ScheduleMetrics::default(),
             candidate_count: metrics.candidate_count,
             placement_trial_count: metrics.placement_trial_count,
             cursor_minute_advance_count: metrics.cursor_minute_advance_count,
@@ -102,7 +75,7 @@ impl From<InternalPackMetrics> for PackMetrics {
 impl From<InternalFlattenMetrics> for FlattenMetrics {
     fn from(metrics: InternalFlattenMetrics) -> Self {
         Self {
-            schedule: metrics.schedule.into(),
+            schedule: ScheduleMetrics::default(),
             overload_iteration_count: metrics.overload_iteration_count,
             candidate_trial_count: metrics.candidate_trial_count,
             override_clone_element_count: metrics.override_clone_element_count,

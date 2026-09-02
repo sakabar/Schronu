@@ -4,8 +4,7 @@ use super::daily_capacity::{
 };
 use super::interface::{FreeTimeManagerTrait, TaskRepositoryTrait};
 use super::schedule_use_case::{
-    build_schedule_context_with_metrics, get_schedule_from_context_with_overrides_and_metrics,
-    ScheduledTaskView,
+    build_schedule_context, get_schedule_from_context_with_overrides, ScheduledTaskView,
 };
 use super::scheduled_capacity::scheduled_capacity_seconds;
 use super::scheduling_metrics::FlattenMetrics;
@@ -153,12 +152,9 @@ fn flatten_tasks_with_end_of_day_offset_minutes_and_metrics(
         })
         .collect::<Result<HashMap<_, _>, ApplicationError>>()?;
     let maximum_daily_capacity = capacities.values().copied().max().unwrap_or(0);
-    let schedule_context = build_schedule_context_with_metrics(repository, &mut metrics.schedule)?;
-    let initial_schedule = get_schedule_from_context_with_overrides_and_metrics(
-        &schedule_context,
-        &HashMap::new(),
-        &mut metrics.schedule,
-    )?;
+    let schedule_context = build_schedule_context(repository)?;
+    let initial_schedule =
+        get_schedule_from_context_with_overrides(&schedule_context, &HashMap::new())?;
     let original_task_details = collect_original_task_details(&initial_schedule, metrics)?;
     let mut schedule = initial_schedule;
     let mut overrides = HashMap::<Uuid, DateTime<Local>>::new();
@@ -214,11 +210,8 @@ fn flatten_tasks_with_end_of_day_offset_minutes_and_metrics(
             }
             metrics.record_override_clone(0);
             let previous_override = overrides.insert(candidate.task_id, target_datetime);
-            let trial_schedule_result = get_schedule_from_context_with_overrides_and_metrics(
-                &schedule_context,
-                &overrides,
-                &mut metrics.schedule,
-            );
+            let trial_schedule_result =
+                get_schedule_from_context_with_overrides(&schedule_context, &overrides);
             match previous_override {
                 Some(previous) => {
                     overrides.insert(candidate.task_id, previous);
