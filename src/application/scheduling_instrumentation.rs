@@ -1,5 +1,3 @@
-#![allow(dead_code)]
-
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum ScheduleEvent {
     Candidates(usize),
@@ -35,10 +33,6 @@ pub(crate) enum FlattenEvent {
 pub(crate) struct SchedulingInstrumentation;
 
 impl SchedulingInstrumentation {
-    pub(crate) fn record_candidates(&mut self, count: usize) {
-        record_schedule(ScheduleEvent::Candidates(count));
-    }
-
     pub(crate) fn record_segment(&mut self) {
         record_schedule(ScheduleEvent::Segment);
     }
@@ -77,38 +71,6 @@ impl SchedulingInstrumentation {
 
     pub(crate) fn record_sort(&mut self) {
         record_schedule(ScheduleEvent::Sort);
-    }
-
-    pub(crate) fn record_rebuild(&mut self) {
-        record_schedule(ScheduleEvent::Rebuild);
-    }
-
-    pub(crate) fn record_pack_candidates(&mut self, count: usize) {
-        record_pack(PackEvent::Candidates(count));
-    }
-
-    pub(crate) fn record_placement_trial(&mut self) {
-        record_pack(PackEvent::PlacementTrial);
-    }
-
-    pub(crate) fn record_cursor_minute_advance(&mut self, minutes: usize) {
-        record_pack(PackEvent::CursorMinuteAdvance(minutes));
-    }
-
-    pub(crate) fn record_overload_iteration(&mut self) {
-        record_flatten(FlattenEvent::OverloadIteration);
-    }
-
-    pub(crate) fn record_candidate_trial(&mut self) {
-        record_flatten(FlattenEvent::CandidateTrial);
-    }
-
-    pub(crate) fn record_override_clone(&mut self, elements: usize) {
-        record_flatten(FlattenEvent::OverrideClone(elements));
-    }
-
-    pub(crate) fn record_full_schedule_scan(&mut self, elements: usize) {
-        record_flatten(FlattenEvent::FullScheduleScan(elements));
     }
 }
 

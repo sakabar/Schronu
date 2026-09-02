@@ -9,7 +9,6 @@ pub mod repository_transaction;
 pub mod schedule_use_case;
 mod scheduled_capacity;
 mod scheduling_instrumentation;
-mod scheduling_metrics;
 mod scheduling_policy;
 pub mod task_use_case;
 mod task_view;
