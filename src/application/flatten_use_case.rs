@@ -7,6 +7,7 @@ use super::schedule_use_case::{
     build_schedule_context_with_metrics, get_schedule_from_context_with_overrides_and_metrics,
     ScheduledTaskView,
 };
+use super::scheduled_capacity::scheduled_capacity_seconds;
 use super::scheduling_metrics::FlattenMetrics;
 use super::task_use_case::ApplicationError;
 use crate::entity::datetime::LogicalDateTimePolicy;
@@ -30,6 +31,7 @@ pub struct FlattenedTask {
 
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub enum UnresolvedReason {
+    FixedStart,
     OnOtherSide,
     CrossesLogicalDate,
     ExceedsDailyCapacity,
@@ -74,6 +76,7 @@ struct FlattenCandidate {
     total_work_seconds: i64,
     is_on_other_side: bool,
     all_work_is_on_overload_date: bool,
+    fixed_start: bool,
 }
 
 pub fn flatten_tasks(
@@ -225,6 +228,21 @@ fn flatten_tasks_with_end_of_day_offset_minutes_and_metrics(
                 }
             }
             let trial_schedule = trial_schedule_result?;
+            let trial_scheduled_start = trial_schedule
+                .iter()
+                .filter(|scheduled| scheduled.task.id == candidate.task_id)
+                .map(|scheduled| scheduled.scheduled_start)
+                .min();
+            let made_progress = trial_scheduled_start.is_some_and(|scheduled_start| {
+                scheduled_start >= target_datetime && scheduled_start > candidate.scheduled_start
+            });
+            if !made_progress {
+                // targetとの完全一致ではなく実際の後方移動をprogressとする。先行予約で
+                // 07:00等へずれる正常配置は受け入れ、同一scheduleへ戻るloopだけを防ぐ。
+                // fixedはprecheck済みなので、非fixedの進捗不能は一般理由として報告する。
+                rejected.push((candidate, UnresolvedReason::Other));
+                continue;
+            }
             if introduces_deadline_violation(&schedule, &trial_schedule, metrics) {
                 rejected.push((candidate, UnresolvedReason::RelatedDeadline));
                 continue;
@@ -342,7 +360,9 @@ fn collect_candidates(
         let Some(first) = segments.first().copied() else {
             continue;
         };
-        if first.total_work_seconds <= 0 {
+        // 通常のzero-work taskは延期対象外だが、fixedは予約容量だけで過負荷を作る。
+        // 候補へ残してFixedStart理由と代表taskを未解決結果へ伝える。
+        if first.total_work_seconds <= 0 && !first.task.fixed_start {
             continue;
         }
         let segment_dates = segments
@@ -379,6 +399,7 @@ fn collect_candidates(
             total_work_seconds: first.total_work_seconds,
             is_on_other_side: first.task.is_on_other_side,
             all_work_is_on_overload_date,
+            fixed_start: first.task.fixed_start,
         });
     }
     Ok(candidates)
@@ -388,7 +409,9 @@ fn candidate_precheck_reason(
     candidate: &FlattenCandidate,
     maximum_daily_capacity: i64,
 ) -> Option<UnresolvedReason> {
-    if candidate.is_on_other_side {
+    if candidate.fixed_start {
+        Some(UnresolvedReason::FixedStart)
+    } else if candidate.is_on_other_side {
         Some(UnresolvedReason::OnOtherSide)
     } else if !candidate.all_work_is_on_overload_date {
         Some(UnresolvedReason::CrossesLogicalDate)
@@ -465,6 +488,7 @@ fn summarize_unresolved_overload(
 ) -> UnresolvedOverload {
     let mut summaries = Vec::<UnresolvedReasonSummary>::new();
     for reason in [
+        UnresolvedReason::FixedStart,
         UnresolvedReason::OnOtherSide,
         UnresolvedReason::CrossesLogicalDate,
         UnresolvedReason::ExceedsDailyCapacity,
@@ -514,8 +538,10 @@ fn calculate_scheduled_work_seconds_by_date(
         metrics.record_full_schedule_scan(1);
         add_scheduled_work_seconds_by_date(
             &mut usage,
+            scheduled.task.fixed_start,
             scheduled.scheduled_start,
             scheduled.scheduled_end,
+            scheduled.scheduled_work_seconds,
         )?;
     }
     Ok(usage)
@@ -523,12 +549,18 @@ fn calculate_scheduled_work_seconds_by_date(
 
 fn add_scheduled_work_seconds_by_date(
     scheduled_work_seconds_by_date: &mut HashMap<NaiveDate, i64>,
+    fixed_start: bool,
     scheduled_start: DateTime<Local>,
     scheduled_end: DateTime<Local>,
+    scheduled_work_seconds: i64,
 ) -> Result<(), ApplicationError> {
     let date = try_logical_date(scheduled_start)?;
-    *scheduled_work_seconds_by_date.entry(date).or_default() +=
-        (scheduled_end - scheduled_start).num_seconds();
+    *scheduled_work_seconds_by_date.entry(date).or_default() += scheduled_capacity_seconds(
+        fixed_start,
+        scheduled_start,
+        scheduled_end,
+        scheduled_work_seconds,
+    );
     Ok(())
 }
 
@@ -536,7 +568,157 @@ fn add_scheduled_work_seconds_by_date(
 mod tests {
     use super::*;
     use crate::test_support::{new_task_handle, TestFreeTimeManager, TestTaskRepository};
-    use chrono::FixedOffset;
+    use chrono::{FixedOffset, TimeZone};
+
+    #[test]
+    fn 平はdeadlineなしfixed予定を延期候補にせず未解決理由を返す() {
+        let now = Local.with_ymd_and_hms(2026, 8, 11, 12, 0, 0).unwrap();
+        let task = new_task_handle("fixed-overload").unwrap();
+        task.sync_clock(now).unwrap();
+        task.set_start_time(now).unwrap();
+        task.set_estimated_work_seconds(60 * 60).unwrap();
+        task.set_fixed_start(true).unwrap();
+        let task_id = task.get_id().unwrap();
+        let repository = TestTaskRepository::new(vec![task], now);
+        let mut free_time_manager = TestFreeTimeManager::new(0);
+
+        let result = flatten_tasks(&repository, &mut free_time_manager).unwrap();
+
+        assert!(result.flattened_tasks.is_empty());
+        assert_eq!(result.unresolved_overloads.len(), 1);
+        let reason = &result.unresolved_overloads[0].reasons[0];
+        assert_eq!(format!("{:?}", reason.reason), "FixedStart");
+        assert_eq!(reason.representative_task_id, Some(task_id));
+    }
+
+    #[test]
+    fn fixedの日次使用量はscheduled_work_secondsでなく予約区間を集計する() {
+        let start = Local.with_ymd_and_hms(2026, 8, 11, 12, 0, 0).unwrap();
+        let mut usage = HashMap::new();
+
+        add_scheduled_work_seconds_by_date(
+            &mut usage,
+            true,
+            start,
+            start + Duration::hours(1),
+            15 * 60,
+        )
+        .unwrap();
+
+        assert_eq!(
+            usage.get(&try_logical_date(start).unwrap()),
+            Some(&(60 * 60))
+        );
+    }
+
+    #[test]
+    fn 平はpartly_doneとzero_workのfixed予約全体を日次容量へ計上する() {
+        let now = Local.with_ymd_and_hms(2026, 8, 11, 12, 0, 0).unwrap();
+
+        for actual_work_seconds in [45 * 60, 60 * 60] {
+            let task = new_task_handle("fixed-reservation").unwrap();
+            task.sync_clock(now).unwrap();
+            task.set_start_time(now).unwrap();
+            task.set_estimated_work_seconds(60 * 60).unwrap();
+            task.set_actual_work_seconds(actual_work_seconds).unwrap();
+            task.set_fixed_start(true).unwrap();
+            let repository = TestTaskRepository::new(vec![task], now);
+            let mut free_time_manager = TestFreeTimeManager::new(30);
+
+            let result = flatten_tasks(&repository, &mut free_time_manager).unwrap();
+
+            assert!(result.had_overload, "actual={actual_work_seconds}");
+            assert_eq!(result.unresolved_overloads.len(), 1);
+            assert_eq!(result.unresolved_overloads[0].excess_work_seconds, 30 * 60);
+        }
+    }
+
+    #[test]
+    fn 平はzero_work_fixedを固定理由と代表task付きで報告する() {
+        let now = Local.with_ymd_and_hms(2026, 8, 11, 12, 0, 0).unwrap();
+        let task = new_task_handle("zero-fixed").unwrap();
+        task.sync_clock(now).unwrap();
+        task.set_start_time(now).unwrap();
+        task.set_estimated_work_seconds(60 * 60).unwrap();
+        task.set_actual_work_seconds(60 * 60).unwrap();
+        task.set_fixed_start(true).unwrap();
+        let task_id = task.get_id().unwrap();
+        let repository = TestTaskRepository::new(vec![task], now);
+        let mut free_time_manager = TestFreeTimeManager::new(30);
+
+        let result = flatten_tasks(&repository, &mut free_time_manager).unwrap();
+        let reason = &result.unresolved_overloads[0].reasons[0];
+
+        assert_eq!(reason.reason, UnresolvedReason::FixedStart);
+        assert_eq!(reason.representative_task_id, Some(task_id));
+        assert_eq!(
+            reason.representative_task_name.as_deref(),
+            Some("zero-fixed")
+        );
+    }
+
+    #[test]
+    fn 平は重複fixed予約を個別加算して過負荷を可視化する() {
+        let now = Local.with_ymd_and_hms(2026, 8, 11, 12, 0, 0).unwrap();
+        let first = new_task_handle("fixed-first").unwrap();
+        first.sync_clock(now).unwrap();
+        first.set_start_time(now).unwrap();
+        first.set_estimated_work_seconds(60 * 60).unwrap();
+        first.set_fixed_start(true).unwrap();
+        let second = new_task_handle("fixed-second").unwrap();
+        second.sync_clock(now).unwrap();
+        second.set_start_time(now + Duration::minutes(30)).unwrap();
+        second.set_estimated_work_seconds(60 * 60).unwrap();
+        second.set_fixed_start(true).unwrap();
+        let repository = TestTaskRepository::new(vec![first, second], now);
+        let mut free_time_manager = TestFreeTimeManager::new(90);
+
+        let result = flatten_tasks(&repository, &mut free_time_manager).unwrap();
+
+        assert!(result.had_overload);
+        assert_eq!(result.unresolved_overloads[0].excess_work_seconds, 30 * 60);
+        assert_eq!(
+            result.unresolved_overloads[0].reasons[0].reason,
+            UnresolvedReason::FixedStart
+        );
+        assert_eq!(result.unresolved_overloads[0].reasons[0].task_count, 2);
+    }
+
+    #[test]
+    fn 平は延期先logical_day_startの先行fixed予定後へ移動する() {
+        let now = Local.with_ymd_and_hms(2026, 8, 11, 12, 0, 0).unwrap();
+        let source_fixed = new_task_handle("source-fixed").unwrap();
+        source_fixed.sync_clock(now).unwrap();
+        source_fixed.set_start_time(now).unwrap();
+        source_fixed
+            .set_estimated_work_seconds(2 * 60 * 60)
+            .unwrap();
+        source_fixed.set_fixed_start(true).unwrap();
+        let flexible = new_task_handle("flexible").unwrap();
+        flexible.sync_clock(now).unwrap();
+        flexible.set_start_time(now).unwrap();
+        flexible.set_estimated_work_seconds(60 * 60).unwrap();
+        let flexible_id = flexible.get_id().unwrap();
+        let target_start = Local.with_ymd_and_hms(2026, 8, 12, 6, 0, 0).unwrap();
+        let target_fixed = new_task_handle("target-fixed").unwrap();
+        target_fixed.sync_clock(now).unwrap();
+        target_fixed.set_start_time(target_start).unwrap();
+        target_fixed.set_estimated_work_seconds(60 * 60).unwrap();
+        target_fixed.set_fixed_start(true).unwrap();
+        let repository =
+            TestTaskRepository::new(vec![source_fixed, flexible.clone(), target_fixed], now);
+        let mut free_time_manager = TestFreeTimeManager::new(2 * 60);
+
+        let result = flatten_tasks(&repository, &mut free_time_manager).unwrap();
+
+        assert_eq!(result.flattened_tasks.len(), 1);
+        assert_eq!(result.flattened_tasks[0].task_id, flexible_id);
+        assert_eq!(
+            result.flattened_tasks[0].target_date,
+            NaiveDate::from_ymd_opt(2026, 8, 12).unwrap()
+        );
+        assert_eq!(flexible.get_pending_until().unwrap(), target_start);
+    }
 
     #[test]
     fn flatten_tasksはoperation時刻のlogical_date計算不能を伝搬しtaskを変更しない() {

@@ -58,6 +58,197 @@ impl SchedulingFixture {
         }
         Ok(digest.finish())
     }
+
+    #[allow(dead_code)]
+    pub fn distinct_deadlines(count: usize) -> Result<Self, TaskTreeError> {
+        let now = fixed_now();
+        let mut sequence = 0_u64;
+        let mut projects = Vec::with_capacity(count);
+        for index in 0..count {
+            let task = new_task(
+                &format!("fixture-project-distinct-deadline-{index:04}"),
+                &mut sequence,
+                now,
+                Status::Todo,
+            )?;
+            task.set_estimated_work_seconds(60)?;
+            task.set_deadline_time_opt(Some(
+                now + Duration::seconds((count + index + 1) as i64 * 60),
+            ))?;
+            projects.push(task);
+        }
+        Ok(Self {
+            projects,
+            now,
+            seed: TYPICAL_SEED,
+        })
+    }
+
+    #[allow(dead_code)]
+    pub fn stress_flatten() -> Result<Self, TaskTreeError> {
+        let mut fixture = build_profile(4, STRESS_SEED)?;
+        let mut sequence = fixture.summary()?.tasks as u64;
+        // 同じ16時間windowを重ね、stress規模を保ったまま1 logical dayの使用量を
+        // 容量超過にする。flexible taskを残すためflattenのcandidate trialも通る。
+        for index in 0..2 {
+            let fixed = new_task(
+                &format!("fixture-project-stress-flatten-fixed-{index}"),
+                &mut sequence,
+                fixture.now,
+                Status::Todo,
+            )?;
+            fixed.set_estimated_work_seconds(16 * 60 * 60)?;
+            fixed.set_fixed_start(true)?;
+            fixture.projects.push(fixed);
+        }
+        let flexible = new_task(
+            "fixture-project-stress-flatten-flexible",
+            &mut sequence,
+            fixture.now,
+            Status::Todo,
+        )?;
+        flexible.set_estimated_work_seconds(10 * 60 * 60)?;
+        fixture.projects.push(flexible);
+        Ok(fixture)
+    }
+
+    #[allow(dead_code)]
+    pub fn atomic_release_adversarial(
+        ready_atomic_count: usize,
+        future_release_count: usize,
+    ) -> Result<Self, TaskTreeError> {
+        let now = fixed_now();
+        let mut sequence = 0_u64;
+        let mut projects = Vec::with_capacity(ready_atomic_count + future_release_count + 1);
+
+        for index in 0..ready_atomic_count {
+            let task = new_task(
+                &format!("fixture-atomic-ready-{index:04}"),
+                &mut sequence,
+                now,
+                Status::Todo,
+            )?;
+            task.set_atomic(true)?;
+            task.set_estimated_work_seconds(8 * 60 * 60)?;
+            task.set_priority((ready_atomic_count - index) as i64)?;
+            projects.push(task);
+        }
+
+        for index in 0..future_release_count {
+            let task = new_task(
+                &format!("fixture-atomic-future-{index:04}"),
+                &mut sequence,
+                now,
+                Status::Todo,
+            )?;
+            task.set_atomic(true)?;
+            task.set_estimated_work_seconds(8 * 60 * 60)?;
+            task.set_priority((ready_atomic_count + future_release_count - index) as i64)?;
+            task.set_start_time(now + Duration::seconds((index + 1) as i64))?;
+            projects.push(task);
+        }
+
+        // 全atomicがこの直前では収まらないようにする。release予測を候補ごとに
+        // 再構築する実装では、同じfuture release列を直積で走査してしまう。
+        let fixed = new_task(
+            "fixture-atomic-fixed-boundary",
+            &mut sequence,
+            now,
+            Status::Todo,
+        )?;
+        fixed.set_start_time(now + Duration::hours(4))?;
+        fixed.set_estimated_work_seconds(60 * 60)?;
+        fixed.set_fixed_start(true)?;
+        projects.push(fixed);
+
+        Ok(Self {
+            projects,
+            now,
+            seed: TYPICAL_SEED,
+        })
+    }
+
+    #[allow(dead_code)]
+    pub fn atomic_release_prediction_adversarial(
+        ready_atomic_count: usize,
+        future_release_count: usize,
+    ) -> Result<Self, TaskTreeError> {
+        assert!(future_release_count >= 2);
+        let now = fixed_now();
+        let mut sequence = 0_u64;
+        let mut projects = Vec::with_capacity(ready_atomic_count + future_release_count);
+
+        for index in 0..ready_atomic_count {
+            let task = new_task(
+                &format!("fixture-prediction-ready-{index:04}"),
+                &mut sequence,
+                now,
+                Status::Todo,
+            )?;
+            task.set_atomic(true)?;
+            task.set_estimated_work_seconds(60 * 60)?;
+            task.set_priority((ready_atomic_count - index) as i64)?;
+            projects.push(task);
+        }
+
+        for index in 0..future_release_count {
+            let task = new_task(
+                &format!("fixture-prediction-future-{index:04}"),
+                &mut sequence,
+                now,
+                Status::Todo,
+            )?;
+            task.set_atomic(true)?;
+            task.set_estimated_work_seconds(60 * 60)?;
+            task.set_start_time(now + Duration::seconds((index + 1) as i64))?;
+            task.set_priority(if index + 1 == future_release_count {
+                10_000
+            } else {
+                -1 - index as i64
+            })?;
+            projects.push(task);
+        }
+
+        Ok(Self {
+            projects,
+            now,
+            seed: STRESS_SEED,
+        })
+    }
+
+    #[allow(dead_code)]
+    pub fn short_fragment_frontier_adversarial(
+        fragment_count: usize,
+    ) -> Result<Self, TaskTreeError> {
+        let now = fixed_now();
+        let mut sequence = 0_u64;
+        let mut projects = Vec::with_capacity(fragment_count + 1);
+
+        let long = new_task("fixture-fragment-long", &mut sequence, now, Status::Todo)?;
+        long.set_estimated_work_seconds((fragment_count as i64 + 1) * 60)?;
+        projects.push(long);
+
+        for index in 0..fragment_count {
+            let task = new_task(
+                &format!("fixture-fragment-release-{index:04}"),
+                &mut sequence,
+                now,
+                Status::Todo,
+            )?;
+            task.set_priority((fragment_count - index) as i64)?;
+            task.set_estimated_work_seconds(60)?;
+            // 1分taskの後に1分gapを残し、長時間taskが次releaseの直前で
+            // 毎回short-fragment判定を通るようにする。
+            task.set_start_time(now + Duration::seconds((index + 1) as i64 * 2 * 60))?;
+            projects.push(task);
+        }
+
+        Ok(Self {
+            projects,
+            now,
+            seed: STRESS_SEED,
+        })
+    }
 }
 
 fn fixed_now() -> DateTime<Local> {

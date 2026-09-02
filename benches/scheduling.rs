@@ -21,6 +21,7 @@ const DAILY_FREE_MINUTES: i64 = 8 * 60;
 const SAMPLE_COUNT: usize = 3;
 const TYPICAL_LIMIT: Duration = Duration::from_millis(500);
 const STRESS_LIMIT: Duration = Duration::from_secs(5);
+const STRESS_FLATTEN_LIMIT: Duration = Duration::from_secs(8);
 
 #[derive(Clone, Copy)]
 enum UseCase {
@@ -220,6 +221,14 @@ fn merge_schedule_metrics(target: &mut ScheduleMetrics, source: ScheduleMetrics)
     target.segment_count += source.segment_count;
     target.occupied_slot_probe_count += source.occupied_slot_probe_count;
     target.dependency_candidate_probe_count += source.dependency_candidate_probe_count;
+    target.selection_event_count += source.selection_event_count;
+    target.selection_candidate_probe_count += source.selection_candidate_probe_count;
+    target.release_candidate_probe_count += source.release_candidate_probe_count;
+    target.atomic_release_cache_probe_count += source.atomic_release_cache_probe_count;
+    target.atomic_release_cache_peak_entry_count = target
+        .atomic_release_cache_peak_entry_count
+        .max(source.atomic_release_cache_peak_entry_count);
+    target.slack_probe_count += source.slack_probe_count;
     target.sort_count += source.sort_count;
     target.schedule_rebuild_count += source.schedule_rebuild_count;
 }
@@ -235,7 +244,12 @@ fn run_flatten(configuration: Configuration) -> Result<(), String> {
     let mut samples = Vec::with_capacity(SAMPLE_COUNT);
     let mut last_output = None;
     for _ in 0..SAMPLE_COUNT {
-        let fixture = SchedulingFixture::build(configuration.size).map_err(|e| e.to_string())?;
+        let fixture = if configuration.size == FixtureSize::Stress {
+            SchedulingFixture::stress_flatten()
+        } else {
+            SchedulingFixture::build(configuration.size)
+        }
+        .map_err(|e| e.to_string())?;
         let repository = SchedulingRepository::new(fixture.projects, fixture.now);
         let mut free_time_manager =
             SchedulingFreeTimeManager::new(FLATTEN_BENCHMARK_CAPACITY_MINUTES);
@@ -268,10 +282,11 @@ fn check_limit(configuration: Configuration, elapsed: Duration) -> Result<(), St
     if !configuration.check_limit {
         return Ok(());
     }
-    let limit = match configuration.size {
-        FixtureSize::Small => return Ok(()),
-        FixtureSize::Typical => TYPICAL_LIMIT,
-        FixtureSize::Stress => STRESS_LIMIT,
+    let limit = match (configuration.size, configuration.use_case) {
+        (FixtureSize::Small, _) => return Ok(()),
+        (FixtureSize::Typical, _) => TYPICAL_LIMIT,
+        (FixtureSize::Stress, UseCase::Flatten) => STRESS_FLATTEN_LIMIT,
+        (FixtureSize::Stress, _) => STRESS_LIMIT,
     };
     if elapsed <= limit {
         Ok(())

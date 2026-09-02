@@ -16,6 +16,7 @@ use schronu::application::benchmarking::{
 use schronu::application::flatten_use_case::flatten_tasks;
 use schronu::application::pack_use_case::pack_tasks;
 use schronu::application::schedule_use_case::get_schedule;
+use std::time::{Duration, Instant};
 
 const DAILY_FREE_MINUTES: i64 = 8 * 60;
 
@@ -49,8 +50,12 @@ fn schedule診断は通常経路と同じ結果を返し内部処理を計数す
     assert_eq!(metrics.schedule_rebuild_count, 1);
     assert!(metrics.candidate_count > 0);
     assert!(metrics.dependency_candidate_probe_count > 0);
+    assert!(metrics.selection_event_count > 0);
+    assert!(metrics.selection_candidate_probe_count > 0);
+    assert!(metrics.release_candidate_probe_count > 0);
+    assert!(metrics.slack_probe_count > 0);
     assert_eq!(metrics.segment_count, actual.len());
-    assert!(metrics.sort_count >= 3);
+    assert_eq!(metrics.sort_count, 2);
 }
 
 #[test]
@@ -61,7 +66,8 @@ fn typical_scheduleはslot探索とsortの上限内に収まる() {
     let (_, metrics) = get_schedule_diagnostics(&repository).unwrap();
 
     assert_eq!(metrics.candidate_count, 1_755);
-    assert_eq!(metrics.segment_count, 1_762);
+    // fixed windowとslack/実preemption境界による15分超のfragment分割を含む出力を固定する。
+    assert_eq!(metrics.segment_count, 1_768);
     assert_eq!(metrics.schedule_rebuild_count, 1);
     assert!(
         metrics.occupied_slot_probe_count <= 100_000,
@@ -69,9 +75,224 @@ fn typical_scheduleはslot探索とsortの上限内に収まる() {
         metrics.occupied_slot_probe_count
     );
     assert!(
-        metrics.sort_count <= 4,
+        metrics.sort_count == 2,
         "sorts exceeded the deterministic limit: {}",
         metrics.sort_count
+    );
+}
+
+#[test]
+fn distinct_deadline_scheduleはdeadline_groupを対数探索する() {
+    const CANDIDATE_COUNT: usize = 512;
+    let fixture = SchedulingFixture::distinct_deadlines(CANDIDATE_COUNT).unwrap();
+    let repository = SchedulingRepository::new(fixture.projects, fixture.now);
+
+    let (schedule, metrics) = get_schedule_diagnostics(&repository).unwrap();
+
+    assert_eq!(metrics.candidate_count, CANDIDATE_COUNT);
+    assert_eq!(schedule.len(), CANDIDATE_COUNT);
+    assert!(metrics.selection_event_count >= CANDIDATE_COUNT);
+    assert!(
+        metrics.slack_probe_count <= CANDIDATE_COUNT * 128,
+        "distinct deadline probes exceeded the logarithmic index limit: {} > {}",
+        metrics.slack_probe_count,
+        CANDIDATE_COUNT * 128
+    );
+}
+
+#[test]
+fn atomic_release探索はready候補とfuture_releaseの直積にならない() {
+    const READY_ATOMIC_COUNT: usize = 32;
+    const FUTURE_RELEASE_COUNT: usize = 32;
+    let fixture =
+        SchedulingFixture::atomic_release_adversarial(READY_ATOMIC_COUNT, FUTURE_RELEASE_COUNT)
+            .unwrap();
+    let now = fixture.now;
+    let repository = SchedulingRepository::new(fixture.projects, fixture.now);
+
+    let started = Instant::now();
+    let (schedule, metrics) = get_schedule_diagnostics(&repository).unwrap();
+    let elapsed = started.elapsed();
+    let candidate_count = READY_ATOMIC_COUNT + FUTURE_RELEASE_COUNT;
+
+    assert!(
+        metrics.release_candidate_probe_count <= candidate_count * 4,
+        "atomic release probes exceeded the linear limit: {} > {}",
+        metrics.release_candidate_probe_count,
+        candidate_count * 4
+    );
+    assert!(
+        elapsed <= Duration::from_secs(2),
+        "atomic release adversarial fixture exceeded wall limit: {elapsed:?}"
+    );
+    assert_eq!(schedule.len(), candidate_count + 1);
+    assert_eq!(
+        schedule
+            .iter()
+            .map(|task| task.scheduled_work_seconds)
+            .sum::<i64>(),
+        candidate_count as i64 * 8 * 60 * 60 + 60 * 60
+    );
+    let fixed = schedule
+        .iter()
+        .find(|task| task.task.fixed_start)
+        .expect("the adversarial fixture contains one fixed boundary");
+    assert_eq!(fixed.scheduled_start, now + chrono::Duration::hours(4));
+    assert_eq!(fixed.scheduled_end, now + chrono::Duration::hours(5));
+    assert!(
+        schedule
+            .iter()
+            .filter(|task| !task.task.fixed_start)
+            .all(|task| task.scheduled_start >= fixed.scheduled_end),
+        "atomic work must not be lost or placed across the fixed boundary"
+    );
+}
+
+#[test]
+fn atomic候補間でrelease予測を共有する() {
+    const READY_ATOMIC_COUNT: usize = 64;
+    const FUTURE_RELEASE_COUNT: usize = 32;
+    let fixture = SchedulingFixture::atomic_release_prediction_adversarial(
+        READY_ATOMIC_COUNT,
+        FUTURE_RELEASE_COUNT,
+    )
+    .unwrap();
+    let now = fixture.now;
+    let repository = SchedulingRepository::new(fixture.projects, fixture.now);
+
+    let started = Instant::now();
+    let (schedule, metrics) = get_schedule_diagnostics(&repository).unwrap();
+    let elapsed = started.elapsed();
+    let candidate_count = READY_ATOMIC_COUNT + FUTURE_RELEASE_COUNT;
+    let probe_limit = candidate_count * 12;
+
+    assert!(
+        metrics.release_candidate_probe_count <= probe_limit,
+        "atomic prediction probes exceeded the shared-timeline limit: {} > {}",
+        metrics.release_candidate_probe_count,
+        probe_limit
+    );
+    assert!(
+        elapsed <= Duration::from_secs(2),
+        "atomic prediction adversarial fixture exceeded wall limit: {elapsed:?}"
+    );
+    assert_eq!(schedule.len(), candidate_count);
+    assert_eq!(
+        schedule
+            .iter()
+            .map(|task| task.scheduled_work_seconds)
+            .sum::<i64>(),
+        candidate_count as i64 * 60 * 60
+    );
+    let preemptor = schedule
+        .iter()
+        .find(|task| task.task.name == "fixture-prediction-future-0031")
+        .expect("the last future release is the common preemptor");
+    assert_eq!(
+        preemptor.scheduled_start,
+        now + chrono::Duration::seconds(FUTURE_RELEASE_COUNT as i64)
+    );
+}
+
+#[test]
+fn atomic_release予測をevent間で再利用する() {
+    let measure = |ready_atomic_count, future_release_count| {
+        let fixture = SchedulingFixture::atomic_release_prediction_adversarial(
+            ready_atomic_count,
+            future_release_count,
+        )
+        .unwrap();
+        let repository = SchedulingRepository::new(fixture.projects, fixture.now);
+        let started = Instant::now();
+        let metrics = get_schedule_diagnostics(&repository).unwrap().1;
+        (metrics, started.elapsed())
+    };
+
+    let (small_metrics, _) = measure(64, 32);
+    let (large_metrics, large_elapsed) = measure(256, 128);
+    let small_probes = small_metrics.release_candidate_probe_count;
+    let large_probes = large_metrics.release_candidate_probe_count;
+    let large_candidate_count = 256 + 128;
+
+    assert!(
+        large_probes <= small_probes * 6,
+        "event-scale release probes grew faster than the input: {large_probes} > {}",
+        small_probes * 6
+    );
+    assert!(
+        large_probes <= large_candidate_count * 12,
+        "large event-scale release probes exceeded the linear limit: {large_probes} > {}",
+        large_candidate_count * 12
+    );
+    assert_eq!(small_metrics.atomic_release_cache_peak_entry_count, 1);
+    assert_eq!(large_metrics.atomic_release_cache_peak_entry_count, 1);
+    assert!(small_metrics.atomic_release_cache_probe_count > 0);
+    assert!(
+        large_metrics.atomic_release_cache_probe_count
+            <= small_metrics.atomic_release_cache_probe_count * 6,
+        "event-scale cache probes grew faster than the input: {} > {}",
+        large_metrics.atomic_release_cache_probe_count,
+        small_metrics.atomic_release_cache_probe_count * 6
+    );
+    assert!(
+        large_metrics.atomic_release_cache_probe_count <= large_candidate_count * 12,
+        "large event-scale cache probes exceeded the linear limit: {} > {}",
+        large_metrics.atomic_release_cache_probe_count,
+        large_candidate_count * 12
+    );
+    assert!(
+        large_metrics.atomic_release_cache_probe_count
+            <= large_metrics.selection_candidate_probe_count
+                + large_metrics.selection_event_count * 2,
+        "cache bookkeeping exceeded candidate/event work: {} > {}",
+        large_metrics.atomic_release_cache_probe_count,
+        large_metrics.selection_candidate_probe_count + large_metrics.selection_event_count * 2
+    );
+    assert!(
+        large_elapsed <= Duration::from_secs(2),
+        "large event-scale fixture exceeded wall limit: {large_elapsed:?}"
+    );
+}
+
+#[test]
+fn 短fragment判定はfrontier全体を複製しない() {
+    const FRAGMENT_COUNT: usize = 128;
+    let fixture = SchedulingFixture::short_fragment_frontier_adversarial(FRAGMENT_COUNT).unwrap();
+    let now = fixture.now;
+    let repository = SchedulingRepository::new(fixture.projects, fixture.now);
+
+    let started = Instant::now();
+    let (schedule, _) = get_schedule_diagnostics(&repository).unwrap();
+    let elapsed = started.elapsed();
+
+    assert_eq!(schedule.len(), FRAGMENT_COUNT + 1);
+    assert_eq!(
+        schedule
+            .iter()
+            .map(|task| task.scheduled_work_seconds)
+            .sum::<i64>(),
+        (FRAGMENT_COUNT as i64 * 2 + 1) * 60,
+        "speculative promotion must neither lose nor duplicate work"
+    );
+    assert!(
+        schedule
+            .iter()
+            .filter(|task| task.task.name.starts_with("fixture-fragment-release-"))
+            .all(|task| task.scheduled_start == task.first_available_time),
+        "each released high-priority task must be selected at its release"
+    );
+    let long = schedule
+        .iter()
+        .find(|task| task.task.name == "fixture-fragment-long")
+        .expect("the adversarial fixture contains the long task");
+    assert_eq!(
+        long.scheduled_start,
+        now + chrono::Duration::seconds(FRAGMENT_COUNT as i64 * 2 * 60 + 60),
+        "restored releases must be promoted exactly once before the long task"
+    );
+    assert!(
+        elapsed <= Duration::from_secs(2),
+        "short fragment adversarial fixture exceeded wall limit: {elapsed:?}"
     );
 }
 
@@ -162,6 +383,32 @@ fn flatten診断は通常経路と同じ結果を返しschedule走査を計数�
 }
 
 #[test]
+fn flatten性能契約は専用過負荷fixtureで移動経路を実行する() {
+    let repository = small_repository();
+    let mut constrained_free_time = SchedulingFreeTimeManager::new(15);
+
+    let (result, metrics) =
+        flatten_tasks_diagnostics(&repository, &mut constrained_free_time).unwrap();
+
+    assert!(metrics.overload_iteration_count > 0);
+    assert!(metrics.candidate_trial_count > 0);
+    assert!(!result.flattened_tasks.is_empty() || !result.unresolved_overloads.is_empty());
+}
+
+#[test]
+fn stress_flattenはstress規模の過負荷経路を実行する() {
+    let fixture = SchedulingFixture::stress_flatten().unwrap();
+    assert!(fixture.summary().unwrap().tasks >= 105_512);
+    let repository = SchedulingRepository::new(fixture.projects, fixture.now);
+    let mut free_time = SchedulingFreeTimeManager::new(FLATTEN_BENCHMARK_CAPACITY_MINUTES);
+
+    let (_, metrics) = flatten_tasks_diagnostics(&repository, &mut free_time).unwrap();
+
+    assert!(metrics.overload_iteration_count > 0);
+    assert!(metrics.candidate_trial_count > 0);
+}
+
+#[test]
 fn pack診断はatomic探索の1分前進量を計数する() {
     let repository = small_repository();
     let mut no_free_time = SchedulingFreeTimeManager::without_continuous_free_time(8 * 60);
@@ -184,7 +431,32 @@ fn assert_fixture_counter_bounds(size: FixtureSize) {
     let (_, schedule) = get_schedule_diagnostics(&repository).unwrap();
     assert!(schedule.occupied_slot_probe_count <= schedule.candidate_count * 20);
     assert!(schedule.dependency_candidate_probe_count <= schedule.candidate_count);
-    assert!(schedule.sort_count <= 4);
+    assert_eq!(schedule.sort_count, 2);
+    assert!(
+        schedule.selection_event_count <= schedule.segment_count * 3,
+        "selection events exceeded the per-segment limit: {} > {}",
+        schedule.selection_event_count,
+        schedule.segment_count * 3
+    );
+    assert!(
+        schedule.selection_candidate_probe_count <= schedule.candidate_count * 16,
+        "selection candidate probes exceeded the indexed limit: {} > {}",
+        schedule.selection_candidate_probe_count,
+        schedule.candidate_count * 16
+    );
+    assert!(
+        // atomicの将来release評価も含め、fixture比率上はcandidate当たり32回以内に保つ。
+        schedule.release_candidate_probe_count <= schedule.candidate_count * 32,
+        "release candidate probes exceeded the indexed limit: {} > {}",
+        schedule.release_candidate_probe_count,
+        schedule.candidate_count * 32
+    );
+    assert!(
+        schedule.slack_probe_count <= schedule.candidate_count * 128,
+        "slack probes exceeded the linear input limit: {} > {}",
+        schedule.slack_probe_count,
+        schedule.candidate_count * 128
+    );
 
     let fixture = SchedulingFixture::build(size).unwrap();
     let repository = SchedulingRepository::new(fixture.projects, fixture.now);
@@ -225,7 +497,7 @@ fn assert_fixture_counter_bounds(size: FixtureSize) {
     let repository = SchedulingRepository::new(fixture.projects, fixture.now);
     let mut flatten_free_time = SchedulingFreeTimeManager::new(FLATTEN_BENCHMARK_CAPACITY_MINUTES);
     let (_, flatten) = flatten_tasks_diagnostics(&repository, &mut flatten_free_time).unwrap();
-    assert!(flatten.overload_iteration_count > 0);
+    // 過負荷分岐そのものは専用fixtureで固定し、規模fixtureでは上限だけを測る。
     assert!(flatten.overload_iteration_count <= 64);
     assert!(flatten.candidate_trial_count <= 128);
     assert_eq!(flatten.override_clone_element_count, 0);

@@ -7,7 +7,7 @@ use crate::entity::task::{
 };
 use chrono::LocalResult;
 use chrono::TimeZone;
-use chrono::{DateTime, Local};
+use chrono::{DateTime, Duration, Local};
 use linked_hash_map::LinkedHashMap;
 use std::error::Error;
 use std::fmt;
@@ -57,6 +57,21 @@ fn task_snapshot_to_yaml_recursive(snapshot: &TaskSnapshot, is_project_root: boo
     let atomic = task.get_atomic();
     if atomic != default_attr.get_atomic() {
         task_hash.insert(Yaml::String(String::from("atomic")), Yaml::Boolean(atomic));
+    }
+
+    let fixed_start = task.get_fixed_start();
+    if fixed_start
+        || matches_legacy_fixed_start_shape(
+            *task.get_start_time(),
+            *task.get_deadline_time_opt(),
+            task.get_estimated_work_seconds(),
+        )
+    {
+        // 旧判定式に一致するfalseは省略すると、次回読込時にtrueへ戻ってしまう。
+        task_hash.insert(
+            Yaml::String(String::from("fixed_start")),
+            Yaml::Boolean(fixed_start),
+        );
     }
 
     let pending_until = task.get_pending_until();
@@ -263,6 +278,16 @@ fn yaml_field<'a>(yaml: &'a Yaml, key: &str) -> Option<&'a Yaml> {
     yaml.as_hash()?.get(&Yaml::String(key.to_string()))
 }
 
+fn matches_legacy_fixed_start_shape(
+    start_time: DateTime<Local>,
+    deadline_time: Option<DateTime<Local>>,
+    estimated_work_seconds: i64,
+) -> bool {
+    Duration::try_seconds(estimated_work_seconds)
+        .and_then(|duration| start_time.checked_add_signed(duration))
+        .is_some_and(|expected_deadline| deadline_time == Some(expected_deadline))
+}
+
 fn strict_error(path: &str, field: &str, reason: &str) -> YamlConversionError {
     YamlConversionError::at(path, field, reason)
 }
@@ -440,6 +465,19 @@ fn yaml_to_task_strict(
     task.set_deadline_time_opt(optional_datetime("deadline_time")?)
         .map_err(map_task_tree_error)?;
     task.set_estimated_work_seconds(nonnegative("estimated_work_seconds", 900)?)
+        .map_err(map_task_tree_error)?;
+    let fixed_start = match yaml_field(yaml, "fixed_start") {
+        Some(value) => value
+            .as_bool()
+            .ok_or_else(|| strict_error(path, "fixed_start", "must be a boolean"))?,
+        None => matches_legacy_fixed_start_shape(
+            task.get_start_time().map_err(map_task_tree_error)?,
+            task.get_deadline_time_opt().map_err(map_task_tree_error)?,
+            task.get_estimated_work_seconds()
+                .map_err(map_task_tree_error)?,
+        ),
+    };
+    task.set_fixed_start(fixed_start)
         .map_err(map_task_tree_error)?;
     task.set_actual_work_seconds(nonnegative("actual_work_seconds", 0)?)
         .map_err(map_task_tree_error)?;

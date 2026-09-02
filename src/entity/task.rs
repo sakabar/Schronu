@@ -318,6 +318,7 @@ pub struct TaskAttr {
     status: Status, // 評価後のステータス。pendingはpending_untilを加味して評価され、Todo扱いとなる
     is_on_other_side: bool, // 相手ボールか?
     atomic: bool,   // 分割できないタスクか?
+    fixed_start: bool, // 開始時刻をスケジューラが動かしてはならないか?
     pending_until: DateTime<Local>,
     last_synced_time: DateTime<Local>,
 
@@ -347,6 +348,7 @@ impl PartialEq for TaskAttr {
             && self.status == other.status
             && self.is_on_other_side == other.is_on_other_side
             && self.atomic == other.atomic
+            && self.fixed_start == other.fixed_start
             && self.pending_until == other.pending_until
             && self.last_synced_time == other.last_synced_time
             && self.priority == other.priority
@@ -408,6 +410,7 @@ impl TaskAttr {
             status: Status::Todo,
             is_on_other_side: false,
             atomic: false,
+            fixed_start: false,
             pending_until: DateTime::<Local>::MIN_UTC.into(),
             last_synced_time: DateTime::<Local>::MIN_UTC.into(),
             priority: 0,
@@ -507,6 +510,14 @@ impl TaskAttr {
 
     pub fn set_atomic(&mut self, atomic: bool) {
         self.atomic = atomic;
+    }
+
+    pub fn get_fixed_start(&self) -> bool {
+        self.fixed_start
+    }
+
+    pub fn set_fixed_start(&mut self, fixed_start: bool) {
+        self.fixed_start = fixed_start;
     }
 
     // 時刻を入力し、その時刻を用いてpending判定を行う。
@@ -994,6 +1005,24 @@ impl TaskHandle {
         })
     }
 
+    pub fn get_fixed_start(&self) -> Result<bool, TaskTreeError> {
+        self.node
+            .try_borrow_data()
+            .map(|attr| attr.get_fixed_start())
+            .map_err(|_| TaskTreeError::Borrow)
+    }
+
+    pub fn set_fixed_start(&self, fixed_start: bool) -> Result<(), TaskTreeError> {
+        self.update(|attr| {
+            if attr.get_fixed_start() == fixed_start {
+                false
+            } else {
+                attr.set_fixed_start(fixed_start);
+                true
+            }
+        })
+    }
+
     pub fn set_pending_until(&self, pending_until: DateTime<Local>) -> Result<(), TaskTreeError> {
         self.update(|attr| {
             let before = *attr.get_pending_until();
@@ -1067,6 +1096,32 @@ impl TaskHandle {
             let before = (*attr.get_start_time(), *attr.get_pending_until());
             attr.set_start_time(start_time);
             before != (*attr.get_start_time(), *attr.get_pending_until())
+        })
+    }
+
+    /// Sets a movable start time in one persistent mutation.
+    ///
+    /// A start set through the `始` command is an availability constraint, not an
+    /// appointment. Updating both fields together prevents a failed second write from
+    /// leaving a task with a new start time that is still fixed.
+    pub fn set_flexible_start_time(
+        &self,
+        start_time: DateTime<Local>,
+    ) -> Result<(), TaskTreeError> {
+        self.update(|attr| {
+            let before = (
+                *attr.get_start_time(),
+                *attr.get_pending_until(),
+                attr.get_fixed_start(),
+            );
+            attr.set_start_time(start_time);
+            attr.set_fixed_start(false);
+            before
+                != (
+                    *attr.get_start_time(),
+                    *attr.get_pending_until(),
+                    attr.get_fixed_start(),
+                )
         })
     }
 
@@ -1343,13 +1398,25 @@ impl TaskHandle {
         &self,
         appointment_start_time: DateTime<Local>,
     ) -> Result<(), TaskTreeError> {
-        // 〆切については、子タスク全体に掛かるようにする
         let deadline_time =
             appointment_start_time + Duration::seconds(self.get_estimated_work_seconds()?);
 
         let root = self.root()?;
+        let is_done = self.get_status()? == Status::Done;
         let mut deadline_updates = Vec::new();
-        self.collect_deadline_updates(Some(deadline_time), Some(None), &mut deadline_updates)?;
+        // 完了済みtaskを境界としてdeadline伝搬を止める既存の不変条件を守る。
+        if !is_done {
+            for child in self.node.children() {
+                Self { node: child }.collect_deadline_updates(
+                    Some(deadline_time),
+                    None,
+                    &mut deadline_updates,
+                )?;
+            }
+        }
+
+        // Every borrow is checked before the first write. This makes the appointment
+        // fields and descendant deadline propagation a single all-or-nothing mutation.
         root.node
             .try_borrow_data_mut()
             .map_err(|_| TaskTreeError::Borrow)?;
@@ -1361,10 +1428,39 @@ impl TaskHandle {
                 .map_err(|_| TaskTreeError::Borrow)?;
         }
 
-        self.unset_deadline_time_opt()?;
-        self.set_deadline_time_opt(Some(deadline_time))?;
+        for (node, deadline) in &deadline_updates {
+            node.try_borrow_data_mut()
+                .map_err(|_| TaskTreeError::Borrow)?
+                .set_deadline_time_opt(Some(*deadline));
+        }
+        let mut attr = self
+            .node
+            .try_borrow_data_mut()
+            .map_err(|_| TaskTreeError::Borrow)?;
+        let before = (
+            *attr.get_start_time(),
+            *attr.get_pending_until(),
+            *attr.get_deadline_time_opt(),
+            attr.get_fixed_start(),
+        );
+        // 完了済みtaskは旧約実装と同じく自己deadlineを解除したままにする。
+        attr.set_deadline_time_opt((!is_done).then_some(deadline_time));
+        attr.set_start_time(appointment_start_time);
+        attr.set_fixed_start(true);
+        let changed = !deadline_updates.is_empty()
+            || before
+                != (
+                    *attr.get_start_time(),
+                    *attr.get_pending_until(),
+                    *attr.get_deadline_time_opt(),
+                    attr.get_fixed_start(),
+                );
+        drop(attr);
 
-        self.set_start_time(appointment_start_time)
+        if changed {
+            root.mark_persistent_mutation()?;
+        }
+        Ok(())
     }
 
     pub fn num_children(&self) -> Result<usize, TaskTreeError> {
