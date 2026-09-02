@@ -4,11 +4,10 @@ use super::daily_capacity::{
 };
 use super::interface::{FreeTimeManagerTrait, TaskRepositoryTrait};
 use super::schedule_use_case::{
-    build_schedule_context_with_metrics, get_schedule_from_context_with_overrides_and_metrics,
-    ScheduledTaskView,
+    build_schedule_context, get_schedule_from_context_with_overrides, ScheduledTaskView,
 };
 use super::scheduled_capacity::scheduled_capacity_seconds;
-use super::scheduling_metrics::FlattenMetrics;
+use super::scheduling_instrumentation::{record_flatten, FlattenEvent};
 use super::task_use_case::ApplicationError;
 use crate::entity::datetime::LogicalDateTimePolicy;
 use crate::entity::task::Status;
@@ -95,33 +94,17 @@ pub fn flatten_tasks_with_end_of_day_offset_minutes(
     free_time_manager: &mut dyn FreeTimeManagerTrait,
     end_of_day_offset_minutes: i64,
 ) -> Result<FlattenResult, ApplicationError> {
-    flatten_tasks_with_end_of_day_offset_minutes_and_metrics(
+    flatten_tasks_with_end_of_day_offset_minutes_internal(
         repository,
         free_time_manager,
         end_of_day_offset_minutes,
-        &mut FlattenMetrics::default(),
     )
 }
 
-#[cfg(feature = "benchmarking")]
-pub(crate) fn flatten_tasks_with_metrics(
-    repository: &dyn TaskRepositoryTrait,
-    free_time_manager: &mut dyn FreeTimeManagerTrait,
-    metrics: &mut FlattenMetrics,
-) -> Result<FlattenResult, ApplicationError> {
-    flatten_tasks_with_end_of_day_offset_minutes_and_metrics(
-        repository,
-        free_time_manager,
-        END_OF_DAY_OFFSET_MINUTES,
-        metrics,
-    )
-}
-
-fn flatten_tasks_with_end_of_day_offset_minutes_and_metrics(
+fn flatten_tasks_with_end_of_day_offset_minutes_internal(
     repository: &dyn TaskRepositoryTrait,
     free_time_manager: &mut dyn FreeTimeManagerTrait,
     end_of_day_offset_minutes: i64,
-    metrics: &mut FlattenMetrics,
 ) -> Result<FlattenResult, ApplicationError> {
     let operation_datetime = repository.get_last_synced_time();
     let today = try_logical_date(operation_datetime)?;
@@ -153,13 +136,10 @@ fn flatten_tasks_with_end_of_day_offset_minutes_and_metrics(
         })
         .collect::<Result<HashMap<_, _>, ApplicationError>>()?;
     let maximum_daily_capacity = capacities.values().copied().max().unwrap_or(0);
-    let schedule_context = build_schedule_context_with_metrics(repository, &mut metrics.schedule)?;
-    let initial_schedule = get_schedule_from_context_with_overrides_and_metrics(
-        &schedule_context,
-        &HashMap::new(),
-        &mut metrics.schedule,
-    )?;
-    let original_task_details = collect_original_task_details(&initial_schedule, metrics)?;
+    let schedule_context = build_schedule_context(repository)?;
+    let initial_schedule =
+        get_schedule_from_context_with_overrides(&schedule_context, &HashMap::new())?;
+    let original_task_details = collect_original_task_details(&initial_schedule)?;
     let mut schedule = initial_schedule;
     let mut overrides = HashMap::<Uuid, DateTime<Local>>::new();
     let mut movement_order = Vec::<Uuid>::new();
@@ -169,7 +149,7 @@ fn flatten_tasks_with_end_of_day_offset_minutes_and_metrics(
     let mut had_overload = false;
 
     loop {
-        let usage = calculate_scheduled_work_seconds_by_date(&schedule, metrics)?;
+        let usage = calculate_scheduled_work_seconds_by_date(&schedule)?;
         let overload_date_opt = dates.iter().find(|date| {
             !blocked_dates.contains(date)
                 && usage.get(date).copied().unwrap_or(0)
@@ -178,7 +158,7 @@ fn flatten_tasks_with_end_of_day_offset_minutes_and_metrics(
         let Some(overload_date) = overload_date_opt.copied() else {
             break;
         };
-        metrics.record_overload_iteration();
+        record_flatten(FlattenEvent::OverloadIteration);
         had_overload = true;
 
         let target_date = if overload_date == boundary_date {
@@ -191,13 +171,13 @@ fn flatten_tasks_with_end_of_day_offset_minutes_and_metrics(
                 },
             )?
         };
-        let mut candidates = collect_candidates(&schedule, overload_date, metrics)?;
+        let mut candidates = collect_candidates(&schedule, overload_date)?;
         sort_candidates_for_deferral(&mut candidates);
 
         let mut accepted = None;
         let mut rejected = Vec::<(FlattenCandidate, UnresolvedReason)>::new();
         for candidate in candidates {
-            metrics.record_candidate_trial();
+            record_flatten(FlattenEvent::CandidateTrial);
             if let Some(reason) = candidate_precheck_reason(&candidate, maximum_daily_capacity) {
                 rejected.push((candidate, reason));
                 continue;
@@ -212,13 +192,10 @@ fn flatten_tasks_with_end_of_day_offset_minutes_and_metrics(
                 rejected.push((candidate, UnresolvedReason::OwnDeadline));
                 continue;
             }
-            metrics.record_override_clone(0);
+            record_flatten(FlattenEvent::OverrideClone(0));
             let previous_override = overrides.insert(candidate.task_id, target_datetime);
-            let trial_schedule_result = get_schedule_from_context_with_overrides_and_metrics(
-                &schedule_context,
-                &overrides,
-                &mut metrics.schedule,
-            );
+            let trial_schedule_result =
+                get_schedule_from_context_with_overrides(&schedule_context, &overrides);
             match previous_override {
                 Some(previous) => {
                     overrides.insert(candidate.task_id, previous);
@@ -243,7 +220,7 @@ fn flatten_tasks_with_end_of_day_offset_minutes_and_metrics(
                 rejected.push((candidate, UnresolvedReason::Other));
                 continue;
             }
-            if introduces_deadline_violation(&schedule, &trial_schedule, metrics) {
+            if introduces_deadline_violation(&schedule, &trial_schedule) {
                 rejected.push((candidate, UnresolvedReason::RelatedDeadline));
                 continue;
             }
@@ -323,11 +300,10 @@ fn flatten_tasks_with_end_of_day_offset_minutes_and_metrics(
 #[allow(clippy::type_complexity)]
 fn collect_original_task_details(
     schedule: &[ScheduledTaskView],
-    metrics: &mut FlattenMetrics,
 ) -> Result<HashMap<Uuid, (String, i64, NaiveDate, i64)>, ApplicationError> {
     let mut details = HashMap::new();
     for scheduled in schedule {
-        metrics.record_full_schedule_scan(1);
+        record_flatten(FlattenEvent::FullScheduleScan(1));
         if let std::collections::hash_map::Entry::Vacant(entry) = details.entry(scheduled.task.id) {
             entry.insert((
                 scheduled.task.name.clone(),
@@ -343,11 +319,10 @@ fn collect_original_task_details(
 fn collect_candidates(
     schedule: &[ScheduledTaskView],
     overload_date: NaiveDate,
-    metrics: &mut FlattenMetrics,
 ) -> Result<Vec<FlattenCandidate>, ApplicationError> {
     let mut segments_by_task = HashMap::<Uuid, Vec<&ScheduledTaskView>>::new();
     for scheduled in schedule {
-        metrics.record_full_schedule_scan(1);
+        record_flatten(FlattenEvent::FullScheduleScan(1));
         segments_by_task
             .entry(scheduled.task.id)
             .or_default()
@@ -448,12 +423,11 @@ fn sort_candidates_for_deferral(candidates: &mut [FlattenCandidate]) {
 fn introduces_deadline_violation(
     current_schedule: &[ScheduledTaskView],
     trial_schedule: &[ScheduledTaskView],
-    metrics: &mut FlattenMetrics,
 ) -> bool {
-    let current_ends = scheduled_end_by_task(current_schedule, metrics);
-    let trial_ends = scheduled_end_by_task(trial_schedule, metrics);
+    let current_ends = scheduled_end_by_task(current_schedule);
+    let trial_ends = scheduled_end_by_task(trial_schedule);
     trial_schedule.iter().any(|scheduled| {
-        metrics.record_full_schedule_scan(1);
+        record_flatten(FlattenEvent::FullScheduleScan(1));
         let Some(deadline) = scheduled.task.deadline_time else {
             return false;
         };
@@ -467,13 +441,10 @@ fn introduces_deadline_violation(
     })
 }
 
-fn scheduled_end_by_task(
-    schedule: &[ScheduledTaskView],
-    metrics: &mut FlattenMetrics,
-) -> HashMap<Uuid, DateTime<Local>> {
+fn scheduled_end_by_task(schedule: &[ScheduledTaskView]) -> HashMap<Uuid, DateTime<Local>> {
     let mut ends = HashMap::<Uuid, DateTime<Local>>::new();
     for scheduled in schedule {
-        metrics.record_full_schedule_scan(1);
+        record_flatten(FlattenEvent::FullScheduleScan(1));
         ends.entry(scheduled.task.id)
             .and_modify(|end| *end = (*end).max(scheduled.scheduled_end))
             .or_insert(scheduled.scheduled_end);
@@ -531,11 +502,10 @@ fn summarize_unresolved_overload(
 
 fn calculate_scheduled_work_seconds_by_date(
     schedule: &[ScheduledTaskView],
-    metrics: &mut FlattenMetrics,
 ) -> Result<HashMap<NaiveDate, i64>, ApplicationError> {
     let mut usage = HashMap::new();
     for scheduled in schedule {
-        metrics.record_full_schedule_scan(1);
+        record_flatten(FlattenEvent::FullScheduleScan(1));
         add_scheduled_work_seconds_by_date(
             &mut usage,
             scheduled.task.fixed_start,

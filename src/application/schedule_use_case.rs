@@ -1,8 +1,8 @@
 use crate::application::daily_capacity::try_next_logical_date_start;
 use crate::application::interface::TaskRepositoryTrait;
-use crate::application::scheduling_metrics::ScheduleMetrics;
+use crate::application::scheduling_instrumentation::{record_schedule, ScheduleEvent};
 use crate::application::scheduling_policy::{
-    schedule_tasks_by_priority_with_metrics, SchedulingPolicyError, TaskScheduleCandidate,
+    schedule_tasks_by_priority, SchedulingPolicyError, TaskScheduleCandidate,
 };
 use crate::application::task_use_case::ApplicationError;
 use crate::application::task_view::TaskView;
@@ -41,53 +41,30 @@ struct TaskScheduleAttributes {
 pub fn get_schedule(
     repository: &dyn TaskRepositoryTrait,
 ) -> Result<Vec<ScheduledTaskView>, ApplicationError> {
-    get_schedule_with_first_available_time_overrides_and_metrics(
-        repository,
-        &HashMap::new(),
-        &mut ScheduleMetrics::default(),
-    )
+    get_schedule_with_first_available_time_overrides(repository, &HashMap::new())
 }
 
-pub(crate) fn get_schedule_with_metrics(
-    repository: &dyn TaskRepositoryTrait,
-    metrics: &mut ScheduleMetrics,
-) -> Result<Vec<ScheduledTaskView>, ApplicationError> {
-    get_schedule_with_first_available_time_overrides_and_metrics(
-        repository,
-        &HashMap::new(),
-        metrics,
-    )
-}
-
-pub(crate) fn get_schedule_with_task_first_available_time_and_metrics(
+pub(crate) fn get_schedule_with_task_first_available_time(
     repository: &dyn TaskRepositoryTrait,
     task_id: Uuid,
     first_available_time: DateTime<Local>,
-    metrics: &mut ScheduleMetrics,
 ) -> Result<Vec<ScheduledTaskView>, ApplicationError> {
-    get_schedule_with_first_available_time_overrides_and_metrics(
+    get_schedule_with_first_available_time_overrides(
         repository,
         &HashMap::from([(task_id, first_available_time)]),
-        metrics,
     )
 }
 
-pub(crate) fn get_schedule_with_first_available_time_overrides_and_metrics(
+pub(crate) fn get_schedule_with_first_available_time_overrides(
     repository: &dyn TaskRepositoryTrait,
     first_available_time_overrides: &HashMap<Uuid, DateTime<Local>>,
-    metrics: &mut ScheduleMetrics,
 ) -> Result<Vec<ScheduledTaskView>, ApplicationError> {
-    let context = build_schedule_context_with_metrics(repository, metrics)?;
-    get_schedule_from_context_with_overrides_and_metrics(
-        &context,
-        first_available_time_overrides,
-        metrics,
-    )
+    let context = build_schedule_context(repository)?;
+    get_schedule_from_context_with_overrides(&context, first_available_time_overrides)
 }
 
-pub(crate) fn build_schedule_context_with_metrics(
+pub(crate) fn build_schedule_context(
     repository: &dyn TaskRepositoryTrait,
-    metrics: &mut ScheduleMetrics,
 ) -> Result<ScheduleContext, ApplicationError> {
     for project_root in repository.get_all_projects() {
         project_root
@@ -95,24 +72,23 @@ pub(crate) fn build_schedule_context_with_metrics(
             .map_err(ApplicationError::TaskTree)?;
     }
     Ok(ScheduleContext {
-        candidates: build_schedule_candidates(repository, metrics)?,
+        candidates: build_schedule_candidates(repository)?,
         last_synced_time: repository.get_last_synced_time(),
     })
 }
 
-pub(crate) fn get_schedule_from_context_with_overrides_and_metrics(
+pub(crate) fn get_schedule_from_context_with_overrides(
     context: &ScheduleContext,
     first_available_time_overrides: &HashMap<Uuid, DateTime<Local>>,
-    metrics: &mut ScheduleMetrics,
 ) -> Result<Vec<ScheduledTaskView>, ApplicationError> {
-    metrics.record_rebuild();
+    record_schedule(ScheduleEvent::Rebuild);
     let mut candidates = context.candidates.clone();
     for candidate in &mut candidates {
         if let Some(first_available_time) = first_available_time_overrides.get(&candidate.id) {
             candidate.first_available_time = max(*first_available_time, context.last_synced_time);
         }
     }
-    schedule_tasks_by_priority_with_metrics(&candidates, context.last_synced_time, metrics)
+    schedule_tasks_by_priority(&candidates, context.last_synced_time)
         .map_err(map_scheduling_policy_error)?
         .into_iter()
         .map(|scheduled| {
@@ -131,7 +107,6 @@ pub(crate) fn get_schedule_from_context_with_overrides_and_metrics(
 
 fn build_schedule_candidates(
     repository: &dyn TaskRepositoryTrait,
-    metrics: &mut ScheduleMetrics,
 ) -> Result<Vec<TaskScheduleCandidate>, ApplicationError> {
     let last_synced_time = repository.get_last_synced_time();
     let mut task_schedule_attributes: HashMap<Uuid, TaskScheduleAttributes> = HashMap::new();
@@ -173,7 +148,7 @@ fn build_schedule_candidates(
     }
 
     let mut attributes = task_schedule_attributes.into_iter().collect::<Vec<_>>();
-    metrics.record_sort();
+    record_schedule(ScheduleEvent::Sort);
     attributes.sort_by_key(|(id, _)| *id);
 
     let mut candidates = Vec::new();
@@ -211,7 +186,7 @@ fn build_schedule_candidates(
             deadline_time: attributes.deadline_time,
         });
     }
-    metrics.record_candidates(candidates.len());
+    record_schedule(ScheduleEvent::Candidates(candidates.len()));
     Ok(candidates)
 }
 

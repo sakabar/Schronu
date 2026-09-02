@@ -40,7 +40,7 @@
 //!
 //! 詳しい例と実装上の理由は`docs/design/scheduling_policy.md`を参照する。
 
-use crate::application::scheduling_metrics::ScheduleMetrics;
+use crate::application::scheduling_instrumentation::SchedulingInstrumentation;
 use crate::entity::task::TaskHandle;
 use chrono::{DateTime, Duration, Local};
 use std::cell::RefCell;
@@ -121,7 +121,7 @@ struct CompletionEvent {
 fn classify_fixed_candidates(
     candidates: &[TaskScheduleCandidate],
     last_synced_time: DateTime<Local>,
-    metrics: &mut ScheduleMetrics,
+    instrumentation: &mut SchedulingInstrumentation,
 ) -> Result<PreparedCandidates, SchedulingPolicyError> {
     let mut pending = Vec::with_capacity(candidates.len());
     let mut scheduled_fixed = Vec::new();
@@ -155,9 +155,9 @@ fn classify_fixed_candidates(
             insert_occupied_slot(
                 &mut occupied_fixed,
                 (fixed_segment_start, original_window_end),
-                metrics,
+                instrumentation,
             );
-            metrics.record_segment();
+            instrumentation.record_segment();
             scheduled_fixed.push(to_scheduled_task(
                 candidate,
                 fixed_segment_start,
@@ -167,7 +167,7 @@ fn classify_fixed_candidates(
             ));
         } else if total_work_seconds == 0 {
             // zero remainingも1つの決定的な点として残し、候補消失を防ぐ。
-            metrics.record_segment();
+            instrumentation.record_segment();
             scheduled_fixed.push(to_scheduled_task(
                 candidate,
                 fixed_segment_start,
@@ -219,15 +219,15 @@ fn checked_segment_end(
 fn insert_occupied_slot(
     occupied_slots: &mut Vec<(DateTime<Local>, DateTime<Local>)>,
     mut slot: (DateTime<Local>, DateTime<Local>),
-    metrics: &mut ScheduleMetrics,
+    instrumentation: &mut SchedulingInstrumentation,
 ) {
     let first_merged = occupied_slots.partition_point(|(_, existing_end)| {
-        metrics.record_occupied_slot_probe();
+        instrumentation.record_occupied_slot_probe();
         *existing_end < slot.0
     });
     let mut past_merged = first_merged;
     while let Some((existing_start, existing_end)) = occupied_slots.get(past_merged) {
-        metrics.record_occupied_slot_probe();
+        instrumentation.record_occupied_slot_probe();
         if *existing_start > slot.1 {
             break;
         }
@@ -285,10 +285,10 @@ impl AtomicReleasePredictionCache {
         now: DateTime<Local>,
         states: &[FlexibleState],
         frontier_generation: Option<u64>,
-        metrics: &mut ScheduleMetrics,
+        instrumentation: &mut SchedulingInstrumentation,
     ) {
         self.entries.retain(|prediction| {
-            metrics.record_atomic_release_cache_probe();
+            instrumentation.record_atomic_release_cache_probe();
             prediction.release > now
                 && states[prediction.preemptor_index].completion_time.is_none()
                 && states[prediction.preemptor_index].remaining_seconds > 0
@@ -297,9 +297,13 @@ impl AtomicReleasePredictionCache {
         });
     }
 
-    fn insert(&mut self, prediction: AtomicReleasePrediction, metrics: &mut ScheduleMetrics) {
+    fn insert(
+        &mut self,
+        prediction: AtomicReleasePrediction,
+        instrumentation: &mut SchedulingInstrumentation,
+    ) {
         if !self.entries.iter().any(|existing| {
-            metrics.record_atomic_release_cache_probe();
+            instrumentation.record_atomic_release_cache_probe();
             existing.release == prediction.release
                 && existing.preemptor_index == prediction.preemptor_index
                 && existing.critical_deadline == prediction.critical_deadline
@@ -307,7 +311,7 @@ impl AtomicReleasePredictionCache {
         }) {
             self.entries.push(prediction);
         }
-        metrics.record_atomic_release_cache_entries(self.entries.len());
+        instrumentation.record_atomic_release_cache_entries(self.entries.len());
     }
 }
 
@@ -428,12 +432,20 @@ impl SlackRangeTree {
         &mut self,
         range: std::ops::Range<usize>,
         delta: i64,
-        metrics: &mut ScheduleMetrics,
+        instrumentation: &mut SchedulingInstrumentation,
     ) {
         if range.start >= range.end || self.len == 0 || delta == 0 {
             return;
         }
-        self.range_add_inner(1, 0, self.len, range.start, range.end, delta, metrics);
+        self.range_add_inner(
+            1,
+            0,
+            self.len,
+            range.start,
+            range.end,
+            delta,
+            instrumentation,
+        );
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -445,9 +457,9 @@ impl SlackRangeTree {
         query_left: usize,
         query_right: usize,
         delta: i64,
-        metrics: &mut ScheduleMetrics,
+        instrumentation: &mut SchedulingInstrumentation,
     ) {
-        metrics.record_slack_probes(1);
+        instrumentation.record_slack_probes(1);
         if query_right <= left || right <= query_left {
             return;
         }
@@ -464,7 +476,7 @@ impl SlackRangeTree {
             query_left,
             query_right,
             delta,
-            metrics,
+            instrumentation,
         );
         self.range_add_inner(
             node * 2 + 1,
@@ -473,19 +485,24 @@ impl SlackRangeTree {
             query_left,
             query_right,
             delta,
-            metrics,
+            instrumentation,
         );
         self.pull(node);
     }
 
-    fn deactivate(&mut self, index: usize, metrics: &mut ScheduleMetrics) {
+    fn deactivate(&mut self, index: usize, instrumentation: &mut SchedulingInstrumentation) {
         if self.len > 0 {
-            self.deactivate_inner(1, 0, self.len, index, metrics);
+            self.deactivate_inner(1, 0, self.len, index, instrumentation);
         }
     }
 
-    fn activate(&mut self, index: usize, value: i64, metrics: &mut ScheduleMetrics) {
-        self.activate_inner(1, 0, self.len, index, value, metrics);
+    fn activate(
+        &mut self,
+        index: usize,
+        value: i64,
+        instrumentation: &mut SchedulingInstrumentation,
+    ) {
+        self.activate_inner(1, 0, self.len, index, value, instrumentation);
     }
 
     fn activate_inner(
@@ -495,9 +512,9 @@ impl SlackRangeTree {
         right: usize,
         index: usize,
         value: i64,
-        metrics: &mut ScheduleMetrics,
+        instrumentation: &mut SchedulingInstrumentation,
     ) {
-        metrics.record_slack_probes(1);
+        instrumentation.record_slack_probes(1);
         if right - left == 1 {
             self.min[node] = value;
             self.lazy[node] = 0;
@@ -506,15 +523,19 @@ impl SlackRangeTree {
         self.push(node);
         let middle = (left + right) / 2;
         if index < middle {
-            self.activate_inner(node * 2, left, middle, index, value, metrics);
+            self.activate_inner(node * 2, left, middle, index, value, instrumentation);
         } else {
-            self.activate_inner(node * 2 + 1, middle, right, index, value, metrics);
+            self.activate_inner(node * 2 + 1, middle, right, index, value, instrumentation);
         }
         self.pull(node);
     }
 
-    fn point_value(&self, index: usize, metrics: &mut ScheduleMetrics) -> Option<i64> {
-        self.range_min(index..index + 1, metrics)
+    fn point_value(
+        &self,
+        index: usize,
+        instrumentation: &mut SchedulingInstrumentation,
+    ) -> Option<i64> {
+        self.range_min(index..index + 1, instrumentation)
     }
 
     fn deactivate_inner(
@@ -523,9 +544,9 @@ impl SlackRangeTree {
         left: usize,
         right: usize,
         index: usize,
-        metrics: &mut ScheduleMetrics,
+        instrumentation: &mut SchedulingInstrumentation,
     ) {
-        metrics.record_slack_probes(1);
+        instrumentation.record_slack_probes(1);
         if right - left == 1 {
             self.min[node] = INACTIVE_SLACK;
             self.lazy[node] = 0;
@@ -534,9 +555,9 @@ impl SlackRangeTree {
         self.push(node);
         let middle = (left + right) / 2;
         if index < middle {
-            self.deactivate_inner(node * 2, left, middle, index, metrics);
+            self.deactivate_inner(node * 2, left, middle, index, instrumentation);
         } else {
-            self.deactivate_inner(node * 2 + 1, middle, right, index, metrics);
+            self.deactivate_inner(node * 2 + 1, middle, right, index, instrumentation);
         }
         self.pull(node);
     }
@@ -545,12 +566,12 @@ impl SlackRangeTree {
         &self,
         range: std::ops::Range<usize>,
         threshold: i64,
-        metrics: &mut ScheduleMetrics,
+        instrumentation: &mut SchedulingInstrumentation,
     ) -> Option<usize> {
         if range.start >= range.end || self.len == 0 {
             return None;
         }
-        self.first_at_most_inner(1, 0, self.len, &range, threshold, 0, metrics)
+        self.first_at_most_inner(1, 0, self.len, &range, threshold, 0, instrumentation)
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -562,9 +583,9 @@ impl SlackRangeTree {
         range: &std::ops::Range<usize>,
         threshold: i64,
         inherited_lazy: i64,
-        metrics: &mut ScheduleMetrics,
+        instrumentation: &mut SchedulingInstrumentation,
     ) -> Option<usize> {
-        metrics.record_slack_probes(1);
+        instrumentation.record_slack_probes(1);
         if range.end <= left
             || right <= range.start
             || self.min[node].saturating_add(inherited_lazy) > threshold
@@ -583,7 +604,7 @@ impl SlackRangeTree {
             range,
             threshold,
             inherited_lazy,
-            metrics,
+            instrumentation,
         )
         .or_else(|| {
             self.first_at_most_inner(
@@ -593,7 +614,7 @@ impl SlackRangeTree {
                 range,
                 threshold,
                 inherited_lazy,
-                metrics,
+                instrumentation,
             )
         })
     }
@@ -601,12 +622,12 @@ impl SlackRangeTree {
     fn range_min(
         &self,
         range: std::ops::Range<usize>,
-        metrics: &mut ScheduleMetrics,
+        instrumentation: &mut SchedulingInstrumentation,
     ) -> Option<i64> {
         if range.start >= range.end || self.len == 0 {
             return None;
         }
-        let minimum = self.range_min_inner(1, 0, self.len, &range, 0, metrics);
+        let minimum = self.range_min_inner(1, 0, self.len, &range, 0, instrumentation);
         (minimum < INACTIVE_SLACK / 2).then_some(minimum)
     }
 
@@ -617,9 +638,9 @@ impl SlackRangeTree {
         right: usize,
         range: &std::ops::Range<usize>,
         inherited_lazy: i64,
-        metrics: &mut ScheduleMetrics,
+        instrumentation: &mut SchedulingInstrumentation,
     ) -> i64 {
-        metrics.record_slack_probes(1);
+        instrumentation.record_slack_probes(1);
         if range.end <= left || right <= range.start {
             return INACTIVE_SLACK;
         }
@@ -631,9 +652,22 @@ impl SlackRangeTree {
         }
         let inherited_lazy = inherited_lazy.saturating_add(self.lazy[node]);
         let middle = (left + right) / 2;
-        let left_min = self.range_min_inner(node * 2, left, middle, range, inherited_lazy, metrics);
-        let right_min =
-            self.range_min_inner(node * 2 + 1, middle, right, range, inherited_lazy, metrics);
+        let left_min = self.range_min_inner(
+            node * 2,
+            left,
+            middle,
+            range,
+            inherited_lazy,
+            instrumentation,
+        );
+        let right_min = self.range_min_inner(
+            node * 2 + 1,
+            middle,
+            right,
+            range,
+            inherited_lazy,
+            instrumentation,
+        );
         left_min.min(right_min)
     }
 
@@ -663,7 +697,7 @@ impl SlackDemandIndex {
         states: &[FlexibleState],
         now: DateTime<Local>,
         fixed_slots: &[(DateTime<Local>, DateTime<Local>)],
-        metrics: &mut ScheduleMetrics,
+        instrumentation: &mut SchedulingInstrumentation,
     ) -> Self {
         let mut deadlines = states
             .iter()
@@ -676,7 +710,7 @@ impl SlackDemandIndex {
             .iter()
             .map(|state| {
                 state.effective_deadline.map(|deadline| {
-                    metrics.record_slack_probes(1);
+                    instrumentation.record_slack_probes(1);
                     let group = deadlines
                         .binary_search(&deadline)
                         .expect("effective deadline was collected into the index");
@@ -693,7 +727,7 @@ impl SlackDemandIndex {
             .map(|(group, deadline)| {
                 cumulative_demand = cumulative_demand.saturating_add(remaining_by_group[group]);
                 (remaining_by_group[group] > 0).then(|| {
-                    available_seconds_until(now, *deadline, fixed_slots, metrics)
+                    available_seconds_until(now, *deadline, fixed_slots, instrumentation)
                         .saturating_sub(cumulative_demand)
                 })
             })
@@ -717,8 +751,11 @@ impl SlackDemandIndex {
         }
     }
 
-    fn critical_deadline(&self, metrics: &mut ScheduleMetrics) -> Option<DateTime<Local>> {
-        metrics.record_slack_probes(1);
+    fn critical_deadline(
+        &self,
+        instrumentation: &mut SchedulingInstrumentation,
+    ) -> Option<DateTime<Local>> {
+        instrumentation.record_slack_probes(1);
         self.critical_groups
             .first()
             .map(|group| self.deadlines[*group])
@@ -729,13 +766,13 @@ impl SlackDemandIndex {
         &self,
         state_index: usize,
         worked_seconds: i64,
-        metrics: &mut ScheduleMetrics,
+        instrumentation: &mut SchedulingInstrumentation,
     ) -> Option<DateTime<Local>> {
         let changed_end = self.group_by_state[state_index].unwrap_or(self.deadlines.len());
-        let newly_critical = self
-            .slack_tree
-            .first_at_most(0..changed_end, worked_seconds, metrics);
-        metrics.record_slack_probes(1);
+        let newly_critical =
+            self.slack_tree
+                .first_at_most(0..changed_end, worked_seconds, instrumentation);
+        instrumentation.record_slack_probes(1);
         newly_critical
             .into_iter()
             .chain(self.critical_groups.first().copied())
@@ -748,9 +785,9 @@ impl SlackDemandIndex {
         &self,
         state_index: usize,
         now: DateTime<Local>,
-        metrics: &mut ScheduleMetrics,
+        instrumentation: &mut SchedulingInstrumentation,
     ) -> Option<DateTime<Local>> {
-        self.slack_seconds_before_state(state_index, None, metrics)
+        self.slack_seconds_before_state(state_index, None, instrumentation)
             .and_then(|seconds| now.checked_add_signed(Duration::seconds(seconds)))
     }
 
@@ -761,31 +798,35 @@ impl SlackDemandIndex {
         now: DateTime<Local>,
         worked_state: usize,
         worked_seconds: i64,
-        metrics: &mut ScheduleMetrics,
+        instrumentation: &mut SchedulingInstrumentation,
     ) -> Option<DateTime<Local>> {
-        self.slack_seconds_before_state(state_index, Some((worked_state, worked_seconds)), metrics)
-            .and_then(|seconds| now.checked_add_signed(Duration::seconds(seconds)))
+        self.slack_seconds_before_state(
+            state_index,
+            Some((worked_state, worked_seconds)),
+            instrumentation,
+        )
+        .and_then(|seconds| now.checked_add_signed(Duration::seconds(seconds)))
     }
 
     fn slack_seconds_before_state(
         &self,
         state_index: usize,
         worked: Option<(usize, i64)>,
-        metrics: &mut ScheduleMetrics,
+        instrumentation: &mut SchedulingInstrumentation,
     ) -> Option<i64> {
         let boundary_end = self.group_by_state[state_index].unwrap_or(self.deadlines.len());
         let Some((worked_state, worked_seconds)) = worked else {
-            return self.slack_tree.range_min(0..boundary_end, metrics);
+            return self.slack_tree.range_min(0..boundary_end, instrumentation);
         };
         let changed_end = self.group_by_state[worked_state].unwrap_or(self.deadlines.len());
         let changed_overlap = boundary_end.min(changed_end);
         let changed = self
             .slack_tree
-            .range_min(0..changed_overlap, metrics)
+            .range_min(0..changed_overlap, instrumentation)
             .map(|slack| slack.saturating_sub(worked_seconds));
         let unchanged = self
             .slack_tree
-            .range_min(changed_overlap..boundary_end, metrics);
+            .range_min(changed_overlap..boundary_end, instrumentation);
         let minimum = match (changed, unchanged) {
             (Some(changed), Some(unchanged)) => Some(changed.min(unchanged)),
             (changed, unchanged) => changed.or(unchanged),
@@ -803,21 +844,24 @@ impl SlackDemandIndex {
         &mut self,
         range: std::ops::Range<usize>,
         seconds: i64,
-        metrics: &mut ScheduleMetrics,
+        instrumentation: &mut SchedulingInstrumentation,
     ) -> Vec<(usize, i64)> {
         if range.start >= range.end || seconds == 0 {
             return Vec::new();
         }
         self.slack_tree
-            .range_add(range.clone(), seconds.saturating_neg(), metrics);
+            .range_add(range.clone(), seconds.saturating_neg(), instrumentation);
         let mut deactivated = Vec::new();
-        while let Some(group) = self.slack_tree.first_at_most(range.clone(), 0, metrics) {
+        while let Some(group) = self
+            .slack_tree
+            .first_at_most(range.clone(), 0, instrumentation)
+        {
             let current = self
                 .slack_tree
-                .point_value(group, metrics)
+                .point_value(group, instrumentation)
                 .expect("critical group is active before deactivation");
             deactivated.push((group, current.saturating_add(seconds)));
-            self.slack_tree.deactivate(group, metrics);
+            self.slack_tree.deactivate(group, instrumentation);
             self.critical_groups.insert(group);
         }
         deactivated
@@ -829,16 +873,16 @@ impl SlackDemandIndex {
         &mut self,
         state_index: usize,
         work_seconds: i64,
-        metrics: &mut ScheduleMetrics,
+        instrumentation: &mut SchedulingInstrumentation,
     ) {
         self.current_time += Duration::seconds(work_seconds);
         let changed_end = self.group_by_state[state_index].unwrap_or(self.deadlines.len());
-        self.decrease_range(0..changed_end, work_seconds, metrics);
+        self.decrease_range(0..changed_end, work_seconds, instrumentation);
         if let Some(group) = self.group_by_state[state_index] {
             self.remaining_by_group[group] =
                 self.remaining_by_group[group].saturating_sub(work_seconds);
             if self.remaining_by_group[group] == 0 {
-                self.slack_tree.deactivate(group, metrics);
+                self.slack_tree.deactivate(group, instrumentation);
                 self.critical_groups.remove(&group);
             }
         }
@@ -850,9 +894,9 @@ impl SlackDemandIndex {
         &mut self,
         old_now: DateTime<Local>,
         new_now: DateTime<Local>,
-        metrics: &mut ScheduleMetrics,
+        instrumentation: &mut SchedulingInstrumentation,
     ) {
-        self.apply_idle_decrease(old_now, new_now, metrics);
+        self.apply_idle_decrease(old_now, new_now, instrumentation);
         self.current_time = new_now;
     }
 
@@ -860,9 +904,9 @@ impl SlackDemandIndex {
         &mut self,
         old_now: DateTime<Local>,
         new_now: DateTime<Local>,
-        metrics: &mut ScheduleMetrics,
+        instrumentation: &mut SchedulingInstrumentation,
     ) -> SpeculativeSlackChange {
-        let deactivated = self.apply_idle_decrease(old_now, new_now, metrics);
+        let deactivated = self.apply_idle_decrease(old_now, new_now, instrumentation);
         self.current_time = new_now;
         SpeculativeSlackChange { deactivated }
     }
@@ -871,7 +915,7 @@ impl SlackDemandIndex {
         &mut self,
         old_now: DateTime<Local>,
         new_now: DateTime<Local>,
-        metrics: &mut ScheduleMetrics,
+        instrumentation: &mut SchedulingInstrumentation,
     ) -> Vec<(usize, i64)> {
         let elapsed = (new_now - old_now).num_seconds().max(0);
         let first_after_old = self
@@ -886,12 +930,12 @@ impl SlackDemandIndex {
         let mut deactivated = Vec::new();
         for group in first_after_old..first_future {
             let seconds = (self.deadlines[group] - old_now).num_seconds().max(0);
-            deactivated.extend(self.decrease_range(group..group + 1, seconds, metrics));
+            deactivated.extend(self.decrease_range(group..group + 1, seconds, instrumentation));
         }
         deactivated.extend(self.decrease_range(
             first_future..self.deadlines.len(),
             elapsed,
-            metrics,
+            instrumentation,
         ));
         deactivated
     }
@@ -901,7 +945,7 @@ impl SlackDemandIndex {
         old_now: DateTime<Local>,
         new_now: DateTime<Local>,
         change: SpeculativeSlackChange,
-        metrics: &mut ScheduleMetrics,
+        instrumentation: &mut SchedulingInstrumentation,
     ) {
         let elapsed = (new_now - old_now).num_seconds().max(0);
         let first_after_old = self
@@ -913,13 +957,14 @@ impl SlackDemandIndex {
         for group in first_after_old..first_future {
             let seconds = (self.deadlines[group] - old_now).num_seconds().max(0);
             self.slack_tree
-                .range_add(group..group + 1, seconds, metrics);
+                .range_add(group..group + 1, seconds, instrumentation);
         }
         self.slack_tree
-            .range_add(first_future..self.deadlines.len(), elapsed, metrics);
+            .range_add(first_future..self.deadlines.len(), elapsed, instrumentation);
         for (group, original_slack) in change.deactivated {
             self.critical_groups.remove(&group);
-            self.slack_tree.activate(group, original_slack, metrics);
+            self.slack_tree
+                .activate(group, original_slack, instrumentation);
         }
         self.current_time = old_now;
     }
@@ -1025,7 +1070,7 @@ impl SchedulerFrontier {
         &mut self,
         now: DateTime<Local>,
         states: &[FlexibleState],
-        metrics: &mut ScheduleMetrics,
+        instrumentation: &mut SchedulingInstrumentation,
     ) {
         while self
             .release_events
@@ -1037,7 +1082,7 @@ impl SchedulerFrontier {
                 .pop_first()
                 .expect("a checked release event exists");
             for node in nodes {
-                metrics.record_release_candidate_probe();
+                instrumentation.record_release_candidate_probe();
                 match node {
                     DependencyNode::Task(index) => {
                         if states[index].completion_time.is_some() || self.ready[index] {
@@ -1056,7 +1101,7 @@ impl SchedulerFrontier {
                         }
                     }
                     DependencyNode::Completion(_) => {
-                        self.complete_node(node, release, states, metrics);
+                        self.complete_node(node, release, states, instrumentation);
                     }
                 }
             }
@@ -1067,7 +1112,7 @@ impl SchedulerFrontier {
         &mut self,
         now: DateTime<Local>,
         states: &[FlexibleState],
-        metrics: &mut ScheduleMetrics,
+        instrumentation: &mut SchedulingInstrumentation,
     ) -> SpeculativeReleasePromotion {
         let mut change = SpeculativeReleasePromotion {
             removed_events: Vec::new(),
@@ -1112,7 +1157,7 @@ impl SchedulerFrontier {
                 nodes.extend(derived_nodes);
             }
             for node in nodes {
-                metrics.record_release_candidate_probe();
+                instrumentation.record_release_candidate_probe();
                 match node {
                     DependencyNode::Task(index) => {
                         if states[index].completion_time.is_some() || self.ready[index] {
@@ -1123,7 +1168,7 @@ impl SchedulerFrontier {
                                 node,
                                 release,
                                 states,
-                                metrics,
+                                instrumentation,
                                 &mut derived_releases,
                                 &mut change,
                             );
@@ -1142,7 +1187,7 @@ impl SchedulerFrontier {
                         node,
                         release,
                         states,
-                        metrics,
+                        instrumentation,
                         &mut derived_releases,
                         &mut change,
                     ),
@@ -1185,7 +1230,7 @@ impl SchedulerFrontier {
         now: DateTime<Local>,
         until: DateTime<Local>,
         states: &[FlexibleState],
-        metrics: &mut ScheduleMetrics,
+        instrumentation: &mut SchedulingInstrumentation,
     ) -> Vec<(DateTime<Local>, Vec<usize>)> {
         let mut actual_releases = self.release_events.range(now..).peekable();
         let mut derived_releases = BTreeMap::<DateTime<Local>, Vec<DependencyNode>>::new();
@@ -1230,7 +1275,7 @@ impl SchedulerFrontier {
 
             let mut released_tasks = Vec::new();
             for node in nodes {
-                metrics.record_release_candidate_probe();
+                instrumentation.record_release_candidate_probe();
                 let completes_immediately = match node {
                     DependencyNode::Task(index) => {
                         if states[index].completion_time.is_some() {
@@ -1250,7 +1295,7 @@ impl SchedulerFrontier {
                         continue;
                     }
                     for dependent in &self.dependents[node_offset] {
-                        metrics.record_release_candidate_probe();
+                        instrumentation.record_release_candidate_probe();
                         let dependent_offset = Self::node_offset(*dependent, self.task_count);
                         let unresolved_count = unresolved
                             .entry(dependent_offset)
@@ -1307,14 +1352,14 @@ impl SchedulerFrontier {
         index: usize,
         completion_time: DateTime<Local>,
         states: &[FlexibleState],
-        metrics: &mut ScheduleMetrics,
+        instrumentation: &mut SchedulingInstrumentation,
     ) {
         self.remove_ready(index, &states[index]);
         self.complete_node(
             DependencyNode::Task(index),
             completion_time,
             states,
-            metrics,
+            instrumentation,
         );
     }
 
@@ -1323,7 +1368,7 @@ impl SchedulerFrontier {
         node: DependencyNode,
         completion_time: DateTime<Local>,
         states: &[FlexibleState],
-        metrics: &mut ScheduleMetrics,
+        instrumentation: &mut SchedulingInstrumentation,
     ) {
         let node_offset = Self::node_offset(node, self.task_count);
         if self.completed_nodes[node_offset] {
@@ -1335,7 +1380,7 @@ impl SchedulerFrontier {
         // dependency追加の有無にかかわらずこの世代を跨いで再利用しない。
         self.generation = self.generation.wrapping_add(1);
         for dependent in std::mem::take(&mut self.dependents[node_offset]) {
-            metrics.record_release_candidate_probe();
+            instrumentation.record_release_candidate_probe();
             let dependent_offset = Self::node_offset(dependent, self.task_count);
             if self.unresolved_dependencies[dependent_offset] == 0 {
                 continue;
@@ -1363,7 +1408,7 @@ impl SchedulerFrontier {
         node: DependencyNode,
         completion_time: DateTime<Local>,
         states: &[FlexibleState],
-        metrics: &mut ScheduleMetrics,
+        instrumentation: &mut SchedulingInstrumentation,
         derived_releases: &mut BTreeMap<DateTime<Local>, Vec<DependencyNode>>,
         change: &mut SpeculativeReleasePromotion,
     ) {
@@ -1378,7 +1423,7 @@ impl SchedulerFrontier {
 
         for dependent_index in 0..self.dependents[node_offset].len() {
             let dependent = self.dependents[node_offset][dependent_index];
-            metrics.record_release_candidate_probe();
+            instrumentation.record_release_candidate_probe();
             let dependent_offset = Self::node_offset(dependent, self.task_count);
             if self.unresolved_dependencies[dependent_offset] == 0 {
                 continue;
@@ -1447,14 +1492,14 @@ impl SchedulerFrontier {
         index: usize,
         now: DateTime<Local>,
         states: &[FlexibleState],
-        metrics: &mut ScheduleMetrics,
+        instrumentation: &mut SchedulingInstrumentation,
     ) -> DateTime<Local> {
         let completion_time = now.max(self.completion_events[index].earliest_occurrence);
         self.complete_node(
             DependencyNode::Completion(index),
             completion_time,
             states,
-            metrics,
+            instrumentation,
         );
         completion_time
     }
@@ -1502,14 +1547,14 @@ fn available_seconds_until(
     start: DateTime<Local>,
     deadline: DateTime<Local>,
     fixed_slots: &[(DateTime<Local>, DateTime<Local>)],
-    metrics: &mut ScheduleMetrics,
+    instrumentation: &mut SchedulingInstrumentation,
 ) -> i64 {
     if deadline <= start {
         return 0;
     }
     let reserved = fixed_slots
         .iter()
-        .inspect(|_| metrics.record_occupied_slot_probe())
+        .inspect(|_| instrumentation.record_occupied_slot_probe())
         .map(|(fixed_start, fixed_end)| {
             let overlap_start = max(start, *fixed_start);
             let overlap_end = deadline.min(*fixed_end);
@@ -1569,7 +1614,7 @@ fn next_preempting_release(
     now: DateTime<Local>,
     slack_guard: Option<DateTime<Local>>,
     context: &BoundaryContext<'_>,
-    metrics: &mut ScheduleMetrics,
+    instrumentation: &mut SchedulingInstrumentation,
 ) -> Result<Option<DateTime<Local>>, SchedulingPolicyError> {
     let states = context.states;
     let fixed_slots = context.fixed_slots;
@@ -1585,15 +1630,20 @@ fn next_preempting_release(
     {
         return Ok(None);
     }
-    if let Some(release) =
-        cached_preempting_release(selected_index, selected, now, slack_guard, context, metrics)?
-    {
+    if let Some(release) = cached_preempting_release(
+        selected_index,
+        selected,
+        now,
+        slack_guard,
+        context,
+        instrumentation,
+    )? {
         return Ok(Some(release));
     }
     let mut additional_normal = BTreeSet::new();
     let mut additional_protected = BTreeSet::new();
     for (release, released_indices) in
-        frontier.future_task_release_batches(now, evaluation_end, states, metrics)
+        frontier.future_task_release_batches(now, evaluation_end, states, instrumentation)
     {
         for index in released_indices {
             if states[index].remaining_seconds == 0 {
@@ -1611,7 +1661,8 @@ fn next_preempting_release(
         if worked == selected.remaining_seconds {
             return Ok(None);
         }
-        let critical = slack_index.critical_deadline_after_work(selected_index, worked, metrics);
+        let critical =
+            slack_index.critical_deadline_after_work(selected_index, worked, instrumentation);
         let protected_ready = critical.is_some_and(|critical| {
             frontier
                 .protected_ready
@@ -1628,7 +1679,7 @@ fn next_preempting_release(
                 .union(&additional_protected)
                 .take_while(|((deadline, ..), _)| *deadline <= critical)
             {
-                metrics.record_selection_candidate_probe();
+                instrumentation.record_selection_candidate_probe();
                 let candidate = if *index == selected_index {
                     &virtual_selected
                 } else {
@@ -1639,7 +1690,7 @@ fn next_preempting_release(
                     release,
                     selected_index,
                     worked,
-                    metrics,
+                    instrumentation,
                 );
                 if candidate_fits_without_future_release(
                     candidate,
@@ -1654,7 +1705,7 @@ fn next_preempting_release(
                             *index,
                             Some(critical),
                             true,
-                            metrics,
+                            instrumentation,
                         );
                         return Ok(Some(release));
                     }
@@ -1663,7 +1714,7 @@ fn next_preempting_release(
             }
         } else {
             for (_, index) in frontier.normal_ready.union(&additional_normal) {
-                metrics.record_selection_candidate_probe();
+                instrumentation.record_selection_candidate_probe();
                 let candidate = if *index == selected_index {
                     &virtual_selected
                 } else {
@@ -1674,7 +1725,7 @@ fn next_preempting_release(
                     release,
                     selected_index,
                     worked,
-                    metrics,
+                    instrumentation,
                 );
                 if candidate_fits_without_future_release(
                     candidate,
@@ -1684,7 +1735,12 @@ fn next_preempting_release(
                 )? {
                     if *index != selected_index {
                         cache_atomic_release_prediction(
-                            context, release, *index, critical, false, metrics,
+                            context,
+                            release,
+                            *index,
+                            critical,
+                            false,
+                            instrumentation,
                         );
                         return Ok(Some(release));
                     }
@@ -1702,7 +1758,7 @@ fn cache_atomic_release_prediction(
     preemptor_index: usize,
     critical_deadline: Option<DateTime<Local>>,
     protected_mode: bool,
-    metrics: &mut ScheduleMetrics,
+    instrumentation: &mut SchedulingInstrumentation,
 ) {
     let prediction = AtomicReleasePrediction {
         release,
@@ -1712,7 +1768,7 @@ fn cache_atomic_release_prediction(
         frontier_generation: context.frontier.generation,
     };
     if let Some(cache) = context.atomic_release_predictions {
-        cache.borrow_mut().insert(prediction, metrics);
+        cache.borrow_mut().insert(prediction, instrumentation);
     }
     if let Some(event_predictions) = context.event_atomic_release_predictions {
         let mut event_predictions = event_predictions.borrow_mut();
@@ -1737,7 +1793,7 @@ fn cached_preempting_release(
     now: DateTime<Local>,
     slack_guard: Option<DateTime<Local>>,
     context: &BoundaryContext<'_>,
-    metrics: &mut ScheduleMetrics,
+    instrumentation: &mut SchedulingInstrumentation,
 ) -> Result<Option<DateTime<Local>>, SchedulingPolicyError> {
     let Some(event_predictions) = context.event_atomic_release_predictions else {
         return Ok(None);
@@ -1746,7 +1802,7 @@ fn cached_preempting_release(
     for prediction in event_predictions.borrow().iter().copied() {
         // release timelineを再走査せず、index済みpreemptor 1件だけを通常の
         // selection candidateとして再検証する。
-        metrics.record_selection_candidate_probe();
+        instrumentation.record_selection_candidate_probe();
         if prediction.preemptor_index == selected_index
             || slack_guard.is_some_and(|guard| prediction.release > guard)
         {
@@ -1759,7 +1815,8 @@ fn cached_preempting_release(
         if worked == selected.remaining_seconds {
             continue;
         }
-        let critical = slack_index.critical_deadline_after_work(selected_index, worked, metrics);
+        let critical =
+            slack_index.critical_deadline_after_work(selected_index, worked, instrumentation);
         if critical != prediction.critical_deadline {
             continue;
         }
@@ -1785,7 +1842,7 @@ fn cached_preempting_release(
             prediction.release,
             selected_index,
             worked,
-            metrics,
+            instrumentation,
         );
         if candidate_fits_without_future_release(
             preemptor,
@@ -1824,11 +1881,17 @@ fn segment_boundary(
     now: DateTime<Local>,
     slack_guard: Option<DateTime<Local>>,
     context: &BoundaryContext<'_>,
-    metrics: &mut ScheduleMetrics,
+    instrumentation: &mut SchedulingInstrumentation,
 ) -> Result<SegmentBoundary, SchedulingPolicyError> {
     let completion = checked_segment_end(selected.candidate.id, now, selected.remaining_seconds)?;
-    let preempting_release =
-        next_preempting_release(selected_index, selected, now, slack_guard, context, metrics)?;
+    let preempting_release = next_preempting_release(
+        selected_index,
+        selected,
+        now,
+        slack_guard,
+        context,
+        instrumentation,
+    )?;
     let time = [
         Some(completion),
         next_fixed_start(now, context.fixed_slots),
@@ -1852,7 +1915,7 @@ fn atomic_fits(
     now: DateTime<Local>,
     slack_guard: Option<DateTime<Local>>,
     context: &BoundaryContext<'_>,
-    metrics: &mut ScheduleMetrics,
+    instrumentation: &mut SchedulingInstrumentation,
 ) -> Result<bool, SchedulingPolicyError> {
     if !selected.candidate.atomic {
         return Ok(true);
@@ -1871,7 +1934,15 @@ fn atomic_fits(
     }
 
     Ok(completion
-        == segment_boundary(selected_index, selected, now, slack_guard, context, metrics)?.time)
+        == segment_boundary(
+            selected_index,
+            selected,
+            now,
+            slack_guard,
+            context,
+            instrumentation,
+        )?
+        .time)
 }
 
 /// slack guardで極端に短いfragmentができる候補は、時間を捨ててから
@@ -1882,16 +1953,29 @@ fn fits_split_contract(
     now: DateTime<Local>,
     slack_guard: Option<DateTime<Local>>,
     context: &BoundaryContext<'_>,
-    metrics: &mut ScheduleMetrics,
+    instrumentation: &mut SchedulingInstrumentation,
 ) -> Result<bool, SchedulingPolicyError> {
     if selected.candidate.atomic {
-        return atomic_fits(selected_index, selected, now, slack_guard, context, metrics);
+        return atomic_fits(
+            selected_index,
+            selected,
+            now,
+            slack_guard,
+            context,
+            instrumentation,
+        );
     }
     let Some(guard) = slack_guard else {
         return Ok(true);
     };
-    let preempting_release =
-        next_preempting_release(selected_index, selected, now, slack_guard, context, metrics)?;
+    let preempting_release = next_preempting_release(
+        selected_index,
+        selected,
+        now,
+        slack_guard,
+        context,
+        instrumentation,
+    )?;
     if next_fixed_start(now, context.fixed_slots).is_some_and(|event| event <= guard)
         || preempting_release.is_some_and(|event| event <= guard)
     {
@@ -1919,10 +2003,10 @@ fn select_next_candidate(
     frontier: &SchedulerFrontier,
     slack_index: &SlackDemandIndex,
     atomic_release_predictions: &RefCell<AtomicReleasePredictionCache>,
-    metrics: &mut ScheduleMetrics,
+    instrumentation: &mut SchedulingInstrumentation,
 ) -> Result<Option<Selection>, SchedulingPolicyError> {
-    metrics.record_selection_event();
-    let critical = slack_index.critical_deadline(metrics);
+    instrumentation.record_selection_event();
+    let critical = slack_index.critical_deadline(instrumentation);
     debug_assert_eq!(slack_index.current_time, now, "slack index time diverged");
     // persistent cacheはevent開始時に一度だけ読む。同じevent内のatomic候補は
     // この差分viewを共有し、候補ごとにpersistent cacheを再探索しない。
@@ -1931,7 +2015,7 @@ fn select_next_candidate(
         cache
             .entries
             .iter()
-            .inspect(|_| metrics.record_atomic_release_cache_probe())
+            .inspect(|_| instrumentation.record_atomic_release_cache_probe())
             .copied()
             .collect::<Vec<_>>()
     });
@@ -1955,15 +2039,15 @@ fn select_next_candidate(
             if *deadline > critical {
                 break;
             }
-            metrics.record_selection_candidate_probe();
-            let slack_guard = slack_index.slack_boundary(*index, now, metrics);
+            instrumentation.record_selection_candidate_probe();
+            let slack_guard = slack_index.slack_boundary(*index, now, instrumentation);
             if fits_split_contract(
                 *index,
                 &states[*index],
                 now,
                 slack_guard,
                 &boundary_context,
-                metrics,
+                instrumentation,
             )? {
                 return Ok(Some(Selection {
                     index: *index,
@@ -1973,15 +2057,15 @@ fn select_next_candidate(
         }
     } else {
         for (_, index) in &frontier.normal_ready {
-            metrics.record_selection_candidate_probe();
-            let slack_guard = slack_index.slack_boundary(*index, now, metrics);
+            instrumentation.record_selection_candidate_probe();
+            let slack_guard = slack_index.slack_boundary(*index, now, instrumentation);
             if fits_split_contract(
                 *index,
                 &states[*index],
                 now,
                 slack_guard,
                 &boundary_context,
-                metrics,
+                instrumentation,
             )? {
                 return Ok(Some(Selection {
                     index: *index,
@@ -2002,10 +2086,11 @@ fn select_at_speculative_boundary(
     fixed_slots: &[(DateTime<Local>, DateTime<Local>)],
     frontier: &mut SchedulerFrontier,
     slack_index: &mut SlackDemandIndex,
-    metrics: &mut ScheduleMetrics,
+    instrumentation: &mut SchedulingInstrumentation,
 ) -> Result<SpeculativeBoundarySelection, SchedulingPolicyError> {
-    let speculative_releases = frontier.begin_speculative_releases(boundary, states, metrics);
-    let slack_change = slack_index.begin_speculative_idle(old_now, boundary, metrics);
+    let speculative_releases =
+        frontier.begin_speculative_releases(boundary, states, instrumentation);
+    let slack_change = slack_index.begin_speculative_idle(old_now, boundary, instrumentation);
     let atomic_release_predictions = RefCell::new(AtomicReleasePredictionCache::default());
     let selection = select_next_candidate(
         states,
@@ -2014,7 +2099,7 @@ fn select_at_speculative_boundary(
         frontier,
         slack_index,
         &atomic_release_predictions,
-        metrics,
+        instrumentation,
     );
     frontier.restore_speculative_releases(speculative_releases, states);
     match selection {
@@ -2023,22 +2108,10 @@ fn select_at_speculative_boundary(
             slack_change,
         }),
         Err(error) => {
-            slack_index.restore_speculative_idle(old_now, boundary, slack_change, metrics);
+            slack_index.restore_speculative_idle(old_now, boundary, slack_change, instrumentation);
             Err(error)
         }
     }
-}
-
-#[cfg(test)]
-fn schedule_tasks_by_priority(
-    candidates: &[TaskScheduleCandidate],
-    last_synced_time: DateTime<Local>,
-) -> Result<Vec<ScheduledTask>, SchedulingPolicyError> {
-    schedule_tasks_by_priority_with_metrics(
-        candidates,
-        last_synced_time,
-        &mut ScheduleMetrics::default(),
-    )
 }
 
 /// event loopが所有する可変状態を、候補の前処理結果から一度だけ構築する。
@@ -2060,7 +2133,7 @@ fn initialize_policy_state(
     prepared: PreparedCandidates,
     effective_deadlines_by_id: &HashMap<Uuid, Option<DateTime<Local>>>,
     last_synced_time: DateTime<Local>,
-    metrics: &mut ScheduleMetrics,
+    instrumentation: &mut SchedulingInstrumentation,
 ) -> PolicyState {
     let PreparedCandidates {
         pending,
@@ -2079,7 +2152,7 @@ fn initialize_policy_state(
     let mut states = task_candidates
         .into_iter()
         .map(|candidate| {
-            metrics.record_dependency_candidate_probe();
+            instrumentation.record_dependency_candidate_probe();
             let remaining_seconds = candidate.remaining_seconds.max(0);
             FlexibleState {
                 total_work_seconds: total_work_seconds_by_id
@@ -2119,7 +2192,7 @@ fn initialize_policy_state(
 
     let fixed_slots = occupied_fixed;
     let now = last_synced_time;
-    let slack_index = SlackDemandIndex::new(&states, now, &fixed_slots, metrics);
+    let slack_index = SlackDemandIndex::new(&states, now, &fixed_slots, instrumentation);
     let frontier = SchedulerFrontier::with_completion_events(&states, completion_events);
     PolicyState {
         states,
@@ -2139,14 +2212,14 @@ fn initialize_policy_state(
 /// 1segmentだけ強制配置し、dependency graphを進められる状態へ戻す。
 fn advance_without_selection(
     state: &mut PolicyState,
-    metrics: &mut ScheduleMetrics,
+    instrumentation: &mut SchedulingInstrumentation,
 ) -> Result<ControlFlow<()>, SchedulingPolicyError> {
     let next_release = state.frontier.next_release();
     let next_fixed = next_fixed_start(state.now, &state.fixed_slots);
     if let Some(next_event) = [next_release, next_fixed].into_iter().flatten().min() {
         state
             .slack_index
-            .record_idle(state.now, next_event, metrics);
+            .record_idle(state.now, next_event, instrumentation);
         state.now = next_event;
         return Ok(ControlFlow::Continue(()));
     }
@@ -2158,7 +2231,7 @@ fn advance_without_selection(
         .iter()
         .enumerate()
         .filter(|(_, state)| {
-            metrics.record_selection_candidate_probe();
+            instrumentation.record_selection_candidate_probe();
             state.completion_time.is_none()
         })
         .min_by_key(|(_, state)| normal_selection_key(state))
@@ -2168,11 +2241,11 @@ fn advance_without_selection(
         let fallback_start = max(state.now, release);
         state
             .slack_index
-            .record_idle(state.now, fallback_start, metrics);
+            .record_idle(state.now, fallback_start, instrumentation);
         state.now = fallback_start;
         state.frontier.force_ready(index, &state.states[index]);
         if state.states[index].remaining_seconds == 0 {
-            metrics.record_segment();
+            instrumentation.record_segment();
             state.scheduled_tasks.push(to_scheduled_task(
                 &state.states[index].candidate,
                 state.now,
@@ -2183,10 +2256,12 @@ fn advance_without_selection(
             state.states[index].completion_time = Some(state.now);
             state
                 .frontier
-                .complete(index, state.now, &state.states, metrics);
+                .complete(index, state.now, &state.states, instrumentation);
             return Ok(ControlFlow::Continue(()));
         }
-        let fallback_guard = state.slack_index.slack_boundary(index, state.now, metrics);
+        let fallback_guard = state
+            .slack_index
+            .slack_boundary(index, state.now, instrumentation);
         schedule_selected_segment(
             index,
             &mut state.states,
@@ -2194,7 +2269,7 @@ fn advance_without_selection(
             &mut state.now,
             &state.fixed_slots,
             fallback_guard,
-            metrics,
+            instrumentation,
             true,
             &mut state.slack_index,
             &mut state.frontier,
@@ -2202,24 +2277,31 @@ fn advance_without_selection(
         return Ok(ControlFlow::Continue(()));
     }
     if let Some(index) = state.frontier.first_incomplete_completion() {
-        let next =
-            state
-                .frontier
-                .force_complete_completion(index, state.now, &state.states, metrics);
-        state.slack_index.record_idle(state.now, next, metrics);
+        let next = state.frontier.force_complete_completion(
+            index,
+            state.now,
+            &state.states,
+            instrumentation,
+        );
+        state
+            .slack_index
+            .record_idle(state.now, next, instrumentation);
         state.now = next;
         return Ok(ControlFlow::Continue(()));
     }
     Ok(ControlFlow::Break(()))
 }
 
-/// 配置済みtaskを表示順へ並べ、表示sortを1回だけmetricsへ記録する。
+/// 配置済みtaskを表示順へ並べ、表示sortを1回だけinstrumentationへ記録する。
 ///
 /// 配置を終えた全segmentのsliceを、in-placeで決定論的に並べ替える。
 /// 配置policyには影響せず、同一開始時刻ではdeadline有無、priority降順、rank、UUIDの
 /// 順で同率を解消する。
-fn sort_schedule_for_display(scheduled_tasks: &mut [ScheduledTask], metrics: &mut ScheduleMetrics) {
-    metrics.record_sort();
+fn sort_schedule_for_display(
+    scheduled_tasks: &mut [ScheduledTask],
+    instrumentation: &mut SchedulingInstrumentation,
+) {
+    instrumentation.record_sort();
     scheduled_tasks.sort_by(|a, b| {
         (
             a.scheduled_start,
@@ -2242,14 +2324,25 @@ fn sort_schedule_for_display(scheduled_tasks: &mut [ScheduledTask], metrics: &mu
 ///
 /// phase順を保つことで、fixed予約、容量保護、実作業、表示順の責務が混ざらない。
 /// helperはこのmodule内に閉じ、上位use caseが別の選択規則を持たないようにする。
-pub(super) fn schedule_tasks_by_priority_with_metrics(
+pub(super) fn schedule_tasks_by_priority(
     candidates: &[TaskScheduleCandidate],
     last_synced_time: DateTime<Local>,
-    metrics: &mut ScheduleMetrics,
+) -> Result<Vec<ScheduledTask>, SchedulingPolicyError> {
+    schedule_tasks_by_priority_instrumented(
+        candidates,
+        last_synced_time,
+        &mut SchedulingInstrumentation,
+    )
+}
+
+fn schedule_tasks_by_priority_instrumented(
+    candidates: &[TaskScheduleCandidate],
+    last_synced_time: DateTime<Local>,
+    instrumentation: &mut SchedulingInstrumentation,
 ) -> Result<Vec<ScheduledTask>, SchedulingPolicyError> {
     // Phase 1: fixedを先に分類し、約束時刻がflexibleの選択結果に影響されない
     // 形で予約する。
-    let prepared = classify_fixed_candidates(candidates, last_synced_time, metrics)?;
+    let prepared = classify_fixed_candidates(candidates, last_synced_time, instrumentation)?;
 
     // Phase 2: fixed開始をdependencyのeffective deadlineにすることで、fixed本体を
     // 動かさずにその準備容量だけを保護する。
@@ -2258,14 +2351,14 @@ pub(super) fn schedule_tasks_by_priority_with_metrics(
         prepared,
         &effective_deadlines_by_id,
         last_synced_time,
-        metrics,
+        instrumentation,
     );
 
     // Phase 3: eventとeventの間だけを配置し、releaseやslack境界で必ず再選択する。
     while state.frontier.incomplete_count > 0 {
         state
             .frontier
-            .promote_releases(state.now, &state.states, metrics);
+            .promote_releases(state.now, &state.states, instrumentation);
         state
             .atomic_release_predictions
             .borrow_mut()
@@ -2273,7 +2366,7 @@ pub(super) fn schedule_tasks_by_priority_with_metrics(
                 state.now,
                 &state.states,
                 Some(state.frontier.generation),
-                metrics,
+                instrumentation,
             );
         if let Some((_, fixed_end)) = fixed_slot_containing(state.now, &state.fixed_slots) {
             state.slack_index.record_fixed_skip(fixed_end);
@@ -2283,7 +2376,7 @@ pub(super) fn schedule_tasks_by_priority_with_metrics(
 
         // 本当に作業量が0秒のtaskも、表示とdependency解放の決定的な点を持つ。
         if let Some(index) = state.frontier.first_zero() {
-            metrics.record_segment();
+            instrumentation.record_segment();
             state.scheduled_tasks.push(to_scheduled_task(
                 &state.states[index].candidate,
                 state.now,
@@ -2294,7 +2387,7 @@ pub(super) fn schedule_tasks_by_priority_with_metrics(
             state.states[index].completion_time = Some(state.now);
             state
                 .frontier
-                .complete(index, state.now, &state.states, metrics);
+                .complete(index, state.now, &state.states, instrumentation);
             continue;
         }
 
@@ -2305,10 +2398,10 @@ pub(super) fn schedule_tasks_by_priority_with_metrics(
             &state.frontier,
             &state.slack_index,
             &state.atomic_release_predictions,
-            metrics,
+            instrumentation,
         )?;
         let Some(selection) = selection else {
-            match advance_without_selection(&mut state, metrics)? {
+            match advance_without_selection(&mut state, instrumentation)? {
                 ControlFlow::Continue(()) => continue,
                 ControlFlow::Break(()) => break,
             }
@@ -2321,7 +2414,7 @@ pub(super) fn schedule_tasks_by_priority_with_metrics(
             &mut state.now,
             &state.fixed_slots,
             selection.slack_boundary,
-            metrics,
+            instrumentation,
             false,
             &mut state.slack_index,
             &mut state.frontier,
@@ -2329,7 +2422,7 @@ pub(super) fn schedule_tasks_by_priority_with_metrics(
     }
 
     // Phase 4: 表示順は選択policyと分離し、同一入力から常に同一結果を返す。
-    sort_schedule_for_display(&mut state.scheduled_tasks, metrics);
+    sort_schedule_for_display(&mut state.scheduled_tasks, instrumentation);
     Ok(state.scheduled_tasks)
 }
 
@@ -2341,7 +2434,7 @@ fn schedule_selected_segment(
     now: &mut DateTime<Local>,
     fixed_slots: &[(DateTime<Local>, DateTime<Local>)],
     slack_guard: Option<DateTime<Local>>,
-    metrics: &mut ScheduleMetrics,
+    instrumentation: &mut SchedulingInstrumentation,
     ignore_dependencies: bool,
     slack_index: &mut SlackDemandIndex,
     frontier: &mut SchedulerFrontier,
@@ -2360,7 +2453,7 @@ fn schedule_selected_segment(
         *now,
         slack_guard,
         &boundary_context,
-        metrics,
+        instrumentation,
     )?;
     let mut boundary = segment_boundary.time;
     if states[selected_index].candidate.atomic {
@@ -2388,7 +2481,7 @@ fn schedule_selected_segment(
             fixed_slots,
             frontier,
             slack_index,
-            metrics,
+            instrumentation,
         )?;
         let release_preempts = speculative
             .selection
@@ -2403,7 +2496,12 @@ fn schedule_selected_segment(
             *now = boundary;
             return Ok(());
         }
-        slack_index.restore_speculative_idle(*now, boundary, speculative.slack_change, metrics);
+        slack_index.restore_speculative_idle(
+            *now,
+            boundary,
+            speculative.slack_change,
+            instrumentation,
+        );
         if guard_releases_protected_task {
             // 保護taskがguard時刻までreleaseされない場合、それより前に切り替える
             // 選択肢はない。使える時間をidleにするより、境界までの作業を保存する。
@@ -2422,7 +2520,7 @@ fn schedule_selected_segment(
     let scheduled_start = *now;
     let total_work_seconds = states[selected_index].total_work_seconds;
     let candidate = states[selected_index].candidate.clone();
-    metrics.record_segment();
+    instrumentation.record_segment();
     scheduled_tasks.push(to_scheduled_task(
         &candidate,
         scheduled_start,
@@ -2431,11 +2529,11 @@ fn schedule_selected_segment(
         total_work_seconds,
     ));
     states[selected_index].remaining_seconds -= work_seconds;
-    slack_index.record_work(selected_index, work_seconds, metrics);
+    slack_index.record_work(selected_index, work_seconds, instrumentation);
     *now = boundary;
     if states[selected_index].remaining_seconds == 0 {
         states[selected_index].completion_time = Some(boundary);
-        frontier.complete(selected_index, boundary, states, metrics);
+        frontier.complete(selected_index, boundary, states, instrumentation);
     } else if ignore_dependencies {
         // fallbackは1segment進めることでcycleを解く。残作業は通常event loopへ戻す。
         states[selected_index].candidate.dependency_ids.clear();
