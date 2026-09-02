@@ -54,7 +54,7 @@
 | TD-016 | P3 | 完了 | M | マジック値、未使用フィールド、古いコメントが意図を曖昧にしている |
 | TD-017 | P1 | 完了 | XL | `TaskHandle`の既存infallible APIが内部不変条件の破れをpanicとして扱う |
 | TD-018 | P1 | 完了 | XL | CLI runtimeにcommand orchestrationと表示計算が残っている |
-| TD-019 | P2 | 未着手 | L | scheduling性能計測の状態がapplicationの業務ロジックへ伝播している |
+| TD-019 | P2 | 完了 | L | scheduling性能計測の状態がapplicationの業務ロジックへ伝播している |
 
 ## 詳細
 
@@ -794,6 +794,9 @@
 
 - 優先度: `P2`
 - 概算規模: `L`
+- 完了日: 2026-09-02
+- 対応: `scheduling_instrumentation`へ中立なevent記録境界を設け、default featureではno-op、`benchmarking` featureだけがthread-local sessionとcounter stateを持つ構成へ置換した。schedule、pack、flattenの通常entrypointからconcrete metricsの生成・引数伝播と`*_with_metrics`/`*_and_metrics`経路を除去し、診断entrypointは各session内で同じ通常algorithmを実行する。公開metrics型はsession側の型を直接再公開し、重複型と旧`scheduling_metrics` moduleを削除した。
+- 検証: `cargo fmt --check`、`cargo clippy --locked --all-targets -- -D warnings`、`cargo test --locked`、`cargo test --locked --features benchmarking --test scheduling_benchmark_contract`、`git diff --check`に成功した。通常testは失敗0件、benchmark contractは16件成功した。3 use case内のconcrete metrics名と`_with_metrics`/`_and_metrics`が0件であり、3回の責務別subagent reviewとcommit履歴reviewでも残存指摘がないことを確認した。
 - 調査revision: `91afef6`
 
 #### 現状と根拠
