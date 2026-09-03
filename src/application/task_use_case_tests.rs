@@ -1375,6 +1375,7 @@ fn complete_task_繰り返し親のfixed_startを次回子タスクに引き継�
     )
     .unwrap();
 
+    assert!(!child_task.get_fixed_start().unwrap());
     let next_child = parent_task
         .get_children()
         .unwrap()
@@ -1382,6 +1383,37 @@ fn complete_task_繰り返し親のfixed_startを次回子タスクに引き継�
         .find(|task| task.get_status().unwrap() != Status::Done)
         .expect("next repetition child");
     assert!(next_child.get_fixed_start().unwrap());
+}
+
+#[test]
+fn complete_task_繰り返し親がflexibleならfixed_startの子からもflexibleな次回子を生成する() {
+    let parent_task = crate::test_support::new_task_handle("通勤").unwrap();
+    parent_task
+        .set_repetition_interval_days_opt(Some(7))
+        .unwrap();
+    let child_task =
+        parent_task.create_as_last_child(crate::test_support::new_task_attr("今回の通勤"));
+    child_task.set_fixed_start(true).unwrap();
+
+    let mut repository = TestTaskRepository::new(vec![parent_task.clone()], fixed_now());
+    complete_task_with_fresh_factory(
+        &mut repository,
+        CompleteTaskInput {
+            task_id: child_task.get_id().unwrap(),
+            finished_at: fixed_now(),
+            additional_actual_work_seconds: 0,
+        },
+    )
+    .unwrap();
+
+    assert!(child_task.get_fixed_start().unwrap());
+    let next_child = parent_task
+        .get_children()
+        .unwrap()
+        .into_iter()
+        .find(|task| task.get_status().unwrap() != Status::Done)
+        .expect("next repetition child");
+    assert!(!next_child.get_fixed_start().unwrap());
 }
 
 #[test]
