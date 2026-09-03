@@ -88,7 +88,10 @@ fn copy_for_spreadsheetはmacos標準pathでtask行とpaddingを生成する() {
     let stdout = String::from_utf8(output.stdout).expect("script output is UTF-8");
     let lines: Vec<_> = stdout.lines().collect();
     let expected_task_lines: Vec<_> = expected_task_rows.lines().collect();
-    assert_eq!(&lines[..expected_task_lines.len()], expected_task_lines);
+    for (actual, expected) in lines.iter().zip(&expected_task_lines) {
+        assert_eq!(actual.strip_suffix('\t'), Some(*expected));
+        assert_eq!(actual.split('\t').count(), 18);
+    }
     assert_eq!(lines.len(), expected_task_lines.len() + 50);
     assert!(
         lines[expected_task_lines.len()..]
