@@ -1,4 +1,5 @@
 use super::*;
+use crate::application::interface::ProjectRegistrationError;
 use crate::test_support::TestTaskRepository;
 use chrono::TimeZone;
 use std::cell::Cell;
@@ -305,6 +306,30 @@ fn create_task_空の名前を拒否して変更しない() {
         actual,
         Err(ApplicationError::InvalidInput { field: "name", .. })
     ));
+    assert!(repository.projects().is_empty());
+}
+
+#[test]
+fn create_task_project登録errorを情報を落とさず返して変更しない() {
+    let duplicate_id = Uuid::from_u128(0x2121);
+    let mut repository = TestTaskRepository::new(vec![], fixed_now());
+    repository.set_registration_error(ProjectRegistrationError::DuplicateTaskId(duplicate_id));
+
+    let actual = create_task_with_fresh_factory(
+        &mut repository,
+        CreateTaskInput {
+            name: "重複project".to_string(),
+            estimated_work_minutes: None,
+            pending_until: None,
+        },
+    );
+
+    assert_eq!(
+        actual,
+        Err(ApplicationError::ProjectRegistration(
+            ProjectRegistrationError::DuplicateTaskId(duplicate_id)
+        ))
+    );
     assert!(repository.projects().is_empty());
 }
 

@@ -203,7 +203,7 @@ impl TaskRepositoryTrait for RecordingRepository {
     fn start_new_project(
         &mut self,
         root_task: TaskHandle,
-    ) -> Result<(), crate::entity::task::TaskTreeError> {
+    ) -> Result<(), crate::application::interface::ProjectRegistrationError> {
         self.mutation_count.set(self.mutation_count.get() + 1);
         self.operation_order.borrow_mut().push("mutation");
         self.projects.push(root_task);

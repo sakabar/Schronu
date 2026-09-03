@@ -1,5 +1,5 @@
 use crate::application::daily_capacity::{try_local_date_and_time, try_next_logical_date_start};
-use crate::application::interface::TaskRepositoryTrait;
+use crate::application::interface::{ProjectRegistrationError, TaskRepositoryTrait};
 use crate::application::schedule_use_case::get_schedule;
 pub use crate::application::task_view::TaskView;
 use crate::entity::task::{
@@ -23,6 +23,7 @@ pub enum ApplicationError {
     },
     HasUndoneChildren(Uuid),
     TaskTree(TaskTreeError),
+    ProjectRegistration(ProjectRegistrationError),
     AmbiguousLocalDateTime {
         local_datetime: NaiveDateTime,
         earlier: DateTime<Local>,
@@ -65,6 +66,7 @@ impl fmt::Display for ApplicationError {
                 write!(formatter, "task has undone children: {task_id}")
             }
             Self::TaskTree(error) => write!(formatter, "task tree operation failed: {error}"),
+            Self::ProjectRegistration(error) => error.fmt(formatter),
             Self::AmbiguousLocalDateTime {
                 local_datetime,
                 earlier,
@@ -342,7 +344,7 @@ pub fn create_task(
     let task_id = root_task.get_id().map_err(ApplicationError::TaskTree)?;
     repository
         .start_new_project(root_task)
-        .map_err(ApplicationError::TaskTree)?;
+        .map_err(ApplicationError::ProjectRegistration)?;
     Ok(task_id)
 }
 

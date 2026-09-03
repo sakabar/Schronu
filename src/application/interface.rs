@@ -17,6 +17,41 @@ pub enum RepositoryReloadOutcome {
     Cached,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum ProjectRegistrationError {
+    TaskTree(TaskTreeError),
+    DuplicateTaskId(Uuid),
+    DuplicateStoragePath(PathBuf),
+}
+
+impl fmt::Display for ProjectRegistrationError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::TaskTree(error) => write!(formatter, "project registration failed: {error}"),
+            Self::DuplicateTaskId(task_id) => {
+                write!(
+                    formatter,
+                    "project registration duplicate task ID: {task_id}"
+                )
+            }
+            Self::DuplicateStoragePath(path) => write!(
+                formatter,
+                "project registration duplicate storage path: {}",
+                path.display()
+            ),
+        }
+    }
+}
+
+impl Error for ProjectRegistrationError {
+    fn source(&self) -> Option<&(dyn Error + 'static)> {
+        match self {
+            Self::TaskTree(error) => Some(error),
+            Self::DuplicateTaskId(_) | Self::DuplicateStoragePath(_) => None,
+        }
+    }
+}
+
 #[derive(Debug)]
 pub struct TaskRepositoryError {
     operation: TaskRepositoryOperation,
@@ -85,7 +120,7 @@ pub trait TaskRepositoryTrait {
         excluded_task_ids: &[Uuid],
     ) -> Result<Option<Uuid>, TaskTreeError>;
     fn get_by_id(&self, id: Uuid) -> Result<Option<TaskHandle>, TaskTreeError>;
-    fn start_new_project(&mut self, root_task: TaskHandle) -> Result<(), TaskTreeError>;
+    fn start_new_project(&mut self, root_task: TaskHandle) -> Result<(), ProjectRegistrationError>;
 }
 
 pub trait FreeTimeManagerTrait {
