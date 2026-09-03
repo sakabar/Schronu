@@ -17,3 +17,7 @@ pub(crate) fn scheduled_capacity_seconds(
         scheduled_work_seconds.max(0)
     }
 }
+
+#[cfg(test)]
+#[path = "scheduled_capacity_tests.rs"]
+mod tests;
