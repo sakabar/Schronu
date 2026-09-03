@@ -62,7 +62,7 @@
 | TD-021 | P1 | 未着手 | M | repositoryが重複UUIDを受理し、ID指定操作の対象が走査順に依存する |
 | TD-022 | P1 | 未着手 | XL | 複数project保存でrevisionだけが先行し、失敗時にdisk snapshotが部分更新される |
 | TD-023 | P1 | 未着手 | S | `終`が不正時刻と一部application errorを成功扱いで握り潰す |
-| TD-024 | P1 | 未着手 | M | CLI parserが不正な数値や余分な引数を黙って受理し、更新commandを実行する |
+| TD-024 | P1 | 完了 | M | CLI parserが不正な数値や余分な引数を黙って受理し、更新commandを実行する |
 | TD-025 | P1 | 未着手 | M | 対話CLIのterminal I/O失敗がpanicまたは未検査結果になる |
 | TD-026 | P1 | 未着手 | L | task名をCLI・YAML・MCP・Spreadsheet間で安全にround-tripできない |
 | TD-027 | P1 | 未着手 | S | 残作業時間の補正計算が合法な大値入力で整数overflowする |
@@ -1014,6 +1014,9 @@
 - 分類: `バグ / 入力検証`
 - 優先度: `P1`
 - 概算規模: `M`
+- 完了日: 2026-09-04
+- 対応: command定義へcanonical name、usage、最小・最大argument数を集約し、typed fieldの変換前に全既知commandのarityを検証するようにした。`extrude`はargument省略時だけ既存動作を維持し、不正値と`u16`範囲外をfield付きerrorにする。`arrange`の任意flagは`全`または`all`だけを受理する。parse errorはbusy timeとrepositoryの読込、task変更、保存より先に返す。
+- 検証: `cargo fmt --check`、`cargo clippy --locked --all-targets -- -D warnings`、`cargo test --locked -q`、`git diff --check`に成功した。通常testは失敗0件で、全commandのarity table、alias、省略時既定値、canonical error、非対話runtimeの未変更・未保存契約を確認した。契約単位のspec reviewとcode quality review、最終実装・commit履歴reviewでも残存指摘がないことを確認した。
 - 関連既存項目: TD-006の完了条件に対する残存不具合。
 
 #### 現状と根拠
