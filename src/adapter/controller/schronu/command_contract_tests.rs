@@ -713,6 +713,33 @@ fn parse_errors_preserve_field_reason_usage_and_display_contract() {
 }
 
 #[test]
+fn arity_and_typed_value_errors_share_the_canonical_command_usage() {
+    for (arity_input, typed_input, command, usage) in [
+        (
+            "defer 1 DAY extra",
+            "defer invalid DAY",
+            "後",
+            "後 <量> [単位]",
+        ),
+        (
+            "new task 15 extra",
+            "new task invalid",
+            "新",
+            "新 <name> [minutes]",
+        ),
+        ("actual 1 extra", "actual invalid", "実", "実 <integer>"),
+    ] {
+        let arity_error = parse_command(arity_input, ParseMode::NonInteractive).unwrap_err();
+        let typed_error = parse_command(typed_input, ParseMode::NonInteractive).unwrap_err();
+
+        assert_eq!(arity_error.command(), command, "input: {arity_input}");
+        assert_eq!(typed_error.command(), command, "input: {typed_input}");
+        assert_eq!(arity_error.usage(), usage, "input: {arity_input}");
+        assert_eq!(typed_error.usage(), usage, "input: {typed_input}");
+    }
+}
+
+#[test]
 fn focus_selection_modes_are_interactive_only_and_validate_arguments() {
     for input in ["高", "high", "hi", "highest", "低", "low", "lo", "lowest"] {
         assert!(matches!(
