@@ -72,7 +72,7 @@
 | TD-031 | P1 | 未着手 | S | Spreadsheet変換がrank 1000以降のtask行を黙って破棄する |
 | TD-032 | P1 | 未着手 | S | macOS標準環境でSpreadsheet変換の`tac`依存が空出力の成功になる |
 | TD-033 | P1 | 未着手 | M | 同一taskの複数segmentをApps Scriptが別行へ同期する |
-| TD-034 | P1 | 未着手 | M | Spreadsheet入力が存在しない日付と不正な時分秒をcommandへ変換する |
+| TD-034 | P1 | 一部完了(W1-J) | M | Spreadsheet入力が存在しない日付と不正な時分秒をcommandへ変換する |
 | TD-035 | P2 | 未着手 | M | 反復延期がDST境界で開始時刻とdeadlineの壁時計時刻をずらす |
 | TD-036 | P2 | 未着手 | L | source textを独自parseするarchitecture testがRust構文と実装名へ強く結合している |
 | TD-037 | P2 | 未着手 | M | 未使用のlenient YAML変換APIがstrict loaderと並存している |
@@ -1370,8 +1370,12 @@
 - 分類: `バグ / Spreadsheet import`
 - 優先度: `P1`
 - 概算規模: `M`
+- W1-J完了日: 2026-09-04
+- 対応: S列のminute/secondを00-59へ限定し、P列をGregorian暦の実在日まで検証するようにした。専用import contract testで、入力全体の検証が成功するまでstdoutへcommandを出さない契約を固定した。
+- 検証: `cargo fmt --check`、`cargo clippy --locked --all-targets -- -D warnings`、`cargo test --locked`、`git diff --check`に成功した。専用import contract test 5件と既存Spreadsheet contract test 4件が成功し、仕様・code quality reviewの指摘を解消した。
+- 残存: 正常生成commandをCLI parserへ通すcross-boundary contract testはWave 2へ残す。このintegration gateがGreenになるまでTD-034全体は完了扱いにしない。
 
-#### 現状と根拠
+#### 着手時の現状と根拠
 
 - `shell/generate_command_from_spreadsheet.sh:37-59`の完了日時parseは月1-12、日1-31しか検査せず、`2026/02/31`や非閏年の`02/29`を受理する。
 - 同script`21-28`の実作業時間parseは形だけを見て、minute/secondが00-59であることを検査しない。`0:99:99`を99分として受理する。
