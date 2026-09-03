@@ -7683,7 +7683,7 @@ fn test_try_save_before_exit_保存成功なら終了可能にする() {
     let task_repository = TestTaskRepository::new(new_test_task_handle("保存対象").unwrap(), now);
     let mut stdout = TestWriter::new();
 
-    let actual = try_save_before_exit(&mut stdout, &task_repository);
+    let actual = try_save_before_exit(&mut stdout, &task_repository).unwrap();
 
     assert!(actual);
     assert_eq!(stdout.into_string(), "");
@@ -7698,7 +7698,7 @@ fn test_try_save_before_exit_保存失敗ならerrorを表示して終了を止�
     task_repository.save_failures_remaining.set(1);
     let mut stdout = FlushTrackingWriter::successful(true);
 
-    let actual = try_save_before_exit(&mut stdout, &task_repository);
+    let actual = try_save_before_exit(&mut stdout, &task_repository).unwrap();
 
     assert!(!actual);
     assert_eq!(
@@ -7795,7 +7795,9 @@ fn test_try_exit_interactive_保存失敗後の再試行で成功する() {
             &mut free_time_manager,
             &mut focused_task_id_opt,
             now,
-        ) {
+        )
+        .unwrap()
+        {
             exited = true;
             break;
         }
@@ -7835,7 +7837,8 @@ fn test_try_exit_interactive_ctrl_d終了時は帯を表示する() {
         &mut free_time_manager,
         &mut focused_task_id_opt,
         now,
-    );
+    )
+    .unwrap();
 
     assert!(exited);
     let output = stdout.into_string();
