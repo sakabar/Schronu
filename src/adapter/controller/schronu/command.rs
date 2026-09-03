@@ -533,6 +533,18 @@ fn parse_arrange(
     arguments: &[String],
 ) -> Result<Command, CommandParseError> {
     let value = required_argument(arguments, definition, "estimated_work_minutes")?;
+    let includes_zero_estimate = match arguments.get(1).map(String::as_str) {
+        None => false,
+        Some("全" | "all") => true,
+        Some(_) => {
+            return Err(parse_error(
+                definition.canonical_name,
+                "includes_zero_estimate",
+                "全またはallで指定してください",
+                definition.usage,
+            ));
+        }
+    };
     Ok(Command::Arrange {
         minutes: parse_i64(
             value,
@@ -540,9 +552,7 @@ fn parse_arrange(
             "estimated_work_minutes",
             "整数で指定してください",
         )?,
-        includes_zero_estimate: arguments
-            .get(1)
-            .is_some_and(|argument| matches!(argument.as_str(), "全" | "all")),
+        includes_zero_estimate,
     })
 }
 
@@ -680,7 +690,17 @@ fn parse_action(
         CommandKind::Extrude => CommandAction::Extrude {
             step_days: arguments
                 .first()
-                .map(|value| value.parse::<u16>().unwrap_or(1)),
+                .map(|value| {
+                    value.parse::<u16>().map_err(|_| {
+                        parse_error(
+                            definition.canonical_name,
+                            "step_days",
+                            "0以上65535以下の整数で指定してください",
+                            definition.usage,
+                        )
+                    })
+                })
+                .transpose()?,
         },
         CommandKind::Clear | CommandKind::Gather => CommandAction::ClearOrGather {
             kind,
