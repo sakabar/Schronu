@@ -3,6 +3,7 @@ use super::task_use_case::get_task;
 use crate::entity::task::{Status, TaskHandle};
 use crate::test_support::TestTaskRepository;
 use chrono::{DateTime, Duration, FixedOffset, Local, NaiveDate, TimeZone};
+use std::panic::{catch_unwind, AssertUnwindSafe};
 use uuid::Uuid;
 
 fn is_externally_visible_function_declaration(source_line: &str) -> bool {
@@ -511,6 +512,43 @@ fn get_scheduleは祖先時刻の既存残秒式とcandidate残秒を区別す�
     assert_eq!(child_segment.scheduled_work_seconds, 30 * 60);
     assert_eq!(child_segment.scheduled_start, now + Duration::hours(1));
     assert_eq!(parent_segment.scheduled_start, now + Duration::minutes(90));
+}
+
+#[test]
+fn get_scheduleは残作業補正のoverflowを値付きerrorにしtaskを変更しない() {
+    const ESTIMATED_WORK_SECONDS: i64 = 9_223_372_036_854_775_800;
+    const ACTUAL_WORK_SECONDS: i64 = ESTIMATED_WORK_SECONDS + 1;
+
+    let now = fixed_now();
+    let task = task_with_schedule("残作業overflow", now, ESTIMATED_WORK_SECONDS, 0);
+    task.set_actual_work_seconds(ACTUAL_WORK_SECONDS).unwrap();
+    let task_id = task.get_id().unwrap();
+    let repository = TestTaskRepository::new(vec![task.clone()], now);
+    let original_view = get_task(&repository, task_id).unwrap().unwrap();
+    let original_revision = task.get_persistent_mutation_revision().unwrap();
+
+    let actual = catch_unwind(AssertUnwindSafe(|| get_schedule(&repository)))
+        .expect("remaining work overflow must not panic");
+
+    assert_eq!(
+        actual,
+        Err(
+            super::task_use_case::ApplicationError::RemainingWorkCalculationOverflow {
+                task_id,
+                estimated_work_seconds: ESTIMATED_WORK_SECONDS,
+                actual_work_seconds: ACTUAL_WORK_SECONDS,
+            }
+        )
+    );
+    assert_eq!(
+        get_task(&repository, task_id).unwrap().unwrap(),
+        original_view
+    );
+    assert_eq!(
+        task.get_persistent_mutation_revision().unwrap(),
+        original_revision
+    );
+    assert_eq!(repository.save_count(), 0);
 }
 
 #[test]
