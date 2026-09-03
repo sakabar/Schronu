@@ -778,6 +778,9 @@ fn build_next_repetition_task_attr(
     let parent_atomic = parent_task
         .get_atomic()
         .map_err(ApplicationError::TaskTree)?;
+    let parent_fixed_start = parent_task
+        .get_fixed_start()
+        .map_err(ApplicationError::TaskTree)?;
 
     let next_logical_date_start = try_next_logical_date_start(occurrence_anchor)?;
     let repetition_offset_days =
@@ -836,6 +839,7 @@ fn build_next_repetition_task_attr(
     new_task_attr.set_deadline_time_opt(Some(new_deadline_time));
     new_task_attr.set_estimated_work_seconds(adjusted_parent_estimated_work_seconds);
     new_task_attr.set_atomic(parent_atomic);
+    new_task_attr.set_fixed_start(parent_fixed_start);
     Ok(new_task_attr)
 }
 
