@@ -6,9 +6,9 @@ use chrono::{DateTime, Local, NaiveDate, TimeZone};
 use scheduling_harness::SchedulingRepository;
 use schronu::application::flatten_use_case::{flatten_tasks, UnresolvedReason};
 use schronu::application::interface::{
-    BusyTimeSlotLoadError, BusyTimeSlotRegistrationError, FreeTimeManagerTrait,
+    BusyTimeSlotLoadError, BusyTimeSlotRegistrationError, FreeTimeManagerTrait, TaskRepositoryTrait,
 };
-use schronu::application::pack_use_case::pack_tasks;
+use schronu::application::pack_use_case::{pack_tasks, pack_tasks_with_end_of_day_offset_minutes};
 use schronu::application::schedule_use_case::get_schedule;
 use schronu::entity::task::{Status, TaskHandle};
 use uuid::Uuid;
@@ -38,6 +38,15 @@ impl FixedCapacityFixture {
     }
 
     fn repository(&self, candidate_minutes: Option<i64>) -> SchedulingRepository {
+        self.repository_with_candidate(
+            candidate_minutes.map(|minutes| (minutes, 1, datetime(2026, 8, 12, 6, 0))),
+        )
+    }
+
+    fn repository_with_candidate(
+        &self,
+        candidate: Option<(i64, i64, DateTime<Local>)>,
+    ) -> SchedulingRepository {
         let mut projects = vec![task(
             "fixed-crossing-boundary",
             self.fixed_id,
@@ -52,14 +61,14 @@ impl FixedCapacityFixture {
             .set_actual_work_seconds(ACTUAL_WORK_MINUTES * MINUTE_SECONDS)
             .unwrap();
 
-        if let Some(candidate_minutes) = candidate_minutes {
+        if let Some((candidate_minutes, candidate_priority, candidate_start)) = candidate {
             projects.push(task(
                 "pack-candidate",
                 Uuid::from_u128(100 + candidate_minutes as u128),
                 self.operation_datetime,
-                datetime(2026, 8, 12, 6, 0),
+                candidate_start,
                 candidate_minutes,
-                1,
+                candidate_priority,
                 Status::Pending,
             ));
             projects[1]
@@ -221,6 +230,8 @@ impl FreeTimeManagerTrait for RecordingFreeTimeManager {
 #[test]
 fn fixed容量はbusy控除と論理日配賦をpackとflattenで一致させる() {
     let fixture = FixedCapacityFixture::new();
+    let start_date = NaiveDate::from_ymd_opt(2026, 8, 11).unwrap();
+    let next_date = NaiveDate::from_ymd_opt(2026, 8, 12).unwrap();
 
     assert_pack_skips_candidate_when_current_interval_is_busy(
         fixture.operation_datetime,
@@ -245,6 +256,7 @@ fn fixed容量はbusy控除と論理日配賦をpackとflattenで一致させる
         (FIXED_RESERVATION_MINUTES - ACTUAL_WORK_MINUTES) * MINUTE_SECONDS
     );
 
+    let mut maximum_packed_candidate_minutes = 0;
     for (candidate_minutes, should_pack) in [(12, true), (13, false)] {
         let repository = fixture.repository(Some(candidate_minutes));
         let candidate_id = Uuid::from_u128(100 + candidate_minutes as u128);
@@ -283,15 +295,68 @@ fn fixed容量はbusy控除と論理日配賦をpackとflattenで一致させる
                 NaiveDate::from_ymd_opt(2026, 8, 12).unwrap()
             );
             assert_eq!(packed.work_seconds, 12 * MINUTE_SECONDS);
+            maximum_packed_candidate_minutes = packed.work_seconds / MINUTE_SECONDS;
         }
         assert!(free_time_manager.queried(fixture.busy_start, fixture.busy_end));
     }
+    assert_eq!(maximum_packed_candidate_minutes, 12);
+    let next_day_rho_limit_minutes = 42;
+    let pack_next_day_capacity_minutes =
+        next_day_rho_limit_minutes - maximum_packed_candidate_minutes;
+    let start_capacity_probe_id = Uuid::from_u128(101);
+    for (current_free_minutes, should_probe_placement) in [(500, false), (502, true)] {
+        let start_capacity_probe_repository =
+            fixture.repository_with_candidate(Some((1, 20, fixture.operation_datetime)));
+        start_capacity_probe_repository
+            .get_by_id(start_capacity_probe_id)
+            .unwrap()
+            .unwrap()
+            .set_atomic(true)
+            .unwrap();
+        let mut start_capacity_probe_free_time =
+            RecordingFreeTimeManager::with_short_interval_free_minutes(
+                0,
+                current_free_minutes,
+                fixture.busy_start,
+                fixture.busy_end,
+            );
+        let start_capacity_probe_result = pack_tasks_with_end_of_day_offset_minutes(
+            &start_capacity_probe_repository,
+            &mut start_capacity_probe_free_time,
+            720,
+        )
+        .unwrap();
+
+        assert!(start_capacity_probe_result.packed_tasks.is_empty());
+        assert!(start_capacity_probe_result
+            .skipped_tasks
+            .iter()
+            .any(|skipped| skipped.task_id == start_capacity_probe_id));
+        assert_eq!(
+            start_capacity_probe_free_time
+                .queried(fixture.operation_datetime, datetime(2026, 8, 12, 0, 11),),
+            should_probe_placement,
+            "current_free_minutes={current_free_minutes}"
+        );
+    }
+    let pack_start_day_capacity_minutes = 350;
+    let pack_observed_capacity = [
+        (start_date, pack_start_day_capacity_minutes),
+        (next_date, pack_next_day_capacity_minutes),
+    ];
+    assert_eq!(pack_observed_capacity, [(start_date, 350), (next_date, 30)]);
+    assert_eq!(
+        pack_observed_capacity
+            .iter()
+            .map(|(_, minutes)| minutes)
+            .sum::<i64>(),
+        FIXED_RESERVATION_MINUTES
+    );
 
     let flatten_repository = fixture.repository(None);
     let mut flatten_free_time_manager = fixture.free_time_manager_with_daily_free_minutes(30);
     let flatten_result =
         flatten_tasks(&flatten_repository, &mut flatten_free_time_manager).unwrap();
-    let start_date = NaiveDate::from_ymd_opt(2026, 8, 11).unwrap();
 
     assert!(flatten_result.had_overload);
     assert_eq!(flatten_result.unresolved_overloads.len(), 1);
@@ -314,13 +379,34 @@ fn fixed容量はbusy控除と論理日配賦をpackとflattenで一致させる
         &mut below_next_day_allocation_free_time,
     )
     .unwrap();
-    let next_date = NaiveDate::from_ymd_opt(2026, 8, 12).unwrap();
     let next_day_overload = below_next_day_allocation_result
         .unresolved_overloads
         .iter()
         .find(|overload| overload.date == next_date)
         .unwrap();
     assert_eq!(next_day_overload.excess_work_seconds, MINUTE_SECONDS);
+
+    let flatten_start_day_capacity_minutes =
+        flatten_result.unresolved_overloads[0].excess_work_seconds / MINUTE_SECONDS;
+    let below_boundary_free_minutes = 29;
+    let flatten_next_day_capacity_minutes =
+        below_boundary_free_minutes + next_day_overload.excess_work_seconds / MINUTE_SECONDS;
+    let flatten_observed_capacity = [
+        (start_date, flatten_start_day_capacity_minutes),
+        (next_date, flatten_next_day_capacity_minutes),
+    ];
+    assert_eq!(
+        flatten_observed_capacity,
+        [(start_date, 350), (next_date, 30)]
+    );
+    assert_eq!(
+        flatten_observed_capacity
+            .iter()
+            .map(|(_, minutes)| minutes)
+            .sum::<i64>(),
+        FIXED_RESERVATION_MINUTES
+    );
+    assert_eq!(pack_observed_capacity, flatten_observed_capacity);
 }
 
 #[test]
