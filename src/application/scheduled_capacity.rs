@@ -32,6 +32,7 @@ pub(crate) fn scheduled_capacity_seconds_by_logical_date(
         return Ok(Vec::new());
     }
 
+    try_logical_date(scheduled_start)?;
     let capacity_seconds = scheduled_capacity_seconds(
         fixed_start,
         scheduled_start,
