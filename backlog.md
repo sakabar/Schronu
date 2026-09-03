@@ -61,7 +61,7 @@
 | TD-020 | P0 | 未着手 | M | 同日・同名またはsanitize後に同名となるprojectが同じ保存先を共有し、再読込時に1件消失する |
 | TD-021 | P1 | 未着手 | M | repositoryが重複UUIDを受理し、ID指定操作の対象が走査順に依存する |
 | TD-022 | P1 | 未着手 | XL | 複数project保存でrevisionだけが先行し、失敗時にdisk snapshotが部分更新される |
-| TD-023 | P1 | 未着手 | S | `終`が不正時刻と一部application errorを成功扱いで握り潰す |
+| TD-023 | P1 | 完了 | S | `終`が不正時刻と一部application errorを成功扱いで握り潰す |
 | TD-024 | P1 | 未着手 | M | CLI parserが不正な数値や余分な引数を黙って受理し、更新commandを実行する |
 | TD-025 | P1 | 未着手 | M | 対話CLIのterminal I/O失敗がpanicまたは未検査結果になる |
 | TD-026 | P1 | 未着手 | L | task名をCLI・YAML・MCP・Spreadsheet間で安全にround-tripできない |
@@ -979,6 +979,9 @@
 - 分類: `バグ / エラー契約`
 - 優先度: `P1`
 - 概算規模: `S`
+- 完了日: 2026-09-04
+- 対応: `終`の不正な完了時刻を`finished_at`付きの`CommandParseError`へ変換し、`HasUndoneChildren`だけは既存のtree表示へfallbackしつつ、その他の`ApplicationError`はvariantを保持してruntimeへ伝搬するようにした。error時はcompletion後のfocus更新を行わず、対話CLIでは診断を表示して既存focus状態を維持する。
+- 検証: 構文不正、不正な秒、存在しない日付、task不明、実績加算overflow、tree errorのhandler contract testを追加した。`cargo fmt --check`、`cargo clippy --locked --all-targets -- -D warnings`、`cargo test --locked`、`git diff --check`に成功し、サブエージェントreviewでも指摘がないことを確認した。
 - 関連既存項目: TD-006の完了条件に対する残存不具合。
 
 #### 現状と根拠
