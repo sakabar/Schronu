@@ -70,7 +70,7 @@
 | TD-029 | P1 | 未着手 | L | 反復task完了の後段失敗で完了状態と親見積もりだけが部分更新される |
 | TD-030 | P1 | 未着手 | S | 00:00以降の日次残容量計算がbusy timeを無視する |
 | TD-031 | P1 | 未着手 | S | Spreadsheet変換がrank 1000以降のtask行を黙って破棄する |
-| TD-032 | P1 | 未着手 | S | macOS標準環境でSpreadsheet変換の`tac`依存が空出力の成功になる |
+| TD-032 | P1 | 完了 | S | macOS標準環境でSpreadsheet変換の`tac`依存が空出力の成功になる |
 | TD-033 | P1 | 未着手 | M | 同一taskの複数segmentをApps Scriptが別行へ同期する |
 | TD-034 | P1 | 未着手 | M | Spreadsheet入力が存在しない日付と不正な時分秒をcommandへ変換する |
 | TD-035 | P2 | 未着手 | M | 反復延期がDST境界で開始時刻とdeadlineの壁時計時刻をずらす |
@@ -1298,6 +1298,9 @@
 - 分類: `バグ / portability`
 - 優先度: `P1`
 - 概算規模: `S`
+- 完了日: 2026-09-04
+- 対応: task行の逆順処理をPOSIX AWK内の配列へ統合し、GNU `tac`依存を除去した。`pipefail`とpipeline出力の一時保持を導入し、前段command失敗と必須command欠落で非0終了しつつtask行とpaddingを公開しないようにした。`yes | head`は`pipefail`下のSIGPIPEを避けるためzsh builtinの50回loopへ置換した。
+- 検証: `PATH=/usr/bin:/bin`の正常変換、途中失敗するfake AWK、必須command欠落を製品script経路で確認する専用test 3件と既存Spreadsheet contract 4件に成功した。`/bin/zsh -n shell/copy_for_spreadsheet.sh`、`cargo fmt --check`、`cargo clippy --locked --all-targets -- -D warnings`、`cargo test --locked`、`git diff --check`に成功し、旧新出力のbyte一致とsubagent reviewで追加指摘がないことを確認した。
 
 #### 現状と根拠
 
