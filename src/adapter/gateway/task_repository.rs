@@ -21,6 +21,8 @@ use uuid::Uuid;
 use walkdir::WalkDir;
 use yaml_rust::{Yaml, YamlEmitter, YamlLoader};
 
+const PROJECT_DIRECTORY_COMPONENT_MAX_BYTES: usize = 255;
+
 pub struct TaskRepository {
     projects: Vec<Project>,
     project_storage_dir_name: String,
@@ -224,8 +226,17 @@ fn project_directory_name(date: &str, project_name: &str, project_id: Uuid) -> S
     // ディレクトリ名からはURLを除く (ディレクトリの区切りに使われうる "/" が入らないようにするため)
     let http_pattern = Regex::new(r"http.*").expect("project name URL regex must be valid");
     let project_name_for_dir = http_pattern.replace(project_name, "").replace('/', "-");
+    let prefix = format!("{date}-");
+    let identity_suffix = format!("-{project_id}");
+    let max_name_bytes =
+        PROJECT_DIRECTORY_COMPONENT_MAX_BYTES.saturating_sub(prefix.len() + identity_suffix.len());
+    let mut name_end = project_name_for_dir.len().min(max_name_bytes);
+    while !project_name_for_dir.is_char_boundary(name_end) {
+        name_end -= 1;
+    }
+    let project_name_for_dir = &project_name_for_dir[..name_end];
 
-    format!("{date}-{project_name_for_dir}-{project_id}")
+    format!("{prefix}{project_name_for_dir}{identity_suffix}")
 }
 
 impl Project {

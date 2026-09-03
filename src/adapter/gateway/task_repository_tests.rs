@@ -324,6 +324,36 @@ fn test_save_load_url除去後に同名となるprojectを別directoryへ保存�
 }
 
 #[test]
+fn test_save_uuid追加後も長いproject名をutf8境界で短縮して保存する() {
+    let storage_dir = TestStorageDir::new();
+    let now = Local.with_ymd_and_hms(2026, 9, 4, 12, 0, 0).unwrap();
+    let task_id = Uuid::from_u128(0x2023);
+    let project_name = "あ".repeat(80);
+    let mut repository = TaskRepository::new(storage_dir.path_str());
+    repository.sync_clock(now).unwrap();
+    repository
+        .start_new_project(project_root_with_identity(&project_name, task_id, now))
+        .unwrap();
+
+    repository.save().unwrap();
+
+    let project_directory = fs::read_dir(&storage_dir.path)
+        .unwrap()
+        .filter_map(Result::ok)
+        .find(|entry| entry.path().join("project.yaml").is_file())
+        .unwrap();
+    let directory_name = project_directory.file_name();
+    let directory_name = directory_name.to_str().unwrap();
+    assert!(directory_name.len() <= 255);
+    assert!(directory_name.ends_with(&format!("-{task_id}")));
+
+    let mut loaded_repository = TaskRepository::new(storage_dir.path_str());
+    loaded_repository.sync_clock(now).unwrap();
+    loaded_repository.load().unwrap();
+    assert!(loaded_repository.get_by_id(task_id).unwrap().is_some());
+}
+
+#[test]
 fn test_load_旧形式directoryをrenameせず読み込む() {
     let storage_dir = TestStorageDir::new();
     let now = Local.with_ymd_and_hms(2026, 9, 4, 12, 0, 0).unwrap();
