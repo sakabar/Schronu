@@ -79,6 +79,44 @@ fn new_test_task_handle(name: &str) -> Result<TaskHandle, TaskTreeError> {
 }
 
 #[cfg(test)]
+fn complete_task_tree_snapshot(root: &TaskHandle) -> Vec<String> {
+    fn append(task: &TaskHandle, path: &str, rows: &mut Vec<String>) {
+        let attr = task.get_attr().unwrap();
+        let children = task.get_children().unwrap();
+        rows.push(format!(
+            "{path}|id={:?}|name={:?}|orig_status={:?}|status={:?}|other_side={:?}|atomic={:?}|pending_until={:?}|last_synced={:?}|priority={:?}|create={:?}|start={:?}|end={:?}|deadline={:?}|estimated={:?}|actual={:?}|repetition_interval={:?}|repetition_anchor={:?}|days_in_advance={:?}|category={:?}|children={}",
+            attr.get_id(),
+            attr.get_name(),
+            attr.get_orig_status(),
+            attr.get_status(),
+            attr.get_is_on_other_side(),
+            attr.get_atomic(),
+            attr.get_pending_until(),
+            attr.get_last_synced_time(),
+            attr.get_priority(),
+            attr.get_create_time(),
+            attr.get_start_time(),
+            attr.get_end_time_opt(),
+            attr.get_deadline_time_opt(),
+            attr.get_estimated_work_seconds(),
+            attr.get_actual_work_seconds(),
+            attr.get_repetition_interval_days_opt(),
+            attr.get_repetition_anchor(),
+            attr.get_days_in_advance(),
+            attr.get_project_category_opt(),
+            children.len(),
+        ));
+        for (index, child) in children.iter().enumerate() {
+            append(child, &format!("{path}.{index}"), rows);
+        }
+    }
+
+    let mut rows = Vec::new();
+    append(root, "root", &mut rows);
+    rows
+}
+
+#[cfg(test)]
 fn report_command_result(stdout: &mut dyn SchronuWriter, result: Result<(), CommandError>) {
     if let Err(error) = result {
         let _output_error = render_display_model(stdout, &error_display_model(&error))
