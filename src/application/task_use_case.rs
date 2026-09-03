@@ -516,6 +516,9 @@ pub fn complete_task(
     let prospective_next_focus_task_id = prospective_next_focus_task_id(&task)?;
     let next_repetition_task =
         prepare_next_repetition_task(&task, actual_work_seconds, input.finished_at, factory)?;
+    if let Some(prepared) = &next_repetition_task {
+        ensure_task_ids_available(repository, [prepared.task_id])?;
+    }
     let next_focus_task_id = if next_repetition_task.is_some() {
         None
     } else {
