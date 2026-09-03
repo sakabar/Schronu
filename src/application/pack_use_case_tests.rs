@@ -213,28 +213,46 @@ fn pack_tasksは論理日境界を跨ぐfixed予約を両日の容量へ計上�
 fn pack_tasksは日跨ぎ反復予約の容量を各論理日で反復分から除外する() {
     let now = Local.with_ymd_and_hms(2026, 8, 10, 12, 0, 0).unwrap();
     let fixed_start = Local.with_ymd_and_hms(2026, 8, 11, 5, 30, 0).unwrap();
-    let parent = crate::test_support::new_task_handle("repetitive-parent").unwrap();
-    parent.sync_clock(now).unwrap();
-    parent.set_repetition_interval_days_opt(Some(7)).unwrap();
-    let fixed = parent.create_as_last_child(crate::test_support::new_task_attr("fixed"));
-    fixed.set_start_time(fixed_start).unwrap();
-    fixed.set_estimated_work_seconds(60 * 60).unwrap();
-    fixed.set_fixed_start(true).unwrap();
-    let candidate = pending_task("candidate", now, now + Duration::days(2), 15, 1);
-    candidate
-        .set_start_time(Local.with_ymd_and_hms(2026, 8, 11, 6, 0, 0).unwrap())
-        .unwrap();
-    let repository = TestTaskRepository::new(vec![parent, candidate.clone()], now);
-    let mut free_time_manager = TestFreeTimeManager::new(60);
+    for (candidate_minutes, should_pack) in [(15, true), (30, false)] {
+        let parent = crate::test_support::new_task_handle("repetitive-parent").unwrap();
+        parent.sync_clock(now).unwrap();
+        parent.set_repetition_interval_days_opt(Some(7)).unwrap();
+        let fixed = parent.create_as_last_child(crate::test_support::new_task_attr("fixed"));
+        fixed.set_start_time(fixed_start).unwrap();
+        fixed.set_estimated_work_seconds(60 * 60).unwrap();
+        fixed.set_fixed_start(true).unwrap();
+        let candidate = pending_task(
+            "candidate",
+            now,
+            now + Duration::days(2),
+            candidate_minutes,
+            1,
+        );
+        candidate
+            .set_start_time(Local.with_ymd_and_hms(2026, 8, 11, 6, 0, 0).unwrap())
+            .unwrap();
+        let original_pending_until = candidate.get_pending_until().unwrap();
+        let repository = TestTaskRepository::new(vec![parent, candidate.clone()], now);
+        let mut free_time_manager = TestFreeTimeManager::new(60);
 
-    let result = pack_tasks(&repository, &mut free_time_manager).unwrap();
+        let result = pack_tasks(&repository, &mut free_time_manager).unwrap();
 
-    assert_eq!(result.packed_tasks.len(), 1);
-    assert_eq!(result.packed_tasks[0].task_id, candidate.get_id().unwrap());
-    assert_eq!(
-        result.packed_tasks[0].target_date,
-        NaiveDate::from_ymd_opt(2026, 8, 11).unwrap()
-    );
+        if should_pack {
+            assert_eq!(result.packed_tasks.len(), 1);
+            assert_eq!(result.packed_tasks[0].task_id, candidate.get_id().unwrap());
+            assert_eq!(
+                result.packed_tasks[0].target_date,
+                NaiveDate::from_ymd_opt(2026, 8, 11).unwrap()
+            );
+        } else {
+            assert!(result.packed_tasks.is_empty());
+            assert_eq!(result.skipped_tasks[0].task_id, candidate.get_id().unwrap());
+            assert_eq!(
+                candidate.get_pending_until().unwrap(),
+                original_pending_until
+            );
+        }
+    }
 }
 
 #[test]
