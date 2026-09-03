@@ -111,7 +111,11 @@ fn p列の存在しない暦日と範囲外時刻は全commandを出力せず拒
     for invalid_datetime in [
         "2026/02/31 9:10:00",
         "2025/02/29 9:10:00",
+        "1900/02/29 9:10:00",
         "2026/04/31 9:10:00",
+        "2026/06/31 9:10:00",
+        "2026/09/31 9:10:00",
+        "2026/11/31 9:10:00",
         "2026/12/31 24:00:00",
     ] {
         let input = format!(
@@ -147,24 +151,30 @@ fn p列の存在しない暦日と範囲外時刻は全commandを出力せず拒
 }
 
 #[test]
-fn p列は閏日と23時59分59秒を受理する() {
-    let input = format!(
-        "{}\n",
-        spreadsheet_row(
-            "leap-day-id",
-            "leap day task",
-            "",
-            "2024/02/29 23:59:59",
-            "0:01:00",
-        )
-    );
-    let output = run_import(&input);
+fn p列は通常の閏日と400年ごとの閏日を受理する() {
+    for valid_datetime in ["2024/02/29 23:59:59", "2000/02/29 9:10:00"] {
+        let input = format!(
+            "{}\n",
+            spreadsheet_row(
+                "leap-day-id",
+                "leap day task",
+                "",
+                valid_datetime,
+                "0:01:00",
+            )
+        );
+        let output = run_import(&input);
 
-    assert!(
-        output.status.success(),
-        "valid leap day must be accepted: {}",
-        String::from_utf8_lossy(&output.stderr)
-    );
-    let stdout = String::from_utf8(output.stdout).expect("stdout is UTF-8");
-    assert!(stdout.contains("終 23:59:59 2024/02/29\n"));
+        assert!(
+            output.status.success(),
+            "{valid_datetime} must be accepted: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let stdout = String::from_utf8(output.stdout).expect("stdout is UTF-8");
+        let expected_datetime = valid_datetime.split_once(' ').unwrap();
+        assert!(stdout.contains(&format!(
+            "終 {} {}\n",
+            expected_datetime.1, expected_datetime.0
+        )));
+    }
 }
