@@ -499,8 +499,10 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::cell::Cell;
     use std::collections::VecDeque;
     use std::io::Write;
+    use std::rc::Rc;
 
     #[derive(Default)]
     struct TestWriter(Vec<u8>);
@@ -761,6 +763,151 @@ mod tests {
                 },
             );
         assert_output_failure(result);
+    }
+
+    struct FakeTerminalFactory {
+        terminal: Option<std::io::Result<Box<dyn SchronuWriter>>>,
+    }
+
+    impl TerminalFactory for FakeTerminalFactory {
+        fn open_terminal(&mut self) -> std::io::Result<Box<dyn SchronuWriter>> {
+            self.terminal
+                .take()
+                .expect("fake terminal factory must be called once")
+        }
+    }
+
+    struct DropTrackingWriter {
+        drops: Rc<Cell<usize>>,
+        fail_output: bool,
+    }
+
+    impl Drop for DropTrackingWriter {
+        fn drop(&mut self) {
+            self.drops.set(self.drops.get() + 1);
+        }
+    }
+
+    impl Write for DropTrackingWriter {
+        fn write(&mut self, buffer: &[u8]) -> std::io::Result<usize> {
+            if self.fail_output {
+                Err(FailureWriter::permission_denied())
+            } else {
+                Ok(buffer.len())
+            }
+        }
+
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+
+    impl SchronuWriter for DropTrackingWriter {
+        fn writeln_newline(&mut self, _message: &str) -> std::io::Result<()> {
+            if self.fail_output {
+                Err(FailureWriter::permission_denied())
+            } else {
+                Ok(())
+            }
+        }
+    }
+
+    fn tracking_factory(
+        drops: &Rc<Cell<usize>>,
+        fail_output: bool,
+    ) -> FakeTerminalFactory {
+        FakeTerminalFactory {
+            terminal: Some(Ok(Box::new(DropTrackingWriter {
+                drops: Rc::clone(drops),
+                fail_output,
+            }))),
+        }
+    }
+
+    #[test]
+    fn raw_mode_initialization_failure_preserves_source() {
+        let mut factory = FakeTerminalFactory {
+            terminal: Some(Err(std::io::Error::new(
+                std::io::ErrorKind::PermissionDenied,
+                "raw mode unavailable",
+            ))),
+        };
+        let mut input = ScriptedInput::new([]);
+        let result = run_with_terminal_factory(
+            Local::now(),
+            &mut factory,
+            &mut input,
+            |_, _| DriverOutcome::<&str, &str>::Continue,
+        );
+
+        match result {
+            Err(DriverRunError::Io(InteractiveIoError::RawMode(error))) => {
+                assert_eq!(error.kind(), std::io::ErrorKind::PermissionDenied);
+                assert!(
+                    std::error::Error::source(&InteractiveIoError::RawMode(error)).is_some()
+                );
+            }
+            other => panic!("expected raw mode initialization failure, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn terminal_guard_restores_on_normal_exit() {
+        let drops = Rc::new(Cell::new(0));
+        let mut factory = tracking_factory(&drops, false);
+        let mut input = ScriptedInput::new([ReceivedInput::Key(Key::Ctrl('d'))]);
+
+        let result = run_with_terminal_factory(
+            Local::now(),
+            &mut factory,
+            &mut input,
+            |_, event| match event {
+                DriverEvent::RenderScreen { .. } => DriverOutcome::<&str, &str>::Continue,
+                DriverEvent::Exit => DriverOutcome::Exit,
+                _ => unreachable!(),
+            },
+        );
+
+        assert!(result.is_ok());
+        assert_eq!(drops.get(), 1);
+    }
+
+    #[test]
+    fn terminal_guard_restores_on_handler_failure() {
+        let drops = Rc::new(Cell::new(0));
+        let mut factory = tracking_factory(&drops, false);
+        let mut input = ScriptedInput::new([ReceivedInput::Key(Key::Ctrl('c'))]);
+
+        let result = run_with_terminal_factory(
+            Local::now(),
+            &mut factory,
+            &mut input,
+            |_, event| match event {
+                DriverEvent::RenderScreen { .. } => DriverOutcome::<&str, &str>::Continue,
+                DriverEvent::Interrupted => DriverOutcome::Fatal("handler failed"),
+                _ => unreachable!(),
+            },
+        );
+
+        assert!(matches!(result, Err(DriverRunError::Handler("handler failed"))));
+        assert_eq!(drops.get(), 1);
+    }
+
+    #[test]
+    fn terminal_guard_restores_on_output_failure() {
+        let drops = Rc::new(Cell::new(0));
+        let mut factory = tracking_factory(&drops, true);
+        let mut input = ScriptedInput::new([]);
+
+        let result = run_with_terminal_factory(
+            Local::now(),
+            &mut factory,
+            &mut input,
+            |_, _| DriverOutcome::<&str, &str>::Continue,
+        );
+
+        assert_output_failure(result);
+        assert_eq!(drops.get(), 1);
     }
 
     #[test]
