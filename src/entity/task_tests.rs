@@ -45,24 +45,6 @@ fn test_read_status_パーズできなかったときはNoneを返す() {
 }
 
 #[test]
-fn test_read_repetition_anchor_deadlineの文字列を変換する() {
-    let actual = read_repetition_anchor("deadline");
-    assert_eq!(actual, RepetitionAnchor::Deadline);
-}
-
-#[test]
-fn test_read_repetition_anchor_completionの文字列を変換する() {
-    let actual = read_repetition_anchor("completion");
-    assert_eq!(actual, RepetitionAnchor::Completion);
-}
-
-#[test]
-fn test_read_repetition_anchor_不正値ならdeadlineを返す() {
-    let actual = read_repetition_anchor("invalid");
-    assert_eq!(actual, RepetitionAnchor::Deadline);
-}
-
-#[test]
 fn test_read_project_category_文字列を変換する() {
     assert_eq!(
         read_project_category("earning"),

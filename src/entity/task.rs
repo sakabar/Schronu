@@ -70,13 +70,6 @@ impl fmt::Display for RepetitionAnchor {
     }
 }
 
-pub fn read_repetition_anchor(s: &str) -> RepetitionAnchor {
-    match s.to_lowercase().as_str() {
-        "completion" => RepetitionAnchor::Completion,
-        _ => RepetitionAnchor::Deadline,
-    }
-}
-
 #[derive(Copy, Clone, Debug, Eq, Hash, PartialEq, Serialize)]
 pub enum ProjectCategory {
     #[serde(rename = "earning")]
