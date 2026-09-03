@@ -535,18 +535,16 @@ where
         }
     }
 
-    write!(stdout, "{}", termion::clear::CurrentLine)
-        .map_err(|error| DriverRunError::Io(InteractiveIoError::Output(error)))?;
-    writeln!(stdout, "{}{}{}", style::Bold, line, style::Reset)
-        .map_err(|error| DriverRunError::Io(InteractiveIoError::Output(error)))?;
-    writeln!(stdout, "{}", termion::cursor::SteadyBlock)
-        .map_err(|error| DriverRunError::Io(InteractiveIoError::Output(error)))?;
-    stdout
-        .flush()
-        .map_err(|error| DriverRunError::Io(InteractiveIoError::Output(error)))?;
+    let exit_render_result = (|| {
+        write!(stdout, "{}", termion::clear::CurrentLine)?;
+        writeln!(stdout, "{}{}{}", style::Bold, line, style::Reset)?;
+        writeln!(stdout, "{}", termion::cursor::SteadyBlock)?;
+        stdout.flush()
+    })();
     match loop_error_opt {
         Some(error) => Err(DriverRunError::Handler(error)),
-        None => Ok(()),
+        None => exit_render_result
+            .map_err(|error| DriverRunError::Io(InteractiveIoError::Output(error))),
     }
 }
 
@@ -600,6 +598,7 @@ mod tests {
 
     struct FailureWriter {
         failure: FailurePoint,
+        error_kind: std::io::ErrorKind,
         matching_writes: usize,
         flushes: usize,
         output: Vec<u8>,
@@ -612,6 +611,7 @@ mod tests {
                     needle: needle.into(),
                     occurrence,
                 },
+                error_kind: std::io::ErrorKind::PermissionDenied,
                 matching_writes: 0,
                 flushes: 0,
                 output: Vec::new(),
@@ -621,6 +621,7 @@ mod tests {
         fn line_containing(needle: impl Into<String>) -> Self {
             Self {
                 failure: FailurePoint::LineContaining(needle.into()),
+                error_kind: std::io::ErrorKind::PermissionDenied,
                 matching_writes: 0,
                 flushes: 0,
                 output: Vec::new(),
@@ -630,6 +631,7 @@ mod tests {
         fn flush(number: usize) -> Self {
             Self {
                 failure: FailurePoint::Flush(number),
+                error_kind: std::io::ErrorKind::PermissionDenied,
                 matching_writes: 0,
                 flushes: 0,
                 output: Vec::new(),
@@ -642,6 +644,15 @@ mod tests {
                 "injected output failure",
             )
         }
+
+        fn with_error_kind(mut self, error_kind: std::io::ErrorKind) -> Self {
+            self.error_kind = error_kind;
+            self
+        }
+
+        fn injected_error(&self) -> std::io::Error {
+            std::io::Error::new(self.error_kind, "injected output failure")
+        }
     }
 
     impl Write for FailureWriter {
@@ -652,7 +663,7 @@ mod tests {
                     .matches(needle)
                     .count();
                 if occurrences >= *occurrence && self.matching_writes < *occurrence {
-                    return Err(Self::permission_denied());
+                    return Err(self.injected_error());
                 }
                 self.matching_writes = occurrences;
             }
@@ -662,7 +673,7 @@ mod tests {
         fn flush(&mut self) -> std::io::Result<()> {
             self.flushes += 1;
             if matches!(self.failure, FailurePoint::Flush(number) if self.flushes == number) {
-                return Err(Self::permission_denied());
+                return Err(self.injected_error());
             }
             Ok(())
         }
@@ -672,7 +683,7 @@ mod tests {
         fn writeln_newline(&mut self, message: &str) -> std::io::Result<()> {
             if matches!(&self.failure, FailurePoint::LineContaining(needle) if message.contains(needle))
             {
-                return Err(Self::permission_denied());
+                return Err(self.injected_error());
             }
             Ok(())
         }
@@ -830,6 +841,28 @@ mod tests {
         assert!(matches!(
             result,
             Err(DriverRunError::Handler("render failed"))
+        ));
+    }
+
+    #[test]
+    fn handler_failure_is_not_suppressed_by_broken_pipe_during_exit_render() {
+        let mut writer =
+            FailureWriter::write_containing(termion::clear::CurrentLine.to_string(), 2)
+                .with_error_kind(std::io::ErrorKind::BrokenPipe);
+        let result =
+            run_script(
+                &mut writer,
+                [ReceivedInput::Key(Key::Ctrl('c'))],
+                |event| match event {
+                    DriverEvent::RenderScreen { .. } => DriverOutcome::Continue,
+                    DriverEvent::Interrupted => DriverOutcome::Fatal("handler failed"),
+                    _ => unreachable!(),
+                },
+            );
+
+        assert!(matches!(
+            result,
+            Err(DriverRunError::Handler("handler failed"))
         ));
     }
 
