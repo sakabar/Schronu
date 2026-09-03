@@ -19,7 +19,13 @@ use schronu::application::interface::{
 use std::cell::{Cell, RefCell};
 
 #[cfg(test)]
+use std::collections::VecDeque;
+
+#[cfg(test)]
 use std::path::PathBuf;
+
+#[cfg(test)]
+use std::rc::Rc;
 
 #[cfg(test)]
 use std::time::Instant;
@@ -215,6 +221,108 @@ impl SchronuWriter for TestWriter {
 
     fn supports_ansi_color(&self) -> bool {
         self.supports_ansi_color
+    }
+}
+
+#[cfg(test)]
+struct ScriptedInteractiveInput {
+    inputs: VecDeque<interactive::ReceivedInput>,
+}
+
+#[cfg(test)]
+impl ScriptedInteractiveInput {
+    fn command(command: &str) -> Self {
+        let mut inputs = command
+            .chars()
+            .map(|character| interactive::ReceivedInput::Key(termion::event::Key::Char(character)))
+            .collect::<VecDeque<_>>();
+        inputs.push_back(interactive::ReceivedInput::Key(termion::event::Key::Char(
+            '\n',
+        )));
+        Self { inputs }
+    }
+
+    fn empty() -> Self {
+        Self {
+            inputs: VecDeque::new(),
+        }
+    }
+}
+
+#[cfg(test)]
+impl interactive::InputSource for ScriptedInteractiveInput {
+    fn receive(&mut self, _wait_duration: StdDuration) -> interactive::ReceivedInput {
+        self.inputs
+            .pop_front()
+            .unwrap_or(interactive::ReceivedInput::Disconnected)
+    }
+}
+
+#[cfg(test)]
+struct SignaledFailureWriter {
+    fail_output: Rc<Cell<bool>>,
+}
+
+#[cfg(test)]
+impl Write for SignaledFailureWriter {
+    fn write(&mut self, buffer: &[u8]) -> std::io::Result<usize> {
+        if self.fail_output.get() {
+            Err(std::io::Error::new(
+                std::io::ErrorKind::PermissionDenied,
+                "test interactive output failure",
+            ))
+        } else {
+            Ok(buffer.len())
+        }
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        if self.fail_output.get() {
+            Err(std::io::Error::new(
+                std::io::ErrorKind::PermissionDenied,
+                "test interactive output failure",
+            ))
+        } else {
+            Ok(())
+        }
+    }
+}
+
+#[cfg(test)]
+impl SchronuWriter for SignaledFailureWriter {
+    fn writeln_newline(&mut self, message: &str) -> std::io::Result<()> {
+        writeln!(self, "{message}")
+    }
+
+    fn supports_ansi_color(&self) -> bool {
+        false
+    }
+}
+
+#[cfg(test)]
+struct SignaledFailureTerminalFactory {
+    fail_output: Rc<Cell<bool>>,
+}
+
+#[cfg(test)]
+impl interactive::TerminalFactory for SignaledFailureTerminalFactory {
+    fn open_terminal(&mut self) -> std::io::Result<Box<dyn SchronuWriter>> {
+        Ok(Box::new(SignaledFailureWriter {
+            fail_output: Rc::clone(&self.fail_output),
+        }))
+    }
+}
+
+#[cfg(test)]
+struct RawModeFailureTerminalFactory;
+
+#[cfg(test)]
+impl interactive::TerminalFactory for RawModeFailureTerminalFactory {
+    fn open_terminal(&mut self) -> std::io::Result<Box<dyn SchronuWriter>> {
+        Err(std::io::Error::new(
+            std::io::ErrorKind::PermissionDenied,
+            "test raw mode failure",
+        ))
     }
 }
 

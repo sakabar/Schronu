@@ -1568,3 +1568,6 @@ fn interactive_application(
 
 #[cfg(test)]
 include!("runtime_contract_tests.rs");
+
+#[cfg(test)]
+include!("interactive_io_contract_tests.rs");
