@@ -102,6 +102,15 @@ impl FlexibleCapacityFixture {
     }
 
     fn repository(&self, candidate_minutes: Option<i64>) -> SchedulingRepository {
+        self.repository_with_candidate(
+            candidate_minutes.map(|minutes| (minutes, 1, datetime(2026, 8, 12, 6, 0))),
+        )
+    }
+
+    fn repository_with_candidate(
+        &self,
+        candidate: Option<(i64, i64, DateTime<Local>)>,
+    ) -> SchedulingRepository {
         let mut projects = vec![task(
             "flexible-crossing-boundary",
             self.flexible_id,
@@ -112,14 +121,14 @@ impl FlexibleCapacityFixture {
             Status::Todo,
         )];
 
-        if let Some(candidate_minutes) = candidate_minutes {
+        if let Some((candidate_minutes, candidate_priority, candidate_start)) = candidate {
             projects.push(task(
                 "pack-candidate",
                 Uuid::from_u128(200 + candidate_minutes as u128),
                 self.operation_datetime,
-                datetime(2026, 8, 12, 6, 0),
+                candidate_start,
                 candidate_minutes,
-                1,
+                candidate_priority,
                 Status::Pending,
             ));
             projects[1]
@@ -133,6 +142,7 @@ impl FlexibleCapacityFixture {
 
 struct RecordingFreeTimeManager {
     daily_free_minutes: i64,
+    short_interval_free_minutes: Option<i64>,
     blocked_interval: (DateTime<Local>, DateTime<Local>),
     queries: Vec<(DateTime<Local>, DateTime<Local>)>,
 }
@@ -145,6 +155,21 @@ impl RecordingFreeTimeManager {
     ) -> Self {
         Self {
             daily_free_minutes,
+            short_interval_free_minutes: None,
+            blocked_interval: (blocked_start, blocked_end),
+            queries: Vec::new(),
+        }
+    }
+
+    fn with_short_interval_free_minutes(
+        daily_free_minutes: i64,
+        short_interval_free_minutes: i64,
+        blocked_start: DateTime<Local>,
+        blocked_end: DateTime<Local>,
+    ) -> Self {
+        Self {
+            daily_free_minutes,
+            short_interval_free_minutes: Some(short_interval_free_minutes),
             blocked_interval: (blocked_start, blocked_end),
             queries: Vec::new(),
         }
@@ -161,6 +186,9 @@ impl FreeTimeManagerTrait for RecordingFreeTimeManager {
         let duration_minutes = (*end - *start).num_minutes().max(0);
         if duration_minutes >= 12 * 60 {
             return self.daily_free_minutes;
+        }
+        if let Some(free_minutes) = self.short_interval_free_minutes {
+            return free_minutes;
         }
 
         let (blocked_start, blocked_end) = self.blocked_interval;
@@ -355,7 +383,45 @@ fn flexible容量はbusy控除と論理日配賦をpackとflattenで一致させ
     let next_day_rho_limit_minutes = 42;
     let pack_next_day_capacity_minutes =
         next_day_rho_limit_minutes - maximum_packed_candidate_minutes;
-    let pack_start_day_capacity_minutes = FLEXIBLE_WORK_MINUTES - pack_next_day_capacity_minutes;
+    let start_capacity_probe_id = Uuid::from_u128(201);
+    for (current_free_minutes, should_pack) in [(500, false), (502, true)] {
+        let start_capacity_probe_repository =
+            fixture.repository_with_candidate(Some((1, 20, fixture.operation_datetime)));
+        let mut start_capacity_probe_free_time =
+            RecordingFreeTimeManager::with_short_interval_free_minutes(
+                0,
+                current_free_minutes,
+                fixture.busy_start,
+                fixture.busy_end,
+            );
+        let start_capacity_probe_result = pack_tasks(
+            &start_capacity_probe_repository,
+            &mut start_capacity_probe_free_time,
+        )
+        .unwrap();
+
+        assert_eq!(
+            start_capacity_probe_result
+                .packed_tasks
+                .iter()
+                .any(|packed| {
+                    packed.task_id == start_capacity_probe_id
+                        && packed.target_date == start_date
+                        && packed.work_seconds == MINUTE_SECONDS
+                }),
+            should_pack,
+            "current_free_minutes={current_free_minutes}"
+        );
+        assert_eq!(
+            start_capacity_probe_result
+                .skipped_tasks
+                .iter()
+                .any(|skipped| skipped.task_id == start_capacity_probe_id),
+            !should_pack,
+            "current_free_minutes={current_free_minutes}"
+        );
+    }
+    let pack_start_day_capacity_minutes = 350;
     let pack_observed_capacity = [
         (start_date, pack_start_day_capacity_minutes),
         (next_date, pack_next_day_capacity_minutes),
