@@ -222,6 +222,12 @@ impl FreeTimeManagerTrait for RecordingFreeTimeManager {
 fn fixed容量はbusy控除と論理日配賦をpackとflattenで一致させる() {
     let fixture = FixedCapacityFixture::new();
 
+    assert_pack_skips_candidate_when_current_interval_is_busy(
+        fixture.operation_datetime,
+        fixture.busy_start,
+        fixture.busy_end,
+    );
+
     let schedule_repository = fixture.repository(None);
     let fixed_segment = get_schedule(&schedule_repository)
         .unwrap()
@@ -322,6 +328,12 @@ fn flexible容量はbusy控除と論理日配賦をpackとflattenで一致させ
     let fixture = FlexibleCapacityFixture::new();
     let start_date = NaiveDate::from_ymd_opt(2026, 8, 11).unwrap();
     let next_date = NaiveDate::from_ymd_opt(2026, 8, 12).unwrap();
+
+    assert_pack_skips_candidate_when_current_interval_is_busy(
+        fixture.operation_datetime,
+        fixture.busy_start,
+        fixture.busy_end,
+    );
 
     let schedule_repository = fixture.repository(None);
     let flexible_segments = get_schedule(&schedule_repository)
@@ -505,6 +517,41 @@ fn flexible容量はbusy控除と論理日配賦をpackとflattenで一致させ
         FLEXIBLE_WORK_MINUTES
     );
     assert_eq!(pack_observed_capacity, flatten_observed_capacity);
+}
+
+fn assert_pack_skips_candidate_when_current_interval_is_busy(
+    operation_datetime: DateTime<Local>,
+    busy_start: DateTime<Local>,
+    busy_end: DateTime<Local>,
+) {
+    let candidate_id = Uuid::from_u128(999);
+    let candidate = task(
+        "busy-only-pack-candidate",
+        candidate_id,
+        operation_datetime,
+        operation_datetime,
+        1,
+        20,
+        Status::Pending,
+    );
+    candidate
+        .set_pending_until(datetime(2026, 8, 13, 6, 0))
+        .unwrap();
+    let repository = SchedulingRepository::new(vec![candidate], operation_datetime);
+    let mut free_time_manager = RecordingFreeTimeManager::new(0, busy_start, busy_end);
+
+    let result = pack_tasks(&repository, &mut free_time_manager).unwrap();
+
+    assert!(result.packed_tasks.is_empty());
+    assert_eq!(result.skipped_tasks.len(), 1);
+    assert_eq!(result.skipped_tasks[0].task_id, candidate_id);
+    assert_eq!(result.skipped_tasks[0].name, "busy-only-pack-candidate");
+    assert_eq!(result.skipped_tasks[0].priority, 20);
+    assert_eq!(
+        result.skipped_tasks[0].required_work_seconds,
+        MINUTE_SECONDS
+    );
+    assert!(free_time_manager.queried(busy_start, busy_end));
 }
 
 fn task(
