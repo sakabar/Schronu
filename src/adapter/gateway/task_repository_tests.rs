@@ -77,6 +77,13 @@ fn file_repository_error(error: &TaskRepositoryError) -> &FileRepositoryError {
         .expect("repository error source must be FileRepositoryError")
 }
 
+fn duplicate_task_id_error(error: &TaskRepositoryError) -> &DuplicateTaskIdError {
+    error
+        .source()
+        .and_then(|source| source.downcast_ref::<DuplicateTaskIdError>())
+        .expect("repository error source must be DuplicateTaskIdError")
+}
+
 fn task_with_start_time(name: &str, start_time: DateTime<Local>) -> TaskHandle {
     let task = crate::test_support::new_task_handle(name).unwrap();
     task.set_start_time(start_time).unwrap();
@@ -1037,6 +1044,164 @@ fn test_load_途中失敗ではmemoryを部分更新しない() {
     assert!(repository.get_by_id(memory_task_id).unwrap().is_some());
     assert!(repository.get_by_id(stored_task_id).unwrap().is_none());
     assert_eq!(repository.get_all_projects().len(), 1);
+}
+
+#[test]
+fn test_load_同一tree内の重複uuidを両方のpath付きerrorで拒否する() {
+    let storage_dir = TestStorageDir::new();
+    let now = Local.with_ymd_and_hms(2026, 9, 4, 12, 0, 0).unwrap();
+    let duplicate_id = Uuid::from_u128(0x2211);
+    let root_task = project_root_with_identity("root", duplicate_id, now);
+    root_task.create_as_last_child(crate::entity::task::TaskAttr::with_identity(
+        "duplicate child",
+        duplicate_id,
+        now,
+    ));
+    let project = Project::new(root_task, "", "", 5);
+    let project_yaml_file_path = write_project_yaml(
+        &storage_dir,
+        "duplicate-tree",
+        std::str::from_utf8(&TaskRepository::serialize_project(&project).unwrap()).unwrap(),
+    );
+    let mut repository = TaskRepository::new(storage_dir.path_str());
+
+    let actual = repository.load().unwrap_err();
+
+    assert_eq!(actual.operation(), ApplicationRepositoryOperation::Load);
+    let source = duplicate_task_id_error(&actual);
+    assert_eq!(source.task_id(), duplicate_id);
+    assert_eq!(
+        source.first_project_yaml_file_path(),
+        project_yaml_file_path
+    );
+    assert_eq!(source.first_task_path(), "project");
+    assert_eq!(
+        source.duplicate_project_yaml_file_path(),
+        source.first_project_yaml_file_path()
+    );
+    assert_eq!(source.duplicate_task_path(), "project.children[0]");
+}
+
+#[test]
+fn test_reload_if_changed_project間の重複uuidを拒否して全memory状態を維持する() {
+    let storage_dir = TestStorageDir::new();
+    let before = Local.with_ymd_and_hms(2026, 9, 4, 12, 0, 0).unwrap();
+    let after = before + Duration::hours(1);
+    let memory_task_id = Uuid::from_u128(0x2221);
+    let duplicate_id = Uuid::from_u128(0x2222);
+    let mut source_repository = TaskRepository::new(storage_dir.path_str());
+    source_repository.sync_clock(before).unwrap();
+    let memory_root = project_root_with_identity("memory project", memory_task_id, before);
+    let memory_child =
+        memory_root.create_as_last_child(crate::entity::task::TaskAttr::with_identity(
+            "memory child",
+            Uuid::from_u128(0x2224),
+            before,
+        ));
+    source_repository.start_new_project(memory_root).unwrap();
+    source_repository.save().unwrap();
+
+    let mut repository = TaskRepository::new(storage_dir.path_str());
+    repository.reload_if_changed(before).unwrap();
+    let memory_task = repository.get_by_id(memory_task_id).unwrap().unwrap();
+    memory_task.set_actual_work_seconds(17).unwrap();
+    let original_project_count = repository.projects.len();
+    let original_cache_ids = repository
+        .id_to_task_map
+        .borrow()
+        .keys()
+        .copied()
+        .collect::<std::collections::HashSet<_>>();
+    let original_storage_revision = repository.storage_revision.get();
+    let original_has_loaded = repository.has_loaded;
+    let original_repository_clock = repository.get_last_synced_time();
+    let original_task_clock = memory_task.get_last_synced_time().unwrap();
+    let memory_child_id = memory_child.get_id().unwrap();
+    let loaded_memory_child = repository.get_by_id(memory_child_id).unwrap().unwrap();
+    let original_child_clock = loaded_memory_child.get_last_synced_time().unwrap();
+
+    let first_path = write_project_yaml(
+        &storage_dir,
+        "zz-first-duplicate",
+        std::str::from_utf8(
+            &TaskRepository::serialize_project(&Project::new(
+                project_root_with_identity("first", duplicate_id, after),
+                "",
+                "",
+                5,
+            ))
+            .unwrap(),
+        )
+        .unwrap(),
+    );
+    let second_path = write_project_yaml(
+        &storage_dir,
+        "zz-second-duplicate",
+        std::str::from_utf8(
+            &TaskRepository::serialize_project(&Project::new(
+                project_root_with_identity("second", duplicate_id, after),
+                "",
+                "",
+                5,
+            ))
+            .unwrap(),
+        )
+        .unwrap(),
+    );
+    let changed_revision = Uuid::from_u128(0x2223);
+    fs::write(
+        storage_dir.path.join(".revision"),
+        changed_revision.to_string(),
+    )
+    .unwrap();
+
+    let actual = repository.reload_if_changed(after).unwrap_err();
+
+    assert_eq!(actual.operation(), ApplicationRepositoryOperation::Load);
+    let source = duplicate_task_id_error(&actual);
+    assert_eq!(source.task_id(), duplicate_id);
+    assert_eq!(source.first_project_yaml_file_path(), first_path);
+    assert_eq!(source.first_task_path(), "project");
+    assert_eq!(source.duplicate_project_yaml_file_path(), second_path);
+    assert_eq!(source.duplicate_task_path(), "project");
+    assert_eq!(repository.projects.len(), original_project_count);
+    assert_eq!(
+        repository
+            .id_to_task_map
+            .borrow()
+            .keys()
+            .copied()
+            .collect::<std::collections::HashSet<_>>(),
+        original_cache_ids
+    );
+    assert_eq!(repository.storage_revision.get(), original_storage_revision);
+    assert_eq!(repository.has_loaded, original_has_loaded);
+    assert_eq!(repository.get_last_synced_time(), original_repository_clock);
+    assert_eq!(
+        memory_task.get_last_synced_time().unwrap(),
+        original_task_clock
+    );
+    assert_eq!(
+        loaded_memory_child.get_last_synced_time().unwrap(),
+        original_child_clock
+    );
+    assert!(repository.get_by_id(memory_task_id).unwrap().is_some());
+    assert_eq!(
+        repository
+            .get_by_id(memory_task_id)
+            .unwrap()
+            .unwrap()
+            .get_actual_work_seconds()
+            .unwrap(),
+        17
+    );
+    assert_eq!(
+        repository.get_all_projects()[0]
+            .get_actual_work_seconds()
+            .unwrap(),
+        17
+    );
+    assert!(repository.get_by_id(duplicate_id).unwrap().is_none());
 }
 
 #[cfg(unix)]
