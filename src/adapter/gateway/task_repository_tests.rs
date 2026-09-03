@@ -82,6 +82,52 @@ fn task_with_start_time(name: &str, start_time: DateTime<Local>) -> TaskHandle {
     task
 }
 
+fn project_root_with_identity(name: &str, id: Uuid, now: DateTime<Local>) -> TaskHandle {
+    let task = TaskHandle::with_identity(name, id, now).unwrap();
+    task.set_priority(5).unwrap();
+    task
+}
+
+fn assert_colliding_project_names_survive_save_load(
+    first_name: &str,
+    second_name: &str,
+    first_id: Uuid,
+    second_id: Uuid,
+) {
+    let storage_dir = TestStorageDir::new();
+    let now = Local.with_ymd_and_hms(2026, 9, 4, 12, 0, 0).unwrap();
+    let mut repository = TaskRepository::new(storage_dir.path_str());
+    repository.sync_clock(now).unwrap();
+    repository
+        .start_new_project(project_root_with_identity(first_name, first_id, now))
+        .unwrap();
+    repository
+        .start_new_project(project_root_with_identity(second_name, second_id, now))
+        .unwrap();
+
+    repository.save().unwrap();
+
+    let expected_directories = [
+        storage_dir
+            .path
+            .join(format!("20260904-{first_name}-{first_id}")),
+        storage_dir
+            .path
+            .join(format!("20260904-{second_name}-{second_id}")),
+    ];
+    for directory in expected_directories {
+        assert!(directory.join("project.yaml").is_file());
+    }
+
+    let mut loaded_repository = TaskRepository::new(storage_dir.path_str());
+    loaded_repository.sync_clock(now).unwrap();
+    loaded_repository.load().unwrap();
+
+    assert_eq!(loaded_repository.get_all_projects().len(), 2);
+    assert!(loaded_repository.get_by_id(first_id).unwrap().is_some());
+    assert!(loaded_repository.get_by_id(second_id).unwrap().is_some());
+}
+
 fn pending_task_with_until(name: &str, pending_until: DateTime<Local>) -> TaskHandle {
     let task = crate::test_support::new_task_handle(name).unwrap();
     task.set_start_time(DateTime::<Local>::MIN_UTC.into())
@@ -192,6 +238,114 @@ fn test_save_新規projectのdirectoryとyamlを作る() {
     loaded_repository.load().unwrap();
     let loaded_task = loaded_repository.get_by_id(root_task_id).unwrap().unwrap();
     assert_eq!(loaded_task.get_name().unwrap(), "保存対象");
+}
+
+#[test]
+fn test_save_load_同日同名projectを別directoryへ保存する() {
+    assert_colliding_project_names_survive_save_load(
+        "同名project",
+        "同名project",
+        Uuid::from_u128(0x2001),
+        Uuid::from_u128(0x2002),
+    );
+}
+
+#[test]
+fn test_save_load_slash置換後に同名となるprojectを別directoryへ保存する() {
+    let storage_dir = TestStorageDir::new();
+    let now = Local.with_ymd_and_hms(2026, 9, 4, 12, 0, 0).unwrap();
+    let first_id = Uuid::from_u128(0x2011);
+    let second_id = Uuid::from_u128(0x2012);
+    let mut repository = TaskRepository::new(storage_dir.path_str());
+    repository.sync_clock(now).unwrap();
+    repository
+        .start_new_project(project_root_with_identity("a/b", first_id, now))
+        .unwrap();
+    repository
+        .start_new_project(project_root_with_identity("a-b", second_id, now))
+        .unwrap();
+
+    repository.save().unwrap();
+
+    for id in [first_id, second_id] {
+        assert!(storage_dir
+            .path
+            .join(format!("20260904-a-b-{id}"))
+            .join("project.yaml")
+            .is_file());
+    }
+    let mut loaded_repository = TaskRepository::new(storage_dir.path_str());
+    loaded_repository.sync_clock(now).unwrap();
+    loaded_repository.load().unwrap();
+    assert_eq!(loaded_repository.get_all_projects().len(), 2);
+    assert!(loaded_repository.get_by_id(first_id).unwrap().is_some());
+    assert!(loaded_repository.get_by_id(second_id).unwrap().is_some());
+}
+
+#[test]
+fn test_save_load_url除去後に同名となるprojectを別directoryへ保存する() {
+    let storage_dir = TestStorageDir::new();
+    let now = Local.with_ymd_and_hms(2026, 9, 4, 12, 0, 0).unwrap();
+    let first_id = Uuid::from_u128(0x2021);
+    let second_id = Uuid::from_u128(0x2022);
+    let mut repository = TaskRepository::new(storage_dir.path_str());
+    repository.sync_clock(now).unwrap();
+    repository
+        .start_new_project(project_root_with_identity(
+            "project http://example.com/one",
+            first_id,
+            now,
+        ))
+        .unwrap();
+    repository
+        .start_new_project(project_root_with_identity(
+            "project https://example.com/two",
+            second_id,
+            now,
+        ))
+        .unwrap();
+
+    repository.save().unwrap();
+
+    for id in [first_id, second_id] {
+        assert!(storage_dir
+            .path
+            .join(format!("20260904-project -{id}"))
+            .join("project.yaml")
+            .is_file());
+    }
+    let mut loaded_repository = TaskRepository::new(storage_dir.path_str());
+    loaded_repository.sync_clock(now).unwrap();
+    loaded_repository.load().unwrap();
+    assert_eq!(loaded_repository.get_all_projects().len(), 2);
+    assert!(loaded_repository.get_by_id(first_id).unwrap().is_some());
+    assert!(loaded_repository.get_by_id(second_id).unwrap().is_some());
+}
+
+#[test]
+fn test_load_旧形式directoryをrenameせず読み込む() {
+    let storage_dir = TestStorageDir::new();
+    let now = Local.with_ymd_and_hms(2026, 9, 4, 12, 0, 0).unwrap();
+    let task_id = Uuid::from_u128(0x2031);
+    let root_task = project_root_with_identity("旧形式", task_id, now);
+    let project = Project::new(root_task, "", "", 5);
+    let bytes = TaskRepository::serialize_project(&project).unwrap();
+    let legacy_directory = storage_dir.path.join("20260904-旧形式");
+    fs::create_dir_all(&legacy_directory).unwrap();
+    fs::write(legacy_directory.join("project.yaml"), bytes).unwrap();
+
+    let mut repository = TaskRepository::new(storage_dir.path_str());
+    repository.sync_clock(now).unwrap();
+    repository.load().unwrap();
+    repository.save().unwrap();
+
+    assert_eq!(repository.get_all_projects().len(), 1);
+    assert!(repository.get_by_id(task_id).unwrap().is_some());
+    assert!(legacy_directory.join("project.yaml").is_file());
+    assert!(!storage_dir
+        .path
+        .join(format!("20260904-旧形式-{task_id}"))
+        .exists());
 }
 
 fn project_with_all_persisted_yaml_fields() -> Project {
