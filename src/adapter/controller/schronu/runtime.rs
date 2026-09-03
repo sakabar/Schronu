@@ -1,5 +1,3 @@
-#![allow(unused_must_use)]
-
 use super::command::{
     parse_command, validate_command_input, Command, CommandKind, CommandParseError,
     CommandValidationError, ParseMode,
@@ -141,6 +139,7 @@ enum RunError {
     BusyTimeSlots(BusyTimeSlotLoadError),
     Repository(TaskRepositoryError),
     CliRepositoryTransaction(CliRepositoryTransactionError),
+    InteractiveIo(interactive::InteractiveIoError),
     InputDisconnected {
         save_error_opt: Option<TaskRepositoryError>,
     },
@@ -163,6 +162,10 @@ pub(super) enum CommandError {
     Parse(CommandParseError),
     Application(ApplicationError),
     Output(std::io::Error),
+    ExitSaveDiagnostic {
+        save_error: TaskRepositoryError,
+        output_error: std::io::Error,
+    },
     ExternalOpen {
         target: &'static str,
         source: Box<dyn std::error::Error + Send + Sync>,
@@ -175,6 +178,13 @@ impl std::fmt::Display for CommandError {
             Self::Parse(error) => error.fmt(formatter),
             Self::Application(error) => write!(formatter, "操作エラー: {error}"),
             Self::Output(error) => write!(formatter, "出力エラー: {error}"),
+            Self::ExitSaveDiagnostic {
+                save_error,
+                output_error,
+            } => write!(
+                formatter,
+                "終了前の保存に失敗しました: {save_error}; additionally, failed to display the save error: {output_error}"
+            ),
             Self::ExternalOpen { target, source } => {
                 write!(formatter, "外部起動エラー ({target}): {source}")
             }
@@ -188,6 +198,7 @@ impl std::error::Error for CommandError {
             Self::Parse(error) => Some(error),
             Self::Application(error) => Some(error),
             Self::Output(error) => Some(error),
+            Self::ExitSaveDiagnostic { save_error, .. } => Some(save_error),
             Self::ExternalOpen { source, .. } => Some(source.as_ref()),
         }
     }
@@ -248,12 +259,12 @@ fn verify_display_model() -> DisplayModel {
 pub(super) fn report_application_result<T>(
     stdout: &mut dyn SchronuWriter,
     result: Result<T, ApplicationError>,
-) {
+) -> Result<(), CommandError> {
     if let Err(error) = result {
         let error = CommandError::Application(error);
-        let _output_error = render_display_model(stdout, &error_display_model(&error))
-            .map_err(CommandError::Output);
+        render_display_model(stdout, &error_display_model(&error)).map_err(CommandError::Output)?;
     }
+    Ok(())
 }
 
 #[derive(Debug)]
@@ -314,6 +325,7 @@ impl std::fmt::Display for RunError {
             Self::BusyTimeSlots(error) => error.fmt(formatter),
             Self::Repository(error) => error.fmt(formatter),
             Self::CliRepositoryTransaction(error) => error.fmt(formatter),
+            Self::InteractiveIo(error) => error.fmt(formatter),
             Self::InputDisconnected {
                 save_error_opt: Some(error),
             } => write!(
@@ -357,6 +369,7 @@ impl std::error::Error for RunError {
             Self::BusyTimeSlots(error) => Some(error),
             Self::Repository(error) => Some(error),
             Self::CliRepositoryTransaction(error) => Some(error),
+            Self::InteractiveIo(error) => Some(error),
             Self::InputDisconnected { save_error_opt } => save_error_opt
                 .as_ref()
                 .map(|error| error as &(dyn std::error::Error + 'static)),
@@ -623,9 +636,73 @@ fn execute_parsed(
 
 fn captured_output_result(output: &mut ErrorCapturingWriter<'_>) -> Result<(), CommandError> {
     match output.take_error() {
-        Some(error) if error.kind() == std::io::ErrorKind::BrokenPipe => Ok(()),
-        Some(error) => Err(CommandError::Output(error)),
+        Some(error) => classify_output_error(error).map_err(CommandError::Output),
         None => Ok(()),
+    }
+}
+
+fn classify_output_error(error: std::io::Error) -> Result<(), std::io::Error> {
+    if error.kind() == std::io::ErrorKind::BrokenPipe {
+        Ok(())
+    } else {
+        Err(error)
+    }
+}
+
+fn classify_interactive_run_result(
+    result: Result<(), interactive::DriverRunError<RunError>>,
+) -> Result<(), RunError> {
+    match result {
+        Ok(()) => Ok(()),
+        Err(interactive::DriverRunError::Io(
+            error @ interactive::InteractiveIoError::RawMode(_),
+        )) => Err(RunError::InteractiveIo(error)),
+        Err(interactive::DriverRunError::Io(interactive::InteractiveIoError::Output(error))) => {
+            classify_output_error(error).map_err(|error| {
+                RunError::InteractiveIo(interactive::InteractiveIoError::Output(error))
+            })
+        }
+        Err(interactive::DriverRunError::Handler(RunError::Command(CommandError::Output(
+            error,
+        )))) => classify_output_error(error)
+            .map_err(|error| RunError::Command(CommandError::Output(error))),
+        Err(interactive::DriverRunError::Handler(error)) => Err(error),
+    }
+}
+
+#[cfg(test)]
+mod interactive_output_classification_tests {
+    use super::*;
+
+    #[test]
+    fn driver_outputのbroken_pipeだけを正常終了に分類する() {
+        let broken_pipe = interactive::DriverRunError::Io(interactive::InteractiveIoError::Output(
+            std::io::Error::new(std::io::ErrorKind::BrokenPipe, "closed pipe"),
+        ));
+        assert!(classify_interactive_run_result(Err(broken_pipe)).is_ok());
+
+        let permission_denied = interactive::DriverRunError::Io(
+            interactive::InteractiveIoError::Output(std::io::Error::new(
+                std::io::ErrorKind::PermissionDenied,
+                "terminal denied output",
+            )),
+        );
+        let error = classify_interactive_run_result(Err(permission_denied)).unwrap_err();
+        assert!(matches!(
+            error,
+            RunError::InteractiveIo(interactive::InteractiveIoError::Output(ref source))
+                if source.kind() == std::io::ErrorKind::PermissionDenied
+        ));
+        assert!(std::error::Error::source(&error).is_some());
+    }
+
+    #[test]
+    fn runtime描画のbroken_pipeもdriver出力と同じ分類を使う() {
+        let broken_pipe =
+            interactive::DriverRunError::Handler(RunError::Command(CommandError::Output(
+                std::io::Error::new(std::io::ErrorKind::BrokenPipe, "closed pipe"),
+            )));
+        assert!(classify_interactive_run_result(Err(broken_pipe)).is_ok());
     }
 }
 
@@ -862,7 +939,9 @@ fn report_run_result(stderr: &mut dyn Write, result: Result<(), RunError>) -> bo
     match result {
         Ok(()) => true,
         Err(error) => {
-            render_plain_display_model(stderr, &error_display_model(&error)).unwrap();
+            if render_plain_display_model(stderr, &error_display_model(&error)).is_err() {
+                return false;
+            }
             false
         }
     }
@@ -928,17 +1007,21 @@ fn execute_non_interactive_command_at(
 fn try_save_before_exit(
     stdout: &mut dyn SchronuWriter,
     task_repository: &dyn TaskRepositoryTrait,
-) -> bool {
+) -> Result<bool, CommandError> {
     match task_repository.save() {
-        Ok(()) => true,
+        Ok(()) => Ok(true),
         Err(error) => {
-            render_display_model_with_mode(
+            if let Err(output_error) = render_display_model_with_mode(
                 stdout,
                 &error_display_model(&error),
                 RenderMode::Flushed,
-            )
-            .unwrap();
-            false
+            ) {
+                return Err(CommandError::ExitSaveDiagnostic {
+                    save_error: error,
+                    output_error,
+                });
+            }
+            Ok(false)
         }
     }
 }
@@ -988,19 +1071,22 @@ fn try_exit_interactive(
     free_time_manager: &mut dyn FreeTimeManagerTrait,
     focused_task_id_opt: &mut Option<Uuid>,
     now: DateTime<Local>,
-) -> bool {
-    if !try_save_before_exit(stdout, task_repository) {
-        return false;
+) -> Result<bool, CommandError> {
+    if !try_save_before_exit(stdout, task_repository)? {
+        return Ok(false);
     }
 
-    task_repository.sync_clock(now);
+    task_repository
+        .sync_clock(now)
+        .map_err(ApplicationError::TaskTree)
+        .map_err(CommandError::Application)?;
     render_interactive_band(
         stdout,
         focused_task_id_opt,
         task_repository,
         free_time_manager,
-    );
-    true
+    )?;
+    Ok(true)
 }
 
 fn render_interactive_band(
@@ -1008,7 +1094,7 @@ fn render_interactive_band(
     focused_task_id_opt: &mut Option<Uuid>,
     task_repository: &mut dyn TaskRepositoryTrait,
     free_time_manager: &mut dyn FreeTimeManagerTrait,
-) {
+) -> Result<(), CommandError> {
     let result = build_show_all_tasks_display_with_config(
         focused_task_id_opt,
         task_repository,
@@ -1018,43 +1104,44 @@ fn render_interactive_band(
         active_config(),
     );
     match result {
-        Ok(display) => render_display_model(stdout, &display).unwrap(),
-        Err(error) => {
-            report_application_result::<()>(stdout, Err(error));
-        }
+        Ok(display) => render_display_model(stdout, &display).map_err(CommandError::Output),
+        Err(error) => report_application_result::<()>(stdout, Err(error)),
     }
 }
 
-fn render_focus_from_source(stdout: &mut dyn SchronuWriter, source: &dyn FocusDisplaySource) {
-    let ancestors = source.build_ancestors().map(|display| {
-        render_display_model(stdout, &display).unwrap();
-    });
-    report_application_result(stdout, ancestors);
+fn render_focus_from_source(
+    stdout: &mut dyn SchronuWriter,
+    source: &dyn FocusDisplaySource,
+) -> Result<(), CommandError> {
+    match source.build_ancestors() {
+        Ok(display) => render_display_model(stdout, &display).map_err(CommandError::Output)?,
+        Err(error) => report_application_result::<()>(stdout, Err(error))?,
+    }
 
     let Some(header) = source.build_header() else {
-        return;
+        return Ok(());
     };
     let header = match header {
         Ok(header) => header,
         Err(error) => {
-            report_application_result::<()>(stdout, Err(error));
-            return;
+            report_application_result::<()>(stdout, Err(error))?;
+            return Ok(());
         }
     };
-    render_display_model(stdout, &DisplayModel::Focus(header)).unwrap();
+    render_display_model(stdout, &DisplayModel::Focus(header)).map_err(CommandError::Output)?;
 
     let Some(timing) = source.build_timing() else {
-        return;
+        return Ok(());
     };
     let timing = match timing {
         Ok(timing) => timing,
         Err(error) => {
-            report_application_result::<()>(stdout, Err(error));
-            return;
+            report_application_result::<()>(stdout, Err(error))?;
+            return Ok(());
         }
     };
-    render_display_model(stdout, &DisplayModel::Focus(timing)).unwrap();
-    stdout.flush().unwrap();
+    render_display_model(stdout, &DisplayModel::Focus(timing)).map_err(CommandError::Output)?;
+    stdout.flush().map_err(CommandError::Output)
 }
 
 fn render_focused_task(
@@ -1064,15 +1151,15 @@ fn render_focused_task(
     last_focused_task_id_opt: &mut Option<Uuid>,
     focus_started_datetime: &mut DateTime<Local>,
     now: DateTime<Local>,
-) {
+) -> Result<(), CommandError> {
     let Some(focused_task_id) = focused_task_id_opt else {
-        return;
+        return Ok(());
     };
     let focused_task_opt = match task_repository.get_by_id(focused_task_id) {
         Ok(task) => task,
         Err(error) => {
-            report_application_result::<()>(stdout, Err(ApplicationError::TaskTree(error)));
-            return;
+            report_application_result::<()>(stdout, Err(ApplicationError::TaskTree(error)))?;
+            return Ok(());
         }
     };
 
@@ -1088,7 +1175,7 @@ fn render_focused_task(
             focus_started_datetime,
             now,
         },
-    );
+    )
 }
 
 struct FocusRenderState<'a> {
@@ -1103,13 +1190,13 @@ fn render_interactive_screen(
     free_time_manager: &mut dyn FreeTimeManagerTrait,
     focus_state: FocusRenderState,
     now: DateTime<Local>,
-) {
+) -> Result<(), CommandError> {
     render_interactive_band(
         stdout,
         focus_state.focused_task_id_opt,
         task_repository,
         free_time_manager,
-    );
+    )?;
     render_focused_task(
         stdout,
         task_repository,
@@ -1117,7 +1204,7 @@ fn render_interactive_screen(
         focus_state.last_focused_task_id_opt,
         focus_state.focus_started_datetime,
         now,
-    );
+    )
 }
 
 struct InteractiveCommandExecution {
@@ -1145,7 +1232,7 @@ fn interactive_outcome_application_mode<'a>(
     }
 }
 
-#[allow(clippy::too_many_arguments, unused_must_use)]
+#[allow(clippy::too_many_arguments)]
 fn execute_interactive_command(
     stdout: &mut dyn SchronuWriter,
     task_repository: &mut dyn TaskRepositoryTrait,
@@ -1192,11 +1279,13 @@ fn execute_interactive_command(
         if propagates_error {
             return Err(error);
         }
-        let _output_error = render_display_model(stdout, &error_display_model(&error))
-            .map_err(CommandError::Output);
+        render_display_model(stdout, &error_display_model(&error)).map_err(CommandError::Output)?;
     }
 
-    task_repository.sync_clock(operation_now);
+    task_repository
+        .sync_clock(operation_now)
+        .map_err(ApplicationError::TaskTree)
+        .map_err(CommandError::Application)?;
     let focus_changed =
         reconcile_focus_after_reload(task_repository, focused_task_id_opt, focus_selection_mode)
             .map_err(CommandError::from)?;
@@ -1242,7 +1331,7 @@ fn handle_interactive_submit_at(
     let transaction_result =
         run_cli_repository_transaction(task_repository, operation_now, |task_repository| {
             reconcile_interactive_state_after_reload(task_repository, &mut state, operation_now)?;
-            writeln_newline(stdout, "").unwrap();
+            writeln_newline(stdout, "").map_err(CommandError::Output)?;
             writeln_newline(
                 stdout,
                 &format!(
@@ -1253,9 +1342,9 @@ fn handle_interactive_submit_at(
                     style::Reset
                 ),
             )
-            .unwrap();
-            writeln_newline(stdout, "").unwrap();
-            stdout.flush().unwrap();
+            .map_err(CommandError::Output)?;
+            writeln_newline(stdout, "").map_err(CommandError::Output)?;
+            stdout.flush().map_err(CommandError::Output)?;
 
             let execution = execute_interactive_command(
                 stdout,
@@ -1325,7 +1414,13 @@ fn handle_interactive_repository_event(
             let now = Local::now();
             match reload_repository_for_cli(task_repository, now) {
                 Ok(storage_lock) => {
-                    reconcile_interactive_state_after_reload(task_repository, &mut state, now);
+                    if let Err(error) =
+                        reconcile_interactive_state_after_reload(task_repository, &mut state, now)
+                    {
+                        return InteractiveRepositoryEventOutcome::Fatal(RunError::Command(
+                            CommandError::Application(error),
+                        ));
+                    }
                     drop(storage_lock);
                     InteractiveRepositoryEventOutcome::Continue
                 }
@@ -1336,17 +1431,25 @@ fn handle_interactive_repository_event(
             let now = Local::now();
             match reload_repository_for_cli(task_repository, now) {
                 Ok(_storage_lock) => {
-                    reconcile_interactive_state_after_reload(task_repository, &mut state, now);
-                    if try_exit_interactive(
+                    if let Err(error) =
+                        reconcile_interactive_state_after_reload(task_repository, &mut state, now)
+                    {
+                        return InteractiveRepositoryEventOutcome::Fatal(RunError::Command(
+                            CommandError::Application(error),
+                        ));
+                    }
+                    match try_exit_interactive(
                         stdout,
                         task_repository,
                         free_time_manager,
                         state.focused_task_id_opt,
                         now,
                     ) {
-                        InteractiveRepositoryEventOutcome::Exit
-                    } else {
-                        InteractiveRepositoryEventOutcome::Continue
+                        Ok(true) => InteractiveRepositoryEventOutcome::Exit,
+                        Ok(false) => InteractiveRepositoryEventOutcome::Continue,
+                        Err(error) => {
+                            InteractiveRepositoryEventOutcome::Fatal(RunError::Command(error))
+                        }
                     }
                 }
                 Err(error) => InteractiveRepositoryEventOutcome::Retry(error),
@@ -1396,9 +1499,9 @@ fn interactive_application(
     let mut last_focused_task_id_opt = None;
     let mut focus_started_datetime = now;
 
-    interactive::run(now, |stdout, event| {
+    let result = interactive::run(now, |stdout, event| {
         if let interactive::DriverEvent::RenderScreen { now } = event {
-            render_interactive_screen(
+            return match render_interactive_screen(
                 stdout,
                 task_repository,
                 free_time_manager,
@@ -1408,8 +1511,10 @@ fn interactive_application(
                     focus_started_datetime: &mut focus_started_datetime,
                 },
                 now,
-            );
-            return interactive::DriverOutcome::Continue;
+            ) {
+                Ok(()) => interactive::DriverOutcome::Continue,
+                Err(error) => interactive::DriverOutcome::Fatal(RunError::Command(error)),
+            };
         }
 
         let repository_event = match event {
@@ -1444,19 +1549,25 @@ fn interactive_application(
             InteractiveRepositoryEventOutcome::Continue => interactive::DriverOutcome::Continue,
             InteractiveRepositoryEventOutcome::CommandExecuted(command_kind, operation_now) => {
                 if !interactive::should_suppress_leaf_tasks_after_command(command_kind) {
-                    let result = build_leaf_tree_display(task_repository).map(|tree| {
-                        render_display_model(stdout, &DisplayModel::Tree(tree)).unwrap();
-                    });
-                    report_application_result(stdout, result);
+                    let result = match build_leaf_tree_display(task_repository) {
+                        Ok(tree) => render_display_model(stdout, &DisplayModel::Tree(tree))
+                            .map_err(CommandError::Output),
+                        Err(error) => report_application_result::<()>(stdout, Err(error)),
+                    };
+                    if let Err(error) = result {
+                        return interactive::DriverOutcome::Fatal(RunError::Command(error));
+                    }
                 }
-                render_focused_task(
+                if let Err(error) = render_focused_task(
                     stdout,
                     task_repository,
                     focused_task_id_opt,
                     &mut last_focused_task_id_opt,
                     &mut focus_started_datetime,
                     operation_now,
-                );
+                ) {
+                    return interactive::DriverOutcome::Fatal(RunError::Command(error));
+                }
                 interactive::DriverOutcome::Submitted
             }
             InteractiveRepositoryEventOutcome::Retry(error) => {
@@ -1467,8 +1578,12 @@ fn interactive_application(
                 interactive::DriverOutcome::Fatal(error)
             }
         }
-    })
+    });
+    classify_interactive_run_result(result)
 }
 
 #[cfg(test)]
 include!("runtime_contract_tests.rs");
+
+#[cfg(test)]
+include!("interactive_io_contract_tests.rs");

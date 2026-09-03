@@ -20,7 +20,13 @@ use schronu::application::interface::{
 use std::cell::{Cell, RefCell};
 
 #[cfg(test)]
+use std::collections::VecDeque;
+
+#[cfg(test)]
 use std::path::PathBuf;
+
+#[cfg(test)]
+use std::rc::Rc;
 
 #[cfg(test)]
 use std::time::Instant;
@@ -220,6 +226,111 @@ impl SchronuWriter for TestWriter {
 }
 
 #[cfg(test)]
+struct ScriptedInteractiveInput {
+    inputs: VecDeque<interactive::ReceivedInput>,
+}
+
+#[cfg(test)]
+impl ScriptedInteractiveInput {
+    fn command(command: &str) -> Self {
+        let mut inputs = command
+            .chars()
+            .map(|character| interactive::ReceivedInput::Key(termion::event::Key::Char(character)))
+            .collect::<VecDeque<_>>();
+        inputs.push_back(interactive::ReceivedInput::Key(termion::event::Key::Char(
+            '\n',
+        )));
+        Self { inputs }
+    }
+
+    fn empty() -> Self {
+        Self {
+            inputs: VecDeque::new(),
+        }
+    }
+}
+
+#[cfg(test)]
+impl interactive::InputSource for ScriptedInteractiveInput {
+    fn receive(&mut self, _wait_duration: StdDuration) -> interactive::ReceivedInput {
+        self.inputs
+            .pop_front()
+            .unwrap_or(interactive::ReceivedInput::Disconnected)
+    }
+}
+
+#[cfg(test)]
+struct SignaledFailureWriter {
+    fail_output: Rc<Cell<bool>>,
+    error_kind: std::io::ErrorKind,
+}
+
+#[cfg(test)]
+impl Write for SignaledFailureWriter {
+    fn write(&mut self, buffer: &[u8]) -> std::io::Result<usize> {
+        if self.fail_output.get() {
+            Err(std::io::Error::new(
+                self.error_kind,
+                "test interactive output failure",
+            ))
+        } else {
+            Ok(buffer.len())
+        }
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        if self.fail_output.get() {
+            Err(std::io::Error::new(
+                self.error_kind,
+                "test interactive output failure",
+            ))
+        } else {
+            Ok(())
+        }
+    }
+}
+
+#[cfg(test)]
+impl SchronuWriter for SignaledFailureWriter {
+    fn writeln_newline(&mut self, message: &str) -> std::io::Result<()> {
+        writeln!(self, "{message}")
+    }
+
+    fn supports_ansi_color(&self) -> bool {
+        false
+    }
+}
+
+#[cfg(test)]
+struct SignaledFailureTerminalFactory {
+    fail_output: Rc<Cell<bool>>,
+    error_kind: std::io::ErrorKind,
+}
+
+#[cfg(test)]
+impl interactive::TerminalFactory for SignaledFailureTerminalFactory {
+    fn open_terminal(&mut self) -> std::io::Result<Box<dyn SchronuWriter>> {
+        Ok(Box::new(SignaledFailureWriter {
+            fail_output: Rc::clone(&self.fail_output),
+            error_kind: self.error_kind,
+        }))
+    }
+}
+
+#[cfg(test)]
+struct RawModeFailureTerminalFactory;
+
+#[cfg(test)]
+impl interactive::TerminalFactory for RawModeFailureTerminalFactory {
+    fn open_terminal(&mut self) -> std::io::Result<Box<dyn SchronuWriter>> {
+        Err(std::io::Error::new(
+            std::io::ErrorKind::PermissionDenied,
+            "test raw mode failure",
+        ))
+    }
+}
+
+#[cfg(test)]
 struct FailingNewlineWriter {
     buffer: Vec<u8>,
     failures_remaining: usize,
@@ -369,6 +480,7 @@ struct TestTaskRepository {
     get_by_id_attempt_count: Cell<usize>,
     save_failures_remaining: Cell<usize>,
     save_attempt_count: Cell<usize>,
+    save_attempt_signal_opt: Option<Rc<Cell<bool>>>,
     has_pending_changes: Cell<bool>,
     operation_trace: RefCell<Vec<&'static str>>,
 }
@@ -428,6 +540,7 @@ impl TestTaskRepository {
             get_by_id_attempt_count: Cell::new(0),
             save_failures_remaining: Cell::new(0),
             save_attempt_count: Cell::new(0),
+            save_attempt_signal_opt: None,
             has_pending_changes: Cell::new(true),
             operation_trace: RefCell::new(Vec::new()),
         }
@@ -435,6 +548,11 @@ impl TestTaskRepository {
 
     fn with_storage_directory(mut self, storage_directory: &std::path::Path) -> Self {
         self.storage_directory = storage_directory.to_str().unwrap().to_string();
+        self
+    }
+
+    fn with_save_attempt_signal(mut self, signal: Rc<Cell<bool>>) -> Self {
+        self.save_attempt_signal_opt = Some(signal);
         self
     }
 
@@ -489,6 +607,9 @@ impl TaskRepositoryTrait for TestTaskRepository {
         self.operation_trace.borrow_mut().push("save");
         self.save_attempt_count
             .set(self.save_attempt_count.get() + 1);
+        if let Some(signal) = &self.save_attempt_signal_opt {
+            signal.set(true);
+        }
         let failures_remaining = self.save_failures_remaining.get();
         if failures_remaining > 0 {
             self.save_failures_remaining.set(failures_remaining - 1);
@@ -764,7 +885,7 @@ fn execute_sequential_command(command: &str) -> (TaskHandle, Option<Uuid>) {
     let mut focused_task_id_opt = Some(task_id);
     let mut stdout = TestWriter::new();
 
-    execute(
+    let _ = execute(
         &mut stdout,
         &mut task_repository,
         &mut free_time_manager,
@@ -780,7 +901,7 @@ fn execute_sequential_command(command: &str) -> (TaskHandle, Option<Uuid>) {
 fn execute_arrange_command(command: &str) -> TaskHandle {
     let now = Local.with_ymd_and_hms(2026, 8, 3, 12, 0, 0).unwrap();
     let task = new_test_task_handle("ルーチン").unwrap();
-    task.set_repetition_interval_days_opt(Some(7));
+    let _ = task.set_repetition_interval_days_opt(Some(7));
 
     let mut estimated_child_attr = new_test_task_attr("見積もりあり");
     estimated_child_attr.set_estimated_work_seconds(5 * 60);
@@ -801,7 +922,7 @@ fn execute_arrange_command(command: &str) -> TaskHandle {
     let mut focused_task_id_opt = Some(task_id);
     let mut stdout = TestWriter::new();
 
-    execute(
+    let _ = execute(
         &mut stdout,
         &mut task_repository,
         &mut free_time_manager,
@@ -817,11 +938,11 @@ fn execute_arrange_command(command: &str) -> TaskHandle {
 fn assert_show_all_spreadsheet_formatter_contract() {
     let now = Local.with_ymd_and_hms(2026, 8, 11, 12, 0, 0).unwrap();
     let task = new_test_task_handle("夕食  の 準備").unwrap();
-    task.set_estimated_work_seconds(40 * 60);
-    task.set_start_time(now);
-    task.set_priority(1);
-    task.set_project_category_opt(Some(ProjectCategory::Investment));
-    task.sync_clock(now);
+    let _ = task.set_estimated_work_seconds(40 * 60);
+    let _ = task.set_start_time(now);
+    let _ = task.set_priority(1);
+    let _ = task.set_project_category_opt(Some(ProjectCategory::Investment));
+    let _ = task.sync_clock(now);
     let task_id = task.get_id().unwrap();
 
     let result = execute_command_for_test(task, now, Some(task_id), "全");
@@ -885,7 +1006,7 @@ fn execute_show_all_command_for_test(
     let mut focused_task_id_opt = None;
     let mut stdout = TestWriter::new();
 
-    execute(
+    let _ = execute(
         &mut stdout,
         &mut task_repository,
         &mut free_time_manager,
@@ -940,7 +1061,7 @@ fn execute_calendar_command_with_ansi_color_for_test(
         TestWriter::new_for_pipe()
     };
 
-    execute(
+    let _ = execute(
         &mut stdout,
         &mut task_repository,
         &mut free_time_manager,
@@ -963,7 +1084,7 @@ fn execute_band_command_with_elapsed_for_test(
     let mut focused_task_id_opt = None;
     let mut stdout = TestWriter::new();
 
-    execute(
+    let _ = execute(
         &mut stdout,
         &mut task_repository,
         &mut free_time_manager,
@@ -983,10 +1104,10 @@ fn add_scheduled_child_for_test(
     estimated_work_minutes: i64,
 ) -> TaskHandle {
     let child = root.create_as_last_child(new_test_task_attr(name));
-    child.set_estimated_work_seconds(estimated_work_minutes * 60);
-    child.set_start_time(start_time);
-    child.set_pending_until(start_time);
-    child.set_orig_status(Status::Pending);
+    let _ = child.set_estimated_work_seconds(estimated_work_minutes * 60);
+    let _ = child.set_start_time(start_time);
+    let _ = child.set_pending_until(start_time);
+    let _ = child.set_orig_status(Status::Pending);
     child
 }
 
@@ -1004,7 +1125,7 @@ fn execute_flatten_command_for_test(
     let mut focused_task_id_opt = None;
     let mut stdout = TestWriter::new();
 
-    execute(
+    let _ = execute(
         &mut stdout,
         &mut task_repository,
         &mut free_time_manager,

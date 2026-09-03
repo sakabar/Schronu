@@ -9,7 +9,7 @@ fn parse_focus_selection_mode_command(line: &str) -> Option<FocusSelectionMode> 
 #[test]
 fn test_get_adjustable_prefix_label_前倒し可能日数を表示する() {
     let task = new_test_task_handle("タスク").unwrap();
-    task.set_start_time(Local.with_ymd_and_hms(2026, 5, 7, 12, 0, 0).unwrap());
+    let _ = task.set_start_time(Local.with_ymd_and_hms(2026, 5, 7, 12, 0, 0).unwrap());
     let dt = Local.with_ymd_and_hms(2026, 5, 10, 12, 0, 0).unwrap();
     let last_synced_time = Local.with_ymd_and_hms(2026, 5, 7, 12, 0, 0).unwrap();
 
@@ -21,7 +21,7 @@ fn test_get_adjustable_prefix_label_前倒し可能日数を表示する() {
 #[test]
 fn test_get_adjustable_prefix_label_今日より前には戻さない() {
     let task = new_test_task_handle("タスク").unwrap();
-    task.set_start_time(Local.with_ymd_and_hms(2026, 5, 1, 12, 0, 0).unwrap());
+    let _ = task.set_start_time(Local.with_ymd_and_hms(2026, 5, 1, 12, 0, 0).unwrap());
     let dt = Local.with_ymd_and_hms(2026, 5, 10, 12, 0, 0).unwrap();
     let last_synced_time = Local.with_ymd_and_hms(2026, 5, 7, 12, 0, 0).unwrap();
 
@@ -33,7 +33,7 @@ fn test_get_adjustable_prefix_label_今日より前には戻さない() {
 #[test]
 fn test_get_adjustable_prefix_label_同日着手可能なら表示しない() {
     let task = new_test_task_handle("タスク").unwrap();
-    task.set_start_time(Local.with_ymd_and_hms(2026, 5, 10, 12, 0, 0).unwrap());
+    let _ = task.set_start_time(Local.with_ymd_and_hms(2026, 5, 10, 12, 0, 0).unwrap());
     let dt = Local.with_ymd_and_hms(2026, 5, 10, 18, 0, 0).unwrap();
     let last_synced_time = Local.with_ymd_and_hms(2026, 5, 7, 12, 0, 0).unwrap();
 
@@ -45,7 +45,7 @@ fn test_get_adjustable_prefix_label_同日着手可能なら表示しない() {
 #[test]
 fn test_get_adjustable_prefix_label_今日と予定日が同じなら過去の着手可能日は表示しない() {
     let task = new_test_task_handle("タスク").unwrap();
-    task.set_start_time(Local.with_ymd_and_hms(2026, 5, 1, 12, 0, 0).unwrap());
+    let _ = task.set_start_time(Local.with_ymd_and_hms(2026, 5, 1, 12, 0, 0).unwrap());
     let dt = Local.with_ymd_and_hms(2026, 5, 7, 18, 0, 0).unwrap();
     let last_synced_time = Local.with_ymd_and_hms(2026, 5, 7, 12, 0, 0).unwrap();
 
@@ -57,8 +57,8 @@ fn test_get_adjustable_prefix_label_今日と予定日が同じなら過去の�
 #[test]
 fn test_get_adjustable_prefix_label_相手待ちは表示しない() {
     let task = new_test_task_handle("タスク").unwrap();
-    task.set_start_time(Local.with_ymd_and_hms(2026, 5, 7, 12, 0, 0).unwrap());
-    task.set_is_on_other_side(true);
+    let _ = task.set_start_time(Local.with_ymd_and_hms(2026, 5, 7, 12, 0, 0).unwrap());
+    let _ = task.set_is_on_other_side(true);
     let dt = Local.with_ymd_and_hms(2026, 5, 10, 12, 0, 0).unwrap();
     let last_synced_time = Local.with_ymd_and_hms(2026, 5, 7, 12, 0, 0).unwrap();
 
@@ -70,7 +70,7 @@ fn test_get_adjustable_prefix_label_相手待ちは表示しない() {
 #[test]
 fn test_get_adjustable_prefix_label_葉以外は表示しない() {
     let task = new_test_task_handle("タスク").unwrap();
-    task.set_start_time(Local.with_ymd_and_hms(2026, 5, 7, 12, 0, 0).unwrap());
+    let _ = task.set_start_time(Local.with_ymd_and_hms(2026, 5, 7, 12, 0, 0).unwrap());
     let dt = Local.with_ymd_and_hms(2026, 5, 10, 12, 0, 0).unwrap();
     let last_synced_time = Local.with_ymd_and_hms(2026, 5, 7, 12, 0, 0).unwrap();
 
@@ -275,7 +275,7 @@ fn test_execute_set_priority_優先度を変更する() {
     let task = new_test_task_handle("タスク").unwrap();
     let focused_task_opt = Some(task.clone());
 
-    execute_set_priority(&focused_task_opt, "8");
+    let _ = execute_set_priority(&focused_task_opt, "8");
 
     assert_eq!(task.get_priority().unwrap(), 8);
 }
@@ -283,10 +283,10 @@ fn test_execute_set_priority_優先度を変更する() {
 #[test]
 fn test_execute_set_priority_不正値なら変更しない() {
     let task = new_test_task_handle("タスク").unwrap();
-    task.set_priority(5);
+    let _ = task.set_priority(5);
     let focused_task_opt = Some(task.clone());
 
-    execute_set_priority(&focused_task_opt, "invalid");
+    let _ = execute_set_priority(&focused_task_opt, "invalid");
 
     assert_eq!(task.get_priority().unwrap(), 5);
 }
@@ -295,7 +295,7 @@ fn test_execute_set_priority_不正値なら変更しない() {
 fn test_execute_set_priority_フォーカスなしなら何もしない() {
     let focused_task_opt = None;
 
-    execute_set_priority(&focused_task_opt, "8");
+    let _ = execute_set_priority(&focused_task_opt, "8");
 }
 
 #[test]
