@@ -3,6 +3,19 @@
 set -ue
 set -o pipefail
 
+reverse_lines() {
+    awk '
+    {
+        lines[NR] = $0
+    }
+    END {
+        for (i = NR; i >= 1; i--) {
+            print lines[i]
+        }
+    }
+    '
+}
+
 cell_row_num=3
 weekday_order='月火水木金土日月'
 month_offset=(0 31 59 90 120 151 181 212 243 273 304 334)
@@ -25,19 +38,12 @@ cat - | awk '
     }
     gsub(/[[:space:]]+/, " ", line)
 
-    task_row = ""
     for (i = 1; i <= 9; i++) {
-        task_row = task_row column[i] "\t"
+        printf "%s\t", column[i]
     }
-    task_rows[++task_row_count] = task_row line
+    print line
 }
-
-END {
-    for (i = task_row_count; i >= 1; i--) {
-        print task_rows[i]
-    }
-}
-' | while IFS=$'\t' read -r rank task_id icon remaining_time scheduled_time priority estimated_minutes project_number category task_name; do
+' | reverse_lines | while IFS=$'\t' read -r rank task_id icon remaining_time scheduled_time priority estimated_minutes project_number category task_name; do
     prev_cell_row_num=$[$cell_row_num - 1]
 
     scheduled_date=${scheduled_time%%\(*}
