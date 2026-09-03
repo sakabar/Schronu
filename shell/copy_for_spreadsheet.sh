@@ -47,28 +47,36 @@ function is_category(value) {
         value == "資" || value == "消" || value == "_"
 }
 
+function fail_incomplete_task_row(line_number) {
+    print "line " line_number ": incomplete task row" > "/dev/stderr"
+    exit 1
+}
+
 /^[0-9]/ {
     line = $0
+    invalid = 0
+    for (i = 1; i <= 9; i++) {
+        column[i] = ""
+    }
     for (i = 1; i <= 9; i++) {
         sub(/^[[:space:]]+/, "", line)
         if (!match(line, /^[^[:space:]]+/)) {
-            next
+            invalid = 1
+            break
         }
         column[i] = substr(line, RSTART, RLENGTH)
         line = substr(line, RSTART + RLENGTH)
     }
 
     sub(/^[[:space:]]+/, "", line)
-    if (line == "") {
-        next
-    }
     gsub(/[[:space:]]+/, " ", line)
 
-    if (length(column[1]) < 4 || !is_decimal(column[1]) ||
+    if (invalid || line == "" || length(column[1]) < 4 ||
+        !is_decimal(column[1]) ||
         !is_uuid(column[2]) || !is_scheduled_time(column[5]) ||
         !is_decimal(column[6]) || !is_decimal(column[7]) ||
         !is_integer(column[8]) || !is_category(column[9])) {
-        next
+        fail_incomplete_task_row(NR)
     }
 
     for (i = 1; i <= 9; i++) {
