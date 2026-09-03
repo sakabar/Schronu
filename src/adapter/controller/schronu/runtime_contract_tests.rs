@@ -4737,12 +4737,12 @@ fn test_execute_flatten_論理日境界をまたぐtaskは延期しない() {
 }
 
 #[test]
-fn test_execute_flatten_論理日境界をまたぐtaskの全作業時間を開始日の論理日に計上する() {
+fn test_execute_flatten_論理日境界をまたぐtaskの容量を各論理日へ配賦する() {
     let now = Local.with_ymd_and_hms(2026, 8, 13, 6, 0, 0).unwrap();
     let today = now.date_naive();
     let root = new_test_task_handle("平テスト").unwrap();
     root.set_estimated_work_seconds(0);
-    add_scheduled_child_for_test(&root, "日境界をまたぐ", now, 25 * 60);
+    let target = add_scheduled_child_for_test(&root, "日境界をまたぐ", now, 25 * 60);
 
     let result = execute_flatten_command_for_test(
         "平",
@@ -4751,11 +4751,16 @@ fn test_execute_flatten_論理日境界をまたぐtaskの全作業時間を開�
         HashMap::from([(today, 24 * 60), (today + Duration::days(1), 26 * 60)]),
     );
 
-    assert!(result.output.starts_with("平: 0件 00:00 (未解消1日)\n"));
-    assert!(result
-        .output
-        .contains(&format!("[Warn] 平\t{}\t未解消 01:00", today)));
-    assert!(result.output.contains("論理日境界をまたぐ: 1件"));
+    assert_eq!(
+        result
+            .task
+            .get_by_id(target.get_id().unwrap())
+            .unwrap()
+            .get_pending_until()
+            .unwrap(),
+        now
+    );
+    assert_eq!(result.output, "[Info] 100%を超過している日はありません。\n");
 }
 
 #[test]
