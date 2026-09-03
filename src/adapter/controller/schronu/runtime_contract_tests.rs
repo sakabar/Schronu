@@ -5835,75 +5835,17 @@ fn test_interactiveのfinish実績overflow診断後のterminal_failureで状態�
     };
     let mut input = ScriptedInteractiveInput::command("終");
 
-    let driver_result = interactive::run_with_terminal_factory(
+    let driver_result = run_interactive_runtime_for_test(
         now,
         &mut terminal_factory,
         &mut input,
-        |stdout, event| {
-            if matches!(event, interactive::DriverEvent::RenderScreen { .. }) {
-                return interactive::DriverOutcome::Continue;
-            }
-            let repository_event = match event {
-                interactive::DriverEvent::Submit { line } => {
-                    InteractiveRepositoryEvent::Submit { line }
-                }
-                interactive::DriverEvent::Refresh => InteractiveRepositoryEvent::Refresh,
-                interactive::DriverEvent::Exit => InteractiveRepositoryEvent::Exit,
-                interactive::DriverEvent::Interrupted => InteractiveRepositoryEvent::Interrupted,
-                interactive::DriverEvent::InputDisconnected => {
-                    InteractiveRepositoryEvent::InputDisconnected
-                }
-                interactive::DriverEvent::InputRead(error) => {
-                    InteractiveRepositoryEvent::InputRead(error)
-                }
-                interactive::DriverEvent::RenderScreen { .. } => unreachable!(),
-            };
-            match handle_interactive_repository_event(
-                stdout,
-                &mut repository,
-                &mut free_time_manager,
-                InteractiveRepositoryState {
-                    focused_task_id_opt: &mut focused_task_id_opt,
-                    last_focused_task_id_opt: &mut last_focused_task_id_opt,
-                    focus_started_datetime: &mut focus_started_datetime,
-                    focus_selection_mode: &mut focus_selection_mode,
-                },
-                repository_event,
-            ) {
-                InteractiveRepositoryEventOutcome::Continue => interactive::DriverOutcome::Continue,
-                InteractiveRepositoryEventOutcome::CommandExecuted(command_kind, operation_now) => {
-                    fail_output.set(true);
-                    if !interactive::should_suppress_leaf_tasks_after_command(command_kind) {
-                        let result = match build_leaf_tree_display(&mut repository) {
-                            Ok(tree) => render_display_model(stdout, &DisplayModel::Tree(tree))
-                                .map_err(CommandError::Output),
-                            Err(error) => report_application_result::<()>(stdout, Err(error)),
-                        };
-                        if let Err(error) = result {
-                            return interactive::DriverOutcome::Fatal(RunError::Command(error));
-                        }
-                    }
-                    if let Err(error) = render_focused_task(
-                        stdout,
-                        &repository,
-                        focused_task_id_opt,
-                        &mut last_focused_task_id_opt,
-                        &mut focus_started_datetime,
-                        operation_now,
-                    ) {
-                        return interactive::DriverOutcome::Fatal(RunError::Command(error));
-                    }
-                    interactive::DriverOutcome::Submitted
-                }
-                InteractiveRepositoryEventOutcome::Retry(error) => {
-                    interactive::DriverOutcome::Retry(error)
-                }
-                InteractiveRepositoryEventOutcome::Exit => interactive::DriverOutcome::Exit,
-                InteractiveRepositoryEventOutcome::Fatal(error) => {
-                    interactive::DriverOutcome::Fatal(error)
-                }
-            }
-        },
+        &mut repository,
+        &mut free_time_manager,
+        &mut focused_task_id_opt,
+        &mut last_focused_task_id_opt,
+        &mut focus_started_datetime,
+        &mut focus_selection_mode,
+        || fail_output.set(true),
     );
     let result = classify_interactive_run_result(driver_result);
 
@@ -5975,54 +5917,17 @@ fn test_interactiveのflatten余分argumentはparse_fatalでもterminal_guardを
     };
     let mut input = ScriptedInteractiveInput::command("flatten extra");
 
-    let driver_result = interactive::run_with_terminal_factory(
+    let driver_result = run_interactive_runtime_for_test(
         now,
         &mut terminal_factory,
         &mut input,
-        |stdout, event| {
-            if matches!(event, interactive::DriverEvent::RenderScreen { .. }) {
-                return interactive::DriverOutcome::Continue;
-            }
-            let repository_event = match event {
-                interactive::DriverEvent::Submit { line } => {
-                    InteractiveRepositoryEvent::Submit { line }
-                }
-                interactive::DriverEvent::Refresh => InteractiveRepositoryEvent::Refresh,
-                interactive::DriverEvent::Exit => InteractiveRepositoryEvent::Exit,
-                interactive::DriverEvent::Interrupted => InteractiveRepositoryEvent::Interrupted,
-                interactive::DriverEvent::InputDisconnected => {
-                    InteractiveRepositoryEvent::InputDisconnected
-                }
-                interactive::DriverEvent::InputRead(error) => {
-                    InteractiveRepositoryEvent::InputRead(error)
-                }
-                interactive::DriverEvent::RenderScreen { .. } => unreachable!(),
-            };
-            match handle_interactive_repository_event(
-                stdout,
-                &mut repository,
-                &mut free_time_manager,
-                InteractiveRepositoryState {
-                    focused_task_id_opt: &mut focused_task_id_opt,
-                    last_focused_task_id_opt: &mut last_focused_task_id_opt,
-                    focus_started_datetime: &mut focus_started_datetime,
-                    focus_selection_mode: &mut focus_selection_mode,
-                },
-                repository_event,
-            ) {
-                InteractiveRepositoryEventOutcome::Continue => interactive::DriverOutcome::Continue,
-                InteractiveRepositoryEventOutcome::CommandExecuted(..) => {
-                    interactive::DriverOutcome::Submitted
-                }
-                InteractiveRepositoryEventOutcome::Retry(error) => {
-                    interactive::DriverOutcome::Retry(error)
-                }
-                InteractiveRepositoryEventOutcome::Exit => interactive::DriverOutcome::Exit,
-                InteractiveRepositoryEventOutcome::Fatal(error) => {
-                    interactive::DriverOutcome::Fatal(error)
-                }
-            }
-        },
+        &mut repository,
+        &mut free_time_manager,
+        &mut focused_task_id_opt,
+        &mut last_focused_task_id_opt,
+        &mut focus_started_datetime,
+        &mut focus_selection_mode,
+        || fail_output.set(true),
     );
     let result = classify_interactive_run_result(driver_result);
 
