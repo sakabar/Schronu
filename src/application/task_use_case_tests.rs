@@ -479,6 +479,63 @@ fn breakdown_task_operationで固定したid列と時刻を使う() {
 }
 
 #[test]
+fn breakdown_task_既存taskと生成uuidが衝突する場合は変更しない() {
+    let now = fixed_now();
+    let parent = crate::test_support::new_task_handle("親").unwrap();
+    let existing = crate::test_support::new_task_handle("既存").unwrap();
+    let duplicate_id = existing.get_id().unwrap();
+    let mut repository = TestTaskRepository::new(vec![parent.clone(), existing], now);
+    let mut next_id = || duplicate_id;
+    let mut factory = TaskFactory::new(now, &mut next_id);
+
+    let actual = breakdown_task(
+        &mut repository,
+        BreakdownTaskInput {
+            parent_id: parent.get_id().unwrap(),
+            names: vec!["子".to_string()],
+            pending_until: None,
+        },
+        &mut factory,
+    );
+
+    assert_eq!(
+        actual,
+        Err(ApplicationError::ProjectRegistration(
+            ProjectRegistrationError::DuplicateTaskId(duplicate_id)
+        ))
+    );
+    assert!(parent.get_children().unwrap().is_empty());
+}
+
+#[test]
+fn breakdown_task_batch内で生成uuidが衝突する場合は変更しない() {
+    let now = fixed_now();
+    let parent = crate::test_support::new_task_handle("親").unwrap();
+    let duplicate_id = Uuid::parse_str("00000000-0000-0000-0000-000000000203").unwrap();
+    let mut repository = TestTaskRepository::new(vec![parent.clone()], now);
+    let mut next_id = || duplicate_id;
+    let mut factory = TaskFactory::new(now, &mut next_id);
+
+    let actual = breakdown_task(
+        &mut repository,
+        BreakdownTaskInput {
+            parent_id: parent.get_id().unwrap(),
+            names: vec!["一".to_string(), "二".to_string()],
+            pending_until: None,
+        },
+        &mut factory,
+    );
+
+    assert_eq!(
+        actual,
+        Err(ApplicationError::ProjectRegistration(
+            ProjectRegistrationError::DuplicateTaskId(duplicate_id)
+        ))
+    );
+    assert!(parent.get_children().unwrap().is_empty());
+}
+
+#[test]
 fn breakdown_task_全ての子を指定時刻までpendingにする() {
     let parent = crate::test_support::new_task_handle("親").unwrap();
     let pending_until = Local.with_ymd_and_hms(2026, 8, 13, 6, 0, 0).unwrap();
