@@ -293,6 +293,21 @@ fn free_timeは負のeod_offsetでもeod前のbusyを控除する() {
     );
 
     assert_eq!(actual, Ok(45));
+
+    for last_synced_time in [
+        Local.with_ymd_and_hms(2026, 8, 12, 22, 0, 0).unwrap(),
+        Local.with_ymd_and_hms(2026, 8, 12, 22, 1, 0).unwrap(),
+    ] {
+        assert_eq!(
+            calculate_free_time_minutes_for_logical_date_with_end_of_day_offset_minutes(
+                &date,
+                last_synced_time,
+                &mut free_time_manager,
+                -120,
+            ),
+            Ok(0)
+        );
+    }
 }
 
 #[test]
