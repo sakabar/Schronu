@@ -1083,6 +1083,44 @@ fn test_load_同一tree内の重複uuidを両方のpath付きerrorで拒否す�
 }
 
 #[test]
+fn test_reload_if_changed初回loadの重複uuid失敗時は未読込状態を維持する() {
+    let storage_dir = TestStorageDir::new();
+    let now = Local.with_ymd_and_hms(2026, 9, 4, 12, 0, 0).unwrap();
+    let duplicate_id = Uuid::from_u128(0x2212);
+    for (directory_name, task_name) in [("first", "first"), ("second", "second")] {
+        let project = Project::new(
+            project_root_with_identity(task_name, duplicate_id, now),
+            "",
+            "",
+            5,
+        );
+        write_project_yaml(
+            &storage_dir,
+            directory_name,
+            std::str::from_utf8(&TaskRepository::serialize_project(&project).unwrap()).unwrap(),
+        );
+    }
+    let changed_revision = Uuid::from_u128(0x2213);
+    fs::write(
+        storage_dir.path.join(".revision"),
+        changed_revision.to_string(),
+    )
+    .unwrap();
+    let mut repository = TaskRepository::new(storage_dir.path_str());
+    let original_clock = repository.get_last_synced_time();
+
+    let actual = repository.reload_if_changed(now).unwrap_err();
+
+    assert_eq!(actual.operation(), ApplicationRepositoryOperation::Load);
+    assert_eq!(duplicate_task_id_error(&actual).task_id(), duplicate_id);
+    assert!(!repository.has_loaded);
+    assert!(repository.projects.is_empty());
+    assert!(repository.id_to_task_map.borrow().is_empty());
+    assert_eq!(repository.storage_revision.get(), None);
+    assert_eq!(repository.get_last_synced_time(), original_clock);
+}
+
+#[test]
 fn test_reload_if_changed_project間の重複uuidを拒否して全memory状態を維持する() {
     let storage_dir = TestStorageDir::new();
     let before = Local.with_ymd_and_hms(2026, 9, 4, 12, 0, 0).unwrap();
