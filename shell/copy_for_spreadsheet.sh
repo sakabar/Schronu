@@ -25,6 +25,10 @@ function is_decimal(value) {
     return value ~ /^[0-9][0-9]*$/
 }
 
+function is_integer(value) {
+    return value ~ /^-?[0-9][0-9]*$/
+}
+
 function is_uuid(value, parts) {
     if (split(value, parts, "-") != 5) {
         return 0
@@ -63,7 +67,7 @@ function is_category(value) {
     if (length(column[1]) < 4 || !is_decimal(column[1]) ||
         !is_uuid(column[2]) || !is_scheduled_time(column[5]) ||
         !is_decimal(column[6]) || !is_decimal(column[7]) ||
-        !is_decimal(column[8]) || !is_category(column[9])) {
+        !is_integer(column[8]) || !is_category(column[9])) {
         next
     }
 
