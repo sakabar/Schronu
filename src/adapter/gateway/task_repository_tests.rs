@@ -940,6 +940,57 @@ fn test_load_open失敗を型付きerrorにする() {
     assert_eq!(source.path, project_yaml_file_path);
 }
 
+#[cfg(unix)]
+#[test]
+fn test_load_canonical_pathが重複するprojectを拒否してmemoryを変更しない() {
+    use std::os::unix::fs::symlink;
+
+    let storage_dir = TestStorageDir::new();
+    fs::create_dir_all(&storage_dir.path).unwrap();
+    let now = Local.with_ymd_and_hms(2026, 9, 4, 12, 0, 0).unwrap();
+    let stored_task = project_root_with_identity("保存済み", Uuid::from_u128(0x2201), now);
+    let stored_project = Project::new(stored_task, "", "", 5);
+    let shared_yaml_path = storage_dir.path.join("shared.yaml");
+    fs::write(
+        &shared_yaml_path,
+        TaskRepository::serialize_project(&stored_project).unwrap(),
+    )
+    .unwrap();
+    let first_project_yaml_path = storage_dir.path.join("alias-a/project.yaml");
+    let second_project_yaml_path = storage_dir.path.join("alias-b/project.yaml");
+    fs::create_dir_all(first_project_yaml_path.parent().unwrap()).unwrap();
+    fs::create_dir_all(second_project_yaml_path.parent().unwrap()).unwrap();
+    symlink(&shared_yaml_path, &first_project_yaml_path).unwrap();
+    symlink(&shared_yaml_path, &second_project_yaml_path).unwrap();
+
+    let memory_task_id = Uuid::from_u128(0x2202);
+    let mut repository = TaskRepository::new(storage_dir.path_str());
+    repository.sync_clock(now).unwrap();
+    repository
+        .start_new_project(project_root_with_identity(
+            "memory project",
+            memory_task_id,
+            now,
+        ))
+        .unwrap();
+    let original_revision = Uuid::from_u128(0x2203);
+    repository.storage_revision.set(Some(original_revision));
+
+    let actual = repository.load().unwrap_err();
+
+    assert_eq!(actual.operation(), ApplicationRepositoryOperation::Load);
+    let source = file_repository_error(&actual);
+    assert_eq!(source.operation, FileRepositoryOperation::ParseProject);
+    assert_eq!(source.path, second_project_yaml_path);
+    assert_eq!(source.source.kind(), std::io::ErrorKind::InvalidData);
+    let message = source.source.to_string();
+    assert!(message.contains(first_project_yaml_path.to_str().unwrap()));
+    assert!(message.contains(second_project_yaml_path.to_str().unwrap()));
+    assert_eq!(repository.get_all_projects().len(), 1);
+    assert!(repository.get_by_id(memory_task_id).unwrap().is_some());
+    assert_eq!(repository.storage_revision.get(), Some(original_revision));
+}
+
 #[test]
 fn test_load_途中失敗ではmemoryを部分更新しない() {
     let storage_dir = TestStorageDir::new();
