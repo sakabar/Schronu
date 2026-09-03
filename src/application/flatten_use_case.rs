@@ -582,6 +582,24 @@ mod tests {
     }
 
     #[test]
+    fn 平は論理日境界を跨ぐfixed予約を両日の容量へ計上する() {
+        let now = Local.with_ymd_and_hms(2026, 8, 10, 12, 0, 0).unwrap();
+        let fixed_start = Local.with_ymd_and_hms(2026, 8, 11, 5, 30, 0).unwrap();
+        let task = new_task_handle("fixed-crossing-boundary").unwrap();
+        task.sync_clock(now).unwrap();
+        task.set_start_time(fixed_start).unwrap();
+        task.set_estimated_work_seconds(60 * 60).unwrap();
+        task.set_fixed_start(true).unwrap();
+        let repository = TestTaskRepository::new(vec![task], now);
+        let mut free_time_manager = TestFreeTimeManager::new(30);
+
+        let result = flatten_tasks(&repository, &mut free_time_manager).unwrap();
+
+        assert!(!result.had_overload);
+        assert!(result.unresolved_overloads.is_empty());
+    }
+
+    #[test]
     fn 平はpartly_doneとzero_workのfixed予約全体を日次容量へ計上する() {
         let now = Local.with_ymd_and_hms(2026, 8, 11, 12, 0, 0).unwrap();
 
