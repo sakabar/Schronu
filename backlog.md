@@ -58,7 +58,7 @@
 | TD-017 | P1 | 完了 | XL | `TaskHandle`の既存infallible APIが内部不変条件の破れをpanicとして扱う |
 | TD-018 | P1 | 完了 | XL | CLI runtimeにcommand orchestrationと表示計算が残っている |
 | TD-019 | P2 | 完了 | L | scheduling性能計測の状態がapplicationの業務ロジックへ伝播している |
-| TD-020 | P0 | 未着手 | M | 同日・同名またはsanitize後に同名となるprojectが同じ保存先を共有し、再読込時に1件消失する |
+| TD-020 | P0 | 完了 | M | 同日・同名またはsanitize後に同名となるprojectが同じ保存先を共有し、再読込時に1件消失する |
 | TD-021 | P1 | 未着手 | M | repositoryが重複UUIDを受理し、ID指定操作の対象が走査順に依存する |
 | TD-022 | P1 | 未着手 | XL | 複数project保存でrevisionだけが先行し、失敗時にdisk snapshotが部分更新される |
 | TD-023 | P1 | 未着手 | S | `終`が不正時刻と一部application errorを成功扱いで握り潰す |
@@ -863,6 +863,9 @@
 - 分類: `バグ / データ保全`
 - 優先度: `P0`
 - 概算規模: `M`
+- 完了日: 2026-09-04
+- 対応: 新規project directoryを`YYYYMMDD-{sanitize済みproject名}-{root UUID}`形式にして完全なUUIDをidentityとし、長い表示名はUTF-8境界でcomponent上限内へ短縮した。登録前に既存task UUIDと保存先pathをtyped errorで拒否し、load時はcanonical pathと実際に開くfileを同じtargetへ固定した上で、同一実体の重複を両path付きerrorにする。旧形式directoryはrenameせず読み取り・再保存できる互換性を維持した。
+- 検証: 同名、`a/b`と`a-b`、URL除去衝突、長いUTF-8名、旧形式非migration、登録失敗原子性、canonical path重複、symlink差し替え後のfile identityを製品repository経路で確認した。`cargo fmt --check`、`cargo clippy --locked --all-targets -- -D warnings`、`cargo test --locked`、`git diff --check`に成功し、libraryは600件成功・1件ignore、CLIは446件、MCP binaryは2件、stdio integrationは13件、fixtureは5件成功・1件ignore、Spreadsheetは4件成功した。責務別3回とbranch全体1回のsubagent reviewを行い、2件のP2指摘を個別commitで修正後、コードと履歴に残存指摘がないことを確認した。
 
 #### 現状と根拠
 
