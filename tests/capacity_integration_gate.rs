@@ -184,6 +184,22 @@ fn fixed容量はbusy控除と論理日配賦をpackとflattenで一致させる
             !should_pack,
             "candidate_minutes={candidate_minutes}"
         );
+        if should_pack {
+            let packed = result
+                .packed_tasks
+                .iter()
+                .find(|packed| packed.task_id == candidate_id)
+                .unwrap();
+            assert_eq!(
+                packed.source_date,
+                NaiveDate::from_ymd_opt(2026, 8, 13).unwrap()
+            );
+            assert_eq!(
+                packed.target_date,
+                NaiveDate::from_ymd_opt(2026, 8, 12).unwrap()
+            );
+            assert_eq!(packed.work_seconds, 12 * MINUTE_SECONDS);
+        }
         assert!(free_time_manager.queried(fixture.busy_start, fixture.busy_end));
     }
 
