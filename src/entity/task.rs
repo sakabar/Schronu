@@ -325,7 +325,7 @@ pub struct TaskAttr {
     status: Status, // 評価後のステータス。pendingはpending_untilを加味して評価され、Todo扱いとなる
     is_on_other_side: bool, // 相手ボールか?
     atomic: bool,   // 分割できないタスクか?
-    fixed_start: bool, // 開始時刻をスケジューラが動かしてはならないか?
+    fixed_start: bool, // raw属性。予定上fixedかは反復間隔も含めて判定する。
     pending_until: DateTime<Local>,
     last_synced_time: DateTime<Local>,
 
