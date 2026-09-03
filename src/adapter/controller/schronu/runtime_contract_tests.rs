@@ -5947,7 +5947,7 @@ fn test_interactiveのfinish実績overflow診断後のterminal_failureで状態�
 }
 
 #[test]
-fn test_interactiveのflatten余分argumentは状態を変更せずraw_guardを復元する() {
+fn test_interactiveのflatten余分argumentはparse_fatalでもterminal_guardを解放する() {
     let storage_dir = TestStorageDir::new();
     std::fs::create_dir_all(&storage_dir.path).unwrap();
     let now = Local::now();
@@ -5968,7 +5968,7 @@ fn test_interactiveのflatten余分argumentは状態を変更せずraw_guardを�
     let output = Rc::new(RefCell::new(Vec::new()));
     let drop_count = Rc::new(Cell::new(0));
     let mut terminal_factory = SharedSignaledFailureTerminalFactory {
-        fail_output,
+        fail_output: Rc::clone(&fail_output),
         output,
         drop_count: Rc::clone(&drop_count),
         error_kind: std::io::ErrorKind::PermissionDenied,
@@ -6027,6 +6027,7 @@ fn test_interactiveのflatten余分argumentは状態を変更せずraw_guardを�
     let result = classify_interactive_run_result(driver_result);
 
     assert_eq!(drop_count.get(), 1);
+    assert!(!fail_output.get());
     assert!(matches!(
         &result,
         Err(RunError::Command(CommandError::Parse(error)))
