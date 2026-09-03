@@ -1,5 +1,6 @@
 use super::*;
 use crate::application::task_use_case::{resolve_local_datetime, ApplicationError};
+use crate::test_support::TestFreeTimeManager;
 use chrono::{Duration, FixedOffset, LocalResult, NaiveDateTime, TimeZone};
 
 struct DurationFreeTimeManager;
@@ -178,6 +179,120 @@ fn free_timeは極端なoffsetの終端計算不能をdateとoffset付きで返�
             end_of_day_offset_minutes: i64::MAX,
         })
     );
+}
+
+#[test]
+fn free_timeは深夜帯の残区間が全てbusyなら0分を返す() {
+    let date = NaiveDate::from_ymd_opt(2026, 8, 11).unwrap();
+    let last_synced_time = Local.with_ymd_and_hms(2026, 8, 12, 0, 10, 0).unwrap();
+    let busy_start = Local.with_ymd_and_hms(2026, 8, 12, 0, 0, 0).unwrap();
+    let busy_end = Local.with_ymd_and_hms(2026, 8, 12, 0, 30, 0).unwrap();
+    let mut free_time_manager = TestFreeTimeManager::with_blocked_interval(0, busy_start, busy_end);
+
+    let actual = calculate_free_time_minutes_for_logical_date(
+        &date,
+        last_synced_time,
+        &mut free_time_manager,
+    );
+
+    assert_eq!(actual, Ok(0));
+}
+
+#[test]
+fn free_timeは深夜帯のbusyと重なる分だけ残容量から控除する() {
+    let date = NaiveDate::from_ymd_opt(2026, 8, 11).unwrap();
+    let last_synced_time = Local.with_ymd_and_hms(2026, 8, 12, 0, 10, 0).unwrap();
+    let busy_start = Local.with_ymd_and_hms(2026, 8, 12, 0, 0, 0).unwrap();
+    let busy_end = Local.with_ymd_and_hms(2026, 8, 12, 0, 20, 0).unwrap();
+    let mut free_time_manager = TestFreeTimeManager::with_blocked_interval(0, busy_start, busy_end);
+
+    let actual = calculate_free_time_minutes_for_logical_date(
+        &date,
+        last_synced_time,
+        &mut free_time_manager,
+    );
+
+    assert_eq!(actual, Ok(10));
+}
+
+#[test]
+fn free_timeはeodちょうどとeod後なら0分を返す() {
+    let date = NaiveDate::from_ymd_opt(2026, 8, 11).unwrap();
+    let mut free_time_manager = DurationFreeTimeManager;
+
+    for last_synced_time in [
+        Local.with_ymd_and_hms(2026, 8, 12, 0, 30, 0).unwrap(),
+        Local.with_ymd_and_hms(2026, 8, 12, 0, 31, 0).unwrap(),
+    ] {
+        assert_eq!(
+            calculate_free_time_minutes_for_logical_date(
+                &date,
+                last_synced_time,
+                &mut free_time_manager,
+            ),
+            Ok(0)
+        );
+    }
+}
+
+#[test]
+fn free_timeは05時59分をeod後の0分と06時00分を新しい論理日の全日容量とする() {
+    let previous_date = NaiveDate::from_ymd_opt(2026, 8, 11).unwrap();
+    let current_date = NaiveDate::from_ymd_opt(2026, 8, 12).unwrap();
+    let mut free_time_manager = TestFreeTimeManager::new(777);
+
+    assert_eq!(
+        calculate_free_time_minutes_for_logical_date(
+            &previous_date,
+            Local.with_ymd_and_hms(2026, 8, 12, 5, 59, 0).unwrap(),
+            &mut free_time_manager,
+        ),
+        Ok(0)
+    );
+    assert_eq!(
+        calculate_free_time_minutes_for_logical_date(
+            &current_date,
+            Local.with_ymd_and_hms(2026, 8, 12, 6, 0, 0).unwrap(),
+            &mut free_time_manager,
+        ),
+        Ok(777)
+    );
+}
+
+#[test]
+fn free_timeは正のeod_offsetでも深夜帯のbusyを控除する() {
+    let date = NaiveDate::from_ymd_opt(2026, 8, 11).unwrap();
+    let last_synced_time = Local.with_ymd_and_hms(2026, 8, 12, 1, 0, 0).unwrap();
+    let busy_start = Local.with_ymd_and_hms(2026, 8, 12, 0, 0, 0).unwrap();
+    let busy_end = Local.with_ymd_and_hms(2026, 8, 12, 1, 30, 0).unwrap();
+    let mut free_time_manager = TestFreeTimeManager::with_blocked_interval(0, busy_start, busy_end);
+
+    let actual = calculate_free_time_minutes_for_logical_date_with_end_of_day_offset_minutes(
+        &date,
+        last_synced_time,
+        &mut free_time_manager,
+        120,
+    );
+
+    assert_eq!(actual, Ok(30));
+}
+
+#[test]
+fn free_timeは負のeod_offsetでもeod前のbusyを控除する() {
+    let date = NaiveDate::from_ymd_opt(2026, 8, 12).unwrap();
+    let last_synced_time = Local.with_ymd_and_hms(2026, 8, 12, 21, 0, 0).unwrap();
+    let busy_start = Local.with_ymd_and_hms(2026, 8, 12, 21, 15, 0).unwrap();
+    let busy_end = Local.with_ymd_and_hms(2026, 8, 12, 21, 30, 0).unwrap();
+    let mut free_time_manager = TestFreeTimeManager::with_blocked_interval(0, busy_start, busy_end);
+
+    let actual = calculate_free_time_minutes_for_logical_date_with_end_of_day_offset_minutes(
+        &date,
+        last_synced_time,
+        &mut free_time_manager,
+        -120,
+    );
+
+    assert_eq!(actual, Ok(45));
 }
 
 #[test]
