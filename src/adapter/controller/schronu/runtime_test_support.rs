@@ -210,6 +210,32 @@ impl Drop for TestStorageDir {
 }
 
 #[cfg(test)]
+fn seed_clean_task_revision_observer(
+    storage_directory: &std::path::Path,
+    task: &TaskHandle,
+    now: DateTime<Local>,
+) -> TaskRepository {
+    let mut observer = TaskRepository::new(storage_directory.to_str().unwrap());
+    observer.sync_clock(now).unwrap();
+    observer.start_new_project(task.clone()).unwrap();
+    observer.save().unwrap();
+    assert!(!observer.has_pending_changes().unwrap());
+
+    let original_priority = task.get_priority().unwrap();
+    let probe_priority = if original_priority == i64::MAX {
+        original_priority - 1
+    } else {
+        original_priority + 1
+    };
+    task.set_priority(probe_priority).unwrap();
+    task.set_priority(original_priority).unwrap();
+    assert!(observer.has_pending_changes().unwrap());
+    observer.save().unwrap();
+    assert!(!observer.has_pending_changes().unwrap());
+    observer
+}
+
+#[cfg(test)]
 impl TestWriter {
     fn new() -> Self {
         Self {

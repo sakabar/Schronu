@@ -5813,6 +5813,7 @@ fn test_interactiveのfinish実績overflow診断後のterminal_failureで状態�
     let task_id = task.get_id().unwrap();
     task.set_actual_work_seconds(i64::MAX).unwrap();
     let original_snapshot = complete_task_tree_snapshot(&task);
+    let revision_observer = seed_clean_task_revision_observer(&storage_dir.path, &task, now);
     let mut repository = TestTaskRepository::new(task, now)
         .with_storage_directory(&storage_dir.path)
         .with_pending_changes(false);
@@ -5859,6 +5860,7 @@ fn test_interactiveのfinish実績overflow診断後のterminal_failureで状態�
         complete_task_tree_snapshot(&repository.task),
         original_snapshot
     );
+    assert!(!revision_observer.has_pending_changes().unwrap());
     assert_eq!(focused_task_id_opt, Some(task_id));
     assert_eq!(last_focused_task_id_opt, Some(task_id));
     assert_eq!(focus_started_datetime, original_focus_started_datetime);
@@ -5896,6 +5898,7 @@ fn test_interactiveのflatten余分argumentはparse_fatalでもterminal_guardを
     let task = new_test_task_handle("変更しないtask").unwrap();
     let task_id = task.get_id().unwrap();
     let original_snapshot = complete_task_tree_snapshot(&task);
+    let revision_observer = seed_clean_task_revision_observer(&storage_dir.path, &task, now);
     let mut repository = TestTaskRepository::new(task, now)
         .with_storage_directory(&storage_dir.path)
         .with_pending_changes(false);
@@ -5945,6 +5948,7 @@ fn test_interactiveのflatten余分argumentはparse_fatalでもterminal_guardを
         complete_task_tree_snapshot(&repository.task),
         original_snapshot
     );
+    assert!(!revision_observer.has_pending_changes().unwrap());
     assert_eq!(focused_task_id_opt, Some(task_id));
     assert_eq!(last_focused_task_id_opt, Some(task_id));
     assert_eq!(focus_started_datetime, now);
