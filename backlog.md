@@ -63,7 +63,7 @@
 | TD-022 | P1 | 未着手 | XL | 複数project保存でrevisionだけが先行し、失敗時にdisk snapshotが部分更新される |
 | TD-023 | P1 | 未着手 | S | `終`が不正時刻と一部application errorを成功扱いで握り潰す |
 | TD-024 | P1 | 未着手 | M | CLI parserが不正な数値や余分な引数を黙って受理し、更新commandを実行する |
-| TD-025 | P1 | 未着手 | M | 対話CLIのterminal I/O失敗がpanicまたは未検査結果になる |
+| TD-025 | P1 | 完了 | M | 対話CLIのterminal I/O失敗がpanicまたは未検査結果になる |
 | TD-026 | P1 | 未着手 | L | task名をCLI・YAML・MCP・Spreadsheet間で安全にround-tripできない |
 | TD-027 | P1 | 未着手 | S | 残作業時間の補正計算が合法な大値入力で整数overflowする |
 | TD-028 | P1 | 未着手 | M | 論理日境界を跨ぐschedule segmentの容量が開始日に全量計上される |
@@ -1050,6 +1050,9 @@
 - 分類: `バグ / 障害回復性`
 - 優先度: `P1`
 - 概算規模: `M`
+- 完了日: 2026-09-04
+- 対応: interactive driverへ注入可能なinput sourceとterminal factoryを設け、prompt、refresh、cursor、error表示、終了描画、flushをすべてfallibleにした。raw terminalはRAII guardで所有し、初期化失敗と出力失敗をsource付き`InteractiveIoError`として区別する。runtimeのinteractive描画helperも`Result`を返し、非対話経路と共通の分類で`BrokenPipe`だけを正常終了として扱う。module・関数単位の`allow(unused_must_use)`を除去し、成功commandのtransaction内即時保存、terminal・raw mode失敗時の追加保存なし、Ctrl-D・stdin異常時の既存reload後saveを維持した。
+- 検証: prompt、refresh、cursor、retry error、submit後prompt、終了描画、flushのfailure writer testと、raw mode初期化失敗、通常終了・handler failure・output failure時のguard drop testを追加した。`cargo fmt --check`、`cargo clippy --locked --all-targets -- -D warnings`、`cargo test --locked`、`git diff --check`に成功した。W2-Dのprocess-level統合gateは後続laneとして残す。
 - 関連既存項目: TD-006は非対話command出力のerror捕捉を完了したが、interactive driverに同じ契約が届いていない。
 
 #### 現状と根拠
