@@ -5714,7 +5714,7 @@ fn test_non_interactiveの不正argumentはrepositoryもbusy_timeも読込まず
         ),
     ] {
         let task = new_test_task_handle("変更しないtask").unwrap();
-        let original_snapshot = task.snapshot().unwrap();
+        let original_snapshot = complete_task_tree_snapshot(&task);
         let mut repository = TestTaskRepository::new(task, now);
         let mut free_time_manager = TestFreeTimeManagerWithLoadError::default();
 
@@ -5735,7 +5735,11 @@ fn test_non_interactiveの不正argumentはrepositoryもbusy_timeも読込まず
             }
             unexpected => panic!("unexpected error for {input}: {unexpected:?}"),
         }
-        assert_eq!(repository.task.snapshot().unwrap(), original_snapshot, "{input}");
+        assert_eq!(
+            complete_task_tree_snapshot(&repository.task),
+            original_snapshot,
+            "{input}"
+        );
         assert_eq!(free_time_manager.loaded_path(), None, "{input}");
         assert_eq!(repository.load_attempt_count.get(), 0, "{input}");
         assert_eq!(
@@ -5754,6 +5758,50 @@ fn test_non_interactiveの不正argumentはrepositoryもbusy_timeも読込まず
         );
         assert_eq!(output, expected, "input: {input}");
     }
+}
+
+#[test]
+fn test_non_interactiveのfinish時刻errorはload後に診断し状態を変更せず保存しない() {
+    let storage_dir = TestStorageDir::new();
+    std::fs::create_dir_all(&storage_dir.path).unwrap();
+    let now = Local.with_ymd_and_hms(2026, 8, 27, 12, 0, 0).unwrap();
+    let task = new_test_task_handle("終了時刻error対象").unwrap();
+    task.set_estimated_work_seconds(45 * 60).unwrap();
+    task.set_actual_work_seconds(15 * 60).unwrap();
+    let original_snapshot = complete_task_tree_snapshot(&task);
+    let mut repository = TestTaskRepository::new(task, now).with_storage_directory(&storage_dir.path);
+    let mut free_time_manager = TestFreeTimeManager::default();
+
+    let error = execute_non_interactive_command_at(
+        &mut repository,
+        &mut free_time_manager,
+        "終 invalid",
+        now,
+    )
+    .expect_err("不正な終了時刻はRunErrorとして返るべきです");
+
+    match &error {
+        RunError::Command(CommandError::Parse(parse_error)) => {
+            assert_eq!(parse_error.command(), "終");
+            assert_eq!(parse_error.field(), "finished_at");
+            assert_eq!(parse_error.reason(), "日時が不正です");
+            assert_eq!(parse_error.usage(), "終 [今|HH:MM[:SS] [日付]]");
+        }
+        unexpected => panic!("unexpected error: {unexpected:?}"),
+    }
+    assert_eq!(
+        complete_task_tree_snapshot(&repository.task),
+        original_snapshot
+    );
+    assert_eq!(repository.save_attempt_count.get(), 0);
+    assert_eq!(repository.operation_trace(), ["reload_if_changed", "load"]);
+
+    let mut stderr = Vec::new();
+    assert!(!report_run_result(&mut stderr, Err(error)));
+    assert_eq!(
+        String::from_utf8(stderr).unwrap(),
+        "[Error] 入力エラー: finished_at: 日時が不正です (コマンド: 終, 使い方: 終 [今|HH:MM[:SS] [日付]])\n"
+    );
 }
 
 #[test]

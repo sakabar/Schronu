@@ -84,13 +84,14 @@ fn complete_task_tree_snapshot(root: &TaskHandle) -> Vec<String> {
         let attr = task.get_attr().unwrap();
         let children = task.get_children().unwrap();
         rows.push(format!(
-            "{path}|id={:?}|name={:?}|orig_status={:?}|status={:?}|other_side={:?}|atomic={:?}|pending_until={:?}|last_synced={:?}|priority={:?}|create={:?}|start={:?}|end={:?}|deadline={:?}|estimated={:?}|actual={:?}|repetition_interval={:?}|repetition_anchor={:?}|days_in_advance={:?}|category={:?}|children={}",
+            "{path}|id={:?}|name={:?}|orig_status={:?}|status={:?}|other_side={:?}|atomic={:?}|fixed_start={:?}|pending_until={:?}|last_synced={:?}|priority={:?}|create={:?}|start={:?}|end={:?}|deadline={:?}|estimated={:?}|actual={:?}|repetition_interval={:?}|repetition_anchor={:?}|days_in_advance={:?}|category={:?}|children={}",
             attr.get_id(),
             attr.get_name(),
             attr.get_orig_status(),
             attr.get_status(),
             attr.get_is_on_other_side(),
             attr.get_atomic(),
+            attr.get_fixed_start(),
             attr.get_pending_until(),
             attr.get_last_synced_time(),
             attr.get_priority(),
