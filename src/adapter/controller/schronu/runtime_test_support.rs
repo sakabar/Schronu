@@ -12,7 +12,8 @@ use chrono::{FixedOffset, TimeZone, Timelike};
 
 #[cfg(test)]
 use schronu::application::interface::{
-    BusyTimeSlotRegistrationError, RepositoryReloadOutcome, TaskRepositoryOperation,
+    BusyTimeSlotRegistrationError, ProjectRegistrationError, RepositoryReloadOutcome,
+    TaskRepositoryOperation,
 };
 
 #[cfg(test)]
@@ -557,7 +558,10 @@ impl TaskRepositoryTrait for TestTaskRepository {
         self.task.get_by_id(id)
     }
 
-    fn start_new_project(&mut self, root_task: TaskHandle) -> Result<(), TaskTreeError> {
+    fn start_new_project(
+        &mut self,
+        root_task: TaskHandle,
+    ) -> Result<(), ProjectRegistrationError> {
         self.task = root_task;
         Ok(())
     }

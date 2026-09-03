@@ -10,7 +10,7 @@ use super::schedule_use_case::{
 use super::scheduled_capacity::scheduled_capacity_seconds_by_logical_date;
 use super::scheduling_instrumentation::{record_pack, PackEvent};
 use super::task_use_case::ApplicationError;
-use crate::entity::task::Status;
+use crate::entity::task::{fixed_start_applies_to_schedule, Status};
 use chrono::{DateTime, Duration, Local, NaiveDate};
 use std::cmp::Reverse;
 use std::collections::{HashMap, HashSet};
@@ -345,7 +345,10 @@ fn calculate_daily_leeway(
 
     for scheduled in schedule {
         let capacity_by_date = scheduled_capacity_seconds_by_logical_date(
-            scheduled.task.fixed_start,
+            fixed_start_applies_to_schedule(
+                scheduled.task.fixed_start,
+                scheduled.task.repetition_interval_days,
+            ),
             scheduled.scheduled_start,
             scheduled.scheduled_end,
             scheduled.scheduled_work_seconds,

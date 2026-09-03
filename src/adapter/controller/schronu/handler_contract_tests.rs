@@ -19,7 +19,7 @@ use schronu::application::flatten_use_case::FlattenResult;
 use schronu::application::pack_use_case::PackResult;
 use schronu::application::task_use_case::ApplicationError;
 use schronu::application::task_use_case::{BreakdownTaskInput, CompleteTaskInput, CreateTaskInput};
-use schronu::entity::task::{TaskAttr, TaskHandle};
+use schronu::entity::task::{TaskAttr, TaskHandle, TaskTreeError};
 use std::io::Write;
 use uuid::Uuid;
 
@@ -1816,15 +1816,12 @@ impl FinishPlacementCommandContext for TraceFinishPlacementContext {
     ) -> Result<Option<Uuid>, ApplicationError> {
         self.calls.push("complete".to_string());
         self.completion_inputs.push(input);
-        match self.completion_response {
-            FinishCompletionResponse::Success(next_focus) => Ok(next_focus),
+        match &self.completion_response {
+            FinishCompletionResponse::Success(next_focus) => Ok(*next_focus),
             FinishCompletionResponse::HasUndoneChildren(task_id) => {
-                Err(ApplicationError::HasUndoneChildren(task_id))
+                Err(ApplicationError::HasUndoneChildren(*task_id))
             }
-            FinishCompletionResponse::OtherError => Err(ApplicationError::InvalidInput {
-                field: "finish",
-                reason: "injected completion failure",
-            }),
+            FinishCompletionResponse::ApplicationError(error) => Err(error.clone()),
         }
     }
 
@@ -1847,7 +1844,7 @@ impl FinishPlacementCommandContext for TraceFinishPlacementContext {
 enum FinishCompletionResponse {
     Success(Option<Uuid>),
     HasUndoneChildren(Uuid),
-    OtherError,
+    ApplicationError(ApplicationError),
 }
 
 fn finish_tree_display() -> TreeDisplay {
@@ -1891,11 +1888,11 @@ fn finish成功はsemantic_emptyとfocus変更を返す() {
 }
 
 #[test]
-fn finishのfocusなしと不正時刻とその他completion_errorは表示とfocusを変更しない() {
+fn finishのfocusなしは表示とfocusを変更しない() {
     let now = Local.with_ymd_and_hms(2026, 8, 23, 12, 0, 0).unwrap();
     let task = TaskHandle::with_identity("finish target", Uuid::from_u128(21), now).unwrap();
 
-    let mut no_focus_context = TraceFinishPlacementContext::semantic(now, task.clone());
+    let mut no_focus_context = TraceFinishPlacementContext::semantic(now, task);
     no_focus_context.focused_task = None;
     let no_focus = handle_finish_placement_command(&finish_command(), &mut no_focus_context)
         .unwrap()
@@ -1903,29 +1900,63 @@ fn finishのfocusなしと不正時刻とその他completion_errorは表示とfo
     assert_eq!(no_focus.display, DisplayModel::Sequence(Vec::new()));
     assert!(no_focus_context.calls.is_empty());
     assert!(no_focus_context.focus_updates.is_empty());
+}
 
-    let invalid_command = Command::Action(CommandAction::Finish {
-        values: vec!["invalid".to_string()],
-    });
-    let mut invalid_context = TraceFinishPlacementContext::semantic(now, task.clone());
-    let invalid = handle_finish_placement_command(&invalid_command, &mut invalid_context)
-        .unwrap()
-        .expect("invalid finish time must remain a handled no-op");
-    assert_eq!(invalid.display, DisplayModel::Sequence(Vec::new()));
-    assert!(invalid_context.calls.is_empty());
-    assert!(invalid_context.completion_inputs.is_empty());
-    assert!(invalid_context.focus_updates.is_empty());
+#[test]
+fn finishの不正時刻はfield付きparse_errorとして返し操作しない() {
+    let now = Local.with_ymd_and_hms(2026, 8, 23, 12, 0, 0).unwrap();
+    let invalid_values = [
+        vec!["invalid".to_string()],
+        vec!["09:23:60".to_string(), "2026/7/4".to_string()],
+        vec!["14:30".to_string(), "2026/2/30".to_string()],
+    ];
 
-    let mut completion_error_context = TraceFinishPlacementContext::semantic(now, task);
-    completion_error_context.completion_response = FinishCompletionResponse::OtherError;
-    let completion_error =
-        handle_finish_placement_command(&finish_command(), &mut completion_error_context)
-            .unwrap()
-            .expect("reported completion error must remain handled");
-    assert_eq!(completion_error.display, DisplayModel::Sequence(Vec::new()));
-    assert_eq!(completion_error_context.calls, ["complete"]);
-    assert_eq!(completion_error_context.completion_inputs.len(), 1);
-    assert!(completion_error_context.focus_updates.is_empty());
+    for values in invalid_values {
+        let mut context = CompositeTraceContext::new(now);
+        let command = Command::Action(CommandAction::Finish { values });
+
+        let result = handle_command(&command, &mut context);
+
+        let Err(HandlerError::Parse(error)) = result else {
+            panic!("invalid finish time must return a parse error: {result:?}");
+        };
+        assert_eq!(error.command(), "終");
+        assert_eq!(error.field(), "finished_at");
+        assert_eq!(error.reason(), "日時が不正です");
+        assert_eq!(error.usage(), "終 [今|HH:MM[:SS] [日付]]");
+        assert!(context.finish_placement.calls.is_empty());
+        assert!(context.finish_placement.completion_inputs.is_empty());
+        assert!(context.finish_placement.focus_updates.is_empty());
+    }
+}
+
+#[test]
+fn finishのcompletion_errorはvariantを保って返しfocusを変更しない() {
+    let now = Local.with_ymd_and_hms(2026, 8, 23, 12, 0, 0).unwrap();
+    let errors = [
+        ApplicationError::TaskNotFound(Uuid::from_u128(91)),
+        ApplicationError::InvalidInput {
+            field: "additional_actual_work_seconds",
+            reason: "actual work seconds overflow",
+        },
+        ApplicationError::TaskTree(TaskTreeError::Borrow),
+    ];
+
+    for expected_error in errors {
+        let mut context = CompositeTraceContext::new(now);
+        context.finish_placement.completion_response =
+            FinishCompletionResponse::ApplicationError(expected_error.clone());
+
+        let result = handle_command(&finish_command(), &mut context);
+
+        let Err(HandlerError::Application(actual_error)) = result else {
+            panic!("completion error must propagate through the handler: {result:?}");
+        };
+        assert_eq!(actual_error, expected_error);
+        assert_eq!(context.finish_placement.calls, ["complete"]);
+        assert_eq!(context.finish_placement.completion_inputs.len(), 1);
+        assert!(context.finish_placement.focus_updates.is_empty());
+    }
 }
 
 #[test]
@@ -1983,13 +2014,13 @@ fn finishのundone_tree取得errorは情報を保って伝播する() {
 
     let result = handle_finish_placement_command(&finish_command(), &mut context);
 
-    assert_eq!(
+    assert!(matches!(
         result,
-        Err(ApplicationError::InvalidInput {
+        Err(HandlerError::Application(ApplicationError::InvalidInput {
             field: "tree",
             reason: "injected finish tree failure",
-        })
-    );
+        }))
+    ));
     assert_eq!(context.calls, ["show-focused-tree"]);
     assert!(context.completion_inputs.is_empty());
     assert!(context.focus_updates.is_empty());

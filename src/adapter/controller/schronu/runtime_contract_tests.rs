@@ -6447,7 +6447,7 @@ fn test_明示focus中に終了したらhandlerの次focusではなく元modeか
 }
 
 #[test]
-fn test_明示focus中の終不正入力はfocusと伏せた一覧を維持する() {
+fn test_明示focus中の終不正入力はerrorを表示してfocusと伏せた一覧を維持する() {
     let now = Local.with_ymd_and_hms(2026, 8, 16, 12, 0, 0).unwrap();
     let task = new_test_task_handle("終入力error対象").unwrap();
     let task_id = task.get_id().unwrap();
@@ -6486,7 +6486,10 @@ fn test_明示focus中の終不正入力はfocusと伏せた一覧を維持す�
     assert_eq!(focused_task_id_opt, Some(task_id));
     assert_eq!(focus_selection_mode, previous_mode);
     assert_eq!(task.get_orig_status().unwrap(), Status::Todo);
-    assert_eq!(stdout.into_string(), "");
+    assert_eq!(
+        stdout.into_string(),
+        "[Error] 入力エラー: finished_at: 日時が不正です (コマンド: 終, 使い方: 終 [今|HH:MM[:SS] [日付]])\n"
+    );
 }
 
 #[test]

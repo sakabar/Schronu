@@ -256,6 +256,45 @@ fn pack_tasksは日跨ぎ反復予約の容量を各論理日で反復分から�
 }
 
 #[test]
+fn calculate_daily_leewayは反復親のfixed_startを予約容量に使わない() {
+    let now = fixed_now();
+    let scheduled_start = Local.with_ymd_and_hms(2026, 8, 12, 6, 0, 0).unwrap();
+    let repetition_parent = crate::test_support::new_task_handle("反復親").unwrap();
+    repetition_parent.sync_clock(now).unwrap();
+    repetition_parent.set_start_time(now).unwrap();
+    repetition_parent
+        .set_estimated_work_seconds(60 * 60)
+        .unwrap();
+    repetition_parent.set_fixed_start(true).unwrap();
+    repetition_parent
+        .set_repetition_interval_days_opt(Some(7))
+        .unwrap();
+    let repository = TestTaskRepository::new(vec![repetition_parent.clone()], now);
+    let schedule = vec![ScheduledTaskView {
+        task: super::super::task_view::TaskView::try_from(&repetition_parent).unwrap(),
+        first_available_time: scheduled_start,
+        scheduled_start,
+        scheduled_end: scheduled_start + Duration::hours(1),
+        scheduled_work_seconds: 15 * 60,
+        total_work_seconds: 15 * 60,
+        rank: 0,
+    }];
+    let target_date = NaiveDate::from_ymd_opt(2026, 8, 12).unwrap();
+    let mut free_time_manager = TestFreeTimeManager::new(60);
+
+    let leeway = calculate_daily_leeway(
+        &repository,
+        &mut free_time_manager,
+        &schedule,
+        &[target_date],
+        END_OF_DAY_OFFSET_MINUTES,
+    )
+    .unwrap();
+
+    assert_eq!(leeway.get(&target_date), Some(&(27 * 60)));
+}
+
+#[test]
 fn pack_tasks_先行配置後の最新予定で後続taskの前倒し可否を判定する() {
     let now = Local.with_ymd_and_hms(2026, 8, 11, 6, 0, 0).unwrap();
     let first = pending_task("18時間20分", now, now + Duration::days(1), 18 * 60 + 20, 9);
