@@ -384,6 +384,7 @@ impl TaskRepositoryTrait for TaskRepository {
             TaskRepositoryError::new(ApplicationRepositoryOperation::Load, error)
         })?;
         let mut loaded_projects = Vec::new();
+        let mut canonical_project_paths = HashMap::new();
         for entry_result in WalkDir::new(self.project_storage_dir_name.as_str()).sort_by_file_name()
         {
             let entry = entry_result.map_err(|error| {
@@ -483,6 +484,36 @@ impl TaskRepositoryTrait for TaskRepository {
                             ),
                         )
                     })?;
+                let canonical_project_yaml_path = fs::canonicalize(&project_yaml_file_path)
+                    .map_err(|error| {
+                        TaskRepositoryError::new(
+                            ApplicationRepositoryOperation::Load,
+                            FileRepositoryError::new(
+                                FileRepositoryOperation::ReadMetadata,
+                                &project_yaml_file_path,
+                                error,
+                            ),
+                        )
+                    })?;
+                if let Some(first_project_yaml_path) = canonical_project_paths
+                    .insert(canonical_project_yaml_path, project_yaml_file_path.clone())
+                {
+                    return Err(TaskRepositoryError::new(
+                        ApplicationRepositoryOperation::Load,
+                        FileRepositoryError::new(
+                            FileRepositoryOperation::ParseProject,
+                            &project_yaml_file_path,
+                            std::io::Error::new(
+                                std::io::ErrorKind::InvalidData,
+                                format!(
+                                    "project YAML paths resolve to the same canonical path: {} and {}",
+                                    first_project_yaml_path.display(),
+                                    project_yaml_file_path.display()
+                                ),
+                            ),
+                        ),
+                    ));
+                }
                 let priority = root_task.get_priority().map_err(|error| {
                     TaskRepositoryError::new(ApplicationRepositoryOperation::Load, error)
                 })?;
