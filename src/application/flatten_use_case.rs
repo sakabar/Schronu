@@ -562,6 +562,38 @@ mod tests {
     }
 
     #[test]
+    fn 平は反復親のfixed_startを生成用属性として延期候補から除外しない() {
+        let now = Local.with_ymd_and_hms(2026, 8, 11, 12, 0, 0).unwrap();
+        let repetition_parent = new_task_handle("反復親").unwrap();
+        repetition_parent.sync_clock(now).unwrap();
+        repetition_parent.set_start_time(now).unwrap();
+        repetition_parent
+            .set_estimated_work_seconds(60 * 60)
+            .unwrap();
+        repetition_parent.set_fixed_start(true).unwrap();
+        repetition_parent
+            .set_repetition_interval_days_opt(Some(7))
+            .unwrap();
+        let repetition_parent_id = repetition_parent.get_id().unwrap();
+
+        let flexible = new_task_handle("通常task").unwrap();
+        flexible.sync_clock(now).unwrap();
+        flexible.set_start_time(now).unwrap();
+        flexible.set_estimated_work_seconds(60 * 60).unwrap();
+        flexible.set_priority(1).unwrap();
+
+        let repository = TestTaskRepository::new(vec![repetition_parent.clone(), flexible], now);
+        let mut free_time_manager = TestFreeTimeManager::new(60);
+
+        let result = flatten_tasks(&repository, &mut free_time_manager).unwrap();
+
+        assert_eq!(result.flattened_tasks.len(), 1);
+        assert_eq!(result.flattened_tasks[0].task_id, repetition_parent_id);
+        assert!(result.unresolved_overloads.is_empty());
+        assert!(repetition_parent.get_fixed_start().unwrap());
+    }
+
+    #[test]
     fn fixedの日次使用量はscheduled_work_secondsでなく予約区間を集計する() {
         let start = Local.with_ymd_and_hms(2026, 8, 11, 12, 0, 0).unwrap();
         let mut usage = HashMap::new();
