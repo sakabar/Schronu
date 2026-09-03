@@ -47,6 +47,11 @@ pub enum ApplicationError {
         start_time: DateTime<Local>,
         work_seconds: i64,
     },
+    RemainingWorkCalculationOverflow {
+        task_id: Uuid,
+        estimated_work_seconds: i64,
+        actual_work_seconds: i64,
+    },
 }
 
 impl fmt::Display for ApplicationError {
@@ -96,6 +101,14 @@ impl fmt::Display for ApplicationError {
             } => write!(
                 formatter,
                 "schedule end is outside the supported range: task_id={task_id}, start_time={start_time}, work_seconds={work_seconds}"
+            ),
+            Self::RemainingWorkCalculationOverflow {
+                task_id,
+                estimated_work_seconds,
+                actual_work_seconds,
+            } => write!(
+                formatter,
+                "remaining work calculation overflow: task_id={task_id}, estimated_work_seconds={estimated_work_seconds}, actual_work_seconds={actual_work_seconds}"
             ),
         }
     }
