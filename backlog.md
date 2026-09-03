@@ -1,22 +1,25 @@
 # Schronu 技術的負債バックログ
 
-- 監査日: 2026-08-15
-- 対象revision: `ec43b68`
+- 初回監査日: 2026-08-15
+- 再監査日: 2026-09-02
+- 並列開発計画更新日: 2026-09-03
+- 対象revision: `8ce90d7`
 - 対象範囲: 追跡中のRustコード、shell script、Apps Script、設定、CI、README
 - 評価方針: 現在の正確性とデータ保全への影響、障害時の回復性、変更時の波及範囲、検証容易性を優先して評価する
 
 ## 検証結果
 
-監査時点では次の結果だった。
+再監査時点では次の結果だった。既存の品質ゲートはGreenであり、今回追加した項目はlint違反の列挙ではなく、正常入力で到達する不整合、失敗原子性、未検証の境界、運用上の制約を対象とする。
 
 | 検証 | 結果 | 備考 |
 | --- | --- | --- |
-| `cargo test -q` | 成功 | 563件成功、1件ignored、失敗0件 |
+| `cargo test --locked` | 成功 | 1060件成功、2件ignored、失敗0件 |
+| `cargo test --locked --features benchmarking --test scheduling_benchmark_contract` | 成功 | 16件成功、失敗0件 |
 | `cargo fmt --check` | 成功 | 差分なし |
-| `cargo clippy --all-targets -- -D warnings` | 失敗 | testを中心にzero-prefixed literal、needless borrow、assertion on constant、option_env unwrapなどが残る |
-| `git ls-files Cargo.lock` | 出力なし | 実行バイナリを配布する構成だが、`Cargo.lock`はignoreされ未追跡 |
+| `cargo clippy --locked --all-targets --all-features -- -D warnings` | 成功 | default buildと`benchmarking` featureを含めwarningなし |
+| `git ls-files Cargo.lock` | 成功 | `Cargo.lock`を追跡済み |
 
-テストが広く存在する点は強みである。一方、現在のCIはtestとformatしか実行せず、リポジトリガイドが要求するclippyを品質ゲートにしていない。
+テストが広く存在し、CIもtest、benchmark contract、format、clippyを実行している点は強みである。一方、Greenである既存testの一部が誤挙動を明示的に固定しているため、修正時は既存assertionを安易に緩和せず、READMEとdomain contractのどちらを正とするかをRed testで先に示す必要がある。
 
 ## 優先度
 
@@ -55,6 +58,26 @@
 | TD-017 | P1 | 完了 | XL | `TaskHandle`の既存infallible APIが内部不変条件の破れをpanicとして扱う |
 | TD-018 | P1 | 完了 | XL | CLI runtimeにcommand orchestrationと表示計算が残っている |
 | TD-019 | P2 | 完了 | L | scheduling性能計測の状態がapplicationの業務ロジックへ伝播している |
+| TD-020 | P0 | 未着手 | M | 同日・同名またはsanitize後に同名となるprojectが同じ保存先を共有し、再読込時に1件消失する |
+| TD-021 | P1 | 未着手 | M | repositoryが重複UUIDを受理し、ID指定操作の対象が走査順に依存する |
+| TD-022 | P1 | 未着手 | XL | 複数project保存でrevisionだけが先行し、失敗時にdisk snapshotが部分更新される |
+| TD-023 | P1 | 未着手 | S | `終`が不正時刻と一部application errorを成功扱いで握り潰す |
+| TD-024 | P1 | 未着手 | M | CLI parserが不正な数値や余分な引数を黙って受理し、更新commandを実行する |
+| TD-025 | P1 | 未着手 | M | 対話CLIのterminal I/O失敗がpanicまたは未検査結果になる |
+| TD-026 | P1 | 未着手 | L | task名をCLI・YAML・MCP・Spreadsheet間で安全にround-tripできない |
+| TD-027 | P1 | 未着手 | S | 残作業時間の補正計算が合法な大値入力で整数overflowする |
+| TD-028 | P1 | 未着手 | M | 論理日境界を跨ぐschedule segmentの容量が開始日に全量計上される |
+| TD-029 | P1 | 未着手 | L | 反復task完了の後段失敗で完了状態と親見積もりだけが部分更新される |
+| TD-030 | P1 | 未着手 | S | 00:00以降の日次残容量計算がbusy timeを無視する |
+| TD-031 | P1 | 未着手 | S | Spreadsheet変換がrank 1000以降のtask行を黙って破棄する |
+| TD-032 | P1 | 未着手 | S | macOS標準環境でSpreadsheet変換の`tac`依存が空出力の成功になる |
+| TD-033 | P1 | 未着手 | M | 同一taskの複数segmentをApps Scriptが別行へ同期する |
+| TD-034 | P1 | 未着手 | M | Spreadsheet入力が存在しない日付と不正な時分秒をcommandへ変換する |
+| TD-035 | P2 | 未着手 | M | 反復延期がDST境界で開始時刻とdeadlineの壁時計時刻をずらす |
+| TD-036 | P2 | 未着手 | L | source textを独自parseするarchitecture testがRust構文と実装名へ強く結合している |
+| TD-037 | P2 | 未着手 | M | 未使用のlenient YAML変換APIがstrict loaderと並存している |
+| TD-038 | P2 | 未着手 | L | MCPのtask一覧に検索・paginationがなく、大規模storageで応答が無制限に増える |
+| TD-039 | P2 | 未着手 | L | 稼働中processを止めずに整合したbackupを作成・検証・restoreする手段がない |
 
 ## 詳細
 
@@ -835,17 +858,911 @@
 - TD-012で性能契約と診断経路が固定された後の負債として扱う。
 - 今後のscheduling algorithm変更より先に計測境界を整理し、境界変更とalgorithm変更を同じcommitへ混ぜない。
 
+### TD-020: 同日・同名またはsanitize後に同名となるprojectが同じ保存先を共有し、再読込時に1件消失する
+
+- 分類: `バグ / データ保全`
+- 優先度: `P0`
+- 概算規模: `M`
+
+#### 現状と根拠
+
+- `src/application/task_use_case.rs:298-333`はproject名や保存先の重複を確認せず、正常なcreate操作として`start_new_project`を呼ぶ。
+- `src/adapter/gateway/task_repository.rs:743-755`は保存directoryを`YYYYMMDD-{project_name_for_dir}`だけから生成する。root UUIDはpathへ含まれない。
+- 同箇所はURL以降を除去し、`/`を`-`へ置換するため、完全な同名だけでなく`a/b`と`a-b`、異なるURL suffixを持つ名前も同じpathになり得る。
+- `src/adapter/gateway/task_repository.rs:598-602`は各projectを順番に同じ`project.yaml`へatomic renameし、path重複を検出しない。memoryでは2件ともclean扱いになるが、diskには最後の1件しか残らない。
+- 既存testは「新規projectのdirectoryを作る」「start時点ではfilesystemを変更しない」を固定するが、同一repository内のpath一意性とsave-load後の件数を検証していない。
+
+#### 影響
+
+- 正常なCLI/MCP入力だけで先に作成したprojectが失われる。次回process起動までmemory上では2件見えるため、消失の発見も遅れる。
+- sanitize規則を変更すると新旧のpath衝突条件が変わり、migrationなしでは別の上書きを作り得る。
+
+#### 推奨する改善方針
+
+- 保存directoryのidentityへroot task UUIDを含める。表示用の名前部分は可読性の補助とし、一意性を担わせない。
+- 既存directory形式は読み取り互換を維持し、新規作成分だけ新形式を使う。load時にはcanonicalized path重複も拒否する。
+- `start_new_project`はmemoryへ追加する前に、既存project pathとUUIDの双方を検査し、失敗時にrepositoryを変更しない。
+
+#### 完了条件
+
+- 同日・同名projectを2件作成し、save-load後も異なるUUIDの2件が残る。
+- `a/b`と`a-b`、URL除去後に同名となる名前でも衝突しない。
+- 旧directory名の既存storageをrenameせず読み込める。
+- 新形式の命名規則と互換方針をREADMEへ記載する。
+
+#### 推奨commit分割
+
+1. `Test: project保存先の一意性契約を固定する`: 同名・sanitize衝突のsave-load Red testだけを追加する。
+2. `Repository: project保存先へidentityを付与する`: path割当と重複拒否を最小実装し、全品質ゲートを通す。
+3. `Docs: project directory互換規則を記載する`: READMEだけを更新する。
+
+### TD-021: repositoryが重複UUIDを受理し、ID指定操作の対象が走査順に依存する
+
+- 分類: `バグ / データ整合性`
+- 優先度: `P1`
+- 概算規模: `M`
+
+#### 現状と根拠
+
+- strict YAML decodeは`src/adapter/gateway/yaml.rs:344-353`で各UUIDの形式だけを検査し、tree内・project間の一意性を検査しない。
+- `src/adapter/gateway/task_repository.rs:263-270`は`HashMap::insert`の置換結果を無視する。重複IDがあると後からcacheしたtaskが先のentryを上書きする。
+- `src/adapter/gateway/task_repository.rs:483-493`は全projectをcacheした後、そのままload成功とする。`get_by_id`を使うCLI、MCP、Spreadsheetの対象はfile名と走査順へ依存する。
+- `src/application/task_use_case_tests.rs:1155-1160`には同一UUIDのsiblingを作るfixtureがあるが、repositoryのload/lookup一意性は検証していない。
+- READMEはtask IDを一意なUUIDとして外部連携キーにしている。
+
+#### 影響
+
+- ID指定の完了・延期・更新が別taskへ適用され、保存後に意図したtaskと異なるデータが確定する。
+- `検証`commandが成功してもUUID一意性は保証されない。
+
+#### 推奨する改善方針
+
+- load中に`UUID -> project.yaml path + task path`を構築し、重複時は最初と2件目の両位置を持つtyped validation errorで全loadを失敗させる。
+- cache構築を一時mapで完了してからrepository stateへcommitし、失敗時のmemory原子性を維持する。
+- `TaskFactory`のID生成器が衝突値を返した場合も、新規project/child追加を拒否する。
+
+#### 完了条件
+
+- 同一tree内と別project間の重複UUIDが、両方のfile/task pathを含むerrorになる。
+- load失敗時に既存projects、cache、revision、clockを変更しない。
+- `検証`commandも同じvalidatorを通る。
+- CLI/MCP/Spreadsheetの外部ID契約を変更しない。
+
+#### 推奨commit分割
+
+1. `Test: repository UUID一意性を固定する`: tree内、project間、memory原子性のRed testを追加する。
+2. `Repository: 重複UUIDをpath付きで拒否する`: 一時indexとtyped errorを実装する。
+3. `Test: 検証commandへUUID一意性を通す`: 製品経路のcontract testを追加してGreenにする。
+
+### TD-022: 複数project保存でrevisionだけが先行し、失敗時にdisk snapshotが部分更新される
+
+- 分類: `技術的負債 / 障害回復性`
+- 優先度: `P1`
+- 概算規模: `XL`
+
+#### 現状と根拠
+
+- `src/adapter/gateway/task_repository.rs:523-575`は変更projectをserializeし、directoryを準備する。
+- 同ファイル`576-602`は`.revision`を先にatomic更新し、その後で各`project.yaml`を個別に置換する。2件目以降のwrite失敗時は、revisionと先行projectだけが新しく、残りは古いsnapshotになる。
+- `src/adapter/gateway/task_repository_tests.rs:890-914`は「project失敗時はdisk revisionだけを先に進める」ことを明示的にGreen契約として固定している。
+- READMEは複数projectをまたぐatomic transactionを初版対象外とし、save失敗後のMCP process再起動を要求する。しかし再起動してもdisk上の部分更新自体はrollbackされない。
+
+#### 影響
+
+- `flatten`、`pack`、反復task完了など複数projectを変更する操作が、障害時に業務上ひとまとまりでないsnapshotを残す。
+- revisionが新しいため別processは部分更新済みsnapshotを正規の最新版としてloadする。
+- `StateUncertain`はmemory継続を防ぐだけで、disk整合性を回復しない。
+
+#### 推奨する改善方針
+
+- storage直下にtransaction staging directoryとmanifestを作り、全projectのtemporary fileをwrite+syncした後にcommit markerを切り替える。
+- 起動時に未完了transactionを検出し、旧snapshotへ戻すかcommitを完了するrecovery protocolを定義する。
+- directory fsync、renameの同一filesystem制約、削除project、permission維持、crash pointを明示する。単なるrevision更新順の後置だけでは、project間atomicityを満たさない。
+
+#### 完了条件
+
+- prepare中、1件目rename後、最終rename前、marker切替前後の各failure injectionで、再起動後に旧snapshotまたは新snapshotのどちらか一方だけを読む。
+- revisionと全project内容が同じtransaction IDへ対応する。
+- temporary/staging fileが通常load対象にならず、recovery後に残骸を安全に除去できる。
+- 単一projectの「同一内容なら書かない」最適化とpermission維持を保つ。
+
+#### 推奨commit分割
+
+1. `Test: 複数project saveのcrash contractを固定する`: failure point別のRed integration testを追加する。
+2. `Repository: save staging phaseを導入する`: 挙動を変えずprepare境界を分離する。
+3. `Repository: snapshot commit markerを導入する`: recovery可能なcommit protocolを実装する。
+4. `Repository: 未完了saveを起動時に回復する`: recoveryとcleanupを独立実装する。
+5. `Docs: repository recovery protocolを記載する`: READMEを更新する。
+
+### TD-023: `終`が不正時刻と一部application errorを成功扱いで握り潰す
+
+- 分類: `バグ / エラー契約`
+- 優先度: `P1`
+- 概算規模: `S`
+- 関連既存項目: TD-006の完了条件に対する残存不具合。
+
+#### 現状と根拠
+
+- `src/adapter/controller/schronu/handler.rs:733-771`で、`decide_finish_time_values`が`None`を返す不正時刻は空の成功outcomeになる。
+- 同ファイル`761-770`は`HasUndoneChildren`だけをtree表示へ変換し、それ以外の`ApplicationError`を`Err(_) => {}`で破棄する。
+- `src/adapter/controller/schronu/handler_contract_tests.rs:1893-1928`は、不正時刻とその他completion errorを「handled no-op」とする誤挙動を明示的に固定している。
+- READMEは不正commandと操作拒否を診断し、非対話では非0終了・未保存にすると説明している。
+
+#### 影響
+
+- taskが完了していないのにCLIは成功終了し、automationや利用者が完了済みと誤認する。
+- Spreadsheetから生成された不正な`終`commandでも、実績更新だけが先に行われる運用事故へつながる。
+
+#### 推奨する改善方針
+
+- 不正時刻をfield付き`CommandParseError`または`ApplicationError::InvalidInput`へ変換する。
+- `HasUndoneChildren`の既存tree表示だけを明示branchとして残し、その他のerrorは`?`でruntimeへ伝搬する。
+
+#### 完了条件
+
+- 不正時刻、task不明、算術overflow、tree errorが診断され、非対話実行は非0で終了する。
+- error時にfocus、task snapshot、mutation revision、diskを変更しない。
+- `HasUndoneChildren`のtree表示契約は維持する。
+
+#### 推奨commit分割
+
+1. `Test: 終commandのerror伝搬を固定する`: 現行no-op assertionをREADME契約に沿うRed testへ置換する。
+2. `CLI: 終commandのerrorを保持する`: handlerの最小修正でGreenにする。
+
+### TD-024: CLI parserが不正な数値や余分な引数を黙って受理し、更新commandを実行する
+
+- 分類: `バグ / 入力検証`
+- 優先度: `P1`
+- 概算規模: `M`
+- 関連既存項目: TD-006の完了条件に対する残存不具合。
+
+#### 現状と根拠
+
+- `src/adapter/controller/schronu/command.rs:649`付近は`extrude invalid`の数値変換失敗を既定の1日へfallbackする。
+- `src/adapter/controller/schronu/command_contract_tests.rs:278`付近はこのsilent fallbackを現在の契約として固定している。
+- `src/adapter/controller/schronu/command.rs:698`付近の引数なしcommand群は余分なargumentを検査せず捨てるため、`flatten extra`や`pack extra`が実行され得る。
+- READMEは不正入力時に状態変更もsaveもしないと明記する。
+
+#### 影響
+
+- typoが意図しない延期・平坦化・前倒しとして実行・保存される。
+- commandごとにarity検証方法が異なり、新command追加時に同じsilent fallbackを再発させやすい。
+
+#### 推奨する改善方針
+
+- `CommandAction`定義に最小・最大argument数とfield parseを集約し、未知・余分・型違いを統一`CommandParseError`にする。
+- shorthandの既定値は「argument省略」の場合だけ適用し、「argumentはあるが不正」と区別する。
+
+#### 完了条件
+
+- `extrude invalid`、`flatten extra`、`pack extra`、引数なしcommandへの任意の余分な値を拒否し、保存しない。
+- 全commandの最小・最大argument数をtable-driven testで固定する。
+- 正常なaliasと省略時既定値は維持する。
+
+#### 推奨commit分割
+
+1. `Test: CLI command arityを固定する`: command別のRed table testを追加する。
+2. `CLI: 不正argumentのsilent fallbackを除去する`: parserをGreenにする。
+3. `Test: 不正argumentでrepositoryを保存しない`: runtime製品経路を固定する。
+
+### TD-025: 対話CLIのterminal I/O失敗がpanicまたは未検査結果になる
+
+- 分類: `バグ / 障害回復性`
+- 優先度: `P1`
+- 概算規模: `M`
+- 関連既存項目: TD-006は非対話command出力のerror捕捉を完了したが、interactive driverに同じ契約が届いていない。
+
+#### 現状と根拠
+
+- `src/adapter/controller/schronu/interactive.rs:163-209`はprompt描画、flush、raw mode移行、cursor設定を`unwrap()`する。
+- 同ファイル`246-378`もerror表示、cursor移動、文字出力、終了描画を多数の`unwrap()`と直接`println!`で処理する。
+- `src/adapter/controller/schronu/runtime.rs:1`はmodule全体へ`allow(unused_must_use)`を付け、interactive描画helperの戻り値を一部未検査にしている。
+- READMEはBrokenPipeを正常な出力終了として扱うと説明するが、interactive経路ではpanicし得る。
+
+#### 影響
+
+- terminal切断、pipe終了、raw mode移行失敗がbacktrace付きpanicになり、`RunError`の診断・終了code契約を迂回する。
+- raw mode復元前のpanicはterminal状態を壊す可能性がある。
+
+#### 推奨する改善方針
+
+- interactive driverを`Result<_, InteractiveIoError>`にし、描画・cursor・flush・raw mode初期化をすべてfallibleにする。
+- raw terminalをRAII guardで管理し、途中errorでも復元する。
+- BrokenPipe分類は非対話の`captured_output_result`と共通化し、module levelの`allow(unused_must_use)`を除去する。
+
+#### 完了条件
+
+- prompt、refresh、cursor、error表示、終了描画、raw mode移行の各failure injectionでpanicしない。
+- BrokenPipeは正常終了、それ以外はsource付き出力errorとして非0終了する。
+- error後もterminal復元処理が走り、task save方針が明示される。
+
+#### 推奨commit分割
+
+1. `Test: interactive I/O failure contractを固定する`: failure writerとraw mode failureのRed testを追加する。
+2. `CLI: interactive driverをfallibleにする`: I/O result伝搬を実装する。
+3. `CLI: raw terminal lifecycleをguardへ移す`: lifecycleだけを独立変更する。
+
+### TD-026: task名をCLI・YAML・MCP・Spreadsheet間で安全にround-tripできない
+
+- 分類: `バグ / 境界契約`
+- 優先度: `P1`
+- 概算規模: `L`
+
+#### 現状と根拠
+
+- `tests/fixtures/spreadsheet/generated-commands.txt`は空白を含む`新 新規 タスク`を期待する一方、`src/adapter/controller/schronu/command.rs:483`付近は第1 tokenをname、第2 tokenを見積分として解釈する。生成済みcommandを実際のCLI parserへ通すtestがない。
+- `src/application/task_use_case.rs:580-594`のname validationはblankと整数だけを拒否し、tab、改行、ANSI escape、その他control characterを許可する。
+- `src/adapter/gateway/yaml.rs:337-343`もblankだけを拒否する。MCP JSONからはCLIで入力できない制御文字を渡せる。
+- `src/adapter/controller/schronu/renderer.rs:24-37`はtask名をSpreadsheet行へ未escapeで連結するため、tab/改行は列・行構造を壊す。repository directory名にも未定義のcontrol characterが入り得る。
+
+#### 影響
+
+- Spreadsheetで空白入りtaskを仮登録しても生成commandを実行できない。
+- control characterを含む名前がterminal表示を偽装し、Spreadsheetの列ずれやcommand injectionに似た誤操作を起こす。
+- YAMLでは保存できるがCLIでは再現・修正できない値が生まれる。
+
+#### 推奨する改善方針
+
+- task名のcanonical contractをapplication層で定義する。少なくともNUL、改行、tab、terminal controlは拒否または明示escapeする。
+- CLIに引用符・backslashを扱う単一lexerを導入し、Spreadsheet generatorも同じescape規則で名前を出力する。
+- 永続YAMLの既存名を検査するdry-runを用意し、厳格化前に互換性を確認する。
+
+#### 完了条件
+
+- 空白、日本語、引用符、backslashを含む許可名がSpreadsheet生成からCLI parseまで同一文字列でround-tripする。
+- tab、改行、ESC、NULの扱いがCLI/MCP/YAMLで一致し、Spreadsheetの行列構造を壊さない。
+- 既存不正名にはfile/task path付き診断が出る。
+- A-J列とshell取込を変更する場合、AGENTS.mdが列挙する全連携箇所を同時確認する。
+
+#### 推奨commit分割
+
+1. `Test: task名の境界契約を固定する`: application validationとCLI lexerのRed testを追加する。
+2. `CLI: 引用可能なtask名lexerを導入する`: parserだけをGreenにする。
+3. `Spreadsheet: task名をCLI形式へescapeする`: shell fixtureとend-to-end testを更新する。
+4. `Repository: control character名を診断する`: strict loaderと検証commandを更新する。
+
+### TD-027: 残作業時間の補正計算が合法な大値入力で整数overflowする
+
+- 分類: `バグ / 算術安全性`
+- 優先度: `P1`
+- 概算規模: `S`
+
+#### 現状と根拠
+
+- `src/application/schedule_use_case.rs:327`付近の`calculate_remaining_work_seconds`は、実績が見積もりを超えた場合に`estimated_work_seconds * 2 - actual_work_seconds`を未検査で計算する。
+- CLI/MCPの見積分は秒変換時にoverflowを検査するが、`i64::MAX`近傍までの非負値は型上有効である。実績もchecked add後の大値を保持できる。
+- 見積が`i64::MAX / 2`を超え、実績が見積を少し超えた入力では、debug/test buildはpanicし、release buildはwrapする。
+
+#### 影響
+
+- 同じstorageでもbuild profileによりpanicまたは誤ったscheduleになる。
+- `get_schedule`だけでなく、その結果を使う`pack`、`flatten`へ波及する。
+
+#### 推奨する改善方針
+
+- 数式をchecked演算で表現し、表現不能時はfieldと値を保持するtyped errorにする。saturatingを採る場合は業務上の意味を先に契約化する。
+- estimated/actual secondsの上限をdomain invariantとして制限する案も比較し、YAML/MCP/CLIで同じ上限を使う。
+
+#### 完了条件
+
+- `E=i64::MAX`近傍の60の倍数、`A=E+1`でもpanicせず、debug/releaseで同じ結果または同じerrorになる。
+- 通常の「見積60分、実績90分なら残30分」を維持する。
+- error時にschedule候補やtask stateを変更しない。
+
+#### 推奨commit分割
+
+1. `Test: 残作業補正のoverflow契約を固定する`: boundary Red testを追加する。
+2. `Schedule: 残作業補正をchecked演算にする`: 最小実装でGreenにする。
+
+### TD-028: 論理日境界を跨ぐschedule segmentの容量が開始日に全量計上される
+
+- 分類: `バグ / schedule正確性`
+- 優先度: `P1`
+- 概算規模: `M`
+
+#### 現状と根拠
+
+- `src/application/pack_use_case.rs:346`付近の日次集計は`scheduled_start`の論理日を1つだけ求め、segment全体の容量をその日に加算する。
+- `src/application/flatten_use_case.rs:520`付近も同じ集計方法を持つ。
+- `src/application/scheduled_capacity.rs:8`付近はfixedなら予約window全体、flexibleならsegment全作業秒を返すが、06:00の論理日境界で分割しない。
+- 05:30-06:30の1時間segmentは、前日30分・翌日30分ではなく、開始側の論理日へ60分すべて計上される。
+
+#### 影響
+
+- 前日の過負荷を過大評価し、翌日の過負荷を見落とす。
+- `flatten`が誤った日から延期し、`pack`が翌日の余差へtaskを詰めすぎる。
+
+#### 推奨する改善方針
+
+- schedule segmentと各論理日区間のintersectionを返す共通helperをapplication層へ置き、packとflattenで共有する。
+- fixedはintersectionの実時間、flexibleはsegmentの実作業秒を各区間へ欠損なく配賦する。丸め差は最後の区間へ集約するなど決定規則を定める。
+
+#### 完了条件
+
+- 05:30-06:30を30分ずつ別論理日へ計上する。
+- 2日以上、fixed、flexible、既に分割済みのsegmentで、日別合計の総和が元segment容量と一致する。
+- packとflattenが同じhelperを使い、同一fixtureの日別容量が一致する。
+
+#### 推奨commit分割
+
+1. `Test: schedule容量の日跨ぎ配賦を固定する`: 共通helperのRed contractを追加する。
+2. `Application: segmentを論理日別に配賦する`: helperを実装する。
+3. `Pack: 日別容量集計を共通helperへ移す`: packだけをGreenにする。
+4. `Flatten: 日別容量集計を共通helperへ移す`: flattenだけをGreenにする。
+
+### TD-029: 反復task完了の後段失敗で完了状態と親見積もりだけが部分更新される
+
+- 分類: `バグ / 失敗原子性`
+- 優先度: `P1`
+- 概算規模: `L`
+
+#### 現状と根拠
+
+- `src/application/task_use_case.rs:500`付近の`complete_task`は、対象taskの実績、status、完了時刻を更新した後に次回反復taskを生成する。
+- `src/application/task_use_case.rs:679`付近の`create_prepared_repetition_task`は、親見積もりを先に更新し、その後`create_child`する。
+- child insertやhierarchy grant、borrowが後段で失敗すると、対象taskはDone、親見積もりは変更済みだが次回taskがない状態で`Err`になる。
+- transaction層はsaveを抑止するが、同一processのmemoryをrollbackしない。既存testは準備段階のoverflow等を検証するが、最初のwrite後にchild生成を失敗させる契約がない。
+
+#### 影響
+
+- 反復taskが途切れ、再試行で実績・親見積もりが重複更新され得る。
+- CLIは処理失敗を表示しても、その後のinteractive操作が部分更新状態を観測する。
+
+#### 推奨する改善方針
+
+- 対象更新、親見積もり更新、次回child追加を1つのdomain operationとして、変更計画の構築と全borrow/hierarchy事前検証後にcommitする。
+- rollbackより「最初のwrite前に失敗条件を解消する」方式を優先し、成功時のmutation revision増分も明示する。
+
+#### 完了条件
+
+- hierarchy edit禁止、borrow競合、insert失敗を注入しても、対象snapshot、親見積もり、children、focus、mutation revisionがすべて不変。
+- 成功時は現在の完了値と次回反復taskの契約を維持する。
+- CLI/MCP双方が同じapplication operationを通る。
+
+#### 推奨commit分割
+
+1. `Test: 反復完了の後段失敗原子性を固定する`: failure injection Red testを追加する。
+2. `Task: 反復完了の変更計画を導入する`: domain側のprepareを実装する。
+3. `Application: 反復完了を一括commitする`: use caseを新operationへ移してGreenにする。
+
+### TD-030: 00:00以降の日次残容量計算がbusy timeを無視する
+
+- 分類: `バグ / 日次容量`
+- 優先度: `P1`
+- 概算規模: `S`
+- 関連既存項目: TD-001はFreeTimeManager自体の日跨ぎを修正したが、application側がmanagerを呼ばない経路が残る。
+
+#### 現状と根拠
+
+- `src/application/daily_capacity.rs:62-71`は、現在時刻が06:00未満かつ日次終端より前の場合、`FreeTimeManagerTrait::get_free_minutes`を呼ばず、単純な`eod - last_synced_time`を自由時間として返す。
+- 既定の日次終端は翌00:30である。00:10-00:30がweekly busy slotでも、00:10実行時には0分でなく20分の自由時間になる。
+- `end_of_day_offset_minutes`を大きくすると、busy timeを無視する時間帯も広がる。
+
+#### 影響
+
+- 深夜実行時にpackの余差とflattenの日次容量を過大評価し、過負荷を見落とす。
+- 同じ区間をFreeTimeManagerへ直接照会した結果とdaily capacity結果が一致しない。
+
+#### 推奨する改善方針
+
+- `last_synced_time < eod`なら時刻帯にかかわらず`get_free_minutes(last_synced_time, eod)`を使う。
+- EOD後は0、対象日が現在の論理日でなければ全日計算、という条件へ単純化する。
+
+#### 完了条件
+
+- 00:10-00:30を全てbusyにした場合は残容量0分、一部busyならその分だけ控除する。
+- EODちょうど、EOD後、05:59、06:00、正負のEOD offsetを固定する。
+- daily capacity、pack、flattenの製品経路で同じ結果になる。
+
+#### 推奨commit分割
+
+1. `Test: 深夜の日次容量へbusy timeを反映する`: recording fakeを使うRed testを追加する。
+2. `Capacity: 深夜もfree time managerを照会する`: 条件分岐を最小修正する。
+
+### TD-031: Spreadsheet変換がrank 1000以降のtask行を黙って破棄する
+
+- 分類: `バグ / Spreadsheet export`
+- 優先度: `P1`
+- 概算規模: `S`
+
+#### 現状と根拠
+
+- `shell/copy_for_spreadsheet.sh:9`は`/^0/`で始まる行だけをtask行として処理する。
+- `src/adapter/controller/schronu/renderer.rs:968`付近のrank表示は`format!("{:04}", rank)`という最小幅であり、rank 999は`0999`、rank 1000は`1000`になる。
+- 実行確認では`0999`は変換され、`1000`と`10000`は0行になった。errorやwarningは出ない。
+- `tests/spreadsheet_contract.rs:116`付近のfixtureはrank `0000`と`0001`だけで境界を覆わない。
+
+#### 影響
+
+- 1001件以上を表示する大規模storageで、Spreadsheetへ貼るtaskが途中から黙って欠落する。
+- 欠落後もpadding行が出るため、空きtaskとして気付きにくい。
+
+#### 推奨する改善方針
+
+- 行頭文字でなく、rank、UUID、scheduled timeなどA-J列のtask row grammarを検査する。
+- より堅牢にはCLIへ`--format tsv`等のmachine-readable出力を追加し、human displayの見た目へshellを依存させない。
+
+#### 完了条件
+
+- `0999`、`1000`、`10000`をすべて保持し、見出し・集計・warning行は除外する。
+- 不完全なtask行は黙ってskipせず、line番号付きerrorにする。
+- 既存A-J列順とtask名中の空白を維持する。
+
+#### 推奨commit分割
+
+1. `Test: Spreadsheet rank上限境界を固定する`: 999/1000/10000のRed fixtureを追加する。
+2. `Spreadsheet: task行判定を列grammarへ変更する`: shellだけをGreenにする。
+
+### TD-032: macOS標準環境でSpreadsheet変換の`tac`依存が空出力の成功になる
+
+- 分類: `バグ / portability`
+- 優先度: `P1`
+- 概算規模: `S`
+
+#### 現状と根拠
+
+- READMEはmacOSを正式対応対象とするが、`shell/copy_for_spreadsheet.sh:31`はmacOS標準にないGNU系`tac`を使う。
+- 同scriptは`set -ue`だけで`pipefail`を設定しない。`PATH=/usr/bin:/bin`で`tac: command not found`になっても、後段のwhile/paddingが終了code 0を返し得る。
+- CIはUbuntuだけで、`tests/spreadsheet_contract.rs`も通常PATHを使うため、開発機にHomebrew `tac`があると欠落を検出しない。
+
+#### 影響
+
+- documented workflowが空のtask dataを正常結果としてclipboardへ渡す。
+- 必須commandの存在が非明示で、環境差がdata欠落に直結する。
+
+#### 推奨する改善方針
+
+- 逆順処理をAWK内へ統合するか、macOS標準のportableな実装へ置換する。
+- `set -o pipefail`を追加し、必須command欠落や前段failureを非0で伝搬する。
+
+#### 完了条件
+
+- HomebrewなしのmacOS標準PATHで正常fixtureを変換できる。
+- 前段command failureと必須command欠落が非0終了し、task/paddingを一切出さない。
+- CIにportable PATHを固定したcontract testがある。
+
+#### 推奨commit分割
+
+1. `Test: Spreadsheet変換をmacOS標準PATHで固定する`: 現在失敗するtestを追加する。
+2. `Spreadsheet: tac依存をportableな逆順処理へ置換する`: scriptをGreenにする。
+
+### TD-033: 同一taskの複数segmentをApps Scriptが別行へ同期する
+
+- 分類: `バグ / Spreadsheet同期`
+- 優先度: `P1`
+- 概算規模: `M`
+
+#### 現状と根拠
+
+- scheduleは1taskを複数segmentへ分割でき、Spreadsheet fixtureとREADMEも同一task IDの複数行を扱う。
+- `apps_script/main.js:87-107`は編集行のtask IDだけを取得して同期先を探す。
+- `apps_script/main.js:111-128`の`findRowByTaskId_`は最初の一致行を即座に返す。2番目以降のsegmentを編集しても、相手sheetの先頭segmentへL/N/P/R値を書き込む。
+- `tests/spreadsheet_contract.rs:205`以降はApps Scriptの定数と文書文字列を確認するだけで、関数挙動を実行しない。
+- `apps_script/README.md`はL/N/P/Rを同期すると説明する一方、`applyTimeFormat`実装は日付保持のため`実ログ`を対象外にしており、時刻formatの説明にも軽微な乖離がある。
+
+#### 影響
+
+- segment別の開始・完了時刻が別segmentへ転記され、実績command生成と表示順が壊れる。
+- 同期先が見つかったためerrorにならず、誤同期を利用者が見落とす。
+
+#### 推奨する改善方針
+
+- row identityを`task_id`だけでなく予定segmentを識別する複合keyにする。既存列で一意にできない場合は明示的なsegment ID列を追加する。
+- L/Pのsegment固有値とN/Rのtask全体値を分け、同一taskの全行へ同期すべき列と対応segmentだけへ同期すべき列を明文化する。
+- duplicate/ambiguous keyは先頭を選ばず診断する。
+
+#### 完了条件
+
+- 同じtask IDを持つ2行以上を両sheetに置き、各segmentのL/P編集が対応segmentだけへ反映される。
+- N/Rの同期単位がtestと文書で一致する。
+- key欠落・重複時にsilent returnせず、利用者が確認できる診断または再試行情報を残す。
+- 列追加時は`spreadsheet_columns.tsv`、CLI、両shell、Apps Script、両READMEを同時更新する。
+
+#### 推奨commit分割
+
+1. `Test: Spreadsheet segment同期の契約を固定する`: Apps Script関数を実行するRed testを追加する。
+2. `Spreadsheet: segment identityを定義する`: manifestとfixtureだけを更新する。
+3. `Apps Script: segment単位の同期へ変更する`: 実装をGreenにする。
+4. `Docs: sheet別の同期と時刻formatを訂正する`: 文書だけを更新する。
+
+### TD-034: Spreadsheet入力が存在しない日付と不正な時分秒をcommandへ変換する
+
+- 分類: `バグ / Spreadsheet import`
+- 優先度: `P1`
+- 概算規模: `M`
+
+#### 現状と根拠
+
+- `shell/generate_command_from_spreadsheet.sh:37-59`の完了日時parseは月1-12、日1-31しか検査せず、`2026/02/31`や非閏年の`02/29`を受理する。
+- 同script`21-28`の実作業時間parseは形だけを見て、minute/secondが00-59であることを検査しない。`0:99:99`を99分として受理する。
+- 実行確認では`2026/02/31 9:10:00`から`終 9:10:00 2026/02/31`、`0:99:99`から`働 99`を生成した。
+- 正常fixtureの文字列比較だけで、異常時にoutputが完全に空か、生成commandをCLIが受理するかを検証していない。
+
+#### 影響
+
+- `働`だけが反映され、`終`はTD-023のsilent no-opになるなど、1回のSpreadsheet取込が部分適用される。
+- 行番号・列名の段階で検出できる入力誤りが、後段CLIの別errorとして現れる。
+
+#### 推奨する改善方針
+
+- P列は実在する暦日まで検査し、S列はminute/secondを00-59へ制限する。
+- 中期的にはSpreadsheet importをRustのtyped境界へ移し、chronoとCLI parserを再利用する。shellで維持する場合も全行validationを先に完了し、1件でも不正ならcommandを1行も出さない。
+
+#### 完了条件
+
+- `2026/02/31`、非閏年`02/29`、`0:60:00`、`0:00:60`を列名・line番号付きで拒否する。
+- 正しい閏日、`23:59:59`、24時間超のhour表現という現行契約を明示して受理する。
+- error時はstdoutが空で、task単位の部分commandを出さない。
+- 正常生成commandを実際のCLI parserへ通すend-to-end testがある。
+
+#### 推奨commit分割
+
+1. `Test: Spreadsheet日時検証を固定する`: calendar/time境界のRed testを追加する。
+2. `Spreadsheet: P列とS列を厳密検証する`: shellをGreenにする。
+3. `Test: Spreadsheet生成commandをCLI parserへ接続する`: cross-boundary contractを追加する。
+
+### TD-035: 反復延期がDST境界で開始時刻とdeadlineの壁時計時刻をずらす
+
+- 分類: `バグ / timezone`
+- 優先度: `P2`
+- 概算規模: `M`
+- 関連既存項目: TD-010はlocal datetime変換errorを統一したが、反復間隔をelapsed durationとして扱う経路が残る。
+
+#### 現状と根拠
+
+- `src/application/task_use_case.rs:425`付近の親deadlineなし経路は`orig_deadline + Duration::days(interval)`とし、暦日でなく24時間単位を加算する。
+- 親deadlineあり経路は新deadlineを暦日で構築した後、`new_deadline - orig_deadline`の`num_days()`を開始時刻へ適用する。
+- DST開始週の7暦日は6日23時間なので、前者は壁時計時刻が1時間ずれ、後者は`num_days()`切り捨てで開始日が1日不足し得る。DST終了時は逆方向にずれる。
+- 既存testとCI timezoneはAsia/Tokyo中心で、DST境界を覆わない。
+
+#### 影響
+
+- DST地域で週次routineの開始・deadlineが1時間または1日ずれる。
+- `defer_routine_task`と通常の次回反復生成が異なる周期意味を持つ。
+
+#### 推奨する改善方針
+
+- repetition interval daysを暦日として定義し、元のlocal dateへchecked addした後、元のlocal timeを既存のfallible local変換で解決する。
+- startとdeadlineをelapsed秒差から相互導出せず、それぞれ同じ暦日数だけ移動する。
+- `AmbiguousLocalDateTime`と`NonexistentLocalDateTime`を保持し、error時は変更しない。
+
+#### 完了条件
+
+- DST開始・終了を跨ぐ1日/7日周期でstart/deadlineの壁時計時刻を維持する。
+- 親deadlineあり/なしの結果が同じ暦日規則に従う。
+- 曖昧・不存在時刻は構造化errorになり、snapshotとrevisionが不変である。
+- timezone別testをsubprocessまたはtimezoneを明示できる型で決定論的に実行する。
+
+#### 推奨commit分割
+
+1. `Test: 反復延期のDST契約を固定する`: timezone別Red testを追加する。
+2. `Task: 反復日数を暦日加算する`: 共通helperを実装する。
+3. `Application: routine延期を暦日helperへ移す`: use caseをGreenにする。
+
+### TD-036: source textを独自parseするarchitecture testがRust構文と実装名へ強く結合している
+
+- 分類: `技術的負債 / test保守性`
+- 優先度: `P2`
+- 概算規模: `L`
+
+#### 現状と根拠
+
+- `src/adapter/controller/schronu/interactive_contract_tests.rs:11-51`はcontroller配下のRust sourceをfilesystemから収集する。
+- 同ファイル`158`以降はcomment、string、raw string、`cfg(test)`、braceを独自scannerで除外し、関数・trait・implの領域を文字列として抽出する。
+- 同ファイル`950-1080`などは移動済み関数名、禁止識別子、正規化したsignature文字列を列挙し、architectureを検査する。scanner自体のtestも数百行必要になっている。
+- `schedule_use_case_contract_tests.rs:518`以降、`handler_contract_tests.rs`、`command_contract_tests.rs`にも`include_str!`と`contains`による構造検査がある。
+- Rustとして等価なrename、format、generic表現、macro利用でもtestが壊れ得る一方、文字列scannerが理解しない新構文ではfalse negativeになり得る。
+
+#### 影響
+
+- 製品挙動を変えないrefactorでも、独自parserと禁止symbol一覧の追従が必要になる。
+- compilerが既に保証できる依存方向を文字列でも二重検証し、test suiteの規模と実行・review費用を増やす。
+
+#### 推奨する改善方針
+
+- module visibility、trait境界、戻り型はcompile-fail testまたは通常の型検査で固定する。
+- source architecture lintが必要なら`syn`等のRust parserを使う独立`xtask`/test helperへ限定し、製品関数名のdeny listを縮小する。
+- 移行中はscanner testと置換testを同時に削除せず、1契約ずつcompiler-backed testへ置換する。
+
+#### 完了条件
+
+- comment/string/raw stringを自前parseするhelperがcontroller contract testからなくなる。
+- parser/handler/renderer/runtimeの依存方向をcompiler-backed testまたは正式なRust ASTで検証する。
+- 製品関数のrenameだけでbehavior testが壊れない。
+- test移動と製品挙動変更を同じcommitへ混ぜない。
+
+#### 推奨commit分割
+
+1. `Test: controller境界をcompile-time contractへ固定する`: 1境界だけ新testを追加する。
+2. `Test: 対応するsource scannerを除去する`: 同じ契約の旧scannerだけを削除する。
+3. 上記をparser、handler、view、renderer、runtimeごとに繰り返す。
+
+### TD-037: 未使用のlenient YAML変換APIがstrict loaderと並存している
+
+- 分類: `技術的負債 / API整理`
+- 優先度: `P2`
+- 概算規模: `M`
+- 関連既存項目: TD-003とTD-009の完了後に残った旧経路。
+
+#### 現状と根拠
+
+- `src/adapter/gateway/yaml.rs:191-225`の公開`yaml_to_immutable_task`は、欠落/不正nameを空文字、未知statusをTodo、不正日時を最小時刻、型違いchildrenを空配列へ黙って変換する。
+- production検索では同関数、`ImmutableTask`、`extract_leaf_immutable_tasks_from_project`にmain repository loadからのcallerがなく、testと自己再帰だけが残る。
+- `src/entity/task.rs:73-77`の公開`read_repetition_anchor`も未知値をDeadlineへfallbackし、strict loaderは別途独自に未知値を拒否する。
+- strict loaderの「present-but-invalidはerror」という現在の契約と逆のAPIが同じcrateで公開され、将来のcallerが誤って選択できる。
+
+#### 影響
+
+- dead pathのtest・型・fallback仕様を保守し続ける必要がある。
+- 新しいimport機能が旧helperを再利用すると、TD-003で解消したsilent data coercionを再導入する。
+
+#### 推奨する改善方針
+
+- `rg`と外部利用有無を確認し、未使用なら`ImmutableTask`系とlenient converterを機械的削除する。
+- 必要なread-only projectionならstrict DTOから生成し、YAML parseとdomain projectionを分離する。
+- enum parseは`Option`/`Result`で未知値情報を保持し、fallbackは互換version policy内だけで行う。
+
+#### 完了条件
+
+- production APIに不正YAMLをsilent fallbackするconverterがない。
+- repository load、検証command、migrationが同じstrict parse規則を使う。
+- 削除前後で公開CLI、YAML保存形式、MCP JSONが変わらない。
+
+#### 推奨commit分割
+
+1. `Test: lenient YAML APIにproduction callerがないことを確認する`: 利用調査と必要ならcharacterizationを行う。
+2. `YAML: 未使用のlenient immutable変換を除去する`: 機械的削除だけを行う。
+3. `Entity: 未使用immutable projectionを除去する`: entity cleanupを別commitにする。
+
+### TD-038: MCPのtask一覧に検索・paginationがなく、大規模storageで応答が無制限に増える
+
+- 分類: `機能提案 / scalability`
+- 優先度: `P2`
+- 概算規模: `L`
+
+#### 現状と根拠
+
+- README記載の`list_tasks`入力はperiod、statuses、categoriesだけで、name query、project root、limit、cursorを持たない。
+- `src/application/task_use_case.rs:283-291`は全project treeをpre-orderで`Vec`へ収集し、その後filterする。
+- MCPは結果全体を1つのJSON-RPC responseへserializeする。repositoryには2172 project規模の手動性能fixtureがあり、task数に比例してresponse、memory、client contextを消費する。
+- CLIにはtask名を含む表示検索があるが、MCP clientはUUID不明時に小さい応答で対象を探せない。
+
+#### 期待する機能
+
+- `list_tasks`へ任意の`query`、`root_task_id`、`limit`、opaque `cursor`を追加し、安定順序でpage取得できるようにする。
+- cursorはsort keyとfilter条件を検証し、途中でrepository revisionが変わった場合の扱いを明示する。
+
+#### 完了条件
+
+- default limitと最大limitをschema・READMEへ明記し、pageを連結するとfilter済み全件と重複・欠損なく一致する。
+- 同一deadline/name等の同値keyでもUUID tie-breakで順序が安定する。
+- queryはUnicodeと大文字小文字規則を文書化する。
+- 旧clientの引数なしcallに対する互換方針を決め、無制限応答を残す場合は明示opt-inにする。
+- typical/stress fixtureでresponse sizeと走査回数の上限を測定する。
+
+#### 推奨commit分割
+
+1. `Test: task一覧の安定順序を固定する`: 現行順序のcharacterization testを追加する。
+2. `Application: task queryとpage型を導入する`: adapter非依存のpaginationを実装する。
+3. `MCP: list_tasksへlimitとcursorを追加する`: schema/input/outputを更新する。
+4. `MCP: task名とroot filterを追加する`: 検索機能を別commitで追加する。
+5. `Docs: task一覧paginationを記載する`: READMEとgolden schemaを更新する。
+
+### TD-039: 稼働中processを止めずに整合したbackupを作成・検証・restoreする手段がない
+
+- 分類: `機能提案 / 運用安全性`
+- 優先度: `P2`
+- 概算規模: `L`
+
+#### 現状と根拠
+
+- READMEは一貫したbackupのためCLIと全MCP serverを停止し、`.lock`を除くstorage全体を手動copyするよう求める。
+- CLI/MCPは既にstorage advisory lockとstrict検証commandを持つが、lock保持中にsnapshotを作るuser-facing commandはない。
+- TD-022のsave failureや手動復旧時に、どのrevisionの全projectを退避したかを記録するmanifestがない。
+
+#### 期待する機能
+
+- read-onlyの`backup`操作がstorage lockを取得し、revision、全project、schema/tool version、作成時刻、file digestをmanifest付きsnapshotへ保存する。
+- `backup verify`がsource storageなしでもdigestとstrict YAMLを検査する。
+- `restore`は別directoryへの展開を既定とし、稼働中storageへの上書きは明示確認・lock・事前backupを要求する。
+
+#### 完了条件
+
+- MCP/CLIがidleまたは別操作待ちの状態でも、lock取得後の一貫したsnapshotを作れる。
+- saveとbackupが競合しても旧/新の混合snapshotにならない。
+- `.lock`、temporary、staging fileを除外し、`.revision`とproject digestの対応をmanifestで検査できる。
+- restore failureで既存storageを部分上書きせず、別directoryへのrestore後に`検証`を通して切替できる。
+- backup format、retention、permission、機密情報の扱いをREADMEへ記載する。
+
+#### 推奨commit分割
+
+1. `Test: repository snapshot manifestを固定する`: read-only snapshot contractのRed testを追加する。
+2. `Repository: lock下のbackup readerを実装する`: archive形式に依存しないsnapshot生成を追加する。
+3. `CLI: backupとverify commandを追加する`: user-facing境界を実装する。
+4. `Repository: 別directory restoreを実装する`: overwriteなしのrestoreを追加する。
+5. `Docs: backupとrestore運用を記載する`: READMEを更新する。
+
 ## 推奨着手順
 
-1. TD-008のうち`Cargo.lock`追跡と既存clippy違反の解消を行い、以後の変更に品質ゲートを設ける。
-2. TD-001とTD-002を別々のRed/Green系列で直し、scheduleの入力となる自由時間を正確かつfallibleにする。
-3. TD-003で永続化データのsilent fallbackを止める。厳格化前に既存データのdry-run検査を行う。
-4. TD-006とTD-007でerror・transaction境界を整え、adapter間の挙動を統一する。
-5. TD-013でSpreadsheet互換fixtureを固定してからTD-005のCLI境界分割を行う。その後、TD-015のCLI characterization testと`test_support`分離を先行し、残るruntime縮小と意味的表示model分離をTD-018で進める。
-6. TD-010、TD-009、TD-004はいずれも完了済みである。domain境界の縮小とtree実装の全面変更は、それぞれ独立した段階として実施した。
-7. TD-011、TD-015を独立して進める。TD-015のCLI fixture分離はTD-018の製品コード移動とcommitを分ける。
-8. TD-012は完了済みである。次のscheduling algorithm変更前にTD-019で計測境界を整理する。
-9. TD-016は関連する上位項目の完了後、小さいcleanup commitへ分割して解消した。
+1. TD-020を最優先で修正し、正常なproject作成によるデータ消失を止める。同じ系列でTD-021のidentity検証を進めるが、path一意性とUUID一意性は別のRed/Green cycleにする。
+2. TD-023、TD-024、TD-025を順に修正し、CLIが失敗を成功扱いする経路とpanic経路を閉じる。これにより後続項目の異常系testが正しい終了codeを観測できる。
+3. TD-027とTD-030は小さく独立した正確性修正として先行できる。その後、TD-028の日別配賦とTD-029の反復完了原子性を、それぞれ別のapplication契約として進める。
+4. Spreadsheet系列はTD-031とTD-032でexport欠落を先に止め、TD-034でimport validationを厳格化する。TD-026のtask名lexerを確定してから空白名のend-to-endをGreenにし、列identity変更を伴うTD-033は最後に行う。
+5. TD-022はstorage formatとcrash recoveryを伴うため、P1の中でも独立projectとして進める。先にTD-020/TD-021でidentity不変条件を固定し、transaction manifestへ曖昧なprojectを持ち込まない。
+6. TD-035はtimezone別test harnessを先に用意する。TD-036とTD-037は挙動変更と分けたtest/API cleanupとして、schedulingやCLIの機能修正と同じcommitへ混ぜない。
+7. TD-038とTD-039は互換設計を先に文書化する将来機能である。MCP paginationは既存client互換、backup/restoreはTD-022のsnapshot protocolとの共有可能性を確認してから実装する。
+
+## 未着手項目の並列開発計画
+
+この節は、TD-020〜TD-039を複数worktree・複数担当で実装する際の統合計画である。担当数には上限を置かず、意味上の先行条件と主要write範囲が衝突しない限り並列化する。ここでいうwaveは全laneを待つglobal barrierではない。各laneは、自身の先行条件がmainへmergeされ、rebase後の品質ゲートがGreenになった時点で次wave相当の作業へ進んでよい。
+
+### 判断基準
+
+- `hard dependency`: 先行項目が契約・identity・永続化protocolを確定しないと、後続実装を正しく設計できない依存である。先行項目のGreen commitがmainへmergeされるまで製品実装を開始しない。
+- `serialization dependency`: 意味上は独立しているが、同じ製品file・巨大test file・fixtureを変更するため、merge順を固定する依存である。Red testの設計は並行できるが、同じwrite範囲へ同時に実装しない。
+- `integration gate`: 実装は並行できるが、両方をmergeした状態で追加のcross-boundary testを通すまで完了扱いにしない関係である。
+- 文書だけの衝突は製品実装を止める理由にしない。各TDのdocumentation commitを製品Green commitから分け、`README.md`と`apps_script/README.md`はwave内の製品commitが揃った後にrebaseして順番にmergeする。
+
+### 主要な依存関係
+
+`H`はhard dependency、`S`はserialization dependency、`I`はintegration gateを表す。
+
+```text
+TD-020 ─H─┐
+           ├─> TD-022 ─H─> TD-039
+TD-021 ─H─┘
+
+TD-037 ─S─> TD-021
+TD-021 ─S─> TD-029 ─S─> TD-026 ─S─> TD-035 ─S─> TD-038
+
+TD-024 ─H─┐
+TD-034 ─S─┼─> TD-026 ─S─> TD-033
+TD-037 ─S─┘                ^
+TD-032 ─S─> TD-031 ────────┘
+
+TD-021 ─H─┐
+TD-022 ─H─┼─> TD-038
+TD-026 ─H─┘
+
+TD-028 ─I─ TD-030
+
+TD-023〜TD-026、TD-033、TD-039 ─S─> TD-036
+```
+
+補足:
+
+- TD-020とTD-021は論理的には独立だが、どちらも`task_repository.rs`とrepository testを変更する。TD-022のtransaction manifestへ安定したproject pathと一意なUUIDを格納するため、merge順はTD-020→TD-021→TD-022とする。
+- TD-037は独立したdead API cleanupだが、`yaml.rs`を触るTD-021やTD-026より先に終える。古いlenient APIの削除と新しいvalidationを同じ差分にしない。
+- TD-032をTD-031より先に置く。先にportableな実行環境とpipeline failure契約を確立すると、rank境界testをmacOS標準PATHでも信頼できるためである。
+- TD-023とTD-029は製品fileが異なるためRed test作成までは並行できる。ただし反復完了のend-to-end error契約はTD-023のerror伝搬をmergeした後に確定する。
+- TD-028とTD-030は別moduleなので並行実装する。両方のmerge後に、論理日境界を跨ぎbusy timeとも重なるsegmentの統合testを追加する。
+- TD-038のcursorはtask identityとrepository revisionへ結び付く。TD-021とTD-022が確定する前にcursor形式を公開しない。またname queryの正規化はTD-026のtask名契約を再利用する。
+- TD-036は挙動修正ではなくarchitecture testの置換である。先に実施するとTD-023〜TD-026、TD-033、TD-039の製品変更とtest変更が衝突するため、対象境界の製品変更後に回す。
+
+### Wave 0: 並列作業の準備
+
+コード変更を含まない調整段階である。
+
+1. 各TDを別worktree・別branchへ割り当てる。branch名は`feature/td-0xx-<short-name>`とし、1 branchへ複数TDのGreen実装を混ぜない。
+2. 各laneは着手前に「変更予定の製品file」「新規または変更予定のtest file」「fixture」「文書」を宣言する。同じ製品fileを予約したlaneは同時実装しない。異なる関数だからという理由だけで同一fileの同時所有を許可しない。
+3. `tests/spreadsheet_contract.rs`へ複数laneが同時追記しない。TDごとの新規contract testと専用fixture directoryを作り、既存testの機械的移動は挙動変更と別commitにする。
+4. `task_use_case.rs`を共有するTD-021、TD-029、TD-026、TD-035、TD-038は既定では直列化する。並列化する場合は、先に挙動非変更のmodule分割だけを独立commitで完了し、全品質ゲートを通してから各laneへ引き渡す。test fileを分けただけでは製品fileの競合を解消したことにしない。
+5. 各Red/Green cycleとreview修正は、前節のcommit分割とリポジトリ規約に従う。未commit差分を別laneへ手渡さない。
+
+### Wave 1: 独立した正確性修正(最大10レーン)
+
+| Lane | 項目 | 主なwrite範囲 | このwaveで固定する契約 |
+| --- | --- | --- | --- |
+| W1-A | TD-020 | `task_repository.rs`、repository test、project作成経路 | project directory identityと旧形式の読み取り互換 |
+| W1-B | TD-037 | `yaml.rs`、`task.rs`と各test | 未使用lenient APIの除去。strict loaderの挙動は変更しない |
+| W1-C | TD-023 | `handler.rs`、handler contract test | `終`の不正入力・application errorを成功扱いしない |
+| W1-D | TD-024 | `command.rs`、command/runtime contract test | command arityと「省略」と「不正値」の区別 |
+| W1-E | TD-025 | `interactive.rs`、`runtime.rs`、interactive I/O test | terminal I/Oのfallible化とraw mode復元 |
+| W1-F | TD-027 | `schedule_use_case.rs`と算術境界test | 残作業補正のchecked演算 |
+| W1-G | TD-028 | `scheduled_capacity.rs`、`pack_use_case.rs`、`flatten_use_case.rs`と各test | segmentの日別分割規則 |
+| W1-H | TD-030 | `daily_capacity.rs`と専用test | 深夜帯でもbusy timeを控除する規則 |
+| W1-I | TD-032 | `copy_for_spreadsheet.sh`とportable PATH test | `tac`非依存とpipeline failure伝搬 |
+| W1-J | TD-034 | `generate_command_from_spreadsheet.sh`と専用import test | 暦日・時分秒の全行事前validation |
+
+W1-GとW1-Hは同時実装してよいが、どちらも相手の製品fileを変更しない。統合testは両方のmerge後にWave 2の独立laneで追加する。W1-IとW1-Jはshell fileが異なるため並行できるが、共通fixtureと`tests/spreadsheet_contract.rs`は予約しない。W1-C、W1-D、W1-Eも製品実装は並行できるが、`runtime_contract_tests.rs`と共通test supportを使うend-to-end検証はWave 2へ後置する。
+
+### Wave 2: identity・Spreadsheet基盤・統合test(最大5レーン)
+
+| Lane | 項目 | 先行条件 | 主なwrite範囲・注意事項 |
+| --- | --- | --- | --- |
+| W2-A | TD-021 | TD-020、TD-037 | `task_repository.rs`と一意性test。UUID生成時の衝突対応が`task_use_case.rs`へ及ぶ場合はW3-B開始前にmergeする |
+| W2-B | TD-031 | TD-032 | `copy_for_spreadsheet.sh`とrank境界専用test。TD-032のportable implementationを維持する |
+| W2-C | TD-036のschedule境界だけ | TD-027 | `schedule_use_case_contract_tests.rs`に限定してcompiler/AST-backed testへ置換する。controller/view scannerには触れない |
+| W2-D | TD-023〜TD-025のCLI統合gate | TD-023、TD-024、TD-025 | `runtime_contract_tests.rs`と共通test supportをこのlaneだけが所有し、error、終了code、未保存、raw mode復元を製品経路で確認する |
+| W2-E | TD-028・TD-030の容量統合gate | TD-028、TD-030 | 論理日境界を跨ぎbusy timeとも重なるsegmentをpack/flatten製品経路で確認する。製品algorithmは変更しない |
+
+TD-036全体はこのwaveで完了扱いにしない。schedule境界の旧scannerを新しい契約がGreenになった範囲だけ除去し、残りはWave 7へ送る。
+
+### Wave 3: repository transactionと反復完了原子性(最大2レーン)
+
+| Lane | 項目 | 先行条件 | 主なwrite範囲・統合順 |
+| --- | --- | --- | --- |
+| W3-A | TD-022 | TD-020、TD-021 | repository save/recoveryと新規transaction module。storage write範囲をこのlaneが単独所有する |
+| W3-B | TD-029 | TD-021、TD-023 | `task_use_case.rs`の反復完了経路と専用原子性test。memory原子性を担当する |
+
+TD-039はW3-Aと同時に、manifest項目、crash point、backup/restore受け入れtestの設計だけを進めてよい。ただしTD-022のcommit markerとrecovery protocolがGreenになるまでrepository製品コードへ着手しない。
+
+### Wave 4: backup coreとtask名横断契約(最大2レーン)
+
+| Lane | 項目 | 先行条件 | 主なwrite範囲・注意事項 |
+| --- | --- | --- | --- |
+| W4-A | TD-039のrepository phase | TD-022 | 新規backup/snapshot module、manifest、verify、別directory restore。CLI controllerは変更しない |
+| W4-B | TD-026 | TD-021、TD-024、TD-029、TD-031、TD-032、TD-034、TD-037 | task名validation、CLI lexer、YAML/MCP、Spreadsheet escapeを記載済みcommit順で実装する |
+
+W4-AとW4-Bは新規backup moduleとtask名境界へwrite範囲を分ける。W4-Aが`task_repository.rs`または`yaml.rs`の保存・読込契約を変更する必要が生じた場合は、TD-026のYAML commitと同時実装せず、W4-Aを先にmergeしてTD-026をrebaseする。
+
+### Wave 5: Spreadsheet identityと反復暦日修正(最大2レーン)
+
+| Lane | 項目 | 先行条件 | 主なwrite範囲・注意事項 |
+| --- | --- | --- | --- |
+| W5-A | TD-035 | TD-029、TD-026 | `task_use_case.rs`の反復暦日helperとtimezone別test |
+| W5-B | TD-033 | TD-026、TD-031、TD-032、TD-034 | segment identity、列契約、renderer/view、両shell、Apps Script。Spreadsheet write範囲を単独所有する |
+
+W5-AとW5-Bはapplication task操作とSpreadsheet表示で製品fileが分かれるため並行できる。W5-Bの文書commitとTD-039 repository phaseの文書commitは製品commitの後に順番にmergeする。
+
+### Wave 6: backup CLIとMCP pagination(最大2レーン)
+
+| Lane | 項目 | 先行条件 | 主なwrite範囲・注意事項 |
+| --- | --- | --- | --- |
+| W6-A | TD-039のCLI phaseと完了 | TD-039 repository phase、TD-026、TD-033 | `command.rs`、`handler.rs`または`runtime.rs`、`view.rs`、`renderer.rs`、CLI contract test、README |
+| W6-B | TD-038 | TD-021、TD-022、TD-026、TD-035 | application query/page型、MCP schema/input/output、pagination test |
+
+W6-AとW6-BはCLI controllerとMCP/applicationにwrite範囲を分ける。backup、verify、restoreの各commandを別のRed/Green cycleにする。TD-039はrepository phaseだけでは完了にせず、CLI製品経路、failure injection、文書までGreenにして完了とする。
+
+### Wave 7: architecture test cleanup(原則1レーン)
+
+| Lane | 項目 | 先行条件 | 主なwrite範囲 |
+| --- | --- | --- | --- |
+| W7-A | TD-036の残りと完了 | TD-023〜TD-026、TD-033、TD-039 | controller、handler、runtime、view、rendererのsource scannerを契約単位でcompiler/AST-backed testへ置換する |
+
+TD-036はparser、handler、runtime、renderer/viewの各契約を別commitにする。各置換が完全に別test fileへ閉じる場合だけ内部laneを増やしてよい。共通scanner helper、`Cargo.toml`、共通compile-fail harnessを複数laneが変更するなら1レーンへ戻す。
+
+### 任意の並列化accelerator
+
+既定計画は追加のmodule移動を前提にしない。critical pathをさらに短縮する価値がある場合だけ、次の挙動非変更commitを先に実施してよい。
+
+- `task_use_case.rs`からlist/query責務を独立moduleへ機械的分離し、移動前後で全testをGreenにする。このcommitが独立してreview・revert可能なら、TD-035とTD-038をWave 5で並列化できる。
+- task名validationをapplicationの独立moduleへ機械的分離できる場合、TD-029とTD-026の製品file競合を除ける。ただしCLI・YAML・Spreadsheetまで同時に移動せず、validationだけを分離する。
+- accelerator自体に公開API変更、error変更、挙動変更を含めない。差分が大きくなる場合は、並列度向上よりreview容易性を優先して既定の直列計画へ戻す。
+
+### 共有write範囲の所有順
+
+| Hotspot | 所有順 | 並列化条件 |
+| --- | --- | --- |
+| `task_repository.rs`とrepository test | TD-020→TD-021→TD-022→TD-039 | 並列化しない。storage identityとtransaction protocolの主直列レーンとする |
+| `yaml.rs`とYAML test | TD-037→TD-021→TD-026 | TD-021がrepository aggregateだけで完結する場合はYAML変更を省略できるが、merge順は維持する |
+| `task_use_case.rs`とapplication test | TD-021→TD-029→TD-026→TD-035→TD-038 | 既定では直列化する。挙動非変更のmodule分割を先にGreenでmergeした場合だけ分離後のmodule単位で並行する |
+| CLI parser/driver/表示 | TD-023・TD-024・TD-025を並列→TD-026→TD-039→TD-036 | 初動3件は製品fileとtest fileを分ける。TD-036は最後に置く |
+| `copy_for_spreadsheet.sh` | TD-032→TD-031→TD-033 | 同じscriptを触るため直列化する |
+| Spreadsheet import/fixture | TD-034→TD-026→TD-033 | TD-034は専用test/fixtureを使えばexport laneと並行可能 |
+| Spreadsheet列・Apps Script | TD-026→TD-033→TD-036のrenderer/view部分 | TD-033中はmanifest、両shell、Apps Script、renderer/viewを1laneが所有する |
+| schedule容量 | TD-027、TD-028、TD-030を並列 | TD-028とTD-030のmerge後に論理日境界×busy timeの統合testを追加する |
+| `README.md`類 | 各waveの製品commit後 | docs commitをrebaseして1件ずつmergeし、製品実装の並列度を下げない |
+
+### 各laneのmerge gate
+
+1. 先行TDが完了statusになったことではなく、必要な契約commitがmainに存在することを確認する。
+2. mainへrebaseし、競合解消で他TDのtest・error情報・戻り値を削除していないことをreviewする。
+3. 対象testのRed理由が1つだった記録と、最小Green後の対象test結果を残す。
+4. Green commit前に`cargo fmt --check`、`cargo clippy --locked --all-targets -- -D warnings`、`cargo test --locked`を実行する。benchmarking境界を触る場合は`cargo test --locked --features benchmarking --test scheduling_benchmark_contract`も実行する。
+5. shell、Apps Script、Spreadsheet列を触るlaneは`cargo test --locked --test spreadsheet_contract`に加え、そのTD専用contract testを実行する。
+6. storage laneはfailure injection後の再起動testと`検証`commandの製品経路を通す。memoryだけ、またはdiskだけの単体testで完了扱いにしない。
+7. wave内の全merge後にfull quality gateとcommit履歴reviewを行う。integration gateがある組み合わせはcross-boundary testを追加してから次へ進む。
+
+### 並列計画を中断・組み替えする条件
+
+- 実装中に予約外のHotspotを変更する必要が生じた。
+- 共有error enum、公開trait、factory API、Spreadsheet列数、storage formatの変更が新たに必要になった。
+- rebase時に同じ既存testのassertionを複数laneが異なる意味へ変更していた。
+- 一方のlaneが他方のRed testを意図せずGreenまたは別理由のRedへ変えた。
+- 品質ゲート失敗の原因を単一TDへ帰属できなくなった。
+
+この場合、差分を強引にまとめず、依存元を先にmergeし、依存先をrebaseしてRed理由を再確認する。すでに複数責務が1commitへ混ざった場合は、共有前であればcommitを契約単位へ分割し直す。
 
 ## まとめて実施しない変更
 
@@ -856,5 +1773,11 @@
 - test file移動と既存testのassertion変更を同じcommitにしない。
 - clippy cleanupへdomain挙動変更を混ぜない。
 - 性能改善のためにscheduleの決定順序やdeadline契約を暗黙に変更しない。
+- project directory命名変更、UUID一意性検証、複数project atomic saveを1つの巨大なrepository commitへまとめない。
+- CLIの`終`error修正、command arity修正、interactive I/O修正は失敗理由と対象moduleが異なるため、別々のRed/Green cycleにする。
+- task名lexer導入とSpreadsheet列追加を同じcommitへ混ぜない。lexerのCLI契約を先にGreenにし、その後generatorとfixtureを移行する。
+- pack/flattenの日別容量修正とscheduling algorithmの選択順変更を同時に行わない。
+- 反復完了の失敗原子性とDST暦日計算を同時に変更しない。
+- source scanner削除時に、対応するarchitecture契約を検証なしで失わない。compiler-backedな置換testを先に追加する。
 
 各項目は、既存テストを削除・緩和せず、期待する契約を示すRedテスト、最小のGreen実装、全検証、レビューの順で進める。
