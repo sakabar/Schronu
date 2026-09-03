@@ -40,6 +40,57 @@ struct Project {
     persisted_mutation_revision: Cell<Option<u64>>,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct TaskLocation {
+    project_yaml_file_path: PathBuf,
+    task_path: String,
+}
+
+#[derive(Debug, Eq, PartialEq)]
+pub struct DuplicateTaskIdError {
+    task_id: Uuid,
+    first: TaskLocation,
+    duplicate: TaskLocation,
+}
+
+impl DuplicateTaskIdError {
+    pub fn task_id(&self) -> Uuid {
+        self.task_id
+    }
+
+    pub fn first_project_yaml_file_path(&self) -> &Path {
+        &self.first.project_yaml_file_path
+    }
+
+    pub fn first_task_path(&self) -> &str {
+        &self.first.task_path
+    }
+
+    pub fn duplicate_project_yaml_file_path(&self) -> &Path {
+        &self.duplicate.project_yaml_file_path
+    }
+
+    pub fn duplicate_task_path(&self) -> &str {
+        &self.duplicate.task_path
+    }
+}
+
+impl fmt::Display for DuplicateTaskIdError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            formatter,
+            "duplicate task ID {} at {}:{} and {}:{}",
+            self.task_id,
+            self.first.project_yaml_file_path.display(),
+            self.first.task_path,
+            self.duplicate.project_yaml_file_path.display(),
+            self.duplicate.task_path
+        )
+    }
+}
+
+impl Error for DuplicateTaskIdError {}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum FileRepositoryOperation {
     TraverseDirectory,
