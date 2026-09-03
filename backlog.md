@@ -1794,3 +1794,8 @@ TD-036はparser、handler、runtime、renderer/viewの各契約を別commitに�
 - source scanner削除時に、対応するarchitecture契約を検証なしで失わない。compiler-backedな置換testを先に追加する。
 
 各項目は、既存テストを削除・緩和せず、期待する契約を示すRedテスト、最小のGreen実装、全検証、レビューの順で進める。
+
+## Codexへの依頼方法の例
+
+backlog.mdのWave 1、W1-A〜W1-Jを統括してください。各laneは内部subagentではなく、サイドバーから個別に確認できる新しいCodex taskとして作成し、それぞれ別branch・別worktreeで実装してください。親taskは各taskの進捗を監視し、backlog記載のwrite範囲と依存関係を管理してください。各laneでは契約単位のRed/Green commit、各Green後のsubagent review、品質ゲート、履歴reviewを実施してください。親taskでも各branchのmain...branch差分とcommit履歴を個別reviewし、問題があれば該当taskへ修正を依頼してください。Wave 2は実装せず、残存作業として報告してください。
+各lane taskの初回turnでは、ファイル編集・実装・commitを一切行わず、backlog.md、write範囲、依存関係を調査し、契約単位のRed/Green commit計画のみを提示して終了してください。親taskから計画承認と実装開始の指示を受けるまで待機してください。
