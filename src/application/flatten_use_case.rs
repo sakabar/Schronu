@@ -10,7 +10,7 @@ use super::scheduled_capacity::scheduled_capacity_seconds;
 use super::scheduling_instrumentation::{record_flatten, FlattenEvent};
 use super::task_use_case::ApplicationError;
 use crate::entity::datetime::LogicalDateTimePolicy;
-use crate::entity::task::Status;
+use crate::entity::task::{fixed_start_applies_to_schedule, Status};
 use chrono::{DateTime, Duration, Local, NaiveDate};
 use std::collections::{HashMap, HashSet};
 use uuid::Uuid;
@@ -337,7 +337,11 @@ fn collect_candidates(
         };
         // 通常のzero-work taskは延期対象外だが、fixedは予約容量だけで過負荷を作る。
         // 候補へ残してFixedStart理由と代表taskを未解決結果へ伝える。
-        if first.total_work_seconds <= 0 && !first.task.fixed_start {
+        let fixed_start = fixed_start_applies_to_schedule(
+            first.task.fixed_start,
+            first.task.repetition_interval_days,
+        );
+        if first.total_work_seconds <= 0 && !fixed_start {
             continue;
         }
         let segment_dates = segments
@@ -374,7 +378,7 @@ fn collect_candidates(
             total_work_seconds: first.total_work_seconds,
             is_on_other_side: first.task.is_on_other_side,
             all_work_is_on_overload_date,
-            fixed_start: first.task.fixed_start,
+            fixed_start,
         });
     }
     Ok(candidates)
@@ -508,7 +512,10 @@ fn calculate_scheduled_work_seconds_by_date(
         record_flatten(FlattenEvent::FullScheduleScan(1));
         add_scheduled_work_seconds_by_date(
             &mut usage,
-            scheduled.task.fixed_start,
+            fixed_start_applies_to_schedule(
+                scheduled.task.fixed_start,
+                scheduled.task.repetition_interval_days,
+            ),
             scheduled.scheduled_start,
             scheduled.scheduled_end,
             scheduled.scheduled_work_seconds,
