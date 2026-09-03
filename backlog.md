@@ -1170,7 +1170,7 @@
 - 概算規模: `M`
 - 完了日: 2026-09-04
 - 対応: schedule segmentと06:00境界の交差区間を時系列で返すapplication共通helperを追加した。fixedは予約windowの実時間、flexibleは作業秒を交差時間比で配賦し、整数除算の丸め差を最後の区間へ集約して総量を保存する。packの通常・反復容量とflattenの使用量・延期候補日を同じhelperへ移し、開始日の翌日にだけ過負荷があるsegmentも未解消理由と代表taskへ関連付けるようにした。
-- 検証: 05:30-06:30、複数日、fixed、flexible、分割済みsegment、丸め差、zero容量、日時範囲errorの単体契約と、pack・flatten・CLI製品経路のRed/Greenを確認した。`cargo fmt --check`、`cargo clippy --locked --all-targets -- -D warnings`、`cargo test --locked`、`git diff --check`に成功し、通常testは602件+447件ほか失敗0件だった。3回の責務別subagent reviewと最終履歴reviewの指摘を個別commitで解消した。
+- 検証: 05:30-06:30、複数日、fixed、flexible、分割済みsegment、丸め差、zero容量、日時範囲errorの単体契約と、pack・flatten・CLI製品経路のRed/Greenを確認した。`cargo fmt --check`、`cargo clippy --locked --all-targets -- -D warnings`、`cargo test --locked`、`git diff --check`に成功し、main取り込み後の通常testは601件+449件ほか失敗0件だった。3回の責務別subagent reviewと最終履歴reviewの指摘を個別commitで解消した。
 
 #### 現状と根拠
 
