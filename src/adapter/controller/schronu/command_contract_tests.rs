@@ -100,14 +100,475 @@ fn parser_converts_command_fields_to_typed_values() {
             unit: "day".to_string(),
         }
     );
+    let error = parse_command("後 2 DAYS extra", ParseMode::NonInteractive).unwrap_err();
+    assert_eq!(error.field(), "arguments");
+    assert_eq!(error.reason(), "引数の個数が正しくありません");
+    assert_eq!(error.usage(), "後 <量> [単位]");
+}
+
+#[test]
+fn all_commands_enforce_argument_bounds() {
+    struct Case {
+        command: &'static str,
+        mode: ParseMode,
+        valid_arguments: &'static [&'static str],
+        minimum: usize,
+        maximum: Option<usize>,
+        usage: &'static str,
+    }
+
+    let cases = [
+        Case {
+            command: "樹",
+            mode: ParseMode::NonInteractive,
+            valid_arguments: &[],
+            minimum: 0,
+            maximum: Some(0),
+            usage: "樹",
+        },
+        Case {
+            command: "条",
+            mode: ParseMode::NonInteractive,
+            valid_arguments: &[],
+            minimum: 0,
+            maximum: Some(0),
+            usage: "条",
+        },
+        Case {
+            command: "根",
+            mode: ParseMode::NonInteractive,
+            valid_arguments: &[],
+            minimum: 0,
+            maximum: Some(0),
+            usage: "根",
+        },
+        Case {
+            command: "葉",
+            mode: ParseMode::NonInteractive,
+            valid_arguments: &[],
+            minimum: 0,
+            maximum: Some(0),
+            usage: "葉",
+        },
+        Case {
+            command: "今",
+            mode: ParseMode::NonInteractive,
+            valid_arguments: &[],
+            minimum: 0,
+            maximum: Some(0),
+            usage: "今",
+        },
+        Case {
+            command: "単",
+            mode: ParseMode::NonInteractive,
+            valid_arguments: &[],
+            minimum: 0,
+            maximum: Some(0),
+            usage: "単",
+        },
+        Case {
+            command: "暦",
+            mode: ParseMode::NonInteractive,
+            valid_arguments: &[],
+            minimum: 0,
+            maximum: Some(0),
+            usage: "暦",
+        },
+        Case {
+            command: "帯",
+            mode: ParseMode::NonInteractive,
+            valid_arguments: &[],
+            minimum: 0,
+            maximum: Some(0),
+            usage: "帯",
+        },
+        Case {
+            command: "開",
+            mode: ParseMode::NonInteractive,
+            valid_arguments: &[],
+            minimum: 0,
+            maximum: Some(0),
+            usage: "開",
+        },
+        Case {
+            command: "黒",
+            mode: ParseMode::NonInteractive,
+            valid_arguments: &[],
+            minimum: 0,
+            maximum: Some(0),
+            usage: "黒",
+        },
+        Case {
+            command: "外",
+            mode: ParseMode::NonInteractive,
+            valid_arguments: &[],
+            minimum: 0,
+            maximum: Some(0),
+            usage: "外",
+        },
+        Case {
+            command: "親",
+            mode: ParseMode::NonInteractive,
+            valid_arguments: &[],
+            minimum: 0,
+            maximum: Some(0),
+            usage: "親",
+        },
+        Case {
+            command: "子",
+            mode: ParseMode::NonInteractive,
+            valid_arguments: &[],
+            minimum: 0,
+            maximum: Some(0),
+            usage: "子",
+        },
+        Case {
+            command: "深",
+            mode: ParseMode::NonInteractive,
+            valid_arguments: &[],
+            minimum: 0,
+            maximum: Some(0),
+            usage: "深",
+        },
+        Case {
+            command: "待",
+            mode: ParseMode::NonInteractive,
+            valid_arguments: &[],
+            minimum: 0,
+            maximum: Some(0),
+            usage: "待",
+        },
+        Case {
+            command: "清",
+            mode: ParseMode::NonInteractive,
+            valid_arguments: &[],
+            minimum: 0,
+            maximum: Some(0),
+            usage: "清",
+        },
+        Case {
+            command: "平",
+            mode: ParseMode::NonInteractive,
+            valid_arguments: &[],
+            minimum: 0,
+            maximum: Some(0),
+            usage: "平",
+        },
+        Case {
+            command: "詰",
+            mode: ParseMode::NonInteractive,
+            valid_arguments: &[],
+            minimum: 0,
+            maximum: Some(0),
+            usage: "詰",
+        },
+        Case {
+            command: "高",
+            mode: ParseMode::Interactive,
+            valid_arguments: &[],
+            minimum: 0,
+            maximum: Some(0),
+            usage: "高",
+        },
+        Case {
+            command: "検証",
+            mode: ParseMode::NonInteractive,
+            valid_arguments: &[],
+            minimum: 0,
+            maximum: Some(0),
+            usage: "検証",
+        },
+        Case {
+            command: "tuck",
+            mode: ParseMode::Interactive,
+            valid_arguments: &[],
+            minimum: 0,
+            maximum: Some(0),
+            usage: "tuck",
+        },
+        Case {
+            command: "全",
+            mode: ParseMode::NonInteractive,
+            valid_arguments: &["pattern"],
+            minimum: 0,
+            maximum: Some(1),
+            usage: "全 [pattern]",
+        },
+        Case {
+            command: "尾",
+            mode: ParseMode::NonInteractive,
+            valid_arguments: &["pattern"],
+            minimum: 0,
+            maximum: Some(1),
+            usage: "尾 [pattern]",
+        },
+        Case {
+            command: "選",
+            mode: ParseMode::NonInteractive,
+            valid_arguments: &["00000000-0000-0000-0000-000000000001"],
+            minimum: 0,
+            maximum: Some(1),
+            usage: "選 [task_id]",
+        },
+        Case {
+            command: "働",
+            mode: ParseMode::NonInteractive,
+            valid_arguments: &["15"],
+            minimum: 0,
+            maximum: Some(1),
+            usage: "働 [minutes]",
+        },
+        Case {
+            command: "押",
+            mode: ParseMode::NonInteractive,
+            valid_arguments: &["2"],
+            minimum: 0,
+            maximum: Some(1),
+            usage: "押 [days]",
+        },
+        Case {
+            command: "低",
+            mode: ParseMode::Interactive,
+            valid_arguments: &["2"],
+            minimum: 0,
+            maximum: Some(1),
+            usage: "低 [days]",
+        },
+        Case {
+            command: "逃",
+            mode: ParseMode::NonInteractive,
+            valid_arguments: &["1", "秒"],
+            minimum: 0,
+            maximum: Some(2),
+            usage: "逃 [量] [単位]",
+        },
+        Case {
+            command: "終",
+            mode: ParseMode::NonInteractive,
+            valid_arguments: &["今", "09:00"],
+            minimum: 0,
+            maximum: Some(2),
+            usage: "終 [日付] [時刻]",
+        },
+        Case {
+            command: "見",
+            mode: ParseMode::NonInteractive,
+            valid_arguments: &["00000000-0000-0000-0000-000000000001"],
+            minimum: 1,
+            maximum: Some(1),
+            usage: "見 <task_id>",
+        },
+        Case {
+            command: "〆",
+            mode: ParseMode::NonInteractive,
+            valid_arguments: &["今"],
+            minimum: 1,
+            maximum: Some(1),
+            usage: "〆 <日付または時刻>",
+        },
+        Case {
+            command: "予",
+            mode: ParseMode::NonInteractive,
+            valid_arguments: &["15"],
+            minimum: 1,
+            maximum: Some(1),
+            usage: "予 <分>",
+        },
+        Case {
+            command: "実",
+            mode: ParseMode::NonInteractive,
+            valid_arguments: &["15"],
+            minimum: 1,
+            maximum: Some(1),
+            usage: "実 <integer>",
+        },
+        Case {
+            command: "重",
+            mode: ParseMode::NonInteractive,
+            valid_arguments: &["1"],
+            minimum: 1,
+            maximum: Some(1),
+            usage: "重 <integer>",
+        },
+        Case {
+            command: "類",
+            mode: ParseMode::NonInteractive,
+            valid_arguments: &["資"],
+            minimum: 1,
+            maximum: Some(1),
+            usage: "類 <カテゴリ>",
+        },
+        Case {
+            command: "新",
+            mode: ParseMode::NonInteractive,
+            valid_arguments: &["task", "15"],
+            minimum: 1,
+            maximum: Some(2),
+            usage: "新 <name> [minutes]",
+        },
+        Case {
+            command: "遊",
+            mode: ParseMode::NonInteractive,
+            valid_arguments: &["task", "15"],
+            minimum: 1,
+            maximum: Some(2),
+            usage: "遊 <name> [minutes]",
+        },
+        Case {
+            command: "突",
+            mode: ParseMode::NonInteractive,
+            valid_arguments: &["task", "15"],
+            minimum: 1,
+            maximum: Some(2),
+            usage: "突 <name> [minutes]",
+        },
+        Case {
+            command: "約",
+            mode: ParseMode::NonInteractive,
+            valid_arguments: &["今", "09:00"],
+            minimum: 1,
+            maximum: Some(2),
+            usage: "約 <日付> [時刻]",
+        },
+        Case {
+            command: "始",
+            mode: ParseMode::NonInteractive,
+            valid_arguments: &["今", "09:00"],
+            minimum: 1,
+            maximum: Some(2),
+            usage: "始 <日付> [時刻]",
+        },
+        Case {
+            command: "上",
+            mode: ParseMode::NonInteractive,
+            valid_arguments: &["task", "15"],
+            minimum: 1,
+            maximum: Some(2),
+            usage: "上 <name> [minutes]",
+        },
+        Case {
+            command: "揃",
+            mode: ParseMode::NonInteractive,
+            valid_arguments: &["15", "全"],
+            minimum: 1,
+            maximum: Some(2),
+            usage: "揃 <分> [全]",
+        },
+        Case {
+            command: "後",
+            mode: ParseMode::NonInteractive,
+            valid_arguments: &["1", "秒"],
+            minimum: 1,
+            maximum: Some(2),
+            usage: "後 <量> [単位]",
+        },
+        Case {
+            command: "空",
+            mode: ParseMode::NonInteractive,
+            valid_arguments: &["今", "09:00"],
+            minimum: 1,
+            maximum: Some(2),
+            usage: "空 <日付> [時刻]",
+        },
+        Case {
+            command: "集",
+            mode: ParseMode::NonInteractive,
+            valid_arguments: &["今", "09:00"],
+            minimum: 1,
+            maximum: Some(2),
+            usage: "集 <日付> [時刻]",
+        },
+        Case {
+            command: "割",
+            mode: ParseMode::NonInteractive,
+            valid_arguments: &["15", "child"],
+            minimum: 2,
+            maximum: Some(2),
+            usage: "割 <minutes> <name>",
+        },
+        Case {
+            command: "連",
+            mode: ParseMode::NonInteractive,
+            valid_arguments: &["task", "15", "1", "2", "suffix"],
+            minimum: 4,
+            maximum: Some(5),
+            usage: "連 <name> <minutes> <begin> <end> [suffix]",
+        },
+        Case {
+            command: "繰",
+            mode: ParseMode::NonInteractive,
+            valid_arguments: &["task", "15", "月", "09:00", "10:00"],
+            minimum: 5,
+            maximum: Some(5),
+            usage: "繰 <name> <minutes> <day> <start> <deadline>",
+        },
+        Case {
+            command: "下",
+            mode: ParseMode::NonInteractive,
+            valid_arguments: &["task", "child", "leaf"],
+            minimum: 1,
+            maximum: None,
+            usage: "下 <name>...",
+        },
+    ];
+
+    for case in cases {
+        let input_at_minimum = std::iter::once(case.command)
+            .chain(case.valid_arguments[..case.minimum].iter().copied())
+            .collect::<Vec<_>>()
+            .join(" ");
+        assert!(
+            parse_command(&input_at_minimum, case.mode).is_ok(),
+            "minimum boundary must parse: {input_at_minimum}"
+        );
+
+        if case.minimum > 0 {
+            let input_below_minimum = std::iter::once(case.command)
+                .chain(case.valid_arguments[..case.minimum - 1].iter().copied())
+                .collect::<Vec<_>>()
+                .join(" ");
+            assert_arity_error(&input_below_minimum, case.mode, case.command, case.usage);
+        }
+
+        if let Some(maximum) = case.maximum {
+            let input_at_maximum = std::iter::once(case.command)
+                .chain(case.valid_arguments[..maximum].iter().copied())
+                .collect::<Vec<_>>()
+                .join(" ");
+            assert!(
+                parse_command(&input_at_maximum, case.mode).is_ok(),
+                "maximum boundary must parse: {input_at_maximum}"
+            );
+            assert_arity_error(
+                &format!("{input_at_maximum} extra"),
+                case.mode,
+                case.command,
+                case.usage,
+            );
+        } else {
+            let unbounded_input = std::iter::once(case.command)
+                .chain(case.valid_arguments.iter().copied())
+                .chain(["another"])
+                .collect::<Vec<_>>()
+                .join(" ");
+            assert!(
+                parse_command(&unbounded_input, case.mode).is_ok(),
+                "unbounded arguments must parse: {unbounded_input}"
+            );
+        }
+    }
+}
+
+fn assert_arity_error(input: &str, mode: ParseMode, command: &str, usage: &str) {
+    let error = parse_command(input, mode).unwrap_err();
+    assert_eq!(error.command(), command, "input: {input}");
+    assert_eq!(error.field(), "arguments", "input: {input}");
     assert_eq!(
-        parse_command("後 2 DAYS extra", ParseMode::NonInteractive).unwrap(),
-        Command::Action(CommandAction::TimeExpression {
-            kind: CommandKind::Defer,
-            canonical_name: "後",
-            values: vec!["2".to_string(), "DAYS".to_string(), "extra".to_string()],
-        })
+        error.reason(),
+        "引数の個数が正しくありません",
+        "input: {input}"
     );
+    assert_eq!(error.usage(), usage, "input: {input}");
 }
 
 #[test]
@@ -242,10 +703,12 @@ fn parse_errors_preserve_field_reason_usage_and_display_contract() {
     );
 
     let deadline_error = parse_command("〆", ParseMode::NonInteractive).unwrap_err();
-    assert_eq!(deadline_error.field(), "deadline");
+    assert_eq!(deadline_error.field(), "arguments");
+    assert_eq!(deadline_error.reason(), "引数の個数が正しくありません");
     assert_eq!(deadline_error.usage(), "〆 <日付または時刻>");
     let category_error = parse_command("類", ParseMode::NonInteractive).unwrap_err();
-    assert_eq!(category_error.field(), "category");
+    assert_eq!(category_error.field(), "arguments");
+    assert_eq!(category_error.reason(), "引数の個数が正しくありません");
     assert_eq!(category_error.usage(), "類 <カテゴリ>");
 }
 

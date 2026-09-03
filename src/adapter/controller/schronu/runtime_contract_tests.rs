@@ -1708,7 +1708,6 @@ fn defer系の通常interactive_commandはflushしshortcutはflushしない() {
 
     for command in [
         "後 09:30",
-        "後 abc 日 extra",
         "清",
         "逃",
         "押",
@@ -1738,6 +1737,38 @@ fn defer系の通常interactive_commandはflushしshortcutはflushしない() {
 
         assert_eq!(stdout.flush_count, 1, "{command}");
     }
+
+    let task = new_test_task_handle("余剰引数ではflushしない対象").unwrap();
+    let task_id = task.get_id().unwrap();
+    let original_snapshot = task.snapshot().unwrap();
+    let mut task_repository = TestTaskRepository::new(task, now);
+    let mut free_time_manager = TestFreeTimeManager::default();
+    let mut focused_task_id_opt = Some(task_id);
+    let mut focus_selection_mode = FocusSelectionMode::highest_priority();
+    focus_selection_mode.set_explicit(true);
+    let mut stdout = FlushTrackingWriter::successful(true);
+
+    let result = execute_interactive_command(
+        &mut stdout,
+        &mut task_repository,
+        &mut free_time_manager,
+        &mut focused_task_id_opt,
+        &now,
+        &mut focus_selection_mode,
+        now,
+        "後 abc 日 extra",
+    );
+
+    assert!(matches!(
+        result,
+        Err(CommandError::Parse(ref error))
+            if error.field() == "arguments"
+                && error.reason() == "引数の個数が正しくありません"
+                && error.usage() == "後 <量> [単位]"
+    ));
+    assert_eq!(stdout.flush_count, 0);
+    assert_eq!(task_repository.task.snapshot().unwrap(), original_snapshot);
+    assert_eq!(focused_task_id_opt, Some(task_id));
 
     for command in ["t", "h", "D", "d", "w", "W", "y"] {
         let task = new_test_task_handle("shortcutのflush対象").unwrap();
@@ -2682,26 +2713,22 @@ fn test_execute_defer_expression_曜日指定は次の該当曜日までpending�
 }
 
 #[test]
-fn test_execute_defer_余剰引数でも単位正規化と入力error表示を維持する() {
+fn test_execute_defer_余剰引数を拒否して状態を維持する() {
     let now = Local.with_ymd_and_hms(2026, 8, 11, 12, 0, 0).unwrap();
     let task = new_test_task_handle("余剰引数の延期対象").unwrap();
     let task_id = task.get_id().unwrap();
+    let original_snapshot = task.snapshot().unwrap();
 
-    let valid = execute_command_for_test(task.clone(), now, Some(task_id), "後 2 DAYS extra");
-    assert_eq!(valid.task.get_orig_status().unwrap(), Status::Pending);
-    assert_eq!(
-        valid.task.get_pending_until().unwrap(),
-        Local.with_ymd_and_hms(2026, 8, 13, 6, 0, 0).unwrap()
-    );
-    assert_eq!(valid.focused_task_id_opt, None);
+    for command in ["後 2 DAYS extra", "後 abc 日 extra"] {
+        let result = execute_command_for_test(task.clone(), now, Some(task_id), command);
 
-    task.set_orig_status(Status::Todo).unwrap();
-    let invalid = execute_command_for_test(task.clone(), now, Some(task_id), "後 abc 日 extra");
-    assert_eq!(invalid.task.get_orig_status().unwrap(), Status::Todo);
-    assert_eq!(invalid.focused_task_id_opt, Some(task_id));
-    assert!(invalid.output.contains(
-        "[Error] 入力エラー: amount: 整数で指定してください (コマンド: 後, 使い方: 後 <数値> <単位>)"
-    ));
+        assert_eq!(result.task.get_orig_status().unwrap(), Status::Todo);
+        assert_eq!(result.task.snapshot().unwrap(), original_snapshot);
+        assert_eq!(result.focused_task_id_opt, Some(task_id));
+        assert!(result.output.contains(
+            "[Error] 入力エラー: arguments: 引数の個数が正しくありません (コマンド: 後, 使い方: 後 <量> [単位])"
+        ));
+    }
 }
 
 #[test]
