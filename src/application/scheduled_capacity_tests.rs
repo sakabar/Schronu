@@ -172,3 +172,20 @@ fn 論理日を計算できない日時は既存errorを保持する() {
         })
     );
 }
+
+#[test]
+fn zero_workでも開始論理日の既存errorを保持する() {
+    let local_datetime = NaiveDate::MIN.and_hms_opt(5, 59, 0).unwrap();
+    let start = DateTime::<Local>::from_naive_utc_and_offset(
+        local_datetime,
+        FixedOffset::east_opt(0).unwrap(),
+    );
+
+    assert_eq!(
+        scheduled_capacity_seconds_by_logical_date(false, start, start + Duration::hours(1), 0,),
+        Err(ApplicationError::LogicalDateOutOfRange {
+            operation: "logical_date",
+            datetime: start,
+        })
+    );
+}
