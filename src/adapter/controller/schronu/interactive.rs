@@ -385,6 +385,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::collections::VecDeque;
 
     #[derive(Default)]
     struct TestWriter(Vec<u8>);
@@ -404,6 +405,227 @@ mod tests {
         fn writeln_newline(&mut self, message: &str) -> std::io::Result<()> {
             writeln!(self, "{message}")
         }
+    }
+
+    struct ScriptedInput(VecDeque<ReceivedInput>);
+
+    impl InputSource for ScriptedInput {
+        fn receive(&mut self, _wait_duration: Duration) -> ReceivedInput {
+            self.0.pop_front().expect("scripted input must not end")
+        }
+    }
+
+    impl ScriptedInput {
+        fn new(inputs: impl IntoIterator<Item = ReceivedInput>) -> Self {
+            Self(inputs.into_iter().collect())
+        }
+    }
+
+    enum FailurePoint {
+        WriteContaining { needle: String, occurrence: usize },
+        LineContaining(String),
+        Flush(usize),
+    }
+
+    struct FailureWriter {
+        failure: FailurePoint,
+        matching_writes: usize,
+        flushes: usize,
+    }
+
+    impl FailureWriter {
+        fn write_containing(needle: impl Into<String>, occurrence: usize) -> Self {
+            Self {
+                failure: FailurePoint::WriteContaining {
+                    needle: needle.into(),
+                    occurrence,
+                },
+                matching_writes: 0,
+                flushes: 0,
+            }
+        }
+
+        fn line_containing(needle: impl Into<String>) -> Self {
+            Self {
+                failure: FailurePoint::LineContaining(needle.into()),
+                matching_writes: 0,
+                flushes: 0,
+            }
+        }
+
+        fn flush(number: usize) -> Self {
+            Self {
+                failure: FailurePoint::Flush(number),
+                matching_writes: 0,
+                flushes: 0,
+            }
+        }
+
+        fn permission_denied() -> std::io::Error {
+            std::io::Error::new(std::io::ErrorKind::PermissionDenied, "injected output failure")
+        }
+    }
+
+    impl Write for FailureWriter {
+        fn write(&mut self, buffer: &[u8]) -> std::io::Result<usize> {
+            if let FailurePoint::WriteContaining { needle, occurrence } = &self.failure {
+                if String::from_utf8_lossy(buffer).contains(needle) {
+                    self.matching_writes += 1;
+                    if self.matching_writes == *occurrence {
+                        return Err(Self::permission_denied());
+                    }
+                }
+            }
+            Ok(buffer.len())
+        }
+
+        fn flush(&mut self) -> std::io::Result<()> {
+            self.flushes += 1;
+            if matches!(self.failure, FailurePoint::Flush(number) if self.flushes == number) {
+                return Err(Self::permission_denied());
+            }
+            Ok(())
+        }
+    }
+
+    impl SchronuWriter for FailureWriter {
+        fn writeln_newline(&mut self, message: &str) -> std::io::Result<()> {
+            if matches!(&self.failure, FailurePoint::LineContaining(needle) if message.contains(needle))
+            {
+                return Err(Self::permission_denied());
+            }
+            Ok(())
+        }
+    }
+
+    fn assert_output_failure<E: std::fmt::Debug>(result: Result<(), DriverRunError<E>>) {
+        match result {
+            Err(DriverRunError::Io(InteractiveIoError::Output(error))) => {
+                assert_eq!(error.kind(), std::io::ErrorKind::PermissionDenied);
+                assert!(std::error::Error::source(&InteractiveIoError::Output(error)).is_some());
+            }
+            other => panic!("expected an output failure, got {other:?}"),
+        }
+    }
+
+    fn run_script(
+        writer: &mut dyn SchronuWriter,
+        inputs: impl IntoIterator<Item = ReceivedInput>,
+        mut outcome_for: impl FnMut(&DriverEvent<'_>) -> DriverOutcome<&'static str, &'static str>,
+    ) -> Result<(), DriverRunError<&'static str>> {
+        let mut input = ScriptedInput::new(inputs);
+        run_driver(Local::now(), writer, &mut input, |_, event| {
+            outcome_for(&event)
+        })
+    }
+
+    #[test]
+    fn prompt_output_failure_is_returned() {
+        let mut writer = FailureWriter::write_containing(termion::clear::CurrentLine.to_string(), 1);
+        let result = run_script(&mut writer, [ReceivedInput::Key(Key::Ctrl('d'))], |event| {
+            match event {
+                DriverEvent::RenderScreen { .. } => DriverOutcome::Continue,
+                DriverEvent::Exit => DriverOutcome::Exit,
+                _ => unreachable!(),
+            }
+        });
+        assert_output_failure(result);
+    }
+
+    #[test]
+    fn refresh_output_failure_is_returned() {
+        let mut writer = FailureWriter::write_containing(termion::clear::All.to_string(), 2);
+        let result = run_script(
+            &mut writer,
+            [ReceivedInput::Refresh, ReceivedInput::Key(Key::Ctrl('d'))],
+            |event| match event {
+                DriverEvent::RenderScreen { .. } | DriverEvent::Refresh => DriverOutcome::Continue,
+                DriverEvent::Exit => DriverOutcome::Exit,
+                _ => unreachable!(),
+            },
+        );
+        assert_output_failure(result);
+    }
+
+    #[test]
+    fn cursor_output_failure_is_returned() {
+        let mut writer = FailureWriter::write_containing(termion::cursor::Left(1).to_string(), 1);
+        let result = run_script(
+            &mut writer,
+            [
+                ReceivedInput::Key(Key::Char('a')),
+                ReceivedInput::Key(Key::Left),
+                ReceivedInput::Key(Key::Ctrl('d')),
+            ],
+            |event| match event {
+                DriverEvent::RenderScreen { .. } => DriverOutcome::Continue,
+                DriverEvent::Exit => DriverOutcome::Exit,
+                _ => unreachable!(),
+            },
+        );
+        assert_output_failure(result);
+    }
+
+    #[test]
+    fn retry_error_output_failure_is_returned() {
+        let mut writer = FailureWriter::line_containing("[Error] retry");
+        let result = run_script(
+            &mut writer,
+            [ReceivedInput::Refresh, ReceivedInput::Key(Key::Ctrl('d'))],
+            |event| match event {
+                DriverEvent::RenderScreen { .. } => DriverOutcome::Continue,
+                DriverEvent::Refresh => DriverOutcome::Retry("retry"),
+                DriverEvent::Exit => DriverOutcome::Exit,
+                _ => unreachable!(),
+            },
+        );
+        assert_output_failure(result);
+    }
+
+    #[test]
+    fn submitted_prompt_output_failure_is_returned() {
+        let mut writer = FailureWriter::write_containing("schronu> ", 2);
+        let result = run_script(
+            &mut writer,
+            [
+                ReceivedInput::Key(Key::Char('a')),
+                ReceivedInput::Key(Key::Char('\n')),
+                ReceivedInput::Key(Key::Ctrl('d')),
+            ],
+            |event| match event {
+                DriverEvent::RenderScreen { .. } => DriverOutcome::Continue,
+                DriverEvent::Submit { .. } => DriverOutcome::Submitted,
+                DriverEvent::Exit => DriverOutcome::Exit,
+                _ => unreachable!(),
+            },
+        );
+        assert_output_failure(result);
+    }
+
+    #[test]
+    fn exit_output_failure_is_returned() {
+        let mut writer = FailureWriter::write_containing(termion::clear::CurrentLine.to_string(), 2);
+        let result = run_script(&mut writer, [ReceivedInput::Key(Key::Ctrl('d'))], |event| {
+            match event {
+                DriverEvent::RenderScreen { .. } => DriverOutcome::Continue,
+                DriverEvent::Exit => DriverOutcome::Exit,
+                _ => unreachable!(),
+            }
+        });
+        assert_output_failure(result);
+    }
+
+    #[test]
+    fn flush_failure_is_returned() {
+        let mut writer = FailureWriter::flush(1);
+        let result = run_script(&mut writer, [ReceivedInput::Key(Key::Ctrl('d'))], |event| {
+            match event {
+                DriverEvent::RenderScreen { .. } => DriverOutcome::Continue,
+                DriverEvent::Exit => DriverOutcome::Exit,
+                _ => unreachable!(),
+            }
+        });
+        assert_output_failure(result);
     }
 
     #[test]
