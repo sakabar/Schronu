@@ -1,6 +1,6 @@
 use crate::adapter::gateway::yaml::{task_snapshot_to_yaml, yaml_to_task};
 use crate::application::interface::{
-    RepositoryReloadOutcome, TaskRepositoryError,
+    ProjectRegistrationError, RepositoryReloadOutcome, TaskRepositoryError,
     TaskRepositoryOperation as ApplicationRepositoryOperation, TaskRepositoryTrait,
 };
 use crate::entity::task::extract_leaf_tasks_from_project;
@@ -759,17 +759,38 @@ impl TaskRepositoryTrait for TaskRepository {
         Ok(None)
     }
 
-    fn start_new_project(&mut self, root_task: TaskHandle) -> Result<(), TaskTreeError> {
-        let project_name = root_task.get_name()?;
-        let project_id = root_task.get_id()?;
+    fn start_new_project(&mut self, root_task: TaskHandle) -> Result<(), ProjectRegistrationError> {
+        let project_name = root_task
+            .get_name()
+            .map_err(ProjectRegistrationError::TaskTree)?;
+        let project_id = root_task
+            .get_id()
+            .map_err(ProjectRegistrationError::TaskTree)?;
+        let priority = root_task
+            .get_priority()
+            .map_err(ProjectRegistrationError::TaskTree)?;
 
         let yyyymmdd = self.last_synced_time.format("%Y%m%d").to_string();
         let dir_name = project_directory_name(&yyyymmdd, &project_name, project_id);
         let project_dir_path = Path::new(&self.project_storage_dir_name).join(dir_name);
-
         let project_yaml_file_path = project_dir_path.join("project.yaml");
 
-        let priority = root_task.get_priority()?;
+        for project in &self.projects {
+            if project
+                .root_task
+                .get_by_id(project_id)
+                .map_err(ProjectRegistrationError::TaskTree)?
+                .is_some()
+            {
+                return Err(ProjectRegistrationError::DuplicateTaskId(project_id));
+            }
+            if project.project_dir_path == project_dir_path {
+                return Err(ProjectRegistrationError::DuplicateStoragePath(
+                    project_dir_path,
+                ));
+            }
+        }
+
         let project = Project::new(
             root_task,
             project_dir_path,
@@ -777,7 +798,8 @@ impl TaskRepositoryTrait for TaskRepository {
             priority,
         );
 
-        self.cache_task_and_descendants(&project.root_task)?;
+        self.cache_task_and_descendants(&project.root_task)
+            .map_err(ProjectRegistrationError::TaskTree)?;
         self.projects.push(project);
         Ok(())
     }

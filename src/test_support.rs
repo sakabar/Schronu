@@ -1,6 +1,6 @@
 use crate::application::interface::{
     BusyTimeSlotLoadError, BusyTimeSlotRegistrationError, FreeTimeManagerTrait,
-    TaskRepositoryError, TaskRepositoryTrait,
+    ProjectRegistrationError, TaskRepositoryError, TaskRepositoryTrait,
 };
 use crate::entity::task::{TaskAttr, TaskHandle, TaskTreeError};
 use chrono::{DateTime, Local, TimeZone};
@@ -42,6 +42,7 @@ pub(crate) struct TestTaskRepository {
     now: DateTime<Local>,
     highest_priority_leaf_task_id: Option<Uuid>,
     save_count: Cell<usize>,
+    registration_error: Option<ProjectRegistrationError>,
 }
 
 impl TestTaskRepository {
@@ -51,6 +52,7 @@ impl TestTaskRepository {
             now,
             highest_priority_leaf_task_id: None,
             save_count: Cell::new(0),
+            registration_error: None,
         }
     }
 
@@ -68,6 +70,10 @@ impl TestTaskRepository {
 
     pub(crate) fn highest_priority_leaf_task_id(&self) -> Option<Uuid> {
         self.highest_priority_leaf_task_id
+    }
+
+    pub(crate) fn set_registration_error(&mut self, error: ProjectRegistrationError) {
+        self.registration_error = Some(error);
     }
 }
 
@@ -129,7 +135,10 @@ impl TaskRepositoryTrait for TestTaskRepository {
         Ok(None)
     }
 
-    fn start_new_project(&mut self, root_task: TaskHandle) -> Result<(), TaskTreeError> {
+    fn start_new_project(&mut self, root_task: TaskHandle) -> Result<(), ProjectRegistrationError> {
+        if let Some(error) = self.registration_error.clone() {
+            return Err(error);
+        }
         self.projects.push(root_task);
         Ok(())
     }

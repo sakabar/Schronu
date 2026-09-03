@@ -176,22 +176,17 @@ fn test_start_new_project_既存taskと同じuuidを拒否して状態を変更�
     let mut repository = TaskRepository::new(storage_dir.path_str());
     repository.sync_clock(now).unwrap();
     repository
-        .start_new_project(project_root_with_identity(
-            "既存project",
-            duplicate_id,
-            now,
-        ))
+        .start_new_project(project_root_with_identity("既存project", duplicate_id, now))
         .unwrap();
 
     let actual = repository
-        .start_new_project(project_root_with_identity(
-            "重複project",
-            duplicate_id,
-            now,
-        ))
+        .start_new_project(project_root_with_identity("重複project", duplicate_id, now))
         .unwrap_err();
 
-    assert_eq!(actual, ProjectRegistrationError::DuplicateTaskId(duplicate_id));
+    assert_eq!(
+        actual,
+        ProjectRegistrationError::DuplicateTaskId(duplicate_id)
+    );
     assert_eq!(repository.get_all_projects().len(), 1);
     assert_eq!(
         repository
@@ -230,11 +225,7 @@ fn test_start_new_project_既存projectと同じ保存先を拒否して状態�
     ));
 
     let actual = repository
-        .start_new_project(project_root_with_identity(
-            "同じ保存先",
-            candidate_id,
-            now,
-        ))
+        .start_new_project(project_root_with_identity("同じ保存先", candidate_id, now))
         .unwrap_err();
 
     assert_eq!(
