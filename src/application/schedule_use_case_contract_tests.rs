@@ -317,6 +317,39 @@ fn get_scheduleはfixed_start属性をpolicyへ渡し指定開始を保持する
 }
 
 #[test]
+fn get_scheduleは反復親のfixed_startを生成用属性として予定から除外する() {
+    let now = Local.with_ymd_and_hms(2026, 9, 4, 1, 0, 0).unwrap();
+    let parent_start = Local.with_ymd_and_hms(2026, 9, 3, 21, 4, 6).unwrap();
+    let parent = task_with_schedule("反復親", parent_start, 15 * 60, 0);
+    parent.set_fixed_start(true).unwrap();
+    parent.set_repetition_interval_days_opt(Some(7)).unwrap();
+    parent
+        .set_pending_until(Local.with_ymd_and_hms(2037, 12, 31, 23, 59, 59).unwrap())
+        .unwrap();
+    parent.set_orig_status(Status::Pending).unwrap();
+
+    let child_start = Local.with_ymd_and_hms(2026, 9, 9, 21, 4, 6).unwrap();
+    let mut child_attr = crate::test_support::new_task_attr("既存のflexible子");
+    child_attr.set_start_time(child_start);
+    child_attr.set_deadline_time_opt(Some(
+        Local.with_ymd_and_hms(2026, 9, 9, 23, 59, 59).unwrap(),
+    ));
+    let child = parent.create_as_last_child(child_attr);
+    let repository = TestTaskRepository::new(vec![parent.clone()], now);
+
+    let schedule = get_schedule(&repository).unwrap();
+    let child_schedule = schedule
+        .iter()
+        .find(|segment| segment.task.id == child.get_id().unwrap())
+        .unwrap();
+
+    assert_eq!(child_schedule.first_available_time, child_start);
+    assert_eq!(child_schedule.scheduled_start, child_start);
+    assert!(parent.get_fixed_start().unwrap());
+    assert!(!child.get_fixed_start().unwrap());
+}
+
+#[test]
 fn get_scheduleは表現不能なfixed_flexible_atomic終了時刻を構造化errorにする() {
     let now = fixed_now();
 
