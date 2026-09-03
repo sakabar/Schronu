@@ -162,6 +162,10 @@ pub(super) enum CommandError {
     Parse(CommandParseError),
     Application(ApplicationError),
     Output(std::io::Error),
+    ExitSaveDiagnostic {
+        save_error: TaskRepositoryError,
+        output_error: std::io::Error,
+    },
     ExternalOpen {
         target: &'static str,
         source: Box<dyn std::error::Error + Send + Sync>,
@@ -174,6 +178,13 @@ impl std::fmt::Display for CommandError {
             Self::Parse(error) => error.fmt(formatter),
             Self::Application(error) => write!(formatter, "操作エラー: {error}"),
             Self::Output(error) => write!(formatter, "出力エラー: {error}"),
+            Self::ExitSaveDiagnostic {
+                save_error,
+                output_error,
+            } => write!(
+                formatter,
+                "終了前の保存に失敗しました: {save_error}; additionally, failed to display the save error: {output_error}"
+            ),
             Self::ExternalOpen { target, source } => {
                 write!(formatter, "外部起動エラー ({target}): {source}")
             }
@@ -187,6 +198,7 @@ impl std::error::Error for CommandError {
             Self::Parse(error) => Some(error),
             Self::Application(error) => Some(error),
             Self::Output(error) => Some(error),
+            Self::ExitSaveDiagnostic { save_error, .. } => Some(save_error),
             Self::ExternalOpen { source, .. } => Some(source.as_ref()),
         }
     }
@@ -999,12 +1011,16 @@ fn try_save_before_exit(
     match task_repository.save() {
         Ok(()) => Ok(true),
         Err(error) => {
-            render_display_model_with_mode(
+            if let Err(output_error) = render_display_model_with_mode(
                 stdout,
                 &error_display_model(&error),
                 RenderMode::Flushed,
-            )
-            .map_err(CommandError::Output)?;
+            ) {
+                return Err(CommandError::ExitSaveDiagnostic {
+                    save_error: error,
+                    output_error,
+                });
+            }
             Ok(false)
         }
     }
