@@ -5640,6 +5640,87 @@ fn test_non_interactiveの不正属性値はbusy_time読込前に拒否する() 
 }
 
 #[test]
+fn test_non_interactiveの不正argumentはrepositoryもbusy_timeも読込まず保存しない() {
+    let now = Local.with_ymd_and_hms(2026, 8, 27, 12, 0, 0).unwrap();
+
+    for (input, command, field, reason, usage) in [
+        (
+            "extrude invalid",
+            "押",
+            "step_days",
+            "0以上65535以下の整数で指定してください",
+            "押 [days]",
+        ),
+        (
+            "flatten extra",
+            "平",
+            "arguments",
+            "引数の個数が正しくありません",
+            "平",
+        ),
+        (
+            "pack extra",
+            "詰",
+            "arguments",
+            "引数の個数が正しくありません",
+            "詰",
+        ),
+        (
+            "tree extra",
+            "樹",
+            "arguments",
+            "引数の個数が正しくありません",
+            "樹",
+        ),
+    ] {
+        let task = new_test_task_handle("変更しないtask").unwrap();
+        let original_snapshot = task.snapshot().unwrap();
+        let mut repository = TestTaskRepository::new(task, now);
+        let mut free_time_manager = TestFreeTimeManagerWithLoadError::default();
+
+        let error = execute_non_interactive_command_at(
+            &mut repository,
+            &mut free_time_manager,
+            input,
+            now,
+        )
+        .expect_err("不正argumentはRunErrorとして返るべきです");
+
+        match &error {
+            RunError::Command(CommandError::Parse(parse_error)) => {
+                assert_eq!(parse_error.command(), command, "input: {input}");
+                assert_eq!(parse_error.field(), field, "input: {input}");
+                assert_eq!(parse_error.reason(), reason, "input: {input}");
+                assert_eq!(parse_error.usage(), usage, "input: {input}");
+            }
+            unexpected => panic!("unexpected error for {input}: {unexpected:?}"),
+        }
+        assert_eq!(repository.task.snapshot().unwrap(), original_snapshot, "{input}");
+        assert_eq!(free_time_manager.loaded_path(), None, "{input}");
+        assert_eq!(repository.load_attempt_count.get(), 0, "{input}");
+        assert_eq!(
+            repository.reload_if_changed_attempt_count.get(),
+            0,
+            "{input}"
+        );
+        assert_eq!(repository.save_attempt_count.get(), 0, "{input}");
+        assert!(repository.operation_trace().is_empty(), "{input}");
+
+        let mut stderr = Vec::new();
+        assert!(!report_run_result(&mut stderr, Err(error)), "{input}");
+        let output = String::from_utf8(stderr).unwrap();
+        assert!(output.contains("[Error]"), "input: {input}: {output}");
+        let canonical_error = format!(
+            "入力エラー: {field}: {reason} (コマンド: {command}, 使い方: {usage})"
+        );
+        assert!(
+            output.contains(&canonical_error),
+            "input: {input}: {output}"
+        );
+    }
+}
+
+#[test]
 fn test_execute_non_interactive_command_project作成はoperation時刻を共有する() {
     let storage_dir = TestStorageDir::new();
     std::fs::create_dir_all(&storage_dir.path).unwrap();
