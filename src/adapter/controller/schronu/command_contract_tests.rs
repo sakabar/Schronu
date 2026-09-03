@@ -770,12 +770,15 @@ fn extrude_distinguishes_an_omitted_argument_from_an_invalid_one() {
         parse_command("押", ParseMode::NonInteractive).unwrap(),
         Command::Action(CommandAction::Extrude { step_days: None })
     );
-    assert_eq!(
-        parse_command("extrude 15", ParseMode::NonInteractive).unwrap(),
-        Command::Action(CommandAction::Extrude {
-            step_days: Some(15)
-        })
-    );
+    for (input, expected) in [("extrude 0", 0), ("extrude 15", 15), ("押 65535", 65535)] {
+        assert_eq!(
+            parse_command(input, ParseMode::NonInteractive).unwrap(),
+            Command::Action(CommandAction::Extrude {
+                step_days: Some(expected)
+            }),
+            "input: {input}"
+        );
+    }
 
     for input in ["extrude invalid", "押 65536"] {
         let error = parse_command(input, ParseMode::NonInteractive).unwrap_err();
