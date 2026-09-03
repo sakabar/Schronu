@@ -533,6 +533,12 @@ fn parse_arrange(
     arguments: &[String],
 ) -> Result<Command, CommandParseError> {
     let value = required_argument(arguments, definition, "estimated_work_minutes")?;
+    let minutes = parse_i64(
+        value,
+        definition,
+        "estimated_work_minutes",
+        "整数で指定してください",
+    )?;
     let includes_zero_estimate = match arguments.get(1).map(String::as_str) {
         None => false,
         Some("全" | "all") => true,
@@ -546,12 +552,7 @@ fn parse_arrange(
         }
     };
     Ok(Command::Arrange {
-        minutes: parse_i64(
-            value,
-            definition,
-            "estimated_work_minutes",
-            "整数で指定してください",
-        )?,
+        minutes,
         includes_zero_estimate,
     })
 }
