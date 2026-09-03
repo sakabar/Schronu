@@ -15,6 +15,7 @@ use uuid::Uuid;
 
 const MINUTE_SECONDS: i64 = 60;
 const FIXED_RESERVATION_MINUTES: i64 = 380;
+const FLEXIBLE_WORK_MINUTES: i64 = 380;
 const ACTUAL_WORK_MINUTES: i64 = 60;
 
 #[derive(Clone, Copy)]
@@ -78,6 +79,55 @@ impl FixedCapacityFixture {
         daily_free_minutes: i64,
     ) -> RecordingFreeTimeManager {
         RecordingFreeTimeManager::new(daily_free_minutes, self.busy_start, self.busy_end)
+    }
+}
+
+#[derive(Clone, Copy)]
+struct FlexibleCapacityFixture {
+    operation_datetime: DateTime<Local>,
+    busy_start: DateTime<Local>,
+    busy_end: DateTime<Local>,
+    flexible_id: Uuid,
+}
+
+impl FlexibleCapacityFixture {
+    fn new() -> Self {
+        let operation_datetime = datetime(2026, 8, 12, 0, 10);
+        Self {
+            operation_datetime,
+            busy_start: operation_datetime,
+            busy_end: datetime(2026, 8, 12, 0, 30),
+            flexible_id: Uuid::from_u128(2),
+        }
+    }
+
+    fn repository(&self, candidate_minutes: Option<i64>) -> SchedulingRepository {
+        let mut projects = vec![task(
+            "flexible-crossing-boundary",
+            self.flexible_id,
+            self.operation_datetime,
+            self.operation_datetime,
+            FLEXIBLE_WORK_MINUTES,
+            10,
+            Status::Todo,
+        )];
+
+        if let Some(candidate_minutes) = candidate_minutes {
+            projects.push(task(
+                "pack-candidate",
+                Uuid::from_u128(200 + candidate_minutes as u128),
+                self.operation_datetime,
+                datetime(2026, 8, 12, 6, 0),
+                candidate_minutes,
+                1,
+                Status::Pending,
+            ));
+            projects[1]
+                .set_pending_until(datetime(2026, 8, 13, 6, 0))
+                .unwrap();
+        }
+
+        SchedulingRepository::new(projects, self.operation_datetime)
     }
 }
 
@@ -237,6 +287,158 @@ fn fixed容量はbusy控除と論理日配賦をpackとflattenで一致させる
         .find(|overload| overload.date == next_date)
         .unwrap();
     assert_eq!(next_day_overload.excess_work_seconds, MINUTE_SECONDS);
+}
+
+#[test]
+fn flexible容量はbusy控除と論理日配賦をpackとflattenで一致させる() {
+    let fixture = FlexibleCapacityFixture::new();
+    let start_date = NaiveDate::from_ymd_opt(2026, 8, 11).unwrap();
+    let next_date = NaiveDate::from_ymd_opt(2026, 8, 12).unwrap();
+
+    let schedule_repository = fixture.repository(None);
+    let flexible_segments = get_schedule(&schedule_repository)
+        .unwrap()
+        .into_iter()
+        .filter(|segment| segment.task.id == fixture.flexible_id)
+        .collect::<Vec<_>>();
+    assert_eq!(flexible_segments.len(), 1);
+    let flexible_segment = &flexible_segments[0];
+    assert!(!flexible_segment.task.fixed_start);
+    assert_eq!(flexible_segment.scheduled_start, fixture.operation_datetime);
+    assert_eq!(flexible_segment.scheduled_end, datetime(2026, 8, 12, 6, 30));
+    assert_eq!(
+        flexible_segment.scheduled_work_seconds,
+        FLEXIBLE_WORK_MINUTES * MINUTE_SECONDS
+    );
+    assert_eq!(
+        flexible_segment.total_work_seconds,
+        FLEXIBLE_WORK_MINUTES * MINUTE_SECONDS
+    );
+    assert_eq!(
+        (flexible_segment.scheduled_end - flexible_segment.scheduled_start).num_minutes(),
+        FLEXIBLE_WORK_MINUTES
+    );
+
+    let mut maximum_packed_candidate_minutes = 0;
+    for (candidate_minutes, should_pack) in [(12, true), (13, false)] {
+        let repository = fixture.repository(Some(candidate_minutes));
+        let candidate_id = Uuid::from_u128(200 + candidate_minutes as u128);
+        let mut free_time_manager =
+            RecordingFreeTimeManager::new(60, fixture.busy_start, fixture.busy_end);
+
+        let result = pack_tasks(&repository, &mut free_time_manager).unwrap();
+
+        assert_eq!(result.packed_tasks.len(), usize::from(should_pack));
+        assert_eq!(result.skipped_tasks.len(), usize::from(!should_pack));
+        if should_pack {
+            let packed = &result.packed_tasks[0];
+            assert_eq!(packed.task_id, candidate_id);
+            assert_eq!(packed.name, "pack-candidate");
+            assert_eq!(packed.priority, 1);
+            assert_eq!(
+                packed.source_date,
+                NaiveDate::from_ymd_opt(2026, 8, 13).unwrap()
+            );
+            assert_eq!(packed.target_date, next_date);
+            assert_eq!(packed.work_seconds, 12 * MINUTE_SECONDS);
+            maximum_packed_candidate_minutes = packed.work_seconds / MINUTE_SECONDS;
+        } else {
+            let skipped = &result.skipped_tasks[0];
+            assert_eq!(skipped.task_id, candidate_id);
+            assert_eq!(skipped.name, "pack-candidate");
+            assert_eq!(skipped.priority, 1);
+            assert_eq!(skipped.required_work_seconds, 13 * MINUTE_SECONDS);
+        }
+        assert!(free_time_manager.queried(fixture.busy_start, fixture.busy_end));
+    }
+    assert_eq!(maximum_packed_candidate_minutes, 12);
+    let next_day_rho_limit_minutes = 42;
+    let pack_next_day_capacity_minutes =
+        next_day_rho_limit_minutes - maximum_packed_candidate_minutes;
+    let pack_start_day_capacity_minutes = FLEXIBLE_WORK_MINUTES - pack_next_day_capacity_minutes;
+    let pack_observed_capacity = [
+        (start_date, pack_start_day_capacity_minutes),
+        (next_date, pack_next_day_capacity_minutes),
+    ];
+    assert_eq!(pack_observed_capacity, [(start_date, 350), (next_date, 30)]);
+    assert_eq!(
+        pack_observed_capacity
+            .iter()
+            .map(|(_, minutes)| minutes)
+            .sum::<i64>(),
+        FLEXIBLE_WORK_MINUTES
+    );
+
+    let capacity_boundary_repository = fixture.repository(None);
+    let mut capacity_boundary_free_time =
+        RecordingFreeTimeManager::new(30, fixture.busy_start, fixture.busy_end);
+    let capacity_boundary_result = flatten_tasks(
+        &capacity_boundary_repository,
+        &mut capacity_boundary_free_time,
+    )
+    .unwrap();
+
+    assert!(capacity_boundary_result.had_overload);
+    assert_eq!(capacity_boundary_result.unresolved_overloads.len(), 1);
+    let start_day_overload = &capacity_boundary_result.unresolved_overloads[0];
+    assert_eq!(start_day_overload.date, start_date);
+    assert_eq!(start_day_overload.excess_work_seconds, 350 * MINUTE_SECONDS);
+    assert_eq!(
+        start_day_overload.reasons[0].reason,
+        UnresolvedReason::CrossesLogicalDate
+    );
+    assert!(capacity_boundary_result
+        .unresolved_overloads
+        .iter()
+        .all(|overload| overload.date != next_date));
+    assert!(capacity_boundary_free_time.queried(fixture.busy_start, fixture.busy_end));
+
+    let below_capacity_boundary_repository = fixture.repository(None);
+    let mut below_capacity_boundary_free_time =
+        RecordingFreeTimeManager::new(29, fixture.busy_start, fixture.busy_end);
+    let below_capacity_boundary_result = flatten_tasks(
+        &below_capacity_boundary_repository,
+        &mut below_capacity_boundary_free_time,
+    )
+    .unwrap();
+    let below_boundary_start_overload = below_capacity_boundary_result
+        .unresolved_overloads
+        .iter()
+        .find(|overload| overload.date == start_date)
+        .unwrap();
+    assert_eq!(
+        below_boundary_start_overload.excess_work_seconds,
+        350 * MINUTE_SECONDS
+    );
+    let next_day_overload = below_capacity_boundary_result
+        .unresolved_overloads
+        .iter()
+        .find(|overload| overload.date == next_date)
+        .unwrap();
+    assert_eq!(next_day_overload.excess_work_seconds, MINUTE_SECONDS);
+    assert!(below_capacity_boundary_free_time.queried(fixture.busy_start, fixture.busy_end));
+
+    let flatten_start_day_capacity_minutes =
+        below_boundary_start_overload.excess_work_seconds / MINUTE_SECONDS;
+    let below_boundary_free_minutes = 29;
+    let flatten_next_day_capacity_minutes =
+        below_boundary_free_minutes + next_day_overload.excess_work_seconds / MINUTE_SECONDS;
+    let flatten_observed_capacity = [
+        (start_date, flatten_start_day_capacity_minutes),
+        (next_date, flatten_next_day_capacity_minutes),
+    ];
+    assert_eq!(
+        flatten_observed_capacity,
+        [(start_date, 350), (next_date, 30)]
+    );
+    assert_eq!(
+        flatten_observed_capacity
+            .iter()
+            .map(|(_, minutes)| minutes)
+            .sum::<i64>(),
+        FLEXIBLE_WORK_MINUTES
+    );
+    assert_eq!(pack_observed_capacity, flatten_observed_capacity);
 }
 
 fn task(
