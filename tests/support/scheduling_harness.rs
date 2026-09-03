@@ -1,7 +1,7 @@
 use chrono::{DateTime, Local};
 use schronu::application::interface::{
     BusyTimeSlotLoadError, BusyTimeSlotRegistrationError, FreeTimeManagerTrait,
-    TaskRepositoryError, TaskRepositoryTrait,
+    ProjectRegistrationError, TaskRepositoryError, TaskRepositoryTrait,
 };
 #[cfg(test)]
 use schronu::entity::task::Status;
@@ -118,8 +118,9 @@ impl TaskRepositoryTrait for SchedulingRepository {
         Ok(self.tasks_by_id.get(&id).cloned())
     }
 
-    fn start_new_project(&mut self, root_task: TaskHandle) -> Result<(), TaskTreeError> {
-        index_task(&root_task, &mut self.tasks_by_id)?;
+    fn start_new_project(&mut self, root_task: TaskHandle) -> Result<(), ProjectRegistrationError> {
+        index_task(&root_task, &mut self.tasks_by_id)
+            .map_err(ProjectRegistrationError::TaskTree)?;
         self.projects.push(root_task);
         Ok(())
     }

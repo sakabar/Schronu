@@ -725,7 +725,7 @@ pub(super) fn handle_defer_command<C: DeferCommandContext + ?Sized>(
 pub(super) fn handle_finish_placement_command<C: FinishPlacementCommandContext + ?Sized>(
     command: &Command,
     context: &mut C,
-) -> Result<Option<CommandOutcome>, ApplicationError> {
+) -> Result<Option<CommandOutcome>, HandlerError> {
     let kind = command.kind();
     let mut semantic_display = None;
 
@@ -741,33 +741,38 @@ pub(super) fn handle_finish_placement_command<C: FinishPlacementCommandContext +
                 semantic_display = Some(DisplayModel::Tree(context.show_focused_tree()?));
             } else {
                 let now = context.last_synced_time();
-                if let Some(finished_at) = decide_finish_time_values(values, &now)? {
-                    let additional_actual_work_seconds = if values.is_empty() {
-                        let focus_duration_seconds =
-                            (now - context.focus_started_datetime()).num_seconds();
-                        if focus_duration_seconds >= 60 {
-                            focus_duration_seconds
-                        } else {
-                            0
-                        }
+                let finished_at = decide_finish_time_values(values, &now)?.ok_or_else(|| {
+                    HandlerError::Parse(CommandParseError::new(
+                        "終",
+                        "finished_at",
+                        "日時が不正です",
+                        "終 [今|HH:MM[:SS] [日付]]",
+                    ))
+                })?;
+                let additional_actual_work_seconds = if values.is_empty() {
+                    let focus_duration_seconds =
+                        (now - context.focus_started_datetime()).num_seconds();
+                    if focus_duration_seconds >= 60 {
+                        focus_duration_seconds
                     } else {
                         0
-                    };
-                    let input = CompleteTaskInput {
-                        task_id: focused_task.get_id().map_err(ApplicationError::TaskTree)?,
-                        finished_at,
-                        additional_actual_work_seconds,
-                    };
-                    match context.complete_focused_task(input) {
-                        Ok(next_focus_task_id) => {
-                            context.set_focused_task_id(next_focus_task_id);
-                        }
-                        Err(ApplicationError::HasUndoneChildren(_)) => {
-                            semantic_display =
-                                Some(DisplayModel::Tree(context.show_focused_tree()?));
-                        }
-                        Err(_) => {}
                     }
+                } else {
+                    0
+                };
+                let input = CompleteTaskInput {
+                    task_id: focused_task.get_id().map_err(ApplicationError::TaskTree)?,
+                    finished_at,
+                    additional_actual_work_seconds,
+                };
+                match context.complete_focused_task(input) {
+                    Ok(next_focus_task_id) => {
+                        context.set_focused_task_id(next_focus_task_id);
+                    }
+                    Err(ApplicationError::HasUndoneChildren(_)) => {
+                        semantic_display = Some(DisplayModel::Tree(context.show_focused_tree()?));
+                    }
+                    Err(error) => return Err(error.into()),
                 }
             }
         }

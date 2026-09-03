@@ -70,6 +70,13 @@ impl fmt::Display for RepetitionAnchor {
     }
 }
 
+pub(crate) fn fixed_start_applies_to_schedule(
+    fixed_start: bool,
+    repetition_interval_days_opt: Option<i64>,
+) -> bool {
+    fixed_start && repetition_interval_days_opt.is_none()
+}
+
 #[derive(Copy, Clone, Debug, Eq, Hash, PartialEq, Serialize)]
 pub enum ProjectCategory {
     #[serde(rename = "earning")]
@@ -191,7 +198,7 @@ pub struct TaskAttr {
     status: Status, // 評価後のステータス。pendingはpending_untilを加味して評価され、Todo扱いとなる
     is_on_other_side: bool, // 相手ボールか?
     atomic: bool,   // 分割できないタスクか?
-    fixed_start: bool, // 開始時刻をスケジューラが動かしてはならないか?
+    fixed_start: bool, // raw属性。予定上fixedかは反復間隔も含めて判定する。
     pending_until: DateTime<Local>,
     last_synced_time: DateTime<Local>,
 
@@ -387,6 +394,10 @@ impl TaskAttr {
 
     pub fn get_fixed_start(&self) -> bool {
         self.fixed_start
+    }
+
+    pub(crate) fn fixed_start_applies_to_schedule(&self) -> bool {
+        fixed_start_applies_to_schedule(self.fixed_start, self.repetition_interval_days_opt)
     }
 
     pub fn set_fixed_start(&mut self, fixed_start: bool) {
@@ -882,6 +893,13 @@ impl TaskHandle {
         self.node
             .try_borrow_data()
             .map(|attr| attr.get_fixed_start())
+            .map_err(|_| TaskTreeError::Borrow)
+    }
+
+    pub(crate) fn fixed_start_applies_to_schedule(&self) -> Result<bool, TaskTreeError> {
+        self.node
+            .try_borrow_data()
+            .map(|attr| attr.fixed_start_applies_to_schedule())
             .map_err(|_| TaskTreeError::Borrow)
     }
 
