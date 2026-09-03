@@ -65,7 +65,7 @@
 | TD-024 | P1 | 未着手 | M | CLI parserが不正な数値や余分な引数を黙って受理し、更新commandを実行する |
 | TD-025 | P1 | 未着手 | M | 対話CLIのterminal I/O失敗がpanicまたは未検査結果になる |
 | TD-026 | P1 | 未着手 | L | task名をCLI・YAML・MCP・Spreadsheet間で安全にround-tripできない |
-| TD-027 | P1 | 未着手 | S | 残作業時間の補正計算が合法な大値入力で整数overflowする |
+| TD-027 | P1 | 完了 | S | 残作業時間の補正計算が合法な大値入力で整数overflowする |
 | TD-028 | P1 | 未着手 | M | 論理日境界を跨ぐschedule segmentの容量が開始日に全量計上される |
 | TD-029 | P1 | 未着手 | L | 反復task完了の後段失敗で完了状態と親見積もりだけが部分更新される |
 | TD-030 | P1 | 未着手 | S | 00:00以降の日次残容量計算がbusy timeを無視する |
@@ -1129,6 +1129,9 @@
 - 分類: `バグ / 算術安全性`
 - 優先度: `P1`
 - 概算規模: `S`
+- 完了日: 2026-09-04
+- 対応: 残作業補正の減算と倍化をchecked演算へ置換し、中間値が`i64`で表現不能な場合はtask ID、見積秒、実績秒を保持する`RemainingWorkCalculationOverflow`を返すようにした。通常の残作業規則とpack・flattenへのerror伝搬は維持した。
+- 検証: `i64::MAX`近傍かつ60の倍数の見積とその1秒超過の実績による境界testをdebug・release双方で実行し、同一errorとtask view・mutation revision・save回数の不変を確認した。`cargo fmt --check`、`cargo clippy --locked --all-targets -- -D warnings`、`cargo test --locked`、`git diff --check`に成功し、subagent reviewの指摘は0件だった。
 
 #### 現状と根拠
 
