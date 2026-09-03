@@ -220,6 +220,14 @@ fn write_file_atomically(
     )
 }
 
+fn project_directory_name(date: &str, project_name: &str, project_id: Uuid) -> String {
+    // ディレクトリ名からはURLを除く (ディレクトリの区切りに使われうる "/" が入らないようにするため)
+    let http_pattern = Regex::new(r"http.*").expect("project name URL regex must be valid");
+    let project_name_for_dir = http_pattern.replace(project_name, "").replace('/', "-");
+
+    format!("{date}-{project_name_for_dir}-{project_id}")
+}
+
 impl Project {
     fn new(
         root_task: TaskHandle,
@@ -742,14 +750,10 @@ impl TaskRepositoryTrait for TaskRepository {
 
     fn start_new_project(&mut self, root_task: TaskHandle) -> Result<(), TaskTreeError> {
         let project_name = root_task.get_name()?;
+        let project_id = root_task.get_id()?;
 
         let yyyymmdd = self.last_synced_time.format("%Y%m%d").to_string();
-
-        // ディレクトリ名からはURLを除く (ディレクトリの区切りに使われうる "/" が入らないようにするため)
-        let http_pattern = Regex::new(r"http.*").unwrap();
-        let project_name_for_dir = http_pattern.replace(&project_name, "").replace("/", "-");
-
-        let dir_name = format!("{}-{}", yyyymmdd, project_name_for_dir);
+        let dir_name = project_directory_name(&yyyymmdd, &project_name, project_id);
         let project_dir_path = Path::new(&self.project_storage_dir_name).join(dir_name);
 
         let project_yaml_file_path = project_dir_path.join("project.yaml");

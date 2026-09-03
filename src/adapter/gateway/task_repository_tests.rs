@@ -41,8 +41,9 @@ impl TestStorageDir {
         self.path.to_str().expect("test path must be valid UTF-8")
     }
 
-    fn project_dir_path(&self, date: &str, project_name: &str) -> PathBuf {
-        self.path.join(format!("{date}-{project_name}"))
+    fn project_dir_path(&self, date: &str, project_name: &str, project_id: Uuid) -> PathBuf {
+        self.path
+            .join(format!("{date}-{project_name}-{project_id}"))
     }
 }
 
@@ -222,7 +223,7 @@ fn test_save_新規projectのdirectoryとyamlを作る() {
     let root_task = crate::test_support::new_task_handle("保存対象").unwrap();
     let root_task_id = root_task.get_id().unwrap();
     task_repository.start_new_project(root_task).unwrap();
-    let project_dir_path = storage_dir.project_dir_path("20260811", "保存対象");
+    let project_dir_path = storage_dir.project_dir_path("20260811", "保存対象", root_task_id);
     let markdown_dir_path = project_dir_path.join("markdown");
     let project_yaml_file_path = project_dir_path.join("project.yaml");
 
@@ -510,10 +511,10 @@ fn test_save_directory作成失敗を型付きerrorで返す() {
     let now = Local.with_ymd_and_hms(2026, 8, 11, 12, 0, 0).unwrap();
     let mut task_repository = TaskRepository::new(storage_dir.path_str());
     task_repository.sync_clock(now).unwrap();
-    task_repository
-        .start_new_project(crate::test_support::new_task_handle("保存失敗対象").unwrap())
-        .unwrap();
-    let expected_project_dir = storage_dir.project_dir_path("20260811", "保存失敗対象");
+    let task = crate::test_support::new_task_handle("保存失敗対象").unwrap();
+    let task_id = task.get_id().unwrap();
+    task_repository.start_new_project(task).unwrap();
+    let expected_project_dir = storage_dir.project_dir_path("20260811", "保存失敗対象", task_id);
 
     let actual = task_repository.save().unwrap_err();
 
@@ -531,11 +532,11 @@ fn test_save_project_yaml_read失敗でもatomic_writeを試す() {
     let now = Local.with_ymd_and_hms(2026, 8, 11, 12, 0, 0).unwrap();
     let mut task_repository = TaskRepository::new(storage_dir.path_str());
     task_repository.sync_clock(now).unwrap();
-    task_repository
-        .start_new_project(crate::test_support::new_task_handle("read失敗対象").unwrap())
-        .unwrap();
+    let task = crate::test_support::new_task_handle("read失敗対象").unwrap();
+    let task_id = task.get_id().unwrap();
+    task_repository.start_new_project(task).unwrap();
     let project_yaml_path = storage_dir
-        .project_dir_path("20260811", "read失敗対象")
+        .project_dir_path("20260811", "read失敗対象", task_id)
         .join("project.yaml");
     fs::create_dir_all(&project_yaml_path).unwrap();
 
@@ -873,15 +874,17 @@ fn test_save_変更したprojectだけを置換する() {
     repository.sync_clock(now).unwrap();
     let changed_task = crate::test_support::new_task_handle("変更対象").unwrap();
     let unchanged_task = crate::test_support::new_task_handle("未変更対象").unwrap();
+    let changed_task_id = changed_task.get_id().unwrap();
+    let unchanged_task_id = unchanged_task.get_id().unwrap();
     repository.start_new_project(changed_task.clone()).unwrap();
     repository.start_new_project(unchanged_task).unwrap();
     repository.save().unwrap();
 
     let changed_yaml_path = storage_dir
-        .project_dir_path("20260811", "変更対象")
+        .project_dir_path("20260811", "変更対象", changed_task_id)
         .join("project.yaml");
     let unchanged_yaml_path = storage_dir
-        .project_dir_path("20260811", "未変更対象")
+        .project_dir_path("20260811", "未変更対象", unchanged_task_id)
         .join("project.yaml");
     let changed_inode = fs::metadata(&changed_yaml_path).unwrap().ino();
     let unchanged_inode = fs::metadata(&unchanged_yaml_path).unwrap().ino();
@@ -919,10 +922,11 @@ fn test_save_未変更projectはserialize比較対象にしない() {
     repository.sync_clock(now).unwrap();
     let changed_task = crate::test_support::new_task_handle("変更対象").unwrap();
     let unchanged_task = crate::test_support::new_task_handle("未変更対象").unwrap();
+    let unchanged_task_id = unchanged_task.get_id().unwrap();
     repository.start_new_project(changed_task.clone()).unwrap();
     repository.start_new_project(unchanged_task).unwrap();
     repository.save().unwrap();
-    let unchanged_dir = storage_dir.project_dir_path("20260813", "未変更対象");
+    let unchanged_dir = storage_dir.project_dir_path("20260813", "未変更対象", unchanged_task_id);
     fs::remove_dir_all(&unchanged_dir).unwrap();
 
     changed_task.set_estimated_work_seconds(30 * 60).unwrap();
@@ -937,25 +941,25 @@ fn test_save_load直後のprojectはcleanで新規projectだけを保存する()
     let now = Local.with_ymd_and_hms(2026, 8, 13, 12, 0, 0).unwrap();
     let mut source = TaskRepository::new(storage_dir.path_str());
     source.sync_clock(now).unwrap();
-    source
-        .start_new_project(crate::test_support::new_task_handle("読込済み").unwrap())
-        .unwrap();
+    let loaded_task = crate::test_support::new_task_handle("読込済み").unwrap();
+    let loaded_task_id = loaded_task.get_id().unwrap();
+    source.start_new_project(loaded_task).unwrap();
     source.save().unwrap();
 
     let mut repository = TaskRepository::new(storage_dir.path_str());
     repository.sync_clock(now).unwrap();
     repository.load().unwrap();
-    let loaded_dir = storage_dir.project_dir_path("20260813", "読込済み");
+    let loaded_dir = storage_dir.project_dir_path("20260813", "読込済み", loaded_task_id);
     fs::remove_dir_all(&loaded_dir).unwrap();
-    repository
-        .start_new_project(crate::test_support::new_task_handle("新規").unwrap())
-        .unwrap();
+    let new_task = crate::test_support::new_task_handle("新規").unwrap();
+    let new_task_id = new_task.get_id().unwrap();
+    repository.start_new_project(new_task).unwrap();
 
     repository.save().unwrap();
 
     assert!(!loaded_dir.exists());
     assert!(storage_dir
-        .project_dir_path("20260813", "新規")
+        .project_dir_path("20260813", "新規", new_task_id)
         .join("project.yaml")
         .is_file());
 }
@@ -971,7 +975,7 @@ fn test_save_失敗後もdirtyを維持して再試行する() {
     repository.start_new_project(task.clone()).unwrap();
     repository.save().unwrap();
     let project_yaml_path = storage_dir
-        .project_dir_path("20260813", "再試行対象")
+        .project_dir_path("20260813", "再試行対象", task_id)
         .join("project.yaml");
     let old_bytes = fs::read(&project_yaml_path).unwrap();
     fs::remove_file(&project_yaml_path).unwrap();
@@ -1049,11 +1053,12 @@ fn test_save_project失敗時はdisk_revisionだけを先に進める() {
     let mut repository = TaskRepository::new(storage_dir.path_str());
     repository.sync_clock(now).unwrap();
     let task = crate::test_support::new_task_handle("失敗対象").unwrap();
+    let task_id = task.get_id().unwrap();
     repository.start_new_project(task.clone()).unwrap();
     repository.save().unwrap();
     let previous_revision = repository.storage_revision.get().unwrap();
     let project_yaml_path = storage_dir
-        .project_dir_path("20260813", "失敗対象")
+        .project_dir_path("20260813", "失敗対象", task_id)
         .join("project.yaml");
     fs::remove_file(&project_yaml_path).unwrap();
     fs::create_dir(&project_yaml_path).unwrap();
@@ -1141,9 +1146,9 @@ fn test_save_revision_symlinkを拒否して参照先を変更しない() {
     let now = Local.with_ymd_and_hms(2026, 8, 13, 12, 0, 0).unwrap();
     let mut repository = TaskRepository::new(storage_dir.path_str());
     repository.sync_clock(now).unwrap();
-    repository
-        .start_new_project(crate::test_support::new_task_handle("保存対象").unwrap())
-        .unwrap();
+    let task = crate::test_support::new_task_handle("保存対象").unwrap();
+    let task_id = task.get_id().unwrap();
+    repository.start_new_project(task).unwrap();
 
     let actual = repository.save().unwrap_err();
 
@@ -1153,7 +1158,7 @@ fn test_save_revision_symlinkを拒否して参照先を変更しない() {
     assert_eq!(source.path, revision_path);
     assert_eq!(fs::read_to_string(target_path).unwrap(), target_content);
     assert!(!storage_dir
-        .project_dir_path("20260813", "保存対象")
+        .project_dir_path("20260813", "保存対象", task_id)
         .join("project.yaml")
         .exists());
 }
@@ -1192,7 +1197,7 @@ fn test_reload_if_changed_revision一致ならyamlを再読込せずclock同期�
     source.start_new_project(task).unwrap();
     source.save().unwrap();
     let project_yaml_path = storage_dir
-        .project_dir_path("20260813", "cache対象")
+        .project_dir_path("20260813", "cache対象", task_id)
         .join("project.yaml");
     let mut repository = TaskRepository::new(storage_dir.path_str());
     assert_eq!(

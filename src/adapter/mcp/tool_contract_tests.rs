@@ -90,13 +90,13 @@ fn 同一mcp_processの2回目のread_toolは実repositoryのcacheを使う() {
     let now = fixed_now();
     let mut source = TaskRepository::new(storage_path);
     source.sync_clock(now).unwrap();
-    source
-        .start_new_project(new_task_handle("MCP cache対象").unwrap())
-        .unwrap();
+    let task = new_task_handle("MCP cache対象").unwrap();
+    let task_id = task.get_id().unwrap();
+    source.start_new_project(task).unwrap();
     source.save().unwrap();
     let project_yaml_path = storage
         .path
-        .join("20260811-MCP cache対象")
+        .join(format!("20260811-MCP cache対象-{task_id}"))
         .join("project.yaml");
     let repository = TaskRepository::new(storage_path);
     let mut server = McpServer::with_storage_directory(repository, &storage.path);
