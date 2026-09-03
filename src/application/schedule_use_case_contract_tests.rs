@@ -1,5 +1,6 @@
-use super::schedule_use_case::get_schedule;
-use super::task_use_case::get_task;
+use super::interface::TaskRepositoryTrait;
+use super::schedule_use_case::{get_schedule, ScheduledTaskView};
+use super::task_use_case::{get_task, ApplicationError};
 use crate::entity::task::{Status, TaskHandle};
 use crate::test_support::TestTaskRepository;
 use chrono::{DateTime, Duration, FixedOffset, Local, NaiveDate, TimeZone};
@@ -24,6 +25,16 @@ fn is_externally_visible_function_declaration(source_line: &str) -> bool {
 
 fn fixed_now() -> DateTime<Local> {
     Local.with_ymd_and_hms(2026, 8, 11, 12, 0, 0).unwrap()
+}
+
+#[test]
+fn schedule_use_caseの型境界を固定する() {
+    fn assert_contract(
+        _schedule: fn(&dyn TaskRepositoryTrait) -> Result<Vec<ScheduledTaskView>, ApplicationError>,
+    ) {
+    }
+
+    assert_contract(get_schedule);
 }
 
 #[test]
