@@ -232,11 +232,46 @@ fn fixed容量はbusy控除と論理日配賦をpackとflattenで一致させる
     let fixture = FixedCapacityFixture::new();
     let start_date = NaiveDate::from_ymd_opt(2026, 8, 11).unwrap();
     let next_date = NaiveDate::from_ymd_opt(2026, 8, 12).unwrap();
-
-    assert_pack_skips_candidate_when_current_interval_is_busy(
+    let busy_probe_fixed_id = Uuid::from_u128(301);
+    let busy_probe_candidate_id = Uuid::from_u128(302);
+    let busy_probe_repository = fixed_busy_probe_repository(
+        fixture.operation_datetime,
+        busy_probe_fixed_id,
+        busy_probe_candidate_id,
+    );
+    let busy_probe_fixed_segment = get_schedule(&busy_probe_repository)
+        .unwrap()
+        .into_iter()
+        .find(|segment| segment.task.id == busy_probe_fixed_id)
+        .unwrap();
+    assert_eq!(
+        busy_probe_fixed_segment.scheduled_start,
+        datetime(2026, 8, 12, 0, 20)
+    );
+    assert_eq!(
+        busy_probe_fixed_segment.scheduled_end,
+        datetime(2026, 8, 12, 6, 20)
+    );
+    assert!(busy_probe_fixed_segment.scheduled_start < fixture.busy_end);
+    assert!(busy_probe_fixed_segment.scheduled_end > datetime(2026, 8, 12, 6, 0));
+    assert_crossing_segment_busy_changes_pack_result(
+        fixed_busy_probe_repository(
+            fixture.operation_datetime,
+            busy_probe_fixed_id,
+            busy_probe_candidate_id,
+        ),
+        fixed_busy_probe_repository(
+            fixture.operation_datetime,
+            busy_probe_fixed_id,
+            busy_probe_candidate_id,
+        ),
+        busy_probe_candidate_id,
+        1,
         fixture.operation_datetime,
         fixture.busy_start,
         fixture.busy_end,
+        datetime(2026, 8, 12, 8, 36),
+        516,
     );
 
     let schedule_repository = fixture.repository(None);
@@ -415,10 +450,26 @@ fn flexible容量はbusy控除と論理日配賦をpackとflattenで一致させ
     let start_date = NaiveDate::from_ymd_opt(2026, 8, 11).unwrap();
     let next_date = NaiveDate::from_ymd_opt(2026, 8, 12).unwrap();
 
-    assert_pack_skips_candidate_when_current_interval_is_busy(
+    let busy_probe_candidate_minutes = 134;
+    let busy_probe_candidate_id = Uuid::from_u128(200 + busy_probe_candidate_minutes as u128);
+    assert_crossing_segment_busy_changes_pack_result(
+        fixture.repository_with_candidate(Some((
+            busy_probe_candidate_minutes,
+            20,
+            fixture.operation_datetime,
+        ))),
+        fixture.repository_with_candidate(Some((
+            busy_probe_candidate_minutes,
+            20,
+            fixture.operation_datetime,
+        ))),
+        busy_probe_candidate_id,
+        busy_probe_candidate_minutes,
         fixture.operation_datetime,
         fixture.busy_start,
         fixture.busy_end,
+        datetime(2026, 8, 12, 12, 0),
+        720,
     );
 
     let schedule_repository = fixture.repository(None);
@@ -605,14 +656,75 @@ fn flexible容量はbusy控除と論理日配賦をpackとflattenで一致させ
     assert_eq!(pack_observed_capacity, flatten_observed_capacity);
 }
 
-fn assert_pack_skips_candidate_when_current_interval_is_busy(
+#[allow(clippy::too_many_arguments)]
+fn assert_crossing_segment_busy_changes_pack_result(
+    busy_repository: SchedulingRepository,
+    no_busy_repository: SchedulingRepository,
+    candidate_id: Uuid,
+    candidate_minutes: i64,
     operation_datetime: DateTime<Local>,
     busy_start: DateTime<Local>,
     busy_end: DateTime<Local>,
+    expected_query_end: DateTime<Local>,
+    end_of_day_offset_minutes: i64,
 ) {
-    let candidate_id = Uuid::from_u128(999);
+    let mut busy_free_time_manager = RecordingFreeTimeManager::new(0, busy_start, busy_end);
+    let busy_result = pack_tasks_with_end_of_day_offset_minutes(
+        &busy_repository,
+        &mut busy_free_time_manager,
+        end_of_day_offset_minutes,
+    )
+    .unwrap();
+
+    assert!(busy_result.packed_tasks.is_empty());
+    assert_eq!(busy_result.skipped_tasks.len(), 1);
+    assert_eq!(busy_result.skipped_tasks[0].task_id, candidate_id);
+    assert_eq!(busy_result.skipped_tasks[0].name, "pack-candidate");
+    assert_eq!(busy_result.skipped_tasks[0].priority, 20);
+    assert_eq!(
+        busy_result.skipped_tasks[0].required_work_seconds,
+        candidate_minutes * MINUTE_SECONDS
+    );
+    assert!(busy_free_time_manager.queried(operation_datetime, expected_query_end));
+
+    let mut no_busy_free_time_manager = RecordingFreeTimeManager::new(0, busy_start, busy_start);
+    let no_busy_result = pack_tasks_with_end_of_day_offset_minutes(
+        &no_busy_repository,
+        &mut no_busy_free_time_manager,
+        end_of_day_offset_minutes,
+    )
+    .unwrap();
+    let packed = no_busy_result
+        .packed_tasks
+        .iter()
+        .find(|packed| packed.task_id == candidate_id)
+        .unwrap();
+
+    assert_eq!(
+        packed.target_date,
+        NaiveDate::from_ymd_opt(2026, 8, 11).unwrap()
+    );
+    assert_eq!(packed.work_seconds, candidate_minutes * MINUTE_SECONDS);
+    assert!(no_busy_result.skipped_tasks.is_empty());
+}
+
+fn fixed_busy_probe_repository(
+    operation_datetime: DateTime<Local>,
+    fixed_id: Uuid,
+    candidate_id: Uuid,
+) -> SchedulingRepository {
+    let fixed = task(
+        "fixed-busy-crossing-boundary",
+        fixed_id,
+        operation_datetime,
+        datetime(2026, 8, 12, 0, 20),
+        360,
+        10,
+        Status::Todo,
+    );
+    fixed.set_fixed_start(true).unwrap();
     let candidate = task(
-        "busy-only-pack-candidate",
+        "pack-candidate",
         candidate_id,
         operation_datetime,
         operation_datetime,
@@ -623,21 +735,7 @@ fn assert_pack_skips_candidate_when_current_interval_is_busy(
     candidate
         .set_pending_until(datetime(2026, 8, 13, 6, 0))
         .unwrap();
-    let repository = SchedulingRepository::new(vec![candidate], operation_datetime);
-    let mut free_time_manager = RecordingFreeTimeManager::new(0, busy_start, busy_end);
-
-    let result = pack_tasks(&repository, &mut free_time_manager).unwrap();
-
-    assert!(result.packed_tasks.is_empty());
-    assert_eq!(result.skipped_tasks.len(), 1);
-    assert_eq!(result.skipped_tasks[0].task_id, candidate_id);
-    assert_eq!(result.skipped_tasks[0].name, "busy-only-pack-candidate");
-    assert_eq!(result.skipped_tasks[0].priority, 20);
-    assert_eq!(
-        result.skipped_tasks[0].required_work_seconds,
-        MINUTE_SECONDS
-    );
-    assert!(free_time_manager.queried(busy_start, busy_end));
+    SchedulingRepository::new(vec![fixed, candidate], operation_datetime)
 }
 
 fn task(
