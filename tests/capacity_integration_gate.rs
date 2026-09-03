@@ -204,7 +204,7 @@ fn fixed容量はbusy控除と論理日配賦をpackとflattenで一致させる
     }
 
     let flatten_repository = fixture.repository(None);
-    let mut flatten_free_time_manager = fixture.free_time_manager_with_daily_free_minutes(59);
+    let mut flatten_free_time_manager = fixture.free_time_manager_with_daily_free_minutes(30);
     let flatten_result =
         flatten_tasks(&flatten_repository, &mut flatten_free_time_manager).unwrap();
     let start_date = NaiveDate::from_ymd_opt(2026, 8, 11).unwrap();
@@ -221,6 +221,22 @@ fn fixed容量はbusy控除と論理日配賦をpackとflattenで一致させる
         UnresolvedReason::FixedStart
     );
     assert!(flatten_free_time_manager.queried(fixture.busy_start, fixture.busy_end));
+
+    let below_next_day_allocation_repository = fixture.repository(None);
+    let mut below_next_day_allocation_free_time =
+        fixture.free_time_manager_with_daily_free_minutes(29);
+    let below_next_day_allocation_result = flatten_tasks(
+        &below_next_day_allocation_repository,
+        &mut below_next_day_allocation_free_time,
+    )
+    .unwrap();
+    let next_date = NaiveDate::from_ymd_opt(2026, 8, 12).unwrap();
+    let next_day_overload = below_next_day_allocation_result
+        .unresolved_overloads
+        .iter()
+        .find(|overload| overload.date == next_date)
+        .unwrap();
+    assert_eq!(next_day_overload.excess_work_seconds, MINUTE_SECONDS);
 }
 
 fn task(
