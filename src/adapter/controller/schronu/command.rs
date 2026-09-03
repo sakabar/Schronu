@@ -461,65 +461,84 @@ pub(super) fn parse_command(input: &str, mode: ParseMode) -> Result<Command, Com
     definition.validate_argument_count(&arguments)?;
 
     match definition.kind {
-        CommandKind::TuckAway => parse_tuck_away(&arguments, mode),
-        CommandKind::Estimate => parse_estimate(&arguments),
-        CommandKind::Focus => parse_focus(&arguments),
-        CommandKind::Arrange => parse_arrange(&arguments),
+        CommandKind::TuckAway => parse_tuck_away(definition, mode),
+        CommandKind::Estimate => parse_estimate(definition, &arguments),
+        CommandKind::Focus => parse_focus(definition, &arguments),
+        CommandKind::Arrange => parse_arrange(definition, &arguments),
         CommandKind::ShowAll => Ok(Command::ShowAll {
             pattern: arguments.first().cloned(),
         }),
         CommandKind::Defer if arguments.len() == 2 => Ok(Command::Defer {
             amount: parse_i64(
                 &arguments[0],
-                "後",
+                definition,
                 "amount",
                 "整数で指定してください",
-                "後 <量> <単位>",
             )?,
             unit: arguments[1].to_lowercase(),
         }),
-        _ => parse_action(definition.kind, definition.canonical_name, &arguments),
+        _ => parse_action(definition, &arguments),
     }
 }
 
-fn parse_tuck_away(arguments: &[String], mode: ParseMode) -> Result<Command, CommandParseError> {
-    debug_assert!(arguments.is_empty());
+fn parse_tuck_away(
+    definition: CommandDefinition,
+    mode: ParseMode,
+) -> Result<Command, CommandParseError> {
     if mode == ParseMode::NonInteractive {
-        return Err(parse_error("tuck", "mode", "対話モード専用です", "tuck"));
+        return Err(parse_error(
+            definition.canonical_name,
+            "mode",
+            "対話モード専用です",
+            definition.usage,
+        ));
     }
     Ok(Command::TuckAway)
 }
 
-fn parse_estimate(arguments: &[String]) -> Result<Command, CommandParseError> {
-    let value = required_argument(arguments, "予", "estimated_work_minutes", "予 <分>")?;
+fn parse_estimate(
+    definition: CommandDefinition,
+    arguments: &[String],
+) -> Result<Command, CommandParseError> {
+    let value = required_argument(arguments, definition, "estimated_work_minutes")?;
     Ok(Command::Estimate {
         minutes: parse_i64(
             value,
-            "予",
+            definition,
             "estimated_work_minutes",
             "整数で指定してください",
-            "予 <分>",
         )?,
     })
 }
 
-fn parse_focus(arguments: &[String]) -> Result<Command, CommandParseError> {
-    let value = required_argument(arguments, "見", "task_id", "見 <task_id>")?;
+fn parse_focus(
+    definition: CommandDefinition,
+    arguments: &[String],
+) -> Result<Command, CommandParseError> {
+    let value = required_argument(arguments, definition, "task_id")?;
     Ok(Command::Focus {
-        task_id: Uuid::parse_str(value)
-            .map_err(|_| parse_error("見", "task_id", "UUIDで指定してください", "見 <task_id>"))?,
+        task_id: Uuid::parse_str(value).map_err(|_| {
+            parse_error(
+                definition.canonical_name,
+                "task_id",
+                "UUIDで指定してください",
+                definition.usage,
+            )
+        })?,
     })
 }
 
-fn parse_arrange(arguments: &[String]) -> Result<Command, CommandParseError> {
-    let value = required_argument(arguments, "揃", "estimated_work_minutes", "揃 <分> [全]")?;
+fn parse_arrange(
+    definition: CommandDefinition,
+    arguments: &[String],
+) -> Result<Command, CommandParseError> {
+    let value = required_argument(arguments, definition, "estimated_work_minutes")?;
     Ok(Command::Arrange {
         minutes: parse_i64(
             value,
-            "揃",
+            definition,
             "estimated_work_minutes",
             "整数で指定してください",
-            "揃 <分> [全]",
         )?,
         includes_zero_estimate: arguments
             .get(1)
@@ -528,82 +547,55 @@ fn parse_arrange(arguments: &[String]) -> Result<Command, CommandParseError> {
 }
 
 fn parse_action(
-    kind: CommandKind,
-    canonical_name: &'static str,
+    definition: CommandDefinition,
     arguments: &[String],
 ) -> Result<Command, CommandParseError> {
+    let kind = definition.kind;
+    let canonical_name = definition.canonical_name;
     let action = match kind {
         CommandKind::NewProject | CommandKind::HobbyProject | CommandKind::UnplannedProject => {
-            let name = required_argument(
-                arguments,
-                canonical_name,
-                "task_name",
-                "<command> <name> [minutes]",
-            )?;
+            let name = required_argument(arguments, definition, "task_name")?;
             CommandAction::NewProject {
                 kind,
                 canonical_name,
                 name: name.to_string(),
                 estimated_minutes: optional_i64(
                     arguments.get(1),
-                    canonical_name,
+                    definition,
                     "estimated_work_minutes",
-                    "<command> <name> [minutes]",
                 )?,
             }
         }
         CommandKind::Sequential => {
-            if arguments.len() < 4 {
-                return Err(parse_error(
-                    "連",
-                    "arguments",
-                    "名前、見積、開始番号、終了番号が必要です",
-                    "連 <name> <minutes> <begin> <end> [suffix]",
-                ));
-            }
+            let [name, estimated_minutes, begin_index, end_index, suffix @ ..] = arguments else {
+                unreachable!("sequential arity was validated before field parsing")
+            };
             CommandAction::Sequential {
-                name: arguments[0].clone(),
+                name: name.clone(),
                 estimated_minutes: parse_integer_field(
-                    &arguments[1],
-                    "連",
+                    estimated_minutes,
+                    definition,
                     "estimated_work_minutes",
-                    "連 <name> <minutes> <begin> <end> [suffix]",
                 )?,
-                begin_index: parse_integer_field(
-                    &arguments[2],
-                    "連",
-                    "begin_index",
-                    "連 <name> <minutes> <begin> <end> [suffix]",
-                )?,
-                end_index: parse_integer_field(
-                    &arguments[3],
-                    "連",
-                    "end_index",
-                    "連 <name> <minutes> <begin> <end> [suffix]",
-                )?,
-                suffix: arguments.get(4).cloned(),
+                begin_index: parse_integer_field(begin_index, definition, "begin_index")?,
+                end_index: parse_integer_field(end_index, definition, "end_index")?,
+                suffix: suffix.first().cloned(),
             }
         }
         CommandKind::Repeat => {
-            if arguments.len() != 5 {
-                return Err(parse_error(
-                    "繰",
-                    "arguments",
-                    "名前、見積、曜日、開始時刻、締切時刻が必要です",
-                    "繰 <name> <minutes> <day> <start> <deadline>",
-                ));
-            }
+            let [name, estimated_minutes, day, start_time, deadline_time] = arguments else {
+                unreachable!("repeat arity was validated before field parsing")
+            };
             CommandAction::Repeat {
-                name: arguments[0].clone(),
+                name: name.clone(),
                 estimated_minutes: parse_integer_field(
-                    &arguments[1],
-                    "繰",
+                    estimated_minutes,
+                    definition,
                     "estimated_work_minutes",
-                    "繰 <name> <minutes> <day> <start> <deadline>",
                 )?,
-                day: arguments[2].clone(),
-                start_time: arguments[3].clone(),
-                deadline_time: arguments[4].clone(),
+                day: day.clone(),
+                start_time: start_time.clone(),
+                deadline_time: deadline_time.clone(),
             }
         }
         CommandKind::Appointment | CommandKind::Start | CommandKind::Defer => {
@@ -623,22 +615,26 @@ fn parse_action(
                 .first()
                 .map(|value| {
                     Uuid::parse_str(value).map_err(|_| {
-                        parse_error("選", "task_id", "UUIDで指定してください", "選 [task_id]")
+                        parse_error(
+                            canonical_name,
+                            "task_id",
+                            "UUIDで指定してください",
+                            definition.usage,
+                        )
                     })
                 })
                 .transpose()?,
         },
         CommandKind::NextUp => {
-            let name = required_argument(arguments, "上", "task_name", "上 <name> [minutes]")?;
+            let name = required_argument(arguments, definition, "task_name")?;
             CommandAction::TaskWithEstimate {
                 kind,
                 canonical_name,
                 name: name.to_string(),
                 estimated_minutes: optional_i64(
                     arguments.get(1),
-                    "上",
+                    definition,
                     "estimated_work_minutes",
-                    "上 <name> [minutes]",
                 )?,
             }
         }
@@ -646,55 +642,37 @@ fn parse_action(
             names: arguments.to_vec(),
         },
         CommandKind::Split => {
-            if arguments.len() != 2 {
-                return Err(parse_error(
-                    "割",
-                    "arguments",
-                    "分数とtask名が必要です",
-                    "割 <minutes> <name>",
-                ));
-            }
+            let [minutes, name] = arguments else {
+                unreachable!("split arity was validated before field parsing")
+            };
             CommandAction::Split {
-                minutes: parse_integer_field(
-                    &arguments[0],
-                    "割",
-                    "minutes",
-                    "割 <minutes> <name>",
-                )?,
-                name: arguments[1].clone(),
+                minutes: parse_integer_field(minutes, definition, "minutes")?,
+                name: name.clone(),
             }
         }
         CommandKind::Deadline => CommandAction::StringValue {
             kind,
             canonical_name,
-            value: required_argument(arguments, canonical_name, "deadline", "〆 <日付または時刻>")?
-                .to_string(),
+            value: required_argument(arguments, definition, "deadline")?.to_string(),
         },
         CommandKind::Category => CommandAction::StringValue {
             kind,
             canonical_name,
-            value: required_argument(arguments, canonical_name, "category", "類 <カテゴリ>")?
-                .to_string(),
+            value: required_argument(arguments, definition, "category")?.to_string(),
         },
         CommandKind::Actual | CommandKind::Priority => CommandAction::IntegerValue {
             kind,
             canonical_name,
             value: parse_integer_field(
-                required_argument(arguments, canonical_name, "value", "<command> <integer>")?,
-                canonical_name,
+                required_argument(arguments, definition, "value")?,
+                definition,
                 "value",
-                "<command> <integer>",
             )?,
         },
         CommandKind::Work => CommandAction::OptionalInteger {
             kind,
             canonical_name,
-            value: optional_i64(
-                arguments.first(),
-                "働",
-                "actual_work_minutes",
-                "働 [minutes]",
-            )?,
+            value: optional_i64(arguments.first(), definition, "actual_work_minutes")?,
         },
         CommandKind::Escape => CommandAction::Escape {
             defer_expression: (!arguments.is_empty()).then(|| arguments.to_vec()),
@@ -726,15 +704,14 @@ fn parse_action(
                             canonical_name,
                             "recent_days",
                             "0以上の整数で指定してください",
-                            "低 [days]",
+                            definition.usage,
                         ));
                     }
                     parse_i64(
                         value,
-                        canonical_name,
+                        definition,
                         "recent_days",
                         "0以上の整数で指定してください",
-                        "低 [days]",
                     )
                 })
                 .transpose()?;
@@ -778,46 +755,46 @@ fn parse_action(
 
 fn required_argument<'a>(
     arguments: &'a [String],
-    command: &'static str,
+    definition: CommandDefinition,
     field: &'static str,
-    usage: &'static str,
 ) -> Result<&'a str, CommandParseError> {
-    arguments
-        .first()
-        .map(String::as_str)
-        .ok_or_else(|| parse_error(command, field, "値が必要です", usage))
+    arguments.first().map(String::as_str).ok_or_else(|| {
+        parse_error(
+            definition.canonical_name,
+            field,
+            "値が必要です",
+            definition.usage,
+        )
+    })
 }
 
 fn optional_i64(
     value: Option<&String>,
-    command: &'static str,
+    definition: CommandDefinition,
     field: &'static str,
-    usage: &'static str,
 ) -> Result<Option<i64>, CommandParseError> {
     value
-        .map(|value| parse_integer_field(value, command, field, usage))
+        .map(|value| parse_integer_field(value, definition, field))
         .transpose()
 }
 
 fn parse_integer_field(
     value: &str,
-    command: &'static str,
+    definition: CommandDefinition,
     field: &'static str,
-    usage: &'static str,
 ) -> Result<i64, CommandParseError> {
-    parse_i64(value, command, field, "整数で指定してください", usage)
+    parse_i64(value, definition, field, "整数で指定してください")
 }
 
 fn parse_i64(
     value: &str,
-    command: &'static str,
+    definition: CommandDefinition,
     field: &'static str,
     reason: &'static str,
-    usage: &'static str,
 ) -> Result<i64, CommandParseError> {
     value
         .parse()
-        .map_err(|_| parse_error(command, field, reason, usage))
+        .map_err(|_| parse_error(definition.canonical_name, field, reason, definition.usage))
 }
 
 fn parse_error(
