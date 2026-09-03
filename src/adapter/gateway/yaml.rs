@@ -2,9 +2,7 @@ use crate::entity::datetime::parse_local_datetime;
 use crate::entity::task::read_project_category;
 use crate::entity::task::read_status;
 use crate::entity::task::Status;
-use crate::entity::task::{
-    ImmutableTask, RepetitionAnchor, TaskAttr, TaskHandle, TaskSnapshot, TaskTreeError,
-};
+use crate::entity::task::{RepetitionAnchor, TaskAttr, TaskHandle, TaskSnapshot, TaskTreeError};
 use chrono::LocalResult;
 use chrono::TimeZone;
 use chrono::{DateTime, Duration, Local};
@@ -186,43 +184,6 @@ fn task_snapshot_to_yaml_recursive(snapshot: &TaskSnapshot, is_project_root: boo
     }
 
     Yaml::Hash(task_hash)
-}
-
-pub fn yaml_to_immutable_task(yaml: &Yaml, now: DateTime<Local>) -> ImmutableTask {
-    let name: String = yaml["name"].as_str().unwrap_or("").to_string();
-
-    let status_str: String = yaml["status"].as_str().unwrap_or("").to_string();
-    let status: Status = read_status(&status_str).unwrap_or(Status::Todo);
-
-    let pending_until_str: String = yaml["pending_until"].as_str().unwrap_or("").to_string();
-    let mut pending_until: DateTime<Local> = DateTime::<Local>::MIN_UTC.into();
-
-    if let Ok(LocalResult::Single(pu)) =
-        parse_local_datetime(&pending_until_str, "%Y/%m/%d %H:%M:%S")
-    {
-        pending_until = pu;
-    }
-
-    if let Ok(LocalResult::Single(pu)) = parse_local_datetime(&pending_until_str, "%Y/%m/%d %H:%M")
-    {
-        pending_until = pu;
-    }
-
-    if let Ok(LocalResult::Single(pu)) = parse_local_datetime(
-        format!("{} 00:00", pending_until_str).as_str(),
-        "%Y/%m/%d %H:%M",
-    ) {
-        pending_until = pu;
-    }
-
-    let mut children = vec![];
-
-    for child_yaml in yaml["children"].as_vec().unwrap_or(&vec![]) {
-        let child = yaml_to_immutable_task(child_yaml, now);
-        children.push(child);
-    }
-
-    ImmutableTask::new_with_current_time(name, status, pending_until, children, now)
 }
 
 #[derive(Debug, Eq, PartialEq)]
