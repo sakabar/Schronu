@@ -543,6 +543,23 @@ children:
 }
 
 #[test]
+fn test_yaml_to_task_nameの欠落_型違い_空白はpath付きerrorを返す() {
+    for (yaml, expected) in [
+        ("{}", "project.name: is required"),
+        ("name: 42", "project.name: must be a string"),
+        ("name: '   '", "project.name: must not be blank"),
+    ] {
+        let docs = YamlLoader::load_from_str(yaml).unwrap();
+        let actual = yaml_to_task(&docs[0], Local::now()).unwrap_err();
+
+        assert_eq!(
+            actual.to_string(),
+            format!("cannot convert project YAML to task: {expected}")
+        );
+    }
+}
+
+#[test]
 fn test_yaml_to_task_childrenが配列でなければerrorを返す() {
     let docs = YamlLoader::load_from_str(
         "
