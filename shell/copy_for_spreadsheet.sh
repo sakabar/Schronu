@@ -23,12 +23,19 @@ cat - | awk '
     }
     gsub(/[[:space:]]+/, " ", line)
 
+    task_row = ""
     for (i = 1; i <= 9; i++) {
-        printf "%s\t", column[i]
+        task_row = task_row column[i] "\t"
     }
-    print line
+    task_rows[++task_row_count] = task_row line
 }
-' | tac | while IFS=$'\t' read -r rank task_id icon remaining_time scheduled_time priority estimated_minutes project_number category task_name; do
+
+END {
+    for (i = task_row_count; i >= 1; i--) {
+        print task_rows[i]
+    }
+}
+' | while IFS=$'\t' read -r rank task_id icon remaining_time scheduled_time priority estimated_minutes project_number category task_name; do
     prev_cell_row_num=$[$cell_row_num - 1]
 
     scheduled_date=${scheduled_time%%\(*}
