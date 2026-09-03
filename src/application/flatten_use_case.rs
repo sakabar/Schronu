@@ -1,16 +1,16 @@
 use super::daily_capacity::{
     calculate_free_time_minutes_for_logical_date_with_end_of_day_offset_minutes, try_logical_date,
-    try_logical_date_start, try_next_logical_date_start, END_OF_DAY_OFFSET_MINUTES,
+    try_logical_date_start, END_OF_DAY_OFFSET_MINUTES,
 };
 use super::interface::{FreeTimeManagerTrait, TaskRepositoryTrait};
 use super::schedule_use_case::{
     build_schedule_context, get_schedule_from_context_with_overrides, ScheduledTaskView,
 };
-use super::scheduled_capacity::scheduled_capacity_seconds;
+use super::scheduled_capacity::scheduled_capacity_seconds_by_logical_date;
 use super::scheduling_instrumentation::{record_flatten, FlattenEvent};
 use super::task_use_case::ApplicationError;
 use crate::entity::datetime::LogicalDateTimePolicy;
-use crate::entity::task::Status;
+use crate::entity::task::{fixed_start_applies_to_schedule, Status};
 use chrono::{DateTime, Duration, Local, NaiveDate};
 use std::collections::{HashMap, HashSet};
 use uuid::Uuid;
@@ -330,39 +330,49 @@ fn collect_candidates(
     }
 
     let mut candidates = Vec::new();
-    let mut next_logical_date_start_opt = None;
     for segments in segments_by_task.into_values() {
         let Some(first) = segments.first().copied() else {
             continue;
         };
         // 通常のzero-work taskは延期対象外だが、fixedは予約容量だけで過負荷を作る。
         // 候補へ残してFixedStart理由と代表taskを未解決結果へ伝える。
-        if first.total_work_seconds <= 0 && !first.task.fixed_start {
+        let fixed_start = fixed_start_applies_to_schedule(
+            first.task.fixed_start,
+            first.task.repetition_interval_days,
+        );
+        if first.total_work_seconds <= 0 && !fixed_start {
             continue;
         }
         let segment_dates = segments
             .iter()
-            .map(|segment| try_logical_date(segment.scheduled_start))
+            .map(|segment| {
+                scheduled_capacity_seconds_by_logical_date(
+                    fixed_start,
+                    segment.scheduled_start,
+                    segment.scheduled_end,
+                    segment.scheduled_work_seconds,
+                )
+                .map(|capacity_by_date| {
+                    capacity_by_date
+                        .into_iter()
+                        .map(|(date, _)| date)
+                        .collect::<Vec<_>>()
+                })
+            })
             .collect::<Result<Vec<_>, _>>()?;
-        if !segment_dates.contains(&overload_date) {
+        if !segment_dates
+            .iter()
+            .any(|dates| dates.contains(&overload_date))
+        {
             continue;
         }
         let Some(scheduled_start) = segments.iter().map(|segment| segment.scheduled_start).min()
         else {
             continue;
         };
-        let next_logical_date_start = match next_logical_date_start_opt {
-            Some(datetime) => datetime,
-            None => {
-                let datetime = try_next_logical_date_start(try_logical_date_start(overload_date)?)?;
-                next_logical_date_start_opt = Some(datetime);
-                datetime
-            }
-        };
-        let all_work_is_on_overload_date =
-            segments.iter().zip(segment_dates).all(|(segment, date)| {
-                date == overload_date && segment.scheduled_end <= next_logical_date_start
-            });
+        let all_work_is_on_overload_date = segment_dates
+            .iter()
+            .all(|dates| dates.as_slice() == [overload_date]);
         candidates.push(FlattenCandidate {
             task_id: first.task.id,
             name: first.task.name.clone(),
@@ -374,7 +384,7 @@ fn collect_candidates(
             total_work_seconds: first.total_work_seconds,
             is_on_other_side: first.task.is_on_other_side,
             all_work_is_on_overload_date,
-            fixed_start: first.task.fixed_start,
+            fixed_start,
         });
     }
     Ok(candidates)
@@ -508,7 +518,10 @@ fn calculate_scheduled_work_seconds_by_date(
         record_flatten(FlattenEvent::FullScheduleScan(1));
         add_scheduled_work_seconds_by_date(
             &mut usage,
-            scheduled.task.fixed_start,
+            fixed_start_applies_to_schedule(
+                scheduled.task.fixed_start,
+                scheduled.task.repetition_interval_days,
+            ),
             scheduled.scheduled_start,
             scheduled.scheduled_end,
             scheduled.scheduled_work_seconds,
@@ -524,13 +537,14 @@ fn add_scheduled_work_seconds_by_date(
     scheduled_end: DateTime<Local>,
     scheduled_work_seconds: i64,
 ) -> Result<(), ApplicationError> {
-    let date = try_logical_date(scheduled_start)?;
-    *scheduled_work_seconds_by_date.entry(date).or_default() += scheduled_capacity_seconds(
+    for (date, capacity_seconds) in scheduled_capacity_seconds_by_logical_date(
         fixed_start,
         scheduled_start,
         scheduled_end,
         scheduled_work_seconds,
-    );
+    )? {
+        *scheduled_work_seconds_by_date.entry(date).or_default() += capacity_seconds;
+    }
     Ok(())
 }
 
@@ -562,6 +576,38 @@ mod tests {
     }
 
     #[test]
+    fn 平は反復親のfixed_startを生成用属性として延期候補から除外しない() {
+        let now = Local.with_ymd_and_hms(2026, 8, 11, 12, 0, 0).unwrap();
+        let repetition_parent = new_task_handle("反復親").unwrap();
+        repetition_parent.sync_clock(now).unwrap();
+        repetition_parent.set_start_time(now).unwrap();
+        repetition_parent
+            .set_estimated_work_seconds(60 * 60)
+            .unwrap();
+        repetition_parent.set_fixed_start(true).unwrap();
+        repetition_parent
+            .set_repetition_interval_days_opt(Some(7))
+            .unwrap();
+        let repetition_parent_id = repetition_parent.get_id().unwrap();
+
+        let flexible = new_task_handle("通常task").unwrap();
+        flexible.sync_clock(now).unwrap();
+        flexible.set_start_time(now).unwrap();
+        flexible.set_estimated_work_seconds(60 * 60).unwrap();
+        flexible.set_priority(1).unwrap();
+
+        let repository = TestTaskRepository::new(vec![repetition_parent.clone(), flexible], now);
+        let mut free_time_manager = TestFreeTimeManager::new(60);
+
+        let result = flatten_tasks(&repository, &mut free_time_manager).unwrap();
+
+        assert_eq!(result.flattened_tasks.len(), 1);
+        assert_eq!(result.flattened_tasks[0].task_id, repetition_parent_id);
+        assert!(result.unresolved_overloads.is_empty());
+        assert!(repetition_parent.get_fixed_start().unwrap());
+    }
+
+    #[test]
     fn fixedの日次使用量はscheduled_work_secondsでなく予約区間を集計する() {
         let start = Local.with_ymd_and_hms(2026, 8, 11, 12, 0, 0).unwrap();
         let mut usage = HashMap::new();
@@ -579,6 +625,24 @@ mod tests {
             usage.get(&try_logical_date(start).unwrap()),
             Some(&(60 * 60))
         );
+    }
+
+    #[test]
+    fn 平は論理日境界を跨ぐfixed予約を両日の容量へ計上する() {
+        let now = Local.with_ymd_and_hms(2026, 8, 10, 12, 0, 0).unwrap();
+        let fixed_start = Local.with_ymd_and_hms(2026, 8, 11, 5, 30, 0).unwrap();
+        let task = new_task_handle("fixed-crossing-boundary").unwrap();
+        task.sync_clock(now).unwrap();
+        task.set_start_time(fixed_start).unwrap();
+        task.set_estimated_work_seconds(60 * 60).unwrap();
+        task.set_fixed_start(true).unwrap();
+        let repository = TestTaskRepository::new(vec![task], now);
+        let mut free_time_manager = TestFreeTimeManager::new(30);
+
+        let result = flatten_tasks(&repository, &mut free_time_manager).unwrap();
+
+        assert!(!result.had_overload);
+        assert!(result.unresolved_overloads.is_empty());
     }
 
     #[test]

@@ -522,225 +522,6 @@ days_in_advance: 1
 }
 
 #[test]
-fn test_yaml_to_immutable_task_childrenキーが存在しない場合は空配列として登録されること() {
-    let s = "
-name: 'タスク1'
-status: 'todo'
-";
-
-    let docs = YamlLoader::load_from_str(s).unwrap();
-    let project_yaml: &Yaml = &docs[0];
-
-    let actual = yaml_to_immutable_task(project_yaml, yaml_test_now());
-    let expected = ImmutableTask::new_with_name("タスク1".to_string());
-    assert_eq!(actual, expected);
-}
-
-#[test]
-fn test_yaml_to_immutable_task_childrenキーが存在して空配列の場合() {
-    let s = "
-name: 'タスク1'
-children: []
-";
-    let docs = YamlLoader::load_from_str(s).unwrap();
-    let project_yaml: &Yaml = &docs[0];
-
-    let actual = yaml_to_immutable_task(project_yaml, yaml_test_now());
-    let expected = ImmutableTask::new_with_name("タスク1".to_string());
-    assert_eq!(actual, expected);
-}
-
-#[test]
-#[allow(non_snake_case)]
-fn test_yaml_to_immutable_task_statusキーが存在しない場合はTodoとして登録されること() {
-    let s = "
-name: 'タスク1'
-children: []
-";
-
-    let docs = YamlLoader::load_from_str(s).unwrap();
-    let project_yaml: &Yaml = &docs[0];
-
-    let actual = yaml_to_immutable_task(project_yaml, yaml_test_now());
-    let expected = ImmutableTask::new_with_name("タスク1".to_string());
-    assert_eq!(actual, expected);
-}
-
-#[test]
-#[allow(non_snake_case)]
-fn test_yaml_to_immutable_task_statusキーの値が不正な時はTodoとして登録されること() {
-    let s = "
-name: 'タスク1'
-status: 'invalid_status'
-children: []
-";
-
-    let docs = YamlLoader::load_from_str(s).unwrap();
-    let project_yaml: &Yaml = &docs[0];
-
-    let actual = yaml_to_immutable_task(project_yaml, yaml_test_now());
-    let expected = ImmutableTask::new_with_name("タスク1".to_string());
-    assert_eq!(actual, expected);
-}
-
-#[test]
-fn test_yaml_to_immutable_task_childrenキーが存在してnullの場合() {
-    let s = "
-name: 'タスク1'
-status: 'done'
-children:
-";
-    let docs = YamlLoader::load_from_str(s).unwrap();
-    let project_yaml: &Yaml = &docs[0];
-
-    let actual = yaml_to_immutable_task(project_yaml, yaml_test_now());
-    let expected =
-        ImmutableTask::new_with_name_status_children("タスク1".to_string(), Status::Done, vec![]);
-    assert_eq!(actual, expected);
-}
-
-#[test]
-#[allow(non_snake_case)]
-fn test_yaml_to_immutable_task_pending_untilキーが存在しない場合は1970として登録されること() {
-    let s = "
-name: 'タスク1'
-status: 'pending'
-children: []
-";
-
-    let docs = YamlLoader::load_from_str(s).unwrap();
-    let project_yaml: &Yaml = &docs[0];
-
-    let actual = yaml_to_immutable_task(project_yaml, yaml_test_now());
-    // 1970は過去なので、pendingではなくtodoとなる
-    let expected =
-        ImmutableTask::new_with_name_status_children("タスク1".to_string(), Status::Todo, vec![]);
-    assert_eq!(actual, expected);
-}
-
-#[test]
-#[allow(non_snake_case)]
-fn test_yaml_to_immutable_task_pending_untilキーが存在する場合はそれが登録されて現在時刻と比較した上で代入されること_日時(
-) {
-    let s = "
-name: 'タスク1'
-status: 'pending'
-pending_until: '2000/01/01 00:00'
-children: []
-";
-
-    let docs = YamlLoader::load_from_str(s).unwrap();
-    let project_yaml: &Yaml = &docs[0];
-
-    let actual = yaml_to_immutable_task(project_yaml, yaml_test_now());
-    // 2000/01/01は過去なので、pendingではなくtodoとなる
-    let expected = ImmutableTask::new(
-        "タスク1".to_string(),
-        Status::Todo,
-        Local.with_ymd_and_hms(2000, 1, 1, 0, 0, 0).unwrap(),
-        vec![],
-    );
-    assert_eq!(actual, expected);
-}
-
-#[test]
-#[allow(non_snake_case)]
-fn test_yaml_to_immutable_task_pending_untilキーが存在する場合はそれが登録されて現在時刻と比較した上で代入されること_日付(
-) {
-    let s = "
-name: 'タスク1'
-status: 'pending'
-pending_until: '2000/01/01'
-children: []
-";
-
-    let docs = YamlLoader::load_from_str(s).unwrap();
-    let project_yaml: &Yaml = &docs[0];
-
-    let actual = yaml_to_immutable_task(project_yaml, yaml_test_now());
-    // 2000/01/01は過去なので、pendingではなくtodoとなる
-    let expected = ImmutableTask::new(
-        "タスク1".to_string(),
-        Status::Todo,
-        Local.with_ymd_and_hms(2000, 1, 1, 0, 0, 0).unwrap(),
-        vec![],
-    );
-    assert_eq!(actual, expected);
-}
-
-#[test]
-#[allow(non_snake_case)]
-fn test_yaml_to_immutable_task_pending_untilキーが存在する場合はそれが登録されて現在時刻と比較した上で代入されること_日時秒(
-) {
-    let s = "
-name: 'タスク1'
-status: 'pending'
-pending_until: '2000/01/01 01:23:45'
-children: []
-";
-
-    let docs = YamlLoader::load_from_str(s).unwrap();
-    let project_yaml: &Yaml = &docs[0];
-
-    let actual = yaml_to_immutable_task(project_yaml, yaml_test_now());
-    // 2000/01/01は過去なので、pendingではなくtodoとなる
-    let expected = ImmutableTask::new(
-        "タスク1".to_string(),
-        Status::Todo,
-        Local.with_ymd_and_hms(2000, 1, 1, 1, 23, 45).unwrap(),
-        vec![],
-    );
-    assert_eq!(actual, expected);
-}
-
-#[test]
-fn test_yaml_to_immutable_task_再帰的にパーズできること() {
-    let s = "
-name: '親タスク'
-children:
-  - name: '子タスク'
-";
-    let docs = YamlLoader::load_from_str(s).unwrap();
-    let project_yaml: &Yaml = &docs[0];
-
-    let actual = yaml_to_immutable_task(project_yaml, yaml_test_now());
-
-    let child_task = ImmutableTask::new_with_name("子タスク".to_string());
-    let parent_task =
-        ImmutableTask::new_with_name_children("親タスク".to_string(), vec![child_task]);
-    assert_eq!(actual, parent_task);
-}
-
-#[test]
-fn test_yaml_to_immutable_taskはcaller指定時刻を全nodeのpending判定へ共有する() {
-    let s = "
-name: '親タスク'
-status: 'pending'
-pending_until: '2001/01/01 00:00:00'
-children:
-  - name: '子タスク'
-    status: 'pending'
-    pending_until: '2001/01/01 00:00:00'
-    children:
-      - name: '孫タスク'
-        status: 'pending'
-        pending_until: '2001/01/01 00:00:00'
-";
-    let docs = YamlLoader::load_from_str(s).unwrap();
-    let project_yaml: &Yaml = &docs[0];
-    let operation_now = Local.with_ymd_and_hms(2000, 1, 1, 0, 0, 0).unwrap();
-
-    let actual = yaml_to_immutable_task(project_yaml, operation_now);
-
-    assert_eq!(actual.get_status(), &Status::Pending);
-    assert_eq!(actual.get_children()[0].get_status(), &Status::Pending);
-    assert_eq!(
-        actual.get_children()[0].get_children()[0].get_status(),
-        &Status::Pending
-    );
-}
-
-#[test]
 fn test_yaml_to_taskは欠落した生成時刻と開始時刻へoperation時刻を全nodeで共有する() {
     let docs = YamlLoader::load_from_str(
         "
@@ -759,6 +540,23 @@ children:
     assert_eq!(actual.get_start_time().unwrap(), operation_now);
     assert_eq!(child.get_create_time().unwrap(), operation_now);
     assert_eq!(child.get_start_time().unwrap(), operation_now);
+}
+
+#[test]
+fn test_yaml_to_task_nameの欠落_型違い_空白はpath付きerrorを返す() {
+    for (yaml, expected) in [
+        ("{}", "project.name: is required"),
+        ("name: 42", "project.name: must be a string"),
+        ("name: '   '", "project.name: must not be blank"),
+    ] {
+        let docs = YamlLoader::load_from_str(yaml).unwrap();
+        let actual = yaml_to_task(&docs[0], Local::now()).unwrap_err();
+
+        assert_eq!(
+            actual.to_string(),
+            format!("cannot convert project YAML to task: {expected}")
+        );
+    }
 }
 
 #[test]

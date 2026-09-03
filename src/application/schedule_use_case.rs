@@ -170,11 +170,12 @@ fn build_schedule_candidates(
         };
         candidates.push(TaskScheduleCandidate {
             id,
-            remaining_seconds: calculate_remaining_work_seconds(&task)
-                .map_err(ApplicationError::TaskTree)?,
+            remaining_seconds: calculate_remaining_work_seconds(id, &task)?,
             dependency_ids: child_ids_by_parent_id.remove(&id).unwrap_or_default(),
             atomic: task.get_atomic().map_err(ApplicationError::TaskTree)?,
-            fixed_start: task.get_fixed_start().map_err(ApplicationError::TaskTree)?,
+            fixed_start: task
+                .fixed_start_applies_to_schedule()
+                .map_err(ApplicationError::TaskTree)?,
             fixed_start_time: task.get_start_time().map_err(ApplicationError::TaskTree)?,
             estimated_work_seconds: task
                 .get_estimated_work_seconds()
@@ -205,7 +206,7 @@ fn list_ancestor_schedule_times_checked(
     // Phase 1: 子の終了を親の開始下限にする。ただしfixedはdependencyで動かさない。
     while let Some(current) = task {
         let fixed = current
-            .get_fixed_start()
+            .fixed_start_applies_to_schedule()
             .map_err(ApplicationError::TaskTree)?;
         let own_start = if fixed {
             current
@@ -231,7 +232,7 @@ fn list_ancestor_schedule_times_checked(
     let mut parent_required_start = DateTime::<Local>::MAX_UTC.with_timezone(&Local);
     for (rough_start, current) in ancestors.iter_mut().rev() {
         if current
-            .get_fixed_start()
+            .fixed_start_applies_to_schedule()
             .map_err(ApplicationError::TaskTree)?
         {
             parent_required_start = min(parent_required_start, *rough_start);
@@ -268,7 +269,7 @@ fn list_ancestor_schedule_times_checked(
     child_finish = DateTime::<Local>::MIN_UTC.with_timezone(&Local);
     for (start, current) in &mut ancestors {
         if current
-            .get_fixed_start()
+            .fixed_start_applies_to_schedule()
             .map_err(ApplicationError::TaskTree)?
         {
             *start = current
@@ -324,14 +325,31 @@ fn map_scheduling_policy_error(error: SchedulingPolicyError) -> ApplicationError
     }
 }
 
-fn calculate_remaining_work_seconds(task: &TaskHandle) -> Result<i64, TaskTreeError> {
-    let estimated_work_seconds = task.get_estimated_work_seconds()?;
-    let actual_work_seconds = task.get_actual_work_seconds()?;
-    if estimated_work_seconds >= actual_work_seconds {
-        Ok(estimated_work_seconds - actual_work_seconds)
+fn calculate_remaining_work_seconds(
+    task_id: Uuid,
+    task: &TaskHandle,
+) -> Result<i64, ApplicationError> {
+    let estimated_work_seconds = task
+        .get_estimated_work_seconds()
+        .map_err(ApplicationError::TaskTree)?;
+    let actual_work_seconds = task
+        .get_actual_work_seconds()
+        .map_err(ApplicationError::TaskTree)?;
+    let remaining_work_seconds = if estimated_work_seconds >= actual_work_seconds {
+        estimated_work_seconds.checked_sub(actual_work_seconds)
     } else {
-        Ok(max(0, estimated_work_seconds * 2 - actual_work_seconds))
-    }
+        estimated_work_seconds
+            .checked_mul(2)
+            .and_then(|doubled_estimate| doubled_estimate.checked_sub(actual_work_seconds))
+    };
+
+    remaining_work_seconds
+        .map(|remaining| max(0, remaining))
+        .ok_or(ApplicationError::RemainingWorkCalculationOverflow {
+            task_id,
+            estimated_work_seconds,
+            actual_work_seconds,
+        })
 }
 
 fn calculate_ancestry_work_seconds(task: &TaskHandle) -> Result<i64, TaskTreeError> {

@@ -1,6 +1,6 @@
 use crate::adapter::gateway::yaml::{task_snapshot_to_yaml, yaml_to_task};
 use crate::application::interface::{
-    RepositoryReloadOutcome, TaskRepositoryError,
+    ProjectRegistrationError, RepositoryReloadOutcome, TaskRepositoryError,
     TaskRepositoryOperation as ApplicationRepositoryOperation, TaskRepositoryTrait,
 };
 use crate::entity::task::extract_leaf_tasks_from_project;
@@ -20,6 +20,8 @@ use std::path::{Path, PathBuf};
 use uuid::Uuid;
 use walkdir::WalkDir;
 use yaml_rust::{Yaml, YamlEmitter, YamlLoader};
+
+const PROJECT_DIRECTORY_COMPONENT_MAX_BYTES: usize = 255;
 
 pub struct TaskRepository {
     projects: Vec<Project>,
@@ -220,6 +222,43 @@ fn write_file_atomically(
     )
 }
 
+fn open_project_file(
+    project_yaml_file_path: &Path,
+) -> Result<(File, PathBuf), FileRepositoryError> {
+    let canonical_path = fs::canonicalize(project_yaml_file_path).map_err(|error| {
+        FileRepositoryError::new(
+            FileRepositoryOperation::OpenFile,
+            project_yaml_file_path,
+            error,
+        )
+    })?;
+    let file = File::open(&canonical_path).map_err(|error| {
+        FileRepositoryError::new(
+            FileRepositoryOperation::OpenFile,
+            project_yaml_file_path,
+            error,
+        )
+    })?;
+    Ok((file, canonical_path))
+}
+
+fn project_directory_name(date: &str, project_name: &str, project_id: Uuid) -> String {
+    // ディレクトリ名からはURLを除く (ディレクトリの区切りに使われうる "/" が入らないようにするため)
+    let http_pattern = Regex::new(r"http.*").expect("project name URL regex must be valid");
+    let project_name_for_dir = http_pattern.replace(project_name, "").replace('/', "-");
+    let prefix = format!("{date}-");
+    let identity_suffix = format!("-{project_id}");
+    let max_name_bytes =
+        PROJECT_DIRECTORY_COMPONENT_MAX_BYTES.saturating_sub(prefix.len() + identity_suffix.len());
+    let mut name_end = project_name_for_dir.len().min(max_name_bytes);
+    while !project_name_for_dir.is_char_boundary(name_end) {
+        name_end -= 1;
+    }
+    let project_name_for_dir = &project_name_for_dir[..name_end];
+
+    format!("{prefix}{project_name_for_dir}{identity_suffix}")
+}
+
 impl Project {
     fn new(
         root_task: TaskHandle,
@@ -365,6 +404,7 @@ impl TaskRepositoryTrait for TaskRepository {
             TaskRepositoryError::new(ApplicationRepositoryOperation::Load, error)
         })?;
         let mut loaded_projects = Vec::new();
+        let mut canonical_project_paths = HashMap::new();
         for entry_result in WalkDir::new(self.project_storage_dir_name.as_str()).sort_by_file_name()
         {
             let entry = entry_result.map_err(|error| {
@@ -404,16 +444,10 @@ impl TaskRepositoryTrait for TaskRepository {
                         )
                     })?
                     .to_path_buf();
-                let mut file = File::open(entry.path()).map_err(|error| {
-                    TaskRepositoryError::new(
-                        ApplicationRepositoryOperation::Load,
-                        FileRepositoryError::new(
-                            FileRepositoryOperation::OpenFile,
-                            &project_yaml_file_path,
-                            error,
-                        ),
-                    )
-                })?;
+                let (mut file, canonical_project_yaml_path) =
+                    open_project_file(&project_yaml_file_path).map_err(|error| {
+                        TaskRepositoryError::new(ApplicationRepositoryOperation::Load, error)
+                    })?;
                 let mut text = String::new();
                 file.read_to_string(&mut text).map_err(|error| {
                     TaskRepositoryError::new(
@@ -464,6 +498,25 @@ impl TaskRepositoryTrait for TaskRepository {
                             ),
                         )
                     })?;
+                if let Some(first_project_yaml_path) = canonical_project_paths
+                    .insert(canonical_project_yaml_path, project_yaml_file_path.clone())
+                {
+                    return Err(TaskRepositoryError::new(
+                        ApplicationRepositoryOperation::Load,
+                        FileRepositoryError::new(
+                            FileRepositoryOperation::ParseProject,
+                            &project_yaml_file_path,
+                            std::io::Error::new(
+                                std::io::ErrorKind::InvalidData,
+                                format!(
+                                    "project YAML paths resolve to the same canonical path: {} and {}",
+                                    first_project_yaml_path.display(),
+                                    project_yaml_file_path.display()
+                                ),
+                            ),
+                        ),
+                    ));
+                }
                 let priority = root_task.get_priority().map_err(|error| {
                     TaskRepositoryError::new(ApplicationRepositoryOperation::Load, error)
                 })?;
@@ -740,21 +793,38 @@ impl TaskRepositoryTrait for TaskRepository {
         Ok(None)
     }
 
-    fn start_new_project(&mut self, root_task: TaskHandle) -> Result<(), TaskTreeError> {
-        let project_name = root_task.get_name()?;
+    fn start_new_project(&mut self, root_task: TaskHandle) -> Result<(), ProjectRegistrationError> {
+        let project_name = root_task
+            .get_name()
+            .map_err(ProjectRegistrationError::TaskTree)?;
+        let project_id = root_task
+            .get_id()
+            .map_err(ProjectRegistrationError::TaskTree)?;
+        let priority = root_task
+            .get_priority()
+            .map_err(ProjectRegistrationError::TaskTree)?;
 
         let yyyymmdd = self.last_synced_time.format("%Y%m%d").to_string();
-
-        // ディレクトリ名からはURLを除く (ディレクトリの区切りに使われうる "/" が入らないようにするため)
-        let http_pattern = Regex::new(r"http.*").unwrap();
-        let project_name_for_dir = http_pattern.replace(&project_name, "").replace("/", "-");
-
-        let dir_name = format!("{}-{}", yyyymmdd, project_name_for_dir);
+        let dir_name = project_directory_name(&yyyymmdd, &project_name, project_id);
         let project_dir_path = Path::new(&self.project_storage_dir_name).join(dir_name);
-
         let project_yaml_file_path = project_dir_path.join("project.yaml");
 
-        let priority = root_task.get_priority()?;
+        for project in &self.projects {
+            if project
+                .root_task
+                .get_by_id(project_id)
+                .map_err(ProjectRegistrationError::TaskTree)?
+                .is_some()
+            {
+                return Err(ProjectRegistrationError::DuplicateTaskId(project_id));
+            }
+            if project.project_dir_path == project_dir_path {
+                return Err(ProjectRegistrationError::DuplicateStoragePath(
+                    project_dir_path,
+                ));
+            }
+        }
+
         let project = Project::new(
             root_task,
             project_dir_path,
@@ -762,7 +832,8 @@ impl TaskRepositoryTrait for TaskRepository {
             priority,
         );
 
-        self.cache_task_and_descendants(&project.root_task)?;
+        self.cache_task_and_descendants(&project.root_task)
+            .map_err(ProjectRegistrationError::TaskTree)?;
         self.projects.push(project);
         Ok(())
     }

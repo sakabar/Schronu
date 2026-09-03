@@ -7,10 +7,10 @@ use super::interface::{FreeTimeManagerTrait, TaskRepositoryTrait};
 use super::schedule_use_case::{
     get_schedule, get_schedule_with_task_first_available_time, ScheduledTaskView,
 };
-use super::scheduled_capacity::scheduled_capacity_seconds;
+use super::scheduled_capacity::scheduled_capacity_seconds_by_logical_date;
 use super::scheduling_instrumentation::{record_pack, PackEvent};
 use super::task_use_case::ApplicationError;
-use crate::entity::task::Status;
+use crate::entity::task::{fixed_start_applies_to_schedule, Status};
 use chrono::{DateTime, Duration, Local, NaiveDate};
 use std::cmp::Reverse;
 use std::collections::{HashMap, HashSet};
@@ -344,18 +344,22 @@ fn calculate_daily_leeway(
     let mut repetitive_work_seconds = HashMap::<NaiveDate, i64>::new();
 
     for scheduled in schedule {
-        let date = try_logical_date(scheduled.scheduled_start)?;
-        if !target_dates.contains(&date) {
-            continue;
-        }
-        let capacity_seconds = scheduled_capacity_seconds(
-            scheduled.task.fixed_start,
+        let capacity_by_date = scheduled_capacity_seconds_by_logical_date(
+            fixed_start_applies_to_schedule(
+                scheduled.task.fixed_start,
+                scheduled.task.repetition_interval_days,
+            ),
             scheduled.scheduled_start,
             scheduled.scheduled_end,
             scheduled.scheduled_work_seconds,
-        );
-        *total_work_seconds.entry(date).or_default() += capacity_seconds;
-        if repository
+        )?;
+        if !capacity_by_date
+            .iter()
+            .any(|(date, _)| target_dates.contains(date))
+        {
+            continue;
+        }
+        let is_repetitive = repository
             .get_by_id(scheduled.task.id)
             .map_err(ApplicationError::TaskTree)?
             .map(|task| {
@@ -364,9 +368,15 @@ fn calculate_daily_leeway(
             })
             .transpose()
             .map_err(ApplicationError::TaskTree)?
-            .unwrap_or(false)
-        {
-            *repetitive_work_seconds.entry(date).or_default() += capacity_seconds;
+            .unwrap_or(false);
+        for (date, capacity_seconds) in capacity_by_date {
+            if !target_dates.contains(&date) {
+                continue;
+            }
+            *total_work_seconds.entry(date).or_default() += capacity_seconds;
+            if is_repetitive {
+                *repetitive_work_seconds.entry(date).or_default() += capacity_seconds;
+            }
         }
     }
 
