@@ -58,24 +58,24 @@
 | TD-017 | P1 | 完了 | XL | `TaskHandle`の既存infallible APIが内部不変条件の破れをpanicとして扱う |
 | TD-018 | P1 | 完了 | XL | CLI runtimeにcommand orchestrationと表示計算が残っている |
 | TD-019 | P2 | 完了 | L | scheduling性能計測の状態がapplicationの業務ロジックへ伝播している |
-| TD-020 | P0 | 未着手 | M | 同日・同名またはsanitize後に同名となるprojectが同じ保存先を共有し、再読込時に1件消失する |
+| TD-020 | P0 | 完了 | M | 同日・同名またはsanitize後に同名となるprojectが同じ保存先を共有し、再読込時に1件消失する |
 | TD-021 | P1 | 未着手 | M | repositoryが重複UUIDを受理し、ID指定操作の対象が走査順に依存する |
 | TD-022 | P1 | 未着手 | XL | 複数project保存でrevisionだけが先行し、失敗時にdisk snapshotが部分更新される |
-| TD-023 | P1 | 未着手 | S | `終`が不正時刻と一部application errorを成功扱いで握り潰す |
-| TD-024 | P1 | 未着手 | M | CLI parserが不正な数値や余分な引数を黙って受理し、更新commandを実行する |
+| TD-023 | P1 | 完了 | S | `終`が不正時刻と一部application errorを成功扱いで握り潰す |
+| TD-024 | P1 | 完了 | M | CLI parserが不正な数値や余分な引数を黙って受理し、更新commandを実行する |
 | TD-025 | P1 | 完了 | M | 対話CLIのterminal I/O失敗がpanicまたは未検査結果になる |
 | TD-026 | P1 | 未着手 | L | task名をCLI・YAML・MCP・Spreadsheet間で安全にround-tripできない |
-| TD-027 | P1 | 未着手 | S | 残作業時間の補正計算が合法な大値入力で整数overflowする |
-| TD-028 | P1 | 未着手 | M | 論理日境界を跨ぐschedule segmentの容量が開始日に全量計上される |
+| TD-027 | P1 | 完了 | S | 残作業時間の補正計算が合法な大値入力で整数overflowする |
+| TD-028 | P1 | 完了 | M | 論理日境界を跨ぐschedule segmentの容量が開始日に全量計上される |
 | TD-029 | P1 | 未着手 | L | 反復task完了の後段失敗で完了状態と親見積もりだけが部分更新される |
 | TD-030 | P1 | 未着手 | S | 00:00以降の日次残容量計算がbusy timeを無視する |
 | TD-031 | P1 | 未着手 | S | Spreadsheet変換がrank 1000以降のtask行を黙って破棄する |
-| TD-032 | P1 | 未着手 | S | macOS標準環境でSpreadsheet変換の`tac`依存が空出力の成功になる |
+| TD-032 | P1 | 完了 | S | macOS標準環境でSpreadsheet変換の`tac`依存が空出力の成功になる |
 | TD-033 | P1 | 未着手 | M | 同一taskの複数segmentをApps Scriptが別行へ同期する |
-| TD-034 | P1 | 未着手 | M | Spreadsheet入力が存在しない日付と不正な時分秒をcommandへ変換する |
+| TD-034 | P1 | 一部完了(W1-J) | M | Spreadsheet入力が存在しない日付と不正な時分秒をcommandへ変換する |
 | TD-035 | P2 | 未着手 | M | 反復延期がDST境界で開始時刻とdeadlineの壁時計時刻をずらす |
 | TD-036 | P2 | 未着手 | L | source textを独自parseするarchitecture testがRust構文と実装名へ強く結合している |
-| TD-037 | P2 | 未着手 | M | 未使用のlenient YAML変換APIがstrict loaderと並存している |
+| TD-037 | P2 | 完了 | M | 未使用のlenient YAML変換APIがstrict loaderと並存している |
 | TD-038 | P2 | 未着手 | L | MCPのtask一覧に検索・paginationがなく、大規模storageで応答が無制限に増える |
 | TD-039 | P2 | 未着手 | L | 稼働中processを止めずに整合したbackupを作成・検証・restoreする手段がない |
 
@@ -863,6 +863,9 @@
 - 分類: `バグ / データ保全`
 - 優先度: `P0`
 - 概算規模: `M`
+- 完了日: 2026-09-04
+- 対応: 新規project directoryを`YYYYMMDD-{sanitize済みproject名}-{root UUID}`形式にして完全なUUIDをidentityとし、長い表示名はUTF-8境界でcomponent上限内へ短縮した。登録前に既存task UUIDと保存先pathをtyped errorで拒否し、load時はcanonical pathと実際に開くfileを同じtargetへ固定した上で、同一実体の重複を両path付きerrorにする。旧形式directoryはrenameせず読み取り・再保存できる互換性を維持した。
+- 検証: 同名、`a/b`と`a-b`、URL除去衝突、長いUTF-8名、旧形式非migration、登録失敗原子性、canonical path重複、symlink差し替え後のfile identityを製品repository経路で確認した。`cargo fmt --check`、`cargo clippy --locked --all-targets -- -D warnings`、`cargo test --locked`、`git diff --check`に成功し、libraryは600件成功・1件ignore、CLIは446件、MCP binaryは2件、stdio integrationは13件、fixtureは5件成功・1件ignore、Spreadsheetは4件成功した。責務別3回とbranch全体1回のsubagent reviewを行い、2件のP2指摘を個別commitで修正後、コードと履歴に残存指摘がないことを確認した。
 
 #### 現状と根拠
 
@@ -979,6 +982,9 @@
 - 分類: `バグ / エラー契約`
 - 優先度: `P1`
 - 概算規模: `S`
+- 完了日: 2026-09-04
+- 対応: `終`の不正な完了時刻を`finished_at`付きの`CommandParseError`へ変換し、`HasUndoneChildren`だけは既存のtree表示へfallbackしつつ、その他の`ApplicationError`はvariantを保持してruntimeへ伝搬するようにした。error時はcompletion後のfocus更新を行わず、対話CLIでは診断を表示して既存focus状態を維持する。
+- 検証: 構文不正、不正な秒、存在しない日付、task不明、実績加算overflow、tree errorのhandler contract testを追加した。`cargo fmt --check`、`cargo clippy --locked --all-targets -- -D warnings`、`cargo test --locked`、`git diff --check`に成功し、サブエージェントreviewでも指摘がないことを確認した。
 - 関連既存項目: TD-006の完了条件に対する残存不具合。
 
 #### 現状と根拠
@@ -1014,6 +1020,9 @@
 - 分類: `バグ / 入力検証`
 - 優先度: `P1`
 - 概算規模: `M`
+- 完了日: 2026-09-04
+- 対応: command定義へcanonical name、usage、最小・最大argument数を集約し、typed fieldの変換前に全既知commandのarityを検証するようにした。`extrude`はargument省略時だけ既存動作を維持し、不正値と`u16`範囲外をfield付きerrorにする。`arrange`の任意flagは`全`または`all`だけを受理する。parse errorはbusy timeとrepositoryの読込、task変更、保存より先に返す。
+- 検証: `cargo fmt --check`、`cargo clippy --locked --all-targets -- -D warnings`、`cargo test --locked -q`、`git diff --check`に成功した。通常testは失敗0件で、全commandのarity table、alias、省略時既定値、canonical error、非対話runtimeの未変更・未保存契約を確認した。契約単位のspec reviewとcode quality review、最終実装・commit履歴reviewでも残存指摘がないことを確認した。
 - 関連既存項目: TD-006の完了条件に対する残存不具合。
 
 #### 現状と根拠
@@ -1129,6 +1138,9 @@
 - 分類: `バグ / 算術安全性`
 - 優先度: `P1`
 - 概算規模: `S`
+- 完了日: 2026-09-04
+- 対応: 残作業補正の減算と倍化をchecked演算へ置換し、中間値が`i64`で表現不能な場合はtask ID、見積秒、実績秒を保持する`RemainingWorkCalculationOverflow`を返すようにした。通常の残作業規則とpack・flattenへのerror伝搬は維持した。
+- 検証: `i64::MAX`近傍かつ60の倍数の見積とその1秒超過の実績による境界testをdebug・release双方で実行し、同一errorとtask view・mutation revision・save回数の不変を確認した。`cargo fmt --check`、`cargo clippy --locked --all-targets -- -D warnings`、`cargo test --locked`、`git diff --check`に成功し、subagent reviewの指摘は0件だった。
 
 #### 現状と根拠
 
@@ -1162,6 +1174,9 @@
 - 分類: `バグ / schedule正確性`
 - 優先度: `P1`
 - 概算規模: `M`
+- 完了日: 2026-09-04
+- 対応: schedule segmentと06:00境界の交差区間を時系列で返すapplication共通helperを追加した。fixedは予約windowの実時間、flexibleは作業秒を交差時間比で配賦し、整数除算の丸め差を最後の区間へ集約して総量を保存する。packの通常・反復容量とflattenの使用量・延期候補日を同じhelperへ移し、開始日の翌日にだけ過負荷があるsegmentも未解消理由と代表taskへ関連付けるようにした。
+- 検証: 05:30-06:30、複数日、fixed、flexible、分割済みsegment、丸め差、zero容量、日時範囲errorの単体契約と、pack・flatten・CLI製品経路のRed/Greenを確認した。`cargo fmt --check`、`cargo clippy --locked --all-targets -- -D warnings`、`cargo test --locked`、`git diff --check`に成功し、main取り込み後の通常testは601件+449件ほか失敗0件だった。3回の責務別subagent reviewと最終履歴reviewの指摘を個別commitで解消した。
 
 #### 現状と根拠
 
@@ -1301,6 +1316,9 @@
 - 分類: `バグ / portability`
 - 優先度: `P1`
 - 概算規模: `S`
+- 完了日: 2026-09-04
+- 対応: task行の逆順処理をPOSIX AWK内の配列へ統合し、GNU `tac`依存を除去した。`pipefail`とpipeline出力の一時保持を導入し、前段command失敗と必須command欠落で非0終了しつつtask行とpaddingを公開しないようにした。`yes | head`は`pipefail`下のSIGPIPEを避けるためzsh builtinの50回loopへ置換した。
+- 検証: `PATH=/usr/bin:/bin`の正常変換、途中失敗するfake AWK、必須command欠落を製品script経路で確認する専用test 3件と既存Spreadsheet contract 4件に成功した。`/bin/zsh -n shell/copy_for_spreadsheet.sh`、`cargo fmt --check`、`cargo clippy --locked --all-targets -- -D warnings`、`cargo test --locked`、`git diff --check`に成功し、旧新出力のbyte一致とsubagent reviewで追加指摘がないことを確認した。
 
 #### 現状と根拠
 
@@ -1373,8 +1391,12 @@
 - 分類: `バグ / Spreadsheet import`
 - 優先度: `P1`
 - 概算規模: `M`
+- W1-J完了日: 2026-09-04
+- 対応: S列のminute/secondを00-59へ限定し、P列をGregorian暦の実在日まで検証するようにした。専用import contract testで、入力全体の検証が成功するまでstdoutへcommandを出さない契約を固定した。
+- 検証: `cargo fmt --check`、`cargo clippy --locked --all-targets -- -D warnings`、`cargo test --locked`、`git diff --check`に成功した。専用import contract test 5件と既存Spreadsheet contract test 4件が成功し、仕様・code quality reviewの指摘を解消した。
+- 残存: 正常生成commandをCLI parserへ通すcross-boundary contract testはWave 2へ残す。このintegration gateがGreenになるまでTD-034全体は完了扱いにしない。
 
-#### 現状と根拠
+#### 着手時の現状と根拠
 
 - `shell/generate_command_from_spreadsheet.sh:37-59`の完了日時parseは月1-12、日1-31しか検査せず、`2026/02/31`や非閏年の`02/29`を受理する。
 - 同script`21-28`の実作業時間parseは形だけを見て、minute/secondが00-59であることを検査しない。`0:99:99`を99分として受理する。
@@ -1485,6 +1507,9 @@
 - 分類: `技術的負債 / API整理`
 - 優先度: `P2`
 - 概算規模: `M`
+- 完了日: 2026-09-04
+- 対応: 未使用`yaml_to_immutable_task`と専用test、`ImmutableTask`・`extract_leaf_immutable_tasks_from_project`と専用test、未知値を`Deadline`へfallbackする`read_repetition_anchor`と専用testを削除。strict `yaml_to_task`、repository load、YAML encoder/保存形式、CLI、MCP JSONは変更なし。不正nameのstrict validation testも追加。
+- 検証: `cargo fmt --check`、`cargo clippy --locked --all-targets -- -D warnings`、`cargo test --locked`、`git diff --check`成功。通常testは1038件成功、2件ignored、失敗0件。`src/`と`tests/`の削除対象3 API参照0件、repository loadは`yaml_to_task`のみ、2段階reviewと横断再reviewで残存指摘なし。
 - 関連既存項目: TD-003とTD-009の完了後に残った旧経路。
 
 #### 現状と根拠
@@ -1784,3 +1809,8 @@ TD-036はparser、handler、runtime、renderer/viewの各契約を別commitに�
 - source scanner削除時に、対応するarchitecture契約を検証なしで失わない。compiler-backedな置換testを先に追加する。
 
 各項目は、既存テストを削除・緩和せず、期待する契約を示すRedテスト、最小のGreen実装、全検証、レビューの順で進める。
+
+## Codexへの依頼方法の例
+
+backlog.mdのWave 1、W1-A〜W1-Jを統括してください。各laneは内部subagentではなく、サイドバーから個別に確認できる新しいCodex taskとして現在のproject内に作成し、それぞれ別branch・別worktreeで実装してください。親taskは各taskの進捗を監視し、backlog記載のwrite範囲と依存関係を管理してください。各laneでは契約単位のRed/Green commit、各Green後のsubagent review、品質ゲート、履歴reviewを実施してください。親taskでも各branchのmain...branch差分とcommit履歴を個別reviewし、問題があれば該当taskへ修正を依頼してください。Wave 2は実装せず、残存作業として報告してください。
+各lane taskの初回turnでは、ファイル編集・実装・commitを一切行わず、backlog.md、write範囲、依存関係を調査し、契約単位のRed/Green commit計画のみを提示して終了してください。親taskから計画承認と実装開始の指示を受けるまで待機してください。

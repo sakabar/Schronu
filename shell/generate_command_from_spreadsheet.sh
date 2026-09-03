@@ -24,6 +24,11 @@ function to_minutes(time_str, parts) {
     }
 
     split(time_str, parts, ":")
+
+    if (parts[2] + 0 > 59 || parts[3] + 0 > 59) {
+        return -1
+    }
+
     return (parts[1] * 60) + parts[2]
 }
 
@@ -32,6 +37,26 @@ function set_invalid(task_id, line_no, message) {
         invalid_line_by_id[task_id] = line_no
         invalid_message_by_id[task_id] = message
     }
+}
+
+function is_leap_year(year) {
+    return year % 400 == 0 || (year % 4 == 0 && year % 100 != 0)
+}
+
+function days_in_month(year, month) {
+    if (month == 2) {
+        return is_leap_year(year) ? 29 : 28
+    }
+
+    if (month == 4 || month == 6 || month == 9 || month == 11) {
+        return 30
+    }
+
+    return 31
+}
+
+function is_valid_calendar_date(year, month, day) {
+    return month >= 1 && month <= 12 && day >= 1 && day <= days_in_month(year, month)
 }
 
 function parse_finish_datetime(datetime_str, parts, date_parts, time_parts, yyyy, month, day, hour, minute, second) {
@@ -50,7 +75,7 @@ function parse_finish_datetime(datetime_str, parts, date_parts, time_parts, yyyy
     minute = time_parts[2] + 0
     second = time_parts[3] + 0
 
-    if (month < 1 || month > 12 || day < 1 || day > 31 || hour > 23 || minute > 59 || second > 59) {
+    if (!is_valid_calendar_date(yyyy, month, day) || hour > 23 || minute > 59 || second > 59) {
         return 0
     }
 

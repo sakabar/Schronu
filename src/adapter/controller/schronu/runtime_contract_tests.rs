@@ -1708,7 +1708,6 @@ fn defer系の通常interactive_commandはflushしshortcutはflushしない() {
 
     for command in [
         "後 09:30",
-        "後 abc 日 extra",
         "清",
         "逃",
         "押",
@@ -1738,6 +1737,38 @@ fn defer系の通常interactive_commandはflushしshortcutはflushしない() {
 
         assert_eq!(stdout.flush_count, 1, "{command}");
     }
+
+    let task = new_test_task_handle("余剰引数ではflushしない対象").unwrap();
+    let task_id = task.get_id().unwrap();
+    let original_snapshot = task.snapshot().unwrap();
+    let mut task_repository = TestTaskRepository::new(task, now);
+    let mut free_time_manager = TestFreeTimeManager::default();
+    let mut focused_task_id_opt = Some(task_id);
+    let mut focus_selection_mode = FocusSelectionMode::highest_priority();
+    focus_selection_mode.set_explicit(true);
+    let mut stdout = FlushTrackingWriter::successful(true);
+
+    let result = execute_interactive_command(
+        &mut stdout,
+        &mut task_repository,
+        &mut free_time_manager,
+        &mut focused_task_id_opt,
+        &now,
+        &mut focus_selection_mode,
+        now,
+        "後 abc 日 extra",
+    );
+
+    assert!(matches!(
+        result,
+        Err(CommandError::Parse(ref error))
+            if error.field() == "arguments"
+                && error.reason() == "引数の個数が正しくありません"
+                && error.usage() == "後 <量> [単位]"
+    ));
+    assert_eq!(stdout.flush_count, 0);
+    assert_eq!(task_repository.task.snapshot().unwrap(), original_snapshot);
+    assert_eq!(focused_task_id_opt, Some(task_id));
 
     for command in ["t", "h", "D", "d", "w", "W", "y"] {
         let task = new_test_task_handle("shortcutのflush対象").unwrap();
@@ -2682,26 +2713,22 @@ fn test_execute_defer_expression_曜日指定は次の該当曜日までpending�
 }
 
 #[test]
-fn test_execute_defer_余剰引数でも単位正規化と入力error表示を維持する() {
+fn test_execute_defer_余剰引数を拒否して状態を維持する() {
     let now = Local.with_ymd_and_hms(2026, 8, 11, 12, 0, 0).unwrap();
     let task = new_test_task_handle("余剰引数の延期対象").unwrap();
     let task_id = task.get_id().unwrap();
+    let original_snapshot = task.snapshot().unwrap();
 
-    let valid = execute_command_for_test(task.clone(), now, Some(task_id), "後 2 DAYS extra");
-    assert_eq!(valid.task.get_orig_status().unwrap(), Status::Pending);
-    assert_eq!(
-        valid.task.get_pending_until().unwrap(),
-        Local.with_ymd_and_hms(2026, 8, 13, 6, 0, 0).unwrap()
-    );
-    assert_eq!(valid.focused_task_id_opt, None);
+    for command in ["後 2 DAYS extra", "後 abc 日 extra"] {
+        let result = execute_command_for_test(task.clone(), now, Some(task_id), command);
 
-    task.set_orig_status(Status::Todo).unwrap();
-    let invalid = execute_command_for_test(task.clone(), now, Some(task_id), "後 abc 日 extra");
-    assert_eq!(invalid.task.get_orig_status().unwrap(), Status::Todo);
-    assert_eq!(invalid.focused_task_id_opt, Some(task_id));
-    assert!(invalid.output.contains(
-        "[Error] 入力エラー: amount: 整数で指定してください (コマンド: 後, 使い方: 後 <数値> <単位>)"
-    ));
+        assert_eq!(result.task.get_orig_status().unwrap(), Status::Todo);
+        assert_eq!(result.task.snapshot().unwrap(), original_snapshot);
+        assert_eq!(result.focused_task_id_opt, Some(task_id));
+        assert!(result.output.contains(
+            "[Error] 入力エラー: arguments: 引数の個数が正しくありません (コマンド: 後, 使い方: 後 <量> [単位])"
+        ));
+    }
 }
 
 #[test]
@@ -3547,15 +3574,24 @@ fn test_execute_arrange_all指定は全指定と同じ挙動になる() {
 }
 
 #[test]
-fn test_execute_arrange_未知の第3引数で見積もり0を維持する() {
-    let task = execute_arrange_command("揃 15 unknown");
-    let children = task
-        .get_children()
-        .expect("arrange result tree must be readable");
+fn test_execute_arrange_未知のflagを拒否して状態を変更しない() {
+    let now = Local.with_ymd_and_hms(2026, 8, 3, 12, 0, 0).unwrap();
+    let task = new_test_task_handle("ルーチン").unwrap();
+    let _ = task.set_repetition_interval_days_opt(Some(7));
 
-    assert_eq!(children[0].get_estimated_work_seconds().unwrap(), 15 * 60);
-    assert_eq!(children[1].get_estimated_work_seconds().unwrap(), 0);
-    assert_eq!(children[2].get_estimated_work_seconds().unwrap(), 10 * 60);
+    let mut estimated_child_attr = new_test_task_attr("不正flag対象");
+    estimated_child_attr.set_estimated_work_seconds(5 * 60);
+    task.create_as_last_child(estimated_child_attr);
+
+    let task_id = task.get_id().unwrap();
+    let original_snapshot = task.snapshot().unwrap();
+    let result = execute_command_for_test(task, now, Some(task_id), "揃 15 unknown");
+
+    assert_eq!(result.task.snapshot().unwrap(), original_snapshot);
+    assert_eq!(result.focused_task_id_opt, Some(task_id));
+    assert!(result.output.contains(
+        "[Error] 入力エラー: includes_zero_estimate: 全またはallで指定してください (コマンド: 揃, 使い方: 揃 <分> [全])"
+    ));
 }
 
 #[test]
@@ -4737,12 +4773,12 @@ fn test_execute_flatten_論理日境界をまたぐtaskは延期しない() {
 }
 
 #[test]
-fn test_execute_flatten_論理日境界をまたぐtaskの全作業時間を開始日の論理日に計上する() {
+fn test_execute_flatten_論理日境界をまたぐtaskの容量を各論理日へ配賦する() {
     let now = Local.with_ymd_and_hms(2026, 8, 13, 6, 0, 0).unwrap();
     let today = now.date_naive();
     let root = new_test_task_handle("平テスト").unwrap();
     let _ = root.set_estimated_work_seconds(0);
-    add_scheduled_child_for_test(&root, "日境界をまたぐ", now, 25 * 60);
+    let target = add_scheduled_child_for_test(&root, "日境界をまたぐ", now, 25 * 60);
 
     let result = execute_flatten_command_for_test(
         "平",
@@ -4751,11 +4787,51 @@ fn test_execute_flatten_論理日境界をまたぐtaskの全作業時間を開�
         HashMap::from([(today, 24 * 60), (today + Duration::days(1), 26 * 60)]),
     );
 
+    assert_eq!(
+        result
+            .task
+            .get_by_id(target.get_id().unwrap())
+            .unwrap()
+            .get_pending_until()
+            .unwrap(),
+        now
+    );
+    assert_eq!(result.output, "[Info] 100%を超過している日はありません。\n");
+}
+
+#[test]
+fn test_execute_flatten_日跨ぎtaskを翌論理日の未解消理由へ関連付ける() {
+    let now = Local.with_ymd_and_hms(2026, 8, 13, 6, 0, 0).unwrap();
+    let today = now.date_naive();
+    let tomorrow = today + Duration::days(1);
+    let root = new_test_task_handle("平テスト").unwrap();
+    let _ = root.set_estimated_work_seconds(0);
+    let target = add_scheduled_child_for_test(&root, "日境界をまたぐ", now, 25 * 60);
+
+    let result = execute_flatten_command_for_test(
+        "平",
+        now,
+        root,
+        HashMap::from([(today, 24 * 60), (tomorrow, 0)]),
+    );
+
+    assert_eq!(
+        result
+            .task
+            .get_by_id(target.get_id().unwrap())
+            .unwrap()
+            .get_pending_until()
+            .unwrap(),
+        now
+    );
     assert!(result.output.starts_with("平: 0件 00:00 (未解消1日)\n"));
     assert!(result
         .output
-        .contains(&format!("[Warn] 平\t{}\t未解消 01:00", today)));
+        .contains(&format!("[Warn] 平\t{}\t未解消 01:00", tomorrow)));
     assert!(result.output.contains("論理日境界をまたぐ: 1件"));
+    assert!(result
+        .output
+        .contains(&format!("{}\t日境界をまたぐ", target.get_id().unwrap())));
 }
 
 #[test]
@@ -5604,6 +5680,83 @@ fn test_non_interactiveの不正属性値はbusy_time読込前に拒否する() 
 }
 
 #[test]
+fn test_non_interactiveの不正argumentはrepositoryもbusy_timeも読込まず保存しない() {
+    let now = Local.with_ymd_and_hms(2026, 8, 27, 12, 0, 0).unwrap();
+
+    for (input, command, field, reason, usage) in [
+        (
+            "extrude invalid",
+            "押",
+            "step_days",
+            "0以上65535以下の整数で指定してください",
+            "押 [days]",
+        ),
+        (
+            "flatten extra",
+            "平",
+            "arguments",
+            "引数の個数が正しくありません",
+            "平",
+        ),
+        (
+            "pack extra",
+            "詰",
+            "arguments",
+            "引数の個数が正しくありません",
+            "詰",
+        ),
+        (
+            "tree extra",
+            "樹",
+            "arguments",
+            "引数の個数が正しくありません",
+            "樹",
+        ),
+    ] {
+        let task = new_test_task_handle("変更しないtask").unwrap();
+        let original_snapshot = task.snapshot().unwrap();
+        let mut repository = TestTaskRepository::new(task, now);
+        let mut free_time_manager = TestFreeTimeManagerWithLoadError::default();
+
+        let error = execute_non_interactive_command_at(
+            &mut repository,
+            &mut free_time_manager,
+            input,
+            now,
+        )
+        .expect_err("不正argumentはRunErrorとして返るべきです");
+
+        match &error {
+            RunError::Command(CommandError::Parse(parse_error)) => {
+                assert_eq!(parse_error.command(), command, "input: {input}");
+                assert_eq!(parse_error.field(), field, "input: {input}");
+                assert_eq!(parse_error.reason(), reason, "input: {input}");
+                assert_eq!(parse_error.usage(), usage, "input: {input}");
+            }
+            unexpected => panic!("unexpected error for {input}: {unexpected:?}"),
+        }
+        assert_eq!(repository.task.snapshot().unwrap(), original_snapshot, "{input}");
+        assert_eq!(free_time_manager.loaded_path(), None, "{input}");
+        assert_eq!(repository.load_attempt_count.get(), 0, "{input}");
+        assert_eq!(
+            repository.reload_if_changed_attempt_count.get(),
+            0,
+            "{input}"
+        );
+        assert_eq!(repository.save_attempt_count.get(), 0, "{input}");
+        assert!(repository.operation_trace().is_empty(), "{input}");
+
+        let mut stderr = Vec::new();
+        assert!(!report_run_result(&mut stderr, Err(error)), "{input}");
+        let output = String::from_utf8(stderr).unwrap();
+        let expected = format!(
+            "[Error] 入力エラー: {field}: {reason} (コマンド: {command}, 使い方: {usage})\n"
+        );
+        assert_eq!(output, expected, "input: {input}");
+    }
+}
+
+#[test]
 fn test_execute_non_interactive_command_project作成はoperation時刻を共有する() {
     let storage_dir = TestStorageDir::new();
     std::fs::create_dir_all(&storage_dir.path).unwrap();
@@ -6407,7 +6560,7 @@ fn test_明示focus中に終了したらhandlerの次focusではなく元modeか
 }
 
 #[test]
-fn test_明示focus中の終不正入力はfocusと伏せた一覧を維持する() {
+fn test_明示focus中の終不正入力はerrorを表示してfocusと伏せた一覧を維持する() {
     let now = Local.with_ymd_and_hms(2026, 8, 16, 12, 0, 0).unwrap();
     let task = new_test_task_handle("終入力error対象").unwrap();
     let task_id = task.get_id().unwrap();
@@ -6446,7 +6599,10 @@ fn test_明示focus中の終不正入力はfocusと伏せた一覧を維持す�
     assert_eq!(focused_task_id_opt, Some(task_id));
     assert_eq!(focus_selection_mode, previous_mode);
     assert_eq!(task.get_orig_status().unwrap(), Status::Todo);
-    assert_eq!(stdout.into_string(), "");
+    assert_eq!(
+        stdout.into_string(),
+        "[Error] 入力エラー: finished_at: 日時が不正です (コマンド: 終, 使い方: 終 [今|HH:MM[:SS] [日付]])\n"
+    );
 }
 
 #[test]

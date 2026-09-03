@@ -70,11 +70,11 @@ impl fmt::Display for RepetitionAnchor {
     }
 }
 
-pub fn read_repetition_anchor(s: &str) -> RepetitionAnchor {
-    match s.to_lowercase().as_str() {
-        "completion" => RepetitionAnchor::Completion,
-        _ => RepetitionAnchor::Deadline,
-    }
+pub(crate) fn fixed_start_applies_to_schedule(
+    fixed_start: bool,
+    repetition_interval_days_opt: Option<i64>,
+) -> bool {
+    fixed_start && repetition_interval_days_opt.is_none()
 }
 
 #[derive(Copy, Clone, Debug, Eq, Hash, PartialEq, Serialize)]
@@ -112,126 +112,6 @@ pub fn read_project_category(s: &str) -> Option<ProjectCategory> {
         "consumption" | "消" => Some(ProjectCategory::Consumption),
         _ => None,
     }
-}
-
-#[derive(Clone, Debug, PartialEq)]
-pub struct ImmutableTask {
-    name: String,
-    status: Status,
-    pending_until: DateTime<Local>,
-    children: Vec<ImmutableTask>,
-}
-
-impl ImmutableTask {
-    pub fn new(
-        name: String,
-        status: Status,
-        pending_until: DateTime<Local>,
-        children: Vec<ImmutableTask>,
-    ) -> Self {
-        Self {
-            name,
-            status,
-            pending_until,
-            children,
-        }
-    }
-
-    pub fn new_with_current_time(
-        name: String,
-        status: Status,
-        pending_until: DateTime<Local>,
-        children: Vec<ImmutableTask>,
-        now: DateTime<Local>,
-    ) -> Self {
-        let new_status = if status == Status::Pending && now > pending_until {
-            Status::Todo
-        } else {
-            status
-        };
-
-        Self {
-            name,
-            status: new_status,
-            pending_until,
-            children,
-        }
-    }
-
-    pub fn new_with_name(name: String) -> Self {
-        Self {
-            name,
-            status: Status::Todo,
-            pending_until: DateTime::<Local>::MIN_UTC.into(),
-            children: vec![],
-        }
-    }
-
-    pub fn new_with_name_status_children(
-        name: String,
-        status: Status,
-        children: Vec<ImmutableTask>,
-    ) -> Self {
-        // 期限未指定のPendingは次回の時刻評価で即座にTodoとなるよう、最小時刻を使う。
-        Self {
-            name,
-            status,
-            pending_until: DateTime::<Local>::MIN_UTC.into(),
-            children,
-        }
-    }
-
-    pub fn new_with_name_children(name: String, children: Vec<ImmutableTask>) -> Self {
-        Self {
-            name,
-            status: Status::Todo,
-            pending_until: DateTime::<Local>::MIN_UTC.into(),
-            children,
-        }
-    }
-
-    pub fn get_name(&self) -> &str {
-        &self.name
-    }
-
-    pub fn get_status(&self) -> &Status {
-        &self.status
-    }
-
-    pub fn get_children(&self) -> &Vec<ImmutableTask> {
-        &self.children
-    }
-}
-
-pub fn extract_leaf_immutable_tasks_from_project(task: &ImmutableTask) -> Vec<&ImmutableTask> {
-    let children_are_all_done = task
-        .get_children()
-        .iter()
-        .all(|task| task.status == Status::Done);
-
-    if task.get_status() == &Status::Todo
-        && (task.get_children().is_empty() || children_are_all_done)
-    {
-        return vec![task];
-    }
-
-    let mut ans: Vec<&ImmutableTask> = vec![];
-
-    // 深さ優先
-    for child in task.get_children() {
-        if child.get_status() != &Status::Done {
-            let leaves_with_pending: Vec<&ImmutableTask> =
-                extract_leaf_immutable_tasks_from_project(child);
-            let mut leaves: Vec<&ImmutableTask> = leaves_with_pending
-                .iter()
-                .filter(|&leaf| leaf.get_status() != &Status::Pending)
-                .copied()
-                .collect::<Vec<_>>();
-            ans.append(&mut leaves);
-        }
-    }
-
-    ans
 }
 
 // Todoの葉タスクを抽出する
@@ -318,7 +198,7 @@ pub struct TaskAttr {
     status: Status, // 評価後のステータス。pendingはpending_untilを加味して評価され、Todo扱いとなる
     is_on_other_side: bool, // 相手ボールか?
     atomic: bool,   // 分割できないタスクか?
-    fixed_start: bool, // 開始時刻をスケジューラが動かしてはならないか?
+    fixed_start: bool, // raw属性。予定上fixedかは反復間隔も含めて判定する。
     pending_until: DateTime<Local>,
     last_synced_time: DateTime<Local>,
 
@@ -514,6 +394,10 @@ impl TaskAttr {
 
     pub fn get_fixed_start(&self) -> bool {
         self.fixed_start
+    }
+
+    pub(crate) fn fixed_start_applies_to_schedule(&self) -> bool {
+        fixed_start_applies_to_schedule(self.fixed_start, self.repetition_interval_days_opt)
     }
 
     pub fn set_fixed_start(&mut self, fixed_start: bool) {
@@ -1009,6 +893,13 @@ impl TaskHandle {
         self.node
             .try_borrow_data()
             .map(|attr| attr.get_fixed_start())
+            .map_err(|_| TaskTreeError::Borrow)
+    }
+
+    pub(crate) fn fixed_start_applies_to_schedule(&self) -> Result<bool, TaskTreeError> {
+        self.node
+            .try_borrow_data()
+            .map(|attr| attr.fixed_start_applies_to_schedule())
             .map_err(|_| TaskTreeError::Borrow)
     }
 

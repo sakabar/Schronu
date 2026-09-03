@@ -1,5 +1,6 @@
 use super::*;
 use crate::adapter::gateway::yaml::YamlConversionError;
+use crate::application::interface::ProjectRegistrationError;
 use chrono::{Duration, TimeZone};
 use std::path::PathBuf;
 
@@ -41,8 +42,9 @@ impl TestStorageDir {
         self.path.to_str().expect("test path must be valid UTF-8")
     }
 
-    fn project_dir_path(&self, date: &str, project_name: &str) -> PathBuf {
-        self.path.join(format!("{date}-{project_name}"))
+    fn project_dir_path(&self, date: &str, project_name: &str, project_id: Uuid) -> PathBuf {
+        self.path
+            .join(format!("{date}-{project_name}-{project_id}"))
     }
 }
 
@@ -82,6 +84,52 @@ fn task_with_start_time(name: &str, start_time: DateTime<Local>) -> TaskHandle {
     task
 }
 
+fn project_root_with_identity(name: &str, id: Uuid, now: DateTime<Local>) -> TaskHandle {
+    let task = TaskHandle::with_identity(name, id, now).unwrap();
+    task.set_priority(5).unwrap();
+    task
+}
+
+fn assert_colliding_project_names_survive_save_load(
+    first_name: &str,
+    second_name: &str,
+    first_id: Uuid,
+    second_id: Uuid,
+) {
+    let storage_dir = TestStorageDir::new();
+    let now = Local.with_ymd_and_hms(2026, 9, 4, 12, 0, 0).unwrap();
+    let mut repository = TaskRepository::new(storage_dir.path_str());
+    repository.sync_clock(now).unwrap();
+    repository
+        .start_new_project(project_root_with_identity(first_name, first_id, now))
+        .unwrap();
+    repository
+        .start_new_project(project_root_with_identity(second_name, second_id, now))
+        .unwrap();
+
+    repository.save().unwrap();
+
+    let expected_directories = [
+        storage_dir
+            .path
+            .join(format!("20260904-{first_name}-{first_id}")),
+        storage_dir
+            .path
+            .join(format!("20260904-{second_name}-{second_id}")),
+    ];
+    for directory in expected_directories {
+        assert!(directory.join("project.yaml").is_file());
+    }
+
+    let mut loaded_repository = TaskRepository::new(storage_dir.path_str());
+    loaded_repository.sync_clock(now).unwrap();
+    loaded_repository.load().unwrap();
+
+    assert_eq!(loaded_repository.get_all_projects().len(), 2);
+    assert!(loaded_repository.get_by_id(first_id).unwrap().is_some());
+    assert!(loaded_repository.get_by_id(second_id).unwrap().is_some());
+}
+
 fn pending_task_with_until(name: &str, pending_until: DateTime<Local>) -> TaskHandle {
     let task = crate::test_support::new_task_handle(name).unwrap();
     task.set_start_time(DateTime::<Local>::MIN_UTC.into())
@@ -118,6 +166,76 @@ fn test_start_new_project_taskをmemoryに登録する() {
             .unwrap(),
         "メモリ登録対象"
     );
+}
+
+#[test]
+fn test_start_new_project_既存taskと同じuuidを拒否して状態を変更しない() {
+    let storage_dir = TestStorageDir::new();
+    let now = Local.with_ymd_and_hms(2026, 9, 4, 12, 0, 0).unwrap();
+    let duplicate_id = Uuid::from_u128(0x2101);
+    let mut repository = TaskRepository::new(storage_dir.path_str());
+    repository.sync_clock(now).unwrap();
+    repository
+        .start_new_project(project_root_with_identity("既存project", duplicate_id, now))
+        .unwrap();
+
+    let actual = repository
+        .start_new_project(project_root_with_identity("重複project", duplicate_id, now))
+        .unwrap_err();
+
+    assert_eq!(
+        actual,
+        ProjectRegistrationError::DuplicateTaskId(duplicate_id)
+    );
+    assert_eq!(repository.get_all_projects().len(), 1);
+    assert_eq!(
+        repository
+            .get_by_id(duplicate_id)
+            .unwrap()
+            .unwrap()
+            .get_name()
+            .unwrap(),
+        "既存project"
+    );
+    assert!(!storage_dir.path.exists());
+}
+
+#[test]
+fn test_start_new_project_既存projectと同じ保存先を拒否して状態を変更しない() {
+    let storage_dir = TestStorageDir::new();
+    let now = Local.with_ymd_and_hms(2026, 9, 4, 12, 0, 0).unwrap();
+    let existing_id = Uuid::from_u128(0x2111);
+    let candidate_id = Uuid::from_u128(0x2112);
+    let colliding_directory = storage_dir.path.join(project_directory_name(
+        "20260904",
+        "同じ保存先",
+        candidate_id,
+    ));
+    let existing_root = project_root_with_identity("既存project", existing_id, now);
+    let mut repository = TaskRepository::new(storage_dir.path_str());
+    repository.sync_clock(now).unwrap();
+    repository
+        .cache_task_and_descendants(&existing_root)
+        .unwrap();
+    repository.projects.push(Project::new(
+        existing_root,
+        &colliding_directory,
+        colliding_directory.join("project.yaml"),
+        5,
+    ));
+
+    let actual = repository
+        .start_new_project(project_root_with_identity("同じ保存先", candidate_id, now))
+        .unwrap_err();
+
+    assert_eq!(
+        actual,
+        ProjectRegistrationError::DuplicateStoragePath(colliding_directory)
+    );
+    assert_eq!(repository.get_all_projects().len(), 1);
+    assert!(repository.get_by_id(existing_id).unwrap().is_some());
+    assert!(repository.get_by_id(candidate_id).unwrap().is_none());
+    assert!(!storage_dir.path.exists());
 }
 
 #[test]
@@ -176,7 +294,7 @@ fn test_save_新規projectのdirectoryとyamlを作る() {
     let root_task = crate::test_support::new_task_handle("保存対象").unwrap();
     let root_task_id = root_task.get_id().unwrap();
     task_repository.start_new_project(root_task).unwrap();
-    let project_dir_path = storage_dir.project_dir_path("20260811", "保存対象");
+    let project_dir_path = storage_dir.project_dir_path("20260811", "保存対象", root_task_id);
     let markdown_dir_path = project_dir_path.join("markdown");
     let project_yaml_file_path = project_dir_path.join("project.yaml");
 
@@ -192,6 +310,144 @@ fn test_save_新規projectのdirectoryとyamlを作る() {
     loaded_repository.load().unwrap();
     let loaded_task = loaded_repository.get_by_id(root_task_id).unwrap().unwrap();
     assert_eq!(loaded_task.get_name().unwrap(), "保存対象");
+}
+
+#[test]
+fn test_save_load_同日同名projectを別directoryへ保存する() {
+    assert_colliding_project_names_survive_save_load(
+        "同名project",
+        "同名project",
+        Uuid::from_u128(0x2001),
+        Uuid::from_u128(0x2002),
+    );
+}
+
+#[test]
+fn test_save_load_slash置換後に同名となるprojectを別directoryへ保存する() {
+    let storage_dir = TestStorageDir::new();
+    let now = Local.with_ymd_and_hms(2026, 9, 4, 12, 0, 0).unwrap();
+    let first_id = Uuid::from_u128(0x2011);
+    let second_id = Uuid::from_u128(0x2012);
+    let mut repository = TaskRepository::new(storage_dir.path_str());
+    repository.sync_clock(now).unwrap();
+    repository
+        .start_new_project(project_root_with_identity("a/b", first_id, now))
+        .unwrap();
+    repository
+        .start_new_project(project_root_with_identity("a-b", second_id, now))
+        .unwrap();
+
+    repository.save().unwrap();
+
+    for id in [first_id, second_id] {
+        assert!(storage_dir
+            .path
+            .join(format!("20260904-a-b-{id}"))
+            .join("project.yaml")
+            .is_file());
+    }
+    let mut loaded_repository = TaskRepository::new(storage_dir.path_str());
+    loaded_repository.sync_clock(now).unwrap();
+    loaded_repository.load().unwrap();
+    assert_eq!(loaded_repository.get_all_projects().len(), 2);
+    assert!(loaded_repository.get_by_id(first_id).unwrap().is_some());
+    assert!(loaded_repository.get_by_id(second_id).unwrap().is_some());
+}
+
+#[test]
+fn test_save_load_url除去後に同名となるprojectを別directoryへ保存する() {
+    let storage_dir = TestStorageDir::new();
+    let now = Local.with_ymd_and_hms(2026, 9, 4, 12, 0, 0).unwrap();
+    let first_id = Uuid::from_u128(0x2021);
+    let second_id = Uuid::from_u128(0x2022);
+    let mut repository = TaskRepository::new(storage_dir.path_str());
+    repository.sync_clock(now).unwrap();
+    repository
+        .start_new_project(project_root_with_identity(
+            "project http://example.com/one",
+            first_id,
+            now,
+        ))
+        .unwrap();
+    repository
+        .start_new_project(project_root_with_identity(
+            "project https://example.com/two",
+            second_id,
+            now,
+        ))
+        .unwrap();
+
+    repository.save().unwrap();
+
+    for id in [first_id, second_id] {
+        assert!(storage_dir
+            .path
+            .join(format!("20260904-project -{id}"))
+            .join("project.yaml")
+            .is_file());
+    }
+    let mut loaded_repository = TaskRepository::new(storage_dir.path_str());
+    loaded_repository.sync_clock(now).unwrap();
+    loaded_repository.load().unwrap();
+    assert_eq!(loaded_repository.get_all_projects().len(), 2);
+    assert!(loaded_repository.get_by_id(first_id).unwrap().is_some());
+    assert!(loaded_repository.get_by_id(second_id).unwrap().is_some());
+}
+
+#[test]
+fn test_save_uuid追加後も長いproject名をutf8境界で短縮して保存する() {
+    let storage_dir = TestStorageDir::new();
+    let now = Local.with_ymd_and_hms(2026, 9, 4, 12, 0, 0).unwrap();
+    let task_id = Uuid::from_u128(0x2023);
+    let project_name = "あ".repeat(80);
+    let mut repository = TaskRepository::new(storage_dir.path_str());
+    repository.sync_clock(now).unwrap();
+    repository
+        .start_new_project(project_root_with_identity(&project_name, task_id, now))
+        .unwrap();
+
+    repository.save().unwrap();
+
+    let project_directory = fs::read_dir(&storage_dir.path)
+        .unwrap()
+        .filter_map(Result::ok)
+        .find(|entry| entry.path().join("project.yaml").is_file())
+        .unwrap();
+    let directory_name = project_directory.file_name();
+    let directory_name = directory_name.to_str().unwrap();
+    assert!(directory_name.len() <= 255);
+    assert!(directory_name.ends_with(&format!("-{task_id}")));
+
+    let mut loaded_repository = TaskRepository::new(storage_dir.path_str());
+    loaded_repository.sync_clock(now).unwrap();
+    loaded_repository.load().unwrap();
+    assert!(loaded_repository.get_by_id(task_id).unwrap().is_some());
+}
+
+#[test]
+fn test_load_旧形式directoryをrenameせず読み込む() {
+    let storage_dir = TestStorageDir::new();
+    let now = Local.with_ymd_and_hms(2026, 9, 4, 12, 0, 0).unwrap();
+    let task_id = Uuid::from_u128(0x2031);
+    let root_task = project_root_with_identity("旧形式", task_id, now);
+    let project = Project::new(root_task, "", "", 5);
+    let bytes = TaskRepository::serialize_project(&project).unwrap();
+    let legacy_directory = storage_dir.path.join("20260904-旧形式");
+    fs::create_dir_all(&legacy_directory).unwrap();
+    fs::write(legacy_directory.join("project.yaml"), bytes).unwrap();
+
+    let mut repository = TaskRepository::new(storage_dir.path_str());
+    repository.sync_clock(now).unwrap();
+    repository.load().unwrap();
+    repository.save().unwrap();
+
+    assert_eq!(repository.get_all_projects().len(), 1);
+    assert!(repository.get_by_id(task_id).unwrap().is_some());
+    assert!(legacy_directory.join("project.yaml").is_file());
+    assert!(!storage_dir
+        .path
+        .join(format!("20260904-旧形式-{task_id}"))
+        .exists());
 }
 
 fn project_with_all_persisted_yaml_fields() -> Project {
@@ -356,10 +612,10 @@ fn test_save_directory作成失敗を型付きerrorで返す() {
     let now = Local.with_ymd_and_hms(2026, 8, 11, 12, 0, 0).unwrap();
     let mut task_repository = TaskRepository::new(storage_dir.path_str());
     task_repository.sync_clock(now).unwrap();
-    task_repository
-        .start_new_project(crate::test_support::new_task_handle("保存失敗対象").unwrap())
-        .unwrap();
-    let expected_project_dir = storage_dir.project_dir_path("20260811", "保存失敗対象");
+    let task = crate::test_support::new_task_handle("保存失敗対象").unwrap();
+    let task_id = task.get_id().unwrap();
+    task_repository.start_new_project(task).unwrap();
+    let expected_project_dir = storage_dir.project_dir_path("20260811", "保存失敗対象", task_id);
 
     let actual = task_repository.save().unwrap_err();
 
@@ -377,11 +633,11 @@ fn test_save_project_yaml_read失敗でもatomic_writeを試す() {
     let now = Local.with_ymd_and_hms(2026, 8, 11, 12, 0, 0).unwrap();
     let mut task_repository = TaskRepository::new(storage_dir.path_str());
     task_repository.sync_clock(now).unwrap();
-    task_repository
-        .start_new_project(crate::test_support::new_task_handle("read失敗対象").unwrap())
-        .unwrap();
+    let task = crate::test_support::new_task_handle("read失敗対象").unwrap();
+    let task_id = task.get_id().unwrap();
+    task_repository.start_new_project(task).unwrap();
     let project_yaml_path = storage_dir
-        .project_dir_path("20260811", "read失敗対象")
+        .project_dir_path("20260811", "read失敗対象", task_id)
         .join("project.yaml");
     fs::create_dir_all(&project_yaml_path).unwrap();
 
@@ -684,6 +940,81 @@ fn test_load_open失敗を型付きerrorにする() {
     assert_eq!(source.path, project_yaml_file_path);
 }
 
+#[cfg(unix)]
+#[test]
+fn test_open_project_fileはcanonical_identityとopened_fileを同じtargetへ固定する() {
+    use std::os::unix::fs::symlink;
+
+    let storage_dir = TestStorageDir::new();
+    fs::create_dir_all(&storage_dir.path).unwrap();
+    let first_target = storage_dir.path.join("first.yaml");
+    let second_target = storage_dir.path.join("second.yaml");
+    fs::write(&first_target, "first").unwrap();
+    fs::write(&second_target, "second").unwrap();
+    let project_yaml_path = storage_dir.path.join("project.yaml");
+    symlink(&first_target, &project_yaml_path).unwrap();
+
+    let (mut opened_file, canonical_path) = open_project_file(&project_yaml_path).unwrap();
+    fs::remove_file(&project_yaml_path).unwrap();
+    symlink(&second_target, &project_yaml_path).unwrap();
+    let mut contents = String::new();
+    opened_file.read_to_string(&mut contents).unwrap();
+
+    assert_eq!(canonical_path, fs::canonicalize(first_target).unwrap());
+    assert_eq!(contents, "first");
+}
+
+#[cfg(unix)]
+#[test]
+fn test_load_canonical_pathが重複するprojectを拒否してmemoryを変更しない() {
+    use std::os::unix::fs::symlink;
+
+    let storage_dir = TestStorageDir::new();
+    fs::create_dir_all(&storage_dir.path).unwrap();
+    let now = Local.with_ymd_and_hms(2026, 9, 4, 12, 0, 0).unwrap();
+    let stored_task = project_root_with_identity("保存済み", Uuid::from_u128(0x2201), now);
+    let stored_project = Project::new(stored_task, "", "", 5);
+    let shared_yaml_path = storage_dir.path.join("shared.yaml");
+    fs::write(
+        &shared_yaml_path,
+        TaskRepository::serialize_project(&stored_project).unwrap(),
+    )
+    .unwrap();
+    let first_project_yaml_path = storage_dir.path.join("alias-a/project.yaml");
+    let second_project_yaml_path = storage_dir.path.join("alias-b/project.yaml");
+    fs::create_dir_all(first_project_yaml_path.parent().unwrap()).unwrap();
+    fs::create_dir_all(second_project_yaml_path.parent().unwrap()).unwrap();
+    symlink(&shared_yaml_path, &first_project_yaml_path).unwrap();
+    symlink(&shared_yaml_path, &second_project_yaml_path).unwrap();
+
+    let memory_task_id = Uuid::from_u128(0x2202);
+    let mut repository = TaskRepository::new(storage_dir.path_str());
+    repository.sync_clock(now).unwrap();
+    repository
+        .start_new_project(project_root_with_identity(
+            "memory project",
+            memory_task_id,
+            now,
+        ))
+        .unwrap();
+    let original_revision = Uuid::from_u128(0x2203);
+    repository.storage_revision.set(Some(original_revision));
+
+    let actual = repository.load().unwrap_err();
+
+    assert_eq!(actual.operation(), ApplicationRepositoryOperation::Load);
+    let source = file_repository_error(&actual);
+    assert_eq!(source.operation, FileRepositoryOperation::ParseProject);
+    assert_eq!(source.path, second_project_yaml_path);
+    assert_eq!(source.source.kind(), std::io::ErrorKind::InvalidData);
+    let message = source.source.to_string();
+    assert!(message.contains(first_project_yaml_path.to_str().unwrap()));
+    assert!(message.contains(second_project_yaml_path.to_str().unwrap()));
+    assert_eq!(repository.get_all_projects().len(), 1);
+    assert!(repository.get_by_id(memory_task_id).unwrap().is_some());
+    assert_eq!(repository.storage_revision.get(), Some(original_revision));
+}
+
 #[test]
 fn test_load_途中失敗ではmemoryを部分更新しない() {
     let storage_dir = TestStorageDir::new();
@@ -719,15 +1050,17 @@ fn test_save_変更したprojectだけを置換する() {
     repository.sync_clock(now).unwrap();
     let changed_task = crate::test_support::new_task_handle("変更対象").unwrap();
     let unchanged_task = crate::test_support::new_task_handle("未変更対象").unwrap();
+    let changed_task_id = changed_task.get_id().unwrap();
+    let unchanged_task_id = unchanged_task.get_id().unwrap();
     repository.start_new_project(changed_task.clone()).unwrap();
     repository.start_new_project(unchanged_task).unwrap();
     repository.save().unwrap();
 
     let changed_yaml_path = storage_dir
-        .project_dir_path("20260811", "変更対象")
+        .project_dir_path("20260811", "変更対象", changed_task_id)
         .join("project.yaml");
     let unchanged_yaml_path = storage_dir
-        .project_dir_path("20260811", "未変更対象")
+        .project_dir_path("20260811", "未変更対象", unchanged_task_id)
         .join("project.yaml");
     let changed_inode = fs::metadata(&changed_yaml_path).unwrap().ino();
     let unchanged_inode = fs::metadata(&unchanged_yaml_path).unwrap().ino();
@@ -765,10 +1098,11 @@ fn test_save_未変更projectはserialize比較対象にしない() {
     repository.sync_clock(now).unwrap();
     let changed_task = crate::test_support::new_task_handle("変更対象").unwrap();
     let unchanged_task = crate::test_support::new_task_handle("未変更対象").unwrap();
+    let unchanged_task_id = unchanged_task.get_id().unwrap();
     repository.start_new_project(changed_task.clone()).unwrap();
     repository.start_new_project(unchanged_task).unwrap();
     repository.save().unwrap();
-    let unchanged_dir = storage_dir.project_dir_path("20260813", "未変更対象");
+    let unchanged_dir = storage_dir.project_dir_path("20260813", "未変更対象", unchanged_task_id);
     fs::remove_dir_all(&unchanged_dir).unwrap();
 
     changed_task.set_estimated_work_seconds(30 * 60).unwrap();
@@ -783,25 +1117,25 @@ fn test_save_load直後のprojectはcleanで新規projectだけを保存する()
     let now = Local.with_ymd_and_hms(2026, 8, 13, 12, 0, 0).unwrap();
     let mut source = TaskRepository::new(storage_dir.path_str());
     source.sync_clock(now).unwrap();
-    source
-        .start_new_project(crate::test_support::new_task_handle("読込済み").unwrap())
-        .unwrap();
+    let loaded_task = crate::test_support::new_task_handle("読込済み").unwrap();
+    let loaded_task_id = loaded_task.get_id().unwrap();
+    source.start_new_project(loaded_task).unwrap();
     source.save().unwrap();
 
     let mut repository = TaskRepository::new(storage_dir.path_str());
     repository.sync_clock(now).unwrap();
     repository.load().unwrap();
-    let loaded_dir = storage_dir.project_dir_path("20260813", "読込済み");
+    let loaded_dir = storage_dir.project_dir_path("20260813", "読込済み", loaded_task_id);
     fs::remove_dir_all(&loaded_dir).unwrap();
-    repository
-        .start_new_project(crate::test_support::new_task_handle("新規").unwrap())
-        .unwrap();
+    let new_task = crate::test_support::new_task_handle("新規").unwrap();
+    let new_task_id = new_task.get_id().unwrap();
+    repository.start_new_project(new_task).unwrap();
 
     repository.save().unwrap();
 
     assert!(!loaded_dir.exists());
     assert!(storage_dir
-        .project_dir_path("20260813", "新規")
+        .project_dir_path("20260813", "新規", new_task_id)
         .join("project.yaml")
         .is_file());
 }
@@ -817,7 +1151,7 @@ fn test_save_失敗後もdirtyを維持して再試行する() {
     repository.start_new_project(task.clone()).unwrap();
     repository.save().unwrap();
     let project_yaml_path = storage_dir
-        .project_dir_path("20260813", "再試行対象")
+        .project_dir_path("20260813", "再試行対象", task_id)
         .join("project.yaml");
     let old_bytes = fs::read(&project_yaml_path).unwrap();
     fs::remove_file(&project_yaml_path).unwrap();
@@ -895,11 +1229,12 @@ fn test_save_project失敗時はdisk_revisionだけを先に進める() {
     let mut repository = TaskRepository::new(storage_dir.path_str());
     repository.sync_clock(now).unwrap();
     let task = crate::test_support::new_task_handle("失敗対象").unwrap();
+    let task_id = task.get_id().unwrap();
     repository.start_new_project(task.clone()).unwrap();
     repository.save().unwrap();
     let previous_revision = repository.storage_revision.get().unwrap();
     let project_yaml_path = storage_dir
-        .project_dir_path("20260813", "失敗対象")
+        .project_dir_path("20260813", "失敗対象", task_id)
         .join("project.yaml");
     fs::remove_file(&project_yaml_path).unwrap();
     fs::create_dir(&project_yaml_path).unwrap();
@@ -987,9 +1322,9 @@ fn test_save_revision_symlinkを拒否して参照先を変更しない() {
     let now = Local.with_ymd_and_hms(2026, 8, 13, 12, 0, 0).unwrap();
     let mut repository = TaskRepository::new(storage_dir.path_str());
     repository.sync_clock(now).unwrap();
-    repository
-        .start_new_project(crate::test_support::new_task_handle("保存対象").unwrap())
-        .unwrap();
+    let task = crate::test_support::new_task_handle("保存対象").unwrap();
+    let task_id = task.get_id().unwrap();
+    repository.start_new_project(task).unwrap();
 
     let actual = repository.save().unwrap_err();
 
@@ -999,7 +1334,7 @@ fn test_save_revision_symlinkを拒否して参照先を変更しない() {
     assert_eq!(source.path, revision_path);
     assert_eq!(fs::read_to_string(target_path).unwrap(), target_content);
     assert!(!storage_dir
-        .project_dir_path("20260813", "保存対象")
+        .project_dir_path("20260813", "保存対象", task_id)
         .join("project.yaml")
         .exists());
 }
@@ -1038,7 +1373,7 @@ fn test_reload_if_changed_revision一致ならyamlを再読込せずclock同期�
     source.start_new_project(task).unwrap();
     source.save().unwrap();
     let project_yaml_path = storage_dir
-        .project_dir_path("20260813", "cache対象")
+        .project_dir_path("20260813", "cache対象", task_id)
         .join("project.yaml");
     let mut repository = TaskRepository::new(storage_dir.path_str());
     assert_eq!(
