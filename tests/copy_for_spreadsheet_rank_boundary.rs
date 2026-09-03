@@ -58,3 +58,29 @@ fn copy_for_spreadsheetはrank上限境界のtask行だけを列順どおり保�
     assert!(task_lines.iter().all(|line| line.split('\t').count() == 18));
     assert_eq!(lines.len(), task_lines.len() + 50);
 }
+
+#[test]
+fn copy_for_spreadsheetは不完全な数値rank候補を元入力line番号付きerrorにする() {
+    let input = fs::read_to_string(repository_path(
+        "tests/fixtures/copy_for_spreadsheet_rank_boundary/incomplete-task-row.txt",
+    ))
+    .expect("incomplete task row fixture exists");
+
+    let output = run_copy_script(&input);
+
+    assert!(
+        !output.status.success(),
+        "incomplete task row must fail instead of being skipped"
+    );
+    assert!(
+        output.stdout.is_empty(),
+        "stdout must stay empty on failure: {}",
+        String::from_utf8_lossy(&output.stdout)
+    );
+
+    let stderr = String::from_utf8(output.stderr).expect("script error is UTF-8");
+    assert!(
+        stderr.contains("line 3:"),
+        "error must report the original input line: {stderr}"
+    );
+}
