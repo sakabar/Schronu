@@ -21,7 +21,29 @@ weekday_order='月火水木金土日月'
 month_offset=(0 31 59 90 120 151 181 212 243 273 304 334)
 task_rows_output=$(
 cat - | awk '
-/^0/ && !/^----/ {
+function is_decimal(value) {
+    return value ~ /^[0-9][0-9]*$/
+}
+
+function is_uuid(value, parts) {
+    if (split(value, parts, "-") != 5) {
+        return 0
+    }
+    return length(parts[1]) == 8 && length(parts[2]) == 4 &&
+        length(parts[3]) == 4 && length(parts[4]) == 4 &&
+        length(parts[5]) == 12 && value ~ /^[0-9a-f-]+$/
+}
+
+function is_scheduled_time(value) {
+    return value ~ /^[0-9][0-9]\/[0-9][0-9]\([月火水木金土日]\)-[0-9][0-9]:[0-9][0-9]~[0-9][0-9]:[0-9][0-9]$/
+}
+
+function is_category(value) {
+    return value == "獲" || value == "維" || value == "回" ||
+        value == "資" || value == "消" || value == "_"
+}
+
+/^[0-9]/ {
     line = $0
     for (i = 1; i <= 9; i++) {
         sub(/^[[:space:]]+/, "", line)
@@ -37,6 +59,13 @@ cat - | awk '
         next
     }
     gsub(/[[:space:]]+/, " ", line)
+
+    if (length(column[1]) < 4 || !is_decimal(column[1]) ||
+        !is_uuid(column[2]) || !is_scheduled_time(column[5]) ||
+        !is_decimal(column[6]) || !is_decimal(column[7]) ||
+        !is_decimal(column[8]) || !is_category(column[9])) {
+        next
+    }
 
     for (i = 1; i <= 9; i++) {
         printf "%s\t", column[i]
