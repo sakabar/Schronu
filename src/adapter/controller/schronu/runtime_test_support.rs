@@ -261,6 +261,7 @@ impl interactive::InputSource for ScriptedInteractiveInput {
 #[cfg(test)]
 struct SignaledFailureWriter {
     fail_output: Rc<Cell<bool>>,
+    error_kind: std::io::ErrorKind,
 }
 
 #[cfg(test)]
@@ -268,7 +269,7 @@ impl Write for SignaledFailureWriter {
     fn write(&mut self, buffer: &[u8]) -> std::io::Result<usize> {
         if self.fail_output.get() {
             Err(std::io::Error::new(
-                std::io::ErrorKind::PermissionDenied,
+                self.error_kind,
                 "test interactive output failure",
             ))
         } else {
@@ -279,7 +280,7 @@ impl Write for SignaledFailureWriter {
     fn flush(&mut self) -> std::io::Result<()> {
         if self.fail_output.get() {
             Err(std::io::Error::new(
-                std::io::ErrorKind::PermissionDenied,
+                self.error_kind,
                 "test interactive output failure",
             ))
         } else {
@@ -302,6 +303,7 @@ impl SchronuWriter for SignaledFailureWriter {
 #[cfg(test)]
 struct SignaledFailureTerminalFactory {
     fail_output: Rc<Cell<bool>>,
+    error_kind: std::io::ErrorKind,
 }
 
 #[cfg(test)]
@@ -309,6 +311,7 @@ impl interactive::TerminalFactory for SignaledFailureTerminalFactory {
     fn open_terminal(&mut self) -> std::io::Result<Box<dyn SchronuWriter>> {
         Ok(Box::new(SignaledFailureWriter {
             fail_output: Rc::clone(&self.fail_output),
+            error_kind: self.error_kind,
         }))
     }
 }
@@ -476,6 +479,7 @@ struct TestTaskRepository {
     get_by_id_attempt_count: Cell<usize>,
     save_failures_remaining: Cell<usize>,
     save_attempt_count: Cell<usize>,
+    save_attempt_signal_opt: Option<Rc<Cell<bool>>>,
     has_pending_changes: Cell<bool>,
     operation_trace: RefCell<Vec<&'static str>>,
 }
@@ -535,6 +539,7 @@ impl TestTaskRepository {
             get_by_id_attempt_count: Cell::new(0),
             save_failures_remaining: Cell::new(0),
             save_attempt_count: Cell::new(0),
+            save_attempt_signal_opt: None,
             has_pending_changes: Cell::new(true),
             operation_trace: RefCell::new(Vec::new()),
         }
@@ -542,6 +547,11 @@ impl TestTaskRepository {
 
     fn with_storage_directory(mut self, storage_directory: &std::path::Path) -> Self {
         self.storage_directory = storage_directory.to_str().unwrap().to_string();
+        self
+    }
+
+    fn with_save_attempt_signal(mut self, signal: Rc<Cell<bool>>) -> Self {
+        self.save_attempt_signal_opt = Some(signal);
         self
     }
 
@@ -596,6 +606,9 @@ impl TaskRepositoryTrait for TestTaskRepository {
         self.operation_trace.borrow_mut().push("save");
         self.save_attempt_count
             .set(self.save_attempt_count.get() + 1);
+        if let Some(signal) = &self.save_attempt_signal_opt {
+            signal.set(true);
+        }
         let failures_remaining = self.save_failures_remaining.get();
         if failures_remaining > 0 {
             self.save_failures_remaining.set(failures_remaining - 1);
