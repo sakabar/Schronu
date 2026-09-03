@@ -21,7 +21,6 @@ pub(crate) fn scheduled_capacity_seconds(
 }
 
 /// schedule segmentの容量を、交差する論理日へ時系列順に配賦する。
-#[allow(dead_code)] // packとflattenを後続commitで順次移行するまでの段階的導入。
 pub(crate) fn scheduled_capacity_seconds_by_logical_date(
     fixed_start: bool,
     scheduled_start: DateTime<Local>,
