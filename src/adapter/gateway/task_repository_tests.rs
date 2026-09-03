@@ -1,5 +1,6 @@
 use super::*;
 use crate::adapter::gateway::yaml::YamlConversionError;
+use crate::application::interface::ProjectRegistrationError;
 use chrono::{Duration, TimeZone};
 use std::path::PathBuf;
 
@@ -165,6 +166,85 @@ fn test_start_new_project_taskをmemoryに登録する() {
             .unwrap(),
         "メモリ登録対象"
     );
+}
+
+#[test]
+fn test_start_new_project_既存taskと同じuuidを拒否して状態を変更しない() {
+    let storage_dir = TestStorageDir::new();
+    let now = Local.with_ymd_and_hms(2026, 9, 4, 12, 0, 0).unwrap();
+    let duplicate_id = Uuid::from_u128(0x2101);
+    let mut repository = TaskRepository::new(storage_dir.path_str());
+    repository.sync_clock(now).unwrap();
+    repository
+        .start_new_project(project_root_with_identity(
+            "既存project",
+            duplicate_id,
+            now,
+        ))
+        .unwrap();
+
+    let actual = repository
+        .start_new_project(project_root_with_identity(
+            "重複project",
+            duplicate_id,
+            now,
+        ))
+        .unwrap_err();
+
+    assert_eq!(actual, ProjectRegistrationError::DuplicateTaskId(duplicate_id));
+    assert_eq!(repository.get_all_projects().len(), 1);
+    assert_eq!(
+        repository
+            .get_by_id(duplicate_id)
+            .unwrap()
+            .unwrap()
+            .get_name()
+            .unwrap(),
+        "既存project"
+    );
+    assert!(!storage_dir.path.exists());
+}
+
+#[test]
+fn test_start_new_project_既存projectと同じ保存先を拒否して状態を変更しない() {
+    let storage_dir = TestStorageDir::new();
+    let now = Local.with_ymd_and_hms(2026, 9, 4, 12, 0, 0).unwrap();
+    let existing_id = Uuid::from_u128(0x2111);
+    let candidate_id = Uuid::from_u128(0x2112);
+    let colliding_directory = storage_dir.path.join(project_directory_name(
+        "20260904",
+        "同じ保存先",
+        candidate_id,
+    ));
+    let existing_root = project_root_with_identity("既存project", existing_id, now);
+    let mut repository = TaskRepository::new(storage_dir.path_str());
+    repository.sync_clock(now).unwrap();
+    repository
+        .cache_task_and_descendants(&existing_root)
+        .unwrap();
+    repository.projects.push(Project::new(
+        existing_root,
+        &colliding_directory,
+        colliding_directory.join("project.yaml"),
+        5,
+    ));
+
+    let actual = repository
+        .start_new_project(project_root_with_identity(
+            "同じ保存先",
+            candidate_id,
+            now,
+        ))
+        .unwrap_err();
+
+    assert_eq!(
+        actual,
+        ProjectRegistrationError::DuplicateStoragePath(colliding_directory)
+    );
+    assert_eq!(repository.get_all_projects().len(), 1);
+    assert!(repository.get_by_id(existing_id).unwrap().is_some());
+    assert!(repository.get_by_id(candidate_id).unwrap().is_none());
+    assert!(!storage_dir.path.exists());
 }
 
 #[test]
