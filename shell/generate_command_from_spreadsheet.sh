@@ -24,6 +24,11 @@ function to_minutes(time_str, parts) {
     }
 
     split(time_str, parts, ":")
+
+    if (parts[2] + 0 > 59 || parts[3] + 0 > 59) {
+        return -1
+    }
+
     return (parts[1] * 60) + parts[2]
 }
 
