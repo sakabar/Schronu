@@ -75,7 +75,7 @@
 | TD-034 | P1 | 未着手 | M | Spreadsheet入力が存在しない日付と不正な時分秒をcommandへ変換する |
 | TD-035 | P2 | 未着手 | M | 反復延期がDST境界で開始時刻とdeadlineの壁時計時刻をずらす |
 | TD-036 | P2 | 未着手 | L | source textを独自parseするarchitecture testがRust構文と実装名へ強く結合している |
-| TD-037 | P2 | 未着手 | M | 未使用のlenient YAML変換APIがstrict loaderと並存している |
+| TD-037 | P2 | 完了 | M | 未使用のlenient YAML変換APIがstrict loaderと並存している |
 | TD-038 | P2 | 未着手 | L | MCPのtask一覧に検索・paginationがなく、大規模storageで応答が無制限に増える |
 | TD-039 | P2 | 未着手 | L | 稼働中processを止めずに整合したbackupを作成・検証・restoreする手段がない |
 
@@ -1482,6 +1482,9 @@
 - 分類: `技術的負債 / API整理`
 - 優先度: `P2`
 - 概算規模: `M`
+- 完了日: 2026-09-04
+- 対応: 未使用`yaml_to_immutable_task`と専用test、`ImmutableTask`・`extract_leaf_immutable_tasks_from_project`と専用test、未知値を`Deadline`へfallbackする`read_repetition_anchor`と専用testを削除。strict `yaml_to_task`、repository load、YAML encoder/保存形式、CLI、MCP JSONは変更なし。不正nameのstrict validation testも追加。
+- 検証: `cargo fmt --check`、`cargo clippy --locked --all-targets -- -D warnings`、`cargo test --locked`、`git diff --check`成功。通常testは1038件成功、2件ignored、失敗0件。`src/`と`tests/`の削除対象3 API参照0件、repository loadは`yaml_to_task`のみ、2段階reviewと横断再reviewで残存指摘なし。
 - 関連既存項目: TD-003とTD-009の完了後に残った旧経路。
 
 #### 現状と根拠
