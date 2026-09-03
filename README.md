@@ -596,6 +596,8 @@ SpreadsheetのA-S列は[spreadsheet_columns.tsv](spreadsheet_columns.tsv)を正�
 
 `約`または`appointment`で開始時刻を設定したタスクはfixed予定となり、priorityや締切にかかわらず指定時刻から動きません。`始`または`start`で開始時刻を設定し直すとflexibleへ戻ります。fixed予定同士が重なる場合は重複したまま表示し、その他のタスクはその予約時間を避けます。
 
+ただし、自身に`repetition_interval_days`を持つ反復親では、`fixed_start`は次回子taskを生成するための既定値です。反復親自身はfixed予定にならず、新しく生成される子だけが親の値を継承します。既存の子の`fixed_start`は変更されず、個別の子に対する`約`・`始`も親や次回子へ逆伝播しません。
+
 旧dataに`fixed_start`がない場合だけ、`deadline_time == start_time + estimated_work_seconds`と完全一致するタスクを従来の予定としてfixed扱いします。明示的な`fixed_start: false`は推定で上書きしません。
 
 選択規則、slackの定義、fixed・atomic・依存関係の扱いは[予定配置policyの設計](docs/design/scheduling_policy.md)を参照してください。
