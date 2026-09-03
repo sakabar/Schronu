@@ -2014,13 +2014,13 @@ fn finishのundone_tree取得errorは情報を保って伝播する() {
 
     let result = handle_finish_placement_command(&finish_command(), &mut context);
 
-    assert_eq!(
+    assert!(matches!(
         result,
-        Err(ApplicationError::InvalidInput {
+        Err(HandlerError::Application(ApplicationError::InvalidInput {
             field: "tree",
             reason: "injected finish tree failure",
-        })
-    );
+        }))
+    ));
     assert_eq!(context.calls, ["show-focused-tree"]);
     assert!(context.completion_inputs.is_empty());
     assert!(context.focus_updates.is_empty());
