@@ -364,15 +364,25 @@ pub fn breakdown_task(
     }
 
     let parent_task = find_task(repository, input.parent_id)?;
-    let mut child_ids = Vec::with_capacity(input.names.len());
+    let child_attrs = input
+        .names
+        .into_iter()
+        .map(|name| {
+            let mut child_attr = factory.create_task_attr(&name);
+            if let Some(pending_until) = input.pending_until {
+                child_attr.set_orig_status(Status::Pending);
+                child_attr.set_pending_until(pending_until);
+            }
+            child_attr
+        })
+        .collect::<Vec<_>>();
+    ensure_task_ids_available(
+        repository,
+        child_attrs.iter().map(|child_attr| *child_attr.get_id()),
+    )?;
+    let mut child_ids = Vec::with_capacity(child_attrs.len());
 
-    for name in input.names {
-        let mut child_attr = factory.create_task_attr(&name);
-        if let Some(pending_until) = input.pending_until {
-            child_attr.set_orig_status(Status::Pending);
-            child_attr.set_pending_until(pending_until);
-        }
-
+    for child_attr in child_attrs {
         let child_task = parent_task
             .create_child(child_attr)
             .map_err(ApplicationError::TaskTree)?;
@@ -590,6 +600,25 @@ fn find_task(
         .get_by_id(task_id)
         .map_err(ApplicationError::TaskTree)?
         .ok_or(ApplicationError::TaskNotFound(task_id))
+}
+
+fn ensure_task_ids_available(
+    repository: &dyn TaskRepositoryTrait,
+    task_ids: impl IntoIterator<Item = Uuid>,
+) -> Result<(), ApplicationError> {
+    let mut generated_ids = HashSet::new();
+    for task_id in task_ids {
+        let already_exists = repository
+            .get_by_id(task_id)
+            .map_err(ApplicationError::TaskTree)?
+            .is_some();
+        if already_exists || !generated_ids.insert(task_id) {
+            return Err(ApplicationError::ProjectRegistration(
+                ProjectRegistrationError::DuplicateTaskId(task_id),
+            ));
+        }
+    }
+    Ok(())
 }
 
 pub fn validate_task_name(name: &str, field: &'static str) -> Result<(), ApplicationError> {
