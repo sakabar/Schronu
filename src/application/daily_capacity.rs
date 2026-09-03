@@ -1,7 +1,7 @@
 use super::interface::FreeTimeManagerTrait;
 use super::task_use_case::{resolve_local_datetime, ApplicationError};
 use crate::entity::datetime::{LogicalDateTimePolicy, DEFAULT_END_OF_DAY_OFFSET_MINUTES};
-use chrono::{DateTime, Local, NaiveDate, NaiveTime, TimeZone, Timelike};
+use chrono::{DateTime, Local, NaiveDate, NaiveTime, TimeZone};
 
 pub const RHO_GOAL: f64 = 0.7;
 pub const END_OF_DAY_OFFSET_MINUTES: i64 = DEFAULT_END_OF_DAY_OFFSET_MINUTES;
@@ -53,28 +53,20 @@ pub fn calculate_free_time_minutes_for_logical_date_with_end_of_day_offset_minut
     free_time_manager: &mut dyn FreeTimeManagerTrait,
     end_of_day_offset_minutes: i64,
 ) -> Result<i64, ApplicationError> {
-    let local_datetime_base = try_logical_date_start(*date)?;
     let current_logical_date = try_logical_date(last_synced_time)?;
-    let eod = try_logical_date_end(current_logical_date, end_of_day_offset_minutes)?;
-    let next_boundary_for_base = try_next_logical_date_start(local_datetime_base)?;
-    let next_boundary_for_last_synced_time = try_next_logical_date_start(last_synced_time)?;
-
-    if local_datetime_base < last_synced_time && last_synced_time < next_boundary_for_base {
-        if last_synced_time.hour() < next_boundary_for_last_synced_time.hour() {
-            if last_synced_time < eod {
-                Ok((eod - last_synced_time).num_minutes())
-            } else {
-                Ok(0)
-            }
-        } else {
-            Ok(free_time_manager.get_free_minutes(&last_synced_time, &eod))
-        }
-    } else {
-        calculate_full_day_free_time_minutes_for_logical_date_with_end_of_day_offset_minutes(
+    if *date != current_logical_date {
+        return calculate_full_day_free_time_minutes_for_logical_date_with_end_of_day_offset_minutes(
             date,
             free_time_manager,
             end_of_day_offset_minutes,
-        )
+        );
+    }
+
+    let eod = try_logical_date_end(*date, end_of_day_offset_minutes)?;
+    if last_synced_time < eod {
+        Ok(free_time_manager.get_free_minutes(&last_synced_time, &eod))
+    } else {
+        Ok(0)
     }
 }
 
