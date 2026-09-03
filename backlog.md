@@ -66,7 +66,7 @@
 | TD-025 | P1 | 未着手 | M | 対話CLIのterminal I/O失敗がpanicまたは未検査結果になる |
 | TD-026 | P1 | 未着手 | L | task名をCLI・YAML・MCP・Spreadsheet間で安全にround-tripできない |
 | TD-027 | P1 | 未着手 | S | 残作業時間の補正計算が合法な大値入力で整数overflowする |
-| TD-028 | P1 | 未着手 | M | 論理日境界を跨ぐschedule segmentの容量が開始日に全量計上される |
+| TD-028 | P1 | 完了 | M | 論理日境界を跨ぐschedule segmentの容量が開始日に全量計上される |
 | TD-029 | P1 | 未着手 | L | 反復task完了の後段失敗で完了状態と親見積もりだけが部分更新される |
 | TD-030 | P1 | 未着手 | S | 00:00以降の日次残容量計算がbusy timeを無視する |
 | TD-031 | P1 | 未着手 | S | Spreadsheet変換がrank 1000以降のtask行を黙って破棄する |
@@ -1159,6 +1159,9 @@
 - 分類: `バグ / schedule正確性`
 - 優先度: `P1`
 - 概算規模: `M`
+- 完了日: 2026-09-04
+- 対応: schedule segmentと06:00境界の交差区間を時系列で返すapplication共通helperを追加した。fixedは予約windowの実時間、flexibleは作業秒を交差時間比で配賦し、整数除算の丸め差を最後の区間へ集約して総量を保存する。packの通常・反復容量とflattenの使用量・延期候補日を同じhelperへ移し、開始日の翌日にだけ過負荷があるsegmentも未解消理由と代表taskへ関連付けるようにした。
+- 検証: 05:30-06:30、複数日、fixed、flexible、分割済みsegment、丸め差、zero容量、日時範囲errorの単体契約と、pack・flatten・CLI製品経路のRed/Greenを確認した。`cargo fmt --check`、`cargo clippy --locked --all-targets -- -D warnings`、`cargo test --locked`、`git diff --check`に成功し、通常testは602件+447件ほか失敗0件だった。3回の責務別subagent reviewと最終履歴reviewの指摘を個別commitで解消した。
 
 #### 現状と根拠
 
