@@ -357,6 +357,78 @@ impl interactive::TerminalFactory for SignaledFailureTerminalFactory {
 }
 
 #[cfg(test)]
+struct SharedSignaledFailureWriter {
+    fail_output: Rc<Cell<bool>>,
+    output: Rc<RefCell<Vec<u8>>>,
+    drop_count: Rc<Cell<usize>>,
+    error_kind: std::io::ErrorKind,
+}
+
+#[cfg(test)]
+impl Write for SharedSignaledFailureWriter {
+    fn write(&mut self, buffer: &[u8]) -> std::io::Result<usize> {
+        if self.fail_output.get() {
+            Err(std::io::Error::new(
+                self.error_kind,
+                "test interactive output failure",
+            ))
+        } else {
+            self.output.borrow_mut().extend_from_slice(buffer);
+            Ok(buffer.len())
+        }
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        if self.fail_output.get() {
+            Err(std::io::Error::new(
+                self.error_kind,
+                "test interactive output failure",
+            ))
+        } else {
+            Ok(())
+        }
+    }
+}
+
+#[cfg(test)]
+impl SchronuWriter for SharedSignaledFailureWriter {
+    fn writeln_newline(&mut self, message: &str) -> std::io::Result<()> {
+        writeln!(self, "{message}")
+    }
+
+    fn supports_ansi_color(&self) -> bool {
+        false
+    }
+}
+
+#[cfg(test)]
+impl Drop for SharedSignaledFailureWriter {
+    fn drop(&mut self) {
+        self.drop_count.set(self.drop_count.get() + 1);
+    }
+}
+
+#[cfg(test)]
+struct SharedSignaledFailureTerminalFactory {
+    fail_output: Rc<Cell<bool>>,
+    output: Rc<RefCell<Vec<u8>>>,
+    drop_count: Rc<Cell<usize>>,
+    error_kind: std::io::ErrorKind,
+}
+
+#[cfg(test)]
+impl interactive::TerminalFactory for SharedSignaledFailureTerminalFactory {
+    fn open_terminal(&mut self) -> std::io::Result<Box<dyn SchronuWriter>> {
+        Ok(Box::new(SharedSignaledFailureWriter {
+            fail_output: Rc::clone(&self.fail_output),
+            output: Rc::clone(&self.output),
+            drop_count: Rc::clone(&self.drop_count),
+            error_kind: self.error_kind,
+        }))
+    }
+}
+
+#[cfg(test)]
 struct RawModeFailureTerminalFactory;
 
 #[cfg(test)]
@@ -592,6 +664,11 @@ impl TestTaskRepository {
 
     fn with_save_attempt_signal(mut self, signal: Rc<Cell<bool>>) -> Self {
         self.save_attempt_signal_opt = Some(signal);
+        self
+    }
+
+    fn with_pending_changes(self, has_pending_changes: bool) -> Self {
+        self.has_pending_changes.set(has_pending_changes);
         self
     }
 

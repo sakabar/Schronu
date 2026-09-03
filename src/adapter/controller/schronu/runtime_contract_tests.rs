@@ -5805,6 +5805,257 @@ fn test_non_interactiveのfinish時刻errorはload後に診断し状態を変更
 }
 
 #[test]
+fn test_interactiveのfinish実績overflow診断後のterminal_failureで状態とraw_guardを復元する() {
+    let storage_dir = TestStorageDir::new();
+    std::fs::create_dir_all(&storage_dir.path).unwrap();
+    let now = Local::now();
+    let task = new_test_task_handle("完了しないtask").unwrap();
+    let task_id = task.get_id().unwrap();
+    task.set_actual_work_seconds(i64::MAX).unwrap();
+    let original_snapshot = complete_task_tree_snapshot(&task);
+    let mut repository = TestTaskRepository::new(task, now)
+        .with_storage_directory(&storage_dir.path)
+        .with_pending_changes(false);
+    let mut free_time_manager = TestFreeTimeManager::default();
+    let mut focused_task_id_opt = Some(task_id);
+    let mut last_focused_task_id_opt = Some(task_id);
+    let mut focus_started_datetime = now - Duration::minutes(2);
+    let original_focus_started_datetime = focus_started_datetime;
+    let mut focus_selection_mode = FocusSelectionMode::highest_priority();
+    focus_selection_mode.set_explicit(true);
+    let original_focus_selection_mode = focus_selection_mode.clone();
+    let fail_output = Rc::new(Cell::new(false));
+    let output = Rc::new(RefCell::new(Vec::new()));
+    let drop_count = Rc::new(Cell::new(0));
+    let mut terminal_factory = SharedSignaledFailureTerminalFactory {
+        fail_output: Rc::clone(&fail_output),
+        output: Rc::clone(&output),
+        drop_count: Rc::clone(&drop_count),
+        error_kind: std::io::ErrorKind::PermissionDenied,
+    };
+    let mut input = ScriptedInteractiveInput::command("終");
+
+    let driver_result = interactive::run_with_terminal_factory(
+        now,
+        &mut terminal_factory,
+        &mut input,
+        |stdout, event| {
+            if matches!(event, interactive::DriverEvent::RenderScreen { .. }) {
+                return interactive::DriverOutcome::Continue;
+            }
+            let repository_event = match event {
+                interactive::DriverEvent::Submit { line } => {
+                    InteractiveRepositoryEvent::Submit { line }
+                }
+                interactive::DriverEvent::Refresh => InteractiveRepositoryEvent::Refresh,
+                interactive::DriverEvent::Exit => InteractiveRepositoryEvent::Exit,
+                interactive::DriverEvent::Interrupted => InteractiveRepositoryEvent::Interrupted,
+                interactive::DriverEvent::InputDisconnected => {
+                    InteractiveRepositoryEvent::InputDisconnected
+                }
+                interactive::DriverEvent::InputRead(error) => {
+                    InteractiveRepositoryEvent::InputRead(error)
+                }
+                interactive::DriverEvent::RenderScreen { .. } => unreachable!(),
+            };
+            match handle_interactive_repository_event(
+                stdout,
+                &mut repository,
+                &mut free_time_manager,
+                InteractiveRepositoryState {
+                    focused_task_id_opt: &mut focused_task_id_opt,
+                    last_focused_task_id_opt: &mut last_focused_task_id_opt,
+                    focus_started_datetime: &mut focus_started_datetime,
+                    focus_selection_mode: &mut focus_selection_mode,
+                },
+                repository_event,
+            ) {
+                InteractiveRepositoryEventOutcome::Continue => interactive::DriverOutcome::Continue,
+                InteractiveRepositoryEventOutcome::CommandExecuted(command_kind, operation_now) => {
+                    fail_output.set(true);
+                    if !interactive::should_suppress_leaf_tasks_after_command(command_kind) {
+                        let result = match build_leaf_tree_display(&mut repository) {
+                            Ok(tree) => render_display_model(stdout, &DisplayModel::Tree(tree))
+                                .map_err(CommandError::Output),
+                            Err(error) => report_application_result::<()>(stdout, Err(error)),
+                        };
+                        if let Err(error) = result {
+                            return interactive::DriverOutcome::Fatal(RunError::Command(error));
+                        }
+                    }
+                    if let Err(error) = render_focused_task(
+                        stdout,
+                        &repository,
+                        focused_task_id_opt,
+                        &mut last_focused_task_id_opt,
+                        &mut focus_started_datetime,
+                        operation_now,
+                    ) {
+                        return interactive::DriverOutcome::Fatal(RunError::Command(error));
+                    }
+                    interactive::DriverOutcome::Submitted
+                }
+                InteractiveRepositoryEventOutcome::Retry(error) => {
+                    interactive::DriverOutcome::Retry(error)
+                }
+                InteractiveRepositoryEventOutcome::Exit => interactive::DriverOutcome::Exit,
+                InteractiveRepositoryEventOutcome::Fatal(error) => {
+                    interactive::DriverOutcome::Fatal(error)
+                }
+            }
+        },
+    );
+    let result = classify_interactive_run_result(driver_result);
+
+    assert_eq!(drop_count.get(), 1);
+    assert!(matches!(
+        &result,
+        Err(RunError::Command(CommandError::Output(error)))
+            if error.kind() == std::io::ErrorKind::PermissionDenied
+    ));
+    assert_eq!(
+        complete_task_tree_snapshot(&repository.task),
+        original_snapshot
+    );
+    assert_eq!(focused_task_id_opt, Some(task_id));
+    assert_eq!(last_focused_task_id_opt, Some(task_id));
+    assert_eq!(focus_started_datetime, original_focus_started_datetime);
+    assert_eq!(focus_selection_mode, original_focus_selection_mode);
+    assert!(!repository.has_pending_changes.get());
+    assert_eq!(repository.save_attempt_count.get(), 0);
+    assert_eq!(
+        repository.operation_trace(),
+        ["reload_if_changed", "load", "has_pending_changes"]
+    );
+    let terminal_output = String::from_utf8(output.borrow().clone()).unwrap();
+    assert_eq!(
+        terminal_output
+            .lines()
+            .filter(|line| line.starts_with("[Error]"))
+            .collect::<Vec<_>>(),
+        [
+            "[Error] 操作エラー: invalid input for additional_actual_work_seconds: actual work seconds overflow"
+        ]
+    );
+
+    let mut stderr = Vec::new();
+    assert!(!report_run_result(&mut stderr, result));
+    assert_eq!(
+        String::from_utf8(stderr).unwrap(),
+        "[Error] 出力エラー: test interactive output failure\n"
+    );
+}
+
+#[test]
+fn test_interactiveのflatten余分argumentは状態を変更せずraw_guardを復元する() {
+    let storage_dir = TestStorageDir::new();
+    std::fs::create_dir_all(&storage_dir.path).unwrap();
+    let now = Local::now();
+    let task = new_test_task_handle("変更しないtask").unwrap();
+    let task_id = task.get_id().unwrap();
+    let original_snapshot = complete_task_tree_snapshot(&task);
+    let mut repository = TestTaskRepository::new(task, now)
+        .with_storage_directory(&storage_dir.path)
+        .with_pending_changes(false);
+    let mut free_time_manager = TestFreeTimeManager::default();
+    let mut focused_task_id_opt = Some(task_id);
+    let mut last_focused_task_id_opt = Some(task_id);
+    let mut focus_started_datetime = now;
+    let mut focus_selection_mode = FocusSelectionMode::highest_priority();
+    focus_selection_mode.set_explicit(true);
+    let original_focus_selection_mode = focus_selection_mode.clone();
+    let fail_output = Rc::new(Cell::new(false));
+    let output = Rc::new(RefCell::new(Vec::new()));
+    let drop_count = Rc::new(Cell::new(0));
+    let mut terminal_factory = SharedSignaledFailureTerminalFactory {
+        fail_output,
+        output,
+        drop_count: Rc::clone(&drop_count),
+        error_kind: std::io::ErrorKind::PermissionDenied,
+    };
+    let mut input = ScriptedInteractiveInput::command("flatten extra");
+
+    let driver_result = interactive::run_with_terminal_factory(
+        now,
+        &mut terminal_factory,
+        &mut input,
+        |stdout, event| {
+            if matches!(event, interactive::DriverEvent::RenderScreen { .. }) {
+                return interactive::DriverOutcome::Continue;
+            }
+            let repository_event = match event {
+                interactive::DriverEvent::Submit { line } => {
+                    InteractiveRepositoryEvent::Submit { line }
+                }
+                interactive::DriverEvent::Refresh => InteractiveRepositoryEvent::Refresh,
+                interactive::DriverEvent::Exit => InteractiveRepositoryEvent::Exit,
+                interactive::DriverEvent::Interrupted => InteractiveRepositoryEvent::Interrupted,
+                interactive::DriverEvent::InputDisconnected => {
+                    InteractiveRepositoryEvent::InputDisconnected
+                }
+                interactive::DriverEvent::InputRead(error) => {
+                    InteractiveRepositoryEvent::InputRead(error)
+                }
+                interactive::DriverEvent::RenderScreen { .. } => unreachable!(),
+            };
+            match handle_interactive_repository_event(
+                stdout,
+                &mut repository,
+                &mut free_time_manager,
+                InteractiveRepositoryState {
+                    focused_task_id_opt: &mut focused_task_id_opt,
+                    last_focused_task_id_opt: &mut last_focused_task_id_opt,
+                    focus_started_datetime: &mut focus_started_datetime,
+                    focus_selection_mode: &mut focus_selection_mode,
+                },
+                repository_event,
+            ) {
+                InteractiveRepositoryEventOutcome::Continue => interactive::DriverOutcome::Continue,
+                InteractiveRepositoryEventOutcome::CommandExecuted(..) => {
+                    interactive::DriverOutcome::Submitted
+                }
+                InteractiveRepositoryEventOutcome::Retry(error) => {
+                    interactive::DriverOutcome::Retry(error)
+                }
+                InteractiveRepositoryEventOutcome::Exit => interactive::DriverOutcome::Exit,
+                InteractiveRepositoryEventOutcome::Fatal(error) => {
+                    interactive::DriverOutcome::Fatal(error)
+                }
+            }
+        },
+    );
+    let result = classify_interactive_run_result(driver_result);
+
+    assert_eq!(drop_count.get(), 1);
+    assert!(matches!(
+        &result,
+        Err(RunError::Command(CommandError::Parse(error)))
+            if error.command() == "平"
+                && error.field() == "arguments"
+                && error.reason() == "引数の個数が正しくありません"
+                && error.usage() == "平"
+    ));
+    assert_eq!(
+        complete_task_tree_snapshot(&repository.task),
+        original_snapshot
+    );
+    assert_eq!(focused_task_id_opt, Some(task_id));
+    assert_eq!(last_focused_task_id_opt, Some(task_id));
+    assert_eq!(focus_started_datetime, now);
+    assert_eq!(focus_selection_mode, original_focus_selection_mode);
+    assert!(!repository.has_pending_changes.get());
+    assert_eq!(repository.save_attempt_count.get(), 0);
+    assert_eq!(repository.operation_trace(), ["reload_if_changed", "load"]);
+
+    let mut stderr = Vec::new();
+    assert!(!report_run_result(&mut stderr, result));
+    assert_eq!(
+        String::from_utf8(stderr).unwrap(),
+        "[Error] 入力エラー: arguments: 引数の個数が正しくありません (コマンド: 平, 使い方: 平)\n"
+    );
+}
+
+#[test]
 fn test_execute_non_interactive_command_project作成はoperation時刻を共有する() {
     let storage_dir = TestStorageDir::new();
     std::fs::create_dir_all(&storage_dir.path).unwrap();
