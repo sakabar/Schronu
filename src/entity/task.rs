@@ -77,6 +77,13 @@ pub fn read_repetition_anchor(s: &str) -> RepetitionAnchor {
     }
 }
 
+pub(crate) fn fixed_start_applies_to_schedule(
+    fixed_start: bool,
+    repetition_interval_days_opt: Option<i64>,
+) -> bool {
+    fixed_start && repetition_interval_days_opt.is_none()
+}
+
 #[derive(Copy, Clone, Debug, Eq, Hash, PartialEq, Serialize)]
 pub enum ProjectCategory {
     #[serde(rename = "earning")]
@@ -514,6 +521,10 @@ impl TaskAttr {
 
     pub fn get_fixed_start(&self) -> bool {
         self.fixed_start
+    }
+
+    pub(crate) fn fixed_start_applies_to_schedule(&self) -> bool {
+        fixed_start_applies_to_schedule(self.fixed_start, self.repetition_interval_days_opt)
     }
 
     pub fn set_fixed_start(&mut self, fixed_start: bool) {
@@ -1009,6 +1020,13 @@ impl TaskHandle {
         self.node
             .try_borrow_data()
             .map(|attr| attr.get_fixed_start())
+            .map_err(|_| TaskTreeError::Borrow)
+    }
+
+    pub(crate) fn fixed_start_applies_to_schedule(&self) -> Result<bool, TaskTreeError> {
+        self.node
+            .try_borrow_data()
+            .map(|attr| attr.fixed_start_applies_to_schedule())
             .map_err(|_| TaskTreeError::Borrow)
     }
 
