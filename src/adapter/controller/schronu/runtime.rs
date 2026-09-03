@@ -642,6 +642,9 @@ fn classify_interactive_run_result(
 ) -> Result<(), RunError> {
     match result {
         Ok(()) => Ok(()),
+        Err(interactive::DriverRunError::Io(
+            error @ interactive::InteractiveIoError::RawMode(_),
+        )) => Err(RunError::InteractiveIo(error)),
         Err(interactive::DriverRunError::Io(interactive::InteractiveIoError::Output(error))) => {
             classify_output_error(error).map_err(|error| {
                 RunError::InteractiveIo(interactive::InteractiveIoError::Output(error))

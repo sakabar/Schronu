@@ -35,12 +35,14 @@ pub(super) enum DriverOutcome<R, E> {
 
 #[derive(Debug)]
 pub(super) enum InteractiveIoError {
+    RawMode(std::io::Error),
     Output(std::io::Error),
 }
 
 impl std::fmt::Display for InteractiveIoError {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
+            Self::RawMode(error) => write!(formatter, "failed to initialize raw mode: {error}"),
             Self::Output(error) => write!(formatter, "interactive output failed: {error}"),
         }
     }
@@ -49,7 +51,7 @@ impl std::fmt::Display for InteractiveIoError {
 impl std::error::Error for InteractiveIoError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
-            Self::Output(error) => Some(error),
+            Self::RawMode(error) | Self::Output(error) => Some(error),
         }
     }
 }
@@ -120,6 +122,36 @@ trait InputSource {
 
 struct ChannelInput<'a> {
     receiver: &'a Receiver<std::io::Result<Key>>,
+}
+
+trait TerminalFactory {
+    fn open_terminal(&mut self) -> std::io::Result<Box<dyn SchronuWriter>>;
+}
+
+struct SystemTerminalFactory;
+
+impl TerminalFactory for SystemTerminalFactory {
+    fn open_terminal(&mut self) -> std::io::Result<Box<dyn SchronuWriter>> {
+        let terminal: termion::raw::RawTerminal<std::io::Stdout> = stdout().into_raw_mode()?;
+        Ok(Box::new(terminal))
+    }
+}
+
+struct TerminalGuard {
+    terminal: Box<dyn SchronuWriter>,
+}
+
+impl TerminalGuard {
+    fn open(factory: &mut dyn TerminalFactory) -> Result<Self, InteractiveIoError> {
+        factory
+            .open_terminal()
+            .map(|terminal| Self { terminal })
+            .map_err(InteractiveIoError::RawMode)
+    }
+
+    fn writer(&mut self) -> &mut dyn SchronuWriter {
+        self.terminal.as_mut()
+    }
 }
 
 impl InputSource for ChannelInput<'_> {
@@ -260,7 +292,6 @@ where
     R: Display,
     E: Display,
 {
-    let mut stdout: termion::raw::RawTerminal<std::io::Stdout> = stdout().into_raw_mode().unwrap();
     let (key_sender, key_receiver) = mpsc::channel();
     thread::spawn(move || {
         for key_result in std::io::stdin().keys() {
@@ -273,7 +304,26 @@ where
     let mut input = ChannelInput {
         receiver: &key_receiver,
     };
-    run_driver(initial_now, &mut stdout, &mut input, handle_event)
+    run_with_terminal_factory(
+        initial_now,
+        &mut SystemTerminalFactory,
+        &mut input,
+        handle_event,
+    )
+}
+
+fn run_with_terminal_factory<R, E>(
+    initial_now: DateTime<Local>,
+    terminal_factory: &mut dyn TerminalFactory,
+    input: &mut dyn InputSource,
+    handle_event: impl FnMut(&mut dyn SchronuWriter, DriverEvent<'_>) -> DriverOutcome<R, E>,
+) -> Result<(), DriverRunError<E>>
+where
+    R: Display,
+    E: Display,
+{
+    let mut terminal = TerminalGuard::open(terminal_factory).map_err(DriverRunError::Io)?;
+    run_driver(initial_now, terminal.writer(), input, handle_event)
 }
 
 fn run_driver<R, E>(
@@ -812,10 +862,7 @@ mod tests {
         }
     }
 
-    fn tracking_factory(
-        drops: &Rc<Cell<usize>>,
-        fail_output: bool,
-    ) -> FakeTerminalFactory {
+    fn tracking_factory(drops: &Rc<Cell<usize>>, fail_output: bool) -> FakeTerminalFactory {
         FakeTerminalFactory {
             terminal: Some(Ok(Box::new(DropTrackingWriter {
                 drops: Rc::clone(drops),
@@ -833,19 +880,14 @@ mod tests {
             ))),
         };
         let mut input = ScriptedInput::new([]);
-        let result = run_with_terminal_factory(
-            Local::now(),
-            &mut factory,
-            &mut input,
-            |_, _| DriverOutcome::<&str, &str>::Continue,
-        );
+        let result = run_with_terminal_factory(Local::now(), &mut factory, &mut input, |_, _| {
+            DriverOutcome::<&str, &str>::Continue
+        });
 
         match result {
             Err(DriverRunError::Io(InteractiveIoError::RawMode(error))) => {
                 assert_eq!(error.kind(), std::io::ErrorKind::PermissionDenied);
-                assert!(
-                    std::error::Error::source(&InteractiveIoError::RawMode(error)).is_some()
-                );
+                assert!(std::error::Error::source(&InteractiveIoError::RawMode(error)).is_some());
             }
             other => panic!("expected raw mode initialization failure, got {other:?}"),
         }
@@ -889,7 +931,10 @@ mod tests {
             },
         );
 
-        assert!(matches!(result, Err(DriverRunError::Handler("handler failed"))));
+        assert!(matches!(
+            result,
+            Err(DriverRunError::Handler("handler failed"))
+        ));
         assert_eq!(drops.get(), 1);
     }
 
@@ -899,12 +944,9 @@ mod tests {
         let mut factory = tracking_factory(&drops, true);
         let mut input = ScriptedInput::new([]);
 
-        let result = run_with_terminal_factory(
-            Local::now(),
-            &mut factory,
-            &mut input,
-            |_, _| DriverOutcome::<&str, &str>::Continue,
-        );
+        let result = run_with_terminal_factory(Local::now(), &mut factory, &mut input, |_, _| {
+            DriverOutcome::<&str, &str>::Continue
+        });
 
         assert_output_failure(result);
         assert_eq!(drops.get(), 1);
