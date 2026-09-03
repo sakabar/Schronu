@@ -80,9 +80,11 @@ impl<E: std::error::Error + 'static> std::error::Error for DriverRunError<E> {
     }
 }
 
-fn expect_continue<R, E>(outcome: DriverOutcome<R, E>, event: &str) {
-    if !matches!(outcome, DriverOutcome::Continue) {
-        unreachable!("{event} event returned an invalid outcome");
+fn expect_continue<R, E>(outcome: DriverOutcome<R, E>, event: &str) -> Result<(), E> {
+    match outcome {
+        DriverOutcome::Continue => Ok(()),
+        DriverOutcome::Fatal(error) => Err(error),
+        _ => unreachable!("{event} event returned an invalid outcome"),
     }
 }
 
@@ -349,7 +351,8 @@ where
     expect_continue(
         handle_event(stdout, DriverEvent::RenderScreen { now: initial_now }),
         "render screen",
-    );
+    )
+    .map_err(DriverRunError::Handler)?;
     render_prompt(stdout, header, &line, cursor_x)
         .map_err(|error| DriverRunError::Io(InteractiveIoError::Output(error)))?;
 
@@ -393,7 +396,8 @@ where
                 expect_continue(
                     handle_event(stdout, DriverEvent::RenderScreen { now: Local::now() }),
                     "render screen",
-                );
+                )
+                .map_err(DriverRunError::Handler)?;
                 render_prompt(stdout, header, &line, cursor_x)
                     .map_err(|error| DriverRunError::Io(InteractiveIoError::Output(error)))?;
                 next_refresh_at = idle_refresh_deadline(Instant::now());
@@ -815,6 +819,20 @@ mod tests {
         assert_output_failure(result);
     }
 
+    #[test]
+    fn render_handler_failure_is_returned_without_panic() {
+        let mut writer = TestWriter::default();
+        let result = run_script(&mut writer, [], |event| match event {
+            DriverEvent::RenderScreen { .. } => DriverOutcome::Fatal("render failed"),
+            _ => unreachable!(),
+        });
+
+        assert!(matches!(
+            result,
+            Err(DriverRunError::Handler("render failed"))
+        ));
+    }
+
     struct FakeTerminalFactory {
         terminal: Option<std::io::Result<Box<dyn SchronuWriter>>>,
     }
@@ -1023,7 +1041,7 @@ mod tests {
 
     #[test]
     fn event_specific_outcomes_preserve_fatal_error() {
-        expect_continue::<(), ()>(DriverOutcome::Continue, "render screen");
+        expect_continue::<(), ()>(DriverOutcome::Continue, "render screen").unwrap();
         assert_eq!(
             expect_fatal::<(), _>(DriverOutcome::Fatal("fatal"), "input read"),
             "fatal"
