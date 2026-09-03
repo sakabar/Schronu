@@ -144,11 +144,11 @@ fn collect_directory_bytes(
         let file_type = entry.file_type().unwrap();
         if file_type.is_dir() {
             collect_directory_bytes(storage, &path, files);
-        } else if file_type.is_file() && entry.file_name() != ".lock" {
-            files.insert(
-                path.strip_prefix(storage).unwrap().to_path_buf(),
-                fs::read(path).unwrap(),
-            );
+        } else if file_type.is_file() {
+            let relative_path = path.strip_prefix(storage).unwrap().to_path_buf();
+            if relative_path != Path::new(".lock") {
+                files.insert(relative_path, fs::read(path).unwrap());
+            }
         }
     }
 }
