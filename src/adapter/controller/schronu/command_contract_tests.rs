@@ -815,6 +815,12 @@ fn arrange_accepts_only_the_explicit_all_flags() {
     assert_eq!(error.field(), "includes_zero_estimate");
     assert_eq!(error.reason(), "全またはallで指定してください");
     assert_eq!(error.usage(), "揃 <分> [全]");
+
+    let error = parse_command("揃 invalid unknown", ParseMode::NonInteractive).unwrap_err();
+    assert_eq!(error.command(), "揃");
+    assert_eq!(error.field(), "estimated_work_minutes");
+    assert_eq!(error.reason(), "整数で指定してください");
+    assert_eq!(error.usage(), "揃 <分> [全]");
 }
 
 #[test]
