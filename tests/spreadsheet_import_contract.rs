@@ -105,3 +105,66 @@ fn s列の24時間表現は形式ではなく既存の合計上限として拒�
     );
     assert!(!stderr.contains("S列の形式が不正です"));
 }
+
+#[test]
+fn p列の存在しない暦日と範囲外時刻は全commandを出力せず拒否する() {
+    for invalid_datetime in [
+        "2026/02/31 9:10:00",
+        "2025/02/29 9:10:00",
+        "2026/04/31 9:10:00",
+        "2026/12/31 24:00:00",
+    ] {
+        let input = format!(
+            "{}\n{}\n",
+            spreadsheet_row(
+                "valid-id",
+                "valid task",
+                "",
+                "2026/01/01 9:00:00",
+                "0:01:00",
+            ),
+            spreadsheet_row(
+                "invalid-id",
+                "invalid task",
+                "",
+                invalid_datetime,
+                "0:01:00",
+            ),
+        );
+        let output = run_import(&input);
+        let stderr = String::from_utf8(output.stderr).expect("stderr is UTF-8");
+
+        assert!(
+            !output.status.success(),
+            "{invalid_datetime} must be rejected"
+        );
+        assert_eq!(output.stdout, b"", "commands must be emitted atomically");
+        assert!(
+            stderr.contains(&format!("line 2: P列の形式が不正です: {invalid_datetime}")),
+            "unexpected stderr for {invalid_datetime}: {stderr}"
+        );
+    }
+}
+
+#[test]
+fn p列は閏日と23時59分59秒を受理する() {
+    let input = format!(
+        "{}\n",
+        spreadsheet_row(
+            "leap-day-id",
+            "leap day task",
+            "",
+            "2024/02/29 23:59:59",
+            "0:01:00",
+        )
+    );
+    let output = run_import(&input);
+
+    assert!(
+        output.status.success(),
+        "valid leap day must be accepted: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8(output.stdout).expect("stdout is UTF-8");
+    assert!(stdout.contains("終 23:59:59 2024/02/29\n"));
+}
