@@ -3574,15 +3574,24 @@ fn test_execute_arrange_all指定は全指定と同じ挙動になる() {
 }
 
 #[test]
-fn test_execute_arrange_未知の第3引数で見積もり0を維持する() {
-    let task = execute_arrange_command("揃 15 unknown");
-    let children = task
-        .get_children()
-        .expect("arrange result tree must be readable");
+fn test_execute_arrange_未知のflagを拒否して状態を変更しない() {
+    let now = Local.with_ymd_and_hms(2026, 8, 3, 12, 0, 0).unwrap();
+    let task = new_test_task_handle("ルーチン").unwrap();
+    task.set_repetition_interval_days_opt(Some(7));
 
-    assert_eq!(children[0].get_estimated_work_seconds().unwrap(), 15 * 60);
-    assert_eq!(children[1].get_estimated_work_seconds().unwrap(), 0);
-    assert_eq!(children[2].get_estimated_work_seconds().unwrap(), 10 * 60);
+    let mut estimated_child_attr = new_test_task_attr("不正flag対象");
+    estimated_child_attr.set_estimated_work_seconds(5 * 60);
+    task.create_as_last_child(estimated_child_attr);
+
+    let task_id = task.get_id().unwrap();
+    let original_snapshot = task.snapshot().unwrap();
+    let result = execute_command_for_test(task, now, Some(task_id), "揃 15 unknown");
+
+    assert_eq!(result.task.snapshot().unwrap(), original_snapshot);
+    assert_eq!(result.focused_task_id_opt, Some(task_id));
+    assert!(result.output.contains(
+        "[Error] 入力エラー: includes_zero_estimate: 全またはallで指定してください (コマンド: 揃, 使い方: 揃 <分> [全])"
+    ));
 }
 
 #[test]

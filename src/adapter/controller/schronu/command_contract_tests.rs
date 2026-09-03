@@ -765,15 +765,56 @@ fn focus_selection_modes_are_interactive_only_and_validate_arguments() {
 }
 
 #[test]
-fn extrude_without_an_argument_is_noop_and_invalid_days_fall_back_to_one() {
+fn extrude_distinguishes_an_omitted_argument_from_an_invalid_one() {
     assert_eq!(
         parse_command("押", ParseMode::NonInteractive).unwrap(),
         Command::Action(CommandAction::Extrude { step_days: None })
     );
     assert_eq!(
-        parse_command("extrude invalid", ParseMode::NonInteractive).unwrap(),
-        Command::Action(CommandAction::Extrude { step_days: Some(1) })
+        parse_command("extrude 15", ParseMode::NonInteractive).unwrap(),
+        Command::Action(CommandAction::Extrude {
+            step_days: Some(15)
+        })
     );
+
+    for input in ["extrude invalid", "押 65536"] {
+        let error = parse_command(input, ParseMode::NonInteractive).unwrap_err();
+        assert_eq!(error.command(), "押", "input: {input}");
+        assert_eq!(error.field(), "step_days", "input: {input}");
+        assert_eq!(
+            error.reason(),
+            "0以上65535以下の整数で指定してください",
+            "input: {input}"
+        );
+        assert_eq!(error.usage(), "押 [days]", "input: {input}");
+    }
+}
+
+#[test]
+fn arrange_accepts_only_the_explicit_all_flags() {
+    assert_eq!(
+        parse_command("揃 15", ParseMode::NonInteractive).unwrap(),
+        Command::Arrange {
+            minutes: 15,
+            includes_zero_estimate: false,
+        }
+    );
+    for input in ["揃 15 全", "arrange 15 all"] {
+        assert_eq!(
+            parse_command(input, ParseMode::NonInteractive).unwrap(),
+            Command::Arrange {
+                minutes: 15,
+                includes_zero_estimate: true,
+            },
+            "input: {input}"
+        );
+    }
+
+    let error = parse_command("揃 15 invalid", ParseMode::NonInteractive).unwrap_err();
+    assert_eq!(error.command(), "揃");
+    assert_eq!(error.field(), "includes_zero_estimate");
+    assert_eq!(error.reason(), "全またはallで指定してください");
+    assert_eq!(error.usage(), "揃 <分> [全]");
 }
 
 #[test]
