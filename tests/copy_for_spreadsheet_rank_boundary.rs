@@ -61,26 +61,63 @@ fn copy_for_spreadsheetはrank上限境界のtask行だけを列順どおり保�
 
 #[test]
 fn copy_for_spreadsheetは不完全な数値rank候補を元入力line番号付きerrorにする() {
-    let input = fs::read_to_string(repository_path(
-        "tests/fixtures/copy_for_spreadsheet_rank_boundary/incomplete-task-row.txt",
-    ))
-    .expect("incomplete task row fixture exists");
+    let uuid = "44444444-4444-4444-4444-444444444444";
+    let cases = [
+        ("A-I途中token不足", format!("1000 {uuid} !")),
+        (
+            "J空",
+            format!("1000 {uuid} ! ____-00:40 06/21(土)-18:00~18:40 0 40 01 獲"),
+        ),
+        (
+            "short rank",
+            format!("999 {uuid} ! ____-00:40 06/21(土)-18:00~18:40 0 40 01 獲 task"),
+        ),
+        (
+            "UUID",
+            "1000 invalid-uuid ! ____-00:40 06/21(土)-18:00~18:40 0 40 01 獲 task".to_string(),
+        ),
+        (
+            "scheduled time",
+            format!("1000 {uuid} ! ____-00:40 06/21(土)-18:00-18:40 0 40 01 獲 task"),
+        ),
+        (
+            "F priority",
+            format!("1000 {uuid} ! ____-00:40 06/21(土)-18:00~18:40 high 40 01 獲 task"),
+        ),
+        (
+            "G estimated",
+            format!("1000 {uuid} ! ____-00:40 06/21(土)-18:00~18:40 0 forty 01 獲 task"),
+        ),
+        (
+            "H signed project priority",
+            format!("1000 {uuid} ! ____-00:40 06/21(土)-18:00~18:40 0 40 --1 獲 task"),
+        ),
+        (
+            "I category",
+            format!("1000 {uuid} ! ____-00:40 06/21(土)-18:00~18:40 0 40 01 未 task"),
+        ),
+    ];
 
-    let output = run_copy_script(&input);
+    for (case_name, malformed_row) in cases {
+        let input = format!(
+            "rank task_id icon remaining_time scheduled_time priority estimated_minutes project_number category task_name\n[Warn] この行はtask候補ではありません。\n{malformed_row}\n"
+        );
+        let output = run_copy_script(&input);
 
-    assert!(
-        !output.status.success(),
-        "incomplete task row must fail instead of being skipped"
-    );
-    assert!(
-        output.stdout.is_empty(),
-        "stdout must stay empty on failure: {}",
-        String::from_utf8_lossy(&output.stdout)
-    );
+        assert!(
+            !output.status.success(),
+            "{case_name}: incomplete task row must fail instead of being skipped"
+        );
+        assert!(
+            output.stdout.is_empty(),
+            "{case_name}: stdout must stay empty on failure: {}",
+            String::from_utf8_lossy(&output.stdout)
+        );
 
-    let stderr = String::from_utf8(output.stderr).expect("script error is UTF-8");
-    assert!(
-        stderr.contains("line 3:"),
-        "error must report the original input line: {stderr}"
-    );
+        let stderr = String::from_utf8(output.stderr).expect("script error is UTF-8");
+        assert!(
+            stderr.contains("line 3:"),
+            "{case_name}: error must report the original input line: {stderr}"
+        );
+    }
 }
