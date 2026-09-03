@@ -1,10 +1,12 @@
 #!/bin/zsh
 # 2024/03/16
 set -ue
+set -o pipefail
 
 cell_row_num=3
 weekday_order='月火水木金土日月'
 month_offset=(0 31 59 90 120 151 181 212 243 273 304 334)
+task_rows_output=$(
 cat - | awk '
 /^0/ && !/^----/ {
     line = $0
@@ -96,6 +98,10 @@ END {
     previous_scheduled_ordinal=${scheduled_ordinal}
     cell_row_num=$[$cell_row_num + 1]
 done
+) || exit $?
 
-tabs_line=$(seq 1 10 | awk '{print ""}' | tr '\n' '\t')
-yes "${tabs_line}" | head -n 50
+if [[ -n ${task_rows_output} ]]; then
+    print -r -- "${task_rows_output}"
+fi
+tabs_line=$'\t\t\t\t\t\t\t\t\t\t'
+repeat 50 print -r -- "${tabs_line}"
