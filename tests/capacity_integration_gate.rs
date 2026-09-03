@@ -70,7 +70,14 @@ impl FixedCapacityFixture {
     }
 
     fn free_time_manager(&self) -> RecordingFreeTimeManager {
-        RecordingFreeTimeManager::new(60, self.busy_start, self.busy_end)
+        self.free_time_manager_with_daily_free_minutes(60)
+    }
+
+    fn free_time_manager_with_daily_free_minutes(
+        &self,
+        daily_free_minutes: i64,
+    ) -> RecordingFreeTimeManager {
+        RecordingFreeTimeManager::new(daily_free_minutes, self.busy_start, self.busy_end)
     }
 }
 
@@ -179,7 +186,7 @@ fn fixed容量はbusy控除と論理日配賦をpackとflattenで一致させる
     }
 
     let flatten_repository = fixture.repository(None);
-    let mut flatten_free_time_manager = fixture.free_time_manager();
+    let mut flatten_free_time_manager = fixture.free_time_manager_with_daily_free_minutes(59);
     let flatten_result =
         flatten_tasks(&flatten_repository, &mut flatten_free_time_manager).unwrap();
     let start_date = NaiveDate::from_ymd_opt(2026, 8, 11).unwrap();
