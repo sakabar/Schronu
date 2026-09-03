@@ -5709,14 +5709,10 @@ fn test_non_interactiveの不正argumentはrepositoryもbusy_timeも読込まず
         let mut stderr = Vec::new();
         assert!(!report_run_result(&mut stderr, Err(error)), "{input}");
         let output = String::from_utf8(stderr).unwrap();
-        assert!(output.contains("[Error]"), "input: {input}: {output}");
-        let canonical_error = format!(
-            "入力エラー: {field}: {reason} (コマンド: {command}, 使い方: {usage})"
+        let expected = format!(
+            "[Error] 入力エラー: {field}: {reason} (コマンド: {command}, 使い方: {usage})\n"
         );
-        assert!(
-            output.contains(&canonical_error),
-            "input: {input}: {output}"
-        );
+        assert_eq!(output, expected, "input: {input}");
     }
 }
 
