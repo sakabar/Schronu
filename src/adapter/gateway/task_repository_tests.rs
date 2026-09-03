@@ -942,6 +942,30 @@ fn test_load_open失敗を型付きerrorにする() {
 
 #[cfg(unix)]
 #[test]
+fn test_open_project_fileはcanonical_identityとopened_fileを同じtargetへ固定する() {
+    use std::os::unix::fs::symlink;
+
+    let storage_dir = TestStorageDir::new();
+    fs::create_dir_all(&storage_dir.path).unwrap();
+    let first_target = storage_dir.path.join("first.yaml");
+    let second_target = storage_dir.path.join("second.yaml");
+    fs::write(&first_target, "first").unwrap();
+    fs::write(&second_target, "second").unwrap();
+    let project_yaml_path = storage_dir.path.join("project.yaml");
+    symlink(&first_target, &project_yaml_path).unwrap();
+
+    let (mut opened_file, canonical_path) = open_project_file(&project_yaml_path).unwrap();
+    fs::remove_file(&project_yaml_path).unwrap();
+    symlink(&second_target, &project_yaml_path).unwrap();
+    let mut contents = String::new();
+    opened_file.read_to_string(&mut contents).unwrap();
+
+    assert_eq!(canonical_path, fs::canonicalize(first_target).unwrap());
+    assert_eq!(contents, "first");
+}
+
+#[cfg(unix)]
+#[test]
 fn test_load_canonical_pathが重複するprojectを拒否してmemoryを変更しない() {
     use std::os::unix::fs::symlink;
 

@@ -222,6 +222,26 @@ fn write_file_atomically(
     )
 }
 
+fn open_project_file(
+    project_yaml_file_path: &Path,
+) -> Result<(File, PathBuf), FileRepositoryError> {
+    let canonical_path = fs::canonicalize(project_yaml_file_path).map_err(|error| {
+        FileRepositoryError::new(
+            FileRepositoryOperation::OpenFile,
+            project_yaml_file_path,
+            error,
+        )
+    })?;
+    let file = File::open(&canonical_path).map_err(|error| {
+        FileRepositoryError::new(
+            FileRepositoryOperation::OpenFile,
+            project_yaml_file_path,
+            error,
+        )
+    })?;
+    Ok((file, canonical_path))
+}
+
 fn project_directory_name(date: &str, project_name: &str, project_id: Uuid) -> String {
     // ディレクトリ名からはURLを除く (ディレクトリの区切りに使われうる "/" が入らないようにするため)
     let http_pattern = Regex::new(r"http.*").expect("project name URL regex must be valid");
@@ -424,16 +444,10 @@ impl TaskRepositoryTrait for TaskRepository {
                         )
                     })?
                     .to_path_buf();
-                let mut file = File::open(entry.path()).map_err(|error| {
-                    TaskRepositoryError::new(
-                        ApplicationRepositoryOperation::Load,
-                        FileRepositoryError::new(
-                            FileRepositoryOperation::OpenFile,
-                            &project_yaml_file_path,
-                            error,
-                        ),
-                    )
-                })?;
+                let (mut file, canonical_project_yaml_path) =
+                    open_project_file(&project_yaml_file_path).map_err(|error| {
+                        TaskRepositoryError::new(ApplicationRepositoryOperation::Load, error)
+                    })?;
                 let mut text = String::new();
                 file.read_to_string(&mut text).map_err(|error| {
                     TaskRepositoryError::new(
@@ -481,17 +495,6 @@ impl TaskRepositoryTrait for TaskRepository {
                                 FileRepositoryOperation::ParseProject,
                                 &project_yaml_file_path,
                                 std::io::Error::new(std::io::ErrorKind::InvalidData, error),
-                            ),
-                        )
-                    })?;
-                let canonical_project_yaml_path = fs::canonicalize(&project_yaml_file_path)
-                    .map_err(|error| {
-                        TaskRepositoryError::new(
-                            ApplicationRepositoryOperation::Load,
-                            FileRepositoryError::new(
-                                FileRepositoryOperation::ReadMetadata,
-                                &project_yaml_file_path,
-                                error,
                             ),
                         )
                     })?;
