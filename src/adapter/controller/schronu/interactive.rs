@@ -111,14 +111,14 @@ fn control_key(key: &Key, line_is_empty: bool) -> Option<ControlKey> {
     }
 }
 
-enum ReceivedInput {
+pub(super) enum ReceivedInput {
     Key(Key),
     Refresh,
     ReadError(std::io::Error),
     Disconnected,
 }
 
-trait InputSource {
+pub(super) trait InputSource {
     fn receive(&mut self, wait_duration: Duration) -> ReceivedInput;
 }
 
@@ -126,7 +126,7 @@ struct ChannelInput<'a> {
     receiver: &'a Receiver<std::io::Result<Key>>,
 }
 
-trait TerminalFactory {
+pub(super) trait TerminalFactory {
     fn open_terminal(&mut self) -> std::io::Result<Box<dyn SchronuWriter>>;
 }
 
@@ -314,7 +314,7 @@ where
     )
 }
 
-fn run_with_terminal_factory<R, E>(
+pub(super) fn run_with_terminal_factory<R, E>(
     initial_now: DateTime<Local>,
     terminal_factory: &mut dyn TerminalFactory,
     input: &mut dyn InputSource,
