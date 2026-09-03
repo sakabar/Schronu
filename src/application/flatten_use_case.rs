@@ -1,12 +1,12 @@
 use super::daily_capacity::{
     calculate_free_time_minutes_for_logical_date_with_end_of_day_offset_minutes, try_logical_date,
-    try_logical_date_start, try_next_logical_date_start, END_OF_DAY_OFFSET_MINUTES,
+    try_logical_date_start, END_OF_DAY_OFFSET_MINUTES,
 };
 use super::interface::{FreeTimeManagerTrait, TaskRepositoryTrait};
 use super::schedule_use_case::{
     build_schedule_context, get_schedule_from_context_with_overrides, ScheduledTaskView,
 };
-use super::scheduled_capacity::scheduled_capacity_seconds;
+use super::scheduled_capacity::scheduled_capacity_seconds_by_logical_date;
 use super::scheduling_instrumentation::{record_flatten, FlattenEvent};
 use super::task_use_case::ApplicationError;
 use crate::entity::datetime::LogicalDateTimePolicy;
@@ -330,7 +330,6 @@ fn collect_candidates(
     }
 
     let mut candidates = Vec::new();
-    let mut next_logical_date_start_opt = None;
     for segments in segments_by_task.into_values() {
         let Some(first) = segments.first().copied() else {
             continue;
@@ -342,27 +341,34 @@ fn collect_candidates(
         }
         let segment_dates = segments
             .iter()
-            .map(|segment| try_logical_date(segment.scheduled_start))
+            .map(|segment| {
+                scheduled_capacity_seconds_by_logical_date(
+                    segment.task.fixed_start,
+                    segment.scheduled_start,
+                    segment.scheduled_end,
+                    segment.scheduled_work_seconds,
+                )
+                .map(|capacity_by_date| {
+                    capacity_by_date
+                        .into_iter()
+                        .map(|(date, _)| date)
+                        .collect::<Vec<_>>()
+                })
+            })
             .collect::<Result<Vec<_>, _>>()?;
-        if !segment_dates.contains(&overload_date) {
+        if !segment_dates
+            .iter()
+            .any(|dates| dates.contains(&overload_date))
+        {
             continue;
         }
         let Some(scheduled_start) = segments.iter().map(|segment| segment.scheduled_start).min()
         else {
             continue;
         };
-        let next_logical_date_start = match next_logical_date_start_opt {
-            Some(datetime) => datetime,
-            None => {
-                let datetime = try_next_logical_date_start(try_logical_date_start(overload_date)?)?;
-                next_logical_date_start_opt = Some(datetime);
-                datetime
-            }
-        };
-        let all_work_is_on_overload_date =
-            segments.iter().zip(segment_dates).all(|(segment, date)| {
-                date == overload_date && segment.scheduled_end <= next_logical_date_start
-            });
+        let all_work_is_on_overload_date = segment_dates
+            .iter()
+            .all(|dates| dates.as_slice() == [overload_date]);
         candidates.push(FlattenCandidate {
             task_id: first.task.id,
             name: first.task.name.clone(),
@@ -524,13 +530,14 @@ fn add_scheduled_work_seconds_by_date(
     scheduled_end: DateTime<Local>,
     scheduled_work_seconds: i64,
 ) -> Result<(), ApplicationError> {
-    let date = try_logical_date(scheduled_start)?;
-    *scheduled_work_seconds_by_date.entry(date).or_default() += scheduled_capacity_seconds(
+    for (date, capacity_seconds) in scheduled_capacity_seconds_by_logical_date(
         fixed_start,
         scheduled_start,
         scheduled_end,
         scheduled_work_seconds,
-    );
+    )? {
+        *scheduled_work_seconds_by_date.entry(date).or_default() += capacity_seconds;
+    }
     Ok(())
 }
 
