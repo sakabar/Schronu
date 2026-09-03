@@ -760,7 +760,7 @@ fn execute_sequential_command(command: &str) -> (TaskHandle, Option<Uuid>) {
     let mut focused_task_id_opt = Some(task_id);
     let mut stdout = TestWriter::new();
 
-    execute(
+    let _ = execute(
         &mut stdout,
         &mut task_repository,
         &mut free_time_manager,
@@ -776,7 +776,7 @@ fn execute_sequential_command(command: &str) -> (TaskHandle, Option<Uuid>) {
 fn execute_arrange_command(command: &str) -> TaskHandle {
     let now = Local.with_ymd_and_hms(2026, 8, 3, 12, 0, 0).unwrap();
     let task = new_test_task_handle("ルーチン").unwrap();
-    task.set_repetition_interval_days_opt(Some(7));
+    let _ = task.set_repetition_interval_days_opt(Some(7));
 
     let mut estimated_child_attr = new_test_task_attr("見積もりあり");
     estimated_child_attr.set_estimated_work_seconds(5 * 60);
@@ -797,7 +797,7 @@ fn execute_arrange_command(command: &str) -> TaskHandle {
     let mut focused_task_id_opt = Some(task_id);
     let mut stdout = TestWriter::new();
 
-    execute(
+    let _ = execute(
         &mut stdout,
         &mut task_repository,
         &mut free_time_manager,
@@ -813,11 +813,11 @@ fn execute_arrange_command(command: &str) -> TaskHandle {
 fn assert_show_all_spreadsheet_formatter_contract() {
     let now = Local.with_ymd_and_hms(2026, 8, 11, 12, 0, 0).unwrap();
     let task = new_test_task_handle("夕食  の 準備").unwrap();
-    task.set_estimated_work_seconds(40 * 60);
-    task.set_start_time(now);
-    task.set_priority(1);
-    task.set_project_category_opt(Some(ProjectCategory::Investment));
-    task.sync_clock(now);
+    let _ = task.set_estimated_work_seconds(40 * 60);
+    let _ = task.set_start_time(now);
+    let _ = task.set_priority(1);
+    let _ = task.set_project_category_opt(Some(ProjectCategory::Investment));
+    let _ = task.sync_clock(now);
     let task_id = task.get_id().unwrap();
 
     let result = execute_command_for_test(task, now, Some(task_id), "全");
@@ -881,7 +881,7 @@ fn execute_show_all_command_for_test(
     let mut focused_task_id_opt = None;
     let mut stdout = TestWriter::new();
 
-    execute(
+    let _ = execute(
         &mut stdout,
         &mut task_repository,
         &mut free_time_manager,
@@ -936,7 +936,7 @@ fn execute_calendar_command_with_ansi_color_for_test(
         TestWriter::new_for_pipe()
     };
 
-    execute(
+    let _ = execute(
         &mut stdout,
         &mut task_repository,
         &mut free_time_manager,
@@ -959,7 +959,7 @@ fn execute_band_command_with_elapsed_for_test(
     let mut focused_task_id_opt = None;
     let mut stdout = TestWriter::new();
 
-    execute(
+    let _ = execute(
         &mut stdout,
         &mut task_repository,
         &mut free_time_manager,
@@ -979,10 +979,10 @@ fn add_scheduled_child_for_test(
     estimated_work_minutes: i64,
 ) -> TaskHandle {
     let child = root.create_as_last_child(new_test_task_attr(name));
-    child.set_estimated_work_seconds(estimated_work_minutes * 60);
-    child.set_start_time(start_time);
-    child.set_pending_until(start_time);
-    child.set_orig_status(Status::Pending);
+    let _ = child.set_estimated_work_seconds(estimated_work_minutes * 60);
+    let _ = child.set_start_time(start_time);
+    let _ = child.set_pending_until(start_time);
+    let _ = child.set_orig_status(Status::Pending);
     child
 }
 
@@ -1000,7 +1000,7 @@ fn execute_flatten_command_for_test(
     let mut focused_task_id_opt = None;
     let mut stdout = TestWriter::new();
 
-    execute(
+    let _ = execute(
         &mut stdout,
         &mut task_repository,
         &mut free_time_manager,
