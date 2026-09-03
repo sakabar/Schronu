@@ -150,6 +150,8 @@ fn fixed容量はbusy控除と論理日配賦をpackとflattenで一致させる
         .into_iter()
         .find(|segment| segment.task.id == fixture.fixed_id)
         .unwrap();
+    assert_eq!(fixed_segment.scheduled_start, fixture.operation_datetime);
+    assert_eq!(fixed_segment.scheduled_end, datetime(2026, 8, 12, 6, 30));
     assert_eq!(
         (fixed_segment.scheduled_end - fixed_segment.scheduled_start).num_minutes(),
         FIXED_RESERVATION_MINUTES
