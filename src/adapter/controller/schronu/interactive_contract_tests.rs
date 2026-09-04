@@ -2346,6 +2346,15 @@ fn interactive製品eventはtyped_classifierへ直接接続する() {
             "interactive event caller must not recover command meaning with {forbidden}"
         );
     }
+
+    let (_, entrypoint_source) =
+        unique_function_region(&product_sources, "interactive_application")
+            .expect("interactive application entrypoint must remain unique");
+    let entrypoint_code = code_only(entrypoint_source);
+    assert!(
+        entrypoint_code.contains("handle_interactive_driver_event("),
+        "interactive application must delegate product events to the shared driver boundary"
+    );
 }
 
 #[test]
