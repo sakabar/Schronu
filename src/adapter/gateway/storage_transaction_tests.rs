@@ -1,6 +1,7 @@
 use super::*;
 use serde_json::Value;
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::Mutex;
 
 fn file_system_io() -> Arc<dyn StorageTransactionIo> {
     Arc::new(FileSystemStorageTransactionIo)
@@ -85,6 +86,60 @@ enum FailingStagedFilePhase {
 
 struct FailingStagedFileIo {
     phase: FailingStagedFilePhase,
+}
+
+struct CommitOrderIo {
+    storage_dir_path: PathBuf,
+    transaction_dir_path: Mutex<Option<PathBuf>>,
+    marker_directory_synced: Mutex<bool>,
+    first_target_path: PathBuf,
+    second_target_path: PathBuf,
+}
+
+impl StorageTransactionIo for CommitOrderIo {
+    fn create_dir_all(&self, path: &Path) -> std::io::Result<()> {
+        FileSystemStorageTransactionIo.create_dir_all(path)
+    }
+
+    fn create_new_file(&self, path: &Path) -> std::io::Result<()> {
+        if path.file_name().is_some_and(|name| name == "commit") {
+            *self.transaction_dir_path.lock().unwrap() = path.parent().map(Path::to_path_buf);
+        } else if path.parent() == Some(self.storage_dir_path.as_path())
+            || path.parent() == self.first_target_path.parent()
+            || path.parent() == self.second_target_path.parent()
+        {
+            assert!(
+                *self.marker_directory_synced.lock().unwrap(),
+                "live target must not be prepared before the commit marker directory is synced"
+            );
+        }
+        FileSystemStorageTransactionIo.create_new_file(path)
+    }
+
+    fn write_file(&self, path: &Path, bytes: &[u8]) -> std::io::Result<()> {
+        if path.parent() == Some(self.storage_dir_path.as_path())
+            && path
+                .file_name()
+                .is_some_and(|name| name.to_string_lossy().starts_with(".revision"))
+        {
+            assert_eq!(fs::read(&self.first_target_path).unwrap(), b"first-new");
+            assert_eq!(fs::read(&self.second_target_path).unwrap(), b"second-new");
+        }
+        FileSystemStorageTransactionIo.write_file(path, bytes)
+    }
+
+    fn sync_directory(&self, path: &Path) -> std::io::Result<()> {
+        if self
+            .transaction_dir_path
+            .lock()
+            .unwrap()
+            .as_deref()
+            .is_some_and(|transaction_dir_path| transaction_dir_path == path)
+        {
+            *self.marker_directory_synced.lock().unwrap() = true;
+        }
+        FileSystemStorageTransactionIo.sync_directory(path)
+    }
 }
 
 impl StorageTransactionIo for FailingStagedFileIo {
@@ -323,4 +378,90 @@ fn test_prepare_directory_sync失敗ではlive_targetを変更しない() {
         assert!(actual.is_err());
         assert_eq!(fs::read(target_path).unwrap(), b"old");
     }
+}
+
+#[test]
+fn test_commit_markerをsyncしてからprojectを適用しrevisionを最後に更新する() {
+    let storage_dir = TestStorageDir::new();
+    let first_target_path = storage_dir.path.join("first/project.yaml");
+    let second_target_path = storage_dir.path.join("second/project.yaml");
+    fs::create_dir_all(first_target_path.parent().unwrap()).unwrap();
+    fs::create_dir_all(second_target_path.parent().unwrap()).unwrap();
+    fs::write(&first_target_path, b"first-old").unwrap();
+    fs::write(&second_target_path, b"second-old").unwrap();
+    let revision = Uuid::from_u128(0x2207);
+    let io = Arc::new(CommitOrderIo {
+        storage_dir_path: storage_dir.path.clone(),
+        transaction_dir_path: Mutex::new(None),
+        marker_directory_synced: Mutex::new(false),
+        first_target_path: first_target_path.clone(),
+        second_target_path: second_target_path.clone(),
+    });
+    let prepared = prepare(
+        io,
+        &storage_dir.path,
+        revision,
+        &[
+            WriteRequest {
+                target_path: &first_target_path,
+                bytes: b"first-new",
+            },
+            WriteRequest {
+                target_path: &second_target_path,
+                bytes: b"second-new",
+            },
+        ],
+    )
+    .unwrap();
+    let manifest: Value = serde_json::from_slice(
+        &fs::read(prepared.transaction_dir_path.join("manifest.json")).unwrap(),
+    )
+    .unwrap();
+    let transaction_id = Uuid::parse_str(manifest["transaction_id"].as_str().unwrap()).unwrap();
+    assert_eq!(manifest["revision"], revision.to_string());
+
+    prepared
+        .commit(&storage_dir.path.join(".revision"))
+        .unwrap();
+
+    assert_ne!(transaction_id, Uuid::nil());
+    assert_eq!(fs::read(first_target_path).unwrap(), b"first-new");
+    assert_eq!(fs::read(second_target_path).unwrap(), b"second-new");
+    assert_eq!(
+        fs::read_to_string(storage_dir.path.join(".revision")).unwrap(),
+        format!("{revision}\n")
+    );
+    assert_eq!(
+        fs::read_dir(storage_dir.path.join(TRANSACTION_DIRECTORY_NAME))
+            .unwrap()
+            .count(),
+        0
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn test_commit_既存targetのpermissionを維持する() {
+    use std::os::unix::fs::{MetadataExt, PermissionsExt};
+
+    let storage_dir = TestStorageDir::new();
+    let target_path = storage_dir.path.join("project.yaml");
+    fs::write(&target_path, b"old").unwrap();
+    fs::set_permissions(&target_path, fs::Permissions::from_mode(0o600)).unwrap();
+    let prepared = prepare(
+        file_system_io(),
+        &storage_dir.path,
+        Uuid::from_u128(0x2208),
+        &[WriteRequest {
+            target_path: &target_path,
+            bytes: b"new",
+        }],
+    )
+    .unwrap();
+
+    prepared
+        .commit(&storage_dir.path.join(".revision"))
+        .unwrap();
+
+    assert_eq!(fs::metadata(target_path).unwrap().mode() & 0o777, 0o600);
 }
