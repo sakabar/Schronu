@@ -6,7 +6,7 @@ use crate::adapter::gateway::schronu_config::SchronuConfig;
 use crate::adapter::gateway::storage_lock::{LockMode, StorageLock, StorageLockError};
 use crate::adapter::gateway::task_repository::TaskRepository;
 use crate::application::interface::{
-    BusyTimeSlotLoadError, FreeTimeManagerTrait, TaskRepositoryError,
+    BusyTimeSlotLoadError, FreeTimeManagerTrait, TaskRepositoryError, TaskRepositoryTrait,
 };
 use crate::application::repository_transaction::{
     run_repository_transaction, RepositoryTransactionError,
@@ -50,7 +50,7 @@ impl TodayTextService {
         let storage_directory = &self.storage_directory;
         let free_time_manager = &mut self.free_time_manager;
         let config = &self.config;
-        let display = run_repository_transaction(
+        run_repository_transaction(
             task_repository,
             now,
             || StorageLock::acquire(storage_directory, LockMode::Web),
@@ -58,33 +58,63 @@ impl TodayTextService {
                 free_time_manager
                     .load_busy_time_slots_from_file(busy_time_slots_path)
                     .map_err(TodayTextOperationError::BusyTimeSlots)?;
-                let mut focused_task_id_opt =
-                    select_focus_task_id(repository, &FocusSelectionMode::highest_priority())
-                        .map_err(TodayTextOperationError::Application)?;
-                let display = build_show_all_tasks_display_with_config(
-                    &mut focused_task_id_opt,
-                    repository,
-                    free_time_manager,
-                    &Some("今".to_string()),
-                    TaskListDisplayOrder::ScheduledStartDesc,
-                    config,
-                )
-                .map_err(TodayTextOperationError::Application)?;
-                Ok((display, false))
+                render_today_text(repository, free_time_manager, config)
+                    .map(|text| (text, false))
+                    .map_err(TodayTextOperationError::Core)
             },
         )
-        .map_err(TodayTextError::from_transaction)?;
+        .map_err(TodayTextError::from_transaction)
+    }
+}
 
-        let mut bytes = Vec::new();
-        render_plain_display_model(&mut bytes, &display).map_err(TodayTextError::Render)?;
-        String::from_utf8(bytes).map_err(TodayTextError::Encoding)
+pub(super) fn render_today_text<R, F>(
+    task_repository: &mut R,
+    free_time_manager: &mut F,
+    config: &SchronuConfig,
+) -> Result<String, TodayTextCoreError>
+where
+    R: TaskRepositoryTrait,
+    F: FreeTimeManagerTrait,
+{
+    let mut focused_task_id_opt =
+        select_focus_task_id(task_repository, &FocusSelectionMode::highest_priority())
+            .map_err(TodayTextCoreError::Application)?;
+    let display = build_show_all_tasks_display_with_config(
+        &mut focused_task_id_opt,
+        task_repository,
+        free_time_manager,
+        &Some("今".to_string()),
+        TaskListDisplayOrder::ScheduledStartDesc,
+        config,
+    )
+    .map_err(TodayTextCoreError::Application)?;
+
+    let mut bytes = Vec::new();
+    render_plain_display_model(&mut bytes, &display).map_err(TodayTextCoreError::Render)?;
+    String::from_utf8(bytes).map_err(TodayTextCoreError::Encoding)
+}
+
+#[derive(Debug)]
+pub(super) enum TodayTextCoreError {
+    Application(ApplicationError),
+    Render(std::io::Error),
+    Encoding(std::string::FromUtf8Error),
+}
+
+impl TodayTextCoreError {
+    fn into_public(self) -> TodayTextError {
+        match self {
+            Self::Application(error) => TodayTextError::Application(error),
+            Self::Render(error) => TodayTextError::Render(error),
+            Self::Encoding(error) => TodayTextError::Encoding(error),
+        }
     }
 }
 
 #[derive(Debug)]
 enum TodayTextOperationError {
     BusyTimeSlots(BusyTimeSlotLoadError),
-    Application(ApplicationError),
+    Core(TodayTextCoreError),
 }
 
 #[derive(Debug)]
@@ -109,8 +139,8 @@ impl TodayTextError {
             RepositoryTransactionError::Operation(TodayTextOperationError::BusyTimeSlots(
                 error,
             )) => Self::BusyTimeSlots(error),
-            RepositoryTransactionError::Operation(TodayTextOperationError::Application(error)) => {
-                Self::Application(error)
+            RepositoryTransactionError::Operation(TodayTextOperationError::Core(error)) => {
+                error.into_public()
             }
         }
     }

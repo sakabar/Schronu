@@ -2273,6 +2273,56 @@ fn test_execute_今_plain出力の全文を固定する() {
 }
 
 #[test]
+fn cliとwebの今表示は同じrepositoryとfree_time入力で一致する() {
+    let now = Local.with_ymd_and_hms(2026, 8, 11, 12, 0, 0).unwrap();
+    let repository_fixture = || {
+        let task = TaskHandle::with_identity(
+            "CLI/Web一致契約task",
+            Uuid::from_u128(0x2026_0812),
+            now,
+        )
+        .unwrap();
+        task.set_estimated_work_seconds(45 * 60).unwrap();
+        task.set_start_time(now + Duration::minutes(30)).unwrap();
+        task.set_fixed_start(true).unwrap();
+        task.set_deadline_time_opt(Some(now + Duration::hours(2)))
+            .unwrap();
+        task.set_priority(8).unwrap();
+        task.set_project_category_opt(Some(ProjectCategory::Investment))
+            .unwrap();
+        let task_id = task.get_id().unwrap();
+        (TestTaskRepository::new(task, now), task_id)
+    };
+    let (mut cli_repository, cli_task_id) = repository_fixture();
+    let (mut web_repository, _) = repository_fixture();
+    let mut cli_free_time_manager = TestFreeTimeManager::with_free_minutes(180);
+    let mut web_free_time_manager = TestFreeTimeManager::with_free_minutes(180);
+    let mut focused_task_id_opt = Some(cli_task_id);
+    let mut cli_writer = TestWriter::new_for_pipe();
+
+    execute(
+        &mut cli_writer,
+        &mut cli_repository,
+        &mut cli_free_time_manager,
+        &mut focused_task_id_opt,
+        &now,
+        "今",
+    )
+    .unwrap();
+    let cli_text = cli_writer.into_string();
+    let web_text = super::today_text::render_today_text(
+        &mut web_repository,
+        &mut web_free_time_manager,
+        &SchronuConfig::default(),
+    )
+    .unwrap();
+
+    assert!(!cli_text.contains("\x1b["));
+    assert!(!web_text.contains("\x1b["));
+    assert_eq!(web_text, cli_text);
+}
+
+#[test]
 fn test_execute_new_新規projectを翌朝までpendingで作成する() {
     let now = Local.with_ymd_and_hms(2026, 8, 11, 12, 0, 0).unwrap();
     let original_task = new_test_task_handle("既存タスク").unwrap();
