@@ -431,6 +431,18 @@ impl TaskHandle {
         action()
     }
 
+    pub(crate) fn with_hierarchy_edit_prohibition_for_test<T>(
+        &self,
+        action: impl FnOnce() -> T,
+    ) -> T {
+        let _prohibition = self
+            .node
+            .tree()
+            .prohibit_hierarchy_edit()
+            .expect("test hierarchy edit prohibition");
+        action()
+    }
+
     pub(crate) fn eq_tree(&self, task: &TaskHandle) -> Result<bool, TaskTreeError> {
         self.node
             .tree()

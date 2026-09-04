@@ -1293,6 +1293,70 @@ fn complete_task_繰り返しtaskを生成して見積もりを補正する() {
 }
 
 #[test]
+fn complete_task_反復child追加のhierarchy_grant失敗で全状態を変更しない() {
+    let parent = crate::test_support::new_task_handle("ルーチン").unwrap();
+    parent.set_repetition_interval_days_opt(Some(7)).unwrap();
+    parent.set_estimated_work_seconds(600).unwrap();
+    let child = parent.create_as_last_child(crate::test_support::new_task_attr("今回"));
+    child.set_actual_work_seconds(100).unwrap();
+    let child_id = child.get_id().unwrap();
+    let child_status_before = child.get_status().unwrap();
+    let child_actual_before = child.get_actual_work_seconds().unwrap();
+    let child_end_before = child.get_end_time_opt().unwrap();
+    let parent_estimate_before = parent.get_estimated_work_seconds().unwrap();
+    let child_ids_before = parent
+        .get_children()
+        .unwrap()
+        .into_iter()
+        .map(|task| task.get_id().unwrap())
+        .collect::<Vec<_>>();
+    let revision_before = parent.get_persistent_mutation_revision().unwrap();
+    let mut repository = TestTaskRepository::new(vec![parent.clone()], fixed_now());
+    let mut next_id = || Uuid::from_u128(0x2903);
+    let mut factory = TaskFactory::new(fixed_now(), &mut next_id);
+
+    let actual = parent.with_hierarchy_edit_prohibition_for_test(|| {
+        complete_task(
+            &mut repository,
+            CompleteTaskInput {
+                task_id: child_id,
+                finished_at: fixed_now(),
+                additional_actual_work_seconds: 50,
+            },
+            &mut factory,
+        )
+    });
+
+    assert_eq!(
+        actual,
+        Err(ApplicationError::TaskTree(TaskTreeError::HierarchyGrant))
+    );
+    assert_eq!(child.get_status().unwrap(), child_status_before);
+    assert_eq!(
+        child.get_actual_work_seconds().unwrap(),
+        child_actual_before
+    );
+    assert_eq!(child.get_end_time_opt().unwrap(), child_end_before);
+    assert_eq!(
+        parent.get_estimated_work_seconds().unwrap(),
+        parent_estimate_before
+    );
+    assert_eq!(
+        parent
+            .get_children()
+            .unwrap()
+            .into_iter()
+            .map(|task| task.get_id().unwrap())
+            .collect::<Vec<_>>(),
+        child_ids_before
+    );
+    assert_eq!(
+        parent.get_persistent_mutation_revision().unwrap(),
+        revision_before
+    );
+}
+
+#[test]
 fn complete_task_反復taskのuuidが既存taskと衝突する場合は変更しない() {
     let parent = crate::test_support::new_task_handle("ルーチン").unwrap();
     parent.set_repetition_interval_days_opt(Some(7)).unwrap();
