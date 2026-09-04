@@ -1,5 +1,4 @@
 use fs2::FileExt;
-use serde::{Deserialize, Serialize};
 use std::error::Error;
 use std::fmt;
 use std::fs::{self, File};
@@ -7,6 +6,13 @@ use std::io::Write;
 use std::path::{Component, Path, PathBuf};
 use std::sync::Arc;
 use uuid::Uuid;
+
+mod manifest;
+
+use manifest::{
+    content_checksum, content_matches, invalid_manifest_entry_error, validate_content_integrity,
+    validate_staged_file_path, ManifestEntry, ManifestEntryOperation, TransactionManifest,
+};
 
 pub(super) const TRANSACTION_DIRECTORY_NAME: &str = ".schronu-transactions";
 const ACTIVE_TRANSACTION_DIRECTORY_NAME: &str = ".active";
@@ -100,42 +106,6 @@ impl Error for StorageTransactionError {
 pub(super) struct WriteRequest<'a> {
     pub(super) target_path: &'a Path,
     pub(super) bytes: &'a [u8],
-}
-
-#[derive(Deserialize, Serialize)]
-struct TransactionManifest {
-    version: u32,
-    transaction_id: Uuid,
-    revision: Uuid,
-    directories: Vec<PathBuf>,
-    entries: Vec<ManifestEntry>,
-}
-
-#[derive(Deserialize, Serialize)]
-struct ManifestEntry {
-    target: PathBuf,
-    #[serde(default, skip_serializing_if = "ManifestEntryOperation::is_write")]
-    operation: ManifestEntryOperation,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    staged_file: Option<PathBuf>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    content_length: Option<u64>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    content_checksum: Option<String>,
-}
-
-#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
-#[serde(rename_all = "snake_case")]
-enum ManifestEntryOperation {
-    #[default]
-    Write,
-    Delete,
-}
-
-impl ManifestEntryOperation {
-    fn is_write(operation: &Self) -> bool {
-        *operation == Self::Write
-    }
 }
 
 pub(super) trait StorageTransactionIo: Send + Sync {
@@ -843,79 +813,6 @@ fn validate_delete_target_ancestors(
                 ));
             }
         }
-    }
-    Ok(())
-}
-
-fn invalid_manifest_entry_error(path: &Path, message: &'static str) -> StorageTransactionError {
-    StorageTransactionError::new(
-        StorageTransactionOperation::ValidateManifest,
-        path,
-        std::io::Error::new(std::io::ErrorKind::InvalidData, message),
-    )
-}
-
-fn validate_content_integrity(
-    manifest_path: &Path,
-    content_length: u64,
-    content_checksum: &str,
-) -> Result<(), StorageTransactionError> {
-    let checksum = content_checksum.strip_prefix("fnv1a64:").ok_or_else(|| {
-        invalid_manifest_entry_error(
-            manifest_path,
-            "write checksum must use the fnv1a64 algorithm",
-        )
-    })?;
-    if content_length > isize::MAX as u64 {
-        return Err(invalid_manifest_entry_error(
-            manifest_path,
-            "write content length exceeds the supported file size",
-        ));
-    }
-    if checksum.len() != 16
-        || !checksum
-            .bytes()
-            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
-    {
-        return Err(invalid_manifest_entry_error(
-            manifest_path,
-            "write checksum must contain 16 lowercase hexadecimal digits",
-        ));
-    }
-    Ok(())
-}
-
-fn content_checksum(bytes: &[u8]) -> String {
-    const FNV_OFFSET_BASIS: u64 = 0xcbf29ce484222325;
-    const FNV_PRIME: u64 = 0x00000100000001b3;
-
-    let checksum = bytes.iter().fold(FNV_OFFSET_BASIS, |checksum, byte| {
-        (checksum ^ u64::from(*byte)).wrapping_mul(FNV_PRIME)
-    });
-    format!("fnv1a64:{checksum:016x}")
-}
-
-fn content_matches(bytes: &[u8], expected_length: u64, expected_checksum: &str) -> bool {
-    bytes.len() as u64 == expected_length && content_checksum(bytes) == expected_checksum
-}
-
-fn validate_staged_file_path(
-    transaction_dir_path: &Path,
-    staged_file: &Path,
-) -> Result<(), StorageTransactionError> {
-    let components = staged_file.components().collect::<Vec<_>>();
-    if !matches!(
-        components.as_slice(),
-        [Component::Normal(directory), Component::Normal(_)] if *directory == "files"
-    ) {
-        return Err(StorageTransactionError::new(
-            StorageTransactionOperation::ValidateManifest,
-            transaction_dir_path.join(staged_file),
-            std::io::Error::new(
-                std::io::ErrorKind::InvalidData,
-                "staged file must be a direct child of the transaction files directory",
-            ),
-        ));
     }
     Ok(())
 }
