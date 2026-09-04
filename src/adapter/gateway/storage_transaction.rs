@@ -3,7 +3,7 @@ use std::error::Error;
 use std::fmt;
 use std::fs::{self, File};
 use std::io::Write;
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 use std::sync::Arc;
 use uuid::Uuid;
 
@@ -26,6 +26,7 @@ enum StorageTransactionOperation {
     ActiveTransaction,
     CreateStagedFilesDirectory,
     ResolveTargetPath,
+    ValidateTargetPath,
     ReadTargetMetadata,
     CreateStagedFile,
     SetStagedPermissions,
@@ -171,8 +172,8 @@ pub(super) struct PreparedTransaction {
 }
 
 struct PreparedEntry {
-    target_path: PathBuf,
-    staged_file_path: PathBuf,
+    target: PathBuf,
+    staged_file: PathBuf,
 }
 
 impl PreparedTransaction {
@@ -255,27 +256,26 @@ impl PreparedTransaction {
     }
 
     fn apply_staged_file(&self, entry: &PreparedEntry) -> Result<(), StorageTransactionError> {
-        let bytes = self
-            .io
-            .read_file(&entry.staged_file_path)
-            .map_err(|error| {
-                StorageTransactionError::new(
-                    StorageTransactionOperation::ReadStagedFile,
-                    &entry.staged_file_path,
-                    error,
-                )
-            })?;
+        let target_path = self.storage_dir_path.join(&entry.target);
+        let staged_file_path = self.transaction_dir_path.join(&entry.staged_file);
+        let bytes = self.io.read_file(&staged_file_path).map_err(|error| {
+            StorageTransactionError::new(
+                StorageTransactionOperation::ReadStagedFile,
+                &staged_file_path,
+                error,
+            )
+        })?;
         let permissions = self
             .io
-            .target_permissions(&entry.staged_file_path)
+            .target_permissions(&staged_file_path)
             .map_err(|error| {
                 StorageTransactionError::new(
                     StorageTransactionOperation::ReadTargetMetadata,
-                    &entry.staged_file_path,
+                    &staged_file_path,
                     error,
                 )
             })?;
-        self.apply_bytes(&entry.target_path, &bytes, permissions)
+        self.apply_bytes(&target_path, &bytes, permissions)
     }
 
     fn apply_revision(&self, revision_path: &Path) -> Result<(), StorageTransactionError> {
@@ -448,11 +448,13 @@ pub(super) fn prepare_with_directories(
     let entries = writes
         .iter()
         .enumerate()
-        .map(|(index, write)| PreparedEntry {
-            target_path: write.target_path.to_path_buf(),
-            staged_file_path: transaction_dir_path.join("files").join(index.to_string()),
+        .map(|(index, write)| {
+            Ok(PreparedEntry {
+                target: validate_storage_relative_path(storage_dir_path, write.target_path)?,
+                staged_file: PathBuf::from("files").join(index.to_string()),
+            })
         })
-        .collect();
+        .collect::<Result<Vec<_>, StorageTransactionError>>()?;
     Ok(PreparedTransaction {
         storage_dir_path: storage_dir_path.to_path_buf(),
         transactions_dir_path,
@@ -479,21 +481,12 @@ fn prepare_contents(
 ) -> Result<Vec<PathBuf>, StorageTransactionError> {
     let mut entries = Vec::with_capacity(writes.len());
     for (index, write) in writes.iter().enumerate() {
-        let target = write
-            .target_path
-            .strip_prefix(storage_dir_path)
-            .map_err(|error| {
-                StorageTransactionError::new(
-                    StorageTransactionOperation::ResolveTargetPath,
-                    write.target_path,
-                    std::io::Error::new(std::io::ErrorKind::InvalidInput, error),
-                )
-            })?;
+        let target = validate_storage_relative_path(storage_dir_path, write.target_path)?;
         let staged_file = PathBuf::from("files").join(index.to_string());
         let staged_file_path = transaction_dir_path.join(&staged_file);
         write_staged_file(io, write.target_path, &staged_file_path, write.bytes)?;
         entries.push(ManifestEntry {
-            target: target.to_path_buf(),
+            target,
             staged_file,
         });
     }
@@ -501,18 +494,7 @@ fn prepare_contents(
 
     let directories = directories
         .iter()
-        .map(|directory| {
-            directory
-                .strip_prefix(storage_dir_path)
-                .map(Path::to_path_buf)
-                .map_err(|error| {
-                    StorageTransactionError::new(
-                        StorageTransactionOperation::ResolveTargetPath,
-                        *directory,
-                        std::io::Error::new(std::io::ErrorKind::InvalidInput, error),
-                    )
-                })
-        })
+        .map(|directory| validate_storage_relative_path(storage_dir_path, directory))
         .collect::<Result<Vec<_>, _>>()?;
     let manifest = TransactionManifest {
         version: 1,
@@ -555,6 +537,63 @@ fn prepare_contents(
     sync_directory(io, transactions_dir_path)?;
     sync_directory(io, storage_dir_path)?;
     Ok(directories)
+}
+
+fn validate_storage_relative_path(
+    storage_dir_path: &Path,
+    target_path: &Path,
+) -> Result<PathBuf, StorageTransactionError> {
+    let relative_path = target_path
+        .strip_prefix(storage_dir_path)
+        .map_err(|error| {
+            StorageTransactionError::new(
+                StorageTransactionOperation::ResolveTargetPath,
+                target_path,
+                std::io::Error::new(std::io::ErrorKind::InvalidInput, error),
+            )
+        })?;
+    if relative_path.as_os_str().is_empty() {
+        return Err(invalid_target_path_error(
+            target_path,
+            "transaction target must not be the storage root",
+        ));
+    }
+
+    let mut validated = PathBuf::new();
+    for (index, component) in relative_path.components().enumerate() {
+        match component {
+            Component::Normal(name) => {
+                if index == 0 && name == TRANSACTION_DIRECTORY_NAME {
+                    return Err(invalid_target_path_error(
+                        target_path,
+                        "transaction target must not use the reserved transaction namespace",
+                    ));
+                }
+                validated.push(name);
+            }
+            Component::CurDir => {
+                return Err(invalid_target_path_error(
+                    target_path,
+                    "transaction target must use normalized path components",
+                ));
+            }
+            Component::ParentDir | Component::RootDir | Component::Prefix(_) => {
+                return Err(invalid_target_path_error(
+                    target_path,
+                    "transaction target must remain within the storage directory",
+                ));
+            }
+        }
+    }
+    Ok(validated)
+}
+
+fn invalid_target_path_error(path: &Path, message: &'static str) -> StorageTransactionError {
+    StorageTransactionError::new(
+        StorageTransactionOperation::ValidateTargetPath,
+        path,
+        std::io::Error::new(std::io::ErrorKind::InvalidInput, message),
+    )
 }
 
 fn write_staged_file(

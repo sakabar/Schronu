@@ -495,6 +495,86 @@ fn test_prepare_同時実行では一方だけがactive_transactionを取得す�
 }
 
 #[test]
+fn test_prepare_file_targetのpath_escapeと予約namespaceを拒否する() {
+    let storage_dir = TestStorageDir::new();
+    let target_paths = [
+        storage_dir.path.clone(),
+        storage_dir.path.join("../escaped.yaml"),
+        storage_dir.path.join(".schronu-transactions/live.yaml"),
+    ];
+    for target_path in target_paths {
+        let actual = prepare(
+            file_system_io(),
+            &storage_dir.path,
+            Uuid::from_u128(0x2214),
+            &[WriteRequest {
+                target_path: &target_path,
+                bytes: b"new",
+            }],
+        );
+
+        let error = match actual {
+            Err(error) => error,
+            Ok(prepared) => {
+                prepared.discard().unwrap();
+                panic!("invalid file target must fail: {}", target_path.display());
+            }
+        };
+        assert_eq!(
+            error.operation,
+            StorageTransactionOperation::ValidateTargetPath
+        );
+        assert_eq!(error.path, target_path);
+        assert!(!storage_dir
+            .path
+            .join(TRANSACTION_DIRECTORY_NAME)
+            .join(ACTIVE_TRANSACTION_DIRECTORY_NAME)
+            .exists());
+    }
+}
+
+#[test]
+fn test_prepare_directory_targetの空path_escapeと予約namespaceを拒否する() {
+    let storage_dir = TestStorageDir::new();
+    let directory_paths = [
+        storage_dir.path.clone(),
+        storage_dir.path.join("../escaped"),
+        storage_dir.path.join(".schronu-transactions/live"),
+    ];
+
+    for directory_path in &directory_paths {
+        let actual = prepare_with_directories(
+            file_system_io(),
+            &storage_dir.path,
+            Uuid::from_u128(0x2215),
+            &[],
+            &[directory_path],
+        );
+
+        let error = match actual {
+            Err(error) => error,
+            Ok(prepared) => {
+                prepared.discard().unwrap();
+                panic!(
+                    "invalid directory target must fail: {}",
+                    directory_path.display()
+                );
+            }
+        };
+        assert_eq!(
+            error.operation,
+            StorageTransactionOperation::ValidateTargetPath
+        );
+        assert_eq!(error.path, *directory_path);
+        assert!(!storage_dir
+            .path
+            .join(TRANSACTION_DIRECTORY_NAME)
+            .join(ACTIVE_TRANSACTION_DIRECTORY_NAME)
+            .exists());
+    }
+}
+
+#[test]
 fn test_prepare_staged_file失敗はpathとphaseを保持する() {
     for (phase, expected_operation) in [
         (
