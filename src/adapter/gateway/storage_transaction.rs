@@ -35,6 +35,7 @@ enum StorageTransactionOperation {
     SyncManifest,
     CreateCommitMarker,
     SyncCommitMarker,
+    RenameCommitMarker,
     CreateTargetDirectory,
     ReadStagedFile,
     CreateLiveTemporary,
@@ -189,21 +190,33 @@ impl PreparedTransaction {
         revision_path: &Path,
         directories: &[PathBuf],
     ) -> Result<(), StorageTransactionError> {
+        let marker_temporary_path = self.transaction_dir_path.join("commit.tmp");
         let marker_path = self.transaction_dir_path.join("commit");
-        self.io.create_new_file(&marker_path).map_err(|error| {
-            StorageTransactionError::new(
-                StorageTransactionOperation::CreateCommitMarker,
-                &marker_path,
-                error,
-            )
-        })?;
-        self.io.sync_file(&marker_path).map_err(|error| {
+        self.io
+            .create_new_file(&marker_temporary_path)
+            .map_err(|error| {
+                StorageTransactionError::new(
+                    StorageTransactionOperation::CreateCommitMarker,
+                    &marker_temporary_path,
+                    error,
+                )
+            })?;
+        self.io.sync_file(&marker_temporary_path).map_err(|error| {
             StorageTransactionError::new(
                 StorageTransactionOperation::SyncCommitMarker,
-                &marker_path,
+                &marker_temporary_path,
                 error,
             )
         })?;
+        self.io
+            .rename(&marker_temporary_path, &marker_path)
+            .map_err(|error| {
+                StorageTransactionError::new(
+                    StorageTransactionOperation::RenameCommitMarker,
+                    &marker_path,
+                    error,
+                )
+            })?;
         sync_directory(self.io.as_ref(), &self.transaction_dir_path)?;
 
         for directory in directories {

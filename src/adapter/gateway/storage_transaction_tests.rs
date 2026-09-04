@@ -103,9 +103,7 @@ impl StorageTransactionIo for CommitOrderIo {
     }
 
     fn create_new_file(&self, path: &Path) -> std::io::Result<()> {
-        if path.file_name().is_some_and(|name| name == "commit") {
-            *self.transaction_dir_path.lock().unwrap() = path.parent().map(Path::to_path_buf);
-        } else if path.parent() == Some(self.storage_dir_path.as_path())
+        if path.parent() == Some(self.storage_dir_path.as_path())
             || path.parent() == self.first_target_path.parent()
             || path.parent() == self.second_target_path.parent()
         {
@@ -130,10 +128,21 @@ impl StorageTransactionIo for CommitOrderIo {
     }
 
     fn sync_file(&self, path: &Path) -> std::io::Result<()> {
-        if path.file_name().is_some_and(|name| name == "commit") {
+        if path.file_name().is_some_and(|name| name == "commit.tmp") {
             *self.marker_file_synced.lock().unwrap() = true;
         }
         FileSystemStorageTransactionIo.sync_file(path)
+    }
+
+    fn rename(&self, from: &Path, to: &Path) -> std::io::Result<()> {
+        if to.file_name().is_some_and(|name| name == "commit") {
+            assert!(
+                *self.marker_file_synced.lock().unwrap(),
+                "commit marker temporary file must be synced before rename"
+            );
+            *self.transaction_dir_path.lock().unwrap() = to.parent().map(Path::to_path_buf);
+        }
+        FileSystemStorageTransactionIo.rename(from, to)
     }
 
     fn sync_directory(&self, path: &Path) -> std::io::Result<()> {
@@ -172,7 +181,7 @@ struct FailingCommitIo {
 impl StorageTransactionIo for FailingCommitIo {
     fn create_new_file(&self, path: &Path) -> std::io::Result<()> {
         if matches!(self.phase, FailingCommitPhase::MarkerCreate)
-            && path.file_name().is_some_and(|name| name == "commit")
+            && path.file_name().is_some_and(|name| name == "commit.tmp")
         {
             return Err(std::io::Error::other("injected marker create failure"));
         }
@@ -193,7 +202,7 @@ impl StorageTransactionIo for FailingCommitIo {
 
     fn sync_file(&self, path: &Path) -> std::io::Result<()> {
         let file_name = path.file_name().unwrap_or_default().to_string_lossy();
-        if (matches!(self.phase, FailingCommitPhase::MarkerSync) && file_name == "commit")
+        if (matches!(self.phase, FailingCommitPhase::MarkerSync) && file_name == "commit.tmp")
             || (matches!(self.phase, FailingCommitPhase::LiveSync)
                 && file_name.starts_with(".project.yaml."))
         {
@@ -577,7 +586,10 @@ fn test_commit_failure時は回復用manifestとstaged_fileを維持する() {
         assert!(transaction_dir_path.join("files/0").is_file());
         assert_eq!(
             transaction_dir_path.join("commit").is_file(),
-            !matches!(phase, FailingCommitPhase::MarkerCreate)
+            !matches!(
+                phase,
+                FailingCommitPhase::MarkerCreate | FailingCommitPhase::MarkerSync
+            )
         );
     }
 }
