@@ -51,17 +51,12 @@ impl FailingPrepareIo {
 }
 
 impl StorageTransactionIo for FailingPrepareIo {
-    fn write_new_file(
-        &self,
-        path: &Path,
-        bytes: &[u8],
-        permissions: Option<fs::Permissions>,
-    ) -> std::io::Result<()> {
+    fn write_file(&self, path: &Path, bytes: &[u8]) -> std::io::Result<()> {
         let call = self.write_calls.fetch_add(1, Ordering::SeqCst) + 1;
         if self.fail_write_call == Some(call) {
             return Err(std::io::Error::other("injected write/sync failure"));
         }
-        FileSystemStorageTransactionIo.write_new_file(path, bytes, permissions)
+        FileSystemStorageTransactionIo.write_file(path, bytes)
     }
 
     fn sync_file(&self, path: &Path) -> std::io::Result<()> {
@@ -78,6 +73,40 @@ impl StorageTransactionIo for FailingPrepareIo {
             return Err(std::io::Error::other("injected directory sync failure"));
         }
         FileSystemStorageTransactionIo.sync_directory(path)
+    }
+}
+
+#[derive(Clone, Copy)]
+enum FailingStagedFilePhase {
+    Create,
+    SetPermissions,
+    Write,
+}
+
+struct FailingStagedFileIo {
+    phase: FailingStagedFilePhase,
+}
+
+impl StorageTransactionIo for FailingStagedFileIo {
+    fn create_new_file(&self, path: &Path) -> std::io::Result<()> {
+        if matches!(self.phase, FailingStagedFilePhase::Create) {
+            return Err(std::io::Error::other("injected create failure"));
+        }
+        FileSystemStorageTransactionIo.create_new_file(path)
+    }
+
+    fn set_permissions(&self, path: &Path, permissions: fs::Permissions) -> std::io::Result<()> {
+        if matches!(self.phase, FailingStagedFilePhase::SetPermissions) {
+            return Err(std::io::Error::other("injected permission failure"));
+        }
+        FileSystemStorageTransactionIo.set_permissions(path, permissions)
+    }
+
+    fn write_file(&self, path: &Path, bytes: &[u8]) -> std::io::Result<()> {
+        if matches!(self.phase, FailingStagedFilePhase::Write) {
+            return Err(std::io::Error::other("injected write failure"));
+        }
+        FileSystemStorageTransactionIo.write_file(path, bytes)
     }
 }
 
@@ -155,6 +184,51 @@ fn test_prepare_staged_files_directory作成失敗時はuuid_directoryを残さ�
     assert!(actual.is_err());
     let transactions_dir_path = storage_dir.path.join(TRANSACTION_DIRECTORY_NAME);
     assert_eq!(fs::read_dir(transactions_dir_path).unwrap().count(), 0);
+}
+
+#[test]
+fn test_prepare_staged_file失敗はpathとphaseを保持する() {
+    for (phase, expected_operation) in [
+        (
+            FailingStagedFilePhase::Create,
+            StorageTransactionOperation::CreateStagedFile,
+        ),
+        (
+            FailingStagedFilePhase::SetPermissions,
+            StorageTransactionOperation::SetStagedPermissions,
+        ),
+        (
+            FailingStagedFilePhase::Write,
+            StorageTransactionOperation::WriteStagedFile,
+        ),
+    ] {
+        let storage_dir = TestStorageDir::new();
+        let target_path = storage_dir.path.join("project.yaml");
+        fs::write(&target_path, b"old").unwrap();
+        let io = Arc::new(FailingStagedFileIo { phase });
+
+        let actual = prepare(
+            io,
+            &storage_dir.path,
+            Uuid::from_u128(0x2206),
+            &[WriteRequest {
+                target_path: &target_path,
+                bytes: b"new",
+            }],
+        );
+
+        let error = match actual {
+            Err(error) => error,
+            Ok(prepared) => {
+                prepared.discard().unwrap();
+                panic!("prepare must fail");
+            }
+        };
+        assert_eq!(error.operation, expected_operation);
+        assert_eq!(error.path.file_name().unwrap(), "0");
+        assert_eq!(error.path.parent().unwrap().file_name().unwrap(), "files");
+        assert!(error.source().is_some());
+    }
 }
 
 #[cfg(unix)]

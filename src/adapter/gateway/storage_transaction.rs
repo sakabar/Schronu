@@ -11,13 +11,35 @@ pub(super) const TRANSACTION_DIRECTORY_NAME: &str = ".schronu-transactions";
 
 #[derive(Debug)]
 pub(super) struct StorageTransactionError {
-    operation: &'static str,
+    operation: StorageTransactionOperation,
     path: PathBuf,
     source: std::io::Error,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum StorageTransactionOperation {
+    Discard,
+    CreateTransactionDirectory,
+    CreateStagedFilesDirectory,
+    ResolveTargetPath,
+    ReadTargetMetadata,
+    CreateStagedFile,
+    SetStagedPermissions,
+    WriteStagedFile,
+    SyncStagedFile,
+    SerializeManifest,
+    CreateManifest,
+    WriteManifest,
+    SyncManifest,
+    SyncDirectory,
+}
+
 impl StorageTransactionError {
-    fn new(operation: &'static str, path: impl Into<PathBuf>, source: std::io::Error) -> Self {
+    fn new(
+        operation: StorageTransactionOperation,
+        path: impl Into<PathBuf>,
+        source: std::io::Error,
+    ) -> Self {
         Self {
             operation,
             path: path.into(),
@@ -30,7 +52,7 @@ impl fmt::Display for StorageTransactionError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(
             formatter,
-            "storage transaction {} failed for {}: {}",
+            "storage transaction {:?} failed for {}: {}",
             self.operation,
             self.path.display(),
             self.source
@@ -76,17 +98,20 @@ pub(super) trait StorageTransactionIo: Send + Sync {
         }
     }
 
-    fn write_new_file(
-        &self,
-        path: &Path,
-        bytes: &[u8],
-        permissions: Option<fs::Permissions>,
-    ) -> std::io::Result<()> {
-        let mut file = File::options().write(true).create_new(true).open(path)?;
-        if let Some(permissions) = permissions {
-            file.set_permissions(permissions)?;
-        }
-        file.write_all(bytes)
+    fn create_new_file(&self, path: &Path) -> std::io::Result<()> {
+        File::options()
+            .write(true)
+            .create_new(true)
+            .open(path)
+            .map(drop)
+    }
+
+    fn set_permissions(&self, path: &Path, permissions: fs::Permissions) -> std::io::Result<()> {
+        fs::set_permissions(path, permissions)
+    }
+
+    fn write_file(&self, path: &Path, bytes: &[u8]) -> std::io::Result<()> {
+        File::options().write(true).open(path)?.write_all(bytes)
     }
 
     fn sync_file(&self, path: &Path) -> std::io::Result<()> {
@@ -115,7 +140,11 @@ impl PreparedTransaction {
         self.io
             .remove_dir_all(&self.transaction_dir_path)
             .map_err(|error| {
-                StorageTransactionError::new("discard", self.transaction_dir_path, error)
+                StorageTransactionError::new(
+                    StorageTransactionOperation::Discard,
+                    self.transaction_dir_path,
+                    error,
+                )
             })
     }
 }
@@ -129,7 +158,7 @@ pub(super) fn prepare(
     let transactions_dir_path = storage_dir_path.join(TRANSACTION_DIRECTORY_NAME);
     io.create_dir_all(&transactions_dir_path).map_err(|error| {
         StorageTransactionError::new(
-            "create transaction directory",
+            StorageTransactionOperation::CreateTransactionDirectory,
             &transactions_dir_path,
             error,
         )
@@ -140,7 +169,7 @@ pub(super) fn prepare(
     if let Err(error) = io.create_dir_all(&staged_files_dir_path) {
         let _ = io.remove_dir_all(&transaction_dir_path);
         return Err(StorageTransactionError::new(
-            "create staged files directory",
+            StorageTransactionOperation::CreateStagedFilesDirectory,
             &staged_files_dir_path,
             error,
         ));
@@ -184,7 +213,7 @@ fn prepare_contents(
             .strip_prefix(storage_dir_path)
             .map_err(|error| {
                 StorageTransactionError::new(
-                    "resolve target path",
+                    StorageTransactionOperation::ResolveTargetPath,
                     write.target_path,
                     std::io::Error::new(std::io::ErrorKind::InvalidInput, error),
                 )
@@ -208,15 +237,33 @@ fn prepare_contents(
     let manifest_path = transaction_dir_path.join("manifest.json");
     let manifest_bytes = serde_json::to_vec(&manifest).map_err(|error| {
         StorageTransactionError::new(
-            "serialize manifest",
+            StorageTransactionOperation::SerializeManifest,
             &manifest_path,
             std::io::Error::new(std::io::ErrorKind::InvalidData, error),
         )
     })?;
-    io.write_new_file(&manifest_path, &manifest_bytes, None)
-        .map_err(|error| StorageTransactionError::new("write manifest", &manifest_path, error))?;
-    io.sync_file(&manifest_path)
-        .map_err(|error| StorageTransactionError::new("sync manifest", &manifest_path, error))?;
+    io.create_new_file(&manifest_path).map_err(|error| {
+        StorageTransactionError::new(
+            StorageTransactionOperation::CreateManifest,
+            &manifest_path,
+            error,
+        )
+    })?;
+    io.write_file(&manifest_path, &manifest_bytes)
+        .map_err(|error| {
+            StorageTransactionError::new(
+                StorageTransactionOperation::WriteManifest,
+                &manifest_path,
+                error,
+            )
+        })?;
+    io.sync_file(&manifest_path).map_err(|error| {
+        StorageTransactionError::new(
+            StorageTransactionOperation::SyncManifest,
+            &manifest_path,
+            error,
+        )
+    })?;
     sync_directory(io, transaction_dir_path)?;
     sync_directory(io, transactions_dir_path)?;
     sync_directory(io, storage_dir_path)
@@ -229,22 +276,52 @@ fn write_staged_file(
     bytes: &[u8],
 ) -> Result<(), StorageTransactionError> {
     let existing_permissions = io.target_permissions(target_path).map_err(|error| {
-        StorageTransactionError::new("read target metadata", target_path, error)
+        StorageTransactionError::new(
+            StorageTransactionOperation::ReadTargetMetadata,
+            target_path,
+            error,
+        )
     })?;
-    io.write_new_file(staged_file_path, bytes, existing_permissions)
-        .map_err(|error| {
-            StorageTransactionError::new("write staged file", staged_file_path, error)
-        })?;
-    io.sync_file(staged_file_path)
-        .map_err(|error| StorageTransactionError::new("sync staged file", staged_file_path, error))
+    io.create_new_file(staged_file_path).map_err(|error| {
+        StorageTransactionError::new(
+            StorageTransactionOperation::CreateStagedFile,
+            staged_file_path,
+            error,
+        )
+    })?;
+    if let Some(permissions) = existing_permissions {
+        io.set_permissions(staged_file_path, permissions)
+            .map_err(|error| {
+                StorageTransactionError::new(
+                    StorageTransactionOperation::SetStagedPermissions,
+                    staged_file_path,
+                    error,
+                )
+            })?;
+    }
+    io.write_file(staged_file_path, bytes).map_err(|error| {
+        StorageTransactionError::new(
+            StorageTransactionOperation::WriteStagedFile,
+            staged_file_path,
+            error,
+        )
+    })?;
+    io.sync_file(staged_file_path).map_err(|error| {
+        StorageTransactionError::new(
+            StorageTransactionOperation::SyncStagedFile,
+            staged_file_path,
+            error,
+        )
+    })
 }
 
 fn sync_directory(
     io: &dyn StorageTransactionIo,
     path: &Path,
 ) -> Result<(), StorageTransactionError> {
-    io.sync_directory(path)
-        .map_err(|error| StorageTransactionError::new("sync directory", path, error))
+    io.sync_directory(path).map_err(|error| {
+        StorageTransactionError::new(StorageTransactionOperation::SyncDirectory, path, error)
+    })
 }
 
 #[cfg(test)]
