@@ -137,13 +137,14 @@ pub(super) fn prepare(
     let transaction_id = Uuid::new_v4();
     let transaction_dir_path = transactions_dir_path.join(transaction_id.hyphenated().to_string());
     let staged_files_dir_path = transaction_dir_path.join("files");
-    io.create_dir_all(&staged_files_dir_path).map_err(|error| {
-        StorageTransactionError::new(
+    if let Err(error) = io.create_dir_all(&staged_files_dir_path) {
+        let _ = io.remove_dir_all(&transaction_dir_path);
+        return Err(StorageTransactionError::new(
             "create staged files directory",
             &staged_files_dir_path,
             error,
-        )
-    })?;
+        ));
+    }
 
     let result = prepare_contents(
         io.as_ref(),

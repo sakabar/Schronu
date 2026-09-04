@@ -15,6 +15,24 @@ struct FailingPrepareIo {
     sync_calls: AtomicUsize,
 }
 
+struct FailSecondCreateDirectoryIo {
+    create_calls: AtomicUsize,
+}
+
+impl StorageTransactionIo for FailSecondCreateDirectoryIo {
+    fn create_dir_all(&self, path: &Path) -> std::io::Result<()> {
+        let call = self.create_calls.fetch_add(1, Ordering::SeqCst) + 1;
+        if call == 2 {
+            FileSystemStorageTransactionIo
+                .create_dir_all(path.parent().expect("staged files directory has a parent"))?;
+            return Err(std::io::Error::other(
+                "injected staged files directory failure",
+            ));
+        }
+        FileSystemStorageTransactionIo.create_dir_all(path)
+    }
+}
+
 impl FailingPrepareIo {
     fn new(
         fail_write_call: Option<usize>,
@@ -114,6 +132,29 @@ fn test_prepare_staged_fileとimmutable_manifestを作成する() {
 
     prepared.discard().unwrap();
     assert!(storage_dir.path.join(TRANSACTION_DIRECTORY_NAME).is_dir());
+}
+
+#[test]
+fn test_prepare_staged_files_directory作成失敗時はuuid_directoryを残さない() {
+    let storage_dir = TestStorageDir::new();
+    let target_path = storage_dir.path.join("project.yaml");
+    let io = Arc::new(FailSecondCreateDirectoryIo {
+        create_calls: AtomicUsize::new(0),
+    });
+
+    let actual = prepare(
+        io,
+        &storage_dir.path,
+        Uuid::from_u128(0x2205),
+        &[WriteRequest {
+            target_path: &target_path,
+            bytes: b"project: {}\n",
+        }],
+    );
+
+    assert!(actual.is_err());
+    let transactions_dir_path = storage_dir.path.join(TRANSACTION_DIRECTORY_NAME);
+    assert_eq!(fs::read_dir(transactions_dir_path).unwrap().count(), 0);
 }
 
 #[cfg(unix)]
