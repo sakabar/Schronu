@@ -492,15 +492,18 @@ fn test_recover_uncommitted_marker公開中のlive_writerとは競合してactiv
     let commit_thread = std::thread::spawn(move || prepared.commit(&revision_path));
     io.marker_sync_started.wait();
 
-    let actual = recover_uncommitted(file_system_io(), &storage_dir.path).unwrap_err();
+    let actual = recover_uncommitted(file_system_io(), &storage_dir.path);
+    let marker_was_preserved = active_transaction_path.join("commit").is_file();
+    io.marker_sync_resume.wait();
+    let commit_result = commit_thread.join();
 
+    let actual = actual.unwrap_err();
     assert!(actual.to_string().contains("AcquireTransactionLock"));
     assert!(actual.source().is_some_and(|source| source
         .downcast_ref::<std::io::Error>()
         .is_some_and(|error| { error.kind() == std::io::ErrorKind::WouldBlock })));
-    assert!(active_transaction_path.join("commit").is_file());
-    io.marker_sync_resume.wait();
-    commit_thread.join().unwrap().unwrap();
+    assert!(marker_was_preserved);
+    commit_result.unwrap().unwrap();
     assert_eq!(fs::read(target_path).unwrap(), b"new");
 }
 
