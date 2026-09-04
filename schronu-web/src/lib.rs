@@ -7,6 +7,7 @@ use tokio::sync::oneshot;
 pub mod app;
 
 pub const REFRESH_INTERVAL: Duration = Duration::from_secs(60);
+const TODAY_WORKER_STACK_SIZE_BYTES: usize = 32 * 1024 * 1024;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum RefreshTrigger {
@@ -82,6 +83,7 @@ impl TodayWorkerHandle {
         let (commands, receiver) = mpsc::channel::<TodayWorkerCommand>();
         thread::Builder::new()
             .name("schronu-today-text".to_owned())
+            .stack_size(TODAY_WORKER_STACK_SIZE_BYTES)
             .spawn(move || {
                 let mut query = factory();
                 while let Ok(command) = receiver.recv() {
