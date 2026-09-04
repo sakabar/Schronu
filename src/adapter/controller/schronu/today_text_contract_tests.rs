@@ -72,7 +72,7 @@ fn busy_time_slots_yaml() -> String {
     let mut yaml = String::from("days_of_week:\n");
     for day_of_week in ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"] {
         yaml.push_str(&format!(
-            "  - day_of_week: {day_of_week}\n    busy_time_slots:\n      - start_time: '00:00'\n        duration_minutes: 720\n        name: before-test-window\n      - start_time: '14:00'\n        duration_minutes: 599\n        name: after-test-window\n"
+            "  - day_of_week: {day_of_week}\n    busy_time_slots: []\n"
         ));
     }
     yaml
