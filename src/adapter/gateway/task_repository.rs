@@ -1,5 +1,5 @@
 use crate::adapter::gateway::storage_transaction::{
-    FileSystemStorageTransactionIo, StorageTransactionIo, WriteRequest,
+    self, FileSystemStorageTransactionIo, StorageTransactionIo, WriteRequest,
 };
 use crate::adapter::gateway::yaml::{task_snapshot_to_yaml, yaml_to_task};
 use crate::application::interface::{
@@ -768,12 +768,13 @@ impl TaskRepositoryTrait for TaskRepository {
                 bytes,
             })
             .collect::<Vec<_>>();
-        let prepared_transaction = self
-            .storage_transaction_io
-            .prepare(storage_dir_path, new_storage_revision, &write_requests)
-            .map_err(|error| {
-                TaskRepositoryError::new(ApplicationRepositoryOperation::Save, error)
-            })?;
+        let prepared_transaction = storage_transaction::prepare(
+            self.storage_transaction_io.clone(),
+            storage_dir_path,
+            new_storage_revision,
+            &write_requests,
+        )
+        .map_err(|error| TaskRepositoryError::new(ApplicationRepositoryOperation::Save, error))?;
         for (project, _) in &prepared_writes {
             if let Err(error) = fs::create_dir_all(&project.project_dir_path) {
                 let _ = prepared_transaction.discard();

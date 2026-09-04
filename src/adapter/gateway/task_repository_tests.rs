@@ -1,5 +1,4 @@
 use super::*;
-use crate::adapter::gateway::storage_transaction::{PreparedTransaction, StorageTransactionError};
 use crate::adapter::gateway::yaml::YamlConversionError;
 use crate::application::interface::ProjectRegistrationError;
 use chrono::{Duration, TimeZone};
@@ -8,20 +7,12 @@ use std::path::PathBuf;
 struct FailingStorageTransactionIo;
 
 impl StorageTransactionIo for FailingStorageTransactionIo {
-    fn prepare(
-        &self,
-        storage_dir_path: &Path,
-        revision: Uuid,
-        writes: &[WriteRequest<'_>],
-    ) -> Result<PreparedTransaction, StorageTransactionError> {
-        let blocked_storage_dir_path = storage_dir_path.join("injected-prepare-failure");
-        fs::create_dir_all(storage_dir_path).unwrap();
-        fs::write(&blocked_storage_dir_path, b"blocked").unwrap();
-        crate::adapter::gateway::storage_transaction::prepare(
-            &blocked_storage_dir_path,
-            revision,
-            writes,
-        )
+    fn create_dir_all(&self, path: &Path) -> std::io::Result<()> {
+        if path.ends_with(crate::adapter::gateway::storage_transaction::TRANSACTION_DIRECTORY_NAME)
+        {
+            return Err(std::io::Error::other("injected prepare failure"));
+        }
+        fs::create_dir_all(path)
     }
 }
 

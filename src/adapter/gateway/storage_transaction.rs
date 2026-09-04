@@ -4,6 +4,7 @@ use std::fmt;
 use std::fs::{self, File};
 use std::io::Write;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use uuid::Uuid;
 
 pub(super) const TRANSACTION_DIRECTORY_NAME: &str = ".schronu-transactions";
@@ -62,60 +63,81 @@ struct ManifestEntry {
     staged_file: PathBuf,
 }
 
-pub(super) struct PreparedTransaction {
-    transaction_dir_path: PathBuf,
-}
-
 pub(super) trait StorageTransactionIo: Send + Sync {
-    fn prepare(
+    fn create_dir_all(&self, path: &Path) -> std::io::Result<()> {
+        fs::create_dir_all(path)
+    }
+
+    fn target_permissions(&self, path: &Path) -> std::io::Result<Option<fs::Permissions>> {
+        match fs::metadata(path) {
+            Ok(metadata) => Ok(Some(metadata.permissions())),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
+            Err(error) => Err(error),
+        }
+    }
+
+    fn write_new_file(
         &self,
-        storage_dir_path: &Path,
-        revision: Uuid,
-        writes: &[WriteRequest<'_>],
-    ) -> Result<PreparedTransaction, StorageTransactionError>;
+        path: &Path,
+        bytes: &[u8],
+        permissions: Option<fs::Permissions>,
+    ) -> std::io::Result<()> {
+        let mut file = File::options().write(true).create_new(true).open(path)?;
+        if let Some(permissions) = permissions {
+            file.set_permissions(permissions)?;
+        }
+        file.write_all(bytes)
+    }
+
+    fn sync_file(&self, path: &Path) -> std::io::Result<()> {
+        File::open(path)?.sync_all()
+    }
+
+    fn sync_directory(&self, path: &Path) -> std::io::Result<()> {
+        File::open(path)?.sync_all()
+    }
+    fn remove_dir_all(&self, path: &Path) -> std::io::Result<()> {
+        fs::remove_dir_all(path)
+    }
 }
 
 #[derive(Default)]
 pub(super) struct FileSystemStorageTransactionIo;
+impl StorageTransactionIo for FileSystemStorageTransactionIo {}
 
-impl StorageTransactionIo for FileSystemStorageTransactionIo {
-    fn prepare(
-        &self,
-        storage_dir_path: &Path,
-        revision: Uuid,
-        writes: &[WriteRequest<'_>],
-    ) -> Result<PreparedTransaction, StorageTransactionError> {
-        prepare(storage_dir_path, revision, writes)
-    }
+pub(super) struct PreparedTransaction {
+    transaction_dir_path: PathBuf,
+    io: Arc<dyn StorageTransactionIo>,
 }
 
 impl PreparedTransaction {
     pub(super) fn discard(self) -> Result<(), StorageTransactionError> {
-        fs::remove_dir_all(&self.transaction_dir_path).map_err(|error| {
-            StorageTransactionError::new("discard", self.transaction_dir_path, error)
-        })?;
-        Ok(())
+        self.io
+            .remove_dir_all(&self.transaction_dir_path)
+            .map_err(|error| {
+                StorageTransactionError::new("discard", self.transaction_dir_path, error)
+            })
     }
 }
 
 pub(super) fn prepare(
+    io: Arc<dyn StorageTransactionIo>,
     storage_dir_path: &Path,
     revision: Uuid,
     writes: &[WriteRequest<'_>],
 ) -> Result<PreparedTransaction, StorageTransactionError> {
     let transactions_dir_path = storage_dir_path.join(TRANSACTION_DIRECTORY_NAME);
-    fs::create_dir_all(&transactions_dir_path).map_err(|error| {
+    io.create_dir_all(&transactions_dir_path).map_err(|error| {
         StorageTransactionError::new(
             "create transaction directory",
             &transactions_dir_path,
             error,
         )
     })?;
-
     let transaction_id = Uuid::new_v4();
     let transaction_dir_path = transactions_dir_path.join(transaction_id.hyphenated().to_string());
     let staged_files_dir_path = transaction_dir_path.join("files");
-    fs::create_dir_all(&staged_files_dir_path).map_err(|error| {
+    io.create_dir_all(&staged_files_dir_path).map_err(|error| {
         StorageTransactionError::new(
             "create staged files directory",
             &staged_files_dir_path,
@@ -124,6 +146,7 @@ pub(super) fn prepare(
     })?;
 
     let result = prepare_contents(
+        io.as_ref(),
         storage_dir_path,
         &transactions_dir_path,
         &transaction_dir_path,
@@ -133,17 +156,18 @@ pub(super) fn prepare(
         writes,
     );
     if let Err(error) = result {
-        let _ = fs::remove_dir_all(&transaction_dir_path);
+        let _ = io.remove_dir_all(&transaction_dir_path);
         return Err(error);
     }
-
     Ok(PreparedTransaction {
         transaction_dir_path,
+        io,
     })
 }
 
 #[allow(clippy::too_many_arguments)]
 fn prepare_contents(
+    io: &dyn StorageTransactionIo,
     storage_dir_path: &Path,
     transactions_dir_path: &Path,
     transaction_dir_path: &Path,
@@ -166,14 +190,13 @@ fn prepare_contents(
             })?;
         let staged_file = PathBuf::from("files").join(index.to_string());
         let staged_file_path = transaction_dir_path.join(&staged_file);
-        write_staged_file(write.target_path, &staged_file_path, write.bytes)?;
+        write_staged_file(io, write.target_path, &staged_file_path, write.bytes)?;
         entries.push(ManifestEntry {
             target: target.to_path_buf(),
             staged_file,
         });
     }
-
-    sync_directory(staged_files_dir_path)?;
+    sync_directory(io, staged_files_dir_path)?;
 
     let manifest = TransactionManifest {
         version: 1,
@@ -189,63 +212,37 @@ fn prepare_contents(
             std::io::Error::new(std::io::ErrorKind::InvalidData, error),
         )
     })?;
-    let mut manifest_file = File::options()
-        .write(true)
-        .create_new(true)
-        .open(&manifest_path)
-        .map_err(|error| StorageTransactionError::new("create manifest", &manifest_path, error))?;
-    manifest_file
-        .write_all(&manifest_bytes)
+    io.write_new_file(&manifest_path, &manifest_bytes, None)
         .map_err(|error| StorageTransactionError::new("write manifest", &manifest_path, error))?;
-    manifest_file
-        .sync_all()
+    io.sync_file(&manifest_path)
         .map_err(|error| StorageTransactionError::new("sync manifest", &manifest_path, error))?;
-
-    sync_directory(transaction_dir_path)?;
-    sync_directory(transactions_dir_path)?;
-    sync_directory(storage_dir_path)
+    sync_directory(io, transaction_dir_path)?;
+    sync_directory(io, transactions_dir_path)?;
+    sync_directory(io, storage_dir_path)
 }
 
 fn write_staged_file(
+    io: &dyn StorageTransactionIo,
     target_path: &Path,
     staged_file_path: &Path,
     bytes: &[u8],
 ) -> Result<(), StorageTransactionError> {
-    let existing_permissions = match fs::metadata(target_path) {
-        Ok(metadata) => Some(metadata.permissions()),
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
-        Err(error) => {
-            return Err(StorageTransactionError::new(
-                "read target metadata",
-                target_path,
-                error,
-            ));
-        }
-    };
-    let mut file = File::options()
-        .write(true)
-        .create_new(true)
-        .open(staged_file_path)
-        .map_err(|error| {
-            StorageTransactionError::new("create staged file", staged_file_path, error)
-        })?;
-    if let Some(permissions) = existing_permissions {
-        file.set_permissions(permissions).map_err(|error| {
-            StorageTransactionError::new("set staged file permissions", staged_file_path, error)
-        })?;
-    }
-    file.write_all(bytes).map_err(|error| {
-        StorageTransactionError::new("write staged file", staged_file_path, error)
+    let existing_permissions = io.target_permissions(target_path).map_err(|error| {
+        StorageTransactionError::new("read target metadata", target_path, error)
     })?;
-    file.sync_all()
+    io.write_new_file(staged_file_path, bytes, existing_permissions)
+        .map_err(|error| {
+            StorageTransactionError::new("write staged file", staged_file_path, error)
+        })?;
+    io.sync_file(staged_file_path)
         .map_err(|error| StorageTransactionError::new("sync staged file", staged_file_path, error))
 }
 
-fn sync_directory(path: &Path) -> Result<(), StorageTransactionError> {
-    let directory = File::open(path)
-        .map_err(|error| StorageTransactionError::new("open directory", path, error))?;
-    directory
-        .sync_all()
+fn sync_directory(
+    io: &dyn StorageTransactionIo,
+    path: &Path,
+) -> Result<(), StorageTransactionError> {
+    io.sync_directory(path)
         .map_err(|error| StorageTransactionError::new("sync directory", path, error))
 }
 
