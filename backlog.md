@@ -67,7 +67,7 @@
 | TD-026 | P1 | 未着手 | L | task名をCLI・YAML・MCP・Spreadsheet間で安全にround-tripできない |
 | TD-027 | P1 | 完了 | S | 残作業時間の補正計算が合法な大値入力で整数overflowする |
 | TD-028 | P1 | 完了 | M | 論理日境界を跨ぐschedule segmentの容量が開始日に全量計上される |
-| TD-029 | P1 | 未着手 | L | 反復task完了の後段失敗で完了状態と親見積もりだけが部分更新される |
+| TD-029 | P1 | 完了 | L | 反復task完了の後段失敗で完了状態と親見積もりだけが部分更新される |
 | TD-030 | P1 | 未着手 | S | 00:00以降の日次残容量計算がbusy timeを無視する |
 | TD-031 | P1 | 未着手 | S | Spreadsheet変換がrank 1000以降のtask行を黙って破棄する |
 | TD-032 | P1 | 完了 | S | macOS標準環境でSpreadsheet変換の`tac`依存が空出力の成功になる |
@@ -1213,6 +1213,9 @@
 - 分類: `バグ / 失敗原子性`
 - 優先度: `P1`
 - 概算規模: `L`
+- 完了日: 2026-09-05
+- 対応: 対象taskの実績・status・完了時刻、反復親の見積もり、次回child追加を1つのentity operationへ集約した。root・対象task・親の全mutable borrowとhierarchy grantを最初のwrite前に取得し、commit phaseは失敗不能としてrootのmutation revisionを1回だけ進める。`complete_task`の反復あり経路とtest helperを同operationへ接続し、反復なし経路は変更していない。
+- 検証: hierarchy edit禁止とroot・対象task・親の各borrow競合でsnapshot、親見積もり、children、revisionが不変であること、成功時の既存完了値と次回反復taskの契約、root revisionの1増分をRed/Green testで固定した。`cargo fmt --check`、`cargo clippy --locked --all-targets -- -D warnings`、`cargo test --locked`、`git diff --check`に成功し、各Green後の内部review指摘を1件1commitで修正して再review済み。
 
 #### 現状と根拠
 
