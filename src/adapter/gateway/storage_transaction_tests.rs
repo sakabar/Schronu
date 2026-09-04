@@ -1394,6 +1394,37 @@ fn test_manifest_entryは旧write形式とdelete_operationを区別する() {
 }
 
 #[test]
+fn test_manifest_v1の保存bytesはfield順と省略規則を維持する() {
+    let manifest = TransactionManifest {
+        version: 1,
+        transaction_id: Uuid::parse_str("11111111-2222-3333-4444-555555555555").unwrap(),
+        revision: Uuid::parse_str("aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee").unwrap(),
+        directories: vec![PathBuf::from("project"), PathBuf::from("archive")],
+        entries: vec![
+            ManifestEntry {
+                target: PathBuf::from("project/project.yaml"),
+                operation: ManifestEntryOperation::Write,
+                staged_file: Some(PathBuf::from("files/0")),
+                content_length: Some(12),
+                content_checksum: Some("fnv1a64:0123456789abcdef".to_string()),
+            },
+            ManifestEntry {
+                target: PathBuf::from("archive/old.yaml"),
+                operation: ManifestEntryOperation::Delete,
+                staged_file: None,
+                content_length: None,
+                content_checksum: None,
+            },
+        ],
+    };
+
+    assert_eq!(
+        serde_json::to_vec(&manifest).unwrap(),
+        br#"{"version":1,"transaction_id":"11111111-2222-3333-4444-555555555555","revision":"aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee","directories":["project","archive"],"entries":[{"target":"project/project.yaml","staged_file":"files/0","content_length":12,"content_checksum":"fnv1a64:0123456789abcdef"},{"target":"archive/old.yaml","operation":"delete"}]}"#
+    );
+}
+
+#[test]
 fn test_committed_write_manifestは内容検証情報の欠落を拒否する() {
     let storage_dir = TestStorageDir::new();
     let target_path = storage_dir.path.join("project.yaml");
