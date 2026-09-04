@@ -13,6 +13,7 @@ const LOCK_RETRY_INTERVAL: Duration = Duration::from_millis(10);
 pub enum LockMode {
     Cli,
     Mcp,
+    Web,
 }
 
 impl fmt::Display for LockMode {
@@ -20,6 +21,7 @@ impl fmt::Display for LockMode {
         match self {
             Self::Cli => write!(formatter, "cli"),
             Self::Mcp => write!(formatter, "mcp"),
+            Self::Web => write!(formatter, "web"),
         }
     }
 }
