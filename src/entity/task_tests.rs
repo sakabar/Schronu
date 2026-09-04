@@ -555,6 +555,42 @@ fn test_反復完了は完了値と親見積もりと次回childを一括反映�
 }
 
 #[test]
+fn test_反復完了は親がrootでなくてもroot_revisionだけを1進める() {
+    let root = new_test_task_handle("root").unwrap();
+    let parent = root.create_child(new_test_task_attr("反復親")).unwrap();
+    parent.set_estimated_work_seconds(600).unwrap();
+    let child = parent.create_child(new_test_task_attr("今回")).unwrap();
+    let finished_at = Local.with_ymd_and_hms(2026, 8, 20, 12, 34, 56).unwrap();
+    let next_id = Uuid::from_u128(0x2902);
+    let before_root_revision = root.get_persistent_mutation_revision().unwrap();
+    let before_parent_revision = parent.node.borrow_data().persistent_mutation_revision;
+
+    let next = child
+        .complete_with_next_repetition(
+            300,
+            finished_at,
+            450,
+            TaskAttr::with_identity("次回", next_id, finished_at),
+        )
+        .unwrap();
+
+    assert_eq!(child.get_actual_work_seconds().unwrap(), 300);
+    assert_eq!(child.get_status().unwrap(), Status::Done);
+    assert_eq!(child.get_end_time_opt().unwrap(), Some(finished_at));
+    assert_eq!(parent.get_estimated_work_seconds().unwrap(), 450);
+    assert_eq!(next.get_id().unwrap(), next_id);
+    assert_eq!(parent.get_children().unwrap().len(), 2);
+    assert_eq!(
+        root.get_persistent_mutation_revision().unwrap(),
+        before_root_revision.wrapping_add(1)
+    );
+    assert_eq!(
+        parent.node.borrow_data().persistent_mutation_revision,
+        before_parent_revision
+    );
+}
+
+#[test]
 fn test_反復完了はhierarchy_grant取得失敗時に何も変更しない() {
     let parent = new_test_task_handle("反復親").unwrap();
     parent.set_estimated_work_seconds(600).unwrap();
