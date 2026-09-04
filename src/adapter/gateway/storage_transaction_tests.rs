@@ -460,6 +460,28 @@ fn create_delete_transaction(
     transaction_dir_path
 }
 
+fn prepare_delete_transaction(
+    storage_dir_path: &Path,
+    target: &str,
+    revision: Uuid,
+) -> PreparedTransaction {
+    let transaction_dir_path = create_delete_transaction(storage_dir_path, target, revision, false);
+    let transactions_dir_path = transaction_dir_path.parent().unwrap().to_path_buf();
+    let manifest_path = transaction_dir_path.join("manifest.json");
+    let manifest = serde_json::from_slice(&fs::read(&manifest_path).unwrap()).unwrap();
+    let transaction_lock = acquire_transaction_lock(&transactions_dir_path).unwrap();
+    prepared_from_manifest(
+        file_system_io(),
+        storage_dir_path,
+        transactions_dir_path,
+        transaction_dir_path,
+        manifest_path,
+        manifest,
+        transaction_lock,
+    )
+    .unwrap()
+}
+
 impl TestStorageDir {
     fn new() -> Self {
         let path =
@@ -1207,6 +1229,52 @@ fn test_delete_entry_markerありではtargetを削除しrevisionを更新する
 }
 
 #[test]
+fn test_delete_entryは通常commitでmarker公開後にtargetを削除する() {
+    let storage_dir = TestStorageDir::new();
+    let target_path = storage_dir.path.join("project/project.yaml");
+    fs::create_dir_all(target_path.parent().unwrap()).unwrap();
+    fs::write(&target_path, b"old").unwrap();
+    let revision = Uuid::from_u128(0x2238);
+    let prepared = prepare_delete_transaction(&storage_dir.path, "project/project.yaml", revision);
+
+    prepared
+        .commit(&storage_dir.path.join(".revision"))
+        .unwrap();
+
+    assert!(!target_path.exists());
+    assert_eq!(
+        fs::read_to_string(storage_dir.path.join(".revision")).unwrap(),
+        format!("{revision}\n")
+    );
+}
+
+#[test]
+fn test_manifest_entryは旧write形式とdelete_operationを区別する() {
+    let old_write: ManifestEntry = serde_json::from_value(serde_json::json!({
+        "target": "project.yaml",
+        "staged_file": "files/0"
+    }))
+    .unwrap();
+    let delete: ManifestEntry = serde_json::from_value(serde_json::json!({
+        "target": "project.yaml",
+        "operation": "delete"
+    }))
+    .unwrap();
+
+    assert_eq!(old_write.operation, ManifestEntryOperation::Write);
+    assert_eq!(old_write.staged_file, Some(PathBuf::from("files/0")));
+    assert_eq!(delete.operation, ManifestEntryOperation::Delete);
+    assert_eq!(delete.staged_file, None);
+    assert_eq!(
+        serde_json::to_value(&old_write).unwrap(),
+        serde_json::json!({
+            "target": "project.yaml",
+            "staged_file": "files/0"
+        })
+    );
+}
+
+#[test]
 fn test_delete_entry_targetがなくても再実行可能である() {
     let storage_dir = TestStorageDir::new();
     let revision = Uuid::from_u128(0x2233);
@@ -1299,4 +1367,28 @@ fn test_delete_entry_symlinkは参照先を変更せずlinkだけを削除する
 
     assert!(!target_path.exists());
     assert_eq!(fs::read(external_path).unwrap(), b"external");
+}
+
+#[test]
+fn test_delete_entryはstorage外へのpath_escapeを拒否する() {
+    let storage_dir = TestStorageDir::new();
+    let external_file_name = format!("schronu-delete-external-{}.yaml", Uuid::new_v4());
+    let external_path = storage_dir.path.parent().unwrap().join(&external_file_name);
+    let manifest_target = format!("../{external_file_name}");
+    fs::write(&external_path, b"external").unwrap();
+    create_delete_transaction(
+        &storage_dir.path,
+        &manifest_target,
+        Uuid::from_u128(0x2237),
+        true,
+    );
+
+    let actual = recover(file_system_io(), &storage_dir.path).unwrap_err();
+
+    assert_eq!(
+        actual.operation,
+        StorageTransactionOperation::ValidateTargetPath
+    );
+    assert_eq!(fs::read(&external_path).unwrap(), b"external");
+    fs::remove_file(external_path).unwrap();
 }

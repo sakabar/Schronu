@@ -58,6 +58,7 @@ enum StorageTransactionOperation {
     WriteLiveTemporary,
     SyncLiveTemporary,
     RenameLiveTarget,
+    RemoveLiveTarget,
     RenameForCleanup,
     SyncDirectory,
 }
@@ -111,7 +112,24 @@ struct TransactionManifest {
 #[derive(Deserialize, Serialize)]
 struct ManifestEntry {
     target: PathBuf,
-    staged_file: PathBuf,
+    #[serde(default, skip_serializing_if = "ManifestEntryOperation::is_write")]
+    operation: ManifestEntryOperation,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    staged_file: Option<PathBuf>,
+}
+
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+enum ManifestEntryOperation {
+    #[default]
+    Write,
+    Delete,
+}
+
+impl ManifestEntryOperation {
+    fn is_write(operation: &Self) -> bool {
+        *operation == Self::Write
+    }
 }
 
 pub(super) trait StorageTransactionIo: Send + Sync {
@@ -198,13 +216,15 @@ struct TransactionLock {
 
 struct PreparedEntry {
     target: PathBuf,
-    staged_file: PathBuf,
+    operation: ManifestEntryOperation,
+    staged_file: Option<PathBuf>,
 }
 
 struct PreflightEntry {
     target_path: PathBuf,
-    bytes: Vec<u8>,
-    permissions: fs::Permissions,
+    operation: ManifestEntryOperation,
+    bytes: Option<Vec<u8>>,
+    permissions: Option<fs::Permissions>,
 }
 
 impl PreparedTransaction {
@@ -267,11 +287,17 @@ impl PreparedTransaction {
             })?;
         }
         for entry in &preflight_entries {
-            self.apply_bytes(
-                &entry.target_path,
-                &entry.bytes,
-                Some(entry.permissions.clone()),
-            )?;
+            match entry.operation {
+                ManifestEntryOperation::Write => self.apply_bytes(
+                    &entry.target_path,
+                    entry
+                        .bytes
+                        .as_deref()
+                        .expect("preflight write entry must contain staged bytes"),
+                    entry.permissions.clone(),
+                )?,
+                ManifestEntryOperation::Delete => self.apply_delete(&entry.target_path)?,
+            }
         }
         self.apply_revision(revision_path)?;
 
@@ -299,7 +325,20 @@ impl PreparedTransaction {
         self.entries
             .iter()
             .map(|entry| {
-                let staged_file_path = self.transaction_dir_path.join(&entry.staged_file);
+                if entry.operation == ManifestEntryOperation::Delete {
+                    return Ok(PreflightEntry {
+                        target_path: self.storage_dir_path.join(&entry.target),
+                        operation: entry.operation,
+                        bytes: None,
+                        permissions: None,
+                    });
+                }
+                let staged_file_path = self.transaction_dir_path.join(
+                    entry
+                        .staged_file
+                        .as_ref()
+                        .expect("validated write entry must contain a staged file"),
+                );
                 let metadata = self
                     .io
                     .symlink_metadata(&staged_file_path)
@@ -329,8 +368,9 @@ impl PreparedTransaction {
                 })?;
                 Ok(PreflightEntry {
                     target_path: self.storage_dir_path.join(&entry.target),
-                    bytes,
-                    permissions: metadata.permissions(),
+                    operation: entry.operation,
+                    bytes: Some(bytes),
+                    permissions: Some(metadata.permissions()),
                 })
             })
             .collect()
@@ -349,6 +389,38 @@ impl PreparedTransaction {
             format!("{}\n", self.revision).as_bytes(),
             permissions,
         )
+    }
+
+    fn apply_delete(&self, target_path: &Path) -> Result<(), StorageTransactionError> {
+        let parent_path = target_path.parent().ok_or_else(|| {
+            StorageTransactionError::new(
+                StorageTransactionOperation::RemoveLiveTarget,
+                target_path,
+                std::io::Error::new(
+                    std::io::ErrorKind::InvalidInput,
+                    "transaction target must have a parent directory",
+                ),
+            )
+        })?;
+        match self.io.remove_file(target_path) {
+            Ok(()) => sync_directory(self.io.as_ref(), parent_path),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                match self.io.sync_directory(parent_path) {
+                    Ok(()) => Ok(()),
+                    Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+                    Err(error) => Err(StorageTransactionError::new(
+                        StorageTransactionOperation::SyncDirectory,
+                        parent_path,
+                        error,
+                    )),
+                }
+            }
+            Err(error) => Err(StorageTransactionError::new(
+                StorageTransactionOperation::RemoveLiveTarget,
+                target_path,
+                error,
+            )),
+        }
     }
 
     fn apply_bytes(
@@ -599,9 +671,27 @@ fn prepared_from_manifest(
                 storage_dir_path,
                 &storage_dir_path.join(entry.target),
             )?;
-            validate_staged_file_path(&transaction_dir_path, &entry.staged_file)?;
+            match (entry.operation, entry.staged_file.as_deref()) {
+                (ManifestEntryOperation::Write, Some(staged_file)) => {
+                    validate_staged_file_path(&transaction_dir_path, staged_file)?;
+                }
+                (ManifestEntryOperation::Delete, None) => {}
+                (ManifestEntryOperation::Write, None) => {
+                    return Err(invalid_manifest_entry_error(
+                        &manifest_path,
+                        "write entry must contain a staged file",
+                    ));
+                }
+                (ManifestEntryOperation::Delete, Some(_)) => {
+                    return Err(invalid_manifest_entry_error(
+                        &manifest_path,
+                        "delete entry must not contain a staged file",
+                    ));
+                }
+            }
             Ok(PreparedEntry {
                 target,
+                operation: entry.operation,
                 staged_file: entry.staged_file,
             })
         })
@@ -617,6 +707,14 @@ fn prepared_from_manifest(
         io,
         _transaction_lock: transaction_lock,
     })
+}
+
+fn invalid_manifest_entry_error(path: &Path, message: &'static str) -> StorageTransactionError {
+    StorageTransactionError::new(
+        StorageTransactionOperation::ValidateManifest,
+        path,
+        std::io::Error::new(std::io::ErrorKind::InvalidData, message),
+    )
 }
 
 fn validate_staged_file_path(
@@ -720,7 +818,8 @@ pub(super) fn prepare_with_directories(
         .map(|(index, write)| {
             Ok(PreparedEntry {
                 target: validate_storage_relative_path(storage_dir_path, write.target_path)?,
-                staged_file: PathBuf::from("files").join(index.to_string()),
+                operation: ManifestEntryOperation::Write,
+                staged_file: Some(PathBuf::from("files").join(index.to_string())),
             })
         })
         .collect::<Result<Vec<_>, StorageTransactionError>>()?;
@@ -884,7 +983,8 @@ fn prepare_contents(
         write_staged_file(io, write.target_path, &staged_file_path, write.bytes)?;
         entries.push(ManifestEntry {
             target,
-            staged_file,
+            operation: ManifestEntryOperation::Write,
+            staged_file: Some(staged_file),
         });
     }
     sync_directory(io, staged_files_dir_path)?;
