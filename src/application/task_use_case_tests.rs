@@ -895,7 +895,7 @@ fn create_next_repetition_taskは構造化errorを返せるresultを維持する
 }
 
 #[test]
-fn create_next_repetition_taskは反復ありで原子operationを通る() {
+fn create_next_repetition_taskは現在taskの完了と次回task生成をまとめて反映する() {
     let parent = crate::test_support::new_task_handle("ルーチン").unwrap();
     parent.set_repetition_interval_days_opt(Some(7)).unwrap();
     parent.set_estimated_work_seconds(600).unwrap();
