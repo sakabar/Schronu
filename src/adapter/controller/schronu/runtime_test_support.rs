@@ -35,20 +35,6 @@ use std::time::Instant;
 const DEFAULT_LOWEST_PRIORITY_RECENT_DAYS: i64 = 0;
 
 #[cfg(test)]
-#[allow(dead_code)]
-trait TaskHandleTestExt {
-    fn create_as_last_child(&self, task_attr: TaskAttr) -> TaskHandle;
-}
-
-#[cfg(test)]
-impl TaskHandleTestExt for TaskHandle {
-    fn create_as_last_child(&self, task_attr: TaskAttr) -> TaskHandle {
-        self.create_child(task_attr)
-            .expect("test hierarchy child creation must succeed")
-    }
-}
-
-#[cfg(test)]
 fn next_test_task_id() -> Uuid {
     use std::sync::atomic::{AtomicU64, Ordering};
 
