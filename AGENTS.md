@@ -189,6 +189,49 @@ git show --stat --oneline HEAD
 
 意図より差分が大きい場合や、複数責務が含まれている場合は、次の作業へ進む前にcommit分割をやり直す。
 
+#### branch累積差分とPR準備判定
+
+commit単位のRed/Green、品質ゲート、reviewが成功したことにより、機能の正しさは保証された。ここからは、branch全体の保守性を高めるためのリファクタリングを行う。小さいcommitの累積によって単一fileへ責務、fixture、error処理、状態遷移が集中する場合があるため、各commitの差分とは別に、基点からの累積差分を継続して確認する。
+
+契約群の完了時、変更が当初計画より増えた時、backlogを完了へ変更する前、PR作成または「PR作成可能」「実装完了」と報告する前に、最低限次を確認する。
+
+```bash
+git diff --stat main...HEAD
+git diff --numstat main...HEAD
+git diff --name-only main...HEAD
+```
+
+必要に応じて変更fileの`wc -l`、主要な型・関数・test fixtureの一覧も確認し、次をbranch全体で説明できる状態にする。
+
+- 製品コード、test、fixture、documentationそれぞれの追加・削除行数
+- 新規または大幅拡張した各moduleの単一責務
+- module間の依存方向と、公開・private境界
+- disk上のfile・directory構成、manifest schema、状態遷移、error、platform依存I/Oの所有場所
+- test helperとfailure injectionの共通化状況
+- 今回新しく持ち込んだ技術的負債と、残す合理的理由
+
+機械的移動・自動生成を除き、branch累積で次のいずれかに該当した時点で実装を一旦止め、module分割、責務分離、test構造の再設計が必要かを再検討する。これはcommitを小さく分けていても省略しない。
+
+- 1つの新規または大幅拡張fileが800行を超える
+- 1つのfileへの追加がbranch累積で800行を超える
+- fixtureやmockの準備がtest本体より支配的になる
+- 1つのmoduleを理解するために複数の独立した状態遷移やI/O protocolを同時に追う必要がある
+- `allow(clippy::too_many_arguments)`、多数の`expect`、同型の`map_err`、同型のmock実装など、構造上の圧力を示す記述が増える
+- 当初のcommit計画にない補助責務、互換処理、security処理、cleanup処理が同じmoduleへ累積する
+
+800行は自動的な不合格基準ではなく、設計再検討を必須にする閾値である。分割しない場合は、責務が1つである根拠、代替案を採らない理由、保守方法、残存負債を報告し、親taskまたはuserの明示承認を得る。承認前に実装完了、PR作成可能、backlog完了として扱わない。
+
+品質ゲートがGreenであること、failure pointを網羅していること、reviewでP1/P2がないことだけを根拠にPR準備完了としてはならない。正しさのreviewとは独立して、保守性reviewを行う。保守性reviewでは最新commitだけでなく`main...HEAD`の全差分を対象とし、最低限次を確認する。
+
+- file分割が責務境界と一致している
+- protocolの不変条件と状態遷移を局所的に追える
+- 同じ意味の検証、path計算、error変換、fixtureが重複していない
+- testが網羅性を保ちながら追加・変更しやすい構造になっている
+- line数を減らすためだけに可読性、error情報、failure coverageを落としていない
+- reviewerが差分全体を読まなくても、各moduleの責務と変更理由を説明できる
+
+保守性上の問題を発見した場合、testがGreenでも「動作はGreenだが実装は未完了」と扱う。安全に同じbranchとwrite範囲で整理できるならPR前にリファクタリングし、予約外write、公開API変更、storage互換性変更、他laneへの波及が必要なら作業を止めて報告する。将来対応へ先送りする場合は、具体的な負債、影響、回避策をbacklogへ記録し、明示承認を得る。
+
 #### 最終履歴レビュー
 
 backlog項目を完了にする前に、コードだけでなくcommit履歴もreviewする。
@@ -202,6 +245,8 @@ backlog項目を完了にする前に、コードだけでなくcommit履歴もr
 - documentation変更が製品実装と分かれている
 - 各commitの目的がmessageと差分から判断できる
 - 各Green commitで品質ゲートを通した記録がある
+- 小さいcommitの累積による巨大module、巨大fixture、責務集中が発生していないことを検証済みである
+- branch全体の保守性reviewと、必要な明示承認が完了している
 
 履歴がreview不能な粒度になっている場合は、未mergeかつ安全に履歴を再構成できる段階でcommitを分割する。既に共有済みのbranchを書き換える場合は、backup branchを作り、force-pushの影響を明示してから行う。承認なしに共有branchをforce-pushしない。
 
