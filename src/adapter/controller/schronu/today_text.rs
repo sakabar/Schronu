@@ -43,10 +43,6 @@ impl TodayTextService {
                 .ok_or_else(|| {
                     TodayTextError::PathEncoding(self.config.busy_time_slots_yaml_path.clone())
                 })?;
-        self.free_time_manager
-            .load_busy_time_slots_from_file(busy_time_slots_path)
-            .map_err(TodayTextError::BusyTimeSlots)?;
-
         let task_repository = self
             .task_repository
             .as_mut()
@@ -59,8 +55,12 @@ impl TodayTextService {
             now,
             || StorageLock::acquire(storage_directory, LockMode::Web),
             |repository| {
+                free_time_manager
+                    .load_busy_time_slots_from_file(busy_time_slots_path)
+                    .map_err(TodayTextOperationError::BusyTimeSlots)?;
                 let mut focused_task_id_opt =
-                    select_focus_task_id(repository, &FocusSelectionMode::highest_priority())?;
+                    select_focus_task_id(repository, &FocusSelectionMode::highest_priority())
+                        .map_err(TodayTextOperationError::Application)?;
                 let display = build_show_all_tasks_display_with_config(
                     &mut focused_task_id_opt,
                     repository,
@@ -68,8 +68,9 @@ impl TodayTextService {
                     &Some("今".to_string()),
                     TaskListDisplayOrder::ScheduledStartDesc,
                     config,
-                )?;
-                Ok::<_, ApplicationError>((display, false))
+                )
+                .map_err(TodayTextOperationError::Application)?;
+                Ok((display, false))
             },
         )
         .map_err(TodayTextError::from_transaction)?;
@@ -78,6 +79,12 @@ impl TodayTextService {
         render_plain_display_model(&mut bytes, &display).map_err(TodayTextError::Render)?;
         String::from_utf8(bytes).map_err(TodayTextError::Encoding)
     }
+}
+
+#[derive(Debug)]
+enum TodayTextOperationError {
+    BusyTimeSlots(BusyTimeSlotLoadError),
+    Application(ApplicationError),
 }
 
 #[derive(Debug)]
@@ -93,13 +100,18 @@ pub enum TodayTextError {
 
 impl TodayTextError {
     fn from_transaction(
-        error: RepositoryTransactionError<StorageLockError, ApplicationError>,
+        error: RepositoryTransactionError<StorageLockError, TodayTextOperationError>,
     ) -> Self {
         match error {
             RepositoryTransactionError::Lock(error) => Self::Lock(error),
             RepositoryTransactionError::Load(error)
             | RepositoryTransactionError::StateUncertain(error) => Self::Repository(error),
-            RepositoryTransactionError::Operation(error) => Self::Application(error),
+            RepositoryTransactionError::Operation(TodayTextOperationError::BusyTimeSlots(
+                error,
+            )) => Self::BusyTimeSlots(error),
+            RepositoryTransactionError::Operation(TodayTextOperationError::Application(error)) => {
+                Self::Application(error)
+            }
         }
     }
 }

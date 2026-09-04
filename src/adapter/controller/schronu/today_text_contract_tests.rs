@@ -125,6 +125,22 @@ fn render_atはstorage_lock競合を元error付きで分類する() {
 }
 
 #[test]
+fn render_atはbusy_time_slotが読めなくてもstorage_lock競合を先に返す() {
+    let now = Local.with_ymd_and_hms(2026, 8, 11, 12, 0, 0).unwrap();
+    let fixture = TodayTextFixture::empty();
+    let _cli_lock = StorageLock::acquire(&fixture.storage, LockMode::Cli).unwrap();
+    let config = SchronuConfig {
+        busy_time_slots_yaml_path: fixture.root.join("missing-busy-time-slots.yaml"),
+        ..fixture.config()
+    };
+    let mut service = TodayTextService::new(fixture.storage.clone(), config);
+
+    let error = service.render_at(now).unwrap_err();
+
+    assert!(matches!(error, TodayTextError::Lock(_)));
+}
+
+#[test]
 fn render_atはrepository読込失敗を元error付きで分類する() {
     let now = Local.with_ymd_and_hms(2026, 8, 11, 12, 0, 0).unwrap();
     let fixture = TodayTextFixture::empty();
