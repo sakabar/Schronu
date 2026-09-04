@@ -424,8 +424,8 @@ fn test_recover_uncommitted_markerなしactive_transactionを破棄して再実�
     fs::write(active_transaction_path.join("files/0"), b"partial").unwrap();
     fs::write(active_transaction_path.join("commit.tmp"), b"").unwrap();
 
-    recover_uncommitted(file_system_io(), &storage_dir.path).unwrap();
-    recover_uncommitted(file_system_io(), &storage_dir.path).unwrap();
+    recover(file_system_io(), &storage_dir.path).unwrap();
+    recover(file_system_io(), &storage_dir.path).unwrap();
 
     assert!(!active_transaction_path.exists());
 }
@@ -440,9 +440,9 @@ fn test_recover_uncommitted_markerありactive_transactionを破棄しない() {
     fs::create_dir_all(&active_transaction_path).unwrap();
     fs::write(active_transaction_path.join("commit"), b"").unwrap();
 
-    let actual = recover_uncommitted(file_system_io(), &storage_dir.path).unwrap_err();
+    let actual = recover(file_system_io(), &storage_dir.path).unwrap_err();
 
-    assert!(actual.to_string().contains("CommittedTransaction"));
+    assert!(actual.to_string().contains("ReadManifest"));
     assert!(active_transaction_path.join("commit").is_file());
 }
 
@@ -461,7 +461,7 @@ fn test_transaction_root_symlinkはprepareとrecoveryで拒否して外部を変
     symlink(&external_dir.path, &transactions_dir_path).unwrap();
     let target_path = storage_dir.path.join("project.yaml");
 
-    let recover_error = recover_uncommitted(file_system_io(), &storage_dir.path).unwrap_err();
+    let recover_error = recover(file_system_io(), &storage_dir.path).unwrap_err();
     let prepare_error = match prepare(
         file_system_io(),
         &storage_dir.path,
@@ -503,7 +503,7 @@ fn test_recover_uncommitted_prepared_transaction_drop後にlockを再取得す�
     let active_transaction_path = prepared.transaction_dir_path.clone();
 
     drop(prepared);
-    recover_uncommitted(file_system_io(), &storage_dir.path).unwrap();
+    recover(file_system_io(), &storage_dir.path).unwrap();
 
     assert!(!active_transaction_path.exists());
 }
@@ -532,7 +532,7 @@ fn test_recover_uncommitted_marker公開中のlive_writerとは競合してactiv
     let commit_thread = std::thread::spawn(move || prepared.commit(&revision_path));
     io.marker_sync_started.wait();
 
-    let actual = recover_uncommitted(file_system_io(), &storage_dir.path);
+    let actual = recover(file_system_io(), &storage_dir.path);
     let marker_was_preserved = active_transaction_path.join("commit").is_file();
     io.marker_sync_resume.wait();
     let commit_result = commit_thread.join();

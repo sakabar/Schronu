@@ -1,5 +1,5 @@
 use fs2::FileExt;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::error::Error;
 use std::fmt;
 use std::fs::{self, File};
@@ -29,8 +29,10 @@ enum StorageTransactionOperation {
     AcquireTransactionLock,
     ValidateTransactionDirectory,
     InspectActiveTransaction,
-    CommittedTransaction,
     DiscardUncommitted,
+    ReadManifest,
+    ParseManifest,
+    ValidateManifest,
     CreateStagedFilesDirectory,
     ResolveTargetPath,
     ValidateTargetPath,
@@ -49,6 +51,7 @@ enum StorageTransactionOperation {
     CreateTargetDirectory,
     ReadStagedFile,
     CreateLiveTemporary,
+    RemoveLiveTemporary,
     SetLivePermissions,
     WriteLiveTemporary,
     SyncLiveTemporary,
@@ -94,7 +97,7 @@ pub(super) struct WriteRequest<'a> {
     pub(super) bytes: &'a [u8],
 }
 
-#[derive(Serialize)]
+#[derive(Deserialize, Serialize)]
 struct TransactionManifest {
     version: u32,
     transaction_id: Uuid,
@@ -103,7 +106,7 @@ struct TransactionManifest {
     entries: Vec<ManifestEntry>,
 }
 
-#[derive(Serialize)]
+#[derive(Deserialize, Serialize)]
 struct ManifestEntry {
     target: PathBuf,
     staged_file: PathBuf,
@@ -160,6 +163,10 @@ pub(super) trait StorageTransactionIo: Send + Sync {
 
     fn remove_dir_all(&self, path: &Path) -> std::io::Result<()> {
         fs::remove_dir_all(path)
+    }
+
+    fn remove_file(&self, path: &Path) -> std::io::Result<()> {
+        fs::remove_file(path)
     }
 }
 
@@ -232,6 +239,10 @@ impl PreparedTransaction {
             })?;
         sync_directory(self.io.as_ref(), &self.transaction_dir_path)?;
 
+        self.finish_committed(revision_path)
+    }
+
+    fn finish_committed(self, revision_path: &Path) -> Result<(), StorageTransactionError> {
         for directory in &self.directories {
             let directory_path = self.storage_dir_path.join(directory);
             self.io.create_dir_all(&directory_path).map_err(|error| {
@@ -343,13 +354,29 @@ impl PreparedTransaction {
             file_name.to_string_lossy(),
             self.transaction_id.hyphenated()
         ));
-        self.io.create_new_file(&temporary_path).map_err(|error| {
-            StorageTransactionError::new(
-                StorageTransactionOperation::CreateLiveTemporary,
-                &temporary_path,
-                error,
-            )
-        })?;
+        if let Err(error) = self.io.create_new_file(&temporary_path) {
+            if error.kind() != std::io::ErrorKind::AlreadyExists {
+                return Err(StorageTransactionError::new(
+                    StorageTransactionOperation::CreateLiveTemporary,
+                    &temporary_path,
+                    error,
+                ));
+            }
+            self.io.remove_file(&temporary_path).map_err(|error| {
+                StorageTransactionError::new(
+                    StorageTransactionOperation::RemoveLiveTemporary,
+                    &temporary_path,
+                    error,
+                )
+            })?;
+            self.io.create_new_file(&temporary_path).map_err(|error| {
+                StorageTransactionError::new(
+                    StorageTransactionOperation::CreateLiveTemporary,
+                    &temporary_path,
+                    error,
+                )
+            })?;
+        }
         if let Some(permissions) = permissions {
             self.io
                 .set_permissions(&temporary_path, permissions)
@@ -390,7 +417,7 @@ impl PreparedTransaction {
     }
 }
 
-pub(super) fn recover_uncommitted(
+pub(super) fn recover(
     io: Arc<dyn StorageTransactionIo>,
     storage_dir_path: &Path,
 ) -> Result<(), StorageTransactionError> {
@@ -427,11 +454,32 @@ pub(super) fn recover_uncommitted(
     let marker_path = transaction_dir_path.join("commit");
     match fs::symlink_metadata(&marker_path) {
         Ok(_) => {
-            return Err(StorageTransactionError::new(
-                StorageTransactionOperation::CommittedTransaction,
-                marker_path,
-                std::io::Error::other("committed transaction requires roll-forward recovery"),
-            ));
+            let manifest_path = transaction_dir_path.join("manifest.json");
+            let manifest_bytes = io.read_file(&manifest_path).map_err(|error| {
+                StorageTransactionError::new(
+                    StorageTransactionOperation::ReadManifest,
+                    &manifest_path,
+                    error,
+                )
+            })?;
+            let manifest: TransactionManifest =
+                serde_json::from_slice(&manifest_bytes).map_err(|error| {
+                    StorageTransactionError::new(
+                        StorageTransactionOperation::ParseManifest,
+                        &manifest_path,
+                        std::io::Error::new(std::io::ErrorKind::InvalidData, error),
+                    )
+                })?;
+            let prepared = prepared_from_manifest(
+                io,
+                storage_dir_path,
+                transactions_dir_path,
+                transaction_dir_path,
+                manifest_path,
+                manifest,
+                _transaction_lock,
+            )?;
+            return prepared.finish_committed(&storage_dir_path.join(".revision"));
         }
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
         Err(error) => {
@@ -451,6 +499,82 @@ pub(super) fn recover_uncommitted(
         )
     })?;
     sync_directory(io.as_ref(), &transactions_dir_path)?;
+    Ok(())
+}
+
+#[allow(clippy::too_many_arguments)]
+fn prepared_from_manifest(
+    io: Arc<dyn StorageTransactionIo>,
+    storage_dir_path: &Path,
+    transactions_dir_path: PathBuf,
+    transaction_dir_path: PathBuf,
+    manifest_path: PathBuf,
+    manifest: TransactionManifest,
+    transaction_lock: TransactionLock,
+) -> Result<PreparedTransaction, StorageTransactionError> {
+    if manifest.version != 1 || manifest.transaction_id.is_nil() {
+        return Err(StorageTransactionError::new(
+            StorageTransactionOperation::ValidateManifest,
+            manifest_path,
+            std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                "transaction manifest must use version 1 and a non-nil transaction id",
+            ),
+        ));
+    }
+    let directories = manifest
+        .directories
+        .into_iter()
+        .map(|directory| {
+            validate_storage_relative_path(storage_dir_path, &storage_dir_path.join(directory))
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    let entries = manifest
+        .entries
+        .into_iter()
+        .map(|entry| {
+            let target = validate_storage_relative_path(
+                storage_dir_path,
+                &storage_dir_path.join(entry.target),
+            )?;
+            validate_staged_file_path(&transaction_dir_path, &entry.staged_file)?;
+            Ok(PreparedEntry {
+                target,
+                staged_file: entry.staged_file,
+            })
+        })
+        .collect::<Result<Vec<_>, StorageTransactionError>>()?;
+    Ok(PreparedTransaction {
+        storage_dir_path: storage_dir_path.to_path_buf(),
+        transactions_dir_path,
+        transaction_dir_path,
+        transaction_id: manifest.transaction_id,
+        revision: manifest.revision,
+        directories,
+        entries,
+        io,
+        _transaction_lock: transaction_lock,
+    })
+}
+
+fn validate_staged_file_path(
+    transaction_dir_path: &Path,
+    staged_file: &Path,
+) -> Result<(), StorageTransactionError> {
+    let components = staged_file.components().collect::<Vec<_>>();
+    if !matches!(
+        components.as_slice(),
+        [Component::Normal(directory), Component::Normal(_)] if *directory == "files"
+    ) {
+        return Err(StorageTransactionError::new(
+            StorageTransactionOperation::ValidateManifest,
+            transaction_dir_path.join(staged_file),
+            std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                "staged file must be a direct child of the transaction files directory",
+            ),
+        ));
+    }
     Ok(())
 }
 
