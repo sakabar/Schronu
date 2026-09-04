@@ -278,6 +278,20 @@ mod tests {
 
     #[cfg(unix)]
     #[test]
+    fn storage_lock_webはcliとmcpと同じlockで競合する() {
+        let directory = TestDir::new();
+        let _web_lock = StorageLock::acquire(directory.path(), LockMode::Web).unwrap();
+
+        for mode in [LockMode::Cli, LockMode::Mcp] {
+            let error = StorageLock::acquire(directory.path(), mode).unwrap_err();
+
+            assert_eq!(error.kind(), StorageLockErrorKind::Contended);
+            assert!(error.holder_metadata().unwrap().contains("mode=web"));
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
     fn storage_lock_同じ保存先の二重取得を拒否する() {
         let directory = TestDir::new();
         let _first = StorageLock::acquire(directory.path(), LockMode::Cli).unwrap();
