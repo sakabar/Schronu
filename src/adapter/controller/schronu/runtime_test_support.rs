@@ -401,7 +401,11 @@ impl Write for SharedSignaledFailureWriter {
             ))
         } else {
             self.output.borrow_mut().extend_from_slice(buffer);
-            if let Some(marker) = &self.fail_after_output_marker {
+            if let Some(marker) = self
+                .fail_after_output_marker
+                .as_ref()
+                .filter(|marker| !marker.is_empty())
+            {
                 let output = self.output.borrow();
                 if output
                     .windows(marker.len())
