@@ -1,4 +1,3 @@
-use super::runtime::EXPECTED_TODAY_PLAIN_TEXT;
 use super::{TodayTextError, TodayTextService};
 use crate::adapter::gateway::schronu_config::SchronuConfig;
 use crate::adapter::gateway::storage_lock::{LockMode, StorageLock, StorageLockErrorKind};
@@ -9,6 +8,23 @@ use chrono::{Duration, Local, TimeZone};
 use std::fs;
 use std::path::{Path, PathBuf};
 use uuid::Uuid;
+
+const EXPECTED_TODAY_PLAIN_TEXT: &str = concat!(
+    "0000 00000000-0000-0000-0000-000020260811 ! ____-00:30 ",
+    "08/11(火)-13:00~13:30 0 30 07 資 Web表示契約task\n",
+    "---- ------------------------------------ - ---------- ",
+    "--------------------- - -- -- 60分間の空き時間\n",
+    "\n",
+    "予定カテゴリ: 獲得 0.0時間(0% | 0%) / 維持 0.0時間(0% | 0%) / ",
+    "回復 0.0時間(0% | 0%) / 投資 0.5時間(4% | 4%) / ",
+    "消費 0.0時間(0% | 4%) / 未分類 0.0時間(0% | 4%)\n",
+    "\n",
+    "残り拘束時間は0.0時間です\n",
+    "完了見込み日時は0.5時間後の2026/08/11 12:30:00です\n",
+    "rep ρ = (0.50 + 0.00) / (0.50 + 0.00 + 12 + 0/60) = 0.04, Lq = 0.0\n",
+    "one ρ = (0.50 + 0.00) / (0.50 + 0.00 + 12 + 0/60) = 0.04, Lq = 0.0\n",
+    "\n",
+);
 
 struct TodayTextFixture {
     root: PathBuf,
