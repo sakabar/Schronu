@@ -1824,12 +1824,22 @@ fn test_load_marker済みtransactionのmanifest意味違反はlive_snapshotを�
 fn test_load_marker済みtransactionの未適用staged_file欠落はpathとphaseを保持する() {
     let storage_dir = TestStorageDir::new();
     let now = Local.with_ymd_and_hms(2026, 9, 5, 13, 0, 0).unwrap();
-    let (_, _, _, active_transaction_path) = create_committed_transaction_interruption(
-        &storage_dir,
-        now,
-        CommittedCrashPhase::BeforeFirstProjectRename,
-    );
-    let staged_file_path = active_transaction_path.join("files/0");
+    let (first_id, second_id, _, active_transaction_path) =
+        create_committed_transaction_interruption(
+            &storage_dir,
+            now,
+            CommittedCrashPhase::BeforeFirstProjectRename,
+        );
+    let first_project_path = storage_dir
+        .project_dir_path("20260905", "roll-forward-first", first_id)
+        .join("project.yaml");
+    let second_project_path = storage_dir
+        .project_dir_path("20260905", "roll-forward-second", second_id)
+        .join("project.yaml");
+    let old_first = fs::read(&first_project_path).unwrap();
+    let old_second = fs::read(&second_project_path).unwrap();
+    let old_revision = fs::read(storage_dir.path.join(".revision")).unwrap();
+    let staged_file_path = active_transaction_path.join("files/1");
     fs::remove_file(&staged_file_path).unwrap();
     let mut repository = TaskRepository::new(storage_dir.path_str());
 
@@ -1841,6 +1851,12 @@ fn test_load_marker済みtransactionの未適用staged_file欠落はpathとphase
         .to_string()
         .contains(&staged_file_path.display().to_string()));
     assert!(active_transaction_path.join("commit").is_file());
+    assert_eq!(fs::read(first_project_path).unwrap(), old_first);
+    assert_eq!(fs::read(second_project_path).unwrap(), old_second);
+    assert_eq!(
+        fs::read(storage_dir.path.join(".revision")).unwrap(),
+        old_revision
+    );
 }
 
 #[test]

@@ -37,6 +37,7 @@ enum StorageTransactionOperation {
     ResolveTargetPath,
     ValidateTargetPath,
     ReadTargetMetadata,
+    ValidateStagedFile,
     CreateStagedFile,
     SetStagedPermissions,
     WriteStagedFile,
@@ -129,6 +130,10 @@ pub(super) trait StorageTransactionIo: Send + Sync {
         }
     }
 
+    fn symlink_metadata(&self, path: &Path) -> std::io::Result<fs::Metadata> {
+        fs::symlink_metadata(path)
+    }
+
     fn create_new_file(&self, path: &Path) -> std::io::Result<()> {
         File::options()
             .write(true)
@@ -195,6 +200,12 @@ struct PreparedEntry {
     staged_file: PathBuf,
 }
 
+struct PreflightEntry {
+    target_path: PathBuf,
+    bytes: Vec<u8>,
+    permissions: fs::Permissions,
+}
+
 impl PreparedTransaction {
     #[cfg(test)]
     pub(super) fn discard(self) -> Result<(), StorageTransactionError> {
@@ -243,6 +254,7 @@ impl PreparedTransaction {
     }
 
     fn finish_committed(self, revision_path: &Path) -> Result<(), StorageTransactionError> {
+        let preflight_entries = self.preflight_entries()?;
         for directory in &self.directories {
             let directory_path = self.storage_dir_path.join(directory);
             self.io.create_dir_all(&directory_path).map_err(|error| {
@@ -253,8 +265,12 @@ impl PreparedTransaction {
                 )
             })?;
         }
-        for entry in &self.entries {
-            self.apply_staged_file(entry)?;
+        for entry in &preflight_entries {
+            self.apply_bytes(
+                &entry.target_path,
+                &entry.bytes,
+                Some(entry.permissions.clone()),
+            )?;
         }
         self.apply_revision(revision_path)?;
 
@@ -278,27 +294,45 @@ impl PreparedTransaction {
         Ok(())
     }
 
-    fn apply_staged_file(&self, entry: &PreparedEntry) -> Result<(), StorageTransactionError> {
-        let target_path = self.storage_dir_path.join(&entry.target);
-        let staged_file_path = self.transaction_dir_path.join(&entry.staged_file);
-        let bytes = self.io.read_file(&staged_file_path).map_err(|error| {
-            StorageTransactionError::new(
-                StorageTransactionOperation::ReadStagedFile,
-                &staged_file_path,
-                error,
-            )
-        })?;
-        let permissions = self
-            .io
-            .target_permissions(&staged_file_path)
-            .map_err(|error| {
-                StorageTransactionError::new(
-                    StorageTransactionOperation::ReadTargetMetadata,
-                    &staged_file_path,
-                    error,
-                )
-            })?;
-        self.apply_bytes(&target_path, &bytes, permissions)
+    fn preflight_entries(&self) -> Result<Vec<PreflightEntry>, StorageTransactionError> {
+        self.entries
+            .iter()
+            .map(|entry| {
+                let staged_file_path = self.transaction_dir_path.join(&entry.staged_file);
+                let metadata = self
+                    .io
+                    .symlink_metadata(&staged_file_path)
+                    .map_err(|error| {
+                        StorageTransactionError::new(
+                            StorageTransactionOperation::ReadStagedFile,
+                            &staged_file_path,
+                            error,
+                        )
+                    })?;
+                if !metadata.file_type().is_file() {
+                    return Err(StorageTransactionError::new(
+                        StorageTransactionOperation::ValidateStagedFile,
+                        &staged_file_path,
+                        std::io::Error::new(
+                            std::io::ErrorKind::InvalidData,
+                            "staged transaction material must be a regular file",
+                        ),
+                    ));
+                }
+                let bytes = self.io.read_file(&staged_file_path).map_err(|error| {
+                    StorageTransactionError::new(
+                        StorageTransactionOperation::ReadStagedFile,
+                        &staged_file_path,
+                        error,
+                    )
+                })?;
+                Ok(PreflightEntry {
+                    target_path: self.storage_dir_path.join(&entry.target),
+                    bytes,
+                    permissions: metadata.permissions(),
+                })
+            })
+            .collect()
     }
 
     fn apply_revision(&self, revision_path: &Path) -> Result<(), StorageTransactionError> {
