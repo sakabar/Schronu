@@ -446,6 +446,46 @@ fn test_recover_uncommitted_markerありactive_transactionを破棄しない() {
     assert!(active_transaction_path.join("commit").is_file());
 }
 
+#[cfg(unix)]
+#[test]
+fn test_transaction_root_symlinkはprepareとrecoveryで拒否して外部を変更しない() {
+    use std::os::unix::fs::symlink;
+
+    let storage_dir = TestStorageDir::new();
+    let external_dir = TestStorageDir::new();
+    let external_active_path = external_dir.path.join(ACTIVE_TRANSACTION_DIRECTORY_NAME);
+    fs::create_dir(&external_active_path).unwrap();
+    let external_manifest_path = external_active_path.join("manifest.json");
+    fs::write(&external_manifest_path, b"external").unwrap();
+    let transactions_dir_path = storage_dir.path.join(TRANSACTION_DIRECTORY_NAME);
+    symlink(&external_dir.path, &transactions_dir_path).unwrap();
+    let target_path = storage_dir.path.join("project.yaml");
+
+    let recover_error = recover_uncommitted(file_system_io(), &storage_dir.path).unwrap_err();
+    let prepare_error = match prepare(
+        file_system_io(),
+        &storage_dir.path,
+        Uuid::from_u128(0x2254),
+        &[WriteRequest {
+            target_path: &target_path,
+            bytes: b"new",
+        }],
+    ) {
+        Err(error) => error,
+        Ok(_) => panic!("transaction root symlink must be rejected"),
+    };
+
+    for error in [recover_error, prepare_error] {
+        assert_eq!(
+            error.operation,
+            StorageTransactionOperation::ValidateTransactionDirectory
+        );
+        assert_eq!(error.path, transactions_dir_path);
+    }
+    assert_eq!(fs::read(external_manifest_path).unwrap(), b"external");
+    assert!(!target_path.exists());
+}
+
 #[test]
 fn test_recover_uncommitted_prepared_transaction_drop後にlockを再取得する() {
     let storage_dir = TestStorageDir::new();

@@ -1492,6 +1492,36 @@ fn test_load_markerなしtransaction破棄失敗はpathとphaseを保持してme
     assert_eq!(repository.storage_revision.get(), None);
 }
 
+#[cfg(unix)]
+#[test]
+fn test_load_transaction_root_symlinkを拒否して外部activeを変更しない() {
+    use std::os::unix::fs::symlink;
+
+    let storage_dir = TestStorageDir::new();
+    fs::create_dir(&storage_dir.path).unwrap();
+    let external_dir = TestStorageDir::new();
+    fs::create_dir(&external_dir.path).unwrap();
+    let external_active_path = external_dir.path.join(".active");
+    fs::create_dir(&external_active_path).unwrap();
+    let external_manifest_path = external_active_path.join("manifest.json");
+    fs::write(&external_manifest_path, b"external").unwrap();
+    let transactions_dir_path = storage_dir
+        .path
+        .join(crate::adapter::gateway::storage_transaction::TRANSACTION_DIRECTORY_NAME);
+    symlink(&external_dir.path, &transactions_dir_path).unwrap();
+    let mut repository = TaskRepository::new(storage_dir.path_str());
+
+    let actual = repository.load().unwrap_err();
+
+    assert_eq!(actual.operation(), ApplicationRepositoryOperation::Load);
+    let source = storage_transaction_error(&actual);
+    assert!(source.to_string().contains("ValidateTransactionDirectory"));
+    assert!(source
+        .to_string()
+        .contains(&transactions_dir_path.display().to_string()));
+    assert_eq!(fs::read(external_manifest_path).unwrap(), b"external");
+}
+
 #[test]
 fn test_load_malformed_revisionをphase付きerrorにする() {
     let storage_dir = TestStorageDir::new();
