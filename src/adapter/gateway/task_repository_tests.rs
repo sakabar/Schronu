@@ -1873,6 +1873,89 @@ fn test_load_marker済みtransactionの未適用staged_file欠落はpathとphase
     );
 }
 
+#[test]
+fn test_load_marker済みtransactionの同一長staged破損をlive変更前に拒否する() {
+    let storage_dir = TestStorageDir::new();
+    let now = Local.with_ymd_and_hms(2026, 9, 5, 13, 0, 0).unwrap();
+    let (first_id, second_id, _, active_transaction_path) =
+        create_committed_transaction_interruption(
+            &storage_dir,
+            now,
+            CommittedCrashPhase::BeforeFirstProjectRename,
+        );
+    let first_project_path = storage_dir
+        .project_dir_path("20260905", "roll-forward-first", first_id)
+        .join("project.yaml");
+    let second_project_path = storage_dir
+        .project_dir_path("20260905", "roll-forward-second", second_id)
+        .join("project.yaml");
+    let old_first = fs::read(&first_project_path).unwrap();
+    let old_second = fs::read(&second_project_path).unwrap();
+    let revision_path = storage_dir.path.join(".revision");
+    let old_revision = fs::read(&revision_path).unwrap();
+    let staged_file_path = active_transaction_path.join("files/1");
+    let mut corrupted = fs::read(&staged_file_path).unwrap();
+    corrupted[0] ^= 1;
+    fs::write(&staged_file_path, &corrupted).unwrap();
+    assert_eq!(
+        fs::metadata(&staged_file_path).unwrap().len(),
+        corrupted.len() as u64
+    );
+    let mut repository = TaskRepository::new(storage_dir.path_str());
+
+    let actual = repository.load().unwrap_err();
+
+    assert!(active_transaction_path.join("commit").is_file());
+    assert_eq!(fs::read(first_project_path).unwrap(), old_first);
+    assert_eq!(fs::read(second_project_path).unwrap(), old_second);
+    assert_eq!(fs::read(revision_path).unwrap(), old_revision);
+    let source = storage_transaction_error(&actual);
+    assert!(source.to_string().contains("ValidateStagedContent"));
+    assert!(source
+        .to_string()
+        .contains(&staged_file_path.display().to_string()));
+}
+
+#[test]
+fn test_reload_if_changed_marker済みtransactionの適用済みtargetを検証してstaged欠落を許容する() {
+    let storage_dir = TestStorageDir::new();
+    let now = Local.with_ymd_and_hms(2026, 9, 5, 13, 0, 0).unwrap();
+    let (first_id, second_id, committed_revision, active_transaction_path) =
+        create_committed_transaction_interruption(
+            &storage_dir,
+            now,
+            CommittedCrashPhase::BeforeFirstProjectRename,
+        );
+    let manifest: serde_json::Value =
+        serde_json::from_slice(&fs::read(active_transaction_path.join("manifest.json")).unwrap())
+            .unwrap();
+    let applied_entry = &manifest["entries"][0];
+    let applied_target_path = storage_dir
+        .path
+        .join(applied_entry["target"].as_str().unwrap());
+    let applied_staged_path =
+        active_transaction_path.join(applied_entry["staged_file"].as_str().unwrap());
+    fs::write(
+        &applied_target_path,
+        fs::read(&applied_staged_path).unwrap(),
+    )
+    .unwrap();
+    fs::remove_file(&applied_staged_path).unwrap();
+    assert!(active_transaction_path.join("files/1").is_file());
+    let mut repository = TaskRepository::new(storage_dir.path_str());
+
+    let outcome = repository.reload_if_changed(now).unwrap();
+
+    assert_eq!(outcome, RepositoryReloadOutcome::Reloaded);
+    assert_recovered_projects(&repository, first_id, second_id);
+    assert_eq!(repository.storage_revision.get(), Some(committed_revision));
+    assert_eq!(
+        fs::read_to_string(storage_dir.path.join(".revision")).unwrap(),
+        format!("{committed_revision}\n")
+    );
+    assert!(!active_transaction_path.exists());
+}
+
 #[cfg(unix)]
 #[test]
 fn test_load_marker済みtransactionのcontrol_file_symlinkを拒否して外部とliveを変更しない() {
