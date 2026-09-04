@@ -229,8 +229,9 @@ impl PreparedTransaction {
                     error,
                 )
             })?;
-        sync_directory(self.io.as_ref(), &self.transactions_dir_path)?;
-        sync_directory(self.io.as_ref(), &self.storage_dir_path)
+        let _ = self.io.sync_directory(&self.transactions_dir_path);
+        let _ = self.io.sync_directory(&self.storage_dir_path);
+        Ok(())
     }
 
     fn apply_staged_file(&self, entry: &PreparedEntry) -> Result<(), StorageTransactionError> {
