@@ -79,6 +79,45 @@ fn new_test_task_handle(name: &str) -> Result<TaskHandle, TaskTreeError> {
 }
 
 #[cfg(test)]
+fn complete_task_tree_snapshot(root: &TaskHandle) -> Vec<String> {
+    fn append(task: &TaskHandle, path: &str, rows: &mut Vec<String>) {
+        let attr = task.get_attr().unwrap();
+        let children = task.get_children().unwrap();
+        rows.push(format!(
+            "{path}|id={:?}|name={:?}|orig_status={:?}|status={:?}|other_side={:?}|atomic={:?}|fixed_start={:?}|pending_until={:?}|last_synced={:?}|priority={:?}|create={:?}|start={:?}|end={:?}|deadline={:?}|estimated={:?}|actual={:?}|repetition_interval={:?}|repetition_anchor={:?}|days_in_advance={:?}|category={:?}|children={}",
+            attr.get_id(),
+            attr.get_name(),
+            attr.get_orig_status(),
+            attr.get_status(),
+            attr.get_is_on_other_side(),
+            attr.get_atomic(),
+            attr.get_fixed_start(),
+            attr.get_pending_until(),
+            attr.get_last_synced_time(),
+            attr.get_priority(),
+            attr.get_create_time(),
+            attr.get_start_time(),
+            attr.get_end_time_opt(),
+            attr.get_deadline_time_opt(),
+            attr.get_estimated_work_seconds(),
+            attr.get_actual_work_seconds(),
+            attr.get_repetition_interval_days_opt(),
+            attr.get_repetition_anchor(),
+            attr.get_days_in_advance(),
+            attr.get_project_category_opt(),
+            children.len(),
+        ));
+        for (index, child) in children.iter().enumerate() {
+            append(child, &format!("{path}.{index}"), rows);
+        }
+    }
+
+    let mut rows = Vec::new();
+    append(root, "root", &mut rows);
+    rows
+}
+
+#[cfg(test)]
 fn report_command_result(stdout: &mut dyn SchronuWriter, result: Result<(), CommandError>) {
     if let Err(error) = result {
         let _output_error = render_display_model(stdout, &error_display_model(&error))
@@ -168,6 +207,32 @@ impl Drop for TestStorageDir {
     fn drop(&mut self) {
         let _ = std::fs::remove_dir_all(&self.path);
     }
+}
+
+#[cfg(test)]
+fn seed_clean_task_revision_observer(
+    storage_directory: &std::path::Path,
+    task: &TaskHandle,
+    now: DateTime<Local>,
+) -> TaskRepository {
+    let mut observer = TaskRepository::new(storage_directory.to_str().unwrap());
+    observer.sync_clock(now).unwrap();
+    observer.start_new_project(task.clone()).unwrap();
+    observer.save().unwrap();
+    assert!(!observer.has_pending_changes().unwrap());
+
+    let original_priority = task.get_priority().unwrap();
+    let probe_priority = if original_priority == i64::MAX {
+        original_priority - 1
+    } else {
+        original_priority + 1
+    };
+    task.set_priority(probe_priority).unwrap();
+    task.set_priority(original_priority).unwrap();
+    assert!(observer.has_pending_changes().unwrap());
+    observer.save().unwrap();
+    assert!(!observer.has_pending_changes().unwrap());
+    observer
 }
 
 #[cfg(test)]
@@ -315,6 +380,128 @@ impl interactive::TerminalFactory for SignaledFailureTerminalFactory {
             error_kind: self.error_kind,
         }))
     }
+}
+
+#[cfg(test)]
+struct SharedSignaledFailureWriter {
+    fail_output: Rc<Cell<bool>>,
+    output: Rc<RefCell<Vec<u8>>>,
+    drop_count: Rc<Cell<usize>>,
+    error_kind: std::io::ErrorKind,
+    fail_after_output_marker: Option<String>,
+}
+
+#[cfg(test)]
+impl Write for SharedSignaledFailureWriter {
+    fn write(&mut self, buffer: &[u8]) -> std::io::Result<usize> {
+        if self.fail_output.get() {
+            Err(std::io::Error::new(
+                self.error_kind,
+                "test interactive output failure",
+            ))
+        } else {
+            self.output.borrow_mut().extend_from_slice(buffer);
+            if let Some(marker) = self
+                .fail_after_output_marker
+                .as_ref()
+                .filter(|marker| !marker.is_empty())
+            {
+                let output = self.output.borrow();
+                if output
+                    .windows(marker.len())
+                    .any(|window| window == marker.as_bytes())
+                {
+                    self.fail_output.set(true);
+                }
+            }
+            Ok(buffer.len())
+        }
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        if self.fail_output.get() {
+            Err(std::io::Error::new(
+                self.error_kind,
+                "test interactive output failure",
+            ))
+        } else {
+            Ok(())
+        }
+    }
+}
+
+#[cfg(test)]
+impl SchronuWriter for SharedSignaledFailureWriter {
+    fn writeln_newline(&mut self, message: &str) -> std::io::Result<()> {
+        writeln!(self, "{message}")
+    }
+
+    fn supports_ansi_color(&self) -> bool {
+        false
+    }
+}
+
+#[cfg(test)]
+impl Drop for SharedSignaledFailureWriter {
+    fn drop(&mut self) {
+        self.drop_count.set(self.drop_count.get() + 1);
+    }
+}
+
+#[cfg(test)]
+struct SharedSignaledFailureTerminalFactory {
+    fail_output: Rc<Cell<bool>>,
+    output: Rc<RefCell<Vec<u8>>>,
+    drop_count: Rc<Cell<usize>>,
+    error_kind: std::io::ErrorKind,
+    fail_after_output_marker: Option<String>,
+}
+
+#[cfg(test)]
+impl interactive::TerminalFactory for SharedSignaledFailureTerminalFactory {
+    fn open_terminal(&mut self) -> std::io::Result<Box<dyn SchronuWriter>> {
+        Ok(Box::new(SharedSignaledFailureWriter {
+            fail_output: Rc::clone(&self.fail_output),
+            output: Rc::clone(&self.output),
+            drop_count: Rc::clone(&self.drop_count),
+            error_kind: self.error_kind,
+            fail_after_output_marker: self.fail_after_output_marker.clone(),
+        }))
+    }
+}
+
+#[cfg(test)]
+#[allow(clippy::too_many_arguments)]
+fn run_interactive_runtime_for_test(
+    initial_now: DateTime<Local>,
+    terminal_factory: &mut dyn interactive::TerminalFactory,
+    input: &mut dyn interactive::InputSource,
+    repository: &mut TestTaskRepository,
+    free_time_manager: &mut TestFreeTimeManager,
+    focused_task_id_opt: &mut Option<Uuid>,
+    last_focused_task_id_opt: &mut Option<Uuid>,
+    focus_started_datetime: &mut DateTime<Local>,
+    focus_selection_mode: &mut FocusSelectionMode,
+) -> Result<(), interactive::DriverRunError<RunError>> {
+    interactive::run_with_terminal_factory(
+        initial_now,
+        terminal_factory,
+        input,
+        |stdout, event| {
+            handle_interactive_driver_event(
+                stdout,
+                InteractiveDriverState {
+                    task_repository: repository,
+                    free_time_manager,
+                    focused_task_id_opt,
+                    last_focused_task_id_opt,
+                    focus_started_datetime,
+                    focus_selection_mode,
+                },
+                event,
+            )
+        },
+    )
 }
 
 #[cfg(test)]
@@ -553,6 +740,11 @@ impl TestTaskRepository {
 
     fn with_save_attempt_signal(mut self, signal: Rc<Cell<bool>>) -> Self {
         self.save_attempt_signal_opt = Some(signal);
+        self
+    }
+
+    fn with_pending_changes(self, has_pending_changes: bool) -> Self {
+        self.has_pending_changes.set(has_pending_changes);
         self
     }
 

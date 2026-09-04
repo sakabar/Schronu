@@ -1478,6 +1478,92 @@ fn load_busy_time_slots_for_interactive_application(
     Ok(())
 }
 
+struct InteractiveDriverState<'a> {
+    task_repository: &'a mut dyn TaskRepositoryTrait,
+    free_time_manager: &'a mut dyn FreeTimeManagerTrait,
+    focused_task_id_opt: &'a mut Option<Uuid>,
+    last_focused_task_id_opt: &'a mut Option<Uuid>,
+    focus_started_datetime: &'a mut DateTime<Local>,
+    focus_selection_mode: &'a mut FocusSelectionMode,
+}
+
+fn handle_interactive_driver_event(
+    stdout: &mut dyn SchronuWriter,
+    state: InteractiveDriverState<'_>,
+    event: interactive::DriverEvent<'_>,
+) -> interactive::DriverOutcome<CliRepositoryTransactionError, RunError> {
+    if let interactive::DriverEvent::RenderScreen { now } = event {
+        return match render_interactive_screen(
+            stdout,
+            state.task_repository,
+            state.free_time_manager,
+            FocusRenderState {
+                focused_task_id_opt: state.focused_task_id_opt,
+                last_focused_task_id_opt: state.last_focused_task_id_opt,
+                focus_started_datetime: state.focus_started_datetime,
+            },
+            now,
+        ) {
+            Ok(()) => interactive::DriverOutcome::Continue,
+            Err(error) => interactive::DriverOutcome::Fatal(RunError::Command(error)),
+        };
+    }
+
+    let repository_event = match event {
+        interactive::DriverEvent::Refresh => InteractiveRepositoryEvent::Refresh,
+        interactive::DriverEvent::Submit { line } => InteractiveRepositoryEvent::Submit { line },
+        interactive::DriverEvent::Exit => InteractiveRepositoryEvent::Exit,
+        interactive::DriverEvent::Interrupted => InteractiveRepositoryEvent::Interrupted,
+        interactive::DriverEvent::InputDisconnected => {
+            InteractiveRepositoryEvent::InputDisconnected
+        }
+        interactive::DriverEvent::InputRead(error) => InteractiveRepositoryEvent::InputRead(error),
+        interactive::DriverEvent::RenderScreen { .. } => unreachable!(),
+    };
+    let outcome = handle_interactive_repository_event(
+        stdout,
+        state.task_repository,
+        state.free_time_manager,
+        InteractiveRepositoryState {
+            focused_task_id_opt: state.focused_task_id_opt,
+            last_focused_task_id_opt: state.last_focused_task_id_opt,
+            focus_started_datetime: state.focus_started_datetime,
+            focus_selection_mode: state.focus_selection_mode,
+        },
+        repository_event,
+    );
+
+    match outcome {
+        InteractiveRepositoryEventOutcome::Continue => interactive::DriverOutcome::Continue,
+        InteractiveRepositoryEventOutcome::CommandExecuted(command_kind, operation_now) => {
+            if !interactive::should_suppress_leaf_tasks_after_command(command_kind) {
+                let result = match build_leaf_tree_display(state.task_repository) {
+                    Ok(tree) => render_display_model(stdout, &DisplayModel::Tree(tree))
+                        .map_err(CommandError::Output),
+                    Err(error) => report_application_result::<()>(stdout, Err(error)),
+                };
+                if let Err(error) = result {
+                    return interactive::DriverOutcome::Fatal(RunError::Command(error));
+                }
+            }
+            if let Err(error) = render_focused_task(
+                stdout,
+                state.task_repository,
+                *state.focused_task_id_opt,
+                state.last_focused_task_id_opt,
+                state.focus_started_datetime,
+                operation_now,
+            ) {
+                return interactive::DriverOutcome::Fatal(RunError::Command(error));
+            }
+            interactive::DriverOutcome::Submitted
+        }
+        InteractiveRepositoryEventOutcome::Retry(error) => interactive::DriverOutcome::Retry(error),
+        InteractiveRepositoryEventOutcome::Exit => interactive::DriverOutcome::Exit,
+        InteractiveRepositoryEventOutcome::Fatal(error) => interactive::DriverOutcome::Fatal(error),
+    }
+}
+
 fn interactive_application(
     task_repository: &mut dyn TaskRepositoryTrait,
     free_time_manager: &mut dyn FreeTimeManagerTrait,
@@ -1500,84 +1586,18 @@ fn interactive_application(
     let mut focus_started_datetime = now;
 
     let result = interactive::run(now, |stdout, event| {
-        if let interactive::DriverEvent::RenderScreen { now } = event {
-            return match render_interactive_screen(
-                stdout,
+        handle_interactive_driver_event(
+            stdout,
+            InteractiveDriverState {
                 task_repository,
                 free_time_manager,
-                FocusRenderState {
-                    focused_task_id_opt: &mut focused_task_id_opt,
-                    last_focused_task_id_opt: &mut last_focused_task_id_opt,
-                    focus_started_datetime: &mut focus_started_datetime,
-                },
-                now,
-            ) {
-                Ok(()) => interactive::DriverOutcome::Continue,
-                Err(error) => interactive::DriverOutcome::Fatal(RunError::Command(error)),
-            };
-        }
-
-        let repository_event = match event {
-            interactive::DriverEvent::Refresh => InteractiveRepositoryEvent::Refresh,
-            interactive::DriverEvent::Submit { line } => {
-                InteractiveRepositoryEvent::Submit { line }
-            }
-            interactive::DriverEvent::Exit => InteractiveRepositoryEvent::Exit,
-            interactive::DriverEvent::Interrupted => InteractiveRepositoryEvent::Interrupted,
-            interactive::DriverEvent::InputDisconnected => {
-                InteractiveRepositoryEvent::InputDisconnected
-            }
-            interactive::DriverEvent::InputRead(error) => {
-                InteractiveRepositoryEvent::InputRead(error)
-            }
-            interactive::DriverEvent::RenderScreen { .. } => unreachable!(),
-        };
-        let outcome = handle_interactive_repository_event(
-            stdout,
-            task_repository,
-            free_time_manager,
-            InteractiveRepositoryState {
                 focused_task_id_opt: &mut focused_task_id_opt,
                 last_focused_task_id_opt: &mut last_focused_task_id_opt,
                 focus_started_datetime: &mut focus_started_datetime,
                 focus_selection_mode: &mut focus_selection_mode,
             },
-            repository_event,
-        );
-
-        match outcome {
-            InteractiveRepositoryEventOutcome::Continue => interactive::DriverOutcome::Continue,
-            InteractiveRepositoryEventOutcome::CommandExecuted(command_kind, operation_now) => {
-                if !interactive::should_suppress_leaf_tasks_after_command(command_kind) {
-                    let result = match build_leaf_tree_display(task_repository) {
-                        Ok(tree) => render_display_model(stdout, &DisplayModel::Tree(tree))
-                            .map_err(CommandError::Output),
-                        Err(error) => report_application_result::<()>(stdout, Err(error)),
-                    };
-                    if let Err(error) = result {
-                        return interactive::DriverOutcome::Fatal(RunError::Command(error));
-                    }
-                }
-                if let Err(error) = render_focused_task(
-                    stdout,
-                    task_repository,
-                    focused_task_id_opt,
-                    &mut last_focused_task_id_opt,
-                    &mut focus_started_datetime,
-                    operation_now,
-                ) {
-                    return interactive::DriverOutcome::Fatal(RunError::Command(error));
-                }
-                interactive::DriverOutcome::Submitted
-            }
-            InteractiveRepositoryEventOutcome::Retry(error) => {
-                interactive::DriverOutcome::Retry(error)
-            }
-            InteractiveRepositoryEventOutcome::Exit => interactive::DriverOutcome::Exit,
-            InteractiveRepositoryEventOutcome::Fatal(error) => {
-                interactive::DriverOutcome::Fatal(error)
-            }
-        }
+            event,
+        )
     });
     classify_interactive_run_result(result)
 }

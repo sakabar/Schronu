@@ -455,6 +455,36 @@ fn contains_identifier(source: &str, identifier: &str) -> bool {
         .any(|token| token == identifier)
 }
 
+fn is_possible_identifier_character(character: char) -> bool {
+    character == '_' || character.is_alphanumeric() || !character.is_ascii()
+}
+
+fn contains_direct_free_function_call(code: &str, function_name: &str) -> bool {
+    code.match_indices(function_name).any(|(start, _)| {
+        let before = &code[..start];
+        let after = &code[start + function_name.len()..];
+        let target_prefix = before.strip_suffix("r#").unwrap_or(before);
+        let has_identifier_boundary = target_prefix
+            .chars()
+            .next_back()
+            .is_none_or(|character| !is_possible_identifier_character(character))
+            && after
+                .chars()
+                .next()
+                .is_none_or(|character| !is_possible_identifier_character(character));
+        let trimmed_prefix = target_prefix.trim_end();
+        let is_unqualified = !trimmed_prefix.ends_with('.') && !trimmed_prefix.ends_with("::");
+        let previous_token = trimmed_prefix
+            .rsplit(|character: char| !is_possible_identifier_character(character))
+            .next()
+            .unwrap_or_default();
+        has_identifier_boundary
+            && is_unqualified
+            && previous_token != "fn"
+            && after.trim_start().starts_with('(')
+    })
+}
+
 struct DirectMethodLocation {
     start: usize,
     signature_end: usize,
@@ -2332,18 +2362,64 @@ fn interactive製品eventはtyped_classifierへ直接接続する() {
         );
     }
 
-    let (_, caller_source) = unique_function_region(&product_sources, "interactive_application")
-        .expect("interactive application entry must remain unique");
+    let (_, caller_source) =
+        unique_function_region(&product_sources, "handle_interactive_driver_event")
+            .expect("interactive driver event boundary must remain unique");
+    let caller_code = code_only(caller_source);
     assert!(
-        caller_source.contains("should_suppress_leaf_tasks_after_command(command_kind)"),
+        caller_code.contains("should_suppress_leaf_tasks_after_command(command_kind)"),
         "interactive command completion must pass its typed kind directly to the redraw classifier"
     );
     for forbidden in ["parse_command(", ".chars().next(", ".split_whitespace("] {
         assert!(
-            !caller_source.contains(forbidden),
+            !caller_code.contains(forbidden),
             "interactive event caller must not recover command meaning with {forbidden}"
         );
     }
+
+    let (_, entrypoint_source) =
+        unique_function_region(&product_sources, "interactive_application")
+            .expect("interactive application entrypoint must remain unique");
+    let entrypoint_code = code_only(entrypoint_source);
+    assert!(
+        contains_direct_free_function_call(&entrypoint_code, "handle_interactive_driver_event"),
+        "interactive application must delegate product events to the shared driver boundary"
+    );
+}
+
+#[test]
+fn direct_free_function_call_scannerはqualified_callと非codeを除外する() {
+    let function_name = "handle_interactive_driver_event";
+    for source in [
+        "another_handle_interactive_driver_event();",
+        "別handle_interactive_driver_event();",
+        "handle_interactive_driver_event別();",
+        "driver.handle_interactive_driver_event();",
+        "runtime::handle_interactive_driver_event();",
+        "fn handle_interactive_driver_event() {}",
+        "fn r#handle_interactive_driver_event() {}",
+        "driver.r#handle_interactive_driver_event();",
+        "runtime::r#handle_interactive_driver_event();",
+        "// handle_interactive_driver_event();",
+        "let marker = \"handle_interactive_driver_event();\";",
+    ] {
+        assert!(
+            !contains_direct_free_function_call(&code_only(source), function_name),
+            "scanner must reject non-direct call: {source}"
+        );
+    }
+    assert!(contains_direct_free_function_call(
+        &code_only("handle_interactive_driver_event ();"),
+        function_name
+    ));
+    assert!(contains_direct_free_function_call(
+        &code_only("State { field: handle_interactive_driver_event() };"),
+        function_name
+    ));
+    assert!(contains_direct_free_function_call(
+        &code_only("r#handle_interactive_driver_event();"),
+        function_name
+    ));
 }
 
 #[test]

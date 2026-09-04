@@ -5714,7 +5714,7 @@ fn test_non_interactiveの不正argumentはrepositoryもbusy_timeも読込まず
         ),
     ] {
         let task = new_test_task_handle("変更しないtask").unwrap();
-        let original_snapshot = task.snapshot().unwrap();
+        let original_snapshot = complete_task_tree_snapshot(&task);
         let mut repository = TestTaskRepository::new(task, now);
         let mut free_time_manager = TestFreeTimeManagerWithLoadError::default();
 
@@ -5735,7 +5735,11 @@ fn test_non_interactiveの不正argumentはrepositoryもbusy_timeも読込まず
             }
             unexpected => panic!("unexpected error for {input}: {unexpected:?}"),
         }
-        assert_eq!(repository.task.snapshot().unwrap(), original_snapshot, "{input}");
+        assert_eq!(
+            complete_task_tree_snapshot(&repository.task),
+            original_snapshot,
+            "{input}"
+        );
         assert_eq!(free_time_manager.loaded_path(), None, "{input}");
         assert_eq!(repository.load_attempt_count.get(), 0, "{input}");
         assert_eq!(
@@ -5754,6 +5758,218 @@ fn test_non_interactiveの不正argumentはrepositoryもbusy_timeも読込まず
         );
         assert_eq!(output, expected, "input: {input}");
     }
+}
+
+#[test]
+fn test_non_interactiveのfinish時刻errorはload後に診断し状態を変更せず保存しない() {
+    let storage_dir = TestStorageDir::new();
+    std::fs::create_dir_all(&storage_dir.path).unwrap();
+    let now = Local.with_ymd_and_hms(2026, 8, 27, 12, 0, 0).unwrap();
+    let task = new_test_task_handle("終了時刻error対象").unwrap();
+    task.set_estimated_work_seconds(45 * 60).unwrap();
+    task.set_actual_work_seconds(15 * 60).unwrap();
+    let original_snapshot = complete_task_tree_snapshot(&task);
+    let mut repository = TestTaskRepository::new(task, now).with_storage_directory(&storage_dir.path);
+    let mut free_time_manager = TestFreeTimeManager::default();
+
+    let error = execute_non_interactive_command_at(
+        &mut repository,
+        &mut free_time_manager,
+        "終 invalid",
+        now,
+    )
+    .expect_err("不正な終了時刻はRunErrorとして返るべきです");
+
+    match &error {
+        RunError::Command(CommandError::Parse(parse_error)) => {
+            assert_eq!(parse_error.command(), "終");
+            assert_eq!(parse_error.field(), "finished_at");
+            assert_eq!(parse_error.reason(), "日時が不正です");
+            assert_eq!(parse_error.usage(), "終 [今|HH:MM[:SS] [日付]]");
+        }
+        unexpected => panic!("unexpected error: {unexpected:?}"),
+    }
+    assert_eq!(
+        complete_task_tree_snapshot(&repository.task),
+        original_snapshot
+    );
+    assert_eq!(repository.save_attempt_count.get(), 0);
+    assert_eq!(repository.operation_trace(), ["reload_if_changed", "load"]);
+
+    let mut stderr = Vec::new();
+    assert!(!report_run_result(&mut stderr, Err(error)));
+    assert_eq!(
+        String::from_utf8(stderr).unwrap(),
+        "[Error] 入力エラー: finished_at: 日時が不正です (コマンド: 終, 使い方: 終 [今|HH:MM[:SS] [日付]])\n"
+    );
+}
+
+#[test]
+fn test_interactiveのfinish実績overflow診断後のterminal_failureで状態とraw_guardを復元する() {
+    let storage_dir = TestStorageDir::new();
+    std::fs::create_dir_all(&storage_dir.path).unwrap();
+    let now = Local::now();
+    let task = new_test_task_handle("完了しないtask").unwrap();
+    let task_id = task.get_id().unwrap();
+    task.set_estimated_work_seconds(i64::MAX).unwrap();
+    task.set_actual_work_seconds(i64::MAX).unwrap();
+    let original_snapshot = complete_task_tree_snapshot(&task);
+    let revision_observer = seed_clean_task_revision_observer(&storage_dir.path, &task, now);
+    let mut repository = TestTaskRepository::new(task, now)
+        .with_storage_directory(&storage_dir.path)
+        .with_pending_changes(false);
+    let mut free_time_manager = TestFreeTimeManager::default();
+    let mut focused_task_id_opt = Some(task_id);
+    let mut last_focused_task_id_opt = Some(task_id);
+    let mut focus_started_datetime = now - Duration::minutes(2);
+    let original_focus_started_datetime = focus_started_datetime;
+    let mut focus_selection_mode = FocusSelectionMode::highest_priority();
+    focus_selection_mode.set_explicit(true);
+    let original_focus_selection_mode = focus_selection_mode.clone();
+    let fail_output = Rc::new(Cell::new(false));
+    let output = Rc::new(RefCell::new(Vec::new()));
+    let drop_count = Rc::new(Cell::new(0));
+    let mut terminal_factory = SharedSignaledFailureTerminalFactory {
+        fail_output: Rc::clone(&fail_output),
+        output: Rc::clone(&output),
+        drop_count: Rc::clone(&drop_count),
+        error_kind: std::io::ErrorKind::PermissionDenied,
+        fail_after_output_marker: Some(
+            "[Error] 操作エラー: invalid input for additional_actual_work_seconds: actual work seconds overflow\n"
+                .to_owned(),
+        ),
+    };
+    let mut input = ScriptedInteractiveInput::command("終");
+
+    let driver_result = run_interactive_runtime_for_test(
+        now,
+        &mut terminal_factory,
+        &mut input,
+        &mut repository,
+        &mut free_time_manager,
+        &mut focused_task_id_opt,
+        &mut last_focused_task_id_opt,
+        &mut focus_started_datetime,
+        &mut focus_selection_mode,
+    );
+    let result = classify_interactive_run_result(driver_result);
+
+    assert_eq!(drop_count.get(), 1);
+    assert!(matches!(
+        &result,
+        Err(RunError::Command(CommandError::Output(error)))
+            if error.kind() == std::io::ErrorKind::PermissionDenied
+    ));
+    assert_eq!(
+        complete_task_tree_snapshot(&repository.task),
+        original_snapshot
+    );
+    assert!(!revision_observer.has_pending_changes().unwrap());
+    assert_eq!(focused_task_id_opt, Some(task_id));
+    assert_eq!(last_focused_task_id_opt, Some(task_id));
+    assert_eq!(focus_started_datetime, original_focus_started_datetime);
+    assert_eq!(focus_selection_mode, original_focus_selection_mode);
+    assert!(!repository.has_pending_changes.get());
+    assert_eq!(repository.save_attempt_count.get(), 0);
+    assert_eq!(
+        repository.operation_trace(),
+        ["reload_if_changed", "load", "has_pending_changes"]
+    );
+    let terminal_output = String::from_utf8(output.borrow().clone()).unwrap();
+    assert_eq!(
+        terminal_output
+            .lines()
+            .filter(|line| line.starts_with("[Error]"))
+            .collect::<Vec<_>>(),
+        [
+            "[Error] 操作エラー: invalid input for additional_actual_work_seconds: actual work seconds overflow"
+        ]
+    );
+
+    let mut stderr = Vec::new();
+    assert!(!report_run_result(&mut stderr, result));
+    assert_eq!(
+        String::from_utf8(stderr).unwrap(),
+        "[Error] 出力エラー: test interactive output failure\n"
+    );
+}
+
+#[test]
+fn test_interactiveのflatten余分argumentはparse_fatalでもterminal_guardを解放する() {
+    let storage_dir = TestStorageDir::new();
+    std::fs::create_dir_all(&storage_dir.path).unwrap();
+    let now = Local::now();
+    let task = new_test_task_handle("変更しないtask").unwrap();
+    let task_id = task.get_id().unwrap();
+    let original_snapshot = complete_task_tree_snapshot(&task);
+    let revision_observer = seed_clean_task_revision_observer(&storage_dir.path, &task, now);
+    let mut repository = TestTaskRepository::new(task, now)
+        .with_storage_directory(&storage_dir.path)
+        .with_pending_changes(false);
+    let mut free_time_manager = TestFreeTimeManager::default();
+    let mut focused_task_id_opt = Some(task_id);
+    let mut last_focused_task_id_opt = Some(task_id);
+    let mut focus_started_datetime = now;
+    let mut focus_selection_mode = FocusSelectionMode::highest_priority();
+    focus_selection_mode.set_explicit(true);
+    let original_focus_selection_mode = focus_selection_mode.clone();
+    let fail_output = Rc::new(Cell::new(false));
+    let output = Rc::new(RefCell::new(Vec::new()));
+    let drop_count = Rc::new(Cell::new(0));
+    let mut terminal_factory = SharedSignaledFailureTerminalFactory {
+        fail_output: Rc::clone(&fail_output),
+        output,
+        drop_count: Rc::clone(&drop_count),
+        error_kind: std::io::ErrorKind::PermissionDenied,
+        fail_after_output_marker: Some(
+            "[Error] 操作エラー: invalid input for additional_actual_work_seconds: actual work seconds overflow\n"
+                .to_owned(),
+        ),
+    };
+    let mut input = ScriptedInteractiveInput::command("flatten extra");
+
+    let driver_result = run_interactive_runtime_for_test(
+        now,
+        &mut terminal_factory,
+        &mut input,
+        &mut repository,
+        &mut free_time_manager,
+        &mut focused_task_id_opt,
+        &mut last_focused_task_id_opt,
+        &mut focus_started_datetime,
+        &mut focus_selection_mode,
+    );
+    let result = classify_interactive_run_result(driver_result);
+
+    assert_eq!(drop_count.get(), 1);
+    assert!(!fail_output.get());
+    assert!(matches!(
+        &result,
+        Err(RunError::Command(CommandError::Parse(error)))
+            if error.command() == "平"
+                && error.field() == "arguments"
+                && error.reason() == "引数の個数が正しくありません"
+                && error.usage() == "平"
+    ));
+    assert_eq!(
+        complete_task_tree_snapshot(&repository.task),
+        original_snapshot
+    );
+    assert!(!revision_observer.has_pending_changes().unwrap());
+    assert_eq!(focused_task_id_opt, Some(task_id));
+    assert_eq!(last_focused_task_id_opt, Some(task_id));
+    assert_eq!(focus_started_datetime, now);
+    assert_eq!(focus_selection_mode, original_focus_selection_mode);
+    assert!(!repository.has_pending_changes.get());
+    assert_eq!(repository.save_attempt_count.get(), 0);
+    assert_eq!(repository.operation_trace(), ["reload_if_changed", "load"]);
+
+    let mut stderr = Vec::new();
+    assert!(!report_run_result(&mut stderr, result));
+    assert_eq!(
+        String::from_utf8(stderr).unwrap(),
+        "[Error] 入力エラー: arguments: 引数の個数が正しくありません (コマンド: 平, 使い方: 平)\n"
+    );
 }
 
 #[test]
@@ -5915,43 +6131,6 @@ fn test_execute_non_interactive_command_検証はsaveとfree_time読込を行わ
 
 #[test]
 fn test_verifyのread_only_repository検査はruntimeが所有する() {
-    fn complete_task_tree_snapshot(root: &TaskHandle) -> Vec<String> {
-        fn append(task: &TaskHandle, path: &str, rows: &mut Vec<String>) {
-            let attr = task.get_attr().unwrap();
-            let children = task.get_children().unwrap();
-            rows.push(format!(
-                "{path}|id={:?}|name={:?}|orig_status={:?}|status={:?}|other_side={:?}|atomic={:?}|pending_until={:?}|last_synced={:?}|priority={:?}|create={:?}|start={:?}|end={:?}|deadline={:?}|estimated={:?}|actual={:?}|repetition_interval={:?}|repetition_anchor={:?}|days_in_advance={:?}|category={:?}|children={}",
-                attr.get_id(),
-                attr.get_name(),
-                attr.get_orig_status(),
-                attr.get_status(),
-                attr.get_is_on_other_side(),
-                attr.get_atomic(),
-                attr.get_pending_until(),
-                attr.get_last_synced_time(),
-                attr.get_priority(),
-                attr.get_create_time(),
-                attr.get_start_time(),
-                attr.get_end_time_opt(),
-                attr.get_deadline_time_opt(),
-                attr.get_estimated_work_seconds(),
-                attr.get_actual_work_seconds(),
-                attr.get_repetition_interval_days_opt(),
-                attr.get_repetition_anchor(),
-                attr.get_days_in_advance(),
-                attr.get_project_category_opt(),
-                children.len(),
-            ));
-            for (index, child) in children.iter().enumerate() {
-                append(child, &format!("{path}.{index}"), rows);
-            }
-        }
-
-        let mut rows = Vec::new();
-        append(root, "root", &mut rows);
-        rows
-    }
-
     let storage_dir = TestStorageDir::new();
     std::fs::create_dir_all(&storage_dir.path).unwrap();
     let now = Local.with_ymd_and_hms(2026, 8, 26, 12, 0, 0).unwrap();
