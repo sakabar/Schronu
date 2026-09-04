@@ -1425,29 +1425,40 @@ fn test_save_actual_writeだけがrevisionを更新する() {
 }
 
 #[test]
-fn test_save_project失敗時はdisk_revisionだけを先に進める() {
+fn test_save_prepare失敗時は複数projectとrevisionを旧snapshotに維持する() {
     let storage_dir = TestStorageDir::new();
     let now = Local.with_ymd_and_hms(2026, 8, 13, 12, 0, 0).unwrap();
     let revision_path = storage_dir.path.join(".revision");
     let mut repository = TaskRepository::new(storage_dir.path_str());
     repository.sync_clock(now).unwrap();
-    let task = crate::test_support::new_task_handle("失敗対象").unwrap();
-    let task_id = task.get_id().unwrap();
-    repository.start_new_project(task.clone()).unwrap();
+    let first_task = crate::test_support::new_task_handle("第一対象").unwrap();
+    let first_task_id = first_task.get_id().unwrap();
+    repository.start_new_project(first_task.clone()).unwrap();
+    let second_task = crate::test_support::new_task_handle("第二対象").unwrap();
+    let second_task_id = second_task.get_id().unwrap();
+    repository.start_new_project(second_task.clone()).unwrap();
     repository.save().unwrap();
     let previous_revision = repository.storage_revision.get().unwrap();
-    let project_yaml_path = storage_dir
-        .project_dir_path("20260813", "失敗対象", task_id)
+    let first_project_yaml_path = storage_dir
+        .project_dir_path("20260813", "第一対象", first_task_id)
         .join("project.yaml");
-    fs::remove_file(&project_yaml_path).unwrap();
-    fs::create_dir(&project_yaml_path).unwrap();
-    task.set_estimated_work_seconds(30 * 60).unwrap();
+    let second_project_yaml_path = storage_dir
+        .project_dir_path("20260813", "第二対象", second_task_id)
+        .join("project.yaml");
+    let first_old_bytes = fs::read(&first_project_yaml_path).unwrap();
+    let second_old_bytes = fs::read(&second_project_yaml_path).unwrap();
+    fs::write(storage_dir.path.join(".schronu-transactions"), b"blocked").unwrap();
+    first_task.set_estimated_work_seconds(30 * 60).unwrap();
+    second_task.set_estimated_work_seconds(45 * 60).unwrap();
 
-    assert!(repository.save().is_err());
+    let actual = repository.save();
 
+    assert!(actual.is_err());
     let disk_revision =
         Uuid::parse_str(fs::read_to_string(&revision_path).unwrap().trim()).unwrap();
-    assert_ne!(disk_revision, previous_revision);
+    assert_eq!(disk_revision, previous_revision);
+    assert_eq!(fs::read(first_project_yaml_path).unwrap(), first_old_bytes);
+    assert_eq!(fs::read(second_project_yaml_path).unwrap(), second_old_bytes);
     assert_eq!(repository.storage_revision.get(), Some(previous_revision));
 }
 
