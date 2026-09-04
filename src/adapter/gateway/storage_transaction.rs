@@ -24,6 +24,9 @@ enum StorageTransactionOperation {
     CreateTransactionDirectory,
     AcquireActiveTransaction,
     ActiveTransaction,
+    InspectActiveTransaction,
+    CommittedTransaction,
+    DiscardUncommitted,
     CreateStagedFilesDirectory,
     ResolveTargetPath,
     ValidateTargetPath,
@@ -376,6 +379,64 @@ impl PreparedTransaction {
             })?;
         sync_directory(self.io.as_ref(), parent_path)
     }
+}
+
+pub(super) fn recover_uncommitted(
+    io: Arc<dyn StorageTransactionIo>,
+    storage_dir_path: &Path,
+) -> Result<(), StorageTransactionError> {
+    let transactions_dir_path = storage_dir_path.join(TRANSACTION_DIRECTORY_NAME);
+    let transaction_dir_path = transactions_dir_path.join(ACTIVE_TRANSACTION_DIRECTORY_NAME);
+    match fs::symlink_metadata(&transaction_dir_path) {
+        Ok(metadata) if metadata.is_dir() => {}
+        Ok(_) => {
+            return Err(StorageTransactionError::new(
+                StorageTransactionOperation::InspectActiveTransaction,
+                &transaction_dir_path,
+                std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    "active transaction must be a directory",
+                ),
+            ));
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(error) => {
+            return Err(StorageTransactionError::new(
+                StorageTransactionOperation::InspectActiveTransaction,
+                &transaction_dir_path,
+                error,
+            ));
+        }
+    }
+
+    let marker_path = transaction_dir_path.join("commit");
+    match fs::symlink_metadata(&marker_path) {
+        Ok(_) => {
+            return Err(StorageTransactionError::new(
+                StorageTransactionOperation::CommittedTransaction,
+                marker_path,
+                std::io::Error::other("committed transaction requires roll-forward recovery"),
+            ));
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(error) => {
+            return Err(StorageTransactionError::new(
+                StorageTransactionOperation::InspectActiveTransaction,
+                marker_path,
+                error,
+            ));
+        }
+    }
+
+    io.remove_dir_all(&transaction_dir_path).map_err(|error| {
+        StorageTransactionError::new(
+            StorageTransactionOperation::DiscardUncommitted,
+            &transaction_dir_path,
+            error,
+        )
+    })?;
+    sync_directory(io.as_ref(), &transactions_dir_path)?;
+    Ok(())
 }
 
 #[cfg(test)]

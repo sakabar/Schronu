@@ -462,6 +462,14 @@ impl TaskRepository {
         Path::new(&self.project_storage_dir_name).join(".revision")
     }
 
+    fn recover_uncommitted_transaction(&self) -> Result<(), TaskRepositoryError> {
+        storage_transaction::recover_uncommitted(
+            self.storage_transaction_io.clone(),
+            Path::new(&self.project_storage_dir_name),
+        )
+        .map_err(|error| TaskRepositoryError::new(ApplicationRepositoryOperation::Load, error))
+    }
+
     fn read_storage_revision(&self) -> Result<Option<Uuid>, FileRepositoryError> {
         let revision_path = self.storage_revision_path();
         match fs::symlink_metadata(&revision_path) {
@@ -537,6 +545,7 @@ impl TaskRepositoryTrait for TaskRepository {
     }
 
     fn load(&mut self) -> Result<(), TaskRepositoryError> {
+        self.recover_uncommitted_transaction()?;
         let storage_revision = self.read_storage_revision().map_err(|error| {
             TaskRepositoryError::new(ApplicationRepositoryOperation::Load, error)
         })?;
@@ -548,6 +557,7 @@ impl TaskRepositoryTrait for TaskRepository {
         &mut self,
         now: DateTime<Local>,
     ) -> Result<RepositoryReloadOutcome, TaskRepositoryError> {
+        self.recover_uncommitted_transaction()?;
         let storage_revision = self.read_storage_revision().map_err(|error| {
             TaskRepositoryError::new(ApplicationRepositoryOperation::Load, error)
         })?;
