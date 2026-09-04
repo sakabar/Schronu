@@ -353,6 +353,33 @@ impl PreparedTransaction {
                     .content_checksum
                     .as_deref()
                     .expect("validated write entry must contain content checksum");
+                let staged_file_path = self.transaction_dir_path.join(
+                    entry
+                        .staged_file
+                        .as_ref()
+                        .expect("validated write entry must contain a staged file"),
+                );
+                let staged_metadata = match self.io.symlink_metadata(&staged_file_path) {
+                    Ok(metadata) if metadata.file_type().is_file() => Some(metadata),
+                    Ok(_) => {
+                        return Err(StorageTransactionError::new(
+                            StorageTransactionOperation::ValidateStagedFile,
+                            &staged_file_path,
+                            std::io::Error::new(
+                                std::io::ErrorKind::InvalidData,
+                                "staged transaction material must be a regular file",
+                            ),
+                        ));
+                    }
+                    Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
+                    Err(error) => {
+                        return Err(StorageTransactionError::new(
+                            StorageTransactionOperation::ReadStagedFile,
+                            &staged_file_path,
+                            error,
+                        ));
+                    }
+                };
                 match self.io.symlink_metadata(&target_path) {
                     Ok(metadata) if metadata.file_type().is_file() => {
                         let target_bytes = self.io.read_file(&target_path).map_err(|error| {
@@ -382,32 +409,16 @@ impl PreparedTransaction {
                         ));
                     }
                 }
-                let staged_file_path = self.transaction_dir_path.join(
-                    entry
-                        .staged_file
-                        .as_ref()
-                        .expect("validated write entry must contain a staged file"),
-                );
-                let metadata = self
-                    .io
-                    .symlink_metadata(&staged_file_path)
-                    .map_err(|error| {
-                        StorageTransactionError::new(
-                            StorageTransactionOperation::ReadStagedFile,
-                            &staged_file_path,
-                            error,
-                        )
-                    })?;
-                if !metadata.file_type().is_file() {
-                    return Err(StorageTransactionError::new(
-                        StorageTransactionOperation::ValidateStagedFile,
+                let metadata = staged_metadata.ok_or_else(|| {
+                    StorageTransactionError::new(
+                        StorageTransactionOperation::ReadStagedFile,
                         &staged_file_path,
                         std::io::Error::new(
-                            std::io::ErrorKind::InvalidData,
-                            "staged transaction material must be a regular file",
+                            std::io::ErrorKind::NotFound,
+                            "staged transaction material does not exist",
                         ),
-                    ));
-                }
+                    )
+                })?;
                 let bytes = self.io.read_file(&staged_file_path).map_err(|error| {
                     StorageTransactionError::new(
                         StorageTransactionOperation::ReadStagedFile,

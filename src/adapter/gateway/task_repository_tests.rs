@@ -1958,6 +1958,60 @@ fn test_reload_if_changed_marker済みtransactionの適用済みtargetを検証�
 
 #[cfg(unix)]
 #[test]
+fn test_load_marker済みtransactionの適用済みtargetでもstaged_symlinkを拒否する() {
+    use std::os::unix::fs::symlink;
+
+    let storage_dir = TestStorageDir::new();
+    let external_dir = TestStorageDir::new();
+    fs::create_dir_all(&external_dir.path).unwrap();
+    let now = Local.with_ymd_and_hms(2026, 9, 5, 13, 0, 0).unwrap();
+    let (first_id, second_id, _, active_transaction_path) =
+        create_committed_transaction_interruption(
+            &storage_dir,
+            now,
+            CommittedCrashPhase::BeforeFirstProjectRename,
+        );
+    let manifest: serde_json::Value =
+        serde_json::from_slice(&fs::read(active_transaction_path.join("manifest.json")).unwrap())
+            .unwrap();
+    let applied_entry = &manifest["entries"][0];
+    let applied_target_path = storage_dir
+        .path
+        .join(applied_entry["target"].as_str().unwrap());
+    let applied_staged_path =
+        active_transaction_path.join(applied_entry["staged_file"].as_str().unwrap());
+    let expected_bytes = fs::read(&applied_staged_path).unwrap();
+    fs::write(&applied_target_path, &expected_bytes).unwrap();
+    fs::remove_file(&applied_staged_path).unwrap();
+    let external_path = external_dir.path.join("staged.external");
+    fs::write(&external_path, &expected_bytes).unwrap();
+    symlink(&external_path, &applied_staged_path).unwrap();
+    let external_bytes = fs::read(&external_path).unwrap();
+    let second_project_path = storage_dir
+        .project_dir_path("20260905", "roll-forward-second", second_id)
+        .join("project.yaml");
+    let old_second = fs::read(&second_project_path).unwrap();
+    let revision_path = storage_dir.path.join(".revision");
+    let old_revision = fs::read(&revision_path).unwrap();
+    let mut repository = TaskRepository::new(storage_dir.path_str());
+
+    let actual = repository.load().unwrap_err();
+
+    let source = storage_transaction_error(&actual);
+    assert!(source.to_string().contains("ValidateStagedFile"));
+    assert!(source
+        .to_string()
+        .contains(&applied_staged_path.display().to_string()));
+    assert!(active_transaction_path.join("commit").is_file());
+    assert_eq!(fs::read(applied_target_path).unwrap(), expected_bytes);
+    assert_eq!(fs::read(second_project_path).unwrap(), old_second);
+    assert_eq!(fs::read(revision_path).unwrap(), old_revision);
+    assert_eq!(fs::read(external_path).unwrap(), external_bytes);
+    assert!(repository.get_by_id(first_id).unwrap().is_none());
+}
+
+#[cfg(unix)]
+#[test]
 fn test_load_marker済みtransactionのcontrol_file_symlinkを拒否して外部とliveを変更しない() {
     use std::os::unix::fs::symlink;
 
