@@ -60,7 +60,7 @@
 | TD-019 | P2 | 完了 | L | scheduling性能計測の状態がapplicationの業務ロジックへ伝播している |
 | TD-020 | P0 | 完了 | M | 同日・同名またはsanitize後に同名となるprojectが同じ保存先を共有し、再読込時に1件消失する |
 | TD-021 | P1 | 未着手 | M | repositoryが重複UUIDを受理し、ID指定操作の対象が走査順に依存する |
-| TD-022 | P1 | 未着手 | XL | 複数project保存でrevisionだけが先行し、失敗時にdisk snapshotが部分更新される |
+| TD-022 | P1 | 完了 | XL | 複数project保存でrevisionだけが先行し、失敗時にdisk snapshotが部分更新される |
 | TD-023 | P1 | 完了 | S | `終`が不正時刻と一部application errorを成功扱いで握り潰す |
 | TD-024 | P1 | 完了 | M | CLI parserが不正な数値や余分な引数を黙って受理し、更新commandを実行する |
 | TD-025 | P1 | 完了 | M | 対話CLIのterminal I/O失敗がpanicまたは未検査結果になる |
@@ -942,6 +942,9 @@
 - 分類: `技術的負債 / 障害回復性`
 - 優先度: `P1`
 - 概算規模: `XL`
+- 完了日: 2026-09-05
+- 対応: 変更projectをimmutable manifestとstaged fileへwrite・syncしてから、独立markerをatomicに公開・directory syncするrepository transactionを導入した。markerだけをcommit pointとし、markerなしはlive targetを変更せず破棄して旧snapshotを維持し、markerありは全materialの事前検証後に新snapshotへidempotentにroll-forwardして`.revision`を最後に揃える。同一内容のskip、permission維持、静止したsymlinkの拒否、advisory lockによる直列化を維持し、deleteは公開APIを増やさないprivate protocolだけを実装した。path検証後に外部processがfilesystem entryを悪意的に差し替えるsymlink TOCTOUは、TD-022の脅威model外でありrepository全体に残る独立したsecurity debtとした。
+- 検証: prepare、commit marker、markerなしdiscard、markerありroll-forward、material preflight、revision後置、deleteの各契約をRed/Green cycleで固定し、各Green後のsubagent review指摘を個別commitで修正・再reviewした。`cargo fmt --check`、`cargo clippy --locked --all-targets -- -D warnings`、`cargo test --locked`、`git diff --check`に成功し、testはlibrary 637件成功・1件ignored、controller 475件成功、integration test全件成功を確認した。
 
 #### 現状と根拠
 
