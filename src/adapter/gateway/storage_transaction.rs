@@ -91,18 +91,10 @@ impl StorageTransactionIo for FileSystemStorageTransactionIo {
 
 impl PreparedTransaction {
     pub(super) fn discard(self) -> Result<(), StorageTransactionError> {
-        let transaction_dir_path = self.transaction_dir_path.clone();
-        fs::remove_dir_all(&transaction_dir_path).map_err(|error| {
-            StorageTransactionError::new("discard", transaction_dir_path, error)
+        fs::remove_dir_all(&self.transaction_dir_path).map_err(|error| {
+            StorageTransactionError::new("discard", self.transaction_dir_path, error)
         })?;
-        std::mem::forget(self);
         Ok(())
-    }
-}
-
-impl Drop for PreparedTransaction {
-    fn drop(&mut self) {
-        let _ = fs::remove_dir_all(&self.transaction_dir_path);
     }
 }
 

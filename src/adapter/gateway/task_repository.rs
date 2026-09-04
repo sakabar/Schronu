@@ -789,7 +789,7 @@ impl TaskRepositoryTrait for TaskRepository {
             })?;
         let revision_text = format!("{new_storage_revision}\n");
         if let Err(error) = write_file_atomically(&revision_path, revision_text.as_bytes()) {
-            drop(prepared_transaction);
+            let _ = prepared_transaction.discard();
             return Err(TaskRepositoryError::new(
                 ApplicationRepositoryOperation::Save,
                 error,
@@ -798,7 +798,7 @@ impl TaskRepositoryTrait for TaskRepository {
 
         for (project, bytes) in prepared_writes {
             if let Err(error) = write_file_atomically(&project.project_yaml_file_path, &bytes) {
-                drop(prepared_transaction);
+                let _ = prepared_transaction.discard();
                 return Err(TaskRepositoryError::new(
                     ApplicationRepositoryOperation::Save,
                     error,
