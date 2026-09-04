@@ -265,6 +265,17 @@ mod tests {
 
     #[cfg(unix)]
     #[test]
+    fn storage_lock_web取得時にmetadataへmodeを記録する() {
+        let directory = TestDir::new();
+
+        let _guard = StorageLock::acquire(directory.path(), LockMode::Web).unwrap();
+
+        let metadata = fs::read_to_string(directory.path().join(".lock")).unwrap();
+        assert!(metadata.contains("mode=web"));
+    }
+
+    #[cfg(unix)]
+    #[test]
     fn storage_lock_同じ保存先の二重取得を拒否する() {
         let directory = TestDir::new();
         let _first = StorageLock::acquire(directory.path(), LockMode::Cli).unwrap();
