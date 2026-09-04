@@ -632,16 +632,14 @@ fn test_save_directory作成失敗を型付きerrorで返す() {
     let mut task_repository = TaskRepository::new(storage_dir.path_str());
     task_repository.sync_clock(now).unwrap();
     let task = crate::test_support::new_task_handle("保存失敗対象").unwrap();
-    let task_id = task.get_id().unwrap();
     task_repository.start_new_project(task).unwrap();
-    let expected_project_dir = storage_dir.project_dir_path("20260811", "保存失敗対象", task_id);
 
     let actual = task_repository.save().unwrap_err();
 
     assert_eq!(actual.operation(), ApplicationRepositoryOperation::Save);
     let source = file_repository_error(&actual);
     assert_eq!(source.operation, FileRepositoryOperation::CreateDirectory);
-    assert_eq!(source.path, expected_project_dir);
+    assert_eq!(source.path, storage_dir.path);
     assert!(source.source.raw_os_error().is_some());
 }
 

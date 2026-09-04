@@ -739,7 +739,7 @@ impl TaskRepositoryTrait for TaskRepository {
                 ApplicationRepositoryOperation::Save,
                 FileRepositoryError::new(
                     FileRepositoryOperation::CreateDirectory,
-                    &prepared_writes[0].0.project_dir_path,
+                    storage_dir_path,
                     error,
                 ),
             )
