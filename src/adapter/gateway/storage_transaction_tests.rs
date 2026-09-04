@@ -79,9 +79,11 @@ impl StorageTransactionIo for FailingPrepareIo {
 
 #[derive(Clone, Copy)]
 enum FailingStagedFilePhase {
+    ReadMetadata,
     Create,
     SetPermissions,
     Write,
+    Sync,
 }
 
 struct FailingStagedFileIo {
@@ -328,6 +330,13 @@ impl StorageTransactionIo for FailingCommitIo {
 }
 
 impl StorageTransactionIo for FailingStagedFileIo {
+    fn target_permissions(&self, path: &Path) -> std::io::Result<Option<fs::Permissions>> {
+        if matches!(self.phase, FailingStagedFilePhase::ReadMetadata) {
+            return Err(std::io::Error::other("injected metadata failure"));
+        }
+        FileSystemStorageTransactionIo.target_permissions(path)
+    }
+
     fn create_new_file(&self, path: &Path) -> std::io::Result<()> {
         if matches!(self.phase, FailingStagedFilePhase::Create) {
             return Err(std::io::Error::other("injected create failure"));
@@ -347,6 +356,13 @@ impl StorageTransactionIo for FailingStagedFileIo {
             return Err(std::io::Error::other("injected write failure"));
         }
         FileSystemStorageTransactionIo.write_file(path, bytes)
+    }
+
+    fn sync_file(&self, path: &Path) -> std::io::Result<()> {
+        if matches!(self.phase, FailingStagedFilePhase::Sync) {
+            return Err(std::io::Error::other("injected sync failure"));
+        }
+        FileSystemStorageTransactionIo.sync_file(path)
     }
 }
 
@@ -576,18 +592,31 @@ fn test_prepare_directory_targetの空path_escapeと予約namespaceを拒否す�
 
 #[test]
 fn test_prepare_staged_file失敗はpathとphaseを保持する() {
-    for (phase, expected_operation) in [
+    for (phase, expected_operation, reports_target_path) in [
+        (
+            FailingStagedFilePhase::ReadMetadata,
+            StorageTransactionOperation::ReadTargetMetadata,
+            true,
+        ),
         (
             FailingStagedFilePhase::Create,
             StorageTransactionOperation::CreateStagedFile,
+            false,
         ),
         (
             FailingStagedFilePhase::SetPermissions,
             StorageTransactionOperation::SetStagedPermissions,
+            false,
         ),
         (
             FailingStagedFilePhase::Write,
             StorageTransactionOperation::WriteStagedFile,
+            false,
+        ),
+        (
+            FailingStagedFilePhase::Sync,
+            StorageTransactionOperation::SyncStagedFile,
+            false,
         ),
     ] {
         let storage_dir = TestStorageDir::new();
@@ -613,8 +642,12 @@ fn test_prepare_staged_file失敗はpathとphaseを保持する() {
             }
         };
         assert_eq!(error.operation, expected_operation);
-        assert_eq!(error.path.file_name().unwrap(), "0");
-        assert_eq!(error.path.parent().unwrap().file_name().unwrap(), "files");
+        if reports_target_path {
+            assert_eq!(error.path, target_path);
+        } else {
+            assert_eq!(error.path.file_name().unwrap(), "0");
+            assert_eq!(error.path.parent().unwrap().file_name().unwrap(), "files");
+        }
         assert!(error.source().is_some());
     }
 }

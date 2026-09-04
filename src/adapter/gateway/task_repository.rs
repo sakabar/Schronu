@@ -112,16 +112,6 @@ enum FileRepositoryOperation {
     ParseRevision,
     SerializeProject,
     CreateDirectory,
-    #[cfg(test)]
-    CreateFile,
-    #[cfg(test)]
-    WriteFile,
-    #[cfg(test)]
-    SyncFile,
-    #[cfg(test)]
-    SetPermissions,
-    #[cfg(test)]
-    RenameFile,
 }
 
 #[derive(Debug)]
@@ -161,121 +151,6 @@ impl Error for FileRepositoryError {
     fn source(&self) -> Option<&(dyn Error + 'static)> {
         Some(&self.source)
     }
-}
-
-#[cfg(test)]
-trait AtomicSaveFile {
-    fn write_all(&mut self, bytes: &[u8]) -> std::io::Result<()>;
-    fn sync_all(&self) -> std::io::Result<()>;
-}
-
-#[cfg(test)]
-impl AtomicSaveFile for File {
-    fn write_all(&mut self, bytes: &[u8]) -> std::io::Result<()> {
-        Write::write_all(self, bytes)
-    }
-
-    fn sync_all(&self) -> std::io::Result<()> {
-        File::sync_all(self)
-    }
-}
-
-#[cfg(test)]
-fn write_and_sync_temporary_file(
-    file: &mut dyn AtomicSaveFile,
-    temporary_file_path: &Path,
-    bytes: &[u8],
-) -> Result<(), FileRepositoryError> {
-    file.write_all(bytes).map_err(|error| {
-        FileRepositoryError::new(
-            FileRepositoryOperation::WriteFile,
-            temporary_file_path,
-            error,
-        )
-    })?;
-    file.sync_all().map_err(|error| {
-        FileRepositoryError::new(
-            FileRepositoryOperation::SyncFile,
-            temporary_file_path,
-            error,
-        )
-    })
-}
-
-#[cfg(test)]
-fn replace_file_atomically<F: AtomicSaveFile>(
-    target_file_path: &Path,
-    temporary_file_path: &Path,
-    mut file: F,
-    bytes: &[u8],
-) -> Result<(), FileRepositoryError> {
-    let write_result = write_and_sync_temporary_file(&mut file, temporary_file_path, bytes);
-    drop(file);
-
-    let result = write_result.and_then(|()| {
-        fs::rename(temporary_file_path, target_file_path).map_err(|error| {
-            FileRepositoryError::new(FileRepositoryOperation::RenameFile, target_file_path, error)
-        })
-    });
-
-    if result.is_err() {
-        let _ = fs::remove_file(temporary_file_path);
-    }
-    result
-}
-
-#[cfg(test)]
-fn write_file_atomically_with_temporary_path(
-    target_file_path: &Path,
-    temporary_file_path: &Path,
-    bytes: &[u8],
-) -> Result<(), FileRepositoryError> {
-    let existing_permissions = match fs::metadata(target_file_path) {
-        Ok(metadata) => Some(metadata.permissions()),
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
-        Err(error) => {
-            return Err(FileRepositoryError::new(
-                FileRepositoryOperation::ReadMetadata,
-                target_file_path,
-                error,
-            ));
-        }
-    };
-    let file = File::create(temporary_file_path).map_err(|error| {
-        FileRepositoryError::new(
-            FileRepositoryOperation::CreateFile,
-            temporary_file_path,
-            error,
-        )
-    })?;
-    if let Some(permissions) = existing_permissions {
-        if let Err(error) = file.set_permissions(permissions) {
-            drop(file);
-            let _ = fs::remove_file(temporary_file_path);
-            return Err(FileRepositoryError::new(
-                FileRepositoryOperation::SetPermissions,
-                temporary_file_path,
-                error,
-            ));
-        }
-    }
-    replace_file_atomically(target_file_path, temporary_file_path, file, bytes)
-}
-
-#[cfg(test)]
-fn write_file_atomically_if_changed_with_temporary_path(
-    target_file_path: &Path,
-    temporary_file_path: &Path,
-    bytes: &[u8],
-) -> Result<bool, FileRepositoryError> {
-    match fs::read(target_file_path) {
-        Ok(existing_bytes) if existing_bytes == bytes => return Ok(false),
-        Ok(_) => {}
-        Err(_) => {}
-    }
-
-    write_file_atomically_with_temporary_path(target_file_path, temporary_file_path, bytes)?;
-    Ok(true)
 }
 
 fn open_project_file(
