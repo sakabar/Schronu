@@ -525,14 +525,27 @@ pub fn complete_task(
         prospective_next_focus_task_id
     };
 
-    task.set_actual_work_seconds(actual_work_seconds)
-        .map_err(ApplicationError::TaskTree)?;
-    task.set_orig_status(Status::Done)
-        .map_err(ApplicationError::TaskTree)?;
-    task.set_end_time_opt(Some(input.finished_at))
-        .map_err(ApplicationError::TaskTree)?;
-
-    let next_repetition_task_id = create_prepared_repetition_task(next_repetition_task)?;
+    let next_repetition_task_id = match next_repetition_task {
+        Some(prepared) => {
+            task.complete_with_next_repetition(
+                actual_work_seconds,
+                input.finished_at,
+                prepared.adjusted_parent_estimated_work_seconds,
+                prepared.task_attr,
+            )
+            .map_err(ApplicationError::TaskTree)?;
+            Some(prepared.task_id)
+        }
+        None => {
+            task.set_actual_work_seconds(actual_work_seconds)
+                .map_err(ApplicationError::TaskTree)?;
+            task.set_orig_status(Status::Done)
+                .map_err(ApplicationError::TaskTree)?;
+            task.set_end_time_opt(Some(input.finished_at))
+                .map_err(ApplicationError::TaskTree)?;
+            None
+        }
+    };
 
     Ok(CompleteTaskOutput {
         next_focus_task_id,
@@ -675,11 +688,25 @@ fn create_next_repetition_task(
         .get_actual_work_seconds()
         .map_err(ApplicationError::TaskTree)?;
     let prepared = prepare_next_repetition_task(task, actual_work_seconds, finished_at, factory)?;
-    create_prepared_repetition_task(prepared)
+    let Some(prepared) = prepared else {
+        return Ok(None);
+    };
+    let parent = task.parent().map_err(ApplicationError::TaskTree)?.ok_or(
+        ApplicationError::InvalidInput {
+            field: "task_id",
+            reason: "task must have a parent",
+        },
+    )?;
+    parent
+        .set_estimated_work_seconds(prepared.adjusted_parent_estimated_work_seconds)
+        .map_err(ApplicationError::TaskTree)?;
+    parent
+        .create_child(prepared.task_attr)
+        .map_err(ApplicationError::TaskTree)?;
+    Ok(Some(prepared.task_id))
 }
 
 struct PreparedRepetitionTask {
-    parent_task: TaskHandle,
     task_attr: TaskAttr,
     task_id: Uuid,
     adjusted_parent_estimated_work_seconds: i64,
@@ -716,28 +743,10 @@ fn prepare_next_repetition_task(
     )?;
     let task_id = *task_attr.get_id();
     Ok(Some(PreparedRepetitionTask {
-        parent_task,
         task_attr,
         task_id,
         adjusted_parent_estimated_work_seconds,
     }))
-}
-
-fn create_prepared_repetition_task(
-    prepared: Option<PreparedRepetitionTask>,
-) -> Result<Option<Uuid>, ApplicationError> {
-    let Some(prepared) = prepared else {
-        return Ok(None);
-    };
-    prepared
-        .parent_task
-        .set_estimated_work_seconds(prepared.adjusted_parent_estimated_work_seconds)
-        .map_err(ApplicationError::TaskTree)?;
-    prepared
-        .parent_task
-        .create_child(prepared.task_attr)
-        .map_err(ApplicationError::TaskTree)?;
-    Ok(Some(prepared.task_id))
 }
 
 fn adjusted_repetition_estimate(

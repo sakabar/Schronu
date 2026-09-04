@@ -670,7 +670,6 @@ impl TaskHandle {
         Ok(Self { node: child_node })
     }
 
-    #[allow(dead_code)]
     pub(crate) fn complete_with_next_repetition(
         &self,
         actual_work_seconds: i64,
