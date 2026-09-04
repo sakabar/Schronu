@@ -691,19 +691,15 @@ fn create_next_repetition_task(
     let Some(prepared) = prepared else {
         return Ok(None);
     };
-    let parent = task.parent().map_err(ApplicationError::TaskTree)?.ok_or(
-        ApplicationError::InvalidInput {
-            field: "task_id",
-            reason: "task must have a parent",
-        },
-    )?;
-    parent
-        .set_estimated_work_seconds(prepared.adjusted_parent_estimated_work_seconds)
-        .map_err(ApplicationError::TaskTree)?;
-    parent
-        .create_child(prepared.task_attr)
-        .map_err(ApplicationError::TaskTree)?;
-    Ok(Some(prepared.task_id))
+    let task_id = prepared.task_id;
+    task.complete_with_next_repetition(
+        actual_work_seconds,
+        finished_at,
+        prepared.adjusted_parent_estimated_work_seconds,
+        prepared.task_attr,
+    )
+    .map_err(ApplicationError::TaskTree)?;
+    Ok(Some(task_id))
 }
 
 struct PreparedRepetitionTask {

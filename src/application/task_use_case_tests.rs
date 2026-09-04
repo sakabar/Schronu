@@ -895,6 +895,31 @@ fn create_next_repetition_taskは構造化errorを返せるresultを維持する
 }
 
 #[test]
+fn create_next_repetition_taskは反復ありで原子operationを通る() {
+    let parent = crate::test_support::new_task_handle("ルーチン").unwrap();
+    parent.set_repetition_interval_days_opt(Some(7)).unwrap();
+    parent.set_estimated_work_seconds(600).unwrap();
+    let task = parent.create_as_last_child(crate::test_support::new_task_attr("今回"));
+    task.set_actual_work_seconds(300).unwrap();
+    let expected_id = Uuid::from_u128(0x2904);
+    let mut next_id = || expected_id;
+    let mut factory = TaskFactory::new(fixed_now(), &mut next_id);
+    let revision_before = parent.get_persistent_mutation_revision().unwrap();
+
+    let actual = create_next_repetition_task(&task, fixed_now(), &mut factory);
+
+    assert_eq!(actual, Ok(Some(expected_id)));
+    assert_eq!(task.get_status().unwrap(), Status::Done);
+    assert_eq!(task.get_end_time_opt().unwrap(), Some(fixed_now()));
+    assert_eq!(parent.get_estimated_work_seconds().unwrap(), 525);
+    assert!(parent.get_by_id(expected_id).unwrap().is_some());
+    assert_eq!(
+        parent.get_persistent_mutation_revision().unwrap(),
+        revision_before.wrapping_add(1)
+    );
+}
+
+#[test]
 fn complete_task_反復anchorの次論理日計算不能をerrorにして変更しない() {
     let occurrence_anchor = DateTime::<Local>::from_naive_utc_and_offset(
         NaiveDate::MAX.and_hms_opt(6, 0, 0).unwrap(),
