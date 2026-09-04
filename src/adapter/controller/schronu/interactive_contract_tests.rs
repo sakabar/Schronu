@@ -2335,13 +2335,14 @@ fn interactive製品eventはtyped_classifierへ直接接続する() {
     let (_, caller_source) =
         unique_function_region(&product_sources, "handle_interactive_driver_event")
             .expect("interactive driver event boundary must remain unique");
+    let caller_code = code_only(caller_source);
     assert!(
-        caller_source.contains("should_suppress_leaf_tasks_after_command(command_kind)"),
+        caller_code.contains("should_suppress_leaf_tasks_after_command(command_kind)"),
         "interactive command completion must pass its typed kind directly to the redraw classifier"
     );
     for forbidden in ["parse_command(", ".chars().next(", ".split_whitespace("] {
         assert!(
-            !caller_source.contains(forbidden),
+            !caller_code.contains(forbidden),
             "interactive event caller must not recover command meaning with {forbidden}"
         );
     }
