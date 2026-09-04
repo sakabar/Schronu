@@ -526,6 +526,89 @@ fn test_persistent_mutation_revisionはtree構造変更で進む() {
 }
 
 #[test]
+fn test_反復完了は完了値と親見積もりと次回childを一括反映する() {
+    let parent = new_test_task_handle("反復親").unwrap();
+    parent.set_estimated_work_seconds(600).unwrap();
+    let child = parent.create_child(new_test_task_attr("今回")).unwrap();
+    let finished_at = Local.with_ymd_and_hms(2026, 8, 20, 12, 34, 56).unwrap();
+    let next_attr = TaskAttr::with_identity(
+        "次回",
+        Uuid::from_u128(0x2901),
+        Local.with_ymd_and_hms(2026, 8, 20, 12, 0, 0).unwrap(),
+    );
+    let before_revision = parent.get_persistent_mutation_revision().unwrap();
+
+    let next = child
+        .complete_with_next_repetition(300, finished_at, 450, next_attr)
+        .unwrap();
+
+    assert_eq!(child.get_actual_work_seconds().unwrap(), 300);
+    assert_eq!(child.get_status().unwrap(), Status::Done);
+    assert_eq!(child.get_end_time_opt().unwrap(), Some(finished_at));
+    assert_eq!(parent.get_estimated_work_seconds().unwrap(), 450);
+    assert_eq!(next.get_id().unwrap(), Uuid::from_u128(0x2901));
+    assert_eq!(parent.get_children().unwrap().len(), 2);
+    assert_eq!(
+        parent.get_persistent_mutation_revision().unwrap(),
+        before_revision.wrapping_add(1)
+    );
+}
+
+#[test]
+fn test_反復完了はhierarchy_grant取得失敗時に何も変更しない() {
+    let parent = new_test_task_handle("反復親").unwrap();
+    parent.set_estimated_work_seconds(600).unwrap();
+    let child = parent.create_child(new_test_task_attr("今回")).unwrap();
+    let before_snapshot = parent.snapshot().unwrap();
+    let before_revision = parent.get_persistent_mutation_revision().unwrap();
+    let hierarchy_edit_prohibition = parent
+        .node
+        .tree()
+        .prohibit_hierarchy_edit()
+        .expect("test hierarchy edit prohibition");
+
+    let actual = child.complete_with_next_repetition(
+        300,
+        Local.with_ymd_and_hms(2026, 8, 20, 12, 34, 56).unwrap(),
+        450,
+        new_test_task_attr("次回"),
+    );
+
+    assert!(matches!(actual, Err(TaskTreeError::HierarchyGrant)));
+    drop(hierarchy_edit_prohibition);
+    assert_eq!(parent.snapshot().unwrap(), before_snapshot);
+    assert_eq!(
+        parent.get_persistent_mutation_revision().unwrap(),
+        before_revision
+    );
+}
+
+#[test]
+fn test_反復完了はborrow競合時に何も変更しない() {
+    let parent = new_test_task_handle("反復親").unwrap();
+    parent.set_estimated_work_seconds(600).unwrap();
+    let child = parent.create_child(new_test_task_attr("今回")).unwrap();
+    let before_snapshot = parent.snapshot().unwrap();
+    let before_revision = parent.get_persistent_mutation_revision().unwrap();
+
+    let actual = child.with_shared_data_borrow_for_test(|| {
+        child.complete_with_next_repetition(
+            300,
+            Local.with_ymd_and_hms(2026, 8, 20, 12, 34, 56).unwrap(),
+            450,
+            new_test_task_attr("次回"),
+        )
+    });
+
+    assert!(matches!(actual, Err(TaskTreeError::Borrow)));
+    assert_eq!(parent.snapshot().unwrap(), before_snapshot);
+    assert_eq!(
+        parent.get_persistent_mutation_revision().unwrap(),
+        before_revision
+    );
+}
+
+#[test]
 fn test_persistent_mutation_revisionはclockの永続化変更だけで進む() {
     let now = Local.with_ymd_and_hms(2026, 8, 13, 12, 0, 0).unwrap();
     let unchanged = new_test_task_handle("unchanged").unwrap();
