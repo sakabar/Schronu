@@ -11,6 +11,8 @@ struct FailFirstCommittedProjectWriteIo {
     failed: AtomicBool,
 }
 
+struct FailUncommittedDiscardIo;
+
 impl StorageTransactionIo for FailFirstCommittedProjectWriteIo {
     fn write_file(&self, path: &Path, bytes: &[u8]) -> std::io::Result<()> {
         if path
@@ -33,6 +35,17 @@ impl StorageTransactionIo for FailingStorageTransactionIo {
             return Err(std::io::Error::other("injected prepare failure"));
         }
         fs::create_dir_all(path)
+    }
+}
+
+impl StorageTransactionIo for FailUncommittedDiscardIo {
+    fn remove_dir_all(&self, path: &Path) -> std::io::Result<()> {
+        if path.file_name().is_some_and(|name| name == ".active") {
+            return Err(std::io::Error::other(
+                "injected uncommitted discard failure",
+            ));
+        }
+        FileSystemStorageTransactionIo.remove_dir_all(path)
     }
 }
 
@@ -77,6 +90,29 @@ fn write_project_yaml(
     let project_yaml_file_path = project_dir_path.join("project.yaml");
     fs::write(&project_yaml_file_path, contents).unwrap();
     project_yaml_file_path
+}
+
+fn create_markerless_active_transaction(storage_dir: &TestStorageDir, phase: &str) -> PathBuf {
+    let active_transaction_path = storage_dir
+        .path
+        .join(crate::adapter::gateway::storage_transaction::TRANSACTION_DIRECTORY_NAME)
+        .join(".active");
+    fs::create_dir_all(active_transaction_path.join("files")).unwrap();
+    match phase {
+        "staged-write" => fs::write(active_transaction_path.join("files/0"), b"partial").unwrap(),
+        "staged-sync" => fs::write(active_transaction_path.join("files/0"), b"staged").unwrap(),
+        "manifest-sync" => {
+            fs::write(active_transaction_path.join("files/0"), b"staged").unwrap();
+            fs::write(active_transaction_path.join("manifest.json"), b"{}").unwrap();
+        }
+        "before-marker" => {
+            fs::write(active_transaction_path.join("files/0"), b"staged").unwrap();
+            fs::write(active_transaction_path.join("manifest.json"), b"{}").unwrap();
+            fs::write(active_transaction_path.join("commit.tmp"), b"").unwrap();
+        }
+        _ => panic!("unknown interruption phase: {phase}"),
+    }
+    active_transaction_path
 }
 
 fn file_repository_error(error: &TaskRepositoryError) -> &FileRepositoryError {
@@ -1353,6 +1389,107 @@ fn test_save_post_marker失敗後はactive_transactionを保持して次saveを�
     assert_eq!(fs::read(revision_path).unwrap(), old_revision_bytes);
     assert!(active_transaction_path.join("commit").is_file());
     assert!(active_transaction_path.join("manifest.json").is_file());
+}
+
+#[test]
+fn test_load_markerなしtransactionをrevisionとproject読込前に破棄する() {
+    for phase in [
+        "staged-write",
+        "staged-sync",
+        "manifest-sync",
+        "before-marker",
+    ] {
+        let storage_dir = TestStorageDir::new();
+        let now = Local.with_ymd_and_hms(2026, 9, 5, 12, 0, 0).unwrap();
+        let mut source_repository = TaskRepository::new(storage_dir.path_str());
+        source_repository.sync_clock(now).unwrap();
+        let task = crate::test_support::new_task_handle("old").unwrap();
+        let task_id = task.get_id().unwrap();
+        source_repository.start_new_project(task).unwrap();
+        source_repository.save().unwrap();
+        let project_yaml_path = storage_dir
+            .project_dir_path("20260905", "old", task_id)
+            .join("project.yaml");
+        let old_project = fs::read(&project_yaml_path).unwrap();
+        let revision = Uuid::parse_str(
+            fs::read_to_string(storage_dir.path.join(".revision"))
+                .unwrap()
+                .trim(),
+        )
+        .unwrap();
+        let old_revision = fs::read(storage_dir.path.join(".revision")).unwrap();
+        let active_transaction_path = create_markerless_active_transaction(&storage_dir, phase);
+        fs::write(
+            active_transaction_path.join("files/project.yaml"),
+            b"project: [",
+        )
+        .unwrap();
+        let mut repository = TaskRepository::new(storage_dir.path_str());
+        repository.sync_clock(now).unwrap();
+
+        repository.load().unwrap();
+
+        assert!(!active_transaction_path.exists(), "phase: {phase}");
+        assert_eq!(fs::read(&project_yaml_path).unwrap(), old_project);
+        assert_eq!(
+            fs::read(storage_dir.path.join(".revision")).unwrap(),
+            old_revision
+        );
+        assert_eq!(repository.storage_revision.get(), Some(revision));
+    }
+}
+
+#[test]
+fn test_reload_if_changed_markerなしtransactionをcache判定前に破棄する() {
+    let storage_dir = TestStorageDir::new();
+    let now = Local.with_ymd_and_hms(2026, 9, 5, 12, 0, 0).unwrap();
+    let mut repository = TaskRepository::new(storage_dir.path_str());
+    repository.sync_clock(now).unwrap();
+    let task = crate::test_support::new_task_handle("old").unwrap();
+    repository.start_new_project(task).unwrap();
+    repository.save().unwrap();
+    repository.load().unwrap();
+    let revision = repository.storage_revision.get();
+    let active_transaction_path =
+        create_markerless_active_transaction(&storage_dir, "before-marker");
+
+    let actual = repository.reload_if_changed(now).unwrap();
+
+    assert_eq!(actual, RepositoryReloadOutcome::Cached);
+    assert!(!active_transaction_path.exists());
+    assert_eq!(repository.storage_revision.get(), revision);
+}
+
+#[test]
+fn test_load_markerなしtransaction破棄失敗はpathとphaseを保持してmemoryを変更しない() {
+    let storage_dir = TestStorageDir::new();
+    let now = Local.with_ymd_and_hms(2026, 9, 5, 12, 0, 0).unwrap();
+    let active_transaction_path =
+        create_markerless_active_transaction(&storage_dir, "before-marker");
+    let mut repository = TaskRepository::new(storage_dir.path_str());
+    repository.sync_clock(now).unwrap();
+    let memory_task = crate::test_support::new_task_handle("memory").unwrap();
+    let memory_task_id = memory_task.get_id().unwrap();
+    repository.start_new_project(memory_task).unwrap();
+    repository.storage_transaction_io = Arc::new(FailUncommittedDiscardIo);
+
+    let actual = repository.load().unwrap_err();
+
+    assert_eq!(actual.operation(), ApplicationRepositoryOperation::Load);
+    let source = storage_transaction_error(&actual);
+    assert!(source.to_string().contains("DiscardUncommitted"));
+    assert!(source
+        .to_string()
+        .contains(&active_transaction_path.display().to_string()));
+    assert!(source
+        .source()
+        .unwrap()
+        .to_string()
+        .contains("injected uncommitted discard failure"));
+    assert_eq!(repository.get_all_projects().len(), 1);
+    assert!(repository.get_by_id(memory_task_id).unwrap().is_some());
+    assert!(!repository.has_loaded);
+    assert_eq!(repository.storage_revision.get(), None);
 }
 
 #[test]

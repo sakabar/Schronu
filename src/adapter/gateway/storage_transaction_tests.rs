@@ -388,6 +388,39 @@ impl Drop for TestStorageDir {
 }
 
 #[test]
+fn test_recover_uncommitted_markerなしactive_transactionを破棄して再実行できる() {
+    let storage_dir = TestStorageDir::new();
+    let active_transaction_path = storage_dir
+        .path
+        .join(TRANSACTION_DIRECTORY_NAME)
+        .join(ACTIVE_TRANSACTION_DIRECTORY_NAME);
+    fs::create_dir_all(active_transaction_path.join("files")).unwrap();
+    fs::write(active_transaction_path.join("files/0"), b"partial").unwrap();
+    fs::write(active_transaction_path.join("commit.tmp"), b"").unwrap();
+
+    recover_uncommitted(file_system_io(), &storage_dir.path).unwrap();
+    recover_uncommitted(file_system_io(), &storage_dir.path).unwrap();
+
+    assert!(!active_transaction_path.exists());
+}
+
+#[test]
+fn test_recover_uncommitted_markerありactive_transactionを破棄しない() {
+    let storage_dir = TestStorageDir::new();
+    let active_transaction_path = storage_dir
+        .path
+        .join(TRANSACTION_DIRECTORY_NAME)
+        .join(ACTIVE_TRANSACTION_DIRECTORY_NAME);
+    fs::create_dir_all(&active_transaction_path).unwrap();
+    fs::write(active_transaction_path.join("commit"), b"").unwrap();
+
+    let actual = recover_uncommitted(file_system_io(), &storage_dir.path).unwrap_err();
+
+    assert!(actual.to_string().contains("CommittedTransaction"));
+    assert!(active_transaction_path.join("commit").is_file());
+}
+
+#[test]
 fn test_prepare_staged_fileとimmutable_manifestを作成する() {
     let storage_dir = TestStorageDir::new();
     let target_path = storage_dir.path.join("project/project.yaml");
