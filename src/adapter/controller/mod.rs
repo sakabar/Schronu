@@ -16,6 +16,8 @@ mod renderer;
 #[path = "schronu/runtime.rs"]
 mod runtime;
 
+mod storage_directory;
+
 #[path = "schronu/today_text.rs"]
 mod today_text;
 
@@ -47,6 +49,7 @@ pub fn run_cli() {
     runtime::application();
 }
 
+pub use storage_directory::resolve_project_storage_directory;
 pub use today_text::{TodayTextError, TodayTextService};
 
 #[cfg(test)]

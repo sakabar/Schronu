@@ -51,8 +51,7 @@ use std::io::{stdout, Write};
 use std::process;
 use std::sync::OnceLock;
 
-#[path = "../storage_directory.rs"]
-mod storage_directory;
+use super::storage_directory;
 use std::time::Duration as StdDuration;
 use storage_directory::resolve_project_storage_directory;
 use termion::style;
