@@ -5811,6 +5811,7 @@ fn test_interactiveのfinish実績overflow診断後のterminal_failureで状態�
     let now = Local::now();
     let task = new_test_task_handle("完了しないtask").unwrap();
     let task_id = task.get_id().unwrap();
+    task.set_estimated_work_seconds(i64::MAX).unwrap();
     task.set_actual_work_seconds(i64::MAX).unwrap();
     let original_snapshot = complete_task_tree_snapshot(&task);
     let revision_observer = seed_clean_task_revision_observer(&storage_dir.path, &task, now);
@@ -5833,6 +5834,10 @@ fn test_interactiveのfinish実績overflow診断後のterminal_failureで状態�
         output: Rc::clone(&output),
         drop_count: Rc::clone(&drop_count),
         error_kind: std::io::ErrorKind::PermissionDenied,
+        fail_after_output_marker: Some(
+            "[Error] 操作エラー: invalid input for additional_actual_work_seconds: actual work seconds overflow\n"
+                .to_owned(),
+        ),
     };
     let mut input = ScriptedInteractiveInput::command("終");
 
@@ -5846,7 +5851,6 @@ fn test_interactiveのfinish実績overflow診断後のterminal_failureで状態�
         &mut last_focused_task_id_opt,
         &mut focus_started_datetime,
         &mut focus_selection_mode,
-        || fail_output.set(true),
     );
     let result = classify_interactive_run_result(driver_result);
 
@@ -5917,6 +5921,10 @@ fn test_interactiveのflatten余分argumentはparse_fatalでもterminal_guardを
         output,
         drop_count: Rc::clone(&drop_count),
         error_kind: std::io::ErrorKind::PermissionDenied,
+        fail_after_output_marker: Some(
+            "[Error] 操作エラー: invalid input for additional_actual_work_seconds: actual work seconds overflow\n"
+                .to_owned(),
+        ),
     };
     let mut input = ScriptedInteractiveInput::command("flatten extra");
 
@@ -5930,7 +5938,6 @@ fn test_interactiveのflatten余分argumentはparse_fatalでもterminal_guardを
         &mut last_focused_task_id_opt,
         &mut focus_started_datetime,
         &mut focus_selection_mode,
-        || fail_output.set(true),
     );
     let result = classify_interactive_run_result(driver_result);
 

@@ -388,6 +388,7 @@ struct SharedSignaledFailureWriter {
     output: Rc<RefCell<Vec<u8>>>,
     drop_count: Rc<Cell<usize>>,
     error_kind: std::io::ErrorKind,
+    fail_after_output_marker: Option<String>,
 }
 
 #[cfg(test)]
@@ -400,6 +401,15 @@ impl Write for SharedSignaledFailureWriter {
             ))
         } else {
             self.output.borrow_mut().extend_from_slice(buffer);
+            if let Some(marker) = &self.fail_after_output_marker {
+                let output = self.output.borrow();
+                if output
+                    .windows(marker.len())
+                    .any(|window| window == marker.as_bytes())
+                {
+                    self.fail_output.set(true);
+                }
+            }
             Ok(buffer.len())
         }
     }
@@ -440,6 +450,7 @@ struct SharedSignaledFailureTerminalFactory {
     output: Rc<RefCell<Vec<u8>>>,
     drop_count: Rc<Cell<usize>>,
     error_kind: std::io::ErrorKind,
+    fail_after_output_marker: Option<String>,
 }
 
 #[cfg(test)]
@@ -450,6 +461,7 @@ impl interactive::TerminalFactory for SharedSignaledFailureTerminalFactory {
             output: Rc::clone(&self.output),
             drop_count: Rc::clone(&self.drop_count),
             error_kind: self.error_kind,
+            fail_after_output_marker: self.fail_after_output_marker.clone(),
         }))
     }
 }
@@ -466,76 +478,24 @@ fn run_interactive_runtime_for_test(
     last_focused_task_id_opt: &mut Option<Uuid>,
     focus_started_datetime: &mut DateTime<Local>,
     focus_selection_mode: &mut FocusSelectionMode,
-    mut on_command_executed: impl FnMut(),
 ) -> Result<(), interactive::DriverRunError<RunError>> {
     interactive::run_with_terminal_factory(
         initial_now,
         terminal_factory,
         input,
         |stdout, event| {
-            if matches!(event, interactive::DriverEvent::RenderScreen { .. }) {
-                return interactive::DriverOutcome::Continue;
-            }
-            let repository_event = match event {
-                interactive::DriverEvent::Submit { line } => {
-                    InteractiveRepositoryEvent::Submit { line }
-                }
-                interactive::DriverEvent::Refresh => InteractiveRepositoryEvent::Refresh,
-                interactive::DriverEvent::Exit => InteractiveRepositoryEvent::Exit,
-                interactive::DriverEvent::Interrupted => InteractiveRepositoryEvent::Interrupted,
-                interactive::DriverEvent::InputDisconnected => {
-                    InteractiveRepositoryEvent::InputDisconnected
-                }
-                interactive::DriverEvent::InputRead(error) => {
-                    InteractiveRepositoryEvent::InputRead(error)
-                }
-                interactive::DriverEvent::RenderScreen { .. } => unreachable!(),
-            };
-            match handle_interactive_repository_event(
+            handle_interactive_driver_event(
                 stdout,
-                repository,
-                free_time_manager,
-                InteractiveRepositoryState {
+                InteractiveDriverState {
+                    task_repository: repository,
+                    free_time_manager,
                     focused_task_id_opt,
                     last_focused_task_id_opt,
                     focus_started_datetime,
                     focus_selection_mode,
                 },
-                repository_event,
-            ) {
-                InteractiveRepositoryEventOutcome::Continue => interactive::DriverOutcome::Continue,
-                InteractiveRepositoryEventOutcome::CommandExecuted(command_kind, operation_now) => {
-                    on_command_executed();
-                    if !interactive::should_suppress_leaf_tasks_after_command(command_kind) {
-                        let result = match build_leaf_tree_display(repository) {
-                            Ok(tree) => render_display_model(stdout, &DisplayModel::Tree(tree))
-                                .map_err(CommandError::Output),
-                            Err(error) => report_application_result::<()>(stdout, Err(error)),
-                        };
-                        if let Err(error) = result {
-                            return interactive::DriverOutcome::Fatal(RunError::Command(error));
-                        }
-                    }
-                    if let Err(error) = render_focused_task(
-                        stdout,
-                        repository,
-                        *focused_task_id_opt,
-                        last_focused_task_id_opt,
-                        focus_started_datetime,
-                        operation_now,
-                    ) {
-                        return interactive::DriverOutcome::Fatal(RunError::Command(error));
-                    }
-                    interactive::DriverOutcome::Submitted
-                }
-                InteractiveRepositoryEventOutcome::Retry(error) => {
-                    interactive::DriverOutcome::Retry(error)
-                }
-                InteractiveRepositoryEventOutcome::Exit => interactive::DriverOutcome::Exit,
-                InteractiveRepositoryEventOutcome::Fatal(error) => {
-                    interactive::DriverOutcome::Fatal(error)
-                }
-            }
+                event,
+            )
         },
     )
 }
