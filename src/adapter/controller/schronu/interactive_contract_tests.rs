@@ -455,6 +455,37 @@ fn contains_identifier(source: &str, identifier: &str) -> bool {
         .any(|token| token == identifier)
 }
 
+fn contains_direct_free_function_call(code: &str, function_name: &str) -> bool {
+    code.match_indices(function_name).any(|(start, _)| {
+        let before = &code[..start];
+        let after = &code[start + function_name.len()..];
+        let has_identifier_boundary = before
+            .chars()
+            .next_back()
+            .is_none_or(|character| !(character.is_ascii_alphanumeric() || character == '_'))
+            && after
+                .chars()
+                .next()
+                .is_none_or(|character| !(character.is_ascii_alphanumeric() || character == '_'));
+        let is_unqualified = !matches!(
+            before
+                .chars()
+                .rev()
+                .find(|character| !character.is_whitespace()),
+            Some('.' | ':')
+        );
+        let previous_token = before
+            .trim_end()
+            .rsplit(|character: char| !(character.is_ascii_alphanumeric() || character == '_'))
+            .next()
+            .unwrap_or_default();
+        has_identifier_boundary
+            && is_unqualified
+            && previous_token != "fn"
+            && after.trim_start().starts_with('(')
+    })
+}
+
 struct DirectMethodLocation {
     start: usize,
     signature_end: usize,
@@ -2352,9 +2383,31 @@ fn interactive製品eventはtyped_classifierへ直接接続する() {
             .expect("interactive application entrypoint must remain unique");
     let entrypoint_code = code_only(entrypoint_source);
     assert!(
-        entrypoint_code.contains("handle_interactive_driver_event("),
+        contains_direct_free_function_call(&entrypoint_code, "handle_interactive_driver_event"),
         "interactive application must delegate product events to the shared driver boundary"
     );
+}
+
+#[test]
+fn direct_free_function_call_scannerはqualified_callと非codeを除外する() {
+    let function_name = "handle_interactive_driver_event";
+    for source in [
+        "another_handle_interactive_driver_event();",
+        "driver.handle_interactive_driver_event();",
+        "runtime::handle_interactive_driver_event();",
+        "fn handle_interactive_driver_event() {}",
+        "// handle_interactive_driver_event();",
+        "let marker = \"handle_interactive_driver_event();\";",
+    ] {
+        assert!(
+            !contains_direct_free_function_call(&code_only(source), function_name),
+            "scanner must reject non-direct call: {source}"
+        );
+    }
+    assert!(contains_direct_free_function_call(
+        &code_only("handle_interactive_driver_event ();"),
+        function_name
+    ));
 }
 
 #[test]
