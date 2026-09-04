@@ -1550,17 +1550,7 @@ fn test_save_post_marker失敗後はactive_transactionを保持して次saveを�
     let transactions_dir_path = storage_dir
         .path
         .join(crate::adapter::gateway::storage_transaction::TRANSACTION_DIRECTORY_NAME);
-    let active_transaction_paths = fs::read_dir(&transactions_dir_path)
-        .unwrap()
-        .map(|entry| entry.unwrap().path())
-        .filter(|path| {
-            path.file_name()
-                .and_then(|name| name.to_str())
-                .is_some_and(|name| Uuid::parse_str(name).is_ok())
-        })
-        .collect::<Vec<_>>();
-    assert_eq!(active_transaction_paths.len(), 1);
-    let active_transaction_path = &active_transaction_paths[0];
+    let active_transaction_path = transactions_dir_path.join(".active");
     assert!(active_transaction_path.join("commit").is_file());
     assert!(active_transaction_path.join("manifest.json").is_file());
 

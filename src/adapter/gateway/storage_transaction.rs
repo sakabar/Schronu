@@ -8,6 +8,7 @@ use std::sync::Arc;
 use uuid::Uuid;
 
 pub(super) const TRANSACTION_DIRECTORY_NAME: &str = ".schronu-transactions";
+const ACTIVE_TRANSACTION_DIRECTORY_NAME: &str = ".active";
 
 #[derive(Debug)]
 pub(super) struct StorageTransactionError {
@@ -21,7 +22,7 @@ enum StorageTransactionOperation {
     #[cfg(test)]
     Discard,
     CreateTransactionDirectory,
-    ListTransactions,
+    AcquireActiveTransaction,
     ActiveTransaction,
     CreateStagedFilesDirectory,
     ResolveTargetPath,
@@ -105,6 +106,10 @@ pub(super) trait StorageTransactionIo: Send + Sync {
         fs::create_dir_all(path)
     }
 
+    fn create_dir(&self, path: &Path) -> std::io::Result<()> {
+        fs::create_dir(path)
+    }
+
     fn target_permissions(&self, path: &Path) -> std::io::Result<Option<fs::Permissions>> {
         match fs::metadata(path) {
             Ok(metadata) => Ok(Some(metadata.permissions())),
@@ -139,12 +144,6 @@ pub(super) trait StorageTransactionIo: Send + Sync {
 
     fn sync_directory(&self, path: &Path) -> std::io::Result<()> {
         File::open(path)?.sync_all()
-    }
-
-    fn read_directory_paths(&self, path: &Path) -> std::io::Result<Vec<PathBuf>> {
-        fs::read_dir(path)?
-            .map(|entry| entry.map(|entry| entry.path()))
-            .collect()
     }
 
     fn rename(&self, from: &Path, to: &Path) -> std::io::Result<()> {
@@ -404,31 +403,20 @@ pub(super) fn prepare_with_directories(
             error,
         )
     })?;
-    let transaction_paths = io
-        .read_directory_paths(&transactions_dir_path)
-        .map_err(|error| {
-            StorageTransactionError::new(
-                StorageTransactionOperation::ListTransactions,
-                &transactions_dir_path,
-                error,
-            )
-        })?;
-    if let Some(active_transaction_path) = transaction_paths.into_iter().find(|path| {
-        path.file_name()
-            .and_then(|name| name.to_str())
-            .is_some_and(|name| Uuid::parse_str(name).is_ok())
-    }) {
+    let transaction_id = Uuid::new_v4();
+    let transaction_dir_path = transactions_dir_path.join(ACTIVE_TRANSACTION_DIRECTORY_NAME);
+    if let Err(error) = io.create_dir(&transaction_dir_path) {
+        let operation = if error.kind() == std::io::ErrorKind::AlreadyExists {
+            StorageTransactionOperation::ActiveTransaction
+        } else {
+            StorageTransactionOperation::AcquireActiveTransaction
+        };
         return Err(StorageTransactionError::new(
-            StorageTransactionOperation::ActiveTransaction,
-            active_transaction_path,
-            std::io::Error::new(
-                std::io::ErrorKind::AlreadyExists,
-                "an active storage transaction already exists",
-            ),
+            operation,
+            &transaction_dir_path,
+            error,
         ));
     }
-    let transaction_id = Uuid::new_v4();
-    let transaction_dir_path = transactions_dir_path.join(transaction_id.hyphenated().to_string());
     let staged_files_dir_path = transaction_dir_path.join("files");
     if let Err(error) = io.create_dir_all(&staged_files_dir_path) {
         let _ = io.remove_dir_all(&transaction_dir_path);

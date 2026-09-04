@@ -1,7 +1,7 @@
 use super::*;
 use serde_json::Value;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
-use std::sync::Mutex;
+use std::sync::{Barrier, Mutex};
 
 fn file_system_io() -> Arc<dyn StorageTransactionIo> {
     Arc::new(FileSystemStorageTransactionIo)
@@ -446,6 +446,52 @@ fn test_prepare_cleanup_tombstoneはactive_transactionとして扱わない() {
     .unwrap();
 
     prepared.discard().unwrap();
+}
+
+#[test]
+fn test_prepare_同時実行では一方だけがactive_transactionを取得する() {
+    let storage_dir = TestStorageDir::new();
+    let barrier = Arc::new(Barrier::new(3));
+    let handles = (0..2)
+        .map(|index| {
+            let barrier = barrier.clone();
+            let storage_dir_path = storage_dir.path.clone();
+            std::thread::spawn(move || {
+                let target_path = storage_dir_path.join(format!("project-{index}.yaml"));
+                barrier.wait();
+                prepare(
+                    file_system_io(),
+                    &storage_dir_path,
+                    Uuid::from_u128(0x2213 + index),
+                    &[WriteRequest {
+                        target_path: &target_path,
+                        bytes: b"new",
+                    }],
+                )
+            })
+        })
+        .collect::<Vec<_>>();
+    barrier.wait();
+
+    let mut prepared_transaction = None;
+    let mut errors = Vec::new();
+    for handle in handles {
+        match handle.join().unwrap() {
+            Ok(prepared) => {
+                assert!(prepared_transaction.replace(prepared).is_none());
+            }
+            Err(error) => errors.push(error),
+        }
+    }
+
+    assert_eq!(errors.len(), 1);
+    assert!(errors[0].to_string().contains("ActiveTransaction"));
+    assert!(storage_dir
+        .path
+        .join(TRANSACTION_DIRECTORY_NAME)
+        .join(ACTIVE_TRANSACTION_DIRECTORY_NAME)
+        .is_dir());
+    prepared_transaction.unwrap().discard().unwrap();
 }
 
 #[test]
