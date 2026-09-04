@@ -52,7 +52,7 @@ Web側だけを検証するcommandは次のとおりです。
 cargo test --locked -p schronu-web --no-default-features --features server
 cargo clippy --locked -p schronu-web --no-default-features --features server --all-targets -- -D warnings
 cargo check --locked -p schronu-web --no-default-features --features web --target wasm32-unknown-unknown
-dx build --locked --web --package schronu-web
+~/.cargo/bin/dx build --locked --web --package schronu-web
 ```
 
 ### testの責務とfixture配置
