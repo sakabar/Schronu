@@ -35,6 +35,10 @@ mod renderer_contract_tests;
 #[path = "schronu/interactive_contract_tests.rs"]
 mod interactive_contract_tests;
 
+#[cfg(test)]
+#[path = "schronu/today_text_contract_tests.rs"]
+mod today_text_contract_tests;
+
 /// CLI applicationを起動する。
 pub fn run_cli() {
     runtime::application();
