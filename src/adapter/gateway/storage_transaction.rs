@@ -671,6 +671,9 @@ fn prepared_from_manifest(
                 storage_dir_path,
                 &storage_dir_path.join(entry.target),
             )?;
+            if entry.operation == ManifestEntryOperation::Delete {
+                validate_delete_target_ancestors(io.as_ref(), storage_dir_path, &target)?;
+            }
             match (entry.operation, entry.staged_file.as_deref()) {
                 (ManifestEntryOperation::Write, Some(staged_file)) => {
                     validate_staged_file_path(&transaction_dir_path, staged_file)?;
@@ -707,6 +710,41 @@ fn prepared_from_manifest(
         io,
         _transaction_lock: transaction_lock,
     })
+}
+
+fn validate_delete_target_ancestors(
+    io: &dyn StorageTransactionIo,
+    storage_dir_path: &Path,
+    target: &Path,
+) -> Result<(), StorageTransactionError> {
+    let mut ancestor_path = storage_dir_path.to_path_buf();
+    let Some(parent) = target.parent() else {
+        return Ok(());
+    };
+    for component in parent.components() {
+        let Component::Normal(name) = component else {
+            unreachable!("validated transaction target must contain only normal components");
+        };
+        ancestor_path.push(name);
+        match io.symlink_metadata(&ancestor_path) {
+            Ok(metadata) if metadata.is_dir() && !metadata.file_type().is_symlink() => {}
+            Ok(_) => {
+                return Err(invalid_target_path_error(
+                    &ancestor_path,
+                    "delete target ancestors must be directories and must not be symbolic links",
+                ));
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => break,
+            Err(error) => {
+                return Err(StorageTransactionError::new(
+                    StorageTransactionOperation::ValidateTargetPath,
+                    &ancestor_path,
+                    error,
+                ));
+            }
+        }
+    }
+    Ok(())
 }
 
 fn invalid_manifest_entry_error(path: &Path, message: &'static str) -> StorageTransactionError {

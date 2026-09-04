@@ -1369,6 +1369,32 @@ fn test_delete_entry_symlinkは参照先を変更せずlinkだけを削除する
     assert_eq!(fs::read(external_path).unwrap(), b"external");
 }
 
+#[cfg(unix)]
+#[test]
+fn test_delete_entry_symlink_parentを拒否し参照先を変更しない() {
+    use std::os::unix::fs::symlink;
+
+    let storage_dir = TestStorageDir::new();
+    let external_dir = TestStorageDir::new();
+    let external_path = external_dir.path.join("project.yaml");
+    fs::write(&external_path, b"external").unwrap();
+    symlink(&external_dir.path, storage_dir.path.join("linked-project")).unwrap();
+    create_delete_transaction(
+        &storage_dir.path,
+        "linked-project/project.yaml",
+        Uuid::from_u128(0x2239),
+        true,
+    );
+
+    let actual = recover(file_system_io(), &storage_dir.path).unwrap_err();
+
+    assert_eq!(
+        actual.operation,
+        StorageTransactionOperation::ValidateTargetPath
+    );
+    assert_eq!(fs::read(external_path).unwrap(), b"external");
+}
+
 #[test]
 fn test_delete_entryはstorage外へのpath_escapeを拒否する() {
     let storage_dir = TestStorageDir::new();
