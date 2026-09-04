@@ -122,119 +122,129 @@ storage_transaction/
 - 対象test: commit order/failure test。
 - Green確認: 対象testと全品質gate。
 
-### Task 8: recoveryとcleanupを分離する
+### Task 8: recoveryを分離する
 
-**Commit:** `Repository: transaction recoveryとcleanupを分離する`
+**Commit:** `Repository: transaction recoveryを分離する`
 
-- 固定する契約: marker判定、roll-forward、tombstone処理を維持する。
-- 変更対象: `recovery.rs`と`cleanup.rs`への機械的移動。
+- 固定する契約: marker判定とroll-forwardを維持する。
+- 変更対象: `recovery.rs`への機械的移動。
 - 依存: Task 7。
-- 対象test: recovery/delete/cleanup test。
+- 対象test: recovery test。
 - Green確認: 対象testと全品質gate。
 
-### Task 9: transaction testを責務別moduleへ分ける
+### Task 9: cleanupを分離する
+
+**Commit:** `Repository: transaction cleanupを分離する`
+
+- 固定する契約: tombstoneへのhandoffとbest-effort再清掃を維持する。
+- 変更対象: `cleanup.rs`への機械的移動。
+- 依存: Task 8。
+- 対象test: cleanup test。
+- Green確認: 対象testと全品質gate。
+
+### Task 10: transaction testを責務別moduleへ分ける
 
 **Commit:** `Test: transaction contractを責務別moduleへ分ける`
 
 - 固定する契約: 既存32 scenarioとすべてのassertion、failure pointを維持する。
 - 変更対象: manifest、prepare、commit、recovery、delete、security testへの機械的分割。
-- 依存: Task 8。
+- 依存: Task 9。
 - 対象test: transaction test全32 scenario。
 - Green確認: 移動前後で全32 scenario Green、全品質gate。
 
-### Task 10: repository transaction testを分離する
+### Task 11: repository transaction testを分離する
 
 **Commit:** `Test: repository transaction契約を専用moduleへ分ける`
 
 - 固定する契約: TD-022由来18 scenarioとすべてのassertion、failure pointを維持する。
 - 変更対象: save、recovery、support testへの機械的分割。
-- 依存: Task 9。
+- 依存: Task 10。
 - 対象test: repository経路test全18 scenario。
 - Green確認: 移動前後で全18 scenario Green、全品質gate。
 
-### Task 11: transaction layoutを一元化する
+### Task 12: transaction layoutを一元化する
 
 **Commit:** `Repository: transaction layoutを一元化する`
 
 - 固定する契約: `.active`、manifest、marker、staged、cleanup、revision pathを従来と同じdisk layoutで生成する。
 - 変更対象: `TransactionLayout`。
-- 依存: Task 10。
+- 依存: Task 11。
 - 対象test: transaction/repository test全件。
 - Green確認: 対象testと全品質gate。
 
-### Task 12: manifest検証済み状態を導入する
+### Task 13: manifest検証済み状態を導入する
 
 **Commit:** `Repository: manifest検証済み状態を導入する`
 
 - 固定する契約: raw manifestを一度だけ検証し、write/deleteをdiscriminatedなvalidated entryとして扱う。
 - 変更対象: manifest decode・validationと利用側。
-- 依存: Task 11。
+- 依存: Task 12。
 - 対象test: malformed、integrity、delete test。
 - Green確認: 対象testと全品質gate。検証済みentryに対する`expect`が0件。
 
-### Task 13: marker前後の状態を型で分離する
+### Task 14: marker前後の状態を型で分離する
 
 **Commit:** `Repository: marker前後の状態を型で分離する`
 
 - 固定する契約: `PreparedTransaction::commit()`がmarkerを公開した後、`CommittedTransaction::roll_forward()`だけがsnapshotを適用する。
 - 変更対象: transaction内部状態とcommit flow。
-- 依存: Task 12。
+- 依存: Task 13。
 - 対象test: marker、crash、revision-last test。
 - Green確認: 対象testと全品質gate。
 
-### Task 14: transaction I/O経路を統一する
+### Task 15: transaction I/O経路を統一する
 
 **Commit:** `Repository: transaction I/O経路を統一する`
 
 - 固定する契約: metadata、directory列挙を含む全filesystem操作をI/O境界経由にし、挙動とerror情報を維持する。
 - 変更対象: `io.rs`と各transaction moduleのI/O呼び出し。
-- 依存: Task 13。
+- 依存: Task 14。
 - 対象test: I/O failure、cleanup、symlink test。
 - Green確認: 対象testと全品質gate。raw filesystem syscallが`io.rs`以外のtransaction製品moduleに0件。
 
-### Task 15: prepare failure injectionを共通化する
+### Task 16: prepare failure injectionを共通化する
 
 **Commit:** `Test: prepare failure injectionを共通化する`
 
 - 固定する契約: prepare時のfailure pointと記録内容を維持する。
 - 変更対象: operation、path matcher、発生回数で故障させる`RecordingIo`。
-- 依存: Task 14。
+- 依存: Task 15。
 - 対象test: prepare test全件。
 - Green確認: 対象testと全品質gate。
 
-### Task 16: commit/recovery failure injectionを共通化する
+### Task 17: commit/recovery failure injectionを共通化する
 
 **Commit:** `Test: commit recovery failure injectionを共通化する`
 
 - 固定する契約: commit order、crash、delete、cleanupのfailure pointと記録内容を維持する。
 - 変更対象: event logとfault ruleを使う共通harness。barrier使用mockだけは専用で残す。
-- 依存: Task 15。
+- 依存: Task 16。
 - 対象test: commit/recovery/delete test全件。
 - Green確認: 対象testと全品質gate。
 
-### Task 17: repository transaction fixtureを共通化する
+### Task 18: repository transaction fixtureを共通化する
 
 **Commit:** `Test: repository transaction fixtureを共通化する`
 
 - 固定する契約: repository製品経路の既存failure scenarioを維持する。
 - 変更対象: repository側5種のI/O mock、snapshot作成・検証helper。
-- 依存: Task 16。
+- 依存: Task 17。
 - 対象test: TD-022 repository test全18件。
 - Green確認: 対象testと全品質gate。
 
-### Task 18: TD-022の保守性検証を記録する
+### Task 19: TD-022の保守性検証を記録する
 
 **Commit:** `Docs: TD-022の保守性検証を記録する`
 
 - 固定する契約: module責務、累積差分、file行数、test維持、残存非対象を記録する。
 - 変更対象: `backlog.md`。
-- 依存: Task 17。
+- 依存: Task 18。
 - 対象test: final gateと最終履歴review。
 - Green確認: 全品質gate、正しさreview、保守性review、clean status。
 
 ## Per-Commit Workflow
 
-機械的移動commitではsymbol名、型構造、処理順序を変更しない。型・I/O設計の変更はTask 11以降へ分離する。
+機械的移動commitではsymbol名、型構造、処理順序を変更しない。型・I/O設計の変更はTask 12以降へ分離する。
 
 各Green commitで次の順序を守る。
 
