@@ -463,7 +463,8 @@ fn contains_direct_free_function_call(code: &str, function_name: &str) -> bool {
     code.match_indices(function_name).any(|(start, _)| {
         let before = &code[..start];
         let after = &code[start + function_name.len()..];
-        let has_identifier_boundary = before
+        let target_prefix = before.strip_suffix("r#").unwrap_or(before);
+        let has_identifier_boundary = target_prefix
             .chars()
             .next_back()
             .is_none_or(|character| !is_possible_identifier_character(character))
@@ -471,16 +472,10 @@ fn contains_direct_free_function_call(code: &str, function_name: &str) -> bool {
                 .chars()
                 .next()
                 .is_none_or(|character| !is_possible_identifier_character(character));
-        let is_unqualified = !matches!(
-            before
-                .chars()
-                .rev()
-                .find(|character| !character.is_whitespace()),
-            Some('.' | ':')
-        );
-        let previous_token = before
-            .trim_end()
-            .rsplit(|character: char| !(character.is_ascii_alphanumeric() || character == '_'))
+        let trimmed_prefix = target_prefix.trim_end();
+        let is_unqualified = !trimmed_prefix.ends_with('.') && !trimmed_prefix.ends_with("::");
+        let previous_token = trimmed_prefix
+            .rsplit(|character: char| !is_possible_identifier_character(character))
             .next()
             .unwrap_or_default();
         has_identifier_boundary
@@ -2402,6 +2397,9 @@ fn direct_free_function_call_scannerはqualified_callと非codeを除外する()
         "driver.handle_interactive_driver_event();",
         "runtime::handle_interactive_driver_event();",
         "fn handle_interactive_driver_event() {}",
+        "fn r#handle_interactive_driver_event() {}",
+        "driver.r#handle_interactive_driver_event();",
+        "runtime::r#handle_interactive_driver_event();",
         "// handle_interactive_driver_event();",
         "let marker = \"handle_interactive_driver_event();\";",
     ] {
@@ -2412,6 +2410,14 @@ fn direct_free_function_call_scannerはqualified_callと非codeを除外する()
     }
     assert!(contains_direct_free_function_call(
         &code_only("handle_interactive_driver_event ();"),
+        function_name
+    ));
+    assert!(contains_direct_free_function_call(
+        &code_only("State { field: handle_interactive_driver_event() };"),
+        function_name
+    ));
+    assert!(contains_direct_free_function_call(
+        &code_only("r#handle_interactive_driver_event();"),
         function_name
     ));
 }
