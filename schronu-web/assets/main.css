@@ -1,0 +1,46 @@
+:root {
+    color-scheme: light dark;
+    font-family: system-ui, sans-serif;
+}
+
+body {
+    margin: 0;
+}
+
+.shell {
+    margin: 0 auto;
+    max-width: 80rem;
+    padding: 1.5rem;
+}
+
+.toolbar {
+    align-items: center;
+    display: flex;
+    gap: 1rem;
+    justify-content: space-between;
+}
+
+.toolbar h1 {
+    font-size: 1.25rem;
+}
+
+button {
+    cursor: pointer;
+    padding: 0.5rem 1rem;
+}
+
+button:disabled {
+    cursor: wait;
+}
+
+.error {
+    border: 1px solid currentColor;
+    margin-block: 1rem;
+    padding: 1rem;
+}
+
+.today-text {
+    overflow-x: auto;
+    padding-block: 1rem;
+    white-space: pre;
+}
