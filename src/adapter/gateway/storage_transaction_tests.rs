@@ -396,6 +396,70 @@ struct TestStorageDir {
     path: PathBuf,
 }
 
+struct DeleteSyncIo {
+    target_path: PathBuf,
+    target_removed: AtomicBool,
+    parent_synced_after_remove: AtomicBool,
+    fail_first_target_parent_sync: AtomicBool,
+}
+
+impl StorageTransactionIo for DeleteSyncIo {
+    fn remove_file(&self, path: &Path) -> std::io::Result<()> {
+        let result = FileSystemStorageTransactionIo.remove_file(path);
+        if result.is_ok() && path == self.target_path {
+            self.target_removed.store(true, Ordering::SeqCst);
+        }
+        result
+    }
+
+    fn sync_directory(&self, path: &Path) -> std::io::Result<()> {
+        if self.target_removed.load(Ordering::SeqCst) && Some(path) == self.target_path.parent() {
+            if self
+                .fail_first_target_parent_sync
+                .swap(false, Ordering::SeqCst)
+            {
+                return Err(std::io::Error::other(
+                    "injected delete directory sync failure",
+                ));
+            }
+            self.parent_synced_after_remove
+                .store(true, Ordering::SeqCst);
+        }
+        FileSystemStorageTransactionIo.sync_directory(path)
+    }
+}
+
+fn create_delete_transaction(
+    storage_dir_path: &Path,
+    target: &str,
+    revision: Uuid,
+    committed: bool,
+) -> PathBuf {
+    let transaction_dir_path = storage_dir_path
+        .join(TRANSACTION_DIRECTORY_NAME)
+        .join(ACTIVE_TRANSACTION_DIRECTORY_NAME);
+    fs::create_dir_all(transaction_dir_path.join("files")).unwrap();
+    let manifest = serde_json::json!({
+        "version": 1,
+        "transaction_id": Uuid::from_u128(0x2230),
+        "revision": revision,
+        "directories": [],
+        "entries": [{
+            "target": target,
+            "operation": "delete"
+        }]
+    });
+    fs::write(
+        transaction_dir_path.join("manifest.json"),
+        serde_json::to_vec(&manifest).unwrap(),
+    )
+    .unwrap();
+    if committed {
+        fs::write(transaction_dir_path.join("commit"), b"").unwrap();
+    }
+    transaction_dir_path
+}
+
 impl TestStorageDir {
     fn new() -> Self {
         let path =
@@ -1103,4 +1167,136 @@ fn test_commit_cleanup失敗はtombstoneへ回復情報を保持して成功す�
         assert!(cleanup_dir_path.join("files/0").is_file(), "{phase:?}");
         assert_eq!(fs::read(target_path).unwrap(), b"new");
     }
+}
+
+#[test]
+fn test_delete_entry_markerなしではtargetを維持しtransactionを破棄する() {
+    let storage_dir = TestStorageDir::new();
+    let target_path = storage_dir.path.join("project/project.yaml");
+    fs::create_dir_all(target_path.parent().unwrap()).unwrap();
+    fs::write(&target_path, b"old").unwrap();
+    let transaction_dir_path = create_delete_transaction(
+        &storage_dir.path,
+        "project/project.yaml",
+        Uuid::from_u128(0x2231),
+        false,
+    );
+
+    recover(file_system_io(), &storage_dir.path).unwrap();
+
+    assert_eq!(fs::read(target_path).unwrap(), b"old");
+    assert!(!transaction_dir_path.exists());
+}
+
+#[test]
+fn test_delete_entry_markerありではtargetを削除しrevisionを更新する() {
+    let storage_dir = TestStorageDir::new();
+    let target_path = storage_dir.path.join("project/project.yaml");
+    fs::create_dir_all(target_path.parent().unwrap()).unwrap();
+    fs::write(&target_path, b"old").unwrap();
+    let revision = Uuid::from_u128(0x2232);
+    create_delete_transaction(&storage_dir.path, "project/project.yaml", revision, true);
+
+    recover(file_system_io(), &storage_dir.path).unwrap();
+
+    assert!(!target_path.exists());
+    assert_eq!(
+        fs::read_to_string(storage_dir.path.join(".revision")).unwrap(),
+        format!("{revision}\n")
+    );
+}
+
+#[test]
+fn test_delete_entry_targetがなくても再実行可能である() {
+    let storage_dir = TestStorageDir::new();
+    let revision = Uuid::from_u128(0x2233);
+    create_delete_transaction(&storage_dir.path, "project/project.yaml", revision, true);
+
+    recover(file_system_io(), &storage_dir.path).unwrap();
+    recover(file_system_io(), &storage_dir.path).unwrap();
+
+    assert_eq!(
+        fs::read_to_string(storage_dir.path.join(".revision")).unwrap(),
+        format!("{revision}\n")
+    );
+}
+
+#[test]
+fn test_delete_entry後にparent_directoryをsyncする() {
+    let storage_dir = TestStorageDir::new();
+    let target_path = storage_dir.path.join("project/project.yaml");
+    fs::create_dir_all(target_path.parent().unwrap()).unwrap();
+    fs::write(&target_path, b"old").unwrap();
+    create_delete_transaction(
+        &storage_dir.path,
+        "project/project.yaml",
+        Uuid::from_u128(0x2234),
+        true,
+    );
+    let io = Arc::new(DeleteSyncIo {
+        target_path,
+        target_removed: AtomicBool::new(false),
+        parent_synced_after_remove: AtomicBool::new(false),
+        fail_first_target_parent_sync: AtomicBool::new(false),
+    });
+
+    recover(io.clone(), &storage_dir.path).unwrap();
+
+    assert!(io.target_removed.load(Ordering::SeqCst));
+    assert!(io.parent_synced_after_remove.load(Ordering::SeqCst));
+}
+
+#[test]
+fn test_delete_entry_sync中断後の回復再試行でnew_snapshotへ到達する() {
+    let storage_dir = TestStorageDir::new();
+    let target_path = storage_dir.path.join("project/project.yaml");
+    fs::create_dir_all(target_path.parent().unwrap()).unwrap();
+    fs::write(&target_path, b"old").unwrap();
+    let revision = Uuid::from_u128(0x2235);
+    let transaction_dir_path =
+        create_delete_transaction(&storage_dir.path, "project/project.yaml", revision, true);
+    let io = Arc::new(DeleteSyncIo {
+        target_path: target_path.clone(),
+        target_removed: AtomicBool::new(false),
+        parent_synced_after_remove: AtomicBool::new(false),
+        fail_first_target_parent_sync: AtomicBool::new(true),
+    });
+
+    let first = recover(io, &storage_dir.path);
+    assert!(first.is_err());
+    assert!(!target_path.exists());
+    assert!(transaction_dir_path.join("commit").is_file());
+
+    recover(file_system_io(), &storage_dir.path).unwrap();
+
+    assert!(!target_path.exists());
+    assert!(!transaction_dir_path.exists());
+    assert_eq!(
+        fs::read_to_string(storage_dir.path.join(".revision")).unwrap(),
+        format!("{revision}\n")
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn test_delete_entry_symlinkは参照先を変更せずlinkだけを削除する() {
+    use std::os::unix::fs::symlink;
+
+    let storage_dir = TestStorageDir::new();
+    let external_dir = TestStorageDir::new();
+    let external_path = external_dir.path.join("external.yaml");
+    fs::write(&external_path, b"external").unwrap();
+    let target_path = storage_dir.path.join("project.yaml");
+    symlink(&external_path, &target_path).unwrap();
+    create_delete_transaction(
+        &storage_dir.path,
+        "project.yaml",
+        Uuid::from_u128(0x2236),
+        true,
+    );
+
+    recover(file_system_io(), &storage_dir.path).unwrap();
+
+    assert!(!target_path.exists());
+    assert_eq!(fs::read(external_path).unwrap(), b"external");
 }
