@@ -1,8 +1,28 @@
 use super::*;
+use crate::adapter::gateway::storage_transaction::{PreparedTransaction, StorageTransactionError};
 use crate::adapter::gateway::yaml::YamlConversionError;
 use crate::application::interface::ProjectRegistrationError;
 use chrono::{Duration, TimeZone};
 use std::path::PathBuf;
+
+struct FailingStorageTransactionIo;
+
+impl StorageTransactionIo for FailingStorageTransactionIo {
+    fn prepare(
+        &self,
+        storage_dir_path: &Path,
+        revision: Uuid,
+        writes: &[WriteRequest<'_>],
+    ) -> Result<PreparedTransaction, StorageTransactionError> {
+        let blocked_storage_dir_path = storage_dir_path.join("injected-prepare-failure");
+        fs::write(&blocked_storage_dir_path, b"blocked").unwrap();
+        crate::adapter::gateway::storage_transaction::prepare(
+            &blocked_storage_dir_path,
+            revision,
+            writes,
+        )
+    }
+}
 
 struct FailingAtomicSaveFile {
     write_error: bool,
@@ -1447,7 +1467,7 @@ fn test_save_prepare失敗時は複数projectとrevisionを旧snapshotに維持�
         .join("project.yaml");
     let first_old_bytes = fs::read(&first_project_yaml_path).unwrap();
     let second_old_bytes = fs::read(&second_project_yaml_path).unwrap();
-    fs::write(storage_dir.path.join(".schronu-transactions"), b"blocked").unwrap();
+    repository.storage_transaction_io = Arc::new(FailingStorageTransactionIo);
     first_task.set_estimated_work_seconds(30 * 60).unwrap();
     second_task.set_estimated_work_seconds(45 * 60).unwrap();
 
@@ -1458,7 +1478,10 @@ fn test_save_prepare失敗時は複数projectとrevisionを旧snapshotに維持�
         Uuid::parse_str(fs::read_to_string(&revision_path).unwrap().trim()).unwrap();
     assert_eq!(disk_revision, previous_revision);
     assert_eq!(fs::read(first_project_yaml_path).unwrap(), first_old_bytes);
-    assert_eq!(fs::read(second_project_yaml_path).unwrap(), second_old_bytes);
+    assert_eq!(
+        fs::read(second_project_yaml_path).unwrap(),
+        second_old_bytes
+    );
     assert_eq!(repository.storage_revision.get(), Some(previous_revision));
 }
 

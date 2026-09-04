@@ -1,3 +1,6 @@
+use crate::adapter::gateway::storage_transaction::{
+    FileSystemStorageTransactionIo, StorageTransactionIo, WriteRequest,
+};
 use crate::adapter::gateway::yaml::{task_snapshot_to_yaml, yaml_to_task};
 use crate::application::interface::{
     ProjectRegistrationError, RepositoryReloadOutcome, TaskRepositoryError,
@@ -17,6 +20,7 @@ use std::fs;
 use std::fs::File;
 use std::io::prelude::*;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use uuid::Uuid;
 use walkdir::WalkDir;
 use yaml_rust::{Yaml, YamlEmitter, YamlLoader};
@@ -30,6 +34,7 @@ pub struct TaskRepository {
     id_to_task_map: RefCell<HashMap<Uuid, TaskHandle>>,
     storage_revision: Cell<Option<Uuid>>,
     has_loaded: bool,
+    storage_transaction_io: Arc<dyn StorageTransactionIo>,
 }
 
 struct Project {
@@ -353,6 +358,7 @@ impl TaskRepository {
             id_to_task_map: RefCell::new(HashMap::new()),
             storage_revision: Cell::new(None),
             has_loaded: false,
+            storage_transaction_io: Arc::new(FileSystemStorageTransactionIo),
         }
     }
 
@@ -767,16 +773,42 @@ impl TaskRepositoryTrait for TaskRepository {
             ));
         }
         let new_storage_revision = Uuid::new_v4();
-        let revision_text = format!("{new_storage_revision}\n");
-        write_file_atomically(&revision_path, revision_text.as_bytes()).map_err(|error| {
-            TaskRepositoryError::new(ApplicationRepositoryOperation::Save, error)
-        })?;
-
-        for (project, bytes) in prepared_writes {
-            write_file_atomically(&project.project_yaml_file_path, &bytes).map_err(|error| {
+        let storage_dir_path = Path::new(&self.project_storage_dir_name);
+        let write_requests = prepared_writes
+            .iter()
+            .map(|(project, bytes)| WriteRequest {
+                target_path: &project.project_yaml_file_path,
+                bytes,
+            })
+            .collect::<Vec<_>>();
+        let prepared_transaction = self
+            .storage_transaction_io
+            .prepare(storage_dir_path, new_storage_revision, &write_requests)
+            .map_err(|error| {
                 TaskRepositoryError::new(ApplicationRepositoryOperation::Save, error)
             })?;
+        let revision_text = format!("{new_storage_revision}\n");
+        if let Err(error) = write_file_atomically(&revision_path, revision_text.as_bytes()) {
+            drop(prepared_transaction);
+            return Err(TaskRepositoryError::new(
+                ApplicationRepositoryOperation::Save,
+                error,
+            ));
         }
+
+        for (project, bytes) in prepared_writes {
+            if let Err(error) = write_file_atomically(&project.project_yaml_file_path, &bytes) {
+                drop(prepared_transaction);
+                return Err(TaskRepositoryError::new(
+                    ApplicationRepositoryOperation::Save,
+                    error,
+                ));
+            }
+        }
+
+        prepared_transaction.discard().map_err(|error| {
+            TaskRepositoryError::new(ApplicationRepositoryOperation::Save, error)
+        })?;
 
         for project in projects_to_save {
             project.mark_clean().map_err(|error| {
