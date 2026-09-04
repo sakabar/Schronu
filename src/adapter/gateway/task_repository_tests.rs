@@ -1874,46 +1874,67 @@ fn test_load_marker済みtransactionの未適用staged_file欠落はpathとphase
 }
 
 #[test]
-fn test_load_marker済みtransactionの同一長staged破損をlive変更前に拒否する() {
-    let storage_dir = TestStorageDir::new();
-    let now = Local.with_ymd_and_hms(2026, 9, 5, 13, 0, 0).unwrap();
-    let (first_id, second_id, _, active_transaction_path) =
-        create_committed_transaction_interruption(
+fn test_load_marker済みtransactionの同一長staged破損を適用状態に関わらず拒否する() {
+    for target_already_applied in [false, true] {
+        let storage_dir = TestStorageDir::new();
+        let now = Local.with_ymd_and_hms(2026, 9, 5, 13, 0, 0).unwrap();
+        let (_, _, _, active_transaction_path) = create_committed_transaction_interruption(
             &storage_dir,
             now,
             CommittedCrashPhase::BeforeFirstProjectRename,
         );
-    let first_project_path = storage_dir
-        .project_dir_path("20260905", "roll-forward-first", first_id)
-        .join("project.yaml");
-    let second_project_path = storage_dir
-        .project_dir_path("20260905", "roll-forward-second", second_id)
-        .join("project.yaml");
-    let old_first = fs::read(&first_project_path).unwrap();
-    let old_second = fs::read(&second_project_path).unwrap();
-    let revision_path = storage_dir.path.join(".revision");
-    let old_revision = fs::read(&revision_path).unwrap();
-    let staged_file_path = active_transaction_path.join("files/1");
-    let mut corrupted = fs::read(&staged_file_path).unwrap();
-    corrupted[0] ^= 1;
-    fs::write(&staged_file_path, &corrupted).unwrap();
-    assert_eq!(
-        fs::metadata(&staged_file_path).unwrap().len(),
-        corrupted.len() as u64
-    );
-    let mut repository = TaskRepository::new(storage_dir.path_str());
+        let manifest: serde_json::Value = serde_json::from_slice(
+            &fs::read(active_transaction_path.join("manifest.json")).unwrap(),
+        )
+        .unwrap();
+        let entries = manifest["entries"].as_array().unwrap();
+        let corrupt_index = if target_already_applied { 0 } else { 1 };
+        let mut expected_live = entries
+            .iter()
+            .map(|entry| {
+                let target_path = storage_dir.path.join(entry["target"].as_str().unwrap());
+                let bytes = fs::read(&target_path).unwrap();
+                (target_path, bytes)
+            })
+            .collect::<Vec<_>>();
+        let staged_file_path =
+            active_transaction_path.join(entries[corrupt_index]["staged_file"].as_str().unwrap());
+        let expected_bytes = fs::read(&staged_file_path).unwrap();
+        if target_already_applied {
+            fs::write(&expected_live[corrupt_index].0, &expected_bytes).unwrap();
+            expected_live[corrupt_index].1 = expected_bytes.clone();
+        }
+        let mut corrupted = expected_bytes;
+        corrupted[0] ^= 1;
+        fs::write(&staged_file_path, &corrupted).unwrap();
+        assert_eq!(
+            fs::metadata(&staged_file_path).unwrap().len(),
+            corrupted.len() as u64
+        );
+        let revision_path = storage_dir.path.join(".revision");
+        let old_revision = fs::read(&revision_path).unwrap();
+        let mut repository = TaskRepository::new(storage_dir.path_str());
 
-    let actual = repository.load().unwrap_err();
+        let actual = repository.load().unwrap_err();
 
-    assert!(active_transaction_path.join("commit").is_file());
-    assert_eq!(fs::read(first_project_path).unwrap(), old_first);
-    assert_eq!(fs::read(second_project_path).unwrap(), old_second);
-    assert_eq!(fs::read(revision_path).unwrap(), old_revision);
-    let source = storage_transaction_error(&actual);
-    assert!(source.to_string().contains("ValidateStagedContent"));
-    assert!(source
-        .to_string()
-        .contains(&staged_file_path.display().to_string()));
+        assert!(
+            active_transaction_path.join("commit").is_file(),
+            "target_already_applied: {target_already_applied}"
+        );
+        for (target_path, expected_bytes) in expected_live {
+            assert_eq!(
+                fs::read(target_path).unwrap(),
+                expected_bytes,
+                "target_already_applied: {target_already_applied}"
+            );
+        }
+        assert_eq!(fs::read(revision_path).unwrap(), old_revision);
+        let source = storage_transaction_error(&actual);
+        assert!(source.to_string().contains("ValidateStagedContent"));
+        assert!(source
+            .to_string()
+            .contains(&staged_file_path.display().to_string()));
+    }
 }
 
 #[test]

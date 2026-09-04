@@ -360,8 +360,27 @@ impl PreparedTransaction {
                         .as_ref()
                         .expect("validated write entry must contain a staged file"),
                 );
-                let staged_metadata = match self.io.symlink_metadata(&staged_file_path) {
-                    Ok(metadata) if metadata.file_type().is_file() => Some(metadata),
+                let staged_material = match self.io.symlink_metadata(&staged_file_path) {
+                    Ok(metadata) if metadata.file_type().is_file() => {
+                        let bytes = self.io.read_file(&staged_file_path).map_err(|error| {
+                            StorageTransactionError::new(
+                                StorageTransactionOperation::ReadStagedFile,
+                                &staged_file_path,
+                                error,
+                            )
+                        })?;
+                        if !content_matches(&bytes, expected_length, expected_checksum) {
+                            return Err(StorageTransactionError::new(
+                                StorageTransactionOperation::ValidateStagedContent,
+                                &staged_file_path,
+                                std::io::Error::new(
+                                    std::io::ErrorKind::InvalidData,
+                                    "staged transaction material does not match manifest content",
+                                ),
+                            ));
+                        }
+                        Some((bytes, metadata.permissions()))
+                    }
                     Ok(_) => {
                         return Err(StorageTransactionError::new(
                             StorageTransactionOperation::ValidateStagedFile,
@@ -410,7 +429,7 @@ impl PreparedTransaction {
                         ));
                     }
                 }
-                let metadata = staged_metadata.ok_or_else(|| {
+                let (bytes, permissions) = staged_material.ok_or_else(|| {
                     StorageTransactionError::new(
                         StorageTransactionOperation::ReadStagedFile,
                         &staged_file_path,
@@ -420,28 +439,11 @@ impl PreparedTransaction {
                         ),
                     )
                 })?;
-                let bytes = self.io.read_file(&staged_file_path).map_err(|error| {
-                    StorageTransactionError::new(
-                        StorageTransactionOperation::ReadStagedFile,
-                        &staged_file_path,
-                        error,
-                    )
-                })?;
-                if !content_matches(&bytes, expected_length, expected_checksum) {
-                    return Err(StorageTransactionError::new(
-                        StorageTransactionOperation::ValidateStagedContent,
-                        &staged_file_path,
-                        std::io::Error::new(
-                            std::io::ErrorKind::InvalidData,
-                            "staged transaction material does not match manifest content",
-                        ),
-                    ));
-                }
                 Ok(PreflightEntry {
                     target_path,
                     operation: entry.operation,
                     bytes: Some(bytes),
-                    permissions: Some(metadata.permissions()),
+                    permissions: Some(permissions),
                     already_applied: false,
                 })
             })
