@@ -585,13 +585,14 @@ fn test_反復完了はhierarchy_grant取得失敗時に何も変更しない() 
 
 #[test]
 fn test_反復完了はborrow競合時に何も変更しない() {
-    let parent = new_test_task_handle("反復親").unwrap();
+    let root = new_test_task_handle("root").unwrap();
+    let parent = root.create_child(new_test_task_attr("反復親")).unwrap();
     parent.set_estimated_work_seconds(600).unwrap();
     let child = parent.create_child(new_test_task_attr("今回")).unwrap();
-    let before_snapshot = parent.snapshot().unwrap();
-    let before_revision = parent.get_persistent_mutation_revision().unwrap();
+    let before_snapshot = root.snapshot().unwrap();
+    let before_revision = root.get_persistent_mutation_revision().unwrap();
 
-    let actual = child.with_shared_data_borrow_for_test(|| {
+    let actual = parent.with_shared_data_borrow_for_test(|| {
         child.complete_with_next_repetition(
             300,
             Local.with_ymd_and_hms(2026, 8, 20, 12, 34, 56).unwrap(),
@@ -601,9 +602,9 @@ fn test_反復完了はborrow競合時に何も変更しない() {
     });
 
     assert!(matches!(actual, Err(TaskTreeError::Borrow)));
-    assert_eq!(parent.snapshot().unwrap(), before_snapshot);
+    assert_eq!(root.snapshot().unwrap(), before_snapshot);
     assert_eq!(
-        parent.get_persistent_mutation_revision().unwrap(),
+        root.get_persistent_mutation_revision().unwrap(),
         before_revision
     );
 }
