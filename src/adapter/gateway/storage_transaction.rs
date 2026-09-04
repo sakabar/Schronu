@@ -1,3 +1,4 @@
+use fs2::FileExt;
 use serde::Serialize;
 use std::error::Error;
 use std::fmt;
@@ -9,6 +10,7 @@ use uuid::Uuid;
 
 pub(super) const TRANSACTION_DIRECTORY_NAME: &str = ".schronu-transactions";
 const ACTIVE_TRANSACTION_DIRECTORY_NAME: &str = ".active";
+const TRANSACTION_LOCK_FILE_NAME: &str = ".lock";
 
 #[derive(Debug)]
 pub(super) struct StorageTransactionError {
@@ -24,6 +26,7 @@ enum StorageTransactionOperation {
     CreateTransactionDirectory,
     AcquireActiveTransaction,
     ActiveTransaction,
+    AcquireTransactionLock,
     InspectActiveTransaction,
     CommittedTransaction,
     DiscardUncommitted,
@@ -172,6 +175,11 @@ pub(super) struct PreparedTransaction {
     directories: Vec<PathBuf>,
     entries: Vec<PreparedEntry>,
     io: Arc<dyn StorageTransactionIo>,
+    _transaction_lock: TransactionLock,
+}
+
+struct TransactionLock {
+    _file: File,
 }
 
 struct PreparedEntry {
@@ -386,6 +394,18 @@ pub(super) fn recover_uncommitted(
     storage_dir_path: &Path,
 ) -> Result<(), StorageTransactionError> {
     let transactions_dir_path = storage_dir_path.join(TRANSACTION_DIRECTORY_NAME);
+    match fs::symlink_metadata(&transactions_dir_path) {
+        Ok(_) => {}
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(error) => {
+            return Err(StorageTransactionError::new(
+                StorageTransactionOperation::InspectActiveTransaction,
+                &transactions_dir_path,
+                error,
+            ));
+        }
+    }
+    let _transaction_lock = acquire_transaction_lock(&transactions_dir_path)?;
     let transaction_dir_path = transactions_dir_path.join(ACTIVE_TRANSACTION_DIRECTORY_NAME);
     match fs::symlink_metadata(&transaction_dir_path) {
         Ok(metadata) if metadata.is_dir() => {}
@@ -464,8 +484,19 @@ pub(super) fn prepare_with_directories(
             error,
         )
     })?;
-    let transaction_id = Uuid::new_v4();
     let transaction_dir_path = transactions_dir_path.join(ACTIVE_TRANSACTION_DIRECTORY_NAME);
+    let transaction_lock = acquire_transaction_lock(&transactions_dir_path).map_err(|error| {
+        if error.source.kind() == std::io::ErrorKind::WouldBlock {
+            StorageTransactionError::new(
+                StorageTransactionOperation::ActiveTransaction,
+                &transaction_dir_path,
+                error.source,
+            )
+        } else {
+            error
+        }
+    })?;
+    let transaction_id = Uuid::new_v4();
     if let Err(error) = io.create_dir(&transaction_dir_path) {
         let operation = if error.kind() == std::io::ErrorKind::AlreadyExists {
             StorageTransactionOperation::ActiveTransaction
@@ -525,7 +556,57 @@ pub(super) fn prepare_with_directories(
         directories,
         entries,
         io,
+        _transaction_lock: transaction_lock,
     })
+}
+
+fn acquire_transaction_lock(
+    transactions_dir_path: &Path,
+) -> Result<TransactionLock, StorageTransactionError> {
+    let lock_path = transactions_dir_path.join(TRANSACTION_LOCK_FILE_NAME);
+    let file = open_transaction_lock_file(&lock_path).map_err(|error| {
+        StorageTransactionError::new(
+            StorageTransactionOperation::AcquireTransactionLock,
+            &lock_path,
+            error,
+        )
+    })?;
+    file.try_lock_exclusive().map_err(|error| {
+        StorageTransactionError::new(
+            StorageTransactionOperation::AcquireTransactionLock,
+            &lock_path,
+            error,
+        )
+    })?;
+    Ok(TransactionLock { _file: file })
+}
+
+#[cfg(unix)]
+fn open_transaction_lock_file(path: &Path) -> std::io::Result<File> {
+    use std::os::unix::fs::OpenOptionsExt;
+
+    let file = fs::OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .read(true)
+        .write(true)
+        .custom_flags(libc::O_NOFOLLOW)
+        .open(path)?;
+    if !file.metadata()?.file_type().is_file() {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            "transaction lock path must be a regular file",
+        ));
+    }
+    Ok(file)
+}
+
+#[cfg(not(unix))]
+fn open_transaction_lock_file(_path: &Path) -> std::io::Result<File> {
+    Err(std::io::Error::new(
+        std::io::ErrorKind::Unsupported,
+        "transaction locking is supported only on Unix platforms",
+    ))
 }
 
 #[allow(clippy::too_many_arguments)]

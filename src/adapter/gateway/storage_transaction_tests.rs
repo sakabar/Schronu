@@ -100,6 +100,32 @@ struct CommitOrderIo {
     second_target_path: PathBuf,
 }
 
+struct BlockingMarkerPublicationIo {
+    marker_published: AtomicBool,
+    marker_sync_started: Barrier,
+    marker_sync_resume: Barrier,
+}
+
+impl StorageTransactionIo for BlockingMarkerPublicationIo {
+    fn rename(&self, from: &Path, to: &Path) -> std::io::Result<()> {
+        FileSystemStorageTransactionIo.rename(from, to)?;
+        if to.file_name().is_some_and(|name| name == "commit") {
+            self.marker_published.store(true, Ordering::SeqCst);
+        }
+        Ok(())
+    }
+
+    fn sync_directory(&self, path: &Path) -> std::io::Result<()> {
+        if path.file_name().is_some_and(|name| name == ".active")
+            && self.marker_published.load(Ordering::SeqCst)
+        {
+            self.marker_sync_started.wait();
+            self.marker_sync_resume.wait();
+        }
+        FileSystemStorageTransactionIo.sync_directory(path)
+    }
+}
+
 impl StorageTransactionIo for CommitOrderIo {
     fn create_dir_all(&self, path: &Path) -> std::io::Result<()> {
         if path.file_name().is_some_and(|name| name == "markdown") {
@@ -421,6 +447,64 @@ fn test_recover_uncommitted_markerありactive_transactionを破棄しない() {
 }
 
 #[test]
+fn test_recover_uncommitted_prepared_transaction_drop後にlockを再取得する() {
+    let storage_dir = TestStorageDir::new();
+    let target_path = storage_dir.path.join("project.yaml");
+    let prepared = prepare(
+        file_system_io(),
+        &storage_dir.path,
+        Uuid::from_u128(0x2253),
+        &[WriteRequest {
+            target_path: &target_path,
+            bytes: b"new",
+        }],
+    )
+    .unwrap();
+    let active_transaction_path = prepared.transaction_dir_path.clone();
+
+    drop(prepared);
+    recover_uncommitted(file_system_io(), &storage_dir.path).unwrap();
+
+    assert!(!active_transaction_path.exists());
+}
+
+#[test]
+fn test_recover_uncommitted_marker公開中のlive_writerとは競合してactiveを削除しない() {
+    let storage_dir = TestStorageDir::new();
+    let target_path = storage_dir.path.join("project.yaml");
+    let revision_path = storage_dir.path.join(".revision");
+    let io = Arc::new(BlockingMarkerPublicationIo {
+        marker_published: AtomicBool::new(false),
+        marker_sync_started: Barrier::new(2),
+        marker_sync_resume: Barrier::new(2),
+    });
+    let prepared = prepare(
+        io.clone(),
+        &storage_dir.path,
+        Uuid::from_u128(0x2252),
+        &[WriteRequest {
+            target_path: &target_path,
+            bytes: b"new",
+        }],
+    )
+    .unwrap();
+    let active_transaction_path = prepared.transaction_dir_path.clone();
+    let commit_thread = std::thread::spawn(move || prepared.commit(&revision_path));
+    io.marker_sync_started.wait();
+
+    let actual = recover_uncommitted(file_system_io(), &storage_dir.path).unwrap_err();
+
+    assert!(actual.to_string().contains("AcquireTransactionLock"));
+    assert!(actual.source().is_some_and(|source| source
+        .downcast_ref::<std::io::Error>()
+        .is_some_and(|error| { error.kind() == std::io::ErrorKind::WouldBlock })));
+    assert!(active_transaction_path.join("commit").is_file());
+    io.marker_sync_resume.wait();
+    commit_thread.join().unwrap().unwrap();
+    assert_eq!(fs::read(target_path).unwrap(), b"new");
+}
+
+#[test]
 fn test_prepare_staged_fileとimmutable_manifestを作成する() {
     let storage_dir = TestStorageDir::new();
     let target_path = storage_dir.path.join("project/project.yaml");
@@ -472,7 +556,9 @@ fn test_prepare_staged_files_directory作成失敗時はuuid_directoryを残さ�
 
     assert!(actual.is_err());
     let transactions_dir_path = storage_dir.path.join(TRANSACTION_DIRECTORY_NAME);
-    assert_eq!(fs::read_dir(transactions_dir_path).unwrap().count(), 0);
+    assert!(!transactions_dir_path
+        .join(ACTIVE_TRANSACTION_DIRECTORY_NAME)
+        .exists());
 }
 
 #[test]
@@ -836,11 +922,14 @@ fn test_commit_markerをsyncしてからprojectを適用しrevisionを最後に�
         fs::read_to_string(storage_dir.path.join(".revision")).unwrap(),
         format!("{revision}\n")
     );
+    let transaction_entries = fs::read_dir(storage_dir.path.join(TRANSACTION_DIRECTORY_NAME))
+        .unwrap()
+        .collect::<Result<Vec<_>, _>>()
+        .unwrap();
+    assert_eq!(transaction_entries.len(), 1);
     assert_eq!(
-        fs::read_dir(storage_dir.path.join(TRANSACTION_DIRECTORY_NAME))
-            .unwrap()
-            .count(),
-        0
+        transaction_entries[0].file_name(),
+        TRANSACTION_LOCK_FILE_NAME
     );
 }
 
