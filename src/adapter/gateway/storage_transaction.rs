@@ -116,6 +116,10 @@ struct ManifestEntry {
     operation: ManifestEntryOperation,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     staged_file: Option<PathBuf>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    content_length: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    content_checksum: Option<String>,
 }
 
 #[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
@@ -218,6 +222,8 @@ struct PreparedEntry {
     target: PathBuf,
     operation: ManifestEntryOperation,
     staged_file: Option<PathBuf>,
+    _content_length: Option<u64>,
+    _content_checksum: Option<String>,
 }
 
 struct PreflightEntry {
@@ -675,21 +681,44 @@ fn prepared_from_manifest(
             if entry.operation == ManifestEntryOperation::Delete {
                 validate_delete_target_ancestors(io.as_ref(), storage_dir_path, &target)?;
             }
-            match (entry.operation, entry.staged_file.as_deref()) {
-                (ManifestEntryOperation::Write, Some(staged_file)) => {
+            match (
+                entry.operation,
+                entry.staged_file.as_deref(),
+                entry.content_length,
+                entry.content_checksum.as_deref(),
+            ) {
+                (
+                    ManifestEntryOperation::Write,
+                    Some(staged_file),
+                    Some(content_length),
+                    Some(content_checksum),
+                ) => {
                     validate_staged_file_path(&transaction_dir_path, staged_file)?;
+                    validate_content_integrity(&manifest_path, content_length, content_checksum)?;
                 }
-                (ManifestEntryOperation::Delete, None) => {}
-                (ManifestEntryOperation::Write, None) => {
+                (ManifestEntryOperation::Delete, None, None, None) => {}
+                (ManifestEntryOperation::Write, None, _, _) => {
                     return Err(invalid_manifest_entry_error(
                         &manifest_path,
                         "write entry must contain a staged file",
                     ));
                 }
-                (ManifestEntryOperation::Delete, Some(_)) => {
+                (ManifestEntryOperation::Write, Some(_), _, _) => {
+                    return Err(invalid_manifest_entry_error(
+                        &manifest_path,
+                        "write entry must contain content length and checksum",
+                    ));
+                }
+                (ManifestEntryOperation::Delete, Some(_), _, _) => {
                     return Err(invalid_manifest_entry_error(
                         &manifest_path,
                         "delete entry must not contain a staged file",
+                    ));
+                }
+                (ManifestEntryOperation::Delete, None, _, _) => {
+                    return Err(invalid_manifest_entry_error(
+                        &manifest_path,
+                        "delete entry must not contain content integrity information",
                     ));
                 }
             }
@@ -697,6 +726,8 @@ fn prepared_from_manifest(
                 target,
                 operation: entry.operation,
                 staged_file: entry.staged_file,
+                _content_length: entry.content_length,
+                _content_checksum: entry.content_checksum,
             })
         })
         .collect::<Result<Vec<_>, StorageTransactionError>>()?;
@@ -754,6 +785,46 @@ fn invalid_manifest_entry_error(path: &Path, message: &'static str) -> StorageTr
         path,
         std::io::Error::new(std::io::ErrorKind::InvalidData, message),
     )
+}
+
+fn validate_content_integrity(
+    manifest_path: &Path,
+    content_length: u64,
+    content_checksum: &str,
+) -> Result<(), StorageTransactionError> {
+    let checksum = content_checksum.strip_prefix("fnv1a64:").ok_or_else(|| {
+        invalid_manifest_entry_error(
+            manifest_path,
+            "write checksum must use the fnv1a64 algorithm",
+        )
+    })?;
+    if content_length > isize::MAX as u64 {
+        return Err(invalid_manifest_entry_error(
+            manifest_path,
+            "write content length exceeds the supported file size",
+        ));
+    }
+    if checksum.len() != 16
+        || !checksum
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+    {
+        return Err(invalid_manifest_entry_error(
+            manifest_path,
+            "write checksum must contain 16 lowercase hexadecimal digits",
+        ));
+    }
+    Ok(())
+}
+
+fn content_checksum(bytes: &[u8]) -> String {
+    const FNV_OFFSET_BASIS: u64 = 0xcbf29ce484222325;
+    const FNV_PRIME: u64 = 0x00000100000001b3;
+
+    let checksum = bytes.iter().fold(FNV_OFFSET_BASIS, |checksum, byte| {
+        (checksum ^ u64::from(*byte)).wrapping_mul(FNV_PRIME)
+    });
+    format!("fnv1a64:{checksum:016x}")
 }
 
 fn validate_staged_file_path(
@@ -860,6 +931,8 @@ pub(super) fn prepare_with_directories(
                 target: validate_storage_relative_path(storage_dir_path, write.target_path)?,
                 operation: ManifestEntryOperation::Write,
                 staged_file: Some(PathBuf::from("files").join(index.to_string())),
+                _content_length: Some(write.bytes.len() as u64),
+                _content_checksum: Some(content_checksum(write.bytes)),
             })
         })
         .collect::<Result<Vec<_>, StorageTransactionError>>()?;
@@ -1025,6 +1098,8 @@ fn prepare_contents(
             target,
             operation: ManifestEntryOperation::Write,
             staged_file: Some(staged_file),
+            content_length: Some(write.bytes.len() as u64),
+            content_checksum: Some(content_checksum(write.bytes)),
         });
     }
     sync_directory(io, staged_files_dir_path)?;
