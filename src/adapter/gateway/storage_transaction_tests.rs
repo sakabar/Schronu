@@ -189,21 +189,23 @@ fn test_prepare_途中のwriteとsync失敗ではlive_targetを変更しない()
 
 #[test]
 fn test_prepare_directory_sync失敗ではlive_targetを変更しない() {
-    let storage_dir = TestStorageDir::new();
-    let target_path = storage_dir.path.join("project.yaml");
-    fs::write(&target_path, b"old").unwrap();
-    let io = Arc::new(FailingPrepareIo::new(None, None, Some(1)));
+    for fail_sync_call in 1..=4 {
+        let storage_dir = TestStorageDir::new();
+        let target_path = storage_dir.path.join("project.yaml");
+        fs::write(&target_path, b"old").unwrap();
+        let io = Arc::new(FailingPrepareIo::new(None, None, Some(fail_sync_call)));
 
-    let actual = prepare(
-        io,
-        &storage_dir.path,
-        Uuid::from_u128(0x2204),
-        &[WriteRequest {
-            target_path: &target_path,
-            bytes: b"new",
-        }],
-    );
+        let actual = prepare(
+            io,
+            &storage_dir.path,
+            Uuid::from_u128(0x2204),
+            &[WriteRequest {
+                target_path: &target_path,
+                bytes: b"new",
+            }],
+        );
 
-    assert!(actual.is_err());
-    assert_eq!(fs::read(target_path).unwrap(), b"old");
+        assert!(actual.is_err());
+        assert_eq!(fs::read(target_path).unwrap(), b"old");
+    }
 }
