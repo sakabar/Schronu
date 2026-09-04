@@ -106,6 +106,7 @@ fn worker_constructs_and_runs_the_query_on_its_dedicated_thread() {
 #[test]
 fn worker_handles_today_text_stack_workload() {
     if std::env::var_os(STACK_WORKLOAD_CHILD).is_some() {
+        assert!(std::env::var_os("RUST_MIN_STACK").is_none());
         let worker = TodayWorkerHandle::spawn(|| StackWorkloadQuery);
 
         assert_eq!(
@@ -120,6 +121,7 @@ fn worker_handles_today_text_stack_workload() {
         .arg("worker_handles_today_text_stack_workload")
         .arg("--nocapture")
         .env(STACK_WORKLOAD_CHILD, "1")
+        .env_remove("RUST_MIN_STACK")
         .output()
         .expect("stack workload child process must start");
 
