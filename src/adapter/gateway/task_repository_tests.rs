@@ -15,6 +15,7 @@ impl StorageTransactionIo for FailingStorageTransactionIo {
         writes: &[WriteRequest<'_>],
     ) -> Result<PreparedTransaction, StorageTransactionError> {
         let blocked_storage_dir_path = storage_dir_path.join("injected-prepare-failure");
+        fs::create_dir_all(storage_dir_path).unwrap();
         fs::write(&blocked_storage_dir_path, b"blocked").unwrap();
         crate::adapter::gateway::storage_transaction::prepare(
             &blocked_storage_dir_path,
@@ -1483,6 +1484,25 @@ fn test_save_prepare失敗時は複数projectとrevisionを旧snapshotに維持�
         second_old_bytes
     );
     assert_eq!(repository.storage_revision.get(), Some(previous_revision));
+}
+
+#[test]
+fn test_save_prepare失敗時は新規projectのlive_directoryを作成しない() {
+    let storage_dir = TestStorageDir::new();
+    let now = Local.with_ymd_and_hms(2026, 8, 13, 12, 0, 0).unwrap();
+    let mut repository = TaskRepository::new(storage_dir.path_str());
+    repository.sync_clock(now).unwrap();
+    let task = crate::test_support::new_task_handle("新規対象").unwrap();
+    let task_id = task.get_id().unwrap();
+    repository.start_new_project(task).unwrap();
+    repository.storage_transaction_io = Arc::new(FailingStorageTransactionIo);
+    let project_dir_path = storage_dir.project_dir_path("20260813", "新規対象", task_id);
+
+    let actual = repository.save();
+
+    assert!(actual.is_err());
+    assert!(!project_dir_path.exists());
+    assert!(!storage_dir.path.join(".revision").exists());
 }
 
 #[test]

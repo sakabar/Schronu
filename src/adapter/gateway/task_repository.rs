@@ -733,29 +733,17 @@ impl TaskRepositoryTrait for TaskRepository {
             return Ok(());
         }
 
-        for (project, _) in &prepared_writes {
-            fs::create_dir_all(&project.project_dir_path).map_err(|error| {
-                TaskRepositoryError::new(
-                    ApplicationRepositoryOperation::Save,
-                    FileRepositoryError::new(
-                        FileRepositoryOperation::CreateDirectory,
-                        &project.project_dir_path,
-                        error,
-                    ),
-                )
-            })?;
-            let markdown_dir_path = project.project_dir_path.join("markdown");
-            fs::create_dir_all(&markdown_dir_path).map_err(|error| {
-                TaskRepositoryError::new(
-                    ApplicationRepositoryOperation::Save,
-                    FileRepositoryError::new(
-                        FileRepositoryOperation::CreateDirectory,
-                        &markdown_dir_path,
-                        error,
-                    ),
-                )
-            })?;
-        }
+        let storage_dir_path = Path::new(&self.project_storage_dir_name);
+        fs::create_dir_all(storage_dir_path).map_err(|error| {
+            TaskRepositoryError::new(
+                ApplicationRepositoryOperation::Save,
+                FileRepositoryError::new(
+                    FileRepositoryOperation::CreateDirectory,
+                    &prepared_writes[0].0.project_dir_path,
+                    error,
+                ),
+            )
+        })?;
         let revision_path = self.storage_revision_path();
         if fs::symlink_metadata(&revision_path)
             .is_ok_and(|metadata| metadata.file_type().is_symlink())
@@ -773,7 +761,6 @@ impl TaskRepositoryTrait for TaskRepository {
             ));
         }
         let new_storage_revision = Uuid::new_v4();
-        let storage_dir_path = Path::new(&self.project_storage_dir_name);
         let write_requests = prepared_writes
             .iter()
             .map(|(project, bytes)| WriteRequest {
@@ -787,6 +774,31 @@ impl TaskRepositoryTrait for TaskRepository {
             .map_err(|error| {
                 TaskRepositoryError::new(ApplicationRepositoryOperation::Save, error)
             })?;
+        for (project, _) in &prepared_writes {
+            if let Err(error) = fs::create_dir_all(&project.project_dir_path) {
+                let _ = prepared_transaction.discard();
+                return Err(TaskRepositoryError::new(
+                    ApplicationRepositoryOperation::Save,
+                    FileRepositoryError::new(
+                        FileRepositoryOperation::CreateDirectory,
+                        &project.project_dir_path,
+                        error,
+                    ),
+                ));
+            }
+            let markdown_dir_path = project.project_dir_path.join("markdown");
+            if let Err(error) = fs::create_dir_all(&markdown_dir_path) {
+                let _ = prepared_transaction.discard();
+                return Err(TaskRepositoryError::new(
+                    ApplicationRepositoryOperation::Save,
+                    FileRepositoryError::new(
+                        FileRepositoryOperation::CreateDirectory,
+                        &markdown_dir_path,
+                        error,
+                    ),
+                ));
+            }
+        }
         let revision_text = format!("{new_storage_revision}\n");
         if let Err(error) = write_file_atomically(&revision_path, revision_text.as_bytes()) {
             let _ = prepared_transaction.discard();
