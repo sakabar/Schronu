@@ -666,6 +666,51 @@ impl TaskHandle {
         Ok(Self { node: child_node })
     }
 
+    #[allow(dead_code)]
+    pub(crate) fn complete_with_next_repetition(
+        &self,
+        actual_work_seconds: i64,
+        finished_at: DateTime<Local>,
+        adjusted_parent_estimated_work_seconds: i64,
+        next_task_attr: TaskAttr,
+    ) -> Result<Self, TaskTreeError> {
+        let parent = self.parent()?.ok_or(TaskTreeError::RootOperation)?;
+        let root = self.root()?;
+
+        root.ensure_persistent_mutation_writable()?;
+        self.node
+            .try_borrow_data_mut()
+            .map_err(|_| TaskTreeError::Borrow)?;
+        parent
+            .node
+            .try_borrow_data_mut()
+            .map_err(|_| TaskTreeError::Borrow)?;
+        let grant = parent
+            .node
+            .tree()
+            .grant_hierarchy_edit()
+            .map_err(|_| TaskTreeError::HierarchyGrant)?;
+
+        let child_node = parent.node.create_as_last_child(&grant, next_task_attr);
+        {
+            let mut attr = self
+                .node
+                .try_borrow_data_mut()
+                .map_err(|_| TaskTreeError::Borrow)?;
+            attr.set_actual_work_seconds(actual_work_seconds);
+            attr.set_orig_status(Status::Done);
+            attr.set_end_time_opt(Some(finished_at));
+        }
+        parent
+            .node
+            .try_borrow_data_mut()
+            .map_err(|_| TaskTreeError::Borrow)?
+            .set_estimated_work_seconds(adjusted_parent_estimated_work_seconds);
+        root.mark_persistent_mutation()?;
+
+        Ok(Self { node: child_node })
+    }
+
     pub fn reparent_to(&mut self, parent_task: &Self) -> Result<(), TaskTreeError> {
         if self.node.ptr_eq(&parent_task.node)
             || parent_task
