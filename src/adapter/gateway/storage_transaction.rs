@@ -535,6 +535,7 @@ pub(super) fn recover(
     };
     let _transaction_lock = acquire_transaction_lock(&transactions_dir_path)?;
     validate_transactions_directory(&transactions_dir_path)?;
+    cleanup_stale_tombstones(io.as_ref(), &transactions_dir_path);
     let transaction_dir_path = transactions_dir_path.join(ACTIVE_TRANSACTION_DIRECTORY_NAME);
     match fs::symlink_metadata(&transaction_dir_path) {
         Ok(metadata) if metadata.is_dir() => {}
@@ -809,6 +810,7 @@ pub(super) fn prepare_with_directories(
         }
     })?;
     validate_transactions_directory(&transactions_dir_path)?;
+    cleanup_stale_tombstones(io.as_ref(), &transactions_dir_path);
     let transaction_id = Uuid::new_v4();
     if let Err(error) = io.create_dir(&transaction_dir_path) {
         let operation = if error.kind() == std::io::ErrorKind::AlreadyExists {
@@ -1184,6 +1186,40 @@ fn sync_directory(
     io.sync_directory(path).map_err(|error| {
         StorageTransactionError::new(StorageTransactionOperation::SyncDirectory, path, error)
     })
+}
+
+fn cleanup_stale_tombstones(io: &dyn StorageTransactionIo, transactions_dir_path: &Path) {
+    let Ok(entries) = fs::read_dir(transactions_dir_path) else {
+        return;
+    };
+    let mut removed = false;
+    for entry in entries.flatten() {
+        let path = entry.path();
+        let Some(name) = entry.file_name().to_str().map(str::to_owned) else {
+            continue;
+        };
+        let Some(uuid_text) = name.strip_prefix(".cleanup-") else {
+            continue;
+        };
+        let Ok(uuid) = Uuid::parse_str(uuid_text) else {
+            continue;
+        };
+        if uuid.hyphenated().to_string() != uuid_text {
+            continue;
+        }
+        let Ok(metadata) = io.symlink_metadata(&path) else {
+            continue;
+        };
+        if !metadata.file_type().is_dir() {
+            continue;
+        }
+        if io.remove_dir_all(&path).is_ok() {
+            removed = true;
+        }
+    }
+    if removed {
+        let _ = io.sync_directory(transactions_dir_path);
+    }
 }
 
 #[cfg(test)]

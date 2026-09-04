@@ -13,6 +13,8 @@ struct FailFirstCommittedProjectWriteIo {
 
 struct FailUncommittedDiscardIo;
 
+struct FailCleanupDeleteIo;
+
 #[derive(Clone, Copy, Debug)]
 enum CommittedCrashPhase {
     BeforeFirstProjectRename,
@@ -133,6 +135,18 @@ impl StorageTransactionIo for FailUncommittedDiscardIo {
             return Err(std::io::Error::other(
                 "injected uncommitted discard failure",
             ));
+        }
+        FileSystemStorageTransactionIo.remove_dir_all(path)
+    }
+}
+
+impl StorageTransactionIo for FailCleanupDeleteIo {
+    fn remove_dir_all(&self, path: &Path) -> std::io::Result<()> {
+        if path
+            .file_name()
+            .is_some_and(|name| name.to_string_lossy().starts_with(".cleanup-"))
+        {
+            return Err(std::io::Error::other("injected transient cleanup failure"));
         }
         FileSystemStorageTransactionIo.remove_dir_all(path)
     }
@@ -1932,6 +1946,67 @@ fn test_load_marker済みtransactionのcontrol_file_symlinkを拒否して外部
         );
         assert_eq!(fs::read(external_path).unwrap(), external_bytes);
     }
+}
+
+#[cfg(unix)]
+#[test]
+fn test_load_前回失敗したcleanup_tombstoneだけを再清掃してsnapshotを維持する() {
+    use std::os::unix::fs::symlink;
+
+    let storage_dir = TestStorageDir::new();
+    let external_dir = TestStorageDir::new();
+    fs::create_dir_all(&external_dir.path).unwrap();
+    let external_sentinel = external_dir.path.join("sentinel");
+    fs::write(&external_sentinel, b"external").unwrap();
+    let now = Local.with_ymd_and_hms(2026, 9, 5, 13, 0, 0).unwrap();
+    let mut source = TaskRepository::new(storage_dir.path_str());
+    source.sync_clock(now).unwrap();
+    let task = crate::test_support::new_task_handle("cleanup-retry").unwrap();
+    let task_id = task.get_id().unwrap();
+    source.start_new_project(task).unwrap();
+    source.storage_transaction_io = Arc::new(FailCleanupDeleteIo);
+
+    source.save().unwrap();
+
+    let project_path = storage_dir
+        .project_dir_path("20260905", "cleanup-retry", task_id)
+        .join("project.yaml");
+    let project_bytes = fs::read(&project_path).unwrap();
+    let revision_bytes = fs::read(storage_dir.path.join(".revision")).unwrap();
+    let transactions_dir_path = storage_dir
+        .path
+        .join(crate::adapter::gateway::storage_transaction::TRANSACTION_DIRECTORY_NAME);
+    let cleanup_path = fs::read_dir(&transactions_dir_path)
+        .unwrap()
+        .map(|entry| entry.unwrap().path())
+        .find(|path| {
+            path.file_name()
+                .is_some_and(|name| name.to_string_lossy().starts_with(".cleanup-"))
+        })
+        .unwrap();
+    assert!(cleanup_path.join("manifest.json").is_file());
+    assert!(cleanup_path.join("files/0").is_file());
+    let arbitrary_path = transactions_dir_path.join(".cleanup-not-a-uuid");
+    fs::create_dir(&arbitrary_path).unwrap();
+    fs::write(arbitrary_path.join("sentinel"), b"arbitrary").unwrap();
+    let symlink_path =
+        transactions_dir_path.join(format!(".cleanup-{}", Uuid::from_u128(0x22fe).hyphenated()));
+    symlink(&external_dir.path, &symlink_path).unwrap();
+    let mut repository = TaskRepository::new(storage_dir.path_str());
+    repository.sync_clock(now).unwrap();
+
+    repository.load().unwrap();
+
+    assert!(!cleanup_path.exists());
+    assert!(arbitrary_path.join("sentinel").is_file());
+    assert!(symlink_path.is_symlink());
+    assert_eq!(fs::read(external_sentinel).unwrap(), b"external");
+    assert_eq!(fs::read(project_path).unwrap(), project_bytes);
+    assert_eq!(
+        fs::read(storage_dir.path.join(".revision")).unwrap(),
+        revision_bytes
+    );
+    assert!(repository.get_by_id(task_id).unwrap().is_some());
 }
 
 #[test]
