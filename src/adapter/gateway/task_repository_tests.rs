@@ -1731,6 +1731,96 @@ fn test_load_marker済みtransactionの不正manifestはpathとphaseを保持す
 }
 
 #[test]
+fn test_load_marker済みtransactionのmanifest意味違反はlive_snapshotを変更しない() {
+    for case in [
+        "unsupported-version",
+        "nil-transaction-id",
+        "escaping-target",
+        "reserved-target",
+        "escaping-directory",
+        "invalid-staged-file",
+    ] {
+        let storage_dir = TestStorageDir::new();
+        let now = Local.with_ymd_and_hms(2026, 9, 5, 13, 0, 0).unwrap();
+        let (first_id, second_id, _, active_transaction_path) =
+            create_committed_transaction_interruption(
+                &storage_dir,
+                now,
+                CommittedCrashPhase::BeforeFirstProjectRename,
+            );
+        let first_project_path = storage_dir
+            .project_dir_path("20260905", "roll-forward-first", first_id)
+            .join("project.yaml");
+        let second_project_path = storage_dir
+            .project_dir_path("20260905", "roll-forward-second", second_id)
+            .join("project.yaml");
+        let old_first = fs::read(&first_project_path).unwrap();
+        let old_second = fs::read(&second_project_path).unwrap();
+        let old_revision = fs::read(storage_dir.path.join(".revision")).unwrap();
+        let manifest_path = active_transaction_path.join("manifest.json");
+        let mut manifest: serde_json::Value =
+            serde_json::from_slice(&fs::read(&manifest_path).unwrap()).unwrap();
+        let (expected_phase, expected_path) = match case {
+            "unsupported-version" => {
+                manifest["version"] = serde_json::json!(2);
+                ("ValidateManifest", manifest_path.clone())
+            }
+            "nil-transaction-id" => {
+                manifest["transaction_id"] = serde_json::json!(Uuid::nil().to_string());
+                ("ValidateManifest", manifest_path.clone())
+            }
+            "escaping-target" => {
+                manifest["entries"][0]["target"] = serde_json::json!("../outside.yaml");
+                (
+                    "ValidateTargetPath",
+                    storage_dir.path.join("../outside.yaml"),
+                )
+            }
+            "reserved-target" => {
+                manifest["entries"][0]["target"] =
+                    serde_json::json!(".schronu-transactions/outside.yaml");
+                (
+                    "ValidateTargetPath",
+                    storage_dir.path.join(".schronu-transactions/outside.yaml"),
+                )
+            }
+            "escaping-directory" => {
+                manifest["directories"] = serde_json::json!(["../outside"]);
+                ("ValidateTargetPath", storage_dir.path.join("../outside"))
+            }
+            "invalid-staged-file" => {
+                manifest["entries"][0]["staged_file"] = serde_json::json!("../material");
+                (
+                    "ValidateManifest",
+                    active_transaction_path.join("../material"),
+                )
+            }
+            _ => unreachable!(),
+        };
+        fs::write(&manifest_path, serde_json::to_vec(&manifest).unwrap()).unwrap();
+        let mut repository = TaskRepository::new(storage_dir.path_str());
+
+        let actual = repository.load().unwrap_err();
+
+        let source = storage_transaction_error(&actual);
+        assert!(source.to_string().contains(expected_phase), "case: {case}");
+        assert!(
+            source
+                .to_string()
+                .contains(&expected_path.display().to_string()),
+            "case: {case}"
+        );
+        assert!(active_transaction_path.join("commit").is_file());
+        assert_eq!(fs::read(&first_project_path).unwrap(), old_first);
+        assert_eq!(fs::read(&second_project_path).unwrap(), old_second);
+        assert_eq!(
+            fs::read(storage_dir.path.join(".revision")).unwrap(),
+            old_revision
+        );
+    }
+}
+
+#[test]
 fn test_load_marker済みtransactionの未適用staged_file欠落はpathとphaseを保持する() {
     let storage_dir = TestStorageDir::new();
     let now = Local.with_ymd_and_hms(2026, 9, 5, 13, 0, 0).unwrap();
