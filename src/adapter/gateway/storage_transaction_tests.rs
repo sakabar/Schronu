@@ -20,6 +20,22 @@ struct FailSecondCreateDirectoryIo {
     create_calls: AtomicUsize,
 }
 
+struct FailTargetContentReadIo {
+    target_path: PathBuf,
+}
+
+impl StorageTransactionIo for FailTargetContentReadIo {
+    fn read_file(&self, path: &Path) -> std::io::Result<Vec<u8>> {
+        if path == self.target_path {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::PermissionDenied,
+                "injected target content read failure",
+            ));
+        }
+        FileSystemStorageTransactionIo.read_file(path)
+    }
+}
+
 impl StorageTransactionIo for FailSecondCreateDirectoryIo {
     fn create_dir_all(&self, path: &Path) -> std::io::Result<()> {
         let call = self.create_calls.fetch_add(1, Ordering::SeqCst) + 1;
@@ -1197,6 +1213,40 @@ fn test_commit_failure時は回復用manifestとstaged_fileを維持する() {
             )
         );
     }
+}
+
+#[test]
+fn test_commit_target内容読込失敗はpathと専用phaseを保持する() {
+    let storage_dir = TestStorageDir::new();
+    let target_path = storage_dir.path.join("project.yaml");
+    fs::write(&target_path, b"old").unwrap();
+    let prepared = prepare(
+        Arc::new(FailTargetContentReadIo {
+            target_path: target_path.clone(),
+        }),
+        &storage_dir.path,
+        Uuid::from_u128(0x2241),
+        &[WriteRequest {
+            target_path: &target_path,
+            bytes: b"new",
+        }],
+    )
+    .unwrap();
+    let transaction_dir_path = prepared.transaction_dir_path.clone();
+
+    let actual = prepared
+        .commit(&storage_dir.path.join(".revision"))
+        .unwrap_err();
+
+    assert_eq!(
+        actual.operation,
+        StorageTransactionOperation::ReadTargetContent
+    );
+    assert_eq!(actual.path, target_path);
+    assert_eq!(actual.source.kind(), std::io::ErrorKind::PermissionDenied);
+    assert_eq!(fs::read(&actual.path).unwrap(), b"old");
+    assert!(!storage_dir.path.join(".revision").exists());
+    assert!(transaction_dir_path.join("commit").is_file());
 }
 
 #[test]

@@ -38,6 +38,7 @@ enum StorageTransactionOperation {
     ResolveTargetPath,
     ValidateTargetPath,
     ReadTargetMetadata,
+    ReadTargetContent,
     ValidateStagedFile,
     ValidateStagedContent,
     CreateStagedFile,
@@ -384,7 +385,7 @@ impl PreparedTransaction {
                     Ok(metadata) if metadata.file_type().is_file() => {
                         let target_bytes = self.io.read_file(&target_path).map_err(|error| {
                             StorageTransactionError::new(
-                                StorageTransactionOperation::ReadTargetMetadata,
+                                StorageTransactionOperation::ReadTargetContent,
                                 &target_path,
                                 error,
                             )
