@@ -646,6 +646,56 @@ fn test_反復完了はborrow競合時に何も変更しない() {
 }
 
 #[test]
+fn test_反復完了はroot_borrow競合時に何も変更しない() {
+    let root = new_test_task_handle("root").unwrap();
+    let parent = root.create_child(new_test_task_attr("反復親")).unwrap();
+    let child = parent.create_child(new_test_task_attr("今回")).unwrap();
+    let before_snapshot = root.snapshot().unwrap();
+    let before_revision = root.get_persistent_mutation_revision().unwrap();
+
+    let actual = root.with_shared_data_borrow_for_test(|| {
+        child.complete_with_next_repetition(
+            300,
+            Local.with_ymd_and_hms(2026, 8, 20, 12, 34, 56).unwrap(),
+            450,
+            new_test_task_attr("次回"),
+        )
+    });
+
+    assert!(matches!(actual, Err(TaskTreeError::Borrow)));
+    assert_eq!(root.snapshot().unwrap(), before_snapshot);
+    assert_eq!(
+        root.get_persistent_mutation_revision().unwrap(),
+        before_revision
+    );
+}
+
+#[test]
+fn test_反復完了は対象task_borrow競合時に何も変更しない() {
+    let root = new_test_task_handle("root").unwrap();
+    let parent = root.create_child(new_test_task_attr("反復親")).unwrap();
+    let child = parent.create_child(new_test_task_attr("今回")).unwrap();
+    let before_snapshot = root.snapshot().unwrap();
+    let before_revision = root.get_persistent_mutation_revision().unwrap();
+
+    let actual = child.with_shared_data_borrow_for_test(|| {
+        child.complete_with_next_repetition(
+            300,
+            Local.with_ymd_and_hms(2026, 8, 20, 12, 34, 56).unwrap(),
+            450,
+            new_test_task_attr("次回"),
+        )
+    });
+
+    assert!(matches!(actual, Err(TaskTreeError::Borrow)));
+    assert_eq!(root.snapshot().unwrap(), before_snapshot);
+    assert_eq!(
+        root.get_persistent_mutation_revision().unwrap(),
+        before_revision
+    );
+}
+
+#[test]
 fn test_persistent_mutation_revisionはclockの永続化変更だけで進む() {
     let now = Local.with_ymd_and_hms(2026, 8, 13, 12, 0, 0).unwrap();
     let unchanged = new_test_task_handle("unchanged").unwrap();
