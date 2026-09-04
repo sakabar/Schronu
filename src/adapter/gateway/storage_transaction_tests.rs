@@ -427,6 +427,28 @@ fn test_prepare_staged_files_directory作成失敗時はuuid_directoryを残さ�
 }
 
 #[test]
+fn test_prepare_cleanup_tombstoneはactive_transactionとして扱わない() {
+    let storage_dir = TestStorageDir::new();
+    let transactions_dir_path = storage_dir.path.join(TRANSACTION_DIRECTORY_NAME);
+    fs::create_dir_all(transactions_dir_path.join(format!(".cleanup-{}", Uuid::from_u128(0x2211))))
+        .unwrap();
+    let target_path = storage_dir.path.join("project.yaml");
+
+    let prepared = prepare(
+        file_system_io(),
+        &storage_dir.path,
+        Uuid::from_u128(0x2212),
+        &[WriteRequest {
+            target_path: &target_path,
+            bytes: b"new",
+        }],
+    )
+    .unwrap();
+
+    prepared.discard().unwrap();
+}
+
+#[test]
 fn test_prepare_staged_file失敗はpathとphaseを保持する() {
     for (phase, expected_operation) in [
         (

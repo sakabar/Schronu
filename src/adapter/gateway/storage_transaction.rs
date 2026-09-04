@@ -21,6 +21,8 @@ enum StorageTransactionOperation {
     #[cfg(test)]
     Discard,
     CreateTransactionDirectory,
+    ListTransactions,
+    ActiveTransaction,
     CreateStagedFilesDirectory,
     ResolveTargetPath,
     ReadTargetMetadata,
@@ -137,6 +139,12 @@ pub(super) trait StorageTransactionIo: Send + Sync {
 
     fn sync_directory(&self, path: &Path) -> std::io::Result<()> {
         File::open(path)?.sync_all()
+    }
+
+    fn read_directory_paths(&self, path: &Path) -> std::io::Result<Vec<PathBuf>> {
+        fs::read_dir(path)?
+            .map(|entry| entry.map(|entry| entry.path()))
+            .collect()
     }
 
     fn rename(&self, from: &Path, to: &Path) -> std::io::Result<()> {
@@ -396,6 +404,29 @@ pub(super) fn prepare_with_directories(
             error,
         )
     })?;
+    let transaction_paths = io
+        .read_directory_paths(&transactions_dir_path)
+        .map_err(|error| {
+            StorageTransactionError::new(
+                StorageTransactionOperation::ListTransactions,
+                &transactions_dir_path,
+                error,
+            )
+        })?;
+    if let Some(active_transaction_path) = transaction_paths.into_iter().find(|path| {
+        path.file_name()
+            .and_then(|name| name.to_str())
+            .is_some_and(|name| Uuid::parse_str(name).is_ok())
+    }) {
+        return Err(StorageTransactionError::new(
+            StorageTransactionOperation::ActiveTransaction,
+            active_transaction_path,
+            std::io::Error::new(
+                std::io::ErrorKind::AlreadyExists,
+                "an active storage transaction already exists",
+            ),
+        ));
+    }
     let transaction_id = Uuid::new_v4();
     let transaction_dir_path = transactions_dir_path.join(transaction_id.hyphenated().to_string());
     let staged_files_dir_path = transaction_dir_path.join("files");

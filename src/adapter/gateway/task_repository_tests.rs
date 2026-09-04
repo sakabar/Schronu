@@ -3,8 +3,28 @@ use crate::adapter::gateway::yaml::YamlConversionError;
 use crate::application::interface::ProjectRegistrationError;
 use chrono::{Duration, TimeZone};
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 struct FailingStorageTransactionIo;
+
+struct FailFirstCommittedProjectWriteIo {
+    failed: AtomicBool,
+}
+
+impl StorageTransactionIo for FailFirstCommittedProjectWriteIo {
+    fn write_file(&self, path: &Path, bytes: &[u8]) -> std::io::Result<()> {
+        if path
+            .file_name()
+            .is_some_and(|name| name.to_string_lossy().starts_with(".project.yaml."))
+            && !self.failed.swap(true, Ordering::SeqCst)
+        {
+            return Err(std::io::Error::other(
+                "injected committed project write failure",
+            ));
+        }
+        FileSystemStorageTransactionIo.write_file(path, bytes)
+    }
+}
 
 impl StorageTransactionIo for FailingStorageTransactionIo {
     fn create_dir_all(&self, path: &Path) -> std::io::Result<()> {
@@ -1378,17 +1398,11 @@ fn test_save_失敗後もdirtyを維持して再試行する() {
     let task_id = task.get_id().unwrap();
     repository.start_new_project(task.clone()).unwrap();
     repository.save().unwrap();
-    let project_yaml_path = storage_dir
-        .project_dir_path("20260813", "再試行対象", task_id)
-        .join("project.yaml");
-    let old_bytes = fs::read(&project_yaml_path).unwrap();
-    fs::remove_file(&project_yaml_path).unwrap();
-    fs::create_dir(&project_yaml_path).unwrap();
     task.set_estimated_work_seconds(30 * 60).unwrap();
+    repository.storage_transaction_io = Arc::new(FailingStorageTransactionIo);
 
     assert!(repository.save().is_err());
-    fs::remove_dir(&project_yaml_path).unwrap();
-    fs::write(&project_yaml_path, old_bytes).unwrap();
+    repository.storage_transaction_io = Arc::new(FileSystemStorageTransactionIo);
     repository.save().unwrap();
 
     let mut reloaded = TaskRepository::new(storage_dir.path_str());
@@ -1507,6 +1521,60 @@ fn test_save_prepare失敗時は新規projectのlive_directoryを作成しない
     assert!(actual.is_err());
     assert!(!project_dir_path.exists());
     assert!(!storage_dir.path.join(".revision").exists());
+}
+
+#[test]
+fn test_save_post_marker失敗後はactive_transactionを保持して次saveを拒否する() {
+    let storage_dir = TestStorageDir::new();
+    let now = Local.with_ymd_and_hms(2026, 8, 13, 12, 0, 0).unwrap();
+    let revision_path = storage_dir.path.join(".revision");
+    let mut repository = TaskRepository::new(storage_dir.path_str());
+    repository.sync_clock(now).unwrap();
+    let task = crate::test_support::new_task_handle("commit失敗対象").unwrap();
+    let task_id = task.get_id().unwrap();
+    repository.start_new_project(task.clone()).unwrap();
+    repository.save().unwrap();
+    let project_yaml_path = storage_dir
+        .project_dir_path("20260813", "commit失敗対象", task_id)
+        .join("project.yaml");
+    let old_project_bytes = fs::read(&project_yaml_path).unwrap();
+    let old_revision_bytes = fs::read(&revision_path).unwrap();
+    repository.storage_transaction_io = Arc::new(FailFirstCommittedProjectWriteIo {
+        failed: AtomicBool::new(false),
+    });
+    task.set_estimated_work_seconds(30 * 60).unwrap();
+
+    let first = repository.save();
+
+    assert!(first.is_err());
+    let transactions_dir_path = storage_dir
+        .path
+        .join(crate::adapter::gateway::storage_transaction::TRANSACTION_DIRECTORY_NAME);
+    let active_transaction_paths = fs::read_dir(&transactions_dir_path)
+        .unwrap()
+        .map(|entry| entry.unwrap().path())
+        .filter(|path| {
+            path.file_name()
+                .and_then(|name| name.to_str())
+                .is_some_and(|name| Uuid::parse_str(name).is_ok())
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(active_transaction_paths.len(), 1);
+    let active_transaction_path = &active_transaction_paths[0];
+    assert!(active_transaction_path.join("commit").is_file());
+    assert!(active_transaction_path.join("manifest.json").is_file());
+
+    let second = repository.save().unwrap_err();
+
+    let source = storage_transaction_error(&second);
+    assert!(source.to_string().contains("ActiveTransaction"));
+    assert!(source
+        .to_string()
+        .contains(&active_transaction_path.display().to_string()));
+    assert_eq!(fs::read(project_yaml_path).unwrap(), old_project_bytes);
+    assert_eq!(fs::read(revision_path).unwrap(), old_revision_bytes);
+    assert!(active_transaction_path.join("commit").is_file());
+    assert!(active_transaction_path.join("manifest.json").is_file());
 }
 
 #[test]
