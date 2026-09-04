@@ -171,7 +171,7 @@ enum FailingCommitPhase {
     LiveSync,
     LiveRename,
     RevisionWrite,
-    Cleanup,
+    CleanupDelete,
 }
 
 struct FailingCommitIo {
@@ -221,7 +221,7 @@ impl StorageTransactionIo for FailingCommitIo {
     }
 
     fn remove_dir_all(&self, path: &Path) -> std::io::Result<()> {
-        if matches!(self.phase, FailingCommitPhase::Cleanup) {
+        if matches!(self.phase, FailingCommitPhase::CleanupDelete) {
             return Err(std::io::Error::other("injected cleanup failure"));
         }
         FileSystemStorageTransactionIo.remove_dir_all(path)
@@ -562,7 +562,6 @@ fn test_commit_failure時は回復用manifestとstaged_fileを維持する() {
         FailingCommitPhase::LiveSync,
         FailingCommitPhase::LiveRename,
         FailingCommitPhase::RevisionWrite,
-        FailingCommitPhase::Cleanup,
     ] {
         let storage_dir = TestStorageDir::new();
         let target_path = storage_dir.path.join("project.yaml");
@@ -592,4 +591,37 @@ fn test_commit_failure時は回復用manifestとstaged_fileを維持する() {
             )
         );
     }
+}
+
+#[test]
+fn test_commit_cleanup削除失敗はtombstoneへ回復情報を保持して成功する() {
+    let storage_dir = TestStorageDir::new();
+    let target_path = storage_dir.path.join("project.yaml");
+    fs::write(&target_path, b"old").unwrap();
+    let prepared = prepare(
+        Arc::new(FailingCommitIo {
+            phase: FailingCommitPhase::CleanupDelete,
+        }),
+        &storage_dir.path,
+        Uuid::from_u128(0x2210),
+        &[WriteRequest {
+            target_path: &target_path,
+            bytes: b"new",
+        }],
+    )
+    .unwrap();
+    let transaction_id = prepared.transaction_id;
+
+    prepared
+        .commit(&storage_dir.path.join(".revision"))
+        .unwrap();
+
+    let cleanup_dir_path = storage_dir
+        .path
+        .join(TRANSACTION_DIRECTORY_NAME)
+        .join(format!(".cleanup-{}", transaction_id.hyphenated()));
+    assert!(cleanup_dir_path.join("commit").is_file());
+    assert!(cleanup_dir_path.join("manifest.json").is_file());
+    assert!(cleanup_dir_path.join("files/0").is_file());
+    assert_eq!(fs::read(target_path).unwrap(), b"new");
 }

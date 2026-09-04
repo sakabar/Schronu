@@ -20,7 +20,6 @@ pub(super) struct StorageTransactionError {
 enum StorageTransactionOperation {
     #[cfg(test)]
     Discard,
-    Cleanup,
     CreateTransactionDirectory,
     CreateStagedFilesDirectory,
     ResolveTargetPath,
@@ -43,6 +42,7 @@ enum StorageTransactionOperation {
     WriteLiveTemporary,
     SyncLiveTemporary,
     RenameLiveTarget,
+    RenameForCleanup,
     SyncDirectory,
 }
 
@@ -233,15 +233,20 @@ impl PreparedTransaction {
         }
         self.apply_revision(revision_path)?;
 
+        let cleanup_dir_path = self
+            .transactions_dir_path
+            .join(format!(".cleanup-{}", self.transaction_id.hyphenated()));
         self.io
-            .remove_dir_all(&self.transaction_dir_path)
+            .rename(&self.transaction_dir_path, &cleanup_dir_path)
             .map_err(|error| {
                 StorageTransactionError::new(
-                    StorageTransactionOperation::Cleanup,
+                    StorageTransactionOperation::RenameForCleanup,
                     &self.transaction_dir_path,
                     error,
                 )
             })?;
+        let _ = self.io.sync_directory(&self.transactions_dir_path);
+        let _ = self.io.remove_dir_all(&cleanup_dir_path);
         let _ = self.io.sync_directory(&self.transactions_dir_path);
         let _ = self.io.sync_directory(&self.storage_dir_path);
         Ok(())
