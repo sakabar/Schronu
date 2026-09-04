@@ -29,17 +29,20 @@ Rust versionまたは依存関係を更新する場合は、`rust-toolchain.toml
 ```shell
 rustup target add wasm32-unknown-unknown
 cargo install dioxus-cli --version 0.7.10 --locked
+~/.cargo/bin/dx --version
 ```
+
+`~/.cargo/bin/dx --version`が`dioxus 0.7.10`を表示することを確認してください。Homebrew版Denoも`dx`という名前の`deno x`commandを提供するため、PATHの順序によっては裸の`dx`がDioxus CLIを指しません。以下では名前の衝突を避けるため、CargoがinstallしたDioxus CLIをabsolute pathで実行します。
 
 repository rootから次のように起動します。task storageと設定はCLI・MCPと同じ`SCHRONU_STORAGE_DIR`、`SCHRONU_CONFIG_PATH`で指定し、相対pathの解釈違いを避けるためabsolute pathを推奨します。
 
 ```shell
 SCHRONU_STORAGE_DIR=/absolute/path/to/tasks \
 SCHRONU_CONFIG_PATH=/absolute/path/to/schronu.yaml \
-dx serve --locked --web --package schronu-web
+~/.cargo/bin/dx serve --locked --web --package schronu-web
 ```
 
-起動後は`http://127.0.0.1:8080`を開きます。application serverは`127.0.0.1`へ固定しており、認証は設けていません。`dx serve`へ外部addressを指定しないでください。
+起動後は`http://127.0.0.1:8080`を開きます。application serverは`127.0.0.1`へ固定しており、認証は設けていません。Dioxus CLIの`serve`へ外部addressを指定しないでください。
 
 このMVPは`今`のplain text表示だけを対象とします。task操作、focus操作、HTML table、filter、paging、revision監視、配布用bundleは対象外です。
 
