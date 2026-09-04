@@ -245,9 +245,10 @@ impl PreparedTransaction {
                     error,
                 )
             })?;
-        let _ = self.io.sync_directory(&self.transactions_dir_path);
-        let _ = self.io.remove_dir_all(&cleanup_dir_path);
-        let _ = self.io.sync_directory(&self.transactions_dir_path);
+        if self.io.sync_directory(&self.transactions_dir_path).is_ok() {
+            let _ = self.io.remove_dir_all(&cleanup_dir_path);
+            let _ = self.io.sync_directory(&self.transactions_dir_path);
+        }
         let _ = self.io.sync_directory(&self.storage_dir_path);
         Ok(())
     }
