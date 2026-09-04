@@ -676,37 +676,44 @@ impl TaskHandle {
     ) -> Result<Self, TaskTreeError> {
         let parent = self.parent()?.ok_or(TaskTreeError::RootOperation)?;
         let root = self.root()?;
-
-        root.ensure_persistent_mutation_writable()?;
-        self.node
-            .try_borrow_data_mut()
-            .map_err(|_| TaskTreeError::Borrow)?;
-        parent
-            .node
-            .try_borrow_data_mut()
-            .map_err(|_| TaskTreeError::Borrow)?;
         let grant = parent
             .node
             .tree()
             .grant_hierarchy_edit()
             .map_err(|_| TaskTreeError::HierarchyGrant)?;
-
-        let child_node = parent.node.create_as_last_child(&grant, next_task_attr);
-        {
-            let mut attr = self
-                .node
-                .try_borrow_data_mut()
-                .map_err(|_| TaskTreeError::Borrow)?;
-            attr.set_actual_work_seconds(actual_work_seconds);
-            attr.set_orig_status(Status::Done);
-            attr.set_end_time_opt(Some(finished_at));
-        }
-        parent
+        let mut root_attr = if parent.node.ptr_eq(&root.node) {
+            None
+        } else {
+            Some(
+                root.node
+                    .try_borrow_data_mut()
+                    .map_err(|_| TaskTreeError::Borrow)?,
+            )
+        };
+        let mut attr = self
             .node
             .try_borrow_data_mut()
-            .map_err(|_| TaskTreeError::Borrow)?
-            .set_estimated_work_seconds(adjusted_parent_estimated_work_seconds);
-        root.mark_persistent_mutation()?;
+            .map_err(|_| TaskTreeError::Borrow)?;
+        let mut parent_attr = parent
+            .node
+            .try_borrow_data_mut()
+            .map_err(|_| TaskTreeError::Borrow)?;
+
+        let child_node = parent.node.create_as_last_child(&grant, next_task_attr);
+        attr.set_actual_work_seconds(actual_work_seconds);
+        attr.set_orig_status(Status::Done);
+        attr.set_end_time_opt(Some(finished_at));
+        parent_attr.set_estimated_work_seconds(adjusted_parent_estimated_work_seconds);
+        match &mut root_attr {
+            Some(root_attr) => {
+                root_attr.persistent_mutation_revision =
+                    root_attr.persistent_mutation_revision.wrapping_add(1);
+            }
+            None => {
+                parent_attr.persistent_mutation_revision =
+                    parent_attr.persistent_mutation_revision.wrapping_add(1);
+            }
+        }
 
         Ok(Self { node: child_node })
     }
