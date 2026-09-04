@@ -1,6 +1,6 @@
 use super::*;
 use serde_json::Value;
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::Mutex;
 
 fn file_system_io() -> Arc<dyn StorageTransactionIo> {
@@ -99,6 +99,12 @@ struct CommitOrderIo {
 
 impl StorageTransactionIo for CommitOrderIo {
     fn create_dir_all(&self, path: &Path) -> std::io::Result<()> {
+        if path.file_name().is_some_and(|name| name == "markdown") {
+            assert!(
+                *self.marker_directory_synced.lock().unwrap(),
+                "live directory must not be created before the commit marker directory is synced"
+            );
+        }
         FileSystemStorageTransactionIo.create_dir_all(path)
     }
 
@@ -170,15 +176,30 @@ enum FailingCommitPhase {
     LiveWrite,
     LiveSync,
     LiveRename,
+    TargetDirectory,
+    LiveDirectorySync,
     RevisionWrite,
+    RevisionSync,
+    RevisionRename,
     CleanupDelete,
 }
 
 struct FailingCommitIo {
     phase: FailingCommitPhase,
+    marker_published: AtomicBool,
+    live_target_renamed: AtomicBool,
 }
 
 impl StorageTransactionIo for FailingCommitIo {
+    fn create_dir_all(&self, path: &Path) -> std::io::Result<()> {
+        if matches!(self.phase, FailingCommitPhase::TargetDirectory)
+            && path.file_name().is_some_and(|name| name == "markdown")
+        {
+            return Err(std::io::Error::other("injected target directory failure"));
+        }
+        FileSystemStorageTransactionIo.create_dir_all(path)
+    }
+
     fn create_new_file(&self, path: &Path) -> std::io::Result<()> {
         if matches!(self.phase, FailingCommitPhase::MarkerCreate)
             && path.file_name().is_some_and(|name| name == "commit.tmp")
@@ -205,6 +226,8 @@ impl StorageTransactionIo for FailingCommitIo {
         if (matches!(self.phase, FailingCommitPhase::MarkerSync) && file_name == "commit.tmp")
             || (matches!(self.phase, FailingCommitPhase::LiveSync)
                 && file_name.starts_with(".project.yaml."))
+            || (matches!(self.phase, FailingCommitPhase::RevisionSync)
+                && file_name.contains("revision"))
         {
             return Err(std::io::Error::other("injected commit sync failure"));
         }
@@ -212,12 +235,36 @@ impl StorageTransactionIo for FailingCommitIo {
     }
 
     fn rename(&self, from: &Path, to: &Path) -> std::io::Result<()> {
+        if to.file_name().is_some_and(|name| name == "commit") {
+            self.marker_published.store(true, Ordering::SeqCst);
+        }
         if matches!(self.phase, FailingCommitPhase::LiveRename)
             && to.file_name().is_some_and(|name| name == "project.yaml")
         {
             return Err(std::io::Error::other("injected live rename failure"));
         }
-        FileSystemStorageTransactionIo.rename(from, to)
+        if matches!(self.phase, FailingCommitPhase::RevisionRename)
+            && to.file_name().is_some_and(|name| name == ".revision")
+        {
+            return Err(std::io::Error::other("injected revision rename failure"));
+        }
+        let result = FileSystemStorageTransactionIo.rename(from, to);
+        if result.is_ok() && to.file_name().is_some_and(|name| name == "project.yaml") {
+            self.live_target_renamed.store(true, Ordering::SeqCst);
+        }
+        result
+    }
+
+    fn sync_directory(&self, path: &Path) -> std::io::Result<()> {
+        if matches!(self.phase, FailingCommitPhase::LiveDirectorySync)
+            && self.marker_published.load(Ordering::SeqCst)
+            && self.live_target_renamed.load(Ordering::SeqCst)
+        {
+            return Err(std::io::Error::other(
+                "injected live directory sync failure",
+            ));
+        }
+        FileSystemStorageTransactionIo.sync_directory(path)
     }
 
     fn remove_dir_all(&self, path: &Path) -> std::io::Result<()> {
@@ -508,7 +555,10 @@ fn test_commit_markerをsyncしてからprojectを適用しrevisionを最後に�
     assert_eq!(manifest["revision"], revision.to_string());
 
     prepared
-        .commit(&storage_dir.path.join(".revision"))
+        .commit_with_directories(
+            &storage_dir.path.join(".revision"),
+            &[storage_dir.path.join("third/markdown")],
+        )
         .unwrap();
 
     assert_ne!(transaction_id, Uuid::nil());
@@ -561,13 +611,21 @@ fn test_commit_failure時は回復用manifestとstaged_fileを維持する() {
         FailingCommitPhase::LiveWrite,
         FailingCommitPhase::LiveSync,
         FailingCommitPhase::LiveRename,
+        FailingCommitPhase::TargetDirectory,
+        FailingCommitPhase::LiveDirectorySync,
         FailingCommitPhase::RevisionWrite,
+        FailingCommitPhase::RevisionSync,
+        FailingCommitPhase::RevisionRename,
     ] {
         let storage_dir = TestStorageDir::new();
         let target_path = storage_dir.path.join("project.yaml");
         fs::write(&target_path, b"old").unwrap();
         let prepared = prepare(
-            Arc::new(FailingCommitIo { phase }),
+            Arc::new(FailingCommitIo {
+                phase,
+                marker_published: AtomicBool::new(false),
+                live_target_renamed: AtomicBool::new(false),
+            }),
             &storage_dir.path,
             Uuid::from_u128(0x2209),
             &[WriteRequest {
@@ -578,7 +636,10 @@ fn test_commit_failure時は回復用manifestとstaged_fileを維持する() {
         .unwrap();
         let transaction_dir_path = prepared.transaction_dir_path.clone();
 
-        let actual = prepared.commit(&storage_dir.path.join(".revision"));
+        let actual = prepared.commit_with_directories(
+            &storage_dir.path.join(".revision"),
+            &[storage_dir.path.join("markdown")],
+        );
 
         assert!(actual.is_err(), "{phase:?} must fail");
         assert!(transaction_dir_path.join("manifest.json").is_file());
@@ -601,6 +662,8 @@ fn test_commit_cleanup削除失敗はtombstoneへ回復情報を保持して成�
     let prepared = prepare(
         Arc::new(FailingCommitIo {
             phase: FailingCommitPhase::CleanupDelete,
+            marker_published: AtomicBool::new(false),
+            live_target_renamed: AtomicBool::new(false),
         }),
         &storage_dir.path,
         Uuid::from_u128(0x2210),
