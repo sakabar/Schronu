@@ -1,9 +1,14 @@
 use schronu_web::{
     RefreshState, RefreshTrigger, TodayTextQuery, TodayWorkerHandle, REFRESH_INTERVAL,
 };
+use std::process::Command;
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::Duration;
+
+const STACK_WORKLOAD_CHILD: &str = "SCHRONU_WEB_STACK_WORKLOAD_CHILD";
+const STACK_FRAME_BYTES: usize = 4 * 1024;
+const STACK_DEPTH: usize = 3 * 1024;
 
 #[test]
 fn initial_refresh_stores_the_first_successful_text() {
@@ -98,6 +103,34 @@ fn worker_constructs_and_runs_the_query_on_its_dedicated_thread() {
     );
 }
 
+#[test]
+fn worker_handles_today_text_stack_workload() {
+    if std::env::var_os(STACK_WORKLOAD_CHILD).is_some() {
+        let worker = TodayWorkerHandle::spawn(|| StackWorkloadQuery);
+
+        assert_eq!(
+            futures::executor::block_on(worker.request_async()),
+            Ok("stack workload completed".to_owned())
+        );
+        return;
+    }
+
+    let output = Command::new(std::env::current_exe().expect("test executable must be available"))
+        .arg("--exact")
+        .arg("worker_handles_today_text_stack_workload")
+        .arg("--nocapture")
+        .env(STACK_WORKLOAD_CHILD, "1")
+        .output()
+        .expect("stack workload child process must start");
+
+    assert!(
+        output.status.success(),
+        "stack workload child failed\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
 fn state_with_text(text: &str) -> RefreshState {
     let mut state = RefreshState::new();
     assert!(state.begin_refresh(RefreshTrigger::Initial));
@@ -117,4 +150,27 @@ impl TodayTextQuery for FixedQuery {
             .expect("query thread record must be writable") = Some(thread::current().id());
         Ok("today text".to_owned())
     }
+}
+
+struct StackWorkloadQuery;
+
+impl TodayTextQuery for StackWorkloadQuery {
+    fn today_text(&mut self) -> Result<String, String> {
+        let checksum = consume_stack(STACK_DEPTH);
+        std::hint::black_box(checksum);
+        Ok("stack workload completed".to_owned())
+    }
+}
+
+#[inline(never)]
+fn consume_stack(depth: usize) -> usize {
+    let frame = [depth as u8; STACK_FRAME_BYTES];
+    std::hint::black_box(&frame);
+    let nested = if depth == 0 {
+        0
+    } else {
+        consume_stack(depth - 1)
+    };
+    std::hint::black_box(&frame);
+    nested.wrapping_add(frame[depth % STACK_FRAME_BYTES] as usize)
 }
