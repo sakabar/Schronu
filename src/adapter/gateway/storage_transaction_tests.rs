@@ -173,6 +173,8 @@ impl StorageTransactionIo for CommitOrderIo {
 enum FailingCommitPhase {
     MarkerCreate,
     MarkerSync,
+    MarkerRename,
+    MarkerDirectorySync,
     LiveWrite,
     LiveSync,
     LiveRename,
@@ -181,13 +183,17 @@ enum FailingCommitPhase {
     RevisionWrite,
     RevisionSync,
     RevisionRename,
+    CleanupRename,
+    CleanupHandoffSync,
     CleanupDelete,
 }
 
 struct FailingCommitIo {
     phase: FailingCommitPhase,
     marker_published: AtomicBool,
+    marker_dir_path: Mutex<Option<PathBuf>>,
     live_target_renamed: AtomicBool,
+    cleanup_handoff: AtomicBool,
 }
 
 impl StorageTransactionIo for FailingCommitIo {
@@ -235,8 +241,10 @@ impl StorageTransactionIo for FailingCommitIo {
     }
 
     fn rename(&self, from: &Path, to: &Path) -> std::io::Result<()> {
-        if to.file_name().is_some_and(|name| name == "commit") {
-            self.marker_published.store(true, Ordering::SeqCst);
+        if to.file_name().is_some_and(|name| name == "commit")
+            && matches!(self.phase, FailingCommitPhase::MarkerRename)
+        {
+            return Err(std::io::Error::other("injected marker rename failure"));
         }
         if matches!(self.phase, FailingCommitPhase::LiveRename)
             && to.file_name().is_some_and(|name| name == "project.yaml")
@@ -248,20 +256,56 @@ impl StorageTransactionIo for FailingCommitIo {
         {
             return Err(std::io::Error::other("injected revision rename failure"));
         }
+        if to
+            .file_name()
+            .is_some_and(|name| name.to_string_lossy().starts_with(".cleanup-"))
+            && matches!(self.phase, FailingCommitPhase::CleanupRename)
+        {
+            return Err(std::io::Error::other("injected cleanup rename failure"));
+        }
         let result = FileSystemStorageTransactionIo.rename(from, to);
-        if result.is_ok() && to.file_name().is_some_and(|name| name == "project.yaml") {
-            self.live_target_renamed.store(true, Ordering::SeqCst);
+        if result.is_ok() {
+            if to.file_name().is_some_and(|name| name == "commit") {
+                self.marker_published.store(true, Ordering::SeqCst);
+                *self.marker_dir_path.lock().unwrap() = to.parent().map(Path::to_path_buf);
+            } else if to.file_name().is_some_and(|name| name == "project.yaml") {
+                self.live_target_renamed.store(true, Ordering::SeqCst);
+            } else if to
+                .file_name()
+                .is_some_and(|name| name.to_string_lossy().starts_with(".cleanup-"))
+            {
+                self.cleanup_handoff.store(true, Ordering::SeqCst);
+            }
         }
         result
     }
 
     fn sync_directory(&self, path: &Path) -> std::io::Result<()> {
+        if matches!(self.phase, FailingCommitPhase::MarkerDirectorySync)
+            && self
+                .marker_dir_path
+                .lock()
+                .unwrap()
+                .as_deref()
+                .is_some_and(|marker_dir_path| marker_dir_path == path)
+        {
+            return Err(std::io::Error::other(
+                "injected marker directory sync failure",
+            ));
+        }
         if matches!(self.phase, FailingCommitPhase::LiveDirectorySync)
             && self.marker_published.load(Ordering::SeqCst)
             && self.live_target_renamed.load(Ordering::SeqCst)
         {
             return Err(std::io::Error::other(
                 "injected live directory sync failure",
+            ));
+        }
+        if matches!(self.phase, FailingCommitPhase::CleanupHandoffSync)
+            && self.cleanup_handoff.load(Ordering::SeqCst)
+        {
+            return Err(std::io::Error::other(
+                "injected cleanup handoff sync failure",
             ));
         }
         FileSystemStorageTransactionIo.sync_directory(path)
@@ -608,6 +652,8 @@ fn test_commit_failure時は回復用manifestとstaged_fileを維持する() {
     for phase in [
         FailingCommitPhase::MarkerCreate,
         FailingCommitPhase::MarkerSync,
+        FailingCommitPhase::MarkerRename,
+        FailingCommitPhase::MarkerDirectorySync,
         FailingCommitPhase::LiveWrite,
         FailingCommitPhase::LiveSync,
         FailingCommitPhase::LiveRename,
@@ -616,6 +662,7 @@ fn test_commit_failure時は回復用manifestとstaged_fileを維持する() {
         FailingCommitPhase::RevisionWrite,
         FailingCommitPhase::RevisionSync,
         FailingCommitPhase::RevisionRename,
+        FailingCommitPhase::CleanupRename,
     ] {
         let storage_dir = TestStorageDir::new();
         let target_path = storage_dir.path.join("project.yaml");
@@ -624,7 +671,9 @@ fn test_commit_failure時は回復用manifestとstaged_fileを維持する() {
             Arc::new(FailingCommitIo {
                 phase,
                 marker_published: AtomicBool::new(false),
+                marker_dir_path: Mutex::new(None),
                 live_target_renamed: AtomicBool::new(false),
+                cleanup_handoff: AtomicBool::new(false),
             }),
             &storage_dir.path,
             Uuid::from_u128(0x2209),
@@ -648,43 +697,55 @@ fn test_commit_failure時は回復用manifestとstaged_fileを維持する() {
             transaction_dir_path.join("commit").is_file(),
             !matches!(
                 phase,
-                FailingCommitPhase::MarkerCreate | FailingCommitPhase::MarkerSync
+                FailingCommitPhase::MarkerCreate
+                    | FailingCommitPhase::MarkerSync
+                    | FailingCommitPhase::MarkerRename
             )
         );
     }
 }
 
 #[test]
-fn test_commit_cleanup削除失敗はtombstoneへ回復情報を保持して成功する() {
-    let storage_dir = TestStorageDir::new();
-    let target_path = storage_dir.path.join("project.yaml");
-    fs::write(&target_path, b"old").unwrap();
-    let prepared = prepare(
-        Arc::new(FailingCommitIo {
-            phase: FailingCommitPhase::CleanupDelete,
-            marker_published: AtomicBool::new(false),
-            live_target_renamed: AtomicBool::new(false),
-        }),
-        &storage_dir.path,
-        Uuid::from_u128(0x2210),
-        &[WriteRequest {
-            target_path: &target_path,
-            bytes: b"new",
-        }],
-    )
-    .unwrap();
-    let transaction_id = prepared.transaction_id;
-
-    prepared
-        .commit(&storage_dir.path.join(".revision"))
+fn test_commit_cleanup失敗はtombstoneへ回復情報を保持して成功する() {
+    for phase in [
+        FailingCommitPhase::CleanupHandoffSync,
+        FailingCommitPhase::CleanupDelete,
+    ] {
+        let storage_dir = TestStorageDir::new();
+        let target_path = storage_dir.path.join("project.yaml");
+        fs::write(&target_path, b"old").unwrap();
+        let prepared = prepare(
+            Arc::new(FailingCommitIo {
+                phase,
+                marker_published: AtomicBool::new(false),
+                marker_dir_path: Mutex::new(None),
+                live_target_renamed: AtomicBool::new(false),
+                cleanup_handoff: AtomicBool::new(false),
+            }),
+            &storage_dir.path,
+            Uuid::from_u128(0x2210),
+            &[WriteRequest {
+                target_path: &target_path,
+                bytes: b"new",
+            }],
+        )
         .unwrap();
+        let transaction_id = prepared.transaction_id;
 
-    let cleanup_dir_path = storage_dir
-        .path
-        .join(TRANSACTION_DIRECTORY_NAME)
-        .join(format!(".cleanup-{}", transaction_id.hyphenated()));
-    assert!(cleanup_dir_path.join("commit").is_file());
-    assert!(cleanup_dir_path.join("manifest.json").is_file());
-    assert!(cleanup_dir_path.join("files/0").is_file());
-    assert_eq!(fs::read(target_path).unwrap(), b"new");
+        prepared
+            .commit(&storage_dir.path.join(".revision"))
+            .unwrap();
+
+        let cleanup_dir_path = storage_dir
+            .path
+            .join(TRANSACTION_DIRECTORY_NAME)
+            .join(format!(".cleanup-{}", transaction_id.hyphenated()));
+        assert!(cleanup_dir_path.join("commit").is_file(), "{phase:?}");
+        assert!(
+            cleanup_dir_path.join("manifest.json").is_file(),
+            "{phase:?}"
+        );
+        assert!(cleanup_dir_path.join("files/0").is_file(), "{phase:?}");
+        assert_eq!(fs::read(target_path).unwrap(), b"new");
+    }
 }
