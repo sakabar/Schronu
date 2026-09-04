@@ -106,6 +106,53 @@ struct BlockingMarkerPublicationIo {
     marker_sync_resume: Barrier,
 }
 
+struct DeleteCommitOrderIo {
+    target_path: PathBuf,
+    marker_file_synced: AtomicBool,
+    marker_directory_path: Mutex<Option<PathBuf>>,
+    marker_directory_synced: AtomicBool,
+}
+
+impl StorageTransactionIo for DeleteCommitOrderIo {
+    fn sync_file(&self, path: &Path) -> std::io::Result<()> {
+        if path.file_name().is_some_and(|name| name == "commit.tmp") {
+            self.marker_file_synced.store(true, Ordering::SeqCst);
+        }
+        FileSystemStorageTransactionIo.sync_file(path)
+    }
+
+    fn rename(&self, from: &Path, to: &Path) -> std::io::Result<()> {
+        if to.file_name().is_some_and(|name| name == "commit") {
+            assert!(self.marker_file_synced.load(Ordering::SeqCst));
+            *self.marker_directory_path.lock().unwrap() = to.parent().map(Path::to_path_buf);
+        }
+        FileSystemStorageTransactionIo.rename(from, to)
+    }
+
+    fn remove_file(&self, path: &Path) -> std::io::Result<()> {
+        if path == self.target_path {
+            assert!(
+                self.marker_directory_synced.load(Ordering::SeqCst),
+                "delete target must remain unchanged until the commit marker directory is synced"
+            );
+        }
+        FileSystemStorageTransactionIo.remove_file(path)
+    }
+
+    fn sync_directory(&self, path: &Path) -> std::io::Result<()> {
+        if self
+            .marker_directory_path
+            .lock()
+            .unwrap()
+            .as_deref()
+            .is_some_and(|marker_directory_path| marker_directory_path == path)
+        {
+            self.marker_directory_synced.store(true, Ordering::SeqCst);
+        }
+        FileSystemStorageTransactionIo.sync_directory(path)
+    }
+}
+
 impl StorageTransactionIo for BlockingMarkerPublicationIo {
     fn rename(&self, from: &Path, to: &Path) -> std::io::Result<()> {
         FileSystemStorageTransactionIo.rename(from, to)?;
@@ -461,6 +508,7 @@ fn create_delete_transaction(
 }
 
 fn prepare_delete_transaction(
+    io: Arc<dyn StorageTransactionIo>,
     storage_dir_path: &Path,
     target: &str,
     revision: Uuid,
@@ -471,7 +519,7 @@ fn prepare_delete_transaction(
     let manifest = serde_json::from_slice(&fs::read(&manifest_path).unwrap()).unwrap();
     let transaction_lock = acquire_transaction_lock(&transactions_dir_path).unwrap();
     prepared_from_manifest(
-        file_system_io(),
+        io,
         storage_dir_path,
         transactions_dir_path,
         transaction_dir_path,
@@ -1235,13 +1283,26 @@ fn test_delete_entryは通常commitでmarker公開後にtargetを削除する() 
     fs::create_dir_all(target_path.parent().unwrap()).unwrap();
     fs::write(&target_path, b"old").unwrap();
     let revision = Uuid::from_u128(0x2238);
-    let prepared = prepare_delete_transaction(&storage_dir.path, "project/project.yaml", revision);
+    let io = Arc::new(DeleteCommitOrderIo {
+        target_path: target_path.clone(),
+        marker_file_synced: AtomicBool::new(false),
+        marker_directory_path: Mutex::new(None),
+        marker_directory_synced: AtomicBool::new(false),
+    });
+    let prepared = prepare_delete_transaction(
+        io.clone(),
+        &storage_dir.path,
+        "project/project.yaml",
+        revision,
+    );
 
     prepared
         .commit(&storage_dir.path.join(".revision"))
         .unwrap();
 
     assert!(!target_path.exists());
+    assert!(io.marker_file_synced.load(Ordering::SeqCst));
+    assert!(io.marker_directory_synced.load(Ordering::SeqCst));
     assert_eq!(
         fs::read_to_string(storage_dir.path.join(".revision")).unwrap(),
         format!("{revision}\n")
