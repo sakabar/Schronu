@@ -455,6 +455,10 @@ fn contains_identifier(source: &str, identifier: &str) -> bool {
         .any(|token| token == identifier)
 }
 
+fn is_possible_identifier_character(character: char) -> bool {
+    character == '_' || character.is_alphanumeric() || !character.is_ascii()
+}
+
 fn contains_direct_free_function_call(code: &str, function_name: &str) -> bool {
     code.match_indices(function_name).any(|(start, _)| {
         let before = &code[..start];
@@ -462,11 +466,11 @@ fn contains_direct_free_function_call(code: &str, function_name: &str) -> bool {
         let has_identifier_boundary = before
             .chars()
             .next_back()
-            .is_none_or(|character| !(character.is_ascii_alphanumeric() || character == '_'))
+            .is_none_or(|character| !is_possible_identifier_character(character))
             && after
                 .chars()
                 .next()
-                .is_none_or(|character| !(character.is_ascii_alphanumeric() || character == '_'));
+                .is_none_or(|character| !is_possible_identifier_character(character));
         let is_unqualified = !matches!(
             before
                 .chars()
@@ -2393,6 +2397,8 @@ fn direct_free_function_call_scannerはqualified_callと非codeを除外する()
     let function_name = "handle_interactive_driver_event";
     for source in [
         "another_handle_interactive_driver_event();",
+        "別handle_interactive_driver_event();",
+        "handle_interactive_driver_event別();",
         "driver.handle_interactive_driver_event();",
         "runtime::handle_interactive_driver_event();",
         "fn handle_interactive_driver_event() {}",
