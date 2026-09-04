@@ -39,6 +39,7 @@ enum StorageTransactionOperation {
     ValidateTargetPath,
     ReadTargetMetadata,
     ValidateStagedFile,
+    ValidateStagedContent,
     CreateStagedFile,
     SetStagedPermissions,
     WriteStagedFile,
@@ -222,8 +223,8 @@ struct PreparedEntry {
     target: PathBuf,
     operation: ManifestEntryOperation,
     staged_file: Option<PathBuf>,
-    _content_length: Option<u64>,
-    _content_checksum: Option<String>,
+    content_length: Option<u64>,
+    content_checksum: Option<String>,
 }
 
 struct PreflightEntry {
@@ -231,6 +232,7 @@ struct PreflightEntry {
     operation: ManifestEntryOperation,
     bytes: Option<Vec<u8>>,
     permissions: Option<fs::Permissions>,
+    already_applied: bool,
 }
 
 impl PreparedTransaction {
@@ -293,6 +295,9 @@ impl PreparedTransaction {
             })?;
         }
         for entry in &preflight_entries {
+            if entry.already_applied {
+                continue;
+            }
             match entry.operation {
                 ManifestEntryOperation::Write => self.apply_bytes(
                     &entry.target_path,
@@ -337,7 +342,45 @@ impl PreparedTransaction {
                         operation: entry.operation,
                         bytes: None,
                         permissions: None,
+                        already_applied: false,
                     });
+                }
+                let target_path = self.storage_dir_path.join(&entry.target);
+                let expected_length = entry
+                    .content_length
+                    .expect("validated write entry must contain content length");
+                let expected_checksum = entry
+                    .content_checksum
+                    .as_deref()
+                    .expect("validated write entry must contain content checksum");
+                match self.io.symlink_metadata(&target_path) {
+                    Ok(metadata) if metadata.file_type().is_file() => {
+                        let target_bytes = self.io.read_file(&target_path).map_err(|error| {
+                            StorageTransactionError::new(
+                                StorageTransactionOperation::ReadTargetMetadata,
+                                &target_path,
+                                error,
+                            )
+                        })?;
+                        if content_matches(&target_bytes, expected_length, expected_checksum) {
+                            return Ok(PreflightEntry {
+                                target_path,
+                                operation: entry.operation,
+                                bytes: None,
+                                permissions: None,
+                                already_applied: true,
+                            });
+                        }
+                    }
+                    Ok(_) => {}
+                    Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                    Err(error) => {
+                        return Err(StorageTransactionError::new(
+                            StorageTransactionOperation::ReadTargetMetadata,
+                            &target_path,
+                            error,
+                        ));
+                    }
                 }
                 let staged_file_path = self.transaction_dir_path.join(
                     entry
@@ -372,11 +415,22 @@ impl PreparedTransaction {
                         error,
                     )
                 })?;
+                if !content_matches(&bytes, expected_length, expected_checksum) {
+                    return Err(StorageTransactionError::new(
+                        StorageTransactionOperation::ValidateStagedContent,
+                        &staged_file_path,
+                        std::io::Error::new(
+                            std::io::ErrorKind::InvalidData,
+                            "staged transaction material does not match manifest content",
+                        ),
+                    ));
+                }
                 Ok(PreflightEntry {
-                    target_path: self.storage_dir_path.join(&entry.target),
+                    target_path,
                     operation: entry.operation,
                     bytes: Some(bytes),
                     permissions: Some(metadata.permissions()),
+                    already_applied: false,
                 })
             })
             .collect()
@@ -726,8 +780,8 @@ fn prepared_from_manifest(
                 target,
                 operation: entry.operation,
                 staged_file: entry.staged_file,
-                _content_length: entry.content_length,
-                _content_checksum: entry.content_checksum,
+                content_length: entry.content_length,
+                content_checksum: entry.content_checksum,
             })
         })
         .collect::<Result<Vec<_>, StorageTransactionError>>()?;
@@ -825,6 +879,10 @@ fn content_checksum(bytes: &[u8]) -> String {
         (checksum ^ u64::from(*byte)).wrapping_mul(FNV_PRIME)
     });
     format!("fnv1a64:{checksum:016x}")
+}
+
+fn content_matches(bytes: &[u8], expected_length: u64, expected_checksum: &str) -> bool {
+    bytes.len() as u64 == expected_length && content_checksum(bytes) == expected_checksum
 }
 
 fn validate_staged_file_path(
@@ -931,8 +989,8 @@ pub(super) fn prepare_with_directories(
                 target: validate_storage_relative_path(storage_dir_path, write.target_path)?,
                 operation: ManifestEntryOperation::Write,
                 staged_file: Some(PathBuf::from("files").join(index.to_string())),
-                _content_length: Some(write.bytes.len() as u64),
-                _content_checksum: Some(content_checksum(write.bytes)),
+                content_length: Some(write.bytes.len() as u64),
+                content_checksum: Some(content_checksum(write.bytes)),
             })
         })
         .collect::<Result<Vec<_>, StorageTransactionError>>()?;
