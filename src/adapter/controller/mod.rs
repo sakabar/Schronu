@@ -16,6 +16,9 @@ mod renderer;
 #[path = "schronu/runtime.rs"]
 mod runtime;
 
+#[path = "schronu/today_text.rs"]
+mod today_text;
+
 #[path = "schronu/view.rs"]
 mod view;
 
@@ -43,6 +46,8 @@ mod today_text_contract_tests;
 pub fn run_cli() {
     runtime::application();
 }
+
+pub use today_text::{TodayTextError, TodayTextService};
 
 #[cfg(test)]
 mod entrypoint_contract_tests {

@@ -75,7 +75,7 @@ const MY_ASCII_SET: &AsciiSet = &CONTROLS.add(b' ');
 const OBSIDIAN_VAULT_ASCII_SET: &AsciiSet = &MY_ASCII_SET.add(b'&').add(b'=');
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-enum FocusSelectionMode {
+pub(super) enum FocusSelectionMode {
     HighestPriority {
         tucked_task_ids: Vec<Uuid>,
         is_explicit: bool,
@@ -88,7 +88,7 @@ enum FocusSelectionMode {
 }
 
 impl FocusSelectionMode {
-    fn highest_priority() -> Self {
+    pub(super) fn highest_priority() -> Self {
         Self::HighestPriority {
             tucked_task_ids: Vec::new(),
             is_explicit: false,
@@ -390,7 +390,7 @@ fn focus_selection_mode_from_selection(selection: FocusSelection) -> FocusSelect
     }
 }
 
-fn select_focus_task_id(
+pub(super) fn select_focus_task_id(
     task_repository: &mut dyn TaskRepositoryTrait,
     focus_selection_mode: &FocusSelectionMode,
 ) -> Result<Option<Uuid>, ApplicationError> {
