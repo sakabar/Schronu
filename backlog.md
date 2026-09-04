@@ -943,8 +943,8 @@
 - 優先度: `P1`
 - 概算規模: `XL`
 - 完了日: 2026-09-05
-- 対応: 変更projectをimmutable manifestとstaged fileへwrite・syncしてから、独立markerをatomicに公開・directory syncするrepository transactionを導入した。markerだけをcommit pointとし、markerなしはlive targetを変更せず破棄して旧snapshotを維持し、markerありは全materialの事前検証後に新snapshotへidempotentにroll-forwardして`.revision`を最後に揃える。同一内容のskip、permission維持、静止したsymlinkの拒否、advisory lockによる直列化を維持し、deleteは公開APIを増やさないprivate protocolだけを実装した。path検証後に外部processがfilesystem entryを悪意的に差し替えるsymlink TOCTOUは、TD-022の脅威model外でありrepository全体に残る独立したsecurity debtとした。
-- 検証: prepare、commit marker、markerなしdiscard、markerありroll-forward、material preflight、revision後置、deleteの各契約をRed/Green cycleで固定し、各Green後のsubagent review指摘を個別commitで修正・再reviewした。`cargo fmt --check`、`cargo clippy --locked --all-targets -- -D warnings`、`cargo test --locked`、`git diff --check`に成功し、testはlibrary 638件成功・1件ignored、controller 475件成功、integration test全件成功を確認した。
+- 対応: 変更projectをimmutable manifestとstaged fileへwrite・syncしてから、独立markerをatomicに公開・directory syncするrepository transactionを導入した。markerだけをcommit pointとし、markerなしはlive targetを変更せず破棄して旧snapshotを維持し、markerありは全materialの長さとchecksumを事前検証後に新snapshotへidempotentにroll-forwardして`.revision`を最後に揃える。既にmanifestどおりの内容であるlive targetは適用済みとして扱い、対応staged fileが欠落しても残りを回復する。同一内容のskip、permission維持、静止したsymlinkの拒否、advisory lockによる直列化を維持し、deleteは公開APIを増やさないprivate protocolだけを実装した。path検証後に外部processがfilesystem entryを悪意的に差し替えるsymlink TOCTOUは、TD-022の脅威model外でありrepository全体に残る独立したsecurity debtとした。
+- 検証: prepare、commit marker、markerなしdiscard、markerありroll-forward、内容検証付きmaterial preflight、適用済みtarget判定、revision後置、deleteの各契約をRed/Green cycleで固定し、各Green後のsubagent review指摘を個別commitで修正・再reviewした。`cargo fmt --check`、`cargo clippy --locked --all-targets -- -D warnings`、`cargo test --locked`、`git diff --check`に成功し、testはlibrary 644件成功・1件ignored、controller 475件成功、integration test全件成功を確認した。
 
 #### 現状と根拠
 
