@@ -18,6 +18,7 @@ pub(super) struct StorageTransactionError {
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum StorageTransactionOperation {
+    #[cfg(test)]
     Discard,
     Cleanup,
     CreateTransactionDirectory,
@@ -165,6 +166,7 @@ struct PreparedEntry {
 }
 
 impl PreparedTransaction {
+    #[cfg(test)]
     pub(super) fn discard(self) -> Result<(), StorageTransactionError> {
         self.io
             .remove_dir_all(&self.transaction_dir_path)
@@ -177,7 +179,16 @@ impl PreparedTransaction {
             })
     }
 
+    #[cfg(test)]
     pub(super) fn commit(self, revision_path: &Path) -> Result<(), StorageTransactionError> {
+        self.commit_with_directories(revision_path, &[])
+    }
+
+    pub(super) fn commit_with_directories(
+        self,
+        revision_path: &Path,
+        directories: &[PathBuf],
+    ) -> Result<(), StorageTransactionError> {
         let marker_path = self.transaction_dir_path.join("commit");
         self.io.create_new_file(&marker_path).map_err(|error| {
             StorageTransactionError::new(
@@ -195,6 +206,15 @@ impl PreparedTransaction {
         })?;
         sync_directory(self.io.as_ref(), &self.transaction_dir_path)?;
 
+        for directory in directories {
+            self.io.create_dir_all(directory).map_err(|error| {
+                StorageTransactionError::new(
+                    StorageTransactionOperation::CreateTargetDirectory,
+                    directory,
+                    error,
+                )
+            })?;
+        }
         for entry in &self.entries {
             self.apply_staged_file(entry)?;
         }

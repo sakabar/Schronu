@@ -769,21 +769,12 @@ impl TaskRepositoryTrait for TaskRepository {
             &write_requests,
         )
         .map_err(|error| TaskRepositoryError::new(ApplicationRepositoryOperation::Save, error))?;
-        for (project, _) in &prepared_writes {
-            if let Err(error) = fs::create_dir_all(project.project_dir_path.join("markdown")) {
-                let _ = prepared_transaction.discard();
-                return Err(TaskRepositoryError::new(
-                    ApplicationRepositoryOperation::Save,
-                    FileRepositoryError::new(
-                        FileRepositoryOperation::CreateDirectory,
-                        project.project_dir_path.join("markdown"),
-                        error,
-                    ),
-                ));
-            }
-        }
+        let markdown_directories = prepared_writes
+            .iter()
+            .map(|(project, _)| project.project_dir_path.join("markdown"))
+            .collect::<Vec<_>>();
         prepared_transaction
-            .commit(&revision_path)
+            .commit_with_directories(&revision_path, &markdown_directories)
             .map_err(|error| {
                 TaskRepositoryError::new(ApplicationRepositoryOperation::Save, error)
             })?;
