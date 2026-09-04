@@ -91,6 +91,7 @@ struct FailingStagedFileIo {
 struct CommitOrderIo {
     storage_dir_path: PathBuf,
     transaction_dir_path: Mutex<Option<PathBuf>>,
+    manifest_file_synced: Mutex<bool>,
     marker_file_synced: Mutex<bool>,
     marker_directory_synced: Mutex<bool>,
     first_target_path: PathBuf,
@@ -109,7 +110,12 @@ impl StorageTransactionIo for CommitOrderIo {
     }
 
     fn create_new_file(&self, path: &Path) -> std::io::Result<()> {
-        if path.parent() == Some(self.storage_dir_path.as_path())
+        if path.file_name().is_some_and(|name| name == "commit.tmp") {
+            assert!(
+                *self.manifest_file_synced.lock().unwrap(),
+                "immutable manifest must be synced before marker publication starts"
+            );
+        } else if path.parent() == Some(self.storage_dir_path.as_path())
             || path.parent() == self.first_target_path.parent()
             || path.parent() == self.second_target_path.parent()
         {
@@ -134,7 +140,9 @@ impl StorageTransactionIo for CommitOrderIo {
     }
 
     fn sync_file(&self, path: &Path) -> std::io::Result<()> {
-        if path.file_name().is_some_and(|name| name == "commit.tmp") {
+        if path.file_name().is_some_and(|name| name == "manifest.json") {
+            *self.manifest_file_synced.lock().unwrap() = true;
+        } else if path.file_name().is_some_and(|name| name == "commit.tmp") {
             *self.marker_file_synced.lock().unwrap() = true;
         }
         FileSystemStorageTransactionIo.sync_file(path)
@@ -570,12 +578,14 @@ fn test_commit_markerをsyncしてからprojectを適用しrevisionを最後に�
     let io = Arc::new(CommitOrderIo {
         storage_dir_path: storage_dir.path.clone(),
         transaction_dir_path: Mutex::new(None),
+        manifest_file_synced: Mutex::new(false),
         marker_file_synced: Mutex::new(false),
         marker_directory_synced: Mutex::new(false),
         first_target_path: first_target_path.clone(),
         second_target_path: second_target_path.clone(),
     });
-    let prepared = prepare(
+    let markdown_dir_path = storage_dir.path.join("third/markdown");
+    let prepared = prepare_with_directories(
         io,
         &storage_dir.path,
         revision,
@@ -589,6 +599,7 @@ fn test_commit_markerをsyncしてからprojectを適用しrevisionを最後に�
                 bytes: b"second-new",
             },
         ],
+        &[&markdown_dir_path],
     )
     .unwrap();
     let manifest: Value = serde_json::from_slice(
@@ -597,17 +608,16 @@ fn test_commit_markerをsyncしてからprojectを適用しrevisionを最後に�
     .unwrap();
     let transaction_id = Uuid::parse_str(manifest["transaction_id"].as_str().unwrap()).unwrap();
     assert_eq!(manifest["revision"], revision.to_string());
+    assert_eq!(manifest["directories"][0], "third/markdown");
 
     prepared
-        .commit_with_directories(
-            &storage_dir.path.join(".revision"),
-            &[storage_dir.path.join("third/markdown")],
-        )
+        .commit(&storage_dir.path.join(".revision"))
         .unwrap();
 
     assert_ne!(transaction_id, Uuid::nil());
     assert_eq!(fs::read(first_target_path).unwrap(), b"first-new");
     assert_eq!(fs::read(second_target_path).unwrap(), b"second-new");
+    assert!(markdown_dir_path.is_dir());
     assert_eq!(
         fs::read_to_string(storage_dir.path.join(".revision")).unwrap(),
         format!("{revision}\n")
@@ -667,7 +677,8 @@ fn test_commit_failure時は回復用manifestとstaged_fileを維持する() {
         let storage_dir = TestStorageDir::new();
         let target_path = storage_dir.path.join("project.yaml");
         fs::write(&target_path, b"old").unwrap();
-        let prepared = prepare(
+        let markdown_dir_path = storage_dir.path.join("markdown");
+        let prepared = prepare_with_directories(
             Arc::new(FailingCommitIo {
                 phase,
                 marker_published: AtomicBool::new(false),
@@ -681,14 +692,12 @@ fn test_commit_failure時は回復用manifestとstaged_fileを維持する() {
                 target_path: &target_path,
                 bytes: b"new",
             }],
+            &[&markdown_dir_path],
         )
         .unwrap();
         let transaction_dir_path = prepared.transaction_dir_path.clone();
 
-        let actual = prepared.commit_with_directories(
-            &storage_dir.path.join(".revision"),
-            &[storage_dir.path.join("markdown")],
-        );
+        let actual = prepared.commit(&storage_dir.path.join(".revision"));
 
         assert!(actual.is_err(), "{phase:?} must fail");
         assert!(transaction_dir_path.join("manifest.json").is_file());

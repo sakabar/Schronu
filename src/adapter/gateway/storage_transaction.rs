@@ -88,6 +88,7 @@ struct TransactionManifest {
     version: u32,
     transaction_id: Uuid,
     revision: Uuid,
+    directories: Vec<PathBuf>,
     entries: Vec<ManifestEntry>,
 }
 
@@ -157,6 +158,7 @@ pub(super) struct PreparedTransaction {
     transaction_dir_path: PathBuf,
     transaction_id: Uuid,
     revision: Uuid,
+    directories: Vec<PathBuf>,
     entries: Vec<PreparedEntry>,
     io: Arc<dyn StorageTransactionIo>,
 }
@@ -180,16 +182,7 @@ impl PreparedTransaction {
             })
     }
 
-    #[cfg(test)]
     pub(super) fn commit(self, revision_path: &Path) -> Result<(), StorageTransactionError> {
-        self.commit_with_directories(revision_path, &[])
-    }
-
-    pub(super) fn commit_with_directories(
-        self,
-        revision_path: &Path,
-        directories: &[PathBuf],
-    ) -> Result<(), StorageTransactionError> {
         let marker_temporary_path = self.transaction_dir_path.join("commit.tmp");
         let marker_path = self.transaction_dir_path.join("commit");
         self.io
@@ -219,11 +212,12 @@ impl PreparedTransaction {
             })?;
         sync_directory(self.io.as_ref(), &self.transaction_dir_path)?;
 
-        for directory in directories {
-            self.io.create_dir_all(directory).map_err(|error| {
+        for directory in &self.directories {
+            let directory_path = self.storage_dir_path.join(directory);
+            self.io.create_dir_all(&directory_path).map_err(|error| {
                 StorageTransactionError::new(
                     StorageTransactionOperation::CreateTargetDirectory,
-                    directory,
+                    directory_path,
                     error,
                 )
             })?;
@@ -377,11 +371,22 @@ impl PreparedTransaction {
     }
 }
 
+#[cfg(test)]
 pub(super) fn prepare(
     io: Arc<dyn StorageTransactionIo>,
     storage_dir_path: &Path,
     revision: Uuid,
     writes: &[WriteRequest<'_>],
+) -> Result<PreparedTransaction, StorageTransactionError> {
+    prepare_with_directories(io, storage_dir_path, revision, writes, &[])
+}
+
+pub(super) fn prepare_with_directories(
+    io: Arc<dyn StorageTransactionIo>,
+    storage_dir_path: &Path,
+    revision: Uuid,
+    writes: &[WriteRequest<'_>],
+    directories: &[&Path],
 ) -> Result<PreparedTransaction, StorageTransactionError> {
     let transactions_dir_path = storage_dir_path.join(TRANSACTION_DIRECTORY_NAME);
     io.create_dir_all(&transactions_dir_path).map_err(|error| {
@@ -403,7 +408,7 @@ pub(super) fn prepare(
         ));
     }
 
-    let result = prepare_contents(
+    let directories = prepare_contents(
         io.as_ref(),
         storage_dir_path,
         &transactions_dir_path,
@@ -412,11 +417,15 @@ pub(super) fn prepare(
         transaction_id,
         revision,
         writes,
+        directories,
     );
-    if let Err(error) = result {
-        let _ = io.remove_dir_all(&transaction_dir_path);
-        return Err(error);
-    }
+    let directories = match directories {
+        Ok(directories) => directories,
+        Err(error) => {
+            let _ = io.remove_dir_all(&transaction_dir_path);
+            return Err(error);
+        }
+    };
     let entries = writes
         .iter()
         .enumerate()
@@ -431,6 +440,7 @@ pub(super) fn prepare(
         transaction_dir_path,
         transaction_id,
         revision,
+        directories,
         entries,
         io,
     })
@@ -446,7 +456,8 @@ fn prepare_contents(
     transaction_id: Uuid,
     revision: Uuid,
     writes: &[WriteRequest<'_>],
-) -> Result<(), StorageTransactionError> {
+    directories: &[&Path],
+) -> Result<Vec<PathBuf>, StorageTransactionError> {
     let mut entries = Vec::with_capacity(writes.len());
     for (index, write) in writes.iter().enumerate() {
         let target = write
@@ -469,10 +480,26 @@ fn prepare_contents(
     }
     sync_directory(io, staged_files_dir_path)?;
 
+    let directories = directories
+        .iter()
+        .map(|directory| {
+            directory
+                .strip_prefix(storage_dir_path)
+                .map(Path::to_path_buf)
+                .map_err(|error| {
+                    StorageTransactionError::new(
+                        StorageTransactionOperation::ResolveTargetPath,
+                        *directory,
+                        std::io::Error::new(std::io::ErrorKind::InvalidInput, error),
+                    )
+                })
+        })
+        .collect::<Result<Vec<_>, _>>()?;
     let manifest = TransactionManifest {
         version: 1,
         transaction_id,
         revision,
+        directories: directories.clone(),
         entries,
     };
     let manifest_path = transaction_dir_path.join("manifest.json");
@@ -507,7 +534,8 @@ fn prepare_contents(
     })?;
     sync_directory(io, transaction_dir_path)?;
     sync_directory(io, transactions_dir_path)?;
-    sync_directory(io, storage_dir_path)
+    sync_directory(io, storage_dir_path)?;
+    Ok(directories)
 }
 
 fn write_staged_file(

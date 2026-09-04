@@ -762,19 +762,24 @@ impl TaskRepositoryTrait for TaskRepository {
                 bytes,
             })
             .collect::<Vec<_>>();
-        let prepared_transaction = storage_transaction::prepare(
-            self.storage_transaction_io.clone(),
-            storage_dir_path,
-            new_storage_revision,
-            &write_requests,
-        )
-        .map_err(|error| TaskRepositoryError::new(ApplicationRepositoryOperation::Save, error))?;
         let markdown_directories = prepared_writes
             .iter()
             .map(|(project, _)| project.project_dir_path.join("markdown"))
             .collect::<Vec<_>>();
+        let markdown_directory_paths = markdown_directories
+            .iter()
+            .map(PathBuf::as_path)
+            .collect::<Vec<_>>();
+        let prepared_transaction = storage_transaction::prepare_with_directories(
+            self.storage_transaction_io.clone(),
+            storage_dir_path,
+            new_storage_revision,
+            &write_requests,
+            &markdown_directory_paths,
+        )
+        .map_err(|error| TaskRepositoryError::new(ApplicationRepositoryOperation::Save, error))?;
         prepared_transaction
-            .commit_with_directories(&revision_path, &markdown_directories)
+            .commit(&revision_path)
             .map_err(|error| {
                 TaskRepositoryError::new(ApplicationRepositoryOperation::Save, error)
             })?;
