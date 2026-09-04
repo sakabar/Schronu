@@ -29,6 +29,7 @@ enum StorageTransactionOperation {
     AcquireTransactionLock,
     ValidateTransactionDirectory,
     InspectActiveTransaction,
+    ValidateCommitMarker,
     DiscardUncommitted,
     ReadManifest,
     ParseManifest,
@@ -486,9 +487,36 @@ pub(super) fn recover(
     }
 
     let marker_path = transaction_dir_path.join("commit");
-    match fs::symlink_metadata(&marker_path) {
-        Ok(_) => {
+    match io.symlink_metadata(&marker_path) {
+        Ok(metadata) => {
+            if !metadata.file_type().is_file() {
+                return Err(StorageTransactionError::new(
+                    StorageTransactionOperation::ValidateCommitMarker,
+                    marker_path,
+                    std::io::Error::new(
+                        std::io::ErrorKind::InvalidData,
+                        "transaction commit marker must be a regular file",
+                    ),
+                ));
+            }
             let manifest_path = transaction_dir_path.join("manifest.json");
+            let manifest_metadata = io.symlink_metadata(&manifest_path).map_err(|error| {
+                StorageTransactionError::new(
+                    StorageTransactionOperation::ReadManifest,
+                    &manifest_path,
+                    error,
+                )
+            })?;
+            if !manifest_metadata.file_type().is_file() {
+                return Err(StorageTransactionError::new(
+                    StorageTransactionOperation::ValidateManifest,
+                    &manifest_path,
+                    std::io::Error::new(
+                        std::io::ErrorKind::InvalidData,
+                        "transaction manifest must be a regular file",
+                    ),
+                ));
+            }
             let manifest_bytes = io.read_file(&manifest_path).map_err(|error| {
                 StorageTransactionError::new(
                     StorageTransactionOperation::ReadManifest,

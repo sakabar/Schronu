@@ -1859,6 +1859,81 @@ fn test_load_marker済みtransactionの未適用staged_file欠落はpathとphase
     );
 }
 
+#[cfg(unix)]
+#[test]
+fn test_load_marker済みtransactionのcontrol_file_symlinkを拒否して外部とliveを変更しない() {
+    use std::os::unix::fs::symlink;
+
+    for (case, expected_phase) in [
+        ("marker", "ValidateCommitMarker"),
+        ("manifest", "ValidateManifest"),
+        ("later-staged", "ValidateStagedFile"),
+    ] {
+        let storage_dir = TestStorageDir::new();
+        let external_dir = TestStorageDir::new();
+        fs::create_dir_all(&external_dir.path).unwrap();
+        let external_path = external_dir.path.join(format!("{case}.external"));
+        let now = Local.with_ymd_and_hms(2026, 9, 5, 13, 0, 0).unwrap();
+        let (first_id, second_id, _, active_transaction_path) =
+            create_committed_transaction_interruption(
+                &storage_dir,
+                now,
+                CommittedCrashPhase::BeforeFirstProjectRename,
+            );
+        let first_project_path = storage_dir
+            .project_dir_path("20260905", "roll-forward-first", first_id)
+            .join("project.yaml");
+        let second_project_path = storage_dir
+            .project_dir_path("20260905", "roll-forward-second", second_id)
+            .join("project.yaml");
+        let old_first = fs::read(&first_project_path).unwrap();
+        let old_second = fs::read(&second_project_path).unwrap();
+        let old_revision = fs::read(storage_dir.path.join(".revision")).unwrap();
+        let replaced_path = match case {
+            "marker" => {
+                fs::write(&external_path, b"external-marker").unwrap();
+                active_transaction_path.join("commit")
+            }
+            "manifest" => {
+                fs::write(&external_path, b"external-manifest").unwrap();
+                active_transaction_path.join("manifest.json")
+            }
+            "later-staged" => {
+                let staged_path = active_transaction_path.join("files/1");
+                fs::write(&external_path, fs::read(&staged_path).unwrap()).unwrap();
+                staged_path
+            }
+            _ => unreachable!(),
+        };
+        fs::remove_file(&replaced_path).unwrap();
+        symlink(&external_path, &replaced_path).unwrap();
+        let external_bytes = fs::read(&external_path).unwrap();
+        let mut repository = TaskRepository::new(storage_dir.path_str());
+
+        let actual = repository.load().unwrap_err();
+
+        let source = storage_transaction_error(&actual);
+        assert!(
+            source.to_string().contains(expected_phase),
+            "case: {case}, error: {source}"
+        );
+        assert!(
+            source
+                .to_string()
+                .contains(&replaced_path.display().to_string()),
+            "case: {case}"
+        );
+        assert!(active_transaction_path.exists(), "case: {case}");
+        assert_eq!(fs::read(first_project_path).unwrap(), old_first);
+        assert_eq!(fs::read(second_project_path).unwrap(), old_second);
+        assert_eq!(
+            fs::read(storage_dir.path.join(".revision")).unwrap(),
+            old_revision
+        );
+        assert_eq!(fs::read(external_path).unwrap(), external_bytes);
+    }
+}
+
 #[test]
 fn test_load_markerなしtransaction破棄失敗はpathとphaseを保持してmemoryを変更しない() {
     let storage_dir = TestStorageDir::new();
