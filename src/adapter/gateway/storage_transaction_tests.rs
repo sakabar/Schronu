@@ -91,6 +91,7 @@ struct FailingStagedFileIo {
 struct CommitOrderIo {
     storage_dir_path: PathBuf,
     transaction_dir_path: Mutex<Option<PathBuf>>,
+    marker_file_synced: Mutex<bool>,
     marker_directory_synced: Mutex<bool>,
     first_target_path: PathBuf,
     second_target_path: PathBuf,
@@ -120,12 +121,19 @@ impl StorageTransactionIo for CommitOrderIo {
         if path.parent() == Some(self.storage_dir_path.as_path())
             && path
                 .file_name()
-                .is_some_and(|name| name.to_string_lossy().starts_with(".revision"))
+                .is_some_and(|name| name.to_string_lossy().contains("revision"))
         {
             assert_eq!(fs::read(&self.first_target_path).unwrap(), b"first-new");
             assert_eq!(fs::read(&self.second_target_path).unwrap(), b"second-new");
         }
         FileSystemStorageTransactionIo.write_file(path, bytes)
+    }
+
+    fn sync_file(&self, path: &Path) -> std::io::Result<()> {
+        if path.file_name().is_some_and(|name| name == "commit") {
+            *self.marker_file_synced.lock().unwrap() = true;
+        }
+        FileSystemStorageTransactionIo.sync_file(path)
     }
 
     fn sync_directory(&self, path: &Path) -> std::io::Result<()> {
@@ -136,9 +144,78 @@ impl StorageTransactionIo for CommitOrderIo {
             .as_deref()
             .is_some_and(|transaction_dir_path| transaction_dir_path == path)
         {
+            assert!(
+                *self.marker_file_synced.lock().unwrap(),
+                "commit marker file must be synced before its directory"
+            );
             *self.marker_directory_synced.lock().unwrap() = true;
         }
         FileSystemStorageTransactionIo.sync_directory(path)
+    }
+}
+
+#[derive(Clone, Copy, Debug)]
+enum FailingCommitPhase {
+    MarkerCreate,
+    MarkerSync,
+    LiveWrite,
+    LiveSync,
+    LiveRename,
+    RevisionWrite,
+    Cleanup,
+}
+
+struct FailingCommitIo {
+    phase: FailingCommitPhase,
+}
+
+impl StorageTransactionIo for FailingCommitIo {
+    fn create_new_file(&self, path: &Path) -> std::io::Result<()> {
+        if matches!(self.phase, FailingCommitPhase::MarkerCreate)
+            && path.file_name().is_some_and(|name| name == "commit")
+        {
+            return Err(std::io::Error::other("injected marker create failure"));
+        }
+        FileSystemStorageTransactionIo.create_new_file(path)
+    }
+
+    fn write_file(&self, path: &Path, bytes: &[u8]) -> std::io::Result<()> {
+        let file_name = path.file_name().unwrap_or_default().to_string_lossy();
+        if (matches!(self.phase, FailingCommitPhase::LiveWrite)
+            && file_name.starts_with(".project.yaml."))
+            || (matches!(self.phase, FailingCommitPhase::RevisionWrite)
+                && file_name.contains("revision"))
+        {
+            return Err(std::io::Error::other("injected live write failure"));
+        }
+        FileSystemStorageTransactionIo.write_file(path, bytes)
+    }
+
+    fn sync_file(&self, path: &Path) -> std::io::Result<()> {
+        let file_name = path.file_name().unwrap_or_default().to_string_lossy();
+        if (matches!(self.phase, FailingCommitPhase::MarkerSync) && file_name == "commit")
+            || (matches!(self.phase, FailingCommitPhase::LiveSync)
+                && file_name.starts_with(".project.yaml."))
+        {
+            return Err(std::io::Error::other("injected commit sync failure"));
+        }
+        FileSystemStorageTransactionIo.sync_file(path)
+    }
+
+    fn rename(&self, from: &Path, to: &Path) -> std::io::Result<()> {
+        if matches!(self.phase, FailingCommitPhase::LiveRename)
+            && to.file_name().is_some_and(|name| name == "project.yaml")
+        {
+            return Err(std::io::Error::other("injected live rename failure"));
+        }
+        FileSystemStorageTransactionIo.rename(from, to)
+    }
+
+    fn remove_dir_all(&self, path: &Path) -> std::io::Result<()> {
+        if matches!(self.phase, FailingCommitPhase::Cleanup) {
+            return Err(std::io::Error::other("injected cleanup failure"));
+        }
+        FileSystemStorageTransactionIo.remove_dir_all(path)
     }
 }
 
@@ -393,6 +470,7 @@ fn test_commit_markerをsyncしてからprojectを適用しrevisionを最後に�
     let io = Arc::new(CommitOrderIo {
         storage_dir_path: storage_dir.path.clone(),
         transaction_dir_path: Mutex::new(None),
+        marker_file_synced: Mutex::new(false),
         marker_directory_synced: Mutex::new(false),
         first_target_path: first_target_path.clone(),
         second_target_path: second_target_path.clone(),
@@ -464,4 +542,42 @@ fn test_commit_既存targetのpermissionを維持する() {
         .unwrap();
 
     assert_eq!(fs::metadata(target_path).unwrap().mode() & 0o777, 0o600);
+}
+
+#[test]
+fn test_commit_failure時は回復用manifestとstaged_fileを維持する() {
+    for phase in [
+        FailingCommitPhase::MarkerCreate,
+        FailingCommitPhase::MarkerSync,
+        FailingCommitPhase::LiveWrite,
+        FailingCommitPhase::LiveSync,
+        FailingCommitPhase::LiveRename,
+        FailingCommitPhase::RevisionWrite,
+        FailingCommitPhase::Cleanup,
+    ] {
+        let storage_dir = TestStorageDir::new();
+        let target_path = storage_dir.path.join("project.yaml");
+        fs::write(&target_path, b"old").unwrap();
+        let prepared = prepare(
+            Arc::new(FailingCommitIo { phase }),
+            &storage_dir.path,
+            Uuid::from_u128(0x2209),
+            &[WriteRequest {
+                target_path: &target_path,
+                bytes: b"new",
+            }],
+        )
+        .unwrap();
+        let transaction_dir_path = prepared.transaction_dir_path.clone();
+
+        let actual = prepared.commit(&storage_dir.path.join(".revision"));
+
+        assert!(actual.is_err(), "{phase:?} must fail");
+        assert!(transaction_dir_path.join("manifest.json").is_file());
+        assert!(transaction_dir_path.join("files/0").is_file());
+        assert_eq!(
+            transaction_dir_path.join("commit").is_file(),
+            !matches!(phase, FailingCommitPhase::MarkerCreate)
+        );
+    }
 }
