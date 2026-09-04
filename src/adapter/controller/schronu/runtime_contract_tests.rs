@@ -4753,7 +4753,7 @@ fn test_execute_flatten_15分以下fragmentを避けたtaskを丸ごと翌論理
         Local.with_ymd_and_hms(2026, 8, 14, 0, 45, 0).unwrap(),
     ));
     let schedule_repository = TestTaskRepository::new(root.clone(), now);
-    let target_segments = schronu::application::schedule_use_case::get_schedule(
+    let target_segments = crate::application::schedule_use_case::get_schedule(
         &schedule_repository,
     )
     .unwrap()

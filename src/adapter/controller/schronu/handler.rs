@@ -6,18 +6,18 @@ use super::renderer::{
     DisplayModel, FlattenDisplay, FlattenReason, FlattenReasonSummary, FlattenRow,
     FlattenUnresolvedDay, MessageLevel, PackDisplay, PackRow, TreeDisplay,
 };
-use chrono::{DateTime, Datelike, Days, Duration, Local, NaiveDate, NaiveDateTime, NaiveTime};
-use regex::Regex;
-use schronu::application::daily_capacity::{
+use crate::application::daily_capacity::{
     try_local_date_and_time, try_logical_date, try_next_logical_date_start,
 };
-use schronu::application::flatten_use_case::{FlattenResult, UnresolvedReason};
-use schronu::application::pack_use_case::PackResult;
-use schronu::application::task_use_case::{
+use crate::application::flatten_use_case::{FlattenResult, UnresolvedReason};
+use crate::application::pack_use_case::PackResult;
+use crate::application::task_use_case::{
     estimated_work_seconds_from_minutes, validate_task_name, ApplicationError, BreakdownTaskInput,
     CompleteTaskInput, CreateTaskInput,
 };
-use schronu::entity::task::{TaskAttr, TaskHandle};
+use crate::entity::task::{TaskAttr, TaskHandle};
+use chrono::{DateTime, Datelike, Days, Duration, Local, NaiveDate, NaiveDateTime, NaiveTime};
+use regex::Regex;
 use std::cmp::min;
 use uuid::Uuid;
 

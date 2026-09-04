@@ -790,7 +790,7 @@ fn test_format_focused_task_header_project_categoryを表示する() {
 
 #[test]
 fn test_task_list_search_textは旧a_j列の代表patternをtyped_fieldから構築する() {
-    let row = crate::renderer::TaskListTaskRow {
+    let row = super::super::renderer::TaskListTaskRow {
         rank: 7,
         task_id: Uuid::parse_str("11111111-1111-1111-1111-111111111111").unwrap(),
         icon: "!".to_string(),
