@@ -479,6 +479,63 @@ fn breakdown_task_operationで固定したid列と時刻を使う() {
 }
 
 #[test]
+fn breakdown_task_既存taskと生成uuidが衝突する場合は変更しない() {
+    let now = fixed_now();
+    let parent = crate::test_support::new_task_handle("親").unwrap();
+    let existing = crate::test_support::new_task_handle("既存").unwrap();
+    let duplicate_id = existing.get_id().unwrap();
+    let mut repository = TestTaskRepository::new(vec![parent.clone(), existing], now);
+    let mut next_id = || duplicate_id;
+    let mut factory = TaskFactory::new(now, &mut next_id);
+
+    let actual = breakdown_task(
+        &mut repository,
+        BreakdownTaskInput {
+            parent_id: parent.get_id().unwrap(),
+            names: vec!["子".to_string()],
+            pending_until: None,
+        },
+        &mut factory,
+    );
+
+    assert_eq!(
+        actual,
+        Err(ApplicationError::ProjectRegistration(
+            ProjectRegistrationError::DuplicateTaskId(duplicate_id)
+        ))
+    );
+    assert!(parent.get_children().unwrap().is_empty());
+}
+
+#[test]
+fn breakdown_task_batch内で生成uuidが衝突する場合は変更しない() {
+    let now = fixed_now();
+    let parent = crate::test_support::new_task_handle("親").unwrap();
+    let duplicate_id = Uuid::parse_str("00000000-0000-0000-0000-000000000203").unwrap();
+    let mut repository = TestTaskRepository::new(vec![parent.clone()], now);
+    let mut next_id = || duplicate_id;
+    let mut factory = TaskFactory::new(now, &mut next_id);
+
+    let actual = breakdown_task(
+        &mut repository,
+        BreakdownTaskInput {
+            parent_id: parent.get_id().unwrap(),
+            names: vec!["一".to_string(), "二".to_string()],
+            pending_until: None,
+        },
+        &mut factory,
+    );
+
+    assert_eq!(
+        actual,
+        Err(ApplicationError::ProjectRegistration(
+            ProjectRegistrationError::DuplicateTaskId(duplicate_id)
+        ))
+    );
+    assert!(parent.get_children().unwrap().is_empty());
+}
+
+#[test]
 fn breakdown_task_全ての子を指定時刻までpendingにする() {
     let parent = crate::test_support::new_task_handle("親").unwrap();
     let pending_until = Local.with_ymd_and_hms(2026, 8, 13, 6, 0, 0).unwrap();
@@ -1233,6 +1290,57 @@ fn complete_task_繰り返しtaskを生成して見積もりを補正する() {
     let create_time = next_task.get_create_time().unwrap();
     assert!(before_completion <= create_time);
     assert!(create_time <= after_completion);
+}
+
+#[test]
+fn complete_task_反復taskのuuidが既存taskと衝突する場合は変更しない() {
+    let parent = crate::test_support::new_task_handle("ルーチン").unwrap();
+    parent.set_repetition_interval_days_opt(Some(7)).unwrap();
+    parent.set_estimated_work_seconds(600).unwrap();
+    let child = parent.create_as_last_child(crate::test_support::new_task_attr("今回"));
+    child.set_actual_work_seconds(100).unwrap();
+    let child_id = child.get_id().unwrap();
+    let duplicate_id = Uuid::from_u128(0x103);
+    let existing_task = TaskHandle::with_identity("既存task", duplicate_id, fixed_now()).unwrap();
+    let mut repository = TestTaskRepository::new(vec![parent.clone(), existing_task], fixed_now());
+    let children_before = parent
+        .get_children()
+        .unwrap()
+        .into_iter()
+        .map(|task| task.get_id().unwrap())
+        .collect::<Vec<_>>();
+    let mut next_id = || duplicate_id;
+    let mut factory = TaskFactory::new(fixed_now(), &mut next_id);
+
+    let actual = complete_task(
+        &mut repository,
+        CompleteTaskInput {
+            task_id: child_id,
+            finished_at: fixed_now(),
+            additional_actual_work_seconds: 50,
+        },
+        &mut factory,
+    );
+
+    assert!(matches!(
+        actual,
+        Err(ApplicationError::ProjectRegistration(
+            ProjectRegistrationError::DuplicateTaskId(id)
+        )) if id == duplicate_id
+    ));
+    assert_eq!(child.get_status().unwrap(), Status::Todo);
+    assert_eq!(child.get_end_time_opt().unwrap(), None);
+    assert_eq!(child.get_actual_work_seconds().unwrap(), 100);
+    assert_eq!(parent.get_estimated_work_seconds().unwrap(), 600);
+    assert_eq!(
+        parent
+            .get_children()
+            .unwrap()
+            .into_iter()
+            .map(|task| task.get_id().unwrap())
+            .collect::<Vec<_>>(),
+        children_before
+    );
 }
 
 #[test]

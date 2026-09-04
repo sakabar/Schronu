@@ -40,6 +40,63 @@ struct Project {
     persisted_mutation_revision: Cell<Option<u64>>,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct TaskLocation {
+    project_yaml_file_path: PathBuf,
+    task_path: String,
+}
+
+#[derive(Debug, Eq, PartialEq)]
+pub struct DuplicateTaskIdError {
+    task_id: Uuid,
+    first: TaskLocation,
+    duplicate: TaskLocation,
+}
+
+impl DuplicateTaskIdError {
+    pub fn task_id(&self) -> Uuid {
+        self.task_id
+    }
+
+    pub fn first_project_yaml_file_path(&self) -> &Path {
+        &self.first.project_yaml_file_path
+    }
+
+    pub fn first_task_path(&self) -> &str {
+        &self.first.task_path
+    }
+
+    pub fn duplicate_project_yaml_file_path(&self) -> &Path {
+        &self.duplicate.project_yaml_file_path
+    }
+
+    pub fn duplicate_task_path(&self) -> &str {
+        &self.duplicate.task_path
+    }
+}
+
+impl fmt::Display for DuplicateTaskIdError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            formatter,
+            "duplicate task ID {} at {}:{} and {}:{}",
+            self.task_id,
+            self.first.project_yaml_file_path.display(),
+            self.first.task_path,
+            self.duplicate.project_yaml_file_path.display(),
+            self.duplicate.task_path
+        )
+    }
+}
+
+impl Error for DuplicateTaskIdError {}
+
+struct LoadedRepositoryState {
+    projects: Vec<Project>,
+    id_to_task_map: HashMap<Uuid, TaskHandle>,
+    storage_revision: Option<Uuid>,
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum FileRepositoryOperation {
     TraverseDirectory,
@@ -310,6 +367,211 @@ impl TaskRepository {
         Ok(())
     }
 
+    fn index_task_and_descendants(
+        task: &TaskHandle,
+        project_yaml_file_path: &Path,
+        task_path: String,
+        task_locations: &mut HashMap<Uuid, TaskLocation>,
+        id_to_task_map: &mut HashMap<Uuid, TaskHandle>,
+    ) -> Result<(), TaskRepositoryError> {
+        let task_id = task.get_id().map_err(|error| {
+            TaskRepositoryError::new(ApplicationRepositoryOperation::Load, error)
+        })?;
+        let location = TaskLocation {
+            project_yaml_file_path: project_yaml_file_path.to_path_buf(),
+            task_path,
+        };
+        if let Some(first) = task_locations.insert(task_id, location.clone()) {
+            return Err(TaskRepositoryError::new(
+                ApplicationRepositoryOperation::Load,
+                DuplicateTaskIdError {
+                    task_id,
+                    first,
+                    duplicate: location,
+                },
+            ));
+        }
+        id_to_task_map.insert(task_id, task.clone());
+
+        for (index, child_task) in task
+            .get_children()
+            .map_err(|error| TaskRepositoryError::new(ApplicationRepositoryOperation::Load, error))?
+            .into_iter()
+            .enumerate()
+        {
+            Self::index_task_and_descendants(
+                &child_task,
+                project_yaml_file_path,
+                format!("{}.children[{index}]", location.task_path),
+                task_locations,
+                id_to_task_map,
+            )?;
+        }
+        Ok(())
+    }
+
+    fn load_state(
+        &self,
+        last_synced_time: DateTime<Local>,
+        storage_revision: Option<Uuid>,
+    ) -> Result<LoadedRepositoryState, TaskRepositoryError> {
+        let mut loaded_projects = Vec::new();
+        let mut canonical_project_paths = HashMap::new();
+        for entry_result in WalkDir::new(self.project_storage_dir_name.as_str()).sort_by_file_name()
+        {
+            let entry = entry_result.map_err(|error| {
+                let path = error
+                    .path()
+                    .map(Path::to_path_buf)
+                    .unwrap_or_else(|| PathBuf::from(&self.project_storage_dir_name));
+                let reason = error.to_string();
+                let io_error = error
+                    .into_io_error()
+                    .unwrap_or_else(|| std::io::Error::other(reason));
+                TaskRepositoryError::new(
+                    ApplicationRepositoryOperation::Load,
+                    FileRepositoryError::new(
+                        FileRepositoryOperation::TraverseDirectory,
+                        path,
+                        io_error,
+                    ),
+                )
+            })?;
+            if entry.file_name() != "project.yaml" {
+                continue;
+            }
+
+            let project_yaml_file_path = entry.path().to_path_buf();
+            let project_dir_path = entry
+                .path()
+                .parent()
+                .ok_or_else(|| {
+                    TaskRepositoryError::new(
+                        ApplicationRepositoryOperation::Load,
+                        FileRepositoryError::new(
+                            FileRepositoryOperation::ParseProject,
+                            &project_yaml_file_path,
+                            std::io::Error::new(
+                                std::io::ErrorKind::InvalidData,
+                                "project.yaml must have a parent directory",
+                            ),
+                        ),
+                    )
+                })?
+                .to_path_buf();
+            let (mut file, canonical_project_yaml_path) =
+                open_project_file(&project_yaml_file_path).map_err(|error| {
+                    TaskRepositoryError::new(ApplicationRepositoryOperation::Load, error)
+                })?;
+            let mut text = String::new();
+            file.read_to_string(&mut text).map_err(|error| {
+                TaskRepositoryError::new(
+                    ApplicationRepositoryOperation::Load,
+                    FileRepositoryError::new(
+                        FileRepositoryOperation::ReadFile,
+                        &project_yaml_file_path,
+                        error,
+                    ),
+                )
+            })?;
+
+            let docs = YamlLoader::load_from_str(&text).map_err(|error| {
+                TaskRepositoryError::new(
+                    ApplicationRepositoryOperation::Load,
+                    FileRepositoryError::new(
+                        FileRepositoryOperation::ParseProject,
+                        &project_yaml_file_path,
+                        std::io::Error::new(std::io::ErrorKind::InvalidData, error),
+                    ),
+                )
+            })?;
+            let project_yaml = docs
+                .first()
+                .map(|doc| &doc["project"])
+                .filter(|yaml| yaml.as_hash().is_some())
+                .ok_or_else(|| {
+                    TaskRepositoryError::new(
+                        ApplicationRepositoryOperation::Load,
+                        FileRepositoryError::new(
+                            FileRepositoryOperation::ParseProject,
+                            &project_yaml_file_path,
+                            std::io::Error::new(
+                                std::io::ErrorKind::InvalidData,
+                                "project document must contain a project mapping",
+                            ),
+                        ),
+                    )
+                })?;
+            let root_task = yaml_to_task(project_yaml, last_synced_time).map_err(|error| {
+                TaskRepositoryError::new(
+                    ApplicationRepositoryOperation::Load,
+                    FileRepositoryError::new(
+                        FileRepositoryOperation::ParseProject,
+                        &project_yaml_file_path,
+                        std::io::Error::new(std::io::ErrorKind::InvalidData, error),
+                    ),
+                )
+            })?;
+            if let Some(first_project_yaml_path) = canonical_project_paths
+                .insert(canonical_project_yaml_path, project_yaml_file_path.clone())
+            {
+                return Err(TaskRepositoryError::new(
+                    ApplicationRepositoryOperation::Load,
+                    FileRepositoryError::new(
+                        FileRepositoryOperation::ParseProject,
+                        &project_yaml_file_path,
+                        std::io::Error::new(
+                            std::io::ErrorKind::InvalidData,
+                            format!(
+                                "project YAML paths resolve to the same canonical path: {} and {}",
+                                first_project_yaml_path.display(),
+                                project_yaml_file_path.display()
+                            ),
+                        ),
+                    ),
+                ));
+            }
+            let priority = root_task.get_priority().map_err(|error| {
+                TaskRepositoryError::new(ApplicationRepositoryOperation::Load, error)
+            })?;
+            let project = Project::new(
+                root_task,
+                project_dir_path,
+                project_yaml_file_path,
+                priority,
+            );
+            project.mark_clean().map_err(|error| {
+                TaskRepositoryError::new(ApplicationRepositoryOperation::Load, error)
+            })?;
+            loaded_projects.push(project);
+        }
+
+        let mut task_locations = HashMap::new();
+        let mut id_to_task_map = HashMap::new();
+        for project in &loaded_projects {
+            Self::index_task_and_descendants(
+                &project.root_task,
+                &project.project_yaml_file_path,
+                "project".to_string(),
+                &mut task_locations,
+                &mut id_to_task_map,
+            )?;
+        }
+
+        Ok(LoadedRepositoryState {
+            projects: loaded_projects,
+            id_to_task_map,
+            storage_revision,
+        })
+    }
+
+    fn apply_loaded_state(&mut self, loaded: LoadedRepositoryState) {
+        self.projects = loaded.projects;
+        self.id_to_task_map.replace(loaded.id_to_task_map);
+        self.storage_revision.set(loaded.storage_revision);
+        self.has_loaded = true;
+    }
+
     fn sync_task_and_descendants(
         task: &TaskHandle,
         now: DateTime<Local>,
@@ -403,149 +665,10 @@ impl TaskRepositoryTrait for TaskRepository {
         let storage_revision = self.read_storage_revision().map_err(|error| {
             TaskRepositoryError::new(ApplicationRepositoryOperation::Load, error)
         })?;
-        let mut loaded_projects = Vec::new();
-        let mut canonical_project_paths = HashMap::new();
-        for entry_result in WalkDir::new(self.project_storage_dir_name.as_str()).sort_by_file_name()
-        {
-            let entry = entry_result.map_err(|error| {
-                let path = error
-                    .path()
-                    .map(Path::to_path_buf)
-                    .unwrap_or_else(|| PathBuf::from(&self.project_storage_dir_name));
-                let reason = error.to_string();
-                let io_error = error
-                    .into_io_error()
-                    .unwrap_or_else(|| std::io::Error::other(reason));
-                TaskRepositoryError::new(
-                    ApplicationRepositoryOperation::Load,
-                    FileRepositoryError::new(
-                        FileRepositoryOperation::TraverseDirectory,
-                        path,
-                        io_error,
-                    ),
-                )
-            })?;
-            if entry.file_name() == "project.yaml" {
-                let project_yaml_file_path = entry.path().to_path_buf();
-                let project_dir_path = entry
-                    .path()
-                    .parent()
-                    .ok_or_else(|| {
-                        TaskRepositoryError::new(
-                            ApplicationRepositoryOperation::Load,
-                            FileRepositoryError::new(
-                                FileRepositoryOperation::ParseProject,
-                                &project_yaml_file_path,
-                                std::io::Error::new(
-                                    std::io::ErrorKind::InvalidData,
-                                    "project.yaml must have a parent directory",
-                                ),
-                            ),
-                        )
-                    })?
-                    .to_path_buf();
-                let (mut file, canonical_project_yaml_path) =
-                    open_project_file(&project_yaml_file_path).map_err(|error| {
-                        TaskRepositoryError::new(ApplicationRepositoryOperation::Load, error)
-                    })?;
-                let mut text = String::new();
-                file.read_to_string(&mut text).map_err(|error| {
-                    TaskRepositoryError::new(
-                        ApplicationRepositoryOperation::Load,
-                        FileRepositoryError::new(
-                            FileRepositoryOperation::ReadFile,
-                            &project_yaml_file_path,
-                            error,
-                        ),
-                    )
-                })?;
-
-                let docs = YamlLoader::load_from_str(&text).map_err(|error| {
-                    TaskRepositoryError::new(
-                        ApplicationRepositoryOperation::Load,
-                        FileRepositoryError::new(
-                            FileRepositoryOperation::ParseProject,
-                            &project_yaml_file_path,
-                            std::io::Error::new(std::io::ErrorKind::InvalidData, error),
-                        ),
-                    )
-                })?;
-                let project_yaml = docs
-                    .first()
-                    .map(|doc| &doc["project"])
-                    .filter(|yaml| yaml.as_hash().is_some())
-                    .ok_or_else(|| {
-                        TaskRepositoryError::new(
-                            ApplicationRepositoryOperation::Load,
-                            FileRepositoryError::new(
-                                FileRepositoryOperation::ParseProject,
-                                &project_yaml_file_path,
-                                std::io::Error::new(
-                                    std::io::ErrorKind::InvalidData,
-                                    "project document must contain a project mapping",
-                                ),
-                            ),
-                        )
-                    })?;
-                let root_task =
-                    yaml_to_task(project_yaml, self.last_synced_time).map_err(|error| {
-                        TaskRepositoryError::new(
-                            ApplicationRepositoryOperation::Load,
-                            FileRepositoryError::new(
-                                FileRepositoryOperation::ParseProject,
-                                &project_yaml_file_path,
-                                std::io::Error::new(std::io::ErrorKind::InvalidData, error),
-                            ),
-                        )
-                    })?;
-                if let Some(first_project_yaml_path) = canonical_project_paths
-                    .insert(canonical_project_yaml_path, project_yaml_file_path.clone())
-                {
-                    return Err(TaskRepositoryError::new(
-                        ApplicationRepositoryOperation::Load,
-                        FileRepositoryError::new(
-                            FileRepositoryOperation::ParseProject,
-                            &project_yaml_file_path,
-                            std::io::Error::new(
-                                std::io::ErrorKind::InvalidData,
-                                format!(
-                                    "project YAML paths resolve to the same canonical path: {} and {}",
-                                    first_project_yaml_path.display(),
-                                    project_yaml_file_path.display()
-                                ),
-                            ),
-                        ),
-                    ));
-                }
-                let priority = root_task.get_priority().map_err(|error| {
-                    TaskRepositoryError::new(ApplicationRepositoryOperation::Load, error)
-                })?;
-                let project = Project::new(
-                    root_task,
-                    project_dir_path,
-                    project_yaml_file_path,
-                    priority,
-                );
-                project.mark_clean().map_err(|error| {
-                    TaskRepositoryError::new(ApplicationRepositoryOperation::Load, error)
-                })?;
-                loaded_projects.push(project);
-            }
-        }
-
-        self.projects = loaded_projects;
-        self.id_to_task_map.borrow_mut().clear();
-        for project in &self.projects {
-            self.cache_task_and_descendants(&project.root_task)
-                .map_err(|error| {
-                    TaskRepositoryError::new(ApplicationRepositoryOperation::Load, error)
-                })?;
-        }
-        self.storage_revision.set(storage_revision);
-        self.has_loaded = true;
+        let loaded = self.load_state(self.last_synced_time, storage_revision)?;
+        self.apply_loaded_state(loaded);
         Ok(())
     }
-
     fn reload_if_changed(
         &mut self,
         now: DateTime<Local>,
@@ -560,8 +683,9 @@ impl TaskRepositoryTrait for TaskRepository {
             return Ok(RepositoryReloadOutcome::Cached);
         }
 
+        let loaded = self.load_state(now, storage_revision)?;
+        self.apply_loaded_state(loaded);
         self.last_synced_time = now;
-        self.load()?;
         Ok(RepositoryReloadOutcome::Reloaded)
     }
 
