@@ -3,7 +3,7 @@ use crate::adapter::gateway::yaml::YamlConversionError;
 use crate::application::interface::ProjectRegistrationError;
 use chrono::{Duration, TimeZone};
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
 struct FailingStorageTransactionIo;
 
@@ -12,6 +12,95 @@ struct FailFirstCommittedProjectWriteIo {
 }
 
 struct FailUncommittedDiscardIo;
+
+#[derive(Clone, Copy, Debug)]
+enum CommittedCrashPhase {
+    BeforeFirstProjectRename,
+    AfterFirstProjectRename,
+    BeforeFinalProjectRename,
+    BeforeRevision,
+    AfterRevisionBeforeCleanup,
+}
+
+struct CommittedCrashIo {
+    phase: CommittedCrashPhase,
+    project_temporary_creates: AtomicUsize,
+    project_renames: AtomicUsize,
+}
+
+impl CommittedCrashIo {
+    fn new(phase: CommittedCrashPhase) -> Self {
+        Self {
+            phase,
+            project_temporary_creates: AtomicUsize::new(0),
+            project_renames: AtomicUsize::new(0),
+        }
+    }
+
+    fn is_project_temporary(path: &Path) -> bool {
+        path.file_name()
+            .is_some_and(|name| name.to_string_lossy().starts_with(".project.yaml."))
+    }
+
+    fn is_revision_temporary(path: &Path) -> bool {
+        path.file_name()
+            .is_some_and(|name| name.to_string_lossy().starts_with("..revision."))
+    }
+}
+
+impl StorageTransactionIo for CommittedCrashIo {
+    fn create_new_file(&self, path: &Path) -> std::io::Result<()> {
+        if Self::is_project_temporary(path) {
+            let create_index = self
+                .project_temporary_creates
+                .fetch_add(1, Ordering::SeqCst);
+            if matches!(self.phase, CommittedCrashPhase::AfterFirstProjectRename)
+                && create_index == 1
+            {
+                return Err(std::io::Error::other(
+                    "injected crash after first project rename",
+                ));
+            }
+        }
+        if matches!(self.phase, CommittedCrashPhase::BeforeRevision)
+            && Self::is_revision_temporary(path)
+        {
+            return Err(std::io::Error::other("injected crash before revision"));
+        }
+        FileSystemStorageTransactionIo.create_new_file(path)
+    }
+
+    fn rename(&self, from: &Path, to: &Path) -> std::io::Result<()> {
+        if to.file_name().is_some_and(|name| name == "project.yaml") {
+            let rename_index = self.project_renames.fetch_add(1, Ordering::SeqCst);
+            if matches!(self.phase, CommittedCrashPhase::BeforeFirstProjectRename)
+                && rename_index == 0
+            {
+                return Err(std::io::Error::other(
+                    "injected crash before first project rename",
+                ));
+            }
+            if matches!(self.phase, CommittedCrashPhase::BeforeFinalProjectRename)
+                && rename_index == 1
+            {
+                return Err(std::io::Error::other(
+                    "injected crash before final project rename",
+                ));
+            }
+        }
+        if matches!(self.phase, CommittedCrashPhase::AfterRevisionBeforeCleanup)
+            && from.file_name().is_some_and(|name| name == ".active")
+            && to
+                .file_name()
+                .is_some_and(|name| name.to_string_lossy().starts_with(".cleanup-"))
+        {
+            return Err(std::io::Error::other(
+                "injected crash after revision before cleanup",
+            ));
+        }
+        FileSystemStorageTransactionIo.rename(from, to)
+    }
+}
 
 impl StorageTransactionIo for FailFirstCommittedProjectWriteIo {
     fn write_file(&self, path: &Path, bytes: &[u8]) -> std::io::Result<()> {
@@ -113,6 +202,60 @@ fn create_markerless_active_transaction(storage_dir: &TestStorageDir, phase: &st
         _ => panic!("unknown interruption phase: {phase}"),
     }
     active_transaction_path
+}
+
+fn create_committed_transaction_interruption(
+    storage_dir: &TestStorageDir,
+    now: DateTime<Local>,
+    phase: CommittedCrashPhase,
+) -> (Uuid, Uuid, Uuid, PathBuf) {
+    let mut repository = TaskRepository::new(storage_dir.path_str());
+    repository.sync_clock(now).unwrap();
+    let first = crate::test_support::new_task_handle("roll-forward-first").unwrap();
+    let second = crate::test_support::new_task_handle("roll-forward-second").unwrap();
+    let first_id = first.get_id().unwrap();
+    let second_id = second.get_id().unwrap();
+    repository.start_new_project(first.clone()).unwrap();
+    repository.start_new_project(second.clone()).unwrap();
+    repository.save().unwrap();
+    first.set_estimated_work_seconds(30 * 60).unwrap();
+    second.set_estimated_work_seconds(45 * 60).unwrap();
+    repository.storage_transaction_io = Arc::new(CommittedCrashIo::new(phase));
+
+    let error = repository.save().unwrap_err();
+    assert_eq!(error.operation(), ApplicationRepositoryOperation::Save);
+
+    let active_transaction_path = storage_dir
+        .path
+        .join(crate::adapter::gateway::storage_transaction::TRANSACTION_DIRECTORY_NAME)
+        .join(".active");
+    assert!(active_transaction_path.join("commit").is_file());
+    let manifest: serde_json::Value =
+        serde_json::from_slice(&fs::read(active_transaction_path.join("manifest.json")).unwrap())
+            .unwrap();
+    let revision = Uuid::parse_str(manifest["revision"].as_str().unwrap()).unwrap();
+    (first_id, second_id, revision, active_transaction_path)
+}
+
+fn assert_recovered_projects(repository: &TaskRepository, first_id: Uuid, second_id: Uuid) {
+    assert_eq!(
+        repository
+            .get_by_id(first_id)
+            .unwrap()
+            .unwrap()
+            .get_estimated_work_seconds()
+            .unwrap(),
+        30 * 60
+    );
+    assert_eq!(
+        repository
+            .get_by_id(second_id)
+            .unwrap()
+            .unwrap()
+            .get_estimated_work_seconds()
+            .unwrap(),
+        45 * 60
+    );
 }
 
 fn file_repository_error(error: &TaskRepositoryError) -> &FileRepositoryError {
@@ -1458,6 +1601,156 @@ fn test_reload_if_changed_markerなしtransactionをcache判定前に破棄す�
     assert_eq!(actual, RepositoryReloadOutcome::Cached);
     assert!(!active_transaction_path.exists());
     assert_eq!(repository.storage_revision.get(), revision);
+}
+
+#[test]
+fn test_load_marker済みtransactionを各中断点からnew_snapshotへroll_forwardする() {
+    for phase in [
+        CommittedCrashPhase::BeforeFirstProjectRename,
+        CommittedCrashPhase::AfterFirstProjectRename,
+        CommittedCrashPhase::BeforeFinalProjectRename,
+        CommittedCrashPhase::BeforeRevision,
+        CommittedCrashPhase::AfterRevisionBeforeCleanup,
+    ] {
+        let storage_dir = TestStorageDir::new();
+        let now = Local.with_ymd_and_hms(2026, 9, 5, 13, 0, 0).unwrap();
+        let (first_id, second_id, committed_revision, active_transaction_path) =
+            create_committed_transaction_interruption(&storage_dir, now, phase);
+        if matches!(phase, CommittedCrashPhase::BeforeFirstProjectRename) {
+            fs::write(
+                storage_dir.path.join(".revision"),
+                format!("{}\n", Uuid::from_u128(0x22ff)),
+            )
+            .unwrap();
+        }
+        let mut repository = TaskRepository::new(storage_dir.path_str());
+        repository.sync_clock(now).unwrap();
+
+        repository.load().unwrap();
+
+        assert_recovered_projects(&repository, first_id, second_id);
+        assert_eq!(repository.storage_revision.get(), Some(committed_revision));
+        assert_eq!(
+            fs::read_to_string(storage_dir.path.join(".revision")).unwrap(),
+            format!("{committed_revision}\n")
+        );
+        assert!(!active_transaction_path.exists(), "phase: {phase:?}");
+    }
+}
+
+#[test]
+fn test_reload_if_changed_marker済みtransactionをcache判定前にroll_forwardする() {
+    let storage_dir = TestStorageDir::new();
+    let now = Local.with_ymd_and_hms(2026, 9, 5, 13, 0, 0).unwrap();
+    let mut cached = TaskRepository::new(storage_dir.path_str());
+    cached.sync_clock(now).unwrap();
+    let first = crate::test_support::new_task_handle("roll-forward-first").unwrap();
+    let second = crate::test_support::new_task_handle("roll-forward-second").unwrap();
+    let first_id = first.get_id().unwrap();
+    let second_id = second.get_id().unwrap();
+    cached.start_new_project(first.clone()).unwrap();
+    cached.start_new_project(second.clone()).unwrap();
+    cached.save().unwrap();
+    cached.load().unwrap();
+    cached
+        .get_by_id(first_id)
+        .unwrap()
+        .unwrap()
+        .set_estimated_work_seconds(30 * 60)
+        .unwrap();
+    cached
+        .get_by_id(second_id)
+        .unwrap()
+        .unwrap()
+        .set_estimated_work_seconds(45 * 60)
+        .unwrap();
+    cached.storage_transaction_io = Arc::new(CommittedCrashIo::new(
+        CommittedCrashPhase::AfterFirstProjectRename,
+    ));
+    cached.save().unwrap_err();
+    cached.storage_transaction_io = Arc::new(FileSystemStorageTransactionIo);
+
+    let outcome = cached.reload_if_changed(now).unwrap();
+
+    assert_eq!(outcome, RepositoryReloadOutcome::Reloaded);
+    assert_recovered_projects(&cached, first_id, second_id);
+}
+
+#[test]
+fn test_load_roll_forward中断後も再実行して同じnew_snapshotへ到達する() {
+    let storage_dir = TestStorageDir::new();
+    let now = Local.with_ymd_and_hms(2026, 9, 5, 13, 0, 0).unwrap();
+    let (first_id, second_id, committed_revision, active_transaction_path) =
+        create_committed_transaction_interruption(
+            &storage_dir,
+            now,
+            CommittedCrashPhase::BeforeFirstProjectRename,
+        );
+    let mut repository = TaskRepository::new(storage_dir.path_str());
+    repository.sync_clock(now).unwrap();
+    repository.storage_transaction_io = Arc::new(CommittedCrashIo::new(
+        CommittedCrashPhase::AfterFirstProjectRename,
+    ));
+
+    let interrupted = repository.load().unwrap_err();
+
+    assert_eq!(
+        interrupted.operation(),
+        ApplicationRepositoryOperation::Load
+    );
+    assert!(active_transaction_path.join("commit").is_file());
+    repository.storage_transaction_io = Arc::new(FileSystemStorageTransactionIo);
+    repository.load().unwrap();
+    repository.load().unwrap();
+    assert_recovered_projects(&repository, first_id, second_id);
+    assert_eq!(repository.storage_revision.get(), Some(committed_revision));
+    assert!(!active_transaction_path.exists());
+}
+
+#[test]
+fn test_load_marker済みtransactionの不正manifestはpathとphaseを保持する() {
+    let storage_dir = TestStorageDir::new();
+    let now = Local.with_ymd_and_hms(2026, 9, 5, 13, 0, 0).unwrap();
+    let (_, _, _, active_transaction_path) = create_committed_transaction_interruption(
+        &storage_dir,
+        now,
+        CommittedCrashPhase::BeforeRevision,
+    );
+    let manifest_path = active_transaction_path.join("manifest.json");
+    fs::write(&manifest_path, b"not-json").unwrap();
+    let mut repository = TaskRepository::new(storage_dir.path_str());
+
+    let actual = repository.load().unwrap_err();
+
+    let source = storage_transaction_error(&actual);
+    assert!(source.to_string().contains("ParseManifest"));
+    assert!(source
+        .to_string()
+        .contains(&manifest_path.display().to_string()));
+    assert!(active_transaction_path.join("commit").is_file());
+}
+
+#[test]
+fn test_load_marker済みtransactionの未適用staged_file欠落はpathとphaseを保持する() {
+    let storage_dir = TestStorageDir::new();
+    let now = Local.with_ymd_and_hms(2026, 9, 5, 13, 0, 0).unwrap();
+    let (_, _, _, active_transaction_path) = create_committed_transaction_interruption(
+        &storage_dir,
+        now,
+        CommittedCrashPhase::BeforeFirstProjectRename,
+    );
+    let staged_file_path = active_transaction_path.join("files/0");
+    fs::remove_file(&staged_file_path).unwrap();
+    let mut repository = TaskRepository::new(storage_dir.path_str());
+
+    let actual = repository.load().unwrap_err();
+
+    let source = storage_transaction_error(&actual);
+    assert!(source.to_string().contains("ReadStagedFile"));
+    assert!(source
+        .to_string()
+        .contains(&staged_file_path.display().to_string()));
+    assert!(active_transaction_path.join("commit").is_file());
 }
 
 #[test]
