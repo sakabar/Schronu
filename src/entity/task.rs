@@ -476,6 +476,10 @@ impl TaskAttr {
         self.actual_work_seconds = actual_work_seconds;
     }
 
+    fn mark_persistent_mutation(&mut self) {
+        self.persistent_mutation_revision = self.persistent_mutation_revision.wrapping_add(1);
+    }
+
     pub fn get_actual_work_seconds(&self) -> i64 {
         self.actual_work_seconds
     }
@@ -705,14 +709,8 @@ impl TaskHandle {
         attr.set_end_time_opt(Some(finished_at));
         parent_attr.set_estimated_work_seconds(adjusted_parent_estimated_work_seconds);
         match &mut root_attr {
-            Some(root_attr) => {
-                root_attr.persistent_mutation_revision =
-                    root_attr.persistent_mutation_revision.wrapping_add(1);
-            }
-            None => {
-                parent_attr.persistent_mutation_revision =
-                    parent_attr.persistent_mutation_revision.wrapping_add(1);
-            }
+            Some(root_attr) => root_attr.mark_persistent_mutation(),
+            None => parent_attr.mark_persistent_mutation(),
         }
 
         Ok(Self { node: child_node })
@@ -847,7 +845,7 @@ impl TaskHandle {
             .node
             .try_borrow_data_mut()
             .map_err(|_| TaskTreeError::Borrow)?;
-        attr.persistent_mutation_revision = attr.persistent_mutation_revision.wrapping_add(1);
+        attr.mark_persistent_mutation();
         Ok(())
     }
 
