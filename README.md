@@ -265,21 +265,21 @@ CLIとMCP serverは保存先直下の`.lock`へ同じOS advisory lockを取得�
 
 新規projectのdirectory名は`YYYYMMDD-{project名}-{root UUID}`形式です。project名部分は可読性のための補助情報であり、URL以降の除去、`/`から`-`への置換、filesystemのcomponent長に収めるためのUTF-8境界での短縮を行います。一意なidentityには省略しないhyphenated形式のroot UUIDを使用するため、同日・同名や変換後に同名となるprojectも別directoryへ保存されます。従来の`YYYYMMDD-{project名}`形式もそのまま読み込み、既存directoryを新形式へ自動renameしません。
 
-実際に`project.yaml`を変更する保存では、保存先直下の`.revision`を先にatomic更新してから、変更されたprojectだけを保存します。`.revision`はCLI・MCP間でcacheを無効化するための補助metadataで、task dataや`project.yaml`のschemaではありません。既存storageに`.revision`がない場合もそのまま起動でき、最初の変更保存時に作成されます。
+実際に`project.yaml`を変更する保存は、複数projectを1つのrepository transactionとして扱います。変更されたprojectだけをstagingし、immutable manifestとすべてのstaged fileをwrite・syncした後、liveな`project.yaml`を1件も変更する前に独立したcommit markerをatomicに作成してdirectoryをsyncします。このmarkerがtransactionの唯一のcommit pointです。markerの後に各projectを適用し、全projectの適用後にmanifestにtransaction UUIDとともに記録したrevision値へ`.revision`を最後にatomic更新します。`.revision`はCLI・MCP間でcacheを無効化するための補助metadataであり、commit pointやtask data、`project.yaml`のschemaではありません。既存storageに`.revision`がない場合もそのまま起動でき、最初の変更保存時に作成されます。内容が同じprojectは書き換えず、書き換えるfileの既存permissionは維持します。
 
-各processは起動後の最初のstorage操作では必ず全projectをloadします。2回目以降は`.revision`が前回値と一致すればmemory上のtask treeを再利用し、現在時刻へのclock同期だけを行います。他processが保存して`.revision`が変わった場合は、次のCLI command、MCP `tools/call`、またはCLIの60秒ごとの再描画で全projectを1回loadし直します。稼働中の`project.yaml`直接編集は`.revision`を更新しないため検出対象外です。
+各processは起動後の最初のstorage操作では必ずtransaction recoveryを行ってから全projectをloadします。reload時もrevision判定より前にrecoveryを行います。commit markerがない未完transactionは、live targetが未変更のためstagingを破棄して旧snapshotを維持します。markerがあるtransactionはcommit済みとし、project適用の途中や`.revision`更新の前後でprocessが終了していても、manifestに従って常に新snapshotへidempotentにroll-forwardし、最後に`.revision`を対応値へ揃えます。2回目以降はrecovery後の`.revision`が前回値と一致すればmemory上のtask treeを再利用し、現在時刻へのclock同期だけを行います。他processが保存して`.revision`が変わった場合は、次のCLI command、MCP `tools/call`、またはCLIの60秒ごとの再描画で全projectを1回loadし直します。稼働中の`project.yaml`直接編集は`.revision`を更新しないため検出対象外です。
 
 CLIはlock競合時に最大1秒、10ms間隔で取得を再試行します。timeoutしたcommandは実行も保存もせず、入力を保持するため、競合解消後にEnterで再試行できます。MCP callは競合時に待機せず`repository_lock_contended`と`recovery: "retry"`を返します。競合中のstorage操作が終わった後に再試行してください。`.lock` fileはprocess終了後も残りますが、fileの存在だけではlock中を意味しません。OS lockを取得できるかどうかで、実際のlock状態を判定します。取得成功時にmetadataは上書きされます。
 
 CLIのCtrl-Cは未送信の入力だけを破棄します。既に成功したcommandは保存済みであり、session全体をrollbackしません。CLI commandのsaveに失敗した場合は、memoryとfileの状態が一致している保証がないためCLIを終了します。保存先を確認・修復してからCLIを再起動してください。
 
-稼働中のprocessがある状態で`.lock`や`.revision`を削除・編集すると、排他やcache無効化が破れる可能性があります。どちらも手動変更しないでください。`.revision`が壊れた場合はCLIと全MCP serverを停止し、`.revision`だけを削除してから再起動すると、次の変更保存時に再作成されます。異常終了後は、まず通常どおり再起動してOS lockが解放済みか確認してください。
+稼働中のprocessがある状態で`.lock`や`.revision`、保存先直下の`.schronu-transactions`を削除・編集すると、排他、cache無効化、またはcrash recoveryが破れる可能性があります。いずれも手動変更しないでください。`.revision`が壊れた場合はCLIと全MCP serverを停止し、`.revision`だけを削除してから再起動すると、次の変更保存時に再作成されます。異常終了後は、まず通常どおり再起動してOS lockが解放済みか確認してください。静止した状態で不正なsymlinkとなっているtransaction用directoryやmaterialは拒否します。
 
 ### backupと安全上の注意
 
 一貫したbackupを取る場合はCLIを終了し、全MCP serverを停止した状態で、`.lock`を除く保存先directoryの内容をdirectory構造ごとcopyしてください。`.lock`はtask dataではないためbackup・restore対象外です。`project.yaml`の直接編集や復元もCLI・MCP停止中に行い、完了後にprocessを再起動してください。
 
-stdio接続を許可したMCP clientはtaskの作成・変更・完了とfile保存を実行できます。信頼できるローカルclientだけに設定し、保存先のfilesystem permissionとbackupを管理してください。初版の対象外は、team共有、端末間同期、network transport、複数projectをまたぐatomic transactionです。
+stdio接続を許可したMCP clientはtaskの作成・変更・完了とfile保存を実行できます。信頼できるローカルclientだけに設定し、保存先のfilesystem permissionとbackupを管理してください。repository transactionの脅威modelは、Schronuのadvisory lockに従うprocess同士の併用とprocess crashです。path検証後に外部processがfilesystem entryを悪意的に差し替えるsymlink TOCTOUには完全な保護を提供せず、transactionに限らないrepository全体の将来のsecurity debtとして扱います。初版の対象外は、team共有、端末間同期、network transportです。
 
 ## CLI
 
