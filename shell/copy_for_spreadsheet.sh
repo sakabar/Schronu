@@ -21,22 +21,63 @@ weekday_order='月火水木金土日月'
 month_offset=(0 31 59 90 120 151 181 212 243 273 304 334)
 task_rows_output=$(
 cat - | awk '
-/^0/ && !/^----/ {
+function is_decimal(value) {
+    return value ~ /^[0-9][0-9]*$/
+}
+
+function is_integer(value) {
+    return value ~ /^-?[0-9][0-9]*$/
+}
+
+function is_uuid(value, parts) {
+    if (split(value, parts, "-") != 5) {
+        return 0
+    }
+    return length(parts[1]) == 8 && length(parts[2]) == 4 &&
+        length(parts[3]) == 4 && length(parts[4]) == 4 &&
+        length(parts[5]) == 12 && value ~ /^[0-9a-f-]+$/
+}
+
+function is_scheduled_time(value) {
+    return value ~ /^[0-9][0-9]\/[0-9][0-9]\([月火水木金土日]\)-[0-9][0-9]:[0-9][0-9]~[0-9][0-9]:[0-9][0-9]$/
+}
+
+function is_category(value) {
+    return value == "獲" || value == "維" || value == "回" ||
+        value == "資" || value == "消" || value == "_"
+}
+
+function fail_incomplete_task_row(line_number) {
+    print "line " line_number ": incomplete task row" > "/dev/stderr"
+    exit 1
+}
+
+/^[0-9]/ {
     line = $0
+    invalid = 0
+    for (i = 1; i <= 9; i++) {
+        column[i] = ""
+    }
     for (i = 1; i <= 9; i++) {
         sub(/^[[:space:]]+/, "", line)
         if (!match(line, /^[^[:space:]]+/)) {
-            next
+            invalid = 1
+            break
         }
         column[i] = substr(line, RSTART, RLENGTH)
         line = substr(line, RSTART + RLENGTH)
     }
 
     sub(/^[[:space:]]+/, "", line)
-    if (line == "") {
-        next
-    }
     gsub(/[[:space:]]+/, " ", line)
+
+    if (invalid || line == "" || length(column[1]) < 4 ||
+        !is_decimal(column[1]) ||
+        !is_uuid(column[2]) || !is_scheduled_time(column[5]) ||
+        !is_decimal(column[6]) || !is_decimal(column[7]) ||
+        !is_integer(column[8]) || !is_category(column[9])) {
+        fail_incomplete_task_row(NR)
+    }
 
     for (i = 1; i <= 9; i++) {
         printf "%s\t", column[i]
