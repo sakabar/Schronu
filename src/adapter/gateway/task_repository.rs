@@ -112,10 +112,15 @@ enum FileRepositoryOperation {
     ParseRevision,
     SerializeProject,
     CreateDirectory,
+    #[cfg(test)]
     CreateFile,
+    #[cfg(test)]
     WriteFile,
+    #[cfg(test)]
     SyncFile,
+    #[cfg(test)]
     SetPermissions,
+    #[cfg(test)]
     RenameFile,
 }
 
@@ -158,11 +163,13 @@ impl Error for FileRepositoryError {
     }
 }
 
+#[cfg(test)]
 trait AtomicSaveFile {
     fn write_all(&mut self, bytes: &[u8]) -> std::io::Result<()>;
     fn sync_all(&self) -> std::io::Result<()>;
 }
 
+#[cfg(test)]
 impl AtomicSaveFile for File {
     fn write_all(&mut self, bytes: &[u8]) -> std::io::Result<()> {
         Write::write_all(self, bytes)
@@ -173,6 +180,7 @@ impl AtomicSaveFile for File {
     }
 }
 
+#[cfg(test)]
 fn write_and_sync_temporary_file(
     file: &mut dyn AtomicSaveFile,
     temporary_file_path: &Path,
@@ -194,6 +202,7 @@ fn write_and_sync_temporary_file(
     })
 }
 
+#[cfg(test)]
 fn replace_file_atomically<F: AtomicSaveFile>(
     target_file_path: &Path,
     temporary_file_path: &Path,
@@ -215,6 +224,7 @@ fn replace_file_atomically<F: AtomicSaveFile>(
     result
 }
 
+#[cfg(test)]
 fn write_file_atomically_with_temporary_path(
     target_file_path: &Path,
     temporary_file_path: &Path,
@@ -252,6 +262,7 @@ fn write_file_atomically_with_temporary_path(
     replace_file_atomically(target_file_path, temporary_file_path, file, bytes)
 }
 
+#[cfg(test)]
 fn write_file_atomically_if_changed_with_temporary_path(
     target_file_path: &Path,
     temporary_file_path: &Path,
@@ -265,23 +276,6 @@ fn write_file_atomically_if_changed_with_temporary_path(
 
     write_file_atomically_with_temporary_path(target_file_path, temporary_file_path, bytes)?;
     Ok(true)
-}
-
-fn write_file_atomically(
-    target_file_path: &Path,
-    bytes: &[u8],
-) -> Result<bool, FileRepositoryError> {
-    let file_name = target_file_path
-        .file_name()
-        .and_then(|name| name.to_str())
-        .unwrap_or("project.yaml");
-    let temporary_file_path = target_file_path
-        .with_file_name(format!(".{file_name}.{}.tmp", Uuid::new_v4().hyphenated()));
-    write_file_atomically_if_changed_with_temporary_path(
-        target_file_path,
-        &temporary_file_path,
-        bytes,
-    )
 }
 
 fn open_project_file(
@@ -776,52 +770,23 @@ impl TaskRepositoryTrait for TaskRepository {
         )
         .map_err(|error| TaskRepositoryError::new(ApplicationRepositoryOperation::Save, error))?;
         for (project, _) in &prepared_writes {
-            if let Err(error) = fs::create_dir_all(&project.project_dir_path) {
+            if let Err(error) = fs::create_dir_all(project.project_dir_path.join("markdown")) {
                 let _ = prepared_transaction.discard();
                 return Err(TaskRepositoryError::new(
                     ApplicationRepositoryOperation::Save,
                     FileRepositoryError::new(
                         FileRepositoryOperation::CreateDirectory,
-                        &project.project_dir_path,
-                        error,
-                    ),
-                ));
-            }
-            let markdown_dir_path = project.project_dir_path.join("markdown");
-            if let Err(error) = fs::create_dir_all(&markdown_dir_path) {
-                let _ = prepared_transaction.discard();
-                return Err(TaskRepositoryError::new(
-                    ApplicationRepositoryOperation::Save,
-                    FileRepositoryError::new(
-                        FileRepositoryOperation::CreateDirectory,
-                        &markdown_dir_path,
+                        project.project_dir_path.join("markdown"),
                         error,
                     ),
                 ));
             }
         }
-        let revision_text = format!("{new_storage_revision}\n");
-        if let Err(error) = write_file_atomically(&revision_path, revision_text.as_bytes()) {
-            let _ = prepared_transaction.discard();
-            return Err(TaskRepositoryError::new(
-                ApplicationRepositoryOperation::Save,
-                error,
-            ));
-        }
-
-        for (project, bytes) in prepared_writes {
-            if let Err(error) = write_file_atomically(&project.project_yaml_file_path, &bytes) {
-                let _ = prepared_transaction.discard();
-                return Err(TaskRepositoryError::new(
-                    ApplicationRepositoryOperation::Save,
-                    error,
-                ));
-            }
-        }
-
-        prepared_transaction.discard().map_err(|error| {
-            TaskRepositoryError::new(ApplicationRepositoryOperation::Save, error)
-        })?;
+        prepared_transaction
+            .commit(&revision_path)
+            .map_err(|error| {
+                TaskRepositoryError::new(ApplicationRepositoryOperation::Save, error)
+            })?;
 
         for project in projects_to_save {
             project.mark_clean().map_err(|error| {

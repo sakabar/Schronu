@@ -89,6 +89,19 @@ fn file_repository_error(error: &TaskRepositoryError) -> &FileRepositoryError {
         .expect("repository error source must be FileRepositoryError")
 }
 
+fn storage_transaction_error(
+    error: &TaskRepositoryError,
+) -> &crate::adapter::gateway::storage_transaction::StorageTransactionError {
+    error
+        .source()
+        .and_then(|source| {
+            source.downcast_ref::<
+                crate::adapter::gateway::storage_transaction::StorageTransactionError,
+            >()
+        })
+        .expect("repository error source must be StorageTransactionError")
+}
+
 fn duplicate_task_id_error(error: &TaskRepositoryError) -> &DuplicateTaskIdError {
     error
         .source()
@@ -661,10 +674,12 @@ fn test_save_project_yaml_read失敗でもatomic_writeを試す() {
     let actual = task_repository.save().unwrap_err();
 
     assert_eq!(actual.operation(), ApplicationRepositoryOperation::Save);
-    let source = file_repository_error(&actual);
-    assert_eq!(source.operation, FileRepositoryOperation::RenameFile);
-    assert_eq!(source.path, project_yaml_path);
-    assert!(source.path.is_dir());
+    let source = storage_transaction_error(&actual);
+    assert!(source.to_string().contains("RenameLiveTarget"));
+    assert!(source
+        .to_string()
+        .contains(&project_yaml_path.display().to_string()));
+    assert!(project_yaml_path.is_dir());
 }
 
 #[test]

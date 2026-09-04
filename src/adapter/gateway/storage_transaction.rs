@@ -19,6 +19,7 @@ pub(super) struct StorageTransactionError {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum StorageTransactionOperation {
     Discard,
+    Cleanup,
     CreateTransactionDirectory,
     CreateStagedFilesDirectory,
     ResolveTargetPath,
@@ -31,6 +32,15 @@ enum StorageTransactionOperation {
     CreateManifest,
     WriteManifest,
     SyncManifest,
+    CreateCommitMarker,
+    SyncCommitMarker,
+    CreateTargetDirectory,
+    ReadStagedFile,
+    CreateLiveTemporary,
+    SetLivePermissions,
+    WriteLiveTemporary,
+    SyncLiveTemporary,
+    RenameLiveTarget,
     SyncDirectory,
 }
 
@@ -114,6 +124,10 @@ pub(super) trait StorageTransactionIo: Send + Sync {
         File::options().write(true).open(path)?.write_all(bytes)
     }
 
+    fn read_file(&self, path: &Path) -> std::io::Result<Vec<u8>> {
+        fs::read(path)
+    }
+
     fn sync_file(&self, path: &Path) -> std::io::Result<()> {
         File::open(path)?.sync_all()
     }
@@ -121,6 +135,11 @@ pub(super) trait StorageTransactionIo: Send + Sync {
     fn sync_directory(&self, path: &Path) -> std::io::Result<()> {
         File::open(path)?.sync_all()
     }
+
+    fn rename(&self, from: &Path, to: &Path) -> std::io::Result<()> {
+        fs::rename(from, to)
+    }
+
     fn remove_dir_all(&self, path: &Path) -> std::io::Result<()> {
         fs::remove_dir_all(path)
     }
@@ -131,8 +150,18 @@ pub(super) struct FileSystemStorageTransactionIo;
 impl StorageTransactionIo for FileSystemStorageTransactionIo {}
 
 pub(super) struct PreparedTransaction {
+    storage_dir_path: PathBuf,
+    transactions_dir_path: PathBuf,
     transaction_dir_path: PathBuf,
+    transaction_id: Uuid,
+    revision: Uuid,
+    entries: Vec<PreparedEntry>,
     io: Arc<dyn StorageTransactionIo>,
+}
+
+struct PreparedEntry {
+    target_path: PathBuf,
+    staged_file_path: PathBuf,
 }
 
 impl PreparedTransaction {
@@ -146,6 +175,165 @@ impl PreparedTransaction {
                     error,
                 )
             })
+    }
+
+    pub(super) fn commit(self, revision_path: &Path) -> Result<(), StorageTransactionError> {
+        let marker_path = self.transaction_dir_path.join("commit");
+        self.io.create_new_file(&marker_path).map_err(|error| {
+            StorageTransactionError::new(
+                StorageTransactionOperation::CreateCommitMarker,
+                &marker_path,
+                error,
+            )
+        })?;
+        self.io.sync_file(&marker_path).map_err(|error| {
+            StorageTransactionError::new(
+                StorageTransactionOperation::SyncCommitMarker,
+                &marker_path,
+                error,
+            )
+        })?;
+        sync_directory(self.io.as_ref(), &self.transaction_dir_path)?;
+
+        for entry in &self.entries {
+            self.apply_staged_file(entry)?;
+        }
+        self.apply_revision(revision_path)?;
+
+        self.io
+            .remove_dir_all(&self.transaction_dir_path)
+            .map_err(|error| {
+                StorageTransactionError::new(
+                    StorageTransactionOperation::Cleanup,
+                    &self.transaction_dir_path,
+                    error,
+                )
+            })?;
+        sync_directory(self.io.as_ref(), &self.transactions_dir_path)?;
+        sync_directory(self.io.as_ref(), &self.storage_dir_path)
+    }
+
+    fn apply_staged_file(&self, entry: &PreparedEntry) -> Result<(), StorageTransactionError> {
+        let bytes = self
+            .io
+            .read_file(&entry.staged_file_path)
+            .map_err(|error| {
+                StorageTransactionError::new(
+                    StorageTransactionOperation::ReadStagedFile,
+                    &entry.staged_file_path,
+                    error,
+                )
+            })?;
+        let permissions = self
+            .io
+            .target_permissions(&entry.staged_file_path)
+            .map_err(|error| {
+                StorageTransactionError::new(
+                    StorageTransactionOperation::ReadTargetMetadata,
+                    &entry.staged_file_path,
+                    error,
+                )
+            })?;
+        self.apply_bytes(&entry.target_path, &bytes, permissions)
+    }
+
+    fn apply_revision(&self, revision_path: &Path) -> Result<(), StorageTransactionError> {
+        let permissions = self.io.target_permissions(revision_path).map_err(|error| {
+            StorageTransactionError::new(
+                StorageTransactionOperation::ReadTargetMetadata,
+                revision_path,
+                error,
+            )
+        })?;
+        self.apply_bytes(
+            revision_path,
+            format!("{}\n", self.revision).as_bytes(),
+            permissions,
+        )
+    }
+
+    fn apply_bytes(
+        &self,
+        target_path: &Path,
+        bytes: &[u8],
+        permissions: Option<fs::Permissions>,
+    ) -> Result<(), StorageTransactionError> {
+        let parent_path = target_path.parent().ok_or_else(|| {
+            StorageTransactionError::new(
+                StorageTransactionOperation::CreateTargetDirectory,
+                target_path,
+                std::io::Error::new(
+                    std::io::ErrorKind::InvalidInput,
+                    "transaction target must have a parent directory",
+                ),
+            )
+        })?;
+        self.io.create_dir_all(parent_path).map_err(|error| {
+            StorageTransactionError::new(
+                StorageTransactionOperation::CreateTargetDirectory,
+                parent_path,
+                error,
+            )
+        })?;
+        let file_name = target_path.file_name().ok_or_else(|| {
+            StorageTransactionError::new(
+                StorageTransactionOperation::CreateLiveTemporary,
+                target_path,
+                std::io::Error::new(
+                    std::io::ErrorKind::InvalidInput,
+                    "transaction target must have a file name",
+                ),
+            )
+        })?;
+        let temporary_path = parent_path.join(format!(
+            ".{}.{}.tmp",
+            file_name.to_string_lossy(),
+            self.transaction_id.hyphenated()
+        ));
+        self.io.create_new_file(&temporary_path).map_err(|error| {
+            StorageTransactionError::new(
+                StorageTransactionOperation::CreateLiveTemporary,
+                &temporary_path,
+                error,
+            )
+        })?;
+        if let Some(permissions) = permissions {
+            self.io
+                .set_permissions(&temporary_path, permissions)
+                .map_err(|error| {
+                    StorageTransactionError::new(
+                        StorageTransactionOperation::SetLivePermissions,
+                        &temporary_path,
+                        error,
+                    )
+                })?;
+        }
+        self.io
+            .write_file(&temporary_path, bytes)
+            .map_err(|error| {
+                StorageTransactionError::new(
+                    StorageTransactionOperation::WriteLiveTemporary,
+                    &temporary_path,
+                    error,
+                )
+            })?;
+        self.io.sync_file(&temporary_path).map_err(|error| {
+            StorageTransactionError::new(
+                StorageTransactionOperation::SyncLiveTemporary,
+                &temporary_path,
+                error,
+            )
+        })?;
+        self.io
+            .rename(&temporary_path, target_path)
+            .map_err(|error| {
+                StorageTransactionError::new(
+                    StorageTransactionOperation::RenameLiveTarget,
+                    target_path,
+                    error,
+                )
+            })?;
+        sync_directory(self.io.as_ref(), parent_path)
     }
 }
 
@@ -189,8 +377,21 @@ pub(super) fn prepare(
         let _ = io.remove_dir_all(&transaction_dir_path);
         return Err(error);
     }
+    let entries = writes
+        .iter()
+        .enumerate()
+        .map(|(index, write)| PreparedEntry {
+            target_path: write.target_path.to_path_buf(),
+            staged_file_path: transaction_dir_path.join("files").join(index.to_string()),
+        })
+        .collect();
     Ok(PreparedTransaction {
+        storage_dir_path: storage_dir_path.to_path_buf(),
+        transactions_dir_path,
         transaction_dir_path,
+        transaction_id,
+        revision,
+        entries,
         io,
     })
 }
