@@ -82,7 +82,10 @@ fn worker_constructs_and_runs_the_query_on_its_dedicated_thread() {
         }
     });
 
-    assert_eq!(worker.request(), Ok("today text".to_owned()));
+    assert_eq!(
+        futures::executor::block_on(worker.request_async()),
+        Ok("today text".to_owned())
+    );
     assert_ne!(
         *construction_thread
             .lock()

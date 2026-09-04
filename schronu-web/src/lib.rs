@@ -92,13 +92,6 @@ impl TodayWorkerHandle {
         Self { commands }
     }
 
-    pub fn request(&self) -> Result<String, String> {
-        let receiver = self.send_request()?;
-        receiver
-            .blocking_recv()
-            .map_err(|_| "today text worker stopped before responding".to_owned())?
-    }
-
     pub async fn request_async(&self) -> Result<String, String> {
         let receiver = self.send_request()?;
         receiver
