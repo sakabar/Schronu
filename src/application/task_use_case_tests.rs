@@ -178,6 +178,30 @@ fn add_actual_work_完了済みtaskでは変更しない() {
 }
 
 #[test]
+fn complete_task_expected指定時は完了済みtaskの二重送信を拒否する() {
+    let task = crate::test_support::new_task_handle("完了済み").unwrap();
+    task.set_actual_work_seconds(300).unwrap();
+    task.set_orig_status(Status::Done).unwrap();
+    let task_id = task.get_id().unwrap();
+    let before = task.snapshot().unwrap();
+    let mut repository = TestTaskRepository::new(vec![task.clone()], fixed_now());
+
+    let error = complete_task_with_fresh_factory(
+        &mut repository,
+        CompleteTaskInput {
+            task_id,
+            finished_at: fixed_now(),
+            additional_actual_work_seconds: 0,
+            expected_actual_work_seconds: Some(300),
+        },
+    )
+    .unwrap_err();
+
+    assert!(matches!(error, ApplicationError::TaskAlreadyCompleted(id) if id == task_id));
+    assert_eq!(task.snapshot().unwrap(), before);
+}
+
+#[test]
 fn add_actual_work_負数とoverflowではtaskを変更しない() {
     for (initial, additional, expected_reason) in [
         (61, -1, "must not be negative"),
