@@ -21,6 +21,9 @@ mod storage_directory;
 #[path = "schronu/today_text.rs"]
 mod today_text;
 
+#[path = "schronu/web_read.rs"]
+mod web_read;
+
 #[path = "schronu/view.rs"]
 mod view;
 
@@ -43,6 +46,10 @@ mod interactive_contract_tests;
 #[cfg(test)]
 #[path = "schronu/today_text_contract_tests.rs"]
 mod today_text_contract_tests;
+
+#[cfg(test)]
+#[path = "schronu/web_read_buffer_contract_tests.rs"]
+mod web_read_buffer_contract_tests;
 
 /// CLI applicationを起動する。
 pub fn run_cli() {
