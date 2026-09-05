@@ -438,16 +438,47 @@ pub fn defer_task(
     Ok(())
 }
 
-pub fn add_actual_work(
-    repository: &mut dyn TaskRepositoryTrait,
-    input: AddActualWorkInput,
-) -> Result<i64, ApplicationError> {
-    if input.additional_actual_work_seconds < 0 {
+fn validate_additional_actual_work_seconds(
+    additional_actual_work_seconds: i64,
+) -> Result<(), ApplicationError> {
+    if additional_actual_work_seconds < 0 {
         return Err(ApplicationError::InvalidInput {
             field: "additional_actual_work_seconds",
             reason: "must not be negative",
         });
     }
+    Ok(())
+}
+
+fn calculate_updated_actual_work_seconds(
+    task_id: Uuid,
+    actual_work_seconds: i64,
+    expected_actual_work_seconds: Option<i64>,
+    additional_actual_work_seconds: i64,
+) -> Result<i64, ApplicationError> {
+    if let Some(expected_actual_work_seconds) = expected_actual_work_seconds {
+        if actual_work_seconds != expected_actual_work_seconds {
+            return Err(ApplicationError::ActualWorkConflict {
+                task_id,
+                expected_actual_work_seconds,
+                actual_work_seconds,
+            });
+        }
+    }
+
+    actual_work_seconds
+        .checked_add(additional_actual_work_seconds)
+        .ok_or(ApplicationError::InvalidInput {
+            field: "additional_actual_work_seconds",
+            reason: "actual work seconds overflow",
+        })
+}
+
+pub fn add_actual_work(
+    repository: &mut dyn TaskRepositoryTrait,
+    input: AddActualWorkInput,
+) -> Result<i64, ApplicationError> {
+    validate_additional_actual_work_seconds(input.additional_actual_work_seconds)?;
 
     let task = find_task(repository, input.task_id)?;
     if task.get_status().map_err(ApplicationError::TaskTree)? == Status::Done {
@@ -457,22 +488,12 @@ pub fn add_actual_work(
     let actual_work_seconds = task
         .get_actual_work_seconds()
         .map_err(ApplicationError::TaskTree)?;
-    if let Some(expected_actual_work_seconds) = input.expected_actual_work_seconds {
-        if actual_work_seconds != expected_actual_work_seconds {
-            return Err(ApplicationError::ActualWorkConflict {
-                task_id: input.task_id,
-                expected_actual_work_seconds,
-                actual_work_seconds,
-            });
-        }
-    }
-
-    let updated_actual_work_seconds = actual_work_seconds
-        .checked_add(input.additional_actual_work_seconds)
-        .ok_or(ApplicationError::InvalidInput {
-            field: "additional_actual_work_seconds",
-            reason: "actual work seconds overflow",
-        })?;
+    let updated_actual_work_seconds = calculate_updated_actual_work_seconds(
+        input.task_id,
+        actual_work_seconds,
+        input.expected_actual_work_seconds,
+        input.additional_actual_work_seconds,
+    )?;
     task.set_actual_work_seconds(updated_actual_work_seconds)
         .map_err(ApplicationError::TaskTree)?;
     Ok(updated_actual_work_seconds)
@@ -568,30 +589,16 @@ pub fn complete_task(
         return Err(ApplicationError::HasUndoneChildren(input.task_id));
     }
 
-    if input.additional_actual_work_seconds < 0 {
-        return Err(ApplicationError::InvalidInput {
-            field: "additional_actual_work_seconds",
-            reason: "must not be negative",
-        });
-    }
+    validate_additional_actual_work_seconds(input.additional_actual_work_seconds)?;
     let current_actual_work_seconds = task
         .get_actual_work_seconds()
         .map_err(ApplicationError::TaskTree)?;
-    if let Some(expected_actual_work_seconds) = input.expected_actual_work_seconds {
-        if current_actual_work_seconds != expected_actual_work_seconds {
-            return Err(ApplicationError::ActualWorkConflict {
-                task_id: input.task_id,
-                expected_actual_work_seconds,
-                actual_work_seconds: current_actual_work_seconds,
-            });
-        }
-    }
-    let actual_work_seconds = current_actual_work_seconds
-        .checked_add(input.additional_actual_work_seconds)
-        .ok_or(ApplicationError::InvalidInput {
-            field: "additional_actual_work_seconds",
-            reason: "actual work seconds overflow",
-        })?;
+    let actual_work_seconds = calculate_updated_actual_work_seconds(
+        input.task_id,
+        current_actual_work_seconds,
+        input.expected_actual_work_seconds,
+        input.additional_actual_work_seconds,
+    )?;
 
     let prospective_next_focus_task_id = prospective_next_focus_task_id(&task)?;
     let next_repetition_task =
