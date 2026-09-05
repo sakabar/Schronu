@@ -366,25 +366,40 @@ fn snapshot作成のstrict_loadはdestination_pathnameを再openしない() {
     fs::create_dir(&parent).unwrap();
 
     create_snapshot_before_strict_load(&storage, &destination, now, || {
-        let staging_name = fs::read_dir(&parent)
-            .unwrap()
-            .map(|entry| entry.unwrap().file_name())
-            .find(|name| name.to_string_lossy().starts_with(".snapshot.tmp-"))
-            .unwrap();
         fs::rename(&parent, &original_parent).unwrap();
         fs::create_dir(&parent).unwrap();
-        let decoy_storage = parent.join(&staging_name).join("storage");
-        fs::create_dir_all(decoy_storage.join("invalid")).unwrap();
-        fs::write(
-            decoy_storage.join("invalid/project.yaml"),
-            b"not: [strict yaml",
-        )
-        .unwrap();
+        fs::write(parent.join("decoy"), b"not: [strict yaml").unwrap();
     })
     .unwrap();
 
     assert!(original_parent.join("snapshot/manifest.json").is_file());
     assert!(!parent.join("snapshot").exists());
+}
+
+#[test]
+fn snapshot作成はstrict検証成功前にstagingへ書き込まない() {
+    let root = TestDirectory::new("create-strict-before-write");
+    let storage = root.child("source");
+    let destination = root.child("snapshot");
+    let now = Local.with_ymd_and_hms(2026, 9, 5, 12, 0, 0).unwrap();
+    let (_, project_yaml) = create_saved_repository(&storage, now);
+    fs::write(project_yaml, b"not: [strict yaml").unwrap();
+
+    let (result, write_calls) = create_snapshot_with_failure_observation(
+        &storage,
+        &destination,
+        now,
+        SnapshotFailurePoint::Write,
+    );
+
+    let error = result.unwrap_err();
+    assert!(error.to_string().contains("RepositoryLoad"), "{error}");
+    assert_eq!(write_calls, 0);
+    assert!(!destination.exists());
+    assert!(!fs::read_dir(&root.path)
+        .unwrap()
+        .map(|entry| entry.unwrap().file_name())
+        .any(|name| name.to_string_lossy().starts_with(".snapshot.tmp-")));
 }
 
 #[cfg(target_os = "linux")]

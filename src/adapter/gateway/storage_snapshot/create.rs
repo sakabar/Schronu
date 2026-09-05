@@ -195,6 +195,8 @@ where
     validate_capture_unchanged(storage_directory, &scanned)?;
     let collected = collect_storage(scanned);
     let revision = read_revision(&collected.files)?;
+    (hooks.before_strict_load)();
+    strict_load_captured(&collected, storage_directory)?;
     let staging = staging_path(destination)?;
     let staging_name = staging
         .file_name()
@@ -213,8 +215,6 @@ where
     };
     let result = (|| {
         write_payload(&staging_publication, &collected, io)?;
-        (hooks.before_strict_load)();
-        strict_load_captured(&collected, storage_directory)?;
         (hooks.after_parent_open)();
         publish_manifest(
             &staging_publication,
