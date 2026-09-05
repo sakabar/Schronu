@@ -1,6 +1,7 @@
 use schronu_web::{
-    ListTasksRequest, RecordSessionRequest, RecordSessionResult, RetryAdvice, ScheduledTaskRow,
-    ServerSnapshot, SessionTask, WebError, WebErrorCode, WebSuccess,
+    web_error_codes, CompleteSessionResponse, ListTasksRequest, RecordSessionRequest,
+    RecordSessionResult, RetryAdvice, ScheduledTaskRow, ServerSnapshot, SessionTask, WebError,
+    WebSuccess,
 };
 use serde::{de::DeserializeOwned, Serialize};
 use serde_json::json;
@@ -115,45 +116,43 @@ fn five_operationsのrequestとsuccessは仕様どおりのjson形式を持つ()
         }),
     );
 
-    // complete_sessionはbootstrapと同じServerSnapshotだけを返す。
-    assert_eq!(
-        serde_json::to_value(snapshot).unwrap()["logical_date"],
-        "2026-09-05"
+    let complete_response: CompleteSessionResponse = snapshot;
+    assert_json_round_trip(
+        &complete_response,
+        json!({
+            "observed_at_epoch_ms": 1_788_565_500_123_i64,
+            "logical_date": "2026-09-05",
+            "buffer_seconds": -61
+        }),
     );
 }
 
 #[test]
 fn error_codeとretry_adviceはsnake_case文字列として往復する() {
     let cases = [
-        (WebErrorCode::InvalidInput, "invalid_input"),
-        (WebErrorCode::TaskNotFound, "task_not_found"),
-        (WebErrorCode::TaskAlreadyCompleted, "task_already_completed"),
-        (WebErrorCode::ActualWorkConflict, "actual_work_conflict"),
-        (WebErrorCode::ArithmeticOverflow, "arithmetic_overflow"),
-        (WebErrorCode::TaskNotCompletable, "task_not_completable"),
-        (WebErrorCode::ConfigurationError, "configuration_error"),
-        (
-            WebErrorCode::RepositoryUnavailable,
-            "repository_unavailable",
-        ),
-        (WebErrorCode::OperationFailed, "operation_failed"),
-        (WebErrorCode::WorkerUnavailable, "worker_unavailable"),
-        (WebErrorCode::RepositorySaveFailed, "repository_save_failed"),
-        (
-            WebErrorCode::RepositoryStateUncertain,
-            "repository_state_uncertain",
-        ),
+        web_error_codes::INVALID_INPUT,
+        web_error_codes::TASK_NOT_FOUND,
+        web_error_codes::TASK_ALREADY_COMPLETED,
+        web_error_codes::ACTUAL_WORK_CONFLICT,
+        web_error_codes::ARITHMETIC_OVERFLOW,
+        web_error_codes::TASK_NOT_COMPLETABLE,
+        web_error_codes::CONFIGURATION_ERROR,
+        web_error_codes::REPOSITORY_UNAVAILABLE,
+        web_error_codes::OPERATION_FAILED,
+        web_error_codes::WORKER_UNAVAILABLE,
+        web_error_codes::REPOSITORY_SAVE_FAILED,
+        web_error_codes::REPOSITORY_STATE_UNCERTAIN,
     ];
 
-    for (code, encoded) in cases {
-        assert_json_round_trip(&code, json!(encoded));
+    for code in cases {
+        assert_json_round_trip(&code.to_owned(), json!(code));
     }
     assert_json_round_trip(&RetryAdvice::Retry, json!("retry"));
     assert_json_round_trip(&RetryAdvice::ManualCheck, json!("manual_check"));
 
     assert_json_round_trip(
         &WebError {
-            code: WebErrorCode::WorkerUnavailable,
+            code: web_error_codes::WORKER_UNAVAILABLE.to_owned(),
             message: "Web worker is unavailable".to_owned(),
             retry_advice: RetryAdvice::Retry,
         },

@@ -7,6 +7,7 @@ mod wire;
 pub use refresh_state::{RefreshState, RefreshTrigger, REFRESH_INTERVAL};
 pub use today_worker::{TodayTextQuery, TodayWorkerHandle};
 pub use wire::{
-    ListTasksRequest, RecordSessionRequest, RecordSessionResult, RetryAdvice, ScheduledTaskRow,
-    ServerSnapshot, SessionTask, WebError, WebErrorCode, WebSuccess,
+    web_error_codes, CompleteSessionResponse, ListTasksRequest, RecordSessionRequest,
+    RecordSessionResult, RetryAdvice, ScheduledTaskRow, ServerSnapshot, SessionTask, WebError,
+    WebSuccess,
 };

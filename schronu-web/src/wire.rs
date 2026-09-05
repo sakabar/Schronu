@@ -7,6 +7,8 @@ pub struct ServerSnapshot {
     pub buffer_seconds: i64,
 }
 
+pub type CompleteSessionResponse = ServerSnapshot;
+
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct SessionTask {
     pub task_id: String,
@@ -47,21 +49,19 @@ pub struct RecordSessionResult {
     pub actual_work_seconds: i64,
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum WebErrorCode {
-    InvalidInput,
-    TaskNotFound,
-    TaskAlreadyCompleted,
-    ActualWorkConflict,
-    ArithmeticOverflow,
-    TaskNotCompletable,
-    ConfigurationError,
-    RepositoryUnavailable,
-    OperationFailed,
-    WorkerUnavailable,
-    RepositorySaveFailed,
-    RepositoryStateUncertain,
+pub mod web_error_codes {
+    pub const INVALID_INPUT: &str = "invalid_input";
+    pub const TASK_NOT_FOUND: &str = "task_not_found";
+    pub const TASK_ALREADY_COMPLETED: &str = "task_already_completed";
+    pub const ACTUAL_WORK_CONFLICT: &str = "actual_work_conflict";
+    pub const ARITHMETIC_OVERFLOW: &str = "arithmetic_overflow";
+    pub const TASK_NOT_COMPLETABLE: &str = "task_not_completable";
+    pub const CONFIGURATION_ERROR: &str = "configuration_error";
+    pub const REPOSITORY_UNAVAILABLE: &str = "repository_unavailable";
+    pub const OPERATION_FAILED: &str = "operation_failed";
+    pub const WORKER_UNAVAILABLE: &str = "worker_unavailable";
+    pub const REPOSITORY_SAVE_FAILED: &str = "repository_save_failed";
+    pub const REPOSITORY_STATE_UNCERTAIN: &str = "repository_state_uncertain";
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -73,7 +73,7 @@ pub enum RetryAdvice {
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct WebError {
-    pub code: WebErrorCode,
+    pub code: String,
     pub message: String,
     pub retry_advice: RetryAdvice,
 }
