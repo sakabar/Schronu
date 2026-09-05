@@ -171,3 +171,47 @@ fn snapshot_manifest_v1はversion_digest_path重複をdecode時に拒否する()
         assert!(result.is_err(), "{case}");
     }
 }
+
+#[test]
+fn snapshot_manifestのfile_count超過は最初の超過entryをtyped保持する() {
+    use crate::adapter::gateway::storage_snapshot::{
+        manifest::decode_manifest_with_limits, SnapshotLimitKind, SnapshotResourceLimits,
+    };
+
+    let manifest_path = PathBuf::from("/snapshot/manifest.json");
+    let value = serde_json::json!({
+        "format_version": 1,
+        "tool_version": "0.1.0",
+        "created_at": "2026-09-05T12:00:00+09:00",
+        "revision": null,
+        "digest": {"algorithm": "fnv1a64", "version": 1},
+        "directories": [],
+        "files": [
+            {
+                "path": "first.yaml",
+                "mode": 416,
+                "content_length": 0,
+                "content_digest": "fnv1a64:cbf29ce484222325"
+            },
+            {
+                "path": "nested/excess.yaml",
+                "mode": 416,
+                "content_length": 0,
+                "content_digest": "fnv1a64:cbf29ce484222325"
+            }
+        ]
+    });
+    let bytes = serde_json::to_vec(&value).unwrap();
+    let limits = SnapshotResourceLimits::new(8_192, 1, 1_024, 2_048, 4_096, 64);
+
+    let error = decode_manifest_with_limits(&manifest_path, &bytes, limits).unwrap_err();
+
+    assert_eq!(error.limit_kind(), Some(SnapshotLimitKind::FileCount));
+    assert_eq!(error.limit_value(), Some(1));
+    assert_eq!(error.observed_value(), Some(2));
+    assert_eq!(error.path(), manifest_path);
+    assert_eq!(
+        error.limit_path(),
+        Some(std::path::Path::new("nested/excess.yaml"))
+    );
+}

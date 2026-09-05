@@ -63,7 +63,7 @@ pub(in crate::adapter::gateway) fn decode_manifest(
     decode_manifest_with_limits(manifest_path, bytes, DEFAULT_RESOURCE_LIMITS)
 }
 
-pub(super) fn decode_manifest_with_limits(
+pub(in crate::adapter::gateway) fn decode_manifest_with_limits(
     manifest_path: &Path,
     bytes: &[u8],
     limits: SnapshotResourceLimits,
@@ -96,13 +96,16 @@ fn validate_manifest(
         ));
     }
 
-    limits.check(
-        manifest_path,
-        None,
-        super::error::SnapshotLimitKind::FileCount,
-        limits.file_count as u64,
-        u64::try_from(manifest.files.len()).unwrap_or(u64::MAX),
-    )?;
+    if manifest.files.len() > limits.file_count {
+        let relative_path = validate_relative_path(&manifest.files[limits.file_count].path)?;
+        return Err(SnapshotError::limit(
+            manifest_path,
+            super::error::SnapshotLimitKind::FileCount,
+            limits.file_count as u64,
+            u64::try_from(manifest.files.len()).unwrap_or(u64::MAX),
+            Some(relative_path),
+        ));
+    }
     let mut paths = HashSet::new();
     for directory in &mut manifest.directories {
         directory.path = validate_relative_path(&directory.path)?;
