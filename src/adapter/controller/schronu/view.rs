@@ -57,6 +57,41 @@ pub(super) fn task_list_search_text(row: &TaskListTaskRow) -> String {
     format_task_list_columns(&task_list_columns(row, TaskListIconMode::Original))
 }
 
+fn format_deadline_remaining_time(
+    deadline_time_opt: Option<&DateTime<Local>>,
+    end_datetime: DateTime<Local>,
+    last_synced_time: DateTime<Local>,
+    next_logical_date_start: DateTime<Local>,
+) -> String {
+    if let Some(deadline_time) = deadline_time_opt {
+        if *deadline_time < next_logical_date_start {
+            let breaking_minutes = (end_datetime - deadline_time).num_minutes().abs();
+            let breaking_hh = breaking_minutes / 60;
+            let breaking_mm = breaking_minutes % 60;
+
+            if *deadline_time < last_synced_time {
+                format!("+{:02}:{:02}ASAP", breaking_hh, breaking_mm)
+            } else if *deadline_time < end_datetime {
+                format!("+{:02}:{:02}____", breaking_hh, breaking_mm)
+            } else {
+                format!("____-{:02}:{:02}", breaking_hh, breaking_mm)
+            }
+        } else {
+            let deadline_leeway_days = (*deadline_time - end_datetime).num_days().abs();
+
+            if deadline_leeway_days == 0 {
+                "________0D".to_string()
+            } else if *deadline_time > end_datetime {
+                format!("_____-{:03}D", deadline_leeway_days)
+            } else {
+                format!("_____+{:03}D", deadline_leeway_days)
+            }
+        }
+    } else {
+        "____/__/__".to_string()
+    }
+}
+
 pub(super) fn get_adjustable_prefix_label(
     task: &TaskHandle,
     dt: DateTime<Local>,
@@ -885,33 +920,12 @@ pub(super) fn build_show_all_tasks_display_with_config(
                 "-"
             };
 
-            let deadline_string = if let Some(deadline_time) = deadline_time_opt {
-                if *deadline_time < next_logical_date_start {
-                    let breaking_minutes = (end_datetime - deadline_time).num_minutes().abs();
-                    let breaking_hh = breaking_minutes / 60;
-                    let breaking_mm = breaking_minutes % 60;
-
-                    if *deadline_time < last_synced_time {
-                        format!("+{:02}:{:02}ASAP", breaking_hh, breaking_mm)
-                    } else if *deadline_time < end_datetime {
-                        format!("+{:02}:{:02}____", breaking_hh, breaking_mm)
-                    } else {
-                        format!("____-{:02}:{:02}", breaking_hh, breaking_mm)
-                    }
-                } else {
-                    let deadline_leeway_days = (*deadline_time - end_datetime).num_days().abs();
-
-                    if deadline_leeway_days == 0 {
-                        "________0D".to_string()
-                    } else if *deadline_time > end_datetime {
-                        format!("_____-{:03}D", deadline_leeway_days)
-                    } else {
-                        format!("_____+{:03}D", deadline_leeway_days)
-                    }
-                }
-            } else {
-                "____/__/__".to_string()
-            };
+            let deadline_string = format_deadline_remaining_time(
+                deadline_time_opt.as_ref(),
+                end_datetime,
+                last_synced_time,
+                next_logical_date_start,
+            );
 
             let task_row = TaskListTaskRow {
                 rank: ind,
