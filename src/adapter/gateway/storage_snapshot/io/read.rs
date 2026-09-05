@@ -7,7 +7,9 @@ use crate::adapter::gateway::storage_snapshot::error::{
 use crate::adapter::gateway::storage_snapshot::layout::MANIFEST_FILE_NAME;
 #[cfg(any(target_os = "macos", target_os = "linux"))]
 use crate::adapter::gateway::storage_snapshot::manifest::accumulate_directory_manifest_bytes;
-use crate::adapter::gateway::storage_snapshot::{permission_mode, SnapshotResourceLimits};
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+use crate::adapter::gateway::storage_snapshot::permission_mode;
+use crate::adapter::gateway::storage_snapshot::SnapshotResourceLimits;
 #[cfg(any(target_os = "macos", target_os = "linux"))]
 use std::fs::File;
 use std::path::Path;
