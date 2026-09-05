@@ -146,6 +146,40 @@ fn active_session中の新しいsnapshotは停止済みbufferを引き継ぐ() {
 }
 
 #[test]
+fn 複数session中の記録snapshotはcommit済み区間を二重creditしない() {
+    let storage = FakeStorage::default();
+    let mut state = load_client_state(&storage, 1_000_000).unwrap();
+    let bootstrap_id = bootstrap_effect(state.request_bootstrap());
+    state.apply_bootstrap_result(bootstrap_id, Ok(snapshot("2026-09-05", 1_000_000)));
+
+    state.tick(1_010_000);
+    state.add_session_from_row(&storage, &row(OTHER_TASK_ID, 0));
+    state.tick(1_020_000);
+    state.add_session_from_row(&storage, &row(TASK_ID, 0));
+    state.tick(1_030_000);
+    let (request_id, _) = record_effect(state.begin_record_session(&storage, TASK_ID));
+    state.apply_record_result(
+        &storage,
+        request_id,
+        Ok(WebSuccess {
+            snapshot: schronu_web::ServerSnapshot {
+                observed_at_epoch_ms: 1_030_000,
+                logical_date: "2026-09-05".to_owned(),
+                buffer_seconds: 40,
+            },
+            data: RecordSessionResult {
+                actual_work_seconds: 110,
+            },
+        }),
+    );
+    state.tick(1_040_000);
+
+    assert_eq!(state.display_buffer_seconds(), Some(50));
+    state.discard_session(&storage, OTHER_TASK_ID);
+    assert_eq!(state.display_buffer_seconds(), Some(30));
+}
+
+#[test]
 fn snapshotとlistはlogical_date反転時にstale一覧を保持せず追加requestもしない() {
     let storage = FakeStorage::default();
     let mut state = load_client_state(&storage, 10).unwrap();
