@@ -3147,6 +3147,8 @@ dependencies = [
  "futures",
  "gloo-timers",
  "schronu",
+ "serde",
+ "serde_json",
  "tokio",
 ]
 
