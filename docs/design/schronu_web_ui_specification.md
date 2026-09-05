@@ -461,7 +461,7 @@ OperationHistoryEntry {
 
 | 仕様箇所 | 対応要件 |
 | --- | --- |
-| 2、3、4 | REQ-NFR-001..005、REQ-NET-001、REQ-APP-001 |
+| 2、3、4、8 | REQ-NFR-001..006、REQ-NET-001、REQ-APP-001 |
 | 3.4、6.1、7.2 | REQ-SESSION-001..007、REQ-AUTO-001..004 |
 | 5 | REQ-APP-001..004、REQ-COMPAT-001..005 |
 | 6.2、6.3、7.2 | REQ-CARD-001..012 |
