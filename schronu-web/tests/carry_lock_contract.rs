@@ -4,7 +4,7 @@ use schronu_web::client::carry_lock::{
 use schronu_web::client::state::load_client_state;
 
 mod client_state_support;
-use client_state_support::FakeStorage;
+use client_state_support::{bootstrap_effect, snapshot, FakeStorage};
 
 #[test]
 fn 保存値なしと正常schemaは互換性を保って復元する() {
@@ -81,12 +81,32 @@ fn enableはmemory優先でdisableはstorage優先にする() {
 #[test]
 fn carry_lock_warningは既存storage_warningと併せて公開する() {
     let storage = FakeStorage::default();
+    *storage.value.borrow_mut() = Some("not-json".to_owned());
     storage.fail_carry_lock_reads.set(true);
 
     let state = load_client_state(&storage, 0).unwrap();
 
     assert_eq!(state.carry_lock_mode(), CarryLockMode::Locked);
-    assert_eq!(state.all_storage_warnings().len(), 1);
-    assert!(state.all_storage_warnings()[0].contains("持ち歩きロック"));
+    let warnings = state.all_storage_warnings();
+    assert_eq!(warnings.len(), 2);
+    assert!(warnings
+        .iter()
+        .any(|warning| warning.contains("セッション")));
+    assert!(warnings
+        .iter()
+        .any(|warning| warning.contains("持ち歩きロック")));
     assert_eq!(CARRY_LOCK_STORAGE_KEY, "schronu_web.carry_lock.v1");
+}
+
+#[test]
+fn 閲覧responseはarmedの権利を消費しない() {
+    let storage = FakeStorage::default();
+    let mut state = load_client_state(&storage, 1_000).unwrap();
+    state.enable_carry_lock(&storage);
+    state.arm_carry_lock(2_000);
+    let request_id = bootstrap_effect(state.request_bootstrap());
+
+    state.apply_bootstrap_result(request_id, Ok(snapshot("2026-09-05", 2_001)));
+
+    assert_eq!(state.carry_lock_mode(), CarryLockMode::ArmedUntil(17_000));
 }

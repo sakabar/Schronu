@@ -1,7 +1,10 @@
 mod component;
 #[cfg(all(feature = "web", target_arch = "wasm32"))]
 mod component_dispatch;
-#[cfg(all(feature = "web", target_arch = "wasm32"))]
+#[cfg(any(
+    all(test, feature = "web"),
+    all(feature = "web", target_arch = "wasm32")
+))]
 mod component_models;
 #[cfg(any(test, all(feature = "web", target_arch = "wasm32")))]
 mod component_runtime;

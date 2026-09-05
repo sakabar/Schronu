@@ -2,6 +2,7 @@ mod diagnostics;
 mod read_state;
 mod session_state;
 
+use super::carry_lock::{load_carry_lock, CarryLockMode, CarryLockState};
 use super::date_buttons::LogicalDateButton;
 pub use super::effect::ClientEffect;
 pub use super::history::{Locality, Operation, OperationHistoryEntry, Outcome};
@@ -35,6 +36,7 @@ pub struct ClientState {
     read: ReadState,
     sessions: SessionState,
     diagnostics: DiagnosticsState,
+    carry_lock: CarryLockState,
     tick_now_epoch_ms: i64,
 }
 
@@ -42,6 +44,7 @@ impl ClientState {
     fn new(
         work_sessions: WorkSessionsState,
         mutation_safety: MutationSafetyState,
+        carry_lock: CarryLockState,
         tick_now_epoch_ms: i64,
     ) -> Self {
         Self {
@@ -49,6 +52,7 @@ impl ClientState {
             read: ReadState::new(),
             sessions: SessionState::new(work_sessions, mutation_safety),
             diagnostics: DiagnosticsState::new(),
+            carry_lock,
             tick_now_epoch_ms,
         }
     }
@@ -63,6 +67,42 @@ impl ClientState {
 
     pub fn storage_warnings(&self) -> &[String] {
         self.sessions.work_sessions.warnings()
+    }
+
+    pub fn all_storage_warnings(&self) -> Vec<String> {
+        self.storage_warnings()
+            .iter()
+            .cloned()
+            .chain(self.carry_lock.warning().map(str::to_owned))
+            .collect()
+    }
+
+    pub fn carry_lock_mode(&self) -> CarryLockMode {
+        self.carry_lock.mode()
+    }
+
+    pub fn carry_lock_locked(&self) -> bool {
+        self.carry_lock.mode() == CarryLockMode::Locked
+    }
+
+    pub fn enable_carry_lock<S: KeyValueStorage>(&mut self, storage: &S) -> ClientEffect {
+        self.carry_lock.enable(storage);
+        ClientEffect::None
+    }
+
+    pub fn arm_carry_lock(&mut self, now_epoch_ms: i64) -> ClientEffect {
+        self.carry_lock.arm(now_epoch_ms);
+        ClientEffect::None
+    }
+
+    pub fn disable_carry_lock<S: KeyValueStorage>(&mut self, storage: &S) -> ClientEffect {
+        self.carry_lock.disable(storage);
+        ClientEffect::None
+    }
+
+    #[cfg(any(test, all(feature = "web", target_arch = "wasm32")))]
+    pub(crate) fn authorize_carry_lock_mutation(&mut self, now_epoch_ms: i64) -> bool {
+        self.carry_lock.authorize_mutation(now_epoch_ms)
     }
 
     pub fn storage_write_blocked(&self) -> bool {
@@ -172,6 +212,7 @@ impl ClientState {
 
     pub fn tick(&mut self, now_epoch_ms: i64) -> ClientEffect {
         self.tick_now_epoch_ms = now_epoch_ms;
+        self.carry_lock.expire(now_epoch_ms);
         ClientEffect::None
     }
 }
@@ -183,6 +224,7 @@ pub fn load_client_state<S: KeyValueStorage>(
     Ok(ClientState::new(
         load_work_sessions(storage)?,
         load_mutation_safety(storage)?,
+        load_carry_lock(storage),
         tick_now_epoch_ms,
     ))
 }
@@ -194,5 +236,10 @@ pub fn load_client_state_for_ui<S: KeyValueStorage>(
     let work_sessions = load_work_sessions(storage).unwrap_or_else(|_| unavailable_state());
     let mutation_safety =
         load_mutation_safety(storage).unwrap_or_else(|_| MutationSafetyState::blocked());
-    ClientState::new(work_sessions, mutation_safety, tick_now_epoch_ms)
+    ClientState::new(
+        work_sessions,
+        mutation_safety,
+        load_carry_lock(storage),
+        tick_now_epoch_ms,
+    )
 }

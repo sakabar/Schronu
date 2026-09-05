@@ -16,6 +16,9 @@ pub(crate) enum ComponentAction {
     CompleteSession(String),
     CompleteSessionWithoutRecording(String),
     ConfirmRepositoryChecked,
+    EnableCarryLock,
+    ArmCarryLock,
+    DisableCarryLock,
 }
 
 pub(crate) fn component_action_from_session_action(action: SessionAction) -> ComponentAction {
@@ -65,13 +68,14 @@ impl ComponentOrchestrator {
         effect
     }
 
-    pub fn action<S: KeyValueStorage>(
+    pub fn action_at<S: KeyValueStorage>(
         &mut self,
         storage: &S,
+        now_epoch_ms: i64,
         action: ComponentAction,
     ) -> ClientEffect {
         self.state.as_mut().map_or(ClientEffect::None, |state| {
-            reduce_component_action(state, storage, action)
+            reduce_component_action_at(state, storage, now_epoch_ms, action)
         })
     }
 
@@ -91,6 +95,25 @@ pub(crate) fn reduce_component_action<S: KeyValueStorage>(
     storage: &S,
     action: ComponentAction,
 ) -> ClientEffect {
+    let now_epoch_ms = state.tick_now_epoch_ms();
+    reduce_component_action_at(state, storage, now_epoch_ms, action)
+}
+
+pub(crate) fn reduce_component_action_at<S: KeyValueStorage>(
+    state: &mut ClientState,
+    storage: &S,
+    now_epoch_ms: i64,
+    action: ComponentAction,
+) -> ClientEffect {
+    match action {
+        ComponentAction::EnableCarryLock => return state.enable_carry_lock(storage),
+        ComponentAction::ArmCarryLock => return state.arm_carry_lock(now_epoch_ms),
+        ComponentAction::DisableCarryLock => return state.disable_carry_lock(storage),
+        _ => {}
+    }
+    if is_carry_lock_mutation(&action) && !state.authorize_carry_lock_mutation(now_epoch_ms) {
+        return ClientEffect::None;
+    }
     match action {
         ComponentAction::SwitchTab(tab) => state.switch_tab(tab),
         ComponentAction::Tick(now_epoch_ms) => state.tick(now_epoch_ms),
@@ -106,5 +129,21 @@ pub(crate) fn reduce_component_action<S: KeyValueStorage>(
             state.begin_complete_session_without_recording(storage, &task_id)
         }
         ComponentAction::ConfirmRepositoryChecked => state.confirm_repository_checked(storage),
+        ComponentAction::EnableCarryLock
+        | ComponentAction::ArmCarryLock
+        | ComponentAction::DisableCarryLock => ClientEffect::None,
     }
+}
+
+fn is_carry_lock_mutation(action: &ComponentAction) -> bool {
+    matches!(
+        action,
+        ComponentAction::AutoSession
+            | ComponentAction::AddSession(_)
+            | ComponentAction::DiscardSession(_)
+            | ComponentAction::RecordSession(_)
+            | ComponentAction::CompleteSession(_)
+            | ComponentAction::CompleteSessionWithoutRecording(_)
+            | ComponentAction::ConfirmRepositoryChecked
+    )
 }

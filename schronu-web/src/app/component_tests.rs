@@ -1,11 +1,12 @@
 #![cfg(feature = "server")]
 
 use super::component::app;
+#[cfg(feature = "web")]
+use super::component_models::BrowserPageModel;
 use super::component_runtime::{
     component_action_from_session_action, initialize_client, reduce_component_action,
     reduce_component_action_at, ComponentAction, ComponentOrchestrator,
 };
-use super::component_models::BrowserPageModel;
 use super::effect_dispatcher::ClientResponse;
 use super::session_view::{SessionAction, SessionActionKind};
 use crate::client::state::{ActiveTab, ClientEffect};
@@ -166,12 +167,36 @@ fn 持ち歩きロックは変更操作だけを中央で遮断しarmedを一度
         );
     }
 
-    reduce_component_action_at(
-        &mut state,
-        &storage,
-        2_000,
-        ComponentAction::ArmCarryLock,
-    );
+    for action in [
+        ComponentAction::AutoSession,
+        ComponentAction::AddSession(task(RECORD_ID)),
+        ComponentAction::DiscardSession(RECORD_ID.to_owned()),
+        ComponentAction::RecordSession(RECORD_ID.to_owned()),
+        ComponentAction::CompleteSession(RECORD_ID.to_owned()),
+        ComponentAction::CompleteSessionWithoutRecording(RECORD_ID.to_owned()),
+        ComponentAction::ConfirmRepositoryChecked,
+    ] {
+        let action_storage = MemoryStorage::default();
+        let (mut action_state, _) = initialize_client(&action_storage, 1_000);
+        reduce_component_action_at(
+            &mut action_state,
+            &action_storage,
+            1_000,
+            ComponentAction::EnableCarryLock,
+        );
+        reduce_component_action_at(
+            &mut action_state,
+            &action_storage,
+            2_000,
+            ComponentAction::ArmCarryLock,
+        );
+
+        let _ = reduce_component_action_at(&mut action_state, &action_storage, 2_001, action);
+
+        assert!(action_state.carry_lock_locked());
+    }
+
+    reduce_component_action_at(&mut state, &storage, 2_000, ComponentAction::ArmCarryLock);
     assert_eq!(
         reduce_component_action_at(
             &mut state,
@@ -186,6 +211,15 @@ fn 持ち歩きロックは変更操作だけを中央で遮断しarmedを一度
         ClientEffect::None
     );
     assert!(matches!(
+        reduce_component_action_at(
+            &mut state,
+            &storage,
+            2_002,
+            ComponentAction::SelectDate("2026-09-05".to_owned())
+        ),
+        ClientEffect::ListTasks { .. }
+    ));
+    assert!(matches!(
         reduce_component_action_at(&mut state, &storage, 2_003, ComponentAction::AutoSession),
         ClientEffect::AutoSession { .. }
     ));
@@ -199,6 +233,12 @@ fn 持ち歩きロックは変更操作だけを中央で遮断しarmedを一度
         ClientEffect::None,
         "同時刻の2件目も遮断する"
     );
+    reduce_component_action_at(
+        &mut state,
+        &storage,
+        2_004,
+        ComponentAction::DisableCarryLock,
+    );
 }
 
 #[test]
@@ -211,12 +251,7 @@ fn armed期限判定はaction時刻を使い期限切れ操作を遮断する() 
         1_000,
         ComponentAction::EnableCarryLock,
     );
-    reduce_component_action_at(
-        &mut state,
-        &storage,
-        2_000,
-        ComponentAction::ArmCarryLock,
-    );
+    reduce_component_action_at(&mut state, &storage, 2_000, ComponentAction::ArmCarryLock);
 
     assert_eq!(
         reduce_component_action_at(&mut state, &storage, 17_000, ComponentAction::AutoSession),
@@ -226,6 +261,26 @@ fn armed期限判定はaction時刻を使い期限切れ操作を遮断する() 
 }
 
 #[test]
+fn armedはtickが期限へ到達した時点でlockedへ戻る() {
+    let storage = MemoryStorage::default();
+    let (mut state, _) = initialize_client(&storage, 1_000);
+    reduce_component_action_at(
+        &mut state,
+        &storage,
+        1_000,
+        ComponentAction::EnableCarryLock,
+    );
+    reduce_component_action_at(&mut state, &storage, 2_000, ComponentAction::ArmCarryLock);
+
+    reduce_component_action_at(&mut state, &storage, 16_999, ComponentAction::Tick(16_999));
+    assert!(!state.carry_lock_locked());
+
+    reduce_component_action_at(&mut state, &storage, 17_000, ComponentAction::Tick(17_000));
+    assert!(state.carry_lock_locked());
+}
+
+#[test]
+#[cfg(feature = "web")]
 fn carry_lock_warningはbrowser_page_modelのwarningsへ合流する() {
     let storage = MemoryStorage::failing_carry_lock_reads();
     let (state, _) = initialize_client(&storage, 1_000);
@@ -236,6 +291,40 @@ fn carry_lock_warningはbrowser_page_modelのwarningsへ合流する() {
         .warnings
         .iter()
         .any(|warning| warning.contains("持ち歩きロック")));
+    let BrowserPageModel {
+        active_tab,
+        tick_now_epoch_ms,
+        buffer,
+        sessions,
+        rows,
+        active_task_ids,
+        dates,
+        history,
+        warnings,
+        safety_warning,
+        display_error,
+        global_blocked,
+        can_confirm,
+        auto_session_in_flight,
+        auto_session_empty,
+    } = model;
+    let _ = (
+        active_tab,
+        tick_now_epoch_ms,
+        buffer,
+        sessions,
+        rows,
+        active_task_ids,
+        dates,
+        history,
+        warnings,
+        safety_warning,
+        display_error,
+        global_blocked,
+        can_confirm,
+        auto_session_in_flight,
+        auto_session_empty,
+    );
 }
 
 #[test]
@@ -280,7 +369,7 @@ fn 製品orchestratorはmountを一度に制限しresponseとtickを同じstate�
         60
     );
     assert_eq!(
-        orchestrator.action(&storage, ComponentAction::Tick(3_000)),
+        orchestrator.action_at(&storage, 3_000, ComponentAction::Tick(3_000)),
         ClientEffect::None
     );
     assert_eq!(orchestrator.state().unwrap().tick_now_epoch_ms(), 3_000);

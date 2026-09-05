@@ -48,7 +48,7 @@ impl BrowserPageModel {
                 })
                 .collect(),
             history: history_view_models(state),
-            warnings: state.storage_warnings().to_vec(),
+            warnings: state.all_storage_warnings(),
             safety_warning: state.mutation_safety_warning(),
             display_error: state
                 .display_error()
@@ -61,6 +61,7 @@ impl BrowserPageModel {
     }
 }
 
+#[cfg(all(feature = "web", target_arch = "wasm32"))]
 pub(crate) fn browser_now_epoch_ms() -> i64 {
     js_sys::Date::now() as i64
 }
