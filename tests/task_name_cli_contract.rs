@@ -124,10 +124,10 @@ fn 非対話cliはcontrol名を入力errorにしてstorageを変更しない() {
         assert_eq!(output.status.code(), Some(1), "task_name={task_name:?}");
         assert!(output.stdout.is_empty(), "task_name={task_name:?}");
         let stderr = String::from_utf8(output.stderr).unwrap();
-        assert!(
-            stderr.starts_with("[Error] ")
-                && (stderr.contains("入力エラー") || stderr.contains("invalid input")),
-            "task_name={task_name:?}, stderr={stderr:?}"
+        assert_eq!(
+            stderr,
+            "[Error] 操作エラー: invalid input for name: must not contain control characters\n",
+            "task_name={task_name:?}"
         );
         assert_eq!(
             fixture.persistent_storage_bytes_excluding_process_lock(),
