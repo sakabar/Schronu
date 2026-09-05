@@ -11,6 +11,11 @@ fn snapshotはlock下の全永続dataとpermissionを保存して予約領域を
     let (_, project_yaml) = create_saved_repository(&storage, now);
     let project_directory = project_yaml.parent().unwrap();
     fs::write(project_directory.join("notes.bin"), b"persistent-note").unwrap();
+    fs::write(
+        project_directory.join(format!(".project.yaml.{}.tmp", Uuid::new_v4())),
+        b"live-temporary",
+    )
+    .unwrap();
     fs::create_dir_all(project_directory.join("markdown/empty")).unwrap();
     fs::write(storage.join(".orphan.tmp"), b"temporary").unwrap();
     fs::create_dir_all(storage.join(".schronu-transactions/unused")).unwrap();

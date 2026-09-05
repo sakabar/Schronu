@@ -37,7 +37,13 @@ pub(super) fn is_reserved_path(path: &Path) -> bool {
     let Some(Component::Normal(first)) = components.next() else {
         return true;
     };
-    first == ".lock" || first == ".schronu-transactions" || is_temporary_name(first)
+    first == ".lock"
+        || first == ".schronu-transactions"
+        || is_temporary_name(first)
+        || components.any(|component| match component {
+            Component::Normal(name) => is_temporary_name(name),
+            _ => true,
+        })
 }
 
 fn is_temporary_name(name: &std::ffi::OsStr) -> bool {
