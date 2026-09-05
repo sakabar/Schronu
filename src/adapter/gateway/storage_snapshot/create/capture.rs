@@ -2,9 +2,11 @@ use super::invalid;
 #[cfg(any(target_os = "macos", target_os = "linux"))]
 use crate::adapter::gateway::storage_snapshot::error::SnapshotLimitKind;
 use crate::adapter::gateway::storage_snapshot::error::{SnapshotError, SnapshotOperation};
+#[cfg(test)]
+use crate::adapter::gateway::storage_snapshot::io::FileSystemSnapshotIo;
 #[cfg(any(target_os = "macos", target_os = "linux"))]
 use crate::adapter::gateway::storage_snapshot::io::SnapshotFailurePoint;
-use crate::adapter::gateway::storage_snapshot::io::{FileSystemSnapshotIo, SnapshotIo};
+use crate::adapter::gateway::storage_snapshot::io::SnapshotIo;
 use crate::adapter::gateway::storage_snapshot::layout::is_reserved_path;
 #[cfg(any(target_os = "macos", target_os = "linux"))]
 use crate::adapter::gateway::storage_snapshot::manifest::accumulate_directory_manifest_bytes;
@@ -276,46 +278,234 @@ pub(super) fn validate_capture_unchanged(
     scanned: &ScannedStorage,
     limits: SnapshotResourceLimits,
 ) -> Result<(), SnapshotError> {
-    let current = scan_storage_entries(storage, limits, &FileSystemSnapshotIo)?;
-    let mut directories = current
+    validate_capture_unchanged_secure(storage, scanned, limits)
+}
+
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+fn validate_capture_unchanged_secure(
+    storage: &Path,
+    scanned: &ScannedStorage,
+    limits: SnapshotResourceLimits,
+) -> Result<(), SnapshotError> {
+    use std::os::unix::fs::OpenOptionsExt;
+
+    let root = File::options()
+        .read(true)
+        .custom_flags(libc::O_DIRECTORY | libc::O_NOFOLLOW | libc::O_CLOEXEC)
+        .open(storage)
+        .map_err(|error| SnapshotError::new(SnapshotOperation::Read, storage, error))?;
+    let directories = scanned
         .directories
         .iter()
         .map(|entry| (entry.relative.as_path(), entry))
         .collect::<std::collections::HashMap<_, _>>();
-    let mut files = current
+    let files = scanned
         .files
         .iter()
         .map(|entry| (entry.relative.as_path(), entry))
         .collect::<std::collections::HashMap<_, _>>();
-    for expected in &scanned.directories {
-        let path = storage.join(&expected.relative);
-        let Some(found) = directories.remove(expected.relative.as_path()) else {
+    let mut validator = CaptureValidator {
+        storage,
+        limits,
+        directories,
+        files,
+        file_count: 0,
+        total_bytes: 0,
+        directory_manifest_bytes: 0,
+    };
+    validator.read_directory(&root, Path::new(""))?;
+    if let Some(expected) = validator.directories.values().next() {
+        return Err(capture_changed(storage.join(&expected.relative)));
+    }
+    if let Some(expected) = validator.files.values().next() {
+        return Err(capture_changed(&expected.path));
+    }
+    Ok(())
+}
+
+#[cfg(not(any(target_os = "macos", target_os = "linux")))]
+fn validate_capture_unchanged_secure(
+    storage: &Path,
+    _scanned: &ScannedStorage,
+    _limits: SnapshotResourceLimits,
+) -> Result<(), SnapshotError> {
+    Err(invalid(
+        storage,
+        "secure snapshot source validation is supported only on macOS and Linux",
+    ))
+}
+
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+struct CaptureValidator<'a> {
+    storage: &'a Path,
+    limits: SnapshotResourceLimits,
+    directories: std::collections::HashMap<&'a Path, &'a ScannedDirectory>,
+    files: std::collections::HashMap<&'a Path, &'a ScannedFile>,
+    file_count: usize,
+    total_bytes: u64,
+    directory_manifest_bytes: u64,
+}
+
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+impl CaptureValidator<'_> {
+    fn read_directory(&mut self, directory: &File, relative: &Path) -> Result<(), SnapshotError> {
+        use std::os::fd::{AsRawFd, FromRawFd};
+
+        for name in crate::adapter::gateway::storage_snapshot::io::read_directory_names(
+            directory.as_raw_fd(),
+        )
+        .map_err(|error| {
+            SnapshotError::new(SnapshotOperation::Read, self.storage.join(relative), error)
+        })? {
+            let name = name.map_err(|error| {
+                SnapshotError::new(SnapshotOperation::Read, self.storage.join(relative), error)
+            })?;
+            let child_relative = relative.join(&name);
+            if is_reserved_path(&child_relative) {
+                continue;
+            }
+            let display_path = self.storage.join(&child_relative);
+            self.limits.check_path(&display_path, &child_relative)?;
+            let name = CString::new(name.as_bytes())
+                .map_err(|_| invalid(&display_path, "snapshot source entry contains a NUL byte"))?;
+            // SAFETY: name is a live CString and the returned descriptor is owned below.
+            let descriptor = unsafe {
+                libc::openat(
+                    directory.as_raw_fd(),
+                    name.as_ptr(),
+                    libc::O_RDONLY | libc::O_CLOEXEC | libc::O_NOFOLLOW | libc::O_NONBLOCK,
+                )
+            };
+            if descriptor < 0 {
+                return Err(SnapshotError::new(
+                    SnapshotOperation::Read,
+                    &display_path,
+                    std::io::Error::last_os_error(),
+                ));
+            }
+            // SAFETY: openat returned a new descriptor transferred to File exactly once.
+            let mut child = unsafe { File::from_raw_fd(descriptor) };
+            let metadata = child.metadata().map_err(|error| {
+                SnapshotError::new(SnapshotOperation::Read, &display_path, error)
+            })?;
+            if metadata.is_dir() {
+                self.validate_directory(&display_path, &child_relative, &metadata)?;
+                self.read_directory(&child, &child_relative)?;
+            } else if metadata.is_file() {
+                self.validate_file(&display_path, &child_relative, &mut child, &metadata)?;
+            } else {
+                return Err(capture_changed(display_path));
+            }
+        }
+        Ok(())
+    }
+
+    fn validate_directory(
+        &mut self,
+        path: &Path,
+        relative: &Path,
+        metadata: &fs::Metadata,
+    ) -> Result<(), SnapshotError> {
+        self.directory_manifest_bytes = accumulate_directory_manifest_bytes(
+            path,
+            relative,
+            permission_mode(&metadata.permissions()),
+            self.directory_manifest_bytes,
+            self.limits,
+        )?;
+        let Some(expected) = self.directories.remove(relative) else {
             return Err(capture_changed(path));
         };
-        if permission_mode(&found.metadata.permissions())
+        if permission_mode(&metadata.permissions())
             != permission_mode(&expected.metadata.permissions())
         {
             return Err(capture_changed(path));
         }
+        Ok(())
     }
-    for expected in &scanned.files {
-        let Some(found) = files.remove(expected.relative.as_path()) else {
-            return Err(capture_changed(&expected.path));
+
+    fn validate_file(
+        &mut self,
+        path: &Path,
+        relative: &Path,
+        source: &mut File,
+        metadata: &fs::Metadata,
+    ) -> Result<(), SnapshotError> {
+        use std::io::Read;
+
+        self.file_count = self.file_count.checked_add(1).ok_or_else(|| {
+            SnapshotError::limit(
+                path,
+                SnapshotLimitKind::FileCount,
+                self.limits.file_count as u64,
+                u64::MAX,
+                Some(relative.to_path_buf()),
+            )
+        })?;
+        self.limits.check(
+            path,
+            Some(relative),
+            SnapshotLimitKind::FileCount,
+            self.limits.file_count as u64,
+            self.file_count as u64,
+        )?;
+        self.limits.check(
+            path,
+            Some(relative),
+            SnapshotLimitKind::FileBytes,
+            self.limits.file_bytes,
+            metadata.len(),
+        )?;
+        self.total_bytes = self
+            .total_bytes
+            .checked_add(metadata.len())
+            .ok_or_else(|| {
+                SnapshotError::limit(
+                    path,
+                    SnapshotLimitKind::PayloadBytes,
+                    self.limits.total_bytes,
+                    u64::MAX,
+                    Some(relative.to_path_buf()),
+                )
+            })?;
+        self.limits.check(
+            path,
+            Some(relative),
+            SnapshotLimitKind::PayloadBytes,
+            self.limits.total_bytes,
+            self.total_bytes,
+        )?;
+        let Some(expected) = self.files.remove(relative) else {
+            return Err(capture_changed(path));
         };
-        if found.bytes != expected.bytes
-            || permission_mode(&found.metadata.permissions())
+        if metadata.len() != expected.bytes.len() as u64
+            || permission_mode(&metadata.permissions())
                 != permission_mode(&expected.metadata.permissions())
         {
-            return Err(capture_changed(&expected.path));
+            return Err(capture_changed(path));
         }
+        let mut offset = 0_usize;
+        let mut buffer = [0_u8; 8 * 1024];
+        loop {
+            let read = source
+                .read(&mut buffer)
+                .map_err(|error| SnapshotError::new(SnapshotOperation::Read, path, error))?;
+            if read == 0 {
+                break;
+            }
+            let end = offset
+                .checked_add(read)
+                .ok_or_else(|| capture_changed(path))?;
+            if expected.bytes.get(offset..end) != Some(&buffer[..read]) {
+                return Err(capture_changed(path));
+            }
+            offset = end;
+        }
+        if offset != expected.bytes.len() {
+            return Err(capture_changed(path));
+        }
+        Ok(())
     }
-    if let Some(found) = directories.values().next() {
-        return Err(capture_changed(storage.join(&found.relative)));
-    }
-    if let Some(found) = files.values().next() {
-        return Err(capture_changed(&found.path));
-    }
-    Ok(())
 }
 
 fn capture_changed(path: impl Into<PathBuf>) -> SnapshotError {
