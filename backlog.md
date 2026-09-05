@@ -1633,13 +1633,14 @@
 
 - repository load、task tree traversal、schedule生成、view生成を個別に計測し、stack消費が支配的な再帰箇所を特定する。
 - 現行の走査順序とerror契約をcharacterization testで固定してから、対象ごとに明示的な`Vec` stackを使う反復処理へ段階的に置換する。
-- Web workerの32MiB指定は移行中の防御として維持し、各置換後に制御された小stackで代表fixtureと実データを検証する。
+- Web workerの32MiB指定は移行中の防御として維持し、各置換後に2MiB固定stackでcommit管理済みfixtureを検証する。実データ確認は補助acceptanceとして別に行う。
 
 #### 完了条件
 
-- representative fixtureと実データが制御された小stackの専用threadでstack overflowせず処理できる。
+- `SchedulingFixture::build(FixtureSize::Typical)`の26,378 tasks・最大depth 210と、その4倍のtask規模を持つ`FixtureSize::Stress`が、2MiB固定stackの専用threadでstack overflowせず処理できる。
 - repository load、tree traversal、schedule・view生成の順序、出力、error情報が置換前後で一致する。
 - `schronu-web`固有の32MiB stack指定を削除し、root/Webの全品質gateと実データacceptanceがGreenになる。
+- 実データはfixture契約の代替にせず、Web初回表示と手動更新が成功する補助acceptanceとして確認する。
 
 #### 依存関係
 
