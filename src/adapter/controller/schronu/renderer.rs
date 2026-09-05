@@ -1,5 +1,5 @@
 use crate::{
-    application::session_progress::{calculate_session_progress, SessionProgressCalculationError},
+    application::session_progress::calculate_session_progress,
     entity::task::{ProjectCategory, TaskAttr, TaskTreeError},
 };
 use chrono::{DateTime, Datelike, Duration, Local, NaiveDate, Weekday};
@@ -794,21 +794,21 @@ pub(super) fn format_focus_progress(
     if estimated_work_seconds <= 0 {
         return format!("[{}] --%", "-".repeat(FOCUS_PROGRESS_BAR_SEGMENTS));
     }
+    let (actual_work_seconds, focusing_seconds) = if actual_work_seconds < 0 || focusing_seconds < 0
+    {
+        (
+            actual_work_seconds.saturating_add(focusing_seconds).max(0),
+            0,
+        )
+    } else {
+        (actual_work_seconds, focusing_seconds)
+    };
     let percentage = match calculate_session_progress(
         estimated_work_seconds,
         actual_work_seconds,
         focusing_seconds,
     ) {
         Ok(progress) => progress.progress_percent.map(i128::from),
-        // TaskAttr historically allowed a negative actual value. Preserve the CLI rendering
-        // contract for such persisted data while keeping the application contract strict.
-        Err(SessionProgressCalculationError::NegativeSeconds { .. })
-            if estimated_work_seconds > 0 =>
-        {
-            let total_work_seconds =
-                (i128::from(actual_work_seconds) + i128::from(focusing_seconds)).max(0);
-            Some(total_work_seconds * 100 / i128::from(estimated_work_seconds))
-        }
         Err(error) => {
             return format!(
                 "[{}] --% ({error})",
