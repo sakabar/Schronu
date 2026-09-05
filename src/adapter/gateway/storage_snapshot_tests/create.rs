@@ -1,6 +1,6 @@
 use crate::adapter::gateway::storage_lock::{LockMode, StorageLock};
 use crate::adapter::gateway::storage_snapshot::{
-    create_snapshot_after_parent_open, create_snapshot_at, create_snapshot_before_publish,
+    create_snapshot_after_capture, create_snapshot_after_parent_open, create_snapshot_at, create_snapshot_before_publish,
     create_snapshot_with_failure, create_snapshot_with_failure_observation,
     create_snapshot_with_limits, SnapshotFailurePoint, SnapshotLimitKind,
     SnapshotResourceLimits,
@@ -116,6 +116,27 @@ fn snapshot作成resource_limitは境界を許可し超過をtyped拒否する()
             assert_eq!(error.limit_path(), Some(expected_path.as_path()), "{name}: {error}");
         }
     }
+}
+
+#[test]
+fn snapshot作成はcapture後の非協調file差し替えを公開しない() {
+    let root = TestDirectory::new("create-capture-swap");
+    let storage = root.child("source");
+    let destination = root.child("snapshot");
+    let displaced = root.child("captured-project.yaml");
+    let now = Local.with_ymd_and_hms(2026, 9, 5, 12, 0, 0).unwrap();
+    let (_, project_yaml) = create_saved_repository(&storage, now);
+    let replacement = fs::read_to_string(&project_yaml)
+        .unwrap()
+        .replace("snapshot-project", "replacement-project");
+
+    create_snapshot_after_capture(&storage, &destination, now, || {
+        fs::rename(&project_yaml, &displaced).unwrap();
+        fs::write(&project_yaml, replacement).unwrap();
+    })
+    .unwrap_err();
+
+    assert!(!destination.exists());
 }
 
 #[test]

@@ -1,5 +1,5 @@
 use crate::adapter::gateway::storage_snapshot::{
-    create_snapshot_at, create_snapshot_with_limits, SnapshotLimitKind,
+    create_snapshot_after_capture, create_snapshot_at, create_snapshot_with_limits, SnapshotLimitKind,
     SnapshotResourceLimits,
 };
 use crate::adapter::gateway::storage_transaction::{
@@ -7,6 +7,7 @@ use crate::adapter::gateway::storage_transaction::{
 };
 use chrono::TimeZone;
 use std::sync::Arc;
+use std::cell::RefCell;
 
 #[test]
 fn snapshotはmarkerなしtransactionを破棄して旧snapshotを収録する() {
@@ -35,10 +36,22 @@ fn snapshotはmarkerなしtransactionを破棄して旧snapshotを収録する()
     let active = storage.join(".schronu-transactions/.active");
     assert!(active.is_dir());
 
-    let summary = create_snapshot_at(&storage, &destination, now).unwrap();
+    let captured = RefCell::new(None);
+    let summary = create_snapshot_after_capture(&storage, &destination, now, || {
+        assert!(!active.exists());
+        captured.replace(Some((
+            fs::read(&project_yaml).unwrap(),
+            fs::metadata(&project_yaml).unwrap().len(),
+        )));
+    })
+    .unwrap();
 
     assert!(!active.exists());
     assert_eq!(fs::read(&project_yaml).unwrap(), old_project);
+    assert_eq!(
+        captured.into_inner(),
+        Some((old_project.clone(), old_project.len() as u64))
+    );
     assert_eq!(fs::read(storage.join(".revision")).unwrap(), old_revision);
     assert_eq!(
         fs::read(destination.join("storage").join(project_yaml.strip_prefix(&storage).unwrap()))
@@ -88,11 +101,23 @@ fn snapshotはmarker済みtransactionをroll_forwardして新snapshotを収録�
     let active = storage.join(".schronu-transactions/.active");
     assert!(active.join("commit").is_file());
 
-    let summary = create_snapshot_at(&storage, &destination, now).unwrap();
+    let captured = RefCell::new(None);
+    let summary = create_snapshot_after_capture(&storage, &destination, now, || {
+        assert!(!active.exists());
+        captured.replace(Some((
+            fs::read(&project_yaml).unwrap(),
+            fs::metadata(&project_yaml).unwrap().len(),
+        )));
+    })
+    .unwrap();
 
     assert!(!active.exists());
     assert_eq!(summary.revision(), Some(new_revision));
     assert_eq!(fs::read(&project_yaml).unwrap(), new_project);
+    assert_eq!(
+        captured.into_inner(),
+        Some((new_project.clone(), new_project.len() as u64))
+    );
     assert_eq!(
         fs::read(destination.join("storage").join(project_yaml.strip_prefix(&storage).unwrap()))
             .unwrap(),
