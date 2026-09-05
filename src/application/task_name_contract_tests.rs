@@ -14,9 +14,10 @@ fn fixed_now() -> chrono::DateTime<Local> {
     Local.with_ymd_and_hms(2026, 9, 5, 12, 0, 0).unwrap()
 }
 
-fn factory_with_id(id: Uuid) -> TaskFactory<'static> {
-    let next_id = Box::leak(Box::new(move || id));
-    TaskFactory::new(fixed_now(), next_id)
+fn with_factory_id<T>(id: Uuid, operation: impl FnOnce(&mut TaskFactory<'_>) -> T) -> T {
+    let mut next_id = move || id;
+    let mut factory = TaskFactory::new(fixed_now(), &mut next_id);
+    operation(&mut factory)
 }
 
 #[test]
@@ -48,17 +49,18 @@ fn create_taskは許可名を原文のまま保存する() {
     {
         let mut repository = TestTaskRepository::new(vec![], fixed_now());
         let expected_id = Uuid::from_u128(index as u128 + 1);
-        let mut factory = factory_with_id(expected_id);
 
-        let actual = create_task(
-            &mut repository,
-            CreateTaskInput {
-                name: name.to_string(),
-                estimated_work_minutes: None,
-                pending_until: None,
-            },
-            &mut factory,
-        );
+        let actual = with_factory_id(expected_id, |factory| {
+            create_task(
+                &mut repository,
+                CreateTaskInput {
+                    name: name.to_string(),
+                    estimated_work_minutes: None,
+                    pending_until: None,
+                },
+                factory,
+            )
+        });
 
         assert_eq!(actual, Ok(expected_id));
         assert_eq!(repository.projects()[0].get_name().unwrap(), name);
@@ -155,17 +157,18 @@ fn canonical_validationは全unicode_controlを理由付きで拒否する() {
 #[test]
 fn create_taskはcontrol名を拒否してrepositoryを変更しない() {
     let mut repository = TestTaskRepository::new(vec![], fixed_now());
-    let mut factory = factory_with_id(Uuid::from_u128(200));
 
-    let actual = create_task(
-        &mut repository,
-        CreateTaskInput {
-            name: "task\nname".to_string(),
-            estimated_work_minutes: None,
-            pending_until: None,
-        },
-        &mut factory,
-    );
+    let actual = with_factory_id(Uuid::from_u128(200), |factory| {
+        create_task(
+            &mut repository,
+            CreateTaskInput {
+                name: "task\nname".to_string(),
+                estimated_work_minutes: None,
+                pending_until: None,
+            },
+            factory,
+        )
+    });
 
     assert_eq!(
         actual,
