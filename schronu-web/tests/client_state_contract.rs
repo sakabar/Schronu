@@ -1,5 +1,6 @@
 use schronu_web::client::state::{
-    ActiveTab, ClientEffect, ClientState, DisplayError, Locality, Operation, Outcome, ServerFailure,
+    load_client_state, ActiveTab, ClientEffect, ClientState, DisplayError, Locality, Operation,
+    Outcome, ServerFailure,
 };
 use schronu_web::client::work_sessions::{
     load_work_sessions, KeyValueStorage, StorageError, WorkSession, WORK_SESSIONS_STORAGE_KEY,
@@ -281,6 +282,38 @@ fn repository_state_uncertain後はpage全体のmutationを停止する() {
         state.begin_complete_session(OTHER_TASK_ID),
         ClientEffect::None
     );
+}
+
+#[test]
+fn repository_state_uncertainのblockは別keyへ保存しreload後も復元する() {
+    let storage = FakeStorage::default();
+    let mut state = state_with_sessions(&storage, &[TASK_ID, OTHER_TASK_ID]);
+    let (request_id, _) = record_effect(state.begin_record_session(TASK_ID));
+    state.apply_record_result(
+        &storage,
+        request_id,
+        Err(ServerFailure::Operation(web_error(
+            web_error_codes::REPOSITORY_STATE_UNCERTAIN,
+            RetryAdvice::ManualCheck,
+        ))),
+    );
+
+    let mut restored = load_client_state(&storage, 0).unwrap();
+    assert_eq!(restored.begin_record_session(OTHER_TASK_ID), ClientEffect::None);
+
+    let storage = FakeStorage::default();
+    let mut state = state_with_sessions(&storage, &[TASK_ID, OTHER_TASK_ID]);
+    let (request_id, _) = record_effect(state.begin_record_session(TASK_ID));
+    storage.fail_writes.set(true);
+    state.apply_record_result(
+        &storage,
+        request_id,
+        Err(ServerFailure::Operation(web_error(
+            web_error_codes::REPOSITORY_STATE_UNCERTAIN,
+            RetryAdvice::ManualCheck,
+        ))),
+    );
+    assert_eq!(state.begin_record_session(OTHER_TASK_ID), ClientEffect::None);
 }
 
 #[test]
