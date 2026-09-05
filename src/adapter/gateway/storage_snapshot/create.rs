@@ -192,11 +192,11 @@ where
     recover_storage(storage_directory)?;
     let scanned = scan_storage_entries(storage_directory, limits, io)?;
     (hooks.after_capture)();
-    validate_capture_unchanged(storage_directory, &scanned)?;
+    (hooks.before_strict_load)();
+    strict_load_captured(&scanned, storage_directory)?;
+    validate_capture_unchanged(storage_directory, &scanned, limits)?;
     let collected = collect_storage(scanned);
     let revision = read_revision(&collected.files)?;
-    (hooks.before_strict_load)();
-    strict_load_captured(&collected, storage_directory)?;
     let staging = staging_path(destination)?;
     let staging_name = staging
         .file_name()
@@ -264,22 +264,22 @@ impl<AfterParent, AfterCapture, BeforeStrict, BeforePublish>
 }
 
 fn strict_load_captured(
-    collected: &CollectedStorage,
+    scanned: &ScannedStorage,
     source_storage: &Path,
 ) -> Result<(), SnapshotError> {
-    let revision_file = collected
+    let revision_file = scanned
         .files
         .iter()
-        .find(|file| file.path == Path::new(".revision"));
-    let revision_path = revision_file.map(|file| source_storage.join(&file.path));
+        .find(|file| file.relative == Path::new(".revision"));
+    let revision_path = revision_file.map(|file| source_storage.join(&file.relative));
     let revision = revision_file
         .zip(revision_path.as_deref())
         .map(|(file, path)| (path, file.bytes.as_slice()));
-    let project_files = collected
+    let project_files = scanned
         .files
         .iter()
-        .filter(|file| file.path.file_name() == Some(OsStr::new("project.yaml")))
-        .map(|file| (source_storage.join(&file.path), file.bytes.as_slice()))
+        .filter(|file| file.relative.file_name() == Some(OsStr::new("project.yaml")))
+        .map(|file| (source_storage.join(&file.relative), file.bytes.as_slice()))
         .collect::<Vec<_>>();
     let mut repository = TaskRepository::new("");
     repository

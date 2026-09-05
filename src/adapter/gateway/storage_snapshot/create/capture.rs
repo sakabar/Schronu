@@ -4,15 +4,13 @@ use crate::adapter::gateway::storage_snapshot::error::SnapshotLimitKind;
 use crate::adapter::gateway::storage_snapshot::error::{SnapshotError, SnapshotOperation};
 #[cfg(any(target_os = "macos", target_os = "linux"))]
 use crate::adapter::gateway::storage_snapshot::io::SnapshotFailurePoint;
-use crate::adapter::gateway::storage_snapshot::io::SnapshotIo;
+use crate::adapter::gateway::storage_snapshot::io::{FileSystemSnapshotIo, SnapshotIo};
 use crate::adapter::gateway::storage_snapshot::layout::is_reserved_path;
 #[cfg(any(target_os = "macos", target_os = "linux"))]
 use crate::adapter::gateway::storage_snapshot::manifest::accumulate_directory_manifest_bytes;
 use crate::adapter::gateway::storage_snapshot::{permission_mode, SnapshotResourceLimits};
-use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
-use walkdir::{DirEntry, WalkDir};
 
 #[cfg(any(target_os = "macos", target_os = "linux"))]
 use std::ffi::CString;
@@ -273,110 +271,49 @@ impl CaptureBuilder<'_> {
     }
 }
 
-fn open_source_file(path: &Path) -> Result<fs::File, SnapshotError> {
-    let mut options = fs::OpenOptions::new();
-    options.read(true);
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::OpenOptionsExt;
-        options.custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK);
-    }
-    options
-        .open(path)
-        .map_err(|error| SnapshotError::new(SnapshotOperation::Read, path, error))
-}
-
 pub(super) fn validate_capture_unchanged(
     storage: &Path,
     scanned: &ScannedStorage,
+    limits: SnapshotResourceLimits,
 ) -> Result<(), SnapshotError> {
-    use std::io::Read;
-
-    let mut directories = scanned
+    let current = scan_storage_entries(storage, limits, &FileSystemSnapshotIo)?;
+    let mut directories = current
         .directories
         .iter()
         .map(|entry| (entry.relative.as_path(), entry))
-        .collect::<HashMap<_, _>>();
-    let mut files = scanned
+        .collect::<std::collections::HashMap<_, _>>();
+    let mut files = current
         .files
         .iter()
         .map(|entry| (entry.relative.as_path(), entry))
-        .collect::<HashMap<_, _>>();
-    let walker = WalkDir::new(storage)
-        .follow_links(false)
-        .sort_by_file_name()
-        .into_iter()
-        .filter_entry(|entry| should_descend(storage, entry));
-    for entry in walker {
-        let entry = entry.map_err(|error| {
-            let path = error.path().unwrap_or(storage).to_path_buf();
-            SnapshotError::new(SnapshotOperation::Read, path, std::io::Error::other(error))
-        })?;
-        if entry.depth() == 0 {
-            continue;
+        .collect::<std::collections::HashMap<_, _>>();
+    for expected in &scanned.directories {
+        let path = storage.join(&expected.relative);
+        let Some(found) = directories.remove(expected.relative.as_path()) else {
+            return Err(capture_changed(path));
+        };
+        if permission_mode(&found.metadata.permissions())
+            != permission_mode(&expected.metadata.permissions())
+        {
+            return Err(capture_changed(path));
         }
-        let relative = entry
-            .path()
-            .strip_prefix(storage)
-            .expect("WalkDir entries remain below the storage root");
-        if is_reserved_path(relative) {
-            continue;
-        }
-        let metadata = fs::symlink_metadata(entry.path())
-            .map_err(|error| SnapshotError::new(SnapshotOperation::Read, entry.path(), error))?;
-        if metadata.is_dir() {
-            let expected = directories
-                .remove(relative)
-                .ok_or_else(|| capture_changed(entry.path()))?;
-            if permission_mode(&metadata.permissions())
+    }
+    for expected in &scanned.files {
+        let Some(found) = files.remove(expected.relative.as_path()) else {
+            return Err(capture_changed(&expected.path));
+        };
+        if found.bytes != expected.bytes
+            || permission_mode(&found.metadata.permissions())
                 != permission_mode(&expected.metadata.permissions())
-            {
-                return Err(capture_changed(entry.path()));
-            }
-        } else if metadata.is_file() {
-            let expected = files
-                .remove(relative)
-                .ok_or_else(|| capture_changed(entry.path()))?;
-            let mut source = open_source_file(entry.path())?;
-            let opened = source.metadata().map_err(|error| {
-                SnapshotError::new(SnapshotOperation::Read, entry.path(), error)
-            })?;
-            if !opened.is_file()
-                || opened.len() != expected.bytes.len() as u64
-                || permission_mode(&opened.permissions())
-                    != permission_mode(&expected.metadata.permissions())
-            {
-                return Err(capture_changed(entry.path()));
-            }
-            let mut offset = 0_usize;
-            let mut buffer = [0_u8; 8 * 1024];
-            loop {
-                let read = source.read(&mut buffer).map_err(|error| {
-                    SnapshotError::new(SnapshotOperation::Read, entry.path(), error)
-                })?;
-                if read == 0 {
-                    break;
-                }
-                let end = offset
-                    .checked_add(read)
-                    .ok_or_else(|| capture_changed(entry.path()))?;
-                if expected.bytes.get(offset..end) != Some(&buffer[..read]) {
-                    return Err(capture_changed(entry.path()));
-                }
-                offset = end;
-            }
-            if offset != expected.bytes.len() {
-                return Err(capture_changed(entry.path()));
-            }
-        } else {
-            return Err(capture_changed(entry.path()));
+        {
+            return Err(capture_changed(&expected.path));
         }
     }
-    if let Some(entry) = directories.values().next() {
-        return Err(capture_changed(storage.join(&entry.relative)));
+    if let Some(found) = directories.values().next() {
+        return Err(capture_changed(storage.join(&found.relative)));
     }
-    if let Some(entry) = files.values().next() {
-        return Err(capture_changed(&entry.path));
+    if let Some(found) = files.values().next() {
+        return Err(capture_changed(&found.path));
     }
     Ok(())
 }
@@ -388,11 +325,27 @@ fn capture_changed(path: impl Into<PathBuf>) -> SnapshotError {
     )
 }
 
-fn should_descend(storage: &Path, entry: &DirEntry) -> bool {
-    entry.depth() == 0
-        || entry
-            .path()
-            .strip_prefix(storage)
-            .map(|path| !is_reserved_path(path))
-            .unwrap_or(false)
+#[cfg(all(test, any(target_os = "macos", target_os = "linux")))]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn capture不変性再検査も同じfile件数上限で停止する() {
+        let storage = std::env::temp_dir().join(format!(
+            "schronu-capture-validation-limit-{}",
+            uuid::Uuid::new_v4().hyphenated()
+        ));
+        fs::create_dir(&storage).unwrap();
+        fs::write(storage.join("first"), b"first").unwrap();
+        let limits = SnapshotResourceLimits::new(u64::MAX, 1, u64::MAX, u64::MAX, usize::MAX, 64);
+        let scanned = scan_storage_entries(&storage, limits, &FileSystemSnapshotIo).unwrap();
+        fs::write(storage.join("second"), b"second").unwrap();
+
+        let error = validate_capture_unchanged(&storage, &scanned, limits).unwrap_err();
+
+        assert_eq!(error.limit_kind(), Some(SnapshotLimitKind::FileCount));
+        assert_eq!(error.limit_value(), Some(1));
+        assert_eq!(error.observed_value(), Some(2));
+        fs::remove_dir_all(storage).unwrap();
+    }
 }
