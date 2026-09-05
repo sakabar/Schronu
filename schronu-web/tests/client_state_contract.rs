@@ -533,6 +533,27 @@ fn 完了成功は記録方針にかかわらず対象taskの全segmentだけを
 }
 
 #[test]
+fn 日付境界の完了成功は新snapshotと日付buttonを適用し表示中の一覧を維持する() {
+    let storage = FakeStorage::default();
+    let mut state = state_with_sessions(&storage, &[TASK_ID]);
+    let other_row = row(OTHER_TASK_ID, 10);
+    apply_list_rows(
+        &mut state,
+        "2026-09-05",
+        1,
+        vec![row(TASK_ID, 0), other_row.clone()],
+    );
+    let (request_id, _) = complete_effect(state.begin_complete_session(&storage, TASK_ID));
+
+    state.apply_complete_result(&storage, request_id, Ok(snapshot("2026-09-06", 2)));
+
+    assert_eq!(state.snapshot().unwrap().logical_date, "2026-09-06");
+    assert_eq!(state.date_buttons()[0].logical_date, "2026-09-06");
+    assert_eq!(state.selected_logical_date(), Some("2026-09-05"));
+    assert_eq!(state.scheduled_rows(), &[other_row]);
+}
+
+#[test]
 fn 完了失敗は記録方針にかかわらず一覧を保持する() {
     for record_elapsed_seconds in [true, false] {
         let storage = FakeStorage::default();
