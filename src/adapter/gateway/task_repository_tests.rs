@@ -1,21 +1,9 @@
 use super::*;
+use crate::adapter::gateway::storage_transaction_test_support::*;
 use crate::adapter::gateway::yaml::YamlConversionError;
 use crate::application::interface::ProjectRegistrationError;
 use chrono::{Duration, TimeZone};
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
-
-struct FailingStorageTransactionIo;
-
-impl StorageTransactionIo for FailingStorageTransactionIo {
-    fn create_dir_all(&self, path: &Path) -> std::io::Result<()> {
-        if path.ends_with(crate::adapter::gateway::storage_transaction::TRANSACTION_DIRECTORY_NAME)
-        {
-            return Err(std::io::Error::other("injected prepare failure"));
-        }
-        fs::create_dir_all(path)
-    }
-}
 
 struct TestStorageDir {
     path: PathBuf,
@@ -46,6 +34,18 @@ impl Drop for TestStorageDir {
             fs::remove_file(&self.path).expect("failed to remove test storage file");
         }
     }
+}
+
+fn prepare_failure_io() -> Arc<dyn StorageTransactionIo> {
+    Arc::new(RecordingIo::new(vec![FaultRule {
+        operation: RecordingOperation::CreateDirectory,
+        path_matcher: PathMatcher::FileName(
+            crate::adapter::gateway::storage_transaction::TRANSACTION_DIRECTORY_NAME,
+        ),
+        occurrence: 1,
+        error_kind: std::io::ErrorKind::Other,
+        error_message: "injected prepare failure",
+    }]))
 }
 
 fn write_project_yaml(
@@ -1168,7 +1168,7 @@ fn test_save_失敗後もdirtyを維持して再試行する() {
     repository.start_new_project(task.clone()).unwrap();
     repository.save().unwrap();
     task.set_estimated_work_seconds(30 * 60).unwrap();
-    repository.storage_transaction_io = Arc::new(FailingStorageTransactionIo);
+    repository.storage_transaction_io = prepare_failure_io();
 
     assert!(repository.save().is_err());
     repository.storage_transaction_io = Arc::new(FileSystemStorageTransactionIo);

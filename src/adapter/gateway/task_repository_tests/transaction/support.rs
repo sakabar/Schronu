@@ -1,13 +1,5 @@
-struct FailFirstCommittedProjectWriteIo {
-    failed: AtomicBool,
-}
-
-struct FailUncommittedDiscardIo;
-
-struct FailCleanupDeleteIo;
-
 #[derive(Clone, Copy, Debug)]
-enum CommittedCrashPhase {
+enum CommittedInterruption {
     BeforeFirstProjectRename,
     AfterFirstProjectRename,
     BeforeFinalProjectRename,
@@ -15,122 +7,54 @@ enum CommittedCrashPhase {
     AfterRevisionBeforeCleanup,
 }
 
-struct CommittedCrashIo {
-    phase: CommittedCrashPhase,
-    project_temporary_creates: AtomicUsize,
-    project_renames: AtomicUsize,
-}
-
-impl CommittedCrashIo {
-    fn new(phase: CommittedCrashPhase) -> Self {
-        Self {
-            phase,
-            project_temporary_creates: AtomicUsize::new(0),
-            project_renames: AtomicUsize::new(0),
-        }
-    }
-
-    fn is_project_temporary(path: &Path) -> bool {
-        path.file_name()
-            .is_some_and(|name| name.to_string_lossy().starts_with(".project.yaml."))
-    }
-
-    fn is_revision_temporary(path: &Path) -> bool {
-        path.file_name()
-            .is_some_and(|name| name.to_string_lossy().starts_with("..revision."))
-    }
-}
-
-impl StorageTransactionIo for CommittedCrashIo {
-    fn create_new_file(&self, path: &Path) -> std::io::Result<()> {
-        if Self::is_project_temporary(path) {
-            let create_index = self
-                .project_temporary_creates
-                .fetch_add(1, Ordering::SeqCst);
-            if matches!(self.phase, CommittedCrashPhase::AfterFirstProjectRename)
-                && create_index == 1
-            {
-                return Err(std::io::Error::other(
-                    "injected crash after first project rename",
-                ));
-            }
-        }
-        if matches!(self.phase, CommittedCrashPhase::BeforeRevision)
-            && Self::is_revision_temporary(path)
-        {
-            return Err(std::io::Error::other("injected crash before revision"));
-        }
-        FileSystemStorageTransactionIo.create_new_file(path)
-    }
-
-    fn rename(&self, from: &Path, to: &Path) -> std::io::Result<()> {
-        if to.file_name().is_some_and(|name| name == "project.yaml") {
-            let rename_index = self.project_renames.fetch_add(1, Ordering::SeqCst);
-            if matches!(self.phase, CommittedCrashPhase::BeforeFirstProjectRename)
-                && rename_index == 0
-            {
-                return Err(std::io::Error::other(
-                    "injected crash before first project rename",
-                ));
-            }
-            if matches!(self.phase, CommittedCrashPhase::BeforeFinalProjectRename)
-                && rename_index == 1
-            {
-                return Err(std::io::Error::other(
-                    "injected crash before final project rename",
-                ));
-            }
-        }
-        if matches!(self.phase, CommittedCrashPhase::AfterRevisionBeforeCleanup)
-            && from.file_name().is_some_and(|name| name == ".active")
-            && to
-                .file_name()
-                .is_some_and(|name| name.to_string_lossy().starts_with(".cleanup-"))
-        {
-            return Err(std::io::Error::other(
+impl CommittedInterruption {
+    fn fault_rule(self) -> FaultRule {
+        let (operation, path_matcher, occurrence, error_message) = match self {
+            Self::BeforeFirstProjectRename => (
+                RecordingOperation::Rename,
+                PathMatcher::FileName("project.yaml"),
+                1,
+                "injected crash before first project rename",
+            ),
+            Self::AfterFirstProjectRename => (
+                RecordingOperation::CreateFile,
+                PathMatcher::FileNamePrefix(".project.yaml."),
+                2,
+                "injected crash after first project rename",
+            ),
+            Self::BeforeFinalProjectRename => (
+                RecordingOperation::Rename,
+                PathMatcher::FileName("project.yaml"),
+                2,
+                "injected crash before final project rename",
+            ),
+            Self::BeforeRevision => (
+                RecordingOperation::CreateFile,
+                PathMatcher::FileNamePrefix("..revision."),
+                1,
+                "injected crash before revision",
+            ),
+            Self::AfterRevisionBeforeCleanup => (
+                RecordingOperation::Rename,
+                PathMatcher::FileNamePrefix(".cleanup-"),
+                1,
                 "injected crash after revision before cleanup",
-            ));
+            ),
+        };
+        FaultRule {
+            operation,
+            path_matcher,
+            occurrence,
+            error_kind: std::io::ErrorKind::Other,
+            error_message,
         }
-        FileSystemStorageTransactionIo.rename(from, to)
     }
 }
 
-impl StorageTransactionIo for FailFirstCommittedProjectWriteIo {
-    fn write_file(&self, path: &Path, bytes: &[u8]) -> std::io::Result<()> {
-        if path
-            .file_name()
-            .is_some_and(|name| name.to_string_lossy().starts_with(".project.yaml."))
-            && !self.failed.swap(true, Ordering::SeqCst)
-        {
-            return Err(std::io::Error::other(
-                "injected committed project write failure",
-            ));
-        }
-        FileSystemStorageTransactionIo.write_file(path, bytes)
-    }
-}
-
-impl StorageTransactionIo for FailUncommittedDiscardIo {
-    fn remove_dir_all(&self, path: &Path) -> std::io::Result<()> {
-        if path.file_name().is_some_and(|name| name == ".active") {
-            return Err(std::io::Error::other(
-                "injected uncommitted discard failure",
-            ));
-        }
-        FileSystemStorageTransactionIo.remove_dir_all(path)
-    }
-}
-
-impl StorageTransactionIo for FailCleanupDeleteIo {
-    fn remove_dir_all(&self, path: &Path) -> std::io::Result<()> {
-        if path
-            .file_name()
-            .is_some_and(|name| name.to_string_lossy().starts_with(".cleanup-"))
-        {
-            return Err(std::io::Error::other("injected transient cleanup failure"));
-        }
-        FileSystemStorageTransactionIo.remove_dir_all(path)
-    }
+fn committed_interruption_io(
+    interruption: CommittedInterruption,
+) -> Arc<dyn StorageTransactionIo> {
+    Arc::new(RecordingIo::new(vec![interruption.fault_rule()]))
 }
 
 fn create_markerless_active_transaction(storage_dir: &TestStorageDir, phase: &str) -> PathBuf {
@@ -159,7 +83,7 @@ fn create_markerless_active_transaction(storage_dir: &TestStorageDir, phase: &st
 fn create_committed_transaction_interruption(
     storage_dir: &TestStorageDir,
     now: DateTime<Local>,
-    phase: CommittedCrashPhase,
+    interruption: CommittedInterruption,
 ) -> (Uuid, Uuid, Uuid, PathBuf) {
     let mut repository = TaskRepository::new(storage_dir.path_str());
     repository.sync_clock(now).unwrap();
@@ -172,7 +96,7 @@ fn create_committed_transaction_interruption(
     repository.save().unwrap();
     first.set_estimated_work_seconds(30 * 60).unwrap();
     second.set_estimated_work_seconds(45 * 60).unwrap();
-    repository.storage_transaction_io = Arc::new(CommittedCrashIo::new(phase));
+    repository.storage_transaction_io = committed_interruption_io(interruption);
 
     let error = repository.save().unwrap_err();
     assert_eq!(error.operation(), ApplicationRepositoryOperation::Save);

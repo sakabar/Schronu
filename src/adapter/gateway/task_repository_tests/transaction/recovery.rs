@@ -70,17 +70,17 @@ fn test_reload_if_changed_markerなしtransactionをcache判定前に破棄す�
 #[test]
 fn test_load_marker済みtransactionを各中断点からnew_snapshotへroll_forwardする() {
     for phase in [
-        CommittedCrashPhase::BeforeFirstProjectRename,
-        CommittedCrashPhase::AfterFirstProjectRename,
-        CommittedCrashPhase::BeforeFinalProjectRename,
-        CommittedCrashPhase::BeforeRevision,
-        CommittedCrashPhase::AfterRevisionBeforeCleanup,
+        CommittedInterruption::BeforeFirstProjectRename,
+        CommittedInterruption::AfterFirstProjectRename,
+        CommittedInterruption::BeforeFinalProjectRename,
+        CommittedInterruption::BeforeRevision,
+        CommittedInterruption::AfterRevisionBeforeCleanup,
     ] {
         let storage_dir = TestStorageDir::new();
         let now = Local.with_ymd_and_hms(2026, 9, 5, 13, 0, 0).unwrap();
         let (first_id, second_id, committed_revision, active_transaction_path) =
             create_committed_transaction_interruption(&storage_dir, now, phase);
-        if matches!(phase, CommittedCrashPhase::BeforeFirstProjectRename) {
+        if matches!(phase, CommittedInterruption::BeforeFirstProjectRename) {
             fs::write(
                 storage_dir.path.join(".revision"),
                 format!("{}\n", Uuid::from_u128(0x22ff)),
@@ -128,9 +128,8 @@ fn test_reload_if_changed_marker済みtransactionをcache判定前にroll_forwar
         .unwrap()
         .set_estimated_work_seconds(45 * 60)
         .unwrap();
-    cached.storage_transaction_io = Arc::new(CommittedCrashIo::new(
-        CommittedCrashPhase::AfterFirstProjectRename,
-    ));
+    cached.storage_transaction_io =
+        committed_interruption_io(CommittedInterruption::AfterFirstProjectRename);
     cached.save().unwrap_err();
     cached.storage_transaction_io = Arc::new(FileSystemStorageTransactionIo);
 
@@ -148,13 +147,12 @@ fn test_load_roll_forward中断後も再実行して同じnew_snapshotへ到達�
         create_committed_transaction_interruption(
             &storage_dir,
             now,
-            CommittedCrashPhase::BeforeFirstProjectRename,
+            CommittedInterruption::BeforeFirstProjectRename,
         );
     let mut repository = TaskRepository::new(storage_dir.path_str());
     repository.sync_clock(now).unwrap();
-    repository.storage_transaction_io = Arc::new(CommittedCrashIo::new(
-        CommittedCrashPhase::AfterFirstProjectRename,
-    ));
+    repository.storage_transaction_io =
+        committed_interruption_io(CommittedInterruption::AfterFirstProjectRename);
 
     let interrupted = repository.load().unwrap_err();
 
@@ -178,7 +176,7 @@ fn test_load_marker済みtransactionの不正manifestはpathとphaseを保持す
     let (_, _, _, active_transaction_path) = create_committed_transaction_interruption(
         &storage_dir,
         now,
-        CommittedCrashPhase::BeforeRevision,
+        CommittedInterruption::BeforeRevision,
     );
     let manifest_path = active_transaction_path.join("manifest.json");
     fs::write(&manifest_path, b"not-json").unwrap();
@@ -210,7 +208,7 @@ fn test_load_marker済みtransactionのmanifest意味違反はlive_snapshotを�
             create_committed_transaction_interruption(
                 &storage_dir,
                 now,
-                CommittedCrashPhase::BeforeFirstProjectRename,
+                CommittedInterruption::BeforeFirstProjectRename,
             );
         let first_project_path = storage_dir
             .project_dir_path("20260905", "roll-forward-first", first_id)
@@ -292,7 +290,7 @@ fn test_load_marker済みtransactionの未適用staged_file欠落はpathとphase
         create_committed_transaction_interruption(
             &storage_dir,
             now,
-            CommittedCrashPhase::BeforeFirstProjectRename,
+            CommittedInterruption::BeforeFirstProjectRename,
         );
     let first_project_path = storage_dir
         .project_dir_path("20260905", "roll-forward-first", first_id)
@@ -331,7 +329,7 @@ fn test_load_marker済みtransactionの同一長staged破損を適用状態に�
         let (_, _, _, active_transaction_path) = create_committed_transaction_interruption(
             &storage_dir,
             now,
-            CommittedCrashPhase::BeforeFirstProjectRename,
+            CommittedInterruption::BeforeFirstProjectRename,
         );
         let manifest: serde_json::Value = serde_json::from_slice(
             &fs::read(active_transaction_path.join("manifest.json")).unwrap(),
@@ -395,7 +393,7 @@ fn test_reload_if_changed_marker済みtransactionの適用済みtargetを検証�
         create_committed_transaction_interruption(
             &storage_dir,
             now,
-            CommittedCrashPhase::BeforeFirstProjectRename,
+            CommittedInterruption::BeforeFirstProjectRename,
         );
     let manifest: serde_json::Value =
         serde_json::from_slice(&fs::read(active_transaction_path.join("manifest.json")).unwrap())
@@ -440,7 +438,7 @@ fn test_load_marker済みtransactionの適用済みtargetでもstaged_symlinkを
         create_committed_transaction_interruption(
             &storage_dir,
             now,
-            CommittedCrashPhase::BeforeFirstProjectRename,
+            CommittedInterruption::BeforeFirstProjectRename,
         );
     let manifest: serde_json::Value =
         serde_json::from_slice(&fs::read(active_transaction_path.join("manifest.json")).unwrap())
@@ -500,7 +498,7 @@ fn test_load_marker済みtransactionのcontrol_file_symlinkを拒否して外部
             create_committed_transaction_interruption(
                 &storage_dir,
                 now,
-                CommittedCrashPhase::BeforeFirstProjectRename,
+                CommittedInterruption::BeforeFirstProjectRename,
             );
         let first_project_path = storage_dir
             .project_dir_path("20260905", "roll-forward-first", first_id)
@@ -572,7 +570,13 @@ fn test_load_前回失敗したcleanup_tombstoneだけを再清掃してsnapshot
     let task = crate::test_support::new_task_handle("cleanup-retry").unwrap();
     let task_id = task.get_id().unwrap();
     source.start_new_project(task).unwrap();
-    source.storage_transaction_io = Arc::new(FailCleanupDeleteIo);
+    source.storage_transaction_io = Arc::new(RecordingIo::new(vec![FaultRule {
+        operation: RecordingOperation::RemoveDirectory,
+        path_matcher: PathMatcher::FileNamePrefix(".cleanup-"),
+        occurrence: 1,
+        error_kind: std::io::ErrorKind::Other,
+        error_message: "injected transient cleanup failure",
+    }]));
 
     source.save().unwrap();
 
@@ -628,7 +632,13 @@ fn test_load_markerなしtransaction破棄失敗はpathとphaseを保持してme
     let memory_task = crate::test_support::new_task_handle("memory").unwrap();
     let memory_task_id = memory_task.get_id().unwrap();
     repository.start_new_project(memory_task).unwrap();
-    repository.storage_transaction_io = Arc::new(FailUncommittedDiscardIo);
+    repository.storage_transaction_io = Arc::new(RecordingIo::new(vec![FaultRule {
+        operation: RecordingOperation::RemoveDirectory,
+        path_matcher: PathMatcher::FileName(".active"),
+        occurrence: 1,
+        error_kind: std::io::ErrorKind::Other,
+        error_message: "injected uncommitted discard failure",
+    }]));
 
     let actual = repository.load().unwrap_err();
 

@@ -21,7 +21,7 @@ fn test_save_prepare失敗時は複数projectとrevisionを旧snapshotに維持�
         .join("project.yaml");
     let first_old_bytes = fs::read(&first_project_yaml_path).unwrap();
     let second_old_bytes = fs::read(&second_project_yaml_path).unwrap();
-    repository.storage_transaction_io = Arc::new(FailingStorageTransactionIo);
+    repository.storage_transaction_io = prepare_failure_io();
     first_task.set_estimated_work_seconds(30 * 60).unwrap();
     second_task.set_estimated_work_seconds(45 * 60).unwrap();
 
@@ -48,7 +48,7 @@ fn test_save_prepare失敗時は新規projectのlive_directoryを作成しない
     let task = crate::test_support::new_task_handle("新規対象").unwrap();
     let task_id = task.get_id().unwrap();
     repository.start_new_project(task).unwrap();
-    repository.storage_transaction_io = Arc::new(FailingStorageTransactionIo);
+    repository.storage_transaction_io = prepare_failure_io();
     let project_dir_path = storage_dir.project_dir_path("20260813", "新規対象", task_id);
 
     let actual = repository.save();
@@ -74,9 +74,13 @@ fn test_save_post_marker失敗後はactive_transactionを保持して次saveを�
         .join("project.yaml");
     let old_project_bytes = fs::read(&project_yaml_path).unwrap();
     let old_revision_bytes = fs::read(&revision_path).unwrap();
-    repository.storage_transaction_io = Arc::new(FailFirstCommittedProjectWriteIo {
-        failed: AtomicBool::new(false),
-    });
+    repository.storage_transaction_io = Arc::new(RecordingIo::new(vec![FaultRule {
+        operation: RecordingOperation::WriteFile,
+        path_matcher: PathMatcher::FileNamePrefix(".project.yaml."),
+        occurrence: 1,
+        error_kind: std::io::ErrorKind::Other,
+        error_message: "injected committed project write failure",
+    }]));
     task.set_estimated_work_seconds(30 * 60).unwrap();
 
     let first = repository.save();

@@ -1,7 +1,8 @@
 use super::*;
+use crate::adapter::gateway::storage_transaction_test_support::*;
 use serde_json::Value;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Barrier, Mutex};
+use std::sync::Barrier;
 
 include!("storage_transaction_tests/support.rs");
 
