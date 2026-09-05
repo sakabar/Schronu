@@ -407,7 +407,8 @@ impl StableDirectory {
             .and_then(|entries| entries.checked_add(2))
             .unwrap_or(u64::MAX);
         self.remove_contents_with_limits(CleanupLimits {
-            max_depth: DEFAULT_RESOURCE_LIMITS.depth,
+            // Snapshot publication wraps payload paths in the storage directory.
+            max_depth: DEFAULT_RESOURCE_LIMITS.depth.saturating_add(1),
             max_entries,
         })
     }
@@ -731,6 +732,21 @@ mod cleanup_limit_tests {
         assert_eq!(error.kind(), std::io::ErrorKind::InvalidData);
         assert!(error.to_string().contains("cleanup depth limit"));
         fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn rollback_cleanupはsnapshot_wrapper込みの最大depthを処理する() {
+        let (root, directory) = stable_directory("default-depth");
+        let mut deepest = root.join("storage");
+        for _ in 0..DEFAULT_RESOURCE_LIMITS.depth {
+            deepest.push("d");
+        }
+        fs::create_dir_all(deepest).unwrap();
+
+        directory.remove_contents().unwrap();
+
+        assert_eq!(fs::read_dir(&root).unwrap().count(), 0);
+        fs::remove_dir(root).unwrap();
     }
 }
 
