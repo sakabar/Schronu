@@ -92,6 +92,49 @@ fn format_deadline_remaining_time(
     }
 }
 
+#[cfg(test)]
+mod deadline_remaining_time_tests {
+    use super::format_deadline_remaining_time;
+    use chrono::{Local, TimeZone};
+
+    #[test]
+    fn 現行の締切なしと同一logical_dateとasapの表示を維持する() {
+        let last_synced_time = Local.with_ymd_and_hms(2026, 9, 6, 10, 0, 0).unwrap();
+        let end_datetime = Local.with_ymd_and_hms(2026, 9, 6, 18, 0, 0).unwrap();
+        let next_logical_date_start = Local.with_ymd_and_hms(2026, 9, 7, 6, 0, 0).unwrap();
+
+        for (deadline_time_opt, expected) in [
+            (None, "____/__/__"),
+            (
+                Some(Local.with_ymd_and_hms(2026, 9, 6, 9, 0, 0).unwrap()),
+                "+09:00ASAP",
+            ),
+            (
+                Some(Local.with_ymd_and_hms(2026, 9, 6, 12, 0, 0).unwrap()),
+                "+06:00____",
+            ),
+            (
+                Some(Local.with_ymd_and_hms(2026, 9, 6, 18, 0, 0).unwrap()),
+                "____-00:00",
+            ),
+            (
+                Some(Local.with_ymd_and_hms(2026, 9, 6, 20, 0, 59).unwrap()),
+                "____-02:00",
+            ),
+        ] {
+            assert_eq!(
+                format_deadline_remaining_time(
+                    deadline_time_opt.as_ref(),
+                    end_datetime,
+                    last_synced_time,
+                    next_logical_date_start,
+                ),
+                expected
+            );
+        }
+    }
+}
+
 pub(super) fn get_adjustable_prefix_label(
     task: &TaskHandle,
     dt: DateTime<Local>,
