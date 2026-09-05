@@ -2,7 +2,7 @@ use std::fmt::{Display, Formatter};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct SessionProgress {
-    pub total_work_seconds: i64,
+    pub total_work_seconds: i128,
     pub progress_percent: Option<i64>,
     pub remaining_work_seconds_at_start: i64,
     pub remaining_work_seconds: i64,
@@ -14,12 +14,8 @@ pub enum SessionProgressCalculationError {
         field: &'static str,
         value: i64,
     },
-    TotalWorkSecondsOverflow {
-        actual_work_seconds_at_start: i64,
-        elapsed_seconds: i64,
-    },
     ProgressPercentOverflow {
-        total_work_seconds: i64,
+        total_work_seconds: i128,
         estimated_work_seconds: i64,
     },
 }
@@ -30,13 +26,6 @@ impl Display for SessionProgressCalculationError {
             Self::NegativeSeconds { field, value } => {
                 write!(formatter, "{field} must be non-negative: {value}")
             }
-            Self::TotalWorkSecondsOverflow {
-                actual_work_seconds_at_start,
-                elapsed_seconds,
-            } => write!(
-                formatter,
-                "total work seconds overflow: actual_work_seconds_at_start={actual_work_seconds_at_start}, elapsed_seconds={elapsed_seconds}"
-            ),
             Self::ProgressPercentOverflow {
                 total_work_seconds,
                 estimated_work_seconds,
@@ -59,16 +48,11 @@ pub fn calculate_session_progress(
     validate_non_negative("actual_work_seconds_at_start", actual_work_seconds_at_start)?;
     validate_non_negative("elapsed_seconds", elapsed_seconds)?;
 
-    let total_work_seconds = actual_work_seconds_at_start
-        .checked_add(elapsed_seconds)
-        .ok_or(SessionProgressCalculationError::TotalWorkSecondsOverflow {
-            actual_work_seconds_at_start,
-            elapsed_seconds,
-        })?;
+    let total_work_seconds = i128::from(actual_work_seconds_at_start) + i128::from(elapsed_seconds);
     let progress_percent = if estimated_work_seconds == 0 {
         None
     } else {
-        let percentage = i128::from(total_work_seconds) * 100 / i128::from(estimated_work_seconds);
+        let percentage = total_work_seconds * 100 / i128::from(estimated_work_seconds);
         Some(i64::try_from(percentage).map_err(|_| {
             SessionProgressCalculationError::ProgressPercentOverflow {
                 total_work_seconds,
