@@ -86,7 +86,7 @@ Dioxus server functionの戻り値は次の二重`Result`とする。
 Result<Result<T, WebError>, ServerFnError>
 ```
 
-内側はworkerまたはSchronuの操作が返すtyped `WebError`、外側はrequest、responseのserialize、network、server function contextなどのtransport `ServerFnError`を表す。clientは外側の失敗を再試行可能な表示errorへnormalizeするが、codeを`worker_unavailable`とはしない。`worker_unavailable`はworker commandの送信失敗またはresponse channel切断だけに使用する。
+内側はworkerまたはSchronuの操作が返すtyped `WebError`、外側はrequest、responseのserialize、network、server function contextなどのtransport `ServerFnError`を表す。clientは外側の失敗をcodeなしのtransport表示errorへnormalizeする。read操作のtransport失敗は再試行可能とするが、mutationではserver commitの成否が分からないため再試行不可とし、repositoryの手動確認を要求する。`worker_unavailable`はworker commandの送信失敗またはresponse channel切断だけに使用する。
 
 ### 3.3 Task DTO
 
@@ -155,7 +155,7 @@ keyは`schronu_web.work_sessions.v1`とする。valueはversion付きobjectと�
 
 このkeyが存在しない場合、またはversion 1の`mutation_blocked`が`false`の場合だけmutation可能な初期状態とする。未知version、JSON不正、schema不正は安全側へ倒し、mutation blockedとして復元する。
 
-`record_session`または`complete_session`の送信前に、`mutation_blocked: true`をstorage-firstで保存する。保存失敗時はrequestを送信しない。成功、またはserverが未commitと確定できるerror responseの受信後、ほかに応答待ちのmutationがなく、repository状態も確定している場合だけ`false`へ戻す。browser crash、transport切断、`repository_state_uncertain`では`true`を残し、reload後も全mutationを停止する。解除はrepositoryを手動確認する明示操作だけが所有し、通常のread成功、session破棄、reloadでは解除しない。解除の保存に失敗した場合もblocked状態を維持する。
+`record_session`または`complete_session`の送信前に、`mutation_blocked: true`をstorage-firstで保存する。保存失敗時はrequestを送信しない。成功、またはserverが未commitと確定できるerror responseの受信後、ほかに応答待ちのmutationがなく、repository状態も確定している場合だけ`false`へ戻す。browser crash、transport切断、`repository_state_uncertain`では`true`を残し、reload後も全mutationを停止する。解除はrepositoryを手動確認する明示操作だけが所有し、通常のread成功、session破棄、reloadでは解除しない。server commit後にlocal session削除だけが失敗している場合、明示解除は該当sessionを`work_sessions`からstorage-firstで削除してからmarkerを解除する。session削除に失敗した場合はmarkerを解除しない。session削除後のmarker解除に失敗した場合もblocked状態を維持するが、該当sessionは既に永続層から消えているため二重送信できない。transportまたは`repository_state_uncertain`由来の未確定sessionは、手動確認結果に基づく再操作のため残す。
 
 ## 4. Server operations
 
@@ -419,7 +419,7 @@ display_buffer = buffer_seconds - snapshot_elapsed
 | 破棄して解除 | なし | なし | session削除 | なし |
 | 記録して解除 | safety marker保存後に`record_session` | 実績保存1回 | 送信前marker設定。確定応答後marker解除。成功後session削除 | なし |
 | 完了 | safety marker保存後に`complete_session` | 完了transaction 1回 | 送信前marker設定。確定応答後marker解除。成功後session削除 | なし |
-| repository手動確認済み | なし | なし | safety marker解除 | なし |
+| repository手動確認済み | なし | なし | commit済みで削除失敗したsessionを先に削除し、safety marker解除 | なし |
 | 06:00境界 | なし | なし | なし | なし |
 
 ## 9. Error contracts
@@ -443,7 +443,7 @@ server errorは少なくとも次を識別可能にする。`retry_advice`が`re
 
 すべてのerror responseはcodeに対応した利用者向け`message`を持つ。validation、競合、task状態errorは`manual_check`であり、利用者が原因を修正するかsessionを破棄するまで同一requestを再送しない。`repository_state_uncertain`を1回返したserviceはpoisoned状態とし、read操作は許可しても、workerまたはserviceが再起動されるまで後続mutationをrepositoryへ到達させず同じcodeで拒否する。再起動後も、利用者がrepositoryを手動確認するまではclient側でmutationを再送しない。一時的なrepository利用不能、未commitと確定した保存失敗、worker停止だけをtyped errorとして`retry`とする。
 
-未知の`WebError.code`を受信した場合もpayloadを保持し、serverが返した`retry_advice`に従って表示と再送可否を決める。外側の`ServerFnError`は`WebError`ではないため、この表のcodeへ変換せず、client固有のtransport表示errorとして扱う。
+未知の`WebError.code`を受信した場合もpayloadを保持し、serverが返した`retry_advice`に従って表示と再送可否を決める。外側の`ServerFnError`は`WebError`ではないため、この表のcodeへ変換せず、client固有のtransport表示errorとしてoperationとtask scopeを保持する。readのtransport失敗だけを再試行可能とし、mutationのtransport失敗はsafety markerを維持してrepositoryの手動確認を要求する。
 
 server操作ごとに`operation_now`は1回だけ取得し、経過秒算出、完了時刻、snapshotに共通利用する。
 
@@ -464,7 +464,7 @@ OperationHistoryEntry {
 - panelは初期状態で閉じ、利用者が開閉できる。
 - requestを送るserver操作はresponse受信時に成否を1件記録する。
 - local操作はlocalStorage結果を含む最終成否を1件記録する。
-- repository手動確認済み操作はsafety marker解除のlocalStorage成否を`ConfirmRepositoryCheck`として1件記録する。
+- repository手動確認済み操作はcommit済みsession除去とsafety marker解除を順に行い、その最終成否を`ConfirmRepositoryCheck`として1件記録する。
 - summaryへ秘密情報、repository path、stack traceを出さない。
 - 実行していない`見`、`働`、`終`、`外`などのCLI commandを履歴へ記録しない。
 
