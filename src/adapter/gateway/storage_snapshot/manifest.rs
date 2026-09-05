@@ -96,8 +96,15 @@ fn validate_manifest(
         ));
     }
 
+    for directory in &mut manifest.directories {
+        directory.path = validate_relative_path(&directory.path)?;
+    }
+    for file in &mut manifest.files {
+        file.path = validate_relative_path(&file.path)?;
+    }
+
     if manifest.files.len() > limits.file_count {
-        let relative_path = validate_relative_path(&manifest.files[limits.file_count].path)?;
+        let relative_path = manifest.files[limits.file_count].path.clone();
         return Err(SnapshotError::limit(
             manifest_path,
             super::error::SnapshotLimitKind::FileCount,
@@ -108,7 +115,6 @@ fn validate_manifest(
     }
     let mut paths = HashSet::new();
     for directory in &mut manifest.directories {
-        directory.path = validate_relative_path(&directory.path)?;
         limits.check_path(manifest_path, &directory.path)?;
         if !paths.insert(directory.path.clone()) {
             return Err(invalid_manifest(manifest_path, "duplicate snapshot path"));
@@ -116,7 +122,6 @@ fn validate_manifest(
     }
     let mut total_bytes = 0_u64;
     for file in &mut manifest.files {
-        file.path = validate_relative_path(&file.path)?;
         limits.check_path(manifest_path, &file.path)?;
         limits.check(
             manifest_path,

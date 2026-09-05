@@ -215,3 +215,56 @@ fn snapshot_manifestのfile_count超過は最初の超過entryをtyped保持す�
         Some(std::path::Path::new("nested/excess.yaml"))
     );
 }
+
+#[test]
+fn snapshot_manifestはfile_count超過より全entryのpath_securityを優先する() {
+    use crate::adapter::gateway::storage_snapshot::{
+        manifest::decode_manifest_with_limits, SnapshotResourceLimits,
+    };
+
+    let base = serde_json::json!({
+        "format_version": 1,
+        "tool_version": "0.1.0",
+        "created_at": "2026-09-05T12:00:00+09:00",
+        "revision": null,
+        "digest": {"algorithm": "fnv1a64", "version": 1},
+        "directories": [],
+        "files": [
+            {
+                "path": "first.yaml",
+                "mode": 416,
+                "content_length": 0,
+                "content_digest": "fnv1a64:cbf29ce484222325"
+            },
+            {
+                "path": "excess.yaml",
+                "mode": 416,
+                "content_length": 0,
+                "content_digest": "fnv1a64:cbf29ce484222325"
+            }
+        ]
+    });
+    let limits = SnapshotResourceLimits::new(8_192, 1, 1_024, 2_048, 4_096, 64);
+
+    for invalid in ["../directory", "/absolute", ".lock"] {
+        let mut value = base.clone();
+        value["directories"] = serde_json::json!([{"path": invalid, "mode": 493}]);
+        let error = decode_manifest_with_limits(
+            PathBuf::from("/snapshot/manifest.json").as_path(),
+            &serde_json::to_vec(&value).unwrap(),
+            limits,
+        )
+        .unwrap_err();
+        assert_eq!(error.limit_kind(), None, "{invalid}: {error}");
+    }
+
+    let mut invalid_file = base;
+    invalid_file["files"][0]["path"] = serde_json::json!("../first.yaml");
+    let error = decode_manifest_with_limits(
+        PathBuf::from("/snapshot/manifest.json").as_path(),
+        &serde_json::to_vec(&invalid_file).unwrap(),
+        limits,
+    )
+    .unwrap_err();
+    assert_eq!(error.limit_kind(), None, "{error}");
+}
