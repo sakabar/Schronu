@@ -67,13 +67,15 @@ impl DisplayError {
             || matches!(
                 self,
                 Self::Operation {
-                    error: WebError {
-                        retry_advice: crate::RetryAdvice::Retry,
-                        ..
-                    },
+                    error,
                     operation: error_operation,
                     task_id: error_task_id,
-                } if *error_operation == operation && error_task_id.as_deref() == task_id
+                } if *error_operation == operation
+                    && error_task_id.as_deref() == task_id
+                    && (error.retry_advice == crate::RetryAdvice::Retry
+                        || (error_task_id.is_none()
+                            && error.code
+                                != crate::web_error_codes::REPOSITORY_STATE_UNCERTAIN))
             )
     }
 
