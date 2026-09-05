@@ -1,3 +1,5 @@
+use crate::application::interface::TaskRepositorySaveFailureDisposition;
+
 #[test]
 fn test_save_prepare失敗時は複数projectとrevisionを旧snapshotに維持する() {
     let storage_dir = TestStorageDir::new();

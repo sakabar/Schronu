@@ -84,9 +84,12 @@ impl PreparedTransaction {
         sync_directory(
             self.state.io.as_ref(),
             &self.state.paths.transaction_dir_path,
-        )?;
+        )
+        .map_err(StorageTransactionError::with_commit_marker_established)?;
 
-        CommittedTransaction { state: self.state }.roll_forward()
+        CommittedTransaction { state: self.state }
+            .roll_forward()
+            .map_err(StorageTransactionError::with_commit_marker_established)
     }
 }
 
