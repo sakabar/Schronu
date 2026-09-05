@@ -69,7 +69,7 @@
 | TD-028 | P1 | 完了 | M | 論理日境界を跨ぐschedule segmentの容量が開始日に全量計上される |
 | TD-029 | P1 | 完了 | L | 反復task完了の後段失敗で完了状態と親見積もりだけが部分更新される |
 | TD-030 | P1 | 未着手 | S | 00:00以降の日次残容量計算がbusy timeを無視する |
-| TD-031 | P1 | 未着手 | S | Spreadsheet変換がrank 1000以降のtask行を黙って破棄する |
+| TD-031 | P1 | 未着手 | S | Spreadsheet変換がind 1000以降のtask行を黙って破棄する |
 | TD-032 | P1 | 完了 | S | macOS標準環境でSpreadsheet変換の`tac`依存が空出力の成功になる |
 | TD-033 | P1 | 未着手 | M | 同一taskの複数segmentをApps Scriptが別行へ同期する |
 | TD-034 | P1 | 一部完了(W1-J) | M | Spreadsheet入力が存在しない日付と不正な時分秒をcommandへ変換する |
@@ -1294,7 +1294,7 @@
 1. `Test: 深夜の日次容量へbusy timeを反映する`: recording fakeを使うRed testを追加する。
 2. `Capacity: 深夜もfree time managerを照会する`: 条件分岐を最小修正する。
 
-### TD-031: Spreadsheet変換がrank 1000以降のtask行を黙って破棄する
+### TD-031: Spreadsheet変換がind 1000以降のtask行を黙って破棄する
 
 - 分類: `バグ / Spreadsheet export`
 - 優先度: `P1`
@@ -1303,9 +1303,9 @@
 #### 現状と根拠
 
 - `shell/copy_for_spreadsheet.sh:9`は`/^0/`で始まる行だけをtask行として処理する。
-- `src/adapter/controller/schronu/renderer.rs:968`付近のrank表示は`format!("{:04}", rank)`という最小幅であり、rank 999は`0999`、rank 1000は`1000`になる。
+- `src/adapter/controller/schronu/renderer.rs:968`付近のind表示は`format!("{:04}", ind)`という最小幅であり、ind 999は`0999`、ind 1000は`1000`になる。
 - 実行確認では`0999`は変換され、`1000`と`10000`は0行になった。errorやwarningは出ない。
-- `tests/spreadsheet_contract.rs:116`付近のfixtureはrank `0000`と`0001`だけで境界を覆わない。
+- `tests/spreadsheet_contract.rs:116`付近のfixtureはind `0000`と`0001`だけで境界を覆わない。
 
 #### 影響
 
@@ -1314,7 +1314,7 @@
 
 #### 推奨する改善方針
 
-- 行頭文字でなく、rank、UUID、scheduled timeなどA-J列のtask row grammarを検査する。
+- 行頭文字でなく、ind、UUID、estimated_datetimeなどA-J列のtask row grammarを検査する。
 - より堅牢にはCLIへ`--format tsv`等のmachine-readable出力を追加し、human displayの見た目へshellを依存させない。
 
 #### 完了条件
@@ -1325,7 +1325,7 @@
 
 #### 推奨commit分割
 
-1. `Test: Spreadsheet rank上限境界を固定する`: 999/1000/10000のRed fixtureを追加する。
+1. `Test: Spreadsheet ind上限境界を固定する`: 999/1000/10000のRed fixtureを追加する。
 2. `Spreadsheet: task行判定を列grammarへ変更する`: shellだけをGreenにする。
 
 ### TD-032: macOS標準環境でSpreadsheet変換の`tac`依存が空出力の成功になる

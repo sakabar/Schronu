@@ -3,6 +3,7 @@ use crate::client::work_sessions::KeyValueStorage;
 use crate::SessionTask;
 
 use super::effect_dispatcher::{apply_response, ClientResponse};
+use super::session_view::{SessionAction, SessionActionKind};
 
 pub(crate) enum ComponentAction {
     SwitchTab(ActiveTab),
@@ -13,7 +14,19 @@ pub(crate) enum ComponentAction {
     DiscardSession(String),
     RecordSession(String),
     CompleteSession(String),
+    CompleteSessionWithoutRecording(String),
     ConfirmRepositoryChecked,
+}
+
+pub(crate) fn component_action_from_session_action(action: SessionAction) -> ComponentAction {
+    match action.kind {
+        SessionActionKind::Discard => ComponentAction::DiscardSession(action.task_id),
+        SessionActionKind::Record => ComponentAction::RecordSession(action.task_id),
+        SessionActionKind::Complete => ComponentAction::CompleteSession(action.task_id),
+        SessionActionKind::CompleteWithoutRecording => {
+            ComponentAction::CompleteSessionWithoutRecording(action.task_id)
+        }
+    }
 }
 
 pub(crate) fn initialize_client<S: KeyValueStorage>(
@@ -88,6 +101,9 @@ pub(crate) fn reduce_component_action<S: KeyValueStorage>(
         ComponentAction::RecordSession(task_id) => state.begin_record_session(storage, &task_id),
         ComponentAction::CompleteSession(task_id) => {
             state.begin_complete_session(storage, &task_id)
+        }
+        ComponentAction::CompleteSessionWithoutRecording(task_id) => {
+            state.begin_complete_session_without_recording(storage, &task_id)
         }
         ComponentAction::ConfirmRepositoryChecked => state.confirm_repository_checked(storage),
     }

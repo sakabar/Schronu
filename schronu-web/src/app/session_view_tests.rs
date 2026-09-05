@@ -3,7 +3,9 @@
 use std::sync::{Arc, Mutex};
 
 use super::session_view::{SessionAction, SessionActionKind, SessionCardViewModel, SessionView};
-use super::view_test_support::{dispatch_click, rebuild_with_click_listeners};
+use super::view_test_support::{
+    dispatch_click, rebuild_with_click_listeners, render_with_click_listeners,
+};
 use dioxus::dioxus_core::ElementId;
 use dioxus::prelude::*;
 
@@ -99,7 +101,7 @@ fn empty_session_view_only_offers_auto_session_without_firing_callbacks() {
 }
 
 #[test]
-fn session_card_renders_time_progress_overrun_and_three_typed_actions() {
+fn session_card_renders_time_progress_overrun_and_four_typed_actions() {
     let (html, events) = render(vec![card("task-1")], false);
 
     for text in [
@@ -110,7 +112,8 @@ fn session_card_renders_time_progress_overrun_and_three_typed_actions() {
         "00:03",
         "破棄して解除",
         "記録して解除",
-        "完了",
+        "計測を破棄して完了",
+        "記録して完了",
     ] {
         assert!(html.contains(text), "missing {text}: {html}");
     }
@@ -126,13 +129,65 @@ fn session_card_renders_time_progress_overrun_and_three_typed_actions() {
     assert!(html.contains("session-progress-overrun"));
     assert!(html.contains("width:33%"));
     assert!(html.contains("session-remaining is-overrun"));
-    for label in ["破棄して解除", "記録して解除", "完了"] {
+    for label in [
+        "破棄して解除",
+        "記録して解除",
+        "計測を破棄して完了",
+        "記録して完了",
+    ] {
         assert!(
             html.contains(&format!("aria-label=\"コピーをせん: {label}\"")),
             "{html}"
         );
     }
     assert!(events.is_empty());
+}
+
+#[test]
+fn session操作は意味別classと狭幅1列layoutを持つ() {
+    let (html, _) = render(vec![card("task-1")], false);
+    for class in [
+        "session-action-discard",
+        "session-action-record",
+        "session-action-complete-without-recording",
+        "session-action-complete",
+    ] {
+        assert!(html.contains(&format!("class=\"{class}\"")), "{html}");
+    }
+
+    let css = include_str!("../../assets/main.css");
+    assert!(!css.contains(".session-actions button:nth-child"));
+    for (selector, declaration) in [
+        (".session-action-discard", "color: var(--muted);"),
+        (".session-action-record", "color: var(--blue-dark);"),
+        (
+            ".session-action-complete-without-recording",
+            "color: var(--red);",
+        ),
+        (".session-action-complete", "color: var(--green-dark);"),
+    ] {
+        assert!(css_rule_body(css, selector).contains(declaration));
+    }
+    let narrow_layout = css
+        .split_once("@media (max-width: 34rem)")
+        .expect("narrow viewport rule must exist")
+        .1;
+    assert!(
+        css_rule_body(narrow_layout, ".session-actions").contains("grid-template-columns: 1fr;")
+    );
+}
+
+fn css_rule_body<'a>(css: &'a str, selector: &str) -> &'a str {
+    let (_, after_selector) = css
+        .split_once(selector)
+        .unwrap_or_else(|| panic!("CSS selector must exist: {selector}"));
+    let (_, after_opening_brace) = after_selector
+        .split_once('{')
+        .unwrap_or_else(|| panic!("CSS rule must open a block: {selector}"));
+    after_opening_brace
+        .split_once('}')
+        .unwrap_or_else(|| panic!("CSS rule must close a block: {selector}"))
+        .0
 }
 
 #[test]
@@ -167,7 +222,7 @@ fn each_block_reason_disables_only_the_affected_session_actions() {
         },
     ] {
         let (html, _) = render(vec![blocked_card, card("active")], false);
-        assert_eq!(html.matches("disabled").count(), 3, "{html}");
+        assert_eq!(html.matches("disabled").count(), 4, "{html}");
     }
 
     let manually_blocked = SessionCardViewModel {
@@ -175,16 +230,70 @@ fn each_block_reason_disables_only_the_affected_session_actions() {
         ..card("blocked")
     };
     let (html, _) = render(vec![manually_blocked, card("active")], false);
-    assert_eq!(html.matches("disabled").count(), 2, "{html}");
+    assert_eq!(html.matches("disabled").count(), 3, "{html}");
 
     let (globally_blocked, _) = render(vec![card("one"), card("two")], true);
-    assert_eq!(globally_blocked.matches("disabled").count(), 4);
+    assert_eq!(globally_blocked.matches("disabled").count(), 6);
 }
 
 #[test]
 fn action_kind_is_a_closed_typed_contract() {
     assert_ne!(SessionActionKind::Discard, SessionActionKind::Record);
     assert_ne!(SessionActionKind::Record, SessionActionKind::Complete);
+    assert_ne!(
+        SessionActionKind::Complete,
+        SessionActionKind::CompleteWithoutRecording
+    );
+}
+
+#[test]
+fn 計測破棄完了はcard内で確認し確定時だけtyped_callbackを送る() {
+    let events = Arc::new(Mutex::new(Vec::new()));
+    let (mut cancel_dom, action_ids) = build_dom(vec![card("task-a")], false, Arc::clone(&events));
+    assert_eq!(action_ids.len(), 4);
+    let action_ids: Vec<_> = action_ids.into_iter().rev().collect();
+
+    dispatch_click(&cancel_dom, action_ids[2]);
+    assert!(events.lock().unwrap().is_empty());
+    let confirm_ids = render_with_click_listeners(&mut cancel_dom);
+    let html = dioxus::ssr::render(&cancel_dom);
+    assert!(html.contains("このセッションの計測時間は記録されません。タスクを完了しますか?"));
+    assert!(html.contains("class=\"session-discard-completion-confirmation\""));
+    assert_eq!(confirm_ids.len(), 2);
+    dispatch_click(&cancel_dom, confirm_ids[0]);
+    render_with_click_listeners(&mut cancel_dom);
+    assert!(!dioxus::ssr::render(&cancel_dom).contains("タスクを完了しますか?"));
+    assert!(events.lock().unwrap().is_empty());
+
+    let (mut confirm_dom, action_ids) = build_dom(vec![card("task-b")], false, Arc::clone(&events));
+    let action_ids: Vec<_> = action_ids.into_iter().rev().collect();
+    dispatch_click(&confirm_dom, action_ids[2]);
+    let confirm_ids = render_with_click_listeners(&mut confirm_dom);
+    dispatch_click(&confirm_dom, confirm_ids[1]);
+    assert_eq!(*events.lock().unwrap(), ["task-b:CompleteWithoutRecording"]);
+}
+
+#[test]
+fn 計測破棄完了の確認状態は選択したcardだけに保持する() {
+    let events = Arc::new(Mutex::new(Vec::new()));
+    let (mut dom, action_ids) = build_dom(
+        vec![card("task-a"), card("task-b")],
+        false,
+        Arc::clone(&events),
+    );
+    let action_ids: Vec<_> = action_ids.into_iter().rev().collect();
+
+    dispatch_click(&dom, action_ids[2]);
+    render_with_click_listeners(&mut dom);
+    let html = dioxus::ssr::render(&dom);
+
+    assert_eq!(html.matches("タスクを完了しますか?").count(), 1, "{html}");
+    assert_eq!(
+        html.matches("class=\"session-actions\"").count(),
+        1,
+        "{html}"
+    );
+    assert!(events.lock().unwrap().is_empty());
 }
 
 #[test]
@@ -197,15 +306,17 @@ fn enabled_buttons_dispatch_the_exact_typed_callback_once() {
 
     events.lock().unwrap().clear();
     let (action_dom, action_ids) = build_dom(vec![card("task-a")], false, Arc::clone(&events));
-    assert_eq!(action_ids.len(), 3);
-    for (element_id, expected) in
-        action_ids
-            .into_iter()
-            .rev()
-            .zip(["task-a:Discard", "task-a:Record", "task-a:Complete"])
-    {
+    assert_eq!(action_ids.len(), 4);
+    for (element_id, expected) in action_ids.into_iter().rev().zip([
+        Some("task-a:Discard"),
+        Some("task-a:Record"),
+        None,
+        Some("task-a:Complete"),
+    ]) {
         dispatch_click(&action_dom, element_id);
-        assert_eq!(events.lock().unwrap().last().unwrap(), expected);
+        if let Some(expected) = expected {
+            assert_eq!(events.lock().unwrap().last().unwrap(), expected);
+        }
     }
     assert_eq!(
         *events.lock().unwrap(),

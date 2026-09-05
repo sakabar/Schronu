@@ -9,6 +9,7 @@ pub enum SessionActionKind {
     Discard,
     Record,
     Complete,
+    CompleteWithoutRecording,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -63,6 +64,7 @@ fn SessionCard(
     global_blocked: bool,
     on_action: EventHandler<SessionAction>,
 ) -> Element {
+    let mut confirming_discard_completion = use_signal(|| false);
     let discard_disabled = session.in_flight || session.server_committed;
     let mutation_disabled = discard_disabled || global_blocked || session.manual_check_blocked;
     let completion = session
@@ -113,30 +115,69 @@ fn SessionCard(
                 }
             }
             p { class: remaining_class, "{format_mm_ss(session.remaining_seconds)}" }
-            div { class: "session-actions",
-                SessionActionButton {
-                    label: "破棄して解除",
-                    task_name: session.task_name.clone(),
-                    task_id: session.task_id.clone(),
-                    kind: SessionActionKind::Discard,
-                    disabled: discard_disabled,
-                    on_action,
+            if confirming_discard_completion() {
+                div {
+                    class: "session-discard-completion-confirmation",
+                    role: "group",
+                    aria_label: "{session.task_name}: 計測を破棄して完了の確認",
+                    p { "このセッションの計測時間は記録されません。タスクを完了しますか?" }
+                    div { class: "session-confirmation-actions",
+                        button {
+                            r#type: "button",
+                            onclick: move |_| confirming_discard_completion.set(false),
+                            "キャンセル"
+                        }
+                        button {
+                            class: "session-action-complete-without-recording",
+                            r#type: "button",
+                            disabled: mutation_disabled,
+                            aria_label: "{session.task_name}: 計測を破棄して完了を確定",
+                            onclick: move |_| {
+                                if !mutation_disabled {
+                                    on_action.call(SessionAction {
+                                        task_id: session.task_id.clone(),
+                                        kind: SessionActionKind::CompleteWithoutRecording,
+                                    });
+                                }
+                            },
+                            "計測を破棄して完了"
+                        }
+                    }
                 }
-                SessionActionButton {
-                    label: "記録して解除",
-                    task_name: session.task_name.clone(),
-                    task_id: session.task_id.clone(),
-                    kind: SessionActionKind::Record,
-                    disabled: mutation_disabled,
-                    on_action,
-                }
-                SessionActionButton {
-                    label: "完了",
-                    task_name: session.task_name,
-                    task_id: session.task_id,
-                    kind: SessionActionKind::Complete,
-                    disabled: mutation_disabled,
-                    on_action,
+            } else {
+                div { class: "session-actions",
+                    SessionActionButton {
+                        class: "session-action-discard",
+                        label: "破棄して解除",
+                        task_name: session.task_name.clone(),
+                        task_id: session.task_id.clone(),
+                        kind: SessionActionKind::Discard,
+                        disabled: discard_disabled,
+                        on_action,
+                    }
+                    SessionActionButton {
+                        class: "session-action-record",
+                        label: "記録して解除",
+                        task_name: session.task_name.clone(),
+                        task_id: session.task_id.clone(),
+                        kind: SessionActionKind::Record,
+                        disabled: mutation_disabled,
+                        on_action,
+                    }
+                    SessionDiscardCompletionButton {
+                        task_name: session.task_name.clone(),
+                        disabled: mutation_disabled,
+                        on_confirm: move |_| confirming_discard_completion.set(true),
+                    }
+                    SessionActionButton {
+                        class: "session-action-complete",
+                        label: "記録して完了",
+                        task_name: session.task_name.clone(),
+                        task_id: session.task_id.clone(),
+                        kind: SessionActionKind::Complete,
+                        disabled: mutation_disabled,
+                        on_action,
+                    }
                 }
             }
         }
@@ -144,7 +185,31 @@ fn SessionCard(
 }
 
 #[component]
+fn SessionDiscardCompletionButton(
+    task_name: String,
+    disabled: bool,
+    on_confirm: EventHandler<()>,
+) -> Element {
+    let aria_label = format!("{task_name}: 計測を破棄して完了");
+    rsx! {
+        button {
+            class: "session-action-complete-without-recording",
+            r#type: "button",
+            aria_label,
+            disabled,
+            onclick: move |_| {
+                if !disabled {
+                    on_confirm.call(());
+                }
+            },
+            "計測を破棄して完了"
+        }
+    }
+}
+
+#[component]
 fn SessionActionButton(
+    class: &'static str,
     label: &'static str,
     task_name: String,
     task_id: String,
@@ -155,6 +220,7 @@ fn SessionActionButton(
     let aria_label = format!("{task_name}: {label}");
     rsx! {
         button {
+            class,
             r#type: "button",
             aria_label,
             disabled,

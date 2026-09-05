@@ -16,14 +16,14 @@ use uuid::Uuid;
 #[test]
 fn spreadsheet_task_rowはaからjの10列を既存cli形式で出力する() {
     let row = SpreadsheetTaskRow {
-        rank: "0001",
+        ind: "0001",
         task_id: "11111111-1111-1111-1111-111111111111",
         icon: "!",
-        remaining_time: "____-01:20",
-        scheduled_time: "06/21(土)-18:40~19:20",
-        priority: "0",
+        deadline: "____-01:20",
+        estimated_datetime: "06/21(土)-18:40~19:20",
+        rank: "0",
         estimated_minutes: "40",
-        project_number: "01",
+        priority: "01",
         category: "維",
         task_name: "夕食 の 準備",
     };
@@ -34,8 +34,11 @@ fn spreadsheet_task_rowはaからjの10列を既存cli形式で出力する() {
         formatted,
         "0001 11111111-1111-1111-1111-111111111111 ! ____-01:20 06/21(土)-18:40~19:20 0 40 01 維 夕食 の 準備"
     );
-    let mut columns = formatted.split_whitespace();
-    assert_eq!(columns.nth(8), Some("維"), "I列はcategory");
+    let columns = formatted.split_whitespace().collect::<Vec<_>>();
+    assert_eq!(columns[0], "0001", "A列はind");
+    assert_eq!(columns[5], "0", "F列はrank");
+    assert_eq!(columns[7], "01", "H列はpriority");
+    assert_eq!(columns[8], "維", "I列はcategory");
     assert_eq!(
         formatted.splitn(10, char::is_whitespace).nth(9),
         Some("夕食 の 準備"),
@@ -366,15 +369,15 @@ fn task_list_displayはtyped_rowからa_j列とカテゴリ集計を既存順序
     let display = DisplayModel::TaskList(TaskListDisplay {
         rows: vec![
             TaskListRow::Task(TaskListTaskRow {
-                rank: 1,
+                ind: 1,
                 task_id: first_task_id,
                 icon: "!".to_string(),
-                remaining_time: "____-01:20".to_string(),
+                deadline: "____-01:20".to_string(),
                 scheduled_start: Local.with_ymd_and_hms(2026, 8, 23, 9, 0, 0).unwrap(),
                 scheduled_end: Local.with_ymd_and_hms(2026, 8, 23, 9, 40, 0).unwrap(),
-                priority_rank: 0,
+                rank: 0,
                 estimated_minutes: 40,
-                project_number_priority: 1,
+                priority: 1,
                 project_category: Some(ProjectCategory::Sustaining),
                 task_name: "夕食 の 準備".to_string(),
                 give_up_candidate: true,
@@ -384,15 +387,15 @@ fn task_list_displayはtyped_rowからa_j列とカテゴリ集計を既存順序
                 text: "予定外の案内".to_string(),
             },
             TaskListRow::Task(TaskListTaskRow {
-                rank: 2,
+                ind: 2,
                 task_id: second_task_id,
                 icon: "/".to_string(),
-                remaining_time: "____/__/__".to_string(),
+                deadline: "____/__/__".to_string(),
                 scheduled_start: Local.with_ymd_and_hms(2026, 8, 23, 10, 0, 0).unwrap(),
                 scheduled_end: Local.with_ymd_and_hms(2026, 8, 23, 10, 5, 0).unwrap(),
-                priority_rank: 3,
+                rank: 3,
                 estimated_minutes: 5,
-                project_number_priority: 8,
+                priority: 8,
                 project_category: None,
                 task_name: "短い task".to_string(),
                 give_up_candidate: false,
@@ -457,15 +460,15 @@ fn task_list_displayはtyped_rowからa_j列とカテゴリ集計を既存順序
 #[test]
 fn task_list_icon_modeは同じgive_up候補の検索iconと表示iconを区別する() {
     let row = TaskListTaskRow {
-        rank: 1,
+        ind: 1,
         task_id: Uuid::parse_str("11111111-1111-1111-1111-111111111111").unwrap(),
         icon: "!".to_string(),
-        remaining_time: "____-01:20".to_string(),
+        deadline: "____-01:20".to_string(),
         scheduled_start: Local.with_ymd_and_hms(2026, 8, 23, 9, 0, 0).unwrap(),
         scheduled_end: Local.with_ymd_and_hms(2026, 8, 23, 9, 40, 0).unwrap(),
-        priority_rank: 0,
+        rank: 0,
         estimated_minutes: 40,
-        project_number_priority: 1,
+        priority: 1,
         project_category: Some(ProjectCategory::Sustaining),
         task_name: "give-up候補".to_string(),
         give_up_candidate: true,

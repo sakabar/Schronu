@@ -1,6 +1,6 @@
 use crate::{
-    CompleteSessionResponse, ListTasksRequest, RecordSessionRequest, RecordSessionResult,
-    ScheduledTaskRow, ServerSnapshot, SessionTask, WebError, WebSuccess,
+    CompleteSessionRequest, CompleteSessionResponse, ListTasksRequest, RecordSessionRequest,
+    RecordSessionResult, ScheduledTaskRow, ServerSnapshot, SessionTask, WebError, WebSuccess,
 };
 use dioxus::prelude::*;
 
@@ -58,7 +58,7 @@ pub async fn record_session(
 
 #[server(endpoint = "web_complete_session")]
 pub async fn complete_session(
-    request: RecordSessionRequest,
+    request: CompleteSessionRequest,
 ) -> Result<WebOperationResult<CompleteSessionResponse>, ServerFnError> {
     #[cfg(feature = "server")]
     {
@@ -108,7 +108,7 @@ async fn dispatch_record_session(
 #[cfg(feature = "server")]
 async fn dispatch_complete_session(
     worker: WebWorkerHandle,
-    request: RecordSessionRequest,
+    request: CompleteSessionRequest,
 ) -> WebOperationResult<CompleteSessionResponse> {
     worker.complete_session(request).await
 }
@@ -120,9 +120,9 @@ mod tests {
         dispatch_record_session, WebOperationResult,
     };
     use crate::{
-        CompleteSessionResponse, ListTasksRequest, RecordSessionRequest, RecordSessionResult,
-        RetryAdvice, ScheduledTaskRow, ServerSnapshot, SessionTask, WebError, WebOperations,
-        WebSuccess, WebWorkerHandle,
+        CompleteSessionRequest, CompleteSessionResponse, ListTasksRequest, RecordSessionRequest,
+        RecordSessionResult, RetryAdvice, ScheduledTaskRow, ServerSnapshot, SessionTask, WebError,
+        WebOperations, WebSuccess, WebWorkerHandle,
     };
     use dioxus::fullstack::axum::http::Request;
     use dioxus::fullstack::FullstackContext;
@@ -142,6 +142,12 @@ mod tests {
             started_at_epoch_ms: 1,
             expected_actual_work_seconds: 2,
         };
+        let complete_request = CompleteSessionRequest {
+            task_id: request.task_id.clone(),
+            started_at_epoch_ms: request.started_at_epoch_ms,
+            expected_actual_work_seconds: request.expected_actual_work_seconds,
+            record_elapsed_seconds: true,
+        };
 
         futures::executor::block_on(async {
             let _: WebOperationResult<ServerSnapshot> = dispatch_bootstrap(worker.clone()).await;
@@ -157,7 +163,7 @@ mod tests {
             let _: WebOperationResult<WebSuccess<RecordSessionResult>> =
                 dispatch_record_session(worker.clone(), request.clone()).await;
             let completed: WebOperationResult<CompleteSessionResponse> =
-                dispatch_complete_session(worker, request).await;
+                dispatch_complete_session(worker, complete_request).await;
             assert_eq!(completed, Ok(snapshot()));
         });
 
@@ -243,7 +249,7 @@ mod tests {
 
         fn complete_session(
             &mut self,
-            _request: RecordSessionRequest,
+            _request: CompleteSessionRequest,
         ) -> Result<CompleteSessionResponse, WebError> {
             self.count();
             Ok(snapshot())

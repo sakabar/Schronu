@@ -11,6 +11,7 @@ pub enum Operation {
     DiscardSession,
     RecordSession,
     CompleteSession,
+    CompleteSessionWithoutRecording,
     ConfirmRepositoryCheck,
 }
 

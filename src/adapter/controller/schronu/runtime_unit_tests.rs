@@ -723,15 +723,15 @@ fn test_mark_give_up_candidate_rows_by_date_未来日にも空差累に応じて
 #[test]
 fn test_replace_task_list_icon_アイコン列だけを置き換える() {
     let mut row = super::super::renderer::TaskListTaskRow {
-        rank: 28,
+        ind: 28,
         task_id: Uuid::parse_str("11111111-1111-1111-1111-111111111111").unwrap(),
         icon: "/".to_string(),
-        remaining_time: "____/__/__".to_string(),
+        deadline: "____/__/__".to_string(),
         scheduled_start: Local.with_ymd_and_hms(2026, 6, 28, 23, 11, 0).unwrap(),
         scheduled_end: Local.with_ymd_and_hms(2026, 6, 28, 23, 30, 0).unwrap(),
-        priority_rank: 0,
+        rank: 0,
         estimated_minutes: 19,
-        project_number_priority: 5,
+        priority: 5,
         project_category: Some(ProjectCategory::Investment),
         task_name: "夕食  の 準備".to_string(),
         give_up_candidate: false,
@@ -791,15 +791,15 @@ fn test_format_focused_task_header_project_categoryを表示する() {
 #[test]
 fn test_task_list_search_textは旧a_j列の代表patternをtyped_fieldから構築する() {
     let row = super::super::renderer::TaskListTaskRow {
-        rank: 7,
+        ind: 7,
         task_id: Uuid::parse_str("11111111-1111-1111-1111-111111111111").unwrap(),
         icon: "!".to_string(),
-        remaining_time: "____-01:20".to_string(),
+        deadline: "____-01:20".to_string(),
         scheduled_start: Local.with_ymd_and_hms(2026, 8, 23, 9, 0, 0).unwrap(),
         scheduled_end: Local.with_ymd_and_hms(2026, 8, 23, 9, 40, 0).unwrap(),
-        priority_rank: 3,
+        rank: 3,
         estimated_minutes: 5,
-        project_number_priority: 8,
+        priority: 8,
         project_category: Some(ProjectCategory::Sustaining),
         task_name: "検索 対象task".to_string(),
         give_up_candidate: false,

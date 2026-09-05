@@ -1,7 +1,7 @@
 use super::web_service::{build_auto_session_dto, build_scheduled_task_rows};
 use crate::application::schedule_use_case::ScheduledTaskView;
 use crate::application::task_use_case::get_task;
-use crate::entity::task::TaskHandle;
+use crate::entity::task::{Status, TaskHandle};
 use crate::test_support::TestTaskRepository;
 use chrono::{Duration, Local, NaiveDate, TimeZone};
 use uuid::Uuid;
@@ -114,6 +114,57 @@ fn listのdtoはtask値とdeadlineとleaf判定を情報を落とさず返す() 
     let encoded = serde_json::to_string(&rows[0]).unwrap();
     let decoded = serde_json::from_str(&encoded).unwrap();
     assert_eq!(rows[0], decoded);
+}
+
+#[test]
+fn listのleaf判定はtask_treeの子ではなくschedule_rank_0だけを採用する() {
+    let date = NaiveDate::from_ymd_opt(2026, 9, 5).unwrap();
+    let start = Local.with_ymd_and_hms(2026, 9, 5, 8, 0, 0).unwrap();
+    let rank_zero_id = Uuid::from_u128(30);
+    let rank_one_id = Uuid::from_u128(31);
+    let rank_zero_handle = TaskHandle::with_identity("rank zero", rank_zero_id, start).unwrap();
+    let completed_child = rank_zero_handle.create_as_last_child(
+        crate::test_support::new_task_attr_at("completed child", start),
+    );
+    completed_child.set_orig_status(Status::Done).unwrap();
+    let rank_one_handle = TaskHandle::with_identity("rank one", rank_one_id, start).unwrap();
+    let repository = TestTaskRepository::new(
+        vec![rank_zero_handle.clone(), rank_one_handle.clone()],
+        start,
+    );
+    let rank_zero_task = get_task(&repository, rank_zero_id).unwrap().unwrap();
+    let rank_one_task = get_task(&repository, rank_one_id).unwrap().unwrap();
+
+    assert!(!rank_zero_task.child_ids.is_empty());
+    assert!(rank_one_task.child_ids.is_empty());
+
+    let rows = build_scheduled_task_rows(
+        &[
+            ScheduledTaskView {
+                task: rank_zero_task,
+                first_available_time: start,
+                scheduled_start: start,
+                scheduled_end: start + Duration::minutes(10),
+                scheduled_work_seconds: 600,
+                total_work_seconds: 600,
+                rank: 0,
+            },
+            ScheduledTaskView {
+                task: rank_one_task,
+                first_available_time: start,
+                scheduled_start: start + Duration::minutes(10),
+                scheduled_end: start + Duration::minutes(20),
+                scheduled_work_seconds: 600,
+                total_work_seconds: 600,
+                rank: 1,
+            },
+        ],
+        date,
+    )
+    .unwrap();
+
+    assert!(rows[0].is_leaf);
+    assert!(!rows[1].is_leaf);
 }
 
 #[test]

@@ -1,12 +1,12 @@
 # column	index	name	source	sync	time_format	purpose
-A	1	rank	CLI	false		表示順の通し番号
+A	1	ind	CLI	false		表示順のインデックス
 B	2	task_id	CLI	false		タスクの一意IDとシート間の同期キー
 C	3	icon	CLI	false		タスク状態を示すアイコン
-D	4	remaining_time	CLI	false		残作業時間の表示
-E	5	scheduled_time	CLI	false		予定日時の表示
-F	6	priority	CLI	false		優先度
+D	4	deadline	CLI	false		締切と予定完了時刻との差
+E	5	estimated_datetime	CLI	false		作業予定日時
+F	6	rank	CLI	false		タスクの深さまたは順位
 G	7	estimated_minutes	CLI	false		見積もり分数
-H	8	project_number	CLI	false		project番号
+H	8	priority	CLI	false		プロジェクト優先度
 I	9	category	CLI	false		category
 J	10	task_name	CLI	false		タスク名
 K	11	is_manual_start	formula	false		L列が手入力かを示す

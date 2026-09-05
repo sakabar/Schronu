@@ -1,13 +1,13 @@
 use crate::{
-    web_error_codes, CompleteSessionResponse, ListTasksRequest, RecordSessionRequest,
-    RecordSessionResult, RetryAdvice, ScheduledTaskRow, ServerSnapshot, SessionTask, WebError,
-    WebOperations, WebSuccess, WebWorkerHandle,
+    web_error_codes, CompleteSessionRequest, CompleteSessionResponse, ListTasksRequest,
+    RecordSessionRequest, RecordSessionResult, RetryAdvice, ScheduledTaskRow, ServerSnapshot,
+    SessionTask, WebError, WebOperations, WebSuccess, WebWorkerHandle,
 };
 use chrono::{DateTime, Local, NaiveDate};
 use schronu::adapter::controller::{
-    resolve_project_storage_directory, RecordSessionRequest as CoreRecordSessionRequest,
-    ScheduledTaskRowDto, ServerSnapshot as CoreServerSnapshot, SessionTaskDto, WebService,
-    WebSuccess as CoreWebSuccess,
+    resolve_project_storage_directory, CompleteSessionRequest as CoreCompleteSessionRequest,
+    RecordSessionRequest as CoreRecordSessionRequest, ScheduledTaskRowDto,
+    ServerSnapshot as CoreServerSnapshot, SessionTaskDto, WebService, WebSuccess as CoreWebSuccess,
 };
 use schronu::adapter::gateway::schronu_config::load_schronu_config;
 use std::env;
@@ -115,7 +115,7 @@ impl<C: Clock> WebOperations for EnvironmentWebOperations<C> {
 
     fn complete_session(
         &mut self,
-        request: RecordSessionRequest,
+        request: CompleteSessionRequest,
     ) -> Result<CompleteSessionResponse, WebError> {
         let operation_now = self.clock.now();
         self.service()?
@@ -164,6 +164,17 @@ impl From<RecordSessionRequest> for CoreRecordSessionRequest {
             task_id: request.task_id,
             started_at_epoch_ms: request.started_at_epoch_ms,
             expected_actual_work_seconds: request.expected_actual_work_seconds,
+        }
+    }
+}
+
+impl From<CompleteSessionRequest> for CoreCompleteSessionRequest {
+    fn from(request: CompleteSessionRequest) -> Self {
+        Self {
+            task_id: request.task_id,
+            started_at_epoch_ms: request.started_at_epoch_ms,
+            expected_actual_work_seconds: request.expected_actual_work_seconds,
+            record_elapsed_seconds: request.record_elapsed_seconds,
         }
     }
 }
@@ -225,7 +236,10 @@ fn configuration_error() -> WebError {
 #[cfg(test)]
 mod tests {
     use super::{Clock, EnvironmentWebOperations};
-    use crate::{web_error_codes, ListTasksRequest, RecordSessionRequest, WebOperations};
+    use crate::{
+        web_error_codes, CompleteSessionRequest, ListTasksRequest, RecordSessionRequest,
+        WebOperations,
+    };
     use chrono::{DateTime, Local, TimeZone};
     use std::fs;
     use std::path::PathBuf;
@@ -265,6 +279,12 @@ mod tests {
             started_at_epoch_ms: now.timestamp_millis(),
             expected_actual_work_seconds: 0,
         };
+        let invalid_complete_request = CompleteSessionRequest {
+            task_id: invalid_request.task_id.clone(),
+            started_at_epoch_ms: invalid_request.started_at_epoch_ms,
+            expected_actual_work_seconds: invalid_request.expected_actual_work_seconds,
+            record_elapsed_seconds: true,
+        };
         assert_eq!(
             operations
                 .record_session(invalid_request.clone())
@@ -274,7 +294,7 @@ mod tests {
         );
         assert_eq!(
             operations
-                .complete_session(invalid_request)
+                .complete_session(invalid_complete_request)
                 .unwrap_err()
                 .code,
             web_error_codes::INVALID_INPUT

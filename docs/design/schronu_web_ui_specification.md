@@ -17,7 +17,7 @@ WebセッションはSchronu本体のcurrent taskと独立させる。Schronuの
 | localStorage adapter | `work_sessions`のversion付きserialize、読込、検証、保存を行う。 |
 | server function | wire DTOを検証し、専用workerへ型付きcommandを送る。 |
 | Web operation worker | 1 thread上でWeb操作を直列実行し、environment、repository、free-time資源を所有する。 |
-| Web controller service | application use caseを組み合わせ、snapshot、一覧、自動選定、記録、完了を提供する。 |
+| Web controller service | application use caseを組み合わせ、snapshot、一覧、自動選定、記録、計測を記録する完了、計測を破棄する完了を提供する。 |
 | application | schedule、focus選定、UUID指定実績加算、task完了のdomain操作を提供する。 |
 | repository transaction | task treeの読込、変更、保存、rollback、状態不確実性の契約を維持する。 |
 
@@ -112,6 +112,8 @@ ScheduledTaskRow {
     is_leaf: bool,
 }
 ```
+
+`is_leaf`はwire互換のため名称を維持するが、task tree上の`child_ids`の空否ではなく、schedule計算結果の`ScheduledTaskView.rank == 0`を表す。rank 0は未完了の子を持たないtaskである。
 
 同じtaskが複数segmentに分かれる場合、同じ`task_id`を持つrowを複数返してよい。serverは`get_schedule`の結果を開始時刻昇順に安定sortする。
 
@@ -209,14 +211,24 @@ RecordSessionRequest {
 
 ### 4.5 `complete_session`
 
-入力は`RecordSessionRequest`と同じとする。
+入力:
 
-1. `record_session`と同じ規則で追加実績秒を算出する。
-2. 既存`CompleteTaskInput`へtask UUID、`operation_now`、追加実績秒、`Some(expected_actual_work_seconds)`を渡す。
-3. applicationは期待実績検証、実績加算、完了、終了時刻更新、反復task生成を1つの操作として準備する。
-4. repository transactionは全変更を1回で保存する。
+```text
+CompleteSessionRequest {
+    task_id: UUID,
+    started_at_epoch_ms: i64,
+    expected_actual_work_seconds: i64,
+    record_elapsed_seconds: bool,
+}
+```
 
-成功時は`ServerSnapshot`だけを返す。既存`complete_task`が返す次task情報はWebへ返さず、次taskをSchronu本体のcurrent taskへ設定せず、sessionも自動追加しない。失敗時は他のoperationと同じ`WebError`を返す。
+1. `record_elapsed_seconds`が`true`なら、`record_session`と同じ規則で追加実績秒を算出する。
+2. `record_elapsed_seconds`が`false`なら、`started_at_epoch_ms`を実績計算やvalidationに使用せず、追加実績秒を0とする。
+3. 既存`CompleteTaskInput`へtask UUID、`operation_now`、追加実績秒、`Some(expected_actual_work_seconds)`を渡す。
+4. applicationは期待実績検証、実績加算、完了、終了時刻更新、反復task生成を1つの操作として準備する。
+5. repository transactionは全変更を1回で保存する。
+
+`record_elapsed_seconds`の値にかかわらず期待実績競合、未完了child、反復task生成、保存、安全停止は同じ完了経路で処理する。成功時は`ServerSnapshot`だけを返す。既存`complete_task`が返す次task情報はWebへ返さず、次taskをSchronu本体のcurrent taskへ設定せず、sessionも自動追加しない。失敗時は他のoperationと同じ`WebError`を返す。
 
 ## 5. Application contracts
 
@@ -276,6 +288,7 @@ expected_actual_work_seconds: Option<i64>
 - 不一致時は実績、status、終了時刻、親子状態、反復task、mutation revisionを変更しない。
 - CLIとMCP adapterは常に`None`を設定する。
 - Webだけが`Some(開始時実績)`を設定する。
+- Webの`complete_session`は、`record_elapsed_seconds`が`true`なら経過秒、`false`なら0を追加実績秒として渡す。
 - MCPの入力structおよび生成JSON schemaへこのfieldを追加しない。
 
 ## 6. Client state and calculations
@@ -408,7 +421,10 @@ display_buffer = buffer_seconds - buffer_elapsed
 
 - セッション0件では「自動セッション」buttonを表示する。
 - 1件以上ではbuttonを隠し、各`work_session`をcard表示する。
-- cardはtask名、開始`HH:MM`、完了予定`HH:MM`、進捗率、bar、残り・超過`MM:SS`、3操作buttonを持つ。
+- cardはtask名、開始`HH:MM`、完了予定`HH:MM`、進捗率、bar、残り・超過`MM:SS`、「破棄して解除」「記録して解除」「計測を破棄して完了」「記録して完了」の4操作buttonを持つ。
+- 操作buttonは意味別classを持ち、通常幅では解除系2つと完了系2つをそれぞれ同じ段に配置し、狭い画面では1列にする。
+- 「計測を破棄して完了」をclickすると当該cardだけを確認表示へ切り替え、「このセッションの計測時間は記録されません。タスクを完了しますか?」と「キャンセル」「計測を破棄して完了」を表示する。最初のclickとキャンセルではserver requestを送らず、確定時だけ`record_elapsed_seconds: false`の`complete_session`を1回送る。
+- 「記録して完了」は確認を挟まず、`record_elapsed_seconds: true`の`complete_session`を送る。
 - 「自動セッション」成功時はresponseのtask snapshotから現在時刻を開始時刻とするsessionを追加する。
 - 自動選定結果が`None`なら空状態と案内を表示する。
 
@@ -417,7 +433,7 @@ display_buffer = buffer_seconds - buffer_elapsed
 - 日付button click時だけ`list_tasks(date)`を送る。
 - rowは締切、予定`HH:MM-HH:MM`、task名、「セッション」buttonを表示する。
 - 締切は選択logical date内なら`HH:MM`、それ以外は`MM/DD HH:MM`とする。現在epochが締切epochを超えた場合に赤くする。
-- `is_leaf`がtrueのtask名を緑にする。
+- schedule rankが0のとき`is_leaf`をtrueとし、そのtask名を緑にする。
 - 「セッション」click時はrowのtask snapshotとclient現在時刻からsessionを作り、localStorageへ保存する。active tabは変更しない。
 - `work_sessions`に同一UUIDがあれば、そのUUIDの全rowでbuttonをdisabledにする。
 
@@ -427,7 +443,7 @@ display_buffer = buffer_seconds - buffer_elapsed
 - 「破棄して解除」はlocalStorage削除成功後だけmemory stateを確定し、残存する計測中セッションからbufferを再計算する。server requestとtask実績更新は行わない。
 - server mutationは、response成功後にlocalStorageからsessionを削除する。
 - server errorまたはlocalStorage削除失敗ではsessionを残す。server保存成功後にlocalStorage削除だけが失敗した場合、responseの更新後実績を反映した競合案内を表示し、再送による二重加算を防ぐため対象buttonを無効化し、対象sessionをbuffer計算上の計測中sessionから除外する。
-- in-flight中は対象sessionの3buttonを無効化する。他sessionの計測は継続する。
+- in-flight中は対象sessionの4buttonを無効化する。他sessionの計測は継続する。globalまたはmanual safety block中はserver mutationの3buttonを無効化し、「破棄して解除」は利用可能とする。
 
 ## 8. Communication and persistence matrix
 
@@ -441,7 +457,9 @@ display_buffer = buffer_seconds - buffer_elapsed
 | 一覧の「セッション」 | なし | なし | session追加 | なし |
 | 破棄して解除 | なし | なし | session削除。成功後にbuffer再計算 | なし |
 | 記録して解除 | safety marker保存後に`record_session` | 実績保存1回 | 送信前marker設定。確定応答後marker解除。成功後session削除 | なし |
-| 完了 | safety marker保存後に`complete_session` | 完了transaction 1回 | 送信前marker設定。確定応答後marker解除。成功後session削除 | なし |
+| 計測を破棄して完了の確認・キャンセル | なし | なし | card内の一時的な確認状態だけを変更 | なし |
+| 計測を破棄して完了の確定 | safety marker保存後に`complete_session(record_elapsed_seconds: false)` | 追加実績0の完了transaction 1回 | 送信前marker設定。確定応答後marker解除。成功後session削除 | なし |
+| 記録して完了 | safety marker保存後に`complete_session(record_elapsed_seconds: true)` | 経過秒を加算する完了transaction 1回 | 送信前marker設定。確定応答後marker解除。成功後session削除 | なし |
 | repository手動確認済み | なし | なし | commit済みで削除失敗したsessionを先に削除し、safety marker解除 | なし |
 | 06:00境界 | なし | なし | なし | なし |
 
@@ -476,7 +494,8 @@ server操作ごとに`operation_now`は1回だけ取得し、経過秒算出、�
 OperationHistoryEntry {
     occurred_at_epoch_ms: i64,
     operation: Bootstrap | ListTasks | AutoSession | AddSession | DiscardSession
-             | RecordSession | CompleteSession | ConfirmRepositoryCheck,
+             | RecordSession | CompleteSession | CompleteSessionWithoutRecording
+             | ConfirmRepositoryCheck,
     task_id: Option<UUID>,
     locality: Local | Server,
     outcome: Success | Failure,
@@ -486,6 +505,7 @@ OperationHistoryEntry {
 
 - panelは初期状態で閉じ、利用者が開閉できる。
 - requestを送るserver操作はresponse受信時に成否を1件記録する。
+- `record_elapsed_seconds: true`の完了は`CompleteSession`、`false`の完了は`CompleteSessionWithoutRecording`として、成功・失敗のどちらも区別して記録する。
 - local操作はlocalStorage結果を含む最終成否を1件記録する。
 - repository手動確認済み操作はcommit済みsession除去とsafety marker解除を順に行い、その最終成否を`ConfirmRepositoryCheck`として1件記録する。
 - summaryへ秘密情報、repository path、stack traceを出さない。
@@ -515,12 +535,12 @@ OperationHistoryEntry {
 
 - 共通実績加算: 正常加算、0秒、未知UUID、完了済みtask、負数、期待値一致・不一致、加算overflow、失敗時無変更。
 - `complete_task`: 期待値一致、競合、負の追加秒、overflow、未完了の子、完了済み、反復task生成、各失敗時の全状態不変。
-- `complete_session`: 成功responseが`ServerSnapshot`だけで、次task情報を含まないこと。
+- `complete_session`: 記録ありでは経過整数秒を加算し、記録なしでは開始時刻を使用せず追加実績0で完了すること。どちらも期待実績競合、反復task、未完了child、保存失敗の契約を維持し、成功responseが`ServerSnapshot`だけで次task情報を含まないこと。
 - 進捗計算: 開始時33%、100%、133%、見積0、長時間、乗算overflow回避。
 - buffer: 正、0、負、06:00前後、日次終端前の固定`busy_time_slot`控除、隣接logical dateの除外を検証する。日次終端10分前で予定作業なしなら`+00:10:00`、日次終端ちょうどで予定作業なしなら`00:00:00`、日次終端40分後で予定作業なしなら`-00:40:00`、日次終端40分後で予定残作業62分なら`-01:42:00`となることを検証する。
 - buffer segment集計: 単一segment、同一taskの複数segment、複数task、進行中segment全量、同一logical date内の過去segment、`scheduled_work_seconds`合計overflowを検証する。
 - buffer更新: 実績変更後のschedule再生成と、日次終端の前後を問わずclientで計測中セッションが存在しない時間だけを毎秒減算し、1件以上存在する間は停止することを検証する。
-- read model: 指定日、開始時刻順、複数segment、葉判定、締切、候補なしの自動選定。
+- read model: 指定日、開始時刻順、複数segment、schedule rank 0判定(task tree上の子の有無に非依存)、締切、候補なしの自動選定。
 
 ### 12.2 CLI互換性
 
@@ -546,7 +566,7 @@ OperationHistoryEntry {
 - bufferはsession 0件、snapshot以前からのsession、snapshot後の途中開始、複数sessionの重複、最古sessionだけの破棄、全session破棄で、session不在時間だけを減算することを検証する。
 - 破棄のlocalStorage保存失敗ではsessionとbuffer表示を維持し、server commit済みでlocal削除に失敗したsessionはbuffer計算上の計測中sessionから除外することを検証する。
 - 同じlogical dateのread snapshot、実績反映済みmutation snapshot、06:00を跨ぐlogical date更新を新たなbuffer基準とし、snapshot以前の壁時計時間を過剰補正しないことを検証する。
-- server mutation成功、競合、保存失敗、worker停止時のsession遷移を検証する。
+- 記録と2種類の完了についてserver mutation成功、競合、保存失敗、worker停止、多重送信防止、global・manual safety block時のsession遷移を検証する。
 - 各endpointの成功型がsnapshotを持ち、error型がsnapshotを持たず、clientがerror時に直前snapshotを維持することを検証する。
 - error codeごとの`retry_advice`がerror表と一致し、`manual_check`では同一requestを再送しないことを検証する。
 - 履歴の100件上限、local/server、成否、reload非永続化を検証する。
@@ -554,6 +574,8 @@ OperationHistoryEntry {
 ### 12.5 UI and integration
 
 - 「セッション」「一覧」、8日button、card、一覧row、色、時刻形式をcomponent testとbrowser目視で確認する。
+- 4操作buttonのlabel、ARIA名、意味別class、通常幅の2列配置、狭幅の1列配置を確認する。
+- 「計測を破棄して完了」の最初のclickでは通信せず、card単位の確認表示、キャンセル、確定時の1回だけのtyped callbackを確認する。
 - 33%、100%、133%、見積0、buffer正負の表示を確認する。
 - 通信matrixの各操作についてrequest件数を確認する。
 - 2件以上の同時計測とreload復元を確認する。

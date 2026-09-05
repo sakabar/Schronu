@@ -85,7 +85,13 @@ button:disabled {
     letter-spacing: 0.03em;
 }
 
-.tabs,
+.tabs {
+    display: flex;
+    gap: 0.25rem;
+    padding: 0.25rem 0.1rem 0;
+    border-bottom: 1px solid var(--line);
+}
+
 .date-pills {
     display: flex;
     gap: 0.5rem;
@@ -94,14 +100,39 @@ button:disabled {
     scrollbar-width: thin;
 }
 
-.tab-button,
+.tab-button {
+    position: relative;
+    flex: 0 0 auto;
+    margin-bottom: -1px;
+    border-color: transparent;
+    border-radius: 0.7rem 0.7rem 0 0;
+    background: transparent;
+    color: var(--muted);
+    padding: 0.7rem 1.2rem;
+}
+
+.tab-button:hover:not(:disabled) {
+    border-color: var(--line);
+    background: var(--surface-muted);
+    color: var(--ink);
+}
+
+.tab-button.is-selected,
+.tab-button.is-selected:hover:not(:disabled) {
+    z-index: 1;
+    border-color: var(--line);
+    border-bottom-color: var(--page);
+    background: var(--page);
+    box-shadow: inset 0 0.2rem 0 var(--green);
+    color: var(--green-dark);
+}
+
 .date-pill {
     flex: 0 0 auto;
     border-radius: 999px;
     padding-inline: 1.2rem;
 }
 
-.tab-button.is-selected,
 .date-pill.is-selected {
     border-color: var(--green-dark);
     background: var(--green);
@@ -263,18 +294,50 @@ button:disabled {
 .session-actions {
     grid-area: actions;
     display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
     gap: 0.45rem;
-    min-width: 8.5rem;
+    min-width: 18rem;
 }
 
-.session-actions button:nth-child(2) {
+.session-action-discard {
+    border-color: var(--muted);
+    color: var(--muted);
+}
+
+.session-action-record {
     border-color: var(--blue);
     color: var(--blue-dark);
 }
 
-.session-actions button:last-child {
+.session-action-complete {
     border-color: var(--green-dark);
     color: var(--green-dark);
+}
+
+.session-action-complete-without-recording {
+    border-color: var(--red);
+    color: var(--red);
+}
+
+.session-discard-completion-confirmation {
+    grid-area: actions;
+    max-width: 21rem;
+    border: 1px solid var(--red);
+    border-radius: 0.75rem;
+    background: var(--red-soft);
+    padding: 0.75rem;
+}
+
+.session-discard-completion-confirmation p {
+    margin: 0 0 0.65rem;
+    color: var(--red);
+    font-size: 0.9rem;
+}
+
+.session-confirmation-actions {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 0.45rem;
 }
 
 .task-list-view {
@@ -389,7 +452,8 @@ button:disabled {
     }
 
     .session-actions {
-        grid-template-columns: repeat(3, minmax(0, 1fr));
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        min-width: 0;
     }
 
     .session-actions button {
@@ -411,6 +475,10 @@ button:disabled {
     }
 
     .session-actions {
+        grid-template-columns: 1fr;
+    }
+
+    .session-confirmation-actions {
         grid-template-columns: 1fr;
     }
 
