@@ -268,6 +268,11 @@ button:disabled {
     min-width: 18rem;
 }
 
+.session-action-discard {
+    border-color: var(--muted);
+    color: var(--muted);
+}
+
 .session-action-record {
     border-color: var(--blue);
     color: var(--blue-dark);
