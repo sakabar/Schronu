@@ -199,7 +199,21 @@ fn snapshot作成失敗はdestinationもstagingも公開しない() {
         let error = create_snapshot_with_failure(&storage, &destination, now, point)
             .unwrap_err()
             .to_string();
+        let expected_operation = match point {
+            SnapshotFailurePoint::FileSync
+            | SnapshotFailurePoint::DirectorySync
+            | SnapshotFailurePoint::ParentSync => "Sync",
+            SnapshotFailurePoint::Read => "Read",
+            SnapshotFailurePoint::Write
+            | SnapshotFailurePoint::Permission
+            | SnapshotFailurePoint::Rename => "Write",
+            SnapshotFailurePoint::Copy => unreachable!(),
+        };
 
+        assert!(
+            error.contains(&format!("snapshot {expected_operation} failed")),
+            "{error}"
+        );
         assert!(error.contains(&format!("injected {point:?} failure")), "{error}");
         assert!(!destination.exists(), "{point:?}");
         assert!(
