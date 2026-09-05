@@ -12,12 +12,14 @@ use super::manifest::{
 use super::{SnapshotResourceLimits, SnapshotSummary, DEFAULT_RESOURCE_LIMITS};
 use crate::adapter::gateway::storage_content_integrity::{content_digest, DIGEST_ALGORITHM};
 use crate::adapter::gateway::storage_lock::{LockMode, StorageLock};
+use crate::adapter::gateway::storage_transaction::{recover, FileSystemStorageTransactionIo};
 use crate::adapter::gateway::task_repository::TaskRepository;
 use crate::application::interface::TaskRepositoryTrait;
 use chrono::{DateTime, Local};
 use std::ffi::{OsStr, OsString};
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use uuid::Uuid;
 use walkdir::{DirEntry, WalkDir};
 
@@ -154,6 +156,8 @@ fn create_snapshot_impl(
         SnapshotError::new(SnapshotOperation::AcquireLock, path, error)
     })?;
 
+    recover_storage(storage_directory)?;
+    scan_storage_entries(storage_directory, limits, |_, _, _| Ok(()))?;
     strict_load(storage_directory)?;
     let collected = collect_storage(storage_directory, io, limits)?;
     let revision = read_revision(&collected.files)?;
@@ -204,6 +208,11 @@ fn strict_load(storage: &Path) -> Result<(), SnapshotError> {
     let mut repository = TaskRepository::new(storage_text);
     repository
         .load()
+        .map_err(|error| SnapshotError::new(SnapshotOperation::RepositoryLoad, storage, error))
+}
+
+fn recover_storage(storage: &Path) -> Result<(), SnapshotError> {
+    recover(Arc::new(FileSystemStorageTransactionIo), storage)
         .map_err(|error| SnapshotError::new(SnapshotOperation::RepositoryLoad, storage, error))
 }
 
@@ -316,6 +325,75 @@ fn collect_storage(
     let mut directories = Vec::new();
     let mut files = Vec::new();
     let mut total_bytes = 0_u64;
+    scan_storage_entries(storage, limits, |path, relative, metadata| {
+        if metadata.is_dir() {
+            directories.push(CollectedDirectory {
+                path: relative.to_path_buf(),
+                permissions: metadata.permissions(),
+            });
+            return Ok(());
+        }
+
+        io.before(SnapshotFailurePoint::Read)
+            .map_err(|error| SnapshotError::new(SnapshotOperation::Read, path, error))?;
+        let mut source = fs::File::open(path)
+            .map_err(|error| SnapshotError::new(SnapshotOperation::Read, path, error))?;
+        let capacity = usize::try_from(metadata.len())
+            .map_err(|error| SnapshotError::new(SnapshotOperation::Read, path, error))?;
+        let mut bytes = Vec::new();
+        bytes
+            .try_reserve_exact(capacity)
+            .map_err(|error| SnapshotError::new(SnapshotOperation::Read, path, error))?;
+        source
+            .by_ref()
+            .take(
+                limits
+                    .file_bytes
+                    .min(limits.total_bytes - total_bytes)
+                    .saturating_add(1),
+            )
+            .read_to_end(&mut bytes)
+            .map_err(|error| SnapshotError::new(SnapshotOperation::Read, path, error))?;
+        limits.check(
+            path,
+            Some(relative),
+            super::error::SnapshotLimitKind::FileBytes,
+            limits.file_bytes,
+            bytes.len() as u64,
+        )?;
+        total_bytes = total_bytes.checked_add(bytes.len() as u64).ok_or_else(|| {
+            SnapshotError::limit(
+                path,
+                super::error::SnapshotLimitKind::PayloadBytes,
+                limits.total_bytes,
+                u64::MAX,
+                Some(relative.to_path_buf()),
+            )
+        })?;
+        limits.check(
+            path,
+            Some(relative),
+            super::error::SnapshotLimitKind::PayloadBytes,
+            limits.total_bytes,
+            total_bytes,
+        )?;
+        files.push(CollectedFile {
+            path: relative.to_path_buf(),
+            bytes,
+            permissions: metadata.permissions(),
+        });
+        Ok(())
+    })?;
+    Ok(CollectedStorage { directories, files })
+}
+
+fn scan_storage_entries(
+    storage: &Path,
+    limits: SnapshotResourceLimits,
+    mut visit: impl FnMut(&Path, &Path, &fs::Metadata) -> Result<(), SnapshotError>,
+) -> Result<(), SnapshotError> {
+    let mut file_count = 0_usize;
+    let mut total_bytes = 0_u64;
     let walker = WalkDir::new(storage)
         .follow_links(false)
         .sort_by_file_name()
@@ -347,12 +425,9 @@ fn collect_storage(
             ));
         }
         if metadata.is_dir() {
-            directories.push(CollectedDirectory {
-                path: relative,
-                permissions: metadata.permissions(),
-            });
+            visit(entry.path(), &relative, &metadata)?;
         } else if metadata.is_file() {
-            let observed_count = files.len().checked_add(1).ok_or_else(|| {
+            file_count = file_count.checked_add(1).ok_or_else(|| {
                 SnapshotError::limit(
                     entry.path(),
                     super::error::SnapshotLimitKind::FileCount,
@@ -366,7 +441,7 @@ fn collect_storage(
                 Some(&relative),
                 super::error::SnapshotLimitKind::FileCount,
                 limits.file_count as u64,
-                observed_count as u64,
+                file_count as u64,
             )?;
             limits.check(
                 entry.path(),
@@ -375,55 +450,7 @@ fn collect_storage(
                 limits.file_bytes,
                 metadata.len(),
             )?;
-            let observed_total = total_bytes.checked_add(metadata.len()).ok_or_else(|| {
-                SnapshotError::limit(
-                    entry.path(),
-                    super::error::SnapshotLimitKind::PayloadBytes,
-                    limits.total_bytes,
-                    u64::MAX,
-                    Some(relative.clone()),
-                )
-            })?;
-            limits.check(
-                entry.path(),
-                Some(&relative),
-                super::error::SnapshotLimitKind::PayloadBytes,
-                limits.total_bytes,
-                observed_total,
-            )?;
-            io.before(SnapshotFailurePoint::Read).map_err(|error| {
-                SnapshotError::new(SnapshotOperation::Read, entry.path(), error)
-            })?;
-            let mut source = fs::File::open(entry.path()).map_err(|error| {
-                SnapshotError::new(SnapshotOperation::Read, entry.path(), error)
-            })?;
-            let capacity = usize::try_from(metadata.len()).map_err(|error| {
-                SnapshotError::new(SnapshotOperation::Read, entry.path(), error)
-            })?;
-            let mut bytes = Vec::new();
-            bytes.try_reserve_exact(capacity).map_err(|error| {
-                SnapshotError::new(SnapshotOperation::Read, entry.path(), error)
-            })?;
-            source
-                .by_ref()
-                .take(
-                    limits
-                        .file_bytes
-                        .min(limits.total_bytes - total_bytes)
-                        .saturating_add(1),
-                )
-                .read_to_end(&mut bytes)
-                .map_err(|error| {
-                    SnapshotError::new(SnapshotOperation::Read, entry.path(), error)
-                })?;
-            limits.check(
-                entry.path(),
-                Some(&relative),
-                super::error::SnapshotLimitKind::FileBytes,
-                limits.file_bytes,
-                bytes.len() as u64,
-            )?;
-            total_bytes = total_bytes.checked_add(bytes.len() as u64).ok_or_else(|| {
+            total_bytes = total_bytes.checked_add(metadata.len()).ok_or_else(|| {
                 SnapshotError::limit(
                     entry.path(),
                     super::error::SnapshotLimitKind::PayloadBytes,
@@ -439,11 +466,7 @@ fn collect_storage(
                 limits.total_bytes,
                 total_bytes,
             )?;
-            files.push(CollectedFile {
-                path: relative,
-                bytes,
-                permissions: metadata.permissions(),
-            });
+            visit(entry.path(), &relative, &metadata)?;
         } else {
             return Err(invalid(
                 entry.path(),
@@ -451,7 +474,7 @@ fn collect_storage(
             ));
         }
     }
-    Ok(CollectedStorage { directories, files })
+    Ok(())
 }
 
 fn should_descend(storage: &Path, entry: &DirEntry) -> bool {

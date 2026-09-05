@@ -1,4 +1,7 @@
-use crate::adapter::gateway::storage_snapshot::create_snapshot_at;
+use crate::adapter::gateway::storage_snapshot::{
+    create_snapshot_at, create_snapshot_with_limits, SnapshotLimitKind,
+    SnapshotResourceLimits,
+};
 use crate::adapter::gateway::storage_transaction::{
     prepare, FileSystemStorageTransactionIo, WriteRequest,
 };
@@ -139,4 +142,48 @@ fn snapshotはrecovery後の不正yamlをstrict_loadで拒否して公開しな�
         format!("{new_revision}\n")
     );
     assert!(!storage.join(".schronu-transactions/.active").exists());
+}
+
+#[test]
+fn snapshotはrecovery後のstorageをresource検査してからstrict_loadする() {
+    let root = TestDirectory::new("recovery-resource-preflight");
+    let storage = root.child("source");
+    let destination = root.child("snapshot");
+    let now = Local.with_ymd_and_hms(2026, 9, 5, 12, 0, 0).unwrap();
+    let (_, project_yaml) = create_saved_repository(&storage, now);
+    let oversized_invalid_project = vec![b'['; 129];
+    let new_revision = Uuid::new_v4();
+    let io = Arc::new(RecordingIo::new(vec![FaultRule {
+        operation: RecordingOperation::Rename,
+        path_matcher: PathMatcher::FileName("project.yaml"),
+        occurrence: 1,
+        error_kind: std::io::ErrorKind::Other,
+        error_message: "injected interruption after commit marker",
+    }]));
+    let prepared = prepare(
+        io,
+        &storage,
+        new_revision,
+        &[WriteRequest {
+            target_path: &project_yaml,
+            bytes: &oversized_invalid_project,
+        }],
+    )
+    .unwrap();
+    prepared.commit().unwrap_err();
+    let limits = SnapshotResourceLimits::new(1_024, 10, 128, 1_024, 4_096, 64);
+
+    let error =
+        create_snapshot_with_limits(&storage, &destination, now, limits).unwrap_err();
+
+    assert_eq!(error.limit_kind(), Some(SnapshotLimitKind::FileBytes));
+    assert_eq!(error.limit_value(), Some(128));
+    assert_eq!(error.observed_value(), Some(129));
+    assert_eq!(
+        error.limit_path(),
+        Some(project_yaml.strip_prefix(&storage).unwrap())
+    );
+    assert_eq!(fs::read(&project_yaml).unwrap(), oversized_invalid_project);
+    assert!(!storage.join(".schronu-transactions/.active").exists());
+    assert!(!destination.exists());
 }
