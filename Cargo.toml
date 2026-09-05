@@ -3,6 +3,11 @@ name = "schronu"
 version = "0.1.0"
 edition = "2021"
 
+[workspace]
+members = [".", "schronu-web"]
+default-members = ["."]
+resolver = "2"
+
 [features]
 benchmarking = []
 

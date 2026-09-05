@@ -9,21 +9,21 @@ use super::renderer::{
     TaskListDisplay, TaskListIconMode, TaskListMetricsDisplay, TaskListRow, TaskListTaskRow,
     TreeDisplay, BAND_SECONDS_PER_DAY,
 };
-use chrono::{DateTime, Datelike, Duration, Local, NaiveDate};
-use regex::Regex;
-use schronu::adapter::gateway::schronu_config::SchronuConfig;
-use schronu::application::daily_capacity::{
+use crate::adapter::gateway::schronu_config::SchronuConfig;
+use crate::application::daily_capacity::{
     calculate_daily_rho_diff_hours,
     calculate_free_time_minutes_for_logical_date_with_end_of_day_offset_minutes,
     calculate_full_day_free_time_minutes_for_logical_date_with_end_of_day_offset_minutes,
     try_logical_date, try_logical_date_end, try_next_logical_date_start, RHO_GOAL,
 };
-use schronu::application::interface::{FreeTimeManagerTrait, TaskRepositoryTrait};
-use schronu::application::schedule_use_case::get_schedule;
-use schronu::application::task_use_case::ApplicationError;
-use schronu::entity::task::{
+use crate::application::interface::{FreeTimeManagerTrait, TaskRepositoryTrait};
+use crate::application::schedule_use_case::get_schedule;
+use crate::application::task_use_case::ApplicationError;
+use crate::entity::task::{
     extract_leaf_tasks_from_project, round_up_sec_as_minute, ProjectCategory, TaskHandle,
 };
+use chrono::{DateTime, Datelike, Duration, Local, NaiveDate};
+use regex::Regex;
 use std::cmp::{max, min};
 use std::collections::HashMap;
 use unicode_width::UnicodeWidthChar;

@@ -2217,6 +2217,111 @@ fn test_execute_all_締切順の予定時刻を表示する() {
     );
 }
 
+const EXPECTED_TODAY_PLAIN_TEXT: &str = concat!(
+    "0000 00000000-0000-0000-0000-000020260811 ! ____-00:30 ",
+    "08/11(火)-13:00~13:30 0 30 07 資 Web表示契約task\n",
+    "---- ------------------------------------ - ---------- ",
+    "--------------------- - -- -- 60分間の空き時間\n",
+    "\n",
+    "予定カテゴリ: 獲得 0.0時間(0% | 0%) / 維持 0.0時間(0% | 0%) / ",
+    "回復 0.0時間(0% | 0%) / 投資 0.5時間(25% | 25%) / ",
+    "消費 0.0時間(0% | 25%) / 未分類 0.0時間(0% | 25%)\n",
+    "\n",
+    "残り拘束時間は0.0時間です\n",
+    "完了見込み日時は0.5時間後の2026/08/11 12:30:00です\n",
+    "rep ρ = (0.50 + 0.00) / (0.50 + 0.00 + 12 + 0/60) = 0.04, Lq = 0.0\n",
+    "one ρ = (0.50 + 0.00) / (0.50 + 0.00 + 12 + 0/60) = 0.04, Lq = 0.0\n",
+    "\n",
+);
+
+#[test]
+fn test_execute_今_plain出力の全文を固定する() {
+    let now = Local.with_ymd_and_hms(2026, 8, 11, 12, 0, 0).unwrap();
+    let task = TaskHandle::with_identity(
+        "Web表示契約task",
+        Uuid::from_u128(0x2026_0811),
+        now,
+    )
+    .unwrap();
+    task.set_estimated_work_seconds(30 * 60).unwrap();
+    task.set_start_time(now + Duration::hours(1)).unwrap();
+    task.set_fixed_start(true).unwrap();
+    task.set_deadline_time_opt(Some(now + Duration::hours(2)))
+        .unwrap();
+    task.set_priority(7).unwrap();
+    task.set_project_category_opt(Some(ProjectCategory::Investment))
+        .unwrap();
+    let task_id = task.get_id().unwrap();
+    let mut task_repository = TestTaskRepository::new(task, now);
+    let mut free_time_manager = TestFreeTimeManager::with_free_minutes(120);
+    let mut focused_task_id_opt = Some(task_id);
+    let mut stdout = TestWriter::new_for_pipe();
+
+    execute(
+        &mut stdout,
+        &mut task_repository,
+        &mut free_time_manager,
+        &mut focused_task_id_opt,
+        &now,
+        "今",
+    )
+    .unwrap();
+
+    let actual = stdout.into_string();
+    assert!(!actual.contains("\x1b["));
+    assert_eq!(actual, EXPECTED_TODAY_PLAIN_TEXT);
+}
+
+#[test]
+fn cliとwebの今表示は同じrepositoryとfree_time入力で一致する() {
+    let now = Local.with_ymd_and_hms(2026, 8, 11, 12, 0, 0).unwrap();
+    let repository_fixture = || {
+        let task = TaskHandle::with_identity(
+            "CLI/Web一致契約task",
+            Uuid::from_u128(0x2026_0812),
+            now,
+        )
+        .unwrap();
+        task.set_estimated_work_seconds(45 * 60).unwrap();
+        task.set_start_time(now + Duration::minutes(30)).unwrap();
+        task.set_fixed_start(true).unwrap();
+        task.set_deadline_time_opt(Some(now + Duration::hours(2)))
+            .unwrap();
+        task.set_priority(8).unwrap();
+        task.set_project_category_opt(Some(ProjectCategory::Investment))
+            .unwrap();
+        let task_id = task.get_id().unwrap();
+        (TestTaskRepository::new(task, now), task_id)
+    };
+    let (mut cli_repository, cli_task_id) = repository_fixture();
+    let (mut web_repository, _) = repository_fixture();
+    let mut cli_free_time_manager = TestFreeTimeManager::with_free_minutes(180);
+    let mut web_free_time_manager = TestFreeTimeManager::with_free_minutes(180);
+    let mut focused_task_id_opt = Some(cli_task_id);
+    let mut cli_writer = TestWriter::new_for_pipe();
+
+    execute(
+        &mut cli_writer,
+        &mut cli_repository,
+        &mut cli_free_time_manager,
+        &mut focused_task_id_opt,
+        &now,
+        "今",
+    )
+    .unwrap();
+    let cli_text = cli_writer.into_string();
+    let web_text = super::today_text::render_today_text(
+        &mut web_repository,
+        &mut web_free_time_manager,
+        &SchronuConfig::default(),
+    )
+    .unwrap();
+
+    assert!(!cli_text.contains("\x1b["));
+    assert!(!web_text.contains("\x1b["));
+    assert_eq!(web_text, cli_text);
+}
+
 #[test]
 fn test_execute_new_新規projectを翌朝までpendingで作成する() {
     let now = Local.with_ymd_and_hms(2026, 8, 11, 12, 0, 0).unwrap();
@@ -4697,7 +4802,7 @@ fn test_execute_flatten_15分以下fragmentを避けたtaskを丸ごと翌論理
         Local.with_ymd_and_hms(2026, 8, 14, 0, 45, 0).unwrap(),
     ));
     let schedule_repository = TestTaskRepository::new(root.clone(), now);
-    let target_segments = schronu::application::schedule_use_case::get_schedule(
+    let target_segments = crate::application::schedule_use_case::get_schedule(
         &schedule_repository,
     )
     .unwrap()

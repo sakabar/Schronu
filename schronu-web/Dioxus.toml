@@ -1,0 +1,8 @@
+[application]
+name = "schronu-web"
+
+[web.app]
+title = "schronu 今"
+
+[web.watcher]
+watch_path = ["src", "assets"]

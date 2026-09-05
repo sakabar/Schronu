@@ -11,7 +11,7 @@ use super::interactive::{
 use chrono::{FixedOffset, TimeZone, Timelike};
 
 #[cfg(test)]
-use schronu::application::interface::{
+use crate::application::interface::{
     BusyTimeSlotRegistrationError, ProjectRegistrationError, RepositoryReloadOutcome,
     TaskRepositoryOperation,
 };
@@ -33,19 +33,6 @@ use std::time::Instant;
 
 #[cfg(test)]
 const DEFAULT_LOWEST_PRIORITY_RECENT_DAYS: i64 = 0;
-
-#[cfg(test)]
-trait TaskHandleTestExt {
-    fn create_as_last_child(&self, task_attr: TaskAttr) -> TaskHandle;
-}
-
-#[cfg(test)]
-impl TaskHandleTestExt for TaskHandle {
-    fn create_as_last_child(&self, task_attr: TaskAttr) -> TaskHandle {
-        self.create_child(task_attr)
-            .expect("test hierarchy child creation must succeed")
-    }
-}
 
 #[cfg(test)]
 fn next_test_task_id() -> Uuid {
@@ -763,7 +750,7 @@ impl TaskRepositoryTrait for TestTaskRepository {
         vec![&self.task]
     }
 
-    fn load(&mut self) -> Result<(), schronu::application::interface::TaskRepositoryError> {
+    fn load(&mut self) -> Result<(), crate::application::interface::TaskRepositoryError> {
         self.operation_trace.borrow_mut().push("load");
         self.load_attempt_count
             .set(self.load_attempt_count.get() + 1);
@@ -795,7 +782,7 @@ impl TaskRepositoryTrait for TestTaskRepository {
         Ok(RepositoryReloadOutcome::Reloaded)
     }
 
-    fn save(&self) -> Result<(), schronu::application::interface::TaskRepositoryError> {
+    fn save(&self) -> Result<(), crate::application::interface::TaskRepositoryError> {
         self.operation_trace.borrow_mut().push("save");
         self.save_attempt_count
             .set(self.save_attempt_count.get() + 1);
@@ -1367,7 +1354,7 @@ impl TaskListDisplayRow {
                     scheduled_start,
                     scheduled_end: scheduled_start + Duration::seconds(work_seconds),
                     priority_rank,
-                    estimated_minutes: schronu::entity::task::round_up_sec_as_minute(work_seconds),
+                    estimated_minutes: crate::entity::task::round_up_sec_as_minute(work_seconds),
                     project_number_priority: priority,
                     project_category: project_category_opt,
                     task_name,

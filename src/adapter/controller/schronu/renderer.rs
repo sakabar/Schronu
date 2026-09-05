@@ -1,5 +1,5 @@
+use crate::entity::task::{ProjectCategory, TaskAttr, TaskTreeError};
 use chrono::{DateTime, Datelike, Duration, Local, NaiveDate, Weekday};
-use schronu::entity::task::{ProjectCategory, TaskAttr, TaskTreeError};
 use std::io::{IsTerminal, Stdout, Write};
 use termion::color;
 use termion::raw::RawTerminal;

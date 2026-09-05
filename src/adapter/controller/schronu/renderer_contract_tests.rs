@@ -8,8 +8,8 @@ use super::renderer::{
     TaskListDisplay, TaskListIconMode, TaskListMetricsDisplay, TaskListRow, TaskListTaskRow,
     TreeDisplay,
 };
+use crate::entity::task::{ProjectCategory, TaskAttr};
 use chrono::{Local, NaiveDate, TimeZone, Weekday};
-use schronu::entity::task::{ProjectCategory, TaskAttr};
 use std::io::Write;
 use uuid::Uuid;
 

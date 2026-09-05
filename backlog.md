@@ -79,6 +79,7 @@
 | TD-038 | P2 | 未着手 | L | MCPのtask一覧に検索・paginationがなく、大規模storageで応答が無制限に増える |
 | TD-039 | P2 | 未着手 | L | 稼働中processを止めずに整合したbackupを作成・検証・restoreする手段がない |
 | TD-040 | P0 | 完了 | S | 小数秒付き現在時刻でslack indexとschedulerの論理時刻が乖離する |
+| TD-041 | P2 | 未着手 | L | task treeとscheduleの再帰処理が大規模storageでlarge stackを必要とする |
 
 ## 詳細
 
@@ -1642,6 +1643,42 @@
 - segmentの`scheduled_work_seconds`、taskの残作業秒数、slack需要は従来の整数秒契約を維持する。
 - `debug_assert_eq!`を残し、内部不変条件の再検出を継続する。
 - Web branchで別途追跡する再帰処理とstack使用量の改善は、本修正と独立した変更として扱う。
+
+### TD-041: task treeとscheduleの再帰処理が大規模storageでlarge stackを必要とする
+
+- 分類: `設計 / プロセス継続性`
+- 優先度: `P2`
+- 概算規模: `L`
+
+#### 現状と根拠
+
+- task treeの読込、走査、schedule・view生成には再帰処理が残っており、大規模storageでは通常のthread stackを使い切る。
+- `schronu-web`は`TodayTextService`を実行する専用worker threadへ32MiBのstackを予約し、実データ処理時のstack overflowを防御している。
+- この予約はWeb serverのprocess abortを防ぐための局所的な対策であり、再帰処理そのもののstack消費量や入力規模に対する上限は解消していない。
+
+#### 影響
+
+- task数やtree深度が現在の代表値を超えると、32MiBを予約したWeb workerでもstack overflowへ再到達する可能性がある。
+- CLIなど別の実行経路は各threadのstack policyへ依存し、同じstorageに対するprocess継続性が実行環境ごとに異なり得る。
+- Web固有のstack予約が根本原因を覆い隠すため、再帰箇所を追加すると必要stack量を予測しにくい。
+
+#### 推奨する改善方針
+
+- repository load、task tree traversal、schedule生成、view生成を個別に計測し、stack消費が支配的な再帰箇所を特定する。
+- 現行の走査順序とerror契約をcharacterization testで固定してから、対象ごとに明示的な`Vec` stackを使う反復処理へ段階的に置換する。
+- Web workerの32MiB指定は移行中の防御として維持し、各置換後に2MiB固定stackでcommit管理済みfixtureを検証する。実データ確認は補助acceptanceとして別に行う。
+
+#### 完了条件
+
+- `SchedulingFixture::build(FixtureSize::Typical)`の26,378 tasks・最大depth 210と、その4倍のtask規模を持つ`FixtureSize::Stress`が、2MiB固定stackの専用threadでstack overflowせず処理できる。
+- repository load、tree traversal、schedule・view生成の順序、出力、error情報が置換前後で一致する。
+- `schronu-web`固有の32MiB stack指定を削除し、root/Webの全品質gateと実データacceptanceがGreenになる。
+- 実データはfixture契約の代替にせず、Web初回表示と手動更新が成功する補助acceptanceとして確認する。
+
+#### 依存関係
+
+- 今回の`schronu-web` module分割には混ぜず、再帰処理ごとに独立したRed/Green cycleで進める。
+- 公開API、storage schema、lock metadataを変更する必要が生じた場合は、互換性設計を別commitで先に固定する。
 
 ## 推奨着手順
 

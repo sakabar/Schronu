@@ -1,7 +1,7 @@
+use crate::application::task_use_case::{estimated_work_seconds_from_minutes, ApplicationError};
+use crate::entity::datetime::parse_local_datetime;
+use crate::entity::task::{read_project_category, ProjectCategory};
 use regex::Regex;
-use schronu::application::task_use_case::{estimated_work_seconds_from_minutes, ApplicationError};
-use schronu::entity::datetime::parse_local_datetime;
-use schronu::entity::task::{read_project_category, ProjectCategory};
 use uuid::Uuid;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

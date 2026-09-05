@@ -13,6 +13,7 @@ const LOCK_RETRY_INTERVAL: Duration = Duration::from_millis(10);
 pub enum LockMode {
     Cli,
     Mcp,
+    Web,
 }
 
 impl fmt::Display for LockMode {
@@ -20,6 +21,7 @@ impl fmt::Display for LockMode {
         match self {
             Self::Cli => write!(formatter, "cli"),
             Self::Mcp => write!(formatter, "mcp"),
+            Self::Web => write!(formatter, "web"),
         }
     }
 }
@@ -261,6 +263,31 @@ mod tests {
         assert!(metadata.contains(&format!("pid={}", std::process::id())));
         assert!(metadata.contains("mode=cli"));
         assert!(metadata.contains("started_at="));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn storage_lock_web取得時にmetadataへmodeを記録する() {
+        let directory = TestDir::new();
+
+        let _guard = StorageLock::acquire(directory.path(), LockMode::Web).unwrap();
+
+        let metadata = fs::read_to_string(directory.path().join(".lock")).unwrap();
+        assert!(metadata.contains("mode=web"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn storage_lock_webはcliとmcpと同じlockで競合する() {
+        let directory = TestDir::new();
+        let _web_lock = StorageLock::acquire(directory.path(), LockMode::Web).unwrap();
+
+        for mode in [LockMode::Cli, LockMode::Mcp] {
+            let error = StorageLock::acquire(directory.path(), mode).unwrap_err();
+
+            assert_eq!(error.kind(), StorageLockErrorKind::Contended);
+            assert!(error.holder_metadata().unwrap().contains("mode=web"));
+        }
     }
 
     #[cfg(unix)]

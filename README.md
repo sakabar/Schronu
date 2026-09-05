@@ -20,6 +20,41 @@ cargo clippy --locked --all-targets -- -D warnings
 
 Rust versionまたは依存関係を更新する場合は、`rust-toolchain.toml`と`Cargo.lock`を同じ専用PRで更新し、上記の全検証を通してください。
 
+### schronu-web
+
+`schronu-web`は、CLIの`今`コマンドと同じplain textをbrowserへread-onlyで表示するDioxus fullstack applicationです。初回表示後は60秒ごとに自動更新し、`更新`buttonでも手動更新できます。更新中はrequestを重複させません。取得に失敗した場合は直前の成功結果を残したままerrorと`再試行`buttonを表示します。
+
+開発環境にはDioxus CLI 0.7.10とWASM targetが必要です。
+
+```shell
+rustup target add wasm32-unknown-unknown
+cargo install dioxus-cli --version 0.7.10 --locked
+~/.cargo/bin/dx --version
+```
+
+`~/.cargo/bin/dx --version`が`dioxus 0.7.10`を表示することを確認してください。Homebrew版Denoも`dx`という名前の`deno x`commandを提供するため、PATHの順序によっては裸の`dx`がDioxus CLIを指しません。以下では名前の衝突を避けるため、CargoがinstallしたDioxus CLIをabsolute pathで実行します。
+
+repository rootから次のように起動します。task storageと設定はCLI・MCPと同じ`SCHRONU_STORAGE_DIR`、`SCHRONU_CONFIG_PATH`で指定し、相対pathの解釈違いを避けるためabsolute pathを推奨します。
+
+```shell
+SCHRONU_STORAGE_DIR=/absolute/path/to/tasks \
+SCHRONU_CONFIG_PATH=/absolute/path/to/schronu.yaml \
+~/.cargo/bin/dx serve --locked --web --package schronu-web
+```
+
+起動後は`http://127.0.0.1:8080`を開きます。application serverは`127.0.0.1`へ固定しており、認証は設けていません。Dioxus CLIの`serve`へ外部addressを指定しないでください。
+
+このMVPは`今`のplain text表示だけを対象とします。task操作、focus操作、HTML table、filter、paging、revision監視、配布用bundleは対象外です。
+
+Web側だけを検証するcommandは次のとおりです。
+
+```shell
+cargo test --locked -p schronu-web --no-default-features --features server
+cargo clippy --locked -p schronu-web --no-default-features --features server --all-targets -- -D warnings
+cargo check --locked -p schronu-web --no-default-features --features web --target wasm32-unknown-unknown
+~/.cargo/bin/dx build --locked --web --package schronu-web
+```
+
 ### testの責務とfixture配置
 
 unit testはmodule privateな振る舞いを検証します。大規模なtest suiteは製品fileと同じdirectoryの`*_tests.rs`へ置き、`#[cfg(test)]`付きの`#[path = "..."] mod tests;`または`include!("...");`から読み込んで、従来のtest module pathを維持します。
@@ -103,8 +138,8 @@ cargo bench --locked --features benchmarking --bench scheduling -- stress flatte
 * 通知機能
   * うるさく思ってオフにされるのがオチ。あるいは、通知に気付いても無視するか。
 * 複数の端末でのタスク情報の同期
-  * ネットワークによる通信は[crates.io](https://crates.io/)からRustのライブラリをダウンロードしてくることのみ
-  * その他は一切ネットワークを通した送受信を行わないため、セキュリティ的に安全
+  * `schronu-web`はlocalhost内でbrowserと通信するが、外部端末との同期は行わない
+  * task dataを外部serviceへ送信しない
 
 ## MCP server
 
@@ -129,7 +164,7 @@ SCHRONU_STORAGE_DIR=/absolute/path/to/tasks SCHRONU_CONFIG_PATH=/absolute/path/t
 
 ### 設定ファイル
 
-`SCHRONU_CONFIG_PATH`には任意の設定YAMLのabsolute pathを指定できます。CLIの`schronu`とMCP serverの`schronu-mcp`は、ともに起動時に同じ設定を読み込みます。未指定時は従来の既定値で動作します。指定したfileが読めない、YAMLが壊れている、未知のキーや不正な値がある場合は、意図しない既定値でtaskを操作しないよう起動を停止します。
+`SCHRONU_CONFIG_PATH`には任意の設定YAMLのabsolute pathを指定できます。CLIの`schronu`とMCP serverの`schronu-mcp`は起動時に、`schronu-web`は最初の表示取得時に同じ設定を読み込みます。未指定時は従来の既定値で動作します。指定したfileが読めない、YAMLが壊れている、未知のキーや不正な値がある場合、CLIとMCP serverは起動を停止し、Webは画面へerrorを表示します。
 
 仕事用設定の例です。
 
@@ -259,9 +294,9 @@ clientごとの設定形式に合わせて、commandと環境変数を次のよ�
 
 write toolの保存に失敗すると、memory上のrepositoryとfileの状態が一致している保証がありません。失敗したrequestには`repository_save_failed`、同一sessionの後続`tools/call`には`repository_state_uncertain`と`recovery: "restart_server"`を返します。そのsessionを継続利用せず、MCP serverを再起動してrepositoryをfileから読み直してください。
 
-### CLIとの排他lock
+### CLI・MCP・Webの排他lock
 
-CLIとMCP serverは保存先直下の`.lock`へ同じOS advisory lockを取得します。CLIは起動時、60秒ごとの再描画、command実行時だけlockを取得します。command実行時はrepository cacheの確認、command実行、saveまで保持してから解放し、成功したcommandは即時保存します。MCP serverは`tools/call`ごとにlockを取得し、repository cacheの確認、tool実行、必要ならsave、response構築まで保持してから解放します。CLIと複数のMCP processはidle中に共存でき、storage操作だけが直列化されます。`.lock`には`pid`、`started_at`、`mode`(`cli`または`mcp`)が記録され、`started_at`はそのstorage操作がlockを取得した時刻です。
+CLI、MCP server、Web serverは保存先直下の`.lock`へ同じOS advisory lockを取得します。CLIは起動時、60秒ごとの再描画、command実行時だけlockを取得します。command実行時はrepository cacheの確認、command実行、saveまで保持してから解放し、成功したcommandは即時保存します。MCP serverは`tools/call`ごとにlockを取得し、repository cacheの確認、tool実行、必要ならsave、response構築まで保持してから解放します。Web serverは初回表示、60秒ごとの自動更新、手動更新ごとにlockを取得し、repositoryとbusy time slotsを読み込んでplain textを生成してから解放します。各processはidle中に共存でき、storage操作だけが直列化されます。`.lock`には`pid`、`started_at`、`mode`(`cli`、`mcp`、`web`)が記録され、`started_at`はそのstorage操作がlockを取得した時刻です。
 
 新規projectのdirectory名は`YYYYMMDD-{project名}-{root UUID}`形式です。project名部分は可読性のための補助情報であり、URL以降の除去、`/`から`-`への置換、filesystemのcomponent長に収めるためのUTF-8境界での短縮を行います。一意なidentityには省略しないhyphenated形式のroot UUIDを使用するため、同日・同名や変換後に同名となるprojectも別directoryへ保存されます。従来の`YYYYMMDD-{project名}`形式もそのまま読み込み、既存directoryを新形式へ自動renameしません。
 
