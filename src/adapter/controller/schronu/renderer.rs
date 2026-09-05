@@ -820,9 +820,7 @@ pub(super) fn format_focus_progress(
         return format!("[{}] --%", "-".repeat(FOCUS_PROGRESS_BAR_SEGMENTS));
     };
     let filled_segments = percentage.min(FOCUS_PROGRESS_BAR_SEGMENTS as i128) as usize;
-    let overflow_segments = (percentage - 100)
-        .max(0)
-        .min(FOCUS_PROGRESS_BAR_SEGMENTS as i128) as usize;
+    let overflow_segments = (percentage - 100).max(0) as usize;
     format!(
         "[{}{}]{} {}%",
         "█".repeat(filled_segments),
