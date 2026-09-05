@@ -634,6 +634,28 @@ fn latest_readの古いsnapshotも受信履歴へ記録する() {
     );
 }
 
+#[test]
+fn latest_listは古い同一logical_dateのsnapshotだけ無視してrowsを適用する() {
+    let storage = FakeStorage::default();
+    let mut state = load_client_state(&storage, 0).unwrap();
+    let bootstrap_id = bootstrap_effect(state.request_bootstrap());
+    state.apply_bootstrap_result(bootstrap_id, Ok(snapshot("2026-09-05", 200)));
+    let list_id = list_effect(state.request_list("2026-09-06")).0;
+
+    state.apply_list_result(
+        list_id,
+        "2026-09-06",
+        Ok(WebSuccess {
+            snapshot: snapshot("2026-09-05", 100),
+            data: vec![row(TASK_ID, 0)],
+        }),
+    );
+
+    assert_eq!(state.snapshot().unwrap().observed_at_epoch_ms, 200);
+    assert_eq!(state.selected_logical_date(), Some("2026-09-06"));
+    assert_eq!(state.scheduled_rows()[0].task.task_id, TASK_ID);
+}
+
 #[derive(Default)]
 struct FakeStorage {
     value: RefCell<Option<String>>,
