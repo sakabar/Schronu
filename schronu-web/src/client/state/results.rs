@@ -72,9 +72,7 @@ impl ClientState {
         }
         match result {
             Ok(success) => {
-                if self.apply_snapshot(success.snapshot).is_none() {
-                    return ClientEffect::None;
-                }
+                let _ = self.apply_snapshot(success.snapshot);
                 self.auto_session_empty = success.data.is_none();
                 self.record_server(
                     Operation::AutoSession,
