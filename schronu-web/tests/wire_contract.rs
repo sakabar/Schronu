@@ -165,6 +165,21 @@ fn error_codeとretry_adviceはsnake_case文字列として往復する() {
     );
 }
 
+#[test]
+fn 未知のweb_error_codeもerror全体を壊さず保持する() {
+    let unknown_error = json!({
+        "code": "future_server_error",
+        "message": "A newer server reported an unknown error",
+        "retry_advice": "manual_check"
+    });
+
+    let decoded: WebError = serde_json::from_value(unknown_error.clone()).unwrap();
+
+    assert_eq!(serde_json::to_value(&decoded).unwrap(), unknown_error);
+    assert_eq!(decoded.message, "A newer server reported an unknown error");
+    assert_eq!(decoded.retry_advice, RetryAdvice::ManualCheck);
+}
+
 fn assert_json_round_trip<T>(value: &T, expected_json: serde_json::Value)
 where
     T: Clone + std::fmt::Debug + Eq + Serialize + DeserializeOwned,
