@@ -261,6 +261,34 @@ fn mutation成功時だけsessionを消し履歴を最新100件へ制限する()
         .any(|entry| entry.summary.contains("network detail")));
 }
 
+#[test]
+fn repository_state_uncertain後はpage全体のmutationを停止する() {
+    let storage = FakeStorage::default();
+    let mut state = state_with_sessions(&storage, &[TASK_ID, OTHER_TASK_ID]);
+    assert!(matches!(
+        state.begin_record_session(TASK_ID),
+        ClientEffect::RecordSession(_)
+    ));
+
+    state.apply_record_result(
+        &storage,
+        TASK_ID,
+        Err(ServerFailure::Operation(web_error(
+            web_error_codes::REPOSITORY_STATE_UNCERTAIN,
+            RetryAdvice::ManualCheck,
+        ))),
+    );
+
+    assert_eq!(
+        state.begin_record_session(OTHER_TASK_ID),
+        ClientEffect::None
+    );
+    assert_eq!(
+        state.begin_complete_session(OTHER_TASK_ID),
+        ClientEffect::None
+    );
+}
+
 #[derive(Default)]
 struct FakeStorage {
     value: RefCell<Option<String>>,
