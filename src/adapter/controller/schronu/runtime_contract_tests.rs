@@ -2247,6 +2247,35 @@ fn test_execute_all_締切順の予定時刻を表示する() {
     );
 }
 
+#[test]
+fn test_execute_all_締切差をlogical_date単位でd列へ表示する() {
+    let now = Local.with_ymd_and_hms(2026, 9, 6, 10, 0, 0).unwrap();
+    let task = TaskHandle::with_identity(
+        "logical date締切表示",
+        Uuid::from_u128(0x2026_0906),
+        now,
+    )
+    .unwrap();
+    task.set_estimated_work_seconds(30 * 60).unwrap();
+    task.set_start_time(Local.with_ymd_and_hms(2026, 9, 6, 17, 30, 0).unwrap())
+        .unwrap();
+    task.set_fixed_start(true).unwrap();
+    task.set_deadline_time_opt(Some(
+        Local.with_ymd_and_hms(2026, 9, 7, 20, 0, 0).unwrap(),
+    ))
+    .unwrap();
+
+    let result = execute_command_for_test(task, now, None, "全");
+    let task_line = result
+        .output
+        .lines()
+        .find(|line| line.contains("logical date締切表示"))
+        .expect("task row");
+    let columns = task_line.split_whitespace().collect::<Vec<_>>();
+
+    assert_eq!(columns[3], "_____-001D");
+}
+
 const EXPECTED_TODAY_PLAIN_TEXT: &str = concat!(
     "0000 00000000-0000-0000-0000-000020260811 ! ____-00:30 ",
     "08/11(火)-13:00~13:30 0 30 07 資 Web表示契約task\n",

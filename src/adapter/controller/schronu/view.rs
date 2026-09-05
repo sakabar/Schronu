@@ -61,34 +61,39 @@ fn format_deadline_remaining_time(
     deadline_time_opt: Option<&DateTime<Local>>,
     end_datetime: DateTime<Local>,
     last_synced_time: DateTime<Local>,
-    next_logical_date_start: DateTime<Local>,
-) -> String {
-    if let Some(deadline_time) = deadline_time_opt {
-        if *deadline_time < next_logical_date_start {
-            let breaking_minutes = (end_datetime - deadline_time).num_minutes().abs();
-            let breaking_hh = breaking_minutes / 60;
-            let breaking_mm = breaking_minutes % 60;
+) -> Result<String, ApplicationError> {
+    let Some(deadline_time) = deadline_time_opt else {
+        return Ok("____/__/__".to_string());
+    };
+    let difference_minutes = (end_datetime - deadline_time).num_minutes().abs();
+    let difference_hours = difference_minutes / 60;
+    let remaining_minutes = difference_minutes % 60;
 
-            if *deadline_time < last_synced_time {
-                format!("+{:02}:{:02}ASAP", breaking_hh, breaking_mm)
-            } else if *deadline_time < end_datetime {
-                format!("+{:02}:{:02}____", breaking_hh, breaking_mm)
-            } else {
-                format!("____-{:02}:{:02}", breaking_hh, breaking_mm)
-            }
-        } else {
-            let deadline_leeway_days = (*deadline_time - end_datetime).num_days().abs();
+    if *deadline_time < last_synced_time {
+        return Ok(format!(
+            "+{:02}:{:02}ASAP",
+            difference_hours, remaining_minutes
+        ));
+    }
 
-            if deadline_leeway_days == 0 {
-                "________0D".to_string()
-            } else if *deadline_time > end_datetime {
-                format!("_____-{:03}D", deadline_leeway_days)
-            } else {
-                format!("_____+{:03}D", deadline_leeway_days)
-            }
-        }
+    let deadline_logical_date = try_logical_date(*deadline_time)?;
+    let end_logical_date = try_logical_date(end_datetime)?;
+    let logical_date_difference = (deadline_logical_date - end_logical_date).num_days();
+
+    if logical_date_difference > 0 {
+        Ok(format!("_____-{:03}D", logical_date_difference))
+    } else if logical_date_difference < 0 {
+        Ok(format!("_____+{:03}D", logical_date_difference.abs()))
+    } else if *deadline_time < end_datetime {
+        Ok(format!(
+            "+{:02}:{:02}____",
+            difference_hours, remaining_minutes
+        ))
     } else {
-        "____/__/__".to_string()
+        Ok(format!(
+            "____-{:02}:{:02}",
+            difference_hours, remaining_minutes
+        ))
     }
 }
 
@@ -101,7 +106,6 @@ mod deadline_remaining_time_tests {
     fn 現行の締切なしと同一logical_dateとasapの表示を維持する() {
         let last_synced_time = Local.with_ymd_and_hms(2026, 9, 6, 10, 0, 0).unwrap();
         let end_datetime = Local.with_ymd_and_hms(2026, 9, 6, 18, 0, 0).unwrap();
-        let next_logical_date_start = Local.with_ymd_and_hms(2026, 9, 7, 6, 0, 0).unwrap();
 
         for (deadline_time_opt, expected) in [
             (None, "____/__/__"),
@@ -127,8 +131,8 @@ mod deadline_remaining_time_tests {
                     deadline_time_opt.as_ref(),
                     end_datetime,
                     last_synced_time,
-                    next_logical_date_start,
-                ),
+                )
+                .unwrap(),
                 expected
             );
         }
@@ -137,7 +141,6 @@ mod deadline_remaining_time_tests {
     #[test]
     fn 締切差を06時境界のlogical_date単位で表示する() {
         let last_synced_time = Local.with_ymd_and_hms(2026, 9, 6, 10, 0, 0).unwrap();
-        let next_logical_date_start = Local.with_ymd_and_hms(2026, 9, 7, 6, 0, 0).unwrap();
 
         for (end_datetime, deadline_time, expected) in [
             (
@@ -176,8 +179,8 @@ mod deadline_remaining_time_tests {
                     Some(&deadline_time),
                     end_datetime,
                     last_synced_time,
-                    next_logical_date_start,
-                ),
+                )
+                .unwrap(),
                 expected
             );
         }
@@ -190,8 +193,8 @@ mod deadline_remaining_time_tests {
                 Some(&overdue_deadline),
                 overdue_end,
                 past_last_synced_time,
-                Local.with_ymd_and_hms(2026, 9, 9, 6, 0, 0).unwrap(),
-            ),
+            )
+            .unwrap(),
             "+50:00ASAP"
         );
     }
@@ -1029,8 +1032,7 @@ pub(super) fn build_show_all_tasks_display_with_config(
                 deadline_time_opt.as_ref(),
                 end_datetime,
                 last_synced_time,
-                next_logical_date_start,
-            );
+            )?;
 
             let task_row = TaskListTaskRow {
                 rank: ind,
