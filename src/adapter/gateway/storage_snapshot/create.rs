@@ -79,6 +79,7 @@ fn create_snapshot_impl(
 ) -> Result<SnapshotSummary, SnapshotError> {
     let publication = validate_endpoints(storage_directory, destination)?;
     after_parent_open();
+    ensure_parent_outside_storage(&publication, destination)?;
     let _lock = StorageLock::acquire(storage_directory, LockMode::Backup).map_err(|error| {
         let path = error.path().to_path_buf();
         SnapshotError::new(SnapshotOperation::AcquireLock, path, error)
@@ -150,6 +151,7 @@ struct CollectedFile {
 struct PublicationDestination {
     parent: StableParent,
     destination_name: OsString,
+    storage: PathBuf,
 }
 
 fn validate_endpoints(
@@ -207,7 +209,26 @@ fn validate_endpoints(
     Ok(PublicationDestination {
         parent: stable_parent,
         destination_name,
+        storage: canonical_storage,
     })
+}
+
+fn ensure_parent_outside_storage(
+    publication: &PublicationDestination,
+    destination: &Path,
+) -> Result<(), SnapshotError> {
+    if publication
+        .parent
+        .is_within(&publication.storage)
+        .map_err(|error| SnapshotError::new(SnapshotOperation::Validate, destination, error))?
+    {
+        Err(invalid(
+            destination,
+            "snapshot destination parent moved inside the source storage",
+        ))
+    } else {
+        Ok(())
+    }
 }
 
 fn collect_storage(storage: &Path) -> Result<CollectedStorage, SnapshotError> {
@@ -362,6 +383,7 @@ fn publish_snapshot(
         .sync()
         .map_err(|error| SnapshotError::new(SnapshotOperation::Sync, staging.path, error))?;
     before_publish();
+    ensure_parent_outside_storage(staging.target, staging.destination)?;
     staging
         .target
         .parent

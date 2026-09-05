@@ -52,6 +52,28 @@ impl StableParent {
         Ok(handle.dev() == path.dev() && handle.ino() == path.ino())
     }
 
+    pub(in crate::adapter::gateway::storage_snapshot) fn is_within(
+        &self,
+        ancestor: &Path,
+    ) -> std::io::Result<bool> {
+        use std::os::unix::fs::MetadataExt;
+
+        let ancestor = fs::metadata(ancestor)?;
+        let mut current = self.directory.try_clone()?;
+        loop {
+            let metadata = current.metadata()?;
+            if metadata.dev() == ancestor.dev() && metadata.ino() == ancestor.ino() {
+                return Ok(true);
+            }
+            let parent = open_parent_directory(&current)?;
+            let parent_metadata = parent.metadata()?;
+            if parent_metadata.dev() == metadata.dev() && parent_metadata.ino() == metadata.ino() {
+                return Ok(false);
+            }
+            current = parent;
+        }
+    }
+
     pub(in crate::adapter::gateway::storage_snapshot) fn entry_exists(
         &self,
         name: &std::ffi::OsStr,
@@ -339,6 +361,13 @@ impl StableParent {
         Err(unsupported_publication())
     }
 
+    pub(in crate::adapter::gateway::storage_snapshot) fn is_within(
+        &self,
+        _ancestor: &Path,
+    ) -> std::io::Result<bool> {
+        Err(unsupported_publication())
+    }
+
     pub(in crate::adapter::gateway::storage_snapshot) fn entry_exists(
         &self,
         _name: &std::ffi::OsStr,
@@ -442,6 +471,26 @@ fn invalid_relative(path: &Path) -> std::io::Error {
             path.display()
         ),
     )
+}
+
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+fn open_parent_directory(directory: &File) -> std::io::Result<File> {
+    use std::os::fd::{AsRawFd, FromRawFd};
+
+    // SAFETY: the static name is NUL-terminated, and a successful descriptor is owned below.
+    let descriptor = unsafe {
+        libc::openat(
+            directory.as_raw_fd(),
+            c"..".as_ptr(),
+            libc::O_RDONLY | libc::O_DIRECTORY | libc::O_NOFOLLOW | libc::O_CLOEXEC,
+        )
+    };
+    if descriptor < 0 {
+        Err(std::io::Error::last_os_error())
+    } else {
+        // SAFETY: openat returned a new owned descriptor transferred exactly once.
+        Ok(unsafe { File::from_raw_fd(descriptor) })
+    }
 }
 
 #[cfg(target_os = "macos")]

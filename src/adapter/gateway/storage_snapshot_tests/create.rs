@@ -127,6 +127,26 @@ fn snapshot作成は検証後に差し替えられた親directoryへ書き込ま
 }
 
 #[test]
+fn snapshot作成はsource配下へ移動された親directoryを拒否する() {
+    let root = TestDirectory::new("create-parent-moved-into-source");
+    let storage = root.child("source");
+    let parent = root.child("parent");
+    let moved_parent = storage.join("moved-parent");
+    let destination = parent.join("snapshot");
+    let now = Local.with_ymd_and_hms(2026, 9, 5, 12, 0, 0).unwrap();
+    create_saved_repository(&storage, now);
+    fs::create_dir(&parent).unwrap();
+
+    create_snapshot_after_parent_open(&storage, &destination, now, || {
+        fs::rename(&parent, &moved_parent).unwrap();
+    })
+    .unwrap_err();
+
+    assert!(!moved_parent.join("snapshot").exists());
+    assert!(fs::read_dir(&moved_parent).unwrap().next().is_none());
+}
+
+#[test]
 fn snapshot作成は差し替えられたstaging_directoryを公開しない() {
     let root = TestDirectory::new("create-staging-swap");
     let storage = root.child("source");
