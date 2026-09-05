@@ -249,6 +249,9 @@ impl ClientState {
             .then(|| self.work_sessions.replace_sessions(storage, candidate))
             .transpose()
             .map(|_| ());
+        if found && result.is_ok() {
+            self.manual_check_blocked_task_ids.remove(task_id);
+        }
         self.record_local_result(Operation::DiscardSession, Some(task_id), result.is_ok());
         ClientEffect::None
     }
