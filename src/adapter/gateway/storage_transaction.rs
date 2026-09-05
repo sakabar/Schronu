@@ -17,7 +17,6 @@ mod recovery;
 
 use io::TransactionLock;
 pub(super) use io::{FileSystemStorageTransactionIo, StorageTransactionIo};
-use layout::validate_storage_relative_path;
 #[cfg(test)]
 use layout::ACTIVE_TRANSACTION_DIRECTORY_NAME;
 #[cfg(test)]

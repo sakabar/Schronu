@@ -8,14 +8,13 @@ use super::io::{
     acquire_transaction_lock, resolve_transactions_directory, sync_directory,
     validate_transactions_directory,
 };
-use super::layout::TransactionLayout;
+use super::layout::{validate_storage_relative_path, TransactionLayout};
 use super::manifest::{
     content_checksum, ContentIntegrity, RawTransactionManifest, ValidatedEntry, ValidatedManifest,
 };
 use super::{
-    validate_storage_relative_path, PreparedTransaction, StorageTransactionError,
-    StorageTransactionIo, StorageTransactionOperation, TransactionPaths, TransactionState,
-    WriteRequest,
+    PreparedTransaction, StorageTransactionError, StorageTransactionIo,
+    StorageTransactionOperation, TransactionPaths, TransactionState, WriteRequest,
 };
 
 struct PrepareContext<'a> {
