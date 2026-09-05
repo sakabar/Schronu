@@ -18,6 +18,21 @@ function trim(str) {
     return str
 }
 
+function escape_cli_argument(value, escaped, position, character) {
+    escaped = ""
+    for (position = 1; position <= length(value); position++) {
+        character = substr(value, position, 1)
+        if (character == "\\") {
+            escaped = escaped "\\\\"
+        } else if (character == "\"") {
+            escaped = escaped "\\\""
+        } else {
+            escaped = escaped character
+        }
+    }
+    return escaped
+}
+
 function to_minutes(time_str, parts) {
     if (time_str !~ /^[0-9]+:[0-9][0-9]:[0-9][0-9]$/) {
         return -1
@@ -97,6 +112,7 @@ function initialize_task(task_id, task_name) {
 {
     task_id = trim($2)
     task_name = trim($10)
+    raw_task_name = $10
     finish_flag = trim($14)
     finish_datetime = trim($16)
     should_extract = trim($17)
@@ -109,7 +125,7 @@ function initialize_task(task_id, task_name) {
     }
 
     if (task_id == "" && task_name != "") {
-        new_task_names[++new_task_count] = task_name
+        new_task_names[++new_task_count] = raw_task_name
         next
     }
 
@@ -196,7 +212,7 @@ END {
     }
 
     for (i = 1; i <= new_task_count; i++) {
-        printf("新 %s\n", new_task_names[i])
+        printf("新 \"%s\"\n", escape_cli_argument(new_task_names[i]))
         printf("下 スプレッドシートで仮登録したタスクを見積もる\n")
         printf("予 3\n\n")
     }
