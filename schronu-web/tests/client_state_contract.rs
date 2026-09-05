@@ -1,4 +1,6 @@
-use schronu_web::client::state::{load_client_state, ActiveTab, ClientEffect, ServerFailure};
+use schronu_web::client::state::{
+    load_client_state, ActiveTab, ClientEffect, Operation, ServerFailure,
+};
 use schronu_web::{web_error_codes, RecordSessionResult, RetryAdvice, SessionTask, WebSuccess};
 
 mod client_state_support;
@@ -221,6 +223,32 @@ fn mutationは対象だけを直列化しerror助言とcommit後storage失敗を
         ClientEffect::None
     );
     assert_eq!(state.discard_session(&storage, TASK_ID), ClientEffect::None);
+}
+
+#[test]
+fn 完了effectは計測の記録方針と履歴種別を保持する() {
+    let recording_storage = FakeStorage::default();
+    let mut recording_state = state_with_sessions(&recording_storage, &[TASK_ID]);
+    let (_, recording_request) =
+        complete_effect(recording_state.begin_complete_session(&recording_storage, TASK_ID));
+    assert!(recording_request.record_elapsed_seconds);
+
+    let discard_storage = FakeStorage::default();
+    let mut discard_state = state_with_sessions(&discard_storage, &[TASK_ID]);
+    let (request_id, discard_request) = complete_effect(
+        discard_state.begin_complete_session_without_recording(&discard_storage, TASK_ID),
+    );
+    assert!(!discard_request.record_elapsed_seconds);
+
+    discard_state.apply_complete_result(
+        &discard_storage,
+        request_id,
+        Ok(snapshot("2026-09-05", 1)),
+    );
+    assert_eq!(
+        discard_state.history().back().unwrap().operation,
+        Operation::CompleteSessionWithoutRecording
+    );
 }
 
 #[test]
