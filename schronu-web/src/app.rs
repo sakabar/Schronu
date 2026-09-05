@@ -1,4 +1,6 @@
 mod component;
+#[cfg(test)]
+mod effect_dispatcher_tests;
 #[cfg(feature = "server")]
 mod environment_query;
 #[cfg(feature = "server")]
