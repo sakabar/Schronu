@@ -46,7 +46,7 @@ elif [[ $# -eq 1 && $1 == "--stdin" ]]; then
 else
     print -u2 -- "usage: $0 [--stdin]"
     exit 2
-fi | reject_nul_task_names | awk -F '\t' '
+fi | reject_nul_task_names | LC_ALL=C awk -F '\t' '
 function trim(str) {
     sub(/^[[:space:]]+/, "", str)
     sub(/[[:space:]]+$/, "", str)
