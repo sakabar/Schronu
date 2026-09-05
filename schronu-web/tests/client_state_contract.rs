@@ -58,10 +58,7 @@ fn bufferは成功したsession破棄で未作業時間を再計算する() {
     let storage = FakeStorage::default();
     let mut state = load_client_state(&storage, 1_000_000).unwrap();
     let bootstrap_id = bootstrap_effect(state.request_bootstrap());
-    state.apply_bootstrap_result(
-        bootstrap_id,
-        Ok(snapshot("2026-09-05", 1_000_000)),
-    );
+    state.apply_bootstrap_result(bootstrap_id, Ok(snapshot("2026-09-05", 1_000_000)));
 
     state.tick(1_010_000);
     assert_eq!(
@@ -90,6 +87,32 @@ fn bufferは成功したsession破棄で未作業時間を再計算する() {
         ClientEffect::None
     );
     assert_eq!(state.display_buffer_seconds(), Some(20));
+}
+
+#[test]
+fn server_commit済みでlocal削除失敗したsessionはbufferを停止しない() {
+    let storage = FakeStorage::default();
+    let mut state = state_with_sessions(&storage, &[TASK_ID]);
+    let bootstrap_id = bootstrap_effect(state.request_bootstrap());
+    state.apply_bootstrap_result(bootstrap_id, Ok(snapshot("2026-09-05", 0)));
+
+    state.tick(60_000);
+    let (request_id, _) = record_effect(state.begin_record_session(&storage, TASK_ID));
+    storage.fail_work_session_writes.set(true);
+    state.apply_record_result(
+        &storage,
+        request_id,
+        Ok(WebSuccess {
+            snapshot: snapshot("2026-09-05", 60_000),
+            data: RecordSessionResult {
+                actual_work_seconds: 160,
+            },
+        }),
+    );
+    state.tick(90_000);
+
+    assert!(state.is_session_committed_blocked(TASK_ID));
+    assert_eq!(state.display_buffer_seconds(), Some(30));
 }
 
 #[test]
