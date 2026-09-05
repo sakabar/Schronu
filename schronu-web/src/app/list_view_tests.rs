@@ -133,6 +133,29 @@ fn list_rowはresponsive表示用の意味別cellとlabelを持つ() {
 }
 
 #[test]
+fn listは46rem以下でtask_firstの2列metadata_cardになる() {
+    let css = include_str!("../../assets/main.css");
+    let narrow_list_layout = css
+        .split_once("@media (max-width: 46rem)")
+        .expect("list card breakpoint must match the 44rem table plus 2rem shell gutters")
+        .1;
+
+    for required in [
+        ".task-table-scroll {\n        overflow-x: visible;",
+        ".task-table {\n        display: block;\n        min-width: 0;",
+        ".task-table thead {\n        position: absolute;",
+        ".task-table tbody {\n        display: grid;",
+        "grid-template-areas:\n            \"task task\"\n            \"deadline schedule\"\n            \"action action\";",
+        ".task-table td[data-label]::before {\n        content: attr(data-label);",
+        ".task-name {\n        grid-area: task;\n        overflow-wrap: anywhere;",
+        ".session-cell {\n        grid-area: action;",
+        ".session-cell .session-start {\n        width: 100%;\n        min-height: 3rem;",
+    ] {
+        assert!(narrow_list_layout.contains(required), "missing: {required}");
+    }
+}
+
+#[test]
 fn active_uuid_disables_every_matching_row_but_not_other_tasks() {
     let events = Arc::new(Mutex::new(Vec::new()));
     let (dom, _) = build(RootProps {
