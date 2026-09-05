@@ -1,4 +1,5 @@
-use super::layout::TransactionLayout;
+use super::io::{validate_delete_target_ancestors, StorageTransactionIo};
+use super::layout::{validate_storage_relative_path, TransactionLayout};
 use super::{StorageTransactionError, StorageTransactionOperation};
 use serde::{Deserialize, Serialize};
 use std::path::{Component, Path, PathBuf};
@@ -96,6 +97,144 @@ impl ManifestEntryOperation {
     fn is_write(operation: &Self) -> bool {
         *operation == Self::Write
     }
+}
+
+pub(super) fn read_validated_manifest(
+    io: &dyn StorageTransactionIo,
+    storage_dir_path: &Path,
+    transaction_dir_path: &Path,
+) -> Result<ValidatedManifest, StorageTransactionError> {
+    let manifest_path = TransactionLayout::manifest_path(transaction_dir_path);
+    let manifest_metadata = io.symlink_metadata(&manifest_path).map_err(|error| {
+        StorageTransactionError::new(
+            StorageTransactionOperation::ReadManifest,
+            &manifest_path,
+            error,
+        )
+    })?;
+    if !manifest_metadata.file_type().is_file() {
+        return Err(StorageTransactionError::new(
+            StorageTransactionOperation::ValidateManifest,
+            &manifest_path,
+            std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                "transaction manifest must be a regular file",
+            ),
+        ));
+    }
+    let manifest_bytes = io.read_file(&manifest_path).map_err(|error| {
+        StorageTransactionError::new(
+            StorageTransactionOperation::ReadManifest,
+            &manifest_path,
+            error,
+        )
+    })?;
+    let manifest = serde_json::from_slice(&manifest_bytes).map_err(|error| {
+        StorageTransactionError::new(
+            StorageTransactionOperation::ParseManifest,
+            &manifest_path,
+            std::io::Error::new(std::io::ErrorKind::InvalidData, error),
+        )
+    })?;
+    validate_raw_manifest(io, storage_dir_path, transaction_dir_path, manifest)
+}
+
+pub(super) fn validate_raw_manifest(
+    io: &dyn StorageTransactionIo,
+    storage_dir_path: &Path,
+    transaction_dir_path: &Path,
+    manifest: RawTransactionManifest,
+) -> Result<ValidatedManifest, StorageTransactionError> {
+    let manifest_path = TransactionLayout::manifest_path(transaction_dir_path);
+    let RawTransactionManifest {
+        version,
+        transaction_id,
+        revision,
+        directories,
+        entries,
+    } = manifest;
+    let layout = TransactionLayout::new(storage_dir_path);
+    if version != 1 || transaction_id.is_nil() {
+        return Err(StorageTransactionError::new(
+            StorageTransactionOperation::ValidateManifest,
+            manifest_path,
+            std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                "transaction manifest must use version 1 and a non-nil transaction id",
+            ),
+        ));
+    }
+    let directories = directories
+        .into_iter()
+        .map(|directory| {
+            validate_storage_relative_path(storage_dir_path, &layout.target_path(&directory))
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    let entries = entries
+        .into_iter()
+        .map(|entry| {
+            let target = validate_storage_relative_path(
+                storage_dir_path,
+                &layout.target_path(&entry.target),
+            )?;
+            if entry.operation == ManifestEntryOperation::Delete {
+                validate_delete_target_ancestors(io, storage_dir_path, &target)?;
+            }
+            match (
+                entry.operation,
+                entry.staged_file,
+                entry.content_length,
+                entry.content_checksum,
+            ) {
+                (
+                    ManifestEntryOperation::Write,
+                    Some(staged_file),
+                    Some(content_length),
+                    Some(content_checksum),
+                ) => {
+                    validate_staged_file_path(transaction_dir_path, &staged_file)?;
+                    validate_content_integrity(&manifest_path, content_length, &content_checksum)?;
+                    Ok(ValidatedEntry::Write {
+                        target,
+                        staged_file,
+                        integrity: ContentIntegrity {
+                            content_length,
+                            checksum: content_checksum,
+                        },
+                    })
+                }
+                (ManifestEntryOperation::Delete, None, None, None) => {
+                    Ok(ValidatedEntry::Delete { target })
+                }
+                (ManifestEntryOperation::Write, None, _, _) => Err(invalid_manifest_entry_error(
+                    &manifest_path,
+                    "write entry must contain a staged file",
+                )),
+                (ManifestEntryOperation::Write, Some(_), _, _) => {
+                    Err(invalid_manifest_entry_error(
+                        &manifest_path,
+                        "write entry must contain content length and checksum",
+                    ))
+                }
+                (ManifestEntryOperation::Delete, Some(_), _, _) => {
+                    Err(invalid_manifest_entry_error(
+                        &manifest_path,
+                        "delete entry must not contain a staged file",
+                    ))
+                }
+                (ManifestEntryOperation::Delete, None, _, _) => Err(invalid_manifest_entry_error(
+                    &manifest_path,
+                    "delete entry must not contain content integrity information",
+                )),
+            }
+        })
+        .collect::<Result<Vec<_>, StorageTransactionError>>()?;
+    Ok(ValidatedManifest {
+        transaction_id,
+        revision,
+        directories,
+        entries,
+    })
 }
 
 pub(super) fn invalid_manifest_entry_error(

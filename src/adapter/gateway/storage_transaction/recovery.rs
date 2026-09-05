@@ -4,20 +4,17 @@ use std::sync::Arc;
 use super::cleanup::cleanup_stale_tombstones;
 use super::io::{
     acquire_transaction_lock, resolve_transactions_directory, sync_directory,
-    validate_delete_target_ancestors, validate_transactions_directory,
+    validate_transactions_directory,
 };
 use super::layout::TransactionLayout;
-use super::manifest::{
-    invalid_manifest_entry_error, validate_content_integrity, validate_staged_file_path,
-    ContentIntegrity, ManifestEntryOperation, RawTransactionManifest, ValidatedEntry,
-    ValidatedManifest,
-};
+use super::manifest::{read_validated_manifest, ValidatedManifest};
+#[cfg(test)]
+use super::manifest::{validate_raw_manifest, RawTransactionManifest};
 #[cfg(test)]
 use super::PreparedTransaction;
 use super::{
-    validate_storage_relative_path, CommittedTransaction, StorageTransactionError,
-    StorageTransactionIo, StorageTransactionOperation, TransactionLock, TransactionPaths,
-    TransactionState,
+    CommittedTransaction, StorageTransactionError, StorageTransactionIo,
+    StorageTransactionOperation, TransactionLock, TransactionPaths, TransactionState,
 };
 
 pub(in crate::adapter::gateway) fn recover(
@@ -69,40 +66,9 @@ pub(in crate::adapter::gateway) fn recover(
                     ),
                 ));
             }
-            let manifest_path = TransactionLayout::manifest_path(&transaction_dir_path);
-            let manifest_metadata = io.symlink_metadata(&manifest_path).map_err(|error| {
-                StorageTransactionError::new(
-                    StorageTransactionOperation::ReadManifest,
-                    &manifest_path,
-                    error,
-                )
-            })?;
-            if !manifest_metadata.file_type().is_file() {
-                return Err(StorageTransactionError::new(
-                    StorageTransactionOperation::ValidateManifest,
-                    &manifest_path,
-                    std::io::Error::new(
-                        std::io::ErrorKind::InvalidData,
-                        "transaction manifest must be a regular file",
-                    ),
-                ));
-            }
-            let manifest_bytes = io.read_file(&manifest_path).map_err(|error| {
-                StorageTransactionError::new(
-                    StorageTransactionOperation::ReadManifest,
-                    &manifest_path,
-                    error,
-                )
-            })?;
-            let manifest: RawTransactionManifest = serde_json::from_slice(&manifest_bytes)
-                .map_err(|error| {
-                    StorageTransactionError::new(
-                        StorageTransactionOperation::ParseManifest,
-                        &manifest_path,
-                        std::io::Error::new(std::io::ErrorKind::InvalidData, error),
-                    )
-                })?;
-            let state = transaction_state_from_manifest(
+            let manifest =
+                read_validated_manifest(io.as_ref(), storage_dir_path, &transaction_dir_path)?;
+            let state = transaction_state_from_validated_manifest(
                 io,
                 TransactionPaths {
                     storage_dir_path: storage_dir_path.to_path_buf(),
@@ -111,7 +77,7 @@ pub(in crate::adapter::gateway) fn recover(
                 },
                 manifest,
                 _transaction_lock,
-            )?;
+            );
             return CommittedTransaction { state }.roll_forward();
         }
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
@@ -142,111 +108,27 @@ pub(super) fn prepared_from_manifest(
     manifest: RawTransactionManifest,
     transaction_lock: TransactionLock,
 ) -> Result<PreparedTransaction, StorageTransactionError> {
+    let manifest = validate_raw_manifest(
+        io.as_ref(),
+        &paths.storage_dir_path,
+        &paths.transaction_dir_path,
+        manifest,
+    )?;
     Ok(PreparedTransaction {
-        state: transaction_state_from_manifest(io, paths, manifest, transaction_lock)?,
+        state: transaction_state_from_validated_manifest(io, paths, manifest, transaction_lock),
     })
 }
 
-fn transaction_state_from_manifest(
+fn transaction_state_from_validated_manifest(
     io: Arc<dyn StorageTransactionIo>,
     paths: TransactionPaths,
-    manifest: RawTransactionManifest,
+    manifest: ValidatedManifest,
     transaction_lock: TransactionLock,
-) -> Result<TransactionState, StorageTransactionError> {
-    let manifest_path = TransactionLayout::manifest_path(&paths.transaction_dir_path);
-    let RawTransactionManifest {
-        version,
-        transaction_id,
-        revision,
-        directories,
-        entries,
-    } = manifest;
-    let layout = TransactionLayout::new(&paths.storage_dir_path);
-    if version != 1 || transaction_id.is_nil() {
-        return Err(StorageTransactionError::new(
-            StorageTransactionOperation::ValidateManifest,
-            manifest_path,
-            std::io::Error::new(
-                std::io::ErrorKind::InvalidData,
-                "transaction manifest must use version 1 and a non-nil transaction id",
-            ),
-        ));
-    }
-    let directories = directories
-        .into_iter()
-        .map(|directory| {
-            validate_storage_relative_path(&paths.storage_dir_path, &layout.target_path(&directory))
-        })
-        .collect::<Result<Vec<_>, _>>()?;
-    let entries = entries
-        .into_iter()
-        .map(|entry| {
-            let target = validate_storage_relative_path(
-                &paths.storage_dir_path,
-                &layout.target_path(&entry.target),
-            )?;
-            if entry.operation == ManifestEntryOperation::Delete {
-                validate_delete_target_ancestors(io.as_ref(), &paths.storage_dir_path, &target)?;
-            }
-            match (
-                entry.operation,
-                entry.staged_file,
-                entry.content_length,
-                entry.content_checksum,
-            ) {
-                (
-                    ManifestEntryOperation::Write,
-                    Some(staged_file),
-                    Some(content_length),
-                    Some(content_checksum),
-                ) => {
-                    validate_staged_file_path(&paths.transaction_dir_path, &staged_file)?;
-                    validate_content_integrity(&manifest_path, content_length, &content_checksum)?;
-                    Ok(ValidatedEntry::Write {
-                        target,
-                        staged_file,
-                        integrity: ContentIntegrity {
-                            content_length,
-                            checksum: content_checksum,
-                        },
-                    })
-                }
-                (ManifestEntryOperation::Delete, None, None, None) => {
-                    Ok(ValidatedEntry::Delete { target })
-                }
-                (ManifestEntryOperation::Write, None, _, _) => Err(invalid_manifest_entry_error(
-                    &manifest_path,
-                    "write entry must contain a staged file",
-                )),
-                (ManifestEntryOperation::Write, Some(_), _, _) => {
-                    Err(invalid_manifest_entry_error(
-                        &manifest_path,
-                        "write entry must contain content length and checksum",
-                    ))
-                }
-                (ManifestEntryOperation::Delete, Some(_), _, _) => {
-                    Err(invalid_manifest_entry_error(
-                        &manifest_path,
-                        "delete entry must not contain a staged file",
-                    ))
-                }
-                (ManifestEntryOperation::Delete, None, _, _) => Err(invalid_manifest_entry_error(
-                    &manifest_path,
-                    "delete entry must not contain content integrity information",
-                )),
-            }
-        })
-        .collect::<Result<Vec<_>, StorageTransactionError>>()?;
-    let manifest = ValidatedManifest {
-        transaction_id,
-        revision,
-        directories,
-        entries,
-    };
-    Ok(TransactionState {
+) -> TransactionState {
+    TransactionState {
         paths,
         manifest,
         io,
         _transaction_lock: transaction_lock,
-    })
+    }
 }
