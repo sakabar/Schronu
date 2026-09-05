@@ -242,7 +242,13 @@ impl ClientState {
         succeeded: bool,
     ) {
         let (outcome, summary) = if succeeded {
-            self.clear_error_on_unrelated_success();
+            if self
+                .display_error
+                .as_ref()
+                .is_some_and(DisplayError::is_resolved_by_local_success)
+            {
+                self.display_error = None;
+            }
             (Outcome::Success, "localStorageを更新しました。")
         } else {
             self.display_error = Some(DisplayError::LocalStorage {
@@ -263,6 +269,7 @@ impl ClientState {
         self.display_error = Some(match error {
             ServerFailure::Operation(error) => DisplayError::Operation {
                 error,
+                operation,
                 task_id: task_id.map(ToOwned::to_owned),
             },
             ServerFailure::Transport(_) => DisplayError::Transport,
@@ -283,7 +290,13 @@ impl ClientState {
         summary: &str,
     ) {
         if outcome == Outcome::Success {
-            self.clear_error_on_unrelated_success();
+            if self
+                .display_error
+                .as_ref()
+                .is_some_and(|error| error.is_resolved_by_server_success(operation, task_id))
+            {
+                self.display_error = None;
+            }
         }
         self.record_history(operation, task_id, Locality::Server, outcome, summary);
     }
@@ -300,16 +313,6 @@ impl ClientState {
             },
             "古い応答を表示へ適用せず受信しました。",
         );
-    }
-
-    fn clear_error_on_unrelated_success(&mut self) {
-        if self
-            .display_error
-            .as_ref()
-            .is_some_and(DisplayError::clears_on_unrelated_success)
-        {
-            self.display_error = None;
-        }
     }
 
     fn record_history(

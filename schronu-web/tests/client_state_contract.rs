@@ -421,6 +421,7 @@ fn 未知のoperation_errorはcodeと助言を失わず表示状態へ保持す�
         state.display_error(),
         Some(&DisplayError::Operation {
             error,
+            operation: Operation::Bootstrap,
             task_id: None,
         })
     );

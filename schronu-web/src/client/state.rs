@@ -22,6 +22,7 @@ pub enum ActiveTab {
 pub enum DisplayError {
     Operation {
         error: WebError,
+        operation: Operation,
         task_id: Option<String>,
     },
     Transport,
@@ -61,15 +62,29 @@ impl DisplayError {
         )
     }
 
-    fn clears_on_unrelated_success(&self) -> bool {
-        self.retryable()
+    fn is_resolved_by_server_success(&self, operation: Operation, task_id: Option<&str>) -> bool {
+        matches!(self, Self::Transport)
             || matches!(
                 self,
-                Self::LocalStorage {
-                    committed_on_server: false,
-                    ..
-                }
+                Self::Operation {
+                    error: WebError {
+                        retry_advice: crate::RetryAdvice::Retry,
+                        ..
+                    },
+                    operation: error_operation,
+                    task_id: error_task_id,
+                } if *error_operation == operation && error_task_id.as_deref() == task_id
             )
+    }
+
+    fn is_resolved_by_local_success(&self) -> bool {
+        matches!(
+            self,
+            Self::LocalStorage {
+                committed_on_server: false,
+                ..
+            }
+        )
     }
 
     fn is_resolved_by_discard(&self, task_id: &str) -> bool {
@@ -81,6 +96,7 @@ impl DisplayError {
                     retry_advice: crate::RetryAdvice::ManualCheck,
                     ..
                 },
+                operation: _,
                 task_id: Some(error_task_id),
             } if error_task_id == task_id
                 && code != crate::web_error_codes::REPOSITORY_STATE_UNCERTAIN
