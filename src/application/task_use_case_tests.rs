@@ -65,6 +65,150 @@ fn complete_task_with_fresh_factory(
     complete_task(repository, input, &mut factory)
 }
 
+#[test]
+fn add_actual_work_uuid指定で秒数を加算する() {
+    let task = crate::test_support::new_task_handle("作業対象").unwrap();
+    task.set_actual_work_seconds(61).unwrap();
+    let task_id = task.get_id().unwrap();
+    let mut repository = TestTaskRepository::new(vec![task.clone()], fixed_now());
+
+    let actual = add_actual_work(
+        &mut repository,
+        AddActualWorkInput {
+            task_id,
+            additional_actual_work_seconds: 60,
+            expected_actual_work_seconds: None,
+        },
+    )
+    .unwrap();
+
+    assert_eq!(actual, 121);
+    assert_eq!(task.get_actual_work_seconds().unwrap(), 121);
+}
+
+#[test]
+fn add_actual_work_expectedが現在実績と一致する場合だけ加算する() {
+    let task = crate::test_support::new_task_handle("作業対象").unwrap();
+    task.set_actual_work_seconds(61).unwrap();
+    let task_id = task.get_id().unwrap();
+    let mut repository = TestTaskRepository::new(vec![task.clone()], fixed_now());
+
+    let actual = add_actual_work(
+        &mut repository,
+        AddActualWorkInput {
+            task_id,
+            additional_actual_work_seconds: 2,
+            expected_actual_work_seconds: Some(61),
+        },
+    )
+    .unwrap();
+
+    assert_eq!(actual, 63);
+    assert_eq!(task.get_actual_work_seconds().unwrap(), 63);
+}
+
+#[test]
+fn add_actual_work_expected不一致ではtaskを変更しない() {
+    let task = crate::test_support::new_task_handle("作業対象").unwrap();
+    task.set_actual_work_seconds(61).unwrap();
+    let task_id = task.get_id().unwrap();
+    let original = task.snapshot().unwrap();
+    let mut repository = TestTaskRepository::new(vec![task.clone()], fixed_now());
+
+    let actual = add_actual_work(
+        &mut repository,
+        AddActualWorkInput {
+            task_id,
+            additional_actual_work_seconds: 2,
+            expected_actual_work_seconds: Some(60),
+        },
+    );
+
+    assert_eq!(
+        actual,
+        Err(ApplicationError::ActualWorkConflict {
+            task_id,
+            expected_actual_work_seconds: 60,
+            actual_work_seconds: 61,
+        })
+    );
+    assert_eq!(task.snapshot().unwrap(), original);
+}
+
+#[test]
+fn add_actual_work_未知_uuidではtyped_errorを返す() {
+    let task = crate::test_support::new_task_handle("別task").unwrap();
+    let unknown_id = Uuid::from_u128(77);
+    let original = task.snapshot().unwrap();
+    let mut repository = TestTaskRepository::new(vec![task.clone()], fixed_now());
+
+    let actual = add_actual_work(
+        &mut repository,
+        AddActualWorkInput {
+            task_id: unknown_id,
+            additional_actual_work_seconds: 1,
+            expected_actual_work_seconds: None,
+        },
+    );
+
+    assert_eq!(actual, Err(ApplicationError::TaskNotFound(unknown_id)));
+    assert_eq!(task.snapshot().unwrap(), original);
+}
+
+#[test]
+fn add_actual_work_完了済みtaskでは変更しない() {
+    let task = crate::test_support::new_task_handle("完了済み").unwrap();
+    task.set_actual_work_seconds(61).unwrap();
+    task.set_orig_status(Status::Done).unwrap();
+    let task_id = task.get_id().unwrap();
+    let original = task.snapshot().unwrap();
+    let mut repository = TestTaskRepository::new(vec![task.clone()], fixed_now());
+
+    let actual = add_actual_work(
+        &mut repository,
+        AddActualWorkInput {
+            task_id,
+            additional_actual_work_seconds: 1,
+            expected_actual_work_seconds: None,
+        },
+    );
+
+    assert_eq!(actual, Err(ApplicationError::TaskAlreadyCompleted(task_id)));
+    assert_eq!(task.snapshot().unwrap(), original);
+}
+
+#[test]
+fn add_actual_work_負数とoverflowではtaskを変更しない() {
+    for (initial, additional, expected_reason) in [
+        (61, -1, "must not be negative"),
+        (i64::MAX, 1, "actual work seconds overflow"),
+    ] {
+        let task = crate::test_support::new_task_handle("作業対象").unwrap();
+        task.set_actual_work_seconds(initial).unwrap();
+        let task_id = task.get_id().unwrap();
+        let original = task.snapshot().unwrap();
+        let mut repository = TestTaskRepository::new(vec![task.clone()], fixed_now());
+
+        let actual = add_actual_work(
+            &mut repository,
+            AddActualWorkInput {
+                task_id,
+                additional_actual_work_seconds: additional,
+                expected_actual_work_seconds: None,
+            },
+        );
+
+        assert_eq!(
+            actual,
+            Err(ApplicationError::InvalidInput {
+                field: "additional_actual_work_seconds",
+                reason: expected_reason,
+            })
+        );
+        assert_eq!(task.snapshot().unwrap(), original);
+    }
+}
+
 fn next_child_after_finish(
     repetition_anchor: RepetitionAnchor,
     days_in_advance: i64,
