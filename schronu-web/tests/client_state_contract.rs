@@ -191,7 +191,7 @@ fn mutationは対象だけを直列化しerror助言とcommit後storage失敗を
         complete_request_id,
         Err(ServerFailure::Transport("network detail".to_owned())),
     );
-    assert!(state.display_error().unwrap().retryable());
+    assert!(!state.display_error().unwrap().retryable());
     assert!(!state.is_session_manual_check_blocked(OTHER_TASK_ID));
 
     let storage = FakeStorage::default();

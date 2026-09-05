@@ -451,6 +451,28 @@ fn transport不確実性は並行mutation完了後もglobal_blockを維持する
 }
 
 #[test]
+fn transport_errorはreadだけ再試行可能でmutationは手動確認を要求する() {
+    let storage = FakeStorage::default();
+    let mut read_state = load_client_state(&storage, 0).unwrap();
+    let request_id = bootstrap_effect(read_state.request_bootstrap());
+    read_state.apply_bootstrap_result(
+        request_id,
+        Err(ServerFailure::Transport("detail".to_owned())),
+    );
+    assert!(read_state.display_error().unwrap().retryable());
+
+    let mut mutation_state = state_with_sessions(&storage, &[TASK_ID]);
+    let (request_id, _) = record_effect(mutation_state.begin_record_session(&storage, TASK_ID));
+    mutation_state.apply_record_result(
+        &storage,
+        request_id,
+        Err(ServerFailure::Transport("detail".to_owned())),
+    );
+    assert!(!mutation_state.display_error().unwrap().retryable());
+    assert!(mutation_state.mutation_globally_blocked());
+}
+
+#[test]
 fn server成功後のsession削除失敗はsafety_markerを解除しない() {
     let storage = FakeStorage::default();
     let mut state = state_with_sessions(&storage, &[TASK_ID]);
