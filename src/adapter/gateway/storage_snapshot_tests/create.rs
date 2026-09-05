@@ -1,7 +1,7 @@
 use crate::adapter::gateway::storage_lock::{LockMode, StorageLock};
 use crate::adapter::gateway::storage_snapshot::{
     create_snapshot_after_parent_open, create_snapshot_at, create_snapshot_before_publish,
-    finalize_publication,
+    create_snapshot_with_failure, finalize_publication, SnapshotFailurePoint,
 };
 use crate::adapter::gateway::storage_snapshot::io::rename_no_replace;
 use crate::adapter::gateway::storage_snapshot::io::SnapshotIo;
@@ -180,6 +180,37 @@ fn snapshot作成は差し替えられたstaging_directoryを公開しない() {
         .find(|path| path.join("foreign").is_file())
         .unwrap();
     assert_eq!(fs::read(foreign.join("foreign")).unwrap(), b"preserve");
+}
+
+#[test]
+fn snapshot作成失敗はdestinationもstagingも公開しない() {
+    for point in [
+        SnapshotFailurePoint::Read,
+        SnapshotFailurePoint::Write,
+        SnapshotFailurePoint::Permission,
+        SnapshotFailurePoint::FileSync,
+        SnapshotFailurePoint::DirectorySync,
+        SnapshotFailurePoint::Rename,
+        SnapshotFailurePoint::ParentSync,
+    ] {
+        let root = TestDirectory::new(&format!("create-atomic-{point:?}"));
+        let storage = root.child("source");
+        let destination = root.child("snapshot");
+        let now = Local.with_ymd_and_hms(2026, 9, 5, 12, 0, 0).unwrap();
+        create_saved_repository(&storage, now);
+
+        create_snapshot_with_failure(&storage, &destination, now, point).unwrap_err();
+
+        assert!(!destination.exists(), "{point:?}");
+        assert!(
+            fs::read_dir(&root.path).unwrap().all(|entry| !entry
+                .unwrap()
+                .file_name()
+                .to_string_lossy()
+                .starts_with(".snapshot.tmp-")),
+            "{point:?}"
+        );
+    }
 }
 
 #[test]
