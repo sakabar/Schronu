@@ -1,5 +1,6 @@
 use super::error::{SnapshotError, SnapshotOperation};
 use super::layout::validate_relative_path;
+use super::{SnapshotResourceLimits, DEFAULT_RESOURCE_LIMITS};
 use crate::adapter::gateway::storage_content_integrity::DIGEST_ALGORITHM;
 use chrono::{DateTime, FixedOffset};
 use serde::{Deserialize, Serialize};
@@ -59,15 +60,30 @@ pub(in crate::adapter::gateway) fn decode_manifest(
     manifest_path: &Path,
     bytes: &[u8],
 ) -> Result<SnapshotManifest, SnapshotError> {
+    decode_manifest_with_limits(manifest_path, bytes, DEFAULT_RESOURCE_LIMITS)
+}
+
+pub(super) fn decode_manifest_with_limits(
+    manifest_path: &Path,
+    bytes: &[u8],
+    limits: SnapshotResourceLimits,
+) -> Result<SnapshotManifest, SnapshotError> {
+    limits.check(
+        manifest_path,
+        super::error::SnapshotLimitKind::ManifestBytes,
+        limits.manifest_bytes,
+        bytes.len() as u64,
+    )?;
     let mut manifest: SnapshotManifest = serde_json::from_slice(bytes)
         .map_err(|error| SnapshotError::new(SnapshotOperation::Decode, manifest_path, error))?;
-    validate_manifest(manifest_path, &mut manifest)?;
+    validate_manifest(manifest_path, &mut manifest, limits)?;
     Ok(manifest)
 }
 
 fn validate_manifest(
     manifest_path: &Path,
     manifest: &mut SnapshotManifest,
+    limits: SnapshotResourceLimits,
 ) -> Result<(), SnapshotError> {
     if manifest.format_version != FORMAT_VERSION
         || manifest.digest.algorithm != DIGEST_ALGORITHM
@@ -79,15 +95,46 @@ fn validate_manifest(
         ));
     }
 
+    limits.check(
+        manifest_path,
+        super::error::SnapshotLimitKind::FileCount,
+        limits.file_count as u64,
+        u64::try_from(manifest.files.len()).unwrap_or(u64::MAX),
+    )?;
     let mut paths = HashSet::new();
     for directory in &mut manifest.directories {
         directory.path = validate_relative_path(&directory.path)?;
+        limits.check_path(&directory.path)?;
         if !paths.insert(directory.path.clone()) {
             return Err(invalid_manifest(manifest_path, "duplicate snapshot path"));
         }
     }
+    let mut total_bytes = 0_u64;
     for file in &mut manifest.files {
         file.path = validate_relative_path(&file.path)?;
+        limits.check_path(&file.path)?;
+        limits.check(
+            &file.path,
+            super::error::SnapshotLimitKind::FileBytes,
+            limits.file_bytes,
+            file.content_length,
+        )?;
+        total_bytes = total_bytes
+            .checked_add(file.content_length)
+            .ok_or_else(|| {
+                SnapshotError::limit(
+                    &file.path,
+                    super::error::SnapshotLimitKind::PayloadBytes,
+                    limits.total_bytes,
+                    u64::MAX,
+                )
+            })?;
+        limits.check(
+            &file.path,
+            super::error::SnapshotLimitKind::PayloadBytes,
+            limits.total_bytes,
+            total_bytes,
+        )?;
         if !paths.insert(file.path.clone()) {
             return Err(invalid_manifest(manifest_path, "duplicate snapshot path"));
         }

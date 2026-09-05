@@ -23,6 +23,8 @@ pub(in crate::adapter::gateway) use restore::{
     restore_snapshot_with_failure, restore_snapshot_with_failure_observation,
 };
 pub use verify::verify_snapshot;
+#[cfg(test)]
+pub(in crate::adapter::gateway) use verify::verify_snapshot_with_limits;
 
 use error::{SnapshotError as InternalSnapshotError, SnapshotLimitKind};
 use std::path::Path;

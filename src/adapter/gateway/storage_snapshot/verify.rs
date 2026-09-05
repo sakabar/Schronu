@@ -1,8 +1,8 @@
 use super::error::{SnapshotError, SnapshotOperation};
-use super::io::{read_directory_tree, DirectoryTree, TreeDirectory, TreeFile};
+use super::io::{read_directory_tree_with_limits, DirectoryTree, TreeDirectory, TreeFile};
 use super::layout::{MANIFEST_FILE_NAME, PAYLOAD_DIRECTORY_NAME};
-use super::manifest::{decode_manifest, SnapshotManifest};
-use super::SnapshotSummary;
+use super::manifest::{decode_manifest_with_limits, SnapshotManifest};
+use super::{SnapshotResourceLimits, SnapshotSummary, DEFAULT_RESOURCE_LIMITS};
 use crate::adapter::gateway::storage_content_integrity::content_matches;
 use crate::adapter::gateway::task_repository::TaskRepository;
 use crate::application::interface::TaskRepositoryTrait;
@@ -13,7 +13,14 @@ use std::path::{Path, PathBuf};
 pub fn verify_snapshot(
     snapshot_directory: impl AsRef<Path>,
 ) -> Result<SnapshotSummary, SnapshotError> {
-    let verified = load_verified_snapshot(snapshot_directory.as_ref())?;
+    verify_snapshot_with_limits(snapshot_directory.as_ref(), DEFAULT_RESOURCE_LIMITS)
+}
+
+pub(in crate::adapter::gateway) fn verify_snapshot_with_limits(
+    snapshot: &Path,
+    limits: SnapshotResourceLimits,
+) -> Result<SnapshotSummary, SnapshotError> {
+    let verified = load_verified_snapshot_with_limits(snapshot, limits)?;
     Ok(SnapshotSummary::new(
         verified.manifest.revision,
         verified.manifest.files.len(),
@@ -26,8 +33,14 @@ pub(super) struct VerifiedSnapshot {
 }
 
 pub(super) fn load_verified_snapshot(snapshot: &Path) -> Result<VerifiedSnapshot, SnapshotError> {
-    let tree = read_directory_tree(snapshot)
-        .map_err(|error| SnapshotError::new(SnapshotOperation::Read, snapshot, error))?;
+    load_verified_snapshot_with_limits(snapshot, DEFAULT_RESOURCE_LIMITS)
+}
+
+fn load_verified_snapshot_with_limits(
+    snapshot: &Path,
+    limits: SnapshotResourceLimits,
+) -> Result<VerifiedSnapshot, SnapshotError> {
+    let tree = read_directory_tree_with_limits(snapshot, limits)?;
     validate_snapshot_root(snapshot, &tree)?;
     let manifest_file = tree
         .files
@@ -35,7 +48,7 @@ pub(super) fn load_verified_snapshot(snapshot: &Path) -> Result<VerifiedSnapshot
         .find(|file| file.path == Path::new(MANIFEST_FILE_NAME))
         .expect("validated snapshot root contains manifest.json");
     let manifest_path = snapshot.join(MANIFEST_FILE_NAME);
-    let manifest = decode_manifest(&manifest_path, &manifest_file.bytes)?;
+    let manifest = decode_manifest_with_limits(&manifest_path, &manifest_file.bytes, limits)?;
     let revision_bytes = verify_payload(snapshot, &tree, &manifest)?;
     verify_revision(snapshot, &manifest, revision_bytes)?;
     strict_validate_payload(snapshot, &tree)?;
