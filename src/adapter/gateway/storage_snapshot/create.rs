@@ -216,10 +216,12 @@ fn publish_snapshot(
             .map_err(|error| SnapshotError::new(SnapshotOperation::Write, &path, error))?;
         output
             .write_all(&file.bytes)
-            .and_then(|()| output.sync_all())
-            .map_err(|error| SnapshotError::new(SnapshotOperation::Sync, &path, error))?;
+            .map_err(|error| SnapshotError::new(SnapshotOperation::Write, &path, error))?;
         fs::set_permissions(&path, file.permissions.clone())
             .map_err(|error| SnapshotError::new(SnapshotOperation::Write, &path, error))?;
+        output
+            .sync_all()
+            .map_err(|error| SnapshotError::new(SnapshotOperation::Sync, &path, error))?;
     }
     for directory in collected.directories.iter().rev() {
         let path = payload.join(&directory.path);
