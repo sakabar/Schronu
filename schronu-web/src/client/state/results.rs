@@ -226,6 +226,7 @@ impl ClientState {
         succeeded: bool,
     ) {
         let (outcome, summary) = if succeeded {
+            self.display_error = None;
             (Outcome::Success, "localStorageを更新しました。")
         } else {
             self.display_error = Some(DisplayError::LocalStorage {
@@ -261,6 +262,9 @@ impl ClientState {
         outcome: Outcome,
         summary: &str,
     ) {
+        if outcome == Outcome::Success {
+            self.display_error = None;
+        }
         self.record_history(operation, task_id, Locality::Server, outcome, summary);
     }
 
