@@ -581,35 +581,119 @@ fn complete_sessionは期待実績競合時にtaskと永続dataを変更しな�
 }
 
 #[test]
-fn complete_sessionは反復task生成と元task完了を同じ保存で反映する() {
+fn complete_sessionは記録方針にかかわらず反復task生成と元task完了を同じ保存で反映する() {
+    let operation_now = Local.with_ymd_and_hms(2026, 9, 5, 19, 1, 0).unwrap();
+    for (record_elapsed_seconds, expected_actual_work_seconds) in [(true, 360), (false, 300)] {
+        let fixture = WebReadServiceFixture::new();
+        let (parent_id, child_id) =
+            fixture.seed_repetition_task(operation_now - Duration::hours(1));
+        let mut service = WebService::new(fixture.storage.clone(), fixture.config());
+
+        service
+            .complete_session_at(
+                operation_now,
+                CompleteSessionRequest {
+                    task_id: child_id.to_string(),
+                    started_at_epoch_ms: operation_now.timestamp_millis() - 60_000,
+                    expected_actual_work_seconds: 300,
+                    record_elapsed_seconds,
+                },
+            )
+            .unwrap();
+
+        let mut repository = TaskRepository::new(fixture.storage.to_str().unwrap());
+        repository.reload_if_changed(operation_now).unwrap();
+        let parent = repository.get_by_id(parent_id).unwrap().unwrap();
+        let children = parent.get_children().unwrap();
+        assert_eq!(children.len(), 2);
+        let completed = repository.get_by_id(child_id).unwrap().unwrap();
+        assert_eq!(completed.get_status().unwrap(), Status::Done);
+        assert_eq!(
+            completed.get_actual_work_seconds().unwrap(),
+            expected_actual_work_seconds
+        );
+        assert!(children
+            .iter()
+            .any(|child| child.get_id().unwrap() != child_id));
+    }
+}
+
+#[test]
+fn complete_sessionは計測破棄指定でも未完了childがあれば保存しない() {
     let operation_now = Local.with_ymd_and_hms(2026, 9, 5, 19, 1, 0).unwrap();
     let fixture = WebReadServiceFixture::new();
-    let (parent_id, child_id) = fixture.seed_repetition_task(operation_now - Duration::hours(1));
+    let parent_id = fixture.seed_fixed_task(operation_now - Duration::hours(1));
+    let mut repository = TaskRepository::new(fixture.storage.to_str().unwrap());
+    repository.reload_if_changed(operation_now).unwrap();
+    repository
+        .get_by_id(parent_id)
+        .unwrap()
+        .unwrap()
+        .create_child(TaskAttr::with_identity(
+            "undone child",
+            Uuid::from_u128(0x2026_0905_0003),
+            operation_now,
+        ))
+        .unwrap();
+    repository.save().unwrap();
+    let before = fixture.persisted_bytes();
     let mut service = WebService::new(fixture.storage.clone(), fixture.config());
 
-    service
+    let error = service
         .complete_session_at(
             operation_now,
             CompleteSessionRequest {
-                task_id: child_id.to_string(),
-                started_at_epoch_ms: operation_now.timestamp_millis() - 60_000,
+                task_id: parent_id.to_string(),
+                started_at_epoch_ms: i64::MAX,
                 expected_actual_work_seconds: 300,
-                record_elapsed_seconds: true,
+                record_elapsed_seconds: false,
             },
         )
-        .unwrap();
+        .unwrap_err();
+
+    assert!(matches!(
+        error,
+        WebReadError::Application(
+            crate::application::task_use_case::ApplicationError::HasUndoneChildren(id)
+        ) if id == parent_id
+    ));
+    assert_eq!(fixture.persisted_bytes(), before);
+}
+
+#[test]
+fn complete_sessionは計測破棄指定のcommit前保存失敗後に同一requestを再試行できる() {
+    let operation_now = Local.with_ymd_and_hms(2026, 9, 5, 19, 1, 0).unwrap();
+    let fixture = WebReadServiceFixture::new();
+    let task_id = fixture.seed_fixed_task(operation_now - Duration::hours(1));
+    let request = CompleteSessionRequest {
+        task_id: task_id.to_string(),
+        started_at_epoch_ms: i64::MAX,
+        expected_actual_work_seconds: 300,
+        record_elapsed_seconds: false,
+    };
+    let io = Arc::new(RecordingIo::new(vec![FaultRule {
+        operation: RecordingOperation::CreateDirectory,
+        path_matcher: PathMatcher::FileName(".schronu-transactions"),
+        occurrence: 1,
+        error_kind: std::io::ErrorKind::Other,
+        error_message: "injected pre-commit failure",
+    }]));
+    let mut service = WebService::new(fixture.storage.clone(), fixture.config());
+    service.set_mutation_repository_factory(move |storage_path| {
+        TaskRepository::new_with_storage_transaction_io(storage_path, io.clone())
+    });
+
+    assert!(matches!(
+        service.complete_session_at(operation_now, request.clone()),
+        Err(WebReadError::RepositorySaveFailed(_))
+    ));
+    service.complete_session_at(operation_now, request).unwrap();
 
     let mut repository = TaskRepository::new(fixture.storage.to_str().unwrap());
     repository.reload_if_changed(operation_now).unwrap();
-    let parent = repository.get_by_id(parent_id).unwrap().unwrap();
-    let children = parent.get_children().unwrap();
-    assert_eq!(children.len(), 2);
-    let completed = repository.get_by_id(child_id).unwrap().unwrap();
+    let completed = repository.get_by_id(task_id).unwrap().unwrap();
+    assert_eq!(completed.get_actual_work_seconds().unwrap(), 300);
     assert_eq!(completed.get_status().unwrap(), Status::Done);
-    assert_eq!(completed.get_actual_work_seconds().unwrap(), 360);
-    assert!(children
-        .iter()
-        .any(|child| child.get_id().unwrap() != child_id));
 }
 
 #[test]
