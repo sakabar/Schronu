@@ -31,7 +31,9 @@ fn snapshot_verifyはdigestが一致する不正yamlをstrict拒否する() {
     fs::write(snapshot.join("storage").join(relative), invalid).unwrap();
     update_manifest_file(&snapshot, relative, invalid);
 
-    verify_snapshot(&snapshot).unwrap_err();
+    let error = verify_snapshot(&snapshot).unwrap_err().to_string();
+    assert!(error.contains("RepositoryLoad"), "{error}");
+    assert!(error.contains("project.yaml"), "{error}");
 }
 
 #[test]
@@ -45,7 +47,8 @@ fn snapshot_verifyはdigestが一致する重複task_uuidをstrict拒否する()
     let source_relative = project_yaml.strip_prefix(&storage).unwrap();
     let duplicate_relative = PathBuf::from("duplicate/project.yaml");
     let bytes = fs::read(snapshot.join("storage").join(source_relative)).unwrap();
-    fs::create_dir(snapshot.join("storage/duplicate")).unwrap();
+    let duplicate_directory = snapshot.join("storage/duplicate");
+    fs::create_dir(&duplicate_directory).unwrap();
     fs::write(snapshot.join("storage").join(&duplicate_relative), &bytes).unwrap();
 
     let manifest_path = snapshot.join("manifest.json");
@@ -54,7 +57,10 @@ fn snapshot_verifyはdigestが一致する重複task_uuidをstrict拒否する()
     manifest["directories"]
         .as_array_mut()
         .unwrap()
-        .push(serde_json::json!({"path": "duplicate", "mode": 493}));
+        .push(serde_json::json!({
+            "path": "duplicate",
+            "mode": permission_mode(&duplicate_directory),
+        }));
     let mut file_entry = manifest["files"]
         .as_array()
         .unwrap()
@@ -66,5 +72,18 @@ fn snapshot_verifyはdigestが一致する重複task_uuidをstrict拒否する()
     manifest["files"].as_array_mut().unwrap().push(file_entry);
     fs::write(manifest_path, serde_json::to_vec(&manifest).unwrap()).unwrap();
 
-    verify_snapshot(&snapshot).unwrap_err();
+    let error = verify_snapshot(&snapshot).unwrap_err().to_string();
+    assert!(error.contains("RepositoryLoad"), "{error}");
+    assert!(error.contains("duplicate task ID"), "{error}");
+}
+
+#[cfg(unix)]
+fn permission_mode(path: &Path) -> u32 {
+    use std::os::unix::fs::PermissionsExt;
+    fs::metadata(path).unwrap().permissions().mode() & 0o7777
+}
+
+#[cfg(not(unix))]
+fn permission_mode(_path: &Path) -> Option<u32> {
+    None
 }
