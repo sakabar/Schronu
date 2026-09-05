@@ -79,6 +79,7 @@ impl ClientState {
             self.record_stale_response(Operation::AutoSession, result.is_ok());
             return ClientEffect::None;
         }
+        self.auto_session_in_flight = false;
         match result {
             Ok(success) => {
                 let _ = self.apply_snapshot(success.snapshot);

@@ -157,6 +157,7 @@ pub struct ClientState {
     history: VecDeque<OperationHistoryEntry>,
     tick_now_epoch_ms: i64,
     auto_session_empty: bool,
+    auto_session_in_flight: bool,
     next_read_request_id: u64,
     latest_bootstrap_request_id: Option<u64>,
     latest_list_request_id: Option<u64>,
@@ -189,6 +190,7 @@ impl ClientState {
             history: VecDeque::new(),
             tick_now_epoch_ms,
             auto_session_empty: false,
+            auto_session_in_flight: false,
             next_read_request_id: 1,
             latest_bootstrap_request_id: None,
             latest_list_request_id: None,
@@ -244,6 +246,10 @@ impl ClientState {
 
     pub fn auto_session_empty(&self) -> bool {
         self.auto_session_empty
+    }
+
+    pub fn auto_session_in_flight(&self) -> bool {
+        self.auto_session_in_flight
     }
 
     pub fn is_session_in_flight(&self, task_id: &str) -> bool {
@@ -312,10 +318,14 @@ impl ClientState {
     }
 
     pub fn request_auto_session(&mut self) -> ClientEffect {
+        if self.auto_session_in_flight {
+            return ClientEffect::None;
+        }
         let Some(request_id) = self.next_read_request_id() else {
             return ClientEffect::None;
         };
         self.latest_auto_request_id = Some(request_id);
+        self.auto_session_in_flight = true;
         ClientEffect::AutoSession { request_id }
     }
 
