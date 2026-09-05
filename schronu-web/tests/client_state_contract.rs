@@ -513,6 +513,43 @@ fn auto_sessionは古いsnapshotを無視してtask_payloadを適用する() {
     );
 }
 
+#[test]
+fn 未解決の手動確認errorは無関係な成功で解消しない() {
+    let storage = FakeStorage::default();
+    let mut state = state_with_sessions(&storage, &[TASK_ID]);
+    let (record_id, _) = record_effect(state.begin_record_session(TASK_ID));
+    storage.fail_writes.set(true);
+    state.apply_record_result(
+        &storage,
+        record_id,
+        Ok(WebSuccess {
+            snapshot: snapshot("2026-09-05", 1),
+            data: RecordSessionResult {
+                actual_work_seconds: 101,
+            },
+        }),
+    );
+    let committed_error = state.display_error().cloned();
+    storage.fail_writes.set(false);
+    let bootstrap_id = bootstrap_effect(state.request_bootstrap());
+    state.apply_bootstrap_result(bootstrap_id, Ok(snapshot("2026-09-05", 2)));
+    assert_eq!(state.display_error(), committed_error.as_ref());
+
+    let mut state = state_with_sessions(&storage, &[TASK_ID]);
+    let (record_id, _) = record_effect(state.begin_record_session(TASK_ID));
+    state.apply_record_result(
+        &storage,
+        record_id,
+        Err(ServerFailure::Operation(web_error(
+            web_error_codes::ACTUAL_WORK_CONFLICT,
+            RetryAdvice::ManualCheck,
+        ))),
+    );
+    let manual_error = state.display_error().cloned();
+    state.add_session_from_row(&storage, &row(OTHER_TASK_ID, 0));
+    assert_eq!(state.display_error(), manual_error.as_ref());
+}
+
 #[derive(Default)]
 struct FakeStorage {
     value: RefCell<Option<String>>,
