@@ -402,14 +402,20 @@ pub(super) fn validate_command_input(command: &Command) -> Result<(), CommandVal
 }
 
 pub(super) fn parse_command(input: &str, mode: ParseMode) -> Result<Command, CommandParseError> {
-    let tokens = tokenize(input).map_err(|error| {
-        CommandParseError::new(
-            "入力",
-            "syntax",
-            error.kind().reason(),
-            "<command> [arguments]",
-        )
-    })?;
+    let tokens = match mode {
+        ParseMode::Interactive => tokenize(input).map_err(|error| {
+            CommandParseError::new(
+                "入力",
+                "syntax",
+                error.kind().reason(),
+                "<command> [arguments]",
+            )
+        })?,
+        ParseMode::NonInteractive => input
+            .split_whitespace()
+            .map(str::to_string)
+            .collect::<Vec<_>>(),
+    };
     if input.starts_with('0') {
         return Ok(Command::Noop);
     }

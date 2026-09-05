@@ -81,6 +81,34 @@ fn interactive_parser_reports_typed_errors_for_incomplete_lexemes() {
 }
 
 #[test]
+fn noninteractive_string_parser_does_not_apply_interactive_lexer_rules() {
+    assert_eq!(
+        parse_command(r#"新 "alpha" 15"#, ParseMode::NonInteractive).unwrap(),
+        Command::Action(CommandAction::NewProject {
+            kind: CommandKind::NewProject,
+            canonical_name: "新",
+            name: "\"alpha\"".to_string(),
+            estimated_minutes: Some(15),
+        })
+    );
+    assert_eq!(
+        parse_command(r"新 alpha\beta", ParseMode::NonInteractive).unwrap(),
+        Command::Action(CommandAction::NewProject {
+            kind: CommandKind::NewProject,
+            canonical_name: "新",
+            name: r"alpha\beta".to_string(),
+            estimated_minutes: None,
+        })
+    );
+
+    let error = parse_command("新 'alpha beta'", ParseMode::NonInteractive).unwrap_err();
+    assert_eq!(error.command(), "新");
+    assert_eq!(error.field(), "estimated_work_minutes");
+    assert_eq!(error.reason(), "整数で指定してください");
+    assert_eq!(error.usage(), "新 <name> [minutes]");
+}
+
+#[test]
 fn lexer_keeps_existing_alias_and_arity_contracts() {
     assert_eq!(
         parse_command("new 'alpha beta'", ParseMode::Interactive)
