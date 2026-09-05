@@ -327,6 +327,8 @@ fn 古いmutation応答は同じuuidの新しいsessionへ作用しない() {
 fn 逆順のlist応答と古いsnapshotは最新表示を巻き戻さない() {
     let storage = FakeStorage::default();
     let mut state = ClientState::new(load_work_sessions(&storage).unwrap(), 0);
+    let bootstrap_id = bootstrap_effect(state.request_bootstrap());
+    state.apply_bootstrap_result(bootstrap_id, Ok(snapshot("2026-09-05", 50)));
     let first_request_id = match state.request_list("2026-09-05") {
         ClientEffect::ListTasks { request_id, .. } => request_id,
         other => panic!("unexpected effect: {other:?}"),
@@ -340,7 +342,7 @@ fn 逆順のlist応答と古いsnapshotは最新表示を巻き戻さない() {
         second_request_id,
         "2026-09-06",
         Ok(WebSuccess {
-            snapshot: snapshot("2026-09-06", 200),
+            snapshot: snapshot("2026-09-05", 200),
             data: vec![row(OTHER_TASK_ID, 0)],
         }),
     );
@@ -354,7 +356,8 @@ fn 逆順のlist応答と古いsnapshotは最新表示を巻き戻さない() {
     );
 
     assert_eq!(state.snapshot().unwrap().observed_at_epoch_ms, 200);
-    assert_eq!(state.snapshot().unwrap().logical_date, "2026-09-06");
+    assert_eq!(state.snapshot().unwrap().logical_date, "2026-09-05");
+    assert_eq!(state.selected_logical_date(), Some("2026-09-06"));
     assert_eq!(state.scheduled_rows()[0].task.task_id, OTHER_TASK_ID);
 }
 

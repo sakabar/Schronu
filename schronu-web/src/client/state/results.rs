@@ -39,11 +39,10 @@ impl ClientState {
         }
         match result {
             Ok(success) => {
-                let response_logical_date = success.snapshot.logical_date.clone();
-                let Some(_) = self.apply_snapshot(success.snapshot) else {
+                let Some(logical_date_changed) = self.apply_snapshot(success.snapshot) else {
                     return ClientEffect::None;
                 };
-                if requested_date == response_logical_date {
+                if !logical_date_changed {
                     self.selected_logical_date = Some(requested_date.to_owned());
                     self.scheduled_rows = success.data;
                 }
