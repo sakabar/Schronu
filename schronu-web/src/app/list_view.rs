@@ -96,10 +96,10 @@ fn TaskRow(
 
     rsx! {
         tr { class: "task-row",
-            td { class: deadline_class, "{deadline}" }
-            td { class: "schedule-time", "{row.schedule_label}" }
+            td { class: deadline_class, "data-label": "締切", "{deadline}" }
+            td { class: "schedule-time", "data-label": "予定", "{row.schedule_label}" }
             td { class: task_class, "{row.task.task_name}" }
-            td {
+            td { class: "session-cell",
                 button {
                     class: "session-start",
                     r#type: "button",
