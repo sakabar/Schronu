@@ -887,7 +887,7 @@ fn command_definition(name: &str) -> Option<CommandDefinition> {
         "暦" | "cal" => CommandDefinition::new(Kind::Calendar, "暦", "暦", 0, Some(0)),
         "帯" | "band" => CommandDefinition::new(Kind::Band, "帯", "帯", 0, Some(0)),
         "見" | "focus" | "fc" => {
-            CommandDefinition::new(Kind::Focus, "見", "見 <task_id>", 1, Some(1))
+            CommandDefinition::new(Kind::Focus, "見", "見 <task_id>", 1, None)
         }
         "選" | "pick" => CommandDefinition::new(Kind::Pick, "選", "選 [task_id]", 0, Some(1)),
         "開" | "open" | "op" => CommandDefinition::new(Kind::Open, "開", "開", 0, Some(0)),

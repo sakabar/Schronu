@@ -107,6 +107,31 @@ fn parser_converts_command_fields_to_typed_values() {
 }
 
 #[test]
+fn focusは全aliasとmodeで先頭argumentだけを受理する() {
+    let task_id = Uuid::new_v4();
+
+    for alias in ["見", "focus", "fc"] {
+        for mode in [ParseMode::Interactive, ParseMode::NonInteractive] {
+            let input = format!("{alias} {task_id} A _______");
+            assert_eq!(
+                parse_command(&input, mode).unwrap(),
+                Command::Focus { task_id },
+                "input: {input}, mode: {mode:?}"
+            );
+
+            let invalid_first = format!("{alias} invalid {task_id}");
+            let error = parse_command(&invalid_first, mode).unwrap_err();
+            assert_eq!(error.field(), "task_id", "input: {invalid_first}");
+            assert_eq!(
+                error.reason(),
+                "UUIDで指定してください",
+                "input: {invalid_first}"
+            );
+        }
+    }
+}
+
+#[test]
 fn all_commands_enforce_argument_bounds() {
     struct Case {
         command: &'static str,
@@ -355,7 +380,7 @@ fn all_commands_enforce_argument_bounds() {
             mode: ParseMode::NonInteractive,
             valid_arguments: &["00000000-0000-0000-0000-000000000001"],
             minimum: 1,
-            maximum: Some(1),
+            maximum: None,
             usage: "見 <task_id>",
         },
         Case {
