@@ -185,6 +185,44 @@ fn each_block_reason_disables_only_the_affected_session_actions() {
 fn action_kind_is_a_closed_typed_contract() {
     assert_ne!(SessionActionKind::Discard, SessionActionKind::Record);
     assert_ne!(SessionActionKind::Record, SessionActionKind::Complete);
+    assert_ne!(
+        SessionActionKind::Complete,
+        SessionActionKind::CompleteWithoutRecording
+    );
+}
+
+#[test]
+fn 計測破棄完了はcard内で確認し確定時だけtyped_callbackを送る() {
+    let events = Arc::new(Mutex::new(Vec::new()));
+    let (mut cancel_dom, action_ids) =
+        build_dom(vec![card("task-a")], false, Arc::clone(&events));
+    assert_eq!(action_ids.len(), 4);
+    let action_ids: Vec<_> = action_ids.into_iter().rev().collect();
+
+    dispatch_click(&cancel_dom, action_ids[2]);
+    assert!(events.lock().unwrap().is_empty());
+    let confirm_ids = rebuild_with_click_listeners(&mut cancel_dom);
+    let html = dioxus::ssr::render(&cancel_dom);
+    assert!(html.contains("このセッションの計測時間は記録されません。タスクを完了しますか?"));
+    assert!(html.contains("class=\"session-discard-completion-confirmation\""));
+    assert_eq!(confirm_ids.len(), 2);
+    let confirm_ids: Vec<_> = confirm_ids.into_iter().rev().collect();
+    dispatch_click(&cancel_dom, confirm_ids[0]);
+    rebuild_with_click_listeners(&mut cancel_dom);
+    assert!(!dioxus::ssr::render(&cancel_dom).contains("タスクを完了しますか?"));
+    assert!(events.lock().unwrap().is_empty());
+
+    let (mut confirm_dom, action_ids) =
+        build_dom(vec![card("task-b")], false, Arc::clone(&events));
+    let action_ids: Vec<_> = action_ids.into_iter().rev().collect();
+    dispatch_click(&confirm_dom, action_ids[2]);
+    let confirm_ids = rebuild_with_click_listeners(&mut confirm_dom);
+    let confirm_ids: Vec<_> = confirm_ids.into_iter().rev().collect();
+    dispatch_click(&confirm_dom, confirm_ids[1]);
+    assert_eq!(
+        *events.lock().unwrap(),
+        ["task-b:CompleteWithoutRecording"]
+    );
 }
 
 #[test]
