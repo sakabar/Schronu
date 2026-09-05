@@ -58,7 +58,7 @@ impl ClientState {
         self.add_session_from_list_task(storage, &row.task, row.is_leaf)
     }
 
-    pub fn add_session_from_list_task<S: KeyValueStorage>(
+    pub(crate) fn add_session_from_list_task<S: KeyValueStorage>(
         &mut self,
         storage: &S,
         task: &SessionTask,
