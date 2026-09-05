@@ -113,7 +113,7 @@ async fn dispatch_complete_session(
     worker.complete_session(request).await
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "server"))]
 mod tests {
     use super::{
         dispatch_auto_session, dispatch_bootstrap, dispatch_complete_session, dispatch_list_tasks,
