@@ -119,6 +119,32 @@ fn snapshot作成resource_limitは境界を許可し超過をtyped拒否する()
 }
 
 #[test]
+fn snapshot作成はdirectory_captureをmanifest_budgetで先行制限する() {
+    let root = TestDirectory::new("create-directory-budget");
+    let storage = root.child("source");
+    let destination = root.child("snapshot");
+    let now = Local.with_ymd_and_hms(2026, 9, 5, 12, 0, 0).unwrap();
+    create_saved_repository(&storage, now);
+    let limits = SnapshotResourceLimits::new(
+        1,
+        10_000,
+        64 * 1024 * 1024,
+        256 * 1024 * 1024,
+        4_096,
+        64,
+    );
+
+    let error = create_snapshot_with_limits(&storage, &destination, now, limits).unwrap_err();
+
+    assert_eq!(error.limit_kind(), Some(SnapshotLimitKind::ManifestBytes));
+    let relative = error
+        .limit_path()
+        .expect("directory entry must identify the relative path");
+    assert_eq!(error.path(), storage.join(relative));
+    assert!(!destination.exists());
+}
+
+#[test]
 fn snapshot作成はcapture後の非協調file差し替えを公開しない() {
     let root = TestDirectory::new("create-capture-swap");
     let storage = root.child("source");
