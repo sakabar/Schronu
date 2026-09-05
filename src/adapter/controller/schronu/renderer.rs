@@ -12,14 +12,14 @@ pub(super) const MAX_COL: u16 = 999;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(super) struct SpreadsheetTaskRow<'a> {
-    pub(super) rank: &'a str,
+    pub(super) ind: &'a str,
     pub(super) task_id: &'a str,
     pub(super) icon: &'a str,
-    pub(super) remaining_time: &'a str,
-    pub(super) scheduled_time: &'a str,
-    pub(super) priority: &'a str,
+    pub(super) deadline: &'a str,
+    pub(super) estimated_datetime: &'a str,
+    pub(super) rank: &'a str,
     pub(super) estimated_minutes: &'a str,
-    pub(super) project_number: &'a str,
+    pub(super) priority: &'a str,
     pub(super) category: &'a str,
     pub(super) task_name: &'a str,
 }
@@ -27,14 +27,14 @@ pub(super) struct SpreadsheetTaskRow<'a> {
 pub(super) fn format_spreadsheet_task_row(row: &SpreadsheetTaskRow<'_>) -> String {
     format!(
         "{} {} {} {} {} {} {} {} {} {}",
-        row.rank,
+        row.ind,
         row.task_id,
         row.icon,
-        row.remaining_time,
-        row.scheduled_time,
-        row.priority,
+        row.deadline,
+        row.estimated_datetime,
+        row.rank,
         row.estimated_minutes,
-        row.project_number,
+        row.priority,
         row.category,
         row.task_name,
     )
@@ -90,15 +90,15 @@ pub(super) enum TreeDisplay {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(super) struct TaskListTaskRow {
-    pub(super) rank: usize,
+    pub(super) ind: usize,
     pub(super) task_id: Uuid,
     pub(super) icon: String,
-    pub(super) remaining_time: String,
+    pub(super) deadline: String,
     pub(super) scheduled_start: DateTime<Local>,
     pub(super) scheduled_end: DateTime<Local>,
-    pub(super) priority_rank: usize,
+    pub(super) rank: usize,
     pub(super) estimated_minutes: i64,
-    pub(super) project_number_priority: i64,
+    pub(super) priority: i64,
     pub(super) project_category: Option<ProjectCategory>,
     pub(super) task_name: String,
     pub(super) give_up_candidate: bool,
@@ -112,14 +112,14 @@ pub(super) enum TaskListIconMode {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(super) struct TaskListColumns {
-    rank: String,
+    ind: String,
     task_id: String,
     icon: String,
-    remaining_time: String,
-    scheduled_time: String,
-    priority: String,
+    deadline: String,
+    estimated_datetime: String,
+    rank: String,
     estimated_minutes: String,
-    project_number: String,
+    priority: String,
     category: String,
     task_name: String,
 }
@@ -990,20 +990,20 @@ pub(super) fn task_list_columns(
         TaskListIconMode::ApplyGiveUpCandidate => row.icon.clone(),
     };
     TaskListColumns {
-        rank: format!("{:04}", row.rank),
+        ind: format!("{:04}", row.ind),
         task_id: row.task_id.to_string(),
         icon,
-        remaining_time: row.remaining_time.clone(),
-        scheduled_time: format!(
+        deadline: row.deadline.clone(),
+        estimated_datetime: format!(
             "{}({})-{}~{}",
             row.scheduled_start.format("%m/%d"),
             weekday_jp(row.scheduled_start.weekday()),
             row.scheduled_start.format("%H:%M"),
             row.scheduled_end.format("%H:%M"),
         ),
-        priority: row.priority_rank.to_string(),
+        rank: row.rank.to_string(),
         estimated_minutes: format!("{:02}", row.estimated_minutes),
-        project_number: format!("{:02}", row.project_number_priority),
+        priority: format!("{:02}", row.priority),
         category: project_category_symbol(row.project_category).to_string(),
         task_name: row.task_name.clone(),
     }
@@ -1011,14 +1011,14 @@ pub(super) fn task_list_columns(
 
 pub(super) fn format_task_list_columns(columns: &TaskListColumns) -> String {
     format_spreadsheet_task_row(&SpreadsheetTaskRow {
-        rank: &columns.rank,
+        ind: &columns.ind,
         task_id: &columns.task_id,
         icon: &columns.icon,
-        remaining_time: &columns.remaining_time,
-        scheduled_time: &columns.scheduled_time,
-        priority: &columns.priority,
+        deadline: &columns.deadline,
+        estimated_datetime: &columns.estimated_datetime,
+        rank: &columns.rank,
         estimated_minutes: &columns.estimated_minutes,
-        project_number: &columns.project_number,
+        priority: &columns.priority,
         category: &columns.category,
         task_name: &columns.task_name,
     })
