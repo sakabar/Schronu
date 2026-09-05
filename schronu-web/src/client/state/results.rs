@@ -211,6 +211,10 @@ impl ClientState {
         if keep_armed || !self.pending_mutations.is_empty() || self.mutation_globally_blocked {
             return;
         }
+        if !self.committed_blocked_task_ids.is_empty() {
+            self.mutation_globally_blocked = true;
+            return;
+        }
         if self.mutation_safety.disarm(storage).is_err()
             && self.committed_blocked_task_ids.is_empty()
         {
