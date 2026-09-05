@@ -1,6 +1,7 @@
 use dioxus::prelude::*;
 
 use crate::client::time_model::format_mm_ss;
+pub(crate) use crate::client::view_projection::SessionCardViewModel;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 #[cfg_attr(
@@ -17,21 +18,6 @@ pub enum SessionActionKind {
 pub struct SessionAction {
     pub task_id: String,
     pub kind: SessionActionKind,
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct SessionCardViewModel {
-    pub task_id: String,
-    pub task_name: String,
-    pub started_at_hh_mm: String,
-    pub completion_hh_mm: Option<String>,
-    pub progress_percent: Option<i128>,
-    pub normal_bar_percent: i128,
-    pub overrun_bar_percent: i128,
-    pub remaining_seconds: i128,
-    pub in_flight: bool,
-    pub manual_check_blocked: bool,
-    pub server_committed: bool,
 }
 
 #[component]

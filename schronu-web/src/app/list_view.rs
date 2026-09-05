@@ -1,5 +1,6 @@
 use dioxus::prelude::*;
 
+pub(crate) use crate::client::view_projection::ListRowViewModel;
 use crate::SessionTask;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -7,15 +8,6 @@ pub struct DateButtonViewModel {
     pub logical_date: String,
     pub label: String,
     pub selected: bool,
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct ListRowViewModel {
-    pub task: SessionTask,
-    pub deadline_label: Option<String>,
-    pub schedule_label: String,
-    pub deadline_epoch_ms: Option<i64>,
-    pub is_leaf: bool,
 }
 
 #[component]
