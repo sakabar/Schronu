@@ -2,6 +2,10 @@ use std::path::Path;
 use std::sync::Arc;
 
 use super::cleanup::cleanup_stale_tombstones;
+use super::io::{
+    acquire_transaction_lock, resolve_transactions_directory, sync_directory,
+    validate_delete_target_ancestors, validate_transactions_directory,
+};
 use super::layout::TransactionLayout;
 use super::manifest::{
     invalid_manifest_entry_error, validate_content_integrity, validate_staged_file_path,
@@ -11,9 +15,7 @@ use super::manifest::{
 #[cfg(test)]
 use super::PreparedTransaction;
 use super::{
-    acquire_transaction_lock, resolve_transactions_directory, sync_directory,
-    validate_delete_target_ancestors, validate_storage_relative_path,
-    validate_transactions_directory, CommittedTransaction, StorageTransactionError,
+    validate_storage_relative_path, CommittedTransaction, StorageTransactionError,
     StorageTransactionIo, StorageTransactionOperation, TransactionLock, TransactionPaths,
     TransactionState,
 };

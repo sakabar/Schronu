@@ -1,3 +1,4 @@
+use super::io::TRANSACTION_LOCK_FILE_NAME;
 use super::*;
 use crate::adapter::gateway::storage_transaction_test_support::*;
 use serde_json::Value;

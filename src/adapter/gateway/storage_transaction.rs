@@ -15,12 +15,7 @@ mod manifest;
 mod prepare;
 mod recovery;
 
-#[cfg(test)]
-use io::TRANSACTION_LOCK_FILE_NAME;
-use io::{
-    acquire_transaction_lock, resolve_transactions_directory, sync_directory,
-    validate_delete_target_ancestors, validate_transactions_directory, TransactionLock,
-};
+use io::TransactionLock;
 pub(super) use io::{FileSystemStorageTransactionIo, StorageTransactionIo};
 use layout::validate_storage_relative_path;
 #[cfg(test)]

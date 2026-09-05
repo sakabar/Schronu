@@ -2,11 +2,11 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use super::cleanup::cleanup_committed_transaction;
+use super::io::sync_directory;
 use super::layout::TransactionLayout;
 use super::manifest::{content_matches, ValidatedEntry};
 use super::{
-    sync_directory, CommittedTransaction, PreparedTransaction, StorageTransactionError,
-    StorageTransactionOperation,
+    CommittedTransaction, PreparedTransaction, StorageTransactionError, StorageTransactionOperation,
 };
 
 enum PreflightEntry {

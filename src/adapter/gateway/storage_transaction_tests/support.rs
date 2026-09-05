@@ -1,4 +1,6 @@
 
+use super::io::acquire_transaction_lock;
+
 fn file_system_io() -> Arc<dyn StorageTransactionIo> {
     Arc::new(FileSystemStorageTransactionIo)
 }

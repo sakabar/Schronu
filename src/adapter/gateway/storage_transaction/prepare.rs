@@ -4,15 +4,18 @@ use std::sync::Arc;
 use uuid::Uuid;
 
 use super::cleanup::cleanup_stale_tombstones;
+use super::io::{
+    acquire_transaction_lock, resolve_transactions_directory, sync_directory,
+    validate_transactions_directory,
+};
 use super::layout::TransactionLayout;
 use super::manifest::{
     content_checksum, ContentIntegrity, RawTransactionManifest, ValidatedEntry, ValidatedManifest,
 };
 use super::{
-    acquire_transaction_lock, resolve_transactions_directory, sync_directory,
-    validate_storage_relative_path, validate_transactions_directory, PreparedTransaction,
-    StorageTransactionError, StorageTransactionIo, StorageTransactionOperation, TransactionPaths,
-    TransactionState, WriteRequest,
+    validate_storage_relative_path, PreparedTransaction, StorageTransactionError,
+    StorageTransactionIo, StorageTransactionOperation, TransactionPaths, TransactionState,
+    WriteRequest,
 };
 
 struct PrepareContext<'a> {
