@@ -11,6 +11,7 @@ const LOCK_RETRY_INTERVAL: Duration = Duration::from_millis(10);
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum LockMode {
+    Backup,
     Cli,
     Mcp,
     Web,
@@ -19,6 +20,7 @@ pub enum LockMode {
 impl fmt::Display for LockMode {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Self::Backup => write!(formatter, "backup"),
             Self::Cli => write!(formatter, "cli"),
             Self::Mcp => write!(formatter, "mcp"),
             Self::Web => write!(formatter, "web"),

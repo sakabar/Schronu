@@ -4,9 +4,14 @@ use std::path::{Path, PathBuf};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(super) enum SnapshotOperation {
+    AcquireLock,
+    Create,
     Encode,
     Decode,
+    Read,
+    Sync,
     Validate,
+    Write,
 }
 
 #[derive(Debug)]
