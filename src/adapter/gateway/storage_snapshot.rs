@@ -1,5 +1,6 @@
 mod create;
 mod error;
+pub(in crate::adapter::gateway) mod io;
 mod layout;
 pub(super) mod manifest;
 

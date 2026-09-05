@@ -1,5 +1,6 @@
 use crate::adapter::gateway::storage_snapshot::create_snapshot_at;
 use crate::adapter::gateway::storage_lock::{LockMode, StorageLock};
+use crate::adapter::gateway::storage_snapshot::io::rename_no_replace;
 use chrono::TimeZone;
 
 #[test]
@@ -90,4 +91,23 @@ fn snapshotはsave用lockとの競合中にstorageを読まない() {
 
     let summary = create_snapshot_at(&storage, &destination, now).unwrap();
     assert_eq!(summary.file_count(), 2);
+}
+
+#[test]
+fn snapshot公開renameは競合して作成されたdestinationを置換しない() {
+    let root = TestDirectory::new("create-no-replace");
+    let staging = root.child(".snapshot.tmp-staged");
+    let destination = root.child("snapshot");
+    fs::create_dir(&staging).unwrap();
+    fs::write(staging.join("staged"), b"snapshot").unwrap();
+    fs::create_dir(&destination).unwrap();
+    fs::write(destination.join("concurrent"), b"preserve").unwrap();
+
+    rename_no_replace(&staging, &destination).unwrap_err();
+
+    assert_eq!(
+        fs::read(destination.join("concurrent")).unwrap(),
+        b"preserve"
+    );
+    assert_eq!(fs::read(staging.join("staged")).unwrap(), b"snapshot");
 }

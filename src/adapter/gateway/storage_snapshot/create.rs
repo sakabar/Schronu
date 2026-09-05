@@ -1,4 +1,5 @@
 use super::error::{SnapshotError, SnapshotOperation};
+use super::io::rename_no_replace;
 use super::layout::{is_reserved_path, MANIFEST_FILE_NAME, PAYLOAD_DIRECTORY_NAME};
 use super::manifest::{
     decode_manifest, encode_manifest, DigestDescriptor, DirectoryEntry, FileEntry,
@@ -245,7 +246,7 @@ fn publish_snapshot(
         .and_then(|()| manifest_file.sync_all())
         .map_err(|error| SnapshotError::new(SnapshotOperation::Sync, &manifest_path, error))?;
     sync_directory(staging)?;
-    fs::rename(staging, destination)
+    rename_no_replace(staging, destination)
         .map_err(|error| SnapshotError::new(SnapshotOperation::Write, destination, error))?;
     sync_directory(destination.parent().expect("destination has a parent"))
 }
