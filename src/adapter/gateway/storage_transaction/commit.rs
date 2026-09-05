@@ -106,105 +106,107 @@ impl PreparedTransaction {
         let layout = TransactionLayout::new(&self.storage_dir_path);
         self.entries
             .iter()
-            .map(|entry| {
-                if let ValidatedEntry::Delete { target } = entry {
-                    return Ok(PreflightEntry::Delete {
-                        target_path: layout.target_path(target),
-                    });
-                }
-                let ValidatedEntry::Write {
+            .map(|entry| match entry {
+                ValidatedEntry::Delete { target } => Ok(PreflightEntry::Delete {
+                    target_path: layout.target_path(target),
+                }),
+                ValidatedEntry::Write {
                     target,
                     staged_file,
                     integrity,
-                } = entry
-                else {
-                    unreachable!("delete entries return before write preflight");
-                };
-                let target_path = layout.target_path(target);
-                let staged_file_path =
-                    TransactionLayout::staged_file_path(&self.transaction_dir_path, staged_file);
-                let staged_material = match self.io.symlink_metadata(&staged_file_path) {
-                    Ok(metadata) if metadata.file_type().is_file() => {
-                        let bytes = self.io.read_file(&staged_file_path).map_err(|error| {
-                            StorageTransactionError::new(
-                                StorageTransactionOperation::ReadStagedFile,
-                                &staged_file_path,
-                                error,
-                            )
-                        })?;
-                        if !content_matches(&bytes, integrity.content_length, &integrity.checksum) {
+                } => {
+                    let target_path = layout.target_path(target);
+                    let staged_file_path = TransactionLayout::staged_file_path(
+                        &self.transaction_dir_path,
+                        staged_file,
+                    );
+                    let staged_material = match self.io.symlink_metadata(&staged_file_path) {
+                        Ok(metadata) if metadata.file_type().is_file() => {
+                            let bytes = self.io.read_file(&staged_file_path).map_err(|error| {
+                                StorageTransactionError::new(
+                                    StorageTransactionOperation::ReadStagedFile,
+                                    &staged_file_path,
+                                    error,
+                                )
+                            })?;
+                            if !content_matches(
+                                &bytes,
+                                integrity.content_length,
+                                &integrity.checksum,
+                            ) {
+                                return Err(StorageTransactionError::new(
+                                    StorageTransactionOperation::ValidateStagedContent,
+                                    &staged_file_path,
+                                    std::io::Error::new(
+                                        std::io::ErrorKind::InvalidData,
+                                        "staged transaction material does not match manifest content",
+                                    ),
+                                ));
+                            }
+                            Some((bytes, metadata.permissions()))
+                        }
+                        Ok(_) => {
                             return Err(StorageTransactionError::new(
-                                StorageTransactionOperation::ValidateStagedContent,
+                                StorageTransactionOperation::ValidateStagedFile,
                                 &staged_file_path,
                                 std::io::Error::new(
                                     std::io::ErrorKind::InvalidData,
-                                    "staged transaction material does not match manifest content",
+                                    "staged transaction material must be a regular file",
                                 ),
                             ));
                         }
-                        Some((bytes, metadata.permissions()))
-                    }
-                    Ok(_) => {
-                        return Err(StorageTransactionError::new(
-                            StorageTransactionOperation::ValidateStagedFile,
-                            &staged_file_path,
-                            std::io::Error::new(
-                                std::io::ErrorKind::InvalidData,
-                                "staged transaction material must be a regular file",
-                            ),
-                        ));
-                    }
-                    Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
-                    Err(error) => {
-                        return Err(StorageTransactionError::new(
-                            StorageTransactionOperation::ReadStagedFile,
-                            &staged_file_path,
-                            error,
-                        ));
-                    }
-                };
-                match self.io.symlink_metadata(&target_path) {
-                    Ok(metadata) if metadata.file_type().is_file() => {
-                        let target_bytes = self.io.read_file(&target_path).map_err(|error| {
-                            StorageTransactionError::new(
-                                StorageTransactionOperation::ReadTargetContent,
+                        Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
+                        Err(error) => {
+                            return Err(StorageTransactionError::new(
+                                StorageTransactionOperation::ReadStagedFile,
+                                &staged_file_path,
+                                error,
+                            ));
+                        }
+                    };
+                    match self.io.symlink_metadata(&target_path) {
+                        Ok(metadata) if metadata.file_type().is_file() => {
+                            let target_bytes = self.io.read_file(&target_path).map_err(|error| {
+                                StorageTransactionError::new(
+                                    StorageTransactionOperation::ReadTargetContent,
+                                    &target_path,
+                                    error,
+                                )
+                            })?;
+                            if content_matches(
+                                &target_bytes,
+                                integrity.content_length,
+                                &integrity.checksum,
+                            ) {
+                                return Ok(PreflightEntry::AlreadyApplied);
+                            }
+                        }
+                        Ok(_) => {}
+                        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                        Err(error) => {
+                            return Err(StorageTransactionError::new(
+                                StorageTransactionOperation::ReadTargetMetadata,
                                 &target_path,
                                 error,
-                            )
-                        })?;
-                        if content_matches(
-                            &target_bytes,
-                            integrity.content_length,
-                            &integrity.checksum,
-                        ) {
-                            return Ok(PreflightEntry::AlreadyApplied);
+                            ));
                         }
                     }
-                    Ok(_) => {}
-                    Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-                    Err(error) => {
-                        return Err(StorageTransactionError::new(
-                            StorageTransactionOperation::ReadTargetMetadata,
-                            &target_path,
-                            error,
-                        ));
-                    }
+                    let (bytes, permissions) = staged_material.ok_or_else(|| {
+                        StorageTransactionError::new(
+                            StorageTransactionOperation::ReadStagedFile,
+                            &staged_file_path,
+                            std::io::Error::new(
+                                std::io::ErrorKind::NotFound,
+                                "staged transaction material does not exist",
+                            ),
+                        )
+                    })?;
+                    Ok(PreflightEntry::Write {
+                        target_path,
+                        bytes,
+                        permissions,
+                    })
                 }
-                let (bytes, permissions) = staged_material.ok_or_else(|| {
-                    StorageTransactionError::new(
-                        StorageTransactionOperation::ReadStagedFile,
-                        &staged_file_path,
-                        std::io::Error::new(
-                            std::io::ErrorKind::NotFound,
-                            "staged transaction material does not exist",
-                        ),
-                    )
-                })?;
-                Ok(PreflightEntry::Write {
-                    target_path,
-                    bytes,
-                    permissions,
-                })
             })
             .collect()
     }
