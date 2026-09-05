@@ -140,6 +140,64 @@ fn snapshot_verifyはmanifest_decode前のdirectory_captureをmanifest_budgetで
     assert!(error.path().starts_with(&payload));
 }
 
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+#[test]
+fn snapshot_verifyのdirectory_captureは実encode長境界を許可し1byte超過をtyped拒否する() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let root = TestDirectory::new("verify-directory-exact-budget");
+    let storage = root.child("source");
+    let snapshot = root.child("snapshot");
+    let now = Local.with_ymd_and_hms(2026, 9, 5, 12, 0, 0).unwrap();
+    create_saved_repository(&storage, now);
+    create_snapshot_at(&storage, &snapshot, now).unwrap();
+    fs::remove_dir_all(&storage).unwrap();
+    let payload = snapshot.join("storage");
+    for index in 0..4 {
+        fs::create_dir(payload.join(format!("{index}-{}", "x".repeat(200)))).unwrap();
+    }
+
+    let entries = WalkDir::new(&payload)
+        .min_depth(1)
+        .into_iter()
+        .map(Result::unwrap)
+        .filter(|entry| entry.file_type().is_dir())
+        .map(|entry| DirectoryEntry {
+            path: entry.path().strip_prefix(&payload).unwrap().to_path_buf(),
+            mode: Some(entry.metadata().unwrap().permissions().mode() & 0o7777),
+        })
+        .collect::<Vec<_>>();
+    let exact_bytes = entries
+        .iter()
+        .map(|entry| serde_json::to_vec(entry).unwrap().len() as u64)
+        .sum::<u64>()
+        + entries.len().saturating_sub(1) as u64;
+    let manifest_bytes = fs::metadata(snapshot.join("manifest.json")).unwrap().len();
+    assert!(exact_bytes > manifest_bytes);
+    let exact = SnapshotResourceLimits::new(
+        exact_bytes,
+        10_000,
+        64 * 1024 * 1024,
+        256 * 1024 * 1024,
+        4_096,
+        64,
+    );
+
+    let non_limit_error = verify_snapshot_with_limits(&snapshot, exact).unwrap_err();
+    assert_eq!(non_limit_error.limit_kind(), None, "{non_limit_error}");
+
+    let error = verify_snapshot_with_limits(
+        &snapshot,
+        exact.with_manifest_bytes(exact_bytes - 1),
+    )
+    .unwrap_err();
+    assert_eq!(error.limit_kind(), Some(SnapshotLimitKind::ManifestBytes));
+    assert_eq!(error.limit_value(), Some(exact_bytes - 1));
+    assert_eq!(error.observed_value(), Some(exact_bytes));
+    let relative = error.limit_path().expect("directory path must be retained");
+    assert_eq!(error.path(), payload.join(relative));
+}
+
 fn create_source_independent_snapshot(label: &str) -> (TestDirectory, PathBuf, PathBuf) {
     let root = TestDirectory::new(label);
     let storage = root.child("source");
