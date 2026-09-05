@@ -67,7 +67,7 @@
 | TD-026 | P1 | 未着手 | L | task名をCLI・YAML・MCP・Spreadsheet間で安全にround-tripできない |
 | TD-027 | P1 | 完了 | S | 残作業時間の補正計算が合法な大値入力で整数overflowする |
 | TD-028 | P1 | 完了 | M | 論理日境界を跨ぐschedule segmentの容量が開始日に全量計上される |
-| TD-029 | P1 | 未着手 | L | 反復task完了の後段失敗で完了状態と親見積もりだけが部分更新される |
+| TD-029 | P1 | 完了 | L | 反復task完了の後段失敗で完了状態と親見積もりだけが部分更新される |
 | TD-030 | P1 | 未着手 | S | 00:00以降の日次残容量計算がbusy timeを無視する |
 | TD-031 | P1 | 未着手 | S | Spreadsheet変換がrank 1000以降のtask行を黙って破棄する |
 | TD-032 | P1 | 完了 | S | macOS標準環境でSpreadsheet変換の`tac`依存が空出力の成功になる |
@@ -78,7 +78,8 @@
 | TD-037 | P2 | 完了 | M | 未使用のlenient YAML変換APIがstrict loaderと並存している |
 | TD-038 | P2 | 未着手 | L | MCPのtask一覧に検索・paginationがなく、大規模storageで応答が無制限に増える |
 | TD-039 | P2 | 未着手 | L | 稼働中processを止めずに整合したbackupを作成・検証・restoreする手段がない |
-| TD-040 | P2 | 未着手 | L | task treeとscheduleの再帰処理が大規模storageでlarge stackを必要とする |
+| TD-040 | P0 | 完了 | S | 小数秒付き現在時刻でslack indexとschedulerの論理時刻が乖離する |
+| TD-041 | P2 | 未着手 | L | task treeとscheduleの再帰処理が大規模storageでlarge stackを必要とする |
 
 ## 詳細
 
@@ -1214,6 +1215,9 @@
 - 分類: `バグ / 失敗原子性`
 - 優先度: `P1`
 - 概算規模: `L`
+- 完了日: 2026-09-05
+- 対応: 対象taskの実績・status・完了時刻、反復親の見積もり、次回child追加を1つのentity operationへ集約した。root・対象task・親の全mutable borrowとhierarchy grantを最初のwrite前に取得し、commit phaseは失敗不能としてrootのmutation revisionを1回だけ進める。`complete_task`の反復あり経路とtest helperを同operationへ接続し、反復なし経路は変更していない。
+- 検証: hierarchy edit禁止とroot・対象task・親の各borrow競合でsnapshot、親見積もり、children、revisionが不変であること、成功時の既存完了値と次回反復taskの契約、root revisionの1増分をRed/Green testで固定した。`cargo fmt --check`、`cargo clippy --locked --all-targets -- -D warnings`、`cargo test --locked`、`git diff --check`に成功し、各Green後の内部review指摘を1件1commitで修正して再review済み。
 
 #### 現状と根拠
 
@@ -1611,7 +1615,36 @@
 4. `Repository: 別directory restoreを実装する`: overwriteなしのrestoreを追加する。
 5. `Docs: backupとrestore運用を記載する`: READMEを更新する。
 
-### TD-040: task treeとscheduleの再帰処理が大規模storageでlarge stackを必要とする
+### TD-040: 小数秒付き現在時刻でslack indexとschedulerの論理時刻が乖離する
+
+- 分類: `バグ / プロセス継続性`
+- 優先度: `P0`
+- 概算規模: `S`
+- 完了日: 2026-09-05
+- 対応: 作業量とslack需要は従来どおり整数秒で更新し、`SlackDemandIndex.current_time`は実際のsegment境界時刻へ直接同期するようにした。
+- 検証: 障害ログと同じ718.250msの乖離を再現するRed testを追加し、修正後のrelease再選択、segment境界、整数作業秒数を固定した。rootの全品質gateに成功した。
+
+#### 現状と根拠
+
+- 2026-09-05、`schronu-web`の60秒ごとの更新またはその近傍の「今」再取得中に、`schronu-today-text`専用threadが`slack index time diverged`でpanicした。
+- panic時の`SlackDemandIndex.current_time`は`2026-09-05T15:59:59.281750+09:00`、schedulerの`now`は`2026-09-05T16:00:00+09:00`で、差は718.250msだった。
+- `schedule_selected_segment`は境界までの作業量を`num_seconds()`で切り捨てた整数秒とし、scheduler本体の`now`は実際の境界時刻へ設定していた。
+- `SlackDemandIndex::record_work`が同じ整数作業秒数だけを`current_time`へ加算していたため、小数秒付きの開始時刻から整数秒境界へ進むとindex側に端数が残った。
+
+#### 影響
+
+- debug buildでは次の候補選択時の不変条件検査で実行threadがpanicする。workerを再生成しないWeb構成では、server processが残っていても以後の「今」queryは成功しない。
+- release buildで不変条件検査が無効でも、同じ論理時刻を持つべきstateが乖離し、後続のslack判定が異なる時刻を前提とする。
+- この障害はstack overflowではなく、32MiB stack、`.zshrc`、`RUST_MIN_STACK`、Dioxus componentとは独立している。
+
+#### 完了条件
+
+- 小数秒付きの開始時刻からfixed、release、deadline guardなどの境界へ進んでも、`SlackDemandIndex.current_time`とschedulerの`now`が一致する。
+- segmentの`scheduled_work_seconds`、taskの残作業秒数、slack需要は従来の整数秒契約を維持する。
+- `debug_assert_eq!`を残し、内部不変条件の再検出を継続する。
+- Web branchで別途追跡する再帰処理とstack使用量の改善は、本修正と独立した変更として扱う。
+
+### TD-041: task treeとscheduleの再帰処理が大規模storageでlarge stackを必要とする
 
 - 分類: `設計 / プロセス継続性`
 - 優先度: `P2`

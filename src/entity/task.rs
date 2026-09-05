@@ -476,6 +476,10 @@ impl TaskAttr {
         self.actual_work_seconds = actual_work_seconds;
     }
 
+    fn mark_persistent_mutation(&mut self) {
+        self.persistent_mutation_revision = self.persistent_mutation_revision.wrapping_add(1);
+    }
+
     pub fn get_actual_work_seconds(&self) -> i64 {
         self.actual_work_seconds
     }
@@ -666,6 +670,51 @@ impl TaskHandle {
         Ok(Self { node: child_node })
     }
 
+    pub(crate) fn complete_with_next_repetition(
+        &self,
+        actual_work_seconds: i64,
+        finished_at: DateTime<Local>,
+        adjusted_parent_estimated_work_seconds: i64,
+        next_task_attr: TaskAttr,
+    ) -> Result<Self, TaskTreeError> {
+        let parent = self.parent()?.ok_or(TaskTreeError::RootOperation)?;
+        let root = self.root()?;
+        let grant = parent
+            .node
+            .tree()
+            .grant_hierarchy_edit()
+            .map_err(|_| TaskTreeError::HierarchyGrant)?;
+        let mut root_attr = if parent.node.ptr_eq(&root.node) {
+            None
+        } else {
+            Some(
+                root.node
+                    .try_borrow_data_mut()
+                    .map_err(|_| TaskTreeError::Borrow)?,
+            )
+        };
+        let mut attr = self
+            .node
+            .try_borrow_data_mut()
+            .map_err(|_| TaskTreeError::Borrow)?;
+        let mut parent_attr = parent
+            .node
+            .try_borrow_data_mut()
+            .map_err(|_| TaskTreeError::Borrow)?;
+
+        let child_node = parent.node.create_as_last_child(&grant, next_task_attr);
+        attr.set_actual_work_seconds(actual_work_seconds);
+        attr.set_orig_status(Status::Done);
+        attr.set_end_time_opt(Some(finished_at));
+        parent_attr.set_estimated_work_seconds(adjusted_parent_estimated_work_seconds);
+        match &mut root_attr {
+            Some(root_attr) => root_attr.mark_persistent_mutation(),
+            None => parent_attr.mark_persistent_mutation(),
+        }
+
+        Ok(Self { node: child_node })
+    }
+
     pub fn reparent_to(&mut self, parent_task: &Self) -> Result<(), TaskTreeError> {
         if self.node.ptr_eq(&parent_task.node)
             || parent_task
@@ -795,7 +844,7 @@ impl TaskHandle {
             .node
             .try_borrow_data_mut()
             .map_err(|_| TaskTreeError::Borrow)?;
-        attr.persistent_mutation_revision = attr.persistent_mutation_revision.wrapping_add(1);
+        attr.mark_persistent_mutation();
         Ok(())
     }
 

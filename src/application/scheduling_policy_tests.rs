@@ -1100,6 +1100,32 @@ fn future_candidateのrelease時刻でsegmentを切り再選択する() {
 }
 
 #[test]
+fn 小数秒付き開始時刻からrelease境界へ進んでも時刻を同期する() {
+    let whole_second = Local.with_ymd_and_hms(2026, 9, 5, 15, 0, 0).unwrap();
+    let now = whole_second + Duration::microseconds(281_750);
+    let release = whole_second + Duration::hours(1);
+    let running = candidate("running", now, 50, 3 * 60 * 60);
+    let running_id = running.id;
+    let released = candidate("released", release, 99, 60);
+    let released_id = released.id;
+
+    let scheduled = schedule_tasks_by_priority(&[running, released], now).unwrap();
+    let running_segments = segments_for(&scheduled, running_id);
+
+    assert_eq!(running_segments[0].scheduled_start, now);
+    assert_eq!(running_segments[0].scheduled_end, release);
+    assert_eq!(running_segments[0].scheduled_work_seconds, 3599);
+    assert_eq!(scheduled_start(&scheduled, released_id), release);
+    assert_eq!(
+        running_segments
+            .iter()
+            .map(|segment| segment.scheduled_work_seconds)
+            .sum::<i64>(),
+        3 * 60 * 60
+    );
+}
+
+#[test]
 fn 現在taskに勝たないreleaseは連続作業を分割しない() {
     let now = Local.with_ymd_and_hms(2026, 9, 1, 9, 0, 0).unwrap();
     let running = candidate("running", now, 99, 213 * 60);
