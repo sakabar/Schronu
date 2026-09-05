@@ -126,22 +126,23 @@ fn canonical_validationはblankと符号付き整数を理由付きで拒否す�
 
 #[test]
 fn canonical_validationは全unicode_controlを理由付きで拒否する() {
-    for name in [
-        "task\tname",
-        "task\nname",
-        "task\u{1b}name",
-        "task\0name",
-        "task\u{85}name",
-    ] {
-        assert_eq!(
-            validate_task_name(name, "name"),
-            Err(ApplicationError::InvalidInput {
-                field: "name",
-                reason: CONTROL_CHARACTER_REASON,
-            }),
-            "name={name:?}"
-        );
+    let controls = (0..=char::MAX as u32)
+        .filter_map(char::from_u32)
+        .filter(|character| character.is_control());
+
+    for control in controls {
+        for name in [format!("task{control}name"), control.to_string()] {
+            assert_eq!(
+                validate_task_name(&name, "name"),
+                Err(ApplicationError::InvalidInput {
+                    field: "name",
+                    reason: CONTROL_CHARACTER_REASON,
+                }),
+                "control={control:?}, name={name:?}"
+            );
+        }
     }
+
     assert_eq!(
         validate_task_name("\t", "name"),
         Err(ApplicationError::InvalidInput {
