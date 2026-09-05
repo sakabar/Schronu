@@ -734,6 +734,32 @@ fn mutationはsafety_marker保存後だけ送信し未応答reloadをblockする
     );
 }
 
+#[test]
+fn 復元したsafety_blockは診断でき手動確認成功時だけ解除する() {
+    let storage = FakeStorage::default();
+    let mut state = state_with_sessions(&storage, &[TASK_ID]);
+    record_effect(state.begin_record_session(&storage, TASK_ID));
+    let mut restored = load_client_state(&storage, 0).unwrap();
+    assert!(restored.mutation_globally_blocked());
+    assert!(restored.mutation_safety_warning().is_some());
+
+    storage.fail_writes.set(true);
+    assert_eq!(
+        restored.confirm_repository_checked(&storage),
+        ClientEffect::None
+    );
+    assert!(restored.mutation_globally_blocked());
+
+    storage.fail_writes.set(false);
+    restored.confirm_repository_checked(&storage);
+    assert!(!restored.mutation_globally_blocked());
+    let mut reloaded = load_client_state(&storage, 0).unwrap();
+    assert!(matches!(
+        reloaded.begin_record_session(&storage, TASK_ID),
+        ClientEffect::RecordSession { .. }
+    ));
+}
+
 #[derive(Default)]
 struct FakeStorage {
     value: RefCell<Option<String>>,
