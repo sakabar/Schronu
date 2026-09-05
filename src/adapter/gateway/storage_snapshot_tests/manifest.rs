@@ -104,6 +104,60 @@ fn snapshot_manifest_v1はdirectoryとfileをpath順にencodeする() {
 }
 
 #[test]
+fn snapshot_manifest_encodeは上限内だけを保持して最初の超過byteで拒否する() {
+    use crate::adapter::gateway::storage_snapshot::{
+        manifest::encode_manifest_with_limits, SnapshotLimitKind, SnapshotResourceLimits,
+    };
+
+    let manifest = SnapshotManifest {
+        format_version: 1,
+        tool_version: "0.1.0".to_string(),
+        created_at: FixedOffset::east_opt(0)
+            .unwrap()
+            .with_ymd_and_hms(2026, 9, 5, 3, 0, 0)
+            .unwrap(),
+        revision: None,
+        digest: DigestDescriptor {
+            algorithm: "fnv1a64".to_string(),
+            version: 1,
+        },
+        directories: vec![DirectoryEntry {
+            path: PathBuf::from("project"),
+            mode: Some(0o755),
+        }],
+        files: Vec::new(),
+    };
+    let manifest_path = PathBuf::from("/snapshot/manifest.json");
+    let encoded = encode_manifest(&manifest).unwrap();
+    let exact = SnapshotResourceLimits::new(
+        encoded.len() as u64,
+        10_000,
+        64 * 1024 * 1024,
+        256 * 1024 * 1024,
+        4_096,
+        64,
+    );
+
+    assert_eq!(
+        encode_manifest_with_limits(&manifest_path, &manifest, exact).unwrap(),
+        encoded
+    );
+
+    let limit = encoded.len() as u64 - 7;
+    let error = encode_manifest_with_limits(
+        &manifest_path,
+        &manifest,
+        exact.with_manifest_bytes(limit),
+    )
+    .unwrap_err();
+    assert_eq!(error.limit_kind(), Some(SnapshotLimitKind::ManifestBytes));
+    assert_eq!(error.limit_value(), Some(limit));
+    assert_eq!(error.observed_value(), Some(limit + 1));
+    assert_eq!(error.path(), manifest_path);
+    assert_eq!(error.limit_path(), None);
+}
+
+#[test]
 fn snapshot_manifest_v1はversion_digest_path重複をdecode時に拒否する() {
     let valid = serde_json::json!({
         "format_version": 1,
