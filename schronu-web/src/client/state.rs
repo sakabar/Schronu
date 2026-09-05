@@ -124,6 +124,14 @@ impl ClientState {
         self.work_sessions.sessions()
     }
 
+    pub fn storage_warnings(&self) -> &[String] {
+        self.work_sessions.warnings()
+    }
+
+    pub fn storage_write_blocked(&self) -> bool {
+        self.work_sessions.write_blocked()
+    }
+
     pub fn snapshot(&self) -> Option<&ServerSnapshot> {
         self.snapshot.as_ref()
     }
