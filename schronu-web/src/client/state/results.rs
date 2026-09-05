@@ -15,6 +15,7 @@ impl ClientState {
         match result {
             Ok(snapshot) => {
                 if self.apply_snapshot(snapshot).is_none() {
+                    self.record_stale_response(Operation::Bootstrap, true);
                     return ClientEffect::None;
                 }
                 self.record_server(
@@ -42,6 +43,7 @@ impl ClientState {
         match result {
             Ok(success) => {
                 let Some(logical_date_changed) = self.apply_snapshot(success.snapshot) else {
+                    self.record_stale_response(Operation::ListTasks, true);
                     return ClientEffect::None;
                 };
                 if !logical_date_changed {
