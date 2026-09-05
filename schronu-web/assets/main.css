@@ -377,12 +377,6 @@ button:disabled {
     color: var(--red);
 }
 
-.today-text {
-    overflow-x: auto;
-    padding-block: 1rem;
-    white-space: pre;
-}
-
 @media (max-width: 52rem) {
     .session-card {
         grid-template-columns: 1fr;
