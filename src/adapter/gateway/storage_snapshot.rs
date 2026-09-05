@@ -11,6 +11,8 @@ pub use create::create_snapshot;
 pub(in crate::adapter::gateway) use create::{create_snapshot_at, finalize_publication};
 pub use error::SnapshotError;
 pub use restore::restore_snapshot;
+#[cfg(test)]
+pub(in crate::adapter::gateway) use restore::restore_snapshot_after_parent_open;
 pub use verify::verify_snapshot;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
