@@ -75,12 +75,25 @@ fn restore_snapshot_impl(
         &verified.tree,
         io,
     );
-    if result.is_err() {
-        let _ = publication
+    if let Err(primary) = result {
+        return match publication
             .parent
-            .remove_published_directory(&staging_name, &staging_directory);
+            .remove_published_directory(&staging_name, &staging_directory)
+        {
+            Ok(()) => Err(primary),
+            Err(cleanup) => Err(SnapshotError::followup_failure(
+                primary,
+                SnapshotOperation::Write,
+                &staging,
+                "cleanup",
+                cleanup,
+            )),
+        };
     }
-    result.map(|()| SnapshotSummary::new(verified.manifest.revision, verified.manifest.files.len()))
+    Ok(SnapshotSummary::new(
+        verified.manifest.revision,
+        verified.manifest.files.len(),
+    ))
 }
 
 struct PublicationDestination {
@@ -199,18 +212,33 @@ fn materialize_restore(
         )
         .map_err(|error| SnapshotError::new(SnapshotOperation::Write, destination, error))?;
     if let Err(sync_error) = publication.parent.sync(io) {
-        publication
-            .parent
-            .remove_published_directory(&publication.destination_name, staging_directory)
-            .map_err(|cleanup_error| {
-                SnapshotError::new(SnapshotOperation::Write, destination, cleanup_error)
-            })?;
-        let _ = publication.parent.sync(io);
-        return Err(SnapshotError::new(
+        let primary = SnapshotError::new(
             SnapshotOperation::Sync,
             destination.parent().expect("destination has a parent"),
             sync_error,
-        ));
+        );
+        if let Err(cleanup_error) = publication
+            .parent
+            .remove_published_directory(&publication.destination_name, staging_directory)
+        {
+            return Err(SnapshotError::followup_failure(
+                primary,
+                SnapshotOperation::Write,
+                destination,
+                "cleanup",
+                cleanup_error,
+            ));
+        }
+        if let Err(sync_error) = publication.parent.sync(io) {
+            return Err(SnapshotError::followup_failure(
+                primary,
+                SnapshotOperation::Sync,
+                destination.parent().expect("destination has a parent"),
+                "rollback parent sync",
+                sync_error,
+            ));
+        }
+        return Err(primary);
     }
     Ok(())
 }

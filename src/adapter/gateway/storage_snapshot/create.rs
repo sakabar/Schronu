@@ -161,12 +161,22 @@ fn create_snapshot_impl(
         io,
         before_publish,
     );
-    if result.is_err() {
-        let _ = publication
+    if let Err(primary) = result {
+        return match publication
             .parent
-            .remove_published_directory(&staging_name, &staging_directory);
+            .remove_published_directory(&staging_name, &staging_directory)
+        {
+            Ok(()) => Err(primary),
+            Err(cleanup) => Err(SnapshotError::followup_failure(
+                primary,
+                SnapshotOperation::Write,
+                &staging,
+                "cleanup",
+                cleanup,
+            )),
+        };
     }
-    result.map(|()| SnapshotSummary::new(revision, collected.files.len()))
+    Ok(SnapshotSummary::new(revision, collected.files.len()))
 }
 
 fn strict_load(storage: &Path) -> Result<(), SnapshotError> {
@@ -453,22 +463,40 @@ fn publish_snapshot(
             SnapshotError::new(SnapshotOperation::Write, staging.destination, error)
         })?;
     if let Err(sync_error) = staging.target.parent.sync(io) {
-        staging
-            .target
-            .parent
-            .remove_published_directory(&staging.target.destination_name, staging.directory)
-            .map_err(|cleanup_error| {
-                SnapshotError::new(SnapshotOperation::Write, staging.destination, cleanup_error)
-            })?;
-        let _ = staging.target.parent.sync(io);
-        return Err(SnapshotError::new(
+        let primary = SnapshotError::new(
             SnapshotOperation::Sync,
             staging
                 .destination
                 .parent()
                 .expect("destination has a parent"),
             sync_error,
-        ));
+        );
+        if let Err(cleanup_error) = staging
+            .target
+            .parent
+            .remove_published_directory(&staging.target.destination_name, staging.directory)
+        {
+            return Err(SnapshotError::followup_failure(
+                primary,
+                SnapshotOperation::Write,
+                staging.destination,
+                "cleanup",
+                cleanup_error,
+            ));
+        }
+        if let Err(sync_error) = staging.target.parent.sync(io) {
+            return Err(SnapshotError::followup_failure(
+                primary,
+                SnapshotOperation::Sync,
+                staging
+                    .destination
+                    .parent()
+                    .expect("destination has a parent"),
+                "rollback parent sync",
+                sync_error,
+            ));
+        }
+        return Err(primary);
     }
     Ok(())
 }
