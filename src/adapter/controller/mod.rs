@@ -18,9 +18,6 @@ mod runtime;
 
 mod storage_directory;
 
-#[path = "schronu/today_text.rs"]
-mod today_text;
-
 #[path = "schronu/web_service.rs"]
 mod web_service;
 
@@ -47,10 +44,6 @@ mod renderer_contract_tests;
 mod interactive_contract_tests;
 
 #[cfg(test)]
-#[path = "schronu/today_text_contract_tests.rs"]
-mod today_text_contract_tests;
-
-#[cfg(test)]
 #[path = "schronu/web_read_buffer_contract_tests.rs"]
 mod web_read_buffer_contract_tests;
 
@@ -68,7 +61,6 @@ pub fn run_cli() {
 }
 
 pub use storage_directory::resolve_project_storage_directory;
-pub use today_text::{TodayTextError, TodayTextService};
 pub use web_service::{
     ScheduledTaskRowDto, ServerSnapshot, SessionTaskDto, WebReadError, WebReadOverflowError,
     WebService, WebSuccess,
