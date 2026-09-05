@@ -334,12 +334,20 @@ impl ClientState {
         ClientEffect::None
     }
 
-    pub fn begin_record_session(&mut self, task_id: &str) -> ClientEffect {
-        self.begin_mutation(task_id, MutationKind::Record)
+    pub fn begin_record_session<S: KeyValueStorage>(
+        &mut self,
+        storage: &S,
+        task_id: &str,
+    ) -> ClientEffect {
+        self.begin_mutation(storage, task_id, MutationKind::Record)
     }
 
-    pub fn begin_complete_session(&mut self, task_id: &str) -> ClientEffect {
-        self.begin_mutation(task_id, MutationKind::Complete)
+    pub fn begin_complete_session<S: KeyValueStorage>(
+        &mut self,
+        storage: &S,
+        task_id: &str,
+    ) -> ClientEffect {
+        self.begin_mutation(storage, task_id, MutationKind::Complete)
     }
 
     fn add_session<S: KeyValueStorage>(&mut self, storage: &S, task: &SessionTask) {
@@ -362,7 +370,12 @@ impl ClientState {
         self.record_local_result(Operation::AddSession, Some(&task.task_id), result.is_ok());
     }
 
-    fn begin_mutation(&mut self, task_id: &str, kind: MutationKind) -> ClientEffect {
+    fn begin_mutation<S: KeyValueStorage>(
+        &mut self,
+        storage: &S,
+        task_id: &str,
+        kind: MutationKind,
+    ) -> ClientEffect {
         if self.mutation_globally_blocked
             || self.in_flight_task_ids.contains(task_id)
             || self.manual_check_blocked_task_ids.contains(task_id)
@@ -386,6 +399,17 @@ impl ClientState {
         let Some(next_request_id) = request_id.checked_add(1) else {
             return ClientEffect::None;
         };
+        if self.pending_mutations.is_empty() && self.mutation_safety.arm(storage).is_err() {
+            self.record_local_result(
+                match kind {
+                    MutationKind::Record => Operation::RecordSession,
+                    MutationKind::Complete => Operation::CompleteSession,
+                },
+                Some(task_id),
+                false,
+            );
+            return ClientEffect::None;
+        }
         self.next_mutation_request_id = next_request_id;
         self.in_flight_task_ids.insert(task_id.to_owned());
         self.pending_mutations.insert(

@@ -117,9 +117,12 @@ impl ClientState {
                     Operation::RecordSession,
                     Some(success.data.actual_work_seconds),
                 );
+                self.finish_mutation_safety(storage, Operation::RecordSession, false);
             }
             Err(error) => {
-                self.finish_failed_mutation(storage, &task_id, Operation::RecordSession, error)
+                let keep_safety = keeps_safety_marker(&error);
+                self.finish_failed_mutation(&task_id, Operation::RecordSession, error);
+                self.finish_mutation_safety(storage, Operation::RecordSession, keep_safety);
             }
         }
         ClientEffect::None
@@ -139,9 +142,12 @@ impl ClientState {
             Ok(snapshot) => {
                 let _ = self.apply_snapshot(snapshot);
                 self.finish_committed_mutation(storage, &task_id, Operation::CompleteSession, None);
+                self.finish_mutation_safety(storage, Operation::CompleteSession, false);
             }
             Err(error) => {
-                self.finish_failed_mutation(storage, &task_id, Operation::CompleteSession, error)
+                let keep_safety = keeps_safety_marker(&error);
+                self.finish_failed_mutation(&task_id, Operation::CompleteSession, error);
+                self.finish_mutation_safety(storage, Operation::CompleteSession, keep_safety);
             }
         }
         ClientEffect::None
@@ -168,9 +174,8 @@ impl ClientState {
         Some(changed)
     }
 
-    fn finish_failed_mutation<S: KeyValueStorage>(
+    fn finish_failed_mutation(
         &mut self,
-        storage: &S,
         task_id: &str,
         operation: Operation,
         error: ServerFailure,
@@ -181,7 +186,6 @@ impl ClientState {
                 if code == crate::web_error_codes::REPOSITORY_STATE_UNCERTAIN
         ) {
             self.mutation_globally_blocked = true;
-            self.mutation_safety.block_mutations(storage);
         }
         if matches!(
             &error,
@@ -194,6 +198,22 @@ impl ClientState {
                 .insert(task_id.to_owned());
         }
         self.record_server_failure(operation, Some(task_id), error);
+    }
+
+    fn finish_mutation_safety<S: KeyValueStorage>(
+        &mut self,
+        storage: &S,
+        operation: Operation,
+        keep_armed: bool,
+    ) {
+        if keep_armed || !self.pending_mutations.is_empty() || self.mutation_globally_blocked {
+            return;
+        }
+        if self.mutation_safety.disarm(storage).is_err()
+            && self.committed_blocked_task_ids.is_empty()
+        {
+            self.record_local_result(operation, None, false);
+        }
     }
 
     fn finish_committed_mutation<S: KeyValueStorage>(
@@ -343,4 +363,13 @@ fn consume_latest(latest_request_id: &mut Option<u64>, request_id: u64) -> bool 
     }
     *latest_request_id = None;
     true
+}
+
+fn keeps_safety_marker(error: &ServerFailure) -> bool {
+    matches!(error, ServerFailure::Transport(_))
+        || matches!(
+            error,
+            ServerFailure::Operation(WebError { code, .. })
+                if code == crate::web_error_codes::REPOSITORY_STATE_UNCERTAIN
+        )
 }

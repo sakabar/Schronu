@@ -34,14 +34,25 @@ impl MutationSafetyState {
         self.mutation_blocked
     }
 
-    pub fn block_mutations<S: KeyValueStorage>(&mut self, storage: &S) {
-        self.mutation_blocked = true;
+    pub fn arm<S: KeyValueStorage>(&mut self, storage: &S) -> Result<(), StorageError> {
         let stored = StoredMutationSafety {
             version: STORAGE_VERSION,
             mutation_blocked: true,
         };
-        if let Ok(serialized) = serde_json::to_string(&stored) {
-            let _ = storage.set(MUTATION_SAFETY_STORAGE_KEY, &serialized);
-        }
+        let serialized = serde_json::to_string(&stored).map_err(|_| StorageError::WriteFailed)?;
+        storage.set(MUTATION_SAFETY_STORAGE_KEY, &serialized)?;
+        self.mutation_blocked = true;
+        Ok(())
+    }
+
+    pub fn disarm<S: KeyValueStorage>(&mut self, storage: &S) -> Result<(), StorageError> {
+        let stored = StoredMutationSafety {
+            version: STORAGE_VERSION,
+            mutation_blocked: false,
+        };
+        let serialized = serde_json::to_string(&stored).map_err(|_| StorageError::WriteFailed)?;
+        storage.set(MUTATION_SAFETY_STORAGE_KEY, &serialized)?;
+        self.mutation_blocked = false;
+        Ok(())
     }
 }

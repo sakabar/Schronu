@@ -156,9 +156,13 @@ fn mutationは対象だけを直列化しerror助言とcommit後storage失敗を
         started_at_epoch_ms: 0,
         expected_actual_work_seconds: 100,
     };
-    let (first_request_id, first_request) = record_effect(state.begin_record_session(TASK_ID));
+    let (first_request_id, first_request) =
+        record_effect(state.begin_record_session(&storage, TASK_ID));
     assert_eq!(first_request, expected_request.clone());
-    assert_eq!(state.begin_complete_session(TASK_ID), ClientEffect::None);
+    assert_eq!(
+        state.begin_complete_session(&storage, TASK_ID),
+        ClientEffect::None
+    );
     assert!(state.is_session_in_flight(TASK_ID));
     assert!(!state.is_session_in_flight(OTHER_TASK_ID));
     assert_eq!(state.discard_session(&storage, TASK_ID), ClientEffect::None);
@@ -173,7 +177,8 @@ fn mutationは対象だけを直列化しerror助言とcommit後storage失敗を
         ))),
     );
     assert!(!state.is_session_in_flight(TASK_ID));
-    let (second_request_id, second_request) = record_effect(state.begin_record_session(TASK_ID));
+    let (second_request_id, second_request) =
+        record_effect(state.begin_record_session(&storage, TASK_ID));
     assert_eq!(second_request, expected_request);
     state.apply_record_result(
         &storage,
@@ -184,9 +189,13 @@ fn mutationは対象だけを直列化しerror助言とcommit後storage失敗を
         ))),
     );
     assert!(state.is_session_manual_check_blocked(TASK_ID));
-    assert_eq!(state.begin_record_session(TASK_ID), ClientEffect::None);
+    assert_eq!(
+        state.begin_record_session(&storage, TASK_ID),
+        ClientEffect::None
+    );
 
-    let (complete_request_id, _) = complete_effect(state.begin_complete_session(OTHER_TASK_ID));
+    let (complete_request_id, _) =
+        complete_effect(state.begin_complete_session(&storage, OTHER_TASK_ID));
     state.apply_complete_result(
         &storage,
         complete_request_id,
@@ -195,9 +204,10 @@ fn mutationは対象だけを直列化しerror助言とcommit後storage失敗を
     assert!(state.display_error().unwrap().retryable());
     assert!(!state.is_session_manual_check_blocked(OTHER_TASK_ID));
 
+    let storage = FakeStorage::default();
     let mut state = state_with_sessions(&storage, &[TASK_ID, OTHER_TASK_ID]);
     state.tick(62_999);
-    let (request_id, _) = record_effect(state.begin_record_session(TASK_ID));
+    let (request_id, _) = record_effect(state.begin_record_session(&storage, TASK_ID));
     storage.fail_writes.set(true);
     state.apply_record_result(
         &storage,
@@ -212,8 +222,14 @@ fn mutationは対象だけを直列化しerror助言とcommit後storage失敗を
     assert_eq!(state.sessions().len(), 2);
     assert!(state.is_session_committed_blocked(TASK_ID));
     assert_eq!(state.display_actual_work_seconds(TASK_ID), Some(162));
-    assert_eq!(state.begin_record_session(TASK_ID), ClientEffect::None);
-    assert_eq!(state.begin_complete_session(TASK_ID), ClientEffect::None);
+    assert_eq!(
+        state.begin_record_session(&storage, TASK_ID),
+        ClientEffect::None
+    );
+    assert_eq!(
+        state.begin_complete_session(&storage, TASK_ID),
+        ClientEffect::None
+    );
     assert_eq!(state.discard_session(&storage, TASK_ID), ClientEffect::None);
 }
 
@@ -221,7 +237,7 @@ fn mutationは対象だけを直列化しerror助言とcommit後storage失敗を
 fn mutation成功時だけsessionを消し履歴を最新100件へ制限する() {
     let storage = FakeStorage::default();
     let mut state = state_with_sessions(&storage, &[TASK_ID]);
-    let (request_id, _) = record_effect(state.begin_record_session(TASK_ID));
+    let (request_id, _) = record_effect(state.begin_record_session(&storage, TASK_ID));
     state.apply_record_result(
         &storage,
         request_id,
@@ -235,7 +251,8 @@ fn mutation成功時だけsessionを消し履歴を最新100件へ制限する()
     assert!(state.sessions().is_empty());
 
     let mut complete_state = state_with_sessions(&storage, &[OTHER_TASK_ID]);
-    let (request_id, _) = complete_effect(complete_state.begin_complete_session(OTHER_TASK_ID));
+    let (request_id, _) =
+        complete_effect(complete_state.begin_complete_session(&storage, OTHER_TASK_ID));
     complete_state.apply_complete_result(&storage, request_id, Ok(snapshot("2026-09-05", 2)));
     assert!(complete_state.sessions().is_empty());
 
@@ -262,7 +279,7 @@ fn mutation成功時だけsessionを消し履歴を最新100件へ制限する()
 fn repository_state_uncertain後はpage全体のmutationを停止する() {
     let storage = FakeStorage::default();
     let mut state = state_with_sessions(&storage, &[TASK_ID, OTHER_TASK_ID]);
-    let (request_id, _) = record_effect(state.begin_record_session(TASK_ID));
+    let (request_id, _) = record_effect(state.begin_record_session(&storage, TASK_ID));
 
     state.apply_record_result(
         &storage,
@@ -274,11 +291,11 @@ fn repository_state_uncertain後はpage全体のmutationを停止する() {
     );
 
     assert_eq!(
-        state.begin_record_session(OTHER_TASK_ID),
+        state.begin_record_session(&storage, OTHER_TASK_ID),
         ClientEffect::None
     );
     assert_eq!(
-        state.begin_complete_session(OTHER_TASK_ID),
+        state.begin_complete_session(&storage, OTHER_TASK_ID),
         ClientEffect::None
     );
 }
@@ -287,7 +304,7 @@ fn repository_state_uncertain後はpage全体のmutationを停止する() {
 fn repository_state_uncertainのblockは別keyへ保存しreload後も復元する() {
     let storage = FakeStorage::default();
     let mut state = state_with_sessions(&storage, &[TASK_ID, OTHER_TASK_ID]);
-    let (request_id, _) = record_effect(state.begin_record_session(TASK_ID));
+    let (request_id, _) = record_effect(state.begin_record_session(&storage, TASK_ID));
     state.apply_record_result(
         &storage,
         request_id,
@@ -299,13 +316,13 @@ fn repository_state_uncertainのblockは別keyへ保存しreload後も復元す�
 
     let mut restored = load_client_state(&storage, 0).unwrap();
     assert_eq!(
-        restored.begin_record_session(OTHER_TASK_ID),
+        restored.begin_record_session(&storage, OTHER_TASK_ID),
         ClientEffect::None
     );
 
     let storage = FakeStorage::default();
     let mut state = state_with_sessions(&storage, &[TASK_ID, OTHER_TASK_ID]);
-    let (request_id, _) = record_effect(state.begin_record_session(TASK_ID));
+    let (request_id, _) = record_effect(state.begin_record_session(&storage, TASK_ID));
     storage.fail_writes.set(true);
     state.apply_record_result(
         &storage,
@@ -316,7 +333,7 @@ fn repository_state_uncertainのblockは別keyへ保存しreload後も復元す�
         ))),
     );
     assert_eq!(
-        state.begin_record_session(OTHER_TASK_ID),
+        state.begin_record_session(&storage, OTHER_TASK_ID),
         ClientEffect::None
     );
 }
@@ -325,7 +342,7 @@ fn repository_state_uncertainのblockは別keyへ保存しreload後も復元す�
 fn 古いmutation応答は同じuuidの新しいsessionへ作用しない() {
     let storage = FakeStorage::default();
     let mut state = state_with_sessions(&storage, &[TASK_ID]);
-    let first_request_id = match state.begin_record_session(TASK_ID) {
+    let first_request_id = match state.begin_record_session(&storage, TASK_ID) {
         ClientEffect::RecordSession { request_id, .. } => request_id,
         other => panic!("unexpected effect: {other:?}"),
     };
@@ -339,7 +356,7 @@ fn 古いmutation応答は同じuuidの新しいsessionへ作用しない() {
     );
     state.discard_session(&storage, TASK_ID);
     state.add_session_from_row(&storage, &row(TASK_ID, 200));
-    let second_request_id = match state.begin_record_session(TASK_ID) {
+    let second_request_id = match state.begin_record_session(&storage, TASK_ID) {
         ClientEffect::RecordSession { request_id, .. } => request_id,
         other => panic!("unexpected effect: {other:?}"),
     };
@@ -431,7 +448,7 @@ fn 未知のoperation_errorはcodeと助言を失わず表示状態へ保持す�
 fn manual_check_blockはsession破棄成功時だけ解消する() {
     let storage = FakeStorage::default();
     let mut state = state_with_sessions(&storage, &[TASK_ID]);
-    let (request_id, _) = record_effect(state.begin_record_session(TASK_ID));
+    let (request_id, _) = record_effect(state.begin_record_session(&storage, TASK_ID));
     state.apply_record_result(
         &storage,
         request_id,
@@ -449,7 +466,7 @@ fn manual_check_blockはsession破棄成功時だけ解消する() {
     state.discard_session(&storage, TASK_ID);
     state.add_session_from_row(&storage, &row(TASK_ID, 0));
     assert!(matches!(
-        state.begin_record_session(TASK_ID),
+        state.begin_record_session(&storage, TASK_ID),
         ClientEffect::RecordSession { .. }
     ));
 }
@@ -458,7 +475,7 @@ fn manual_check_blockはsession破棄成功時だけ解消する() {
 fn server_commit後のlocal削除失敗はserver成功とlocal失敗を別々に記録する() {
     let storage = FakeStorage::default();
     let mut state = state_with_sessions(&storage, &[TASK_ID]);
-    let (request_id, _) = record_effect(state.begin_record_session(TASK_ID));
+    let (request_id, _) = record_effect(state.begin_record_session(&storage, TASK_ID));
     storage.fail_writes.set(true);
 
     state.apply_record_result(
@@ -562,7 +579,7 @@ fn auto_sessionは古いsnapshotを無視してtask_payloadを適用する() {
 fn 未解決の手動確認errorは無関係な成功で解消しない() {
     let storage = FakeStorage::default();
     let mut state = state_with_sessions(&storage, &[TASK_ID]);
-    let (record_id, _) = record_effect(state.begin_record_session(TASK_ID));
+    let (record_id, _) = record_effect(state.begin_record_session(&storage, TASK_ID));
     storage.fail_writes.set(true);
     state.apply_record_result(
         &storage,
@@ -580,8 +597,9 @@ fn 未解決の手動確認errorは無関係な成功で解消しない() {
     state.apply_bootstrap_result(bootstrap_id, Ok(snapshot("2026-09-05", 2)));
     assert_eq!(state.display_error(), committed_error.as_ref());
 
+    let storage = FakeStorage::default();
     let mut state = state_with_sessions(&storage, &[TASK_ID]);
-    let (record_id, _) = record_effect(state.begin_record_session(TASK_ID));
+    let (record_id, _) = record_effect(state.begin_record_session(&storage, TASK_ID));
     state.apply_record_result(
         &storage,
         record_id,
@@ -661,7 +679,7 @@ fn latest_listは古い同一logical_dateのsnapshotだけ無視してrowsを適
 fn task_scoped_retry_errorは無関係なlocal成功で解消しない() {
     let storage = FakeStorage::default();
     let mut state = state_with_sessions(&storage, &[TASK_ID]);
-    let (request_id, _) = record_effect(state.begin_record_session(TASK_ID));
+    let (request_id, _) = record_effect(state.begin_record_session(&storage, TASK_ID));
     state.apply_record_result(
         &storage,
         request_id,
