@@ -477,8 +477,8 @@ impl StableParent {
         _to: &std::ffi::OsStr,
         _published: &StableDirectory,
         _io: &dyn SnapshotIo,
-    ) -> Result<(), FileWriteError> {
-        Err(FileWriteError::write(unsupported_publication()))
+    ) -> std::io::Result<()> {
+        Err(unsupported_publication())
     }
 
     pub(in crate::adapter::gateway::storage_snapshot) fn remove_published_directory(
@@ -512,8 +512,8 @@ impl StableDirectory {
         _bytes: &[u8],
         _permissions: fs::Permissions,
         _io: &dyn SnapshotIo,
-    ) -> std::io::Result<()> {
-        Err(unsupported_publication())
+    ) -> Result<(), FileWriteError> {
+        Err(FileWriteError::write(unsupported_publication()))
     }
 
     pub(in crate::adapter::gateway::storage_snapshot) fn set_directory_permissions(
