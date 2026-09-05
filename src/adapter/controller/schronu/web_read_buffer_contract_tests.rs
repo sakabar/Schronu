@@ -9,15 +9,19 @@ fn bufferは残り空き秒から同一logical_dateの全segmentを差し引く(
     let other = current.succ_opt().unwrap();
 
     assert_eq!(
-        calculate_buffer_seconds(current, 60, &[(current, 900), (current, 900), (other, 600)]),
+        calculate_buffer_seconds(
+            current,
+            3_600,
+            &[(current, 900), (current, 900), (other, 600)]
+        ),
         Ok(1_800)
     );
     assert_eq!(
-        calculate_buffer_seconds(current, 30, &[(current, 900), (current, 900)]),
+        calculate_buffer_seconds(current, 1_800, &[(current, 900), (current, 900)]),
         Ok(0)
     );
     assert_eq!(
-        calculate_buffer_seconds(current, 15, &[(current, 900), (current, 900)]),
+        calculate_buffer_seconds(current, 900, &[(current, 900), (current, 900)]),
         Ok(-900)
     );
 }
@@ -29,7 +33,7 @@ fn bufferは同じtask由来や進行中と過去のsegmentもuuid集約せず�
     assert_eq!(
         calculate_buffer_seconds(
             current,
-            120,
+            7_200,
             &[(current, 600), (current, 900), (current, 300)]
         ),
         Ok(5_400)
@@ -37,17 +41,16 @@ fn bufferは同じtask由来や進行中と過去のsegmentもuuid集約せず�
 }
 
 #[test]
-fn bufferは分秒変換とsegment加算と減算のoverflowを情報付きで返す() {
+fn bufferはsegment加算と減算のoverflowを情報付きで返す() {
     let current = NaiveDate::from_ymd_opt(2026, 9, 5).unwrap();
 
     for (free_minutes, segments, operation) in [
-        (i64::MAX, vec![], "free_minutes_to_seconds"),
         (
             0,
             vec![(current, i64::MAX), (current, 1)],
             "scheduled_seconds_sum",
         ),
-        (i64::MIN / 60, vec![(current, 9)], "buffer_subtraction"),
+        (i64::MIN, vec![(current, 1)], "buffer_subtraction"),
     ] {
         let error = calculate_buffer_seconds(current, free_minutes, &segments).unwrap_err();
         assert_eq!(error.operation(), operation);
@@ -74,7 +77,7 @@ fn snapshotは06時境界と同一のobserved_atを全計算へ使う() {
 
 #[test]
 fn snapshotの残り空き時間はbusy_time_slotを反映する() {
-    let now = Local.with_ymd_and_hms(2026, 9, 5, 19, 0, 0).unwrap();
+    let now = Local.with_ymd_and_hms(2026, 9, 5, 19, 0, 59).unwrap();
     let mut repository = TestTaskRepository::new(vec![], now);
     let mut free_time = TestFreeTimeManager::with_blocked_interval(
         0,
@@ -84,5 +87,5 @@ fn snapshotの残り空き時間はbusy_time_slotを反映する() {
 
     let snapshot = build_server_snapshot(&mut repository, &mut free_time, now).unwrap();
 
-    assert_eq!(snapshot.buffer_seconds, 4 * 60 * 60 + 30 * 60);
+    assert_eq!(snapshot.buffer_seconds, 4 * 60 * 60 + 29 * 60);
 }
