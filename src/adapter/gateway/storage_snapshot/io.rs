@@ -1,8 +1,22 @@
 use std::ffi::CString;
+use std::fs::{self, File};
 use std::path::Path;
 
 #[cfg(unix)]
 use std::os::unix::ffi::OsStrExt;
+
+pub(in crate::adapter::gateway) trait SnapshotIo: Send + Sync {
+    fn sync_directory(&self, path: &Path) -> std::io::Result<()> {
+        File::open(path)?.sync_all()
+    }
+
+    fn remove_dir_all(&self, path: &Path) -> std::io::Result<()> {
+        fs::remove_dir_all(path)
+    }
+}
+
+pub(in crate::adapter::gateway) struct FileSystemSnapshotIo;
+impl SnapshotIo for FileSystemSnapshotIo {}
 
 #[cfg(unix)]
 fn c_path(path: &Path) -> std::io::Result<CString> {

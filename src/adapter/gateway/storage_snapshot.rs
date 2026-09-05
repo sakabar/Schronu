@@ -6,7 +6,7 @@ pub(super) mod manifest;
 
 pub use create::create_snapshot;
 #[cfg(test)]
-pub(in crate::adapter::gateway) use create::create_snapshot_at;
+pub(in crate::adapter::gateway) use create::{create_snapshot_at, finalize_publication};
 pub use error::SnapshotError;
 
 #[derive(Clone, Debug, Eq, PartialEq)]

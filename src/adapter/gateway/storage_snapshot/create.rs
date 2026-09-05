@@ -1,5 +1,5 @@
 use super::error::{SnapshotError, SnapshotOperation};
-use super::io::rename_no_replace;
+use super::io::{rename_no_replace, FileSystemSnapshotIo, SnapshotIo};
 use super::layout::{is_reserved_path, MANIFEST_FILE_NAME, PAYLOAD_DIRECTORY_NAME};
 use super::manifest::{
     decode_manifest, encode_manifest, DigestDescriptor, DirectoryEntry, FileEntry,
@@ -248,7 +248,26 @@ fn publish_snapshot(
     sync_directory(staging)?;
     rename_no_replace(staging, destination)
         .map_err(|error| SnapshotError::new(SnapshotOperation::Write, destination, error))?;
-    sync_directory(destination.parent().expect("destination has a parent"))
+    finalize_publication(&FileSystemSnapshotIo, destination)
+}
+
+pub(in crate::adapter::gateway) fn finalize_publication(
+    io: &dyn SnapshotIo,
+    destination: &Path,
+) -> Result<(), SnapshotError> {
+    let parent = destination.parent().expect("destination has a parent");
+    if let Err(sync_error) = io.sync_directory(parent) {
+        io.remove_dir_all(destination).map_err(|cleanup_error| {
+            SnapshotError::new(SnapshotOperation::Write, destination, cleanup_error)
+        })?;
+        let _ = io.sync_directory(parent);
+        return Err(SnapshotError::new(
+            SnapshotOperation::Sync,
+            parent,
+            sync_error,
+        ));
+    }
+    Ok(())
 }
 
 fn build_manifest(

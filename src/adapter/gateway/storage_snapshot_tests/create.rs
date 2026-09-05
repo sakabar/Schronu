@@ -1,7 +1,9 @@
-use crate::adapter::gateway::storage_snapshot::create_snapshot_at;
 use crate::adapter::gateway::storage_lock::{LockMode, StorageLock};
+use crate::adapter::gateway::storage_snapshot::{create_snapshot_at, finalize_publication};
 use crate::adapter::gateway::storage_snapshot::io::rename_no_replace;
+use crate::adapter::gateway::storage_snapshot::io::SnapshotIo;
 use chrono::TimeZone;
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 #[test]
 fn snapshotはlock下の全永続dataとpermissionを保存して予約領域を除外する() {
@@ -110,4 +112,35 @@ fn snapshot公開renameは競合して作成されたdestinationを置換しな�
         b"preserve"
     );
     assert_eq!(fs::read(staging.join("staged")).unwrap(), b"snapshot");
+}
+
+struct FirstSyncFailureIo {
+    sync_count: AtomicUsize,
+}
+
+impl SnapshotIo for FirstSyncFailureIo {
+    fn sync_directory(&self, path: &Path) -> std::io::Result<()> {
+        let count = self.sync_count.fetch_add(1, Ordering::SeqCst);
+        if count == 0 {
+            Err(std::io::Error::other("injected parent sync failure"))
+        } else {
+            fs::File::open(path)?.sync_all()
+        }
+    }
+}
+
+#[test]
+fn snapshot公開後のparent_sync失敗はdestinationをrollbackする() {
+    let root = TestDirectory::new("create-parent-sync-failure");
+    let destination = root.child("snapshot");
+    fs::create_dir(&destination).unwrap();
+    fs::write(destination.join("manifest.json"), b"published").unwrap();
+    let io = FirstSyncFailureIo {
+        sync_count: AtomicUsize::new(0),
+    };
+
+    finalize_publication(&io, &destination).unwrap_err();
+
+    assert!(!destination.exists());
+    assert_eq!(io.sync_count.load(Ordering::SeqCst), 2);
 }
