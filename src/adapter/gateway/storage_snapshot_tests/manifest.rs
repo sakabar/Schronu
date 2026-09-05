@@ -130,6 +130,11 @@ fn snapshot_manifest_v1はversion_digest_path重複をdecode時に拒否する()
             value["digest"]["algorithm"] = serde_json::json!("sha256");
             value
         }),
+        ("digest-version", {
+            let mut value = valid.clone();
+            value["digest"]["version"] = serde_json::json!(2);
+            value
+        }),
         ("reserved-path", {
             let mut value = valid.clone();
             value["files"][0]["path"] = serde_json::json!(".lock");
