@@ -121,7 +121,7 @@ impl WebService {
     ) -> Result<WebSuccess<RecordSessionResult>, WebReadError> {
         let input = prepare_add_actual_work_input(request, operation_now)
             .map_err(WebReadError::InvalidInput)?;
-        self.run_transaction_at(operation_now, |repository, free_time_manager, offset| {
+        self.run_mutation_at(operation_now, |repository, free_time_manager, offset| {
             let actual_work_seconds =
                 add_actual_work(repository, input).map_err(WebReadCoreError::Application)?;
             let snapshot = build_server_snapshot_with_offset(
@@ -149,7 +149,7 @@ impl WebService {
     ) -> Result<ServerSnapshot, WebReadError> {
         let input = prepare_add_actual_work_input(request, operation_now)
             .map_err(WebReadError::InvalidInput)?;
-        self.run_transaction_at(operation_now, |repository, free_time_manager, offset| {
+        self.run_mutation_at(operation_now, |repository, free_time_manager, offset| {
             let mut next_id = uuid::Uuid::new_v4;
             let mut factory = TaskFactory::new(operation_now, &mut next_id);
             complete_task(
@@ -214,13 +214,66 @@ impl WebService {
             .ok_or_else(|| WebReadError::PathEncoding(self.storage_directory.clone()))?;
         let free_time_manager = &mut self.free_time_manager;
 
+        Self::run_with_repository_at(
+            storage_directory,
+            task_repository,
+            free_time_manager,
+            &busy_time_slots_path,
+            end_of_day_offset_minutes,
+            operation_now,
+            operation,
+        )
+    }
+
+    fn run_mutation_at<T>(
+        &mut self,
+        operation_now: DateTime<Local>,
+        operation: impl FnOnce(
+            &mut TaskRepository,
+            &mut FreeTimeManager,
+            i64,
+        ) -> Result<(T, bool), WebReadCoreError>,
+    ) -> Result<T, WebReadError> {
+        let busy_time_slots_path = self.busy_time_slots_path()?.to_owned();
+        let end_of_day_offset_minutes = self.config.end_of_day_offset_minutes;
+        let storage_directory = &self.storage_directory;
+        let storage_path = storage_directory
+            .to_str()
+            .ok_or_else(|| WebReadError::PathEncoding(storage_directory.clone()))?;
+        let mut task_repository = TaskRepository::new(storage_path);
+        let free_time_manager = &mut self.free_time_manager;
+
+        Self::run_with_repository_at(
+            storage_directory,
+            &mut task_repository,
+            free_time_manager,
+            &busy_time_slots_path,
+            end_of_day_offset_minutes,
+            operation_now,
+            operation,
+        )
+    }
+
+    fn run_with_repository_at<T>(
+        storage_directory: &std::path::Path,
+        task_repository: &mut TaskRepository,
+        free_time_manager: &mut FreeTimeManager,
+        busy_time_slots_path: &str,
+        end_of_day_offset_minutes: i64,
+        operation_now: DateTime<Local>,
+        operation: impl FnOnce(
+            &mut TaskRepository,
+            &mut FreeTimeManager,
+            i64,
+        ) -> Result<(T, bool), WebReadCoreError>,
+    ) -> Result<T, WebReadError> {
         run_repository_transaction(
             task_repository,
             operation_now,
             || StorageLock::acquire(storage_directory, LockMode::Web),
             |repository| {
                 free_time_manager
-                    .load_busy_time_slots_from_file(&busy_time_slots_path)
+                    .load_busy_time_slots_from_file(busy_time_slots_path)
                     .map_err(WebReadOperationError::BusyTimeSlots)?;
                 operation(repository, free_time_manager, end_of_day_offset_minutes)
                     .map_err(WebReadOperationError::Core)
