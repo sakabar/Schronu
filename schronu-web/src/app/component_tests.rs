@@ -2,9 +2,11 @@
 
 use super::component::app;
 use super::component_runtime::{
-    initialize_client, reduce_component_action, ComponentAction, ComponentOrchestrator,
+    component_action_from_session_action, initialize_client, reduce_component_action,
+    ComponentAction, ComponentOrchestrator,
 };
 use super::effect_dispatcher::ClientResponse;
+use super::session_view::{SessionAction, SessionActionKind};
 use crate::client::state::{ActiveTab, ClientEffect};
 use crate::client::work_sessions::{KeyValueStorage, StorageError};
 use crate::ServerSnapshot;
@@ -12,6 +14,34 @@ use crate::SessionTask;
 use dioxus::prelude::VirtualDom;
 use std::cell::RefCell;
 use std::collections::HashMap;
+
+#[test]
+fn session操作は対応するcomponent_actionへ変換する() {
+    for (kind, expected) in [
+        (SessionActionKind::Discard, "discard"),
+        (SessionActionKind::Record, "record"),
+        (SessionActionKind::Complete, "complete"),
+        (
+            SessionActionKind::CompleteWithoutRecording,
+            "complete_without_recording",
+        ),
+    ] {
+        let action = component_action_from_session_action(SessionAction {
+            task_id: "task".to_owned(),
+            kind,
+        });
+        let actual = match action {
+            ComponentAction::DiscardSession(task_id) if task_id == "task" => "discard",
+            ComponentAction::RecordSession(task_id) if task_id == "task" => "record",
+            ComponentAction::CompleteSession(task_id) if task_id == "task" => "complete",
+            ComponentAction::CompleteSessionWithoutRecording(task_id) if task_id == "task" => {
+                "complete_without_recording"
+            }
+            _ => "unexpected",
+        };
+        assert_eq!(actual, expected);
+    }
+}
 
 #[test]
 fn 初期化はstorage失敗時もbootstrapを一度だけ要求する() {
