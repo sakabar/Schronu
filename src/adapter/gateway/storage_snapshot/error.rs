@@ -2,6 +2,8 @@ use std::error::Error;
 use std::fmt;
 use std::path::{Path, PathBuf};
 
+use super::io::{FileWriteError, FileWriteStage};
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(super) enum SnapshotOperation {
     AcquireLock,
@@ -36,6 +38,14 @@ impl SnapshotError {
 
     pub fn path(&self) -> &Path {
         &self.path
+    }
+
+    pub(super) fn file_write(path: impl Into<PathBuf>, source: FileWriteError) -> Self {
+        let operation = match source.stage() {
+            FileWriteStage::Write => SnapshotOperation::Write,
+            FileWriteStage::Sync => SnapshotOperation::Sync,
+        };
+        Self::new(operation, path, source)
     }
 }
 

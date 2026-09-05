@@ -1,5 +1,6 @@
 #[cfg(any(target_os = "macos", target_os = "linux"))]
 use super::read_directory_names;
+use super::FileWriteError;
 #[cfg(any(target_os = "macos", target_os = "linux"))]
 use std::ffi::CString;
 use std::fs::{self, File};
@@ -287,11 +288,13 @@ impl StableDirectory {
         bytes: &[u8],
         permissions: fs::Permissions,
         io: &dyn SnapshotIo,
-    ) -> std::io::Result<()> {
+    ) -> Result<(), FileWriteError> {
         use std::io::Write;
         use std::os::fd::FromRawFd;
 
-        let (parent, name) = self.parent_and_name(relative)?;
+        let (parent, name) = self
+            .parent_and_name(relative)
+            .map_err(FileWriteError::write)?;
         // SAFETY: name is live, and a successful descriptor is uniquely owned below.
         let descriptor = unsafe {
             libc::openat(
@@ -302,16 +305,20 @@ impl StableDirectory {
             )
         };
         if descriptor < 0 {
-            return Err(std::io::Error::last_os_error());
+            return Err(FileWriteError::write(std::io::Error::last_os_error()));
         }
         // SAFETY: openat returned a new owned descriptor transferred exactly once.
         let mut file = unsafe { File::from_raw_fd(descriptor) };
-        io.before(SnapshotFailurePoint::Write)?;
-        file.write_all(bytes)?;
-        io.before(SnapshotFailurePoint::Permission)?;
-        file.set_permissions(permissions)?;
-        io.before(SnapshotFailurePoint::FileSync)?;
-        file.sync_all()
+        io.before(SnapshotFailurePoint::Write)
+            .map_err(FileWriteError::write)?;
+        file.write_all(bytes).map_err(FileWriteError::write)?;
+        io.before(SnapshotFailurePoint::Permission)
+            .map_err(FileWriteError::write)?;
+        file.set_permissions(permissions)
+            .map_err(FileWriteError::write)?;
+        io.before(SnapshotFailurePoint::FileSync)
+            .map_err(FileWriteError::sync)?;
+        file.sync_all().map_err(FileWriteError::sync)
     }
 
     pub(in crate::adapter::gateway::storage_snapshot) fn set_directory_permissions(
@@ -470,8 +477,8 @@ impl StableParent {
         _to: &std::ffi::OsStr,
         _published: &StableDirectory,
         _io: &dyn SnapshotIo,
-    ) -> std::io::Result<()> {
-        Err(unsupported_publication())
+    ) -> Result<(), FileWriteError> {
+        Err(FileWriteError::write(unsupported_publication()))
     }
 
     pub(in crate::adapter::gateway::storage_snapshot) fn remove_published_directory(

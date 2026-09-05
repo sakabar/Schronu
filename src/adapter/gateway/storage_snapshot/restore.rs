@@ -169,7 +169,7 @@ fn materialize_restore(
             .map_err(|error| SnapshotError::new(SnapshotOperation::Write, &path, error))?;
         staging_directory
             .write_file(relative, &file.bytes, file.permissions.clone(), io)
-            .map_err(|error| SnapshotError::new(SnapshotOperation::Sync, &path, error))?;
+            .map_err(|error| SnapshotError::file_write(&path, error))?;
     }
     for directory in tree
         .directories

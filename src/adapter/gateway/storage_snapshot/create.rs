@@ -402,7 +402,7 @@ fn publish_snapshot(
                 file.permissions.clone(),
                 io,
             )
-            .map_err(|error| SnapshotError::new(SnapshotOperation::Write, &path, error))?;
+            .map_err(|error| SnapshotError::file_write(&path, error))?;
     }
     for directory in collected.directories.iter().rev() {
         let path = payload.join(&directory.path);
@@ -433,7 +433,7 @@ fn publish_snapshot(
             manifest_permissions(),
             io,
         )
-        .map_err(|error| SnapshotError::new(SnapshotOperation::Write, &manifest_path, error))?;
+        .map_err(|error| SnapshotError::file_write(&manifest_path, error))?;
     staging
         .directory
         .sync(io)
