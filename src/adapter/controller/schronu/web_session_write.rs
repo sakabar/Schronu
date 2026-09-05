@@ -1,5 +1,5 @@
 use crate::application::task_use_case::AddActualWorkInput;
-use chrono::{DateTime, Local};
+use chrono::{DateTime, Local, Utc};
 use serde::{Deserialize, Serialize};
 use std::error::Error;
 use std::fmt;
@@ -28,6 +28,7 @@ pub enum WebSessionInputError {
         observed_at_epoch_ms: i64,
     },
     NegativeExpectedActualWorkSeconds(i64),
+    StartedAtOutOfRange(i64),
     ElapsedTimeOverflow {
         started_at_epoch_ms: i64,
         observed_at_epoch_ms: i64,
@@ -51,6 +52,9 @@ impl fmt::Display for WebSessionInputError {
                 formatter,
                 "expected_actual_work_seconds must not be negative: {value}"
             ),
+            Self::StartedAtOutOfRange(value) => {
+                write!(formatter, "started_at_epoch_ms is out of range: {value}")
+            }
             Self::ElapsedTimeOverflow {
                 started_at_epoch_ms,
                 observed_at_epoch_ms,
@@ -76,6 +80,11 @@ pub(super) fn prepare_add_actual_work_input(
     if request.expected_actual_work_seconds < 0 {
         return Err(WebSessionInputError::NegativeExpectedActualWorkSeconds(
             request.expected_actual_work_seconds,
+        ));
+    }
+    if DateTime::<Utc>::from_timestamp_millis(request.started_at_epoch_ms).is_none() {
+        return Err(WebSessionInputError::StartedAtOutOfRange(
+            request.started_at_epoch_ms,
         ));
     }
 
