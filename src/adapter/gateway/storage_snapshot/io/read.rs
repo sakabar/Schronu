@@ -70,6 +70,7 @@ fn read_directory_handle(
     for name in super::read_directory_names(directory.as_raw_fd())
         .map_err(|error| read_error(root.join(relative), error))?
     {
+        let name = name.map_err(|error| read_error(root.join(relative), error))?;
         let child_path = relative.join(&name);
         let display_path = root.join(&child_path);
         let logical_path = child_path

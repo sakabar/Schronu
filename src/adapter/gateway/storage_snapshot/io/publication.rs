@@ -382,6 +382,7 @@ impl StableDirectory {
 
     fn remove_contents(&self) -> std::io::Result<()> {
         for name in read_directory_names(self.raw_fd())? {
+            let name = name?;
             let name = c_name(&name)?;
             let mut stat = std::mem::MaybeUninit::<libc::stat>::uninit();
             // SAFETY: stat is writable and name is live for the call.

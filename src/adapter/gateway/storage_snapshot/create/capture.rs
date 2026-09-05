@@ -63,6 +63,7 @@ fn scan_storage_entries_secure(
         files: Vec::new(),
         file_count: 0,
         total_bytes: 0,
+        directory_manifest_bytes: 0,
     };
     builder.read_directory(&root, Path::new(""))?;
     Ok(ScannedStorage {
@@ -92,6 +93,7 @@ struct CaptureBuilder<'a> {
     files: Vec<ScannedFile>,
     file_count: usize,
     total_bytes: u64,
+    directory_manifest_bytes: u64,
 }
 
 #[cfg(any(target_os = "macos", target_os = "linux"))]
@@ -105,6 +107,9 @@ impl CaptureBuilder<'_> {
         .map_err(|error| {
             SnapshotError::new(SnapshotOperation::Read, self.storage.join(relative), error)
         })? {
+            let name = name.map_err(|error| {
+                SnapshotError::new(SnapshotOperation::Read, self.storage.join(relative), error)
+            })?;
             let child_relative = relative.join(&name);
             if is_reserved_path(&child_relative) {
                 continue;
@@ -134,6 +139,34 @@ impl CaptureBuilder<'_> {
                 SnapshotError::new(SnapshotOperation::Read, &display_path, error)
             })?;
             if metadata.is_dir() {
+                let entry_bytes = u64::try_from(
+                    child_relative
+                        .to_str()
+                        .expect("path resource validation accepted valid Unicode")
+                        .len(),
+                )
+                .unwrap_or(u64::MAX)
+                .saturating_add(1);
+                let observed = self
+                    .directory_manifest_bytes
+                    .checked_add(entry_bytes)
+                    .ok_or_else(|| {
+                        SnapshotError::limit(
+                            &display_path,
+                            SnapshotLimitKind::ManifestBytes,
+                            self.limits.manifest_bytes,
+                            u64::MAX,
+                            Some(child_relative.clone()),
+                        )
+                    })?;
+                self.limits.check(
+                    &display_path,
+                    Some(&child_relative),
+                    SnapshotLimitKind::ManifestBytes,
+                    self.limits.manifest_bytes,
+                    observed,
+                )?;
+                self.directory_manifest_bytes = observed;
                 self.directories.push(ScannedDirectory {
                     relative: child_relative.clone(),
                     metadata,

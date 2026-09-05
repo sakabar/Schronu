@@ -74,10 +74,7 @@ pub(super) struct DirectoryTree {
 #[cfg(any(target_os = "macos", target_os = "linux"))]
 pub(in crate::adapter::gateway::storage_snapshot) fn read_directory_names(
     descriptor: std::os::fd::RawFd,
-) -> std::io::Result<Vec<std::ffi::OsString>> {
-    use std::ffi::CStr;
-    use std::os::unix::ffi::OsStringExt;
-
+) -> std::io::Result<DirectoryNames> {
     // SAFETY: dup creates an independently owned descriptor for fdopendir.
     let duplicate = unsafe { libc::dup(descriptor) };
     if duplicate < 0 {
@@ -90,26 +87,56 @@ pub(in crate::adapter::gateway::storage_snapshot) fn read_directory_names(
         unsafe { libc::close(duplicate) };
         return Err(std::io::Error::last_os_error());
     }
-    let mut names = Vec::new();
-    loop {
-        clear_errno();
-        // SAFETY: directory remains valid until closedir below.
-        let entry = unsafe { libc::readdir(directory) };
-        if entry.is_null() {
-            let error = std::io::Error::last_os_error();
-            // SAFETY: directory is a live DIR pointer and is closed exactly once.
-            unsafe { libc::closedir(directory) };
-            return if error.raw_os_error() == Some(0) {
-                Ok(names)
-            } else {
-                Err(error)
-            };
+    Ok(DirectoryNames {
+        directory,
+        finished: false,
+    })
+}
+
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+pub(in crate::adapter::gateway::storage_snapshot) struct DirectoryNames {
+    directory: *mut libc::DIR,
+    finished: bool,
+}
+
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+impl Iterator for DirectoryNames {
+    type Item = std::io::Result<std::ffi::OsString>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        use std::ffi::CStr;
+        use std::os::unix::ffi::OsStringExt;
+
+        if self.finished {
+            return None;
         }
-        // SAFETY: readdir returns a NUL-terminated d_name valid until the next call.
-        let bytes = unsafe { CStr::from_ptr((*entry).d_name.as_ptr()) }.to_bytes();
-        if bytes != b"." && bytes != b".." {
-            names.push(std::ffi::OsString::from_vec(bytes.to_vec()));
+        loop {
+            clear_errno();
+            // SAFETY: directory remains valid until Drop closes it.
+            let entry = unsafe { libc::readdir(self.directory) };
+            if entry.is_null() {
+                let error = std::io::Error::last_os_error();
+                self.finished = true;
+                return if error.raw_os_error() == Some(0) {
+                    None
+                } else {
+                    Some(Err(error))
+                };
+            }
+            // SAFETY: readdir returns a NUL-terminated d_name valid until the next call.
+            let bytes = unsafe { CStr::from_ptr((*entry).d_name.as_ptr()) }.to_bytes();
+            if bytes != b"." && bytes != b".." {
+                return Some(Ok(std::ffi::OsString::from_vec(bytes.to_vec())));
+            }
         }
+    }
+}
+
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+impl Drop for DirectoryNames {
+    fn drop(&mut self) {
+        // SAFETY: fdopendir transferred ownership to this live DIR pointer.
+        unsafe { libc::closedir(self.directory) };
     }
 }
 
