@@ -1,3 +1,6 @@
+use crate::adapter::gateway::storage_transaction::{
+    self, FileSystemStorageTransactionIo, StorageTransactionIo, WriteRequest,
+};
 use crate::adapter::gateway::yaml::{task_snapshot_to_yaml, yaml_to_task};
 use crate::application::interface::{
     ProjectRegistrationError, RepositoryReloadOutcome, TaskRepositoryError,
@@ -17,6 +20,7 @@ use std::fs;
 use std::fs::File;
 use std::io::prelude::*;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use uuid::Uuid;
 use walkdir::WalkDir;
 use yaml_rust::{Yaml, YamlEmitter, YamlLoader};
@@ -30,6 +34,7 @@ pub struct TaskRepository {
     id_to_task_map: RefCell<HashMap<Uuid, TaskHandle>>,
     storage_revision: Cell<Option<Uuid>>,
     has_loaded: bool,
+    storage_transaction_io: Arc<dyn StorageTransactionIo>,
 }
 
 struct Project {
@@ -107,11 +112,6 @@ enum FileRepositoryOperation {
     ParseRevision,
     SerializeProject,
     CreateDirectory,
-    CreateFile,
-    WriteFile,
-    SyncFile,
-    SetPermissions,
-    RenameFile,
 }
 
 #[derive(Debug)]
@@ -151,132 +151,6 @@ impl Error for FileRepositoryError {
     fn source(&self) -> Option<&(dyn Error + 'static)> {
         Some(&self.source)
     }
-}
-
-trait AtomicSaveFile {
-    fn write_all(&mut self, bytes: &[u8]) -> std::io::Result<()>;
-    fn sync_all(&self) -> std::io::Result<()>;
-}
-
-impl AtomicSaveFile for File {
-    fn write_all(&mut self, bytes: &[u8]) -> std::io::Result<()> {
-        Write::write_all(self, bytes)
-    }
-
-    fn sync_all(&self) -> std::io::Result<()> {
-        File::sync_all(self)
-    }
-}
-
-fn write_and_sync_temporary_file(
-    file: &mut dyn AtomicSaveFile,
-    temporary_file_path: &Path,
-    bytes: &[u8],
-) -> Result<(), FileRepositoryError> {
-    file.write_all(bytes).map_err(|error| {
-        FileRepositoryError::new(
-            FileRepositoryOperation::WriteFile,
-            temporary_file_path,
-            error,
-        )
-    })?;
-    file.sync_all().map_err(|error| {
-        FileRepositoryError::new(
-            FileRepositoryOperation::SyncFile,
-            temporary_file_path,
-            error,
-        )
-    })
-}
-
-fn replace_file_atomically<F: AtomicSaveFile>(
-    target_file_path: &Path,
-    temporary_file_path: &Path,
-    mut file: F,
-    bytes: &[u8],
-) -> Result<(), FileRepositoryError> {
-    let write_result = write_and_sync_temporary_file(&mut file, temporary_file_path, bytes);
-    drop(file);
-
-    let result = write_result.and_then(|()| {
-        fs::rename(temporary_file_path, target_file_path).map_err(|error| {
-            FileRepositoryError::new(FileRepositoryOperation::RenameFile, target_file_path, error)
-        })
-    });
-
-    if result.is_err() {
-        let _ = fs::remove_file(temporary_file_path);
-    }
-    result
-}
-
-fn write_file_atomically_with_temporary_path(
-    target_file_path: &Path,
-    temporary_file_path: &Path,
-    bytes: &[u8],
-) -> Result<(), FileRepositoryError> {
-    let existing_permissions = match fs::metadata(target_file_path) {
-        Ok(metadata) => Some(metadata.permissions()),
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
-        Err(error) => {
-            return Err(FileRepositoryError::new(
-                FileRepositoryOperation::ReadMetadata,
-                target_file_path,
-                error,
-            ));
-        }
-    };
-    let file = File::create(temporary_file_path).map_err(|error| {
-        FileRepositoryError::new(
-            FileRepositoryOperation::CreateFile,
-            temporary_file_path,
-            error,
-        )
-    })?;
-    if let Some(permissions) = existing_permissions {
-        if let Err(error) = file.set_permissions(permissions) {
-            drop(file);
-            let _ = fs::remove_file(temporary_file_path);
-            return Err(FileRepositoryError::new(
-                FileRepositoryOperation::SetPermissions,
-                temporary_file_path,
-                error,
-            ));
-        }
-    }
-    replace_file_atomically(target_file_path, temporary_file_path, file, bytes)
-}
-
-fn write_file_atomically_if_changed_with_temporary_path(
-    target_file_path: &Path,
-    temporary_file_path: &Path,
-    bytes: &[u8],
-) -> Result<bool, FileRepositoryError> {
-    match fs::read(target_file_path) {
-        Ok(existing_bytes) if existing_bytes == bytes => return Ok(false),
-        Ok(_) => {}
-        Err(_) => {}
-    }
-
-    write_file_atomically_with_temporary_path(target_file_path, temporary_file_path, bytes)?;
-    Ok(true)
-}
-
-fn write_file_atomically(
-    target_file_path: &Path,
-    bytes: &[u8],
-) -> Result<bool, FileRepositoryError> {
-    let file_name = target_file_path
-        .file_name()
-        .and_then(|name| name.to_str())
-        .unwrap_or("project.yaml");
-    let temporary_file_path = target_file_path
-        .with_file_name(format!(".{file_name}.{}.tmp", Uuid::new_v4().hyphenated()));
-    write_file_atomically_if_changed_with_temporary_path(
-        target_file_path,
-        &temporary_file_path,
-        bytes,
-    )
 }
 
 fn open_project_file(
@@ -353,6 +227,7 @@ impl TaskRepository {
             id_to_task_map: RefCell::new(HashMap::new()),
             storage_revision: Cell::new(None),
             has_loaded: false,
+            storage_transaction_io: Arc::new(FileSystemStorageTransactionIo),
         }
     }
 
@@ -587,6 +462,14 @@ impl TaskRepository {
         Path::new(&self.project_storage_dir_name).join(".revision")
     }
 
+    fn recover_transaction(&self) -> Result<(), TaskRepositoryError> {
+        storage_transaction::recover(
+            self.storage_transaction_io.clone(),
+            Path::new(&self.project_storage_dir_name),
+        )
+        .map_err(|error| TaskRepositoryError::new(ApplicationRepositoryOperation::Load, error))
+    }
+
     fn read_storage_revision(&self) -> Result<Option<Uuid>, FileRepositoryError> {
         let revision_path = self.storage_revision_path();
         match fs::symlink_metadata(&revision_path) {
@@ -662,6 +545,7 @@ impl TaskRepositoryTrait for TaskRepository {
     }
 
     fn load(&mut self) -> Result<(), TaskRepositoryError> {
+        self.recover_transaction()?;
         let storage_revision = self.read_storage_revision().map_err(|error| {
             TaskRepositoryError::new(ApplicationRepositoryOperation::Load, error)
         })?;
@@ -673,6 +557,7 @@ impl TaskRepositoryTrait for TaskRepository {
         &mut self,
         now: DateTime<Local>,
     ) -> Result<RepositoryReloadOutcome, TaskRepositoryError> {
+        self.recover_transaction()?;
         let storage_revision = self.read_storage_revision().map_err(|error| {
             TaskRepositoryError::new(ApplicationRepositoryOperation::Load, error)
         })?;
@@ -727,29 +612,17 @@ impl TaskRepositoryTrait for TaskRepository {
             return Ok(());
         }
 
-        for (project, _) in &prepared_writes {
-            fs::create_dir_all(&project.project_dir_path).map_err(|error| {
-                TaskRepositoryError::new(
-                    ApplicationRepositoryOperation::Save,
-                    FileRepositoryError::new(
-                        FileRepositoryOperation::CreateDirectory,
-                        &project.project_dir_path,
-                        error,
-                    ),
-                )
-            })?;
-            let markdown_dir_path = project.project_dir_path.join("markdown");
-            fs::create_dir_all(&markdown_dir_path).map_err(|error| {
-                TaskRepositoryError::new(
-                    ApplicationRepositoryOperation::Save,
-                    FileRepositoryError::new(
-                        FileRepositoryOperation::CreateDirectory,
-                        &markdown_dir_path,
-                        error,
-                    ),
-                )
-            })?;
-        }
+        let storage_dir_path = Path::new(&self.project_storage_dir_name);
+        fs::create_dir_all(storage_dir_path).map_err(|error| {
+            TaskRepositoryError::new(
+                ApplicationRepositoryOperation::Save,
+                FileRepositoryError::new(
+                    FileRepositoryOperation::CreateDirectory,
+                    storage_dir_path,
+                    error,
+                ),
+            )
+        })?;
         let revision_path = self.storage_revision_path();
         if fs::symlink_metadata(&revision_path)
             .is_ok_and(|metadata| metadata.file_type().is_symlink())
@@ -767,16 +640,32 @@ impl TaskRepositoryTrait for TaskRepository {
             ));
         }
         let new_storage_revision = Uuid::new_v4();
-        let revision_text = format!("{new_storage_revision}\n");
-        write_file_atomically(&revision_path, revision_text.as_bytes()).map_err(|error| {
+        let write_requests = prepared_writes
+            .iter()
+            .map(|(project, bytes)| WriteRequest {
+                target_path: &project.project_yaml_file_path,
+                bytes,
+            })
+            .collect::<Vec<_>>();
+        let markdown_directories = prepared_writes
+            .iter()
+            .map(|(project, _)| project.project_dir_path.join("markdown"))
+            .collect::<Vec<_>>();
+        let markdown_directory_paths = markdown_directories
+            .iter()
+            .map(PathBuf::as_path)
+            .collect::<Vec<_>>();
+        let prepared_transaction = storage_transaction::prepare_with_directories(
+            self.storage_transaction_io.clone(),
+            storage_dir_path,
+            new_storage_revision,
+            &write_requests,
+            &markdown_directory_paths,
+        )
+        .map_err(|error| TaskRepositoryError::new(ApplicationRepositoryOperation::Save, error))?;
+        prepared_transaction.commit().map_err(|error| {
             TaskRepositoryError::new(ApplicationRepositoryOperation::Save, error)
         })?;
-
-        for (project, bytes) in prepared_writes {
-            write_file_atomically(&project.project_yaml_file_path, &bytes).map_err(|error| {
-                TaskRepositoryError::new(ApplicationRepositoryOperation::Save, error)
-            })?;
-        }
 
         for project in projects_to_save {
             project.mark_clean().map_err(|error| {

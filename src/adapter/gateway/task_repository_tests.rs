@@ -1,31 +1,9 @@
 use super::*;
+use crate::adapter::gateway::storage_transaction_test_support::*;
 use crate::adapter::gateway::yaml::YamlConversionError;
 use crate::application::interface::ProjectRegistrationError;
 use chrono::{Duration, TimeZone};
 use std::path::PathBuf;
-
-struct FailingAtomicSaveFile {
-    write_error: bool,
-    sync_error: bool,
-}
-
-impl AtomicSaveFile for FailingAtomicSaveFile {
-    fn write_all(&mut self, _bytes: &[u8]) -> std::io::Result<()> {
-        if self.write_error {
-            Err(std::io::Error::other("test write failure"))
-        } else {
-            Ok(())
-        }
-    }
-
-    fn sync_all(&self) -> std::io::Result<()> {
-        if self.sync_error {
-            Err(std::io::Error::other("test sync failure"))
-        } else {
-            Ok(())
-        }
-    }
-}
 
 struct TestStorageDir {
     path: PathBuf,
@@ -58,6 +36,18 @@ impl Drop for TestStorageDir {
     }
 }
 
+fn prepare_failure_io() -> Arc<dyn StorageTransactionIo> {
+    Arc::new(RecordingIo::new(vec![FaultRule {
+        operation: RecordingOperation::CreateDirectory,
+        path_matcher: PathMatcher::FileName(
+            crate::adapter::gateway::storage_transaction::TRANSACTION_DIRECTORY_NAME,
+        ),
+        occurrence: 1,
+        error_kind: std::io::ErrorKind::Other,
+        error_message: "injected prepare failure",
+    }]))
+}
+
 fn write_project_yaml(
     storage_dir: &TestStorageDir,
     directory_name: &str,
@@ -75,6 +65,19 @@ fn file_repository_error(error: &TaskRepositoryError) -> &FileRepositoryError {
         .source()
         .and_then(|source| source.downcast_ref::<FileRepositoryError>())
         .expect("repository error source must be FileRepositoryError")
+}
+
+fn storage_transaction_error(
+    error: &TaskRepositoryError,
+) -> &crate::adapter::gateway::storage_transaction::StorageTransactionError {
+    error
+        .source()
+        .and_then(|source| {
+            source.downcast_ref::<
+                crate::adapter::gateway::storage_transaction::StorageTransactionError,
+            >()
+        })
+        .expect("repository error source must be StorageTransactionError")
 }
 
 fn duplicate_task_id_error(error: &TaskRepositoryError) -> &DuplicateTaskIdError {
@@ -620,16 +623,14 @@ fn test_save_directory作成失敗を型付きerrorで返す() {
     let mut task_repository = TaskRepository::new(storage_dir.path_str());
     task_repository.sync_clock(now).unwrap();
     let task = crate::test_support::new_task_handle("保存失敗対象").unwrap();
-    let task_id = task.get_id().unwrap();
     task_repository.start_new_project(task).unwrap();
-    let expected_project_dir = storage_dir.project_dir_path("20260811", "保存失敗対象", task_id);
 
     let actual = task_repository.save().unwrap_err();
 
     assert_eq!(actual.operation(), ApplicationRepositoryOperation::Save);
     let source = file_repository_error(&actual);
     assert_eq!(source.operation, FileRepositoryOperation::CreateDirectory);
-    assert_eq!(source.path, expected_project_dir);
+    assert_eq!(source.path, storage_dir.path);
     assert!(source.source.raw_os_error().is_some());
 }
 
@@ -651,199 +652,12 @@ fn test_save_project_yaml_read失敗でもatomic_writeを試す() {
     let actual = task_repository.save().unwrap_err();
 
     assert_eq!(actual.operation(), ApplicationRepositoryOperation::Save);
-    let source = file_repository_error(&actual);
-    assert_eq!(source.operation, FileRepositoryOperation::RenameFile);
-    assert_eq!(source.path, project_yaml_path);
-    assert!(source.path.is_dir());
-}
-
-#[test]
-fn test_write_file_atomically_既存fileを置換してtemporary_fileを残さない() {
-    let storage_dir = TestStorageDir::new();
-    fs::create_dir_all(&storage_dir.path).unwrap();
-    let target_file_path = storage_dir.path.join("project.yaml");
-    let temporary_file_path = storage_dir.path.join("project.yaml.test.tmp");
-    fs::write(&target_file_path, b"old").unwrap();
-
-    write_file_atomically_with_temporary_path(&target_file_path, &temporary_file_path, b"new")
-        .unwrap();
-
-    assert_eq!(fs::read(&target_file_path).unwrap(), b"new");
-    assert!(!temporary_file_path.exists());
-}
-
-#[cfg(unix)]
-#[test]
-fn test_write_file_atomically_if_changed_同一内容なら置換しない() {
-    use std::os::unix::fs::MetadataExt;
-
-    let storage_dir = TestStorageDir::new();
-    fs::create_dir_all(&storage_dir.path).unwrap();
-    let target_file_path = storage_dir.path.join("project.yaml");
-    let temporary_file_path = storage_dir.path.join("project.yaml.test.tmp");
-    fs::write(&target_file_path, b"same").unwrap();
-    let original_inode = fs::metadata(&target_file_path).unwrap().ino();
-
-    let replaced = write_file_atomically_if_changed_with_temporary_path(
-        &target_file_path,
-        &temporary_file_path,
-        b"same",
-    )
-    .unwrap();
-
-    assert!(!replaced);
-    assert_eq!(
-        fs::metadata(&target_file_path).unwrap().ino(),
-        original_inode
-    );
-    assert!(!temporary_file_path.exists());
-}
-
-#[test]
-fn test_write_file_atomically_if_changed_変更内容なら置換する() {
-    let storage_dir = TestStorageDir::new();
-    fs::create_dir_all(&storage_dir.path).unwrap();
-    let target_file_path = storage_dir.path.join("project.yaml");
-    let temporary_file_path = storage_dir.path.join("project.yaml.test.tmp");
-    fs::write(&target_file_path, b"old").unwrap();
-
-    let replaced = write_file_atomically_if_changed_with_temporary_path(
-        &target_file_path,
-        &temporary_file_path,
-        b"new",
-    )
-    .unwrap();
-
-    assert!(replaced);
-    assert_eq!(fs::read(&target_file_path).unwrap(), b"new");
-    assert!(!temporary_file_path.exists());
-}
-
-#[test]
-fn test_write_file_atomically_if_changed_新規fileを作成する() {
-    let storage_dir = TestStorageDir::new();
-    fs::create_dir_all(&storage_dir.path).unwrap();
-    let target_file_path = storage_dir.path.join("project.yaml");
-    let temporary_file_path = storage_dir.path.join("project.yaml.test.tmp");
-
-    let replaced = write_file_atomically_if_changed_with_temporary_path(
-        &target_file_path,
-        &temporary_file_path,
-        b"new",
-    )
-    .unwrap();
-
-    assert!(replaced);
-    assert_eq!(fs::read(&target_file_path).unwrap(), b"new");
-    assert!(!temporary_file_path.exists());
-}
-
-#[cfg(unix)]
-#[test]
-fn test_write_file_atomically_if_changed_read失敗でもatomic_writeを試す() {
-    let storage_dir = TestStorageDir::new();
-    fs::create_dir_all(&storage_dir.path).unwrap();
-    let target_file_path = storage_dir.path.join("project.yaml");
-    let temporary_file_path = storage_dir.path.join("project.yaml.test.tmp");
-    fs::create_dir(&target_file_path).unwrap();
-
-    let actual = write_file_atomically_if_changed_with_temporary_path(
-        &target_file_path,
-        &temporary_file_path,
-        b"new",
-    )
-    .unwrap_err();
-
-    assert_eq!(actual.operation, FileRepositoryOperation::RenameFile);
-    assert_eq!(actual.path, target_file_path);
-    assert!(target_file_path.is_dir());
-    assert!(!temporary_file_path.exists());
-}
-
-#[cfg(unix)]
-#[test]
-fn test_write_file_atomically_既存fileのpermissionを維持する() {
-    use std::os::unix::fs::PermissionsExt;
-
-    let storage_dir = TestStorageDir::new();
-    fs::create_dir_all(&storage_dir.path).unwrap();
-    let target_file_path = storage_dir.path.join("project.yaml");
-    let temporary_file_path = storage_dir.path.join("project.yaml.test.tmp");
-    fs::write(&target_file_path, b"old").unwrap();
-    fs::set_permissions(&target_file_path, fs::Permissions::from_mode(0o600)).unwrap();
-
-    write_file_atomically_with_temporary_path(&target_file_path, &temporary_file_path, b"new")
-        .unwrap();
-
-    let mode = fs::metadata(&target_file_path)
-        .unwrap()
-        .permissions()
-        .mode()
-        & 0o777;
-    assert_eq!(mode, 0o600);
-}
-
-#[test]
-fn test_write_file_atomically_temporary_file作成失敗時に既存fileを維持する() {
-    let storage_dir = TestStorageDir::new();
-    fs::create_dir_all(&storage_dir.path).unwrap();
-    let target_file_path = storage_dir.path.join("project.yaml");
-    let temporary_file_path = storage_dir.path.join("project.yaml.test.tmp");
-    fs::write(&target_file_path, b"old").unwrap();
-    fs::create_dir(&temporary_file_path).unwrap();
-
-    let actual =
-        write_file_atomically_with_temporary_path(&target_file_path, &temporary_file_path, b"new")
-            .unwrap_err();
-
-    assert_eq!(actual.operation, FileRepositoryOperation::CreateFile);
-    assert_eq!(actual.path, temporary_file_path);
-    assert_eq!(fs::read(&target_file_path).unwrap(), b"old");
-}
-
-#[test]
-fn test_replace_file_atomically_write失敗とsync失敗時に既存fileを維持する() {
-    for (write_error, sync_error, expected_operation) in [
-        (true, false, FileRepositoryOperation::WriteFile),
-        (false, true, FileRepositoryOperation::SyncFile),
-    ] {
-        let storage_dir = TestStorageDir::new();
-        fs::create_dir_all(&storage_dir.path).unwrap();
-        let target_file_path = storage_dir.path.join("project.yaml");
-        let temporary_file_path = storage_dir.path.join("project.yaml.test.tmp");
-        fs::write(&target_file_path, b"old").unwrap();
-        fs::write(&temporary_file_path, b"temporary").unwrap();
-        let file = FailingAtomicSaveFile {
-            write_error,
-            sync_error,
-        };
-
-        let actual = replace_file_atomically(&target_file_path, &temporary_file_path, file, b"new")
-            .unwrap_err();
-
-        assert_eq!(actual.operation, expected_operation);
-        assert_eq!(actual.path, temporary_file_path);
-        assert_eq!(fs::read(&target_file_path).unwrap(), b"old");
-        assert!(!temporary_file_path.exists());
-    }
-}
-
-#[test]
-fn test_write_file_atomically_rename失敗時にtemporary_fileを削除する() {
-    let storage_dir = TestStorageDir::new();
-    fs::create_dir_all(&storage_dir.path).unwrap();
-    let target_file_path = storage_dir.path.join("project.yaml");
-    let temporary_file_path = storage_dir.path.join("project.yaml.test.tmp");
-    fs::create_dir(&target_file_path).unwrap();
-
-    let actual =
-        write_file_atomically_with_temporary_path(&target_file_path, &temporary_file_path, b"new")
-            .unwrap_err();
-
-    assert_eq!(actual.operation, FileRepositoryOperation::RenameFile);
-    assert_eq!(actual.path, target_file_path);
-    assert!(target_file_path.is_dir());
-    assert!(!temporary_file_path.exists());
+    let source = storage_transaction_error(&actual);
+    assert!(source.to_string().contains("RenameLiveTarget"));
+    assert!(source
+        .to_string()
+        .contains(&project_yaml_path.display().to_string()));
+    assert!(project_yaml_path.is_dir());
 }
 
 #[test]
@@ -1353,17 +1167,11 @@ fn test_save_失敗後もdirtyを維持して再試行する() {
     let task_id = task.get_id().unwrap();
     repository.start_new_project(task.clone()).unwrap();
     repository.save().unwrap();
-    let project_yaml_path = storage_dir
-        .project_dir_path("20260813", "再試行対象", task_id)
-        .join("project.yaml");
-    let old_bytes = fs::read(&project_yaml_path).unwrap();
-    fs::remove_file(&project_yaml_path).unwrap();
-    fs::create_dir(&project_yaml_path).unwrap();
     task.set_estimated_work_seconds(30 * 60).unwrap();
+    repository.storage_transaction_io = prepare_failure_io();
 
     assert!(repository.save().is_err());
-    fs::remove_dir(&project_yaml_path).unwrap();
-    fs::write(&project_yaml_path, old_bytes).unwrap();
+    repository.storage_transaction_io = Arc::new(FileSystemStorageTransactionIo);
     repository.save().unwrap();
 
     let mut reloaded = TaskRepository::new(storage_dir.path_str());
@@ -1424,31 +1232,22 @@ fn test_save_actual_writeだけがrevisionを更新する() {
     assert_eq!(repository.storage_revision.get(), Some(first_revision));
 }
 
-#[test]
-fn test_save_project失敗時はdisk_revisionだけを先に進める() {
-    let storage_dir = TestStorageDir::new();
-    let now = Local.with_ymd_and_hms(2026, 8, 13, 12, 0, 0).unwrap();
-    let revision_path = storage_dir.path.join(".revision");
-    let mut repository = TaskRepository::new(storage_dir.path_str());
-    repository.sync_clock(now).unwrap();
-    let task = crate::test_support::new_task_handle("失敗対象").unwrap();
-    let task_id = task.get_id().unwrap();
-    repository.start_new_project(task.clone()).unwrap();
-    repository.save().unwrap();
-    let previous_revision = repository.storage_revision.get().unwrap();
-    let project_yaml_path = storage_dir
-        .project_dir_path("20260813", "失敗対象", task_id)
-        .join("project.yaml");
-    fs::remove_file(&project_yaml_path).unwrap();
-    fs::create_dir(&project_yaml_path).unwrap();
-    task.set_estimated_work_seconds(30 * 60).unwrap();
+mod transaction {
+    use super::*;
 
-    assert!(repository.save().is_err());
+    include!("task_repository_tests/transaction/support.rs");
 
-    let disk_revision =
-        Uuid::parse_str(fs::read_to_string(&revision_path).unwrap().trim()).unwrap();
-    assert_ne!(disk_revision, previous_revision);
-    assert_eq!(repository.storage_revision.get(), Some(previous_revision));
+    mod save {
+        use super::*;
+
+        include!("task_repository_tests/transaction/save.rs");
+    }
+
+    mod recovery {
+        use super::*;
+
+        include!("task_repository_tests/transaction/recovery.rs");
+    }
 }
 
 #[test]
