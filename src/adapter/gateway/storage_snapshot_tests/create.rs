@@ -196,8 +196,11 @@ fn snapshot作成失敗はdestinationもstagingも公開しない() {
         let now = Local.with_ymd_and_hms(2026, 9, 5, 12, 0, 0).unwrap();
         create_saved_repository(&storage, now);
 
-        create_snapshot_with_failure(&storage, &destination, now, point).unwrap_err();
+        let error = create_snapshot_with_failure(&storage, &destination, now, point)
+            .unwrap_err()
+            .to_string();
 
+        assert!(error.contains(&format!("injected {point:?} failure")), "{error}");
         assert!(!destination.exists(), "{point:?}");
         assert!(
             fs::read_dir(&root.path).unwrap().all(|entry| !entry
