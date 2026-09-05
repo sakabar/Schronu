@@ -341,6 +341,43 @@ fn record_sessionは日時として表現不能な開始epochを保存前に拒�
 }
 
 #[test]
+fn record_sessionはsnapshot失敗時のmutationを後続requestへ持ち越さない() {
+    let operation_now = Local.with_ymd_and_hms(2026, 9, 5, 19, 1, 0).unwrap();
+    let fixture = WebReadServiceFixture::new();
+    let task_id = fixture.seed_fixed_task_with_actual(operation_now - Duration::hours(1), 0, false);
+    let before = fixture.persisted_bytes();
+    let mut config = fixture.config();
+    config.end_of_day_offset_minutes = i64::MAX;
+    let mut service = WebService::new(fixture.storage.clone(), config);
+    let request = RecordSessionRequest {
+        task_id: task_id.to_string(),
+        started_at_epoch_ms: operation_now.timestamp_millis() - 1_000,
+        expected_actual_work_seconds: 0,
+    };
+
+    let first = service
+        .record_session_at(operation_now, request.clone())
+        .unwrap_err();
+    let second = service
+        .record_session_at(operation_now, request)
+        .unwrap_err();
+
+    assert!(matches!(
+        first,
+        WebReadError::Application(
+            crate::application::task_use_case::ApplicationError::LogicalDateEndOutOfRange { .. }
+        )
+    ));
+    assert!(matches!(
+        second,
+        WebReadError::Application(
+            crate::application::task_use_case::ApplicationError::LogicalDateEndOutOfRange { .. }
+        )
+    ));
+    assert_eq!(fixture.persisted_bytes(), before);
+}
+
+#[test]
 fn record_sessionは未知taskと完了済みtaskと競合と加算overflowで保存しない() {
     let operation_now = Local.with_ymd_and_hms(2026, 9, 5, 19, 1, 0).unwrap();
 
