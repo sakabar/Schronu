@@ -29,6 +29,10 @@ mod view;
 mod command_contract_tests;
 
 #[cfg(test)]
+#[path = "schronu/cli_syntax_contract_tests.rs"]
+mod cli_syntax_contract_tests;
+
+#[cfg(test)]
 #[path = "schronu/handler_contract_tests.rs"]
 mod handler_contract_tests;
 
