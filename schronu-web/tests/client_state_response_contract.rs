@@ -1,10 +1,39 @@
 use schronu_web::client::state::{
-    load_client_state, ClientEffect, DisplayError, Locality, Operation, Outcome, ServerFailure,
+    load_client_state, load_client_state_for_ui, ClientEffect, DisplayError, Locality, Operation,
+    Outcome, ServerFailure,
 };
 use schronu_web::{web_error_codes, RecordSessionResult, RetryAdvice, WebSuccess};
 
 mod client_state_support;
 use client_state_support::*;
+
+#[test]
+fn ui初期化はstorage読取失敗をfail_closedにしてread操作を許可する() {
+    let storage = FakeStorage::default();
+    storage.fail_work_session_reads.set(true);
+    storage.fail_safety_reads.set(true);
+
+    let mut state = load_client_state_for_ui(&storage, 1_000);
+
+    assert!(state.sessions().is_empty());
+    assert!(state.storage_write_blocked());
+    assert_eq!(state.storage_warnings().len(), 1);
+    assert!(!state.storage_warnings()[0].contains("schronu_web"));
+    assert!(state.mutation_globally_blocked());
+    assert!(state.mutation_safety_warning().is_some());
+    assert!(matches!(
+        state.request_bootstrap(),
+        ClientEffect::Bootstrap { .. }
+    ));
+    assert!(matches!(
+        state.request_list("2026-09-05"),
+        ClientEffect::ListTasks { .. }
+    ));
+    assert!(matches!(
+        state.request_auto_session(),
+        ClientEffect::AutoSession { .. }
+    ));
+}
 
 #[test]
 fn 逆順のlist応答と古いsnapshotは最新表示を巻き戻さない() {

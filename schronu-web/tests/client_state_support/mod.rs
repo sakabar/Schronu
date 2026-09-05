@@ -17,10 +17,18 @@ pub struct FakeStorage {
     pub fail_writes: Cell<bool>,
     pub fail_work_session_writes: Cell<bool>,
     pub fail_safety_writes: Cell<bool>,
+    pub fail_work_session_reads: Cell<bool>,
+    pub fail_safety_reads: Cell<bool>,
 }
 
 impl KeyValueStorage for FakeStorage {
     fn get(&self, key: &str) -> Result<Option<String>, StorageError> {
+        if key == WORK_SESSIONS_STORAGE_KEY && self.fail_work_session_reads.get() {
+            return Err(StorageError::ReadFailed);
+        }
+        if key == "schronu_web.mutation_safety.v1" && self.fail_safety_reads.get() {
+            return Err(StorageError::ReadFailed);
+        }
         match key {
             WORK_SESSIONS_STORAGE_KEY => Ok(self.value.borrow().clone()),
             "schronu_web.mutation_safety.v1" => Ok(self.safety_value.borrow().clone()),
