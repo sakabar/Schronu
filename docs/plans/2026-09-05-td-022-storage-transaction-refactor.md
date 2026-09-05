@@ -149,7 +149,7 @@ storage_transaction/
 - 固定する契約: 既存32 scenarioとすべてのassertion、failure pointを維持する。
 - 変更対象: manifest、prepare、commit、recovery、delete、security testへの機械的分割。
 - 依存: Task 9。
-- 対象test: transaction test全32 scenario。
+- 対象test: transaction test全33 scenario(既存32件とmanifest保存bytes characterization 1件)。
 - Green確認: 移動前後で全32 scenario Green、全品質gate。
 
 ### Task 11: repository transaction testを分離する
@@ -268,7 +268,7 @@ git diff --check
 
 ## Final Acceptance
 
-- 現行transaction test 32件とrepository経路test 18件の全scenario、assertion、failure pointが維持されている。
+- transaction test 33件(既存32件とmanifest保存bytes characterization 1件)とrepository経路test 18件の全scenario、assertion、failure pointが維持されている。
 - markerだけがcommit pointであり、marker前は旧snapshot、marker後はnew snapshotへroll-forwardする。
 - 全entryのpreflight後にlive変更し、`.revision`を最後に更新する。
 - manifest v1のJSON表現とdisk上のfile・directory構成が変わっていない。
