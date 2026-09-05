@@ -153,9 +153,13 @@ fn snapshot_verifyのdirectory_captureは実encode長境界を許可し1byte超�
     create_snapshot_at(&storage, &snapshot, now).unwrap();
     fs::remove_dir_all(&storage).unwrap();
     let payload = snapshot.join("storage");
-    for index in 0..4 {
-        fs::create_dir(payload.join(format!("{index}-{}", "x".repeat(200)))).unwrap();
-    }
+    fs::remove_dir_all(&payload).unwrap();
+    fs::create_dir(&payload).unwrap();
+    let expected_relative = PathBuf::from("a".repeat(200))
+        .join("b".repeat(200))
+        .join("c".repeat(200))
+        .join("d".repeat(200));
+    fs::create_dir_all(payload.join(&expected_relative)).unwrap();
 
     let entries = WalkDir::new(&payload)
         .min_depth(1)
@@ -194,8 +198,8 @@ fn snapshot_verifyのdirectory_captureは実encode長境界を許可し1byte超�
     assert_eq!(error.limit_kind(), Some(SnapshotLimitKind::ManifestBytes));
     assert_eq!(error.limit_value(), Some(exact_bytes - 1));
     assert_eq!(error.observed_value(), Some(exact_bytes));
-    let relative = error.limit_path().expect("directory path must be retained");
-    assert_eq!(error.path(), payload.join(relative));
+    assert_eq!(error.limit_path(), Some(expected_relative.as_path()));
+    assert_eq!(error.path(), payload.join(&expected_relative));
 }
 
 fn create_source_independent_snapshot(label: &str) -> (TestDirectory, PathBuf, PathBuf) {
