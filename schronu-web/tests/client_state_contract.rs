@@ -289,6 +289,46 @@ fn repository_state_uncertain後はpage全体のmutationを停止する() {
     );
 }
 
+#[test]
+fn 古いmutation応答は同じuuidの新しいsessionへ作用しない() {
+    let storage = FakeStorage::default();
+    let mut state = state_with_sessions(&storage, &[TASK_ID]);
+    let first_request_id = match state.begin_record_session(TASK_ID) {
+        ClientEffect::RecordSession { request_id, .. } => request_id,
+        other => panic!("unexpected effect: {other:?}"),
+    };
+    state.apply_record_result(
+        &storage,
+        first_request_id,
+        Err(ServerFailure::Operation(web_error(
+            web_error_codes::REPOSITORY_SAVE_FAILED,
+            RetryAdvice::Retry,
+        ))),
+    );
+    state.discard_session(&storage, TASK_ID);
+    state.add_session_from_row(&storage, &row(TASK_ID, 200));
+    let second_request_id = match state.begin_record_session(TASK_ID) {
+        ClientEffect::RecordSession { request_id, .. } => request_id,
+        other => panic!("unexpected effect: {other:?}"),
+    };
+
+    state.apply_record_result(
+        &storage,
+        first_request_id,
+        Ok(WebSuccess {
+            snapshot: snapshot("2026-09-05", 10),
+            data: RecordSessionResult {
+                actual_work_seconds: 101,
+            },
+        }),
+    );
+
+    assert_eq!(state.sessions().len(), 1);
+    assert_eq!(state.sessions()[0].actual_work_seconds_at_start, 200);
+    assert!(state.is_session_in_flight(TASK_ID));
+    assert_ne!(first_request_id, second_request_id);
+}
+
 #[derive(Default)]
 struct FakeStorage {
     value: RefCell<Option<String>>,
