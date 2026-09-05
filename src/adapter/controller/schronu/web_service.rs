@@ -57,6 +57,7 @@ pub struct WebService {
     task_repository: Option<TaskRepository>,
     free_time_manager: FreeTimeManager,
     config: SchronuConfig,
+    repository_state_uncertain: bool,
 }
 
 impl WebService {
@@ -67,6 +68,7 @@ impl WebService {
             task_repository,
             free_time_manager: FreeTimeManager::new(),
             config,
+            repository_state_uncertain: false,
         }
     }
 
@@ -223,6 +225,7 @@ impl WebService {
             operation_now,
             operation,
         )
+        .map_err(WebReadError::from_transaction)
     }
 
     fn run_mutation_at<T>(
@@ -234,6 +237,7 @@ impl WebService {
             i64,
         ) -> Result<(T, bool), WebReadCoreError>,
     ) -> Result<T, WebReadError> {
+        self.ensure_mutation_available()?;
         let busy_time_slots_path = self.busy_time_slots_path()?.to_owned();
         let end_of_day_offset_minutes = self.config.end_of_day_offset_minutes;
         let storage_directory = &self.storage_directory;
@@ -243,7 +247,7 @@ impl WebService {
         let mut task_repository = TaskRepository::new(storage_path);
         let free_time_manager = &mut self.free_time_manager;
 
-        Self::run_with_repository_at(
+        let result = Self::run_with_repository_at(
             storage_directory,
             &mut task_repository,
             free_time_manager,
@@ -251,7 +255,26 @@ impl WebService {
             end_of_day_offset_minutes,
             operation_now,
             operation,
-        )
+        );
+        self.finish_mutation_result(result)
+    }
+
+    fn ensure_mutation_available(&self) -> Result<(), WebReadError> {
+        if self.repository_state_uncertain {
+            Err(WebReadError::RepositoryPoisoned)
+        } else {
+            Ok(())
+        }
+    }
+
+    fn finish_mutation_result<T>(
+        &mut self,
+        result: Result<T, RepositoryTransactionError<StorageLockError, WebReadOperationError>>,
+    ) -> Result<T, WebReadError> {
+        if matches!(result, Err(RepositoryTransactionError::StateUncertain(_))) {
+            self.repository_state_uncertain = true;
+        }
+        result.map_err(WebReadError::from_transaction)
     }
 
     fn run_with_repository_at<T>(
@@ -266,7 +289,7 @@ impl WebService {
             &mut FreeTimeManager,
             i64,
         ) -> Result<(T, bool), WebReadCoreError>,
-    ) -> Result<T, WebReadError> {
+    ) -> Result<T, RepositoryTransactionError<StorageLockError, WebReadOperationError>> {
         run_repository_transaction(
             task_repository,
             operation_now,
@@ -279,7 +302,6 @@ impl WebService {
                     .map_err(WebReadOperationError::Core)
             },
         )
-        .map_err(WebReadError::from_transaction)
     }
 }
 
@@ -515,7 +537,9 @@ pub enum WebReadError {
     BusyTimeSlots(BusyTimeSlotLoadError),
     Lock(StorageLockError),
     Repository(TaskRepositoryError),
+    RepositorySaveFailed(TaskRepositoryError),
     RepositoryStateUncertain(TaskRepositoryError),
+    RepositoryPoisoned,
     Application(ApplicationError),
     InvalidInput(WebSessionInputError),
     PathEncoding(PathBuf),
@@ -529,8 +553,8 @@ impl WebReadError {
         match error {
             RepositoryTransactionError::Lock(error) => Self::Lock(error),
             RepositoryTransactionError::Load(error) => Self::Repository(error),
-            RepositoryTransactionError::SaveFailed(error)
-            | RepositoryTransactionError::StateUncertain(error) => {
+            RepositoryTransactionError::SaveFailed(error) => Self::RepositorySaveFailed(error),
+            RepositoryTransactionError::StateUncertain(error) => {
                 Self::RepositoryStateUncertain(error)
             }
             RepositoryTransactionError::Operation(WebReadOperationError::BusyTimeSlots(error)) => {
@@ -552,12 +576,19 @@ impl fmt::Display for WebReadError {
             Self::BusyTimeSlots(error) => write!(formatter, "busy time slot load failed: {error}"),
             Self::Lock(error) => write!(formatter, "storage lock failed: {error}"),
             Self::Repository(error) => write!(formatter, "repository read failed: {error}"),
+            Self::RepositorySaveFailed(error) => {
+                write!(formatter, "repository save failed before commit: {error}")
+            }
             Self::RepositoryStateUncertain(error) => {
                 write!(
                     formatter,
                     "repository state is uncertain after save: {error}"
                 )
             }
+            Self::RepositoryPoisoned => write!(
+                formatter,
+                "repository state is uncertain after a previous save failure"
+            ),
             Self::Application(error) => write!(formatter, "Web operation failed: {error}"),
             Self::InvalidInput(error) => write!(formatter, "invalid Web request: {error}"),
             Self::PathEncoding(path) => {
@@ -574,11 +605,12 @@ impl Error for WebReadError {
             Self::BusyTimeSlots(error) => Some(error),
             Self::Lock(error) => Some(error),
             Self::Repository(error) => Some(error),
+            Self::RepositorySaveFailed(error) => Some(error),
             Self::RepositoryStateUncertain(error) => Some(error),
             Self::Application(error) => Some(error),
             Self::InvalidInput(error) => Some(error),
             Self::Overflow(error) => Some(error),
-            Self::PathEncoding(_) => None,
+            Self::PathEncoding(_) | Self::RepositoryPoisoned => None,
         }
     }
 }
