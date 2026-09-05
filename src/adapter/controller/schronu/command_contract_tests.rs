@@ -1,25 +1,9 @@
 use super::command::{
-    command_with_minimum_valid_arguments, parse_command_tokens, parse_interactive_command,
-    parse_non_interactive_command_tokens, Command, CommandAction, CommandKind, CommandParseError,
-    InteractiveShortcut, ParseMode,
+    command_with_minimum_valid_arguments, parse_non_interactive_command_tokens, Command,
+    CommandAction, CommandKind, InteractiveShortcut, ParseMode,
 };
+use super::command_test_support::parse_command;
 use uuid::Uuid;
-
-fn parse_command(input: &str, mode: ParseMode) -> Result<Command, CommandParseError> {
-    if input.trim().is_empty() || input.trim_start().starts_with('#') || input.starts_with('0') {
-        return Ok(Command::Noop);
-    }
-    match mode {
-        ParseMode::Interactive => parse_interactive_command(input),
-        ParseMode::NonInteractive => {
-            let tokens = input
-                .split_whitespace()
-                .map(str::to_string)
-                .collect::<Vec<_>>();
-            parse_command_tokens(&tokens, ParseMode::NonInteractive)
-        }
-    }
-}
 
 #[test]
 fn all_aliases_parse_to_the_same_typed_command_kind() {

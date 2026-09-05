@@ -1,10 +1,12 @@
 #[cfg(test)]
-use super::command::{parse_command_tokens, ParseMode};
+use super::command::ParseMode;
 use super::command::{
     parse_interactive_command, parse_non_interactive_command_tokens, validate_command_input,
     Command, CommandKind, CommandParseError, CommandValidationError,
 };
 use super::command_context::*;
+#[cfg(test)]
+use super::command_test_support::parse_command;
 use super::handler::{
     handle_command, CommandOutcome, ExternalRequest, FocusChange, FocusSelection,
     FocusSessionEffect, HandlerError,

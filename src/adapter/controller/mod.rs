@@ -28,6 +28,10 @@ mod today_text;
 mod view;
 
 #[cfg(test)]
+#[path = "schronu/command_test_support.rs"]
+mod command_test_support;
+
+#[cfg(test)]
 #[path = "schronu/command_contract_tests.rs"]
 mod command_contract_tests;
 
