@@ -4,7 +4,7 @@ use crate::adapter::gateway::storage_snapshot::error::{
 };
 use crate::adapter::gateway::storage_snapshot::io::{SnapshotFailurePoint, SnapshotIo};
 use crate::adapter::gateway::storage_snapshot::layout::is_reserved_path;
-use crate::adapter::gateway::storage_snapshot::manifest::encoded_directory_entry_len;
+use crate::adapter::gateway::storage_snapshot::manifest::accumulate_directory_manifest_bytes;
 use crate::adapter::gateway::storage_snapshot::SnapshotResourceLimits;
 use std::collections::HashMap;
 use std::fs;
@@ -140,33 +140,13 @@ impl CaptureBuilder<'_> {
                 SnapshotError::new(SnapshotOperation::Read, &display_path, error)
             })?;
             if metadata.is_dir() {
-                let entry_bytes = encoded_directory_entry_len(
+                self.directory_manifest_bytes = accumulate_directory_manifest_bytes(
                     &display_path,
                     &child_relative,
                     permission_mode(&metadata.permissions()),
+                    self.directory_manifest_bytes,
+                    self.limits,
                 )?;
-                let separator_bytes = u64::from(self.directory_manifest_bytes != 0);
-                let observed = self
-                    .directory_manifest_bytes
-                    .checked_add(separator_bytes)
-                    .and_then(|bytes| bytes.checked_add(entry_bytes))
-                    .ok_or_else(|| {
-                        SnapshotError::limit(
-                            &display_path,
-                            SnapshotLimitKind::ManifestBytes,
-                            self.limits.manifest_bytes,
-                            u64::MAX,
-                            Some(child_relative.clone()),
-                        )
-                    })?;
-                self.limits.check(
-                    &display_path,
-                    Some(&child_relative),
-                    SnapshotLimitKind::ManifestBytes,
-                    self.limits.manifest_bytes,
-                    observed,
-                )?;
-                self.directory_manifest_bytes = observed;
                 self.directories.push(ScannedDirectory {
                     relative: child_relative.clone(),
                     metadata,

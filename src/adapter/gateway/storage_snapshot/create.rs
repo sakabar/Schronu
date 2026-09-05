@@ -611,13 +611,13 @@ fn build_manifest(
 }
 
 #[cfg(unix)]
-fn permission_mode(permissions: &fs::Permissions) -> Option<u32> {
+pub(super) fn permission_mode(permissions: &fs::Permissions) -> Option<u32> {
     use std::os::unix::fs::PermissionsExt;
     Some(permissions.mode() & 0o7777)
 }
 
 #[cfg(not(unix))]
-fn permission_mode(_permissions: &fs::Permissions) -> Option<u32> {
+pub(super) fn permission_mode(_permissions: &fs::Permissions) -> Option<u32> {
     None
 }
 

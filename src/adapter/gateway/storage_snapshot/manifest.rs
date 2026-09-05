@@ -113,17 +113,38 @@ impl std::io::Write for BoundedManifestWriter {
     }
 }
 
-pub(super) fn encoded_directory_entry_len(
+pub(super) fn accumulate_directory_manifest_bytes(
     operation_path: &Path,
     path: &Path,
     mode: Option<u32>,
+    current: u64,
+    limits: SnapshotResourceLimits,
 ) -> Result<u64, SnapshotError> {
     let bytes = serde_json::to_vec(&DirectoryEntry {
         path: path.to_path_buf(),
         mode,
     })
     .map_err(|error| SnapshotError::new(SnapshotOperation::Encode, operation_path, error))?;
-    Ok(u64::try_from(bytes.len()).unwrap_or(u64::MAX))
+    let observed = current
+        .checked_add(u64::from(current != 0))
+        .and_then(|length| length.checked_add(u64::try_from(bytes.len()).unwrap_or(u64::MAX)))
+        .ok_or_else(|| {
+            SnapshotError::limit(
+                operation_path,
+                super::error::SnapshotLimitKind::ManifestBytes,
+                limits.manifest_bytes,
+                u64::MAX,
+                Some(path.to_path_buf()),
+            )
+        })?;
+    limits.check(
+        operation_path,
+        Some(path),
+        super::error::SnapshotLimitKind::ManifestBytes,
+        limits.manifest_bytes,
+        observed,
+    )?;
+    Ok(observed)
 }
 
 pub(in crate::adapter::gateway) fn decode_manifest(

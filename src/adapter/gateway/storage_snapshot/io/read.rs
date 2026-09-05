@@ -1,10 +1,14 @@
 use super::DirectoryTree;
 #[cfg(any(target_os = "macos", target_os = "linux"))]
 use super::{TreeDirectory, TreeFile};
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+use crate::adapter::gateway::storage_snapshot::create::permission_mode;
 use crate::adapter::gateway::storage_snapshot::error::{
     SnapshotError, SnapshotLimitKind, SnapshotOperation,
 };
 use crate::adapter::gateway::storage_snapshot::layout::MANIFEST_FILE_NAME;
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+use crate::adapter::gateway::storage_snapshot::manifest::accumulate_directory_manifest_bytes;
 use crate::adapter::gateway::storage_snapshot::SnapshotResourceLimits;
 #[cfg(any(target_os = "macos", target_os = "linux"))]
 use std::fs::File;
@@ -51,7 +55,7 @@ pub(in crate::adapter::gateway::storage_snapshot) fn read_directory_tree_with_li
 
 #[derive(Default)]
 struct TraversalUsage {
-    directory_count: u64,
+    directory_manifest_bytes: u64,
     file_count: usize,
     total_bytes: u64,
 }
@@ -116,17 +120,13 @@ fn read_directory_handle(
             .map_err(|error| read_error(&display_path, error))?;
         if metadata.is_dir() {
             if child_path != Path::new("storage") {
-                let observed_count = usage.directory_count.checked_add(1).ok_or_else(|| {
-                    SnapshotError::limit(
-                        &display_path,
-                        SnapshotLimitKind::ManifestBytes,
-                        limits.manifest_bytes,
-                        u64::MAX,
-                        Some(logical_path.to_path_buf()),
-                    )
-                })?;
-                limits.check_directory_capture(&display_path, logical_path, observed_count)?;
-                usage.directory_count = observed_count;
+                usage.directory_manifest_bytes = accumulate_directory_manifest_bytes(
+                    &display_path,
+                    logical_path,
+                    permission_mode(&metadata.permissions()),
+                    usage.directory_manifest_bytes,
+                    limits,
+                )?;
             }
             tree.directories.push(TreeDirectory {
                 path: child_path.clone(),
