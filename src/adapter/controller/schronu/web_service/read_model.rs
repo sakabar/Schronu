@@ -126,7 +126,7 @@ pub(in crate::adapter::controller) fn build_scheduled_task_rows(
                 .task
                 .deadline_time
                 .map(|deadline| deadline.timestamp_millis()),
-            is_leaf: segment.task.child_ids.is_empty(),
+            is_leaf: segment.rank == 0,
         })
         .collect())
 }
