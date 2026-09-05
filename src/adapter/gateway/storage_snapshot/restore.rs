@@ -21,6 +21,7 @@ pub fn restore_snapshot(
         destination.as_ref(),
         &FileSystemSnapshotIo,
         || {},
+        || {},
     )
 }
 
@@ -35,6 +36,22 @@ pub(in crate::adapter::gateway) fn restore_snapshot_after_parent_open(
         destination,
         &FileSystemSnapshotIo,
         after_parent_open,
+        || {},
+    )
+}
+
+#[cfg(test)]
+pub(in crate::adapter::gateway) fn restore_snapshot_before_publish(
+    snapshot: &Path,
+    destination: &Path,
+    before_publish: impl FnOnce(),
+) -> Result<SnapshotSummary, SnapshotError> {
+    restore_snapshot_impl(
+        snapshot,
+        destination,
+        &FileSystemSnapshotIo,
+        || {},
+        before_publish,
     )
 }
 
@@ -45,7 +62,7 @@ pub(in crate::adapter::gateway) fn restore_snapshot_with_failure(
     point: SnapshotFailurePoint,
 ) -> Result<SnapshotSummary, SnapshotError> {
     let io = FailOnceSnapshotIo::new(point);
-    restore_snapshot_impl(snapshot, destination, &io, || {})
+    restore_snapshot_impl(snapshot, destination, &io, || {}, || {})
 }
 
 fn restore_snapshot_impl(
@@ -53,6 +70,7 @@ fn restore_snapshot_impl(
     destination: &Path,
     io: &dyn SnapshotIo,
     after_parent_open: impl FnOnce(),
+    before_publish: impl FnOnce(),
 ) -> Result<SnapshotSummary, SnapshotError> {
     let publication = validate_destination(snapshot, destination)?;
     after_parent_open();
@@ -67,15 +85,14 @@ fn restore_snapshot_impl(
         .parent
         .create_directory(&staging_name)
         .map_err(|error| SnapshotError::new(SnapshotOperation::Create, &staging, error))?;
-    let result = materialize_restore(
-        &staging,
-        &staging_name,
-        &staging_directory,
+    let staging_publication = RestoreStaging {
+        path: &staging,
+        name: &staging_name,
+        directory: &staging_directory,
         destination,
-        &publication,
-        &verified.tree,
-        io,
-    );
+        target: &publication,
+    };
+    let result = materialize_restore(&staging_publication, &verified.tree, io, before_publish);
     if let Err(primary) = result {
         return match publication
             .parent
@@ -95,6 +112,14 @@ struct PublicationDestination {
     parent: StableParent,
     destination_name: OsString,
     snapshot_root: PathBuf,
+}
+
+struct RestoreStaging<'a> {
+    path: &'a Path,
+    name: &'a OsStr,
+    directory: &'a StableDirectory,
+    destination: &'a Path,
+    target: &'a PublicationDestination,
 }
 
 fn validate_destination(
@@ -163,13 +188,10 @@ fn ensure_parent_outside_snapshot(
 }
 
 fn materialize_restore(
-    staging: &Path,
-    staging_name: &OsStr,
-    staging_directory: &StableDirectory,
-    destination: &Path,
-    publication: &PublicationDestination,
+    staging: &RestoreStaging<'_>,
     tree: &DirectoryTree,
     io: &dyn SnapshotIo,
+    before_publish: impl FnOnce(),
 ) -> Result<(), SnapshotError> {
     for directory in tree
         .directories
@@ -177,8 +199,9 @@ fn materialize_restore(
         .filter(|entry| entry.path != Path::new(PAYLOAD_DIRECTORY_NAME))
     {
         let relative = payload_relative(&directory.path)?;
-        let path = staging.join(relative);
-        staging_directory
+        let path = staging.path.join(relative);
+        staging
+            .directory
             .create_directory(relative)
             .map_err(|error| SnapshotError::new(SnapshotOperation::Create, &path, error))?;
     }
@@ -188,10 +211,11 @@ fn materialize_restore(
         .filter(|entry| entry.path != Path::new(MANIFEST_FILE_NAME))
     {
         let relative = payload_relative(&file.path)?;
-        let path = staging.join(relative);
+        let path = staging.path.join(relative);
         io.before(SnapshotFailurePoint::Copy)
             .map_err(|error| SnapshotError::new(SnapshotOperation::Write, &path, error))?;
-        staging_directory
+        staging
+            .directory
             .write_file(relative, &file.bytes, file.permissions.clone(), io)
             .map_err(|error| SnapshotError::file_write(&path, error))?;
     }
@@ -202,36 +226,47 @@ fn materialize_restore(
         .rev()
     {
         let relative = payload_relative(&directory.path)?;
-        let path = staging.join(relative);
-        staging_directory
+        let path = staging.path.join(relative);
+        staging
+            .directory
             .set_directory_permissions(relative, directory.permissions.clone())
             .map_err(|error| SnapshotError::new(SnapshotOperation::Write, &path, error))?;
-        staging_directory
+        staging
+            .directory
             .sync_directory(relative, io)
             .map_err(|error| SnapshotError::new(SnapshotOperation::Sync, &path, error))?;
     }
-    staging_directory
+    staging
+        .directory
         .sync(io)
-        .map_err(|error| SnapshotError::new(SnapshotOperation::Sync, staging, error))?;
-    ensure_parent_outside_snapshot(publication, destination)?;
-    publication
+        .map_err(|error| SnapshotError::new(SnapshotOperation::Sync, staging.path, error))?;
+    before_publish();
+    ensure_parent_outside_snapshot(staging.target, staging.destination)?;
+    staging
+        .target
         .parent
         .rename_no_replace(
-            staging_name,
-            &publication.destination_name,
-            staging_directory,
+            staging.name,
+            &staging.target.destination_name,
+            staging.directory,
             io,
         )
-        .map_err(|error| SnapshotError::new(SnapshotOperation::Write, destination, error))?;
-    if let Err(sync_error) = publication.parent.sync(io) {
+        .map_err(|error| {
+            SnapshotError::new(SnapshotOperation::Write, staging.destination, error)
+        })?;
+    if let Err(sync_error) = staging.target.parent.sync(io) {
         let primary = SnapshotError::new(
             SnapshotOperation::Sync,
-            destination.parent().expect("destination has a parent"),
+            staging
+                .destination
+                .parent()
+                .expect("destination has a parent"),
             sync_error,
         );
-        if let Err(cleanup_error) = publication
+        if let Err(cleanup_error) = staging
+            .target
             .parent
-            .remove_published_directory(&publication.destination_name, staging_directory)
+            .remove_published_directory(&staging.target.destination_name, staging.directory)
         {
             return Err(SnapshotError::followup_failure(
                 primary,
@@ -239,7 +274,7 @@ fn materialize_restore(
                 cleanup_error,
             ));
         }
-        if let Err(sync_error) = publication.parent.sync(io) {
+        if let Err(sync_error) = staging.target.parent.sync(io) {
             return Err(SnapshotError::followup_failure(
                 primary,
                 "rollback parent sync",
