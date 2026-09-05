@@ -246,6 +246,7 @@ fn next_child_after_finish(
             task_id: child_task.get_id().unwrap(),
             finished_at,
             additional_actual_work_seconds: 0,
+            expected_actual_work_seconds: None,
         },
     )
     .unwrap();
@@ -966,6 +967,7 @@ fn complete_task_未完了の子があれば変更しない() {
             task_id,
             finished_at: fixed_now(),
             additional_actual_work_seconds: 120,
+            expected_actual_work_seconds: None,
         },
     );
 
@@ -988,6 +990,7 @@ fn complete_task_実績を加算して完了する() {
             task_id,
             finished_at: fixed_now(),
             additional_actual_work_seconds: 120,
+            expected_actual_work_seconds: None,
         },
     )
     .unwrap();
@@ -1129,6 +1132,7 @@ fn complete_task_反復なしではtask_factoryのidを消費しない() {
             task_id,
             finished_at: fixed_now(),
             additional_actual_work_seconds: 0,
+            expected_actual_work_seconds: None,
         },
         &mut factory,
     )
@@ -1218,6 +1222,7 @@ fn complete_task_反復anchorの次論理日計算不能をerrorにして変更�
                 task_id: child_id,
                 finished_at: fixed_now(),
                 additional_actual_work_seconds: 60,
+                expected_actual_work_seconds: None,
             },
             &mut factory,
         )
@@ -1301,6 +1306,7 @@ fn complete_task_反復見積補正のoverflowをerrorにして変更しない()
                 task_id: child_id,
                 finished_at: fixed_now(),
                 additional_actual_work_seconds: i64::MAX,
+                expected_actual_work_seconds: None,
             },
             &mut factory,
         )
@@ -1384,6 +1390,7 @@ fn complete_task_focus先読み失敗でtaskと反復親を変更しない() {
                 task_id: child_id,
                 finished_at: fixed_now(),
                 additional_actual_work_seconds: 60,
+                expected_actual_work_seconds: None,
             },
             &mut factory,
         )
@@ -1440,6 +1447,7 @@ fn complete_task_対象以外のsiblingが全てdoneならparentを次focusに�
             task_id: child_id,
             finished_at: fixed_now(),
             additional_actual_work_seconds: 0,
+            expected_actual_work_seconds: None,
         },
     )
     .unwrap();
@@ -1473,6 +1481,7 @@ fn complete_task_唯一の反復子から次回taskを生成したらfocusを返
             task_id: child_id,
             finished_at: fixed_now(),
             additional_actual_work_seconds: 0,
+            expected_actual_work_seconds: None,
         },
         &mut factory,
     )
@@ -1506,6 +1515,7 @@ fn complete_task_todoのsiblingがあれば次focusを返さない() {
             task_id: child_id,
             finished_at: fixed_now(),
             additional_actual_work_seconds: 0,
+            expected_actual_work_seconds: None,
         },
     )
     .unwrap();
@@ -1528,6 +1538,7 @@ fn complete_task_同一uuidのtodo_siblingを対象taskと誤認しない() {
             task_id: child.get_id().unwrap(),
             finished_at: fixed_now(),
             additional_actual_work_seconds: 0,
+            expected_actual_work_seconds: None,
         },
     )
     .unwrap();
@@ -1554,6 +1565,7 @@ fn complete_task_繰り返しtaskを生成して見積もりを補正する() {
             task_id: child_id,
             finished_at: fixed_now(),
             additional_actual_work_seconds: 0,
+            expected_actual_work_seconds: None,
         },
         &mut factory,
     )
@@ -1602,6 +1614,7 @@ fn complete_task_反復child追加のhierarchy_grant失敗で全状態を変更�
                 task_id: child_id,
                 finished_at: fixed_now(),
                 additional_actual_work_seconds: 50,
+                expected_actual_work_seconds: None,
             },
             &mut factory,
         )
@@ -1662,6 +1675,7 @@ fn complete_task_反復taskのuuidが既存taskと衝突する場合は変更し
             task_id: child_id,
             finished_at: fixed_now(),
             additional_actual_work_seconds: 50,
+            expected_actual_work_seconds: None,
         },
         &mut factory,
     );
@@ -1709,6 +1723,7 @@ fn complete_task_反復taskはoperation固定のidentityを使う() {
             task_id: child_id,
             finished_at: fixed_now(),
             additional_actual_work_seconds: 0,
+            expected_actual_work_seconds: None,
         },
         &mut factory,
     )
@@ -1817,6 +1832,7 @@ fn complete_task_繰り返し親のatomicを次回子タスクに引き継ぐ() 
             task_id: child_task.get_id().unwrap(),
             finished_at,
             additional_actual_work_seconds: 0,
+            expected_actual_work_seconds: None,
         },
     )
     .unwrap();
@@ -1848,6 +1864,7 @@ fn complete_task_繰り返し親のfixed_startを次回子タスクに引き継�
             task_id: child_task.get_id().unwrap(),
             finished_at: fixed_now(),
             additional_actual_work_seconds: 0,
+            expected_actual_work_seconds: None,
         },
     )
     .unwrap();
@@ -1879,6 +1896,7 @@ fn complete_task_繰り返し親がflexibleならfixed_startの子からもflexi
             task_id: child_task.get_id().unwrap(),
             finished_at: fixed_now(),
             additional_actual_work_seconds: 0,
+            expected_actual_work_seconds: None,
         },
     )
     .unwrap();
@@ -1906,6 +1924,7 @@ fn complete_task_負の追加実績を拒否して変更しない() {
             task_id,
             finished_at: fixed_now(),
             additional_actual_work_seconds: -1,
+            expected_actual_work_seconds: None,
         },
     );
 
@@ -1936,6 +1955,7 @@ fn complete_task_実績加算がoverflowする場合はerrorにして変更し�
                 task_id,
                 finished_at: fixed_now(),
                 additional_actual_work_seconds: 1,
+                expected_actual_work_seconds: None,
             },
         )
     }));
@@ -2009,6 +2029,7 @@ fn update_use_cases_未知uuidはtask_not_foundを返す() {
                 task_id,
                 finished_at: fixed_now(),
                 additional_actual_work_seconds: 0,
+                expected_actual_work_seconds: None,
             }
         ),
         Err(ApplicationError::TaskNotFound(task_id))
@@ -2111,6 +2132,7 @@ fn write_use_cases_repositoryをsaveしない() {
             task_id: child_id,
             finished_at: fixed_now(),
             additional_actual_work_seconds: 0,
+            expected_actual_work_seconds: None,
         },
     )
     .unwrap();

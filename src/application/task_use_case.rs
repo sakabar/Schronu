@@ -188,6 +188,7 @@ pub struct CompleteTaskInput {
     pub task_id: Uuid,
     pub finished_at: DateTime<Local>,
     pub additional_actual_work_seconds: i64,
+    pub expected_actual_work_seconds: Option<i64>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -568,9 +569,19 @@ pub fn complete_task(
             reason: "must not be negative",
         });
     }
-    let actual_work_seconds = task
+    let current_actual_work_seconds = task
         .get_actual_work_seconds()
-        .map_err(ApplicationError::TaskTree)?
+        .map_err(ApplicationError::TaskTree)?;
+    if let Some(expected_actual_work_seconds) = input.expected_actual_work_seconds {
+        if current_actual_work_seconds != expected_actual_work_seconds {
+            return Err(ApplicationError::ActualWorkConflict {
+                task_id: input.task_id,
+                expected_actual_work_seconds,
+                actual_work_seconds: current_actual_work_seconds,
+            });
+        }
+    }
+    let actual_work_seconds = current_actual_work_seconds
         .checked_add(input.additional_actual_work_seconds)
         .ok_or(ApplicationError::InvalidInput {
             field: "additional_actual_work_seconds",
