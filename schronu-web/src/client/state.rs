@@ -366,6 +366,33 @@ impl ClientState {
         if !self.mutation_globally_blocked || !self.pending_mutations.is_empty() {
             return ClientEffect::None;
         }
+        if !self.committed_blocked_task_ids.is_empty() {
+            let candidate = self
+                .sessions()
+                .iter()
+                .filter(|session| !self.committed_blocked_task_ids.contains(&session.task_id))
+                .cloned()
+                .collect();
+            if self
+                .work_sessions
+                .replace_sessions(storage, candidate)
+                .is_err()
+            {
+                let task_id = self.committed_blocked_task_ids.iter().next().cloned();
+                self.record_local_result(
+                    Operation::ConfirmRepositoryCheck,
+                    task_id.as_deref(),
+                    false,
+                );
+                self.display_error = Some(DisplayError::LocalStorage {
+                    committed_on_server: true,
+                    task_id,
+                });
+                return ClientEffect::None;
+            }
+            self.committed_blocked_task_ids.clear();
+            self.committed_actual_work_seconds.clear();
+        }
         let result = self.mutation_safety.disarm(storage);
         if result.is_ok() {
             self.mutation_globally_blocked = false;
@@ -375,6 +402,12 @@ impl ClientState {
                     error: WebError { code, .. },
                     ..
                 }) if code == crate::web_error_codes::REPOSITORY_STATE_UNCERTAIN
+            ) || matches!(
+                &self.display_error,
+                Some(DisplayError::LocalStorage {
+                    committed_on_server: true,
+                    ..
+                })
             ) {
                 self.display_error = None;
             }
