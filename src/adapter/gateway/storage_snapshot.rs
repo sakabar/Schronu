@@ -79,54 +79,6 @@ impl SnapshotResourceLimits {
         }
     }
 
-    #[cfg(test)]
-    pub(in crate::adapter::gateway) const fn with_manifest_bytes(self, limit: u64) -> Self {
-        Self {
-            manifest_bytes: limit,
-            ..self
-        }
-    }
-
-    #[cfg(test)]
-    pub(in crate::adapter::gateway) const fn with_file_count(self, limit: usize) -> Self {
-        Self {
-            file_count: limit,
-            ..self
-        }
-    }
-
-    #[cfg(test)]
-    pub(in crate::adapter::gateway) const fn with_file_bytes(self, limit: u64) -> Self {
-        Self {
-            file_bytes: limit,
-            ..self
-        }
-    }
-
-    #[cfg(test)]
-    pub(in crate::adapter::gateway) const fn with_total_bytes(self, limit: u64) -> Self {
-        Self {
-            total_bytes: limit,
-            ..self
-        }
-    }
-
-    #[cfg(test)]
-    pub(in crate::adapter::gateway) const fn with_path_bytes(self, limit: usize) -> Self {
-        Self {
-            path_bytes: limit,
-            ..self
-        }
-    }
-
-    #[cfg(test)]
-    pub(in crate::adapter::gateway) const fn with_depth(self, limit: usize) -> Self {
-        Self {
-            depth: limit,
-            ..self
-        }
-    }
-
     fn check_path(
         self,
         operation_path: &Path,

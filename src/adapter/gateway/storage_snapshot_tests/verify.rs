@@ -65,27 +65,69 @@ fn snapshot_verify_resource_limitは境界を許可し超過をtyped拒否する
 
     for (limits, expected) in [
         (
-            exact.with_manifest_bytes(manifest_bytes - 1),
+            SnapshotResourceLimits::new(
+                manifest_bytes - 1,
+                file_count,
+                file_bytes,
+                total_bytes,
+                path_bytes,
+                depth,
+            ),
             SnapshotLimitKind::ManifestBytes,
         ),
         (
-            exact.with_file_count(file_count - 1),
+            SnapshotResourceLimits::new(
+                manifest_bytes,
+                file_count - 1,
+                file_bytes,
+                total_bytes,
+                path_bytes,
+                depth,
+            ),
             SnapshotLimitKind::FileCount,
         ),
         (
-            exact.with_file_bytes(file_bytes - 1),
+            SnapshotResourceLimits::new(
+                manifest_bytes,
+                file_count,
+                file_bytes - 1,
+                total_bytes,
+                path_bytes,
+                depth,
+            ),
             SnapshotLimitKind::FileBytes,
         ),
         (
-            exact.with_total_bytes(total_bytes - 1),
+            SnapshotResourceLimits::new(
+                manifest_bytes,
+                file_count,
+                file_bytes,
+                total_bytes - 1,
+                path_bytes,
+                depth,
+            ),
             SnapshotLimitKind::PayloadBytes,
         ),
         (
-            exact.with_path_bytes(path_bytes - 1),
+            SnapshotResourceLimits::new(
+                manifest_bytes,
+                file_count,
+                file_bytes,
+                total_bytes,
+                path_bytes - 1,
+                depth,
+            ),
             SnapshotLimitKind::PathBytes,
         ),
         (
-            exact.with_depth(depth - 1),
+            SnapshotResourceLimits::new(
+                manifest_bytes,
+                file_count,
+                file_bytes,
+                total_bytes,
+                path_bytes,
+                depth - 1,
+            ),
             SnapshotLimitKind::PathDepth,
         ),
     ] {
@@ -192,7 +234,14 @@ fn snapshot_verifyのdirectory_captureは実encode長境界を許可し1byte超�
 
     let error = verify_snapshot_with_limits(
         &snapshot,
-        exact.with_manifest_bytes(exact_bytes - 1),
+        SnapshotResourceLimits::new(
+            exact_bytes - 1,
+            10_000,
+            64 * 1024 * 1024,
+            256 * 1024 * 1024,
+            4_096,
+            64,
+        ),
     )
     .unwrap_err();
     assert_eq!(error.limit_kind(), Some(SnapshotLimitKind::ManifestBytes));

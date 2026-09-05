@@ -147,7 +147,14 @@ fn snapshot_manifest_encodeは上限内だけを保持して最初の超過byte�
     let error = encode_manifest_with_limits(
         &manifest_path,
         &manifest,
-        exact.with_manifest_bytes(limit),
+        SnapshotResourceLimits::new(
+            limit,
+            10_000,
+            64 * 1024 * 1024,
+            256 * 1024 * 1024,
+            4_096,
+            64,
+        ),
     )
     .unwrap_err();
     assert_eq!(error.limit_kind(), Some(SnapshotLimitKind::ManifestBytes));
