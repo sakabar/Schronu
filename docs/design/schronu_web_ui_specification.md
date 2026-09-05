@@ -453,7 +453,7 @@ server操作ごとに`operation_now`は1回だけ取得し、経過秒算出、�
 OperationHistoryEntry {
     occurred_at_epoch_ms: i64,
     operation: Bootstrap | ListTasks | AutoSession | AddSession | DiscardSession
-             | RecordSession | CompleteSession,
+             | RecordSession | CompleteSession | ConfirmRepositoryCheck,
     task_id: Option<UUID>,
     locality: Local | Server,
     outcome: Success | Failure,
@@ -464,6 +464,7 @@ OperationHistoryEntry {
 - panelは初期状態で閉じ、利用者が開閉できる。
 - requestを送るserver操作はresponse受信時に成否を1件記録する。
 - local操作はlocalStorage結果を含む最終成否を1件記録する。
+- repository手動確認済み操作はsafety marker解除のlocalStorage成否を`ConfirmRepositoryCheck`として1件記録する。
 - summaryへ秘密情報、repository path、stack traceを出さない。
 - 実行していない`見`、`働`、`終`、`外`などのCLI commandを履歴へ記録しない。
 
