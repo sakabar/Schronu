@@ -207,3 +207,56 @@ fn storage_read_failure_is_typed() {
 
     assert_eq!(load_work_sessions(&storage), Err(StorageError::ReadFailed));
 }
+
+#[test]
+fn invalid_candidate_mutations_preserve_all_state_without_writing() {
+    let original = session("550e8400-e29b-41d4-a716-446655440000", "設計");
+    let raw = json!({
+        "version": 1,
+        "work_sessions": [original, session("invalid", "破損")]
+    });
+    let storage = FakeStorage::with_value(raw.to_string());
+    let mut state = load_work_sessions(&storage).unwrap();
+    let before = (
+        state.sessions().to_vec(),
+        state.warnings().to_vec(),
+        state.write_blocked(),
+        state.needs_repair(),
+    );
+
+    let duplicate = vec![
+        session("550e8400-e29b-41d4-a716-446655440000", "設計"),
+        session("550E8400-E29B-41D4-A716-446655440000", "重複"),
+    ];
+    assert_eq!(
+        state.replace_sessions(&storage, duplicate),
+        Err(WorkSessionsMutationError::InvalidSession)
+    );
+    assert_eq!(storage.set_calls.get(), 0);
+    assert_eq!(
+        (
+            state.sessions().to_vec(),
+            state.warnings().to_vec(),
+            state.write_blocked(),
+            state.needs_repair(),
+        ),
+        before
+    );
+
+    let mut invalid = session("67e55044-10b1-426f-9247-bb680e5fe0c8", "不正");
+    invalid.actual_work_seconds_at_start = -1;
+    assert_eq!(
+        state.replace_sessions(&storage, vec![invalid]),
+        Err(WorkSessionsMutationError::InvalidSession)
+    );
+    assert_eq!(storage.set_calls.get(), 0);
+    assert_eq!(
+        (
+            state.sessions().to_vec(),
+            state.warnings().to_vec(),
+            state.write_blocked(),
+            state.needs_repair(),
+        ),
+        before
+    );
+}
