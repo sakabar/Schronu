@@ -112,6 +112,7 @@ Schronu-webを、1日の余力と複数taskの作業状況を同時に把握で�
 - **REQ-LIST-008**: schedule rankが0であるtask(未完了の子を持たないtask)のtask名を緑色で表示すること。
 - **REQ-LIST-009**: 一覧の「セッション」buttonは対象taskをlocalの`work_sessions`へ追加するだけとし、server通信および画面遷移を行わないこと。
 - **REQ-LIST-010**: 対象task UUIDのセッションが存在する場合、同じtaskを表すすべてのschedule segmentの「セッション」buttonを無効化すること。
+- **REQ-LIST-011**: schedule rankが0でないtaskは「セッション」buttonを表示せず、client stateが手動追加要求を受けても`work_sessions`へ追加しないこと。
 
 ### 4.8 通信制限と発火履歴
 
@@ -161,7 +162,7 @@ Schronu-webを、1日の余力と複数taskの作業状況を同時に把握で�
 | AC-006 | 06:00境界、tab切替、毎秒tick、一覧からのセッション追加、破棄して解除、破棄完了の確認とキャンセルではserver requestが増えない。 |
 | AC-007 | 初回、日付選択、自動セッション、記録、2種類の完了確定だけが仕様どおりのserver requestを発生させる。 |
 | AC-008 | 一覧に8 logical datesが表示され、両端が同じ曜日でも具体日付で別の日として取得される。 |
-| AC-009 | 一覧は開始時刻順で、締切超過は赤、schedule rank 0のtask名は緑、セッション中taskのbuttonは全segmentで無効になる。 |
+| AC-009 | 一覧は開始時刻順で、締切超過は赤、schedule rank 0のtask名は緑になる。rank非0ではセッションbuttonを表示せず、セッション中のrank 0 taskでは全segmentのbuttonが無効になる。 |
 | AC-010 | 破棄して解除ではtaskが変わらず、記録では完了済み整数秒だけが加算され、記録して完了では加算とtask完了が1 transactionで保存され、計測を破棄して完了では既存実績を変えずtaskだけが完了する。 |
 | AC-011 | 別processで実績が変化した後の記録・2種類の完了は競合となり、taskと反復taskを保存せず、Webセッションを保持する。 |
 | AC-012 | CLI`働`は秒端数を保持し、引数なしは整数秒、明示指定は分から秒へ換算して加算し、失敗時はfocusを保持する。 |
