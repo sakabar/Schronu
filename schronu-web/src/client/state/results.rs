@@ -42,20 +42,27 @@ impl ClientState {
         }
         match result {
             Ok(success) => {
-                let Some(logical_date_changed) = self.apply_snapshot(success.snapshot) else {
-                    self.record_stale_response(Operation::ListTasks, true);
-                    return ClientEffect::None;
-                };
-                if !logical_date_changed {
+                let same_logical_date = self
+                    .snapshot
+                    .as_ref()
+                    .is_some_and(|current| current.logical_date == success.snapshot.logical_date);
+                let snapshot_result = self.apply_snapshot(success.snapshot);
+                if snapshot_result == Some(false)
+                    || (snapshot_result.is_none() && same_logical_date)
+                {
                     self.selected_logical_date = Some(requested_date.to_owned());
                     self.scheduled_rows = success.data;
                 }
-                self.record_server(
-                    Operation::ListTasks,
-                    None,
-                    Outcome::Success,
-                    "一覧を更新しました。",
-                );
+                if snapshot_result.is_none() {
+                    self.record_stale_response(Operation::ListTasks, true);
+                } else {
+                    self.record_server(
+                        Operation::ListTasks,
+                        None,
+                        Outcome::Success,
+                        "一覧を更新しました。",
+                    );
+                }
             }
             Err(error) => self.record_server_failure(Operation::ListTasks, None, error),
         }
