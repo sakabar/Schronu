@@ -872,10 +872,11 @@ impl SlackDemandIndex {
     fn record_work(
         &mut self,
         state_index: usize,
+        new_now: DateTime<Local>,
         work_seconds: i64,
         instrumentation: &mut SchedulingInstrumentation,
     ) {
-        self.current_time += Duration::seconds(work_seconds);
+        self.current_time = new_now;
         let changed_end = self.group_by_state[state_index].unwrap_or(self.deadlines.len());
         self.decrease_range(0..changed_end, work_seconds, instrumentation);
         if let Some(group) = self.group_by_state[state_index] {
@@ -2529,7 +2530,7 @@ fn schedule_selected_segment(
         total_work_seconds,
     ));
     states[selected_index].remaining_seconds -= work_seconds;
-    slack_index.record_work(selected_index, work_seconds, instrumentation);
+    slack_index.record_work(selected_index, boundary, work_seconds, instrumentation);
     *now = boundary;
     if states[selected_index].remaining_seconds == 0 {
         states[selected_index].completion_time = Some(boundary);

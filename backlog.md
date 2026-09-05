@@ -78,6 +78,7 @@
 | TD-037 | P2 | 完了 | M | 未使用のlenient YAML変換APIがstrict loaderと並存している |
 | TD-038 | P2 | 未着手 | L | MCPのtask一覧に検索・paginationがなく、大規模storageで応答が無制限に増える |
 | TD-039 | P2 | 未着手 | L | 稼働中processを止めずに整合したbackupを作成・検証・restoreする手段がない |
+| TD-040 | P0 | 完了 | S | 小数秒付き現在時刻でslack indexとschedulerの論理時刻が乖離する |
 
 ## 詳細
 
@@ -1612,6 +1613,35 @@
 3. `CLI: backupとverify commandを追加する`: user-facing境界を実装する。
 4. `Repository: 別directory restoreを実装する`: overwriteなしのrestoreを追加する。
 5. `Docs: backupとrestore運用を記載する`: READMEを更新する。
+
+### TD-040: 小数秒付き現在時刻でslack indexとschedulerの論理時刻が乖離する
+
+- 分類: `バグ / プロセス継続性`
+- 優先度: `P0`
+- 概算規模: `S`
+- 完了日: 2026-09-05
+- 対応: 作業量とslack需要は従来どおり整数秒で更新し、`SlackDemandIndex.current_time`は実際のsegment境界時刻へ直接同期するようにした。
+- 検証: 障害ログと同じ718.250msの乖離を再現するRed testを追加し、修正後のrelease再選択、segment境界、整数作業秒数を固定した。rootの全品質gateに成功した。
+
+#### 現状と根拠
+
+- 2026-09-05、`schronu-web`の60秒ごとの更新またはその近傍の「今」再取得中に、`schronu-today-text`専用threadが`slack index time diverged`でpanicした。
+- panic時の`SlackDemandIndex.current_time`は`2026-09-05T15:59:59.281750+09:00`、schedulerの`now`は`2026-09-05T16:00:00+09:00`で、差は718.250msだった。
+- `schedule_selected_segment`は境界までの作業量を`num_seconds()`で切り捨てた整数秒とし、scheduler本体の`now`は実際の境界時刻へ設定していた。
+- `SlackDemandIndex::record_work`が同じ整数作業秒数だけを`current_time`へ加算していたため、小数秒付きの開始時刻から整数秒境界へ進むとindex側に端数が残った。
+
+#### 影響
+
+- debug buildでは次の候補選択時の不変条件検査で実行threadがpanicする。workerを再生成しないWeb構成では、server processが残っていても以後の「今」queryは成功しない。
+- release buildで不変条件検査が無効でも、同じ論理時刻を持つべきstateが乖離し、後続のslack判定が異なる時刻を前提とする。
+- この障害はstack overflowではなく、32MiB stack、`.zshrc`、`RUST_MIN_STACK`、Dioxus componentとは独立している。
+
+#### 完了条件
+
+- 小数秒付きの開始時刻からfixed、release、deadline guardなどの境界へ進んでも、`SlackDemandIndex.current_time`とschedulerの`now`が一致する。
+- segmentの`scheduled_work_seconds`、taskの残作業秒数、slack需要は従来の整数秒契約を維持する。
+- `debug_assert_eq!`を残し、内部不変条件の再検出を継続する。
+- Web branchで別途追跡する再帰処理とstack使用量の改善は、本修正と独立した変更として扱う。
 
 ## 推奨着手順
 
