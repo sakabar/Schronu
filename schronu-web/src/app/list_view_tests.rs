@@ -98,7 +98,13 @@ fn list_renders_eight_dates_selected_row_fields_and_visual_states() {
     assert!(html.contains("11:25-11:28"));
     assert!(html.contains("task-name is-leaf"));
     assert_eq!(html.matches("deadline is-overdue").count(), 1);
-    assert_eq!(html.matches("セッション").count(), 2);
+    assert_eq!(html.matches("<button class=\"session-start\"").count(), 2);
+    for task_name in ["task leaf", "task late"] {
+        assert!(
+            html.contains(&format!("aria-label=\"{task_name}: セッション\"")),
+            "{html}"
+        );
+    }
     assert!(!html.contains("<a"));
     assert!(events.lock().unwrap().is_empty());
 }

@@ -122,6 +122,12 @@ fn session_card_renders_time_progress_overrun_and_three_typed_actions() {
     assert!(html.contains("session-progress-overrun"));
     assert!(html.contains("width:33%"));
     assert!(html.contains("session-remaining is-overrun"));
+    for label in ["破棄して解除", "記録して解除", "完了"] {
+        assert!(
+            html.contains(&format!("aria-label=\"コピーをせん: {label}\"")),
+            "{html}"
+        );
+    }
     assert!(events.is_empty());
 }
 
