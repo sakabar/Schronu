@@ -1,5 +1,7 @@
 use crate::adapter::gateway::storage_lock::{LockMode, StorageLock};
-use crate::adapter::gateway::storage_snapshot::{create_snapshot_at, finalize_publication};
+use crate::adapter::gateway::storage_snapshot::{
+    create_snapshot_after_parent_open, create_snapshot_at, finalize_publication,
+};
 use crate::adapter::gateway::storage_snapshot::io::rename_no_replace;
 use crate::adapter::gateway::storage_snapshot::io::SnapshotIo;
 use chrono::TimeZone;
@@ -98,6 +100,29 @@ fn snapshotはsave用lockとの競合中にstorageを読まない() {
 
     let summary = create_snapshot_at(&storage, &destination, now).unwrap();
     assert_eq!(summary.file_count(), 2);
+}
+
+#[test]
+fn snapshot作成は検証後に差し替えられた親directoryへ書き込まない() {
+    let root = TestDirectory::new("create-parent-swap");
+    let storage = root.child("source");
+    let parent = root.child("parent");
+    let original_parent = root.child("original-parent");
+    let destination = parent.join("snapshot");
+    let now = Local.with_ymd_and_hms(2026, 9, 5, 12, 0, 0).unwrap();
+    create_saved_repository(&storage, now);
+    fs::create_dir(&parent).unwrap();
+
+    create_snapshot_after_parent_open(&storage, &destination, now, || {
+        fs::rename(&parent, &original_parent).unwrap();
+        fs::create_dir(&parent).unwrap();
+        fs::write(parent.join("sentinel"), b"preserve").unwrap();
+    })
+    .unwrap();
+
+    assert!(original_parent.join("snapshot/manifest.json").is_file());
+    assert!(!parent.join("snapshot").exists());
+    assert_eq!(fs::read(parent.join("sentinel")).unwrap(), b"preserve");
 }
 
 #[test]
