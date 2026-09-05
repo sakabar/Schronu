@@ -127,7 +127,6 @@ fn snapshot_restoreは検証後に差し替えられた親directoryへ書き込�
 #[test]
 fn snapshot_restore失敗はdestinationもstagingも公開しない() {
     for point in [
-        SnapshotFailurePoint::StrictValidation,
         SnapshotFailurePoint::Copy,
         SnapshotFailurePoint::Permission,
         SnapshotFailurePoint::FileSync,
@@ -155,4 +154,31 @@ fn snapshot_restore失敗はdestinationもstagingも公開しない() {
             "{point:?}"
         );
     }
+}
+
+#[test]
+fn snapshot_restoreはstrict_repository検証失敗時に出力しない() {
+    let root = TestDirectory::new("restore-strict-failure");
+    let source = root.child("source");
+    let snapshot = root.child("snapshot");
+    let destination = root.child("restored");
+    let now = Local.with_ymd_and_hms(2026, 9, 5, 12, 0, 0).unwrap();
+    let (_, project_yaml) = create_saved_repository(&source, now);
+    let relative = project_yaml.strip_prefix(&source).unwrap();
+    create_snapshot_at(&source, &snapshot, now).unwrap();
+    let invalid = b"project: [";
+    fs::write(snapshot.join("storage").join(relative), invalid).unwrap();
+    update_snapshot_manifest_file(&snapshot, relative, invalid);
+
+    let error = restore_snapshot(&snapshot, &destination)
+        .unwrap_err()
+        .to_string();
+
+    assert!(error.contains("RepositoryLoad"), "{error}");
+    assert!(!destination.exists());
+    assert!(fs::read_dir(&root.path).unwrap().all(|entry| !entry
+        .unwrap()
+        .file_name()
+        .to_string_lossy()
+        .starts_with(".restored.tmp-")));
 }

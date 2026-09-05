@@ -1,22 +1,5 @@
-use crate::adapter::gateway::storage_content_integrity::content_digest;
 use crate::adapter::gateway::storage_snapshot::{create_snapshot_at, verify_snapshot};
 use chrono::TimeZone;
-
-fn update_manifest_file(snapshot: &Path, relative: &Path, bytes: &[u8]) {
-    let manifest_path = snapshot.join("manifest.json");
-    let mut manifest: serde_json::Value =
-        serde_json::from_slice(&fs::read(&manifest_path).unwrap()).unwrap();
-    let relative = relative.to_str().unwrap();
-    let entry = manifest["files"]
-        .as_array_mut()
-        .unwrap()
-        .iter_mut()
-        .find(|entry| entry["path"] == relative)
-        .unwrap();
-    entry["content_length"] = serde_json::json!(bytes.len());
-    entry["content_digest"] = serde_json::json!(content_digest(bytes));
-    fs::write(manifest_path, serde_json::to_vec(&manifest).unwrap()).unwrap();
-}
 
 #[test]
 fn snapshot_verifyはdigestが一致する不正yamlをstrict拒否する() {
@@ -29,7 +12,7 @@ fn snapshot_verifyはdigestが一致する不正yamlをstrict拒否する() {
     create_snapshot_at(&storage, &snapshot, now).unwrap();
     let invalid = b"project: [";
     fs::write(snapshot.join("storage").join(relative), invalid).unwrap();
-    update_manifest_file(&snapshot, relative, invalid);
+    update_snapshot_manifest_file(&snapshot, relative, invalid);
 
     let error = verify_snapshot(&snapshot).unwrap_err().to_string();
     assert!(error.contains("RepositoryLoad"), "{error}");

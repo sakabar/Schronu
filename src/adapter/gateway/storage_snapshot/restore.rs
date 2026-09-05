@@ -56,8 +56,6 @@ fn restore_snapshot_impl(
 ) -> Result<SnapshotSummary, SnapshotError> {
     let publication = validate_destination(snapshot, destination)?;
     after_parent_open();
-    io.before(SnapshotFailurePoint::StrictValidation)
-        .map_err(|error| SnapshotError::new(SnapshotOperation::RepositoryLoad, snapshot, error))?;
     let verified = load_verified_snapshot(snapshot)?;
     let staging = staging_path(destination)?;
     let staging_name = staging

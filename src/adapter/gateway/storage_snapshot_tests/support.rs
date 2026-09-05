@@ -48,3 +48,21 @@ fn create_saved_repository(storage: &Path, now: DateTime<Local>) -> (Uuid, PathB
         .unwrap();
     (task_id, project_yaml)
 }
+
+fn update_snapshot_manifest_file(snapshot: &Path, relative: &Path, bytes: &[u8]) {
+    let manifest_path = snapshot.join("manifest.json");
+    let mut manifest: serde_json::Value =
+        serde_json::from_slice(&fs::read(&manifest_path).unwrap()).unwrap();
+    let relative = relative.to_str().unwrap();
+    let entry = manifest["files"]
+        .as_array_mut()
+        .unwrap()
+        .iter_mut()
+        .find(|entry| entry["path"] == relative)
+        .unwrap();
+    entry["content_length"] = serde_json::json!(bytes.len());
+    entry["content_digest"] = serde_json::json!(
+        crate::adapter::gateway::storage_content_integrity::content_digest(bytes)
+    );
+    fs::write(manifest_path, serde_json::to_vec(&manifest).unwrap()).unwrap();
+}

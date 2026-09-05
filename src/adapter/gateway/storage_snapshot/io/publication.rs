@@ -11,7 +11,6 @@ use std::os::unix::ffi::OsStrExt;
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(in crate::adapter::gateway) enum SnapshotFailurePoint {
     Read,
-    StrictValidation,
     Copy,
     Write,
     Permission,
