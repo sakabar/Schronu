@@ -21,14 +21,10 @@ fn 通信matrixとstorage_firstのlocal状態遷移を固定する() {
     assert_eq!(state.switch_tab(ActiveTab::List), ClientEffect::None);
     assert_eq!(state.tick(2_000), ClientEffect::None);
     assert_eq!(state.tick_now_epoch_ms(), 2_000);
-    assert_eq!(state.request_bootstrap(), ClientEffect::Bootstrap);
-    assert_eq!(
-        state.request_list("2026-09-05"),
-        ClientEffect::ListTasks(schronu_web::ListTasksRequest {
-            logical_date: "2026-09-05".to_owned(),
-        })
-    );
-    assert_eq!(state.request_auto_session(), ClientEffect::AutoSession);
+    bootstrap_effect(state.request_bootstrap());
+    let (_, list_request) = list_effect(state.request_list("2026-09-05"));
+    assert_eq!(list_request.logical_date, "2026-09-05");
+    auto_effect(state.request_auto_session());
 
     let task_row = row(TASK_ID, 300);
     assert_eq!(
@@ -69,8 +65,11 @@ fn 通信matrixとstorage_firstのlocal状態遷移を固定する() {
 fn snapshotとlistはlogical_date反転時にstale一覧を保持せず追加requestもしない() {
     let storage = FakeStorage::default();
     let mut state = ClientState::new(load_work_sessions(&storage).unwrap(), 10);
-    state.apply_bootstrap_result(Ok(snapshot("2026-09-05", 10)));
+    let bootstrap_request_id = bootstrap_effect(state.request_bootstrap());
+    state.apply_bootstrap_result(bootstrap_request_id, Ok(snapshot("2026-09-05", 10)));
+    let (list_request_id, _) = list_effect(state.request_list("2026-09-05"));
     state.apply_list_result(
+        list_request_id,
         "2026-09-05",
         Ok(WebSuccess {
             snapshot: snapshot("2026-09-05", 11),
@@ -80,7 +79,9 @@ fn snapshotとlistはlogical_date反転時にstale一覧を保持せず追加req
     assert_eq!(state.selected_logical_date(), Some("2026-09-05"));
     assert_eq!(state.scheduled_rows().len(), 1);
 
+    let (list_request_id, _) = list_effect(state.request_list("2026-09-05"));
     let effect = state.apply_list_result(
+        list_request_id,
         "2026-09-05",
         Ok(WebSuccess {
             snapshot: snapshot("2026-09-06", 12),
@@ -105,8 +106,10 @@ fn auto_sessionはsnapshotを適用しtick開始で保存成功時だけ追加�
         actual_work_seconds: 300,
     };
 
+    let request_id = auto_effect(state.request_auto_session());
     state.apply_auto_session_result(
         &storage,
+        request_id,
         Ok(WebSuccess {
             snapshot: snapshot("2026-09-05", 1),
             data: Some(selected),
@@ -117,8 +120,10 @@ fn auto_sessionはsnapshotを適用しtick開始で保存成功時だけ追加�
 
     state.discard_session(&storage, TASK_ID);
     storage.fail_writes.set(true);
+    let request_id = auto_effect(state.request_auto_session());
     state.apply_auto_session_result(
         &storage,
+        request_id,
         Ok(WebSuccess {
             snapshot: snapshot("2026-09-05", 2),
             data: Some(row(TASK_ID, 0).task),
@@ -126,8 +131,10 @@ fn auto_sessionはsnapshotを適用しtick開始で保存成功時だけ追加�
     );
     assert!(state.sessions().is_empty());
     storage.fail_writes.set(false);
+    let request_id = auto_effect(state.request_auto_session());
     state.apply_auto_session_result(
         &storage,
+        request_id,
         Ok(WebSuccess {
             snapshot: snapshot("2026-09-05", 3),
             data: None,
@@ -232,10 +239,14 @@ fn mutation成功時だけsessionを消し履歴を最新100件へ制限する()
 
     for epoch in 0..101 {
         state.tick(epoch);
-        state.apply_bootstrap_result(Err(ServerFailure::Operation(web_error(
-            "failure",
-            RetryAdvice::Retry,
-        ))));
+        let request_id = bootstrap_effect(state.request_bootstrap());
+        state.apply_bootstrap_result(
+            request_id,
+            Err(ServerFailure::Operation(web_error(
+                "failure",
+                RetryAdvice::Retry,
+            ))),
+        );
     }
     assert_eq!(state.history().len(), 100);
     assert_eq!(state.history().front().unwrap().occurred_at_epoch_ms, 1);
@@ -433,6 +444,30 @@ fn complete_effect(effect: ClientEffect) -> (u64, schronu_web::RecordSessionRequ
             request_id,
             request,
         } => (request_id, request),
+        other => panic!("unexpected effect: {other:?}"),
+    }
+}
+
+fn bootstrap_effect(effect: ClientEffect) -> u64 {
+    match effect {
+        ClientEffect::Bootstrap { request_id } => request_id,
+        other => panic!("unexpected effect: {other:?}"),
+    }
+}
+
+fn list_effect(effect: ClientEffect) -> (u64, schronu_web::ListTasksRequest) {
+    match effect {
+        ClientEffect::ListTasks {
+            request_id,
+            request,
+        } => (request_id, request),
+        other => panic!("unexpected effect: {other:?}"),
+    }
+}
+
+fn auto_effect(effect: ClientEffect) -> u64 {
+    match effect {
+        ClientEffect::AutoSession { request_id } => request_id,
         other => panic!("unexpected effect: {other:?}"),
     }
 }

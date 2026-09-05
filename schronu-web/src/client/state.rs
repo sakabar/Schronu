@@ -54,6 +54,10 @@ pub struct ClientState {
     history: VecDeque<OperationHistoryEntry>,
     tick_now_epoch_ms: i64,
     auto_session_empty: bool,
+    next_read_request_id: u64,
+    latest_bootstrap_request_id: Option<u64>,
+    latest_list_request_id: Option<u64>,
+    latest_auto_request_id: Option<u64>,
     next_mutation_request_id: u64,
     pending_mutations: HashMap<u64, PendingMutation>,
 }
@@ -76,6 +80,10 @@ impl ClientState {
             history: VecDeque::new(),
             tick_now_epoch_ms,
             auto_session_empty: false,
+            next_read_request_id: 1,
+            latest_bootstrap_request_id: None,
+            latest_list_request_id: None,
+            latest_auto_request_id: None,
             next_mutation_request_id: 1,
             pending_mutations: HashMap::new(),
         }
@@ -155,18 +163,33 @@ impl ClientState {
         ClientEffect::None
     }
 
-    pub fn request_bootstrap(&self) -> ClientEffect {
-        ClientEffect::Bootstrap
+    pub fn request_bootstrap(&mut self) -> ClientEffect {
+        let Some(request_id) = self.next_read_request_id() else {
+            return ClientEffect::None;
+        };
+        self.latest_bootstrap_request_id = Some(request_id);
+        ClientEffect::Bootstrap { request_id }
     }
 
-    pub fn request_list(&self, logical_date: &str) -> ClientEffect {
-        ClientEffect::ListTasks(ListTasksRequest {
-            logical_date: logical_date.to_owned(),
-        })
+    pub fn request_list(&mut self, logical_date: &str) -> ClientEffect {
+        let Some(request_id) = self.next_read_request_id() else {
+            return ClientEffect::None;
+        };
+        self.latest_list_request_id = Some(request_id);
+        ClientEffect::ListTasks {
+            request_id,
+            request: ListTasksRequest {
+                logical_date: logical_date.to_owned(),
+            },
+        }
     }
 
-    pub fn request_auto_session(&self) -> ClientEffect {
-        ClientEffect::AutoSession
+    pub fn request_auto_session(&mut self) -> ClientEffect {
+        let Some(request_id) = self.next_read_request_id() else {
+            return ClientEffect::None;
+        };
+        self.latest_auto_request_id = Some(request_id);
+        ClientEffect::AutoSession { request_id }
     }
 
     pub fn add_session_from_row<S: KeyValueStorage>(
@@ -285,5 +308,11 @@ impl ClientState {
         let task_id = pending.task_id.clone();
         self.pending_mutations.remove(&request_id);
         Some(task_id)
+    }
+
+    fn next_read_request_id(&mut self) -> Option<u64> {
+        let request_id = self.next_read_request_id;
+        self.next_read_request_id = request_id.checked_add(1)?;
+        Some(request_id)
     }
 }

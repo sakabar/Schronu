@@ -5,11 +5,17 @@ use crate::{RecordSessionResult, RetryAdvice, WebSuccess};
 impl ClientState {
     pub fn apply_bootstrap_result(
         &mut self,
+        request_id: u64,
         result: Result<ServerSnapshot, ServerFailure>,
     ) -> ClientEffect {
+        if !consume_latest(&mut self.latest_bootstrap_request_id, request_id) {
+            return ClientEffect::None;
+        }
         match result {
             Ok(snapshot) => {
-                self.apply_snapshot(snapshot);
+                if self.apply_snapshot(snapshot).is_none() {
+                    return ClientEffect::None;
+                }
                 self.record_server(
                     Operation::Bootstrap,
                     None,
@@ -24,13 +30,20 @@ impl ClientState {
 
     pub fn apply_list_result(
         &mut self,
+        request_id: u64,
         requested_date: &str,
         result: Result<WebSuccess<Vec<ScheduledTaskRow>>, ServerFailure>,
     ) -> ClientEffect {
+        if !consume_latest(&mut self.latest_list_request_id, request_id) {
+            return ClientEffect::None;
+        }
         match result {
             Ok(success) => {
-                let logical_date_changed = self.apply_snapshot(success.snapshot);
-                if !logical_date_changed {
+                let response_logical_date = success.snapshot.logical_date.clone();
+                let Some(_) = self.apply_snapshot(success.snapshot) else {
+                    return ClientEffect::None;
+                };
+                if requested_date == response_logical_date {
                     self.selected_logical_date = Some(requested_date.to_owned());
                     self.scheduled_rows = success.data;
                 }
@@ -49,11 +62,17 @@ impl ClientState {
     pub fn apply_auto_session_result<S: KeyValueStorage>(
         &mut self,
         storage: &S,
+        request_id: u64,
         result: Result<WebSuccess<Option<SessionTask>>, ServerFailure>,
     ) -> ClientEffect {
+        if !consume_latest(&mut self.latest_auto_request_id, request_id) {
+            return ClientEffect::None;
+        }
         match result {
             Ok(success) => {
-                self.apply_snapshot(success.snapshot);
+                if self.apply_snapshot(success.snapshot).is_none() {
+                    return ClientEffect::None;
+                }
                 self.auto_session_empty = success.data.is_none();
                 self.record_server(
                     Operation::AutoSession,
@@ -82,7 +101,7 @@ impl ClientState {
         self.in_flight_task_ids.remove(&task_id);
         match result {
             Ok(success) => {
-                self.apply_snapshot(success.snapshot);
+                let _ = self.apply_snapshot(success.snapshot);
                 self.finish_committed_mutation(
                     storage,
                     &task_id,
@@ -107,7 +126,7 @@ impl ClientState {
         self.in_flight_task_ids.remove(&task_id);
         match result {
             Ok(snapshot) => {
-                self.apply_snapshot(snapshot);
+                let _ = self.apply_snapshot(snapshot);
                 self.finish_committed_mutation(storage, &task_id, Operation::CompleteSession, None);
             }
             Err(error) => self.finish_failed_mutation(&task_id, Operation::CompleteSession, error),
@@ -115,7 +134,14 @@ impl ClientState {
         ClientEffect::None
     }
 
-    fn apply_snapshot(&mut self, snapshot: ServerSnapshot) -> bool {
+    fn apply_snapshot(&mut self, snapshot: ServerSnapshot) -> Option<bool> {
+        if self
+            .snapshot
+            .as_ref()
+            .is_some_and(|current| current.observed_at_epoch_ms > snapshot.observed_at_epoch_ms)
+        {
+            return None;
+        }
         let changed = self
             .snapshot
             .as_ref()
@@ -126,7 +152,7 @@ impl ClientState {
             self.scheduled_rows.clear();
         }
         self.snapshot = Some(snapshot);
-        changed
+        Some(changed)
     }
 
     fn finish_failed_mutation(
@@ -270,4 +296,12 @@ impl ClientState {
             },
         );
     }
+}
+
+fn consume_latest(latest_request_id: &mut Option<u64>, request_id: u64) -> bool {
+    if *latest_request_id != Some(request_id) {
+        return false;
+    }
+    *latest_request_id = None;
+    true
 }
