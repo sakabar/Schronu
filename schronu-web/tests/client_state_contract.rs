@@ -760,6 +760,38 @@ fn 復元したsafety_blockは診断でき手動確認成功時だけ解除す�
     ));
 }
 
+#[test]
+fn safety_markerは全mutationの確定応答後だけ自動解除する() {
+    let storage = FakeStorage::default();
+    let mut state = state_with_sessions(&storage, &[TASK_ID, OTHER_TASK_ID]);
+    let (first_id, _) = record_effect(state.begin_record_session(&storage, TASK_ID));
+    let (second_id, _) = record_effect(state.begin_record_session(&storage, OTHER_TASK_ID));
+
+    state.apply_record_result(
+        &storage,
+        first_id,
+        Err(ServerFailure::Operation(web_error(
+            web_error_codes::REPOSITORY_SAVE_FAILED,
+            RetryAdvice::Retry,
+        ))),
+    );
+    assert!(load_client_state(&storage, 0)
+        .unwrap()
+        .mutation_globally_blocked());
+
+    state.apply_record_result(
+        &storage,
+        second_id,
+        Err(ServerFailure::Operation(web_error(
+            web_error_codes::REPOSITORY_SAVE_FAILED,
+            RetryAdvice::Retry,
+        ))),
+    );
+    assert!(!load_client_state(&storage, 0)
+        .unwrap()
+        .mutation_globally_blocked());
+}
+
 #[derive(Default)]
 struct FakeStorage {
     value: RefCell<Option<String>>,
