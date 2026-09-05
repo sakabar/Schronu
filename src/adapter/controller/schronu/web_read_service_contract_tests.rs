@@ -342,25 +342,25 @@ fn record_sessionは未知taskと完了済みtaskと競合と加算overflowで�
             WebReadError::Application(error) => error,
             other => panic!("unexpected error: {other:?}"),
         };
-        assert!(match (expected_kind, application_error) {
-            ("not_found", crate::application::task_use_case::ApplicationError::TaskNotFound(_))
-            | (
+        assert!(matches!(
+            (expected_kind, application_error),
+            (
+                "not_found",
+                crate::application::task_use_case::ApplicationError::TaskNotFound(_)
+            ) | (
                 "completed",
                 crate::application::task_use_case::ApplicationError::TaskAlreadyCompleted(_),
-            )
-            | (
+            ) | (
                 "conflict",
                 crate::application::task_use_case::ApplicationError::ActualWorkConflict { .. },
-            )
-            | (
+            ) | (
                 "overflow",
                 crate::application::task_use_case::ApplicationError::InvalidInput {
                     field: "additional_actual_work_seconds",
                     reason: "actual work seconds overflow",
                 },
-            ) => true,
-            _ => false,
-        });
+            )
+        ));
         assert_eq!(fixture.persisted_bytes(), before);
     }
 }

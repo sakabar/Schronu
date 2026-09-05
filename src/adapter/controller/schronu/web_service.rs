@@ -1,3 +1,6 @@
+use super::web_session_write::{
+    prepare_add_actual_work_input, RecordSessionRequest, RecordSessionResult, WebSessionInputError,
+};
 use crate::adapter::gateway::free_time_manager::FreeTimeManager;
 use crate::adapter::gateway::schronu_config::SchronuConfig;
 use crate::adapter::gateway::storage_lock::{LockMode, StorageLock, StorageLockError};
@@ -10,7 +13,7 @@ use crate::application::repository_transaction::{
     run_repository_transaction, RepositoryTransactionError,
 };
 use crate::application::schedule_use_case::{get_schedule, ScheduledTaskView};
-use crate::application::task_use_case::{get_focus, ApplicationError};
+use crate::application::task_use_case::{add_actual_work, get_focus, ApplicationError};
 use chrono::{DateTime, Local, NaiveDate};
 use serde::{Deserialize, Serialize};
 use std::error::Error;
@@ -109,6 +112,34 @@ impl WebService {
         })
     }
 
+    pub fn record_session_at(
+        &mut self,
+        operation_now: DateTime<Local>,
+        request: RecordSessionRequest,
+    ) -> Result<WebSuccess<RecordSessionResult>, WebReadError> {
+        let input = prepare_add_actual_work_input(request, operation_now)
+            .map_err(WebReadError::InvalidInput)?;
+        self.run_transaction_at(operation_now, |repository, free_time_manager, offset| {
+            let actual_work_seconds =
+                add_actual_work(repository, input).map_err(WebReadCoreError::Application)?;
+            let snapshot = build_server_snapshot_with_offset(
+                repository,
+                free_time_manager,
+                operation_now,
+                offset,
+            )?;
+            Ok((
+                WebSuccess {
+                    snapshot,
+                    data: RecordSessionResult {
+                        actual_work_seconds,
+                    },
+                },
+                true,
+            ))
+        })
+    }
+
     fn busy_time_slots_path(&self) -> Result<&str, WebReadError> {
         self.config
             .busy_time_slots_yaml_path
@@ -126,6 +157,20 @@ impl WebService {
             &mut FreeTimeManager,
             i64,
         ) -> Result<T, WebReadCoreError>,
+    ) -> Result<T, WebReadError> {
+        self.run_transaction_at(operation_now, |repository, free_time_manager, offset| {
+            operation(repository, free_time_manager, offset).map(|output| (output, false))
+        })
+    }
+
+    fn run_transaction_at<T>(
+        &mut self,
+        operation_now: DateTime<Local>,
+        operation: impl FnOnce(
+            &mut TaskRepository,
+            &mut FreeTimeManager,
+            i64,
+        ) -> Result<(T, bool), WebReadCoreError>,
     ) -> Result<T, WebReadError> {
         let busy_time_slots_path = self.busy_time_slots_path()?.to_owned();
         let end_of_day_offset_minutes = self.config.end_of_day_offset_minutes;
@@ -145,7 +190,6 @@ impl WebService {
                     .load_busy_time_slots_from_file(&busy_time_slots_path)
                     .map_err(WebReadOperationError::BusyTimeSlots)?;
                 operation(repository, free_time_manager, end_of_day_offset_minutes)
-                    .map(|output| (output, false))
                     .map_err(WebReadOperationError::Core)
             },
         )
@@ -385,7 +429,9 @@ pub enum WebReadError {
     BusyTimeSlots(BusyTimeSlotLoadError),
     Lock(StorageLockError),
     Repository(TaskRepositoryError),
+    RepositoryStateUncertain(TaskRepositoryError),
     Application(ApplicationError),
+    InvalidInput(WebSessionInputError),
     PathEncoding(PathBuf),
     Overflow(WebReadOverflowError),
 }
@@ -396,8 +442,10 @@ impl WebReadError {
     ) -> Self {
         match error {
             RepositoryTransactionError::Lock(error) => Self::Lock(error),
-            RepositoryTransactionError::Load(error)
-            | RepositoryTransactionError::StateUncertain(error) => Self::Repository(error),
+            RepositoryTransactionError::Load(error) => Self::Repository(error),
+            RepositoryTransactionError::StateUncertain(error) => {
+                Self::RepositoryStateUncertain(error)
+            }
             RepositoryTransactionError::Operation(WebReadOperationError::BusyTimeSlots(error)) => {
                 Self::BusyTimeSlots(error)
             }
@@ -417,7 +465,14 @@ impl fmt::Display for WebReadError {
             Self::BusyTimeSlots(error) => write!(formatter, "busy time slot load failed: {error}"),
             Self::Lock(error) => write!(formatter, "storage lock failed: {error}"),
             Self::Repository(error) => write!(formatter, "repository read failed: {error}"),
-            Self::Application(error) => write!(formatter, "Web read operation failed: {error}"),
+            Self::RepositoryStateUncertain(error) => {
+                write!(
+                    formatter,
+                    "repository state is uncertain after save: {error}"
+                )
+            }
+            Self::Application(error) => write!(formatter, "Web operation failed: {error}"),
+            Self::InvalidInput(error) => write!(formatter, "invalid Web request: {error}"),
             Self::PathEncoding(path) => {
                 write!(formatter, "path must be valid UTF-8: {}", path.display())
             }
@@ -432,7 +487,9 @@ impl Error for WebReadError {
             Self::BusyTimeSlots(error) => Some(error),
             Self::Lock(error) => Some(error),
             Self::Repository(error) => Some(error),
+            Self::RepositoryStateUncertain(error) => Some(error),
             Self::Application(error) => Some(error),
+            Self::InvalidInput(error) => Some(error),
             Self::Overflow(error) => Some(error),
             Self::PathEncoding(_) => None,
         }

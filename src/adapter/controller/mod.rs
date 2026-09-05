@@ -24,6 +24,9 @@ mod today_text;
 #[path = "schronu/web_service.rs"]
 mod web_service;
 
+#[path = "schronu/web_session_write.rs"]
+mod web_session_write;
+
 #[path = "schronu/view.rs"]
 mod view;
 
@@ -70,6 +73,7 @@ pub use web_service::{
     ScheduledTaskRowDto, ServerSnapshot, SessionTaskDto, WebReadError, WebReadOverflowError,
     WebService, WebSuccess,
 };
+pub use web_session_write::{RecordSessionRequest, RecordSessionResult, WebSessionInputError};
 
 #[cfg(test)]
 mod entrypoint_contract_tests {
