@@ -543,6 +543,7 @@ fn 完了失敗は記録方針にかかわらず一覧を保持する() {
             1,
             vec![row(TASK_ID, 0), row(OTHER_TASK_ID, 0), row(TASK_ID, 0)],
         );
+        let expected_rows = state.scheduled_rows().to_vec();
 
         let effect = if record_elapsed_seconds {
             state.begin_complete_session(&storage, TASK_ID)
@@ -560,7 +561,7 @@ fn 完了失敗は記録方針にかかわらず一覧を保持する() {
         );
 
         assert_eq!(state.selected_logical_date(), Some("2026-09-05"));
-        assert_eq!(state.scheduled_rows().len(), 3);
+        assert_eq!(state.scheduled_rows(), expected_rows);
     }
 }
 
@@ -588,12 +589,14 @@ fn server完了後のlocal_session削除失敗でも対象taskを一覧から除
 fn 完了前のlist応答は後着しても完了taskを復活させない() {
     let storage = FakeStorage::default();
     let mut state = state_with_sessions(&storage, &[TASK_ID]);
+    let initial_other_row = row(OTHER_TASK_ID, 10);
     apply_list_rows(
         &mut state,
         "2026-09-05",
         1,
-        vec![row(TASK_ID, 0), row(OTHER_TASK_ID, 0)],
+        vec![row(TASK_ID, 0), initial_other_row.clone()],
     );
+    let expected_rows = vec![initial_other_row];
     let (old_list_request_id, old_list_request) = list_effect(state.request_list("2026-09-05"));
     let (complete_request_id, _) = complete_effect(state.begin_complete_session(&storage, TASK_ID));
     state.apply_complete_result(&storage, complete_request_id, Ok(snapshot("2026-09-05", 3)));
@@ -603,12 +606,11 @@ fn 完了前のlist応答は後着しても完了taskを復活させない() {
         &old_list_request.logical_date,
         Ok(WebSuccess {
             snapshot: snapshot("2026-09-05", 2),
-            data: vec![row(TASK_ID, 0), row(OTHER_TASK_ID, 0)],
+            data: vec![row(TASK_ID, 100), row(OTHER_TASK_ID, 200)],
         }),
     );
 
-    assert_eq!(state.scheduled_rows().len(), 1);
-    assert_eq!(state.scheduled_rows()[0].task.task_id, OTHER_TASK_ID);
+    assert_eq!(state.scheduled_rows(), expected_rows);
 }
 
 #[test]
@@ -641,6 +643,7 @@ fn 記録とlocalなsession破棄は一覧を変更しない() {
         1,
         vec![row(TASK_ID, 0), row(OTHER_TASK_ID, 0)],
     );
+    let expected_record_rows = record_state.scheduled_rows().to_vec();
     let (record_request_id, _) =
         record_effect(record_state.begin_record_session(&record_storage, TASK_ID));
     record_state.apply_record_result(
@@ -653,7 +656,7 @@ fn 記録とlocalなsession破棄は一覧を変更しない() {
             },
         }),
     );
-    assert_eq!(record_state.scheduled_rows().len(), 2);
+    assert_eq!(record_state.scheduled_rows(), expected_record_rows);
 
     let discard_storage = FakeStorage::default();
     let mut discard_state = state_with_sessions(&discard_storage, &[TASK_ID]);
@@ -663,8 +666,9 @@ fn 記録とlocalなsession破棄は一覧を変更しない() {
         1,
         vec![row(TASK_ID, 0), row(OTHER_TASK_ID, 0)],
     );
+    let expected_discard_rows = discard_state.scheduled_rows().to_vec();
     discard_state.discard_session(&discard_storage, TASK_ID);
-    assert_eq!(discard_state.scheduled_rows().len(), 2);
+    assert_eq!(discard_state.scheduled_rows(), expected_discard_rows);
 }
 
 #[test]
