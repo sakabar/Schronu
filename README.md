@@ -73,7 +73,7 @@ CLI commandは、入力から副作用までを次のprivate境界で処理し�
 4. `renderer.rs`が`DisplayModel`を既存CLI文字列へ変換し、writer固有改行、ANSI、Spreadsheet A-J列の整形、flush modeを扱う。
 5. `runtime.rs`は依存構築、repository transaction、Verifyのread-only repository検査、外部URL起動、interactive/non-interactive調停、focus変更と描画要求の適用、終了code変換だけを担う。
 
-この境界はprivateな実装構造です。command名とalias、CLI文言、YAML、MCP、Spreadsheetの公開契約は変更しません。
+このprivateな責務分割自体は、既存のcommand名、alias、CLI表示文言を変更しません。
 
 task名は入力した原文をtrim・正規化せずに保存します。validation時だけ前後の空白を除いた値を使い、blankと、`123`、`+123`、`-123`のようなoptional sign付きASCII整数だけの名前を拒否します。さらに、全Unicode control characterを拒否します。通常の空白(先頭・末尾・連続を含む)、Unicode・日本語、single quote、double quote、backslashは使用でき、原文のまま保持されます。
 
