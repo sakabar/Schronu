@@ -3,7 +3,10 @@ mod results;
 use super::date_buttons::LogicalDateButton;
 pub use super::effect::ClientEffect;
 pub use super::history::{Locality, Operation, OperationHistoryEntry, Outcome};
-use super::work_sessions::{KeyValueStorage, WorkSession, WorkSessionsState};
+use super::safety_state::{load_mutation_safety, MutationSafetyState};
+use super::work_sessions::{
+    load_work_sessions, KeyValueStorage, StorageError, WorkSession, WorkSessionsState,
+};
 use crate::{
     ListTasksRequest, RecordSessionRequest, ScheduledTaskRow, ServerSnapshot, SessionTask, WebError,
 };
@@ -114,6 +117,7 @@ pub struct ClientState {
     committed_blocked_task_ids: HashSet<String>,
     committed_actual_work_seconds: HashMap<String, i64>,
     mutation_globally_blocked: bool,
+    mutation_safety: MutationSafetyState,
     display_error: Option<DisplayError>,
     history: VecDeque<OperationHistoryEntry>,
     tick_now_epoch_ms: i64,
@@ -127,7 +131,12 @@ pub struct ClientState {
 }
 
 impl ClientState {
-    pub fn new(work_sessions: WorkSessionsState, tick_now_epoch_ms: i64) -> Self {
+    fn new(
+        work_sessions: WorkSessionsState,
+        mutation_safety: MutationSafetyState,
+        tick_now_epoch_ms: i64,
+    ) -> Self {
+        let mutation_globally_blocked = mutation_safety.mutation_blocked();
         Self {
             active_tab: ActiveTab::Session,
             work_sessions,
@@ -139,7 +148,8 @@ impl ClientState {
             manual_check_blocked_task_ids: HashSet::new(),
             committed_blocked_task_ids: HashSet::new(),
             committed_actual_work_seconds: HashMap::new(),
-            mutation_globally_blocked: false,
+            mutation_globally_blocked,
+            mutation_safety,
             display_error: None,
             history: VecDeque::new(),
             tick_now_epoch_ms,
@@ -396,4 +406,15 @@ impl ClientState {
         self.next_read_request_id = request_id.checked_add(1)?;
         Some(request_id)
     }
+}
+
+pub fn load_client_state<S: KeyValueStorage>(
+    storage: &S,
+    tick_now_epoch_ms: i64,
+) -> Result<ClientState, StorageError> {
+    Ok(ClientState::new(
+        load_work_sessions(storage)?,
+        load_mutation_safety(storage)?,
+        tick_now_epoch_ms,
+    ))
 }

@@ -17,8 +17,7 @@ const OTHER_TASK_ID: &str = "00000000-0000-4000-8000-000000000002";
 #[test]
 fn 通信matrixとstorage_firstのlocal状態遷移を固定する() {
     let storage = FakeStorage::default();
-    let sessions = load_work_sessions(&storage).unwrap();
-    let mut state = ClientState::new(sessions, 1_000);
+    let mut state = load_client_state(&storage, 1_000).unwrap();
 
     assert_eq!(state.active_tab(), ActiveTab::Session);
     assert_eq!(state.switch_tab(ActiveTab::List), ClientEffect::None);
@@ -67,7 +66,7 @@ fn 通信matrixとstorage_firstのlocal状態遷移を固定する() {
 #[test]
 fn snapshotとlistはlogical_date反転時にstale一覧を保持せず追加requestもしない() {
     let storage = FakeStorage::default();
-    let mut state = ClientState::new(load_work_sessions(&storage).unwrap(), 10);
+    let mut state = load_client_state(&storage, 10).unwrap();
     let bootstrap_request_id = bootstrap_effect(state.request_bootstrap());
     state.apply_bootstrap_result(bootstrap_request_id, Ok(snapshot("2026-09-05", 10)));
     let (list_request_id, _) = list_effect(state.request_list("2026-09-05"));
@@ -101,7 +100,7 @@ fn snapshotとlistはlogical_date反転時にstale一覧を保持せず追加req
 #[test]
 fn auto_sessionはsnapshotを適用しtick開始で保存成功時だけ追加する() {
     let storage = FakeStorage::default();
-    let mut state = ClientState::new(load_work_sessions(&storage).unwrap(), 5_000);
+    let mut state = load_client_state(&storage, 5_000).unwrap();
     let selected = SessionTask {
         task_id: TASK_ID.to_owned(),
         task_name: "selected".to_owned(),
@@ -299,7 +298,10 @@ fn repository_state_uncertainのblockは別keyへ保存しreload後も復元す�
     );
 
     let mut restored = load_client_state(&storage, 0).unwrap();
-    assert_eq!(restored.begin_record_session(OTHER_TASK_ID), ClientEffect::None);
+    assert_eq!(
+        restored.begin_record_session(OTHER_TASK_ID),
+        ClientEffect::None
+    );
 
     let storage = FakeStorage::default();
     let mut state = state_with_sessions(&storage, &[TASK_ID, OTHER_TASK_ID]);
@@ -313,7 +315,10 @@ fn repository_state_uncertainのblockは別keyへ保存しreload後も復元す�
             RetryAdvice::ManualCheck,
         ))),
     );
-    assert_eq!(state.begin_record_session(OTHER_TASK_ID), ClientEffect::None);
+    assert_eq!(
+        state.begin_record_session(OTHER_TASK_ID),
+        ClientEffect::None
+    );
 }
 
 #[test]
@@ -359,7 +364,7 @@ fn 古いmutation応答は同じuuidの新しいsessionへ作用しない() {
 #[test]
 fn 逆順のlist応答と古いsnapshotは最新表示を巻き戻さない() {
     let storage = FakeStorage::default();
-    let mut state = ClientState::new(load_work_sessions(&storage).unwrap(), 0);
+    let mut state = load_client_state(&storage, 0).unwrap();
     let bootstrap_id = bootstrap_effect(state.request_bootstrap());
     state.apply_bootstrap_result(bootstrap_id, Ok(snapshot("2026-09-05", 50)));
     let first_request_id = match state.request_list("2026-09-05") {
@@ -406,7 +411,7 @@ fn 逆順のlist応答と古いsnapshotは最新表示を巻き戻さない() {
 #[test]
 fn 未知のoperation_errorはcodeと助言を失わず表示状態へ保持する() {
     let storage = FakeStorage::default();
-    let mut state = ClientState::new(load_work_sessions(&storage).unwrap(), 0);
+    let mut state = load_client_state(&storage, 0).unwrap();
     let request_id = bootstrap_effect(state.request_bootstrap());
     let error = web_error("future_error", RetryAdvice::ManualCheck);
 
@@ -479,7 +484,7 @@ fn server_commit後のlocal削除失敗はserver成功とlocal失敗を別々に
 fn 起動時のstorage警告と書込停止をclient状態から参照できる() {
     let storage = FakeStorage::default();
     *storage.value.borrow_mut() = Some("{broken".to_owned());
-    let state = ClientState::new(load_work_sessions(&storage).unwrap(), 0);
+    let state = load_client_state(&storage, 0).unwrap();
 
     assert!(!state.storage_warnings().is_empty());
     assert!(state.storage_write_blocked());
@@ -488,7 +493,7 @@ fn 起動時のstorage警告と書込停止をclient状態から参照できる(
 #[test]
 fn 後続操作の成功は以前の表示errorを解消する() {
     let storage = FakeStorage::default();
-    let mut state = ClientState::new(load_work_sessions(&storage).unwrap(), 0);
+    let mut state = load_client_state(&storage, 0).unwrap();
     let request_id = bootstrap_effect(state.request_bootstrap());
     state.apply_bootstrap_result(
         request_id,
@@ -505,7 +510,7 @@ fn 後続操作の成功は以前の表示errorを解消する() {
 #[test]
 fn 未来日の一覧は今日のsnapshotと共に適用する() {
     let storage = FakeStorage::default();
-    let mut state = ClientState::new(load_work_sessions(&storage).unwrap(), 0);
+    let mut state = load_client_state(&storage, 0).unwrap();
     let bootstrap_id = bootstrap_effect(state.request_bootstrap());
     state.apply_bootstrap_result(bootstrap_id, Ok(snapshot("2026-09-05", 1)));
     let (list_id, _) = list_effect(state.request_list("2026-09-06"));
@@ -526,7 +531,7 @@ fn 未来日の一覧は今日のsnapshotと共に適用する() {
 #[test]
 fn auto_sessionは古いsnapshotを無視してtask_payloadを適用する() {
     let storage = FakeStorage::default();
-    let mut state = ClientState::new(load_work_sessions(&storage).unwrap(), 5_000);
+    let mut state = load_client_state(&storage, 5_000).unwrap();
     let bootstrap_id = bootstrap_effect(state.request_bootstrap());
     state.apply_bootstrap_result(bootstrap_id, Ok(snapshot("2026-09-05", 200)));
     let auto_id = auto_effect(state.request_auto_session());
@@ -605,21 +610,30 @@ fn session重複追加と不存在破棄はstorage履歴へ偽装しない() {
 #[derive(Default)]
 struct FakeStorage {
     value: RefCell<Option<String>>,
+    safety_value: RefCell<Option<String>>,
     fail_writes: Cell<bool>,
 }
 
 impl KeyValueStorage for FakeStorage {
     fn get(&self, key: &str) -> Result<Option<String>, StorageError> {
-        assert_eq!(key, WORK_SESSIONS_STORAGE_KEY);
-        Ok(self.value.borrow().clone())
+        match key {
+            WORK_SESSIONS_STORAGE_KEY => Ok(self.value.borrow().clone()),
+            "schronu_web.mutation_safety.v1" => Ok(self.safety_value.borrow().clone()),
+            other => panic!("unexpected key: {other}"),
+        }
     }
 
     fn set(&self, key: &str, value: &str) -> Result<(), StorageError> {
-        assert_eq!(key, WORK_SESSIONS_STORAGE_KEY);
         if self.fail_writes.get() {
             return Err(StorageError::WriteFailed);
         }
-        *self.value.borrow_mut() = Some(value.to_owned());
+        match key {
+            WORK_SESSIONS_STORAGE_KEY => *self.value.borrow_mut() = Some(value.to_owned()),
+            "schronu_web.mutation_safety.v1" => {
+                *self.safety_value.borrow_mut() = Some(value.to_owned());
+            }
+            other => panic!("unexpected key: {other}"),
+        }
         Ok(())
     }
 }
@@ -640,7 +654,7 @@ fn state_with_sessions(storage: &FakeStorage, ids: &[&str]) -> ClientState {
                 .collect(),
         )
         .unwrap();
-    ClientState::new(sessions, 0)
+    load_client_state(storage, 0).unwrap()
 }
 
 fn snapshot(logical_date: &str, observed_at_epoch_ms: i64) -> ServerSnapshot {

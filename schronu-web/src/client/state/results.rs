@@ -109,7 +109,9 @@ impl ClientState {
                     Some(success.data.actual_work_seconds),
                 );
             }
-            Err(error) => self.finish_failed_mutation(&task_id, Operation::RecordSession, error),
+            Err(error) => {
+                self.finish_failed_mutation(storage, &task_id, Operation::RecordSession, error)
+            }
         }
         ClientEffect::None
     }
@@ -129,7 +131,9 @@ impl ClientState {
                 let _ = self.apply_snapshot(snapshot);
                 self.finish_committed_mutation(storage, &task_id, Operation::CompleteSession, None);
             }
-            Err(error) => self.finish_failed_mutation(&task_id, Operation::CompleteSession, error),
+            Err(error) => {
+                self.finish_failed_mutation(storage, &task_id, Operation::CompleteSession, error)
+            }
         }
         ClientEffect::None
     }
@@ -155,8 +159,9 @@ impl ClientState {
         Some(changed)
     }
 
-    fn finish_failed_mutation(
+    fn finish_failed_mutation<S: KeyValueStorage>(
         &mut self,
+        storage: &S,
         task_id: &str,
         operation: Operation,
         error: ServerFailure,
@@ -167,6 +172,7 @@ impl ClientState {
                 if code == crate::web_error_codes::REPOSITORY_STATE_UNCERTAIN
         ) {
             self.mutation_globally_blocked = true;
+            self.mutation_safety.block_mutations(storage);
         }
         if matches!(
             &error,
