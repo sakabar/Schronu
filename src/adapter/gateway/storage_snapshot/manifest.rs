@@ -10,7 +10,7 @@ use uuid::Uuid;
 pub(super) const FORMAT_VERSION: u32 = 1;
 pub(super) const DIGEST_VERSION: u32 = 1;
 
-#[derive(Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 pub(in crate::adapter::gateway) struct SnapshotManifest {
     pub(in crate::adapter::gateway) format_version: u32,
     pub(in crate::adapter::gateway) tool_version: String,
@@ -21,19 +21,19 @@ pub(in crate::adapter::gateway) struct SnapshotManifest {
     pub(in crate::adapter::gateway) files: Vec<FileEntry>,
 }
 
-#[derive(Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 pub(in crate::adapter::gateway) struct DigestDescriptor {
     pub(in crate::adapter::gateway) algorithm: String,
     pub(in crate::adapter::gateway) version: u32,
 }
 
-#[derive(Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 pub(in crate::adapter::gateway) struct DirectoryEntry {
     pub(in crate::adapter::gateway) path: PathBuf,
     pub(in crate::adapter::gateway) mode: Option<u32>,
 }
 
-#[derive(Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 pub(in crate::adapter::gateway) struct FileEntry {
     pub(in crate::adapter::gateway) path: PathBuf,
     pub(in crate::adapter::gateway) mode: Option<u32>,
@@ -44,7 +44,14 @@ pub(in crate::adapter::gateway) struct FileEntry {
 pub(in crate::adapter::gateway) fn encode_manifest(
     manifest: &SnapshotManifest,
 ) -> Result<Vec<u8>, SnapshotError> {
-    serde_json::to_vec(manifest)
+    let mut manifest = manifest.clone();
+    manifest
+        .directories
+        .sort_by(|left, right| left.path.cmp(&right.path));
+    manifest
+        .files
+        .sort_by(|left, right| left.path.cmp(&right.path));
+    serde_json::to_vec(&manifest)
         .map_err(|error| SnapshotError::new(SnapshotOperation::Encode, "manifest.json", error))
 }
 

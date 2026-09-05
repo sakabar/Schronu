@@ -54,3 +54,51 @@ fn snapshot_manifest_v1はrevisionなしをnullで保持する() {
     let value: serde_json::Value = serde_json::from_slice(&encoded).unwrap();
     assert!(value["revision"].is_null());
 }
+
+#[test]
+fn snapshot_manifest_v1はdirectoryとfileをpath順にencodeする() {
+    let manifest = SnapshotManifest {
+        format_version: 1,
+        tool_version: "0.1.0".to_string(),
+        created_at: FixedOffset::east_opt(0)
+            .unwrap()
+            .with_ymd_and_hms(2026, 9, 5, 3, 0, 0)
+            .unwrap(),
+        revision: None,
+        digest: DigestDescriptor {
+            algorithm: "fnv1a64".to_string(),
+            version: 1,
+        },
+        directories: vec![
+            DirectoryEntry {
+                path: PathBuf::from("z"),
+                mode: None,
+            },
+            DirectoryEntry {
+                path: PathBuf::from("a"),
+                mode: None,
+            },
+        ],
+        files: vec![
+            FileEntry {
+                path: PathBuf::from("z/file"),
+                mode: None,
+                content_length: 0,
+                content_digest: "fnv1a64:cbf29ce484222325".to_string(),
+            },
+            FileEntry {
+                path: PathBuf::from("a/file"),
+                mode: None,
+                content_length: 0,
+                content_digest: "fnv1a64:cbf29ce484222325".to_string(),
+            },
+        ],
+    };
+
+    let encoded: serde_json::Value =
+        serde_json::from_slice(&encode_manifest(&manifest).unwrap()).unwrap();
+    assert_eq!(encoded["directories"][0]["path"], "a");
+    assert_eq!(encoded["directories"][1]["path"], "z");
+    assert_eq!(encoded["files"][0]["path"], "a/file");
+    assert_eq!(encoded["files"][1]["path"], "z/file");
+}
