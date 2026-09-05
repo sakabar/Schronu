@@ -142,8 +142,24 @@ fn snapshot_restore失敗はdestinationもstagingも公開しない() {
         create_saved_repository(&source, now);
         create_snapshot_at(&source, &snapshot, now).unwrap();
 
-        restore_snapshot_with_failure(&snapshot, &destination, point).unwrap_err();
+        let error = restore_snapshot_with_failure(&snapshot, &destination, point)
+            .unwrap_err()
+            .to_string();
+        let expected_operation = match point {
+            SnapshotFailurePoint::FileSync
+            | SnapshotFailurePoint::DirectorySync
+            | SnapshotFailurePoint::ParentSync => "Sync",
+            SnapshotFailurePoint::Copy
+            | SnapshotFailurePoint::Permission
+            | SnapshotFailurePoint::Rename => "Write",
+            SnapshotFailurePoint::Read | SnapshotFailurePoint::Write => unreachable!(),
+        };
 
+        assert!(
+            error.contains(&format!("snapshot {expected_operation} failed")),
+            "{error}"
+        );
+        assert!(error.contains(&format!("injected {point:?} failure")), "{error}");
         assert!(!destination.exists(), "{point:?}");
         assert!(
             fs::read_dir(&root.path).unwrap().all(|entry| !entry
