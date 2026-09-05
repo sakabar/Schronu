@@ -822,11 +822,38 @@ fn transport不確実性は並行mutation完了後もglobal_blockを維持する
     );
 }
 
+#[test]
+fn server成功後のsession削除失敗はsafety_markerを解除しない() {
+    let storage = FakeStorage::default();
+    let mut state = state_with_sessions(&storage, &[TASK_ID]);
+    let (request_id, _) = record_effect(state.begin_record_session(&storage, TASK_ID));
+    storage.fail_work_session_writes.set(true);
+
+    state.apply_record_result(
+        &storage,
+        request_id,
+        Ok(WebSuccess {
+            snapshot: snapshot("2026-09-05", 1),
+            data: RecordSessionResult {
+                actual_work_seconds: 101,
+            },
+        }),
+    );
+
+    let mut restored = load_client_state(&storage, 0).unwrap();
+    assert!(restored.mutation_globally_blocked());
+    assert_eq!(
+        restored.begin_record_session(&storage, TASK_ID),
+        ClientEffect::None
+    );
+}
+
 #[derive(Default)]
 struct FakeStorage {
     value: RefCell<Option<String>>,
     safety_value: RefCell<Option<String>>,
     fail_writes: Cell<bool>,
+    fail_work_session_writes: Cell<bool>,
 }
 
 impl KeyValueStorage for FakeStorage {
@@ -840,6 +867,9 @@ impl KeyValueStorage for FakeStorage {
 
     fn set(&self, key: &str, value: &str) -> Result<(), StorageError> {
         if self.fail_writes.get() {
+            return Err(StorageError::WriteFailed);
+        }
+        if key == WORK_SESSIONS_STORAGE_KEY && self.fail_work_session_writes.get() {
             return Err(StorageError::WriteFailed);
         }
         match key {
