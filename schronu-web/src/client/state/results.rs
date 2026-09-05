@@ -9,6 +9,7 @@ impl ClientState {
         result: Result<ServerSnapshot, ServerFailure>,
     ) -> ClientEffect {
         if !consume_latest(&mut self.latest_bootstrap_request_id, request_id) {
+            self.record_stale_response(Operation::Bootstrap, result.is_ok());
             return ClientEffect::None;
         }
         match result {
@@ -35,6 +36,7 @@ impl ClientState {
         result: Result<WebSuccess<Vec<ScheduledTaskRow>>, ServerFailure>,
     ) -> ClientEffect {
         if !consume_latest(&mut self.latest_list_request_id, request_id) {
+            self.record_stale_response(Operation::ListTasks, result.is_ok());
             return ClientEffect::None;
         }
         match result {
@@ -65,6 +67,7 @@ impl ClientState {
         result: Result<WebSuccess<Option<SessionTask>>, ServerFailure>,
     ) -> ClientEffect {
         if !consume_latest(&mut self.latest_auto_request_id, request_id) {
+            self.record_stale_response(Operation::AutoSession, result.is_ok());
             return ClientEffect::None;
         }
         match result {
@@ -265,6 +268,20 @@ impl ClientState {
             self.display_error = None;
         }
         self.record_history(operation, task_id, Locality::Server, outcome, summary);
+    }
+
+    fn record_stale_response(&mut self, operation: Operation, succeeded: bool) {
+        self.record_history(
+            operation,
+            None,
+            Locality::Server,
+            if succeeded {
+                Outcome::Success
+            } else {
+                Outcome::Failure
+            },
+            "古い応答を表示へ適用せず受信しました。",
+        );
     }
 
     fn record_history(
