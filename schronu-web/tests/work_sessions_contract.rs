@@ -61,10 +61,10 @@ fn missing_key_loads_an_empty_writable_state_without_warnings() {
 
     let state = load_work_sessions(&storage).unwrap();
 
-    assert!(state.sessions.is_empty());
-    assert!(state.warnings.is_empty());
-    assert!(!state.write_blocked);
-    assert!(!state.needs_repair);
+    assert!(state.sessions().is_empty());
+    assert!(state.warnings().is_empty());
+    assert!(!state.write_blocked());
+    assert!(!state.needs_repair());
     assert_eq!(storage.set_calls.get(), 0);
 }
 
@@ -76,14 +76,14 @@ fn sessions_roundtrip_in_a_versioned_top_level_object() {
 
     state.replace_sessions(&storage, expected.clone()).unwrap();
 
-    assert_eq!(state.sessions, expected);
+    assert_eq!(state.sessions(), expected);
     assert_eq!(storage.set_calls.get(), 1);
     assert_eq!(
         serde_json::from_str::<serde_json::Value>(storage.value.borrow().as_ref().unwrap())
             .unwrap(),
         json!({"version": 1, "work_sessions": expected})
     );
-    assert_eq!(load_work_sessions(&storage).unwrap().sessions, expected);
+    assert_eq!(load_work_sessions(&storage).unwrap().sessions(), expected);
 }
 
 #[test]
@@ -96,11 +96,14 @@ fn corrupt_json_wrong_shape_and_wrong_version_are_write_blocked_without_rewrite(
         let storage = FakeStorage::with_value(raw);
         let state = load_work_sessions(&storage).unwrap();
 
-        assert!(state.sessions.is_empty());
-        assert!(!state.warnings.is_empty());
-        assert!(state.warnings.iter().all(|warning| !warning.contains(raw)));
-        assert!(state.write_blocked);
-        assert!(!state.needs_repair);
+        assert!(state.sessions().is_empty());
+        assert!(!state.warnings().is_empty());
+        assert!(state
+            .warnings()
+            .iter()
+            .all(|warning| !warning.contains(raw)));
+        assert!(state.write_blocked());
+        assert!(!state.needs_repair());
         assert_eq!(storage.set_calls.get(), 0);
         assert_eq!(storage.value.borrow().as_deref(), Some(raw));
     }
@@ -128,15 +131,15 @@ fn invalid_and_duplicate_entries_are_filtered_without_writing_on_load() {
     let state = load_work_sessions(&storage).unwrap();
 
     assert_eq!(
-        state.sessions,
+        state.sessions(),
         [
             session("550e8400-e29b-41d4-a716-446655440000", "設計"),
             session("67e55044-10b1-426f-9247-bb680e5fe0c8", "実装")
         ]
     );
-    assert!(!state.write_blocked);
-    assert!(state.needs_repair);
-    assert!(!state.warnings.is_empty());
+    assert!(!state.write_blocked());
+    assert!(state.needs_repair());
+    assert!(!state.warnings().is_empty());
     assert_eq!(storage.set_calls.get(), 0);
 }
 
@@ -155,12 +158,12 @@ fn next_successful_mutation_repairs_filtered_storage_once() {
 
     state.replace_sessions(&storage, repaired.clone()).unwrap();
 
-    assert_eq!(state.sessions, repaired);
-    assert!(!state.needs_repair);
+    assert_eq!(state.sessions(), repaired);
+    assert!(!state.needs_repair());
     assert_eq!(storage.set_calls.get(), 1);
     assert_eq!(
-        load_work_sessions(&storage).unwrap().warnings,
-        Vec::<String>::new()
+        load_work_sessions(&storage).unwrap().warnings(),
+        Vec::<String>::new().as_slice()
     );
 }
 
@@ -181,7 +184,7 @@ fn failed_write_leaves_memory_unchanged() {
             StorageError::WriteFailed
         ))
     );
-    assert_eq!(state.sessions, original);
+    assert_eq!(state.sessions(), original);
 }
 
 #[test]
@@ -196,7 +199,7 @@ fn write_blocked_state_rejects_mutation_without_touching_storage() {
         ),
         Err(WorkSessionsMutationError::WriteBlocked)
     );
-    assert!(state.sessions.is_empty());
+    assert!(state.sessions().is_empty());
     assert_eq!(storage.set_calls.get(), 0);
 }
 

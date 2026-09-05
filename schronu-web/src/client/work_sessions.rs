@@ -20,10 +20,10 @@ pub struct WorkSession {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct WorkSessionsState {
-    pub sessions: Vec<WorkSession>,
-    pub warnings: Vec<String>,
-    pub write_blocked: bool,
-    pub needs_repair: bool,
+    sessions: Vec<WorkSession>,
+    warnings: Vec<String>,
+    write_blocked: bool,
+    needs_repair: bool,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -101,6 +101,22 @@ pub fn load_work_sessions<S: KeyValueStorage>(
 }
 
 impl WorkSessionsState {
+    pub fn sessions(&self) -> &[WorkSession] {
+        &self.sessions
+    }
+
+    pub fn warnings(&self) -> &[String] {
+        &self.warnings
+    }
+
+    pub fn write_blocked(&self) -> bool {
+        self.write_blocked
+    }
+
+    pub fn needs_repair(&self) -> bool {
+        self.needs_repair
+    }
+
     pub fn replace_sessions<S: KeyValueStorage>(
         &mut self,
         storage: &S,
