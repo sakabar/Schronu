@@ -309,14 +309,13 @@ impl ClientState {
         outcome: Outcome,
         summary: &str,
     ) {
-        if outcome == Outcome::Success {
-            if self
+        if outcome == Outcome::Success
+            && self
                 .display_error
                 .as_ref()
                 .is_some_and(|error| error.is_resolved_by_server_success(operation, task_id))
-            {
-                self.display_error = None;
-            }
+        {
+            self.display_error = None;
         }
         self.record_history(operation, task_id, Locality::Server, outcome, summary);
     }
