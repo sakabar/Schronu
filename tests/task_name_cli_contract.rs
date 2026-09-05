@@ -114,6 +114,24 @@ fn 非対話cliはosのtask名argvを原文のまま保存する() {
 }
 
 #[test]
+fn 非対話cliは単一argvのcommand全文を暗黙分割しない() {
+    let fixture = CliFixture::seeded();
+    let storage_before = fixture.persistent_storage_bytes_excluding_process_lock();
+
+    let output = fixture.run(&["新 legacy-name"]);
+
+    assert!(
+        output.status.success(),
+        "stderr={}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        fixture.persistent_storage_bytes_excluding_process_lock(),
+        storage_before
+    );
+}
+
+#[test]
 fn 非対話cliはcontrol名を入力errorにしてstorageを変更しない() {
     for task_name in ["ESC\u{1b}name", "tab\tname"] {
         let fixture = CliFixture::seeded();
