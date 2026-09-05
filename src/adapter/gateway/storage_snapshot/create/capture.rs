@@ -2,7 +2,7 @@ use super::invalid;
 #[cfg(any(target_os = "macos", target_os = "linux"))]
 use crate::adapter::gateway::storage_snapshot::error::SnapshotLimitKind;
 use crate::adapter::gateway::storage_snapshot::error::{SnapshotError, SnapshotOperation};
-#[cfg(test)]
+#[cfg(all(test, any(target_os = "macos", target_os = "linux")))]
 use crate::adapter::gateway::storage_snapshot::io::FileSystemSnapshotIo;
 #[cfg(any(target_os = "macos", target_os = "linux"))]
 use crate::adapter::gateway::storage_snapshot::io::SnapshotFailurePoint;
