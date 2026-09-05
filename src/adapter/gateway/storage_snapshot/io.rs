@@ -8,7 +8,9 @@ use std::path::PathBuf;
 #[cfg(test)]
 pub(in crate::adapter::gateway) use publication::FailOnceSnapshotIo;
 pub(in crate::adapter::gateway) use publication::SnapshotFailurePoint;
-pub(super) use publication::{FileSystemSnapshotIo, SnapshotIo, StableDirectory, StableParent};
+pub(super) use publication::{
+    finalize_publication, FileSystemSnapshotIo, SnapshotIo, StableDirectory, StableParent,
+};
 pub(super) use read::read_directory_tree_with_limits;
 
 #[derive(Clone, Copy, Debug)]

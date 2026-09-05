@@ -1,4 +1,5 @@
 use super::FileWriteError;
+use crate::adapter::gateway::storage_snapshot::error::{SnapshotError, SnapshotOperation};
 #[cfg(any(target_os = "macos", target_os = "linux"))]
 use std::ffi::CString;
 use std::fs::{self, File};
@@ -79,6 +80,42 @@ pub(in crate::adapter::gateway::storage_snapshot) struct StableParent {
 
 pub(in crate::adapter::gateway::storage_snapshot) struct StableDirectory {
     directory: File,
+}
+
+pub(in crate::adapter::gateway::storage_snapshot) fn finalize_publication(
+    parent: &StableParent,
+    staging_name: &std::ffi::OsStr,
+    destination_name: &std::ffi::OsStr,
+    published: &StableDirectory,
+    destination: &Path,
+    io: &dyn SnapshotIo,
+) -> Result<(), SnapshotError> {
+    parent
+        .rename_no_replace(staging_name, destination_name, published, io)
+        .map_err(|error| SnapshotError::new(SnapshotOperation::Write, destination, error))?;
+    if let Err(sync_error) = parent.sync(io) {
+        let primary = SnapshotError::new(
+            SnapshotOperation::Sync,
+            destination.parent().expect("destination has a parent"),
+            sync_error,
+        );
+        if let Err(cleanup_error) = parent.remove_published_directory(destination_name, published) {
+            return Err(SnapshotError::followup_failure(
+                primary,
+                "cleanup",
+                cleanup_error,
+            ));
+        }
+        if let Err(sync_error) = parent.sync(io) {
+            return Err(SnapshotError::followup_failure(
+                primary,
+                "rollback parent sync",
+                sync_error,
+            ));
+        }
+        return Err(primary);
+    }
+    Ok(())
 }
 
 #[cfg(any(target_os = "macos", target_os = "linux"))]

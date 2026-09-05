@@ -2,8 +2,8 @@ use super::error::{SnapshotError, SnapshotOperation};
 #[cfg(test)]
 use super::io::FailOnceSnapshotIo;
 use super::io::{
-    DirectoryTree, FileSystemSnapshotIo, SnapshotFailurePoint, SnapshotIo, StableDirectory,
-    StableParent,
+    finalize_publication, DirectoryTree, FileSystemSnapshotIo, SnapshotFailurePoint, SnapshotIo,
+    StableDirectory, StableParent,
 };
 use super::layout::{staging_path, MANIFEST_FILE_NAME, PAYLOAD_DIRECTORY_NAME};
 use super::verify::load_verified_snapshot;
@@ -253,48 +253,14 @@ fn materialize_restore(
         .map_err(|error| SnapshotError::new(SnapshotOperation::Sync, staging.path, error))?;
     before_publish();
     ensure_parent_outside_snapshot(staging.target, staging.destination)?;
-    staging
-        .target
-        .parent
-        .rename_no_replace(
-            staging.name,
-            &staging.target.destination_name,
-            staging.directory,
-            io,
-        )
-        .map_err(|error| {
-            SnapshotError::new(SnapshotOperation::Write, staging.destination, error)
-        })?;
-    if let Err(sync_error) = staging.target.parent.sync(io) {
-        let primary = SnapshotError::new(
-            SnapshotOperation::Sync,
-            staging
-                .destination
-                .parent()
-                .expect("destination has a parent"),
-            sync_error,
-        );
-        if let Err(cleanup_error) = staging
-            .target
-            .parent
-            .remove_published_directory(&staging.target.destination_name, staging.directory)
-        {
-            return Err(SnapshotError::followup_failure(
-                primary,
-                "cleanup",
-                cleanup_error,
-            ));
-        }
-        if let Err(sync_error) = staging.target.parent.sync(io) {
-            return Err(SnapshotError::followup_failure(
-                primary,
-                "rollback parent sync",
-                sync_error,
-            ));
-        }
-        return Err(primary);
-    }
-    Ok(())
+    finalize_publication(
+        &staging.target.parent,
+        staging.name,
+        &staging.target.destination_name,
+        staging.directory,
+        staging.destination,
+        io,
+    )
 }
 
 fn payload_relative(path: &Path) -> Result<&Path, SnapshotError> {
