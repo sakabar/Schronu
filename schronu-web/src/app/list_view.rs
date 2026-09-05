@@ -101,17 +101,19 @@ fn TaskRow(
             td { class: "schedule-time", "{row.schedule_label}" }
             td { class: task_class, "{row.task.task_name}" }
             td {
-                button {
-                    class: "session-start",
-                    r#type: "button",
-                    aria_label: button_label,
-                    disabled: active,
-                    onclick: move |_| {
-                        if !active {
-                            on_start_session.call((task.clone(), is_leaf));
-                        }
-                    },
-                    "セッション"
+                if is_leaf {
+                    button {
+                        class: "session-start",
+                        r#type: "button",
+                        aria_label: button_label,
+                        disabled: active,
+                        onclick: move |_| {
+                            if !active {
+                                on_start_session.call((task.clone(), is_leaf));
+                            }
+                        },
+                        "セッション"
+                    }
                 }
             }
         }
