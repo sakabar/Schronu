@@ -3,18 +3,21 @@ use std::path::{Path, PathBuf};
 
 use super::cleanup::cleanup_committed_transaction;
 use super::layout::TransactionLayout;
-use super::manifest::content_matches;
+use super::manifest::{content_matches, ValidatedEntry};
 use super::{
-    sync_directory, ManifestEntryOperation, PreparedTransaction, StorageTransactionError,
-    StorageTransactionOperation,
+    sync_directory, PreparedTransaction, StorageTransactionError, StorageTransactionOperation,
 };
 
-struct PreflightEntry {
-    target_path: PathBuf,
-    operation: ManifestEntryOperation,
-    bytes: Option<Vec<u8>>,
-    permissions: Option<fs::Permissions>,
-    already_applied: bool,
+enum PreflightEntry {
+    AlreadyApplied,
+    Write {
+        target_path: PathBuf,
+        bytes: Vec<u8>,
+        permissions: fs::Permissions,
+    },
+    Delete {
+        target_path: PathBuf,
+    },
 }
 
 impl PreparedTransaction {
@@ -84,20 +87,15 @@ impl PreparedTransaction {
                 )
             })?;
         }
-        for entry in &preflight_entries {
-            if entry.already_applied {
-                continue;
-            }
-            match entry.operation {
-                ManifestEntryOperation::Write => self.apply_bytes(
-                    &entry.target_path,
-                    entry
-                        .bytes
-                        .as_deref()
-                        .expect("preflight write entry must contain staged bytes"),
-                    entry.permissions.clone(),
-                )?,
-                ManifestEntryOperation::Delete => self.apply_delete(&entry.target_path)?,
+        for entry in preflight_entries {
+            match entry {
+                PreflightEntry::AlreadyApplied => {}
+                PreflightEntry::Write {
+                    target_path,
+                    bytes,
+                    permissions,
+                } => self.apply_bytes(&target_path, &bytes, Some(permissions))?,
+                PreflightEntry::Delete { target_path } => self.apply_delete(&target_path)?,
             }
         }
         self.apply_revision(revision_path)?;
@@ -109,30 +107,22 @@ impl PreparedTransaction {
         self.entries
             .iter()
             .map(|entry| {
-                if entry.operation == ManifestEntryOperation::Delete {
-                    return Ok(PreflightEntry {
-                        target_path: layout.target_path(&entry.target),
-                        operation: entry.operation,
-                        bytes: None,
-                        permissions: None,
-                        already_applied: false,
+                if let ValidatedEntry::Delete { target } = entry {
+                    return Ok(PreflightEntry::Delete {
+                        target_path: layout.target_path(target),
                     });
                 }
-                let target_path = layout.target_path(&entry.target);
-                let expected_length = entry
-                    .content_length
-                    .expect("validated write entry must contain content length");
-                let expected_checksum = entry
-                    .content_checksum
-                    .as_deref()
-                    .expect("validated write entry must contain content checksum");
-                let staged_file_path = TransactionLayout::staged_file_path(
-                    &self.transaction_dir_path,
-                    entry
-                        .staged_file
-                        .as_ref()
-                        .expect("validated write entry must contain a staged file"),
-                );
+                let ValidatedEntry::Write {
+                    target,
+                    staged_file,
+                    integrity,
+                } = entry
+                else {
+                    unreachable!("delete entries return before write preflight");
+                };
+                let target_path = layout.target_path(target);
+                let staged_file_path =
+                    TransactionLayout::staged_file_path(&self.transaction_dir_path, staged_file);
                 let staged_material = match self.io.symlink_metadata(&staged_file_path) {
                     Ok(metadata) if metadata.file_type().is_file() => {
                         let bytes = self.io.read_file(&staged_file_path).map_err(|error| {
@@ -142,7 +132,7 @@ impl PreparedTransaction {
                                 error,
                             )
                         })?;
-                        if !content_matches(&bytes, expected_length, expected_checksum) {
+                        if !content_matches(&bytes, integrity.content_length, &integrity.checksum) {
                             return Err(StorageTransactionError::new(
                                 StorageTransactionOperation::ValidateStagedContent,
                                 &staged_file_path,
@@ -182,14 +172,12 @@ impl PreparedTransaction {
                                 error,
                             )
                         })?;
-                        if content_matches(&target_bytes, expected_length, expected_checksum) {
-                            return Ok(PreflightEntry {
-                                target_path,
-                                operation: entry.operation,
-                                bytes: None,
-                                permissions: None,
-                                already_applied: true,
-                            });
+                        if content_matches(
+                            &target_bytes,
+                            integrity.content_length,
+                            &integrity.checksum,
+                        ) {
+                            return Ok(PreflightEntry::AlreadyApplied);
                         }
                     }
                     Ok(_) => {}
@@ -212,12 +200,10 @@ impl PreparedTransaction {
                         ),
                     )
                 })?;
-                Ok(PreflightEntry {
+                Ok(PreflightEntry::Write {
                     target_path,
-                    operation: entry.operation,
-                    bytes: Some(bytes),
-                    permissions: Some(permissions),
-                    already_applied: false,
+                    bytes,
+                    permissions,
                 })
             })
             .collect()

@@ -5,16 +5,16 @@ use std::path::{Component, Path, PathBuf};
 use uuid::Uuid;
 
 #[derive(Deserialize, Serialize)]
-pub(super) struct TransactionManifest {
+pub(super) struct RawTransactionManifest {
     pub(super) version: u32,
     pub(super) transaction_id: Uuid,
     pub(super) revision: Uuid,
     pub(super) directories: Vec<PathBuf>,
-    pub(super) entries: Vec<ManifestEntry>,
+    pub(super) entries: Vec<RawManifestEntry>,
 }
 
 #[derive(Deserialize, Serialize)]
-pub(super) struct ManifestEntry {
+pub(super) struct RawManifestEntry {
     pub(super) target: PathBuf,
     #[serde(default, skip_serializing_if = "ManifestEntryOperation::is_write")]
     pub(super) operation: ManifestEntryOperation,
@@ -24,6 +24,64 @@ pub(super) struct ManifestEntry {
     pub(super) content_length: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(super) content_checksum: Option<String>,
+}
+
+pub(super) struct ValidatedManifest {
+    pub(super) transaction_id: Uuid,
+    pub(super) revision: Uuid,
+    pub(super) directories: Vec<PathBuf>,
+    pub(super) entries: Vec<ValidatedEntry>,
+}
+
+pub(super) enum ValidatedEntry {
+    Write {
+        target: PathBuf,
+        staged_file: PathBuf,
+        integrity: ContentIntegrity,
+    },
+    Delete {
+        target: PathBuf,
+    },
+}
+
+pub(super) struct ContentIntegrity {
+    pub(super) content_length: u64,
+    pub(super) checksum: String,
+}
+
+impl From<&ValidatedManifest> for RawTransactionManifest {
+    fn from(manifest: &ValidatedManifest) -> Self {
+        Self {
+            version: 1,
+            transaction_id: manifest.transaction_id,
+            revision: manifest.revision,
+            directories: manifest.directories.clone(),
+            entries: manifest
+                .entries
+                .iter()
+                .map(|entry| match entry {
+                    ValidatedEntry::Write {
+                        target,
+                        staged_file,
+                        integrity,
+                    } => RawManifestEntry {
+                        target: target.clone(),
+                        operation: ManifestEntryOperation::Write,
+                        staged_file: Some(staged_file.clone()),
+                        content_length: Some(integrity.content_length),
+                        content_checksum: Some(integrity.checksum.clone()),
+                    },
+                    ValidatedEntry::Delete { target } => RawManifestEntry {
+                        target: target.clone(),
+                        operation: ManifestEntryOperation::Delete,
+                        staged_file: None,
+                        content_length: None,
+                        content_checksum: None,
+                    },
+                })
+                .collect(),
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]

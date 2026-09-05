@@ -4,12 +4,16 @@ use std::sync::Arc;
 
 use super::cleanup::cleanup_stale_tombstones;
 use super::layout::TransactionLayout;
+use super::manifest::{
+    invalid_manifest_entry_error, validate_content_integrity, validate_staged_file_path,
+    ContentIntegrity, ManifestEntryOperation, RawTransactionManifest, ValidatedEntry,
+    ValidatedManifest,
+};
 use super::{
-    acquire_transaction_lock, invalid_manifest_entry_error, resolve_transactions_directory,
-    sync_directory, validate_content_integrity, validate_delete_target_ancestors,
-    validate_staged_file_path, validate_storage_relative_path, validate_transactions_directory,
-    ManifestEntryOperation, PreparedEntry, PreparedTransaction, StorageTransactionError,
-    StorageTransactionIo, StorageTransactionOperation, TransactionLock, TransactionManifest,
+    acquire_transaction_lock, resolve_transactions_directory, sync_directory,
+    validate_delete_target_ancestors, validate_storage_relative_path,
+    validate_transactions_directory, PreparedTransaction, StorageTransactionError,
+    StorageTransactionIo, StorageTransactionOperation, TransactionLock,
 };
 
 pub(in crate::adapter::gateway) fn recover(
@@ -86,8 +90,8 @@ pub(in crate::adapter::gateway) fn recover(
                     error,
                 )
             })?;
-            let manifest: TransactionManifest =
-                serde_json::from_slice(&manifest_bytes).map_err(|error| {
+            let manifest: RawTransactionManifest = serde_json::from_slice(&manifest_bytes)
+                .map_err(|error| {
                     StorageTransactionError::new(
                         StorageTransactionOperation::ParseManifest,
                         &manifest_path,
@@ -133,11 +137,18 @@ pub(super) fn prepared_from_manifest(
     transactions_dir_path: PathBuf,
     transaction_dir_path: PathBuf,
     manifest_path: PathBuf,
-    manifest: TransactionManifest,
+    manifest: RawTransactionManifest,
     transaction_lock: TransactionLock,
 ) -> Result<PreparedTransaction, StorageTransactionError> {
+    let RawTransactionManifest {
+        version,
+        transaction_id,
+        revision,
+        directories,
+        entries,
+    } = manifest;
     let layout = TransactionLayout::new(storage_dir_path);
-    if manifest.version != 1 || manifest.transaction_id.is_nil() {
+    if version != 1 || transaction_id.is_nil() {
         return Err(StorageTransactionError::new(
             StorageTransactionOperation::ValidateManifest,
             manifest_path,
@@ -147,15 +158,13 @@ pub(super) fn prepared_from_manifest(
             ),
         ));
     }
-    let directories = manifest
-        .directories
+    let directories = directories
         .into_iter()
         .map(|directory| {
             validate_storage_relative_path(storage_dir_path, &layout.target_path(&directory))
         })
         .collect::<Result<Vec<_>, _>>()?;
-    let entries = manifest
-        .entries
+    let entries = entries
         .into_iter()
         .map(|entry| {
             let target = validate_storage_relative_path(
@@ -167,9 +176,9 @@ pub(super) fn prepared_from_manifest(
             }
             match (
                 entry.operation,
-                entry.staged_file.as_deref(),
+                entry.staged_file,
                 entry.content_length,
-                entry.content_checksum.as_deref(),
+                entry.content_checksum,
             ) {
                 (
                     ManifestEntryOperation::Write,
@@ -177,52 +186,57 @@ pub(super) fn prepared_from_manifest(
                     Some(content_length),
                     Some(content_checksum),
                 ) => {
-                    validate_staged_file_path(&transaction_dir_path, staged_file)?;
-                    validate_content_integrity(&manifest_path, content_length, content_checksum)?;
+                    validate_staged_file_path(&transaction_dir_path, &staged_file)?;
+                    validate_content_integrity(&manifest_path, content_length, &content_checksum)?;
+                    Ok(ValidatedEntry::Write {
+                        target,
+                        staged_file,
+                        integrity: ContentIntegrity {
+                            content_length,
+                            checksum: content_checksum,
+                        },
+                    })
                 }
-                (ManifestEntryOperation::Delete, None, None, None) => {}
-                (ManifestEntryOperation::Write, None, _, _) => {
-                    return Err(invalid_manifest_entry_error(
-                        &manifest_path,
-                        "write entry must contain a staged file",
-                    ));
+                (ManifestEntryOperation::Delete, None, None, None) => {
+                    Ok(ValidatedEntry::Delete { target })
                 }
+                (ManifestEntryOperation::Write, None, _, _) => Err(invalid_manifest_entry_error(
+                    &manifest_path,
+                    "write entry must contain a staged file",
+                )),
                 (ManifestEntryOperation::Write, Some(_), _, _) => {
-                    return Err(invalid_manifest_entry_error(
+                    Err(invalid_manifest_entry_error(
                         &manifest_path,
                         "write entry must contain content length and checksum",
-                    ));
+                    ))
                 }
                 (ManifestEntryOperation::Delete, Some(_), _, _) => {
-                    return Err(invalid_manifest_entry_error(
+                    Err(invalid_manifest_entry_error(
                         &manifest_path,
                         "delete entry must not contain a staged file",
-                    ));
+                    ))
                 }
-                (ManifestEntryOperation::Delete, None, _, _) => {
-                    return Err(invalid_manifest_entry_error(
-                        &manifest_path,
-                        "delete entry must not contain content integrity information",
-                    ));
-                }
+                (ManifestEntryOperation::Delete, None, _, _) => Err(invalid_manifest_entry_error(
+                    &manifest_path,
+                    "delete entry must not contain content integrity information",
+                )),
             }
-            Ok(PreparedEntry {
-                target,
-                operation: entry.operation,
-                staged_file: entry.staged_file,
-                content_length: entry.content_length,
-                content_checksum: entry.content_checksum,
-            })
         })
         .collect::<Result<Vec<_>, StorageTransactionError>>()?;
+    let manifest = ValidatedManifest {
+        transaction_id,
+        revision,
+        directories,
+        entries,
+    };
     Ok(PreparedTransaction {
         storage_dir_path: storage_dir_path.to_path_buf(),
         transactions_dir_path,
         transaction_dir_path,
         transaction_id: manifest.transaction_id,
         revision: manifest.revision,
-        directories,
-        entries,
+        directories: manifest.directories,
+        entries: manifest.entries,
         io,
         _transaction_lock: transaction_lock,
     })

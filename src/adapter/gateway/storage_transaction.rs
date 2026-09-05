@@ -22,9 +22,11 @@ use layout::ACTIVE_TRANSACTION_DIRECTORY_NAME;
 #[cfg(test)]
 pub(super) use layout::TRANSACTION_DIRECTORY_NAME;
 use layout::{validate_storage_relative_path, TransactionLayout};
+use manifest::ValidatedEntry;
+#[cfg(test)]
 use manifest::{
-    content_checksum, invalid_manifest_entry_error, validate_content_integrity,
-    validate_staged_file_path, ManifestEntry, ManifestEntryOperation, TransactionManifest,
+    ManifestEntryOperation, RawManifestEntry as ManifestEntry,
+    RawTransactionManifest as TransactionManifest,
 };
 #[cfg(test)]
 pub(super) use prepare::prepare;
@@ -130,17 +132,9 @@ pub(super) struct PreparedTransaction {
     transaction_id: Uuid,
     revision: Uuid,
     directories: Vec<PathBuf>,
-    entries: Vec<PreparedEntry>,
+    entries: Vec<ValidatedEntry>,
     io: Arc<dyn StorageTransactionIo>,
     _transaction_lock: TransactionLock,
-}
-
-struct PreparedEntry {
-    target: PathBuf,
-    operation: ManifestEntryOperation,
-    staged_file: Option<PathBuf>,
-    content_length: Option<u64>,
-    content_checksum: Option<String>,
 }
 
 fn validate_delete_target_ancestors(

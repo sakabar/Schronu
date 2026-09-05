@@ -1,15 +1,17 @@
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::sync::Arc;
 
 use uuid::Uuid;
 
 use super::cleanup::cleanup_stale_tombstones;
 use super::layout::TransactionLayout;
+use super::manifest::{
+    content_checksum, ContentIntegrity, RawTransactionManifest, ValidatedEntry, ValidatedManifest,
+};
 use super::{
-    acquire_transaction_lock, content_checksum, resolve_transactions_directory, sync_directory,
-    validate_storage_relative_path, validate_transactions_directory, ManifestEntry,
-    ManifestEntryOperation, PreparedEntry, PreparedTransaction, StorageTransactionError,
-    StorageTransactionIo, StorageTransactionOperation, TransactionManifest, WriteRequest,
+    acquire_transaction_lock, resolve_transactions_directory, sync_directory,
+    validate_storage_relative_path, validate_transactions_directory, PreparedTransaction,
+    StorageTransactionError, StorageTransactionIo, StorageTransactionOperation, WriteRequest,
 };
 
 #[cfg(test)]
@@ -70,7 +72,7 @@ pub(in crate::adapter::gateway) fn prepare_with_directories(
         ));
     }
 
-    let directories = prepare_contents(
+    let manifest = prepare_contents(
         io.as_ref(),
         storage_dir_path,
         &transactions_dir_path,
@@ -81,26 +83,19 @@ pub(in crate::adapter::gateway) fn prepare_with_directories(
         writes,
         directories,
     );
-    let directories = match directories {
-        Ok(directories) => directories,
+    let manifest = match manifest {
+        Ok(manifest) => manifest,
         Err(error) => {
             let _ = io.remove_dir_all(&transaction_dir_path);
             return Err(error);
         }
     };
-    let entries = writes
-        .iter()
-        .enumerate()
-        .map(|(index, write)| {
-            Ok(PreparedEntry {
-                target: validate_storage_relative_path(storage_dir_path, write.target_path)?,
-                operation: ManifestEntryOperation::Write,
-                staged_file: Some(TransactionLayout::staged_file_relative_path(index)),
-                content_length: Some(write.bytes.len() as u64),
-                content_checksum: Some(content_checksum(write.bytes)),
-            })
-        })
-        .collect::<Result<Vec<_>, StorageTransactionError>>()?;
+    let ValidatedManifest {
+        transaction_id,
+        revision,
+        directories,
+        entries,
+    } = manifest;
     Ok(PreparedTransaction {
         storage_dir_path: storage_dir_path.to_path_buf(),
         transactions_dir_path,
@@ -125,7 +120,7 @@ fn prepare_contents(
     revision: Uuid,
     writes: &[WriteRequest<'_>],
     directories: &[&Path],
-) -> Result<Vec<PathBuf>, StorageTransactionError> {
+) -> Result<ValidatedManifest, StorageTransactionError> {
     let mut entries = Vec::with_capacity(writes.len());
     for (index, write) in writes.iter().enumerate() {
         let target = validate_storage_relative_path(storage_dir_path, write.target_path)?;
@@ -133,12 +128,13 @@ fn prepare_contents(
         let staged_file_path =
             TransactionLayout::staged_file_path(transaction_dir_path, &staged_file);
         write_staged_file(io, write.target_path, &staged_file_path, write.bytes)?;
-        entries.push(ManifestEntry {
+        entries.push(ValidatedEntry::Write {
             target,
-            operation: ManifestEntryOperation::Write,
-            staged_file: Some(staged_file),
-            content_length: Some(write.bytes.len() as u64),
-            content_checksum: Some(content_checksum(write.bytes)),
+            staged_file,
+            integrity: ContentIntegrity {
+                content_length: write.bytes.len() as u64,
+                checksum: content_checksum(write.bytes),
+            },
         });
     }
     sync_directory(io, staged_files_dir_path)?;
@@ -147,15 +143,15 @@ fn prepare_contents(
         .iter()
         .map(|directory| validate_storage_relative_path(storage_dir_path, directory))
         .collect::<Result<Vec<_>, _>>()?;
-    let manifest = TransactionManifest {
-        version: 1,
+    let manifest = ValidatedManifest {
         transaction_id,
         revision,
-        directories: directories.clone(),
+        directories,
         entries,
     };
+    let raw_manifest = RawTransactionManifest::from(&manifest);
     let manifest_path = TransactionLayout::manifest_path(transaction_dir_path);
-    let manifest_bytes = serde_json::to_vec(&manifest).map_err(|error| {
+    let manifest_bytes = serde_json::to_vec(&raw_manifest).map_err(|error| {
         StorageTransactionError::new(
             StorageTransactionOperation::SerializeManifest,
             &manifest_path,
@@ -187,7 +183,7 @@ fn prepare_contents(
     sync_directory(io, transaction_dir_path)?;
     sync_directory(io, transactions_dir_path)?;
     sync_directory(io, storage_dir_path)?;
-    Ok(directories)
+    Ok(manifest)
 }
 
 fn write_staged_file(
