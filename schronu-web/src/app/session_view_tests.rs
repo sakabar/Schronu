@@ -2,10 +2,8 @@
 
 use std::sync::{Arc, Mutex};
 
+use super::session_view::{SessionAction, SessionActionKind, SessionCardViewModel, SessionView};
 use dioxus::prelude::*;
-use schronu_web::app::session_view::{
-    SessionAction, SessionActionKind, SessionCardViewModel, SessionView,
-};
 
 #[derive(Clone)]
 struct RootProps {

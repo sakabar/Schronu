@@ -4,6 +4,8 @@ mod environment_query;
 #[cfg(feature = "server")]
 mod environment_web_operations;
 pub mod session_view;
+#[cfg(test)]
+mod session_view_tests;
 mod today_endpoint;
 mod web_endpoint;
 
