@@ -14,7 +14,7 @@ fn next_task_id() -> Uuid {
     use std::sync::atomic::{AtomicU64, Ordering};
 
     static SEQUENCE: AtomicU64 = AtomicU64::new(1);
-    Uuid::from_u128(u128::from(SEQUENCE.fetch_add(1, Ordering::Relaxed)))
+    Uuid::from_u128(TASK_ID_NAMESPACE | u128::from(SEQUENCE.fetch_add(1, Ordering::Relaxed)))
 }
 
 fn task_time() -> DateTime<Local> {
