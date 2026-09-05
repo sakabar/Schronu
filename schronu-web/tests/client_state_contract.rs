@@ -451,6 +451,27 @@ fn 後続操作の成功は以前の表示errorを解消する() {
     assert_eq!(state.display_error(), None);
 }
 
+#[test]
+fn 未来日の一覧は今日のsnapshotと共に適用する() {
+    let storage = FakeStorage::default();
+    let mut state = ClientState::new(load_work_sessions(&storage).unwrap(), 0);
+    let bootstrap_id = bootstrap_effect(state.request_bootstrap());
+    state.apply_bootstrap_result(bootstrap_id, Ok(snapshot("2026-09-05", 1)));
+    let (list_id, _) = list_effect(state.request_list("2026-09-06"));
+
+    state.apply_list_result(
+        list_id,
+        "2026-09-06",
+        Ok(WebSuccess {
+            snapshot: snapshot("2026-09-05", 2),
+            data: vec![row(TASK_ID, 0)],
+        }),
+    );
+
+    assert_eq!(state.selected_logical_date(), Some("2026-09-06"));
+    assert_eq!(state.scheduled_rows()[0].task.task_id, TASK_ID);
+}
+
 #[derive(Default)]
 struct FakeStorage {
     value: RefCell<Option<String>>,
