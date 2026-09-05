@@ -1,6 +1,8 @@
 mod component;
 #[cfg(feature = "server")]
 mod environment_query;
+#[cfg(feature = "server")]
+mod environment_web_operations;
 mod today_endpoint;
 
 pub use component::app;
