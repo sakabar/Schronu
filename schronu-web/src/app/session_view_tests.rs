@@ -1,8 +1,14 @@
 #![cfg(feature = "server")]
 
-use std::sync::{Arc, Mutex};
+use std::{
+    any::Any,
+    rc::Rc,
+    sync::{Arc, Mutex, Once},
+};
 
 use super::session_view::{SessionAction, SessionActionKind, SessionCardViewModel, SessionView};
+use dioxus::dioxus_core::{ElementId, Mutation};
+use dioxus::html::SerializedMouseData;
 use dioxus::prelude::*;
 
 #[derive(Clone)]
@@ -30,18 +36,52 @@ fn test_root(props: RootProps) -> Element {
 
 fn render(sessions: Vec<SessionCardViewModel>, global_blocked: bool) -> (String, Vec<String>) {
     let events = Arc::new(Mutex::new(Vec::new()));
+    let (dom, _) = build_dom(sessions, global_blocked, Arc::clone(&events));
+    let html = dioxus::ssr::render(&dom);
+    let rendered_events = events.lock().unwrap().clone();
+    (html, rendered_events)
+}
+
+fn build_dom(
+    sessions: Vec<SessionCardViewModel>,
+    global_blocked: bool,
+    events: Arc<Mutex<Vec<String>>>,
+) -> (VirtualDom, Vec<ElementId>) {
+    ensure_event_converter();
     let mut dom = VirtualDom::new_with_props(
         test_root,
         RootProps {
             sessions,
             global_blocked,
-            events: Arc::clone(&events),
+            events,
         },
     );
-    dom.rebuild_in_place();
-    let html = dioxus::ssr::render(&dom);
-    let rendered_events = events.lock().unwrap().clone();
-    (html, rendered_events)
+    let mutations = dom.rebuild_to_vec();
+    let listener_ids = mutations
+        .edits
+        .into_iter()
+        .filter_map(|mutation| match mutation {
+            Mutation::NewEventListener { name, id } if name == "click" => Some(id),
+            _ => None,
+        })
+        .collect();
+    (dom, listener_ids)
+}
+
+fn dispatch_click(dom: &VirtualDom, element_id: ElementId) {
+    ensure_event_converter();
+    let event = Event::new(
+        Rc::new(PlatformEventData::new(Box::<SerializedMouseData>::default())) as Rc<dyn Any>,
+        true,
+    );
+    dom.runtime().handle_event("click", event, element_id);
+}
+
+fn ensure_event_converter() {
+    static EVENT_CONVERTER: Once = Once::new();
+    EVENT_CONVERTER.call_once(|| {
+        set_event_converter(Box::new(dioxus::html::SerializedHtmlEventConverter));
+    });
 }
 
 fn card(task_id: &str) -> SessionCardViewModel {
@@ -136,4 +176,55 @@ fn each_block_reason_disables_only_the_affected_session_actions() {
 fn action_kind_is_a_closed_typed_contract() {
     assert_ne!(SessionActionKind::Discard, SessionActionKind::Record);
     assert_ne!(SessionActionKind::Record, SessionActionKind::Complete);
+}
+
+#[test]
+fn enabled_buttons_dispatch_the_exact_typed_callback_once() {
+    let events = Arc::new(Mutex::new(Vec::new()));
+    let (auto_dom, auto_ids) = build_dom(Vec::new(), false, Arc::clone(&events));
+    assert_eq!(auto_ids.len(), 1);
+    dispatch_click(&auto_dom, auto_ids[0]);
+    assert_eq!(*events.lock().unwrap(), ["auto"]);
+
+    events.lock().unwrap().clear();
+    let (action_dom, action_ids) = build_dom(vec![card("task-a")], false, Arc::clone(&events));
+    assert_eq!(action_ids.len(), 3);
+    for (element_id, expected) in
+        action_ids
+            .into_iter()
+            .rev()
+            .zip(["task-a:Discard", "task-a:Record", "task-a:Complete"])
+    {
+        dispatch_click(&action_dom, element_id);
+        assert_eq!(events.lock().unwrap().last().unwrap(), expected);
+    }
+    assert_eq!(
+        *events.lock().unwrap(),
+        ["task-a:Discard", "task-a:Record", "task-a:Complete"]
+    );
+
+    events.lock().unwrap().clear();
+    let (other_dom, other_ids) = build_dom(vec![card("task-b")], false, Arc::clone(&events));
+    dispatch_click(&other_dom, *other_ids.last().unwrap());
+    assert_eq!(*events.lock().unwrap(), ["task-b:Discard"]);
+}
+
+#[test]
+fn disabled_buttons_do_not_dispatch_callbacks() {
+    let events = Arc::new(Mutex::new(Vec::new()));
+    let (auto_dom, auto_ids) = build_dom(Vec::new(), true, Arc::clone(&events));
+    for element_id in auto_ids {
+        dispatch_click(&auto_dom, element_id);
+    }
+
+    let blocked = SessionCardViewModel {
+        in_flight: true,
+        ..card("blocked")
+    };
+    let (action_dom, action_ids) = build_dom(vec![blocked], false, Arc::clone(&events));
+    for element_id in action_ids {
+        dispatch_click(&action_dom, element_id);
+    }
+
+    assert!(events.lock().unwrap().is_empty());
 }

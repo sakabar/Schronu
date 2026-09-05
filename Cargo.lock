@@ -3144,6 +3144,7 @@ version = "0.1.0"
 dependencies = [
  "chrono",
  "dioxus",
+ "dioxus-html",
  "futures",
  "gloo-timers",
  "schronu",
