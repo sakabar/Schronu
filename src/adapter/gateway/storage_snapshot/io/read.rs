@@ -1,4 +1,7 @@
-use super::{DirectoryTree, TreeDirectory, TreeFile};
+use super::DirectoryTree;
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+use super::{TreeDirectory, TreeFile};
+#[cfg(any(target_os = "macos", target_os = "linux"))]
 use std::fs::File;
 use std::path::Path;
 

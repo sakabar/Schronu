@@ -1,3 +1,4 @@
+#[cfg(any(target_os = "macos", target_os = "linux"))]
 use super::read_directory_names;
 #[cfg(any(target_os = "macos", target_os = "linux"))]
 use std::ffi::CString;
