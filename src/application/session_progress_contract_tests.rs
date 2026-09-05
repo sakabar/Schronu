@@ -64,16 +64,11 @@ fn 負の入力はfieldと値を保持したerrorにする() {
 }
 
 #[test]
-fn 総作業秒のoverflowは入力値を保持したerrorにする() {
-    let actual = calculate_session_progress(1, i64::MAX, 1);
+fn 総作業秒はi64を超えても正確に保持する() {
+    let actual = calculate_session_progress(i64::MAX, i64::MAX, 1).unwrap();
 
-    assert_eq!(
-        actual,
-        Err(SessionProgressCalculationError::TotalWorkSecondsOverflow {
-            actual_work_seconds_at_start: i64::MAX,
-            elapsed_seconds: 1,
-        })
-    );
+    assert_eq!(actual.total_work_seconds, i128::from(i64::MAX) + 1);
+    assert_eq!(actual.progress_percent, Some(100));
 }
 
 #[test]
@@ -83,7 +78,7 @@ fn 進捗率のoverflowは計算値を保持したerrorにする() {
     assert_eq!(
         actual,
         Err(SessionProgressCalculationError::ProgressPercentOverflow {
-            total_work_seconds: i64::MAX,
+            total_work_seconds: i128::from(i64::MAX),
             estimated_work_seconds: 1,
         })
     );
