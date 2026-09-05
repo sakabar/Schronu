@@ -2,7 +2,7 @@
 set -ue
 set -o pipefail
 
-# AからT列まであるスプレッドシートをクリップボードにコピーしてあるとする
+# AからS列まであるスプレッドシートをクリップボードにコピーしてあるとする
 
 function reject_nul_task_names() {
     local -a lines
