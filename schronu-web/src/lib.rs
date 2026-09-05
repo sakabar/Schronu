@@ -1,5 +1,7 @@
 #[cfg(any(feature = "web", feature = "server"))]
 pub mod app;
+#[cfg(feature = "server")]
+mod controller_error;
 mod refresh_state;
 mod today_worker;
 mod wire;
