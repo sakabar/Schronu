@@ -121,9 +121,11 @@ mod tests {
     };
     use crate::{
         CompleteSessionResponse, ListTasksRequest, RecordSessionRequest, RecordSessionResult,
-        ScheduledTaskRow, ServerSnapshot, SessionTask, WebError, WebOperations, WebSuccess,
-        WebWorkerHandle,
+        RetryAdvice, ScheduledTaskRow, ServerSnapshot, SessionTask, WebError, WebOperations,
+        WebSuccess, WebWorkerHandle,
     };
+    use dioxus::fullstack::axum::http::Request;
+    use dioxus::fullstack::FullstackContext;
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::Arc;
 
@@ -133,6 +135,7 @@ mod tests {
         let worker_calls = Arc::clone(&calls);
         let worker = WebWorkerHandle::spawn(move || CountingOperations {
             calls: worker_calls,
+            bootstrap_error: None,
         });
         let request = RecordSessionRequest {
             task_id: "task".to_owned(),
@@ -161,8 +164,34 @@ mod tests {
         assert_eq!(calls.load(Ordering::SeqCst), 5);
     }
 
+    #[test]
+    fn 公開endpointはextensionからworkerを抽出しoperation_errorを内側に保持する() {
+        let calls = Arc::new(AtomicUsize::new(0));
+        let worker_calls = Arc::clone(&calls);
+        let sentinel = WebError {
+            code: "sentinel_operation_error".to_owned(),
+            message: "sentinel".to_owned(),
+            retry_advice: RetryAdvice::ManualCheck,
+        };
+        let worker_error = sentinel.clone();
+        let worker = WebWorkerHandle::spawn(move || CountingOperations {
+            calls: worker_calls,
+            bootstrap_error: Some(worker_error),
+        });
+        let mut request = Request::builder().body(()).unwrap();
+        request.extensions_mut().insert(worker);
+        let context = FullstackContext::new(request.into_parts().0);
+
+        let outer = futures::executor::block_on(context.scope(super::bootstrap()));
+        let inner = outer.expect("Extension extraction is a transport success");
+
+        assert_eq!(inner, Err(sentinel));
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+    }
+
     struct CountingOperations {
         calls: Arc<AtomicUsize>,
+        bootstrap_error: Option<WebError>,
     }
 
     impl CountingOperations {
@@ -174,7 +203,10 @@ mod tests {
     impl WebOperations for CountingOperations {
         fn bootstrap(&mut self) -> Result<ServerSnapshot, WebError> {
             self.count();
-            Ok(snapshot())
+            match self.bootstrap_error.take() {
+                Some(error) => Err(error),
+                None => Ok(snapshot()),
+            }
         }
 
         fn list_tasks(
