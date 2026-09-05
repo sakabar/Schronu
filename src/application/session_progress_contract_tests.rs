@@ -72,14 +72,8 @@ fn 総作業秒はi64を超えても正確に保持する() {
 }
 
 #[test]
-fn 進捗率のoverflowは計算値を保持したerrorにする() {
-    let actual = calculate_session_progress(1, i64::MAX, 0);
+fn 有効なi64入力の巨大な進捗率を正確に保持する() {
+    let actual = calculate_session_progress(1, i64::MAX, 0).unwrap();
 
-    assert_eq!(
-        actual,
-        Err(SessionProgressCalculationError::ProgressPercentOverflow {
-            total_work_seconds: i128::from(i64::MAX),
-            estimated_work_seconds: 1,
-        })
-    );
+    assert_eq!(actual.progress_percent, Some(i128::from(i64::MAX) * 100));
 }
