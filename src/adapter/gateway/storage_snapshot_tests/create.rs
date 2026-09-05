@@ -154,6 +154,12 @@ fn snapshot作成は差し替えられたstaging_directoryを公開しない() {
 
     assert!(!destination.exists());
     assert!(displaced.join("manifest.json").is_file());
+    let foreign = fs::read_dir(&root.path)
+        .unwrap()
+        .map(|entry| entry.unwrap().path())
+        .find(|path| path.join("foreign").is_file())
+        .unwrap();
+    assert_eq!(fs::read(foreign.join("foreign")).unwrap(), b"preserve");
 }
 
 #[test]

@@ -48,13 +48,10 @@ fn restore_snapshot_impl(
         &publication,
         &verified.tree,
     );
-    if result.is_err()
-        && publication
+    if result.is_err() {
+        let _ = publication
             .parent
-            .entry_exists(&staging_name)
-            .unwrap_or(false)
-    {
-        let _ = publication.parent.remove_directory_tree(&staging_name);
+            .remove_published_directory(&staging_name, &staging_directory);
     }
     result.map(|()| SnapshotSummary::new(verified.manifest.revision, verified.manifest.files.len()))
 }

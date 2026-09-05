@@ -116,21 +116,6 @@ impl StableParent {
         }
     }
 
-    pub(in crate::adapter::gateway::storage_snapshot) fn remove_directory_tree(
-        &self,
-        name: &std::ffi::OsStr,
-    ) -> std::io::Result<()> {
-        let name = c_name(name)?;
-        let directory = StableDirectory::open_at(self.raw_fd(), &name)?;
-        directory.remove_contents()?;
-        // SAFETY: name is a live CString and names an entry below the fixed parent handle.
-        if unsafe { libc::unlinkat(self.raw_fd(), name.as_ptr(), libc::AT_REMOVEDIR) } == 0 {
-            Ok(())
-        } else {
-            Err(std::io::Error::last_os_error())
-        }
-    }
-
     pub(in crate::adapter::gateway::storage_snapshot) fn remove_published_directory(
         &self,
         name: &std::ffi::OsStr,
@@ -373,13 +358,6 @@ impl StableParent {
         _from: &std::ffi::OsStr,
         _to: &std::ffi::OsStr,
         _published: &StableDirectory,
-    ) -> std::io::Result<()> {
-        Err(unsupported_publication())
-    }
-
-    pub(in crate::adapter::gateway::storage_snapshot) fn remove_directory_tree(
-        &self,
-        _name: &std::ffi::OsStr,
     ) -> std::io::Result<()> {
         Err(unsupported_publication())
     }
