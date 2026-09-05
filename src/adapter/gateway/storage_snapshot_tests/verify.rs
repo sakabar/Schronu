@@ -107,6 +107,39 @@ fn snapshot_verify_resource_limitは境界を許可し超過をtyped拒否する
     }
 }
 
+#[test]
+fn snapshot_verifyはmanifest_decode前のdirectory_captureをmanifest_budgetで制限する() {
+    let root = TestDirectory::new("verify-directory-budget");
+    let storage = root.child("source");
+    let snapshot = root.child("snapshot");
+    let now = Local.with_ymd_and_hms(2026, 9, 5, 12, 0, 0).unwrap();
+    create_saved_repository(&storage, now);
+    create_snapshot_at(&storage, &snapshot, now).unwrap();
+    fs::remove_dir_all(&storage).unwrap();
+
+    let manifest_bytes = fs::metadata(snapshot.join("manifest.json")).unwrap().len();
+    let limits = SnapshotResourceLimits::new(
+        manifest_bytes,
+        10_000,
+        64 * 1024 * 1024,
+        256 * 1024 * 1024,
+        4_096,
+        64,
+    );
+    let payload = snapshot.join("storage");
+    for index in 0..=(manifest_bytes / 24) {
+        fs::create_dir(payload.join(format!("extra-{index}"))).unwrap();
+    }
+
+    let error = verify_snapshot_with_limits(&snapshot, limits).unwrap_err();
+
+    assert_eq!(error.limit_kind(), Some(SnapshotLimitKind::ManifestBytes));
+    assert_eq!(error.limit_value(), Some(manifest_bytes));
+    assert!(error.observed_value().unwrap() > manifest_bytes);
+    assert!(error.limit_path().is_some());
+    assert!(error.path().starts_with(&payload));
+}
+
 fn create_source_independent_snapshot(label: &str) -> (TestDirectory, PathBuf, PathBuf) {
     let root = TestDirectory::new(label);
     let storage = root.child("source");
