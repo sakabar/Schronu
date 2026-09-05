@@ -99,6 +99,7 @@ fn TaskRow(
         "task-name"
     };
     let deadline = row.deadline_label.as_deref().unwrap_or("—");
+    let button_label = format!("{}: セッション", row.task.task_name);
     let task = row.task.clone();
 
     rsx! {
@@ -110,6 +111,7 @@ fn TaskRow(
                 button {
                     class: "session-start",
                     r#type: "button",
+                    aria_label: button_label,
                     disabled: active,
                     onclick: move |_| {
                         if !active {

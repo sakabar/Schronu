@@ -125,6 +125,7 @@ fn SessionCard(
             div { class: "session-actions",
                 SessionActionButton {
                     label: "破棄して解除",
+                    task_name: session.task_name.clone(),
                     task_id: session.task_id.clone(),
                     kind: SessionActionKind::Discard,
                     disabled: discard_disabled,
@@ -132,6 +133,7 @@ fn SessionCard(
                 }
                 SessionActionButton {
                     label: "記録して解除",
+                    task_name: session.task_name.clone(),
                     task_id: session.task_id.clone(),
                     kind: SessionActionKind::Record,
                     disabled: mutation_disabled,
@@ -139,6 +141,7 @@ fn SessionCard(
                 }
                 SessionActionButton {
                     label: "完了",
+                    task_name: session.task_name,
                     task_id: session.task_id,
                     kind: SessionActionKind::Complete,
                     disabled: mutation_disabled,
@@ -152,14 +155,17 @@ fn SessionCard(
 #[component]
 fn SessionActionButton(
     label: &'static str,
+    task_name: String,
     task_id: String,
     kind: SessionActionKind,
     disabled: bool,
     on_action: EventHandler<SessionAction>,
 ) -> Element {
+    let aria_label = format!("{task_name}: {label}");
     rsx! {
         button {
             r#type: "button",
+            aria_label,
             disabled,
             onclick: move |_| {
                 if !disabled {
