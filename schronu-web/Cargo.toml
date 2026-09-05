@@ -5,7 +5,7 @@ edition = "2021"
 
 [features]
 default = []
-web = ["dioxus/web", "dep:gloo-timers"]
+web = ["dioxus/web", "dep:gloo-timers", "dep:web-sys"]
 server = [
     "dioxus/server",
     "dep:schronu",
@@ -21,7 +21,9 @@ tokio = { version = "1", features = ["sync"] }
 schronu = { path = "..", optional = true }
 chrono = "0.4.24"
 serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+uuid = "1.0"
+web-sys = { version = "0.3", features = ["Storage", "Window"], optional = true }
 
 [dev-dependencies]
 futures = "0.3"
-serde_json = "1.0"
