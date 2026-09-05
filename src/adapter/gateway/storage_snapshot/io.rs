@@ -308,6 +308,85 @@ impl StableParent {
             "stable snapshot publication is supported only on Unix platforms",
         ))
     }
+
+    pub(super) fn matches_path(&self, _path: &Path) -> std::io::Result<bool> {
+        Err(unsupported_publication())
+    }
+
+    pub(super) fn entry_exists(&self, _name: &std::ffi::OsStr) -> std::io::Result<bool> {
+        Err(unsupported_publication())
+    }
+
+    pub(super) fn create_directory(
+        &self,
+        _name: &std::ffi::OsStr,
+    ) -> std::io::Result<StableDirectory> {
+        Err(unsupported_publication())
+    }
+
+    pub(super) fn rename_no_replace(
+        &self,
+        _from: &std::ffi::OsStr,
+        _to: &std::ffi::OsStr,
+    ) -> std::io::Result<()> {
+        Err(unsupported_publication())
+    }
+
+    pub(super) fn remove_directory_tree(&self, _name: &std::ffi::OsStr) -> std::io::Result<()> {
+        Err(unsupported_publication())
+    }
+
+    pub(super) fn remove_published_directory(
+        &self,
+        _name: &std::ffi::OsStr,
+        _published: &StableDirectory,
+    ) -> std::io::Result<()> {
+        Err(unsupported_publication())
+    }
+
+    pub(super) fn sync(&self) -> std::io::Result<()> {
+        Err(unsupported_publication())
+    }
+}
+
+#[cfg(not(any(target_os = "macos", target_os = "linux")))]
+impl StableDirectory {
+    pub(super) fn create_directory(&self, _relative: &Path) -> std::io::Result<()> {
+        Err(unsupported_publication())
+    }
+
+    pub(super) fn write_file(
+        &self,
+        _relative: &Path,
+        _bytes: &[u8],
+        _permissions: fs::Permissions,
+    ) -> std::io::Result<()> {
+        Err(unsupported_publication())
+    }
+
+    pub(super) fn set_directory_permissions(
+        &self,
+        _relative: &Path,
+        _permissions: fs::Permissions,
+    ) -> std::io::Result<()> {
+        Err(unsupported_publication())
+    }
+
+    pub(super) fn sync_directory(&self, _relative: &Path) -> std::io::Result<()> {
+        Err(unsupported_publication())
+    }
+
+    pub(super) fn sync(&self) -> std::io::Result<()> {
+        Err(unsupported_publication())
+    }
+}
+
+#[cfg(not(any(target_os = "macos", target_os = "linux")))]
+fn unsupported_publication() -> std::io::Error {
+    std::io::Error::new(
+        std::io::ErrorKind::Unsupported,
+        "stable snapshot publication is supported only on Unix platforms",
+    )
 }
 
 #[cfg(any(target_os = "macos", target_os = "linux"))]
