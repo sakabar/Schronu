@@ -64,7 +64,7 @@
 | TD-023 | P1 | 完了 | S | `終`が不正時刻と一部application errorを成功扱いで握り潰す |
 | TD-024 | P1 | 完了 | M | CLI parserが不正な数値や余分な引数を黙って受理し、更新commandを実行する |
 | TD-025 | P1 | 完了 | M | 対話CLIのterminal I/O失敗がpanicまたは未検査結果になる |
-| TD-026 | P1 | 未着手 | L | task名をCLI・YAML・MCP・Spreadsheet間で安全にround-tripできない |
+| TD-026 | P1 | 完了 | L | task名をCLI・YAML・MCP・Spreadsheet間で安全にround-tripできない |
 | TD-027 | P1 | 完了 | S | 残作業時間の補正計算が合法な大値入力で整数overflowする |
 | TD-028 | P1 | 完了 | M | 論理日境界を跨ぐschedule segmentの容量が開始日に全量計上される |
 | TD-029 | P1 | 完了 | L | 反復task完了の後段失敗で完了状態と親見積もりだけが部分更新される |
@@ -1109,6 +1109,10 @@
 - 分類: `バグ / 境界契約`
 - 優先度: `P1`
 - 概算規模: `L`
+- 完了日: 2026-09-05
+- 対応: application層へcanonical task名validatorを置き、原文をtrim・正規化せず保持したまま、validation時だけtrimしてblankとoptional sign付きASCII整数だけの名前を拒否し、全Unicode control characterも拒否する契約へ統一した。interactive CLIにはsingle quote内をliteral、double quote内とquote外のbackslashを次の1文字のescapeとして扱い、quoteを除去して隣接fragmentを連結する共通lexerを導入した。non-interactive CLIはOS argvをjoin・再lexerせずtoken列parserへ直接渡す。Spreadsheet generatorはJ列の原文をdouble-quoted argvへ変換してbackslashとdouble quoteをescapeし、A-Sの19列と全task名を全行事前検証して不正時のstdoutを空に保つ。strict YAMLはtask path、repository loadは実file pathを保持して診断し、MCPは既存の`invalid_input` error形状を保ったまま同validatorを使用してschema descriptionも同期した。A-J列、A-S manifest、Apps Script同期列、storage schemaは変更していない。
+- 検証: application validation、interactive lexer、non-interactive argv、Spreadsheet escape・構造保護、strict YAML・repository診断、横断integrationを契約単位のRed/Green commitで固定し、各Greenで`git diff --check`、`cargo fmt --check`、`cargo clippy --locked --all-targets -- -D warnings`、`cargo test --locked`を成功させた。Spreadsheet、MCP、YAML、CLIの専用testも成功した。各cycleのspec・quality reviewと最終の履歴・累積差分の保守性reviewを行い、P1/P2/P3の残存指摘がないことを確認した。
+- 残存: blockingな新規負債はない。OS argvのNULはprocess起動前に`InvalidInput`となってapplicationへ到達しないOS境界をtestで固定しており、保存前に拒否されるため横断契約を妨げない。SpreadsheetはAWK上に同じ規則を表現する必要があるが、実generatorから各公開境界を通す横断testでdriftを検出する。独立dry-runは追加せず通常のrepository loadが既存不正名をfile/task path付きで診断するため、利用中のstorageを変更せず発見できる。
 
 #### 現状と根拠
 

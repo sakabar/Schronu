@@ -4,6 +4,8 @@ use crate::entity::task::{read_project_category, ProjectCategory};
 use regex::Regex;
 use uuid::Uuid;
 
+use super::cli_syntax::tokenize;
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(super) enum ParseMode {
     Interactive,
@@ -399,31 +401,56 @@ pub(super) fn validate_command_input(command: &Command) -> Result<(), CommandVal
     }
 }
 
-pub(super) fn parse_command(input: &str, mode: ParseMode) -> Result<Command, CommandParseError> {
-    let normalized = input.split_whitespace().collect::<Vec<_>>().join(" ");
-    if normalized.is_empty() || normalized.starts_with('#') {
+pub(super) fn parse_interactive_command(input: &str) -> Result<Command, CommandParseError> {
+    if input.trim().is_empty() || input.trim_start().starts_with('#') || input.starts_with('0') {
+        return Ok(Command::Noop);
+    }
+
+    let tokens = tokenize(input).map_err(|error| {
+        CommandParseError::new(
+            "入力",
+            "syntax",
+            error.kind().reason(),
+            "<command> [arguments]",
+        )
+    })?;
+    parse_command_tokens(&tokens, ParseMode::Interactive)
+}
+
+pub(super) fn parse_command_tokens(
+    tokens: &[String],
+    mode: ParseMode,
+) -> Result<Command, CommandParseError> {
+    let Some(name) = tokens.first().map(String::as_str) else {
+        return Ok(Command::Noop);
+    };
+    if name.starts_with('#') {
         return Ok(Command::Noop);
     }
 
     if mode == ParseMode::Interactive {
-        let shortcut = match normalized.as_str() {
-            "t" => Some(Command::TuckAway),
-            "h" => Some(Command::Defer {
+        let shortcut = match tokens {
+            [value] if value == "t" => Some(Command::TuckAway),
+            [value] if value == "h" => Some(Command::Defer {
                 amount: 1,
                 unit: "時間".to_string(),
             }),
-            "D" => Some(Command::Defer {
+            [value] if value == "D" => Some(Command::Defer {
                 amount: 86_400,
                 unit: "秒".to_string(),
             }),
-            "d" => Some(Command::InteractiveShortcut(
+            [value] if value == "d" => Some(Command::InteractiveShortcut(
                 InteractiveShortcut::NextMorning,
             )),
-            "w" => Some(Command::InteractiveShortcut(InteractiveShortcut::NextWeek)),
-            "W" => Some(Command::InteractiveShortcut(
+            [value] if value == "w" => {
+                Some(Command::InteractiveShortcut(InteractiveShortcut::NextWeek))
+            }
+            [value] if value == "W" => Some(Command::InteractiveShortcut(
                 InteractiveShortcut::DeferRoutine,
             )),
-            "y" => Some(Command::InteractiveShortcut(InteractiveShortcut::FiveYears)),
+            [value] if value == "y" => {
+                Some(Command::InteractiveShortcut(InteractiveShortcut::FiveYears))
+            }
             _ => None,
         };
         if let Some(shortcut) = shortcut {
@@ -431,21 +458,12 @@ pub(super) fn parse_command(input: &str, mode: ParseMode) -> Result<Command, Com
         }
     }
 
-    let tokens = normalized.split(' ').collect::<Vec<_>>();
-    let name = tokens[0];
-    let arguments = tokens[1..]
-        .iter()
-        .map(|argument| (*argument).to_string())
-        .collect::<Vec<_>>();
+    let arguments = &tokens[1..];
 
     let Some(definition) = command_definition(name) else {
-        return if input.starts_with('0') {
-            Ok(Command::Noop)
-        } else {
-            Ok(Command::ShowAll {
-                pattern: Some(name.to_string()),
-            })
-        };
+        return Ok(Command::ShowAll {
+            pattern: Some(name.to_string()),
+        });
     };
 
     if matches!(
@@ -458,13 +476,13 @@ pub(super) fn parse_command(input: &str, mode: ParseMode) -> Result<Command, Com
         });
     }
 
-    definition.validate_argument_count(&arguments)?;
+    definition.validate_argument_count(arguments)?;
 
     match definition.kind {
         CommandKind::TuckAway => parse_tuck_away(definition, mode),
-        CommandKind::Estimate => parse_estimate(definition, &arguments),
-        CommandKind::Focus => parse_focus(definition, &arguments),
-        CommandKind::Arrange => parse_arrange(definition, &arguments),
+        CommandKind::Estimate => parse_estimate(definition, arguments),
+        CommandKind::Focus => parse_focus(definition, arguments),
+        CommandKind::Arrange => parse_arrange(definition, arguments),
         CommandKind::ShowAll => Ok(Command::ShowAll {
             pattern: arguments.first().cloned(),
         }),
@@ -477,8 +495,17 @@ pub(super) fn parse_command(input: &str, mode: ParseMode) -> Result<Command, Com
             )?,
             unit: arguments[1].to_lowercase(),
         }),
-        _ => parse_action(definition, &arguments),
+        _ => parse_action(definition, arguments),
     }
+}
+
+pub(super) fn parse_non_interactive_command_tokens(
+    tokens: &[String],
+) -> Result<Command, CommandParseError> {
+    if tokens.first().is_some_and(|name| name.starts_with('0')) {
+        return Ok(Command::Noop);
+    }
+    parse_command_tokens(tokens, ParseMode::NonInteractive)
 }
 
 fn parse_tuck_away(
@@ -995,12 +1022,18 @@ pub(super) fn representative_valid_commands() -> Vec<Command> {
         } else {
             ParseMode::NonInteractive
         };
-        parse_command(&command_with_minimum_valid_arguments(name), mode)
-            .expect("representative command must parse")
+        let input = command_with_minimum_valid_arguments(name);
+        match mode {
+            ParseMode::Interactive => parse_interactive_command(&input),
+            ParseMode::NonInteractive => {
+                let tokens = tokenize(&input).expect("representative command must tokenize");
+                parse_non_interactive_command_tokens(&tokens)
+            }
+        }
+        .expect("representative command must parse")
     }));
     commands.extend(["t", "d", "w", "W", "y"].map(|shortcut| {
-        parse_command(shortcut, ParseMode::Interactive)
-            .expect("representative interactive shortcut must parse")
+        parse_interactive_command(shortcut).expect("representative interactive shortcut must parse")
     }));
     commands
 }

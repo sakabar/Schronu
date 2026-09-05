@@ -1,6 +1,9 @@
 #[path = "schronu/command.rs"]
 mod command;
 
+#[path = "schronu/cli_syntax.rs"]
+mod cli_syntax;
+
 #[path = "schronu/command_context.rs"]
 mod command_context;
 
@@ -25,8 +28,20 @@ mod today_text;
 mod view;
 
 #[cfg(test)]
+#[path = "schronu/command_test_support.rs"]
+mod command_test_support;
+
+#[cfg(test)]
 #[path = "schronu/command_contract_tests.rs"]
 mod command_contract_tests;
+
+#[cfg(test)]
+#[path = "schronu/cli_syntax_contract_tests.rs"]
+mod cli_syntax_contract_tests;
+
+#[cfg(test)]
+#[path = "schronu/task_name_spreadsheet_contract_tests.rs"]
+mod task_name_spreadsheet_contract_tests;
 
 #[cfg(test)]
 #[path = "schronu/handler_contract_tests.rs"]

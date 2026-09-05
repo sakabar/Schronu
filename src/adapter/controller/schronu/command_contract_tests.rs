@@ -1,7 +1,8 @@
 use super::command::{
-    command_with_minimum_valid_arguments, parse_command, Command, CommandAction, CommandKind,
-    InteractiveShortcut, ParseMode,
+    command_with_minimum_valid_arguments, parse_non_interactive_command_tokens, Command,
+    CommandAction, CommandKind, InteractiveShortcut, ParseMode,
 };
+use super::command_test_support::parse_command;
 use uuid::Uuid;
 
 #[test]
@@ -644,6 +645,10 @@ fn parser_distinguishes_noop_search_fallback_and_interactive_shortcuts() {
         Command::Noop
     );
     assert_eq!(
+        parse_non_interactive_command_tokens(&["0001 task".to_string()]).unwrap(),
+        Command::Noop
+    );
+    assert_eq!(
         parse_command(" 0001 task", ParseMode::NonInteractive).unwrap(),
         Command::ShowAll {
             pattern: Some("0001".to_string()),
@@ -854,6 +859,6 @@ fn arrange_accepts_only_the_explicit_all_flags() {
 #[test]
 fn runtime_routes_both_product_entry_paths_through_the_shared_parser() {
     let source = include_str!("runtime.rs");
-    assert!(source.contains("parse_command(command, ParseMode::NonInteractive)"));
-    assert!(source.contains("parse_command(command, ParseMode::Interactive)"));
+    assert!(source.contains("parse_non_interactive_command_tokens(command_tokens)"));
+    assert!(source.contains("parse_interactive_command(command)"));
 }
