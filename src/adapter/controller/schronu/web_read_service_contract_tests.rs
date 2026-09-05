@@ -558,7 +558,7 @@ fn record_sessionはcommit前save失敗後に同一requestを再試行できる(
     };
     let io = Arc::new(RecordingIo::new(vec![FaultRule {
         operation: RecordingOperation::CreateDirectory,
-        path_matcher: PathMatcher::FileName(".transactions"),
+        path_matcher: PathMatcher::FileName(".schronu-transactions"),
         occurrence: 1,
         error_kind: std::io::ErrorKind::Other,
         error_message: "injected pre-commit failure",

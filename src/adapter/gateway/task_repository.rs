@@ -232,6 +232,16 @@ impl TaskRepository {
         }
     }
 
+    #[cfg(test)]
+    pub(crate) fn new_with_storage_transaction_io(
+        project_storage_dir_name: &str,
+        storage_transaction_io: Arc<dyn StorageTransactionIo>,
+    ) -> Self {
+        let mut repository = Self::new(project_storage_dir_name);
+        repository.storage_transaction_io = storage_transaction_io;
+        repository
+    }
+
     fn cache_task_and_descendants(&self, task: &TaskHandle) -> Result<(), TaskTreeError> {
         self.id_to_task_map
             .borrow_mut()

@@ -58,6 +58,7 @@ pub struct WebService {
     free_time_manager: FreeTimeManager,
     config: SchronuConfig,
     repository_state_uncertain: bool,
+    mutation_repository_factory: Box<dyn Fn(&str) -> TaskRepository>,
 }
 
 impl WebService {
@@ -69,6 +70,7 @@ impl WebService {
             free_time_manager: FreeTimeManager::new(),
             config,
             repository_state_uncertain: false,
+            mutation_repository_factory: Box::new(TaskRepository::new),
         }
     }
 
@@ -244,7 +246,7 @@ impl WebService {
         let storage_path = storage_directory
             .to_str()
             .ok_or_else(|| WebReadError::PathEncoding(storage_directory.clone()))?;
-        let mut task_repository = TaskRepository::new(storage_path);
+        let mut task_repository = (self.mutation_repository_factory)(storage_path);
         let free_time_manager = &mut self.free_time_manager;
 
         let result = Self::run_with_repository_at(
@@ -265,6 +267,14 @@ impl WebService {
         } else {
             Ok(())
         }
+    }
+
+    #[cfg(test)]
+    pub(super) fn set_mutation_repository_factory(
+        &mut self,
+        factory: impl Fn(&str) -> TaskRepository + 'static,
+    ) {
+        self.mutation_repository_factory = Box::new(factory);
     }
 
     fn finish_mutation_result<T>(

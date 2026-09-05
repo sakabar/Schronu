@@ -8,9 +8,7 @@ use std::path::{Component, Path, PathBuf};
 #[cfg(test)]
 pub(super) use super::layout::TRANSACTION_LOCK_FILE_NAME;
 
-pub(in crate::adapter::gateway) trait StorageTransactionIo:
-    Send + Sync
-{
+pub(crate) trait StorageTransactionIo: Send + Sync {
     fn create_dir_all(&self, path: &Path) -> std::io::Result<()> {
         fs::create_dir_all(path)
     }

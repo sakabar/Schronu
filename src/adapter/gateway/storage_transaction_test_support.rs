@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(super) enum RecordingOperation {
+pub(crate) enum RecordingOperation {
     CreateDirectory,
     ReadTargetMetadata,
     ReadFile,
@@ -19,7 +19,7 @@ pub(super) enum RecordingOperation {
 }
 
 #[derive(Debug)]
-pub(super) enum PathMatcher {
+pub(crate) enum PathMatcher {
     Any,
     Exact(PathBuf),
     FileName(&'static str),
@@ -27,12 +27,12 @@ pub(super) enum PathMatcher {
     FileNameContains(&'static str),
 }
 
-pub(super) struct FaultRule {
-    pub(super) operation: RecordingOperation,
-    pub(super) path_matcher: PathMatcher,
-    pub(super) occurrence: usize,
-    pub(super) error_kind: std::io::ErrorKind,
-    pub(super) error_message: &'static str,
+pub(crate) struct FaultRule {
+    pub(crate) operation: RecordingOperation,
+    pub(crate) path_matcher: PathMatcher,
+    pub(crate) occurrence: usize,
+    pub(crate) error_kind: std::io::ErrorKind,
+    pub(crate) error_message: &'static str,
 }
 
 #[derive(Clone, Debug)]
@@ -41,13 +41,13 @@ pub(super) struct IoEvent {
     path: PathBuf,
 }
 
-pub(super) struct RecordingIo {
+pub(crate) struct RecordingIo {
     faults: Vec<FaultRule>,
     events: Mutex<Vec<IoEvent>>,
 }
 
 impl RecordingIo {
-    pub(super) fn new(faults: Vec<FaultRule>) -> Self {
+    pub(crate) fn new(faults: Vec<FaultRule>) -> Self {
         Self {
             faults,
             events: Mutex::new(Vec::new()),

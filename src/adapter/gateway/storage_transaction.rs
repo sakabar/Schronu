@@ -15,8 +15,9 @@ mod manifest;
 mod prepare;
 mod recovery;
 
+pub(super) use io::FileSystemStorageTransactionIo;
+pub(crate) use io::StorageTransactionIo;
 use io::TransactionLock;
-pub(super) use io::{FileSystemStorageTransactionIo, StorageTransactionIo};
 #[cfg(test)]
 use layout::ACTIVE_TRANSACTION_DIRECTORY_NAME;
 #[cfg(test)]
