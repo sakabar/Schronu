@@ -100,7 +100,8 @@ fn format_deadline_remaining_time(
 #[cfg(test)]
 mod deadline_remaining_time_tests {
     use super::format_deadline_remaining_time;
-    use chrono::{Local, TimeZone};
+    use crate::application::task_use_case::ApplicationError;
+    use chrono::{DateTime, Duration, FixedOffset, Local, NaiveDate, TimeZone};
 
     #[test]
     fn 現行の締切なしと同一logical_dateとasapの表示を維持する() {
@@ -196,6 +197,40 @@ mod deadline_remaining_time_tests {
             )
             .unwrap(),
             "+50:00ASAP"
+        );
+    }
+
+    #[test]
+    fn logical_date差が1000日以上でも日数を省略しない() {
+        let last_synced_time = Local.with_ymd_and_hms(2026, 9, 6, 10, 0, 0).unwrap();
+        let end_datetime = Local.with_ymd_and_hms(2026, 9, 6, 18, 0, 0).unwrap();
+        let deadline_time = end_datetime + Duration::days(1000);
+
+        assert_eq!(
+            format_deadline_remaining_time(Some(&deadline_time), end_datetime, last_synced_time,)
+                .unwrap(),
+            "_____-1000D"
+        );
+    }
+
+    #[test]
+    fn logical_date計算不能は情報を保持して返す() {
+        let offset = FixedOffset::east_opt(0).unwrap();
+        let end_datetime = DateTime::<Local>::from_naive_utc_and_offset(
+            NaiveDate::MIN.and_hms_opt(5, 0, 0).unwrap(),
+            offset,
+        );
+        let deadline_time = DateTime::<Local>::from_naive_utc_and_offset(
+            NaiveDate::MIN.and_hms_opt(6, 0, 0).unwrap(),
+            offset,
+        );
+
+        assert_eq!(
+            format_deadline_remaining_time(Some(&deadline_time), end_datetime, deadline_time,),
+            Err(ApplicationError::LogicalDateOutOfRange {
+                operation: "logical_date",
+                datetime: end_datetime,
+            })
         );
     }
 }
