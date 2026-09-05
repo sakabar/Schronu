@@ -607,6 +607,33 @@ fn session重複追加と不存在破棄はstorage履歴へ偽装しない() {
     assert_eq!(state.display_error(), None);
 }
 
+#[test]
+fn latest_readの古いsnapshotも受信履歴へ記録する() {
+    let storage = FakeStorage::default();
+    let mut state = load_client_state(&storage, 0).unwrap();
+    let bootstrap_id = bootstrap_effect(state.request_bootstrap());
+    let list_id = list_effect(state.request_list("2026-09-05")).0;
+    state.apply_list_result(
+        list_id,
+        "2026-09-05",
+        Ok(WebSuccess {
+            snapshot: snapshot("2026-09-05", 200),
+            data: vec![],
+        }),
+    );
+
+    state.apply_bootstrap_result(bootstrap_id, Ok(snapshot("2026-09-05", 100)));
+
+    assert_eq!(
+        state
+            .history()
+            .iter()
+            .filter(|entry| entry.operation == Operation::Bootstrap)
+            .count(),
+        1
+    );
+}
+
 #[derive(Default)]
 struct FakeStorage {
     value: RefCell<Option<String>>,
