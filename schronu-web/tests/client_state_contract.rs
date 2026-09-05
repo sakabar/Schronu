@@ -154,6 +154,8 @@ fn mutationは対象だけを直列化しerror助言とcommit後storage失敗を
     assert_eq!(state.begin_complete_session(TASK_ID), ClientEffect::None);
     assert!(state.is_session_in_flight(TASK_ID));
     assert!(!state.is_session_in_flight(OTHER_TASK_ID));
+    assert_eq!(state.discard_session(&storage, TASK_ID), ClientEffect::None);
+    assert_eq!(state.sessions().len(), 2, "in-flight must disable discard");
 
     state.apply_record_result(
         &storage,
@@ -191,7 +193,8 @@ fn mutationは対象だけを直列化しerror助言とcommit後storage失敗を
     assert!(state.display_error().unwrap().retryable);
     assert!(!state.is_session_manual_check_blocked(OTHER_TASK_ID));
 
-    state.clear_manual_check_block(TASK_ID);
+    let mut state = state_with_sessions(&storage, &[TASK_ID, OTHER_TASK_ID]);
+    state.tick(62_999);
     assert!(matches!(
         state.begin_record_session(TASK_ID),
         ClientEffect::RecordSession(_)
@@ -234,6 +237,14 @@ fn mutation成功時だけsessionを消し履歴を最新100件へ制限する()
         }),
     );
     assert!(state.sessions().is_empty());
+
+    let mut complete_state = state_with_sessions(&storage, &[OTHER_TASK_ID]);
+    assert!(matches!(
+        complete_state.begin_complete_session(OTHER_TASK_ID),
+        ClientEffect::CompleteSession(_)
+    ));
+    complete_state.apply_complete_result(&storage, OTHER_TASK_ID, Ok(snapshot("2026-09-05", 2)));
+    assert!(complete_state.sessions().is_empty());
 
     for epoch in 0..101 {
         state.tick(epoch);
