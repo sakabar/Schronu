@@ -1,6 +1,7 @@
 use super::*;
-use crate::client::date_buttons::logical_date_buttons;
+use crate::client::date_buttons::{logical_date_buttons, logical_date_start};
 use crate::{ListTasksRequest, SessionTask, WebSuccess};
+use chrono::LocalResult;
 use std::ops::Range;
 
 pub(super) struct ReadState {
@@ -176,6 +177,7 @@ impl ClientState {
         {
             return None;
         }
+        let initial_snapshot = self.read.snapshot.is_none();
         let changed = self
             .read
             .snapshot
@@ -186,7 +188,22 @@ impl ClientState {
                 logical_date_buttons(&snapshot.logical_date).unwrap_or_default();
             self.read.selected_logical_date = None;
             self.read.scheduled_rows.clear();
-            self.read.buffer_tracking_started_at_epoch_ms = Some(snapshot.observed_at_epoch_ms);
+            let tracking_started_at = if initial_snapshot {
+                snapshot.observed_at_epoch_ms
+            } else {
+                match logical_date_start(&snapshot.logical_date) {
+                    Ok(LocalResult::Single(start))
+                        if start.timestamp_millis() <= snapshot.observed_at_epoch_ms =>
+                    {
+                        start.timestamp_millis()
+                    }
+                    Ok(LocalResult::Single(_))
+                    | Ok(LocalResult::Ambiguous(_, _))
+                    | Ok(LocalResult::None)
+                    | Err(_) => snapshot.observed_at_epoch_ms,
+                }
+            };
+            self.read.buffer_tracking_started_at_epoch_ms = Some(tracking_started_at);
             self.read.committed_session_intervals.clear();
         }
         self.read.snapshot = Some(snapshot);
