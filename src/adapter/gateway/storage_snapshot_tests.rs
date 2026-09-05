@@ -18,3 +18,10 @@ mod create {
 
     include!("storage_snapshot_tests/create.rs");
 }
+
+mod recovery {
+    use super::*;
+    use crate::adapter::gateway::storage_transaction_test_support::*;
+
+    include!("storage_snapshot_tests/recovery.rs");
+}
