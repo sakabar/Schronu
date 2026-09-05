@@ -18,7 +18,7 @@ pub(super) enum SnapshotOperation {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(super) enum SnapshotLimitKind {
+pub enum SnapshotLimitKind {
     ManifestBytes,
     FileCount,
     FileBytes,
@@ -32,6 +32,7 @@ pub struct SnapshotError {
     operation: SnapshotOperation,
     path: PathBuf,
     source: Box<dyn Error + Send + Sync>,
+    limit: Option<SnapshotLimitDetails>,
 }
 
 impl SnapshotError {
@@ -43,11 +44,30 @@ impl SnapshotError {
             operation,
             path: path.into(),
             source: Box::new(source),
+            limit: None,
         }
     }
 
     pub fn path(&self) -> &Path {
         &self.path
+    }
+
+    pub fn limit_kind(&self) -> Option<SnapshotLimitKind> {
+        self.limit.as_ref().map(|details| details.kind)
+    }
+
+    pub fn limit_value(&self) -> Option<u64> {
+        self.limit.as_ref().map(|details| details.limit)
+    }
+
+    pub fn observed_value(&self) -> Option<u64> {
+        self.limit.as_ref().map(|details| details.observed)
+    }
+
+    pub fn limit_path(&self) -> Option<&Path> {
+        self.limit
+            .as_ref()
+            .and_then(|details| details.path.as_deref())
     }
 
     pub(super) fn file_write(path: impl Into<PathBuf>, source: FileWriteError) -> Self {
@@ -63,16 +83,23 @@ impl SnapshotError {
         kind: SnapshotLimitKind,
         limit: u64,
         observed: u64,
+        limit_path: Option<PathBuf>,
     ) -> Self {
-        Self::new(
-            SnapshotOperation::Validate,
-            path,
-            SnapshotLimitError {
+        Self {
+            operation: SnapshotOperation::Validate,
+            path: path.into(),
+            source: Box::new(SnapshotLimitError {
                 kind,
                 limit,
                 observed,
-            },
-        )
+            }),
+            limit: Some(SnapshotLimitDetails {
+                kind,
+                limit,
+                observed,
+                path: limit_path,
+            }),
+        }
     }
 
     pub(super) fn followup_failure<E>(primary: Self, action: &'static str, followup: E) -> Self
@@ -83,6 +110,7 @@ impl SnapshotError {
             operation,
             path,
             source,
+            limit,
         } = primary;
         Self {
             operation,
@@ -92,8 +120,17 @@ impl SnapshotError {
                 action,
                 followup: Box::new(followup),
             }),
+            limit,
         }
     }
+}
+
+#[derive(Clone, Debug)]
+struct SnapshotLimitDetails {
+    kind: SnapshotLimitKind,
+    limit: u64,
+    observed: u64,
+    path: Option<PathBuf>,
 }
 
 #[derive(Debug)]

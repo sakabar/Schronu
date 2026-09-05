@@ -70,6 +70,7 @@ pub(super) fn decode_manifest_with_limits(
 ) -> Result<SnapshotManifest, SnapshotError> {
     limits.check(
         manifest_path,
+        None,
         super::error::SnapshotLimitKind::ManifestBytes,
         limits.manifest_bytes,
         bytes.len() as u64,
@@ -97,6 +98,7 @@ fn validate_manifest(
 
     limits.check(
         manifest_path,
+        None,
         super::error::SnapshotLimitKind::FileCount,
         limits.file_count as u64,
         u64::try_from(manifest.files.len()).unwrap_or(u64::MAX),
@@ -104,7 +106,7 @@ fn validate_manifest(
     let mut paths = HashSet::new();
     for directory in &mut manifest.directories {
         directory.path = validate_relative_path(&directory.path)?;
-        limits.check_path(&directory.path)?;
+        limits.check_path(manifest_path, &directory.path)?;
         if !paths.insert(directory.path.clone()) {
             return Err(invalid_manifest(manifest_path, "duplicate snapshot path"));
         }
@@ -112,9 +114,10 @@ fn validate_manifest(
     let mut total_bytes = 0_u64;
     for file in &mut manifest.files {
         file.path = validate_relative_path(&file.path)?;
-        limits.check_path(&file.path)?;
+        limits.check_path(manifest_path, &file.path)?;
         limits.check(
-            &file.path,
+            manifest_path,
+            Some(&file.path),
             super::error::SnapshotLimitKind::FileBytes,
             limits.file_bytes,
             file.content_length,
@@ -127,10 +130,12 @@ fn validate_manifest(
                     super::error::SnapshotLimitKind::PayloadBytes,
                     limits.total_bytes,
                     u64::MAX,
+                    Some(file.path.clone()),
                 )
             })?;
         limits.check(
-            &file.path,
+            manifest_path,
+            Some(&file.path),
             super::error::SnapshotLimitKind::PayloadBytes,
             limits.total_bytes,
             total_bytes,

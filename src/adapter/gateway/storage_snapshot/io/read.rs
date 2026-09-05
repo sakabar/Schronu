@@ -78,7 +78,7 @@ fn read_directory_handle(
             .filter(|path| !path.as_os_str().is_empty())
             .unwrap_or(&child_path);
         if child_path != Path::new(MANIFEST_FILE_NAME) && child_path != Path::new("storage") {
-            limits.check_path(logical_path)?;
+            limits.check_path(&display_path, logical_path)?;
         }
         let name = CString::new(name.as_bytes()).map_err(|_| {
             read_error(
@@ -129,16 +129,19 @@ fn read_directory_handle(
                         SnapshotLimitKind::FileCount,
                         limits.file_count as u64,
                         u64::MAX,
+                        Some(logical_path.to_path_buf()),
                     )
                 })?;
                 limits.check(
                     &display_path,
+                    Some(logical_path),
                     SnapshotLimitKind::FileCount,
                     limits.file_count as u64,
                     observed_count as u64,
                 )?;
                 limits.check(
                     &display_path,
+                    Some(logical_path),
                     SnapshotLimitKind::FileBytes,
                     limits.file_bytes,
                     metadata.len(),
@@ -153,10 +156,12 @@ fn read_directory_handle(
                                 SnapshotLimitKind::PayloadBytes,
                                 limits.total_bytes,
                                 u64::MAX,
+                                Some(logical_path.to_path_buf()),
                             )
                         })?;
                 limits.check(
                     &display_path,
+                    Some(logical_path),
                     SnapshotLimitKind::PayloadBytes,
                     limits.total_bytes,
                     observed_total,
@@ -170,7 +175,13 @@ fn read_directory_handle(
             } else {
                 SnapshotLimitKind::FileBytes
             };
-            limits.check(&display_path, limit_kind, byte_limit, metadata.len())?;
+            limits.check(
+                &display_path,
+                (!is_manifest).then_some(logical_path),
+                limit_kind,
+                byte_limit,
+                metadata.len(),
+            )?;
             let mut bytes = Vec::new();
             let capacity = usize::try_from(metadata.len()).map_err(|error| {
                 SnapshotError::new(SnapshotOperation::Read, &display_path, error)
@@ -183,7 +194,13 @@ fn read_directory_handle(
                 .take(byte_limit.saturating_add(1))
                 .read_to_end(&mut bytes)
                 .map_err(|error| read_error(&display_path, error))?;
-            limits.check(&display_path, limit_kind, byte_limit, bytes.len() as u64)?;
+            limits.check(
+                &display_path,
+                (!is_manifest).then_some(logical_path),
+                limit_kind,
+                byte_limit,
+                bytes.len() as u64,
+            )?;
             if !is_manifest {
                 usage.file_count += 1;
                 usage.total_bytes = usage
@@ -195,10 +212,12 @@ fn read_directory_handle(
                             SnapshotLimitKind::PayloadBytes,
                             limits.total_bytes,
                             u64::MAX,
+                            Some(logical_path.to_path_buf()),
                         )
                     })?;
                 limits.check(
                     &display_path,
+                    Some(logical_path),
                     SnapshotLimitKind::PayloadBytes,
                     limits.total_bytes,
                     usage.total_bytes,

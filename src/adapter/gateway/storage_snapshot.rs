@@ -13,7 +13,7 @@ pub(in crate::adapter::gateway) use create::{
     create_snapshot_with_failure, create_snapshot_with_failure_observation,
     create_snapshot_with_limits,
 };
-pub use error::SnapshotError;
+pub use error::{SnapshotError, SnapshotLimitKind};
 #[cfg(test)]
 pub(in crate::adapter::gateway) use io::SnapshotFailurePoint;
 pub use restore::restore_snapshot;
@@ -26,7 +26,7 @@ pub use verify::verify_snapshot;
 #[cfg(test)]
 pub(in crate::adapter::gateway) use verify::verify_snapshot_with_limits;
 
-use error::{SnapshotError as InternalSnapshotError, SnapshotLimitKind};
+use error::SnapshotError as InternalSnapshotError;
 use std::path::Path;
 
 const DEFAULT_RESOURCE_LIMITS: SnapshotResourceLimits = SnapshotResourceLimits::new(
@@ -115,31 +115,44 @@ impl SnapshotResourceLimits {
         }
     }
 
-    fn check_path(self, path: &Path) -> Result<(), InternalSnapshotError> {
-        let observed_bytes = path.to_str().map(str::len).unwrap_or(usize::MAX);
+    fn check_path(
+        self,
+        operation_path: &Path,
+        relative_path: &Path,
+    ) -> Result<(), InternalSnapshotError> {
+        let observed_bytes = relative_path.to_str().map(str::len).unwrap_or(usize::MAX);
         self.check(
-            path,
+            operation_path,
+            Some(relative_path),
             SnapshotLimitKind::PathBytes,
             self.path_bytes as u64,
             u64::try_from(observed_bytes).unwrap_or(u64::MAX),
         )?;
         self.check(
-            path,
+            operation_path,
+            Some(relative_path),
             SnapshotLimitKind::PathDepth,
             self.depth as u64,
-            path.components().count() as u64,
+            relative_path.components().count() as u64,
         )
     }
 
     fn check(
         self,
-        path: &Path,
+        operation_path: &Path,
+        relative_path: Option<&Path>,
         kind: SnapshotLimitKind,
         limit: u64,
         observed: u64,
     ) -> Result<(), InternalSnapshotError> {
         if observed > limit {
-            Err(InternalSnapshotError::limit(path, kind, limit, observed))
+            Err(InternalSnapshotError::limit(
+                operation_path,
+                kind,
+                limit,
+                observed,
+                relative_path.map(Path::to_path_buf),
+            ))
         } else {
             Ok(())
         }

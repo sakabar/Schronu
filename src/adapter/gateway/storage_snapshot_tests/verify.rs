@@ -1,5 +1,6 @@
 use crate::adapter::gateway::storage_snapshot::{
-    create_snapshot_at, verify_snapshot, verify_snapshot_with_limits, SnapshotResourceLimits,
+    create_snapshot_at, verify_snapshot, verify_snapshot_with_limits, SnapshotLimitKind,
+    SnapshotResourceLimits,
 };
 use chrono::TimeZone;
 use walkdir::WalkDir;
@@ -56,23 +57,45 @@ fn snapshot_verify_resource_limitは境界を許可し超過をtyped拒否する
     for (limits, expected) in [
         (
             exact.with_manifest_bytes(manifest_bytes - 1),
-            "ManifestBytes",
+            SnapshotLimitKind::ManifestBytes,
         ),
-        (exact.with_file_count(file_count - 1), "FileCount"),
-        (exact.with_file_bytes(file_bytes - 1), "FileBytes"),
+        (
+            exact.with_file_count(file_count - 1),
+            SnapshotLimitKind::FileCount,
+        ),
+        (
+            exact.with_file_bytes(file_bytes - 1),
+            SnapshotLimitKind::FileBytes,
+        ),
         (
             exact.with_total_bytes(total_bytes - 1),
-            "PayloadBytes",
+            SnapshotLimitKind::PayloadBytes,
         ),
-        (exact.with_path_bytes(path_bytes - 1), "PathBytes"),
-        (exact.with_depth(depth - 1), "PathDepth"),
+        (
+            exact.with_path_bytes(path_bytes - 1),
+            SnapshotLimitKind::PathBytes,
+        ),
+        (
+            exact.with_depth(depth - 1),
+            SnapshotLimitKind::PathDepth,
+        ),
     ] {
-        let error = verify_snapshot_with_limits(&snapshot, limits)
-            .unwrap_err()
-            .to_string();
-        assert!(error.contains(expected), "{error}");
-        assert!(error.contains("limit="), "{error}");
-        assert!(error.contains("observed="), "{error}");
+        let error = verify_snapshot_with_limits(&snapshot, limits).unwrap_err();
+        assert_eq!(error.limit_kind(), Some(expected), "{error}");
+        assert_eq!(
+            error.observed_value(),
+            error.limit_value().and_then(|limit| limit.checked_add(1)),
+            "{error}"
+        );
+        if expected == SnapshotLimitKind::ManifestBytes {
+            assert_eq!(error.limit_path(), None, "{error}");
+        } else {
+            assert!(error.path().is_absolute(), "{error}");
+            assert!(
+                error.limit_path().is_some_and(|path| !path.is_absolute()),
+                "{error}"
+            );
+        }
     }
 }
 

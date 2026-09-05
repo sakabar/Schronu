@@ -337,7 +337,7 @@ fn collect_storage(
         if is_reserved_path(&relative) {
             continue;
         }
-        limits.check_path(&relative)?;
+        limits.check_path(entry.path(), &relative)?;
         let metadata = fs::symlink_metadata(entry.path())
             .map_err(|error| SnapshotError::new(SnapshotOperation::Read, entry.path(), error))?;
         if metadata.file_type().is_symlink() {
@@ -358,16 +358,19 @@ fn collect_storage(
                     super::error::SnapshotLimitKind::FileCount,
                     limits.file_count as u64,
                     u64::MAX,
+                    Some(relative.clone()),
                 )
             })?;
             limits.check(
                 entry.path(),
+                Some(&relative),
                 super::error::SnapshotLimitKind::FileCount,
                 limits.file_count as u64,
                 observed_count as u64,
             )?;
             limits.check(
                 entry.path(),
+                Some(&relative),
                 super::error::SnapshotLimitKind::FileBytes,
                 limits.file_bytes,
                 metadata.len(),
@@ -378,10 +381,12 @@ fn collect_storage(
                     super::error::SnapshotLimitKind::PayloadBytes,
                     limits.total_bytes,
                     u64::MAX,
+                    Some(relative.clone()),
                 )
             })?;
             limits.check(
                 entry.path(),
+                Some(&relative),
                 super::error::SnapshotLimitKind::PayloadBytes,
                 limits.total_bytes,
                 observed_total,
@@ -413,6 +418,7 @@ fn collect_storage(
                 })?;
             limits.check(
                 entry.path(),
+                Some(&relative),
                 super::error::SnapshotLimitKind::FileBytes,
                 limits.file_bytes,
                 bytes.len() as u64,
@@ -423,10 +429,12 @@ fn collect_storage(
                     super::error::SnapshotLimitKind::PayloadBytes,
                     limits.total_bytes,
                     u64::MAX,
+                    Some(relative.clone()),
                 )
             })?;
             limits.check(
                 entry.path(),
+                Some(&relative),
                 super::error::SnapshotLimitKind::PayloadBytes,
                 limits.total_bytes,
                 total_bytes,
@@ -533,6 +541,7 @@ fn publish_snapshot(
     let manifest_path = staging.path.join(MANIFEST_FILE_NAME);
     limits.check(
         &manifest_path,
+        None,
         super::error::SnapshotLimitKind::ManifestBytes,
         limits.manifest_bytes,
         manifest_bytes.len() as u64,
