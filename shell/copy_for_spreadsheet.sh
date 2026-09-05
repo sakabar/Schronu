@@ -38,7 +38,7 @@ function is_uuid(value, parts) {
         length(parts[5]) == 12 && value ~ /^[0-9a-f-]+$/
 }
 
-function is_scheduled_time(value) {
+function is_estimated_datetime(value) {
     return value ~ /^[0-9][0-9]\/[0-9][0-9]\([月火水木金土日]\)-[0-9][0-9]:[0-9][0-9]~[0-9][0-9]:[0-9][0-9]$/
 }
 
@@ -73,7 +73,7 @@ function fail_incomplete_task_row(line_number) {
 
     if (invalid || line == "" || length(column[1]) < 4 ||
         !is_decimal(column[1]) ||
-        !is_uuid(column[2]) || !is_scheduled_time(column[5]) ||
+        !is_uuid(column[2]) || !is_estimated_datetime(column[5]) ||
         !is_decimal(column[6]) || !is_decimal(column[7]) ||
         !is_integer(column[8]) || !is_category(column[9])) {
         fail_incomplete_task_row(NR)
@@ -84,13 +84,13 @@ function fail_incomplete_task_row(line_number) {
     }
     print line
 }
-' | reverse_lines | while IFS=$'\t' read -r rank task_id icon remaining_time scheduled_time priority estimated_minutes project_number category task_name; do
+' | reverse_lines | while IFS=$'\t' read -r ind task_id icon deadline estimated_datetime rank estimated_minutes priority category task_name; do
     prev_cell_row_num=$[$cell_row_num - 1]
 
-    scheduled_date=${scheduled_time%%\(*}
-    scheduled_weekday=${scheduled_time#*\(}
+    scheduled_date=${estimated_datetime%%\(*}
+    scheduled_weekday=${estimated_datetime#*\(}
     scheduled_weekday=${scheduled_weekday%%\)*}
-    scheduled_start=${scheduled_time#*\)-}
+    scheduled_start=${estimated_datetime#*\)-}
     scheduled_start=${scheduled_start%%\~*}
     scheduled_hour=${scheduled_start%%:*}
     scheduled_minute=${scheduled_start#*:}
@@ -134,8 +134,8 @@ function fail_incomplete_task_row(line_number) {
     q_cell=''
 
     printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
-        "${rank}" "${task_id}" "${icon}" "${remaining_time}" "${scheduled_time}" \
-        "${priority}" "${estimated_minutes}" "${project_number}" "${category}" "${task_name}" \
+        "${ind}" "${task_id}" "${icon}" "${deadline}" "${estimated_datetime}" \
+        "${rank}" "${estimated_minutes}" "${priority}" "${category}" "${task_name}" \
         "${manu_cell}" "${k_cell}" "${l_cell}" "${m_cell}" "${n_cell}" "${o_cell}" \
         "${p_cell}" "${q_cell}"
 

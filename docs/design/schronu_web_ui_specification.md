@@ -113,6 +113,8 @@ ScheduledTaskRow {
 }
 ```
 
+`is_leaf`はwire互換のため名称を維持するが、task tree上の`child_ids`の空否ではなく、schedule計算結果の`ScheduledTaskView.rank == 0`を表す。rank 0は未完了の子を持たないtaskである。
+
 同じtaskが複数segmentに分かれる場合、同じ`task_id`を持つrowを複数返してよい。serverは`get_schedule`の結果を開始時刻昇順に安定sortする。
 
 ### 3.4 localStorage schema
@@ -409,7 +411,7 @@ display_buffer = buffer_seconds - snapshot_elapsed
 - 日付button click時だけ`list_tasks(date)`を送る。
 - rowは締切、予定`HH:MM-HH:MM`、task名、「セッション」buttonを表示する。
 - 締切は選択logical date内なら`HH:MM`、それ以外は`MM/DD HH:MM`とする。現在epochが締切epochを超えた場合に赤くする。
-- `is_leaf`がtrueのtask名を緑にする。
+- schedule rankが0のとき`is_leaf`をtrueとし、そのtask名を緑にする。
 - 「セッション」click時はrowのtask snapshotとclient現在時刻からsessionを作り、localStorageへ保存する。active tabは変更しない。
 - `work_sessions`に同一UUIDがあれば、そのUUIDの全rowでbuttonをdisabledにする。
 
@@ -514,7 +516,7 @@ OperationHistoryEntry {
 - buffer: 正、0、負、06:00前後、固定`busy_time_slot`、隣接logical dateの除外を検証する。
 - buffer segment集計: 単一segment、同一taskの複数segment、複数task、進行中segment全量、同一logical date内の過去segment、`scheduled_work_seconds`合計overflowを検証する。
 - buffer更新: 実績変更後のschedule再生成と、clientでsnapshot経過秒を1回だけ減算することを検証する。
-- read model: 指定日、開始時刻順、複数segment、葉判定、締切、候補なしの自動選定。
+- read model: 指定日、開始時刻順、複数segment、schedule rank 0判定(task tree上の子の有無に非依存)、締切、候補なしの自動選定。
 
 ### 12.2 CLI互換性
 
