@@ -3,7 +3,7 @@ use crate::adapter::gateway::schronu_config::SchronuConfig;
 use crate::adapter::gateway::storage_lock::{LockMode, StorageLock, StorageLockErrorKind};
 use crate::adapter::gateway::task_repository::TaskRepository;
 use crate::application::interface::TaskRepositoryTrait;
-use crate::entity::task::{Status, TaskHandle};
+use crate::entity::task::{Status, TaskAttr, TaskHandle};
 use chrono::{Duration, Local, NaiveDate, TimeZone};
 use std::fs;
 use std::path::PathBuf;
@@ -69,6 +69,25 @@ impl WebReadServiceFixture {
         repository.start_new_project(task).unwrap();
         repository.save().unwrap();
         task_id
+    }
+
+    fn seed_repetition_task(&self, now: chrono::DateTime<Local>) -> (Uuid, Uuid) {
+        let parent_id = Uuid::from_u128(0x2026_0905_0001);
+        let child_id = Uuid::from_u128(0x2026_0905_0002);
+        let parent = TaskHandle::with_identity("routine", parent_id, now).unwrap();
+        parent.set_repetition_interval_days_opt(Some(7)).unwrap();
+        parent.set_estimated_work_seconds(600).unwrap();
+        let child = parent
+            .create_child(TaskAttr::with_identity("occurrence", child_id, now))
+            .unwrap();
+        child.set_estimated_work_seconds(600).unwrap();
+        child.set_actual_work_seconds(300).unwrap();
+
+        let mut repository = TaskRepository::new(self.storage.to_str().unwrap());
+        repository.sync_clock(now).unwrap();
+        repository.start_new_project(parent).unwrap();
+        repository.save().unwrap();
+        (parent_id, child_id)
     }
 
     fn persisted_bytes(&self) -> Vec<(PathBuf, Vec<u8>)> {
@@ -363,4 +382,102 @@ fn record_sessionは未知taskと完了済みtaskと競合と加算overflowで�
         ));
         assert_eq!(fixture.persisted_bytes(), before);
     }
+}
+
+#[test]
+fn complete_sessionは経過秒加算と完了を1回の保存で反映してsnapshotだけを返す() {
+    let seeded_at = Local.with_ymd_and_hms(2026, 9, 5, 18, 0, 0).unwrap();
+    let operation_now =
+        Local.with_ymd_and_hms(2026, 9, 5, 19, 1, 0).unwrap() + Duration::milliseconds(999);
+    let fixture = WebReadServiceFixture::new();
+    let task_id = fixture.seed_fixed_task(seeded_at);
+    let mut service = WebService::new(fixture.storage.clone(), fixture.config());
+
+    let response = service
+        .complete_session_at(
+            operation_now,
+            RecordSessionRequest {
+                task_id: task_id.to_string(),
+                started_at_epoch_ms: operation_now.timestamp_millis() - 61_999,
+                expected_actual_work_seconds: 300,
+            },
+        )
+        .unwrap();
+
+    assert_eq!(
+        response.observed_at_epoch_ms,
+        operation_now.timestamp_millis()
+    );
+    assert_eq!(response.logical_date, "2026-09-05");
+    let mut repository = TaskRepository::new(fixture.storage.to_str().unwrap());
+    repository.reload_if_changed(operation_now).unwrap();
+    let completed = repository.get_by_id(task_id).unwrap().unwrap();
+    assert_eq!(completed.get_actual_work_seconds().unwrap(), 361);
+    assert_eq!(completed.get_status().unwrap(), Status::Done);
+    assert_eq!(
+        completed
+            .get_end_time_opt()
+            .unwrap()
+            .map(|finished_at| finished_at.timestamp()),
+        Some(operation_now.timestamp())
+    );
+}
+
+#[test]
+fn complete_sessionは期待実績競合時にtaskと永続dataを変更しない() {
+    let operation_now = Local.with_ymd_and_hms(2026, 9, 5, 19, 1, 0).unwrap();
+    let fixture = WebReadServiceFixture::new();
+    let task_id = fixture.seed_fixed_task(operation_now - Duration::hours(1));
+    let before = fixture.persisted_bytes();
+    let mut service = WebService::new(fixture.storage.clone(), fixture.config());
+
+    let error = service
+        .complete_session_at(
+            operation_now,
+            RecordSessionRequest {
+                task_id: task_id.to_string(),
+                started_at_epoch_ms: operation_now.timestamp_millis() - 60_000,
+                expected_actual_work_seconds: 299,
+            },
+        )
+        .unwrap_err();
+
+    assert!(matches!(
+        error,
+        WebReadError::Application(
+            crate::application::task_use_case::ApplicationError::ActualWorkConflict { .. }
+        )
+    ));
+    assert_eq!(fixture.persisted_bytes(), before);
+}
+
+#[test]
+fn complete_sessionは反復task生成と元task完了を同じ保存で反映する() {
+    let operation_now = Local.with_ymd_and_hms(2026, 9, 5, 19, 1, 0).unwrap();
+    let fixture = WebReadServiceFixture::new();
+    let (parent_id, child_id) = fixture.seed_repetition_task(operation_now - Duration::hours(1));
+    let mut service = WebService::new(fixture.storage.clone(), fixture.config());
+
+    service
+        .complete_session_at(
+            operation_now,
+            RecordSessionRequest {
+                task_id: child_id.to_string(),
+                started_at_epoch_ms: operation_now.timestamp_millis() - 60_000,
+                expected_actual_work_seconds: 300,
+            },
+        )
+        .unwrap();
+
+    let mut repository = TaskRepository::new(fixture.storage.to_str().unwrap());
+    repository.reload_if_changed(operation_now).unwrap();
+    let parent = repository.get_by_id(parent_id).unwrap().unwrap();
+    let children = parent.get_children().unwrap();
+    assert_eq!(children.len(), 2);
+    let completed = repository.get_by_id(child_id).unwrap().unwrap();
+    assert_eq!(completed.get_status().unwrap(), Status::Done);
+    assert_eq!(completed.get_actual_work_seconds().unwrap(), 360);
+    assert!(children
+        .iter()
+        .any(|child| child.get_id().unwrap() != child_id));
 }
