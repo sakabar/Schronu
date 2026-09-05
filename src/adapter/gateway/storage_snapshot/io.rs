@@ -80,6 +80,13 @@ pub(in crate::adapter::gateway::storage_snapshot) fn read_directory_names(
     if duplicate < 0 {
         return Err(std::io::Error::last_os_error());
     }
+    // SAFETY: duplicate is owned here and directory descriptors support seek-to-start.
+    if unsafe { libc::lseek(duplicate, 0, libc::SEEK_SET) } == -1 {
+        let error = std::io::Error::last_os_error();
+        // SAFETY: duplicate is still uniquely owned because fdopendir was not called.
+        unsafe { libc::close(duplicate) };
+        return Err(error);
+    }
     // SAFETY: duplicate is valid and ownership transfers to DIR on success.
     let directory = unsafe { libc::fdopendir(duplicate) };
     if directory.is_null() {
