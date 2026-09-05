@@ -150,7 +150,7 @@ storage_transaction/
 - 変更対象: manifest、prepare、commit、recovery、delete、security testへの機械的分割。
 - 依存: Task 9。
 - 対象test: transaction test全33 scenario(既存32件とmanifest保存bytes characterization 1件)。
-- Green確認: 移動前後で全32 scenario Green、全品質gate。
+- Green確認: 移動前後で全33 scenario Green、全品質gate。
 
 ### Task 11: repository transaction testを分離する
 
