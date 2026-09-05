@@ -3,6 +3,8 @@ mod component;
 mod environment_query;
 #[cfg(feature = "server")]
 mod environment_web_operations;
+#[cfg(test)]
+mod history_view_tests;
 pub(crate) mod list_view;
 #[cfg(test)]
 mod list_view_tests;
