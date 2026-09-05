@@ -438,7 +438,11 @@ impl StableDirectory {
         // SAFETY: fstatat initialized stat on success.
         let stat = unsafe { stat.assume_init() };
         let metadata = self.directory.metadata()?;
-        Ok(metadata.dev() == stat.st_dev as u64 && metadata.ino() == stat.st_ino)
+        #[cfg(target_os = "linux")]
+        let stat_device = stat.st_dev;
+        #[cfg(target_os = "macos")]
+        let stat_device = stat.st_dev as u64;
+        Ok(metadata.dev() == stat_device && metadata.ino() == stat.st_ino)
     }
 
     fn raw_fd(&self) -> std::os::fd::RawFd {
