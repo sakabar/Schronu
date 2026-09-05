@@ -85,7 +85,7 @@ Schronu-webを、1日の余力と複数taskの作業状況を同時に把握で�
 
 ### 4.6 buffer
 
-- **REQ-BUFFER-001**: bufferを`現在logical dateの残り空き秒 - 同日の予定残作業秒`としてserver側で算出すること。
+- **REQ-BUFFER-001**: bufferを`現在logical dateの残り空き秒 - 同日のschedule segmentごとのscheduled_work_seconds合計`としてserver側で算出すること。同一taskの複数segment、進行中segment、同じlogical date内の過去segmentをそれぞれ1回ずつ全量で集計すること。
 - **REQ-BUFFER-002**: serverからbuffer秒とその観測時刻を取得し、以後はbrowser側で経過秒を差し引いて1秒ごとに表示を更新すること。
 - **REQ-BUFFER-003**: 0以上のbufferを`HH:MM:SS`でカウントダウン表示すること。
 - **REQ-BUFFER-004**: 負のbufferを赤い文字の`-HH:MM:SS`でカウントアップ表示すること。

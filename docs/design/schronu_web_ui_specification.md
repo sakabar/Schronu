@@ -138,6 +138,8 @@ keyは`schronu_web.work_sessions.v1`とする。valueはversion付きobjectと�
 
 専用workerは次の5 commandを順番に処理する。workerへの送信順が実行順となる。
 
+各commandでは`operation_now`を1回だけ取得し、その時刻でrepositoryを`sync_clock`してからapplication操作とsnapshot生成を行う。実績を変更するcommandは、sync済みrepositoryへ変更を適用した後に同じ`operation_now`を基準としてscheduleを再生成し、更新後実績をbufferへ反映する。
+
 ### 4.1 `bootstrap`
 
 - 入力: なし
@@ -305,10 +307,25 @@ server側:
 
 ```text
 buffer_seconds = remaining_free_seconds(logical_date, observed_at)
-               - scheduled_remaining_work_seconds(logical_date, observed_at)
+               - sum(
+                   segment.scheduled_work_seconds
+                   where logical_date(segment.scheduled_start) == logical_date
+                 )
 ```
 
-`remaining_free_seconds`は06:00境界、Schronu設定、毎週固定の`busy_time_slot`を反映する。単発予定を`busy_time_slot`として追加しない。`scheduled_remaining_work_seconds`は同じlogical dateのscheduleに割り当てられた未実施作業秒を用いる。
+`remaining_free_seconds`は06:00境界、Schronu設定、毎週固定の`busy_time_slot`を反映する。単発予定を`busy_time_slot`として追加しない。
+
+予定作業秒の集計規則:
+
+1. repositoryを`observed_at`へsyncした後、既存`get_schedule`から`Vec<ScheduledTaskView>`を生成する。
+2. `ScheduledTaskView.scheduled_start`のlogical dateが対象logical dateと一致するsegmentだけを選ぶ。logical date判定は06:00境界を使う。
+3. 選んだ各segmentの`scheduled_work_seconds`をchecked additionで1回ずつ合計する。
+4. 同一taskが複数segmentを持つ場合もUUIDでまとめず、各segmentをそれぞれ加算する。
+5. 進行中segmentも経過分を差し引かず、`scheduled_work_seconds`全量を加算する。
+6. sync後のscheduleは通常`observed_at`より前に開始するsegmentを返さない。過去開始のsegmentが返った場合でも、開始時刻のlogical dateが一致すれば除外せず全量を加算する。
+7. `record_session`または`complete_session`による実績変更後は、operation開始時にsync済みのrepositoryからscheduleを再生成する。これにより更新後の残作業が同じresponseのbufferへ反映される。
+
+server snapshotのbufferでは進行中segmentから経過秒を引かない。browserは次の式でsnapshot後の経過秒を1回だけ差し引くため、serverとclientで二重減算しない。
 
 client側:
 
@@ -446,7 +463,9 @@ OperationHistoryEntry {
 - `complete_task`: 期待値一致、競合、負の追加秒、overflow、未完了の子、完了済み、反復task生成、各失敗時の全状態不変。
 - `complete_session`: 成功responseが`ServerSnapshot`だけで、次task情報を含まないこと。
 - 進捗計算: 開始時33%、100%、133%、見積0、長時間、乗算overflow回避。
-- buffer: 正、0、負、06:00前後、固定`busy_time_slot`、schedule残作業の反映。
+- buffer: 正、0、負、06:00前後、固定`busy_time_slot`、隣接logical dateの除外を検証する。
+- buffer segment集計: 単一segment、同一taskの複数segment、複数task、進行中segment全量、同一logical date内の過去segment、`scheduled_work_seconds`合計overflowを検証する。
+- buffer更新: 実績変更後のschedule再生成と、clientでsnapshot経過秒を1回だけ減算することを検証する。
 - read model: 指定日、開始時刻順、複数segment、葉判定、締切、候補なしの自動選定。
 
 ### 12.2 CLI互換性
