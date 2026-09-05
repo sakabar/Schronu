@@ -31,7 +31,9 @@ clientはCLI command文字列を生成・submitせず、型付きserver function
 - 時刻: Unix epoch millisecondsの整数
 - 時間量: 秒の整数
 - logical date: `YYYY-MM-DD`文字列
-- 曜日・時刻表示: clientがlocal timezoneで生成する
+- 曜日・時刻表示: epoch millisecondsをbrowserのlocal timezoneへ変換して生成する
+
+browserとserverは同じlocal machine timezoneで動作することを実行前提とする。logical dateはbrowserでepochから再判定せず、serverの`ServerSnapshot.logical_date`を正とする。browserとserverのtimezone設定が異なる構成、または利用者がbrowserだけ異なるtimezoneで表示する構成は対象外とする。
 
 ### 3.2 Success and error envelope
 
@@ -500,6 +502,7 @@ OperationHistoryEntry {
 - 33%、100%、133%、見積0、buffer正負の表示を確認する。
 - 通信matrixの各操作についてrequest件数を確認する。
 - 2件以上の同時計測とreload復元を確認する。
+- serverと同じlocal timezoneでepoch表示と曜日labelを確認し、logical dateがserver返却値を起点に生成されることを確認する。
 - UI表示文字列を検索し、「フォーカス」が存在しないことを確認する。
 - server featureのtest・clippy、wasm32 check、Dioxus web buildを実行する。
 - rootで`cargo fmt --check`、`cargo clippy --locked --all-targets -- -D warnings`、`cargo test --locked`を実行する。
@@ -520,7 +523,7 @@ OperationHistoryEntry {
 
 | 仕様箇所 | 対応要件 |
 | --- | --- |
-| 2、3、4、8 | REQ-NFR-001..006、REQ-NET-001、REQ-APP-001 |
+| 2、3、4、8 | REQ-NFR-001..007、REQ-NET-001、REQ-APP-001 |
 | 3.4、6.1、7.2 | REQ-SESSION-001..007、REQ-AUTO-001..004 |
 | 5 | REQ-APP-001..004、REQ-COMPAT-001..005 |
 | 6.2、6.3、7.2 | REQ-CARD-001..012 |

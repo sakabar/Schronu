@@ -15,6 +15,7 @@ Schronu-webを、1日の余力と複数taskの作業状況を同時に把握で�
 - taskの取得・更新にはSchronuのapplication層とrepository transactionを使用する。
 - CLIおよびMCPの外部契約は、REQ-COMPAT-002で明示するCLI`働`の変更を除いて維持する。
 - 認証、外部公開、端末間同期、別browser tab間の即時同期は対象外とする。
+- browserとserverは同じlocal machine timezoneで実行する。異なるtimezone設定を持つclient/server構成は対象外とする。
 
 ## 3. 用語
 
@@ -138,6 +139,7 @@ Schronu-webを、1日の余力と複数taskの作業状況を同時に把握で�
 - **REQ-NFR-004**: errorは原因を識別可能な型付きerrorとし、競合、再試行可能なrepository error、repository状態が不確実で再送できないerrorを区別できること。
 - **REQ-NFR-005**: serverの成功responseはserver観測時刻、現在logical date、buffer秒を含み、clientが同じ基準時刻から表示を更新できること。error responseはsnapshotを含めず、code、message、再試行方針を含むこと。
 - **REQ-NFR-006**: UIの自動更新はbrowser内の計算に限定し、意図しないtask dataの読み書きを発生させないこと。
+- **REQ-NFR-007**: epoch millisecondsの表示はbrowserのlocal timezoneを使用し、logical dateの判定はserverが返す値を使用すること。browserとserverは同じlocal machine timezoneで動作することを実行前提とする。
 
 ## 6. 受入条件
 
