@@ -8,11 +8,13 @@ use chrono::{DateTime, Local, TimeZone};
 use std::cell::Cell;
 use uuid::Uuid;
 
+const TASK_ID_NAMESPACE: u128 = 0xffff_ffff_ffff_ffff_0000_0000_0000_0000;
+
 fn next_task_id() -> Uuid {
     use std::sync::atomic::{AtomicU64, Ordering};
 
     static SEQUENCE: AtomicU64 = AtomicU64::new(1);
-    Uuid::from_u128(u128::from(SEQUENCE.fetch_add(1, Ordering::Relaxed)))
+    Uuid::from_u128(TASK_ID_NAMESPACE | u128::from(SEQUENCE.fetch_add(1, Ordering::Relaxed)))
 }
 
 fn task_time() -> DateTime<Local> {
@@ -225,5 +227,20 @@ impl FreeTimeManagerTrait for TestFreeTimeManager {
         _busy_time_slots_file_path: &str,
     ) -> Result<(), BusyTimeSlotLoadError> {
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn task_fixtureのuuidは専用名前空間で一意に採番する() {
+        let first = next_task_id();
+        let second = next_task_id();
+
+        assert_eq!(first.as_u128() & TASK_ID_NAMESPACE, TASK_ID_NAMESPACE);
+        assert_eq!(second.as_u128() & TASK_ID_NAMESPACE, TASK_ID_NAMESPACE);
+        assert_ne!(first, second);
     }
 }
