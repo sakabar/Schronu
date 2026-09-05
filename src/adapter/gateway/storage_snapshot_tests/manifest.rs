@@ -150,6 +150,12 @@ fn snapshot_manifest_v1はversion_digest_path重複をdecode時に拒否する()
             value["files"][0]["content_digest"] = serde_json::json!("fnv1a64:abc");
             value
         }),
+        ("file-ancestor-conflict", {
+            let mut value = valid.clone();
+            value["directories"] = serde_json::json!([{"path": "project/nested", "mode": 493}]);
+            value["files"][0]["path"] = serde_json::json!("project");
+            value
+        }),
     ];
 
     for (case, value) in cases {

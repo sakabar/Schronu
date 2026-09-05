@@ -93,6 +93,30 @@ fn validate_manifest(
         }
         validate_digest(manifest_path, &file.content_digest)?;
     }
+    let file_paths = manifest
+        .files
+        .iter()
+        .map(|file| file.path.as_path())
+        .collect::<HashSet<_>>();
+    let has_file_ancestor = manifest.directories.iter().any(|directory| {
+        directory
+            .path
+            .ancestors()
+            .filter(|ancestor| !ancestor.as_os_str().is_empty())
+            .any(|ancestor| file_paths.contains(ancestor))
+    }) || manifest.files.iter().any(|file| {
+        file.path
+            .ancestors()
+            .skip(1)
+            .filter(|ancestor| !ancestor.as_os_str().is_empty())
+            .any(|ancestor| file_paths.contains(ancestor))
+    });
+    if has_file_ancestor {
+        return Err(invalid_manifest(
+            manifest_path,
+            "snapshot file path must not be an ancestor of another entry",
+        ));
+    }
     Ok(())
 }
 
