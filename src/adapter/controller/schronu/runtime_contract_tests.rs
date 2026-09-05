@@ -7867,6 +7867,16 @@ fn test_format_focus_progress_見積未算定なら負の入力でも従来表�
 }
 
 #[test]
+fn test_format_focus_progress_負のlegacy入力は合計を0以上へ丸める() {
+    let one_percent = format!("[█{}] 1%", "░".repeat(99));
+    let zero_percent = format!("[{}] 0%", "░".repeat(100));
+
+    assert_eq!(format_focus_progress(100, -1, 2), one_percent);
+    assert_eq!(format_focus_progress(100, 2, -1), one_percent);
+    assert_eq!(format_focus_progress(100, -2, -1), zero_percent);
+}
+
+#[test]
 fn test_format_focus_progress_見積と作業時間を秒数基準で計算する() {
     let actual = format_focus_progress(4 * 60 + 33, 0, 2 * 60);
 
