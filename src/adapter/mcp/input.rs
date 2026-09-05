@@ -399,7 +399,7 @@ pub(super) struct GetTaskInput {
 #[derive(Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub(super) struct CreateTaskInput {
-    /// The task name. After trimming surrounding whitespace, it must not be blank or consist only of an optionally signed integer.
+    /// The exact task name is preserved without trimming or normalization. Validation trims only to detect blank names and optionally signed ASCII-integer-only names; all Unicode control characters are rejected. Non-control whitespace, Unicode text, quotes, and backslashes are allowed.
     pub(super) name: NonEmptyString,
     /// The estimated work duration as a non-negative integer number of minutes. When provided, it is converted to seconds; when omitted, the task keeps the default estimate of 15 minutes.
     #[serde(default)]
@@ -450,7 +450,7 @@ fn child_task_names_schema(generator: &mut SchemaGenerator) -> Schema {
     item_schema.insert(
         "description".to_string(),
         Value::from(
-            "A child task name. After trimming surrounding whitespace, it must not be blank or consist only of an optionally signed integer.",
+            "A child task name is preserved exactly without trimming or normalization. Validation trims only to detect blank names and optionally signed ASCII-integer-only names; all Unicode control characters are rejected. Non-control whitespace, Unicode text, quotes, and backslashes are allowed.",
         ),
     );
     schema

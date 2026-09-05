@@ -152,7 +152,7 @@
           "type": "integer"
         },
         "name": {
-          "description": "The task name. After trimming surrounding whitespace, it must not be blank or consist only of an optionally signed integer.",
+          "description": "The exact task name is preserved without trimming or normalization. Validation trims only to detect blank names and optionally signed ASCII-integer-only names; all Unicode control characters are rejected. Non-control whitespace, Unicode text, quotes, and backslashes are allowed.",
           "minLength": 1,
           "type": "string"
         },
@@ -181,7 +181,7 @@
         "names": {
           "description": "One or more child task names, added to the parent in this array order.",
           "items": {
-            "description": "A child task name. After trimming surrounding whitespace, it must not be blank or consist only of an optionally signed integer.",
+            "description": "A child task name is preserved exactly without trimming or normalization. Validation trims only to detect blank names and optionally signed ASCII-integer-only names; all Unicode control characters are rejected. Non-control whitespace, Unicode text, quotes, and backslashes are allowed.",
             "minLength": 1,
             "type": "string"
           },
