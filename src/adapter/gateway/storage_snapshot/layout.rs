@@ -48,9 +48,21 @@ pub(super) fn is_reserved_path(path: &Path) -> bool {
 
 fn is_temporary_name(name: &std::ffi::OsStr) -> bool {
     let name = name.to_string_lossy();
-    (name.starts_with('.') && name.ends_with(".tmp"))
-        || (name.starts_with('.') && name.contains(".tmp-"))
-        || (name.starts_with('.') && name.ends_with(".temporary"))
+    let Some(hidden) = name.strip_prefix('.') else {
+        return false;
+    };
+    if let Some(stem) = hidden.strip_suffix(".tmp") {
+        return stem
+            .rsplit_once('.')
+            .is_some_and(|(_, id)| is_canonical_uuid(id));
+    }
+    hidden
+        .rsplit_once(".tmp-")
+        .is_some_and(|(_, id)| is_canonical_uuid(id))
+}
+
+fn is_canonical_uuid(text: &str) -> bool {
+    uuid::Uuid::parse_str(text).is_ok_and(|id| id.hyphenated().to_string() == text)
 }
 
 fn invalid_path(path: &Path, message: &'static str) -> SnapshotError {

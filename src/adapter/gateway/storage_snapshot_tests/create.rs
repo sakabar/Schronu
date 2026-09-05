@@ -36,7 +36,7 @@ fn snapshotはlock下の全永続dataとpermissionを保存して予約領域を
 
     let summary = create_snapshot_at(&storage, &destination, now).unwrap();
 
-    assert_eq!(summary.file_count(), 4);
+    assert_eq!(summary.file_count(), 5);
     assert!(summary.revision().is_some());
     let payload = destination.join("storage");
     let relative_project = project_yaml.strip_prefix(&storage).unwrap();
@@ -57,7 +57,7 @@ fn snapshotはlock下の全永続dataとpermissionを保存して予約領域を
         .join("markdown/empty")
         .is_dir());
     assert!(!payload.join(".lock").exists());
-    assert!(!payload.join(".orphan.tmp").exists());
+    assert_eq!(fs::read(payload.join(".orphan.tmp")).unwrap(), b"temporary");
     assert!(!payload.join(".schronu-transactions").exists());
     #[cfg(unix)]
     {
@@ -78,7 +78,7 @@ fn snapshotはlock下の全永続dataとpermissionを保存して予約領域を
     .unwrap();
     assert_eq!(manifest.revision, summary.revision());
     assert_eq!(manifest.tool_version, env!("CARGO_PKG_VERSION"));
-    assert_eq!(manifest.files.len(), 4);
+    assert_eq!(manifest.files.len(), 5);
 }
 
 #[test]
