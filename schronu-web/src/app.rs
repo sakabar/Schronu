@@ -7,6 +7,8 @@ pub(crate) mod session_view;
 #[cfg(test)]
 mod session_view_tests;
 mod today_endpoint;
+#[cfg(test)]
+mod view_test_support;
 mod web_endpoint;
 
 pub use component::app;
