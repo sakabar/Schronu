@@ -38,6 +38,7 @@ pub struct ClientState {
     manual_check_blocked_task_ids: HashSet<String>,
     committed_blocked_task_ids: HashSet<String>,
     committed_actual_work_seconds: HashMap<String, i64>,
+    mutation_globally_blocked: bool,
     display_error: Option<DisplayError>,
     history: VecDeque<OperationHistoryEntry>,
     tick_now_epoch_ms: i64,
@@ -57,6 +58,7 @@ impl ClientState {
             manual_check_blocked_task_ids: HashSet::new(),
             committed_blocked_task_ids: HashSet::new(),
             committed_actual_work_seconds: HashMap::new(),
+            mutation_globally_blocked: false,
             display_error: None,
             history: VecDeque::new(),
             tick_now_epoch_ms,
@@ -216,7 +218,8 @@ impl ClientState {
     }
 
     fn begin_mutation(&mut self, task_id: &str, complete: bool) -> ClientEffect {
-        if self.in_flight_task_ids.contains(task_id)
+        if self.mutation_globally_blocked
+            || self.in_flight_task_ids.contains(task_id)
             || self.manual_check_blocked_task_ids.contains(task_id)
             || self.committed_blocked_task_ids.contains(task_id)
         {

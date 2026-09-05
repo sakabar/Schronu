@@ -131,6 +131,13 @@ impl ClientState {
     ) {
         if matches!(
             &error,
+            ServerFailure::Operation(WebError { code, .. })
+                if code == crate::web_error_codes::REPOSITORY_STATE_UNCERTAIN
+        ) {
+            self.mutation_globally_blocked = true;
+        }
+        if matches!(
+            &error,
             ServerFailure::Operation(WebError {
                 retry_advice: RetryAdvice::ManualCheck,
                 ..
