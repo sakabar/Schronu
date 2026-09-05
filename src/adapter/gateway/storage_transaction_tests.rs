@@ -1,6 +1,6 @@
 use super::*;
 use serde_json::Value;
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Barrier, Mutex};
 
 include!("storage_transaction_tests/support.rs");

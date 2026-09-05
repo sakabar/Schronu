@@ -3,17 +3,39 @@ fn file_system_io() -> Arc<dyn StorageTransactionIo> {
     Arc::new(FileSystemStorageTransactionIo)
 }
 
-struct FailingPrepareIo {
-    fail_write_call: Option<usize>,
-    fail_file_sync_call: Option<usize>,
-    fail_sync_call: Option<usize>,
-    write_calls: AtomicUsize,
-    file_sync_calls: AtomicUsize,
-    sync_calls: AtomicUsize,
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum RecordingOperation {
+    CreateDirectory,
+    ReadTargetMetadata,
+    CreateFile,
+    SetPermissions,
+    WriteFile,
+    SyncFile,
+    SyncDirectory,
 }
 
-struct FailSecondCreateDirectoryIo {
-    create_calls: AtomicUsize,
+enum PathMatcher {
+    Any,
+    Exact(PathBuf),
+    FileName(&'static str),
+}
+
+struct FaultRule {
+    operation: RecordingOperation,
+    path_matcher: PathMatcher,
+    occurrence: usize,
+    error_kind: std::io::ErrorKind,
+    error_message: &'static str,
+}
+
+struct IoEvent {
+    operation: RecordingOperation,
+    path: PathBuf,
+}
+
+struct RecordingIo {
+    faults: Vec<FaultRule>,
+    events: Mutex<Vec<IoEvent>>,
 }
 
 struct FailTargetContentReadIo {
@@ -31,74 +53,86 @@ impl StorageTransactionIo for FailTargetContentReadIo {
         FileSystemStorageTransactionIo.read_file(path)
     }
 }
-impl StorageTransactionIo for FailSecondCreateDirectoryIo {
-    fn create_dir_all(&self, path: &Path) -> std::io::Result<()> {
-        let call = self.create_calls.fetch_add(1, Ordering::SeqCst) + 1;
-        if call == 2 {
-            FileSystemStorageTransactionIo
-                .create_dir_all(path.parent().expect("staged files directory has a parent"))?;
-            return Err(std::io::Error::other(
-                "injected staged files directory failure",
-            ));
+impl RecordingIo {
+    fn new(faults: Vec<FaultRule>) -> Self {
+        Self {
+            faults,
+            events: Mutex::new(Vec::new()),
         }
+    }
+
+    fn record(&self, operation: RecordingOperation, path: &Path) -> std::io::Result<()> {
+        let mut events = self.events.lock().unwrap();
+        events.push(IoEvent {
+            operation,
+            path: path.to_path_buf(),
+        });
+        for fault in &self.faults {
+            if fault.operation != operation || !fault.path_matcher.matches(path) {
+                continue;
+            }
+            let occurrence = events
+                .iter()
+                .filter(|event| {
+                    event.operation == fault.operation && fault.path_matcher.matches(&event.path)
+                })
+                .count();
+            if occurrence == fault.occurrence {
+                return Err(std::io::Error::new(
+                    fault.error_kind,
+                    fault.error_message,
+                ));
+            }
+        }
+        Ok(())
+    }
+}
+
+impl PathMatcher {
+    fn matches(&self, path: &Path) -> bool {
+        match self {
+            Self::Any => true,
+            Self::Exact(expected) => path == expected,
+            Self::FileName(expected) => path.file_name().is_some_and(|name| name == *expected),
+        }
+    }
+}
+
+impl StorageTransactionIo for RecordingIo {
+    fn create_dir_all(&self, path: &Path) -> std::io::Result<()> {
+        self.record(RecordingOperation::CreateDirectory, path)?;
         FileSystemStorageTransactionIo.create_dir_all(path)
     }
-}
 
-impl FailingPrepareIo {
-    fn new(
-        fail_write_call: Option<usize>,
-        fail_file_sync_call: Option<usize>,
-        fail_sync_call: Option<usize>,
-    ) -> Self {
-        Self {
-            fail_write_call,
-            fail_file_sync_call,
-            fail_sync_call,
-            write_calls: AtomicUsize::new(0),
-            file_sync_calls: AtomicUsize::new(0),
-            sync_calls: AtomicUsize::new(0),
-        }
+    fn target_permissions(&self, path: &Path) -> std::io::Result<Option<fs::Permissions>> {
+        self.record(RecordingOperation::ReadTargetMetadata, path)?;
+        FileSystemStorageTransactionIo.target_permissions(path)
     }
-}
 
-impl StorageTransactionIo for FailingPrepareIo {
+    fn create_new_file(&self, path: &Path) -> std::io::Result<()> {
+        self.record(RecordingOperation::CreateFile, path)?;
+        FileSystemStorageTransactionIo.create_new_file(path)
+    }
+
+    fn set_permissions(&self, path: &Path, permissions: fs::Permissions) -> std::io::Result<()> {
+        self.record(RecordingOperation::SetPermissions, path)?;
+        FileSystemStorageTransactionIo.set_permissions(path, permissions)
+    }
+
     fn write_file(&self, path: &Path, bytes: &[u8]) -> std::io::Result<()> {
-        let call = self.write_calls.fetch_add(1, Ordering::SeqCst) + 1;
-        if self.fail_write_call == Some(call) {
-            return Err(std::io::Error::other("injected write/sync failure"));
-        }
+        self.record(RecordingOperation::WriteFile, path)?;
         FileSystemStorageTransactionIo.write_file(path, bytes)
     }
 
     fn sync_file(&self, path: &Path) -> std::io::Result<()> {
-        let call = self.file_sync_calls.fetch_add(1, Ordering::SeqCst) + 1;
-        if self.fail_file_sync_call == Some(call) {
-            return Err(std::io::Error::other("injected file sync failure"));
-        }
+        self.record(RecordingOperation::SyncFile, path)?;
         FileSystemStorageTransactionIo.sync_file(path)
     }
 
     fn sync_directory(&self, path: &Path) -> std::io::Result<()> {
-        let call = self.sync_calls.fetch_add(1, Ordering::SeqCst) + 1;
-        if self.fail_sync_call == Some(call) {
-            return Err(std::io::Error::other("injected directory sync failure"));
-        }
+        self.record(RecordingOperation::SyncDirectory, path)?;
         FileSystemStorageTransactionIo.sync_directory(path)
     }
-}
-
-#[derive(Clone, Copy)]
-enum FailingStagedFilePhase {
-    ReadMetadata,
-    Create,
-    SetPermissions,
-    Write,
-    Sync,
-}
-
-struct FailingStagedFileIo {
-    phase: FailingStagedFilePhase,
 }
 
 struct CommitOrderIo {
@@ -410,43 +444,6 @@ impl StorageTransactionIo for FailingCommitIo {
             return Err(std::io::Error::other("injected cleanup failure"));
         }
         FileSystemStorageTransactionIo.remove_dir_all(path)
-    }
-}
-
-impl StorageTransactionIo for FailingStagedFileIo {
-    fn target_permissions(&self, path: &Path) -> std::io::Result<Option<fs::Permissions>> {
-        if matches!(self.phase, FailingStagedFilePhase::ReadMetadata) {
-            return Err(std::io::Error::other("injected metadata failure"));
-        }
-        FileSystemStorageTransactionIo.target_permissions(path)
-    }
-
-    fn create_new_file(&self, path: &Path) -> std::io::Result<()> {
-        if matches!(self.phase, FailingStagedFilePhase::Create) {
-            return Err(std::io::Error::other("injected create failure"));
-        }
-        FileSystemStorageTransactionIo.create_new_file(path)
-    }
-
-    fn set_permissions(&self, path: &Path, permissions: fs::Permissions) -> std::io::Result<()> {
-        if matches!(self.phase, FailingStagedFilePhase::SetPermissions) {
-            return Err(std::io::Error::other("injected permission failure"));
-        }
-        FileSystemStorageTransactionIo.set_permissions(path, permissions)
-    }
-
-    fn write_file(&self, path: &Path, bytes: &[u8]) -> std::io::Result<()> {
-        if matches!(self.phase, FailingStagedFilePhase::Write) {
-            return Err(std::io::Error::other("injected write failure"));
-        }
-        FileSystemStorageTransactionIo.write_file(path, bytes)
-    }
-
-    fn sync_file(&self, path: &Path) -> std::io::Result<()> {
-        if matches!(self.phase, FailingStagedFilePhase::Sync) {
-            return Err(std::io::Error::other("injected sync failure"));
-        }
-        FileSystemStorageTransactionIo.sync_file(path)
     }
 }
 

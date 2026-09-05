@@ -39,9 +39,13 @@ fn test_prepare_staged_fileとimmutable_manifestを作成する() {
 fn test_prepare_staged_files_directory作成失敗時はuuid_directoryを残さない() {
     let storage_dir = TestStorageDir::new();
     let target_path = storage_dir.path.join("project.yaml");
-    let io = Arc::new(FailSecondCreateDirectoryIo {
-        create_calls: AtomicUsize::new(0),
-    });
+    let io = Arc::new(RecordingIo::new(vec![FaultRule {
+        operation: RecordingOperation::CreateDirectory,
+        path_matcher: PathMatcher::Any,
+        occurrence: 2,
+        error_kind: std::io::ErrorKind::Other,
+        error_message: "injected staged files directory failure",
+    }]));
 
     let actual = prepare(
         io,
@@ -130,37 +134,53 @@ fn test_prepare_同時実行では一方だけがactive_transactionを取得す�
 
 #[test]
 fn test_prepare_staged_file失敗はpathとphaseを保持する() {
-    for (phase, expected_operation, reports_target_path) in [
+    for (operation, expected_operation, reports_target_path, error_message) in [
         (
-            FailingStagedFilePhase::ReadMetadata,
+            RecordingOperation::ReadTargetMetadata,
             StorageTransactionOperation::ReadTargetMetadata,
             true,
+            "injected metadata failure",
         ),
         (
-            FailingStagedFilePhase::Create,
+            RecordingOperation::CreateFile,
             StorageTransactionOperation::CreateStagedFile,
             false,
+            "injected create failure",
         ),
         (
-            FailingStagedFilePhase::SetPermissions,
+            RecordingOperation::SetPermissions,
             StorageTransactionOperation::SetStagedPermissions,
             false,
+            "injected permission failure",
         ),
         (
-            FailingStagedFilePhase::Write,
+            RecordingOperation::WriteFile,
             StorageTransactionOperation::WriteStagedFile,
             false,
+            "injected write failure",
         ),
         (
-            FailingStagedFilePhase::Sync,
+            RecordingOperation::SyncFile,
             StorageTransactionOperation::SyncStagedFile,
             false,
+            "injected sync failure",
         ),
     ] {
         let storage_dir = TestStorageDir::new();
         let target_path = storage_dir.path.join("project.yaml");
         fs::write(&target_path, b"old").unwrap();
-        let io = Arc::new(FailingStagedFileIo { phase });
+        let path_matcher = if reports_target_path {
+            PathMatcher::Exact(target_path.clone())
+        } else {
+            PathMatcher::FileName("0")
+        };
+        let io = Arc::new(RecordingIo::new(vec![FaultRule {
+            operation,
+            path_matcher,
+            occurrence: 1,
+            error_kind: std::io::ErrorKind::Other,
+            error_message,
+        }]));
 
         let actual = prepare(
             io,
@@ -221,22 +241,40 @@ fn test_prepare_既存targetのpermissionをstaged_fileへ引き継ぐ() {
 
 #[test]
 fn test_prepare_途中のwriteとsync失敗ではlive_targetを変更しない() {
-    for (fail_write_call, fail_file_sync_call) in [
-        (Some(2), None),
-        (None, Some(2)),
-        (Some(3), None),
-        (None, Some(3)),
+    for (operation, occurrence, error_message) in [
+        (
+            RecordingOperation::WriteFile,
+            2,
+            "injected write/sync failure",
+        ),
+        (
+            RecordingOperation::SyncFile,
+            2,
+            "injected file sync failure",
+        ),
+        (
+            RecordingOperation::WriteFile,
+            3,
+            "injected write/sync failure",
+        ),
+        (
+            RecordingOperation::SyncFile,
+            3,
+            "injected file sync failure",
+        ),
     ] {
         let storage_dir = TestStorageDir::new();
         let first_target_path = storage_dir.path.join("first.yaml");
         let second_target_path = storage_dir.path.join("second.yaml");
         fs::write(&first_target_path, b"first-old").unwrap();
         fs::write(&second_target_path, b"second-old").unwrap();
-        let io = Arc::new(FailingPrepareIo::new(
-            fail_write_call,
-            fail_file_sync_call,
-            None,
-        ));
+        let io = Arc::new(RecordingIo::new(vec![FaultRule {
+            operation,
+            path_matcher: PathMatcher::Any,
+            occurrence,
+            error_kind: std::io::ErrorKind::Other,
+            error_message,
+        }]));
 
         let actual = prepare(
             io,
@@ -266,7 +304,13 @@ fn test_prepare_directory_sync失敗ではlive_targetを変更しない() {
         let storage_dir = TestStorageDir::new();
         let target_path = storage_dir.path.join("project.yaml");
         fs::write(&target_path, b"old").unwrap();
-        let io = Arc::new(FailingPrepareIo::new(None, None, Some(fail_sync_call)));
+        let io = Arc::new(RecordingIo::new(vec![FaultRule {
+            operation: RecordingOperation::SyncDirectory,
+            path_matcher: PathMatcher::Any,
+            occurrence: fail_sync_call,
+            error_kind: std::io::ErrorKind::Other,
+            error_message: "injected directory sync failure",
+        }]));
 
         let actual = prepare(
             io,
