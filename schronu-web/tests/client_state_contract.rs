@@ -866,6 +866,27 @@ fn read_manual_errorは同じoperation成功時に解消する() {
     assert_eq!(state.display_error(), None);
 }
 
+#[test]
+fn repository確認後はuncertain由来のtask_blockも残さない() {
+    let storage = FakeStorage::default();
+    let mut state = state_with_sessions(&storage, &[TASK_ID]);
+    let (request_id, _) = record_effect(state.begin_record_session(&storage, TASK_ID));
+    state.apply_record_result(
+        &storage,
+        request_id,
+        Err(ServerFailure::Operation(web_error(
+            web_error_codes::REPOSITORY_STATE_UNCERTAIN,
+            RetryAdvice::ManualCheck,
+        ))),
+    );
+    state.confirm_repository_checked(&storage);
+
+    assert!(matches!(
+        state.begin_record_session(&storage, TASK_ID),
+        ClientEffect::RecordSession { .. }
+    ));
+}
+
 #[derive(Default)]
 struct FakeStorage {
     value: RefCell<Option<String>>,
