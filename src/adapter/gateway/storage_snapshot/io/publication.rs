@@ -234,6 +234,18 @@ impl StableParent {
         }
     }
 
+    pub(in crate::adapter::gateway::storage_snapshot) fn remove_published_directory_if_present(
+        &self,
+        name: &std::ffi::OsStr,
+        published: &StableDirectory,
+    ) -> std::io::Result<()> {
+        if self.entry_exists(name)? {
+            self.remove_published_directory(name, published)
+        } else {
+            Ok(())
+        }
+    }
+
     pub(in crate::adapter::gateway::storage_snapshot) fn sync(
         &self,
         io: &dyn SnapshotIo,
@@ -482,6 +494,14 @@ impl StableParent {
     }
 
     pub(in crate::adapter::gateway::storage_snapshot) fn remove_published_directory(
+        &self,
+        _name: &std::ffi::OsStr,
+        _published: &StableDirectory,
+    ) -> std::io::Result<()> {
+        Err(unsupported_publication())
+    }
+
+    pub(in crate::adapter::gateway::storage_snapshot) fn remove_published_directory_if_present(
         &self,
         _name: &std::ffi::OsStr,
         _published: &StableDirectory,

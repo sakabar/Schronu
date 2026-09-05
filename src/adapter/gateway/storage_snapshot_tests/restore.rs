@@ -160,6 +160,9 @@ fn snapshot_restore失敗はdestinationもstagingも公開しない() {
             "{error}"
         );
         assert!(error.contains(&format!("injected {point:?} failure")), "{error}");
+        if point == SnapshotFailurePoint::ParentSync {
+            assert!(!error.contains("cleanup failed"), "{error}");
+        }
         assert!(!destination.exists(), "{point:?}");
         assert!(
             fs::read_dir(&root.path).unwrap().all(|entry| !entry

@@ -270,7 +270,9 @@ fn snapshot公開後のparent_sync失敗はrollback後にparentを再syncする(
         SnapshotFailurePoint::ParentSync,
     );
 
-    result.unwrap_err();
+    let error = result.unwrap_err().to_string();
+    assert!(error.contains("injected ParentSync failure"), "{error}");
+    assert!(!error.contains("cleanup failed"), "{error}");
     assert!(!destination.exists());
     assert_eq!(sync_count, 2);
 }

@@ -164,7 +164,7 @@ fn create_snapshot_impl(
     if let Err(primary) = result {
         return match publication
             .parent
-            .remove_published_directory(&staging_name, &staging_directory)
+            .remove_published_directory_if_present(&staging_name, &staging_directory)
         {
             Ok(()) => Err(primary),
             Err(cleanup) => Err(SnapshotError::followup_failure(
