@@ -6,6 +6,7 @@ use super::date_buttons::LogicalDateButton;
 pub use super::effect::ClientEffect;
 pub use super::history::{Locality, Operation, OperationHistoryEntry, Outcome};
 use super::safety_state::{load_mutation_safety, MutationSafetyState};
+use super::time_model::buffer_timing;
 use super::work_sessions::{
     load_work_sessions, unavailable_state, KeyValueStorage, StorageError, WorkSession,
     WorkSessionsState,
@@ -143,6 +144,25 @@ impl ClientState {
                     .find(|session| session.task_id == task_id)
                     .map(|session| session.actual_work_seconds_at_start)
             })
+    }
+
+    pub fn display_buffer_seconds(&self) -> Option<i128> {
+        let snapshot = self.snapshot()?;
+        let active_session_starts: Vec<_> = self
+            .sessions()
+            .iter()
+            .filter(|session| !self.is_session_committed_blocked(&session.task_id))
+            .map(|session| session.started_at_epoch_ms)
+            .collect();
+        Some(
+            buffer_timing(
+                snapshot.observed_at_epoch_ms,
+                snapshot.buffer_seconds,
+                self.tick_now_epoch_ms,
+                &active_session_starts,
+            )
+            .display_buffer_seconds,
+        )
     }
 
     pub fn switch_tab(&mut self, tab: ActiveTab) -> ClientEffect {

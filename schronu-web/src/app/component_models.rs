@@ -1,7 +1,6 @@
 use super::history_view::HistoryEntryViewModel;
 use super::list_view::DateButtonViewModel;
 use crate::client::state::{ActiveTab, ClientState, Locality, Operation, Outcome};
-use crate::client::time_model::buffer_timing;
 use crate::client::view_projection::{
     project_list_rows_for_browser, project_session_cards_for_browser, ListRowViewModel,
     SessionCardViewModel,
@@ -31,14 +30,7 @@ impl BrowserPageModel {
         Self {
             active_tab: state.active_tab(),
             tick_now_epoch_ms,
-            buffer: state.snapshot().map(|snapshot| {
-                buffer_timing(
-                    snapshot.observed_at_epoch_ms,
-                    snapshot.buffer_seconds,
-                    tick_now_epoch_ms,
-                )
-                .display_buffer_seconds
-            }),
+            buffer: state.display_buffer_seconds(),
             sessions: project_session_cards_for_browser(state),
             rows: project_list_rows_for_browser(state),
             active_task_ids: state

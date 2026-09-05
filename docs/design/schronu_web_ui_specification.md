@@ -342,14 +342,24 @@ remaining_seconds = remaining_at_start - elapsed_seconds
 server側:
 
 ```text
-buffer_seconds = remaining_free_seconds(logical_date, observed_at)
+end_of_day = end_of_day(logical_date)
+
+remaining_capacity_seconds =
+  observed_at < end_of_day:
+    free_seconds(observed_at, end_of_day, weekly_busy_time_slots)
+  observed_at >= end_of_day:
+    seconds(end_of_day - observed_at) // 0以下
+
+buffer_seconds = remaining_capacity_seconds
                - sum(
                    segment.scheduled_work_seconds
                    where logical_date(segment.scheduled_start) == logical_date
                  )
 ```
 
-`remaining_free_seconds`は06:00境界、Schronu設定、毎週固定の`busy_time_slot`を反映する。単発予定を`busy_time_slot`として追加しない。
+`remaining_capacity_seconds`は現在logical dateに対する符号付き残り容量である。`observed_at`が日次終端より前なら、06:00境界、Schronu設定、毎週固定の`busy_time_slot`を反映した残り空き秒とする。単発予定を`busy_time_slot`として追加しない。`observed_at`が日次終端ちょうどなら0、日次終端より後なら`end_of_day - observed_at`の負の秒数とし、`busy_time_slot`に関係なく日次終端後の全壁時計超過時間を含める。
+
+例えば日次終端が00:30、`observed_at`が01:10、同じlogical dateの予定残作業が62分なら、`remaining_capacity_seconds`は-40分、`buffer_seconds`は`-40分 - 62分 = -01:42:00`となる。
 
 予定作業秒の集計規則:
 
@@ -361,19 +371,31 @@ buffer_seconds = remaining_free_seconds(logical_date, observed_at)
 6. sync後のscheduleは通常`observed_at`より前に開始するsegmentを返さない。過去開始のsegmentが返った場合でも、開始時刻のlogical dateが一致すれば除外せず全量を加算する。
 7. `record_session`または`complete_session`による実績変更後は、operation開始時にsync済みのrepositoryからscheduleを再生成する。これにより更新後の残作業が同じresponseのbufferへ反映される。
 
-server snapshotのbufferでは進行中segmentから経過秒を引かない。browserは次の式でsnapshot後の経過秒を1回だけ差し引くため、serverとclientで二重減算しない。
+server snapshotのbufferでは進行中segmentから経過秒を引かない。browserは、計測中セッションが存在しない時間だけを次の規則で差し引く。server snapshotの観測時刻が日次終端以後でも、計測中セッションが0件ならsnapshot後の経過に応じて毎秒減算し、1件以上なら停止する。
 
 client側:
 
 ```text
 snapshot_elapsed = max(0, floor((tick_now - observed_at) / 1000))
-display_buffer = buffer_seconds - snapshot_elapsed
+active_sessions = work_sessions - server_commit済みでlocal削除に失敗したsessions
+earliest_active_start = min(active_sessions.started_at)
+
+buffer_elapsed =
+  active_sessionsが空: snapshot_elapsed
+  active_sessionsが存在: max(0, floor((min(tick_now, earliest_active_start) - observed_at) / 1000))
+
+display_buffer = buffer_seconds - buffer_elapsed
 ```
 
+- `snapshot_elapsed`は観測用に保持し、bufferから実際に引く値は`buffer_elapsed`とする。
+- 新しいserver responseを受信した場合は、その`buffer_seconds`と`observed_at`を新たな表示計算の基準とする。snapshot以前に開始した計測中セッションは、snapshot直後からbufferを停止する。snapshot以前の時間をclientで遡って補正しないため、serverが`busy_time_slot`を除いて算出したbufferへ壁時計時間を過剰加算しない。
+- `record_session`または`complete_session`のmutation responseは、対象実績を反映した`buffer_seconds`をそのまま新たな基準とする。server commit済みでlocalStorage削除だけに失敗した対象sessionは、以後のbuffer計算上の計測中sessionから除外する。
+- 複数の計測中セッションは、いずれか1件が存在する区間の和集合として扱う。すべて現在まで継続するため、最古の開始時刻から現在までbufferを停止し、重複時間を二重に補正しない。
+- 「破棄して解除」成功後は残存セッションから式全体を再計算する。最古セッションだけを破棄した場合は後発セッション開始前を未作業として追加減算し、全件破棄した場合はsnapshot後の全経過秒を減算する。localStorage保存失敗時はmemory stateを確定しないため、buffer表示も変化させない。
+- browser時計が後退した区間は0秒へclampする。時刻差と加減算は`i64`境界でもoverflowしない計算を用いる。
 - `display_buffer >= 0`: 通常色の`HH:MM:SS`
 - `display_buffer < 0`: 赤色の`-HH:MM:SS`
 - hourは総時間とし、24以上もそのまま表示する。
-- clientの06:00到達を監視してserver requestを送らない。
 
 ### 6.5 logical date buttons
 
@@ -418,8 +440,9 @@ display_buffer = buffer_seconds - snapshot_elapsed
 ### 7.4 操作結果
 
 - localStorage更新は、memory state確定前に保存成功を確認する。
+- 「破棄して解除」はlocalStorage削除成功後だけmemory stateを確定し、残存する計測中セッションからbufferを再計算する。server requestとtask実績更新は行わない。
 - server mutationは、response成功後にlocalStorageからsessionを削除する。
-- server errorまたはlocalStorage削除失敗ではsessionを残す。server保存成功後にlocalStorage削除だけが失敗した場合、responseの更新後実績を反映した競合案内を表示し、再送による二重加算を防ぐため対象buttonを無効化する。
+- server errorまたはlocalStorage削除失敗ではsessionを残す。server保存成功後にlocalStorage削除だけが失敗した場合、responseの更新後実績を反映した競合案内を表示し、再送による二重加算を防ぐため対象buttonを無効化し、対象sessionをbuffer計算上の計測中sessionから除外する。
 - in-flight中は対象sessionの4buttonを無効化する。他sessionの計測は継続する。globalまたはmanual safety block中はserver mutationの3buttonを無効化し、「破棄して解除」は利用可能とする。
 
 ## 8. Communication and persistence matrix
@@ -428,11 +451,11 @@ display_buffer = buffer_seconds - snapshot_elapsed
 | --- | --- | --- | --- | --- |
 | 初回表示 | `bootstrap` | なし | なし。復元時に元keyを書き換えない | なし |
 | tab切替 | なし | なし | なし | なし |
-| 毎秒tick | なし | なし | なし | なし |
+| 毎秒tick | なし | なし | なし。client stateからbufferを再計算 | なし |
 | 日付button | `list_tasks` | なし | なし | なし |
 | 自動セッション | `auto_session` | なし | session追加 | なし |
 | 一覧の「セッション」 | なし | なし | session追加 | なし |
-| 破棄して解除 | なし | なし | session削除 | なし |
+| 破棄して解除 | なし | なし | session削除。成功後にbuffer再計算 | なし |
 | 記録して解除 | safety marker保存後に`record_session` | 実績保存1回 | 送信前marker設定。確定応答後marker解除。成功後session削除 | なし |
 | 計測を破棄して完了の確認・キャンセル | なし | なし | card内の一時的な確認状態だけを変更 | なし |
 | 計測を破棄して完了の確定 | safety marker保存後に`complete_session(record_elapsed_seconds: false)` | 追加実績0の完了transaction 1回 | 送信前marker設定。確定応答後marker解除。成功後session削除 | なし |
@@ -496,6 +519,7 @@ OperationHistoryEntry {
 - CLIのtask未選択時no-opと成功時だけfocus解除する規則
 - MCPのtool名、tool数、JSON schema、required field、default、response、error
 - MCP `complete_task`の`task_id`、`finished_at`、`additional_actual_work_seconds`というwire入力
+- Schronu-webのserver API、`ServerSnapshot`を含むclient/server wire形式、localStorage schema
 - YAMLを含むtask storage schema
 - repository lock、transaction、rollback、state uncertainの区別
 
@@ -513,9 +537,9 @@ OperationHistoryEntry {
 - `complete_task`: 期待値一致、競合、負の追加秒、overflow、未完了の子、完了済み、反復task生成、各失敗時の全状態不変。
 - `complete_session`: 記録ありでは経過整数秒を加算し、記録なしでは開始時刻を使用せず追加実績0で完了すること。どちらも期待実績競合、反復task、未完了child、保存失敗の契約を維持し、成功responseが`ServerSnapshot`だけで次task情報を含まないこと。
 - 進捗計算: 開始時33%、100%、133%、見積0、長時間、乗算overflow回避。
-- buffer: 正、0、負、06:00前後、固定`busy_time_slot`、隣接logical dateの除外を検証する。
+- buffer: 正、0、負、06:00前後、日次終端前の固定`busy_time_slot`控除、隣接logical dateの除外を検証する。日次終端10分前で予定作業なしなら`+00:10:00`、日次終端ちょうどで予定作業なしなら`00:00:00`、日次終端40分後で予定作業なしなら`-00:40:00`、日次終端40分後で予定残作業62分なら`-01:42:00`となることを検証する。
 - buffer segment集計: 単一segment、同一taskの複数segment、複数task、進行中segment全量、同一logical date内の過去segment、`scheduled_work_seconds`合計overflowを検証する。
-- buffer更新: 実績変更後のschedule再生成と、clientでsnapshot経過秒を1回だけ減算することを検証する。
+- buffer更新: 実績変更後のschedule再生成と、日次終端の前後を問わずclientで計測中セッションが存在しない時間だけを毎秒減算し、1件以上存在する間は停止することを検証する。
 - read model: 指定日、開始時刻順、複数segment、schedule rank 0判定(task tree上の子の有無に非依存)、締切、候補なしの自動選定。
 
 ### 12.2 CLI互換性
@@ -539,6 +563,9 @@ OperationHistoryEntry {
 - entry不正と同一UUID重複では不正entryだけを除外し、初期化時はkeyを維持し、次のlocal state変更時にvalid entryだけでversion 1を書き戻すことを検証する。
 - reload、timer遅延、browser時計後退で開始時刻基準の経過秒になることを検証する。
 - session追加・破棄がserver callを生成しないことを検証する。
+- bufferはsession 0件、snapshot以前からのsession、snapshot後の途中開始、複数sessionの重複、最古sessionだけの破棄、全session破棄で、session不在時間だけを減算することを検証する。
+- 破棄のlocalStorage保存失敗ではsessionとbuffer表示を維持し、server commit済みでlocal削除に失敗したsessionはbuffer計算上の計測中sessionから除外することを検証する。
+- 同じlogical dateのread snapshot、実績反映済みmutation snapshot、06:00を跨ぐlogical date更新を新たなbuffer基準とし、snapshot以前の壁時計時間を過剰補正しないことを検証する。
 - 記録と2種類の完了についてserver mutation成功、競合、保存失敗、worker停止、多重送信防止、global・manual safety block時のsession遷移を検証する。
 - 各endpointの成功型がsnapshotを持ち、error型がsnapshotを持たず、clientがerror時に直前snapshotを維持することを検証する。
 - error codeごとの`retry_advice`がerror表と一致し、`manual_check`では同一requestを再送しないことを検証する。
@@ -578,7 +605,7 @@ OperationHistoryEntry {
 | 5 | REQ-APP-001..004、REQ-COMPAT-001..005 |
 | 6.2、6.3、7.2 | REQ-CARD-001..012 |
 | 4.4、4.5、7.4、9 | REQ-ACTION-001..009 |
-| 6.4 | REQ-BUFFER-001..006 |
+| 6.4 | REQ-BUFFER-001..010 |
 | 6.5、7.3 | REQ-LIST-001..010 |
 | 7.1、8、10 | REQ-COMMON-001..006、REQ-NET-001..006 |
 | 11、12 | REQ-COMPAT-001..005、全受入条件 |

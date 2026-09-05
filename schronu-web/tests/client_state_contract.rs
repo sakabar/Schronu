@@ -1,3 +1,4 @@
+use chrono::{Local, TimeZone};
 use schronu_web::client::state::{
     load_client_state, ActiveTab, ClientEffect, Locality, Operation, Outcome, ServerFailure,
 };
@@ -53,6 +54,202 @@ fn 通信matrixとstorage_firstのlocal状態遷移を固定する() {
     storage.fail_writes.set(false);
     assert_eq!(state.discard_session(&storage, TASK_ID), ClientEffect::None);
     assert!(state.sessions().is_empty());
+}
+
+#[test]
+fn bufferは成功したsession破棄で未作業時間を再計算する() {
+    let storage = FakeStorage::default();
+    let mut state = load_client_state(&storage, 1_000_000).unwrap();
+    let bootstrap_id = bootstrap_effect(state.request_bootstrap());
+    state.apply_bootstrap_result(bootstrap_id, Ok(snapshot("2026-09-05", 1_000_000)));
+
+    state.tick(1_010_000);
+    assert_eq!(
+        state.add_session_from_row(&storage, &row(TASK_ID, 0)),
+        ClientEffect::None
+    );
+    state.tick(1_020_000);
+    assert_eq!(
+        state.add_session_from_row(&storage, &row(OTHER_TASK_ID, 0)),
+        ClientEffect::None
+    );
+    state.tick(1_040_000);
+    assert_eq!(state.display_buffer_seconds(), Some(50));
+
+    storage.fail_writes.set(true);
+    assert_eq!(state.discard_session(&storage, TASK_ID), ClientEffect::None);
+    assert_eq!(state.sessions().len(), 2);
+    assert_eq!(state.display_buffer_seconds(), Some(50));
+
+    storage.fail_writes.set(false);
+    assert_eq!(state.discard_session(&storage, TASK_ID), ClientEffect::None);
+    assert_eq!(state.display_buffer_seconds(), Some(40));
+
+    assert_eq!(
+        state.discard_session(&storage, OTHER_TASK_ID),
+        ClientEffect::None
+    );
+    assert_eq!(state.display_buffer_seconds(), Some(20));
+}
+
+#[test]
+fn server_commit済みでlocal削除失敗したsessionはbufferを停止しない() {
+    let storage = FakeStorage::default();
+    let mut state = state_with_sessions(&storage, &[TASK_ID]);
+    let bootstrap_id = bootstrap_effect(state.request_bootstrap());
+    state.apply_bootstrap_result(bootstrap_id, Ok(snapshot("2026-09-05", 0)));
+
+    state.tick(60_000);
+    let (request_id, _) = record_effect(state.begin_record_session(&storage, TASK_ID));
+    storage.fail_work_session_writes.set(true);
+    state.apply_record_result(
+        &storage,
+        request_id,
+        Ok(WebSuccess {
+            snapshot: snapshot("2026-09-05", 60_000),
+            data: RecordSessionResult {
+                actual_work_seconds: 160,
+            },
+        }),
+    );
+    state.tick(90_000);
+
+    assert!(state.is_session_committed_blocked(TASK_ID));
+    assert_eq!(state.display_buffer_seconds(), Some(30));
+}
+
+#[test]
+fn active_session中の新しいsnapshotを新たなbuffer基準にする() {
+    let storage = FakeStorage::default();
+    let mut state = load_client_state(&storage, 1_000_000).unwrap();
+    let bootstrap_id = bootstrap_effect(state.request_bootstrap());
+    state.apply_bootstrap_result(bootstrap_id, Ok(snapshot("2026-09-05", 1_000_000)));
+
+    state.tick(1_010_000);
+    state.add_session_from_row(&storage, &row(TASK_ID, 0));
+    state.tick(1_030_000);
+    let (request_id, request) = list_effect(state.request_list("2026-09-05"));
+    state.apply_list_result(
+        request_id,
+        &request.logical_date,
+        Ok(WebSuccess {
+            snapshot: schronu_web::ServerSnapshot {
+                observed_at_epoch_ms: 1_030_000,
+                logical_date: "2026-09-05".to_owned(),
+                buffer_seconds: 30,
+            },
+            data: Vec::new(),
+        }),
+    );
+    state.tick(1_040_000);
+
+    assert_eq!(state.display_buffer_seconds(), Some(30));
+    state.discard_session(&storage, TASK_ID);
+    assert_eq!(state.display_buffer_seconds(), Some(20));
+}
+
+#[test]
+fn active_session中にbusy_timeを跨いだsnapshotは壁時計時間をcreditしない() {
+    let storage = FakeStorage::default();
+    let mut state = load_client_state(&storage, 1_000_000).unwrap();
+    let bootstrap_id = bootstrap_effect(state.request_bootstrap());
+    state.apply_bootstrap_result(bootstrap_id, Ok(snapshot("2026-09-05", 1_000_000)));
+
+    state.tick(1_010_000);
+    state.add_session_from_row(&storage, &row(TASK_ID, 0));
+    state.tick(1_030_000);
+    let (request_id, request) = list_effect(state.request_list("2026-09-05"));
+    state.apply_list_result(
+        request_id,
+        &request.logical_date,
+        Ok(WebSuccess {
+            snapshot: schronu_web::ServerSnapshot {
+                observed_at_epoch_ms: 1_030_000,
+                logical_date: "2026-09-05".to_owned(),
+                buffer_seconds: 50,
+            },
+            data: Vec::new(),
+        }),
+    );
+    state.tick(1_040_000);
+
+    assert_eq!(state.display_buffer_seconds(), Some(50));
+}
+
+#[test]
+fn 複数session中の記録snapshotを新たなbuffer基準にする() {
+    let storage = FakeStorage::default();
+    let mut state = load_client_state(&storage, 1_000_000).unwrap();
+    let bootstrap_id = bootstrap_effect(state.request_bootstrap());
+    state.apply_bootstrap_result(bootstrap_id, Ok(snapshot("2026-09-05", 1_000_000)));
+
+    state.tick(1_010_000);
+    state.add_session_from_row(&storage, &row(OTHER_TASK_ID, 0));
+    state.tick(1_020_000);
+    state.add_session_from_row(&storage, &row(TASK_ID, 0));
+    state.tick(1_030_000);
+    let (request_id, _) = record_effect(state.begin_record_session(&storage, TASK_ID));
+    state.apply_record_result(
+        &storage,
+        request_id,
+        Ok(WebSuccess {
+            snapshot: schronu_web::ServerSnapshot {
+                observed_at_epoch_ms: 1_030_000,
+                logical_date: "2026-09-05".to_owned(),
+                buffer_seconds: 40,
+            },
+            data: RecordSessionResult {
+                actual_work_seconds: 110,
+            },
+        }),
+    );
+    state.tick(1_040_000);
+
+    assert_eq!(state.display_buffer_seconds(), Some(40));
+    state.discard_session(&storage, OTHER_TASK_ID);
+    assert_eq!(state.display_buffer_seconds(), Some(30));
+}
+
+#[test]
+fn logical_date変更snapshotを新たなbuffer基準にする() {
+    let boundary = Local
+        .with_ymd_and_hms(2026, 9, 6, 6, 0, 0)
+        .single()
+        .expect("06:00 must be an unambiguous local time")
+        .timestamp_millis();
+    let storage = FakeStorage::default();
+    let mut state = load_client_state(&storage, boundary - 10_000).unwrap();
+    let bootstrap_id = bootstrap_effect(state.request_bootstrap());
+    state.apply_bootstrap_result(
+        bootstrap_id,
+        Ok(schronu_web::ServerSnapshot {
+            observed_at_epoch_ms: boundary - 10_000,
+            logical_date: "2026-09-05".to_owned(),
+            buffer_seconds: 60,
+        }),
+    );
+
+    state.tick(boundary - 5_000);
+    state.add_session_from_row(&storage, &row(TASK_ID, 0));
+    state.tick(boundary + 10_000);
+    let (request_id, request) = list_effect(state.request_list("2026-09-06"));
+    state.apply_list_result(
+        request_id,
+        &request.logical_date,
+        Ok(WebSuccess {
+            snapshot: schronu_web::ServerSnapshot {
+                observed_at_epoch_ms: boundary + 10_000,
+                logical_date: "2026-09-06".to_owned(),
+                buffer_seconds: 50,
+            },
+            data: Vec::new(),
+        }),
+    );
+    state.tick(boundary + 20_000);
+
+    assert_eq!(state.display_buffer_seconds(), Some(50));
+    state.discard_session(&storage, TASK_ID);
+    assert_eq!(state.display_buffer_seconds(), Some(40));
 }
 
 #[test]

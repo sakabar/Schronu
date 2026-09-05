@@ -1,6 +1,6 @@
 use super::web_service::{build_server_snapshot, calculate_buffer_seconds};
 use crate::application::interface::TaskRepositoryTrait;
-use crate::test_support::{TestFreeTimeManager, TestTaskRepository};
+use crate::test_support::{new_task_handle_at, TestFreeTimeManager, TestTaskRepository};
 use chrono::{Duration, Local, NaiveDate, TimeZone};
 
 #[test]
@@ -88,4 +88,36 @@ fn snapshotの残り空き時間はbusy_time_slotを反映する() {
     let snapshot = build_server_snapshot(&mut repository, &mut free_time, now).unwrap();
 
     assert_eq!(snapshot.buffer_seconds, 4 * 60 * 60 + 29 * 60);
+}
+
+#[test]
+fn snapshotは日次終端の前後を符号付きの残り容量として返す() {
+    for (now, expected_buffer_seconds) in [
+        (Local.with_ymd_and_hms(2026, 9, 6, 0, 20, 0).unwrap(), 600),
+        (Local.with_ymd_and_hms(2026, 9, 6, 0, 30, 0).unwrap(), 0),
+        (
+            Local.with_ymd_and_hms(2026, 9, 6, 1, 10, 0).unwrap(),
+            -2_400,
+        ),
+    ] {
+        let mut repository = TestTaskRepository::new(vec![], now);
+        let mut free_time = TestFreeTimeManager::new(0);
+
+        let snapshot = build_server_snapshot(&mut repository, &mut free_time, now).unwrap();
+
+        assert_eq!(snapshot.buffer_seconds, expected_buffer_seconds);
+    }
+}
+
+#[test]
+fn snapshotは日次終端後の超過秒と残作業秒をともに減算する() {
+    let now = Local.with_ymd_and_hms(2026, 9, 6, 1, 10, 0).unwrap();
+    let task = new_task_handle_at("残作業62分", now).unwrap();
+    task.set_estimated_work_seconds(62 * 60).unwrap();
+    let mut repository = TestTaskRepository::new(vec![task], now);
+    let mut free_time = TestFreeTimeManager::new(0);
+
+    let snapshot = build_server_snapshot(&mut repository, &mut free_time, now).unwrap();
+
+    assert_eq!(snapshot.buffer_seconds, -(40 + 62) * 60);
 }
