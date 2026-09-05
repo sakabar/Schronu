@@ -144,6 +144,31 @@ fn session_card_renders_time_progress_overrun_and_four_typed_actions() {
 }
 
 #[test]
+fn session操作は意味別classと狭幅1列layoutを持つ() {
+    let (html, _) = render(vec![card("task-1")], false);
+    for class in [
+        "session-action-discard",
+        "session-action-record",
+        "session-action-complete-without-recording",
+        "session-action-complete",
+    ] {
+        assert!(html.contains(&format!("class=\"{class}\"")), "{html}");
+    }
+
+    let css = include_str!("../../assets/main.css");
+    assert!(!css.contains(".session-actions button:nth-child"));
+    let narrow_layout = css
+        .split_once("@media (max-width: 34rem)")
+        .expect("narrow viewport rule must exist")
+        .1;
+    let session_actions = narrow_layout
+        .split_once(".session-actions")
+        .expect("narrow session actions rule must exist")
+        .1;
+    assert!(session_actions.contains("grid-template-columns: 1fr;"));
+}
+
+#[test]
 fn unavailable_completion_and_progress_render_placeholders() {
     let mut unavailable = card("task-1");
     unavailable.completion_hh_mm = None;
