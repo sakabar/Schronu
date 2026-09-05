@@ -1,5 +1,80 @@
-use crate::adapter::gateway::storage_snapshot::{create_snapshot_at, verify_snapshot};
+use crate::adapter::gateway::storage_snapshot::{
+    create_snapshot_at, verify_snapshot, verify_snapshot_with_limits, SnapshotResourceLimits,
+};
 use chrono::TimeZone;
+use walkdir::WalkDir;
+
+#[test]
+fn snapshot_verify_resource_limitは境界を許可し超過をtyped拒否する() {
+    let (_root, snapshot, _) = create_source_independent_snapshot("verify-resource-limits");
+    let manifest_bytes = fs::metadata(snapshot.join("manifest.json")).unwrap().len();
+    let payload = snapshot.join("storage");
+    let entries = WalkDir::new(&payload)
+        .into_iter()
+        .filter_map(Result::ok)
+        .filter(|entry| entry.depth() > 0)
+        .collect::<Vec<_>>();
+    let files = entries
+        .iter()
+        .filter(|entry| entry.file_type().is_file())
+        .collect::<Vec<_>>();
+    let file_count = files.len();
+    let file_bytes = files
+        .iter()
+        .map(|entry| entry.metadata().unwrap().len())
+        .max()
+        .unwrap();
+    let total_bytes = files
+        .iter()
+        .map(|entry| entry.metadata().unwrap().len())
+        .sum::<u64>();
+    let logical_paths = entries
+        .iter()
+        .map(|entry| entry.path().strip_prefix(&payload).unwrap())
+        .collect::<Vec<_>>();
+    let path_bytes = logical_paths
+        .iter()
+        .map(|path| path.to_str().unwrap().len())
+        .max()
+        .unwrap();
+    let depth = logical_paths
+        .iter()
+        .map(|path| path.components().count())
+        .max()
+        .unwrap();
+    let exact = SnapshotResourceLimits::new(
+        manifest_bytes,
+        file_count,
+        file_bytes,
+        total_bytes,
+        path_bytes,
+        depth,
+    );
+
+    verify_snapshot_with_limits(&snapshot, exact).unwrap();
+
+    for (limits, expected) in [
+        (
+            exact.with_manifest_bytes(manifest_bytes - 1),
+            "ManifestBytes",
+        ),
+        (exact.with_file_count(file_count - 1), "FileCount"),
+        (exact.with_file_bytes(file_bytes - 1), "FileBytes"),
+        (
+            exact.with_total_bytes(total_bytes - 1),
+            "PayloadBytes",
+        ),
+        (exact.with_path_bytes(path_bytes - 1), "PathBytes"),
+        (exact.with_depth(depth - 1), "PathDepth"),
+    ] {
+        let error = verify_snapshot_with_limits(&snapshot, limits)
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains(expected), "{error}");
+        assert!(error.contains("limit="), "{error}");
+        assert!(error.contains("observed="), "{error}");
+    }
+}
 
 fn create_source_independent_snapshot(label: &str) -> (TestDirectory, PathBuf, PathBuf) {
     let root = TestDirectory::new(label);
