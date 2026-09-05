@@ -1,12 +1,16 @@
 use super::{RecordSessionRequest, WebReadError, WebService};
 use crate::adapter::gateway::schronu_config::SchronuConfig;
 use crate::adapter::gateway::storage_lock::{LockMode, StorageLock, StorageLockErrorKind};
+use crate::adapter::gateway::storage_transaction_test_support::{
+    FaultRule, PathMatcher, RecordingIo, RecordingOperation,
+};
 use crate::adapter::gateway::task_repository::TaskRepository;
 use crate::application::interface::TaskRepositoryTrait;
 use crate::entity::task::{Status, TaskAttr, TaskHandle};
 use chrono::{Duration, Local, NaiveDate, TimeZone};
 use std::fs;
 use std::path::PathBuf;
+use std::sync::Arc;
 use uuid::Uuid;
 
 struct WebReadServiceFixture {
@@ -540,4 +544,72 @@ fn complete_sessionは反復task生成と元task完了を同じ保存で反映�
     assert!(children
         .iter()
         .any(|child| child.get_id().unwrap() != child_id));
+}
+
+#[test]
+fn record_sessionはcommit前save失敗後に同一requestを再試行できる() {
+    let operation_now = Local.with_ymd_and_hms(2026, 9, 5, 19, 1, 0).unwrap();
+    let fixture = WebReadServiceFixture::new();
+    let task_id = fixture.seed_fixed_task(operation_now - Duration::hours(1));
+    let request = RecordSessionRequest {
+        task_id: task_id.to_string(),
+        started_at_epoch_ms: operation_now.timestamp_millis() - 60_000,
+        expected_actual_work_seconds: 300,
+    };
+    let io = Arc::new(RecordingIo::new(vec![FaultRule {
+        operation: RecordingOperation::CreateDirectory,
+        path_matcher: PathMatcher::FileName(".transactions"),
+        occurrence: 1,
+        error_kind: std::io::ErrorKind::Other,
+        error_message: "injected pre-commit failure",
+    }]));
+    let mut service = WebService::new(fixture.storage.clone(), fixture.config());
+    service.set_mutation_repository_factory(move |storage_path| {
+        TaskRepository::new_with_storage_transaction_io(storage_path, io.clone())
+    });
+
+    assert!(matches!(
+        service.record_session_at(operation_now, request.clone()),
+        Err(WebReadError::RepositorySaveFailed(_))
+    ));
+    assert_eq!(
+        service
+            .record_session_at(operation_now, request)
+            .unwrap()
+            .data
+            .actual_work_seconds,
+        360
+    );
+}
+
+#[test]
+fn record_sessionはcommit後save失敗で後続mutationを拒否する() {
+    let operation_now = Local.with_ymd_and_hms(2026, 9, 5, 19, 1, 0).unwrap();
+    let fixture = WebReadServiceFixture::new();
+    let task_id = fixture.seed_fixed_task(operation_now - Duration::hours(1));
+    let request = RecordSessionRequest {
+        task_id: task_id.to_string(),
+        started_at_epoch_ms: operation_now.timestamp_millis() - 60_000,
+        expected_actual_work_seconds: 300,
+    };
+    let io = Arc::new(RecordingIo::new(vec![FaultRule {
+        operation: RecordingOperation::WriteFile,
+        path_matcher: PathMatcher::FileNamePrefix(".project.yaml."),
+        occurrence: 1,
+        error_kind: std::io::ErrorKind::Other,
+        error_message: "injected post-commit failure",
+    }]));
+    let mut service = WebService::new(fixture.storage.clone(), fixture.config());
+    service.set_mutation_repository_factory(move |storage_path| {
+        TaskRepository::new_with_storage_transaction_io(storage_path, io.clone())
+    });
+
+    assert!(matches!(
+        service.record_session_at(operation_now, request.clone()),
+        Err(WebReadError::RepositoryStateUncertain(_))
+    ));
+    assert!(matches!(
+        service.record_session_at(operation_now, request),
+        Err(WebReadError::RepositoryPoisoned)
+    ));
 }
