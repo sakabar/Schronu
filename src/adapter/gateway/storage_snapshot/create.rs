@@ -1,6 +1,6 @@
 use super::error::{SnapshotError, SnapshotOperation};
 use super::io::{rename_no_replace, FileSystemSnapshotIo, SnapshotIo};
-use super::layout::{is_reserved_path, MANIFEST_FILE_NAME, PAYLOAD_DIRECTORY_NAME};
+use super::layout::{is_reserved_path, staging_path, MANIFEST_FILE_NAME, PAYLOAD_DIRECTORY_NAME};
 use super::manifest::{
     decode_manifest, encode_manifest, DigestDescriptor, DirectoryEntry, FileEntry,
     SnapshotManifest, DIGEST_VERSION, FORMAT_VERSION,
@@ -190,20 +190,6 @@ fn read_revision(files: &[CollectedFile]) -> Result<Option<Uuid>, SnapshotError>
     Uuid::parse_str(text.trim())
         .map(Some)
         .map_err(|error| SnapshotError::new(SnapshotOperation::Validate, &file.path, error))
-}
-
-fn staging_path(destination: &Path) -> Result<PathBuf, SnapshotError> {
-    let parent = destination
-        .parent()
-        .expect("validated destination has a parent directory");
-    let name = destination
-        .file_name()
-        .ok_or_else(|| invalid(destination, "snapshot destination must have a file name"))?;
-    Ok(parent.join(format!(
-        ".{}.tmp-{}",
-        name.to_string_lossy(),
-        Uuid::new_v4().hyphenated()
-    )))
 }
 
 fn publish_snapshot(

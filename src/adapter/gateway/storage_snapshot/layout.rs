@@ -1,8 +1,24 @@
 use super::error::{SnapshotError, SnapshotOperation};
 use std::path::{Component, Path, PathBuf};
+use uuid::Uuid;
 
 pub(super) const MANIFEST_FILE_NAME: &str = "manifest.json";
 pub(super) const PAYLOAD_DIRECTORY_NAME: &str = "storage";
+
+pub(super) fn staging_path(destination: &Path) -> Result<PathBuf, SnapshotError> {
+    let parent = destination
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+        .ok_or_else(|| invalid_path(destination, "destination must have a parent directory"))?;
+    let name = destination
+        .file_name()
+        .ok_or_else(|| invalid_path(destination, "destination must have a file name"))?;
+    Ok(parent.join(format!(
+        ".{}.tmp-{}",
+        name.to_string_lossy(),
+        Uuid::new_v4().hyphenated()
+    )))
+}
 
 pub(super) fn validate_relative_path(path: &Path) -> Result<PathBuf, SnapshotError> {
     if path.as_os_str().is_empty() || path.is_absolute() {

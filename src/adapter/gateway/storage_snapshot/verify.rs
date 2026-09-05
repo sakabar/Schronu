@@ -13,7 +13,19 @@ use std::path::{Path, PathBuf};
 pub fn verify_snapshot(
     snapshot_directory: impl AsRef<Path>,
 ) -> Result<SnapshotSummary, SnapshotError> {
-    let snapshot = snapshot_directory.as_ref();
+    let verified = load_verified_snapshot(snapshot_directory.as_ref())?;
+    Ok(SnapshotSummary::new(
+        verified.manifest.revision,
+        verified.manifest.files.len(),
+    ))
+}
+
+pub(super) struct VerifiedSnapshot {
+    pub(super) manifest: SnapshotManifest,
+    pub(super) tree: DirectoryTree,
+}
+
+pub(super) fn load_verified_snapshot(snapshot: &Path) -> Result<VerifiedSnapshot, SnapshotError> {
     let tree = read_directory_tree(snapshot)
         .map_err(|error| SnapshotError::new(SnapshotOperation::Read, snapshot, error))?;
     validate_snapshot_root(snapshot, &tree)?;
@@ -27,10 +39,7 @@ pub fn verify_snapshot(
     let revision_bytes = verify_payload(snapshot, &tree, &manifest)?;
     verify_revision(snapshot, &manifest, revision_bytes)?;
     strict_validate_payload(snapshot, &tree)?;
-    Ok(SnapshotSummary::new(
-        manifest.revision,
-        manifest.files.len(),
-    ))
+    Ok(VerifiedSnapshot { manifest, tree })
 }
 
 fn strict_validate_payload(snapshot: &Path, tree: &DirectoryTree) -> Result<(), SnapshotError> {
