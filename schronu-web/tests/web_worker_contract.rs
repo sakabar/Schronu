@@ -1,7 +1,7 @@
 use schronu_web::{
-    CompleteSessionResponse, ListTasksRequest, RecordSessionRequest, RecordSessionResult,
-    ScheduledTaskRow, ServerSnapshot, SessionTask, WebError, WebOperations, WebSuccess,
-    WebWorkerHandle,
+    web_error_codes, CompleteSessionResponse, ListTasksRequest, RecordSessionRequest,
+    RecordSessionResult, RetryAdvice, ScheduledTaskRow, ServerSnapshot, SessionTask, WebError,
+    WebOperations, WebSuccess, WebWorkerHandle,
 };
 use std::sync::{Arc, Mutex};
 use std::thread;
@@ -72,6 +72,17 @@ fn workerは5操作を送信順に専用threadで実行してpayloadを保持す
     );
 }
 
+#[test]
+fn worker停止時だけworker_unavailableをretry可能として返す() {
+    let worker = WebWorkerHandle::spawn(|| PanickingOperations);
+
+    let error = futures::executor::block_on(worker.bootstrap())
+        .expect_err("stopped worker must return an error");
+
+    assert_eq!(error.code, web_error_codes::WORKER_UNAVAILABLE);
+    assert_eq!(error.retry_advice, RetryAdvice::Retry);
+}
+
 #[derive(Debug, PartialEq)]
 enum Event {
     Factory(thread::ThreadId),
@@ -84,6 +95,39 @@ enum Event {
 
 struct RecordingOperations {
     events: Arc<Mutex<Vec<Event>>>,
+}
+
+struct PanickingOperations;
+
+impl WebOperations for PanickingOperations {
+    fn bootstrap(&mut self) -> Result<ServerSnapshot, WebError> {
+        panic!("injected worker stop")
+    }
+
+    fn list_tasks(
+        &mut self,
+        _request: ListTasksRequest,
+    ) -> Result<WebSuccess<Vec<ScheduledTaskRow>>, WebError> {
+        unreachable!()
+    }
+
+    fn auto_session(&mut self) -> Result<WebSuccess<Option<SessionTask>>, WebError> {
+        unreachable!()
+    }
+
+    fn record_session(
+        &mut self,
+        _request: RecordSessionRequest,
+    ) -> Result<WebSuccess<RecordSessionResult>, WebError> {
+        unreachable!()
+    }
+
+    fn complete_session(
+        &mut self,
+        _request: RecordSessionRequest,
+    ) -> Result<CompleteSessionResponse, WebError> {
+        unreachable!()
+    }
 }
 
 impl WebOperations for RecordingOperations {
