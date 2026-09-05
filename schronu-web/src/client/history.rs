@@ -11,6 +11,7 @@ pub enum Operation {
     DiscardSession,
     RecordSession,
     CompleteSession,
+    ConfirmRepositoryCheck,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

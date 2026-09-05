@@ -239,6 +239,16 @@ impl ClientState {
         self.committed_blocked_task_ids.contains(task_id)
     }
 
+    pub fn mutation_globally_blocked(&self) -> bool {
+        self.mutation_globally_blocked
+    }
+
+    pub fn mutation_safety_warning(&self) -> Option<&'static str> {
+        self.mutation_globally_blocked.then_some(
+            "repositoryの状態を手動確認するまで、セッションの記録と完了は停止されています。",
+        )
+    }
+
     pub fn display_actual_work_seconds(&self, task_id: &str) -> Option<i64> {
         self.committed_actual_work_seconds
             .get(task_id)
@@ -348,6 +358,27 @@ impl ClientState {
         task_id: &str,
     ) -> ClientEffect {
         self.begin_mutation(storage, task_id, MutationKind::Complete)
+    }
+
+    pub fn confirm_repository_checked<S: KeyValueStorage>(&mut self, storage: &S) -> ClientEffect {
+        if !self.mutation_globally_blocked || !self.pending_mutations.is_empty() {
+            return ClientEffect::None;
+        }
+        let result = self.mutation_safety.disarm(storage);
+        if result.is_ok() {
+            self.mutation_globally_blocked = false;
+            if matches!(
+                &self.display_error,
+                Some(DisplayError::Operation {
+                    error: WebError { code, .. },
+                    ..
+                }) if code == crate::web_error_codes::REPOSITORY_STATE_UNCERTAIN
+            ) {
+                self.display_error = None;
+            }
+        }
+        self.record_local_result(Operation::ConfirmRepositoryCheck, None, result.is_ok());
+        ClientEffect::None
     }
 
     fn add_session<S: KeyValueStorage>(&mut self, storage: &S, task: &SessionTask) {
