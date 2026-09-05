@@ -299,7 +299,10 @@ impl ClientState {
                 operation,
                 task_id: task_id.map(ToOwned::to_owned),
             },
-            ServerFailure::Transport(_) => DisplayError::Transport,
+            ServerFailure::Transport(_) => DisplayError::Transport {
+                operation,
+                task_id: task_id.map(ToOwned::to_owned),
+            },
         });
         self.record_server(
             operation,

@@ -25,7 +25,10 @@ pub enum DisplayError {
         operation: Operation,
         task_id: Option<String>,
     },
-    Transport,
+    Transport {
+        operation: Operation,
+        task_id: Option<String>,
+    },
     LocalStorage {
         committed_on_server: bool,
         task_id: Option<String>,
@@ -36,7 +39,14 @@ impl DisplayError {
     pub fn message(&self) -> &str {
         match self {
             Self::Operation { error, .. } => &error.message,
-            Self::Transport => "通信に失敗しました。時間をおいて再試行してください。",
+            Self::Transport { operation, .. }
+                if is_read_operation(*operation) =>
+            {
+                "通信に失敗しました。時間をおいて再試行してください。"
+            }
+            Self::Transport { .. } => {
+                "通信結果を確認できません。repositoryの状態を手動確認してください。"
+            }
             Self::LocalStorage {
                 committed_on_server: true,
                 ..
@@ -49,34 +59,33 @@ impl DisplayError {
     }
 
     pub fn retryable(&self) -> bool {
-        matches!(
-            self,
-            Self::Transport
-                | Self::Operation {
-                    error: WebError {
-                        retry_advice: crate::RetryAdvice::Retry,
-                        ..
-                    },
-                    ..
-                }
-        )
+        match self {
+            Self::Transport { operation, .. } => is_read_operation(*operation),
+            Self::Operation { error, .. } => error.retry_advice == crate::RetryAdvice::Retry,
+            Self::LocalStorage { .. } => false,
+        }
     }
 
     fn is_resolved_by_server_success(&self, operation: Operation, task_id: Option<&str>) -> bool {
-        matches!(self, Self::Transport)
-            || matches!(
-                self,
-                Self::Operation {
-                    error,
-                    operation: error_operation,
-                    task_id: error_task_id,
-                } if *error_operation == operation
-                    && error_task_id.as_deref() == task_id
-                    && (error.retry_advice == crate::RetryAdvice::Retry
-                        || (error_task_id.is_none()
-                            && error.code
-                                != crate::web_error_codes::REPOSITORY_STATE_UNCERTAIN))
-            )
+        matches!(
+            self,
+            Self::Transport {
+                operation: error_operation,
+                task_id: error_task_id,
+            } if *error_operation == operation && error_task_id.as_deref() == task_id
+        ) || matches!(
+            self,
+            Self::Operation {
+                error,
+                operation: error_operation,
+                task_id: error_task_id,
+            } if *error_operation == operation
+                && error_task_id.as_deref() == task_id
+                && (error.retry_advice == crate::RetryAdvice::Retry
+                    || (error_task_id.is_none()
+                        && error.code
+                            != crate::web_error_codes::REPOSITORY_STATE_UNCERTAIN))
+        )
     }
 
     fn is_resolved_by_local_success(&self) -> bool {
@@ -104,6 +113,13 @@ impl DisplayError {
                 && code != crate::web_error_codes::REPOSITORY_STATE_UNCERTAIN
         )
     }
+}
+
+fn is_read_operation(operation: Operation) -> bool {
+    matches!(
+        operation,
+        Operation::Bootstrap | Operation::ListTasks | Operation::AutoSession
+    )
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
