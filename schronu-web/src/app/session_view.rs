@@ -3,6 +3,10 @@ use dioxus::prelude::*;
 use crate::client::time_model::format_mm_ss;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[cfg_attr(
+    not(test),
+    expect(dead_code, reason = "used by the pending app integration")
+)]
 pub enum SessionActionKind {
     Discard,
     Record,
@@ -44,7 +48,11 @@ pub fn SessionView(
                     class: "primary-action",
                     r#type: "button",
                     disabled: global_blocked,
-                    onclick: move |_| on_auto_session.call(()),
+                    onclick: move |_| {
+                        if !global_blocked {
+                            on_auto_session.call(());
+                        }
+                    },
                     "自動セッション"
                 }
             }
@@ -147,10 +155,14 @@ fn SessionActionButton(
         button {
             r#type: "button",
             disabled,
-            onclick: move |_| on_action.call(SessionAction {
-                task_id: task_id.clone(),
-                kind,
-            }),
+            onclick: move |_| {
+                if !disabled {
+                    on_action.call(SessionAction {
+                        task_id: task_id.clone(),
+                        kind,
+                    });
+                }
+            },
             "{label}"
         }
     }
