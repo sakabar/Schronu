@@ -220,6 +220,8 @@ mod output_contract_tests;
 #[cfg(test)]
 mod protocol_contract_tests;
 #[cfg(test)]
+mod task_name_contract_tests;
+#[cfg(test)]
 mod test_support;
 #[cfg(test)]
 mod tool_contract_tests;
