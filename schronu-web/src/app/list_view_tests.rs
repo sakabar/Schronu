@@ -26,10 +26,10 @@ fn root(props: RootProps) -> Element {
             active_task_ids: props.active_task_ids,
             tick_now_epoch_ms: props.tick_now_epoch_ms,
             on_select_date: move |date: String| date_events.lock().unwrap().push(format!("date:{date}")),
-            on_start_session: move |(task, _): (SessionTask, bool)| task_events
+            on_start_session: move |(task, is_leaf): (SessionTask, bool)| task_events
                 .lock()
                 .unwrap()
-                .push(format!("task:{}:{}", task.task_id, task.task_name)),
+                .push(format!("task:{}:{}:{is_leaf}", task.task_id, task.task_name)),
         }
     }
 }
@@ -167,7 +167,18 @@ fn date_and_task_clicks_dispatch_exact_payload_once() {
         events: Arc::clone(&events),
     });
     dispatch_click(&task_dom, task_listeners[0]);
-    assert_eq!(*events.lock().unwrap(), ["task:task-id:task task-id"]);
+    assert_eq!(*events.lock().unwrap(), ["task:task-id:task task-id:false"]);
+
+    events.lock().unwrap().clear();
+    let (leaf_dom, leaf_listeners) = build(RootProps {
+        dates: Vec::new(),
+        rows: vec![row("leaf-id", None, true)],
+        active_task_ids: Vec::new(),
+        tick_now_epoch_ms: 0,
+        events: Arc::clone(&events),
+    });
+    dispatch_click(&leaf_dom, leaf_listeners[0]);
+    assert_eq!(*events.lock().unwrap(), ["task:leaf-id:task leaf-id:true"]);
 }
 
 #[test]
