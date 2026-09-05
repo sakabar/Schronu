@@ -147,6 +147,34 @@ fn active_session中の新しいsnapshotは停止済みbufferを引き継ぐ() {
 }
 
 #[test]
+fn active_session中にbusy_timeを跨いだsnapshotは壁時計時間をcreditしない() {
+    let storage = FakeStorage::default();
+    let mut state = load_client_state(&storage, 1_000_000).unwrap();
+    let bootstrap_id = bootstrap_effect(state.request_bootstrap());
+    state.apply_bootstrap_result(bootstrap_id, Ok(snapshot("2026-09-05", 1_000_000)));
+
+    state.tick(1_010_000);
+    state.add_session_from_row(&storage, &row(TASK_ID, 0));
+    state.tick(1_030_000);
+    let (request_id, request) = list_effect(state.request_list("2026-09-05"));
+    state.apply_list_result(
+        request_id,
+        &request.logical_date,
+        Ok(WebSuccess {
+            snapshot: schronu_web::ServerSnapshot {
+                observed_at_epoch_ms: 1_030_000,
+                logical_date: "2026-09-05".to_owned(),
+                buffer_seconds: 50,
+            },
+            data: Vec::new(),
+        }),
+    );
+    state.tick(1_040_000);
+
+    assert_eq!(state.display_buffer_seconds(), Some(50));
+}
+
+#[test]
 fn 複数session中の記録snapshotはcommit済み区間を二重creditしない() {
     let storage = FakeStorage::default();
     let mut state = load_client_state(&storage, 1_000_000).unwrap();
