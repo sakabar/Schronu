@@ -19,7 +19,7 @@ pub(crate) fn dispatch_session_action(
 pub(crate) fn dispatch_action(mut client: Signal<ComponentOrchestrator>, action: ComponentAction) {
     let effect = client
         .write()
-        .action_at(&BrowserLocalStorage, browser_now_epoch_ms(), action);
+        .action(&BrowserLocalStorage, browser_now_epoch_ms(), action);
     dispatch_action_effect(client, effect);
 }
 

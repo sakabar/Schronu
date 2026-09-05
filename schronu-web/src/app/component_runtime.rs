@@ -7,7 +7,7 @@ use super::session_view::{SessionAction, SessionActionKind};
 
 pub(crate) enum ComponentAction {
     SwitchTab(ActiveTab),
-    Tick(i64),
+    Tick,
     SelectDate(String),
     AutoSession,
     AddSession(SessionTask),
@@ -68,7 +68,7 @@ impl ComponentOrchestrator {
         effect
     }
 
-    pub fn action_at<S: KeyValueStorage>(
+    pub fn action<S: KeyValueStorage>(
         &mut self,
         storage: &S,
         now_epoch_ms: i64,
@@ -90,15 +90,6 @@ impl ComponentOrchestrator {
     }
 }
 
-pub(crate) fn reduce_component_action<S: KeyValueStorage>(
-    state: &mut ClientState,
-    storage: &S,
-    action: ComponentAction,
-) -> ClientEffect {
-    let now_epoch_ms = state.tick_now_epoch_ms();
-    reduce_component_action_at(state, storage, now_epoch_ms, action)
-}
-
 pub(crate) fn reduce_component_action_at<S: KeyValueStorage>(
     state: &mut ClientState,
     storage: &S,
@@ -116,7 +107,7 @@ pub(crate) fn reduce_component_action_at<S: KeyValueStorage>(
     }
     match action {
         ComponentAction::SwitchTab(tab) => state.switch_tab(tab),
-        ComponentAction::Tick(now_epoch_ms) => state.tick(now_epoch_ms),
+        ComponentAction::Tick => state.tick(now_epoch_ms),
         ComponentAction::SelectDate(logical_date) => state.request_list(&logical_date),
         ComponentAction::AutoSession => state.request_auto_session(),
         ComponentAction::AddSession(task) => state.add_session_from_task(storage, &task),

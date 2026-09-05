@@ -4,8 +4,8 @@ use super::component::app;
 #[cfg(feature = "web")]
 use super::component_models::BrowserPageModel;
 use super::component_runtime::{
-    component_action_from_session_action, initialize_client, reduce_component_action,
-    reduce_component_action_at, ComponentAction, ComponentOrchestrator,
+    component_action_from_session_action, initialize_client, reduce_component_action_at,
+    ComponentAction, ComponentOrchestrator,
 };
 use super::effect_dispatcher::ClientResponse;
 use super::session_view::{SessionAction, SessionActionKind};
@@ -65,42 +65,45 @@ fn component_actionは仕様の五操作だけをserver_effectへ変換する() 
 
     for action in [
         ComponentAction::SwitchTab(ActiveTab::List),
-        ComponentAction::Tick(2_000),
+        ComponentAction::Tick,
         ComponentAction::AddSession(task(RECORD_ID)),
         ComponentAction::DiscardSession(RECORD_ID.to_owned()),
         ComponentAction::ConfirmRepositoryChecked,
     ] {
         assert_eq!(
-            reduce_component_action(&mut state, &storage, action),
+            reduce_component_action_at(&mut state, &storage, 2_000, action),
             ClientEffect::None
         );
     }
 
     assert!(matches!(
-        reduce_component_action(
+        reduce_component_action_at(
             &mut state,
             &storage,
+            2_000,
             ComponentAction::SelectDate("2026-09-05".to_owned())
         ),
         ClientEffect::ListTasks { request, .. } if request.logical_date == "2026-09-05"
     ));
     assert!(matches!(
-        reduce_component_action(&mut state, &storage, ComponentAction::AutoSession),
+        reduce_component_action_at(&mut state, &storage, 2_000, ComponentAction::AutoSession),
         ClientEffect::AutoSession { .. }
     ));
 
     assert_eq!(
-        reduce_component_action(
+        reduce_component_action_at(
             &mut state,
             &storage,
+            2_000,
             ComponentAction::AddSession(task(RECORD_ID))
         ),
         ClientEffect::None
     );
     assert!(matches!(
-        reduce_component_action(
+        reduce_component_action_at(
             &mut state,
             &storage,
+            2_000,
             ComponentAction::RecordSession(RECORD_ID.to_owned())
         ),
         ClientEffect::RecordSession { request, .. } if request.task_id == RECORD_ID
@@ -108,15 +111,17 @@ fn component_actionは仕様の五操作だけをserver_effectへ変換する() 
 
     let other_storage = MemoryStorage::default();
     let (mut other_state, _) = initialize_client(&other_storage, 1_000);
-    reduce_component_action(
+    reduce_component_action_at(
         &mut other_state,
         &other_storage,
+        1_000,
         ComponentAction::AddSession(task(COMPLETE_ID)),
     );
     assert!(matches!(
-        reduce_component_action(
+        reduce_component_action_at(
             &mut other_state,
             &other_storage,
+            1_000,
             ComponentAction::CompleteSession(COMPLETE_ID.to_owned())
         ),
         ClientEffect::CompleteSession { request, .. } if request.task_id == COMPLETE_ID
@@ -125,15 +130,17 @@ fn component_actionは仕様の五操作だけをserver_effectへ変換する() 
 
     let discard_complete_storage = MemoryStorage::default();
     let (mut discard_complete_state, _) = initialize_client(&discard_complete_storage, 1_000);
-    reduce_component_action(
+    reduce_component_action_at(
         &mut discard_complete_state,
         &discard_complete_storage,
+        1_000,
         ComponentAction::AddSession(task(COMPLETE_ID)),
     );
     assert!(matches!(
-        reduce_component_action(
+        reduce_component_action_at(
             &mut discard_complete_state,
             &discard_complete_storage,
+            1_000,
             ComponentAction::CompleteSessionWithoutRecording(COMPLETE_ID.to_owned())
         ),
         ClientEffect::CompleteSession { request, .. } if request.task_id == COMPLETE_ID
@@ -207,7 +214,7 @@ fn 持ち歩きロックは変更操作だけを中央で遮断しarmedを一度
         ClientEffect::None
     );
     assert_eq!(
-        reduce_component_action_at(&mut state, &storage, 2_002, ComponentAction::Tick(2_002)),
+        reduce_component_action_at(&mut state, &storage, 2_002, ComponentAction::Tick),
         ClientEffect::None
     );
     assert!(matches!(
@@ -272,10 +279,10 @@ fn armedはtickが期限へ到達した時点でlockedへ戻る() {
     );
     reduce_component_action_at(&mut state, &storage, 2_000, ComponentAction::ArmCarryLock);
 
-    reduce_component_action_at(&mut state, &storage, 16_999, ComponentAction::Tick(16_999));
+    reduce_component_action_at(&mut state, &storage, 16_999, ComponentAction::Tick);
     assert!(!state.carry_lock_locked());
 
-    reduce_component_action_at(&mut state, &storage, 17_000, ComponentAction::Tick(17_000));
+    reduce_component_action_at(&mut state, &storage, 17_000, ComponentAction::Tick);
     assert!(state.carry_lock_locked());
 }
 
@@ -295,22 +302,12 @@ fn armedはtickまたは変更認可で時計後退を検出すると即時失�
         2_000,
         ComponentAction::ArmCarryLock,
     );
-    reduce_component_action_at(
-        &mut tick_state,
-        &storage,
-        2_500,
-        ComponentAction::Tick(2_500),
-    );
+    reduce_component_action_at(&mut tick_state, &storage, 2_500, ComponentAction::Tick);
     assert_eq!(
         tick_state.carry_lock_mode(),
         crate::client::carry_lock::CarryLockMode::ArmedUntil(17_000)
     );
-    reduce_component_action_at(
-        &mut tick_state,
-        &storage,
-        2_499,
-        ComponentAction::Tick(2_499),
-    );
+    reduce_component_action_at(&mut tick_state, &storage, 2_499, ComponentAction::Tick);
     assert!(tick_state.carry_lock_locked());
 
     let (mut mutation_state, _) = initialize_client(&storage, 1_000);
@@ -428,7 +425,7 @@ fn 製品orchestratorはmountを一度に制限しresponseとtickを同じstate�
         60
     );
     assert_eq!(
-        orchestrator.action_at(&storage, 3_000, ComponentAction::Tick(3_000)),
+        orchestrator.action(&storage, 3_000, ComponentAction::Tick),
         ClientEffect::None
     );
     assert_eq!(orchestrator.state().unwrap().tick_now_epoch_ms(), 3_000);

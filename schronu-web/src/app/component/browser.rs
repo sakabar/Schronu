@@ -25,7 +25,7 @@ pub(super) fn BrowserApp() -> Element {
     use_future(move || async move {
         loop {
             gloo_timers::future::TimeoutFuture::new(TICK_MILLIS).await;
-            dispatch_action(client, ComponentAction::Tick(browser_now_epoch_ms()));
+            dispatch_action(client, ComponentAction::Tick);
         }
     });
 
