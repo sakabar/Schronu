@@ -13,7 +13,9 @@ use crate::application::repository_transaction::{
     run_repository_transaction, RepositoryTransactionError,
 };
 use crate::application::schedule_use_case::{get_schedule, ScheduledTaskView};
-use crate::application::task_use_case::{add_actual_work, get_focus, ApplicationError};
+use crate::application::task_use_case::{
+    add_actual_work, complete_task, get_focus, ApplicationError, CompleteTaskInput, TaskFactory,
+};
 use chrono::{DateTime, Local, NaiveDate};
 use serde::{Deserialize, Serialize};
 use std::error::Error;
@@ -137,6 +139,37 @@ impl WebService {
                 },
                 true,
             ))
+        })
+    }
+
+    pub fn complete_session_at(
+        &mut self,
+        operation_now: DateTime<Local>,
+        request: RecordSessionRequest,
+    ) -> Result<ServerSnapshot, WebReadError> {
+        let input = prepare_add_actual_work_input(request, operation_now)
+            .map_err(WebReadError::InvalidInput)?;
+        self.run_transaction_at(operation_now, |repository, free_time_manager, offset| {
+            let mut next_id = uuid::Uuid::new_v4;
+            let mut factory = TaskFactory::new(operation_now, &mut next_id);
+            complete_task(
+                repository,
+                CompleteTaskInput {
+                    task_id: input.task_id,
+                    finished_at: operation_now,
+                    additional_actual_work_seconds: input.additional_actual_work_seconds,
+                    expected_actual_work_seconds: input.expected_actual_work_seconds,
+                },
+                &mut factory,
+            )
+            .map_err(WebReadCoreError::Application)?;
+            let snapshot = build_server_snapshot_with_offset(
+                repository,
+                free_time_manager,
+                operation_now,
+                offset,
+            )?;
+            Ok((snapshot, true))
         })
     }
 
