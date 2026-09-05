@@ -1,76 +1,76 @@
-# Wave Orchestration Protocol
+# Wave統括手順
 
-## 1. Discover and Reserve
+## 1. 調査と変更範囲の予約
 
-1. Parse `N` as a non-negative integer. Locate the exact `Wave N` section, every `WN-*` lane, its backlog item, contract, dependencies, write range, Wave notes, integration gates, and the `Wave N+1` section when present.
-2. Stop before task creation if lane membership, dependency kind, completion contract, or write ownership is ambiguous. Do not invent missing policy from neighboring Waves.
-3. Confirm that the user explicitly requested new sidebar-visible lane tasks. Automatic Skill selection or a request to explain/plan the Wave is not authorization to call `create_thread`; ask first when that authority is absent.
-4. Read repository instructions and inspect `main`, its revision, current worktrees, remotes, and relevant backlog items. A status label alone does not satisfy a dependency; verify that the required contract commit exists on `main`.
-5. Build a reservation table for product files, tests, fixtures, and documentation. The whole file is the ownership unit. Create all lane planning tasks, but authorize implementation only for dependency-ready lanes.
-6. Resolve the saved project with `list_projects`: match the primary worktree path from `git worktree list` to a Git repository project. If no unique match exists, stop and ask the user. Never create a projectless substitute.
+1. `N`を0以上の整数としてparseする。正確な`Wave N` section、すべての`WN-*` lane、backlog項目、契約、依存関係、write範囲、Wave内の注意事項、統合gate、存在する場合は`Wave N+1` sectionを特定する。
+2. laneの所属、依存種別、完了契約、write所有権のいずれかが曖昧なら、task作成前に停止する。隣接Waveから不足方針を推測してはならない。
+3. サイドバーから確認できる新しいlane taskの作成を、ユーザーが明示的に依頼していることを確認する。Skillの自動選択やWaveの説明・計画依頼は`create_thread`の許可にならない。権限がなければ先に尋ねる。
+4. repositoryの指示を読み、`main`、revision、現在のworktree、remote、関連backlog項目を調査する。status表記だけで依存充足とは扱わず、必要な契約commitが`main`に存在することを確認する。
+5. 製品file、test、fixture、文書の予約表を作る。所有単位はfile全体とする。全laneの計画用taskを作成するが、実装を承認するのは依存がreadyなlaneだけとする。
+6. `list_projects`で保存済みprojectを解決する。`git worktree list`で得たprimary worktree pathとGit repository projectを一致させる。一意に一致しなければ停止してユーザーへ尋ね、projectless taskで代用しない。
 
-## 2. Create Planning Tasks
+## 2. 計画用taskの作成
 
-For each lane, call `create_thread` with the resolved `projectId` and `environment.type: worktree`. Omit model and thinking overrides. Use a title containing the lane ID and backlog item.
+各laneについて、解決した`projectId`と`environment.type: worktree`を指定して`create_thread`を呼ぶ。modelとthinkingは上書きしない。titleにはlane IDとbacklog項目を含める。
 
-If worktree setup returns only a `clientThreadId`, do not pass it to tools that require a ready `threadId`. Use the task listing to resolve the ready task before waiting, reading, or messaging it. Track the ready task ID, host ID, worktree path, intended branch, dependencies, and reservation state in the parent lane table.
+worktree準備中で`clientThreadId`だけが返った場合、それをreadyな`threadId`が必要なtoolへ渡してはならない。task一覧からreadyなtaskを解決してから、wait、read、message送信を行う。親のlane表には、readyなtask ID、host ID、worktree path、予定branch、依存関係、予約状態を記録する。
 
-The initial prompt must include:
+初回promptには次を含める。
 
-- Wave/lane ID, backlog item, fixed contract, dependencies, reserved write range, base `main` revision, and intended `feature/<lane>-<short-name>` branch;
-- an absolute prohibition on file edits, implementation, branch creation, commits, push, and PR creation during the first turn;
-- a request to inspect `backlog.md`, `AGENTS.md`, relevant code/tests, dependency readiness, and write conflicts;
-- a required commit plan for every contract unit: commit message, fixed contract, responsibility/module, dependency on earlier commits, target tests, expected single Red reason, and Green command;
-- an instruction to end the turn after presenting the plan and wait for parent approval.
+- Wave/lane ID、backlog項目、固定する契約、依存関係、予約済みwrite範囲、基点となる`main` revision、予定branch `feature/<lane>-<short-name>`。
+- 初回turnでのfile編集、実装、branch作成・切り替え、commit、push、PR作成の絶対禁止。
+- `backlog.md`、`AGENTS.md`、関連コード・test、依存のready状態、write競合の調査依頼。
+- 各契約単位のcommit計画。各commitについてmessage、固定する契約、責務・module、先行commitへの依存、対象test、想定する単一のRed理由、Green確認commandを必須とする。
+- 計画提示後にturnを終了し、親の明示承認を待つ指示。
 
-Wait with `wait_threads`; split more than eight lanes into groups of at most eight targets and use each returned cursor for later waits. Use `read_thread` only for missing detail, attention requests, or final evidence. Confirm from the lane worktree that the first turn added no commit and changed no file. If it did, isolate the lane and ask the user for recovery direction while other lanes continue.
+`wait_threads`で待機する。laneが8件を超える場合は最大8 targetのgroupへ分け、返されたcursorを後続waitで使用する。`read_thread`は詳細不足、対応要求、最終証跡の確認にだけ使う。初回turnでcommit追加もfile変更もないことをlane worktreeで確認する。違反があればそのlaneを隔離し、ほかのlaneを続行しながら回復方針をユーザーへ尋ねる。
 
-## 3. Approve and Monitor Implementation
+## 3. 実装の承認と監視
 
-Review each plan against the backlog contract, repository commit rules, dependencies, and reservation table. Send an explicit implementation-start message only when both the plan and dependencies are approved. Require the lane to create or confirm its dedicated feature branch before editing.
+各計画をbacklog契約、repositoryのcommit規則、依存関係、予約表と照合する。計画と依存関係の両方を承認した場合にだけ、実装開始を明示するmessageを送る。編集前に専用feature branchを作成または確認させる。
 
-Each lane must:
+各laneで次を実施する。
 
-1. Add one contract-level Red test, run it, and confirm one expected failure reason before committing it.
-2. Add the smallest Green implementation, run target tests and repository quality gates, and commit the basic Green implementation so the review target is stable.
-3. Obtain an internal subagent specification/code-quality review after that Green commit. Fix findings one at a time with target verification and one finding per commit. Do not dismiss P1/P2 findings or weaken earlier tests.
-4. Review `main...branch` cumulatively for responsibility boundaries, duplication, file size, fixtures, failure paths, dependency direction, and repository-specific maintainability thresholds.
-5. Update only its own backlog status/detail/verification/residual-work text in a separate documentation commit after product Green and after the parent grants that lane the exclusive `backlog.md` documentation lease. Release the lease after the commit. Grant leases in dependency and intended PR merge order; do not edit shared global verification summaries or another lane's item.
-6. Finish with a clean worktree, full quality gates, `git diff --check`, and a history review. Do not push or create a PR yet.
+1. 契約単位のRed testを1つ追加して実行し、想定した1つの理由で失敗したことを確認してからcommitする。
+2. 最小のGreen実装を追加し、対象testとrepositoryの品質gateを実行する。review対象を固定するため、基礎Green実装をcommitする。
+3. Green commit後に内部subagentによる仕様・code quality reviewを行う。指摘は1件ずつ、対象testで検証し、1指摘1commitで修正する。P1/P2を却下したり、以前のtestを弱めたりしない。
+4. `main...branch`累積差分について、責務境界、重複、file size、fixture、failure path、依存方向、repository固有の保守性閾値をreviewする。
+5. 製品Green後、親からそのlane専用の`backlog.md`文書leaseを得てから、自laneのstatus、詳細、検証、残存作業だけを独立した文書commitで更新する。commit後はleaseを解放する。leaseは依存順と予定PR merge順に付与し、共有の全体検証summaryや他laneの項目は編集しない。
+6. cleanなworktree、全品質gate、`git diff --check`、履歴reviewを確認して終了する。この時点ではpushもPR作成も行わない。
 
-If a lane needs an unreserved file, public API/schema/error change, or discovers a different Red reason, tell it to preserve its state and stop that expansion. Review the impact and obtain explicit parent or user approval before updating reservations and the commit plan. Never use artificial calls, test-only production branches, reduced error information, or duplicated helpers to remain inside an obsolete reservation.
+予約外file、公開API・schema・error変更、異なるRed理由が必要になった場合は、その範囲拡張だけを停止し、現在の状態を保持させる。影響をreviewし、親またはユーザーの明示承認を得てから予約表とcommit計画を更新する。古くなった予約内へ収めるために、人工的な呼び出し、製品コードのtest専用分岐、error情報の削減、helperの複製を行ってはならない。
 
-## 4. Parent Review and Combined Gate
+## 4. 親reviewと統合gate
 
-For each completed lane, independently inspect:
+完了報告を受けた各laneについて、親が次を個別に確認する。
 
-- `git log --reverse` with subjects and bodies for the lane range;
-- `git diff --stat`, `--numstat`, `--name-only`, `--check`, and the full `main...branch` diff;
-- Red/Green pairing, single-purpose commits, review-fix isolation, allowed files, preserved tests, product-path coverage, documentation isolation, and clean status;
-- repository thresholds such as files or cumulative additions over 800 lines, oversized fixtures, repeated helpers/error mappings, or responsibilities that cannot be followed locally.
+- lane範囲のsubjectとbodyを含む`git log --reverse`。
+- `git diff --stat`、`--numstat`、`--name-only`、`--check`、`main...branch`の全差分。
+- Red/Greenの対応、commitの単一目的性、review修正の分離、許可file、既存testの維持、製品経路のcoverage、文書変更の分離、clean status。
+- fileまたは累積追加が800行を超える、fixtureが巨大、helperやerror変換が重複、責務を局所的に追えないなど、repositoryの保守性閾値。
 
-Send concrete findings back to the same lane. Require P1/P2 fixes and re-review; record uncertain findings without blocking safe fixes. A Green test suite does not override a maintainability or history failure.
+具体的な指摘は同じlaneへ返す。P1/P2は修正と再reviewを必須とし、判断が難しい指摘は安全な修正を止めずに記録する。test suiteがGreenでも、保守性または履歴の失敗を上書きできない。
 
-For lanes without an intra-Wave hard dependency, wait until every lane passes parent review, then create a disposable integration worktree from current `main`. Apply lane commits in dependency and documented serialization order without modifying feature branches. Resolve no semantic conflict silently: route it to the owning lane, have that lane rebase or repair its branch, repeat parent review, then rebuild the disposable integration state.
+Wave内hard dependencyがない場合は、全laneが親reviewを通過するまで待つ。その後、現在の`main`から使い捨てintegration worktreeを作り、feature branchを変更せず、依存順と文書化された直列化順にlane commitを適用する。semantic conflictは黙って解消せず、所有laneへ戻してbranchのrebaseまたは修正、親の再reviewを行い、使い捨て統合状態を再構築する。
 
-When a lane has an intra-Wave hard dependency, process the Wave by dependency frontier instead of deadlocking. Parent-review every ready frontier, combine current `main` with that frontier and all previously merged Wave work, run the applicable gates, then publish only the frontier PRs. Stop dependent implementation until the user merges the prerequisite PRs to `main`; verify the merge commit, rebase dependent lanes, and continue. After the final frontier, run the full-Wave combined gate before publishing its PRs. Never merge a prerequisite PR on the user's behalf.
+Wave内hard dependencyがある場合は、deadlockを避けるためdependency frontier単位で進める。readyなfrontierをすべて親reviewし、現在の`main`へそのfrontierとmerge済みWave作業を合成して該当gateを実行し、そのfrontierのPRだけを公開する。ユーザーが前提PRを`main`へmergeするまで依存laneの実装を開始しない。merge commitを確認し、依存laneをrebaseして続行する。最後のfrontierでは、PR公開前にWave全体の統合gateを実行する。前提PRをユーザーに代わってmergeしてはならない。
 
-Run `git diff --check`, repository-wide format/lint/test gates, Wave-specific gates, and cross-boundary integration tests required by the backlog. Remove or leave the disposable worktree according to safe repository practice; never publish its synthetic history.
+`git diff --check`、repository全体のformat・lint・test gate、Wave固有gate、backlogが要求する境界横断testを実行する。使い捨てworktreeは安全なrepository運用に従って削除または残置し、その合成履歴は公開しない。
 
-If the selected Wave requires a shared backlog summary, update it only after the full-Wave combined gate. Use the backlog-designated lane; otherwise assign the lexicographically last lane in the final dependency frontier. Do not create another task. Give that existing lane the exclusive documentation lease and require a separate final docs commit containing only the shared summary. Parent-review the commit, rebuild the disposable integration state, and rerun `git diff --check`, documentation-specific checks, and any repository gate whose inputs include the changed documentation before publication.
+選択Waveが共有backlog summaryの更新を要求する場合は、Wave全体の統合gate後にだけ更新する。backlogで担当laneが指定されていればそれを使い、未指定なら最終dependency frontierでlane IDが辞書順の最後となるlaneを割り当てる。別taskは作らない。その既存laneへ文書leaseを与え、共有summaryだけの最終文書commitを作成させる。親がcommitをreviewし、使い捨て統合状態を再構築して、`git diff --check`、文書固有の検査、変更文書を入力とするrepository gateを再実行してから公開する。
 
-## 5. Publish and Report
+## 5. 公開と報告
 
-Only after the required parent reviews and combined gate pass, tell eligible lanes to push their feature branches normally and create non-draft PRs targeting `main`. For an intra-Wave dependency, "eligible" means the current dependency frontier; otherwise it means all lanes. Require the PR body to state purpose, contract changes, Red/Green history, review fixes, verification, compatibility, dependencies, merge order, and residual work. Do not merge, force-push, or publish a combined integration branch.
+必要な親reviewと統合gateの通過後にだけ、対象laneへfeature branchの通常pushと`main`向け非draft PR作成を指示する。Wave内依存がある場合の対象laneは現在のdependency frontier、それ以外は全laneとする。PR本文には目的、契約変更、Red/Green履歴、review修正、検証、互換性、依存関係、merge順、残存作業を記載する。merge、force-push、合成integration branchの公開は禁止する。
 
-Because lanes take serialized leases for separate backlog documentation commits, state the PR merge order. After an earlier PR is merged, later conflicting branches must rebase on updated `main`, preserve already-merged backlog evidence, rerun relevant and full gates, and receive renewed parent review before merge readiness is claimed. A required shared summary stays on its assigned existing lane.
+各laneが別々のbacklog文書commit用leaseを順番に取得するため、PRのmerge順を明記する。先行PRのmerge後、競合する後続branchは最新`main`へrebaseし、merge済みのbacklog証跡を維持したうえで、関連gateと全gate、親reviewを再実行しなければmerge可能と報告しない。必須の共有summaryは、割り当て済みの既存laneに置く。
 
-The final report must list each lane's task title/ID, branch, commits, review status, gates, PR URL/state, required merge/rebase order, and any blocked or unapproved scope. Distinguish "development and PR preparation complete" from "merged to main." Describe Wave `N+1` dependencies and residual work, but do not create its tasks, branches, commits, or PRs.
+最終報告には各laneのtask title/ID、branch、commit、review状態、gate、PR URL/state、必要なmerge・rebase順、blockedまたは未承認の範囲を含める。「開発・PR準備完了」と「mainへmerge済み」を区別する。Wave `N+1`の依存関係と残存作業は説明するが、そのtask、branch、commit、PRは作成しない。
 
-## Example Initial Prompt
+## 初回prompt例
 
 ```text
-You own W4-A / TD-039 for planning only. The fixed contract, dependency list, reserved product/test/fixture/docs files, intended branch, and base main revision are included below.
+あなたはW4-A / TD-039の計画だけを担当します。固定する契約、依存関係、予約済みの製品・test・fixture・文書file、予定branch、基点となるmain revisionを以下に記載します。
 
-In this first turn, do not edit files, implement, create or switch branches, commit, push, or create a PR. Inspect backlog.md, AGENTS.md, dependencies, and the relevant code/tests. Return a contract-level Red/Green commit plan containing, for every commit: message, fixed contract, responsibility/module, dependency, target test, expected single Red reason, and Green verification command. End the turn after the plan and wait for explicit parent approval.
+初回turnでは、file編集、実装、branch作成・切り替え、commit、push、PR作成を行わないでください。backlog.md、AGENTS.md、依存関係、関連コード・testを調査してください。各commitについて、message、固定する契約、責務・module、依存関係、対象test、想定する単一のRed理由、Green確認commandを含む契約単位のRed/Green commit計画を提示してください。計画提示後にturnを終了し、親の明示承認を待ってください。
 ```
