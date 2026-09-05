@@ -34,7 +34,7 @@ fn workerは5操作を送信順に専用threadで実行してpayloadを保持す
         task_id: request.task_id.clone(),
         started_at_epoch_ms: request.started_at_epoch_ms,
         expected_actual_work_seconds: request.expected_actual_work_seconds,
-        record_elapsed_seconds: true,
+        record_elapsed_seconds: false,
     };
 
     futures::executor::block_on(async {
@@ -81,7 +81,7 @@ fn workerは5操作を送信順に専用threadで実行してpayloadを保持す
             Event::List("2026-09-05".to_owned()),
             Event::Auto,
             Event::Record(123, 456),
-            Event::Complete(123, 456),
+            Event::Complete(123, 456, false),
         ]
     );
 }
@@ -134,7 +134,7 @@ enum Event {
     List(String),
     Auto,
     Record(i64, i64),
-    Complete(i64, i64),
+    Complete(i64, i64, bool),
 }
 
 struct RecordingOperations {
@@ -260,6 +260,7 @@ impl WebOperations for RecordingOperations {
         self.events.lock().unwrap().push(Event::Complete(
             request.started_at_epoch_ms,
             request.expected_actual_work_seconds,
+            request.record_elapsed_seconds,
         ));
         Ok(snapshot(5))
     }
