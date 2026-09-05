@@ -13,6 +13,7 @@ pub struct SessionTiming {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct BufferTiming {
     pub snapshot_elapsed_seconds: i64,
+    pub buffer_elapsed_seconds: i64,
     pub display_buffer_seconds: i128,
 }
 
@@ -53,11 +54,23 @@ pub fn buffer_timing(
     observed_at_epoch_ms: i64,
     buffer_seconds: i64,
     tick_now_epoch_ms: i64,
+    active_session_started_at_epoch_ms: &[i64],
 ) -> BufferTiming {
     let snapshot_elapsed_seconds = elapsed_seconds(observed_at_epoch_ms, tick_now_epoch_ms);
+    let buffer_elapsed_seconds = active_session_started_at_epoch_ms
+        .iter()
+        .copied()
+        .min()
+        .map_or(snapshot_elapsed_seconds, |earliest_session_start| {
+            elapsed_seconds(
+                observed_at_epoch_ms,
+                tick_now_epoch_ms.min(earliest_session_start),
+            )
+        });
     BufferTiming {
         snapshot_elapsed_seconds,
-        display_buffer_seconds: i128::from(buffer_seconds) - i128::from(snapshot_elapsed_seconds),
+        buffer_elapsed_seconds,
+        display_buffer_seconds: i128::from(buffer_seconds) - i128::from(buffer_elapsed_seconds),
     }
 }
 
