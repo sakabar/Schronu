@@ -556,6 +556,19 @@ fn 未解決の手動確認errorは無関係な成功で解消しない() {
     assert_eq!(state.display_error(), manual_error.as_ref());
 }
 
+#[test]
+fn session重複追加と不存在破棄はstorage履歴へ偽装しない() {
+    let storage = FakeStorage::default();
+    let mut state = state_with_sessions(&storage, &[TASK_ID]);
+    let history_len = state.history().len();
+
+    state.add_session_from_row(&storage, &row(TASK_ID, 0));
+    state.discard_session(&storage, OTHER_TASK_ID);
+
+    assert_eq!(state.history().len(), history_len);
+    assert_eq!(state.display_error(), None);
+}
+
 #[derive(Default)]
 struct FakeStorage {
     value: RefCell<Option<String>>,
