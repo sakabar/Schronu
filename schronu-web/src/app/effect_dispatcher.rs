@@ -2,8 +2,8 @@ use crate::client::state::{ClientEffect, ServerFailure};
 #[cfg(any(test, all(feature = "web", target_arch = "wasm32")))]
 use crate::client::{state::ClientState, work_sessions::KeyValueStorage};
 use crate::{
-    CompleteSessionResponse, ListTasksRequest, RecordSessionRequest, RecordSessionResult,
-    ScheduledTaskRow, ServerSnapshot, SessionTask, WebError, WebSuccess,
+    CompleteSessionRequest, CompleteSessionResponse, ListTasksRequest, RecordSessionRequest,
+    RecordSessionResult, ScheduledTaskRow, ServerSnapshot, SessionTask, WebError, WebSuccess,
 };
 use dioxus::prelude::ServerFnError;
 
@@ -26,7 +26,7 @@ pub(crate) trait WebGateway {
 
     async fn complete_session(
         &self,
-        request: RecordSessionRequest,
+        request: CompleteSessionRequest,
     ) -> Result<Result<CompleteSessionResponse, WebError>, ServerFnError>;
 }
 
@@ -61,7 +61,7 @@ impl WebGateway for ServerFunctionGateway {
 
     async fn complete_session(
         &self,
-        request: RecordSessionRequest,
+        request: CompleteSessionRequest,
     ) -> Result<Result<CompleteSessionResponse, WebError>, ServerFnError> {
         super::complete_session(request).await
     }

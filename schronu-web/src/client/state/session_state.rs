@@ -1,6 +1,9 @@
 use super::diagnostics::is_read_operation;
 use super::*;
-use crate::{RecordSessionRequest, RecordSessionResult, RetryAdvice, SessionTask, WebSuccess};
+use crate::{
+    CompleteSessionRequest, RecordSessionRequest, RecordSessionResult, RetryAdvice, SessionTask,
+    WebSuccess,
+};
 use std::collections::{HashMap, HashSet};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -233,11 +236,9 @@ impl ClientState {
         else {
             return ClientEffect::None;
         };
-        let request = RecordSessionRequest {
-            task_id: session.task_id.clone(),
-            started_at_epoch_ms: session.started_at_epoch_ms,
-            expected_actual_work_seconds: session.actual_work_seconds_at_start,
-        };
+        let request_task_id = session.task_id.clone();
+        let started_at_epoch_ms = session.started_at_epoch_ms;
+        let expected_actual_work_seconds = session.actual_work_seconds_at_start;
         let request_id = self.sessions.next_mutation_request_id;
         let Some(next_request_id) = request_id.checked_add(1) else {
             return ClientEffect::None;
@@ -267,11 +268,20 @@ impl ClientState {
         match kind {
             MutationKind::Complete => ClientEffect::CompleteSession {
                 request_id,
-                request,
+                request: CompleteSessionRequest {
+                    task_id: request_task_id,
+                    started_at_epoch_ms,
+                    expected_actual_work_seconds,
+                    record_elapsed_seconds: true,
+                },
             },
             MutationKind::Record => ClientEffect::RecordSession {
                 request_id,
-                request,
+                request: RecordSessionRequest {
+                    task_id: request_task_id,
+                    started_at_epoch_ms,
+                    expected_actual_work_seconds,
+                },
             },
         }
     }

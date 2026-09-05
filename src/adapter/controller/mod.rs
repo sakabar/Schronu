@@ -80,7 +80,9 @@ pub use web_service::{
     ScheduledTaskRowDto, ServerSnapshot, SessionTaskDto, WebReadError, WebReadOverflowError,
     WebService, WebSuccess,
 };
-pub use web_session_write::{RecordSessionRequest, RecordSessionResult, WebSessionInputError};
+pub use web_session_write::{
+    CompleteSessionRequest, RecordSessionRequest, RecordSessionResult, WebSessionInputError,
+};
 
 #[cfg(test)]
 mod entrypoint_contract_tests {

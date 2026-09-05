@@ -12,7 +12,8 @@ pub(super) use read_model::{build_auto_session_dto, build_scheduled_task_rows};
 pub(super) use read_model::{build_server_snapshot, calculate_buffer_seconds};
 
 use super::web_session_write::{
-    prepare_add_actual_work_input, RecordSessionRequest, RecordSessionResult,
+    prepare_add_actual_work_input, prepare_complete_task_input, CompleteSessionRequest,
+    RecordSessionRequest, RecordSessionResult,
 };
 use crate::adapter::gateway::free_time_manager::FreeTimeManager;
 use crate::adapter::gateway::schronu_config::SchronuConfig;
@@ -23,9 +24,7 @@ use crate::application::repository_transaction::{
     run_repository_transaction, RepositoryTransactionError,
 };
 use crate::application::schedule_use_case::get_schedule;
-use crate::application::task_use_case::{
-    add_actual_work, complete_task, CompleteTaskInput, TaskFactory,
-};
+use crate::application::task_use_case::{add_actual_work, complete_task, TaskFactory};
 use chrono::{DateTime, Local, NaiveDate};
 use error::{WebReadCoreError, WebReadOperationError};
 use read_model::{build_server_snapshot_from_schedule, build_server_snapshot_with_offset};
@@ -128,24 +127,15 @@ impl WebService {
     pub fn complete_session_at(
         &mut self,
         operation_now: DateTime<Local>,
-        request: RecordSessionRequest,
+        request: CompleteSessionRequest,
     ) -> Result<ServerSnapshot, WebReadError> {
-        let input = prepare_add_actual_work_input(request, operation_now)
+        let input = prepare_complete_task_input(request, operation_now)
             .map_err(WebReadError::InvalidInput)?;
         self.run_mutation_at(operation_now, |repository, free_time_manager, offset| {
             let mut next_id = uuid::Uuid::new_v4;
             let mut factory = TaskFactory::new(operation_now, &mut next_id);
-            complete_task(
-                repository,
-                CompleteTaskInput {
-                    task_id: input.task_id,
-                    finished_at: operation_now,
-                    additional_actual_work_seconds: input.additional_actual_work_seconds,
-                    expected_actual_work_seconds: input.expected_actual_work_seconds,
-                },
-                &mut factory,
-            )
-            .map_err(WebReadCoreError::Application)?;
+            complete_task(repository, input, &mut factory)
+                .map_err(WebReadCoreError::Application)?;
             let snapshot = build_server_snapshot_with_offset(
                 repository,
                 free_time_manager,

@@ -460,10 +460,11 @@ fn complete_sessionは経過秒加算と完了を1回の保存で反映してsna
     let response = service
         .complete_session_at(
             operation_now,
-            RecordSessionRequest {
+            CompleteSessionRequest {
                 task_id: task_id.to_string(),
                 started_at_epoch_ms: operation_now.timestamp_millis() - 61_999,
                 expected_actual_work_seconds: 300,
+                record_elapsed_seconds: true,
             },
         )
         .unwrap();
@@ -500,7 +501,7 @@ fn complete_sessionは計測破棄指定時に実績を加算せずtaskを完了
             operation_now,
             CompleteSessionRequest {
                 task_id: task_id.to_string(),
-                started_at_epoch_ms: operation_now.timestamp_millis() - 60_000,
+                started_at_epoch_ms: i64::MAX,
                 expected_actual_work_seconds: 300,
                 record_elapsed_seconds: false,
             },
@@ -522,6 +523,35 @@ fn complete_sessionは計測破棄指定時に実績を加算せずtaskを完了
 }
 
 #[test]
+fn complete_sessionは計測破棄指定でも期待実績競合時に状態を変更しない() {
+    let operation_now = Local.with_ymd_and_hms(2026, 9, 5, 19, 1, 0).unwrap();
+    let fixture = WebReadServiceFixture::new();
+    let task_id = fixture.seed_fixed_task(operation_now - Duration::hours(1));
+    let before = fixture.persisted_bytes();
+    let mut service = WebService::new(fixture.storage.clone(), fixture.config());
+
+    let error = service
+        .complete_session_at(
+            operation_now,
+            CompleteSessionRequest {
+                task_id: task_id.to_string(),
+                started_at_epoch_ms: i64::MAX,
+                expected_actual_work_seconds: 299,
+                record_elapsed_seconds: false,
+            },
+        )
+        .unwrap_err();
+
+    assert!(matches!(
+        error,
+        WebReadError::Application(
+            crate::application::task_use_case::ApplicationError::ActualWorkConflict { .. }
+        )
+    ));
+    assert_eq!(fixture.persisted_bytes(), before);
+}
+
+#[test]
 fn complete_sessionは期待実績競合時にtaskと永続dataを変更しない() {
     let operation_now = Local.with_ymd_and_hms(2026, 9, 5, 19, 1, 0).unwrap();
     let fixture = WebReadServiceFixture::new();
@@ -532,10 +562,11 @@ fn complete_sessionは期待実績競合時にtaskと永続dataを変更しな�
     let error = service
         .complete_session_at(
             operation_now,
-            RecordSessionRequest {
+            CompleteSessionRequest {
                 task_id: task_id.to_string(),
                 started_at_epoch_ms: operation_now.timestamp_millis() - 60_000,
                 expected_actual_work_seconds: 299,
+                record_elapsed_seconds: true,
             },
         )
         .unwrap_err();
@@ -559,10 +590,11 @@ fn complete_sessionは反復task生成と元task完了を同じ保存で反映�
     service
         .complete_session_at(
             operation_now,
-            RecordSessionRequest {
+            CompleteSessionRequest {
                 task_id: child_id.to_string(),
                 started_at_epoch_ms: operation_now.timestamp_millis() - 60_000,
                 expected_actual_work_seconds: 300,
+                record_elapsed_seconds: true,
             },
         )
         .unwrap();

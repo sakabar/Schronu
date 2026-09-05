@@ -5,8 +5,9 @@ use super::effect_dispatcher::{
 };
 use crate::client::state::{ClientEffect, ServerFailure};
 use crate::{
-    CompleteSessionResponse, ListTasksRequest, RecordSessionRequest, RecordSessionResult,
-    RetryAdvice, ScheduledTaskRow, ServerSnapshot, SessionTask, WebError, WebSuccess,
+    CompleteSessionRequest, CompleteSessionResponse, ListTasksRequest, RecordSessionRequest,
+    RecordSessionResult, RetryAdvice, ScheduledTaskRow, ServerSnapshot, SessionTask, WebError,
+    WebSuccess,
 };
 use dioxus::prelude::ServerFnError;
 use std::cell::RefCell;
@@ -18,6 +19,12 @@ fn 五effectはrequest_idとpayloadを保持して各endpointを1回だけ呼ぶ
         task_id: "task".to_owned(),
         started_at_epoch_ms: 1,
         expected_actual_work_seconds: 2,
+    };
+    let complete_request = CompleteSessionRequest {
+        task_id: request.task_id.clone(),
+        started_at_epoch_ms: request.started_at_epoch_ms,
+        expected_actual_work_seconds: request.expected_actual_work_seconds,
+        record_elapsed_seconds: true,
     };
     let responses = futures::executor::block_on(async {
         vec![
@@ -45,7 +52,7 @@ fn 五effectはrequest_idとpayloadを保持して各endpointを1回だけ呼ぶ
                 &gateway,
                 ClientEffect::CompleteSession {
                     request_id: 14,
-                    request,
+                    request: complete_request,
                 },
             )
             .await,
@@ -160,7 +167,7 @@ impl WebGateway for FakeGateway {
 
     async fn complete_session(
         &self,
-        request: RecordSessionRequest,
+        request: CompleteSessionRequest,
     ) -> Result<Result<CompleteSessionResponse, WebError>, ServerFnError> {
         self.calls
             .borrow_mut()
