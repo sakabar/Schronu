@@ -528,6 +528,37 @@ fn repository確認時はcommit済みsessionを永続層から除去してから
 }
 
 #[test]
+fn repository確認のmarker解除失敗時もcommit済みsessionは再送不能である() {
+    let storage = FakeStorage::default();
+    let mut state = state_with_sessions(&storage, &[TASK_ID]);
+    let (request_id, _) = record_effect(state.begin_record_session(&storage, TASK_ID));
+    storage.fail_work_session_writes.set(true);
+    state.apply_record_result(
+        &storage,
+        request_id,
+        Ok(WebSuccess {
+            snapshot: snapshot("2026-09-05", 1),
+            data: RecordSessionResult {
+                actual_work_seconds: 101,
+            },
+        }),
+    );
+
+    storage.fail_work_session_writes.set(false);
+    storage.fail_safety_writes.set(true);
+    state.confirm_repository_checked(&storage);
+    let mut restored = load_client_state(&storage, 0).unwrap();
+
+    assert!(restored.sessions().is_empty());
+    assert!(restored.mutation_globally_blocked());
+    assert!(state.display_error().is_some());
+    assert_eq!(
+        restored.begin_record_session(&storage, TASK_ID),
+        ClientEffect::None
+    );
+}
+
+#[test]
 fn read_manual_errorは同じoperation成功時に解消する() {
     let storage = FakeStorage::default();
     let mut state = load_client_state(&storage, 0).unwrap();

@@ -16,6 +16,7 @@ pub struct FakeStorage {
     pub safety_value: RefCell<Option<String>>,
     pub fail_writes: Cell<bool>,
     pub fail_work_session_writes: Cell<bool>,
+    pub fail_safety_writes: Cell<bool>,
 }
 
 impl KeyValueStorage for FakeStorage {
@@ -32,6 +33,9 @@ impl KeyValueStorage for FakeStorage {
             return Err(StorageError::WriteFailed);
         }
         if key == WORK_SESSIONS_STORAGE_KEY && self.fail_work_session_writes.get() {
+            return Err(StorageError::WriteFailed);
+        }
+        if key == "schronu_web.mutation_safety.v1" && self.fail_safety_writes.get() {
             return Err(StorageError::WriteFailed);
         }
         match key {
