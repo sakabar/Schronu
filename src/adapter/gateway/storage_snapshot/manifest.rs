@@ -1,0 +1,118 @@
+use super::error::{SnapshotError, SnapshotOperation};
+use super::layout::validate_relative_path;
+use crate::adapter::gateway::storage_content_integrity::DIGEST_ALGORITHM;
+use chrono::{DateTime, FixedOffset};
+use serde::{Deserialize, Serialize};
+use std::collections::HashSet;
+use std::path::{Path, PathBuf};
+use uuid::Uuid;
+
+pub(super) const FORMAT_VERSION: u32 = 1;
+pub(super) const DIGEST_VERSION: u32 = 1;
+
+#[derive(Debug, Deserialize, Serialize)]
+pub(in crate::adapter::gateway) struct SnapshotManifest {
+    pub(in crate::adapter::gateway) format_version: u32,
+    pub(in crate::adapter::gateway) tool_version: String,
+    pub(in crate::adapter::gateway) created_at: DateTime<FixedOffset>,
+    pub(in crate::adapter::gateway) revision: Option<Uuid>,
+    pub(in crate::adapter::gateway) digest: DigestDescriptor,
+    pub(in crate::adapter::gateway) directories: Vec<DirectoryEntry>,
+    pub(in crate::adapter::gateway) files: Vec<FileEntry>,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+pub(in crate::adapter::gateway) struct DigestDescriptor {
+    pub(in crate::adapter::gateway) algorithm: String,
+    pub(in crate::adapter::gateway) version: u32,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+pub(in crate::adapter::gateway) struct DirectoryEntry {
+    pub(in crate::adapter::gateway) path: PathBuf,
+    pub(in crate::adapter::gateway) mode: Option<u32>,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+pub(in crate::adapter::gateway) struct FileEntry {
+    pub(in crate::adapter::gateway) path: PathBuf,
+    pub(in crate::adapter::gateway) mode: Option<u32>,
+    pub(in crate::adapter::gateway) content_length: u64,
+    pub(in crate::adapter::gateway) content_digest: String,
+}
+
+pub(in crate::adapter::gateway) fn encode_manifest(
+    manifest: &SnapshotManifest,
+) -> Result<Vec<u8>, SnapshotError> {
+    serde_json::to_vec(manifest)
+        .map_err(|error| SnapshotError::new(SnapshotOperation::Encode, "manifest.json", error))
+}
+
+pub(super) fn decode_manifest(
+    manifest_path: &Path,
+    bytes: &[u8],
+) -> Result<SnapshotManifest, SnapshotError> {
+    let mut manifest: SnapshotManifest = serde_json::from_slice(bytes)
+        .map_err(|error| SnapshotError::new(SnapshotOperation::Decode, manifest_path, error))?;
+    validate_manifest(manifest_path, &mut manifest)?;
+    Ok(manifest)
+}
+
+fn validate_manifest(
+    manifest_path: &Path,
+    manifest: &mut SnapshotManifest,
+) -> Result<(), SnapshotError> {
+    if manifest.format_version != FORMAT_VERSION
+        || manifest.digest.algorithm != DIGEST_ALGORITHM
+        || manifest.digest.version != DIGEST_VERSION
+    {
+        return Err(invalid_manifest(
+            manifest_path,
+            "unsupported snapshot format or digest algorithm version",
+        ));
+    }
+
+    let mut paths = HashSet::new();
+    for directory in &mut manifest.directories {
+        directory.path = validate_relative_path(&directory.path)?;
+        if !paths.insert(directory.path.clone()) {
+            return Err(invalid_manifest(manifest_path, "duplicate snapshot path"));
+        }
+    }
+    for file in &mut manifest.files {
+        file.path = validate_relative_path(&file.path)?;
+        if !paths.insert(file.path.clone()) {
+            return Err(invalid_manifest(manifest_path, "duplicate snapshot path"));
+        }
+        validate_digest(manifest_path, &file.content_digest)?;
+    }
+    Ok(())
+}
+
+fn validate_digest(manifest_path: &Path, digest: &str) -> Result<(), SnapshotError> {
+    let Some(hex) = digest.strip_prefix("fnv1a64:") else {
+        return Err(invalid_manifest(
+            manifest_path,
+            "file digest must use fnv1a64",
+        ));
+    };
+    if hex.len() != 16
+        || !hex
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+    {
+        return Err(invalid_manifest(
+            manifest_path,
+            "file digest must contain 16 lowercase hexadecimal digits",
+        ));
+    }
+    Ok(())
+}
+
+fn invalid_manifest(path: &Path, message: &'static str) -> SnapshotError {
+    SnapshotError::new(
+        SnapshotOperation::Validate,
+        path,
+        std::io::Error::new(std::io::ErrorKind::InvalidData, message),
+    )
+}
