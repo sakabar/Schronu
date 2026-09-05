@@ -192,9 +192,10 @@ impl ClientState {
         if matches!(
             &error,
             ServerFailure::Operation(WebError {
+                code,
                 retry_advice: RetryAdvice::ManualCheck,
                 ..
-            })
+            }) if code != crate::web_error_codes::REPOSITORY_STATE_UNCERTAIN
         ) {
             self.manual_check_blocked_task_ids
                 .insert(task_id.to_owned());
