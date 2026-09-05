@@ -1,0 +1,7 @@
+interface:
+  display_name: "Backlog Wave Orchestrator"
+  short_description: "Waveごとの複数laneを別taskとworktreeで統括"
+  default_prompt: "Use $orchestrating-backlog-waves with the Wave number I provide to coordinate backlog.md in this project."
+
+policy:
+  allow_implicit_invocation: true
