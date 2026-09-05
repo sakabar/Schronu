@@ -47,9 +47,10 @@ pub(in crate::adapter::gateway::storage_snapshot) fn read_directory_names(
     // SAFETY: duplicate is valid and ownership transfers to DIR on success.
     let directory = unsafe { libc::fdopendir(duplicate) };
     if directory.is_null() {
+        let error = std::io::Error::last_os_error();
         // SAFETY: fdopendir did not take ownership on failure.
         unsafe { libc::close(duplicate) };
-        return Err(std::io::Error::last_os_error());
+        return Err(error);
     }
     Ok(DirectoryNames {
         directory,
