@@ -470,6 +470,9 @@ fn transport_errorはreadだけ再試行可能でmutationは手動確認を要�
     );
     assert!(!mutation_state.display_error().unwrap().retryable());
     assert!(mutation_state.mutation_globally_blocked());
+    mutation_state.confirm_repository_checked(&storage);
+    assert!(!mutation_state.mutation_globally_blocked());
+    assert_eq!(mutation_state.display_error(), None);
 }
 
 #[test]
