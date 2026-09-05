@@ -54,6 +54,45 @@ fn 通信matrixとstorage_firstのlocal状態遷移を固定する() {
 }
 
 #[test]
+fn bufferは成功したsession破棄で未作業時間を再計算する() {
+    let storage = FakeStorage::default();
+    let mut state = load_client_state(&storage, 1_000_000).unwrap();
+    let bootstrap_id = bootstrap_effect(state.request_bootstrap());
+    state.apply_bootstrap_result(
+        bootstrap_id,
+        Ok(snapshot("2026-09-05", 1_000_000)),
+    );
+
+    state.tick(1_010_000);
+    assert_eq!(
+        state.add_session_from_row(&storage, &row(TASK_ID, 0)),
+        ClientEffect::None
+    );
+    state.tick(1_020_000);
+    assert_eq!(
+        state.add_session_from_row(&storage, &row(OTHER_TASK_ID, 0)),
+        ClientEffect::None
+    );
+    state.tick(1_040_000);
+    assert_eq!(state.display_buffer_seconds(), Some(50));
+
+    storage.fail_writes.set(true);
+    assert_eq!(state.discard_session(&storage, TASK_ID), ClientEffect::None);
+    assert_eq!(state.sessions().len(), 2);
+    assert_eq!(state.display_buffer_seconds(), Some(50));
+
+    storage.fail_writes.set(false);
+    assert_eq!(state.discard_session(&storage, TASK_ID), ClientEffect::None);
+    assert_eq!(state.display_buffer_seconds(), Some(40));
+
+    assert_eq!(
+        state.discard_session(&storage, OTHER_TASK_ID),
+        ClientEffect::None
+    );
+    assert_eq!(state.display_buffer_seconds(), Some(20));
+}
+
+#[test]
 fn snapshotとlistはlogical_date反転時にstale一覧を保持せず追加requestもしない() {
     let storage = FakeStorage::default();
     let mut state = load_client_state(&storage, 10).unwrap();
