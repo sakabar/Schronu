@@ -1,3 +1,118 @@
+use crate::{
+    CompleteSessionResponse, ListTasksRequest, RecordSessionRequest, RecordSessionResult,
+    ScheduledTaskRow, ServerSnapshot, SessionTask, WebError, WebSuccess,
+};
+use dioxus::prelude::*;
+
+#[cfg(feature = "server")]
+use crate::WebWorkerHandle;
+#[cfg(feature = "server")]
+use dioxus::fullstack::axum::Extension;
+
+pub type WebOperationResult<T> = Result<T, WebError>;
+
+#[server(endpoint = "web_bootstrap")]
+pub async fn bootstrap() -> Result<WebOperationResult<ServerSnapshot>, ServerFnError> {
+    #[cfg(feature = "server")]
+    {
+        Ok(dispatch_bootstrap(extract_worker().await?).await)
+    }
+    #[cfg(not(feature = "server"))]
+    unreachable!("server function body only runs on the server")
+}
+
+#[server(endpoint = "web_list_tasks")]
+pub async fn list_tasks(
+    request: ListTasksRequest,
+) -> Result<WebOperationResult<WebSuccess<Vec<ScheduledTaskRow>>>, ServerFnError> {
+    #[cfg(feature = "server")]
+    {
+        Ok(dispatch_list_tasks(extract_worker().await?, request).await)
+    }
+    #[cfg(not(feature = "server"))]
+    unreachable!("server function body only runs on the server")
+}
+
+#[server(endpoint = "web_auto_session")]
+pub async fn auto_session(
+) -> Result<WebOperationResult<WebSuccess<Option<SessionTask>>>, ServerFnError> {
+    #[cfg(feature = "server")]
+    {
+        Ok(dispatch_auto_session(extract_worker().await?).await)
+    }
+    #[cfg(not(feature = "server"))]
+    unreachable!("server function body only runs on the server")
+}
+
+#[server(endpoint = "web_record_session")]
+pub async fn record_session(
+    request: RecordSessionRequest,
+) -> Result<WebOperationResult<WebSuccess<RecordSessionResult>>, ServerFnError> {
+    #[cfg(feature = "server")]
+    {
+        Ok(dispatch_record_session(extract_worker().await?, request).await)
+    }
+    #[cfg(not(feature = "server"))]
+    unreachable!("server function body only runs on the server")
+}
+
+#[server(endpoint = "web_complete_session")]
+pub async fn complete_session(
+    request: RecordSessionRequest,
+) -> Result<WebOperationResult<CompleteSessionResponse>, ServerFnError> {
+    #[cfg(feature = "server")]
+    {
+        Ok(dispatch_complete_session(extract_worker().await?, request).await)
+    }
+    #[cfg(not(feature = "server"))]
+    unreachable!("server function body only runs on the server")
+}
+
+#[cfg(feature = "server")]
+async fn extract_worker() -> Result<WebWorkerHandle, ServerFnError> {
+    let Extension(worker) =
+        dioxus::fullstack::FullstackContext::extract::<Extension<WebWorkerHandle>, _>()
+            .await
+            .map_err(|error| ServerFnError::new(error.to_string()))?;
+    Ok(worker)
+}
+
+#[cfg(feature = "server")]
+async fn dispatch_bootstrap(worker: WebWorkerHandle) -> WebOperationResult<ServerSnapshot> {
+    worker.bootstrap().await
+}
+
+#[cfg(feature = "server")]
+async fn dispatch_list_tasks(
+    worker: WebWorkerHandle,
+    request: ListTasksRequest,
+) -> WebOperationResult<WebSuccess<Vec<ScheduledTaskRow>>> {
+    worker.list_tasks(request).await
+}
+
+#[cfg(feature = "server")]
+async fn dispatch_auto_session(
+    worker: WebWorkerHandle,
+) -> WebOperationResult<WebSuccess<Option<SessionTask>>> {
+    worker.auto_session().await
+}
+
+#[cfg(feature = "server")]
+async fn dispatch_record_session(
+    worker: WebWorkerHandle,
+    request: RecordSessionRequest,
+) -> WebOperationResult<WebSuccess<RecordSessionResult>> {
+    worker.record_session(request).await
+}
+
+#[cfg(feature = "server")]
+async fn dispatch_complete_session(
+    worker: WebWorkerHandle,
+    request: RecordSessionRequest,
+) -> WebOperationResult<CompleteSessionResponse> {
+    worker.complete_session(request).await
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
