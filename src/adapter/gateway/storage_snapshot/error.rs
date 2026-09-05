@@ -17,6 +17,16 @@ pub(super) enum SnapshotOperation {
     Write,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(super) enum SnapshotLimitKind {
+    ManifestBytes,
+    FileCount,
+    FileBytes,
+    PayloadBytes,
+    PathBytes,
+    PathDepth,
+}
+
 #[derive(Debug)]
 pub struct SnapshotError {
     operation: SnapshotOperation,
@@ -48,6 +58,23 @@ impl SnapshotError {
         Self::new(operation, path, source)
     }
 
+    pub(super) fn limit(
+        path: impl Into<PathBuf>,
+        kind: SnapshotLimitKind,
+        limit: u64,
+        observed: u64,
+    ) -> Self {
+        Self::new(
+            SnapshotOperation::Validate,
+            path,
+            SnapshotLimitError {
+                kind,
+                limit,
+                observed,
+            },
+        )
+    }
+
     pub(super) fn followup_failure<E>(primary: Self, action: &'static str, followup: E) -> Self
     where
         E: Error + Send + Sync + 'static,
@@ -68,6 +95,25 @@ impl SnapshotError {
         }
     }
 }
+
+#[derive(Debug)]
+struct SnapshotLimitError {
+    kind: SnapshotLimitKind,
+    limit: u64,
+    observed: u64,
+}
+
+impl fmt::Display for SnapshotLimitError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            formatter,
+            "snapshot resource limit {:?} exceeded: limit={}, observed={}",
+            self.kind, self.limit, self.observed
+        )
+    }
+}
+
+impl Error for SnapshotLimitError {}
 
 #[derive(Debug)]
 struct SnapshotFollowupError {

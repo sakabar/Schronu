@@ -9,7 +9,7 @@ use super::manifest::{
     decode_manifest, encode_manifest, DigestDescriptor, DirectoryEntry, FileEntry,
     SnapshotManifest, DIGEST_VERSION, FORMAT_VERSION,
 };
-use super::SnapshotSummary;
+use super::{SnapshotResourceLimits, SnapshotSummary, DEFAULT_RESOURCE_LIMITS};
 use crate::adapter::gateway::storage_content_integrity::{content_digest, DIGEST_ALGORITHM};
 use crate::adapter::gateway::storage_lock::{LockMode, StorageLock};
 use crate::adapter::gateway::task_repository::TaskRepository;
@@ -37,13 +37,11 @@ pub(in crate::adapter::gateway) fn create_snapshot_at(
     destination: &Path,
     created_at: DateTime<Local>,
 ) -> Result<SnapshotSummary, SnapshotError> {
-    create_snapshot_impl(
+    create_snapshot_with_limits(
         storage_directory,
         destination,
         created_at,
-        &FileSystemSnapshotIo,
-        || {},
-        || {},
+        DEFAULT_RESOURCE_LIMITS,
     )
 }
 
@@ -58,6 +56,7 @@ pub(in crate::adapter::gateway) fn create_snapshot_after_parent_open(
         storage_directory,
         destination,
         created_at,
+        DEFAULT_RESOURCE_LIMITS,
         &FileSystemSnapshotIo,
         after_parent_open,
         || {},
@@ -75,6 +74,7 @@ pub(in crate::adapter::gateway) fn create_snapshot_before_publish(
         storage_directory,
         destination,
         created_at,
+        DEFAULT_RESOURCE_LIMITS,
         &FileSystemSnapshotIo,
         || {},
         before_publish,
@@ -93,6 +93,7 @@ pub(in crate::adapter::gateway) fn create_snapshot_with_failure(
         storage_directory,
         destination,
         created_at,
+        DEFAULT_RESOURCE_LIMITS,
         &io,
         || {},
         || {},
@@ -111,6 +112,7 @@ pub(in crate::adapter::gateway) fn create_snapshot_with_failure_observation(
         storage_directory,
         destination,
         created_at,
+        DEFAULT_RESOURCE_LIMITS,
         &io,
         || {},
         || {},
@@ -118,10 +120,28 @@ pub(in crate::adapter::gateway) fn create_snapshot_with_failure_observation(
     (result, io.matching_calls())
 }
 
+pub(in crate::adapter::gateway) fn create_snapshot_with_limits(
+    storage_directory: &Path,
+    destination: &Path,
+    created_at: DateTime<Local>,
+    limits: SnapshotResourceLimits,
+) -> Result<SnapshotSummary, SnapshotError> {
+    create_snapshot_impl(
+        storage_directory,
+        destination,
+        created_at,
+        limits,
+        &FileSystemSnapshotIo,
+        || {},
+        || {},
+    )
+}
+
 fn create_snapshot_impl(
     storage_directory: &Path,
     destination: &Path,
     created_at: DateTime<Local>,
+    limits: SnapshotResourceLimits,
     io: &dyn SnapshotIo,
     after_parent_open: impl FnOnce(),
     before_publish: impl FnOnce(),
@@ -135,7 +155,7 @@ fn create_snapshot_impl(
     })?;
 
     strict_load(storage_directory)?;
-    let collected = collect_storage(storage_directory, io)?;
+    let collected = collect_storage(storage_directory, io, limits)?;
     let revision = read_revision(&collected.files)?;
     let staging = staging_path(destination)?;
     let staging_name = staging
@@ -158,6 +178,7 @@ fn create_snapshot_impl(
         created_at,
         revision,
         &collected,
+        limits,
         io,
         before_publish,
     );
@@ -285,9 +306,16 @@ fn ensure_parent_outside_storage(
     }
 }
 
-fn collect_storage(storage: &Path, io: &dyn SnapshotIo) -> Result<CollectedStorage, SnapshotError> {
+fn collect_storage(
+    storage: &Path,
+    io: &dyn SnapshotIo,
+    limits: SnapshotResourceLimits,
+) -> Result<CollectedStorage, SnapshotError> {
+    use std::io::Read;
+
     let mut directories = Vec::new();
     let mut files = Vec::new();
+    let mut total_bytes = 0_u64;
     let walker = WalkDir::new(storage)
         .follow_links(false)
         .sort_by_file_name()
@@ -309,6 +337,7 @@ fn collect_storage(storage: &Path, io: &dyn SnapshotIo) -> Result<CollectedStora
         if is_reserved_path(&relative) {
             continue;
         }
+        limits.check_path(&relative)?;
         let metadata = fs::symlink_metadata(entry.path())
             .map_err(|error| SnapshotError::new(SnapshotOperation::Read, entry.path(), error))?;
         if metadata.file_type().is_symlink() {
@@ -323,12 +352,80 @@ fn collect_storage(storage: &Path, io: &dyn SnapshotIo) -> Result<CollectedStora
                 permissions: metadata.permissions(),
             });
         } else if metadata.is_file() {
+            let observed_count = files.len().checked_add(1).ok_or_else(|| {
+                SnapshotError::limit(
+                    entry.path(),
+                    super::error::SnapshotLimitKind::FileCount,
+                    limits.file_count as u64,
+                    u64::MAX,
+                )
+            })?;
+            limits.check(
+                entry.path(),
+                super::error::SnapshotLimitKind::FileCount,
+                limits.file_count as u64,
+                observed_count as u64,
+            )?;
+            limits.check(
+                entry.path(),
+                super::error::SnapshotLimitKind::FileBytes,
+                limits.file_bytes,
+                metadata.len(),
+            )?;
+            let observed_total = total_bytes.checked_add(metadata.len()).ok_or_else(|| {
+                SnapshotError::limit(
+                    entry.path(),
+                    super::error::SnapshotLimitKind::PayloadBytes,
+                    limits.total_bytes,
+                    u64::MAX,
+                )
+            })?;
+            limits.check(
+                entry.path(),
+                super::error::SnapshotLimitKind::PayloadBytes,
+                limits.total_bytes,
+                observed_total,
+            )?;
             io.before(SnapshotFailurePoint::Read).map_err(|error| {
                 SnapshotError::new(SnapshotOperation::Read, entry.path(), error)
             })?;
-            let bytes = fs::read(entry.path()).map_err(|error| {
+            let mut source = fs::File::open(entry.path()).map_err(|error| {
                 SnapshotError::new(SnapshotOperation::Read, entry.path(), error)
             })?;
+            let capacity = usize::try_from(metadata.len()).map_err(|error| {
+                SnapshotError::new(SnapshotOperation::Read, entry.path(), error)
+            })?;
+            let mut bytes = Vec::new();
+            bytes.try_reserve_exact(capacity).map_err(|error| {
+                SnapshotError::new(SnapshotOperation::Read, entry.path(), error)
+            })?;
+            source
+                .by_ref()
+                .take(limits.file_bytes.min(limits.total_bytes - total_bytes) + 1)
+                .read_to_end(&mut bytes)
+                .map_err(|error| {
+                    SnapshotError::new(SnapshotOperation::Read, entry.path(), error)
+                })?;
+            limits.check(
+                entry.path(),
+                super::error::SnapshotLimitKind::FileBytes,
+                limits.file_bytes,
+                bytes.len() as u64,
+            )?;
+            total_bytes = total_bytes.checked_add(bytes.len() as u64).ok_or_else(|| {
+                SnapshotError::limit(
+                    entry.path(),
+                    super::error::SnapshotLimitKind::PayloadBytes,
+                    limits.total_bytes,
+                    u64::MAX,
+                )
+            })?;
+            limits.check(
+                entry.path(),
+                super::error::SnapshotLimitKind::PayloadBytes,
+                limits.total_bytes,
+                total_bytes,
+            )?;
             files.push(CollectedFile {
                 path: relative,
                 bytes,
@@ -380,6 +477,7 @@ fn publish_snapshot(
     created_at: DateTime<Local>,
     revision: Option<Uuid>,
     collected: &CollectedStorage,
+    limits: SnapshotResourceLimits,
     io: &dyn SnapshotIo,
     before_publish: impl FnOnce(),
 ) -> Result<(), SnapshotError> {
@@ -428,6 +526,12 @@ fn publish_snapshot(
     let manifest = build_manifest(created_at, revision, collected);
     let manifest_bytes = encode_manifest(&manifest)?;
     let manifest_path = staging.path.join(MANIFEST_FILE_NAME);
+    limits.check(
+        &manifest_path,
+        super::error::SnapshotLimitKind::ManifestBytes,
+        limits.manifest_bytes,
+        manifest_bytes.len() as u64,
+    )?;
     decode_manifest(&manifest_path, &manifest_bytes)?;
     staging
         .directory
