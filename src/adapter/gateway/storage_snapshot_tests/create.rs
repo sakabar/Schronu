@@ -238,6 +238,13 @@ fn snapshotはlock下の全永続dataとpermissionを保存して予約領域を
         .join(relative_project.parent().unwrap())
         .join("markdown/empty")
         .is_dir());
+    assert!(!WalkDir::new(&payload).into_iter().filter_map(Result::ok).any(
+        |entry| entry
+            .file_name()
+            .to_string_lossy()
+            .starts_with(".project.yaml.")
+            && entry.file_name().to_string_lossy().ends_with(".tmp")
+    ));
     assert!(!payload.join(".lock").exists());
     assert_eq!(fs::read(payload.join(".orphan.tmp")).unwrap(), b"temporary");
     assert!(!payload.join(".schronu-transactions").exists());
