@@ -64,7 +64,7 @@
 | TD-023 | P1 | 完了 | S | `終`が不正時刻と一部application errorを成功扱いで握り潰す |
 | TD-024 | P1 | 完了 | M | CLI parserが不正な数値や余分な引数を黙って受理し、更新commandを実行する |
 | TD-025 | P1 | 完了 | M | 対話CLIのterminal I/O失敗がpanicまたは未検査結果になる |
-| TD-026 | P1 | 未着手 | L | task名をCLI・YAML・MCP・Spreadsheet間で安全にround-tripできない |
+| TD-026 | P1 | 完了 | L | task名をCLI・YAML・MCP・Spreadsheet間で安全にround-tripできない |
 | TD-027 | P1 | 完了 | S | 残作業時間の補正計算が合法な大値入力で整数overflowする |
 | TD-028 | P1 | 完了 | M | 論理日境界を跨ぐschedule segmentの容量が開始日に全量計上される |
 | TD-029 | P1 | 完了 | L | 反復task完了の後段失敗で完了状態と親見積もりだけが部分更新される |
@@ -77,7 +77,7 @@
 | TD-036 | P2 | 未着手 | L | source textを独自parseするarchitecture testがRust構文と実装名へ強く結合している |
 | TD-037 | P2 | 完了 | M | 未使用のlenient YAML変換APIがstrict loaderと並存している |
 | TD-038 | P2 | 未着手 | L | MCPのtask一覧に検索・paginationがなく、大規模storageで応答が無制限に増える |
-| TD-039 | P2 | 未着手 | L | 稼働中processを止めずに整合したbackupを作成・検証・restoreする手段がない |
+| TD-039 | P2 | 一部完了(W4-A) | L | 稼働中processを止めずに整合したbackupを作成・検証・restoreする手段がない |
 | TD-040 | P0 | 完了 | S | 小数秒付き現在時刻でslack indexとschedulerの論理時刻が乖離する |
 | TD-041 | P2 | 未着手 | L | task treeとscheduleの再帰処理が大規模storageでlarge stackを必要とする |
 
@@ -1109,6 +1109,10 @@
 - 分類: `バグ / 境界契約`
 - 優先度: `P1`
 - 概算規模: `L`
+- 完了日: 2026-09-05
+- 対応: application層へcanonical task名validatorを置き、原文をtrim・正規化せず保持したまま、validation時だけtrimしてblankとoptional sign付きASCII整数だけの名前を拒否し、全Unicode control characterも拒否する契約へ統一した。interactive CLIにはsingle quote内をliteral、double quote内とquote外のbackslashを次の1文字のescapeとして扱い、quoteを除去して隣接fragmentを連結する共通lexerを導入した。non-interactive CLIはOS argvをjoin・再lexerせずtoken列parserへ直接渡す。Spreadsheet generatorはJ列の原文をdouble-quoted argvへ変換してbackslashとdouble quoteをescapeし、A-Sの19列と全task名を全行事前検証して不正時のstdoutを空に保つ。strict YAMLはtask path、repository loadは実file pathを保持して診断し、MCPは既存の`invalid_input` error形状を保ったまま同validatorを使用してschema descriptionも同期した。A-J列、A-S manifest、Apps Script同期列、storage schemaは変更していない。
+- 検証: application validation、interactive lexer、non-interactive argv、Spreadsheet escape・構造保護、strict YAML・repository診断、横断integrationを契約単位のRed/Green commitで固定し、各Greenで`git diff --check`、`cargo fmt --check`、`cargo clippy --locked --all-targets -- -D warnings`、`cargo test --locked`を成功させた。Spreadsheet、MCP、YAML、CLIの専用testも成功した。各cycleのspec・quality reviewと最終の履歴・累積差分の保守性reviewを行い、P1/P2/P3の残存指摘がないことを確認した。
+- 残存: blockingな新規負債はない。OS argvのNULはprocess起動前に`InvalidInput`となってapplicationへ到達しないOS境界をtestで固定しており、保存前に拒否されるため横断契約を妨げない。SpreadsheetはAWK上に同じ規則を表現する必要があるが、実generatorから各公開境界を通す横断testでdriftを検出する。独立dry-runは追加せず通常のrepository loadが既存不正名をfile/task path付きで診断するため、利用中のstorageを変更せず発見できる。
 
 #### 現状と根拠
 
@@ -1594,12 +1598,37 @@
 - 分類: `機能提案 / 運用安全性`
 - 優先度: `P2`
 - 概算規模: `L`
+- 状態: `一部完了(W4-A)`
+- W4-A repository phase対応日: 2026-09-05
+
+#### W4-A repository phase対応
+
+- exclusive storage lock取得後にtransaction recoveryとstrict repository validationを行い、revisionと全project fileが同一時点に揃ったsnapshotを作成するrepository APIを実装した。
+- manifest v1へnullable revision、directory、permission、全fileのbyte lengthと長さ付きFNV-1a 64bit digestを記録し、source storage非依存のverifyを実装した。
+- 未存在の別directoryへstaging経由でatomic restoreし、rename後のparent sync失敗もbounded rollbackと再syncを行うようにした。
+- `.lock`、transaction、既知temporary/staging artifactを物理的に除外し、digest、revision、strict YAML、重複UUID、path traversal、symlink、reserved path、欠落・余剰fileを検証する。
+- manifest 8 MiB、file entry 10,000件、1 file 64 MiB、payload合計256 MiB、相対path 4,096 byte、path depth 64の共通private上限と、rollback cleanupのdepth・総entry上限を実装した。
+- 別directoryへのrestore後に既存の製品`検証`経路を通るintegration contractを追加した。
+
+#### W4-A検証
+
+- manifest、lock/recovery、create、verify、security、restore、resource limit、rollback cleanupを契約単位のRed/Green commitへ分割した。
+- 各Green後の内部review、親task review、累積spec/security・保守性・履歴reviewを実施し、blockingなP1/P2を解消した。
+- `git diff --check`、`cargo fmt --check`、`cargo clippy --locked --all-targets -- -D warnings`、`cargo test --locked`を通過した。Linux CIのdevice ID型差によるclippy失敗もplatform別変換へ修正し、Linux CIとmacOSの意味を一致させた。
+
+#### 残存作業
+
+- Wave 6でbackup、verify、restoreのCLI command、controller、handler/runtime、view、rendererを独立したRed/Green cycleとして実装する。
+- 稼働中storageへの上書きrestoreは、明示確認、exclusive lock、事前backupを含む安全な製品経路として設計・検証する。
+- backup formatの運用、retention、permission、機密情報、default resource limitsをREADMEへ記載する。
+- CLI製品経路のfailure injectionと最終統合testを追加する。
+- 現行の長さ付きFNV-1a 64bit digestは偶発破損検出用であり、暗号学的耐改ざん性を保証しない。暗号学的digestへの将来移行を別途設計する。
 
 #### 現状と根拠
 
 - READMEは一貫したbackupのためCLIと全MCP serverを停止し、`.lock`を除くstorage全体を手動copyするよう求める。
 - CLI/MCPは既にstorage advisory lockとstrict検証commandを持つが、lock保持中にsnapshotを作るuser-facing commandはない。
-- TD-022のsave failureや手動復旧時に、どのrevisionの全projectを退避したかを記録するmanifestがない。
+- repository APIはどのrevisionの全projectを退避したかをmanifestへ記録できるが、これを運用利用するuser-facing CLI経路はまだない。
 
 #### 期待する機能
 

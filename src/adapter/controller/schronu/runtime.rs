@@ -1,8 +1,12 @@
+#[cfg(test)]
+use super::command::ParseMode;
 use super::command::{
-    parse_command, validate_command_input, Command, CommandKind, CommandParseError,
-    CommandValidationError, ParseMode,
+    parse_interactive_command, parse_non_interactive_command_tokens, validate_command_input,
+    Command, CommandKind, CommandParseError, CommandValidationError,
 };
 use super::command_context::*;
+#[cfg(test)]
+use super::command_test_support::parse_command;
 use super::handler::{
     handle_command, CommandOutcome, ExternalRequest, FocusChange, FocusSelection,
     FocusSessionEffect, HandlerError,
@@ -899,7 +903,7 @@ fn reconcile_focus_after_reload(
 }
 
 pub(super) fn application() {
-    let command_opt = parse_non_interactive_command(env::args().skip(1).collect());
+    let command_tokens_opt = parse_non_interactive_command(env::args().skip(1).collect());
     let config = match load_schronu_config(env::var_os("SCHRONU_CONFIG_PATH")) {
         Ok(config) => config,
         Err(error) => {
@@ -924,10 +928,12 @@ pub(super) fn application() {
     let mut free_time_manager = FreeTimeManager::new();
 
     // controllerで実体を見るのを避けるために、1つ関数を切る
-    let result = match command_opt {
-        Some(command) => {
-            execute_non_interactive_command(&mut task_repository, &mut free_time_manager, &command)
-        }
+    let result = match command_tokens_opt {
+        Some(command_tokens) => execute_non_interactive_command(
+            &mut task_repository,
+            &mut free_time_manager,
+            &command_tokens,
+        ),
         None => interactive_application(&mut task_repository, &mut free_time_manager),
     };
     if !report_run_result(&mut std::io::stderr(), result) {
@@ -947,29 +953,34 @@ fn report_run_result(stderr: &mut dyn Write, result: Result<(), RunError>) -> bo
     }
 }
 
-fn parse_non_interactive_command(args: Vec<String>) -> Option<String> {
+fn parse_non_interactive_command(args: Vec<String>) -> Option<Vec<String>> {
     if args.is_empty() {
         return None;
     }
 
-    Some(args.join(" "))
+    Some(args)
 }
 
 fn execute_non_interactive_command(
     task_repository: &mut dyn TaskRepositoryTrait,
     free_time_manager: &mut dyn FreeTimeManagerTrait,
-    command: &str,
+    command_tokens: &[String],
 ) -> Result<(), RunError> {
-    execute_non_interactive_command_at(task_repository, free_time_manager, command, Local::now())
+    execute_non_interactive_command_at(
+        task_repository,
+        free_time_manager,
+        command_tokens,
+        Local::now(),
+    )
 }
 
 fn execute_non_interactive_command_at(
     task_repository: &mut dyn TaskRepositoryTrait,
     free_time_manager: &mut dyn FreeTimeManagerTrait,
-    command: &str,
+    command_tokens: &[String],
     operation_now: DateTime<Local>,
 ) -> Result<(), RunError> {
-    let parsed_command = parse_command(command, ParseMode::NonInteractive)
+    let parsed_command = parse_non_interactive_command_tokens(command_tokens)
         .map_err(map_command_parse_error)
         .map_err(RunError::Command)?;
     validate_command_input(&parsed_command)
@@ -1243,8 +1254,7 @@ fn execute_interactive_command(
     operation_now: DateTime<Local>,
     command: &str,
 ) -> Result<InteractiveCommandExecution, CommandError> {
-    let parsed_command =
-        parse_command(command, ParseMode::Interactive).map_err(map_command_parse_error)?;
+    let parsed_command = parse_interactive_command(command).map_err(map_command_parse_error)?;
     let kind = parsed_command.kind();
     let (command_result, propagates_error) = if kind == CommandKind::Verify {
         let mut output = ErrorCapturingWriter::new(stdout);

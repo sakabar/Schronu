@@ -1,0 +1,147 @@
+mod create;
+mod error;
+pub(in crate::adapter::gateway) mod io;
+mod layout;
+pub(super) mod manifest;
+mod restore;
+mod verify;
+
+pub use create::create_snapshot;
+#[cfg(test)]
+pub(in crate::adapter::gateway) use create::{
+    create_snapshot_after_capture, create_snapshot_after_parent_open, create_snapshot_at,
+    create_snapshot_before_publish, create_snapshot_before_strict_load,
+    create_snapshot_with_failure, create_snapshot_with_failure_observation,
+    create_snapshot_with_limits,
+};
+pub use error::{SnapshotError, SnapshotLimitKind};
+#[cfg(test)]
+pub(in crate::adapter::gateway) use io::SnapshotFailurePoint;
+pub use restore::restore_snapshot;
+#[cfg(test)]
+pub(in crate::adapter::gateway) use restore::{
+    restore_snapshot_after_parent_open, restore_snapshot_before_publish,
+    restore_snapshot_with_failure, restore_snapshot_with_failure_observation,
+};
+pub use verify::verify_snapshot;
+#[cfg(test)]
+pub(in crate::adapter::gateway) use verify::verify_snapshot_with_limits;
+
+use error::SnapshotError as InternalSnapshotError;
+use std::path::Path;
+
+#[cfg(unix)]
+fn permission_mode(permissions: &std::fs::Permissions) -> Option<u32> {
+    use std::os::unix::fs::PermissionsExt;
+    Some(permissions.mode() & 0o7777)
+}
+
+#[cfg(not(unix))]
+fn permission_mode(_permissions: &std::fs::Permissions) -> Option<u32> {
+    None
+}
+
+const DEFAULT_RESOURCE_LIMITS: SnapshotResourceLimits = SnapshotResourceLimits::new(
+    8 * 1024 * 1024,
+    10_000,
+    64 * 1024 * 1024,
+    256 * 1024 * 1024,
+    4_096,
+    64,
+);
+
+#[derive(Clone, Copy)]
+pub(in crate::adapter::gateway) struct SnapshotResourceLimits {
+    manifest_bytes: u64,
+    file_count: usize,
+    file_bytes: u64,
+    total_bytes: u64,
+    path_bytes: usize,
+    depth: usize,
+}
+
+impl SnapshotResourceLimits {
+    pub(in crate::adapter::gateway) const fn new(
+        manifest_bytes: u64,
+        file_count: usize,
+        file_bytes: u64,
+        total_bytes: u64,
+        path_bytes: usize,
+        depth: usize,
+    ) -> Self {
+        Self {
+            manifest_bytes,
+            file_count,
+            file_bytes,
+            total_bytes,
+            path_bytes,
+            depth,
+        }
+    }
+
+    fn check_path(
+        self,
+        operation_path: &Path,
+        relative_path: &Path,
+    ) -> Result<(), InternalSnapshotError> {
+        let observed_bytes = relative_path.to_str().map(str::len).unwrap_or(usize::MAX);
+        self.check(
+            operation_path,
+            Some(relative_path),
+            SnapshotLimitKind::PathBytes,
+            self.path_bytes as u64,
+            u64::try_from(observed_bytes).unwrap_or(u64::MAX),
+        )?;
+        self.check(
+            operation_path,
+            Some(relative_path),
+            SnapshotLimitKind::PathDepth,
+            self.depth as u64,
+            relative_path.components().count() as u64,
+        )
+    }
+
+    fn check(
+        self,
+        operation_path: &Path,
+        relative_path: Option<&Path>,
+        kind: SnapshotLimitKind,
+        limit: u64,
+        observed: u64,
+    ) -> Result<(), InternalSnapshotError> {
+        if observed > limit {
+            Err(InternalSnapshotError::limit(
+                operation_path,
+                kind,
+                limit,
+                observed,
+                relative_path.map(Path::to_path_buf),
+            ))
+        } else {
+            Ok(())
+        }
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct SnapshotSummary {
+    revision: Option<uuid::Uuid>,
+    file_count: usize,
+}
+
+impl SnapshotSummary {
+    fn new(revision: Option<uuid::Uuid>, file_count: usize) -> Self {
+        Self {
+            revision,
+            file_count,
+        }
+    }
+
+    pub fn revision(&self) -> Option<uuid::Uuid> {
+        self.revision
+    }
+
+    pub fn file_count(&self) -> usize {
+        self.file_count
+    }
+}

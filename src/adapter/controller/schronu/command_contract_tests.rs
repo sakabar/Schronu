@@ -1,7 +1,8 @@
 use super::command::{
-    command_with_minimum_valid_arguments, parse_command, Command, CommandAction, CommandKind,
-    InteractiveShortcut, ParseMode,
+    command_with_minimum_valid_arguments, parse_non_interactive_command_tokens, Command,
+    CommandAction, CommandKind, InteractiveShortcut, ParseMode,
 };
+use super::command_test_support::parse_command;
 use uuid::Uuid;
 
 #[test]
@@ -104,6 +105,31 @@ fn parser_converts_command_fields_to_typed_values() {
     assert_eq!(error.field(), "arguments");
     assert_eq!(error.reason(), "引数の個数が正しくありません");
     assert_eq!(error.usage(), "後 <量> [単位]");
+}
+
+#[test]
+fn focusは全aliasとmodeで先頭argumentだけを受理する() {
+    let task_id = Uuid::new_v4();
+
+    for alias in ["見", "focus", "fc"] {
+        for mode in [ParseMode::Interactive, ParseMode::NonInteractive] {
+            let input = format!("{alias} {task_id} A _______");
+            assert_eq!(
+                parse_command(&input, mode).unwrap(),
+                Command::Focus { task_id },
+                "input: {input}, mode: {mode:?}"
+            );
+
+            let invalid_first = format!("{alias} invalid {task_id}");
+            let error = parse_command(&invalid_first, mode).unwrap_err();
+            assert_eq!(error.field(), "task_id", "input: {invalid_first}");
+            assert_eq!(
+                error.reason(),
+                "UUIDで指定してください",
+                "input: {invalid_first}"
+            );
+        }
+    }
 }
 
 #[test]
@@ -355,7 +381,7 @@ fn all_commands_enforce_argument_bounds() {
             mode: ParseMode::NonInteractive,
             valid_arguments: &["00000000-0000-0000-0000-000000000001"],
             minimum: 1,
-            maximum: Some(1),
+            maximum: None,
             usage: "見 <task_id>",
         },
         Case {
@@ -619,6 +645,10 @@ fn parser_distinguishes_noop_search_fallback_and_interactive_shortcuts() {
         Command::Noop
     );
     assert_eq!(
+        parse_non_interactive_command_tokens(&["0001 task".to_string()]).unwrap(),
+        Command::Noop
+    );
+    assert_eq!(
         parse_command(" 0001 task", ParseMode::NonInteractive).unwrap(),
         Command::ShowAll {
             pattern: Some("0001".to_string()),
@@ -829,6 +859,6 @@ fn arrange_accepts_only_the_explicit_all_flags() {
 #[test]
 fn runtime_routes_both_product_entry_paths_through_the_shared_parser() {
     let source = include_str!("runtime.rs");
-    assert!(source.contains("parse_command(command, ParseMode::NonInteractive)"));
-    assert!(source.contains("parse_command(command, ParseMode::Interactive)"));
+    assert!(source.contains("parse_non_interactive_command_tokens(command_tokens)"));
+    assert!(source.contains("parse_interactive_command(command)"));
 }

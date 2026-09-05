@@ -1,7 +1,7 @@
 use super::*;
 
 fn parse_focus_selection_mode_command(line: &str) -> Option<FocusSelectionMode> {
-    parse_command(line, ParseMode::Interactive)
+    parse_interactive_command(line)
         .ok()
         .and_then(|command| focus_selection_mode_from_command(&command))
 }

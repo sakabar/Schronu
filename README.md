@@ -83,7 +83,13 @@ CLI commandは、入力から副作用までを次のprivate境界で処理し�
 4. `renderer.rs`が`DisplayModel`を既存CLI文字列へ変換し、writer固有改行、ANSI、Spreadsheet A-J列の整形、flush modeを扱う。
 5. `runtime.rs`は依存構築、repository transaction、Verifyのread-only repository検査、外部URL起動、interactive/non-interactive調停、focus変更と描画要求の適用、終了code変換だけを担う。
 
-この境界はprivateな実装構造です。command名とalias、CLI文言、YAML、MCP、Spreadsheetの公開契約は変更しません。
+このprivateな責務分割自体は、既存のcommand名、alias、CLI表示文言を変更しません。
+
+task名は入力した原文をtrim・正規化せずに保存します。validation時だけ前後の空白を除いた値を使い、blankと、`123`、`+123`、`-123`のようなoptional sign付きASCII整数だけの名前を拒否します。さらに、全Unicode control characterを拒否します。通常の空白(先頭・末尾・連続を含む)、Unicode・日本語、single quote、double quote、backslashは使用でき、原文のまま保持されます。
+
+interactive入力は次の共通lexerでtoken列に変換されます。single quote内はbackslashを含めてすべてliteralです。double quote内とquote外では、backslashが直後の1文字をescapeします。quote自体はtokenへ含めず、隣接するquoted/unquoted fragmentは同じtokenへ連結します。whitespaceがdelimiterになるのはquote外だけで、`''`と`""`は空tokenを作ります。未閉鎖のsingle/double quoteと末尾backslashはtyped parse errorです。
+
+non-interactive入力では、shellが作ったOS argvをそのまま共通のtoken列parserへ渡し、joinや再lexerを行いません。このため、空白やquote、backslashを含むtask名はshellのquoting規則を使って1つのargvとして渡してください。command全文を1つのargvへ入れて暗黙に分割させる形式には対応しません。
 
 保存性能を測定するignored testは、2172 projectを含むtask storageのコピー元を`SCHRONU_BENCHMARK_STORAGE`へ指定して手動実行します。外部fixtureと実行環境に依存するため、CIでは実行しません。
 
@@ -314,7 +320,7 @@ CLI、MCP server、Web serverは保存先直下の`.lock`へ同じOS advisory lo
 
 各processは起動後の最初のstorage操作では必ずtransaction recoveryを行ってから全projectをloadします。reload時もrevision判定より前にrecoveryを行います。commit markerがない未完transactionは、live targetが未変更のためstagingを破棄して旧snapshotを維持します。markerがあるtransactionはcommit済みとし、project適用の途中や`.revision`更新の前後でprocessが終了していても、manifestに従って常に新snapshotへidempotentにroll-forwardし、最後に`.revision`を対応値へ揃えます。write対象の長さとchecksumはimmutable manifestへ記録され、recoveryは全entryについてlive targetまたはstaged fileの内容を照合してからlive targetを変更します。既に正しい内容のlive targetは適用済みとして扱い、対応するstaged fileが欠落していても残りのentryをroll-forwardできます。2回目以降はrecovery後の`.revision`が前回値と一致すればmemory上のtask treeを再利用し、現在時刻へのclock同期だけを行います。他processが保存して`.revision`が変わった場合は、次のCLI command、MCP `tools/call`、またはCLIの60秒ごとの再描画で全projectを1回loadし直します。稼働中の`project.yaml`直接編集は`.revision`を更新しないため検出対象外です。
 
-CLIはlock競合時に最大1秒、10ms間隔で取得を再試行します。timeoutしたcommandは実行も保存もせず、入力を保持するため、競合解消後にEnterで再試行できます。MCP callは競合時に待機せず`repository_lock_contended`と`recovery: "retry"`を返します。競合中のstorage操作が終わった後に再試行してください。`.lock` fileはprocess終了後も残りますが、fileの存在だけではlock中を意味しません。OS lockを取得できるかどうかで、実際のlock状態を判定します。取得成功時にmetadataは上書きされます。
+CLIはlock競合時に最大1秒、10ms間隔で取得を再試行します。timeoutしたcommandは実行も保存もせず、入力とEnterを押した時点のカーソル位置を保持するため、競合解消後にEnterで再試行できます。この入力状態の保持は、load失敗を含む全Submit Retryに適用します。MCP callは競合時に待機せず`repository_lock_contended`と`recovery: "retry"`を返します。競合中のstorage操作が終わった後に再試行してください。`.lock` fileはprocess終了後も残りますが、fileの存在だけではlock中を意味しません。OS lockを取得できるかどうかで、実際のlock状態を判定します。取得成功時にmetadataは上書きされます。
 
 CLIのCtrl-Cは未送信の入力だけを破棄します。既に成功したcommandは保存済みであり、session全体をrollbackしません。CLI commandのsaveに失敗した場合は、memoryとfileの状態が一致している保証がないためCLIを終了します。保存先を確認・修復してからCLIを再起動してください。
 
@@ -460,7 +466,7 @@ schronu> t
 
 伏せたtask IDは同じモードの間だけCLI process内に保持されます。`高`または`低`を切り替えた場合だけでなく、同じコマンドを再入力した場合も伏せた一覧をresetします。CLIを再起動した場合も伏せた状態は残りません。task一覧やscheduleからはtaskを隠しません。
 
-`見 <task_id>`を使うと、伏せたtaskにも明示的にフォーカスできます。この明示フォーカスは元の高・低モードと伏せた一覧を変更しません。`外`、`tuck`(`伏`または`t`)、または成功した`終`で明示フォーカスが終了すると、元のモードと伏せた一覧から自動選択し直します。
+`見 <task_id>`を使うと、伏せたtaskにも明示的にフォーカスできます。`見`、`focus`、`fc`に複数の引数を渡した場合は、先頭のtask IDだけを受理し、2個目以降を無視します。この明示フォーカスは元の高・低モードと伏せた一覧を変更しません。`外`、`tuck`(`伏`または`t`)、または成功した`終`で明示フォーカスが終了すると、元のモードと伏せた一覧から自動選択し直します。
 
 ### 先送り中のタスクを余差へ前倒しする
 
@@ -555,7 +561,7 @@ schronu 尾
 schronu 尾 週
 ```
 
-この非対話実行では、引数全体を1つのコマンドとして扱います。結果は標準出力へ出し、成功した更新コマンドはタスクファイルへ保存されます。
+この非対話実行では、第1 argvをcommand、後続argvをその引数として扱います。各argvの境界と内容は維持され、結果は標準出力へ出し、成功した更新コマンドはタスクファイルへ保存されます。
 `tuck`、`伏`、`t`は対話モード専用のため、非対話実行では入力errorになり、taskの状態もfileも変更しません。
 
 コマンド入力が不正な場合は、`[Error] 入力エラー: <field>: <理由>`を表示します。対話モードではエラーを表示して入力待ちへ戻り、非対話実行では標準エラーへ表示して非0で終了します。不正入力ではタスクの状態を変更せず、保存も行いません。タスクが見つからない、未完了の子があるなどの操作拒否も診断として表示されます。browserまたはObsidianの起動に失敗した場合は外部起動エラーとして表示されます。
@@ -588,7 +594,9 @@ R列には、タスクの処理時期を変更するときに実行するコマ�
 
 完了対象の行では、P列に `2026/07/04 9:23:45` のような完了時刻、S列に `0:23:45` のような実作業時間を入れてください。生成される `終` コマンドにはP列の完了時刻が渡されます。
 
-新規タスクを仮登録する場合は、B列を空欄のままJ列にタスク名を入力してください。Q列の抽出フラグに関係なく、`新 <タスク名>`、仮の説明、見積もり3分のコマンドが生成されます。
+新規タスクを仮登録する場合は、B列を空欄のままJ列にタスク名を入力してください。Q列の抽出フラグに関係なく、`新 "<task名>"`、仮の説明、見積もり3分のコマンドが生成されます。J列の原文はtrimせず、double-quoted argv内のbackslashとdouble quoteをescapeするため、生成commandをinteractive CLIへ入力しても同じtask名になります。
+
+generatorは、空でない各physical rowがA-Sの19列であることと、J列のtask名がCLIと同じvalidation契約を満たすことを全行について確認してからcommandを出力します。完全な空行とA-Sがすべて空の行は無視し、CRLFの行末だけを正規化します。列数不正はline番号付きで、J列にcontrol character、blank、optional sign付きASCII整数だけのtask名がある場合はline番号とJ列付きで拒否し、部分的なcommandをstdoutへ出しません。
 
 SpreadsheetのA-S列は[spreadsheet_columns.tsv](spreadsheet_columns.tsv)を正本とします。A-J列はSchronuの`全`出力、K-S列はSpreadsheet上の補助列です。B列は`task_id`、J列は`task_name`、L/N/P/R列はシート間の同期対象、P列は完了時刻、Q列は抽出対象、S列は実作業時間です。
 

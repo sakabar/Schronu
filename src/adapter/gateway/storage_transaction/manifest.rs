@@ -1,6 +1,8 @@
 use super::io::{validate_delete_target_ancestors, StorageTransactionIo};
 use super::layout::{validate_storage_relative_path, TransactionLayout};
 use super::{StorageTransactionError, StorageTransactionOperation};
+use crate::adapter::gateway::storage_content_integrity::content_digest;
+pub(super) use crate::adapter::gateway::storage_content_integrity::content_matches;
 use serde::{Deserialize, Serialize};
 use std::path::{Component, Path, PathBuf};
 use uuid::Uuid;
@@ -279,17 +281,7 @@ pub(super) fn validate_content_integrity(
 }
 
 pub(super) fn content_checksum(bytes: &[u8]) -> String {
-    const FNV_OFFSET_BASIS: u64 = 0xcbf29ce484222325;
-    const FNV_PRIME: u64 = 0x00000100000001b3;
-
-    let checksum = bytes.iter().fold(FNV_OFFSET_BASIS, |checksum, byte| {
-        (checksum ^ u64::from(*byte)).wrapping_mul(FNV_PRIME)
-    });
-    format!("fnv1a64:{checksum:016x}")
-}
-
-pub(super) fn content_matches(bytes: &[u8], expected_length: u64, expected_checksum: &str) -> bool {
-    bytes.len() as u64 == expected_length && content_checksum(bytes) == expected_checksum
+    content_digest(bytes)
 }
 
 pub(super) fn validate_staged_file_path(

@@ -1,6 +1,7 @@
 use crate::application::daily_capacity::{try_local_date_and_time, try_next_logical_date_start};
 use crate::application::interface::{ProjectRegistrationError, TaskRepositoryTrait};
 use crate::application::schedule_use_case::get_schedule;
+use crate::application::task_name;
 pub use crate::application::task_view::TaskView;
 use crate::entity::task::{
     ProjectCategory, RepetitionAnchor, Status, TaskAttr, TaskHandle, TaskTreeError,
@@ -725,28 +726,10 @@ fn ensure_task_ids_available(
 }
 
 pub fn validate_task_name(name: &str, field: &'static str) -> Result<(), ApplicationError> {
-    let trimmed_name = name.trim();
-    if trimmed_name.is_empty() {
-        return Err(ApplicationError::InvalidInput {
-            field,
-            reason: "must not be blank",
-        });
-    }
-    if is_integer_only_name(trimmed_name) {
-        return Err(ApplicationError::InvalidInput {
-            field,
-            reason: "must not be an integer-only name",
-        });
-    }
-    Ok(())
-}
-
-fn is_integer_only_name(name: &str) -> bool {
-    let digits = name
-        .strip_prefix('+')
-        .or_else(|| name.strip_prefix('-'))
-        .unwrap_or(name);
-    !digits.is_empty() && digits.chars().all(|character| character.is_ascii_digit())
+    task_name::validate(name).map_err(|violation| ApplicationError::InvalidInput {
+        field,
+        reason: violation.reason(),
+    })
 }
 
 pub fn estimated_work_seconds_from_minutes(minutes: i64) -> Result<i64, ApplicationError> {

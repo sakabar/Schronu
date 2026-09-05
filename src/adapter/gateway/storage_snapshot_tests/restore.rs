@@ -1,0 +1,296 @@
+use crate::adapter::gateway::storage_snapshot::{
+    create_snapshot_at, restore_snapshot, restore_snapshot_after_parent_open,
+    restore_snapshot_before_publish, restore_snapshot_with_failure,
+    restore_snapshot_with_failure_observation, SnapshotFailurePoint,
+};
+use chrono::TimeZone;
+
+#[test]
+fn snapshot_restoreはsource非依存で別directoryへ全永続dataを復元する() {
+    let root = TestDirectory::new("restore");
+    let source = root.child("source");
+    let snapshot = root.child("snapshot");
+    let destination = root.child("restored");
+    let now = Local.with_ymd_and_hms(2026, 9, 5, 12, 0, 0).unwrap();
+    let (_, project_yaml) = create_saved_repository(&source, now);
+    let relative_project = project_yaml.strip_prefix(&source).unwrap().to_path_buf();
+    fs::write(project_yaml.parent().unwrap().join("notes.bin"), b"note").unwrap();
+    let empty_directory = project_yaml.parent().unwrap().join("markdown/empty");
+    fs::create_dir_all(&empty_directory).unwrap();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(&project_yaml, fs::Permissions::from_mode(0o640)).unwrap();
+        fs::set_permissions(&empty_directory, fs::Permissions::from_mode(0o710)).unwrap();
+        fs::set_permissions(source.join(".revision"), fs::Permissions::from_mode(0o600)).unwrap();
+    }
+    let expected_revision_bytes = fs::read(source.join(".revision")).unwrap();
+    let expected_revision = create_snapshot_at(&source, &snapshot, now)
+        .unwrap()
+        .revision();
+    fs::remove_dir_all(&source).unwrap();
+
+    let summary = restore_snapshot(&snapshot, &destination).unwrap();
+
+    assert_eq!(summary.revision(), expected_revision);
+    assert_eq!(summary.file_count(), 3);
+    assert!(destination.join(&relative_project).is_file());
+    assert_eq!(
+        fs::read(destination.join(relative_project.parent().unwrap()).join("notes.bin")).unwrap(),
+        b"note"
+    );
+    assert!(destination
+        .join(relative_project.parent().unwrap())
+        .join("markdown/empty")
+        .is_dir());
+    assert_eq!(
+        fs::read(destination.join(".revision")).unwrap(),
+        expected_revision_bytes
+    );
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        assert_eq!(
+            fs::metadata(destination.join(&relative_project))
+                .unwrap()
+                .permissions()
+                .mode()
+                & 0o777,
+            0o640
+        );
+        assert_eq!(
+            fs::metadata(
+                destination
+                    .join(relative_project.parent().unwrap())
+                    .join("markdown/empty")
+            )
+            .unwrap()
+            .permissions()
+            .mode()
+                & 0o777,
+            0o710
+        );
+        assert_eq!(
+            fs::metadata(destination.join(".revision"))
+                .unwrap()
+                .permissions()
+                .mode()
+                & 0o777,
+            0o600
+        );
+    }
+    let mut repository = TaskRepository::new(destination.to_str().unwrap());
+    repository.load().unwrap();
+}
+
+#[test]
+fn snapshot_restoreは既存destinationを変更せず拒否する() {
+    let root = TestDirectory::new("restore-existing");
+    let source = root.child("source");
+    let snapshot = root.child("snapshot");
+    let destination = root.child("restored");
+    let now = Local.with_ymd_and_hms(2026, 9, 5, 12, 0, 0).unwrap();
+    create_saved_repository(&source, now);
+    create_snapshot_at(&source, &snapshot, now).unwrap();
+    fs::create_dir(&destination).unwrap();
+    fs::write(destination.join("existing"), b"preserve").unwrap();
+
+    restore_snapshot(&snapshot, &destination).unwrap_err();
+
+    assert_eq!(fs::read(destination.join("existing")).unwrap(), b"preserve");
+}
+
+#[test]
+fn snapshot_restoreは検証後に差し替えられた親directoryへ書き込まない() {
+    let root = TestDirectory::new("restore-parent-swap");
+    let source = root.child("source");
+    let snapshot = root.child("snapshot");
+    let parent = root.child("parent");
+    let original_parent = root.child("original-parent");
+    let destination = parent.join("restored");
+    let now = Local.with_ymd_and_hms(2026, 9, 5, 12, 0, 0).unwrap();
+    create_saved_repository(&source, now);
+    create_snapshot_at(&source, &snapshot, now).unwrap();
+    fs::create_dir(&parent).unwrap();
+
+    restore_snapshot_after_parent_open(&snapshot, &destination, || {
+        fs::rename(&parent, &original_parent).unwrap();
+        fs::create_dir(&parent).unwrap();
+        fs::write(parent.join("sentinel"), b"preserve").unwrap();
+    })
+    .unwrap();
+
+    assert!(original_parent.join("restored/.revision").is_file());
+    assert!(!parent.join("restored").exists());
+    assert_eq!(fs::read(parent.join("sentinel")).unwrap(), b"preserve");
+}
+
+#[test]
+fn snapshot_restoreはsnapshot配下へ移動された親directoryを拒否する() {
+    let root = TestDirectory::new("restore-parent-moved-into-snapshot");
+    let source = root.child("source");
+    let snapshot = root.child("snapshot");
+    let parent = root.child("parent");
+    let moved_parent = snapshot.join("moved-parent");
+    let destination = parent.join("restored");
+    let now = Local.with_ymd_and_hms(2026, 9, 5, 12, 0, 0).unwrap();
+    create_saved_repository(&source, now);
+    create_snapshot_at(&source, &snapshot, now).unwrap();
+    fs::create_dir(&parent).unwrap();
+
+    let error = restore_snapshot_after_parent_open(&snapshot, &destination, || {
+        fs::rename(&parent, &moved_parent).unwrap();
+    })
+    .unwrap_err()
+    .to_string();
+
+    assert!(error.contains("outside the snapshot"), "{error}");
+    assert!(!moved_parent.join("restored").exists());
+}
+
+#[test]
+fn snapshot_restoreは差し替えられたstagingのcleanup失敗を保持する() {
+    let root = TestDirectory::new("restore-staging-swap");
+    let source = root.child("source");
+    let snapshot = root.child("snapshot");
+    let destination = root.child("restored");
+    let displaced = root.child("displaced-staging");
+    let now = Local.with_ymd_and_hms(2026, 9, 5, 12, 0, 0).unwrap();
+    create_saved_repository(&source, now);
+    create_snapshot_at(&source, &snapshot, now).unwrap();
+
+    let error = restore_snapshot_before_publish(&snapshot, &destination, || {
+        let staging = fs::read_dir(&root.path)
+            .unwrap()
+            .map(|entry| entry.unwrap().path())
+            .find(|path| {
+                path.file_name()
+                    .unwrap()
+                    .to_string_lossy()
+                    .starts_with(".restored.tmp-")
+            })
+            .unwrap();
+        fs::rename(&staging, &displaced).unwrap();
+        fs::create_dir(&staging).unwrap();
+        fs::write(staging.join("foreign"), b"preserve").unwrap();
+    })
+    .unwrap_err();
+    let mut source_chain = Vec::new();
+    let mut source = std::error::Error::source(&error);
+    while let Some(current) = source {
+        source_chain.push(current.to_string());
+        source = current.source();
+    }
+
+    assert_eq!(error.path(), destination);
+    assert!(source_chain
+        .iter()
+        .any(|source| source.contains("published destination was replaced before rollback")));
+    assert!(!destination.exists());
+    assert!(displaced.join(".revision").is_file());
+    assert!(fs::read_dir(&root.path)
+        .unwrap()
+        .map(|entry| entry.unwrap().path())
+        .any(|path| path.join("foreign").is_file()));
+}
+
+#[test]
+fn snapshot_restoreのparent_sync失敗はrollback後にparentを再syncする() {
+    let root = TestDirectory::new("restore-parent-resync");
+    let source = root.child("source");
+    let snapshot = root.child("snapshot");
+    let destination = root.child("restored");
+    let now = Local.with_ymd_and_hms(2026, 9, 5, 12, 0, 0).unwrap();
+    create_saved_repository(&source, now);
+    create_snapshot_at(&source, &snapshot, now).unwrap();
+
+    let (result, sync_count) = restore_snapshot_with_failure_observation(
+        &snapshot,
+        &destination,
+        SnapshotFailurePoint::ParentSync,
+    );
+    let error = result.unwrap_err().to_string();
+
+    assert!(error.contains("injected ParentSync failure"), "{error}");
+    assert!(!error.contains("cleanup failed"), "{error}");
+    assert!(!destination.exists());
+    assert_eq!(sync_count, 2);
+}
+
+#[test]
+fn snapshot_restore失敗はdestinationもstagingも公開しない() {
+    for point in [
+        SnapshotFailurePoint::Copy,
+        SnapshotFailurePoint::Permission,
+        SnapshotFailurePoint::FileSync,
+        SnapshotFailurePoint::DirectorySync,
+        SnapshotFailurePoint::Rename,
+        SnapshotFailurePoint::ParentSync,
+    ] {
+        let root = TestDirectory::new(&format!("restore-atomic-{point:?}"));
+        let source = root.child("source");
+        let snapshot = root.child("snapshot");
+        let destination = root.child("restored");
+        let now = Local.with_ymd_and_hms(2026, 9, 5, 12, 0, 0).unwrap();
+        create_saved_repository(&source, now);
+        create_snapshot_at(&source, &snapshot, now).unwrap();
+
+        let error = restore_snapshot_with_failure(&snapshot, &destination, point)
+            .unwrap_err()
+            .to_string();
+        let expected_operation = match point {
+            SnapshotFailurePoint::FileSync
+            | SnapshotFailurePoint::DirectorySync
+            | SnapshotFailurePoint::ParentSync => "Sync",
+            SnapshotFailurePoint::Copy
+            | SnapshotFailurePoint::Permission
+            | SnapshotFailurePoint::Rename => "Write",
+            SnapshotFailurePoint::Read | SnapshotFailurePoint::Write => unreachable!(),
+        };
+
+        assert!(
+            error.contains(&format!("snapshot {expected_operation} failed")),
+            "{error}"
+        );
+        assert!(error.contains(&format!("injected {point:?} failure")), "{error}");
+        if point == SnapshotFailurePoint::ParentSync {
+            assert!(!error.contains("cleanup failed"), "{error}");
+        }
+        assert!(!destination.exists(), "{point:?}");
+        assert!(
+            fs::read_dir(&root.path).unwrap().all(|entry| !entry
+                .unwrap()
+                .file_name()
+                .to_string_lossy()
+                .starts_with(".restored.tmp-")),
+            "{point:?}"
+        );
+    }
+}
+
+#[test]
+fn snapshot_restoreはstrict_repository検証失敗時に出力しない() {
+    let root = TestDirectory::new("restore-strict-failure");
+    let source = root.child("source");
+    let snapshot = root.child("snapshot");
+    let destination = root.child("restored");
+    let now = Local.with_ymd_and_hms(2026, 9, 5, 12, 0, 0).unwrap();
+    let (_, project_yaml) = create_saved_repository(&source, now);
+    let relative = project_yaml.strip_prefix(&source).unwrap();
+    create_snapshot_at(&source, &snapshot, now).unwrap();
+    let invalid = b"project: [";
+    fs::write(snapshot.join("storage").join(relative), invalid).unwrap();
+    update_snapshot_manifest_file(&snapshot, relative, invalid);
+
+    let error = restore_snapshot(&snapshot, &destination)
+        .unwrap_err()
+        .to_string();
+
+    assert!(error.contains("RepositoryLoad"), "{error}");
+    assert!(!destination.exists());
+    assert!(fs::read_dir(&root.path).unwrap().all(|entry| !entry
+        .unwrap()
+        .file_name()
+        .to_string_lossy()
+        .starts_with(".restored.tmp-")));
+}
