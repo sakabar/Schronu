@@ -1,5 +1,7 @@
 use super::error::{SnapshotError, SnapshotOperation};
-use super::io::{rename_no_replace, FileSystemSnapshotIo, SnapshotIo};
+#[cfg(test)]
+use super::io::SnapshotIo;
+use super::io::{StableDirectory, StableParent};
 use super::layout::{is_reserved_path, staging_path, MANIFEST_FILE_NAME, PAYLOAD_DIRECTORY_NAME};
 use super::manifest::{
     decode_manifest, encode_manifest, DigestDescriptor, DirectoryEntry, FileEntry,
@@ -11,8 +13,8 @@ use crate::adapter::gateway::storage_lock::{LockMode, StorageLock};
 use crate::adapter::gateway::task_repository::TaskRepository;
 use crate::application::interface::TaskRepositoryTrait;
 use chrono::{DateTime, Local};
-use std::fs::{self, File};
-use std::io::Write;
+use std::ffi::{OsStr, OsString};
+use std::fs;
 use std::path::{Path, PathBuf};
 use uuid::Uuid;
 use walkdir::{DirEntry, WalkDir};
@@ -33,7 +35,32 @@ pub(in crate::adapter::gateway) fn create_snapshot_at(
     destination: &Path,
     created_at: DateTime<Local>,
 ) -> Result<SnapshotSummary, SnapshotError> {
-    validate_endpoints(storage_directory, destination)?;
+    create_snapshot_impl(storage_directory, destination, created_at, || {})
+}
+
+#[cfg(test)]
+pub(in crate::adapter::gateway) fn create_snapshot_after_parent_open(
+    storage_directory: &Path,
+    destination: &Path,
+    created_at: DateTime<Local>,
+    after_parent_open: impl FnOnce(),
+) -> Result<SnapshotSummary, SnapshotError> {
+    create_snapshot_impl(
+        storage_directory,
+        destination,
+        created_at,
+        after_parent_open,
+    )
+}
+
+fn create_snapshot_impl(
+    storage_directory: &Path,
+    destination: &Path,
+    created_at: DateTime<Local>,
+    after_parent_open: impl FnOnce(),
+) -> Result<SnapshotSummary, SnapshotError> {
+    let publication = validate_endpoints(storage_directory, destination)?;
+    after_parent_open();
     let _lock = StorageLock::acquire(storage_directory, LockMode::Backup).map_err(|error| {
         let path = error.path().to_path_buf();
         SnapshotError::new(SnapshotOperation::AcquireLock, path, error)
@@ -43,9 +70,29 @@ pub(in crate::adapter::gateway) fn create_snapshot_at(
     let collected = collect_storage(storage_directory)?;
     let revision = read_revision(&collected.files)?;
     let staging = staging_path(destination)?;
-    let result = publish_snapshot(&staging, destination, created_at, revision, &collected);
-    if result.is_err() && staging.exists() {
-        let _ = fs::remove_dir_all(&staging);
+    let staging_name = staging
+        .file_name()
+        .expect("staging path has a file name")
+        .to_os_string();
+    let staging_directory = publication
+        .parent
+        .create_directory(&staging_name)
+        .map_err(|error| SnapshotError::new(SnapshotOperation::Create, &staging, error))?;
+    let staging_publication = StagingPublication {
+        path: &staging,
+        name: &staging_name,
+        directory: &staging_directory,
+        destination,
+        target: &publication,
+    };
+    let result = publish_snapshot(&staging_publication, created_at, revision, &collected);
+    if result.is_err()
+        && publication
+            .parent
+            .entry_exists(&staging_name)
+            .unwrap_or(false)
+    {
+        let _ = publication.parent.remove_directory_tree(&staging_name);
     }
     result.map(|()| SnapshotSummary::new(revision, collected.files.len()))
 }
@@ -79,7 +126,15 @@ struct CollectedFile {
     permissions: fs::Permissions,
 }
 
-fn validate_endpoints(storage: &Path, destination: &Path) -> Result<(), SnapshotError> {
+struct PublicationDestination {
+    parent: StableParent,
+    destination_name: OsString,
+}
+
+fn validate_endpoints(
+    storage: &Path,
+    destination: &Path,
+) -> Result<PublicationDestination, SnapshotError> {
     let storage_metadata = fs::symlink_metadata(storage)
         .map_err(|error| SnapshotError::new(SnapshotOperation::Validate, storage, error))?;
     if storage_metadata.file_type().is_symlink() || !storage_metadata.is_dir() {
@@ -87,9 +142,6 @@ fn validate_endpoints(storage: &Path, destination: &Path) -> Result<(), Snapshot
             storage,
             "snapshot source must be a non-symlink directory",
         ));
-    }
-    if destination.exists() {
-        return Err(invalid(destination, "snapshot destination must not exist"));
     }
     let parent = destination
         .parent()
@@ -100,17 +152,41 @@ fn validate_endpoints(storage: &Path, destination: &Path) -> Result<(), Snapshot
                 "snapshot destination must have a parent directory",
             )
         })?;
+    let destination_name = destination
+        .file_name()
+        .ok_or_else(|| invalid(destination, "snapshot destination must have a file name"))?
+        .to_os_string();
+    let stable_parent = StableParent::open(parent)
+        .map_err(|error| SnapshotError::new(SnapshotOperation::Validate, parent, error))?;
+    if stable_parent
+        .entry_exists(&destination_name)
+        .map_err(|error| SnapshotError::new(SnapshotOperation::Validate, destination, error))?
+    {
+        return Err(invalid(destination, "snapshot destination must not exist"));
+    }
     let canonical_storage = fs::canonicalize(storage)
         .map_err(|error| SnapshotError::new(SnapshotOperation::Validate, storage, error))?;
     let canonical_parent = fs::canonicalize(parent)
         .map_err(|error| SnapshotError::new(SnapshotOperation::Validate, parent, error))?;
+    if !stable_parent
+        .matches_path(&canonical_parent)
+        .map_err(|error| SnapshotError::new(SnapshotOperation::Validate, parent, error))?
+    {
+        return Err(invalid(
+            destination,
+            "snapshot destination parent changed during validation",
+        ));
+    }
     if canonical_parent.starts_with(&canonical_storage) {
         return Err(invalid(
             destination,
             "snapshot destination must be outside the source storage",
         ));
     }
-    Ok(())
+    Ok(PublicationDestination {
+        parent: stable_parent,
+        destination_name,
+    })
 }
 
 fn collect_storage(storage: &Path) -> Result<CollectedStorage, SnapshotError> {
@@ -192,67 +268,120 @@ fn read_revision(files: &[CollectedFile]) -> Result<Option<Uuid>, SnapshotError>
         .map_err(|error| SnapshotError::new(SnapshotOperation::Validate, &file.path, error))
 }
 
+struct StagingPublication<'a> {
+    path: &'a Path,
+    name: &'a OsStr,
+    directory: &'a StableDirectory,
+    destination: &'a Path,
+    target: &'a PublicationDestination,
+}
+
 fn publish_snapshot(
-    staging: &Path,
-    destination: &Path,
+    staging: &StagingPublication<'_>,
     created_at: DateTime<Local>,
     revision: Option<Uuid>,
     collected: &CollectedStorage,
 ) -> Result<(), SnapshotError> {
-    fs::create_dir(staging)
-        .map_err(|error| SnapshotError::new(SnapshotOperation::Create, staging, error))?;
-    let payload = staging.join(PAYLOAD_DIRECTORY_NAME);
-    fs::create_dir(&payload)
+    let payload = staging.path.join(PAYLOAD_DIRECTORY_NAME);
+    staging
+        .directory
+        .create_directory(Path::new(PAYLOAD_DIRECTORY_NAME))
         .map_err(|error| SnapshotError::new(SnapshotOperation::Create, &payload, error))?;
 
     for directory in &collected.directories {
         let path = payload.join(&directory.path);
-        fs::create_dir(&path)
+        staging
+            .directory
+            .create_directory(&Path::new(PAYLOAD_DIRECTORY_NAME).join(&directory.path))
             .map_err(|error| SnapshotError::new(SnapshotOperation::Create, &path, error))?;
     }
     for file in &collected.files {
         let path = payload.join(&file.path);
-        let mut output = File::options()
-            .write(true)
-            .create_new(true)
-            .open(&path)
+        staging
+            .directory
+            .write_file(
+                &Path::new(PAYLOAD_DIRECTORY_NAME).join(&file.path),
+                &file.bytes,
+                file.permissions.clone(),
+            )
             .map_err(|error| SnapshotError::new(SnapshotOperation::Write, &path, error))?;
-        output
-            .write_all(&file.bytes)
-            .map_err(|error| SnapshotError::new(SnapshotOperation::Write, &path, error))?;
-        fs::set_permissions(&path, file.permissions.clone())
-            .map_err(|error| SnapshotError::new(SnapshotOperation::Write, &path, error))?;
-        output
-            .sync_all()
-            .map_err(|error| SnapshotError::new(SnapshotOperation::Sync, &path, error))?;
     }
     for directory in collected.directories.iter().rev() {
         let path = payload.join(&directory.path);
-        fs::set_permissions(&path, directory.permissions.clone())
+        let relative = Path::new(PAYLOAD_DIRECTORY_NAME).join(&directory.path);
+        staging
+            .directory
+            .set_directory_permissions(&relative, directory.permissions.clone())
             .map_err(|error| SnapshotError::new(SnapshotOperation::Write, &path, error))?;
-        sync_directory(&path)?;
+        staging
+            .directory
+            .sync_directory(&relative)
+            .map_err(|error| SnapshotError::new(SnapshotOperation::Sync, &path, error))?;
     }
-    sync_directory(&payload)?;
+    staging
+        .directory
+        .sync_directory(Path::new(PAYLOAD_DIRECTORY_NAME))
+        .map_err(|error| SnapshotError::new(SnapshotOperation::Sync, &payload, error))?;
 
     let manifest = build_manifest(created_at, revision, collected);
     let manifest_bytes = encode_manifest(&manifest)?;
-    let manifest_path = staging.join(MANIFEST_FILE_NAME);
+    let manifest_path = staging.path.join(MANIFEST_FILE_NAME);
     decode_manifest(&manifest_path, &manifest_bytes)?;
-    let mut manifest_file = File::options()
-        .write(true)
-        .create_new(true)
-        .open(&manifest_path)
+    staging
+        .directory
+        .write_file(
+            Path::new(MANIFEST_FILE_NAME),
+            &manifest_bytes,
+            manifest_permissions(),
+        )
         .map_err(|error| SnapshotError::new(SnapshotOperation::Write, &manifest_path, error))?;
-    manifest_file
-        .write_all(&manifest_bytes)
-        .and_then(|()| manifest_file.sync_all())
-        .map_err(|error| SnapshotError::new(SnapshotOperation::Sync, &manifest_path, error))?;
-    sync_directory(staging)?;
-    rename_no_replace(staging, destination)
-        .map_err(|error| SnapshotError::new(SnapshotOperation::Write, destination, error))?;
-    finalize_publication(&FileSystemSnapshotIo, destination)
+    staging
+        .directory
+        .sync()
+        .map_err(|error| SnapshotError::new(SnapshotOperation::Sync, staging.path, error))?;
+    staging
+        .target
+        .parent
+        .rename_no_replace(staging.name, &staging.target.destination_name)
+        .map_err(|error| {
+            SnapshotError::new(SnapshotOperation::Write, staging.destination, error)
+        })?;
+    if let Err(sync_error) = staging.target.parent.sync() {
+        staging
+            .target
+            .parent
+            .remove_directory_tree(&staging.target.destination_name)
+            .map_err(|cleanup_error| {
+                SnapshotError::new(SnapshotOperation::Write, staging.destination, cleanup_error)
+            })?;
+        let _ = staging.target.parent.sync();
+        return Err(SnapshotError::new(
+            SnapshotOperation::Sync,
+            staging
+                .destination
+                .parent()
+                .expect("destination has a parent"),
+            sync_error,
+        ));
+    }
+    Ok(())
 }
 
+fn manifest_permissions() -> fs::Permissions {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        fs::Permissions::from_mode(0o600)
+    }
+    #[cfg(not(unix))]
+    {
+        fs::metadata(".")
+            .expect("current directory metadata is available")
+            .permissions()
+    }
+}
+
+#[cfg(test)]
 pub(in crate::adapter::gateway) fn finalize_publication(
     io: &dyn SnapshotIo,
     destination: &Path,
@@ -316,12 +445,6 @@ fn permission_mode(permissions: &fs::Permissions) -> Option<u32> {
 #[cfg(not(unix))]
 fn permission_mode(_permissions: &fs::Permissions) -> Option<u32> {
     None
-}
-
-fn sync_directory(path: &Path) -> Result<(), SnapshotError> {
-    File::open(path)
-        .and_then(|directory| directory.sync_all())
-        .map_err(|error| SnapshotError::new(SnapshotOperation::Sync, path, error))
 }
 
 fn invalid(path: impl Into<PathBuf>, message: &'static str) -> SnapshotError {

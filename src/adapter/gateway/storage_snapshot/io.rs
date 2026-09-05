@@ -6,6 +6,7 @@ use std::path::{Component, Path, PathBuf};
 #[cfg(any(target_os = "macos", target_os = "linux"))]
 use std::os::unix::ffi::OsStrExt;
 
+#[cfg(test)]
 pub(in crate::adapter::gateway) trait SnapshotIo: Send + Sync {
     fn sync_directory(&self, path: &Path) -> std::io::Result<()> {
         File::open(path)?.sync_all()
@@ -15,9 +16,6 @@ pub(in crate::adapter::gateway) trait SnapshotIo: Send + Sync {
         fs::remove_dir_all(path)
     }
 }
-
-pub(in crate::adapter::gateway) struct FileSystemSnapshotIo;
-impl SnapshotIo for FileSystemSnapshotIo {}
 
 pub(super) struct StableParent {
     directory: File,
@@ -491,7 +489,7 @@ pub(super) fn read_directory_tree(_path: &Path) -> std::io::Result<DirectoryTree
     ))
 }
 
-#[cfg(any(target_os = "macos", target_os = "linux"))]
+#[cfg(all(test, any(target_os = "macos", target_os = "linux")))]
 fn c_path(path: &Path) -> std::io::Result<CString> {
     CString::new(path.as_os_str().as_bytes()).map_err(|_| {
         std::io::Error::new(
@@ -501,7 +499,7 @@ fn c_path(path: &Path) -> std::io::Result<CString> {
     })
 }
 
-#[cfg(target_os = "macos")]
+#[cfg(all(test, target_os = "macos"))]
 pub(in crate::adapter::gateway) fn rename_no_replace(
     from: &Path,
     to: &Path,
@@ -517,7 +515,7 @@ pub(in crate::adapter::gateway) fn rename_no_replace(
     }
 }
 
-#[cfg(target_os = "linux")]
+#[cfg(all(test, target_os = "linux"))]
 pub(in crate::adapter::gateway) fn rename_no_replace(
     from: &Path,
     to: &Path,
@@ -541,7 +539,7 @@ pub(in crate::adapter::gateway) fn rename_no_replace(
     }
 }
 
-#[cfg(not(any(target_os = "macos", target_os = "linux")))]
+#[cfg(all(test, not(any(target_os = "macos", target_os = "linux"))))]
 pub(in crate::adapter::gateway) fn rename_no_replace(
     _from: &Path,
     _to: &Path,
