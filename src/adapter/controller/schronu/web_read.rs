@@ -1,0 +1,275 @@
+use crate::adapter::gateway::free_time_manager::FreeTimeManager;
+use crate::adapter::gateway::schronu_config::SchronuConfig;
+use crate::adapter::gateway::storage_lock::{LockMode, StorageLock, StorageLockError};
+use crate::adapter::gateway::task_repository::TaskRepository;
+use crate::application::daily_capacity::{
+    calculate_free_time_minutes_for_logical_date, try_logical_date,
+};
+use crate::application::interface::{
+    BusyTimeSlotLoadError, FreeTimeManagerTrait, TaskRepositoryError, TaskRepositoryTrait,
+};
+use crate::application::repository_transaction::{
+    run_repository_transaction, RepositoryTransactionError,
+};
+use crate::application::schedule_use_case::get_schedule;
+use crate::application::task_use_case::ApplicationError;
+use chrono::{DateTime, Local, NaiveDate};
+use serde::{Deserialize, Serialize};
+use std::error::Error;
+use std::fmt;
+use std::path::PathBuf;
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct ServerSnapshot {
+    pub observed_at_epoch_ms: i64,
+    pub logical_date: String,
+    pub buffer_seconds: i64,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct SessionTaskDto {
+    pub task_id: String,
+    pub task_name: String,
+    pub estimated_work_seconds: i64,
+    pub actual_work_seconds: i64,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct ScheduledTaskRowDto {
+    pub task: SessionTaskDto,
+    pub schedule_start_epoch_ms: i64,
+    pub schedule_end_epoch_ms: i64,
+    pub deadline_epoch_ms: Option<i64>,
+    pub is_leaf: bool,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct WebSuccess<T> {
+    pub snapshot: ServerSnapshot,
+    pub data: T,
+}
+
+pub struct WebReadService {
+    storage_directory: PathBuf,
+    task_repository: Option<TaskRepository>,
+    free_time_manager: FreeTimeManager,
+    config: SchronuConfig,
+}
+
+impl WebReadService {
+    pub fn new(storage_directory: PathBuf, config: SchronuConfig) -> Self {
+        let task_repository = storage_directory.to_str().map(TaskRepository::new);
+        Self {
+            storage_directory,
+            task_repository,
+            free_time_manager: FreeTimeManager::new(),
+            config,
+        }
+    }
+
+    pub fn bootstrap_at(
+        &mut self,
+        operation_now: DateTime<Local>,
+    ) -> Result<ServerSnapshot, WebReadError> {
+        let busy_time_slots_path = self.busy_time_slots_path()?.to_owned();
+        let storage_directory = &self.storage_directory;
+        let task_repository = self
+            .task_repository
+            .as_mut()
+            .ok_or_else(|| WebReadError::PathEncoding(self.storage_directory.clone()))?;
+        let free_time_manager = &mut self.free_time_manager;
+
+        run_repository_transaction(
+            task_repository,
+            operation_now,
+            || StorageLock::acquire(storage_directory, LockMode::Web),
+            |repository| {
+                free_time_manager
+                    .load_busy_time_slots_from_file(&busy_time_slots_path)
+                    .map_err(WebReadOperationError::BusyTimeSlots)?;
+                build_server_snapshot(repository, free_time_manager, operation_now)
+                    .map(|snapshot| (snapshot, false))
+                    .map_err(WebReadOperationError::Core)
+            },
+        )
+        .map_err(WebReadError::from_transaction)
+    }
+
+    fn busy_time_slots_path(&self) -> Result<&str, WebReadError> {
+        self.config
+            .busy_time_slots_yaml_path
+            .to_str()
+            .ok_or_else(|| {
+                WebReadError::PathEncoding(self.config.busy_time_slots_yaml_path.clone())
+            })
+    }
+}
+
+pub(super) fn build_server_snapshot<R, F>(
+    task_repository: &mut R,
+    free_time_manager: &mut F,
+    operation_now: DateTime<Local>,
+) -> Result<ServerSnapshot, WebReadCoreError>
+where
+    R: TaskRepositoryTrait,
+    F: FreeTimeManagerTrait,
+{
+    let logical_date = try_logical_date(operation_now).map_err(WebReadCoreError::Application)?;
+    let free_minutes = calculate_free_time_minutes_for_logical_date(
+        &logical_date,
+        task_repository.get_last_synced_time(),
+        free_time_manager,
+    )
+    .map_err(WebReadCoreError::Application)?;
+    let schedule = get_schedule(task_repository).map_err(WebReadCoreError::Application)?;
+    let scheduled_segments = schedule
+        .iter()
+        .map(|segment| {
+            try_logical_date(segment.scheduled_start)
+                .map(|date| (date, segment.scheduled_work_seconds))
+                .map_err(WebReadCoreError::Application)
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    let buffer_seconds = calculate_buffer_seconds(logical_date, free_minutes, &scheduled_segments)?;
+
+    Ok(ServerSnapshot {
+        observed_at_epoch_ms: operation_now.timestamp_millis(),
+        logical_date: logical_date.format("%Y-%m-%d").to_string(),
+        buffer_seconds,
+    })
+}
+
+pub(super) fn calculate_buffer_seconds(
+    current_logical_date: NaiveDate,
+    free_minutes: i64,
+    scheduled_segments: &[(NaiveDate, i64)],
+) -> Result<i64, WebReadOverflowError> {
+    let free_seconds = free_minutes
+        .checked_mul(60)
+        .ok_or_else(|| WebReadOverflowError::new("free_minutes_to_seconds", free_minutes, 60))?;
+    let scheduled_seconds = scheduled_segments
+        .iter()
+        .filter(|(date, _)| *date == current_logical_date)
+        .try_fold(0_i64, |total, (_, seconds)| {
+            total
+                .checked_add(*seconds)
+                .ok_or_else(|| WebReadOverflowError::new("scheduled_seconds_sum", total, *seconds))
+        })?;
+    free_seconds.checked_sub(scheduled_seconds).ok_or_else(|| {
+        WebReadOverflowError::new("buffer_subtraction", free_seconds, scheduled_seconds)
+    })
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct WebReadOverflowError {
+    operation: &'static str,
+    left: i64,
+    right: i64,
+}
+
+impl WebReadOverflowError {
+    fn new(operation: &'static str, left: i64, right: i64) -> Self {
+        Self {
+            operation,
+            left,
+            right,
+        }
+    }
+
+    pub fn operation(&self) -> &'static str {
+        self.operation
+    }
+
+    pub fn operands(&self) -> (i64, i64) {
+        (self.left, self.right)
+    }
+}
+
+impl fmt::Display for WebReadOverflowError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            formatter,
+            "{0} overflow for operands {1} and {2}",
+            self.operation, self.left, self.right
+        )
+    }
+}
+
+impl Error for WebReadOverflowError {}
+
+#[derive(Debug)]
+pub(super) enum WebReadCoreError {
+    Application(ApplicationError),
+    Overflow(WebReadOverflowError),
+}
+
+impl From<WebReadOverflowError> for WebReadCoreError {
+    fn from(error: WebReadOverflowError) -> Self {
+        Self::Overflow(error)
+    }
+}
+
+#[derive(Debug)]
+enum WebReadOperationError {
+    BusyTimeSlots(BusyTimeSlotLoadError),
+    Core(WebReadCoreError),
+}
+
+#[derive(Debug)]
+pub enum WebReadError {
+    BusyTimeSlots(BusyTimeSlotLoadError),
+    Lock(StorageLockError),
+    Repository(TaskRepositoryError),
+    Application(ApplicationError),
+    PathEncoding(PathBuf),
+    Overflow(WebReadOverflowError),
+}
+
+impl WebReadError {
+    fn from_transaction(
+        error: RepositoryTransactionError<StorageLockError, WebReadOperationError>,
+    ) -> Self {
+        match error {
+            RepositoryTransactionError::Lock(error) => Self::Lock(error),
+            RepositoryTransactionError::Load(error)
+            | RepositoryTransactionError::StateUncertain(error) => Self::Repository(error),
+            RepositoryTransactionError::Operation(WebReadOperationError::BusyTimeSlots(error)) => {
+                Self::BusyTimeSlots(error)
+            }
+            RepositoryTransactionError::Operation(WebReadOperationError::Core(
+                WebReadCoreError::Application(error),
+            )) => Self::Application(error),
+            RepositoryTransactionError::Operation(WebReadOperationError::Core(
+                WebReadCoreError::Overflow(error),
+            )) => Self::Overflow(error),
+        }
+    }
+}
+
+impl fmt::Display for WebReadError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::BusyTimeSlots(error) => write!(formatter, "busy time slot load failed: {error}"),
+            Self::Lock(error) => write!(formatter, "storage lock failed: {error}"),
+            Self::Repository(error) => write!(formatter, "repository read failed: {error}"),
+            Self::Application(error) => write!(formatter, "Web read operation failed: {error}"),
+            Self::PathEncoding(path) => {
+                write!(formatter, "path must be valid UTF-8: {}", path.display())
+            }
+            Self::Overflow(error) => error.fmt(formatter),
+        }
+    }
+}
+
+impl Error for WebReadError {
+    fn source(&self) -> Option<&(dyn Error + 'static)> {
+        match self {
+            Self::BusyTimeSlots(error) => Some(error),
+            Self::Lock(error) => Some(error),
+            Self::Repository(error) => Some(error),
+            Self::Application(error) => Some(error),
+            Self::Overflow(error) => Some(error),
+            Self::PathEncoding(_) => None,
+        }
+    }
+}

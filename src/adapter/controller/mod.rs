@@ -58,6 +58,10 @@ pub fn run_cli() {
 
 pub use storage_directory::resolve_project_storage_directory;
 pub use today_text::{TodayTextError, TodayTextService};
+pub use web_read::{
+    ScheduledTaskRowDto, ServerSnapshot, SessionTaskDto, WebReadError, WebReadOverflowError,
+    WebReadService, WebSuccess,
+};
 
 #[cfg(test)]
 mod entrypoint_contract_tests {
