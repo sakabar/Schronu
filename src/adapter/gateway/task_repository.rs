@@ -102,6 +102,55 @@ struct LoadedRepositoryState {
     storage_revision: Option<Uuid>,
 }
 
+struct RepositoryLoadBuilder {
+    last_synced_time: DateTime<Local>,
+    projects: Vec<Project>,
+    canonical_project_paths: HashMap<PathBuf, PathBuf>,
+}
+
+impl RepositoryLoadBuilder {
+    fn new(last_synced_time: DateTime<Local>) -> Self {
+        Self {
+            last_synced_time,
+            projects: Vec::new(),
+            canonical_project_paths: HashMap::new(),
+        }
+    }
+
+    fn push(
+        &mut self,
+        path: PathBuf,
+        canonical_path: PathBuf,
+        bytes: &[u8],
+    ) -> Result<(), TaskRepositoryError> {
+        let text = std::str::from_utf8(bytes).map_err(|error| {
+            TaskRepositoryError::new(
+                ApplicationRepositoryOperation::Load,
+                FileRepositoryError::new(
+                    FileRepositoryOperation::ReadFile,
+                    &path,
+                    std::io::Error::new(std::io::ErrorKind::InvalidData, error),
+                ),
+            )
+        })?;
+        self.projects.push(TaskRepository::parse_project(
+            self.last_synced_time,
+            path,
+            canonical_path,
+            text,
+            &mut self.canonical_project_paths,
+        )?);
+        Ok(())
+    }
+
+    fn finish(
+        self,
+        storage_revision: Option<Uuid>,
+    ) -> Result<LoadedRepositoryState, TaskRepositoryError> {
+        TaskRepository::finish_loaded_state(self.projects, storage_revision)
+    }
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum FileRepositoryOperation {
     TraverseDirectory,
@@ -268,28 +317,11 @@ impl TaskRepository {
             })?;
         let mut project_files = project_files.into_iter().collect::<Vec<_>>();
         project_files.sort_by(|left, right| left.0.cmp(right.0));
-        let mut loaded_projects = Vec::new();
-        let mut canonical_project_paths = HashMap::new();
+        let mut builder = RepositoryLoadBuilder::new(self.last_synced_time);
         for (path, bytes) in project_files {
-            let text = std::str::from_utf8(bytes).map_err(|error| {
-                TaskRepositoryError::new(
-                    ApplicationRepositoryOperation::Load,
-                    FileRepositoryError::new(
-                        FileRepositoryOperation::ReadFile,
-                        path,
-                        std::io::Error::new(std::io::ErrorKind::InvalidData, error),
-                    ),
-                )
-            })?;
-            loaded_projects.push(Self::parse_project(
-                self.last_synced_time,
-                path.to_path_buf(),
-                path.to_path_buf(),
-                text,
-                &mut canonical_project_paths,
-            )?);
+            builder.push(path.to_path_buf(), path.to_path_buf(), bytes)?;
         }
-        let loaded = Self::finish_loaded_state(loaded_projects, storage_revision)?;
+        let loaded = builder.finish(storage_revision)?;
         self.apply_loaded_state(loaded);
         Ok(())
     }
@@ -353,8 +385,7 @@ impl TaskRepository {
         last_synced_time: DateTime<Local>,
         storage_revision: Option<Uuid>,
     ) -> Result<LoadedRepositoryState, TaskRepositoryError> {
-        let mut loaded_projects = Vec::new();
-        let mut canonical_project_paths = HashMap::new();
+        let mut builder = RepositoryLoadBuilder::new(last_synced_time);
         for entry_result in WalkDir::new(self.project_storage_dir_name.as_str()).sort_by_file_name()
         {
             let entry = entry_result.map_err(|error| {
@@ -384,8 +415,8 @@ impl TaskRepository {
                 open_project_file(&project_yaml_file_path).map_err(|error| {
                     TaskRepositoryError::new(ApplicationRepositoryOperation::Load, error)
                 })?;
-            let mut text = String::new();
-            file.read_to_string(&mut text).map_err(|error| {
+            let mut bytes = Vec::new();
+            file.read_to_end(&mut bytes).map_err(|error| {
                 TaskRepositoryError::new(
                     ApplicationRepositoryOperation::Load,
                     FileRepositoryError::new(
@@ -395,15 +426,9 @@ impl TaskRepository {
                     ),
                 )
             })?;
-            loaded_projects.push(Self::parse_project(
-                last_synced_time,
-                project_yaml_file_path,
-                canonical_project_yaml_path,
-                &text,
-                &mut canonical_project_paths,
-            )?);
+            builder.push(project_yaml_file_path, canonical_project_yaml_path, &bytes)?;
         }
-        Self::finish_loaded_state(loaded_projects, storage_revision)
+        builder.finish(storage_revision)
     }
 
     fn parse_project(
