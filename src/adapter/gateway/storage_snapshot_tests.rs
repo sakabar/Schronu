@@ -1,5 +1,5 @@
 use super::storage_snapshot::manifest::{
-    encode_manifest, DigestDescriptor, DirectoryEntry, FileEntry, SnapshotManifest,
+    decode_manifest, encode_manifest, DigestDescriptor, DirectoryEntry, FileEntry, SnapshotManifest,
 };
 use chrono::{FixedOffset, TimeZone};
 use std::path::PathBuf;

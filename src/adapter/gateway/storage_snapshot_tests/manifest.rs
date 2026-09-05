@@ -102,3 +102,61 @@ fn snapshot_manifest_v1はdirectoryとfileをpath順にencodeする() {
     assert_eq!(encoded["files"][0]["path"], "a/file");
     assert_eq!(encoded["files"][1]["path"], "z/file");
 }
+
+#[test]
+fn snapshot_manifest_v1はversion_digest_path重複をdecode時に拒否する() {
+    let valid = serde_json::json!({
+        "format_version": 1,
+        "tool_version": "0.1.0",
+        "created_at": "2026-09-05T12:00:00+09:00",
+        "revision": null,
+        "digest": {"algorithm": "fnv1a64", "version": 1},
+        "directories": [{"path": "project", "mode": 493}],
+        "files": [{
+            "path": "project/project.yaml",
+            "mode": 416,
+            "content_length": 0,
+            "content_digest": "fnv1a64:cbf29ce484222325"
+        }]
+    });
+    let cases = [
+        ("format-version", {
+            let mut value = valid.clone();
+            value["format_version"] = serde_json::json!(2);
+            value
+        }),
+        ("digest-algorithm", {
+            let mut value = valid.clone();
+            value["digest"]["algorithm"] = serde_json::json!("sha256");
+            value
+        }),
+        ("reserved-path", {
+            let mut value = valid.clone();
+            value["files"][0]["path"] = serde_json::json!(".lock");
+            value
+        }),
+        ("traversal", {
+            let mut value = valid.clone();
+            value["files"][0]["path"] = serde_json::json!("../outside");
+            value
+        }),
+        ("duplicate-path", {
+            let mut value = valid.clone();
+            value["files"][0]["path"] = serde_json::json!("project");
+            value
+        }),
+        ("invalid-file-digest", {
+            let mut value = valid.clone();
+            value["files"][0]["content_digest"] = serde_json::json!("fnv1a64:abc");
+            value
+        }),
+    ];
+
+    for (case, value) in cases {
+        let result = decode_manifest(
+            PathBuf::from(format!("{case}-manifest.json")).as_path(),
+            &serde_json::to_vec(&value).unwrap(),
+        );
+        assert!(result.is_err(), "{case}");
+    }
+}

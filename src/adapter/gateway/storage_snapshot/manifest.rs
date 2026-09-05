@@ -55,7 +55,7 @@ pub(in crate::adapter::gateway) fn encode_manifest(
         .map_err(|error| SnapshotError::new(SnapshotOperation::Encode, "manifest.json", error))
 }
 
-pub(super) fn decode_manifest(
+pub(in crate::adapter::gateway) fn decode_manifest(
     manifest_path: &Path,
     bytes: &[u8],
 ) -> Result<SnapshotManifest, SnapshotError> {
