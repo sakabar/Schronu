@@ -110,6 +110,29 @@ fn list_renders_eight_dates_selected_row_fields_and_visual_states() {
 }
 
 #[test]
+fn list_rowはresponsive表示用の意味別cellとlabelを持つ() {
+    let events = Arc::new(Mutex::new(Vec::new()));
+    let (dom, _) = build(RootProps {
+        dates: Vec::new(),
+        rows: vec![row("labeled", None, true)],
+        active_task_ids: Vec::new(),
+        tick_now_epoch_ms: 0,
+        events,
+    });
+    let html = dioxus::ssr::render(&dom);
+
+    assert!(
+        html.contains("class=\"deadline\" data-label=\"締切\""),
+        "{html}"
+    );
+    assert!(
+        html.contains("class=\"schedule-time\" data-label=\"予定\""),
+        "{html}"
+    );
+    assert!(html.contains("class=\"session-cell\""), "{html}");
+}
+
+#[test]
 fn active_uuid_disables_every_matching_row_but_not_other_tasks() {
     let events = Arc::new(Mutex::new(Vec::new()));
     let (dom, _) = build(RootProps {
