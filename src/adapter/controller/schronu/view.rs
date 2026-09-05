@@ -914,15 +914,15 @@ pub(super) fn build_show_all_tasks_display_with_config(
             };
 
             let task_row = TaskListTaskRow {
-                rank: ind,
+                ind,
                 task_id: *id,
                 icon: icon.to_string(),
-                remaining_time: deadline_string,
+                deadline: deadline_string,
                 scheduled_start: *start_datetime,
                 scheduled_end: end_datetime,
-                priority_rank: *rank,
+                rank: *rank,
                 estimated_minutes: round_up_sec_as_minute(estimated_work_seconds),
-                project_number_priority: task_priority,
+                priority: task_priority,
                 project_category: task_project_category_opt,
                 task_name: shorten_name,
                 give_up_candidate: false,

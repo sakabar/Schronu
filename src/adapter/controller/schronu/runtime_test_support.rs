@@ -1360,7 +1360,7 @@ impl TaskListDisplayRow {
     fn new_task(
         scheduled_start: DateTime<Local>,
         logical_naive_date: NaiveDate,
-        priority_rank: usize,
+        rank: usize,
         id: Uuid,
         priority: i64,
         work_seconds: i64,
@@ -1370,7 +1370,7 @@ impl TaskListDisplayRow {
         TaskListDisplayRow {
             scheduled_start,
             logical_naive_date_opt: Some(logical_naive_date),
-            rank: priority_rank,
+            rank,
             id,
             priority,
             work_seconds,
@@ -1379,15 +1379,15 @@ impl TaskListDisplayRow {
             give_up_candidate: false,
             display_row: super::renderer::TaskListRow::Task(
                 super::renderer::TaskListTaskRow {
-                    rank: 0,
+                    ind: 0,
                     task_id: id,
                     icon: "/".to_string(),
-                    remaining_time: "____/__/__".to_string(),
+                    deadline: "____/__/__".to_string(),
                     scheduled_start,
                     scheduled_end: scheduled_start + Duration::seconds(work_seconds),
-                    priority_rank,
+                    rank,
                     estimated_minutes: crate::entity::task::round_up_sec_as_minute(work_seconds),
-                    project_number_priority: priority,
+                    priority,
                     project_category: project_category_opt,
                     task_name,
                     give_up_candidate: false,
