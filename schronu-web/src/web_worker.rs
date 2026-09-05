@@ -1,7 +1,7 @@
 use crate::{
-    web_error_codes, CompleteSessionResponse, ListTasksRequest, RecordSessionRequest,
-    RecordSessionResult, RetryAdvice, ScheduledTaskRow, ServerSnapshot, SessionTask, WebError,
-    WebSuccess,
+    web_error_codes, CompleteSessionRequest, CompleteSessionResponse, ListTasksRequest,
+    RecordSessionRequest, RecordSessionResult, RetryAdvice, ScheduledTaskRow, ServerSnapshot,
+    SessionTask, WebError, WebSuccess,
 };
 use std::sync::mpsc;
 use std::thread;
@@ -22,7 +22,7 @@ pub trait WebOperations: 'static {
     ) -> Result<WebSuccess<RecordSessionResult>, WebError>;
     fn complete_session(
         &mut self,
-        request: RecordSessionRequest,
+        request: CompleteSessionRequest,
     ) -> Result<CompleteSessionResponse, WebError>;
 }
 
@@ -47,7 +47,7 @@ enum WebWorkerCommand {
         response: oneshot::Sender<Result<WebSuccess<RecordSessionResult>, WebError>>,
     },
     CompleteSession {
-        request: RecordSessionRequest,
+        request: CompleteSessionRequest,
         response: oneshot::Sender<Result<CompleteSessionResponse, WebError>>,
     },
 }
@@ -107,7 +107,7 @@ impl WebWorkerHandle {
 
     pub async fn complete_session(
         &self,
-        request: RecordSessionRequest,
+        request: CompleteSessionRequest,
     ) -> Result<CompleteSessionResponse, WebError> {
         let (response, receiver) = oneshot::channel();
         self.commands

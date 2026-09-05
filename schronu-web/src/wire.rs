@@ -45,6 +45,14 @@ pub struct RecordSessionRequest {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct CompleteSessionRequest {
+    pub task_id: String,
+    pub started_at_epoch_ms: i64,
+    pub expected_actual_work_seconds: i64,
+    pub record_elapsed_seconds: bool,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct RecordSessionResult {
     pub actual_work_seconds: i64,
 }

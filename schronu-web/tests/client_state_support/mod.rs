@@ -117,7 +117,7 @@ pub fn record_effect(effect: ClientEffect) -> (u64, schronu_web::RecordSessionRe
     }
 }
 
-pub fn complete_effect(effect: ClientEffect) -> (u64, schronu_web::RecordSessionRequest) {
+pub fn complete_effect(effect: ClientEffect) -> (u64, schronu_web::CompleteSessionRequest) {
     match effect {
         ClientEffect::CompleteSession {
             request_id,

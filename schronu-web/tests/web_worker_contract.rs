@@ -1,7 +1,7 @@
 use schronu_web::{
-    web_error_codes, CompleteSessionResponse, ListTasksRequest, RecordSessionRequest,
-    RecordSessionResult, RetryAdvice, ScheduledTaskRow, ServerSnapshot, SessionTask, WebError,
-    WebOperations, WebSuccess, WebWorkerHandle,
+    web_error_codes, CompleteSessionRequest, CompleteSessionResponse, ListTasksRequest,
+    RecordSessionRequest, RecordSessionResult, RetryAdvice, ScheduledTaskRow, ServerSnapshot,
+    SessionTask, WebError, WebOperations, WebSuccess, WebWorkerHandle,
 };
 use std::process::Command;
 use std::sync::{Arc, Mutex};
@@ -29,6 +29,12 @@ fn workerは5操作を送信順に専用threadで実行してpayloadを保持す
         task_id: "task-1".to_owned(),
         started_at_epoch_ms: 123,
         expected_actual_work_seconds: 456,
+    };
+    let complete_request = CompleteSessionRequest {
+        task_id: request.task_id.clone(),
+        started_at_epoch_ms: request.started_at_epoch_ms,
+        expected_actual_work_seconds: request.expected_actual_work_seconds,
+        record_elapsed_seconds: false,
     };
 
     futures::executor::block_on(async {
@@ -60,7 +66,10 @@ fn workerは5操作を送信順に専用threadで実行してpayloadを保持す
                 },
             })
         );
-        assert_eq!(worker.complete_session(request).await, Ok(snapshot(5)));
+        assert_eq!(
+            worker.complete_session(complete_request).await,
+            Ok(snapshot(5))
+        );
     });
 
     let events = events.lock().expect("event log must be readable");
@@ -72,7 +81,7 @@ fn workerは5操作を送信順に専用threadで実行してpayloadを保持す
             Event::List("2026-09-05".to_owned()),
             Event::Auto,
             Event::Record(123, 456),
-            Event::Complete(123, 456),
+            Event::Complete(123, 456, false),
         ]
     );
 }
@@ -125,7 +134,7 @@ enum Event {
     List(String),
     Auto,
     Record(i64, i64),
-    Complete(i64, i64),
+    Complete(i64, i64, bool),
 }
 
 struct RecordingOperations {
@@ -163,7 +172,7 @@ impl WebOperations for StackWorkloadOperations {
 
     fn complete_session(
         &mut self,
-        _request: RecordSessionRequest,
+        _request: CompleteSessionRequest,
     ) -> Result<CompleteSessionResponse, WebError> {
         unreachable!()
     }
@@ -194,7 +203,7 @@ impl WebOperations for PanickingOperations {
 
     fn complete_session(
         &mut self,
-        _request: RecordSessionRequest,
+        _request: CompleteSessionRequest,
     ) -> Result<CompleteSessionResponse, WebError> {
         unreachable!()
     }
@@ -246,11 +255,12 @@ impl WebOperations for RecordingOperations {
 
     fn complete_session(
         &mut self,
-        request: RecordSessionRequest,
+        request: CompleteSessionRequest,
     ) -> Result<CompleteSessionResponse, WebError> {
         self.events.lock().unwrap().push(Event::Complete(
             request.started_at_epoch_ms,
             request.expected_actual_work_seconds,
+            request.record_elapsed_seconds,
         ));
         Ok(snapshot(5))
     }

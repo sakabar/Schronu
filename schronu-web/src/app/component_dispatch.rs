@@ -1,6 +1,8 @@
-use super::component_runtime::{ComponentAction, ComponentOrchestrator};
+use super::component_runtime::{
+    component_action_from_session_action, ComponentAction, ComponentOrchestrator,
+};
 use super::effect_dispatcher::{execute_effect, ServerFunctionGateway};
-use super::session_view::{SessionAction, SessionActionKind};
+use super::session_view::SessionAction;
 use crate::client::state::ClientEffect;
 use crate::client::work_sessions::BrowserLocalStorage;
 use dioxus::prelude::*;
@@ -9,11 +11,7 @@ pub(crate) fn dispatch_session_action(
     client: Signal<ComponentOrchestrator>,
     action: SessionAction,
 ) {
-    let action = match action.kind {
-        SessionActionKind::Discard => ComponentAction::DiscardSession(action.task_id),
-        SessionActionKind::Record => ComponentAction::RecordSession(action.task_id),
-        SessionActionKind::Complete => ComponentAction::CompleteSession(action.task_id),
-    };
+    let action = component_action_from_session_action(action);
     dispatch_action(client, action);
 }
 

@@ -1,7 +1,7 @@
 use schronu_web::{
-    web_error_codes, CompleteSessionResponse, ListTasksRequest, RecordSessionRequest,
-    RecordSessionResult, RetryAdvice, ScheduledTaskRow, ServerSnapshot, SessionTask, WebError,
-    WebSuccess,
+    web_error_codes, CompleteSessionRequest, CompleteSessionResponse, ListTasksRequest,
+    RecordSessionRequest, RecordSessionResult, RetryAdvice, ScheduledTaskRow, ServerSnapshot,
+    SessionTask, WebError, WebSuccess,
 };
 use serde::{de::DeserializeOwned, Serialize};
 use serde_json::json;
@@ -97,6 +97,20 @@ fn five_operationsのrequestとsuccessは仕様どおりのjson形式を持つ()
             "task_id": "00000000-0000-0000-0000-000000000001",
             "started_at_epoch_ms": 1_788_565_500_000_i64,
             "expected_actual_work_seconds": 300
+        }),
+    );
+    assert_json_round_trip(
+        &CompleteSessionRequest {
+            task_id: mutation_request.task_id.clone(),
+            started_at_epoch_ms: mutation_request.started_at_epoch_ms,
+            expected_actual_work_seconds: mutation_request.expected_actual_work_seconds,
+            record_elapsed_seconds: false,
+        },
+        json!({
+            "task_id": "00000000-0000-0000-0000-000000000001",
+            "started_at_epoch_ms": 1_788_565_500_000_i64,
+            "expected_actual_work_seconds": 300,
+            "record_elapsed_seconds": false
         }),
     );
     assert_json_round_trip(

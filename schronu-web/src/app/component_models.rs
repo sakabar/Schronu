@@ -107,6 +107,7 @@ fn operation_label(operation: Operation) -> &'static str {
         Operation::DiscardSession => "discard_session",
         Operation::RecordSession => "record_session",
         Operation::CompleteSession => "complete_session",
+        Operation::CompleteSessionWithoutRecording => "complete_session_without_recording",
         Operation::ConfirmRepositoryCheck => "confirm_repository_check",
     }
 }
