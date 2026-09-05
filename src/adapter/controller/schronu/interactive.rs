@@ -1064,6 +1064,40 @@ mod tests {
     }
 
     #[test]
+    fn submit_retryは入力と送信時のカーソル位置を保持する() {
+        let mut writer = TestWriter(Vec::new());
+        let mut submitted_lines = Vec::new();
+        let result = run_script(
+            &mut writer,
+            [
+                ReceivedInput::Key(Key::Char('見')),
+                ReceivedInput::Key(Key::Char('積')),
+                ReceivedInput::Key(Key::Left),
+                ReceivedInput::Key(Key::Char('\n')),
+                ReceivedInput::Key(Key::Backspace),
+                ReceivedInput::Key(Key::Char('\n')),
+                ReceivedInput::Key(Key::Ctrl('d')),
+            ],
+            |event| match event {
+                DriverEvent::RenderScreen { .. } => DriverOutcome::Continue,
+                DriverEvent::Submit { line } => {
+                    submitted_lines.push(line.to_string());
+                    if submitted_lines.len() == 1 {
+                        DriverOutcome::Retry("retry")
+                    } else {
+                        DriverOutcome::Submitted
+                    }
+                }
+                DriverEvent::Exit => DriverOutcome::Exit,
+                _ => unreachable!(),
+            },
+        );
+
+        assert!(result.is_ok());
+        assert_eq!(submitted_lines, ["見積", "積"]);
+    }
+
+    #[test]
     fn successful_submit_resets_line_and_cursor() {
         let mut line = String::from("見");
         let mut cursor_x = 1;
