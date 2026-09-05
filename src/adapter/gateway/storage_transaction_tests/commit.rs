@@ -102,6 +102,15 @@ fn test_commit_markerをsyncしてからprojectを適用しrevisionを最後に�
                 1,
             )
     );
+    assert!(
+        marker_directory_sync
+            < event_position(
+                &events,
+                RecordingOperation::CreateFile,
+                &PathMatcher::FileNameContains("revision"),
+                1,
+            )
+    );
     let revision_write = event_position(
         &events,
         RecordingOperation::WriteFile,
@@ -109,19 +118,17 @@ fn test_commit_markerをsyncしてからprojectを適用しrevisionを最後に�
         1,
     );
     assert!(
-        event_position(
+        last_event_position(
             &events,
             RecordingOperation::Rename,
             &PathMatcher::Exact(first_target_path.clone()),
-            1,
         ) < revision_write
     );
     assert!(
-        event_position(
+        last_event_position(
             &events,
             RecordingOperation::Rename,
             &PathMatcher::Exact(second_target_path.clone()),
-            1,
         ) < revision_write
     );
     assert_ne!(transaction_id, Uuid::nil());

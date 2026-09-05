@@ -122,6 +122,19 @@ fn event_position(
         })
 }
 
+fn last_event_position(
+    events: &[IoEvent],
+    operation: RecordingOperation,
+    path_matcher: &PathMatcher,
+) -> usize {
+    events
+        .iter()
+        .rposition(|event| {
+            event.operation == operation && path_matcher.matches(event.path.as_path())
+        })
+        .unwrap_or_else(|| panic!("missing event {operation:?} matching {path_matcher:?}"))
+}
+
 impl StorageTransactionIo for RecordingIo {
     fn create_dir_all(&self, path: &Path) -> std::io::Result<()> {
         self.record(RecordingOperation::CreateDirectory, path)?;
