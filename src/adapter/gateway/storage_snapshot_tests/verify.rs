@@ -63,3 +63,38 @@ fn snapshot_verifyはmanifestとpayloadのrevision不一致を拒否する() {
 
     assert_eq!(error.path(), snapshot.join("storage/.revision"));
 }
+
+#[cfg(unix)]
+#[test]
+fn snapshot_verifyはmanifest_payload_file_storage_symlinkを拒否する() {
+    use std::os::unix::fs::symlink;
+
+    for target in ["manifest", "payload-file", "storage"] {
+        let (root, snapshot, relative_project) =
+            create_source_independent_snapshot(&format!("verify-symlink-{target}"));
+        let outside = root.child("outside");
+        fs::create_dir(&outside).unwrap();
+        let outside_file = outside.join("data");
+        fs::write(&outside_file, b"outside").unwrap();
+        match target {
+            "manifest" => {
+                fs::remove_file(snapshot.join("manifest.json")).unwrap();
+                symlink(&outside_file, snapshot.join("manifest.json")).unwrap();
+            }
+            "payload-file" => {
+                let project = snapshot.join("storage").join(relative_project);
+                fs::remove_file(&project).unwrap();
+                symlink(&outside_file, project).unwrap();
+            }
+            "storage" => {
+                fs::remove_dir_all(snapshot.join("storage")).unwrap();
+                symlink(&outside, snapshot.join("storage")).unwrap();
+            }
+            _ => unreachable!(),
+        }
+
+        verify_snapshot(&snapshot).unwrap_err();
+
+        assert_eq!(fs::read(&outside_file).unwrap(), b"outside");
+    }
+}
