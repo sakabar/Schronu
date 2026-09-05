@@ -15,6 +15,7 @@ pub enum CarryLockMode {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct CarryLockState {
     mode: CarryLockMode,
+    last_observed_epoch_ms: Option<i64>,
     warning: Option<String>,
 }
 
@@ -63,6 +64,7 @@ impl CarryLockState {
 
     pub fn enable<S: KeyValueStorage>(&mut self, storage: &S) {
         self.mode = CarryLockMode::Locked;
+        self.last_observed_epoch_ms = None;
         match store_enabled(storage, true) {
             Ok(()) => self.warning = None,
             Err(_) => {
@@ -78,10 +80,12 @@ impl CarryLockState {
         match store_enabled(storage, false) {
             Ok(()) => {
                 self.mode = CarryLockMode::Normal;
+                self.last_observed_epoch_ms = None;
                 self.warning = None;
             }
             Err(_) => {
                 self.mode = CarryLockMode::Locked;
+                self.last_observed_epoch_ms = None;
                 self.warning = Some(
                     "持ち歩きロックの解除状態を保存できないため、操作ロックを維持しました。"
                         .to_owned(),
@@ -94,15 +98,22 @@ impl CarryLockState {
         if self.mode == CarryLockMode::Locked {
             self.mode =
                 CarryLockMode::ArmedUntil(now_epoch_ms.saturating_add(CARRY_LOCK_WINDOW_MS));
+            self.last_observed_epoch_ms = Some(now_epoch_ms);
         }
     }
 
     pub(crate) fn expire(&mut self, now_epoch_ms: i64) {
-        if matches!(
-            self.mode,
-            CarryLockMode::ArmedUntil(deadline_epoch_ms) if now_epoch_ms >= deadline_epoch_ms
-        ) {
+        let CarryLockMode::ArmedUntil(deadline_epoch_ms) = self.mode else {
+            return;
+        };
+        let clock_moved_back = self
+            .last_observed_epoch_ms
+            .is_some_and(|observed| now_epoch_ms < observed);
+        if clock_moved_back || now_epoch_ms >= deadline_epoch_ms {
             self.mode = CarryLockMode::Locked;
+            self.last_observed_epoch_ms = None;
+        } else {
+            self.last_observed_epoch_ms = Some(now_epoch_ms);
         }
     }
 
@@ -114,6 +125,7 @@ impl CarryLockState {
             CarryLockMode::Locked => false,
             CarryLockMode::ArmedUntil(deadline_epoch_ms) => {
                 self.mode = CarryLockMode::Locked;
+                self.last_observed_epoch_ms = None;
                 now_epoch_ms < deadline_epoch_ms
             }
         }
@@ -122,6 +134,7 @@ impl CarryLockState {
     fn normal() -> Self {
         Self {
             mode: CarryLockMode::Normal,
+            last_observed_epoch_ms: None,
             warning: None,
         }
     }
@@ -129,6 +142,7 @@ impl CarryLockState {
     fn locked() -> Self {
         Self {
             mode: CarryLockMode::Locked,
+            last_observed_epoch_ms: None,
             warning: None,
         }
     }
@@ -136,6 +150,7 @@ impl CarryLockState {
     fn locked_with_warning(warning: &str) -> Self {
         Self {
             mode: CarryLockMode::Locked,
+            last_observed_epoch_ms: None,
             warning: Some(warning.to_owned()),
         }
     }

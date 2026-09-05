@@ -280,6 +280,65 @@ fn armedはtickが期限へ到達した時点でlockedへ戻る() {
 }
 
 #[test]
+fn armedはtickまたは変更認可で時計後退を検出すると即時失効する() {
+    let storage = MemoryStorage::default();
+    let (mut tick_state, _) = initialize_client(&storage, 1_000);
+    reduce_component_action_at(
+        &mut tick_state,
+        &storage,
+        1_000,
+        ComponentAction::EnableCarryLock,
+    );
+    reduce_component_action_at(
+        &mut tick_state,
+        &storage,
+        2_000,
+        ComponentAction::ArmCarryLock,
+    );
+    reduce_component_action_at(
+        &mut tick_state,
+        &storage,
+        2_500,
+        ComponentAction::Tick(2_500),
+    );
+    assert_eq!(
+        tick_state.carry_lock_mode(),
+        crate::client::carry_lock::CarryLockMode::ArmedUntil(17_000)
+    );
+    reduce_component_action_at(
+        &mut tick_state,
+        &storage,
+        2_499,
+        ComponentAction::Tick(2_499),
+    );
+    assert!(tick_state.carry_lock_locked());
+
+    let (mut mutation_state, _) = initialize_client(&storage, 1_000);
+    reduce_component_action_at(
+        &mut mutation_state,
+        &storage,
+        1_000,
+        ComponentAction::EnableCarryLock,
+    );
+    reduce_component_action_at(
+        &mut mutation_state,
+        &storage,
+        2_000,
+        ComponentAction::ArmCarryLock,
+    );
+    assert_eq!(
+        reduce_component_action_at(
+            &mut mutation_state,
+            &storage,
+            1_999,
+            ComponentAction::AutoSession
+        ),
+        ClientEffect::None
+    );
+    assert!(mutation_state.carry_lock_locked());
+}
+
+#[test]
 #[cfg(feature = "web")]
 fn carry_lock_warningはbrowser_page_modelのwarningsへ合流する() {
     let storage = MemoryStorage::failing_carry_lock_reads();
