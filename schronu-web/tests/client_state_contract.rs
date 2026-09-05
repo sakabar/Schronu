@@ -424,6 +424,16 @@ fn server_commit後のlocal削除失敗はserver成功とlocal失敗を別々に
     assert_eq!(entries[0].outcome, Outcome::Failure);
 }
 
+#[test]
+fn 起動時のstorage警告と書込停止をclient状態から参照できる() {
+    let storage = FakeStorage::default();
+    *storage.value.borrow_mut() = Some("{broken".to_owned());
+    let state = ClientState::new(load_work_sessions(&storage).unwrap(), 0);
+
+    assert!(!state.storage_warnings().is_empty());
+    assert!(state.storage_write_blocked());
+}
+
 #[derive(Default)]
 struct FakeStorage {
     value: RefCell<Option<String>>,
