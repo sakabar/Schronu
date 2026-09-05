@@ -1,10 +1,10 @@
 use super::super::component_dispatch::{dispatch_action, dispatch_session_action};
 use super::super::component_models::{browser_now_epoch_ms, BrowserPageModel};
-use super::super::component_runtime::{initialize_client, ComponentAction};
+use super::super::component_runtime::{ComponentAction, ComponentOrchestrator};
 use super::super::history_view::HistoryView;
 use super::super::list_view::ListView;
 use super::super::session_view::SessionView;
-use crate::client::state::{ActiveTab, ClientState};
+use crate::client::state::ActiveTab;
 use crate::client::time_model::format_hh_mm_ss;
 use crate::client::work_sessions::BrowserLocalStorage;
 use dioxus::prelude::*;
@@ -13,16 +13,12 @@ const TICK_MILLIS: u32 = 1_000;
 
 #[component]
 pub(super) fn BrowserApp() -> Element {
-    let mut client = use_signal(|| None::<ClientState>);
-    let mut initialized = use_signal(|| false);
+    let mut client = use_signal(ComponentOrchestrator::new);
 
     use_effect(move || {
-        if initialized() {
-            return;
-        }
-        initialized.set(true);
-        let (state, effect) = initialize_client(&BrowserLocalStorage, browser_now_epoch_ms());
-        client.set(Some(state));
+        let effect = client
+            .write()
+            .mount(&BrowserLocalStorage, browser_now_epoch_ms());
         super::super::component_dispatch::dispatch_action_effect(client, effect);
     });
 
@@ -34,8 +30,8 @@ pub(super) fn BrowserApp() -> Element {
     });
 
     let model = {
-        let state = client.read();
-        let Some(state) = state.as_ref() else {
+        let client = client.read();
+        let Some(state) = client.state() else {
             return loading_shell();
         };
         BrowserPageModel::from_state(state)

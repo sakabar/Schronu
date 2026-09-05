@@ -1,5 +1,5 @@
 use crate::client::state::{ClientEffect, ServerFailure};
-#[cfg(all(feature = "web", target_arch = "wasm32"))]
+#[cfg(any(test, all(feature = "web", target_arch = "wasm32")))]
 use crate::client::{state::ClientState, work_sessions::KeyValueStorage};
 use crate::{
     CompleteSessionResponse, ListTasksRequest, RecordSessionRequest, RecordSessionResult,
@@ -134,7 +134,7 @@ pub(crate) async fn execute_effect<G: WebGateway>(
     }
 }
 
-#[cfg(all(feature = "web", target_arch = "wasm32"))]
+#[cfg(any(test, all(feature = "web", target_arch = "wasm32")))]
 pub(crate) fn apply_response<S: KeyValueStorage>(
     state: &mut ClientState,
     storage: &S,
