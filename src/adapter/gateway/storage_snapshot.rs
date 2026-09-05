@@ -38,6 +38,7 @@ const DEFAULT_RESOURCE_LIMITS: SnapshotResourceLimits = SnapshotResourceLimits::
     4_096,
     64,
 );
+const MINIMUM_ENCODED_DIRECTORY_ENTRY_BYTES: u64 = 24;
 
 #[derive(Clone, Copy)]
 pub(in crate::adapter::gateway) struct SnapshotResourceLimits {
@@ -135,6 +136,22 @@ impl SnapshotResourceLimits {
             SnapshotLimitKind::PathDepth,
             self.depth as u64,
             relative_path.components().count() as u64,
+        )
+    }
+
+    fn check_directory_capture(
+        self,
+        operation_path: &Path,
+        relative_path: &Path,
+        directory_count: u64,
+    ) -> Result<(), InternalSnapshotError> {
+        let observed = directory_count.saturating_mul(MINIMUM_ENCODED_DIRECTORY_ENTRY_BYTES);
+        self.check(
+            operation_path,
+            Some(relative_path),
+            SnapshotLimitKind::ManifestBytes,
+            self.manifest_bytes,
+            observed,
         )
     }
 

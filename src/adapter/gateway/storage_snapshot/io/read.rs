@@ -51,6 +51,7 @@ pub(in crate::adapter::gateway::storage_snapshot) fn read_directory_tree_with_li
 
 #[derive(Default)]
 struct TraversalUsage {
+    directory_count: u64,
     file_count: usize,
     total_bytes: u64,
 }
@@ -114,6 +115,19 @@ fn read_directory_handle(
             .metadata()
             .map_err(|error| read_error(&display_path, error))?;
         if metadata.is_dir() {
+            if child_path != Path::new("storage") {
+                let observed_count = usage.directory_count.checked_add(1).ok_or_else(|| {
+                    SnapshotError::limit(
+                        &display_path,
+                        SnapshotLimitKind::ManifestBytes,
+                        limits.manifest_bytes,
+                        u64::MAX,
+                        Some(logical_path.to_path_buf()),
+                    )
+                })?;
+                limits.check_directory_capture(&display_path, logical_path, observed_count)?;
+                usage.directory_count = observed_count;
+            }
             tree.directories.push(TreeDirectory {
                 path: child_path.clone(),
                 permissions: metadata.permissions(),
