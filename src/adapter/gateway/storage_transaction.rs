@@ -1,7 +1,7 @@
 use std::error::Error;
 use std::fmt;
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 use std::sync::Arc;
 use uuid::Uuid;
 
@@ -15,11 +15,7 @@ use io::{acquire_transaction_lock, sync_directory, TransactionLock};
 pub(super) use io::{FileSystemStorageTransactionIo, StorageTransactionIo};
 #[cfg(test)]
 pub(super) use layout::TRANSACTION_DIRECTORY_NAME;
-use layout::{
-    resolve_transactions_directory, validate_delete_target_ancestors,
-    validate_storage_relative_path, validate_transactions_directory,
-    ACTIVE_TRANSACTION_DIRECTORY_NAME,
-};
+use layout::{validate_storage_relative_path, ACTIVE_TRANSACTION_DIRECTORY_NAME};
 use manifest::{
     content_checksum, content_matches, invalid_manifest_entry_error, validate_content_integrity,
     validate_staged_file_path, ManifestEntry, ManifestEntryOperation, TransactionManifest,
@@ -719,6 +715,41 @@ fn prepared_from_manifest(
     })
 }
 
+fn validate_delete_target_ancestors(
+    io: &dyn StorageTransactionIo,
+    storage_dir_path: &Path,
+    target: &Path,
+) -> Result<(), StorageTransactionError> {
+    let mut ancestor_path = storage_dir_path.to_path_buf();
+    let Some(parent) = target.parent() else {
+        return Ok(());
+    };
+    for component in parent.components() {
+        let Component::Normal(name) = component else {
+            unreachable!("validated transaction target must contain only normal components");
+        };
+        ancestor_path.push(name);
+        match io.symlink_metadata(&ancestor_path) {
+            Ok(metadata) if metadata.is_dir() && !metadata.file_type().is_symlink() => {}
+            Ok(_) => {
+                return Err(layout::invalid_target_path_error(
+                    &ancestor_path,
+                    "delete target ancestors must be directories and must not be symbolic links",
+                ));
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => break,
+            Err(error) => {
+                return Err(StorageTransactionError::new(
+                    StorageTransactionOperation::ValidateTargetPath,
+                    &ancestor_path,
+                    error,
+                ));
+            }
+        }
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 pub(super) fn prepare(
     io: Arc<dyn StorageTransactionIo>,
@@ -818,6 +849,84 @@ pub(super) fn prepare_with_directories(
         io,
         _transaction_lock: transaction_lock,
     })
+}
+
+fn resolve_transactions_directory(
+    io: &dyn StorageTransactionIo,
+    storage_dir_path: &Path,
+    create: bool,
+) -> Result<Option<PathBuf>, StorageTransactionError> {
+    let transactions_dir_path = storage_dir_path.join(layout::TRANSACTION_DIRECTORY_NAME);
+    let (metadata, created) = match fs::symlink_metadata(&transactions_dir_path) {
+        Ok(metadata) => (metadata, false),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound && !create => return Ok(None),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            io.create_dir_all(&transactions_dir_path).map_err(|error| {
+                StorageTransactionError::new(
+                    StorageTransactionOperation::CreateTransactionDirectory,
+                    &transactions_dir_path,
+                    error,
+                )
+            })?;
+            (
+                fs::symlink_metadata(&transactions_dir_path).map_err(|error| {
+                    StorageTransactionError::new(
+                        StorageTransactionOperation::ValidateTransactionDirectory,
+                        &transactions_dir_path,
+                        error,
+                    )
+                })?,
+                true,
+            )
+        }
+        Err(error) => {
+            return Err(StorageTransactionError::new(
+                StorageTransactionOperation::ValidateTransactionDirectory,
+                &transactions_dir_path,
+                error,
+            ));
+        }
+    };
+    validate_transactions_directory_metadata(&transactions_dir_path, &metadata)?;
+    if create && !created {
+        io.create_dir_all(&transactions_dir_path).map_err(|error| {
+            StorageTransactionError::new(
+                StorageTransactionOperation::CreateTransactionDirectory,
+                &transactions_dir_path,
+                error,
+            )
+        })?;
+        validate_transactions_directory(&transactions_dir_path)?;
+    }
+    Ok(Some(transactions_dir_path))
+}
+
+fn validate_transactions_directory(path: &Path) -> Result<(), StorageTransactionError> {
+    let metadata = fs::symlink_metadata(path).map_err(|error| {
+        StorageTransactionError::new(
+            StorageTransactionOperation::ValidateTransactionDirectory,
+            path,
+            error,
+        )
+    })?;
+    validate_transactions_directory_metadata(path, &metadata)
+}
+
+fn validate_transactions_directory_metadata(
+    path: &Path,
+    metadata: &fs::Metadata,
+) -> Result<(), StorageTransactionError> {
+    if metadata.file_type().is_symlink() || !metadata.is_dir() {
+        return Err(StorageTransactionError::new(
+            StorageTransactionOperation::ValidateTransactionDirectory,
+            path,
+            std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                "transaction root must be a directory and must not be a symbolic link",
+            ),
+        ));
+    }
+    Ok(())
 }
 
 #[allow(clippy::too_many_arguments)]
