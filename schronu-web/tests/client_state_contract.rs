@@ -192,7 +192,7 @@ fn mutationは対象だけを直列化しerror助言とcommit後storage失敗を
         complete_request_id,
         Err(ServerFailure::Transport("network detail".to_owned())),
     );
-    assert!(state.display_error().unwrap().retryable);
+    assert!(state.display_error().unwrap().retryable());
     assert!(!state.is_session_manual_check_blocked(OTHER_TASK_ID));
 
     let mut state = state_with_sessions(&storage, &[TASK_ID, OTHER_TASK_ID]);
@@ -365,15 +365,9 @@ fn 未知のoperation_errorはcodeと助言を失わず表示状態へ保持す�
     let request_id = bootstrap_effect(state.request_bootstrap());
     let error = web_error("future_error", RetryAdvice::ManualCheck);
 
-    state.apply_bootstrap_result(
-        request_id,
-        Err(ServerFailure::Operation(error.clone())),
-    );
+    state.apply_bootstrap_result(request_id, Err(ServerFailure::Operation(error.clone())));
 
-    assert_eq!(
-        state.display_error(),
-        Some(&DisplayError::Operation(error))
-    );
+    assert_eq!(state.display_error(), Some(&DisplayError::Operation(error)));
 }
 
 #[derive(Default)]

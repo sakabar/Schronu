@@ -210,9 +210,8 @@ impl ClientState {
                     self.committed_actual_work_seconds
                         .insert(task_id.to_owned(), actual);
                 }
-                self.display_error = Some(DisplayError {
-                    message: "serverでは保存済みですが、localStorageの更新に失敗しました。再送せず状態を確認してください。".to_owned(),
-                    retryable: false,
+                self.display_error = Some(DisplayError::LocalStorage {
+                    committed_on_server: true,
                 });
                 self.record_server(
                     operation,
@@ -233,9 +232,8 @@ impl ClientState {
         let (outcome, summary) = if succeeded {
             (Outcome::Success, "localStorageを更新しました。")
         } else {
-            self.display_error = Some(DisplayError {
-                message: "localStorageを更新できませんでした。".to_owned(),
-                retryable: false,
+            self.display_error = Some(DisplayError::LocalStorage {
+                committed_on_server: false,
             });
             (Outcome::Failure, "localStorage更新に失敗しました。")
         };
@@ -249,14 +247,8 @@ impl ClientState {
         error: ServerFailure,
     ) {
         self.display_error = Some(match error {
-            ServerFailure::Operation(error) => DisplayError {
-                message: error.message,
-                retryable: error.retry_advice == RetryAdvice::Retry,
-            },
-            ServerFailure::Transport(_) => DisplayError {
-                message: "通信に失敗しました。時間をおいて再試行してください。".to_owned(),
-                retryable: true,
-            },
+            ServerFailure::Operation(error) => DisplayError::Operation(error),
+            ServerFailure::Transport(_) => DisplayError::Transport,
         });
         self.record_server(
             operation,

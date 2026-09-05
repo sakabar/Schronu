@@ -16,9 +16,36 @@ pub enum ActiveTab {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct DisplayError {
-    pub message: String,
-    pub retryable: bool,
+pub enum DisplayError {
+    Operation(WebError),
+    Transport,
+    LocalStorage { committed_on_server: bool },
+}
+
+impl DisplayError {
+    pub fn message(&self) -> &str {
+        match self {
+            Self::Operation(error) => &error.message,
+            Self::Transport => "通信に失敗しました。時間をおいて再試行してください。",
+            Self::LocalStorage {
+                committed_on_server: true,
+            } => "serverでは保存済みですが、localStorageの更新に失敗しました。再送せず状態を確認してください。",
+            Self::LocalStorage {
+                committed_on_server: false,
+            } => "localStorageを更新できませんでした。",
+        }
+    }
+
+    pub fn retryable(&self) -> bool {
+        matches!(
+            self,
+            Self::Transport
+                | Self::Operation(WebError {
+                    retry_advice: crate::RetryAdvice::Retry,
+                    ..
+                })
+        )
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
