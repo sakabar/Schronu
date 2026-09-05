@@ -75,7 +75,7 @@ Schronu-webを、1日の余力と複数taskの作業状況を同時に把握で�
 ### 4.5 セッション操作
 
 - **REQ-ACTION-001**: 各cardに「破棄して解除」「記録して解除」「完了」の3buttonを表示すること。
-- **REQ-ACTION-002**: 「破棄して解除」は対象セッションをlocalStorageから削除するだけとし、taskの実績を加算せず、server通信を行わないこと。
+- **REQ-ACTION-002**: 「破棄して解除」は対象セッションをlocalStorageから削除するだけとし、taskの実績を加算せず、server通信を行わないこと。削除成功後は残存する計測中セッションからbufferを再計算し、削除したセッションだけが覆っていた時間を未作業時間として減算すること。
 - **REQ-ACTION-003**: 「記録して解除」は対象taskのUUIDを指定し、server操作時刻までの経過秒を開始時実績へ加算すること。
 - **REQ-ACTION-004**: 「記録して解除」は開始時実績を期待値として検証し、現在実績と不一致の場合はtaskを保存せず、セッションを保持すること。
 - **REQ-ACTION-005**: 「完了」は対象taskのUUIDを指定し、経過秒の加算とtask完了を同じrepository transactionで処理すること。
@@ -87,11 +87,15 @@ Schronu-webを、1日の余力と複数taskの作業状況を同時に把握で�
 ### 4.6 buffer
 
 - **REQ-BUFFER-001**: bufferを`現在logical dateの残り空き秒 - 同日のschedule segmentごとのscheduled_work_seconds合計`としてserver側で算出すること。同一taskの複数segment、進行中segment、同じlogical date内の過去segmentをそれぞれ1回ずつ全量で集計すること。
-- **REQ-BUFFER-002**: serverからbuffer秒とその観測時刻を取得し、以後はbrowser側で経過秒を差し引いて1秒ごとに表示を更新すること。
+- **REQ-BUFFER-002**: serverからbuffer秒とその観測時刻を取得し、以後はbrowser側で計測中セッションが1件も存在しない経過秒だけを差し引いて1秒ごとに表示を更新すること。
 - **REQ-BUFFER-003**: 0以上のbufferを`HH:MM:SS`でカウントダウン表示すること。
 - **REQ-BUFFER-004**: 負のbufferを赤い文字の`-HH:MM:SS`でカウントアップ表示すること。
 - **REQ-BUFFER-005**: logical dateが06:00境界で変化しても、それだけを理由にserverから再取得しないこと。
 - **REQ-BUFFER-006**: 次の明示的server操作のresponseでlogical dateとbuffer snapshotを更新すること。
+- **REQ-BUFFER-007**: 計測中セッションが1件以上存在する時間はbufferを停止すること。snapshot後に最初のセッションを開始した場合は、その開始前のセッション不在時間だけを減算すること。
+- **REQ-BUFFER-008**: 複数の計測中セッションが重なる時間は和集合として扱い、重複時間を二重に補正しないこと。server commit済みでlocalStorage削除失敗により残ったセッションは計測中から除外すること。
+- **REQ-BUFFER-009**: 「破棄して解除」のlocalStorage削除成功後は残存セッションからbufferを再計算し、全セッションを破棄した場合はsnapshot後の全経過秒を減算すること。保存失敗時はmemory上のセッションを維持し、buffer表示を変化させないこと。
+- **REQ-BUFFER-010**: 新しいserver responseを受信した場合は、そのbuffer秒と観測時刻を新たな表示計算の基準とし、観測時点で計測中のセッションがあれば観測直後からbufferを停止すること。
 
 ### 4.7 一覧画面
 

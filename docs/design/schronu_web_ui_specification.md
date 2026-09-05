@@ -348,19 +348,31 @@ buffer_seconds = remaining_free_seconds(logical_date, observed_at)
 6. sync後のscheduleは通常`observed_at`より前に開始するsegmentを返さない。過去開始のsegmentが返った場合でも、開始時刻のlogical dateが一致すれば除外せず全量を加算する。
 7. `record_session`または`complete_session`による実績変更後は、operation開始時にsync済みのrepositoryからscheduleを再生成する。これにより更新後の残作業が同じresponseのbufferへ反映される。
 
-server snapshotのbufferでは進行中segmentから経過秒を引かない。browserは次の式でsnapshot後の経過秒を1回だけ差し引くため、serverとclientで二重減算しない。
+server snapshotのbufferでは進行中segmentから経過秒を引かない。browserは、計測中セッションが存在しない時間だけを次の規則で差し引く。
 
 client側:
 
 ```text
 snapshot_elapsed = max(0, floor((tick_now - observed_at) / 1000))
-display_buffer = buffer_seconds - snapshot_elapsed
+active_sessions = work_sessions - server_commit済みでlocal削除に失敗したsessions
+earliest_active_start = min(active_sessions.started_at)
+
+buffer_elapsed =
+  active_sessionsが空: snapshot_elapsed
+  active_sessionsが存在: max(0, floor((min(tick_now, earliest_active_start) - observed_at) / 1000))
+
+display_buffer = buffer_seconds - buffer_elapsed
 ```
 
+- `snapshot_elapsed`は観測用に保持し、bufferから実際に引く値は`buffer_elapsed`とする。
+- 新しいserver responseを受信した場合は、その`buffer_seconds`と`observed_at`を新たな表示計算の基準とする。snapshot以前に開始した計測中セッションは、snapshot直後からbufferを停止する。snapshot以前の時間をclientで遡って補正しないため、serverが`busy_time_slot`を除いて算出したbufferへ壁時計時間を過剰加算しない。
+- `record_session`または`complete_session`のmutation responseは、対象実績を反映した`buffer_seconds`をそのまま新たな基準とする。server commit済みでlocalStorage削除だけに失敗した対象sessionは、以後のbuffer計算上の計測中sessionから除外する。
+- 複数の計測中セッションは、いずれか1件が存在する区間の和集合として扱う。すべて現在まで継続するため、最古の開始時刻から現在までbufferを停止し、重複時間を二重に補正しない。
+- 「破棄して解除」成功後は残存セッションから式全体を再計算する。最古セッションだけを破棄した場合は後発セッション開始前を未作業として追加減算し、全件破棄した場合はsnapshot後の全経過秒を減算する。localStorage保存失敗時はmemory stateを確定しないため、buffer表示も変化させない。
+- browser時計が後退した区間は0秒へclampする。時刻差と加減算は`i64`境界でもoverflowしない計算を用いる。
 - `display_buffer >= 0`: 通常色の`HH:MM:SS`
 - `display_buffer < 0`: 赤色の`-HH:MM:SS`
 - hourは総時間とし、24以上もそのまま表示する。
-- clientの06:00到達を監視してserver requestを送らない。
 
 ### 6.5 logical date buttons
 
@@ -402,8 +414,9 @@ display_buffer = buffer_seconds - snapshot_elapsed
 ### 7.4 操作結果
 
 - localStorage更新は、memory state確定前に保存成功を確認する。
+- 「破棄して解除」はlocalStorage削除成功後だけmemory stateを確定し、残存する計測中セッションからbufferを再計算する。server requestとtask実績更新は行わない。
 - server mutationは、response成功後にlocalStorageからsessionを削除する。
-- server errorまたはlocalStorage削除失敗ではsessionを残す。server保存成功後にlocalStorage削除だけが失敗した場合、responseの更新後実績を反映した競合案内を表示し、再送による二重加算を防ぐため対象buttonを無効化する。
+- server errorまたはlocalStorage削除失敗ではsessionを残す。server保存成功後にlocalStorage削除だけが失敗した場合、responseの更新後実績を反映した競合案内を表示し、再送による二重加算を防ぐため対象buttonを無効化し、対象sessionをbuffer計算上の計測中sessionから除外する。
 - in-flight中は対象sessionの3buttonを無効化する。他sessionの計測は継続する。
 
 ## 8. Communication and persistence matrix
@@ -412,11 +425,11 @@ display_buffer = buffer_seconds - snapshot_elapsed
 | --- | --- | --- | --- | --- |
 | 初回表示 | `bootstrap` | なし | なし。復元時に元keyを書き換えない | なし |
 | tab切替 | なし | なし | なし | なし |
-| 毎秒tick | なし | なし | なし | なし |
+| 毎秒tick | なし | なし | なし。client stateからbufferを再計算 | なし |
 | 日付button | `list_tasks` | なし | なし | なし |
 | 自動セッション | `auto_session` | なし | session追加 | なし |
 | 一覧の「セッション」 | なし | なし | session追加 | なし |
-| 破棄して解除 | なし | なし | session削除 | なし |
+| 破棄して解除 | なし | なし | session削除。成功後にbuffer再計算 | なし |
 | 記録して解除 | safety marker保存後に`record_session` | 実績保存1回 | 送信前marker設定。確定応答後marker解除。成功後session削除 | なし |
 | 完了 | safety marker保存後に`complete_session` | 完了transaction 1回 | 送信前marker設定。確定応答後marker解除。成功後session削除 | なし |
 | repository手動確認済み | なし | なし | commit済みで削除失敗したsessionを先に削除し、safety marker解除 | なし |
@@ -495,7 +508,7 @@ OperationHistoryEntry {
 - 進捗計算: 開始時33%、100%、133%、見積0、長時間、乗算overflow回避。
 - buffer: 正、0、負、06:00前後、固定`busy_time_slot`、隣接logical dateの除外を検証する。
 - buffer segment集計: 単一segment、同一taskの複数segment、複数task、進行中segment全量、同一logical date内の過去segment、`scheduled_work_seconds`合計overflowを検証する。
-- buffer更新: 実績変更後のschedule再生成と、clientでsnapshot経過秒を1回だけ減算することを検証する。
+- buffer更新: 実績変更後のschedule再生成と、clientで計測中セッションが存在しない時間だけを減算することを検証する。
 - read model: 指定日、開始時刻順、複数segment、葉判定、締切、候補なしの自動選定。
 
 ### 12.2 CLI互換性
@@ -519,6 +532,9 @@ OperationHistoryEntry {
 - entry不正と同一UUID重複では不正entryだけを除外し、初期化時はkeyを維持し、次のlocal state変更時にvalid entryだけでversion 1を書き戻すことを検証する。
 - reload、timer遅延、browser時計後退で開始時刻基準の経過秒になることを検証する。
 - session追加・破棄がserver callを生成しないことを検証する。
+- bufferはsession 0件、snapshot以前からのsession、snapshot後の途中開始、複数sessionの重複、最古sessionだけの破棄、全session破棄で、session不在時間だけを減算することを検証する。
+- 破棄のlocalStorage保存失敗ではsessionとbuffer表示を維持し、server commit済みでlocal削除に失敗したsessionはbuffer計算上の計測中sessionから除外することを検証する。
+- 同じlogical dateのread snapshot、実績反映済みmutation snapshot、06:00を跨ぐlogical date更新を新たなbuffer基準とし、snapshot以前の壁時計時間を過剰補正しないことを検証する。
 - server mutation成功、競合、保存失敗、worker停止時のsession遷移を検証する。
 - 各endpointの成功型がsnapshotを持ち、error型がsnapshotを持たず、clientがerror時に直前snapshotを維持することを検証する。
 - error codeごとの`retry_advice`がerror表と一致し、`manual_check`では同一requestを再送しないことを検証する。
@@ -556,7 +572,7 @@ OperationHistoryEntry {
 | 5 | REQ-APP-001..004、REQ-COMPAT-001..005 |
 | 6.2、6.3、7.2 | REQ-CARD-001..012 |
 | 4.4、4.5、7.4、9 | REQ-ACTION-001..009 |
-| 6.4 | REQ-BUFFER-001..006 |
+| 6.4 | REQ-BUFFER-001..010 |
 | 6.5、7.3 | REQ-LIST-001..010 |
 | 7.1、8、10 | REQ-COMMON-001..006、REQ-NET-001..006 |
 | 11、12 | REQ-COMPAT-001..005、全受入条件 |
