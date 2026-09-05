@@ -69,7 +69,7 @@
 | TD-028 | P1 | 完了 | M | 論理日境界を跨ぐschedule segmentの容量が開始日に全量計上される |
 | TD-029 | P1 | 完了 | L | 反復task完了の後段失敗で完了状態と親見積もりだけが部分更新される |
 | TD-030 | P1 | 未着手 | S | 00:00以降の日次残容量計算がbusy timeを無視する |
-| TD-031 | P1 | 未着手 | S | Spreadsheet変換がrank 1000以降のtask行を黙って破棄する |
+| TD-031 | P1 | 未着手 | S | Spreadsheet変換がind 1000以降のtask行を黙って破棄する |
 | TD-032 | P1 | 完了 | S | macOS標準環境でSpreadsheet変換の`tac`依存が空出力の成功になる |
 | TD-033 | P1 | 未着手 | M | 同一taskの複数segmentをApps Scriptが別行へ同期する |
 | TD-034 | P1 | 一部完了(W1-J) | M | Spreadsheet入力が存在しない日付と不正な時分秒をcommandへ変換する |
