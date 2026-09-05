@@ -186,6 +186,13 @@ impl ClientState {
         Some(changed)
     }
 
+    pub(super) fn remove_completed_task_from_list(&mut self, task_id: &str) {
+        self.read
+            .scheduled_rows
+            .retain(|row| row.task.task_id != task_id);
+        self.read.latest_list_request_id = None;
+    }
+
     fn allocate_read_request_id(&mut self) -> Option<u64> {
         let request_id = self.read.next_request_id;
         self.read.next_request_id = request_id.checked_add(1)?;
