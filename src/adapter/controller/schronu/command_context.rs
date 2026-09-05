@@ -20,10 +20,10 @@ use crate::application::interface::{FreeTimeManagerTrait, TaskRepositoryTrait};
 use crate::application::pack_use_case::{pack_tasks_with_end_of_day_offset_minutes, PackResult};
 use crate::application::schedule_use_case::get_schedule;
 use crate::application::task_use_case::{
-    breakdown_task, complete_task, create_task, defer_routine_task, defer_task,
+    add_actual_work, breakdown_task, complete_task, create_task, defer_routine_task, defer_task,
     estimated_work_seconds_from_minutes, set_category, set_deadline, set_estimate,
-    validate_task_name, ApplicationError, BreakdownTaskInput, CompleteTaskInput, CreateTaskInput,
-    TaskFactory,
+    validate_task_name, AddActualWorkInput, ApplicationError, BreakdownTaskInput,
+    CompleteTaskInput, CreateTaskInput, TaskFactory,
 };
 use crate::entity::task::{
     extract_leaf_tasks_from_project, extract_leaf_tasks_from_project_with_pending, Status,
@@ -1037,23 +1037,26 @@ impl TaskAttributeCommandContext for RuntimeTaskAttributeCommandContext<'_> {
     }
 
     fn add_work(&mut self, minutes: Option<i64>) -> Result<(), ApplicationError> {
-        let additional_minutes = minutes.unwrap_or_else(|| {
-            (self.task_repository.get_last_synced_time() - *self.focus_started_datetime)
-                .num_minutes()
-                + 1
-        });
-        if let Some(focused_task) = self.focused_task()? {
-            let original_minutes = focused_task
-                .get_actual_work_seconds()
-                .map_err(ApplicationError::TaskTree)?
-                / 60;
-            let total_minutes = original_minutes.checked_add(additional_minutes).ok_or(
-                ApplicationError::InvalidInput {
-                    field: "additional_actual_work_minutes",
-                    reason: "actual work minutes overflow",
+        if let Some(task_id) = *self.focused_task_id_opt {
+            let additional_actual_work_seconds = match minutes {
+                Some(minutes) => minutes
+                    .checked_mul(60)
+                    .ok_or(ApplicationError::InvalidInput {
+                        field: "additional_actual_work_seconds",
+                        reason: "seconds conversion overflow",
+                    })?,
+                None => (self.task_repository.get_last_synced_time()
+                    - *self.focus_started_datetime)
+                    .num_seconds(),
+            };
+            add_actual_work(
+                self.task_repository,
+                AddActualWorkInput {
+                    task_id,
+                    additional_actual_work_seconds,
+                    expected_actual_work_seconds: None,
                 },
             )?;
-            set_focused_task_actual_work_minutes(&Some(focused_task), total_minutes)?;
             *self.focused_task_id_opt = None;
         }
         Ok(())
