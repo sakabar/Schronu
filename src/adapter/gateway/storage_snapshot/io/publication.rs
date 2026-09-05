@@ -11,6 +11,8 @@ use std::os::unix::ffi::OsStrExt;
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(in crate::adapter::gateway) enum SnapshotFailurePoint {
     Read,
+    StrictValidation,
+    Copy,
     Write,
     Permission,
     FileSync,
@@ -29,6 +31,35 @@ pub(in crate::adapter::gateway::storage_snapshot) trait SnapshotIo:
 
 pub(in crate::adapter::gateway::storage_snapshot) struct FileSystemSnapshotIo;
 impl SnapshotIo for FileSystemSnapshotIo {}
+
+#[cfg(test)]
+pub(in crate::adapter::gateway) struct FailOnceSnapshotIo {
+    point: SnapshotFailurePoint,
+    failed: std::sync::atomic::AtomicBool,
+}
+
+#[cfg(test)]
+impl FailOnceSnapshotIo {
+    pub(in crate::adapter::gateway) fn new(point: SnapshotFailurePoint) -> Self {
+        Self {
+            point,
+            failed: std::sync::atomic::AtomicBool::new(false),
+        }
+    }
+}
+
+#[cfg(test)]
+impl SnapshotIo for FailOnceSnapshotIo {
+    fn before(&self, point: SnapshotFailurePoint) -> std::io::Result<()> {
+        use std::sync::atomic::Ordering;
+
+        if point == self.point && !self.failed.swap(true, Ordering::SeqCst) {
+            Err(std::io::Error::other(format!("injected {point:?} failure")))
+        } else {
+            Ok(())
+        }
+    }
+}
 
 pub(in crate::adapter::gateway::storage_snapshot) struct StableParent {
     directory: File,

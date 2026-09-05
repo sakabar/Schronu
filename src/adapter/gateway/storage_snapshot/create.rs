@@ -1,4 +1,6 @@
 use super::error::{SnapshotError, SnapshotOperation};
+#[cfg(test)]
+use super::io::FailOnceSnapshotIo;
 use super::io::{
     FileSystemSnapshotIo, SnapshotFailurePoint, SnapshotIo, StableDirectory, StableParent,
 };
@@ -86,27 +88,7 @@ pub(in crate::adapter::gateway) fn create_snapshot_with_failure(
     created_at: DateTime<Local>,
     point: SnapshotFailurePoint,
 ) -> Result<SnapshotSummary, SnapshotError> {
-    use std::sync::atomic::AtomicBool;
-
-    struct FailOnce {
-        point: SnapshotFailurePoint,
-        failed: AtomicBool,
-    }
-    impl SnapshotIo for FailOnce {
-        fn before(&self, point: SnapshotFailurePoint) -> std::io::Result<()> {
-            use std::sync::atomic::Ordering;
-
-            if point == self.point && !self.failed.swap(true, Ordering::SeqCst) {
-                Err(std::io::Error::other(format!("injected {point:?} failure")))
-            } else {
-                Ok(())
-            }
-        }
-    }
-    let io = FailOnce {
-        point,
-        failed: AtomicBool::new(false),
-    };
+    let io = FailOnceSnapshotIo::new(point);
     create_snapshot_impl(
         storage_directory,
         destination,

@@ -1,5 +1,10 @@
 use super::error::{SnapshotError, SnapshotOperation};
-use super::io::{DirectoryTree, FileSystemSnapshotIo, StableDirectory, StableParent};
+#[cfg(test)]
+use super::io::FailOnceSnapshotIo;
+use super::io::{
+    DirectoryTree, FileSystemSnapshotIo, SnapshotFailurePoint, SnapshotIo, StableDirectory,
+    StableParent,
+};
 use super::layout::{staging_path, MANIFEST_FILE_NAME, PAYLOAD_DIRECTORY_NAME};
 use super::verify::load_verified_snapshot;
 use super::SnapshotSummary;
@@ -11,7 +16,12 @@ pub fn restore_snapshot(
     snapshot_directory: impl AsRef<Path>,
     destination: impl AsRef<Path>,
 ) -> Result<SnapshotSummary, SnapshotError> {
-    restore_snapshot_impl(snapshot_directory.as_ref(), destination.as_ref(), || {})
+    restore_snapshot_impl(
+        snapshot_directory.as_ref(),
+        destination.as_ref(),
+        &FileSystemSnapshotIo,
+        || {},
+    )
 }
 
 #[cfg(test)]
@@ -20,16 +30,34 @@ pub(in crate::adapter::gateway) fn restore_snapshot_after_parent_open(
     destination: &Path,
     after_parent_open: impl FnOnce(),
 ) -> Result<SnapshotSummary, SnapshotError> {
-    restore_snapshot_impl(snapshot, destination, after_parent_open)
+    restore_snapshot_impl(
+        snapshot,
+        destination,
+        &FileSystemSnapshotIo,
+        after_parent_open,
+    )
+}
+
+#[cfg(test)]
+pub(in crate::adapter::gateway) fn restore_snapshot_with_failure(
+    snapshot: &Path,
+    destination: &Path,
+    point: SnapshotFailurePoint,
+) -> Result<SnapshotSummary, SnapshotError> {
+    let io = FailOnceSnapshotIo::new(point);
+    restore_snapshot_impl(snapshot, destination, &io, || {})
 }
 
 fn restore_snapshot_impl(
     snapshot: &Path,
     destination: &Path,
+    io: &dyn SnapshotIo,
     after_parent_open: impl FnOnce(),
 ) -> Result<SnapshotSummary, SnapshotError> {
     let publication = validate_destination(snapshot, destination)?;
     after_parent_open();
+    io.before(SnapshotFailurePoint::StrictValidation)
+        .map_err(|error| SnapshotError::new(SnapshotOperation::RepositoryLoad, snapshot, error))?;
     let verified = load_verified_snapshot(snapshot)?;
     let staging = staging_path(destination)?;
     let staging_name = staging
@@ -47,6 +75,7 @@ fn restore_snapshot_impl(
         destination,
         &publication,
         &verified.tree,
+        io,
     );
     if result.is_err() {
         let _ = publication
@@ -118,8 +147,8 @@ fn materialize_restore(
     destination: &Path,
     publication: &PublicationDestination,
     tree: &DirectoryTree,
+    io: &dyn SnapshotIo,
 ) -> Result<(), SnapshotError> {
-    let io = FileSystemSnapshotIo;
     for directory in tree
         .directories
         .iter()
@@ -138,8 +167,10 @@ fn materialize_restore(
     {
         let relative = payload_relative(&file.path)?;
         let path = staging.join(relative);
+        io.before(SnapshotFailurePoint::Copy)
+            .map_err(|error| SnapshotError::new(SnapshotOperation::Write, &path, error))?;
         staging_directory
-            .write_file(relative, &file.bytes, file.permissions.clone(), &io)
+            .write_file(relative, &file.bytes, file.permissions.clone(), io)
             .map_err(|error| SnapshotError::new(SnapshotOperation::Sync, &path, error))?;
     }
     for directory in tree
@@ -154,11 +185,11 @@ fn materialize_restore(
             .set_directory_permissions(relative, directory.permissions.clone())
             .map_err(|error| SnapshotError::new(SnapshotOperation::Write, &path, error))?;
         staging_directory
-            .sync_directory(relative, &io)
+            .sync_directory(relative, io)
             .map_err(|error| SnapshotError::new(SnapshotOperation::Sync, &path, error))?;
     }
     staging_directory
-        .sync(&io)
+        .sync(io)
         .map_err(|error| SnapshotError::new(SnapshotOperation::Sync, staging, error))?;
     publication
         .parent
@@ -166,17 +197,17 @@ fn materialize_restore(
             staging_name,
             &publication.destination_name,
             staging_directory,
-            &io,
+            io,
         )
         .map_err(|error| SnapshotError::new(SnapshotOperation::Write, destination, error))?;
-    if let Err(sync_error) = publication.parent.sync(&io) {
+    if let Err(sync_error) = publication.parent.sync(io) {
         publication
             .parent
             .remove_published_directory(&publication.destination_name, staging_directory)
             .map_err(|cleanup_error| {
                 SnapshotError::new(SnapshotOperation::Write, destination, cleanup_error)
             })?;
-        let _ = publication.parent.sync(&io);
+        let _ = publication.parent.sync(io);
         return Err(SnapshotError::new(
             SnapshotOperation::Sync,
             destination.parent().expect("destination has a parent"),

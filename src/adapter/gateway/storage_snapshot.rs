@@ -17,7 +17,9 @@ pub use error::SnapshotError;
 pub(in crate::adapter::gateway) use io::SnapshotFailurePoint;
 pub use restore::restore_snapshot;
 #[cfg(test)]
-pub(in crate::adapter::gateway) use restore::restore_snapshot_after_parent_open;
+pub(in crate::adapter::gateway) use restore::{
+    restore_snapshot_after_parent_open, restore_snapshot_with_failure,
+};
 pub use verify::verify_snapshot;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
