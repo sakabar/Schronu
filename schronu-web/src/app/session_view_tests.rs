@@ -116,6 +116,8 @@ fn session_card_renders_time_progress_overrun_and_three_typed_actions() {
     }
     assert!(!html.contains("自動セッション"));
     assert!(html.contains("session-progress-normal"));
+    assert!(html.contains("role=\"progressbar\""), "{html}");
+    assert!(html.contains("aria-valuetext=\"133%\""), "{html}");
     assert!(html.contains("width:100%"));
     assert!(html.contains("session-progress-overrun"));
     assert!(html.contains("width:33%"));
@@ -135,6 +137,10 @@ fn unavailable_completion_and_progress_render_placeholders() {
 
     assert!(html.contains("--:--"));
     assert!(html.contains("--%"));
+    assert!(
+        html.contains("aria-valuetext=\"進捗を計算できません\""),
+        "{html}"
+    );
 }
 
 #[test]
