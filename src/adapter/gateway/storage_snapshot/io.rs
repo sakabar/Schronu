@@ -1,8 +1,9 @@
+#[cfg(any(target_os = "macos", target_os = "linux"))]
 use std::ffi::CString;
 use std::fs::{self, File};
 use std::path::{Path, PathBuf};
 
-#[cfg(unix)]
+#[cfg(any(target_os = "macos", target_os = "linux"))]
 use std::os::unix::ffi::OsStrExt;
 
 pub(in crate::adapter::gateway) trait SnapshotIo: Send + Sync {
@@ -34,7 +35,7 @@ pub(super) struct DirectoryTree {
     pub(super) files: Vec<TreeFile>,
 }
 
-#[cfg(unix)]
+#[cfg(any(target_os = "macos", target_os = "linux"))]
 pub(super) fn read_directory_tree(path: &Path) -> std::io::Result<DirectoryTree> {
     use std::os::unix::fs::OpenOptionsExt;
 
@@ -56,7 +57,7 @@ pub(super) fn read_directory_tree(path: &Path) -> std::io::Result<DirectoryTree>
     Ok(tree)
 }
 
-#[cfg(unix)]
+#[cfg(any(target_os = "macos", target_os = "linux"))]
 fn read_directory_handle(
     directory: &File,
     relative: &Path,
@@ -115,7 +116,7 @@ fn read_directory_handle(
     Ok(())
 }
 
-#[cfg(unix)]
+#[cfg(any(target_os = "macos", target_os = "linux"))]
 fn read_directory_names(
     descriptor: std::os::fd::RawFd,
 ) -> std::io::Result<Vec<std::ffi::OsString>> {
@@ -169,7 +170,7 @@ fn clear_errno() {
     unsafe { *libc::__errno_location() = 0 };
 }
 
-#[cfg(not(unix))]
+#[cfg(not(any(target_os = "macos", target_os = "linux")))]
 pub(super) fn read_directory_tree(_path: &Path) -> std::io::Result<DirectoryTree> {
     Err(std::io::Error::new(
         std::io::ErrorKind::Unsupported,
@@ -177,7 +178,7 @@ pub(super) fn read_directory_tree(_path: &Path) -> std::io::Result<DirectoryTree
     ))
 }
 
-#[cfg(unix)]
+#[cfg(any(target_os = "macos", target_os = "linux"))]
 fn c_path(path: &Path) -> std::io::Result<CString> {
     CString::new(path.as_os_str().as_bytes()).map_err(|_| {
         std::io::Error::new(
