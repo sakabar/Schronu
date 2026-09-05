@@ -61,10 +61,10 @@ WebSuccess<T> {
 ```
 
 - `bootstrap`: `ServerSnapshot`
-- `list_tasks`: `WebSuccess<Vec<ScheduledTaskRowDto>>`
-- `auto_session`: `WebSuccess<Option<SessionTaskDto>>`
+- `list_tasks`: `WebSuccess<Vec<ScheduledTaskRow>>`
+- `auto_session`: `WebSuccess<Option<SessionTask>>`
 - `record_session`: `WebSuccess<RecordSessionResult>`
-- `complete_session`: `ServerSnapshot`
+- `complete_session`: `CompleteSessionResponse` (`ServerSnapshot`のtype alias)
 
 error responseは成功型とは別の次の形とし、snapshotまたは部分的な成功payloadを含めない。
 
@@ -78,14 +78,22 @@ WebError {
 RetryAdvice = Retry | ManualCheck
 ```
 
-wire上の`retry_advice`は`retry`または`manual_check`とする。clientはerror responseを受けても直前の`ServerSnapshot`、一覧、`work_sessions`を置換しない。
+`WebError.code`はopenな文字列とする。既知codeは`schronu-web`の`web_error_codes`定数を使って生成し、誤記を防ぐ。clientは未知codeを受信してもdeserializeを失敗させず、`code`、`message`、`retry_advice`をそのまま保持する。wire上の`retry_advice`は`retry`または`manual_check`とする。clientはerror responseを受けても直前の`ServerSnapshot`、一覧、`work_sessions`を置換しない。
+
+Dioxus server functionの戻り値は次の二重`Result`とする。
+
+```text
+Result<Result<T, WebError>, ServerFnError>
+```
+
+内側はworkerまたはSchronuの操作が返すtyped `WebError`、外側はrequest、responseのserialize、network、server function contextなどのtransport `ServerFnError`を表す。clientは外側の失敗を再試行可能な表示errorへnormalizeするが、codeを`worker_unavailable`とはしない。`worker_unavailable`はworker commandの送信失敗またはresponse channel切断だけに使用する。
 
 ### 3.3 Task DTO
 
 セッション開始に必要なtask snapshotは次を持つ。
 
 ```text
-SessionTaskDto {
+SessionTask {
     task_id: UUID,
     task_name: String,
     estimated_work_seconds: i64,
@@ -96,8 +104,8 @@ SessionTaskDto {
 一覧の1行はschedule segmentを表し、次を持つ。
 
 ```text
-ScheduledTaskRowDto {
-    task: SessionTaskDto,
+ScheduledTaskRow {
+    task: SessionTask,
     schedule_start_epoch_ms: i64,
     schedule_end_epoch_ms: i64,
     deadline_epoch_ms: Option<i64>,
@@ -151,7 +159,7 @@ keyは`schronu_web.work_sessions.v1`とする。valueはversion付きobjectと�
 ### 4.2 `list_tasks(date)`
 
 - 入力: `logical_date: YYYY-MM-DD`
-- 成功出力: `WebSuccess<Vec<ScheduledTaskRowDto>>`
+- 成功出力: `WebSuccess<Vec<ScheduledTaskRow>>`
 - 指定日のscheduleを取得し、開始epoch milliseconds昇順で返す。
 - 指定日を曜日へ変換してCLIの`全 曜日`文字列を実行する実装にはしない。
 - task dataは変更しない。
@@ -159,7 +167,7 @@ keyは`schronu_web.work_sessions.v1`とする。valueはversion付きobjectと�
 ### 4.3 `auto_session`
 
 - 入力: なし
-- 成功出力: `WebSuccess<Option<SessionTaskDto>>`
+- 成功出力: `WebSuccess<Option<SessionTask>>`
 - applicationの`get_focus`相当の選定を呼ぶが、current taskの設定処理は呼ばない。
 - 候補がなければ`None`を正常結果として返す。
 - task dataは変更しない。
@@ -269,7 +277,7 @@ work_sessions: Vec<WorkSession>
 server_snapshot: Option<ServerSnapshot>
 date_buttons: Vec<LogicalDateButton>
 selected_logical_date: Option<YYYY-MM-DD>
-scheduled_rows: Vec<ScheduledTaskRowDto>
+scheduled_rows: Vec<ScheduledTaskRow>
 in_flight_session_ids: Set<UUID>
 page_error: Option<DisplayError>
 operation_history: VecDeque<OperationHistoryEntry>
@@ -412,11 +420,16 @@ server errorは少なくとも次を識別可能にする。`retry_advice`が`re
 | `actual_work_conflict` | 現在実績と期待実績が不一致 | `manual_check` | 実績の確認、またはsessionの破棄を案内する。 |
 | `arithmetic_overflow` | 実績、進捗、日時計算が表現範囲外 | `manual_check` | task値または時刻の修正、またはsessionの破棄を案内する。 |
 | `task_not_completable` | 未完了の子など既存完了条件を満たさない | `manual_check` | 未完了の子を含むtask状態の修正、またはsessionの破棄を案内する。 |
-| `repository_save_failed` | 保存失敗、rollback成功 | `retry` | sessionを保持し、同じ操作の再試行を案内する。 |
-| `repository_state_uncertain` | rollbackを保証できない | `manual_check` | sessionを保持して再送を無効化し、repositoryの手動確認を要求する。 |
+| `configuration_error` | 設定file、`busy_time_slot`、storage pathなどの設定不正 | `manual_check` | 設定を修正してworkerまたはserviceを再起動するよう案内する。 |
+| `repository_unavailable` | lock競合またはrepository load失敗など、mutation開始前の一時的失敗 | `retry` | sessionを保持し、同じ操作の再試行を案内する。 |
+| `operation_failed` | 上記codeへ分類できないtask tree、schedule、その他の操作失敗 | `manual_check` | sessionを保持し、task状態の手動確認を案内する。 |
+| `repository_save_failed` | storageが未commitと確認できる保存失敗 | `retry` | sessionを保持し、同じ操作の再試行を案内する。 |
+| `repository_state_uncertain` | storageへのcommit有無を確定できない保存失敗、またはその発生後に同じserviceがmutationを拒否した場合 | `manual_check` | sessionを保持してmutationを無効化し、repositoryの手動確認とworkerまたはserviceの再起動を要求する。 |
 | `worker_unavailable` | worker停止またはresponse channel切断 | `retry` | 既存表示を保持し、接続回復後の再試行を案内する。 |
 
-すべてのerror responseはcodeに対応した利用者向け`message`を持つ。validation、競合、task状態errorは`manual_check`であり、利用者が原因を修正するかsessionを破棄するまで同一requestを再送しない。一時的な保存失敗とworker停止だけを`retry`とする。
+すべてのerror responseはcodeに対応した利用者向け`message`を持つ。validation、競合、task状態errorは`manual_check`であり、利用者が原因を修正するかsessionを破棄するまで同一requestを再送しない。`repository_state_uncertain`を1回返したserviceはpoisoned状態とし、read操作は許可しても、workerまたはserviceが再起動されるまで後続mutationをrepositoryへ到達させず同じcodeで拒否する。再起動後も、利用者がrepositoryを手動確認するまではclient側でmutationを再送しない。一時的なrepository利用不能、未commitと確定した保存失敗、worker停止だけをtyped errorとして`retry`とする。
+
+未知の`WebError.code`を受信した場合もpayloadを保持し、serverが返した`retry_advice`に従って表示と再送可否を決める。外側の`ServerFnError`は`WebError`ではないため、この表のcodeへ変換せず、client固有のtransport表示errorとして扱う。
 
 server操作ごとに`operation_now`は1回だけ取得し、経過秒算出、完了時刻、snapshotに共通利用する。
 
