@@ -51,6 +51,10 @@ mod today_text_contract_tests;
 #[path = "schronu/web_read_buffer_contract_tests.rs"]
 mod web_read_buffer_contract_tests;
 
+#[cfg(test)]
+#[path = "schronu/web_read_model_contract_tests.rs"]
+mod web_read_model_contract_tests;
+
 /// CLI applicationを起動する。
 pub fn run_cli() {
     runtime::application();
