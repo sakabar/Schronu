@@ -698,6 +698,38 @@ fn execute_command_for_test(
 }
 
 #[cfg(test)]
+fn execute_command_with_focus_started_for_test(
+    task: TaskHandle,
+    operation_now: DateTime<Local>,
+    focus_started_datetime: DateTime<Local>,
+    focused_task_id_opt: Option<Uuid>,
+    command: &str,
+) -> CommandTestResult {
+    let mut task_repository = TestTaskRepository::new(task, operation_now);
+    let mut free_time_manager = TestFreeTimeManager::default();
+    let mut focused_task_id_opt = focused_task_id_opt;
+    let mut stdout = TestWriter::new();
+
+    if let Err(error) = execute(
+        &mut stdout,
+        &mut task_repository,
+        &mut free_time_manager,
+        &mut focused_task_id_opt,
+        &focus_started_datetime,
+        command,
+    ) {
+        let _output_error = render_display_model(&mut stdout, &error_display_model(&error))
+            .map_err(CommandError::Output);
+    }
+
+    CommandTestResult {
+        task: task_repository.task,
+        focused_task_id_opt,
+        output: stdout.into_string(),
+    }
+}
+
+#[cfg(test)]
 impl TestTaskRepository {
     fn new(task: TaskHandle, last_synced_time: DateTime<Local>) -> Self {
         let task_id = task.get_id().unwrap();

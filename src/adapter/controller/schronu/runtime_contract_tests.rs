@@ -3533,6 +3533,103 @@ fn test_execute_actual_priority_work_typed値でtaskを更新する() {
 }
 
 #[test]
+fn test_execute_work_省略時はfocus開始からの完了済み秒数を加算する() {
+    let operation_now = Local.with_ymd_and_hms(2026, 8, 11, 12, 1, 1).unwrap();
+
+    for elapsed_seconds in [59, 60, 61] {
+        let task = new_test_task_handle("更新対象").unwrap();
+        task.set_actual_work_seconds(7).unwrap();
+        let task_id = task.get_id().unwrap();
+
+        let result = execute_command_with_focus_started_for_test(
+            task,
+            operation_now,
+            operation_now - Duration::seconds(elapsed_seconds),
+            Some(task_id),
+            "働",
+        );
+
+        assert_eq!(
+            result.task.get_actual_work_seconds().unwrap(),
+            7 + elapsed_seconds
+        );
+        assert_eq!(result.focused_task_id_opt, None);
+    }
+}
+
+#[test]
+fn test_execute_work_明示分を秒へ変換して既存端数へ加算する() {
+    let now = Local.with_ymd_and_hms(2026, 8, 11, 12, 0, 0).unwrap();
+    let task = new_test_task_handle("更新対象").unwrap();
+    task.set_actual_work_seconds(61).unwrap();
+    let task_id = task.get_id().unwrap();
+
+    let result = execute_command_for_test(task, now, Some(task_id), "働 1");
+
+    assert_eq!(result.task.get_actual_work_seconds().unwrap(), 121);
+    assert_eq!(result.focused_task_id_opt, None);
+}
+
+#[test]
+fn test_execute_work_負数とoverflowはtaskとfocusを維持する() {
+    let now = Local.with_ymd_and_hms(2026, 8, 11, 12, 0, 0).unwrap();
+
+    for command in ["働 -1".to_string(), format!("働 {}", i64::MAX)] {
+        let task = new_test_task_handle("更新対象").unwrap();
+        task.set_actual_work_seconds(61).unwrap();
+        let task_id = task.get_id().unwrap();
+
+        let result = execute_command_for_test(task, now, Some(task_id), &command);
+
+        assert_eq!(result.task.get_actual_work_seconds().unwrap(), 61);
+        assert_eq!(result.focused_task_id_opt, Some(task_id));
+        assert!(result
+            .output
+            .contains("invalid input for additional_actual_work_seconds:"));
+    }
+}
+
+#[test]
+fn test_execute_work_時計後退はtaskとfocusを維持する() {
+    let operation_now = Local.with_ymd_and_hms(2026, 8, 11, 12, 0, 0).unwrap();
+    let task = new_test_task_handle("更新対象").unwrap();
+    task.set_actual_work_seconds(61).unwrap();
+    let task_id = task.get_id().unwrap();
+
+    let result = execute_command_with_focus_started_for_test(
+        task,
+        operation_now,
+        operation_now + Duration::seconds(1),
+        Some(task_id),
+        "働",
+    );
+
+    assert_eq!(result.task.get_actual_work_seconds().unwrap(), 61);
+    assert_eq!(result.focused_task_id_opt, Some(task_id));
+    assert!(result
+        .output
+        .contains("invalid input for additional_actual_work_seconds:"));
+}
+
+#[test]
+fn test_execute_work_task未選択では入力値にかかわらずno_opにする() {
+    let now = Local.with_ymd_and_hms(2026, 8, 11, 12, 0, 0).unwrap();
+    let task = new_test_task_handle("非選択task").unwrap();
+    task.set_actual_work_seconds(61).unwrap();
+
+    let result = execute_command_for_test(
+        task,
+        now,
+        None,
+        &format!("働 {}", i64::MAX),
+    );
+
+    assert_eq!(result.task.get_actual_work_seconds().unwrap(), 61);
+    assert_eq!(result.focused_task_id_opt, None);
+    assert!(result.output.is_empty());
+}
+
+#[test]
 fn test_execute_actual_priority_work_不正値はfield付き入力エラーで状態を変更しない() {
     let now = Local.with_ymd_and_hms(2026, 8, 11, 12, 0, 0).unwrap();
     for command in ["実 invalid", "重 invalid", "働 invalid"] {
@@ -3567,7 +3664,12 @@ fn test_execute_actual_work_overflowはfield付きerrorで状態を変更しな�
 
         assert_eq!(result.task.get_actual_work_seconds().unwrap(), 20 * 60);
         assert_eq!(result.focused_task_id_opt, Some(task_id));
-        assert!(result.output.contains("actual_work_minutes"));
+        let expected_field = if command.starts_with("働") {
+            "additional_actual_work_seconds"
+        } else {
+            "actual_work_minutes"
+        };
+        assert!(result.output.contains(expected_field));
     }
 }
 
@@ -6154,7 +6256,7 @@ fn test_execute_non_interactive_command_finishはoperation時刻を共有する(
 }
 
 #[test]
-fn test_execute_non_interactive_command_省略作業時間はoperation時刻を使う() {
+fn test_execute_non_interactive_command_省略作業時間は0秒を加算する() {
     let storage_dir = TestStorageDir::new();
     std::fs::create_dir_all(&storage_dir.path).unwrap();
     let previous_synced_time = Local.with_ymd_and_hms(2026, 8, 19, 9, 0, 0).unwrap();
@@ -6184,7 +6286,7 @@ fn test_execute_non_interactive_command_省略作業時間はoperation時刻を�
             .expect("作業対象のtaskはtreeに残るべきです")
             .get_actual_work_seconds()
             .unwrap(),
-        3 * 60
+        2 * 60
     );
 }
 
