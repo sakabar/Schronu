@@ -3,6 +3,7 @@ use std::fmt;
 use std::fs;
 use std::path::{Component, Path, PathBuf};
 use std::sync::Arc;
+#[cfg(test)]
 use uuid::Uuid;
 
 mod cleanup;
@@ -22,7 +23,7 @@ use layout::ACTIVE_TRANSACTION_DIRECTORY_NAME;
 #[cfg(test)]
 pub(super) use layout::TRANSACTION_DIRECTORY_NAME;
 use layout::{validate_storage_relative_path, TransactionLayout};
-use manifest::ValidatedEntry;
+use manifest::ValidatedManifest;
 #[cfg(test)]
 use manifest::{
     ManifestEntryOperation, RawManifestEntry as ManifestEntry,
@@ -126,15 +127,24 @@ pub(super) struct WriteRequest<'a> {
 }
 
 pub(super) struct PreparedTransaction {
+    state: TransactionState,
+}
+
+struct CommittedTransaction {
+    state: TransactionState,
+}
+
+struct TransactionState {
+    paths: TransactionPaths,
+    manifest: ValidatedManifest,
+    io: Arc<dyn StorageTransactionIo>,
+    _transaction_lock: TransactionLock,
+}
+
+struct TransactionPaths {
     storage_dir_path: PathBuf,
     transactions_dir_path: PathBuf,
     transaction_dir_path: PathBuf,
-    transaction_id: Uuid,
-    revision: Uuid,
-    directories: Vec<PathBuf>,
-    entries: Vec<ValidatedEntry>,
-    io: Arc<dyn StorageTransactionIo>,
-    _transaction_lock: TransactionLock,
 }
 
 fn validate_delete_target_ancestors(

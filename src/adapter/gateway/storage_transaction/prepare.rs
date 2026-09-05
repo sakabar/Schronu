@@ -11,8 +11,17 @@ use super::manifest::{
 use super::{
     acquire_transaction_lock, resolve_transactions_directory, sync_directory,
     validate_storage_relative_path, validate_transactions_directory, PreparedTransaction,
-    StorageTransactionError, StorageTransactionIo, StorageTransactionOperation, WriteRequest,
+    StorageTransactionError, StorageTransactionIo, StorageTransactionOperation, TransactionPaths,
+    TransactionState, WriteRequest,
 };
+
+struct PrepareContext<'a> {
+    io: &'a dyn StorageTransactionIo,
+    paths: &'a TransactionPaths,
+    staged_files_dir_path: &'a Path,
+    transaction_id: Uuid,
+    revision: Uuid,
+}
 
 #[cfg(test)]
 pub(in crate::adapter::gateway) fn prepare(
@@ -72,62 +81,54 @@ pub(in crate::adapter::gateway) fn prepare_with_directories(
         ));
     }
 
-    let manifest = prepare_contents(
-        io.as_ref(),
-        storage_dir_path,
-        &transactions_dir_path,
-        &transaction_dir_path,
-        &staged_files_dir_path,
-        transaction_id,
-        revision,
-        writes,
-        directories,
-    );
-    let manifest = match manifest {
-        Ok(manifest) => manifest,
-        Err(error) => {
-            let _ = io.remove_dir_all(&transaction_dir_path);
-            return Err(error);
-        }
-    };
-    let ValidatedManifest {
-        transaction_id,
-        revision,
-        directories,
-        entries,
-    } = manifest;
-    Ok(PreparedTransaction {
+    let paths = TransactionPaths {
         storage_dir_path: storage_dir_path.to_path_buf(),
         transactions_dir_path,
         transaction_dir_path,
+    };
+    let context = PrepareContext {
+        io: io.as_ref(),
+        paths: &paths,
+        staged_files_dir_path: &staged_files_dir_path,
         transaction_id,
         revision,
-        directories,
-        entries,
-        io,
-        _transaction_lock: transaction_lock,
+    };
+    let manifest = prepare_contents(&context, writes, directories);
+    let manifest = match manifest {
+        Ok(manifest) => manifest,
+        Err(error) => {
+            let _ = io.remove_dir_all(&paths.transaction_dir_path);
+            return Err(error);
+        }
+    };
+    Ok(PreparedTransaction {
+        state: TransactionState {
+            paths,
+            manifest,
+            io,
+            _transaction_lock: transaction_lock,
+        },
     })
 }
 
-#[allow(clippy::too_many_arguments)]
 fn prepare_contents(
-    io: &dyn StorageTransactionIo,
-    storage_dir_path: &Path,
-    transactions_dir_path: &Path,
-    transaction_dir_path: &Path,
-    staged_files_dir_path: &Path,
-    transaction_id: Uuid,
-    revision: Uuid,
+    context: &PrepareContext<'_>,
     writes: &[WriteRequest<'_>],
     directories: &[&Path],
 ) -> Result<ValidatedManifest, StorageTransactionError> {
     let mut entries = Vec::with_capacity(writes.len());
     for (index, write) in writes.iter().enumerate() {
-        let target = validate_storage_relative_path(storage_dir_path, write.target_path)?;
+        let target =
+            validate_storage_relative_path(&context.paths.storage_dir_path, write.target_path)?;
         let staged_file = TransactionLayout::staged_file_relative_path(index);
         let staged_file_path =
-            TransactionLayout::staged_file_path(transaction_dir_path, &staged_file);
-        write_staged_file(io, write.target_path, &staged_file_path, write.bytes)?;
+            TransactionLayout::staged_file_path(&context.paths.transaction_dir_path, &staged_file);
+        write_staged_file(
+            context.io,
+            write.target_path,
+            &staged_file_path,
+            write.bytes,
+        )?;
         entries.push(ValidatedEntry::Write {
             target,
             staged_file,
@@ -137,20 +138,20 @@ fn prepare_contents(
             },
         });
     }
-    sync_directory(io, staged_files_dir_path)?;
+    sync_directory(context.io, context.staged_files_dir_path)?;
 
     let directories = directories
         .iter()
-        .map(|directory| validate_storage_relative_path(storage_dir_path, directory))
+        .map(|directory| validate_storage_relative_path(&context.paths.storage_dir_path, directory))
         .collect::<Result<Vec<_>, _>>()?;
     let manifest = ValidatedManifest {
-        transaction_id,
-        revision,
+        transaction_id: context.transaction_id,
+        revision: context.revision,
         directories,
         entries,
     };
     let raw_manifest = RawTransactionManifest::from(&manifest);
-    let manifest_path = TransactionLayout::manifest_path(transaction_dir_path);
+    let manifest_path = TransactionLayout::manifest_path(&context.paths.transaction_dir_path);
     let manifest_bytes = serde_json::to_vec(&raw_manifest).map_err(|error| {
         StorageTransactionError::new(
             StorageTransactionOperation::SerializeManifest,
@@ -158,14 +159,19 @@ fn prepare_contents(
             std::io::Error::new(std::io::ErrorKind::InvalidData, error),
         )
     })?;
-    io.create_new_file(&manifest_path).map_err(|error| {
-        StorageTransactionError::new(
-            StorageTransactionOperation::CreateManifest,
-            &manifest_path,
-            error,
-        )
-    })?;
-    io.write_file(&manifest_path, &manifest_bytes)
+    context
+        .io
+        .create_new_file(&manifest_path)
+        .map_err(|error| {
+            StorageTransactionError::new(
+                StorageTransactionOperation::CreateManifest,
+                &manifest_path,
+                error,
+            )
+        })?;
+    context
+        .io
+        .write_file(&manifest_path, &manifest_bytes)
         .map_err(|error| {
             StorageTransactionError::new(
                 StorageTransactionOperation::WriteManifest,
@@ -173,16 +179,16 @@ fn prepare_contents(
                 error,
             )
         })?;
-    io.sync_file(&manifest_path).map_err(|error| {
+    context.io.sync_file(&manifest_path).map_err(|error| {
         StorageTransactionError::new(
             StorageTransactionOperation::SyncManifest,
             &manifest_path,
             error,
         )
     })?;
-    sync_directory(io, transaction_dir_path)?;
-    sync_directory(io, transactions_dir_path)?;
-    sync_directory(io, storage_dir_path)?;
+    sync_directory(context.io, &context.paths.transaction_dir_path)?;
+    sync_directory(context.io, &context.paths.transactions_dir_path)?;
+    sync_directory(context.io, &context.paths.storage_dir_path)?;
     Ok(manifest)
 }
 

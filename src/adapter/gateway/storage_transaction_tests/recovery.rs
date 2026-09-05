@@ -45,7 +45,7 @@ fn test_recover_uncommitted_prepared_transaction_drop後にlockを再取得す�
         }],
     )
     .unwrap();
-    let active_transaction_path = prepared.transaction_dir_path.clone();
+    let active_transaction_path = prepared.transaction_dir_path().to_path_buf();
 
     drop(prepared);
     recover(file_system_io(), &storage_dir.path).unwrap();
@@ -57,7 +57,6 @@ fn test_recover_uncommitted_prepared_transaction_drop後にlockを再取得す�
 fn test_recover_uncommitted_marker公開中のlive_writerとは競合してactiveを削除しない() {
     let storage_dir = TestStorageDir::new();
     let target_path = storage_dir.path.join("project.yaml");
-    let revision_path = storage_dir.path.join(".revision");
     let io = Arc::new(BlockingMarkerPublicationIo {
         marker_published: AtomicBool::new(false),
         marker_sync_started: Barrier::new(2),
@@ -73,8 +72,8 @@ fn test_recover_uncommitted_marker公開中のlive_writerとは競合してactiv
         }],
     )
     .unwrap();
-    let active_transaction_path = prepared.transaction_dir_path.clone();
-    let commit_thread = std::thread::spawn(move || prepared.commit(&revision_path));
+    let active_transaction_path = prepared.transaction_dir_path().to_path_buf();
+    let commit_thread = std::thread::spawn(move || prepared.commit());
     io.marker_sync_started.wait();
 
     let actual = recover(file_system_io(), &storage_dir.path);

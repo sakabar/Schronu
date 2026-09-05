@@ -5,7 +5,8 @@ use super::cleanup::cleanup_committed_transaction;
 use super::layout::TransactionLayout;
 use super::manifest::{content_matches, ValidatedEntry};
 use super::{
-    sync_directory, PreparedTransaction, StorageTransactionError, StorageTransactionOperation,
+    sync_directory, CommittedTransaction, PreparedTransaction, StorageTransactionError,
+    StorageTransactionOperation,
 };
 
 enum PreflightEntry {
@@ -22,26 +23,36 @@ enum PreflightEntry {
 
 impl PreparedTransaction {
     #[cfg(test)]
+    pub(super) fn transaction_dir_path(&self) -> &Path {
+        &self.state.paths.transaction_dir_path
+    }
+
+    #[cfg(test)]
+    pub(super) fn transaction_id(&self) -> uuid::Uuid {
+        self.state.manifest.transaction_id
+    }
+
+    #[cfg(test)]
     pub(in crate::adapter::gateway) fn discard(self) -> Result<(), StorageTransactionError> {
-        self.io
-            .remove_dir_all(&self.transaction_dir_path)
+        self.state
+            .io
+            .remove_dir_all(&self.state.paths.transaction_dir_path)
             .map_err(|error| {
                 StorageTransactionError::new(
                     StorageTransactionOperation::Discard,
-                    self.transaction_dir_path,
+                    self.state.paths.transaction_dir_path,
                     error,
                 )
             })
     }
 
-    pub(in crate::adapter::gateway) fn commit(
-        self,
-        revision_path: &Path,
-    ) -> Result<(), StorageTransactionError> {
+    pub(in crate::adapter::gateway) fn commit(self) -> Result<(), StorageTransactionError> {
         let marker_temporary_path =
-            TransactionLayout::temporary_commit_marker_path(&self.transaction_dir_path);
-        let marker_path = TransactionLayout::commit_marker_path(&self.transaction_dir_path);
-        self.io
+            TransactionLayout::temporary_commit_marker_path(&self.state.paths.transaction_dir_path);
+        let marker_path =
+            TransactionLayout::commit_marker_path(&self.state.paths.transaction_dir_path);
+        self.state
+            .io
             .create_new_file(&marker_temporary_path)
             .map_err(|error| {
                 StorageTransactionError::new(
@@ -50,14 +61,18 @@ impl PreparedTransaction {
                     error,
                 )
             })?;
-        self.io.sync_file(&marker_temporary_path).map_err(|error| {
-            StorageTransactionError::new(
-                StorageTransactionOperation::SyncCommitMarker,
-                &marker_temporary_path,
-                error,
-            )
-        })?;
-        self.io
+        self.state
+            .io
+            .sync_file(&marker_temporary_path)
+            .map_err(|error| {
+                StorageTransactionError::new(
+                    StorageTransactionOperation::SyncCommitMarker,
+                    &marker_temporary_path,
+                    error,
+                )
+            })?;
+        self.state
+            .io
             .rename(&marker_temporary_path, &marker_path)
             .map_err(|error| {
                 StorageTransactionError::new(
@@ -66,26 +81,31 @@ impl PreparedTransaction {
                     error,
                 )
             })?;
-        sync_directory(self.io.as_ref(), &self.transaction_dir_path)?;
+        sync_directory(
+            self.state.io.as_ref(),
+            &self.state.paths.transaction_dir_path,
+        )?;
 
-        self.finish_committed(revision_path)
+        CommittedTransaction { state: self.state }.roll_forward()
     }
+}
 
-    pub(super) fn finish_committed(
-        self,
-        revision_path: &Path,
-    ) -> Result<(), StorageTransactionError> {
+impl CommittedTransaction {
+    pub(super) fn roll_forward(self) -> Result<(), StorageTransactionError> {
         let preflight_entries = self.preflight_entries()?;
-        let layout = TransactionLayout::new(&self.storage_dir_path);
-        for directory in &self.directories {
+        let layout = TransactionLayout::new(&self.state.paths.storage_dir_path);
+        for directory in &self.state.manifest.directories {
             let directory_path = layout.target_path(directory);
-            self.io.create_dir_all(&directory_path).map_err(|error| {
-                StorageTransactionError::new(
-                    StorageTransactionOperation::CreateTargetDirectory,
-                    directory_path,
-                    error,
-                )
-            })?;
+            self.state
+                .io
+                .create_dir_all(&directory_path)
+                .map_err(|error| {
+                    StorageTransactionError::new(
+                        StorageTransactionOperation::CreateTargetDirectory,
+                        directory_path,
+                        error,
+                    )
+                })?;
         }
         for entry in preflight_entries {
             match entry {
@@ -98,13 +118,15 @@ impl PreparedTransaction {
                 PreflightEntry::Delete { target_path } => self.apply_delete(&target_path)?,
             }
         }
-        self.apply_revision(revision_path)?;
+        self.apply_revision(&layout.revision_path())?;
         cleanup_committed_transaction(&self)
     }
 
     fn preflight_entries(&self) -> Result<Vec<PreflightEntry>, StorageTransactionError> {
-        let layout = TransactionLayout::new(&self.storage_dir_path);
-        self.entries
+        let layout = TransactionLayout::new(&self.state.paths.storage_dir_path);
+        self.state
+            .manifest
+            .entries
             .iter()
             .map(|entry| match entry {
                 ValidatedEntry::Delete { target } => Ok(PreflightEntry::Delete {
@@ -117,12 +139,12 @@ impl PreparedTransaction {
                 } => {
                     let target_path = layout.target_path(target);
                     let staged_file_path = TransactionLayout::staged_file_path(
-                        &self.transaction_dir_path,
+                        &self.state.paths.transaction_dir_path,
                         staged_file,
                     );
-                    let staged_material = match self.io.symlink_metadata(&staged_file_path) {
+                    let staged_material = match self.state.io.symlink_metadata(&staged_file_path) {
                         Ok(metadata) if metadata.file_type().is_file() => {
-                            let bytes = self.io.read_file(&staged_file_path).map_err(|error| {
+                            let bytes = self.state.io.read_file(&staged_file_path).map_err(|error| {
                                 StorageTransactionError::new(
                                     StorageTransactionOperation::ReadStagedFile,
                                     &staged_file_path,
@@ -164,9 +186,9 @@ impl PreparedTransaction {
                             ));
                         }
                     };
-                    match self.io.symlink_metadata(&target_path) {
+                    match self.state.io.symlink_metadata(&target_path) {
                         Ok(metadata) if metadata.file_type().is_file() => {
-                            let target_bytes = self.io.read_file(&target_path).map_err(|error| {
+                            let target_bytes = self.state.io.read_file(&target_path).map_err(|error| {
                                 StorageTransactionError::new(
                                     StorageTransactionOperation::ReadTargetContent,
                                     &target_path,
@@ -212,16 +234,20 @@ impl PreparedTransaction {
     }
 
     fn apply_revision(&self, revision_path: &Path) -> Result<(), StorageTransactionError> {
-        let permissions = self.io.target_permissions(revision_path).map_err(|error| {
-            StorageTransactionError::new(
-                StorageTransactionOperation::ReadTargetMetadata,
-                revision_path,
-                error,
-            )
-        })?;
+        let permissions = self
+            .state
+            .io
+            .target_permissions(revision_path)
+            .map_err(|error| {
+                StorageTransactionError::new(
+                    StorageTransactionOperation::ReadTargetMetadata,
+                    revision_path,
+                    error,
+                )
+            })?;
         self.apply_bytes(
             revision_path,
-            format!("{}\n", self.revision).as_bytes(),
+            format!("{}\n", self.state.manifest.revision).as_bytes(),
             permissions,
         )
     }
@@ -237,10 +263,10 @@ impl PreparedTransaction {
                 ),
             )
         })?;
-        match self.io.remove_file(target_path) {
-            Ok(()) => sync_directory(self.io.as_ref(), parent_path),
+        match self.state.io.remove_file(target_path) {
+            Ok(()) => sync_directory(self.state.io.as_ref(), parent_path),
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-                match self.io.sync_directory(parent_path) {
+                match self.state.io.sync_directory(parent_path) {
                     Ok(()) => Ok(()),
                     Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
                     Err(error) => Err(StorageTransactionError::new(
@@ -274,7 +300,7 @@ impl PreparedTransaction {
                 ),
             )
         })?;
-        self.io.create_dir_all(parent_path).map_err(|error| {
+        self.state.io.create_dir_all(parent_path).map_err(|error| {
             StorageTransactionError::new(
                 StorageTransactionOperation::CreateTargetDirectory,
                 parent_path,
@@ -291,9 +317,12 @@ impl PreparedTransaction {
                 ),
             )
         })?;
-        let temporary_path =
-            TransactionLayout::live_temporary_path(parent_path, file_name, self.transaction_id);
-        if let Err(error) = self.io.create_new_file(&temporary_path) {
+        let temporary_path = TransactionLayout::live_temporary_path(
+            parent_path,
+            file_name,
+            self.state.manifest.transaction_id,
+        );
+        if let Err(error) = self.state.io.create_new_file(&temporary_path) {
             if error.kind() != std::io::ErrorKind::AlreadyExists {
                 return Err(StorageTransactionError::new(
                     StorageTransactionOperation::CreateLiveTemporary,
@@ -301,23 +330,30 @@ impl PreparedTransaction {
                     error,
                 ));
             }
-            self.io.remove_file(&temporary_path).map_err(|error| {
-                StorageTransactionError::new(
-                    StorageTransactionOperation::RemoveLiveTemporary,
-                    &temporary_path,
-                    error,
-                )
-            })?;
-            self.io.create_new_file(&temporary_path).map_err(|error| {
-                StorageTransactionError::new(
-                    StorageTransactionOperation::CreateLiveTemporary,
-                    &temporary_path,
-                    error,
-                )
-            })?;
+            self.state
+                .io
+                .remove_file(&temporary_path)
+                .map_err(|error| {
+                    StorageTransactionError::new(
+                        StorageTransactionOperation::RemoveLiveTemporary,
+                        &temporary_path,
+                        error,
+                    )
+                })?;
+            self.state
+                .io
+                .create_new_file(&temporary_path)
+                .map_err(|error| {
+                    StorageTransactionError::new(
+                        StorageTransactionOperation::CreateLiveTemporary,
+                        &temporary_path,
+                        error,
+                    )
+                })?;
         }
         if let Some(permissions) = permissions {
-            self.io
+            self.state
+                .io
                 .set_permissions(&temporary_path, permissions)
                 .map_err(|error| {
                     StorageTransactionError::new(
@@ -327,7 +363,8 @@ impl PreparedTransaction {
                     )
                 })?;
         }
-        self.io
+        self.state
+            .io
             .write_file(&temporary_path, bytes)
             .map_err(|error| {
                 StorageTransactionError::new(
@@ -336,14 +373,15 @@ impl PreparedTransaction {
                     error,
                 )
             })?;
-        self.io.sync_file(&temporary_path).map_err(|error| {
+        self.state.io.sync_file(&temporary_path).map_err(|error| {
             StorageTransactionError::new(
                 StorageTransactionOperation::SyncLiveTemporary,
                 &temporary_path,
                 error,
             )
         })?;
-        self.io
+        self.state
+            .io
             .rename(&temporary_path, target_path)
             .map_err(|error| {
                 StorageTransactionError::new(
@@ -352,6 +390,6 @@ impl PreparedTransaction {
                     error,
                 )
             })?;
-        sync_directory(self.io.as_ref(), parent_path)
+        sync_directory(self.state.io.as_ref(), parent_path)
     }
 }

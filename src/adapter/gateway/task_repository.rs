@@ -663,11 +663,9 @@ impl TaskRepositoryTrait for TaskRepository {
             &markdown_directory_paths,
         )
         .map_err(|error| TaskRepositoryError::new(ApplicationRepositoryOperation::Save, error))?;
-        prepared_transaction
-            .commit(&revision_path)
-            .map_err(|error| {
-                TaskRepositoryError::new(ApplicationRepositoryOperation::Save, error)
-            })?;
+        prepared_transaction.commit().map_err(|error| {
+            TaskRepositoryError::new(ApplicationRepositoryOperation::Save, error)
+        })?;
 
         for project in projects_to_save {
             project.mark_clean().map_err(|error| {

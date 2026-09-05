@@ -526,15 +526,18 @@ fn prepare_delete_transaction(
 ) -> PreparedTransaction {
     let transaction_dir_path = create_delete_transaction(storage_dir_path, target, revision, false);
     let transactions_dir_path = transaction_dir_path.parent().unwrap().to_path_buf();
-    let manifest_path = transaction_dir_path.join("manifest.json");
-    let manifest = serde_json::from_slice(&fs::read(&manifest_path).unwrap()).unwrap();
+    let manifest = serde_json::from_slice(
+        &fs::read(transaction_dir_path.join("manifest.json")).unwrap(),
+    )
+    .unwrap();
     let transaction_lock = acquire_transaction_lock(&transactions_dir_path).unwrap();
     prepared_from_manifest(
         io,
-        storage_dir_path,
-        transactions_dir_path,
-        transaction_dir_path,
-        manifest_path,
+        TransactionPaths {
+            storage_dir_path: storage_dir_path.to_path_buf(),
+            transactions_dir_path,
+            transaction_dir_path,
+        },
         manifest,
         transaction_lock,
     )

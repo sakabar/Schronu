@@ -72,7 +72,7 @@ fn test_committed_write_manifestは内容検証情報の欠落を拒否する() 
         }],
     )
     .unwrap();
-    let transaction_dir_path = prepared.transaction_dir_path.clone();
+    let transaction_dir_path = prepared.transaction_dir_path().to_path_buf();
     drop(prepared);
     let manifest_path = transaction_dir_path.join("manifest.json");
     let mut manifest: Value = serde_json::from_slice(&fs::read(&manifest_path).unwrap()).unwrap();
@@ -121,7 +121,7 @@ fn test_committed_write_manifestは不正な内容検証情報を拒否する() 
             }],
         )
         .unwrap();
-        let transaction_dir_path = prepared.transaction_dir_path.clone();
+        let transaction_dir_path = prepared.transaction_dir_path().to_path_buf();
         drop(prepared);
         let manifest_path = transaction_dir_path.join("manifest.json");
         let mut manifest: Value =

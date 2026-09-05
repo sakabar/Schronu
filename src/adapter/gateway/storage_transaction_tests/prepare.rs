@@ -15,7 +15,7 @@ fn test_prepare_staged_fileとimmutable_manifestを作成する() {
     )
     .unwrap();
 
-    let manifest_path = prepared.transaction_dir_path.join("manifest.json");
+    let manifest_path = prepared.transaction_dir_path().join("manifest.json");
     let manifest: Value = serde_json::from_slice(&fs::read(&manifest_path).unwrap()).unwrap();
     assert_eq!(manifest["version"], 1);
     assert_eq!(manifest["revision"], revision.to_string());
@@ -27,7 +27,7 @@ fn test_prepare_staged_fileとimmutable_manifestを作成する() {
         "fnv1a64:066228057cd3f0ee"
     );
     assert_eq!(
-        fs::read(prepared.transaction_dir_path.join("files/0")).unwrap(),
+        fs::read(prepared.transaction_dir_path().join("files/0")).unwrap(),
         b"project: {}\n"
     );
 
@@ -211,7 +211,7 @@ fn test_prepare_既存targetのpermissionをstaged_fileへ引き継ぐ() {
     .unwrap();
 
     assert_eq!(
-        fs::metadata(prepared.transaction_dir_path.join("files/0"))
+        fs::metadata(prepared.transaction_dir_path().join("files/0"))
             .unwrap()
             .mode()
             & 0o777,

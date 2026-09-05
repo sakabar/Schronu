@@ -1,5 +1,5 @@
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::sync::Arc;
 
 use super::cleanup::cleanup_stale_tombstones;
@@ -9,11 +9,14 @@ use super::manifest::{
     ContentIntegrity, ManifestEntryOperation, RawTransactionManifest, ValidatedEntry,
     ValidatedManifest,
 };
+#[cfg(test)]
+use super::PreparedTransaction;
 use super::{
     acquire_transaction_lock, resolve_transactions_directory, sync_directory,
     validate_delete_target_ancestors, validate_storage_relative_path,
-    validate_transactions_directory, PreparedTransaction, StorageTransactionError,
-    StorageTransactionIo, StorageTransactionOperation, TransactionLock,
+    validate_transactions_directory, CommittedTransaction, StorageTransactionError,
+    StorageTransactionIo, StorageTransactionOperation, TransactionLock, TransactionPaths,
+    TransactionState,
 };
 
 pub(in crate::adapter::gateway) fn recover(
@@ -98,16 +101,17 @@ pub(in crate::adapter::gateway) fn recover(
                         std::io::Error::new(std::io::ErrorKind::InvalidData, error),
                     )
                 })?;
-            let prepared = prepared_from_manifest(
+            let state = transaction_state_from_manifest(
                 io,
-                storage_dir_path,
-                transactions_dir_path,
-                transaction_dir_path,
-                manifest_path,
+                TransactionPaths {
+                    storage_dir_path: storage_dir_path.to_path_buf(),
+                    transactions_dir_path,
+                    transaction_dir_path,
+                },
                 manifest,
                 _transaction_lock,
             )?;
-            return prepared.finish_committed(&layout.revision_path());
+            return CommittedTransaction { state }.roll_forward();
         }
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
         Err(error) => {
@@ -130,16 +134,25 @@ pub(in crate::adapter::gateway) fn recover(
     Ok(())
 }
 
-#[allow(clippy::too_many_arguments)]
+#[cfg(test)]
 pub(super) fn prepared_from_manifest(
     io: Arc<dyn StorageTransactionIo>,
-    storage_dir_path: &Path,
-    transactions_dir_path: PathBuf,
-    transaction_dir_path: PathBuf,
-    manifest_path: PathBuf,
+    paths: TransactionPaths,
     manifest: RawTransactionManifest,
     transaction_lock: TransactionLock,
 ) -> Result<PreparedTransaction, StorageTransactionError> {
+    Ok(PreparedTransaction {
+        state: transaction_state_from_manifest(io, paths, manifest, transaction_lock)?,
+    })
+}
+
+fn transaction_state_from_manifest(
+    io: Arc<dyn StorageTransactionIo>,
+    paths: TransactionPaths,
+    manifest: RawTransactionManifest,
+    transaction_lock: TransactionLock,
+) -> Result<TransactionState, StorageTransactionError> {
+    let manifest_path = TransactionLayout::manifest_path(&paths.transaction_dir_path);
     let RawTransactionManifest {
         version,
         transaction_id,
@@ -147,7 +160,7 @@ pub(super) fn prepared_from_manifest(
         directories,
         entries,
     } = manifest;
-    let layout = TransactionLayout::new(storage_dir_path);
+    let layout = TransactionLayout::new(&paths.storage_dir_path);
     if version != 1 || transaction_id.is_nil() {
         return Err(StorageTransactionError::new(
             StorageTransactionOperation::ValidateManifest,
@@ -161,18 +174,18 @@ pub(super) fn prepared_from_manifest(
     let directories = directories
         .into_iter()
         .map(|directory| {
-            validate_storage_relative_path(storage_dir_path, &layout.target_path(&directory))
+            validate_storage_relative_path(&paths.storage_dir_path, &layout.target_path(&directory))
         })
         .collect::<Result<Vec<_>, _>>()?;
     let entries = entries
         .into_iter()
         .map(|entry| {
             let target = validate_storage_relative_path(
-                storage_dir_path,
+                &paths.storage_dir_path,
                 &layout.target_path(&entry.target),
             )?;
             if entry.operation == ManifestEntryOperation::Delete {
-                validate_delete_target_ancestors(io.as_ref(), storage_dir_path, &target)?;
+                validate_delete_target_ancestors(io.as_ref(), &paths.storage_dir_path, &target)?;
             }
             match (
                 entry.operation,
@@ -186,7 +199,7 @@ pub(super) fn prepared_from_manifest(
                     Some(content_length),
                     Some(content_checksum),
                 ) => {
-                    validate_staged_file_path(&transaction_dir_path, &staged_file)?;
+                    validate_staged_file_path(&paths.transaction_dir_path, &staged_file)?;
                     validate_content_integrity(&manifest_path, content_length, &content_checksum)?;
                     Ok(ValidatedEntry::Write {
                         target,
@@ -229,14 +242,9 @@ pub(super) fn prepared_from_manifest(
         directories,
         entries,
     };
-    Ok(PreparedTransaction {
-        storage_dir_path: storage_dir_path.to_path_buf(),
-        transactions_dir_path,
-        transaction_dir_path,
-        transaction_id: manifest.transaction_id,
-        revision: manifest.revision,
-        directories: manifest.directories,
-        entries: manifest.entries,
+    Ok(TransactionState {
+        paths,
+        manifest,
         io,
         _transaction_lock: transaction_lock,
     })

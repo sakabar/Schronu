@@ -36,7 +36,7 @@ fn test_commit_markerをsyncしてからprojectを適用しrevisionを最後に�
     )
     .unwrap();
     let manifest: Value = serde_json::from_slice(
-        &fs::read(prepared.transaction_dir_path.join("manifest.json")).unwrap(),
+        &fs::read(prepared.transaction_dir_path().join("manifest.json")).unwrap(),
     )
     .unwrap();
     let transaction_id = Uuid::parse_str(manifest["transaction_id"].as_str().unwrap()).unwrap();
@@ -44,7 +44,7 @@ fn test_commit_markerをsyncしてからprojectを適用しrevisionを最後に�
     assert_eq!(manifest["directories"][0], "third/markdown");
 
     prepared
-        .commit(&storage_dir.path.join(".revision"))
+        .commit()
         .unwrap();
 
     assert_ne!(transaction_id, Uuid::nil());
@@ -87,7 +87,7 @@ fn test_commit_既存targetのpermissionを維持する() {
     .unwrap();
 
     prepared
-        .commit(&storage_dir.path.join(".revision"))
+        .commit()
         .unwrap();
 
     assert_eq!(fs::metadata(target_path).unwrap().mode() & 0o777, 0o600);
@@ -131,9 +131,9 @@ fn test_commit_failure時は回復用manifestとstaged_fileを維持する() {
             &[&markdown_dir_path],
         )
         .unwrap();
-        let transaction_dir_path = prepared.transaction_dir_path.clone();
+        let transaction_dir_path = prepared.transaction_dir_path().to_path_buf();
 
-        let actual = prepared.commit(&storage_dir.path.join(".revision"));
+        let actual = prepared.commit();
 
         assert!(actual.is_err(), "{phase:?} must fail");
         assert!(transaction_dir_path.join("manifest.json").is_file());
@@ -166,10 +166,10 @@ fn test_commit_target内容読込失敗はpathと専用phaseを保持する() {
         }],
     )
     .unwrap();
-    let transaction_dir_path = prepared.transaction_dir_path.clone();
+    let transaction_dir_path = prepared.transaction_dir_path().to_path_buf();
 
     let actual = prepared
-        .commit(&storage_dir.path.join(".revision"))
+        .commit()
         .unwrap_err();
 
     assert_eq!(
@@ -208,10 +208,10 @@ fn test_commit_cleanup失敗はtombstoneへ回復情報を保持して成功す�
             }],
         )
         .unwrap();
-        let transaction_id = prepared.transaction_id;
+        let transaction_id = prepared.transaction_id();
 
         prepared
-            .commit(&storage_dir.path.join(".revision"))
+            .commit()
             .unwrap();
 
         let cleanup_dir_path = storage_dir

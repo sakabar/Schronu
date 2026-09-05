@@ -3,35 +3,45 @@ use std::path::Path;
 
 use super::layout::TransactionLayout;
 use super::{
-    PreparedTransaction, StorageTransactionError, StorageTransactionIo, StorageTransactionOperation,
+    CommittedTransaction, StorageTransactionError, StorageTransactionIo,
+    StorageTransactionOperation,
 };
 
 pub(super) fn cleanup_committed_transaction(
-    transaction: &PreparedTransaction,
+    transaction: &CommittedTransaction,
 ) -> Result<(), StorageTransactionError> {
-    let layout = TransactionLayout::new(&transaction.storage_dir_path);
-    let cleanup_dir_path = layout.cleanup_dir_path(transaction.transaction_id);
+    let layout = TransactionLayout::new(&transaction.state.paths.storage_dir_path);
+    let cleanup_dir_path = layout.cleanup_dir_path(transaction.state.manifest.transaction_id);
     transaction
+        .state
         .io
-        .rename(&transaction.transaction_dir_path, &cleanup_dir_path)
+        .rename(
+            &transaction.state.paths.transaction_dir_path,
+            &cleanup_dir_path,
+        )
         .map_err(|error| {
             StorageTransactionError::new(
                 StorageTransactionOperation::RenameForCleanup,
-                &transaction.transaction_dir_path,
+                &transaction.state.paths.transaction_dir_path,
                 error,
             )
         })?;
     if transaction
+        .state
         .io
-        .sync_directory(&transaction.transactions_dir_path)
+        .sync_directory(&transaction.state.paths.transactions_dir_path)
         .is_ok()
     {
-        let _ = transaction.io.remove_dir_all(&cleanup_dir_path);
+        let _ = transaction.state.io.remove_dir_all(&cleanup_dir_path);
         let _ = transaction
+            .state
             .io
-            .sync_directory(&transaction.transactions_dir_path);
+            .sync_directory(&transaction.state.paths.transactions_dir_path);
     }
-    let _ = transaction.io.sync_directory(&transaction.storage_dir_path);
+    let _ = transaction
+        .state
+        .io
+        .sync_directory(&transaction.state.paths.storage_dir_path);
     Ok(())
 }
 

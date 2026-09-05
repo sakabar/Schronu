@@ -56,7 +56,7 @@ fn test_delete_entryは通常commitでmarker公開後にtargetを削除する() 
     );
 
     prepared
-        .commit(&storage_dir.path.join(".revision"))
+        .commit()
         .unwrap();
 
     assert!(!target_path.exists());
