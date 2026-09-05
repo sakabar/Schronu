@@ -3,8 +3,13 @@ use schronu_web::{
     RecordSessionResult, RetryAdvice, ScheduledTaskRow, ServerSnapshot, SessionTask, WebError,
     WebOperations, WebSuccess, WebWorkerHandle,
 };
+use std::process::Command;
 use std::sync::{Arc, Mutex};
 use std::thread;
+
+const STACK_WORKLOAD_CHILD: &str = "SCHRONU_WEB_STACK_WORKLOAD_CHILD";
+const STACK_FRAME_BYTES: usize = 4 * 1024;
+const STACK_DEPTH: usize = 3 * 1024;
 
 #[test]
 fn workerは5操作を送信順に専用threadで実行してpayloadを保持する() {
@@ -83,6 +88,36 @@ fn worker停止時だけworker_unavailableをretry可能として返す() {
     assert_eq!(error.retry_advice, RetryAdvice::Retry);
 }
 
+#[test]
+fn workerは32mib_stackを要する操作を完了する() {
+    if std::env::var_os(STACK_WORKLOAD_CHILD).is_some() {
+        assert!(std::env::var_os("RUST_MIN_STACK").is_none());
+        let worker = WebWorkerHandle::spawn(|| StackWorkloadOperations);
+
+        assert_eq!(
+            futures::executor::block_on(worker.bootstrap()),
+            Ok(snapshot(1))
+        );
+        return;
+    }
+
+    let output = Command::new(std::env::current_exe().expect("test executable must be available"))
+        .arg("--exact")
+        .arg("workerは32mib_stackを要する操作を完了する")
+        .arg("--nocapture")
+        .env(STACK_WORKLOAD_CHILD, "1")
+        .env_remove("RUST_MIN_STACK")
+        .output()
+        .expect("stack workload child process must start");
+
+    assert!(
+        output.status.success(),
+        "stack workload child failed\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
 #[derive(Debug, PartialEq)]
 enum Event {
     Factory(thread::ThreadId),
@@ -98,6 +133,41 @@ struct RecordingOperations {
 }
 
 struct PanickingOperations;
+
+struct StackWorkloadOperations;
+
+impl WebOperations for StackWorkloadOperations {
+    fn bootstrap(&mut self) -> Result<ServerSnapshot, WebError> {
+        let checksum = consume_stack(STACK_DEPTH);
+        std::hint::black_box(checksum);
+        Ok(snapshot(1))
+    }
+
+    fn list_tasks(
+        &mut self,
+        _request: ListTasksRequest,
+    ) -> Result<WebSuccess<Vec<ScheduledTaskRow>>, WebError> {
+        unreachable!()
+    }
+
+    fn auto_session(&mut self) -> Result<WebSuccess<Option<SessionTask>>, WebError> {
+        unreachable!()
+    }
+
+    fn record_session(
+        &mut self,
+        _request: RecordSessionRequest,
+    ) -> Result<WebSuccess<RecordSessionResult>, WebError> {
+        unreachable!()
+    }
+
+    fn complete_session(
+        &mut self,
+        _request: RecordSessionRequest,
+    ) -> Result<CompleteSessionResponse, WebError> {
+        unreachable!()
+    }
+}
 
 impl WebOperations for PanickingOperations {
     fn bootstrap(&mut self) -> Result<ServerSnapshot, WebError> {
@@ -201,4 +271,17 @@ fn task() -> SessionTask {
         estimated_work_seconds: 900,
         actual_work_seconds: 456,
     }
+}
+
+#[inline(never)]
+fn consume_stack(depth: usize) -> usize {
+    let frame = [depth as u8; STACK_FRAME_BYTES];
+    std::hint::black_box(&frame);
+    let nested = if depth == 0 {
+        0
+    } else {
+        consume_stack(depth - 1)
+    };
+    std::hint::black_box(&frame);
+    nested.wrapping_add(frame[depth % STACK_FRAME_BYTES] as usize)
 }
