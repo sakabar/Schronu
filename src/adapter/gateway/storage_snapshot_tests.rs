@@ -31,3 +31,9 @@ mod verify {
 
     include!("storage_snapshot_tests/verify.rs");
 }
+
+mod security {
+    use super::*;
+
+    include!("storage_snapshot_tests/security.rs");
+}
