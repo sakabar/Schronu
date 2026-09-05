@@ -329,14 +329,24 @@ remaining_seconds = remaining_at_start - elapsed_seconds
 server側:
 
 ```text
-buffer_seconds = remaining_free_seconds(logical_date, observed_at)
+end_of_day = end_of_day(logical_date)
+
+remaining_capacity_seconds =
+  observed_at < end_of_day:
+    free_seconds(observed_at, end_of_day, weekly_busy_time_slots)
+  observed_at >= end_of_day:
+    seconds(end_of_day - observed_at) // 0以下
+
+buffer_seconds = remaining_capacity_seconds
                - sum(
                    segment.scheduled_work_seconds
                    where logical_date(segment.scheduled_start) == logical_date
                  )
 ```
 
-`remaining_free_seconds`は06:00境界、Schronu設定、毎週固定の`busy_time_slot`を反映する。単発予定を`busy_time_slot`として追加しない。
+`remaining_capacity_seconds`は現在logical dateに対する符号付き残り容量である。`observed_at`が日次終端より前なら、06:00境界、Schronu設定、毎週固定の`busy_time_slot`を反映した残り空き秒とする。単発予定を`busy_time_slot`として追加しない。`observed_at`が日次終端ちょうどなら0、日次終端より後なら`end_of_day - observed_at`の負の秒数とし、`busy_time_slot`に関係なく日次終端後の全壁時計超過時間を含める。
+
+例えば日次終端が00:30、`observed_at`が01:10、同じlogical dateの予定残作業が62分なら、`remaining_capacity_seconds`は-40分、`buffer_seconds`は`-40分 - 62分 = -01:42:00`となる。
 
 予定作業秒の集計規則:
 
@@ -348,7 +358,7 @@ buffer_seconds = remaining_free_seconds(logical_date, observed_at)
 6. sync後のscheduleは通常`observed_at`より前に開始するsegmentを返さない。過去開始のsegmentが返った場合でも、開始時刻のlogical dateが一致すれば除外せず全量を加算する。
 7. `record_session`または`complete_session`による実績変更後は、operation開始時にsync済みのrepositoryからscheduleを再生成する。これにより更新後の残作業が同じresponseのbufferへ反映される。
 
-server snapshotのbufferでは進行中segmentから経過秒を引かない。browserは、計測中セッションが存在しない時間だけを次の規則で差し引く。
+server snapshotのbufferでは進行中segmentから経過秒を引かない。browserは、計測中セッションが存在しない時間だけを次の規則で差し引く。server snapshotの観測時刻が日次終端以後でも、計測中セッションが0件ならsnapshot後の経過に応じて毎秒減算し、1件以上なら停止する。
 
 client側:
 
@@ -489,6 +499,7 @@ OperationHistoryEntry {
 - CLIのtask未選択時no-opと成功時だけfocus解除する規則
 - MCPのtool名、tool数、JSON schema、required field、default、response、error
 - MCP `complete_task`の`task_id`、`finished_at`、`additional_actual_work_seconds`というwire入力
+- Schronu-webのserver API、`ServerSnapshot`を含むclient/server wire形式、localStorage schema
 - YAMLを含むtask storage schema
 - repository lock、transaction、rollback、state uncertainの区別
 
@@ -506,9 +517,9 @@ OperationHistoryEntry {
 - `complete_task`: 期待値一致、競合、負の追加秒、overflow、未完了の子、完了済み、反復task生成、各失敗時の全状態不変。
 - `complete_session`: 成功responseが`ServerSnapshot`だけで、次task情報を含まないこと。
 - 進捗計算: 開始時33%、100%、133%、見積0、長時間、乗算overflow回避。
-- buffer: 正、0、負、06:00前後、固定`busy_time_slot`、隣接logical dateの除外を検証する。
+- buffer: 正、0、負、06:00前後、日次終端前の固定`busy_time_slot`控除、隣接logical dateの除外を検証する。日次終端10分前で予定作業なしなら`+00:10:00`、日次終端ちょうどで予定作業なしなら`00:00:00`、日次終端40分後で予定作業なしなら`-00:40:00`、日次終端40分後で予定残作業62分なら`-01:42:00`となることを検証する。
 - buffer segment集計: 単一segment、同一taskの複数segment、複数task、進行中segment全量、同一logical date内の過去segment、`scheduled_work_seconds`合計overflowを検証する。
-- buffer更新: 実績変更後のschedule再生成と、clientで計測中セッションが存在しない時間だけを減算することを検証する。
+- buffer更新: 実績変更後のschedule再生成と、日次終端の前後を問わずclientで計測中セッションが存在しない時間だけを毎秒減算し、1件以上存在する間は停止することを検証する。
 - read model: 指定日、開始時刻順、複数segment、葉判定、締切、候補なしの自動選定。
 
 ### 12.2 CLI互換性

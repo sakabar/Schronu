@@ -25,7 +25,7 @@ Schronu-webを、1日の余力と複数taskの作業状況を同時に把握で�
 | `work_session` | 内部で単一のセッションを表す名称。 |
 | `work_sessions` | 内部で複数のセッションを表す名称。 |
 | logical date | 06:00を日付境界とするSchronu上の日付。00:00から05:59までは前日として扱う。 |
-| buffer | 現在logical dateの残り空き秒から、同日の予定残作業秒を引いた値。 |
+| buffer | 現在logical dateの符号付き残り容量から、同日の予定残作業秒を引いた値。符号付き残り容量は日次終端前には毎週固定の`busy_time_slot`を除いた残り空き秒、日次終端以後には日次終端からserver観測時刻までの壁時計超過秒を負値で表す。 |
 | 開始時実績 | セッションを開始した時点のtaskの実績作業秒。 |
 | 経過秒 | セッション開始時刻から現在またはserver操作時刻までに完了した整数秒。 |
 
@@ -86,8 +86,8 @@ Schronu-webを、1日の余力と複数taskの作業状況を同時に把握で�
 
 ### 4.6 buffer
 
-- **REQ-BUFFER-001**: bufferを`現在logical dateの残り空き秒 - 同日のschedule segmentごとのscheduled_work_seconds合計`としてserver側で算出すること。同一taskの複数segment、進行中segment、同じlogical date内の過去segmentをそれぞれ1回ずつ全量で集計すること。
-- **REQ-BUFFER-002**: serverからbuffer秒とその観測時刻を取得し、以後はbrowser側で計測中セッションが1件も存在しない経過秒だけを差し引いて1秒ごとに表示を更新すること。
+- **REQ-BUFFER-001**: bufferを`現在logical dateの符号付き残り容量 - 同日のschedule segmentごとのscheduled_work_seconds合計`としてserver側で算出すること。server観測時刻が日次終端より前なら、符号付き残り容量は観測時刻から日次終端までの毎週固定`busy_time_slot`控除後の空き秒とする。日次終端以後なら、符号付き残り容量は`日次終端 - server観測時刻`の0以下の秒数とし、日次終端後の全壁時計超過時間を反映する。同一taskの複数segment、進行中segment、同じlogical date内の過去segmentをそれぞれ1回ずつ全量で集計すること。
+- **REQ-BUFFER-002**: serverからbuffer秒とその観測時刻を取得し、以後はbrowser側で計測中セッションが1件も存在しない経過秒だけを差し引いて1秒ごとに表示を更新すること。この規則はserver観測時刻が日次終端以後の場合も同じとする。
 - **REQ-BUFFER-003**: 0以上のbufferを`HH:MM:SS`でカウントダウン表示すること。
 - **REQ-BUFFER-004**: 負のbufferを赤い文字の`-HH:MM:SS`でカウントアップ表示すること。
 - **REQ-BUFFER-005**: logical dateが06:00境界で変化しても、それだけを理由にserverから再取得しないこと。
@@ -153,7 +153,7 @@ Schronu-webを、1日の余力と複数taskの作業状況を同時に把握で�
 | AC-002 | 2件以上のセッションが同時に1秒ごとに進み、reload後も元の開始時刻から復元される。 |
 | AC-003 | 15分見積、開始時実績5分のtaskはセッション開始直後に33%となり、100%および133%で指定どおりのbarを表示する。 |
 | AC-004 | 見積0のtaskは`--%`と赤い超過時間を表示し、長時間の分表示は59を超えても欠落しない。 |
-| AC-005 | 正、0、負のbufferがserver観測時刻を基準に毎秒変化し、負値は赤い符号付き表示になる。 |
+| AC-005 | 日次終端前は毎週固定`busy_time_slot`控除後の空き秒、日次終端ちょうどは予定作業がなければ0、日次終端後は壁時計超過秒を負値とするbufferがserver観測時刻を基準に変化する。計測中セッションが0件なら毎秒減り、1件以上なら停止し、負値は赤い符号付き表示になる。 |
 | AC-006 | 06:00境界、tab切替、毎秒tick、一覧からのセッション追加、破棄ではserver requestが増えない。 |
 | AC-007 | 初回、日付選択、自動セッション、記録、完了だけが仕様どおりのserver requestを発生させる。 |
 | AC-008 | 一覧に8 logical datesが表示され、両端が同じ曜日でも具体日付で別の日として取得される。 |
