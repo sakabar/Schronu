@@ -104,7 +104,12 @@ fn snapshot作成resource_limitは境界を許可し超過をtyped拒否する()
         );
         if expected == SnapshotLimitKind::ManifestBytes {
             assert_eq!(error.limit_path(), None, "{name}: {error}");
-            assert!(error.path().ends_with("manifest.json"), "{name}: {error}");
+            assert_eq!(error.path().file_name().unwrap(), "manifest.json", "{name}: {error}");
+            let staging = error.path().parent().unwrap();
+            assert_eq!(staging.parent(), Some(root.path.as_path()), "{name}: {error}");
+            let staging_name = staging.file_name().unwrap().to_str().unwrap();
+            let staging_id = staging_name.strip_prefix(".manifest.tmp-").unwrap();
+            assert_eq!(Uuid::parse_str(staging_id).unwrap().hyphenated().to_string(), staging_id);
         } else {
             let expected_path = relative_project.to_path_buf();
             assert_eq!(error.path(), storage.join(&expected_path), "{name}: {error}");
