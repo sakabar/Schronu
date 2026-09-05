@@ -1,6 +1,7 @@
 use crate::adapter::gateway::storage_snapshot::{
     create_snapshot_at, restore_snapshot, restore_snapshot_after_parent_open,
-    restore_snapshot_before_publish, restore_snapshot_with_failure, SnapshotFailurePoint,
+    restore_snapshot_before_publish, restore_snapshot_with_failure,
+    restore_snapshot_with_failure_observation, SnapshotFailurePoint,
 };
 use chrono::TimeZone;
 
@@ -191,6 +192,29 @@ fn snapshot_restoreは差し替えられたstagingのcleanup失敗を保持す�
         .unwrap()
         .map(|entry| entry.unwrap().path())
         .any(|path| path.join("foreign").is_file()));
+}
+
+#[test]
+fn snapshot_restoreのparent_sync失敗はrollback後にparentを再syncする() {
+    let root = TestDirectory::new("restore-parent-resync");
+    let source = root.child("source");
+    let snapshot = root.child("snapshot");
+    let destination = root.child("restored");
+    let now = Local.with_ymd_and_hms(2026, 9, 5, 12, 0, 0).unwrap();
+    create_saved_repository(&source, now);
+    create_snapshot_at(&source, &snapshot, now).unwrap();
+
+    let (result, sync_count) = restore_snapshot_with_failure_observation(
+        &snapshot,
+        &destination,
+        SnapshotFailurePoint::ParentSync,
+    );
+    let error = result.unwrap_err().to_string();
+
+    assert!(error.contains("injected ParentSync failure"), "{error}");
+    assert!(!error.contains("cleanup failed"), "{error}");
+    assert!(!destination.exists());
+    assert_eq!(sync_count, 2);
 }
 
 #[test]
