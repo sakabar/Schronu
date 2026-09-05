@@ -194,15 +194,16 @@ impl ClientState {
             .filter(|session| session.task_id != task_id)
             .cloned()
             .collect();
+        self.record_server(
+            operation,
+            Some(task_id),
+            Outcome::Success,
+            "server操作が完了しました。",
+        );
         match self.work_sessions.replace_sessions(storage, candidate) {
             Ok(()) => {
                 self.manual_check_blocked_task_ids.remove(task_id);
-                self.record_server(
-                    operation,
-                    Some(task_id),
-                    Outcome::Success,
-                    "操作が完了しました。",
-                );
+                self.record_local_result(Operation::DiscardSession, Some(task_id), true);
             }
             Err(_) => {
                 self.committed_blocked_task_ids.insert(task_id.to_owned());
@@ -210,15 +211,10 @@ impl ClientState {
                     self.committed_actual_work_seconds
                         .insert(task_id.to_owned(), actual);
                 }
+                self.record_local_result(Operation::DiscardSession, Some(task_id), false);
                 self.display_error = Some(DisplayError::LocalStorage {
                     committed_on_server: true,
                 });
-                self.record_server(
-                    operation,
-                    Some(task_id),
-                    Outcome::Failure,
-                    "server保存後にlocalStorage更新へ失敗しました。",
-                );
             }
         }
     }
