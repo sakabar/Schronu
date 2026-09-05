@@ -36,6 +36,10 @@ mod command_contract_tests;
 mod cli_syntax_contract_tests;
 
 #[cfg(test)]
+#[path = "schronu/task_name_spreadsheet_contract_tests.rs"]
+mod task_name_spreadsheet_contract_tests;
+
+#[cfg(test)]
 #[path = "schronu/handler_contract_tests.rs"]
 mod handler_contract_tests;
 
