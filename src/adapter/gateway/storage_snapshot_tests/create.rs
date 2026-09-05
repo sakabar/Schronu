@@ -1,6 +1,7 @@
 use crate::adapter::gateway::storage_lock::{LockMode, StorageLock};
 use crate::adapter::gateway::storage_snapshot::{
-    create_snapshot_after_capture, create_snapshot_after_parent_open, create_snapshot_at, create_snapshot_before_publish,
+    create_snapshot_after_capture, create_snapshot_after_parent_open, create_snapshot_at,
+    create_snapshot_before_publish, create_snapshot_before_strict_load,
     create_snapshot_with_failure, create_snapshot_with_failure_observation,
     create_snapshot_with_limits, SnapshotFailurePoint, SnapshotLimitKind,
     SnapshotResourceLimits,
@@ -302,6 +303,57 @@ fn snapshot作成は検証後に差し替えられた親directoryへ書き込ま
     assert!(original_parent.join("snapshot/manifest.json").is_file());
     assert!(!parent.join("snapshot").exists());
     assert_eq!(fs::read(parent.join("sentinel")).unwrap(), b"preserve");
+}
+
+#[test]
+fn snapshot作成のstrict_loadはdestination_pathnameを再openしない() {
+    let root = TestDirectory::new("create-strict-stable-staging");
+    let storage = root.child("source");
+    let parent = root.child("parent");
+    let original_parent = root.child("original-parent");
+    let destination = parent.join("snapshot");
+    let now = Local.with_ymd_and_hms(2026, 9, 5, 12, 0, 0).unwrap();
+    create_saved_repository(&storage, now);
+    fs::create_dir(&parent).unwrap();
+
+    create_snapshot_before_strict_load(&storage, &destination, now, || {
+        let staging_name = fs::read_dir(&parent)
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name())
+            .find(|name| name.to_string_lossy().starts_with(".snapshot.tmp-"))
+            .unwrap();
+        fs::rename(&parent, &original_parent).unwrap();
+        fs::create_dir(&parent).unwrap();
+        let decoy_storage = parent.join(&staging_name).join("storage");
+        fs::create_dir_all(decoy_storage.join("invalid")).unwrap();
+        fs::write(
+            decoy_storage.join("invalid/project.yaml"),
+            b"not: [strict yaml",
+        )
+        .unwrap();
+    })
+    .unwrap();
+
+    assert!(original_parent.join("snapshot/manifest.json").is_file());
+    assert!(!parent.join("snapshot").exists());
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn snapshot作成は非utf8_destinationに依存せずcaptured_bytesをstrict検証する() {
+    use std::os::unix::ffi::OsStringExt;
+
+    let root = TestDirectory::new("create-non-utf8-destination");
+    let storage = root.child("source");
+    let parent = root.path.join(std::ffi::OsString::from_vec(vec![b'p', 0xff]));
+    let destination = parent.join("snapshot");
+    let now = Local.with_ymd_and_hms(2026, 9, 5, 12, 0, 0).unwrap();
+    create_saved_repository(&storage, now);
+    fs::create_dir(&parent).unwrap();
+
+    create_snapshot_at(&storage, &destination, now).unwrap();
+
+    assert!(destination.join("manifest.json").is_file());
 }
 
 #[test]
