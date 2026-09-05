@@ -36,6 +36,41 @@ fn ui初期化はstorage読取失敗をfail_closedにしてread操作を許可�
 }
 
 #[test]
+fn 自動sessionは最新応答を受けるまで多重送信しない() {
+    let storage = FakeStorage::default();
+    let mut state = load_client_state(&storage, 0).unwrap();
+
+    let first_id = auto_effect(state.request_auto_session());
+    assert!(state.auto_session_in_flight());
+    assert_eq!(state.request_auto_session(), ClientEffect::None);
+    state.apply_auto_session_result(
+        &storage,
+        first_id + 1,
+        Err(ServerFailure::Transport("stale".to_owned())),
+    );
+    assert!(state.auto_session_in_flight());
+    state.apply_auto_session_result(
+        &storage,
+        first_id,
+        Err(ServerFailure::Transport("latest".to_owned())),
+    );
+    assert!(!state.auto_session_in_flight());
+
+    let second_id = auto_effect(state.request_auto_session());
+    let bootstrap_id = bootstrap_effect(state.request_bootstrap());
+    state.apply_bootstrap_result(bootstrap_id, Ok(snapshot("2026-09-05", 2)));
+    state.apply_auto_session_result(
+        &storage,
+        second_id,
+        Ok(WebSuccess {
+            snapshot: snapshot("2026-09-05", 1),
+            data: None,
+        }),
+    );
+    assert!(!state.auto_session_in_flight());
+}
+
+#[test]
 fn 逆順のlist応答と古いsnapshotは最新表示を巻き戻さない() {
     let storage = FakeStorage::default();
     let mut state = load_client_state(&storage, 0).unwrap();
