@@ -434,6 +434,23 @@ fn 起動時のstorage警告と書込停止をclient状態から参照できる(
     assert!(state.storage_write_blocked());
 }
 
+#[test]
+fn 後続操作の成功は以前の表示errorを解消する() {
+    let storage = FakeStorage::default();
+    let mut state = ClientState::new(load_work_sessions(&storage).unwrap(), 0);
+    let request_id = bootstrap_effect(state.request_bootstrap());
+    state.apply_bootstrap_result(
+        request_id,
+        Err(ServerFailure::Transport("detail".to_owned())),
+    );
+    assert!(state.display_error().is_some());
+
+    let request_id = bootstrap_effect(state.request_bootstrap());
+    state.apply_bootstrap_result(request_id, Ok(snapshot("2026-09-05", 1)));
+
+    assert_eq!(state.display_error(), None);
+}
+
 #[derive(Default)]
 struct FakeStorage {
     value: RefCell<Option<String>>,
