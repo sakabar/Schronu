@@ -473,3 +473,7 @@ pub(crate) fn yaml_to_task(
 
 #[cfg(test)]
 include!("yaml_tests.rs");
+
+#[cfg(test)]
+#[path = "task_name_yaml_contract_tests.rs"]
+mod task_name_yaml_contract_tests;
