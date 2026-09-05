@@ -67,7 +67,21 @@ fn strict_validate_payload(snapshot: &Path, tree: &DirectoryTree) -> Result<(), 
     });
     let cleanup = fs::remove_dir_all(&validation_root)
         .map_err(|error| SnapshotError::new(SnapshotOperation::Write, &validation_root, error));
-    result.and(cleanup)
+    finish_temporary_validation(result, cleanup)
+}
+
+fn finish_temporary_validation(
+    result: Result<(), SnapshotError>,
+    cleanup: Result<(), SnapshotError>,
+) -> Result<(), SnapshotError> {
+    match (result, cleanup) {
+        (Ok(()), Ok(())) => Ok(()),
+        (Err(primary), Ok(())) => Err(primary),
+        (Ok(()), Err(cleanup)) => Err(cleanup),
+        (Err(primary), Err(cleanup)) => {
+            Err(SnapshotError::followup_failure(primary, "cleanup", cleanup))
+        }
+    }
 }
 
 #[cfg(unix)]
@@ -302,4 +316,38 @@ fn invalid(path: impl Into<PathBuf>, message: &'static str) -> SnapshotError {
         path,
         std::io::Error::new(std::io::ErrorKind::InvalidData, message),
     )
+}
+
+#[cfg(test)]
+mod cleanup_tests {
+    use super::*;
+    use std::error::Error;
+
+    #[test]
+    fn strict検証とtemporary_cleanupの両失敗を保持する() {
+        let primary = SnapshotError::new(
+            SnapshotOperation::RepositoryLoad,
+            "storage",
+            std::io::Error::other("strict validation failed"),
+        );
+        let cleanup = SnapshotError::new(
+            SnapshotOperation::Write,
+            "temporary",
+            std::io::Error::other("temporary cleanup failed"),
+        );
+
+        let error = finish_temporary_validation(Err(primary), Err(cleanup)).unwrap_err();
+        let mut sources = Vec::new();
+        let mut source = error.source();
+        while let Some(current) = source {
+            sources.push(current.to_string());
+            source = current.source();
+        }
+
+        assert_eq!(error.path(), Path::new("storage"));
+        assert!(error.to_string().contains("strict validation failed"));
+        assert!(sources
+            .iter()
+            .any(|source| source.contains("temporary cleanup failed")));
+    }
 }
