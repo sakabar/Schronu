@@ -94,6 +94,15 @@ fn run_script(path: &str, arguments: &[&str], input: &str) -> String {
 fn spreadsheet_column_manifestはaからs列の既存契約を定義する() {
     let columns = parse_columns();
     assert_eq!(columns.len(), 19);
+    for (name, index) in [
+        ("ind", 1),
+        ("deadline", 4),
+        ("estimated_datetime", 5),
+        ("rank", 6),
+        ("priority", 8),
+    ] {
+        assert_eq!(column(&columns, name).index, index);
+    }
     assert_eq!(column(&columns, "task_id").index, 2);
     assert_eq!(column(&columns, "task_name").index, 10);
     assert_eq!(column(&columns, "start_time").index, 12);
