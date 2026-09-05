@@ -808,7 +808,7 @@ pub(super) fn format_focus_progress(
         actual_work_seconds,
         focusing_seconds,
     ) {
-        Ok(progress) => progress.progress_percent.map(i128::from),
+        Ok(progress) => progress.progress_percent,
         Err(error) => {
             return format!(
                 "[{}] --% ({error})",

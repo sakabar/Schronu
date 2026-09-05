@@ -3,21 +3,14 @@ use std::fmt::{Display, Formatter};
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct SessionProgress {
     pub total_work_seconds: i128,
-    pub progress_percent: Option<i64>,
+    pub progress_percent: Option<i128>,
     pub remaining_work_seconds_at_start: i64,
     pub remaining_work_seconds: i64,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum SessionProgressCalculationError {
-    NegativeSeconds {
-        field: &'static str,
-        value: i64,
-    },
-    ProgressPercentOverflow {
-        total_work_seconds: i128,
-        estimated_work_seconds: i64,
-    },
+    NegativeSeconds { field: &'static str, value: i64 },
 }
 
 impl Display for SessionProgressCalculationError {
@@ -26,13 +19,6 @@ impl Display for SessionProgressCalculationError {
             Self::NegativeSeconds { field, value } => {
                 write!(formatter, "{field} must be non-negative: {value}")
             }
-            Self::ProgressPercentOverflow {
-                total_work_seconds,
-                estimated_work_seconds,
-            } => write!(
-                formatter,
-                "progress percent overflow: total_work_seconds={total_work_seconds}, estimated_work_seconds={estimated_work_seconds}"
-            ),
         }
     }
 }
@@ -52,13 +38,7 @@ pub fn calculate_session_progress(
     let progress_percent = if estimated_work_seconds == 0 {
         None
     } else {
-        let percentage = total_work_seconds * 100 / i128::from(estimated_work_seconds);
-        Some(i64::try_from(percentage).map_err(|_| {
-            SessionProgressCalculationError::ProgressPercentOverflow {
-                total_work_seconds,
-                estimated_work_seconds,
-            }
-        })?)
+        Some(total_work_seconds * 100 / i128::from(estimated_work_seconds))
     };
     let remaining_work_seconds_at_start = if estimated_work_seconds > actual_work_seconds_at_start {
         estimated_work_seconds - actual_work_seconds_at_start
