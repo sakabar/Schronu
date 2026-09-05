@@ -5,7 +5,7 @@ edition = "2021"
 
 [features]
 default = []
-web = ["dioxus/web", "dep:gloo-timers", "dep:web-sys"]
+web = ["dioxus/web", "dep:gloo-timers", "dep:js-sys", "dep:web-sys"]
 server = [
     "dioxus/server",
     "dep:schronu",
@@ -17,6 +17,7 @@ server = [
 [dependencies]
 dioxus = { version = "=0.7.10", features = ["fullstack"], optional = true }
 gloo-timers = { version = "0.3", features = ["futures"], optional = true }
+js-sys = { version = "0.3", optional = true }
 tokio = { version = "1", features = ["sync"] }
 schronu = { path = "..", optional = true }
 chrono = "0.4.24"

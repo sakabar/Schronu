@@ -3147,6 +3147,7 @@ dependencies = [
  "dioxus-html",
  "futures",
  "gloo-timers",
+ "js-sys",
  "schronu",
  "serde",
  "serde_json",
