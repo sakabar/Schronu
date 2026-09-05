@@ -30,6 +30,24 @@ fn test_root(props: RootProps) -> Element {
     }
 }
 
+#[derive(Clone)]
+struct AutoRootProps {
+    in_flight: bool,
+    events: Arc<Mutex<Vec<String>>>,
+}
+
+fn auto_root(props: AutoRootProps) -> Element {
+    rsx! {
+        SessionView {
+            sessions: Vec::new(),
+            global_blocked: true,
+            auto_session_in_flight: props.in_flight,
+            on_auto_session: move |_| props.events.lock().unwrap().push("auto".to_owned()),
+            on_action: move |_: SessionAction| {},
+        }
+    }
+}
+
 fn render(sessions: Vec<SessionCardViewModel>, global_blocked: bool) -> (String, Vec<String>) {
     let events = Arc::new(Mutex::new(Vec::new()));
     let (dom, _) = build_dom(sessions, global_blocked, Arc::clone(&events));
@@ -223,5 +241,25 @@ fn in_flight_and_committed_sessions_reject_every_action_callback() {
         }
 
         assert!(events.lock().unwrap().is_empty());
+    }
+}
+
+#[test]
+fn auto_session_is_disabled_only_while_its_own_request_is_in_flight() {
+    for (in_flight, expected) in [(false, ["auto"].as_slice()), (true, [].as_slice())] {
+        let events = Arc::new(Mutex::new(Vec::new()));
+        let mut dom = VirtualDom::new_with_props(
+            auto_root,
+            AutoRootProps {
+                in_flight,
+                events: Arc::clone(&events),
+            },
+        );
+        let listener_ids = rebuild_with_click_listeners(&mut dom);
+        assert_eq!(listener_ids.len(), 1);
+        let html = dioxus::ssr::render(&dom);
+        assert_eq!(html.contains("disabled"), in_flight, "{html}");
+        dispatch_click(&dom, listener_ids[0]);
+        assert_eq!(*events.lock().unwrap(), expected);
     }
 }
