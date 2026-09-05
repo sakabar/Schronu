@@ -7,17 +7,24 @@ fn file_system_io() -> Arc<dyn StorageTransactionIo> {
 enum RecordingOperation {
     CreateDirectory,
     ReadTargetMetadata,
+    ReadFile,
     CreateFile,
     SetPermissions,
     WriteFile,
     SyncFile,
+    Rename,
+    RemoveDirectory,
+    RemoveFile,
     SyncDirectory,
 }
 
+#[derive(Debug)]
 enum PathMatcher {
     Any,
     Exact(PathBuf),
     FileName(&'static str),
+    FileNamePrefix(&'static str),
+    FileNameContains(&'static str),
 }
 
 struct FaultRule {
@@ -28,6 +35,7 @@ struct FaultRule {
     error_message: &'static str,
 }
 
+#[derive(Clone, Debug)]
 struct IoEvent {
     operation: RecordingOperation,
     path: PathBuf,
@@ -38,21 +46,6 @@ struct RecordingIo {
     events: Mutex<Vec<IoEvent>>,
 }
 
-struct FailTargetContentReadIo {
-    target_path: PathBuf,
-}
-
-impl StorageTransactionIo for FailTargetContentReadIo {
-    fn read_file(&self, path: &Path) -> std::io::Result<Vec<u8>> {
-        if path == self.target_path {
-            return Err(std::io::Error::new(
-                std::io::ErrorKind::PermissionDenied,
-                "injected target content read failure",
-            ));
-        }
-        FileSystemStorageTransactionIo.read_file(path)
-    }
-}
 impl RecordingIo {
     fn new(faults: Vec<FaultRule>) -> Self {
         Self {
@@ -86,6 +79,10 @@ impl RecordingIo {
         }
         Ok(())
     }
+
+    fn events(&self) -> Vec<IoEvent> {
+        self.events.lock().unwrap().clone()
+    }
 }
 
 impl PathMatcher {
@@ -94,8 +91,35 @@ impl PathMatcher {
             Self::Any => true,
             Self::Exact(expected) => path == expected,
             Self::FileName(expected) => path.file_name().is_some_and(|name| name == *expected),
+            Self::FileNamePrefix(expected) => path
+                .file_name()
+                .is_some_and(|name| name.to_string_lossy().starts_with(expected)),
+            Self::FileNameContains(expected) => path
+                .file_name()
+                .is_some_and(|name| name.to_string_lossy().contains(expected)),
         }
     }
+}
+
+fn event_position(
+    events: &[IoEvent],
+    operation: RecordingOperation,
+    path_matcher: &PathMatcher,
+    occurrence: usize,
+) -> usize {
+    events
+        .iter()
+        .enumerate()
+        .filter(|(_, event)| {
+            event.operation == operation && path_matcher.matches(event.path.as_path())
+        })
+        .nth(occurrence - 1)
+        .map(|(index, _)| index)
+        .unwrap_or_else(|| {
+            panic!(
+                "missing event {operation:?} matching {path_matcher:?} occurrence {occurrence}"
+            )
+        })
 }
 
 impl StorageTransactionIo for RecordingIo {
@@ -107,6 +131,11 @@ impl StorageTransactionIo for RecordingIo {
     fn target_permissions(&self, path: &Path) -> std::io::Result<Option<fs::Permissions>> {
         self.record(RecordingOperation::ReadTargetMetadata, path)?;
         FileSystemStorageTransactionIo.target_permissions(path)
+    }
+
+    fn read_file(&self, path: &Path) -> std::io::Result<Vec<u8>> {
+        self.record(RecordingOperation::ReadFile, path)?;
+        FileSystemStorageTransactionIo.read_file(path)
     }
 
     fn create_new_file(&self, path: &Path) -> std::io::Result<()> {
@@ -129,73 +158,31 @@ impl StorageTransactionIo for RecordingIo {
         FileSystemStorageTransactionIo.sync_file(path)
     }
 
+    fn rename(&self, from: &Path, to: &Path) -> std::io::Result<()> {
+        self.record(RecordingOperation::Rename, to)?;
+        FileSystemStorageTransactionIo.rename(from, to)
+    }
+
+    fn remove_dir_all(&self, path: &Path) -> std::io::Result<()> {
+        self.record(RecordingOperation::RemoveDirectory, path)?;
+        FileSystemStorageTransactionIo.remove_dir_all(path)
+    }
+
+    fn remove_file(&self, path: &Path) -> std::io::Result<()> {
+        self.record(RecordingOperation::RemoveFile, path)?;
+        FileSystemStorageTransactionIo.remove_file(path)
+    }
+
     fn sync_directory(&self, path: &Path) -> std::io::Result<()> {
         self.record(RecordingOperation::SyncDirectory, path)?;
         FileSystemStorageTransactionIo.sync_directory(path)
     }
 }
 
-struct CommitOrderIo {
-    storage_dir_path: PathBuf,
-    transaction_dir_path: Mutex<Option<PathBuf>>,
-    manifest_file_synced: Mutex<bool>,
-    marker_file_synced: Mutex<bool>,
-    marker_directory_synced: Mutex<bool>,
-    first_target_path: PathBuf,
-    second_target_path: PathBuf,
-}
-
 struct BlockingMarkerPublicationIo {
     marker_published: AtomicBool,
     marker_sync_started: Barrier,
     marker_sync_resume: Barrier,
-}
-
-struct DeleteCommitOrderIo {
-    target_path: PathBuf,
-    marker_file_synced: AtomicBool,
-    marker_directory_path: Mutex<Option<PathBuf>>,
-    marker_directory_synced: AtomicBool,
-}
-
-impl StorageTransactionIo for DeleteCommitOrderIo {
-    fn sync_file(&self, path: &Path) -> std::io::Result<()> {
-        if path.file_name().is_some_and(|name| name == "commit.tmp") {
-            self.marker_file_synced.store(true, Ordering::SeqCst);
-        }
-        FileSystemStorageTransactionIo.sync_file(path)
-    }
-
-    fn rename(&self, from: &Path, to: &Path) -> std::io::Result<()> {
-        if to.file_name().is_some_and(|name| name == "commit") {
-            assert!(self.marker_file_synced.load(Ordering::SeqCst));
-            *self.marker_directory_path.lock().unwrap() = to.parent().map(Path::to_path_buf);
-        }
-        FileSystemStorageTransactionIo.rename(from, to)
-    }
-
-    fn remove_file(&self, path: &Path) -> std::io::Result<()> {
-        if path == self.target_path {
-            assert!(
-                self.marker_directory_synced.load(Ordering::SeqCst),
-                "delete target must remain unchanged until the commit marker directory is synced"
-            );
-        }
-        FileSystemStorageTransactionIo.remove_file(path)
-    }
-
-    fn sync_directory(&self, path: &Path) -> std::io::Result<()> {
-        if self
-            .marker_directory_path
-            .lock()
-            .unwrap()
-            .as_deref()
-            .is_some_and(|marker_directory_path| marker_directory_path == path)
-        {
-            self.marker_directory_synced.store(true, Ordering::SeqCst);
-        }
-        FileSystemStorageTransactionIo.sync_directory(path)
-    }
 }
 
 impl StorageTransactionIo for BlockingMarkerPublicationIo {
@@ -218,270 +205,8 @@ impl StorageTransactionIo for BlockingMarkerPublicationIo {
     }
 }
 
-impl StorageTransactionIo for CommitOrderIo {
-    fn create_dir_all(&self, path: &Path) -> std::io::Result<()> {
-        if path.file_name().is_some_and(|name| name == "markdown") {
-            assert!(
-                *self.marker_directory_synced.lock().unwrap(),
-                "live directory must not be created before the commit marker directory is synced"
-            );
-        }
-        FileSystemStorageTransactionIo.create_dir_all(path)
-    }
-
-    fn create_new_file(&self, path: &Path) -> std::io::Result<()> {
-        if path.file_name().is_some_and(|name| name == "commit.tmp") {
-            assert!(
-                *self.manifest_file_synced.lock().unwrap(),
-                "immutable manifest must be synced before marker publication starts"
-            );
-        } else if path.parent() == Some(self.storage_dir_path.as_path())
-            || path.parent() == self.first_target_path.parent()
-            || path.parent() == self.second_target_path.parent()
-        {
-            assert!(
-                *self.marker_directory_synced.lock().unwrap(),
-                "live target must not be prepared before the commit marker directory is synced"
-            );
-        }
-        FileSystemStorageTransactionIo.create_new_file(path)
-    }
-
-    fn write_file(&self, path: &Path, bytes: &[u8]) -> std::io::Result<()> {
-        if path.parent() == Some(self.storage_dir_path.as_path())
-            && path
-                .file_name()
-                .is_some_and(|name| name.to_string_lossy().contains("revision"))
-        {
-            assert_eq!(fs::read(&self.first_target_path).unwrap(), b"first-new");
-            assert_eq!(fs::read(&self.second_target_path).unwrap(), b"second-new");
-        }
-        FileSystemStorageTransactionIo.write_file(path, bytes)
-    }
-
-    fn sync_file(&self, path: &Path) -> std::io::Result<()> {
-        if path.file_name().is_some_and(|name| name == "manifest.json") {
-            *self.manifest_file_synced.lock().unwrap() = true;
-        } else if path.file_name().is_some_and(|name| name == "commit.tmp") {
-            *self.marker_file_synced.lock().unwrap() = true;
-        }
-        FileSystemStorageTransactionIo.sync_file(path)
-    }
-
-    fn rename(&self, from: &Path, to: &Path) -> std::io::Result<()> {
-        if to.file_name().is_some_and(|name| name == "commit") {
-            assert!(
-                *self.marker_file_synced.lock().unwrap(),
-                "commit marker temporary file must be synced before rename"
-            );
-            *self.transaction_dir_path.lock().unwrap() = to.parent().map(Path::to_path_buf);
-        }
-        FileSystemStorageTransactionIo.rename(from, to)
-    }
-
-    fn sync_directory(&self, path: &Path) -> std::io::Result<()> {
-        if self
-            .transaction_dir_path
-            .lock()
-            .unwrap()
-            .as_deref()
-            .is_some_and(|transaction_dir_path| transaction_dir_path == path)
-        {
-            assert!(
-                *self.marker_file_synced.lock().unwrap(),
-                "commit marker file must be synced before its directory"
-            );
-            *self.marker_directory_synced.lock().unwrap() = true;
-        }
-        FileSystemStorageTransactionIo.sync_directory(path)
-    }
-}
-
-#[derive(Clone, Copy, Debug)]
-enum FailingCommitPhase {
-    MarkerCreate,
-    MarkerSync,
-    MarkerRename,
-    MarkerDirectorySync,
-    LiveWrite,
-    LiveSync,
-    LiveRename,
-    TargetDirectory,
-    LiveDirectorySync,
-    RevisionWrite,
-    RevisionSync,
-    RevisionRename,
-    CleanupRename,
-    CleanupHandoffSync,
-    CleanupDelete,
-}
-
-struct FailingCommitIo {
-    phase: FailingCommitPhase,
-    marker_published: AtomicBool,
-    marker_dir_path: Mutex<Option<PathBuf>>,
-    live_target_renamed: AtomicBool,
-    cleanup_handoff: AtomicBool,
-}
-
-impl StorageTransactionIo for FailingCommitIo {
-    fn create_dir_all(&self, path: &Path) -> std::io::Result<()> {
-        if matches!(self.phase, FailingCommitPhase::TargetDirectory)
-            && path.file_name().is_some_and(|name| name == "markdown")
-        {
-            return Err(std::io::Error::other("injected target directory failure"));
-        }
-        FileSystemStorageTransactionIo.create_dir_all(path)
-    }
-
-    fn create_new_file(&self, path: &Path) -> std::io::Result<()> {
-        if matches!(self.phase, FailingCommitPhase::MarkerCreate)
-            && path.file_name().is_some_and(|name| name == "commit.tmp")
-        {
-            return Err(std::io::Error::other("injected marker create failure"));
-        }
-        FileSystemStorageTransactionIo.create_new_file(path)
-    }
-
-    fn write_file(&self, path: &Path, bytes: &[u8]) -> std::io::Result<()> {
-        let file_name = path.file_name().unwrap_or_default().to_string_lossy();
-        if (matches!(self.phase, FailingCommitPhase::LiveWrite)
-            && file_name.starts_with(".project.yaml."))
-            || (matches!(self.phase, FailingCommitPhase::RevisionWrite)
-                && file_name.contains("revision"))
-        {
-            return Err(std::io::Error::other("injected live write failure"));
-        }
-        FileSystemStorageTransactionIo.write_file(path, bytes)
-    }
-
-    fn sync_file(&self, path: &Path) -> std::io::Result<()> {
-        let file_name = path.file_name().unwrap_or_default().to_string_lossy();
-        if (matches!(self.phase, FailingCommitPhase::MarkerSync) && file_name == "commit.tmp")
-            || (matches!(self.phase, FailingCommitPhase::LiveSync)
-                && file_name.starts_with(".project.yaml."))
-            || (matches!(self.phase, FailingCommitPhase::RevisionSync)
-                && file_name.contains("revision"))
-        {
-            return Err(std::io::Error::other("injected commit sync failure"));
-        }
-        FileSystemStorageTransactionIo.sync_file(path)
-    }
-
-    fn rename(&self, from: &Path, to: &Path) -> std::io::Result<()> {
-        if to.file_name().is_some_and(|name| name == "commit")
-            && matches!(self.phase, FailingCommitPhase::MarkerRename)
-        {
-            return Err(std::io::Error::other("injected marker rename failure"));
-        }
-        if matches!(self.phase, FailingCommitPhase::LiveRename)
-            && to.file_name().is_some_and(|name| name == "project.yaml")
-        {
-            return Err(std::io::Error::other("injected live rename failure"));
-        }
-        if matches!(self.phase, FailingCommitPhase::RevisionRename)
-            && to.file_name().is_some_and(|name| name == ".revision")
-        {
-            return Err(std::io::Error::other("injected revision rename failure"));
-        }
-        if to
-            .file_name()
-            .is_some_and(|name| name.to_string_lossy().starts_with(".cleanup-"))
-            && matches!(self.phase, FailingCommitPhase::CleanupRename)
-        {
-            return Err(std::io::Error::other("injected cleanup rename failure"));
-        }
-        let result = FileSystemStorageTransactionIo.rename(from, to);
-        if result.is_ok() {
-            if to.file_name().is_some_and(|name| name == "commit") {
-                self.marker_published.store(true, Ordering::SeqCst);
-                *self.marker_dir_path.lock().unwrap() = to.parent().map(Path::to_path_buf);
-            } else if to.file_name().is_some_and(|name| name == "project.yaml") {
-                self.live_target_renamed.store(true, Ordering::SeqCst);
-            } else if to
-                .file_name()
-                .is_some_and(|name| name.to_string_lossy().starts_with(".cleanup-"))
-            {
-                self.cleanup_handoff.store(true, Ordering::SeqCst);
-            }
-        }
-        result
-    }
-
-    fn sync_directory(&self, path: &Path) -> std::io::Result<()> {
-        if matches!(self.phase, FailingCommitPhase::MarkerDirectorySync)
-            && self
-                .marker_dir_path
-                .lock()
-                .unwrap()
-                .as_deref()
-                .is_some_and(|marker_dir_path| marker_dir_path == path)
-        {
-            return Err(std::io::Error::other(
-                "injected marker directory sync failure",
-            ));
-        }
-        if matches!(self.phase, FailingCommitPhase::LiveDirectorySync)
-            && self.marker_published.load(Ordering::SeqCst)
-            && self.live_target_renamed.load(Ordering::SeqCst)
-        {
-            return Err(std::io::Error::other(
-                "injected live directory sync failure",
-            ));
-        }
-        if matches!(self.phase, FailingCommitPhase::CleanupHandoffSync)
-            && self.cleanup_handoff.load(Ordering::SeqCst)
-        {
-            return Err(std::io::Error::other(
-                "injected cleanup handoff sync failure",
-            ));
-        }
-        FileSystemStorageTransactionIo.sync_directory(path)
-    }
-
-    fn remove_dir_all(&self, path: &Path) -> std::io::Result<()> {
-        if matches!(self.phase, FailingCommitPhase::CleanupDelete) {
-            return Err(std::io::Error::other("injected cleanup failure"));
-        }
-        FileSystemStorageTransactionIo.remove_dir_all(path)
-    }
-}
-
 struct TestStorageDir {
     path: PathBuf,
-}
-
-struct DeleteSyncIo {
-    target_path: PathBuf,
-    target_removed: AtomicBool,
-    parent_synced_after_remove: AtomicBool,
-    fail_first_target_parent_sync: AtomicBool,
-}
-
-impl StorageTransactionIo for DeleteSyncIo {
-    fn remove_file(&self, path: &Path) -> std::io::Result<()> {
-        let result = FileSystemStorageTransactionIo.remove_file(path);
-        if result.is_ok() && path == self.target_path {
-            self.target_removed.store(true, Ordering::SeqCst);
-        }
-        result
-    }
-
-    fn sync_directory(&self, path: &Path) -> std::io::Result<()> {
-        if self.target_removed.load(Ordering::SeqCst) && Some(path) == self.target_path.parent() {
-            if self
-                .fail_first_target_parent_sync
-                .swap(false, Ordering::SeqCst)
-            {
-                return Err(std::io::Error::other(
-                    "injected delete directory sync failure",
-                ));
-            }
-            self.parent_synced_after_remove
-                .store(true, Ordering::SeqCst);
-        }
-        FileSystemStorageTransactionIo.sync_directory(path)
-    }
 }
 
 fn create_delete_transaction(

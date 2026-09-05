@@ -8,18 +8,10 @@ fn test_commit_markerをsyncしてからprojectを適用しrevisionを最後に�
     fs::write(&first_target_path, b"first-old").unwrap();
     fs::write(&second_target_path, b"second-old").unwrap();
     let revision = Uuid::from_u128(0x2207);
-    let io = Arc::new(CommitOrderIo {
-        storage_dir_path: storage_dir.path.clone(),
-        transaction_dir_path: Mutex::new(None),
-        manifest_file_synced: Mutex::new(false),
-        marker_file_synced: Mutex::new(false),
-        marker_directory_synced: Mutex::new(false),
-        first_target_path: first_target_path.clone(),
-        second_target_path: second_target_path.clone(),
-    });
+    let io = Arc::new(RecordingIo::new(vec![]));
     let markdown_dir_path = storage_dir.path.join("third/markdown");
     let prepared = prepare_with_directories(
-        io,
+        io.clone(),
         &storage_dir.path,
         revision,
         &[
@@ -47,6 +39,91 @@ fn test_commit_markerをsyncしてからprojectを適用しrevisionを最後に�
         .commit()
         .unwrap();
 
+    let events = io.events();
+    let marker_directory_path = storage_dir
+        .path
+        .join(TRANSACTION_DIRECTORY_NAME)
+        .join(ACTIVE_TRANSACTION_DIRECTORY_NAME);
+    let marker_directory_sync = event_position(
+        &events,
+        RecordingOperation::SyncDirectory,
+        &PathMatcher::Exact(marker_directory_path),
+        2,
+    );
+    assert!(
+        event_position(
+            &events,
+            RecordingOperation::SyncFile,
+            &PathMatcher::FileName("manifest.json"),
+            1,
+        ) < event_position(
+            &events,
+            RecordingOperation::CreateFile,
+            &PathMatcher::FileName("commit.tmp"),
+            1,
+        )
+    );
+    assert!(
+        event_position(
+            &events,
+            RecordingOperation::SyncFile,
+            &PathMatcher::FileName("commit.tmp"),
+            1,
+        ) < event_position(
+            &events,
+            RecordingOperation::Rename,
+            &PathMatcher::FileName("commit"),
+            1,
+        )
+    );
+    assert!(
+        event_position(
+            &events,
+            RecordingOperation::Rename,
+            &PathMatcher::FileName("commit"),
+            1,
+        ) < marker_directory_sync
+    );
+    assert!(
+        marker_directory_sync
+            < event_position(
+                &events,
+                RecordingOperation::CreateDirectory,
+                &PathMatcher::Exact(markdown_dir_path.clone()),
+                1,
+            )
+    );
+    assert!(
+        marker_directory_sync
+            < event_position(
+                &events,
+                RecordingOperation::CreateFile,
+                &PathMatcher::FileNamePrefix(".project.yaml."),
+                1,
+            )
+    );
+    let revision_write = event_position(
+        &events,
+        RecordingOperation::WriteFile,
+        &PathMatcher::FileNameContains("revision"),
+        1,
+    );
+    assert!(
+        event_position(
+            &events,
+            RecordingOperation::Rename,
+            &PathMatcher::Exact(first_target_path.clone()),
+            1,
+        ) < revision_write
+    );
+    assert!(
+        event_position(
+            &events,
+            RecordingOperation::Rename,
+            &PathMatcher::Exact(second_target_path.clone()),
+            1,
+        ) < revision_write
+    );
     assert_ne!(transaction_id, Uuid::nil());
     assert_eq!(fs::read(first_target_path).unwrap(), b"first-new");
     assert_eq!(fs::read(second_target_path).unwrap(), b"second-new");
@@ -95,33 +172,124 @@ fn test_commit_既存targetのpermissionを維持する() {
 
 #[test]
 fn test_commit_failure時は回復用manifestとstaged_fileを維持する() {
-    for phase in [
-        FailingCommitPhase::MarkerCreate,
-        FailingCommitPhase::MarkerSync,
-        FailingCommitPhase::MarkerRename,
-        FailingCommitPhase::MarkerDirectorySync,
-        FailingCommitPhase::LiveWrite,
-        FailingCommitPhase::LiveSync,
-        FailingCommitPhase::LiveRename,
-        FailingCommitPhase::TargetDirectory,
-        FailingCommitPhase::LiveDirectorySync,
-        FailingCommitPhase::RevisionWrite,
-        FailingCommitPhase::RevisionSync,
-        FailingCommitPhase::RevisionRename,
-        FailingCommitPhase::CleanupRename,
+    for (name, operation, path_matcher, occurrence, error_message, marker_exists) in [
+        (
+            "marker create",
+            RecordingOperation::CreateFile,
+            PathMatcher::FileName("commit.tmp"),
+            1,
+            "injected marker create failure",
+            false,
+        ),
+        (
+            "marker sync",
+            RecordingOperation::SyncFile,
+            PathMatcher::FileName("commit.tmp"),
+            1,
+            "injected commit sync failure",
+            false,
+        ),
+        (
+            "marker rename",
+            RecordingOperation::Rename,
+            PathMatcher::FileName("commit"),
+            1,
+            "injected marker rename failure",
+            false,
+        ),
+        (
+            "marker directory sync",
+            RecordingOperation::SyncDirectory,
+            PathMatcher::FileName(ACTIVE_TRANSACTION_DIRECTORY_NAME),
+            2,
+            "injected marker directory sync failure",
+            true,
+        ),
+        (
+            "live write",
+            RecordingOperation::WriteFile,
+            PathMatcher::FileNamePrefix(".project.yaml."),
+            1,
+            "injected live write failure",
+            true,
+        ),
+        (
+            "live sync",
+            RecordingOperation::SyncFile,
+            PathMatcher::FileNamePrefix(".project.yaml."),
+            1,
+            "injected commit sync failure",
+            true,
+        ),
+        (
+            "live rename",
+            RecordingOperation::Rename,
+            PathMatcher::FileName("project.yaml"),
+            1,
+            "injected live rename failure",
+            true,
+        ),
+        (
+            "target directory",
+            RecordingOperation::CreateDirectory,
+            PathMatcher::FileName("markdown"),
+            1,
+            "injected target directory failure",
+            true,
+        ),
+        (
+            "live directory sync",
+            RecordingOperation::SyncDirectory,
+            PathMatcher::Any,
+            6,
+            "injected live directory sync failure",
+            true,
+        ),
+        (
+            "revision write",
+            RecordingOperation::WriteFile,
+            PathMatcher::FileNameContains("revision"),
+            1,
+            "injected live write failure",
+            true,
+        ),
+        (
+            "revision sync",
+            RecordingOperation::SyncFile,
+            PathMatcher::FileNameContains("revision"),
+            1,
+            "injected commit sync failure",
+            true,
+        ),
+        (
+            "revision rename",
+            RecordingOperation::Rename,
+            PathMatcher::FileName(".revision"),
+            1,
+            "injected revision rename failure",
+            true,
+        ),
+        (
+            "cleanup rename",
+            RecordingOperation::Rename,
+            PathMatcher::FileNamePrefix(".cleanup-"),
+            1,
+            "injected cleanup rename failure",
+            true,
+        ),
     ] {
         let storage_dir = TestStorageDir::new();
         let target_path = storage_dir.path.join("project.yaml");
         fs::write(&target_path, b"old").unwrap();
         let markdown_dir_path = storage_dir.path.join("markdown");
         let prepared = prepare_with_directories(
-            Arc::new(FailingCommitIo {
-                phase,
-                marker_published: AtomicBool::new(false),
-                marker_dir_path: Mutex::new(None),
-                live_target_renamed: AtomicBool::new(false),
-                cleanup_handoff: AtomicBool::new(false),
-            }),
+            Arc::new(RecordingIo::new(vec![FaultRule {
+                operation,
+                path_matcher,
+                occurrence,
+                error_kind: std::io::ErrorKind::Other,
+                error_message,
+            }])),
             &storage_dir.path,
             Uuid::from_u128(0x2209),
             &[WriteRequest {
@@ -135,17 +303,12 @@ fn test_commit_failure時は回復用manifestとstaged_fileを維持する() {
 
         let actual = prepared.commit();
 
-        assert!(actual.is_err(), "{phase:?} must fail");
+        assert!(actual.is_err(), "{name} must fail");
         assert!(transaction_dir_path.join("manifest.json").is_file());
         assert!(transaction_dir_path.join("files/0").is_file());
         assert_eq!(
             transaction_dir_path.join("commit").is_file(),
-            !matches!(
-                phase,
-                FailingCommitPhase::MarkerCreate
-                    | FailingCommitPhase::MarkerSync
-                    | FailingCommitPhase::MarkerRename
-            )
+            marker_exists
         );
     }
 }
@@ -155,9 +318,13 @@ fn test_commit_target内容読込失敗はpathと専用phaseを保持する() {
     let target_path = storage_dir.path.join("project.yaml");
     fs::write(&target_path, b"old").unwrap();
     let prepared = prepare(
-        Arc::new(FailTargetContentReadIo {
-            target_path: target_path.clone(),
-        }),
+        Arc::new(RecordingIo::new(vec![FaultRule {
+            operation: RecordingOperation::ReadFile,
+            path_matcher: PathMatcher::Exact(target_path.clone()),
+            occurrence: 1,
+            error_kind: std::io::ErrorKind::PermissionDenied,
+            error_message: "injected target content read failure",
+        }])),
         &storage_dir.path,
         Uuid::from_u128(0x2241),
         &[WriteRequest {
@@ -185,21 +352,33 @@ fn test_commit_target内容読込失敗はpathと専用phaseを保持する() {
 
 #[test]
 fn test_commit_cleanup失敗はtombstoneへ回復情報を保持して成功する() {
-    for phase in [
-        FailingCommitPhase::CleanupHandoffSync,
-        FailingCommitPhase::CleanupDelete,
+    for (name, operation, path_matcher, occurrence, error_message) in [
+        (
+            "cleanup handoff sync",
+            RecordingOperation::SyncDirectory,
+            PathMatcher::FileName(TRANSACTION_DIRECTORY_NAME),
+            2,
+            "injected cleanup handoff sync failure",
+        ),
+        (
+            "cleanup delete",
+            RecordingOperation::RemoveDirectory,
+            PathMatcher::FileNamePrefix(".cleanup-"),
+            1,
+            "injected cleanup failure",
+        ),
     ] {
         let storage_dir = TestStorageDir::new();
         let target_path = storage_dir.path.join("project.yaml");
         fs::write(&target_path, b"old").unwrap();
         let prepared = prepare(
-            Arc::new(FailingCommitIo {
-                phase,
-                marker_published: AtomicBool::new(false),
-                marker_dir_path: Mutex::new(None),
-                live_target_renamed: AtomicBool::new(false),
-                cleanup_handoff: AtomicBool::new(false),
-            }),
+            Arc::new(RecordingIo::new(vec![FaultRule {
+                operation,
+                path_matcher,
+                occurrence,
+                error_kind: std::io::ErrorKind::Other,
+                error_message,
+            }])),
             &storage_dir.path,
             Uuid::from_u128(0x2210),
             &[WriteRequest {
@@ -218,12 +397,12 @@ fn test_commit_cleanup失敗はtombstoneへ回復情報を保持して成功す�
             .path
             .join(TRANSACTION_DIRECTORY_NAME)
             .join(format!(".cleanup-{}", transaction_id.hyphenated()));
-        assert!(cleanup_dir_path.join("commit").is_file(), "{phase:?}");
+        assert!(cleanup_dir_path.join("commit").is_file(), "{name}");
         assert!(
             cleanup_dir_path.join("manifest.json").is_file(),
-            "{phase:?}"
+            "{name}"
         );
-        assert!(cleanup_dir_path.join("files/0").is_file(), "{phase:?}");
+        assert!(cleanup_dir_path.join("files/0").is_file(), "{name}");
         assert_eq!(fs::read(target_path).unwrap(), b"new");
     }
 }

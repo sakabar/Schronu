@@ -42,12 +42,7 @@ fn test_delete_entryは通常commitでmarker公開後にtargetを削除する() 
     fs::create_dir_all(target_path.parent().unwrap()).unwrap();
     fs::write(&target_path, b"old").unwrap();
     let revision = Uuid::from_u128(0x2238);
-    let io = Arc::new(DeleteCommitOrderIo {
-        target_path: target_path.clone(),
-        marker_file_synced: AtomicBool::new(false),
-        marker_directory_path: Mutex::new(None),
-        marker_directory_synced: AtomicBool::new(false),
-    });
+    let io = Arc::new(RecordingIo::new(vec![]));
     let prepared = prepare_delete_transaction(
         io.clone(),
         &storage_dir.path,
@@ -59,9 +54,48 @@ fn test_delete_entryは通常commitでmarker公開後にtargetを削除する() 
         .commit()
         .unwrap();
 
+    let events = io.events();
+    let marker_directory_path = storage_dir
+        .path
+        .join(TRANSACTION_DIRECTORY_NAME)
+        .join(ACTIVE_TRANSACTION_DIRECTORY_NAME);
+    let marker_sync = event_position(
+        &events,
+        RecordingOperation::SyncDirectory,
+        &PathMatcher::Exact(marker_directory_path),
+        1,
+    );
+    assert!(
+        event_position(
+            &events,
+            RecordingOperation::SyncFile,
+            &PathMatcher::FileName("commit.tmp"),
+            1,
+        ) < event_position(
+            &events,
+            RecordingOperation::Rename,
+            &PathMatcher::FileName("commit"),
+            1,
+        )
+    );
+    assert!(
+        event_position(
+            &events,
+            RecordingOperation::Rename,
+            &PathMatcher::FileName("commit"),
+            1,
+        ) < marker_sync
+    );
+    assert!(
+        marker_sync
+            < event_position(
+                &events,
+                RecordingOperation::RemoveFile,
+                &PathMatcher::Exact(target_path.clone()),
+                1,
+            )
+    );
     assert!(!target_path.exists());
-    assert!(io.marker_file_synced.load(Ordering::SeqCst));
-    assert!(io.marker_directory_synced.load(Ordering::SeqCst));
     assert_eq!(
         fs::read_to_string(storage_dir.path.join(".revision")).unwrap(),
         format!("{revision}\n")
@@ -95,17 +129,25 @@ fn test_delete_entry後にparent_directoryをsyncする() {
         Uuid::from_u128(0x2234),
         true,
     );
-    let io = Arc::new(DeleteSyncIo {
-        target_path,
-        target_removed: AtomicBool::new(false),
-        parent_synced_after_remove: AtomicBool::new(false),
-        fail_first_target_parent_sync: AtomicBool::new(false),
-    });
+    let target_parent_path = target_path.parent().unwrap().to_path_buf();
+    let io = Arc::new(RecordingIo::new(vec![]));
 
     recover(io.clone(), &storage_dir.path).unwrap();
 
-    assert!(io.target_removed.load(Ordering::SeqCst));
-    assert!(io.parent_synced_after_remove.load(Ordering::SeqCst));
+    let events = io.events();
+    assert!(
+        event_position(
+            &events,
+            RecordingOperation::RemoveFile,
+            &PathMatcher::Exact(target_path),
+            1,
+        ) < event_position(
+            &events,
+            RecordingOperation::SyncDirectory,
+            &PathMatcher::Exact(target_parent_path),
+            1,
+        )
+    );
 }
 
 #[test]
@@ -117,12 +159,13 @@ fn test_delete_entry_sync中断後の回復再試行でnew_snapshotへ到達す�
     let revision = Uuid::from_u128(0x2235);
     let transaction_dir_path =
         create_delete_transaction(&storage_dir.path, "project/project.yaml", revision, true);
-    let io = Arc::new(DeleteSyncIo {
-        target_path: target_path.clone(),
-        target_removed: AtomicBool::new(false),
-        parent_synced_after_remove: AtomicBool::new(false),
-        fail_first_target_parent_sync: AtomicBool::new(true),
-    });
+    let io = Arc::new(RecordingIo::new(vec![FaultRule {
+        operation: RecordingOperation::SyncDirectory,
+        path_matcher: PathMatcher::Exact(target_path.parent().unwrap().to_path_buf()),
+        occurrence: 1,
+        error_kind: std::io::ErrorKind::Other,
+        error_message: "injected delete directory sync failure",
+    }]));
 
     let first = recover(io, &storage_dir.path);
     assert!(first.is_err());
