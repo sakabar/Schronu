@@ -424,6 +424,10 @@ impl ClientState {
                     committed_on_server: true,
                     ..
                 })
+            ) || matches!(
+                &self.display_error,
+                Some(DisplayError::Transport { operation, .. })
+                    if !is_read_operation(*operation)
             ) {
                 self.display_error = None;
             }
