@@ -85,7 +85,13 @@ button:disabled {
     letter-spacing: 0.03em;
 }
 
-.tabs,
+.tabs {
+    display: flex;
+    gap: 0.25rem;
+    padding: 0.25rem 0.1rem 0;
+    border-bottom: 1px solid var(--line);
+}
+
 .date-pills {
     display: flex;
     gap: 0.5rem;
@@ -94,14 +100,39 @@ button:disabled {
     scrollbar-width: thin;
 }
 
-.tab-button,
+.tab-button {
+    position: relative;
+    flex: 0 0 auto;
+    margin-bottom: -1px;
+    border-color: transparent;
+    border-radius: 0.7rem 0.7rem 0 0;
+    background: transparent;
+    color: var(--muted);
+    padding: 0.7rem 1.2rem;
+}
+
+.tab-button:hover:not(:disabled) {
+    border-color: var(--line);
+    background: var(--surface-muted);
+    color: var(--ink);
+}
+
+.tab-button.is-selected,
+.tab-button.is-selected:hover:not(:disabled) {
+    z-index: 1;
+    border-color: var(--line);
+    border-bottom-color: var(--page);
+    background: var(--page);
+    box-shadow: inset 0 0.2rem 0 var(--green);
+    color: var(--green-dark);
+}
+
 .date-pill {
     flex: 0 0 auto;
     border-radius: 999px;
     padding-inline: 1.2rem;
 }
 
-.tab-button.is-selected,
 .date-pill.is-selected {
     border-color: var(--green-dark);
     background: var(--green);
