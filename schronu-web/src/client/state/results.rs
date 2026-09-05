@@ -214,6 +214,7 @@ impl ClientState {
                 self.record_local_result(Operation::DiscardSession, Some(task_id), false);
                 self.display_error = Some(DisplayError::LocalStorage {
                     committed_on_server: true,
+                    task_id: Some(task_id.to_owned()),
                 });
             }
         }
@@ -226,11 +227,12 @@ impl ClientState {
         succeeded: bool,
     ) {
         let (outcome, summary) = if succeeded {
-            self.display_error = None;
+            self.clear_error_on_unrelated_success();
             (Outcome::Success, "localStorageを更新しました。")
         } else {
             self.display_error = Some(DisplayError::LocalStorage {
                 committed_on_server: false,
+                task_id: task_id.map(ToOwned::to_owned),
             });
             (Outcome::Failure, "localStorage更新に失敗しました。")
         };
@@ -244,7 +246,10 @@ impl ClientState {
         error: ServerFailure,
     ) {
         self.display_error = Some(match error {
-            ServerFailure::Operation(error) => DisplayError::Operation(error),
+            ServerFailure::Operation(error) => DisplayError::Operation {
+                error,
+                task_id: task_id.map(ToOwned::to_owned),
+            },
             ServerFailure::Transport(_) => DisplayError::Transport,
         });
         self.record_server(
@@ -263,7 +268,7 @@ impl ClientState {
         summary: &str,
     ) {
         if outcome == Outcome::Success {
-            self.display_error = None;
+            self.clear_error_on_unrelated_success();
         }
         self.record_history(operation, task_id, Locality::Server, outcome, summary);
     }
@@ -280,6 +285,16 @@ impl ClientState {
             },
             "古い応答を表示へ適用せず受信しました。",
         );
+    }
+
+    fn clear_error_on_unrelated_success(&mut self) {
+        if self
+            .display_error
+            .as_ref()
+            .is_some_and(DisplayError::clears_on_unrelated_success)
+        {
+            self.display_error = None;
+        }
     }
 
     fn record_history(

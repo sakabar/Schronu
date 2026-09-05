@@ -17,21 +17,29 @@ pub enum ActiveTab {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum DisplayError {
-    Operation(WebError),
+    Operation {
+        error: WebError,
+        task_id: Option<String>,
+    },
     Transport,
-    LocalStorage { committed_on_server: bool },
+    LocalStorage {
+        committed_on_server: bool,
+        task_id: Option<String>,
+    },
 }
 
 impl DisplayError {
     pub fn message(&self) -> &str {
         match self {
-            Self::Operation(error) => &error.message,
+            Self::Operation { error, .. } => &error.message,
             Self::Transport => "通信に失敗しました。時間をおいて再試行してください。",
             Self::LocalStorage {
                 committed_on_server: true,
+                ..
             } => "serverでは保存済みですが、localStorageの更新に失敗しました。再送せず状態を確認してください。",
             Self::LocalStorage {
                 committed_on_server: false,
+                ..
             } => "localStorageを更新できませんでした。",
         }
     }
@@ -40,10 +48,39 @@ impl DisplayError {
         matches!(
             self,
             Self::Transport
-                | Self::Operation(WebError {
-                    retry_advice: crate::RetryAdvice::Retry,
+                | Self::Operation {
+                    error: WebError {
+                        retry_advice: crate::RetryAdvice::Retry,
+                        ..
+                    },
                     ..
-                })
+                }
+        )
+    }
+
+    fn clears_on_unrelated_success(&self) -> bool {
+        self.retryable()
+            || matches!(
+                self,
+                Self::LocalStorage {
+                    committed_on_server: false,
+                    ..
+                }
+            )
+    }
+
+    fn is_resolved_by_discard(&self, task_id: &str) -> bool {
+        matches!(
+            self,
+            Self::Operation {
+                error: WebError {
+                    code,
+                    retry_advice: crate::RetryAdvice::ManualCheck,
+                    ..
+                },
+                task_id: Some(error_task_id),
+            } if error_task_id == task_id
+                && code != crate::web_error_codes::REPOSITORY_STATE_UNCERTAIN
         )
     }
 }
@@ -259,6 +296,13 @@ impl ClientState {
             .map(|_| ());
         if found && result.is_ok() {
             self.manual_check_blocked_task_ids.remove(task_id);
+            if self
+                .display_error
+                .as_ref()
+                .is_some_and(|error| error.is_resolved_by_discard(task_id))
+            {
+                self.display_error = None;
+            }
         }
         self.record_local_result(Operation::DiscardSession, Some(task_id), result.is_ok());
         ClientEffect::None

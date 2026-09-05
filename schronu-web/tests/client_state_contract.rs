@@ -379,7 +379,13 @@ fn 未知のoperation_errorはcodeと助言を失わず表示状態へ保持す�
 
     state.apply_bootstrap_result(request_id, Err(ServerFailure::Operation(error.clone())));
 
-    assert_eq!(state.display_error(), Some(&DisplayError::Operation(error)));
+    assert_eq!(
+        state.display_error(),
+        Some(&DisplayError::Operation {
+            error,
+            task_id: None,
+        })
+    );
 }
 
 #[test]
