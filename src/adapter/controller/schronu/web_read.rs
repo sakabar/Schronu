@@ -2,9 +2,7 @@ use crate::adapter::gateway::free_time_manager::FreeTimeManager;
 use crate::adapter::gateway::schronu_config::SchronuConfig;
 use crate::adapter::gateway::storage_lock::{LockMode, StorageLock, StorageLockError};
 use crate::adapter::gateway::task_repository::TaskRepository;
-use crate::application::daily_capacity::{
-    calculate_free_time_minutes_for_logical_date_with_end_of_day_offset_minutes, try_logical_date,
-};
+use crate::application::daily_capacity::try_logical_date;
 use crate::application::interface::{
     BusyTimeSlotLoadError, FreeTimeManagerTrait, TaskRepositoryError, TaskRepositoryTrait,
 };
@@ -205,13 +203,29 @@ where
     F: FreeTimeManagerTrait,
 {
     let logical_date = try_logical_date(operation_now).map_err(WebReadCoreError::Application)?;
-    let free_minutes = calculate_free_time_minutes_for_logical_date_with_end_of_day_offset_minutes(
-        &logical_date,
-        task_repository.get_last_synced_time(),
-        free_time_manager,
-        end_of_day_offset_minutes,
-    )
-    .map_err(WebReadCoreError::Application)?;
+    let current_logical_date = try_logical_date(task_repository.get_last_synced_time())
+        .map_err(WebReadCoreError::Application)?;
+    let free_seconds = if logical_date == current_logical_date {
+        let end = crate::application::daily_capacity::try_logical_date_end(
+            logical_date,
+            end_of_day_offset_minutes,
+        )
+        .map_err(WebReadCoreError::Application)?;
+        if task_repository.get_last_synced_time() < end {
+            free_time_manager.get_free_seconds(&task_repository.get_last_synced_time(), &end)
+        } else {
+            0
+        }
+    } else {
+        let start = crate::application::daily_capacity::try_logical_date_start(logical_date)
+            .map_err(WebReadCoreError::Application)?;
+        let end = crate::application::daily_capacity::try_logical_date_end(
+            logical_date,
+            end_of_day_offset_minutes,
+        )
+        .map_err(WebReadCoreError::Application)?;
+        free_time_manager.get_free_seconds(&start, &end)
+    };
     let scheduled_segments = schedule
         .iter()
         .map(|segment| {
@@ -220,7 +234,7 @@ where
                 .map_err(WebReadCoreError::Application)
         })
         .collect::<Result<Vec<_>, _>>()?;
-    let buffer_seconds = calculate_buffer_seconds(logical_date, free_minutes, &scheduled_segments)?;
+    let buffer_seconds = calculate_buffer_seconds(logical_date, free_seconds, &scheduled_segments)?;
 
     Ok(ServerSnapshot {
         observed_at_epoch_ms: operation_now.timestamp_millis(),
@@ -295,12 +309,9 @@ fn session_task_dto(
 
 pub(super) fn calculate_buffer_seconds(
     current_logical_date: NaiveDate,
-    free_minutes: i64,
+    free_seconds: i64,
     scheduled_segments: &[(NaiveDate, i64)],
 ) -> Result<i64, WebReadOverflowError> {
-    let free_seconds = free_minutes
-        .checked_mul(60)
-        .ok_or_else(|| WebReadOverflowError::new("free_minutes_to_seconds", free_minutes, 60))?;
     let scheduled_seconds = scheduled_segments
         .iter()
         .filter(|(date, _)| *date == current_logical_date)

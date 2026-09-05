@@ -125,6 +125,9 @@ pub trait TaskRepositoryTrait {
 
 pub trait FreeTimeManagerTrait {
     fn get_free_minutes(&mut self, start: &DateTime<Local>, end: &DateTime<Local>) -> i64;
+    fn get_free_seconds(&mut self, start: &DateTime<Local>, end: &DateTime<Local>) -> i64 {
+        self.get_free_minutes(start, end) * 60
+    }
     fn get_busy_minutes(&mut self, start: &DateTime<Local>, end: &DateTime<Local>) -> i64;
     fn register_busy_time_slot(
         &mut self,
