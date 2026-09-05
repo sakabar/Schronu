@@ -9,6 +9,7 @@ pub(super) enum SnapshotOperation {
     Encode,
     Decode,
     Read,
+    RepositoryLoad,
     Sync,
     Validate,
     Write,

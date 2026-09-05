@@ -8,6 +8,8 @@ use super::manifest::{
 use super::SnapshotSummary;
 use crate::adapter::gateway::storage_content_integrity::{content_digest, DIGEST_ALGORITHM};
 use crate::adapter::gateway::storage_lock::{LockMode, StorageLock};
+use crate::adapter::gateway::task_repository::TaskRepository;
+use crate::application::interface::TaskRepositoryTrait;
 use chrono::{DateTime, Local};
 use std::fs::{self, File};
 use std::io::Write;
@@ -37,6 +39,7 @@ pub(in crate::adapter::gateway) fn create_snapshot_at(
         SnapshotError::new(SnapshotOperation::AcquireLock, path, error)
     })?;
 
+    strict_load(storage_directory)?;
     let collected = collect_storage(storage_directory)?;
     let revision = read_revision(&collected.files)?;
     let staging = staging_path(destination)?;
@@ -45,6 +48,19 @@ pub(in crate::adapter::gateway) fn create_snapshot_at(
         let _ = fs::remove_dir_all(&staging);
     }
     result.map(|()| SnapshotSummary::new(revision, collected.files.len()))
+}
+
+fn strict_load(storage: &Path) -> Result<(), SnapshotError> {
+    let storage_text = storage.to_str().ok_or_else(|| {
+        invalid(
+            storage,
+            "snapshot source path must be valid Unicode for repository validation",
+        )
+    })?;
+    let mut repository = TaskRepository::new(storage_text);
+    repository
+        .load()
+        .map_err(|error| SnapshotError::new(SnapshotOperation::RepositoryLoad, storage, error))
 }
 
 struct CollectedStorage {
