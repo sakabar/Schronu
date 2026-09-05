@@ -164,7 +164,11 @@ fn materialize_restore(
         .map_err(|error| SnapshotError::new(SnapshotOperation::Sync, staging, error))?;
     publication
         .parent
-        .rename_no_replace(staging_name, &publication.destination_name)
+        .rename_no_replace(
+            staging_name,
+            &publication.destination_name,
+            staging_directory,
+        )
         .map_err(|error| SnapshotError::new(SnapshotOperation::Write, destination, error))?;
     if let Err(sync_error) = publication.parent.sync() {
         publication

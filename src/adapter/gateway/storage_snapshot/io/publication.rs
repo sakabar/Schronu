@@ -95,8 +95,25 @@ impl StableParent {
         &self,
         from: &std::ffi::OsStr,
         to: &std::ffi::OsStr,
+        published: &StableDirectory,
     ) -> std::io::Result<()> {
-        rename_at_no_replace(self.raw_fd(), &c_name(from)?, &c_name(to)?)
+        let from = c_name(from)?;
+        let to = c_name(to)?;
+        if !published.matches_entry(self.raw_fd(), &from)? {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                "staging directory was replaced before publication",
+            ));
+        }
+        rename_at_no_replace(self.raw_fd(), &from, &to)?;
+        if published.matches_entry(self.raw_fd(), &to)? {
+            Ok(())
+        } else {
+            Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                "published destination does not match the staged directory",
+            ))
+        }
     }
 
     pub(in crate::adapter::gateway::storage_snapshot) fn remove_directory_tree(
@@ -355,6 +372,7 @@ impl StableParent {
         &self,
         _from: &std::ffi::OsStr,
         _to: &std::ffi::OsStr,
+        _published: &StableDirectory,
     ) -> std::io::Result<()> {
         Err(unsupported_publication())
     }

@@ -1,6 +1,7 @@
 use crate::adapter::gateway::storage_lock::{LockMode, StorageLock};
 use crate::adapter::gateway::storage_snapshot::{
-    create_snapshot_after_parent_open, create_snapshot_at, finalize_publication,
+    create_snapshot_after_parent_open, create_snapshot_at, create_snapshot_before_publish,
+    finalize_publication,
 };
 use crate::adapter::gateway::storage_snapshot::io::rename_no_replace;
 use crate::adapter::gateway::storage_snapshot::io::SnapshotIo;
@@ -123,6 +124,36 @@ fn snapshot作成は検証後に差し替えられた親directoryへ書き込ま
     assert!(original_parent.join("snapshot/manifest.json").is_file());
     assert!(!parent.join("snapshot").exists());
     assert_eq!(fs::read(parent.join("sentinel")).unwrap(), b"preserve");
+}
+
+#[test]
+fn snapshot作成は差し替えられたstaging_directoryを公開しない() {
+    let root = TestDirectory::new("create-staging-swap");
+    let storage = root.child("source");
+    let destination = root.child("snapshot");
+    let displaced = root.child("displaced-staging");
+    let now = Local.with_ymd_and_hms(2026, 9, 5, 12, 0, 0).unwrap();
+    create_saved_repository(&storage, now);
+
+    create_snapshot_before_publish(&storage, &destination, now, || {
+        let staging = fs::read_dir(&root.path)
+            .unwrap()
+            .map(|entry| entry.unwrap().path())
+            .find(|path| {
+                path.file_name()
+                    .unwrap()
+                    .to_string_lossy()
+                    .starts_with(".snapshot.tmp-")
+            })
+            .unwrap();
+        fs::rename(&staging, &displaced).unwrap();
+        fs::create_dir(&staging).unwrap();
+        fs::write(staging.join("foreign"), b"preserve").unwrap();
+    })
+    .unwrap_err();
+
+    assert!(!destination.exists());
+    assert!(displaced.join("manifest.json").is_file());
 }
 
 #[test]

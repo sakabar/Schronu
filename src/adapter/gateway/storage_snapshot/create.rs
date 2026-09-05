@@ -35,7 +35,7 @@ pub(in crate::adapter::gateway) fn create_snapshot_at(
     destination: &Path,
     created_at: DateTime<Local>,
 ) -> Result<SnapshotSummary, SnapshotError> {
-    create_snapshot_impl(storage_directory, destination, created_at, || {})
+    create_snapshot_impl(storage_directory, destination, created_at, || {}, || {})
 }
 
 #[cfg(test)]
@@ -50,6 +50,23 @@ pub(in crate::adapter::gateway) fn create_snapshot_after_parent_open(
         destination,
         created_at,
         after_parent_open,
+        || {},
+    )
+}
+
+#[cfg(test)]
+pub(in crate::adapter::gateway) fn create_snapshot_before_publish(
+    storage_directory: &Path,
+    destination: &Path,
+    created_at: DateTime<Local>,
+    before_publish: impl FnOnce(),
+) -> Result<SnapshotSummary, SnapshotError> {
+    create_snapshot_impl(
+        storage_directory,
+        destination,
+        created_at,
+        || {},
+        before_publish,
     )
 }
 
@@ -58,6 +75,7 @@ fn create_snapshot_impl(
     destination: &Path,
     created_at: DateTime<Local>,
     after_parent_open: impl FnOnce(),
+    before_publish: impl FnOnce(),
 ) -> Result<SnapshotSummary, SnapshotError> {
     let publication = validate_endpoints(storage_directory, destination)?;
     after_parent_open();
@@ -85,7 +103,13 @@ fn create_snapshot_impl(
         destination,
         target: &publication,
     };
-    let result = publish_snapshot(&staging_publication, created_at, revision, &collected);
+    let result = publish_snapshot(
+        &staging_publication,
+        created_at,
+        revision,
+        &collected,
+        before_publish,
+    );
     if result.is_err()
         && publication
             .parent
@@ -281,6 +305,7 @@ fn publish_snapshot(
     created_at: DateTime<Local>,
     revision: Option<Uuid>,
     collected: &CollectedStorage,
+    before_publish: impl FnOnce(),
 ) -> Result<(), SnapshotError> {
     let payload = staging.path.join(PAYLOAD_DIRECTORY_NAME);
     staging
@@ -339,10 +364,15 @@ fn publish_snapshot(
         .directory
         .sync()
         .map_err(|error| SnapshotError::new(SnapshotOperation::Sync, staging.path, error))?;
+    before_publish();
     staging
         .target
         .parent
-        .rename_no_replace(staging.name, &staging.target.destination_name)
+        .rename_no_replace(
+            staging.name,
+            &staging.target.destination_name,
+            staging.directory,
+        )
         .map_err(|error| {
             SnapshotError::new(SnapshotOperation::Write, staging.destination, error)
         })?;

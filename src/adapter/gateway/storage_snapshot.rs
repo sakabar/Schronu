@@ -9,7 +9,8 @@ mod verify;
 pub use create::create_snapshot;
 #[cfg(test)]
 pub(in crate::adapter::gateway) use create::{
-    create_snapshot_after_parent_open, create_snapshot_at, finalize_publication,
+    create_snapshot_after_parent_open, create_snapshot_at, create_snapshot_before_publish,
+    finalize_publication,
 };
 pub use error::SnapshotError;
 pub use restore::restore_snapshot;
