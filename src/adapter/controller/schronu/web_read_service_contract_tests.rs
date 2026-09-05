@@ -318,6 +318,29 @@ fn record_sessionはwire入力errorを分類して保存しない() {
 }
 
 #[test]
+fn record_sessionは日時として表現不能な開始epochを保存前に拒否する() {
+    let operation_now = Local.with_ymd_and_hms(2026, 9, 5, 19, 1, 0).unwrap();
+    let fixture = WebReadServiceFixture::new();
+    let task_id = fixture.seed_fixed_task(operation_now - Duration::hours(1));
+    let before = fixture.persisted_bytes();
+    let mut service = WebService::new(fixture.storage.clone(), fixture.config());
+
+    let error = service
+        .record_session_at(
+            operation_now,
+            RecordSessionRequest {
+                task_id: task_id.to_string(),
+                started_at_epoch_ms: i64::MIN / 2,
+                expected_actual_work_seconds: 300,
+            },
+        )
+        .unwrap_err();
+
+    assert!(matches!(error, WebReadError::InvalidInput(_)));
+    assert_eq!(fixture.persisted_bytes(), before);
+}
+
+#[test]
 fn record_sessionは未知taskと完了済みtaskと競合と加算overflowで保存しない() {
     let operation_now = Local.with_ymd_and_hms(2026, 9, 5, 19, 1, 0).unwrap();
 
