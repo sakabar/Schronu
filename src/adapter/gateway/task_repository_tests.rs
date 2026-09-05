@@ -9,6 +9,9 @@ struct TestStorageDir {
     path: PathBuf,
 }
 
+type CapturedFile = (PathBuf, Vec<u8>);
+type CapturedRepositoryFiles = (Option<CapturedFile>, Vec<CapturedFile>);
+
 impl TestStorageDir {
     fn new() -> Self {
         Self {
@@ -58,6 +61,41 @@ fn write_project_yaml(
     let project_yaml_file_path = project_dir_path.join("project.yaml");
     fs::write(&project_yaml_file_path, contents).unwrap();
     project_yaml_file_path
+}
+
+fn captured_repository_files(storage_dir: &TestStorageDir) -> CapturedRepositoryFiles {
+    let revision_path = storage_dir.path.join(".revision");
+    let revision = revision_path
+        .is_file()
+        .then(|| (revision_path.clone(), fs::read(&revision_path).unwrap()));
+    let mut projects = WalkDir::new(&storage_dir.path)
+        .sort_by_file_name()
+        .into_iter()
+        .map(Result::unwrap)
+        .filter(|entry| entry.file_name() == "project.yaml")
+        .map(|entry| {
+            let path = entry.into_path();
+            let bytes = fs::read(&path).unwrap();
+            (path, bytes)
+        })
+        .collect::<Vec<_>>();
+    projects.sort_by(|left, right| left.0.cmp(&right.0));
+    (revision, projects)
+}
+
+fn load_captured_repository(
+    repository: &mut TaskRepository,
+    revision: &Option<(PathBuf, Vec<u8>)>,
+    projects: &[(PathBuf, Vec<u8>)],
+) -> Result<(), TaskRepositoryError> {
+    repository.load_captured(
+        revision
+            .as_ref()
+            .map(|(path, bytes)| (path.as_path(), bytes.as_slice())),
+        projects
+            .iter()
+            .map(|(path, bytes)| (path.as_path(), bytes.as_slice())),
+    )
 }
 
 fn file_repository_error(error: &TaskRepositoryError) -> &FileRepositoryError {
@@ -671,6 +709,149 @@ fn test_load_存在しない保存先はtraverse_errorを返す() {
     let source = file_repository_error(&actual);
     assert_eq!(source.operation, FileRepositoryOperation::TraverseDirectory);
     assert_eq!(source.path, storage_dir.path);
+}
+
+#[test]
+fn test_load_capturedはfilesystem_loadの成功結果_revision_project順_identityと一致する() {
+    let storage_dir = TestStorageDir::new();
+    let now = Local.with_ymd_and_hms(2026, 9, 5, 12, 0, 0).unwrap();
+    let first_id = Uuid::from_u128(0x3901);
+    let second_id = Uuid::from_u128(0x3902);
+    for (directory, name, id) in [
+        ("zz-second", "second", second_id),
+        ("aa-first", "first", first_id),
+    ] {
+        let project = Project::new(project_root_with_identity(name, id, now), "", "", 5);
+        write_project_yaml(
+            &storage_dir,
+            directory,
+            std::str::from_utf8(&TaskRepository::serialize_project(&project).unwrap()).unwrap(),
+        );
+    }
+    let revision = Uuid::from_u128(0x3903);
+    fs::write(storage_dir.path.join(".revision"), revision.to_string()).unwrap();
+    let (captured_revision, captured_projects) = captured_repository_files(&storage_dir);
+    let mut filesystem = TaskRepository::new(storage_dir.path_str());
+    filesystem.sync_clock(now).unwrap();
+    filesystem.load().unwrap();
+    let mut captured = TaskRepository::new("unused-captured-storage");
+    captured.sync_clock(now).unwrap();
+
+    load_captured_repository(&mut captured, &captured_revision, &captured_projects).unwrap();
+
+    assert_eq!(
+        captured.storage_revision.get(),
+        filesystem.storage_revision.get()
+    );
+    assert_eq!(captured.storage_revision.get(), Some(revision));
+    let filesystem_ids = filesystem
+        .projects
+        .iter()
+        .map(|project| project.root_task.get_id().unwrap())
+        .collect::<Vec<_>>();
+    let captured_ids = captured
+        .projects
+        .iter()
+        .map(|project| project.root_task.get_id().unwrap())
+        .collect::<Vec<_>>();
+    assert_eq!(captured_ids, filesystem_ids);
+    assert_eq!(captured_ids, vec![first_id, second_id]);
+    for id in captured_ids {
+        assert_eq!(
+            captured.get_by_id(id).unwrap().unwrap().get_name().unwrap(),
+            filesystem
+                .get_by_id(id)
+                .unwrap()
+                .unwrap()
+                .get_name()
+                .unwrap()
+        );
+    }
+}
+
+#[test]
+fn test_load_capturedはstrict_yaml_errorの実file_path診断をfilesystemと一致させる() {
+    let storage_dir = TestStorageDir::new();
+    let project_path = write_project_yaml(
+        &storage_dir,
+        "invalid",
+        "project:\n  name: broken\n  children: not-an-array\n",
+    );
+    let (captured_revision, captured_projects) = captured_repository_files(&storage_dir);
+    let mut filesystem = TaskRepository::new(storage_dir.path_str());
+    let filesystem_error = filesystem.load().unwrap_err();
+    let mut captured = TaskRepository::new("unused-captured-storage");
+
+    let captured_error =
+        load_captured_repository(&mut captured, &captured_revision, &captured_projects)
+            .unwrap_err();
+
+    for error in [&filesystem_error, &captured_error] {
+        let file = file_repository_error(error);
+        assert_eq!(file.operation, FileRepositoryOperation::ParseProject);
+        assert_eq!(file.path, project_path);
+        assert_eq!(file.source.kind(), std::io::ErrorKind::InvalidData);
+        assert!(file.source.to_string().contains("project.children"));
+    }
+}
+
+#[test]
+fn test_load_capturedは不正revisionの実file_path診断をfilesystemと一致させる() {
+    let storage_dir = TestStorageDir::new();
+    fs::create_dir_all(&storage_dir.path).unwrap();
+    let revision_path = storage_dir.path.join(".revision");
+    fs::write(&revision_path, b"invalid-revision").unwrap();
+    let (captured_revision, captured_projects) = captured_repository_files(&storage_dir);
+    let mut filesystem = TaskRepository::new(storage_dir.path_str());
+    let filesystem_error = filesystem.load().unwrap_err();
+    let mut captured = TaskRepository::new("unused-captured-storage");
+
+    let captured_error =
+        load_captured_repository(&mut captured, &captured_revision, &captured_projects)
+            .unwrap_err();
+
+    for error in [&filesystem_error, &captured_error] {
+        let file = file_repository_error(error);
+        assert_eq!(file.operation, FileRepositoryOperation::ParseRevision);
+        assert_eq!(file.path, revision_path);
+        assert_eq!(file.source.kind(), std::io::ErrorKind::InvalidData);
+    }
+}
+
+#[test]
+fn test_load_capturedはuuid重複の実fileとtask_path診断をfilesystemと一致させる() {
+    let storage_dir = TestStorageDir::new();
+    let now = Local.with_ymd_and_hms(2026, 9, 5, 12, 0, 0).unwrap();
+    let duplicate_id = Uuid::from_u128(0x3910);
+    let root = project_root_with_identity("root", duplicate_id, now);
+    root.create_as_last_child(crate::entity::task::TaskAttr::with_identity(
+        "duplicate child",
+        duplicate_id,
+        now,
+    ));
+    let project = Project::new(root, "", "", 5);
+    let project_path = write_project_yaml(
+        &storage_dir,
+        "duplicate",
+        std::str::from_utf8(&TaskRepository::serialize_project(&project).unwrap()).unwrap(),
+    );
+    let (captured_revision, captured_projects) = captured_repository_files(&storage_dir);
+    let mut filesystem = TaskRepository::new(storage_dir.path_str());
+    let filesystem_error = filesystem.load().unwrap_err();
+    let mut captured = TaskRepository::new("unused-captured-storage");
+
+    let captured_error =
+        load_captured_repository(&mut captured, &captured_revision, &captured_projects)
+            .unwrap_err();
+
+    for error in [&filesystem_error, &captured_error] {
+        let duplicate = duplicate_task_id_error(error);
+        assert_eq!(duplicate.task_id(), duplicate_id);
+        assert_eq!(duplicate.first_project_yaml_file_path(), project_path);
+        assert_eq!(duplicate.first_task_path(), "project");
+        assert_eq!(duplicate.duplicate_project_yaml_file_path(), project_path);
+        assert_eq!(duplicate.duplicate_task_path(), "project.children[0]");
+    }
 }
 
 #[test]
