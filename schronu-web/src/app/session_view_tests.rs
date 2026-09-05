@@ -127,10 +127,6 @@ fn each_block_reason_disables_only_the_affected_session_actions() {
             ..card("blocked")
         },
         SessionCardViewModel {
-            manual_check_blocked: true,
-            ..card("blocked")
-        },
-        SessionCardViewModel {
             server_committed: true,
             ..card("blocked")
         },
@@ -139,8 +135,15 @@ fn each_block_reason_disables_only_the_affected_session_actions() {
         assert_eq!(html.matches("disabled").count(), 3, "{html}");
     }
 
+    let manually_blocked = SessionCardViewModel {
+        manual_check_blocked: true,
+        ..card("blocked")
+    };
+    let (html, _) = render(vec![manually_blocked, card("active")], false);
+    assert_eq!(html.matches("disabled").count(), 2, "{html}");
+
     let (globally_blocked, _) = render(vec![card("one"), card("two")], true);
-    assert_eq!(globally_blocked.matches("disabled").count(), 6);
+    assert_eq!(globally_blocked.matches("disabled").count(), 4);
 }
 
 #[test]
@@ -181,21 +184,44 @@ fn enabled_buttons_dispatch_the_exact_typed_callback_once() {
 }
 
 #[test]
-fn disabled_buttons_do_not_dispatch_callbacks() {
+fn safety_blocks_keep_read_and_local_discard_available() {
     let events = Arc::new(Mutex::new(Vec::new()));
     let (auto_dom, auto_ids) = build_dom(Vec::new(), true, Arc::clone(&events));
     for element_id in auto_ids {
         dispatch_click(&auto_dom, element_id);
     }
+    assert_eq!(*events.lock().unwrap(), ["auto"]);
 
-    let blocked = SessionCardViewModel {
-        in_flight: true,
+    events.lock().unwrap().clear();
+    let manually_blocked = SessionCardViewModel {
+        manual_check_blocked: true,
         ..card("blocked")
     };
-    let (action_dom, action_ids) = build_dom(vec![blocked], false, Arc::clone(&events));
+    let (action_dom, action_ids) = build_dom(vec![manually_blocked], true, Arc::clone(&events));
     for element_id in action_ids {
         dispatch_click(&action_dom, element_id);
     }
+    assert_eq!(*events.lock().unwrap(), ["blocked:Discard"]);
+}
 
-    assert!(events.lock().unwrap().is_empty());
+#[test]
+fn in_flight_and_committed_sessions_reject_every_action_callback() {
+    for blocked in [
+        SessionCardViewModel {
+            in_flight: true,
+            ..card("blocked")
+        },
+        SessionCardViewModel {
+            server_committed: true,
+            ..card("blocked")
+        },
+    ] {
+        let events = Arc::new(Mutex::new(Vec::new()));
+        let (action_dom, action_ids) = build_dom(vec![blocked], false, Arc::clone(&events));
+        for element_id in action_ids {
+            dispatch_click(&action_dom, element_id);
+        }
+
+        assert!(events.lock().unwrap().is_empty());
+    }
 }
