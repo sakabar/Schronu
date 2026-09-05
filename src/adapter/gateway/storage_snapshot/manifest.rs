@@ -56,6 +56,19 @@ pub(in crate::adapter::gateway) fn encode_manifest(
         .map_err(|error| SnapshotError::new(SnapshotOperation::Encode, "manifest.json", error))
 }
 
+pub(super) fn encoded_directory_entry_len(
+    operation_path: &Path,
+    path: &Path,
+    mode: Option<u32>,
+) -> Result<u64, SnapshotError> {
+    let bytes = serde_json::to_vec(&DirectoryEntry {
+        path: path.to_path_buf(),
+        mode,
+    })
+    .map_err(|error| SnapshotError::new(SnapshotOperation::Encode, operation_path, error))?;
+    Ok(u64::try_from(bytes.len()).unwrap_or(u64::MAX))
+}
+
 pub(in crate::adapter::gateway) fn decode_manifest(
     manifest_path: &Path,
     bytes: &[u8],

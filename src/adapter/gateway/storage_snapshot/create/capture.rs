@@ -4,6 +4,7 @@ use crate::adapter::gateway::storage_snapshot::error::{
 };
 use crate::adapter::gateway::storage_snapshot::io::{SnapshotFailurePoint, SnapshotIo};
 use crate::adapter::gateway::storage_snapshot::layout::is_reserved_path;
+use crate::adapter::gateway::storage_snapshot::manifest::encoded_directory_entry_len;
 use crate::adapter::gateway::storage_snapshot::SnapshotResourceLimits;
 use std::collections::HashMap;
 use std::fs;
@@ -139,17 +140,16 @@ impl CaptureBuilder<'_> {
                 SnapshotError::new(SnapshotOperation::Read, &display_path, error)
             })?;
             if metadata.is_dir() {
-                let entry_bytes = u64::try_from(
-                    child_relative
-                        .to_str()
-                        .expect("path resource validation accepted valid Unicode")
-                        .len(),
-                )
-                .unwrap_or(u64::MAX)
-                .saturating_add(1);
+                let entry_bytes = encoded_directory_entry_len(
+                    &display_path,
+                    &child_relative,
+                    permission_mode(&metadata.permissions()),
+                )?;
+                let separator_bytes = u64::from(self.directory_manifest_bytes != 0);
                 let observed = self
                     .directory_manifest_bytes
-                    .checked_add(entry_bytes)
+                    .checked_add(separator_bytes)
+                    .and_then(|bytes| bytes.checked_add(entry_bytes))
                     .ok_or_else(|| {
                         SnapshotError::limit(
                             &display_path,
