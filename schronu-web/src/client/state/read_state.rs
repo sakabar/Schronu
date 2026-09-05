@@ -1,10 +1,12 @@
 use super::*;
 use crate::client::date_buttons::logical_date_buttons;
 use crate::{ListTasksRequest, SessionTask, WebSuccess};
+use std::ops::Range;
 
 pub(super) struct ReadState {
     pub(super) snapshot: Option<ServerSnapshot>,
     pub(super) buffer_tracking_started_at_epoch_ms: Option<i64>,
+    pub(super) committed_session_intervals: Vec<Range<i64>>,
     pub(super) date_buttons: Vec<LogicalDateButton>,
     pub(super) selected_logical_date: Option<String>,
     pub(super) scheduled_rows: Vec<ScheduledTaskRow>,
@@ -21,6 +23,7 @@ impl ReadState {
         Self {
             snapshot: None,
             buffer_tracking_started_at_epoch_ms: None,
+            committed_session_intervals: Vec::new(),
             date_buttons: Vec::new(),
             selected_logical_date: None,
             scheduled_rows: Vec::new(),
@@ -184,6 +187,7 @@ impl ClientState {
             self.read.selected_logical_date = None;
             self.read.scheduled_rows.clear();
             self.read.buffer_tracking_started_at_epoch_ms = Some(snapshot.observed_at_epoch_ms);
+            self.read.committed_session_intervals.clear();
         }
         self.read.snapshot = Some(snapshot);
         Some(changed)
@@ -193,6 +197,27 @@ impl ClientState {
         let request_id = self.read.next_request_id;
         self.read.next_request_id = request_id.checked_add(1)?;
         Some(request_id)
+    }
+}
+
+impl ReadState {
+    pub(super) fn record_committed_session_interval(&mut self, interval: Range<i64>) {
+        if interval.start >= interval.end {
+            return;
+        }
+        let mut intervals = std::mem::take(&mut self.committed_session_intervals);
+        intervals.push(interval);
+        intervals.sort_unstable_by_key(|current| current.start);
+
+        for current in intervals {
+            if let Some(previous) = self.committed_session_intervals.last_mut() {
+                if current.start <= previous.end {
+                    previous.end = previous.end.max(current.end);
+                    continue;
+                }
+            }
+            self.committed_session_intervals.push(current);
+        }
     }
 }
 

@@ -163,6 +163,7 @@ impl ClientState {
                 snapshot.buffer_seconds,
                 self.tick_now_epoch_ms,
                 &active_session_starts,
+                &self.read.committed_session_intervals,
             )
             .display_buffer_seconds,
         )
