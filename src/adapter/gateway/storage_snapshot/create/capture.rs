@@ -484,18 +484,64 @@ impl CaptureValidator<'_> {
         {
             return Err(capture_changed(path));
         }
+        let prior_total = self
+            .total_bytes
+            .checked_sub(metadata.len())
+            .ok_or_else(|| {
+                SnapshotError::limit(
+                    path,
+                    SnapshotLimitKind::PayloadBytes,
+                    self.limits.total_bytes,
+                    u64::MAX,
+                    Some(relative.to_path_buf()),
+                )
+            })?;
         let mut offset = 0_usize;
         let mut buffer = [0_u8; 8 * 1024];
+        let read_limit = u64::try_from(expected.bytes.len())
+            .unwrap_or(u64::MAX)
+            .saturating_add(1);
+        let mut bounded = source.take(read_limit);
         loop {
-            let read = source
+            let read = bounded
                 .read(&mut buffer)
                 .map_err(|error| SnapshotError::new(SnapshotOperation::Read, path, error))?;
             if read == 0 {
                 break;
             }
-            let end = offset
-                .checked_add(read)
-                .ok_or_else(|| capture_changed(path))?;
+            let end = offset.checked_add(read).ok_or_else(|| {
+                SnapshotError::limit(
+                    path,
+                    SnapshotLimitKind::FileBytes,
+                    self.limits.file_bytes,
+                    u64::MAX,
+                    Some(relative.to_path_buf()),
+                )
+            })?;
+            let observed_file = u64::try_from(end).unwrap_or(u64::MAX);
+            self.limits.check(
+                path,
+                Some(relative),
+                SnapshotLimitKind::FileBytes,
+                self.limits.file_bytes,
+                observed_file,
+            )?;
+            let observed_total = prior_total.checked_add(observed_file).ok_or_else(|| {
+                SnapshotError::limit(
+                    path,
+                    SnapshotLimitKind::PayloadBytes,
+                    self.limits.total_bytes,
+                    u64::MAX,
+                    Some(relative.to_path_buf()),
+                )
+            })?;
+            self.limits.check(
+                path,
+                Some(relative),
+                SnapshotLimitKind::PayloadBytes,
+                self.limits.total_bytes,
+                observed_total,
+            )?;
             if expected.bytes.get(offset..end) != Some(&buffer[..read]) {
                 return Err(capture_changed(path));
             }
@@ -519,6 +565,37 @@ fn capture_changed(path: impl Into<PathBuf>) -> SnapshotError {
 mod tests {
     use super::*;
 
+    fn validate_growth_after_metadata(
+        storage: &Path,
+        limits: SnapshotResourceLimits,
+    ) -> SnapshotError {
+        use std::io::Write;
+
+        fs::write(storage.join("file"), b"12345").unwrap();
+        let scanned = scan_storage_entries(storage, limits, &FileSystemSnapshotIo).unwrap();
+        let expected = &scanned.files[0];
+        let mut source = File::open(&expected.path).unwrap();
+        let metadata = source.metadata().unwrap();
+        fs::OpenOptions::new()
+            .append(true)
+            .open(&expected.path)
+            .unwrap()
+            .write_all(b"6")
+            .unwrap();
+        let mut validator = CaptureValidator {
+            storage,
+            limits,
+            directories: std::collections::HashMap::new(),
+            files: std::collections::HashMap::from([(expected.relative.as_path(), expected)]),
+            file_count: 0,
+            total_bytes: 0,
+            directory_manifest_bytes: 0,
+        };
+        validator
+            .validate_file(&expected.path, &expected.relative, &mut source, &metadata)
+            .unwrap_err()
+    }
+
     #[test]
     fn capture不変性再検査も同じfile件数上限で停止する() {
         let storage = std::env::temp_dir().join(format!(
@@ -536,6 +613,32 @@ mod tests {
         assert_eq!(error.limit_kind(), Some(SnapshotLimitKind::FileCount));
         assert_eq!(error.limit_value(), Some(1));
         assert_eq!(error.observed_value(), Some(2));
+        fs::remove_dir_all(storage).unwrap();
+    }
+
+    #[test]
+    fn capture不変性streamはmetadata後増大をtyped上限で拒否する() {
+        let storage = std::env::temp_dir().join(format!(
+            "schronu-capture-validation-growth-{}",
+            uuid::Uuid::new_v4().hyphenated()
+        ));
+        fs::create_dir(&storage).unwrap();
+        let file_limits = SnapshotResourceLimits::new(u64::MAX, 1, 5, u64::MAX, usize::MAX, 64);
+
+        let error = validate_growth_after_metadata(&storage, file_limits);
+
+        assert_eq!(error.limit_kind(), Some(SnapshotLimitKind::FileBytes));
+        assert_eq!(error.limit_value(), Some(5));
+        assert_eq!(error.observed_value(), Some(6));
+        assert_eq!(error.limit_path(), Some(Path::new("file")));
+
+        let payload_limits = SnapshotResourceLimits::new(u64::MAX, 1, 6, 5, usize::MAX, 64);
+        let error = validate_growth_after_metadata(&storage, payload_limits);
+
+        assert_eq!(error.limit_kind(), Some(SnapshotLimitKind::PayloadBytes));
+        assert_eq!(error.limit_value(), Some(5));
+        assert_eq!(error.observed_value(), Some(6));
+        assert_eq!(error.limit_path(), Some(Path::new("file")));
         fs::remove_dir_all(storage).unwrap();
     }
 }
