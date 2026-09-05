@@ -291,6 +291,33 @@ fn repository_state_uncertain後はpage全体のmutationを停止する() {
 }
 
 #[test]
+fn repository確認buttonはglobal_block中かつ応答待ちなしの場合だけ有効になる() {
+    let storage = FakeStorage::default();
+    let mut state = state_with_sessions(&storage, &[TASK_ID, OTHER_TASK_ID]);
+    assert!(!state.can_confirm_repository_checked());
+
+    let (first_id, _) = record_effect(state.begin_record_session(&storage, TASK_ID));
+    let (second_id, _) = record_effect(state.begin_record_session(&storage, OTHER_TASK_ID));
+    state.apply_record_result(
+        &storage,
+        first_id,
+        Err(ServerFailure::Transport("detail".to_owned())),
+    );
+    assert!(state.mutation_globally_blocked());
+    assert!(!state.can_confirm_repository_checked());
+
+    state.apply_record_result(
+        &storage,
+        second_id,
+        Err(ServerFailure::Operation(web_error(
+            web_error_codes::REPOSITORY_SAVE_FAILED,
+            RetryAdvice::Retry,
+        ))),
+    );
+    assert!(state.can_confirm_repository_checked());
+}
+
+#[test]
 fn repository_state_uncertainのblockは別keyへ保存しreload後も復元する() {
     let storage = FakeStorage::default();
     let mut state = state_with_sessions(&storage, &[TASK_ID, OTHER_TASK_ID]);
