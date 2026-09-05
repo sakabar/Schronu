@@ -81,6 +81,22 @@ fn interactive_parser_reports_typed_errors_for_incomplete_lexemes() {
 }
 
 #[test]
+fn ignored_interactive_input_bypasses_lexer_errors() {
+    for input in [
+        "   \u{3000}",
+        "# 'unfinished",
+        " \u{3000}# \"unfinished",
+        r"0\",
+    ] {
+        assert_eq!(
+            parse_command(input, ParseMode::Interactive).unwrap(),
+            Command::Noop,
+            "input: {input:?}"
+        );
+    }
+}
+
+#[test]
 fn noninteractive_string_parser_does_not_apply_interactive_lexer_rules() {
     assert_eq!(
         parse_command(r#"新 "alpha" 15"#, ParseMode::NonInteractive).unwrap(),

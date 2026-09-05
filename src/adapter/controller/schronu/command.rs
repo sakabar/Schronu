@@ -402,6 +402,10 @@ pub(super) fn validate_command_input(command: &Command) -> Result<(), CommandVal
 }
 
 pub(super) fn parse_command(input: &str, mode: ParseMode) -> Result<Command, CommandParseError> {
+    if input.trim().is_empty() || input.trim_start().starts_with('#') || input.starts_with('0') {
+        return Ok(Command::Noop);
+    }
+
     let tokens = match mode {
         ParseMode::Interactive => tokenize(input).map_err(|error| {
             CommandParseError::new(
@@ -416,9 +420,6 @@ pub(super) fn parse_command(input: &str, mode: ParseMode) -> Result<Command, Com
             .map(str::to_string)
             .collect::<Vec<_>>(),
     };
-    if input.starts_with('0') {
-        return Ok(Command::Noop);
-    }
     parse_command_tokens(&tokens, mode)
 }
 
