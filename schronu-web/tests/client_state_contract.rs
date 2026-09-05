@@ -484,6 +484,35 @@ fn 未来日の一覧は今日のsnapshotと共に適用する() {
     assert_eq!(state.scheduled_rows()[0].task.task_id, TASK_ID);
 }
 
+#[test]
+fn auto_sessionは古いsnapshotを無視してtask_payloadを適用する() {
+    let storage = FakeStorage::default();
+    let mut state = ClientState::new(load_work_sessions(&storage).unwrap(), 5_000);
+    let bootstrap_id = bootstrap_effect(state.request_bootstrap());
+    state.apply_bootstrap_result(bootstrap_id, Ok(snapshot("2026-09-05", 200)));
+    let auto_id = auto_effect(state.request_auto_session());
+
+    state.apply_auto_session_result(
+        &storage,
+        auto_id,
+        Ok(WebSuccess {
+            snapshot: snapshot("2026-09-05", 100),
+            data: Some(row(TASK_ID, 0).task),
+        }),
+    );
+
+    assert_eq!(state.snapshot().unwrap().observed_at_epoch_ms, 200);
+    assert_eq!(state.sessions()[0].task_id, TASK_ID);
+    assert_eq!(
+        state
+            .history()
+            .iter()
+            .filter(|entry| entry.operation == Operation::AutoSession)
+            .count(),
+        1
+    );
+}
+
 #[derive(Default)]
 struct FakeStorage {
     value: RefCell<Option<String>>,
