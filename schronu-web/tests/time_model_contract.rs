@@ -72,17 +72,18 @@ fn session_timing_avoids_i64_overflow() {
 
 #[test]
 fn buffer_timing_counts_down_from_the_server_observation_epoch() {
-    let timing = buffer_timing(1_000_000, 60, 1_061_999, &[]);
+    let timing = buffer_timing(1_000_000, 1_000_000, 60, 1_061_999, &[]);
     assert_eq!(timing.snapshot_elapsed_seconds, 61);
     assert_eq!(timing.buffer_elapsed_seconds, 61);
+    assert_eq!(timing.session_credit_seconds, 0);
     assert_eq!(timing.display_buffer_seconds, -1);
 
-    let backward_clock = buffer_timing(1_000_000, 60, 999_000, &[]);
+    let backward_clock = buffer_timing(1_000_000, 1_000_000, 60, 999_000, &[]);
     assert_eq!(backward_clock.snapshot_elapsed_seconds, 0);
     assert_eq!(backward_clock.buffer_elapsed_seconds, 0);
     assert_eq!(backward_clock.display_buffer_seconds, 60);
 
-    let boundary = buffer_timing(i64::MIN, i64::MIN, i64::MAX, &[]);
+    let boundary = buffer_timing(i64::MIN, i64::MIN, i64::MIN, i64::MAX, &[]);
     assert_eq!(boundary.snapshot_elapsed_seconds, 18_446_744_073_709_551);
     assert_eq!(boundary.buffer_elapsed_seconds, 18_446_744_073_709_551);
     assert_eq!(
@@ -93,34 +94,54 @@ fn buffer_timing_counts_down_from_the_server_observation_epoch() {
 
 #[test]
 fn buffer_timing_counts_only_time_without_an_active_session() {
-    let active_at_snapshot = buffer_timing(1_000_000, 60, 1_061_999, &[900_000]);
+    let active_at_snapshot = buffer_timing(1_000_000, 1_000_000, 60, 1_061_999, &[900_000]);
     assert_eq!(active_at_snapshot.snapshot_elapsed_seconds, 61);
     assert_eq!(active_at_snapshot.buffer_elapsed_seconds, 0);
     assert_eq!(active_at_snapshot.display_buffer_seconds, 60);
 
-    let started_after_idle = buffer_timing(1_000_000, 60, 1_061_999, &[1_010_500]);
+    let started_after_idle = buffer_timing(1_000_000, 1_000_000, 60, 1_061_999, &[1_010_500]);
     assert_eq!(started_after_idle.snapshot_elapsed_seconds, 61);
     assert_eq!(started_after_idle.buffer_elapsed_seconds, 10);
     assert_eq!(started_after_idle.display_buffer_seconds, 50);
 
-    let future_start_after_clock_reversal = buffer_timing(1_000_000, 60, 1_005_000, &[1_010_000]);
+    let future_start_after_clock_reversal =
+        buffer_timing(1_000_000, 1_000_000, 60, 1_005_000, &[1_010_000]);
     assert_eq!(future_start_after_clock_reversal.buffer_elapsed_seconds, 5);
     assert_eq!(future_start_after_clock_reversal.display_buffer_seconds, 55);
 }
 
 #[test]
 fn buffer_timing_uses_the_union_of_remaining_sessions_after_discard() {
-    let overlapping_sessions = buffer_timing(1_000_000, 60, 1_061_999, &[1_010_500, 1_020_500]);
+    let overlapping_sessions =
+        buffer_timing(1_000_000, 1_000_000, 60, 1_061_999, &[1_010_500, 1_020_500]);
     assert_eq!(overlapping_sessions.buffer_elapsed_seconds, 10);
     assert_eq!(overlapping_sessions.display_buffer_seconds, 50);
 
-    let earliest_discarded = buffer_timing(1_000_000, 60, 1_061_999, &[1_020_500]);
+    let earliest_discarded = buffer_timing(1_000_000, 1_000_000, 60, 1_061_999, &[1_020_500]);
     assert_eq!(earliest_discarded.buffer_elapsed_seconds, 20);
     assert_eq!(earliest_discarded.display_buffer_seconds, 40);
 
-    let all_discarded = buffer_timing(1_000_000, 60, 1_061_999, &[]);
+    let all_discarded = buffer_timing(1_000_000, 1_000_000, 60, 1_061_999, &[]);
     assert_eq!(all_discarded.buffer_elapsed_seconds, 61);
     assert_eq!(all_discarded.display_buffer_seconds, -1);
+}
+
+#[test]
+fn buffer_timing_carries_active_session_time_across_newer_snapshots() {
+    let active = buffer_timing(1_030_000, 1_000_000, 30, 1_040_000, &[1_010_000]);
+    assert_eq!(active.snapshot_elapsed_seconds, 10);
+    assert_eq!(active.buffer_elapsed_seconds, 0);
+    assert_eq!(active.session_credit_seconds, 20);
+    assert_eq!(active.display_buffer_seconds, 50);
+
+    let earliest_discarded = buffer_timing(1_030_000, 1_000_000, 30, 1_040_000, &[1_020_000]);
+    assert_eq!(earliest_discarded.session_credit_seconds, 10);
+    assert_eq!(earliest_discarded.display_buffer_seconds, 40);
+
+    let all_discarded = buffer_timing(1_030_000, 1_000_000, 30, 1_040_000, &[]);
+    assert_eq!(all_discarded.session_credit_seconds, 0);
+    assert_eq!(all_discarded.buffer_elapsed_seconds, 10);
+    assert_eq!(all_discarded.display_buffer_seconds, 20);
 }
 
 #[test]
