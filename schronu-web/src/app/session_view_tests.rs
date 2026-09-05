@@ -157,15 +157,37 @@ fn session操作は意味別classと狭幅1列layoutを持つ() {
 
     let css = include_str!("../../assets/main.css");
     assert!(!css.contains(".session-actions button:nth-child"));
+    for (selector, declaration) in [
+        (".session-action-discard", "color: var(--muted);"),
+        (".session-action-record", "color: var(--blue-dark);"),
+        (
+            ".session-action-complete-without-recording",
+            "color: var(--red);",
+        ),
+        (".session-action-complete", "color: var(--green-dark);"),
+    ] {
+        assert!(css_rule_body(css, selector).contains(declaration));
+    }
     let narrow_layout = css
         .split_once("@media (max-width: 34rem)")
         .expect("narrow viewport rule must exist")
         .1;
-    let session_actions = narrow_layout
-        .split_once(".session-actions")
-        .expect("narrow session actions rule must exist")
-        .1;
-    assert!(session_actions.contains("grid-template-columns: 1fr;"));
+    assert!(
+        css_rule_body(narrow_layout, ".session-actions").contains("grid-template-columns: 1fr;")
+    );
+}
+
+fn css_rule_body<'a>(css: &'a str, selector: &str) -> &'a str {
+    let (_, after_selector) = css
+        .split_once(selector)
+        .unwrap_or_else(|| panic!("CSS selector must exist: {selector}"));
+    let (_, after_opening_brace) = after_selector
+        .split_once('{')
+        .unwrap_or_else(|| panic!("CSS rule must open a block: {selector}"));
+    after_opening_brace
+        .split_once('}')
+        .unwrap_or_else(|| panic!("CSS rule must close a block: {selector}"))
+        .0
 }
 
 #[test]
