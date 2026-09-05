@@ -7834,20 +7834,14 @@ fn test_format_focus_progress_114パーセントで超過分の記号を表示�
 }
 
 #[test]
-fn test_format_focus_progress_巨大な率は数値を維持して超過記号だけを制限する() {
-    let expected_percentage = i128::from(i64::MAX) * 100;
-
+fn test_format_focus_progress_超過記号数は従来どおり上限を設けない() {
     assert_eq!(
         format_focus_progress(100, 201, 0),
-        format!("[{}]{} 201%", "█".repeat(100), ">".repeat(100))
+        format!("[{}]{} 201%", "█".repeat(100), ">".repeat(101))
     );
     assert_eq!(
-        format_focus_progress(1, i64::MAX, 0),
-        format!(
-            "[{}]{} {expected_percentage}%",
-            "█".repeat(100),
-            ">".repeat(100)
-        )
+        format_focus_progress(100, 300, 0),
+        format!("[{}]{} 300%", "█".repeat(100), ">".repeat(200))
     );
 }
 
