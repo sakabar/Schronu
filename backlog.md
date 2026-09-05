@@ -1661,7 +1661,7 @@
 #### 現状と根拠
 
 - task treeの読込、走査、schedule・view生成には再帰処理が残っており、大規模storageでは通常のthread stackを使い切る。
-- `schronu-web`は`TodayTextService`を実行する専用worker threadへ32MiBのstackを予約し、実データ処理時のstack overflowを防御している。
+- `schronu-web`はbootstrap、一覧取得、自動セッション選定、実績記録、完了を処理する専用worker threadへ32MiBのstackを予約し、実データ処理時のstack overflowを防御している。
 - この予約はWeb serverのprocess abortを防ぐための局所的な対策であり、再帰処理そのもののstack消費量や入力規模に対する上限は解消していない。
 
 #### 影響
