@@ -273,6 +273,71 @@ fn 完了effectは計測の記録方針と履歴種別を保持する() {
 }
 
 #[test]
+fn 計測破棄完了は多重送信と不確実な再送を防ぐ() {
+    let transport_storage = FakeStorage::default();
+    let mut transport_state = state_with_sessions(&transport_storage, &[TASK_ID, OTHER_TASK_ID]);
+    let (transport_request_id, _) = complete_effect(
+        transport_state.begin_complete_session_without_recording(&transport_storage, TASK_ID),
+    );
+    assert_eq!(
+        transport_state.begin_complete_session_without_recording(&transport_storage, TASK_ID),
+        ClientEffect::None
+    );
+    transport_state.apply_complete_result(
+        &transport_storage,
+        transport_request_id,
+        Err(ServerFailure::Transport("detail".to_owned())),
+    );
+    assert!(transport_state.mutation_globally_blocked());
+    let mut restored = load_client_state(&transport_storage, 0).unwrap();
+    assert!(restored.mutation_globally_blocked());
+    assert_eq!(
+        restored.begin_complete_session_without_recording(&transport_storage, OTHER_TASK_ID),
+        ClientEffect::None
+    );
+
+    let manual_storage = FakeStorage::default();
+    let mut manual_state = state_with_sessions(&manual_storage, &[TASK_ID]);
+    let (manual_request_id, _) = complete_effect(
+        manual_state.begin_complete_session_without_recording(&manual_storage, TASK_ID),
+    );
+    manual_state.apply_complete_result(
+        &manual_storage,
+        manual_request_id,
+        Err(ServerFailure::Operation(web_error(
+            web_error_codes::ACTUAL_WORK_CONFLICT,
+            RetryAdvice::ManualCheck,
+        ))),
+    );
+    assert!(manual_state.is_session_manual_check_blocked(TASK_ID));
+    assert_eq!(
+        manual_state.begin_complete_session_without_recording(&manual_storage, TASK_ID),
+        ClientEffect::None
+    );
+
+    let committed_storage = FakeStorage::default();
+    let mut committed_state = state_with_sessions(&committed_storage, &[TASK_ID]);
+    let (committed_request_id, _) = complete_effect(
+        committed_state.begin_complete_session_without_recording(&committed_storage, TASK_ID),
+    );
+    committed_storage.fail_work_session_writes.set(true);
+    committed_state.apply_complete_result(
+        &committed_storage,
+        committed_request_id,
+        Ok(snapshot("2026-09-05", 1)),
+    );
+    assert_eq!(committed_state.sessions().len(), 1);
+    assert!(committed_state.is_session_committed_blocked(TASK_ID));
+    assert_eq!(
+        committed_state.begin_complete_session_without_recording(&committed_storage, TASK_ID),
+        ClientEffect::None
+    );
+    assert!(load_client_state(&committed_storage, 0)
+        .unwrap()
+        .mutation_globally_blocked());
+}
+
+#[test]
 fn mutation成功時だけsessionを消し履歴を最新100件へ制限する() {
     let storage = FakeStorage::default();
     let mut state = state_with_sessions(&storage, &[TASK_ID]);
