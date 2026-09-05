@@ -25,3 +25,9 @@ mod recovery {
 
     include!("storage_snapshot_tests/recovery.rs");
 }
+
+mod verify {
+    use super::*;
+
+    include!("storage_snapshot_tests/verify.rs");
+}
