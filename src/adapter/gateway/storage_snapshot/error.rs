@@ -48,31 +48,30 @@ impl SnapshotError {
         Self::new(operation, path, source)
     }
 
-    pub(super) fn followup_failure<E>(
-        primary: Self,
-        operation: SnapshotOperation,
-        path: impl Into<PathBuf>,
-        action: &'static str,
-        followup: E,
-    ) -> Self
+    pub(super) fn followup_failure<E>(primary: Self, action: &'static str, followup: E) -> Self
     where
         E: Error + Send + Sync + 'static,
     {
-        Self::new(
+        let Self {
             operation,
             path,
-            SnapshotFollowupError {
-                primary,
+            source,
+        } = primary;
+        Self {
+            operation,
+            path,
+            source: Box::new(SnapshotFollowupError {
+                primary: source,
                 action,
                 followup: Box::new(followup),
-            },
-        )
+            }),
+        }
     }
 }
 
 #[derive(Debug)]
 struct SnapshotFollowupError {
-    primary: SnapshotError,
+    primary: Box<dyn Error + Send + Sync>,
     action: &'static str,
     followup: Box<dyn Error + Send + Sync>,
 }
@@ -89,7 +88,7 @@ impl fmt::Display for SnapshotFollowupError {
 
 impl Error for SnapshotFollowupError {
     fn source(&self) -> Option<&(dyn Error + 'static)> {
-        Some(&self.primary)
+        Some(self.followup.as_ref())
     }
 }
 

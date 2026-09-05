@@ -167,13 +167,7 @@ fn create_snapshot_impl(
             .remove_published_directory_if_present(&staging_name, &staging_directory)
         {
             Ok(()) => Err(primary),
-            Err(cleanup) => Err(SnapshotError::followup_failure(
-                primary,
-                SnapshotOperation::Write,
-                &staging,
-                "cleanup",
-                cleanup,
-            )),
+            Err(cleanup) => Err(SnapshotError::followup_failure(primary, "cleanup", cleanup)),
         };
     }
     Ok(SnapshotSummary::new(revision, collected.files.len()))
@@ -478,8 +472,6 @@ fn publish_snapshot(
         {
             return Err(SnapshotError::followup_failure(
                 primary,
-                SnapshotOperation::Write,
-                staging.destination,
                 "cleanup",
                 cleanup_error,
             ));
@@ -487,11 +479,6 @@ fn publish_snapshot(
         if let Err(sync_error) = staging.target.parent.sync(io) {
             return Err(SnapshotError::followup_failure(
                 primary,
-                SnapshotOperation::Sync,
-                staging
-                    .destination
-                    .parent()
-                    .expect("destination has a parent"),
                 "rollback parent sync",
                 sync_error,
             ));

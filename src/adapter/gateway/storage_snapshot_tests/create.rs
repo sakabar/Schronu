@@ -4,6 +4,7 @@ use crate::adapter::gateway::storage_snapshot::{
     create_snapshot_with_failure, create_snapshot_with_failure_observation, SnapshotFailurePoint,
 };
 use chrono::TimeZone;
+use std::error::Error;
 
 #[test]
 fn snapshotはlock下の全永続dataとpermissionを保存して予約領域を除外する() {
@@ -167,12 +168,22 @@ fn snapshot作成は差し替えられたstaging_directoryを公開しない() {
         fs::create_dir(&staging).unwrap();
         fs::write(staging.join("foreign"), b"preserve").unwrap();
     })
-    .unwrap_err()
-    .to_string();
+    .unwrap_err();
+    let mut source_chain = Vec::new();
+    let mut source = error.source();
+    while let Some(current) = source {
+        source_chain.push(current.to_string());
+        source = current.source();
+    }
+    let display = error.to_string();
 
-    assert!(error.contains("staging directory was replaced before publication"));
-    assert!(error.contains("cleanup failed"));
-    assert!(error.contains("published destination was replaced before rollback"));
+    assert_eq!(error.path(), destination);
+    assert!(display.contains("staging directory was replaced before publication"));
+    assert!(display.contains("cleanup failed"));
+    assert!(display.contains("published destination was replaced before rollback"));
+    assert!(source_chain
+        .iter()
+        .any(|source| source.contains("published destination was replaced before rollback")));
     assert!(!destination.exists());
     assert!(displaced.join("manifest.json").is_file());
     let foreign = fs::read_dir(&root.path)

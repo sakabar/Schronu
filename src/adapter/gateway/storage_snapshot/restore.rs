@@ -81,13 +81,7 @@ fn restore_snapshot_impl(
             .remove_published_directory_if_present(&staging_name, &staging_directory)
         {
             Ok(()) => Err(primary),
-            Err(cleanup) => Err(SnapshotError::followup_failure(
-                primary,
-                SnapshotOperation::Write,
-                &staging,
-                "cleanup",
-                cleanup,
-            )),
+            Err(cleanup) => Err(SnapshotError::followup_failure(primary, "cleanup", cleanup)),
         };
     }
     Ok(SnapshotSummary::new(
@@ -223,8 +217,6 @@ fn materialize_restore(
         {
             return Err(SnapshotError::followup_failure(
                 primary,
-                SnapshotOperation::Write,
-                destination,
                 "cleanup",
                 cleanup_error,
             ));
@@ -232,8 +224,6 @@ fn materialize_restore(
         if let Err(sync_error) = publication.parent.sync(io) {
             return Err(SnapshotError::followup_failure(
                 primary,
-                SnapshotOperation::Sync,
-                destination.parent().expect("destination has a parent"),
                 "rollback parent sync",
                 sync_error,
             ));
