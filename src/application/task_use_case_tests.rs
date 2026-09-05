@@ -1001,6 +1001,117 @@ fn complete_task_実績を加算して完了する() {
 }
 
 #[test]
+fn complete_task_expected実績が一致すれば加算して完了する() {
+    let task = crate::test_support::new_task_handle("完了").unwrap();
+    task.set_actual_work_seconds(60).unwrap();
+    let task_id = task.get_id().unwrap();
+    let mut repository = TestTaskRepository::new(vec![task], fixed_now());
+
+    let output = complete_task_with_fresh_factory(
+        &mut repository,
+        CompleteTaskInput {
+            task_id,
+            finished_at: fixed_now(),
+            additional_actual_work_seconds: 120,
+            expected_actual_work_seconds: Some(60),
+        },
+    )
+    .unwrap();
+
+    let task = repository.get_by_id(task_id).unwrap().unwrap();
+    assert_eq!(task.get_status().unwrap(), Status::Done);
+    assert_eq!(task.get_end_time_opt().unwrap(), Some(fixed_now()));
+    assert_eq!(task.get_actual_work_seconds().unwrap(), 180);
+    assert_eq!(output.next_focus_task_id, None);
+    assert_eq!(output.next_repetition_task_id, None);
+}
+
+#[test]
+fn complete_task_expected実績が不一致なら反復taskを準備せず何も変更しない() {
+    let parent = crate::test_support::new_task_handle("ルーチン").unwrap();
+    parent.set_repetition_interval_days_opt(Some(7)).unwrap();
+    parent.set_estimated_work_seconds(600).unwrap();
+    let task = parent.create_as_last_child(crate::test_support::new_task_attr("今回"));
+    task.set_actual_work_seconds(60).unwrap();
+    let task_id = task.get_id().unwrap();
+    let parent_before = parent.snapshot().unwrap();
+    let task_before = task.snapshot().unwrap();
+    let children_before = parent
+        .get_children()
+        .unwrap()
+        .into_iter()
+        .map(|child| child.get_id().unwrap())
+        .collect::<Vec<_>>();
+    let mut repository = TestTaskRepository::new(vec![parent.clone()], fixed_now());
+    let id_call_count = Cell::new(0);
+    let mut next_id = || {
+        id_call_count.set(id_call_count.get() + 1);
+        Uuid::from_u128(0x104)
+    };
+    let mut factory = TaskFactory::new(fixed_now(), &mut next_id);
+
+    let actual = complete_task(
+        &mut repository,
+        CompleteTaskInput {
+            task_id,
+            finished_at: fixed_now(),
+            additional_actual_work_seconds: 120,
+            expected_actual_work_seconds: Some(59),
+        },
+        &mut factory,
+    );
+
+    assert_eq!(
+        actual,
+        Err(ApplicationError::ActualWorkConflict {
+            task_id,
+            expected_actual_work_seconds: 59,
+            actual_work_seconds: 60,
+        })
+    );
+    assert_eq!(id_call_count.get(), 0);
+    assert_eq!(parent.snapshot().unwrap(), parent_before);
+    assert_eq!(task.snapshot().unwrap(), task_before);
+    assert_eq!(task.get_status().unwrap(), Status::Todo);
+    assert_eq!(task.get_end_time_opt().unwrap(), None);
+    assert_eq!(task.get_actual_work_seconds().unwrap(), 60);
+    assert_eq!(parent.get_estimated_work_seconds().unwrap(), 600);
+    assert_eq!(
+        parent
+            .get_children()
+            .unwrap()
+            .into_iter()
+            .map(|child| child.get_id().unwrap())
+            .collect::<Vec<_>>(),
+        children_before
+    );
+}
+
+#[test]
+fn complete_task_expected実績なしは従来どおり加算して完了する() {
+    let task = crate::test_support::new_task_handle("完了").unwrap();
+    task.set_actual_work_seconds(60).unwrap();
+    let task_id = task.get_id().unwrap();
+    let mut repository = TestTaskRepository::new(vec![task], fixed_now());
+
+    complete_task_with_fresh_factory(
+        &mut repository,
+        CompleteTaskInput {
+            task_id,
+            finished_at: fixed_now(),
+            additional_actual_work_seconds: 120,
+            expected_actual_work_seconds: None,
+        },
+    )
+    .unwrap();
+
+    let task = repository.get_by_id(task_id).unwrap().unwrap();
+    assert_eq!(task.get_status().unwrap(), Status::Done);
+    assert_eq!(task.get_end_time_opt().unwrap(), Some(fixed_now()));
+    assert_eq!(task.get_actual_work_seconds().unwrap(), 180);
+}
+
+#[test]
 fn complete_task_反復なしではtask_factoryのidを消費しない() {
     let task = crate::test_support::new_task_handle("単発").unwrap();
     let task_id = task.get_id().unwrap();
