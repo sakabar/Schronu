@@ -618,6 +618,54 @@ fn open_parent_directory(directory: &File) -> std::io::Result<File> {
     }
 }
 
+#[cfg(all(test, any(target_os = "macos", target_os = "linux")))]
+mod cleanup_limit_tests {
+    use super::*;
+
+    fn stable_directory(label: &str) -> (std::path::PathBuf, StableDirectory) {
+        let root = std::env::temp_dir().join(format!(
+            "schronu-cleanup-limit-{label}-{}",
+            uuid::Uuid::new_v4().hyphenated()
+        ));
+        fs::create_dir(&root).unwrap();
+        let directory = File::open(&root).unwrap();
+        (root, StableDirectory { directory })
+    }
+
+    #[test]
+    fn rollback_cleanupは処理entry上限で停止する() {
+        let (root, directory) = stable_directory("entries");
+        fs::write(root.join("first"), b"first").unwrap();
+        fs::write(root.join("second"), b"second").unwrap();
+        let limits = CleanupLimits {
+            max_depth: 64,
+            max_entries: 1,
+        };
+
+        let error = directory.remove_contents_with_limits(limits).unwrap_err();
+
+        assert_eq!(error.kind(), std::io::ErrorKind::InvalidData);
+        assert!(error.to_string().contains("cleanup entry limit"));
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn rollback_cleanupは再帰depth上限で停止する() {
+        let (root, directory) = stable_directory("depth");
+        fs::create_dir_all(root.join("first/second")).unwrap();
+        let limits = CleanupLimits {
+            max_depth: 1,
+            max_entries: 10,
+        };
+
+        let error = directory.remove_contents_with_limits(limits).unwrap_err();
+
+        assert_eq!(error.kind(), std::io::ErrorKind::InvalidData);
+        assert!(error.to_string().contains("cleanup depth limit"));
+        fs::remove_dir_all(root).unwrap();
+    }
+}
+
 #[cfg(target_os = "macos")]
 fn rename_at_no_replace(
     parent: std::os::fd::RawFd,
