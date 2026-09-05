@@ -1,41 +1,11 @@
 #![cfg(unix)]
 
-use std::io::Write;
-use std::path::Path;
-use std::process::{Command, Output, Stdio};
+#[path = "task_name_contract_support/spreadsheet.rs"]
+mod spreadsheet_support;
+
+use spreadsheet_support::{run_generator, spreadsheet_row};
 
 const COLUMN_COUNT: usize = 19;
-
-fn repository_path(path: &str) -> std::path::PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).join(path)
-}
-
-fn spreadsheet_row(task_name: &str) -> String {
-    let mut columns = vec![""; COLUMN_COUNT];
-    columns[9] = task_name;
-    columns[18] = "0:00:00";
-    columns.join("\t")
-}
-
-fn run_generator(input: &[u8]) -> Output {
-    let mut child = Command::new("zsh")
-        .arg(repository_path(
-            "shell/generate_command_from_spreadsheet.sh",
-        ))
-        .arg("--stdin")
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .expect("Spreadsheet generator starts");
-    child
-        .stdin
-        .take()
-        .expect("generator stdin")
-        .write_all(input)
-        .expect("Spreadsheet input is written");
-    child.wait_with_output().expect("generator exits")
-}
 
 fn assert_rejected(input: &[u8], line: usize, diagnostic: &str) {
     let output = run_generator(input);

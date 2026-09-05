@@ -1,40 +1,10 @@
 use schronu::adapter::gateway::task_repository::TaskRepository;
 use schronu::application::interface::TaskRepositoryTrait;
-use std::error::Error;
-use std::fs;
-use std::path::PathBuf;
-use uuid::Uuid;
 
-struct TestStorageDir {
-    path: PathBuf,
-}
+#[path = "task_name_contract_support/yaml.rs"]
+mod yaml_support;
 
-impl TestStorageDir {
-    fn new() -> Self {
-        let path = std::env::temp_dir().join(format!(
-            "schronu-task-name-yaml-contract-{}",
-            Uuid::new_v4()
-        ));
-        fs::create_dir_all(&path).unwrap();
-        Self { path }
-    }
-
-    fn write_project(&self, yaml: &str) -> PathBuf {
-        let project_dir = self.path.join("project");
-        fs::create_dir_all(&project_dir).unwrap();
-        let project_yaml_path = project_dir.join("project.yaml");
-        fs::write(&project_yaml_path, yaml).unwrap();
-        project_yaml_path
-    }
-}
-
-impl Drop for TestStorageDir {
-    fn drop(&mut self) {
-        if self.path.exists() {
-            fs::remove_dir_all(&self.path).unwrap();
-        }
-    }
-}
+use yaml_support::{error_chain, TestStorageDir};
 
 #[test]
 fn repository_loadはproject_yamlの実pathとchild名のcanonical診断を保持する() {
@@ -54,14 +24,4 @@ fn repository_loadはproject_yamlの実pathとchild名のcanonical診断を保�
         diagnostic.contains("project.children[0].name: must not contain control characters"),
         "diagnostic must retain task path and canonical reason: {diagnostic}"
     );
-}
-
-fn error_chain(error: &(dyn Error + 'static)) -> String {
-    let mut messages = Vec::new();
-    let mut current = Some(error);
-    while let Some(source) = current {
-        messages.push(source.to_string());
-        current = source.source();
-    }
-    messages.join("\ncaused by: ")
 }

@@ -1,90 +1,12 @@
-use chrono::{Local, Timelike};
-use schronu::adapter::gateway::task_repository::TaskRepository;
-use schronu::application::interface::TaskRepositoryTrait;
-use schronu::entity::task::TaskHandle;
 use std::collections::BTreeMap;
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Output};
-use uuid::Uuid;
 
-struct CliFixture {
-    root: PathBuf,
-    storage: PathBuf,
-    config: PathBuf,
-}
+#[path = "task_name_contract_support/cli.rs"]
+mod cli_support;
 
-impl CliFixture {
-    fn seeded() -> Self {
-        let root = std::env::temp_dir().join(format!(
-            "schronu-task-name-cli-contract-{}",
-            Uuid::new_v4().hyphenated()
-        ));
-        let storage = root.join("storage");
-        fs::create_dir_all(&storage).unwrap();
-
-        let busy_time_slots = root.join("busy_time_slots.yaml");
-        fs::write(&busy_time_slots, valid_busy_time_slots_yaml()).unwrap();
-        let config = root.join("schronu.yaml");
-        fs::write(
-            &config,
-            format!("busy_time_slots_yaml_path: {}\n", busy_time_slots.display()),
-        )
-        .unwrap();
-
-        let now = Local::now().with_nanosecond(0).unwrap();
-        let task = TaskHandle::with_identity("既存task", Uuid::new_v4(), now).unwrap();
-        let mut repository = TaskRepository::new(storage.to_str().unwrap());
-        repository.sync_clock(now).unwrap();
-        repository.load().unwrap();
-        repository.start_new_project(task).unwrap();
-        repository.save().unwrap();
-
-        Self {
-            root,
-            storage,
-            config,
-        }
-    }
-
-    fn command(&self, args: &[&str]) -> Command {
-        let mut command = Command::new(env!("CARGO_BIN_EXE_schronu"));
-        command
-            .args(args)
-            .env("SCHRONU_STORAGE_DIR", &self.storage)
-            .env("SCHRONU_CONFIG_PATH", &self.config);
-        command
-    }
-
-    fn run(&self, args: &[&str]) -> Output {
-        self.command(args).output().unwrap()
-    }
-
-    fn stored_project_names(&self) -> Vec<String> {
-        let mut repository = TaskRepository::new(self.storage.to_str().unwrap());
-        repository.sync_clock(Local::now()).unwrap();
-        repository.load().unwrap();
-        repository
-            .get_all_projects()
-            .into_iter()
-            .map(|task| task.get_name().unwrap())
-            .collect()
-    }
-
-    fn persistent_storage_bytes_excluding_process_lock(&self) -> BTreeMap<PathBuf, Vec<u8>> {
-        let mut files = BTreeMap::new();
-        collect_directory_bytes(&self.storage, &self.storage, &mut files);
-        files.remove(Path::new(".lock"));
-        files
-    }
-}
-
-impl Drop for CliFixture {
-    fn drop(&mut self) {
-        let _ = fs::remove_dir_all(&self.root);
-    }
-}
+use cli_support::CliFixture;
 
 #[test]
 fn 非対話cliはosのtask名argvを原文のまま保存する() {
@@ -94,7 +16,7 @@ fn 非対話cliはosのtask名argvを原文のまま保存する() {
     ];
 
     for task_name in task_names {
-        let fixture = CliFixture::seeded();
+        let fixture = CliFixture::new(true);
 
         let output = fixture.run(&["新", task_name]);
 
@@ -115,8 +37,8 @@ fn 非対話cliはosのtask名argvを原文のまま保存する() {
 
 #[test]
 fn 非対話cliは単一argvのcommand全文を暗黙分割しない() {
-    let fixture = CliFixture::seeded();
-    let storage_before = fixture.persistent_storage_bytes_excluding_process_lock();
+    let fixture = CliFixture::new(true);
+    let storage_before = persistent_storage_bytes_excluding_process_lock(&fixture);
 
     let output = fixture.run(&["新 legacy-name"]);
 
@@ -126,7 +48,7 @@ fn 非対話cliは単一argvのcommand全文を暗黙分割しない() {
         String::from_utf8_lossy(&output.stderr)
     );
     assert_eq!(
-        fixture.persistent_storage_bytes_excluding_process_lock(),
+        persistent_storage_bytes_excluding_process_lock(&fixture),
         storage_before
     );
 }
@@ -134,8 +56,8 @@ fn 非対話cliは単一argvのcommand全文を暗黙分割しない() {
 #[test]
 fn 非対話cliはcontrol名を入力errorにしてstorageを変更しない() {
     for task_name in ["ESC\u{1b}name", "tab\tname"] {
-        let fixture = CliFixture::seeded();
-        let storage_before = fixture.persistent_storage_bytes_excluding_process_lock();
+        let fixture = CliFixture::new(true);
+        let storage_before = persistent_storage_bytes_excluding_process_lock(&fixture);
 
         let output = fixture.run(&["新", task_name]);
 
@@ -148,7 +70,7 @@ fn 非対話cliはcontrol名を入力errorにしてstorageを変更しない() {
             "task_name={task_name:?}"
         );
         assert_eq!(
-            fixture.persistent_storage_bytes_excluding_process_lock(),
+            persistent_storage_bytes_excluding_process_lock(&fixture),
             storage_before,
             "task_name={task_name:?}"
         );
@@ -157,26 +79,25 @@ fn 非対話cliはcontrol名を入力errorにしてstorageを変更しない() {
 
 #[test]
 fn 非対話cliのnul名はos境界で拒否されstorageを変更しない() {
-    let fixture = CliFixture::seeded();
-    let storage_before = fixture.persistent_storage_bytes_excluding_process_lock();
+    let fixture = CliFixture::new(true);
+    let storage_before = persistent_storage_bytes_excluding_process_lock(&fixture);
 
     let error = fixture.command(&["新", "NUL\0name"]).output().unwrap_err();
 
     assert_eq!(error.kind(), io::ErrorKind::InvalidInput);
     assert_eq!(
-        fixture.persistent_storage_bytes_excluding_process_lock(),
+        persistent_storage_bytes_excluding_process_lock(&fixture),
         storage_before
     );
 }
 
-fn valid_busy_time_slots_yaml() -> String {
-    let mut yaml = String::from("days_of_week:\n");
-    for day_of_week in ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"] {
-        yaml.push_str(&format!(
-            "  - day_of_week: {day_of_week}\n    busy_time_slots:\n      - start_time: '13:00'\n        duration_minutes: 60\n        name: recurring-unavailable-time\n"
-        ));
-    }
-    yaml
+fn persistent_storage_bytes_excluding_process_lock(
+    fixture: &CliFixture,
+) -> BTreeMap<PathBuf, Vec<u8>> {
+    let mut files = BTreeMap::new();
+    collect_directory_bytes(&fixture.storage, &fixture.storage, &mut files);
+    files.remove(Path::new(".lock"));
+    files
 }
 
 fn collect_directory_bytes(
