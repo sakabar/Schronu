@@ -582,3 +582,49 @@ impl Error for WebReadError {
         }
     }
 }
+
+#[cfg(test)]
+mod save_error_contract_tests {
+    use super::*;
+    use crate::application::interface::TaskRepositoryOperation;
+
+    fn save_error(retryable: bool) -> TaskRepositoryError {
+        let source = std::io::Error::other("injected save failure");
+        if retryable {
+            TaskRepositoryError::retryable_save(source)
+        } else {
+            TaskRepositoryError::new(TaskRepositoryOperation::Save, source)
+        }
+    }
+
+    #[test]
+    fn retryable_save失敗は分類を公開しserviceをpoisonしない() {
+        let mut service = WebService::new(PathBuf::from("unused"), SchronuConfig::default());
+
+        let error = service
+            .finish_mutation_result::<()>(Err(RepositoryTransactionError::SaveFailed(save_error(
+                true,
+            ))))
+            .unwrap_err();
+
+        assert!(matches!(error, WebReadError::RepositorySaveFailed(_)));
+        assert!(!service.repository_state_uncertain);
+    }
+
+    #[test]
+    fn state_uncertain失敗はserviceをpoisonして後続mutationを拒否する() {
+        let mut service = WebService::new(PathBuf::from("unused"), SchronuConfig::default());
+        let error = service
+            .finish_mutation_result::<()>(Err(RepositoryTransactionError::StateUncertain(
+                save_error(false),
+            )))
+            .unwrap_err();
+
+        assert!(matches!(error, WebReadError::RepositoryStateUncertain(_)));
+        assert!(service.repository_state_uncertain);
+        assert!(matches!(
+            service.ensure_mutation_available(),
+            Err(WebReadError::RepositoryPoisoned)
+        ));
+    }
+}
