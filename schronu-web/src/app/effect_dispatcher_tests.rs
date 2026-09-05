@@ -87,7 +87,7 @@ fn 五effectはrequest_idとpayloadを保持して各endpointを1回だけ呼ぶ
             "list:2026-09-05",
             "auto",
             "record:task",
-            "complete:task"
+            "complete:task:true"
         ]
     );
     assert_eq!(
@@ -95,6 +95,29 @@ fn 五effectはrequest_idとpayloadを保持して各endpointを1回だけ呼ぶ
         None
     );
     assert_eq!(gateway.calls.borrow().len(), 5);
+}
+
+#[test]
+fn 計測破棄完了effectは記録方針falseをgatewayへ保持する() {
+    let gateway = FakeGateway::default();
+    let response = futures::executor::block_on(execute_effect(
+        &gateway,
+        ClientEffect::CompleteSession {
+            request_id: 15,
+            request: CompleteSessionRequest {
+                task_id: "task".to_owned(),
+                started_at_epoch_ms: i64::MAX,
+                expected_actual_work_seconds: 2,
+                record_elapsed_seconds: false,
+            },
+        },
+    ));
+
+    assert!(matches!(
+        response,
+        Some(ClientResponse::CompleteSession { request_id: 15, .. })
+    ));
+    assert_eq!(gateway.calls.borrow().as_slice(), ["complete:task:false"]);
 }
 
 #[test]
@@ -169,9 +192,10 @@ impl WebGateway for FakeGateway {
         &self,
         request: CompleteSessionRequest,
     ) -> Result<Result<CompleteSessionResponse, WebError>, ServerFnError> {
-        self.calls
-            .borrow_mut()
-            .push(format!("complete:{}", request.task_id));
+        self.calls.borrow_mut().push(format!(
+            "complete:{}:{}",
+            request.task_id, request.record_elapsed_seconds
+        ));
         Ok(Ok(snapshot()))
     }
 }
