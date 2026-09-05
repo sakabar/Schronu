@@ -1,6 +1,10 @@
 use crate::application::interface::{TaskRepositoryError, TaskRepositoryTrait};
 use chrono::{DateTime, Local};
 
+#[cfg(test)]
+#[path = "repository_transaction_tests.rs"]
+mod tests;
+
 #[derive(Debug)]
 pub enum RepositoryTransactionError<LockError, OperationError> {
     Lock(LockError),
