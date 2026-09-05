@@ -5,7 +5,8 @@ pub use super::effect::ClientEffect;
 pub use super::history::{Locality, Operation, OperationHistoryEntry, Outcome};
 use super::safety_state::{load_mutation_safety, MutationSafetyState};
 use super::work_sessions::{
-    load_work_sessions, KeyValueStorage, StorageError, WorkSession, WorkSessionsState,
+    load_work_sessions, unavailable_state, KeyValueStorage, StorageError, WorkSession,
+    WorkSessionsState,
 };
 use crate::{
     ListTasksRequest, RecordSessionRequest, ScheduledTaskRow, ServerSnapshot, SessionTask, WebError,
@@ -543,4 +544,14 @@ pub fn load_client_state<S: KeyValueStorage>(
         load_mutation_safety(storage)?,
         tick_now_epoch_ms,
     ))
+}
+
+pub fn load_client_state_for_ui<S: KeyValueStorage>(
+    storage: &S,
+    tick_now_epoch_ms: i64,
+) -> ClientState {
+    let work_sessions = load_work_sessions(storage).unwrap_or_else(|_| unavailable_state());
+    let mutation_safety =
+        load_mutation_safety(storage).unwrap_or_else(|_| MutationSafetyState::blocked());
+    ClientState::new(work_sessions, mutation_safety, tick_now_epoch_ms)
 }

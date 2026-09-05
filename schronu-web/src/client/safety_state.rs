@@ -30,6 +30,12 @@ pub fn load_mutation_safety<S: KeyValueStorage>(
 }
 
 impl MutationSafetyState {
+    pub(crate) fn blocked() -> Self {
+        Self {
+            mutation_blocked: true,
+        }
+    }
+
     pub fn mutation_blocked(&self) -> bool {
         self.mutation_blocked
     }

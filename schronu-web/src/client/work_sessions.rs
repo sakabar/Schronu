@@ -188,6 +188,10 @@ fn blocked_state(warning: &str) -> WorkSessionsState {
     }
 }
 
+pub(crate) fn unavailable_state() -> WorkSessionsState {
+    blocked_state("保存済みセッションを読み取れません。localStorageを手動で確認してください。")
+}
+
 impl fmt::Display for StorageError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
