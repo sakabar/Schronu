@@ -1,7 +1,6 @@
 mod publication;
 mod read;
 
-use std::fmt;
 use std::fs;
 use std::path::PathBuf;
 
@@ -12,50 +11,6 @@ pub(super) use publication::{
     finalize_publication, FileSystemSnapshotIo, SnapshotIo, StableDirectory, StableParent,
 };
 pub(super) use read::read_directory_tree_with_limits;
-
-#[derive(Clone, Copy, Debug)]
-pub(super) enum FileWriteStage {
-    Write,
-    Sync,
-}
-
-#[derive(Debug)]
-pub(super) struct FileWriteError {
-    stage: FileWriteStage,
-    source: std::io::Error,
-}
-
-impl FileWriteError {
-    pub(super) fn write(source: std::io::Error) -> Self {
-        Self {
-            stage: FileWriteStage::Write,
-            source,
-        }
-    }
-
-    pub(super) fn sync(source: std::io::Error) -> Self {
-        Self {
-            stage: FileWriteStage::Sync,
-            source,
-        }
-    }
-
-    pub(super) fn stage(&self) -> FileWriteStage {
-        self.stage
-    }
-}
-
-impl fmt::Display for FileWriteError {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        self.source.fmt(formatter)
-    }
-}
-
-impl std::error::Error for FileWriteError {
-    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
-        Some(&self.source)
-    }
-}
 
 pub(super) struct TreeDirectory {
     pub(super) path: PathBuf,

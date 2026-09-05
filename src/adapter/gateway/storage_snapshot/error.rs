@@ -2,7 +2,49 @@ use std::error::Error;
 use std::fmt;
 use std::path::{Path, PathBuf};
 
-use super::io::{FileWriteError, FileWriteStage};
+#[derive(Clone, Copy, Debug)]
+pub(super) enum FileWriteStage {
+    Write,
+    Sync,
+}
+
+#[derive(Debug)]
+pub(super) struct FileWriteError {
+    stage: FileWriteStage,
+    source: std::io::Error,
+}
+
+impl FileWriteError {
+    pub(super) fn write(source: std::io::Error) -> Self {
+        Self {
+            stage: FileWriteStage::Write,
+            source,
+        }
+    }
+
+    pub(super) fn sync(source: std::io::Error) -> Self {
+        Self {
+            stage: FileWriteStage::Sync,
+            source,
+        }
+    }
+
+    pub(super) fn stage(&self) -> FileWriteStage {
+        self.stage
+    }
+}
+
+impl fmt::Display for FileWriteError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.source.fmt(formatter)
+    }
+}
+
+impl Error for FileWriteError {
+    fn source(&self) -> Option<&(dyn Error + 'static)> {
+        Some(&self.source)
+    }
+}
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(super) enum SnapshotOperation {

@@ -1,5 +1,6 @@
-use super::FileWriteError;
-use crate::adapter::gateway::storage_snapshot::error::{SnapshotError, SnapshotOperation};
+use crate::adapter::gateway::storage_snapshot::error::{
+    FileWriteError, SnapshotError, SnapshotOperation,
+};
 #[cfg(any(target_os = "macos", target_os = "linux"))]
 use std::ffi::CString;
 use std::fs::{self, File};
