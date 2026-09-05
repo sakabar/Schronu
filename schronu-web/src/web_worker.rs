@@ -141,8 +141,8 @@ fn run_worker<O: WebOperations>(mut operations: O, receiver: mpsc::Receiver<WebW
 
 fn unavailable_error() -> WebError {
     WebError {
-        code: web_error_codes::OPERATION_FAILED.to_owned(),
-        message: "Web操作を完了できませんでした。".to_owned(),
-        retry_advice: RetryAdvice::ManualCheck,
+        code: web_error_codes::WORKER_UNAVAILABLE.to_owned(),
+        message: "Web操作を処理できません。時間をおいて再試行してください。".to_owned(),
+        retry_advice: RetryAdvice::Retry,
     }
 }
