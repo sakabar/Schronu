@@ -47,7 +47,7 @@ fn strict_validate_payload(snapshot: &Path, tree: &DirectoryTree) -> Result<(), 
         ".schronu-snapshot-verify-{}",
         uuid::Uuid::new_v4().hyphenated()
     ));
-    fs::create_dir(&validation_root)
+    create_private_directory(&validation_root)
         .map_err(|error| SnapshotError::new(SnapshotOperation::Write, &validation_root, error))?;
     let result = materialize_for_validation(&validation_root, tree).and_then(|()| {
         let root_text = validation_root.to_str().ok_or_else(|| {
@@ -68,6 +68,18 @@ fn strict_validate_payload(snapshot: &Path, tree: &DirectoryTree) -> Result<(), 
     let cleanup = fs::remove_dir_all(&validation_root)
         .map_err(|error| SnapshotError::new(SnapshotOperation::Write, &validation_root, error));
     result.and(cleanup)
+}
+
+#[cfg(unix)]
+fn create_private_directory(path: &Path) -> std::io::Result<()> {
+    use std::os::unix::fs::DirBuilderExt;
+    let mut builder = fs::DirBuilder::new();
+    builder.mode(0o700).create(path)
+}
+
+#[cfg(not(unix))]
+fn create_private_directory(path: &Path) -> std::io::Result<()> {
+    fs::create_dir(path)
 }
 
 fn materialize_for_validation(root: &Path, tree: &DirectoryTree) -> Result<(), SnapshotError> {
