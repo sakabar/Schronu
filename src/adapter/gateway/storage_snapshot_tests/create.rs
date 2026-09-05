@@ -209,3 +209,27 @@ fn snapshot作成失敗はdestinationもstagingも公開しない() {
         );
     }
 }
+
+#[test]
+fn snapshot公開renameは競合destinationを置換しない() {
+    let root = TestDirectory::new("create-no-replace-product-path");
+    let storage = root.child("source");
+    let destination = root.child("snapshot");
+    let now = Local.with_ymd_and_hms(2026, 9, 5, 12, 0, 0).unwrap();
+    create_saved_repository(&storage, now);
+
+    create_snapshot_before_publish(&storage, &destination, now, || {
+        fs::create_dir(&destination).unwrap();
+        fs::write(destination.join("sentinel"), b"preserve").unwrap();
+    })
+    .unwrap_err();
+
+    assert_eq!(fs::read(destination.join("sentinel")).unwrap(), b"preserve");
+    assert!(
+        fs::read_dir(&root.path).unwrap().all(|entry| !entry
+            .unwrap()
+            .file_name()
+            .to_string_lossy()
+            .starts_with(".snapshot.tmp-"))
+    );
+}
