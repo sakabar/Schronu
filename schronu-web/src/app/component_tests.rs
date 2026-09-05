@@ -1,9 +1,13 @@
 #![cfg(feature = "server")]
 
 use super::component::app;
-use super::component_runtime::{initialize_client, reduce_component_action, ComponentAction};
+use super::component_runtime::{
+    initialize_client, reduce_component_action, ComponentAction, ComponentOrchestrator,
+};
+use super::effect_dispatcher::ClientResponse;
 use crate::client::state::{ActiveTab, ClientEffect};
 use crate::client::work_sessions::{KeyValueStorage, StorageError};
+use crate::ServerSnapshot;
 use crate::SessionTask;
 use dioxus::prelude::VirtualDom;
 use std::cell::RefCell;
@@ -97,6 +101,42 @@ fn native_ssrはbrowser_storageへ触れずloading_shellだけを描画する() 
     assert!(html.contains("読み込み中"), "{html}");
     assert!(!html.contains("schronu 今"), "{html}");
     assert!(!html.contains(">更新<"), "{html}");
+}
+
+#[test]
+fn 製品orchestratorはmountを一度に制限しresponseとtickを同じstateへ適用する() {
+    let storage = MemoryStorage::default();
+    let mut orchestrator = ComponentOrchestrator::new();
+
+    let first = orchestrator.mount(&storage, 1_000);
+    assert!(matches!(first, ClientEffect::Bootstrap { request_id: 1 }));
+    assert_eq!(orchestrator.mount(&storage, 2_000), ClientEffect::None);
+
+    orchestrator.apply_response(
+        &storage,
+        ClientResponse::Bootstrap {
+            request_id: 1,
+            result: Ok(ServerSnapshot {
+                observed_at_epoch_ms: 1_000,
+                logical_date: "2026-09-05".to_owned(),
+                buffer_seconds: 60,
+            }),
+        },
+    );
+    assert_eq!(
+        orchestrator
+            .state()
+            .unwrap()
+            .snapshot()
+            .unwrap()
+            .buffer_seconds,
+        60
+    );
+    assert_eq!(
+        orchestrator.action(&storage, ComponentAction::Tick(3_000)),
+        ClientEffect::None
+    );
+    assert_eq!(orchestrator.state().unwrap().tick_now_epoch_ms(), 3_000);
 }
 
 fn task(task_id: &str) -> SessionTask {
