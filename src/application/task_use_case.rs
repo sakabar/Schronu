@@ -556,6 +556,11 @@ pub fn complete_task(
     factory: &mut TaskFactory<'_>,
 ) -> Result<CompleteTaskOutput, ApplicationError> {
     let task = find_task(repository, input.task_id)?;
+    if input.expected_actual_work_seconds.is_some()
+        && task.get_status().map_err(ApplicationError::TaskTree)? == Status::Done
+    {
+        return Err(ApplicationError::TaskAlreadyCompleted(input.task_id));
+    }
     if task
         .has_undone_children()
         .map_err(ApplicationError::TaskTree)?
