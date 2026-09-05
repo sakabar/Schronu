@@ -370,6 +370,33 @@ fn 未知のoperation_errorはcodeと助言を失わず表示状態へ保持す�
     assert_eq!(state.display_error(), Some(&DisplayError::Operation(error)));
 }
 
+#[test]
+fn manual_check_blockはsession破棄成功時だけ解消する() {
+    let storage = FakeStorage::default();
+    let mut state = state_with_sessions(&storage, &[TASK_ID]);
+    let (request_id, _) = record_effect(state.begin_record_session(TASK_ID));
+    state.apply_record_result(
+        &storage,
+        request_id,
+        Err(ServerFailure::Operation(web_error(
+            web_error_codes::ACTUAL_WORK_CONFLICT,
+            RetryAdvice::ManualCheck,
+        ))),
+    );
+
+    storage.fail_writes.set(true);
+    state.discard_session(&storage, TASK_ID);
+    assert!(state.is_session_manual_check_blocked(TASK_ID));
+
+    storage.fail_writes.set(false);
+    state.discard_session(&storage, TASK_ID);
+    state.add_session_from_row(&storage, &row(TASK_ID, 0));
+    assert!(matches!(
+        state.begin_record_session(TASK_ID),
+        ClientEffect::RecordSession { .. }
+    ));
+}
+
 #[derive(Default)]
 struct FakeStorage {
     value: RefCell<Option<String>>,
