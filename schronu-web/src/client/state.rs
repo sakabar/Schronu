@@ -27,6 +27,17 @@ pub enum ServerFailure {
     Transport(String),
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum MutationKind {
+    Record,
+    Complete,
+}
+
+struct PendingMutation {
+    task_id: String,
+    kind: MutationKind,
+}
+
 pub struct ClientState {
     active_tab: ActiveTab,
     work_sessions: WorkSessionsState,
@@ -43,6 +54,8 @@ pub struct ClientState {
     history: VecDeque<OperationHistoryEntry>,
     tick_now_epoch_ms: i64,
     auto_session_empty: bool,
+    next_mutation_request_id: u64,
+    pending_mutations: HashMap<u64, PendingMutation>,
 }
 
 impl ClientState {
@@ -63,6 +76,8 @@ impl ClientState {
             history: VecDeque::new(),
             tick_now_epoch_ms,
             auto_session_empty: false,
+            next_mutation_request_id: 1,
+            pending_mutations: HashMap::new(),
         }
     }
 
@@ -189,11 +204,11 @@ impl ClientState {
     }
 
     pub fn begin_record_session(&mut self, task_id: &str) -> ClientEffect {
-        self.begin_mutation(task_id, false)
+        self.begin_mutation(task_id, MutationKind::Record)
     }
 
     pub fn begin_complete_session(&mut self, task_id: &str) -> ClientEffect {
-        self.begin_mutation(task_id, true)
+        self.begin_mutation(task_id, MutationKind::Complete)
     }
 
     fn add_session<S: KeyValueStorage>(&mut self, storage: &S, task: &SessionTask) {
@@ -217,7 +232,7 @@ impl ClientState {
         self.record_local_result(Operation::AddSession, Some(&task.task_id), result.is_ok());
     }
 
-    fn begin_mutation(&mut self, task_id: &str, complete: bool) -> ClientEffect {
+    fn begin_mutation(&mut self, task_id: &str, kind: MutationKind) -> ClientEffect {
         if self.mutation_globally_blocked
             || self.in_flight_task_ids.contains(task_id)
             || self.manual_check_blocked_task_ids.contains(task_id)
@@ -237,11 +252,38 @@ impl ClientState {
             started_at_epoch_ms: session.started_at_epoch_ms,
             expected_actual_work_seconds: session.actual_work_seconds_at_start,
         };
+        let request_id = self.next_mutation_request_id;
+        let Some(next_request_id) = request_id.checked_add(1) else {
+            return ClientEffect::None;
+        };
+        self.next_mutation_request_id = next_request_id;
         self.in_flight_task_ids.insert(task_id.to_owned());
-        if complete {
-            ClientEffect::CompleteSession(request)
-        } else {
-            ClientEffect::RecordSession(request)
+        self.pending_mutations.insert(
+            request_id,
+            PendingMutation {
+                task_id: task_id.to_owned(),
+                kind,
+            },
+        );
+        match kind {
+            MutationKind::Complete => ClientEffect::CompleteSession {
+                request_id,
+                request,
+            },
+            MutationKind::Record => ClientEffect::RecordSession {
+                request_id,
+                request,
+            },
         }
+    }
+
+    fn take_pending_mutation(&mut self, request_id: u64, kind: MutationKind) -> Option<String> {
+        let pending = self.pending_mutations.get(&request_id)?;
+        if pending.kind != kind {
+            return None;
+        }
+        let task_id = pending.task_id.clone();
+        self.pending_mutations.remove(&request_id);
+        Some(task_id)
     }
 }

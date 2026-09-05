@@ -6,6 +6,12 @@ pub enum ClientEffect {
     Bootstrap,
     ListTasks(ListTasksRequest),
     AutoSession,
-    RecordSession(RecordSessionRequest),
-    CompleteSession(RecordSessionRequest),
+    RecordSession {
+        request_id: u64,
+        request: RecordSessionRequest,
+    },
+    CompleteSession {
+        request_id: u64,
+        request: RecordSessionRequest,
+    },
 }

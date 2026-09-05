@@ -147,10 +147,8 @@ fn mutationは対象だけを直列化しerror助言とcommit後storage失敗を
         started_at_epoch_ms: 0,
         expected_actual_work_seconds: 100,
     };
-    assert_eq!(
-        state.begin_record_session(TASK_ID),
-        ClientEffect::RecordSession(expected_request.clone())
-    );
+    let (first_request_id, first_request) = record_effect(state.begin_record_session(TASK_ID));
+    assert_eq!(first_request, expected_request.clone());
     assert_eq!(state.begin_complete_session(TASK_ID), ClientEffect::None);
     assert!(state.is_session_in_flight(TASK_ID));
     assert!(!state.is_session_in_flight(OTHER_TASK_ID));
@@ -159,20 +157,18 @@ fn mutationは対象だけを直列化しerror助言とcommit後storage失敗を
 
     state.apply_record_result(
         &storage,
-        TASK_ID,
+        first_request_id,
         Err(ServerFailure::Operation(web_error(
             "unknown_retry",
             RetryAdvice::Retry,
         ))),
     );
     assert!(!state.is_session_in_flight(TASK_ID));
-    assert_eq!(
-        state.begin_record_session(TASK_ID),
-        ClientEffect::RecordSession(expected_request)
-    );
+    let (second_request_id, second_request) = record_effect(state.begin_record_session(TASK_ID));
+    assert_eq!(second_request, expected_request);
     state.apply_record_result(
         &storage,
-        TASK_ID,
+        second_request_id,
         Err(ServerFailure::Operation(web_error(
             web_error_codes::ACTUAL_WORK_CONFLICT,
             RetryAdvice::ManualCheck,
@@ -181,13 +177,10 @@ fn mutationは対象だけを直列化しerror助言とcommit後storage失敗を
     assert!(state.is_session_manual_check_blocked(TASK_ID));
     assert_eq!(state.begin_record_session(TASK_ID), ClientEffect::None);
 
-    assert!(matches!(
-        state.begin_complete_session(OTHER_TASK_ID),
-        ClientEffect::CompleteSession(_)
-    ));
+    let (complete_request_id, _) = complete_effect(state.begin_complete_session(OTHER_TASK_ID));
     state.apply_complete_result(
         &storage,
-        OTHER_TASK_ID,
+        complete_request_id,
         Err(ServerFailure::Transport("network detail".to_owned())),
     );
     assert!(state.display_error().unwrap().retryable);
@@ -195,14 +188,11 @@ fn mutationは対象だけを直列化しerror助言とcommit後storage失敗を
 
     let mut state = state_with_sessions(&storage, &[TASK_ID, OTHER_TASK_ID]);
     state.tick(62_999);
-    assert!(matches!(
-        state.begin_record_session(TASK_ID),
-        ClientEffect::RecordSession(_)
-    ));
+    let (request_id, _) = record_effect(state.begin_record_session(TASK_ID));
     storage.fail_writes.set(true);
     state.apply_record_result(
         &storage,
-        TASK_ID,
+        request_id,
         Ok(WebSuccess {
             snapshot: snapshot("2026-09-05", 100),
             data: RecordSessionResult {
@@ -222,13 +212,10 @@ fn mutationは対象だけを直列化しerror助言とcommit後storage失敗を
 fn mutation成功時だけsessionを消し履歴を最新100件へ制限する() {
     let storage = FakeStorage::default();
     let mut state = state_with_sessions(&storage, &[TASK_ID]);
-    assert!(matches!(
-        state.begin_record_session(TASK_ID),
-        ClientEffect::RecordSession(_)
-    ));
+    let (request_id, _) = record_effect(state.begin_record_session(TASK_ID));
     state.apply_record_result(
         &storage,
-        TASK_ID,
+        request_id,
         Ok(WebSuccess {
             snapshot: snapshot("2026-09-05", 1),
             data: RecordSessionResult {
@@ -239,11 +226,8 @@ fn mutation成功時だけsessionを消し履歴を最新100件へ制限する()
     assert!(state.sessions().is_empty());
 
     let mut complete_state = state_with_sessions(&storage, &[OTHER_TASK_ID]);
-    assert!(matches!(
-        complete_state.begin_complete_session(OTHER_TASK_ID),
-        ClientEffect::CompleteSession(_)
-    ));
-    complete_state.apply_complete_result(&storage, OTHER_TASK_ID, Ok(snapshot("2026-09-05", 2)));
+    let (request_id, _) = complete_effect(complete_state.begin_complete_session(OTHER_TASK_ID));
+    complete_state.apply_complete_result(&storage, request_id, Ok(snapshot("2026-09-05", 2)));
     assert!(complete_state.sessions().is_empty());
 
     for epoch in 0..101 {
@@ -265,14 +249,11 @@ fn mutation成功時だけsessionを消し履歴を最新100件へ制限する()
 fn repository_state_uncertain後はpage全体のmutationを停止する() {
     let storage = FakeStorage::default();
     let mut state = state_with_sessions(&storage, &[TASK_ID, OTHER_TASK_ID]);
-    assert!(matches!(
-        state.begin_record_session(TASK_ID),
-        ClientEffect::RecordSession(_)
-    ));
+    let (request_id, _) = record_effect(state.begin_record_session(TASK_ID));
 
     state.apply_record_result(
         &storage,
-        TASK_ID,
+        request_id,
         Err(ServerFailure::Operation(web_error(
             web_error_codes::REPOSITORY_STATE_UNCERTAIN,
             RetryAdvice::ManualCheck,
@@ -398,5 +379,25 @@ fn web_error(code: &str, retry_advice: RetryAdvice) -> WebError {
         code: code.to_owned(),
         message: "safe".to_owned(),
         retry_advice,
+    }
+}
+
+fn record_effect(effect: ClientEffect) -> (u64, schronu_web::RecordSessionRequest) {
+    match effect {
+        ClientEffect::RecordSession {
+            request_id,
+            request,
+        } => (request_id, request),
+        other => panic!("unexpected effect: {other:?}"),
+    }
+}
+
+fn complete_effect(effect: ClientEffect) -> (u64, schronu_web::RecordSessionRequest) {
+    match effect {
+        ClientEffect::CompleteSession {
+            request_id,
+            request,
+        } => (request_id, request),
+        other => panic!("unexpected effect: {other:?}"),
     }
 }

@@ -73,21 +73,24 @@ impl ClientState {
     pub fn apply_record_result<S: KeyValueStorage>(
         &mut self,
         storage: &S,
-        task_id: &str,
+        request_id: u64,
         result: Result<WebSuccess<RecordSessionResult>, ServerFailure>,
     ) -> ClientEffect {
-        self.in_flight_task_ids.remove(task_id);
+        let Some(task_id) = self.take_pending_mutation(request_id, MutationKind::Record) else {
+            return ClientEffect::None;
+        };
+        self.in_flight_task_ids.remove(&task_id);
         match result {
             Ok(success) => {
                 self.apply_snapshot(success.snapshot);
                 self.finish_committed_mutation(
                     storage,
-                    task_id,
+                    &task_id,
                     Operation::RecordSession,
                     Some(success.data.actual_work_seconds),
                 );
             }
-            Err(error) => self.finish_failed_mutation(task_id, Operation::RecordSession, error),
+            Err(error) => self.finish_failed_mutation(&task_id, Operation::RecordSession, error),
         }
         ClientEffect::None
     }
@@ -95,16 +98,19 @@ impl ClientState {
     pub fn apply_complete_result<S: KeyValueStorage>(
         &mut self,
         storage: &S,
-        task_id: &str,
+        request_id: u64,
         result: Result<ServerSnapshot, ServerFailure>,
     ) -> ClientEffect {
-        self.in_flight_task_ids.remove(task_id);
+        let Some(task_id) = self.take_pending_mutation(request_id, MutationKind::Complete) else {
+            return ClientEffect::None;
+        };
+        self.in_flight_task_ids.remove(&task_id);
         match result {
             Ok(snapshot) => {
                 self.apply_snapshot(snapshot);
-                self.finish_committed_mutation(storage, task_id, Operation::CompleteSession, None);
+                self.finish_committed_mutation(storage, &task_id, Operation::CompleteSession, None);
             }
-            Err(error) => self.finish_failed_mutation(task_id, Operation::CompleteSession, error),
+            Err(error) => self.finish_failed_mutation(&task_id, Operation::CompleteSession, error),
         }
         ClientEffect::None
     }
