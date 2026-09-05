@@ -7841,6 +7841,14 @@ fn test_format_focus_progress_開始直後は実経過0秒として扱う() {
 }
 
 #[test]
+fn test_format_focus_progress_見積未算定なら負の入力でも従来表示を維持する() {
+    let expected = format!("[{}] --%", "-".repeat(100));
+
+    assert_eq!(format_focus_progress(0, -1, -1), expected);
+    assert_eq!(format_focus_progress(-1, -1, -1), expected);
+}
+
+#[test]
 fn test_format_focus_progress_見積と作業時間を秒数基準で計算する() {
     let actual = format_focus_progress(4 * 60 + 33, 0, 2 * 60);
 
