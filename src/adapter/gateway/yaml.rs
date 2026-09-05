@@ -1,3 +1,4 @@
+use crate::application::task_name;
 use crate::entity::datetime::parse_local_datetime;
 use crate::entity::task::read_project_category;
 use crate::entity::task::read_status;
@@ -299,9 +300,8 @@ fn yaml_to_task_strict(
         .ok_or_else(|| strict_error(path, "name", "is required"))?
         .as_str()
         .ok_or_else(|| strict_error(path, "name", "must be a string"))?;
-    if name.trim().is_empty() {
-        return Err(strict_error(path, "name", "must not be blank"));
-    }
+    task_name::validate(name)
+        .map_err(|violation| strict_error(path, "name", violation.reason()))?;
     let id = match yaml_field(yaml, "id") {
         None => None,
         Some(value) => Some(
