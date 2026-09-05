@@ -1,3 +1,4 @@
+use chrono::{Local, TimeZone};
 use schronu_web::client::state::{load_client_state, ActiveTab, ClientEffect, ServerFailure};
 use schronu_web::{web_error_codes, RecordSessionResult, RetryAdvice, SessionTask, WebSuccess};
 
@@ -177,6 +178,48 @@ fn 複数session中の記録snapshotはcommit済み区間を二重creditしな�
     assert_eq!(state.display_buffer_seconds(), Some(50));
     state.discard_session(&storage, OTHER_TASK_ID);
     assert_eq!(state.display_buffer_seconds(), Some(30));
+}
+
+#[test]
+fn logical_date変更snapshotは06時以降のactive_session時間をcreditする() {
+    let boundary = Local
+        .with_ymd_and_hms(2026, 9, 6, 6, 0, 0)
+        .single()
+        .expect("06:00 must be an unambiguous local time")
+        .timestamp_millis();
+    let storage = FakeStorage::default();
+    let mut state = load_client_state(&storage, boundary - 10 * 60_000).unwrap();
+    let bootstrap_id = bootstrap_effect(state.request_bootstrap());
+    state.apply_bootstrap_result(
+        bootstrap_id,
+        Ok(schronu_web::ServerSnapshot {
+            observed_at_epoch_ms: boundary - 10 * 60_000,
+            logical_date: "2026-09-05".to_owned(),
+            buffer_seconds: 60,
+        }),
+    );
+
+    state.tick(boundary - 5 * 60_000);
+    state.add_session_from_row(&storage, &row(TASK_ID, 0));
+    state.tick(boundary + 10 * 60_000);
+    let (request_id, request) = list_effect(state.request_list("2026-09-06"));
+    state.apply_list_result(
+        request_id,
+        &request.logical_date,
+        Ok(WebSuccess {
+            snapshot: schronu_web::ServerSnapshot {
+                observed_at_epoch_ms: boundary + 10 * 60_000,
+                logical_date: "2026-09-06".to_owned(),
+                buffer_seconds: 50,
+            },
+            data: Vec::new(),
+        }),
+    );
+    state.tick(boundary + 20 * 60_000);
+
+    assert_eq!(state.display_buffer_seconds(), Some(60));
+    state.discard_session(&storage, TASK_ID);
+    assert_eq!(state.display_buffer_seconds(), Some(40));
 }
 
 #[test]
