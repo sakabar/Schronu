@@ -15,7 +15,10 @@ fn snapshot作成resource_limitは境界を許可し超過をtyped拒否する()
     let storage = root.child("source");
     let baseline = root.child("baseline");
     let now = Local.with_ymd_and_hms(2026, 9, 5, 12, 0, 0).unwrap();
-    create_saved_repository(&storage, now);
+    let (_, project_yaml) = create_saved_repository(&storage, now);
+    fs::remove_file(storage.join(".revision")).unwrap();
+    fs::remove_dir_all(project_yaml.parent().unwrap().join("markdown")).unwrap();
+    let relative_project = project_yaml.strip_prefix(&storage).unwrap();
     create_snapshot_at(&storage, &baseline, now).unwrap();
 
     let manifest_bytes = fs::metadata(baseline.join("manifest.json")).unwrap().len();
@@ -101,12 +104,11 @@ fn snapshot作成resource_limitは境界を許可し超過をtyped拒否する()
         );
         if expected == SnapshotLimitKind::ManifestBytes {
             assert_eq!(error.limit_path(), None, "{name}: {error}");
+            assert!(error.path().ends_with("manifest.json"), "{name}: {error}");
         } else {
-            assert!(error.path().is_absolute(), "{name}: {error}");
-            assert!(
-                error.limit_path().is_some_and(|path| !path.is_absolute()),
-                "{name}: {error}"
-            );
+            let expected_path = relative_project.to_path_buf();
+            assert_eq!(error.path(), storage.join(&expected_path), "{name}: {error}");
+            assert_eq!(error.limit_path(), Some(expected_path.as_path()), "{name}: {error}");
         }
     }
 }

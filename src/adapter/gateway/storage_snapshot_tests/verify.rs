@@ -7,7 +7,16 @@ use walkdir::WalkDir;
 
 #[test]
 fn snapshot_verify_resource_limitは境界を許可し超過をtyped拒否する() {
-    let (_root, snapshot, _) = create_source_independent_snapshot("verify-resource-limits");
+    let root = TestDirectory::new("verify-resource-limits");
+    let storage = root.child("source");
+    let snapshot = root.child("snapshot");
+    let now = Local.with_ymd_and_hms(2026, 9, 5, 12, 0, 0).unwrap();
+    let (_, project_yaml) = create_saved_repository(&storage, now);
+    fs::remove_file(storage.join(".revision")).unwrap();
+    fs::remove_dir_all(project_yaml.parent().unwrap().join("markdown")).unwrap();
+    let relative_project = project_yaml.strip_prefix(&storage).unwrap().to_path_buf();
+    create_snapshot_at(&storage, &snapshot, now).unwrap();
+    fs::remove_dir_all(&storage).unwrap();
     let manifest_bytes = fs::metadata(snapshot.join("manifest.json")).unwrap().len();
     let payload = snapshot.join("storage");
     let entries = WalkDir::new(&payload)
@@ -89,12 +98,11 @@ fn snapshot_verify_resource_limitは境界を許可し超過をtyped拒否する
         );
         if expected == SnapshotLimitKind::ManifestBytes {
             assert_eq!(error.limit_path(), None, "{error}");
+            assert_eq!(error.path(), snapshot.join("manifest.json"), "{error}");
         } else {
-            assert!(error.path().is_absolute(), "{error}");
-            assert!(
-                error.limit_path().is_some_and(|path| !path.is_absolute()),
-                "{error}"
-            );
+            let expected_path = relative_project.clone();
+            assert_eq!(error.limit_path(), Some(expected_path.as_path()), "{error}");
+            assert_eq!(error.path(), payload.join(expected_path), "{error}");
         }
     }
 }
