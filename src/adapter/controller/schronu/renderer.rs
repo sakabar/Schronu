@@ -791,6 +791,9 @@ pub(super) fn format_focus_progress(
     actual_work_seconds: i64,
     focusing_seconds: i64,
 ) -> String {
+    if estimated_work_seconds <= 0 {
+        return format!("[{}] --%", "-".repeat(FOCUS_PROGRESS_BAR_SEGMENTS));
+    }
     let percentage = match calculate_session_progress(
         estimated_work_seconds,
         actual_work_seconds,
