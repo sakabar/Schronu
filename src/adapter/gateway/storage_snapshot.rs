@@ -3,11 +3,13 @@ mod error;
 pub(in crate::adapter::gateway) mod io;
 mod layout;
 pub(super) mod manifest;
+mod verify;
 
 pub use create::create_snapshot;
 #[cfg(test)]
 pub(in crate::adapter::gateway) use create::{create_snapshot_at, finalize_publication};
 pub use error::SnapshotError;
+pub use verify::verify_snapshot;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct SnapshotSummary {
