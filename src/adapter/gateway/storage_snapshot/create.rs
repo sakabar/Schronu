@@ -7,7 +7,7 @@ use super::manifest::{
     decode_manifest, encode_manifest_with_limits, DigestDescriptor, DirectoryEntry, FileEntry,
     SnapshotManifest, DIGEST_VERSION, FORMAT_VERSION,
 };
-use super::{SnapshotResourceLimits, SnapshotSummary, DEFAULT_RESOURCE_LIMITS};
+use super::{permission_mode, SnapshotResourceLimits, SnapshotSummary, DEFAULT_RESOURCE_LIMITS};
 use crate::adapter::gateway::storage_content_integrity::{content_digest, DIGEST_ALGORITHM};
 use crate::adapter::gateway::storage_lock::{LockMode, StorageLock};
 use crate::adapter::gateway::storage_transaction::{recover, FileSystemStorageTransactionIo};
@@ -608,17 +608,6 @@ fn build_manifest(
             })
             .collect(),
     }
-}
-
-#[cfg(unix)]
-pub(super) fn permission_mode(permissions: &fs::Permissions) -> Option<u32> {
-    use std::os::unix::fs::PermissionsExt;
-    Some(permissions.mode() & 0o7777)
-}
-
-#[cfg(not(unix))]
-pub(super) fn permission_mode(_permissions: &fs::Permissions) -> Option<u32> {
-    None
 }
 
 fn invalid(path: impl Into<PathBuf>, message: &'static str) -> SnapshotError {

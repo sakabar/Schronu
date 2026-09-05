@@ -1,11 +1,11 @@
-use super::{invalid, permission_mode};
+use super::invalid;
 use crate::adapter::gateway::storage_snapshot::error::{
     SnapshotError, SnapshotLimitKind, SnapshotOperation,
 };
 use crate::adapter::gateway::storage_snapshot::io::{SnapshotFailurePoint, SnapshotIo};
 use crate::adapter::gateway::storage_snapshot::layout::is_reserved_path;
 use crate::adapter::gateway::storage_snapshot::manifest::accumulate_directory_manifest_bytes;
-use crate::adapter::gateway::storage_snapshot::SnapshotResourceLimits;
+use crate::adapter::gateway::storage_snapshot::{permission_mode, SnapshotResourceLimits};
 use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};

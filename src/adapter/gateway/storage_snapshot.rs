@@ -30,6 +30,17 @@ pub(in crate::adapter::gateway) use verify::verify_snapshot_with_limits;
 use error::SnapshotError as InternalSnapshotError;
 use std::path::Path;
 
+#[cfg(unix)]
+fn permission_mode(permissions: &std::fs::Permissions) -> Option<u32> {
+    use std::os::unix::fs::PermissionsExt;
+    Some(permissions.mode() & 0o7777)
+}
+
+#[cfg(not(unix))]
+fn permission_mode(_permissions: &std::fs::Permissions) -> Option<u32> {
+    None
+}
+
 const DEFAULT_RESOURCE_LIMITS: SnapshotResourceLimits = SnapshotResourceLimits::new(
     8 * 1024 * 1024,
     10_000,

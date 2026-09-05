@@ -1,15 +1,13 @@
 use super::DirectoryTree;
 #[cfg(any(target_os = "macos", target_os = "linux"))]
 use super::{TreeDirectory, TreeFile};
-#[cfg(any(target_os = "macos", target_os = "linux"))]
-use crate::adapter::gateway::storage_snapshot::create::permission_mode;
 use crate::adapter::gateway::storage_snapshot::error::{
     SnapshotError, SnapshotLimitKind, SnapshotOperation,
 };
 use crate::adapter::gateway::storage_snapshot::layout::MANIFEST_FILE_NAME;
 #[cfg(any(target_os = "macos", target_os = "linux"))]
 use crate::adapter::gateway::storage_snapshot::manifest::accumulate_directory_manifest_bytes;
-use crate::adapter::gateway::storage_snapshot::SnapshotResourceLimits;
+use crate::adapter::gateway::storage_snapshot::{permission_mode, SnapshotResourceLimits};
 #[cfg(any(target_os = "macos", target_os = "linux"))]
 use std::fs::File;
 use std::path::Path;
