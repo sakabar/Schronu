@@ -9,6 +9,9 @@ struct TestStorageDir {
     path: PathBuf,
 }
 
+type CapturedFile = (PathBuf, Vec<u8>);
+type CapturedRepositoryFiles = (Option<CapturedFile>, Vec<CapturedFile>);
+
 impl TestStorageDir {
     fn new() -> Self {
         Self {
@@ -60,9 +63,7 @@ fn write_project_yaml(
     project_yaml_file_path
 }
 
-fn captured_repository_files(
-    storage_dir: &TestStorageDir,
-) -> (Option<(PathBuf, Vec<u8>)>, Vec<(PathBuf, Vec<u8>)>) {
+fn captured_repository_files(storage_dir: &TestStorageDir) -> CapturedRepositoryFiles {
     let revision_path = storage_dir.path.join(".revision");
     let revision = revision_path
         .is_file()
