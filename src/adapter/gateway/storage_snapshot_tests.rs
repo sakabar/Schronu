@@ -37,3 +37,9 @@ mod security {
 
     include!("storage_snapshot_tests/security.rs");
 }
+
+mod restore {
+    use super::*;
+
+    include!("storage_snapshot_tests/restore.rs");
+}
