@@ -1,4 +1,6 @@
-use crate::adapter::gateway::storage_snapshot::{create_snapshot_at, restore_snapshot};
+use crate::adapter::gateway::storage_snapshot::{
+    create_snapshot_at, restore_snapshot, restore_snapshot_after_parent_open,
+};
 use chrono::TimeZone;
 
 #[test]
@@ -94,4 +96,29 @@ fn snapshot_restoreは既存destinationを変更せず拒否する() {
     restore_snapshot(&snapshot, &destination).unwrap_err();
 
     assert_eq!(fs::read(destination.join("existing")).unwrap(), b"preserve");
+}
+
+#[test]
+fn snapshot_restoreは検証後に差し替えられた親directoryへ書き込まない() {
+    let root = TestDirectory::new("restore-parent-swap");
+    let source = root.child("source");
+    let snapshot = root.child("snapshot");
+    let parent = root.child("parent");
+    let original_parent = root.child("original-parent");
+    let destination = parent.join("restored");
+    let now = Local.with_ymd_and_hms(2026, 9, 5, 12, 0, 0).unwrap();
+    create_saved_repository(&source, now);
+    create_snapshot_at(&source, &snapshot, now).unwrap();
+    fs::create_dir(&parent).unwrap();
+
+    restore_snapshot_after_parent_open(&snapshot, &destination, || {
+        fs::rename(&parent, &original_parent).unwrap();
+        fs::create_dir(&parent).unwrap();
+        fs::write(parent.join("sentinel"), b"preserve").unwrap();
+    })
+    .unwrap();
+
+    assert!(original_parent.join("restored/.revision").is_file());
+    assert!(!parent.join("restored").exists());
+    assert_eq!(fs::read(parent.join("sentinel")).unwrap(), b"preserve");
 }
