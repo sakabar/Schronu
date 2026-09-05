@@ -692,6 +692,30 @@ fn local_storage_errorはserver成功で解消しない() {
     assert_eq!(state.display_error(), storage_error.as_ref());
 }
 
+#[test]
+fn mutationはsafety_marker保存後だけ送信し未応答reloadをblockする() {
+    let storage = FakeStorage::default();
+    let mut state = state_with_sessions(&storage, &[TASK_ID, OTHER_TASK_ID]);
+
+    storage.fail_writes.set(true);
+    assert_eq!(
+        state.begin_record_session(&storage, TASK_ID),
+        ClientEffect::None
+    );
+    assert!(!state.is_session_in_flight(TASK_ID));
+
+    storage.fail_writes.set(false);
+    assert!(matches!(
+        state.begin_record_session(&storage, TASK_ID),
+        ClientEffect::RecordSession { .. }
+    ));
+    let mut restored = load_client_state(&storage, 0).unwrap();
+    assert_eq!(
+        restored.begin_record_session(&storage, OTHER_TASK_ID),
+        ClientEffect::None
+    );
+}
+
 #[derive(Default)]
 struct FakeStorage {
     value: RefCell<Option<String>>,
