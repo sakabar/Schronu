@@ -848,6 +848,24 @@ fn server成功後のsession削除失敗はsafety_markerを解除しない() {
     );
 }
 
+#[test]
+fn read_manual_errorは同じoperation成功時に解消する() {
+    let storage = FakeStorage::default();
+    let mut state = load_client_state(&storage, 0).unwrap();
+    let first_id = bootstrap_effect(state.request_bootstrap());
+    state.apply_bootstrap_result(
+        first_id,
+        Err(ServerFailure::Operation(web_error(
+            web_error_codes::INVALID_INPUT,
+            RetryAdvice::ManualCheck,
+        ))),
+    );
+    let second_id = bootstrap_effect(state.request_bootstrap());
+    state.apply_bootstrap_result(second_id, Ok(snapshot("2026-09-05", 1)));
+
+    assert_eq!(state.display_error(), None);
+}
+
 #[derive(Default)]
 struct FakeStorage {
     value: RefCell<Option<String>>,
