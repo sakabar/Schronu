@@ -4,10 +4,7 @@ use crate::client::time_model::format_mm_ss;
 pub(crate) use crate::client::view_projection::SessionCardViewModel;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-#[cfg_attr(
-    not(test),
-    expect(dead_code, reason = "used by the pending app integration")
-)]
+#[cfg_attr(not(all(feature = "web", target_arch = "wasm32")), allow(dead_code))]
 pub enum SessionActionKind {
     Discard,
     Record,

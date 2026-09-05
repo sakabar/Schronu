@@ -1,0 +1,48 @@
+use super::component_runtime::{reduce_component_action, ComponentAction};
+use super::effect_dispatcher::{apply_response, execute_effect, ServerFunctionGateway};
+use super::session_view::{SessionAction, SessionActionKind};
+use crate::client::state::{ClientEffect, ClientState};
+use crate::client::work_sessions::BrowserLocalStorage;
+use dioxus::prelude::*;
+
+pub(crate) fn dispatch_session_action(client: Signal<Option<ClientState>>, action: SessionAction) {
+    let action = match action.kind {
+        SessionActionKind::Discard => ComponentAction::DiscardSession(action.task_id),
+        SessionActionKind::Record => ComponentAction::RecordSession(action.task_id),
+        SessionActionKind::Complete => ComponentAction::CompleteSession(action.task_id),
+    };
+    dispatch_action(client, action);
+}
+
+pub(crate) fn dispatch_action(mut client: Signal<Option<ClientState>>, action: ComponentAction) {
+    let effect = {
+        let mut state = client.write();
+        let Some(state) = state.as_mut() else {
+            return;
+        };
+        reduce_component_action(state, &BrowserLocalStorage, action)
+    };
+    dispatch_action_effect(client, effect);
+}
+
+pub(crate) fn dispatch_action_effect(
+    mut client: Signal<Option<ClientState>>,
+    effect: ClientEffect,
+) {
+    if effect == ClientEffect::None {
+        return;
+    }
+    spawn(async move {
+        let Some(response) = execute_effect(&ServerFunctionGateway, effect).await else {
+            return;
+        };
+        let follow_up = {
+            let mut state = client.write();
+            let Some(state) = state.as_mut() else {
+                return;
+            };
+            apply_response(state, &BrowserLocalStorage, response)
+        };
+        dispatch_action_effect(client, follow_up);
+    });
+}

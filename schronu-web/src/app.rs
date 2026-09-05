@@ -1,7 +1,13 @@
 mod component;
+#[cfg(all(feature = "web", target_arch = "wasm32"))]
+mod component_dispatch;
+#[cfg(all(feature = "web", target_arch = "wasm32"))]
+mod component_models;
+#[cfg(any(test, all(feature = "web", target_arch = "wasm32")))]
+mod component_runtime;
 #[cfg(test)]
 mod component_tests;
-#[allow(dead_code)]
+#[cfg(any(test, all(feature = "web", target_arch = "wasm32")))]
 mod effect_dispatcher;
 #[cfg(test)]
 mod effect_dispatcher_tests;

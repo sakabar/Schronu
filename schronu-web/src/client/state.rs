@@ -338,7 +338,15 @@ impl ClientState {
         storage: &S,
         row: &ScheduledTaskRow,
     ) -> ClientEffect {
-        self.add_session(storage, &row.task);
+        self.add_session_from_task(storage, &row.task)
+    }
+
+    pub fn add_session_from_task<S: KeyValueStorage>(
+        &mut self,
+        storage: &S,
+        task: &SessionTask,
+    ) -> ClientEffect {
+        self.add_session(storage, task);
         ClientEffect::None
     }
 
