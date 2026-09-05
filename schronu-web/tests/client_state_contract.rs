@@ -310,6 +310,41 @@ fn 古いmutation応答は同じuuidの新しいsessionへ作用しない() {
     assert_ne!(first_request_id, second_request_id);
 }
 
+#[test]
+fn 逆順のlist応答と古いsnapshotは最新表示を巻き戻さない() {
+    let storage = FakeStorage::default();
+    let mut state = ClientState::new(load_work_sessions(&storage).unwrap(), 0);
+    let first_request_id = match state.request_list("2026-09-05") {
+        ClientEffect::ListTasks { request_id, .. } => request_id,
+        other => panic!("unexpected effect: {other:?}"),
+    };
+    let second_request_id = match state.request_list("2026-09-06") {
+        ClientEffect::ListTasks { request_id, .. } => request_id,
+        other => panic!("unexpected effect: {other:?}"),
+    };
+
+    state.apply_list_result(
+        second_request_id,
+        "2026-09-06",
+        Ok(WebSuccess {
+            snapshot: snapshot("2026-09-06", 200),
+            data: vec![row(OTHER_TASK_ID, 0)],
+        }),
+    );
+    state.apply_list_result(
+        first_request_id,
+        "2026-09-05",
+        Ok(WebSuccess {
+            snapshot: snapshot("2026-09-05", 100),
+            data: vec![row(TASK_ID, 0)],
+        }),
+    );
+
+    assert_eq!(state.snapshot().unwrap().observed_at_epoch_ms, 200);
+    assert_eq!(state.snapshot().unwrap().logical_date, "2026-09-06");
+    assert_eq!(state.scheduled_rows()[0].task.task_id, OTHER_TASK_ID);
+}
+
 #[derive(Default)]
 struct FakeStorage {
     value: RefCell<Option<String>>,
