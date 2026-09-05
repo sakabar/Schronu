@@ -1,10 +1,103 @@
 use crate::adapter::gateway::storage_lock::{LockMode, StorageLock};
 use crate::adapter::gateway::storage_snapshot::{
     create_snapshot_after_parent_open, create_snapshot_at, create_snapshot_before_publish,
-    create_snapshot_with_failure, create_snapshot_with_failure_observation, SnapshotFailurePoint,
+    create_snapshot_with_failure, create_snapshot_with_failure_observation,
+    create_snapshot_with_limits, SnapshotFailurePoint, SnapshotResourceLimits,
 };
 use chrono::TimeZone;
 use std::error::Error;
+use walkdir::WalkDir;
+
+#[test]
+fn snapshot作成resource_limitは境界を許可し超過をtyped拒否する() {
+    let root = TestDirectory::new("create-resource-limits");
+    let storage = root.child("source");
+    let baseline = root.child("baseline");
+    let now = Local.with_ymd_and_hms(2026, 9, 5, 12, 0, 0).unwrap();
+    create_saved_repository(&storage, now);
+    create_snapshot_at(&storage, &baseline, now).unwrap();
+
+    let manifest_bytes = fs::metadata(baseline.join("manifest.json")).unwrap().len();
+    let files = WalkDir::new(&storage)
+        .into_iter()
+        .filter_map(Result::ok)
+        .filter(|entry| entry.file_type().is_file() && entry.file_name() != ".lock")
+        .collect::<Vec<_>>();
+    let file_count = files.len();
+    let file_bytes = files
+        .iter()
+        .map(|entry| entry.metadata().unwrap().len())
+        .max()
+        .unwrap();
+    let total_bytes = files
+        .iter()
+        .map(|entry| entry.metadata().unwrap().len())
+        .sum::<u64>();
+    let paths = files
+        .iter()
+        .map(|entry| entry.path().strip_prefix(&storage).unwrap())
+        .collect::<Vec<_>>();
+    let path_bytes = paths
+        .iter()
+        .map(|path| path.to_str().unwrap().len())
+        .max()
+        .unwrap();
+    let depth = paths
+        .iter()
+        .map(|path| path.components().count())
+        .max()
+        .unwrap();
+    let exact = SnapshotResourceLimits::new(
+        manifest_bytes,
+        file_count,
+        file_bytes,
+        total_bytes,
+        path_bytes,
+        depth,
+    );
+
+    create_snapshot_with_limits(&storage, &root.child("exact"), now, exact).unwrap();
+
+    for (name, limits, expected) in [
+        (
+            "manifest",
+            exact.with_manifest_bytes(manifest_bytes - 1),
+            "ManifestBytes",
+        ),
+        (
+            "file-count",
+            exact.with_file_count(file_count - 1),
+            "FileCount",
+        ),
+        (
+            "file-bytes",
+            exact.with_file_bytes(file_bytes - 1),
+            "FileBytes",
+        ),
+        (
+            "total-bytes",
+            exact.with_total_bytes(total_bytes - 1),
+            "PayloadBytes",
+        ),
+        (
+            "path-bytes",
+            exact.with_path_bytes(path_bytes - 1),
+            "PathBytes",
+        ),
+        (
+            "depth",
+            exact.with_depth(depth - 1),
+            "PathDepth",
+        ),
+    ] {
+        let error = create_snapshot_with_limits(&storage, &root.child(name), now, limits)
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains(expected), "{name}: {error}");
+        assert!(error.contains("limit="), "{name}: {error}");
+        assert!(error.contains("observed="), "{name}: {error}");
+    }
+}
 
 #[test]
 fn snapshotはlock下の全永続dataとpermissionを保存して予約領域を除外する() {
