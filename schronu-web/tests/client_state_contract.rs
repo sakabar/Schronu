@@ -656,6 +656,26 @@ fn latest_listは古い同一logical_dateのsnapshotだけ無視してrowsを適
     assert_eq!(state.scheduled_rows()[0].task.task_id, TASK_ID);
 }
 
+#[test]
+fn task_scoped_retry_errorは無関係なlocal成功で解消しない() {
+    let storage = FakeStorage::default();
+    let mut state = state_with_sessions(&storage, &[TASK_ID]);
+    let (request_id, _) = record_effect(state.begin_record_session(TASK_ID));
+    state.apply_record_result(
+        &storage,
+        request_id,
+        Err(ServerFailure::Operation(web_error(
+            web_error_codes::REPOSITORY_SAVE_FAILED,
+            RetryAdvice::Retry,
+        ))),
+    );
+    let retry_error = state.display_error().cloned();
+
+    state.add_session_from_row(&storage, &row(OTHER_TASK_ID, 0));
+
+    assert_eq!(state.display_error(), retry_error.as_ref());
+}
+
 #[derive(Default)]
 struct FakeStorage {
     value: RefCell<Option<String>>,
