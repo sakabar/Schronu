@@ -163,6 +163,23 @@ impl ClientState {
     }
 
     pub(super) fn apply_snapshot(&mut self, snapshot: ServerSnapshot) -> Option<bool> {
+        let changed = self.apply_snapshot_metadata(snapshot)?;
+        if changed {
+            self.read.selected_logical_date = None;
+            self.read.scheduled_rows.clear();
+        }
+        Some(changed)
+    }
+
+    pub(super) fn apply_completion_snapshot(&mut self, snapshot: ServerSnapshot, task_id: &str) {
+        let _ = self.apply_snapshot_metadata(snapshot);
+        self.read
+            .scheduled_rows
+            .retain(|row| row.task.task_id != task_id);
+        self.read.latest_list_request_id = None;
+    }
+
+    fn apply_snapshot_metadata(&mut self, snapshot: ServerSnapshot) -> Option<bool> {
         if self
             .read
             .snapshot
@@ -179,18 +196,9 @@ impl ClientState {
         if changed {
             self.read.date_buttons =
                 logical_date_buttons(&snapshot.logical_date).unwrap_or_default();
-            self.read.selected_logical_date = None;
-            self.read.scheduled_rows.clear();
         }
         self.read.snapshot = Some(snapshot);
         Some(changed)
-    }
-
-    pub(super) fn remove_completed_task_from_list(&mut self, task_id: &str) {
-        self.read
-            .scheduled_rows
-            .retain(|row| row.task.task_id != task_id);
-        self.read.latest_list_request_id = None;
     }
 
     fn allocate_read_request_id(&mut self) -> Option<u64> {
