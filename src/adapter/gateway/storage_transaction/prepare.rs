@@ -4,12 +4,12 @@ use std::sync::Arc;
 use uuid::Uuid;
 
 use super::cleanup::cleanup_stale_tombstones;
+use super::layout::TransactionLayout;
 use super::{
     acquire_transaction_lock, content_checksum, resolve_transactions_directory, sync_directory,
     validate_storage_relative_path, validate_transactions_directory, ManifestEntry,
     ManifestEntryOperation, PreparedEntry, PreparedTransaction, StorageTransactionError,
     StorageTransactionIo, StorageTransactionOperation, TransactionManifest, WriteRequest,
-    ACTIVE_TRANSACTION_DIRECTORY_NAME,
 };
 
 #[cfg(test)]
@@ -29,10 +29,11 @@ pub(in crate::adapter::gateway) fn prepare_with_directories(
     writes: &[WriteRequest<'_>],
     directories: &[&Path],
 ) -> Result<PreparedTransaction, StorageTransactionError> {
+    let layout = TransactionLayout::new(storage_dir_path);
     let transactions_dir_path =
         resolve_transactions_directory(io.as_ref(), storage_dir_path, true)?
             .expect("transaction directory must exist after successful creation");
-    let transaction_dir_path = transactions_dir_path.join(ACTIVE_TRANSACTION_DIRECTORY_NAME);
+    let transaction_dir_path = layout.active_transaction_dir_path();
     let transaction_lock = acquire_transaction_lock(&transactions_dir_path).map_err(|error| {
         if error.source.kind() == std::io::ErrorKind::WouldBlock {
             StorageTransactionError::new(
@@ -59,7 +60,7 @@ pub(in crate::adapter::gateway) fn prepare_with_directories(
             error,
         ));
     }
-    let staged_files_dir_path = transaction_dir_path.join("files");
+    let staged_files_dir_path = layout.staged_files_dir_path();
     if let Err(error) = io.create_dir_all(&staged_files_dir_path) {
         let _ = io.remove_dir_all(&transaction_dir_path);
         return Err(StorageTransactionError::new(
@@ -94,7 +95,7 @@ pub(in crate::adapter::gateway) fn prepare_with_directories(
             Ok(PreparedEntry {
                 target: validate_storage_relative_path(storage_dir_path, write.target_path)?,
                 operation: ManifestEntryOperation::Write,
-                staged_file: Some(PathBuf::from("files").join(index.to_string())),
+                staged_file: Some(TransactionLayout::staged_file_relative_path(index)),
                 content_length: Some(write.bytes.len() as u64),
                 content_checksum: Some(content_checksum(write.bytes)),
             })
@@ -128,8 +129,9 @@ fn prepare_contents(
     let mut entries = Vec::with_capacity(writes.len());
     for (index, write) in writes.iter().enumerate() {
         let target = validate_storage_relative_path(storage_dir_path, write.target_path)?;
-        let staged_file = PathBuf::from("files").join(index.to_string());
-        let staged_file_path = transaction_dir_path.join(&staged_file);
+        let staged_file = TransactionLayout::staged_file_relative_path(index);
+        let staged_file_path =
+            TransactionLayout::staged_file_path(transaction_dir_path, &staged_file);
         write_staged_file(io, write.target_path, &staged_file_path, write.bytes)?;
         entries.push(ManifestEntry {
             target,
@@ -152,7 +154,7 @@ fn prepare_contents(
         directories: directories.clone(),
         entries,
     };
-    let manifest_path = transaction_dir_path.join("manifest.json");
+    let manifest_path = TransactionLayout::manifest_path(transaction_dir_path);
     let manifest_bytes = serde_json::to_vec(&manifest).map_err(|error| {
         StorageTransactionError::new(
             StorageTransactionOperation::SerializeManifest,

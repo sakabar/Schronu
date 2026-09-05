@@ -1,3 +1,4 @@
+use super::layout::TransactionLayout;
 use super::{StorageTransactionError, StorageTransactionOperation};
 use serde::{Deserialize, Serialize};
 use std::path::{Component, Path, PathBuf};
@@ -101,11 +102,12 @@ pub(super) fn validate_staged_file_path(
     let components = staged_file.components().collect::<Vec<_>>();
     if !matches!(
         components.as_slice(),
-        [Component::Normal(directory), Component::Normal(_)] if *directory == "files"
+        [Component::Normal(directory), Component::Normal(_)]
+            if TransactionLayout::is_staged_files_directory_name(directory)
     ) {
         return Err(StorageTransactionError::new(
             StorageTransactionOperation::ValidateManifest,
-            transaction_dir_path.join(staged_file),
+            TransactionLayout::staged_file_path(transaction_dir_path, staged_file),
             std::io::Error::new(
                 std::io::ErrorKind::InvalidData,
                 "staged file must be a direct child of the transaction files directory",

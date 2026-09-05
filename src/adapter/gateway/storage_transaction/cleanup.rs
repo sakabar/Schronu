@@ -1,8 +1,7 @@
 use std::fs;
 use std::path::Path;
 
-use uuid::Uuid;
-
+use super::layout::TransactionLayout;
 use super::{
     PreparedTransaction, StorageTransactionError, StorageTransactionIo, StorageTransactionOperation,
 };
@@ -10,10 +9,8 @@ use super::{
 pub(super) fn cleanup_committed_transaction(
     transaction: &PreparedTransaction,
 ) -> Result<(), StorageTransactionError> {
-    let cleanup_dir_path = transaction.transactions_dir_path.join(format!(
-        ".cleanup-{}",
-        transaction.transaction_id.hyphenated()
-    ));
+    let layout = TransactionLayout::new(&transaction.storage_dir_path);
+    let cleanup_dir_path = layout.cleanup_dir_path(transaction.transaction_id);
     transaction
         .io
         .rename(&transaction.transaction_dir_path, &cleanup_dir_path)
@@ -51,13 +48,7 @@ pub(super) fn cleanup_stale_tombstones(
         let Some(name) = entry.file_name().to_str().map(str::to_owned) else {
             continue;
         };
-        let Some(uuid_text) = name.strip_prefix(".cleanup-") else {
-            continue;
-        };
-        let Ok(uuid) = Uuid::parse_str(uuid_text) else {
-            continue;
-        };
-        if uuid.hyphenated().to_string() != uuid_text {
+        if TransactionLayout::cleanup_transaction_id(&name).is_none() {
             continue;
         }
         let Ok(metadata) = io.symlink_metadata(&path) else {

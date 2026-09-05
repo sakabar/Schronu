@@ -1,10 +1,12 @@
+use super::layout::TransactionLayout;
 use super::{StorageTransactionError, StorageTransactionOperation};
 use fs2::FileExt;
 use std::fs::{self, File};
 use std::io::Write;
 use std::path::Path;
 
-pub(super) const TRANSACTION_LOCK_FILE_NAME: &str = ".lock";
+#[cfg(test)]
+pub(super) use super::layout::TRANSACTION_LOCK_FILE_NAME;
 
 pub(in crate::adapter::gateway) trait StorageTransactionIo:
     Send + Sync
@@ -81,7 +83,7 @@ pub(super) struct TransactionLock {
 pub(super) fn acquire_transaction_lock(
     transactions_dir_path: &Path,
 ) -> Result<TransactionLock, StorageTransactionError> {
-    let lock_path = transactions_dir_path.join(TRANSACTION_LOCK_FILE_NAME);
+    let lock_path = TransactionLayout::transaction_lock_path(transactions_dir_path);
     let file = open_transaction_lock_file(&lock_path).map_err(|error| {
         StorageTransactionError::new(
             StorageTransactionOperation::AcquireTransactionLock,

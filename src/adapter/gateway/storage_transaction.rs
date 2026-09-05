@@ -18,8 +18,10 @@ use io::TRANSACTION_LOCK_FILE_NAME;
 use io::{acquire_transaction_lock, sync_directory, TransactionLock};
 pub(super) use io::{FileSystemStorageTransactionIo, StorageTransactionIo};
 #[cfg(test)]
+use layout::ACTIVE_TRANSACTION_DIRECTORY_NAME;
+#[cfg(test)]
 pub(super) use layout::TRANSACTION_DIRECTORY_NAME;
-use layout::{validate_storage_relative_path, ACTIVE_TRANSACTION_DIRECTORY_NAME};
+use layout::{validate_storage_relative_path, TransactionLayout};
 use manifest::{
     content_checksum, invalid_manifest_entry_error, validate_content_integrity,
     validate_staged_file_path, ManifestEntry, ManifestEntryOperation, TransactionManifest,
@@ -181,7 +183,7 @@ fn resolve_transactions_directory(
     storage_dir_path: &Path,
     create: bool,
 ) -> Result<Option<PathBuf>, StorageTransactionError> {
-    let transactions_dir_path = storage_dir_path.join(layout::TRANSACTION_DIRECTORY_NAME);
+    let transactions_dir_path = TransactionLayout::new(storage_dir_path).transactions_dir_path();
     let (metadata, created) = match fs::symlink_metadata(&transactions_dir_path) {
         Ok(metadata) => (metadata, false),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound && !create => return Ok(None),

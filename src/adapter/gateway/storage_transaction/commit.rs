@@ -2,6 +2,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use super::cleanup::cleanup_committed_transaction;
+use super::layout::TransactionLayout;
 use super::manifest::content_matches;
 use super::{
     sync_directory, ManifestEntryOperation, PreparedTransaction, StorageTransactionError,
@@ -34,8 +35,9 @@ impl PreparedTransaction {
         self,
         revision_path: &Path,
     ) -> Result<(), StorageTransactionError> {
-        let marker_temporary_path = self.transaction_dir_path.join("commit.tmp");
-        let marker_path = self.transaction_dir_path.join("commit");
+        let marker_temporary_path =
+            TransactionLayout::temporary_commit_marker_path(&self.transaction_dir_path);
+        let marker_path = TransactionLayout::commit_marker_path(&self.transaction_dir_path);
         self.io
             .create_new_file(&marker_temporary_path)
             .map_err(|error| {
@@ -71,8 +73,9 @@ impl PreparedTransaction {
         revision_path: &Path,
     ) -> Result<(), StorageTransactionError> {
         let preflight_entries = self.preflight_entries()?;
+        let layout = TransactionLayout::new(&self.storage_dir_path);
         for directory in &self.directories {
-            let directory_path = self.storage_dir_path.join(directory);
+            let directory_path = layout.target_path(directory);
             self.io.create_dir_all(&directory_path).map_err(|error| {
                 StorageTransactionError::new(
                     StorageTransactionOperation::CreateTargetDirectory,
@@ -102,19 +105,20 @@ impl PreparedTransaction {
     }
 
     fn preflight_entries(&self) -> Result<Vec<PreflightEntry>, StorageTransactionError> {
+        let layout = TransactionLayout::new(&self.storage_dir_path);
         self.entries
             .iter()
             .map(|entry| {
                 if entry.operation == ManifestEntryOperation::Delete {
                     return Ok(PreflightEntry {
-                        target_path: self.storage_dir_path.join(&entry.target),
+                        target_path: layout.target_path(&entry.target),
                         operation: entry.operation,
                         bytes: None,
                         permissions: None,
                         already_applied: false,
                     });
                 }
-                let target_path = self.storage_dir_path.join(&entry.target);
+                let target_path = layout.target_path(&entry.target);
                 let expected_length = entry
                     .content_length
                     .expect("validated write entry must contain content length");
@@ -122,7 +126,8 @@ impl PreparedTransaction {
                     .content_checksum
                     .as_deref()
                     .expect("validated write entry must contain content checksum");
-                let staged_file_path = self.transaction_dir_path.join(
+                let staged_file_path = TransactionLayout::staged_file_path(
+                    &self.transaction_dir_path,
                     entry
                         .staged_file
                         .as_ref()
@@ -298,11 +303,8 @@ impl PreparedTransaction {
                 ),
             )
         })?;
-        let temporary_path = parent_path.join(format!(
-            ".{}.{}.tmp",
-            file_name.to_string_lossy(),
-            self.transaction_id.hyphenated()
-        ));
+        let temporary_path =
+            TransactionLayout::live_temporary_path(parent_path, file_name, self.transaction_id);
         if let Err(error) = self.io.create_new_file(&temporary_path) {
             if error.kind() != std::io::ErrorKind::AlreadyExists {
                 return Err(StorageTransactionError::new(

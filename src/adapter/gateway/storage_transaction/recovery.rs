@@ -3,19 +3,20 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use super::cleanup::cleanup_stale_tombstones;
+use super::layout::TransactionLayout;
 use super::{
     acquire_transaction_lock, invalid_manifest_entry_error, resolve_transactions_directory,
     sync_directory, validate_content_integrity, validate_delete_target_ancestors,
     validate_staged_file_path, validate_storage_relative_path, validate_transactions_directory,
     ManifestEntryOperation, PreparedEntry, PreparedTransaction, StorageTransactionError,
     StorageTransactionIo, StorageTransactionOperation, TransactionLock, TransactionManifest,
-    ACTIVE_TRANSACTION_DIRECTORY_NAME,
 };
 
 pub(in crate::adapter::gateway) fn recover(
     io: Arc<dyn StorageTransactionIo>,
     storage_dir_path: &Path,
 ) -> Result<(), StorageTransactionError> {
+    let layout = TransactionLayout::new(storage_dir_path);
     let Some(transactions_dir_path) =
         resolve_transactions_directory(io.as_ref(), storage_dir_path, false)?
     else {
@@ -24,7 +25,7 @@ pub(in crate::adapter::gateway) fn recover(
     let _transaction_lock = acquire_transaction_lock(&transactions_dir_path)?;
     validate_transactions_directory(&transactions_dir_path)?;
     cleanup_stale_tombstones(io.as_ref(), &transactions_dir_path);
-    let transaction_dir_path = transactions_dir_path.join(ACTIVE_TRANSACTION_DIRECTORY_NAME);
+    let transaction_dir_path = layout.active_transaction_dir_path();
     match fs::symlink_metadata(&transaction_dir_path) {
         Ok(metadata) if metadata.is_dir() => {}
         Ok(_) => {
@@ -47,7 +48,7 @@ pub(in crate::adapter::gateway) fn recover(
         }
     }
 
-    let marker_path = transaction_dir_path.join("commit");
+    let marker_path = TransactionLayout::commit_marker_path(&transaction_dir_path);
     match io.symlink_metadata(&marker_path) {
         Ok(metadata) => {
             if !metadata.file_type().is_file() {
@@ -60,7 +61,7 @@ pub(in crate::adapter::gateway) fn recover(
                     ),
                 ));
             }
-            let manifest_path = transaction_dir_path.join("manifest.json");
+            let manifest_path = TransactionLayout::manifest_path(&transaction_dir_path);
             let manifest_metadata = io.symlink_metadata(&manifest_path).map_err(|error| {
                 StorageTransactionError::new(
                     StorageTransactionOperation::ReadManifest,
@@ -102,7 +103,7 @@ pub(in crate::adapter::gateway) fn recover(
                 manifest,
                 _transaction_lock,
             )?;
-            return prepared.finish_committed(&storage_dir_path.join(".revision"));
+            return prepared.finish_committed(&layout.revision_path());
         }
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
         Err(error) => {
@@ -135,6 +136,7 @@ pub(super) fn prepared_from_manifest(
     manifest: TransactionManifest,
     transaction_lock: TransactionLock,
 ) -> Result<PreparedTransaction, StorageTransactionError> {
+    let layout = TransactionLayout::new(storage_dir_path);
     if manifest.version != 1 || manifest.transaction_id.is_nil() {
         return Err(StorageTransactionError::new(
             StorageTransactionOperation::ValidateManifest,
@@ -149,7 +151,7 @@ pub(super) fn prepared_from_manifest(
         .directories
         .into_iter()
         .map(|directory| {
-            validate_storage_relative_path(storage_dir_path, &storage_dir_path.join(directory))
+            validate_storage_relative_path(storage_dir_path, &layout.target_path(&directory))
         })
         .collect::<Result<Vec<_>, _>>()?;
     let entries = manifest
@@ -158,7 +160,7 @@ pub(super) fn prepared_from_manifest(
         .map(|entry| {
             let target = validate_storage_relative_path(
                 storage_dir_path,
-                &storage_dir_path.join(entry.target),
+                &layout.target_path(&entry.target),
             )?;
             if entry.operation == ManifestEntryOperation::Delete {
                 validate_delete_target_ancestors(io.as_ref(), storage_dir_path, &target)?;
