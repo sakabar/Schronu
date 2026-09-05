@@ -11,12 +11,16 @@ fn snapshot_restoreはsource非依存で別directoryへ全永続dataを復元す
     let (_, project_yaml) = create_saved_repository(&source, now);
     let relative_project = project_yaml.strip_prefix(&source).unwrap().to_path_buf();
     fs::write(project_yaml.parent().unwrap().join("notes.bin"), b"note").unwrap();
-    fs::create_dir_all(project_yaml.parent().unwrap().join("markdown/empty")).unwrap();
+    let empty_directory = project_yaml.parent().unwrap().join("markdown/empty");
+    fs::create_dir_all(&empty_directory).unwrap();
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
         fs::set_permissions(&project_yaml, fs::Permissions::from_mode(0o640)).unwrap();
+        fs::set_permissions(&empty_directory, fs::Permissions::from_mode(0o710)).unwrap();
+        fs::set_permissions(source.join(".revision"), fs::Permissions::from_mode(0o600)).unwrap();
     }
+    let expected_revision_bytes = fs::read(source.join(".revision")).unwrap();
     let expected_revision = create_snapshot_at(&source, &snapshot, now)
         .unwrap()
         .revision();
@@ -35,6 +39,10 @@ fn snapshot_restoreはsource非依存で別directoryへ全永続dataを復元す
         .join(relative_project.parent().unwrap())
         .join("markdown/empty")
         .is_dir());
+    assert_eq!(
+        fs::read(destination.join(".revision")).unwrap(),
+        expected_revision_bytes
+    );
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
@@ -45,6 +53,26 @@ fn snapshot_restoreはsource非依存で別directoryへ全永続dataを復元す
                 .mode()
                 & 0o777,
             0o640
+        );
+        assert_eq!(
+            fs::metadata(
+                destination
+                    .join(relative_project.parent().unwrap())
+                    .join("markdown/empty")
+            )
+            .unwrap()
+            .permissions()
+            .mode()
+                & 0o777,
+            0o710
+        );
+        assert_eq!(
+            fs::metadata(destination.join(".revision"))
+                .unwrap()
+                .permissions()
+                .mode()
+                & 0o777,
+            0o600
         );
     }
     let mut repository = TaskRepository::new(destination.to_str().unwrap());
