@@ -298,3 +298,38 @@ fn invalid_manifest(path: &Path, message: &'static str) -> SnapshotError {
         std::io::Error::new(std::io::ErrorKind::InvalidData, message),
     )
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::adapter::gateway::storage_snapshot::SnapshotLimitKind;
+
+    #[test]
+    fn directory_manifest加算overflowは最大limitでもtyped拒否する() {
+        let operation_path = Path::new("/snapshot/storage/project");
+        let relative_path = Path::new("project");
+        let limits = SnapshotResourceLimits::new(
+            u64::MAX,
+            usize::MAX,
+            u64::MAX,
+            u64::MAX,
+            usize::MAX,
+            usize::MAX,
+        );
+
+        let error = accumulate_directory_manifest_bytes(
+            operation_path,
+            relative_path,
+            None,
+            u64::MAX,
+            limits,
+        )
+        .unwrap_err();
+
+        assert_eq!(error.limit_kind(), Some(SnapshotLimitKind::ManifestBytes));
+        assert_eq!(error.limit_value(), Some(u64::MAX));
+        assert_eq!(error.observed_value(), Some(u64::MAX));
+        assert_eq!(error.path(), operation_path);
+        assert_eq!(error.limit_path(), Some(relative_path));
+    }
+}
