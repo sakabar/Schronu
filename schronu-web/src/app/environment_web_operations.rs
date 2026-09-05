@@ -1,3 +1,227 @@
+use crate::{
+    web_error_codes, CompleteSessionResponse, ListTasksRequest, RecordSessionRequest,
+    RecordSessionResult, RetryAdvice, ScheduledTaskRow, ServerSnapshot, SessionTask, WebError,
+    WebOperations, WebSuccess, WebWorkerHandle,
+};
+use chrono::{DateTime, Local, NaiveDate};
+use schronu::adapter::controller::{
+    resolve_project_storage_directory, RecordSessionRequest as CoreRecordSessionRequest,
+    ScheduledTaskRowDto, ServerSnapshot as CoreServerSnapshot, SessionTaskDto, WebService,
+    WebSuccess as CoreWebSuccess,
+};
+use schronu::adapter::gateway::schronu_config::load_schronu_config;
+use std::env;
+use std::ffi::OsString;
+
+trait Clock: 'static {
+    fn now(&mut self) -> DateTime<Local>;
+}
+
+struct SystemClock;
+
+impl Clock for SystemClock {
+    fn now(&mut self) -> DateTime<Local> {
+        Local::now()
+    }
+}
+
+pub fn web_worker_from_environment() -> WebWorkerHandle {
+    WebWorkerHandle::spawn(EnvironmentWebOperations::new)
+}
+
+struct EnvironmentWebOperations<C = SystemClock> {
+    config_path: Option<OsString>,
+    storage_directory: Option<OsString>,
+    clock: C,
+    service: Option<WebService>,
+}
+
+impl EnvironmentWebOperations<SystemClock> {
+    fn new() -> Self {
+        Self::with_environment_and_clock(
+            env::var_os("SCHRONU_CONFIG_PATH"),
+            env::var_os("SCHRONU_STORAGE_DIR"),
+            SystemClock,
+        )
+    }
+}
+
+impl<C: Clock> EnvironmentWebOperations<C> {
+    fn with_environment_and_clock(
+        config_path: Option<OsString>,
+        storage_directory: Option<OsString>,
+        clock: C,
+    ) -> Self {
+        Self {
+            config_path,
+            storage_directory,
+            clock,
+            service: None,
+        }
+    }
+
+    fn service(&mut self) -> Result<&mut WebService, WebError> {
+        if self.service.is_none() {
+            let config =
+                load_schronu_config(self.config_path.clone()).map_err(|_| configuration_error())?;
+            let directory = resolve_project_storage_directory(self.storage_directory.clone())
+                .map_err(|_| configuration_error())?;
+            self.service = Some(WebService::new(directory, config));
+        }
+        self.service.as_mut().ok_or_else(configuration_error)
+    }
+}
+
+impl<C: Clock> WebOperations for EnvironmentWebOperations<C> {
+    fn bootstrap(&mut self) -> Result<ServerSnapshot, WebError> {
+        let operation_now = self.clock.now();
+        self.service()?
+            .bootstrap_at(operation_now)
+            .map(Into::into)
+            .map_err(Into::into)
+    }
+
+    fn list_tasks(
+        &mut self,
+        request: ListTasksRequest,
+    ) -> Result<WebSuccess<Vec<ScheduledTaskRow>>, WebError> {
+        let operation_now = self.clock.now();
+        let logical_date = NaiveDate::parse_from_str(&request.logical_date, "%Y-%m-%d")
+            .map_err(|_| invalid_input_error())?;
+        self.service()?
+            .list_tasks_at(operation_now, logical_date)
+            .map(convert_success)
+            .map_err(Into::into)
+    }
+
+    fn auto_session(&mut self) -> Result<WebSuccess<Option<SessionTask>>, WebError> {
+        let operation_now = self.clock.now();
+        self.service()?
+            .auto_session_at(operation_now)
+            .map(convert_success)
+            .map_err(Into::into)
+    }
+
+    fn record_session(
+        &mut self,
+        request: RecordSessionRequest,
+    ) -> Result<WebSuccess<RecordSessionResult>, WebError> {
+        let operation_now = self.clock.now();
+        self.service()?
+            .record_session_at(operation_now, request.into())
+            .map(convert_success)
+            .map_err(Into::into)
+    }
+
+    fn complete_session(
+        &mut self,
+        request: RecordSessionRequest,
+    ) -> Result<CompleteSessionResponse, WebError> {
+        let operation_now = self.clock.now();
+        self.service()?
+            .complete_session_at(operation_now, request.into())
+            .map(Into::into)
+            .map_err(Into::into)
+    }
+}
+
+impl From<CoreServerSnapshot> for ServerSnapshot {
+    fn from(snapshot: CoreServerSnapshot) -> Self {
+        Self {
+            observed_at_epoch_ms: snapshot.observed_at_epoch_ms,
+            logical_date: snapshot.logical_date,
+            buffer_seconds: snapshot.buffer_seconds,
+        }
+    }
+}
+
+impl From<SessionTaskDto> for SessionTask {
+    fn from(task: SessionTaskDto) -> Self {
+        Self {
+            task_id: task.task_id,
+            task_name: task.task_name,
+            estimated_work_seconds: task.estimated_work_seconds,
+            actual_work_seconds: task.actual_work_seconds,
+        }
+    }
+}
+
+impl From<ScheduledTaskRowDto> for ScheduledTaskRow {
+    fn from(row: ScheduledTaskRowDto) -> Self {
+        Self {
+            task: row.task.into(),
+            schedule_start_epoch_ms: row.schedule_start_epoch_ms,
+            schedule_end_epoch_ms: row.schedule_end_epoch_ms,
+            deadline_epoch_ms: row.deadline_epoch_ms,
+            is_leaf: row.is_leaf,
+        }
+    }
+}
+
+impl From<RecordSessionRequest> for CoreRecordSessionRequest {
+    fn from(request: RecordSessionRequest) -> Self {
+        Self {
+            task_id: request.task_id,
+            started_at_epoch_ms: request.started_at_epoch_ms,
+            expected_actual_work_seconds: request.expected_actual_work_seconds,
+        }
+    }
+}
+
+trait ConvertData {
+    type Output;
+    fn convert(self) -> Self::Output;
+}
+
+impl ConvertData for Vec<ScheduledTaskRowDto> {
+    type Output = Vec<ScheduledTaskRow>;
+
+    fn convert(self) -> Self::Output {
+        self.into_iter().map(Into::into).collect()
+    }
+}
+
+impl ConvertData for Option<SessionTaskDto> {
+    type Output = Option<SessionTask>;
+
+    fn convert(self) -> Self::Output {
+        self.map(Into::into)
+    }
+}
+
+impl ConvertData for schronu::adapter::controller::RecordSessionResult {
+    type Output = RecordSessionResult;
+
+    fn convert(self) -> Self::Output {
+        RecordSessionResult {
+            actual_work_seconds: self.actual_work_seconds,
+        }
+    }
+}
+
+fn convert_success<T: ConvertData>(success: CoreWebSuccess<T>) -> WebSuccess<T::Output> {
+    WebSuccess {
+        snapshot: success.snapshot.into(),
+        data: success.data.convert(),
+    }
+}
+
+fn invalid_input_error() -> WebError {
+    WebError {
+        code: web_error_codes::INVALID_INPUT.to_owned(),
+        message: "logical_dateはYYYY-MM-DD形式で指定してください。".to_owned(),
+        retry_advice: RetryAdvice::ManualCheck,
+    }
+}
+
+fn configuration_error() -> WebError {
+    WebError {
+        code: web_error_codes::CONFIGURATION_ERROR.to_owned(),
+        message: "Schronuの設定を読み込めませんでした。".to_owned(),
+        retry_advice: RetryAdvice::ManualCheck,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::{Clock, EnvironmentWebOperations};
@@ -116,7 +340,13 @@ mod tests {
             let storage = root.join("storage");
             fs::create_dir_all(&storage).unwrap();
             let busy = root.join("busy.yaml");
-            fs::write(&busy, "days_of_week: []\n").unwrap();
+            let mut busy_yaml = String::from("days_of_week:\n");
+            for day in ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"] {
+                busy_yaml.push_str(&format!(
+                    "  - day_of_week: {day}\n    busy_time_slots: []\n"
+                ));
+            }
+            fs::write(&busy, busy_yaml).unwrap();
             let config = root.join("schronu.yaml");
             Self {
                 root,
