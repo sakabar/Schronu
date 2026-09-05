@@ -1,3 +1,33 @@
+fn non_interactive_test_tokens(command: &str) -> Vec<String> {
+    command.split_whitespace().map(str::to_string).collect()
+}
+
+fn execute_non_interactive_command_for_test(
+    task_repository: &mut dyn TaskRepositoryTrait,
+    free_time_manager: &mut dyn FreeTimeManagerTrait,
+    command: &str,
+) -> Result<(), RunError> {
+    execute_non_interactive_command(
+        task_repository,
+        free_time_manager,
+        &non_interactive_test_tokens(command),
+    )
+}
+
+fn execute_non_interactive_command_at_for_test(
+    task_repository: &mut dyn TaskRepositoryTrait,
+    free_time_manager: &mut dyn FreeTimeManagerTrait,
+    command: &str,
+    operation_now: DateTime<Local>,
+) -> Result<(), RunError> {
+    execute_non_interactive_command_at(
+        task_repository,
+        free_time_manager,
+        &non_interactive_test_tokens(command),
+        operation_now,
+    )
+}
+
 #[test]
 fn test_resolve_upcoming_mmdd_未来の日付は現在年を使う() {
     let now = Local.with_ymd_and_hms(2026, 8, 11, 12, 0, 0).unwrap();
@@ -5748,7 +5778,7 @@ fn test_parse_non_interactive_command_引数なしは_none() {
 #[test]
 fn test_parse_non_interactive_command_単一引数をコマンドにする() {
     let actual = parse_non_interactive_command(vec!["今".to_string()]);
-    let expected = Some("今".to_string());
+    let expected = Some(vec!["今".to_string()]);
 
     assert_eq!(actual, expected);
 }
@@ -5756,7 +5786,7 @@ fn test_parse_non_interactive_command_単一引数をコマンドにする() {
 #[test]
 fn test_parse_non_interactive_command_複数引数を1コマンドにする() {
     let actual = parse_non_interactive_command(vec!["尾".to_string(), "週".to_string()]);
-    let expected = Some("尾 週".to_string());
+    let expected = Some(vec!["尾".to_string(), "週".to_string()]);
 
     assert_eq!(actual, expected);
 }
@@ -5769,7 +5799,7 @@ fn test_non_interactiveの不正属性値はbusy_time読込前に拒否する() 
         let mut repository = TestTaskRepository::new(new_test_task_handle("既存").unwrap(), now);
         let mut free_time_manager = TestFreeTimeManagerWithLoadError::default();
 
-        let result = execute_non_interactive_command_at(
+        let result = execute_non_interactive_command_at_for_test(
             &mut repository,
             &mut free_time_manager,
             command,
@@ -5823,7 +5853,7 @@ fn test_non_interactiveの不正argumentはrepositoryもbusy_timeも読込まず
         let mut repository = TestTaskRepository::new(task, now);
         let mut free_time_manager = TestFreeTimeManagerWithLoadError::default();
 
-        let error = execute_non_interactive_command_at(
+        let error = execute_non_interactive_command_at_for_test(
             &mut repository,
             &mut free_time_manager,
             input,
@@ -5877,7 +5907,7 @@ fn test_non_interactiveのfinish時刻errorはload後に診断し状態を変更
     let mut repository = TestTaskRepository::new(task, now).with_storage_directory(&storage_dir.path);
     let mut free_time_manager = TestFreeTimeManager::default();
 
-    let error = execute_non_interactive_command_at(
+    let error = execute_non_interactive_command_at_for_test(
         &mut repository,
         &mut free_time_manager,
         "終 invalid",
@@ -6090,7 +6120,7 @@ fn test_execute_non_interactive_command_project作成はoperation時刻を共有
     .with_storage_directory(&storage_dir.path);
     let mut free_time_manager = TestFreeTimeManager::default();
 
-    execute_non_interactive_command_at(
+    execute_non_interactive_command_at_for_test(
         &mut task_repository,
         &mut free_time_manager,
         "新 snapshot_project 30",
@@ -6128,7 +6158,7 @@ fn test_execute_non_interactive_command_finishはoperation時刻を共有する(
     task_repository.highest_priority_leaf_task_id_opt = Some(focused_id);
     let mut free_time_manager = TestFreeTimeManager::default();
 
-    execute_non_interactive_command_at(
+    execute_non_interactive_command_at_for_test(
         &mut task_repository,
         &mut free_time_manager,
         "終",
@@ -6166,7 +6196,7 @@ fn test_execute_non_interactive_command_省略作業時間はoperation時刻を�
         .with_storage_directory(&storage_dir.path);
     let mut free_time_manager = TestFreeTimeManager::default();
 
-    execute_non_interactive_command_at(
+    execute_non_interactive_command_at_for_test(
         &mut task_repository,
         &mut free_time_manager,
         "働",
@@ -6202,7 +6232,11 @@ fn test_execute_non_interactive_command_load失敗時はcommandを実行しな�
     let mut free_time_manager = TestFreeTimeManager::default();
 
     let actual =
-        execute_non_interactive_command(&mut task_repository, &mut free_time_manager, "予 45");
+        execute_non_interactive_command_for_test(
+            &mut task_repository,
+            &mut free_time_manager,
+            "予 45",
+        );
 
     assert!(matches!(
         actual,
@@ -6229,7 +6263,12 @@ fn test_execute_non_interactive_command_検証はsaveとfree_time読込を行わ
         TestTaskRepository::new(task, now).with_storage_directory(&storage_dir.path);
     let mut free_time_manager = TestFreeTimeManager::default();
 
-    execute_non_interactive_command(&mut task_repository, &mut free_time_manager, "検証").unwrap();
+    execute_non_interactive_command_for_test(
+        &mut task_repository,
+        &mut free_time_manager,
+        "検証",
+    )
+    .unwrap();
 
     assert_eq!(task_repository.save_attempt_count.get(), 0);
 }
@@ -6273,7 +6312,7 @@ fn test_verifyのread_only_repository検査はruntimeが所有する() {
         TestTaskRepository::new(task, now).with_storage_directory(&storage_dir.path);
     let mut free_time_manager = TestFreeTimeManagerWithLoadError::default();
 
-    execute_non_interactive_command_at(
+    execute_non_interactive_command_at_for_test(
         &mut repository,
         &mut free_time_manager,
         "検証",
@@ -6388,7 +6427,11 @@ fn test_execute_non_interactive_command_gatewayの変換errorをstderrへ表示�
     let mut free_time_manager = TestFreeTimeManager::default();
 
     let result =
-        execute_non_interactive_command(&mut task_repository, &mut free_time_manager, "予 45");
+        execute_non_interactive_command_for_test(
+            &mut task_repository,
+            &mut free_time_manager,
+            "予 45",
+        );
     let mut stderr = Vec::new();
     let succeeded = report_run_result(&mut stderr, result);
 
@@ -6411,7 +6454,11 @@ fn test_execute_non_interactive_command_busy_time_slots読込失敗はstderrへ�
     let busy_time_slots_yaml_path = active_config().busy_time_slots_yaml_path.clone();
 
     let error =
-        execute_non_interactive_command(&mut task_repository, &mut free_time_manager, "予 45")
+        execute_non_interactive_command_for_test(
+            &mut task_repository,
+            &mut free_time_manager,
+            "予 45",
+        )
             .expect_err("busy time slotsの読込失敗はRunErrorとして返るべきです");
 
     assert!(matches!(
@@ -7142,7 +7189,7 @@ fn test_interactive_submitとnoninteractive実行は共通command_transaction経
                 ) if operation_now == now
             ));
         } else {
-            execute_non_interactive_command_at(
+            execute_non_interactive_command_at_for_test(
                 &mut repository,
                 &mut free_time_manager,
                 "estimate 45",

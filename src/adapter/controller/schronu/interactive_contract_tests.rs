@@ -1301,18 +1301,26 @@ fn interactive_terminal_driver_is_isolated_from_runtime() {
 #[test]
 fn interactiveとnoninteractiveは単一のtyped_parserを共有する() {
     let product_sources = controller_product_sources();
-    unique_function_region(&product_sources, "parse_command")
+    let (_, interactive_parser) = unique_function_region(&product_sources, "parse_command")
+        .expect("controller must keep one interactive parser definition");
+    let (_, non_interactive_parser) =
+        unique_function_region(&product_sources, "parse_non_interactive_command_tokens")
+            .expect("controller must keep one non-interactive token entry definition");
+    unique_function_region(&product_sources, "parse_command_tokens")
         .expect("controller must keep one shared typed parser definition");
-    for parse_mode in ["Interactive", "NonInteractive"] {
-        assert!(
-            product_sources.iter().any(|source| source
-                .text
-                .split_whitespace()
-                .collect::<String>()
-                .contains(&format!("parse_command(command,ParseMode::{parse_mode})"))),
-            "{parse_mode} product entry must call the shared typed parser"
-        );
-    }
+    assert!(compact_code(interactive_parser).contains("parse_command_tokens(&tokens,mode)"));
+    assert!(compact_code(non_interactive_parser)
+        .contains("parse_command_tokens(tokens,ParseMode::NonInteractive)"));
+    assert!(product_sources.iter().any(|source| source
+        .text
+        .split_whitespace()
+        .collect::<String>()
+        .contains("parse_command(command,ParseMode::Interactive)")));
+    assert!(product_sources.iter().any(|source| source
+        .text
+        .split_whitespace()
+        .collect::<String>()
+        .contains("parse_non_interactive_command_tokens(command_tokens)")));
 }
 
 #[test]

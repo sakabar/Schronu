@@ -505,6 +505,15 @@ pub(super) fn parse_command_tokens(
     }
 }
 
+pub(super) fn parse_non_interactive_command_tokens(
+    tokens: &[String],
+) -> Result<Command, CommandParseError> {
+    if tokens.first().is_some_and(|name| name.starts_with('0')) {
+        return Ok(Command::Noop);
+    }
+    parse_command_tokens(tokens, ParseMode::NonInteractive)
+}
+
 fn parse_tuck_away(
     definition: CommandDefinition,
     mode: ParseMode,
