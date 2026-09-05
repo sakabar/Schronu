@@ -133,6 +133,68 @@ mod deadline_remaining_time_tests {
             );
         }
     }
+
+    #[test]
+    fn 締切差を06時境界のlogical_date単位で表示する() {
+        let last_synced_time = Local.with_ymd_and_hms(2026, 9, 6, 10, 0, 0).unwrap();
+        let next_logical_date_start = Local.with_ymd_and_hms(2026, 9, 7, 6, 0, 0).unwrap();
+
+        for (end_datetime, deadline_time, expected) in [
+            (
+                Local.with_ymd_and_hms(2026, 9, 6, 18, 0, 0).unwrap(),
+                Local.with_ymd_and_hms(2026, 9, 7, 20, 0, 0).unwrap(),
+                "_____-001D",
+            ),
+            (
+                Local.with_ymd_and_hms(2026, 9, 6, 18, 0, 0).unwrap(),
+                Local.with_ymd_and_hms(2026, 9, 8, 18, 0, 0).unwrap(),
+                "_____-002D",
+            ),
+            (
+                Local.with_ymd_and_hms(2026, 9, 7, 6, 1, 0).unwrap(),
+                Local.with_ymd_and_hms(2026, 9, 7, 6, 2, 0).unwrap(),
+                "____-00:01",
+            ),
+            (
+                Local.with_ymd_and_hms(2026, 9, 7, 5, 59, 0).unwrap(),
+                Local.with_ymd_and_hms(2026, 9, 7, 6, 0, 0).unwrap(),
+                "_____-001D",
+            ),
+            (
+                Local.with_ymd_and_hms(2026, 9, 7, 6, 0, 0).unwrap(),
+                Local.with_ymd_and_hms(2026, 9, 7, 5, 59, 0).unwrap(),
+                "_____+001D",
+            ),
+            (
+                Local.with_ymd_and_hms(2026, 9, 7, 5, 0, 0).unwrap(),
+                Local.with_ymd_and_hms(2026, 9, 7, 5, 30, 0).unwrap(),
+                "____-00:30",
+            ),
+        ] {
+            assert_eq!(
+                format_deadline_remaining_time(
+                    Some(&deadline_time),
+                    end_datetime,
+                    last_synced_time,
+                    next_logical_date_start,
+                ),
+                expected
+            );
+        }
+
+        let past_last_synced_time = Local.with_ymd_and_hms(2026, 9, 8, 10, 0, 0).unwrap();
+        let overdue_deadline = Local.with_ymd_and_hms(2026, 9, 7, 9, 0, 0).unwrap();
+        let overdue_end = Local.with_ymd_and_hms(2026, 9, 9, 11, 0, 0).unwrap();
+        assert_eq!(
+            format_deadline_remaining_time(
+                Some(&overdue_deadline),
+                overdue_end,
+                past_last_synced_time,
+                Local.with_ymd_and_hms(2026, 9, 9, 6, 0, 0).unwrap(),
+            ),
+            "+50:00ASAP"
+        );
+    }
 }
 
 pub(super) fn get_adjustable_prefix_label(
