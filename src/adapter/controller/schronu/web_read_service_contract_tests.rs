@@ -1,4 +1,4 @@
-use super::{RecordSessionRequest, WebReadError, WebService};
+use super::{CompleteSessionRequest, RecordSessionRequest, WebReadError, WebService};
 use crate::adapter::gateway::schronu_config::SchronuConfig;
 use crate::adapter::gateway::storage_lock::{LockMode, StorageLock, StorageLockErrorKind};
 use crate::adapter::gateway::storage_transaction_test_support::{
@@ -477,6 +477,40 @@ fn complete_sessionは経過秒加算と完了を1回の保存で反映してsna
     repository.reload_if_changed(operation_now).unwrap();
     let completed = repository.get_by_id(task_id).unwrap().unwrap();
     assert_eq!(completed.get_actual_work_seconds().unwrap(), 361);
+    assert_eq!(completed.get_status().unwrap(), Status::Done);
+    assert_eq!(
+        completed
+            .get_end_time_opt()
+            .unwrap()
+            .map(|finished_at| finished_at.timestamp()),
+        Some(operation_now.timestamp())
+    );
+}
+
+#[test]
+fn complete_sessionは計測破棄指定時に実績を加算せずtaskを完了する() {
+    let seeded_at = Local.with_ymd_and_hms(2026, 9, 5, 18, 0, 0).unwrap();
+    let operation_now = Local.with_ymd_and_hms(2026, 9, 5, 19, 1, 0).unwrap();
+    let fixture = WebReadServiceFixture::new();
+    let task_id = fixture.seed_fixed_task(seeded_at);
+    let mut service = WebService::new(fixture.storage.clone(), fixture.config());
+
+    service
+        .complete_session_at(
+            operation_now,
+            CompleteSessionRequest {
+                task_id: task_id.to_string(),
+                started_at_epoch_ms: operation_now.timestamp_millis() - 60_000,
+                expected_actual_work_seconds: 300,
+                record_elapsed_seconds: false,
+            },
+        )
+        .unwrap();
+
+    let mut repository = TaskRepository::new(fixture.storage.to_str().unwrap());
+    repository.reload_if_changed(operation_now).unwrap();
+    let completed = repository.get_by_id(task_id).unwrap().unwrap();
+    assert_eq!(completed.get_actual_work_seconds().unwrap(), 300);
     assert_eq!(completed.get_status().unwrap(), Status::Done);
     assert_eq!(
         completed
