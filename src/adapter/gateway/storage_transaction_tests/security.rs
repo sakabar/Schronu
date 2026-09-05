@@ -1,3 +1,4 @@
+#[cfg(unix)]
 #[test]
 fn test_transaction_root_symlinkはprepareとrecoveryで拒否して外部を変更しない() {
     use std::os::unix::fs::symlink;

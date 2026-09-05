@@ -31,7 +31,6 @@ fn test_recover_uncommitted_markerありactive_transactionを破棄しない() {
     assert!(active_transaction_path.join("commit").is_file());
 }
 
-#[cfg(unix)]
 #[test]
 fn test_recover_uncommitted_prepared_transaction_drop後にlockを再取得する() {
     let storage_dir = TestStorageDir::new();
