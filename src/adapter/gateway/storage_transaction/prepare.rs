@@ -56,7 +56,7 @@ pub(in crate::adapter::gateway) fn prepare_with_directories(
             error
         }
     })?;
-    validate_transactions_directory(&transactions_dir_path)?;
+    validate_transactions_directory(io.as_ref(), &transactions_dir_path)?;
     cleanup_stale_tombstones(io.as_ref(), &transactions_dir_path);
     let transaction_id = Uuid::new_v4();
     if let Err(error) = io.create_dir(&transaction_dir_path) {

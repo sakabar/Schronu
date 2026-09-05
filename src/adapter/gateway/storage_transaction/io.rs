@@ -3,7 +3,7 @@ use super::{StorageTransactionError, StorageTransactionOperation};
 use fs2::FileExt;
 use std::fs::{self, File};
 use std::io::Write;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 #[cfg(test)]
 pub(super) use super::layout::TRANSACTION_LOCK_FILE_NAME;
@@ -29,6 +29,13 @@ pub(in crate::adapter::gateway) trait StorageTransactionIo:
 
     fn symlink_metadata(&self, path: &Path) -> std::io::Result<fs::Metadata> {
         fs::symlink_metadata(path)
+    }
+
+    fn read_directory_paths(&self, path: &Path) -> std::io::Result<Vec<PathBuf>> {
+        Ok(fs::read_dir(path)?
+            .filter_map(Result::ok)
+            .map(|entry| entry.path())
+            .collect())
     }
 
     fn create_new_file(&self, path: &Path) -> std::io::Result<()> {

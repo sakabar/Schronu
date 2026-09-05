@@ -1,6 +1,8 @@
 use std::error::Error;
 use std::fmt;
+#[cfg(test)]
 use std::fs;
+use std::fs::Metadata;
 use std::path::{Component, Path, PathBuf};
 use std::sync::Arc;
 #[cfg(test)]
@@ -188,7 +190,7 @@ fn resolve_transactions_directory(
     create: bool,
 ) -> Result<Option<PathBuf>, StorageTransactionError> {
     let transactions_dir_path = TransactionLayout::new(storage_dir_path).transactions_dir_path();
-    let (metadata, created) = match fs::symlink_metadata(&transactions_dir_path) {
+    let (metadata, created) = match io.symlink_metadata(&transactions_dir_path) {
         Ok(metadata) => (metadata, false),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound && !create => return Ok(None),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
@@ -200,13 +202,14 @@ fn resolve_transactions_directory(
                 )
             })?;
             (
-                fs::symlink_metadata(&transactions_dir_path).map_err(|error| {
-                    StorageTransactionError::new(
-                        StorageTransactionOperation::ValidateTransactionDirectory,
-                        &transactions_dir_path,
-                        error,
-                    )
-                })?,
+                io.symlink_metadata(&transactions_dir_path)
+                    .map_err(|error| {
+                        StorageTransactionError::new(
+                            StorageTransactionOperation::ValidateTransactionDirectory,
+                            &transactions_dir_path,
+                            error,
+                        )
+                    })?,
                 true,
             )
         }
@@ -227,13 +230,16 @@ fn resolve_transactions_directory(
                 error,
             )
         })?;
-        validate_transactions_directory(&transactions_dir_path)?;
+        validate_transactions_directory(io, &transactions_dir_path)?;
     }
     Ok(Some(transactions_dir_path))
 }
 
-fn validate_transactions_directory(path: &Path) -> Result<(), StorageTransactionError> {
-    let metadata = fs::symlink_metadata(path).map_err(|error| {
+fn validate_transactions_directory(
+    io: &dyn StorageTransactionIo,
+    path: &Path,
+) -> Result<(), StorageTransactionError> {
+    let metadata = io.symlink_metadata(path).map_err(|error| {
         StorageTransactionError::new(
             StorageTransactionOperation::ValidateTransactionDirectory,
             path,
@@ -245,7 +251,7 @@ fn validate_transactions_directory(path: &Path) -> Result<(), StorageTransaction
 
 fn validate_transactions_directory_metadata(
     path: &Path,
-    metadata: &fs::Metadata,
+    metadata: &Metadata,
 ) -> Result<(), StorageTransactionError> {
     if metadata.file_type().is_symlink() || !metadata.is_dir() {
         return Err(StorageTransactionError::new(

@@ -1,4 +1,3 @@
-use std::fs;
 use std::path::Path;
 
 use super::layout::TransactionLayout;
@@ -49,16 +48,15 @@ pub(super) fn cleanup_stale_tombstones(
     io: &dyn StorageTransactionIo,
     transactions_dir_path: &Path,
 ) {
-    let Ok(entries) = fs::read_dir(transactions_dir_path) else {
+    let Ok(entries) = io.read_directory_paths(transactions_dir_path) else {
         return;
     };
     let mut removed = false;
-    for entry in entries.flatten() {
-        let path = entry.path();
-        let Some(name) = entry.file_name().to_str().map(str::to_owned) else {
+    for path in entries {
+        let Some(name) = path.file_name().and_then(|name| name.to_str()) else {
             continue;
         };
-        if TransactionLayout::cleanup_transaction_id(&name).is_none() {
+        if TransactionLayout::cleanup_transaction_id(name).is_none() {
             continue;
         }
         let Ok(metadata) = io.symlink_metadata(&path) else {

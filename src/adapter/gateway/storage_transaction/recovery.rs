@@ -1,4 +1,3 @@
-use std::fs;
 use std::path::Path;
 use std::sync::Arc;
 
@@ -30,10 +29,10 @@ pub(in crate::adapter::gateway) fn recover(
         return Ok(());
     };
     let _transaction_lock = acquire_transaction_lock(&transactions_dir_path)?;
-    validate_transactions_directory(&transactions_dir_path)?;
+    validate_transactions_directory(io.as_ref(), &transactions_dir_path)?;
     cleanup_stale_tombstones(io.as_ref(), &transactions_dir_path);
     let transaction_dir_path = layout.active_transaction_dir_path();
-    match fs::symlink_metadata(&transaction_dir_path) {
+    match io.symlink_metadata(&transaction_dir_path) {
         Ok(metadata) if metadata.is_dir() => {}
         Ok(_) => {
             return Err(StorageTransactionError::new(
