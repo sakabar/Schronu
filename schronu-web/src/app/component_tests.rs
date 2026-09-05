@@ -3,8 +3,9 @@
 use super::component::app;
 use super::component_runtime::{
     component_action_from_session_action, initialize_client, reduce_component_action,
-    ComponentAction, ComponentOrchestrator,
+    reduce_component_action_at, ComponentAction, ComponentOrchestrator,
 };
+use super::component_models::BrowserPageModel;
 use super::effect_dispatcher::ClientResponse;
 use super::session_view::{SessionAction, SessionActionKind};
 use crate::client::state::{ActiveTab, ClientEffect};
@@ -140,6 +141,104 @@ fn component_actionは仕様の五操作だけをserver_effectへ変換する() 
 }
 
 #[test]
+fn 持ち歩きロックは変更操作だけを中央で遮断しarmedを一度だけ消費する() {
+    let storage = MemoryStorage::default();
+    let (mut state, _) = initialize_client(&storage, 1_000);
+    reduce_component_action_at(
+        &mut state,
+        &storage,
+        1_000,
+        ComponentAction::EnableCarryLock,
+    );
+
+    for action in [
+        ComponentAction::AutoSession,
+        ComponentAction::AddSession(task(RECORD_ID)),
+        ComponentAction::DiscardSession(RECORD_ID.to_owned()),
+        ComponentAction::RecordSession(RECORD_ID.to_owned()),
+        ComponentAction::CompleteSession(RECORD_ID.to_owned()),
+        ComponentAction::CompleteSessionWithoutRecording(RECORD_ID.to_owned()),
+        ComponentAction::ConfirmRepositoryChecked,
+    ] {
+        assert_eq!(
+            reduce_component_action_at(&mut state, &storage, 1_001, action),
+            ClientEffect::None
+        );
+    }
+
+    reduce_component_action_at(
+        &mut state,
+        &storage,
+        2_000,
+        ComponentAction::ArmCarryLock,
+    );
+    assert_eq!(
+        reduce_component_action_at(
+            &mut state,
+            &storage,
+            2_001,
+            ComponentAction::SwitchTab(ActiveTab::List)
+        ),
+        ClientEffect::None
+    );
+    assert_eq!(
+        reduce_component_action_at(&mut state, &storage, 2_002, ComponentAction::Tick(2_002)),
+        ClientEffect::None
+    );
+    assert!(matches!(
+        reduce_component_action_at(&mut state, &storage, 2_003, ComponentAction::AutoSession),
+        ClientEffect::AutoSession { .. }
+    ));
+    assert_eq!(
+        reduce_component_action_at(
+            &mut state,
+            &storage,
+            2_003,
+            ComponentAction::AddSession(task(RECORD_ID))
+        ),
+        ClientEffect::None,
+        "同時刻の2件目も遮断する"
+    );
+}
+
+#[test]
+fn armed期限判定はaction時刻を使い期限切れ操作を遮断する() {
+    let storage = MemoryStorage::default();
+    let (mut state, _) = initialize_client(&storage, 1_000);
+    reduce_component_action_at(
+        &mut state,
+        &storage,
+        1_000,
+        ComponentAction::EnableCarryLock,
+    );
+    reduce_component_action_at(
+        &mut state,
+        &storage,
+        2_000,
+        ComponentAction::ArmCarryLock,
+    );
+
+    assert_eq!(
+        reduce_component_action_at(&mut state, &storage, 17_000, ComponentAction::AutoSession),
+        ClientEffect::None
+    );
+    assert!(state.carry_lock_locked());
+}
+
+#[test]
+fn carry_lock_warningはbrowser_page_modelのwarningsへ合流する() {
+    let storage = MemoryStorage::failing_carry_lock_reads();
+    let (state, _) = initialize_client(&storage, 1_000);
+
+    let model = BrowserPageModel::from_state(&state);
+
+    assert!(model
+        .warnings
+        .iter()
+        .any(|warning| warning.contains("持ち歩きロック")));
+}
+
+#[test]
 fn native_ssrはbrowser_storageへ触れずloading_shellだけを描画する() {
     let mut dom = VirtualDom::new(app);
     dom.rebuild_in_place();
@@ -203,6 +302,7 @@ const COMPLETE_ID: &str = "123e4567-e89b-12d3-a456-426614174001";
 struct MemoryStorage {
     values: RefCell<HashMap<String, String>>,
     fail_reads: bool,
+    fail_carry_lock_reads: bool,
 }
 
 impl MemoryStorage {
@@ -210,6 +310,15 @@ impl MemoryStorage {
         Self {
             values: RefCell::new(HashMap::new()),
             fail_reads: true,
+            fail_carry_lock_reads: false,
+        }
+    }
+
+    fn failing_carry_lock_reads() -> Self {
+        Self {
+            values: RefCell::new(HashMap::new()),
+            fail_reads: false,
+            fail_carry_lock_reads: true,
         }
     }
 }
@@ -217,6 +326,9 @@ impl MemoryStorage {
 impl KeyValueStorage for MemoryStorage {
     fn get(&self, key: &str) -> Result<Option<String>, StorageError> {
         if self.fail_reads {
+            return Err(StorageError::ReadFailed);
+        }
+        if key == "schronu_web.carry_lock.v1" && self.fail_carry_lock_reads {
             return Err(StorageError::ReadFailed);
         }
         Ok(self.values.borrow().get(key).cloned())
