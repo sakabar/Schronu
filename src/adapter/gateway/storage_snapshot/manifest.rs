@@ -42,8 +42,10 @@ pub(in crate::adapter::gateway) struct FileEntry {
     pub(in crate::adapter::gateway) content_digest: String,
 }
 
-pub(in crate::adapter::gateway) fn encode_manifest(
+pub(in crate::adapter::gateway) fn encode_manifest_with_limits(
+    manifest_path: &Path,
     manifest: &SnapshotManifest,
+    limits: SnapshotResourceLimits,
 ) -> Result<Vec<u8>, SnapshotError> {
     let mut manifest = manifest.clone();
     manifest
@@ -52,8 +54,63 @@ pub(in crate::adapter::gateway) fn encode_manifest(
     manifest
         .files
         .sort_by(|left, right| left.path.cmp(&right.path));
-    serde_json::to_vec(&manifest)
-        .map_err(|error| SnapshotError::new(SnapshotOperation::Encode, "manifest.json", error))
+    let mut writer = BoundedManifestWriter::new(limits.manifest_bytes);
+    if let Err(error) = serde_json::to_writer(&mut writer, &manifest) {
+        if let Some(observed) = writer.limit_observed {
+            return Err(SnapshotError::limit(
+                manifest_path,
+                super::error::SnapshotLimitKind::ManifestBytes,
+                limits.manifest_bytes,
+                observed,
+                None,
+            ));
+        }
+        return Err(SnapshotError::new(
+            SnapshotOperation::Encode,
+            manifest_path,
+            error,
+        ));
+    }
+    Ok(writer.bytes)
+}
+
+struct BoundedManifestWriter {
+    bytes: Vec<u8>,
+    limit: u64,
+    limit_observed: Option<u64>,
+}
+
+impl BoundedManifestWriter {
+    fn new(limit: u64) -> Self {
+        Self {
+            bytes: Vec::new(),
+            limit,
+            limit_observed: None,
+        }
+    }
+}
+
+impl std::io::Write for BoundedManifestWriter {
+    fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+        let current = u64::try_from(self.bytes.len()).unwrap_or(u64::MAX);
+        let observed = current.saturating_add(u64::try_from(bytes.len()).unwrap_or(u64::MAX));
+        if observed > self.limit {
+            self.limit_observed = Some(self.limit.saturating_add(1));
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                "snapshot manifest exceeds its resource limit",
+            ));
+        }
+        self.bytes.try_reserve(bytes.len()).map_err(|error| {
+            std::io::Error::new(std::io::ErrorKind::OutOfMemory, error.to_string())
+        })?;
+        self.bytes.extend_from_slice(bytes);
+        Ok(bytes.len())
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
 }
 
 pub(super) fn encoded_directory_entry_len(

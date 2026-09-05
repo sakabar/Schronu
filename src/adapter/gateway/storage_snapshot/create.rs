@@ -4,7 +4,7 @@ use super::io::{FailOnceSnapshotIo, SnapshotFailurePoint};
 use super::io::{FileSystemSnapshotIo, SnapshotIo, StableDirectory, StableParent};
 use super::layout::{staging_path, MANIFEST_FILE_NAME, PAYLOAD_DIRECTORY_NAME};
 use super::manifest::{
-    decode_manifest, encode_manifest, DigestDescriptor, DirectoryEntry, FileEntry,
+    decode_manifest, encode_manifest_with_limits, DigestDescriptor, DirectoryEntry, FileEntry,
     SnapshotManifest, DIGEST_VERSION, FORMAT_VERSION,
 };
 use super::{SnapshotResourceLimits, SnapshotSummary, DEFAULT_RESOURCE_LIMITS};
@@ -499,15 +499,8 @@ fn publish_manifest(
     before_publish: impl FnOnce(),
 ) -> Result<(), SnapshotError> {
     let manifest = build_manifest(created_at, revision, collected);
-    let manifest_bytes = encode_manifest(&manifest)?;
     let manifest_path = staging.path.join(MANIFEST_FILE_NAME);
-    limits.check(
-        &manifest_path,
-        None,
-        super::error::SnapshotLimitKind::ManifestBytes,
-        limits.manifest_bytes,
-        manifest_bytes.len() as u64,
-    )?;
+    let manifest_bytes = encode_manifest_with_limits(&manifest_path, &manifest, limits)?;
     decode_manifest(&manifest_path, &manifest_bytes)?;
     staging
         .directory
