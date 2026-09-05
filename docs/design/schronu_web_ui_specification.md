@@ -153,7 +153,9 @@ keyは`schronu_web.work_sessions.v1`とする。valueはversion付きobjectと�
 }
 ```
 
-このkeyが存在しない場合だけmutation可能な初期状態とする。未知version、JSON不正、schema不正は安全側へ倒し、mutation blockedとして復元する。`repository_state_uncertain`受信時は先にmemory上の全mutationを停止し、同じblocked状態をこのkeyへ保存する。保存に失敗しても現在pageのblockを解除しない。解除はrepositoryを手動確認する明示操作だけが所有し、通常のserver成功、session破棄、reloadでは解除しない。
+このkeyが存在しない場合、またはversion 1の`mutation_blocked`が`false`の場合だけmutation可能な初期状態とする。未知version、JSON不正、schema不正は安全側へ倒し、mutation blockedとして復元する。
+
+`record_session`または`complete_session`の送信前に、`mutation_blocked: true`をstorage-firstで保存する。保存失敗時はrequestを送信しない。成功、またはserverが未commitと確定できるerror responseの受信後、ほかに応答待ちのmutationがなく、repository状態も確定している場合だけ`false`へ戻す。browser crash、transport切断、`repository_state_uncertain`では`true`を残し、reload後も全mutationを停止する。解除はrepositoryを手動確認する明示操作だけが所有し、通常のread成功、session破棄、reloadでは解除しない。解除の保存に失敗した場合もblocked状態を維持する。
 
 ## 4. Server operations
 
@@ -415,8 +417,9 @@ display_buffer = buffer_seconds - snapshot_elapsed
 | 自動セッション | `auto_session` | なし | session追加 | なし |
 | 一覧の「セッション」 | なし | なし | session追加 | なし |
 | 破棄して解除 | なし | なし | session削除 | なし |
-| 記録して解除 | `record_session` | 実績保存1回 | 成功後session削除 | なし |
-| 完了 | `complete_session` | 完了transaction 1回 | 成功後session削除 | なし |
+| 記録して解除 | safety marker保存後に`record_session` | 実績保存1回 | 送信前marker設定。確定応答後marker解除。成功後session削除 | なし |
+| 完了 | safety marker保存後に`complete_session` | 完了transaction 1回 | 送信前marker設定。確定応答後marker解除。成功後session削除 | なし |
+| repository手動確認済み | なし | なし | safety marker解除 | なし |
 | 06:00境界 | なし | なし | なし | なし |
 
 ## 9. Error contracts
