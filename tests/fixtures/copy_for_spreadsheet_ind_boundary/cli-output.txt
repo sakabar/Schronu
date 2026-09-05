@@ -1,4 +1,4 @@
-rank task_id icon remaining_time scheduled_time priority estimated_minutes project_number category task_name
+ind task_id icon deadline estimated_datetime rank estimated_minutes priority category task_name
 ----------------------------------------------------------------------------------------------------------
 10000 33333333-3333-3333-3333-333333333333 ! ____-02:00 06/21(土)-19:20~20:00 2 40 -2 回 rank 10000 の task 名
 1000 22222222-2222-2222-2222-222222222222 ! ____-01:20 06/21(土)-18:40~19:20 1 40 02 維 rank 1000 の task 名

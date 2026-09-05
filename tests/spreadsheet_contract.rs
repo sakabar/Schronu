@@ -185,18 +185,18 @@ fn copy_for_spreadsheetは新しい論理日の最初のp列へ睡眠420分を�
         .lines()
         .filter(|line| line.chars().any(|character| character != '\t'))
         .collect();
-    let sleep_ranks = ["0003", "0006", "0007", "0009"];
+    let sleep_inds = ["0003", "0006", "0007", "0009"];
 
     assert_eq!(copied_rows.len(), 10);
     for (index, copied_row) in copied_rows.iter().enumerate() {
         let fields: Vec<_> = copied_row.split('\t').collect();
         let row = index + 3;
-        let is_sleep_row = sleep_ranks.contains(&fields[0]);
+        let is_sleep_row = sleep_inds.contains(&fields[0]);
         let sleep_minutes = if is_sleep_row { "+420" } else { "" };
         assert_eq!(
             fields[13],
             if is_sleep_row { "F" } else { "" },
-            "unexpected N flag for rank {}",
+            "unexpected N flag for ind {}",
             fields[0]
         );
         assert_eq!(
@@ -204,7 +204,7 @@ fn copy_for_spreadsheetは新しい論理日の最初のp列へ睡眠420分を�
             format!(
                 "=IF(OR(R{row}=\"W\", R{row}=\"d\"), L{row}, L{row}+TIME(0, G{row}{sleep_minutes}, 0))"
             ),
-            "unexpected P formula for rank {}",
+            "unexpected P formula for ind {}",
             fields[0]
         );
     }
