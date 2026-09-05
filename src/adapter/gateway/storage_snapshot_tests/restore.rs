@@ -125,6 +125,29 @@ fn snapshot_restoreは検証後に差し替えられた親directoryへ書き込�
 }
 
 #[test]
+fn snapshot_restoreはsnapshot配下へ移動された親directoryを拒否する() {
+    let root = TestDirectory::new("restore-parent-moved-into-snapshot");
+    let source = root.child("source");
+    let snapshot = root.child("snapshot");
+    let parent = root.child("parent");
+    let moved_parent = snapshot.join("moved-parent");
+    let destination = parent.join("restored");
+    let now = Local.with_ymd_and_hms(2026, 9, 5, 12, 0, 0).unwrap();
+    create_saved_repository(&source, now);
+    create_snapshot_at(&source, &snapshot, now).unwrap();
+    fs::create_dir(&parent).unwrap();
+
+    let error = restore_snapshot_after_parent_open(&snapshot, &destination, || {
+        fs::rename(&parent, &moved_parent).unwrap();
+    })
+    .unwrap_err()
+    .to_string();
+
+    assert!(error.contains("outside the snapshot"), "{error}");
+    assert!(!moved_parent.join("restored").exists());
+}
+
+#[test]
 fn snapshot_restore失敗はdestinationもstagingも公開しない() {
     for point in [
         SnapshotFailurePoint::Copy,

@@ -56,6 +56,7 @@ fn restore_snapshot_impl(
 ) -> Result<SnapshotSummary, SnapshotError> {
     let publication = validate_destination(snapshot, destination)?;
     after_parent_open();
+    ensure_parent_outside_snapshot(&publication, destination)?;
     let verified = load_verified_snapshot(snapshot)?;
     let staging = staging_path(destination)?;
     let staging_name = staging
@@ -93,6 +94,7 @@ fn restore_snapshot_impl(
 struct PublicationDestination {
     parent: StableParent,
     destination_name: OsString,
+    snapshot_root: PathBuf,
 }
 
 fn validate_destination(
@@ -133,16 +135,31 @@ fn validate_destination(
             "restore destination parent changed during validation",
         ));
     }
-    if canonical_parent.starts_with(&canonical_snapshot) {
-        return Err(invalid(
-            destination,
-            "restore destination must be outside the snapshot",
-        ));
-    }
-    Ok(PublicationDestination {
+    let publication = PublicationDestination {
         parent: stable_parent,
         destination_name,
-    })
+        snapshot_root: canonical_snapshot,
+    };
+    ensure_parent_outside_snapshot(&publication, destination)?;
+    Ok(publication)
+}
+
+fn ensure_parent_outside_snapshot(
+    publication: &PublicationDestination,
+    destination: &Path,
+) -> Result<(), SnapshotError> {
+    if publication
+        .parent
+        .is_within(&publication.snapshot_root)
+        .map_err(|error| SnapshotError::new(SnapshotOperation::Validate, destination, error))?
+    {
+        Err(invalid(
+            destination,
+            "restore destination must be outside the snapshot",
+        ))
+    } else {
+        Ok(())
+    }
 }
 
 fn materialize_restore(
@@ -196,6 +213,7 @@ fn materialize_restore(
     staging_directory
         .sync(io)
         .map_err(|error| SnapshotError::new(SnapshotOperation::Sync, staging, error))?;
+    ensure_parent_outside_snapshot(publication, destination)?;
     publication
         .parent
         .rename_no_replace(
