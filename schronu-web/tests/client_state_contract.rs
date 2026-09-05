@@ -188,34 +188,34 @@ fn logical_date変更snapshotは06時以降のactive_session時間をcreditす�
         .expect("06:00 must be an unambiguous local time")
         .timestamp_millis();
     let storage = FakeStorage::default();
-    let mut state = load_client_state(&storage, boundary - 10 * 60_000).unwrap();
+    let mut state = load_client_state(&storage, boundary - 10_000).unwrap();
     let bootstrap_id = bootstrap_effect(state.request_bootstrap());
     state.apply_bootstrap_result(
         bootstrap_id,
         Ok(schronu_web::ServerSnapshot {
-            observed_at_epoch_ms: boundary - 10 * 60_000,
+            observed_at_epoch_ms: boundary - 10_000,
             logical_date: "2026-09-05".to_owned(),
             buffer_seconds: 60,
         }),
     );
 
-    state.tick(boundary - 5 * 60_000);
+    state.tick(boundary - 5_000);
     state.add_session_from_row(&storage, &row(TASK_ID, 0));
-    state.tick(boundary + 10 * 60_000);
+    state.tick(boundary + 10_000);
     let (request_id, request) = list_effect(state.request_list("2026-09-06"));
     state.apply_list_result(
         request_id,
         &request.logical_date,
         Ok(WebSuccess {
             snapshot: schronu_web::ServerSnapshot {
-                observed_at_epoch_ms: boundary + 10 * 60_000,
+                observed_at_epoch_ms: boundary + 10_000,
                 logical_date: "2026-09-06".to_owned(),
                 buffer_seconds: 50,
             },
             data: Vec::new(),
         }),
     );
-    state.tick(boundary + 20 * 60_000);
+    state.tick(boundary + 20_000);
 
     assert_eq!(state.display_buffer_seconds(), Some(60));
     state.discard_session(&storage, TASK_ID);
