@@ -3,8 +3,8 @@ use std::path::{Path, PathBuf};
 
 use super::manifest::content_matches;
 use super::{
-    sync_directory, ManifestEntryOperation, PreparedTransaction, StorageTransactionError,
-    StorageTransactionOperation,
+    cleanup_committed_transaction, sync_directory, ManifestEntryOperation, PreparedTransaction,
+    StorageTransactionError, StorageTransactionOperation,
 };
 
 struct PreflightEntry {
@@ -97,25 +97,7 @@ impl PreparedTransaction {
             }
         }
         self.apply_revision(revision_path)?;
-
-        let cleanup_dir_path = self
-            .transactions_dir_path
-            .join(format!(".cleanup-{}", self.transaction_id.hyphenated()));
-        self.io
-            .rename(&self.transaction_dir_path, &cleanup_dir_path)
-            .map_err(|error| {
-                StorageTransactionError::new(
-                    StorageTransactionOperation::RenameForCleanup,
-                    &self.transaction_dir_path,
-                    error,
-                )
-            })?;
-        if self.io.sync_directory(&self.transactions_dir_path).is_ok() {
-            let _ = self.io.remove_dir_all(&cleanup_dir_path);
-            let _ = self.io.sync_directory(&self.transactions_dir_path);
-        }
-        let _ = self.io.sync_directory(&self.storage_dir_path);
-        Ok(())
+        cleanup_committed_transaction(&self)
     }
 
     fn preflight_entries(&self) -> Result<Vec<PreflightEntry>, StorageTransactionError> {

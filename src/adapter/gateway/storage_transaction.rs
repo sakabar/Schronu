@@ -5,6 +5,7 @@ use std::path::{Component, Path, PathBuf};
 use std::sync::Arc;
 use uuid::Uuid;
 
+mod cleanup;
 mod commit;
 mod io;
 mod layout;
@@ -12,6 +13,7 @@ mod manifest;
 mod prepare;
 mod recovery;
 
+use cleanup::{cleanup_committed_transaction, cleanup_stale_tombstones};
 #[cfg(test)]
 use io::TRANSACTION_LOCK_FILE_NAME;
 use io::{acquire_transaction_lock, sync_directory, TransactionLock};
@@ -251,40 +253,6 @@ fn validate_transactions_directory_metadata(
         ));
     }
     Ok(())
-}
-
-fn cleanup_stale_tombstones(io: &dyn StorageTransactionIo, transactions_dir_path: &Path) {
-    let Ok(entries) = fs::read_dir(transactions_dir_path) else {
-        return;
-    };
-    let mut removed = false;
-    for entry in entries.flatten() {
-        let path = entry.path();
-        let Some(name) = entry.file_name().to_str().map(str::to_owned) else {
-            continue;
-        };
-        let Some(uuid_text) = name.strip_prefix(".cleanup-") else {
-            continue;
-        };
-        let Ok(uuid) = Uuid::parse_str(uuid_text) else {
-            continue;
-        };
-        if uuid.hyphenated().to_string() != uuid_text {
-            continue;
-        }
-        let Ok(metadata) = io.symlink_metadata(&path) else {
-            continue;
-        };
-        if !metadata.file_type().is_dir() {
-            continue;
-        }
-        if io.remove_dir_all(&path).is_ok() {
-            removed = true;
-        }
-    }
-    if removed {
-        let _ = io.sync_directory(transactions_dir_path);
-    }
 }
 
 #[cfg(test)]
