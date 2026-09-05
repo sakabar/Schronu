@@ -12,7 +12,6 @@ use crate::adapter::gateway::storage_content_integrity::{content_digest, DIGEST_
 use crate::adapter::gateway::storage_lock::{LockMode, StorageLock};
 use crate::adapter::gateway::storage_transaction::{recover, FileSystemStorageTransactionIo};
 use crate::adapter::gateway::task_repository::TaskRepository;
-use crate::application::interface::TaskRepositoryTrait;
 use chrono::{DateTime, Local};
 use std::ffi::{OsStr, OsString};
 use std::fs;
@@ -61,7 +60,7 @@ pub(in crate::adapter::gateway) fn create_snapshot_after_parent_open(
         created_at,
         DEFAULT_RESOURCE_LIMITS,
         &FileSystemSnapshotIo,
-        CreateHooks::new(after_parent_open, || {}, || {}),
+        CreateHooks::new(after_parent_open, || {}, || {}, || {}),
     )
 }
 
@@ -78,7 +77,7 @@ pub(in crate::adapter::gateway) fn create_snapshot_after_capture(
         created_at,
         DEFAULT_RESOURCE_LIMITS,
         &FileSystemSnapshotIo,
-        CreateHooks::new(|| {}, after_capture, || {}),
+        CreateHooks::new(|| {}, after_capture, || {}, || {}),
     )
 }
 
@@ -95,7 +94,24 @@ pub(in crate::adapter::gateway) fn create_snapshot_before_publish(
         created_at,
         DEFAULT_RESOURCE_LIMITS,
         &FileSystemSnapshotIo,
-        CreateHooks::new(|| {}, || {}, before_publish),
+        CreateHooks::new(|| {}, || {}, || {}, before_publish),
+    )
+}
+
+#[cfg(test)]
+pub(in crate::adapter::gateway) fn create_snapshot_before_strict_load(
+    storage_directory: &Path,
+    destination: &Path,
+    created_at: DateTime<Local>,
+    before_strict_load: impl FnOnce(),
+) -> Result<SnapshotSummary, SnapshotError> {
+    create_snapshot_impl(
+        storage_directory,
+        destination,
+        created_at,
+        DEFAULT_RESOURCE_LIMITS,
+        &FileSystemSnapshotIo,
+        CreateHooks::new(|| {}, || {}, before_strict_load, || {}),
     )
 }
 
@@ -113,7 +129,7 @@ pub(in crate::adapter::gateway) fn create_snapshot_with_failure(
         created_at,
         DEFAULT_RESOURCE_LIMITS,
         &io,
-        CreateHooks::new(|| {}, || {}, || {}),
+        CreateHooks::new(|| {}, || {}, || {}, || {}),
     )
 }
 
@@ -131,7 +147,7 @@ pub(in crate::adapter::gateway) fn create_snapshot_with_failure_observation(
         created_at,
         DEFAULT_RESOURCE_LIMITS,
         &io,
-        CreateHooks::new(|| {}, || {}, || {}),
+        CreateHooks::new(|| {}, || {}, || {}, || {}),
     );
     (result, io.matching_calls())
 }
@@ -148,21 +164,22 @@ pub(in crate::adapter::gateway) fn create_snapshot_with_limits(
         created_at,
         limits,
         &FileSystemSnapshotIo,
-        CreateHooks::new(|| {}, || {}, || {}),
+        CreateHooks::new(|| {}, || {}, || {}, || {}),
     )
 }
 
-fn create_snapshot_impl<AfterParent, AfterCapture, BeforePublish>(
+fn create_snapshot_impl<AfterParent, AfterCapture, BeforeStrict, BeforePublish>(
     storage_directory: &Path,
     destination: &Path,
     created_at: DateTime<Local>,
     limits: SnapshotResourceLimits,
     io: &dyn SnapshotIo,
-    hooks: CreateHooks<AfterParent, AfterCapture, BeforePublish>,
+    hooks: CreateHooks<AfterParent, AfterCapture, BeforeStrict, BeforePublish>,
 ) -> Result<SnapshotSummary, SnapshotError>
 where
     AfterParent: FnOnce(),
     AfterCapture: FnOnce(),
+    BeforeStrict: FnOnce(),
     BeforePublish: FnOnce(),
 {
     let publication = validate_endpoints(storage_directory, destination)?;
@@ -196,7 +213,8 @@ where
     };
     let result = (|| {
         write_payload(&staging_publication, &collected, io)?;
-        strict_load(&staging.join(PAYLOAD_DIRECTORY_NAME), storage_directory)?;
+        (hooks.before_strict_load)();
+        strict_load_captured(&collected, storage_directory)?;
         (hooks.after_parent_open)();
         publish_manifest(
             &staging_publication,
@@ -220,39 +238,60 @@ where
     Ok(SnapshotSummary::new(revision, collected.files.len()))
 }
 
-struct CreateHooks<AfterParent, AfterCapture, BeforePublish> {
+struct CreateHooks<AfterParent, AfterCapture, BeforeStrict, BeforePublish> {
     after_parent_open: AfterParent,
     after_capture: AfterCapture,
+    before_strict_load: BeforeStrict,
     before_publish: BeforePublish,
 }
 
-impl<AfterParent, AfterCapture, BeforePublish>
-    CreateHooks<AfterParent, AfterCapture, BeforePublish>
+impl<AfterParent, AfterCapture, BeforeStrict, BeforePublish>
+    CreateHooks<AfterParent, AfterCapture, BeforeStrict, BeforePublish>
 {
     fn new(
         after_parent_open: AfterParent,
         after_capture: AfterCapture,
+        before_strict_load: BeforeStrict,
         before_publish: BeforePublish,
     ) -> Self {
         Self {
             after_parent_open,
             after_capture,
+            before_strict_load,
             before_publish,
         }
     }
 }
 
-fn strict_load(storage: &Path, error_path: &Path) -> Result<(), SnapshotError> {
-    let storage_text = storage.to_str().ok_or_else(|| {
-        invalid(
-            error_path,
-            "snapshot source path must be valid Unicode for repository validation",
-        )
-    })?;
-    let mut repository = TaskRepository::new(storage_text);
+fn strict_load_captured(
+    collected: &CollectedStorage,
+    source_storage: &Path,
+) -> Result<(), SnapshotError> {
+    let revision_file = collected
+        .files
+        .iter()
+        .find(|file| file.path == Path::new(".revision"));
+    let revision_path = revision_file.map(|file| source_storage.join(&file.path));
+    let revision = revision_file
+        .zip(revision_path.as_deref())
+        .map(|(file, path)| (path, file.bytes.as_slice()));
+    let project_files = collected
+        .files
+        .iter()
+        .filter(|file| file.path.file_name() == Some(OsStr::new("project.yaml")))
+        .map(|file| (source_storage.join(&file.path), file.bytes.as_slice()))
+        .collect::<Vec<_>>();
+    let mut repository = TaskRepository::new("");
     repository
-        .load()
-        .map_err(|error| SnapshotError::new(SnapshotOperation::RepositoryLoad, error_path, error))
+        .load_captured(
+            revision,
+            project_files
+                .iter()
+                .map(|(path, bytes)| (path.as_path(), *bytes)),
+        )
+        .map_err(|error| {
+            SnapshotError::new(SnapshotOperation::RepositoryLoad, source_storage, error)
+        })
 }
 
 fn recover_storage(storage: &Path) -> Result<(), SnapshotError> {

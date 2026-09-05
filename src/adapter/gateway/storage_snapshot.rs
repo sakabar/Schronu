@@ -10,8 +10,9 @@ pub use create::create_snapshot;
 #[cfg(test)]
 pub(in crate::adapter::gateway) use create::{
     create_snapshot_after_capture, create_snapshot_after_parent_open, create_snapshot_at,
-    create_snapshot_before_publish, create_snapshot_with_failure,
-    create_snapshot_with_failure_observation, create_snapshot_with_limits,
+    create_snapshot_before_publish, create_snapshot_before_strict_load,
+    create_snapshot_with_failure, create_snapshot_with_failure_observation,
+    create_snapshot_with_limits,
 };
 pub use error::{SnapshotError, SnapshotLimitKind};
 #[cfg(test)]

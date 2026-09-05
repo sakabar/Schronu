@@ -297,10 +297,6 @@ impl TaskRepository {
         }
     }
 
-    #[allow(
-        dead_code,
-        reason = "gateway boundary is consumed by the following snapshot contract"
-    )]
     pub(in crate::adapter::gateway) fn load_captured<'a, I>(
         &mut self,
         storage_revision: Option<(&Path, &[u8])>,
