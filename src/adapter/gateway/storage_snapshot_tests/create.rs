@@ -139,6 +139,27 @@ fn snapshot作成はcapture後の非協調file差し替えを公開しない() {
     assert!(!destination.exists());
 }
 
+#[cfg(unix)]
+#[test]
+fn snapshot作成はsource内のdirectory_symlinkからroot外を読まない() {
+    use std::os::unix::fs::symlink;
+
+    let root = TestDirectory::new("create-source-directory-symlink");
+    let storage = root.child("source");
+    let destination = root.child("snapshot");
+    let outside = root.child("outside");
+    let now = Local.with_ymd_and_hms(2026, 9, 5, 12, 0, 0).unwrap();
+    let (_, project_yaml) = create_saved_repository(&storage, now);
+    fs::create_dir(&outside).unwrap();
+    fs::write(outside.join("secret"), b"outside-secret").unwrap();
+    symlink(&outside, project_yaml.parent().unwrap().join("outside-link")).unwrap();
+
+    create_snapshot_at(&storage, &destination, now).unwrap_err();
+
+    assert!(!destination.exists());
+    assert_eq!(fs::read(outside.join("secret")).unwrap(), b"outside-secret");
+}
+
 #[test]
 fn snapshotはlock下の全永続dataとpermissionを保存して予約領域を除外する() {
     let root = TestDirectory::new("create");

@@ -72,7 +72,7 @@ pub(super) struct DirectoryTree {
 }
 
 #[cfg(any(target_os = "macos", target_os = "linux"))]
-fn read_directory_names(
+pub(in crate::adapter::gateway::storage_snapshot) fn read_directory_names(
     descriptor: std::os::fd::RawFd,
 ) -> std::io::Result<Vec<std::ffi::OsString>> {
     use std::ffi::CStr;
