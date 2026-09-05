@@ -3,7 +3,7 @@ use crate::adapter::gateway::schronu_config::SchronuConfig;
 use crate::adapter::gateway::storage_lock::{LockMode, StorageLock, StorageLockError};
 use crate::adapter::gateway::task_repository::TaskRepository;
 use crate::application::daily_capacity::{
-    calculate_free_time_minutes_for_logical_date, try_logical_date,
+    calculate_free_time_minutes_for_logical_date_with_end_of_day_offset_minutes, try_logical_date,
 };
 use crate::application::interface::{
     BusyTimeSlotLoadError, FreeTimeManagerTrait, TaskRepositoryError, TaskRepositoryTrait,
@@ -11,8 +11,8 @@ use crate::application::interface::{
 use crate::application::repository_transaction::{
     run_repository_transaction, RepositoryTransactionError,
 };
-use crate::application::schedule_use_case::get_schedule;
-use crate::application::task_use_case::ApplicationError;
+use crate::application::schedule_use_case::{get_schedule, ScheduledTaskView};
+use crate::application::task_use_case::{get_focus, ApplicationError};
 use chrono::{DateTime, Local, NaiveDate};
 use serde::{Deserialize, Serialize};
 use std::error::Error;
@@ -71,7 +71,66 @@ impl WebReadService {
         &mut self,
         operation_now: DateTime<Local>,
     ) -> Result<ServerSnapshot, WebReadError> {
+        self.run_at(operation_now, |repository, free_time_manager, offset| {
+            build_server_snapshot_with_offset(repository, free_time_manager, operation_now, offset)
+        })
+    }
+
+    pub fn list_tasks_at(
+        &mut self,
+        operation_now: DateTime<Local>,
+        logical_date: NaiveDate,
+    ) -> Result<WebSuccess<Vec<ScheduledTaskRowDto>>, WebReadError> {
+        self.run_at(operation_now, |repository, free_time_manager, offset| {
+            let schedule = get_schedule(repository).map_err(WebReadCoreError::Application)?;
+            let data = build_scheduled_task_rows(&schedule, logical_date)?;
+            let snapshot = build_server_snapshot_from_schedule(
+                repository,
+                free_time_manager,
+                operation_now,
+                &schedule,
+                offset,
+            )?;
+            Ok(WebSuccess { snapshot, data })
+        })
+    }
+
+    pub fn auto_session_at(
+        &mut self,
+        operation_now: DateTime<Local>,
+    ) -> Result<WebSuccess<Option<SessionTaskDto>>, WebReadError> {
+        self.run_at(operation_now, |repository, free_time_manager, offset| {
+            let data = build_auto_session_dto(repository).map_err(WebReadCoreError::Application)?;
+            let snapshot = build_server_snapshot_with_offset(
+                repository,
+                free_time_manager,
+                operation_now,
+                offset,
+            )?;
+            Ok(WebSuccess { snapshot, data })
+        })
+    }
+
+    fn busy_time_slots_path(&self) -> Result<&str, WebReadError> {
+        self.config
+            .busy_time_slots_yaml_path
+            .to_str()
+            .ok_or_else(|| {
+                WebReadError::PathEncoding(self.config.busy_time_slots_yaml_path.clone())
+            })
+    }
+
+    fn run_at<T>(
+        &mut self,
+        operation_now: DateTime<Local>,
+        operation: impl FnOnce(
+            &mut TaskRepository,
+            &mut FreeTimeManager,
+            i64,
+        ) -> Result<T, WebReadCoreError>,
+    ) -> Result<T, WebReadError> {
         let busy_time_slots_path = self.busy_time_slots_path()?.to_owned();
+        let end_of_day_offset_minutes = self.config.end_of_day_offset_minutes;
         let storage_directory = &self.storage_directory;
         let task_repository = self
             .task_repository
@@ -87,24 +146,16 @@ impl WebReadService {
                 free_time_manager
                     .load_busy_time_slots_from_file(&busy_time_slots_path)
                     .map_err(WebReadOperationError::BusyTimeSlots)?;
-                build_server_snapshot(repository, free_time_manager, operation_now)
-                    .map(|snapshot| (snapshot, false))
+                operation(repository, free_time_manager, end_of_day_offset_minutes)
+                    .map(|output| (output, false))
                     .map_err(WebReadOperationError::Core)
             },
         )
         .map_err(WebReadError::from_transaction)
     }
-
-    fn busy_time_slots_path(&self) -> Result<&str, WebReadError> {
-        self.config
-            .busy_time_slots_yaml_path
-            .to_str()
-            .ok_or_else(|| {
-                WebReadError::PathEncoding(self.config.busy_time_slots_yaml_path.clone())
-            })
-    }
 }
 
+#[cfg(test)]
 pub(super) fn build_server_snapshot<R, F>(
     task_repository: &mut R,
     free_time_manager: &mut F,
@@ -114,14 +165,53 @@ where
     R: TaskRepositoryTrait,
     F: FreeTimeManagerTrait,
 {
+    build_server_snapshot_with_offset(
+        task_repository,
+        free_time_manager,
+        operation_now,
+        crate::application::daily_capacity::END_OF_DAY_OFFSET_MINUTES,
+    )
+}
+
+fn build_server_snapshot_with_offset<R, F>(
+    task_repository: &mut R,
+    free_time_manager: &mut F,
+    operation_now: DateTime<Local>,
+    end_of_day_offset_minutes: i64,
+) -> Result<ServerSnapshot, WebReadCoreError>
+where
+    R: TaskRepositoryTrait,
+    F: FreeTimeManagerTrait,
+{
+    let schedule = get_schedule(task_repository).map_err(WebReadCoreError::Application)?;
+    build_server_snapshot_from_schedule(
+        task_repository,
+        free_time_manager,
+        operation_now,
+        &schedule,
+        end_of_day_offset_minutes,
+    )
+}
+
+fn build_server_snapshot_from_schedule<R, F>(
+    task_repository: &mut R,
+    free_time_manager: &mut F,
+    operation_now: DateTime<Local>,
+    schedule: &[ScheduledTaskView],
+    end_of_day_offset_minutes: i64,
+) -> Result<ServerSnapshot, WebReadCoreError>
+where
+    R: TaskRepositoryTrait,
+    F: FreeTimeManagerTrait,
+{
     let logical_date = try_logical_date(operation_now).map_err(WebReadCoreError::Application)?;
-    let free_minutes = calculate_free_time_minutes_for_logical_date(
+    let free_minutes = calculate_free_time_minutes_for_logical_date_with_end_of_day_offset_minutes(
         &logical_date,
         task_repository.get_last_synced_time(),
         free_time_manager,
+        end_of_day_offset_minutes,
     )
     .map_err(WebReadCoreError::Application)?;
-    let schedule = get_schedule(task_repository).map_err(WebReadCoreError::Application)?;
     let scheduled_segments = schedule
         .iter()
         .map(|segment| {
@@ -137,6 +227,70 @@ where
         logical_date: logical_date.format("%Y-%m-%d").to_string(),
         buffer_seconds,
     })
+}
+
+pub(super) fn build_scheduled_task_rows(
+    schedule: &[ScheduledTaskView],
+    logical_date: NaiveDate,
+) -> Result<Vec<ScheduledTaskRowDto>, WebReadCoreError> {
+    let mut dated_segments = schedule
+        .iter()
+        .map(|segment| {
+            try_logical_date(segment.scheduled_start)
+                .map(|date| (date, segment))
+                .map_err(WebReadCoreError::Application)
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    dated_segments.retain(|(date, _)| *date == logical_date);
+    dated_segments.sort_by_key(|(_, segment)| segment.scheduled_start);
+
+    Ok(dated_segments
+        .into_iter()
+        .map(|(_, segment)| ScheduledTaskRowDto {
+            task: session_task_dto(
+                segment.task.id.hyphenated().to_string(),
+                segment.task.name.clone(),
+                segment.task.estimated_work_seconds,
+                segment.task.actual_work_seconds,
+            ),
+            schedule_start_epoch_ms: segment.scheduled_start.timestamp_millis(),
+            schedule_end_epoch_ms: segment.scheduled_end.timestamp_millis(),
+            deadline_epoch_ms: segment
+                .task
+                .deadline_time
+                .map(|deadline| deadline.timestamp_millis()),
+            is_leaf: segment.task.child_ids.is_empty(),
+        })
+        .collect())
+}
+
+pub(super) fn build_auto_session_dto(
+    task_repository: &mut dyn TaskRepositoryTrait,
+) -> Result<Option<SessionTaskDto>, ApplicationError> {
+    get_focus(task_repository).map(|task| {
+        task.map(|task| {
+            session_task_dto(
+                task.id.hyphenated().to_string(),
+                task.name,
+                task.estimated_work_seconds,
+                task.actual_work_seconds,
+            )
+        })
+    })
+}
+
+fn session_task_dto(
+    task_id: String,
+    task_name: String,
+    estimated_work_seconds: i64,
+    actual_work_seconds: i64,
+) -> SessionTaskDto {
+    SessionTaskDto {
+        task_id,
+        task_name,
+        estimated_work_seconds,
+        actual_work_seconds,
+    }
 }
 
 pub(super) fn calculate_buffer_seconds(
