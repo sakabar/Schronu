@@ -6,8 +6,16 @@ use dioxus::prelude::*;
 
 pub fn rebuild_with_click_listeners(dom: &mut VirtualDom) -> Vec<ElementId> {
     ensure_event_converter();
-    dom.rebuild_to_vec()
-        .edits
+    click_listener_ids(dom.rebuild_to_vec().edits)
+}
+
+pub fn render_with_click_listeners(dom: &mut VirtualDom) -> Vec<ElementId> {
+    ensure_event_converter();
+    click_listener_ids(dom.render_immediate_to_vec().edits)
+}
+
+fn click_listener_ids(mutations: Vec<Mutation>) -> Vec<ElementId> {
+    mutations
         .into_iter()
         .filter_map(|mutation| match mutation {
             Mutation::NewEventListener { name, id } if name == "click" => Some(id),

@@ -13,6 +13,9 @@ pub(crate) fn dispatch_session_action(
         SessionActionKind::Discard => ComponentAction::DiscardSession(action.task_id),
         SessionActionKind::Record => ComponentAction::RecordSession(action.task_id),
         SessionActionKind::Complete => ComponentAction::CompleteSession(action.task_id),
+        SessionActionKind::CompleteWithoutRecording => {
+            ComponentAction::CompleteSessionWithoutRecording(action.task_id)
+        }
     };
     dispatch_action(client, action);
 }
