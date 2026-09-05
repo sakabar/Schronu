@@ -17,3 +17,5 @@ mod task_view;
 mod list_tasks_contract_tests;
 #[cfg(test)]
 mod schedule_use_case_contract_tests;
+#[cfg(test)]
+mod task_name_contract_tests;
