@@ -169,7 +169,7 @@ fn materialize_restore(
     if let Err(sync_error) = publication.parent.sync() {
         publication
             .parent
-            .remove_directory_tree(&publication.destination_name)
+            .remove_published_directory(&publication.destination_name, staging_directory)
             .map_err(|cleanup_error| {
                 SnapshotError::new(SnapshotOperation::Write, destination, cleanup_error)
             })?;

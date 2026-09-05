@@ -350,7 +350,7 @@ fn publish_snapshot(
         staging
             .target
             .parent
-            .remove_directory_tree(&staging.target.destination_name)
+            .remove_published_directory(&staging.target.destination_name, staging.directory)
             .map_err(|cleanup_error| {
                 SnapshotError::new(SnapshotOperation::Write, staging.destination, cleanup_error)
             })?;

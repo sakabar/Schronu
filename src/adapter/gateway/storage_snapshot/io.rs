@@ -101,6 +101,33 @@ impl StableParent {
         }
     }
 
+    pub(super) fn remove_published_directory(
+        &self,
+        name: &std::ffi::OsStr,
+        published: &StableDirectory,
+    ) -> std::io::Result<()> {
+        let name = c_name(name)?;
+        if !published.matches_entry(self.raw_fd(), &name)? {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::AlreadyExists,
+                "published destination was replaced before rollback",
+            ));
+        }
+        published.remove_contents()?;
+        if !published.matches_entry(self.raw_fd(), &name)? {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::AlreadyExists,
+                "published destination was replaced during rollback",
+            ));
+        }
+        // SAFETY: the entry identity was checked against the retained published handle.
+        if unsafe { libc::unlinkat(self.raw_fd(), name.as_ptr(), libc::AT_REMOVEDIR) } == 0 {
+            Ok(())
+        } else {
+            Err(std::io::Error::last_os_error())
+        }
+    }
+
     pub(super) fn sync(&self) -> std::io::Result<()> {
         self.directory.sync_all()
     }
@@ -243,6 +270,28 @@ impl StableDirectory {
             }
         }
         Ok(())
+    }
+
+    fn matches_entry(&self, parent: std::os::fd::RawFd, name: &CString) -> std::io::Result<bool> {
+        use std::os::unix::fs::MetadataExt;
+
+        let mut stat = std::mem::MaybeUninit::<libc::stat>::uninit();
+        // SAFETY: stat is writable and name is live for the call.
+        if unsafe {
+            libc::fstatat(
+                parent,
+                name.as_ptr(),
+                stat.as_mut_ptr(),
+                libc::AT_SYMLINK_NOFOLLOW,
+            )
+        } != 0
+        {
+            return Err(std::io::Error::last_os_error());
+        }
+        // SAFETY: fstatat initialized stat on success.
+        let stat = unsafe { stat.assume_init() };
+        let metadata = self.directory.metadata()?;
+        Ok(metadata.dev() == stat.st_dev as u64 && metadata.ino() == stat.st_ino)
     }
 
     fn raw_fd(&self) -> std::os::fd::RawFd {
