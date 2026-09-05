@@ -1,5 +1,5 @@
 use schronu_web::client::state::{
-    load_client_state, ActiveTab, ClientEffect, Operation, ServerFailure,
+    load_client_state, ActiveTab, ClientEffect, Locality, Operation, ServerFailure,
 };
 use schronu_web::{web_error_codes, RecordSessionResult, RetryAdvice, SessionTask, WebSuccess};
 
@@ -245,10 +245,30 @@ fn 完了effectは計測の記録方針と履歴種別を保持する() {
         request_id,
         Ok(snapshot("2026-09-05", 1)),
     );
-    assert_eq!(
-        discard_state.history().back().unwrap().operation,
-        Operation::CompleteSessionWithoutRecording
+    assert!(discard_state.history().iter().any(|entry| {
+        entry.operation == Operation::CompleteSessionWithoutRecording
+            && entry.locality == Locality::Server
+    }));
+    assert!(discard_state.sessions().is_empty());
+
+    let failed_storage = FakeStorage::default();
+    let mut failed_state = state_with_sessions(&failed_storage, &[TASK_ID]);
+    let (failed_request_id, _) = complete_effect(
+        failed_state.begin_complete_session_without_recording(&failed_storage, TASK_ID),
     );
+    failed_state.apply_complete_result(
+        &failed_storage,
+        failed_request_id,
+        Err(ServerFailure::Operation(web_error(
+            web_error_codes::ACTUAL_WORK_CONFLICT,
+            RetryAdvice::ManualCheck,
+        ))),
+    );
+    assert_eq!(failed_state.sessions().len(), 1);
+    assert!(failed_state.history().iter().any(|entry| {
+        entry.operation == Operation::CompleteSessionWithoutRecording
+            && entry.locality == Locality::Server
+    }));
 }
 
 #[test]

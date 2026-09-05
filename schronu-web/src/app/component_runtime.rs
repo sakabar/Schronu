@@ -13,6 +13,7 @@ pub(crate) enum ComponentAction {
     DiscardSession(String),
     RecordSession(String),
     CompleteSession(String),
+    CompleteSessionWithoutRecording(String),
     ConfirmRepositoryChecked,
 }
 
@@ -88,6 +89,9 @@ pub(crate) fn reduce_component_action<S: KeyValueStorage>(
         ComponentAction::RecordSession(task_id) => state.begin_record_session(storage, &task_id),
         ComponentAction::CompleteSession(task_id) => {
             state.begin_complete_session(storage, &task_id)
+        }
+        ComponentAction::CompleteSessionWithoutRecording(task_id) => {
+            state.begin_complete_session_without_recording(storage, &task_id)
         }
         ComponentAction::ConfirmRepositoryChecked => state.confirm_repository_checked(storage),
     }

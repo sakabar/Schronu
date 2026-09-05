@@ -10,6 +10,7 @@ use std::collections::{HashMap, HashSet};
 enum MutationKind {
     Record,
     Complete,
+    CompleteWithoutRecording,
 }
 
 pub(super) struct PendingMutation {
@@ -119,6 +120,14 @@ impl ClientState {
         task_id: &str,
     ) -> ClientEffect {
         self.begin_mutation(storage, task_id, MutationKind::Complete)
+    }
+
+    pub fn begin_complete_session_without_recording<S: KeyValueStorage>(
+        &mut self,
+        storage: &S,
+        task_id: &str,
+    ) -> ClientEffect {
+        self.begin_mutation(storage, task_id, MutationKind::CompleteWithoutRecording)
     }
 
     pub fn confirm_repository_checked<S: KeyValueStorage>(&mut self, storage: &S) -> ClientEffect {
@@ -246,14 +255,7 @@ impl ClientState {
         if self.sessions.pending_mutations.is_empty()
             && self.sessions.mutation_safety.arm(storage).is_err()
         {
-            self.record_local_result(
-                match kind {
-                    MutationKind::Record => Operation::RecordSession,
-                    MutationKind::Complete => Operation::CompleteSession,
-                },
-                Some(task_id),
-                false,
-            );
+            self.record_local_result(mutation_operation(kind), Some(task_id), false);
             return ClientEffect::None;
         }
         self.sessions.next_mutation_request_id = next_request_id;
@@ -266,15 +268,17 @@ impl ClientState {
             },
         );
         match kind {
-            MutationKind::Complete => ClientEffect::CompleteSession {
-                request_id,
-                request: CompleteSessionRequest {
-                    task_id: request_task_id,
-                    started_at_epoch_ms,
-                    expected_actual_work_seconds,
-                    record_elapsed_seconds: true,
-                },
-            },
+            MutationKind::Complete | MutationKind::CompleteWithoutRecording => {
+                ClientEffect::CompleteSession {
+                    request_id,
+                    request: CompleteSessionRequest {
+                        task_id: request_task_id,
+                        started_at_epoch_ms,
+                        expected_actual_work_seconds,
+                        record_elapsed_seconds: kind == MutationKind::Complete,
+                    },
+                }
+            }
             MutationKind::Record => ClientEffect::RecordSession {
                 request_id,
                 request: RecordSessionRequest {
@@ -294,6 +298,20 @@ impl ClientState {
         let task_id = pending.task_id.clone();
         self.sessions.pending_mutations.remove(&request_id);
         Some(task_id)
+    }
+
+    fn take_pending_completion(&mut self, request_id: u64) -> Option<(String, Operation)> {
+        let pending = self.sessions.pending_mutations.get(&request_id)?;
+        if !matches!(
+            pending.kind,
+            MutationKind::Complete | MutationKind::CompleteWithoutRecording
+        ) {
+            return None;
+        }
+        let task_id = pending.task_id.clone();
+        let operation = mutation_operation(pending.kind);
+        self.sessions.pending_mutations.remove(&request_id);
+        Some((task_id, operation))
     }
 
     pub fn apply_record_result<S: KeyValueStorage>(
@@ -332,20 +350,20 @@ impl ClientState {
         request_id: u64,
         result: Result<ServerSnapshot, ServerFailure>,
     ) -> ClientEffect {
-        let Some(task_id) = self.take_pending_mutation(request_id, MutationKind::Complete) else {
+        let Some((task_id, operation)) = self.take_pending_completion(request_id) else {
             return ClientEffect::None;
         };
         self.sessions.in_flight_task_ids.remove(&task_id);
         match result {
             Ok(snapshot) => {
                 let _ = self.apply_snapshot(snapshot);
-                self.finish_committed_mutation(storage, &task_id, Operation::CompleteSession, None);
-                self.finish_mutation_safety(storage, Operation::CompleteSession, false);
+                self.finish_committed_mutation(storage, &task_id, operation, None);
+                self.finish_mutation_safety(storage, operation, false);
             }
             Err(error) => {
                 let keep_safety = keeps_safety_marker(&error);
-                self.finish_failed_mutation(&task_id, Operation::CompleteSession, error);
-                self.finish_mutation_safety(storage, Operation::CompleteSession, keep_safety);
+                self.finish_failed_mutation(&task_id, operation, error);
+                self.finish_mutation_safety(storage, operation, keep_safety);
             }
         }
         ClientEffect::None
@@ -448,6 +466,14 @@ impl ClientState {
                 });
             }
         }
+    }
+}
+
+fn mutation_operation(kind: MutationKind) -> Operation {
+    match kind {
+        MutationKind::Record => Operation::RecordSession,
+        MutationKind::Complete => Operation::CompleteSession,
+        MutationKind::CompleteWithoutRecording => Operation::CompleteSessionWithoutRecording,
     }
 }
 

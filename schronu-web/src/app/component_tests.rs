@@ -88,6 +88,24 @@ fn component_actionは仕様の五操作だけをserver_effectへ変換する() 
             ComponentAction::CompleteSession(COMPLETE_ID.to_owned())
         ),
         ClientEffect::CompleteSession { request, .. } if request.task_id == COMPLETE_ID
+            && request.record_elapsed_seconds
+    ));
+
+    let discard_complete_storage = MemoryStorage::default();
+    let (mut discard_complete_state, _) = initialize_client(&discard_complete_storage, 1_000);
+    reduce_component_action(
+        &mut discard_complete_state,
+        &discard_complete_storage,
+        ComponentAction::AddSession(task(COMPLETE_ID)),
+    );
+    assert!(matches!(
+        reduce_component_action(
+            &mut discard_complete_state,
+            &discard_complete_storage,
+            ComponentAction::CompleteSessionWithoutRecording(COMPLETE_ID.to_owned())
+        ),
+        ClientEffect::CompleteSession { request, .. } if request.task_id == COMPLETE_ID
+            && !request.record_elapsed_seconds
     ));
 }
 
