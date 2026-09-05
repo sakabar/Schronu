@@ -1,4 +1,6 @@
-use schronu_web::client::state::{ActiveTab, ClientEffect, ClientState, ServerFailure};
+use schronu_web::client::state::{
+    ActiveTab, ClientEffect, ClientState, DisplayError, ServerFailure,
+};
 use schronu_web::client::work_sessions::{
     load_work_sessions, KeyValueStorage, StorageError, WorkSession, WORK_SESSIONS_STORAGE_KEY,
 };
@@ -354,6 +356,24 @@ fn 逆順のlist応答と古いsnapshotは最新表示を巻き戻さない() {
     assert_eq!(state.snapshot().unwrap().observed_at_epoch_ms, 200);
     assert_eq!(state.snapshot().unwrap().logical_date, "2026-09-06");
     assert_eq!(state.scheduled_rows()[0].task.task_id, OTHER_TASK_ID);
+}
+
+#[test]
+fn 未知のoperation_errorはcodeと助言を失わず表示状態へ保持する() {
+    let storage = FakeStorage::default();
+    let mut state = ClientState::new(load_work_sessions(&storage).unwrap(), 0);
+    let request_id = bootstrap_effect(state.request_bootstrap());
+    let error = web_error("future_error", RetryAdvice::ManualCheck);
+
+    state.apply_bootstrap_result(
+        request_id,
+        Err(ServerFailure::Operation(error.clone())),
+    );
+
+    assert_eq!(
+        state.display_error(),
+        Some(&DisplayError::Operation(error))
+    );
 }
 
 #[derive(Default)]
