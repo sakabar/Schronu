@@ -108,14 +108,10 @@ fn snapshot公開renameは競合して作成されたdestinationを置換しな�
     fs::create_dir(&staging).unwrap();
     fs::write(staging.join("staged"), b"snapshot").unwrap();
     fs::create_dir(&destination).unwrap();
-    fs::write(destination.join("concurrent"), b"preserve").unwrap();
 
     rename_no_replace(&staging, &destination).unwrap_err();
 
-    assert_eq!(
-        fs::read(destination.join("concurrent")).unwrap(),
-        b"preserve"
-    );
+    assert_eq!(fs::read_dir(&destination).unwrap().count(), 0);
     assert_eq!(fs::read(staging.join("staged")).unwrap(), b"snapshot");
 }
 
