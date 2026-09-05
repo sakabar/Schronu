@@ -55,14 +55,18 @@ impl ClientState {
         storage: &S,
         row: &ScheduledTaskRow,
     ) -> ClientEffect {
-        self.add_session_from_task(storage, &row.task)
+        self.add_session_from_list_task(storage, &row.task, row.is_leaf)
     }
 
-    pub fn add_session_from_task<S: KeyValueStorage>(
+    pub fn add_session_from_list_task<S: KeyValueStorage>(
         &mut self,
         storage: &S,
         task: &SessionTask,
+        is_leaf: bool,
     ) -> ClientEffect {
+        if !is_leaf {
+            return ClientEffect::None;
+        }
         self.add_session(storage, task);
         ClientEffect::None
     }

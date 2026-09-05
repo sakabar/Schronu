@@ -17,7 +17,7 @@ pub fn ListView(
     active_task_ids: Vec<String>,
     tick_now_epoch_ms: i64,
     on_select_date: EventHandler<String>,
-    on_start_session: EventHandler<SessionTask>,
+    on_start_session: EventHandler<(SessionTask, bool)>,
 ) -> Element {
     rsx! {
         section { class: "task-list-view",
@@ -75,7 +75,7 @@ fn TaskRow(
     row: ListRowViewModel,
     active: bool,
     tick_now_epoch_ms: i64,
-    on_start_session: EventHandler<SessionTask>,
+    on_start_session: EventHandler<(SessionTask, bool)>,
 ) -> Element {
     let deadline_class = if row
         .deadline_epoch_ms
@@ -93,6 +93,7 @@ fn TaskRow(
     let deadline = row.deadline_label.as_deref().unwrap_or("—");
     let button_label = format!("{}: セッション", row.task.task_name);
     let task = row.task.clone();
+    let is_leaf = row.is_leaf;
 
     rsx! {
         tr { class: "task-row",
@@ -107,7 +108,7 @@ fn TaskRow(
                     disabled: active,
                     onclick: move |_| {
                         if !active {
-                            on_start_session.call(task.clone());
+                            on_start_session.call((task.clone(), is_leaf));
                         }
                     },
                     "セッション"

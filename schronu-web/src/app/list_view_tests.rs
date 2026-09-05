@@ -26,7 +26,7 @@ fn root(props: RootProps) -> Element {
             active_task_ids: props.active_task_ids,
             tick_now_epoch_ms: props.tick_now_epoch_ms,
             on_select_date: move |date: String| date_events.lock().unwrap().push(format!("date:{date}")),
-            on_start_session: move |task: SessionTask| task_events
+            on_start_session: move |(task, _): (SessionTask, bool)| task_events
                 .lock()
                 .unwrap()
                 .push(format!("task:{}:{}", task.task_id, task.task_name)),

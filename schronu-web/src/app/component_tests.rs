@@ -64,7 +64,10 @@ fn component_actionは仕様の五操作だけをserver_effectへ変換する() 
     for action in [
         ComponentAction::SwitchTab(ActiveTab::List),
         ComponentAction::Tick(2_000),
-        ComponentAction::AddSession(task(RECORD_ID)),
+        ComponentAction::AddSession {
+            task: task(RECORD_ID),
+            is_leaf: true,
+        },
         ComponentAction::DiscardSession(RECORD_ID.to_owned()),
         ComponentAction::ConfirmRepositoryChecked,
     ] {
@@ -91,7 +94,10 @@ fn component_actionは仕様の五操作だけをserver_effectへ変換する() 
         reduce_component_action(
             &mut state,
             &storage,
-            ComponentAction::AddSession(task(RECORD_ID))
+            ComponentAction::AddSession {
+                task: task(RECORD_ID),
+                is_leaf: true,
+            }
         ),
         ClientEffect::None
     );
@@ -109,7 +115,10 @@ fn component_actionは仕様の五操作だけをserver_effectへ変換する() 
     reduce_component_action(
         &mut other_state,
         &other_storage,
-        ComponentAction::AddSession(task(COMPLETE_ID)),
+        ComponentAction::AddSession {
+            task: task(COMPLETE_ID),
+            is_leaf: true,
+        },
     );
     assert!(matches!(
         reduce_component_action(
@@ -126,7 +135,10 @@ fn component_actionは仕様の五操作だけをserver_effectへ変換する() 
     reduce_component_action(
         &mut discard_complete_state,
         &discard_complete_storage,
-        ComponentAction::AddSession(task(COMPLETE_ID)),
+        ComponentAction::AddSession {
+            task: task(COMPLETE_ID),
+            is_leaf: true,
+        },
     );
     assert!(matches!(
         reduce_component_action(
@@ -137,6 +149,27 @@ fn component_actionは仕様の五操作だけをserver_effectへ変換する() 
         ClientEffect::CompleteSession { request, .. } if request.task_id == COMPLETE_ID
             && !request.record_elapsed_seconds
     ));
+}
+
+#[test]
+fn component_actionはrank非0の手動session追加を拒否する() {
+    let storage = MemoryStorage::default();
+    let (mut state, _) = initialize_client(&storage, 1_000);
+
+    assert_eq!(
+        reduce_component_action(
+            &mut state,
+            &storage,
+            ComponentAction::AddSession {
+                task: task(RECORD_ID),
+                is_leaf: false,
+            },
+        ),
+        ClientEffect::None
+    );
+
+    assert!(state.sessions().is_empty());
+    assert!(state.history().is_empty());
 }
 
 #[test]
