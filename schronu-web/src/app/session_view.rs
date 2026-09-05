@@ -93,6 +93,10 @@ fn SessionCard(
         || "進捗を計算できません".to_owned(),
         |percent| format!("{percent}%"),
     );
+    let progress_now = session
+        .progress_percent
+        .map(|percent| percent.clamp(0, 100).to_string());
+    let progress_label = format!("{}の進捗", session.task_name);
     let remaining_class = if session.remaining_seconds < 0 {
         "session-remaining is-overrun"
     } else {
@@ -115,6 +119,10 @@ fn SessionCard(
             div {
                 class: "session-progress-scroll",
                 role: "progressbar",
+                aria_label: progress_label,
+                aria_valuemin: "0",
+                aria_valuemax: "100",
+                aria_valuenow: progress_now,
                 aria_valuetext: progress_aria,
                 div { class: "session-progress-track",
                     div { class: "session-progress-normal", style: normal_style }
