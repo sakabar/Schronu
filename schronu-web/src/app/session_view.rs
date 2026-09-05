@@ -38,6 +38,7 @@ pub struct SessionCardViewModel {
 pub fn SessionView(
     sessions: Vec<SessionCardViewModel>,
     global_blocked: bool,
+    #[props(default)] auto_session_in_flight: bool,
     on_auto_session: EventHandler<()>,
     on_action: EventHandler<SessionAction>,
 ) -> Element {
@@ -47,7 +48,12 @@ pub fn SessionView(
                 button {
                     class: "primary-action",
                     r#type: "button",
-                    onclick: move |_| on_auto_session.call(()),
+                    disabled: auto_session_in_flight,
+                    onclick: move |_| {
+                        if !auto_session_in_flight {
+                            on_auto_session.call(());
+                        }
+                    },
                     "自動セッション"
                 }
             }
