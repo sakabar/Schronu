@@ -15,6 +15,72 @@ fn test_get_free_minutes_簡単なケース1() {
 }
 
 #[test]
+fn get_free_secondsは開始終了の端数秒を保持する() {
+    let mut manager = FreeTimeManager::new();
+    let start = Local.with_ymd_and_hms(2026, 9, 5, 19, 0, 59).unwrap();
+    let end = Local.with_ymd_and_hms(2026, 9, 5, 19, 1, 1).unwrap();
+
+    assert_eq!(manager.get_free_seconds(&start, &end), 2);
+}
+
+#[test]
+fn get_free_secondsはcurrent_minuteのbusy部分だけを除外する() {
+    let mut manager = FreeTimeManager::new();
+    let busy_start = Local.with_ymd_and_hms(2026, 9, 5, 19, 0, 0).unwrap();
+    let busy_end = Local.with_ymd_and_hms(2026, 9, 5, 19, 1, 0).unwrap();
+    manager
+        .register_busy_time_slot(&busy_start, &busy_end)
+        .unwrap();
+    let start = Local.with_ymd_and_hms(2026, 9, 5, 19, 0, 59).unwrap();
+    let end = Local.with_ymd_and_hms(2026, 9, 5, 19, 1, 1).unwrap();
+
+    assert_eq!(manager.get_free_seconds(&start, &end), 1);
+}
+
+#[test]
+fn get_free_secondsは日跨ぎの半開区間を秒精度で合計する() {
+    let mut manager = FreeTimeManager::new();
+    let start = Local.with_ymd_and_hms(2026, 9, 5, 23, 59, 59).unwrap();
+    let end = Local.with_ymd_and_hms(2026, 9, 6, 0, 0, 1).unwrap();
+
+    assert_eq!(manager.get_free_seconds(&start, &end), 2);
+    assert_eq!(manager.get_free_seconds(&end, &start), 0);
+}
+
+#[test]
+fn free_time_traitの秒api既定実装は既存の分値を秒へ変換する() {
+    struct MinuteOnlyManager;
+
+    impl FreeTimeManagerTrait for MinuteOnlyManager {
+        fn get_free_minutes(&mut self, _start: &DateTime<Local>, _end: &DateTime<Local>) -> i64 {
+            7
+        }
+
+        fn get_busy_minutes(&mut self, _start: &DateTime<Local>, _end: &DateTime<Local>) -> i64 {
+            0
+        }
+
+        fn register_busy_time_slot(
+            &mut self,
+            _start: &DateTime<Local>,
+            _end: &DateTime<Local>,
+        ) -> Result<(), BusyTimeSlotRegistrationError> {
+            Ok(())
+        }
+
+        fn load_busy_time_slots_from_file(
+            &mut self,
+            _busy_time_slots_file_path: &str,
+        ) -> Result<(), BusyTimeSlotLoadError> {
+            Ok(())
+        }
+    }
+
+    let now = Local.with_ymd_and_hms(2026, 9, 5, 12, 0, 0).unwrap();
+    assert_eq!(MinuteOnlyManager.get_free_seconds(&now, &now), 420);
+}
+
+#[test]
 fn test_get_free_minutes_丸1日のケース() {
     let mut ft_mng = FreeTimeManager::new();
 

@@ -1,6 +1,7 @@
 use crate::application::interface::{
     BusyTimeSlotLoadError, BusyTimeSlotRegistrationError, FreeTimeManagerTrait,
-    ProjectRegistrationError, TaskRepositoryError, TaskRepositoryTrait,
+    ProjectRegistrationError, TaskRepositoryError, TaskRepositoryOperation,
+    TaskRepositorySaveFailureDisposition, TaskRepositoryTrait,
 };
 use crate::entity::task::{TaskAttr, TaskHandle, TaskTreeError};
 use chrono::{DateTime, Local, TimeZone};
@@ -43,6 +44,7 @@ pub(crate) struct TestTaskRepository {
     highest_priority_leaf_task_id: Option<Uuid>,
     save_count: Cell<usize>,
     registration_error: Option<ProjectRegistrationError>,
+    save_failure_disposition: Cell<Option<TaskRepositorySaveFailureDisposition>>,
 }
 
 impl TestTaskRepository {
@@ -53,6 +55,7 @@ impl TestTaskRepository {
             highest_priority_leaf_task_id: None,
             save_count: Cell::new(0),
             registration_error: None,
+            save_failure_disposition: Cell::new(None),
         }
     }
 
@@ -75,6 +78,13 @@ impl TestTaskRepository {
     pub(crate) fn set_registration_error(&mut self, error: ProjectRegistrationError) {
         self.registration_error = Some(error);
     }
+
+    pub(crate) fn set_save_failure_disposition(
+        &self,
+        disposition: TaskRepositorySaveFailureDisposition,
+    ) {
+        self.save_failure_disposition.set(Some(disposition));
+    }
 }
 
 impl TaskRepositoryTrait for TestTaskRepository {
@@ -92,6 +102,17 @@ impl TaskRepositoryTrait for TestTaskRepository {
 
     fn save(&self) -> Result<(), TaskRepositoryError> {
         self.save_count.set(self.save_count.get() + 1);
+        if let Some(disposition) = self.save_failure_disposition.get() {
+            let source = std::io::Error::other("test save failure");
+            return Err(match disposition {
+                TaskRepositorySaveFailureDisposition::Retryable => {
+                    TaskRepositoryError::retryable_save(source)
+                }
+                TaskRepositorySaveFailureDisposition::StateUncertain => {
+                    TaskRepositoryError::new(TaskRepositoryOperation::Save, source)
+                }
+            });
+        }
         Ok(())
     }
 

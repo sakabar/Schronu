@@ -1,46 +1,426 @@
 :root {
-    color-scheme: light dark;
-    font-family: system-ui, sans-serif;
+    color-scheme: light;
+    font-family:
+        Inter, "Hiragino Sans", "Yu Gothic UI", "Yu Gothic", system-ui,
+        sans-serif;
+    font-synthesis: none;
+    --page: #f5f8f6;
+    --surface: #ffffff;
+    --surface-muted: #edf3ef;
+    --ink: #193128;
+    --muted: #687a72;
+    --line: #d5e1da;
+    --green: #27845e;
+    --green-dark: #196846;
+    --blue: #3677bd;
+    --blue-dark: #255d99;
+    --red: #c33d43;
+    --red-soft: #fff0f0;
+    --shadow: 0 0.75rem 2rem rgb(35 65 52 / 9%);
+}
+
+* {
+    box-sizing: border-box;
 }
 
 body {
     margin: 0;
-}
-
-.shell {
-    margin: 0 auto;
-    max-width: 80rem;
-    padding: 1.5rem;
-}
-
-.toolbar {
-    align-items: center;
-    display: flex;
-    gap: 1rem;
-    justify-content: space-between;
-}
-
-.toolbar h1 {
-    font-size: 1.25rem;
+    min-width: 20rem;
+    background: var(--page);
+    color: var(--ink);
 }
 
 button {
+    border: 1px solid var(--line);
+    border-radius: 0.65rem;
+    background: var(--surface);
+    color: var(--ink);
     cursor: pointer;
-    padding: 0.5rem 1rem;
+    font: inherit;
+    font-weight: 650;
+    padding: 0.65rem 1rem;
+    transition:
+        border-color 120ms ease,
+        background-color 120ms ease,
+        transform 120ms ease;
+}
+
+button:hover:not(:disabled) {
+    border-color: var(--green);
+    background: #f2faf6;
+}
+
+button:active:not(:disabled) {
+    transform: translateY(1px);
+}
+
+button:focus-visible,
+summary:focus-visible {
+    outline: 3px solid rgb(54 119 189 / 35%);
+    outline-offset: 3px;
 }
 
 button:disabled {
-    cursor: wait;
+    cursor: not-allowed;
+    opacity: 0.48;
+}
+
+.shell {
+    width: min(100% - 2rem, 82rem);
+    margin-inline: auto;
+    padding-block: 1.5rem 3rem;
+}
+
+.toolbar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1rem;
+    margin-bottom: 1.25rem;
+}
+
+.toolbar h1 {
+    margin: 0;
+    font-size: clamp(1.2rem, 2vw, 1.55rem);
+    letter-spacing: 0.03em;
+}
+
+.tabs,
+.date-pills {
+    display: flex;
+    gap: 0.5rem;
+    overflow-x: auto;
+    padding: 0.25rem 0.1rem 0.6rem;
+    scrollbar-width: thin;
+}
+
+.tab-button,
+.date-pill {
+    flex: 0 0 auto;
+    border-radius: 999px;
+    padding-inline: 1.2rem;
+}
+
+.tab-button.is-selected,
+.date-pill.is-selected {
+    border-color: var(--green-dark);
+    background: var(--green);
+    color: white;
+}
+
+.buffer-panel {
+    display: grid;
+    place-items: center;
+    gap: 0.25rem;
+    margin-block: 1.5rem 2rem;
+    padding: clamp(1.5rem, 5vw, 3.5rem) 1rem;
+    border: 1px solid var(--line);
+    border-radius: 1.25rem;
+    background: var(--surface);
+    box-shadow: var(--shadow);
+}
+
+.buffer-label {
+    color: var(--muted);
+    font-size: 0.8rem;
+    font-weight: 750;
+    letter-spacing: 0.16em;
+}
+
+.buffer-value {
+    font-variant-numeric: tabular-nums;
+    font-size: clamp(3.4rem, 12vw, 7rem);
+    font-weight: 780;
+    line-height: 1;
+    letter-spacing: -0.04em;
+}
+
+.buffer-value.is-negative,
+.session-remaining.is-overrun,
+.deadline.is-overdue {
+    color: var(--red);
+}
+
+.session-empty {
+    display: grid;
+    min-height: 13rem;
+    place-items: center;
+    border: 1px dashed var(--line);
+    border-radius: 1rem;
+    background: var(--surface);
+}
+
+.primary-action,
+.session-start {
+    border-color: var(--green-dark);
+    background: var(--green);
+    color: white;
+}
+
+.primary-action:hover:not(:disabled),
+.session-start:hover:not(:disabled) {
+    border-color: var(--green-dark);
+    background: var(--green-dark);
+}
+
+.session-list {
+    display: grid;
+    gap: 1rem;
+}
+
+.session-card {
+    display: grid;
+    grid-template-columns: minmax(11rem, 1.1fr) minmax(18rem, 2fr) auto;
+    grid-template-areas:
+        "heading progress actions"
+        "time remaining actions";
+    align-items: center;
+    gap: 1.5rem;
+    border: 1px solid var(--line);
+    border-radius: 1rem;
+    background: var(--surface);
+    box-shadow: var(--shadow);
+    padding: 1.25rem;
+}
+
+.session-card-heading {
+    display: flex;
+    grid-area: heading;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 0.75rem;
+    margin: 0;
+    font-size: 1.15rem;
+    overflow-wrap: anywhere;
+}
+
+.session-card-heading h2 {
+    margin: 0;
+    font: inherit;
+}
+
+.session-time-row {
+    grid-area: time;
+    display: flex;
+    justify-content: space-between;
+    gap: 1rem;
+    margin-top: 0.55rem;
+    color: var(--muted);
+    font-size: 0.9rem;
+    font-variant-numeric: tabular-nums;
+}
+
+.session-progress-label {
+    flex: 0 0 auto;
+    font-variant-numeric: tabular-nums;
+}
+
+.session-progress-scroll {
+    grid-area: progress;
+    max-width: 100%;
+    overflow-x: auto;
+    padding-block: 0.2rem 0.55rem;
+    scrollbar-width: thin;
+}
+
+.session-progress-track {
+    display: flex;
+    width: 100%;
+    min-width: 100%;
+    height: 0.9rem;
+    overflow: visible;
+    border-radius: 999px;
+    background: var(--surface-muted);
+}
+
+.session-progress-normal,
+.session-progress-overrun {
+    flex: 0 0 auto;
+    min-width: 0;
+}
+
+.session-progress-normal {
+    border-radius: 999px 0 0 999px;
+    background: linear-gradient(90deg, var(--green), var(--blue));
+}
+
+.session-progress-overrun {
+    background: var(--red);
+}
+
+.session-progress-overrun:last-child {
+    border-radius: 0 999px 999px 0;
+}
+
+.session-remaining {
+    grid-area: remaining;
+    margin-top: 0.35rem;
+    font-size: 1.25rem;
+    font-variant-numeric: tabular-nums;
+    font-weight: 750;
+}
+
+.session-actions {
+    grid-area: actions;
+    display: grid;
+    gap: 0.45rem;
+    min-width: 8.5rem;
+}
+
+.session-actions button:nth-child(2) {
+    border-color: var(--blue);
+    color: var(--blue-dark);
+}
+
+.session-actions button:last-child {
+    border-color: var(--green-dark);
+    color: var(--green-dark);
+}
+
+.task-list-view {
+    display: grid;
+    gap: 1rem;
+}
+
+.task-table-scroll {
+    overflow-x: auto;
+    border: 1px solid var(--line);
+    border-radius: 1rem;
+    background: var(--surface);
+    box-shadow: var(--shadow);
+}
+
+.task-table {
+    width: 100%;
+    min-width: 44rem;
+    border-collapse: collapse;
+}
+
+.task-table th,
+.task-table td {
+    padding: 0.9rem 1rem;
+    border-bottom: 1px solid var(--line);
+    text-align: left;
+    vertical-align: middle;
+}
+
+.task-table th {
+    background: var(--surface-muted);
+    color: var(--muted);
+    font-size: 0.8rem;
+    letter-spacing: 0.08em;
+}
+
+.task-table tr:last-child td {
+    border-bottom: 0;
+}
+
+.deadline,
+.schedule-time {
+    white-space: nowrap;
+    font-variant-numeric: tabular-nums;
+}
+
+.task-name.is-leaf {
+    color: var(--green-dark);
+    font-weight: 750;
+}
+
+.history-panel {
+    margin-top: 1.5rem;
+    border: 1px solid var(--line);
+    border-radius: 0.85rem;
+    background: var(--surface);
+}
+
+.history-panel summary {
+    cursor: pointer;
+    color: var(--muted);
+    font-weight: 700;
+    padding: 0.9rem 1rem;
+}
+
+.history-list {
+    display: grid;
+    gap: 0.65rem;
+    margin: 0;
+    padding: 0 1rem 1rem;
+    list-style: none;
+}
+
+.history-entry {
+    display: grid;
+    grid-template-columns: auto auto auto 1fr;
+    gap: 0.5rem 0.85rem;
+    padding: 0.75rem;
+    border-radius: 0.65rem;
+    background: var(--surface-muted);
+    font-size: 0.9rem;
+}
+
+.history-entry.is-failure {
+    background: var(--red-soft);
+    color: var(--red);
+}
+
+.history-summary {
+    grid-column: 1 / -1;
+    color: var(--muted);
 }
 
 .error {
-    border: 1px solid currentColor;
     margin-block: 1rem;
     padding: 1rem;
+    border: 1px solid var(--red);
+    border-radius: 0.75rem;
+    background: var(--red-soft);
+    color: var(--red);
 }
 
-.today-text {
-    overflow-x: auto;
-    padding-block: 1rem;
-    white-space: pre;
+@media (max-width: 52rem) {
+    .session-card {
+        grid-template-columns: 1fr;
+        grid-template-areas:
+            "heading"
+            "time"
+            "progress"
+            "remaining"
+            "actions";
+    }
+
+    .session-actions {
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+    }
+
+    .session-actions button {
+        min-height: 3rem;
+        padding-inline: 0.55rem;
+    }
+}
+
+@media (max-width: 34rem) {
+    .shell {
+        width: min(100% - 1rem, 82rem);
+        padding-top: 0.75rem;
+    }
+
+    .toolbar,
+    .session-time-row {
+        align-items: stretch;
+        flex-direction: column;
+    }
+
+    .session-actions {
+        grid-template-columns: 1fr;
+    }
+
+    .history-entry {
+        grid-template-columns: 1fr 1fr;
+    }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    button {
+        transition: none;
+    }
 }

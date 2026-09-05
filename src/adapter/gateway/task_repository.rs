@@ -1,5 +1,6 @@
 use crate::adapter::gateway::storage_transaction::{
-    self, FileSystemStorageTransactionIo, StorageTransactionIo, WriteRequest,
+    self, FileSystemStorageTransactionIo, StorageTransactionCommitState, StorageTransactionIo,
+    WriteRequest,
 };
 use crate::adapter::gateway::yaml::{task_snapshot_to_yaml, yaml_to_task};
 use crate::application::interface::{
@@ -235,6 +236,16 @@ impl TaskRepository {
         }
     }
 
+    #[cfg(test)]
+    pub(crate) fn new_with_storage_transaction_io(
+        project_storage_dir_name: &str,
+        storage_transaction_io: Arc<dyn StorageTransactionIo>,
+    ) -> Self {
+        let mut repository = Self::new(project_storage_dir_name);
+        repository.storage_transaction_io = storage_transaction_io;
+        repository
+    }
+
     pub(in crate::adapter::gateway) fn load_captured<'a, I>(
         &mut self,
         storage_revision: Option<(&Path, &[u8])>,
@@ -383,23 +394,21 @@ impl TaskRepository {
     }
 
     fn serialize_project(project: &Project) -> Result<Vec<u8>, TaskRepositoryError> {
-        let snapshot = project.root_task.snapshot().map_err(|error| {
-            TaskRepositoryError::new(ApplicationRepositoryOperation::Save, error)
-        })?;
+        let snapshot = project
+            .root_task
+            .snapshot()
+            .map_err(TaskRepositoryError::retryable_save)?;
         let task_yaml = task_snapshot_to_yaml(&snapshot);
         let mut project_hash = LinkedHashMap::new();
         project_hash.insert(Yaml::String(String::from("project")), task_yaml);
         let doc = Yaml::Hash(project_hash);
         let mut out = String::new();
         YamlEmitter::new(&mut out).dump(&doc).map_err(|error| {
-            TaskRepositoryError::new(
-                ApplicationRepositoryOperation::Save,
-                FileRepositoryError::new(
-                    FileRepositoryOperation::SerializeProject,
-                    &project.project_yaml_file_path,
-                    std::io::Error::new(std::io::ErrorKind::InvalidData, error),
-                ),
-            )
+            TaskRepositoryError::retryable_save(FileRepositoryError::new(
+                FileRepositoryOperation::SerializeProject,
+                &project.project_yaml_file_path,
+                std::io::Error::new(std::io::ErrorKind::InvalidData, error),
+            ))
         })?;
         out.push('\n');
         Ok(out.into_bytes())
@@ -462,7 +471,7 @@ impl TaskRepositoryTrait for TaskRepository {
             .iter()
             .map(|project| project.needs_save().map(|needs_save| (project, needs_save)))
             .collect::<Result<Vec<_>, _>>()
-            .map_err(|error| TaskRepositoryError::new(ApplicationRepositoryOperation::Save, error))?
+            .map_err(TaskRepositoryError::retryable_save)?
             .into_iter()
             .filter_map(|(project, needs_save)| needs_save.then_some(project))
             .collect::<Vec<_>>();
@@ -479,30 +488,26 @@ impl TaskRepositoryTrait for TaskRepository {
 
         if prepared_writes.is_empty() {
             for project in projects_to_save {
-                project.mark_clean().map_err(|error| {
-                    TaskRepositoryError::new(ApplicationRepositoryOperation::Save, error)
-                })?;
+                project
+                    .mark_clean()
+                    .map_err(TaskRepositoryError::retryable_save)?;
             }
             return Ok(());
         }
 
         let storage_dir_path = Path::new(&self.project_storage_dir_name);
         fs::create_dir_all(storage_dir_path).map_err(|error| {
-            TaskRepositoryError::new(
-                ApplicationRepositoryOperation::Save,
-                FileRepositoryError::new(
-                    FileRepositoryOperation::CreateDirectory,
-                    storage_dir_path,
-                    error,
-                ),
-            )
+            TaskRepositoryError::retryable_save(FileRepositoryError::new(
+                FileRepositoryOperation::CreateDirectory,
+                storage_dir_path,
+                error,
+            ))
         })?;
         let revision_path = self.storage_revision_path();
         if fs::symlink_metadata(&revision_path)
             .is_ok_and(|metadata| metadata.file_type().is_symlink())
         {
-            return Err(TaskRepositoryError::new(
-                ApplicationRepositoryOperation::Save,
+            return Err(TaskRepositoryError::retryable_save(
                 FileRepositoryError::new(
                     FileRepositoryOperation::ReadMetadata,
                     revision_path,
@@ -536,10 +541,17 @@ impl TaskRepositoryTrait for TaskRepository {
             &write_requests,
             &markdown_directory_paths,
         )
-        .map_err(|error| TaskRepositoryError::new(ApplicationRepositoryOperation::Save, error))?;
-        prepared_transaction.commit().map_err(|error| {
-            TaskRepositoryError::new(ApplicationRepositoryOperation::Save, error)
-        })?;
+        .map_err(TaskRepositoryError::retryable_save)?;
+        prepared_transaction
+            .commit()
+            .map_err(|error| match error.commit_state() {
+                StorageTransactionCommitState::NotCommitted => {
+                    TaskRepositoryError::retryable_save(error)
+                }
+                StorageTransactionCommitState::CommitMarkerEstablished => {
+                    TaskRepositoryError::new(ApplicationRepositoryOperation::Save, error)
+                }
+            })?;
 
         for project in projects_to_save {
             project.mark_clean().map_err(|error| {

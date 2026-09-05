@@ -1,4 +1,7 @@
-use crate::entity::task::{ProjectCategory, TaskAttr, TaskTreeError};
+use crate::{
+    application::session_progress::calculate_session_progress,
+    entity::task::{ProjectCategory, TaskAttr, TaskTreeError},
+};
 use chrono::{DateTime, Datelike, Duration, Local, NaiveDate, Weekday};
 use std::io::{IsTerminal, Stdout, Write};
 use termion::color;
@@ -791,9 +794,31 @@ pub(super) fn format_focus_progress(
     if estimated_work_seconds <= 0 {
         return format!("[{}] --%", "-".repeat(FOCUS_PROGRESS_BAR_SEGMENTS));
     }
-    let total_work_seconds =
-        (i128::from(actual_work_seconds) + i128::from(focusing_seconds)).max(0);
-    let percentage = total_work_seconds * 100 / i128::from(estimated_work_seconds);
+    let (actual_work_seconds, focusing_seconds) = if actual_work_seconds < 0 || focusing_seconds < 0
+    {
+        (
+            actual_work_seconds.saturating_add(focusing_seconds).max(0),
+            0,
+        )
+    } else {
+        (actual_work_seconds, focusing_seconds)
+    };
+    let percentage = match calculate_session_progress(
+        estimated_work_seconds,
+        actual_work_seconds,
+        focusing_seconds,
+    ) {
+        Ok(progress) => progress.progress_percent,
+        Err(error) => {
+            return format!(
+                "[{}] --% ({error})",
+                "-".repeat(FOCUS_PROGRESS_BAR_SEGMENTS)
+            );
+        }
+    };
+    let Some(percentage) = percentage else {
+        return format!("[{}] --%", "-".repeat(FOCUS_PROGRESS_BAR_SEGMENTS));
+    };
     let filled_segments = percentage.min(FOCUS_PROGRESS_BAR_SEGMENTS as i128) as usize;
     let overflow_segments = (percentage - 100).max(0) as usize;
     format!(

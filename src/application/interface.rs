@@ -12,6 +12,12 @@ pub enum TaskRepositoryOperation {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum TaskRepositorySaveFailureDisposition {
+    Retryable,
+    StateUncertain,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum RepositoryReloadOutcome {
     Reloaded,
     Cached,
@@ -55,6 +61,7 @@ impl Error for ProjectRegistrationError {
 #[derive(Debug)]
 pub struct TaskRepositoryError {
     operation: TaskRepositoryOperation,
+    save_failure_disposition: Option<TaskRepositorySaveFailureDisposition>,
     source: Box<dyn Error + Send + Sync>,
 }
 
@@ -63,14 +70,32 @@ impl TaskRepositoryError {
     where
         E: Error + Send + Sync + 'static,
     {
+        let save_failure_disposition = (operation == TaskRepositoryOperation::Save)
+            .then_some(TaskRepositorySaveFailureDisposition::StateUncertain);
         Self {
             operation,
+            save_failure_disposition,
+            source: Box::new(source),
+        }
+    }
+
+    pub fn retryable_save<E>(source: E) -> Self
+    where
+        E: Error + Send + Sync + 'static,
+    {
+        Self {
+            operation: TaskRepositoryOperation::Save,
+            save_failure_disposition: Some(TaskRepositorySaveFailureDisposition::Retryable),
             source: Box::new(source),
         }
     }
 
     pub fn operation(&self) -> TaskRepositoryOperation {
         self.operation
+    }
+
+    pub fn save_failure_disposition(&self) -> Option<TaskRepositorySaveFailureDisposition> {
+        self.save_failure_disposition
     }
 }
 
@@ -125,6 +150,9 @@ pub trait TaskRepositoryTrait {
 
 pub trait FreeTimeManagerTrait {
     fn get_free_minutes(&mut self, start: &DateTime<Local>, end: &DateTime<Local>) -> i64;
+    fn get_free_seconds(&mut self, start: &DateTime<Local>, end: &DateTime<Local>) -> i64 {
+        self.get_free_minutes(start, end) * 60
+    }
     fn get_busy_minutes(&mut self, start: &DateTime<Local>, end: &DateTime<Local>) -> i64;
     fn register_busy_time_slot(
         &mut self,

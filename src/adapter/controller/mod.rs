@@ -21,8 +21,11 @@ mod runtime;
 
 mod storage_directory;
 
-#[path = "schronu/today_text.rs"]
-mod today_text;
+#[path = "schronu/web_service.rs"]
+mod web_service;
+
+#[path = "schronu/web_session_write.rs"]
+mod web_session_write;
 
 #[path = "schronu/view.rs"]
 mod view;
@@ -56,8 +59,16 @@ mod renderer_contract_tests;
 mod interactive_contract_tests;
 
 #[cfg(test)]
-#[path = "schronu/today_text_contract_tests.rs"]
-mod today_text_contract_tests;
+#[path = "schronu/web_read_buffer_contract_tests.rs"]
+mod web_read_buffer_contract_tests;
+
+#[cfg(test)]
+#[path = "schronu/web_read_model_contract_tests.rs"]
+mod web_read_model_contract_tests;
+
+#[cfg(test)]
+#[path = "schronu/web_read_service_contract_tests.rs"]
+mod web_read_service_contract_tests;
 
 /// CLI applicationを起動する。
 pub fn run_cli() {
@@ -65,7 +76,11 @@ pub fn run_cli() {
 }
 
 pub use storage_directory::resolve_project_storage_directory;
-pub use today_text::{TodayTextError, TodayTextService};
+pub use web_service::{
+    ScheduledTaskRowDto, ServerSnapshot, SessionTaskDto, WebReadError, WebReadOverflowError,
+    WebService, WebSuccess,
+};
+pub use web_session_write::{RecordSessionRequest, RecordSessionResult, WebSessionInputError};
 
 #[cfg(test)]
 mod entrypoint_contract_tests {

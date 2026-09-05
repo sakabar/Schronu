@@ -764,6 +764,7 @@ pub(super) fn handle_finish_placement_command<C: FinishPlacementCommandContext +
                     task_id: focused_task.get_id().map_err(ApplicationError::TaskTree)?,
                     finished_at,
                     additional_actual_work_seconds,
+                    expected_actual_work_seconds: None,
                 };
                 match context.complete_focused_task(input) {
                     Ok(next_focus_task_id) => {

@@ -15,8 +15,9 @@ mod manifest;
 mod prepare;
 mod recovery;
 
+pub(super) use io::FileSystemStorageTransactionIo;
+pub(crate) use io::StorageTransactionIo;
 use io::TransactionLock;
-pub(super) use io::{FileSystemStorageTransactionIo, StorageTransactionIo};
 #[cfg(test)]
 use layout::ACTIVE_TRANSACTION_DIRECTORY_NAME;
 #[cfg(test)]
@@ -38,7 +39,14 @@ pub(super) use recovery::recover;
 pub(super) struct StorageTransactionError {
     operation: StorageTransactionOperation,
     path: PathBuf,
+    commit_state: StorageTransactionCommitState,
     source: std::io::Error,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(super) enum StorageTransactionCommitState {
+    NotCommitted,
+    CommitMarkerEstablished,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -96,8 +104,18 @@ impl StorageTransactionError {
         Self {
             operation,
             path: path.into(),
+            commit_state: StorageTransactionCommitState::NotCommitted,
             source,
         }
+    }
+
+    fn with_commit_marker_established(mut self) -> Self {
+        self.commit_state = StorageTransactionCommitState::CommitMarkerEstablished;
+        self
+    }
+
+    pub(super) fn commit_state(&self) -> StorageTransactionCommitState {
+        self.commit_state
     }
 }
 

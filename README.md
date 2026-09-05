@@ -22,7 +22,7 @@ Rust versionまたは依存関係を更新する場合は、`rust-toolchain.toml
 
 ### schronu-web
 
-`schronu-web`は、CLIの`今`コマンドと同じplain textをbrowserへread-onlyで表示するDioxus fullstack applicationです。初回表示後は60秒ごとに自動更新し、`更新`buttonでも手動更新できます。更新中はrequestを重複させません。取得に失敗した場合は直前の成功結果を残したままerrorと`再試行`buttonを表示します。
+`schronu-web`は、複数の作業セッションと8 logical dates分のtask一覧を扱うDioxus fullstack applicationです。Web UIのセッションはSchronu本体のcurrent taskとは独立しており、複数taskのtimerを同時に進められます。セッションと1日のbufferはbrowser内で1秒ごとに再計算し、このtickだけではserver通信を行いません。
 
 開発環境にはDioxus CLI 0.7.10とWASM targetが必要です。
 
@@ -44,7 +44,17 @@ SCHRONU_CONFIG_PATH=/absolute/path/to/schronu.yaml \
 
 起動後は`http://127.0.0.1:8080`を開きます。application serverは`127.0.0.1`へ固定しており、認証は設けていません。Dioxus CLIの`serve`へ外部addressを指定しないでください。
 
-このMVPは`今`のplain text表示だけを対象とします。task操作、focus操作、HTML table、filter、paging、revision監視、配布用bundleは対象外です。
+初回表示ではlogical date、buffer、日付選択肢を取得します。以後server通信が起きるのは、日付を選んでtask一覧を取得するとき、自動セッションを選定するとき、セッションを記録して解除するとき、taskを完了するときだけです。tab切替、timer更新、一覧からのセッション追加、セッションの破棄では通信しません。logical dateが日付境界の06:00を越えて変わっても自動取得せず、次のserver操作のresponseで更新します。
+
+作業中のセッションは`schronu_web.work_sessions.v1`、変更系requestの送信中を示す安全状態は`schronu_web.mutation_safety.v1`としてlocalStorageへ保存します。reload後は保存した開始時刻を基準にtimerを復元します。記録または完了のresponseを確定できないままreloadした場合、二重適用を避けるため変更系操作を停止します。repositoryの状態を別の手段で確認してから、画面の確認操作で停止を解除してください。
+
+セッションの操作は次のとおりです。
+
+- `破棄して解除`: Web UIのセッションだけを削除し、実績を記録しない。
+- `記録して解除`: セッション開始後の完了済み整数秒をtaskの実績へ加算してから、セッションを削除する。
+- `完了`: 同じ実績秒を加算してtaskを完了してから、セッションを削除する。
+
+記録と完了はセッション開始時の実績秒を期待値として照合します。他processが同じtaskを先に更新した場合は競合として拒否し、Web UI上のセッションを残します。Schronu本体のcurrent taskは、自動セッション、一覧からの追加、解除、記録、完了のいずれでも変更しません。
 
 Web側だけを検証するcommandは次のとおりです。
 
@@ -170,7 +180,7 @@ SCHRONU_STORAGE_DIR=/absolute/path/to/tasks SCHRONU_CONFIG_PATH=/absolute/path/t
 
 ### 設定ファイル
 
-`SCHRONU_CONFIG_PATH`には任意の設定YAMLのabsolute pathを指定できます。CLIの`schronu`とMCP serverの`schronu-mcp`は起動時に、`schronu-web`は最初の表示取得時に同じ設定を読み込みます。未指定時は従来の既定値で動作します。指定したfileが読めない、YAMLが壊れている、未知のキーや不正な値がある場合、CLIとMCP serverは起動を停止し、Webは画面へerrorを表示します。
+`SCHRONU_CONFIG_PATH`には任意の設定YAMLのabsolute pathを指定できます。CLIの`schronu`とMCP serverの`schronu-mcp`は起動時に、`schronu-web`は最初のbootstrap時に同じ設定を読み込みます。未指定時は従来の既定値で動作します。指定したfileが読めない、YAMLが壊れている、未知のキーや不正な値がある場合、CLIとMCP serverは起動を停止し、Webは画面へerrorを表示します。
 
 仕事用設定の例です。
 
@@ -302,7 +312,7 @@ write toolの保存に失敗すると、memory上のrepositoryとfileの状態�
 
 ### CLI・MCP・Webの排他lock
 
-CLI、MCP server、Web serverは保存先直下の`.lock`へ同じOS advisory lockを取得します。CLIは起動時、60秒ごとの再描画、command実行時だけlockを取得します。command実行時はrepository cacheの確認、command実行、saveまで保持してから解放し、成功したcommandは即時保存します。MCP serverは`tools/call`ごとにlockを取得し、repository cacheの確認、tool実行、必要ならsave、response構築まで保持してから解放します。Web serverは初回表示、60秒ごとの自動更新、手動更新ごとにlockを取得し、repositoryとbusy time slotsを読み込んでplain textを生成してから解放します。各processはidle中に共存でき、storage操作だけが直列化されます。`.lock`には`pid`、`started_at`、`mode`(`cli`、`mcp`、`web`)が記録され、`started_at`はそのstorage操作がlockを取得した時刻です。
+CLI、MCP server、Web serverは保存先直下の`.lock`へ同じOS advisory lockを取得します。CLIは起動時、60秒ごとの再描画、command実行時だけlockを取得します。command実行時はrepository cacheの確認、command実行、saveまで保持してから解放し、成功したcommandは即時保存します。MCP serverは`tools/call`ごとにlockを取得し、repository cacheの確認、tool実行、必要ならsave、response構築まで保持してから解放します。Web serverはbootstrap、task一覧取得、自動セッション選定、実績記録、task完了の各操作でlockを取得します。読み取り操作はresponse構築後、変更操作はtransaction保存後にlockを解放します。各processはidle中に共存でき、storage操作だけが直列化されます。`.lock`には`pid`、`started_at`、`mode`(`cli`、`mcp`、`web`)が記録され、`started_at`はそのstorage操作がlockを取得した時刻です。
 
 新規projectのdirectory名は`YYYYMMDD-{project名}-{root UUID}`形式です。project名部分は可読性のための補助情報であり、URL以降の除去、`/`から`-`への置換、filesystemのcomponent長に収めるためのUTF-8境界での短縮を行います。一意なidentityには省略しないhyphenated形式のroot UUIDを使用するため、同日・同名や変換後に同名となるprojectも別directoryへ保存されます。従来の`YYYYMMDD-{project名}`形式もそのまま読み込み、既存directoryを新形式へ自動renameしません。
 

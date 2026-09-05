@@ -10,6 +10,7 @@ pub mod schedule_use_case;
 mod scheduled_capacity;
 mod scheduling_instrumentation;
 mod scheduling_policy;
+pub mod session_progress;
 pub(crate) mod task_name;
 pub mod task_use_case;
 mod task_view;
@@ -18,5 +19,7 @@ mod task_view;
 mod list_tasks_contract_tests;
 #[cfg(test)]
 mod schedule_use_case_contract_tests;
+#[cfg(test)]
+mod session_progress_contract_tests;
 #[cfg(test)]
 mod task_name_contract_tests;

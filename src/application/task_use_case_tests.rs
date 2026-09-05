@@ -65,6 +65,174 @@ fn complete_task_with_fresh_factory(
     complete_task(repository, input, &mut factory)
 }
 
+#[test]
+fn add_actual_work_uuid指定で秒数を加算する() {
+    let task = crate::test_support::new_task_handle("作業対象").unwrap();
+    task.set_actual_work_seconds(61).unwrap();
+    let task_id = task.get_id().unwrap();
+    let mut repository = TestTaskRepository::new(vec![task.clone()], fixed_now());
+
+    let actual = add_actual_work(
+        &mut repository,
+        AddActualWorkInput {
+            task_id,
+            additional_actual_work_seconds: 60,
+            expected_actual_work_seconds: None,
+        },
+    )
+    .unwrap();
+
+    assert_eq!(actual, 121);
+    assert_eq!(task.get_actual_work_seconds().unwrap(), 121);
+}
+
+#[test]
+fn add_actual_work_expectedが現在実績と一致する場合だけ加算する() {
+    let task = crate::test_support::new_task_handle("作業対象").unwrap();
+    task.set_actual_work_seconds(61).unwrap();
+    let task_id = task.get_id().unwrap();
+    let mut repository = TestTaskRepository::new(vec![task.clone()], fixed_now());
+
+    let actual = add_actual_work(
+        &mut repository,
+        AddActualWorkInput {
+            task_id,
+            additional_actual_work_seconds: 2,
+            expected_actual_work_seconds: Some(61),
+        },
+    )
+    .unwrap();
+
+    assert_eq!(actual, 63);
+    assert_eq!(task.get_actual_work_seconds().unwrap(), 63);
+}
+
+#[test]
+fn add_actual_work_expected不一致ではtaskを変更しない() {
+    let task = crate::test_support::new_task_handle("作業対象").unwrap();
+    task.set_actual_work_seconds(61).unwrap();
+    let task_id = task.get_id().unwrap();
+    let original = task.snapshot().unwrap();
+    let mut repository = TestTaskRepository::new(vec![task.clone()], fixed_now());
+
+    let actual = add_actual_work(
+        &mut repository,
+        AddActualWorkInput {
+            task_id,
+            additional_actual_work_seconds: 2,
+            expected_actual_work_seconds: Some(60),
+        },
+    );
+
+    assert_eq!(
+        actual,
+        Err(ApplicationError::ActualWorkConflict {
+            task_id,
+            expected_actual_work_seconds: 60,
+            actual_work_seconds: 61,
+        })
+    );
+    assert_eq!(task.snapshot().unwrap(), original);
+}
+
+#[test]
+fn add_actual_work_未知_uuidではtyped_errorを返す() {
+    let task = crate::test_support::new_task_handle("別task").unwrap();
+    let unknown_id = Uuid::from_u128(77);
+    let original = task.snapshot().unwrap();
+    let mut repository = TestTaskRepository::new(vec![task.clone()], fixed_now());
+
+    let actual = add_actual_work(
+        &mut repository,
+        AddActualWorkInput {
+            task_id: unknown_id,
+            additional_actual_work_seconds: 1,
+            expected_actual_work_seconds: None,
+        },
+    );
+
+    assert_eq!(actual, Err(ApplicationError::TaskNotFound(unknown_id)));
+    assert_eq!(task.snapshot().unwrap(), original);
+}
+
+#[test]
+fn add_actual_work_完了済みtaskでは変更しない() {
+    let task = crate::test_support::new_task_handle("完了済み").unwrap();
+    task.set_actual_work_seconds(61).unwrap();
+    task.set_orig_status(Status::Done).unwrap();
+    let task_id = task.get_id().unwrap();
+    let original = task.snapshot().unwrap();
+    let mut repository = TestTaskRepository::new(vec![task.clone()], fixed_now());
+
+    let actual = add_actual_work(
+        &mut repository,
+        AddActualWorkInput {
+            task_id,
+            additional_actual_work_seconds: 1,
+            expected_actual_work_seconds: None,
+        },
+    );
+
+    assert_eq!(actual, Err(ApplicationError::TaskAlreadyCompleted(task_id)));
+    assert_eq!(task.snapshot().unwrap(), original);
+}
+
+#[test]
+fn complete_task_expected指定時は完了済みtaskの二重送信を拒否する() {
+    let task = crate::test_support::new_task_handle("完了済み").unwrap();
+    task.set_actual_work_seconds(300).unwrap();
+    task.set_orig_status(Status::Done).unwrap();
+    let task_id = task.get_id().unwrap();
+    let before = task.snapshot().unwrap();
+    let mut repository = TestTaskRepository::new(vec![task.clone()], fixed_now());
+
+    let error = complete_task_with_fresh_factory(
+        &mut repository,
+        CompleteTaskInput {
+            task_id,
+            finished_at: fixed_now(),
+            additional_actual_work_seconds: 0,
+            expected_actual_work_seconds: Some(300),
+        },
+    )
+    .unwrap_err();
+
+    assert!(matches!(error, ApplicationError::TaskAlreadyCompleted(id) if id == task_id));
+    assert_eq!(task.snapshot().unwrap(), before);
+}
+
+#[test]
+fn add_actual_work_負数とoverflowではtaskを変更しない() {
+    for (initial, additional, expected_reason) in [
+        (61, -1, "must not be negative"),
+        (i64::MAX, 1, "actual work seconds overflow"),
+    ] {
+        let task = crate::test_support::new_task_handle("作業対象").unwrap();
+        task.set_actual_work_seconds(initial).unwrap();
+        let task_id = task.get_id().unwrap();
+        let original = task.snapshot().unwrap();
+        let mut repository = TestTaskRepository::new(vec![task.clone()], fixed_now());
+
+        let actual = add_actual_work(
+            &mut repository,
+            AddActualWorkInput {
+                task_id,
+                additional_actual_work_seconds: additional,
+                expected_actual_work_seconds: None,
+            },
+        );
+
+        assert_eq!(
+            actual,
+            Err(ApplicationError::InvalidInput {
+                field: "additional_actual_work_seconds",
+                reason: expected_reason,
+            })
+        );
+        assert_eq!(task.snapshot().unwrap(), original);
+    }
+}
+
 fn next_child_after_finish(
     repetition_anchor: RepetitionAnchor,
     days_in_advance: i64,
@@ -102,6 +270,7 @@ fn next_child_after_finish(
             task_id: child_task.get_id().unwrap(),
             finished_at,
             additional_actual_work_seconds: 0,
+            expected_actual_work_seconds: None,
         },
     )
     .unwrap();
@@ -822,6 +991,7 @@ fn complete_task_未完了の子があれば変更しない() {
             task_id,
             finished_at: fixed_now(),
             additional_actual_work_seconds: 120,
+            expected_actual_work_seconds: None,
         },
     );
 
@@ -844,6 +1014,7 @@ fn complete_task_実績を加算して完了する() {
             task_id,
             finished_at: fixed_now(),
             additional_actual_work_seconds: 120,
+            expected_actual_work_seconds: None,
         },
     )
     .unwrap();
@@ -854,6 +1025,117 @@ fn complete_task_実績を加算して完了する() {
     assert_eq!(task.get_actual_work_seconds().unwrap(), 180);
     assert_eq!(output.next_focus_task_id, None);
     assert_eq!(output.next_repetition_task_id, None);
+}
+
+#[test]
+fn complete_task_expected実績が一致すれば加算して完了する() {
+    let task = crate::test_support::new_task_handle("完了").unwrap();
+    task.set_actual_work_seconds(60).unwrap();
+    let task_id = task.get_id().unwrap();
+    let mut repository = TestTaskRepository::new(vec![task], fixed_now());
+
+    let output = complete_task_with_fresh_factory(
+        &mut repository,
+        CompleteTaskInput {
+            task_id,
+            finished_at: fixed_now(),
+            additional_actual_work_seconds: 120,
+            expected_actual_work_seconds: Some(60),
+        },
+    )
+    .unwrap();
+
+    let task = repository.get_by_id(task_id).unwrap().unwrap();
+    assert_eq!(task.get_status().unwrap(), Status::Done);
+    assert_eq!(task.get_end_time_opt().unwrap(), Some(fixed_now()));
+    assert_eq!(task.get_actual_work_seconds().unwrap(), 180);
+    assert_eq!(output.next_focus_task_id, None);
+    assert_eq!(output.next_repetition_task_id, None);
+}
+
+#[test]
+fn complete_task_expected実績が不一致なら反復taskを準備せず何も変更しない() {
+    let parent = crate::test_support::new_task_handle("ルーチン").unwrap();
+    parent.set_repetition_interval_days_opt(Some(7)).unwrap();
+    parent.set_estimated_work_seconds(600).unwrap();
+    let task = parent.create_as_last_child(crate::test_support::new_task_attr("今回"));
+    task.set_actual_work_seconds(60).unwrap();
+    let task_id = task.get_id().unwrap();
+    let parent_before = parent.snapshot().unwrap();
+    let task_before = task.snapshot().unwrap();
+    let children_before = parent
+        .get_children()
+        .unwrap()
+        .into_iter()
+        .map(|child| child.get_id().unwrap())
+        .collect::<Vec<_>>();
+    let mut repository = TestTaskRepository::new(vec![parent.clone()], fixed_now());
+    let id_call_count = Cell::new(0);
+    let mut next_id = || {
+        id_call_count.set(id_call_count.get() + 1);
+        Uuid::from_u128(0x104)
+    };
+    let mut factory = TaskFactory::new(fixed_now(), &mut next_id);
+
+    let actual = complete_task(
+        &mut repository,
+        CompleteTaskInput {
+            task_id,
+            finished_at: fixed_now(),
+            additional_actual_work_seconds: 120,
+            expected_actual_work_seconds: Some(59),
+        },
+        &mut factory,
+    );
+
+    assert_eq!(
+        actual,
+        Err(ApplicationError::ActualWorkConflict {
+            task_id,
+            expected_actual_work_seconds: 59,
+            actual_work_seconds: 60,
+        })
+    );
+    assert_eq!(id_call_count.get(), 0);
+    assert_eq!(parent.snapshot().unwrap(), parent_before);
+    assert_eq!(task.snapshot().unwrap(), task_before);
+    assert_eq!(task.get_status().unwrap(), Status::Todo);
+    assert_eq!(task.get_end_time_opt().unwrap(), None);
+    assert_eq!(task.get_actual_work_seconds().unwrap(), 60);
+    assert_eq!(parent.get_estimated_work_seconds().unwrap(), 600);
+    assert_eq!(
+        parent
+            .get_children()
+            .unwrap()
+            .into_iter()
+            .map(|child| child.get_id().unwrap())
+            .collect::<Vec<_>>(),
+        children_before
+    );
+}
+
+#[test]
+fn complete_task_expected実績なしは従来どおり加算して完了する() {
+    let task = crate::test_support::new_task_handle("完了").unwrap();
+    task.set_actual_work_seconds(60).unwrap();
+    let task_id = task.get_id().unwrap();
+    let mut repository = TestTaskRepository::new(vec![task], fixed_now());
+
+    complete_task_with_fresh_factory(
+        &mut repository,
+        CompleteTaskInput {
+            task_id,
+            finished_at: fixed_now(),
+            additional_actual_work_seconds: 120,
+            expected_actual_work_seconds: None,
+        },
+    )
+    .unwrap();
+
+    let task = repository.get_by_id(task_id).unwrap().unwrap();
+    assert_eq!(task.get_status().unwrap(), Status::Done);
+    assert_eq!(task.get_end_time_opt().unwrap(), Some(fixed_now()));
+    assert_eq!(task.get_actual_work_seconds().unwrap(), 180);
 }
 
 #[test]
@@ -874,6 +1156,7 @@ fn complete_task_反復なしではtask_factoryのidを消費しない() {
             task_id,
             finished_at: fixed_now(),
             additional_actual_work_seconds: 0,
+            expected_actual_work_seconds: None,
         },
         &mut factory,
     )
@@ -963,6 +1246,7 @@ fn complete_task_反復anchorの次論理日計算不能をerrorにして変更�
                 task_id: child_id,
                 finished_at: fixed_now(),
                 additional_actual_work_seconds: 60,
+                expected_actual_work_seconds: None,
             },
             &mut factory,
         )
@@ -1046,6 +1330,7 @@ fn complete_task_反復見積補正のoverflowをerrorにして変更しない()
                 task_id: child_id,
                 finished_at: fixed_now(),
                 additional_actual_work_seconds: i64::MAX,
+                expected_actual_work_seconds: None,
             },
             &mut factory,
         )
@@ -1129,6 +1414,7 @@ fn complete_task_focus先読み失敗でtaskと反復親を変更しない() {
                 task_id: child_id,
                 finished_at: fixed_now(),
                 additional_actual_work_seconds: 60,
+                expected_actual_work_seconds: None,
             },
             &mut factory,
         )
@@ -1185,6 +1471,7 @@ fn complete_task_対象以外のsiblingが全てdoneならparentを次focusに�
             task_id: child_id,
             finished_at: fixed_now(),
             additional_actual_work_seconds: 0,
+            expected_actual_work_seconds: None,
         },
     )
     .unwrap();
@@ -1218,6 +1505,7 @@ fn complete_task_唯一の反復子から次回taskを生成したらfocusを返
             task_id: child_id,
             finished_at: fixed_now(),
             additional_actual_work_seconds: 0,
+            expected_actual_work_seconds: None,
         },
         &mut factory,
     )
@@ -1251,6 +1539,7 @@ fn complete_task_todoのsiblingがあれば次focusを返さない() {
             task_id: child_id,
             finished_at: fixed_now(),
             additional_actual_work_seconds: 0,
+            expected_actual_work_seconds: None,
         },
     )
     .unwrap();
@@ -1273,6 +1562,7 @@ fn complete_task_同一uuidのtodo_siblingを対象taskと誤認しない() {
             task_id: child.get_id().unwrap(),
             finished_at: fixed_now(),
             additional_actual_work_seconds: 0,
+            expected_actual_work_seconds: None,
         },
     )
     .unwrap();
@@ -1299,6 +1589,7 @@ fn complete_task_繰り返しtaskを生成して見積もりを補正する() {
             task_id: child_id,
             finished_at: fixed_now(),
             additional_actual_work_seconds: 0,
+            expected_actual_work_seconds: None,
         },
         &mut factory,
     )
@@ -1347,6 +1638,7 @@ fn complete_task_反復child追加のhierarchy_grant失敗で全状態を変更�
                 task_id: child_id,
                 finished_at: fixed_now(),
                 additional_actual_work_seconds: 50,
+                expected_actual_work_seconds: None,
             },
             &mut factory,
         )
@@ -1407,6 +1699,7 @@ fn complete_task_反復taskのuuidが既存taskと衝突する場合は変更し
             task_id: child_id,
             finished_at: fixed_now(),
             additional_actual_work_seconds: 50,
+            expected_actual_work_seconds: None,
         },
         &mut factory,
     );
@@ -1454,6 +1747,7 @@ fn complete_task_反復taskはoperation固定のidentityを使う() {
             task_id: child_id,
             finished_at: fixed_now(),
             additional_actual_work_seconds: 0,
+            expected_actual_work_seconds: None,
         },
         &mut factory,
     )
@@ -1562,6 +1856,7 @@ fn complete_task_繰り返し親のatomicを次回子タスクに引き継ぐ() 
             task_id: child_task.get_id().unwrap(),
             finished_at,
             additional_actual_work_seconds: 0,
+            expected_actual_work_seconds: None,
         },
     )
     .unwrap();
@@ -1593,6 +1888,7 @@ fn complete_task_繰り返し親のfixed_startを次回子タスクに引き継�
             task_id: child_task.get_id().unwrap(),
             finished_at: fixed_now(),
             additional_actual_work_seconds: 0,
+            expected_actual_work_seconds: None,
         },
     )
     .unwrap();
@@ -1624,6 +1920,7 @@ fn complete_task_繰り返し親がflexibleならfixed_startの子からもflexi
             task_id: child_task.get_id().unwrap(),
             finished_at: fixed_now(),
             additional_actual_work_seconds: 0,
+            expected_actual_work_seconds: None,
         },
     )
     .unwrap();
@@ -1651,6 +1948,7 @@ fn complete_task_負の追加実績を拒否して変更しない() {
             task_id,
             finished_at: fixed_now(),
             additional_actual_work_seconds: -1,
+            expected_actual_work_seconds: None,
         },
     );
 
@@ -1681,6 +1979,7 @@ fn complete_task_実績加算がoverflowする場合はerrorにして変更し�
                 task_id,
                 finished_at: fixed_now(),
                 additional_actual_work_seconds: 1,
+                expected_actual_work_seconds: None,
             },
         )
     }));
@@ -1754,6 +2053,7 @@ fn update_use_cases_未知uuidはtask_not_foundを返す() {
                 task_id,
                 finished_at: fixed_now(),
                 additional_actual_work_seconds: 0,
+                expected_actual_work_seconds: None,
             }
         ),
         Err(ApplicationError::TaskNotFound(task_id))
@@ -1856,6 +2156,7 @@ fn write_use_cases_repositoryをsaveしない() {
             task_id: child_id,
             finished_at: fixed_now(),
             additional_actual_work_seconds: 0,
+            expected_actual_work_seconds: None,
         },
     )
     .unwrap();

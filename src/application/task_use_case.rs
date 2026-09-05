@@ -18,6 +18,12 @@ use uuid::Uuid;
 #[derive(Clone, Debug, PartialEq)]
 pub enum ApplicationError {
     TaskNotFound(Uuid),
+    TaskAlreadyCompleted(Uuid),
+    ActualWorkConflict {
+        task_id: Uuid,
+        expected_actual_work_seconds: i64,
+        actual_work_seconds: i64,
+    },
     InvalidInput {
         field: &'static str,
         reason: &'static str,
@@ -60,6 +66,17 @@ impl fmt::Display for ApplicationError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::TaskNotFound(task_id) => write!(formatter, "task not found: {task_id}"),
+            Self::TaskAlreadyCompleted(task_id) => {
+                write!(formatter, "task is already completed: {task_id}")
+            }
+            Self::ActualWorkConflict {
+                task_id,
+                expected_actual_work_seconds,
+                actual_work_seconds,
+            } => write!(
+                formatter,
+                "actual work conflict: task_id={task_id}, expected_actual_work_seconds={expected_actual_work_seconds}, actual_work_seconds={actual_work_seconds}"
+            ),
             Self::InvalidInput { field, reason } => {
                 write!(formatter, "invalid input for {field}: {reason}")
             }
@@ -172,6 +189,14 @@ pub struct CompleteTaskInput {
     pub task_id: Uuid,
     pub finished_at: DateTime<Local>,
     pub additional_actual_work_seconds: i64,
+    pub expected_actual_work_seconds: Option<i64>,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct AddActualWorkInput {
+    pub task_id: Uuid,
+    pub additional_actual_work_seconds: i64,
+    pub expected_actual_work_seconds: Option<i64>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -414,6 +439,67 @@ pub fn defer_task(
     Ok(())
 }
 
+fn validate_additional_actual_work_seconds(
+    additional_actual_work_seconds: i64,
+) -> Result<(), ApplicationError> {
+    if additional_actual_work_seconds < 0 {
+        return Err(ApplicationError::InvalidInput {
+            field: "additional_actual_work_seconds",
+            reason: "must not be negative",
+        });
+    }
+    Ok(())
+}
+
+fn calculate_updated_actual_work_seconds(
+    task_id: Uuid,
+    actual_work_seconds: i64,
+    expected_actual_work_seconds: Option<i64>,
+    additional_actual_work_seconds: i64,
+) -> Result<i64, ApplicationError> {
+    if let Some(expected_actual_work_seconds) = expected_actual_work_seconds {
+        if actual_work_seconds != expected_actual_work_seconds {
+            return Err(ApplicationError::ActualWorkConflict {
+                task_id,
+                expected_actual_work_seconds,
+                actual_work_seconds,
+            });
+        }
+    }
+
+    actual_work_seconds
+        .checked_add(additional_actual_work_seconds)
+        .ok_or(ApplicationError::InvalidInput {
+            field: "additional_actual_work_seconds",
+            reason: "actual work seconds overflow",
+        })
+}
+
+pub fn add_actual_work(
+    repository: &mut dyn TaskRepositoryTrait,
+    input: AddActualWorkInput,
+) -> Result<i64, ApplicationError> {
+    validate_additional_actual_work_seconds(input.additional_actual_work_seconds)?;
+
+    let task = find_task(repository, input.task_id)?;
+    if task.get_status().map_err(ApplicationError::TaskTree)? == Status::Done {
+        return Err(ApplicationError::TaskAlreadyCompleted(input.task_id));
+    }
+
+    let actual_work_seconds = task
+        .get_actual_work_seconds()
+        .map_err(ApplicationError::TaskTree)?;
+    let updated_actual_work_seconds = calculate_updated_actual_work_seconds(
+        input.task_id,
+        actual_work_seconds,
+        input.expected_actual_work_seconds,
+        input.additional_actual_work_seconds,
+    )?;
+    task.set_actual_work_seconds(updated_actual_work_seconds)
+        .map_err(ApplicationError::TaskTree)?;
+    Ok(updated_actual_work_seconds)
+}
+
 pub fn defer_routine_task(
     repository: &mut dyn TaskRepositoryTrait,
     task_id: Uuid,
@@ -492,6 +578,11 @@ pub fn complete_task(
     factory: &mut TaskFactory<'_>,
 ) -> Result<CompleteTaskOutput, ApplicationError> {
     let task = find_task(repository, input.task_id)?;
+    if input.expected_actual_work_seconds.is_some()
+        && task.get_status().map_err(ApplicationError::TaskTree)? == Status::Done
+    {
+        return Err(ApplicationError::TaskAlreadyCompleted(input.task_id));
+    }
     if task
         .has_undone_children()
         .map_err(ApplicationError::TaskTree)?
@@ -499,20 +590,16 @@ pub fn complete_task(
         return Err(ApplicationError::HasUndoneChildren(input.task_id));
     }
 
-    if input.additional_actual_work_seconds < 0 {
-        return Err(ApplicationError::InvalidInput {
-            field: "additional_actual_work_seconds",
-            reason: "must not be negative",
-        });
-    }
-    let actual_work_seconds = task
+    validate_additional_actual_work_seconds(input.additional_actual_work_seconds)?;
+    let current_actual_work_seconds = task
         .get_actual_work_seconds()
-        .map_err(ApplicationError::TaskTree)?
-        .checked_add(input.additional_actual_work_seconds)
-        .ok_or(ApplicationError::InvalidInput {
-            field: "additional_actual_work_seconds",
-            reason: "actual work seconds overflow",
-        })?;
+        .map_err(ApplicationError::TaskTree)?;
+    let actual_work_seconds = calculate_updated_actual_work_seconds(
+        input.task_id,
+        current_actual_work_seconds,
+        input.expected_actual_work_seconds,
+        input.additional_actual_work_seconds,
+    )?;
 
     let prospective_next_focus_task_id = prospective_next_focus_task_id(&task)?;
     let next_repetition_task =

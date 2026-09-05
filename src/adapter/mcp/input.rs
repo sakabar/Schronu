@@ -523,6 +523,7 @@ impl CompleteTaskInput {
                 OptionalValue::Value(finished_at) => finished_at.0,
             },
             additional_actual_work_seconds: self.additional_actual_work_seconds.0,
+            expected_actual_work_seconds: None,
         }
     }
 }

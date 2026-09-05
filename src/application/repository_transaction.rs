@@ -1,11 +1,18 @@
-use crate::application::interface::{TaskRepositoryError, TaskRepositoryTrait};
+use crate::application::interface::{
+    TaskRepositoryError, TaskRepositorySaveFailureDisposition, TaskRepositoryTrait,
+};
 use chrono::{DateTime, Local};
+
+#[cfg(test)]
+#[path = "repository_transaction_tests.rs"]
+mod tests;
 
 #[derive(Debug)]
 pub enum RepositoryTransactionError<LockError, OperationError> {
     Lock(LockError),
     Load(TaskRepositoryError),
     Operation(OperationError),
+    SaveFailed(TaskRepositoryError),
     StateUncertain(TaskRepositoryError),
 }
 
@@ -27,7 +34,14 @@ where
     if should_save {
         repository
             .save()
-            .map_err(RepositoryTransactionError::StateUncertain)?;
+            .map_err(|error| match error.save_failure_disposition() {
+                Some(TaskRepositorySaveFailureDisposition::Retryable) => {
+                    RepositoryTransactionError::SaveFailed(error)
+                }
+                Some(TaskRepositorySaveFailureDisposition::StateUncertain) | None => {
+                    RepositoryTransactionError::StateUncertain(error)
+                }
+            })?;
     }
     Ok(output)
 }

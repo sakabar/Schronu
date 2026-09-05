@@ -2171,6 +2171,7 @@ fn 完了と配置commandはtyped値のままhandlerが所有してruntime_fallb
             task_id: Uuid::from_u128(21),
             finished_at: Local.with_ymd_and_hms(2026, 8, 23, 9, 45, 0).unwrap(),
             additional_actual_work_seconds: 0,
+            expected_actual_work_seconds: None,
         }]
     );
 

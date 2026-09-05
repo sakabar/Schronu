@@ -1,3 +1,5 @@
+use crate::application::interface::TaskRepositorySaveFailureDisposition;
+
 #[test]
 fn test_save_prepare失敗時は複数projectとrevisionを旧snapshotに維持する() {
     let storage_dir = TestStorageDir::new();
@@ -28,6 +30,10 @@ fn test_save_prepare失敗時は複数projectとrevisionを旧snapshotに維持�
     let actual = repository.save();
 
     assert!(actual.is_err());
+    assert_eq!(
+        actual.unwrap_err().save_failure_disposition(),
+        Some(TaskRepositorySaveFailureDisposition::Retryable)
+    );
     let disk_revision =
         Uuid::parse_str(fs::read_to_string(&revision_path).unwrap().trim()).unwrap();
     assert_eq!(disk_revision, previous_revision);
@@ -85,7 +91,10 @@ fn test_save_post_marker失敗後はactive_transactionを保持して次saveを�
 
     let first = repository.save();
 
-    assert!(first.is_err());
+    assert_eq!(
+        first.unwrap_err().save_failure_disposition(),
+        Some(TaskRepositorySaveFailureDisposition::StateUncertain)
+    );
     let transactions_dir_path = storage_dir
         .path
         .join(crate::adapter::gateway::storage_transaction::TRANSACTION_DIRECTORY_NAME);

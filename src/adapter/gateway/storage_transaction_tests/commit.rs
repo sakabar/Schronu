@@ -308,9 +308,17 @@ fn test_commit_failure時は回復用manifestとstaged_fileを維持する() {
         .unwrap();
         let transaction_dir_path = prepared.transaction_dir_path().to_path_buf();
 
-        let actual = prepared.commit();
+        let error = prepared.commit().unwrap_err();
 
-        assert!(actual.is_err(), "{name} must fail");
+        assert_eq!(
+            error.commit_state(),
+            if marker_exists {
+                StorageTransactionCommitState::CommitMarkerEstablished
+            } else {
+                StorageTransactionCommitState::NotCommitted
+            },
+            "unexpected commit state for {name}"
+        );
         assert!(transaction_dir_path.join("manifest.json").is_file());
         assert!(transaction_dir_path.join("files/0").is_file());
         assert_eq!(

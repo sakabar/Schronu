@@ -2,7 +2,7 @@ use crate::application::interface::{
     BusyTimeSlotLoadError, BusyTimeSlotRegistrationError, FreeTimeManagerTrait,
 };
 use crate::entity::busy_time_slot::BusyTimeSlot;
-use chrono::{DateTime, Datelike, Local, NaiveDate, Timelike, Weekday};
+use chrono::{DateTime, Datelike, Duration, Local, NaiveDate, Timelike, Weekday};
 use std::collections::HashMap;
 use std::fs::File;
 use std::io::prelude::*;
@@ -314,6 +314,37 @@ impl FreeTimeManagerTrait for FreeTimeManager {
         let free_minutes = self.get_free_minutes(start, end);
 
         (*end - *start).num_minutes() - free_minutes
+    }
+
+    fn get_free_seconds(&mut self, start: &DateTime<Local>, end: &DateTime<Local>) -> i64 {
+        if start >= end {
+            return 0;
+        }
+
+        let mut current = *start;
+        let mut free_duration = Duration::zero();
+        while current < *end {
+            let minute_start = current
+                .with_second(0)
+                .and_then(|datetime| datetime.with_nanosecond(0))
+                .unwrap_or(current);
+            let next_minute = minute_start
+                .checked_add_signed(Duration::minutes(1))
+                .unwrap_or(*end);
+            let segment_end = (*end).min(next_minute);
+            let free_time_slot = self.get_free_time_slot(current.date_naive());
+            let minute_index = (current.hour() * 60 + current.minute()) as usize;
+
+            if free_time_slot[minute_index] != 0 {
+                let segment_duration = segment_end.signed_duration_since(current);
+                free_duration = free_duration
+                    .checked_add(&segment_duration)
+                    .unwrap_or_else(|| end.signed_duration_since(*start));
+            }
+            current = segment_end;
+        }
+
+        free_duration.num_seconds()
     }
 
     // 同日内の半開区間[start, end)だけを登録する。

@@ -2303,56 +2303,6 @@ fn test_execute_今_plain出力の全文を固定する() {
 }
 
 #[test]
-fn cliとwebの今表示は同じrepositoryとfree_time入力で一致する() {
-    let now = Local.with_ymd_and_hms(2026, 8, 11, 12, 0, 0).unwrap();
-    let repository_fixture = || {
-        let task = TaskHandle::with_identity(
-            "CLI/Web一致契約task",
-            Uuid::from_u128(0x2026_0812),
-            now,
-        )
-        .unwrap();
-        task.set_estimated_work_seconds(45 * 60).unwrap();
-        task.set_start_time(now + Duration::minutes(30)).unwrap();
-        task.set_fixed_start(true).unwrap();
-        task.set_deadline_time_opt(Some(now + Duration::hours(2)))
-            .unwrap();
-        task.set_priority(8).unwrap();
-        task.set_project_category_opt(Some(ProjectCategory::Investment))
-            .unwrap();
-        let task_id = task.get_id().unwrap();
-        (TestTaskRepository::new(task, now), task_id)
-    };
-    let (mut cli_repository, cli_task_id) = repository_fixture();
-    let (mut web_repository, _) = repository_fixture();
-    let mut cli_free_time_manager = TestFreeTimeManager::with_free_minutes(180);
-    let mut web_free_time_manager = TestFreeTimeManager::with_free_minutes(180);
-    let mut focused_task_id_opt = Some(cli_task_id);
-    let mut cli_writer = TestWriter::new_for_pipe();
-
-    execute(
-        &mut cli_writer,
-        &mut cli_repository,
-        &mut cli_free_time_manager,
-        &mut focused_task_id_opt,
-        &now,
-        "今",
-    )
-    .unwrap();
-    let cli_text = cli_writer.into_string();
-    let web_text = super::today_text::render_today_text(
-        &mut web_repository,
-        &mut web_free_time_manager,
-        &SchronuConfig::default(),
-    )
-    .unwrap();
-
-    assert!(!cli_text.contains("\x1b["));
-    assert!(!web_text.contains("\x1b["));
-    assert_eq!(web_text, cli_text);
-}
-
-#[test]
 fn test_execute_new_新規projectを翌朝までpendingで作成する() {
     let now = Local.with_ymd_and_hms(2026, 8, 11, 12, 0, 0).unwrap();
     let original_task = new_test_task_handle("既存タスク").unwrap();
@@ -3563,6 +3513,103 @@ fn test_execute_actual_priority_work_typed値でtaskを更新する() {
 }
 
 #[test]
+fn test_execute_work_省略時はfocus開始からの完了済み秒数を加算する() {
+    let operation_now = Local.with_ymd_and_hms(2026, 8, 11, 12, 1, 1).unwrap();
+
+    for elapsed_seconds in [59, 60, 61] {
+        let task = new_test_task_handle("更新対象").unwrap();
+        task.set_actual_work_seconds(7).unwrap();
+        let task_id = task.get_id().unwrap();
+
+        let result = execute_command_with_focus_started_for_test(
+            task,
+            operation_now,
+            operation_now - Duration::seconds(elapsed_seconds),
+            Some(task_id),
+            "働",
+        );
+
+        assert_eq!(
+            result.task.get_actual_work_seconds().unwrap(),
+            7 + elapsed_seconds
+        );
+        assert_eq!(result.focused_task_id_opt, None);
+    }
+}
+
+#[test]
+fn test_execute_work_明示分を秒へ変換して既存端数へ加算する() {
+    let now = Local.with_ymd_and_hms(2026, 8, 11, 12, 0, 0).unwrap();
+    let task = new_test_task_handle("更新対象").unwrap();
+    task.set_actual_work_seconds(61).unwrap();
+    let task_id = task.get_id().unwrap();
+
+    let result = execute_command_for_test(task, now, Some(task_id), "働 1");
+
+    assert_eq!(result.task.get_actual_work_seconds().unwrap(), 121);
+    assert_eq!(result.focused_task_id_opt, None);
+}
+
+#[test]
+fn test_execute_work_負数とoverflowはtaskとfocusを維持する() {
+    let now = Local.with_ymd_and_hms(2026, 8, 11, 12, 0, 0).unwrap();
+
+    for command in ["働 -1".to_string(), format!("働 {}", i64::MAX)] {
+        let task = new_test_task_handle("更新対象").unwrap();
+        task.set_actual_work_seconds(61).unwrap();
+        let task_id = task.get_id().unwrap();
+
+        let result = execute_command_for_test(task, now, Some(task_id), &command);
+
+        assert_eq!(result.task.get_actual_work_seconds().unwrap(), 61);
+        assert_eq!(result.focused_task_id_opt, Some(task_id));
+        assert!(result
+            .output
+            .contains("invalid input for additional_actual_work_seconds:"));
+    }
+}
+
+#[test]
+fn test_execute_work_時計後退はtaskとfocusを維持する() {
+    let operation_now = Local.with_ymd_and_hms(2026, 8, 11, 12, 0, 0).unwrap();
+    let task = new_test_task_handle("更新対象").unwrap();
+    task.set_actual_work_seconds(61).unwrap();
+    let task_id = task.get_id().unwrap();
+
+    let result = execute_command_with_focus_started_for_test(
+        task,
+        operation_now,
+        operation_now + Duration::seconds(1),
+        Some(task_id),
+        "働",
+    );
+
+    assert_eq!(result.task.get_actual_work_seconds().unwrap(), 61);
+    assert_eq!(result.focused_task_id_opt, Some(task_id));
+    assert!(result
+        .output
+        .contains("invalid input for additional_actual_work_seconds:"));
+}
+
+#[test]
+fn test_execute_work_task未選択では入力値にかかわらずno_opにする() {
+    let now = Local.with_ymd_and_hms(2026, 8, 11, 12, 0, 0).unwrap();
+    let task = new_test_task_handle("非選択task").unwrap();
+    task.set_actual_work_seconds(61).unwrap();
+
+    let result = execute_command_for_test(
+        task,
+        now,
+        None,
+        &format!("働 {}", i64::MAX),
+    );
+
+    assert_eq!(result.task.get_actual_work_seconds().unwrap(), 61);
+    assert_eq!(result.focused_task_id_opt, None);
+    assert!(result.output.is_empty());
+}
+
+#[test]
 fn test_execute_actual_priority_work_不正値はfield付き入力エラーで状態を変更しない() {
     let now = Local.with_ymd_and_hms(2026, 8, 11, 12, 0, 0).unwrap();
     for command in ["実 invalid", "重 invalid", "働 invalid"] {
@@ -3597,7 +3644,12 @@ fn test_execute_actual_work_overflowはfield付きerrorで状態を変更しな�
 
         assert_eq!(result.task.get_actual_work_seconds().unwrap(), 20 * 60);
         assert_eq!(result.focused_task_id_opt, Some(task_id));
-        assert!(result.output.contains("actual_work_minutes"));
+        let expected_field = if command.starts_with("働") {
+            "additional_actual_work_seconds"
+        } else {
+            "actual_work_minutes"
+        };
+        assert!(result.output.contains(expected_field));
     }
 }
 
@@ -6184,7 +6236,7 @@ fn test_execute_non_interactive_command_finishはoperation時刻を共有する(
 }
 
 #[test]
-fn test_execute_non_interactive_command_省略作業時間はoperation時刻を使う() {
+fn test_execute_non_interactive_command_省略作業時間は0秒を加算する() {
     let storage_dir = TestStorageDir::new();
     std::fs::create_dir_all(&storage_dir.path).unwrap();
     let previous_synced_time = Local.with_ymd_and_hms(2026, 8, 19, 9, 0, 0).unwrap();
@@ -6214,7 +6266,7 @@ fn test_execute_non_interactive_command_省略作業時間はoperation時刻を�
             .expect("作業対象のtaskはtreeに残るべきです")
             .get_actual_work_seconds()
             .unwrap(),
-        3 * 60
+        2 * 60
     );
 }
 
@@ -7779,10 +7831,40 @@ fn test_format_focus_progress_114パーセントで超過分の記号を表示�
 }
 
 #[test]
+fn test_format_focus_progress_超過記号数は従来どおり上限を設けない() {
+    assert_eq!(
+        format_focus_progress(100, 201, 0),
+        format!("[{}]{} 201%", "█".repeat(100), ">".repeat(101))
+    );
+    assert_eq!(
+        format_focus_progress(100, 300, 0),
+        format!("[{}]{} 300%", "█".repeat(100), ">".repeat(200))
+    );
+}
+
+#[test]
 fn test_format_focus_progress_開始直後は実経過0秒として扱う() {
     let actual = format_focus_progress(100 * 60, 0, 0);
 
     assert_eq!(actual, format!("[{}] 0%", "░".repeat(100)));
+}
+
+#[test]
+fn test_format_focus_progress_見積未算定なら負の入力でも従来表示を維持する() {
+    let expected = format!("[{}] --%", "-".repeat(100));
+
+    assert_eq!(format_focus_progress(0, -1, -1), expected);
+    assert_eq!(format_focus_progress(-1, -1, -1), expected);
+}
+
+#[test]
+fn test_format_focus_progress_負のlegacy入力は合計を0以上へ丸める() {
+    let one_percent = format!("[█{}] 1%", "░".repeat(99));
+    let zero_percent = format!("[{}] 0%", "░".repeat(100));
+
+    assert_eq!(format_focus_progress(100, -1, 2), one_percent);
+    assert_eq!(format_focus_progress(100, 2, -1), one_percent);
+    assert_eq!(format_focus_progress(100, -2, -1), zero_percent);
 }
 
 #[test]

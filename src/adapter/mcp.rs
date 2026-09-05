@@ -137,7 +137,8 @@ impl<R: TaskRepositoryTrait> McpServer<R> {
             Err(RepositoryTransactionError::Operation(error)) => {
                 internal_error_response(id, &error.to_string())
             }
-            Err(RepositoryTransactionError::StateUncertain(error)) => {
+            Err(RepositoryTransactionError::SaveFailed(error))
+            | Err(RepositoryTransactionError::StateUncertain(error)) => {
                 self.repository_state_uncertain = true;
                 repository_save_error_response(id, &error.to_string())
             }
