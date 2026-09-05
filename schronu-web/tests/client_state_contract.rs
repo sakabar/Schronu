@@ -677,6 +677,21 @@ fn task_scoped_retry_errorは無関係なlocal成功で解消しない() {
     assert_eq!(state.display_error(), retry_error.as_ref());
 }
 
+#[test]
+fn local_storage_errorはserver成功で解消しない() {
+    let storage = FakeStorage::default();
+    let mut state = load_client_state(&storage, 0).unwrap();
+    storage.fail_writes.set(true);
+    state.add_session_from_row(&storage, &row(TASK_ID, 0));
+    let storage_error = state.display_error().cloned();
+    storage.fail_writes.set(false);
+
+    let bootstrap_id = bootstrap_effect(state.request_bootstrap());
+    state.apply_bootstrap_result(bootstrap_id, Ok(snapshot("2026-09-05", 1)));
+
+    assert_eq!(state.display_error(), storage_error.as_ref());
+}
+
 #[derive(Default)]
 struct FakeStorage {
     value: RefCell<Option<String>>,
