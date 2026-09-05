@@ -22,10 +22,46 @@ pub fn verify_snapshot(
     let payload = snapshot.join(PAYLOAD_DIRECTORY_NAME);
     require_directory(&payload)?;
     verify_payload(&payload, &manifest)?;
+    verify_revision(&payload, &manifest)?;
     Ok(SnapshotSummary::new(
         manifest.revision,
         manifest.files.len(),
     ))
+}
+
+fn verify_revision(payload: &Path, manifest: &SnapshotManifest) -> Result<(), SnapshotError> {
+    let revision_path = payload.join(".revision");
+    match manifest.revision {
+        None if !manifest
+            .files
+            .iter()
+            .any(|file| file.path == Path::new(".revision")) =>
+        {
+            Ok(())
+        }
+        Some(expected) => {
+            let bytes = fs::read(&revision_path).map_err(|error| {
+                SnapshotError::new(SnapshotOperation::Read, &revision_path, error)
+            })?;
+            let text = std::str::from_utf8(&bytes).map_err(|error| {
+                SnapshotError::new(SnapshotOperation::Validate, &revision_path, error)
+            })?;
+            let actual = uuid::Uuid::parse_str(text.trim()).map_err(|error| {
+                SnapshotError::new(SnapshotOperation::Validate, &revision_path, error)
+            })?;
+            if actual != expected {
+                return Err(invalid(
+                    revision_path,
+                    "snapshot manifest revision does not match payload",
+                ));
+            }
+            Ok(())
+        }
+        None => Err(invalid(
+            revision_path,
+            "snapshot without a revision must not contain .revision",
+        )),
+    }
 }
 
 fn validate_snapshot_root(snapshot: &Path) -> Result<(), SnapshotError> {

@@ -49,3 +49,17 @@ fn snapshot_verifyは欠落余剰長さ違いdigest違いを拒否する() {
         );
     }
 }
+
+#[test]
+fn snapshot_verifyはmanifestとpayloadのrevision不一致を拒否する() {
+    let (_root, snapshot, _) = create_source_independent_snapshot("verify-revision-mismatch");
+    let manifest_path = snapshot.join("manifest.json");
+    let mut manifest: serde_json::Value =
+        serde_json::from_slice(&fs::read(&manifest_path).unwrap()).unwrap();
+    manifest["revision"] = serde_json::json!(Uuid::new_v4());
+    fs::write(&manifest_path, serde_json::to_vec(&manifest).unwrap()).unwrap();
+
+    let error = verify_snapshot(&snapshot).unwrap_err();
+
+    assert_eq!(error.path(), snapshot.join("storage/.revision"));
+}
