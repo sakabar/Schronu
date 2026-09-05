@@ -1,4 +1,6 @@
 mod component;
+#[cfg(test)]
+mod component_tests;
 #[allow(dead_code)]
 mod effect_dispatcher;
 #[cfg(test)]
