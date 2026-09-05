@@ -36,6 +36,7 @@ impl SnapshotIo for FileSystemSnapshotIo {}
 pub(in crate::adapter::gateway) struct FailOnceSnapshotIo {
     point: SnapshotFailurePoint,
     failed: std::sync::atomic::AtomicBool,
+    matching_calls: std::sync::atomic::AtomicUsize,
 }
 
 #[cfg(test)]
@@ -44,7 +45,13 @@ impl FailOnceSnapshotIo {
         Self {
             point,
             failed: std::sync::atomic::AtomicBool::new(false),
+            matching_calls: std::sync::atomic::AtomicUsize::new(0),
         }
+    }
+
+    pub(in crate::adapter::gateway) fn matching_calls(&self) -> usize {
+        self.matching_calls
+            .load(std::sync::atomic::Ordering::SeqCst)
     }
 }
 
@@ -53,7 +60,11 @@ impl SnapshotIo for FailOnceSnapshotIo {
     fn before(&self, point: SnapshotFailurePoint) -> std::io::Result<()> {
         use std::sync::atomic::Ordering;
 
-        if point == self.point && !self.failed.swap(true, Ordering::SeqCst) {
+        if point != self.point {
+            return Ok(());
+        }
+        self.matching_calls.fetch_add(1, Ordering::SeqCst);
+        if !self.failed.swap(true, Ordering::SeqCst) {
             Err(std::io::Error::other(format!("injected {point:?} failure")))
         } else {
             Ok(())

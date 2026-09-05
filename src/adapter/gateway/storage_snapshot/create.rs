@@ -99,6 +99,25 @@ pub(in crate::adapter::gateway) fn create_snapshot_with_failure(
     )
 }
 
+#[cfg(test)]
+pub(in crate::adapter::gateway) fn create_snapshot_with_failure_observation(
+    storage_directory: &Path,
+    destination: &Path,
+    created_at: DateTime<Local>,
+    point: SnapshotFailurePoint,
+) -> (Result<SnapshotSummary, SnapshotError>, usize) {
+    let io = FailOnceSnapshotIo::new(point);
+    let result = create_snapshot_impl(
+        storage_directory,
+        destination,
+        created_at,
+        &io,
+        || {},
+        || {},
+    );
+    (result, io.matching_calls())
+}
+
 fn create_snapshot_impl(
     storage_directory: &Path,
     destination: &Path,

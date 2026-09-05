@@ -1,7 +1,7 @@
 use crate::adapter::gateway::storage_lock::{LockMode, StorageLock};
 use crate::adapter::gateway::storage_snapshot::{
     create_snapshot_after_parent_open, create_snapshot_at, create_snapshot_before_publish,
-    create_snapshot_with_failure, SnapshotFailurePoint,
+    create_snapshot_with_failure, create_snapshot_with_failure_observation, SnapshotFailurePoint,
 };
 use chrono::TimeZone;
 
@@ -232,4 +232,24 @@ fn snapshot公開renameは競合destinationを置換しない() {
             .to_string_lossy()
             .starts_with(".snapshot.tmp-"))
     );
+}
+
+#[test]
+fn snapshot公開後のparent_sync失敗はrollback後にparentを再syncする() {
+    let root = TestDirectory::new("create-parent-resync");
+    let storage = root.child("source");
+    let destination = root.child("snapshot");
+    let now = Local.with_ymd_and_hms(2026, 9, 5, 12, 0, 0).unwrap();
+    create_saved_repository(&storage, now);
+
+    let (result, sync_count) = create_snapshot_with_failure_observation(
+        &storage,
+        &destination,
+        now,
+        SnapshotFailurePoint::ParentSync,
+    );
+
+    result.unwrap_err();
+    assert!(!destination.exists());
+    assert_eq!(sync_count, 2);
 }
