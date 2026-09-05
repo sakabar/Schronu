@@ -14,6 +14,7 @@ fn snapshotはlock下の全永続dataとpermissionを保存して予約領域を
     let (_, project_yaml) = create_saved_repository(&storage, now);
     let project_directory = project_yaml.parent().unwrap();
     fs::write(project_directory.join("notes.bin"), b"persistent-note").unwrap();
+    fs::write(project_directory.join("notes.tmp"), b"persistent-tmp").unwrap();
     fs::write(
         project_directory.join(format!(".project.yaml.{}.tmp", Uuid::new_v4())),
         b"live-temporary",
@@ -35,7 +36,7 @@ fn snapshotはlock下の全永続dataとpermissionを保存して予約領域を
 
     let summary = create_snapshot_at(&storage, &destination, now).unwrap();
 
-    assert_eq!(summary.file_count(), 3);
+    assert_eq!(summary.file_count(), 4);
     assert!(summary.revision().is_some());
     let payload = destination.join("storage");
     let relative_project = project_yaml.strip_prefix(&storage).unwrap();
@@ -46,6 +47,10 @@ fn snapshotはlock下の全永続dataとpermissionを保存して予約領域を
     assert_eq!(
         fs::read(payload.join(relative_project.parent().unwrap()).join("notes.bin")).unwrap(),
         b"persistent-note"
+    );
+    assert_eq!(
+        fs::read(payload.join(relative_project.parent().unwrap()).join("notes.tmp")).unwrap(),
+        b"persistent-tmp"
     );
     assert!(payload
         .join(relative_project.parent().unwrap())
@@ -73,7 +78,7 @@ fn snapshotはlock下の全永続dataとpermissionを保存して予約領域を
     .unwrap();
     assert_eq!(manifest.revision, summary.revision());
     assert_eq!(manifest.tool_version, env!("CARGO_PKG_VERSION"));
-    assert_eq!(manifest.files.len(), 3);
+    assert_eq!(manifest.files.len(), 4);
 }
 
 #[test]

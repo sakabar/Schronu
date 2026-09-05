@@ -48,7 +48,7 @@ pub(super) fn is_reserved_path(path: &Path) -> bool {
 
 fn is_temporary_name(name: &std::ffi::OsStr) -> bool {
     let name = name.to_string_lossy();
-    name.ends_with(".tmp")
+    (name.starts_with('.') && name.ends_with(".tmp"))
         || (name.starts_with('.') && name.contains(".tmp-"))
         || (name.starts_with('.') && name.ends_with(".temporary"))
 }
