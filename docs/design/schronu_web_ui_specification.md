@@ -98,10 +98,12 @@ keyは`schronu_web.work_sessions.v1`とする。valueはversion付きobjectと�
 読込規則:
 
 1. keyがなければ空配列とする。
-2. JSON不正、version不一致、UUID不正、空のtask名、負の見積・実績、不正なepochは該当データを採用しない。
-3. 同一UUIDが複数ある場合は配列中の先頭1件だけを採用する。
-4. 採用できないデータがあればclient errorとして表示するが、server通信やtask更新は行わない。
-5. state変更後は採用済みの全`work_sessions`を1回で書き戻す。保存失敗時はmemory上の直前stateを維持し、操作失敗として履歴へ残す。
+2. top-level JSONのparseまたはschema検証に失敗した場合、memory上は空の`work_sessions`とし、warningを表示する。元のkeyは削除・上書きせず、そのpage lifetimeではstorageをwrite blockedとして扱う。
+3. `version`が1以外の場合、内容を解釈せず、memory上は空の`work_sessions`とし、warningを表示する。将来versionのdataを失わないよう、元のkeyは削除・上書きせず、そのpage lifetimeではstorageをwrite blockedとして扱う。
+4. version 1の個別entryでUUID不正、空のtask名、負の見積・実績、不正なepochがある場合、そのentryだけを除外し、valid entryは採用する。同一UUIDの2件目以降も不正entryとして除外する。
+5. 個別entryを除外した初期化時点ではkeyを書き換えない。利用者が次にセッション追加・破棄などのlocal state変更を成功させた時、memory上のvalid entryだけをversion 1として1回で保存する。
+6. いずれの復旧経路でもwarningを表示し、task更新を行わず、`bootstrap`を中止しない。
+7. storageがwrite blockedでない通常のstate変更では、採用済みの全`work_sessions`を1回で書き戻す。write blockedまたは保存失敗の場合はmemory上の直前stateを維持し、手動でkeyを確認してreloadするようwarningと履歴へ残す。
 
 ## 4. Server operations
 
@@ -339,7 +341,7 @@ display_buffer = buffer_seconds - snapshot_elapsed
 
 | 操作 | server通信 | task保存 | localStorage変更 | current task変更 |
 | --- | --- | --- | --- | --- |
-| 初回表示 | `bootstrap` | なし | 復元時の正規化だけ | なし |
+| 初回表示 | `bootstrap` | なし | なし。復元時に元keyを書き換えない | なし |
 | tab切替 | なし | なし | なし | なし |
 | 毎秒tick | なし | なし | なし | なし |
 | 日付button | `list_tasks` | なし | なし | なし |
@@ -432,7 +434,9 @@ OperationHistoryEntry {
 
 ### 12.4 Client state
 
-- localStorage round trip、version不一致、不正JSON、不正field、同一UUID重複を検証する。
+- localStorage round tripを検証する。
+- top-level JSON不正とversion不一致では空state、warning、元key維持、storage write blocked、`bootstrap`継続になることを検証する。
+- entry不正と同一UUID重複では不正entryだけを除外し、初期化時はkeyを維持し、次のlocal state変更時にvalid entryだけでversion 1を書き戻すことを検証する。
 - reload、timer遅延、browser時計後退で開始時刻基準の経過秒になることを検証する。
 - session追加・破棄がserver callを生成しないことを検証する。
 - server mutation成功、競合、保存失敗、worker停止時のsession遷移を検証する。
