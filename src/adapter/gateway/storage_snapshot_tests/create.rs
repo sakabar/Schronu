@@ -152,7 +152,7 @@ fn snapshot作成は差し替えられたstaging_directoryを公開しない() {
     let now = Local.with_ymd_and_hms(2026, 9, 5, 12, 0, 0).unwrap();
     create_saved_repository(&storage, now);
 
-    create_snapshot_before_publish(&storage, &destination, now, || {
+    let error = create_snapshot_before_publish(&storage, &destination, now, || {
         let staging = fs::read_dir(&root.path)
             .unwrap()
             .map(|entry| entry.unwrap().path())
@@ -167,8 +167,12 @@ fn snapshot作成は差し替えられたstaging_directoryを公開しない() {
         fs::create_dir(&staging).unwrap();
         fs::write(staging.join("foreign"), b"preserve").unwrap();
     })
-    .unwrap_err();
+    .unwrap_err()
+    .to_string();
 
+    assert!(error.contains("staging directory was replaced before publication"));
+    assert!(error.contains("cleanup failed"));
+    assert!(error.contains("published destination was replaced before rollback"));
     assert!(!destination.exists());
     assert!(displaced.join("manifest.json").is_file());
     let foreign = fs::read_dir(&root.path)
