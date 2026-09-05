@@ -136,7 +136,7 @@ Schronu-webを、1日の余力と複数taskの作業状況を同時に把握で�
 - **REQ-NFR-002**: server側のtask操作は専用workerで直列化し、repositoryへの同時操作を避けること。
 - **REQ-NFR-003**: client/server間ではUUID、epoch milliseconds、秒数、`YYYY-MM-DD`をwire形式として使用すること。
 - **REQ-NFR-004**: errorは原因を識別可能な型付きerrorとし、競合、再試行可能なrepository error、repository状態が不確実で再送できないerrorを区別できること。
-- **REQ-NFR-005**: server responseはserver観測時刻、現在logical date、buffer秒を含み、clientが同じ基準時刻から表示を更新できること。
+- **REQ-NFR-005**: serverの成功responseはserver観測時刻、現在logical date、buffer秒を含み、clientが同じ基準時刻から表示を更新できること。error responseはsnapshotを含めず、code、message、再試行方針を含むこと。
 - **REQ-NFR-006**: UIの自動更新はbrowser内の計算に限定し、意図しないtask dataの読み書きを発生させないこと。
 
 ## 6. 受入条件

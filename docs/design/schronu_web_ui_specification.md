@@ -33,9 +33,9 @@ clientはCLI command文字列を生成・submitせず、型付きserver function
 - logical date: `YYYY-MM-DD`文字列
 - 曜日・時刻表示: clientがlocal timezoneで生成する
 
-### 3.2 Common snapshot
+### 3.2 Success and error envelope
 
-すべてのserver responseはpayloadと併せて次のsnapshotを返す。
+成功responseだけがpayloadと併せて次のsnapshotを返す。
 
 ```text
 ServerSnapshot {
@@ -48,6 +48,35 @@ ServerSnapshot {
 `observed_at_epoch_ms`、`logical_date`、`buffer_seconds`は同じserver操作時刻を基準に算出する。clientはresponse受信時刻ではなく`observed_at_epoch_ms`を表示計算の基準とする。
 
 `complete_session`の成功responseは`ServerSnapshot`だけとする。既存`complete_task`が返す次task情報はwireへ含めない。
+
+payloadを持つ成功responseは次の形とする。
+
+```text
+WebSuccess<T> {
+    snapshot: ServerSnapshot,
+    data: T,
+}
+```
+
+- `bootstrap`: `ServerSnapshot`
+- `list_tasks`: `WebSuccess<Vec<ScheduledTaskRowDto>>`
+- `auto_session`: `WebSuccess<Option<SessionTaskDto>>`
+- `record_session`: `WebSuccess<RecordSessionResult>`
+- `complete_session`: `ServerSnapshot`
+
+error responseは成功型とは別の次の形とし、snapshotまたは部分的な成功payloadを含めない。
+
+```text
+WebError {
+    code: String,
+    message: String,
+    retry_advice: RetryAdvice,
+}
+
+RetryAdvice = Retry | ManualCheck
+```
+
+wire上の`retry_advice`は`retry`または`manual_check`とする。clientはerror responseを受けても直前の`ServerSnapshot`、一覧、`work_sessions`を置換しない。
 
 ### 3.3 Task DTO
 
@@ -112,13 +141,13 @@ keyは`schronu_web.work_sessions.v1`とする。valueはversion付きobjectと�
 ### 4.1 `bootstrap`
 
 - 入力: なし
-- 出力: `ServerSnapshot`
+- 成功出力: `ServerSnapshot`
 - task dataは変更しない。
 
 ### 4.2 `list_tasks(date)`
 
 - 入力: `logical_date: YYYY-MM-DD`
-- 出力: `ServerSnapshot`と`Vec<ScheduledTaskRowDto>`
+- 成功出力: `WebSuccess<Vec<ScheduledTaskRowDto>>`
 - 指定日のscheduleを取得し、開始epoch milliseconds昇順で返す。
 - 指定日を曜日へ変換してCLIの`全 曜日`文字列を実行する実装にはしない。
 - task dataは変更しない。
@@ -126,7 +155,7 @@ keyは`schronu_web.work_sessions.v1`とする。valueはversion付きobjectと�
 ### 4.3 `auto_session`
 
 - 入力: なし
-- 出力: `ServerSnapshot`と`Option<SessionTaskDto>`
+- 成功出力: `WebSuccess<Option<SessionTaskDto>>`
 - applicationの`get_focus`相当の選定を呼ぶが、current taskの設定処理は呼ばない。
 - 候補がなければ`None`を正常結果として返す。
 - task dataは変更しない。
@@ -151,7 +180,7 @@ RecordSessionRequest {
 4. UUID、追加実績秒、期待実績秒をapplicationの共通実績加算操作へ渡す。
 5. repository transactionの保存成功後に`ServerSnapshot`を返す。
 
-出力は`ServerSnapshot`と更新後の実績秒を持つ。current taskは参照・変更しない。
+成功出力は`WebSuccess<RecordSessionResult>`とし、`RecordSessionResult`は更新後の実績秒を持つ。current taskは参照・変更しない。
 
 ### 4.5 `complete_session`
 
@@ -162,7 +191,7 @@ RecordSessionRequest {
 3. applicationは期待実績検証、実績加算、完了、終了時刻更新、反復task生成を1つの操作として準備する。
 4. repository transactionは全変更を1回で保存する。
 
-成功時は`ServerSnapshot`だけを返す。既存`complete_task`が返す次task情報はWebへ返さず、次taskをSchronu本体のcurrent taskへ設定せず、sessionも自動追加しない。
+成功時は`ServerSnapshot`だけを返す。既存`complete_task`が返す次task情報はWebへ返さず、次taskをSchronu本体のcurrent taskへ設定せず、sessionも自動追加しない。失敗時は他のoperationと同じ`WebError`を返す。
 
 ## 5. Application contracts
 
@@ -354,19 +383,21 @@ display_buffer = buffer_seconds - snapshot_elapsed
 
 ## 9. Error contracts
 
-server errorは少なくとも次を識別可能にする。
+server errorは少なくとも次を識別可能にする。`retry_advice`が`retry`の場合だけ同じ操作の再試行を案内する。`manual_check`では同一requestをそのまま再送しない。
 
-| code | 条件 | client動作 |
-| --- | --- | --- |
-| `invalid_input` | UUID、日付、epoch、負の経過秒、範囲外 | sessionと既存表示を保持して内容を表示する。 |
-| `task_not_found` | UUIDに対応するtaskがない | sessionを保持し、破棄可能にする。 |
-| `task_already_completed` | 完了済みtaskを記録・完了しようとした | 保存せずsessionを保持する。 |
-| `actual_work_conflict` | 現在実績と期待実績が不一致 | 保存せずsessionを保持し、競合を明示する。 |
-| `arithmetic_overflow` | 実績、進捗、日時計算が表現範囲外 | 保存せずsessionを保持する。 |
-| `task_not_completable` | 未完了の子など既存完了条件を満たさない | 保存せずsessionを保持する。 |
-| `repository_save_failed` | 保存失敗、rollback成功 | sessionを保持して再試行可能と表示する。 |
-| `repository_state_uncertain` | rollbackを保証できない | sessionを保持して再送を無効化し、手動確認を要求する。 |
-| `worker_unavailable` | worker停止またはresponse channel切断 | 既存表示を保持してserver操作失敗を表示する。 |
+| code | 条件 | `retry_advice` | client動作 |
+| --- | --- | --- | --- |
+| `invalid_input` | UUID、日付、epoch、負の経過秒、範囲外 | `manual_check` | 入力の修正、またはsessionの破棄を案内する。 |
+| `task_not_found` | UUIDに対応するtaskがない | `manual_check` | task状態の確認、またはsessionの破棄を案内する。 |
+| `task_already_completed` | 完了済みtaskを記録・完了しようとした | `manual_check` | task状態の確認、またはsessionの破棄を案内する。 |
+| `actual_work_conflict` | 現在実績と期待実績が不一致 | `manual_check` | 実績の確認、またはsessionの破棄を案内する。 |
+| `arithmetic_overflow` | 実績、進捗、日時計算が表現範囲外 | `manual_check` | task値または時刻の修正、またはsessionの破棄を案内する。 |
+| `task_not_completable` | 未完了の子など既存完了条件を満たさない | `manual_check` | 未完了の子を含むtask状態の修正、またはsessionの破棄を案内する。 |
+| `repository_save_failed` | 保存失敗、rollback成功 | `retry` | sessionを保持し、同じ操作の再試行を案内する。 |
+| `repository_state_uncertain` | rollbackを保証できない | `manual_check` | sessionを保持して再送を無効化し、repositoryの手動確認を要求する。 |
+| `worker_unavailable` | worker停止またはresponse channel切断 | `retry` | 既存表示を保持し、接続回復後の再試行を案内する。 |
+
+すべてのerror responseはcodeに対応した利用者向け`message`を持つ。validation、競合、task状態errorは`manual_check`であり、利用者が原因を修正するかsessionを破棄するまで同一requestを再送しない。一時的な保存失敗とworker停止だけを`retry`とする。
 
 server操作ごとに`operation_now`は1回だけ取得し、経過秒算出、完了時刻、snapshotに共通利用する。
 
@@ -440,6 +471,8 @@ OperationHistoryEntry {
 - reload、timer遅延、browser時計後退で開始時刻基準の経過秒になることを検証する。
 - session追加・破棄がserver callを生成しないことを検証する。
 - server mutation成功、競合、保存失敗、worker停止時のsession遷移を検証する。
+- 各endpointの成功型がsnapshotを持ち、error型がsnapshotを持たず、clientがerror時に直前snapshotを維持することを検証する。
+- error codeごとの`retry_advice`がerror表と一致し、`manual_check`では同一requestを再送しないことを検証する。
 - 履歴の100件上限、local/server、成否、reload非永続化を検証する。
 
 ### 12.5 UI and integration
