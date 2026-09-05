@@ -65,6 +65,17 @@ pub(in crate::adapter::gateway) fn restore_snapshot_with_failure(
     restore_snapshot_impl(snapshot, destination, &io, || {}, || {})
 }
 
+#[cfg(test)]
+pub(in crate::adapter::gateway) fn restore_snapshot_with_failure_observation(
+    snapshot: &Path,
+    destination: &Path,
+    point: SnapshotFailurePoint,
+) -> (Result<SnapshotSummary, SnapshotError>, usize) {
+    let io = FailOnceSnapshotIo::new(point);
+    let result = restore_snapshot_impl(snapshot, destination, &io, || {}, || {});
+    (result, io.matching_calls())
+}
+
 fn restore_snapshot_impl(
     snapshot: &Path,
     destination: &Path,
