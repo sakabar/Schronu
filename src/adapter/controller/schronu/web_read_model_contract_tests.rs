@@ -1,4 +1,4 @@
-use super::web_read::{build_auto_session_dto, build_scheduled_task_rows};
+use super::web_service::{build_auto_session_dto, build_scheduled_task_rows};
 use crate::application::schedule_use_case::ScheduledTaskView;
 use crate::application::task_use_case::get_task;
 use crate::entity::task::TaskHandle;

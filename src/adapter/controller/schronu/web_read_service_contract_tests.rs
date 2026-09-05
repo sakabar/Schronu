@@ -1,4 +1,4 @@
-use super::{WebReadError, WebReadService};
+use super::{WebReadError, WebService};
 use crate::adapter::gateway::schronu_config::SchronuConfig;
 use crate::adapter::gateway::storage_lock::{LockMode, StorageLock, StorageLockErrorKind};
 use crate::adapter::gateway::task_repository::TaskRepository;
@@ -101,7 +101,7 @@ fn serviceの3read操作は実storageを同期して同一snapshotとtyped_data�
     let fixture = WebReadServiceFixture::new();
     let task_id = fixture.seed_fixed_task(seeded_at);
     let before = fixture.persisted_bytes();
-    let mut service = WebReadService::new(fixture.storage.clone(), fixture.config());
+    let mut service = WebService::new(fixture.storage.clone(), fixture.config());
 
     let bootstrap = service.bootstrap_at(operation_now).unwrap();
     let listed = service
@@ -139,7 +139,7 @@ fn serviceはweb_lock競合をrepository読込前にtyped_errorで返す() {
     let now = Local.with_ymd_and_hms(2026, 9, 5, 19, 0, 59).unwrap();
     let fixture = WebReadServiceFixture::new();
     let _cli_lock = StorageLock::acquire(&fixture.storage, LockMode::Cli).unwrap();
-    let mut service = WebReadService::new(fixture.storage.clone(), fixture.config());
+    let mut service = WebService::new(fixture.storage.clone(), fixture.config());
 
     let error = service.bootstrap_at(now).unwrap_err();
 
@@ -161,7 +161,7 @@ fn serviceはbusy_time_slot読込失敗を元情報付きtyped_errorで返す() 
         busy_time_slots_yaml_path: missing.clone(),
         ..fixture.config()
     };
-    let mut service = WebReadService::new(fixture.storage.clone(), config);
+    let mut service = WebService::new(fixture.storage.clone(), config);
 
     let error = service.bootstrap_at(now).unwrap_err();
 

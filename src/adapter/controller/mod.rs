@@ -21,8 +21,8 @@ mod storage_directory;
 #[path = "schronu/today_text.rs"]
 mod today_text;
 
-#[path = "schronu/web_read.rs"]
-mod web_read;
+#[path = "schronu/web_service.rs"]
+mod web_service;
 
 #[path = "schronu/view.rs"]
 mod view;
@@ -66,9 +66,9 @@ pub fn run_cli() {
 
 pub use storage_directory::resolve_project_storage_directory;
 pub use today_text::{TodayTextError, TodayTextService};
-pub use web_read::{
+pub use web_service::{
     ScheduledTaskRowDto, ServerSnapshot, SessionTaskDto, WebReadError, WebReadOverflowError,
-    WebReadService, WebSuccess,
+    WebService, WebSuccess,
 };
 
 #[cfg(test)]

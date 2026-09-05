@@ -1,4 +1,4 @@
-use super::web_read::{build_server_snapshot, calculate_buffer_seconds};
+use super::web_service::{build_server_snapshot, calculate_buffer_seconds};
 use crate::application::interface::TaskRepositoryTrait;
 use crate::test_support::{TestFreeTimeManager, TestTaskRepository};
 use chrono::{Duration, Local, NaiveDate, TimeZone};

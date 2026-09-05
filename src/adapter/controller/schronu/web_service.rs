@@ -47,14 +47,14 @@ pub struct WebSuccess<T> {
     pub data: T,
 }
 
-pub struct WebReadService {
+pub struct WebService {
     storage_directory: PathBuf,
     task_repository: Option<TaskRepository>,
     free_time_manager: FreeTimeManager,
     config: SchronuConfig,
 }
 
-impl WebReadService {
+impl WebService {
     pub fn new(storage_directory: PathBuf, config: SchronuConfig) -> Self {
         let task_repository = storage_directory.to_str().map(TaskRepository::new);
         Self {
