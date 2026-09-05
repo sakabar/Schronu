@@ -359,6 +359,15 @@ fn 逆順のlist応答と古いsnapshotは最新表示を巻き戻さない() {
     assert_eq!(state.snapshot().unwrap().logical_date, "2026-09-05");
     assert_eq!(state.selected_logical_date(), Some("2026-09-06"));
     assert_eq!(state.scheduled_rows()[0].task.task_id, OTHER_TASK_ID);
+    assert_eq!(
+        state
+            .history()
+            .iter()
+            .filter(|entry| entry.operation == Operation::ListTasks)
+            .count(),
+        2,
+        "stale responseも受信履歴へ残す"
+    );
 }
 
 #[test]
