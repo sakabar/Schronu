@@ -178,11 +178,12 @@ AddActualWorkInput {
 
 1. 追加実績秒が非負であることを検証する。
 2. UUIDでtaskを取得する。
-3. 期待実績が`Some`なら現在実績と完全一致することを検証する。
-4. checked additionで更新後実績を計算する。
-5. すべての検証後にtaskを変更する。
+3. taskが未完了であることを検証し、完了済みなら`task_already_completed`を返す。
+4. 期待実績が`Some`なら現在実績と完全一致することを検証する。
+5. checked additionで更新後実績を計算する。
+6. すべての検証後にtaskを変更する。
 
-未知task、負数、期待値不一致、overflowではtask treeのmutation revisionを含めて状態を変更しない。
+未知task、完了済みtask、負数、期待値不一致、overflowではtask treeのmutation revisionを含めて状態を変更しない。
 
 呼び出し側の差は入力の決定と成功後のUI状態だけに限定する。
 
@@ -406,7 +407,7 @@ OperationHistoryEntry {
 
 ### 12.1 Application
 
-- 共通実績加算: 正常加算、0秒、未知UUID、負数、期待値一致・不一致、加算overflow、失敗時無変更。
+- 共通実績加算: 正常加算、0秒、未知UUID、完了済みtask、負数、期待値一致・不一致、加算overflow、失敗時無変更。
 - `complete_task`: 期待値一致、競合、負の追加秒、overflow、未完了の子、完了済み、反復task生成、各失敗時の全状態不変。
 - 進捗計算: 開始時33%、100%、133%、見積0、長時間、乗算overflow回避。
 - buffer: 正、0、負、06:00前後、固定`busy_time_slot`、schedule残作業の反映。
