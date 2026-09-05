@@ -37,7 +37,7 @@ Schronu-webを、1日の余力と複数taskの作業状況を同時に把握で�
 - **REQ-COMMON-003**: URL routingを必要とせず、単一ページ内で画面を切り替えられること。
 - **REQ-COMMON-004**: 利用者に見える名称には「フォーカス」を使用せず、「セッション」を使用すること。既存core APIの`get_focus`は内部の選定処理として利用してよい。
 - **REQ-COMMON-005**: 初回表示時に1度だけserverからsnapshotを取得し、bufferとlogical dateを初期化すること。
-- **REQ-COMMON-006**: server操作に失敗した場合、直前の表示データと`work_sessions`を保持したまま、再試行可能なerrorを表示すること。
+- **REQ-COMMON-006**: server操作に失敗した場合、直前の表示データと`work_sessions`を保持したまま、errorの再試行可否を識別し、再試行または手動確認を案内すること。repository状態が不確実な場合は再送を案内しないこと。
 
 ### 4.2 セッション状態
 
@@ -135,7 +135,7 @@ Schronu-webを、1日の余力と複数taskの作業状況を同時に把握で�
 - **REQ-NFR-001**: 時刻、秒数、UUID、logical dateを型付きデータとしてclient/server間で受け渡し、CLI出力文字列をparseしないこと。
 - **REQ-NFR-002**: server側のtask操作は専用workerで直列化し、repositoryへの同時操作を避けること。
 - **REQ-NFR-003**: client/server間ではUUID、epoch milliseconds、秒数、`YYYY-MM-DD`をwire形式として使用すること。
-- **REQ-NFR-004**: errorは原因を識別可能な型付きerrorとし、競合と再試行可能なrepository errorを区別できること。
+- **REQ-NFR-004**: errorは原因を識別可能な型付きerrorとし、競合、再試行可能なrepository error、repository状態が不確実で再送できないerrorを区別できること。
 - **REQ-NFR-005**: server responseはserver観測時刻、現在logical date、buffer秒を含み、clientが同じ基準時刻から表示を更新できること。
 - **REQ-NFR-006**: UIの自動更新はbrowser内の計算に限定し、意図しないtask dataの読み書きを発生させないこと。
 
