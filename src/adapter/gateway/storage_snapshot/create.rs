@@ -401,7 +401,12 @@ fn collect_storage(
             })?;
             source
                 .by_ref()
-                .take(limits.file_bytes.min(limits.total_bytes - total_bytes) + 1)
+                .take(
+                    limits
+                        .file_bytes
+                        .min(limits.total_bytes - total_bytes)
+                        .saturating_add(1),
+                )
                 .read_to_end(&mut bytes)
                 .map_err(|error| {
                     SnapshotError::new(SnapshotOperation::Read, entry.path(), error)
