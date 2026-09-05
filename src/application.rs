@@ -17,3 +17,5 @@ mod task_view;
 mod list_tasks_contract_tests;
 #[cfg(test)]
 mod schedule_use_case_contract_tests;
+#[cfg(test)]
+mod session_progress_contract_tests;
