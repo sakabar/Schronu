@@ -1,5 +1,5 @@
 use schronu_web::client::state::{
-    ActiveTab, ClientEffect, ClientState, DisplayError, ServerFailure,
+    ActiveTab, ClientEffect, ClientState, DisplayError, Locality, Operation, Outcome, ServerFailure,
 };
 use schronu_web::client::work_sessions::{
     load_work_sessions, KeyValueStorage, StorageError, WorkSession, WORK_SESSIONS_STORAGE_KEY,
@@ -395,6 +395,33 @@ fn manual_check_blockはsession破棄成功時だけ解消する() {
         state.begin_record_session(TASK_ID),
         ClientEffect::RecordSession { .. }
     ));
+}
+
+#[test]
+fn server_commit後のlocal削除失敗はserver成功とlocal失敗を別々に記録する() {
+    let storage = FakeStorage::default();
+    let mut state = state_with_sessions(&storage, &[TASK_ID]);
+    let (request_id, _) = record_effect(state.begin_record_session(TASK_ID));
+    storage.fail_writes.set(true);
+
+    state.apply_record_result(
+        &storage,
+        request_id,
+        Ok(WebSuccess {
+            snapshot: snapshot("2026-09-05", 1),
+            data: RecordSessionResult {
+                actual_work_seconds: 101,
+            },
+        }),
+    );
+
+    let entries: Vec<_> = state.history().iter().rev().take(2).collect();
+    assert_eq!(entries[1].operation, Operation::RecordSession);
+    assert_eq!(entries[1].locality, Locality::Server);
+    assert_eq!(entries[1].outcome, Outcome::Success);
+    assert_eq!(entries[0].operation, Operation::DiscardSession);
+    assert_eq!(entries[0].locality, Locality::Local);
+    assert_eq!(entries[0].outcome, Outcome::Failure);
 }
 
 #[derive(Default)]
