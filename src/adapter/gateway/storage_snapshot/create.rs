@@ -166,7 +166,6 @@ where
     BeforePublish: FnOnce(),
 {
     let publication = validate_endpoints(storage_directory, destination)?;
-    (hooks.after_parent_open)();
     ensure_parent_outside_storage(&publication, destination)?;
     let _lock = StorageLock::acquire(storage_directory, LockMode::Backup).map_err(|error| {
         let path = error.path().to_path_buf();
@@ -176,7 +175,6 @@ where
     recover_storage(storage_directory)?;
     let scanned = scan_storage_entries(storage_directory, limits, io)?;
     (hooks.after_capture)();
-    strict_load(storage_directory)?;
     validate_capture_unchanged(storage_directory, &scanned)?;
     let collected = collect_storage(scanned);
     let revision = read_revision(&collected.files)?;
@@ -196,15 +194,20 @@ where
         destination,
         target: &publication,
     };
-    let result = publish_snapshot(
-        &staging_publication,
-        created_at,
-        revision,
-        &collected,
-        limits,
-        io,
-        hooks.before_publish,
-    );
+    let result = (|| {
+        write_payload(&staging_publication, &collected, io)?;
+        strict_load(&staging.join(PAYLOAD_DIRECTORY_NAME), storage_directory)?;
+        (hooks.after_parent_open)();
+        publish_manifest(
+            &staging_publication,
+            created_at,
+            revision,
+            &collected,
+            limits,
+            io,
+            hooks.before_publish,
+        )
+    })();
     if let Err(primary) = result {
         return match publication
             .parent
@@ -239,17 +242,17 @@ impl<AfterParent, AfterCapture, BeforePublish>
     }
 }
 
-fn strict_load(storage: &Path) -> Result<(), SnapshotError> {
+fn strict_load(storage: &Path, error_path: &Path) -> Result<(), SnapshotError> {
     let storage_text = storage.to_str().ok_or_else(|| {
         invalid(
-            storage,
+            error_path,
             "snapshot source path must be valid Unicode for repository validation",
         )
     })?;
     let mut repository = TaskRepository::new(storage_text);
     repository
         .load()
-        .map_err(|error| SnapshotError::new(SnapshotOperation::RepositoryLoad, storage, error))
+        .map_err(|error| SnapshotError::new(SnapshotOperation::RepositoryLoad, error_path, error))
 }
 
 fn recover_storage(storage: &Path) -> Result<(), SnapshotError> {
@@ -399,14 +402,10 @@ struct StagingPublication<'a> {
     target: &'a PublicationDestination,
 }
 
-fn publish_snapshot(
+fn write_payload(
     staging: &StagingPublication<'_>,
-    created_at: DateTime<Local>,
-    revision: Option<Uuid>,
     collected: &CollectedStorage,
-    limits: SnapshotResourceLimits,
     io: &dyn SnapshotIo,
-    before_publish: impl FnOnce(),
 ) -> Result<(), SnapshotError> {
     let payload = staging.path.join(PAYLOAD_DIRECTORY_NAME);
     staging
@@ -448,8 +447,18 @@ fn publish_snapshot(
     staging
         .directory
         .sync_directory(Path::new(PAYLOAD_DIRECTORY_NAME), io)
-        .map_err(|error| SnapshotError::new(SnapshotOperation::Sync, &payload, error))?;
+        .map_err(|error| SnapshotError::new(SnapshotOperation::Sync, &payload, error))
+}
 
+fn publish_manifest(
+    staging: &StagingPublication<'_>,
+    created_at: DateTime<Local>,
+    revision: Option<Uuid>,
+    collected: &CollectedStorage,
+    limits: SnapshotResourceLimits,
+    io: &dyn SnapshotIo,
+    before_publish: impl FnOnce(),
+) -> Result<(), SnapshotError> {
     let manifest = build_manifest(created_at, revision, collected);
     let manifest_bytes = encode_manifest(&manifest)?;
     let manifest_path = staging.path.join(MANIFEST_FILE_NAME);
