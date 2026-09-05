@@ -116,7 +116,10 @@ fn five_operationsのrequestとsuccessは仕様どおりのjson形式を持つ()
     );
 
     // complete_sessionはbootstrapと同じServerSnapshotだけを返す。
-    assert_eq!(serde_json::to_value(snapshot).unwrap()["logical_date"], "2026-09-05");
+    assert_eq!(
+        serde_json::to_value(snapshot).unwrap()["logical_date"],
+        "2026-09-05"
+    );
 }
 
 #[test]
@@ -129,7 +132,10 @@ fn error_codeとretry_adviceはsnake_case文字列として往復する() {
         (WebErrorCode::ArithmeticOverflow, "arithmetic_overflow"),
         (WebErrorCode::TaskNotCompletable, "task_not_completable"),
         (WebErrorCode::ConfigurationError, "configuration_error"),
-        (WebErrorCode::RepositoryUnavailable, "repository_unavailable"),
+        (
+            WebErrorCode::RepositoryUnavailable,
+            "repository_unavailable",
+        ),
         (WebErrorCode::OperationFailed, "operation_failed"),
         (WebErrorCode::WorkerUnavailable, "worker_unavailable"),
         (WebErrorCode::RepositorySaveFailed, "repository_save_failed"),
