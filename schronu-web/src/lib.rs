@@ -1,5 +1,6 @@
 #[cfg(any(feature = "web", feature = "server"))]
 pub mod app;
+pub mod client;
 #[cfg(feature = "server")]
 mod controller_error;
 mod refresh_state;
