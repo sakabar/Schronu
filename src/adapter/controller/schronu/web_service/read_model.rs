@@ -56,18 +56,19 @@ where
     F: FreeTimeManagerTrait,
 {
     let logical_date = try_logical_date(operation_now).map_err(WebReadCoreError::Application)?;
-    let current_logical_date = try_logical_date(task_repository.get_last_synced_time())
-        .map_err(WebReadCoreError::Application)?;
-    let free_seconds = if logical_date == current_logical_date {
+    let observed_at = task_repository.get_last_synced_time();
+    let current_logical_date =
+        try_logical_date(observed_at).map_err(WebReadCoreError::Application)?;
+    let remaining_capacity_seconds = if logical_date == current_logical_date {
         let end = crate::application::daily_capacity::try_logical_date_end(
             logical_date,
             end_of_day_offset_minutes,
         )
         .map_err(WebReadCoreError::Application)?;
-        if task_repository.get_last_synced_time() < end {
-            free_time_manager.get_free_seconds(&task_repository.get_last_synced_time(), &end)
+        if observed_at < end {
+            free_time_manager.get_free_seconds(&observed_at, &end)
         } else {
-            0
+            end.signed_duration_since(observed_at).num_seconds()
         }
     } else {
         let start = crate::application::daily_capacity::try_logical_date_start(logical_date)
@@ -87,7 +88,11 @@ where
                 .map_err(WebReadCoreError::Application)
         })
         .collect::<Result<Vec<_>, _>>()?;
-    let buffer_seconds = calculate_buffer_seconds(logical_date, free_seconds, &scheduled_segments)?;
+    let buffer_seconds = calculate_buffer_seconds(
+        logical_date,
+        remaining_capacity_seconds,
+        &scheduled_segments,
+    )?;
 
     Ok(ServerSnapshot {
         observed_at_epoch_ms: operation_now.timestamp_millis(),
@@ -162,7 +167,7 @@ fn session_task_dto(
 
 pub(in crate::adapter::controller) fn calculate_buffer_seconds(
     current_logical_date: NaiveDate,
-    free_seconds: i64,
+    remaining_capacity_seconds: i64,
     scheduled_segments: &[(NaiveDate, i64)],
 ) -> Result<i64, WebReadOverflowError> {
     let scheduled_seconds = scheduled_segments
@@ -173,7 +178,13 @@ pub(in crate::adapter::controller) fn calculate_buffer_seconds(
                 .checked_add(*seconds)
                 .ok_or_else(|| WebReadOverflowError::new("scheduled_seconds_sum", total, *seconds))
         })?;
-    free_seconds.checked_sub(scheduled_seconds).ok_or_else(|| {
-        WebReadOverflowError::new("buffer_subtraction", free_seconds, scheduled_seconds)
-    })
+    remaining_capacity_seconds
+        .checked_sub(scheduled_seconds)
+        .ok_or_else(|| {
+            WebReadOverflowError::new(
+                "buffer_subtraction",
+                remaining_capacity_seconds,
+                scheduled_seconds,
+            )
+        })
 }
