@@ -10,6 +10,8 @@ use uuid::Uuid;
 
 pub(super) const FORMAT_VERSION: u32 = 1;
 pub(super) const DIGEST_VERSION: u32 = 1;
+// `{"path":"a","mode":null}` is the shortest valid encoded directory entry.
+pub(super) const MINIMUM_DIRECTORY_ENTRY_BYTES: u64 = 24;
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub(in crate::adapter::gateway) struct SnapshotManifest {
@@ -303,6 +305,17 @@ fn invalid_manifest(path: &Path, message: &'static str) -> SnapshotError {
 mod tests {
     use super::*;
     use crate::adapter::gateway::storage_snapshot::SnapshotLimitKind;
+
+    #[test]
+    fn cleanup上限のdirectory最小encode長はschemaと一致する() {
+        let encoded = serde_json::to_vec(&DirectoryEntry {
+            path: PathBuf::from("a"),
+            mode: None,
+        })
+        .unwrap();
+
+        assert_eq!(encoded.len() as u64, MINIMUM_DIRECTORY_ENTRY_BYTES);
+    }
 
     #[test]
     fn directory_manifest加算overflowは最大limitでもtyped拒否する() {

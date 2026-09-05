@@ -2,6 +2,10 @@
 use super::read_directory_names;
 use super::FileWriteError;
 #[cfg(any(target_os = "macos", target_os = "linux"))]
+use crate::adapter::gateway::storage_snapshot::manifest::MINIMUM_DIRECTORY_ENTRY_BYTES;
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+use crate::adapter::gateway::storage_snapshot::DEFAULT_RESOURCE_LIMITS;
+#[cfg(any(target_os = "macos", target_os = "linux"))]
 use std::ffi::CString;
 use std::fs::{self, File};
 use std::path::{Component, Path};
@@ -78,6 +82,19 @@ pub(in crate::adapter::gateway::storage_snapshot) struct StableParent {
 
 pub(in crate::adapter::gateway::storage_snapshot) struct StableDirectory {
     directory: File,
+}
+
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+#[derive(Clone, Copy)]
+struct CleanupLimits {
+    max_depth: usize,
+    max_entries: u64,
+}
+
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+#[derive(Default)]
+struct CleanupUsage {
+    entries: u64,
 }
 
 #[cfg(any(target_os = "macos", target_os = "linux"))]
@@ -381,6 +398,30 @@ impl StableDirectory {
     }
 
     fn remove_contents(&self) -> std::io::Result<()> {
+        let directory_entries =
+            DEFAULT_RESOURCE_LIMITS.manifest_bytes / MINIMUM_DIRECTORY_ENTRY_BYTES;
+        let file_entries = u64::try_from(DEFAULT_RESOURCE_LIMITS.file_count).unwrap_or(u64::MAX);
+        let max_entries = directory_entries
+            .checked_add(file_entries)
+            // Snapshot publication adds manifest.json and storage around the payload.
+            .and_then(|entries| entries.checked_add(2))
+            .unwrap_or(u64::MAX);
+        self.remove_contents_with_limits(CleanupLimits {
+            max_depth: DEFAULT_RESOURCE_LIMITS.depth,
+            max_entries,
+        })
+    }
+
+    fn remove_contents_with_limits(&self, limits: CleanupLimits) -> std::io::Result<()> {
+        self.remove_contents_bounded(limits, 0, &mut CleanupUsage::default())
+    }
+
+    fn remove_contents_bounded(
+        &self,
+        limits: CleanupLimits,
+        depth: usize,
+        usage: &mut CleanupUsage,
+    ) -> std::io::Result<()> {
         loop {
             let name = {
                 let mut names = read_directory_names(self.raw_fd())?;
@@ -389,6 +430,13 @@ impl StableDirectory {
             let Some(name) = name else {
                 break;
             };
+            usage.entries = usage
+                .entries
+                .checked_add(1)
+                .ok_or_else(cleanup_entry_limit_error)?;
+            if usage.entries > limits.max_entries {
+                return Err(cleanup_entry_limit_error());
+            }
             let name = c_name(&name)?;
             let mut stat = std::mem::MaybeUninit::<libc::stat>::uninit();
             // SAFETY: stat is writable and name is live for the call.
@@ -406,8 +454,12 @@ impl StableDirectory {
             // SAFETY: fstatat initialized stat on success.
             let stat = unsafe { stat.assume_init() };
             if stat.st_mode & libc::S_IFMT == libc::S_IFDIR {
+                let child_depth = depth.checked_add(1).ok_or_else(cleanup_depth_limit_error)?;
+                if child_depth > limits.max_depth {
+                    return Err(cleanup_depth_limit_error());
+                }
                 let child = Self::open_at(self.raw_fd(), &name)?;
-                child.remove_contents()?;
+                child.remove_contents_bounded(limits, child_depth, usage)?;
                 // SAFETY: name is a child of the fixed directory handle.
                 if unsafe { libc::unlinkat(self.raw_fd(), name.as_ptr(), libc::AT_REMOVEDIR) } != 0
                 {
@@ -449,6 +501,22 @@ impl StableDirectory {
         use std::os::fd::AsRawFd;
         self.directory.as_raw_fd()
     }
+}
+
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+fn cleanup_entry_limit_error() -> std::io::Error {
+    std::io::Error::new(
+        std::io::ErrorKind::InvalidData,
+        "snapshot rollback cleanup entry limit exceeded",
+    )
+}
+
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+fn cleanup_depth_limit_error() -> std::io::Error {
+    std::io::Error::new(
+        std::io::ErrorKind::InvalidData,
+        "snapshot rollback cleanup depth limit exceeded",
+    )
 }
 
 #[cfg(not(any(target_os = "macos", target_os = "linux")))]
