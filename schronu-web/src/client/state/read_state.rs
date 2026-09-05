@@ -4,6 +4,7 @@ use crate::{ListTasksRequest, SessionTask, WebSuccess};
 
 pub(super) struct ReadState {
     pub(super) snapshot: Option<ServerSnapshot>,
+    pub(super) buffer_tracking_started_at_epoch_ms: Option<i64>,
     pub(super) date_buttons: Vec<LogicalDateButton>,
     pub(super) selected_logical_date: Option<String>,
     pub(super) scheduled_rows: Vec<ScheduledTaskRow>,
@@ -19,6 +20,7 @@ impl ReadState {
     pub(super) fn new() -> Self {
         Self {
             snapshot: None,
+            buffer_tracking_started_at_epoch_ms: None,
             date_buttons: Vec::new(),
             selected_logical_date: None,
             scheduled_rows: Vec::new(),
@@ -181,6 +183,7 @@ impl ClientState {
                 logical_date_buttons(&snapshot.logical_date).unwrap_or_default();
             self.read.selected_logical_date = None;
             self.read.scheduled_rows.clear();
+            self.read.buffer_tracking_started_at_epoch_ms = Some(snapshot.observed_at_epoch_ms);
         }
         self.read.snapshot = Some(snapshot);
         Some(changed)

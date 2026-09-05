@@ -14,6 +14,7 @@ pub struct SessionTiming {
 pub struct BufferTiming {
     pub snapshot_elapsed_seconds: i64,
     pub buffer_elapsed_seconds: i64,
+    pub session_credit_seconds: i64,
     pub display_buffer_seconds: i128,
 }
 
@@ -52,25 +53,33 @@ pub fn session_timing(
 
 pub fn buffer_timing(
     observed_at_epoch_ms: i64,
+    tracking_started_at_epoch_ms: i64,
     buffer_seconds: i64,
     tick_now_epoch_ms: i64,
     active_session_started_at_epoch_ms: &[i64],
 ) -> BufferTiming {
     let snapshot_elapsed_seconds = elapsed_seconds(observed_at_epoch_ms, tick_now_epoch_ms);
-    let buffer_elapsed_seconds = active_session_started_at_epoch_ms
-        .iter()
-        .copied()
-        .min()
-        .map_or(snapshot_elapsed_seconds, |earliest_session_start| {
+    let earliest_active_start = active_session_started_at_epoch_ms.iter().copied().min();
+    let tracking_start = tracking_started_at_epoch_ms.min(observed_at_epoch_ms);
+    let buffer_elapsed_seconds =
+        earliest_active_start.map_or(snapshot_elapsed_seconds, |earliest_session_start| {
             elapsed_seconds(
                 observed_at_epoch_ms,
                 tick_now_epoch_ms.min(earliest_session_start),
             )
         });
+    let session_credit_seconds = earliest_active_start.map_or(0, |earliest_session_start| {
+        elapsed_seconds(
+            earliest_session_start.max(tracking_start),
+            observed_at_epoch_ms,
+        )
+    });
     BufferTiming {
         snapshot_elapsed_seconds,
         buffer_elapsed_seconds,
-        display_buffer_seconds: i128::from(buffer_seconds) - i128::from(buffer_elapsed_seconds),
+        session_credit_seconds,
+        display_buffer_seconds: i128::from(buffer_seconds) + i128::from(session_credit_seconds)
+            - i128::from(buffer_elapsed_seconds),
     }
 }
 
