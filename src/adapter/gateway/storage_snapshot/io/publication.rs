@@ -110,7 +110,21 @@ impl StableParent {
         if unsafe { libc::mkdirat(self.raw_fd(), name.as_ptr(), 0o700) } != 0 {
             return Err(std::io::Error::last_os_error());
         }
-        StableDirectory::open_at(self.raw_fd(), &name)
+        match StableDirectory::open_at(self.raw_fd(), &name) {
+            Ok(directory) => Ok(directory),
+            Err(open_error) => {
+                // SAFETY: this call removes only the empty directory just created below this fd.
+                if unsafe { libc::unlinkat(self.raw_fd(), name.as_ptr(), libc::AT_REMOVEDIR) } == 0
+                {
+                    Err(open_error)
+                } else {
+                    Err(std::io::Error::other(format!(
+                        "opening the created staging directory failed ({open_error}); cleanup failed ({})",
+                        std::io::Error::last_os_error()
+                    )))
+                }
+            }
+        }
     }
 
     pub(in crate::adapter::gateway::storage_snapshot) fn rename_no_replace(
