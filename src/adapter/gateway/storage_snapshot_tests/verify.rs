@@ -98,3 +98,17 @@ fn snapshot_verifyはmanifest_payload_file_storage_symlinkを拒否する() {
         assert_eq!(fs::read(&outside_file).unwrap(), b"outside");
     }
 }
+
+#[cfg(unix)]
+#[test]
+fn snapshot_verifyはwriterなしfifoをblockせず拒否する() {
+    use std::os::unix::ffi::OsStrExt;
+
+    let (_root, snapshot, _) = create_source_independent_snapshot("verify-fifo");
+    let fifo = snapshot.join("storage/unexpected-fifo");
+    let fifo_path = std::ffi::CString::new(fifo.as_os_str().as_bytes()).unwrap();
+    // SAFETY: fifo_path is a live CString and mkfifo does not retain its pointer.
+    assert_eq!(unsafe { libc::mkfifo(fifo_path.as_ptr(), 0o600) }, 0);
+
+    verify_snapshot(&snapshot).unwrap_err();
+}

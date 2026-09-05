@@ -78,7 +78,7 @@ fn read_directory_handle(
             libc::openat(
                 directory.as_raw_fd(),
                 name.as_ptr(),
-                libc::O_RDONLY | libc::O_CLOEXEC | libc::O_NOFOLLOW,
+                libc::O_RDONLY | libc::O_CLOEXEC | libc::O_NOFOLLOW | libc::O_NONBLOCK,
             )
         };
         if descriptor < 0 {
