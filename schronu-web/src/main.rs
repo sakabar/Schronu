@@ -2,12 +2,9 @@
 #[tokio::main]
 async fn main() {
     use dioxus::fullstack::axum::Extension;
-    let today_worker = schronu_web::app::worker_from_environment();
     let web_worker = schronu_web::app::web_worker_from_environment();
     let address = loopback_server_address(dioxus::cli_config::server_port().unwrap_or(8080));
-    let router = dioxus::server::router(schronu_web::app::app)
-        .layer(Extension(today_worker))
-        .layer(Extension(web_worker));
+    let router = dioxus::server::router(schronu_web::app::app).layer(Extension(web_worker));
     let listener = tokio::net::TcpListener::bind(address)
         .await
         .expect("loopback web server must bind");
