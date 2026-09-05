@@ -380,7 +380,7 @@ fn all_commands_enforce_argument_bounds() {
             mode: ParseMode::NonInteractive,
             valid_arguments: &["00000000-0000-0000-0000-000000000001"],
             minimum: 1,
-            maximum: Some(1),
+            maximum: None,
             usage: "見 <task_id>",
         },
         Case {
