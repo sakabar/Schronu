@@ -47,12 +47,7 @@ pub fn SessionView(
                 button {
                     class: "primary-action",
                     r#type: "button",
-                    disabled: global_blocked,
-                    onclick: move |_| {
-                        if !global_blocked {
-                            on_auto_session.call(());
-                        }
-                    },
+                    onclick: move |_| on_auto_session.call(()),
                     "自動セッション"
                 }
             }
@@ -79,10 +74,8 @@ fn SessionCard(
     global_blocked: bool,
     on_action: EventHandler<SessionAction>,
 ) -> Element {
-    let disabled = global_blocked
-        || session.in_flight
-        || session.manual_check_blocked
-        || session.server_committed;
+    let discard_disabled = session.in_flight || session.server_committed;
+    let mutation_disabled = discard_disabled || global_blocked || session.manual_check_blocked;
     let completion = session
         .completion_hh_mm
         .clone()
@@ -121,21 +114,21 @@ fn SessionCard(
                     label: "破棄して解除",
                     task_id: session.task_id.clone(),
                     kind: SessionActionKind::Discard,
-                    disabled,
+                    disabled: discard_disabled,
                     on_action,
                 }
                 SessionActionButton {
                     label: "記録して解除",
                     task_id: session.task_id.clone(),
                     kind: SessionActionKind::Record,
-                    disabled,
+                    disabled: mutation_disabled,
                     on_action,
                 }
                 SessionActionButton {
                     label: "完了",
                     task_id: session.task_id,
                     kind: SessionActionKind::Complete,
-                    disabled,
+                    disabled: mutation_disabled,
                     on_action,
                 }
             }
