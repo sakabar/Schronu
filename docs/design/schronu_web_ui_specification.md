@@ -47,6 +47,8 @@ ServerSnapshot {
 
 `observed_at_epoch_ms`、`logical_date`、`buffer_seconds`は同じserver操作時刻を基準に算出する。clientはresponse受信時刻ではなく`observed_at_epoch_ms`を表示計算の基準とする。
 
+`complete_session`の成功responseは`ServerSnapshot`だけとする。既存`complete_task`が返す次task情報はwireへ含めない。
+
 ### 3.3 Task DTO
 
 セッション開始に必要なtask snapshotは次を持つ。
@@ -158,7 +160,7 @@ RecordSessionRequest {
 3. applicationは期待実績検証、実績加算、完了、終了時刻更新、反復task生成を1つの操作として準備する。
 4. repository transactionは全変更を1回で保存する。
 
-出力は`ServerSnapshot`と既存`complete_task`の次task情報を必要な範囲で持つ。Webは次taskをSchronu本体のcurrent taskへ設定せず、sessionも自動追加しない。
+成功時は`ServerSnapshot`だけを返す。既存`complete_task`が返す次task情報はWebへ返さず、次taskをSchronu本体のcurrent taskへ設定せず、sessionも自動追加しない。
 
 ## 5. Application contracts
 
@@ -409,6 +411,7 @@ OperationHistoryEntry {
 
 - 共通実績加算: 正常加算、0秒、未知UUID、完了済みtask、負数、期待値一致・不一致、加算overflow、失敗時無変更。
 - `complete_task`: 期待値一致、競合、負の追加秒、overflow、未完了の子、完了済み、反復task生成、各失敗時の全状態不変。
+- `complete_session`: 成功responseが`ServerSnapshot`だけで、次task情報を含まないこと。
 - 進捗計算: 開始時33%、100%、133%、見積0、長時間、乗算overflow回避。
 - buffer: 正、0、負、06:00前後、固定`busy_time_slot`、schedule残作業の反映。
 - read model: 指定日、開始時刻順、複数segment、葉判定、締切、候補なしの自動選定。
