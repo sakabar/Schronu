@@ -144,6 +144,17 @@ keyは`schronu_web.work_sessions.v1`とする。valueはversion付きobjectと�
 6. いずれの復旧経路でもwarningを表示し、task更新を行わず、`bootstrap`を中止しない。
 7. storageがwrite blockedでない通常のstate変更では、採用済みの全`work_sessions`を1回で書き戻す。write blockedまたは保存失敗の場合はmemory上の直前stateを維持し、手動でkeyを確認してreloadするようwarningと履歴へ残す。
 
+`repository_state_uncertain`の再送防止状態は、`work_sessions` schemaを拡張せず、別keyの`schronu_web.mutation_safety.v1`へ保存する。
+
+```json
+{
+  "version": 1,
+  "mutation_blocked": true
+}
+```
+
+このkeyが存在しない場合だけmutation可能な初期状態とする。未知version、JSON不正、schema不正は安全側へ倒し、mutation blockedとして復元する。`repository_state_uncertain`受信時は先にmemory上の全mutationを停止し、同じblocked状態をこのkeyへ保存する。保存に失敗しても現在pageのblockを解除しない。解除はrepositoryを手動確認する明示操作だけが所有し、通常のserver成功、session破棄、reloadでは解除しない。
+
 ## 4. Server operations
 
 専用workerは次の5 commandを順番に処理する。workerへの送信順が実行順となる。
