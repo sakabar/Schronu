@@ -152,13 +152,14 @@ fn buffer_timing_carries_active_session_time_across_newer_snapshots() {
 
 #[test]
 fn buffer_timing_does_not_credit_server_committed_session_intervals_twice() {
+    let committed_intervals = std::iter::once(1_020_000..1_030_000).collect::<Vec<_>>();
     let timing = buffer_timing(
         1_030_000,
         1_000_000,
         40,
         1_040_000,
         &[1_010_000],
-        &[1_020_000..1_030_000],
+        &committed_intervals,
     );
 
     assert_eq!(timing.session_credit_seconds, 10);
