@@ -274,6 +274,10 @@ impl ClientState {
         )
     }
 
+    pub fn can_confirm_repository_checked(&self) -> bool {
+        self.mutation_globally_blocked && self.pending_mutations.is_empty()
+    }
+
     pub fn display_actual_work_seconds(&self, task_id: &str) -> Option<i64> {
         self.committed_actual_work_seconds
             .get(task_id)
@@ -390,7 +394,7 @@ impl ClientState {
     }
 
     pub fn confirm_repository_checked<S: KeyValueStorage>(&mut self, storage: &S) -> ClientEffect {
-        if !self.mutation_globally_blocked || !self.pending_mutations.is_empty() {
+        if !self.can_confirm_repository_checked() {
             return ClientEffect::None;
         }
         if !self.committed_blocked_task_ids.is_empty() {
