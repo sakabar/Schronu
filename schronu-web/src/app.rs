@@ -1,8 +1,8 @@
-use dioxus::prelude::*;
-
 mod component;
+mod today_endpoint;
 
 pub use component::app;
+pub use today_endpoint::today_text;
 
 #[cfg(feature = "server")]
 use crate::{TodayTextQuery, TodayWorkerHandle};
@@ -18,24 +18,6 @@ use std::env;
 
 #[cfg(feature = "server")]
 use std::ffi::OsString;
-
-#[cfg(feature = "server")]
-use dioxus::fullstack::axum::Extension;
-
-#[server(endpoint = "today_text")]
-pub async fn today_text() -> Result<String, ServerFnError> {
-    #[cfg(feature = "server")]
-    {
-        let Extension(worker) =
-            dioxus::fullstack::FullstackContext::extract::<Extension<TodayWorkerHandle>, _>()
-                .await
-                .map_err(|error| ServerFnError::new(error.to_string()))?;
-        return worker.request_async().await.map_err(ServerFnError::new);
-    }
-
-    #[cfg(not(feature = "server"))]
-    unreachable!("server function body only runs on the server")
-}
 
 #[cfg(feature = "server")]
 pub fn worker_from_environment() -> TodayWorkerHandle {
