@@ -1,6 +1,6 @@
 use crate::adapter::gateway::storage_snapshot::{
     create_snapshot_at, restore_snapshot, restore_snapshot_after_parent_open,
-    restore_snapshot_with_failure, SnapshotFailurePoint,
+    restore_snapshot_before_publish, restore_snapshot_with_failure, SnapshotFailurePoint,
 };
 use chrono::TimeZone;
 
@@ -145,6 +145,52 @@ fn snapshot_restoreはsnapshot配下へ移動された親directoryを拒否す�
 
     assert!(error.contains("outside the snapshot"), "{error}");
     assert!(!moved_parent.join("restored").exists());
+}
+
+#[test]
+fn snapshot_restoreは差し替えられたstagingのcleanup失敗を保持する() {
+    let root = TestDirectory::new("restore-staging-swap");
+    let source = root.child("source");
+    let snapshot = root.child("snapshot");
+    let destination = root.child("restored");
+    let displaced = root.child("displaced-staging");
+    let now = Local.with_ymd_and_hms(2026, 9, 5, 12, 0, 0).unwrap();
+    create_saved_repository(&source, now);
+    create_snapshot_at(&source, &snapshot, now).unwrap();
+
+    let error = restore_snapshot_before_publish(&snapshot, &destination, || {
+        let staging = fs::read_dir(&root.path)
+            .unwrap()
+            .map(|entry| entry.unwrap().path())
+            .find(|path| {
+                path.file_name()
+                    .unwrap()
+                    .to_string_lossy()
+                    .starts_with(".restored.tmp-")
+            })
+            .unwrap();
+        fs::rename(&staging, &displaced).unwrap();
+        fs::create_dir(&staging).unwrap();
+        fs::write(staging.join("foreign"), b"preserve").unwrap();
+    })
+    .unwrap_err();
+    let mut source_chain = Vec::new();
+    let mut source = std::error::Error::source(&error);
+    while let Some(current) = source {
+        source_chain.push(current.to_string());
+        source = current.source();
+    }
+
+    assert_eq!(error.path(), destination);
+    assert!(source_chain
+        .iter()
+        .any(|source| source.contains("published destination was replaced before rollback")));
+    assert!(!destination.exists());
+    assert!(displaced.join(".revision").is_file());
+    assert!(fs::read_dir(&root.path)
+        .unwrap()
+        .map(|entry| entry.unwrap().path())
+        .any(|path| path.join("foreign").is_file()));
 }
 
 #[test]
