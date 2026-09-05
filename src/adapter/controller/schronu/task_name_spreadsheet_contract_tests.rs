@@ -4,7 +4,7 @@ use std::io::Write;
 use std::path::Path;
 use std::process::{Command as ProcessCommand, Stdio};
 
-use super::command::{parse_command, Command, CommandAction, ParseMode};
+use super::command::{parse_interactive_command, Command, CommandAction};
 
 const TASK_NAME_ROWS: &str =
     include_str!("../../../../tests/fixtures/task_name_spreadsheet/allowed-task-names.tsv");
@@ -55,7 +55,7 @@ fn spreadsheetのtask名はinteractive_cliを通って原文へround_tripする(
 
     assert_eq!(commands.len(), expected_names.len());
     for (command, expected_name) in commands.into_iter().zip(expected_names) {
-        let parsed = parse_command(command, ParseMode::Interactive)
+        let parsed = parse_interactive_command(command)
             .unwrap_or_else(|error| panic!("generated command must parse: {command:?}: {error}"));
         let Command::Action(CommandAction::NewProject { name, .. }) = parsed else {
             panic!("generated command must create a task: {command:?}");

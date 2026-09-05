@@ -1,8 +1,25 @@
 use super::command::{
-    command_with_minimum_valid_arguments, parse_command, parse_non_interactive_command_tokens,
-    Command, CommandAction, CommandKind, InteractiveShortcut, ParseMode,
+    command_with_minimum_valid_arguments, parse_command_tokens, parse_interactive_command,
+    parse_non_interactive_command_tokens, Command, CommandAction, CommandKind, CommandParseError,
+    InteractiveShortcut, ParseMode,
 };
 use uuid::Uuid;
+
+fn parse_command(input: &str, mode: ParseMode) -> Result<Command, CommandParseError> {
+    if input.trim().is_empty() || input.trim_start().starts_with('#') || input.starts_with('0') {
+        return Ok(Command::Noop);
+    }
+    match mode {
+        ParseMode::Interactive => parse_interactive_command(input),
+        ParseMode::NonInteractive => {
+            let tokens = input
+                .split_whitespace()
+                .map(str::to_string)
+                .collect::<Vec<_>>();
+            parse_command_tokens(&tokens, ParseMode::NonInteractive)
+        }
+    }
+}
 
 #[test]
 fn all_aliases_parse_to_the_same_typed_command_kind() {
@@ -834,5 +851,5 @@ fn arrange_accepts_only_the_explicit_all_flags() {
 fn runtime_routes_both_product_entry_paths_through_the_shared_parser() {
     let source = include_str!("runtime.rs");
     assert!(source.contains("parse_non_interactive_command_tokens(command_tokens)"));
-    assert!(source.contains("parse_command(command, ParseMode::Interactive)"));
+    assert!(source.contains("parse_interactive_command(command)"));
 }

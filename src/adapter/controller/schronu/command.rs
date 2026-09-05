@@ -401,26 +401,20 @@ pub(super) fn validate_command_input(command: &Command) -> Result<(), CommandVal
     }
 }
 
-pub(super) fn parse_command(input: &str, mode: ParseMode) -> Result<Command, CommandParseError> {
+pub(super) fn parse_interactive_command(input: &str) -> Result<Command, CommandParseError> {
     if input.trim().is_empty() || input.trim_start().starts_with('#') || input.starts_with('0') {
         return Ok(Command::Noop);
     }
 
-    let tokens = match mode {
-        ParseMode::Interactive => tokenize(input).map_err(|error| {
-            CommandParseError::new(
-                "入力",
-                "syntax",
-                error.kind().reason(),
-                "<command> [arguments]",
-            )
-        })?,
-        ParseMode::NonInteractive => input
-            .split_whitespace()
-            .map(str::to_string)
-            .collect::<Vec<_>>(),
-    };
-    parse_command_tokens(&tokens, mode)
+    let tokens = tokenize(input).map_err(|error| {
+        CommandParseError::new(
+            "入力",
+            "syntax",
+            error.kind().reason(),
+            "<command> [arguments]",
+        )
+    })?;
+    parse_command_tokens(&tokens, ParseMode::Interactive)
 }
 
 pub(super) fn parse_command_tokens(
@@ -1028,12 +1022,18 @@ pub(super) fn representative_valid_commands() -> Vec<Command> {
         } else {
             ParseMode::NonInteractive
         };
-        parse_command(&command_with_minimum_valid_arguments(name), mode)
-            .expect("representative command must parse")
+        let input = command_with_minimum_valid_arguments(name);
+        match mode {
+            ParseMode::Interactive => parse_interactive_command(&input),
+            ParseMode::NonInteractive => {
+                let tokens = tokenize(&input).expect("representative command must tokenize");
+                parse_non_interactive_command_tokens(&tokens)
+            }
+        }
+        .expect("representative command must parse")
     }));
     commands.extend(["t", "d", "w", "W", "y"].map(|shortcut| {
-        parse_command(shortcut, ParseMode::Interactive)
-            .expect("representative interactive shortcut must parse")
+        parse_interactive_command(shortcut).expect("representative interactive shortcut must parse")
     }));
     commands
 }

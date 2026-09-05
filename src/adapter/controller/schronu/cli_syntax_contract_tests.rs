@@ -1,4 +1,23 @@
-use super::command::{parse_command, Command, CommandAction, CommandKind, ParseMode};
+use super::command::{
+    parse_command_tokens, parse_interactive_command, Command, CommandAction, CommandKind,
+    CommandParseError, ParseMode,
+};
+
+fn parse_command(input: &str, mode: ParseMode) -> Result<Command, CommandParseError> {
+    if input.trim().is_empty() || input.trim_start().starts_with('#') || input.starts_with('0') {
+        return Ok(Command::Noop);
+    }
+    match mode {
+        ParseMode::Interactive => parse_interactive_command(input),
+        ParseMode::NonInteractive => {
+            let tokens = input
+                .split_whitespace()
+                .map(str::to_string)
+                .collect::<Vec<_>>();
+            parse_command_tokens(&tokens, ParseMode::NonInteractive)
+        }
+    }
+}
 
 #[test]
 fn interactive_parser_preserves_quoted_task_names_for_every_task_name_command() {

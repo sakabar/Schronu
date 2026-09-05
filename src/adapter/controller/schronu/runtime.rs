@@ -1,6 +1,8 @@
+#[cfg(test)]
+use super::command::{parse_command_tokens, ParseMode};
 use super::command::{
-    parse_command, parse_non_interactive_command_tokens, validate_command_input, Command,
-    CommandKind, CommandParseError, CommandValidationError, ParseMode,
+    parse_interactive_command, parse_non_interactive_command_tokens, validate_command_input,
+    Command, CommandKind, CommandParseError, CommandValidationError,
 };
 use super::command_context::*;
 use super::handler::{
@@ -1249,8 +1251,7 @@ fn execute_interactive_command(
     operation_now: DateTime<Local>,
     command: &str,
 ) -> Result<InteractiveCommandExecution, CommandError> {
-    let parsed_command =
-        parse_command(command, ParseMode::Interactive).map_err(map_command_parse_error)?;
+    let parsed_command = parse_interactive_command(command).map_err(map_command_parse_error)?;
     let kind = parsed_command.kind();
     let (command_result, propagates_error) = if kind == CommandKind::Verify {
         let mut output = ErrorCapturingWriter::new(stdout);
