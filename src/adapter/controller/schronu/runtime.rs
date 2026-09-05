@@ -860,7 +860,8 @@ fn run_cli_repository_transaction<T>(
             RunError::from(CliRepositoryTransactionError::Load(error))
         }
         RepositoryTransactionError::Operation(error) => RunError::from(error),
-        RepositoryTransactionError::StateUncertain(error) => {
+        RepositoryTransactionError::SaveFailed(error)
+        | RepositoryTransactionError::StateUncertain(error) => {
             RunError::from(CliRepositoryTransactionError::Save(error))
         }
     })

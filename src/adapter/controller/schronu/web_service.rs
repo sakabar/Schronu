@@ -529,7 +529,8 @@ impl WebReadError {
         match error {
             RepositoryTransactionError::Lock(error) => Self::Lock(error),
             RepositoryTransactionError::Load(error) => Self::Repository(error),
-            RepositoryTransactionError::StateUncertain(error) => {
+            RepositoryTransactionError::SaveFailed(error)
+            | RepositoryTransactionError::StateUncertain(error) => {
                 Self::RepositoryStateUncertain(error)
             }
             RepositoryTransactionError::Operation(WebReadOperationError::BusyTimeSlots(error)) => {

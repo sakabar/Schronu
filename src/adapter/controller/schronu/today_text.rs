@@ -135,6 +135,7 @@ impl TodayTextError {
         match error {
             RepositoryTransactionError::Lock(error) => Self::Lock(error),
             RepositoryTransactionError::Load(error)
+            | RepositoryTransactionError::SaveFailed(error)
             | RepositoryTransactionError::StateUncertain(error) => Self::Repository(error),
             RepositoryTransactionError::Operation(TodayTextOperationError::BusyTimeSlots(
                 error,
