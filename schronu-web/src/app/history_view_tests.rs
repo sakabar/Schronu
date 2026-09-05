@@ -24,6 +24,7 @@ fn history_panel_is_closed_by_default_and_renders_all_display_fields() {
         HistoryEntryViewModel {
             occurred_at_hh_mm_ss: "11:25:03".to_owned(),
             operation: "record_session".to_owned(),
+            task_id: Some("123e4567-e89b-12d3-a456-426614174000".to_owned()),
             locality: "server".to_owned(),
             outcome: "success".to_owned(),
             summary: "実績を記録しました。".to_owned(),
@@ -32,6 +33,7 @@ fn history_panel_is_closed_by_default_and_renders_all_display_fields() {
         HistoryEntryViewModel {
             occurred_at_hh_mm_ss: "11:26:10".to_owned(),
             operation: "discard_session".to_owned(),
+            task_id: None,
             locality: "local".to_owned(),
             outcome: "failure".to_owned(),
             summary: "セッションを保持しました。".to_owned(),
@@ -45,6 +47,7 @@ fn history_panel_is_closed_by_default_and_renders_all_display_fields() {
     for text in [
         "11:25:03",
         "record_session",
+        "123e4567-e89b-12d3-a456-426614174000",
         "server",
         "success",
         "実績を記録しました。",
