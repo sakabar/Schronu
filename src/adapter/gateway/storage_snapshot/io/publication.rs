@@ -8,16 +8,27 @@ use std::path::{Component, Path};
 #[cfg(any(target_os = "macos", target_os = "linux"))]
 use std::os::unix::ffi::OsStrExt;
 
-#[cfg(test)]
-pub(in crate::adapter::gateway) trait SnapshotIo: Send + Sync {
-    fn sync_directory(&self, path: &Path) -> std::io::Result<()> {
-        File::open(path)?.sync_all()
-    }
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(in crate::adapter::gateway) enum SnapshotFailurePoint {
+    Read,
+    Write,
+    Permission,
+    FileSync,
+    DirectorySync,
+    Rename,
+    ParentSync,
+}
 
-    fn remove_dir_all(&self, path: &Path) -> std::io::Result<()> {
-        fs::remove_dir_all(path)
+pub(in crate::adapter::gateway::storage_snapshot) trait SnapshotIo:
+    Send + Sync
+{
+    fn before(&self, _point: SnapshotFailurePoint) -> std::io::Result<()> {
+        Ok(())
     }
 }
+
+pub(in crate::adapter::gateway::storage_snapshot) struct FileSystemSnapshotIo;
+impl SnapshotIo for FileSystemSnapshotIo {}
 
 pub(in crate::adapter::gateway::storage_snapshot) struct StableParent {
     directory: File,
@@ -132,6 +143,7 @@ impl StableParent {
         from: &std::ffi::OsStr,
         to: &std::ffi::OsStr,
         published: &StableDirectory,
+        io: &dyn SnapshotIo,
     ) -> std::io::Result<()> {
         let from = c_name(from)?;
         let to = c_name(to)?;
@@ -141,6 +153,7 @@ impl StableParent {
                 "staging directory was replaced before publication",
             ));
         }
+        io.before(SnapshotFailurePoint::Rename)?;
         rename_at_no_replace(self.raw_fd(), &from, &to)?;
         if published.matches_entry(self.raw_fd(), &to)? {
             Ok(())
@@ -179,7 +192,11 @@ impl StableParent {
         }
     }
 
-    pub(in crate::adapter::gateway::storage_snapshot) fn sync(&self) -> std::io::Result<()> {
+    pub(in crate::adapter::gateway::storage_snapshot) fn sync(
+        &self,
+        io: &dyn SnapshotIo,
+    ) -> std::io::Result<()> {
+        io.before(SnapshotFailurePoint::ParentSync)?;
         self.directory.sync_all()
     }
 
@@ -228,6 +245,7 @@ impl StableDirectory {
         relative: &Path,
         bytes: &[u8],
         permissions: fs::Permissions,
+        io: &dyn SnapshotIo,
     ) -> std::io::Result<()> {
         use std::io::Write;
         use std::os::fd::FromRawFd;
@@ -247,8 +265,11 @@ impl StableDirectory {
         }
         // SAFETY: openat returned a new owned descriptor transferred exactly once.
         let mut file = unsafe { File::from_raw_fd(descriptor) };
+        io.before(SnapshotFailurePoint::Write)?;
         file.write_all(bytes)?;
+        io.before(SnapshotFailurePoint::Permission)?;
         file.set_permissions(permissions)?;
+        io.before(SnapshotFailurePoint::FileSync)?;
         file.sync_all()
     }
 
@@ -264,11 +285,17 @@ impl StableDirectory {
     pub(in crate::adapter::gateway::storage_snapshot) fn sync_directory(
         &self,
         relative: &Path,
+        io: &dyn SnapshotIo,
     ) -> std::io::Result<()> {
+        io.before(SnapshotFailurePoint::DirectorySync)?;
         self.open_relative_directory(relative)?.directory.sync_all()
     }
 
-    pub(in crate::adapter::gateway::storage_snapshot) fn sync(&self) -> std::io::Result<()> {
+    pub(in crate::adapter::gateway::storage_snapshot) fn sync(
+        &self,
+        io: &dyn SnapshotIo,
+    ) -> std::io::Result<()> {
+        io.before(SnapshotFailurePoint::DirectorySync)?;
         self.directory.sync_all()
     }
 
@@ -401,6 +428,7 @@ impl StableParent {
         _from: &std::ffi::OsStr,
         _to: &std::ffi::OsStr,
         _published: &StableDirectory,
+        _io: &dyn SnapshotIo,
     ) -> std::io::Result<()> {
         Err(unsupported_publication())
     }
@@ -413,7 +441,10 @@ impl StableParent {
         Err(unsupported_publication())
     }
 
-    pub(in crate::adapter::gateway::storage_snapshot) fn sync(&self) -> std::io::Result<()> {
+    pub(in crate::adapter::gateway::storage_snapshot) fn sync(
+        &self,
+        _io: &dyn SnapshotIo,
+    ) -> std::io::Result<()> {
         Err(unsupported_publication())
     }
 }
@@ -432,6 +463,7 @@ impl StableDirectory {
         _relative: &Path,
         _bytes: &[u8],
         _permissions: fs::Permissions,
+        _io: &dyn SnapshotIo,
     ) -> std::io::Result<()> {
         Err(unsupported_publication())
     }
@@ -447,11 +479,15 @@ impl StableDirectory {
     pub(in crate::adapter::gateway::storage_snapshot) fn sync_directory(
         &self,
         _relative: &Path,
+        _io: &dyn SnapshotIo,
     ) -> std::io::Result<()> {
         Err(unsupported_publication())
     }
 
-    pub(in crate::adapter::gateway::storage_snapshot) fn sync(&self) -> std::io::Result<()> {
+    pub(in crate::adapter::gateway::storage_snapshot) fn sync(
+        &self,
+        _io: &dyn SnapshotIo,
+    ) -> std::io::Result<()> {
         Err(unsupported_publication())
     }
 }
@@ -551,65 +587,4 @@ fn rename_at_no_replace(
     } else {
         Err(std::io::Error::last_os_error())
     }
-}
-
-#[cfg(all(test, any(target_os = "macos", target_os = "linux")))]
-fn c_path(path: &Path) -> std::io::Result<CString> {
-    CString::new(path.as_os_str().as_bytes()).map_err(|_| {
-        std::io::Error::new(
-            std::io::ErrorKind::InvalidInput,
-            "filesystem path contains a NUL byte",
-        )
-    })
-}
-
-#[cfg(all(test, target_os = "macos"))]
-pub(in crate::adapter::gateway) fn rename_no_replace(
-    from: &Path,
-    to: &Path,
-) -> std::io::Result<()> {
-    let from = c_path(from)?;
-    let to = c_path(to)?;
-    // SAFETY: both pointers are backed by live CStrings and renamex_np does not retain them.
-    let result = unsafe { libc::renamex_np(from.as_ptr(), to.as_ptr(), libc::RENAME_EXCL) };
-    if result == 0 {
-        Ok(())
-    } else {
-        Err(std::io::Error::last_os_error())
-    }
-}
-
-#[cfg(all(test, target_os = "linux"))]
-pub(in crate::adapter::gateway) fn rename_no_replace(
-    from: &Path,
-    to: &Path,
-) -> std::io::Result<()> {
-    let from = c_path(from)?;
-    let to = c_path(to)?;
-    // SAFETY: both pointers are backed by live CStrings and renameat2 does not retain them.
-    let result = unsafe {
-        libc::renameat2(
-            libc::AT_FDCWD,
-            from.as_ptr(),
-            libc::AT_FDCWD,
-            to.as_ptr(),
-            libc::RENAME_NOREPLACE,
-        )
-    };
-    if result == 0 {
-        Ok(())
-    } else {
-        Err(std::io::Error::last_os_error())
-    }
-}
-
-#[cfg(all(test, not(any(target_os = "macos", target_os = "linux"))))]
-pub(in crate::adapter::gateway) fn rename_no_replace(
-    _from: &Path,
-    _to: &Path,
-) -> std::io::Result<()> {
-    Err(std::io::Error::new(
-        std::io::ErrorKind::Unsupported,
-        "atomic no-replace rename is supported only on macOS and Linux",
-    ))
 }

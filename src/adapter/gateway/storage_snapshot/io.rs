@@ -4,9 +4,8 @@ mod read;
 use std::fs;
 use std::path::PathBuf;
 
-#[cfg(test)]
-pub(in crate::adapter::gateway) use publication::{rename_no_replace, SnapshotIo};
-pub(super) use publication::{StableDirectory, StableParent};
+pub(in crate::adapter::gateway) use publication::SnapshotFailurePoint;
+pub(super) use publication::{FileSystemSnapshotIo, SnapshotIo, StableDirectory, StableParent};
 pub(super) use read::read_directory_tree;
 
 pub(super) struct TreeDirectory {

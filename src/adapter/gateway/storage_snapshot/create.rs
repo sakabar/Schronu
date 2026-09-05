@@ -1,7 +1,7 @@
 use super::error::{SnapshotError, SnapshotOperation};
-#[cfg(test)]
-use super::io::SnapshotIo;
-use super::io::{StableDirectory, StableParent};
+use super::io::{
+    FileSystemSnapshotIo, SnapshotFailurePoint, SnapshotIo, StableDirectory, StableParent,
+};
 use super::layout::{is_reserved_path, staging_path, MANIFEST_FILE_NAME, PAYLOAD_DIRECTORY_NAME};
 use super::manifest::{
     decode_manifest, encode_manifest, DigestDescriptor, DirectoryEntry, FileEntry,
@@ -35,7 +35,14 @@ pub(in crate::adapter::gateway) fn create_snapshot_at(
     destination: &Path,
     created_at: DateTime<Local>,
 ) -> Result<SnapshotSummary, SnapshotError> {
-    create_snapshot_impl(storage_directory, destination, created_at, || {}, || {})
+    create_snapshot_impl(
+        storage_directory,
+        destination,
+        created_at,
+        &FileSystemSnapshotIo,
+        || {},
+        || {},
+    )
 }
 
 #[cfg(test)]
@@ -49,6 +56,7 @@ pub(in crate::adapter::gateway) fn create_snapshot_after_parent_open(
         storage_directory,
         destination,
         created_at,
+        &FileSystemSnapshotIo,
         after_parent_open,
         || {},
     )
@@ -65,8 +73,47 @@ pub(in crate::adapter::gateway) fn create_snapshot_before_publish(
         storage_directory,
         destination,
         created_at,
+        &FileSystemSnapshotIo,
         || {},
         before_publish,
+    )
+}
+
+#[cfg(test)]
+pub(in crate::adapter::gateway) fn create_snapshot_with_failure(
+    storage_directory: &Path,
+    destination: &Path,
+    created_at: DateTime<Local>,
+    point: SnapshotFailurePoint,
+) -> Result<SnapshotSummary, SnapshotError> {
+    use std::sync::atomic::AtomicBool;
+
+    struct FailOnce {
+        point: SnapshotFailurePoint,
+        failed: AtomicBool,
+    }
+    impl SnapshotIo for FailOnce {
+        fn before(&self, point: SnapshotFailurePoint) -> std::io::Result<()> {
+            use std::sync::atomic::Ordering;
+
+            if point == self.point && !self.failed.swap(true, Ordering::SeqCst) {
+                Err(std::io::Error::other(format!("injected {point:?} failure")))
+            } else {
+                Ok(())
+            }
+        }
+    }
+    let io = FailOnce {
+        point,
+        failed: AtomicBool::new(false),
+    };
+    create_snapshot_impl(
+        storage_directory,
+        destination,
+        created_at,
+        &io,
+        || {},
+        || {},
     )
 }
 
@@ -74,6 +121,7 @@ fn create_snapshot_impl(
     storage_directory: &Path,
     destination: &Path,
     created_at: DateTime<Local>,
+    io: &dyn SnapshotIo,
     after_parent_open: impl FnOnce(),
     before_publish: impl FnOnce(),
 ) -> Result<SnapshotSummary, SnapshotError> {
@@ -86,7 +134,7 @@ fn create_snapshot_impl(
     })?;
 
     strict_load(storage_directory)?;
-    let collected = collect_storage(storage_directory)?;
+    let collected = collect_storage(storage_directory, io)?;
     let revision = read_revision(&collected.files)?;
     let staging = staging_path(destination)?;
     let staging_name = staging
@@ -109,6 +157,7 @@ fn create_snapshot_impl(
         created_at,
         revision,
         &collected,
+        io,
         before_publish,
     );
     if result.is_err() {
@@ -231,7 +280,7 @@ fn ensure_parent_outside_storage(
     }
 }
 
-fn collect_storage(storage: &Path) -> Result<CollectedStorage, SnapshotError> {
+fn collect_storage(storage: &Path, io: &dyn SnapshotIo) -> Result<CollectedStorage, SnapshotError> {
     let mut directories = Vec::new();
     let mut files = Vec::new();
     let walker = WalkDir::new(storage)
@@ -269,6 +318,9 @@ fn collect_storage(storage: &Path) -> Result<CollectedStorage, SnapshotError> {
                 permissions: metadata.permissions(),
             });
         } else if metadata.is_file() {
+            io.before(SnapshotFailurePoint::Read).map_err(|error| {
+                SnapshotError::new(SnapshotOperation::Read, entry.path(), error)
+            })?;
             let bytes = fs::read(entry.path()).map_err(|error| {
                 SnapshotError::new(SnapshotOperation::Read, entry.path(), error)
             })?;
@@ -323,6 +375,7 @@ fn publish_snapshot(
     created_at: DateTime<Local>,
     revision: Option<Uuid>,
     collected: &CollectedStorage,
+    io: &dyn SnapshotIo,
     before_publish: impl FnOnce(),
 ) -> Result<(), SnapshotError> {
     let payload = staging.path.join(PAYLOAD_DIRECTORY_NAME);
@@ -346,6 +399,7 @@ fn publish_snapshot(
                 &Path::new(PAYLOAD_DIRECTORY_NAME).join(&file.path),
                 &file.bytes,
                 file.permissions.clone(),
+                io,
             )
             .map_err(|error| SnapshotError::new(SnapshotOperation::Write, &path, error))?;
     }
@@ -358,12 +412,12 @@ fn publish_snapshot(
             .map_err(|error| SnapshotError::new(SnapshotOperation::Write, &path, error))?;
         staging
             .directory
-            .sync_directory(&relative)
+            .sync_directory(&relative, io)
             .map_err(|error| SnapshotError::new(SnapshotOperation::Sync, &path, error))?;
     }
     staging
         .directory
-        .sync_directory(Path::new(PAYLOAD_DIRECTORY_NAME))
+        .sync_directory(Path::new(PAYLOAD_DIRECTORY_NAME), io)
         .map_err(|error| SnapshotError::new(SnapshotOperation::Sync, &payload, error))?;
 
     let manifest = build_manifest(created_at, revision, collected);
@@ -376,11 +430,12 @@ fn publish_snapshot(
             Path::new(MANIFEST_FILE_NAME),
             &manifest_bytes,
             manifest_permissions(),
+            io,
         )
         .map_err(|error| SnapshotError::new(SnapshotOperation::Write, &manifest_path, error))?;
     staging
         .directory
-        .sync()
+        .sync(io)
         .map_err(|error| SnapshotError::new(SnapshotOperation::Sync, staging.path, error))?;
     before_publish();
     ensure_parent_outside_storage(staging.target, staging.destination)?;
@@ -391,11 +446,12 @@ fn publish_snapshot(
             staging.name,
             &staging.target.destination_name,
             staging.directory,
+            io,
         )
         .map_err(|error| {
             SnapshotError::new(SnapshotOperation::Write, staging.destination, error)
         })?;
-    if let Err(sync_error) = staging.target.parent.sync() {
+    if let Err(sync_error) = staging.target.parent.sync(io) {
         staging
             .target
             .parent
@@ -403,7 +459,7 @@ fn publish_snapshot(
             .map_err(|cleanup_error| {
                 SnapshotError::new(SnapshotOperation::Write, staging.destination, cleanup_error)
             })?;
-        let _ = staging.target.parent.sync();
+        let _ = staging.target.parent.sync(io);
         return Err(SnapshotError::new(
             SnapshotOperation::Sync,
             staging
@@ -428,26 +484,6 @@ fn manifest_permissions() -> fs::Permissions {
             .expect("current directory metadata is available")
             .permissions()
     }
-}
-
-#[cfg(test)]
-pub(in crate::adapter::gateway) fn finalize_publication(
-    io: &dyn SnapshotIo,
-    destination: &Path,
-) -> Result<(), SnapshotError> {
-    let parent = destination.parent().expect("destination has a parent");
-    if let Err(sync_error) = io.sync_directory(parent) {
-        io.remove_dir_all(destination).map_err(|cleanup_error| {
-            SnapshotError::new(SnapshotOperation::Write, destination, cleanup_error)
-        })?;
-        let _ = io.sync_directory(parent);
-        return Err(SnapshotError::new(
-            SnapshotOperation::Sync,
-            parent,
-            sync_error,
-        ));
-    }
-    Ok(())
 }
 
 fn build_manifest(

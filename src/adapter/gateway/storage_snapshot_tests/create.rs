@@ -1,12 +1,9 @@
 use crate::adapter::gateway::storage_lock::{LockMode, StorageLock};
 use crate::adapter::gateway::storage_snapshot::{
     create_snapshot_after_parent_open, create_snapshot_at, create_snapshot_before_publish,
-    create_snapshot_with_failure, finalize_publication, SnapshotFailurePoint,
+    create_snapshot_with_failure, SnapshotFailurePoint,
 };
-use crate::adapter::gateway::storage_snapshot::io::rename_no_replace;
-use crate::adapter::gateway::storage_snapshot::io::SnapshotIo;
 use chrono::TimeZone;
-use std::sync::atomic::{AtomicUsize, Ordering};
 
 #[test]
 fn snapshotはlock下の全永続dataとpermissionを保存して予約領域を除外する() {
@@ -211,50 +208,4 @@ fn snapshot作成失敗はdestinationもstagingも公開しない() {
             "{point:?}"
         );
     }
-}
-
-#[test]
-fn snapshot公開renameは競合して作成されたdestinationを置換しない() {
-    let root = TestDirectory::new("create-no-replace");
-    let staging = root.child(".snapshot.tmp-staged");
-    let destination = root.child("snapshot");
-    fs::create_dir(&staging).unwrap();
-    fs::write(staging.join("staged"), b"snapshot").unwrap();
-    fs::create_dir(&destination).unwrap();
-
-    rename_no_replace(&staging, &destination).unwrap_err();
-
-    assert_eq!(fs::read_dir(&destination).unwrap().count(), 0);
-    assert_eq!(fs::read(staging.join("staged")).unwrap(), b"snapshot");
-}
-
-struct FirstSyncFailureIo {
-    sync_count: AtomicUsize,
-}
-
-impl SnapshotIo for FirstSyncFailureIo {
-    fn sync_directory(&self, path: &Path) -> std::io::Result<()> {
-        let count = self.sync_count.fetch_add(1, Ordering::SeqCst);
-        if count == 0 {
-            Err(std::io::Error::other("injected parent sync failure"))
-        } else {
-            fs::File::open(path)?.sync_all()
-        }
-    }
-}
-
-#[test]
-fn snapshot公開後のparent_sync失敗はdestinationをrollbackする() {
-    let root = TestDirectory::new("create-parent-sync-failure");
-    let destination = root.child("snapshot");
-    fs::create_dir(&destination).unwrap();
-    fs::write(destination.join("manifest.json"), b"published").unwrap();
-    let io = FirstSyncFailureIo {
-        sync_count: AtomicUsize::new(0),
-    };
-
-    finalize_publication(&io, &destination).unwrap_err();
-
-    assert!(!destination.exists());
-    assert_eq!(io.sync_count.load(Ordering::SeqCst), 2);
 }
