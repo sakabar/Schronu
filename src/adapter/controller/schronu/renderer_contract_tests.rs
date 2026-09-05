@@ -1164,6 +1164,25 @@ fn focus_displayはtyped属性からancestorと残り時間とprogress境界を�
     }
 }
 
+#[test]
+fn focus_progress_rendererは百分率算式を所有しない() {
+    let source = include_str!("renderer.rs");
+    let start = source.find("pub(super) fn format_focus_progress(").unwrap();
+    let end = source[start..]
+        .find("pub(super) fn format_work_seconds_as_hours_minutes(")
+        .map(|offset| start + offset)
+        .unwrap();
+    let function_source = &source[start..end];
+
+    assert_eq!(
+        function_source
+            .matches("calculate_session_progress(")
+            .count(),
+        1
+    );
+    assert!(!function_source.contains("* 100"));
+}
+
 struct AlwaysFailWriter;
 
 impl Write for AlwaysFailWriter {
