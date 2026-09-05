@@ -1,9 +1,12 @@
 use super::invalid;
-use crate::adapter::gateway::storage_snapshot::error::{
-    SnapshotError, SnapshotLimitKind, SnapshotOperation,
-};
-use crate::adapter::gateway::storage_snapshot::io::{SnapshotFailurePoint, SnapshotIo};
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+use crate::adapter::gateway::storage_snapshot::error::SnapshotLimitKind;
+use crate::adapter::gateway::storage_snapshot::error::{SnapshotError, SnapshotOperation};
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+use crate::adapter::gateway::storage_snapshot::io::SnapshotFailurePoint;
+use crate::adapter::gateway::storage_snapshot::io::SnapshotIo;
 use crate::adapter::gateway::storage_snapshot::layout::is_reserved_path;
+#[cfg(any(target_os = "macos", target_os = "linux"))]
 use crate::adapter::gateway::storage_snapshot::manifest::accumulate_directory_manifest_bytes;
 use crate::adapter::gateway::storage_snapshot::{permission_mode, SnapshotResourceLimits};
 use std::collections::HashMap;

@@ -1,9 +1,10 @@
 use super::DirectoryTree;
 #[cfg(any(target_os = "macos", target_os = "linux"))]
 use super::{TreeDirectory, TreeFile};
-use crate::adapter::gateway::storage_snapshot::error::{
-    SnapshotError, SnapshotLimitKind, SnapshotOperation,
-};
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+use crate::adapter::gateway::storage_snapshot::error::SnapshotLimitKind;
+use crate::adapter::gateway::storage_snapshot::error::{SnapshotError, SnapshotOperation};
+#[cfg(any(target_os = "macos", target_os = "linux"))]
 use crate::adapter::gateway::storage_snapshot::layout::MANIFEST_FILE_NAME;
 #[cfg(any(target_os = "macos", target_os = "linux"))]
 use crate::adapter::gateway::storage_snapshot::manifest::accumulate_directory_manifest_bytes;
@@ -53,6 +54,7 @@ pub(in crate::adapter::gateway::storage_snapshot) fn read_directory_tree_with_li
     Ok(tree)
 }
 
+#[cfg(any(target_os = "macos", target_os = "linux"))]
 #[derive(Default)]
 struct TraversalUsage {
     directory_manifest_bytes: u64,
