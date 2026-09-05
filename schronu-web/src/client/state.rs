@@ -290,11 +290,11 @@ impl ClientState {
             .cloned()
             .collect();
         let found = candidate.len() != self.sessions().len();
-        let result = found
-            .then(|| self.work_sessions.replace_sessions(storage, candidate))
-            .transpose()
-            .map(|_| ());
-        if found && result.is_ok() {
+        if !found {
+            return ClientEffect::None;
+        }
+        let result = self.work_sessions.replace_sessions(storage, candidate);
+        if result.is_ok() {
             self.manual_check_blocked_task_ids.remove(task_id);
             if self
                 .display_error
@@ -322,7 +322,6 @@ impl ClientState {
             .iter()
             .any(|session| session.task_id == task.task_id)
         {
-            self.record_local_result(Operation::AddSession, Some(&task.task_id), false);
             return;
         }
         let mut candidate = self.sessions().to_vec();
