@@ -1013,7 +1013,6 @@ pub(super) fn build_show_all_tasks_display_with_config(
             let today_leaf_icon: String = "/".to_string();
 
             let icon = if task_deadline_time_opt.is_some()
-                && task_deadline_time_opt.unwrap() < next_logical_date_start
                 && task_deadline_time_opt.unwrap() < end_datetime
             {
                 &breaking_deadline_icon
