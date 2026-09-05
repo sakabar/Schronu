@@ -2276,6 +2276,76 @@ fn test_execute_all_締切差をlogical_date単位でd列へ表示する() {
     assert_eq!(columns[3], "_____-001D");
 }
 
+#[test]
+fn test_execute_all_未来締切を超過する予定のiconをvにする() {
+    let now = Local.with_ymd_and_hms(2026, 9, 6, 10, 0, 0).unwrap();
+    let root = new_test_task_handle("root").unwrap();
+    let missed = add_scheduled_child_for_test(
+        &root,
+        "未来締切超過",
+        Local.with_ymd_and_hms(2026, 9, 8, 7, 0, 0).unwrap(),
+        60,
+    );
+    missed.set_fixed_start(true).unwrap();
+    missed
+        .set_deadline_time_opt(Some(
+            Local.with_ymd_and_hms(2026, 9, 7, 20, 0, 0).unwrap(),
+        ))
+        .unwrap();
+    let within = add_scheduled_child_for_test(
+        &root,
+        "未来締切内",
+        Local.with_ymd_and_hms(2026, 9, 7, 18, 0, 0).unwrap(),
+        60,
+    );
+    within.set_fixed_start(true).unwrap();
+    within
+        .set_deadline_time_opt(Some(
+            Local.with_ymd_and_hms(2026, 9, 7, 20, 0, 0).unwrap(),
+        ))
+        .unwrap();
+    let today = add_scheduled_child_for_test(
+        &root,
+        "当日締切内",
+        Local.with_ymd_and_hms(2026, 9, 6, 18, 0, 0).unwrap(),
+        60,
+    );
+    today.set_fixed_start(true).unwrap();
+    today
+        .set_deadline_time_opt(Some(
+            Local.with_ymd_and_hms(2026, 9, 6, 20, 0, 0).unwrap(),
+        ))
+        .unwrap();
+
+    let mut task_repository = TestTaskRepository::new(root, now);
+    let mut free_time_manager = TestFreeTimeManager::with_free_minutes(24 * 60);
+    let mut focused_task_id_opt = None;
+    let mut stdout = TestWriter::new();
+    execute(
+        &mut stdout,
+        &mut task_repository,
+        &mut free_time_manager,
+        &mut focused_task_id_opt,
+        &now,
+        "全",
+    )
+    .unwrap();
+    let output = stdout.into_string();
+    let icon_for = |name: &str| {
+        output
+            .lines()
+            .find(|line| line.contains(name))
+            .expect("task row")
+            .split_whitespace()
+            .nth(2)
+            .expect("icon column")
+    };
+
+    assert_eq!(icon_for("未来締切超過"), "v");
+    assert_eq!(icon_for("未来締切内"), "-");
+    assert_eq!(icon_for("当日締切内"), "!");
+}
+
 const EXPECTED_TODAY_PLAIN_TEXT: &str = concat!(
     "0000 00000000-0000-0000-0000-000020260811 ! ____-00:30 ",
     "08/11(火)-13:00~13:30 0 30 07 資 Web表示契約task\n",
