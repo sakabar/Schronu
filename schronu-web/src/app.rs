@@ -1,4 +1,6 @@
 mod component;
+#[allow(dead_code)]
+mod effect_dispatcher;
 #[cfg(test)]
 mod effect_dispatcher_tests;
 #[cfg(feature = "server")]
