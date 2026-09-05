@@ -3,12 +3,12 @@ use std::sync::Arc;
 
 use uuid::Uuid;
 
+use super::cleanup::cleanup_stale_tombstones;
 use super::{
-    acquire_transaction_lock, cleanup_stale_tombstones, content_checksum,
-    resolve_transactions_directory, sync_directory, validate_storage_relative_path,
-    validate_transactions_directory, ManifestEntry, ManifestEntryOperation, PreparedEntry,
-    PreparedTransaction, StorageTransactionError, StorageTransactionIo,
-    StorageTransactionOperation, TransactionManifest, WriteRequest,
+    acquire_transaction_lock, content_checksum, resolve_transactions_directory, sync_directory,
+    validate_storage_relative_path, validate_transactions_directory, ManifestEntry,
+    ManifestEntryOperation, PreparedEntry, PreparedTransaction, StorageTransactionError,
+    StorageTransactionIo, StorageTransactionOperation, TransactionManifest, WriteRequest,
     ACTIVE_TRANSACTION_DIRECTORY_NAME,
 };
 

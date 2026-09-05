@@ -13,7 +13,6 @@ mod manifest;
 mod prepare;
 mod recovery;
 
-use cleanup::{cleanup_committed_transaction, cleanup_stale_tombstones};
 #[cfg(test)]
 use io::TRANSACTION_LOCK_FILE_NAME;
 use io::{acquire_transaction_lock, sync_directory, TransactionLock};

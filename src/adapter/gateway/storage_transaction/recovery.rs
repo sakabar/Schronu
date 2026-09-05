@@ -2,13 +2,14 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
+use super::cleanup::cleanup_stale_tombstones;
 use super::{
-    acquire_transaction_lock, cleanup_stale_tombstones, invalid_manifest_entry_error,
-    resolve_transactions_directory, sync_directory, validate_content_integrity,
-    validate_delete_target_ancestors, validate_staged_file_path, validate_storage_relative_path,
-    validate_transactions_directory, ManifestEntryOperation, PreparedEntry, PreparedTransaction,
-    StorageTransactionError, StorageTransactionIo, StorageTransactionOperation, TransactionLock,
-    TransactionManifest, ACTIVE_TRANSACTION_DIRECTORY_NAME,
+    acquire_transaction_lock, invalid_manifest_entry_error, resolve_transactions_directory,
+    sync_directory, validate_content_integrity, validate_delete_target_ancestors,
+    validate_staged_file_path, validate_storage_relative_path, validate_transactions_directory,
+    ManifestEntryOperation, PreparedEntry, PreparedTransaction, StorageTransactionError,
+    StorageTransactionIo, StorageTransactionOperation, TransactionLock, TransactionManifest,
+    ACTIVE_TRANSACTION_DIRECTORY_NAME,
 };
 
 pub(in crate::adapter::gateway) fn recover(

@@ -1,10 +1,11 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
+use super::cleanup::cleanup_committed_transaction;
 use super::manifest::content_matches;
 use super::{
-    cleanup_committed_transaction, sync_directory, ManifestEntryOperation, PreparedTransaction,
-    StorageTransactionError, StorageTransactionOperation,
+    sync_directory, ManifestEntryOperation, PreparedTransaction, StorageTransactionError,
+    StorageTransactionOperation,
 };
 
 struct PreflightEntry {
