@@ -14,7 +14,6 @@ pub struct SessionTiming {
 pub struct BufferTiming {
     pub snapshot_elapsed_seconds: i64,
     pub buffer_elapsed_seconds: i64,
-    pub session_credit_seconds: i64,
     pub display_buffer_seconds: i128,
 }
 
@@ -53,68 +52,26 @@ pub fn session_timing(
 
 pub fn buffer_timing(
     observed_at_epoch_ms: i64,
-    tracking_started_at_epoch_ms: i64,
     buffer_seconds: i64,
     tick_now_epoch_ms: i64,
     active_session_started_at_epoch_ms: &[i64],
-    committed_session_intervals: &[Range<i64>],
 ) -> BufferTiming {
     let snapshot_elapsed_seconds = elapsed_seconds(observed_at_epoch_ms, tick_now_epoch_ms);
-    let earliest_active_start = active_session_started_at_epoch_ms.iter().copied().min();
-    let tracking_start = tracking_started_at_epoch_ms.min(observed_at_epoch_ms);
-    let buffer_elapsed_seconds =
-        earliest_active_start.map_or(snapshot_elapsed_seconds, |earliest_session_start| {
+    let buffer_elapsed_seconds = active_session_started_at_epoch_ms
+        .iter()
+        .copied()
+        .min()
+        .map_or(snapshot_elapsed_seconds, |earliest_session_start| {
             elapsed_seconds(
                 observed_at_epoch_ms,
                 tick_now_epoch_ms.min(earliest_session_start),
             )
         });
-    let session_credit_seconds = earliest_active_start.map_or(0, |earliest_session_start| {
-        uncovered_interval_seconds(
-            earliest_session_start.max(tracking_start),
-            observed_at_epoch_ms,
-            committed_session_intervals,
-        )
-    });
     BufferTiming {
         snapshot_elapsed_seconds,
         buffer_elapsed_seconds,
-        session_credit_seconds,
-        display_buffer_seconds: i128::from(buffer_seconds) + i128::from(session_credit_seconds)
-            - i128::from(buffer_elapsed_seconds),
+        display_buffer_seconds: i128::from(buffer_seconds) - i128::from(buffer_elapsed_seconds),
     }
-}
-
-fn uncovered_interval_seconds(
-    start_epoch_ms: i64,
-    end_epoch_ms: i64,
-    excluded_intervals: &[Range<i64>],
-) -> i64 {
-    if end_epoch_ms <= start_epoch_ms {
-        return 0;
-    }
-    let mut intersections: Vec<_> = excluded_intervals
-        .iter()
-        .filter_map(|interval| {
-            let start = interval.start.max(start_epoch_ms);
-            let end = interval.end.min(end_epoch_ms);
-            (start < end).then_some(start..end)
-        })
-        .collect();
-    intersections.sort_unstable_by_key(|interval| interval.start);
-
-    let mut covered_ms = 0_i128;
-    let mut covered_until = start_epoch_ms;
-    for interval in intersections {
-        let uncovered_start = interval.start.max(covered_until);
-        if uncovered_start < interval.end {
-            covered_ms += i128::from(interval.end) - i128::from(uncovered_start);
-            covered_until = interval.end;
-        }
-    }
-    let duration_ms = i128::from(end_epoch_ms) - i128::from(start_epoch_ms);
-    i64::try_from((duration_ms - covered_ms) / 1_000)
-        .expect("the difference between two i64 millisecond epochs fits in i64 seconds")
 }
 
 pub fn format_mm_ss(seconds: i128) -> String {
@@ -148,4 +105,3 @@ fn completion_epoch_ms(started_at_epoch_ms: i64, remaining_seconds: i128) -> Opt
     let completion = i128::from(started_at_epoch_ms).checked_add(remaining_ms)?;
     i64::try_from(completion).ok()
 }
-use std::ops::Range;

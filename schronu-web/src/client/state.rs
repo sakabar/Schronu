@@ -157,13 +157,9 @@ impl ClientState {
         Some(
             buffer_timing(
                 snapshot.observed_at_epoch_ms,
-                self.read
-                    .buffer_tracking_started_at_epoch_ms
-                    .unwrap_or(snapshot.observed_at_epoch_ms),
                 snapshot.buffer_seconds,
                 self.tick_now_epoch_ms,
                 &active_session_starts,
-                &self.read.committed_session_intervals,
             )
             .display_buffer_seconds,
         )

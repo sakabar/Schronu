@@ -1,4 +1,4 @@
-use chrono::{DateTime, Datelike, Days, Local, LocalResult, NaiveDate, TimeZone, Weekday};
+use chrono::{Datelike, Days, NaiveDate, Weekday};
 
 const BUTTON_COUNT: u64 = 8;
 
@@ -36,15 +36,6 @@ pub fn logical_date_buttons(
             })
         })
         .collect()
-}
-
-pub(crate) fn logical_date_start(
-    logical_date: &str,
-) -> Result<LocalResult<DateTime<Local>>, DateButtonsError> {
-    let local_start = parse_logical_date(logical_date)?
-        .and_hms_opt(6, 0, 0)
-        .ok_or(DateButtonsError::DateOverflow)?;
-    Ok(Local.from_local_datetime(&local_start))
 }
 
 fn parse_logical_date(input: &str) -> Result<NaiveDate, DateButtonsError> {

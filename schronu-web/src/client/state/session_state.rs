@@ -298,7 +298,7 @@ impl ClientState {
         self.sessions.in_flight_task_ids.remove(&task_id);
         match result {
             Ok(success) => {
-                self.apply_committed_session_snapshot(&task_id, success.snapshot);
+                let _ = self.apply_snapshot(success.snapshot);
                 self.finish_committed_mutation(
                     storage,
                     &task_id,
@@ -328,7 +328,7 @@ impl ClientState {
         self.sessions.in_flight_task_ids.remove(&task_id);
         match result {
             Ok(snapshot) => {
-                self.apply_committed_session_snapshot(&task_id, snapshot);
+                let _ = self.apply_snapshot(snapshot);
                 self.finish_committed_mutation(storage, &task_id, Operation::CompleteSession, None);
                 self.finish_mutation_safety(storage, Operation::CompleteSession, false);
             }
@@ -369,24 +369,6 @@ impl ClientState {
                 .insert(task_id.to_owned());
         }
         self.record_server_failure(operation, Some(task_id), error);
-    }
-
-    fn apply_committed_session_snapshot(&mut self, task_id: &str, snapshot: ServerSnapshot) {
-        let session_started_at = self
-            .sessions()
-            .iter()
-            .find(|session| session.task_id == task_id)
-            .map(|session| session.started_at_epoch_ms);
-        let observed_at = snapshot.observed_at_epoch_ms;
-        let _ = self.apply_snapshot(snapshot);
-        if let (Some(session_started_at), Some(tracking_started_at)) = (
-            session_started_at,
-            self.read.buffer_tracking_started_at_epoch_ms,
-        ) {
-            self.read.record_committed_session_interval(
-                session_started_at.max(tracking_started_at)..observed_at,
-            );
-        }
     }
 
     fn finish_mutation_safety<S: KeyValueStorage>(

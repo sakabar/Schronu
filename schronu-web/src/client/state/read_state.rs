@@ -1,13 +1,9 @@
 use super::*;
-use crate::client::date_buttons::{logical_date_buttons, logical_date_start};
+use crate::client::date_buttons::logical_date_buttons;
 use crate::{ListTasksRequest, SessionTask, WebSuccess};
-use chrono::LocalResult;
-use std::ops::Range;
 
 pub(super) struct ReadState {
     pub(super) snapshot: Option<ServerSnapshot>,
-    pub(super) buffer_tracking_started_at_epoch_ms: Option<i64>,
-    pub(super) committed_session_intervals: Vec<Range<i64>>,
     pub(super) date_buttons: Vec<LogicalDateButton>,
     pub(super) selected_logical_date: Option<String>,
     pub(super) scheduled_rows: Vec<ScheduledTaskRow>,
@@ -23,8 +19,6 @@ impl ReadState {
     pub(super) fn new() -> Self {
         Self {
             snapshot: None,
-            buffer_tracking_started_at_epoch_ms: None,
-            committed_session_intervals: Vec::new(),
             date_buttons: Vec::new(),
             selected_logical_date: None,
             scheduled_rows: Vec::new(),
@@ -177,7 +171,6 @@ impl ClientState {
         {
             return None;
         }
-        let initial_snapshot = self.read.snapshot.is_none();
         let changed = self
             .read
             .snapshot
@@ -188,23 +181,6 @@ impl ClientState {
                 logical_date_buttons(&snapshot.logical_date).unwrap_or_default();
             self.read.selected_logical_date = None;
             self.read.scheduled_rows.clear();
-            let tracking_started_at = if initial_snapshot {
-                snapshot.observed_at_epoch_ms
-            } else {
-                match logical_date_start(&snapshot.logical_date) {
-                    Ok(LocalResult::Single(start))
-                        if start.timestamp_millis() <= snapshot.observed_at_epoch_ms =>
-                    {
-                        start.timestamp_millis()
-                    }
-                    Ok(LocalResult::Single(_))
-                    | Ok(LocalResult::Ambiguous(_, _))
-                    | Ok(LocalResult::None)
-                    | Err(_) => snapshot.observed_at_epoch_ms,
-                }
-            };
-            self.read.buffer_tracking_started_at_epoch_ms = Some(tracking_started_at);
-            self.read.committed_session_intervals.clear();
         }
         self.read.snapshot = Some(snapshot);
         Some(changed)
@@ -214,27 +190,6 @@ impl ClientState {
         let request_id = self.read.next_request_id;
         self.read.next_request_id = request_id.checked_add(1)?;
         Some(request_id)
-    }
-}
-
-impl ReadState {
-    pub(super) fn record_committed_session_interval(&mut self, interval: Range<i64>) {
-        if interval.start >= interval.end {
-            return;
-        }
-        let mut intervals = std::mem::take(&mut self.committed_session_intervals);
-        intervals.push(interval);
-        intervals.sort_unstable_by_key(|current| current.start);
-
-        for current in intervals {
-            if let Some(previous) = self.committed_session_intervals.last_mut() {
-                if current.start <= previous.end {
-                    previous.end = previous.end.max(current.end);
-                    continue;
-                }
-            }
-            self.committed_session_intervals.push(current);
-        }
     }
 }
 

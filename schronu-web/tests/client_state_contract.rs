@@ -117,7 +117,7 @@ fn server_commit済みでlocal削除失敗したsessionはbufferを停止しな�
 }
 
 #[test]
-fn active_session中の新しいsnapshotは停止済みbufferを引き継ぐ() {
+fn active_session中の新しいsnapshotを新たなbuffer基準にする() {
     let storage = FakeStorage::default();
     let mut state = load_client_state(&storage, 1_000_000).unwrap();
     let bootstrap_id = bootstrap_effect(state.request_bootstrap());
@@ -141,7 +141,7 @@ fn active_session中の新しいsnapshotは停止済みbufferを引き継ぐ() {
     );
     state.tick(1_040_000);
 
-    assert_eq!(state.display_buffer_seconds(), Some(50));
+    assert_eq!(state.display_buffer_seconds(), Some(30));
     state.discard_session(&storage, TASK_ID);
     assert_eq!(state.display_buffer_seconds(), Some(20));
 }
@@ -175,7 +175,7 @@ fn active_session中にbusy_timeを跨いだsnapshotは壁時計時間をcredit�
 }
 
 #[test]
-fn 複数session中の記録snapshotはcommit済み区間を二重creditしない() {
+fn 複数session中の記録snapshotを新たなbuffer基準にする() {
     let storage = FakeStorage::default();
     let mut state = load_client_state(&storage, 1_000_000).unwrap();
     let bootstrap_id = bootstrap_effect(state.request_bootstrap());
@@ -203,13 +203,13 @@ fn 複数session中の記録snapshotはcommit済み区間を二重creditしな�
     );
     state.tick(1_040_000);
 
-    assert_eq!(state.display_buffer_seconds(), Some(50));
+    assert_eq!(state.display_buffer_seconds(), Some(40));
     state.discard_session(&storage, OTHER_TASK_ID);
     assert_eq!(state.display_buffer_seconds(), Some(30));
 }
 
 #[test]
-fn logical_date変更snapshotは06時以降のactive_session時間をcreditする() {
+fn logical_date変更snapshotを新たなbuffer基準にする() {
     let boundary = Local
         .with_ymd_and_hms(2026, 9, 6, 6, 0, 0)
         .single()
@@ -245,7 +245,7 @@ fn logical_date変更snapshotは06時以降のactive_session時間をcreditす�
     );
     state.tick(boundary + 20_000);
 
-    assert_eq!(state.display_buffer_seconds(), Some(60));
+    assert_eq!(state.display_buffer_seconds(), Some(50));
     state.discard_session(&storage, TASK_ID);
     assert_eq!(state.display_buffer_seconds(), Some(40));
 }
