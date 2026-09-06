@@ -7,7 +7,7 @@ use super::date_buttons::LogicalDateButton;
 pub use super::effect::ClientEffect;
 pub use super::history::{Operation, OperationHistoryEntry, Outcome, ServerActionInvocation};
 use super::safety_state::{load_mutation_safety, MutationSafetyState};
-use super::time_model::buffer_timing;
+use super::time_model::buffer_timing_with_sessions;
 use super::work_sessions::{
     load_work_sessions, unavailable_state, KeyValueStorage, StorageError, WorkSession,
     WorkSessionsState,
@@ -159,6 +159,20 @@ impl ClientState {
         self.sessions.in_flight_task_ids.contains(task_id)
     }
 
+    pub(crate) fn session_stopped_at_epoch_ms(&self, task_id: &str) -> Option<i64> {
+        self.sessions
+            .pending_mutations
+            .values()
+            .find(|pending| pending.invocation.task_id() == Some(task_id))
+            .map(|pending| pending.ended_at_epoch_ms)
+            .or_else(|| {
+                self.sessions
+                    .uncertain_stopped_at_epoch_ms
+                    .get(task_id)
+                    .copied()
+            })
+    }
+
     pub fn is_session_manual_check_blocked(&self, task_id: &str) -> bool {
         self.sessions
             .manual_check_blocked_task_ids
@@ -198,18 +212,23 @@ impl ClientState {
 
     pub fn display_buffer_seconds(&self) -> Option<i128> {
         let snapshot = self.snapshot()?;
-        let active_session_starts: Vec<_> = self
+        let session_intervals: Vec<_> = self
             .sessions()
             .iter()
             .filter(|session| !self.is_session_committed_blocked(&session.task_id))
-            .map(|session| session.started_at_epoch_ms)
+            .map(|session| {
+                (
+                    session.started_at_epoch_ms,
+                    self.session_stopped_at_epoch_ms(&session.task_id),
+                )
+            })
             .collect();
         Some(
-            buffer_timing(
+            buffer_timing_with_sessions(
                 snapshot.observed_at_epoch_ms,
                 snapshot.buffer_seconds,
                 self.tick_now_epoch_ms,
-                &active_session_starts,
+                &session_intervals,
             )
             .display_buffer_seconds,
         )

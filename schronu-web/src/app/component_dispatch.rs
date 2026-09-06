@@ -1,6 +1,6 @@
-use super::component_models::browser_monotonic_now_ms;
+use super::component_models::{browser_monotonic_now_ms, browser_now_epoch_ms};
 use super::component_runtime::{
-    component_action_from_session_action, ComponentAction, ComponentOrchestrator,
+    component_actions_from_session_action, ComponentAction, ComponentOrchestrator,
 };
 use super::effect_dispatcher::{execute_tracked_effect, ServerFunctionGateway};
 use super::session_view::SessionAction;
@@ -12,8 +12,10 @@ pub(crate) fn dispatch_session_action(
     client: Signal<ComponentOrchestrator>,
     action: SessionAction,
 ) {
-    let action = component_action_from_session_action(action);
-    dispatch_action(client, action);
+    let actions = component_actions_from_session_action(action, browser_now_epoch_ms());
+    for action in actions {
+        dispatch_action(client, action);
+    }
 }
 
 pub(crate) fn dispatch_action(mut client: Signal<ComponentOrchestrator>, action: ComponentAction) {

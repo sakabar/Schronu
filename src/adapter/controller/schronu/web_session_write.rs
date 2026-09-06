@@ -9,6 +9,7 @@ use uuid::Uuid;
 pub struct RecordSessionRequest {
     pub task_id: String,
     pub started_at_epoch_ms: i64,
+    pub ended_at_epoch_ms: Option<i64>,
     pub expected_actual_work_seconds: i64,
 }
 
@@ -16,6 +17,7 @@ pub struct RecordSessionRequest {
 pub struct CompleteSessionRequest {
     pub task_id: String,
     pub started_at_epoch_ms: i64,
+    pub ended_at_epoch_ms: Option<i64>,
     pub expected_actual_work_seconds: i64,
     pub record_elapsed_seconds: bool,
 }
@@ -37,6 +39,11 @@ pub enum WebSessionInputError {
     },
     NegativeExpectedActualWorkSeconds(i64),
     StartedAtOutOfRange(i64),
+    EndedAtOutOfRange(i64),
+    FutureEndedAt {
+        ended_at_epoch_ms: i64,
+        observed_at_epoch_ms: i64,
+    },
     ElapsedTimeOverflow {
         started_at_epoch_ms: i64,
         observed_at_epoch_ms: i64,
@@ -63,6 +70,16 @@ impl fmt::Display for WebSessionInputError {
             Self::StartedAtOutOfRange(value) => {
                 write!(formatter, "started_at_epoch_ms is out of range: {value}")
             }
+            Self::EndedAtOutOfRange(value) => {
+                write!(formatter, "ended_at_epoch_ms is out of range: {value}")
+            }
+            Self::FutureEndedAt {
+                ended_at_epoch_ms,
+                observed_at_epoch_ms,
+            } => write!(
+                formatter,
+                "ended_at_epoch_ms {ended_at_epoch_ms} is later than observed_at_epoch_ms {observed_at_epoch_ms}"
+            ),
             Self::ElapsedTimeOverflow {
                 started_at_epoch_ms,
                 observed_at_epoch_ms,
@@ -84,8 +101,9 @@ pub(super) fn prepare_add_actual_work_input(
         &request.task_id,
         request.expected_actual_work_seconds,
     )?;
+    let ended_at = resolve_ended_at(request.ended_at_epoch_ms, operation_now)?;
     let additional_actual_work_seconds =
-        calculate_elapsed_seconds(request.started_at_epoch_ms, operation_now)?;
+        calculate_elapsed_seconds(request.started_at_epoch_ms, ended_at)?;
 
     Ok(AddActualWorkInput {
         task_id,
@@ -102,15 +120,16 @@ pub(super) fn prepare_complete_task_input(
         &request.task_id,
         request.expected_actual_work_seconds,
     )?;
+    let ended_at = resolve_ended_at(request.ended_at_epoch_ms, operation_now)?;
     let additional_actual_work_seconds = if request.record_elapsed_seconds {
-        calculate_elapsed_seconds(request.started_at_epoch_ms, operation_now)?
+        calculate_elapsed_seconds(request.started_at_epoch_ms, ended_at)?
     } else {
         0
     };
 
     Ok(CompleteTaskInput {
         task_id,
-        finished_at: operation_now,
+        finished_at: ended_at,
         additional_actual_work_seconds,
         expected_actual_work_seconds: Some(request.expected_actual_work_seconds),
     })
@@ -135,7 +154,7 @@ fn validate_task_and_expected_actual_work(
 
 fn calculate_elapsed_seconds(
     started_at_epoch_ms: i64,
-    operation_now: DateTime<Local>,
+    ended_at: DateTime<Local>,
 ) -> Result<i64, WebSessionInputError> {
     if DateTime::<Utc>::from_timestamp_millis(started_at_epoch_ms).is_none() {
         return Err(WebSessionInputError::StartedAtOutOfRange(
@@ -143,7 +162,7 @@ fn calculate_elapsed_seconds(
         ));
     }
 
-    let observed_at_epoch_ms = operation_now.timestamp_millis();
+    let observed_at_epoch_ms = ended_at.timestamp_millis();
     let elapsed_milliseconds = observed_at_epoch_ms
         .checked_sub(started_at_epoch_ms)
         .ok_or(WebSessionInputError::ElapsedTimeOverflow {
@@ -157,4 +176,23 @@ fn calculate_elapsed_seconds(
         });
     }
     Ok(elapsed_milliseconds / 1_000)
+}
+
+fn resolve_ended_at(
+    ended_at_epoch_ms: Option<i64>,
+    operation_now: DateTime<Local>,
+) -> Result<DateTime<Local>, WebSessionInputError> {
+    let Some(ended_at_epoch_ms) = ended_at_epoch_ms else {
+        return Ok(operation_now);
+    };
+    let ended_at = DateTime::<Utc>::from_timestamp_millis(ended_at_epoch_ms)
+        .ok_or(WebSessionInputError::EndedAtOutOfRange(ended_at_epoch_ms))?
+        .with_timezone(&Local);
+    if ended_at > operation_now {
+        return Err(WebSessionInputError::FutureEndedAt {
+            ended_at_epoch_ms,
+            observed_at_epoch_ms: operation_now.timestamp_millis(),
+        });
+    }
+    Ok(ended_at)
 }

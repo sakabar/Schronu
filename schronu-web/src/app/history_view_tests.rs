@@ -25,14 +25,14 @@ fn history_panel_is_closed_by_default_and_omits_locality() {
     let html = render(vec![
         HistoryEntryViewModel {
             occurred_at_hh_mm_ss: "11:25:03".to_owned(),
-            invocation: "record_session(task_id: \"123e4567-e89b-12d3-a456-426614174000\", started_at_epoch_ms: 1000, expected_actual_work_seconds: 2000)".to_owned(),
+            invocation: "record_session(task_id: \"123e4567-e89b-12d3-a456-426614174000\", started_at_epoch_ms: 1000, ended_at_epoch_ms: Some(1500), expected_actual_work_seconds: 2000)".to_owned(),
             outcome: "success".to_owned(),
             summary: "実績を記録しました。".to_owned(),
             failed: false,
         },
         HistoryEntryViewModel {
             occurred_at_hh_mm_ss: "11:26:10".to_owned(),
-            invocation: "complete_session(task_id: \"task<&>\", started_at_epoch_ms: 3000, expected_actual_work_seconds: 4000, record_elapsed_seconds: false)".to_owned(),
+            invocation: "complete_session(task_id: \"task<&>\", started_at_epoch_ms: 3000, ended_at_epoch_ms: Some(3500), expected_actual_work_seconds: 4000, record_elapsed_seconds: false)".to_owned(),
             outcome: "failure".to_owned(),
             summary: "セッションを保持しました。".to_owned(),
             failed: true,
@@ -44,11 +44,11 @@ fn history_panel_is_closed_by_default_and_omits_locality() {
     assert!(html.contains("<summary>発火履歴</summary>"));
     for text in [
         "11:25:03",
-        "record_session(task_id: &#34;123e4567-e89b-12d3-a456-426614174000&#34;, started_at_epoch_ms: 1000, expected_actual_work_seconds: 2000)",
+        "record_session(task_id: &#34;123e4567-e89b-12d3-a456-426614174000&#34;, started_at_epoch_ms: 1000, ended_at_epoch_ms: Some(1500), expected_actual_work_seconds: 2000)",
         "success",
         "実績を記録しました。",
         "11:26:10",
-        "complete_session(task_id: &#34;task&#60;&#38;&#62;&#34;, started_at_epoch_ms: 3000, expected_actual_work_seconds: 4000, record_elapsed_seconds: false)",
+        "complete_session(task_id: &#34;task&#60;&#38;&#62;&#34;, started_at_epoch_ms: 3000, ended_at_epoch_ms: Some(3500), expected_actual_work_seconds: 4000, record_elapsed_seconds: false)",
         "failure",
         "セッションを保持しました。",
     ] {
@@ -80,10 +80,11 @@ fn invocation_formatterは実action名と全引数を関数呼出し形式にす
         ServerActionInvocation::RecordSession(RecordSessionRequest {
             task_id: task_id.to_owned(),
             started_at_epoch_ms: 1_000,
+            ended_at_epoch_ms: Some(1_500),
             expected_actual_work_seconds: 2_000,
         })
         .to_string(),
-        "record_session(task_id: \"task<\\\"&>\", started_at_epoch_ms: 1000, expected_actual_work_seconds: 2000)"
+        "record_session(task_id: \"task<\\\"&>\", started_at_epoch_ms: 1000, ended_at_epoch_ms: Some(1500), expected_actual_work_seconds: 2000)"
     );
     for (record_elapsed_seconds, expected) in [
         (true, "record_elapsed_seconds: true"),
@@ -92,6 +93,7 @@ fn invocation_formatterは実action名と全引数を関数呼出し形式にす
         let formatted = ServerActionInvocation::CompleteSession(CompleteSessionRequest {
             task_id: task_id.to_owned(),
             started_at_epoch_ms: 3_000,
+            ended_at_epoch_ms: Some(3_500),
             expected_actual_work_seconds: 4_000,
             record_elapsed_seconds,
         })

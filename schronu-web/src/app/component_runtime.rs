@@ -39,6 +39,29 @@ pub(crate) fn component_action_from_session_action(action: SessionAction) -> Com
     }
 }
 
+pub(crate) fn component_actions_from_session_action(
+    action: SessionAction,
+    ended_at_epoch_ms: i64,
+) -> Vec<ComponentAction> {
+    let stops_session = matches!(
+        action.kind,
+        SessionActionKind::Record
+            | SessionActionKind::Complete
+            | SessionActionKind::CompleteWithoutRecording
+    );
+    let mutation = component_action_from_session_action(action);
+    if stops_session {
+        vec![
+            ComponentAction::Tick {
+                wall_now_epoch_ms: ended_at_epoch_ms,
+            },
+            mutation,
+        ]
+    } else {
+        vec![mutation]
+    }
+}
+
 pub(crate) fn initialize_client<S: KeyValueStorage>(
     storage: &S,
     wall_now_epoch_ms: i64,
