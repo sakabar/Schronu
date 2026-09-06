@@ -27,10 +27,10 @@ fn root(props: RootProps) -> Element {
             tick_now_epoch_ms: props.tick_now_epoch_ms,
             mutations_locked: false,
             on_select_date: move |date: String| date_events.lock().unwrap().push(format!("date:{date}")),
-            on_start_session: move |task: SessionTask| task_events
+            on_start_session: move |(task, is_leaf): (SessionTask, bool)| task_events
                 .lock()
                 .unwrap()
-                .push(format!("task:{}:{}", task.task_id, task.task_name)),
+                .push(format!("task:{}:{}:{is_leaf}", task.task_id, task.task_name)),
         }
     }
 }
@@ -46,7 +46,7 @@ fn carry_lockはsession追加だけを無効化し日付選択は維持する() 
                 label: "土".to_owned(),
                 selected: false,
             }],
-            rows: vec![row("task-id", None, false)],
+            rows: vec![row("task-id", None, true)],
             active_task_ids: Vec::new(),
             tick_now_epoch_ms: 0,
             events: Arc::clone(&events),
@@ -67,7 +67,10 @@ fn carry_lockはsession追加だけを無効化し日付選択は維持する() 
                 tick_now_epoch_ms: props.tick_now_epoch_ms,
                 mutations_locked: true,
                 on_select_date: move |date: String| date_events.lock().unwrap().push(format!("date:{date}")),
-                on_start_session: move |task: SessionTask| task_events.lock().unwrap().push(format!("task:{}", task.task_id)),
+                on_start_session: move |(task, is_leaf): (SessionTask, bool)| task_events
+                    .lock()
+                    .unwrap()
+                    .push(format!("task:{}:{is_leaf}", task.task_id)),
             }
         }
     }
@@ -80,7 +83,7 @@ fn carry_lockはsession追加だけを無効化し日付選択は維持する() 
                 label: "土".to_owned(),
                 selected: false,
             }],
-            rows: vec![row("task-id", None, false)],
+            rows: vec![row("task-id", None, true)],
             active_task_ids: Vec::new(),
             tick_now_epoch_ms: 0,
             events: Arc::clone(&events),
@@ -162,15 +165,81 @@ fn list_renders_eight_dates_selected_row_fields_and_visual_states() {
     assert!(html.contains("11:25-11:28"));
     assert!(html.contains("task-name is-leaf"));
     assert_eq!(html.matches("deadline is-overdue").count(), 1);
-    assert_eq!(html.matches("<button class=\"session-start\"").count(), 2);
-    for task_name in ["task leaf", "task late"] {
-        assert!(
-            html.contains(&format!("aria-label=\"{task_name}: セッション\"")),
-            "{html}"
-        );
-    }
+    assert_eq!(html.matches("<button class=\"session-start\"").count(), 1);
+    assert!(
+        html.contains("aria-label=\"task leaf: セッション\""),
+        "{html}"
+    );
+    assert!(
+        !html.contains("aria-label=\"task late: セッション\""),
+        "{html}"
+    );
     assert!(!html.contains("<a"));
     assert!(events.lock().unwrap().is_empty());
+}
+
+#[test]
+fn list_rowはresponsive表示用の意味別cellとlabelを持つ() {
+    let events = Arc::new(Mutex::new(Vec::new()));
+    let (dom, _) = build(RootProps {
+        dates: Vec::new(),
+        rows: vec![row("labeled", None, true)],
+        active_task_ids: Vec::new(),
+        tick_now_epoch_ms: 0,
+        events,
+    });
+    let html = dioxus::ssr::render(&dom);
+
+    assert!(
+        html.contains("class=\"deadline\" data-label=\"締切\""),
+        "{html}"
+    );
+    assert!(
+        html.contains("class=\"schedule-time\" data-label=\"予定\""),
+        "{html}"
+    );
+    assert!(html.contains("class=\"session-cell\""), "{html}");
+}
+
+#[test]
+fn listは46rem以下でtask_firstの2列metadata_cardになる() {
+    let css = include_str!("../../assets/main.css");
+    let narrow_list_layout = css
+        .split_once("@media (max-width: 46rem)")
+        .expect("list card breakpoint must match the 44rem table plus 2rem shell gutters")
+        .1;
+
+    for required in [
+        ".task-table-scroll {\n        overflow-x: visible;",
+        ".task-table {\n        display: block;\n        min-width: 0;",
+        ".task-table thead {\n        position: absolute;",
+        ".task-table tbody {\n        display: grid;",
+        "grid-template-areas:\n            \"task task\"\n            \"deadline schedule\"\n            \"action action\";",
+        ".task-table td[data-label]::before {\n        content: attr(data-label);",
+        ".task-name {\n        grid-area: task;\n        overflow-wrap: anywhere;",
+        ".session-cell {\n        grid-area: action;",
+        ".session-cell .session-start {\n        width: 100%;\n        min-height: 3rem;",
+    ] {
+        assert!(narrow_list_layout.contains(required), "missing: {required}");
+    }
+}
+
+#[test]
+fn 幅34rem以下はbufferと日付buttonをtouch_targetを保って圧縮する() {
+    let css = include_str!("../../assets/main.css");
+    let narrow_layout = css
+        .split_once("@media (max-width: 34rem)")
+        .expect("narrow viewport rule must exist")
+        .1;
+
+    for required in [
+        ".buffer-panel {\n        margin-block: 0.75rem 1rem;\n        padding: 1.25rem 1rem;",
+        ".buffer-value {\n        font-size: 3rem;",
+        ".date-pills {\n        gap: 0.35rem;",
+        ".date-pill {\n        min-height: max(2.75rem, 44px);\n        padding: 0.5rem 0.9rem;",
+    ] {
+        assert!(narrow_layout.contains(required), "missing: {required}");
+    }
 }
 
 #[test]
@@ -179,9 +248,9 @@ fn active_uuid_disables_every_matching_row_but_not_other_tasks() {
     let (dom, _) = build(RootProps {
         dates: Vec::new(),
         rows: vec![
-            row("same", None, false),
-            row("same", None, false),
-            row("other", None, false),
+            row("same", None, true),
+            row("same", None, true),
+            row("other", None, true),
         ],
         active_task_ids: vec!["same".to_owned()],
         tick_now_epoch_ms: 0,
@@ -206,7 +275,7 @@ fn deadline_equal_to_now_is_not_overdue() {
 }
 
 #[test]
-fn date_and_task_clicks_dispatch_exact_payload_once() {
+fn date_and_leaf_task_clicks_dispatch_exact_payload_once() {
     let events = Arc::new(Mutex::new(Vec::new()));
     let (date_dom, date_listeners) = build(RootProps {
         dates: vec![DateButtonViewModel {
@@ -225,13 +294,29 @@ fn date_and_task_clicks_dispatch_exact_payload_once() {
     events.lock().unwrap().clear();
     let (task_dom, task_listeners) = build(RootProps {
         dates: Vec::new(),
-        rows: vec![row("task-id", None, false)],
+        rows: vec![row("task-id", None, true)],
         active_task_ids: Vec::new(),
         tick_now_epoch_ms: 0,
         events: Arc::clone(&events),
     });
     dispatch_click(&task_dom, task_listeners[0]);
-    assert_eq!(*events.lock().unwrap(), ["task:task-id:task task-id"]);
+    assert_eq!(*events.lock().unwrap(), ["task:task-id:task task-id:true"]);
+}
+
+#[test]
+fn rank非0のtaskは開始buttonとclick_listenerを持たない() {
+    let events = Arc::new(Mutex::new(Vec::new()));
+    let (dom, listeners) = build(RootProps {
+        dates: Vec::new(),
+        rows: vec![row("non-leaf", None, false)],
+        active_task_ids: Vec::new(),
+        tick_now_epoch_ms: 0,
+        events: Arc::clone(&events),
+    });
+
+    assert!(listeners.is_empty());
+    assert!(!dioxus::ssr::render(&dom).contains("session-start"));
+    assert!(events.lock().unwrap().is_empty());
 }
 
 #[test]
@@ -239,7 +324,7 @@ fn disabled_active_task_does_not_dispatch() {
     let events = Arc::new(Mutex::new(Vec::new()));
     let (dom, listeners) = build(RootProps {
         dates: Vec::new(),
-        rows: vec![row("active", None, false)],
+        rows: vec![row("active", None, true)],
         active_task_ids: vec!["active".to_owned()],
         tick_now_epoch_ms: 0,
         events: Arc::clone(&events),

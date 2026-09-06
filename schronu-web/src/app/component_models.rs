@@ -1,7 +1,7 @@
 use super::carry_lock_view::CarryLockViewModel;
 use super::history_view::HistoryEntryViewModel;
 use super::list_view::DateButtonViewModel;
-use crate::client::state::{ActiveTab, ClientState, Locality, Operation, Outcome};
+use crate::client::state::{ActiveTab, ClientState, Operation, Outcome};
 use crate::client::view_projection::{
     project_list_rows_for_browser, project_session_cards_for_browser, ListRowViewModel,
     SessionCardViewModel,
@@ -91,11 +91,6 @@ fn history_view_models(state: &ClientState) -> Vec<HistoryEntryViewModel> {
             occurred_at_hh_mm_ss: browser_hh_mm_ss(entry.occurred_at_epoch_ms),
             operation: operation_label(entry.operation).to_owned(),
             task_id: entry.task_id.clone(),
-            locality: match entry.locality {
-                Locality::Local => "local",
-                Locality::Server => "server",
-            }
-            .to_owned(),
             outcome: match entry.outcome {
                 Outcome::Success => "success",
                 Outcome::Failure => "failure",

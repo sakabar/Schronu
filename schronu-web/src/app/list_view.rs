@@ -18,7 +18,7 @@ pub fn ListView(
     tick_now_epoch_ms: i64,
     #[props(default)] mutations_locked: bool,
     on_select_date: EventHandler<String>,
-    on_start_session: EventHandler<SessionTask>,
+    on_start_session: EventHandler<(SessionTask, bool)>,
 ) -> Element {
     rsx! {
         section { class: "task-list-view",
@@ -78,7 +78,7 @@ fn TaskRow(
     active: bool,
     tick_now_epoch_ms: i64,
     mutations_locked: bool,
-    on_start_session: EventHandler<SessionTask>,
+    on_start_session: EventHandler<(SessionTask, bool)>,
 ) -> Element {
     let deadline_class = if row
         .deadline_epoch_ms
@@ -96,24 +96,27 @@ fn TaskRow(
     let deadline = row.deadline_label.as_deref().unwrap_or("—");
     let button_label = format!("{}: セッション", row.task.task_name);
     let task = row.task.clone();
+    let is_leaf = row.is_leaf;
 
     rsx! {
         tr { class: "task-row",
-            td { class: deadline_class, "{deadline}" }
-            td { class: "schedule-time", "{row.schedule_label}" }
+            td { class: deadline_class, "data-label": "締切", "{deadline}" }
+            td { class: "schedule-time", "data-label": "予定", "{row.schedule_label}" }
             td { class: task_class, "{row.task.task_name}" }
-            td {
-                button {
-                    class: "session-start",
-                    r#type: "button",
-                    aria_label: button_label,
-                    disabled: active || mutations_locked,
-                    onclick: move |_| {
-                        if !active && !mutations_locked {
-                            on_start_session.call(task.clone());
-                        }
-                    },
-                    "セッション"
+            td { class: "session-cell",
+                if is_leaf {
+                    button {
+                        class: "session-start",
+                        r#type: "button",
+                        aria_label: button_label,
+                        disabled: active || mutations_locked,
+                        onclick: move |_| {
+                            if !active && !mutations_locked {
+                                on_start_session.call((task.clone(), is_leaf));
+                            }
+                        },
+                        "セッション"
+                    }
                 }
             }
         }

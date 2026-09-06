@@ -124,7 +124,10 @@ pub(super) fn BrowserApp() -> Element {
                     tick_now_epoch_ms,
                     mutations_locked,
                     on_select_date: move |date| dispatch_action(client, ComponentAction::SelectDate(date)),
-                    on_start_session: move |task| dispatch_action(client, ComponentAction::AddSession(task)),
+                    on_start_session: move |(task, is_leaf)| dispatch_action(
+                        client,
+                        ComponentAction::AddSession { task, is_leaf },
+                    ),
                 }
             }
             HistoryView { entries: history }

@@ -1,6 +1,6 @@
 use chrono::{Local, TimeZone};
 use schronu_web::client::state::{
-    load_client_state, ActiveTab, ClientEffect, Locality, Operation, Outcome, ServerFailure,
+    load_client_state, ActiveTab, ClientEffect, Operation, Outcome, ServerFailure,
 };
 use schronu_web::{web_error_codes, RecordSessionResult, RetryAdvice, SessionTask, WebSuccess};
 
@@ -54,6 +54,27 @@ fn 通信matrixとstorage_firstのlocal状態遷移を固定する() {
     storage.fail_writes.set(false);
     assert_eq!(state.discard_session(&storage, TASK_ID), ClientEffect::None);
     assert!(state.sessions().is_empty());
+    assert!(
+        state.history().is_empty(),
+        "localStorage操作は発火履歴へ記録しない"
+    );
+}
+
+#[test]
+fn rank非0の一覧taskは手動sessionへ追加しない() {
+    let storage = FakeStorage::default();
+    let mut state = load_client_state(&storage, 2_000).unwrap();
+    let mut task_row = row(TASK_ID, 300);
+    task_row.is_leaf = false;
+
+    assert_eq!(
+        state.add_session_from_row(&storage, &task_row),
+        ClientEffect::None
+    );
+
+    assert!(state.sessions().is_empty());
+    assert!(storage.value.borrow().is_none());
+    assert!(state.history().is_empty());
 }
 
 #[test]
@@ -442,10 +463,10 @@ fn 完了effectは計測の記録方針と履歴種別を保持する() {
         request_id,
         Ok(snapshot("2026-09-05", 1)),
     );
-    assert!(discard_state.history().iter().any(|entry| {
-        entry.operation == Operation::CompleteSessionWithoutRecording
-            && entry.locality == Locality::Server
-    }));
+    assert!(discard_state
+        .history()
+        .iter()
+        .any(|entry| { entry.operation == Operation::CompleteSessionWithoutRecording }));
     assert!(discard_state.sessions().is_empty());
 
     let failed_storage = FakeStorage::default();
@@ -464,7 +485,6 @@ fn 完了effectは計測の記録方針と履歴種別を保持する() {
     assert_eq!(failed_state.sessions().len(), 1);
     assert!(failed_state.history().iter().any(|entry| {
         entry.operation == Operation::CompleteSessionWithoutRecording
-            && entry.locality == Locality::Server
             && entry.outcome == Outcome::Failure
     }));
 }

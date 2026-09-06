@@ -12,7 +12,10 @@ pub(crate) enum ComponentAction {
     },
     SelectDate(String),
     AutoSession,
-    AddSession(SessionTask),
+    AddSession {
+        task: SessionTask,
+        is_leaf: bool,
+    },
     DiscardSession(String),
     RecordSession(String),
     CompleteSession(String),
@@ -120,7 +123,9 @@ pub(crate) fn reduce_component_action_at<S: KeyValueStorage>(
         ComponentAction::Tick { wall_now_epoch_ms } => state.tick(wall_now_epoch_ms),
         ComponentAction::SelectDate(logical_date) => state.request_list(&logical_date),
         ComponentAction::AutoSession => state.request_auto_session(),
-        ComponentAction::AddSession(task) => state.add_session_from_task(storage, &task),
+        ComponentAction::AddSession { task, is_leaf } => {
+            state.add_session_from_list_task(storage, &task, is_leaf)
+        }
         ComponentAction::DiscardSession(task_id) => state.discard_session(storage, &task_id),
         ComponentAction::RecordSession(task_id) => state.begin_record_session(storage, &task_id),
         ComponentAction::CompleteSession(task_id) => {
@@ -141,7 +146,7 @@ fn is_carry_lock_mutation(action: &ComponentAction) -> bool {
     matches!(
         action,
         ComponentAction::AutoSession
-            | ComponentAction::AddSession(_)
+            | ComponentAction::AddSession { .. }
             | ComponentAction::DiscardSession(_)
             | ComponentAction::RecordSession(_)
             | ComponentAction::CompleteSession(_)

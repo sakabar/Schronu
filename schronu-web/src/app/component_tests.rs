@@ -68,7 +68,10 @@ fn component_actionは仕様の五操作だけをserver_effectへ変換する() 
         ComponentAction::Tick {
             wall_now_epoch_ms: 2_000,
         },
-        ComponentAction::AddSession(task(RECORD_ID)),
+        ComponentAction::AddSession {
+            task: task(RECORD_ID),
+            is_leaf: true,
+        },
         ComponentAction::DiscardSession(RECORD_ID.to_owned()),
         ComponentAction::ConfirmRepositoryChecked,
     ] {
@@ -97,7 +100,10 @@ fn component_actionは仕様の五操作だけをserver_effectへ変換する() 
             &mut state,
             &storage,
             2_000,
-            ComponentAction::AddSession(task(RECORD_ID))
+            ComponentAction::AddSession {
+                task: task(RECORD_ID),
+                is_leaf: true,
+            }
         ),
         ClientEffect::None
     );
@@ -117,7 +123,10 @@ fn component_actionは仕様の五操作だけをserver_effectへ変換する() 
         &mut other_state,
         &other_storage,
         1_000,
-        ComponentAction::AddSession(task(COMPLETE_ID)),
+        ComponentAction::AddSession {
+            task: task(COMPLETE_ID),
+            is_leaf: true,
+        },
     );
     assert!(matches!(
         reduce_component_action_at(
@@ -136,7 +145,10 @@ fn component_actionは仕様の五操作だけをserver_effectへ変換する() 
         &mut discard_complete_state,
         &discard_complete_storage,
         1_000,
-        ComponentAction::AddSession(task(COMPLETE_ID)),
+        ComponentAction::AddSession {
+            task: task(COMPLETE_ID),
+            is_leaf: true,
+        },
     );
     assert!(matches!(
         reduce_component_action_at(
@@ -163,7 +175,10 @@ fn 持ち歩きロックは変更操作だけを中央で遮断しarmedを一度
 
     for action in [
         ComponentAction::AutoSession,
-        ComponentAction::AddSession(task(RECORD_ID)),
+        ComponentAction::AddSession {
+            task: task(RECORD_ID),
+            is_leaf: true,
+        },
         ComponentAction::DiscardSession(RECORD_ID.to_owned()),
         ComponentAction::RecordSession(RECORD_ID.to_owned()),
         ComponentAction::CompleteSession(RECORD_ID.to_owned()),
@@ -178,7 +193,10 @@ fn 持ち歩きロックは変更操作だけを中央で遮断しarmedを一度
 
     for action in [
         ComponentAction::AutoSession,
-        ComponentAction::AddSession(task(RECORD_ID)),
+        ComponentAction::AddSession {
+            task: task(RECORD_ID),
+            is_leaf: true,
+        },
         ComponentAction::DiscardSession(RECORD_ID.to_owned()),
         ComponentAction::RecordSession(RECORD_ID.to_owned()),
         ComponentAction::CompleteSession(RECORD_ID.to_owned()),
@@ -244,7 +262,10 @@ fn 持ち歩きロックは変更操作だけを中央で遮断しarmedを一度
             &mut state,
             &storage,
             2_003,
-            ComponentAction::AddSession(task(RECORD_ID))
+            ComponentAction::AddSession {
+                task: task(RECORD_ID),
+                is_leaf: true,
+            }
         ),
         ClientEffect::None,
         "同時刻の2件目も遮断する"
@@ -442,6 +463,28 @@ fn carry_lock_warningはbrowser_page_modelのwarningsへ合流する() {
         auto_session_empty,
         carry_lock,
     );
+}
+
+#[test]
+fn component_actionはrank非0の手動session追加を拒否する() {
+    let storage = MemoryStorage::default();
+    let (mut state, _) = initialize_client(&storage, 1_000);
+
+    assert_eq!(
+        reduce_component_action_at(
+            &mut state,
+            &storage,
+            1_000,
+            ComponentAction::AddSession {
+                task: task(RECORD_ID),
+                is_leaf: false,
+            },
+        ),
+        ClientEffect::None
+    );
+
+    assert!(state.sessions().is_empty());
+    assert!(state.history().is_empty());
 }
 
 #[test]
