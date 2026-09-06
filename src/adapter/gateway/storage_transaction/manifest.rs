@@ -1,4 +1,4 @@
-use super::io::{validate_delete_target, StorageTransactionIo};
+use super::io::{validate_delete_target, validate_delete_target_path, StorageTransactionIo};
 use super::layout::{validate_storage_relative_path, TransactionLayout};
 use super::{StorageTransactionError, StorageTransactionOperation};
 use crate::adapter::gateway::storage_content_integrity::content_digest;
@@ -188,7 +188,11 @@ pub(super) fn validate_raw_manifest(
         .map(|entry| {
             let target_path = layout.target_path(&entry.target);
             let target = if entry.operation == ManifestEntryOperation::Delete {
-                validate_delete_target(io, storage_dir_path, &target_path)?
+                if replace_target_directories {
+                    validate_delete_target_path(storage_dir_path, &target_path)?
+                } else {
+                    validate_delete_target(io, storage_dir_path, &target_path)?
+                }
             } else {
                 validate_storage_relative_path(storage_dir_path, &target_path)?
             };

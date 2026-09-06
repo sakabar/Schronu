@@ -324,12 +324,41 @@ impl CommittedTransaction {
                     )),
                 }
             }
+            Err(error)
+                if self.state.manifest.replace_target_directories
+                    && error.kind() == std::io::ErrorKind::NotADirectory
+                    && self.delete_is_shadowed_by_desired_file(relative_path) =>
+            {
+                Ok(())
+            }
+            Err(error)
+                if self.state.manifest.replace_target_directories
+                    && error.kind() == std::io::ErrorKind::DirectoryNotEmpty
+                    && self
+                        .state
+                        .manifest
+                        .directories
+                        .iter()
+                        .any(|directory| directory == relative_path) =>
+            {
+                Ok(())
+            }
             Err(error) => Err(StorageTransactionError::new(
                 StorageTransactionOperation::RemoveLiveTarget,
                 target_path,
                 error,
             )),
         }
+    }
+
+    fn delete_is_shadowed_by_desired_file(&self, relative_path: &Path) -> bool {
+        self.state.manifest.entries.iter().any(|entry| {
+            matches!(
+                entry,
+                ValidatedEntry::Write { target, .. }
+                    if target != relative_path && relative_path.starts_with(target)
+            )
+        })
     }
 
     fn apply_bytes(

@@ -311,13 +311,7 @@ pub(super) fn validate_delete_target(
     storage_dir_path: &Path,
     target_path: &Path,
 ) -> Result<PathBuf, StorageTransactionError> {
-    let target = validate_storage_relative_path(storage_dir_path, target_path)?;
-    if matches!(target.to_str(), Some(".lock" | ".revision")) {
-        return Err(layout::invalid_target_path_error(
-            target_path,
-            "delete target must not use a reserved storage file",
-        ));
-    }
+    let target = validate_delete_target_path(storage_dir_path, target_path)?;
     let mut ancestor_path = storage_dir_path.to_path_buf();
     let Some(parent) = target.parent() else {
         return Ok(target);
@@ -344,6 +338,20 @@ pub(super) fn validate_delete_target(
                 ));
             }
         }
+    }
+    Ok(target)
+}
+
+pub(super) fn validate_delete_target_path(
+    storage_dir_path: &Path,
+    target_path: &Path,
+) -> Result<PathBuf, StorageTransactionError> {
+    let target = validate_storage_relative_path(storage_dir_path, target_path)?;
+    if matches!(target.to_str(), Some(".lock" | ".revision")) {
+        return Err(layout::invalid_target_path_error(
+            target_path,
+            "delete target must not use a reserved storage file",
+        ));
     }
     Ok(target)
 }
