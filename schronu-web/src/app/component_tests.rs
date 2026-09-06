@@ -374,7 +374,7 @@ fn 一覧のセッション保存失敗時は一覧tabに留まる() {
 }
 
 #[test]
-fn 持ち歩きロックは変更操作だけを中央で遮断しarmedを一度だけ消費する() {
+fn 持ち歩きロックはguard対象actionのたびに無操作期限を延長する() {
     let storage = MemoryStorage::default();
     let (mut state, _) = initialize_client(&storage, 1_000);
     reduce_component_action_at(
@@ -435,7 +435,11 @@ fn 持ち歩きロックは変更操作だけを中央で遮断しarmedを一度
 
         let _ = reduce_component_action_at(&mut action_state, &action_storage, 2_001, action);
 
-        assert!(action_state.carry_lock_locked());
+        assert_eq!(
+            action_state.carry_lock_mode(),
+            crate::client::carry_lock::CarryLockMode::ArmedUntil(17_001),
+            "成功・失敗や実変更の有無によらずdispatch時点から15秒延長する"
+        );
     }
 
     reduce_component_action_at(&mut state, &storage, 2_000, ComponentAction::ArmCarryLock);
@@ -468,28 +472,70 @@ fn 持ち歩きロックは変更操作だけを中央で遮断しarmedを一度
         ),
         ClientEffect::ListTasks { .. }
     ));
+    assert_eq!(
+        state.carry_lock_mode(),
+        crate::client::carry_lock::CarryLockMode::ArmedUntil(17_000),
+        "閲覧操作では無操作期限を延長しない"
+    );
     assert!(matches!(
         reduce_component_action_at(&mut state, &storage, 2_003, ComponentAction::AutoSession),
         ClientEffect::AutoSession { .. }
     ));
     assert_eq!(
+        state.carry_lock_mode(),
+        crate::client::carry_lock::CarryLockMode::ArmedUntil(17_003)
+    );
+    assert_eq!(
         reduce_component_action_at(
             &mut state,
             &storage,
-            2_003,
+            10_000,
             ComponentAction::AddSession {
                 task: task(RECORD_ID),
                 is_leaf: true,
             }
         ),
-        ClientEffect::None,
-        "同時刻の2件目も遮断する"
+        ClientEffect::None
+    );
+    assert_eq!(
+        state.carry_lock_mode(),
+        crate::client::carry_lock::CarryLockMode::ArmedUntil(25_000),
+        "次のguard対象actionから無操作期限を再計算する"
     );
     reduce_component_action_at(
         &mut state,
         &storage,
         2_004,
         ComponentAction::DisableCarryLock,
+    );
+
+    let failing_storage = MemoryStorage::failing_writes();
+    let (mut failing_state, _) = initialize_client(&failing_storage, 1_000);
+    reduce_component_action_at(
+        &mut failing_state,
+        &failing_storage,
+        1_000,
+        ComponentAction::EnableCarryLock,
+    );
+    reduce_component_action_at(
+        &mut failing_state,
+        &failing_storage,
+        2_000,
+        ComponentAction::ArmCarryLock,
+    );
+    reduce_component_action_at(
+        &mut failing_state,
+        &failing_storage,
+        3_000,
+        ComponentAction::AddSession {
+            task: task(RECORD_ID),
+            is_leaf: true,
+        },
+    );
+    assert_eq!(
+        failing_state.carry_lock_mode(),
+        crate::client::carry_lock::CarryLockMode::ArmedUntil(18_000),
+        "localStorage失敗でもdispatch時点から期限を延長する"
     );
 }
 
@@ -541,31 +587,6 @@ fn armedはmonotonic時刻が期限へ到達した時点でlockedへ戻る() {
         ComponentAction::Tick {
             wall_now_epoch_ms: i64::MIN,
         },
-    );
-    assert!(state.carry_lock_locked());
-}
-
-#[test]
-fn discard_completionのcancelはarmedを即時にlockedへ戻す() {
-    let storage = MemoryStorage::default();
-    let (mut state, _) = initialize_client(&storage, 1_000);
-    reduce_component_action_at(
-        &mut state,
-        &storage,
-        1_000,
-        ComponentAction::EnableCarryLock,
-    );
-    reduce_component_action_at(&mut state, &storage, 2_000, ComponentAction::ArmCarryLock);
-
-    assert!(!state.carry_lock_locked());
-    assert_eq!(
-        reduce_component_action_at(
-            &mut state,
-            &storage,
-            2_500,
-            ComponentAction::RelockCarryLock,
-        ),
-        ClientEffect::None
     );
     assert!(state.carry_lock_locked());
 }
@@ -628,6 +649,38 @@ fn wall_clock変動にかかわらずarmedはmonotonic_15秒境界で失効す�
         },
     );
     assert!(tick_state.carry_lock_locked());
+}
+
+#[test]
+fn armedはmonotonic時計が後退した時点でlockedへ戻る() {
+    let storage = MemoryStorage::default();
+    let (mut state, _) = initialize_client(&storage, 1_000);
+    reduce_component_action_at(
+        &mut state,
+        &storage,
+        1_000,
+        ComponentAction::EnableCarryLock,
+    );
+    reduce_component_action_at(&mut state, &storage, 2_000, ComponentAction::ArmCarryLock);
+    reduce_component_action_at(
+        &mut state,
+        &storage,
+        2_500,
+        ComponentAction::Tick {
+            wall_now_epoch_ms: 2_500,
+        },
+    );
+
+    reduce_component_action_at(
+        &mut state,
+        &storage,
+        2_499,
+        ComponentAction::Tick {
+            wall_now_epoch_ms: 2_499,
+        },
+    );
+
+    assert!(state.carry_lock_locked());
 }
 
 #[test]
