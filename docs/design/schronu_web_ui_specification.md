@@ -655,7 +655,7 @@ OperationHistoryEntry {
 - top-level JSON不正とversion不一致では空state、warning、元key維持、storage write blocked、`bootstrap`継続になることを検証する。
 - entry不正と同一UUID重複では不正entryだけを除外し、初期化時はkeyを維持し、次のlocal state変更時にvalid entryだけでversion 1を書き戻すことを検証する。
 - reload、timer遅延、browser時計後退で開始時刻基準の経過秒になることを検証する。
-- session追加・破棄がserver callを生成しないことを検証する。
+- session追加はserver callを生成せず、破棄はlocalStorage削除成功後だけ一覧再取得を生成し、削除失敗時は生成しないことを検証する。
 - 一覧の手動session追加は`is_leaf == false`でlocalStorage、memory state、発火履歴を変更しないことを検証する。
 - bufferはsession 0件、snapshot以前からの復元session、snapshot後の途中開始、複数sessionの同時計測、単一・複数sessionの見積到達、開始時に見積到達済みのsession、sessionの個別破棄、全session破棄で、server bufferからsnapshot後の壁時計経過秒を1回減算し、各sessionの未送信進捗秒を個別に合算することを検証する。
 - 破棄のlocalStorage保存失敗ではsessionとbuffer表示を維持し、server commit済みでlocal削除に失敗したsessionはbuffer計算上の計測中sessionから除外することを検証する。
