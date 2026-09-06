@@ -114,6 +114,70 @@ fn bufferは成功したsession破棄で未作業時間を再計算する() {
 }
 
 #[test]
+fn 終了処理中はclick時刻を保持してbufferを再開し失敗時に計測へ戻す() {
+    let storage = FakeStorage::default();
+    let mut state = state_with_sessions(&storage, &[TASK_ID]);
+    let bootstrap_id = bootstrap_effect(state.request_bootstrap());
+    state.apply_bootstrap_result(bootstrap_id, Ok(snapshot("2026-09-05", 0)));
+    state.tick(60_000);
+
+    let (request_id, request) = record_effect(state.begin_record_session(&storage, TASK_ID));
+    assert_eq!(request.ended_at_epoch_ms, Some(60_000));
+
+    state.tick(65_000);
+    assert_eq!(state.display_buffer_seconds(), Some(-5));
+
+    state.apply_record_result(
+        &storage,
+        request_id,
+        Err(ServerFailure::Operation(web_error(
+            web_error_codes::REPOSITORY_SAVE_FAILED,
+            RetryAdvice::Retry,
+        ))),
+    );
+    assert_eq!(state.display_buffer_seconds(), Some(60));
+}
+
+#[test]
+fn 三終了操作は同じclick時刻をrequestへ保持する() {
+    let record_storage = FakeStorage::default();
+    let mut record_state = state_with_sessions(&record_storage, &[TASK_ID]);
+    record_state.tick(60_000);
+    let (_, record) = record_effect(record_state.begin_record_session(&record_storage, TASK_ID));
+
+    let complete_storage = FakeStorage::default();
+    let mut complete_state = state_with_sessions(&complete_storage, &[TASK_ID]);
+    complete_state.tick(60_000);
+    let (_, complete) =
+        complete_effect(complete_state.begin_complete_session(&complete_storage, TASK_ID));
+
+    let discard_storage = FakeStorage::default();
+    let mut discard_state = state_with_sessions(&discard_storage, &[TASK_ID]);
+    discard_state.tick(60_000);
+    let (_, discard_complete) = complete_effect(
+        discard_state.begin_complete_session_without_recording(&discard_storage, TASK_ID),
+    );
+
+    assert_eq!(record.ended_at_epoch_ms, Some(60_000));
+    assert_eq!(complete.ended_at_epoch_ms, Some(60_000));
+    assert_eq!(discard_complete.ended_at_epoch_ms, Some(60_000));
+}
+
+#[test]
+fn 別sessionが計測中なら終了処理中もbufferを停止する() {
+    let storage = FakeStorage::default();
+    let mut state = state_with_sessions(&storage, &[TASK_ID, OTHER_TASK_ID]);
+    let bootstrap_id = bootstrap_effect(state.request_bootstrap());
+    state.apply_bootstrap_result(bootstrap_id, Ok(snapshot("2026-09-05", 0)));
+    state.tick(60_000);
+    record_effect(state.begin_record_session(&storage, TASK_ID));
+
+    state.tick(65_000);
+
+    assert_eq!(state.display_buffer_seconds(), Some(60));
+}
+
+#[test]
 fn server_commit済みでlocal削除失敗したsessionはbufferを停止しない() {
     let storage = FakeStorage::default();
     let mut state = state_with_sessions(&storage, &[TASK_ID]);

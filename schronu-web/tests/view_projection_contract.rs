@@ -45,6 +45,34 @@ fn fixed_offsetでsession時刻と進捗を生成しcommit済みtimerは停止�
 }
 
 #[test]
+fn 終了処理中のsession表示はclick時刻で停止し失敗時に再開する() {
+    let storage = FakeStorage::default();
+    let mut state = load_client_state(&storage, START_EPOCH_MS).unwrap();
+    state.add_session_from_row(&storage, &session_row());
+    state.tick(START_EPOCH_MS + 60_000);
+    let (request_id, _) = record_effect(state.begin_record_session(&storage, TASK_ID));
+
+    state.tick(START_EPOCH_MS + 65_000);
+    let pending = project_session_cards(&state, JST_OFFSET_MINUTES);
+    assert_eq!(pending[0].remaining_seconds, 540);
+    assert_eq!(pending[0].progress_percent, Some(40));
+
+    state.apply_record_result(
+        &storage,
+        request_id,
+        Err(schronu_web::client::state::ServerFailure::Operation(
+            schronu_web::WebError {
+                code: schronu_web::web_error_codes::REPOSITORY_SAVE_FAILED.to_owned(),
+                message: "safe".to_owned(),
+                retry_advice: schronu_web::RetryAdvice::Retry,
+            },
+        )),
+    );
+    let resumed = project_session_cards(&state, JST_OFFSET_MINUTES);
+    assert_eq!(resumed[0].remaining_seconds, 535);
+}
+
+#[test]
 fn listはserverが生成したdeadline表示と予定超過を無変換で保持する() {
     let storage = FakeStorage::default();
     let mut state = load_client_state(&storage, START_EPOCH_MS).unwrap();
