@@ -25,6 +25,7 @@ fn root(props: RootProps) -> Element {
             rows: props.rows,
             active_task_ids: props.active_task_ids,
             tick_now_epoch_ms: props.tick_now_epoch_ms,
+            mutations_locked: false,
             on_select_date: move |date: String| date_events.lock().unwrap().push(format!("date:{date}")),
             on_start_session: move |task: SessionTask| task_events
                 .lock()
@@ -32,6 +33,66 @@ fn root(props: RootProps) -> Element {
                 .push(format!("task:{}:{}", task.task_id, task.task_name)),
         }
     }
+}
+
+#[test]
+fn carry_lockはsession追加だけを無効化し日付選択は維持する() {
+    let events = Arc::new(Mutex::new(Vec::new()));
+    let mut dom = VirtualDom::new_with_props(
+        root,
+        RootProps {
+            dates: vec![DateButtonViewModel {
+                logical_date: "2026-09-12".to_owned(),
+                label: "土".to_owned(),
+                selected: false,
+            }],
+            rows: vec![row("task-id", None, false)],
+            active_task_ids: Vec::new(),
+            tick_now_epoch_ms: 0,
+            events: Arc::clone(&events),
+        },
+    );
+    dom.rebuild_in_place();
+    let unlocked = dioxus::ssr::render(&dom);
+    assert!(!unlocked.contains("class=\"session-start\" disabled"));
+
+    fn locked_root(props: RootProps) -> Element {
+        let date_events = Arc::clone(&props.events);
+        let task_events = Arc::clone(&props.events);
+        rsx! {
+            ListView {
+                dates: props.dates,
+                rows: props.rows,
+                active_task_ids: props.active_task_ids,
+                tick_now_epoch_ms: props.tick_now_epoch_ms,
+                mutations_locked: true,
+                on_select_date: move |date: String| date_events.lock().unwrap().push(format!("date:{date}")),
+                on_start_session: move |task: SessionTask| task_events.lock().unwrap().push(format!("task:{}", task.task_id)),
+            }
+        }
+    }
+
+    let mut locked = VirtualDom::new_with_props(
+        locked_root,
+        RootProps {
+            dates: vec![DateButtonViewModel {
+                logical_date: "2026-09-12".to_owned(),
+                label: "土".to_owned(),
+                selected: false,
+            }],
+            rows: vec![row("task-id", None, false)],
+            active_task_ids: Vec::new(),
+            tick_now_epoch_ms: 0,
+            events: Arc::clone(&events),
+        },
+    );
+    let ids = rebuild_with_click_listeners(&mut locked);
+    let html = dioxus::ssr::render(&locked);
+    assert!(html.contains("class=\"session-start\" disabled"), "{html}");
+    for id in ids {
+        dispatch_click(&locked, id);
+    }
+    assert_eq!(*events.lock().unwrap(), ["date:2026-09-12"]);
 }
 
 fn build(props: RootProps) -> (VirtualDom, Vec<dioxus::dioxus_core::ElementId>) {

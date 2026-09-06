@@ -23,6 +23,7 @@ fn test_root(props: RootProps) -> Element {
         SessionView {
             sessions: props.sessions,
             global_blocked: props.global_blocked,
+            mutations_locked: false,
             on_auto_session: move |_| auto_events.lock().unwrap().push("auto".to_owned()),
             on_action: move |action: SessionAction| action_events
                 .lock()
@@ -43,9 +44,58 @@ fn auto_root(props: AutoRootProps) -> Element {
         SessionView {
             sessions: Vec::new(),
             global_blocked: true,
+            mutations_locked: false,
             auto_session_in_flight: props.in_flight,
             on_auto_session: move |_| props.events.lock().unwrap().push("auto".to_owned()),
             on_action: move |_: SessionAction| {},
+        }
+    }
+}
+
+#[test]
+fn carry_lockはauto_sessionと四操作をすべて無効化する() {
+    let events = Arc::new(Mutex::new(Vec::new()));
+    let mut empty = VirtualDom::new_with_props(
+        locked_root,
+        RootProps {
+            sessions: Vec::new(),
+            global_blocked: false,
+            events: Arc::clone(&events),
+        },
+    );
+    let empty_ids = rebuild_with_click_listeners(&mut empty);
+    let empty_html = dioxus::ssr::render(&empty);
+    assert!(empty_html.contains("disabled"), "{empty_html}");
+    for id in empty_ids {
+        dispatch_click(&empty, id);
+    }
+
+    let mut session = VirtualDom::new_with_props(
+        locked_root,
+        RootProps {
+            sessions: vec![card("locked")],
+            global_blocked: false,
+            events: Arc::clone(&events),
+        },
+    );
+    let ids = rebuild_with_click_listeners(&mut session);
+    assert_eq!(dioxus::ssr::render(&session).matches("disabled").count(), 4);
+    for id in ids {
+        dispatch_click(&session, id);
+    }
+    assert!(events.lock().unwrap().is_empty());
+}
+
+fn locked_root(props: RootProps) -> Element {
+    let auto_events = Arc::clone(&props.events);
+    let action_events = Arc::clone(&props.events);
+    rsx! {
+        SessionView {
+            sessions: props.sessions,
+            global_blocked: props.global_blocked,
+            mutations_locked: true,
+            on_auto_session: move |_| auto_events.lock().unwrap().push("auto".to_owned()),
+            on_action: move |action: SessionAction| action_events.lock().unwrap().push(format!("{}:{:?}", action.task_id, action.kind)),
         }
     }
 }
