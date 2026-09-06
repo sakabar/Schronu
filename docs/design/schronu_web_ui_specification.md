@@ -444,7 +444,7 @@ display_buffer = buffer_seconds - buffer_elapsed - restored_session_elapsed
 
 `CarryLockState`は`Normal`、`Locked`、`ArmedUntil(monotonic_deadline_ms)`を持つ。`ArmedUntil`は`Performance.now()`相当の単調時計を基準に15秒後を期限とし、セッション経過時間などに使う壁時計とは分離する。一時許可の残り秒数も単調時計から算出する。単調時計が後退した場合も安全側へ倒して`Locked`へ戻す。
 
-すべてのcomponent actionは同じreducerを通し、reducerはaction処理前に期限を観測する。`AutoSession`、`AddSession`、`DiscardSession`、`RecordSession`、`CompleteSession`、`CompleteSessionWithoutRecording`、`ConfirmRepositoryChecked`を変更操作とする。`Locked`ではこれらをeffectなしで拒否し、`ArmedUntil`では最初のdispatchを処理する前に権利を消費して`Locked`へ戻す。成功、失敗、local stateが実際に変化したかには依存しない。tab切替、tick、日付選択とresponse適用は権利を消費しない。
+すべてのcomponent actionは同じreducerを通し、reducerはaction処理前に期限を観測する。`AutoSession`、`AddSession`、`DiscardSession`、`RecordSession`、`CompleteSession`、`CompleteSessionWithoutRecording`、`ResumeCompletionConflict`、`ConfirmCompletionConflict`、`ConfirmRepositoryChecked`を変更操作とする。`Locked`ではこれらをeffectなしで拒否し、`ArmedUntil`では最初のdispatchを処理する前に権利を消費して`Locked`へ戻す。成功、失敗、local stateが実際に変化したかには依存しない。tab切替、tick、日付選択とresponse適用は権利を消費しない。
 
 ## 7. UI behavior
 
