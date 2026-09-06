@@ -1066,7 +1066,12 @@ fn list_tasks_input_cases() -> Vec<ContractCase> {
             input: json!({
                 "period": valid_period,
                 "statuses": ["todo", "pending", "done"],
-                "categories": ["earning", "sustaining", "recovery", "investment", "consumption", null]
+                "categories": ["earning", "sustaining", "recovery", "investment", "consumption", null],
+                "query": "task",
+                "root_task_id": "80d7db87-324e-4e8d-a5b7-ff78cd5bf39a",
+                "limit": 500,
+                "cursor": "opaque-cursor",
+                "unbounded": false
             }),
             schema_accepts: true,
             decode: ExpectedDecode::Valid,
@@ -1276,6 +1281,72 @@ fn list_tasks_input_cases() -> Vec<ContractCase> {
             decode: ExpectedDecode::Schema {
                 field: "categories[0]",
                 reason: "must be a supported category or null",
+            },
+        },
+        ContractCase {
+            name: "empty query and unbounded are valid",
+            input: json!({"query": "", "unbounded": true}),
+            schema_accepts: true,
+            decode: ExpectedDecode::Valid,
+        },
+        ContractCase {
+            name: "limit lower boundary",
+            input: json!({"limit": 1}),
+            schema_accepts: true,
+            decode: ExpectedDecode::Valid,
+        },
+        ContractCase {
+            name: "limit is zero",
+            input: json!({"limit": 0}),
+            schema_accepts: false,
+            decode: ExpectedDecode::Schema {
+                field: "limit",
+                reason: "has an invalid value",
+            },
+        },
+        ContractCase {
+            name: "limit exceeds maximum",
+            input: json!({"limit": 501}),
+            schema_accepts: false,
+            decode: ExpectedDecode::Schema {
+                field: "limit",
+                reason: "has an invalid value",
+            },
+        },
+        ContractCase {
+            name: "limit has wrong type",
+            input: json!({"limit": 1.5}),
+            schema_accepts: false,
+            decode: ExpectedDecode::Schema {
+                field: "limit",
+                reason: "has an invalid value",
+            },
+        },
+        ContractCase {
+            name: "root task id is invalid",
+            input: json!({"root_task_id": "not-a-uuid"}),
+            schema_accepts: false,
+            decode: ExpectedDecode::Semantic {
+                field: "root_task_id",
+                reason: "must be a valid UUID",
+            },
+        },
+        ContractCase {
+            name: "cursor has wrong type",
+            input: json!({"cursor": 42}),
+            schema_accepts: false,
+            decode: ExpectedDecode::Schema {
+                field: "cursor",
+                reason: "must be a string",
+            },
+        },
+        ContractCase {
+            name: "unbounded has wrong type",
+            input: json!({"unbounded": "true"}),
+            schema_accepts: false,
+            decode: ExpectedDecode::Schema {
+                field: "unbounded",
+                reason: "has an invalid type",
             },
         },
         ContractCase {

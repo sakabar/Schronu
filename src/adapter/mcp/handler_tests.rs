@@ -210,6 +210,11 @@ fn list_tasks_handlerはtyped_filterをapplication入力へ変換しrepository�
             }),
             statuses: OptionalValue::Value(vec![StatusValue::Pending]),
             categories: OptionalValue::Value(vec![Some(ProjectCategoryValue::Recovery)]),
+            query: OptionalValue::Missing,
+            root_task_id: OptionalValue::Missing,
+            limit: OptionalValue::Missing,
+            cursor: OptionalValue::Missing,
+            unbounded: OptionalValue::Missing,
         },
     );
 
@@ -286,6 +291,11 @@ fn list_tasks_handlerはperiod_fieldの全4値をapplication入力へ変換す�
                 }),
                 statuses: OptionalValue::Missing,
                 categories: OptionalValue::Missing,
+                query: OptionalValue::Missing,
+                root_task_id: OptionalValue::Missing,
+                limit: OptionalValue::Missing,
+                cursor: OptionalValue::Missing,
+                unbounded: OptionalValue::Missing,
             },
         );
 
@@ -318,6 +328,11 @@ fn list_tasks_handlerはstatusの全3値をapplication入力へ変換する() {
                 period: OptionalValue::Missing,
                 statuses: OptionalValue::Value(vec![status]),
                 categories: OptionalValue::Missing,
+                query: OptionalValue::Missing,
+                root_task_id: OptionalValue::Missing,
+                limit: OptionalValue::Missing,
+                cursor: OptionalValue::Missing,
+                unbounded: OptionalValue::Missing,
             },
         );
 
@@ -398,6 +413,11 @@ fn list_tasks_handlerはcategoryの全5値とnullをapplication入力へ変換�
                 period: OptionalValue::Missing,
                 statuses: OptionalValue::Missing,
                 categories: OptionalValue::Value(vec![category]),
+                query: OptionalValue::Missing,
+                root_task_id: OptionalValue::Missing,
+                limit: OptionalValue::Missing,
+                cursor: OptionalValue::Missing,
+                unbounded: OptionalValue::Missing,
             },
         );
 

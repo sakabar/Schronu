@@ -11,8 +11,8 @@ use crate::application::schedule_use_case::get_schedule;
 use crate::application::task_use_case::{
     breakdown_task as breakdown_task_use_case, complete_task as complete_task_use_case,
     create_task as create_task_use_case, defer_routine_task as defer_routine_task_use_case,
-    defer_task as defer_task_use_case, get_focus, get_task, list_tasks, set_category, set_deadline,
-    set_estimate, ApplicationError, TaskFactory,
+    defer_task as defer_task_use_case, get_focus, get_task, list_tasks_page, set_category,
+    set_deadline, set_estimate, ApplicationError, TaskFactory,
 };
 use chrono::{DateTime, Local};
 use serde_json::{json, Value};
@@ -139,14 +139,26 @@ fn call_list_tasks<R: TaskRepositoryTrait>(
     id: Value,
     input: ListTasksInput,
 ) -> Value {
-    match list_tasks(repository, input.into_filter()) {
-        Ok(tasks) => tool_result_response(
+    let request = match input.into_page_request() {
+        Ok(request) => request,
+        Err(ApplicationError::InvalidInput { field, reason }) => {
+            return invalid_input_response(id, field, reason)
+        }
+        Err(error) => return internal_error_response(id, &error.to_string()),
+    };
+
+    match list_tasks_page(repository, request) {
+        Ok(page) => tool_result_response(
             id,
             json!({
-                "tasks": tasks.iter().map(task_view_json).collect::<Vec<_>>()
+                "tasks": page.tasks.iter().map(task_view_json).collect::<Vec<_>>(),
+                "next_cursor": page.next_cursor,
             }),
             false,
         ),
+        Err(ApplicationError::TaskNotFound(task_id)) => {
+            task_not_found_response(id, task_id, Some("root_task_id"))
+        }
         Err(ApplicationError::InvalidInput { field, reason }) => {
             invalid_input_response(id, field, reason)
         }
