@@ -1,10 +1,18 @@
 #![cfg(feature = "server")]
 
-use std::sync::{Arc, Mutex};
+use std::{
+    cell::RefCell,
+    rc::Rc,
+    sync::{Arc, Mutex},
+};
 
 use super::list_view::{DateButtonViewModel, ListRowViewModel, ListView};
-use super::view_test_support::{dispatch_click, rebuild_with_click_listeners};
+use super::view_test_support::{
+    dispatch_click, dispatch_platform_event, rebuild_with_click_listeners,
+    rebuild_with_event_listeners, rebuild_with_named_event_listeners, render_with_click_listeners,
+};
 use crate::SessionTask;
+use dioxus::html::SerializedFormData;
 use dioxus::prelude::*;
 
 #[derive(Clone)]
@@ -12,6 +20,7 @@ struct RootProps {
     dates: Vec<DateButtonViewModel>,
     rows: Vec<ListRowViewModel>,
     active_task_ids: Vec<String>,
+    filter_text: String,
     events: Arc<Mutex<Vec<String>>>,
 }
 
@@ -23,12 +32,17 @@ fn root(props: RootProps) -> Element {
             dates: props.dates,
             rows: props.rows,
             active_task_ids: props.active_task_ids,
+            filter_text: props.filter_text,
             mutations_locked: false,
             on_select_date: move |date: String| date_events.lock().unwrap().push(format!("date:{date}")),
             on_start_session: move |(task, is_leaf): (SessionTask, bool)| task_events
                 .lock()
                 .unwrap()
                 .push(format!("task:{}:{}:{is_leaf}", task.task_id, task.task_name)),
+            on_filter_change: move |filter: String| props.events
+                .lock()
+                .unwrap()
+                .push(format!("filter:{filter}")),
         }
     }
 }
@@ -46,6 +60,7 @@ fn carry_lockはsession追加だけを無効化し日付選択は維持する() 
             }],
             rows: vec![row("task-id", false, true)],
             active_task_ids: Vec::new(),
+            filter_text: String::new(),
             events: Arc::clone(&events),
         },
     );
@@ -61,12 +76,17 @@ fn carry_lockはsession追加だけを無効化し日付選択は維持する() 
                 dates: props.dates,
                 rows: props.rows,
                 active_task_ids: props.active_task_ids,
+                filter_text: props.filter_text,
                 mutations_locked: true,
                 on_select_date: move |date: String| date_events.lock().unwrap().push(format!("date:{date}")),
                 on_start_session: move |(task, is_leaf): (SessionTask, bool)| task_events
                     .lock()
                     .unwrap()
                     .push(format!("task:{}:{is_leaf}", task.task_id)),
+                on_filter_change: move |filter: String| props.events
+                    .lock()
+                    .unwrap()
+                    .push(format!("filter:{filter}")),
             }
         }
     }
@@ -81,6 +101,7 @@ fn carry_lockはsession追加だけを無効化し日付選択は維持する() 
             }],
             rows: vec![row("task-id", false, true)],
             active_task_ids: Vec::new(),
+            filter_text: String::new(),
             events: Arc::clone(&events),
         },
     );
@@ -112,8 +133,22 @@ fn task(task_id: &str, task_name: &str) -> SessionTask {
 }
 
 fn row(task_id: &str, misses_deadline: bool, is_leaf: bool) -> ListRowViewModel {
+    named_row(
+        task_id,
+        &format!("task {task_id}"),
+        misses_deadline,
+        is_leaf,
+    )
+}
+
+fn named_row(
+    task_id: &str,
+    task_name: &str,
+    misses_deadline: bool,
+    is_leaf: bool,
+) -> ListRowViewModel {
     ListRowViewModel {
-        task: task(task_id, &format!("task {task_id}")),
+        task: task(task_id, task_name),
         deadline_label: "____-01:00".to_owned(),
         schedule_label: "11:25-11:28".to_owned(),
         misses_deadline,
@@ -140,6 +175,7 @@ fn list_renders_eight_dates_selected_row_fields_and_visual_states() {
         dates: eight_dates(),
         rows: vec![row("leaf", true, true), row("late", false, false)],
         active_task_ids: Vec::new(),
+        filter_text: String::new(),
         events: Arc::clone(&events),
     });
     let html = dioxus::ssr::render(&dom);
@@ -176,6 +212,7 @@ fn list_rowはresponsive表示用の意味別cellとlabelを持つ() {
         dates: Vec::new(),
         rows: vec![row("labeled", false, true)],
         active_task_ids: Vec::new(),
+        filter_text: String::new(),
         events,
     });
     let html = dioxus::ssr::render(&dom);
@@ -243,6 +280,7 @@ fn active_uuid_disables_every_matching_row_but_not_other_tasks() {
             row("other", false, true),
         ],
         active_task_ids: vec!["same".to_owned()],
+        filter_text: String::new(),
         events,
     });
     let html = dioxus::ssr::render(&dom);
@@ -257,6 +295,7 @@ fn misses_deadlineがfalseなら赤色にしない() {
         dates: Vec::new(),
         rows: vec![row("equal", false, false)],
         active_task_ids: Vec::new(),
+        filter_text: String::new(),
         events,
     });
     assert!(!dioxus::ssr::render(&dom).contains("deadline is-overdue"));
@@ -273,6 +312,7 @@ fn date_and_leaf_task_clicks_dispatch_exact_payload_once() {
         }],
         rows: Vec::new(),
         active_task_ids: Vec::new(),
+        filter_text: String::new(),
         events: Arc::clone(&events),
     });
     dispatch_click(&date_dom, date_listeners[0]);
@@ -283,6 +323,7 @@ fn date_and_leaf_task_clicks_dispatch_exact_payload_once() {
         dates: Vec::new(),
         rows: vec![row("task-id", false, true)],
         active_task_ids: Vec::new(),
+        filter_text: String::new(),
         events: Arc::clone(&events),
     });
     dispatch_click(&task_dom, task_listeners[0]);
@@ -296,6 +337,7 @@ fn rank非0のtaskは開始buttonとclick_listenerを持たない() {
         dates: Vec::new(),
         rows: vec![row("non-leaf", false, false)],
         active_task_ids: Vec::new(),
+        filter_text: String::new(),
         events: Arc::clone(&events),
     });
 
@@ -311,10 +353,245 @@ fn disabled_active_task_does_not_dispatch() {
         dates: Vec::new(),
         rows: vec![row("active", false, true)],
         active_task_ids: vec!["active".to_owned()],
+        filter_text: String::new(),
         events: Arc::clone(&events),
     });
     for listener in listeners {
         dispatch_click(&dom, listener);
     }
     assert!(events.lock().unwrap().is_empty());
+}
+
+#[test]
+fn task_name_filterは前後空白を除いた大小無視の部分一致で全segmentを絞る() {
+    let events = Arc::new(Mutex::new(Vec::new()));
+    let rows = vec![
+        named_row("planning", "週次 Planning", false, true),
+        named_row("implementation", "実装", false, true),
+        named_row("planning", "週次 Planning", false, true),
+    ];
+    let (dom, _) = build(RootProps {
+        dates: Vec::new(),
+        rows,
+        active_task_ids: Vec::new(),
+        filter_text: "  PLAn  ".to_owned(),
+        events,
+    });
+    let html = dioxus::ssr::render(&dom);
+
+    assert_eq!(html.matches("週次 Planning").count(), 4, "{html}");
+    assert!(!html.contains("実装"), "{html}");
+
+    let (japanese_dom, _) = build(RootProps {
+        dates: Vec::new(),
+        rows: vec![
+            named_row("design", "画面設計", false, true),
+            named_row("implementation", "実装", false, true),
+        ],
+        active_task_ids: Vec::new(),
+        filter_text: "設計".to_owned(),
+        events: Arc::new(Mutex::new(Vec::new())),
+    });
+    let japanese_html = dioxus::ssr::render(&japanese_dom);
+    assert!(japanese_html.contains("画面設計"), "{japanese_html}");
+    assert!(!japanese_html.contains("実装"), "{japanese_html}");
+}
+
+#[test]
+fn 空白だけのfilterは全rowを表示する() {
+    let events = Arc::new(Mutex::new(Vec::new()));
+    let (dom, _) = build(RootProps {
+        dates: Vec::new(),
+        rows: vec![
+            named_row("design", "設計", false, true),
+            named_row("implementation", "実装", false, true),
+        ],
+        active_task_ids: Vec::new(),
+        filter_text: "   ".to_owned(),
+        events,
+    });
+    let html = dioxus::ssr::render(&dom);
+
+    assert!(html.contains("設計"), "{html}");
+    assert!(html.contains("実装"), "{html}");
+}
+
+#[test]
+fn 検索欄は日付buttonの下かつtableの上にあり入力を通知する() {
+    let events = Arc::new(Mutex::new(Vec::new()));
+    let mut dom = VirtualDom::new_with_props(
+        root,
+        RootProps {
+            dates: eight_dates(),
+            rows: vec![row("task-id", false, true)],
+            active_task_ids: Vec::new(),
+            filter_text: String::new(),
+            events: Arc::clone(&events),
+        },
+    );
+    let input_listeners = rebuild_with_event_listeners(&mut dom, "input");
+    let html = dioxus::ssr::render(&dom);
+    let dates_position = html.find("class=\"date-pills\"").unwrap();
+    let filter_position = html.find("class=\"task-name-filter\"").unwrap();
+    let table_position = html.find("class=\"task-table-scroll\"").unwrap();
+
+    assert!(dates_position < filter_position && filter_position < table_position);
+    assert!(html.contains("aria-label=\"タスク名を検索\""), "{html}");
+    assert!(html.contains("placeholder=\"タスク名を検索\""), "{html}");
+    assert_eq!(input_listeners.len(), 1);
+
+    dispatch_platform_event(
+        &dom,
+        "input",
+        input_listeners[0],
+        Box::new(SerializedFormData::new("設計".to_owned(), Vec::new())),
+    );
+    assert_eq!(*events.lock().unwrap(), ["filter:設計"]);
+}
+
+#[test]
+fn clear_buttonは入力中だけ表示して空文字を一度通知する() {
+    let events = Arc::new(Mutex::new(Vec::new()));
+    let (dom, listeners) = build(RootProps {
+        dates: Vec::new(),
+        rows: Vec::new(),
+        active_task_ids: Vec::new(),
+        filter_text: "設計".to_owned(),
+        events: Arc::clone(&events),
+    });
+    let html = dioxus::ssr::render(&dom);
+
+    assert!(html.contains("aria-label=\"検索文字列をクリア\""), "{html}");
+    assert_eq!(listeners.len(), 1);
+    dispatch_click(&dom, listeners[0]);
+    assert_eq!(*events.lock().unwrap(), ["filter:"]);
+
+    let (empty_dom, _) = build(RootProps {
+        dates: Vec::new(),
+        rows: Vec::new(),
+        active_task_ids: Vec::new(),
+        filter_text: String::new(),
+        events,
+    });
+    assert!(!dioxus::ssr::render(&empty_dom).contains("検索文字列をクリア"));
+}
+
+#[test]
+fn filter一致なしはstatusを表示してtask操作を生成しない() {
+    let events = Arc::new(Mutex::new(Vec::new()));
+    let (dom, listeners) = build(RootProps {
+        dates: Vec::new(),
+        rows: vec![named_row("design", "設計", false, true)],
+        active_task_ids: Vec::new(),
+        filter_text: "実装".to_owned(),
+        events,
+    });
+    let html = dioxus::ssr::render(&dom);
+
+    assert!(html.contains("role=\"status\""), "{html}");
+    assert!(html.contains("一致するタスクがありません。"), "{html}");
+    assert!(!html.contains("session-start"), "{html}");
+    assert_eq!(listeners.len(), 1, "input listener is not a click listener");
+}
+
+#[test]
+fn task_name_filterはmobile幅とclearのtouch_targetを維持する() {
+    let css = include_str!("../../assets/main.css");
+
+    for required in [
+        ".task-name-filter {",
+        "width: 100%;",
+        "min-width: 0;",
+        ".task-name-filter-clear {",
+        "min-width: max(2.75rem, 44px);",
+        "min-height: max(2.75rem, 44px);",
+    ] {
+        assert!(css.contains(required), "missing: {required}");
+    }
+}
+
+#[component]
+fn StatefulFilterHarness(events: Rc<RefCell<Vec<String>>>) -> Element {
+    let mut show_list = use_signal(|| true);
+    let mut filter_text = use_signal(String::new);
+    let date_events = Rc::clone(&events);
+    let session_events = Rc::clone(&events);
+
+    rsx! {
+        button {
+            r#type: "button",
+            aria_label: "一覧tab切替",
+            onclick: move |_| {
+                let next = !*show_list.read();
+                show_list.set(next);
+            },
+            "一覧tab切替"
+        }
+        if *show_list.read() {
+            ListView {
+                dates: Vec::new(),
+                rows: vec![
+                    named_row("design", "画面設計", false, false),
+                    named_row("implementation", "実装", false, false),
+                ],
+                active_task_ids: Vec::new(),
+                filter_text: filter_text.read().clone(),
+                on_select_date: move |_| date_events.borrow_mut().push("server:date".to_owned()),
+                on_start_session: move |_| session_events.borrow_mut().push("storage:session".to_owned()),
+                on_filter_change: move |filter| filter_text.set(filter),
+            }
+        }
+    }
+}
+
+#[test]
+fn filter入力とclearは副作用なく再描画されtab往復でも条件を保持する() {
+    let events = Rc::new(RefCell::new(Vec::new()));
+    let mut dom = VirtualDom::new_with_props(
+        StatefulFilterHarness,
+        StatefulFilterHarnessProps {
+            events: Rc::clone(&events),
+        },
+    );
+    let listeners = rebuild_with_named_event_listeners(&mut dom);
+    let toggle_id = listeners
+        .iter()
+        .find_map(|(name, id)| (name == "click").then_some(*id))
+        .unwrap();
+    let input_id = listeners
+        .iter()
+        .find_map(|(name, id)| (name == "input").then_some(*id))
+        .unwrap();
+
+    dispatch_platform_event(
+        &dom,
+        "input",
+        input_id,
+        Box::new(SerializedFormData::new("設計".to_owned(), Vec::new())),
+    );
+    let clear_ids = render_with_click_listeners(&mut dom);
+    let filtered_html = dioxus::ssr::render(&dom);
+    assert!(filtered_html.contains("画面設計"), "{filtered_html}");
+    assert!(!filtered_html.contains(">実装<"), "{filtered_html}");
+    assert!(events.borrow().is_empty());
+
+    dispatch_click(&dom, toggle_id);
+    render_with_click_listeners(&mut dom);
+    dispatch_click(&dom, toggle_id);
+    let restored_clear_ids = render_with_click_listeners(&mut dom);
+    let restored_html = dioxus::ssr::render(&dom);
+    assert!(restored_html.contains("value=\"設計\""), "{restored_html}");
+    assert!(restored_html.contains("画面設計"), "{restored_html}");
+    assert!(!restored_html.contains(">実装<"), "{restored_html}");
+    assert!(events.borrow().is_empty());
+
+    assert_eq!(clear_ids.len(), 1);
+    assert_eq!(restored_clear_ids.len(), 1);
+    dispatch_click(&dom, restored_clear_ids[0]);
+    render_with_click_listeners(&mut dom);
+    let cleared_html = dioxus::ssr::render(&dom);
+    assert!(cleared_html.contains("画面設計"), "{cleared_html}");
+    assert!(cleared_html.contains(">実装<"), "{cleared_html}");
+    assert!(!cleared_html.contains("検索文字列をクリア"));
+    assert!(events.borrow().is_empty());
 }
