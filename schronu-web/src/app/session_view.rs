@@ -71,11 +71,14 @@ fn SessionCard(
     on_cancel_authorization: EventHandler<()>,
 ) -> Element {
     let mut confirming_discard_completion = use_signal(|| false);
-    use_effect(move || {
-        if mutations_locked {
-            confirming_discard_completion.set(false);
-        }
-    });
+    use_effect(use_reactive(
+        (&mutations_locked,),
+        move |(mutations_locked,)| {
+            if mutations_locked {
+                confirming_discard_completion.set(false);
+            }
+        },
+    ));
     let discard_disabled = session.in_flight || session.server_committed || mutations_locked;
     let mutation_disabled = discard_disabled || global_blocked || session.manual_check_blocked;
     let completion = session

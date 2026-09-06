@@ -7,7 +7,9 @@ use super::view_test_support::{
     dispatch_click, rebuild_with_click_listeners, render_with_click_listeners,
 };
 use dioxus::dioxus_core::ElementId;
+use dioxus::dioxus_core::ScopeId;
 use dioxus::prelude::*;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 #[derive(Clone)]
 struct RootProps {
@@ -100,6 +102,50 @@ fn locked_root(props: RootProps) -> Element {
             on_action: move |action: SessionAction| action_events.lock().unwrap().push(format!("{}:{:?}", action.task_id, action.kind)),
         }
     }
+}
+
+#[derive(Clone)]
+struct ReactiveLockRootProps {
+    locked: Arc<AtomicBool>,
+}
+
+fn reactive_lock_root(props: ReactiveLockRootProps) -> Element {
+    rsx! {
+        SessionView {
+            sessions: vec![card("reactive-lock")],
+            global_blocked: false,
+            mutations_locked: props.locked.load(Ordering::SeqCst),
+            on_auto_session: move |_| {},
+            on_action: move |_: SessionAction| {},
+        }
+    }
+}
+
+#[test]
+fn falseからtrueへ再描画されたcarry_lock_propは完了確認を閉じる() {
+    let locked = Arc::new(AtomicBool::new(false));
+    let mut dom = VirtualDom::new_with_props(
+        reactive_lock_root,
+        ReactiveLockRootProps {
+            locked: Arc::clone(&locked),
+        },
+    );
+    let action_ids = rebuild_with_click_listeners(&mut dom)
+        .into_iter()
+        .rev()
+        .collect::<Vec<_>>();
+    dispatch_click(&dom, action_ids[2]);
+    render_with_click_listeners(&mut dom);
+    assert!(dioxus::ssr::render(&dom).contains("タスクを完了しますか?"));
+
+    locked.store(true, Ordering::SeqCst);
+    dom.mark_dirty(ScopeId::APP);
+    render_with_click_listeners(&mut dom);
+    render_with_click_listeners(&mut dom);
+
+    let html = dioxus::ssr::render(&dom);
+    assert!(!html.contains("タスクを完了しますか?"), "{html}");
+    assert_eq!(html.matches("disabled").count(), 4, "{html}");
 }
 
 fn render(sessions: Vec<SessionCardViewModel>, global_blocked: bool) -> (String, Vec<String>) {
