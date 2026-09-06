@@ -129,6 +129,7 @@ fn endpointのouter失敗はsafe_transportへ変換しinner_errorは保持する
         code: "sentinel".to_owned(),
         message: "safe".to_owned(),
         retry_advice: RetryAdvice::ManualCheck,
+        current_actual_work_seconds: None,
     };
     assert_eq!(
         normalize_endpoint_result::<ServerSnapshot>(Ok(Err(operation_error.clone()))),
@@ -196,6 +197,7 @@ impl WebGateway for BootstrapGateway {
                 code: "sentinel".to_owned(),
                 message: "safe".to_owned(),
                 retry_advice: RetryAdvice::Retry,
+                current_actual_work_seconds: None,
             })),
             BootstrapOutcome::TransportFailure => Err(ServerFnError::new("transport")),
         }

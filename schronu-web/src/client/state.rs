@@ -168,10 +168,23 @@ impl ClientState {
             .map(|pending| pending.ended_at_epoch_ms)
             .or_else(|| {
                 self.sessions
+                    .completion_conflicts
+                    .get(task_id)
+                    .map(|conflict| conflict.ended_at_epoch_ms)
+            })
+            .or_else(|| {
+                self.sessions
                     .uncertain_stopped_at_epoch_ms
                     .get(task_id)
                     .copied()
             })
+    }
+
+    pub(crate) fn completion_conflict(
+        &self,
+        task_id: &str,
+    ) -> Option<&session_state::CompletionConflict> {
+        self.sessions.completion_conflicts.get(task_id)
     }
 
     pub fn is_session_manual_check_blocked(&self, task_id: &str) -> bool {
@@ -211,7 +224,7 @@ impl ClientState {
             })
     }
 
-    fn buffer_protected_interval(&self, session: &WorkSession) -> (i64, Option<i64>) {
+    fn buffer_protected_intervals(&self, session: &WorkSession) -> Vec<(i64, Option<i64>)> {
         let estimated_completion_epoch_ms = session_timing(
             session.started_at_epoch_ms,
             session.estimated_work_seconds_at_start,
@@ -219,6 +232,17 @@ impl ClientState {
             session.started_at_epoch_ms,
         )
         .estimated_completion_epoch_ms;
+        if let Some(conflict) = self.sessions.completion_conflicts.get(&session.task_id) {
+            if estimated_completion_epoch_ms.is_none_or(|estimated_completion| {
+                conflict.ended_at_epoch_ms <= estimated_completion
+            }) {
+                return vec![(session.started_at_epoch_ms, None)];
+            }
+            return vec![
+                (session.started_at_epoch_ms, estimated_completion_epoch_ms),
+                (conflict.ended_at_epoch_ms, None),
+            ];
+        }
         let stopped_at_epoch_ms = self.session_stopped_at_epoch_ms(&session.task_id);
         let protected_until_epoch_ms = match (estimated_completion_epoch_ms, stopped_at_epoch_ms) {
             (Some(estimated_completion), Some(stopped_at)) => {
@@ -227,7 +251,7 @@ impl ClientState {
             (Some(estimated_completion), None) => Some(estimated_completion),
             (None, stopped_at) => stopped_at,
         };
-        (session.started_at_epoch_ms, protected_until_epoch_ms)
+        vec![(session.started_at_epoch_ms, protected_until_epoch_ms)]
     }
 
     pub fn display_buffer_seconds(&self) -> Option<i128> {
@@ -236,7 +260,7 @@ impl ClientState {
             .sessions()
             .iter()
             .filter(|session| !self.is_session_committed_blocked(&session.task_id))
-            .map(|session| self.buffer_protected_interval(session))
+            .flat_map(|session| self.buffer_protected_intervals(session))
             .collect();
         let timing = buffer_timing_with_sessions(
             snapshot.observed_at_epoch_ms,

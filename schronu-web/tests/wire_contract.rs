@@ -197,6 +197,7 @@ fn error_codeとretry_adviceはsnake_case文字列として往復する() {
             code: web_error_codes::WORKER_UNAVAILABLE.to_owned(),
             message: "Web worker is unavailable".to_owned(),
             retry_advice: RetryAdvice::Retry,
+            current_actual_work_seconds: None,
         },
         json!({
             "code": "worker_unavailable",
@@ -204,6 +205,38 @@ fn error_codeとretry_adviceはsnake_case文字列として往復する() {
             "retry_advice": "retry"
         }),
     );
+}
+
+#[test]
+fn 実績競合errorだけが現在の実績時間をjsonへ公開する() {
+    assert_json_round_trip(
+        &WebError {
+            code: web_error_codes::ACTUAL_WORK_CONFLICT.to_owned(),
+            message: "セッションカードで実績時間を確認してください。".to_owned(),
+            retry_advice: RetryAdvice::ManualCheck,
+            current_actual_work_seconds: Some(420),
+        },
+        json!({
+            "code": "actual_work_conflict",
+            "message": "セッションカードで実績時間を確認してください。",
+            "retry_advice": "manual_check",
+            "current_actual_work_seconds": 420
+        }),
+    );
+}
+
+#[test]
+fn 現在実績のない旧error_payloadをdeserializeできる() {
+    let legacy_error = json!({
+        "code": "worker_unavailable",
+        "message": "Web worker is unavailable",
+        "retry_advice": "retry"
+    });
+
+    let decoded: WebError = serde_json::from_value(legacy_error.clone()).unwrap();
+
+    assert_eq!(decoded.current_actual_work_seconds, None);
+    assert_eq!(serde_json::to_value(&decoded).unwrap(), legacy_error);
 }
 
 #[test]
