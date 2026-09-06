@@ -72,6 +72,50 @@ fn test_prepare_deleteをimmutable_manifestへ追加する() {
 }
 
 #[test]
+fn test_prepareはwrite_delete重複とduplicate_deleteを拒否する() {
+    let storage_dir = TestStorageDir::new();
+    let target = storage_dir.path.join("project.yaml");
+
+    for (writes, deletes) in [
+        (
+            vec![WriteRequest {
+                target_path: &target,
+                bytes: b"new",
+            }],
+            vec![target.as_path()],
+        ),
+        (vec![], vec![target.as_path(), target.as_path()]),
+    ] {
+        let actual = prepare_with_directories_and_deletes(
+            file_system_io(),
+            &storage_dir.path,
+            Uuid::from_u128(0x2259),
+            &writes,
+            &[],
+            &deletes,
+        );
+        let error = match actual {
+            Err(error) => error,
+            Ok(prepared) => {
+                prepared.discard().unwrap();
+                panic!("duplicate transaction targets must fail");
+            }
+        };
+
+        assert_eq!(
+            error.operation,
+            StorageTransactionOperation::ValidateTargetPath
+        );
+        assert_eq!(error.path, target);
+        assert!(!storage_dir
+            .path
+            .join(TRANSACTION_DIRECTORY_NAME)
+            .join(ACTIVE_TRANSACTION_DIRECTORY_NAME)
+            .exists());
+    }
+}
+
+#[test]
 fn test_prepare_staged_files_directory作成失敗時はuuid_directoryを残さない() {
     let storage_dir = TestStorageDir::new();
     let target_path = storage_dir.path.join("project.yaml");
