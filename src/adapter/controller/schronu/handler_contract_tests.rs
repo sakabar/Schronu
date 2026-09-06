@@ -2551,7 +2551,7 @@ fn 全command_groupは単一handler入口からtyped_contextへdispatchされる
 }
 
 #[test]
-fn verify以外の全command_shapeは統一handler入口でoutcomeを返す() {
+fn storage_maintenance以外の全command_shapeは統一handler入口でoutcomeを返す() {
     let now = Local.with_ymd_and_hms(2026, 8, 23, 12, 0, 0).unwrap();
 
     for command in representative_valid_commands() {
@@ -2559,8 +2559,18 @@ fn verify以外の全command_shapeは統一handler入口でoutcomeを返す() {
         let mut context = CompositeTraceContext::new(now);
         let outcome = handle_command(&command, &mut context)
             .unwrap_or_else(|error| panic!("{kind:?} must be handled without error: {error}"));
-        if kind == CommandKind::Verify {
-            assert!(outcome.is_none(), "verify remains owned by runtime");
+        if matches!(
+            kind,
+            CommandKind::Backup
+                | CommandKind::BackupVerify
+                | CommandKind::Restore
+                | CommandKind::RestoreCurrent
+                | CommandKind::Verify
+        ) {
+            assert!(
+                outcome.is_none(),
+                "storage maintenance remains owned by runtime"
+            );
         } else {
             assert!(outcome.is_some(), "{kind:?} must produce an outcome");
         }

@@ -108,7 +108,6 @@ impl ClientState {
             .work_sessions
             .replace_sessions(storage, candidate);
         if result.is_ok() {
-            self.restored_session_task_ids.remove(task_id);
             self.sessions.manual_check_blocked_task_ids.remove(task_id);
             self.sessions.completion_conflicts.remove(task_id);
             self.sessions.uncertain_stopped_at_epoch_ms.remove(task_id);
@@ -121,8 +120,13 @@ impl ClientState {
                 self.diagnostics.display_error = None;
             }
         }
-        self.record_local_result(Some(task_id), result.is_ok());
-        ClientEffect::None
+        let succeeded = result.is_ok();
+        self.record_local_result(Some(task_id), succeeded);
+        if succeeded {
+            self.request_selected_or_current_list()
+        } else {
+            ClientEffect::None
+        }
     }
 
     pub fn begin_record_session<S: KeyValueStorage>(
@@ -184,8 +188,6 @@ impl ClientState {
                 });
                 return ClientEffect::None;
             }
-            self.restored_session_task_ids
-                .retain(|task_id| !self.sessions.committed_blocked_task_ids.contains(task_id));
             self.sessions.committed_blocked_task_ids.clear();
             self.sessions.committed_actual_work_seconds.clear();
         }
@@ -362,7 +364,7 @@ impl ClientState {
         self.sessions.in_flight_task_ids.remove(&task_id);
         match result {
             Ok(success) => {
-                let _ = self.apply_snapshot(success.snapshot);
+                let follow_up = self.apply_mutation_snapshot_and_request_list(success.snapshot);
                 self.finish_committed_mutation(
                     storage,
                     &task_id,
@@ -370,6 +372,7 @@ impl ClientState {
                     Some(success.data.actual_work_seconds),
                 );
                 self.finish_mutation_safety(storage, false);
+                return follow_up;
             }
             Err(error) => {
                 let keep_safety = keeps_safety_marker(&error);
@@ -407,9 +410,10 @@ impl ClientState {
             Ok(snapshot) => {
                 self.sessions.completion_conflicts.remove(&task_id);
                 self.clear_superseded_completion_error(&task_id);
-                self.apply_successful_completion_to_read_state(snapshot, &task_id);
+                let follow_up = self.apply_mutation_snapshot_and_request_list(snapshot);
                 self.finish_committed_mutation(storage, &task_id, invocation, None);
                 self.finish_mutation_safety(storage, false);
+                return follow_up;
             }
             Err(error) => {
                 let keep_safety = keeps_safety_marker(&error);
@@ -653,7 +657,6 @@ impl ClientState {
             .replace_sessions(storage, candidate)
         {
             Ok(()) => {
-                self.restored_session_task_ids.remove(task_id);
                 self.sessions.manual_check_blocked_task_ids.remove(task_id);
                 self.sessions.uncertain_stopped_at_epoch_ms.remove(task_id);
                 self.record_local_result(Some(task_id), true);

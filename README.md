@@ -50,7 +50,7 @@ rm -rf target/dx/schronu-web
 
 起動後は`http://127.0.0.1:8080`を開きます。application serverは`127.0.0.1`へ固定しており、認証は設けていません。Dioxus CLIの`serve`へ外部addressを指定しないでください。
 
-初回表示ではlogical date、buffer、日付選択肢を取得します。以後server通信が起きるのは、日付を選んでtask一覧を取得するとき、自動セッションを選定するとき、セッションを記録して解除するとき、taskを完了するときだけです。tab切替、timer更新、一覧からのセッション追加と追加成功後のセッションtabへの切替、「破棄して解除」、破棄完了の確認とキャンセルでは通信しません。logical dateが日付境界の06:00を越えて変わっても自動取得せず、次のserver操作のresponseで更新します。
+初回表示ではlogical date、buffer、日付選択肢を取得します。以後server通信が起きるのは、日付を選んでtask一覧を取得するとき、自動セッションを選定するとき、セッションを解除するとき、taskを完了するときだけです。4種類のセッション終了操作が成功すると、選択中の日付のtask一覧を続けて取得します。tab切替、timer更新、一覧からのセッション追加と追加成功後のセッションtabへの切替、破棄完了の確認とキャンセルでは通信しません。logical dateが日付境界の06:00を越えて変わっても自動取得せず、次のserver操作のresponseで更新します。
 
 いずれのserver通信でも、responseを待つ間は画面全体に「通信中…」とスピナーを表示し、背面の操作を無効にします。複数の通信が重なった場合は、すべてのresponseを受け取るまで表示を維持します。
 
@@ -69,7 +69,7 @@ rm -rf target/dx/schronu-web
 
 browser時計がserver時計より進んでいる場合も、開始・終了click時刻の差から計測秒を保持します。taskへ保存する完了時刻だけはserver操作時刻を上限とし、未来時刻を保存しません。
 
-「計測を破棄して完了」または「記録して完了」が成功すると、追加の一覧取得を行わず、表示中の一覧から完了したtaskの全schedule segmentを即時に除去します。反復により生成された次回taskは自動追加せず、次に日付を選択して一覧を取得したときに表示します。
+4種類のセッション終了操作が成功すると、選択中の日付のtask一覧をserverから再取得し、表示中の一覧をresponse全体で置き換えます。一覧未選択時は最新のserver snapshotが示す現在logical dateを取得します。完了taskの除去、実績変更後の再schedule、反復により生成された次回taskの追加は、いずれもこのserver responseへ従います。
 
 Web側だけを検証するcommandは次のとおりです。
 
@@ -256,7 +256,7 @@ clientごとの設定形式に合わせて、commandと環境変数を次のよ�
 | --- | --- | --- |
 | `get_focus` | なし | 現在着手すべきtaskを返す。候補がなければ`task: null` |
 | `get_task` | `task_id` | UUIDで指定した既存taskの詳細を返す |
-| `list_tasks` | optional: `period`、`statuses`、`categories` | project treeのpre-orderでtaskを返し、指定したfilterで絞り込む |
+| `list_tasks` | optional: `period`、`statuses`、`categories`、`query`、`root_task_id`、`limit`、`cursor`、`unbounded` | project treeのpre-orderでtaskをpage取得し、指定したfilterで絞り込む |
 | `get_schedule` | optional: `from`、`until` | 06:00開始のローカル論理日範囲と重なるschedule segmentを返す |
 | `create_task` | `name`、optional: `estimated_work_minutes`、`pending_until` | root project taskを作成する。見積もり省略時は15分 |
 | `breakdown_task` | `parent_id`、`names`、optional: `pending_until` | 入力順に子taskを追加し、親のdeadlineがあれば継承する |
@@ -265,7 +265,9 @@ clientごとの設定形式に合わせて、commandと環境変数を次のよ�
 | `complete_task` | `task_id`、optional: `finished_at`、`additional_actual_work_seconds` | 未完了の直接の子を持たないtaskを完了し、既存の実作業秒数へ指定値を加算する |
 | `update_task` | `task_id`と、`estimated_work_minutes`、`deadline_time`、`category`のうち1つ以上 | 見積もり・deadline・root projectのcategoryを更新する |
 
-`list_tasks.period`は必須の`field`、`from`、`until`からなり、RFC 3339日時の`from`以上`until`未満の半開区間です。`field`は`scheduled_start`、`created_at`、`deadline`、`completed_at`のいずれかです。`scheduled_start`では、計算されたschedule segmentの開始時刻が1つ以上この範囲に入るtaskを選びます。`statuses`は`todo`、`pending`、`done`、`categories`は上記categoryまたは未分類を表す`null`を配列で指定します。statusは現在時刻を反映した実効statusで判定します。同じ配列内の値はOR、period・status・categoryの各filter間はANDです。`period`の省略、または`statuses`、`categories`の省略・空配列は、その項目では絞り込みません。
+`list_tasks.period`は必須の`field`、`from`、`until`からなり、RFC 3339日時の`from`以上`until`未満の半開区間です。`field`は`scheduled_start`、`created_at`、`deadline`、`completed_at`のいずれかです。`scheduled_start`では、計算されたschedule segmentの開始時刻が1つ以上この範囲に入るtaskを選びます。`statuses`は`todo`、`pending`、`done`、`categories`は上記categoryまたは未分類を表す`null`を配列で指定します。statusは現在時刻を反映した実効statusで判定します。`query`はtask名をUnicode lowercaseへ変換した部分一致で検索し、Unicode正規化は行いません。空文字列は検索filterなしとして扱います。`root_task_id`は指定task自身とそのsubtreeだけを対象にし、存在しないUUIDは`task_not_found`です。同じ配列内の値はOR、各filter間はANDです。`period`の省略、または`statuses`、`categories`の省略・空配列は、その項目では絞り込みません。
+
+`list_tasks`はproject treeのpre-orderを維持し、既定で最大100件、`limit`指定時は1件から500件までを返します。応答は既存の`tasks`に加えて、続きがある場合はopaqueな`next_cursor`、終端では`next_cursor: null`を含みます。次pageでは同じfilterと`cursor`を渡し、`limit`だけは変更できます。全件取得は明示的な`unbounded: true`だけで有効になり、`unbounded`と`limit`または`cursor`の併用は`invalid_input`です。cursorの形式・version・filter・再開位置が一致しない場合や、前page取得後にrepository revisionが変わった場合も`field: cursor`の`invalid_input`になります。その場合はcursorを省略して先頭pageから取得し直してください。
 
 `get_schedule.from`と`get_schedule.until`は、ローカル時刻06:00を境界とする論理日の日付です。両方指定すると`from`の06:00以上`until`の06:00未満、`from`だけならその1論理日、`until`だけなら現在以上`until`の06:00未満、両方省略なら現在以上次の06:00未満を対象にします。schedule segmentは開始時刻だけでなく、その区間が対象範囲と重なるかどうかで選ばれます。
 
@@ -343,7 +345,30 @@ CLIのCtrl-Cは未送信の入力だけを破棄します。既に成功したco
 
 ### backupと安全上の注意
 
-一貫したbackupを取る場合はCLIを終了し、全MCP serverを停止した状態で、`.lock`を除く保存先directoryの内容をdirectory構造ごとcopyしてください。`.lock`はtask dataではないためbackup・restore対象外です。`project.yaml`の直接編集や復元もCLI・MCP停止中に行い、完了後にprocessを再起動してください。
+稼働中のstorageは手動copyではなく、次のCLI commandでbackupとrestoreを行うことを推奨します。いずれも対話・非対話モードで利用できます。
+
+```shell
+schronu backup <snapshot_dir>
+schronu backup verify <snapshot_dir>
+schronu restore <snapshot_dir> <destination_dir>
+schronu restore current <snapshot_dir> <pre_backup_dir> REPLACE_CURRENT_STORAGE
+```
+
+`backup`は現在のstorageのexclusive lockを取得し、停止済みtransactionのrecoveryとstrict repository検証を行ってから、`.revision`と全projectが同一時点に揃ったsnapshotを未存在の`snapshot_dir`へ公開します。他のCLI、MCP、Webは停止する必要がありませんが、同じstorageを操作中でlockを取得できない場合は、その操作の完了後に再試行してください。snapshotは`.lock`、transaction用directory、既知のtemporary・staging artifactを含みません。
+
+`backup verify`はsource storageを読まず、manifestとpayloadの構成、revision、file数・長さ・digest、strict YAML、task UUID重複、path traversal、symlink、予約path、fileの欠落・余剰を検査します。作成直後とrestore前に実行してください。
+
+`restore`は検証済みsnapshotを、現在のstorageではない未存在の`destination_dir`へatomicに展開します。これが既定の安全なrestoreです。展開後は`SCHRONU_STORAGE_DIR=<destination_dir> schronu 検証`で製品のrepository検証を通し、内容を確認してからstorageの切替を行ってください。
+
+`restore current`は現在のstorageを上書きする破壊的操作です。完全一致の確認token `REPLACE_CURRENT_STORAGE`、exclusive lock、未存在の`pre_backup_dir`が必要です。snapshotのstrict verifyが成功した後、現在のstorageを`pre_backup_dir`へbackupしてからtransactionで置換します。不正なsnapshot、既存のpre-backup、lock競合では現在のstorageを変更しません。実行後は`backup verify <pre_backup_dir>`で事前backupも検証し、必要になるまで保持してください。
+
+snapshotのretentionは運用者が管理します。Schronuは古いsnapshotやpre-backupを自動削除しません。保持数や保持期間を決め、`backup verify`に成功した別世代を少なくとも1つ残した上で、不要なsnapshotを手動削除してください。
+
+snapshotはtask名、時刻、工数などの`project.yaml`原文を保持するため、機密情報として扱ってください。Unixではpayloadのfileとdirectoryのmodeをsnapshotとmanifestへ保持し、restore時に復元しますが、snapshotを置く親directoryのpermission、access control、暗号化、外部へのcopyは運用者の責任です。信頼できるaccountだけが読める場所を指定してください。
+
+既定のresource limitはmanifest 8 MiB、file 10,000件、1 file 64 MiB、payload合計256 MiB、相対path 4,096 byte、path depth 64です。上限超過時はbackup・verify・restoreを拒否します。manifestの長さ付きFNV-1a 64bit digestは偶発的な破損を検出するためのもので、暗号学的な耐改ざん性や送信者の真正性は保証しません。信頼できない相手から受け取ったsnapshotをrestoreしないでください。
+
+CLIが利用できない場合だけ、offline fallbackとしてCLI、全MCP server、Web serverを停止し、OS lockが解放されたことを確認してから、`.lock`を除く保存先directoryの内容をdirectory構造ごとcopyしてください。異常終了後は、可能な限り先に通常起動してtransaction recoveryを完了させてください。手動復元と`project.yaml`の直接編集は全process停止中に限り、完了後に`schronu 検証`を通してからprocessを再起動してください。`.lock`はtask dataではないためbackup・restore対象外です。
 
 stdio接続を許可したMCP clientはtaskの作成・変更・完了とfile保存を実行できます。信頼できるローカルclientだけに設定し、保存先のfilesystem permissionとbackupを管理してください。repository transactionの脅威modelは、Schronuのadvisory lockに従うprocess同士の併用とprocess crashです。path検証後に外部processがfilesystem entryを悪意的に差し替えるsymlink TOCTOUには完全な保護を提供せず、transactionに限らないrepository全体の将来のsecurity debtとして扱います。初版の対象外は、team共有、端末間同期、network transportです。
 

@@ -31,7 +31,7 @@
     "name": "get_task"
   },
   {
-    "description": "List tasks in project-tree pre-order, optionally filtered by period, effective status, and category. Different filters are combined using AND.",
+    "description": "List tasks in project-tree pre-order, optionally filtered by period, effective status, category, name query, and root subtree. Returns at most 100 tasks by default with an opaque next_cursor; limit accepts 1 through 500, and unbounded returns all matches. Different filters are combined using AND.",
     "inputSchema": {
       "additionalProperties": false,
       "properties": {
@@ -55,6 +55,16 @@
             ]
           },
           "type": "array"
+        },
+        "cursor": {
+          "description": "Continue from an opaque next_cursor returned by a prior list_tasks call with the same filters. Only limit may change.",
+          "type": "string"
+        },
+        "limit": {
+          "description": "Return at most this many matching tasks, from 1 through 500. Defaults to 100. May be changed between pages.",
+          "maximum": 500,
+          "minimum": 1,
+          "type": "integer"
         },
         "period": {
           "additionalProperties": false,
@@ -96,6 +106,18 @@
           ],
           "type": "object"
         },
+        "query": {
+          "description": "A Unicode-lowercased substring matched against task names without Unicode normalization. An empty string behaves as no query filter.",
+          "type": "string"
+        },
+        "root_task_id": {
+          "description": "Restrict traversal to this task and its descendants. The request fails with task_not_found when the UUID does not exist.",
+          "examples": [
+            "80d7db87-324e-4e8d-a5b7-ff78cd5bf39a"
+          ],
+          "format": "uuid",
+          "type": "string"
+        },
         "statuses": {
           "description": "Effective task statuses to include. Values within the array are combined using OR. Omit this field or pass an empty array to skip status filtering.",
           "items": {
@@ -107,6 +129,10 @@
             "type": "string"
           },
           "type": "array"
+        },
+        "unbounded": {
+          "description": "Return all matching tasks without pagination. Cannot be combined with limit or cursor.",
+          "type": "boolean"
         }
       },
       "required": [],

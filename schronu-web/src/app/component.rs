@@ -27,6 +27,15 @@ pub(super) fn InteractiveShell(blocked: bool, children: Element) -> Element {
 }
 
 #[component]
+pub(super) fn SessionChrome(active_tab: ActiveTab, children: Element) -> Element {
+    if active_tab == ActiveTab::Session {
+        rsx! { {children} }
+    } else {
+        rsx! {}
+    }
+}
+
+#[component]
 fn AppBody() -> Element {
     #[cfg(all(feature = "web", target_arch = "wasm32"))]
     {
@@ -35,9 +44,7 @@ fn AppBody() -> Element {
 
     #[cfg(not(all(feature = "web", target_arch = "wasm32")))]
     rsx! {
-        main { class: "shell", aria_busy: "true",
-            header { class: "toolbar", h1 { "Schronu" } }
-        }
+        main { class: "shell", aria_busy: "true" }
         LoadingOverlay {}
     }
 }

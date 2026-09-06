@@ -35,7 +35,7 @@ Schronu-webを、1日の余力と複数taskの作業状況を同時に把握で�
 
 - **REQ-COMMON-001**: viewport下端に「セッション」「一覧」「発火履歴」のtabを固定表示し、選択中の画面を上端の緑indicatorと`aria-pressed`で識別できること。3buttonは均等幅かつ操作高44px以上とし、safe areaを避け、desktopでは既存shell最大幅へ中央配置すること。
 - **REQ-COMMON-002**: tab切替はclient内だけで処理し、server通信を発生させないこと。tab barは通信中overlayより背面に配置すること。
-- **REQ-COMMON-003**: URL routingを必要とせず、単一ページ内で選択中の1画面だけをDOMへ表示すること。toolbar、持ち歩きロックbar、bufferは3画面で共通表示し、本文末尾は固定tab barとsafe areaに覆われないこと。
+- **REQ-COMMON-003**: URL routingを必要とせず、単一ページ内で選択中の1画面だけをDOMへ表示すること。タイトルやtoolbarは表示せず、持ち歩きロックbarとbufferはセッションtabだけに表示すること。ただし、持ち歩きロックのstateとmutation guardは3画面で共通に有効とし、本文末尾は固定tab barとsafe areaに覆われないこと。
 - **REQ-COMMON-004**: 利用者に見える名称には「フォーカス」を使用せず、「セッション」を使用すること。既存core APIの`get_focus`は内部の選定処理として利用してよい。
 - **REQ-COMMON-005**: 初回表示時に1度だけserverからsnapshotを取得し、bufferとlogical dateを初期化すること。
 - **REQ-COMMON-006**: server操作に失敗した場合、直前の表示データと`work_sessions`を保持したまま、errorの再試行可否を識別し、再試行または手動確認を案内すること。repository状態が不確実な場合は再送を案内しないこと。
@@ -47,7 +47,7 @@ Schronu-webを、1日の余力と複数taskの作業状況を同時に把握で�
 - **REQ-SESSION-001**: 複数のセッションを同時に保持し、それぞれの経過時間を独立して計測できること。
 - **REQ-SESSION-002**: `work_sessions`をlocalStorageの`schronu_web.work_sessions.v1`へ保存すること。
 - **REQ-SESSION-003**: 各`work_session`はtask UUID、task名、開始epoch milliseconds、開始時見積秒、開始時実績秒を保持すること。
-- **REQ-SESSION-004**: reload後は保存した開始時刻と現在時刻との差から各セッションを復元し、reload中の経過時間も反映すること。初期loadでlocalStorageから復元した計測中セッションについては、server snapshotのbuffer秒から、server観測時刻以前に存在する復元セッションのbuffer停止区間の和集合を差し引くこと。buffer停止区間は開始時刻から開始時見積の到達時刻までとし、終了操作中は終了click時刻がそれより早ければその時刻で閉じること。
+- **REQ-SESSION-004**: reload後は保存した開始時刻と現在時刻との差から各セッションを復元し、reload中の経過時間も反映すること。復元したセッションもpage内で開始したセッションと同様に、serverへ未送信の進捗秒をbufferへ加算すること。
 - **REQ-SESSION-005**: 同じtask UUIDのセッションは1件だけ保持し、重複追加しないこと。
 - **REQ-SESSION-006**: localStorageのtop-level JSONが不正またはversionが非対応の場合は空の`work_sessions`で表示し、元のkeyを自動上書きせずwarningを表示すること。個別entryだけが不正な場合はそのentryだけを除外し、次のlocal state変更時にvalid entryだけをversion 1として保存すること。いずれの場合もtaskを更新せず、初回`bootstrap`を継続すること。
 - **REQ-SESSION-007**: Webセッションの追加・削除・復元によってSchronu本体のcurrent taskを変更しないこと。
@@ -77,7 +77,7 @@ Schronu-webを、1日の余力と複数taskの作業状況を同時に把握で�
 ### 4.5 セッション操作
 
 - **REQ-ACTION-001**: 各cardに「破棄して解除」「記録して解除」「計測を破棄して完了」「記録して完了」の4buttonを表示すること。
-- **REQ-ACTION-002**: 「破棄して解除」は対象セッションをlocalStorageから削除するだけとし、taskの実績を加算せず、server通信を行わないこと。削除成功後は残存セッションのbuffer停止区間からbufferを再計算し、削除したセッションだけが覆っていた時間を未作業時間として減算すること。
+- **REQ-ACTION-002**: 「破棄して解除」は対象セッションをlocalStorageから削除するだけとし、taskの実績を加算せず、server通信を行わないこと。削除成功後は残存セッションの未送信進捗秒からbufferを再計算し、削除したセッション分の加算を取り消すこと。
 - **REQ-ACTION-003**: 「記録して解除」は対象taskのUUIDと終了操作click時刻を指定し、その時刻までの経過秒を開始時実績へ加算すること。server処理中の通信待ち時間を加算せず、browser時計がserver時計より進んでいても開始・終了click時刻の差を維持すること。
 - **REQ-ACTION-004**: 「記録して解除」は開始時実績を期待値として検証し、現在実績と不一致の場合はtaskを保存せず、セッションを保持すること。
 - **REQ-ACTION-005**: 「記録して完了」は対象taskのUUIDと終了操作click時刻を指定し、その時刻までの経過秒加算、task完了、終了時刻更新を同じrepository transactionで処理すること。browser時計がserver時計より進んでいる場合、経過秒はclick時刻差を使い、保存する完了時刻はserver操作時刻を上限とすること。
@@ -95,15 +95,15 @@ Schronu-webを、1日の余力と複数taskの作業状況を同時に把握で�
 ### 4.6 buffer
 
 - **REQ-BUFFER-001**: bufferを`現在logical dateの符号付き残り容量 - 同日のschedule segmentごとのscheduled_work_seconds合計`としてserver側で算出すること。server観測時刻が日次終端より前なら、符号付き残り容量は観測時刻から日次終端までの毎週固定`busy_time_slot`控除後の空き秒とする。日次終端以後なら、符号付き残り容量は`日次終端 - server観測時刻`の0以下の秒数とし、日次終端後の全壁時計超過時間を反映する。同一taskの複数segment、進行中segment、同じlogical date内の過去segmentをそれぞれ1回ずつ全量で集計すること。
-- **REQ-BUFFER-002**: serverからbuffer秒とその観測時刻を取得し、以後はbrowser側でbuffer停止区間にいずれのセッションも含まれない経過秒だけを差し引いて1秒ごとに表示を更新すること。1件でも開始時見積内のセッションがある間はbufferを停止し、全セッションが時間超過した後はセッション数にかかわらず実時間と同速で減算すること。終了操作処理中の対象はclick時刻と見積到達時刻の早い方でbuffer停止区間を閉じること。ただし、完了実績競合の確認中と再送中は、見積到達後も競合を解消するまで初回click時点のbuffer表示を維持すること。加えて、初期loadでlocalStorageから復元し、現在も保持するセッションのserver観測時刻までのbuffer停止区間はserver bufferへ未反映として、複数セッションの重複を除いた継続秒を1回だけ差し引くこと。この規則はserver観測時刻が日次終端以後の場合も同じとする。
+- **REQ-BUFFER-002**: serverからbuffer秒とその観測時刻を取得し、browser側で`server buffer - snapshot後の壁時計経過秒 + 各セッションのserverへ未送信の進捗秒の合計`を1秒ごとに再計算すること。未送信進捗秒は開始時刻から開始時見積到達時刻までとし、終了操作中は終了click時刻がそれより早ければその時刻で打ち切ること。ただし、完了実績競合の確認中と再送中は、見積到達後も競合を解消するまで初回click時点のbuffer表示を維持すること。この規則はbufferの正負とserver観測時刻が日次終端の前後かどうかに依存しない。
 - **REQ-BUFFER-003**: 0以上のbufferを`HH:MM:SS`でカウントダウン表示すること。
 - **REQ-BUFFER-004**: 負のbufferを赤い文字の`-HH:MM:SS`でカウントアップ表示すること。
 - **REQ-BUFFER-005**: logical dateが06:00境界で変化しても、それだけを理由にserverから再取得しないこと。
 - **REQ-BUFFER-006**: 次の明示的server操作のresponseでlogical dateとbuffer snapshotを更新すること。
-- **REQ-BUFFER-007**: snapshot後に開始時見積内の計測中セッションが1件以上存在する時間はbufferを停止すること。snapshot後に最初のセッションを開始した場合は、その開始前のbuffer停止区間外の時間だけを減算すること。最後のbuffer停止中セッションが時間超過するか終了操作に入った場合は、その見積到達時刻またはclick時刻からbuffer更新を再開すること。ただし、完了実績競合の確認中と再送中はREQ-ACTION-013を優先し、競合解消まで再開しないこと。snapshot以前から継続する復元セッションは、REQ-BUFFER-002の復元補正を適用したうえで、見積到達時刻までsnapshot後のbufferを停止すること。
-- **REQ-BUFFER-008**: 複数セッションのbuffer停止区間は和集合として扱い、重複時間を二重に補正しないこと。復元セッションの観測時刻以前のbuffer停止区間も和集合として1回だけ差し引くこと。終了処理中のセッションはclick時刻と見積到達時刻の早い方を区間の終端とし、server commit済みでlocalStorage削除失敗により残ったセッションはsnapshot後の停止と復元補正の双方から除外すること。serverが未commitと確定できるerror時は対象を計測中へ戻し、transport切断またはrepository状態が不確実な場合はrepository確認完了までclick時刻で終了した区間として扱うこと。完了実績競合では通常の開始時見積内の停止区間に加え、初回clickから競合解消までを終端なしの停止区間とし、click以前に減算済みのbufferを巻き戻さないこと。
-- **REQ-BUFFER-009**: 「破棄して解除」のlocalStorage削除成功後は、残存セッションの各buffer停止区間からbufferを再計算すること。全セッションを破棄した場合はsnapshot後の全経過秒を減算すること。保存失敗時はmemory上のセッションを維持し、buffer表示を変化させないこと。
-- **REQ-BUFFER-010**: 新しいserver responseを受信した場合は、そのbuffer秒と観測時刻を新たな表示計算の基準とし、観測時点で開始時見積内の計測中セッションがあれば観測直後からbufferを停止すること。観測時点で全セッションが時間超過済みなら、観測直後からbufferを減算すること。初期loadで復元したセッションが残っている間は、新しい基準にもREQ-BUFFER-002の復元補正を適用すること。
+- **REQ-BUFFER-007**: 開始時見積内のセッションは、snapshotの前後にかかわらずsnapshot後の壁時計減算を1秒ずつ相殺する進捗秒をbufferへ加算すること。見積到達またはより早い終了click後は対象セッションの加算を止め、ほかに加算対象がなければbufferを実時間と同速で減算すること。ただし、完了実績競合の確認中と再送中はREQ-ACTION-013を優先し、初回click後の壁時計減算も相殺して競合解消まで表示を固定すること。
+- **REQ-BUFFER-008**: 複数セッションの未送信進捗秒は重複を除かずセッションごとに合算すること。2セッションを同時に10分計測した場合は20分を加算すること。server commit済みでlocalStorage削除失敗により残ったセッションは加算対象から除外し、未commitが確定できるerror時は計測を再開し、transport切断またはrepository状態が不確実な場合はrepository確認完了まで終了click時刻で加算を打ち切ること。完了実績競合では通常の未送信進捗に加え、初回clickから競合解消までの壁時計減算を相殺し、click以前に減算済みのbufferを巻き戻さないこと。
+- **REQ-BUFFER-009**: 「破棄して解除」のlocalStorage削除成功後は、残存セッションの未送信進捗秒だけでbufferを再計算すること。全セッションを破棄した場合はsnapshot後の全経過秒を減算すること。保存失敗時はmemory上のセッションを維持し、buffer表示を変化させないこと。
+- **REQ-BUFFER-010**: 新しいserver responseを受信した場合は、そのbuffer秒と観測時刻を新たな表示計算の基準とし、page内開始とreload復元を区別せず、現在保持する各セッションの開始時刻から観測時刻までの未送信進捗秒も加算すること。一覧の再取得でserver bufferが進んだ観測時刻分減っても、同じ進捗秒を新基準へ加算すること。
 
 ### 4.7 一覧画面
 
@@ -111,7 +111,7 @@ Schronu-webを、1日の余力と複数taskの作業状況を同時に把握で�
 - **REQ-LIST-002**: 先頭のbuttonを`曜 今日`、2番目を`曜 明日`、3番目以降を曜日で表示すること。
 - **REQ-LIST-003**: 日付取得では曜日名ではなく具体的なlogical dateをserverへ送ること。
 - **REQ-LIST-004**: 選択したlogical dateのschedule segmentを開始時刻の昇順で表示すること。
-- **REQ-LIST-005**: 各行に締切、予定時間、task名、「セッション」buttonを表示すること。
+- **REQ-LIST-005**: 各行に締切、予定時間、task名、セッション追加buttonを表示すること。46remを超える画面ではbuttonの表示を「セッション」、46rem以下では左端の44px以上の正方形buttonを「＋」とし、いずれもassistive technologyがtask名とセッション追加操作を識別できるlabelを持つこと。左スワイプによる直接発火は行わないこと。
 - **REQ-LIST-006**: 予定時間をlocal timeの`HH:MM-HH:MM`で表示すること。
 - **REQ-LIST-007**: 現在時刻が締切を過ぎた場合、締切を赤色で表示すること。
 - **REQ-LIST-008**: schedule rankが0であるtask(未完了の子を持たないtask)のtask名を緑色で表示すること。
@@ -119,7 +119,7 @@ Schronu-webを、1日の余力と複数taskの作業状況を同時に把握で�
 - **REQ-LIST-010**: 対象task UUIDのセッションが存在する場合、同じtaskを表すすべてのschedule segmentの「セッション」buttonを無効化すること。
 - **REQ-LIST-011**: schedule rankが0でないtaskは「セッション」buttonを表示せず、client stateが手動追加要求を受けても`work_sessions`へ追加しないこと。
 - **REQ-LIST-012**: 「計測を破棄して完了」または「記録して完了」のserver処理成功後は、追加の`list_tasks`を送らず、表示中の一覧から対象task UUIDを持つ全schedule segmentを即時に除去すること。別taskのrowと選択logical dateを維持し、responseがlogical date境界を跨いだ場合もsnapshotと日付buttonは更新すること。完了成功response受理時点でin-flightの`list_tasks` requestを無効化し、その後に到着したresponseは適用しないこと。完了成功response受理後に開始した`list_tasks` responseは通常どおり適用すること。完了失敗、「記録して解除」、「破棄して解除」では一覧を変更しないこと。server commit成功後に対象sessionのlocalStorage削除だけが失敗した場合も、一覧からは除去すること。反復完了で生成された次回taskは自動追加せず、次の明示的な一覧取得で表示すること。
-- **REQ-LIST-013**: 46rem以下では一覧の横スクロールをなくし、各rowをtask名、label付きの締切・予定、横幅100%の「セッション」buttonの順にcard表示すること。締切と予定は2列とし、tableの列header semanticsを維持すること。
+- **REQ-LIST-013**: 全幅で一覧を`セッション追加、予定、締切、task名`の順に表示し、可視の列headerを維持すること。46rem以下では罫線区切りの1行tableとし、列幅は`44px 5.75rem 5.5rem minmax(0, 1fr)`、rowの操作高は44px以上とする。締切と予定は固定列で折り返さず、task名だけを1行のままcell内で横スクロール可能にし、page全体を横スクロールさせないこと。セッション追加済みのrank 0 taskは同一UUIDの全segmentでdisabledの「✓」、未追加なら「＋」、rank非0なら空の操作cellを表示すること。
 - **REQ-LIST-014**: 日付buttonの直下にtask名検索欄を表示し、前後空白を除外した英字大小無視の部分一致で取得済みrowを即時に絞り込むこと。空または空白だけなら全rowを表示し、一致しない場合は空結果を案内すること。検索文字列は日付・tab切替で保持し、reloadで破棄すること。入力中だけ44px以上のclear buttonを表示し、clear後は検索欄へkeyboard focusを戻すこと。検索入力とclearではserver通信、task更新、localStorage更新、発火履歴追加を行わないこと。
 
 ### 4.8 通信制限と発火履歴
@@ -179,10 +179,10 @@ Schronu-webを、1日の余力と複数taskの作業状況を同時に把握で�
 | ID | 受入条件 |
 | --- | --- |
 | AC-001 | viewport下端に「セッション」「一覧」「発火履歴」の固定tabが表示され、44px以上の均等幅button、safe area、本文との非重複、選択indicatorと`aria-pressed`を維持し、利用者向け文言に「フォーカス」が残っていない。 |
-| AC-002 | 2件以上のセッションが同時に1秒ごとに進み、reload後も元の開始時刻から復元される。server buffer表示はserver観測時刻以前に存在する復元セッションのbuffer停止区間の和集合を1回だけ差し引き、終了操作中の区間は見積到達時刻と終了click時刻の早い方で閉じる。 |
+| AC-002 | 2件以上のセッションが同時に1秒ごとに進み、reload後も元の開始時刻から復元される。server buffer表示は各セッションの未送信進捗秒を個別に加算し、終了操作中の加算は見積到達時刻と終了click時刻の早い方で打ち切る。 |
 | AC-003 | 15分見積、開始時実績5分のtaskはセッション開始直後に33%となり、100%および133%で指定どおりのbarを表示する。 |
 | AC-004 | 開始`HH:MM`、完了予定`HH:MM`、残り・超過`MM:SS`が320px幅でも同じtiming領域の1行に表示され、各値をassistive technologyが識別できる。見積0のtaskは`--%`と赤い超過時間を表示し、長時間の分表示は59を超えても欠落しない。 |
-| AC-005 | 日次終端前は毎週固定`busy_time_slot`控除後の空き秒、日次終端ちょうどは予定作業がなければ0、日次終端後は壁時計超過秒を負値とするbufferがserver観測時刻を基準に変化する。開始時見積内の計測中セッションが1件以上ある間はbufferが停止し、セッション0件または全セッションが時間超過済みならセッション数にかかわらず毎秒減る。localStorageから復元したセッションの観測時刻以前のbuffer停止区間は重複を除いてserver bufferから差し引き、最後のbuffer停止中セッションが時間超過するか終了操作に入った後はその時刻から再開し、負値は赤い符号付き表示になる。 |
+| AC-005 | 日次終端前は毎週固定`busy_time_slot`控除後の空き秒、日次終端ちょうどは予定作業がなければ0、日次終端後は壁時計超過秒を負値とするbufferがserver観測時刻を基準に変化する。browserはsnapshot後の壁時計経過秒を1回減算し、各セッションの未送信進捗秒を重複ごと個別に加算する。1セッションの見積内では通常停止し、同時計測ではセッションごとの進捗が加算され、見積到達またはより早い終了click後は対象の加算を止める。一覧を再取得しても新server bufferへ同じ未送信進捗を足し、正負どちらのbufferも符号どおり表示する。 |
 | AC-006 | 06:00境界、3画面のtab切替、毎秒tick、一覧からのセッション追加、破棄して解除、破棄完了の確認とキャンセルではserver requestが増えない。 |
 | AC-007 | 初回、日付選択、自動セッション、記録、2種類の完了確定だけが仕様どおりのserver requestを発生させる。 |
 | AC-008 | 一覧に8 logical datesが表示され、両端が同じ曜日でも具体日付で別の日として取得される。 |
@@ -194,7 +194,7 @@ Schronu-webを、1日の余力と複数taskの作業状況を同時に把握で�
 | AC-014 | 発火履歴tabの選択時だけ独立sectionがDOMへ表示され、実際のserver action名、全送信引数、成否を区別して100件まで表示し、localStorage操作を表示せず、reload後は空になる。 |
 | AC-015 | 各cardに4操作が表示され、計測を破棄して完了はcard内の確認を経た確定時だけ1回送信され、キャンセルでは送信されない。3終了操作はclick時刻でcardの計測を停止し、通信待ちで表示や実績を増やさない。2種類の完了は`record_elapsed_seconds`の真偽を含む発火履歴で区別される。 |
 | AC-016 | 2種類の完了が成功すると追加通信なしで対象task UUIDの全schedule segmentが一覧から消え、別taskのrowと選択logical dateは維持される。logical date境界を跨ぐ完了responseではsnapshotと日付buttonが更新される。完了成功response受理時点でin-flightだった一覧requestは無効化され、その後にresponseが到着しても対象taskが復活しない。完了成功response受理後に開始した明示的一覧取得は通常どおり反映される。完了失敗、記録して解除、破棄して解除では一覧が変化せず、server commit成功後にlocalStorage削除だけが失敗した場合も完了taskは一覧から消える。 |
-| AC-017 | 320pxから46remまでの画面幅で一覧cardがviewportを横に超えず、長いtask名、日付付き締切、予定、「セッション」buttonをすべて確認・操作できる。34rem以下ではbufferと日付buttonが圧縮され、日付buttonの44px以上の操作高を維持する。 |
+| AC-017 | 320pxから46remまでの画面幅で一覧が可視header付きの1行tableとなり、左端の44px以上の「＋」またはdisabledの「✓」、固定された締切・予定、cell内だけを横スクロールできる長いtask名を表示する。viewport全体は横に超えず、rank非0の操作cellは空になる。46remを超える画面では従来のdesktop tableを維持し、34rem以下ではbufferと日付buttonを圧縮して日付buttonの44px以上の操作高を維持する。 |
 | AC-018 | 通常モードから1 clickで持ち歩きロックを有効化でき、ロック中は状態と説明を長押しbutton内へ集約した2行以内のbarを表示する。ロック中も画面表示・更新、scroll、tab切替、日付選択、一覧取得を利用できる一方、9変更操作はdispatchされない。 |
 | AC-019 | 44px以上のbuttonをpointerまたはSpace・Enterで1.2秒長押しすると15秒かつ1操作だけ許可され、各中断event、期限到達、最初の変更dispatchで再ロックされる。計測を破棄する完了は確認では権利を消費せず確定で消費し、完了実績競合後の再完了・計測再開には新たな許可を要する。 |
 | AC-020 | 持ち歩きロックの正常な保存値を復元し、ロック状態では圧縮したbarを表示する。不正値・未知version・読込失敗では元valueを維持してwarning付きで同じロック表示にする。ロック開始の保存失敗ではmemory上のロックを維持し、通常モード復帰の保存失敗では解除しない。一時許可はreload後に復元しない。 |

@@ -11,12 +11,11 @@ mod scheduled_capacity;
 mod scheduling_instrumentation;
 mod scheduling_policy;
 pub mod session_progress;
+mod task_list;
 pub(crate) mod task_name;
 pub mod task_use_case;
 mod task_view;
 
-#[cfg(test)]
-mod list_tasks_contract_tests;
 #[cfg(test)]
 mod schedule_use_case_contract_tests;
 #[cfg(test)]
