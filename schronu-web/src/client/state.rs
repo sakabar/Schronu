@@ -194,6 +194,14 @@ impl ClientState {
         self.sessions.completion_conflicts.get(task_id)
     }
 
+    fn session_stopped_at_epoch_ms_for_buffer(&self, task_id: &str) -> Option<i64> {
+        if self.sessions.completion_conflicts.contains_key(task_id) {
+            None
+        } else {
+            self.session_stopped_at_epoch_ms(task_id)
+        }
+    }
+
     pub fn is_session_manual_check_blocked(&self, task_id: &str) -> bool {
         self.sessions
             .manual_check_blocked_task_ids
@@ -240,7 +248,7 @@ impl ClientState {
             .map(|session| {
                 (
                     session.started_at_epoch_ms,
-                    self.session_stopped_at_epoch_ms(&session.task_id),
+                    self.session_stopped_at_epoch_ms_for_buffer(&session.task_id),
                 )
             })
             .collect();
@@ -254,7 +262,7 @@ impl ClientState {
             .map(|session| {
                 (
                     session.started_at_epoch_ms,
-                    self.session_stopped_at_epoch_ms(&session.task_id),
+                    self.session_stopped_at_epoch_ms_for_buffer(&session.task_id),
                 )
             })
             .collect();

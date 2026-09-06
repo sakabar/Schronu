@@ -978,6 +978,40 @@ fn 完了実績競合は別taskのrepository不確実errorを消さない() {
 }
 
 #[test]
+fn 完了実績競合の確認中と再送中はbufferを初回click時刻で停止する() {
+    let storage = FakeStorage::default();
+    let mut state = state_with_sessions(&storage, &[TASK_ID]);
+    let bootstrap_id = bootstrap_effect(state.request_bootstrap());
+    state.apply_bootstrap_result(bootstrap_id, Ok(snapshot("2026-09-05", 0)));
+    state.tick(6_500);
+    let (first_id, _) = complete_effect(state.begin_complete_session(&storage, TASK_ID));
+    state.apply_complete_result(
+        &storage,
+        first_id,
+        Err(ServerFailure::Operation(actual_work_conflict(Some(250)))),
+    );
+
+    state.tick(20_000);
+    assert_eq!(state.display_buffer_seconds(), Some(60));
+    let (second_id, _) = complete_effect(state.confirm_completion_conflict(&storage, TASK_ID));
+    state.tick(30_000);
+    assert_eq!(state.display_buffer_seconds(), Some(60));
+    state.apply_complete_result(
+        &storage,
+        second_id,
+        Err(ServerFailure::Operation(actual_work_conflict(Some(300)))),
+    );
+    state.tick(40_000);
+    assert_eq!(state.display_buffer_seconds(), Some(60));
+
+    state.resume_completion_conflict(&storage, TASK_ID);
+    assert_eq!(state.sessions()[0].started_at_epoch_ms, 33_500);
+    assert_eq!(state.display_buffer_seconds(), Some(27));
+    state.tick(50_000);
+    assert_eq!(state.display_buffer_seconds(), Some(27));
+}
+
+#[test]
 fn 計測破棄完了は多重送信と不確実な再送を防ぐ() {
     let transport_storage = FakeStorage::default();
     let mut transport_state = state_with_sessions(&transport_storage, &[TASK_ID, OTHER_TASK_ID]);
