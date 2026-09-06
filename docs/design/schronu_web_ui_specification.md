@@ -408,11 +408,17 @@ observation_window_milliseconds = max(0, tick_now - observed_at)
 buffer_sessions = work_sessions - server commit済みでlocal削除に失敗したsessions
 stopped_at(session) = 終了処理中またはrepository状態不確実なsessionのclick時刻
 restored_buffer_sessions = buffer_sessionsのうち初期loadでlocalStorageから復元したsessions
+estimated_completion(session) =
+  session.started_at + max(session.estimated_at_start - session.actual_at_start, 0)
 protected_until(session) = min(
-  session.started_at + max(session.estimated_at_start - session.actual_at_start, 0),
+  estimated_completion(session),
   session.stopped_atがあればその時刻
 )
-protected_intervals = buffer_sessionsの[started_at, protected_until]
+protected_intervals =
+  完了実績競合の確認中または再送中:
+    buffer_sessionsの[started_at, estimated_completion]と[初回click, 終端なし]
+  それ以外:
+    buffer_sessionsの[started_at, protected_until]
 restored_intervals = restored_buffer_sessionsの[started_at, min(protected_until, observed_at)]
 
 protected_elapsed = protected_intervalsと[observed_at, tick_now]の重なりの和集合milliseconds
@@ -425,12 +431,12 @@ restored_session_elapsed =
 display_buffer = buffer_seconds - buffer_elapsed - restored_session_elapsed
 ```
 
-`protected_until`は定義できる終端のうち最も早い時刻とする。見積到達時刻がepoch範囲外で算出不能かつ`stopped_at`もない場合は終端なしとし、セッションが終了するまでbufferを停止する。
+`protected_until`は定義できる終端のうち最も早い時刻とする。完了実績競合の確認中と再送中は、通常の開始時見積内区間に初回clickから終端なしの区間を追加し、その和集合で初回click時点のbuffer表示を競合解消まで固定する。これにより見積到達後にclickした場合も、見積到達からclickまでに減算済みのbufferは巻き戻さない。見積到達時刻がepoch範囲外で算出不能かつ`stopped_at`もない場合は終端なしとし、セッションが終了するまでbufferを停止する。
 
 - `snapshot_elapsed`は観測用に保持し、bufferから実際に引く値は`buffer_elapsed`とする。
 - 新しいserver responseを受信した場合は、その`buffer_seconds`と`observed_at`を新たな表示計算の基準とする。snapshot以前に開始した計測中セッションは、開始時見積内ならsnapshot直後からbufferを停止し、時間超過済みなら減算する。初期loadでlocalStorageから復元したセッションについては、server bufferへ未反映の継続時間として、`observed_at`以前に存在するbuffer停止区間の和集合を追加で差し引く。現在pageで新規追加したセッションへこの復元補正は適用しない。
 - `record_session`または`complete_session`のmutation responseは、対象実績を反映した`buffer_seconds`をそのまま新たな基準とする。server commit済みでlocalStorage削除だけに失敗した対象sessionは、以後のbuffer計算上の計測中sessionから除外する。
-- 終了操作をdispatchしたsessionはclick時刻と見積到達時刻の早い方を終端とするbuffer停止区間として扱う。ほかにbuffer停止中のsessionがなければその終端後からbufferを直ちに再開し、未commitが確定するerrorでは対象を計測中へ戻す。transport切断または`repository_state_uncertain`ではrepository確認完了までclick時刻の終端を保持する。成功時はresponseのsnapshotを新たな基準とするため、通信待ち時間をclientで二重減算しない。
+- 終了操作をdispatchしたsessionはclick時刻と見積到達時刻の早い方を終端とするbuffer停止区間として扱う。ほかにbuffer停止中のsessionがなければその終端後からbufferを直ちに再開し、未commitが確定するerrorでは対象を計測中へ戻す。transport切断または`repository_state_uncertain`ではrepository確認完了までclick時刻の終端を保持する。完了実績競合では通常の開始時見積内区間に初回clickから終端なしの区間を追加し、確認中と再送中は初回click時点の表示を維持する。成功時はresponseのsnapshotを新たな基準とするため、通信待ち時間をclientで二重減算しない。
 - 複数の計測中セッションは、いずれか1件がbuffer停止中である区間の和集合として扱い、重複時間を二重に補正しない。復元セッションの`observed_at`以前の区間も同じ和集合計算を用い、全セッションが時間超過した区間はセッション数にかかわらず実時間と同速でbufferから差し引く。
 - 「破棄して解除」成功後は残存セッションから式全体を再計算する。最古セッションだけを破棄した場合は後発セッション開始前を未作業として追加減算し、最古の復元セッションを破棄した場合は残存する復元区間の和集合から補正を再計算する。全件破棄した場合はsnapshot後の全経過秒を減算し、復元補正は0とする。localStorage保存失敗時はmemory stateを確定しないため、buffer表示も変化させない。
 - browser時計が後退した区間は0秒へclampする。時刻差と加減算は`i64`境界でもoverflowしない計算を用いる。

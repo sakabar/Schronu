@@ -1128,6 +1128,45 @@ fn 完了実績競合の確認中と再送中はbufferを初回click時刻で停
 }
 
 #[test]
+fn 完了実績競合の確認中は開始時見積の到達後もbufferを停止する() {
+    let storage = FakeStorage::default();
+    let mut state = state_with_sessions(&storage, &[TASK_ID]);
+    let bootstrap_id = bootstrap_effect(state.request_bootstrap());
+    state.apply_bootstrap_result(bootstrap_id, Ok(snapshot("2026-09-05", 0)));
+    state.tick(6_500);
+    let (request_id, _) = complete_effect(state.begin_complete_session(&storage, TASK_ID));
+    state.apply_complete_result(
+        &storage,
+        request_id,
+        Err(ServerFailure::Operation(actual_work_conflict(Some(250)))),
+    );
+
+    state.tick(900_000);
+
+    assert_eq!(state.display_buffer_seconds(), Some(60));
+}
+
+#[test]
+fn 見積到達後の完了実績競合は初回click以前のbuffer減算を維持する() {
+    let storage = FakeStorage::default();
+    let mut state = state_with_sessions(&storage, &[TASK_ID]);
+    let bootstrap_id = bootstrap_effect(state.request_bootstrap());
+    state.apply_bootstrap_result(bootstrap_id, Ok(snapshot("2026-09-05", 0)));
+    state.tick(900_000);
+    assert_eq!(state.display_buffer_seconds(), Some(-40));
+    let (request_id, _) = complete_effect(state.begin_complete_session(&storage, TASK_ID));
+    state.apply_complete_result(
+        &storage,
+        request_id,
+        Err(ServerFailure::Operation(actual_work_conflict(Some(250)))),
+    );
+
+    state.tick(950_000);
+
+    assert_eq!(state.display_buffer_seconds(), Some(-40));
+}
+
+#[test]
 fn 計測破棄完了は多重送信と不確実な再送を防ぐ() {
     let transport_storage = FakeStorage::default();
     let mut transport_state = state_with_sessions(&transport_storage, &[TASK_ID, OTHER_TASK_ID]);

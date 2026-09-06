@@ -196,14 +196,6 @@ impl ClientState {
         self.sessions.completion_conflicts.get(task_id)
     }
 
-    fn session_stopped_at_epoch_ms_for_buffer(&self, task_id: &str) -> Option<i64> {
-        if self.sessions.completion_conflicts.contains_key(task_id) {
-            None
-        } else {
-            self.session_stopped_at_epoch_ms(task_id)
-        }
-    }
-
     pub fn is_session_manual_check_blocked(&self, task_id: &str) -> bool {
         self.sessions
             .manual_check_blocked_task_ids
@@ -241,7 +233,7 @@ impl ClientState {
             })
     }
 
-    fn buffer_protected_interval(&self, session: &WorkSession) -> (i64, Option<i64>) {
+    fn buffer_protected_intervals(&self, session: &WorkSession) -> Vec<(i64, Option<i64>)> {
         let estimated_completion_epoch_ms = session_timing(
             session.started_at_epoch_ms,
             session.estimated_work_seconds_at_start,
@@ -249,7 +241,13 @@ impl ClientState {
             session.started_at_epoch_ms,
         )
         .estimated_completion_epoch_ms;
-        let stopped_at_epoch_ms = self.session_stopped_at_epoch_ms_for_buffer(&session.task_id);
+        if let Some(conflict) = self.sessions.completion_conflicts.get(&session.task_id) {
+            return vec![
+                (session.started_at_epoch_ms, estimated_completion_epoch_ms),
+                (conflict.ended_at_epoch_ms, None),
+            ];
+        }
+        let stopped_at_epoch_ms = self.session_stopped_at_epoch_ms(&session.task_id);
         let protected_until_epoch_ms = match (estimated_completion_epoch_ms, stopped_at_epoch_ms) {
             (Some(estimated_completion), Some(stopped_at)) => {
                 Some(estimated_completion.min(stopped_at))
@@ -257,7 +255,7 @@ impl ClientState {
             (Some(estimated_completion), None) => Some(estimated_completion),
             (None, stopped_at) => stopped_at,
         };
-        (session.started_at_epoch_ms, protected_until_epoch_ms)
+        vec![(session.started_at_epoch_ms, protected_until_epoch_ms)]
     }
 
     pub fn display_buffer_seconds(&self) -> Option<i128> {
@@ -266,7 +264,7 @@ impl ClientState {
             .sessions()
             .iter()
             .filter(|session| !self.is_session_committed_blocked(&session.task_id))
-            .map(|session| self.buffer_protected_interval(session))
+            .flat_map(|session| self.buffer_protected_intervals(session))
             .collect();
         let restored_session_intervals: Vec<_> = self
             .sessions()
@@ -275,7 +273,7 @@ impl ClientState {
                 self.restored_session_task_ids.contains(&session.task_id)
                     && !self.is_session_committed_blocked(&session.task_id)
             })
-            .map(|session| self.buffer_protected_interval(session))
+            .flat_map(|session| self.buffer_protected_intervals(session))
             .collect();
         let restored_session_elapsed_seconds = restored_session_intervals
             .iter()
