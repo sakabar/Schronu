@@ -575,7 +575,7 @@ button:disabled {
     }
 
     .date-pill {
-        min-height: 2.75rem;
+        min-height: max(2.75rem, 44px);
         padding: 0.5rem 0.9rem;
     }
 
