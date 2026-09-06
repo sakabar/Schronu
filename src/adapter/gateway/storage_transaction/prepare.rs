@@ -1,3 +1,4 @@
+use std::collections::HashSet;
 use std::path::Path;
 use std::sync::Arc;
 
@@ -8,7 +9,7 @@ use super::io::{
     acquire_transaction_lock, resolve_transactions_directory, sync_directory,
     validate_delete_target, validate_transactions_directory,
 };
-use super::layout::{validate_storage_relative_path, TransactionLayout};
+use super::layout::{invalid_target_path_error, validate_storage_relative_path, TransactionLayout};
 use super::manifest::{
     content_checksum, ContentIntegrity, RawTransactionManifest, ValidatedEntry, ValidatedManifest,
 };
@@ -131,9 +132,11 @@ fn prepare_contents(
     deletes: &[&Path],
 ) -> Result<ValidatedManifest, StorageTransactionError> {
     let mut entries = Vec::with_capacity(writes.len() + deletes.len());
+    let mut targets = HashSet::with_capacity(writes.len() + deletes.len());
     for (index, write) in writes.iter().enumerate() {
         let target =
             validate_storage_relative_path(&context.paths.storage_dir_path, write.target_path)?;
+        ensure_unique_target(&mut targets, target.clone(), write.target_path)?;
         let staged_file = TransactionLayout::staged_file_relative_path(index);
         let staged_file_path =
             TransactionLayout::staged_file_path(&context.paths.transaction_dir_path, &staged_file);
@@ -153,9 +156,9 @@ fn prepare_contents(
         });
     }
     for delete in deletes {
-        entries.push(ValidatedEntry::Delete {
-            target: validate_delete_target(context.io, &context.paths.storage_dir_path, delete)?,
-        });
+        let target = validate_delete_target(context.io, &context.paths.storage_dir_path, delete)?;
+        ensure_unique_target(&mut targets, target.clone(), delete)?;
+        entries.push(ValidatedEntry::Delete { target });
     }
     sync_directory(context.io, context.staged_files_dir_path)?;
 
@@ -209,6 +212,21 @@ fn prepare_contents(
     sync_directory(context.io, &context.paths.transactions_dir_path)?;
     sync_directory(context.io, &context.paths.storage_dir_path)?;
     Ok(manifest)
+}
+
+fn ensure_unique_target(
+    targets: &mut HashSet<std::path::PathBuf>,
+    target: std::path::PathBuf,
+    operation_path: &Path,
+) -> Result<(), StorageTransactionError> {
+    if targets.insert(target) {
+        Ok(())
+    } else {
+        Err(invalid_target_path_error(
+            operation_path,
+            "transaction targets must be unique",
+        ))
+    }
 }
 
 fn write_staged_file(

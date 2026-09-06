@@ -4,6 +4,7 @@ use super::{StorageTransactionError, StorageTransactionOperation};
 use crate::adapter::gateway::storage_content_integrity::content_digest;
 pub(super) use crate::adapter::gateway::storage_content_integrity::content_matches;
 use serde::{Deserialize, Serialize};
+use std::collections::HashSet;
 use std::path::{Component, Path, PathBuf};
 use uuid::Uuid;
 
@@ -172,6 +173,7 @@ pub(super) fn validate_raw_manifest(
             validate_storage_relative_path(storage_dir_path, &layout.target_path(&directory))
         })
         .collect::<Result<Vec<_>, _>>()?;
+    let mut targets = HashSet::with_capacity(entries.len());
     let entries = entries
         .into_iter()
         .map(|entry| {
@@ -181,6 +183,12 @@ pub(super) fn validate_raw_manifest(
             } else {
                 validate_storage_relative_path(storage_dir_path, &target_path)?
             };
+            if !targets.insert(target.clone()) {
+                return Err(super::layout::invalid_target_path_error(
+                    &target_path,
+                    "transaction targets must be unique",
+                ));
+            }
             match (
                 entry.operation,
                 entry.staged_file,
