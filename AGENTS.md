@@ -38,6 +38,20 @@ cargo test -q entity::task
 - 意図的に未使用の仮引数やprivate fieldは`_`始まりにする。保持や将来利用の意図がある値をwarning対応だけで削除しない。
 - `全`commandのtask行またはSpreadsheet列を変える場合は、controller出力、`shell/copy_for_spreadsheet.sh`、`shell/generate_command_from_spreadsheet.sh`、`apps_script/main.js`、`README.md`を連動確認する。列定義の正本は[spreadsheet_columns.tsv](spreadsheet_columns.tsv)、詳細は[apps_script/README.md](apps_script/README.md)とする。
 
+## Worktree build cache
+
+- `target/`を分岐元からcopyせず、分岐元checkoutのabsolute pathを設定やcommandへ埋め込まない。
+- Local environmentのsetupでは`cargo fetch --locked`だけを実行し、全worktree共通のcompileや`dx build`を行わない。
+- `schronu-web`の製品コードを変更し、最終gateでWASM buildが必要なtaskでは、作業範囲の確定後に次をbackgroundで1回先行実行する。
+
+```bash
+cargo check --locked -p schronu-web --no-default-features --features web --target wasm32-unknown-unknown
+```
+
+- background build中は同じworktreeで別のCargo commandを実行せず、終了codeと出力を必ず回収する。
+- 先行checkはcache warmup専用とし、変更後の最終検証の代わりにしない。
+- `~/.cargo/bin/dx build --locked --web --package schronu-web`はsetupやprewarmでは実行せず、Web変更の最終品質gateで1回だけ実行する。
+
 ## 開発workflow
 
 ### 経路選択
