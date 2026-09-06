@@ -193,3 +193,88 @@ fn current_restoreはfileとdirectoryの種別変更をsnapshotどおり置換�
         b"new-directory-file"
     );
 }
+
+#[test]
+fn current_restoreはdirectoryからfile置換後のrevision失敗を回復する() {
+    let root = TestDirectory::new("current-restore-directory-to-file-recovery");
+    let current = root.child("current");
+    let source = root.child("source");
+    let snapshot = root.child("snapshot");
+    let pre_backup = root.child("pre-backup");
+    let recovery_snapshot = root.child("recovery-snapshot");
+    let now = Local.with_ymd_and_hms(2026, 9, 6, 16, 0, 0).unwrap();
+    create_saved_repository(&current, now);
+    create_saved_repository(&source, now);
+    fs::create_dir_all(current.join("changed/nested")).unwrap();
+    fs::write(current.join("changed/nested/old.bin"), b"old").unwrap();
+    fs::write(source.join("changed"), b"new-file").unwrap();
+    create_snapshot_at(&source, &snapshot, now).unwrap();
+    let storage_lock = StorageLock::acquire(&current, LockMode::Cli).unwrap();
+    let io = Arc::new(RecordingIo::new(vec![FaultRule {
+        operation: RecordingOperation::Rename,
+        path_matcher: PathMatcher::Exact(current.join(".revision")),
+        occurrence: 1,
+        error_kind: std::io::ErrorKind::Other,
+        error_message: "injected revision publication failure",
+    }]));
+
+    restore_current_snapshot_at_with_transaction_io(
+        &current,
+        &snapshot,
+        &pre_backup,
+        now,
+        &storage_lock,
+        io,
+    )
+    .unwrap_err();
+
+    assert_eq!(fs::read(current.join("changed")).unwrap(), b"new-file");
+    drop(storage_lock);
+    create_snapshot_at(&current, &recovery_snapshot, now).unwrap();
+    assert!(!current.join(".schronu-transactions/.active").exists());
+    verify_snapshot(recovery_snapshot).unwrap();
+}
+
+#[test]
+fn current_restoreはfileからnonempty_directory置換後のrevision失敗を回復する() {
+    let root = TestDirectory::new("current-restore-file-to-directory-recovery");
+    let current = root.child("current");
+    let source = root.child("source");
+    let snapshot = root.child("snapshot");
+    let pre_backup = root.child("pre-backup");
+    let recovery_snapshot = root.child("recovery-snapshot");
+    let now = Local.with_ymd_and_hms(2026, 9, 6, 17, 0, 0).unwrap();
+    create_saved_repository(&current, now);
+    create_saved_repository(&source, now);
+    fs::write(current.join("changed"), b"old-file").unwrap();
+    fs::create_dir_all(source.join("changed/nested")).unwrap();
+    fs::write(source.join("changed/nested/new.bin"), b"new-file").unwrap();
+    create_snapshot_at(&source, &snapshot, now).unwrap();
+    let storage_lock = StorageLock::acquire(&current, LockMode::Cli).unwrap();
+    let io = Arc::new(RecordingIo::new(vec![FaultRule {
+        operation: RecordingOperation::Rename,
+        path_matcher: PathMatcher::Exact(current.join(".revision")),
+        occurrence: 1,
+        error_kind: std::io::ErrorKind::Other,
+        error_message: "injected revision publication failure",
+    }]));
+
+    restore_current_snapshot_at_with_transaction_io(
+        &current,
+        &snapshot,
+        &pre_backup,
+        now,
+        &storage_lock,
+        io,
+    )
+    .unwrap_err();
+
+    assert_eq!(
+        fs::read(current.join("changed/nested/new.bin")).unwrap(),
+        b"new-file"
+    );
+    drop(storage_lock);
+    create_snapshot_at(&current, &recovery_snapshot, now).unwrap();
+    assert!(!current.join(".schronu-transactions/.active").exists());
+    verify_snapshot(recovery_snapshot).unwrap();
+}
