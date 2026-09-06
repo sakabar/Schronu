@@ -1,8 +1,13 @@
 use crate::adapter::gateway::storage_lock::{LockMode, StorageLock};
 use crate::adapter::gateway::storage_snapshot::{
-    create_snapshot_at, restore_current_snapshot_at, verify_snapshot,
+    create_snapshot_at, restore_current_snapshot_at,
+    restore_current_snapshot_at_with_transaction_io, verify_snapshot,
 };
 use chrono::TimeZone;
+use crate::adapter::gateway::storage_transaction_test_support::{
+    FaultRule, PathMatcher, RecordingIo, RecordingOperation,
+};
+use std::sync::Arc;
 
 #[test]
 fn current_restoreはpre_backupを公開してsnapshotをfresh_revisionで置換する() {
@@ -52,4 +57,48 @@ fn current_restoreはpre_backupを公開してsnapshotをfresh_revisionで置換
         .join("storage")
         .join(current_project.strip_prefix(&current).unwrap())
         .is_file());
+}
+
+#[test]
+fn current_restoreはtransaction_prepare失敗時にcurrentを変更しない() {
+    let root = TestDirectory::new("current-restore-prepare-failure");
+    let current = root.child("current");
+    let source = root.child("source");
+    let snapshot = root.child("snapshot");
+    let pre_backup = root.child("pre-backup");
+    let now = Local.with_ymd_and_hms(2026, 9, 6, 13, 0, 0).unwrap();
+    let (_, current_project) = create_saved_repository(&current, now);
+    let current_project_bytes = fs::read(&current_project).unwrap();
+    let current_revision = fs::read(current.join(".revision")).unwrap();
+    create_saved_repository(&source, now);
+    create_snapshot_at(&source, &snapshot, now).unwrap();
+    let storage_lock = StorageLock::acquire(&current, LockMode::Cli).unwrap();
+    let io = Arc::new(RecordingIo::new(vec![FaultRule {
+        operation: RecordingOperation::CreateFile,
+        path_matcher: PathMatcher::FileName("0"),
+        occurrence: 1,
+        error_kind: std::io::ErrorKind::Other,
+        error_message: "injected current restore prepare failure",
+    }]));
+
+    let error = restore_current_snapshot_at_with_transaction_io(
+        &current,
+        &snapshot,
+        &pre_backup,
+        now,
+        &storage_lock,
+        io,
+    )
+    .unwrap_err();
+
+    assert_eq!(error.path(), current);
+    assert!(
+        error
+            .to_string()
+            .contains("injected current restore prepare failure"),
+        "{error}"
+    );
+    assert_eq!(fs::read(current_project).unwrap(), current_project_bytes);
+    assert_eq!(fs::read(current.join(".revision")).unwrap(), current_revision);
+    verify_snapshot(pre_backup).unwrap();
 }
