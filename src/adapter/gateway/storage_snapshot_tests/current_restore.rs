@@ -102,3 +102,62 @@ fn current_restoreはtransaction_prepare失敗時にcurrentを変更しない() 
     assert_eq!(fs::read(current.join(".revision")).unwrap(), current_revision);
     verify_snapshot(pre_backup).unwrap();
 }
+
+#[test]
+fn current_restoreはcommit_marker後の失敗を次回snapshotで回復する() {
+    let root = TestDirectory::new("current-restore-commit-recovery");
+    let current = root.child("current");
+    let source = root.child("source");
+    let snapshot = root.child("snapshot");
+    let pre_backup = root.child("pre-backup");
+    let recovery_snapshot = root.child("recovery-snapshot");
+    let now = Local.with_ymd_and_hms(2026, 9, 6, 14, 0, 0).unwrap();
+    create_saved_repository(&current, now);
+    let (_, source_project) = create_saved_repository(&source, now);
+    let expected_project = fs::read(&source_project).unwrap();
+    let relative_project = source_project.strip_prefix(&source).unwrap();
+    let restored_project = current.join(relative_project);
+    create_snapshot_at(&source, &snapshot, now).unwrap();
+    let storage_lock = StorageLock::acquire(&current, LockMode::Cli).unwrap();
+    let io = Arc::new(RecordingIo::new(vec![FaultRule {
+        operation: RecordingOperation::Rename,
+        path_matcher: PathMatcher::Exact(restored_project.clone()),
+        occurrence: 1,
+        error_kind: std::io::ErrorKind::Other,
+        error_message: "injected current restore commit failure",
+    }]));
+
+    let error = restore_current_snapshot_at_with_transaction_io(
+        &current,
+        &snapshot,
+        &pre_backup,
+        now,
+        &storage_lock,
+        io,
+    )
+    .unwrap_err();
+
+    assert!(
+        error
+            .to_string()
+            .contains("injected current restore commit failure"),
+        "{error}"
+    );
+    let active = current.join(".schronu-transactions/.active");
+    assert!(active.join("commit").is_file());
+    let manifest: serde_json::Value =
+        serde_json::from_slice(&fs::read(active.join("manifest.json")).unwrap()).unwrap();
+    let committed_revision = manifest["revision"].as_str().unwrap().to_string();
+    verify_snapshot(&pre_backup).unwrap();
+    drop(storage_lock);
+
+    create_snapshot_at(&current, &recovery_snapshot, now).unwrap();
+
+    assert!(!active.exists());
+    assert_eq!(fs::read(restored_project).unwrap(), expected_project);
+    assert_eq!(
+        fs::read_to_string(current.join(".revision")).unwrap(),
+        format!("{committed_revision}\n")
+    );
+    verify_snapshot(recovery_snapshot).unwrap();
+}
