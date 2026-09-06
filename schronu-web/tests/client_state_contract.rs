@@ -118,6 +118,86 @@ fn bufferは成功したsession破棄で未作業時間を再計算する() {
 }
 
 #[test]
+fn bufferはsessionの見積到達後に減算を再開する() {
+    let storage = FakeStorage::default();
+    let mut state = load_client_state(&storage, 0).unwrap();
+    let bootstrap_id = bootstrap_effect(state.request_bootstrap());
+    state.apply_bootstrap_result(bootstrap_id, Ok(snapshot("2026-09-05", 0)));
+    state.add_session_from_row(&storage, &row(TASK_ID, 100));
+
+    state.tick(800_000);
+    assert_eq!(state.display_buffer_seconds(), Some(60));
+    state.tick(800_999);
+    assert_eq!(state.display_buffer_seconds(), Some(60));
+    state.tick(801_000);
+    assert_eq!(state.display_buffer_seconds(), Some(59));
+}
+
+#[test]
+fn bufferは全sessionの見積到達後に実時間と同速で減算する() {
+    let storage = FakeStorage::default();
+    let mut state = load_client_state(&storage, 0).unwrap();
+    let bootstrap_id = bootstrap_effect(state.request_bootstrap());
+    state.apply_bootstrap_result(bootstrap_id, Ok(snapshot("2026-09-05", 0)));
+    state.add_session_from_row(&storage, &row(TASK_ID, 800));
+    state.tick(50_000);
+    state.add_session_from_row(&storage, &row(OTHER_TASK_ID, 800));
+
+    state.tick(120_000);
+    assert_eq!(state.display_buffer_seconds(), Some(60));
+    state.tick(160_000);
+    assert_eq!(state.display_buffer_seconds(), Some(50));
+}
+
+#[test]
+fn bufferは見積到達済みsessionの開始直後から減算する() {
+    let storage = FakeStorage::default();
+    let mut state = load_client_state(&storage, 0).unwrap();
+    let bootstrap_id = bootstrap_effect(state.request_bootstrap());
+    state.apply_bootstrap_result(bootstrap_id, Ok(snapshot("2026-09-05", 0)));
+    state.add_session_from_row(&storage, &row(TASK_ID, 900));
+
+    state.tick(1_000);
+    assert_eq!(state.display_buffer_seconds(), Some(59));
+}
+
+#[test]
+fn restored_sessionの復元補正とsnapshot後の停止は見積到達時刻で打ち切る() {
+    let storage = FakeStorage::default();
+    let mut sessions = load_work_sessions(&storage).unwrap();
+    sessions
+        .replace_sessions(
+            &storage,
+            vec![WorkSession {
+                task_id: TASK_ID.to_owned(),
+                task_name: "task".to_owned(),
+                started_at_epoch_ms: 0,
+                estimated_work_seconds_at_start: 30,
+                actual_work_seconds_at_start: 0,
+            }],
+        )
+        .unwrap();
+    let mut state = load_client_state(&storage, 20_000).unwrap();
+    let bootstrap_id = bootstrap_effect(state.request_bootstrap());
+    state.apply_bootstrap_result(bootstrap_id, Ok(snapshot("2026-09-05", 20_000)));
+
+    state.tick(35_000);
+    assert_eq!(state.display_buffer_seconds(), Some(35));
+
+    let (request_id, request) = list_effect(state.request_list("2026-09-05"));
+    state.apply_list_result(
+        request_id,
+        &request.logical_date,
+        Ok(WebSuccess {
+            snapshot: snapshot("2026-09-05", 40_000),
+            data: Vec::new(),
+        }),
+    );
+    state.tick(45_000);
+    assert_eq!(state.display_buffer_seconds(), Some(25));
+}
+
+#[test]
 fn restored_sessionの継続時間をserver_bufferから1回だけ差し引く() {
     let storage = FakeStorage::default();
     let mut sessions = load_work_sessions(&storage).unwrap();

@@ -7,7 +7,9 @@ use super::date_buttons::LogicalDateButton;
 pub use super::effect::ClientEffect;
 pub use super::history::{Operation, OperationHistoryEntry, Outcome, ServerActionInvocation};
 use super::safety_state::{load_mutation_safety, MutationSafetyState};
-use super::time_model::{buffer_timing_with_sessions, session_interval_milliseconds};
+use super::time_model::{
+    buffer_timing_with_sessions, session_interval_milliseconds, session_timing,
+};
 use super::work_sessions::{
     load_work_sessions, unavailable_state, KeyValueStorage, StorageError, WorkSession,
     WorkSessionsState,
@@ -218,18 +220,32 @@ impl ClientState {
             })
     }
 
+    fn buffer_protected_interval(&self, session: &WorkSession) -> (i64, Option<i64>) {
+        let estimated_completion_epoch_ms = session_timing(
+            session.started_at_epoch_ms,
+            session.estimated_work_seconds_at_start,
+            session.actual_work_seconds_at_start,
+            session.started_at_epoch_ms,
+        )
+        .estimated_completion_epoch_ms;
+        let stopped_at_epoch_ms = self.session_stopped_at_epoch_ms(&session.task_id);
+        let protected_until_epoch_ms = match (estimated_completion_epoch_ms, stopped_at_epoch_ms) {
+            (Some(estimated_completion), Some(stopped_at)) => {
+                Some(estimated_completion.min(stopped_at))
+            }
+            (Some(estimated_completion), None) => Some(estimated_completion),
+            (None, stopped_at) => stopped_at,
+        };
+        (session.started_at_epoch_ms, protected_until_epoch_ms)
+    }
+
     pub fn display_buffer_seconds(&self) -> Option<i128> {
         let snapshot = self.snapshot()?;
         let session_intervals: Vec<_> = self
             .sessions()
             .iter()
             .filter(|session| !self.is_session_committed_blocked(&session.task_id))
-            .map(|session| {
-                (
-                    session.started_at_epoch_ms,
-                    self.session_stopped_at_epoch_ms(&session.task_id),
-                )
-            })
+            .map(|session| self.buffer_protected_interval(session))
             .collect();
         let restored_session_intervals: Vec<_> = self
             .sessions()
@@ -238,12 +254,7 @@ impl ClientState {
                 self.restored_session_task_ids.contains(&session.task_id)
                     && !self.is_session_committed_blocked(&session.task_id)
             })
-            .map(|session| {
-                (
-                    session.started_at_epoch_ms,
-                    self.session_stopped_at_epoch_ms(&session.task_id),
-                )
-            })
+            .map(|session| self.buffer_protected_interval(session))
             .collect();
         let restored_session_elapsed_seconds = restored_session_intervals
             .iter()
