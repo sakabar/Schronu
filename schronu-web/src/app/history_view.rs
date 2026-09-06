@@ -12,8 +12,8 @@ pub struct HistoryEntryViewModel {
 #[component]
 pub fn HistoryView(entries: Vec<HistoryEntryViewModel>) -> Element {
     rsx! {
-        details { class: "history-panel",
-            summary { "発火履歴" }
+        section { class: "history-panel", aria_label: "発火履歴",
+            h2 { "発火履歴" }
             if entries.is_empty() {
                 p { class: "history-empty", "履歴はありません。" }
             } else {

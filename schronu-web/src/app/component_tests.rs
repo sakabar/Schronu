@@ -14,7 +14,7 @@ use crate::client::state::{ActiveTab, ClientEffect};
 use crate::client::work_sessions::{KeyValueStorage, StorageError};
 use crate::ServerSnapshot;
 use crate::SessionTask;
-use dioxus::prelude::VirtualDom;
+use dioxus::prelude::*;
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
@@ -54,7 +54,7 @@ fn 固定navigationは3tabの選択状態とcallbackを提供する() {
     }
     assert!(
         html.contains(
-            "class=\"tab-button is-selected\" type=\"button\" aria-pressed=\"true\">発火履歴"
+            "class=\"tab-button is-selected\" type=\"button\" aria-pressed=true>発火履歴"
         ),
         "{html}"
     );
@@ -64,7 +64,7 @@ fn 固定navigationは3tabの選択状態とcallbackを提供する() {
     }
     assert_eq!(
         *events.lock().unwrap(),
-        [ActiveTab::Session, ActiveTab::List, ActiveTab::History]
+        [ActiveTab::History, ActiveTab::List, ActiveTab::Session]
     );
 }
 

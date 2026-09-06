@@ -316,7 +316,7 @@ expected_actual_work_seconds: Option<i64>
 clientは最低限、次を保持する。
 
 ```text
-active_tab: Session | List
+active_tab: Session | List | History
 work_sessions: Vec<WorkSession>
 server_snapshot: Option<ServerSnapshot>
 date_buttons: Vec<LogicalDateButton>
@@ -442,7 +442,9 @@ display_buffer = buffer_seconds - buffer_elapsed
 2. `bootstrap`を1回送る。
 3. responseからbufferと8日buttonを表示する。
 4. 初期tabは「セッション」とする。
-5. tab切替だけでは一覧取得を含むserver操作を行わない。
+5. viewport下端へ「セッション」「一覧」「発火履歴」の3tabを固定し、選択中だけ上端の緑indicatorと`aria-pressed: true`を付ける。各buttonは均等幅かつ操作高44px以上とする。
+6. tab barはsafe areaをpaddingへ含め、全幅かつ最大82remで中央配置する。本文末尾にはbar高、safe area、余白の合計を確保し、通信中overlayより低い`z-index`にする。
+7. tab切替だけでは一覧取得を含むserver操作を行わず、選択中の1画面だけをDOMへ描画する。toolbar、持ち歩きロックbar、bufferは3画面で共通表示する。
 
 client componentは非`None`の`ClientEffect`をserverへdispatchする直前に実行中通信数を1増やし、response受理後に成否にかかわらず1減らす。実行中通信数が1以上の間は、viewport全体を覆う半透明overlay、スピナー、「通信中…」を表示する。背面の`main`に`inert`と`aria-busy`を設定し、pointerとkeyboard操作を無効にする。overlayのstatusは`aria-live=polite`で通知する。`prefers-reduced-motion: reduce`ではスピナーの回転を停止するが、待機表示自体は維持する。初回SSRとbrowser初期化前も同じDOMの待機表示にする。
 
@@ -559,7 +561,7 @@ OperationHistoryEntry {
 }
 ```
 
-- panelは初期状態で閉じ、利用者が開閉できる。
+- 「発火履歴」tabの選択時だけ独立したsectionとしてDOMへ描画し、ほかのtabでは履歴内容を描画しない。
 - requestを送るserver操作はresponse受信時に成否を1件記録する。
 - action名と実際に送信した全引数を`action_name(field: value, ...)`形式で表示する。引数のないactionも`bootstrap()`のように括弧を表示し、client内部の`request_id`は表示しない。
 - 2種類の完了は実際のserver actionである`complete_session`として表示し、`record_elapsed_seconds: true`と`false`で、成功・失敗のどちらも区別して記録する。
@@ -631,13 +633,14 @@ OperationHistoryEntry {
 - 完了成功response受理時点でin-flightだった`list_tasks` requestを無効化し、その後にresponseが到着しても完了taskが復活しないことを検証する。完了成功response受理後に開始した`list_tasks` responseは適用されることを検証する。logical date境界を跨ぐ完了responseではsnapshotと日付buttonが更新され、反復taskは次の明示的一覧取得まで自動追加されないことを検証する。
 - 各endpointの成功型がsnapshotを持ち、error型がsnapshotを持たず、clientがerror時に直前snapshotを維持することを検証する。
 - error codeごとの`retry_advice`がerror表と一致し、`manual_check`では同一requestを再送しないことを検証する。
-- 履歴がserver通信結果だけを対象とすること、100件上限、成否、reload非永続化を検証する。
+- `History`へのtab切替がeffectを生成しないこと、履歴がserver通信結果だけを対象とすること、100件上限、成否、reload非永続化を検証する。
 - 持ち歩きロックのkeyなし・正常値・不正JSON・未知version・読込失敗、元value維持、memory-first有効化、storage-first解除、一時許可非永続化を検証する。
 - 単調時計による15秒境界と時計後退、閲覧操作では権利を維持し、7変更操作の最初のdispatchだけが権利を消費することを検証する。
 
 ### 12.5 UI and integration
 
-- 「セッション」「一覧」、8日button、card、一覧row、色、時刻形式をcomponent testとbrowser目視で確認する。
+- 固定された「セッション」「一覧」「発火履歴」の3tab、選択状態、callback、44px以上の操作高、safe area、本文との非重複、通信中overlayとの重なり順をcomponent test、CSS contract test、browser目視で確認する。
+- 各tabで選択中の画面だけがDOMへ存在し、toolbar、持ち歩きロックbar、bufferは共通して存在することを確認する。
 - rank 0の一覧rowだけにセッションbuttonとclick listenerがあり、rank非0にはどちらもないことを確認する。
 - 一覧は320px、360px、46rem、1024pxで確認し、長いtask名、日付付き締切、複数segmentでviewport全体の横スクロールが発生しないことを確認する。
 - 34rem以下でbufferと日付buttonが圧縮され、日付buttonの操作高44px以上と横スクロールが維持されることを確認する。
@@ -680,6 +683,6 @@ OperationHistoryEntry {
 | 4.4、4.5、7.4、9 | REQ-ACTION-001..009 |
 | 6.4 | REQ-BUFFER-001..010 |
 | 6.5、7.3、7.4、8 | REQ-LIST-001..013 |
-| 7.1、8、10 | REQ-COMMON-001..007、REQ-NET-001..006 |
+| 6.1、7.1、8、10、12.4、12.5 | REQ-COMMON-001..007、REQ-NET-001..006 |
 | 3.4、6.6、7.5、8、12.4、12.5 | REQ-LOCK-001..010 |
 | 11、12 | REQ-COMPAT-001..005、全受入条件 |

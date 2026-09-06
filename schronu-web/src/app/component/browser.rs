@@ -9,7 +9,7 @@ use super::super::list_view::ListView;
 use super::super::long_press_browser::BrowserLongPressScheduler;
 use super::super::long_press_controller::LongPressSchedulerHandle;
 use super::super::session_view::SessionView;
-use super::LoadingOverlay;
+use super::{LoadingOverlay, NavigationTabs};
 use crate::client::state::ActiveTab;
 use crate::client::time_model::format_hh_mm_ss;
 use crate::client::work_sessions::BrowserLocalStorage;
@@ -83,17 +83,9 @@ pub(super) fn BrowserApp() -> Element {
                 on_disable: move |_| dispatch_action(client, ComponentAction::DisableCarryLock),
             }
             BufferPanel { value: buffer }
-            nav { class: "tabs", aria_label: "表示切替",
-                TabButton {
-                    label: "セッション",
-                    selected: active_tab == ActiveTab::Session,
-                    onclick: move |_| dispatch_action(client, ComponentAction::SwitchTab(ActiveTab::Session)),
-                }
-                TabButton {
-                    label: "一覧",
-                    selected: active_tab == ActiveTab::List,
-                    onclick: move |_| dispatch_action(client, ComponentAction::SwitchTab(ActiveTab::List)),
-                }
+            NavigationTabs {
+                active_tab,
+                on_switch: move |tab| dispatch_action(client, ComponentAction::SwitchTab(tab)),
             }
             for warning in warnings {
                 section { class: "error", role: "alert", p { "{warning}" } }
@@ -125,7 +117,7 @@ pub(super) fn BrowserApp() -> Element {
                     on_action: move |action| dispatch_session_action(client, action),
                     on_cancel_authorization: move |_| dispatch_action(client, ComponentAction::RelockCarryLock),
                 }
-            } else {
+            } else if active_tab == ActiveTab::List {
                 ListView {
                     dates,
                     rows,
@@ -137,8 +129,9 @@ pub(super) fn BrowserApp() -> Element {
                         ComponentAction::AddSession { task, is_leaf },
                     ),
                 }
+            } else {
+                HistoryView { entries: history }
             }
-            HistoryView { entries: history }
         }
         if server_effect_in_flight {
             LoadingOverlay {}
@@ -168,17 +161,5 @@ fn BufferPanel(value: Option<i128>) -> Element {
             span { class: "buffer-label", "BUFFER" }
             strong { class, "{label}" }
         }
-    }
-}
-
-#[component]
-fn TabButton(label: &'static str, selected: bool, onclick: EventHandler<MouseEvent>) -> Element {
-    let class = if selected {
-        "tab-button is-selected"
-    } else {
-        "tab-button"
-    };
-    rsx! {
-        button { class, r#type: "button", aria_pressed: selected, onclick, "{label}" }
     }
 }
