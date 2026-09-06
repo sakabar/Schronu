@@ -687,6 +687,33 @@ fn repository_state_uncertain後はpage全体のmutationを停止する() {
 }
 
 #[test]
+fn commit成否不明ならrepository確認までclick時刻で停止する() {
+    for uncertain_result in [
+        ServerFailure::Transport("detail".to_owned()),
+        ServerFailure::Operation(web_error(
+            web_error_codes::REPOSITORY_STATE_UNCERTAIN,
+            RetryAdvice::ManualCheck,
+        )),
+    ] {
+        let storage = FakeStorage::default();
+        let mut state = state_with_sessions(&storage, &[TASK_ID]);
+        let bootstrap_id = bootstrap_effect(state.request_bootstrap());
+        state.apply_bootstrap_result(bootstrap_id, Ok(snapshot("2026-09-05", 0)));
+        state.tick(60_000);
+        let (request_id, _) = record_effect(state.begin_record_session(&storage, TASK_ID));
+
+        state.tick(65_000);
+        state.apply_record_result(&storage, request_id, Err(uncertain_result));
+        state.tick(70_000);
+
+        assert_eq!(state.display_buffer_seconds(), Some(50));
+        assert!(state.can_confirm_repository_checked());
+        state.confirm_repository_checked(&storage);
+        assert_eq!(state.display_buffer_seconds(), Some(60));
+    }
+}
+
+#[test]
 fn repository確認buttonはglobal_block中かつ応答待ちなしの場合だけ有効になる() {
     let storage = FakeStorage::default();
     let mut state = state_with_sessions(&storage, &[TASK_ID, OTHER_TASK_ID]);

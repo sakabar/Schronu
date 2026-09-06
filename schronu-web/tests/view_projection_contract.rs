@@ -73,6 +73,30 @@ fn 終了処理中のsession表示はclick時刻で停止し失敗時に再開�
 }
 
 #[test]
+fn commit成否不明のsession表示はrepository確認までclick時刻で停止する() {
+    let storage = FakeStorage::default();
+    let mut state = load_client_state(&storage, START_EPOCH_MS).unwrap();
+    state.add_session_from_row(&storage, &session_row());
+    state.tick(START_EPOCH_MS + 60_000);
+    let (request_id, _) = record_effect(state.begin_record_session(&storage, TASK_ID));
+
+    state.apply_record_result(
+        &storage,
+        request_id,
+        Err(schronu_web::client::state::ServerFailure::Transport(
+            "detail".to_owned(),
+        )),
+    );
+    state.tick(START_EPOCH_MS + 70_000);
+    let uncertain = project_session_cards(&state, JST_OFFSET_MINUTES);
+    assert_eq!(uncertain[0].remaining_seconds, 540);
+
+    state.confirm_repository_checked(&storage);
+    let resumed = project_session_cards(&state, JST_OFFSET_MINUTES);
+    assert_eq!(resumed[0].remaining_seconds, 530);
+}
+
+#[test]
 fn listはserverが生成したdeadline表示と予定超過を無変換で保持する() {
     let storage = FakeStorage::default();
     let mut state = load_client_state(&storage, START_EPOCH_MS).unwrap();

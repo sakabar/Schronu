@@ -69,7 +69,7 @@ fn project_session_cards_with(
                 .display_actual_work_seconds(&session.task_id)
                 .unwrap_or(session.actual_work_seconds_at_start);
             let display_now = state
-                .session_pending_ended_at_epoch_ms(&session.task_id)
+                .session_stopped_at_epoch_ms(&session.task_id)
                 .unwrap_or_else(|| {
                     if server_committed {
                         session.started_at_epoch_ms

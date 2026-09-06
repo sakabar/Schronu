@@ -338,7 +338,7 @@ display_now = pending_session_ended_at.get(task_id).unwrap_or(tick_now_epoch_ms)
 elapsed_seconds = max(0, floor((display_now - started_at_epoch_ms) / 1000))
 ```
 
-毎秒tickは`tick_now_epoch_ms`だけを更新する。経過秒をincrementして保持しないため、tab非表示、timer遅延、reloadを挟んでも開始時刻基準で復元できる。終了操作はbrowser壁時計を同期的に取得し、pending中はそのclick時刻で表示を停止する。serverが未commitと確定できるerror時はpending終了時刻を破棄し、現在時刻基準へ戻す。
+毎秒tickは`tick_now_epoch_ms`だけを更新する。経過秒をincrementして保持しないため、tab非表示、timer遅延、reloadを挟んでも開始時刻基準で復元できる。終了操作はbrowser壁時計を同期的に取得し、pending中はそのclick時刻で表示を停止する。serverが未commitと確定できるerror時はpending終了時刻を破棄し、現在時刻基準へ戻す。transport切断または`repository_state_uncertain`では終了時刻をmemory上に保持し、repository確認完了まで表示を停止する。
 
 ### 6.3 完了予定、進捗、残り時間
 
@@ -410,7 +410,7 @@ display_buffer = buffer_seconds - buffer_elapsed
 - `snapshot_elapsed`は観測用に保持し、bufferから実際に引く値は`buffer_elapsed`とする。
 - 新しいserver responseを受信した場合は、その`buffer_seconds`と`observed_at`を新たな表示計算の基準とする。snapshot以前に開始した計測中セッションは、snapshot直後からbufferを停止する。snapshot以前の時間をclientで遡って補正しないため、serverが`busy_time_slot`を除いて算出したbufferへ壁時計時間を過剰加算しない。
 - `record_session`または`complete_session`のmutation responseは、対象実績を反映した`buffer_seconds`をそのまま新たな基準とする。server commit済みでlocalStorage削除だけに失敗した対象sessionは、以後のbuffer計算上の計測中sessionから除外する。
-- 終了操作をdispatchしたsessionはclick時刻から`active_sessions`より除外する。ほかにactive sessionがなければbufferを直ちに再開し、未commitが確定するerrorでは対象をactiveへ戻す。成功時はresponseのsnapshotを新たな基準とするため、通信待ち時間をclientで二重減算しない。
+- 終了操作をdispatchしたsessionはclick時刻を終端とする稼働区間として扱う。ほかにactive sessionがなければclick後からbufferを直ちに再開し、未commitが確定するerrorでは対象をactiveへ戻す。transport切断または`repository_state_uncertain`ではrepository確認完了までclick時刻の終端を保持する。成功時はresponseのsnapshotを新たな基準とするため、通信待ち時間をclientで二重減算しない。
 - 複数の計測中セッションは、いずれか1件が存在する区間の和集合として扱う。すべて現在まで継続するため、最古の開始時刻から現在までbufferを停止し、重複時間を二重に補正しない。
 - 「破棄して解除」成功後は残存セッションから式全体を再計算する。最古セッションだけを破棄した場合は後発セッション開始前を未作業として追加減算し、全件破棄した場合はsnapshot後の全経過秒を減算する。localStorage保存失敗時はmemory stateを確定しないため、buffer表示も変化させない。
 - browser時計が後退した区間は0秒へclampする。時刻差と加減算は`i64`境界でもoverflowしない計算を用いる。
@@ -482,7 +482,7 @@ display_buffer = buffer_seconds - buffer_elapsed
 - 「破棄して解除」はlocalStorage削除成功後だけmemory stateを確定し、残存する計測中セッションからbufferを再計算する。server requestとtask実績更新は行わない。
 - server mutationは、response成功後にlocalStorageからsessionを削除する。
 - server errorまたはlocalStorage削除失敗ではsessionを残す。server保存成功後にlocalStorage削除だけが失敗した場合、responseの更新後実績を反映した競合案内を表示し、再送による二重加算を防ぐため対象buttonを無効化し、対象sessionをbuffer計算上の計測中sessionから除外する。
-- serverが未commitと確定できるerrorではpending終了時刻を破棄し、対象sessionの表示とbuffer停止を現在時刻基準で自動再開する。
+- serverが未commitと確定できるerrorではpending終了時刻を破棄し、対象sessionの表示とbuffer停止を現在時刻基準で自動再開する。transport切断または`repository_state_uncertain`では終了時刻を保持し、repository確認完了時に破棄して再開する。
 - 2種類の完了では、server処理成功を受理した時点で対象task UUIDの全schedule segmentを一覧から除去する。この除去は後続のlocalStorage削除成否に依存しない。完了error、「記録して解除」、「破棄して解除」では一覧を変更しない。
 - 完了responseの`ServerSnapshot`は通常どおり適用する。responseのlogical dateが変わった場合は日付buttonを再生成する一方、選択logical dateと対象task以外のrowを維持する。追加の`list_tasks`は送らない。
 - in-flight中は対象sessionの4buttonを無効化する。他sessionの計測は継続する。globalまたはmanual safety block中はserver mutationの3buttonを無効化し、「破棄して解除」は利用可能とする。
@@ -622,7 +622,7 @@ OperationHistoryEntry {
 - 破棄のlocalStorage保存失敗ではsessionとbuffer表示を維持し、server commit済みでlocal削除に失敗したsessionはbuffer計算上の計測中sessionから除外することを検証する。
 - 同じlogical dateのread snapshot、実績反映済みmutation snapshot、06:00を跨ぐlogical date更新を新たなbuffer基準とし、snapshot以前の壁時計時間を過剰補正しないことを検証する。
 - 記録と2種類の完了についてserver mutation成功、競合、保存失敗、worker停止、多重送信防止、global・manual safety block時のsession遷移を検証する。
-- 3終了操作でclick時刻をrequestへ保持し、pending中のcard停止、単一・複数sessionのbuffer遷移、未commit確定error後の自動再開を注入epochだけで検証する。実時間のsleepやtimer待機は使用しない。
+- 3終了操作でclick時刻をrequestへ保持し、pending中のcard停止、単一・複数sessionのbuffer遷移、未commit確定error後の自動再開、transport切断・repository状態不確実時の確認完了までの停止を注入epochだけで検証する。実時間のsleepやtimer待機は使用しない。
 - 2種類の完了成功で同一task UUIDの全rowだけが即時に除去され、別taskのrowと選択logical dateが維持されることを検証する。完了error、記録して解除、破棄して解除では一覧が変化せず、server commit成功後のlocalStorage削除失敗でも完了taskのrowが除去されることを検証する。
 - 完了成功response受理時点でin-flightだった`list_tasks` requestを無効化し、その後にresponseが到着しても完了taskが復活しないことを検証する。完了成功response受理後に開始した`list_tasks` responseは適用されることを検証する。logical date境界を跨ぐ完了responseではsnapshotと日付buttonが更新され、反復taskは次の明示的一覧取得まで自動追加されないことを検証する。
 - 各endpointの成功型がsnapshotを持ち、error型がsnapshotを持たず、clientがerror時に直前snapshotを維持することを検証する。
