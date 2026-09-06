@@ -50,7 +50,7 @@ rm -rf target/dx/schronu-web
 
 起動後は`http://127.0.0.1:8080`を開きます。application serverは`127.0.0.1`へ固定しており、認証は設けていません。Dioxus CLIの`serve`へ外部addressを指定しないでください。
 
-初回表示ではlogical date、buffer、日付選択肢を取得します。以後server通信が起きるのは、日付を選んでtask一覧を取得するとき、自動セッションを選定するとき、セッションを記録して解除するとき、taskを完了するときだけです。tab切替、timer更新、一覧からのセッション追加、「破棄して解除」、破棄完了の確認とキャンセルでは通信しません。logical dateが日付境界の06:00を越えて変わっても自動取得せず、次のserver操作のresponseで更新します。
+初回表示ではlogical date、buffer、日付選択肢を取得します。以後server通信が起きるのは、日付を選んでtask一覧を取得するとき、自動セッションを選定するとき、セッションを解除するとき、taskを完了するときだけです。4種類のセッション終了操作が成功すると、選択中の日付のtask一覧を続けて取得します。tab切替、timer更新、一覧からのセッション追加、破棄完了の確認とキャンセルでは通信しません。logical dateが日付境界の06:00を越えて変わっても自動取得せず、次のserver操作のresponseで更新します。
 
 いずれのserver通信でも、responseを待つ間は画面全体に「通信中…」とスピナーを表示し、背面の操作を無効にします。複数の通信が重なった場合は、すべてのresponseを受け取るまで表示を維持します。
 
@@ -67,7 +67,7 @@ rm -rf target/dx/schronu-web
 
 終了操作のserver応答待ち中は対象cardの計測表示をclick時刻で停止し、対象をbuffer計算上の計測中セッションから除外します。serverが未commitと確定できるerrorでは、計測表示とbuffer計算を自動的に元の進行状態へ戻します。transport切断またはrepository状態が不確実な場合は、手動確認が完了するまでclick時刻で停止し続けます。
 
-「計測を破棄して完了」または「記録して完了」が成功すると、追加の一覧取得を行わず、表示中の一覧から完了したtaskの全schedule segmentを即時に除去します。反復により生成された次回taskは自動追加せず、次に日付を選択して一覧を取得したときに表示します。
+4種類のセッション終了操作が成功すると、選択中の日付のtask一覧をserverから再取得し、表示中の一覧をresponse全体で置き換えます。一覧未選択時は最新のserver snapshotが示す現在logical dateを取得します。完了taskの除去、実績変更後の再schedule、反復により生成された次回taskの追加は、いずれもこのserver responseへ従います。
 
 Web側だけを検証するcommandは次のとおりです。
 

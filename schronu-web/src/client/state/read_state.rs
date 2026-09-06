@@ -167,16 +167,22 @@ impl ClientState {
         Some(changed)
     }
 
-    pub(super) fn apply_successful_completion_to_read_state(
+    pub(super) fn apply_mutation_snapshot_and_request_list(
         &mut self,
         snapshot: ServerSnapshot,
-        task_id: &str,
-    ) {
+    ) -> ClientEffect {
         let _ = self.apply_snapshot_metadata(snapshot);
-        self.read
-            .scheduled_rows
-            .retain(|row| row.task.task_id != task_id);
-        self.read.latest_list_request_id = None;
+        self.request_selected_or_current_list()
+    }
+
+    pub(super) fn request_selected_or_current_list(&mut self) -> ClientEffect {
+        let logical_date = self.read.selected_logical_date.clone().or_else(|| {
+            self.read
+                .snapshot
+                .as_ref()
+                .map(|snapshot| snapshot.logical_date.clone())
+        });
+        logical_date.map_or(ClientEffect::None, |date| self.request_list(&date))
     }
 
     fn apply_snapshot_metadata(&mut self, snapshot: ServerSnapshot) -> Option<bool> {
