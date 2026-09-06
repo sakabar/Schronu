@@ -329,12 +329,6 @@ fn record_sessionはwire入力errorを分類して保存しない() {
         RecordSessionRequest {
             task_id: Uuid::new_v4().to_string(),
             started_at_epoch_ms: operation_now.timestamp_millis(),
-            ended_at_epoch_ms: Some(operation_now.timestamp_millis() + 1),
-            expected_actual_work_seconds: 0,
-        },
-        RecordSessionRequest {
-            task_id: Uuid::new_v4().to_string(),
-            started_at_epoch_ms: operation_now.timestamp_millis(),
             ended_at_epoch_ms: Some(i64::MAX),
             expected_actual_work_seconds: 0,
         },
@@ -345,6 +339,29 @@ fn record_sessionはwire入力errorを分類して保存しない() {
         ));
     }
     assert_eq!(fixture.persisted_bytes(), before);
+}
+
+#[test]
+fn record_sessionはbrowser時計がserverより進んでいてもclickまでの経過秒を保存する() {
+    let operation_now = Local.with_ymd_and_hms(2026, 9, 5, 19, 1, 0).unwrap();
+    let browser_ended_at = operation_now + Duration::minutes(5);
+    let fixture = WebReadServiceFixture::new();
+    let task_id = fixture.seed_fixed_task(operation_now - Duration::hours(1));
+    let mut service = WebService::new(fixture.storage.clone(), fixture.config());
+
+    let response = service
+        .record_session_at(
+            operation_now,
+            RecordSessionRequest {
+                task_id: task_id.to_string(),
+                started_at_epoch_ms: browser_ended_at.timestamp_millis() - 60_000,
+                ended_at_epoch_ms: Some(browser_ended_at.timestamp_millis()),
+                expected_actual_work_seconds: 300,
+            },
+        )
+        .unwrap();
+
+    assert_eq!(response.data.actual_work_seconds, 360);
 }
 
 #[test]
@@ -521,6 +538,46 @@ fn complete_sessionは経過秒加算と完了を1回の保存で反映してsna
 }
 
 #[test]
+fn complete_sessionはbrowser時計がserverより進んでいても未来の完了時刻を保存しない() {
+    let operation_now = Local.with_ymd_and_hms(2026, 9, 5, 19, 1, 0).unwrap();
+    let browser_ended_at = operation_now + Duration::minutes(5);
+
+    for (record_elapsed_seconds, expected_actual_work_seconds) in [(true, 360), (false, 300)] {
+        let fixture = WebReadServiceFixture::new();
+        let task_id = fixture.seed_fixed_task(operation_now - Duration::hours(1));
+        let mut service = WebService::new(fixture.storage.clone(), fixture.config());
+
+        service
+            .complete_session_at(
+                operation_now,
+                CompleteSessionRequest {
+                    task_id: task_id.to_string(),
+                    started_at_epoch_ms: browser_ended_at.timestamp_millis() - 60_000,
+                    ended_at_epoch_ms: Some(browser_ended_at.timestamp_millis()),
+                    expected_actual_work_seconds: 300,
+                    record_elapsed_seconds,
+                },
+            )
+            .unwrap();
+
+        let mut repository = TaskRepository::new(fixture.storage.to_str().unwrap());
+        repository.reload_if_changed(operation_now).unwrap();
+        let completed = repository.get_by_id(task_id).unwrap().unwrap();
+        assert_eq!(
+            completed.get_actual_work_seconds().unwrap(),
+            expected_actual_work_seconds
+        );
+        assert_eq!(
+            completed
+                .get_end_time_opt()
+                .unwrap()
+                .map(|finished_at| finished_at.timestamp()),
+            Some(operation_now.timestamp())
+        );
+    }
+}
+
+#[test]
 fn complete_sessionは計測破棄指定時に実績を加算せずtaskを完了する() {
     let seeded_at = Local.with_ymd_and_hms(2026, 9, 5, 18, 0, 0).unwrap();
     let operation_now = Local.with_ymd_and_hms(2026, 9, 5, 19, 1, 0).unwrap();
@@ -569,7 +626,7 @@ fn complete_sessionは計測破棄指定でも期待実績競合時に状態を�
             CompleteSessionRequest {
                 task_id: task_id.to_string(),
                 started_at_epoch_ms: i64::MAX,
-                ended_at_epoch_ms: None,
+                ended_at_epoch_ms: Some(operation_now.timestamp_millis() + 300_000),
                 expected_actual_work_seconds: 299,
                 record_elapsed_seconds: false,
             },
@@ -598,8 +655,8 @@ fn complete_sessionは期待実績競合時にtaskと永続dataを変更しな�
             operation_now,
             CompleteSessionRequest {
                 task_id: task_id.to_string(),
-                started_at_epoch_ms: operation_now.timestamp_millis() - 60_000,
-                ended_at_epoch_ms: None,
+                started_at_epoch_ms: operation_now.timestamp_millis() + 240_000,
+                ended_at_epoch_ms: Some(operation_now.timestamp_millis() + 300_000),
                 expected_actual_work_seconds: 299,
                 record_elapsed_seconds: true,
             },

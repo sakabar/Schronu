@@ -20,6 +20,8 @@ pub(crate) enum ComponentAction {
     RecordSession(String),
     CompleteSession(String),
     CompleteSessionWithoutRecording(String),
+    ResumeCompletionConflict(String),
+    ConfirmCompletionConflict(String),
     ConfirmRepositoryChecked,
     EnableCarryLock,
     ArmCarryLock,
@@ -36,6 +38,12 @@ pub(crate) fn component_action_from_session_action(action: SessionAction) -> Com
         SessionActionKind::CompleteWithoutRecording => {
             ComponentAction::CompleteSessionWithoutRecording(action.task_id)
         }
+        SessionActionKind::ResumeCompletionConflict => {
+            ComponentAction::ResumeCompletionConflict(action.task_id)
+        }
+        SessionActionKind::ConfirmCompletionConflict => {
+            ComponentAction::ConfirmCompletionConflict(action.task_id)
+        }
     }
 }
 
@@ -48,6 +56,7 @@ pub(crate) fn component_actions_from_session_action(
         SessionActionKind::Record
             | SessionActionKind::Complete
             | SessionActionKind::CompleteWithoutRecording
+            | SessionActionKind::ResumeCompletionConflict
     );
     let mutation = component_action_from_session_action(action);
     if stops_session {
@@ -177,6 +186,12 @@ pub(crate) fn reduce_component_action_at<S: KeyValueStorage>(
         ComponentAction::CompleteSessionWithoutRecording(task_id) => {
             state.begin_complete_session_without_recording(storage, &task_id)
         }
+        ComponentAction::ResumeCompletionConflict(task_id) => {
+            state.resume_completion_conflict(storage, &task_id)
+        }
+        ComponentAction::ConfirmCompletionConflict(task_id) => {
+            state.confirm_completion_conflict(storage, &task_id)
+        }
         ComponentAction::ConfirmRepositoryChecked => state.confirm_repository_checked(storage),
         ComponentAction::EnableCarryLock
         | ComponentAction::ArmCarryLock
@@ -194,6 +209,8 @@ fn is_carry_lock_mutation(action: &ComponentAction) -> bool {
             | ComponentAction::RecordSession(_)
             | ComponentAction::CompleteSession(_)
             | ComponentAction::CompleteSessionWithoutRecording(_)
+            | ComponentAction::ResumeCompletionConflict(_)
+            | ComponentAction::ConfirmCompletionConflict(_)
             | ComponentAction::ConfirmRepositoryChecked
     )
 }

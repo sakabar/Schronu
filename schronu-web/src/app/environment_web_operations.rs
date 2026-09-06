@@ -226,6 +226,7 @@ fn invalid_input_error() -> WebError {
         code: web_error_codes::INVALID_INPUT.to_owned(),
         message: "logical_dateはYYYY-MM-DD形式で指定してください。".to_owned(),
         retry_advice: RetryAdvice::ManualCheck,
+        current_actual_work_seconds: None,
     }
 }
 
@@ -234,6 +235,7 @@ fn configuration_error() -> WebError {
         code: web_error_codes::CONFIGURATION_ERROR.to_owned(),
         message: "Schronuの設定を読み込めませんでした。".to_owned(),
         retry_advice: RetryAdvice::ManualCheck,
+        current_actual_work_seconds: None,
     }
 }
 

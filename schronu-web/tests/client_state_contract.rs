@@ -2,6 +2,7 @@ use chrono::{Local, TimeZone};
 use schronu_web::client::state::{
     load_client_state, ActiveTab, ClientEffect, Operation, Outcome, ServerFailure,
 };
+use schronu_web::client::view_projection::project_session_cards;
 use schronu_web::client::work_sessions::{load_work_sessions, WorkSession};
 use schronu_web::{web_error_codes, RecordSessionResult, RetryAdvice, SessionTask, WebSuccess};
 
@@ -697,10 +698,7 @@ fn mutationは対象だけを直列化しerror助言とcommit後storage失敗を
     state.apply_record_result(
         &storage,
         second_request_id,
-        Err(ServerFailure::Operation(web_error(
-            web_error_codes::ACTUAL_WORK_CONFLICT,
-            RetryAdvice::ManualCheck,
-        ))),
+        Err(ServerFailure::Operation(actual_work_conflict(Some(250)))),
     );
     assert!(state.is_session_manual_check_blocked(TASK_ID));
     assert_eq!(
@@ -790,6 +788,385 @@ fn 完了effectは計測の記録方針と履歴種別を保持する() {
         entry.invocation.operation() == Operation::CompleteSessionWithoutRecording
             && entry.outcome == Outcome::Failure
     }));
+}
+
+#[test]
+fn 完了実績競合は初回clickの計測を保持して最新実績で再送する() {
+    for record_elapsed_seconds in [true, false] {
+        let storage = FakeStorage::default();
+        let mut state = state_with_sessions(&storage, &[TASK_ID]);
+        state.tick(6_500);
+        let (first_request_id, original_request) = if record_elapsed_seconds {
+            complete_effect(state.begin_complete_session(&storage, TASK_ID))
+        } else {
+            complete_effect(state.begin_complete_session_without_recording(&storage, TASK_ID))
+        };
+
+        state.apply_complete_result(
+            &storage,
+            first_request_id,
+            Err(ServerFailure::Operation(actual_work_conflict(Some(250)))),
+        );
+
+        assert!(!state.is_session_manual_check_blocked(TASK_ID));
+        assert!(state.display_error().is_none());
+        state.tick(20_000);
+        let card = project_session_cards(&state, 540).remove(0);
+        assert_eq!(card.remaining_seconds, 794, "初回clickでcardを停止する");
+        let conflict = card.completion_conflict.unwrap();
+        assert_eq!(conflict.current_actual_work_seconds, 250);
+        assert_eq!(conflict.measured_elapsed_seconds, 6);
+        assert_eq!(conflict.record_elapsed_seconds, record_elapsed_seconds);
+
+        let (retry_request_id, retry_request) =
+            complete_effect(state.confirm_completion_conflict(&storage, TASK_ID));
+        assert_ne!(retry_request_id, first_request_id);
+        assert_eq!(
+            retry_request,
+            schronu_web::CompleteSessionRequest {
+                expected_actual_work_seconds: 250,
+                ..original_request.clone()
+            }
+        );
+        assert_eq!(
+            state.confirm_completion_conflict(&storage, TASK_ID),
+            ClientEffect::None,
+            "in-flight中に二重送信しない"
+        );
+
+        state.apply_complete_result(
+            &storage,
+            retry_request_id,
+            Err(ServerFailure::Operation(actual_work_conflict(Some(300)))),
+        );
+        let updated = project_session_cards(&state, 540).remove(0);
+        assert_eq!(
+            updated
+                .completion_conflict
+                .unwrap()
+                .current_actual_work_seconds,
+            300
+        );
+        assert_eq!(state.history().len(), 2);
+        assert!(state
+            .history()
+            .iter()
+            .all(|entry| entry.outcome == Outcome::Failure));
+
+        let (final_request_id, final_request) =
+            complete_effect(state.confirm_completion_conflict(&storage, TASK_ID));
+        assert_eq!(final_request.expected_actual_work_seconds, 300);
+        state.apply_complete_result(
+            &storage,
+            final_request_id,
+            Ok(snapshot("2026-09-05", 21_000)),
+        );
+        assert!(state.sessions().is_empty());
+        assert!(state.display_error().is_none());
+    }
+}
+
+#[test]
+fn 完了実績競合からの再開は確認待ちを除外してstorageを原子的に更新する() {
+    let storage = FakeStorage::default();
+    let mut state = state_with_sessions(&storage, &[TASK_ID]);
+    state.tick(6_500);
+    let (request_id, _) = complete_effect(state.begin_complete_session(&storage, TASK_ID));
+    state.apply_complete_result(
+        &storage,
+        request_id,
+        Err(ServerFailure::Operation(actual_work_conflict(Some(250)))),
+    );
+    state.tick(20_000);
+
+    storage.fail_work_session_writes.set(true);
+    assert_eq!(
+        state.resume_completion_conflict(&storage, TASK_ID),
+        ClientEffect::None
+    );
+    assert_eq!(state.sessions()[0].started_at_epoch_ms, 0);
+    assert_eq!(state.sessions()[0].actual_work_seconds_at_start, 100);
+    assert!(project_session_cards(&state, 540)[0]
+        .completion_conflict
+        .is_some());
+    assert!(matches!(
+        state.display_error(),
+        Some(schronu_web::client::state::DisplayError::LocalStorage {
+            committed_on_server: false,
+            ..
+        })
+    ));
+
+    storage.fail_work_session_writes.set(false);
+    state.resume_completion_conflict(&storage, TASK_ID);
+    assert_eq!(state.sessions()[0].started_at_epoch_ms, 13_500);
+    assert_eq!(state.sessions()[0].actual_work_seconds_at_start, 250);
+    assert!(project_session_cards(&state, 540)[0]
+        .completion_conflict
+        .is_none());
+    assert!(state.display_error().is_none());
+}
+
+#[test]
+fn 完了実績競合の再開は安全marker解除成功後だけsessionを更新する() {
+    let storage = FakeStorage::default();
+    let mut state = state_with_sessions(&storage, &[TASK_ID]);
+    state.tick(6_500);
+    let (request_id, _) = complete_effect(state.begin_complete_session(&storage, TASK_ID));
+    storage.fail_safety_writes.set(true);
+    state.apply_complete_result(
+        &storage,
+        request_id,
+        Err(ServerFailure::Operation(actual_work_conflict(Some(250)))),
+    );
+    state.tick(20_000);
+
+    state.resume_completion_conflict(&storage, TASK_ID);
+
+    assert_eq!(state.sessions()[0].started_at_epoch_ms, 0);
+    assert_eq!(state.sessions()[0].actual_work_seconds_at_start, 100);
+    assert!(project_session_cards(&state, 540)[0]
+        .completion_conflict
+        .is_some());
+    assert!(matches!(
+        state.display_error(),
+        Some(schronu_web::client::state::DisplayError::LocalStorage {
+            committed_on_server: false,
+            ..
+        })
+    ));
+    let blocked_after_reload = load_client_state(&storage, 20_000).unwrap();
+    assert!(blocked_after_reload.mutation_globally_blocked());
+    assert_eq!(
+        blocked_after_reload.sessions()[0].started_at_epoch_ms,
+        13_500
+    );
+    assert_eq!(
+        blocked_after_reload.sessions()[0].actual_work_seconds_at_start,
+        250
+    );
+
+    storage.fail_safety_writes.set(false);
+    state.resume_completion_conflict(&storage, TASK_ID);
+
+    assert_eq!(state.sessions()[0].started_at_epoch_ms, 13_500);
+    assert_eq!(state.sessions()[0].actual_work_seconds_at_start, 250);
+    let restored = load_client_state(&storage, 20_000).unwrap();
+    assert!(!restored.mutation_globally_blocked());
+    assert_eq!(restored.sessions(), state.sessions());
+}
+
+#[test]
+fn 完了実績競合の再開はsession保存失敗時に安全markerを維持する() {
+    let storage = FakeStorage::default();
+    let mut state = state_with_sessions(&storage, &[TASK_ID]);
+    state.tick(6_500);
+    let (request_id, _) = complete_effect(state.begin_complete_session(&storage, TASK_ID));
+    storage.fail_safety_writes.set(true);
+    state.apply_complete_result(
+        &storage,
+        request_id,
+        Err(ServerFailure::Operation(actual_work_conflict(Some(250)))),
+    );
+    state.tick(20_000);
+    storage.fail_safety_writes.set(false);
+    storage.fail_work_session_writes.set(true);
+
+    state.resume_completion_conflict(&storage, TASK_ID);
+
+    assert_eq!(state.sessions()[0].started_at_epoch_ms, 0);
+    assert_eq!(state.sessions()[0].actual_work_seconds_at_start, 100);
+    assert!(project_session_cards(&state, 540)[0]
+        .completion_conflict
+        .is_some());
+    let restored = load_client_state(&storage, 20_000).unwrap();
+    assert!(restored.mutation_globally_blocked());
+    assert_eq!(restored.sessions()[0].started_at_epoch_ms, 0);
+    assert_eq!(restored.sessions()[0].actual_work_seconds_at_start, 100);
+}
+
+#[test]
+fn 現在実績のない旧完了競合はmanual_checkのままsession破棄で解消する() {
+    let storage = FakeStorage::default();
+    let mut state = state_with_sessions(&storage, &[TASK_ID]);
+    let (request_id, _) = complete_effect(state.begin_complete_session(&storage, TASK_ID));
+    state.apply_complete_result(
+        &storage,
+        request_id,
+        Err(ServerFailure::Operation(actual_work_conflict(None))),
+    );
+
+    assert!(state.is_session_manual_check_blocked(TASK_ID));
+    assert!(project_session_cards(&state, 540)[0]
+        .completion_conflict
+        .is_none());
+    state.discard_session(&storage, TASK_ID);
+    assert!(state.sessions().is_empty());
+}
+
+#[test]
+fn 完了実績競合は同じ完了taskの古いerrorを確認uiへ置き換える() {
+    let storage = FakeStorage::default();
+    let mut state = state_with_sessions(&storage, &[TASK_ID]);
+    let (retryable_id, _) = complete_effect(state.begin_complete_session(&storage, TASK_ID));
+    state.apply_complete_result(
+        &storage,
+        retryable_id,
+        Err(ServerFailure::Operation(web_error(
+            web_error_codes::REPOSITORY_SAVE_FAILED,
+            RetryAdvice::Retry,
+        ))),
+    );
+    assert!(state.display_error().is_some());
+
+    let (conflict_id, _) = complete_effect(state.begin_complete_session(&storage, TASK_ID));
+    state.apply_complete_result(
+        &storage,
+        conflict_id,
+        Err(ServerFailure::Operation(actual_work_conflict(Some(250)))),
+    );
+
+    assert!(state.display_error().is_none());
+    assert!(project_session_cards(&state, 540)[0]
+        .completion_conflict
+        .is_some());
+
+    storage.fail_work_session_writes.set(true);
+    state.resume_completion_conflict(&storage, TASK_ID);
+    assert!(matches!(
+        state.display_error(),
+        Some(schronu_web::client::state::DisplayError::LocalStorage {
+            committed_on_server: false,
+            task_id: Some(task_id),
+        }) if task_id == TASK_ID
+    ));
+    storage.fail_work_session_writes.set(false);
+    let (second_conflict_id, _) =
+        complete_effect(state.confirm_completion_conflict(&storage, TASK_ID));
+    state.apply_complete_result(
+        &storage,
+        second_conflict_id,
+        Err(ServerFailure::Operation(actual_work_conflict(Some(300)))),
+    );
+
+    assert!(state.display_error().is_none());
+    assert_eq!(
+        project_session_cards(&state, 540)[0]
+            .completion_conflict
+            .unwrap()
+            .current_actual_work_seconds,
+        300
+    );
+}
+
+#[test]
+fn 完了実績競合は別taskのrepository不確実errorを消さない() {
+    let storage = FakeStorage::default();
+    let mut state = state_with_sessions(&storage, &[TASK_ID, OTHER_TASK_ID]);
+    let (conflict_id, _) = complete_effect(state.begin_complete_session(&storage, TASK_ID));
+    let (uncertain_id, _) = complete_effect(state.begin_complete_session(&storage, OTHER_TASK_ID));
+    state.apply_complete_result(
+        &storage,
+        uncertain_id,
+        Err(ServerFailure::Operation(web_error(
+            web_error_codes::REPOSITORY_STATE_UNCERTAIN,
+            RetryAdvice::ManualCheck,
+        ))),
+    );
+    state.apply_complete_result(
+        &storage,
+        conflict_id,
+        Err(ServerFailure::Operation(actual_work_conflict(Some(250)))),
+    );
+
+    assert!(matches!(
+        state.display_error(),
+        Some(schronu_web::client::state::DisplayError::Operation {
+            error,
+            task_id: Some(task_id),
+            ..
+        }) if error.code == web_error_codes::REPOSITORY_STATE_UNCERTAIN
+            && task_id == OTHER_TASK_ID
+    ));
+    assert!(project_session_cards(&state, 540)
+        .into_iter()
+        .find(|card| card.task_id == TASK_ID)
+        .unwrap()
+        .completion_conflict
+        .is_some());
+}
+
+#[test]
+fn 完了実績競合の確認中と再送中はbufferを初回click時刻で停止する() {
+    let storage = FakeStorage::default();
+    let mut state = state_with_sessions(&storage, &[TASK_ID]);
+    let bootstrap_id = bootstrap_effect(state.request_bootstrap());
+    state.apply_bootstrap_result(bootstrap_id, Ok(snapshot("2026-09-05", 0)));
+    state.tick(6_500);
+    let (first_id, _) = complete_effect(state.begin_complete_session(&storage, TASK_ID));
+    state.apply_complete_result(
+        &storage,
+        first_id,
+        Err(ServerFailure::Operation(actual_work_conflict(Some(250)))),
+    );
+
+    state.tick(20_000);
+    assert_eq!(state.display_buffer_seconds(), Some(60));
+    let (second_id, _) = complete_effect(state.confirm_completion_conflict(&storage, TASK_ID));
+    state.tick(30_000);
+    assert_eq!(state.display_buffer_seconds(), Some(60));
+    state.apply_complete_result(
+        &storage,
+        second_id,
+        Err(ServerFailure::Operation(actual_work_conflict(Some(300)))),
+    );
+    state.tick(40_000);
+    assert_eq!(state.display_buffer_seconds(), Some(60));
+
+    state.resume_completion_conflict(&storage, TASK_ID);
+    assert_eq!(state.sessions()[0].started_at_epoch_ms, 33_500);
+    assert_eq!(state.display_buffer_seconds(), Some(27));
+    state.tick(50_000);
+    assert_eq!(state.display_buffer_seconds(), Some(27));
+}
+
+#[test]
+fn 完了実績競合の確認中は開始時見積の到達後もbufferを停止する() {
+    let storage = FakeStorage::default();
+    let mut state = state_with_sessions(&storage, &[TASK_ID]);
+    let bootstrap_id = bootstrap_effect(state.request_bootstrap());
+    state.apply_bootstrap_result(bootstrap_id, Ok(snapshot("2026-09-05", 0)));
+    state.tick(6_500);
+    let (request_id, _) = complete_effect(state.begin_complete_session(&storage, TASK_ID));
+    state.apply_complete_result(
+        &storage,
+        request_id,
+        Err(ServerFailure::Operation(actual_work_conflict(Some(250)))),
+    );
+
+    state.tick(900_000);
+
+    assert_eq!(state.display_buffer_seconds(), Some(60));
+}
+
+#[test]
+fn 見積到達後の完了実績競合は初回click以前のbuffer減算を維持する() {
+    let storage = FakeStorage::default();
+    let mut state = state_with_sessions(&storage, &[TASK_ID]);
+    let bootstrap_id = bootstrap_effect(state.request_bootstrap());
+    state.apply_bootstrap_result(bootstrap_id, Ok(snapshot("2026-09-05", 0)));
+    state.tick(900_000);
+    assert_eq!(state.display_buffer_seconds(), Some(-40));
+    let (request_id, _) = complete_effect(state.begin_complete_session(&storage, TASK_ID));
+    state.apply_complete_result(
+        &storage,
+        request_id,
+        Err(ServerFailure::Operation(actual_work_conflict(Some(250)))),
+    );
+
+    state.tick(950_000);
+
+    assert_eq!(state.display_buffer_seconds(), Some(-40));
 }
 
 #[test]
