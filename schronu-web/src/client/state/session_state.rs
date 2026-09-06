@@ -14,8 +14,6 @@ enum MutationKind {
 }
 
 pub(super) struct PendingMutation {
-    task_id: String,
-    kind: MutationKind,
     invocation: ServerActionInvocation,
 }
 
@@ -295,27 +293,18 @@ impl ClientState {
             }
             _ => unreachable!("mutation must produce a mutation effect"),
         };
-        self.sessions.pending_mutations.insert(
-            request_id,
-            PendingMutation {
-                task_id: task_id.to_owned(),
-                kind,
-                invocation,
-            },
-        );
+        self.sessions
+            .pending_mutations
+            .insert(request_id, PendingMutation { invocation });
         effect
     }
 
-    fn take_pending_mutation(
-        &mut self,
-        request_id: u64,
-        kind: MutationKind,
-    ) -> Option<(String, ServerActionInvocation)> {
+    fn take_pending_record(&mut self, request_id: u64) -> Option<(String, ServerActionInvocation)> {
         let pending = self.sessions.pending_mutations.get(&request_id)?;
-        if pending.kind != kind {
+        let ServerActionInvocation::RecordSession(request) = &pending.invocation else {
             return None;
-        }
-        let task_id = pending.task_id.clone();
+        };
+        let task_id = request.task_id.clone();
         let invocation = pending.invocation.clone();
         self.sessions.pending_mutations.remove(&request_id);
         Some((task_id, invocation))
@@ -326,13 +315,10 @@ impl ClientState {
         request_id: u64,
     ) -> Option<(String, ServerActionInvocation)> {
         let pending = self.sessions.pending_mutations.get(&request_id)?;
-        if !matches!(
-            pending.kind,
-            MutationKind::Complete | MutationKind::CompleteWithoutRecording
-        ) {
+        let ServerActionInvocation::CompleteSession(request) = &pending.invocation else {
             return None;
-        }
-        let task_id = pending.task_id.clone();
+        };
+        let task_id = request.task_id.clone();
         let invocation = pending.invocation.clone();
         self.sessions.pending_mutations.remove(&request_id);
         Some((task_id, invocation))
@@ -344,9 +330,7 @@ impl ClientState {
         request_id: u64,
         result: Result<WebSuccess<RecordSessionResult>, ServerFailure>,
     ) -> ClientEffect {
-        let Some((task_id, invocation)) =
-            self.take_pending_mutation(request_id, MutationKind::Record)
-        else {
+        let Some((task_id, invocation)) = self.take_pending_record(request_id) else {
             return ClientEffect::None;
         };
         self.sessions.in_flight_task_ids.remove(&task_id);
