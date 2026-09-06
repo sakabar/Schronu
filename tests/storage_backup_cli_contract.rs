@@ -48,6 +48,16 @@ impl CliFixture {
             .unwrap()
     }
 
+    fn run_with_relative_storage(&self, args: &[&str]) -> Output {
+        Command::new(env!("CARGO_BIN_EXE_schronu"))
+            .args(args)
+            .current_dir(&self.root)
+            .env("SCHRONU_STORAGE_DIR", "storage")
+            .env("SCHRONU_CONFIG_PATH", &self.config)
+            .output()
+            .unwrap()
+    }
+
     fn child(&self, name: &str) -> PathBuf {
         self.root.join(name)
     }
@@ -234,6 +244,31 @@ fn restore_cliはcurrent_storage非依存で非存在destinationへ復元する(
     assert!(String::from_utf8(output.stdout)
         .unwrap()
         .starts_with(&format!("restore: OK {} revision=", destination.display())));
+}
+
+#[test]
+fn restore_cliは相対current_storageが非存在でも別directoryへ復元する() {
+    let fixture = CliFixture::seeded();
+    let snapshot = fixture.child("snapshot");
+    let destination = fixture.child("restored");
+    assert_eq!(
+        fixture
+            .run(&["backup", snapshot.to_str().unwrap()])
+            .status
+            .code(),
+        Some(0)
+    );
+    fs::remove_dir_all(&fixture.storage).unwrap();
+
+    let output = fixture.run_with_relative_storage(&[
+        "restore",
+        snapshot.to_str().unwrap(),
+        destination.to_str().unwrap(),
+    ]);
+
+    assert_eq!(output.status.code(), Some(0));
+    assert!(output.stderr.is_empty());
+    assert!(destination.join(".revision").is_file());
 }
 
 #[test]
