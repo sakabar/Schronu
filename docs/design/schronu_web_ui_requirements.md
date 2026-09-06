@@ -78,7 +78,7 @@ Schronu-webを、1日の余力と複数taskの作業状況を同時に把握で�
 ### 4.5 セッション操作
 
 - **REQ-ACTION-001**: 各cardに「破棄して解除」「記録して解除」「計測を破棄して完了」「記録して完了」の4buttonを表示すること。
-- **REQ-ACTION-002**: 「破棄して解除」は対象セッションをlocalStorageから削除するだけとし、taskの実績を加算せず、server通信を行わないこと。削除成功後は残存セッションの未送信進捗秒からbufferを再計算し、削除したセッション分の加算を取り消すこと。
+- **REQ-ACTION-002**: 「破棄して解除」は対象セッションをlocalStorageから削除し、taskの実績を加算するserver mutationを行わないこと。削除成功後は残存セッションの未送信進捗秒からbufferを再計算して削除したセッション分の加算を取り消し、表示一覧を更新するため`list_tasks`を送ること。
 - **REQ-ACTION-003**: 「記録して解除」は対象taskのUUIDと終了操作click時刻を指定し、その時刻までの経過秒を開始時実績へ加算すること。server処理中の通信待ち時間を加算せず、browser時計がserver時計より進んでいても開始・終了click時刻の差を維持すること。
 - **REQ-ACTION-004**: 「記録して解除」は開始時実績を期待値として検証し、現在実績と不一致の場合はtaskを保存せず、セッションを保持すること。
 - **REQ-ACTION-005**: 「記録して完了」は対象taskのUUIDと終了操作click時刻を指定し、その時刻までの経過秒加算、task完了、終了時刻更新を同じrepository transactionで処理すること。browser時計がserver時計より進んでいる場合、経過秒はclick時刻差を使い、保存する完了時刻はserver操作時刻を上限とすること。
@@ -119,14 +119,14 @@ Schronu-webを、1日の余力と複数taskの作業状況を同時に把握で�
 - **REQ-LIST-009**: 一覧の「セッション」buttonは対象taskをlocalの`work_sessions`へ追加し、追加に成功した場合はセッションtabへ切り替えること。server通信は行わないこと。
 - **REQ-LIST-010**: 対象task UUIDのセッションが存在する場合、同じtaskを表すすべてのschedule segmentの「セッション」buttonを無効化すること。
 - **REQ-LIST-011**: schedule rankが0でないtaskは「セッション」buttonを表示せず、client stateが手動追加要求を受けても`work_sessions`へ追加しないこと。
-- **REQ-LIST-012**: 「計測を破棄して完了」または「記録して完了」のserver処理成功後は、追加の`list_tasks`を送らず、表示中の一覧から対象task UUIDを持つ全schedule segmentを即時に除去すること。別taskのrowと選択logical dateを維持し、responseがlogical date境界を跨いだ場合もsnapshotと日付buttonは更新すること。完了成功response受理時点でin-flightの`list_tasks` requestを無効化し、その後に到着したresponseは適用しないこと。完了成功response受理後に開始した`list_tasks` responseは通常どおり適用すること。完了失敗、「記録して解除」、「破棄して解除」では一覧を変更しないこと。server commit成功後に対象sessionのlocalStorage削除だけが失敗した場合も、一覧からは除去すること。反復完了で生成された次回taskは自動追加せず、次の明示的な一覧取得で表示すること。
+- **REQ-LIST-012**: 4種類のセッション終了操作が成功した場合は、選択中のlogical date、または未選択なら最新snapshotのlogical dateを指定して`list_tasks`を送り、response全体で表示一覧を置換すること。完了成功response受理時点でin-flightの古い`list_tasks` requestを無効化し、その後に到着したresponseは適用しないこと。server errorでは追加取得せず、server commit成功後に対象sessionのlocalStorage削除だけが失敗した場合は安全状態を維持したまま一覧を再取得すること。
 - **REQ-LIST-013**: 全幅で一覧を`セッション追加、予定、締切、task名`の順に表示し、可視の列headerを維持すること。46rem以下では罫線区切りの1行tableとし、列幅は`44px 5.75rem 5.5rem minmax(0, 1fr)`、rowの操作高は44px以上とする。締切と予定は固定列で折り返さず、task名だけを1行のままcell内で横スクロール可能にし、page全体を横スクロールさせないこと。セッション追加済みのrank 0 taskは同一UUIDの全segmentでdisabledの「✓」、未追加なら「＋」、rank非0なら空の操作cellを表示すること。
 - **REQ-LIST-014**: 日付buttonの直下にtask名検索欄を表示し、前後空白を除外した英字大小無視の部分一致で取得済みrowを即時に絞り込むこと。空または空白だけなら全rowを表示し、一致しない場合は空結果を案内すること。検索文字列は日付・tab切替で保持し、reloadで破棄すること。入力中だけ44px以上のclear buttonを表示し、clear後は検索欄へkeyboard focusを戻すこと。検索入力とclearではserver通信、task更新、localStorage更新、発火履歴追加を行わないこと。
 
 ### 4.8 通信制限と発火履歴
 
-- **REQ-NET-001**: server通信を初回`bootstrap`、日付選択、`自動セッション`、`記録して解除`、`計測を破棄して完了`の確定、`記録して完了`、完了実績競合の再完了に限定すること。
-- **REQ-NET-002**: tab切替、毎秒tick、一覧検索の入力・clear、一覧の「セッション」と追加成功後のtab切替、`破棄して解除`、`計測を破棄して完了`の確認表示とキャンセルではserver通信を行わないこと。
+- **REQ-NET-001**: server通信を初回`bootstrap`、日付選択、`自動セッション`、`記録して解除`、`計測を破棄して完了`の確定、`記録して完了`、完了実績競合の再完了、および4種類のセッション終了成功後の`list_tasks`に限定すること。
+- **REQ-NET-002**: tab切替、毎秒tick、一覧検索の入力・clear、一覧の「セッション」と追加成功後のtab切替、`計測を破棄して完了`の確認表示とキャンセルではserver通信を行わないこと。
 - **REQ-NET-003**: 「発火履歴」tabを選択した場合だけ、発火履歴を独立したsectionとして表示できること。
 - **REQ-NET-004**: 発火履歴はserver通信結果の直近100件をmemory内だけに保持し、reload時に消去すること。localStorage操作は記録しないこと。
 - **REQ-NET-005**: 各履歴に操作時刻、実際に呼び出したserver action名と全送信引数、成功・失敗を表示すること。引数は関数呼出し形式で表示し、client内部の`request_id`は含めないこと。
@@ -184,8 +184,8 @@ Schronu-webを、1日の余力と複数taskの作業状況を同時に把握で�
 | AC-003 | 15分見積、開始時実績5分のtaskはセッション開始直後に33%となり、100%および133%で指定どおりのbarを表示する。 |
 | AC-004 | 開始`HH:MM`、完了予定`HH:MM`、残り・超過`MM:SS`が320px幅でも同じtiming領域の1行に表示され、各値をassistive technologyが識別できる。見積0のtaskは`--%`と赤い超過時間を表示し、長時間の分表示は59を超えても欠落しない。 |
 | AC-005 | 日次終端前は毎週固定`busy_time_slot`控除後の空き秒、日次終端ちょうどは予定作業がなければ0、日次終端後は壁時計超過秒を負値とするbufferがserver観測時刻を基準に変化する。browserはsnapshot後の壁時計経過秒を1回減算し、各セッションの未送信進捗秒を重複ごと個別に加算する。1セッションの見積内では通常停止し、同時計測ではセッションごとの進捗が加算され、見積到達またはより早い終了click後は対象の加算を止める。一覧を再取得しても新server bufferへ同じ未送信進捗を足し、正負どちらのbufferも符号どおり表示する。 |
-| AC-006 | 06:00境界、3画面のtab切替、毎秒tick、一覧からのセッション追加、破棄して解除、破棄完了の確認とキャンセルではserver requestが増えない。 |
-| AC-007 | 初回、日付選択、自動セッション、記録、2種類の完了確定だけが仕様どおりのserver requestを発生させる。 |
+| AC-006 | 06:00境界、3画面のtab切替、毎秒tick、一覧からのセッション追加、破棄完了の確認とキャンセルではserver requestが増えない。 |
+| AC-007 | 初回、日付選択、自動セッション、記録、2種類の完了確定、および4種類のセッション終了成功後の一覧再取得だけが仕様どおりのserver requestを発生させる。 |
 | AC-008 | 一覧に8 logical datesが表示され、両端が同じ曜日でも具体日付で別の日として取得される。 |
 | AC-009 | 一覧は開始時刻順で、締切超過は赤、schedule rank 0のtask名は緑になる。rank非0ではセッションbuttonを表示せず、セッション中のrank 0 taskでは全segmentのbuttonが無効になる。 |
 | AC-010 | 破棄して解除ではtaskが変わらず、記録では終了操作clickまでの完了済み整数秒だけが加算される。記録して完了では同じclick時刻をtask終了時刻として加算と完了が1 transactionで保存され、計測を破棄して完了では既存実績を変えずtaskだけが完了する。 |
@@ -194,7 +194,7 @@ Schronu-webを、1日の余力と複数taskの作業状況を同時に把握で�
 | AC-013 | MCPのtool schemaと既存contract testの期待値が変更されず、CLI`働`以外のCLI contract testも変更なしで成功する。 |
 | AC-014 | 発火履歴tabの選択時だけ独立sectionがDOMへ表示され、実際のserver action名、全送信引数、成否を区別して100件まで表示し、localStorage操作を表示せず、reload後は空になる。 |
 | AC-015 | 各cardに4操作が表示され、計測を破棄して完了はcard内の確認を経た確定時だけ1回送信され、キャンセルでは送信されない。3終了操作はclick時刻でcardの計測を停止し、通信待ちで表示や実績を増やさない。2種類の完了は`record_elapsed_seconds`の真偽を含む発火履歴で区別される。 |
-| AC-016 | 2種類の完了が成功すると追加通信なしで対象task UUIDの全schedule segmentが一覧から消え、別taskのrowと選択logical dateは維持される。logical date境界を跨ぐ完了responseではsnapshotと日付buttonが更新される。完了成功response受理時点でin-flightだった一覧requestは無効化され、その後にresponseが到着しても対象taskが復活しない。完了成功response受理後に開始した明示的一覧取得は通常どおり反映される。完了失敗、記録して解除、破棄して解除では一覧が変化せず、server commit成功後にlocalStorage削除だけが失敗した場合も完了taskは一覧から消える。 |
+| AC-016 | 4種類のセッション終了が成功すると選択中または最新snapshotのlogical dateで一覧を再取得し、実績変更後の再schedule、完了taskの除去、反復taskを含むresponse全体で置換する。終了失敗では再取得せず一覧とsessionを保持し、server commit成功後にlocalStorage削除だけが失敗した場合は安全状態を維持して一覧を再取得する。 |
 | AC-017 | 320pxから46remまでの画面幅で一覧が可視header付きの1行tableとなり、左端の44px以上の「＋」またはdisabledの「✓」、固定された締切・予定、cell内だけを横スクロールできる長いtask名を表示する。viewport全体は横に超えず、rank非0の操作cellは空になる。46remを超える画面では従来のdesktop tableを維持し、34rem以下ではbufferと日付buttonを圧縮して日付buttonの44px以上の操作高を維持する。 |
 | AC-018 | 通常モードから1 clickで持ち歩きロックを有効化でき、ロック中は状態と説明を長押しbutton内へ集約した2行以内のbarを表示する。ロック中も画面表示・更新、scroll、tab切替、日付選択、一覧取得を利用できる一方、9変更操作はdispatchされない。 |
 | AC-019 | 44px以上のbuttonをpointerまたはSpace・Enterで1.2秒長押しすると15秒間許可され、封印対象操作のdispatchごとに成否を問わず無操作期限が15秒後へ延長される。閲覧操作と確認キャンセルでは延長せず、各中断event、期限到達、単調時計の後退で安全側へ戻る。 |

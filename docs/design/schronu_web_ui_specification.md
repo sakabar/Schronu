@@ -449,7 +449,7 @@ display_buffer = buffer_seconds - snapshot_elapsed + session_credit
 - index 1: `曜 明日`
 - index 2..7: `曜`
 
-各buttonは表示labelとは別に具体的な`YYYY-MM-DD`を保持する。新しいserver responseでlogical dateが変わった場合はbuttonを再生成する。2種類の完了成功では選択logical dateを維持し、対象task UUIDのrowだけを除去する。それ以外のresponseでは既存一覧と選択logical dateをclearする。追加の`list_tasks`は自動実行しない。
+各buttonは表示labelとは別に具体的な`YYYY-MM-DD`を保持する。新しいserver responseでlogical dateが変わった場合はbuttonを再生成する。4種類のセッション終了成功後は選択中のlogical dateを維持し、未選択なら最新snapshotのlogical dateを選んで`list_tasks`を自動実行する。
 
 ### 6.6 持ち歩きロックstate
 
@@ -490,7 +490,7 @@ client componentは非`None`の`ClientEffect`をserverへdispatchする直前に
 
 ### 7.3 一覧画面
 
-- 日付button click時だけ`list_tasks(date)`を送る。
+- 日付button click時と4種類のセッション終了成功後に`list_tasks(date)`を送る。
 - 日付button直下、task table直上へtask名検索欄を置く。検索文字列はpage内だけに保持し、日付・tab切替では維持、reloadでは空へ戻す。localStorageへ保存しない。
 - 入力の前後空白を除外して小文字化し、task名を小文字化した文字列への部分一致で取得済みrowを即時に絞り込む。空または空白だけなら全rowを表示し、Unicode正規化と全角・半角変換は行わない。同一taskの複数segmentは一致する全rowを残し、新しい日付のresponseにも保持中の条件を適用する。
 - 生の入力が空でない間だけ「×」のclear buttonを表示し、`aria-label`を「検索文字列をクリア」、操作領域を44px以上とする。clearは検索文字列を空にして全rowを再表示し、DOMから消えるclear buttonにあったkeyboard focusを検索欄へ戻す。検索条件が空でなく一致rowが0件なら、tableの代わりに`role=status`で「一致するタスクがありません。」と表示する。
@@ -501,9 +501,9 @@ client componentは非`None`の`ClientEffect`をserverへdispatchする直前に
 - `is_leaf == true`のrowだけに「セッション」buttonを表示する。`is_leaf == false`のrowではbuttonとclick listenerを生成せず、client stateへ手動追加要求が直接渡されても拒否する。
 - 「セッション」click時はrowのtask snapshotと`is_leaf`、client現在時刻からsessionを作り、localStorageへ保存する。追加成功後はセッションtabへ切り替える。
 - `work_sessions`に同一UUIDがあれば、そのUUIDの全rowでbuttonをdisabledにする。46rem以下では追加済みを「✓」で示し、ARIA labelも追加済みであることを表す。
-- 「計測を破棄して完了」または「記録して完了」のserver処理成功後は、追加の`list_tasks`を送らず、表示中のrowから対象task UUIDを持つ全schedule segmentを除去する。別taskのrowと選択logical dateは、responseでlogical dateが変わった場合も維持する。
-- 完了成功response受理時点でin-flightの`list_tasks` requestを無効化する。その後に到着した無効化済みrequestのresponseは適用せず、完了taskのrowが復活することを防ぐ。完了成功response受理後に利用者が日付buttonをclickして開始した新しい`list_tasks` requestは通常どおり適用する。
-- 完了によって生成された反復taskは成功responseから一覧へ追加せず、次の明示的な`list_tasks`で取得する。
+- 4種類のセッション終了成功後は選択中、または未選択なら最新snapshotのlogical dateを再取得し、表示中の一覧をresponse全体で置換する。
+- 完了成功response受理時点でin-flightの`list_tasks` requestを無効化する。その後に到着した無効化済みrequestのresponseは適用せず、完了taskのrowが復活することを防ぐ。完了成功response後に開始した再取得と、さらに後から利用者が明示した日付取得は通常どおり適用する。
+- 完了によって生成された反復taskは、終了成功後の一覧再取得responseに含まれる場合に表示する。
 - 全幅でheaderとrowをセッション追加、予定、締切、task名の順に置き、可視headerとtable semanticsを維持する。46rem以下ではtable全体の横スクロールを解除し、`44px 5.75rem 5.5rem minmax(0, 1fr)`の4列gridにする。
 - mobile rowは44px以上の1行とし、row間を罫線だけで区切る。card用の行間、角丸、影、内側余白は使用しない。セッション追加cellは未追加のrank 0で「＋」、追加済みでdisabledの「✓」、rank非0で空cellとする。
 - 締切と予定は小さい等幅数字の固定列として折り返さず、既存formatを省略しない。task名だけを`min-width: 0`、`white-space: nowrap`、`overflow-x: auto`としてcell内で横スクロール可能にし、全文をDOMへ保持する。task名のscroll領域はkeyboard focusとfocus-visible表示を持ち、横panがpage全体の横移動へ伝播しないようにする。
@@ -511,13 +511,13 @@ client componentは非`None`の`ClientEffect`をserverへdispatchする直前に
 ### 7.4 操作結果
 
 - localStorage更新は、memory state確定前に保存成功を確認する。
-- 「破棄して解除」はlocalStorage削除成功後だけmemory stateを確定し、残存する計測中セッションからbufferを再計算する。server requestとtask実績更新は行わない。
+- 「破棄して解除」はlocalStorage削除成功後だけmemory stateを確定し、残存する計測中セッションからbufferを再計算する。task実績を更新するserver mutationは行わず、成功後の一覧再取得だけを行う。
 - server mutationは、response成功後にlocalStorageからsessionを削除する。
 - server errorまたはlocalStorage削除失敗ではsessionを残す。server保存成功後にlocalStorage削除だけが失敗した場合、responseの更新後実績を反映した競合案内を表示し、再送による二重加算を防ぐため対象buttonを無効化し、対象sessionをbuffer計算上の計測中sessionから除外する。
 - component orchestratorはactionまたはresponse適用前後のsession件数を共通判定へ渡す。active tabがセッションで、件数が実際に減少して0件になった場合だけ一覧tabへ切り替える。即時削除、server成功後の削除、repository確認済みの削除を同じ判定へ通し、tab切替自体はeffectを生成しない。
 - serverが未commitと確定できるerrorではpending終了時刻を破棄し、対象sessionの表示と未送信進捗の加算を現在時刻基準で自動再開する。transport切断または`repository_state_uncertain`では終了時刻を保持し、repository確認完了時に破棄して再開する。
-- 2種類の完了では、server処理成功を受理した時点で対象task UUIDの全schedule segmentを一覧から除去する。この除去は後続のlocalStorage削除成否に依存しない。完了error、「記録して解除」、「破棄して解除」では一覧を変更しない。
-- 完了responseの`ServerSnapshot`は通常どおり適用する。responseのlogical dateが変わった場合は日付buttonを再生成する一方、選択logical dateと対象task以外のrowを維持する。追加の`list_tasks`は送らない。
+- 4種類の終了成功では一覧再取得effectを生成し、response全体で一覧を置換する。server errorでは再取得せず、server commit成功後のlocalStorage削除失敗では安全状態を維持しつつ再取得する。
+- 完了responseの`ServerSnapshot`は通常どおり適用し、logical dateが変わった場合は日付buttonを再生成する。一覧再取得には選択中のlogical dateを維持して用い、未選択なら最新snapshotのlogical dateを用いる。
 - in-flight中は対象sessionの4buttonを無効化する。他sessionの計測は継続する。globalまたはmanual safety block中はserver mutationの3buttonを無効化し、「破棄して解除」は利用可能とする。
 
 ### 7.5 持ち歩きロックbar
@@ -541,12 +541,12 @@ client componentは非`None`の`ClientEffect`をserverへdispatchする直前に
 | 日付button | `list_tasks` | なし | なし | responseのrowへ置換 | なし |
 | 自動セッション | `auto_session` | なし | session追加 | なし | なし |
 | 一覧の「セッション」 | なし | なし | session追加 | 追加成功後にセッションtabへ切替 | なし |
-| 破棄して解除 | なし | なし | session削除。成功後にbuffer再計算 | なし | なし |
-| 記録して解除 | click時刻付きでsafety marker保存後に`record_session` | clickまでの実績保存1回 | 送信前marker設定とtimer停止。確定応答後marker解除。成功後session削除 | なし | なし |
+| 破棄して解除 | session削除成功後に`list_tasks` | なし | session削除。成功後にbuffer再計算 | 一覧再取得responseで置換 | なし |
+| 記録して解除 | click時刻付きでsafety marker保存後に`record_session`。成功後に`list_tasks` | clickまでの実績保存1回 | 送信前marker設定とtimer停止。確定応答後marker解除。成功後session削除 | 一覧再取得responseで置換 | なし |
 | 計測を破棄して完了の確認・キャンセル | なし | なし | card内の一時的な確認状態だけを変更 | なし | なし |
-| 計測を破棄して完了の確定 | click時刻付きでsafety marker保存後に`complete_session(record_elapsed_seconds: false)`。成功後の追加一覧取得なし | 追加実績0、click時刻で完了するtransaction 1回 | 送信前marker設定とtimer停止。確定応答後marker解除。成功後session削除 | 成功時に同一task UUIDの全rowを除去 | なし |
-| 記録して完了 | click時刻付きでsafety marker保存後に`complete_session(record_elapsed_seconds: true)`。成功後の追加一覧取得なし | clickまでの経過秒を加算し、click時刻で完了するtransaction 1回 | 送信前marker設定とtimer停止。確定応答後marker解除。成功後session削除 | 成功時に同一task UUIDの全rowを除去 | なし |
-| 完了実績競合の再完了 | 元requestの期待実績だけを最新値へ変更し、safety marker保存後に`complete_session` | 最新実績とのCAS成功時だけ元の記録方針で完了 | 初回click時刻の停止を維持。再競合は最新値を更新し、成功後session削除 | 成功時に同一task UUIDの全rowを除去 | なし |
+| 計測を破棄して完了の確定 | click時刻付きでsafety marker保存後に`complete_session(record_elapsed_seconds: false)`。成功後に`list_tasks` | 追加実績0、click時刻で完了するtransaction 1回 | 送信前marker設定とtimer停止。確定応答後marker解除。成功後session削除 | 一覧再取得responseで置換 | なし |
+| 記録して完了 | click時刻付きでsafety marker保存後に`complete_session(record_elapsed_seconds: true)`。成功後に`list_tasks` | clickまでの経過秒を加算し、click時刻で完了するtransaction 1回 | 送信前marker設定とtimer停止。確定応答後marker解除。成功後session削除 | 一覧再取得responseで置換 | なし |
+| 完了実績競合の再完了 | 元requestの期待実績だけを最新値へ変更し、safety marker保存後に`complete_session`。成功後に`list_tasks` | 最新実績とのCAS成功時だけ元の記録方針で完了 | 初回click時刻の停止を維持。再競合は最新値を更新し、成功後session削除 | 一覧再取得responseで置換 | なし |
 | 完了実績競合の計測再開 | なし | なし | 確認待ちを除いた開始時刻と最新実績でsessionを原子的に置換 | なし | なし |
 | repository手動確認済み | なし | なし | commit済みで削除失敗したsessionを先に削除し、safety marker解除 | なし | なし |
 | 持ち歩きロック有効化 | なし | なし | `enabled: true`を保存。失敗時もmemory上はロック | なし | なし |
@@ -663,8 +663,8 @@ OperationHistoryEntry {
 - 記録と2種類の完了についてserver mutation成功、競合、保存失敗、worker停止、多重送信防止、global・manual safety block時のsession遷移を検証する。
 - 3終了操作でclick時刻をrequestへ保持し、pending中のcard停止、見積到達時刻とclick時刻の早い方で打ち切る未送信進捗、単一・複数sessionのbuffer遷移、未commit確定error後の自動再開、transport切断・repository状態不確実時の確認完了までの打ち切りを注入epochだけで検証する。実時間のsleepやtimer待機は使用しない。
 - 完了実績競合について、記録方針別の確認、初回click時刻でのcard・buffer停止、元requestを保った最新実績での再送、新request ID、再競合更新、成功cleanup、旧payloadのmanual block、計測再開の待ち時間除外とstorage失敗時の原子性を検証する。記録操作の競合は従来どおりmanual blockとなることを検証する。
-- 2種類の完了成功で同一task UUIDの全rowだけが即時に除去され、別taskのrowと選択logical dateが維持されることを検証する。完了error、記録して解除、破棄して解除では一覧が変化せず、server commit成功後のlocalStorage削除失敗でも完了taskのrowが除去されることを検証する。
-- 完了成功response受理時点でin-flightだった`list_tasks` requestを無効化し、その後にresponseが到着しても完了taskが復活しないことを検証する。完了成功response受理後に開始した`list_tasks` responseは適用されることを検証する。logical date境界を跨ぐ完了responseではsnapshotと日付buttonが更新され、反復taskは次の明示的一覧取得まで自動追加されないことを検証する。
+- 4種類のセッション終了成功後に選択中または最新snapshotのlogical dateを再取得し、response全体で一覧を置換することを検証する。終了errorでは再取得せず、server commit成功後のlocalStorage削除失敗では安全状態を維持して再取得することも検証する。
+- 完了成功response受理時点でin-flightだった`list_tasks` requestを無効化し、その後にresponseが到着しても完了taskが復活しないことを検証する。完了成功後の再取得responseと、それより後に開始した明示的な`list_tasks` responseは適用されることを検証する。logical date境界を跨ぐ完了responseではsnapshotと日付buttonを更新し、反復taskは再取得responseに従うことを検証する。
 - 各endpointの成功型がsnapshotを持ち、error型がsnapshotを持たず、clientがerror時に直前snapshotを維持することを検証する。
 - error codeごとの`retry_advice`がerror表と一致し、`manual_check`では同一requestをそのまま再送しないことを検証する。完了実績競合だけは明示確認後に期待実績を置換した新requestを送る。
 - `History`へのtab切替がeffectを生成しないこと、履歴がserver通信結果だけを対象とすること、100件上限、成否、reload非永続化を検証する。
