@@ -427,6 +427,10 @@ impl TaskRepositoryTrait for TaskRepository {
             .collect()
     }
 
+    fn repository_revision(&self) -> Option<Uuid> {
+        self.storage_revision.get()
+    }
+
     fn load(&mut self) -> Result<(), TaskRepositoryError> {
         self.recover_transaction()?;
         let storage_revision = self.read_storage_revision().map_err(|error| {
