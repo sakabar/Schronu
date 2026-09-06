@@ -235,3 +235,177 @@ fn complete_taskは曖昧な反復startをerrorにして変更しない() {
         );
     });
 }
+
+fn deferred_routine_task(
+    interval_days: i64,
+    original_start: DateTime<Local>,
+    original_deadline: DateTime<Local>,
+    parent_deadline_time: Option<DateTime<Local>>,
+) -> TaskHandle {
+    let parent = crate::test_support::new_task_handle_at("ルーチン", original_deadline).unwrap();
+    parent
+        .set_repetition_interval_days_opt(Some(interval_days))
+        .unwrap();
+    parent.set_deadline_time_opt(parent_deadline_time).unwrap();
+    let mut child_attr = crate::test_support::new_task_attr_at("延期対象", original_deadline);
+    child_attr.set_start_time(original_start);
+    child_attr.set_deadline_time_opt(Some(original_deadline));
+    let child = parent.create_as_last_child(child_attr);
+    let mut repository = TestTaskRepository::new(vec![parent], original_deadline);
+
+    defer_routine_task(&mut repository, child.get_id().unwrap()).unwrap();
+    child
+}
+
+#[test]
+fn defer_routine_taskはdst境界の1日と7日周期で壁時計時刻を維持する() {
+    in_new_york_timezone(|| {
+        for (original_date, interval_days, target_date) in [
+            ((2026, 3, 7), 1, (2026, 3, 8)),
+            ((2026, 3, 1), 7, (2026, 3, 8)),
+            ((2026, 10, 31), 1, (2026, 11, 1)),
+            ((2026, 10, 25), 7, (2026, 11, 1)),
+        ] {
+            for parent_has_deadline in [true, false] {
+                let original_start = Local
+                    .with_ymd_and_hms(original_date.0, original_date.1, original_date.2, 9, 0, 0)
+                    .unwrap();
+                let original_deadline = Local
+                    .with_ymd_and_hms(original_date.0, original_date.1, original_date.2, 10, 0, 0)
+                    .unwrap();
+                let parent_deadline_time = parent_has_deadline
+                    .then(|| Local.with_ymd_and_hms(2026, 1, 1, 18, 0, 0).unwrap());
+                let task = deferred_routine_task(
+                    interval_days,
+                    original_start,
+                    original_deadline,
+                    parent_deadline_time,
+                );
+                let expected_start = Local
+                    .with_ymd_and_hms(target_date.0, target_date.1, target_date.2, 9, 0, 0)
+                    .unwrap();
+                let expected_deadline = Local
+                    .with_ymd_and_hms(
+                        target_date.0,
+                        target_date.1,
+                        target_date.2,
+                        if parent_has_deadline { 18 } else { 10 },
+                        0,
+                        0,
+                    )
+                    .unwrap();
+
+                assert_eq!(task.get_start_time().unwrap(), expected_start);
+                assert_eq!(
+                    task.get_deadline_time_opt().unwrap(),
+                    Some(expected_deadline)
+                );
+            }
+        }
+    });
+}
+
+fn assert_defer_routine_calendar_error(
+    original_start: DateTime<Local>,
+    original_deadline: DateTime<Local>,
+    parent_deadline_time: Option<DateTime<Local>>,
+    expected_error: ApplicationError,
+) {
+    let parent = crate::test_support::new_task_handle_at("ルーチン", original_deadline).unwrap();
+    parent.set_repetition_interval_days_opt(Some(1)).unwrap();
+    parent.set_deadline_time_opt(parent_deadline_time).unwrap();
+    let mut child_attr = crate::test_support::new_task_attr_at("延期対象", original_deadline);
+    child_attr.set_start_time(original_start);
+    child_attr.set_deadline_time_opt(Some(original_deadline));
+    let child = parent.create_as_last_child(child_attr);
+    let child_snapshot = child.snapshot().unwrap();
+    let parent_revision = parent.get_persistent_mutation_revision().unwrap();
+    let child_id = child.get_id().unwrap();
+    let mut repository = TestTaskRepository::new(vec![parent.clone()], original_deadline);
+    let save_count = repository.save_count();
+
+    assert_eq!(
+        defer_routine_task(&mut repository, child_id),
+        Err(expected_error)
+    );
+    assert_eq!(child.snapshot().unwrap(), child_snapshot);
+    assert_eq!(
+        parent.get_persistent_mutation_revision().unwrap(),
+        parent_revision
+    );
+    assert_eq!(repository.save_count(), save_count);
+}
+
+#[test]
+fn defer_routine_taskは不存在のdeadlineをerrorにして変更しない() {
+    in_new_york_timezone(|| {
+        let local_datetime = NaiveDate::from_ymd_opt(2026, 3, 8)
+            .unwrap()
+            .and_hms_opt(2, 30, 0)
+            .unwrap();
+        assert_defer_routine_calendar_error(
+            Local.with_ymd_and_hms(2026, 3, 7, 1, 0, 0).unwrap(),
+            Local.with_ymd_and_hms(2026, 3, 7, 2, 30, 0).unwrap(),
+            None,
+            ApplicationError::NonexistentLocalDateTime { local_datetime },
+        );
+    });
+}
+
+#[test]
+fn defer_routine_taskは曖昧なdeadlineをerrorにして変更しない() {
+    in_new_york_timezone(|| {
+        let local_datetime = NaiveDate::from_ymd_opt(2026, 11, 1)
+            .unwrap()
+            .and_hms_opt(1, 30, 0)
+            .unwrap();
+        let candidates = Local.from_local_datetime(&local_datetime);
+        assert_defer_routine_calendar_error(
+            Local.with_ymd_and_hms(2026, 10, 31, 0, 30, 0).unwrap(),
+            Local.with_ymd_and_hms(2026, 10, 31, 1, 30, 0).unwrap(),
+            None,
+            ApplicationError::AmbiguousLocalDateTime {
+                local_datetime,
+                earlier: candidates.earliest().unwrap(),
+                later: candidates.latest().unwrap(),
+            },
+        );
+    });
+}
+
+#[test]
+fn defer_routine_taskは不存在のstartをerrorにして変更しない() {
+    in_new_york_timezone(|| {
+        let local_datetime = NaiveDate::from_ymd_opt(2026, 3, 8)
+            .unwrap()
+            .and_hms_opt(2, 30, 0)
+            .unwrap();
+        assert_defer_routine_calendar_error(
+            Local.with_ymd_and_hms(2026, 3, 7, 2, 30, 0).unwrap(),
+            Local.with_ymd_and_hms(2026, 3, 7, 18, 0, 0).unwrap(),
+            Some(Local.with_ymd_and_hms(2026, 1, 1, 18, 0, 0).unwrap()),
+            ApplicationError::NonexistentLocalDateTime { local_datetime },
+        );
+    });
+}
+
+#[test]
+fn defer_routine_taskは曖昧なstartをerrorにして変更しない() {
+    in_new_york_timezone(|| {
+        let local_datetime = NaiveDate::from_ymd_opt(2026, 11, 1)
+            .unwrap()
+            .and_hms_opt(1, 30, 0)
+            .unwrap();
+        let candidates = Local.from_local_datetime(&local_datetime);
+        assert_defer_routine_calendar_error(
+            Local.with_ymd_and_hms(2026, 10, 31, 1, 30, 0).unwrap(),
+            Local.with_ymd_and_hms(2026, 10, 31, 18, 0, 0).unwrap(),
+            Some(Local.with_ymd_and_hms(2026, 1, 1, 18, 0, 0).unwrap()),
+            ApplicationError::AmbiguousLocalDateTime {
+                local_datetime,
+                earlier: candidates.earliest().unwrap(),
+                later: candidates.latest().unwrap(),
+            },
+        );
+    });
+}
