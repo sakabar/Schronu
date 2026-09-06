@@ -417,6 +417,8 @@ display_buffer = buffer_seconds - buffer_elapsed
 4. 初期tabは「セッション」とする。
 5. tab切替だけでは一覧取得を含むserver操作を行わない。
 
+34rem以下ではbuffer領域と日付buttonの余白を圧縮する。日付buttonは操作高44px以上と8日分の横スクロールを維持する。
+
 ### 7.2 セッション画面
 
 - セッション0件では「自動セッション」buttonを表示する。
@@ -436,6 +438,9 @@ display_buffer = buffer_seconds - buffer_elapsed
 - schedule rankが0のとき`is_leaf`をtrueとし、そのtask名を緑にする。
 - 「セッション」click時はrowのtask snapshotとclient現在時刻からsessionを作り、localStorageへ保存する。active tabは変更しない。
 - `work_sessions`に同一UUIDがあれば、そのUUIDの全rowでbuttonをdisabledにする。
+- 46rem以下では横スクロールを解除し、rowをcard表示にする。46remはtableの最小幅44remと通常のshell左右余白2remの合計とする。
+- cardはtask名を先頭、label付きの締切と予定を2列で中段、横幅100%の「セッション」buttonを下段に置く。task名は幅に合わせて折り返すが、締切と予定は折り返さない。
+- table headerは視覚的に隠すだけとし、DOMと列header semanticsは維持する。46remを超える画面では従来のtable表示を維持する。
 
 ### 7.4 操作結果
 
@@ -574,6 +579,8 @@ OperationHistoryEntry {
 ### 12.5 UI and integration
 
 - 「セッション」「一覧」、8日button、card、一覧row、色、時刻形式をcomponent testとbrowser目視で確認する。
+- 一覧は320px、360px、46rem、1024pxで確認し、長いtask名、日付付き締切、複数segmentでviewport全体の横スクロールが発生しないことを確認する。
+- 34rem以下でbufferと日付buttonが圧縮され、日付buttonの操作高44px以上と横スクロールが維持されることを確認する。
 - 4操作buttonのlabel、ARIA名、意味別class、通常幅の2列配置、狭幅の1列配置を確認する。
 - 「計測を破棄して完了」の最初のclickでは通信せず、card単位の確認表示、キャンセル、確定時の1回だけのtyped callbackを確認する。
 - 33%、100%、133%、見積0、buffer正負の表示を確認する。
@@ -606,6 +613,6 @@ OperationHistoryEntry {
 | 6.2、6.3、7.2 | REQ-CARD-001..012 |
 | 4.4、4.5、7.4、9 | REQ-ACTION-001..009 |
 | 6.4 | REQ-BUFFER-001..010 |
-| 6.5、7.3 | REQ-LIST-001..010 |
-| 7.1、8、10 | REQ-COMMON-001..006、REQ-NET-001..006 |
+| 6.5、7.3 | REQ-LIST-001..011 |
+| 7.1、8、10 | REQ-COMMON-001..007、REQ-NET-001..006 |
 | 11、12 | REQ-COMPAT-001..005、全受入条件 |
