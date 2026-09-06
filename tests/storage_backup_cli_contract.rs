@@ -117,3 +117,36 @@ fn backup_cliはsnapshot_errorのpathと段階と原因をstderrへ保持する(
     );
     assert!(Path::new(&snapshot).is_dir());
 }
+
+#[test]
+fn backup_cliは不正current_storageをsnapshot_repository_load_errorとして返す() {
+    let fixture = CliFixture::seeded();
+    let snapshot = fixture.child("snapshot");
+    let project_yaml = find_project_yaml(&fixture.storage);
+    fs::write(&project_yaml, "project: [").unwrap();
+
+    let output = fixture.run(&["backup", snapshot.to_str().unwrap()]);
+
+    assert_eq!(output.status.code(), Some(1));
+    assert!(output.stdout.is_empty());
+    let stderr = String::from_utf8(output.stderr).unwrap();
+    assert!(
+        stderr.contains("storage snapshot RepositoryLoad failed"),
+        "{stderr}"
+    );
+    assert!(
+        stderr.contains(fixture.storage.to_str().unwrap()),
+        "{stderr}"
+    );
+    assert!(stderr.contains(project_yaml.to_str().unwrap()), "{stderr}");
+    assert!(stderr.contains("while parsing a node"), "{stderr}");
+    assert!(!snapshot.exists());
+}
+
+fn find_project_yaml(storage: &Path) -> PathBuf {
+    fs::read_dir(storage)
+        .unwrap()
+        .map(|entry| entry.unwrap().path().join("project.yaml"))
+        .find(|path| path.is_file())
+        .unwrap()
+}

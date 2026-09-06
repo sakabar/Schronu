@@ -846,9 +846,6 @@ fn execute_backup_command(
     let storage_lock =
         StorageLock::acquire_with_timeout(&storage_directory, LockMode::Cli, CLI_LOCK_TIMEOUT)
             .map_err(CliRepositoryTransactionError::Lock)?;
-    task_repository
-        .reload_if_changed(operation_now)
-        .map_err(CliRepositoryTransactionError::Load)?;
     let summary = create_snapshot_with_lock(
         &storage_directory,
         snapshot_directory,
