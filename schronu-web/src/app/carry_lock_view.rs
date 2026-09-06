@@ -102,6 +102,11 @@ pub(crate) fn CarryLockBar(
         CarryLockMode::Locked => "carry-lock-bar is-locked",
         CarryLockMode::ArmedUntil(_) => "carry-lock-bar is-armed",
     };
+    let announcement = match model.mode {
+        CarryLockMode::Normal => "通常モード",
+        CarryLockMode::Locked => "操作ロック中",
+        CarryLockMode::ArmedUntil(_) => "1操作可能",
+    };
     let mut tracker = use_signal(LongPressTracker::default);
     let mut pressing = use_signal(|| false);
     #[cfg(all(feature = "web", target_arch = "wasm32"))]
@@ -118,7 +123,13 @@ pub(crate) fn CarryLockBar(
     });
 
     rsx! {
-        aside { class, aria_live: "polite", aria_label: "持ち歩きロック状態",
+        aside { class, aria_label: "持ち歩きロック状態",
+            span {
+                class: "carry-lock-live-status",
+                aria_live: "polite",
+                aria_atomic: "true",
+                "{announcement}"
+            }
             match model.mode {
                 CarryLockMode::Normal => rsx! {
                     button {

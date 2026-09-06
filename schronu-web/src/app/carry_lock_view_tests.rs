@@ -51,7 +51,6 @@ fn lock_barはmodeごとの状態とaccessibility契約を表示する() {
     assert!(locked.contains("操作ロック中"), "{locked}");
     assert!(locked.contains("1.2秒長押しで1操作許可"), "{locked}");
     assert!(locked.contains("aria-pressed=\"true\""), "{locked}");
-    assert!(locked.contains("aria-live=\"polite\""), "{locked}");
 
     let armed = render(CarryLockViewModel::new(
         CarryLockMode::ArmedUntil(17_000),
@@ -60,6 +59,23 @@ fn lock_barはmodeごとの状態とaccessibility契約を表示する() {
     assert!(armed.contains("carry-lock-bar is-armed"), "{armed}");
     assert!(armed.contains("1操作可能"), "{armed}");
     assert!(armed.contains("残り15秒"), "{armed}");
+}
+
+#[test]
+fn live_regionはmode遷移だけを通知しarmed残秒を含まない() {
+    for (mode, expected) in [
+        (CarryLockMode::Normal, "通常モード"),
+        (CarryLockMode::Locked, "操作ロック中"),
+        (CarryLockMode::ArmedUntil(15_000), "1操作可能"),
+    ] {
+        let html = render(CarryLockViewModel::new(mode, 0));
+        assert_eq!(html.matches("aria-live=\"polite\"").count(), 1, "{html}");
+        let live_start = html.find("class=\"carry-lock-live-status\"").unwrap();
+        let live_end = live_start + html[live_start..].find("</span>").unwrap();
+        let live_region = &html[live_start..live_end];
+        assert!(live_region.contains(expected), "{live_region}");
+        assert!(!live_region.contains("残り"), "{live_region}");
+    }
 }
 
 #[test]
