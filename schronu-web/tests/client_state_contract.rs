@@ -14,6 +14,9 @@ fn 通信matrixとstorage_firstのlocal状態遷移を固定する() {
 
     assert_eq!(state.active_tab(), ActiveTab::Session);
     assert_eq!(state.switch_tab(ActiveTab::List), ClientEffect::None);
+    assert_eq!(state.switch_tab(ActiveTab::History), ClientEffect::None);
+    assert_eq!(state.active_tab(), ActiveTab::History);
+    assert_eq!(state.switch_tab(ActiveTab::List), ClientEffect::None);
     assert_eq!(state.tick(2_000), ClientEffect::None);
     assert_eq!(state.tick_now_epoch_ms(), 2_000);
     bootstrap_effect(state.request_bootstrap());

@@ -21,7 +21,7 @@ fn render(entries: Vec<HistoryEntryViewModel>) -> String {
 }
 
 #[test]
-fn history_panel_is_closed_by_default_and_omits_locality() {
+fn history_is_an_independent_section_and_omits_locality() {
     let html = render(vec![
         HistoryEntryViewModel {
             occurred_at_hh_mm_ss: "11:25:03".to_owned(),
@@ -39,9 +39,12 @@ fn history_panel_is_closed_by_default_and_omits_locality() {
         },
     ]);
 
-    assert!(html.contains("<details class=\"history-panel\">"), "{html}");
-    assert!(!html.contains("<details class=\"history-panel\" open"));
-    assert!(html.contains("<summary>発火履歴</summary>"));
+    assert!(
+        html.contains("<section class=\"history-panel\" aria-label=\"発火履歴\">"),
+        "{html}"
+    );
+    assert!(!html.contains("<details"), "{html}");
+    assert!(html.contains("<h2>発火履歴</h2>"), "{html}");
     for text in [
         "11:25:03",
         "record_session(task_id: &#34;123e4567-e89b-12d3-a456-426614174000&#34;, started_at_epoch_ms: 1000, ended_at_epoch_ms: Some(1500), expected_actual_work_seconds: 2000)",

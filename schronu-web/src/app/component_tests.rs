@@ -1,6 +1,6 @@
 #![cfg(feature = "server")]
 
-use super::component::app;
+use super::component::{app, NavigationTabs};
 #[cfg(feature = "web")]
 use super::component_models::BrowserPageModel;
 use super::component_runtime::{
@@ -9,6 +9,7 @@ use super::component_runtime::{
 };
 use super::effect_dispatcher::ClientResponse;
 use super::session_view::{SessionAction, SessionActionKind};
+use super::view_test_support::{dispatch_click, rebuild_with_click_listeners};
 use crate::client::state::{ActiveTab, ClientEffect};
 use crate::client::work_sessions::{KeyValueStorage, StorageError};
 use crate::ServerSnapshot;
@@ -16,6 +17,56 @@ use crate::SessionTask;
 use dioxus::prelude::VirtualDom;
 use std::cell::RefCell;
 use std::collections::HashMap;
+use std::sync::{Arc, Mutex};
+
+#[derive(Clone)]
+struct NavigationProps {
+    active_tab: ActiveTab,
+    events: Arc<Mutex<Vec<ActiveTab>>>,
+}
+
+fn navigation_root(props: NavigationProps) -> dioxus::prelude::Element {
+    rsx! {
+        NavigationTabs {
+            active_tab: props.active_tab,
+            on_switch: move |tab| props.events.lock().unwrap().push(tab),
+        }
+    }
+}
+
+#[test]
+fn 固定navigationは3tabの選択状態とcallbackを提供する() {
+    let events = Arc::new(Mutex::new(Vec::new()));
+    let mut dom = VirtualDom::new_with_props(
+        navigation_root,
+        NavigationProps {
+            active_tab: ActiveTab::History,
+            events: Arc::clone(&events),
+        },
+    );
+    let ids = rebuild_with_click_listeners(&mut dom);
+    let html = dioxus::ssr::render(&dom);
+
+    assert!(html.contains("<nav class=\"tabs\""), "{html}");
+    assert_eq!(html.matches("class=\"tab-button").count(), 3, "{html}");
+    for label in ["セッション", "一覧", "発火履歴"] {
+        assert!(html.contains(label), "missing {label}: {html}");
+    }
+    assert!(
+        html.contains(
+            "class=\"tab-button is-selected\" type=\"button\" aria-pressed=\"true\">発火履歴"
+        ),
+        "{html}"
+    );
+
+    for id in ids {
+        dispatch_click(&dom, id);
+    }
+    assert_eq!(
+        *events.lock().unwrap(),
+        [ActiveTab::Session, ActiveTab::List, ActiveTab::History]
+    );
+}
 
 #[test]
 fn session操作は対応するcomponent_actionへ変換する() {
