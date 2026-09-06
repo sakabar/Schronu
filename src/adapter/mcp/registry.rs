@@ -19,7 +19,7 @@ pub(super) fn tool_definitions() -> Vec<Value> {
         }),
         json!({
             "name": "list_tasks",
-            "description": "List tasks in project-tree pre-order, optionally filtered by period, effective status, and category. Different filters are combined using AND.",
+            "description": "List tasks in project-tree pre-order, optionally filtered by period, effective status, category, name query, and root subtree. Returns at most 100 tasks by default with an opaque next_cursor; limit accepts 1 through 500, and unbounded returns all matches. Different filters are combined using AND.",
             "inputSchema": generated_input_schema::<ListTasksInput>()
         }),
         json!({

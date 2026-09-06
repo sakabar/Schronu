@@ -76,7 +76,7 @@
 | TD-035 | P2 | 完了 | M | 反復延期が夏時間の切り替え境界で開始時刻とdeadlineの壁時計時刻をずらす |
 | TD-036 | P2 | 未着手 | L | source textを独自parseするarchitecture testがRust構文と実装名へ強く結合している |
 | TD-037 | P2 | 完了 | M | 未使用のlenient YAML変換APIがstrict loaderと並存している |
-| TD-038 | P2 | 未着手 | L | MCPのtask一覧に検索・paginationがなく、大規模storageで応答が無制限に増える |
+| TD-038 | P2 | 完了 | L | MCPのtask一覧に検索・paginationがなく、大規模storageで応答が無制限に増える |
 | TD-039 | P2 | 完了 | L | 稼働中processを止めずに整合したbackupを作成・検証・restoreする手段がない |
 | TD-040 | P0 | 完了 | S | 小数秒付き現在時刻でslack indexとschedulerの論理時刻が乖離する |
 | TD-041 | P2 | 未着手 | L | task treeとscheduleの再帰処理が大規模storageでlarge stackを必要とする |
@@ -1572,26 +1572,31 @@
 - 分類: `機能提案 / scalability`
 - 優先度: `P2`
 - 概算規模: `L`
+- 状態: `完了`
+- W6-B対応日: 2026-09-06
 
-#### 現状と根拠
+#### 対応と根拠
 
-- README記載の`list_tasks`入力はperiod、statuses、categoriesだけで、name query、project root、limit、cursorを持たない。
-- `src/application/task_use_case.rs:283-291`は全project treeをpre-orderで`Vec`へ収集し、その後filterする。
-- MCPは結果全体を1つのJSON-RPC responseへserializeする。repositoryには2172 project規模の手動性能fixtureがあり、task数に比例してresponse、memory、client contextを消費する。
-- CLIにはtask名を含む表示検索があるが、MCP clientはUUID不明時に小さい応答で対象を探せない。
+- `list_tasks`へ`query`、`root_task_id`、`limit`、opaque `cursor`、`unbounded`を追加した。既定limitは100、最大500で、無制限取得は`unbounded: true`だけを明示的に受理する。
+- applicationに既存の全件取得APIを残したままpaged APIを追加し、task全件の事前`Vec`化を避けるiterative pre-order DFSでpage境界まで走査する。
+- cursorはversion、repository revision、canonical filter fingerprint、DFS再開位置、直前task UUIDを保持する。形式、version、filter、revision、再開位置の不一致は情報を失わず既存の`ApplicationError::InvalidInput { field: "cursor", .. }`へ分類する。
+- `query`はUnicode lowercaseの部分一致とし、Unicode正規化を行わない。`root_task_id`は指定task自身を含むsubtreeを選択する。
 
-#### 期待する機能
+#### 検証
 
-- `list_tasks`へ任意の`query`、`root_task_id`、`limit`、opaque `cursor`を追加し、安定順序でpage取得できるようにする。
-- cursorはsort keyとfilter条件を検証し、途中でrepository revisionが変わった場合の扱いを明示する。
+- 0、1、100、101、500件のcardinality境界で全pageを連結し、pre-orderの重複・欠損がなく、終端が`next_cursor: null`になることを固定した。
+- queryのUnicode lowercase・正規化なし・空文字、root subtree、limit変更、filter canonical化、malformed/version/revision/resume mismatch、unbounded競合をApplication/MCP契約testで固定した。
+- 実storageを使うstdio testでcursor継続と別processの保存後のrevision失効を確認した。
+- canonical typical/stress fixtureで走査数と保持数の上限を固定し、MCP JSON-RPC response全体が128KiB以下かつ2秒以内であることを確認した。
+- `cargo fmt --check`、feature有無の`cargo clippy --locked --all-targets -- -D warnings`、`cargo test --locked`、`git diff --check`に成功した。
 
 #### 完了条件
 
-- default limitと最大limitをschema・READMEへ明記し、pageを連結するとfilter済み全件と重複・欠損なく一致する。
-- 同一deadline/name等の同値keyでもUUID tie-breakで順序が安定する。
-- queryはUnicodeと大文字小文字規則を文書化する。
-- 旧clientの引数なしcallに対する互換方針を決め、無制限応答を残す場合は明示opt-inにする。
-- typical/stress fixtureでresponse sizeと走査回数の上限を測定する。
+- default limitと最大limitをschema・READMEへ明記し、pageを連結するとfilter済み全件と重複・欠損なく一致する。完了。
+- project treeのpre-orderを維持し、cursorで直前task UUIDとDFS位置を照合する。完了。
+- queryのUnicode lowercase部分一致と正規化なしを文書化する。完了。
+- 引数なしcallを既定100件とし、無制限応答を`unbounded: true`へ限定する。完了。
+- typical/stress fixtureでMCP response size、走査数、保持数、応答時間の上限を測定する。完了。
 
 #### 推奨commit分割
 
@@ -1834,6 +1839,14 @@ W5-AとW5-Bはapplication task操作とSpreadsheet表示で製品fileが分か�
 | W6-B | TD-038 | TD-021、TD-022、TD-026、TD-035 | application query/page型、MCP schema/input/output、pagination test |
 
 W6-AとW6-BはCLI controllerとMCP/applicationにwrite範囲を分ける。backup、verify、restoreの各commandを別のRed/Green cycleにする。TD-039はrepository phaseだけでは完了にせず、CLI製品経路、failure injection、文書までGreenにして完了とする。
+
+#### Wave 6完了記録(2026-09-06)
+
+- 固定基点`4d87ed77`からW6-A、W6-Bの順に統合し、TD-039とTD-038を完了した。
+- W6-Aは整合snapshotのbackup・verify、別directory restore、事前backup付きcurrent restoreをCLI製品経路へ公開し、transaction recovery、安全なpath境界、lock、error情報を維持した。
+- W6-Bは`list_tasks`へquery・root subtree filterと既定100件・最大500件のcursor paginationを追加し、pre-order、repository revisionによるcursor失効、明示的な無制限取得を維持した。
+- 独立reviewのP1/P2として、W6-Aではentry種別・permissionを含むcurrent restore、lexer統一、failure phase保持、storage maintenance責務分割を、W6-Bではcardinality境界、iterative走査の保持数上限、実MCP JSON-RPCのtypical/stress測定を解消・固定した。
+- Integration gateは`cargo fmt --check`、`cargo clippy --locked --all-targets -- -D warnings`、`cargo test --locked`、`git diff --check`に成功した。主要結果はunit 1,328 passed / 1 ignored、backup CLI 18 passed、MCP stdio 14 passed、benchmarking対象1 passedである。
 
 ### Wave 7: architecture test cleanup(原則1レーン)
 

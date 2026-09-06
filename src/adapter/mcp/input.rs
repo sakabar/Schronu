@@ -3,8 +3,8 @@ use crate::application::daily_capacity::{try_logical_date_start, try_next_logica
 use crate::application::task_use_case::{
     ApplicationError, BreakdownTaskInput as ApplicationBreakdownTaskInput,
     CompleteTaskInput as ApplicationCompleteTaskInput,
-    CreateTaskInput as ApplicationCreateTaskInput, ListTasksFilter, TaskPeriodField,
-    TaskPeriodFilter,
+    CreateTaskInput as ApplicationCreateTaskInput, ListTasksFilter, ListTasksPageRequest,
+    TaskPeriodField, TaskPeriodFilter, LIST_TASKS_MAX_PAGE_SIZE,
 };
 use crate::entity::task::{ProjectCategory, Status};
 use chrono::{DateTime, Local, NaiveDate};
@@ -176,6 +176,47 @@ impl<'de> Deserialize<'de> for NonNegativeI64 {
         Err(serde::de::Error::custom(format!(
             "{SCHEMA_ERROR_PREFIX}must be a non-negative integer"
         )))
+    }
+}
+
+pub(super) struct PageLimit(pub(super) usize);
+
+impl<'de> Deserialize<'de> for PageLimit {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let value = Value::deserialize(deserializer)?;
+        let Value::Number(value) = value else {
+            return Err(serde::de::Error::custom(format!(
+                "{SCHEMA_ERROR_PREFIX}must be an integer between 1 and 500"
+            )));
+        };
+        match value.as_u64().and_then(|value| usize::try_from(value).ok()) {
+            Some(value) if (1..=LIST_TASKS_MAX_PAGE_SIZE).contains(&value) => Ok(Self(value)),
+            _ => Err(serde::de::Error::custom(format!(
+                "{SCHEMA_ERROR_PREFIX}must be an integer between 1 and 500"
+            ))),
+        }
+    }
+}
+
+impl JsonSchema for PageLimit {
+    fn schema_name() -> Cow<'static, str> {
+        "PageLimit".into()
+    }
+
+    fn inline_schema() -> bool {
+        true
+    }
+
+    fn json_schema(_generator: &mut SchemaGenerator) -> Schema {
+        json_schema!({
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 500,
+            "description": "The maximum number of tasks to return, from 1 through 500. Defaults to 100."
+        })
     }
 }
 
@@ -678,11 +719,37 @@ pub(super) struct ListTasksInput {
     #[serde(default)]
     #[schemars(schema_with = "categories_schema")]
     pub(super) categories: OptionalValue<Vec<Option<ProjectCategoryValue>>>,
+    /// A Unicode-lowercased substring matched against task names without Unicode normalization. An empty string behaves as no query filter.
+    #[serde(default)]
+    pub(super) query: OptionalValue<String>,
+    /// Restrict traversal to this task and its descendants. The request fails with task_not_found when the UUID does not exist.
+    #[serde(default)]
+    pub(super) root_task_id: OptionalValue<UuidValue>,
+    /// Return at most this many matching tasks, from 1 through 500. Defaults to 100. May be changed between pages.
+    #[serde(default)]
+    pub(super) limit: OptionalValue<PageLimit>,
+    /// Continue from an opaque next_cursor returned by a prior list_tasks call with the same filters. Only limit may change.
+    #[serde(default)]
+    pub(super) cursor: OptionalValue<String>,
+    /// Return all matching tasks without pagination. Cannot be combined with limit or cursor.
+    #[serde(default)]
+    pub(super) unbounded: OptionalValue<bool>,
 }
 
 impl ListTasksInput {
-    pub(super) fn into_filter(self) -> ListTasksFilter {
-        ListTasksFilter {
+    pub(super) fn into_page_request(self) -> Result<ListTasksPageRequest, ApplicationError> {
+        let unbounded = matches!(self.unbounded, OptionalValue::Value(true));
+        if unbounded
+            && (!matches!(self.limit, OptionalValue::Missing)
+                || !matches!(self.cursor, OptionalValue::Missing))
+        {
+            return Err(ApplicationError::InvalidInput {
+                field: "unbounded",
+                reason: "cannot be combined with limit or cursor",
+            });
+        }
+
+        let filter = ListTasksFilter {
             period: match self.period {
                 OptionalValue::Missing => None,
                 OptionalValue::Value(period) => Some(period.into_filter()),
@@ -700,7 +767,30 @@ impl ListTasksInput {
                     .map(|category| category.map(ProjectCategoryValue::into_category))
                     .collect(),
             },
-        }
+        };
+        Ok(ListTasksPageRequest {
+            filter,
+            query: match self.query {
+                OptionalValue::Missing => None,
+                OptionalValue::Value(query) => Some(query),
+            },
+            root_task_id: match self.root_task_id {
+                OptionalValue::Missing => None,
+                OptionalValue::Value(root_task_id) => Some(root_task_id.0),
+            },
+            limit: if unbounded {
+                None
+            } else {
+                Some(match self.limit {
+                    OptionalValue::Missing => 100,
+                    OptionalValue::Value(limit) => limit.0,
+                })
+            },
+            cursor: match self.cursor {
+                OptionalValue::Missing => None,
+                OptionalValue::Value(cursor) => Some(cursor),
+            },
+        })
     }
 }
 

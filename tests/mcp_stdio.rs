@@ -47,6 +47,19 @@ fn seed_routine_task(storage_directory: &Path) -> (String, DateTime<Local>, Date
     (child_id.to_string(), deadline, start)
 }
 
+fn seed_projects(storage_directory: &Path, count: usize) {
+    let now = Local::now().with_nanosecond(0).unwrap();
+    let mut repository = TaskRepository::new(storage_directory.to_str().unwrap());
+    repository.sync_clock(now).unwrap();
+    repository.load().unwrap();
+    for index in 0..count {
+        repository
+            .start_new_project(new_test_task_handle(&format!("page-task-{index:03}")))
+            .unwrap();
+    }
+    repository.save().unwrap();
+}
+
 struct TestStorageDirectory {
     path: PathBuf,
 }
@@ -630,6 +643,63 @@ fn mcp_stdio複数processはcallごとの再読込で互いのwriteを保持す�
 
     assert_process_succeeded(&mcp_a.finish());
     assert_process_succeeded(&mcp_b.finish());
+}
+
+#[test]
+fn mcp_stdio_list_tasksはcursorを継続しrepository更新後は失効させる() {
+    let storage = TestStorageDirectory::new();
+    seed_projects(storage.path(), 103);
+    let mut reader = McpSession::spawn(storage.path());
+    reader.initialize("pagination-reader");
+
+    let first = reader.call_tool("first-page", "list_tasks", json!({}));
+    let first_content = &first["result"]["structuredContent"];
+    assert_eq!(first_content["tasks"].as_array().unwrap().len(), 100);
+    assert!(first_content.to_string().len() <= 128 * 1024);
+    let cursor = first_content["next_cursor"].as_str().unwrap().to_string();
+
+    let second = reader.call_tool(
+        "second-page",
+        "list_tasks",
+        json!({"limit": 5, "cursor": cursor}),
+    );
+    assert_eq!(
+        second["result"]["structuredContent"]["tasks"]
+            .as_array()
+            .unwrap()
+            .len(),
+        3
+    );
+    assert_eq!(
+        second["result"]["structuredContent"]["next_cursor"],
+        Value::Null
+    );
+
+    let before_mutation = reader.call_tool("before-mutation", "list_tasks", json!({"limit": 1}));
+    let stale_cursor = before_mutation["result"]["structuredContent"]["next_cursor"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let mut writer = McpSession::spawn(storage.path());
+    writer.initialize("pagination-writer");
+    let created = writer.call_tool(
+        "mutate-repository",
+        "create_task",
+        json!({"name": "revision change"}),
+    );
+    assert_eq!(created["result"]["isError"], false);
+    assert_process_succeeded(&writer.finish());
+
+    let stale = reader.call_tool(
+        "stale-cursor",
+        "list_tasks",
+        json!({"limit": 1, "cursor": stale_cursor}),
+    );
+    let error = &stale["result"]["structuredContent"]["error"];
+    assert_eq!(error["code"], "invalid_input");
+    assert_eq!(error["field"], "cursor");
+    assert!(error["message"].as_str().unwrap().contains("revision"));
+    assert_process_succeeded(&reader.finish());
 }
 
 #[test]
