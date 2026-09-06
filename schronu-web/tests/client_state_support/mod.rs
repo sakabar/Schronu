@@ -123,6 +123,15 @@ pub fn web_error(code: &str, retry_advice: RetryAdvice) -> WebError {
     }
 }
 
+pub fn actual_work_conflict(current_actual_work_seconds: Option<i64>) -> WebError {
+    WebError {
+        code: schronu_web::web_error_codes::ACTUAL_WORK_CONFLICT.to_owned(),
+        message: "safe".to_owned(),
+        retry_advice: RetryAdvice::ManualCheck,
+        current_actual_work_seconds,
+    }
+}
+
 pub fn record_effect(effect: ClientEffect) -> (u64, schronu_web::RecordSessionRequest) {
     match effect {
         ClientEffect::RecordSession {
