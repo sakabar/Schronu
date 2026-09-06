@@ -1357,12 +1357,14 @@ fn interactiveとnoninteractiveは単一のparsed_command_dispatcherを共有す
                 "{entry_function} missing intentional Verify dispatch"
             ));
         }
-        let code_without_verify = code.replace("CommandKind::Verify", "");
-        if code_without_verify.contains("Command::")
-            || code_without_verify.contains("CommandKind::")
+        let code_without_maintenance = code
+            .replace("CommandKind::Verify", "")
+            .replace("Command::Backup", "");
+        if code_without_maintenance.contains("Command::")
+            || code_without_maintenance.contains("CommandKind::")
         {
             violations.push(format!(
-                "{entry_function} retains Verify以外のtyped command variant reference"
+                "{entry_function} retains storage maintenance以外のtyped command variant reference"
             ));
         }
     }
@@ -2452,7 +2454,7 @@ fn interactive再描画分類は全command_kindを網羅する() {
     );
     assert_eq!(
         all_command_kinds.len(),
-        50,
+        51,
         "shared representative command fixture must cover every CommandKind"
     );
     for (index, kind) in all_command_kinds.iter().enumerate() {
@@ -2513,6 +2515,7 @@ fn interactive再描画分類は全command_kindを網羅する() {
             | CommandKind::Finish
             | CommandKind::FocusHighest
             | CommandKind::FocusLowest
+            | CommandKind::Backup
             | CommandKind::Verify => false,
         };
 

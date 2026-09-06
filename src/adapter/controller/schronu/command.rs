@@ -2,6 +2,7 @@ use crate::application::task_use_case::{estimated_work_seconds_from_minutes, App
 use crate::entity::datetime::parse_local_datetime;
 use crate::entity::task::{read_project_category, ProjectCategory};
 use regex::Regex;
+use std::path::PathBuf;
 use uuid::Uuid;
 
 use super::cli_syntax::tokenize;
@@ -63,6 +64,7 @@ pub(super) enum CommandKind {
     Finish,
     FocusHighest,
     FocusLowest,
+    Backup,
     Verify,
 }
 
@@ -130,6 +132,9 @@ pub(super) enum Command {
     },
     ShowAll {
         pattern: Option<String>,
+    },
+    Backup {
+        snapshot_directory: PathBuf,
     },
     InteractiveShortcut(InteractiveShortcut),
     Action(CommandAction),
@@ -241,6 +246,7 @@ impl Command {
             Self::TuckAway => CommandKind::TuckAway,
             Self::Defer { .. } => CommandKind::Defer,
             Self::ShowAll { .. } => CommandKind::ShowAll,
+            Self::Backup { .. } => CommandKind::Backup,
             Self::InteractiveShortcut(InteractiveShortcut::DeferRoutine) => {
                 CommandKind::DeferRoutines
             }
@@ -485,6 +491,9 @@ pub(super) fn parse_command_tokens(
         CommandKind::Arrange => parse_arrange(definition, arguments),
         CommandKind::ShowAll => Ok(Command::ShowAll {
             pattern: arguments.first().cloned(),
+        }),
+        CommandKind::Backup => Ok(Command::Backup {
+            snapshot_directory: PathBuf::from(&arguments[0]),
         }),
         CommandKind::Defer if arguments.len() == 2 => Ok(Command::Defer {
             amount: parse_i64(
@@ -796,7 +805,8 @@ fn parse_action(
         | CommandKind::Focus
         | CommandKind::Estimate
         | CommandKind::Arrange
-        | CommandKind::TuckAway => unreachable!("handled before action parsing"),
+        | CommandKind::TuckAway
+        | CommandKind::Backup => unreachable!("handled before action parsing"),
     };
     Ok(Command::Action(action))
 }
@@ -979,6 +989,9 @@ fn command_definition(name: &str) -> Option<CommandDefinition> {
         "低" | "low" | "lo" | "lowest" => {
             CommandDefinition::new(Kind::FocusLowest, "低", "低 [days]", 0, Some(1))
         }
+        "backup" => {
+            CommandDefinition::new(Kind::Backup, "backup", "backup <snapshot_dir>", 1, Some(1))
+        }
         "検証" => CommandDefinition::new(Kind::Verify, "検証", "検証", 0, Some(0)),
         _ => return None,
     };
@@ -1002,6 +1015,7 @@ pub(super) fn command_with_minimum_valid_arguments(command: &str) -> String {
         "後" | "defer" | "逃" | "escape" | "esc" => " 1 秒",
         "空" | "clear" | "集" | "gather" => " 明",
         "終" | "finish" | "fin" => " 今",
+        "backup" => " snapshot",
         _ => "",
     };
     format!("{command}{arguments}")
@@ -1013,7 +1027,7 @@ pub(super) fn representative_valid_commands() -> Vec<Command> {
         "新", "遊", "突", "連", "繰", "約", "始", "樹", "条", "根", "葉", "全", "尾", "今", "単",
         "暦", "帯", "見", "選", "開", "黒", "外", "親", "子", "深", "上", "下", "割", "待", "〆",
         "予", "揃", "実", "重", "類", "働", "後", "清", "逃", "平", "詰", "押", "空", "集", "終",
-        "高", "低", "検証",
+        "高", "低", "backup", "検証",
     ];
     let mut commands = vec![Command::Noop];
     commands.extend(names.into_iter().map(|name| {

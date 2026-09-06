@@ -6,11 +6,12 @@ pub(super) use super::renderer::project_category_symbol;
 use super::renderer::{
     format_task_list_columns, task_list_columns, weekday_jp, AncestorTreeRow, BandDayRow,
     BandDisplay, BandDurations, CalendarAlerts, CalendarDayRow, CalendarDisplay, CalendarSummary,
-    DebugTreeRow, DisplayModel, FocusDisplay, LeafTreeRow, MessageLevel, TaskCategoryWorkSeconds,
-    TaskListDisplay, TaskListIconMode, TaskListMetricsDisplay, TaskListRow, TaskListTaskRow,
-    TreeDisplay, BAND_SECONDS_PER_DAY,
+    DebugTreeRow, DisplayModel, FocusDisplay, LeafTreeRow, MessageLevel, SnapshotDisplay,
+    TaskCategoryWorkSeconds, TaskListDisplay, TaskListIconMode, TaskListMetricsDisplay,
+    TaskListRow, TaskListTaskRow, TreeDisplay, BAND_SECONDS_PER_DAY,
 };
 use crate::adapter::gateway::schronu_config::SchronuConfig;
+use crate::adapter::gateway::storage_snapshot::SnapshotSummary;
 use crate::application::daily_capacity::{
     calculate_daily_rho_diff_hours,
     calculate_free_time_minutes_for_logical_date_with_end_of_day_offset_minutes,
@@ -27,11 +28,21 @@ use chrono::{DateTime, Datelike, Duration, Local, NaiveDate};
 use regex::Regex;
 use std::cmp::{max, min};
 use std::collections::HashMap;
+use std::path::Path;
 use unicode_width::UnicodeWidthChar;
 use uuid::Uuid;
 
 const DAILY_SUMMARY_HORIZON_DAYS: usize = 28;
 const TASK_NAME_DISPLAY_WIDTH_LIMIT: usize = 70;
+
+pub(super) fn backup_display(path: &Path, summary: &SnapshotSummary) -> DisplayModel {
+    DisplayModel::Snapshot(SnapshotDisplay {
+        operation: "backup",
+        path: path.to_path_buf(),
+        revision: summary.revision(),
+        file_count: summary.file_count(),
+    })
+}
 
 fn unreached_daily_summary_date() -> NaiveDate {
     NaiveDate::from_ymd_opt(2037, 12, 31).expect("daily summary fallback date must be valid")

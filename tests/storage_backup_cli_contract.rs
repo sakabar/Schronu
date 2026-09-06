@@ -106,8 +106,14 @@ fn backup_cliはsnapshot_errorのpathと段階と原因をstderrへ保持する(
     assert_eq!(output.status.code(), Some(1));
     assert!(output.stdout.is_empty());
     let stderr = String::from_utf8(output.stderr).unwrap();
-    assert!(stderr.contains("storage snapshot Validate failed"), "{stderr}");
+    assert!(
+        stderr.contains("storage snapshot Validate failed"),
+        "{stderr}"
+    );
     assert!(stderr.contains(snapshot.to_str().unwrap()), "{stderr}");
-    assert!(stderr.contains("snapshot destination must not exist"), "{stderr}");
+    assert!(
+        stderr.contains("snapshot destination must not exist"),
+        "{stderr}"
+    );
     assert!(Path::new(&snapshot).is_dir());
 }

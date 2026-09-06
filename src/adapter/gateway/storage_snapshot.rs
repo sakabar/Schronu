@@ -7,6 +7,7 @@ mod restore;
 mod verify;
 
 pub use create::create_snapshot;
+pub(crate) use create::create_snapshot_with_lock;
 #[cfg(test)]
 pub(in crate::adapter::gateway) use create::{
     create_snapshot_after_capture, create_snapshot_after_parent_open, create_snapshot_at,

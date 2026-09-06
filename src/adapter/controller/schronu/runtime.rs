@@ -29,6 +29,7 @@ use super::view::*;
 use crate::adapter::gateway::free_time_manager::FreeTimeManager;
 use crate::adapter::gateway::schronu_config::{load_schronu_config, SchronuConfig};
 use crate::adapter::gateway::storage_lock::{LockMode, StorageLock, StorageLockError};
+use crate::adapter::gateway::storage_snapshot::{create_snapshot_with_lock, SnapshotError};
 use crate::adapter::gateway::task_repository::TaskRepository;
 #[cfg(test)]
 use crate::application::daily_capacity::try_logical_date_start;
@@ -142,6 +143,7 @@ enum RunError {
     BusyTimeSlots(BusyTimeSlotLoadError),
     Repository(TaskRepositoryError),
     CliRepositoryTransaction(CliRepositoryTransactionError),
+    Snapshot(SnapshotError),
     InteractiveIo(interactive::InteractiveIoError),
     InputDisconnected {
         save_error_opt: Option<TaskRepositoryError>,
@@ -328,6 +330,7 @@ impl std::fmt::Display for RunError {
             Self::BusyTimeSlots(error) => error.fmt(formatter),
             Self::Repository(error) => error.fmt(formatter),
             Self::CliRepositoryTransaction(error) => error.fmt(formatter),
+            Self::Snapshot(error) => error.fmt(formatter),
             Self::InteractiveIo(error) => error.fmt(formatter),
             Self::InputDisconnected {
                 save_error_opt: Some(error),
@@ -372,6 +375,7 @@ impl std::error::Error for RunError {
             Self::BusyTimeSlots(error) => Some(error),
             Self::Repository(error) => Some(error),
             Self::CliRepositoryTransaction(error) => Some(error),
+            Self::Snapshot(error) => Some(error),
             Self::InteractiveIo(error) => Some(error),
             Self::InputDisconnected { save_error_opt } => save_error_opt
                 .as_ref()
@@ -831,6 +835,36 @@ fn execute_verify_command(
         .map_err(RunError::Command)
 }
 
+fn execute_backup_command(
+    stdout: &mut dyn SchronuWriter,
+    task_repository: &mut dyn TaskRepositoryTrait,
+    snapshot_directory: &std::path::Path,
+    operation_now: DateTime<Local>,
+) -> Result<(), RunError> {
+    let storage_directory =
+        std::path::PathBuf::from(task_repository.get_project_storage_dir_name());
+    let storage_lock =
+        StorageLock::acquire_with_timeout(&storage_directory, LockMode::Cli, CLI_LOCK_TIMEOUT)
+            .map_err(CliRepositoryTransactionError::Lock)?;
+    task_repository
+        .reload_if_changed(operation_now)
+        .map_err(CliRepositoryTransactionError::Load)?;
+    let summary = create_snapshot_with_lock(
+        &storage_directory,
+        snapshot_directory,
+        operation_now,
+        &storage_lock,
+    )
+    .map_err(RunError::Snapshot)?;
+    render_display_model_with_mode(
+        stdout,
+        &backup_display(snapshot_directory, &summary),
+        RenderMode::Flushed,
+    )
+    .map_err(CommandError::Output)
+    .map_err(RunError::Command)
+}
+
 fn run_cli_repository_transaction<T>(
     task_repository: &mut dyn TaskRepositoryTrait,
     now: DateTime<Local>,
@@ -989,6 +1023,15 @@ fn execute_non_interactive_command_at(
     if parsed_command.kind() == CommandKind::Verify {
         let mut stdout = stdout();
         return execute_verify_command(&mut stdout, task_repository, operation_now);
+    }
+    if let Command::Backup { snapshot_directory } = &parsed_command {
+        let mut stdout = stdout();
+        return execute_backup_command(
+            &mut stdout,
+            task_repository,
+            snapshot_directory,
+            operation_now,
+        );
     }
     free_time_manager.load_busy_time_slots_from_file(
         active_config()
@@ -1338,6 +1381,43 @@ fn handle_interactive_submit_at(
     operation_now: DateTime<Local>,
 ) -> InteractiveRepositoryEventOutcome {
     let command = line.trim().to_string();
+    if let Ok(Command::Backup { snapshot_directory }) = parse_interactive_command(&command) {
+        if let Err(error) = writeln_newline(stdout, "")
+            .and_then(|()| {
+                writeln_newline(
+                    stdout,
+                    &format!(
+                        "{}{}> {}{}",
+                        style::Bold,
+                        operation_now.format("%Y/%m/%d %H:%M:%S.%f"),
+                        command,
+                        style::Reset
+                    ),
+                )
+            })
+            .and_then(|()| writeln_newline(stdout, ""))
+            .and_then(|()| stdout.flush())
+        {
+            return InteractiveRepositoryEventOutcome::Fatal(RunError::Command(
+                CommandError::Output(error),
+            ));
+        }
+        return match execute_backup_command(
+            stdout,
+            task_repository,
+            &snapshot_directory,
+            operation_now,
+        ) {
+            Ok(()) => InteractiveRepositoryEventOutcome::CommandExecuted(
+                CommandKind::Backup,
+                operation_now,
+            ),
+            Err(RunError::CliRepositoryTransaction(error)) => {
+                InteractiveRepositoryEventOutcome::Retry(error)
+            }
+            Err(error) => InteractiveRepositoryEventOutcome::Fatal(error),
+        };
+    }
     let transaction_result =
         run_cli_repository_transaction(task_repository, operation_now, |task_repository| {
             reconcile_interactive_state_after_reload(task_repository, &mut state, operation_now)?;
