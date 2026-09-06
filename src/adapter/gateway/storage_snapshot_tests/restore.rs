@@ -1,6 +1,7 @@
 use crate::adapter::gateway::storage_snapshot::{
     create_snapshot_at, restore_snapshot, restore_snapshot_after_parent_open,
-    restore_snapshot_before_publish, restore_snapshot_with_failure,
+    restore_snapshot_before_publish, restore_snapshot_to_alternate_after_parent_open,
+    restore_snapshot_with_failure,
     restore_snapshot_with_failure_observation, SnapshotFailurePoint,
 };
 use chrono::TimeZone;
@@ -123,6 +124,39 @@ fn snapshot_restoreは検証後に差し替えられた親directoryへ書き込�
     assert!(original_parent.join("restored/.revision").is_file());
     assert!(!parent.join("restored").exists());
     assert_eq!(fs::read(parent.join("sentinel")).unwrap(), b"preserve");
+}
+
+#[cfg(unix)]
+#[test]
+fn alternate_restoreはparent_symlink差し替え後もcurrent_storageへ公開しない() {
+    use std::os::unix::fs::symlink;
+
+    let root = TestDirectory::new("alternate-restore-parent-symlink-swap");
+    let source = root.child("source");
+    let snapshot = root.child("snapshot");
+    let alternate_root = root.child("alternate-root");
+    let current_root = root.child("current-root");
+    let alternate_parent = alternate_root.join("parent");
+    let current_parent = current_root.join("parent");
+    let alias_root = root.child("alias-root");
+    let displaced_alias = root.child("displaced-alias");
+    let destination = alias_root.join("parent/restored");
+    let current = current_parent.join("restored");
+    let now = Local.with_ymd_and_hms(2026, 9, 5, 12, 0, 0).unwrap();
+    create_saved_repository(&source, now);
+    create_snapshot_at(&source, &snapshot, now).unwrap();
+    fs::create_dir_all(&alternate_parent).unwrap();
+    fs::create_dir_all(&current_parent).unwrap();
+    symlink(&alternate_root, &alias_root).unwrap();
+
+    restore_snapshot_to_alternate_after_parent_open(&snapshot, &destination, &current, || {
+        fs::rename(&alias_root, &displaced_alias).unwrap();
+        symlink(&current_root, &alias_root).unwrap();
+    })
+    .unwrap();
+
+    assert!(alternate_parent.join("restored/.revision").is_file());
+    assert!(!current.exists());
 }
 
 #[test]

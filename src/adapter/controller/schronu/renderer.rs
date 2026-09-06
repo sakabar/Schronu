@@ -4,11 +4,20 @@ use crate::{
 };
 use chrono::{DateTime, Datelike, Duration, Local, NaiveDate, Weekday};
 use std::io::{IsTerminal, Stdout, Write};
+use std::path::PathBuf;
 use termion::color;
 use termion::raw::RawTerminal;
 use uuid::Uuid;
 
 pub(super) const MAX_COL: u16 = 999;
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(super) struct SnapshotDisplay {
+    pub(super) operation: &'static str,
+    pub(super) path: PathBuf,
+    pub(super) revision: Option<Uuid>,
+    pub(super) file_count: usize,
+}
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(super) struct SpreadsheetTaskRow<'a> {
@@ -309,6 +318,7 @@ pub(super) enum FocusDisplay {
 #[derive(Clone, Debug, PartialEq)]
 pub(super) enum DisplayModel {
     Message { level: MessageLevel, text: String },
+    Snapshot(SnapshotDisplay),
     Tree(TreeDisplay),
     TaskList(TaskListDisplay),
     TaskListMetrics(TaskListMetricsDisplay),
@@ -334,7 +344,8 @@ impl DisplayModel {
     pub(super) fn is_empty(&self) -> bool {
         match self {
             Self::Message { .. } => false,
-            Self::Tree(_)
+            Self::Snapshot(_)
+            | Self::Tree(_)
             | Self::TaskList(_)
             | Self::TaskListMetrics(_)
             | Self::Calendar(_)
@@ -379,6 +390,19 @@ pub(super) fn render_display_model(
                 MessageLevel::Error => "[Error] ",
             };
             writer.writeln_newline(&format!("{prefix}{text}"))?;
+        }
+        DisplayModel::Snapshot(snapshot) => {
+            let revision = snapshot
+                .revision
+                .map(|revision| revision.to_string())
+                .unwrap_or_else(|| "none".to_string());
+            writer.writeln_newline(&format!(
+                "{}: OK {} revision={} files={}",
+                snapshot.operation,
+                snapshot.path.display(),
+                revision,
+                snapshot.file_count
+            ))?;
         }
         DisplayModel::Tree(tree) => render_tree_display(writer, tree)?,
         DisplayModel::TaskList(task_list) => render_task_list_display(writer, task_list)?,

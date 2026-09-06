@@ -20,6 +20,11 @@ pub(super) struct CliLexError {
     kind: CliLexErrorKind,
 }
 
+pub(super) struct CliTokenization {
+    pub(super) tokens: Result<Vec<String>, CliLexError>,
+    pub(super) prefix_tokens: Vec<String>,
+}
+
 impl CliLexError {
     fn new(kind: CliLexErrorKind) -> Self {
         Self { kind }
@@ -37,6 +42,10 @@ enum Quote {
 }
 
 pub(super) fn tokenize(input: &str) -> Result<Vec<String>, CliLexError> {
+    tokenize_with_prefix(input).tokens
+}
+
+pub(super) fn tokenize_with_prefix(input: &str) -> CliTokenization {
     let mut tokens = Vec::new();
     let mut token = String::new();
     let mut token_started = false;
@@ -54,11 +63,17 @@ pub(super) fn tokenize(input: &str) -> Result<Vec<String>, CliLexError> {
             }
             Some(Quote::Double) => match character {
                 '"' => quote = None,
-                '\\' => token.push(
-                    characters
-                        .next()
-                        .ok_or_else(|| CliLexError::new(CliLexErrorKind::TrailingBackslash))?,
-                ),
+                '\\' => {
+                    let Some(escaped) = characters.next() else {
+                        return failed_tokenization(
+                            tokens,
+                            token,
+                            token_started,
+                            CliLexErrorKind::TrailingBackslash,
+                        );
+                    };
+                    token.push(escaped);
+                }
                 _ => token.push(character),
             },
             None => match character {
@@ -72,11 +87,15 @@ pub(super) fn tokenize(input: &str) -> Result<Vec<String>, CliLexError> {
                 }
                 '\\' => {
                     token_started = true;
-                    token.push(
-                        characters
-                            .next()
-                            .ok_or_else(|| CliLexError::new(CliLexErrorKind::TrailingBackslash))?,
-                    );
+                    let Some(escaped) = characters.next() else {
+                        return failed_tokenization(
+                            tokens,
+                            token,
+                            token_started,
+                            CliLexErrorKind::TrailingBackslash,
+                        );
+                    };
+                    token.push(escaped);
                 }
                 _ if character.is_whitespace() => {
                     if token_started {
@@ -94,10 +113,20 @@ pub(super) fn tokenize(input: &str) -> Result<Vec<String>, CliLexError> {
 
     match quote {
         Some(Quote::Single) => {
-            return Err(CliLexError::new(CliLexErrorKind::UnterminatedSingleQuote));
+            return failed_tokenization(
+                tokens,
+                token,
+                token_started,
+                CliLexErrorKind::UnterminatedSingleQuote,
+            );
         }
         Some(Quote::Double) => {
-            return Err(CliLexError::new(CliLexErrorKind::UnterminatedDoubleQuote));
+            return failed_tokenization(
+                tokens,
+                token,
+                token_started,
+                CliLexErrorKind::UnterminatedDoubleQuote,
+            );
         }
         None => {}
     }
@@ -105,5 +134,23 @@ pub(super) fn tokenize(input: &str) -> Result<Vec<String>, CliLexError> {
     if token_started {
         tokens.push(token);
     }
-    Ok(tokens)
+    CliTokenization {
+        prefix_tokens: tokens.clone(),
+        tokens: Ok(tokens),
+    }
+}
+
+fn failed_tokenization(
+    mut tokens: Vec<String>,
+    token: String,
+    token_started: bool,
+    kind: CliLexErrorKind,
+) -> CliTokenization {
+    if token_started {
+        tokens.push(token);
+    }
+    CliTokenization {
+        prefix_tokens: tokens,
+        tokens: Err(CliLexError::new(kind)),
+    }
 }

@@ -108,13 +108,16 @@ fn bufferは成功したsession破棄で未作業時間を再計算する() {
     assert_eq!(state.display_buffer_seconds(), Some(50));
 
     storage.fail_writes.set(false);
-    assert_eq!(state.discard_session(&storage, TASK_ID), ClientEffect::None);
+    assert!(matches!(
+        state.discard_session(&storage, TASK_ID),
+        ClientEffect::ListTasks { .. }
+    ));
     assert_eq!(state.display_buffer_seconds(), Some(40));
 
-    assert_eq!(
+    assert!(matches!(
         state.discard_session(&storage, OTHER_TASK_ID),
-        ClientEffect::None
-    );
+        ClientEffect::ListTasks { .. }
+    ));
     assert_eq!(state.display_buffer_seconds(), Some(20));
 }
 
