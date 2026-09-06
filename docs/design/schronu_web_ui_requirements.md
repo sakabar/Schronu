@@ -47,7 +47,7 @@ Schronu-webを、1日の余力と複数taskの作業状況を同時に把握で�
 - **REQ-SESSION-001**: 複数のセッションを同時に保持し、それぞれの経過時間を独立して計測できること。
 - **REQ-SESSION-002**: `work_sessions`をlocalStorageの`schronu_web.work_sessions.v1`へ保存すること。
 - **REQ-SESSION-003**: 各`work_session`はtask UUID、task名、開始epoch milliseconds、開始時見積秒、開始時実績秒を保持すること。
-- **REQ-SESSION-004**: reload後は保存した開始時刻と現在時刻との差から各セッションを復元し、reload中の経過時間も反映すること。
+- **REQ-SESSION-004**: reload後は保存した開始時刻と現在時刻との差から各セッションを復元し、reload中の経過時間も反映すること。初期loadでlocalStorageから復元した計測中セッションについては、server snapshotのbuffer秒から、server観測時刻以前に存在する復元セッション計測区間の和集合を差し引くこと。終了操作中の区間は終了click時刻で閉じること。
 - **REQ-SESSION-005**: 同じtask UUIDのセッションは1件だけ保持し、重複追加しないこと。
 - **REQ-SESSION-006**: localStorageのtop-level JSONが不正またはversionが非対応の場合は空の`work_sessions`で表示し、元のkeyを自動上書きせずwarningを表示すること。個別entryだけが不正な場合はそのentryだけを除外し、次のlocal state変更時にvalid entryだけをversion 1として保存すること。いずれの場合もtaskを更新せず、初回`bootstrap`を継続すること。
 - **REQ-SESSION-007**: Webセッションの追加・削除・復元によってSchronu本体のcurrent taskを変更しないこと。
@@ -92,15 +92,15 @@ Schronu-webを、1日の余力と複数taskの作業状況を同時に把握で�
 ### 4.6 buffer
 
 - **REQ-BUFFER-001**: bufferを`現在logical dateの符号付き残り容量 - 同日のschedule segmentごとのscheduled_work_seconds合計`としてserver側で算出すること。server観測時刻が日次終端より前なら、符号付き残り容量は観測時刻から日次終端までの毎週固定`busy_time_slot`控除後の空き秒とする。日次終端以後なら、符号付き残り容量は`日次終端 - server観測時刻`の0以下の秒数とし、日次終端後の全壁時計超過時間を反映する。同一taskの複数segment、進行中segment、同じlogical date内の過去segmentをそれぞれ1回ずつ全量で集計すること。
-- **REQ-BUFFER-002**: serverからbuffer秒とその観測時刻を取得し、以後はbrowser側で計測中セッションが1件も存在しない経過秒だけを差し引いて1秒ごとに表示を更新すること。終了操作処理中の対象はclick時刻以後を計測中とみなさないこと。この規則はserver観測時刻が日次終端以後の場合も同じとする。
+- **REQ-BUFFER-002**: serverからbuffer秒とその観測時刻を取得し、以後はbrowser側で計測中セッションが1件も存在しない経過秒だけを差し引いて1秒ごとに表示を更新すること。終了操作処理中の対象はclick時刻以後を計測中とみなさないこと。加えて、初期loadでlocalStorageから復元し、現在も保持するセッションのserver観測時刻までの計測区間はserver bufferへ未反映として、複数セッションの重複を除いた継続秒を1回だけ差し引くこと。この規則はserver観測時刻が日次終端以後の場合も同じとする。
 - **REQ-BUFFER-003**: 0以上のbufferを`HH:MM:SS`でカウントダウン表示すること。
 - **REQ-BUFFER-004**: 負のbufferを赤い文字の`-HH:MM:SS`でカウントアップ表示すること。
 - **REQ-BUFFER-005**: logical dateが06:00境界で変化しても、それだけを理由にserverから再取得しないこと。
 - **REQ-BUFFER-006**: 次の明示的server操作のresponseでlogical dateとbuffer snapshotを更新すること。
-- **REQ-BUFFER-007**: 計測中セッションが1件以上存在する時間はbufferを停止すること。snapshot後に最初のセッションを開始した場合は、その開始前のセッション不在時間だけを減算すること。最後の計測中セッションが終了操作に入った場合は、click時刻からbuffer更新を再開すること。
-- **REQ-BUFFER-008**: 複数の計測中セッションが重なる時間は和集合として扱い、重複時間を二重に補正しないこと。終了処理中またはserver commit済みでlocalStorage削除失敗により残ったセッションは計測中から除外すること。serverが未commitと確定できるerror時は対象を計測中へ戻し、transport切断またはrepository状態が不確実な場合はrepository確認完了までclick時刻で終了した区間として扱うこと。
+- **REQ-BUFFER-007**: snapshot後に計測中セッションが1件以上存在する時間はbufferを停止すること。snapshot後に最初のセッションを開始した場合は、その開始前のセッション不在時間だけを減算すること。最後の計測中セッションが終了操作に入った場合は、click時刻からbuffer更新を再開すること。snapshot以前から継続する復元セッションは、REQ-BUFFER-002の復元補正を適用したうえでsnapshot後のbufferを停止すること。
+- **REQ-BUFFER-008**: 複数の計測中セッションが重なる時間は和集合として扱い、重複時間を二重に補正しないこと。復元セッションの観測時刻以前の計測区間も和集合として1回だけ差し引くこと。終了処理中のセッションはclick時刻を計測区間の終端とし、server commit済みでlocalStorage削除失敗により残ったセッションはsnapshot後の停止と復元補正の双方から除外すること。serverが未commitと確定できるerror時は対象を計測中へ戻し、transport切断またはrepository状態が不確実な場合はrepository確認完了までclick時刻で終了した区間として扱うこと。
 - **REQ-BUFFER-009**: 「破棄して解除」のlocalStorage削除成功後は残存セッションからbufferを再計算し、全セッションを破棄した場合はsnapshot後の全経過秒を減算すること。保存失敗時はmemory上のセッションを維持し、buffer表示を変化させないこと。
-- **REQ-BUFFER-010**: 新しいserver responseを受信した場合は、そのbuffer秒と観測時刻を新たな表示計算の基準とし、観測時点で計測中のセッションがあれば観測直後からbufferを停止すること。
+- **REQ-BUFFER-010**: 新しいserver responseを受信した場合は、そのbuffer秒と観測時刻を新たな表示計算の基準とし、観測時点で計測中のセッションがあれば観測直後からbufferを停止すること。初期loadで復元したセッションが残っている間は、新しい基準にもREQ-BUFFER-002の復元補正を適用すること。
 
 ### 4.7 一覧画面
 
@@ -173,10 +173,10 @@ Schronu-webを、1日の余力と複数taskの作業状況を同時に把握で�
 | ID | 受入条件 |
 | --- | --- |
 | AC-001 | 画面上に「セッション」「一覧」が表示され、利用者向け文言に「フォーカス」が残っていない。 |
-| AC-002 | 2件以上のセッションが同時に1秒ごとに進み、reload後も元の開始時刻から復元される。 |
+| AC-002 | 2件以上のセッションが同時に1秒ごとに進み、reload後も元の開始時刻から復元される。server buffer表示はserver観測時刻以前に存在する復元セッション計測区間の和集合を1回だけ差し引き、終了操作中の区間は終了click時刻で閉じる。 |
 | AC-003 | 15分見積、開始時実績5分のtaskはセッション開始直後に33%となり、100%および133%で指定どおりのbarを表示する。 |
 | AC-004 | 見積0のtaskは`--%`と赤い超過時間を表示し、長時間の分表示は59を超えても欠落しない。 |
-| AC-005 | 日次終端前は毎週固定`busy_time_slot`控除後の空き秒、日次終端ちょうどは予定作業がなければ0、日次終端後は壁時計超過秒を負値とするbufferがserver観測時刻を基準に変化する。計測中セッションが0件なら毎秒減り、1件以上なら停止する。最後のセッションの終了操作後はclick時刻から再開し、負値は赤い符号付き表示になる。 |
+| AC-005 | 日次終端前は毎週固定`busy_time_slot`控除後の空き秒、日次終端ちょうどは予定作業がなければ0、日次終端後は壁時計超過秒を負値とするbufferがserver観測時刻を基準に変化する。計測中セッションが0件なら毎秒減り、1件以上なら停止する。localStorageから復元したセッションの観測時刻以前の継続秒は重複を除いてserver bufferから差し引き、最後のセッションの終了操作後はclick時刻から再開し、負値は赤い符号付き表示になる。 |
 | AC-006 | 06:00境界、tab切替、毎秒tick、一覧からのセッション追加、破棄して解除、破棄完了の確認とキャンセルではserver requestが増えない。 |
 | AC-007 | 初回、日付選択、自動セッション、記録、2種類の完了確定だけが仕様どおりのserver requestを発生させる。 |
 | AC-008 | 一覧に8 logical datesが表示され、両端が同じ曜日でも具体日付で別の日として取得される。 |
