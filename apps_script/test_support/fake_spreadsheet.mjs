@@ -102,6 +102,14 @@ class FakeSheet {
     this.rows[row - 1][column - 1] = value;
   }
 
+  userEditRange(row, column, values) {
+    for (let rowOffset = 0; rowOffset < values.length; rowOffset++) {
+      for (let columnOffset = 0; columnOffset < values[rowOffset].length; columnOffset++) {
+        this.userEdit(row + rowOffset, column + columnOffset, values[rowOffset][columnOffset]);
+      }
+    }
+  }
+
   writeCell(row, column, value) {
     this.rows[row - 1][column - 1] = value;
     this.writes.push({ sheet: this.name, row, column, value });
@@ -151,6 +159,15 @@ export function loadAppsScript(sheetRows) {
       context.event = {
         source: spreadsheet,
         range: sheet.getRange(row, column, numRows, numColumns),
+      };
+      vm.runInContext('onEdit(event)', context);
+    },
+    editRange(sheetName, row, column, values) {
+      const sheet = sheets.get(sheetName);
+      sheet.userEditRange(row, column, values);
+      context.event = {
+        source: spreadsheet,
+        range: sheet.getRange(row, column, values.length, values[0].length),
       };
       vm.runInContext('onEdit(event)', context);
     },

@@ -55,3 +55,73 @@ for (const [name, column, value] of [
     assert.equal(appsScript.writes.length, 3);
   });
 }
+
+test('A列が欠落した編集行は書き込まず診断する', () => {
+  const appsScript = loadAppsScript({
+    '実ログ': [taskRow('', TASK_ID)],
+    '優先度低い順': [taskRow('0000', TASK_ID)],
+  });
+
+  appsScript.edit('実ログ', 3, COL.startTime, '12:34');
+
+  assert.deepEqual(appsScript.writes, []);
+  assert.equal(appsScript.toasts.length, 1);
+  assert.match(appsScript.toasts[0].message, /実ログ.*3.*A列/);
+});
+
+test('B列が欠落した編集行は書き込まず診断する', () => {
+  const appsScript = loadAppsScript({
+    '実ログ': [taskRow('0000', '')],
+    '優先度低い順': [taskRow('0000', TASK_ID)],
+  });
+
+  appsScript.edit('実ログ', 3, COL.startTime, '12:34');
+
+  assert.deepEqual(appsScript.writes, []);
+  assert.equal(appsScript.toasts.length, 1);
+  assert.match(appsScript.toasts[0].message, /実ログ.*3.*B列/);
+});
+
+test('相手sheetに対応segmentがなければ書き込まず診断する', () => {
+  const appsScript = loadAppsScript({
+    '実ログ': [taskRow('0001', TASK_ID)],
+    '優先度低い順': [taskRow('0000', TASK_ID)],
+  });
+
+  appsScript.edit('実ログ', 3, COL.startTime, '12:34');
+
+  assert.deepEqual(appsScript.writes, []);
+  assert.equal(appsScript.toasts.length, 1);
+  assert.match(appsScript.toasts[0].message, /優先度低い順.*0001.*11111111/);
+});
+
+for (const duplicateSheet of ['実ログ', '優先度低い順']) {
+  test(`${duplicateSheet}のA+B重複は先頭行へ書き込まず診断する`, () => {
+    const duplicateRows = [taskRow('0000', TASK_ID), taskRow('0000', TASK_ID)];
+    const appsScript = loadAppsScript({
+      '実ログ': duplicateSheet === '実ログ' ? duplicateRows : [taskRow('0000', TASK_ID)],
+      '優先度低い順': duplicateSheet === '優先度低い順'
+        ? duplicateRows
+        : [taskRow('0000', TASK_ID)],
+    });
+
+    appsScript.edit('実ログ', 3, COL.startTime, '12:34');
+
+    assert.deepEqual(appsScript.writes, []);
+    assert.equal(appsScript.toasts.length, 1);
+    assert.match(appsScript.toasts[0].message, new RegExp(`${duplicateSheet}.*0000.*重複`));
+  });
+}
+
+test('複数行編集は全identityを確認してから書き込みを始める', () => {
+  const appsScript = loadAppsScript({
+    '実ログ': [taskRow('0000', TASK_ID), taskRow('0001', TASK_ID)],
+    '優先度低い順': [taskRow('0000', TASK_ID)],
+  });
+
+  appsScript.editRange('実ログ', 3, COL.startTime, [['12:34'], ['13:45']]);
+
+  assert.deepEqual(appsScript.writes, []);
+  assert.equal(appsScript.toasts.length, 1);
+  assert.match(appsScript.toasts[0].message, /0001.*対応/);
+});
