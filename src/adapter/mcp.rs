@@ -18,6 +18,10 @@ mod output;
 mod protocol;
 mod registry;
 
+#[cfg(test)]
+#[path = "mcp/list_tasks_pagination_contract_tests.rs"]
+mod list_tasks_pagination_contract_tests;
+
 use protocol::{
     error_response, initialize_response, initialized_notification_params_are_valid,
     invalid_params_response, tool_result_response, tools_list_response, validate_initialize_params,
