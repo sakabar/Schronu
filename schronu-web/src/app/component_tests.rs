@@ -12,7 +12,10 @@ use super::session_view::{SessionAction, SessionActionKind};
 use super::view_test_support::{dispatch_click, rebuild_with_click_listeners};
 use crate::client::state::{ActiveTab, ClientEffect, ServerFailure};
 use crate::client::work_sessions::{KeyValueStorage, StorageError};
-use crate::{RecordSessionResult, ServerSnapshot, SessionTask, WebSuccess};
+use crate::{
+    web_error_codes, RecordSessionResult, RetryAdvice, ServerSnapshot, SessionTask, WebError,
+    WebSuccess,
+};
 use dioxus::dioxus_core::{AttributeValue, Mutation};
 use dioxus::prelude::VirtualDom;
 use dioxus::prelude::*;
@@ -931,6 +934,33 @@ fn 最後のsessionを即時削除した時だけsessionから一覧tabへ移る
 
 #[test]
 fn server応答で最後のsessionが消えた時だけ一覧tabへ移る() {
+    let multiple_storage = MemoryStorage::default();
+    let mut multiple = mounted_orchestrator(&multiple_storage);
+    add_session(&mut multiple, &multiple_storage, RECORD_ID);
+    add_session(&mut multiple, &multiple_storage, COMPLETE_ID);
+    let request_id = mutation_request_id(&multiple.action(
+        &multiple_storage,
+        2_000,
+        ComponentAction::RecordSession(RECORD_ID.to_owned()),
+    ));
+    assert!(matches!(
+        multiple.apply_response(
+            &multiple_storage,
+            ClientResponse::RecordSession {
+                request_id,
+                result: Ok(WebSuccess {
+                    snapshot: snapshot(2_000),
+                    data: RecordSessionResult {
+                        actual_work_seconds: 1,
+                    },
+                }),
+            },
+        ),
+        ClientEffect::ListTasks { .. }
+    ));
+    assert_eq!(multiple.state().unwrap().sessions().len(), 1);
+    assert_eq!(multiple.state().unwrap().active_tab(), ActiveTab::Session);
+
     for complete in [false, true] {
         let storage = MemoryStorage::default();
         let mut orchestrator = mounted_orchestrator(&storage);
@@ -981,12 +1011,15 @@ fn session削除失敗と他tabでは一覧へ強制遷移しない() {
         2_000,
         ComponentAction::RecordSession(RECORD_ID.to_owned()),
     ));
-    failure.apply_response(
-        &failure_storage,
-        ClientResponse::RecordSession {
-            request_id,
-            result: Err(ServerFailure::Transport("切断".to_owned())),
-        },
+    assert_eq!(
+        failure.apply_response(
+            &failure_storage,
+            ClientResponse::RecordSession {
+                request_id,
+                result: Err(ServerFailure::Transport("切断".to_owned())),
+            },
+        ),
+        ClientEffect::None
     );
     assert_eq!(failure.state().unwrap().active_tab(), ActiveTab::Session);
     assert_eq!(failure.state().unwrap().sessions().len(), 1);
@@ -1000,29 +1033,71 @@ fn session削除失敗と他tabでは一覧へ強制遷移しない() {
         ComponentAction::RecordSession(RECORD_ID.to_owned()),
     ));
     storage_failure.set_fail_writes(true);
-    blocked.apply_response(
-        &storage_failure,
-        ClientResponse::RecordSession {
-            request_id,
-            result: Ok(WebSuccess {
-                snapshot: snapshot(2_000),
-                data: RecordSessionResult {
-                    actual_work_seconds: 1,
-                },
-            }),
-        },
-    );
+    assert!(matches!(
+        blocked.apply_response(
+            &storage_failure,
+            ClientResponse::RecordSession {
+                request_id,
+                result: Ok(WebSuccess {
+                    snapshot: snapshot(2_000),
+                    data: RecordSessionResult {
+                        actual_work_seconds: 1,
+                    },
+                }),
+            },
+        ),
+        ClientEffect::ListTasks { .. }
+    ));
     assert_eq!(blocked.state().unwrap().active_tab(), ActiveTab::Session);
     assert_eq!(blocked.state().unwrap().sessions().len(), 1);
 
     storage_failure.set_fail_writes(false);
-    blocked.action(
-        &storage_failure,
-        2_001,
-        ComponentAction::ConfirmRepositoryChecked,
+    assert_eq!(
+        blocked.action(
+            &storage_failure,
+            2_001,
+            ComponentAction::ConfirmRepositoryChecked,
+        ),
+        ClientEffect::None
     );
     assert!(blocked.state().unwrap().sessions().is_empty());
     assert_eq!(blocked.state().unwrap().active_tab(), ActiveTab::List);
+
+    let conflict_storage = MemoryStorage::default();
+    let mut conflict = mounted_orchestrator(&conflict_storage);
+    add_session(&mut conflict, &conflict_storage, COMPLETE_ID);
+    let request_id = mutation_request_id(&conflict.action(
+        &conflict_storage,
+        2_000,
+        ComponentAction::CompleteSession(COMPLETE_ID.to_owned()),
+    ));
+    assert_eq!(
+        conflict.apply_response(
+            &conflict_storage,
+            ClientResponse::CompleteSession {
+                request_id,
+                result: Err(ServerFailure::Operation(WebError {
+                    code: web_error_codes::ACTUAL_WORK_CONFLICT.to_owned(),
+                    message: "競合".to_owned(),
+                    retry_advice: RetryAdvice::ManualCheck,
+                    current_actual_work_seconds: Some(1),
+                })),
+            },
+        ),
+        ClientEffect::None
+    );
+    assert_eq!(conflict.state().unwrap().active_tab(), ActiveTab::Session);
+    assert_eq!(conflict.state().unwrap().sessions().len(), 1);
+    assert_eq!(
+        conflict.action(
+            &conflict_storage,
+            2_500,
+            ComponentAction::ResumeCompletionConflict(COMPLETE_ID.to_owned()),
+        ),
+        ClientEffect::None
+    );
+    assert_eq!(conflict.state().unwrap().active_tab(), ActiveTab::Session);
+    assert_eq!(conflict.state().unwrap().sessions().len(), 1);
 
     let other_storage = MemoryStorage::default();
     let mut other = mounted_orchestrator(&other_storage);
@@ -1037,13 +1112,16 @@ fn session削除失敗と他tabでは一覧へ強制遷移しない() {
         2_001,
         ComponentAction::SwitchTab(ActiveTab::History),
     );
-    other.apply_response(
-        &other_storage,
-        ClientResponse::CompleteSession {
-            request_id,
-            result: Ok(snapshot(2_000)),
-        },
-    );
+    assert!(matches!(
+        other.apply_response(
+            &other_storage,
+            ClientResponse::CompleteSession {
+                request_id,
+                result: Ok(snapshot(2_000)),
+            },
+        ),
+        ClientEffect::ListTasks { .. }
+    ));
     assert!(other.state().unwrap().sessions().is_empty());
     assert_eq!(other.state().unwrap().active_tab(), ActiveTab::History);
 }
