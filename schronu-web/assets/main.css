@@ -561,6 +561,24 @@ button:disabled {
         padding-top: 0.75rem;
     }
 
+    .buffer-panel {
+        margin-block: 0.75rem 1rem;
+        padding: 1.25rem 1rem;
+    }
+
+    .buffer-value {
+        font-size: 3rem;
+    }
+
+    .date-pills {
+        gap: 0.35rem;
+    }
+
+    .date-pill {
+        min-height: 2.75rem;
+        padding: 0.5rem 0.9rem;
+    }
+
     .toolbar,
     .session-time-row {
         align-items: stretch;
