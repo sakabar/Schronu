@@ -353,6 +353,7 @@ remaining_seconds = remaining_at_start - elapsed_seconds
 - 見積秒が0なら除算せず`--%`とする。
 - `remaining_seconds >= 0`は通常色の`MM:SS`、負なら絶対値を赤い`MM:SS`で表示する。
 - `MM`は総分数とし、2桁へ制限しない。`SS`は常に2桁とする。
+- 開始`HH:MM`、矢印、完了予定`HH:MM`、残り・超過`MM:SS`は1つのtiming領域へ横並びにし、320px幅でも折り返さない。開始と完了予定は`time`要素とし、3値には意味を識別できるARIA labelを付ける。完了予定を算出できない場合も同じ位置へ`--:--`を表示する。
 - `worked_seconds * 100`はoverflowしない計算方法を用いる。
 - 通常bar幅は`min(progress, 100)%`。
 - 超過bar幅は`max(progress - 100, 0)%`で、100%位置の右側へ赤色で連結する。card内で切り捨てず、必要な横方向の表示領域を確保する。
@@ -456,7 +457,7 @@ client componentは非`None`の`ClientEffect`をserverへdispatchする直前に
 
 - セッション0件では「自動セッション」buttonを表示する。
 - 1件以上ではbuttonを隠し、各`work_session`をcard表示する。
-- cardはtask名、開始`HH:MM`、完了予定`HH:MM`、進捗率、bar、残り・超過`MM:SS`、「破棄して解除」「記録して解除」「計測を破棄して完了」「記録して完了」の4操作buttonを持つ。
+- cardはtask名、開始`HH:MM`、完了予定`HH:MM`、進捗率、bar、残り・超過`MM:SS`、「破棄して解除」「記録して解除」「計測を破棄して完了」「記録して完了」の4操作buttonを持つ。開始、矢印、完了予定、残り・超過は1つのtiming領域へ1行で表示し、mobileのgridをtask名、timing、progress、操作の順にする。
 - 操作buttonは意味別classを持ち、通常幅では解除系2つと完了系2つをそれぞれ同じ段に配置し、狭い画面では1列にする。
 - 「計測を破棄して完了」をclickすると当該cardだけを確認表示へ切り替え、「このセッションの計測時間は記録されません。タスクを完了しますか?」と「キャンセル」「計測を破棄して完了」を表示する。最初のclickとキャンセルではserver requestを送らず、確定時だけ`record_elapsed_seconds: false`の`complete_session`を1回送る。
 - 「記録して完了」は確認を挟まず、`record_elapsed_seconds: true`の`complete_session`を送る。
@@ -648,7 +649,8 @@ OperationHistoryEntry {
 - 4操作buttonのlabel、ARIA名、意味別class、通常幅の2列配置、狭幅の1列配置を確認する。
 - 「計測を破棄して完了」の最初のclickでは通信せず、card単位の確認表示、キャンセル、確定時の1回だけのtyped callbackを確認する。
 - 確認表示ではtimerが進み、3終了操作のdispatch後は注入したclick時刻でcardが停止することを確認する。
-- 33%、100%、133%、見積0、buffer正負の表示を確認する。
+- 33%、100%、133%、見積0、buffer正負の表示を確認する。開始、完了予定、残り・超過が同じtiming領域にあり、semanticな`time`要素と識別可能なARIA labelを維持することをcomponent testで確認する。
+- 320px、360px、46rem、1024pxでsession cardのtiming領域が折り返さず、task名、timing、progress、操作の順序とdesktop layoutを維持することをCSS contract testとbrowser目視で確認する。
 - 通信matrixの各操作についてrequest件数を確認する。
 - 全5server通信のdispatchで全画面待機表示と背面の`inert`が即時に有効になり、最後のresponseまで維持されることを確認する。成功、operation error、transport errorの各応答で解除され、`ClientEffect::None`では表示されないことを確認する。SSR初期表示のstatusとARIA属性、viewport全面のCSS、reduced motionを確認する。
 - 持ち歩きロックbarのsticky表示、3状態、残り秒表示、`aria-live`対象、通常モードへの確認付き復帰を確認する。`Locked`では状態文言が44px以上の長押しbutton内にあり、独立した状態blockがなく、解除`details`だけが次の行にあることと、34rem以下でも汎用縦積み規則を適用しないことをcomponent testとCSS contract testで固定する。
