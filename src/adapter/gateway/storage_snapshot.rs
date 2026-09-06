@@ -19,6 +19,8 @@ pub(in crate::adapter::gateway) use create::{
 pub use current_restore::restore_current_snapshot;
 #[cfg(test)]
 pub(in crate::adapter::gateway) use current_restore::restore_current_snapshot_at;
+#[cfg(test)]
+pub(in crate::adapter::gateway) use current_restore::restore_current_snapshot_at_with_transaction_io;
 pub use error::{SnapshotError, SnapshotLimitKind};
 #[cfg(test)]
 pub(in crate::adapter::gateway) use io::SnapshotFailurePoint;

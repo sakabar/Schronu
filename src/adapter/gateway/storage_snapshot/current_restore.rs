@@ -35,6 +35,43 @@ pub(in crate::adapter::gateway) fn restore_current_snapshot_at(
     created_at: DateTime<Local>,
     storage_lock: &StorageLock,
 ) -> Result<SnapshotSummary, SnapshotError> {
+    restore_current_snapshot_impl(
+        current_storage,
+        snapshot,
+        pre_backup,
+        created_at,
+        storage_lock,
+        Arc::new(FileSystemStorageTransactionIo),
+    )
+}
+
+#[cfg(test)]
+pub(in crate::adapter::gateway) fn restore_current_snapshot_at_with_transaction_io(
+    current_storage: &Path,
+    snapshot: &Path,
+    pre_backup: &Path,
+    created_at: DateTime<Local>,
+    storage_lock: &StorageLock,
+    transaction_io: Arc<dyn crate::adapter::gateway::storage_transaction::StorageTransactionIo>,
+) -> Result<SnapshotSummary, SnapshotError> {
+    restore_current_snapshot_impl(
+        current_storage,
+        snapshot,
+        pre_backup,
+        created_at,
+        storage_lock,
+        transaction_io,
+    )
+}
+
+fn restore_current_snapshot_impl(
+    current_storage: &Path,
+    snapshot: &Path,
+    pre_backup: &Path,
+    created_at: DateTime<Local>,
+    storage_lock: &StorageLock,
+    transaction_io: Arc<dyn crate::adapter::gateway::storage_transaction::StorageTransactionIo>,
+) -> Result<SnapshotSummary, SnapshotError> {
     let expected_lock_path = current_storage.join(".lock");
     if storage_lock.path() != expected_lock_path {
         return Err(invalid(
@@ -117,7 +154,7 @@ pub(in crate::adapter::gateway) fn restore_current_snapshot_at(
     let delete_refs = deletes.iter().map(PathBuf::as_path).collect::<Vec<_>>();
     let revision = Uuid::new_v4();
     let prepared = prepare_with_directories_and_deletes(
-        Arc::new(FileSystemStorageTransactionIo),
+        transaction_io,
         current_storage,
         revision,
         &writes,
