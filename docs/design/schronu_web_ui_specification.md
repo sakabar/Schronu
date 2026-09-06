@@ -538,10 +538,11 @@ server操作ごとに`operation_now`は1回だけ取得し、経過秒算出、�
 ```text
 OperationHistoryEntry {
     occurred_at_epoch_ms: i64,
-    operation: Bootstrap | ListTasks | AutoSession | AddSession | DiscardSession
-             | RecordSession | CompleteSession | CompleteSessionWithoutRecording
-             | ConfirmRepositoryCheck,
-    task_id: Option<UUID>,
+    invocation: Bootstrap
+              | ListTasks(ListTasksRequest)
+              | AutoSession
+              | RecordSession(RecordSessionRequest)
+              | CompleteSession(CompleteSessionRequest),
     outcome: Success | Failure,
     summary: String,
 }
@@ -549,7 +550,8 @@ OperationHistoryEntry {
 
 - panelは初期状態で閉じ、利用者が開閉できる。
 - requestを送るserver操作はresponse受信時に成否を1件記録する。
-- `record_elapsed_seconds: true`の完了は`CompleteSession`、`false`の完了は`CompleteSessionWithoutRecording`として、成功・失敗のどちらも区別して記録する。
+- action名と実際に送信した全引数を`action_name(field: value, ...)`形式で表示する。引数のないactionも`bootstrap()`のように括弧を表示し、client内部の`request_id`は表示しない。
+- 2種類の完了は実際のserver actionである`complete_session`として表示し、`record_elapsed_seconds: true`と`false`で、成功・失敗のどちらも区別して記録する。
 - localStorage操作とrepository手動確認済み操作は履歴へ記録しない。
 - summaryへ秘密情報、repository path、stack traceを出さない。
 - 実行していない`見`、`働`、`終`、`外`などのCLI commandを履歴へ記録しない。

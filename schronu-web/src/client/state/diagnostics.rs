@@ -143,36 +143,33 @@ impl ClientState {
 
     pub(super) fn record_server_failure(
         &mut self,
-        operation: Operation,
-        task_id: Option<&str>,
+        invocation: ServerActionInvocation,
         error: ServerFailure,
     ) {
+        let operation = invocation.operation();
+        let task_id = invocation.task_id().map(ToOwned::to_owned);
         self.diagnostics.display_error = Some(match error {
             ServerFailure::Operation(error) => DisplayError::Operation {
                 error,
                 operation,
-                task_id: task_id.map(ToOwned::to_owned),
+                task_id: task_id.clone(),
             },
             ServerFailure::Transport(_) => DisplayError::Transport {
                 operation,
-                task_id: task_id.map(ToOwned::to_owned),
+                task_id: task_id.clone(),
             },
         });
-        self.record_server(
-            operation,
-            task_id,
-            Outcome::Failure,
-            "server操作に失敗しました。",
-        );
+        self.record_server(invocation, Outcome::Failure, "server操作に失敗しました。");
     }
 
     pub(super) fn record_server(
         &mut self,
-        operation: Operation,
-        task_id: Option<&str>,
+        invocation: ServerActionInvocation,
         outcome: Outcome,
         summary: &str,
     ) {
+        let operation = invocation.operation();
+        let task_id = invocation.task_id();
         if outcome == Outcome::Success
             && self
                 .diagnostics
@@ -182,13 +179,16 @@ impl ClientState {
         {
             self.diagnostics.display_error = None;
         }
-        self.record_history(operation, task_id, outcome, summary);
+        self.record_history(invocation, outcome, summary);
     }
 
-    pub(super) fn record_stale_response(&mut self, operation: Operation, succeeded: bool) {
+    pub(super) fn record_stale_response(
+        &mut self,
+        invocation: ServerActionInvocation,
+        succeeded: bool,
+    ) {
         self.record_history(
-            operation,
-            None,
+            invocation,
             if succeeded {
                 Outcome::Success
             } else {
@@ -200,8 +200,7 @@ impl ClientState {
 
     fn record_history(
         &mut self,
-        operation: Operation,
-        task_id: Option<&str>,
+        invocation: ServerActionInvocation,
         outcome: Outcome,
         summary: &str,
     ) {
@@ -209,8 +208,7 @@ impl ClientState {
             &mut self.diagnostics.history,
             OperationHistoryEntry {
                 occurred_at_epoch_ms: self.tick_now_epoch_ms,
-                operation,
-                task_id: task_id.map(ToOwned::to_owned),
+                invocation,
                 outcome,
                 summary: summary.to_owned(),
             },

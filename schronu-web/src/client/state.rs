@@ -5,7 +5,7 @@ mod session_state;
 use super::carry_lock::{load_carry_lock, CarryLockMode, CarryLockState};
 use super::date_buttons::LogicalDateButton;
 pub use super::effect::ClientEffect;
-pub use super::history::{Operation, OperationHistoryEntry, Outcome};
+pub use super::history::{Operation, OperationHistoryEntry, Outcome, ServerActionInvocation};
 use super::safety_state::{load_mutation_safety, MutationSafetyState};
 use super::time_model::buffer_timing;
 use super::work_sessions::{

@@ -1,7 +1,7 @@
 use super::carry_lock_view::CarryLockViewModel;
 use super::history_view::HistoryEntryViewModel;
 use super::list_view::DateButtonViewModel;
-use crate::client::state::{ActiveTab, ClientState, Operation, Outcome};
+use crate::client::state::{ActiveTab, ClientState, Outcome};
 use crate::client::view_projection::{
     project_list_rows_for_browser, project_session_cards_for_browser, ListRowViewModel,
     SessionCardViewModel,
@@ -86,8 +86,7 @@ fn history_view_models(state: &ClientState) -> Vec<HistoryEntryViewModel> {
         .rev()
         .map(|entry| HistoryEntryViewModel {
             occurred_at_hh_mm_ss: browser_hh_mm_ss(entry.occurred_at_epoch_ms),
-            operation: operation_label(entry.operation).to_owned(),
-            task_id: entry.task_id.clone(),
+            invocation: entry.invocation.to_string(),
             outcome: match entry.outcome {
                 Outcome::Success => "success",
                 Outcome::Failure => "failure",
@@ -97,20 +96,6 @@ fn history_view_models(state: &ClientState) -> Vec<HistoryEntryViewModel> {
             failed: entry.outcome == Outcome::Failure,
         })
         .collect()
-}
-
-fn operation_label(operation: Operation) -> &'static str {
-    match operation {
-        Operation::Bootstrap => "bootstrap",
-        Operation::ListTasks => "list_tasks",
-        Operation::AutoSession => "auto_session",
-        Operation::AddSession => "add_session",
-        Operation::DiscardSession => "discard_session",
-        Operation::RecordSession => "record_session",
-        Operation::CompleteSession => "complete_session",
-        Operation::CompleteSessionWithoutRecording => "complete_session_without_recording",
-        Operation::ConfirmRepositoryCheck => "confirm_repository_check",
-    }
 }
 
 fn browser_hh_mm_ss(epoch_ms: i64) -> String {
