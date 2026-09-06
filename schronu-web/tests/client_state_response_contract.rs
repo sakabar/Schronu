@@ -172,14 +172,18 @@ fn 逆順のlist応答と古いsnapshotは最新表示を巻き戻さない() {
     assert_eq!(state.snapshot().unwrap().logical_date, "2026-09-05");
     assert_eq!(state.selected_logical_date(), Some("2026-09-06"));
     assert_eq!(state.scheduled_rows()[0].task.task_id, OTHER_TASK_ID);
+    let list_invocations: Vec<_> = state
+        .history()
+        .iter()
+        .filter_map(|entry| match &entry.invocation {
+            ServerActionInvocation::ListTasks(request) => Some(request.logical_date.as_str()),
+            _ => None,
+        })
+        .collect();
     assert_eq!(
-        state
-            .history()
-            .iter()
-            .filter(|entry| entry.invocation.operation() == Operation::ListTasks)
-            .count(),
-        2,
-        "stale responseも受信履歴へ残す"
+        list_invocations,
+        vec!["2026-09-06", "2026-09-05"],
+        "stale responseも元のrequest引数と共に受信履歴へ残す"
     );
 }
 
