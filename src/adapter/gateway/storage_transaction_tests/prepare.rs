@@ -67,7 +67,7 @@ fn test_prepare_deleteをimmutable_manifestへ追加する() {
     assert!(!deleted.exists());
     assert_eq!(
         fs::read_to_string(storage_dir.path.join(".revision")).unwrap(),
-        revision.to_string()
+        format!("{revision}\n")
     );
 }
 

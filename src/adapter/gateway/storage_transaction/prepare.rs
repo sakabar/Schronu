@@ -42,6 +42,17 @@ pub(in crate::adapter::gateway) fn prepare_with_directories(
     writes: &[WriteRequest<'_>],
     directories: &[&Path],
 ) -> Result<PreparedTransaction, StorageTransactionError> {
+    prepare_with_directories_and_deletes(io, storage_dir_path, revision, writes, directories, &[])
+}
+
+pub(in crate::adapter::gateway) fn prepare_with_directories_and_deletes(
+    io: Arc<dyn StorageTransactionIo>,
+    storage_dir_path: &Path,
+    revision: Uuid,
+    writes: &[WriteRequest<'_>],
+    directories: &[&Path],
+    deletes: &[&Path],
+) -> Result<PreparedTransaction, StorageTransactionError> {
     let layout = TransactionLayout::new(storage_dir_path);
     let transactions_dir_path =
         resolve_transactions_directory(io.as_ref(), storage_dir_path, true)?
@@ -95,7 +106,7 @@ pub(in crate::adapter::gateway) fn prepare_with_directories(
         transaction_id,
         revision,
     };
-    let manifest = prepare_contents(&context, writes, directories);
+    let manifest = prepare_contents(&context, writes, directories, deletes);
     let manifest = match manifest {
         Ok(manifest) => manifest,
         Err(error) => {
@@ -117,8 +128,9 @@ fn prepare_contents(
     context: &PrepareContext<'_>,
     writes: &[WriteRequest<'_>],
     directories: &[&Path],
+    deletes: &[&Path],
 ) -> Result<ValidatedManifest, StorageTransactionError> {
-    let mut entries = Vec::with_capacity(writes.len());
+    let mut entries = Vec::with_capacity(writes.len() + deletes.len());
     for (index, write) in writes.iter().enumerate() {
         let target =
             validate_storage_relative_path(&context.paths.storage_dir_path, write.target_path)?;
@@ -138,6 +150,11 @@ fn prepare_contents(
                 content_length: write.bytes.len() as u64,
                 checksum: content_checksum(write.bytes),
             },
+        });
+    }
+    for delete in deletes {
+        entries.push(ValidatedEntry::Delete {
+            target: validate_storage_relative_path(&context.paths.storage_dir_path, delete)?,
         });
     }
     sync_directory(context.io, context.staged_files_dir_path)?;
