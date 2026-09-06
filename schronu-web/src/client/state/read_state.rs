@@ -72,23 +72,22 @@ impl ClientState {
         result: Result<ServerSnapshot, ServerFailure>,
     ) -> ClientEffect {
         if !consume_latest(&mut self.read.latest_bootstrap_request_id, request_id) {
-            self.record_stale_response(Operation::Bootstrap, result.is_ok());
+            self.record_stale_response(ServerActionInvocation::Bootstrap, result.is_ok());
             return ClientEffect::None;
         }
         match result {
             Ok(snapshot) => {
                 if self.apply_snapshot(snapshot).is_none() {
-                    self.record_stale_response(Operation::Bootstrap, true);
+                    self.record_stale_response(ServerActionInvocation::Bootstrap, true);
                     return ClientEffect::None;
                 }
                 self.record_server(
-                    Operation::Bootstrap,
-                    None,
+                    ServerActionInvocation::Bootstrap,
                     Outcome::Success,
                     "更新しました。",
                 );
             }
-            Err(error) => self.record_server_failure(Operation::Bootstrap, None, error),
+            Err(error) => self.record_server_failure(ServerActionInvocation::Bootstrap, error),
         }
         ClientEffect::None
     }
@@ -99,8 +98,11 @@ impl ClientState {
         requested_date: &str,
         result: Result<WebSuccess<Vec<ScheduledTaskRow>>, ServerFailure>,
     ) -> ClientEffect {
+        let invocation = ServerActionInvocation::ListTasks(ListTasksRequest {
+            logical_date: requested_date.to_owned(),
+        });
         if !consume_latest(&mut self.read.latest_list_request_id, request_id) {
-            self.record_stale_response(Operation::ListTasks, result.is_ok());
+            self.record_stale_response(invocation, result.is_ok());
             return ClientEffect::None;
         }
         match result {
@@ -117,17 +119,12 @@ impl ClientState {
                     self.read.scheduled_rows = success.data;
                 }
                 if snapshot_result.is_none() {
-                    self.record_stale_response(Operation::ListTasks, true);
+                    self.record_stale_response(invocation, true);
                 } else {
-                    self.record_server(
-                        Operation::ListTasks,
-                        None,
-                        Outcome::Success,
-                        "一覧を更新しました。",
-                    );
+                    self.record_server(invocation, Outcome::Success, "一覧を更新しました。");
                 }
             }
-            Err(error) => self.record_server_failure(Operation::ListTasks, None, error),
+            Err(error) => self.record_server_failure(invocation, error),
         }
         ClientEffect::None
     }
@@ -139,7 +136,7 @@ impl ClientState {
         result: Result<WebSuccess<Option<SessionTask>>, ServerFailure>,
     ) -> ClientEffect {
         if !consume_latest(&mut self.read.latest_auto_request_id, request_id) {
-            self.record_stale_response(Operation::AutoSession, result.is_ok());
+            self.record_stale_response(ServerActionInvocation::AutoSession, result.is_ok());
             return ClientEffect::None;
         }
         self.read.auto_session_in_flight = false;
@@ -148,8 +145,7 @@ impl ClientState {
                 let _ = self.apply_snapshot(success.snapshot);
                 self.read.auto_session_empty = success.data.is_none();
                 self.record_server(
-                    Operation::AutoSession,
-                    None,
+                    ServerActionInvocation::AutoSession,
                     Outcome::Success,
                     "自動選定が完了しました。",
                 );
@@ -157,7 +153,7 @@ impl ClientState {
                     self.add_session(storage, &task);
                 }
             }
-            Err(error) => self.record_server_failure(Operation::AutoSession, None, error),
+            Err(error) => self.record_server_failure(ServerActionInvocation::AutoSession, error),
         }
         ClientEffect::None
     }

@@ -86,8 +86,8 @@ fn history_view_models(state: &ClientState) -> Vec<HistoryEntryViewModel> {
         .rev()
         .map(|entry| HistoryEntryViewModel {
             occurred_at_hh_mm_ss: browser_hh_mm_ss(entry.occurred_at_epoch_ms),
-            operation: operation_label(entry.operation).to_owned(),
-            task_id: entry.task_id.clone(),
+            operation: operation_label(entry.invocation.operation()).to_owned(),
+            task_id: entry.invocation.task_id().map(ToOwned::to_owned),
             outcome: match entry.outcome {
                 Outcome::Success => "success",
                 Outcome::Failure => "failure",

@@ -1,5 +1,7 @@
 use std::collections::VecDeque;
 
+use crate::{CompleteSessionRequest, ListTasksRequest, RecordSessionRequest};
+
 const MAX_HISTORY_ENTRIES: usize = 100;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -22,10 +24,41 @@ pub enum Outcome {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+pub enum ServerActionInvocation {
+    Bootstrap,
+    ListTasks(ListTasksRequest),
+    AutoSession,
+    RecordSession(RecordSessionRequest),
+    CompleteSession(CompleteSessionRequest),
+}
+
+impl ServerActionInvocation {
+    pub fn operation(&self) -> Operation {
+        match self {
+            Self::Bootstrap => Operation::Bootstrap,
+            Self::ListTasks(_) => Operation::ListTasks,
+            Self::AutoSession => Operation::AutoSession,
+            Self::RecordSession(_) => Operation::RecordSession,
+            Self::CompleteSession(request) if request.record_elapsed_seconds => {
+                Operation::CompleteSession
+            }
+            Self::CompleteSession(_) => Operation::CompleteSessionWithoutRecording,
+        }
+    }
+
+    pub fn task_id(&self) -> Option<&str> {
+        match self {
+            Self::RecordSession(request) => Some(&request.task_id),
+            Self::CompleteSession(request) => Some(&request.task_id),
+            Self::Bootstrap | Self::ListTasks(_) | Self::AutoSession => None,
+        }
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct OperationHistoryEntry {
     pub occurred_at_epoch_ms: i64,
-    pub operation: Operation,
-    pub task_id: Option<String>,
+    pub invocation: ServerActionInvocation,
     pub outcome: Outcome,
     pub summary: String,
 }

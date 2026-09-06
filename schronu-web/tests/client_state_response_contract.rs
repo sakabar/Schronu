@@ -51,11 +51,7 @@ fn server発火履歴は実actionと送信時の全引数を保持する() {
     let (complete_id, complete_request) = complete_effect(
         complete_state.begin_complete_session_without_recording(&storage, OTHER_TASK_ID),
     );
-    complete_state.apply_complete_result(
-        &storage,
-        complete_id,
-        Ok(snapshot("2026-09-05", 4)),
-    );
+    complete_state.apply_complete_result(&storage, complete_id, Ok(snapshot("2026-09-05", 4)));
 
     let invocations: Vec<_> = state
         .history()
@@ -180,7 +176,7 @@ fn 逆順のlist応答と古いsnapshotは最新表示を巻き戻さない() {
         state
             .history()
             .iter()
-            .filter(|entry| entry.operation == Operation::ListTasks)
+            .filter(|entry| entry.invocation.operation() == Operation::ListTasks)
             .count(),
         2,
         "stale responseも受信履歴へ残す"
@@ -253,7 +249,7 @@ fn server_commit後のlocal削除失敗はserver成功だけを履歴へ記録�
 
     assert_eq!(state.history().len(), 1);
     let entry = state.history().front().unwrap();
-    assert_eq!(entry.operation, Operation::RecordSession);
+    assert_eq!(entry.invocation.operation(), Operation::RecordSession);
     assert_eq!(entry.outcome, Outcome::Success);
     assert!(matches!(
         state.display_error(),
@@ -335,7 +331,7 @@ fn auto_sessionは古いsnapshotを無視してtask_payloadを適用する() {
         state
             .history()
             .iter()
-            .filter(|entry| entry.operation == Operation::AutoSession)
+            .filter(|entry| entry.invocation.operation() == Operation::AutoSession)
             .count(),
         1
     );
@@ -413,7 +409,7 @@ fn latest_readの古いsnapshotも受信履歴へ記録する() {
         state
             .history()
             .iter()
-            .filter(|entry| entry.operation == Operation::Bootstrap)
+            .filter(|entry| entry.invocation.operation() == Operation::Bootstrap)
             .count(),
         1
     );
