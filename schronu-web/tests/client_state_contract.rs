@@ -125,7 +125,7 @@ fn 終了処理中はclick時刻を保持してbufferを再開し失敗時に計
     assert_eq!(request.ended_at_epoch_ms, Some(60_000));
 
     state.tick(65_000);
-    assert_eq!(state.display_buffer_seconds(), Some(-5));
+    assert_eq!(state.display_buffer_seconds(), Some(55));
 
     state.apply_record_result(
         &storage,

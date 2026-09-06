@@ -56,17 +56,59 @@ pub fn buffer_timing(
     tick_now_epoch_ms: i64,
     active_session_started_at_epoch_ms: &[i64],
 ) -> BufferTiming {
-    let snapshot_elapsed_seconds = elapsed_seconds(observed_at_epoch_ms, tick_now_epoch_ms);
-    let buffer_elapsed_seconds = active_session_started_at_epoch_ms
+    let sessions: Vec<_> = active_session_started_at_epoch_ms
         .iter()
         .copied()
-        .min()
-        .map_or(snapshot_elapsed_seconds, |earliest_session_start| {
-            elapsed_seconds(
-                observed_at_epoch_ms,
-                tick_now_epoch_ms.min(earliest_session_start),
-            )
-        });
+        .map(|started_at| (started_at, None))
+        .collect();
+    buffer_timing_with_sessions(
+        observed_at_epoch_ms,
+        buffer_seconds,
+        tick_now_epoch_ms,
+        &sessions,
+    )
+}
+
+pub fn buffer_timing_with_sessions(
+    observed_at_epoch_ms: i64,
+    buffer_seconds: i64,
+    tick_now_epoch_ms: i64,
+    sessions: &[(i64, Option<i64>)],
+) -> BufferTiming {
+    let snapshot_elapsed_seconds = elapsed_seconds(observed_at_epoch_ms, tick_now_epoch_ms);
+    let window_start = i128::from(observed_at_epoch_ms);
+    let window_end = i128::from(tick_now_epoch_ms.max(observed_at_epoch_ms));
+    let mut active_intervals: Vec<_> = sessions
+        .iter()
+        .filter_map(|(started_at, ended_at)| {
+            let start = i128::from(*started_at).max(window_start);
+            let end = i128::from(ended_at.unwrap_or(tick_now_epoch_ms)).min(window_end);
+            (start < end).then_some((start, end))
+        })
+        .collect();
+    active_intervals.sort_unstable_by_key(|interval| interval.0);
+
+    let mut active_milliseconds = 0_i128;
+    let mut merged: Option<(i128, i128)> = None;
+    for (start, end) in active_intervals {
+        match merged {
+            Some((merged_start, merged_end)) if start <= merged_end => {
+                merged = Some((merged_start, merged_end.max(end)));
+            }
+            Some((merged_start, merged_end)) => {
+                active_milliseconds += merged_end - merged_start;
+                merged = Some((start, end));
+            }
+            None => merged = Some((start, end)),
+        }
+    }
+    if let Some((start, end)) = merged {
+        active_milliseconds += end - start;
+    }
+
+    let idle_milliseconds = window_end - window_start - active_milliseconds;
+    let buffer_elapsed_seconds = i64::try_from(idle_milliseconds / 1_000)
+        .expect("the difference between two i64 millisecond epochs fits in i64 seconds");
     BufferTiming {
         snapshot_elapsed_seconds,
         buffer_elapsed_seconds,

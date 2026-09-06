@@ -1,5 +1,5 @@
 use schronu_web::client::time_model::{
-    buffer_timing, format_hh_mm_ss, format_mm_ss, session_timing,
+    buffer_timing, buffer_timing_with_sessions, format_hh_mm_ss, format_mm_ss, session_timing,
 };
 
 #[test]
@@ -121,6 +121,19 @@ fn buffer_timing_uses_the_union_of_remaining_sessions_after_discard() {
     let all_discarded = buffer_timing(1_000_000, 60, 1_061_999, &[]);
     assert_eq!(all_discarded.buffer_elapsed_seconds, 61);
     assert_eq!(all_discarded.display_buffer_seconds, -1);
+}
+
+#[test]
+fn buffer_timing_counts_idle_time_only_after_a_session_end_epoch() {
+    let ended_at_click = buffer_timing_with_sessions(0, 60, 65_000, &[(0, Some(60_000))]);
+    assert_eq!(ended_at_click.snapshot_elapsed_seconds, 65);
+    assert_eq!(ended_at_click.buffer_elapsed_seconds, 5);
+    assert_eq!(ended_at_click.display_buffer_seconds, 55);
+
+    let another_session_remains_active =
+        buffer_timing_with_sessions(0, 60, 65_000, &[(0, Some(60_000)), (30_000, None)]);
+    assert_eq!(another_session_remains_active.buffer_elapsed_seconds, 0);
+    assert_eq!(another_session_remains_active.display_buffer_seconds, 60);
 }
 
 #[test]
