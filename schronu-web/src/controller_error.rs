@@ -146,6 +146,40 @@ mod tests {
     }
 
     #[test]
+    fn 実績時間の競合は現在値だけを公開する() {
+        let task_id = "00000000-0000-4000-8000-000000000001"
+            .parse()
+            .expect("fixture UUID must be valid");
+        let mapped = crate::WebError::from(WebReadError::Application(
+            ApplicationError::ActualWorkConflict {
+                task_id,
+                expected_actual_work_seconds: 123_456_789,
+                actual_work_seconds: 420,
+            },
+        ));
+
+        assert_eq!(mapped.code, web_error_codes::ACTUAL_WORK_CONFLICT);
+        assert_eq!(mapped.retry_advice, RetryAdvice::ManualCheck);
+        assert_eq!(mapped.current_actual_work_seconds, Some(420));
+        assert!(mapped.message.contains("セッションカード"));
+        assert!(!mapped.message.contains("再読み込み"));
+        assert!(!mapped.message.contains("123456789"));
+        assert!(!mapped.message.contains(&task_id.to_string()));
+    }
+
+    #[test]
+    fn 実績時間の競合以外は現在値を公開しない() {
+        let mapped = crate::WebError::from(WebReadError::InvalidInput(
+            WebSessionInputError::InvalidTaskId {
+                task_id: "private-detail".to_owned(),
+                reason: "private-detail".to_owned(),
+            },
+        ));
+
+        assert_eq!(mapped.current_actual_work_seconds, None);
+    }
+
+    #[test]
     fn repositoryの確定状態に応じてretry可否を分類する() {
         let load_error = TaskRepositoryError::new(
             TaskRepositoryOperation::Load,
