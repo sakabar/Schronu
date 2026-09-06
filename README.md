@@ -605,7 +605,7 @@ R列には、タスクの処理時期を変更するときに実行するコマ�
 
 generatorは、空でない各physical rowがA-Sの19列であることと、J列のtask名がCLIと同じvalidation契約を満たすことを全行について確認してからcommandを出力します。完全な空行とA-Sがすべて空の行は無視し、CRLFの行末だけを正規化します。列数不正はline番号付きで、J列にcontrol character、blank、optional sign付きASCII整数だけのtask名がある場合はline番号とJ列付きで拒否し、部分的なcommandをstdoutへ出しません。
 
-SpreadsheetのA-S列は[spreadsheet_columns.tsv](spreadsheet_columns.tsv)を正本とします。A-J列はSchronuの`全`出力、K-S列はSpreadsheet上の補助列です。B列は`task_id`、J列は`task_name`、L/N/P/R列はシート間の同期対象、P列は完了時刻、Q列は抽出対象、S列は実作業時間です。
+SpreadsheetのA-S列は[spreadsheet_columns.tsv](spreadsheet_columns.tsv)を正本とします。A-J列はSchronuの`全`出力、K-S列はSpreadsheet上の補助列です。同じexport snapshotではA列`ind`とB列`task_id`の組が予定segmentを識別します。L/P列は相手シートの対応segmentだけへ、N/R列は編集元を含む両シートの同一task全segmentへ同期します。identity欠落、対応segmentなし、A+B重複では書き込まずToastで診断します。P列は完了時刻、Q列は抽出対象、S列は実作業時間です。
 
 (例)
 

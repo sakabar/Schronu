@@ -71,7 +71,7 @@
 | TD-030 | P1 | 未着手 | S | 00:00以降の日次残容量計算がbusy timeを無視する |
 | TD-031 | P1 | 未着手 | S | Spreadsheet変換がind 1000以降のtask行を黙って破棄する |
 | TD-032 | P1 | 完了 | S | macOS標準環境でSpreadsheet変換の`tac`依存が空出力の成功になる |
-| TD-033 | P1 | 未着手 | M | 同一taskの複数segmentをApps Scriptが別行へ同期する |
+| TD-033 | P1 | 完了 | M | 同一taskの複数segmentをApps Scriptが別行へ同期する |
 | TD-034 | P1 | 一部完了(W1-J) | M | Spreadsheet入力が存在しない日付と不正な時分秒をcommandへ変換する |
 | TD-035 | P2 | 完了 | M | 反復延期が夏時間の切り替え境界で開始時刻とdeadlineの壁時計時刻をずらす |
 | TD-036 | P2 | 未着手 | L | source textを独自parseするarchitecture testがRust構文と実装名へ強く結合している |
@@ -1369,6 +1369,10 @@
 - 分類: `バグ / Spreadsheet同期`
 - 優先度: `P1`
 - 概算規模: `M`
+- 完了日: 2026-09-06
+- 対応: A-Sの19列とCLI A-Jを維持し、同一export snapshot内のA列`ind`とB列`task_id`をsegment複合keyにした。L/Pは相手sheetの対応segmentだけへ、N/Rはsource/target両sheetの同一task全segmentへ同期する。全対象をwrite前に検証し、identity欠落、対応なし、複合key重複、N/Rの競合一括編集を無書込の1回Toastで診断する。数値`0`として読み取られた先頭`ind`も保持する。
+- 検証: Node 24の標準test runnerとfake Spreadsheet APIで`apps_script/main.js`を`node:vm`評価し、`onEdit`製品入口を実行する16件に成功した。CIへ同testを追加し、Spreadsheet contract 5件、renderer contract、両shell構文、`cargo fmt --check`、`cargo clippy --locked --all-targets -- -D warnings`、`cargo test --locked`、`git diff --check`に成功した。内部reviewのP1 1件・P2 2件を個別修正し、再reviewと親branch reviewで未解消P1/P2/P3がないことを確認した。
+- 残存: なし。
 
 #### 現状と根拠
 

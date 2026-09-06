@@ -46,6 +46,44 @@ fn spreadsheet_task_rowはaからjの10列を既存cli形式で出力する() {
     );
 }
 
+#[test]
+fn 同一taskの複数segmentは同じb列と異なるa列を出力する() {
+    let task_id = Uuid::parse_str("11111111-1111-1111-1111-111111111111").unwrap();
+    let scheduled_start = Local.with_ymd_and_hms(2026, 6, 21, 18, 0, 0).unwrap();
+    let rows = [0, 1].map(|ind| TaskListTaskRow {
+        ind,
+        task_id,
+        icon: "-".to_string(),
+        deadline: "____-00:00".to_string(),
+        scheduled_start,
+        scheduled_end: scheduled_start + chrono::Duration::minutes(40),
+        rank: 0,
+        estimated_minutes: 40,
+        priority: 1,
+        project_category: Some(ProjectCategory::Sustaining),
+        task_name: "分割task".to_string(),
+        give_up_candidate: false,
+    });
+
+    let identities = rows.map(|row| {
+        let formatted =
+            format_task_list_columns(&task_list_columns(&row, TaskListIconMode::Original));
+        formatted
+            .split_whitespace()
+            .take(2)
+            .map(str::to_owned)
+            .collect::<Vec<_>>()
+    });
+
+    assert_eq!(
+        identities,
+        [
+            vec!["0000".to_string(), task_id.to_string()],
+            vec!["0001".to_string(), task_id.to_string()],
+        ]
+    );
+}
+
 #[derive(Default)]
 struct TraceWriter {
     operations: Vec<String>,

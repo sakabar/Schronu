@@ -19,6 +19,15 @@ jobs:
           sudo apt-get update
           sudo apt-get install --yes zsh
 
+      - name: Set up Node.js 24
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          package-manager-cache: false
+
+      - name: Test Apps Script
+        run: node --test apps_script/main.test.mjs
+
       - name: Set up Rust 1.97.1
         uses: dtolnay/rust-toolchain@master
         with:
