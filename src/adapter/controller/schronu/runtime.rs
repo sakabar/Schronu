@@ -30,10 +30,7 @@ use super::view::*;
 use crate::adapter::gateway::free_time_manager::FreeTimeManager;
 use crate::adapter::gateway::schronu_config::{load_schronu_config, SchronuConfig};
 use crate::adapter::gateway::storage_lock::{LockMode, StorageLock, StorageLockError};
-use crate::adapter::gateway::storage_snapshot::{
-    create_snapshot_with_lock, restore_current_snapshot, restore_snapshot_to_alternate,
-    verify_snapshot, SnapshotError,
-};
+use crate::adapter::gateway::storage_snapshot::SnapshotError;
 use crate::adapter::gateway::task_repository::TaskRepository;
 #[cfg(test)]
 use crate::application::daily_capacity::try_logical_date_start;
@@ -71,6 +68,9 @@ use uuid::Uuid;
 use chrono::NaiveDate;
 
 const CLI_LOCK_TIMEOUT: StdDuration = StdDuration::from_secs(1);
+
+#[path = "runtime/storage_maintenance.rs"]
+mod storage_maintenance;
 
 static ACTIVE_CONFIG: OnceLock<SchronuConfig> = OnceLock::new();
 
@@ -839,115 +839,6 @@ fn execute_verify_command(
         .map_err(RunError::Command)
 }
 
-fn execute_backup_command(
-    stdout: &mut dyn SchronuWriter,
-    task_repository: &mut dyn TaskRepositoryTrait,
-    snapshot_directory: &std::path::Path,
-    operation_now: DateTime<Local>,
-) -> Result<(), RunError> {
-    let storage_directory =
-        std::path::PathBuf::from(task_repository.get_project_storage_dir_name());
-    let storage_lock =
-        StorageLock::acquire_with_timeout(&storage_directory, LockMode::Cli, CLI_LOCK_TIMEOUT)
-            .map_err(CliRepositoryTransactionError::Lock)?;
-    execute_backup_command_with_lock(
-        stdout,
-        snapshot_directory,
-        operation_now,
-        &storage_directory,
-        &storage_lock,
-    )
-}
-
-fn execute_backup_verify_command(
-    stdout: &mut dyn SchronuWriter,
-    snapshot_directory: &std::path::Path,
-) -> Result<(), RunError> {
-    let summary = verify_snapshot(snapshot_directory).map_err(RunError::Snapshot)?;
-    render_display_model_with_mode(
-        stdout,
-        &backup_verify_display(snapshot_directory, &summary),
-        RenderMode::Flushed,
-    )
-    .map_err(CommandError::Output)
-    .map_err(RunError::Command)
-}
-
-fn execute_restore_command(
-    stdout: &mut dyn SchronuWriter,
-    snapshot_directory: &std::path::Path,
-    destination_directory: &std::path::Path,
-    current_storage_directory: &std::path::Path,
-) -> Result<(), RunError> {
-    let summary = restore_snapshot_to_alternate(
-        snapshot_directory,
-        destination_directory,
-        current_storage_directory,
-    )
-    .map_err(RunError::Snapshot)?;
-    render_display_model_with_mode(
-        stdout,
-        &restore_display(destination_directory, &summary),
-        RenderMode::Flushed,
-    )
-    .map_err(CommandError::Output)
-    .map_err(RunError::Command)
-}
-
-fn execute_restore_current_command(
-    stdout: &mut dyn SchronuWriter,
-    task_repository: &mut dyn TaskRepositoryTrait,
-    snapshot_directory: &std::path::Path,
-    pre_backup_directory: &std::path::Path,
-    operation_now: DateTime<Local>,
-) -> Result<(), RunError> {
-    let storage_directory =
-        std::path::PathBuf::from(task_repository.get_project_storage_dir_name());
-    let storage_lock =
-        StorageLock::acquire_with_timeout(&storage_directory, LockMode::Cli, CLI_LOCK_TIMEOUT)
-            .map_err(CliRepositoryTransactionError::Lock)?;
-    let summary = restore_current_snapshot(
-        &storage_directory,
-        snapshot_directory,
-        pre_backup_directory,
-        &storage_lock,
-    )
-    .map_err(RunError::Snapshot)?;
-    task_repository
-        .reload_if_changed(operation_now)
-        .map_err(CliRepositoryTransactionError::Load)?;
-    render_display_model_with_mode(
-        stdout,
-        &restore_current_display(&storage_directory, &summary),
-        RenderMode::Flushed,
-    )
-    .map_err(CommandError::Output)
-    .map_err(RunError::Command)
-}
-
-fn execute_backup_command_with_lock(
-    stdout: &mut dyn SchronuWriter,
-    snapshot_directory: &std::path::Path,
-    operation_now: DateTime<Local>,
-    storage_directory: &std::path::Path,
-    storage_lock: &StorageLock,
-) -> Result<(), RunError> {
-    let summary = create_snapshot_with_lock(
-        storage_directory,
-        snapshot_directory,
-        operation_now,
-        storage_lock,
-    )
-    .map_err(RunError::Snapshot)?;
-    render_display_model_with_mode(
-        stdout,
-        &backup_display(snapshot_directory, &summary),
-        RenderMode::Flushed,
-    )
-    .map_err(CommandError::Output)
-    .map_err(RunError::Command)
-}
-
 fn run_cli_repository_transaction<T>(
     task_repository: &mut dyn TaskRepositoryTrait,
     now: DateTime<Local>,
@@ -1107,45 +998,12 @@ fn execute_non_interactive_command_at(
         let mut stdout = stdout();
         return execute_verify_command(&mut stdout, task_repository, operation_now);
     }
-    if let Command::Backup { snapshot_directory } = &parsed_command {
-        let mut stdout = stdout();
-        return execute_backup_command(
-            &mut stdout,
-            task_repository,
-            snapshot_directory,
-            operation_now,
-        );
-    }
-    if let Command::BackupVerify { snapshot_directory } = &parsed_command {
-        let mut stdout = stdout();
-        return execute_backup_verify_command(&mut stdout, snapshot_directory);
-    }
-    if let Command::Restore {
-        snapshot_directory,
-        destination_directory,
-    } = &parsed_command
-    {
-        let mut stdout = stdout();
-        return execute_restore_command(
-            &mut stdout,
-            snapshot_directory,
-            destination_directory,
-            std::path::Path::new(task_repository.get_project_storage_dir_name()),
-        );
-    }
-    if let Command::RestoreCurrent {
-        snapshot_directory,
-        pre_backup_directory,
-    } = &parsed_command
-    {
-        let mut stdout = stdout();
-        return execute_restore_current_command(
-            &mut stdout,
-            task_repository,
-            snapshot_directory,
-            pre_backup_directory,
-            operation_now,
-        );
+    if let Some(result) = storage_maintenance::execute_non_interactive(
+        task_repository,
+        &parsed_command,
+        operation_now,
+    ) {
+        return result;
     }
     free_time_manager.load_busy_time_slots_from_file(
         active_config()
@@ -1486,30 +1344,6 @@ enum InteractiveRepositoryEventOutcome {
     Fatal(RunError),
 }
 
-fn render_interactive_command_echo(
-    stdout: &mut dyn SchronuWriter,
-    command: &str,
-    operation_now: DateTime<Local>,
-) -> Result<(), RunError> {
-    writeln_newline(stdout, "")
-        .and_then(|()| {
-            writeln_newline(
-                stdout,
-                &format!(
-                    "{}{}> {}{}",
-                    style::Bold,
-                    operation_now.format("%Y/%m/%d %H:%M:%S.%f"),
-                    command,
-                    style::Reset
-                ),
-            )
-        })
-        .and_then(|()| writeln_newline(stdout, ""))
-        .and_then(|()| stdout.flush())
-        .map_err(CommandError::Output)
-        .map_err(RunError::Command)
-}
-
 fn handle_interactive_submit_at(
     stdout: &mut dyn SchronuWriter,
     task_repository: &mut dyn TaskRepositoryTrait,
@@ -1521,140 +1355,16 @@ fn handle_interactive_submit_at(
     let command = line.trim().to_string();
     let (parsed_command, maintenance_kind) =
         parse_interactive_command_with_maintenance_kind(&command);
-    if let Err(error) = &parsed_command {
-        if let Some(command_kind) = maintenance_kind {
-            if let Err(output_error) =
-                render_interactive_command_echo(stdout, &command, operation_now).and_then(|()| {
-                    render_display_model(
-                        stdout,
-                        &error_display_model(&map_command_parse_error(error.clone())),
-                    )
-                    .map_err(CommandError::Output)
-                    .map_err(RunError::Command)
-                })
-            {
-                return InteractiveRepositoryEventOutcome::Fatal(output_error);
-            }
-            return InteractiveRepositoryEventOutcome::CommandExecuted(command_kind, operation_now);
-        }
-    }
-    if let Ok(Command::BackupVerify { snapshot_directory }) = &parsed_command {
-        if let Err(error) = render_interactive_command_echo(stdout, &command, operation_now) {
-            return InteractiveRepositoryEventOutcome::Fatal(error);
-        }
-        return match execute_backup_verify_command(stdout, snapshot_directory) {
-            Ok(()) => InteractiveRepositoryEventOutcome::CommandExecuted(
-                CommandKind::BackupVerify,
-                operation_now,
-            ),
-            Err(error) => InteractiveRepositoryEventOutcome::Fatal(error),
-        };
-    }
-    if let Ok(Command::Restore {
-        snapshot_directory,
-        destination_directory,
-    }) = &parsed_command
-    {
-        if let Err(error) = render_interactive_command_echo(stdout, &command, operation_now) {
-            return InteractiveRepositoryEventOutcome::Fatal(error);
-        }
-        return match execute_restore_command(
-            stdout,
-            snapshot_directory,
-            destination_directory,
-            std::path::Path::new(task_repository.get_project_storage_dir_name()),
-        ) {
-            Ok(()) => InteractiveRepositoryEventOutcome::CommandExecuted(
-                CommandKind::Restore,
-                operation_now,
-            ),
-            Err(error) => InteractiveRepositoryEventOutcome::Fatal(error),
-        };
-    }
-    if let Ok(Command::RestoreCurrent {
-        snapshot_directory,
-        pre_backup_directory,
-    }) = &parsed_command
-    {
-        if let Err(error) = render_interactive_command_echo(stdout, &command, operation_now) {
-            return InteractiveRepositoryEventOutcome::Fatal(error);
-        }
-        return match execute_restore_current_command(
-            stdout,
-            task_repository,
-            snapshot_directory,
-            pre_backup_directory,
-            operation_now,
-        ) {
-            Ok(()) => match reconcile_interactive_state_after_reload(
-                task_repository,
-                &mut state,
-                operation_now,
-            ) {
-                Ok(()) => InteractiveRepositoryEventOutcome::CommandExecuted(
-                    CommandKind::RestoreCurrent,
-                    operation_now,
-                ),
-                Err(error) => InteractiveRepositoryEventOutcome::Fatal(RunError::Command(
-                    CommandError::Application(error),
-                )),
-            },
-            Err(RunError::CliRepositoryTransaction(error)) => {
-                InteractiveRepositoryEventOutcome::Retry(error)
-            }
-            Err(error) => InteractiveRepositoryEventOutcome::Fatal(error),
-        };
-    }
-    if let Ok(Command::Backup { snapshot_directory }) = &parsed_command {
-        if let Err(error) = render_interactive_command_echo(stdout, &command, operation_now) {
-            return InteractiveRepositoryEventOutcome::Fatal(error);
-        }
-        let storage_directory =
-            std::path::PathBuf::from(task_repository.get_project_storage_dir_name());
-        let storage_lock = match StorageLock::acquire_with_timeout(
-            &storage_directory,
-            LockMode::Cli,
-            CLI_LOCK_TIMEOUT,
-        ) {
-            Ok(storage_lock) => storage_lock,
-            Err(error) => {
-                return InteractiveRepositoryEventOutcome::Retry(
-                    CliRepositoryTransactionError::Lock(error),
-                )
-            }
-        };
-        return match execute_backup_command_with_lock(
-            stdout,
-            snapshot_directory,
-            operation_now,
-            &storage_directory,
-            &storage_lock,
-        ) {
-            Ok(()) => {
-                if let Err(error) = task_repository.reload_if_changed(operation_now) {
-                    return InteractiveRepositoryEventOutcome::Retry(
-                        CliRepositoryTransactionError::Load(error),
-                    );
-                }
-                match reconcile_interactive_state_after_reload(
-                    task_repository,
-                    &mut state,
-                    operation_now,
-                ) {
-                    Ok(()) => InteractiveRepositoryEventOutcome::CommandExecuted(
-                        CommandKind::Backup,
-                        operation_now,
-                    ),
-                    Err(error) => InteractiveRepositoryEventOutcome::Fatal(RunError::Command(
-                        CommandError::Application(error),
-                    )),
-                }
-            }
-            Err(RunError::CliRepositoryTransaction(error)) => {
-                InteractiveRepositoryEventOutcome::Retry(error)
-            }
-            Err(error) => InteractiveRepositoryEventOutcome::Fatal(error),
-        };
+    if let Some(outcome) = storage_maintenance::execute_interactive(
+        stdout,
+        task_repository,
+        &mut state,
+        &command,
+        &parsed_command,
+        maintenance_kind,
+        operation_now,
+    ) {
+        return outcome;
     }
     let transaction_result =
         run_cli_repository_transaction(task_repository, operation_now, |task_repository| {
