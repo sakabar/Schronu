@@ -36,6 +36,42 @@ fn test_prepare_staged_fileとimmutable_manifestを作成する() {
 }
 
 #[test]
+fn test_prepare_deleteをimmutable_manifestへ追加する() {
+    let storage_dir = TestStorageDir::new();
+    let retained = storage_dir.path.join("retained.yaml");
+    let deleted = storage_dir.path.join("deleted.yaml");
+    fs::write(&retained, "old").unwrap();
+    fs::write(&deleted, "delete me").unwrap();
+    let revision = Uuid::from_u128(0x2202);
+
+    let prepared = prepare_with_directories_and_deletes(
+        file_system_io(),
+        &storage_dir.path,
+        revision,
+        &[WriteRequest {
+            target_path: &retained,
+            bytes: b"new",
+        }],
+        &[],
+        &[deleted.as_path()],
+    )
+    .unwrap();
+
+    let manifest_path = prepared.transaction_dir_path().join("manifest.json");
+    let manifest: Value = serde_json::from_slice(&fs::read(&manifest_path).unwrap()).unwrap();
+    assert_eq!(manifest["entries"][1]["target"], "deleted.yaml");
+    assert_eq!(manifest["entries"][1]["operation"], "delete");
+    assert!(manifest["entries"][1].get("staged_file").is_none());
+    prepared.commit().unwrap();
+    assert_eq!(fs::read_to_string(retained).unwrap(), "new");
+    assert!(!deleted.exists());
+    assert_eq!(
+        fs::read_to_string(storage_dir.path.join(".revision")).unwrap(),
+        revision.to_string()
+    );
+}
+
+#[test]
 fn test_prepare_staged_files_directory作成失敗時はuuid_directoryを残さない() {
     let storage_dir = TestStorageDir::new();
     let target_path = storage_dir.path.join("project.yaml");
