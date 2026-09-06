@@ -126,6 +126,22 @@ fn lockedだけが長押し領域と確認付き永続解除を表示する() {
 }
 
 #[test]
+fn lockedの状態文言は長押しbutton内に集約する() {
+    let html = render(CarryLockViewModel::new(CarryLockMode::Locked, 0));
+    let class_position = html.find("class=\"carry-lock-hold").unwrap();
+    let button_start = html[..class_position].rfind("<button").unwrap();
+    let button_end = class_position + html[class_position..].find("</button>").unwrap();
+    let button = &html[button_start..button_end];
+
+    assert!(button.contains("操作ロック中"), "{button}");
+    assert!(button.contains("1.2秒長押しで1操作許可"), "{button}");
+    assert!(!html.contains("class=\"carry-lock-status\""), "{html}");
+
+    let details_position = html.find("class=\"carry-lock-details\"").unwrap();
+    assert!(button_end < details_position, "{html}");
+}
+
+#[test]
 fn normalの1tapと解除確認の確定だけがcallbackを送る() {
     let events = Arc::new(Mutex::new(Vec::new()));
     let mut normal = VirtualDom::new_with_props(
@@ -200,4 +216,23 @@ fn lock_bar_cssはstickyとsafe_areaと状態feedbackを持つ() {
     ] {
         assert!(css.contains(fragment), "missing {fragment}");
     }
+}
+
+#[test]
+fn lock_bar_cssは長押しbuttonの操作高を保ちmobileでも縦積みにしない() {
+    let css = include_str!("../../assets/main.css");
+    let hold_start = css.find(".carry-lock-hold {").unwrap();
+    let hold_end = hold_start + css[hold_start..].find('}').unwrap();
+    let hold_rule = &css[hold_start..hold_end];
+    assert!(
+        hold_rule.contains("min-height: max(2.75rem, 44px);"),
+        "{hold_rule}"
+    );
+
+    let mobile_start = css.find("@media (max-width: 34rem)").unwrap();
+    let mobile_css = &css[mobile_start..];
+    assert!(
+        !mobile_css.contains(".carry-lock-bar"),
+        "mobile規則でcarry-lock-barを縦積みにしてはならない: {mobile_css}"
+    );
 }
