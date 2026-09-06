@@ -4,8 +4,8 @@ use super::component::app;
 #[cfg(feature = "web")]
 use super::component_models::BrowserPageModel;
 use super::component_runtime::{
-    component_action_from_session_action, initialize_client, reduce_component_action_at,
-    ComponentAction, ComponentOrchestrator,
+    component_action_from_session_action, component_actions_from_session_action, initialize_client,
+    reduce_component_action_at, ComponentAction, ComponentOrchestrator,
 };
 use super::effect_dispatcher::ClientResponse;
 use super::session_view::{SessionAction, SessionActionKind};
@@ -43,6 +43,43 @@ fn session操作は対応するcomponent_actionへ変換する() {
         };
         assert_eq!(actual, expected);
     }
+}
+
+#[test]
+fn 三終了操作はbrowser時刻のtick後にdispatchする() {
+    for kind in [
+        SessionActionKind::Record,
+        SessionActionKind::Complete,
+        SessionActionKind::CompleteWithoutRecording,
+    ] {
+        let actions = component_actions_from_session_action(
+            SessionAction {
+                task_id: "task".to_owned(),
+                kind,
+            },
+            60_000,
+        );
+
+        assert!(matches!(
+            actions.first(),
+            Some(ComponentAction::Tick {
+                wall_now_epoch_ms: 60_000
+            })
+        ));
+        assert_eq!(actions.len(), 2);
+    }
+
+    let discard = component_actions_from_session_action(
+        SessionAction {
+            task_id: "task".to_owned(),
+            kind: SessionActionKind::Discard,
+        },
+        60_000,
+    );
+    assert!(matches!(
+        discard.as_slice(),
+        [ComponentAction::DiscardSession(task_id)] if task_id == "task"
+    ));
 }
 
 #[test]
