@@ -541,7 +541,7 @@ client componentは非`None`の`ClientEffect`をserverへdispatchする直前に
 | 一覧検索の入力・clear | なし | なし | なし | 取得済みrowをclient内で絞り込み | なし |
 | 日付button | `list_tasks` | なし | なし | responseのrowへ置換 | なし |
 | 自動セッション | `auto_session` | なし | session追加 | なし | なし |
-| 一覧の「セッション」 | なし | なし | session追加 | なし | なし |
+| 一覧の「セッション」 | なし | なし | session追加 | 追加成功後にセッションtabへ切替 | なし |
 | 破棄して解除 | なし | なし | session削除。成功後にbuffer再計算 | なし | なし |
 | 記録して解除 | click時刻付きでsafety marker保存後に`record_session` | clickまでの実績保存1回 | 送信前marker設定とtimer停止。確定応答後marker解除。成功後session削除 | なし | なし |
 | 計測を破棄して完了の確認・キャンセル | なし | なし | card内の一時的な確認状態だけを変更 | なし | なし |

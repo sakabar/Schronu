@@ -267,6 +267,40 @@ fn component_actionは仕様の五操作だけをserver_effectへ変換する() 
 }
 
 #[test]
+fn 一覧のセッション追加後はセッションtabへ切り替えられserver通信を発生させない() {
+    let storage = MemoryStorage::default();
+    let (mut state, _) = initialize_client(&storage, 1_000);
+
+    reduce_component_action_at(
+        &mut state,
+        &storage,
+        1_000,
+        ComponentAction::SwitchTab(ActiveTab::List),
+    );
+    let effect = reduce_component_action_at(
+        &mut state,
+        &storage,
+        1_000,
+        ComponentAction::AddSession {
+            task: task(RECORD_ID),
+            is_leaf: true,
+        },
+    );
+
+    assert_eq!(effect, ClientEffect::None);
+    assert_eq!(state.sessions().len(), 1);
+    assert_eq!(state.active_tab(), ActiveTab::List);
+
+    reduce_component_action_at(
+        &mut state,
+        &storage,
+        1_000,
+        ComponentAction::SwitchTab(ActiveTab::Session),
+    );
+    assert_eq!(state.active_tab(), ActiveTab::Session);
+}
+
+#[test]
 fn 持ち歩きロックは変更操作だけを中央で遮断しarmedを一度だけ消費する() {
     let storage = MemoryStorage::default();
     let (mut state, _) = initialize_client(&storage, 1_000);
