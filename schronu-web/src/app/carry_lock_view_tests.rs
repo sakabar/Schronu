@@ -221,18 +221,50 @@ fn lock_bar_cssはstickyとsafe_areaと状態feedbackを持つ() {
 #[test]
 fn lock_bar_cssは長押しbuttonの操作高を保ちmobileでも縦積みにしない() {
     let css = include_str!("../../assets/main.css");
-    let hold_start = css.find(".carry-lock-hold {").unwrap();
-    let hold_end = hold_start + css[hold_start..].find('}').unwrap();
-    let hold_rule = &css[hold_start..hold_end];
+    let hold_rule = css_block(css, ".carry-lock-hold");
+    assert!(hold_rule.contains("display: flex;"), "{hold_rule}");
+    assert!(
+        !hold_rule.contains("flex-direction: column;"),
+        "長押しbuttonは横並びを維持する: {hold_rule}"
+    );
     assert!(
         hold_rule.contains("min-height: max(2.75rem, 44px);"),
         "{hold_rule}"
     );
 
-    let mobile_start = css.find("@media (max-width: 34rem)").unwrap();
-    let mobile_css = &css[mobile_start..];
+    let locked_rule = css_block(css, ".carry-lock-bar.is-locked");
+    assert!(locked_rule.contains("flex-wrap: wrap;"), "{locked_rule}");
+
+    let details_rule = css_block(css, ".carry-lock-bar.is-locked .carry-lock-details");
+    assert!(details_rule.contains("flex-basis: 100%;"), "{details_rule}");
+
+    let mobile_rule = css_block(css, "@media (max-width: 34rem)");
     assert!(
-        !mobile_css.contains(".carry-lock-bar"),
-        "mobile規則でcarry-lock-barを縦積みにしてはならない: {mobile_css}"
+        !mobile_rule.contains(".carry-lock-bar"),
+        "mobile規則でcarry-lock-barを縦積みにしてはならない: {mobile_rule}"
     );
+}
+
+fn css_block<'a>(css: &'a str, selector: &str) -> &'a str {
+    let header = format!("{selector} {{");
+    let header_start = css
+        .find(&header)
+        .unwrap_or_else(|| panic!("missing CSS block `{selector}`"));
+    let opening_brace = header_start + header.len() - 1;
+    let mut depth = 0_u32;
+
+    for (offset, character) in css[opening_brace..].char_indices() {
+        match character {
+            '{' => depth += 1,
+            '}' => {
+                depth -= 1;
+                if depth == 0 {
+                    return &css[opening_brace + 1..opening_brace + offset];
+                }
+            }
+            _ => {}
+        }
+    }
+
+    panic!("unclosed CSS block `{selector}`");
 }
