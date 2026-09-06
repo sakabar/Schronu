@@ -13,7 +13,6 @@ use super::{InteractiveShell, LoadingOverlay, NavigationTabs};
 use crate::client::state::ActiveTab;
 use crate::client::time_model::format_hh_mm_ss;
 use crate::client::work_sessions::BrowserLocalStorage;
-use crate::SessionTask;
 use dioxus::prelude::*;
 
 const TICK_MILLIS: u32 = 1_000;
@@ -126,27 +125,10 @@ pub(super) fn BrowserApp() -> Element {
                     filter_text,
                     mutations_locked,
                     on_select_date: move |date| dispatch_action(client, ComponentAction::SelectDate(date)),
-                    on_start_session: move |(task, is_leaf): (SessionTask, bool)| {
-                        dispatch_action(
-                            client,
-                            ComponentAction::AddSession {
-                                task: task.clone(),
-                                is_leaf,
-                            },
-                        );
-                        let added = client.read().state().is_some_and(|state| {
-                            state
-                                .sessions()
-                                .iter()
-                                .any(|session| session.task_id == task.task_id)
-                        });
-                        if added {
-                            dispatch_action(
-                                client,
-                                ComponentAction::SwitchTab(ActiveTab::Session),
-                            );
-                        }
-                    },
+                    on_start_session: move |(task, is_leaf)| dispatch_action(
+                        client,
+                        ComponentAction::AddSession { task, is_leaf },
+                    ),
                     on_filter_change: move |filter| task_name_filter.set(filter),
                 }
             } else {

@@ -289,15 +289,62 @@ fn 一覧のセッション追加後はセッションtabへ切り替えられse
 
     assert_eq!(effect, ClientEffect::None);
     assert_eq!(state.sessions().len(), 1);
-    assert_eq!(state.active_tab(), ActiveTab::List);
+    assert_eq!(state.active_tab(), ActiveTab::Session);
+}
+
+#[test]
+fn 一覧のセッション追加が拒否された場合は一覧tabに留まる() {
+    let storage = MemoryStorage::default();
+    let (mut state, _) = initialize_client(&storage, 1_000);
 
     reduce_component_action_at(
         &mut state,
         &storage,
         1_000,
-        ComponentAction::SwitchTab(ActiveTab::Session),
+        ComponentAction::AddSession {
+            task: task(RECORD_ID),
+            is_leaf: true,
+        },
     );
-    assert_eq!(state.active_tab(), ActiveTab::Session);
+    reduce_component_action_at(
+        &mut state,
+        &storage,
+        1_000,
+        ComponentAction::SwitchTab(ActiveTab::List),
+    );
+
+    for (task, is_leaf) in [(task(RECORD_ID), true), (task(COMPLETE_ID), false)] {
+        let effect = reduce_component_action_at(
+            &mut state,
+            &storage,
+            1_000,
+            ComponentAction::AddSession { task, is_leaf },
+        );
+
+        assert_eq!(effect, ClientEffect::None);
+        assert_eq!(state.sessions().len(), 1);
+        assert_eq!(state.active_tab(), ActiveTab::List);
+    }
+
+    reduce_component_action_at(
+        &mut state,
+        &storage,
+        1_000,
+        ComponentAction::EnableCarryLock,
+    );
+    let effect = reduce_component_action_at(
+        &mut state,
+        &storage,
+        1_001,
+        ComponentAction::AddSession {
+            task: task(COMPLETE_ID),
+            is_leaf: true,
+        },
+    );
+
+    assert_eq!(effect, ClientEffect::None);
+    assert_eq!(state.sessions().len(), 1);
+    assert_eq!(state.active_tab(), ActiveTab::List);
 }
 
 #[test]

@@ -176,7 +176,12 @@ pub(crate) fn reduce_component_action_at<S: KeyValueStorage>(
         ComponentAction::SelectDate(logical_date) => state.request_list(&logical_date),
         ComponentAction::AutoSession => state.request_auto_session(),
         ComponentAction::AddSession { task, is_leaf } => {
-            state.add_session_from_list_task(storage, &task, is_leaf)
+            let session_count = state.sessions().len();
+            let effect = state.add_session_from_list_task(storage, &task, is_leaf);
+            if state.sessions().len() > session_count {
+                state.switch_tab(ActiveTab::Session);
+            }
+            effect
         }
         ComponentAction::DiscardSession(task_id) => state.discard_session(storage, &task_id),
         ComponentAction::RecordSession(task_id) => state.begin_record_session(storage, &task_id),
