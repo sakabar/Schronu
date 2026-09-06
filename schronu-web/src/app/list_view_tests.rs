@@ -237,6 +237,17 @@ fn list_rowはresponsive表示用の意味別cellとlabelを持つ() {
     assert!(html.contains("class=\"task-name-scroll\""), "{html}");
     assert!(html.contains("tabindex=0"), "{html}");
     assert!(html.contains("class=\"session-cell\""), "{html}");
+
+    let action_position = html.find("class=\"session-cell\"").unwrap();
+    let schedule_position = html.find("class=\"schedule-time\"").unwrap();
+    let deadline_position = html.find("class=\"deadline\"").unwrap();
+    let task_position = html.find("class=\"task-name").unwrap();
+    assert!(
+        action_position < schedule_position
+            && schedule_position < deadline_position
+            && deadline_position < task_position,
+        "{html}"
+    );
 }
 
 #[test]
@@ -252,8 +263,8 @@ fn listは46rem以下で可視header付きの一行tableになる() {
         ".task-table {\n        display: block;\n        min-width: 0;",
         ".task-table thead {\n        display: block;",
         ".task-table thead tr,\n    .task-row {\n        display: grid;",
-        "grid-template-columns: 44px 5.5rem 5.75rem minmax(0, 1fr);",
-        "grid-template-areas: \"action deadline schedule task\";",
+        "grid-template-columns: 44px 5.75rem 5.5rem minmax(0, 1fr);",
+        "grid-template-areas: \"action schedule deadline task\";",
         ".task-row {\n        min-height: 44px;",
         ".task-row:not(:last-child) {\n        border-bottom: 1px solid var(--line);",
         ".deadline,\n    .schedule-time {\n        font-size: 0.72rem;",

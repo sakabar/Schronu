@@ -599,7 +599,7 @@ fn native_ssrはbrowser_storageへ触れずloading_shellだけを描画する() 
     dom.rebuild_in_place();
     let html = dioxus::ssr::render(&dom);
 
-    assert!(html.contains("Schronu"), "{html}");
+    assert!(!html.contains("Schronu"), "{html}");
     assert!(html.contains("通信中…"), "{html}");
     assert!(html.contains("loading-overlay"), "{html}");
     assert!(html.contains("loading-spinner"), "{html}");
