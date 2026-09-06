@@ -19,7 +19,7 @@ use crate::adapter::gateway::free_time_manager::FreeTimeManager;
 use crate::adapter::gateway::schronu_config::SchronuConfig;
 use crate::adapter::gateway::storage_lock::{LockMode, StorageLock, StorageLockError};
 use crate::adapter::gateway::task_repository::TaskRepository;
-use crate::application::interface::FreeTimeManagerTrait;
+use crate::application::interface::{FreeTimeManagerTrait, TaskRepositoryTrait};
 use crate::application::repository_transaction::{
     run_repository_transaction, RepositoryTransactionError,
 };
@@ -68,7 +68,11 @@ impl WebService {
     ) -> Result<WebSuccess<Vec<ScheduledTaskRowDto>>, WebReadError> {
         self.run_at(operation_now, |repository, free_time_manager, offset| {
             let schedule = get_schedule(repository).map_err(WebReadCoreError::Application)?;
-            let data = build_scheduled_task_rows(&schedule, logical_date)?;
+            let data = build_scheduled_task_rows(
+                &schedule,
+                logical_date,
+                repository.get_last_synced_time(),
+            )?;
             let snapshot = build_server_snapshot_from_schedule(
                 repository,
                 free_time_manager,

@@ -24,6 +24,8 @@ fn five_operationsのrequestとsuccessは仕様どおりのjson形式を持つ()
         schedule_start_epoch_ms: 1_788_565_500_000,
         schedule_end_epoch_ms: 1_788_566_100_000,
         deadline_epoch_ms: Some(1_788_566_400_000),
+        deadline_label: "____-00:05".to_owned(),
+        misses_deadline: false,
         is_leaf: true,
     };
 
@@ -62,6 +64,8 @@ fn five_operationsのrequestとsuccessは仕様どおりのjson形式を持つ()
                 "schedule_start_epoch_ms": 1_788_565_500_000_i64,
                 "schedule_end_epoch_ms": 1_788_566_100_000_i64,
                 "deadline_epoch_ms": 1_788_566_400_000_i64,
+                "deadline_label": "____-00:05",
+                "misses_deadline": false,
                 "is_leaf": true
             }]
         }),

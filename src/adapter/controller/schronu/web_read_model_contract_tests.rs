@@ -57,7 +57,7 @@ fn listは指定logical_dateだけを開始時刻のstable昇順でsegment単位
         },
     ];
 
-    let rows = build_scheduled_task_rows(&schedule, date).unwrap();
+    let rows = build_scheduled_task_rows(&schedule, date, day_start).unwrap();
 
     assert_eq!(rows.len(), 3);
     assert_eq!(rows[0].task.task_id, second_id.hyphenated().to_string());
@@ -95,6 +95,7 @@ fn listのdtoはtask値とdeadlineとleaf判定を情報を落とさず返す() 
             rank: 0,
         }],
         date,
+        start,
     )
     .unwrap();
 
@@ -109,11 +110,70 @@ fn listのdtoはtask値とdeadlineとleaf判定を情報を落とさず返す() 
         (start + Duration::seconds(1_200)).timestamp_millis()
     );
     assert_eq!(rows[0].deadline_epoch_ms, Some(deadline.timestamp_millis()));
+    assert_eq!(rows[0].deadline_label, "____-07:40");
+    assert!(!rows[0].misses_deadline);
     assert!(rows[0].is_leaf);
 
     let encoded = serde_json::to_string(&rows[0]).unwrap();
     let decoded = serde_json::from_str(&encoded).unwrap();
     assert_eq!(rows[0], decoded);
+}
+
+#[test]
+fn listのdtoは予定終了が締切を過ぎる場合だけmisses_deadlineにする() {
+    let date = NaiveDate::from_ymd_opt(2026, 9, 5).unwrap();
+    let start = Local.with_ymd_and_hms(2026, 9, 5, 8, 0, 0).unwrap();
+    let scheduled_end = start + Duration::hours(1);
+    let cases = [
+        (None, "____/__/__", false),
+        (
+            Some(scheduled_end + Duration::minutes(1)),
+            "____-00:01",
+            false,
+        ),
+        (Some(scheduled_end), "____-00:00", false),
+        (
+            Some(scheduled_end - Duration::minutes(1)),
+            "+00:01____",
+            true,
+        ),
+    ];
+    let handles = cases
+        .iter()
+        .enumerate()
+        .map(|(index, (deadline, _, _))| {
+            let task = TaskHandle::with_identity(
+                "deadline case",
+                Uuid::from_u128(100 + index as u128),
+                start,
+            )
+            .unwrap();
+            task.set_deadline_time_opt(*deadline).unwrap();
+            task
+        })
+        .collect::<Vec<_>>();
+    let repository = TestTaskRepository::new(handles.clone(), start);
+    let schedule = handles
+        .iter()
+        .map(|handle| ScheduledTaskView {
+            task: get_task(&repository, handle.get_id().unwrap())
+                .unwrap()
+                .unwrap(),
+            first_available_time: start,
+            scheduled_start: start,
+            scheduled_end,
+            scheduled_work_seconds: 3_600,
+            total_work_seconds: 3_600,
+            rank: 0,
+        })
+        .collect::<Vec<_>>();
+
+    let rows = build_scheduled_task_rows(&schedule, date, start).unwrap();
+
+    for (row, (_, expected_label, expected_miss)) in rows.iter().zip(cases) {
+        assert_eq!(row.deadline_label, expected_label);
+        assert_eq!(row.misses_deadline, expected_miss);
+    }
 }
 
 #[test]
@@ -160,6 +220,7 @@ fn listのleaf判定はtask_treeの子ではなくschedule_rank_0だけを採用
             },
         ],
         date,
+        start,
     )
     .unwrap();
 

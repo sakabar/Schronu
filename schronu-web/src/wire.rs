@@ -23,6 +23,8 @@ pub struct ScheduledTaskRow {
     pub schedule_start_epoch_ms: i64,
     pub schedule_end_epoch_ms: i64,
     pub deadline_epoch_ms: Option<i64>,
+    pub deadline_label: String,
+    pub misses_deadline: bool,
     pub is_leaf: bool,
 }
 

@@ -1,6 +1,6 @@
 use schronu_web::client::state::load_client_state;
 use schronu_web::client::view_projection::{
-    format_deadline_label, format_local_hh_mm, project_list_rows, project_session_cards,
+    format_local_hh_mm, project_list_rows, project_session_cards,
 };
 use schronu_web::{RecordSessionResult, ScheduledTaskRow, SessionTask, WebSuccess};
 
@@ -45,7 +45,7 @@ fn fixed_offsetでsession時刻と進捗を生成しcommit済みtimerは停止�
 }
 
 #[test]
-fn list時刻とdeadlineは06時境界のlogical_dateで表示形式を選ぶ() {
+fn listはserverが生成したdeadline表示と予定超過を無変換で保持する() {
     let storage = FakeStorage::default();
     let mut state = load_client_state(&storage, START_EPOCH_MS).unwrap();
     let bootstrap_id = bootstrap_effect(state.request_bootstrap());
@@ -56,6 +56,8 @@ fn list時刻とdeadlineは06時境界のlogical_dateで表示形式を選ぶ() 
         schedule_start_epoch_ms: START_EPOCH_MS,
         schedule_end_epoch_ms: START_EPOCH_MS + 30 * 60_000,
         deadline_epoch_ms: Some(1_788_553_800_000), // 2026-09-05 05:30 JST
+        deadline_label: "server deadline label".to_owned(),
+        misses_deadline: true,
         is_leaf: true,
     };
     state.apply_list_result(
@@ -69,21 +71,14 @@ fn list時刻とdeadlineは06時境界のlogical_dateで表示形式を選ぶ() 
 
     let rows = project_list_rows(&state, JST_OFFSET_MINUTES);
     assert_eq!(rows[0].schedule_label, "09:30-10:00");
-    assert_eq!(rows[0].deadline_label.as_deref(), Some("05:30"));
-    assert_eq!(
-        format_deadline_label(1_788_553_800_000, "2026-09-05", JST_OFFSET_MINUTES).as_deref(),
-        Some("09/05 05:30")
-    );
+    assert_eq!(rows[0].deadline_label, "server deadline label");
+    assert!(rows[0].misses_deadline);
 }
 
 #[test]
 fn invalid_epochとoffsetはplaceholderへ安全に退避する() {
     assert_eq!(format_local_hh_mm(i64::MAX, JST_OFFSET_MINUTES), "--:--");
     assert_eq!(format_local_hh_mm(START_EPOCH_MS, i32::MAX), "--:--");
-    assert_eq!(
-        format_deadline_label(i64::MAX, "2026-09-05", JST_OFFSET_MINUTES).as_deref(),
-        Some("--:--")
-    );
 }
 
 fn session_row() -> ScheduledTaskRow {
@@ -97,6 +92,8 @@ fn session_row() -> ScheduledTaskRow {
         schedule_start_epoch_ms: START_EPOCH_MS,
         schedule_end_epoch_ms: START_EPOCH_MS + 30 * 60_000,
         deadline_epoch_ms: None,
+        deadline_label: "____/__/__".to_owned(),
+        misses_deadline: false,
         is_leaf: true,
     }
 }
