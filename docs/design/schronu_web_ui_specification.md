@@ -317,7 +317,7 @@ expected_actual_work_seconds: Option<i64>
 clientは最低限、次を保持する。
 
 ```text
-active_tab: Session | List
+active_tab: Session | List | History
 work_sessions: Vec<WorkSession>
 server_snapshot: Option<ServerSnapshot>
 date_buttons: Vec<LogicalDateButton>
@@ -354,6 +354,7 @@ remaining_seconds = remaining_at_start - elapsed_seconds
 - 見積秒が0なら除算せず`--%`とする。
 - `remaining_seconds >= 0`は通常色の`MM:SS`、負なら絶対値を赤い`MM:SS`で表示する。
 - `MM`は総分数とし、2桁へ制限しない。`SS`は常に2桁とする。
+- 開始`HH:MM`、矢印、完了予定`HH:MM`、残り・超過`MM:SS`は1つのtiming領域へ横並びにし、320px幅でも折り返さない。開始と完了予定は`time`要素とし、3値には意味を識別できるARIA labelを付ける。完了予定を算出できない場合も同じ位置へ`--:--`を表示する。
 - `worked_seconds * 100`はoverflowしない計算方法を用いる。
 - 通常bar幅は`min(progress, 100)%`。
 - 超過bar幅は`max(progress - 100, 0)%`で、100%位置の右側へ赤色で連結する。card内で切り捨てず、必要な横方向の表示領域を確保する。
@@ -449,7 +450,9 @@ display_buffer = buffer_seconds - buffer_elapsed - restored_session_elapsed
 2. `bootstrap`を1回送る。
 3. responseからbufferと8日buttonを表示する。bufferはserver観測時刻以前に存在する復元セッション計測区間の和集合を差し引き、終了操作中の区間は終了click時刻で閉じる。
 4. 初期tabは「セッション」とする。
-5. tab切替だけでは一覧取得を含むserver操作を行わない。
+5. viewport下端へ「セッション」「一覧」「発火履歴」の3tabを固定し、選択中だけ上端の緑indicatorと`aria-pressed: true`を付ける。各buttonは均等幅かつ操作高44px以上とする。
+6. tab barはsafe areaをpaddingへ含め、全幅かつ最大82remで中央配置する。本文末尾にはbar高、safe area、余白の合計を確保し、通信中overlayより低い`z-index`にする。
+7. tab切替だけでは一覧取得を含むserver操作を行わず、選択中の1画面だけをDOMへ描画する。toolbar、持ち歩きロックbar、bufferは3画面で共通表示する。
 
 client componentは非`None`の`ClientEffect`をserverへdispatchする直前に実行中通信数を1増やし、response受理後に成否にかかわらず1減らす。実行中通信数が1以上の間は、viewport全体を覆う半透明overlay、スピナー、「通信中…」を表示する。背面の`main`に`inert`と`aria-busy`を設定し、pointerとkeyboard操作を無効にする。overlayのstatusは`aria-live=polite`で通知する。`prefers-reduced-motion: reduce`ではスピナーの回転を停止するが、待機表示自体は維持する。初回SSRとbrowser初期化前も同じDOMの待機表示にする。
 
@@ -461,7 +464,7 @@ client componentは非`None`の`ClientEffect`をserverへdispatchする直前に
 
 - セッション0件では「自動セッション」buttonを表示する。
 - 1件以上ではbuttonを隠し、各`work_session`をcard表示する。
-- cardはtask名、開始`HH:MM`、完了予定`HH:MM`、進捗率、bar、残り・超過`MM:SS`、「破棄して解除」「記録して解除」「計測を破棄して完了」「記録して完了」の4操作buttonを持つ。
+- cardはtask名、開始`HH:MM`、完了予定`HH:MM`、進捗率、bar、残り・超過`MM:SS`、「破棄して解除」「記録して解除」「計測を破棄して完了」「記録して完了」の4操作buttonを持つ。開始、矢印、完了予定、残り・超過は1つのtiming領域へ1行で表示し、mobileのgridをtask名、timing、progress、操作の順にする。
 - 操作buttonは意味別classを持ち、通常幅では解除系2つと完了系2つをそれぞれ同じ段に配置し、狭い画面では1列にする。
 - 「計測を破棄して完了」をclickすると当該cardだけを確認表示へ切り替え、「このセッションの計測時間は記録されません。タスクを完了しますか?」と「キャンセル」「計測を破棄して完了」を表示する。最初のclickとキャンセルではserver requestを送らず、確定時だけ`record_elapsed_seconds: false`の`complete_session`を1回送る。
 - 「記録して完了」は確認を挟まず、`record_elapsed_seconds: true`の`complete_session`を送る。
@@ -499,7 +502,7 @@ client componentは非`None`の`ClientEffect`をserverへdispatchする直前に
 ### 7.5 持ち歩きロックbar
 
 - page上部へstickyなbarを常時表示する。持ち歩きロックだけを理由に画面を覆うoverlayや内容の非表示は行わず、ロック中もbuffer・セッション・一覧の表示と更新、scroll、tab切替、日付選択、一覧取得を維持する。一覧取得を含むserver通信のdispatch後は、response受理まで通信中overlayによる全面操作遮断を優先する。
-- `Normal`では「持ち歩きロック」を1 clickすると即時に有効化する。`Locked`では「操作ロック中」と「1.2秒長押しで1操作許可」、`ArmedUntil`では「1操作可能」と残り秒数を表示する。
+- `Normal`では「持ち歩きロック」を1 clickすると即時に有効化する。`Locked`では独立した状態blockを生成せず、44px以上の長押しbutton内へ主文言「操作ロック中」と補足「1.2秒長押しで1操作許可」を横並びで集約し、通常モードへ戻す`details`だけを次の行へ置く。barのpaddingとgapを抑え、34rem以下でもbar全体を汎用的な縦積みに切り替えない。`ArmedUntil`では「1操作可能」と残り秒数を表示する。
 - `Locked`の長押しbuttonはprimary pointer、Space、Enterを受け付ける。pointerup、pointerleave、pointercancel、buttonのblur、window scroll、または1.2秒未満のkeyupでtimerを破棄し、stale timerが発火しても許可しない。keyboard auto-repeatは新しい長押しを開始しない。
 - 状態名だけを`aria-live=polite`で通知する。`ArmedUntil`の残り秒数はlive regionの外へ置き、毎秒読み上げない。
 - 「計測を破棄して完了」の確認表示は変更操作に含めず、確定dispatchだけが権利を消費する。キャンセルは`ArmedUntil`を即時に`Locked`へ戻し、期限切れでも確認表示を閉じる。
@@ -566,7 +569,7 @@ OperationHistoryEntry {
 }
 ```
 
-- panelは初期状態で閉じ、利用者が開閉できる。
+- 「発火履歴」tabの選択時だけ独立したsectionとしてDOMへ描画し、ほかのtabでは履歴内容を描画しない。
 - requestを送るserver操作はresponse受信時に成否を1件記録する。
 - action名と実際に送信した全引数を`action_name(field: value, ...)`形式で表示する。引数のないactionも`bootstrap()`のように括弧を表示し、client内部の`request_id`は表示しない。
 - 2種類の完了は実際のserver actionである`complete_session`として表示し、`record_elapsed_seconds: true`と`false`で、成功・失敗のどちらも区別して記録する。
@@ -638,13 +641,14 @@ OperationHistoryEntry {
 - 完了成功response受理時点でin-flightだった`list_tasks` requestを無効化し、その後にresponseが到着しても完了taskが復活しないことを検証する。完了成功response受理後に開始した`list_tasks` responseは適用されることを検証する。logical date境界を跨ぐ完了responseではsnapshotと日付buttonが更新され、反復taskは次の明示的一覧取得まで自動追加されないことを検証する。
 - 各endpointの成功型がsnapshotを持ち、error型がsnapshotを持たず、clientがerror時に直前snapshotを維持することを検証する。
 - error codeごとの`retry_advice`がerror表と一致し、`manual_check`では同一requestを再送しないことを検証する。
-- 履歴がserver通信結果だけを対象とすること、100件上限、成否、reload非永続化を検証する。
+- `History`へのtab切替がeffectを生成しないこと、履歴がserver通信結果だけを対象とすること、100件上限、成否、reload非永続化を検証する。
 - 持ち歩きロックのkeyなし・正常値・不正JSON・未知version・読込失敗、元value維持、memory-first有効化、storage-first解除、一時許可非永続化を検証する。
 - 単調時計による15秒境界と時計後退、閲覧操作では権利を維持し、7変更操作の最初のdispatchだけが権利を消費することを検証する。
 
 ### 12.5 UI and integration
 
-- 「セッション」「一覧」、8日button、card、一覧row、色、時刻形式をcomponent testとbrowser目視で確認する。
+- 固定された「セッション」「一覧」「発火履歴」の3tab、選択状態、callback、44px以上の操作高、safe area、本文との非重複、通信中overlayとの重なり順をcomponent test、CSS contract test、browser目視で確認する。
+- 各tabで選択中の画面だけがDOMへ存在し、toolbar、持ち歩きロックbar、bufferは共通して存在することを確認する。
 - rank 0の一覧rowだけにセッションbuttonとclick listenerがあり、rank非0にはどちらもないことを確認する。
 - 一覧は320px、360px、46rem、1024pxで確認し、長いtask名、日付付き締切、複数segmentでviewport全体の横スクロールが発生しないことを確認する。
 - 34rem以下でbufferと日付buttonが圧縮され、日付buttonの操作高44px以上と横スクロールが維持されることを確認する。
@@ -652,10 +656,11 @@ OperationHistoryEntry {
 - 4操作buttonのlabel、ARIA名、意味別class、通常幅の2列配置、狭幅の1列配置を確認する。
 - 「計測を破棄して完了」の最初のclickでは通信せず、card単位の確認表示、キャンセル、確定時の1回だけのtyped callbackを確認する。
 - 確認表示ではtimerが進み、3終了操作のdispatch後は注入したclick時刻でcardが停止することを確認する。
-- 33%、100%、133%、見積0、buffer正負の表示を確認する。
+- 33%、100%、133%、見積0、buffer正負の表示を確認する。開始、完了予定、残り・超過が同じtiming領域にあり、semanticな`time`要素と識別可能なARIA labelを維持することをcomponent testで確認する。
+- 320px、360px、46rem、1024pxでsession cardのtiming領域が折り返さず、task名、timing、progress、操作の順序とdesktop layoutを維持することをCSS contract testとbrowser目視で確認する。
 - 通信matrixの各操作についてrequest件数を確認する。
 - 全5server通信のdispatchで全画面待機表示と背面の`inert`が即時に有効になり、最後のresponseまで維持されることを確認する。成功、operation error、transport errorの各応答で解除され、`ClientEffect::None`では表示されないことを確認する。SSR初期表示のstatusとARIA属性、viewport全面のCSS、reduced motionを確認する。
-- 持ち歩きロックbarのsticky表示、3状態、残り秒表示、`aria-live`対象、通常モードへの確認付き復帰を確認する。
+- 持ち歩きロックbarのsticky表示、3状態、残り秒表示、`aria-live`対象、通常モードへの確認付き復帰を確認する。`Locked`では状態文言が44px以上の長押しbutton内にあり、独立した状態blockがなく、解除`details`だけが次の行にあることと、34rem以下でも汎用縦積み規則を適用しないことをcomponent testとCSS contract testで固定する。
 - pointer・Space・Enterの1.2秒長押し成立と、pointerup・leave・cancel・blur・window scroll・短いkeyupでの中断を確認する。
 - ロック中も画面表示・更新、scroll、tab切替、日付選択、一覧取得が機能し、7変更操作が無効になることを確認する。破棄完了の確認は一時許可を消費せず、確定時に消費し、キャンセルと期限切れで閉じることを確認する。
 - 2件以上の同時計測とreload復元を確認する。
@@ -687,6 +692,6 @@ OperationHistoryEntry {
 | 4.4、4.5、7.4、9 | REQ-ACTION-001..009 |
 | 6.4 | REQ-BUFFER-001..010 |
 | 6.5、7.3、7.4、8 | REQ-LIST-001..013 |
-| 7.1、8、10 | REQ-COMMON-001..007、REQ-NET-001..006 |
+| 6.1、7.1、8、10、12.4、12.5 | REQ-COMMON-001..007、REQ-NET-001..006 |
 | 3.4、6.6、7.5、8、12.4、12.5 | REQ-LOCK-001..010 |
 | 11、12 | REQ-COMPAT-001..005、全受入条件 |

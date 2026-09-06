@@ -17,6 +17,7 @@
     --red: #c33d43;
     --red-soft: #fff0f0;
     --shadow: 0 0.75rem 2rem rgb(35 65 52 / 9%);
+    --bottom-navigation-height: 3.5rem;
 }
 
 * {
@@ -63,7 +64,8 @@ button:disabled {
 .shell {
     width: min(100% - 2rem, 82rem);
     margin-inline: auto;
-    padding-block: 1.5rem 3rem;
+    padding-block: 1.5rem
+        calc(var(--bottom-navigation-height) + env(safe-area-inset-bottom) + 2rem);
 }
 
 .toolbar {
@@ -125,11 +127,11 @@ button:disabled {
     display: flex;
     align-items: center;
     justify-content: space-between;
-    gap: 0.75rem;
-    margin-bottom: 1rem;
+    gap: 0.4rem 0.6rem;
+    margin-bottom: 0.75rem;
     border: 1px solid var(--line);
     border-radius: 0.85rem;
-    padding: 0.65rem;
+    padding: 0.45rem 0.6rem;
     box-shadow: var(--shadow);
 }
 
@@ -138,8 +140,13 @@ button:disabled {
 }
 
 .carry-lock-bar.is-locked {
+    flex-wrap: wrap;
     border-color: var(--red);
     background: var(--red-soft);
+}
+
+.carry-lock-bar.is-locked .carry-lock-details {
+    flex-basis: 100%;
 }
 
 .carry-lock-bar.is-armed {
@@ -171,8 +178,26 @@ button:disabled {
 }
 
 .carry-lock-hold {
+    display: flex;
+    flex: 1 1 100%;
+    align-items: center;
+    justify-content: center;
+    gap: 0.5rem;
+    min-height: max(2.75rem, 44px);
+    padding: 0.35rem 0.5rem;
     touch-action: pan-y;
     user-select: none;
+}
+
+.carry-lock-hold strong {
+    font-size: 0.9rem;
+    white-space: nowrap;
+}
+
+.carry-lock-hold span {
+    font-size: 0.75rem;
+    font-weight: 400;
+    white-space: nowrap;
 }
 
 .carry-lock-hold.is-pressing {
@@ -201,10 +226,20 @@ button:disabled {
 }
 
 .tabs {
-    display: flex;
-    gap: 0.25rem;
-    padding: 0.25rem 0.1rem 0;
-    border-bottom: 1px solid var(--line);
+    position: fixed;
+    z-index: 100;
+    bottom: 0;
+    left: 50%;
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    width: min(100%, 82rem);
+    min-height: calc(var(--bottom-navigation-height) + env(safe-area-inset-bottom));
+    padding: 0 env(safe-area-inset-right) env(safe-area-inset-bottom)
+        env(safe-area-inset-left);
+    border-top: 1px solid var(--line);
+    background: var(--surface);
+    box-shadow: 0 -0.4rem 1.2rem rgb(35 65 52 / 9%);
+    transform: translateX(-50%);
 }
 
 .date-pills {
@@ -217,20 +252,18 @@ button:disabled {
 
 .tab-button {
     position: relative;
-    flex: 0 0 auto;
-    margin-bottom: -1px;
+    min-width: 0;
+    min-height: max(2.75rem, 44px);
     border-color: transparent;
-    border-radius: 0.7rem 0.7rem 0 0;
+    border-radius: 0;
     background: transparent;
     color: var(--muted);
-    padding: 0.7rem 1.2rem;
+    padding: 0.7rem 0.35rem;
 }
 
 .tab-button.is-selected {
-    z-index: 1;
-    border-color: var(--line);
-    border-bottom-color: var(--page);
-    background: var(--page);
+    border-color: transparent;
+    background: var(--surface);
     box-shadow: inset 0 0.2rem 0 var(--green);
     color: var(--green-dark);
 }
@@ -309,10 +342,8 @@ button:disabled {
     }
 
     .tab-button.is-selected:hover:not(:disabled) {
-        z-index: 1;
-        border-color: var(--line);
-        border-bottom-color: var(--page);
-        background: var(--page);
+        border-color: transparent;
+        background: var(--surface);
         box-shadow: inset 0 0.2rem 0 var(--green);
         color: var(--green-dark);
     }
@@ -340,7 +371,7 @@ button:disabled {
     grid-template-columns: minmax(11rem, 1.1fr) minmax(18rem, 2fr) auto;
     grid-template-areas:
         "heading progress actions"
-        "time remaining actions";
+        "timing progress actions";
     align-items: center;
     gap: 1.5rem;
     border: 1px solid var(--line);
@@ -366,15 +397,24 @@ button:disabled {
     font: inherit;
 }
 
-.session-time-row {
-    grid-area: time;
+.session-timing {
+    grid-area: timing;
     display: flex;
+    min-width: 0;
+    align-items: baseline;
     justify-content: space-between;
-    gap: 1rem;
+    gap: 0.75rem;
     margin-top: 0.55rem;
     color: var(--muted);
     font-size: 0.9rem;
     font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+}
+
+.session-time-range {
+    display: flex;
+    align-items: baseline;
+    gap: 0.4rem;
 }
 
 .session-progress-label {
@@ -420,9 +460,8 @@ button:disabled {
 }
 
 .session-remaining {
-    grid-area: remaining;
-    margin-top: 0.35rem;
-    font-size: 1.25rem;
+    flex: 0 0 auto;
+    font-size: 1.05rem;
     font-variant-numeric: tabular-nums;
     font-weight: 750;
 }
@@ -526,15 +565,15 @@ button:disabled {
 }
 
 .history-panel {
-    margin-top: 1.5rem;
     border: 1px solid var(--line);
     border-radius: 0.85rem;
     background: var(--surface);
 }
 
-.history-panel summary {
-    cursor: pointer;
+.history-panel h2 {
+    margin: 0;
     color: var(--muted);
+    font-size: 1rem;
     font-weight: 700;
     padding: 0.9rem 1rem;
 }
@@ -586,9 +625,8 @@ button:disabled {
         grid-template-columns: 1fr;
         grid-template-areas:
             "heading"
-            "time"
+            "timing"
             "progress"
-            "remaining"
             "actions";
     }
 
@@ -720,15 +758,22 @@ button:disabled {
         padding: 0.5rem 0.9rem;
     }
 
-    .toolbar,
-    .carry-lock-bar,
-    .session-time-row {
+    .toolbar {
         align-items: stretch;
         flex-direction: column;
     }
 
-    .carry-lock-bar {
-        top: env(safe-area-inset-top);
+    .session-timing {
+        gap: 0.4rem;
+        font-size: 0.82rem;
+    }
+
+    .session-time-range {
+        gap: 0.25rem;
+    }
+
+    .session-remaining {
+        font-size: 0.95rem;
     }
 
     .session-actions {

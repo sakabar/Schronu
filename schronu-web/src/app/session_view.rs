@@ -101,6 +101,14 @@ fn SessionCard(
     } else {
         "session-remaining"
     };
+    let remaining = format_mm_ss(session.remaining_seconds);
+    let remaining_label = if session.remaining_seconds < 0 {
+        format!("超過時間 {remaining}")
+    } else {
+        format!("残り時間 {remaining}")
+    };
+    let started_at_label = format!("開始時刻 {}", session.started_at_hh_mm);
+    let completion_label = format!("完了予定時刻 {completion}");
     let normal_style = format!("width:{}%", session.normal_bar_percent.max(0));
     let overrun_style = format!("width:{}%", session.overrun_bar_percent.max(0));
 
@@ -110,10 +118,13 @@ fn SessionCard(
                 h2 { "{session.task_name}" }
                 span { class: "session-progress-label", "{progress}" }
             }
-            div { class: "session-time-row",
-                time { "{session.started_at_hh_mm}" }
-                span { aria_hidden: "true", "→" }
-                time { "{completion}" }
+            div { class: "session-timing",
+                span { class: "session-time-range",
+                    time { aria_label: started_at_label, "{session.started_at_hh_mm}" }
+                    span { aria_hidden: "true", "→" }
+                    time { aria_label: completion_label, "{completion}" }
+                }
+                span { class: remaining_class, aria_label: remaining_label, "{remaining}" }
             }
             div {
                 class: "session-progress-scroll",
@@ -128,7 +139,6 @@ fn SessionCard(
                     div { class: "session-progress-overrun", style: overrun_style }
                 }
             }
-            p { class: remaining_class, "{format_mm_ss(session.remaining_seconds)}" }
             if confirming_discard_completion() {
                 div {
                     class: "session-discard-completion-confirmation",

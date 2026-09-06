@@ -23,6 +23,7 @@ use std::collections::{HashSet, VecDeque};
 pub enum ActiveTab {
     Session,
     List,
+    History,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]

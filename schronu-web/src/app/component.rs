@@ -1,3 +1,4 @@
+use crate::client::state::ActiveTab;
 use dioxus::prelude::*;
 
 #[cfg(all(feature = "web", target_arch = "wasm32"))]
@@ -54,5 +55,40 @@ pub(super) fn LoadingOverlay() -> Element {
                 span { "通信中…" }
             }
         }
+    }
+}
+
+#[component]
+pub(super) fn NavigationTabs(active_tab: ActiveTab, on_switch: EventHandler<ActiveTab>) -> Element {
+    rsx! {
+        nav { class: "tabs", aria_label: "表示切替",
+            TabButton {
+                label: "セッション",
+                selected: active_tab == ActiveTab::Session,
+                onclick: move |_| on_switch.call(ActiveTab::Session),
+            }
+            TabButton {
+                label: "一覧",
+                selected: active_tab == ActiveTab::List,
+                onclick: move |_| on_switch.call(ActiveTab::List),
+            }
+            TabButton {
+                label: "発火履歴",
+                selected: active_tab == ActiveTab::History,
+                onclick: move |_| on_switch.call(ActiveTab::History),
+            }
+        }
+    }
+}
+
+#[component]
+fn TabButton(label: &'static str, selected: bool, onclick: EventHandler<MouseEvent>) -> Element {
+    let class = if selected {
+        "tab-button is-selected"
+    } else {
+        "tab-button"
+    };
+    rsx! {
+        button { class, r#type: "button", aria_pressed: selected, onclick, "{label}" }
     }
 }

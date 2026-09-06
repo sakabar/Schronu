@@ -242,6 +242,153 @@ fn session_card_renders_time_progress_overrun_and_four_typed_actions() {
 }
 
 #[test]
+fn session_cardは開始と完了予定と残り超過を同じ時刻行に表示する() {
+    let mut active = card("active");
+    active.started_at_hh_mm = "12:43".to_owned();
+    active.completion_hh_mm = Some("13:43".to_owned());
+    active.remaining_seconds = 58 * 60 + 4;
+    let (active_html, _) = render(vec![active], false);
+    assert_session_timing(
+        &active_html,
+        "12:43",
+        "13:43",
+        "58:04",
+        "残り時間",
+        "session-remaining",
+    );
+
+    let mut overrun = card("overrun");
+    overrun.remaining_seconds = -3;
+    let (overrun_html, _) = render(vec![overrun], false);
+    assert_session_timing(
+        &overrun_html,
+        "11:25",
+        "11:28",
+        "00:03",
+        "超過時間",
+        "session-remaining is-overrun",
+    );
+
+    let mut unavailable = card("unavailable");
+    unavailable.completion_hh_mm = None;
+    unavailable.remaining_seconds = 10;
+    let (unavailable_html, _) = render(vec![unavailable], false);
+    assert_session_timing(
+        &unavailable_html,
+        "11:25",
+        "--:--",
+        "00:10",
+        "残り時間",
+        "session-remaining",
+    );
+}
+
+fn assert_session_timing(
+    html: &str,
+    started_at: &str,
+    completion: &str,
+    remaining: &str,
+    remaining_kind: &str,
+    remaining_class: &str,
+) {
+    let card = session_card_subtree(html);
+    let timing = session_timing_subtree(card);
+
+    assert_direct_text_node(
+        timing,
+        "time",
+        started_at,
+        None,
+        &format!("開始時刻 {started_at}"),
+    );
+    assert_direct_text_node(
+        timing,
+        "time",
+        completion,
+        None,
+        &format!("完了予定時刻 {completion}"),
+    );
+    assert_direct_text_node(
+        timing,
+        "span",
+        remaining,
+        Some(remaining_class),
+        &format!("{remaining_kind} {remaining}"),
+    );
+    assert!(timing.contains("→"), "missing arrow in {timing}");
+    assert_eq!(timing.matches("<time").count(), 2, "{timing}");
+}
+
+fn assert_direct_text_node(
+    html: &str,
+    tag: &str,
+    text: &str,
+    expected_class: Option<&str>,
+    expected_aria_label: &str,
+) {
+    let opening_tag = opening_tag_for_direct_text(html, tag, text);
+    assert!(
+        opening_tag.contains(&format!("aria-label=\"{expected_aria_label}\"")),
+        "missing aria-label on {opening_tag}"
+    );
+    if let Some(expected_class) = expected_class {
+        assert!(
+            opening_tag.contains(&format!("class=\"{expected_class}\"")),
+            "unexpected class on {opening_tag}"
+        );
+    }
+}
+
+fn opening_tag_for_direct_text<'a>(html: &'a str, tag: &str, text: &str) -> &'a str {
+    let opening_prefix = format!("<{tag}");
+    let closing_tag = format!("</{tag}>");
+    let mut search_start = 0;
+
+    while let Some(relative_start) = html[search_start..].find(&opening_prefix) {
+        let node_start = search_start + relative_start;
+        let opening_end = html[node_start..]
+            .find('>')
+            .map(|offset| node_start + offset)
+            .expect("candidate node must close its opening tag");
+        let text_start = opening_end + 1;
+        let closing_start = html[text_start..]
+            .find(&closing_tag)
+            .map(|offset| text_start + offset)
+            .expect("candidate node must have a closing tag");
+        if &html[text_start..closing_start] == text {
+            return &html[node_start..=opening_end];
+        }
+        search_start = opening_end + 1;
+    }
+
+    panic!("missing <{tag}> node with direct text {text:?} in {html}");
+}
+
+fn session_card_subtree(html: &str) -> &str {
+    let card_start = html
+        .find("class=\"session-card\"")
+        .expect("rendered variant must have one session card");
+    let card_end = html[card_start..]
+        .find("</article>")
+        .map(|offset| card_start + offset)
+        .expect("session card must close");
+
+    &html[card_start..card_end]
+}
+
+fn session_timing_subtree(html: &str) -> &str {
+    let timing_start = html
+        .find("class=\"session-timing\"")
+        .expect("session card must have one timing container");
+    let timing_end = html[timing_start..]
+        .find("</div>")
+        .map(|offset| timing_start + offset)
+        .expect("timing container must close");
+
+    &html[timing_start..timing_end]
+}
+
+#[test]
 fn session操作は意味別classと狭幅1列layoutを持つ() {
     let (html, _) = render(vec![card("task-1")], false);
     for class in [
