@@ -846,11 +846,27 @@ fn execute_backup_command(
     let storage_lock =
         StorageLock::acquire_with_timeout(&storage_directory, LockMode::Cli, CLI_LOCK_TIMEOUT)
             .map_err(CliRepositoryTransactionError::Lock)?;
-    let summary = create_snapshot_with_lock(
-        &storage_directory,
+    execute_backup_command_with_lock(
+        stdout,
         snapshot_directory,
         operation_now,
+        &storage_directory,
         &storage_lock,
+    )
+}
+
+fn execute_backup_command_with_lock(
+    stdout: &mut dyn SchronuWriter,
+    snapshot_directory: &std::path::Path,
+    operation_now: DateTime<Local>,
+    storage_directory: &std::path::Path,
+    storage_lock: &StorageLock,
+) -> Result<(), RunError> {
+    let summary = create_snapshot_with_lock(
+        storage_directory,
+        snapshot_directory,
+        operation_now,
+        storage_lock,
     )
     .map_err(RunError::Snapshot)?;
     render_display_model_with_mode(
@@ -1399,11 +1415,26 @@ fn handle_interactive_submit_at(
                 CommandError::Output(error),
             ));
         }
-        return match execute_backup_command(
+        let storage_directory =
+            std::path::PathBuf::from(task_repository.get_project_storage_dir_name());
+        let storage_lock = match StorageLock::acquire_with_timeout(
+            &storage_directory,
+            LockMode::Cli,
+            CLI_LOCK_TIMEOUT,
+        ) {
+            Ok(storage_lock) => storage_lock,
+            Err(error) => {
+                return InteractiveRepositoryEventOutcome::Retry(
+                    CliRepositoryTransactionError::Lock(error),
+                )
+            }
+        };
+        return match execute_backup_command_with_lock(
             stdout,
-            task_repository,
             &snapshot_directory,
             operation_now,
+            &storage_directory,
+            &storage_lock,
         ) {
             Ok(()) => {
                 if let Err(error) = task_repository.reload_if_changed(operation_now) {
