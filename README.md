@@ -42,6 +42,12 @@ SCHRONU_CONFIG_PATH=/absolute/path/to/schronu.yaml \
 ~/.cargo/bin/dx serve --locked --web --package schronu-web
 ```
 
+`git bisect`や`git checkout`でWeb assetを含むcommitを切り替えた後、`dx serve`が切り替え前のCSSを配信し続ける場合があります。sourceと表示が一致しない場合は、実行中の`dx serve`を停止してからDioxusの生成物だけを削除し、上記commandを再実行してください。`target/`全体を削除する必要はありません。
+
+```shell
+rm -rf target/dx/schronu-web
+```
+
 起動後は`http://127.0.0.1:8080`を開きます。application serverは`127.0.0.1`へ固定しており、認証は設けていません。Dioxus CLIの`serve`へ外部addressを指定しないでください。
 
 初回表示ではlogical date、buffer、日付選択肢を取得します。以後server通信が起きるのは、日付を選んでtask一覧を取得するとき、自動セッションを選定するとき、セッションを記録して解除するとき、taskを完了するときだけです。tab切替、timer更新、一覧からのセッション追加、「破棄して解除」、破棄完了の確認とキャンセルでは通信しません。logical dateが日付境界の06:00を越えて変わっても自動取得せず、次のserver操作のresponseで更新します。

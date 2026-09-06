@@ -25,6 +25,18 @@ pub fn rebuild_with_event_listeners(
     event_listener_ids(dom.rebuild_to_vec().edits, event_name)
 }
 
+pub fn rebuild_with_named_event_listeners(dom: &mut VirtualDom) -> Vec<(String, ElementId)> {
+    ensure_event_converter();
+    dom.rebuild_to_vec()
+        .edits
+        .into_iter()
+        .filter_map(|mutation| match mutation {
+            Mutation::NewEventListener { name, id } => Some((name.to_owned(), id)),
+            _ => None,
+        })
+        .collect()
+}
+
 fn event_listener_ids(mutations: Vec<Mutation>, event_name: &str) -> Vec<ElementId> {
     mutations
         .into_iter()
