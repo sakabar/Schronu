@@ -530,38 +530,26 @@ pub fn defer_routine_task(
         .map_err(ApplicationError::TaskTree)?;
     let orig_start_time = task.get_start_time().map_err(ApplicationError::TaskTree)?;
 
-    let deadline_out_of_range = || ApplicationError::LogicalDateOutOfRange {
-        operation: "defer_routine_deadline",
-        datetime: orig_deadline_time,
-    };
-    let new_deadline_time = if let Some(parent_deadline_time) = parent_deadline_time_opt {
-        let first_logical_date_start = try_next_logical_date_start(orig_deadline_time)?;
-        let additional_days = repetition_interval_days
-            .checked_sub(1)
-            .ok_or_else(deadline_out_of_range)?;
-        let additional_duration =
-            Duration::try_days(additional_days).ok_or_else(deadline_out_of_range)?;
-        let target_date = first_logical_date_start
-            .date_naive()
-            .checked_add_signed(additional_duration)
-            .ok_or_else(deadline_out_of_range)?;
-        try_local_date_and_time(target_date, parent_deadline_time.time())?
-    } else {
-        let duration =
-            Duration::try_days(repetition_interval_days).ok_or_else(deadline_out_of_range)?;
-        orig_deadline_time
-            .checked_add_signed(duration)
-            .ok_or_else(deadline_out_of_range)?
-    };
-    let start_out_of_range = || ApplicationError::LogicalDateOutOfRange {
-        operation: "defer_routine_start",
-        datetime: orig_start_time,
-    };
-    let start_offset_days = (new_deadline_time - orig_deadline_time).num_days();
-    let start_offset = Duration::try_days(start_offset_days).ok_or_else(start_out_of_range)?;
-    let new_start_time = orig_start_time
-        .checked_add_signed(start_offset)
-        .ok_or_else(start_out_of_range)?;
+    if parent_deadline_time_opt.is_some() {
+        try_next_logical_date_start(orig_deadline_time)?;
+    }
+    let deadline_time = parent_deadline_time_opt
+        .unwrap_or(orig_deadline_time)
+        .time();
+    let new_deadline_time = shift_local_date_and_time(
+        orig_deadline_time,
+        repetition_interval_days,
+        deadline_time,
+        "defer_routine_deadline",
+        orig_deadline_time,
+    )?;
+    let new_start_time = shift_local_date_and_time(
+        orig_start_time,
+        repetition_interval_days,
+        orig_start_time.time(),
+        "defer_routine_start",
+        orig_start_time,
+    )?;
 
     task.replace_deadline_time(new_deadline_time)
         .map_err(ApplicationError::TaskTree)?;
