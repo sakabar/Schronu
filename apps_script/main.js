@@ -79,6 +79,10 @@ function syncEditedManualCols_(spreadsheet, sourceSheet, editedRange) {
   const otherSheet = getOtherSheet_(spreadsheet, sourceSheet.getName());
 
   if (!otherSheet) {
+    spreadsheet.toast(
+      `同期先シートが存在しません: ${sourceSheet.getName()}`,
+      'Schronu同期エラー',
+    );
     return;
   }
 
@@ -86,76 +90,139 @@ function syncEditedManualCols_(spreadsheet, sourceSheet, editedRange) {
   const endRow = editedRange.getRow() + editedRange.getNumRows() - 1;
   const startCol = editedRange.getColumn();
   const endCol = startCol + editedRange.getNumColumns() - 1;
+  const editedSyncCols = SCHRONU_CONFIG.syncCols.filter(
+    (col) => startCol <= col && col <= endCol,
+  );
+  const sourceIndex = buildIdentityIndex_(sourceSheet);
+  const targetIndex = buildIdentityIndex_(otherSheet);
+  const errors = [];
+  const writes = new Map();
 
   for (let row = startRow; row <= endRow; row++) {
-    const ind = getInd_(sourceSheet, row);
-    const taskId = getTaskId_(sourceSheet, row);
+    const sourceIdentity = sourceIndex.byRow.get(row) || { ind: '', taskId: '' };
+    const { ind, taskId } = sourceIdentity;
 
+    if (!ind) {
+      errors.push(`${sourceSheet.getName()} ${row}行: A列indが空です`);
+    }
+    if (!taskId) {
+      errors.push(`${sourceSheet.getName()} ${row}行: B列task_idが空です`);
+    }
     if (!ind || !taskId) {
       continue;
     }
 
-    const targetRow = findRowBySegmentIdentity_(otherSheet, ind, taskId);
+    const segmentKey = makeSegmentKey_(ind, taskId);
+    const sourceSegmentRows = sourceIndex.bySegment.get(segmentKey) || [];
+    const targetSegmentRows = targetIndex.bySegment.get(segmentKey) || [];
 
-    if (!targetRow) {
+    if (sourceSegmentRows.length > 1) {
+      errors.push(
+        `${sourceSheet.getName()} A=${ind} B=${taskId}: 複合keyが重複しています`,
+      );
+    }
+    if (targetSegmentRows.length === 0) {
+      errors.push(
+        `${otherSheet.getName()} A=${ind} B=${taskId}: 対応segmentがありません`,
+      );
+    } else if (targetSegmentRows.length > 1) {
+      errors.push(
+        `${otherSheet.getName()} A=${ind} B=${taskId}: 複合keyが重複しています`,
+      );
+    }
+    if (sourceSegmentRows.length !== 1 || targetSegmentRows.length !== 1) {
       continue;
     }
 
-    for (const col of SCHRONU_CONFIG.syncCols) {
-      if (col < startCol || endCol < col) {
-        continue;
-      }
-
+    for (const col of editedSyncCols) {
       const value = sourceSheet.getRange(row, col).getValue();
       if (SCHRONU_CONFIG.taskSyncCols.includes(col)) {
-        for (const sheet of [sourceSheet, otherSheet]) {
-          for (const taskRow of findRowsByTaskId_(sheet, taskId)) {
-            if (sheet === sourceSheet && taskRow === row) {
+        for (const [sheet, index] of [
+          [sourceSheet, sourceIndex],
+          [otherSheet, targetIndex],
+        ]) {
+          for (const taskIdentity of index.byTask.get(taskId) || []) {
+            if (!taskIdentity.ind) {
+              errors.push(`${sheet.getName()} ${taskIdentity.row}行: A列indが空です`);
               continue;
             }
-            sheet.getRange(taskRow, col).setValue(value);
+            if (sheet === sourceSheet && taskIdentity.row === row) {
+              continue;
+            }
+            planWrite_(writes, sheet, taskIdentity.row, col, value);
           }
         }
       } else {
-        otherSheet.getRange(targetRow, col).setValue(value);
+        planWrite_(writes, otherSheet, targetSegmentRows[0].row, col, value);
       }
     }
   }
-}
 
-function findRowsByTaskId_(sheet, taskId) {
-  const lastRow = sheet.getLastRow();
-
-  if (lastRow < SCHRONU_CONFIG.dataStartRow) {
-    return [];
+  if (errors.length > 0) {
+    spreadsheet.toast([...new Set(errors)].join('\n'), 'Schronu同期エラー');
+    return;
   }
 
-  return sheet
-    .getRange(SCHRONU_CONFIG.dataStartRow, SCHRONU_CONFIG.taskIdCol, lastRow - SCHRONU_CONFIG.dataStartRow + 1, 1)
-    .getValues()
-    .flatMap((values, index) => normalizeTaskId_(values[0]) === taskId
-      ? [SCHRONU_CONFIG.dataStartRow + index]
-      : []);
+  for (const write of writes.values()) {
+    write.sheet.getRange(write.row, write.col).setValue(write.value);
+  }
 }
 
-function findRowBySegmentIdentity_(sheet, ind, taskId) {
+function buildIdentityIndex_(sheet) {
   const lastRow = sheet.getLastRow();
+  const index = {
+    byRow: new Map(),
+    bySegment: new Map(),
+    byTask: new Map(),
+  };
 
   if (lastRow < SCHRONU_CONFIG.dataStartRow) {
-    return null;
+    return index;
   }
 
   const values = sheet
     .getRange(SCHRONU_CONFIG.dataStartRow, SCHRONU_CONFIG.indCol, lastRow - SCHRONU_CONFIG.dataStartRow + 1, 2)
     .getValues();
 
-  for (let i = 0; i < values.length; i++) {
-    if (normalizeInd_(values[i][0]) === ind && normalizeTaskId_(values[i][1]) === taskId) {
-      return SCHRONU_CONFIG.dataStartRow + i;
+  for (let offset = 0; offset < values.length; offset++) {
+    const identity = {
+      row: SCHRONU_CONFIG.dataStartRow + offset,
+      ind: normalizeInd_(values[offset][0]),
+      taskId: normalizeTaskId_(values[offset][1]),
+    };
+    index.byRow.set(identity.row, identity);
+    if (identity.taskId) {
+      appendIndexValue_(index.byTask, identity.taskId, identity);
+    }
+    if (identity.ind && identity.taskId) {
+      appendIndexValue_(
+        index.bySegment,
+        makeSegmentKey_(identity.ind, identity.taskId),
+        identity,
+      );
     }
   }
 
-  return null;
+  return index;
+}
+
+function appendIndexValue_(index, key, value) {
+  const values = index.get(key) || [];
+  values.push(value);
+  index.set(key, values);
+}
+
+function makeSegmentKey_(ind, taskId) {
+  return `${ind}\u0000${taskId}`;
+}
+
+function planWrite_(writes, sheet, row, col, value) {
+  writes.set(`${sheet.getName()}\u0000${row}\u0000${col}`, {
+    sheet,
+    row,
+    col,
+    value,
+  });
 }
 
 function getOtherSheet_(spreadsheet, sheetName) {
@@ -166,14 +233,6 @@ function getOtherSheet_(spreadsheet, sheetName) {
   }
 
   return spreadsheet.getSheetByName(otherSheetName);
-}
-
-function getInd_(sheet, row) {
-  return normalizeInd_(sheet.getRange(row, SCHRONU_CONFIG.indCol).getValue());
-}
-
-function getTaskId_(sheet, row) {
-  return normalizeTaskId_(sheet.getRange(row, SCHRONU_CONFIG.taskIdCol).getValue());
 }
 
 function normalizeInd_(value) {
