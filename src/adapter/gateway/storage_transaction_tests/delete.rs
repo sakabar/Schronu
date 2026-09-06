@@ -146,6 +146,28 @@ fn test_delete_entryはfile後に空directoryを削除する() {
 }
 
 #[test]
+fn test_delete_entryは入力順に依存せずfile後にdirectoryを削除する() {
+    let storage_dir = TestStorageDir::new();
+    let directory = storage_dir.path.join("obsolete/nested");
+    let file = directory.join("old.yaml");
+    fs::create_dir_all(&directory).unwrap();
+    fs::write(&file, b"old").unwrap();
+
+    let prepared = prepare_with_directories_and_deletes(
+        file_system_io(),
+        &storage_dir.path,
+        Uuid::from_u128(0x2260),
+        &[],
+        &[],
+        &[directory.as_path(), file.as_path()],
+    )
+    .unwrap();
+    prepared.commit().unwrap();
+
+    assert!(!directory.exists());
+}
+
+#[test]
 fn test_delete_entry後にparent_directoryをsyncする() {
     let storage_dir = TestStorageDir::new();
     let target_path = storage_dir.path.join("project/project.yaml");
