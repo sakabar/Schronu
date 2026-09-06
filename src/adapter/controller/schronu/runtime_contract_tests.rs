@@ -7344,6 +7344,50 @@ fn interactive_backup_verifyはcurrent_storage非依存で成功とsnapshot_erro
 }
 
 #[test]
+fn interactive_backup系の引数errorはcurrent_storageより先に返す() {
+    let storage_dir = TestStorageDir::new();
+    let now = Local.with_ymd_and_hms(2026, 9, 6, 14, 0, 0).unwrap();
+    let task = new_test_task_handle("backup parse focus").unwrap();
+    let task_id = task.get_id().unwrap();
+    let mut repository =
+        TestTaskRepository::new(task, now).with_storage_directory(&storage_dir.path);
+    let mut free_time_manager = TestFreeTimeManager::default();
+    let mut stdout = TestWriter::new();
+    let mut focused_task_id_opt = Some(task_id);
+    let mut last_focused_task_id_opt = Some(task_id);
+    let mut focus_started_datetime = now;
+    let mut focus_selection_mode = FocusSelectionMode::highest_priority();
+
+    for (command, usage) in [
+        ("backup verify", "backup verify <snapshot_dir>"),
+        ("backup verify snapshot extra", "backup verify <snapshot_dir>"),
+        ("backup", "backup <snapshot_dir>"),
+        ("backup snapshot extra", "backup <snapshot_dir>"),
+    ] {
+        let outcome = handle_interactive_submit_at(
+            &mut stdout,
+            &mut repository,
+            &mut free_time_manager,
+            InteractiveRepositoryState {
+                focused_task_id_opt: &mut focused_task_id_opt,
+                last_focused_task_id_opt: &mut last_focused_task_id_opt,
+                focus_started_datetime: &mut focus_started_datetime,
+                focus_selection_mode: &mut focus_selection_mode,
+            },
+            command,
+            now,
+        );
+
+        assert!(matches!(
+            outcome,
+            InteractiveRepositoryEventOutcome::Fatal(RunError::Command(error))
+                if error.to_string().contains(usage)
+        ));
+    }
+    assert_eq!(repository.reload_if_changed_attempt_count.get(), 0);
+}
+
+#[test]
 fn test_interactive_verifyは出力errorを分類してtransactionを継続する() {
     let operation_now = Local.with_ymd_and_hms(2026, 8, 23, 12, 0, 0).unwrap();
 

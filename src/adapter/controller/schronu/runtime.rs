@@ -1438,11 +1438,18 @@ fn handle_interactive_submit_at(
     operation_now: DateTime<Local>,
 ) -> InteractiveRepositoryEventOutcome {
     let command = line.trim().to_string();
-    if let Ok(Command::BackupVerify { snapshot_directory }) = parse_interactive_command(&command) {
+    let parsed_backup_command = (command == "backup" || command.starts_with("backup "))
+        .then(|| parse_interactive_command(&command));
+    if let Some(Err(error)) = &parsed_backup_command {
+        return InteractiveRepositoryEventOutcome::Fatal(RunError::Command(
+            map_command_parse_error(error.clone()),
+        ));
+    }
+    if let Some(Ok(Command::BackupVerify { snapshot_directory })) = &parsed_backup_command {
         if let Err(error) = render_interactive_command_echo(stdout, &command, operation_now) {
             return InteractiveRepositoryEventOutcome::Fatal(error);
         }
-        return match execute_backup_verify_command(stdout, &snapshot_directory) {
+        return match execute_backup_verify_command(stdout, snapshot_directory) {
             Ok(()) => InteractiveRepositoryEventOutcome::CommandExecuted(
                 CommandKind::BackupVerify,
                 operation_now,
@@ -1450,7 +1457,7 @@ fn handle_interactive_submit_at(
             Err(error) => InteractiveRepositoryEventOutcome::Fatal(error),
         };
     }
-    if let Ok(Command::Backup { snapshot_directory }) = parse_interactive_command(&command) {
+    if let Some(Ok(Command::Backup { snapshot_directory })) = &parsed_backup_command {
         if let Err(error) = render_interactive_command_echo(stdout, &command, operation_now) {
             return InteractiveRepositoryEventOutcome::Fatal(error);
         }
@@ -1470,7 +1477,7 @@ fn handle_interactive_submit_at(
         };
         return match execute_backup_command_with_lock(
             stdout,
-            &snapshot_directory,
+            snapshot_directory,
             operation_now,
             &storage_directory,
             &storage_lock,
