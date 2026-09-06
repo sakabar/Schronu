@@ -1,4 +1,5 @@
 use crate::client::carry_lock::CarryLockMode;
+use dioxus::html::input_data::MouseButton;
 use dioxus::prelude::*;
 #[cfg(all(feature = "web", target_arch = "wasm32"))]
 use std::rc::Rc;
@@ -152,7 +153,11 @@ pub(crate) fn CarryLockBar(
                         aria_label: "1.2秒長押しで1操作許可",
                         aria_pressed: "true",
                         onpointerdown: move |event: PointerEvent| {
-                            if event.is_primary() {
+                            if accepts_long_press_pointer(
+                                &event.pointer_type(),
+                                event.is_primary(),
+                                event.trigger_button(),
+                            ) {
                                 begin_long_press(
                                     tracker,
                                     pressing,
@@ -212,6 +217,21 @@ fn DisableCarryLockDetails(on_disable: EventHandler<()>) -> Element {
                 }
             }
         }
+    }
+}
+
+pub(super) fn accepts_long_press_pointer(
+    pointer_type: &str,
+    is_primary: bool,
+    trigger_button: Option<MouseButton>,
+) -> bool {
+    if !is_primary {
+        return false;
+    }
+    match pointer_type {
+        "mouse" => trigger_button == Some(MouseButton::Primary),
+        "touch" | "pen" => true,
+        _ => false,
     }
 }
 

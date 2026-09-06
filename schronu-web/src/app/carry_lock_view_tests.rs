@@ -2,9 +2,12 @@
 
 use std::sync::{Arc, Mutex};
 
-use super::carry_lock_view::{CarryLockBar, CarryLockViewModel, LongPressSource, LongPressTracker};
+use super::carry_lock_view::{
+    accepts_long_press_pointer, CarryLockBar, CarryLockViewModel, LongPressSource, LongPressTracker,
+};
 use super::view_test_support::{dispatch_click, rebuild_with_click_listeners};
 use crate::client::carry_lock::CarryLockMode;
+use dioxus::html::input_data::MouseButton;
 use dioxus::prelude::*;
 
 #[derive(Clone)]
@@ -139,6 +142,37 @@ fn pointer長押しは成立時に一度だけ発火し短押しとcancelを拒�
     let completed = tracker.begin(LongPressSource::Pointer);
     assert!(tracker.complete(completed));
     assert!(!tracker.complete(completed), "同じtimerは1回だけ成立する");
+}
+
+#[test]
+fn pointer長押しは主pointerの許可されたcontactだけで開始する() {
+    assert!(accepts_long_press_pointer(
+        "mouse",
+        true,
+        Some(MouseButton::Primary)
+    ));
+    for button in [
+        MouseButton::Secondary,
+        MouseButton::Auxiliary,
+        MouseButton::Fourth,
+        MouseButton::Fifth,
+        MouseButton::Unknown,
+    ] {
+        assert!(!accepts_long_press_pointer("mouse", true, Some(button)));
+    }
+    assert!(!accepts_long_press_pointer("mouse", true, None));
+    assert!(accepts_long_press_pointer("touch", true, None));
+    assert!(accepts_long_press_pointer("pen", true, None));
+    assert!(!accepts_long_press_pointer(
+        "touch",
+        false,
+        Some(MouseButton::Primary)
+    ));
+    assert!(!accepts_long_press_pointer(
+        "unknown",
+        true,
+        Some(MouseButton::Primary)
+    ));
 }
 
 #[test]
