@@ -278,3 +278,58 @@ fn current_restoreはfileからnonempty_directory置換後のrevision失敗を�
     assert!(!current.join(".schronu-transactions/.active").exists());
     verify_snapshot(recovery_snapshot).unwrap();
 }
+
+#[cfg(unix)]
+#[test]
+fn current_restoreはsnapshotのfileとdirectoryのmodeを復元する() {
+    use std::os::unix::fs::{MetadataExt, PermissionsExt};
+
+    let root = TestDirectory::new("current-restore-permissions");
+    let current = root.child("current");
+    let source = root.child("source");
+    let snapshot = root.child("snapshot");
+    let pre_backup = root.child("pre-backup");
+    let now = Local.with_ymd_and_hms(2026, 9, 6, 18, 0, 0).unwrap();
+    create_saved_repository(&current, now);
+    create_saved_repository(&source, now);
+    fs::create_dir_all(current.join("mode-directory")).unwrap();
+    fs::write(current.join("mode-directory/mode-file"), b"old").unwrap();
+    fs::set_permissions(
+        current.join("mode-directory"),
+        fs::Permissions::from_mode(0o700),
+    )
+    .unwrap();
+    fs::set_permissions(
+        current.join("mode-directory/mode-file"),
+        fs::Permissions::from_mode(0o600),
+    )
+    .unwrap();
+    fs::create_dir_all(source.join("mode-directory")).unwrap();
+    fs::write(source.join("mode-directory/mode-file"), b"new").unwrap();
+    fs::set_permissions(
+        source.join("mode-directory"),
+        fs::Permissions::from_mode(0o751),
+    )
+    .unwrap();
+    fs::set_permissions(
+        source.join("mode-directory/mode-file"),
+        fs::Permissions::from_mode(0o640),
+    )
+    .unwrap();
+    create_snapshot_at(&source, &snapshot, now).unwrap();
+    let storage_lock = StorageLock::acquire(&current, LockMode::Cli).unwrap();
+
+    restore_current_snapshot_at(&current, &snapshot, &pre_backup, now, &storage_lock).unwrap();
+
+    assert_eq!(
+        fs::metadata(current.join("mode-directory")).unwrap().mode() & 0o7777,
+        0o751
+    );
+    assert_eq!(
+        fs::metadata(current.join("mode-directory/mode-file"))
+            .unwrap()
+            .mode()
+            & 0o7777,
+        0o640
+    );
+}
