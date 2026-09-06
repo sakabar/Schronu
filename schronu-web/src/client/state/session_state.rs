@@ -466,6 +466,7 @@ impl ClientState {
     ) -> ClientEffect {
         if self.sessions.mutation_globally_blocked
             || self.sessions.in_flight_task_ids.contains(task_id)
+            || !self.sessions.pending_mutations.is_empty()
             || self
                 .sessions
                 .manual_check_blocked_task_ids
@@ -477,6 +478,10 @@ impl ClientState {
         let Some(conflict) = self.sessions.completion_conflicts.get(task_id).cloned() else {
             return ClientEffect::None;
         };
+        if self.sessions.mutation_safety.disarm(storage).is_err() {
+            self.record_local_result(Some(task_id), false);
+            return ClientEffect::None;
+        }
         let measured_milliseconds = (i128::from(conflict.ended_at_epoch_ms)
             - i128::from(conflict.original_request.started_at_epoch_ms))
         .max(0);

@@ -825,6 +825,48 @@ fn 完了実績競合からの再開は確認待ちを除外してstorageを原�
 }
 
 #[test]
+fn 完了実績競合の再開は安全marker解除成功後だけsessionを更新する() {
+    let storage = FakeStorage::default();
+    let mut state = state_with_sessions(&storage, &[TASK_ID]);
+    state.tick(6_500);
+    let (request_id, _) = complete_effect(state.begin_complete_session(&storage, TASK_ID));
+    storage.fail_safety_writes.set(true);
+    state.apply_complete_result(
+        &storage,
+        request_id,
+        Err(ServerFailure::Operation(actual_work_conflict(Some(250)))),
+    );
+    state.tick(20_000);
+
+    state.resume_completion_conflict(&storage, TASK_ID);
+
+    assert_eq!(state.sessions()[0].started_at_epoch_ms, 0);
+    assert_eq!(state.sessions()[0].actual_work_seconds_at_start, 100);
+    assert!(project_session_cards(&state, 540)[0]
+        .completion_conflict
+        .is_some());
+    assert!(matches!(
+        state.display_error(),
+        Some(schronu_web::client::state::DisplayError::LocalStorage {
+            committed_on_server: false,
+            ..
+        })
+    ));
+    assert!(load_client_state(&storage, 20_000)
+        .unwrap()
+        .mutation_globally_blocked());
+
+    storage.fail_safety_writes.set(false);
+    state.resume_completion_conflict(&storage, TASK_ID);
+
+    assert_eq!(state.sessions()[0].started_at_epoch_ms, 13_500);
+    assert_eq!(state.sessions()[0].actual_work_seconds_at_start, 250);
+    let restored = load_client_state(&storage, 20_000).unwrap();
+    assert!(!restored.mutation_globally_blocked());
+    assert_eq!(restored.sessions(), state.sessions());
+}
+
+#[test]
 fn 現在実績のない旧完了競合はmanual_checkのままsession破棄で解消する() {
     let storage = FakeStorage::default();
     let mut state = state_with_sessions(&storage, &[TASK_ID]);
