@@ -54,6 +54,10 @@ fn 通信matrixとstorage_firstのlocal状態遷移を固定する() {
     storage.fail_writes.set(false);
     assert_eq!(state.discard_session(&storage, TASK_ID), ClientEffect::None);
     assert!(state.sessions().is_empty());
+    assert!(
+        state.history().is_empty(),
+        "localStorage操作は発火履歴へ記録しない"
+    );
 }
 
 #[test]

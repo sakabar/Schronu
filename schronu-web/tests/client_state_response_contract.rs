@@ -164,7 +164,7 @@ fn manual_check_blockはsession破棄成功時だけ解消する() {
 }
 
 #[test]
-fn server_commit後のlocal削除失敗はserver成功とlocal失敗を別々に記録する() {
+fn server_commit後のlocal削除失敗はserver成功だけを履歴へ記録する() {
     let storage = FakeStorage::default();
     let mut state = state_with_sessions(&storage, &[TASK_ID]);
     let (request_id, _) = record_effect(state.begin_record_session(&storage, TASK_ID));
@@ -181,13 +181,18 @@ fn server_commit後のlocal削除失敗はserver成功とlocal失敗を別々に
         }),
     );
 
-    let entries: Vec<_> = state.history().iter().rev().take(2).collect();
-    assert_eq!(entries[1].operation, Operation::RecordSession);
-    assert_eq!(entries[1].locality, Locality::Server);
-    assert_eq!(entries[1].outcome, Outcome::Success);
-    assert_eq!(entries[0].operation, Operation::DiscardSession);
-    assert_eq!(entries[0].locality, Locality::Local);
-    assert_eq!(entries[0].outcome, Outcome::Failure);
+    assert_eq!(state.history().len(), 1);
+    let entry = state.history().front().unwrap();
+    assert_eq!(entry.operation, Operation::RecordSession);
+    assert_eq!(entry.locality, Locality::Server);
+    assert_eq!(entry.outcome, Outcome::Success);
+    assert!(matches!(
+        state.display_error(),
+        Some(DisplayError::LocalStorage {
+            committed_on_server: true,
+            task_id: Some(task_id),
+        }) if task_id == TASK_ID
+    ));
 }
 
 #[test]
