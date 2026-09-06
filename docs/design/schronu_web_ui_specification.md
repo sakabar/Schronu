@@ -442,7 +442,7 @@ display_buffer = buffer_seconds - buffer_elapsed - restored_session_elapsed
 - index 1: `曜 明日`
 - index 2..7: `曜`
 
-各buttonは表示labelとは別に具体的な`YYYY-MM-DD`を保持する。新しいserver responseでlogical dateが変わった場合はbuttonを再生成する。2種類の完了成功では選択logical dateを維持し、対象task UUIDのrowだけを除去する。それ以外のresponseでは既存一覧と選択logical dateをclearする。追加の`list_tasks`は自動実行しない。
+各buttonは表示labelとは別に具体的な`YYYY-MM-DD`を保持する。新しいserver responseでlogical dateが変わった場合はbuttonを再生成する。3種類のserver mutation成功responseでは選択logical dateと既存rowを維持し、選択日の`list_tasks`を続けて送る。それ以外のresponseでlogical dateが変わった場合は既存一覧と選択logical dateをclearする。「破棄して解除」は新しいsnapshotを伴わないが、localStorage削除成功後に同じ一覧再取得を行う。
 
 ### 6.6 持ち歩きロックstate
 
