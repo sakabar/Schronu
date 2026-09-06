@@ -492,9 +492,28 @@ fn native_ssrはbrowser_storageへ触れずloading_shellだけを描画する() 
     let html = dioxus::ssr::render(&dom);
 
     assert!(html.contains("Schronu"), "{html}");
-    assert!(html.contains("読み込み中"), "{html}");
+    assert!(html.contains("通信中…"), "{html}");
+    assert!(html.contains("loading-overlay"), "{html}");
+    assert!(html.contains("loading-spinner"), "{html}");
+    assert!(html.contains("role=\"status\""), "{html}");
+    assert!(html.contains("aria-live=\"polite\""), "{html}");
+    assert!(html.contains("aria-busy=\"true\""), "{html}");
     assert!(!html.contains("schronu 今"), "{html}");
     assert!(!html.contains(">更新<"), "{html}");
+}
+
+#[test]
+fn 製品orchestratorは全server_effectの完了まで通信中を保持する() {
+    let mut orchestrator = ComponentOrchestrator::new();
+
+    assert!(!orchestrator.server_effect_in_flight());
+    orchestrator.begin_server_effect();
+    assert!(orchestrator.server_effect_in_flight());
+    orchestrator.begin_server_effect();
+    orchestrator.finish_server_effect();
+    assert!(orchestrator.server_effect_in_flight());
+    orchestrator.finish_server_effect();
+    assert!(!orchestrator.server_effect_in_flight());
 }
 
 #[test]

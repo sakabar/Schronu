@@ -21,9 +21,25 @@ fn AppBody() -> Element {
 
     #[cfg(not(all(feature = "web", target_arch = "wasm32")))]
     rsx! {
-        main { class: "shell",
+        main { class: "shell", aria_busy: "true",
             header { class: "toolbar", h1 { "Schronu" } }
-            p { role: "status", "読み込み中…" }
+        }
+        LoadingOverlay {}
+    }
+}
+
+#[component]
+pub(super) fn LoadingOverlay() -> Element {
+    rsx! {
+        div {
+            class: "loading-overlay",
+            role: "status",
+            aria_live: "polite",
+            aria_busy: "true",
+            div { class: "loading-indicator",
+                span { class: "loading-spinner", aria_hidden: "true" }
+                span { "通信中…" }
+            }
         }
     }
 }
