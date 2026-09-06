@@ -36,11 +36,12 @@ impl SessionState {
         work_sessions: WorkSessionsState,
         mutation_safety: MutationSafetyState,
     ) -> Self {
+        let committed_blocked_task_ids = mutation_safety.committed_task_ids().clone();
         Self {
             work_sessions,
             in_flight_task_ids: HashSet::new(),
             manual_check_blocked_task_ids: HashSet::new(),
-            committed_blocked_task_ids: HashSet::new(),
+            committed_blocked_task_ids,
             committed_actual_work_seconds: HashMap::new(),
             uncertain_stopped_at_epoch_ms: HashMap::new(),
             mutation_globally_blocked: mutation_safety.mutation_blocked(),
@@ -488,6 +489,14 @@ impl ClientState {
                 self.sessions
                     .committed_blocked_task_ids
                     .insert(task_id.to_owned());
+                if self
+                    .sessions
+                    .mutation_safety
+                    .mark_committed(storage, task_id)
+                    .is_err()
+                {
+                    self.sessions.mutation_globally_blocked = true;
+                }
                 if let Some(actual) = actual_work_seconds {
                     self.sessions
                         .committed_actual_work_seconds

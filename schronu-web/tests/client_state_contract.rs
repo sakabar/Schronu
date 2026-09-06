@@ -313,10 +313,7 @@ fn server_commit済みsessionはreload後もbuffer補正と再送の対象外に
 
     let mut restored = load_client_state(&storage, 90_000).unwrap();
     let bootstrap_id = bootstrap_effect(restored.request_bootstrap());
-    restored.apply_bootstrap_result(
-        bootstrap_id,
-        Ok(snapshot("2026-09-05", 60_000)),
-    );
+    restored.apply_bootstrap_result(bootstrap_id, Ok(snapshot("2026-09-05", 60_000)));
 
     assert!(restored.is_session_committed_blocked(TASK_ID));
     assert_eq!(restored.display_buffer_seconds(), Some(30));

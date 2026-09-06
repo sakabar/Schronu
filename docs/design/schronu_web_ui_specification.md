@@ -151,13 +151,14 @@ keyは`schronu_web.work_sessions.v1`とする。valueはversion付きobjectと�
 ```json
 {
   "version": 1,
-  "mutation_blocked": true
+  "mutation_blocked": true,
+  "committed_task_ids": ["task UUID"]
 }
 ```
 
-このkeyが存在しない場合、またはversion 1の`mutation_blocked`が`false`の場合だけmutation可能な初期状態とする。未知version、JSON不正、schema不正は安全側へ倒し、mutation blockedとして復元する。
+このkeyが存在しない場合、またはversion 1の`mutation_blocked`が`false`の場合だけmutation可能な初期状態とする。`committed_task_ids`はserver commit成功後にlocal session削除だけが失敗したtask UUIDを保持し、省略された既存dataは空配列として読み込む。未知version、JSON不正、schema不正は安全側へ倒し、mutation blockedとして復元する。
 
-`record_session`または`complete_session`の送信前に、`mutation_blocked: true`をstorage-firstで保存する。保存失敗時はrequestを送信しない。成功、またはserverが未commitと確定できるerror responseの受信後、ほかに応答待ちのmutationがなく、repository状態も確定している場合だけ`false`へ戻す。browser crash、transport切断、`repository_state_uncertain`では`true`を残し、reload後も全mutationを停止する。解除はrepositoryを手動確認する明示操作だけが所有し、通常のread成功、session破棄、reloadでは解除しない。server commit後にlocal session削除だけが失敗している場合、明示解除は該当sessionを`work_sessions`からstorage-firstで削除してからmarkerを解除する。session削除に失敗した場合はmarkerを解除しない。session削除後のmarker解除に失敗した場合もblocked状態を維持するが、該当sessionは既に永続層から消えているため二重送信できない。transportまたは`repository_state_uncertain`由来の未確定sessionは、手動確認結果に基づく再操作のため残す。
+`record_session`または`complete_session`の送信前に、`mutation_blocked: true`をstorage-firstで保存する。保存失敗時はrequestを送信しない。成功、またはserverが未commitと確定できるerror responseの受信後、ほかに応答待ちのmutationがなく、repository状態も確定している場合だけ`false`へ戻す。browser crash、transport切断、`repository_state_uncertain`では`true`を残し、reload後も全mutationを停止する。解除はrepositoryを手動確認する明示操作だけが所有し、通常のread成功、session破棄、reloadでは解除しない。server commit後にlocal session削除だけが失敗している場合はtask UUIDを`committed_task_ids`へstorage-firstで追加し、reload後も再送とbuffer補正の対象外にする。明示解除は該当sessionを`work_sessions`からstorage-firstで削除してからmarkerと`committed_task_ids`を解除する。session削除に失敗した場合はmarkerを解除しない。session削除後のmarker解除に失敗した場合もblocked状態を維持するが、該当sessionは既に永続層から消えているため二重送信できない。transportまたは`repository_state_uncertain`由来の未確定sessionは、手動確認結果に基づく再操作のため残す。
 
 持ち歩きロックは`MutationSafetyState`とは目的と解除条件が異なるため、独立した`CarryLockState`とkey `schronu_web.carry_lock.v1`を使用する。
 
@@ -630,7 +631,7 @@ OperationHistoryEntry {
 - 一覧の手動session追加は`is_leaf == false`でlocalStorage、memory state、発火履歴を変更しないことを検証する。
 - bufferはsession 0件、snapshot以前からの復元session、snapshot後の途中開始、複数sessionの重複、最古sessionだけの破棄、全session破棄で、session不在時間と復元sessionの継続時間を契約どおり減算することを検証する。
 - 破棄のlocalStorage保存失敗ではsessionとbuffer表示を維持し、server commit済みでlocal削除に失敗したsessionはbuffer計算上の計測中sessionから除外することを検証する。
-- 同じlogical dateのread snapshot、実績反映済みmutation snapshot、06:00を跨ぐlogical date更新を新たなbuffer基準とし、初期loadで復元したsessionだけは最古開始時刻から各snapshot観測時刻までの継続秒を差し引くことを検証する。
+- 同じlogical dateのread snapshot、実績反映済みmutation snapshot、06:00を跨ぐlogical date更新を新たなbuffer基準とし、初期loadで復元したsessionだけは各snapshot観測時刻以前の計測区間の和集合を差し引くことを検証する。
 - 記録と2種類の完了についてserver mutation成功、競合、保存失敗、worker停止、多重送信防止、global・manual safety block時のsession遷移を検証する。
 - 3終了操作でclick時刻をrequestへ保持し、pending中のcard停止、単一・複数sessionのbuffer遷移、未commit確定error後の自動再開、transport切断・repository状態不確実時の確認完了までの停止を注入epochだけで検証する。実時間のsleepやtimer待機は使用しない。
 - 2種類の完了成功で同一task UUIDの全rowだけが即時に除去され、別taskのrowと選択logical dateが維持されることを検証する。完了error、記録して解除、破棄して解除では一覧が変化せず、server commit成功後のlocalStorage削除失敗でも完了taskのrowが除去されることを検証する。
