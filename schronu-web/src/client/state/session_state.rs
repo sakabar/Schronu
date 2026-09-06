@@ -274,6 +274,7 @@ impl ClientState {
                     request: CompleteSessionRequest {
                         task_id: request_task_id,
                         started_at_epoch_ms,
+                        ended_at_epoch_ms: None,
                         expected_actual_work_seconds,
                         record_elapsed_seconds: kind == MutationKind::Complete,
                     },
@@ -284,6 +285,7 @@ impl ClientState {
                 request: RecordSessionRequest {
                     task_id: request_task_id,
                     started_at_epoch_ms,
+                    ended_at_epoch_ms: None,
                     expected_actual_work_seconds,
                 },
             },

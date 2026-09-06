@@ -165,6 +165,7 @@ impl From<RecordSessionRequest> for CoreRecordSessionRequest {
         Self {
             task_id: request.task_id,
             started_at_epoch_ms: request.started_at_epoch_ms,
+            ended_at_epoch_ms: request.ended_at_epoch_ms,
             expected_actual_work_seconds: request.expected_actual_work_seconds,
         }
     }
@@ -175,6 +176,7 @@ impl From<CompleteSessionRequest> for CoreCompleteSessionRequest {
         Self {
             task_id: request.task_id,
             started_at_epoch_ms: request.started_at_epoch_ms,
+            ended_at_epoch_ms: request.ended_at_epoch_ms,
             expected_actual_work_seconds: request.expected_actual_work_seconds,
             record_elapsed_seconds: request.record_elapsed_seconds,
         }
@@ -279,11 +281,13 @@ mod tests {
         let invalid_request = RecordSessionRequest {
             task_id: "invalid".to_owned(),
             started_at_epoch_ms: now.timestamp_millis(),
+            ended_at_epoch_ms: None,
             expected_actual_work_seconds: 0,
         };
         let invalid_complete_request = CompleteSessionRequest {
             task_id: invalid_request.task_id.clone(),
             started_at_epoch_ms: invalid_request.started_at_epoch_ms,
+            ended_at_epoch_ms: invalid_request.ended_at_epoch_ms,
             expected_actual_work_seconds: invalid_request.expected_actual_work_seconds,
             record_elapsed_seconds: true,
         };

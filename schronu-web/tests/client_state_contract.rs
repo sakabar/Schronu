@@ -364,6 +364,7 @@ fn mutationは対象だけを直列化しerror助言とcommit後storage失敗を
     let expected_request = schronu_web::RecordSessionRequest {
         task_id: TASK_ID.to_owned(),
         started_at_epoch_ms: 0,
+        ended_at_epoch_ms: None,
         expected_actual_work_seconds: 100,
     };
     let (first_request_id, first_request) =
