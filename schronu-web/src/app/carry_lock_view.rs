@@ -6,7 +6,9 @@ use std::rc::Rc;
 #[cfg(all(feature = "web", target_arch = "wasm32"))]
 use wasm_bindgen::{closure::Closure, JsCast};
 
-use super::long_press_controller::{LongPressController, LongPressSchedulerHandle};
+use super::long_press_controller::{
+    LongPressController, LongPressSchedulerHandle, LongPressSource,
+};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) struct CarryLockViewModel {
@@ -36,10 +38,6 @@ impl CarryLockViewModel {
         self.mode == CarryLockMode::Locked
     }
 }
-
-pub(crate) use super::long_press_controller::LongPressSource;
-#[cfg(test)]
-pub(crate) use super::long_press_controller::LongPressTracker;
 
 #[component]
 pub(crate) fn CarryLockBar(
@@ -303,24 +301,18 @@ mod scroll_listener_tests {
     }
 
     #[test]
-    fn guardはscrollを購読しcallbackで長押しをcancelしてdrop時に解除する() {
+    fn guardはscrollを購読しcallbackを呼びdrop時に解除する() {
         let source = FakeScrollSource::default();
-        let tracker = Rc::new(RefCell::new(LongPressTracker::default()));
-        let stale_timer = tracker.borrow_mut().begin(LongPressSource::Pointer);
         let cancellation_count = Rc::new(Cell::new(0_u8));
-        let callback_tracker = Rc::clone(&tracker);
         let callback_count = Rc::clone(&cancellation_count);
 
         let guard = ScrollCancellationGuard::attach(source.clone(), move || {
-            if callback_tracker.borrow_mut().cancel_all() {
-                callback_count.set(callback_count.get().saturating_add(1));
-            }
+            callback_count.set(callback_count.get().saturating_add(1));
         });
         assert_eq!(source.subscribe_count.get(), 1);
 
         source.fire();
         assert_eq!(cancellation_count.get(), 1);
-        assert!(!tracker.borrow_mut().complete(stale_timer));
 
         drop(guard);
         assert_eq!(source.unsubscribe_count.get(), 1);

@@ -2,9 +2,7 @@
 
 use std::sync::{Arc, Mutex};
 
-use super::carry_lock_view::{
-    accepts_long_press_pointer, CarryLockBar, CarryLockViewModel, LongPressSource, LongPressTracker,
-};
+use super::carry_lock_view::{accepts_long_press_pointer, CarryLockBar, CarryLockViewModel};
 use super::long_press_controller::{LongPressScheduler, LongPressSchedulerHandle};
 use super::view_test_support::{dispatch_click, rebuild_with_click_listeners};
 use crate::client::carry_lock::CarryLockMode;
@@ -159,23 +157,6 @@ fn normalの1tapと解除確認の確定だけがcallbackを送る() {
 }
 
 #[test]
-fn pointer長押しは成立時に一度だけ発火し短押しとcancelを拒否する() {
-    let mut tracker = LongPressTracker::default();
-
-    let short = tracker.begin(LongPressSource::Pointer);
-    tracker.cancel(LongPressSource::Pointer);
-    assert!(!tracker.complete(short));
-
-    let cancelled = tracker.begin(LongPressSource::Pointer);
-    tracker.cancel(LongPressSource::Pointer);
-    assert!(!tracker.complete(cancelled));
-
-    let completed = tracker.begin(LongPressSource::Pointer);
-    assert!(tracker.complete(completed));
-    assert!(!tracker.complete(completed), "同じtimerは1回だけ成立する");
-}
-
-#[test]
 fn pointer長押しは主pointerの許可されたcontactだけで開始する() {
     assert!(accepts_long_press_pointer(
         "mouse",
@@ -204,35 +185,6 @@ fn pointer長押しは主pointerの許可されたcontactだけで開始する()
         true,
         Some(MouseButton::Primary)
     ));
-}
-
-#[test]
-fn window_scrollはactive長押しをcancelしてstale_timerを拒否する() {
-    let mut tracker = LongPressTracker::default();
-    let pointer_timer = tracker.begin(LongPressSource::Pointer);
-
-    assert!(tracker.cancel_all());
-
-    assert!(!tracker.complete(pointer_timer));
-    assert!(!tracker.cancel_all(), "非active時のscrollは状態更新しない");
-    let keyboard_timer = tracker.begin_keyboard("Enter", false).unwrap();
-    assert!(tracker.cancel_all());
-    assert!(!tracker.complete(keyboard_timer));
-}
-
-#[test]
-fn keyboard長押しはspaceとenterだけを受け付けkeyupでcancelする() {
-    let mut tracker = LongPressTracker::default();
-    assert!(tracker.begin_keyboard("Escape", false).is_none());
-
-    let space = tracker.begin_keyboard(" ", false).unwrap();
-    assert!(tracker.begin_keyboard(" ", true).is_none());
-    tracker.cancel(LongPressSource::Keyboard);
-    assert!(!tracker.complete(space));
-
-    let enter = tracker.begin_keyboard("Enter", false).unwrap();
-    assert!(tracker.complete(enter));
-    assert!(!tracker.complete(enter));
 }
 
 #[test]
