@@ -457,12 +457,15 @@ fn complete_sessionは経過秒加算と完了を1回の保存で反映してsna
     let task_id = fixture.seed_fixed_task(seeded_at);
     let mut service = WebService::new(fixture.storage.clone(), fixture.config());
 
+    let started_at_epoch_ms = operation_now.timestamp_millis() - 65_999;
+    let ended_at_epoch_ms = operation_now.timestamp_millis() - 5_999;
     let response = service
         .complete_session_at(
             operation_now,
             CompleteSessionRequest {
                 task_id: task_id.to_string(),
-                started_at_epoch_ms: operation_now.timestamp_millis() - 61_999,
+                started_at_epoch_ms,
+                ended_at_epoch_ms: Some(ended_at_epoch_ms),
                 expected_actual_work_seconds: 300,
                 record_elapsed_seconds: true,
             },
@@ -477,14 +480,14 @@ fn complete_sessionは経過秒加算と完了を1回の保存で反映してsna
     let mut repository = TaskRepository::new(fixture.storage.to_str().unwrap());
     repository.reload_if_changed(operation_now).unwrap();
     let completed = repository.get_by_id(task_id).unwrap().unwrap();
-    assert_eq!(completed.get_actual_work_seconds().unwrap(), 361);
+    assert_eq!(completed.get_actual_work_seconds().unwrap(), 360);
     assert_eq!(completed.get_status().unwrap(), Status::Done);
     assert_eq!(
         completed
             .get_end_time_opt()
             .unwrap()
             .map(|finished_at| finished_at.timestamp()),
-        Some(operation_now.timestamp())
+        Some(ended_at_epoch_ms / 1_000)
     );
 }
 
