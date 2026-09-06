@@ -156,6 +156,24 @@ fn listは46rem以下でtask_firstの2列metadata_cardになる() {
 }
 
 #[test]
+fn 幅34rem以下はbufferと日付buttonをtouch_targetを保って圧縮する() {
+    let css = include_str!("../../assets/main.css");
+    let narrow_layout = css
+        .split_once("@media (max-width: 34rem)")
+        .expect("narrow viewport rule must exist")
+        .1;
+
+    for required in [
+        ".buffer-panel {\n        margin-block: 0.75rem 1rem;\n        padding: 1.25rem 1rem;",
+        ".buffer-value {\n        font-size: 3rem;",
+        ".date-pills {\n        gap: 0.35rem;",
+        ".date-pill {\n        min-height: 2.75rem;\n        padding: 0.5rem 0.9rem;",
+    ] {
+        assert!(narrow_layout.contains(required), "missing: {required}");
+    }
+}
+
+#[test]
 fn active_uuid_disables_every_matching_row_but_not_other_tasks() {
     let events = Arc::new(Mutex::new(Vec::new()));
     let (dom, _) = build(RootProps {
