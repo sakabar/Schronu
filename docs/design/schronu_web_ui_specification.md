@@ -437,6 +437,8 @@ display_buffer = buffer_seconds - buffer_elapsed
 4. 初期tabは「セッション」とする。
 5. tab切替だけでは一覧取得を含むserver操作を行わない。
 
+client componentは非`None`の`ClientEffect`をserverへdispatchする直前に実行中通信数を1増やし、response受理後に成否にかかわらず1減らす。実行中通信数が1以上の間は、viewport全体を覆う半透明overlay、スピナー、「通信中…」を表示する。背面の`main`に`inert`と`aria-busy`を設定し、pointerとkeyboard操作を無効にする。overlayのstatusは`aria-live=polite`で通知する。`prefers-reduced-motion: reduce`ではスピナーの回転を停止するが、待機表示自体は維持する。初回SSRとbrowser初期化前も同じDOMの待機表示にする。
+
 34rem以下ではbuffer領域と日付buttonの余白を圧縮する。日付buttonは操作高44px以上と8日分の横スクロールを維持する。
 
 全buttonの`:hover`装飾は`@media (hover: hover) and (pointer: fine)`内だけに定義し、タッチ主体の端末ではタップ後にhover配色を残さない。`:active`と`:focus-visible`はmedia query外に置き、pointer種別にかかわらず操作feedbackを維持する。hover可能なfine pointerではtab、primary action、session startを含む既存hover表現を維持し、選択済み日付buttonのhover中は緑背景と白文字を上書き規則で維持する。
@@ -480,7 +482,7 @@ display_buffer = buffer_seconds - buffer_elapsed
 
 ### 7.5 持ち歩きロックbar
 
-- page上部へstickyなbarを常時表示する。画面を覆うoverlayや内容の非表示は行わず、ロック中もbuffer・セッション・一覧の表示と更新、scroll、tab切替、日付選択、一覧取得を維持する。
+- page上部へstickyなbarを常時表示する。持ち歩きロックだけを理由に画面を覆うoverlayや内容の非表示は行わず、ロック中もbuffer・セッション・一覧の表示と更新、scroll、tab切替、日付選択、一覧取得を維持する。一覧取得を含むserver通信のdispatch後は、response受理まで通信中overlayによる全面操作遮断を優先する。
 - `Normal`では「持ち歩きロック」を1 clickすると即時に有効化する。`Locked`では「操作ロック中」と「1.2秒長押しで1操作許可」、`ArmedUntil`では「1操作可能」と残り秒数を表示する。
 - `Locked`の長押しbuttonはprimary pointer、Space、Enterを受け付ける。pointerup、pointerleave、pointercancel、buttonのblur、window scroll、または1.2秒未満のkeyupでtimerを破棄し、stale timerが発火しても許可しない。keyboard auto-repeatは新しい長押しを開始しない。
 - 状態名だけを`aria-live=polite`で通知する。`ArmedUntil`の残り秒数はlive regionの外へ置き、毎秒読み上げない。
@@ -633,6 +635,7 @@ OperationHistoryEntry {
 - 「計測を破棄して完了」の最初のclickでは通信せず、card単位の確認表示、キャンセル、確定時の1回だけのtyped callbackを確認する。
 - 33%、100%、133%、見積0、buffer正負の表示を確認する。
 - 通信matrixの各操作についてrequest件数を確認する。
+- 全5server通信のdispatchで全画面待機表示と背面の`inert`が即時に有効になり、最後のresponseまで維持されることを確認する。成功、operation error、transport errorの各応答で解除され、`ClientEffect::None`では表示されないことを確認する。SSR初期表示のstatusとARIA属性、viewport全面のCSS、reduced motionを確認する。
 - 持ち歩きロックbarのsticky表示、3状態、残り秒表示、`aria-live`対象、通常モードへの確認付き復帰を確認する。
 - pointer・Space・Enterの1.2秒長押し成立と、pointerup・leave・cancel・blur・window scroll・短いkeyupでの中断を確認する。
 - ロック中も画面表示・更新、scroll、tab切替、日付選択、一覧取得が機能し、7変更操作が無効になることを確認する。破棄完了の確認は一時許可を消費せず、確定時に消費し、キャンセルと期限切れで閉じることを確認する。
