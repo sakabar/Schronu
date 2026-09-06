@@ -14,7 +14,7 @@ use super::manifest::{
     content_checksum, ContentIntegrity, RawTransactionManifest, ValidatedEntry, ValidatedManifest,
 };
 use super::{
-    PreparedTransaction, StorageTransactionError, StorageTransactionIo,
+    PreparedTransaction, ReplacementRequest, StorageTransactionError, StorageTransactionIo,
     StorageTransactionOperation, TransactionPaths, TransactionState, WriteRequest,
 };
 
@@ -28,7 +28,9 @@ struct PrepareContext<'a> {
 
 struct PrepareRequest<'a> {
     writes: &'a [WriteRequest<'a>],
+    file_permissions: Option<&'a [std::fs::Permissions]>,
     directories: &'a [&'a Path],
+    directory_permissions: Option<&'a [std::fs::Permissions]>,
     deletes: &'a [&'a Path],
     preserve_existing_permissions: bool,
 }
@@ -67,7 +69,9 @@ pub(in crate::adapter::gateway) fn prepare_with_directories_and_deletes(
         revision,
         PrepareRequest {
             writes,
+            file_permissions: None,
             directories,
+            directory_permissions: None,
             deletes,
             preserve_existing_permissions: true,
         },
@@ -78,18 +82,18 @@ pub(in crate::adapter::gateway) fn prepare_replacing_with_directories_and_delete
     io: Arc<dyn StorageTransactionIo>,
     storage_dir_path: &Path,
     revision: Uuid,
-    writes: &[WriteRequest<'_>],
-    directories: &[&Path],
-    deletes: &[&Path],
+    request: ReplacementRequest<'_>,
 ) -> Result<PreparedTransaction, StorageTransactionError> {
     prepare_impl(
         io,
         storage_dir_path,
         revision,
         PrepareRequest {
-            writes,
-            directories,
-            deletes,
+            writes: request.writes,
+            file_permissions: Some(request.file_permissions),
+            directories: request.directories,
+            directory_permissions: Some(request.directory_permissions),
+            deletes: request.deletes,
             preserve_existing_permissions: false,
         },
     )
@@ -101,6 +105,7 @@ fn prepare_impl(
     revision: Uuid,
     request: PrepareRequest<'_>,
 ) -> Result<PreparedTransaction, StorageTransactionError> {
+    validate_permission_counts(storage_dir_path, &request)?;
     let layout = TransactionLayout::new(storage_dir_path);
     let transactions_dir_path =
         resolve_transactions_directory(io.as_ref(), storage_dir_path, true)?
@@ -157,7 +162,9 @@ fn prepare_impl(
     let manifest = prepare_contents(
         &context,
         request.writes,
+        request.file_permissions,
         request.directories,
+        request.directory_permissions,
         request.deletes,
         request.preserve_existing_permissions,
     );
@@ -178,10 +185,35 @@ fn prepare_impl(
     })
 }
 
+fn validate_permission_counts(
+    storage_dir_path: &Path,
+    request: &PrepareRequest<'_>,
+) -> Result<(), StorageTransactionError> {
+    let file_permissions_match = request
+        .file_permissions
+        .is_none_or(|permissions| permissions.len() == request.writes.len());
+    let directory_permissions_match = request
+        .directory_permissions
+        .is_none_or(|permissions| permissions.len() == request.directories.len());
+    if file_permissions_match && directory_permissions_match {
+        return Ok(());
+    }
+    Err(StorageTransactionError::new(
+        StorageTransactionOperation::ValidateTargetPath,
+        storage_dir_path,
+        std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "replacement permissions must match transaction target counts",
+        ),
+    ))
+}
+
 fn prepare_contents(
     context: &PrepareContext<'_>,
     writes: &[WriteRequest<'_>],
+    file_permissions: Option<&[std::fs::Permissions]>,
     directories: &[&Path],
+    directory_permissions: Option<&[std::fs::Permissions]>,
     deletes: &[&Path],
     preserve_existing_permissions: bool,
 ) -> Result<ValidatedManifest, StorageTransactionError> {
@@ -200,10 +232,12 @@ fn prepare_contents(
             &staged_file_path,
             write.bytes,
             preserve_existing_permissions,
+            file_permissions.map(|permissions| permissions[index].clone()),
         )?;
         entries.push(ValidatedEntry::Write {
             target,
             staged_file,
+            mode: file_permissions.and_then(|permissions| permission_mode(&permissions[index])),
             integrity: ContentIntegrity {
                 content_length: write.bytes.len() as u64,
                 checksum: content_checksum(write.bytes),
@@ -221,11 +255,15 @@ fn prepare_contents(
         .iter()
         .map(|directory| validate_storage_relative_path(&context.paths.storage_dir_path, directory))
         .collect::<Result<Vec<_>, _>>()?;
+    let directory_modes = directory_permissions
+        .map(|permissions| permissions.iter().map(permission_mode).collect())
+        .unwrap_or_else(|| vec![None; directories.len()]);
     let manifest = ValidatedManifest {
         transaction_id: context.transaction_id,
         revision: context.revision,
         replace_target_directories: !preserve_existing_permissions,
         directories,
+        directory_modes,
         entries,
     };
     let raw_manifest = RawTransactionManifest::from(&manifest);
@@ -291,8 +329,11 @@ fn write_staged_file(
     staged_file_path: &Path,
     bytes: &[u8],
     preserve_existing_permissions: bool,
+    permission_override: Option<std::fs::Permissions>,
 ) -> Result<(), StorageTransactionError> {
-    let existing_permissions = if preserve_existing_permissions {
+    let permissions = if let Some(permissions) = permission_override {
+        Some(permissions)
+    } else if preserve_existing_permissions {
         io.target_permissions(target_path).map_err(|error| {
             StorageTransactionError::new(
                 StorageTransactionOperation::ReadTargetMetadata,
@@ -310,7 +351,7 @@ fn write_staged_file(
             error,
         )
     })?;
-    if let Some(permissions) = existing_permissions {
+    if let Some(permissions) = permissions {
         io.set_permissions(staged_file_path, permissions)
             .map_err(|error| {
                 StorageTransactionError::new(
@@ -334,4 +375,16 @@ fn write_staged_file(
             error,
         )
     })
+}
+
+#[cfg(unix)]
+fn permission_mode(permissions: &std::fs::Permissions) -> Option<u32> {
+    use std::os::unix::fs::PermissionsExt;
+
+    Some(permissions.mode() & 0o7777)
+}
+
+#[cfg(not(unix))]
+fn permission_mode(_permissions: &std::fs::Permissions) -> Option<u32> {
+    None
 }

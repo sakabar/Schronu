@@ -318,8 +318,25 @@ fn current_restoreはsnapshotのfileとdirectoryのmodeを復元する() {
     .unwrap();
     create_snapshot_at(&source, &snapshot, now).unwrap();
     let storage_lock = StorageLock::acquire(&current, LockMode::Cli).unwrap();
+    let io = Arc::new(RecordingIo::new(vec![FaultRule {
+        operation: RecordingOperation::SetPermissions,
+        path_matcher: PathMatcher::Exact(current.join("mode-directory")),
+        occurrence: 1,
+        error_kind: std::io::ErrorKind::Other,
+        error_message: "injected directory permission failure",
+    }]));
 
-    restore_current_snapshot_at(&current, &snapshot, &pre_backup, now, &storage_lock).unwrap();
+    restore_current_snapshot_at_with_transaction_io(
+        &current,
+        &snapshot,
+        &pre_backup,
+        now,
+        &storage_lock,
+        io,
+    )
+    .unwrap_err();
+    drop(storage_lock);
+    create_snapshot_at(&current, &root.child("recovery-snapshot"), now).unwrap();
 
     assert_eq!(
         fs::metadata(current.join("mode-directory")).unwrap().mode() & 0o7777,

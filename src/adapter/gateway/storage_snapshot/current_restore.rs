@@ -5,7 +5,8 @@ use super::verify::load_verified_snapshot;
 use super::{create_snapshot_with_lock, SnapshotSummary, DEFAULT_RESOURCE_LIMITS};
 use crate::adapter::gateway::storage_lock::StorageLock;
 use crate::adapter::gateway::storage_transaction::{
-    prepare_replacing_with_directories_and_deletes, FileSystemStorageTransactionIo, WriteRequest,
+    prepare_replacing_with_directories_and_deletes, FileSystemStorageTransactionIo,
+    ReplacementRequest, WriteRequest,
 };
 use chrono::{DateTime, Local};
 use std::collections::HashSet;
@@ -97,12 +98,18 @@ fn restore_current_snapshot_impl(
                 .strip_prefix(PAYLOAD_DIRECTORY_NAME)
                 .ok()
                 .filter(|relative| *relative != Path::new(".revision"))
-                .map(|relative| (relative.to_path_buf(), file.bytes.as_slice()))
+                .map(|relative| {
+                    (
+                        relative.to_path_buf(),
+                        file.bytes.as_slice(),
+                        file.permissions.clone(),
+                    )
+                })
         })
         .collect::<Vec<_>>();
     let desired_file_paths = desired_files
         .iter()
-        .map(|(path, _)| path.clone())
+        .map(|(path, _, _)| path.clone())
         .collect::<HashSet<_>>();
     let desired_directories = verified
         .tree
@@ -114,23 +121,34 @@ fn restore_current_snapshot_impl(
                 .strip_prefix(PAYLOAD_DIRECTORY_NAME)
                 .ok()
                 .filter(|relative| !relative.as_os_str().is_empty())
-                .map(Path::to_path_buf)
+                .map(|relative| (relative.to_path_buf(), directory.permissions.clone()))
         })
         .collect::<Vec<_>>();
-    let desired_directory_paths = desired_directories.iter().cloned().collect::<HashSet<_>>();
+    let desired_directory_paths = desired_directories
+        .iter()
+        .map(|(path, _)| path.clone())
+        .collect::<HashSet<_>>();
 
     let write_paths = desired_files
         .iter()
-        .map(|(relative, _)| current_storage.join(relative))
+        .map(|(relative, _, _)| current_storage.join(relative))
         .collect::<Vec<_>>();
     let writes = write_paths
         .iter()
         .zip(desired_files.iter())
-        .map(|(target_path, (_, bytes))| WriteRequest { target_path, bytes })
+        .map(|(target_path, (_, bytes, _))| WriteRequest { target_path, bytes })
+        .collect::<Vec<_>>();
+    let file_permissions = desired_files
+        .iter()
+        .map(|(_, _, permissions)| permissions.clone())
         .collect::<Vec<_>>();
     let directory_paths = desired_directories
         .iter()
-        .map(|relative| current_storage.join(relative))
+        .map(|(relative, _)| current_storage.join(relative))
+        .collect::<Vec<_>>();
+    let directory_permissions = desired_directories
+        .iter()
+        .map(|(_, permissions)| permissions.clone())
         .collect::<Vec<_>>();
     let deletes = current
         .files
@@ -160,9 +178,13 @@ fn restore_current_snapshot_impl(
         transaction_io,
         current_storage,
         revision,
-        &writes,
-        &directory_refs,
-        &delete_refs,
+        ReplacementRequest {
+            writes: &writes,
+            file_permissions: &file_permissions,
+            directories: &directory_refs,
+            directory_permissions: &directory_permissions,
+            deletes: &delete_refs,
+        },
     )
     .map_err(|error| SnapshotError::new(SnapshotOperation::Write, current_storage, error))?;
     prepared

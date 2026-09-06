@@ -48,6 +48,15 @@ pub(crate) trait StorageTransactionIo: Send + Sync {
         fs::set_permissions(path, permissions)
     }
 
+    fn set_and_sync_directory_permissions(
+        &self,
+        path: &Path,
+        permissions: fs::Permissions,
+    ) -> std::io::Result<()> {
+        self.set_permissions(path, permissions)?;
+        self.sync_directory(path)
+    }
+
     fn write_file(&self, path: &Path, bytes: &[u8]) -> std::io::Result<()> {
         File::options().write(true).open(path)?.write_all(bytes)
     }
@@ -121,6 +130,16 @@ pub(crate) trait StorageTransactionIo: Send + Sync {
 #[derive(Default)]
 pub(in crate::adapter::gateway) struct FileSystemStorageTransactionIo;
 impl StorageTransactionIo for FileSystemStorageTransactionIo {
+    fn set_and_sync_directory_permissions(
+        &self,
+        path: &Path,
+        permissions: fs::Permissions,
+    ) -> std::io::Result<()> {
+        let directory = File::open(path)?;
+        directory.set_permissions(permissions)?;
+        directory.sync_all()
+    }
+
     fn remove_storage_entry(
         &self,
         storage_dir_path: &Path,

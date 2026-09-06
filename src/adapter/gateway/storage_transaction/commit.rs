@@ -142,6 +142,29 @@ impl CommittedTransaction {
                 }
             }
         }
+        for (directory, mode) in self
+            .state
+            .manifest
+            .directories
+            .iter()
+            .zip(&self.state.manifest.directory_modes)
+            .rev()
+        {
+            let Some(mode) = mode else {
+                continue;
+            };
+            let directory_path = layout.target_path(directory);
+            self.state
+                .io
+                .set_and_sync_directory_permissions(&directory_path, permissions_from_mode(*mode))
+                .map_err(|error| {
+                    StorageTransactionError::new(
+                        StorageTransactionOperation::SetLivePermissions,
+                        &directory_path,
+                        error,
+                    )
+                })?;
+        }
         self.apply_revision(&layout.revision_path())?;
         cleanup_committed_transaction(&self)
     }
@@ -161,6 +184,7 @@ impl CommittedTransaction {
                 ValidatedEntry::Write {
                     target,
                     staged_file,
+                    mode,
                     integrity,
                 } => {
                     let target_path = layout.target_path(target);
@@ -225,7 +249,8 @@ impl CommittedTransaction {
                                 &target_bytes,
                                 integrity.content_length,
                                 &integrity.checksum,
-                            ) {
+                            ) && permission_matches(&metadata.permissions(), *mode)
+                            {
                                 return Ok(PreflightEntry::AlreadyApplied);
                             }
                         }
@@ -244,7 +269,7 @@ impl CommittedTransaction {
                             ));
                         }
                     }
-                    let (bytes, permissions) = staged_material.ok_or_else(|| {
+                    let (bytes, staged_permissions) = staged_material.ok_or_else(|| {
                         StorageTransactionError::new(
                             StorageTransactionOperation::ReadStagedFile,
                             &staged_file_path,
@@ -258,7 +283,9 @@ impl CommittedTransaction {
                         target_path,
                         relative_path: target.clone(),
                         bytes,
-                        permissions,
+                        permissions: mode
+                            .map(permissions_from_mode)
+                            .unwrap_or(staged_permissions),
                     })
                 }
             })
@@ -485,4 +512,28 @@ impl CommittedTransaction {
             })?;
         sync_directory(self.state.io.as_ref(), parent_path)
     }
+}
+
+#[cfg(unix)]
+fn permissions_from_mode(mode: u32) -> fs::Permissions {
+    use std::os::unix::fs::PermissionsExt;
+
+    fs::Permissions::from_mode(mode)
+}
+
+#[cfg(not(unix))]
+fn permissions_from_mode(_mode: u32) -> fs::Permissions {
+    unreachable!("transaction modes are not produced on non-Unix platforms")
+}
+
+#[cfg(unix)]
+fn permission_matches(permissions: &fs::Permissions, expected_mode: Option<u32>) -> bool {
+    use std::os::unix::fs::PermissionsExt;
+
+    expected_mode.is_none_or(|mode| permissions.mode() & 0o7777 == mode)
+}
+
+#[cfg(not(unix))]
+fn permission_matches(_permissions: &fs::Permissions, _expected_mode: Option<u32>) -> bool {
+    true
 }

@@ -16,6 +16,8 @@ pub(super) struct RawTransactionManifest {
     #[serde(default, skip_serializing_if = "is_false")]
     pub(super) replace_target_directories: bool,
     pub(super) directories: Vec<PathBuf>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub(super) directory_modes: Vec<Option<u32>>,
     pub(super) entries: Vec<RawManifestEntry>,
 }
 
@@ -34,6 +36,8 @@ pub(super) struct RawManifestEntry {
     pub(super) content_length: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(super) content_checksum: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(super) mode: Option<u32>,
 }
 
 pub(super) struct ValidatedManifest {
@@ -41,6 +45,7 @@ pub(super) struct ValidatedManifest {
     pub(super) revision: Uuid,
     pub(super) replace_target_directories: bool,
     pub(super) directories: Vec<PathBuf>,
+    pub(super) directory_modes: Vec<Option<u32>>,
     pub(super) entries: Vec<ValidatedEntry>,
 }
 
@@ -48,6 +53,7 @@ pub(super) enum ValidatedEntry {
     Write {
         target: PathBuf,
         staged_file: PathBuf,
+        mode: Option<u32>,
         integrity: ContentIntegrity,
     },
     Delete {
@@ -68,6 +74,11 @@ impl From<&ValidatedManifest> for RawTransactionManifest {
             revision: manifest.revision,
             replace_target_directories: manifest.replace_target_directories,
             directories: manifest.directories.clone(),
+            directory_modes: if manifest.directory_modes.iter().all(Option::is_none) {
+                Vec::new()
+            } else {
+                manifest.directory_modes.clone()
+            },
             entries: manifest
                 .entries
                 .iter()
@@ -75,6 +86,7 @@ impl From<&ValidatedManifest> for RawTransactionManifest {
                     ValidatedEntry::Write {
                         target,
                         staged_file,
+                        mode,
                         integrity,
                     } => RawManifestEntry {
                         target: target.clone(),
@@ -82,6 +94,7 @@ impl From<&ValidatedManifest> for RawTransactionManifest {
                         staged_file: Some(staged_file.clone()),
                         content_length: Some(integrity.content_length),
                         content_checksum: Some(integrity.checksum.clone()),
+                        mode: *mode,
                     },
                     ValidatedEntry::Delete { target } => RawManifestEntry {
                         target: target.clone(),
@@ -89,6 +102,7 @@ impl From<&ValidatedManifest> for RawTransactionManifest {
                         staged_file: None,
                         content_length: None,
                         content_checksum: None,
+                        mode: None,
                     },
                 })
                 .collect(),
@@ -163,6 +177,7 @@ pub(super) fn validate_raw_manifest(
         revision,
         replace_target_directories,
         directories,
+        directory_modes,
         entries,
     } = manifest;
     let layout = TransactionLayout::new(storage_dir_path);
@@ -182,6 +197,19 @@ pub(super) fn validate_raw_manifest(
             validate_storage_relative_path(storage_dir_path, &layout.target_path(&directory))
         })
         .collect::<Result<Vec<_>, _>>()?;
+    let directory_modes = if directory_modes.is_empty() {
+        vec![None; directories.len()]
+    } else if directory_modes.len() == directories.len() {
+        directory_modes
+            .into_iter()
+            .map(|mode| validate_mode(&manifest_path, mode))
+            .collect::<Result<Vec<_>, _>>()?
+    } else {
+        return Err(invalid_manifest_entry_error(
+            &manifest_path,
+            "directory modes must match the directory count",
+        ));
+    };
     let mut targets = HashSet::with_capacity(entries.len());
     let entries = entries
         .into_iter()
@@ -207,47 +235,55 @@ pub(super) fn validate_raw_manifest(
                 entry.staged_file,
                 entry.content_length,
                 entry.content_checksum,
+                entry.mode,
             ) {
                 (
                     ManifestEntryOperation::Write,
                     Some(staged_file),
                     Some(content_length),
                     Some(content_checksum),
+                    mode,
                 ) => {
                     validate_staged_file_path(transaction_dir_path, &staged_file)?;
                     validate_content_integrity(&manifest_path, content_length, &content_checksum)?;
+                    let mode = validate_mode(&manifest_path, mode)?;
                     Ok(ValidatedEntry::Write {
                         target,
                         staged_file,
+                        mode,
                         integrity: ContentIntegrity {
                             content_length,
                             checksum: content_checksum,
                         },
                     })
                 }
-                (ManifestEntryOperation::Delete, None, None, None) => {
+                (ManifestEntryOperation::Delete, None, None, None, None) => {
                     Ok(ValidatedEntry::Delete { target })
                 }
-                (ManifestEntryOperation::Write, None, _, _) => Err(invalid_manifest_entry_error(
-                    &manifest_path,
-                    "write entry must contain a staged file",
-                )),
-                (ManifestEntryOperation::Write, Some(_), _, _) => {
+                (ManifestEntryOperation::Write, None, _, _, _) => {
+                    Err(invalid_manifest_entry_error(
+                        &manifest_path,
+                        "write entry must contain a staged file",
+                    ))
+                }
+                (ManifestEntryOperation::Write, Some(_), _, _, _) => {
                     Err(invalid_manifest_entry_error(
                         &manifest_path,
                         "write entry must contain content length and checksum",
                     ))
                 }
-                (ManifestEntryOperation::Delete, Some(_), _, _) => {
+                (ManifestEntryOperation::Delete, Some(_), _, _, _) => {
                     Err(invalid_manifest_entry_error(
                         &manifest_path,
                         "delete entry must not contain a staged file",
                     ))
                 }
-                (ManifestEntryOperation::Delete, None, _, _) => Err(invalid_manifest_entry_error(
-                    &manifest_path,
-                    "delete entry must not contain content integrity information",
-                )),
+                (ManifestEntryOperation::Delete, None, _, _, _) => {
+                    Err(invalid_manifest_entry_error(
+                        &manifest_path,
+                        "delete entry must not contain content integrity information",
+                    ))
+                }
             }
         })
         .collect::<Result<Vec<_>, StorageTransactionError>>()?;
@@ -256,8 +292,22 @@ pub(super) fn validate_raw_manifest(
         revision,
         replace_target_directories,
         directories,
+        directory_modes,
         entries,
     })
+}
+
+fn validate_mode(
+    manifest_path: &Path,
+    mode: Option<u32>,
+) -> Result<Option<u32>, StorageTransactionError> {
+    if mode.is_some_and(|mode| mode & !0o7777 != 0) {
+        return Err(invalid_manifest_entry_error(
+            manifest_path,
+            "transaction mode must contain only Unix permission bits",
+        ));
+    }
+    Ok(mode)
 }
 
 pub(super) fn invalid_manifest_entry_error(

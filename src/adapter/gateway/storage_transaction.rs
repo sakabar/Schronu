@@ -145,6 +145,14 @@ pub(super) struct WriteRequest<'a> {
     pub(super) bytes: &'a [u8],
 }
 
+pub(super) struct ReplacementRequest<'a> {
+    pub(super) writes: &'a [WriteRequest<'a>],
+    pub(super) file_permissions: &'a [std::fs::Permissions],
+    pub(super) directories: &'a [&'a Path],
+    pub(super) directory_permissions: &'a [std::fs::Permissions],
+    pub(super) deletes: &'a [&'a Path],
+}
+
 pub(super) struct PreparedTransaction {
     state: TransactionState,
 }
