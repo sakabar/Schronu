@@ -1405,10 +1405,26 @@ fn handle_interactive_submit_at(
             &snapshot_directory,
             operation_now,
         ) {
-            Ok(()) => InteractiveRepositoryEventOutcome::CommandExecuted(
-                CommandKind::Backup,
-                operation_now,
-            ),
+            Ok(()) => {
+                if let Err(error) = task_repository.reload_if_changed(operation_now) {
+                    return InteractiveRepositoryEventOutcome::Retry(
+                        CliRepositoryTransactionError::Load(error),
+                    );
+                }
+                match reconcile_interactive_state_after_reload(
+                    task_repository,
+                    &mut state,
+                    operation_now,
+                ) {
+                    Ok(()) => InteractiveRepositoryEventOutcome::CommandExecuted(
+                        CommandKind::Backup,
+                        operation_now,
+                    ),
+                    Err(error) => InteractiveRepositoryEventOutcome::Fatal(RunError::Command(
+                        CommandError::Application(error),
+                    )),
+                }
+            }
             Err(RunError::CliRepositoryTransaction(error)) => {
                 InteractiveRepositoryEventOutcome::Retry(error)
             }

@@ -7213,6 +7213,60 @@ fn test_interactive_submit製品経路は再描画対象commandを完了outcome�
 }
 
 #[test]
+fn interactive_backupはsnapshot後のreloadでfocusを再調整する() {
+    let storage_dir = TestStorageDir::new();
+    std::fs::create_dir_all(&storage_dir.path).unwrap();
+    let snapshot = storage_dir.path.parent().unwrap().join(format!(
+        "schronu-controller-backup-{}",
+        Uuid::new_v4().hyphenated()
+    ));
+    let now = Local.with_ymd_and_hms(2026, 9, 6, 12, 0, 0).unwrap();
+    let root = new_test_task_handle("backup focus root").unwrap();
+    let finished = root.create_as_last_child(new_test_task_attr("finished focus"));
+    finished.set_orig_status(Status::Done).unwrap();
+    let next = root.create_as_last_child(new_test_task_attr("next focus"));
+    let finished_id = finished.get_id().unwrap();
+    let next_id = next.get_id().unwrap();
+    let mut repository =
+        TestTaskRepository::new(root, now).with_storage_directory(&storage_dir.path);
+    repository.highest_priority_leaf_task_id_opt = Some(next_id);
+    let mut free_time_manager = TestFreeTimeManager::default();
+    let mut stdout = TestWriter::new();
+    let mut focused_task_id_opt = Some(finished_id);
+    let mut last_focused_task_id_opt = Some(finished_id);
+    let previous_focus_started_datetime = now - chrono::Duration::hours(1);
+    let mut focus_started_datetime = previous_focus_started_datetime;
+    let mut focus_selection_mode = FocusSelectionMode::highest_priority();
+
+    let outcome = handle_interactive_submit_at(
+        &mut stdout,
+        &mut repository,
+        &mut free_time_manager,
+        InteractiveRepositoryState {
+            focused_task_id_opt: &mut focused_task_id_opt,
+            last_focused_task_id_opt: &mut last_focused_task_id_opt,
+            focus_started_datetime: &mut focus_started_datetime,
+            focus_selection_mode: &mut focus_selection_mode,
+        },
+        &format!("backup {}", snapshot.display()),
+        now,
+    );
+
+    assert!(matches!(
+        outcome,
+        InteractiveRepositoryEventOutcome::CommandExecuted(CommandKind::Backup, actual_now)
+            if actual_now == now
+    ));
+    assert_eq!(repository.reload_if_changed_attempt_count.get(), 1);
+    assert_eq!(focused_task_id_opt, Some(next_id));
+    assert_eq!(last_focused_task_id_opt, None);
+    assert_eq!(focus_started_datetime, now);
+    assert!(snapshot.join("manifest.json").is_file());
+
+    std::fs::remove_dir_all(snapshot).unwrap();
+}
+
+#[test]
 fn test_interactive_verifyは出力errorを分類してtransactionを継続する() {
     let operation_now = Local.with_ymd_and_hms(2026, 8, 23, 12, 0, 0).unwrap();
 
