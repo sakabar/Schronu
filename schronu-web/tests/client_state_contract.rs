@@ -852,9 +852,16 @@ fn 完了実績競合の再開は安全marker解除成功後だけsessionを更�
             ..
         })
     ));
-    assert!(load_client_state(&storage, 20_000)
-        .unwrap()
-        .mutation_globally_blocked());
+    let blocked_after_reload = load_client_state(&storage, 20_000).unwrap();
+    assert!(blocked_after_reload.mutation_globally_blocked());
+    assert_eq!(
+        blocked_after_reload.sessions()[0].started_at_epoch_ms,
+        13_500
+    );
+    assert_eq!(
+        blocked_after_reload.sessions()[0].actual_work_seconds_at_start,
+        250
+    );
 
     storage.fail_safety_writes.set(false);
     state.resume_completion_conflict(&storage, TASK_ID);
@@ -864,6 +871,35 @@ fn 完了実績競合の再開は安全marker解除成功後だけsessionを更�
     let restored = load_client_state(&storage, 20_000).unwrap();
     assert!(!restored.mutation_globally_blocked());
     assert_eq!(restored.sessions(), state.sessions());
+}
+
+#[test]
+fn 完了実績競合の再開はsession保存失敗時に安全markerを維持する() {
+    let storage = FakeStorage::default();
+    let mut state = state_with_sessions(&storage, &[TASK_ID]);
+    state.tick(6_500);
+    let (request_id, _) = complete_effect(state.begin_complete_session(&storage, TASK_ID));
+    storage.fail_safety_writes.set(true);
+    state.apply_complete_result(
+        &storage,
+        request_id,
+        Err(ServerFailure::Operation(actual_work_conflict(Some(250)))),
+    );
+    state.tick(20_000);
+    storage.fail_safety_writes.set(false);
+    storage.fail_work_session_writes.set(true);
+
+    state.resume_completion_conflict(&storage, TASK_ID);
+
+    assert_eq!(state.sessions()[0].started_at_epoch_ms, 0);
+    assert_eq!(state.sessions()[0].actual_work_seconds_at_start, 100);
+    assert!(project_session_cards(&state, 540)[0]
+        .completion_conflict
+        .is_some());
+    let restored = load_client_state(&storage, 20_000).unwrap();
+    assert!(restored.mutation_globally_blocked());
+    assert_eq!(restored.sessions()[0].started_at_epoch_ms, 0);
+    assert_eq!(restored.sessions()[0].actual_work_seconds_at_start, 100);
 }
 
 #[test]

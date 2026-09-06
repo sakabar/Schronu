@@ -479,10 +479,6 @@ impl ClientState {
         let Some(conflict) = self.sessions.completion_conflicts.get(task_id).cloned() else {
             return ClientEffect::None;
         };
-        if self.sessions.mutation_safety.disarm(storage).is_err() {
-            self.record_local_result(Some(task_id), false);
-            return ClientEffect::None;
-        }
         let measured_milliseconds = (i128::from(conflict.ended_at_epoch_ms)
             - i128::from(conflict.original_request.started_at_epoch_ms))
         .max(0);
@@ -502,20 +498,24 @@ impl ClientState {
         };
         session.started_at_epoch_ms = started_at_epoch_ms;
         session.actual_work_seconds_at_start = conflict.current_actual_work_seconds;
-        match self
-            .sessions
-            .work_sessions
+        let mut persisted_work_sessions = self.sessions.work_sessions.clone();
+        if persisted_work_sessions
             .replace_sessions(storage, candidate)
+            .is_err()
         {
-            Ok(()) => {
-                self.sessions.completion_conflicts.remove(task_id);
-                self.sessions.manual_check_blocked_task_ids.remove(task_id);
-                self.sessions.uncertain_stopped_at_epoch_ms.remove(task_id);
-                self.clear_superseded_completion_error(task_id);
-                self.record_local_result(Some(task_id), true);
-            }
-            Err(_) => self.record_local_result(Some(task_id), false),
+            self.record_local_result(Some(task_id), false);
+            return ClientEffect::None;
         }
+        if self.sessions.mutation_safety.disarm(storage).is_err() {
+            self.record_local_result(Some(task_id), false);
+            return ClientEffect::None;
+        }
+        self.sessions.work_sessions = persisted_work_sessions;
+        self.sessions.completion_conflicts.remove(task_id);
+        self.sessions.manual_check_blocked_task_ids.remove(task_id);
+        self.sessions.uncertain_stopped_at_epoch_ms.remove(task_id);
+        self.clear_superseded_completion_error(task_id);
+        self.record_local_result(Some(task_id), true);
         ClientEffect::None
     }
 
