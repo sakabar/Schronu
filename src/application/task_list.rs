@@ -112,3 +112,7 @@ fn is_in_period(time: DateTime<Local>, from: DateTime<Local>, until: DateTime<Lo
 #[cfg(test)]
 #[path = "list_tasks_contract_tests.rs"]
 mod contract_tests;
+
+#[cfg(test)]
+#[path = "list_tasks_pagination_tests.rs"]
+mod pagination_contract_tests;
