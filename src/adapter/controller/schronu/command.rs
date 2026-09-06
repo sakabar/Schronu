@@ -67,6 +67,7 @@ pub(super) enum CommandKind {
     Backup,
     BackupVerify,
     Restore,
+    RestoreCurrent,
     Verify,
 }
 
@@ -144,6 +145,10 @@ pub(super) enum Command {
     Restore {
         snapshot_directory: PathBuf,
         destination_directory: PathBuf,
+    },
+    RestoreCurrent {
+        snapshot_directory: PathBuf,
+        pre_backup_directory: PathBuf,
     },
     InteractiveShortcut(InteractiveShortcut),
     Action(CommandAction),
@@ -258,6 +263,7 @@ impl Command {
             Self::Backup { .. } => CommandKind::Backup,
             Self::BackupVerify { .. } => CommandKind::BackupVerify,
             Self::Restore { .. } => CommandKind::Restore,
+            Self::RestoreCurrent { .. } => CommandKind::RestoreCurrent,
             Self::InteractiveShortcut(InteractiveShortcut::DeferRoutine) => {
                 CommandKind::DeferRoutines
             }
@@ -488,6 +494,29 @@ pub(super) fn parse_command_tokens(
         definition.validate_argument_count(arguments)?;
         return Ok(Command::BackupVerify {
             snapshot_directory: PathBuf::from(&arguments[1]),
+        });
+    }
+
+    if name == "restore" && arguments.first().is_some_and(|value| value == "current") {
+        let definition = CommandDefinition::new(
+            CommandKind::RestoreCurrent,
+            "restore current",
+            "restore current <snapshot_dir> <pre_backup_dir> REPLACE_CURRENT_STORAGE",
+            4,
+            Some(4),
+        );
+        definition.validate_argument_count(arguments)?;
+        if arguments[3] != "REPLACE_CURRENT_STORAGE" {
+            return Err(parse_error(
+                definition.canonical_name,
+                "confirmation",
+                "確認tokenが正しくありません",
+                definition.usage,
+            ));
+        }
+        return Ok(Command::RestoreCurrent {
+            snapshot_directory: PathBuf::from(&arguments[1]),
+            pre_backup_directory: PathBuf::from(&arguments[2]),
         });
     }
 
@@ -837,7 +866,8 @@ fn parse_action(
         | CommandKind::TuckAway
         | CommandKind::Backup
         | CommandKind::BackupVerify
-        | CommandKind::Restore => unreachable!("handled before action parsing"),
+        | CommandKind::Restore
+        | CommandKind::RestoreCurrent => unreachable!("handled before action parsing"),
     };
     Ok(Command::Action(action))
 }
@@ -1087,5 +1117,24 @@ pub(super) fn representative_valid_commands() -> Vec<Command> {
     commands.extend(["t", "d", "w", "W", "y"].map(|shortcut| {
         parse_interactive_command(shortcut).expect("representative interactive shortcut must parse")
     }));
+    commands.extend(
+        [
+            vec!["backup", "verify", "snapshot"],
+            vec!["restore", "snapshot", "destination"],
+            vec![
+                "restore",
+                "current",
+                "snapshot",
+                "pre-backup",
+                "REPLACE_CURRENT_STORAGE",
+            ],
+        ]
+        .map(|tokens| {
+            parse_non_interactive_command_tokens(
+                &tokens.into_iter().map(str::to_string).collect::<Vec<_>>(),
+            )
+            .expect("representative maintenance command must parse")
+        }),
+    );
     commands
 }

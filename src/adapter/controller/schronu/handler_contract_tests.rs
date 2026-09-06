@@ -2564,6 +2564,7 @@ fn storage_maintenance以外の全command_shapeは統一handler入口でoutcome�
             CommandKind::Backup
                 | CommandKind::BackupVerify
                 | CommandKind::Restore
+                | CommandKind::RestoreCurrent
                 | CommandKind::Verify
         ) {
             assert!(

@@ -2455,7 +2455,7 @@ fn interactive再描画分類は全command_kindを網羅する() {
     );
     assert_eq!(
         all_command_kinds.len(),
-        51,
+        54,
         "shared representative command fixture must cover every CommandKind"
     );
     for (index, kind) in all_command_kinds.iter().enumerate() {
@@ -2519,6 +2519,7 @@ fn interactive再描画分類は全command_kindを網羅する() {
             | CommandKind::Backup
             | CommandKind::BackupVerify
             | CommandKind::Restore
+            | CommandKind::RestoreCurrent
             | CommandKind::Verify => false,
         };
 

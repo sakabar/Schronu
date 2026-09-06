@@ -62,6 +62,15 @@ pub(super) fn restore_display(path: &Path, summary: &SnapshotSummary) -> Display
     })
 }
 
+pub(super) fn restore_current_display(path: &Path, summary: &SnapshotSummary) -> DisplayModel {
+    DisplayModel::Snapshot(SnapshotDisplay {
+        operation: "restore current",
+        path: path.to_path_buf(),
+        revision: summary.revision(),
+        file_count: summary.file_count(),
+    })
+}
+
 fn unreached_daily_summary_date() -> NaiveDate {
     NaiveDate::from_ymd_opt(2037, 12, 31).expect("daily summary fallback date must be valid")
 }
