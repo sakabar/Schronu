@@ -5,7 +5,7 @@ use regex::Regex;
 use std::path::PathBuf;
 use uuid::Uuid;
 
-use super::cli_syntax::tokenize;
+use super::cli_syntax::{tokenize, tokenize_with_prefix};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(super) enum ParseMode {
@@ -429,15 +429,47 @@ pub(super) fn parse_interactive_command(input: &str) -> Result<Command, CommandP
         return Ok(Command::Noop);
     }
 
-    let tokens = tokenize(input).map_err(|error| {
-        CommandParseError::new(
-            "入力",
-            "syntax",
-            error.kind().reason(),
-            "<command> [arguments]",
-        )
-    })?;
+    let tokens = tokenize(input).map_err(command_lex_error)?;
     parse_command_tokens(&tokens, ParseMode::Interactive)
+}
+
+pub(super) fn parse_interactive_command_with_maintenance_kind(
+    input: &str,
+) -> (Result<Command, CommandParseError>, Option<CommandKind>) {
+    if input.trim().is_empty() || input.trim_start().starts_with('#') || input.starts_with('0') {
+        return (Ok(Command::Noop), None);
+    }
+
+    let tokenization = tokenize_with_prefix(input);
+    let maintenance_kind = maintenance_kind_from_tokens(&tokenization.prefix_tokens);
+    let command = tokenization.tokens.map_err(command_lex_error);
+    (
+        command.and_then(|tokens| parse_command_tokens(&tokens, ParseMode::Interactive)),
+        maintenance_kind,
+    )
+}
+
+fn command_lex_error(error: super::cli_syntax::CliLexError) -> CommandParseError {
+    CommandParseError::new(
+        "入力",
+        "syntax",
+        error.kind().reason(),
+        "<command> [arguments]",
+    )
+}
+
+fn maintenance_kind_from_tokens(tokens: &[String]) -> Option<CommandKind> {
+    match tokens {
+        [name, subcommand, ..] if name == "backup" && subcommand == "verify" => {
+            Some(CommandKind::BackupVerify)
+        }
+        [name, ..] if name == "backup" => Some(CommandKind::Backup),
+        [name, subcommand, ..] if name == "restore" && subcommand == "current" => {
+            Some(CommandKind::RestoreCurrent)
+        }
+        [name, ..] if name == "restore" => Some(CommandKind::Restore),
+        _ => None,
+    }
 }
 
 pub(super) fn parse_command_tokens(

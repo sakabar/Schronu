@@ -1,8 +1,9 @@
 #[cfg(test)]
 use super::command::ParseMode;
 use super::command::{
-    parse_interactive_command, parse_non_interactive_command_tokens, validate_command_input,
-    Command, CommandKind, CommandParseError, CommandValidationError,
+    parse_interactive_command, parse_interactive_command_with_maintenance_kind,
+    parse_non_interactive_command_tokens, validate_command_input, Command, CommandKind,
+    CommandParseError, CommandValidationError,
 };
 use super::command_context::*;
 #[cfg(test)]
@@ -1509,52 +1510,6 @@ fn render_interactive_command_echo(
         .map_err(RunError::Command)
 }
 
-fn storage_maintenance_input_kind(input: &str) -> Option<CommandKind> {
-    let input = input.trim_start();
-    for (prefix, default_kind) in [
-        ("backup", CommandKind::Backup),
-        ("'backup'", CommandKind::Backup),
-        ("\"backup\"", CommandKind::Backup),
-        ("restore", CommandKind::Restore),
-        ("'restore'", CommandKind::Restore),
-        ("\"restore\"", CommandKind::Restore),
-    ] {
-        let Some(rest) = input.strip_prefix(prefix) else {
-            continue;
-        };
-        if rest
-            .chars()
-            .next()
-            .is_some_and(|character| !character.is_whitespace())
-        {
-            continue;
-        }
-        let rest = rest.trim_start();
-        return Some(
-            if default_kind == CommandKind::Backup
-                && (rest == "verify"
-                    || rest
-                        .strip_prefix("verify")
-                        .and_then(|suffix| suffix.chars().next())
-                        .is_some_and(char::is_whitespace))
-            {
-                CommandKind::BackupVerify
-            } else if default_kind == CommandKind::Restore
-                && (rest == "current"
-                    || rest
-                        .strip_prefix("current")
-                        .and_then(|suffix| suffix.chars().next())
-                        .is_some_and(char::is_whitespace))
-            {
-                CommandKind::RestoreCurrent
-            } else {
-                default_kind
-            },
-        );
-    }
-    None
-}
-
 fn handle_interactive_submit_at(
     stdout: &mut dyn SchronuWriter,
     task_repository: &mut dyn TaskRepositoryTrait,
@@ -1564,9 +1519,10 @@ fn handle_interactive_submit_at(
     operation_now: DateTime<Local>,
 ) -> InteractiveRepositoryEventOutcome {
     let command = line.trim().to_string();
-    let parsed_command = parse_interactive_command(&command);
+    let (parsed_command, maintenance_kind) =
+        parse_interactive_command_with_maintenance_kind(&command);
     if let Err(error) = &parsed_command {
-        if let Some(command_kind) = storage_maintenance_input_kind(&command) {
+        if let Some(command_kind) = maintenance_kind {
             if let Err(output_error) =
                 render_interactive_command_echo(stdout, &command, operation_now).and_then(|()| {
                     render_display_model(
