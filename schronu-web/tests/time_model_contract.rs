@@ -92,15 +92,15 @@ fn buffer_timing_counts_down_from_the_server_observation_epoch() {
 }
 
 #[test]
-fn buffer_timing_counts_only_time_without_an_active_session() {
+fn buffer_timing_adds_each_sessions_unreported_progress() {
     let active_at_snapshot = buffer_timing(1_000_000, 60, 1_061_999, &[900_000]);
     assert_eq!(active_at_snapshot.snapshot_elapsed_seconds, 61);
-    assert_eq!(active_at_snapshot.buffer_elapsed_seconds, 0);
-    assert_eq!(active_at_snapshot.display_buffer_seconds, 60);
+    assert_eq!(active_at_snapshot.buffer_elapsed_seconds, 61);
+    assert_eq!(active_at_snapshot.display_buffer_seconds, 160);
 
     let started_after_idle = buffer_timing(1_000_000, 60, 1_061_999, &[1_010_500]);
     assert_eq!(started_after_idle.snapshot_elapsed_seconds, 61);
-    assert_eq!(started_after_idle.buffer_elapsed_seconds, 10);
+    assert_eq!(started_after_idle.buffer_elapsed_seconds, 61);
     assert_eq!(started_after_idle.display_buffer_seconds, 50);
 
     let future_start_after_clock_reversal = buffer_timing(1_000_000, 60, 1_005_000, &[1_010_000]);
@@ -109,13 +109,13 @@ fn buffer_timing_counts_only_time_without_an_active_session() {
 }
 
 #[test]
-fn buffer_timing_uses_the_union_of_remaining_sessions_after_discard() {
+fn buffer_timing_sums_overlapping_sessions_and_recalculates_after_discard() {
     let overlapping_sessions = buffer_timing(1_000_000, 60, 1_061_999, &[1_010_500, 1_020_500]);
-    assert_eq!(overlapping_sessions.buffer_elapsed_seconds, 10);
-    assert_eq!(overlapping_sessions.display_buffer_seconds, 50);
+    assert_eq!(overlapping_sessions.buffer_elapsed_seconds, 61);
+    assert_eq!(overlapping_sessions.display_buffer_seconds, 91);
 
     let earliest_discarded = buffer_timing(1_000_000, 60, 1_061_999, &[1_020_500]);
-    assert_eq!(earliest_discarded.buffer_elapsed_seconds, 20);
+    assert_eq!(earliest_discarded.buffer_elapsed_seconds, 61);
     assert_eq!(earliest_discarded.display_buffer_seconds, 40);
 
     let all_discarded = buffer_timing(1_000_000, 60, 1_061_999, &[]);
@@ -124,16 +124,16 @@ fn buffer_timing_uses_the_union_of_remaining_sessions_after_discard() {
 }
 
 #[test]
-fn buffer_timing_counts_idle_time_only_after_a_session_end_epoch() {
+fn buffer_timing_stops_credit_at_each_session_end_epoch() {
     let ended_at_click = buffer_timing_with_sessions(0, 60, 65_000, &[(0, Some(60_000))]);
     assert_eq!(ended_at_click.snapshot_elapsed_seconds, 65);
-    assert_eq!(ended_at_click.buffer_elapsed_seconds, 5);
+    assert_eq!(ended_at_click.buffer_elapsed_seconds, 65);
     assert_eq!(ended_at_click.display_buffer_seconds, 55);
 
     let another_session_remains_active =
         buffer_timing_with_sessions(0, 60, 65_000, &[(0, Some(60_000)), (30_000, None)]);
-    assert_eq!(another_session_remains_active.buffer_elapsed_seconds, 0);
-    assert_eq!(another_session_remains_active.display_buffer_seconds, 60);
+    assert_eq!(another_session_remains_active.buffer_elapsed_seconds, 65);
+    assert_eq!(another_session_remains_active.display_buffer_seconds, 90);
 }
 
 #[test]

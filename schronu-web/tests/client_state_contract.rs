@@ -99,12 +99,12 @@ fn bufferは成功したsession破棄で未作業時間を再計算する() {
         ClientEffect::None
     );
     state.tick(1_040_000);
-    assert_eq!(state.display_buffer_seconds(), Some(50));
+    assert_eq!(state.display_buffer_seconds(), Some(70));
 
     storage.fail_writes.set(true);
     assert_eq!(state.discard_session(&storage, TASK_ID), ClientEffect::None);
     assert_eq!(state.sessions().len(), 2);
-    assert_eq!(state.display_buffer_seconds(), Some(50));
+    assert_eq!(state.display_buffer_seconds(), Some(70));
 
     storage.fail_writes.set(false);
     assert_eq!(state.discard_session(&storage, TASK_ID), ClientEffect::None);
@@ -144,9 +144,9 @@ fn bufferは全sessionの見積到達後に実時間と同速で減算する() {
     state.add_session_from_row(&storage, &row(OTHER_TASK_ID, 800));
 
     state.tick(120_000);
-    assert_eq!(state.display_buffer_seconds(), Some(60));
+    assert_eq!(state.display_buffer_seconds(), Some(110));
     state.tick(160_000);
-    assert_eq!(state.display_buffer_seconds(), Some(50));
+    assert_eq!(state.display_buffer_seconds(), Some(100));
 }
 
 #[test]
@@ -162,7 +162,7 @@ fn bufferは見積到達済みsessionの開始直後から減算する() {
 }
 
 #[test]
-fn restored_sessionの復元補正とsnapshot後の停止は見積到達時刻で打ち切る() {
+fn restored_sessionの未送信進捗は見積到達時刻で打ち切る() {
     let storage = FakeStorage::default();
     let mut sessions = load_work_sessions(&storage).unwrap();
     sessions
@@ -179,26 +179,37 @@ fn restored_sessionの復元補正とsnapshot後の停止は見積到達時刻�
         .unwrap();
     let mut state = load_client_state(&storage, 20_000).unwrap();
     let bootstrap_id = bootstrap_effect(state.request_bootstrap());
-    state.apply_bootstrap_result(bootstrap_id, Ok(snapshot("2026-09-05", 20_000)));
+    state.apply_bootstrap_result(
+        bootstrap_id,
+        Ok(schronu_web::ServerSnapshot {
+            observed_at_epoch_ms: 20_000,
+            logical_date: "2026-09-05".to_owned(),
+            buffer_seconds: 40,
+        }),
+    );
 
     state.tick(35_000);
-    assert_eq!(state.display_buffer_seconds(), Some(35));
+    assert_eq!(state.display_buffer_seconds(), Some(55));
 
     let (request_id, request) = list_effect(state.request_list("2026-09-05"));
     state.apply_list_result(
         request_id,
         &request.logical_date,
         Ok(WebSuccess {
-            snapshot: snapshot("2026-09-05", 40_000),
+            snapshot: schronu_web::ServerSnapshot {
+                observed_at_epoch_ms: 40_000,
+                logical_date: "2026-09-05".to_owned(),
+                buffer_seconds: 20,
+            },
             data: Vec::new(),
         }),
     );
     state.tick(45_000);
-    assert_eq!(state.display_buffer_seconds(), Some(25));
+    assert_eq!(state.display_buffer_seconds(), Some(45));
 }
 
 #[test]
-fn restored_sessionの継続時間をserver_bufferから1回だけ差し引く() {
+fn restored_sessionの未送信進捗を個別にserver_bufferへ加算する() {
     let storage = FakeStorage::default();
     let mut sessions = load_work_sessions(&storage).unwrap();
     sessions
@@ -225,13 +236,20 @@ fn restored_sessionの継続時間をserver_bufferから1回だけ差し引く()
 
     let mut state = load_client_state(&storage, 1_040_000).unwrap();
     let bootstrap_id = bootstrap_effect(state.request_bootstrap());
-    state.apply_bootstrap_result(bootstrap_id, Ok(snapshot("2026-09-05", 1_030_000)));
+    state.apply_bootstrap_result(
+        bootstrap_id,
+        Ok(schronu_web::ServerSnapshot {
+            observed_at_epoch_ms: 1_030_000,
+            logical_date: "2026-09-05".to_owned(),
+            buffer_seconds: 30,
+        }),
+    );
 
-    assert_eq!(state.display_buffer_seconds(), Some(30));
+    assert_eq!(state.display_buffer_seconds(), Some(90));
     state.discard_session(&storage, TASK_ID);
-    assert_eq!(state.display_buffer_seconds(), Some(40));
-    state.discard_session(&storage, OTHER_TASK_ID);
     assert_eq!(state.display_buffer_seconds(), Some(50));
+    state.discard_session(&storage, OTHER_TASK_ID);
+    assert_eq!(state.display_buffer_seconds(), Some(20));
 
     state.add_session_from_row(&storage, &row(TASK_ID, 0));
     state.tick(1_060_000);
@@ -240,15 +258,19 @@ fn restored_sessionの継続時間をserver_bufferから1回だけ差し引く()
         request_id,
         &request.logical_date,
         Ok(WebSuccess {
-            snapshot: snapshot("2026-09-05", 1_050_000),
+            snapshot: schronu_web::ServerSnapshot {
+                observed_at_epoch_ms: 1_050_000,
+                logical_date: "2026-09-05".to_owned(),
+                buffer_seconds: 10,
+            },
             data: Vec::new(),
         }),
     );
-    assert_eq!(state.display_buffer_seconds(), Some(60));
+    assert_eq!(state.display_buffer_seconds(), Some(20));
 }
 
 #[test]
-fn restored_sessionの復元補正は終了click時刻で打ち切る() {
+fn restored_sessionの未送信進捗は終了click時刻で打ち切る() {
     let storage = FakeStorage::default();
     let mut sessions = load_work_sessions(&storage).unwrap();
     sessions
@@ -265,7 +287,14 @@ fn restored_sessionの復元補正は終了click時刻で打ち切る() {
         .unwrap();
     let mut state = load_client_state(&storage, 1_020_000).unwrap();
     let bootstrap_id = bootstrap_effect(state.request_bootstrap());
-    state.apply_bootstrap_result(bootstrap_id, Ok(snapshot("2026-09-05", 1_020_000)));
+    state.apply_bootstrap_result(
+        bootstrap_id,
+        Ok(schronu_web::ServerSnapshot {
+            observed_at_epoch_ms: 1_020_000,
+            logical_date: "2026-09-05".to_owned(),
+            buffer_seconds: 40,
+        }),
+    );
 
     state.tick(1_030_000);
     record_effect(state.begin_record_session(&storage, TASK_ID));
@@ -275,12 +304,16 @@ fn restored_sessionの復元補正は終了click時刻で打ち切る() {
         request_id,
         &request.logical_date,
         Ok(WebSuccess {
-            snapshot: snapshot("2026-09-05", 1_050_000),
+            snapshot: schronu_web::ServerSnapshot {
+                observed_at_epoch_ms: 1_050_000,
+                logical_date: "2026-09-05".to_owned(),
+                buffer_seconds: 10,
+            },
             data: Vec::new(),
         }),
     );
 
-    assert_eq!(state.display_buffer_seconds(), Some(20));
+    assert_eq!(state.display_buffer_seconds(), Some(30));
 }
 
 #[test]
@@ -334,7 +367,7 @@ fn 三終了操作は同じclick時刻をrequestへ保持する() {
 }
 
 #[test]
-fn 別sessionが計測中なら終了処理中もbufferを停止する() {
+fn 終了処理中も各sessionの未送信進捗を合算する() {
     let storage = FakeStorage::default();
     let mut state = state_with_sessions(&storage, &[TASK_ID, OTHER_TASK_ID]);
     let bootstrap_id = bootstrap_effect(state.request_bootstrap());
@@ -344,7 +377,7 @@ fn 別sessionが計測中なら終了処理中もbufferを停止する() {
 
     state.tick(65_000);
 
-    assert_eq!(state.display_buffer_seconds(), Some(60));
+    assert_eq!(state.display_buffer_seconds(), Some(120));
 }
 
 #[test]
@@ -440,7 +473,7 @@ fn server_commit済みidを永続化できなければlocal_sessionを削除し�
 }
 
 #[test]
-fn active_session中の新しいsnapshotを新たなbuffer基準にする() {
+fn active_session中の新snapshotへ未送信進捗を加算する() {
     let storage = FakeStorage::default();
     let mut state = load_client_state(&storage, 1_000_000).unwrap();
     let bootstrap_id = bootstrap_effect(state.request_bootstrap());
@@ -464,13 +497,113 @@ fn active_session中の新しいsnapshotを新たなbuffer基準にする() {
     );
     state.tick(1_040_000);
 
-    assert_eq!(state.display_buffer_seconds(), Some(30));
+    assert_eq!(state.display_buffer_seconds(), Some(50));
     state.discard_session(&storage, TASK_ID);
     assert_eq!(state.display_buffer_seconds(), Some(20));
 }
 
 #[test]
-fn active_session中にbusy_timeを跨いだsnapshotは壁時計時間をcreditしない() {
+fn active_session中の一覧再取得は未送信進捗を新snapshotへ加算する() {
+    let storage = FakeStorage::default();
+    let mut state = load_client_state(&storage, 1_000_000).unwrap();
+    let bootstrap_id = bootstrap_effect(state.request_bootstrap());
+    state.apply_bootstrap_result(bootstrap_id, Ok(snapshot("2026-09-05", 1_000_000)));
+
+    state.tick(1_010_000);
+    state.add_session_from_row(&storage, &row(TASK_ID, 0));
+    state.tick(1_030_000);
+    assert_eq!(state.display_buffer_seconds(), Some(50));
+
+    for (observed_at_epoch_ms, buffer_seconds) in [(1_030_000, 30), (1_050_000, 10)] {
+        let (request_id, request) = list_effect(state.request_list("2026-09-05"));
+        state.apply_list_result(
+            request_id,
+            &request.logical_date,
+            Ok(WebSuccess {
+                snapshot: schronu_web::ServerSnapshot {
+                    observed_at_epoch_ms,
+                    logical_date: "2026-09-05".to_owned(),
+                    buffer_seconds,
+                },
+                data: Vec::new(),
+            }),
+        );
+        state.tick(observed_at_epoch_ms);
+        assert_eq!(state.display_buffer_seconds(), Some(50));
+    }
+}
+
+#[test]
+fn 負のbufferも一覧再取得ごとに未送信進捗を加算する() {
+    let storage = FakeStorage::default();
+    let mut state = load_client_state(&storage, 1_000_000).unwrap();
+    let bootstrap_id = bootstrap_effect(state.request_bootstrap());
+    state.apply_bootstrap_result(
+        bootstrap_id,
+        Ok(schronu_web::ServerSnapshot {
+            observed_at_epoch_ms: 1_000_000,
+            logical_date: "2026-09-05".to_owned(),
+            buffer_seconds: -30,
+        }),
+    );
+
+    state.tick(1_010_000);
+    state.add_session_from_row(&storage, &row(TASK_ID, 0));
+    for (observed_at_epoch_ms, buffer_seconds) in [(1_030_000, -60), (1_050_000, -80)] {
+        let (request_id, request) = list_effect(state.request_list("2026-09-05"));
+        state.apply_list_result(
+            request_id,
+            &request.logical_date,
+            Ok(WebSuccess {
+                snapshot: schronu_web::ServerSnapshot {
+                    observed_at_epoch_ms,
+                    logical_date: "2026-09-05".to_owned(),
+                    buffer_seconds,
+                },
+                data: Vec::new(),
+            }),
+        );
+        state.tick(observed_at_epoch_ms);
+        assert_eq!(state.display_buffer_seconds(), Some(-40));
+    }
+}
+
+#[test]
+fn zero_bufferも一覧再取得後に符号を変えない() {
+    let storage = FakeStorage::default();
+    let mut state = load_client_state(&storage, 1_000_000).unwrap();
+    let bootstrap_id = bootstrap_effect(state.request_bootstrap());
+    state.apply_bootstrap_result(
+        bootstrap_id,
+        Ok(schronu_web::ServerSnapshot {
+            observed_at_epoch_ms: 1_000_000,
+            logical_date: "2026-09-05".to_owned(),
+            buffer_seconds: 10,
+        }),
+    );
+
+    state.tick(1_010_000);
+    state.add_session_from_row(&storage, &row(TASK_ID, 0));
+    state.tick(1_030_000);
+    let (request_id, request) = list_effect(state.request_list("2026-09-05"));
+    state.apply_list_result(
+        request_id,
+        &request.logical_date,
+        Ok(WebSuccess {
+            snapshot: schronu_web::ServerSnapshot {
+                observed_at_epoch_ms: 1_030_000,
+                logical_date: "2026-09-05".to_owned(),
+                buffer_seconds: -20,
+            },
+            data: Vec::new(),
+        }),
+    );
+
+    assert_eq!(state.display_buffer_seconds(), Some(0));
+}
+
+#[test]
+fn active_session中にbusy_timeを跨いだsnapshotもserver基準へ未送信進捗を足す() {
     let storage = FakeStorage::default();
     let mut state = load_client_state(&storage, 1_000_000).unwrap();
     let bootstrap_id = bootstrap_effect(state.request_bootstrap());
@@ -494,11 +627,11 @@ fn active_session中にbusy_timeを跨いだsnapshotは壁時計時間をcredit�
     );
     state.tick(1_040_000);
 
-    assert_eq!(state.display_buffer_seconds(), Some(50));
+    assert_eq!(state.display_buffer_seconds(), Some(70));
 }
 
 #[test]
-fn 複数session中の記録snapshotを新たなbuffer基準にする() {
+fn 複数session中の記録snapshotへ残存sessionの未送信進捗を足す() {
     let storage = FakeStorage::default();
     let mut state = load_client_state(&storage, 1_000_000).unwrap();
     let bootstrap_id = bootstrap_effect(state.request_bootstrap());
@@ -526,13 +659,13 @@ fn 複数session中の記録snapshotを新たなbuffer基準にする() {
     );
     state.tick(1_040_000);
 
-    assert_eq!(state.display_buffer_seconds(), Some(40));
+    assert_eq!(state.display_buffer_seconds(), Some(60));
     state.discard_session(&storage, OTHER_TASK_ID);
     assert_eq!(state.display_buffer_seconds(), Some(30));
 }
 
 #[test]
-fn logical_date変更snapshotを新たなbuffer基準にする() {
+fn logical_date変更snapshotへも未送信進捗を足す() {
     let boundary = Local
         .with_ymd_and_hms(2026, 9, 6, 6, 0, 0)
         .single()
@@ -568,7 +701,7 @@ fn logical_date変更snapshotを新たなbuffer基準にする() {
     );
     state.tick(boundary + 20_000);
 
-    assert_eq!(state.display_buffer_seconds(), Some(50));
+    assert_eq!(state.display_buffer_seconds(), Some(65));
     state.discard_session(&storage, TASK_ID);
     assert_eq!(state.display_buffer_seconds(), Some(40));
 }

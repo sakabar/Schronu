@@ -76,58 +76,23 @@ pub fn buffer_timing_with_sessions(
     sessions: &[(i64, Option<i64>)],
 ) -> BufferTiming {
     let snapshot_elapsed_seconds = elapsed_seconds(observed_at_epoch_ms, tick_now_epoch_ms);
-    let window_start = i128::from(observed_at_epoch_ms);
-    let window_end = i128::from(tick_now_epoch_ms.max(observed_at_epoch_ms));
-    let active_milliseconds =
-        session_interval_milliseconds(observed_at_epoch_ms, tick_now_epoch_ms, sessions);
-    let idle_milliseconds = window_end - window_start - active_milliseconds;
-    let buffer_elapsed_seconds = i64::try_from(idle_milliseconds / 1_000)
-        .expect("the difference between two i64 millisecond epochs fits in i64 seconds");
+    let credit_until_epoch_ms = tick_now_epoch_ms.max(observed_at_epoch_ms);
+    let session_credit_seconds = sessions
+        .iter()
+        .map(|(started_at, ended_at)| {
+            let end = ended_at
+                .unwrap_or(credit_until_epoch_ms)
+                .min(credit_until_epoch_ms);
+            i128::from(elapsed_seconds(*started_at, end))
+        })
+        .sum::<i128>();
+    let buffer_elapsed_seconds = snapshot_elapsed_seconds;
     BufferTiming {
         snapshot_elapsed_seconds,
         buffer_elapsed_seconds,
-        display_buffer_seconds: i128::from(buffer_seconds) - i128::from(buffer_elapsed_seconds),
+        display_buffer_seconds: i128::from(buffer_seconds) - i128::from(buffer_elapsed_seconds)
+            + session_credit_seconds,
     }
-}
-
-pub(crate) fn session_interval_milliseconds(
-    window_start_epoch_ms: i64,
-    window_end_epoch_ms: i64,
-    sessions: &[(i64, Option<i64>)],
-) -> i128 {
-    if window_end_epoch_ms <= window_start_epoch_ms {
-        return 0;
-    }
-    let window_start = i128::from(window_start_epoch_ms);
-    let window_end = i128::from(window_end_epoch_ms);
-    let mut active_intervals: Vec<_> = sessions
-        .iter()
-        .filter_map(|(started_at, ended_at)| {
-            let start = i128::from(*started_at).max(window_start);
-            let end = i128::from(ended_at.unwrap_or(window_end_epoch_ms)).min(window_end);
-            (start < end).then_some((start, end))
-        })
-        .collect();
-    active_intervals.sort_unstable_by_key(|interval| interval.0);
-
-    let mut active_milliseconds = 0_i128;
-    let mut merged: Option<(i128, i128)> = None;
-    for (start, end) in active_intervals {
-        match merged {
-            Some((merged_start, merged_end)) if start <= merged_end => {
-                merged = Some((merged_start, merged_end.max(end)));
-            }
-            Some((merged_start, merged_end)) => {
-                active_milliseconds += merged_end - merged_start;
-                merged = Some((start, end));
-            }
-            None => merged = Some((start, end)),
-        }
-    }
-    if let Some((start, end)) = merged {
-        active_milliseconds += end - start;
-    }
-    active_milliseconds
 }
 
 pub fn format_mm_ss(seconds: i128) -> String {
