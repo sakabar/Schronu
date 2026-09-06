@@ -348,6 +348,32 @@ fn 一覧のセッション追加が拒否された場合は一覧tabに留ま�
 }
 
 #[test]
+fn 一覧のセッション保存失敗時は一覧tabに留まる() {
+    let storage = MemoryStorage::failing_writes();
+    let (mut state, _) = initialize_client(&storage, 1_000);
+    reduce_component_action_at(
+        &mut state,
+        &storage,
+        1_000,
+        ComponentAction::SwitchTab(ActiveTab::List),
+    );
+
+    let effect = reduce_component_action_at(
+        &mut state,
+        &storage,
+        1_000,
+        ComponentAction::AddSession {
+            task: task(RECORD_ID),
+            is_leaf: true,
+        },
+    );
+
+    assert_eq!(effect, ClientEffect::None);
+    assert!(state.sessions().is_empty());
+    assert_eq!(state.active_tab(), ActiveTab::List);
+}
+
+#[test]
 fn 持ち歩きロックは変更操作だけを中央で遮断しarmedを一度だけ消費する() {
     let storage = MemoryStorage::default();
     let (mut state, _) = initialize_client(&storage, 1_000);
@@ -796,6 +822,7 @@ const COMPLETE_ID: &str = "123e4567-e89b-12d3-a456-426614174001";
 struct MemoryStorage {
     values: RefCell<HashMap<String, String>>,
     fail_reads: bool,
+    fail_writes: bool,
     fail_carry_lock_reads: bool,
 }
 
@@ -804,6 +831,16 @@ impl MemoryStorage {
         Self {
             values: RefCell::new(HashMap::new()),
             fail_reads: true,
+            fail_writes: false,
+            fail_carry_lock_reads: false,
+        }
+    }
+
+    fn failing_writes() -> Self {
+        Self {
+            values: RefCell::new(HashMap::new()),
+            fail_reads: false,
+            fail_writes: true,
             fail_carry_lock_reads: false,
         }
     }
@@ -813,6 +850,7 @@ impl MemoryStorage {
         Self {
             values: RefCell::new(HashMap::new()),
             fail_reads: false,
+            fail_writes: false,
             fail_carry_lock_reads: true,
         }
     }
@@ -830,6 +868,9 @@ impl KeyValueStorage for MemoryStorage {
     }
 
     fn set(&self, key: &str, value: &str) -> Result<(), StorageError> {
+        if self.fail_writes {
+            return Err(StorageError::WriteFailed);
+        }
         self.values
             .borrow_mut()
             .insert(key.to_owned(), value.to_owned());
