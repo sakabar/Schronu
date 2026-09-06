@@ -7399,9 +7399,24 @@ fn interactive_storage_maintenanceの引数errorはcurrent_storageより先に�
             CommandKind::Backup,
         ),
         (
+            r#""back"up snapshot extra"#,
+            "backup <snapshot_dir>",
+            CommandKind::Backup,
+        ),
+        (
+            r"back\up snapshot extra",
+            "backup <snapshot_dir>",
+            CommandKind::Backup,
+        ),
+        (
             "backup\t\"unterminated",
             "double quoteが閉じられていません",
             CommandKind::Backup,
+        ),
+        (
+            r#""back"up verify"#,
+            "backup verify <snapshot_dir>",
+            CommandKind::BackupVerify,
         ),
         (
             "restore snapshot",
@@ -7412,6 +7427,21 @@ fn interactive_storage_maintenanceの引数errorはcurrent_storageより先に�
             "restore snapshot destination extra",
             "restore <snapshot_dir> <destination_dir>",
             CommandKind::Restore,
+        ),
+        (
+            r"res\tore snapshot",
+            "restore <snapshot_dir> <destination_dir>",
+            CommandKind::Restore,
+        ),
+        (
+            r#""res"tore current snapshot pre-backup"#,
+            "restore current <snapshot_dir> <pre_backup_dir> REPLACE_CURRENT_STORAGE",
+            CommandKind::RestoreCurrent,
+        ),
+        (
+            "restore current snapshot \"unterminated",
+            "double quoteが閉じられていません",
+            CommandKind::RestoreCurrent,
         ),
     ] {
         let outcome = handle_interactive_submit_at(
