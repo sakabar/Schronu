@@ -30,7 +30,7 @@ use crate::adapter::gateway::free_time_manager::FreeTimeManager;
 use crate::adapter::gateway::schronu_config::{load_schronu_config, SchronuConfig};
 use crate::adapter::gateway::storage_lock::{LockMode, StorageLock, StorageLockError};
 use crate::adapter::gateway::storage_snapshot::{
-    create_snapshot_with_lock, restore_snapshot, verify_snapshot, SnapshotError,
+    create_snapshot_with_lock, restore_snapshot_to_alternate, verify_snapshot, SnapshotError,
 };
 use crate::adapter::gateway::task_repository::TaskRepository;
 #[cfg(test)]
@@ -875,9 +875,14 @@ fn execute_restore_command(
     stdout: &mut dyn SchronuWriter,
     snapshot_directory: &std::path::Path,
     destination_directory: &std::path::Path,
+    current_storage_directory: &std::path::Path,
 ) -> Result<(), RunError> {
-    let summary =
-        restore_snapshot(snapshot_directory, destination_directory).map_err(RunError::Snapshot)?;
+    let summary = restore_snapshot_to_alternate(
+        snapshot_directory,
+        destination_directory,
+        current_storage_directory,
+    )
+    .map_err(RunError::Snapshot)?;
     render_display_model_with_mode(
         stdout,
         &restore_display(destination_directory, &summary),
@@ -1088,7 +1093,12 @@ fn execute_non_interactive_command_at(
     } = &parsed_command
     {
         let mut stdout = stdout();
-        return execute_restore_command(&mut stdout, snapshot_directory, destination_directory);
+        return execute_restore_command(
+            &mut stdout,
+            snapshot_directory,
+            destination_directory,
+            std::path::Path::new(task_repository.get_project_storage_dir_name()),
+        );
     }
     free_time_manager.load_busy_time_slots_from_file(
         active_config()
@@ -1453,9 +1463,16 @@ fn render_interactive_command_echo(
         .map_err(RunError::Command)
 }
 
-fn backup_input_kind(input: &str) -> Option<CommandKind> {
+fn storage_maintenance_input_kind(input: &str) -> Option<CommandKind> {
     let input = input.trim_start();
-    for prefix in ["backup", "'backup'", "\"backup\""] {
+    for (prefix, default_kind) in [
+        ("backup", CommandKind::Backup),
+        ("'backup'", CommandKind::Backup),
+        ("\"backup\"", CommandKind::Backup),
+        ("restore", CommandKind::Restore),
+        ("'restore'", CommandKind::Restore),
+        ("\"restore\"", CommandKind::Restore),
+    ] {
         let Some(rest) = input.strip_prefix(prefix) else {
             continue;
         };
@@ -1468,15 +1485,16 @@ fn backup_input_kind(input: &str) -> Option<CommandKind> {
         }
         let rest = rest.trim_start();
         return Some(
-            if rest == "verify"
-                || rest
-                    .strip_prefix("verify")
-                    .and_then(|suffix| suffix.chars().next())
-                    .is_some_and(char::is_whitespace)
+            if default_kind == CommandKind::Backup
+                && (rest == "verify"
+                    || rest
+                        .strip_prefix("verify")
+                        .and_then(|suffix| suffix.chars().next())
+                        .is_some_and(char::is_whitespace))
             {
                 CommandKind::BackupVerify
             } else {
-                CommandKind::Backup
+                default_kind
             },
         );
     }
@@ -1494,7 +1512,7 @@ fn handle_interactive_submit_at(
     let command = line.trim().to_string();
     let parsed_command = parse_interactive_command(&command);
     if let Err(error) = &parsed_command {
-        if let Some(command_kind) = backup_input_kind(&command) {
+        if let Some(command_kind) = storage_maintenance_input_kind(&command) {
             if let Err(output_error) =
                 render_interactive_command_echo(stdout, &command, operation_now).and_then(|()| {
                     render_display_model(
@@ -1530,7 +1548,12 @@ fn handle_interactive_submit_at(
         if let Err(error) = render_interactive_command_echo(stdout, &command, operation_now) {
             return InteractiveRepositoryEventOutcome::Fatal(error);
         }
-        return match execute_restore_command(stdout, snapshot_directory, destination_directory) {
+        return match execute_restore_command(
+            stdout,
+            snapshot_directory,
+            destination_directory,
+            std::path::Path::new(task_repository.get_project_storage_dir_name()),
+        ) {
             Ok(()) => InteractiveRepositoryEventOutcome::CommandExecuted(
                 CommandKind::Restore,
                 operation_now,

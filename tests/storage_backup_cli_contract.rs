@@ -295,6 +295,72 @@ fn restore_cliは厳密な引数数をusage付きで拒否する() {
     }
 }
 
+#[test]
+fn restore_cliはcurrent_storage_pathを通常restoreから拒否する() {
+    let fixture = CliFixture::seeded();
+    let snapshot = fixture.child("snapshot");
+    assert_eq!(
+        fixture
+            .run(&["backup", snapshot.to_str().unwrap()])
+            .status
+            .code(),
+        Some(0)
+    );
+    fs::remove_dir_all(&fixture.storage).unwrap();
+
+    let output = fixture.run(&[
+        "restore",
+        snapshot.to_str().unwrap(),
+        fixture.storage.to_str().unwrap(),
+    ]);
+
+    assert_eq!(output.status.code(), Some(1));
+    assert!(!fixture.storage.exists());
+    let stderr = String::from_utf8(output.stderr).unwrap();
+    assert!(
+        stderr.contains("storage snapshot Validate failed"),
+        "{stderr}"
+    );
+    assert!(
+        stderr.contains("ordinary restore destination must differ from current storage"),
+        "{stderr}"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn restore_cliはparent_symlink経由のcurrent_storage_aliasを拒否する() {
+    use std::os::unix::fs::symlink;
+
+    let fixture = CliFixture::seeded();
+    let snapshot = fixture.child("snapshot");
+    assert_eq!(
+        fixture
+            .run(&["backup", snapshot.to_str().unwrap()])
+            .status
+            .code(),
+        Some(0)
+    );
+    fs::remove_dir_all(&fixture.storage).unwrap();
+    let alias_parent = fixture.child("alias-parent");
+    symlink(&fixture.root, &alias_parent).unwrap();
+    let alias_destination = alias_parent.join("storage");
+
+    let output = fixture.run(&[
+        "restore",
+        snapshot.to_str().unwrap(),
+        alias_destination.to_str().unwrap(),
+    ]);
+
+    assert_eq!(output.status.code(), Some(1));
+    assert!(!fixture.storage.exists());
+    let stderr = String::from_utf8(output.stderr).unwrap();
+    assert!(
+        stderr.contains("ordinary restore destination must differ from current storage"),
+        "{stderr}"
+    );
+}
+
 fn find_project_yaml(storage: &Path) -> PathBuf {
     fs::read_dir(storage)
         .unwrap()

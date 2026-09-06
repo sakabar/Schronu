@@ -7367,7 +7367,7 @@ fn interactive_backup_verifyはcurrent_storage非依存で成功とsnapshot_erro
 }
 
 #[test]
-fn interactive_backup系の引数errorはcurrent_storageより先に返す() {
+fn interactive_storage_maintenanceの引数errorはcurrent_storageより先に返す() {
     let storage_dir = TestStorageDir::new();
     let now = Local.with_ymd_and_hms(2026, 9, 6, 14, 0, 0).unwrap();
     let task = new_test_task_handle("backup parse focus").unwrap();
@@ -7402,6 +7402,16 @@ fn interactive_backup系の引数errorはcurrent_storageより先に返す() {
             "backup\t\"unterminated",
             "double quoteが閉じられていません",
             CommandKind::Backup,
+        ),
+        (
+            "restore snapshot",
+            "restore <snapshot_dir> <destination_dir>",
+            CommandKind::Restore,
+        ),
+        (
+            "restore snapshot destination extra",
+            "restore <snapshot_dir> <destination_dir>",
+            CommandKind::Restore,
         ),
     ] {
         let outcome = handle_interactive_submit_at(

@@ -25,6 +25,38 @@ pub fn restore_snapshot(
     )
 }
 
+pub(crate) fn restore_snapshot_to_alternate(
+    snapshot_directory: &Path,
+    destination: &Path,
+    current_storage_directory: &Path,
+) -> Result<SnapshotSummary, SnapshotError> {
+    let destination_identity = path_identity(destination)?;
+    let current_identity = path_identity(current_storage_directory)?;
+    if destination_identity == current_identity {
+        return Err(invalid(
+            destination,
+            "ordinary restore destination must differ from current storage",
+        ));
+    }
+    restore_snapshot(snapshot_directory, destination)
+}
+
+fn path_identity(path: &Path) -> Result<PathBuf, SnapshotError> {
+    if path.exists() {
+        return fs::canonicalize(path)
+            .map_err(|error| SnapshotError::new(SnapshotOperation::Validate, path, error));
+    }
+    let parent = path
+        .parent()
+        .ok_or_else(|| invalid(path, "restore path must have a parent directory"))?;
+    let name = path
+        .file_name()
+        .ok_or_else(|| invalid(path, "restore path must have a file name"))?;
+    fs::canonicalize(parent)
+        .map(|canonical_parent| canonical_parent.join(name))
+        .map_err(|error| SnapshotError::new(SnapshotOperation::Validate, parent, error))
+}
+
 #[cfg(test)]
 pub(in crate::adapter::gateway) fn restore_snapshot_after_parent_open(
     snapshot: &Path,
