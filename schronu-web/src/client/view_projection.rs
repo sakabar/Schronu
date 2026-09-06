@@ -18,6 +18,14 @@ pub struct SessionCardViewModel {
     pub in_flight: bool,
     pub manual_check_blocked: bool,
     pub server_committed: bool,
+    pub completion_conflict: Option<CompletionConflictViewModel>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct CompletionConflictViewModel {
+    pub current_actual_work_seconds: i64,
+    pub measured_elapsed_seconds: i64,
+    pub record_elapsed_seconds: bool,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -98,6 +106,19 @@ fn project_session_cards_with(
                 in_flight: state.is_session_in_flight(&session.task_id),
                 manual_check_blocked: state.is_session_manual_check_blocked(&session.task_id),
                 server_committed,
+                completion_conflict: state.completion_conflict(&session.task_id).map(|conflict| {
+                    let measured_milliseconds = (i128::from(conflict.ended_at_epoch_ms)
+                        - i128::from(conflict.original_request.started_at_epoch_ms))
+                    .max(0);
+                    CompletionConflictViewModel {
+                        current_actual_work_seconds: conflict.current_actual_work_seconds,
+                        measured_elapsed_seconds: i64::try_from(measured_milliseconds / 1_000)
+                            .expect(
+                            "the difference between two i64 millisecond epochs fits in i64 seconds",
+                        ),
+                        record_elapsed_seconds: conflict.original_request.record_elapsed_seconds,
+                    }
+                }),
             }
         })
         .collect()

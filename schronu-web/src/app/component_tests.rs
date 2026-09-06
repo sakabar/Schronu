@@ -80,6 +80,14 @@ fn session操作は対応するcomponent_actionへ変換する() {
             SessionActionKind::CompleteWithoutRecording,
             "complete_without_recording",
         ),
+        (
+            SessionActionKind::ResumeCompletionConflict,
+            "resume_conflict",
+        ),
+        (
+            SessionActionKind::ConfirmCompletionConflict,
+            "confirm_conflict",
+        ),
     ] {
         let action = component_action_from_session_action(SessionAction {
             task_id: "task".to_owned(),
@@ -91,6 +99,12 @@ fn session操作は対応するcomponent_actionへ変換する() {
             ComponentAction::CompleteSession(task_id) if task_id == "task" => "complete",
             ComponentAction::CompleteSessionWithoutRecording(task_id) if task_id == "task" => {
                 "complete_without_recording"
+            }
+            ComponentAction::ResumeCompletionConflict(task_id) if task_id == "task" => {
+                "resume_conflict"
+            }
+            ComponentAction::ConfirmCompletionConflict(task_id) if task_id == "task" => {
+                "confirm_conflict"
             }
             _ => "unexpected",
         };
@@ -273,6 +287,8 @@ fn 持ち歩きロックは変更操作だけを中央で遮断しarmedを一度
         ComponentAction::RecordSession(RECORD_ID.to_owned()),
         ComponentAction::CompleteSession(RECORD_ID.to_owned()),
         ComponentAction::CompleteSessionWithoutRecording(RECORD_ID.to_owned()),
+        ComponentAction::ResumeCompletionConflict(RECORD_ID.to_owned()),
+        ComponentAction::ConfirmCompletionConflict(RECORD_ID.to_owned()),
         ComponentAction::ConfirmRepositoryChecked,
     ] {
         assert_eq!(
@@ -291,6 +307,8 @@ fn 持ち歩きロックは変更操作だけを中央で遮断しarmedを一度
         ComponentAction::RecordSession(RECORD_ID.to_owned()),
         ComponentAction::CompleteSession(RECORD_ID.to_owned()),
         ComponentAction::CompleteSessionWithoutRecording(RECORD_ID.to_owned()),
+        ComponentAction::ResumeCompletionConflict(RECORD_ID.to_owned()),
+        ComponentAction::ConfirmCompletionConflict(RECORD_ID.to_owned()),
         ComponentAction::ConfirmRepositoryChecked,
     ] {
         let action_storage = MemoryStorage::default();

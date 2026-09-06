@@ -1,6 +1,6 @@
 use dioxus::prelude::*;
 
-use crate::client::time_model::format_mm_ss;
+use crate::client::time_model::{format_hh_mm_ss, format_mm_ss};
 pub(crate) use crate::client::view_projection::SessionCardViewModel;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -10,6 +10,8 @@ pub enum SessionActionKind {
     Record,
     Complete,
     CompleteWithoutRecording,
+    ResumeCompletionConflict,
+    ConfirmCompletionConflict,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -111,6 +113,26 @@ fn SessionCard(
     let completion_label = format!("完了予定時刻 {completion}");
     let normal_style = format!("width:{}%", session.normal_bar_percent.max(0));
     let overrun_style = format!("width:{}%", session.overrun_bar_percent.max(0));
+    let conflict_message = session.completion_conflict.map(|conflict| {
+        let current = format_hh_mm_ss(i128::from(conflict.current_actual_work_seconds));
+        if conflict.record_elapsed_seconds {
+            let measured = format_hh_mm_ss(i128::from(conflict.measured_elapsed_seconds));
+            format!(
+                "タスクの実績時間が更新されています。現在の実績 {current} に、このセッションの計測 {measured} を加えて完了しますか?"
+            )
+        } else {
+            format!(
+                "タスクの実績時間が更新されています。現在の実績 {current} を維持して完了しますか?"
+            )
+        }
+    });
+    let conflict_confirm_label = session.completion_conflict.map_or("", |conflict| {
+        if conflict.record_elapsed_seconds {
+            "加算して完了"
+        } else {
+            "実績を維持して完了"
+        }
+    });
 
     rsx! {
         article { class: "session-card",
@@ -139,7 +161,34 @@ fn SessionCard(
                     div { class: "session-progress-overrun", style: overrun_style }
                 }
             }
-            if confirming_discard_completion() {
+            if session.completion_conflict.is_some() {
+                div {
+                    class: "session-discard-completion-confirmation",
+                    role: "group",
+                    aria_label: "{session.task_name}: 実績時間の競合確認",
+                    p { "{conflict_message.as_deref().unwrap_or_default()}" }
+                    div { class: "session-confirmation-actions",
+                        SessionActionButton {
+                            class: "session-action-resume-conflict",
+                            label: "計測を再開",
+                            task_name: session.task_name.clone(),
+                            task_id: session.task_id.clone(),
+                            kind: SessionActionKind::ResumeCompletionConflict,
+                            disabled: mutation_disabled,
+                            on_action,
+                        }
+                        SessionActionButton {
+                            class: "session-action-confirm-conflict",
+                            label: conflict_confirm_label,
+                            task_name: session.task_name.clone(),
+                            task_id: session.task_id.clone(),
+                            kind: SessionActionKind::ConfirmCompletionConflict,
+                            disabled: mutation_disabled,
+                            on_action,
+                        }
+                    }
+                }
+            } else if confirming_discard_completion() {
                 div {
                     class: "session-discard-completion-confirmation",
                     role: "group",

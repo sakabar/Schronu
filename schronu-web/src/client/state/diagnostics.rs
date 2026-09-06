@@ -123,6 +123,26 @@ impl DiagnosticsState {
 }
 
 impl ClientState {
+    pub(super) fn clear_superseded_completion_error(&mut self, task_id: &str) {
+        if matches!(
+            &self.diagnostics.display_error,
+            Some(DisplayError::Operation {
+                error: WebError { code, .. },
+                operation: Operation::CompleteSession | Operation::CompleteSessionWithoutRecording,
+                task_id: Some(error_task_id),
+            }) if code != crate::web_error_codes::REPOSITORY_STATE_UNCERTAIN
+                && error_task_id == task_id
+        ) || matches!(
+            &self.diagnostics.display_error,
+            Some(DisplayError::LocalStorage {
+                committed_on_server: false,
+                task_id: Some(error_task_id),
+            }) if error_task_id == task_id
+        ) {
+            self.diagnostics.display_error = None;
+        }
+    }
+
     pub(super) fn record_local_result(&mut self, task_id: Option<&str>, succeeded: bool) {
         if succeeded {
             if self

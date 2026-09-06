@@ -6,6 +6,7 @@ use super::session_view::{SessionAction, SessionActionKind, SessionCardViewModel
 use super::view_test_support::{
     dispatch_click, rebuild_with_click_listeners, render_with_click_listeners,
 };
+use crate::client::view_projection::CompletionConflictViewModel;
 use dioxus::dioxus_core::ElementId;
 use dioxus::dioxus_core::ScopeId;
 use dioxus::prelude::*;
@@ -186,6 +187,7 @@ fn card(task_id: &str) -> SessionCardViewModel {
         in_flight: false,
         manual_check_blocked: false,
         server_committed: false,
+        completion_conflict: None,
     }
 }
 
@@ -489,6 +491,57 @@ fn action_kind_is_a_closed_typed_contract() {
         SessionActionKind::Complete,
         SessionActionKind::CompleteWithoutRecording
     );
+    assert_ne!(
+        SessionActionKind::ResumeCompletionConflict,
+        SessionActionKind::ConfirmCompletionConflict
+    );
+}
+
+#[test]
+fn 完了実績競合は計測方針に応じた確認文とtyped_actionだけを表示する() {
+    for (records, message, confirm_label) in [
+        (
+            true,
+            "タスクの実績時間が更新されています。現在の実績 01:01:01 に、このセッションの計測 00:01:02 を加えて完了しますか?",
+            "加算して完了",
+        ),
+        (
+            false,
+            "タスクの実績時間が更新されています。現在の実績 01:01:01 を維持して完了しますか?",
+            "実績を維持して完了",
+        ),
+    ] {
+        let events = Arc::new(Mutex::new(Vec::new()));
+        let conflicted = SessionCardViewModel {
+            completion_conflict: Some(CompletionConflictViewModel {
+                current_actual_work_seconds: 3_661,
+                measured_elapsed_seconds: 62,
+                record_elapsed_seconds: records,
+            }),
+            ..card("conflicted")
+        };
+        let (dom, ids) = build_dom(vec![conflicted], false, Arc::clone(&events));
+        let html = dioxus::ssr::render(&dom);
+
+        assert!(html.contains("role=\"group\""), "{html}");
+        assert!(html.contains(message), "{html}");
+        assert!(html.contains("計測を再開"), "{html}");
+        assert!(html.contains(confirm_label), "{html}");
+        for normal_action in ["破棄して解除", "記録して解除", "計測を破棄して完了", "記録して完了"] {
+            assert!(!html.contains(normal_action), "{html}");
+        }
+        assert_eq!(ids.len(), 2);
+        for id in ids.into_iter().rev() {
+            dispatch_click(&dom, id);
+        }
+        assert_eq!(
+            *events.lock().unwrap(),
+            [
+                "conflicted:ResumeCompletionConflict",
+                "conflicted:ConfirmCompletionConflict",
+            ]
+        );
+    }
 }
 
 #[test]
