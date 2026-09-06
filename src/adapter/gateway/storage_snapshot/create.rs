@@ -215,10 +215,12 @@ where
     })?;
 
     create_snapshot_locked_with_publication(
-        storage_directory,
-        destination,
-        created_at,
-        limits,
+        SnapshotCreationRequest {
+            storage_directory,
+            destination,
+            created_at,
+            limits,
+        },
         io,
         hooks,
         publication,
@@ -242,22 +244,20 @@ where
     let publication = validate_endpoints(storage_directory, destination)?;
     ensure_parent_outside_storage(&publication, destination)?;
     create_snapshot_locked_with_publication(
-        storage_directory,
-        destination,
-        created_at,
-        limits,
+        SnapshotCreationRequest {
+            storage_directory,
+            destination,
+            created_at,
+            limits,
+        },
         io,
         hooks,
         publication,
     )
 }
 
-#[allow(clippy::too_many_arguments)]
 fn create_snapshot_locked_with_publication<AfterParent, AfterCapture, BeforeStrict, BeforePublish>(
-    storage_directory: &Path,
-    destination: &Path,
-    created_at: DateTime<Local>,
-    limits: SnapshotResourceLimits,
+    request: SnapshotCreationRequest<'_>,
     io: &dyn SnapshotIo,
     hooks: CreateHooks<AfterParent, AfterCapture, BeforeStrict, BeforePublish>,
     publication: PublicationDestination,
@@ -268,6 +268,12 @@ where
     BeforeStrict: FnOnce(),
     BeforePublish: FnOnce(),
 {
+    let SnapshotCreationRequest {
+        storage_directory,
+        destination,
+        created_at,
+        limits,
+    } = request;
     recover_storage(storage_directory)?;
     let scanned = scan_storage_entries(storage_directory, limits, io)?;
     (hooks.after_capture)();
@@ -315,6 +321,13 @@ where
         };
     }
     Ok(SnapshotSummary::new(revision, collected.files.len()))
+}
+
+struct SnapshotCreationRequest<'a> {
+    storage_directory: &'a Path,
+    destination: &'a Path,
+    created_at: DateTime<Local>,
+    limits: SnapshotResourceLimits,
 }
 
 struct CreateHooks<AfterParent, AfterCapture, BeforeStrict, BeforePublish> {
