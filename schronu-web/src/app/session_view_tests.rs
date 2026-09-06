@@ -247,10 +247,83 @@ fn session_cardは開始と完了予定と残り超過を同じ時刻行に表�
     active.started_at_hh_mm = "12:43".to_owned();
     active.completion_hh_mm = Some("13:43".to_owned());
     active.remaining_seconds = 58 * 60 + 4;
+    let (active_html, _) = render(vec![active], false);
+    assert_session_timing(
+        &active_html,
+        "12:43",
+        "13:43",
+        "58:04",
+        "残り時間",
+        "session-remaining",
+    );
+
     let mut overrun = card("overrun");
     overrun.remaining_seconds = -3;
+    let (overrun_html, _) = render(vec![overrun], false);
+    assert_session_timing(
+        &overrun_html,
+        "11:25",
+        "11:28",
+        "00:03",
+        "超過時間",
+        "session-remaining is-overrun",
+    );
 
-    let (html, _) = render(vec![active, overrun], false);
+    let mut unavailable = card("unavailable");
+    unavailable.completion_hh_mm = None;
+    unavailable.remaining_seconds = 10;
+    let (unavailable_html, _) = render(vec![unavailable], false);
+    assert_session_timing(
+        &unavailable_html,
+        "11:25",
+        "--:--",
+        "00:10",
+        "残り時間",
+        "session-remaining",
+    );
+}
+
+fn assert_session_timing(
+    html: &str,
+    started_at: &str,
+    completion: &str,
+    remaining: &str,
+    remaining_kind: &str,
+    remaining_class: &str,
+) {
+    let card = session_card_subtree(html);
+    let timing = session_timing_subtree(card);
+
+    for text in [started_at, "→", completion, remaining] {
+        assert!(timing.contains(text), "missing {text} in {timing}");
+    }
+    for label in [
+        format!("aria-label=\"開始時刻 {started_at}\""),
+        format!("aria-label=\"完了予定時刻 {completion}\""),
+        format!("aria-label=\"{remaining_kind} {remaining}\""),
+    ] {
+        assert!(timing.contains(&label), "missing {label} in {timing}");
+    }
+    assert_eq!(timing.matches("<time").count(), 2, "{timing}");
+    assert!(
+        timing.contains(&format!("class=\"{remaining_class}\"")),
+        "{timing}"
+    );
+}
+
+fn session_card_subtree(html: &str) -> &str {
+    let card_start = html
+        .find("class=\"session-card\"")
+        .expect("rendered variant must have one session card");
+    let card_end = html[card_start..]
+        .find("</article>")
+        .map(|offset| card_start + offset)
+        .expect("session card must close");
+
+    &html[card_start..card_end]
+}
+
+fn session_timing_subtree(html: &str) -> &str {
     let timing_start = html
         .find("class=\"session-timing\"")
         .expect("session card must have one timing container");
@@ -258,24 +331,8 @@ fn session_cardは開始と完了予定と残り超過を同じ時刻行に表�
         .find("</div>")
         .map(|offset| timing_start + offset)
         .expect("timing container must close");
-    let timing = &html[timing_start..timing_end];
 
-    for text in ["12:43", "→", "13:43", "58:04"] {
-        assert!(timing.contains(text), "missing {text} in {timing}");
-    }
-    for label in [
-        "aria-label=\"開始時刻 12:43\"",
-        "aria-label=\"完了予定時刻 13:43\"",
-        "aria-label=\"残り時間 58:04\"",
-    ] {
-        assert!(timing.contains(label), "missing {label} in {timing}");
-    }
-    assert!(timing.matches("<time").count() >= 2, "{timing}");
-    assert!(html.contains("aria-label=\"超過時間 00:03\""), "{html}");
-    assert!(
-        html.contains("class=\"session-remaining is-overrun\""),
-        "{html}"
-    );
+    &html[timing_start..timing_end]
 }
 
 #[test]
