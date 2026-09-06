@@ -394,33 +394,40 @@ buffer_seconds = remaining_capacity_seconds
 6. sync後のscheduleは通常`observed_at`より前に開始するsegmentを返さない。過去開始のsegmentが返った場合でも、開始時刻のlogical dateが一致すれば除外せず全量を加算する。
 7. `record_session`または`complete_session`による実績変更後は、operation開始時にsync済みのrepositoryからscheduleを再生成する。これにより更新後の残作業が同じresponseのbufferへ反映される。
 
-server snapshotのbufferでは進行中segmentから経過秒を引かない。browserは、計測中セッションが存在しない時間だけを次の規則で差し引く。server snapshotの観測時刻が日次終端以後でも、計測中セッションが0件ならsnapshot後の経過に応じて毎秒減算し、1件以上なら停止する。
+server snapshotのbufferでは進行中segmentから経過秒を引かない。browserは、開始時見積内の計測中セッションが存在しない時間だけを次の規則で差し引く。server snapshotの観測時刻が日次終端以後でも、1件でも開始時見積内のセッションがあればbufferを停止し、セッション0件または全セッションが時間超過済みならセッション数にかかわらず毎秒1秒減算する。
 
 client側:
 
 ```text
 snapshot_elapsed = max(0, floor((tick_now - observed_at) / 1000))
-active_sessions = work_sessions - 終了処理中sessions - server commit済みでlocal削除に失敗したsessions
-earliest_active_start = min(active_sessions.started_at)
-restored_active_sessions = active_sessionsのうち初期loadでlocalStorageから復元したsessions
-restored_intervals = restored_active_sessionsの[started_at, min(stopped_atまたはobserved_at, observed_at)]
+observation_window_milliseconds = max(0, tick_now - observed_at)
+buffer_sessions = work_sessions - server commit済みでlocal削除に失敗したsessions
+stopped_at(session) = 終了処理中またはrepository状態不確実なsessionのclick時刻
+restored_buffer_sessions = buffer_sessionsのうち初期loadでlocalStorageから復元したsessions
+protected_until(session) = min(
+  session.started_at + max(session.estimated_at_start - session.actual_at_start, 0),
+  session.stopped_atがあればその時刻
+)
+protected_intervals = buffer_sessionsの[started_at, protected_until]
+restored_intervals = restored_buffer_sessionsの[started_at, min(protected_until, observed_at)]
 
-buffer_elapsed =
-  active_sessionsが空: snapshot_elapsed
-  active_sessionsが存在: max(0, floor((min(tick_now, earliest_active_start) - observed_at) / 1000))
+protected_elapsed = protected_intervalsと[observed_at, tick_now]の重なりの和集合milliseconds
+buffer_elapsed = floor((observation_window_milliseconds - protected_elapsed) / 1000)
 
 restored_session_elapsed =
-  restored_active_sessionsが空: 0
-  restored_active_sessionsが存在: restored_intervalsの和集合のmilliseconds / 1000
+  restored_buffer_sessionsが空: 0
+  restored_buffer_sessionsが存在: restored_intervalsの和集合のmilliseconds / 1000
 
 display_buffer = buffer_seconds - buffer_elapsed - restored_session_elapsed
 ```
 
+`protected_until`は定義できる終端のうち最も早い時刻とする。見積到達時刻がepoch範囲外で算出不能かつ`stopped_at`もない場合は終端なしとし、セッションが終了するまでbufferを停止する。
+
 - `snapshot_elapsed`は観測用に保持し、bufferから実際に引く値は`buffer_elapsed`とする。
-- 新しいserver responseを受信した場合は、その`buffer_seconds`と`observed_at`を新たな表示計算の基準とする。snapshot以前に開始した計測中セッションは、snapshot直後からbufferを停止する。初期loadでlocalStorageから復元したセッションについては、server bufferへ未反映の継続時間として、`observed_at`以前に存在する復元セッション計測区間の和集合を追加で差し引く。終了操作中の区間は終了click時刻で閉じる。現在pageで新規追加したセッションへこの復元補正は適用しない。
+- 新しいserver responseを受信した場合は、その`buffer_seconds`と`observed_at`を新たな表示計算の基準とする。snapshot以前に開始した計測中セッションは、開始時見積内ならsnapshot直後からbufferを停止し、時間超過済みなら減算する。初期loadでlocalStorageから復元したセッションについては、server bufferへ未反映の継続時間として、`observed_at`以前に存在するbuffer停止区間の和集合を追加で差し引く。現在pageで新規追加したセッションへこの復元補正は適用しない。
 - `record_session`または`complete_session`のmutation responseは、対象実績を反映した`buffer_seconds`をそのまま新たな基準とする。server commit済みでlocalStorage削除だけに失敗した対象sessionは、以後のbuffer計算上の計測中sessionから除外する。
-- 終了操作をdispatchしたsessionはclick時刻を終端とする稼働区間として扱う。ほかにactive sessionがなければclick後からbufferを直ちに再開し、未commitが確定するerrorでは対象をactiveへ戻す。transport切断または`repository_state_uncertain`ではrepository確認完了までclick時刻の終端を保持する。成功時はresponseのsnapshotを新たな基準とするため、通信待ち時間をclientで二重減算しない。
-- 複数の計測中セッションは、いずれか1件が存在する区間の和集合として扱い、重複時間を二重に補正しない。復元セッションの`observed_at`以前の区間も同じ和集合計算を用い、終了操作中ならclick時刻で区間を閉じる。
+- 終了操作をdispatchしたsessionはclick時刻と見積到達時刻の早い方を終端とするbuffer停止区間として扱う。ほかにbuffer停止中のsessionがなければその終端後からbufferを直ちに再開し、未commitが確定するerrorでは対象を計測中へ戻す。transport切断または`repository_state_uncertain`ではrepository確認完了までclick時刻の終端を保持する。成功時はresponseのsnapshotを新たな基準とするため、通信待ち時間をclientで二重減算しない。
+- 複数の計測中セッションは、いずれか1件がbuffer停止中である区間の和集合として扱い、重複時間を二重に補正しない。復元セッションの`observed_at`以前の区間も同じ和集合計算を用い、全セッションが時間超過した区間はセッション数にかかわらず実時間と同速でbufferから差し引く。
 - 「破棄して解除」成功後は残存セッションから式全体を再計算する。最古セッションだけを破棄した場合は後発セッション開始前を未作業として追加減算し、最古の復元セッションを破棄した場合は残存する復元区間の和集合から補正を再計算する。全件破棄した場合はsnapshot後の全経過秒を減算し、復元補正は0とする。localStorage保存失敗時はmemory stateを確定しないため、buffer表示も変化させない。
 - browser時計が後退した区間は0秒へclampする。時刻差と加減算は`i64`境界でもoverflowしない計算を用いる。
 - `display_buffer >= 0`: 通常色の`HH:MM:SS`
@@ -449,7 +456,7 @@ display_buffer = buffer_seconds - buffer_elapsed - restored_session_elapsed
 
 1. localStorageを読み、`work_sessions`を復元し、復元したtask UUIDをpage内で識別する。
 2. `bootstrap`を1回送る。
-3. responseからbufferと8日buttonを表示する。bufferはserver観測時刻以前に存在する復元セッション計測区間の和集合を差し引き、終了操作中の区間は終了click時刻で閉じる。
+3. responseからbufferと8日buttonを表示する。bufferはserver観測時刻以前に存在する復元セッションのbuffer停止区間の和集合を差し引き、見積到達時刻またはそれより早い終了click時刻で区間を閉じる。
 4. 初期tabは「セッション」とする。
 5. viewport下端へ「セッション」「一覧」「発火履歴」の3tabを固定し、選択中だけ上端の緑indicatorと`aria-pressed: true`を付ける。各buttonは均等幅かつ操作高44px以上とする。
 6. tab barはsafe areaをpaddingへ含め、全幅かつ最大82remで中央配置する。本文末尾にはbar高、safe area、余白の合計を確保し、通信中overlayより低い`z-index`にする。
@@ -613,7 +620,7 @@ OperationHistoryEntry {
 - 進捗計算: 開始時33%、100%、133%、見積0、長時間、乗算overflow回避。
 - buffer: 正、0、負、06:00前後、日次終端前の固定`busy_time_slot`控除、隣接logical dateの除外を検証する。日次終端10分前で予定作業なしなら`+00:10:00`、日次終端ちょうどで予定作業なしなら`00:00:00`、日次終端40分後で予定作業なしなら`-00:40:00`、日次終端40分後で予定残作業62分なら`-01:42:00`となることを検証する。
 - buffer segment集計: 単一segment、同一taskの複数segment、複数task、進行中segment全量、同一logical date内の過去segment、`scheduled_work_seconds`合計overflowを検証する。
-- buffer更新: 実績変更後のschedule再生成と、日次終端の前後を問わずclientで計測中セッションが存在しない時間だけを毎秒減算し、1件以上存在する間は停止することを検証する。
+- buffer更新: 実績変更後のschedule再生成と、日次終端の前後を問わず開始時見積内のセッションが1件以上存在する間はbufferを停止し、セッション0件または全セッションが時間超過した間は実時間と同速で減算することを検証する。
 - read model: 指定日、開始時刻順、複数segment、schedule rank 0判定(task tree上の子の有無に非依存)、締切、候補なしの自動選定。
 
 ### 12.2 CLI互換性
@@ -638,11 +645,11 @@ OperationHistoryEntry {
 - reload、timer遅延、browser時計後退で開始時刻基準の経過秒になることを検証する。
 - session追加・破棄がserver callを生成しないことを検証する。
 - 一覧の手動session追加は`is_leaf == false`でlocalStorage、memory state、発火履歴を変更しないことを検証する。
-- bufferはsession 0件、snapshot以前からの復元session、snapshot後の途中開始、複数sessionの重複、最古sessionだけの破棄、全session破棄で、session不在時間と復元sessionの継続時間を契約どおり減算することを検証する。
+- bufferはsession 0件、snapshot以前からの復元session、snapshot後の途中開始、複数sessionの重複、単一・複数sessionの見積到達、開始時に見積到達済みのsession、最古sessionだけの破棄、全session破棄で、buffer停止区間外の時間と復元sessionの補正時間を契約どおり減算することを検証する。
 - 破棄のlocalStorage保存失敗ではsessionとbuffer表示を維持し、server commit済みでlocal削除に失敗したsessionはbuffer計算上の計測中sessionから除外することを検証する。
-- 同じlogical dateのread snapshot、実績反映済みmutation snapshot、06:00を跨ぐlogical date更新を新たなbuffer基準とし、初期loadで復元したsessionだけは各snapshot観測時刻以前の計測区間の和集合を差し引くことを検証する。
+- 同じlogical dateのread snapshot、実績反映済みmutation snapshot、06:00を跨ぐlogical date更新を新たなbuffer基準とし、初期loadで復元したsessionだけは各snapshot観測時刻以前のbuffer停止区間の和集合を差し引くことを検証する。
 - 記録と2種類の完了についてserver mutation成功、競合、保存失敗、worker停止、多重送信防止、global・manual safety block時のsession遷移を検証する。
-- 3終了操作でclick時刻をrequestへ保持し、pending中のcard停止、単一・複数sessionのbuffer遷移、未commit確定error後の自動再開、transport切断・repository状態不確実時の確認完了までの停止を注入epochだけで検証する。実時間のsleepやtimer待機は使用しない。
+- 3終了操作でclick時刻をrequestへ保持し、pending中のcard停止、見積到達時刻とclick時刻の早い方で閉じるbuffer停止区間、単一・複数sessionのbuffer遷移、未commit確定error後の自動再開、transport切断・repository状態不確実時の確認完了までの停止を注入epochだけで検証する。実時間のsleepやtimer待機は使用しない。
 - 2種類の完了成功で同一task UUIDの全rowだけが即時に除去され、別taskのrowと選択logical dateが維持されることを検証する。完了error、記録して解除、破棄して解除では一覧が変化せず、server commit成功後のlocalStorage削除失敗でも完了taskのrowが除去されることを検証する。
 - 完了成功response受理時点でin-flightだった`list_tasks` requestを無効化し、その後にresponseが到着しても完了taskが復活しないことを検証する。完了成功response受理後に開始した`list_tasks` responseは適用されることを検証する。logical date境界を跨ぐ完了responseではsnapshotと日付buttonが更新され、反復taskは次の明示的一覧取得まで自動追加されないことを検証する。
 - 各endpointの成功型がsnapshotを持ち、error型がsnapshotを持たず、clientがerror時に直前snapshotを維持することを検証する。
