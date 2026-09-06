@@ -468,6 +468,7 @@ display_buffer = buffer_seconds - snapshot_elapsed + session_credit
 5. viewport下端へ「セッション」「一覧」「発火履歴」の3tabを固定し、選択中だけ上端の緑indicatorと`aria-pressed: true`を付ける。各buttonは均等幅かつ操作高44px以上とする。
 6. tab barはsafe areaをpaddingへ含め、全幅かつ最大82remで中央配置する。本文末尾にはbar高、safe area、余白の合計を確保し、通信中overlayより低い`z-index`にする。
 7. tab切替だけでは一覧取得を含むserver操作を行わず、選択中の1画面だけをDOMへ描画する。タイトルとtoolbarは描画せず、持ち歩きロックbarとbufferはセッションtabだけに表示する。持ち歩きロックstateとmutation guardはtabにかかわらず有効にする。
+8. セッションtab表示中にセッション件数が実際に減少して0件になった場合は、既存のtab切替処理で一覧tabへ移る。件数不変、セッションが残る場合、一覧または発火履歴tab表示中は強制遷移しない。
 
 client componentは非`None`の`ClientEffect`をserverへdispatchする直前に実行中通信数を1増やし、response受理後に成否にかかわらず1減らす。実行中通信数が1以上の間は、viewport全体を覆う半透明overlay、スピナー、「通信中…」を表示する。背面の`main`に`inert`と`aria-busy`を設定し、pointerとkeyboard操作を無効にする。overlayのstatusは`aria-live=polite`で通知する。`prefers-reduced-motion: reduce`ではスピナーの回転を停止するが、待機表示自体は維持する。初回SSRとbrowser初期化前も同じDOMの待機表示にする。
 
@@ -477,7 +478,7 @@ client componentは非`None`の`ClientEffect`をserverへdispatchする直前に
 
 ### 7.2 セッション画面
 
-- セッション0件では「自動セッション」buttonを表示する。
+- 初期化時など、削除を伴わずセッション0件でセッションtabを表示している場合は「自動セッション」buttonを表示する。
 - 1件以上ではbuttonを隠し、各`work_session`をcard表示する。
 - cardはtask名、開始`HH:MM`、完了予定`HH:MM`、進捗率、bar、残り・超過`MM:SS`、「破棄して解除」「記録して解除」「計測を破棄して完了」「記録して完了」の4操作buttonを持つ。開始、矢印、完了予定、残り・超過は1つのtiming領域へ1行で表示し、mobileのgridをtask名、timing、progress、操作の順にする。
 - 操作buttonは意味別classを持ち、通常幅では解除系2つと完了系2つをそれぞれ同じ段に配置し、狭い画面では1列にする。
@@ -498,7 +499,7 @@ client componentは非`None`の`ClientEffect`をserverへdispatchする直前に
 - 締切は選択logical date内なら`HH:MM`、それ以外は`MM/DD HH:MM`とする。現在epochが締切epochを超えた場合に赤くする。
 - schedule rankが0のとき`is_leaf`をtrueとし、そのtask名を緑にする。
 - `is_leaf == true`のrowだけに「セッション」buttonを表示する。`is_leaf == false`のrowではbuttonとclick listenerを生成せず、client stateへ手動追加要求が直接渡されても拒否する。
-- 「セッション」click時はrowのtask snapshotと`is_leaf`、client現在時刻からsessionを作り、localStorageへ保存する。active tabは変更しない。
+- 「セッション」click時はrowのtask snapshotと`is_leaf`、client現在時刻からsessionを作り、localStorageへ保存する。追加成功後はセッションtabへ切り替える。
 - `work_sessions`に同一UUIDがあれば、そのUUIDの全rowでbuttonをdisabledにする。46rem以下では追加済みを「✓」で示し、ARIA labelも追加済みであることを表す。
 - 「計測を破棄して完了」または「記録して完了」のserver処理成功後は、追加の`list_tasks`を送らず、表示中のrowから対象task UUIDを持つ全schedule segmentを除去する。別taskのrowと選択logical dateは、responseでlogical dateが変わった場合も維持する。
 - 完了成功response受理時点でin-flightの`list_tasks` requestを無効化する。その後に到着した無効化済みrequestのresponseは適用せず、完了taskのrowが復活することを防ぐ。完了成功response受理後に利用者が日付buttonをclickして開始した新しい`list_tasks` requestは通常どおり適用する。
@@ -513,6 +514,7 @@ client componentは非`None`の`ClientEffect`をserverへdispatchする直前に
 - 「破棄して解除」はlocalStorage削除成功後だけmemory stateを確定し、残存する計測中セッションからbufferを再計算する。server requestとtask実績更新は行わない。
 - server mutationは、response成功後にlocalStorageからsessionを削除する。
 - server errorまたはlocalStorage削除失敗ではsessionを残す。server保存成功後にlocalStorage削除だけが失敗した場合、responseの更新後実績を反映した競合案内を表示し、再送による二重加算を防ぐため対象buttonを無効化し、対象sessionをbuffer計算上の計測中sessionから除外する。
+- component orchestratorはactionまたはresponse適用前後のsession件数を共通判定へ渡す。active tabがセッションで、件数が実際に減少して0件になった場合だけ一覧tabへ切り替える。即時削除、server成功後の削除、repository確認済みの削除を同じ判定へ通し、tab切替自体はeffectを生成しない。
 - serverが未commitと確定できるerrorではpending終了時刻を破棄し、対象sessionの表示と未送信進捗の加算を現在時刻基準で自動再開する。transport切断または`repository_state_uncertain`では終了時刻を保持し、repository確認完了時に破棄して再開する。
 - 2種類の完了では、server処理成功を受理した時点で対象task UUIDの全schedule segmentを一覧から除去する。この除去は後続のlocalStorage削除成否に依存しない。完了error、「記録して解除」、「破棄して解除」では一覧を変更しない。
 - 完了responseの`ServerSnapshot`は通常どおり適用する。responseのlogical dateが変わった場合は日付buttonを再生成する一方、選択logical dateと対象task以外のrowを維持する。追加の`list_tasks`は送らない。
@@ -668,6 +670,7 @@ OperationHistoryEntry {
 - `History`へのtab切替がeffectを生成しないこと、履歴がserver通信結果だけを対象とすること、100件上限、成否、reload非永続化を検証する。
 - 持ち歩きロックのkeyなし・正常値・不正JSON・未知version・読込失敗、元value維持、memory-first有効化、storage-first解除、一時許可非永続化を検証する。
 - 単調時計による15秒境界と時計後退、閲覧操作と確認キャンセルでは期限を維持し、全変更操作のdispatchごとに成否を問わず期限を15秒後へ更新することを検証する。完了実績競合の再完了と計測再開も同じguardを通す。
+- actionとresponseの製品orchestrator経路で、最後のsession削除成功時だけセッションtabから一覧tabへ移ることを検証する。複数session、server失敗、localStorage削除失敗、他tab表示中では遷移しないことも固定する。
 
 ### 12.5 UI and integration
 

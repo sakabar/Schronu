@@ -141,7 +141,10 @@ impl ComponentOrchestrator {
         response: ClientResponse,
     ) -> ClientEffect {
         self.state.as_mut().map_or(ClientEffect::None, |state| {
-            apply_response(state, storage, response)
+            let previous_session_count = state.sessions().len();
+            let effect = apply_response(state, storage, response);
+            switch_to_list_after_last_session_removed(state, previous_session_count);
+            effect
         })
     }
 }
@@ -162,7 +165,8 @@ pub(crate) fn reduce_component_action_at<S: KeyValueStorage>(
     if is_carry_lock_mutation(&action) && !state.authorize_carry_lock_mutation(monotonic_now_ms) {
         return ClientEffect::None;
     }
-    match action {
+    let previous_session_count = state.sessions().len();
+    let effect = match action {
         ComponentAction::SwitchTab(tab) => state.switch_tab(tab),
         ComponentAction::Tick { wall_now_epoch_ms } => state.tick(wall_now_epoch_ms),
         ComponentAction::SelectDate(logical_date) => state.request_list(&logical_date),
@@ -193,6 +197,20 @@ pub(crate) fn reduce_component_action_at<S: KeyValueStorage>(
         ComponentAction::EnableCarryLock
         | ComponentAction::ArmCarryLock
         | ComponentAction::DisableCarryLock => ClientEffect::None,
+    };
+    switch_to_list_after_last_session_removed(state, previous_session_count);
+    effect
+}
+
+fn switch_to_list_after_last_session_removed(
+    state: &mut ClientState,
+    previous_session_count: usize,
+) {
+    if state.active_tab() == ActiveTab::Session
+        && previous_session_count > state.sessions().len()
+        && state.sessions().is_empty()
+    {
+        state.switch_tab(ActiveTab::List);
     }
 }
 

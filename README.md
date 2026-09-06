@@ -71,6 +71,8 @@ browser時計がserver時計より進んでいる場合も、開始・終了clic
 
 4種類のセッション終了操作が成功すると、選択中の日付のtask一覧をserverから再取得し、表示中の一覧をresponse全体で置き換えます。一覧未選択時は最新のserver snapshotが示す現在logical dateを取得します。完了taskの除去、実績変更後の再schedule、反復により生成された次回taskの追加は、いずれもこのserver responseへ従います。
 
+セッションtabで終了操作またはrepository確認によって最後のセッションが正常に削除されると、一覧tabへ自動的に移ります。セッションが残る場合、serverまたはlocalStorageの処理に失敗した場合、一覧・発火履歴tabを表示している場合は強制遷移しません。このtab切替自体はserver通信を発生させません。
+
 Web側だけを検証するcommandは次のとおりです。
 
 ```shell
