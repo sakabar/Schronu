@@ -1,6 +1,6 @@
 use schronu_web::client::state::{
-    load_client_state, load_client_state_for_ui, ClientEffect, DisplayError, Locality, Operation,
-    Outcome, ServerFailure,
+    load_client_state, load_client_state_for_ui, ClientEffect, DisplayError, Operation, Outcome,
+    ServerFailure,
 };
 use schronu_web::{web_error_codes, RecordSessionResult, RetryAdvice, WebSuccess};
 
@@ -184,7 +184,6 @@ fn server_commit後のlocal削除失敗はserver成功だけを履歴へ記録�
     assert_eq!(state.history().len(), 1);
     let entry = state.history().front().unwrap();
     assert_eq!(entry.operation, Operation::RecordSession);
-    assert_eq!(entry.locality, Locality::Server);
     assert_eq!(entry.outcome, Outcome::Success);
     assert!(matches!(
         state.display_error(),

@@ -16,12 +16,6 @@ pub enum Operation {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum Locality {
-    Local,
-    Server,
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum Outcome {
     Success,
     Failure,
@@ -32,7 +26,6 @@ pub struct OperationHistoryEntry {
     pub occurred_at_epoch_ms: i64,
     pub operation: Operation,
     pub task_id: Option<String>,
-    pub locality: Locality,
     pub outcome: Outcome,
     pub summary: String,
 }

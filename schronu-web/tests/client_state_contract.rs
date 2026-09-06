@@ -1,6 +1,6 @@
 use chrono::{Local, TimeZone};
 use schronu_web::client::state::{
-    load_client_state, ActiveTab, ClientEffect, Locality, Operation, Outcome, ServerFailure,
+    load_client_state, ActiveTab, ClientEffect, Operation, Outcome, ServerFailure,
 };
 use schronu_web::{web_error_codes, RecordSessionResult, RetryAdvice, SessionTask, WebSuccess};
 
@@ -446,10 +446,10 @@ fn 完了effectは計測の記録方針と履歴種別を保持する() {
         request_id,
         Ok(snapshot("2026-09-05", 1)),
     );
-    assert!(discard_state.history().iter().any(|entry| {
-        entry.operation == Operation::CompleteSessionWithoutRecording
-            && entry.locality == Locality::Server
-    }));
+    assert!(discard_state
+        .history()
+        .iter()
+        .any(|entry| { entry.operation == Operation::CompleteSessionWithoutRecording }));
     assert!(discard_state.sessions().is_empty());
 
     let failed_storage = FakeStorage::default();
@@ -468,7 +468,6 @@ fn 完了effectは計測の記録方針と履歴種別を保持する() {
     assert_eq!(failed_state.sessions().len(), 1);
     assert!(failed_state.history().iter().any(|entry| {
         entry.operation == Operation::CompleteSessionWithoutRecording
-            && entry.locality == Locality::Server
             && entry.outcome == Outcome::Failure
     }));
 }
