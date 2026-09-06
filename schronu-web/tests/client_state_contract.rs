@@ -886,6 +886,98 @@ fn 現在実績のない旧完了競合はmanual_checkのままsession破棄で�
 }
 
 #[test]
+fn 完了実績競合は同じ完了taskの古いerrorを確認uiへ置き換える() {
+    let storage = FakeStorage::default();
+    let mut state = state_with_sessions(&storage, &[TASK_ID]);
+    let (retryable_id, _) = complete_effect(state.begin_complete_session(&storage, TASK_ID));
+    state.apply_complete_result(
+        &storage,
+        retryable_id,
+        Err(ServerFailure::Operation(web_error(
+            web_error_codes::REPOSITORY_SAVE_FAILED,
+            RetryAdvice::Retry,
+        ))),
+    );
+    assert!(state.display_error().is_some());
+
+    let (conflict_id, _) = complete_effect(state.begin_complete_session(&storage, TASK_ID));
+    state.apply_complete_result(
+        &storage,
+        conflict_id,
+        Err(ServerFailure::Operation(actual_work_conflict(Some(250)))),
+    );
+
+    assert!(state.display_error().is_none());
+    assert!(project_session_cards(&state, 540)[0]
+        .completion_conflict
+        .is_some());
+
+    storage.fail_work_session_writes.set(true);
+    state.resume_completion_conflict(&storage, TASK_ID);
+    assert!(matches!(
+        state.display_error(),
+        Some(schronu_web::client::state::DisplayError::LocalStorage {
+            committed_on_server: false,
+            task_id: Some(task_id),
+        }) if task_id == TASK_ID
+    ));
+    storage.fail_work_session_writes.set(false);
+    let (second_conflict_id, _) =
+        complete_effect(state.confirm_completion_conflict(&storage, TASK_ID));
+    state.apply_complete_result(
+        &storage,
+        second_conflict_id,
+        Err(ServerFailure::Operation(actual_work_conflict(Some(300)))),
+    );
+
+    assert!(state.display_error().is_none());
+    assert_eq!(
+        project_session_cards(&state, 540)[0]
+            .completion_conflict
+            .unwrap()
+            .current_actual_work_seconds,
+        300
+    );
+}
+
+#[test]
+fn 完了実績競合は別taskのrepository不確実errorを消さない() {
+    let storage = FakeStorage::default();
+    let mut state = state_with_sessions(&storage, &[TASK_ID, OTHER_TASK_ID]);
+    let (conflict_id, _) = complete_effect(state.begin_complete_session(&storage, TASK_ID));
+    let (uncertain_id, _) = complete_effect(state.begin_complete_session(&storage, OTHER_TASK_ID));
+    state.apply_complete_result(
+        &storage,
+        uncertain_id,
+        Err(ServerFailure::Operation(web_error(
+            web_error_codes::REPOSITORY_STATE_UNCERTAIN,
+            RetryAdvice::ManualCheck,
+        ))),
+    );
+    state.apply_complete_result(
+        &storage,
+        conflict_id,
+        Err(ServerFailure::Operation(actual_work_conflict(Some(250)))),
+    );
+
+    assert!(matches!(
+        state.display_error(),
+        Some(schronu_web::client::state::DisplayError::Operation {
+            error,
+            task_id: Some(task_id),
+            ..
+        }) if error.code == web_error_codes::REPOSITORY_STATE_UNCERTAIN
+            && task_id == OTHER_TASK_ID
+    ));
+    assert!(project_session_cards(&state, 540)
+        .into_iter()
+        .find(|card| card.task_id == TASK_ID)
+        .unwrap()
+        .completion_conflict
+        .is_some());
+}
+
+#[test]
 fn 計測破棄完了は多重送信と不確実な再送を防ぐ() {
     let transport_storage = FakeStorage::default();
     let mut transport_state = state_with_sessions(&transport_storage, &[TASK_ID, OTHER_TASK_ID]);

@@ -406,7 +406,7 @@ impl ClientState {
         match result {
             Ok(snapshot) => {
                 self.sessions.completion_conflicts.remove(&task_id);
-                self.clear_completion_conflict_error(&task_id);
+                self.clear_superseded_completion_error(&task_id);
                 self.apply_successful_completion_to_read_state(snapshot, &task_id);
                 self.finish_committed_mutation(storage, &task_id, invocation, None);
                 self.finish_mutation_safety(storage, false);
@@ -425,6 +425,7 @@ impl ClientState {
                         ended_at_epoch_ms,
                         current_actual_work_seconds,
                     );
+                    self.clear_superseded_completion_error(&task_id);
                     self.record_server(invocation, Outcome::Failure, "server操作に失敗しました。");
                 } else {
                     self.sessions.completion_conflicts.remove(&task_id);
@@ -510,7 +511,7 @@ impl ClientState {
                 self.sessions.completion_conflicts.remove(task_id);
                 self.sessions.manual_check_blocked_task_ids.remove(task_id);
                 self.sessions.uncertain_stopped_at_epoch_ms.remove(task_id);
-                self.clear_completion_conflict_error(task_id);
+                self.clear_superseded_completion_error(task_id);
                 self.record_local_result(Some(task_id), true);
             }
             Err(_) => self.record_local_result(Some(task_id), false),
