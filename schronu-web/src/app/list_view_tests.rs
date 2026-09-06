@@ -167,7 +167,7 @@ fn 幅34rem以下はbufferと日付buttonをtouch_targetを保って圧縮する
         ".buffer-panel {\n        margin-block: 0.75rem 1rem;\n        padding: 1.25rem 1rem;",
         ".buffer-value {\n        font-size: 3rem;",
         ".date-pills {\n        gap: 0.35rem;",
-        ".date-pill {\n        min-height: 2.75rem;\n        padding: 0.5rem 0.9rem;",
+        ".date-pill {\n        min-height: max(2.75rem, 44px);\n        padding: 0.5rem 0.9rem;",
     ] {
         assert!(narrow_layout.contains(required), "missing: {required}");
     }
