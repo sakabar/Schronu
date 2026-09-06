@@ -90,7 +90,7 @@ pub fn format_hh_mm_ss(seconds: i128) -> String {
     )
 }
 
-fn elapsed_seconds(start_epoch_ms: i64, now_epoch_ms: i64) -> i64 {
+pub(crate) fn elapsed_seconds(start_epoch_ms: i64, now_epoch_ms: i64) -> i64 {
     let elapsed_ms = i128::from(now_epoch_ms) - i128::from(start_epoch_ms);
     if elapsed_ms <= 0 {
         return 0;

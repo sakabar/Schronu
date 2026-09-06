@@ -95,6 +95,7 @@ impl ClientState {
             .work_sessions
             .replace_sessions(storage, candidate);
         if result.is_ok() {
+            self.restored_session_task_ids.remove(task_id);
             self.sessions.manual_check_blocked_task_ids.remove(task_id);
             if self
                 .diagnostics
@@ -168,6 +169,8 @@ impl ClientState {
                 });
                 return ClientEffect::None;
             }
+            self.restored_session_task_ids
+                .retain(|task_id| !self.sessions.committed_blocked_task_ids.contains(task_id));
             self.sessions.committed_blocked_task_ids.clear();
             self.sessions.committed_actual_work_seconds.clear();
         }
@@ -447,6 +450,7 @@ impl ClientState {
             .replace_sessions(storage, candidate)
         {
             Ok(()) => {
+                self.restored_session_task_ids.remove(task_id);
                 self.sessions.manual_check_blocked_task_ids.remove(task_id);
                 self.record_local_result(Some(task_id), true);
             }

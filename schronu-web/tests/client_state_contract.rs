@@ -2,6 +2,7 @@ use chrono::{Local, TimeZone};
 use schronu_web::client::state::{
     load_client_state, ActiveTab, ClientEffect, Operation, Outcome, ServerFailure,
 };
+use schronu_web::client::work_sessions::{load_work_sessions, WorkSession};
 use schronu_web::{web_error_codes, RecordSessionResult, RetryAdvice, SessionTask, WebSuccess};
 
 mod client_state_support;
@@ -111,6 +112,56 @@ fn bufferは成功したsession破棄で未作業時間を再計算する() {
         ClientEffect::None
     );
     assert_eq!(state.display_buffer_seconds(), Some(20));
+}
+
+#[test]
+fn restored_sessionの継続時間をserver_bufferから1回だけ差し引く() {
+    let storage = FakeStorage::default();
+    let mut sessions = load_work_sessions(&storage).unwrap();
+    sessions
+        .replace_sessions(
+            &storage,
+            vec![
+                WorkSession {
+                    task_id: TASK_ID.to_owned(),
+                    task_name: "first".to_owned(),
+                    started_at_epoch_ms: 1_000_000,
+                    estimated_work_seconds_at_start: 900,
+                    actual_work_seconds_at_start: 0,
+                },
+                WorkSession {
+                    task_id: OTHER_TASK_ID.to_owned(),
+                    task_name: "second".to_owned(),
+                    started_at_epoch_ms: 1_010_000,
+                    estimated_work_seconds_at_start: 900,
+                    actual_work_seconds_at_start: 0,
+                },
+            ],
+        )
+        .unwrap();
+
+    let mut state = load_client_state(&storage, 1_040_000).unwrap();
+    let bootstrap_id = bootstrap_effect(state.request_bootstrap());
+    state.apply_bootstrap_result(bootstrap_id, Ok(snapshot("2026-09-05", 1_030_000)));
+
+    assert_eq!(state.display_buffer_seconds(), Some(30));
+    state.discard_session(&storage, TASK_ID);
+    assert_eq!(state.display_buffer_seconds(), Some(40));
+    state.discard_session(&storage, OTHER_TASK_ID);
+    assert_eq!(state.display_buffer_seconds(), Some(50));
+
+    state.add_session_from_row(&storage, &row(TASK_ID, 0));
+    state.tick(1_060_000);
+    let (request_id, request) = list_effect(state.request_list("2026-09-05"));
+    state.apply_list_result(
+        request_id,
+        &request.logical_date,
+        Ok(WebSuccess {
+            snapshot: snapshot("2026-09-05", 1_050_000),
+            data: Vec::new(),
+        }),
+    );
+    assert_eq!(state.display_buffer_seconds(), Some(60));
 }
 
 #[test]

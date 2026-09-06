@@ -7,7 +7,7 @@ use super::date_buttons::LogicalDateButton;
 pub use super::effect::ClientEffect;
 pub use super::history::{Operation, OperationHistoryEntry, Outcome, ServerActionInvocation};
 use super::safety_state::{load_mutation_safety, MutationSafetyState};
-use super::time_model::buffer_timing;
+use super::time_model::{buffer_timing, elapsed_seconds};
 use super::work_sessions::{
     load_work_sessions, unavailable_state, KeyValueStorage, StorageError, WorkSession,
     WorkSessionsState,
@@ -17,7 +17,7 @@ use diagnostics::DiagnosticsState;
 pub use diagnostics::DisplayError;
 use read_state::ReadState;
 use session_state::SessionState;
-use std::collections::VecDeque;
+use std::collections::{HashSet, VecDeque};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ActiveTab {
@@ -35,6 +35,7 @@ pub struct ClientState {
     active_tab: ActiveTab,
     read: ReadState,
     sessions: SessionState,
+    restored_session_task_ids: HashSet<String>,
     diagnostics: DiagnosticsState,
     carry_lock: CarryLockState,
     tick_now_epoch_ms: i64,
@@ -47,10 +48,16 @@ impl ClientState {
         carry_lock: CarryLockState,
         tick_now_epoch_ms: i64,
     ) -> Self {
+        let restored_session_task_ids = work_sessions
+            .sessions()
+            .iter()
+            .map(|session| session.task_id.clone())
+            .collect();
         Self {
             active_tab: ActiveTab::Session,
             read: ReadState::new(),
             sessions: SessionState::new(work_sessions, mutation_safety),
+            restored_session_task_ids,
             diagnostics: DiagnosticsState::new(),
             carry_lock,
             tick_now_epoch_ms,
@@ -204,15 +211,25 @@ impl ClientState {
             .filter(|session| !self.is_session_committed_blocked(&session.task_id))
             .map(|session| session.started_at_epoch_ms)
             .collect();
-        Some(
-            buffer_timing(
-                snapshot.observed_at_epoch_ms,
-                snapshot.buffer_seconds,
-                self.tick_now_epoch_ms,
-                &active_session_starts,
-            )
-            .display_buffer_seconds,
-        )
+        let restored_session_elapsed_seconds = self
+            .sessions()
+            .iter()
+            .filter(|session| {
+                self.restored_session_task_ids.contains(&session.task_id)
+                    && !self.is_session_committed_blocked(&session.task_id)
+            })
+            .map(|session| session.started_at_epoch_ms)
+            .min()
+            .map_or(0, |started_at_epoch_ms| {
+                elapsed_seconds(started_at_epoch_ms, snapshot.observed_at_epoch_ms)
+            });
+        let timing = buffer_timing(
+            snapshot.observed_at_epoch_ms,
+            snapshot.buffer_seconds,
+            self.tick_now_epoch_ms,
+            &active_session_starts,
+        );
+        Some(timing.display_buffer_seconds - i128::from(restored_session_elapsed_seconds))
     }
 
     pub fn switch_tab(&mut self, tab: ActiveTab) -> ClientEffect {
