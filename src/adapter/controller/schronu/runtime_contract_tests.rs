@@ -7319,6 +7319,29 @@ fn interactive_backup_verifyはcurrent_storage非依存で成功とsnapshot_erro
         snapshot.display()
     )));
 
+    for command in [
+        format!("backup\tverify {}", snapshot.display()),
+        format!("'backup' verify {}", snapshot.display()),
+    ] {
+        let outcome = handle_interactive_submit_at(
+            &mut stdout,
+            &mut repository,
+            &mut free_time_manager,
+            InteractiveRepositoryState {
+                focused_task_id_opt: &mut focused_task_id_opt,
+                last_focused_task_id_opt: &mut last_focused_task_id_opt,
+                focus_started_datetime: &mut focus_started_datetime,
+                focus_selection_mode: &mut focus_selection_mode,
+            },
+            &command,
+            now,
+        );
+        assert!(matches!(
+            outcome,
+            InteractiveRepositoryEventOutcome::CommandExecuted(CommandKind::BackupVerify, _)
+        ));
+    }
+
     let manifest = snapshot.join("manifest.json");
     std::fs::write(&manifest, "{").unwrap();
     let outcome = handle_interactive_submit_at(
@@ -7380,9 +7403,9 @@ fn interactive_backup系の引数errorはcurrent_storageより先に返す() {
 
         assert!(matches!(
             outcome,
-            InteractiveRepositoryEventOutcome::Fatal(RunError::Command(error))
-                if error.to_string().contains(usage)
+            InteractiveRepositoryEventOutcome::Continue
         ));
+        assert!(String::from_utf8_lossy(&stdout.buffer).contains(usage));
     }
     assert_eq!(repository.reload_if_changed_attempt_count.get(), 0);
 }
