@@ -140,20 +140,6 @@ fn window_scrollはactive長押しをcancelしてstale_timerを拒否する() {
 }
 
 #[test]
-fn browser配線はwindow_scroll_listenerを登録しdrop時に解除する() {
-    let source = include_str!("carry_lock_view.rs");
-    for fragment in [
-        "WindowScrollListener::attach",
-        "add_event_listener_with_callback_and_bool(",
-        "impl Drop for WindowScrollListener",
-        "remove_event_listener_with_callback_and_bool(",
-        "tracker.write().cancel_all()",
-    ] {
-        assert!(source.contains(fragment), "missing {fragment}");
-    }
-}
-
-#[test]
 fn keyboard長押しはspaceとenterだけを受け付けkeyupでcancelする() {
     let mut tracker = LongPressTracker::default();
     assert!(tracker.begin_keyboard("Escape", false).is_none());

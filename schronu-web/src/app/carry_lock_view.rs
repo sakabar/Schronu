@@ -105,8 +105,17 @@ pub(crate) fn CarryLockBar(
     let mut tracker = use_signal(LongPressTracker::default);
     let mut pressing = use_signal(|| false);
     #[cfg(all(feature = "web", target_arch = "wasm32"))]
-    let _window_scroll_listener =
-        use_hook(|| Rc::new(WindowScrollListener::attach(tracker, pressing)));
+    let _window_scroll_listener = use_hook(|| {
+        Rc::new(ScrollCancellationGuard::attach(
+            BrowserWindowScrollSource,
+            move || {
+                let cancelled = tracker.write().cancel_all();
+                if cancelled {
+                    pressing.set(false);
+                }
+            },
+        ))
+    });
 
     rsx! {
         aside { class, aria_live: "polite", aria_label: "持ち歩きロック状態",
@@ -215,40 +224,66 @@ fn cancel_long_press(
     pressing.set(false);
 }
 
+trait ScrollEventSource {
+    type Subscription;
+
+    fn subscribe_capture(self, on_scroll: Box<dyn FnMut()>) -> Self::Subscription;
+}
+
+struct ScrollCancellationGuard<Subscription> {
+    _subscription: Subscription,
+}
+
+impl<Subscription> ScrollCancellationGuard<Subscription> {
+    fn attach<Source>(source: Source, on_scroll: impl FnMut() + 'static) -> Self
+    where
+        Source: ScrollEventSource<Subscription = Subscription>,
+    {
+        Self {
+            _subscription: source.subscribe_capture(Box::new(on_scroll)),
+        }
+    }
+}
+
 #[cfg(all(feature = "web", target_arch = "wasm32"))]
-struct WindowScrollListener {
+struct BrowserWindowScrollSource;
+
+#[cfg(all(feature = "web", target_arch = "wasm32"))]
+const CAPTURE_SCROLL_EVENTS: bool = true;
+
+#[cfg(all(feature = "web", target_arch = "wasm32"))]
+struct BrowserWindowScrollSubscription {
     window: web_sys::Window,
     callback: Closure<dyn FnMut(web_sys::Event)>,
 }
 
 #[cfg(all(feature = "web", target_arch = "wasm32"))]
-impl WindowScrollListener {
-    fn attach(mut tracker: Signal<LongPressTracker>, mut pressing: Signal<bool>) -> Self {
+impl ScrollEventSource for BrowserWindowScrollSource {
+    type Subscription = BrowserWindowScrollSubscription;
+
+    fn subscribe_capture(self, mut on_scroll: Box<dyn FnMut()>) -> Self::Subscription {
         let window = web_sys::window().expect("browser Window API must be available");
         let callback = Closure::wrap(Box::new(move |_event: web_sys::Event| {
-            let cancelled = tracker.write().cancel_all();
-            if cancelled {
-                pressing.set(false);
-            }
+            on_scroll();
         }) as Box<dyn FnMut(web_sys::Event)>);
         window
             .add_event_listener_with_callback_and_bool(
                 "scroll",
                 callback.as_ref().unchecked_ref(),
-                true,
+                CAPTURE_SCROLL_EVENTS,
             )
             .expect("window scroll listener must be registered");
-        Self { window, callback }
+        BrowserWindowScrollSubscription { window, callback }
     }
 }
 
 #[cfg(all(feature = "web", target_arch = "wasm32"))]
-impl Drop for WindowScrollListener {
+impl Drop for BrowserWindowScrollSubscription {
     fn drop(&mut self) {
         let _ = self.window.remove_event_listener_with_callback_and_bool(
             "scroll",
             self.callback.as_ref().unchecked_ref(),
-            true,
+            CAPTURE_SCROLL_EVENTS,
         );
     }
 }
@@ -276,4 +311,81 @@ fn complete_long_press_after_delay(
     _token: u64,
     _on_arm: EventHandler<()>,
 ) {
+}
+
+#[cfg(test)]
+mod scroll_listener_tests {
+    use super::*;
+    use std::cell::{Cell, RefCell};
+    use std::rc::Rc;
+
+    type SharedCallback = Rc<RefCell<Option<Box<dyn FnMut()>>>>;
+
+    #[derive(Clone, Default)]
+    struct FakeScrollSource {
+        callback: SharedCallback,
+        subscribe_count: Rc<Cell<usize>>,
+        unsubscribe_count: Rc<Cell<usize>>,
+    }
+
+    impl FakeScrollSource {
+        fn fire(&self) {
+            if let Some(callback) = self.callback.borrow_mut().as_mut() {
+                callback();
+            }
+        }
+    }
+
+    struct FakeScrollSubscription {
+        callback: SharedCallback,
+        unsubscribe_count: Rc<Cell<usize>>,
+    }
+
+    impl Drop for FakeScrollSubscription {
+        fn drop(&mut self) {
+            self.callback.borrow_mut().take();
+            self.unsubscribe_count
+                .set(self.unsubscribe_count.get().saturating_add(1));
+        }
+    }
+
+    impl ScrollEventSource for FakeScrollSource {
+        type Subscription = FakeScrollSubscription;
+
+        fn subscribe_capture(self, on_scroll: Box<dyn FnMut()>) -> Self::Subscription {
+            self.subscribe_count
+                .set(self.subscribe_count.get().saturating_add(1));
+            self.callback.borrow_mut().replace(on_scroll);
+            FakeScrollSubscription {
+                callback: self.callback,
+                unsubscribe_count: self.unsubscribe_count,
+            }
+        }
+    }
+
+    #[test]
+    fn guardはscrollを購読しcallbackで長押しをcancelしてdrop時に解除する() {
+        let source = FakeScrollSource::default();
+        let tracker = Rc::new(RefCell::new(LongPressTracker::default()));
+        let stale_timer = tracker.borrow_mut().begin(LongPressSource::Pointer);
+        let cancellation_count = Rc::new(Cell::new(0_u8));
+        let callback_tracker = Rc::clone(&tracker);
+        let callback_count = Rc::clone(&cancellation_count);
+
+        let guard = ScrollCancellationGuard::attach(source.clone(), move || {
+            if callback_tracker.borrow_mut().cancel_all() {
+                callback_count.set(callback_count.get().saturating_add(1));
+            }
+        });
+        assert_eq!(source.subscribe_count.get(), 1);
+
+        source.fire();
+        assert_eq!(cancellation_count.get(), 1);
+        assert!(!tracker.borrow_mut().complete(stale_timer));
+
+        drop(guard);
+        assert_eq!(source.unsubscribe_count.get(), 1);
+        source.fire();
+        assert_eq!(cancellation_count.get(), 1);
+    }
 }
