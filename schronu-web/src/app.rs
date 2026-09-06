@@ -27,6 +27,8 @@ pub(crate) mod list_view;
 #[cfg(test)]
 mod list_view_tests;
 #[cfg(test)]
+mod long_press_controller_tests;
+#[cfg(test)]
 mod projection_boundary_tests;
 pub(crate) mod session_view;
 #[cfg(test)]
