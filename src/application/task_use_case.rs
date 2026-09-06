@@ -869,6 +869,25 @@ fn resolve_date_and_time(
     resolve_local_datetime(local_datetime, local_datetime.and_local_timezone(Local))
 }
 
+fn shift_local_date_and_time(
+    base_datetime: DateTime<Local>,
+    days: i64,
+    time: NaiveTime,
+    operation: &'static str,
+    out_of_range_datetime: DateTime<Local>,
+) -> Result<DateTime<Local>, ApplicationError> {
+    let out_of_range = || ApplicationError::LogicalDateOutOfRange {
+        operation,
+        datetime: out_of_range_datetime,
+    };
+    let duration = Duration::try_days(days).ok_or_else(out_of_range)?;
+    let target_date = base_datetime
+        .date_naive()
+        .checked_add_signed(duration)
+        .ok_or_else(out_of_range)?;
+    try_local_date_and_time(target_date, time)
+}
+
 fn build_next_repetition_task_attr(
     task: &TaskHandle,
     parent_task: &TaskHandle,
@@ -912,30 +931,28 @@ fn build_next_repetition_task_attr(
                 operation: "next_logical_date_start",
                 datetime: occurrence_anchor,
             })?;
-    let repetition_offset = Duration::try_days(repetition_offset_days).ok_or(
-        ApplicationError::LogicalDateOutOfRange {
-            operation: "next_logical_date_start",
-            datetime: occurrence_anchor,
-        },
+    let next_occurrence_day = shift_local_date_and_time(
+        next_logical_date_start,
+        repetition_offset_days,
+        next_logical_date_start.time(),
+        "next_logical_date_start",
+        occurrence_anchor,
     )?;
-    let next_occurrence_day = next_logical_date_start
-        .checked_add_signed(repetition_offset)
-        .ok_or(ApplicationError::LogicalDateOutOfRange {
-            operation: "next_logical_date_start",
-            datetime: occurrence_anchor,
-        })?;
     let occurrence_start_time = apply_time_template(next_occurrence_day, parent_start_time)?;
-    let days_in_advance =
-        Duration::try_days(days_in_advance).ok_or(ApplicationError::LogicalDateOutOfRange {
-            operation: "repetition_start_time",
-            datetime: occurrence_start_time,
-        })?;
-    let task_start_time = occurrence_start_time
-        .checked_sub_signed(days_in_advance)
-        .ok_or(ApplicationError::LogicalDateOutOfRange {
-            operation: "repetition_start_time",
-            datetime: occurrence_start_time,
-        })?;
+    let start_offset_days =
+        days_in_advance
+            .checked_neg()
+            .ok_or(ApplicationError::LogicalDateOutOfRange {
+                operation: "repetition_start_time",
+                datetime: occurrence_start_time,
+            })?;
+    let task_start_time = shift_local_date_and_time(
+        occurrence_start_time,
+        start_offset_days,
+        occurrence_start_time.time(),
+        "repetition_start_time",
+        occurrence_start_time,
+    )?;
     let new_deadline_time = match parent_deadline_time {
         Some(parent_deadline_time) => {
             apply_time_template(next_occurrence_day, parent_deadline_time)?
