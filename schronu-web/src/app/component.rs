@@ -26,9 +26,13 @@ pub(super) fn InteractiveShell(blocked: bool, children: Element) -> Element {
     }
 }
 
-#[cfg_attr(not(all(feature = "web", target_arch = "wasm32")), allow(dead_code))]
-pub(super) fn session_chrome_visible(active_tab: ActiveTab) -> bool {
-    active_tab == ActiveTab::Session
+#[component]
+pub(super) fn SessionChrome(active_tab: ActiveTab, children: Element) -> Element {
+    if active_tab == ActiveTab::Session {
+        rsx! { {children} }
+    } else {
+        rsx! {}
+    }
 }
 
 #[component]

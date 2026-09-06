@@ -1,6 +1,6 @@
 #![cfg(feature = "server")]
 
-use super::component::{app, session_chrome_visible, InteractiveShell, NavigationTabs};
+use super::component::{app, InteractiveShell, NavigationTabs, SessionChrome};
 #[cfg(feature = "web")]
 use super::component_models::BrowserPageModel;
 use super::component_runtime::{
@@ -612,9 +612,26 @@ fn native_ssrはbrowser_storageへ触れずloading_shellだけを描画する() 
 
 #[test]
 fn 共通chromeはsessionだけに表示する() {
-    assert!(session_chrome_visible(ActiveTab::Session));
-    assert!(!session_chrome_visible(ActiveTab::List));
-    assert!(!session_chrome_visible(ActiveTab::History));
+    fn chrome_root(active_tab: ActiveTab) -> Element {
+        rsx! {
+            SessionChrome { active_tab,
+                aside { class: "carry-lock-bar", "lock" }
+                section { class: "buffer-panel", "buffer" }
+            }
+        }
+    }
+
+    for (active_tab, visible) in [
+        (ActiveTab::Session, true),
+        (ActiveTab::List, false),
+        (ActiveTab::History, false),
+    ] {
+        let mut dom = VirtualDom::new_with_props(chrome_root, active_tab);
+        dom.rebuild_in_place();
+        let html = dioxus::ssr::render(&dom);
+        assert_eq!(html.contains("carry-lock-bar"), visible, "{html}");
+        assert_eq!(html.contains("buffer-panel"), visible, "{html}");
+    }
 }
 
 fn interactive_shell_transition() -> Element {
