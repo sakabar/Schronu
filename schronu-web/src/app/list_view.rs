@@ -1,4 +1,5 @@
 use dioxus::prelude::*;
+use std::rc::Rc;
 
 pub(crate) use crate::client::view_projection::ListRowViewModel;
 use crate::SessionTask;
@@ -21,6 +22,7 @@ pub fn ListView(
     on_start_session: EventHandler<(SessionTask, bool)>,
     on_filter_change: EventHandler<String>,
 ) -> Element {
+    let mut filter_input = use_signal(|| None::<Rc<MountedData>>);
     let normalized_filter = filter_text.trim().to_lowercase();
     let task_name_matches = |task_name: &str| {
         normalized_filter.is_empty() || task_name.to_lowercase().contains(&normalized_filter)
@@ -45,6 +47,7 @@ pub fn ListView(
                     value: filter_text.clone(),
                     aria_label: "タスク名を検索",
                     placeholder: "タスク名を検索",
+                    onmounted: move |element| filter_input.set(Some(element.data())),
                     oninput: move |event| on_filter_change.call(event.value()),
                 }
                 if !filter_text.is_empty() {
@@ -52,7 +55,12 @@ pub fn ListView(
                         class: "task-name-filter-clear",
                         r#type: "button",
                         aria_label: "検索文字列をクリア",
-                        onclick: move |_| on_filter_change.call(String::new()),
+                        onclick: move |_| async move {
+                            on_filter_change.call(String::new());
+                            if let Some(input) = filter_input.cloned() {
+                                let _ = input.set_focus(true).await;
+                            }
+                        },
                         "×"
                     }
                 }
