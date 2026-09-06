@@ -73,7 +73,7 @@
 | TD-032 | P1 | 完了 | S | macOS標準環境でSpreadsheet変換の`tac`依存が空出力の成功になる |
 | TD-033 | P1 | 未着手 | M | 同一taskの複数segmentをApps Scriptが別行へ同期する |
 | TD-034 | P1 | 一部完了(W1-J) | M | Spreadsheet入力が存在しない日付と不正な時分秒をcommandへ変換する |
-| TD-035 | P2 | 未着手 | M | 反復延期がDST境界で開始時刻とdeadlineの壁時計時刻をずらす |
+| TD-035 | P2 | 完了 | M | 反復延期がDST境界で開始時刻とdeadlineの壁時計時刻をずらす |
 | TD-036 | P2 | 未着手 | L | source textを独自parseするarchitecture testがRust構文と実装名へ強く結合している |
 | TD-037 | P2 | 完了 | M | 未使用のlenient YAML変換APIがstrict loaderと並存している |
 | TD-038 | P2 | 未着手 | L | MCPのtask一覧に検索・paginationがなく、大規模storageで応答が無制限に増える |
@@ -1448,6 +1448,10 @@
 - 分類: `バグ / timezone`
 - 優先度: `P2`
 - 概算規模: `M`
+- 完了日: 2026-09-06
+- 対応: `repetition_interval_days`をOS local timezone上の暦日として扱い、通常の次回反復生成とroutine延期を、local dateのchecked加算後に元の壁時計時刻をfallibleに解決する共通helperへ統一した。startとdeadlineは互いのelapsed差分から導出せず、それぞれ独立して移動し、全日時の解決後にmutationする。
+- 検証: `America/New_York`を設定したfresh subprocessで冬・夏のUTC offsetをcanary検証し、DST開始・終了を跨ぐ1日/7日周期、親deadlineあり/なし、`days_in_advance`、曖昧・不存在時刻の構造化errorと失敗時のsnapshot・親aggregate revision・保存回数・focus・子一覧不変を固定した。`cargo fmt --check`、`cargo clippy --locked --all-targets -- -D warnings`、`cargo test --locked`、`git diff --check`に成功し、subagent reviewと親branch reviewで未解消指摘なし。
+- 残存: なし。公開API、error enum、gateway、storage schemaは変更していない。
 - 関連既存項目: TD-010はlocal datetime変換errorを統一したが、反復間隔をelapsed durationとして扱う経路が残る。
 
 #### 現状と根拠
