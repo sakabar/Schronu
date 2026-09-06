@@ -31,7 +31,6 @@ use manifest::{
 #[cfg(test)]
 pub(super) use prepare::prepare;
 pub(super) use prepare::prepare_with_directories;
-#[cfg(test)]
 pub(super) use prepare::prepare_with_directories_and_deletes;
 #[cfg(test)]
 use recovery::prepared_from_manifest;

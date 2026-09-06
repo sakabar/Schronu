@@ -21,7 +21,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use uuid::Uuid;
 
-mod capture;
+pub(super) mod capture;
 
 use capture::{scan_storage_entries, validate_capture_unchanged, ScannedStorage};
 

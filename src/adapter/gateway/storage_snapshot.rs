@@ -1,4 +1,5 @@
 mod create;
+mod current_restore;
 mod error;
 pub(in crate::adapter::gateway) mod io;
 mod layout;
@@ -15,6 +16,9 @@ pub(in crate::adapter::gateway) use create::{
     create_snapshot_with_failure, create_snapshot_with_failure_observation,
     create_snapshot_with_limits,
 };
+pub use current_restore::restore_current_snapshot;
+#[cfg(test)]
+pub(in crate::adapter::gateway) use current_restore::restore_current_snapshot_at;
 pub use error::{SnapshotError, SnapshotLimitKind};
 #[cfg(test)]
 pub(in crate::adapter::gateway) use io::SnapshotFailurePoint;
