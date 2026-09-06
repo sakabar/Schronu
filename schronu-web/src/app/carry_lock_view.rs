@@ -1,5 +1,9 @@
 use crate::client::carry_lock::CarryLockMode;
 use dioxus::prelude::*;
+#[cfg(all(feature = "web", target_arch = "wasm32"))]
+use std::rc::Rc;
+#[cfg(all(feature = "web", target_arch = "wasm32"))]
+use wasm_bindgen::{closure::Closure, JsCast};
 
 #[cfg_attr(not(all(feature = "web", target_arch = "wasm32")), allow(dead_code))]
 pub(crate) const LONG_PRESS_MILLIS: u32 = 1_200;
@@ -72,6 +76,10 @@ impl LongPressTracker {
         }
     }
 
+    pub fn cancel_all(&mut self) -> bool {
+        self.active.take().is_some()
+    }
+
     pub fn complete(&mut self, token: u64) -> bool {
         if self.active.is_some_and(|active| active.token == token) {
             self.active = None;
@@ -96,6 +104,9 @@ pub(crate) fn CarryLockBar(
     };
     let mut tracker = use_signal(LongPressTracker::default);
     let mut pressing = use_signal(|| false);
+    #[cfg(all(feature = "web", target_arch = "wasm32"))]
+    let _window_scroll_listener =
+        use_hook(|| Rc::new(WindowScrollListener::attach(tracker, pressing)));
 
     rsx! {
         aside { class, aria_live: "polite", aria_label: "持ち歩きロック状態",
@@ -202,6 +213,44 @@ fn cancel_long_press(
 ) {
     tracker.write().cancel(source);
     pressing.set(false);
+}
+
+#[cfg(all(feature = "web", target_arch = "wasm32"))]
+struct WindowScrollListener {
+    window: web_sys::Window,
+    callback: Closure<dyn FnMut(web_sys::Event)>,
+}
+
+#[cfg(all(feature = "web", target_arch = "wasm32"))]
+impl WindowScrollListener {
+    fn attach(mut tracker: Signal<LongPressTracker>, mut pressing: Signal<bool>) -> Self {
+        let window = web_sys::window().expect("browser Window API must be available");
+        let callback = Closure::wrap(Box::new(move |_event: web_sys::Event| {
+            let cancelled = tracker.write().cancel_all();
+            if cancelled {
+                pressing.set(false);
+            }
+        }) as Box<dyn FnMut(web_sys::Event)>);
+        window
+            .add_event_listener_with_callback_and_bool(
+                "scroll",
+                callback.as_ref().unchecked_ref(),
+                true,
+            )
+            .expect("window scroll listener must be registered");
+        Self { window, callback }
+    }
+}
+
+#[cfg(all(feature = "web", target_arch = "wasm32"))]
+impl Drop for WindowScrollListener {
+    fn drop(&mut self) {
+        let _ = self.window.remove_event_listener_with_callback_and_bool(
+            "scroll",
+            self.callback.as_ref().unchecked_ref(),
+            true,
+        );
+    }
 }
 
 #[cfg(all(feature = "web", target_arch = "wasm32"))]
