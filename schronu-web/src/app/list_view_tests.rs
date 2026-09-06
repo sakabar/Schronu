@@ -258,6 +258,7 @@ fn listは46rem以下で可視header付きの一行tableになる() {
         ".task-row:not(:last-child) {\n        border-bottom: 1px solid var(--line);",
         ".deadline,\n    .schedule-time {\n        font-size: 0.72rem;",
         ".task-name-scroll {\n        min-width: 0;\n        overflow-x: auto;\n        overscroll-behavior-inline: contain;\n        white-space: nowrap;",
+        "touch-action: pan-x pan-y pinch-zoom;",
         ".session-cell .session-start {\n        width: 44px;\n        min-height: 44px;",
     ] {
         assert!(mobile_list_layout.contains(required), "missing: {required}");
