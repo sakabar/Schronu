@@ -1,4 +1,5 @@
 use chrono::{Local, Timelike};
+use schronu::adapter::gateway::storage_lock::{LockMode, StorageLock};
 use schronu::adapter::gateway::task_repository::TaskRepository;
 use schronu::application::interface::TaskRepositoryTrait;
 use schronu::entity::task::TaskHandle;
@@ -492,6 +493,112 @@ fn restore_current_cliは確認tokenと厳密な引数数をusage付きで要求
         assert!(!snapshot.exists());
         assert!(!pre_backup.exists());
     }
+}
+
+#[test]
+fn restore_current_cliは不正snapshotでpre_backupもcurrent変更も行わない() {
+    let fixture = CliFixture::seeded();
+    let snapshot = fixture.child("snapshot");
+    let pre_backup = fixture.child("pre-backup");
+    assert_eq!(
+        fixture
+            .run(&["backup", snapshot.to_str().unwrap()])
+            .status
+            .code(),
+        Some(0)
+    );
+    fs::write(snapshot.join("manifest.json"), b"{").unwrap();
+    let original_revision = fs::read(fixture.storage.join(".revision")).unwrap();
+    let original_project = fs::read(find_project_yaml(&fixture.storage)).unwrap();
+
+    let output = fixture.run(&[
+        "restore",
+        "current",
+        snapshot.to_str().unwrap(),
+        pre_backup.to_str().unwrap(),
+        "REPLACE_CURRENT_STORAGE",
+    ]);
+
+    assert_eq!(output.status.code(), Some(1));
+    let stderr = String::from_utf8(output.stderr).unwrap();
+    assert!(
+        stderr.contains("storage snapshot Decode failed"),
+        "{stderr}"
+    );
+    assert!(!pre_backup.exists());
+    assert_eq!(
+        fs::read(fixture.storage.join(".revision")).unwrap(),
+        original_revision
+    );
+    assert_eq!(
+        fs::read(find_project_yaml(&fixture.storage)).unwrap(),
+        original_project
+    );
+}
+
+#[test]
+fn restore_current_cliは既存pre_backupを変更せずcurrentも維持する() {
+    let fixture = CliFixture::seeded();
+    let snapshot = fixture.child("snapshot");
+    let pre_backup = fixture.child("pre-backup");
+    assert_eq!(
+        fixture
+            .run(&["backup", snapshot.to_str().unwrap()])
+            .status
+            .code(),
+        Some(0)
+    );
+    fs::create_dir(&pre_backup).unwrap();
+    fs::write(pre_backup.join("sentinel"), b"preserve").unwrap();
+    let original_revision = fs::read(fixture.storage.join(".revision")).unwrap();
+
+    let output = fixture.run(&[
+        "restore",
+        "current",
+        snapshot.to_str().unwrap(),
+        pre_backup.to_str().unwrap(),
+        "REPLACE_CURRENT_STORAGE",
+    ]);
+
+    assert_eq!(output.status.code(), Some(1));
+    assert_eq!(fs::read(pre_backup.join("sentinel")).unwrap(), b"preserve");
+    assert_eq!(
+        fs::read(fixture.storage.join(".revision")).unwrap(),
+        original_revision
+    );
+}
+
+#[test]
+fn restore_current_cliはexclusive_lock競合時にcurrentを変更しない() {
+    let fixture = CliFixture::seeded();
+    let snapshot = fixture.child("snapshot");
+    let pre_backup = fixture.child("pre-backup");
+    assert_eq!(
+        fixture
+            .run(&["backup", snapshot.to_str().unwrap()])
+            .status
+            .code(),
+        Some(0)
+    );
+    let original_revision = fs::read(fixture.storage.join(".revision")).unwrap();
+    let _lock = StorageLock::acquire(&fixture.storage, LockMode::Cli).unwrap();
+
+    let output = fixture.run(&[
+        "restore",
+        "current",
+        snapshot.to_str().unwrap(),
+        pre_backup.to_str().unwrap(),
+        "REPLACE_CURRENT_STORAGE",
+    ]);
+
+    assert_eq!(output.status.code(), Some(1));
+    let stderr = String::from_utf8(output.stderr).unwrap();
+    assert!(stderr.contains("storage lock is already held"), "{stderr}");
+    assert!(!pre_backup.exists());
+    assert_eq!(
+        fs::read(fixture.storage.join(".revision")).unwrap(),
+        original_revision
+    );
 }
 
 fn find_project_yaml(storage: &Path) -> PathBuf {
