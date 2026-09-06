@@ -242,6 +242,43 @@ fn session_card_renders_time_progress_overrun_and_four_typed_actions() {
 }
 
 #[test]
+fn session_cardは開始と完了予定と残り超過を同じ時刻行に表示する() {
+    let mut active = card("active");
+    active.started_at_hh_mm = "12:43".to_owned();
+    active.completion_hh_mm = Some("13:43".to_owned());
+    active.remaining_seconds = 58 * 60 + 4;
+    let mut overrun = card("overrun");
+    overrun.remaining_seconds = -3;
+
+    let (html, _) = render(vec![active, overrun], false);
+    let timing_start = html
+        .find("class=\"session-timing\"")
+        .expect("session card must have one timing container");
+    let timing_end = html[timing_start..]
+        .find("</div>")
+        .map(|offset| timing_start + offset)
+        .expect("timing container must close");
+    let timing = &html[timing_start..timing_end];
+
+    for text in ["12:43", "→", "13:43", "58:04"] {
+        assert!(timing.contains(text), "missing {text} in {timing}");
+    }
+    for label in [
+        "aria-label=\"開始時刻 12:43\"",
+        "aria-label=\"完了予定時刻 13:43\"",
+        "aria-label=\"残り時間 58:04\"",
+    ] {
+        assert!(timing.contains(label), "missing {label} in {timing}");
+    }
+    assert!(timing.matches("<time").count() >= 2, "{timing}");
+    assert!(html.contains("aria-label=\"超過時間 00:03\""), "{html}");
+    assert!(
+        html.contains("class=\"session-remaining is-overrun\""),
+        "{html}"
+    );
+}
+
+#[test]
 fn session操作は意味別classと狭幅1列layoutを持つ() {
     let (html, _) = render(vec![card("task-1")], false);
     for class in [

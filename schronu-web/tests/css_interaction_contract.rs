@@ -81,6 +81,27 @@ fn navigation_is_fixed_safe_and_never_covers_page_content() {
     assert!(tabs_z_index < overlay_z_index);
 }
 
+#[test]
+fn session_timing_stays_on_one_line_at_mobile_widths() {
+    let timing = block_body(MAIN_CSS, ".session-timing");
+    assert!(timing.contains("display: flex;"));
+    assert!(timing.contains("white-space: nowrap;"));
+
+    let mobile = block_body(MAIN_CSS, "@media (max-width: 52rem)");
+    let card = block_body(mobile, ".session-card");
+    for area in ["\"heading\"", "\"timing\"", "\"progress\"", "\"actions\""] {
+        assert!(card.contains(area), "missing {area} in {card}");
+    }
+    assert!(!card.contains("\"time\""), "{card}");
+    assert!(!card.contains("\"remaining\""), "{card}");
+
+    let narrow = block_body(MAIN_CSS, "@media (max-width: 34rem)");
+    assert!(
+        !narrow.contains(".session-timing {\n        flex-direction: column;"),
+        "320px layout must keep session timing on one line"
+    );
+}
+
 fn block_body<'a>(source: &'a str, header: &str) -> &'a str {
     let header_start = source
         .find(header)
