@@ -19,6 +19,7 @@ enum PreflightEntry {
     },
     Delete {
         target_path: PathBuf,
+        relative_path: PathBuf,
     },
 }
 
@@ -119,7 +120,10 @@ impl CommittedTransaction {
                     bytes,
                     permissions,
                 } => self.apply_bytes(&target_path, &bytes, Some(permissions))?,
-                PreflightEntry::Delete { target_path } => self.apply_delete(&target_path)?,
+                PreflightEntry::Delete {
+                    target_path,
+                    relative_path,
+                } => self.apply_delete(&target_path, &relative_path)?,
             }
         }
         self.apply_revision(&layout.revision_path())?;
@@ -136,6 +140,7 @@ impl CommittedTransaction {
             .map(|entry| match entry {
                 ValidatedEntry::Delete { target } => Ok(PreflightEntry::Delete {
                     target_path: layout.target_path(target),
+                    relative_path: target.clone(),
                 }),
                 ValidatedEntry::Write {
                     target,
@@ -238,7 +243,7 @@ impl CommittedTransaction {
             .collect::<Result<Vec<_>, _>>()?;
         entries.sort_by_key(|entry| match entry {
             PreflightEntry::AlreadyApplied | PreflightEntry::Write { .. } => (0, Reverse(0)),
-            PreflightEntry::Delete { target_path } => {
+            PreflightEntry::Delete { target_path, .. } => {
                 (1, Reverse(target_path.components().count()))
             }
         });
@@ -264,7 +269,11 @@ impl CommittedTransaction {
         )
     }
 
-    fn apply_delete(&self, target_path: &Path) -> Result<(), StorageTransactionError> {
+    fn apply_delete(
+        &self,
+        target_path: &Path,
+        relative_path: &Path,
+    ) -> Result<(), StorageTransactionError> {
         let parent_path = target_path.parent().ok_or_else(|| {
             StorageTransactionError::new(
                 StorageTransactionOperation::RemoveLiveTarget,
@@ -275,13 +284,10 @@ impl CommittedTransaction {
                 ),
             )
         })?;
-        let removal = match self.state.io.symlink_metadata(target_path) {
-            Ok(metadata) if metadata.is_dir() && !metadata.file_type().is_symlink() => {
-                self.state.io.remove_dir(target_path)
-            }
-            Ok(_) => self.state.io.remove_file(target_path),
-            Err(error) => Err(error),
-        };
+        let removal = self
+            .state
+            .io
+            .remove_storage_entry(&self.state.paths.storage_dir_path, relative_path);
         match removal {
             Ok(()) => sync_directory(self.state.io.as_ref(), parent_path),
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => {

@@ -79,11 +79,128 @@ pub(crate) trait StorageTransactionIo: Send + Sync {
     fn remove_dir(&self, path: &Path) -> std::io::Result<()> {
         fs::remove_dir(path)
     }
+
+    fn remove_storage_entry(
+        &self,
+        storage_dir_path: &Path,
+        relative_path: &Path,
+    ) -> std::io::Result<()> {
+        let target_path = storage_dir_path.join(relative_path);
+        let metadata = self.symlink_metadata(&target_path)?;
+        if metadata.is_dir() && !metadata.file_type().is_symlink() {
+            self.remove_dir(&target_path)
+        } else {
+            self.remove_file(&target_path)
+        }
+    }
 }
 
 #[derive(Default)]
 pub(in crate::adapter::gateway) struct FileSystemStorageTransactionIo;
-impl StorageTransactionIo for FileSystemStorageTransactionIo {}
+impl StorageTransactionIo for FileSystemStorageTransactionIo {
+    fn remove_storage_entry(
+        &self,
+        storage_dir_path: &Path,
+        relative_path: &Path,
+    ) -> std::io::Result<()> {
+        remove_storage_entry_secure(storage_dir_path, relative_path)
+    }
+}
+
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+fn remove_storage_entry_secure(
+    storage_dir_path: &Path,
+    relative_path: &Path,
+) -> std::io::Result<()> {
+    use std::ffi::CString;
+    use std::os::fd::{AsRawFd, FromRawFd};
+    use std::os::unix::ffi::OsStrExt;
+    use std::os::unix::fs::OpenOptionsExt;
+
+    let mut directory = fs::File::options()
+        .read(true)
+        .custom_flags(libc::O_DIRECTORY | libc::O_NOFOLLOW | libc::O_CLOEXEC)
+        .open(storage_dir_path)?;
+    let mut components = relative_path.components().peekable();
+    while let Some(component) = components.next() {
+        let Component::Normal(name) = component else {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "delete target must contain only normalized components",
+            ));
+        };
+        let name = CString::new(name.as_bytes()).map_err(|_| {
+            std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "delete target contains a NUL byte",
+            )
+        })?;
+        if components.peek().is_some() {
+            // SAFETY: directory and name remain live for the call; a successful fd is owned below.
+            let fd = unsafe {
+                libc::openat(
+                    directory.as_raw_fd(),
+                    name.as_ptr(),
+                    libc::O_RDONLY
+                        | libc::O_DIRECTORY
+                        | libc::O_NOFOLLOW
+                        | libc::O_CLOEXEC
+                        | libc::O_NONBLOCK,
+                )
+            };
+            if fd < 0 {
+                return Err(std::io::Error::last_os_error());
+            }
+            // SAFETY: openat returned a new owned descriptor.
+            directory = unsafe { fs::File::from_raw_fd(fd) };
+            continue;
+        }
+
+        let mut metadata = std::mem::MaybeUninit::<libc::stat>::uninit();
+        // SAFETY: metadata is writable and name and directory remain live for the call.
+        if unsafe {
+            libc::fstatat(
+                directory.as_raw_fd(),
+                name.as_ptr(),
+                metadata.as_mut_ptr(),
+                libc::AT_SYMLINK_NOFOLLOW,
+            )
+        } != 0
+        {
+            return Err(std::io::Error::last_os_error());
+        }
+        // SAFETY: fstatat initialized metadata on success.
+        let metadata = unsafe { metadata.assume_init() };
+        let flags = if metadata.st_mode & libc::S_IFMT == libc::S_IFDIR {
+            libc::AT_REMOVEDIR
+        } else {
+            0
+        };
+        // SAFETY: unlinkat operates below the retained directory fd on the validated final name.
+        if unsafe { libc::unlinkat(directory.as_raw_fd(), name.as_ptr(), flags) } != 0 {
+            return Err(std::io::Error::last_os_error());
+        }
+        return Ok(());
+    }
+    Err(std::io::Error::new(
+        std::io::ErrorKind::InvalidInput,
+        "delete target must not be empty",
+    ))
+}
+
+#[cfg(not(any(target_os = "macos", target_os = "linux")))]
+fn remove_storage_entry_secure(
+    storage_dir_path: &Path,
+    relative_path: &Path,
+) -> std::io::Result<()> {
+    let target_path = storage_dir_path.join(relative_path);
+    let metadata = fs::symlink_metadata(&target_path)?;
+    if metadata.is_dir() && !metadata.file_type().is_symlink() {
+        fs::remove_dir(target_path)
+    } else {
+        fs::remove_file(target_path)
+    }
+}
 
 pub(super) fn validate_delete_target(
     io: &dyn StorageTransactionIo,

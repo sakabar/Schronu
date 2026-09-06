@@ -181,6 +181,11 @@ impl StorageTransactionIo for RecordingIo {
         FileSystemStorageTransactionIo.remove_file(path)
     }
 
+    fn remove_dir(&self, path: &Path) -> std::io::Result<()> {
+        self.record(RecordingOperation::RemoveDirectory, path)?;
+        FileSystemStorageTransactionIo.remove_dir(path)
+    }
+
     fn sync_directory(&self, path: &Path) -> std::io::Result<()> {
         self.record(RecordingOperation::SyncDirectory, path)?;
         FileSystemStorageTransactionIo.sync_directory(path)
