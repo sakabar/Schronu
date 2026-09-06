@@ -13,8 +13,14 @@ pub(super) struct RawTransactionManifest {
     pub(super) version: u32,
     pub(super) transaction_id: Uuid,
     pub(super) revision: Uuid,
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub(super) replace_target_directories: bool,
     pub(super) directories: Vec<PathBuf>,
     pub(super) entries: Vec<RawManifestEntry>,
+}
+
+fn is_false(value: &bool) -> bool {
+    !value
 }
 
 #[derive(Deserialize, Serialize)]
@@ -33,6 +39,7 @@ pub(super) struct RawManifestEntry {
 pub(super) struct ValidatedManifest {
     pub(super) transaction_id: Uuid,
     pub(super) revision: Uuid,
+    pub(super) replace_target_directories: bool,
     pub(super) directories: Vec<PathBuf>,
     pub(super) entries: Vec<ValidatedEntry>,
 }
@@ -59,6 +66,7 @@ impl From<&ValidatedManifest> for RawTransactionManifest {
             version: 1,
             transaction_id: manifest.transaction_id,
             revision: manifest.revision,
+            replace_target_directories: manifest.replace_target_directories,
             directories: manifest.directories.clone(),
             entries: manifest
                 .entries
@@ -153,6 +161,7 @@ pub(super) fn validate_raw_manifest(
         version,
         transaction_id,
         revision,
+        replace_target_directories,
         directories,
         entries,
     } = manifest;
@@ -241,6 +250,7 @@ pub(super) fn validate_raw_manifest(
     Ok(ValidatedManifest {
         transaction_id,
         revision,
+        replace_target_directories,
         directories,
         entries,
     })

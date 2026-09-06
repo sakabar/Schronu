@@ -93,6 +93,29 @@ pub(crate) trait StorageTransactionIo: Send + Sync {
             self.remove_file(&target_path)
         }
     }
+
+    fn remove_storage_directory_if_present(
+        &self,
+        storage_dir_path: &Path,
+        relative_path: &Path,
+    ) -> std::io::Result<()> {
+        let target_path = storage_dir_path.join(relative_path);
+        match self.symlink_metadata(&target_path) {
+            Ok(metadata) if metadata.is_dir() && !metadata.file_type().is_symlink() => {
+                self.remove_dir(&target_path)
+            }
+            Ok(_) => Ok(()),
+            Err(error)
+                if matches!(
+                    error.kind(),
+                    std::io::ErrorKind::NotFound | std::io::ErrorKind::NotADirectory
+                ) =>
+            {
+                Ok(())
+            }
+            Err(error) => Err(error),
+        }
+    }
 }
 
 #[derive(Default)]
@@ -105,6 +128,71 @@ impl StorageTransactionIo for FileSystemStorageTransactionIo {
     ) -> std::io::Result<()> {
         remove_storage_entry_secure(storage_dir_path, relative_path)
     }
+
+    fn remove_storage_directory_if_present(
+        &self,
+        storage_dir_path: &Path,
+        relative_path: &Path,
+    ) -> std::io::Result<()> {
+        remove_storage_directory_if_present_secure(storage_dir_path, relative_path)
+    }
+}
+
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+fn remove_storage_directory_if_present_secure(
+    storage_dir_path: &Path,
+    relative_path: &Path,
+) -> std::io::Result<()> {
+    use std::os::fd::AsRawFd;
+
+    let (directory, name) = match open_storage_entry_parent(storage_dir_path, relative_path) {
+        Ok(parent) => parent,
+        Err(error)
+            if matches!(
+                error.kind(),
+                std::io::ErrorKind::NotFound | std::io::ErrorKind::NotADirectory
+            ) =>
+        {
+            return Ok(());
+        }
+        Err(error) => return Err(error),
+    };
+    let metadata = match storage_entry_metadata(&directory, &name) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(error) => return Err(error),
+    };
+    if metadata.st_mode & libc::S_IFMT != libc::S_IFDIR {
+        return Ok(());
+    }
+    // SAFETY: unlinkat is constrained to a directory below the retained parent fd.
+    if unsafe { libc::unlinkat(directory.as_raw_fd(), name.as_ptr(), libc::AT_REMOVEDIR) } != 0 {
+        return Err(std::io::Error::last_os_error());
+    }
+    Ok(())
+}
+
+#[cfg(not(any(target_os = "macos", target_os = "linux")))]
+fn remove_storage_directory_if_present_secure(
+    storage_dir_path: &Path,
+    relative_path: &Path,
+) -> std::io::Result<()> {
+    let target_path = storage_dir_path.join(relative_path);
+    match fs::symlink_metadata(&target_path) {
+        Ok(metadata) if metadata.is_dir() && !metadata.file_type().is_symlink() => {
+            fs::remove_dir(target_path)
+        }
+        Ok(_) => Ok(()),
+        Err(error)
+            if matches!(
+                error.kind(),
+                std::io::ErrorKind::NotFound | std::io::ErrorKind::NotADirectory
+            ) =>
+        {
+            Ok(())
+        }
+        Err(error) => Err(error),
+    }
 }
 
 #[cfg(any(target_os = "macos", target_os = "linux"))]
@@ -112,12 +200,33 @@ fn remove_storage_entry_secure(
     storage_dir_path: &Path,
     relative_path: &Path,
 ) -> std::io::Result<()> {
+    use std::os::fd::AsRawFd;
+
+    let (directory, name) = open_storage_entry_parent(storage_dir_path, relative_path)?;
+    let metadata = storage_entry_metadata(&directory, &name)?;
+    let flags = if metadata.st_mode & libc::S_IFMT == libc::S_IFDIR {
+        libc::AT_REMOVEDIR
+    } else {
+        0
+    };
+    // SAFETY: unlinkat operates below the retained directory fd on the validated final name.
+    if unsafe { libc::unlinkat(directory.as_raw_fd(), name.as_ptr(), flags) } != 0 {
+        return Err(std::io::Error::last_os_error());
+    }
+    Ok(())
+}
+
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+fn open_storage_entry_parent(
+    storage_dir_path: &Path,
+    relative_path: &Path,
+) -> std::io::Result<(File, std::ffi::CString)> {
     use std::ffi::CString;
     use std::os::fd::{AsRawFd, FromRawFd};
     use std::os::unix::ffi::OsStrExt;
     use std::os::unix::fs::OpenOptionsExt;
 
-    let mut directory = fs::File::options()
+    let mut directory = File::options()
         .read(true)
         .custom_flags(libc::O_DIRECTORY | libc::O_NOFOLLOW | libc::O_CLOEXEC)
         .open(storage_dir_path)?;
@@ -126,66 +235,61 @@ fn remove_storage_entry_secure(
         let Component::Normal(name) = component else {
             return Err(std::io::Error::new(
                 std::io::ErrorKind::InvalidInput,
-                "delete target must contain only normalized components",
+                "storage target must contain only normalized components",
             ));
         };
         let name = CString::new(name.as_bytes()).map_err(|_| {
             std::io::Error::new(
                 std::io::ErrorKind::InvalidInput,
-                "delete target contains a NUL byte",
+                "storage target contains a NUL byte",
             )
         })?;
-        if components.peek().is_some() {
-            // SAFETY: directory and name remain live for the call; a successful fd is owned below.
-            let fd = unsafe {
-                libc::openat(
-                    directory.as_raw_fd(),
-                    name.as_ptr(),
-                    libc::O_RDONLY
-                        | libc::O_DIRECTORY
-                        | libc::O_NOFOLLOW
-                        | libc::O_CLOEXEC
-                        | libc::O_NONBLOCK,
-                )
-            };
-            if fd < 0 {
-                return Err(std::io::Error::last_os_error());
-            }
-            // SAFETY: openat returned a new owned descriptor.
-            directory = unsafe { fs::File::from_raw_fd(fd) };
-            continue;
+        if components.peek().is_none() {
+            return Ok((directory, name));
         }
-
-        let mut metadata = std::mem::MaybeUninit::<libc::stat>::uninit();
-        // SAFETY: metadata is writable and name and directory remain live for the call.
-        if unsafe {
-            libc::fstatat(
+        // SAFETY: directory and name remain live for the call; a successful fd is owned below.
+        let fd = unsafe {
+            libc::openat(
                 directory.as_raw_fd(),
                 name.as_ptr(),
-                metadata.as_mut_ptr(),
-                libc::AT_SYMLINK_NOFOLLOW,
+                libc::O_RDONLY
+                    | libc::O_DIRECTORY
+                    | libc::O_NOFOLLOW
+                    | libc::O_CLOEXEC
+                    | libc::O_NONBLOCK,
             )
-        } != 0
-        {
-            return Err(std::io::Error::last_os_error());
-        }
-        // SAFETY: fstatat initialized metadata on success.
-        let metadata = unsafe { metadata.assume_init() };
-        let flags = if metadata.st_mode & libc::S_IFMT == libc::S_IFDIR {
-            libc::AT_REMOVEDIR
-        } else {
-            0
         };
-        // SAFETY: unlinkat operates below the retained directory fd on the validated final name.
-        if unsafe { libc::unlinkat(directory.as_raw_fd(), name.as_ptr(), flags) } != 0 {
+        if fd < 0 {
             return Err(std::io::Error::last_os_error());
         }
-        return Ok(());
+        // SAFETY: openat returned a new owned descriptor.
+        directory = unsafe { File::from_raw_fd(fd) };
     }
     Err(std::io::Error::new(
         std::io::ErrorKind::InvalidInput,
-        "delete target must not be empty",
+        "storage target must not be empty",
     ))
+}
+
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+fn storage_entry_metadata(directory: &File, name: &std::ffi::CStr) -> std::io::Result<libc::stat> {
+    use std::os::fd::AsRawFd;
+
+    let mut metadata = std::mem::MaybeUninit::<libc::stat>::uninit();
+    // SAFETY: metadata is writable and name and directory remain live for the call.
+    if unsafe {
+        libc::fstatat(
+            directory.as_raw_fd(),
+            name.as_ptr(),
+            metadata.as_mut_ptr(),
+            libc::AT_SYMLINK_NOFOLLOW,
+        )
+    } != 0
+    {
+        return Err(std::io::Error::last_os_error());
+    }
+    // SAFETY: fstatat initialized metadata on success.
+    Ok(unsafe { metadata.assume_init() })
 }
 
 #[cfg(not(any(target_os = "macos", target_os = "linux")))]

@@ -5,7 +5,7 @@ use super::verify::load_verified_snapshot;
 use super::{create_snapshot_with_lock, SnapshotSummary, DEFAULT_RESOURCE_LIMITS};
 use crate::adapter::gateway::storage_lock::StorageLock;
 use crate::adapter::gateway::storage_transaction::{
-    prepare_with_directories_and_deletes, FileSystemStorageTransactionIo, WriteRequest,
+    prepare_replacing_with_directories_and_deletes, FileSystemStorageTransactionIo, WriteRequest,
 };
 use chrono::{DateTime, Local};
 use std::collections::HashSet;
@@ -143,7 +143,10 @@ fn restore_current_snapshot_impl(
             current
                 .directories
                 .iter()
-                .filter(|directory| !desired_directory_paths.contains(&directory.relative))
+                .filter(|directory| {
+                    !desired_directory_paths.contains(&directory.relative)
+                        && !desired_file_paths.contains(&directory.relative)
+                })
                 .map(|directory| current_storage.join(&directory.relative)),
         )
         .collect::<Vec<PathBuf>>();
@@ -153,7 +156,7 @@ fn restore_current_snapshot_impl(
         .collect::<Vec<_>>();
     let delete_refs = deletes.iter().map(PathBuf::as_path).collect::<Vec<_>>();
     let revision = Uuid::new_v4();
-    let prepared = prepare_with_directories_and_deletes(
+    let prepared = prepare_replacing_with_directories_and_deletes(
         transaction_io,
         current_storage,
         revision,

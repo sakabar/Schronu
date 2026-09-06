@@ -26,6 +26,13 @@ struct PrepareContext<'a> {
     revision: Uuid,
 }
 
+struct PrepareRequest<'a> {
+    writes: &'a [WriteRequest<'a>],
+    directories: &'a [&'a Path],
+    deletes: &'a [&'a Path],
+    preserve_existing_permissions: bool,
+}
+
 #[cfg(test)]
 pub(in crate::adapter::gateway) fn prepare(
     io: Arc<dyn StorageTransactionIo>,
@@ -53,6 +60,46 @@ pub(in crate::adapter::gateway) fn prepare_with_directories_and_deletes(
     writes: &[WriteRequest<'_>],
     directories: &[&Path],
     deletes: &[&Path],
+) -> Result<PreparedTransaction, StorageTransactionError> {
+    prepare_impl(
+        io,
+        storage_dir_path,
+        revision,
+        PrepareRequest {
+            writes,
+            directories,
+            deletes,
+            preserve_existing_permissions: true,
+        },
+    )
+}
+
+pub(in crate::adapter::gateway) fn prepare_replacing_with_directories_and_deletes(
+    io: Arc<dyn StorageTransactionIo>,
+    storage_dir_path: &Path,
+    revision: Uuid,
+    writes: &[WriteRequest<'_>],
+    directories: &[&Path],
+    deletes: &[&Path],
+) -> Result<PreparedTransaction, StorageTransactionError> {
+    prepare_impl(
+        io,
+        storage_dir_path,
+        revision,
+        PrepareRequest {
+            writes,
+            directories,
+            deletes,
+            preserve_existing_permissions: false,
+        },
+    )
+}
+
+fn prepare_impl(
+    io: Arc<dyn StorageTransactionIo>,
+    storage_dir_path: &Path,
+    revision: Uuid,
+    request: PrepareRequest<'_>,
 ) -> Result<PreparedTransaction, StorageTransactionError> {
     let layout = TransactionLayout::new(storage_dir_path);
     let transactions_dir_path =
@@ -107,7 +154,13 @@ pub(in crate::adapter::gateway) fn prepare_with_directories_and_deletes(
         transaction_id,
         revision,
     };
-    let manifest = prepare_contents(&context, writes, directories, deletes);
+    let manifest = prepare_contents(
+        &context,
+        request.writes,
+        request.directories,
+        request.deletes,
+        request.preserve_existing_permissions,
+    );
     let manifest = match manifest {
         Ok(manifest) => manifest,
         Err(error) => {
@@ -130,6 +183,7 @@ fn prepare_contents(
     writes: &[WriteRequest<'_>],
     directories: &[&Path],
     deletes: &[&Path],
+    preserve_existing_permissions: bool,
 ) -> Result<ValidatedManifest, StorageTransactionError> {
     let mut entries = Vec::with_capacity(writes.len() + deletes.len());
     let mut targets = HashSet::with_capacity(writes.len() + deletes.len());
@@ -145,6 +199,7 @@ fn prepare_contents(
             write.target_path,
             &staged_file_path,
             write.bytes,
+            preserve_existing_permissions,
         )?;
         entries.push(ValidatedEntry::Write {
             target,
@@ -169,6 +224,7 @@ fn prepare_contents(
     let manifest = ValidatedManifest {
         transaction_id: context.transaction_id,
         revision: context.revision,
+        replace_target_directories: !preserve_existing_permissions,
         directories,
         entries,
     };
@@ -234,14 +290,19 @@ fn write_staged_file(
     target_path: &Path,
     staged_file_path: &Path,
     bytes: &[u8],
+    preserve_existing_permissions: bool,
 ) -> Result<(), StorageTransactionError> {
-    let existing_permissions = io.target_permissions(target_path).map_err(|error| {
-        StorageTransactionError::new(
-            StorageTransactionOperation::ReadTargetMetadata,
-            target_path,
-            error,
-        )
-    })?;
+    let existing_permissions = if preserve_existing_permissions {
+        io.target_permissions(target_path).map_err(|error| {
+            StorageTransactionError::new(
+                StorageTransactionOperation::ReadTargetMetadata,
+                target_path,
+                error,
+            )
+        })?
+    } else {
+        None
+    };
     io.create_new_file(staged_file_path).map_err(|error| {
         StorageTransactionError::new(
             StorageTransactionOperation::CreateStagedFile,

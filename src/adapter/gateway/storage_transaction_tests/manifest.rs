@@ -33,6 +33,7 @@ fn test_manifest_v1の保存bytesはfield順と省略規則を維持する() {
         version: 1,
         transaction_id: Uuid::parse_str("11111111-2222-3333-4444-555555555555").unwrap(),
         revision: Uuid::parse_str("aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee").unwrap(),
+        replace_target_directories: false,
         directories: vec![PathBuf::from("project"), PathBuf::from("archive")],
         entries: vec![
             ManifestEntry {

@@ -14,6 +14,7 @@ enum PreflightEntry {
     AlreadyApplied,
     Write {
         target_path: PathBuf,
+        relative_path: PathBuf,
         bytes: Vec<u8>,
         permissions: fs::Permissions,
     },
@@ -97,8 +98,23 @@ impl PreparedTransaction {
 
 impl CommittedTransaction {
     pub(super) fn roll_forward(self) -> Result<(), StorageTransactionError> {
-        let preflight_entries = self.preflight_entries()?;
+        let mut preflight_entries = self.preflight_entries()?;
         let layout = TransactionLayout::new(&self.state.paths.storage_dir_path);
+        let first_write = preflight_entries
+            .iter()
+            .position(|entry| !matches!(entry, PreflightEntry::Delete { .. }))
+            .unwrap_or(preflight_entries.len());
+        let writes = preflight_entries.split_off(first_write);
+        for entry in preflight_entries {
+            let PreflightEntry::Delete {
+                target_path,
+                relative_path,
+            } = entry
+            else {
+                unreachable!("delete partition contains only deletes");
+            };
+            self.apply_delete(&target_path, &relative_path)?;
+        }
         for directory in &self.state.manifest.directories {
             let directory_path = layout.target_path(directory);
             self.state
@@ -112,18 +128,18 @@ impl CommittedTransaction {
                     )
                 })?;
         }
-        for entry in preflight_entries {
+        for entry in writes {
             match entry {
                 PreflightEntry::AlreadyApplied => {}
                 PreflightEntry::Write {
                     target_path,
+                    relative_path,
                     bytes,
                     permissions,
-                } => self.apply_bytes(&target_path, &bytes, Some(permissions))?,
-                PreflightEntry::Delete {
-                    target_path,
-                    relative_path,
-                } => self.apply_delete(&target_path, &relative_path)?,
+                } => self.apply_bytes(&target_path, &relative_path, &bytes, Some(permissions))?,
+                PreflightEntry::Delete { .. } => {
+                    unreachable!("write partition does not contain deletes")
+                }
             }
         }
         self.apply_revision(&layout.revision_path())?;
@@ -214,7 +230,12 @@ impl CommittedTransaction {
                             }
                         }
                         Ok(_) => {}
-                        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                        Err(error)
+                            if matches!(
+                                error.kind(),
+                                std::io::ErrorKind::NotFound
+                                    | std::io::ErrorKind::NotADirectory
+                            ) => {}
                         Err(error) => {
                             return Err(StorageTransactionError::new(
                                 StorageTransactionOperation::ReadTargetMetadata,
@@ -235,6 +256,7 @@ impl CommittedTransaction {
                     })?;
                     Ok(PreflightEntry::Write {
                         target_path,
+                        relative_path: target.clone(),
                         bytes,
                         permissions,
                     })
@@ -242,10 +264,10 @@ impl CommittedTransaction {
             })
             .collect::<Result<Vec<_>, _>>()?;
         entries.sort_by_key(|entry| match entry {
-            PreflightEntry::AlreadyApplied | PreflightEntry::Write { .. } => (0, Reverse(0)),
             PreflightEntry::Delete { target_path, .. } => {
-                (1, Reverse(target_path.components().count()))
+                (0, Reverse(target_path.components().count()))
             }
+            PreflightEntry::AlreadyApplied | PreflightEntry::Write { .. } => (1, Reverse(0)),
         });
         Ok(entries)
     }
@@ -264,6 +286,7 @@ impl CommittedTransaction {
             })?;
         self.apply_bytes(
             revision_path,
+            Path::new(".revision"),
             format!("{}\n", self.state.manifest.revision).as_bytes(),
             permissions,
         )
@@ -312,6 +335,7 @@ impl CommittedTransaction {
     fn apply_bytes(
         &self,
         target_path: &Path,
+        relative_path: &Path,
         bytes: &[u8],
         permissions: Option<fs::Permissions>,
     ) -> Result<(), StorageTransactionError> {
@@ -405,6 +429,21 @@ impl CommittedTransaction {
                 error,
             )
         })?;
+        if self.state.manifest.replace_target_directories {
+            self.state
+                .io
+                .remove_storage_directory_if_present(
+                    &self.state.paths.storage_dir_path,
+                    relative_path,
+                )
+                .map_err(|error| {
+                    StorageTransactionError::new(
+                        StorageTransactionOperation::RemoveLiveTarget,
+                        target_path,
+                        error,
+                    )
+                })?;
+        }
         self.state
             .io
             .rename(&temporary_path, target_path)
