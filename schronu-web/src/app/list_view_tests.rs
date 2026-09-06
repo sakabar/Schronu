@@ -1,11 +1,15 @@
 #![cfg(feature = "server")]
 
-use std::sync::{Arc, Mutex};
+use std::{
+    cell::RefCell,
+    rc::Rc,
+    sync::{Arc, Mutex},
+};
 
 use super::list_view::{DateButtonViewModel, ListRowViewModel, ListView};
 use super::view_test_support::{
     dispatch_click, dispatch_platform_event, rebuild_with_click_listeners,
-    rebuild_with_event_listeners,
+    rebuild_with_event_listeners, rebuild_with_named_event_listeners, render_with_click_listeners,
 };
 use crate::SessionTask;
 use dioxus::html::SerializedFormData;
@@ -377,6 +381,20 @@ fn task_name_filterは前後空白を除いた大小無視の部分一致で全s
 
     assert_eq!(html.matches("週次 Planning").count(), 4, "{html}");
     assert!(!html.contains("実装"), "{html}");
+
+    let (japanese_dom, _) = build(RootProps {
+        dates: Vec::new(),
+        rows: vec![
+            named_row("design", "画面設計", false, true),
+            named_row("implementation", "実装", false, true),
+        ],
+        active_task_ids: Vec::new(),
+        filter_text: "設計".to_owned(),
+        events: Arc::new(Mutex::new(Vec::new())),
+    });
+    let japanese_html = dioxus::ssr::render(&japanese_dom);
+    assert!(japanese_html.contains("画面設計"), "{japanese_html}");
+    assert!(!japanese_html.contains("実装"), "{japanese_html}");
 }
 
 #[test]
@@ -490,4 +508,90 @@ fn task_name_filterはmobile幅とclearのtouch_targetを維持する() {
     ] {
         assert!(css.contains(required), "missing: {required}");
     }
+}
+
+#[component]
+fn StatefulFilterHarness(events: Rc<RefCell<Vec<String>>>) -> Element {
+    let mut show_list = use_signal(|| true);
+    let mut filter_text = use_signal(String::new);
+    let date_events = Rc::clone(&events);
+    let session_events = Rc::clone(&events);
+
+    rsx! {
+        button {
+            r#type: "button",
+            aria_label: "一覧tab切替",
+            onclick: move |_| {
+                let next = !*show_list.read();
+                show_list.set(next);
+            },
+            "一覧tab切替"
+        }
+        if *show_list.read() {
+            ListView {
+                dates: Vec::new(),
+                rows: vec![
+                    named_row("design", "画面設計", false, false),
+                    named_row("implementation", "実装", false, false),
+                ],
+                active_task_ids: Vec::new(),
+                filter_text: filter_text.read().clone(),
+                on_select_date: move |_| date_events.borrow_mut().push("server:date".to_owned()),
+                on_start_session: move |_| session_events.borrow_mut().push("storage:session".to_owned()),
+                on_filter_change: move |filter| filter_text.set(filter),
+            }
+        }
+    }
+}
+
+#[test]
+fn filter入力とclearは副作用なく再描画されtab往復でも条件を保持する() {
+    let events = Rc::new(RefCell::new(Vec::new()));
+    let mut dom = VirtualDom::new_with_props(
+        StatefulFilterHarness,
+        StatefulFilterHarnessProps {
+            events: Rc::clone(&events),
+        },
+    );
+    let listeners = rebuild_with_named_event_listeners(&mut dom);
+    let toggle_id = listeners
+        .iter()
+        .find_map(|(name, id)| (name == "click").then_some(*id))
+        .unwrap();
+    let input_id = listeners
+        .iter()
+        .find_map(|(name, id)| (name == "input").then_some(*id))
+        .unwrap();
+
+    dispatch_platform_event(
+        &dom,
+        "input",
+        input_id,
+        Box::new(SerializedFormData::new("設計".to_owned(), Vec::new())),
+    );
+    let clear_ids = render_with_click_listeners(&mut dom);
+    let filtered_html = dioxus::ssr::render(&dom);
+    assert!(filtered_html.contains("画面設計"), "{filtered_html}");
+    assert!(!filtered_html.contains(">実装<"), "{filtered_html}");
+    assert!(events.borrow().is_empty());
+
+    dispatch_click(&dom, toggle_id);
+    render_with_click_listeners(&mut dom);
+    dispatch_click(&dom, toggle_id);
+    let restored_clear_ids = render_with_click_listeners(&mut dom);
+    let restored_html = dioxus::ssr::render(&dom);
+    assert!(restored_html.contains("value=\"設計\""), "{restored_html}");
+    assert!(restored_html.contains("画面設計"), "{restored_html}");
+    assert!(!restored_html.contains(">実装<"), "{restored_html}");
+    assert!(events.borrow().is_empty());
+
+    assert_eq!(clear_ids.len(), 1);
+    assert_eq!(restored_clear_ids.len(), 1);
+    dispatch_click(&dom, restored_clear_ids[0]);
+    render_with_click_listeners(&mut dom);
+    let cleared_html = dioxus::ssr::render(&dom);
+    assert!(cleared_html.contains("画面設計"), "{cleared_html}");
+    assert!(cleared_html.contains(">実装<"), "{cleared_html}");
+    assert!(!cleared_html.contains("検索文字列をクリア"));
+    assert!(events.borrow().is_empty());
 }
