@@ -139,3 +139,37 @@ test('複数行編集は全identityを確認してから書き込みを始める
   assert.equal(appsScript.toasts.length, 1);
   assert.match(appsScript.toasts[0].message, /0001.*対応/);
 });
+
+test('N列は同一taskの兄弟segmentが相手sheetになければ全書き込みを拒否する', () => {
+  const appsScript = loadAppsScript({
+    '実ログ': [taskRow('0000', TASK_ID), taskRow('0001', TASK_ID)],
+    '優先度低い順': [taskRow('0000', TASK_ID)],
+  });
+
+  appsScript.edit('実ログ', 3, COL.finishFlag, 'F');
+
+  assert.deepEqual(appsScript.writes, []);
+  assert.equal(appsScript.toasts.length, 1);
+  assert.match(appsScript.toasts[0].message, /優先度低い順.*0001.*対応/);
+});
+
+for (const duplicateSheet of ['実ログ', '優先度低い順']) {
+  test(`R列は${duplicateSheet}の兄弟segment複合key重複を拒否する`, () => {
+    const normalRows = [taskRow('0000', TASK_ID), taskRow('0001', TASK_ID)];
+    const duplicateRows = [
+      taskRow('0000', TASK_ID),
+      taskRow('0001', TASK_ID),
+      taskRow('0001', TASK_ID),
+    ];
+    const appsScript = loadAppsScript({
+      '実ログ': duplicateSheet === '実ログ' ? duplicateRows : normalRows,
+      '優先度低い順': duplicateSheet === '優先度低い順' ? duplicateRows : normalRows,
+    });
+
+    appsScript.edit('実ログ', 3, COL.deferCommand, 'W');
+
+    assert.deepEqual(appsScript.writes, []);
+    assert.equal(appsScript.toasts.length, 1);
+    assert.match(appsScript.toasts[0].message, new RegExp(`${duplicateSheet}.*0001.*重複`));
+  });
+}

@@ -97,6 +97,7 @@ function syncEditedManualCols_(spreadsheet, sourceSheet, editedRange) {
   const targetIndex = buildIdentityIndex_(otherSheet);
   const errors = [];
   const writes = new Map();
+  const validatedTaskIds = new Set();
 
   for (let row = startRow; row <= endRow; row++) {
     const sourceIdentity = sourceIndex.byRow.get(row) || { ind: '', taskId: '' };
@@ -137,6 +138,17 @@ function syncEditedManualCols_(spreadsheet, sourceSheet, editedRange) {
     for (const col of editedSyncCols) {
       const value = sourceSheet.getRange(row, col).getValue();
       if (SCHRONU_CONFIG.taskSyncCols.includes(col)) {
+        if (!validatedTaskIds.has(taskId)) {
+          validateTaskIdentity_(
+            sourceSheet,
+            sourceIndex,
+            otherSheet,
+            targetIndex,
+            taskId,
+            errors,
+          );
+          validatedTaskIds.add(taskId);
+        }
         for (const [sheet, index] of [
           [sourceSheet, sourceIndex],
           [otherSheet, targetIndex],
@@ -152,7 +164,7 @@ function syncEditedManualCols_(spreadsheet, sourceSheet, editedRange) {
             planWrite_(writes, sheet, taskIdentity.row, col, value);
           }
         }
-      } else {
+      } else if (SCHRONU_CONFIG.segmentSyncCols.includes(col)) {
         planWrite_(writes, otherSheet, targetSegmentRows[0].row, col, value);
       }
     }
@@ -165,6 +177,34 @@ function syncEditedManualCols_(spreadsheet, sourceSheet, editedRange) {
 
   for (const write of writes.values()) {
     write.sheet.getRange(write.row, write.col).setValue(write.value);
+  }
+}
+
+function validateTaskIdentity_(sourceSheet, sourceIndex, targetSheet, targetIndex, taskId, errors) {
+  for (const [sheet, index, otherSheet, otherIndex] of [
+    [sourceSheet, sourceIndex, targetSheet, targetIndex],
+    [targetSheet, targetIndex, sourceSheet, sourceIndex],
+  ]) {
+    for (const identity of index.byTask.get(taskId) || []) {
+      if (!identity.ind) {
+        errors.push(`${sheet.getName()} ${identity.row}行: A列indが空です`);
+        continue;
+      }
+
+      const segmentKey = makeSegmentKey_(identity.ind, taskId);
+      const sameSheetRows = index.bySegment.get(segmentKey) || [];
+      const otherSheetRows = otherIndex.bySegment.get(segmentKey) || [];
+      if (sameSheetRows.length > 1) {
+        errors.push(
+          `${sheet.getName()} A=${identity.ind} B=${taskId}: 複合keyが重複しています`,
+        );
+      }
+      if (otherSheetRows.length === 0) {
+        errors.push(
+          `${otherSheet.getName()} A=${identity.ind} B=${taskId}: 対応segmentがありません`,
+        );
+      }
+    }
   }
 }
 
