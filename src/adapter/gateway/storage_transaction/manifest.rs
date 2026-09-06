@@ -1,4 +1,4 @@
-use super::io::{validate_delete_target_ancestors, StorageTransactionIo};
+use super::io::{validate_delete_target, StorageTransactionIo};
 use super::layout::{validate_storage_relative_path, TransactionLayout};
 use super::{StorageTransactionError, StorageTransactionOperation};
 use crate::adapter::gateway::storage_content_integrity::content_digest;
@@ -175,13 +175,12 @@ pub(super) fn validate_raw_manifest(
     let entries = entries
         .into_iter()
         .map(|entry| {
-            let target = validate_storage_relative_path(
-                storage_dir_path,
-                &layout.target_path(&entry.target),
-            )?;
-            if entry.operation == ManifestEntryOperation::Delete {
-                validate_delete_target_ancestors(io, storage_dir_path, &target)?;
-            }
+            let target_path = layout.target_path(&entry.target);
+            let target = if entry.operation == ManifestEntryOperation::Delete {
+                validate_delete_target(io, storage_dir_path, &target_path)?
+            } else {
+                validate_storage_relative_path(storage_dir_path, &target_path)?
+            };
             match (
                 entry.operation,
                 entry.staged_file,

@@ -1,4 +1,4 @@
-use super::layout::{self, TransactionLayout};
+use super::layout::{self, validate_storage_relative_path, TransactionLayout};
 use super::{StorageTransactionError, StorageTransactionOperation};
 use fs2::FileExt;
 use std::fs::{self, File, Metadata};
@@ -85,14 +85,21 @@ pub(crate) trait StorageTransactionIo: Send + Sync {
 pub(in crate::adapter::gateway) struct FileSystemStorageTransactionIo;
 impl StorageTransactionIo for FileSystemStorageTransactionIo {}
 
-pub(super) fn validate_delete_target_ancestors(
+pub(super) fn validate_delete_target(
     io: &dyn StorageTransactionIo,
     storage_dir_path: &Path,
-    target: &Path,
-) -> Result<(), StorageTransactionError> {
+    target_path: &Path,
+) -> Result<PathBuf, StorageTransactionError> {
+    let target = validate_storage_relative_path(storage_dir_path, target_path)?;
+    if matches!(target.to_str(), Some(".lock" | ".revision")) {
+        return Err(layout::invalid_target_path_error(
+            target_path,
+            "delete target must not use a reserved storage file",
+        ));
+    }
     let mut ancestor_path = storage_dir_path.to_path_buf();
     let Some(parent) = target.parent() else {
-        return Ok(());
+        return Ok(target);
     };
     for component in parent.components() {
         let Component::Normal(name) = component else {
@@ -117,7 +124,7 @@ pub(super) fn validate_delete_target_ancestors(
             }
         }
     }
-    Ok(())
+    Ok(target)
 }
 
 pub(super) fn resolve_transactions_directory(

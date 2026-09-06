@@ -179,11 +179,14 @@ fn test_prepare_deleteはsymlink祖先とreserved_storage_fileを拒否する() 
     fs::write(&external_path, b"external").unwrap();
     symlink(&external_dir.path, storage_dir.path.join("linked")).unwrap();
     let unsafe_targets = [
-        storage_dir.path.join("linked/external.yaml"),
-        storage_dir.path.join(".lock"),
+        (
+            storage_dir.path.join("linked/external.yaml"),
+            storage_dir.path.join("linked"),
+        ),
+        (storage_dir.path.join(".lock"), storage_dir.path.join(".lock")),
     ];
 
-    for target in &unsafe_targets {
+    for (target, expected_error_path) in &unsafe_targets {
         let actual = prepare_with_directories_and_deletes(
             file_system_io(),
             &storage_dir.path,
@@ -203,7 +206,7 @@ fn test_prepare_deleteはsymlink祖先とreserved_storage_fileを拒否する() 
             error.operation,
             StorageTransactionOperation::ValidateTargetPath
         );
-        assert_eq!(error.path, *target);
+        assert_eq!(error.path, *expected_error_path);
     }
     assert_eq!(fs::read(external_path).unwrap(), b"external");
 }

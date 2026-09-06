@@ -6,7 +6,7 @@ use uuid::Uuid;
 use super::cleanup::cleanup_stale_tombstones;
 use super::io::{
     acquire_transaction_lock, resolve_transactions_directory, sync_directory,
-    validate_transactions_directory,
+    validate_delete_target, validate_transactions_directory,
 };
 use super::layout::{validate_storage_relative_path, TransactionLayout};
 use super::manifest::{
@@ -154,7 +154,7 @@ fn prepare_contents(
     }
     for delete in deletes {
         entries.push(ValidatedEntry::Delete {
-            target: validate_storage_relative_path(&context.paths.storage_dir_path, delete)?,
+            target: validate_delete_target(context.io, &context.paths.storage_dir_path, delete)?,
         });
     }
     sync_directory(context.io, context.staged_files_dir_path)?;
