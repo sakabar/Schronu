@@ -968,3 +968,7 @@ fn build_next_repetition_task_attr(
 #[cfg(test)]
 #[path = "task_use_case_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "task_use_case_timezone_tests.rs"]
+mod timezone_tests;
