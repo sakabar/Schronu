@@ -118,6 +118,122 @@ fn test_delete_entry_targetがなくても再実行可能である() {
 }
 
 #[test]
+fn test_delete_entryはfile後に空directoryを削除する() {
+    let storage_dir = TestStorageDir::new();
+    let directory = storage_dir.path.join("obsolete/nested");
+    let file = directory.join("old.yaml");
+    fs::create_dir_all(&directory).unwrap();
+    fs::write(&file, b"old").unwrap();
+    let revision = Uuid::from_u128(0x2239);
+
+    let prepared = prepare_with_directories_and_deletes(
+        file_system_io(),
+        &storage_dir.path,
+        revision,
+        &[],
+        &[],
+        &[file.as_path(), directory.as_path()],
+    )
+    .unwrap();
+    prepared.commit().unwrap();
+
+    assert!(!file.exists());
+    assert!(!directory.exists());
+    assert_eq!(
+        fs::read_to_string(storage_dir.path.join(".revision")).unwrap(),
+        format!("{revision}\n")
+    );
+}
+
+#[test]
+fn test_delete_entryは入力順に依存せずfile後にdirectoryを削除する() {
+    let storage_dir = TestStorageDir::new();
+    let directory = storage_dir.path.join("obsolete/nested");
+    let file = directory.join("old.yaml");
+    fs::create_dir_all(&directory).unwrap();
+    fs::write(&file, b"old").unwrap();
+
+    let prepared = prepare_with_directories_and_deletes(
+        file_system_io(),
+        &storage_dir.path,
+        Uuid::from_u128(0x2260),
+        &[],
+        &[],
+        &[directory.as_path(), file.as_path()],
+    )
+    .unwrap();
+    prepared.commit().unwrap();
+
+    assert!(!directory.exists());
+}
+
+#[test]
+fn test_directory_deleteは削除後にparentをsyncする() {
+    let storage_dir = TestStorageDir::new();
+    let directory = storage_dir.path.join("obsolete");
+    fs::create_dir(&directory).unwrap();
+    let io = Arc::new(RecordingIo::new(vec![]));
+    let prepared = prepare_with_directories_and_deletes(
+        io.clone(),
+        &storage_dir.path,
+        Uuid::from_u128(0x2263),
+        &[],
+        &[],
+        &[directory.as_path()],
+    )
+    .unwrap();
+
+    prepared.commit().unwrap();
+
+    let events = io.events();
+    assert!(
+        event_position(
+            &events,
+            RecordingOperation::RemoveDirectory,
+            &PathMatcher::Exact(directory),
+            1,
+        ) < last_event_position(
+            &events,
+            RecordingOperation::SyncDirectory,
+            &PathMatcher::Exact(storage_dir.path.clone()),
+        )
+    );
+}
+
+#[test]
+fn test_directory_delete失敗はmarkerを保持しrecoveryで再試行する() {
+    let storage_dir = TestStorageDir::new();
+    let directory = storage_dir.path.join("obsolete");
+    fs::create_dir(&directory).unwrap();
+    let io = Arc::new(RecordingIo::new(vec![FaultRule {
+        operation: RecordingOperation::RemoveDirectory,
+        path_matcher: PathMatcher::Exact(directory.clone()),
+        occurrence: 1,
+        error_kind: std::io::ErrorKind::Other,
+        error_message: "injected directory delete failure",
+    }]));
+    let prepared = prepare_with_directories_and_deletes(
+        io,
+        &storage_dir.path,
+        Uuid::from_u128(0x2264),
+        &[],
+        &[],
+        &[directory.as_path()],
+    )
+    .unwrap();
+
+    let first = prepared.commit().unwrap_err();
+
+    assert_eq!(
+        first.commit_state(),
+        StorageTransactionCommitState::CommitMarkerEstablished
+    );
+    assert!(directory.is_dir());
+    recover(file_system_io(), &storage_dir.path).unwrap();
+    assert!(!directory.exists());
+}
+
+#[test]
 fn test_delete_entry後にparent_directoryをsyncする() {
     let storage_dir = TestStorageDir::new();
     let target_path = storage_dir.path.join("project/project.yaml");

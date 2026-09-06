@@ -948,7 +948,16 @@ fn tools_list_initialized通知後に10個のtoolのschemaを返す() {
     assert_eq!(property_names(tools, "get_task"), vec!["task_id"]);
     assert_eq!(
         property_names(tools, "list_tasks"),
-        vec!["categories", "period", "statuses"]
+        vec![
+            "categories",
+            "cursor",
+            "limit",
+            "period",
+            "query",
+            "root_task_id",
+            "statuses",
+            "unbounded"
+        ]
     );
     assert_eq!(property_names(tools, "get_schedule"), vec!["from", "until"]);
     assert_eq!(
@@ -1026,6 +1035,18 @@ fn tools_list_initialized通知後に10個のtoolのschemaを返す() {
     assert_non_negative_integer_property(tools, "update_task", "estimated_work_minutes");
     assert_nullable_string_property(tools, "update_task", "deadline_time", Some("date-time"));
     assert_nullable_string_property(tools, "update_task", "category", None);
+
+    assert_string_property(tools, "list_tasks", "query", None);
+    assert_string_property(tools, "list_tasks", "root_task_id", Some("uuid"));
+    assert_string_property(tools, "list_tasks", "cursor", None);
+    let limit = property(tools, "list_tasks", "limit");
+    assert_eq!(limit["type"], "integer");
+    assert_eq!(limit["minimum"], 1);
+    assert_eq!(limit["maximum"], 500);
+    assert_eq!(
+        property(tools, "list_tasks", "unbounded")["type"],
+        "boolean"
+    );
 
     let period = property(tools, "list_tasks", "period");
     assert_eq!(period["type"], "object");

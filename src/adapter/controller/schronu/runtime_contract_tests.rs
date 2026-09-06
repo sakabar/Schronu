@@ -7213,6 +7213,262 @@ fn test_interactive_submit製品経路は再描画対象commandを完了outcome�
 }
 
 #[test]
+fn interactive_backupはsnapshot後のreloadでfocusを再調整する() {
+    let storage_dir = TestStorageDir::new();
+    std::fs::create_dir_all(&storage_dir.path).unwrap();
+    let snapshot = storage_dir.path.parent().unwrap().join(format!(
+        "schronu-controller-backup-{}",
+        Uuid::new_v4().hyphenated()
+    ));
+    let now = Local.with_ymd_and_hms(2026, 9, 6, 12, 0, 0).unwrap();
+    let root = new_test_task_handle("backup focus root").unwrap();
+    let finished = root.create_as_last_child(new_test_task_attr("finished focus"));
+    finished.set_orig_status(Status::Done).unwrap();
+    let next = root.create_as_last_child(new_test_task_attr("next focus"));
+    let finished_id = finished.get_id().unwrap();
+    let next_id = next.get_id().unwrap();
+    let mut repository =
+        TestTaskRepository::new(root, now).with_storage_directory(&storage_dir.path);
+    let reload_observed_exclusive_lock = Rc::new(Cell::new(false));
+    repository = repository
+        .with_reload_lock_contended_signal(Rc::clone(&reload_observed_exclusive_lock));
+    repository.highest_priority_leaf_task_id_opt = Some(next_id);
+    let mut free_time_manager = TestFreeTimeManager::default();
+    let mut stdout = TestWriter::new();
+    let mut focused_task_id_opt = Some(finished_id);
+    let mut last_focused_task_id_opt = Some(finished_id);
+    let previous_focus_started_datetime = now - chrono::Duration::hours(1);
+    let mut focus_started_datetime = previous_focus_started_datetime;
+    let mut focus_selection_mode = FocusSelectionMode::highest_priority();
+
+    let outcome = handle_interactive_submit_at(
+        &mut stdout,
+        &mut repository,
+        &mut free_time_manager,
+        InteractiveRepositoryState {
+            focused_task_id_opt: &mut focused_task_id_opt,
+            last_focused_task_id_opt: &mut last_focused_task_id_opt,
+            focus_started_datetime: &mut focus_started_datetime,
+            focus_selection_mode: &mut focus_selection_mode,
+        },
+        &format!("backup {}", snapshot.display()),
+        now,
+    );
+
+    assert!(matches!(
+        outcome,
+        InteractiveRepositoryEventOutcome::CommandExecuted(CommandKind::Backup, actual_now)
+            if actual_now == now
+    ));
+    assert_eq!(repository.reload_if_changed_attempt_count.get(), 1);
+    assert!(reload_observed_exclusive_lock.get());
+    assert_eq!(focused_task_id_opt, Some(next_id));
+    assert_eq!(last_focused_task_id_opt, None);
+    assert_eq!(focus_started_datetime, now);
+    assert!(snapshot.join("manifest.json").is_file());
+
+    std::fs::remove_dir_all(snapshot).unwrap();
+}
+
+#[test]
+fn interactive_backup_verifyはcurrent_storage非依存で成功とsnapshot_errorを返す() {
+    let storage_dir = TestStorageDir::new();
+    std::fs::create_dir_all(&storage_dir.path).unwrap();
+    let snapshot = storage_dir.path.parent().unwrap().join(format!(
+        "schronu-controller-verify-{}",
+        Uuid::new_v4().hyphenated()
+    ));
+    crate::adapter::gateway::storage_snapshot::create_snapshot(&storage_dir.path, &snapshot)
+        .unwrap();
+    std::fs::remove_dir_all(&storage_dir.path).unwrap();
+    let now = Local.with_ymd_and_hms(2026, 9, 6, 13, 0, 0).unwrap();
+    let task = new_test_task_handle("verify focus").unwrap();
+    let task_id = task.get_id().unwrap();
+    let mut repository =
+        TestTaskRepository::new(task, now).with_storage_directory(&storage_dir.path);
+    let mut free_time_manager = TestFreeTimeManager::default();
+    let mut stdout = TestWriter::new();
+    let mut focused_task_id_opt = Some(task_id);
+    let mut last_focused_task_id_opt = Some(task_id);
+    let mut focus_started_datetime = now;
+    let mut focus_selection_mode = FocusSelectionMode::highest_priority();
+    let command = format!("backup verify {}", snapshot.display());
+
+    let outcome = handle_interactive_submit_at(
+        &mut stdout,
+        &mut repository,
+        &mut free_time_manager,
+        InteractiveRepositoryState {
+            focused_task_id_opt: &mut focused_task_id_opt,
+            last_focused_task_id_opt: &mut last_focused_task_id_opt,
+            focus_started_datetime: &mut focus_started_datetime,
+            focus_selection_mode: &mut focus_selection_mode,
+        },
+        &command,
+        now,
+    );
+
+    assert!(matches!(
+        outcome,
+        InteractiveRepositoryEventOutcome::CommandExecuted(CommandKind::BackupVerify, actual_now)
+            if actual_now == now
+    ));
+    assert_eq!(repository.reload_if_changed_attempt_count.get(), 0);
+    assert!(String::from_utf8_lossy(&stdout.buffer).contains(&format!(
+        "backup verify: OK {} revision=",
+        snapshot.display()
+    )));
+
+    for command in [
+        format!("backup\tverify {}", snapshot.display()),
+        format!("'backup' verify {}", snapshot.display()),
+    ] {
+        let outcome = handle_interactive_submit_at(
+            &mut stdout,
+            &mut repository,
+            &mut free_time_manager,
+            InteractiveRepositoryState {
+                focused_task_id_opt: &mut focused_task_id_opt,
+                last_focused_task_id_opt: &mut last_focused_task_id_opt,
+                focus_started_datetime: &mut focus_started_datetime,
+                focus_selection_mode: &mut focus_selection_mode,
+            },
+            &command,
+            now,
+        );
+        assert!(matches!(
+            outcome,
+            InteractiveRepositoryEventOutcome::CommandExecuted(CommandKind::BackupVerify, _)
+        ));
+    }
+
+    let manifest = snapshot.join("manifest.json");
+    std::fs::write(&manifest, "{").unwrap();
+    let outcome = handle_interactive_submit_at(
+        &mut stdout,
+        &mut repository,
+        &mut free_time_manager,
+        InteractiveRepositoryState {
+            focused_task_id_opt: &mut focused_task_id_opt,
+            last_focused_task_id_opt: &mut last_focused_task_id_opt,
+            focus_started_datetime: &mut focus_started_datetime,
+            focus_selection_mode: &mut focus_selection_mode,
+        },
+        &command,
+        now,
+    );
+
+    assert!(matches!(
+        outcome,
+        InteractiveRepositoryEventOutcome::Fatal(RunError::Snapshot(error))
+            if error.path() == manifest && error.to_string().contains("Decode failed")
+    ));
+    std::fs::remove_dir_all(snapshot).unwrap();
+}
+
+#[test]
+fn interactive_storage_maintenanceの引数errorはcurrent_storageより先に返す() {
+    let storage_dir = TestStorageDir::new();
+    let now = Local.with_ymd_and_hms(2026, 9, 6, 14, 0, 0).unwrap();
+    let task = new_test_task_handle("backup parse focus").unwrap();
+    let task_id = task.get_id().unwrap();
+    let mut repository =
+        TestTaskRepository::new(task, now).with_storage_directory(&storage_dir.path);
+    let mut free_time_manager = TestFreeTimeManager::default();
+    let mut stdout = TestWriter::new();
+    let mut focused_task_id_opt = Some(task_id);
+    let mut last_focused_task_id_opt = Some(task_id);
+    let mut focus_started_datetime = now;
+    let mut focus_selection_mode = FocusSelectionMode::highest_priority();
+
+    for (command, usage, expected_kind) in [
+        (
+            "backup verify",
+            "backup verify <snapshot_dir>",
+            CommandKind::BackupVerify,
+        ),
+        (
+            "backup verify snapshot extra",
+            "backup verify <snapshot_dir>",
+            CommandKind::BackupVerify,
+        ),
+        ("backup", "backup <snapshot_dir>", CommandKind::Backup),
+        (
+            "backup snapshot extra",
+            "backup <snapshot_dir>",
+            CommandKind::Backup,
+        ),
+        (
+            r#""back"up snapshot extra"#,
+            "backup <snapshot_dir>",
+            CommandKind::Backup,
+        ),
+        (
+            r"back\up snapshot extra",
+            "backup <snapshot_dir>",
+            CommandKind::Backup,
+        ),
+        (
+            "backup\t\"unterminated",
+            "double quoteが閉じられていません",
+            CommandKind::Backup,
+        ),
+        (
+            r#""back"up verify"#,
+            "backup verify <snapshot_dir>",
+            CommandKind::BackupVerify,
+        ),
+        (
+            "restore snapshot",
+            "restore <snapshot_dir> <destination_dir>",
+            CommandKind::Restore,
+        ),
+        (
+            "restore snapshot destination extra",
+            "restore <snapshot_dir> <destination_dir>",
+            CommandKind::Restore,
+        ),
+        (
+            r"res\tore snapshot",
+            "restore <snapshot_dir> <destination_dir>",
+            CommandKind::Restore,
+        ),
+        (
+            r#""res"tore current snapshot pre-backup"#,
+            "restore current <snapshot_dir> <pre_backup_dir> REPLACE_CURRENT_STORAGE",
+            CommandKind::RestoreCurrent,
+        ),
+        (
+            "restore current snapshot \"unterminated",
+            "double quoteが閉じられていません",
+            CommandKind::RestoreCurrent,
+        ),
+    ] {
+        let outcome = handle_interactive_submit_at(
+            &mut stdout,
+            &mut repository,
+            &mut free_time_manager,
+            InteractiveRepositoryState {
+                focused_task_id_opt: &mut focused_task_id_opt,
+                last_focused_task_id_opt: &mut last_focused_task_id_opt,
+                focus_started_datetime: &mut focus_started_datetime,
+                focus_selection_mode: &mut focus_selection_mode,
+            },
+            command,
+            now,
+        );
+
+        assert!(matches!(
+            outcome,
+            InteractiveRepositoryEventOutcome::CommandExecuted(actual_kind, actual_now)
+                if actual_kind == expected_kind && actual_now == now
+        ));
+        assert!(String::from_utf8_lossy(&stdout.buffer).contains(usage));
+    }
+    assert_eq!(repository.reload_if_changed_attempt_count.get(), 0);
+}
+
+#[test]
 fn test_interactive_verifyは出力errorを分類してtransactionを継続する() {
     let operation_now = Local.with_ymd_and_hms(2026, 8, 23, 12, 0, 0).unwrap();
 

@@ -1,6 +1,5 @@
-use super::task_use_case::{
-    list_tasks, ApplicationError, ListTasksFilter, TaskPeriodField, TaskPeriodFilter,
-};
+use super::{list_tasks, ListTasksFilter, TaskPeriodField, TaskPeriodFilter};
+use crate::application::task_use_case::ApplicationError;
 use crate::entity::task::{ProjectCategory, Status};
 use crate::test_support::TestTaskRepository;
 use chrono::{DateTime, Duration, Local, TimeZone};

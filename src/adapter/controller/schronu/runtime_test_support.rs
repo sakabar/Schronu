@@ -655,6 +655,7 @@ struct TestTaskRepository {
     save_failures_remaining: Cell<usize>,
     save_attempt_count: Cell<usize>,
     save_attempt_signal_opt: Option<Rc<Cell<bool>>>,
+    reload_lock_contended_signal_opt: Option<Rc<Cell<bool>>>,
     has_pending_changes: Cell<bool>,
     operation_trace: RefCell<Vec<&'static str>>,
 }
@@ -747,6 +748,7 @@ impl TestTaskRepository {
             save_failures_remaining: Cell::new(0),
             save_attempt_count: Cell::new(0),
             save_attempt_signal_opt: None,
+            reload_lock_contended_signal_opt: None,
             has_pending_changes: Cell::new(true),
             operation_trace: RefCell::new(Vec::new()),
         }
@@ -759,6 +761,11 @@ impl TestTaskRepository {
 
     fn with_save_attempt_signal(mut self, signal: Rc<Cell<bool>>) -> Self {
         self.save_attempt_signal_opt = Some(signal);
+        self
+    }
+
+    fn with_reload_lock_contended_signal(mut self, signal: Rc<Cell<bool>>) -> Self {
+        self.reload_lock_contended_signal_opt = Some(signal);
         self
     }
 
@@ -803,6 +810,18 @@ impl TaskRepositoryTrait for TestTaskRepository {
         &mut self,
         now: DateTime<Local>,
     ) -> Result<RepositoryReloadOutcome, TaskRepositoryError> {
+        if let Some(signal) = &self.reload_lock_contended_signal_opt {
+            let lock_result = StorageLock::acquire(
+                std::path::Path::new(&self.storage_directory),
+                LockMode::Mcp,
+            );
+            signal.set(matches!(
+                lock_result,
+                Err(error)
+                    if error.kind()
+                        == crate::adapter::gateway::storage_lock::StorageLockErrorKind::Contended
+            ));
+        }
         self.operation_trace
             .borrow_mut()
             .push("reload_if_changed");

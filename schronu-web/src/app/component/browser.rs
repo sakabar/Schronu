@@ -9,7 +9,7 @@ use super::super::list_view::ListView;
 use super::super::long_press_browser::BrowserLongPressScheduler;
 use super::super::long_press_controller::LongPressSchedulerHandle;
 use super::super::session_view::SessionView;
-use super::{InteractiveShell, LoadingOverlay, NavigationTabs};
+use super::{InteractiveShell, LoadingOverlay, NavigationTabs, SessionChrome};
 use crate::client::state::ActiveTab;
 use crate::client::time_model::format_hh_mm_ss;
 use crate::client::work_sessions::BrowserLocalStorage;
@@ -74,15 +74,16 @@ pub(super) fn BrowserApp() -> Element {
     rsx! {
         InteractiveShell {
             blocked: server_effect_in_flight,
-            header { class: "toolbar", h1 { "Schronu" } }
-            CarryLockBar {
-                model: carry_lock,
-                scheduler: long_press_scheduler,
-                on_enable: move |_| dispatch_action(client, ComponentAction::EnableCarryLock),
-                on_arm: move |_| dispatch_action(client, ComponentAction::ArmCarryLock),
-                on_disable: move |_| dispatch_action(client, ComponentAction::DisableCarryLock),
+            SessionChrome { active_tab,
+                CarryLockBar {
+                    model: carry_lock,
+                    scheduler: long_press_scheduler,
+                    on_enable: move |_| dispatch_action(client, ComponentAction::EnableCarryLock),
+                    on_arm: move |_| dispatch_action(client, ComponentAction::ArmCarryLock),
+                    on_disable: move |_| dispatch_action(client, ComponentAction::DisableCarryLock),
+                }
+                BufferPanel { value: buffer }
             }
-            BufferPanel { value: buffer }
             NavigationTabs {
                 active_tab,
                 on_switch: move |tab| dispatch_action(client, ComponentAction::SwitchTab(tab)),
@@ -143,9 +144,7 @@ pub(super) fn BrowserApp() -> Element {
 
 fn loading_shell() -> Element {
     rsx! {
-        main { class: "shell", aria_busy: "true",
-            header { class: "toolbar", h1 { "Schronu" } }
-        }
+        main { class: "shell", aria_busy: "true" }
         LoadingOverlay {}
     }
 }

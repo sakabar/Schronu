@@ -118,6 +118,9 @@ impl Error for TaskRepositoryError {
 pub trait TaskRepositoryTrait {
     fn get_project_storage_dir_name(&self) -> &str;
     fn get_all_projects(&self) -> Vec<&TaskHandle>;
+    fn repository_revision(&self) -> Option<Uuid> {
+        None
+    }
     fn load(&mut self) -> Result<(), TaskRepositoryError>;
     fn reload_if_changed(
         &mut self,

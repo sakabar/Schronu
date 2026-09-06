@@ -1,8 +1,9 @@
+use std::cmp::Reverse;
 use std::fs;
 use std::path::{Path, PathBuf};
 
 use super::cleanup::cleanup_committed_transaction;
-use super::io::sync_directory;
+use super::io::{sync_directory, DirectoryPermissionError};
 use super::layout::TransactionLayout;
 use super::manifest::{content_matches, ValidatedEntry};
 use super::{
@@ -13,11 +14,13 @@ enum PreflightEntry {
     AlreadyApplied,
     Write {
         target_path: PathBuf,
+        relative_path: PathBuf,
         bytes: Vec<u8>,
         permissions: fs::Permissions,
     },
     Delete {
         target_path: PathBuf,
+        relative_path: PathBuf,
     },
 }
 
@@ -95,8 +98,23 @@ impl PreparedTransaction {
 
 impl CommittedTransaction {
     pub(super) fn roll_forward(self) -> Result<(), StorageTransactionError> {
-        let preflight_entries = self.preflight_entries()?;
+        let mut preflight_entries = self.preflight_entries()?;
         let layout = TransactionLayout::new(&self.state.paths.storage_dir_path);
+        let first_write = preflight_entries
+            .iter()
+            .position(|entry| !matches!(entry, PreflightEntry::Delete { .. }))
+            .unwrap_or(preflight_entries.len());
+        let writes = preflight_entries.split_off(first_write);
+        for entry in preflight_entries {
+            let PreflightEntry::Delete {
+                target_path,
+                relative_path,
+            } = entry
+            else {
+                unreachable!("delete partition contains only deletes");
+            };
+            self.apply_delete(&target_path, &relative_path)?;
+        }
         for directory in &self.state.manifest.directories {
             let directory_path = layout.target_path(directory);
             self.state
@@ -110,16 +128,46 @@ impl CommittedTransaction {
                     )
                 })?;
         }
-        for entry in preflight_entries {
+        for entry in writes {
             match entry {
                 PreflightEntry::AlreadyApplied => {}
                 PreflightEntry::Write {
                     target_path,
+                    relative_path,
                     bytes,
                     permissions,
-                } => self.apply_bytes(&target_path, &bytes, Some(permissions))?,
-                PreflightEntry::Delete { target_path } => self.apply_delete(&target_path)?,
+                } => self.apply_bytes(&target_path, &relative_path, &bytes, Some(permissions))?,
+                PreflightEntry::Delete { .. } => {
+                    unreachable!("write partition does not contain deletes")
+                }
             }
+        }
+        for (directory, mode) in self
+            .state
+            .manifest
+            .directories
+            .iter()
+            .zip(&self.state.manifest.directory_modes)
+            .rev()
+        {
+            let Some(mode) = mode else {
+                continue;
+            };
+            let directory_path = layout.target_path(directory);
+            self.state
+                .io
+                .set_and_sync_directory_permissions(&directory_path, permissions_from_mode(*mode))
+                .map_err(|error| {
+                    let (operation, source) = match error {
+                        DirectoryPermissionError::Set(source) => {
+                            (StorageTransactionOperation::SetLivePermissions, source)
+                        }
+                        DirectoryPermissionError::Sync(source) => {
+                            (StorageTransactionOperation::SyncDirectory, source)
+                        }
+                    };
+                    StorageTransactionError::new(operation, &directory_path, source)
+                })?;
         }
         self.apply_revision(&layout.revision_path())?;
         cleanup_committed_transaction(&self)
@@ -127,17 +175,20 @@ impl CommittedTransaction {
 
     fn preflight_entries(&self) -> Result<Vec<PreflightEntry>, StorageTransactionError> {
         let layout = TransactionLayout::new(&self.state.paths.storage_dir_path);
-        self.state
+        let mut entries = self
+            .state
             .manifest
             .entries
             .iter()
             .map(|entry| match entry {
                 ValidatedEntry::Delete { target } => Ok(PreflightEntry::Delete {
                     target_path: layout.target_path(target),
+                    relative_path: target.clone(),
                 }),
                 ValidatedEntry::Write {
                     target,
                     staged_file,
+                    mode,
                     integrity,
                 } => {
                     let target_path = layout.target_path(target);
@@ -202,12 +253,18 @@ impl CommittedTransaction {
                                 &target_bytes,
                                 integrity.content_length,
                                 &integrity.checksum,
-                            ) {
+                            ) && permission_matches(&metadata.permissions(), *mode)
+                            {
                                 return Ok(PreflightEntry::AlreadyApplied);
                             }
                         }
                         Ok(_) => {}
-                        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                        Err(error)
+                            if matches!(
+                                error.kind(),
+                                std::io::ErrorKind::NotFound
+                                    | std::io::ErrorKind::NotADirectory
+                            ) => {}
                         Err(error) => {
                             return Err(StorageTransactionError::new(
                                 StorageTransactionOperation::ReadTargetMetadata,
@@ -216,7 +273,7 @@ impl CommittedTransaction {
                             ));
                         }
                     }
-                    let (bytes, permissions) = staged_material.ok_or_else(|| {
+                    let (bytes, staged_permissions) = staged_material.ok_or_else(|| {
                         StorageTransactionError::new(
                             StorageTransactionOperation::ReadStagedFile,
                             &staged_file_path,
@@ -228,12 +285,22 @@ impl CommittedTransaction {
                     })?;
                     Ok(PreflightEntry::Write {
                         target_path,
+                        relative_path: target.clone(),
                         bytes,
-                        permissions,
+                        permissions: mode
+                            .map(permissions_from_mode)
+                            .unwrap_or(staged_permissions),
                     })
                 }
             })
-            .collect()
+            .collect::<Result<Vec<_>, _>>()?;
+        entries.sort_by_key(|entry| match entry {
+            PreflightEntry::Delete { target_path, .. } => {
+                (0, Reverse(target_path.components().count()))
+            }
+            PreflightEntry::AlreadyApplied | PreflightEntry::Write { .. } => (1, Reverse(0)),
+        });
+        Ok(entries)
     }
 
     fn apply_revision(&self, revision_path: &Path) -> Result<(), StorageTransactionError> {
@@ -250,12 +317,17 @@ impl CommittedTransaction {
             })?;
         self.apply_bytes(
             revision_path,
+            Path::new(".revision"),
             format!("{}\n", self.state.manifest.revision).as_bytes(),
             permissions,
         )
     }
 
-    fn apply_delete(&self, target_path: &Path) -> Result<(), StorageTransactionError> {
+    fn apply_delete(
+        &self,
+        target_path: &Path,
+        relative_path: &Path,
+    ) -> Result<(), StorageTransactionError> {
         let parent_path = target_path.parent().ok_or_else(|| {
             StorageTransactionError::new(
                 StorageTransactionOperation::RemoveLiveTarget,
@@ -266,7 +338,11 @@ impl CommittedTransaction {
                 ),
             )
         })?;
-        match self.state.io.remove_file(target_path) {
+        let removal = self
+            .state
+            .io
+            .remove_storage_entry(&self.state.paths.storage_dir_path, relative_path);
+        match removal {
             Ok(()) => sync_directory(self.state.io.as_ref(), parent_path),
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
                 match self.state.io.sync_directory(parent_path) {
@@ -279,6 +355,25 @@ impl CommittedTransaction {
                     )),
                 }
             }
+            Err(error)
+                if self.state.manifest.replace_target_directories
+                    && error.kind() == std::io::ErrorKind::NotADirectory
+                    && self.delete_is_shadowed_by_desired_file(relative_path) =>
+            {
+                Ok(())
+            }
+            Err(error)
+                if self.state.manifest.replace_target_directories
+                    && error.kind() == std::io::ErrorKind::DirectoryNotEmpty
+                    && self
+                        .state
+                        .manifest
+                        .directories
+                        .iter()
+                        .any(|directory| directory == relative_path) =>
+            {
+                Ok(())
+            }
             Err(error) => Err(StorageTransactionError::new(
                 StorageTransactionOperation::RemoveLiveTarget,
                 target_path,
@@ -287,9 +382,20 @@ impl CommittedTransaction {
         }
     }
 
+    fn delete_is_shadowed_by_desired_file(&self, relative_path: &Path) -> bool {
+        self.state.manifest.entries.iter().any(|entry| {
+            matches!(
+                entry,
+                ValidatedEntry::Write { target, .. }
+                    if target != relative_path && relative_path.starts_with(target)
+            )
+        })
+    }
+
     fn apply_bytes(
         &self,
         target_path: &Path,
+        relative_path: &Path,
         bytes: &[u8],
         permissions: Option<fs::Permissions>,
     ) -> Result<(), StorageTransactionError> {
@@ -383,6 +489,21 @@ impl CommittedTransaction {
                 error,
             )
         })?;
+        if self.state.manifest.replace_target_directories {
+            self.state
+                .io
+                .remove_storage_directory_if_present(
+                    &self.state.paths.storage_dir_path,
+                    relative_path,
+                )
+                .map_err(|error| {
+                    StorageTransactionError::new(
+                        StorageTransactionOperation::RemoveLiveTarget,
+                        target_path,
+                        error,
+                    )
+                })?;
+        }
         self.state
             .io
             .rename(&temporary_path, target_path)
@@ -395,4 +516,28 @@ impl CommittedTransaction {
             })?;
         sync_directory(self.state.io.as_ref(), parent_path)
     }
+}
+
+#[cfg(unix)]
+fn permissions_from_mode(mode: u32) -> fs::Permissions {
+    use std::os::unix::fs::PermissionsExt;
+
+    fs::Permissions::from_mode(mode)
+}
+
+#[cfg(not(unix))]
+fn permissions_from_mode(_mode: u32) -> fs::Permissions {
+    unreachable!("transaction modes are not produced on non-Unix platforms")
+}
+
+#[cfg(unix)]
+fn permission_matches(permissions: &fs::Permissions, expected_mode: Option<u32>) -> bool {
+    use std::os::unix::fs::PermissionsExt;
+
+    expected_mode.is_none_or(|mode| permissions.mode() & 0o7777 == mode)
+}
+
+#[cfg(not(unix))]
+fn permission_matches(_permissions: &fs::Permissions, _expected_mode: Option<u32>) -> bool {
+    true
 }
