@@ -1,5 +1,6 @@
 const SCHRONU_CONFIG = {
   sheetNames: ['実ログ', '優先度低い順'],
+  indCol: 1,
   taskIdCol: 2,
   syncCols: [12, 14, 16, 18],
   dataStartRow: 3,
@@ -85,13 +86,14 @@ function syncEditedManualCols_(spreadsheet, sourceSheet, editedRange) {
   const endCol = startCol + editedRange.getNumColumns() - 1;
 
   for (let row = startRow; row <= endRow; row++) {
+    const ind = getInd_(sourceSheet, row);
     const taskId = getTaskId_(sourceSheet, row);
 
-    if (!taskId) {
+    if (!ind || !taskId) {
       continue;
     }
 
-    const targetRow = findRowByTaskId_(otherSheet, taskId);
+    const targetRow = findRowBySegmentIdentity_(otherSheet, ind, taskId);
 
     if (!targetRow) {
       continue;
@@ -108,7 +110,7 @@ function syncEditedManualCols_(spreadsheet, sourceSheet, editedRange) {
   }
 }
 
-function findRowByTaskId_(sheet, taskId) {
+function findRowBySegmentIdentity_(sheet, ind, taskId) {
   const lastRow = sheet.getLastRow();
 
   if (lastRow < SCHRONU_CONFIG.dataStartRow) {
@@ -116,11 +118,11 @@ function findRowByTaskId_(sheet, taskId) {
   }
 
   const values = sheet
-    .getRange(SCHRONU_CONFIG.dataStartRow, SCHRONU_CONFIG.taskIdCol, lastRow - SCHRONU_CONFIG.dataStartRow + 1, 1)
+    .getRange(SCHRONU_CONFIG.dataStartRow, SCHRONU_CONFIG.indCol, lastRow - SCHRONU_CONFIG.dataStartRow + 1, 2)
     .getValues();
 
   for (let i = 0; i < values.length; i++) {
-    if (normalizeTaskId_(values[i][0]) === taskId) {
+    if (normalizeInd_(values[i][0]) === ind && normalizeTaskId_(values[i][1]) === taskId) {
       return SCHRONU_CONFIG.dataStartRow + i;
     }
   }
@@ -138,8 +140,16 @@ function getOtherSheet_(spreadsheet, sheetName) {
   return spreadsheet.getSheetByName(otherSheetName);
 }
 
+function getInd_(sheet, row) {
+  return normalizeInd_(sheet.getRange(row, SCHRONU_CONFIG.indCol).getValue());
+}
+
 function getTaskId_(sheet, row) {
   return normalizeTaskId_(sheet.getRange(row, SCHRONU_CONFIG.taskIdCol).getValue());
+}
+
+function normalizeInd_(value) {
+  return String(value || '').trim();
 }
 
 function normalizeTaskId_(value) {
