@@ -14,8 +14,9 @@ enum MutationKind {
 }
 
 pub(super) struct PendingMutation {
-    task_id: String,
+    pub(super) task_id: String,
     kind: MutationKind,
+    pub(super) ended_at_epoch_ms: i64,
 }
 
 pub(super) struct SessionState {
@@ -265,6 +266,7 @@ impl ClientState {
             PendingMutation {
                 task_id: task_id.to_owned(),
                 kind,
+                ended_at_epoch_ms: self.tick_now_epoch_ms,
             },
         );
         match kind {
@@ -274,7 +276,7 @@ impl ClientState {
                     request: CompleteSessionRequest {
                         task_id: request_task_id,
                         started_at_epoch_ms,
-                        ended_at_epoch_ms: None,
+                        ended_at_epoch_ms: Some(self.tick_now_epoch_ms),
                         expected_actual_work_seconds,
                         record_elapsed_seconds: kind == MutationKind::Complete,
                     },
@@ -285,7 +287,7 @@ impl ClientState {
                 request: RecordSessionRequest {
                     task_id: request_task_id,
                     started_at_epoch_ms,
-                    ended_at_epoch_ms: None,
+                    ended_at_epoch_ms: Some(self.tick_now_epoch_ms),
                     expected_actual_work_seconds,
                 },
             },

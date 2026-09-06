@@ -1,4 +1,4 @@
-use super::component_models::browser_monotonic_now_ms;
+use super::component_models::{browser_monotonic_now_ms, browser_now_epoch_ms};
 use super::component_runtime::{
     component_action_from_session_action, ComponentAction, ComponentOrchestrator,
 };
@@ -12,6 +12,19 @@ pub(crate) fn dispatch_session_action(
     client: Signal<ComponentOrchestrator>,
     action: SessionAction,
 ) {
+    if matches!(
+        action.kind,
+        super::session_view::SessionActionKind::Record
+            | super::session_view::SessionActionKind::Complete
+            | super::session_view::SessionActionKind::CompleteWithoutRecording
+    ) {
+        dispatch_action(
+            client,
+            ComponentAction::Tick {
+                wall_now_epoch_ms: browser_now_epoch_ms(),
+            },
+        );
+    }
     let action = component_action_from_session_action(action);
     dispatch_action(client, action);
 }

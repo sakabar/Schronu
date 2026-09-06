@@ -159,6 +159,14 @@ impl ClientState {
         self.sessions.in_flight_task_ids.contains(task_id)
     }
 
+    pub(crate) fn session_pending_ended_at_epoch_ms(&self, task_id: &str) -> Option<i64> {
+        self.sessions
+            .pending_mutations
+            .values()
+            .find(|pending| pending.task_id == task_id)
+            .map(|pending| pending.ended_at_epoch_ms)
+    }
+
     pub fn is_session_manual_check_blocked(&self, task_id: &str) -> bool {
         self.sessions
             .manual_check_blocked_task_ids
@@ -201,7 +209,12 @@ impl ClientState {
         let active_session_starts: Vec<_> = self
             .sessions()
             .iter()
-            .filter(|session| !self.is_session_committed_blocked(&session.task_id))
+            .filter(|session| {
+                !self.is_session_committed_blocked(&session.task_id)
+                    && self
+                        .session_pending_ended_at_epoch_ms(&session.task_id)
+                        .is_none()
+            })
             .map(|session| session.started_at_epoch_ms)
             .collect();
         Some(
