@@ -1840,6 +1840,14 @@ W5-AとW5-Bはapplication task操作とSpreadsheet表示で製品fileが分か�
 
 W6-AとW6-BはCLI controllerとMCP/applicationにwrite範囲を分ける。backup、verify、restoreの各commandを別のRed/Green cycleにする。TD-039はrepository phaseだけでは完了にせず、CLI製品経路、failure injection、文書までGreenにして完了とする。
 
+#### Wave 6完了記録(2026-09-06)
+
+- 固定基点`4d87ed77`からW6-A、W6-Bの順に統合し、TD-039とTD-038を完了した。
+- W6-Aは整合snapshotのbackup・verify、別directory restore、事前backup付きcurrent restoreをCLI製品経路へ公開し、transaction recovery、安全なpath境界、lock、error情報を維持した。
+- W6-Bは`list_tasks`へquery・root subtree filterと既定100件・最大500件のcursor paginationを追加し、pre-order、repository revisionによるcursor失効、明示的な無制限取得を維持した。
+- 独立reviewのP1/P2として、W6-Aではentry種別・permissionを含むcurrent restore、lexer統一、failure phase保持、storage maintenance責務分割を、W6-Bではcardinality境界、iterative走査の保持数上限、実MCP JSON-RPCのtypical/stress測定を解消・固定した。
+- Integration gateは`cargo fmt --check`、`cargo clippy --locked --all-targets -- -D warnings`、`cargo test --locked`、`git diff --check`に成功した。主要結果はunit 1,328 passed / 1 ignored、backup CLI 18 passed、MCP stdio 14 passed、benchmarking対象1 passedである。
+
 ### Wave 7: architecture test cleanup(原則1レーン)
 
 | Lane | 項目 | 先行条件 | 主なwrite範囲 |
