@@ -219,9 +219,9 @@ RecordSessionRequest {
 処理:
 
 1. 1回だけ取得したserver操作時刻を`operation_now`とする。
-2. `ended_at_epoch_ms`があれば終了操作click時刻、なければ旧client互換のため`operation_now`を終了時刻とする。
+2. `ended_at_epoch_ms`があればbrowserの終了操作click時刻、なければ旧client互換のため`operation_now`を計測終了時刻とする。
 3. `floor((ended_at - started_at) / 1000)`を追加実績秒とする。
-4. `started_at <= ended_at <= operation_now`を満たさない場合、日時変換不能、秒数変換不能なら入力errorとし、保存しない。
+4. `started_at <= ended_at`を満たさない場合、日時変換不能、秒数変換不能なら入力errorとし、保存しない。browser時計とserver時計の差により`ended_at > operation_now`でも、browser内の時刻差を計測へ使用する。
 5. UUID、追加実績秒、期待実績秒をapplicationの共通実績加算操作へ渡す。
 6. repository transactionの保存成功後に`ServerSnapshot`を返す。
 
@@ -241,10 +241,10 @@ CompleteSessionRequest {
 }
 ```
 
-1. `ended_at_epoch_ms`があれば終了操作click時刻、なければ旧client互換のため`operation_now`を終了時刻とし、`ended_at <= operation_now`を検証する。
+1. `ended_at_epoch_ms`があればbrowserの終了操作click時刻、なければ旧client互換のため`operation_now`を計測終了時刻とする。保存用の`finished_at`は`min(ended_at, operation_now)`とし、browser時計が進んでいても未来時刻を保存しない。
 2. `record_elapsed_seconds`が`true`なら、`record_session`と同じ規則で追加実績秒を算出する。
 3. `record_elapsed_seconds`が`false`なら、`started_at_epoch_ms`を実績計算やvalidationに使用せず、追加実績秒を0とする。
-4. 既存`CompleteTaskInput`へtask UUID、終了操作click時刻、追加実績秒、`Some(expected_actual_work_seconds)`を渡す。
+4. 既存`CompleteTaskInput`へtask UUID、保存用の終了時刻、追加実績秒、`Some(expected_actual_work_seconds)`を渡す。
 5. applicationは期待実績検証、実績加算、完了、終了時刻更新、反復task生成を1つの操作として準備する。
 6. repository transactionは全変更を1回で保存する。repository同期とresponse snapshot生成は`operation_now`を維持し、click後の通信待ちを未作業時間として反映する。
 
@@ -609,7 +609,7 @@ OperationHistoryEntry {
 
 - 共通実績加算: 正常加算、0秒、未知UUID、完了済みtask、負数、期待値一致・不一致、加算overflow、失敗時無変更。
 - `complete_task`: 期待値一致、競合、負の追加秒、overflow、未完了の子、完了済み、反復task生成、各失敗時の全状態不変。
-- `record_session`と`complete_session`: 注入した開始0秒、click 60秒、server操作65秒で、記録実績とtask終了時刻がclick時点に固定されることを待機なしで検証する。終了時刻省略、開始前、未来、epoch範囲外も検証する。
+- `record_session`と`complete_session`: 注入した開始0秒、click 60秒、server操作65秒で、記録実績とtask終了時刻がclick時点に固定されることを待機なしで検証する。終了時刻省略、開始前、epoch範囲外も検証する。browser時計がserver時計より進む場合はbrowser内の開始・終了差を実績へ反映し、完了時刻をserver操作時刻で上限化することも検証する。
 - `complete_session`: 記録ありではclickまでの経過整数秒を加算し、記録なしでは開始時刻を使用せず追加実績0でclick時刻に完了すること。どちらも期待実績競合、反復task、未完了child、保存失敗の契約を維持し、成功responseが`ServerSnapshot`だけで次task情報を含まないこと。
 - 進捗計算: 開始時33%、100%、133%、見積0、長時間、乗算overflow回避。
 - buffer: 正、0、負、06:00前後、日次終端前の固定`busy_time_slot`控除、隣接logical dateの除外を検証する。日次終端10分前で予定作業なしなら`+00:10:00`、日次終端ちょうどで予定作業なしなら`00:00:00`、日次終端40分後で予定作業なしなら`-00:40:00`、日次終端40分後で予定残作業62分なら`-01:42:00`となることを検証する。
