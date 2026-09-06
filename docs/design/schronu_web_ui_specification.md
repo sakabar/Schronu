@@ -419,6 +419,8 @@ display_buffer = buffer_seconds - buffer_elapsed
 
 34rem以下ではbuffer領域と日付buttonの余白を圧縮する。日付buttonは操作高44px以上と8日分の横スクロールを維持する。
 
+全buttonの`:hover`装飾は`@media (hover: hover) and (pointer: fine)`内だけに定義し、タッチ主体の端末ではタップ後にhover配色を残さない。`:active`と`:focus-visible`はmedia query外に置き、pointer種別にかかわらず操作feedbackを維持する。hover可能なfine pointerではtab、primary action、session startを含む既存hover表現を維持し、選択済み日付buttonのhover中は緑背景と白文字を上書き規則で維持する。
+
 ### 7.2 セッション画面
 
 - セッション0件では「自動セッション」buttonを表示する。
@@ -589,6 +591,7 @@ OperationHistoryEntry {
 - rank 0の一覧rowだけにセッションbuttonとclick listenerがあり、rank非0にはどちらもないことを確認する。
 - 一覧は320px、360px、46rem、1024pxで確認し、長いtask名、日付付き締切、複数segmentでviewport全体の横スクロールが発生しないことを確認する。
 - 34rem以下でbufferと日付buttonが圧縮され、日付buttonの操作高44px以上と横スクロールが維持されることを確認する。
+- touch/mobile emulationでは全buttonのタップ後にhover配色が残らず、`:active`と`:focus-visible`が機能することを確認する。desktopのhover可能なfine pointerでは既存hover表現と、選択済み日付buttonの緑背景・白文字が維持されることを確認する。
 - 4操作buttonのlabel、ARIA名、意味別class、通常幅の2列配置、狭幅の1列配置を確認する。
 - 「計測を破棄して完了」の最初のclickでは通信せず、card単位の確認表示、キャンセル、確定時の1回だけのtyped callbackを確認する。
 - 33%、100%、133%、見積0、buffer正負の表示を確認する。
