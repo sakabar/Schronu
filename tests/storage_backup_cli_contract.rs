@@ -207,6 +207,91 @@ fn backup_verify_cliはsnapshot_errorのpathと段階と原因をstderrへ保持
     assert!(stderr.contains("EOF while parsing"), "{stderr}");
 }
 
+#[test]
+fn restore_cliはcurrent_storage非依存で非存在destinationへ復元する() {
+    let fixture = CliFixture::seeded();
+    let snapshot = fixture.child("snapshot");
+    let destination = fixture.child("restored");
+    assert_eq!(
+        fixture
+            .run(&["backup", snapshot.to_str().unwrap()])
+            .status
+            .code(),
+        Some(0)
+    );
+    fs::remove_dir_all(&fixture.storage).unwrap();
+
+    let output = fixture.run(&[
+        "restore",
+        snapshot.to_str().unwrap(),
+        destination.to_str().unwrap(),
+    ]);
+
+    assert_eq!(output.status.code(), Some(0));
+    assert!(output.stderr.is_empty());
+    assert!(destination.join(".revision").is_file());
+    assert!(find_project_yaml(&destination).is_file());
+    assert!(String::from_utf8(output.stdout)
+        .unwrap()
+        .starts_with(&format!("restore: OK {} revision=", destination.display())));
+}
+
+#[test]
+fn restore_cliは既存destinationを変更せず拒否する() {
+    let fixture = CliFixture::seeded();
+    let snapshot = fixture.child("snapshot");
+    let destination = fixture.child("existing");
+    assert_eq!(
+        fixture
+            .run(&["backup", snapshot.to_str().unwrap()])
+            .status
+            .code(),
+        Some(0)
+    );
+    fs::create_dir(&destination).unwrap();
+    let sentinel = destination.join("sentinel");
+    fs::write(&sentinel, "keep").unwrap();
+
+    let output = fixture.run(&[
+        "restore",
+        snapshot.to_str().unwrap(),
+        destination.to_str().unwrap(),
+    ]);
+
+    assert_eq!(output.status.code(), Some(1));
+    assert!(output.stdout.is_empty());
+    let stderr = String::from_utf8(output.stderr).unwrap();
+    assert!(stderr.contains("storage snapshot Validate failed"), "{stderr}");
+    assert!(stderr.contains(destination.to_str().unwrap()), "{stderr}");
+    assert!(
+        stderr.contains("restore destination must not exist"),
+        "{stderr}"
+    );
+    assert_eq!(fs::read_to_string(sentinel).unwrap(), "keep");
+}
+
+#[test]
+fn restore_cliは厳密な引数数をusage付きで拒否する() {
+    let fixture = CliFixture::seeded();
+
+    for args in [
+        vec!["restore"],
+        vec!["restore", "snapshot"],
+        vec!["restore", "snapshot", "destination", "extra"],
+    ] {
+        let output = fixture.run(&args);
+
+        assert_eq!(output.status.code(), Some(1));
+        assert!(output.stdout.is_empty());
+        let stderr = String::from_utf8(output.stderr).unwrap();
+        assert!(stderr.contains("コマンド: restore"), "{stderr}");
+        assert!(
+            stderr.contains("使い方: restore <snapshot_dir> <destination_dir>"),
+            "{stderr}"
+        );
+    }
+}
+
 fn find_project_yaml(storage: &Path) -> PathBuf {
     fs::read_dir(storage)
         .unwrap()
