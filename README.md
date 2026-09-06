@@ -335,7 +335,30 @@ CLIのCtrl-Cは未送信の入力だけを破棄します。既に成功したco
 
 ### backupと安全上の注意
 
-一貫したbackupを取る場合はCLIを終了し、全MCP serverを停止した状態で、`.lock`を除く保存先directoryの内容をdirectory構造ごとcopyしてください。`.lock`はtask dataではないためbackup・restore対象外です。`project.yaml`の直接編集や復元もCLI・MCP停止中に行い、完了後にprocessを再起動してください。
+稼働中のstorageは手動copyではなく、次のCLI commandでbackupとrestoreを行うことを推奨します。いずれも対話・非対話モードで利用できます。
+
+```shell
+schronu backup <snapshot_dir>
+schronu backup verify <snapshot_dir>
+schronu restore <snapshot_dir> <destination_dir>
+schronu restore current <snapshot_dir> <pre_backup_dir> REPLACE_CURRENT_STORAGE
+```
+
+`backup`は現在のstorageのexclusive lockを取得し、停止済みtransactionのrecoveryとstrict repository検証を行ってから、`.revision`と全projectが同一時点に揃ったsnapshotを未存在の`snapshot_dir`へ公開します。他のCLI、MCP、Webは停止する必要がありませんが、同じstorageを操作中でlockを取得できない場合は、その操作の完了後に再試行してください。snapshotは`.lock`、transaction用directory、既知のtemporary・staging artifactを含みません。
+
+`backup verify`はsource storageを読まず、manifestとpayloadの構成、revision、file数・長さ・digest、strict YAML、task UUID重複、path traversal、symlink、予約path、fileの欠落・余剰を検査します。作成直後とrestore前に実行してください。
+
+`restore`は検証済みsnapshotを、現在のstorageではない未存在の`destination_dir`へatomicに展開します。これが既定の安全なrestoreです。展開後は`SCHRONU_STORAGE_DIR=<destination_dir> schronu 検証`で製品のrepository検証を通し、内容を確認してからstorageの切替を行ってください。
+
+`restore current`は現在のstorageを上書きする破壊的操作です。完全一致の確認token `REPLACE_CURRENT_STORAGE`、exclusive lock、未存在の`pre_backup_dir`が必要です。snapshotのstrict verifyが成功した後、現在のstorageを`pre_backup_dir`へbackupしてからtransactionで置換します。不正なsnapshot、既存のpre-backup、lock競合では現在のstorageを変更しません。実行後は`backup verify <pre_backup_dir>`で事前backupも検証し、必要になるまで保持してください。
+
+snapshotのretentionは運用者が管理します。Schronuは古いsnapshotやpre-backupを自動削除しません。保持数や保持期間を決め、`backup verify`に成功した別世代を少なくとも1つ残した上で、不要なsnapshotを手動削除してください。
+
+snapshotはtask名、時刻、工数などの`project.yaml`原文を保持するため、機密情報として扱ってください。Unixではpayloadのfileとdirectoryのmodeをsnapshotとmanifestへ保持し、restore時に復元しますが、snapshotを置く親directoryのpermission、access control、暗号化、外部へのcopyは運用者の責任です。信頼できるaccountだけが読める場所を指定してください。
+
+既定のresource limitはmanifest 8 MiB、file 10,000件、1 file 64 MiB、payload合計256 MiB、相対path 4,096 byte、path depth 64です。上限超過時はbackup・verify・restoreを拒否します。manifestの長さ付きFNV-1a 64bit digestは偶発的な破損を検出するためのもので、暗号学的な耐改ざん性や送信者の真正性は保証しません。信頼できない相手から受け取ったsnapshotをrestoreしないでください。
+
+CLIが利用できない場合だけ、offline fallbackとしてCLI、全MCP server、Web serverを停止し、OS lockが解放されたことを確認してから、`.lock`を除く保存先directoryの内容をdirectory構造ごとcopyしてください。異常終了後は、可能な限り先に通常起動してtransaction recoveryを完了させてください。手動復元と`project.yaml`の直接編集は全process停止中に限り、完了後に`schronu 検証`を通してからprocessを再起動してください。`.lock`はtask dataではないためbackup・restore対象外です。
 
 stdio接続を許可したMCP clientはtaskの作成・変更・完了とfile保存を実行できます。信頼できるローカルclientだけに設定し、保存先のfilesystem permissionとbackupを管理してください。repository transactionの脅威modelは、Schronuのadvisory lockに従うprocess同士の併用とprocess crashです。path検証後に外部processがfilesystem entryを悪意的に差し替えるsymlink TOCTOUには完全な保護を提供せず、transactionに限らないrepository全体の将来のsecurity debtとして扱います。初版の対象外は、team共有、端末間同期、network transportです。
 
