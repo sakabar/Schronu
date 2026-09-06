@@ -194,11 +194,12 @@ fn list_renders_eight_dates_selected_row_fields_and_visual_states() {
     assert_eq!(html.matches("deadline is-overdue").count(), 1);
     assert_eq!(html.matches("<button class=\"session-start\"").count(), 1);
     assert!(
-        html.contains("aria-label=\"task leaf: セッション\""),
+        html.contains("aria-label=\"task leaf: セッションに追加\""),
         "{html}"
     );
+    assert!(html.contains(">＋</button>"), "{html}");
     assert!(
-        !html.contains("aria-label=\"task late: セッション\""),
+        !html.contains("aria-label=\"task late: セッションに追加\""),
         "{html}"
     );
     assert!(!html.contains("<a"));
@@ -225,13 +226,19 @@ fn list_rowはresponsive表示用の意味別cellとlabelを持つ() {
         html.contains("class=\"schedule-time\" data-label=\"予定\""),
         "{html}"
     );
+    assert!(html.contains("class=\"deadline-heading\""), "{html}");
+    assert!(html.contains("class=\"schedule-heading\""), "{html}");
+    assert!(html.contains("class=\"task-heading\""), "{html}");
+    assert!(html.contains("class=\"session-heading\""), "{html}");
+    assert!(html.contains("class=\"task-name-scroll\""), "{html}");
+    assert!(html.contains("tabindex=\"0\""), "{html}");
     assert!(html.contains("class=\"session-cell\""), "{html}");
 }
 
 #[test]
-fn listは46rem以下でtask_firstの2列metadata_cardになる() {
+fn listは46rem以下で可視header付きの一行tableになる() {
     let css = include_str!("../../assets/main.css");
-    let narrow_list_layout = css
+    let mobile_list_layout = css
         .split_once("@media (max-width: 46rem)")
         .expect("list card breakpoint must match the 44rem table plus 2rem shell gutters")
         .1;
@@ -239,15 +246,32 @@ fn listは46rem以下でtask_firstの2列metadata_cardになる() {
     for required in [
         ".task-table-scroll {\n        overflow-x: visible;",
         ".task-table {\n        display: block;\n        min-width: 0;",
-        ".task-table thead {\n        position: absolute;",
-        ".task-table tbody {\n        display: grid;",
-        "grid-template-areas:\n            \"task task\"\n            \"deadline schedule\"\n            \"action action\";",
-        ".task-table td[data-label]::before {\n        content: attr(data-label);",
-        ".task-name {\n        grid-area: task;\n        overflow-wrap: anywhere;",
-        ".session-cell {\n        grid-area: action;",
-        ".session-cell .session-start {\n        width: 100%;\n        min-height: 3rem;",
+        ".task-table thead {\n        display: block;",
+        ".task-table thead tr,\n    .task-row {\n        display: grid;",
+        "grid-template-columns: 44px 5.5rem 5.75rem minmax(0, 1fr);",
+        "grid-template-areas: \"action deadline schedule task\";",
+        ".task-row {\n        min-height: 44px;",
+        ".task-row:not(:last-child) {\n        border-bottom: 1px solid var(--line);",
+        ".deadline,\n    .schedule-time {\n        font-size: 0.72rem;",
+        ".task-name-scroll {\n        min-width: 0;\n        overflow-x: auto;\n        overscroll-behavior-inline: contain;\n        white-space: nowrap;",
+        ".session-cell .session-start {\n        width: 44px;\n        min-height: 44px;",
     ] {
-        assert!(narrow_list_layout.contains(required), "missing: {required}");
+        assert!(mobile_list_layout.contains(required), "missing: {required}");
+    }
+
+    for removed_card_style in [
+        "gap: 0.75rem;",
+        "border-radius: 1rem;",
+        "box-shadow: var(--shadow);",
+    ] {
+        let row_rule = mobile_list_layout
+            .split_once(".task-row {")
+            .expect("mobile task row rule must exist")
+            .1
+            .split_once('}')
+            .unwrap()
+            .0;
+        assert!(!row_rule.contains(removed_card_style), "{row_rule}");
     }
 }
 
@@ -286,6 +310,9 @@ fn active_uuid_disables_every_matching_row_but_not_other_tasks() {
     let html = dioxus::ssr::render(&dom);
 
     assert_eq!(html.matches("disabled").count(), 2, "{html}");
+    assert_eq!(html.matches(">✓</button>").count(), 2, "{html}");
+    assert_eq!(html.matches(">＋</button>").count(), 1, "{html}");
+    assert_eq!(html.matches("セッション追加済み").count(), 2, "{html}");
 }
 
 #[test]
@@ -343,6 +370,10 @@ fn rank非0のtaskは開始buttonとclick_listenerを持たない() {
 
     assert!(listeners.is_empty());
     assert!(!dioxus::ssr::render(&dom).contains("session-start"));
+    assert!(
+        dioxus::ssr::render(&dom).contains("class=\"session-cell\"></td>"),
+        "rank非0でも列揃え用cellは維持する"
+    );
     assert!(events.lock().unwrap().is_empty());
 }
 
