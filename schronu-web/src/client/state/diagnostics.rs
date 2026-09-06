@@ -123,6 +123,20 @@ impl DiagnosticsState {
 }
 
 impl ClientState {
+    pub(super) fn clear_completion_conflict_error(&mut self, task_id: &str) {
+        if matches!(
+            &self.diagnostics.display_error,
+            Some(DisplayError::Operation {
+                error: WebError { code, .. },
+                operation: Operation::CompleteSession | Operation::CompleteSessionWithoutRecording,
+                task_id: Some(error_task_id),
+            }) if code == crate::web_error_codes::ACTUAL_WORK_CONFLICT
+                && error_task_id == task_id
+        ) {
+            self.diagnostics.display_error = None;
+        }
+    }
+
     pub(super) fn record_local_result(&mut self, task_id: Option<&str>, succeeded: bool) {
         if succeeded {
             if self

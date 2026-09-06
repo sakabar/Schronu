@@ -175,10 +175,23 @@ impl ClientState {
             .map(|pending| pending.ended_at_epoch_ms)
             .or_else(|| {
                 self.sessions
+                    .completion_conflicts
+                    .get(task_id)
+                    .map(|conflict| conflict.ended_at_epoch_ms)
+            })
+            .or_else(|| {
+                self.sessions
                     .uncertain_stopped_at_epoch_ms
                     .get(task_id)
                     .copied()
             })
+    }
+
+    pub(crate) fn completion_conflict(
+        &self,
+        task_id: &str,
+    ) -> Option<&session_state::CompletionConflict> {
+        self.sessions.completion_conflicts.get(task_id)
     }
 
     pub fn is_session_manual_check_blocked(&self, task_id: &str) -> bool {

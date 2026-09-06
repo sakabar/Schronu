@@ -18,6 +18,13 @@ pub(super) struct PendingMutation {
     pub(super) ended_at_epoch_ms: i64,
 }
 
+#[derive(Clone)]
+pub(crate) struct CompletionConflict {
+    pub(crate) original_request: CompleteSessionRequest,
+    pub(crate) ended_at_epoch_ms: i64,
+    pub(crate) current_actual_work_seconds: i64,
+}
+
 pub(super) struct SessionState {
     pub(super) work_sessions: WorkSessionsState,
     pub(super) in_flight_task_ids: HashSet<String>,
@@ -29,6 +36,7 @@ pub(super) struct SessionState {
     pub(super) mutation_safety: MutationSafetyState,
     pub(super) next_mutation_request_id: u64,
     pub(super) pending_mutations: HashMap<u64, PendingMutation>,
+    pub(super) completion_conflicts: HashMap<String, CompletionConflict>,
 }
 
 impl SessionState {
@@ -48,6 +56,7 @@ impl SessionState {
             mutation_safety,
             next_mutation_request_id: 1,
             pending_mutations: HashMap::new(),
+            completion_conflicts: HashMap::new(),
         }
     }
 }
@@ -101,6 +110,7 @@ impl ClientState {
         if result.is_ok() {
             self.restored_session_task_ids.remove(task_id);
             self.sessions.manual_check_blocked_task_ids.remove(task_id);
+            self.sessions.completion_conflicts.remove(task_id);
             self.sessions.uncertain_stopped_at_epoch_ms.remove(task_id);
             if self
                 .diagnostics
@@ -243,6 +253,7 @@ impl ClientState {
                 .manual_check_blocked_task_ids
                 .contains(task_id)
             || self.sessions.committed_blocked_task_ids.contains(task_id)
+            || self.sessions.completion_conflicts.contains_key(task_id)
         {
             return ClientEffect::None;
         }
@@ -394,6 +405,8 @@ impl ClientState {
         self.sessions.in_flight_task_ids.remove(&task_id);
         match result {
             Ok(snapshot) => {
+                self.sessions.completion_conflicts.remove(&task_id);
+                self.clear_completion_conflict_error(&task_id);
                 self.apply_successful_completion_to_read_state(snapshot, &task_id);
                 self.finish_committed_mutation(storage, &task_id, invocation, None);
                 self.finish_mutation_safety(storage, false);
@@ -405,11 +418,156 @@ impl ClientState {
                         .uncertain_stopped_at_epoch_ms
                         .insert(task_id.clone(), ended_at_epoch_ms);
                 }
-                self.finish_failed_mutation(&task_id, invocation, error);
+                if let Some(current_actual_work_seconds) = completion_conflict_actual(&error) {
+                    self.retain_completion_conflict(
+                        &task_id,
+                        &invocation,
+                        ended_at_epoch_ms,
+                        current_actual_work_seconds,
+                    );
+                    self.record_server(invocation, Outcome::Failure, "server操作に失敗しました。");
+                } else {
+                    self.sessions.completion_conflicts.remove(&task_id);
+                    self.finish_failed_mutation(&task_id, invocation, error);
+                }
                 self.finish_mutation_safety(storage, keep_safety);
             }
         }
         ClientEffect::None
+    }
+
+    pub fn confirm_completion_conflict<S: KeyValueStorage>(
+        &mut self,
+        storage: &S,
+        task_id: &str,
+    ) -> ClientEffect {
+        if self.sessions.mutation_globally_blocked
+            || self.sessions.in_flight_task_ids.contains(task_id)
+            || self
+                .sessions
+                .manual_check_blocked_task_ids
+                .contains(task_id)
+            || self.sessions.committed_blocked_task_ids.contains(task_id)
+        {
+            return ClientEffect::None;
+        }
+        let Some(conflict) = self.sessions.completion_conflicts.get(task_id).cloned() else {
+            return ClientEffect::None;
+        };
+        let mut request = conflict.original_request;
+        request.expected_actual_work_seconds = conflict.current_actual_work_seconds;
+        self.enqueue_completion(storage, request, conflict.ended_at_epoch_ms)
+    }
+
+    pub fn resume_completion_conflict<S: KeyValueStorage>(
+        &mut self,
+        storage: &S,
+        task_id: &str,
+    ) -> ClientEffect {
+        if self.sessions.mutation_globally_blocked
+            || self.sessions.in_flight_task_ids.contains(task_id)
+            || self
+                .sessions
+                .manual_check_blocked_task_ids
+                .contains(task_id)
+            || self.sessions.committed_blocked_task_ids.contains(task_id)
+        {
+            return ClientEffect::None;
+        }
+        let Some(conflict) = self.sessions.completion_conflicts.get(task_id).cloned() else {
+            return ClientEffect::None;
+        };
+        let measured_milliseconds = (i128::from(conflict.ended_at_epoch_ms)
+            - i128::from(conflict.original_request.started_at_epoch_ms))
+        .max(0);
+        let Some(started_at_epoch_ms) = i64::try_from(measured_milliseconds)
+            .ok()
+            .and_then(|elapsed| self.tick_now_epoch_ms.checked_sub(elapsed))
+        else {
+            self.record_local_result(Some(task_id), false);
+            return ClientEffect::None;
+        };
+        let mut candidate = self.sessions().to_vec();
+        let Some(session) = candidate
+            .iter_mut()
+            .find(|session| session.task_id == task_id)
+        else {
+            return ClientEffect::None;
+        };
+        session.started_at_epoch_ms = started_at_epoch_ms;
+        session.actual_work_seconds_at_start = conflict.current_actual_work_seconds;
+        match self
+            .sessions
+            .work_sessions
+            .replace_sessions(storage, candidate)
+        {
+            Ok(()) => {
+                self.sessions.completion_conflicts.remove(task_id);
+                self.sessions.manual_check_blocked_task_ids.remove(task_id);
+                self.sessions.uncertain_stopped_at_epoch_ms.remove(task_id);
+                self.clear_completion_conflict_error(task_id);
+                self.record_local_result(Some(task_id), true);
+            }
+            Err(_) => self.record_local_result(Some(task_id), false),
+        }
+        ClientEffect::None
+    }
+
+    fn enqueue_completion<S: KeyValueStorage>(
+        &mut self,
+        storage: &S,
+        request: CompleteSessionRequest,
+        ended_at_epoch_ms: i64,
+    ) -> ClientEffect {
+        let request_id = self.sessions.next_mutation_request_id;
+        let Some(next_request_id) = request_id.checked_add(1) else {
+            return ClientEffect::None;
+        };
+        if self.sessions.pending_mutations.is_empty()
+            && self.sessions.mutation_safety.arm(storage).is_err()
+        {
+            self.record_local_result(Some(&request.task_id), false);
+            return ClientEffect::None;
+        }
+        let task_id = request.task_id.clone();
+        let invocation = ServerActionInvocation::CompleteSession(request.clone());
+        self.sessions.next_mutation_request_id = next_request_id;
+        self.sessions.in_flight_task_ids.insert(task_id);
+        self.sessions.pending_mutations.insert(
+            request_id,
+            PendingMutation {
+                invocation,
+                ended_at_epoch_ms,
+            },
+        );
+        ClientEffect::CompleteSession {
+            request_id,
+            request,
+        }
+    }
+
+    fn retain_completion_conflict(
+        &mut self,
+        task_id: &str,
+        invocation: &ServerActionInvocation,
+        ended_at_epoch_ms: i64,
+        current_actual_work_seconds: i64,
+    ) {
+        if let Some(conflict) = self.sessions.completion_conflicts.get_mut(task_id) {
+            conflict.current_actual_work_seconds = current_actual_work_seconds;
+            return;
+        }
+        let ServerActionInvocation::CompleteSession(original_request) = invocation else {
+            return;
+        };
+        self.sessions.completion_conflicts.insert(
+            task_id.to_owned(),
+            CompletionConflict {
+                original_request: original_request.clone(),
+                ended_at_epoch_ms,
+                current_actual_work_seconds,
+            },
+        );
     }
 
     fn finish_failed_mutation(
@@ -515,6 +673,21 @@ impl ClientState {
             committed_on_server: true,
             task_id: Some(task_id.to_owned()),
         });
+    }
+}
+
+fn completion_conflict_actual(error: &ServerFailure) -> Option<i64> {
+    match error {
+        ServerFailure::Operation(WebError {
+            code,
+            current_actual_work_seconds: Some(current_actual_work_seconds),
+            ..
+        }) if code == crate::web_error_codes::ACTUAL_WORK_CONFLICT
+            && *current_actual_work_seconds >= 0 =>
+        {
+            Some(*current_actual_work_seconds)
+        }
+        _ => None,
     }
 }
 
