@@ -21,7 +21,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use uuid::Uuid;
 
-mod capture;
+pub(super) mod capture;
 
 use capture::{scan_storage_entries, validate_capture_unchanged, ScannedStorage};
 
@@ -46,6 +46,29 @@ pub(in crate::adapter::gateway) fn create_snapshot_at(
         destination,
         created_at,
         DEFAULT_RESOURCE_LIMITS,
+    )
+}
+
+pub(crate) fn create_snapshot_with_lock(
+    storage_directory: &Path,
+    destination: &Path,
+    created_at: DateTime<Local>,
+    storage_lock: &StorageLock,
+) -> Result<SnapshotSummary, SnapshotError> {
+    let expected_lock_path = storage_directory.join(".lock");
+    if storage_lock.path() != expected_lock_path {
+        return Err(invalid(
+            expected_lock_path,
+            "snapshot creation requires the source storage lock",
+        ));
+    }
+    create_snapshot_locked_impl(
+        storage_directory,
+        destination,
+        created_at,
+        DEFAULT_RESOURCE_LIMITS,
+        &FileSystemSnapshotIo,
+        CreateHooks::new(|| {}, || {}, || {}, || {}),
     )
 }
 
@@ -191,6 +214,66 @@ where
         SnapshotError::new(SnapshotOperation::AcquireLock, path, error)
     })?;
 
+    create_snapshot_locked_with_publication(
+        SnapshotCreationRequest {
+            storage_directory,
+            destination,
+            created_at,
+            limits,
+        },
+        io,
+        hooks,
+        publication,
+    )
+}
+
+fn create_snapshot_locked_impl<AfterParent, AfterCapture, BeforeStrict, BeforePublish>(
+    storage_directory: &Path,
+    destination: &Path,
+    created_at: DateTime<Local>,
+    limits: SnapshotResourceLimits,
+    io: &dyn SnapshotIo,
+    hooks: CreateHooks<AfterParent, AfterCapture, BeforeStrict, BeforePublish>,
+) -> Result<SnapshotSummary, SnapshotError>
+where
+    AfterParent: FnOnce(),
+    AfterCapture: FnOnce(),
+    BeforeStrict: FnOnce(),
+    BeforePublish: FnOnce(),
+{
+    let publication = validate_endpoints(storage_directory, destination)?;
+    ensure_parent_outside_storage(&publication, destination)?;
+    create_snapshot_locked_with_publication(
+        SnapshotCreationRequest {
+            storage_directory,
+            destination,
+            created_at,
+            limits,
+        },
+        io,
+        hooks,
+        publication,
+    )
+}
+
+fn create_snapshot_locked_with_publication<AfterParent, AfterCapture, BeforeStrict, BeforePublish>(
+    request: SnapshotCreationRequest<'_>,
+    io: &dyn SnapshotIo,
+    hooks: CreateHooks<AfterParent, AfterCapture, BeforeStrict, BeforePublish>,
+    publication: PublicationDestination,
+) -> Result<SnapshotSummary, SnapshotError>
+where
+    AfterParent: FnOnce(),
+    AfterCapture: FnOnce(),
+    BeforeStrict: FnOnce(),
+    BeforePublish: FnOnce(),
+{
+    let SnapshotCreationRequest {
+        storage_directory,
+        destination,
+        created_at,
+        limits,
+    } = request;
     recover_storage(storage_directory)?;
     let scanned = scan_storage_entries(storage_directory, limits, io)?;
     (hooks.after_capture)();
@@ -238,6 +321,13 @@ where
         };
     }
     Ok(SnapshotSummary::new(revision, collected.files.len()))
+}
+
+struct SnapshotCreationRequest<'a> {
+    storage_directory: &'a Path,
+    destination: &'a Path,
+    created_at: DateTime<Local>,
+    limits: SnapshotResourceLimits,
 }
 
 struct CreateHooks<AfterParent, AfterCapture, BeforeStrict, BeforePublish> {

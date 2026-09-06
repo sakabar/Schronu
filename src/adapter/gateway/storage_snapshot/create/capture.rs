@@ -21,24 +21,24 @@ use std::fs::File;
 #[cfg(any(target_os = "macos", target_os = "linux"))]
 use std::os::unix::ffi::OsStrExt;
 
-pub(super) struct ScannedStorage {
-    pub(super) directories: Vec<ScannedDirectory>,
-    pub(super) files: Vec<ScannedFile>,
+pub(in crate::adapter::gateway::storage_snapshot) struct ScannedStorage {
+    pub(in crate::adapter::gateway::storage_snapshot) directories: Vec<ScannedDirectory>,
+    pub(in crate::adapter::gateway::storage_snapshot) files: Vec<ScannedFile>,
 }
 
-pub(super) struct ScannedDirectory {
-    pub(super) relative: PathBuf,
+pub(in crate::adapter::gateway::storage_snapshot) struct ScannedDirectory {
+    pub(in crate::adapter::gateway::storage_snapshot) relative: PathBuf,
     pub(super) metadata: fs::Metadata,
 }
 
-pub(super) struct ScannedFile {
+pub(in crate::adapter::gateway::storage_snapshot) struct ScannedFile {
     pub(super) path: PathBuf,
-    pub(super) relative: PathBuf,
+    pub(in crate::adapter::gateway::storage_snapshot) relative: PathBuf,
     pub(super) metadata: fs::Metadata,
-    pub(super) bytes: Vec<u8>,
+    pub(in crate::adapter::gateway::storage_snapshot) bytes: Vec<u8>,
 }
 
-pub(super) fn scan_storage_entries(
+pub(in crate::adapter::gateway::storage_snapshot) fn scan_storage_entries(
     storage: &Path,
     limits: SnapshotResourceLimits,
     io: &dyn SnapshotIo,

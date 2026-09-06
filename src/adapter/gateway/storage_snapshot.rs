@@ -1,4 +1,5 @@
 mod create;
+mod current_restore;
 mod error;
 pub(in crate::adapter::gateway) mod io;
 mod layout;
@@ -7,6 +8,7 @@ mod restore;
 mod verify;
 
 pub use create::create_snapshot;
+pub(crate) use create::create_snapshot_with_lock;
 #[cfg(test)]
 pub(in crate::adapter::gateway) use create::{
     create_snapshot_after_capture, create_snapshot_after_parent_open, create_snapshot_at,
@@ -14,14 +16,21 @@ pub(in crate::adapter::gateway) use create::{
     create_snapshot_with_failure, create_snapshot_with_failure_observation,
     create_snapshot_with_limits,
 };
+pub use current_restore::restore_current_snapshot;
+#[cfg(test)]
+pub(in crate::adapter::gateway) use current_restore::restore_current_snapshot_at;
+#[cfg(test)]
+pub(in crate::adapter::gateway) use current_restore::restore_current_snapshot_at_with_transaction_io;
 pub use error::{SnapshotError, SnapshotLimitKind};
 #[cfg(test)]
 pub(in crate::adapter::gateway) use io::SnapshotFailurePoint;
 pub use restore::restore_snapshot;
+pub(crate) use restore::restore_snapshot_to_alternate;
 #[cfg(test)]
 pub(in crate::adapter::gateway) use restore::{
     restore_snapshot_after_parent_open, restore_snapshot_before_publish,
-    restore_snapshot_with_failure, restore_snapshot_with_failure_observation,
+    restore_snapshot_to_alternate_after_parent_open, restore_snapshot_with_failure,
+    restore_snapshot_with_failure_observation,
 };
 pub use verify::verify_snapshot;
 #[cfg(test)]

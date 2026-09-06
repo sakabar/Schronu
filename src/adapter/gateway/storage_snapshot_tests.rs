@@ -61,3 +61,9 @@ mod restore {
 
     include!("storage_snapshot_tests/restore.rs");
 }
+
+mod current_restore {
+    use super::*;
+
+    include!("storage_snapshot_tests/current_restore.rs");
+}

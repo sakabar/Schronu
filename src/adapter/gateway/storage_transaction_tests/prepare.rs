@@ -36,6 +36,86 @@ fn test_prepare_staged_fileとimmutable_manifestを作成する() {
 }
 
 #[test]
+fn test_prepare_deleteをimmutable_manifestへ追加する() {
+    let storage_dir = TestStorageDir::new();
+    let retained = storage_dir.path.join("retained.yaml");
+    let deleted = storage_dir.path.join("deleted.yaml");
+    fs::write(&retained, "old").unwrap();
+    fs::write(&deleted, "delete me").unwrap();
+    let revision = Uuid::from_u128(0x2202);
+
+    let prepared = prepare_with_directories_and_deletes(
+        file_system_io(),
+        &storage_dir.path,
+        revision,
+        &[WriteRequest {
+            target_path: &retained,
+            bytes: b"new",
+        }],
+        &[],
+        &[deleted.as_path()],
+    )
+    .unwrap();
+
+    let manifest_path = prepared.transaction_dir_path().join("manifest.json");
+    let manifest: Value = serde_json::from_slice(&fs::read(&manifest_path).unwrap()).unwrap();
+    assert_eq!(manifest["entries"][1]["target"], "deleted.yaml");
+    assert_eq!(manifest["entries"][1]["operation"], "delete");
+    assert!(manifest["entries"][1].get("staged_file").is_none());
+    prepared.commit().unwrap();
+    assert_eq!(fs::read_to_string(retained).unwrap(), "new");
+    assert!(!deleted.exists());
+    assert_eq!(
+        fs::read_to_string(storage_dir.path.join(".revision")).unwrap(),
+        format!("{revision}\n")
+    );
+}
+
+#[test]
+fn test_prepareはwrite_delete重複とduplicate_deleteを拒否する() {
+    let storage_dir = TestStorageDir::new();
+    let target = storage_dir.path.join("project.yaml");
+
+    for (writes, deletes) in [
+        (
+            vec![WriteRequest {
+                target_path: &target,
+                bytes: b"new",
+            }],
+            vec![target.as_path()],
+        ),
+        (vec![], vec![target.as_path(), target.as_path()]),
+    ] {
+        let actual = prepare_with_directories_and_deletes(
+            file_system_io(),
+            &storage_dir.path,
+            Uuid::from_u128(0x2259),
+            &writes,
+            &[],
+            &deletes,
+        );
+        let error = match actual {
+            Err(error) => error,
+            Ok(prepared) => {
+                prepared.discard().unwrap();
+                panic!("duplicate transaction targets must fail");
+            }
+        };
+
+        assert_eq!(
+            error.operation,
+            StorageTransactionOperation::ValidateTargetPath
+        );
+        assert_eq!(error.path, target);
+        assert!(!storage_dir
+            .path
+            .join(TRANSACTION_DIRECTORY_NAME)
+            .join(ACTIVE_TRANSACTION_DIRECTORY_NAME)
+            .exists());
+    }
+}
+
+#[test]
 fn test_prepare_staged_files_directory作成失敗時はuuid_directoryを残さない() {
     let storage_dir = TestStorageDir::new();
     let target_path = storage_dir.path.join("project.yaml");

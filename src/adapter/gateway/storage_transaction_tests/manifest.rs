@@ -33,7 +33,9 @@ fn test_manifest_v1の保存bytesはfield順と省略規則を維持する() {
         version: 1,
         transaction_id: Uuid::parse_str("11111111-2222-3333-4444-555555555555").unwrap(),
         revision: Uuid::parse_str("aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee").unwrap(),
+        replace_target_directories: false,
         directories: vec![PathBuf::from("project"), PathBuf::from("archive")],
+        directory_modes: Vec::new(),
         entries: vec![
             ManifestEntry {
                 target: PathBuf::from("project/project.yaml"),
@@ -41,6 +43,7 @@ fn test_manifest_v1の保存bytesはfield順と省略規則を維持する() {
                 staged_file: Some(PathBuf::from("files/0")),
                 content_length: Some(12),
                 content_checksum: Some("fnv1a64:0123456789abcdef".to_string()),
+                mode: None,
             },
             ManifestEntry {
                 target: PathBuf::from("archive/old.yaml"),
@@ -48,6 +51,7 @@ fn test_manifest_v1の保存bytesはfield順と省略規則を維持する() {
                 staged_file: None,
                 content_length: None,
                 content_checksum: None,
+                mode: None,
             },
         ],
     };

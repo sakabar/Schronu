@@ -2,9 +2,10 @@ use crate::application::task_use_case::{estimated_work_seconds_from_minutes, App
 use crate::entity::datetime::parse_local_datetime;
 use crate::entity::task::{read_project_category, ProjectCategory};
 use regex::Regex;
+use std::path::PathBuf;
 use uuid::Uuid;
 
-use super::cli_syntax::tokenize;
+use super::cli_syntax::{tokenize, tokenize_with_prefix};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(super) enum ParseMode {
@@ -63,6 +64,10 @@ pub(super) enum CommandKind {
     Finish,
     FocusHighest,
     FocusLowest,
+    Backup,
+    BackupVerify,
+    Restore,
+    RestoreCurrent,
     Verify,
 }
 
@@ -130,6 +135,20 @@ pub(super) enum Command {
     },
     ShowAll {
         pattern: Option<String>,
+    },
+    Backup {
+        snapshot_directory: PathBuf,
+    },
+    BackupVerify {
+        snapshot_directory: PathBuf,
+    },
+    Restore {
+        snapshot_directory: PathBuf,
+        destination_directory: PathBuf,
+    },
+    RestoreCurrent {
+        snapshot_directory: PathBuf,
+        pre_backup_directory: PathBuf,
     },
     InteractiveShortcut(InteractiveShortcut),
     Action(CommandAction),
@@ -241,6 +260,10 @@ impl Command {
             Self::TuckAway => CommandKind::TuckAway,
             Self::Defer { .. } => CommandKind::Defer,
             Self::ShowAll { .. } => CommandKind::ShowAll,
+            Self::Backup { .. } => CommandKind::Backup,
+            Self::BackupVerify { .. } => CommandKind::BackupVerify,
+            Self::Restore { .. } => CommandKind::Restore,
+            Self::RestoreCurrent { .. } => CommandKind::RestoreCurrent,
             Self::InteractiveShortcut(InteractiveShortcut::DeferRoutine) => {
                 CommandKind::DeferRoutines
             }
@@ -406,15 +429,47 @@ pub(super) fn parse_interactive_command(input: &str) -> Result<Command, CommandP
         return Ok(Command::Noop);
     }
 
-    let tokens = tokenize(input).map_err(|error| {
-        CommandParseError::new(
-            "入力",
-            "syntax",
-            error.kind().reason(),
-            "<command> [arguments]",
-        )
-    })?;
+    let tokens = tokenize(input).map_err(command_lex_error)?;
     parse_command_tokens(&tokens, ParseMode::Interactive)
+}
+
+pub(super) fn parse_interactive_command_with_maintenance_kind(
+    input: &str,
+) -> (Result<Command, CommandParseError>, Option<CommandKind>) {
+    if input.trim().is_empty() || input.trim_start().starts_with('#') || input.starts_with('0') {
+        return (Ok(Command::Noop), None);
+    }
+
+    let tokenization = tokenize_with_prefix(input);
+    let maintenance_kind = maintenance_kind_from_tokens(&tokenization.prefix_tokens);
+    let command = tokenization.tokens.map_err(command_lex_error);
+    (
+        command.and_then(|tokens| parse_command_tokens(&tokens, ParseMode::Interactive)),
+        maintenance_kind,
+    )
+}
+
+fn command_lex_error(error: super::cli_syntax::CliLexError) -> CommandParseError {
+    CommandParseError::new(
+        "入力",
+        "syntax",
+        error.kind().reason(),
+        "<command> [arguments]",
+    )
+}
+
+fn maintenance_kind_from_tokens(tokens: &[String]) -> Option<CommandKind> {
+    match tokens {
+        [name, subcommand, ..] if name == "backup" && subcommand == "verify" => {
+            Some(CommandKind::BackupVerify)
+        }
+        [name, ..] if name == "backup" => Some(CommandKind::Backup),
+        [name, subcommand, ..] if name == "restore" && subcommand == "current" => {
+            Some(CommandKind::RestoreCurrent)
+        }
+        [name, ..] if name == "restore" => Some(CommandKind::Restore),
+        _ => None,
+    }
 }
 
 pub(super) fn parse_command_tokens(
@@ -460,6 +515,43 @@ pub(super) fn parse_command_tokens(
 
     let arguments = &tokens[1..];
 
+    if name == "backup" && arguments.first().is_some_and(|value| value == "verify") {
+        let definition = CommandDefinition::new(
+            CommandKind::BackupVerify,
+            "backup verify",
+            "backup verify <snapshot_dir>",
+            2,
+            Some(2),
+        );
+        definition.validate_argument_count(arguments)?;
+        return Ok(Command::BackupVerify {
+            snapshot_directory: PathBuf::from(&arguments[1]),
+        });
+    }
+
+    if name == "restore" && arguments.first().is_some_and(|value| value == "current") {
+        let definition = CommandDefinition::new(
+            CommandKind::RestoreCurrent,
+            "restore current",
+            "restore current <snapshot_dir> <pre_backup_dir> REPLACE_CURRENT_STORAGE",
+            4,
+            Some(4),
+        );
+        definition.validate_argument_count(arguments)?;
+        if arguments[3] != "REPLACE_CURRENT_STORAGE" {
+            return Err(parse_error(
+                definition.canonical_name,
+                "confirmation",
+                "確認tokenが正しくありません",
+                definition.usage,
+            ));
+        }
+        return Ok(Command::RestoreCurrent {
+            snapshot_directory: PathBuf::from(&arguments[1]),
+            pre_backup_directory: PathBuf::from(&arguments[2]),
+        });
+    }
+
     let Some(definition) = command_definition(name) else {
         return Ok(Command::ShowAll {
             pattern: Some(name.to_string()),
@@ -485,6 +577,13 @@ pub(super) fn parse_command_tokens(
         CommandKind::Arrange => parse_arrange(definition, arguments),
         CommandKind::ShowAll => Ok(Command::ShowAll {
             pattern: arguments.first().cloned(),
+        }),
+        CommandKind::Backup => Ok(Command::Backup {
+            snapshot_directory: PathBuf::from(&arguments[0]),
+        }),
+        CommandKind::Restore => Ok(Command::Restore {
+            snapshot_directory: PathBuf::from(&arguments[0]),
+            destination_directory: PathBuf::from(&arguments[1]),
         }),
         CommandKind::Defer if arguments.len() == 2 => Ok(Command::Defer {
             amount: parse_i64(
@@ -796,7 +895,11 @@ fn parse_action(
         | CommandKind::Focus
         | CommandKind::Estimate
         | CommandKind::Arrange
-        | CommandKind::TuckAway => unreachable!("handled before action parsing"),
+        | CommandKind::TuckAway
+        | CommandKind::Backup
+        | CommandKind::BackupVerify
+        | CommandKind::Restore
+        | CommandKind::RestoreCurrent => unreachable!("handled before action parsing"),
     };
     Ok(Command::Action(action))
 }
@@ -979,6 +1082,16 @@ fn command_definition(name: &str) -> Option<CommandDefinition> {
         "低" | "low" | "lo" | "lowest" => {
             CommandDefinition::new(Kind::FocusLowest, "低", "低 [days]", 0, Some(1))
         }
+        "backup" => {
+            CommandDefinition::new(Kind::Backup, "backup", "backup <snapshot_dir>", 1, Some(1))
+        }
+        "restore" => CommandDefinition::new(
+            Kind::Restore,
+            "restore",
+            "restore <snapshot_dir> <destination_dir>",
+            2,
+            Some(2),
+        ),
         "検証" => CommandDefinition::new(Kind::Verify, "検証", "検証", 0, Some(0)),
         _ => return None,
     };
@@ -1002,6 +1115,7 @@ pub(super) fn command_with_minimum_valid_arguments(command: &str) -> String {
         "後" | "defer" | "逃" | "escape" | "esc" => " 1 秒",
         "空" | "clear" | "集" | "gather" => " 明",
         "終" | "finish" | "fin" => " 今",
+        "backup" => " snapshot",
         _ => "",
     };
     format!("{command}{arguments}")
@@ -1013,7 +1127,7 @@ pub(super) fn representative_valid_commands() -> Vec<Command> {
         "新", "遊", "突", "連", "繰", "約", "始", "樹", "条", "根", "葉", "全", "尾", "今", "単",
         "暦", "帯", "見", "選", "開", "黒", "外", "親", "子", "深", "上", "下", "割", "待", "〆",
         "予", "揃", "実", "重", "類", "働", "後", "清", "逃", "平", "詰", "押", "空", "集", "終",
-        "高", "低", "検証",
+        "高", "低", "backup", "検証",
     ];
     let mut commands = vec![Command::Noop];
     commands.extend(names.into_iter().map(|name| {
@@ -1035,5 +1149,24 @@ pub(super) fn representative_valid_commands() -> Vec<Command> {
     commands.extend(["t", "d", "w", "W", "y"].map(|shortcut| {
         parse_interactive_command(shortcut).expect("representative interactive shortcut must parse")
     }));
+    commands.extend(
+        [
+            vec!["backup", "verify", "snapshot"],
+            vec!["restore", "snapshot", "destination"],
+            vec![
+                "restore",
+                "current",
+                "snapshot",
+                "pre-backup",
+                "REPLACE_CURRENT_STORAGE",
+            ],
+        ]
+        .map(|tokens| {
+            parse_non_interactive_command_tokens(
+                &tokens.into_iter().map(str::to_string).collect::<Vec<_>>(),
+            )
+            .expect("representative maintenance command must parse")
+        }),
+    );
     commands
 }

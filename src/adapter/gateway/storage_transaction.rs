@@ -30,7 +30,10 @@ use manifest::{
 };
 #[cfg(test)]
 pub(super) use prepare::prepare;
+pub(super) use prepare::prepare_replacing_with_directories_and_deletes;
 pub(super) use prepare::prepare_with_directories;
+#[cfg(test)]
+pub(super) use prepare::prepare_with_directories_and_deletes;
 #[cfg(test)]
 use recovery::prepared_from_manifest;
 pub(super) use recovery::recover;
@@ -140,6 +143,14 @@ impl Error for StorageTransactionError {
 pub(super) struct WriteRequest<'a> {
     pub(super) target_path: &'a Path,
     pub(super) bytes: &'a [u8],
+}
+
+pub(super) struct ReplacementRequest<'a> {
+    pub(super) writes: &'a [WriteRequest<'a>],
+    pub(super) file_permissions: &'a [std::fs::Permissions],
+    pub(super) directories: &'a [&'a Path],
+    pub(super) directory_permissions: &'a [std::fs::Permissions],
+    pub(super) deletes: &'a [&'a Path],
 }
 
 pub(super) struct PreparedTransaction {

@@ -77,7 +77,7 @@
 | TD-036 | P2 | 未着手 | L | source textを独自parseするarchitecture testがRust構文と実装名へ強く結合している |
 | TD-037 | P2 | 完了 | M | 未使用のlenient YAML変換APIがstrict loaderと並存している |
 | TD-038 | P2 | 未着手 | L | MCPのtask一覧に検索・paginationがなく、大規模storageで応答が無制限に増える |
-| TD-039 | P2 | 一部完了(W4-A) | L | 稼働中processを止めずに整合したbackupを作成・検証・restoreする手段がない |
+| TD-039 | P2 | 完了 | L | 稼働中processを止めずに整合したbackupを作成・検証・restoreする手段がない |
 | TD-040 | P0 | 完了 | S | 小数秒付き現在時刻でslack indexとschedulerの論理時刻が乖離する |
 | TD-041 | P2 | 未着手 | L | task treeとscheduleの再帰処理が大規模storageでlarge stackを必要とする |
 
@@ -1606,8 +1606,9 @@
 - 分類: `機能提案 / 運用安全性`
 - 優先度: `P2`
 - 概算規模: `L`
-- 状態: `一部完了(W4-A)`
+- 状態: `完了`
 - W4-A repository phase対応日: 2026-09-05
+- W6-A CLI phase対応日: 2026-09-06
 
 #### W4-A repository phase対応
 
@@ -1624,41 +1625,18 @@
 - 各Green後の内部review、親task review、累積spec/security・保守性・履歴reviewを実施し、blockingなP1/P2を解消した。
 - `git diff --check`、`cargo fmt --check`、`cargo clippy --locked --all-targets -- -D warnings`、`cargo test --locked`を通過した。Linux CIのdevice ID型差によるclippy失敗もplatform別変換へ修正し、Linux CIとmacOSの意味を一致させた。
 
-#### 残存作業
+#### W6-A CLI phase対応
 
-- Wave 6でbackup、verify、restoreのCLI command、controller、handler/runtime、view、rendererを独立したRed/Green cycleとして実装する。
-- 稼働中storageへの上書きrestoreは、明示確認、exclusive lock、事前backupを含む安全な製品経路として設計・検証する。
-- backup formatの運用、retention、permission、機密情報、default resource limitsをREADMEへ記載する。
-- CLI製品経路のfailure injectionと最終統合testを追加する。
-- 現行の長さ付きFNV-1a 64bit digestは偶発破損検出用であり、暗号学的耐改ざん性を保証しない。暗号学的digestへの将来移行を別途設計する。
+- `backup <snapshot_dir>`、`backup verify <snapshot_dir>`、`restore <snapshot_dir> <destination_dir>`、`restore current <snapshot_dir> <pre_backup_dir> REPLACE_CURRENT_STORAGE`を対話・非対話CLIの共通parse経路へ追加した。
+- backupはexclusive lock内でsnapshot作成からrepository reloadまでを調停し、strict verifyはsource storage非依存、通常restoreは別directoryのみ、current restoreは明示確認・事前backup・transaction置換を必須とした。
+- current restoreでfileとdirectoryのentry種別変更、commit marker後のrecovery、snapshot permission復元を保持し、directory permissionのsetとsync失敗は個別のphaseとpathで診断する。
+- READMEに推奨運用、offline fallback、retention、permission、機密情報、default resource limits、FNV-1a 64bit digestの非暗号学的性質を記録した。
 
-#### 現状と根拠
+#### W6-A検証
 
-- READMEは一貫したbackupのためCLIと全MCP serverを停止し、`.lock`を除くstorage全体を手動copyするよう求める。
-- CLI/MCPは既にstorage advisory lockとstrict検証commandを持つが、lock保持中にsnapshotを作るuser-facing commandはない。
-- repository APIはどのrevisionの全projectを退避したかをmanifestへ記録できるが、これを運用利用するuser-facing CLI経路はまだない。
-
-#### 期待する機能
-
-- read-onlyの`backup`操作がstorage lockを取得し、revision、全project、schema/tool version、作成時刻、file digestをmanifest付きsnapshotへ保存する。
-- `backup verify`がsource storageなしでもdigestとstrict YAMLを検査する。
-- `restore`は別directoryへの展開を既定とし、稼働中storageへの上書きは明示確認・lock・事前backupを要求する。
-
-#### 完了条件
-
-- MCP/CLIがidleまたは別操作待ちの状態でも、lock取得後の一貫したsnapshotを作れる。
-- saveとbackupが競合しても旧/新の混合snapshotにならない。
-- `.lock`、temporary、staging fileを除外し、`.revision`とproject digestの対応をmanifestで検査できる。
-- restore failureで既存storageを部分上書きせず、別directoryへのrestore後に`検証`を通して切替できる。
-- backup format、retention、permission、機密情報の扱いをREADMEへ記載する。
-
-#### 推奨commit分割
-
-1. `Test: repository snapshot manifestを固定する`: read-only snapshot contractのRed testを追加する。
-2. `Repository: lock下のbackup readerを実装する`: archive形式に依存しないsnapshot生成を追加する。
-3. `CLI: backupとverify commandを追加する`: user-facing境界を実装する。
-4. `Repository: 別directory restoreを実装する`: overwriteなしのrestoreを追加する。
-5. `Docs: backupとrestore運用を記載する`: READMEを更新する。
+- CLI製品経路18件で成功、引数不正、strict検証失敗、current storage alias、既存destination・pre-backup、lock競合、restore原子性を固定した。
+- storage snapshotとtransactionのfailure injectionで、prepare・commit中断、entry種別変更後のrecovery、file・directory permissionの復元、削除順序とpath安全性を検証した。
+- `cargo fmt --check`、`cargo clippy --locked --all-targets -- -D warnings`、`cargo test --locked`、`git diff --check`を通過した。
 
 ### TD-040: 小数秒付き現在時刻でslack indexとschedulerの論理時刻が乖離する
 
