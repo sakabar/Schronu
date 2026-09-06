@@ -1,3 +1,4 @@
+use super::carry_lock_view::CarryLockViewModel;
 use super::history_view::HistoryEntryViewModel;
 use super::list_view::DateButtonViewModel;
 use crate::client::state::{ActiveTab, ClientState, Locality, Operation, Outcome};
@@ -22,10 +23,16 @@ pub(crate) struct BrowserPageModel {
     pub can_confirm: bool,
     pub auto_session_in_flight: bool,
     pub auto_session_empty: bool,
+    pub carry_lock: CarryLockViewModel,
 }
 
 impl BrowserPageModel {
+    #[cfg(test)]
     pub fn from_state(state: &ClientState) -> Self {
+        Self::from_state_at(state, 0)
+    }
+
+    pub fn from_state_at(state: &ClientState, monotonic_now_ms: u64) -> Self {
         let tick_now_epoch_ms = state.tick_now_epoch_ms();
         Self {
             active_tab: state.active_tab(),
@@ -57,6 +64,7 @@ impl BrowserPageModel {
             can_confirm: state.can_confirm_repository_checked(),
             auto_session_in_flight: state.auto_session_in_flight(),
             auto_session_empty: state.auto_session_empty(),
+            carry_lock: CarryLockViewModel::new(state.carry_lock_mode(), monotonic_now_ms),
         }
     }
 }

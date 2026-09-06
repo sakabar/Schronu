@@ -19,6 +19,7 @@ struct RootProps {
 fn test_root(props: RootProps) -> Element {
     let auto_events = Arc::clone(&props.events);
     let action_events = Arc::clone(&props.events);
+    let cancel_events = Arc::clone(&props.events);
     rsx! {
         SessionView {
             sessions: props.sessions,
@@ -29,6 +30,7 @@ fn test_root(props: RootProps) -> Element {
                 .lock()
                 .unwrap()
                 .push(format!("{}:{:?}", action.task_id, action.kind)),
+            on_cancel_authorization: move |_| cancel_events.lock().unwrap().push("relock".to_owned()),
         }
     }
 }
@@ -313,8 +315,9 @@ fn 計測破棄完了はcard内で確認し確定時だけtyped_callbackを送�
     dispatch_click(&cancel_dom, confirm_ids[0]);
     render_with_click_listeners(&mut cancel_dom);
     assert!(!dioxus::ssr::render(&cancel_dom).contains("タスクを完了しますか?"));
-    assert!(events.lock().unwrap().is_empty());
+    assert_eq!(*events.lock().unwrap(), ["relock"]);
 
+    events.lock().unwrap().clear();
     let (mut confirm_dom, action_ids) = build_dom(vec![card("task-b")], false, Arc::clone(&events));
     let action_ids: Vec<_> = action_ids.into_iter().rev().collect();
     dispatch_click(&confirm_dom, action_ids[2]);

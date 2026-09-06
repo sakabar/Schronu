@@ -73,7 +73,10 @@ fn lockedだけが長押し領域と確認付き永続解除を表示する() {
 
     let normal = render(CarryLockViewModel::new(CarryLockMode::Normal, 0));
     assert!(!normal.contains("carry-lock-hold"), "{normal}");
-    assert!(!normal.contains("持ち歩きロックを解除しますか?"), "{normal}");
+    assert!(
+        !normal.contains("持ち歩きロックを解除しますか?"),
+        "{normal}"
+    );
 }
 
 #[test]

@@ -310,6 +310,31 @@ fn armedはmonotonic時刻が期限へ到達した時点でlockedへ戻る() {
 }
 
 #[test]
+fn discard_completionのcancelはarmedを即時にlockedへ戻す() {
+    let storage = MemoryStorage::default();
+    let (mut state, _) = initialize_client(&storage, 1_000);
+    reduce_component_action_at(
+        &mut state,
+        &storage,
+        1_000,
+        ComponentAction::EnableCarryLock,
+    );
+    reduce_component_action_at(&mut state, &storage, 2_000, ComponentAction::ArmCarryLock);
+
+    assert!(!state.carry_lock_locked());
+    assert_eq!(
+        reduce_component_action_at(
+            &mut state,
+            &storage,
+            2_500,
+            ComponentAction::RelockCarryLock,
+        ),
+        ClientEffect::None
+    );
+    assert!(state.carry_lock_locked());
+}
+
+#[test]
 fn wall_clock変動にかかわらずarmedはmonotonic_15秒境界で失効する() {
     let storage = MemoryStorage::default();
     let (mut tick_state, _) = initialize_client(&storage, 1_000);
@@ -397,6 +422,7 @@ fn carry_lock_warningはbrowser_page_modelのwarningsへ合流する() {
         can_confirm,
         auto_session_in_flight,
         auto_session_empty,
+        carry_lock,
     } = model;
     let _ = (
         active_tab,
@@ -414,6 +440,7 @@ fn carry_lock_warningはbrowser_page_modelのwarningsへ合流する() {
         can_confirm,
         auto_session_in_flight,
         auto_session_empty,
+        carry_lock,
     );
 }
 

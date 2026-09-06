@@ -88,7 +88,10 @@ fn carry_lockはsession追加だけを無効化し日付選択は維持する() 
     );
     let ids = rebuild_with_click_listeners(&mut locked);
     let html = dioxus::ssr::render(&locked);
-    assert!(html.contains("class=\"session-start\" disabled"), "{html}");
+    assert!(
+        html.contains("class=\"session-start\"") && html.contains("disabled=true"),
+        "{html}"
+    );
     for id in ids {
         dispatch_click(&locked, id);
     }

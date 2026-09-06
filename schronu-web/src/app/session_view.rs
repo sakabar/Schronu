@@ -22,9 +22,11 @@ pub struct SessionAction {
 pub fn SessionView(
     sessions: Vec<SessionCardViewModel>,
     global_blocked: bool,
+    #[props(default)] mutations_locked: bool,
     #[props(default)] auto_session_in_flight: bool,
     on_auto_session: EventHandler<()>,
     on_action: EventHandler<SessionAction>,
+    #[props(default)] on_cancel_authorization: EventHandler<()>,
 ) -> Element {
     if sessions.is_empty() {
         return rsx! {
@@ -32,9 +34,9 @@ pub fn SessionView(
                 button {
                     class: "primary-action",
                     r#type: "button",
-                    disabled: auto_session_in_flight,
+                    disabled: auto_session_in_flight || mutations_locked,
                     onclick: move |_| {
-                        if !auto_session_in_flight {
+                        if !auto_session_in_flight && !mutations_locked {
                             on_auto_session.call(());
                         }
                     },
@@ -51,7 +53,9 @@ pub fn SessionView(
                     key: "{session.task_id}",
                     session,
                     global_blocked,
+                    mutations_locked,
                     on_action,
+                    on_cancel_authorization,
                 }
             }
         }
@@ -62,10 +66,17 @@ pub fn SessionView(
 fn SessionCard(
     session: SessionCardViewModel,
     global_blocked: bool,
+    mutations_locked: bool,
     on_action: EventHandler<SessionAction>,
+    on_cancel_authorization: EventHandler<()>,
 ) -> Element {
     let mut confirming_discard_completion = use_signal(|| false);
-    let discard_disabled = session.in_flight || session.server_committed;
+    use_effect(move || {
+        if mutations_locked {
+            confirming_discard_completion.set(false);
+        }
+    });
+    let discard_disabled = session.in_flight || session.server_committed || mutations_locked;
     let mutation_disabled = discard_disabled || global_blocked || session.manual_check_blocked;
     let completion = session
         .completion_hh_mm
@@ -124,7 +135,10 @@ fn SessionCard(
                     div { class: "session-confirmation-actions",
                         button {
                             r#type: "button",
-                            onclick: move |_| confirming_discard_completion.set(false),
+                            onclick: move |_| {
+                                confirming_discard_completion.set(false);
+                                on_cancel_authorization.call(());
+                            },
                             "キャンセル"
                         }
                         button {

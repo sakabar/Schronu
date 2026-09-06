@@ -100,6 +100,11 @@ impl ClientState {
         ClientEffect::None
     }
 
+    pub fn relock_carry_lock(&mut self) -> ClientEffect {
+        self.carry_lock.relock();
+        ClientEffect::None
+    }
+
     #[cfg(any(test, all(feature = "web", target_arch = "wasm32")))]
     pub(crate) fn observe_carry_lock_time(&mut self, monotonic_now_ms: u64) {
         self.carry_lock.observe_monotonic_time(monotonic_now_ms);

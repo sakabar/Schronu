@@ -1,8 +1,8 @@
-mod component;
 #[cfg(any(test, all(feature = "web", target_arch = "wasm32")))]
 mod carry_lock_view;
 #[cfg(test)]
 mod carry_lock_view_tests;
+mod component;
 #[cfg(all(feature = "web", target_arch = "wasm32"))]
 mod component_dispatch;
 #[cfg(any(
