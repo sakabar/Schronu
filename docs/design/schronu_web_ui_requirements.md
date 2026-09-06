@@ -40,6 +40,7 @@ Schronu-webを、1日の余力と複数taskの作業状況を同時に把握で�
 - **REQ-COMMON-005**: 初回表示時に1度だけserverからsnapshotを取得し、bufferとlogical dateを初期化すること。
 - **REQ-COMMON-006**: server操作に失敗した場合、直前の表示データと`work_sessions`を保持したまま、errorの再試行可否を識別し、再試行または手動確認を案内すること。repository状態が不確実な場合は再送を案内しないこと。
 - **REQ-COMMON-007**: 34rem以下ではbuffer領域と日付buttonの余白を圧縮し、日付buttonの44px以上の操作高と8日分の横スクロールを維持すること。
+- **REQ-COMMON-008**: 全buttonのhover配色はhover可能なfine pointerでだけ適用し、タッチ操作後に残留させないこと。desktopで選択済み日付buttonへhoverした場合は、緑背景と白文字を維持すること。`:active`と`:focus-visible`の操作feedbackはpointer種別によらず維持すること。
 
 ### 4.2 セッション状態
 
@@ -190,3 +191,4 @@ Schronu-webを、1日の余力と複数taskの作業状況を同時に把握で�
 | AC-018 | 通常モードから1 clickで持ち歩きロックを有効化でき、ロック中も画面表示・更新、scroll、tab切替、日付選択、一覧取得を利用できる一方、7変更操作はdispatchされない。 |
 | AC-019 | pointerまたはSpace・Enterの1.2秒長押しで15秒かつ1操作だけ許可され、各中断event、期限到達、最初の変更dispatchで再ロックされる。計測を破棄する完了は確認では権利を消費せず、確定で消費し、キャンセルと期限切れでは確認が閉じる。 |
 | AC-020 | 持ち歩きロックの正常な保存値を復元し、不正値・未知version・読込失敗では元valueを維持してwarning付きでロックする。ロック開始の保存失敗ではmemory上のロックを維持し、通常モード復帰の保存失敗では解除しない。一時許可はreload後に復元しない。 |
+| AC-021 | タッチ主体の端末ではbuttonをタップした後にhover配色が残らず、hover可能なfine pointerでは既存hover表現が適用される。選択済み日付buttonはdesktop hover中も緑背景と白文字を維持し、`:active`と`:focus-visible`は両環境で機能する。 |
