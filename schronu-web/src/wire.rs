@@ -90,4 +90,6 @@ pub struct WebError {
     pub code: String,
     pub message: String,
     pub retry_advice: RetryAdvice,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub current_actual_work_seconds: Option<i64>,
 }

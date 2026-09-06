@@ -180,6 +180,7 @@ mod tests {
             code: "sentinel_operation_error".to_owned(),
             message: "sentinel".to_owned(),
             retry_advice: RetryAdvice::ManualCheck,
+            current_actual_work_seconds: None,
         };
         let worker_error = sentinel.clone();
         let worker = WebWorkerHandle::spawn(move || CountingOperations {

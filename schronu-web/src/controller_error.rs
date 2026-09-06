@@ -44,10 +44,16 @@ fn map_application_error(error: ApplicationError) -> WebError {
             web_error_codes::TASK_ALREADY_COMPLETED,
             "対象のタスクはすでに完了しています。",
         ),
-        ApplicationError::ActualWorkConflict { .. } => manual(
-            web_error_codes::ACTUAL_WORK_CONFLICT,
-            "タスクの実績時間が更新されています。再読み込みして確認してください。",
-        ),
+        ApplicationError::ActualWorkConflict {
+            actual_work_seconds,
+            ..
+        } => WebError {
+            code: web_error_codes::ACTUAL_WORK_CONFLICT.to_owned(),
+            message: "タスクの実績時間が更新されています。セッションカードで確認してください。"
+                .to_owned(),
+            retry_advice: RetryAdvice::ManualCheck,
+            current_actual_work_seconds: Some(actual_work_seconds),
+        },
         ApplicationError::InvalidInput { .. }
         | ApplicationError::AmbiguousLocalDateTime { .. }
         | ApplicationError::NonexistentLocalDateTime { .. }
@@ -78,6 +84,7 @@ fn retry(code: &str, message: &str) -> WebError {
         code: code.to_owned(),
         message: message.to_owned(),
         retry_advice: RetryAdvice::Retry,
+        current_actual_work_seconds: None,
     }
 }
 
@@ -86,6 +93,7 @@ fn manual(code: &str, message: &str) -> WebError {
         code: code.to_owned(),
         message: message.to_owned(),
         retry_advice: RetryAdvice::ManualCheck,
+        current_actual_work_seconds: None,
     }
 }
 

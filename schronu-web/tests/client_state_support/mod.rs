@@ -119,6 +119,7 @@ pub fn web_error(code: &str, retry_advice: RetryAdvice) -> WebError {
         code: code.to_owned(),
         message: "safe".to_owned(),
         retry_advice,
+        current_actual_work_seconds: None,
     }
 }
 
