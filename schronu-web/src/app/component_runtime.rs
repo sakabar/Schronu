@@ -7,15 +7,10 @@ use super::session_view::{SessionAction, SessionActionKind};
 
 pub(crate) enum ComponentAction {
     SwitchTab(ActiveTab),
-    Tick {
-        wall_now_epoch_ms: i64,
-    },
+    Tick { wall_now_epoch_ms: i64 },
     SelectDate(String),
     AutoSession,
-    AddSession {
-        task: SessionTask,
-        is_leaf: bool,
-    },
+    AddSession { task: SessionTask, is_leaf: bool },
     DiscardSession(String),
     RecordSession(String),
     CompleteSession(String),
@@ -26,8 +21,6 @@ pub(crate) enum ComponentAction {
     EnableCarryLock,
     ArmCarryLock,
     DisableCarryLock,
-    #[cfg_attr(not(all(feature = "web", target_arch = "wasm32")), allow(dead_code))]
-    RelockCarryLock,
 }
 
 pub(crate) fn component_action_from_session_action(action: SessionAction) -> ComponentAction {
@@ -164,10 +157,9 @@ pub(crate) fn reduce_component_action_at<S: KeyValueStorage>(
         ComponentAction::EnableCarryLock => return state.enable_carry_lock(storage),
         ComponentAction::ArmCarryLock => return state.arm_carry_lock(monotonic_now_ms),
         ComponentAction::DisableCarryLock => return state.disable_carry_lock(storage),
-        ComponentAction::RelockCarryLock => return state.relock_carry_lock(),
         _ => {}
     }
-    if is_carry_lock_mutation(&action) && !state.authorize_carry_lock_mutation() {
+    if is_carry_lock_mutation(&action) && !state.authorize_carry_lock_mutation(monotonic_now_ms) {
         return ClientEffect::None;
     }
     match action {
@@ -201,7 +193,6 @@ pub(crate) fn reduce_component_action_at<S: KeyValueStorage>(
         ComponentAction::EnableCarryLock
         | ComponentAction::ArmCarryLock
         | ComponentAction::DisableCarryLock => ClientEffect::None,
-        ComponentAction::RelockCarryLock => ClientEffect::None,
     }
 }
 

@@ -455,7 +455,7 @@ display_buffer = buffer_seconds - snapshot_elapsed + session_credit
 
 `CarryLockState`は`Normal`、`Locked`、`ArmedUntil(monotonic_deadline_ms)`を持つ。`ArmedUntil`は`Performance.now()`相当の単調時計を基準に15秒後を期限とし、セッション経過時間などに使う壁時計とは分離する。一時許可の残り秒数も単調時計から算出する。単調時計が後退した場合も安全側へ倒して`Locked`へ戻す。
 
-すべてのcomponent actionは同じreducerを通し、reducerはaction処理前に期限を観測する。`AutoSession`、`AddSession`、`DiscardSession`、`RecordSession`、`CompleteSession`、`CompleteSessionWithoutRecording`、`ResumeCompletionConflict`、`ConfirmCompletionConflict`、`ConfirmRepositoryChecked`を変更操作とする。`Locked`ではこれらをeffectなしで拒否し、`ArmedUntil`では最初のdispatchを処理する前に権利を消費して`Locked`へ戻す。成功、失敗、local stateが実際に変化したかには依存しない。tab切替、tick、日付選択とresponse適用は権利を消費しない。
+すべてのcomponent actionは同じreducerを通し、reducerはaction処理前に期限を観測する。`AutoSession`、`AddSession`、`DiscardSession`、`RecordSession`、`CompleteSession`、`CompleteSessionWithoutRecording`、`ResumeCompletionConflict`、`ConfirmCompletionConflict`、`ConfirmRepositoryChecked`を変更操作とする。`Locked`ではこれらをeffectなしで拒否し、`ArmedUntil`ではdispatch時点の単調時刻から15秒後へ期限を更新してから処理する。成功、失敗、local stateが実際に変化したかには依存しない。tab切替、tick、日付選択とresponse適用では期限を更新しない。
 
 ## 7. UI behavior
 
@@ -521,11 +521,11 @@ client componentは非`None`の`ClientEffect`をserverへdispatchする直前に
 ### 7.5 持ち歩きロックbar
 
 - page上部へstickyなbarを常時表示する。持ち歩きロックだけを理由に画面を覆うoverlayや内容の非表示は行わず、ロック中もbuffer・セッション・一覧の表示と更新、scroll、tab切替、日付選択、一覧取得を維持する。一覧取得を含むserver通信のdispatch後は、response受理まで通信中overlayによる全面操作遮断を優先する。
-- `Normal`では「持ち歩きロック」を1 clickすると即時に有効化する。`Locked`では独立した状態blockを生成せず、44px以上の長押しbutton内へ主文言「操作ロック中」と補足「1.2秒長押しで1操作許可」を横並びで集約し、通常モードへ戻す`details`だけを次の行へ置く。barのpaddingとgapを抑え、34rem以下でもbar全体を汎用的な縦積みに切り替えない。`ArmedUntil`では「1操作可能」と残り秒数を表示する。
+- `Normal`では「持ち歩きロック」を1 clickすると即時に有効化する。`Locked`では独立した状態blockを生成せず、44px以上の長押しbutton内へ主文言「操作ロック中」と補足「1.2秒長押しで15秒間操作可能」を横並びで集約し、通常モードへ戻す`details`だけを次の行へ置く。barのpaddingとgapを抑え、34rem以下でもbar全体を汎用的な縦積みに切り替えない。`ArmedUntil`では「操作可能」と残り秒数を表示する。
 - `Locked`の長押しbuttonはprimary pointer、Space、Enterを受け付ける。pointerup、pointerleave、pointercancel、buttonのblur、window scroll、または1.2秒未満のkeyupでtimerを破棄し、stale timerが発火しても許可しない。keyboard auto-repeatは新しい長押しを開始しない。
 - 状態名だけを`aria-live=polite`で通知する。`ArmedUntil`の残り秒数はlive regionの外へ置き、毎秒読み上げない。
-- 「計測を破棄して完了」の確認表示は変更操作に含めず、確定dispatchだけが権利を消費する。キャンセルは`ArmedUntil`を即時に`Locked`へ戻し、期限切れでも確認表示を閉じる。
-- 完了実績競合の確認は元の完了dispatch後も維持する。「加算して完了」「実績を維持して完了」「計測を再開」は共通guardを通る別の変更操作とし、ロック中は各操作の前に新たな1操作許可を要求する。
+- 「計測を破棄して完了」の確認表示は変更操作に含めず、確定dispatchだけが無操作期限を更新する。キャンセルは`ArmedUntil`と期限を維持し、期限切れでは確認表示を閉じる。
+- 完了実績競合の確認は元の完了dispatch後も維持する。「加算して完了」「実績を維持して完了」「計測を再開」は共通guardを通る別の変更操作とし、一時許可中は各dispatchから15秒後へ無操作期限を更新する。
 - 通常モードへの復帰はbar内の`details`に置き、「確認して解除」の操作だけが永続解除を要求する。
 
 ## 8. Communication and persistence matrix
@@ -667,7 +667,7 @@ OperationHistoryEntry {
 - error codeごとの`retry_advice`がerror表と一致し、`manual_check`では同一requestをそのまま再送しないことを検証する。完了実績競合だけは明示確認後に期待実績を置換した新requestを送る。
 - `History`へのtab切替がeffectを生成しないこと、履歴がserver通信結果だけを対象とすること、100件上限、成否、reload非永続化を検証する。
 - 持ち歩きロックのkeyなし・正常値・不正JSON・未知version・読込失敗、元value維持、memory-first有効化、storage-first解除、一時許可非永続化を検証する。
-- 単調時計による15秒境界と時計後退、閲覧操作では権利を維持し、全変更操作の最初のdispatchだけが権利を消費することを検証する。完了実績競合の再完了と計測再開も同じguardを通す。
+- 単調時計による15秒境界と時計後退、閲覧操作と確認キャンセルでは期限を維持し、全変更操作のdispatchごとに成否を問わず期限を15秒後へ更新することを検証する。完了実績競合の再完了と計測再開も同じguardを通す。
 
 ### 12.5 UI and integration
 

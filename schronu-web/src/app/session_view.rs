@@ -28,7 +28,6 @@ pub fn SessionView(
     #[props(default)] auto_session_in_flight: bool,
     on_auto_session: EventHandler<()>,
     on_action: EventHandler<SessionAction>,
-    #[props(default)] on_cancel_authorization: EventHandler<()>,
 ) -> Element {
     if sessions.is_empty() {
         return rsx! {
@@ -57,7 +56,6 @@ pub fn SessionView(
                     global_blocked,
                     mutations_locked,
                     on_action,
-                    on_cancel_authorization,
                 }
             }
         }
@@ -70,7 +68,6 @@ fn SessionCard(
     global_blocked: bool,
     mutations_locked: bool,
     on_action: EventHandler<SessionAction>,
-    on_cancel_authorization: EventHandler<()>,
 ) -> Element {
     let mut confirming_discard_completion = use_signal(|| false);
     use_effect(use_reactive(
@@ -199,7 +196,6 @@ fn SessionCard(
                             r#type: "button",
                             onclick: move |_| {
                                 confirming_discard_completion.set(false);
-                                on_cancel_authorization.call(());
                             },
                             "キャンセル"
                         }

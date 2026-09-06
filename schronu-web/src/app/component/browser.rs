@@ -116,7 +116,6 @@ pub(super) fn BrowserApp() -> Element {
                     auto_session_in_flight,
                     on_auto_session: move |_| dispatch_action(client, ComponentAction::AutoSession),
                     on_action: move |action| dispatch_session_action(client, action),
-                    on_cancel_authorization: move |_| dispatch_action(client, ComponentAction::RelockCarryLock),
                 }
             } else if active_tab == ActiveTab::List {
                 ListView {

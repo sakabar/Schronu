@@ -22,7 +22,6 @@ struct RootProps {
 fn test_root(props: RootProps) -> Element {
     let auto_events = Arc::clone(&props.events);
     let action_events = Arc::clone(&props.events);
-    let cancel_events = Arc::clone(&props.events);
     rsx! {
         SessionView {
             sessions: props.sessions,
@@ -33,7 +32,6 @@ fn test_root(props: RootProps) -> Element {
                 .lock()
                 .unwrap()
                 .push(format!("{}:{:?}", action.task_id, action.kind)),
-            on_cancel_authorization: move |_| cancel_events.lock().unwrap().push("relock".to_owned()),
         }
     }
 }
