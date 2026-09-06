@@ -177,6 +177,58 @@ fn test_commit_既存targetのpermissionを維持する() {
     assert_eq!(fs::metadata(target_path).unwrap().mode() & 0o777, 0o600);
 }
 
+#[cfg(unix)]
+#[test]
+fn test_commit_directory_permissionのsetとsync失敗を区別する() {
+    use std::os::unix::fs::PermissionsExt;
+
+    for (operation, message, expected_operation) in [
+        (
+            RecordingOperation::SetPermissions,
+            "injected directory permission failure",
+            StorageTransactionOperation::SetLivePermissions,
+        ),
+        (
+            RecordingOperation::SyncDirectory,
+            "injected directory sync failure",
+            StorageTransactionOperation::SyncDirectory,
+        ),
+    ] {
+        let storage_dir = TestStorageDir::new();
+        let directory_path = storage_dir.path.join("markdown");
+        let permissions = [fs::Permissions::from_mode(0o750)];
+        let prepared = prepare_replacing_with_directories_and_deletes(
+            Arc::new(RecordingIo::new(vec![FaultRule {
+                operation,
+                path_matcher: PathMatcher::Exact(directory_path.clone()),
+                occurrence: 1,
+                error_kind: std::io::ErrorKind::Other,
+                error_message: message,
+            }])),
+            &storage_dir.path,
+            Uuid::from_u128(0x2242),
+            ReplacementRequest {
+                writes: &[],
+                file_permissions: &[],
+                directories: &[&directory_path],
+                directory_permissions: &permissions,
+                deletes: &[],
+            },
+        )
+        .unwrap();
+
+        let error = prepared.commit().unwrap_err();
+
+        assert_eq!(error.operation, expected_operation);
+        assert_eq!(error.path, directory_path);
+        assert_eq!(error.source.to_string(), message);
+        assert_eq!(
+            error.commit_state(),
+            StorageTransactionCommitState::CommitMarkerEstablished
+        );
+    }
+}
+
 #[test]
 fn test_commit_failure時は回復用manifestとstaged_fileを維持する() {
     for (name, operation, path_matcher, occurrence, error_message, marker_exists) in [
