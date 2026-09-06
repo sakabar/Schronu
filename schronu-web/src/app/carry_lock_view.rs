@@ -151,7 +151,6 @@ pub(crate) fn CarryLockBar(
                         style: "touch-action: pan-y;",
                         r#type: "button",
                         aria_label: "1.2秒長押しで1操作許可",
-                        aria_pressed: "true",
                         onpointerdown: move |event: PointerEvent| {
                             if accepts_long_press_pointer(
                                 &event.pointer_type(),

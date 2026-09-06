@@ -53,7 +53,6 @@ fn lock_barはmodeごとの状態とaccessibility契約を表示する() {
     assert!(locked.contains("carry-lock-bar is-locked"), "{locked}");
     assert!(locked.contains("操作ロック中"), "{locked}");
     assert!(locked.contains("1.2秒長押しで1操作許可"), "{locked}");
-    assert!(locked.contains("aria-pressed=\"true\""), "{locked}");
 
     let armed = render(CarryLockViewModel::new(
         CarryLockMode::ArmedUntil(17_000),
@@ -62,6 +61,21 @@ fn lock_barはmodeごとの状態とaccessibility契約を表示する() {
     assert!(armed.contains("carry-lock-bar is-armed"), "{armed}");
     assert!(armed.contains("1操作可能"), "{armed}");
     assert!(armed.contains("残り15秒"), "{armed}");
+}
+
+#[test]
+fn 長押し操作はtoggleではない通常buttonのaria意味を持つ() {
+    let html = render(CarryLockViewModel::new(CarryLockMode::Locked, 0));
+    let class_position = html.find("class=\"carry-lock-hold\"").unwrap();
+    let button_start = html[..class_position].rfind("<button").unwrap();
+    let button_end = class_position + html[class_position..].find('>').unwrap();
+    let opening_tag = &html[button_start..button_end];
+
+    assert!(!opening_tag.contains("aria-pressed"), "{opening_tag}");
+    assert!(
+        opening_tag.contains("aria-label=\"1.2秒長押しで1操作許可\""),
+        "{opening_tag}"
+    );
 }
 
 #[test]
