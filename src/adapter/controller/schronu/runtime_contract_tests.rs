@@ -7381,12 +7381,28 @@ fn interactive_backup系の引数errorはcurrent_storageより先に返す() {
     let mut focus_started_datetime = now;
     let mut focus_selection_mode = FocusSelectionMode::highest_priority();
 
-    for (command, usage) in [
-        ("backup verify", "backup verify <snapshot_dir>"),
-        ("backup verify snapshot extra", "backup verify <snapshot_dir>"),
-        ("backup", "backup <snapshot_dir>"),
-        ("backup snapshot extra", "backup <snapshot_dir>"),
-        ("backup\t\"unterminated", "double quoteが閉じられていません"),
+    for (command, usage, expected_kind) in [
+        (
+            "backup verify",
+            "backup verify <snapshot_dir>",
+            CommandKind::BackupVerify,
+        ),
+        (
+            "backup verify snapshot extra",
+            "backup verify <snapshot_dir>",
+            CommandKind::BackupVerify,
+        ),
+        ("backup", "backup <snapshot_dir>", CommandKind::Backup),
+        (
+            "backup snapshot extra",
+            "backup <snapshot_dir>",
+            CommandKind::Backup,
+        ),
+        (
+            "backup\t\"unterminated",
+            "double quoteが閉じられていません",
+            CommandKind::Backup,
+        ),
     ] {
         let outcome = handle_interactive_submit_at(
             &mut stdout,
@@ -7404,7 +7420,8 @@ fn interactive_backup系の引数errorはcurrent_storageより先に返す() {
 
         assert!(matches!(
             outcome,
-            InteractiveRepositoryEventOutcome::Continue
+            InteractiveRepositoryEventOutcome::CommandExecuted(actual_kind, actual_now)
+                if actual_kind == expected_kind && actual_now == now
         ));
         assert!(String::from_utf8_lossy(&stdout.buffer).contains(usage));
     }

@@ -1429,6 +1429,36 @@ fn render_interactive_command_echo(
         .map_err(RunError::Command)
 }
 
+fn backup_input_kind(input: &str) -> Option<CommandKind> {
+    let input = input.trim_start();
+    for prefix in ["backup", "'backup'", "\"backup\""] {
+        let Some(rest) = input.strip_prefix(prefix) else {
+            continue;
+        };
+        if rest
+            .chars()
+            .next()
+            .is_some_and(|character| !character.is_whitespace())
+        {
+            continue;
+        }
+        let rest = rest.trim_start();
+        return Some(
+            if rest == "verify"
+                || rest
+                    .strip_prefix("verify")
+                    .and_then(|suffix| suffix.chars().next())
+                    .is_some_and(char::is_whitespace)
+            {
+                CommandKind::BackupVerify
+            } else {
+                CommandKind::Backup
+            },
+        );
+    }
+    None
+}
+
 fn handle_interactive_submit_at(
     stdout: &mut dyn SchronuWriter,
     task_repository: &mut dyn TaskRepositoryTrait,
@@ -1438,14 +1468,14 @@ fn handle_interactive_submit_at(
     operation_now: DateTime<Local>,
 ) -> InteractiveRepositoryEventOutcome {
     let command = line.trim().to_string();
-    let parsed_command = match parse_interactive_command(&command) {
-        Ok(parsed_command) => parsed_command,
-        Err(error) => {
+    let parsed_command = parse_interactive_command(&command);
+    if let Err(error) = &parsed_command {
+        if let Some(command_kind) = backup_input_kind(&command) {
             if let Err(output_error) =
                 render_interactive_command_echo(stdout, &command, operation_now).and_then(|()| {
                     render_display_model(
                         stdout,
-                        &error_display_model(&map_command_parse_error(error)),
+                        &error_display_model(&map_command_parse_error(error.clone())),
                     )
                     .map_err(CommandError::Output)
                     .map_err(RunError::Command)
@@ -1453,10 +1483,10 @@ fn handle_interactive_submit_at(
             {
                 return InteractiveRepositoryEventOutcome::Fatal(output_error);
             }
-            return InteractiveRepositoryEventOutcome::Continue;
+            return InteractiveRepositoryEventOutcome::CommandExecuted(command_kind, operation_now);
         }
-    };
-    if let Command::BackupVerify { snapshot_directory } = &parsed_command {
+    }
+    if let Ok(Command::BackupVerify { snapshot_directory }) = &parsed_command {
         if let Err(error) = render_interactive_command_echo(stdout, &command, operation_now) {
             return InteractiveRepositoryEventOutcome::Fatal(error);
         }
@@ -1468,7 +1498,7 @@ fn handle_interactive_submit_at(
             Err(error) => InteractiveRepositoryEventOutcome::Fatal(error),
         };
     }
-    if let Command::Backup { snapshot_directory } = &parsed_command {
+    if let Ok(Command::Backup { snapshot_directory }) = &parsed_command {
         if let Err(error) = render_interactive_command_echo(stdout, &command, operation_now) {
             return InteractiveRepositoryEventOutcome::Fatal(error);
         }
