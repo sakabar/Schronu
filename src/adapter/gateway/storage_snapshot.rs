@@ -23,7 +23,8 @@ pub(crate) use restore::restore_snapshot_to_alternate;
 #[cfg(test)]
 pub(in crate::adapter::gateway) use restore::{
     restore_snapshot_after_parent_open, restore_snapshot_before_publish,
-    restore_snapshot_with_failure, restore_snapshot_with_failure_observation,
+    restore_snapshot_to_alternate_after_parent_open, restore_snapshot_with_failure,
+    restore_snapshot_with_failure_observation,
 };
 pub use verify::verify_snapshot;
 #[cfg(test)]

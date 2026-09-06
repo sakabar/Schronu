@@ -20,6 +20,7 @@ pub fn restore_snapshot(
         snapshot_directory.as_ref(),
         destination.as_ref(),
         &FileSystemSnapshotIo,
+        None,
         || {},
         || {},
     )
@@ -30,31 +31,36 @@ pub(crate) fn restore_snapshot_to_alternate(
     destination: &Path,
     current_storage_directory: &Path,
 ) -> Result<SnapshotSummary, SnapshotError> {
-    let destination_identity = path_identity(destination)?;
-    let current_identity = path_identity(current_storage_directory)?;
-    if destination_identity == current_identity {
-        return Err(invalid(
-            destination,
-            "ordinary restore destination must differ from current storage",
-        ));
-    }
-    restore_snapshot(snapshot_directory, destination)
+    let current_destination = CurrentDestination::from_path(current_storage_directory)?;
+    restore_snapshot_impl(
+        snapshot_directory,
+        destination,
+        &FileSystemSnapshotIo,
+        Some(&current_destination),
+        || {},
+        || {},
+    )
 }
 
-fn path_identity(path: &Path) -> Result<PathBuf, SnapshotError> {
-    if path.exists() {
-        return fs::canonicalize(path)
-            .map_err(|error| SnapshotError::new(SnapshotOperation::Validate, path, error));
+struct CurrentDestination {
+    parent: PathBuf,
+    name: OsString,
+}
+
+impl CurrentDestination {
+    fn from_path(path: &Path) -> Result<Self, SnapshotError> {
+        let parent = path
+            .parent()
+            .filter(|parent| !parent.as_os_str().is_empty());
+        let parent = parent.unwrap_or_else(|| Path::new("."));
+        let name = path
+            .file_name()
+            .ok_or_else(|| invalid(path, "restore path must have a file name"))?
+            .to_os_string();
+        let parent = fs::canonicalize(parent)
+            .map_err(|error| SnapshotError::new(SnapshotOperation::Validate, parent, error))?;
+        Ok(Self { parent, name })
     }
-    let parent = path
-        .parent()
-        .ok_or_else(|| invalid(path, "restore path must have a parent directory"))?;
-    let name = path
-        .file_name()
-        .ok_or_else(|| invalid(path, "restore path must have a file name"))?;
-    fs::canonicalize(parent)
-        .map(|canonical_parent| canonical_parent.join(name))
-        .map_err(|error| SnapshotError::new(SnapshotOperation::Validate, parent, error))
 }
 
 #[cfg(test)]
@@ -67,6 +73,7 @@ pub(in crate::adapter::gateway) fn restore_snapshot_after_parent_open(
         snapshot,
         destination,
         &FileSystemSnapshotIo,
+        None,
         after_parent_open,
         || {},
     )
@@ -82,6 +89,7 @@ pub(in crate::adapter::gateway) fn restore_snapshot_before_publish(
         snapshot,
         destination,
         &FileSystemSnapshotIo,
+        None,
         || {},
         before_publish,
     )
@@ -94,7 +102,7 @@ pub(in crate::adapter::gateway) fn restore_snapshot_with_failure(
     point: SnapshotFailurePoint,
 ) -> Result<SnapshotSummary, SnapshotError> {
     let io = FailOnceSnapshotIo::new(point);
-    restore_snapshot_impl(snapshot, destination, &io, || {}, || {})
+    restore_snapshot_impl(snapshot, destination, &io, None, || {}, || {})
 }
 
 #[cfg(test)]
@@ -104,19 +112,40 @@ pub(in crate::adapter::gateway) fn restore_snapshot_with_failure_observation(
     point: SnapshotFailurePoint,
 ) -> (Result<SnapshotSummary, SnapshotError>, usize) {
     let io = FailOnceSnapshotIo::new(point);
-    let result = restore_snapshot_impl(snapshot, destination, &io, || {}, || {});
+    let result = restore_snapshot_impl(snapshot, destination, &io, None, || {}, || {});
     (result, io.matching_calls())
+}
+
+#[cfg(test)]
+pub(in crate::adapter::gateway) fn restore_snapshot_to_alternate_after_parent_open(
+    snapshot: &Path,
+    destination: &Path,
+    current_storage_directory: &Path,
+    after_parent_open: impl FnOnce(),
+) -> Result<SnapshotSummary, SnapshotError> {
+    let current_destination = CurrentDestination::from_path(current_storage_directory)?;
+    restore_snapshot_impl(
+        snapshot,
+        destination,
+        &FileSystemSnapshotIo,
+        Some(&current_destination),
+        after_parent_open,
+        || {},
+    )
 }
 
 fn restore_snapshot_impl(
     snapshot: &Path,
     destination: &Path,
     io: &dyn SnapshotIo,
+    current_destination: Option<&CurrentDestination>,
     after_parent_open: impl FnOnce(),
     before_publish: impl FnOnce(),
 ) -> Result<SnapshotSummary, SnapshotError> {
+    ensure_path_not_current(destination, current_destination)?;
     let publication = validate_destination(snapshot, destination)?;
     after_parent_open();
+    ensure_not_current(&publication, destination, current_destination)?;
     ensure_parent_outside_snapshot(&publication, destination)?;
     let verified = load_verified_snapshot(snapshot)?;
     let staging = staging_path(destination)?;
@@ -135,7 +164,13 @@ fn restore_snapshot_impl(
         destination,
         target: &publication,
     };
-    let result = materialize_restore(&staging_publication, &verified.tree, io, before_publish);
+    let result = materialize_restore(
+        &staging_publication,
+        &verified.tree,
+        io,
+        current_destination,
+        before_publish,
+    );
     if let Err(primary) = result {
         return match publication
             .parent
@@ -149,6 +184,39 @@ fn restore_snapshot_impl(
         verified.manifest.revision,
         verified.manifest.files.len(),
     ))
+}
+
+fn ensure_path_not_current(
+    destination: &Path,
+    current_destination: Option<&CurrentDestination>,
+) -> Result<(), SnapshotError> {
+    let Some(current_destination) = current_destination else {
+        return Ok(());
+    };
+    let parent = destination
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+        .ok_or_else(|| {
+            invalid(
+                destination,
+                "restore destination must have a parent directory",
+            )
+        })?;
+    let destination_name = destination
+        .file_name()
+        .ok_or_else(|| invalid(destination, "restore destination must have a file name"))?;
+    let canonical_parent = fs::canonicalize(parent)
+        .map_err(|error| SnapshotError::new(SnapshotOperation::Validate, parent, error))?;
+    if canonical_parent == current_destination.parent
+        && destination_name == current_destination.name.as_os_str()
+    {
+        Err(invalid(
+            destination,
+            "ordinary restore destination must differ from current storage",
+        ))
+    } else {
+        Ok(())
+    }
 }
 
 struct PublicationDestination {
@@ -230,10 +298,33 @@ fn ensure_parent_outside_snapshot(
     }
 }
 
+fn ensure_not_current(
+    publication: &PublicationDestination,
+    destination: &Path,
+    current_destination: Option<&CurrentDestination>,
+) -> Result<(), SnapshotError> {
+    let Some(current_destination) = current_destination else {
+        return Ok(());
+    };
+    let same_parent = publication
+        .parent
+        .matches_path(&current_destination.parent)
+        .map_err(|error| SnapshotError::new(SnapshotOperation::Validate, destination, error))?;
+    if same_parent && publication.destination_name == current_destination.name {
+        Err(invalid(
+            destination,
+            "ordinary restore destination must differ from current storage",
+        ))
+    } else {
+        Ok(())
+    }
+}
+
 fn materialize_restore(
     staging: &RestoreStaging<'_>,
     tree: &DirectoryTree,
     io: &dyn SnapshotIo,
+    current_destination: Option<&CurrentDestination>,
     before_publish: impl FnOnce(),
 ) -> Result<(), SnapshotError> {
     for directory in tree
@@ -284,6 +375,7 @@ fn materialize_restore(
         .sync(io)
         .map_err(|error| SnapshotError::new(SnapshotOperation::Sync, staging.path, error))?;
     before_publish();
+    ensure_not_current(staging.target, staging.destination, current_destination)?;
     ensure_parent_outside_snapshot(staging.target, staging.destination)?;
     finalize_publication(
         &staging.target.parent,
