@@ -5,7 +5,7 @@ mod session_state;
 use super::carry_lock::{load_carry_lock, CarryLockMode, CarryLockState};
 use super::date_buttons::LogicalDateButton;
 pub use super::effect::ClientEffect;
-pub use super::history::{Operation, OperationHistoryEntry, Outcome};
+pub use super::history::{Operation, OperationHistoryEntry, Outcome, ServerActionInvocation};
 use super::safety_state::{load_mutation_safety, MutationSafetyState};
 use super::time_model::buffer_timing_with_sessions;
 use super::work_sessions::{
@@ -163,7 +163,7 @@ impl ClientState {
         self.sessions
             .pending_mutations
             .values()
-            .find(|pending| pending.task_id == task_id)
+            .find(|pending| pending.invocation.task_id() == Some(task_id))
             .map(|pending| pending.ended_at_epoch_ms)
             .or_else(|| {
                 self.sessions

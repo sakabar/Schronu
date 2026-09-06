@@ -37,6 +37,14 @@ fn button_hover_styles_are_limited_to_hover_capable_fine_pointers() {
     assert!(selected_date_hover.contains("color: white;"));
 }
 
+#[test]
+fn history_invocation_wraps_long_arguments_inside_the_viewport() {
+    let invocation = block_body(MAIN_CSS, ".history-invocation");
+
+    assert!(invocation.contains("overflow-wrap: anywhere;"));
+    assert!(invocation.contains("min-width: 0;"));
+}
+
 fn block_body<'a>(source: &'a str, header: &str) -> &'a str {
     let header_start = source
         .find(header)

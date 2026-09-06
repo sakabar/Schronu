@@ -511,12 +511,17 @@ button:disabled {
 
 .history-entry {
     display: grid;
-    grid-template-columns: auto auto auto 1fr;
+    grid-template-columns: auto minmax(0, 1fr) auto;
     gap: 0.5rem 0.85rem;
     padding: 0.75rem;
     border-radius: 0.65rem;
     background: var(--surface-muted);
     font-size: 0.9rem;
+}
+
+.history-invocation {
+    min-width: 0;
+    overflow-wrap: anywhere;
 }
 
 .history-entry.is-failure {
