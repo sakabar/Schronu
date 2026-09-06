@@ -144,7 +144,7 @@ keyは`schronu_web.work_sessions.v1`とする。valueはversion付きobjectと�
 4. version 1の個別entryでUUID不正、空のtask名、負の見積・実績、不正なepochがある場合、そのentryだけを除外し、valid entryは採用する。同一UUIDの2件目以降も不正entryとして除外する。
 5. 個別entryを除外した初期化時点ではkeyを書き換えない。利用者が次にセッション追加・破棄などのlocal state変更を成功させた時、memory上のvalid entryだけをversion 1として1回で保存する。
 6. いずれの復旧経路でもwarningを表示し、task更新を行わず、`bootstrap`を中止しない。
-7. storageがwrite blockedでない通常のstate変更では、採用済みの全`work_sessions`を1回で書き戻す。write blockedまたは保存失敗の場合はmemory上の直前stateを維持し、手動でkeyを確認してreloadするようwarningと履歴へ残す。
+7. storageがwrite blockedでない通常のstate変更では、採用済みの全`work_sessions`を1回で書き戻す。write blockedまたは保存失敗の場合はmemory上の直前stateを維持し、手動でkeyを確認してreloadするようwarningを表示する。
 
 `repository_state_uncertain`の再送防止状態は、`work_sessions` schemaを拡張せず、別keyの`schronu_web.mutation_safety.v1`へ保存する。
 
@@ -502,7 +502,6 @@ OperationHistoryEntry {
              | RecordSession | CompleteSession | CompleteSessionWithoutRecording
              | ConfirmRepositoryCheck,
     task_id: Option<UUID>,
-    locality: Local | Server,
     outcome: Success | Failure,
     summary: String,
 }
@@ -511,8 +510,7 @@ OperationHistoryEntry {
 - panelは初期状態で閉じ、利用者が開閉できる。
 - requestを送るserver操作はresponse受信時に成否を1件記録する。
 - `record_elapsed_seconds: true`の完了は`CompleteSession`、`false`の完了は`CompleteSessionWithoutRecording`として、成功・失敗のどちらも区別して記録する。
-- local操作はlocalStorage結果を含む最終成否を1件記録する。
-- repository手動確認済み操作はcommit済みsession除去とsafety marker解除を順に行い、その最終成否を`ConfirmRepositoryCheck`として1件記録する。
+- localStorage操作とrepository手動確認済み操作は履歴へ記録しない。
 - summaryへ秘密情報、repository path、stack traceを出さない。
 - 実行していない`見`、`働`、`終`、`外`などのCLI commandを履歴へ記録しない。
 
@@ -576,7 +574,7 @@ OperationHistoryEntry {
 - 完了成功response受理時点でin-flightだった`list_tasks` requestを無効化し、その後にresponseが到着しても完了taskが復活しないことを検証する。完了成功response受理後に開始した`list_tasks` responseは適用されることを検証する。logical date境界を跨ぐ完了responseではsnapshotと日付buttonが更新され、反復taskは次の明示的一覧取得まで自動追加されないことを検証する。
 - 各endpointの成功型がsnapshotを持ち、error型がsnapshotを持たず、clientがerror時に直前snapshotを維持することを検証する。
 - error codeごとの`retry_advice`がerror表と一致し、`manual_check`では同一requestを再送しないことを検証する。
-- 履歴の100件上限、local/server、成否、reload非永続化を検証する。
+- 履歴がserver通信結果だけを対象とすること、100件上限、成否、reload非永続化を検証する。
 
 ### 12.5 UI and integration
 
