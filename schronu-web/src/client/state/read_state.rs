@@ -171,7 +171,11 @@ impl ClientState {
         Some(changed)
     }
 
-    pub(super) fn apply_completion_snapshot(&mut self, snapshot: ServerSnapshot, task_id: &str) {
+    pub(super) fn apply_successful_completion_to_read_state(
+        &mut self,
+        snapshot: ServerSnapshot,
+        task_id: &str,
+    ) {
         let _ = self.apply_snapshot_metadata(snapshot);
         self.read
             .scheduled_rows

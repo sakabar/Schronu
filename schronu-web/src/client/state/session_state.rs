@@ -356,7 +356,7 @@ impl ClientState {
         self.sessions.in_flight_task_ids.remove(&task_id);
         match result {
             Ok(snapshot) => {
-                self.apply_completion_snapshot(snapshot, &task_id);
+                self.apply_successful_completion_to_read_state(snapshot, &task_id);
                 self.finish_committed_mutation(storage, &task_id, operation, None);
                 self.finish_mutation_safety(storage, operation, false);
             }
