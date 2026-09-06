@@ -1,6 +1,6 @@
 # column	index	name	source	sync	time_format	purpose
-A	1	ind	CLI	false		表示順のインデックス
-B	2	task_id	CLI	false		タスクの一意IDとシート間の同期キー
+A	1	ind	CLI	false		同じexport snapshot内でB列task_idと組み合わせて予定segmentを識別するインデックス
+B	2	task_id	CLI	false		タスクの一意ID。A列indとsegment複合keyを構成し、task単位同期にも使用
 C	3	icon	CLI	false		タスク状態を示すアイコン
 D	4	deadline	CLI	false		締切と予定完了時刻との差
 E	5	estimated_datetime	CLI	false		作業予定日時
@@ -10,11 +10,11 @@ H	8	priority	CLI	false		プロジェクト優先度
 I	9	category	CLI	false		category
 J	10	task_name	CLI	false		タスク名
 K	11	is_manual_start	formula	false		L列が手入力かを示す
-L	12	start_time	formula	true	hh:mm	開始時刻
+L	12	start_time	formula	true	hh:mm	開始時刻。A+Bが一致する対応segmentだけへ同期
 M	13	start_time_copy	formula	false	hh:mm	開始時刻の補助列
-N	14	finish_flag	manual	true		完了済みを示すFフラグ
+N	14	finish_flag	manual	true		完了済みを示すFフラグ。同一task_idの全segmentへ同期
 O	15	finish_time_copy	formula	false	hh:mm	完了時刻の補助列
-P	16	finish_time	formula	true	hh:mm	完了時刻
+P	16	finish_time	formula	true	hh:mm	完了時刻。A+Bが一致する対応segmentだけへ同期
 Q	17	should_extract	formula	false		コマンド生成の抽出対象
-R	18	defer_command	manual	true		延期または表示制御の指定
+R	18	defer_command	manual	true		延期または表示制御の指定。同一task_idの全segmentへ同期
 S	19	actual_work_time	manual	false		実作業時間
