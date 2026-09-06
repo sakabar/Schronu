@@ -127,6 +127,25 @@ for (const duplicateSheet of ['実ログ', '優先度低い順']) {
   });
 }
 
+for (const [name, column, values] of [
+  ['N列', COL.finishFlag, [['F'], ['']]],
+  ['R列', COL.deferCommand, [['W'], ['d']]],
+]) {
+  test(`同一taskの${name}へ異なる値を一括入力した場合は同期を拒否する`, () => {
+    const normalRows = [taskRow('0000', TASK_ID), taskRow('0001', TASK_ID)];
+    const appsScript = loadAppsScript({
+      '実ログ': normalRows,
+      '優先度低い順': normalRows,
+    });
+
+    appsScript.editRange('実ログ', 3, column, values);
+
+    assert.deepEqual(appsScript.writes, []);
+    assert.equal(appsScript.toasts.length, 1);
+    assert.match(appsScript.toasts[0].message, new RegExp(`${name}.*競合`));
+  });
+}
+
 test('複数行編集は全identityを確認してから書き込みを始める', () => {
   const appsScript = loadAppsScript({
     '実ログ': [taskRow('0000', TASK_ID), taskRow('0001', TASK_ID)],

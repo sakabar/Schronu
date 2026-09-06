@@ -98,6 +98,14 @@ function syncEditedManualCols_(spreadsheet, sourceSheet, editedRange) {
   const errors = [];
   const writes = new Map();
   const validatedTaskIds = new Set();
+  validateTaskEditValues_(
+    sourceSheet,
+    sourceIndex,
+    startRow,
+    endRow,
+    editedSyncCols,
+    errors,
+  );
 
   for (let row = startRow; row <= endRow; row++) {
     const sourceIdentity = sourceIndex.byRow.get(row) || { ind: '', taskId: '' };
@@ -178,6 +186,32 @@ function syncEditedManualCols_(spreadsheet, sourceSheet, editedRange) {
   for (const write of writes.values()) {
     write.sheet.getRange(write.row, write.col).setValue(write.value);
   }
+}
+
+function validateTaskEditValues_(sheet, index, startRow, endRow, editedSyncCols, errors) {
+  for (const col of editedSyncCols.filter((column) => SCHRONU_CONFIG.taskSyncCols.includes(column))) {
+    const valueByTaskId = new Map();
+    for (let row = startRow; row <= endRow; row++) {
+      const identity = index.byRow.get(row);
+      const taskId = identity ? identity.taskId : '';
+      if (!taskId) {
+        continue;
+      }
+
+      const value = sheet.getRange(row, col).getValue();
+      if (valueByTaskId.has(taskId) && !Object.is(valueByTaskId.get(taskId), value)) {
+        errors.push(
+          `${sheet.getName()} B=${taskId}: ${columnLetter_(col)}列の一括編集値が競合しています`,
+        );
+      } else {
+        valueByTaskId.set(taskId, value);
+      }
+    }
+  }
+}
+
+function columnLetter_(column) {
+  return String.fromCharCode('A'.charCodeAt(0) + column - 1);
 }
 
 function validateTaskIdentity_(sourceSheet, sourceIndex, targetSheet, targetIndex, taskId, errors) {
