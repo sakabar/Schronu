@@ -1,7 +1,7 @@
 #![cfg(feature = "server")]
 
 use super::effect_dispatcher::{
-    execute_effect, normalize_endpoint_result, ClientResponse, WebGateway,
+    execute_effect, execute_tracked_effect, normalize_endpoint_result, ClientResponse, WebGateway,
 };
 use crate::client::state::{ClientEffect, ServerFailure};
 use crate::{
@@ -137,6 +137,93 @@ fn endpointのouter失敗はsafe_transportへ変換しinner_errorは保持する
         ))),
         Err(ServerFailure::Transport("transport".to_owned()))
     );
+}
+
+#[test]
+fn tracked_effectは全応答経路を待機状態で囲みnoneでは変更しない() {
+    for outcome in [
+        BootstrapOutcome::Success,
+        BootstrapOutcome::OperationFailure,
+        BootstrapOutcome::TransportFailure,
+    ] {
+        let gateway = BootstrapGateway { outcome };
+        let mut pending_changes = Vec::new();
+
+        let response = futures::executor::block_on(execute_tracked_effect(
+            &gateway,
+            ClientEffect::Bootstrap { request_id: 1 },
+            |pending| pending_changes.push(pending),
+        ));
+
+        assert!(matches!(response, Some(ClientResponse::Bootstrap { .. })));
+        assert_eq!(pending_changes, [true, false]);
+    }
+
+    let gateway = BootstrapGateway {
+        outcome: BootstrapOutcome::Success,
+    };
+    let mut pending_changes = Vec::new();
+    assert_eq!(
+        futures::executor::block_on(execute_tracked_effect(
+            &gateway,
+            ClientEffect::None,
+            |pending| pending_changes.push(pending),
+        )),
+        None
+    );
+    assert!(pending_changes.is_empty());
+}
+
+#[derive(Clone, Copy)]
+enum BootstrapOutcome {
+    Success,
+    OperationFailure,
+    TransportFailure,
+}
+
+struct BootstrapGateway {
+    outcome: BootstrapOutcome,
+}
+
+impl WebGateway for BootstrapGateway {
+    async fn bootstrap(&self) -> Result<Result<ServerSnapshot, WebError>, ServerFnError> {
+        match self.outcome {
+            BootstrapOutcome::Success => Ok(Ok(snapshot())),
+            BootstrapOutcome::OperationFailure => Ok(Err(WebError {
+                code: "sentinel".to_owned(),
+                message: "safe".to_owned(),
+                retry_advice: RetryAdvice::Retry,
+            })),
+            BootstrapOutcome::TransportFailure => Err(ServerFnError::new("transport")),
+        }
+    }
+
+    async fn list_tasks(
+        &self,
+        _request: ListTasksRequest,
+    ) -> Result<Result<WebSuccess<Vec<ScheduledTaskRow>>, WebError>, ServerFnError> {
+        unreachable!("bootstrap test gateway")
+    }
+
+    async fn auto_session(
+        &self,
+    ) -> Result<Result<WebSuccess<Option<SessionTask>>, WebError>, ServerFnError> {
+        unreachable!("bootstrap test gateway")
+    }
+
+    async fn record_session(
+        &self,
+        _request: RecordSessionRequest,
+    ) -> Result<Result<WebSuccess<RecordSessionResult>, WebError>, ServerFnError> {
+        unreachable!("bootstrap test gateway")
+    }
+
+    async fn complete_session(
+        &self,
+        _request: CompleteSessionRequest,
+    ) -> Result<Result<CompleteSessionResponse, WebError>, ServerFnError> {
+        unreachable!("bootstrap test gateway")
+    }
 }
 
 #[derive(Default)]

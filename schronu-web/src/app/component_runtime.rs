@@ -51,6 +51,7 @@ pub(crate) fn initialize_client<S: KeyValueStorage>(
 pub(crate) struct ComponentOrchestrator {
     state: Option<ClientState>,
     mounted: bool,
+    pending_server_effects: usize,
 }
 
 impl ComponentOrchestrator {
@@ -58,11 +59,30 @@ impl ComponentOrchestrator {
         Self {
             state: None,
             mounted: false,
+            pending_server_effects: 0,
         }
     }
 
     pub fn state(&self) -> Option<&ClientState> {
         self.state.as_ref()
+    }
+
+    pub fn server_effect_in_flight(&self) -> bool {
+        self.pending_server_effects > 0
+    }
+
+    pub fn begin_server_effect(&mut self) {
+        self.pending_server_effects = self
+            .pending_server_effects
+            .checked_add(1)
+            .expect("pending server effect count must not overflow");
+    }
+
+    pub fn finish_server_effect(&mut self) {
+        self.pending_server_effects = self
+            .pending_server_effects
+            .checked_sub(1)
+            .expect("a pending server effect must exist before it finishes");
     }
 
     pub fn mount<S: KeyValueStorage>(

@@ -46,6 +46,8 @@ SCHRONU_CONFIG_PATH=/absolute/path/to/schronu.yaml \
 
 初回表示ではlogical date、buffer、日付選択肢を取得します。以後server通信が起きるのは、日付を選んでtask一覧を取得するとき、自動セッションを選定するとき、セッションを記録して解除するとき、taskを完了するときだけです。tab切替、timer更新、一覧からのセッション追加、「破棄して解除」、破棄完了の確認とキャンセルでは通信しません。logical dateが日付境界の06:00を越えて変わっても自動取得せず、次のserver操作のresponseで更新します。
 
+いずれのserver通信でも、responseを待つ間は画面全体に「通信中…」とスピナーを表示し、背面の操作を無効にします。複数の通信が重なった場合は、すべてのresponseを受け取るまで表示を維持します。
+
 作業中のセッションは`schronu_web.work_sessions.v1`、変更系requestの送信中を示す安全状態は`schronu_web.mutation_safety.v1`としてlocalStorageへ保存します。reload後は保存した開始時刻を基準にtimerを復元します。記録または完了のresponseを確定できないままreloadした場合、二重適用を避けるため変更系操作を停止します。repositoryの状態を別の手段で確認してから、画面の確認操作で停止を解除してください。
 
 セッションの操作は次のとおりです。

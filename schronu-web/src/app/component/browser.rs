@@ -9,6 +9,7 @@ use super::super::list_view::ListView;
 use super::super::long_press_browser::BrowserLongPressScheduler;
 use super::super::long_press_controller::LongPressSchedulerHandle;
 use super::super::session_view::SessionView;
+use super::LoadingOverlay;
 use crate::client::state::ActiveTab;
 use crate::client::time_model::format_hh_mm_ss;
 use crate::client::work_sessions::BrowserLocalStorage;
@@ -66,9 +67,13 @@ pub(super) fn BrowserApp() -> Element {
         carry_lock,
     } = model;
     let mutations_locked = carry_lock.mutations_locked();
+    let server_effect_in_flight = client.read().server_effect_in_flight();
 
     rsx! {
-        main { class: "shell",
+        main {
+            class: "shell",
+            inert: server_effect_in_flight,
+            aria_busy: server_effect_in_flight,
             header { class: "toolbar", h1 { "Schronu" } }
             CarryLockBar {
                 model: carry_lock,
@@ -135,15 +140,18 @@ pub(super) fn BrowserApp() -> Element {
             }
             HistoryView { entries: history }
         }
+        if server_effect_in_flight {
+            LoadingOverlay {}
+        }
     }
 }
 
 fn loading_shell() -> Element {
     rsx! {
-        main { class: "shell",
+        main { class: "shell", aria_busy: "true",
             header { class: "toolbar", h1 { "Schronu" } }
-            p { role: "status", "読み込み中…" }
         }
+        LoadingOverlay {}
     }
 }
 

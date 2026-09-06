@@ -134,6 +134,24 @@ pub(crate) async fn execute_effect<G: WebGateway>(
     }
 }
 
+pub(crate) async fn execute_tracked_effect<G, F>(
+    gateway: &G,
+    effect: ClientEffect,
+    mut on_pending_change: F,
+) -> Option<ClientResponse>
+where
+    G: WebGateway,
+    F: FnMut(bool),
+{
+    if effect == ClientEffect::None {
+        return None;
+    }
+    on_pending_change(true);
+    let response = execute_effect(gateway, effect).await;
+    on_pending_change(false);
+    response
+}
+
 #[cfg(any(test, all(feature = "web", target_arch = "wasm32")))]
 pub(crate) fn apply_response<S: KeyValueStorage>(
     state: &mut ClientState,

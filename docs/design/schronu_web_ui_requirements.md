@@ -127,10 +127,11 @@ Schronu-webを、1日の余力と複数taskの作業状況を同時に把握で�
 - **REQ-NET-005**: 各履歴に操作時刻、実際に呼び出したserver action名と全送信引数、成功・失敗を表示すること。引数は関数呼出し形式で表示し、client内部の`request_id`は含めないこと。
 - **REQ-NET-006**: 実行していないCLI command名を履歴へ記録せず、実際にresponseを受信したserver操作を記録すること。
 - **REQ-NET-007**: 「記録して完了」と「計測を破棄して完了」は、実際の`complete_session`呼出しと`record_elapsed_seconds`の真偽を履歴へ記録し、失敗時もどちらを試みたか識別できること。
+- **REQ-NET-008**: 初回`bootstrap`を含む全server通信で、request開始からresponseの成否を適用するまで画面全体に待機表示を出し、pointerとkeyboardによる背面操作を無効にすること。複数requestの並行時は全responseの受理まで維持し、成功、operation error、transport errorのいずれでも対応するresponseの受理時に当該request分を解除すること。待機表示は「通信中…」をstatusとして通知し、動きを減らすOS設定では回転animationを停止すること。
 
 ### 4.9 持ち歩きロック
 
-- **REQ-LOCK-001**: 画面上部へ常時表示されるstickyな持ち歩きロックbarを設け、通常モードでは「持ち歩きロック」の1 clickで即時にロックできること。画面を覆うoverlayや画面内容を非表示にする方式は使用しないこと。
+- **REQ-LOCK-001**: 画面上部へ常時表示されるstickyな持ち歩きロックbarを設け、通常モードでは「持ち歩きロック」の1 clickで即時にロックできること。持ち歩きロックだけを理由に画面を覆うoverlayや画面内容を非表示にする方式は使用しないこと。server通信中の待機表示は`REQ-NET-008`を優先すること。
 - **REQ-LOCK-002**: ロック中もbufferとセッションの表示・更新、scroll、tab切替、日付選択、一覧取得を利用可能とすること。
 - **REQ-LOCK-003**: ロック中は「自動セッション」、一覧からの「セッション」追加、「破棄して解除」、「記録して解除」、「計測を破棄して完了」、「記録して完了」、「repository確認済み」の7変更操作をclientの共通guardで遮断すること。
 - **REQ-LOCK-004**: ロックbarをpointerまたはSpace・Enterで1.2秒長押しすると、15秒間かつ1操作だけ変更操作を許可すること。pointerup、pointerleave、pointercancel、buttonのblur、window scroll、または1.2秒未満の入力終了では長押しを成立させないこと。
@@ -192,3 +193,4 @@ Schronu-webを、1日の余力と複数taskの作業状況を同時に把握で�
 | AC-019 | pointerまたはSpace・Enterの1.2秒長押しで15秒かつ1操作だけ許可され、各中断event、期限到達、最初の変更dispatchで再ロックされる。計測を破棄する完了は確認では権利を消費せず、確定で消費し、キャンセルと期限切れでは確認が閉じる。 |
 | AC-020 | 持ち歩きロックの正常な保存値を復元し、不正値・未知version・読込失敗では元valueを維持してwarning付きでロックする。ロック開始の保存失敗ではmemory上のロックを維持し、通常モード復帰の保存失敗では解除しない。一時許可はreload後に復元しない。 |
 | AC-021 | タッチ主体の端末ではbuttonをタップした後にhover配色が残らず、hover可能なfine pointerでは既存hover表現が適用される。選択済み日付buttonはdesktop hover中も緑背景と白文字を維持し、`:active`と`:focus-visible`は両環境で機能する。 |
+| AC-022 | 初回取得、一覧取得、自動選定、記録、2種類の完了の各server通信中は全画面の「通信中…」とスピナーが表示され、背面を操作できない。複数通信は最後のresponseまで表示を維持し、成功と各error応答の完了後に解除される。待機状態がassistive technologyへ通知され、reduced motionでは回転しない。 |
