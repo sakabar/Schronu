@@ -66,6 +66,7 @@ pub(super) enum CommandKind {
     FocusLowest,
     Backup,
     BackupVerify,
+    Restore,
     Verify,
 }
 
@@ -139,6 +140,10 @@ pub(super) enum Command {
     },
     BackupVerify {
         snapshot_directory: PathBuf,
+    },
+    Restore {
+        snapshot_directory: PathBuf,
+        destination_directory: PathBuf,
     },
     InteractiveShortcut(InteractiveShortcut),
     Action(CommandAction),
@@ -252,6 +257,7 @@ impl Command {
             Self::ShowAll { .. } => CommandKind::ShowAll,
             Self::Backup { .. } => CommandKind::Backup,
             Self::BackupVerify { .. } => CommandKind::BackupVerify,
+            Self::Restore { .. } => CommandKind::Restore,
             Self::InteractiveShortcut(InteractiveShortcut::DeferRoutine) => {
                 CommandKind::DeferRoutines
             }
@@ -513,6 +519,10 @@ pub(super) fn parse_command_tokens(
         }),
         CommandKind::Backup => Ok(Command::Backup {
             snapshot_directory: PathBuf::from(&arguments[0]),
+        }),
+        CommandKind::Restore => Ok(Command::Restore {
+            snapshot_directory: PathBuf::from(&arguments[0]),
+            destination_directory: PathBuf::from(&arguments[1]),
         }),
         CommandKind::Defer if arguments.len() == 2 => Ok(Command::Defer {
             amount: parse_i64(
@@ -826,7 +836,8 @@ fn parse_action(
         | CommandKind::Arrange
         | CommandKind::TuckAway
         | CommandKind::Backup
-        | CommandKind::BackupVerify => unreachable!("handled before action parsing"),
+        | CommandKind::BackupVerify
+        | CommandKind::Restore => unreachable!("handled before action parsing"),
     };
     Ok(Command::Action(action))
 }
@@ -1012,6 +1023,13 @@ fn command_definition(name: &str) -> Option<CommandDefinition> {
         "backup" => {
             CommandDefinition::new(Kind::Backup, "backup", "backup <snapshot_dir>", 1, Some(1))
         }
+        "restore" => CommandDefinition::new(
+            Kind::Restore,
+            "restore",
+            "restore <snapshot_dir> <destination_dir>",
+            2,
+            Some(2),
+        ),
         "検証" => CommandDefinition::new(Kind::Verify, "検証", "検証", 0, Some(0)),
         _ => return None,
     };

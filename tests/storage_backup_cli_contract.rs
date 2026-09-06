@@ -261,7 +261,10 @@ fn restore_cliは既存destinationを変更せず拒否する() {
     assert_eq!(output.status.code(), Some(1));
     assert!(output.stdout.is_empty());
     let stderr = String::from_utf8(output.stderr).unwrap();
-    assert!(stderr.contains("storage snapshot Validate failed"), "{stderr}");
+    assert!(
+        stderr.contains("storage snapshot Validate failed"),
+        "{stderr}"
+    );
     assert!(stderr.contains(destination.to_str().unwrap()), "{stderr}");
     assert!(
         stderr.contains("restore destination must not exist"),

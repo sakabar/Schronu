@@ -1359,7 +1359,8 @@ fn interactiveとnoninteractiveは単一のparsed_command_dispatcherを共有す
         }
         let code_without_maintenance = code
             .replace("CommandKind::Verify", "")
-            .replace("Command::Backup", "");
+            .replace("Command::Backup", "")
+            .replace("Command::Restore", "");
         if code_without_maintenance.contains("Command::")
             || code_without_maintenance.contains("CommandKind::")
         {
@@ -2517,6 +2518,7 @@ fn interactive再描画分類は全command_kindを網羅する() {
             | CommandKind::FocusLowest
             | CommandKind::Backup
             | CommandKind::BackupVerify
+            | CommandKind::Restore
             | CommandKind::Verify => false,
         };
 

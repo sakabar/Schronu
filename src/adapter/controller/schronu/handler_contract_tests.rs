@@ -2561,7 +2561,10 @@ fn storage_maintenance以外の全command_shapeは統一handler入口でoutcome�
             .unwrap_or_else(|error| panic!("{kind:?} must be handled without error: {error}"));
         if matches!(
             kind,
-            CommandKind::Backup | CommandKind::BackupVerify | CommandKind::Verify
+            CommandKind::Backup
+                | CommandKind::BackupVerify
+                | CommandKind::Restore
+                | CommandKind::Verify
         ) {
             assert!(
                 outcome.is_none(),
