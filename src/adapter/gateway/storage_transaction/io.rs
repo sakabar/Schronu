@@ -75,6 +75,10 @@ pub(crate) trait StorageTransactionIo: Send + Sync {
     fn remove_file(&self, path: &Path) -> std::io::Result<()> {
         fs::remove_file(path)
     }
+
+    fn remove_dir(&self, path: &Path) -> std::io::Result<()> {
+        fs::remove_dir(path)
+    }
 }
 
 #[derive(Default)]

@@ -266,7 +266,14 @@ impl CommittedTransaction {
                 ),
             )
         })?;
-        match self.state.io.remove_file(target_path) {
+        let removal = match self.state.io.symlink_metadata(target_path) {
+            Ok(metadata) if metadata.is_dir() && !metadata.file_type().is_symlink() => {
+                self.state.io.remove_dir(target_path)
+            }
+            Ok(_) => self.state.io.remove_file(target_path),
+            Err(error) => Err(error),
+        };
+        match removal {
             Ok(()) => sync_directory(self.state.io.as_ref(), parent_path),
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
                 match self.state.io.sync_directory(parent_path) {
