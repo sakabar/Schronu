@@ -161,3 +161,35 @@ fn current_restoreはcommit_marker後の失敗を次回snapshotで回復する()
     );
     verify_snapshot(recovery_snapshot).unwrap();
 }
+
+#[test]
+fn current_restoreはfileとdirectoryの種別変更をsnapshotどおり置換する() {
+    let root = TestDirectory::new("current-restore-entry-kind-change");
+    let current = root.child("current");
+    let source = root.child("source");
+    let snapshot = root.child("snapshot");
+    let pre_backup = root.child("pre-backup");
+    let now = Local.with_ymd_and_hms(2026, 9, 6, 15, 0, 0).unwrap();
+    create_saved_repository(&current, now);
+    create_saved_repository(&source, now);
+    fs::create_dir_all(current.join("becomes-file/nested")).unwrap();
+    fs::write(current.join("becomes-file/nested/old.bin"), b"old").unwrap();
+    fs::write(current.join("becomes-directory"), b"old").unwrap();
+    fs::write(source.join("becomes-file"), b"new-file").unwrap();
+    fs::create_dir_all(source.join("becomes-directory/nested")).unwrap();
+    fs::write(
+        source.join("becomes-directory/nested/new.bin"),
+        b"new-directory-file",
+    )
+    .unwrap();
+    create_snapshot_at(&source, &snapshot, now).unwrap();
+    let storage_lock = StorageLock::acquire(&current, LockMode::Cli).unwrap();
+
+    restore_current_snapshot_at(&current, &snapshot, &pre_backup, now, &storage_lock).unwrap();
+
+    assert_eq!(fs::read(current.join("becomes-file")).unwrap(), b"new-file");
+    assert_eq!(
+        fs::read(current.join("becomes-directory/nested/new.bin")).unwrap(),
+        b"new-directory-file"
+    );
+}
