@@ -72,10 +72,10 @@ pub fn ListView(
                     table { class: "task-table",
                         thead {
                             tr {
+                                th { class: "session-heading", aria_label: "セッション操作", "" }
                                 th { class: "schedule-heading", "予定" }
                                 th { class: "deadline-heading", "締切" }
                                 th { class: "task-heading", "タスク" }
-                                th { class: "session-heading", aria_label: "セッション操作", "" }
                             }
                         }
                         tbody {

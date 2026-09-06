@@ -238,6 +238,17 @@ fn list_rowはresponsive表示用の意味別cellとlabelを持つ() {
     assert!(html.contains("tabindex=0"), "{html}");
     assert!(html.contains("class=\"session-cell\""), "{html}");
 
+    let session_heading_position = html.find("class=\"session-heading\"").unwrap();
+    let schedule_heading_position = html.find("class=\"schedule-heading\"").unwrap();
+    let deadline_heading_position = html.find("class=\"deadline-heading\"").unwrap();
+    let task_heading_position = html.find("class=\"task-heading\"").unwrap();
+    assert!(
+        session_heading_position < schedule_heading_position
+            && schedule_heading_position < deadline_heading_position
+            && deadline_heading_position < task_heading_position,
+        "{html}"
+    );
+
     let action_position = html.find("class=\"session-cell\"").unwrap();
     let schedule_position = html.find("class=\"schedule-time\"").unwrap();
     let deadline_position = html.find("class=\"deadline\"").unwrap();
