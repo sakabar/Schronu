@@ -1,3 +1,4 @@
+use std::cmp::Reverse;
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -127,7 +128,8 @@ impl CommittedTransaction {
 
     fn preflight_entries(&self) -> Result<Vec<PreflightEntry>, StorageTransactionError> {
         let layout = TransactionLayout::new(&self.state.paths.storage_dir_path);
-        self.state
+        let mut entries = self
+            .state
             .manifest
             .entries
             .iter()
@@ -233,7 +235,14 @@ impl CommittedTransaction {
                     })
                 }
             })
-            .collect()
+            .collect::<Result<Vec<_>, _>>()?;
+        entries.sort_by_key(|entry| match entry {
+            PreflightEntry::AlreadyApplied | PreflightEntry::Write { .. } => (0, Reverse(0)),
+            PreflightEntry::Delete { target_path } => {
+                (1, Reverse(target_path.components().count()))
+            }
+        });
+        Ok(entries)
     }
 
     fn apply_revision(&self, revision_path: &Path) -> Result<(), StorageTransactionError> {
