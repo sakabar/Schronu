@@ -294,21 +294,74 @@ fn assert_session_timing(
     let card = session_card_subtree(html);
     let timing = session_timing_subtree(card);
 
-    for text in [started_at, "→", completion, remaining] {
-        assert!(timing.contains(text), "missing {text} in {timing}");
-    }
-    for label in [
-        format!("aria-label=\"開始時刻 {started_at}\""),
-        format!("aria-label=\"完了予定時刻 {completion}\""),
-        format!("aria-label=\"{remaining_kind} {remaining}\""),
-    ] {
-        assert!(timing.contains(&label), "missing {label} in {timing}");
-    }
-    assert_eq!(timing.matches("<time").count(), 2, "{timing}");
-    assert!(
-        timing.contains(&format!("class=\"{remaining_class}\"")),
-        "{timing}"
+    assert_direct_text_node(
+        timing,
+        "time",
+        started_at,
+        None,
+        &format!("開始時刻 {started_at}"),
     );
+    assert_direct_text_node(
+        timing,
+        "time",
+        completion,
+        None,
+        &format!("完了予定時刻 {completion}"),
+    );
+    assert_direct_text_node(
+        timing,
+        "span",
+        remaining,
+        Some(remaining_class),
+        &format!("{remaining_kind} {remaining}"),
+    );
+    assert!(timing.contains("→"), "missing arrow in {timing}");
+    assert_eq!(timing.matches("<time").count(), 2, "{timing}");
+}
+
+fn assert_direct_text_node(
+    html: &str,
+    tag: &str,
+    text: &str,
+    expected_class: Option<&str>,
+    expected_aria_label: &str,
+) {
+    let opening_tag = opening_tag_for_direct_text(html, tag, text);
+    assert!(
+        opening_tag.contains(&format!("aria-label=\"{expected_aria_label}\"")),
+        "missing aria-label on {opening_tag}"
+    );
+    if let Some(expected_class) = expected_class {
+        assert!(
+            opening_tag.contains(&format!("class=\"{expected_class}\"")),
+            "unexpected class on {opening_tag}"
+        );
+    }
+}
+
+fn opening_tag_for_direct_text<'a>(html: &'a str, tag: &str, text: &str) -> &'a str {
+    let opening_prefix = format!("<{tag}");
+    let closing_tag = format!("</{tag}>");
+    let mut search_start = 0;
+
+    while let Some(relative_start) = html[search_start..].find(&opening_prefix) {
+        let node_start = search_start + relative_start;
+        let opening_end = html[node_start..]
+            .find('>')
+            .map(|offset| node_start + offset)
+            .expect("candidate node must close its opening tag");
+        let text_start = opening_end + 1;
+        let closing_start = html[text_start..]
+            .find(&closing_tag)
+            .map(|offset| text_start + offset)
+            .expect("candidate node must have a closing tag");
+        if &html[text_start..closing_start] == text {
+            return &html[node_start..=opening_end];
+        }
+        search_start = opening_end + 1;
+    }
+
+    panic!("missing <{tag}> node with direct text {text:?} in {html}");
 }
 
 fn session_card_subtree(html: &str) -> &str {
