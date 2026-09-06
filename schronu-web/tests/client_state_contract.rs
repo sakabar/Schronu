@@ -165,6 +165,106 @@ fn restored_sessionの継続時間をserver_bufferから1回だけ差し引く()
 }
 
 #[test]
+fn restored_sessionの復元補正は終了click時刻で打ち切る() {
+    let storage = FakeStorage::default();
+    let mut sessions = load_work_sessions(&storage).unwrap();
+    sessions
+        .replace_sessions(
+            &storage,
+            vec![WorkSession {
+                task_id: TASK_ID.to_owned(),
+                task_name: "task".to_owned(),
+                started_at_epoch_ms: 1_000_000,
+                estimated_work_seconds_at_start: 900,
+                actual_work_seconds_at_start: 0,
+            }],
+        )
+        .unwrap();
+    let mut state = load_client_state(&storage, 1_020_000).unwrap();
+    let bootstrap_id = bootstrap_effect(state.request_bootstrap());
+    state.apply_bootstrap_result(bootstrap_id, Ok(snapshot("2026-09-05", 1_020_000)));
+
+    state.tick(1_030_000);
+    record_effect(state.begin_record_session(&storage, TASK_ID));
+    state.tick(1_060_000);
+    let (request_id, request) = list_effect(state.request_list("2026-09-05"));
+    state.apply_list_result(
+        request_id,
+        &request.logical_date,
+        Ok(WebSuccess {
+            snapshot: snapshot("2026-09-05", 1_050_000),
+            data: Vec::new(),
+        }),
+    );
+
+    assert_eq!(state.display_buffer_seconds(), Some(20));
+}
+
+#[test]
+fn 終了処理中はclick時刻を保持してbufferを再開し失敗時に計測へ戻す() {
+    let storage = FakeStorage::default();
+    let mut state = state_with_sessions(&storage, &[TASK_ID]);
+    let bootstrap_id = bootstrap_effect(state.request_bootstrap());
+    state.apply_bootstrap_result(bootstrap_id, Ok(snapshot("2026-09-05", 0)));
+    state.tick(60_000);
+
+    let (request_id, request) = record_effect(state.begin_record_session(&storage, TASK_ID));
+    assert_eq!(request.ended_at_epoch_ms, Some(60_000));
+
+    state.tick(65_000);
+    assert_eq!(state.display_buffer_seconds(), Some(55));
+
+    state.apply_record_result(
+        &storage,
+        request_id,
+        Err(ServerFailure::Operation(web_error(
+            web_error_codes::REPOSITORY_SAVE_FAILED,
+            RetryAdvice::Retry,
+        ))),
+    );
+    assert_eq!(state.display_buffer_seconds(), Some(60));
+}
+
+#[test]
+fn 三終了操作は同じclick時刻をrequestへ保持する() {
+    let record_storage = FakeStorage::default();
+    let mut record_state = state_with_sessions(&record_storage, &[TASK_ID]);
+    record_state.tick(60_000);
+    let (_, record) = record_effect(record_state.begin_record_session(&record_storage, TASK_ID));
+
+    let complete_storage = FakeStorage::default();
+    let mut complete_state = state_with_sessions(&complete_storage, &[TASK_ID]);
+    complete_state.tick(60_000);
+    let (_, complete) =
+        complete_effect(complete_state.begin_complete_session(&complete_storage, TASK_ID));
+
+    let discard_storage = FakeStorage::default();
+    let mut discard_state = state_with_sessions(&discard_storage, &[TASK_ID]);
+    discard_state.tick(60_000);
+    let (_, discard_complete) = complete_effect(
+        discard_state.begin_complete_session_without_recording(&discard_storage, TASK_ID),
+    );
+
+    assert_eq!(record.ended_at_epoch_ms, Some(60_000));
+    assert_eq!(complete.ended_at_epoch_ms, Some(60_000));
+    assert_eq!(discard_complete.ended_at_epoch_ms, Some(60_000));
+}
+
+#[test]
+fn 別sessionが計測中なら終了処理中もbufferを停止する() {
+    let storage = FakeStorage::default();
+    let mut state = state_with_sessions(&storage, &[TASK_ID, OTHER_TASK_ID]);
+    let bootstrap_id = bootstrap_effect(state.request_bootstrap());
+    state.apply_bootstrap_result(bootstrap_id, Ok(snapshot("2026-09-05", 0)));
+    state.tick(60_000);
+    record_effect(state.begin_record_session(&storage, TASK_ID));
+
+    state.tick(65_000);
+
+    assert_eq!(state.display_buffer_seconds(), Some(60));
+}
+
+#[test]
 fn server_commit済みでlocal削除失敗したsessionはbufferを停止しない() {
     let storage = FakeStorage::default();
     let mut state = state_with_sessions(&storage, &[TASK_ID]);
@@ -415,6 +515,7 @@ fn mutationは対象だけを直列化しerror助言とcommit後storage失敗を
     let expected_request = schronu_web::RecordSessionRequest {
         task_id: TASK_ID.to_owned(),
         started_at_epoch_ms: 0,
+        ended_at_epoch_ms: Some(62_999),
         expected_actual_work_seconds: 100,
     };
     let (first_request_id, first_request) =
@@ -669,6 +770,33 @@ fn repository_state_uncertain後はpage全体のmutationを停止する() {
         state.begin_complete_session(&storage, OTHER_TASK_ID),
         ClientEffect::None
     );
+}
+
+#[test]
+fn commit成否不明ならrepository確認までclick時刻で停止する() {
+    for uncertain_result in [
+        ServerFailure::Transport("detail".to_owned()),
+        ServerFailure::Operation(web_error(
+            web_error_codes::REPOSITORY_STATE_UNCERTAIN,
+            RetryAdvice::ManualCheck,
+        )),
+    ] {
+        let storage = FakeStorage::default();
+        let mut state = state_with_sessions(&storage, &[TASK_ID]);
+        let bootstrap_id = bootstrap_effect(state.request_bootstrap());
+        state.apply_bootstrap_result(bootstrap_id, Ok(snapshot("2026-09-05", 0)));
+        state.tick(60_000);
+        let (request_id, _) = record_effect(state.begin_record_session(&storage, TASK_ID));
+
+        state.tick(65_000);
+        state.apply_record_result(&storage, request_id, Err(uncertain_result));
+        state.tick(70_000);
+
+        assert_eq!(state.display_buffer_seconds(), Some(50));
+        assert!(state.can_confirm_repository_checked());
+        state.confirm_repository_checked(&storage);
+        assert_eq!(state.display_buffer_seconds(), Some(60));
+    }
 }
 
 #[test]

@@ -140,11 +140,13 @@ mod tests {
         let request = RecordSessionRequest {
             task_id: "task".to_owned(),
             started_at_epoch_ms: 1,
+            ended_at_epoch_ms: None,
             expected_actual_work_seconds: 2,
         };
         let complete_request = CompleteSessionRequest {
             task_id: request.task_id.clone(),
             started_at_epoch_ms: request.started_at_epoch_ms,
+            ended_at_epoch_ms: request.ended_at_epoch_ms,
             expected_actual_work_seconds: request.expected_actual_work_seconds,
             record_elapsed_seconds: true,
         };

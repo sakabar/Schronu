@@ -39,6 +39,29 @@ pub(crate) fn component_action_from_session_action(action: SessionAction) -> Com
     }
 }
 
+pub(crate) fn component_actions_from_session_action(
+    action: SessionAction,
+    ended_at_epoch_ms: i64,
+) -> Vec<ComponentAction> {
+    let stops_session = matches!(
+        action.kind,
+        SessionActionKind::Record
+            | SessionActionKind::Complete
+            | SessionActionKind::CompleteWithoutRecording
+    );
+    let mutation = component_action_from_session_action(action);
+    if stops_session {
+        vec![
+            ComponentAction::Tick {
+                wall_now_epoch_ms: ended_at_epoch_ms,
+            },
+            mutation,
+        ]
+    } else {
+        vec![mutation]
+    }
+}
+
 pub(crate) fn initialize_client<S: KeyValueStorage>(
     storage: &S,
     wall_now_epoch_ms: i64,
@@ -51,6 +74,7 @@ pub(crate) fn initialize_client<S: KeyValueStorage>(
 pub(crate) struct ComponentOrchestrator {
     state: Option<ClientState>,
     mounted: bool,
+    pending_server_effects: usize,
 }
 
 impl ComponentOrchestrator {
@@ -58,11 +82,30 @@ impl ComponentOrchestrator {
         Self {
             state: None,
             mounted: false,
+            pending_server_effects: 0,
         }
     }
 
     pub fn state(&self) -> Option<&ClientState> {
         self.state.as_ref()
+    }
+
+    pub fn server_effect_in_flight(&self) -> bool {
+        self.pending_server_effects > 0
+    }
+
+    pub fn begin_server_effect(&mut self) {
+        self.pending_server_effects = self
+            .pending_server_effects
+            .checked_add(1)
+            .expect("pending server effect count must not overflow");
+    }
+
+    pub fn finish_server_effect(&mut self) {
+        self.pending_server_effects = self
+            .pending_server_effects
+            .checked_sub(1)
+            .expect("a pending server effect must exist before it finishes");
     }
 
     pub fn mount<S: KeyValueStorage>(

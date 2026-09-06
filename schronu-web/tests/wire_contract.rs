@@ -93,6 +93,7 @@ fn five_operationsのrequestとsuccessは仕様どおりのjson形式を持つ()
     let mutation_request = RecordSessionRequest {
         task_id: "00000000-0000-0000-0000-000000000001".to_owned(),
         started_at_epoch_ms: 1_788_565_500_000,
+        ended_at_epoch_ms: Some(1_788_565_560_000),
         expected_actual_work_seconds: 300,
     };
     assert_json_round_trip(
@@ -100,6 +101,7 @@ fn five_operationsのrequestとsuccessは仕様どおりのjson形式を持つ()
         json!({
             "task_id": "00000000-0000-0000-0000-000000000001",
             "started_at_epoch_ms": 1_788_565_500_000_i64,
+            "ended_at_epoch_ms": 1_788_565_560_000_i64,
             "expected_actual_work_seconds": 300
         }),
     );
@@ -107,12 +109,14 @@ fn five_operationsのrequestとsuccessは仕様どおりのjson形式を持つ()
         &CompleteSessionRequest {
             task_id: mutation_request.task_id.clone(),
             started_at_epoch_ms: mutation_request.started_at_epoch_ms,
+            ended_at_epoch_ms: mutation_request.ended_at_epoch_ms,
             expected_actual_work_seconds: mutation_request.expected_actual_work_seconds,
             record_elapsed_seconds: false,
         },
         json!({
             "task_id": "00000000-0000-0000-0000-000000000001",
             "started_at_epoch_ms": 1_788_565_500_000_i64,
+            "ended_at_epoch_ms": 1_788_565_560_000_i64,
             "expected_actual_work_seconds": 300,
             "record_elapsed_seconds": false
         }),
@@ -143,6 +147,26 @@ fn five_operationsのrequestとsuccessは仕様どおりのjson形式を持つ()
             "buffer_seconds": -61
         }),
     );
+}
+
+#[test]
+fn 終了時刻がない旧mutation_requestをdeserializeできる() {
+    let record: RecordSessionRequest = serde_json::from_value(json!({
+        "task_id": "00000000-0000-0000-0000-000000000001",
+        "started_at_epoch_ms": 1_788_565_500_000_i64,
+        "expected_actual_work_seconds": 300
+    }))
+    .unwrap();
+    assert_eq!(record.ended_at_epoch_ms, None);
+
+    let complete: CompleteSessionRequest = serde_json::from_value(json!({
+        "task_id": "00000000-0000-0000-0000-000000000001",
+        "started_at_epoch_ms": 1_788_565_500_000_i64,
+        "expected_actual_work_seconds": 300,
+        "record_elapsed_seconds": true
+    }))
+    .unwrap();
+    assert_eq!(complete.ended_at_epoch_ms, None);
 }
 
 #[test]

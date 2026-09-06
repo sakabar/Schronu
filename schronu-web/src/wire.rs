@@ -43,6 +43,8 @@ pub struct ListTasksRequest {
 pub struct RecordSessionRequest {
     pub task_id: String,
     pub started_at_epoch_ms: i64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ended_at_epoch_ms: Option<i64>,
     pub expected_actual_work_seconds: i64,
 }
 
@@ -50,6 +52,8 @@ pub struct RecordSessionRequest {
 pub struct CompleteSessionRequest {
     pub task_id: String,
     pub started_at_epoch_ms: i64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ended_at_epoch_ms: Option<i64>,
     pub expected_actual_work_seconds: i64,
     pub record_elapsed_seconds: bool,
 }

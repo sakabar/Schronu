@@ -65,14 +65,18 @@ impl fmt::Display for ServerActionInvocation {
             Self::AutoSession => formatter.write_str("auto_session()"),
             Self::RecordSession(request) => write!(
                 formatter,
-                "record_session(task_id: {:?}, started_at_epoch_ms: {}, expected_actual_work_seconds: {})",
-                request.task_id, request.started_at_epoch_ms, request.expected_actual_work_seconds
+                "record_session(task_id: {:?}, started_at_epoch_ms: {}, ended_at_epoch_ms: {:?}, expected_actual_work_seconds: {})",
+                request.task_id,
+                request.started_at_epoch_ms,
+                request.ended_at_epoch_ms,
+                request.expected_actual_work_seconds
             ),
             Self::CompleteSession(request) => write!(
                 formatter,
-                "complete_session(task_id: {:?}, started_at_epoch_ms: {}, expected_actual_work_seconds: {}, record_elapsed_seconds: {})",
+                "complete_session(task_id: {:?}, started_at_epoch_ms: {}, ended_at_epoch_ms: {:?}, expected_actual_work_seconds: {}, record_elapsed_seconds: {})",
                 request.task_id,
                 request.started_at_epoch_ms,
+                request.ended_at_epoch_ms,
                 request.expected_actual_work_seconds,
                 request.record_elapsed_seconds
             ),

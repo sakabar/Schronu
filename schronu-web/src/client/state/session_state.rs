@@ -14,7 +14,8 @@ enum MutationKind {
 }
 
 pub(super) struct PendingMutation {
-    invocation: ServerActionInvocation,
+    pub(super) invocation: ServerActionInvocation,
+    pub(super) ended_at_epoch_ms: i64,
 }
 
 pub(super) struct SessionState {
@@ -23,6 +24,7 @@ pub(super) struct SessionState {
     pub(super) manual_check_blocked_task_ids: HashSet<String>,
     pub(super) committed_blocked_task_ids: HashSet<String>,
     pub(super) committed_actual_work_seconds: HashMap<String, i64>,
+    pub(super) uncertain_stopped_at_epoch_ms: HashMap<String, i64>,
     pub(super) mutation_globally_blocked: bool,
     pub(super) mutation_safety: MutationSafetyState,
     pub(super) next_mutation_request_id: u64,
@@ -40,6 +42,7 @@ impl SessionState {
             manual_check_blocked_task_ids: HashSet::new(),
             committed_blocked_task_ids: HashSet::new(),
             committed_actual_work_seconds: HashMap::new(),
+            uncertain_stopped_at_epoch_ms: HashMap::new(),
             mutation_globally_blocked: mutation_safety.mutation_blocked(),
             mutation_safety,
             next_mutation_request_id: 1,
@@ -97,6 +100,7 @@ impl ClientState {
         if result.is_ok() {
             self.restored_session_task_ids.remove(task_id);
             self.sessions.manual_check_blocked_task_ids.remove(task_id);
+            self.sessions.uncertain_stopped_at_epoch_ms.remove(task_id);
             if self
                 .diagnostics
                 .display_error
@@ -177,6 +181,7 @@ impl ClientState {
         let result = self.sessions.mutation_safety.disarm(storage);
         if result.is_ok() {
             self.sessions.mutation_globally_blocked = false;
+            self.sessions.uncertain_stopped_at_epoch_ms.clear();
             if matches!(
                 &self.diagnostics.display_error,
                 Some(DisplayError::Operation {
@@ -262,11 +267,13 @@ impl ClientState {
         }
         self.sessions.next_mutation_request_id = next_request_id;
         self.sessions.in_flight_task_ids.insert(task_id.to_owned());
+        let ended_at_epoch_ms = self.tick_now_epoch_ms;
         let effect = match kind {
             MutationKind::Complete | MutationKind::CompleteWithoutRecording => {
                 let request = CompleteSessionRequest {
                     task_id: request_task_id,
                     started_at_epoch_ms,
+                    ended_at_epoch_ms: Some(ended_at_epoch_ms),
                     expected_actual_work_seconds,
                     record_elapsed_seconds: kind == MutationKind::Complete,
                 };
@@ -279,6 +286,7 @@ impl ClientState {
                 let request = RecordSessionRequest {
                     task_id: request_task_id,
                     started_at_epoch_ms,
+                    ended_at_epoch_ms: Some(ended_at_epoch_ms),
                     expected_actual_work_seconds,
                 };
                 ClientEffect::RecordSession {
@@ -296,35 +304,30 @@ impl ClientState {
             }
             _ => unreachable!("mutation must produce a mutation effect"),
         };
-        self.sessions
-            .pending_mutations
-            .insert(request_id, PendingMutation { invocation });
+        self.sessions.pending_mutations.insert(
+            request_id,
+            PendingMutation {
+                invocation,
+                ended_at_epoch_ms,
+            },
+        );
         effect
     }
 
-    fn take_pending_record(&mut self, request_id: u64) -> Option<(String, ServerActionInvocation)> {
+    fn take_pending_record(&mut self, request_id: u64) -> Option<PendingMutation> {
         let pending = self.sessions.pending_mutations.get(&request_id)?;
-        let ServerActionInvocation::RecordSession(request) = &pending.invocation else {
+        let ServerActionInvocation::RecordSession(_) = &pending.invocation else {
             return None;
         };
-        let task_id = request.task_id.clone();
-        let invocation = pending.invocation.clone();
-        self.sessions.pending_mutations.remove(&request_id);
-        Some((task_id, invocation))
+        self.sessions.pending_mutations.remove(&request_id)
     }
 
-    fn take_pending_completion(
-        &mut self,
-        request_id: u64,
-    ) -> Option<(String, ServerActionInvocation)> {
+    fn take_pending_completion(&mut self, request_id: u64) -> Option<PendingMutation> {
         let pending = self.sessions.pending_mutations.get(&request_id)?;
-        let ServerActionInvocation::CompleteSession(request) = &pending.invocation else {
+        let ServerActionInvocation::CompleteSession(_) = &pending.invocation else {
             return None;
         };
-        let task_id = request.task_id.clone();
-        let invocation = pending.invocation.clone();
-        self.sessions.pending_mutations.remove(&request_id);
-        Some((task_id, invocation))
+        self.sessions.pending_mutations.remove(&request_id)
     }
 
     pub fn apply_record_result<S: KeyValueStorage>(
@@ -333,9 +336,17 @@ impl ClientState {
         request_id: u64,
         result: Result<WebSuccess<RecordSessionResult>, ServerFailure>,
     ) -> ClientEffect {
-        let Some((task_id, invocation)) = self.take_pending_record(request_id) else {
+        let Some(pending) = self.take_pending_record(request_id) else {
             return ClientEffect::None;
         };
+        let PendingMutation {
+            invocation,
+            ended_at_epoch_ms,
+        } = pending;
+        let task_id = invocation
+            .task_id()
+            .expect("record invocation must have a task id")
+            .to_owned();
         self.sessions.in_flight_task_ids.remove(&task_id);
         match result {
             Ok(success) => {
@@ -350,6 +361,11 @@ impl ClientState {
             }
             Err(error) => {
                 let keep_safety = keeps_safety_marker(&error);
+                if keep_safety {
+                    self.sessions
+                        .uncertain_stopped_at_epoch_ms
+                        .insert(task_id.clone(), ended_at_epoch_ms);
+                }
                 self.finish_failed_mutation(&task_id, invocation, error);
                 self.finish_mutation_safety(storage, keep_safety);
             }
@@ -363,9 +379,17 @@ impl ClientState {
         request_id: u64,
         result: Result<ServerSnapshot, ServerFailure>,
     ) -> ClientEffect {
-        let Some((task_id, invocation)) = self.take_pending_completion(request_id) else {
+        let Some(pending) = self.take_pending_completion(request_id) else {
             return ClientEffect::None;
         };
+        let PendingMutation {
+            invocation,
+            ended_at_epoch_ms,
+        } = pending;
+        let task_id = invocation
+            .task_id()
+            .expect("complete invocation must have a task id")
+            .to_owned();
         self.sessions.in_flight_task_ids.remove(&task_id);
         match result {
             Ok(snapshot) => {
@@ -375,6 +399,11 @@ impl ClientState {
             }
             Err(error) => {
                 let keep_safety = keeps_safety_marker(&error);
+                if keep_safety {
+                    self.sessions
+                        .uncertain_stopped_at_epoch_ms
+                        .insert(task_id.clone(), ended_at_epoch_ms);
+                }
                 self.finish_failed_mutation(&task_id, invocation, error);
                 self.finish_mutation_safety(storage, keep_safety);
             }
@@ -452,6 +481,7 @@ impl ClientState {
             Ok(()) => {
                 self.restored_session_task_ids.remove(task_id);
                 self.sessions.manual_check_blocked_task_ids.remove(task_id);
+                self.sessions.uncertain_stopped_at_epoch_ms.remove(task_id);
                 self.record_local_result(Some(task_id), true);
             }
             Err(_) => {

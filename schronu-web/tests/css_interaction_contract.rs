@@ -45,6 +45,22 @@ fn history_invocation_wraps_long_arguments_inside_the_viewport() {
     assert!(invocation.contains("min-width: 0;"));
 }
 
+#[test]
+fn loading_overlay_blocks_the_viewport_and_respects_reduced_motion() {
+    let overlay = block_body(MAIN_CSS, ".loading-overlay");
+    assert!(overlay.contains("position: fixed;"));
+    assert!(overlay.contains("inset: 0;"));
+    assert!(overlay.contains("z-index:"));
+    assert!(overlay.contains("pointer-events: auto;"));
+
+    let spinner = block_body(MAIN_CSS, ".loading-spinner");
+    assert!(spinner.contains("animation:"));
+    assert!(MAIN_CSS.contains("@keyframes loading-spin"));
+
+    let reduced_motion = block_body(MAIN_CSS, "@media (prefers-reduced-motion: reduce)");
+    assert!(block_body(reduced_motion, ".loading-spinner").contains("animation: none;"));
+}
+
 fn block_body<'a>(source: &'a str, header: &str) -> &'a str {
     let header_start = source
         .find(header)

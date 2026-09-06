@@ -220,18 +220,21 @@ fn record_sessionは経過ミリ秒をfloor秒へ変換して実績を1回だけ
     let revision_before = fs::read(fixture.storage.join(".revision")).unwrap();
     let mut service = WebService::new(fixture.storage.clone(), fixture.config());
 
+    let started_at_epoch_ms = operation_now.timestamp_millis() - 65_999;
+    let ended_at_epoch_ms = operation_now.timestamp_millis() - 5_999;
     let response = service
         .record_session_at(
             operation_now,
             RecordSessionRequest {
                 task_id: task_id.hyphenated().to_string(),
-                started_at_epoch_ms: operation_now.timestamp_millis() - 61_999,
+                started_at_epoch_ms,
+                ended_at_epoch_ms: Some(ended_at_epoch_ms),
                 expected_actual_work_seconds: 300,
             },
         )
         .unwrap();
 
-    assert_eq!(response.data.actual_work_seconds, 361);
+    assert_eq!(response.data.actual_work_seconds, 360);
     assert_eq!(
         response.snapshot.observed_at_epoch_ms,
         operation_now.timestamp_millis()
@@ -249,7 +252,7 @@ fn record_sessionは経過ミリ秒をfloor秒へ変換して実績を1回だけ
             .unwrap()
             .get_actual_work_seconds()
             .unwrap(),
-        361
+        360
     );
 }
 
@@ -262,6 +265,7 @@ fn record_sessionの二重送信は競合となり2回目は保存しない() {
     let request = RecordSessionRequest {
         task_id: task_id.hyphenated().to_string(),
         started_at_epoch_ms: operation_now.timestamp_millis() - 60_000,
+        ended_at_epoch_ms: None,
         expected_actual_work_seconds: 300,
     };
     let mut service = WebService::new(fixture.storage.clone(), fixture.config());
@@ -295,22 +299,44 @@ fn record_sessionはwire入力errorを分類して保存しない() {
         RecordSessionRequest {
             task_id: "not-a-uuid".to_string(),
             started_at_epoch_ms: operation_now.timestamp_millis(),
+            ended_at_epoch_ms: None,
             expected_actual_work_seconds: 0,
         },
         RecordSessionRequest {
             task_id: Uuid::new_v4().to_string(),
             started_at_epoch_ms: operation_now.timestamp_millis() + 1,
+            ended_at_epoch_ms: None,
             expected_actual_work_seconds: 0,
         },
         RecordSessionRequest {
             task_id: Uuid::new_v4().to_string(),
             started_at_epoch_ms: i64::MIN,
+            ended_at_epoch_ms: None,
             expected_actual_work_seconds: 0,
         },
         RecordSessionRequest {
             task_id: Uuid::new_v4().to_string(),
             started_at_epoch_ms: operation_now.timestamp_millis(),
+            ended_at_epoch_ms: None,
             expected_actual_work_seconds: -1,
+        },
+        RecordSessionRequest {
+            task_id: Uuid::new_v4().to_string(),
+            started_at_epoch_ms: operation_now.timestamp_millis(),
+            ended_at_epoch_ms: Some(operation_now.timestamp_millis() - 1),
+            expected_actual_work_seconds: 0,
+        },
+        RecordSessionRequest {
+            task_id: Uuid::new_v4().to_string(),
+            started_at_epoch_ms: operation_now.timestamp_millis(),
+            ended_at_epoch_ms: Some(operation_now.timestamp_millis() + 1),
+            expected_actual_work_seconds: 0,
+        },
+        RecordSessionRequest {
+            task_id: Uuid::new_v4().to_string(),
+            started_at_epoch_ms: operation_now.timestamp_millis(),
+            ended_at_epoch_ms: Some(i64::MAX),
+            expected_actual_work_seconds: 0,
         },
     ] {
         assert!(matches!(
@@ -335,6 +361,7 @@ fn record_sessionは日時として表現不能な開始epochを保存前に拒�
             RecordSessionRequest {
                 task_id: task_id.to_string(),
                 started_at_epoch_ms: i64::MIN / 2,
+                ended_at_epoch_ms: None,
                 expected_actual_work_seconds: 300,
             },
         )
@@ -356,6 +383,7 @@ fn record_sessionはsnapshot失敗時のmutationを後続requestへ持ち越さ�
     let request = RecordSessionRequest {
         task_id: task_id.to_string(),
         started_at_epoch_ms: operation_now.timestamp_millis() - 1_000,
+        ended_at_epoch_ms: None,
         expected_actual_work_seconds: 0,
     };
 
@@ -416,6 +444,7 @@ fn record_sessionは未知taskと完了済みtaskと競合と加算overflowで�
                 RecordSessionRequest {
                     task_id: task_id.to_string(),
                     started_at_epoch_ms,
+                    ended_at_epoch_ms: None,
                     expected_actual_work_seconds: expected,
                 },
             )
@@ -457,12 +486,15 @@ fn complete_sessionは経過秒加算と完了を1回の保存で反映してsna
     let task_id = fixture.seed_fixed_task(seeded_at);
     let mut service = WebService::new(fixture.storage.clone(), fixture.config());
 
+    let started_at_epoch_ms = operation_now.timestamp_millis() - 65_999;
+    let ended_at_epoch_ms = operation_now.timestamp_millis() - 5_999;
     let response = service
         .complete_session_at(
             operation_now,
             CompleteSessionRequest {
                 task_id: task_id.to_string(),
-                started_at_epoch_ms: operation_now.timestamp_millis() - 61_999,
+                started_at_epoch_ms,
+                ended_at_epoch_ms: Some(ended_at_epoch_ms),
                 expected_actual_work_seconds: 300,
                 record_elapsed_seconds: true,
             },
@@ -477,14 +509,14 @@ fn complete_sessionは経過秒加算と完了を1回の保存で反映してsna
     let mut repository = TaskRepository::new(fixture.storage.to_str().unwrap());
     repository.reload_if_changed(operation_now).unwrap();
     let completed = repository.get_by_id(task_id).unwrap().unwrap();
-    assert_eq!(completed.get_actual_work_seconds().unwrap(), 361);
+    assert_eq!(completed.get_actual_work_seconds().unwrap(), 360);
     assert_eq!(completed.get_status().unwrap(), Status::Done);
     assert_eq!(
         completed
             .get_end_time_opt()
             .unwrap()
             .map(|finished_at| finished_at.timestamp()),
-        Some(operation_now.timestamp())
+        Some(ended_at_epoch_ms / 1_000)
     );
 }
 
@@ -502,6 +534,7 @@ fn complete_sessionは計測破棄指定時に実績を加算せずtaskを完了
             CompleteSessionRequest {
                 task_id: task_id.to_string(),
                 started_at_epoch_ms: i64::MAX,
+                ended_at_epoch_ms: None,
                 expected_actual_work_seconds: 300,
                 record_elapsed_seconds: false,
             },
@@ -536,6 +569,7 @@ fn complete_sessionは計測破棄指定でも期待実績競合時に状態を�
             CompleteSessionRequest {
                 task_id: task_id.to_string(),
                 started_at_epoch_ms: i64::MAX,
+                ended_at_epoch_ms: None,
                 expected_actual_work_seconds: 299,
                 record_elapsed_seconds: false,
             },
@@ -565,6 +599,7 @@ fn complete_sessionは期待実績競合時にtaskと永続dataを変更しな�
             CompleteSessionRequest {
                 task_id: task_id.to_string(),
                 started_at_epoch_ms: operation_now.timestamp_millis() - 60_000,
+                ended_at_epoch_ms: None,
                 expected_actual_work_seconds: 299,
                 record_elapsed_seconds: true,
             },
@@ -595,6 +630,7 @@ fn complete_sessionは記録方針にかかわらず反復task生成と元task�
                 CompleteSessionRequest {
                     task_id: child_id.to_string(),
                     started_at_epoch_ms: operation_now.timestamp_millis() - 60_000,
+                    ended_at_epoch_ms: None,
                     expected_actual_work_seconds: 300,
                     record_elapsed_seconds,
                 },
@@ -645,6 +681,7 @@ fn complete_sessionは計測破棄指定でも未完了childがあれば保存�
             CompleteSessionRequest {
                 task_id: parent_id.to_string(),
                 started_at_epoch_ms: i64::MAX,
+                ended_at_epoch_ms: None,
                 expected_actual_work_seconds: 300,
                 record_elapsed_seconds: false,
             },
@@ -668,6 +705,7 @@ fn complete_sessionは計測破棄指定のcommit前保存失敗後に同一requ
     let request = CompleteSessionRequest {
         task_id: task_id.to_string(),
         started_at_epoch_ms: i64::MAX,
+        ended_at_epoch_ms: None,
         expected_actual_work_seconds: 300,
         record_elapsed_seconds: false,
     };
@@ -704,6 +742,7 @@ fn record_sessionはcommit前save失敗後に同一requestを再試行できる(
     let request = RecordSessionRequest {
         task_id: task_id.to_string(),
         started_at_epoch_ms: operation_now.timestamp_millis() - 60_000,
+        ended_at_epoch_ms: None,
         expected_actual_work_seconds: 300,
     };
     let io = Arc::new(RecordingIo::new(vec![FaultRule {
@@ -740,6 +779,7 @@ fn record_sessionはcommit後save失敗で後続mutationを拒否する() {
     let request = RecordSessionRequest {
         task_id: task_id.to_string(),
         started_at_epoch_ms: operation_now.timestamp_millis() - 60_000,
+        ended_at_epoch_ms: None,
         expected_actual_work_seconds: 300,
     };
     let io = Arc::new(RecordingIo::new(vec![FaultRule {

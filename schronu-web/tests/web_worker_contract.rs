@@ -28,11 +28,13 @@ fn workerは5操作を送信順に専用threadで実行してpayloadを保持す
     let request = RecordSessionRequest {
         task_id: "task-1".to_owned(),
         started_at_epoch_ms: 123,
+        ended_at_epoch_ms: None,
         expected_actual_work_seconds: 456,
     };
     let complete_request = CompleteSessionRequest {
         task_id: request.task_id.clone(),
         started_at_epoch_ms: request.started_at_epoch_ms,
+        ended_at_epoch_ms: request.ended_at_epoch_ms,
         expected_actual_work_seconds: request.expected_actual_work_seconds,
         record_elapsed_seconds: false,
     };
