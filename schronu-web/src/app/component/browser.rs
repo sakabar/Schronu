@@ -1,8 +1,13 @@
+use super::super::carry_lock_view::CarryLockBar;
 use super::super::component_dispatch::{dispatch_action, dispatch_session_action};
-use super::super::component_models::{browser_now_epoch_ms, BrowserPageModel};
+use super::super::component_models::{
+    browser_monotonic_now_ms, browser_now_epoch_ms, BrowserPageModel,
+};
 use super::super::component_runtime::{ComponentAction, ComponentOrchestrator};
 use super::super::history_view::HistoryView;
 use super::super::list_view::ListView;
+use super::super::long_press_browser::BrowserLongPressScheduler;
+use super::super::long_press_controller::LongPressSchedulerHandle;
 use super::super::session_view::SessionView;
 use crate::client::state::ActiveTab;
 use crate::client::time_model::format_hh_mm_ss;
@@ -14,6 +19,8 @@ const TICK_MILLIS: u32 = 1_000;
 #[component]
 pub(super) fn BrowserApp() -> Element {
     let mut client = use_signal(ComponentOrchestrator::new);
+    let long_press_scheduler =
+        use_hook(|| LongPressSchedulerHandle::new(BrowserLongPressScheduler));
 
     use_effect(move || {
         let effect = client
@@ -25,7 +32,12 @@ pub(super) fn BrowserApp() -> Element {
     use_future(move || async move {
         loop {
             gloo_timers::future::TimeoutFuture::new(TICK_MILLIS).await;
-            dispatch_action(client, ComponentAction::Tick(browser_now_epoch_ms()));
+            dispatch_action(
+                client,
+                ComponentAction::Tick {
+                    wall_now_epoch_ms: browser_now_epoch_ms(),
+                },
+            );
         }
     });
 
@@ -34,7 +46,7 @@ pub(super) fn BrowserApp() -> Element {
         let Some(state) = client.state() else {
             return loading_shell();
         };
-        BrowserPageModel::from_state(state)
+        BrowserPageModel::from_state_at(state, browser_monotonic_now_ms())
     };
     let BrowserPageModel {
         active_tab,
@@ -51,11 +63,20 @@ pub(super) fn BrowserApp() -> Element {
         can_confirm,
         auto_session_in_flight,
         auto_session_empty,
+        carry_lock,
     } = model;
+    let mutations_locked = carry_lock.mutations_locked();
 
     rsx! {
         main { class: "shell",
             header { class: "toolbar", h1 { "Schronu" } }
+            CarryLockBar {
+                model: carry_lock,
+                scheduler: long_press_scheduler,
+                on_enable: move |_| dispatch_action(client, ComponentAction::EnableCarryLock),
+                on_arm: move |_| dispatch_action(client, ComponentAction::ArmCarryLock),
+                on_disable: move |_| dispatch_action(client, ComponentAction::DisableCarryLock),
+            }
             BufferPanel { value: buffer }
             nav { class: "tabs", aria_label: "表示切替",
                 TabButton {
@@ -77,7 +98,7 @@ pub(super) fn BrowserApp() -> Element {
                     p { "{warning}" }
                     button {
                         r#type: "button",
-                        disabled: !can_confirm,
+                        disabled: !can_confirm || mutations_locked,
                         onclick: move |_| dispatch_action(client, ComponentAction::ConfirmRepositoryChecked),
                         "repository確認済み"
                     }
@@ -93,15 +114,18 @@ pub(super) fn BrowserApp() -> Element {
                 SessionView {
                     sessions,
                     global_blocked,
+                    mutations_locked,
                     auto_session_in_flight,
                     on_auto_session: move |_| dispatch_action(client, ComponentAction::AutoSession),
                     on_action: move |action| dispatch_session_action(client, action),
+                    on_cancel_authorization: move |_| dispatch_action(client, ComponentAction::RelockCarryLock),
                 }
             } else {
                 ListView {
                     dates,
                     rows,
                     active_task_ids,
+                    mutations_locked,
                     on_select_date: move |date| dispatch_action(client, ComponentAction::SelectDate(date)),
                     on_start_session: move |(task, is_leaf)| dispatch_action(
                         client,

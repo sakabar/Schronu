@@ -7,15 +7,25 @@ use super::session_view::{SessionAction, SessionActionKind};
 
 pub(crate) enum ComponentAction {
     SwitchTab(ActiveTab),
-    Tick(i64),
+    Tick {
+        wall_now_epoch_ms: i64,
+    },
     SelectDate(String),
     AutoSession,
-    AddSession { task: SessionTask, is_leaf: bool },
+    AddSession {
+        task: SessionTask,
+        is_leaf: bool,
+    },
     DiscardSession(String),
     RecordSession(String),
     CompleteSession(String),
     CompleteSessionWithoutRecording(String),
     ConfirmRepositoryChecked,
+    EnableCarryLock,
+    ArmCarryLock,
+    DisableCarryLock,
+    #[cfg_attr(not(all(feature = "web", target_arch = "wasm32")), allow(dead_code))]
+    RelockCarryLock,
 }
 
 pub(crate) fn component_action_from_session_action(action: SessionAction) -> ComponentAction {
@@ -31,9 +41,9 @@ pub(crate) fn component_action_from_session_action(action: SessionAction) -> Com
 
 pub(crate) fn initialize_client<S: KeyValueStorage>(
     storage: &S,
-    now_epoch_ms: i64,
+    wall_now_epoch_ms: i64,
 ) -> (ClientState, ClientEffect) {
-    let mut state = load_client_state_for_ui(storage, now_epoch_ms);
+    let mut state = load_client_state_for_ui(storage, wall_now_epoch_ms);
     let effect = state.request_bootstrap();
     (state, effect)
 }
@@ -55,12 +65,16 @@ impl ComponentOrchestrator {
         self.state.as_ref()
     }
 
-    pub fn mount<S: KeyValueStorage>(&mut self, storage: &S, now_epoch_ms: i64) -> ClientEffect {
+    pub fn mount<S: KeyValueStorage>(
+        &mut self,
+        storage: &S,
+        wall_now_epoch_ms: i64,
+    ) -> ClientEffect {
         if self.mounted {
             return ClientEffect::None;
         }
         self.mounted = true;
-        let (state, effect) = initialize_client(storage, now_epoch_ms);
+        let (state, effect) = initialize_client(storage, wall_now_epoch_ms);
         self.state = Some(state);
         effect
     }
@@ -68,10 +82,11 @@ impl ComponentOrchestrator {
     pub fn action<S: KeyValueStorage>(
         &mut self,
         storage: &S,
+        monotonic_now_ms: u64,
         action: ComponentAction,
     ) -> ClientEffect {
         self.state.as_mut().map_or(ClientEffect::None, |state| {
-            reduce_component_action(state, storage, action)
+            reduce_component_action_at(state, storage, monotonic_now_ms, action)
         })
     }
 
@@ -86,14 +101,26 @@ impl ComponentOrchestrator {
     }
 }
 
-pub(crate) fn reduce_component_action<S: KeyValueStorage>(
+pub(crate) fn reduce_component_action_at<S: KeyValueStorage>(
     state: &mut ClientState,
     storage: &S,
+    monotonic_now_ms: u64,
     action: ComponentAction,
 ) -> ClientEffect {
+    state.observe_carry_lock_time(monotonic_now_ms);
+    match action {
+        ComponentAction::EnableCarryLock => return state.enable_carry_lock(storage),
+        ComponentAction::ArmCarryLock => return state.arm_carry_lock(monotonic_now_ms),
+        ComponentAction::DisableCarryLock => return state.disable_carry_lock(storage),
+        ComponentAction::RelockCarryLock => return state.relock_carry_lock(),
+        _ => {}
+    }
+    if is_carry_lock_mutation(&action) && !state.authorize_carry_lock_mutation() {
+        return ClientEffect::None;
+    }
     match action {
         ComponentAction::SwitchTab(tab) => state.switch_tab(tab),
-        ComponentAction::Tick(now_epoch_ms) => state.tick(now_epoch_ms),
+        ComponentAction::Tick { wall_now_epoch_ms } => state.tick(wall_now_epoch_ms),
         ComponentAction::SelectDate(logical_date) => state.request_list(&logical_date),
         ComponentAction::AutoSession => state.request_auto_session(),
         ComponentAction::AddSession { task, is_leaf } => {
@@ -108,5 +135,22 @@ pub(crate) fn reduce_component_action<S: KeyValueStorage>(
             state.begin_complete_session_without_recording(storage, &task_id)
         }
         ComponentAction::ConfirmRepositoryChecked => state.confirm_repository_checked(storage),
+        ComponentAction::EnableCarryLock
+        | ComponentAction::ArmCarryLock
+        | ComponentAction::DisableCarryLock => ClientEffect::None,
+        ComponentAction::RelockCarryLock => ClientEffect::None,
     }
+}
+
+fn is_carry_lock_mutation(action: &ComponentAction) -> bool {
+    matches!(
+        action,
+        ComponentAction::AutoSession
+            | ComponentAction::AddSession { .. }
+            | ComponentAction::DiscardSession(_)
+            | ComponentAction::RecordSession(_)
+            | ComponentAction::CompleteSession(_)
+            | ComponentAction::CompleteSessionWithoutRecording(_)
+            | ComponentAction::ConfirmRepositoryChecked
+    )
 }

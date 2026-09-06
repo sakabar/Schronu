@@ -7,7 +7,9 @@ use super::view_test_support::{
     dispatch_click, rebuild_with_click_listeners, render_with_click_listeners,
 };
 use dioxus::dioxus_core::ElementId;
+use dioxus::dioxus_core::ScopeId;
 use dioxus::prelude::*;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 #[derive(Clone)]
 struct RootProps {
@@ -19,15 +21,18 @@ struct RootProps {
 fn test_root(props: RootProps) -> Element {
     let auto_events = Arc::clone(&props.events);
     let action_events = Arc::clone(&props.events);
+    let cancel_events = Arc::clone(&props.events);
     rsx! {
         SessionView {
             sessions: props.sessions,
             global_blocked: props.global_blocked,
+            mutations_locked: false,
             on_auto_session: move |_| auto_events.lock().unwrap().push("auto".to_owned()),
             on_action: move |action: SessionAction| action_events
                 .lock()
                 .unwrap()
                 .push(format!("{}:{:?}", action.task_id, action.kind)),
+            on_cancel_authorization: move |_| cancel_events.lock().unwrap().push("relock".to_owned()),
         }
     }
 }
@@ -43,11 +48,104 @@ fn auto_root(props: AutoRootProps) -> Element {
         SessionView {
             sessions: Vec::new(),
             global_blocked: true,
+            mutations_locked: false,
             auto_session_in_flight: props.in_flight,
             on_auto_session: move |_| props.events.lock().unwrap().push("auto".to_owned()),
             on_action: move |_: SessionAction| {},
         }
     }
+}
+
+#[test]
+fn carry_lockはauto_sessionと四操作をすべて無効化する() {
+    let events = Arc::new(Mutex::new(Vec::new()));
+    let mut empty = VirtualDom::new_with_props(
+        locked_root,
+        RootProps {
+            sessions: Vec::new(),
+            global_blocked: false,
+            events: Arc::clone(&events),
+        },
+    );
+    let empty_ids = rebuild_with_click_listeners(&mut empty);
+    let empty_html = dioxus::ssr::render(&empty);
+    assert!(empty_html.contains("disabled"), "{empty_html}");
+    for id in empty_ids {
+        dispatch_click(&empty, id);
+    }
+
+    let mut session = VirtualDom::new_with_props(
+        locked_root,
+        RootProps {
+            sessions: vec![card("locked")],
+            global_blocked: false,
+            events: Arc::clone(&events),
+        },
+    );
+    let ids = rebuild_with_click_listeners(&mut session);
+    assert_eq!(dioxus::ssr::render(&session).matches("disabled").count(), 4);
+    for id in ids {
+        dispatch_click(&session, id);
+    }
+    assert!(events.lock().unwrap().is_empty());
+}
+
+fn locked_root(props: RootProps) -> Element {
+    let auto_events = Arc::clone(&props.events);
+    let action_events = Arc::clone(&props.events);
+    rsx! {
+        SessionView {
+            sessions: props.sessions,
+            global_blocked: props.global_blocked,
+            mutations_locked: true,
+            on_auto_session: move |_| auto_events.lock().unwrap().push("auto".to_owned()),
+            on_action: move |action: SessionAction| action_events.lock().unwrap().push(format!("{}:{:?}", action.task_id, action.kind)),
+        }
+    }
+}
+
+#[derive(Clone)]
+struct ReactiveLockRootProps {
+    locked: Arc<AtomicBool>,
+}
+
+fn reactive_lock_root(props: ReactiveLockRootProps) -> Element {
+    rsx! {
+        SessionView {
+            sessions: vec![card("reactive-lock")],
+            global_blocked: false,
+            mutations_locked: props.locked.load(Ordering::SeqCst),
+            on_auto_session: move |_| {},
+            on_action: move |_: SessionAction| {},
+        }
+    }
+}
+
+#[test]
+fn falseからtrueへ再描画されたcarry_lock_propは完了確認を閉じる() {
+    let locked = Arc::new(AtomicBool::new(false));
+    let mut dom = VirtualDom::new_with_props(
+        reactive_lock_root,
+        ReactiveLockRootProps {
+            locked: Arc::clone(&locked),
+        },
+    );
+    let action_ids = rebuild_with_click_listeners(&mut dom)
+        .into_iter()
+        .rev()
+        .collect::<Vec<_>>();
+    dispatch_click(&dom, action_ids[2]);
+    render_with_click_listeners(&mut dom);
+    assert!(dioxus::ssr::render(&dom).contains("タスクを完了しますか?"));
+
+    locked.store(true, Ordering::SeqCst);
+    dom.mark_dirty(ScopeId::APP);
+    render_with_click_listeners(&mut dom);
+    render_with_click_listeners(&mut dom);
+
+    let html = dioxus::ssr::render(&dom);
+    assert!(!html.contains("タスクを完了しますか?"), "{html}");
+    assert_eq!(html.matches("disabled").count(), 4, "{html}");
 }
 
 fn render(sessions: Vec<SessionCardViewModel>, global_blocked: bool) -> (String, Vec<String>) {
@@ -263,8 +361,9 @@ fn 計測破棄完了はcard内で確認し確定時だけtyped_callbackを送�
     dispatch_click(&cancel_dom, confirm_ids[0]);
     render_with_click_listeners(&mut cancel_dom);
     assert!(!dioxus::ssr::render(&cancel_dom).contains("タスクを完了しますか?"));
-    assert!(events.lock().unwrap().is_empty());
+    assert_eq!(*events.lock().unwrap(), ["relock"]);
 
+    events.lock().unwrap().clear();
     let (mut confirm_dom, action_ids) = build_dom(vec![card("task-b")], false, Arc::clone(&events));
     let action_ids: Vec<_> = action_ids.into_iter().rev().collect();
     dispatch_click(&confirm_dom, action_ids[2]);

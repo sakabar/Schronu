@@ -14,11 +14,14 @@ pub const OTHER_TASK_ID: &str = "00000000-0000-4000-8000-000000000002";
 pub struct FakeStorage {
     pub value: RefCell<Option<String>>,
     pub safety_value: RefCell<Option<String>>,
+    pub carry_lock_value: RefCell<Option<String>>,
     pub fail_writes: Cell<bool>,
     pub fail_work_session_writes: Cell<bool>,
     pub fail_safety_writes: Cell<bool>,
     pub fail_work_session_reads: Cell<bool>,
     pub fail_safety_reads: Cell<bool>,
+    pub fail_carry_lock_reads: Cell<bool>,
+    pub fail_carry_lock_writes: Cell<bool>,
 }
 
 impl KeyValueStorage for FakeStorage {
@@ -29,9 +32,13 @@ impl KeyValueStorage for FakeStorage {
         if key == "schronu_web.mutation_safety.v1" && self.fail_safety_reads.get() {
             return Err(StorageError::ReadFailed);
         }
+        if key == "schronu_web.carry_lock.v1" && self.fail_carry_lock_reads.get() {
+            return Err(StorageError::ReadFailed);
+        }
         match key {
             WORK_SESSIONS_STORAGE_KEY => Ok(self.value.borrow().clone()),
             "schronu_web.mutation_safety.v1" => Ok(self.safety_value.borrow().clone()),
+            "schronu_web.carry_lock.v1" => Ok(self.carry_lock_value.borrow().clone()),
             other => panic!("unexpected key: {other}"),
         }
     }
@@ -46,10 +53,16 @@ impl KeyValueStorage for FakeStorage {
         if key == "schronu_web.mutation_safety.v1" && self.fail_safety_writes.get() {
             return Err(StorageError::WriteFailed);
         }
+        if key == "schronu_web.carry_lock.v1" && self.fail_carry_lock_writes.get() {
+            return Err(StorageError::WriteFailed);
+        }
         match key {
             WORK_SESSIONS_STORAGE_KEY => *self.value.borrow_mut() = Some(value.to_owned()),
             "schronu_web.mutation_safety.v1" => {
                 *self.safety_value.borrow_mut() = Some(value.to_owned());
+            }
+            "schronu_web.carry_lock.v1" => {
+                *self.carry_lock_value.borrow_mut() = Some(value.to_owned());
             }
             other => panic!("unexpected key: {other}"),
         }

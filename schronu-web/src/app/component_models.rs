@@ -1,3 +1,4 @@
+use super::carry_lock_view::CarryLockViewModel;
 use super::history_view::HistoryEntryViewModel;
 use super::list_view::DateButtonViewModel;
 use crate::client::state::{ActiveTab, ClientState, Operation, Outcome};
@@ -21,10 +22,16 @@ pub(crate) struct BrowserPageModel {
     pub can_confirm: bool,
     pub auto_session_in_flight: bool,
     pub auto_session_empty: bool,
+    pub carry_lock: CarryLockViewModel,
 }
 
 impl BrowserPageModel {
+    #[cfg(test)]
     pub fn from_state(state: &ClientState) -> Self {
+        Self::from_state_at(state, 0)
+    }
+
+    pub fn from_state_at(state: &ClientState, monotonic_now_ms: u64) -> Self {
         Self {
             active_tab: state.active_tab(),
             buffer: state.display_buffer_seconds(),
@@ -45,7 +52,7 @@ impl BrowserPageModel {
                 })
                 .collect(),
             history: history_view_models(state),
-            warnings: state.storage_warnings().to_vec(),
+            warnings: state.all_storage_warnings(),
             safety_warning: state.mutation_safety_warning(),
             display_error: state
                 .display_error()
@@ -54,12 +61,22 @@ impl BrowserPageModel {
             can_confirm: state.can_confirm_repository_checked(),
             auto_session_in_flight: state.auto_session_in_flight(),
             auto_session_empty: state.auto_session_empty(),
+            carry_lock: CarryLockViewModel::new(state.carry_lock_mode(), monotonic_now_ms),
         }
     }
 }
 
+#[cfg(all(feature = "web", target_arch = "wasm32"))]
 pub(crate) fn browser_now_epoch_ms() -> i64 {
     js_sys::Date::now() as i64
+}
+
+#[cfg(all(feature = "web", target_arch = "wasm32"))]
+pub(crate) fn browser_monotonic_now_ms() -> u64 {
+    web_sys::window()
+        .and_then(|window| window.performance())
+        .map(|performance| performance.now() as u64)
+        .expect("browser Performance API must be available")
 }
 
 fn history_view_models(state: &ClientState) -> Vec<HistoryEntryViewModel> {

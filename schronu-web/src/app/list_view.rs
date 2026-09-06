@@ -15,6 +15,7 @@ pub fn ListView(
     dates: Vec<DateButtonViewModel>,
     rows: Vec<ListRowViewModel>,
     active_task_ids: Vec<String>,
+    #[props(default)] mutations_locked: bool,
     on_select_date: EventHandler<String>,
     on_start_session: EventHandler<(SessionTask, bool)>,
 ) -> Element {
@@ -40,6 +41,7 @@ pub fn ListView(
                             TaskRow {
                                 active: active_task_ids.iter().any(|task_id| task_id == &row.task.task_id),
                                 row,
+                                mutations_locked,
                                 on_start_session,
                             }
                         }
@@ -72,6 +74,7 @@ fn DateButton(date: DateButtonViewModel, on_select_date: EventHandler<String>) -
 fn TaskRow(
     row: ListRowViewModel,
     active: bool,
+    mutations_locked: bool,
     on_start_session: EventHandler<(SessionTask, bool)>,
 ) -> Element {
     let deadline_class = if row.misses_deadline {
@@ -100,9 +103,9 @@ fn TaskRow(
                         class: "session-start",
                         r#type: "button",
                         aria_label: button_label,
-                        disabled: active,
+                        disabled: active || mutations_locked,
                         onclick: move |_| {
-                            if !active {
+                            if !active && !mutations_locked {
                                 on_start_session.call((task.clone(), is_leaf));
                             }
                         },

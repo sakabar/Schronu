@@ -1,7 +1,14 @@
+#[cfg(any(test, all(feature = "web", target_arch = "wasm32")))]
+mod carry_lock_view;
+#[cfg(test)]
+mod carry_lock_view_tests;
 mod component;
 #[cfg(all(feature = "web", target_arch = "wasm32"))]
 mod component_dispatch;
-#[cfg(all(feature = "web", target_arch = "wasm32"))]
+#[cfg(any(
+    all(test, feature = "web"),
+    all(feature = "web", target_arch = "wasm32")
+))]
 mod component_models;
 #[cfg(any(test, all(feature = "web", target_arch = "wasm32")))]
 mod component_runtime;
@@ -19,6 +26,12 @@ mod history_view_tests;
 pub(crate) mod list_view;
 #[cfg(test)]
 mod list_view_tests;
+#[cfg(all(feature = "web", target_arch = "wasm32"))]
+mod long_press_browser;
+#[cfg(any(test, all(feature = "web", target_arch = "wasm32")))]
+mod long_press_controller;
+#[cfg(test)]
+mod long_press_controller_tests;
 #[cfg(test)]
 mod projection_boundary_tests;
 pub(crate) mod session_view;

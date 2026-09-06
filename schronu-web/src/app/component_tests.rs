@@ -1,8 +1,10 @@
 #![cfg(feature = "server")]
 
 use super::component::app;
+#[cfg(feature = "web")]
+use super::component_models::BrowserPageModel;
 use super::component_runtime::{
-    component_action_from_session_action, initialize_client, reduce_component_action,
+    component_action_from_session_action, initialize_client, reduce_component_action_at,
     ComponentAction, ComponentOrchestrator,
 };
 use super::effect_dispatcher::ClientResponse;
@@ -63,7 +65,9 @@ fn component_actionは仕様の五操作だけをserver_effectへ変換する() 
 
     for action in [
         ComponentAction::SwitchTab(ActiveTab::List),
-        ComponentAction::Tick(2_000),
+        ComponentAction::Tick {
+            wall_now_epoch_ms: 2_000,
+        },
         ComponentAction::AddSession {
             task: task(RECORD_ID),
             is_leaf: true,
@@ -72,28 +76,30 @@ fn component_actionは仕様の五操作だけをserver_effectへ変換する() 
         ComponentAction::ConfirmRepositoryChecked,
     ] {
         assert_eq!(
-            reduce_component_action(&mut state, &storage, action),
+            reduce_component_action_at(&mut state, &storage, 2_000, action),
             ClientEffect::None
         );
     }
 
     assert!(matches!(
-        reduce_component_action(
+        reduce_component_action_at(
             &mut state,
             &storage,
+            2_000,
             ComponentAction::SelectDate("2026-09-05".to_owned())
         ),
         ClientEffect::ListTasks { request, .. } if request.logical_date == "2026-09-05"
     ));
     assert!(matches!(
-        reduce_component_action(&mut state, &storage, ComponentAction::AutoSession),
+        reduce_component_action_at(&mut state, &storage, 2_000, ComponentAction::AutoSession),
         ClientEffect::AutoSession { .. }
     ));
 
     assert_eq!(
-        reduce_component_action(
+        reduce_component_action_at(
             &mut state,
             &storage,
+            2_000,
             ComponentAction::AddSession {
                 task: task(RECORD_ID),
                 is_leaf: true,
@@ -102,9 +108,10 @@ fn component_actionは仕様の五操作だけをserver_effectへ変換する() 
         ClientEffect::None
     );
     assert!(matches!(
-        reduce_component_action(
+        reduce_component_action_at(
             &mut state,
             &storage,
+            2_000,
             ComponentAction::RecordSession(RECORD_ID.to_owned())
         ),
         ClientEffect::RecordSession { request, .. } if request.task_id == RECORD_ID
@@ -112,18 +119,20 @@ fn component_actionは仕様の五操作だけをserver_effectへ変換する() 
 
     let other_storage = MemoryStorage::default();
     let (mut other_state, _) = initialize_client(&other_storage, 1_000);
-    reduce_component_action(
+    reduce_component_action_at(
         &mut other_state,
         &other_storage,
+        1_000,
         ComponentAction::AddSession {
             task: task(COMPLETE_ID),
             is_leaf: true,
         },
     );
     assert!(matches!(
-        reduce_component_action(
+        reduce_component_action_at(
             &mut other_state,
             &other_storage,
+            1_000,
             ComponentAction::CompleteSession(COMPLETE_ID.to_owned())
         ),
         ClientEffect::CompleteSession { request, .. } if request.task_id == COMPLETE_ID
@@ -132,18 +141,20 @@ fn component_actionは仕様の五操作だけをserver_effectへ変換する() 
 
     let discard_complete_storage = MemoryStorage::default();
     let (mut discard_complete_state, _) = initialize_client(&discard_complete_storage, 1_000);
-    reduce_component_action(
+    reduce_component_action_at(
         &mut discard_complete_state,
         &discard_complete_storage,
+        1_000,
         ComponentAction::AddSession {
             task: task(COMPLETE_ID),
             is_leaf: true,
         },
     );
     assert!(matches!(
-        reduce_component_action(
+        reduce_component_action_at(
             &mut discard_complete_state,
             &discard_complete_storage,
+            1_000,
             ComponentAction::CompleteSessionWithoutRecording(COMPLETE_ID.to_owned())
         ),
         ClientEffect::CompleteSession { request, .. } if request.task_id == COMPLETE_ID
@@ -152,14 +163,316 @@ fn component_actionは仕様の五操作だけをserver_effectへ変換する() 
 }
 
 #[test]
+fn 持ち歩きロックは変更操作だけを中央で遮断しarmedを一度だけ消費する() {
+    let storage = MemoryStorage::default();
+    let (mut state, _) = initialize_client(&storage, 1_000);
+    reduce_component_action_at(
+        &mut state,
+        &storage,
+        1_000,
+        ComponentAction::EnableCarryLock,
+    );
+
+    for action in [
+        ComponentAction::AutoSession,
+        ComponentAction::AddSession {
+            task: task(RECORD_ID),
+            is_leaf: true,
+        },
+        ComponentAction::DiscardSession(RECORD_ID.to_owned()),
+        ComponentAction::RecordSession(RECORD_ID.to_owned()),
+        ComponentAction::CompleteSession(RECORD_ID.to_owned()),
+        ComponentAction::CompleteSessionWithoutRecording(RECORD_ID.to_owned()),
+        ComponentAction::ConfirmRepositoryChecked,
+    ] {
+        assert_eq!(
+            reduce_component_action_at(&mut state, &storage, 1_001, action),
+            ClientEffect::None
+        );
+    }
+
+    for action in [
+        ComponentAction::AutoSession,
+        ComponentAction::AddSession {
+            task: task(RECORD_ID),
+            is_leaf: true,
+        },
+        ComponentAction::DiscardSession(RECORD_ID.to_owned()),
+        ComponentAction::RecordSession(RECORD_ID.to_owned()),
+        ComponentAction::CompleteSession(RECORD_ID.to_owned()),
+        ComponentAction::CompleteSessionWithoutRecording(RECORD_ID.to_owned()),
+        ComponentAction::ConfirmRepositoryChecked,
+    ] {
+        let action_storage = MemoryStorage::default();
+        let (mut action_state, _) = initialize_client(&action_storage, 1_000);
+        reduce_component_action_at(
+            &mut action_state,
+            &action_storage,
+            1_000,
+            ComponentAction::EnableCarryLock,
+        );
+        reduce_component_action_at(
+            &mut action_state,
+            &action_storage,
+            2_000,
+            ComponentAction::ArmCarryLock,
+        );
+
+        let _ = reduce_component_action_at(&mut action_state, &action_storage, 2_001, action);
+
+        assert!(action_state.carry_lock_locked());
+    }
+
+    reduce_component_action_at(&mut state, &storage, 2_000, ComponentAction::ArmCarryLock);
+    assert_eq!(
+        reduce_component_action_at(
+            &mut state,
+            &storage,
+            2_001,
+            ComponentAction::SwitchTab(ActiveTab::List)
+        ),
+        ClientEffect::None
+    );
+    assert_eq!(
+        reduce_component_action_at(
+            &mut state,
+            &storage,
+            2_002,
+            ComponentAction::Tick {
+                wall_now_epoch_ms: 2_002,
+            }
+        ),
+        ClientEffect::None
+    );
+    assert!(matches!(
+        reduce_component_action_at(
+            &mut state,
+            &storage,
+            2_002,
+            ComponentAction::SelectDate("2026-09-05".to_owned())
+        ),
+        ClientEffect::ListTasks { .. }
+    ));
+    assert!(matches!(
+        reduce_component_action_at(&mut state, &storage, 2_003, ComponentAction::AutoSession),
+        ClientEffect::AutoSession { .. }
+    ));
+    assert_eq!(
+        reduce_component_action_at(
+            &mut state,
+            &storage,
+            2_003,
+            ComponentAction::AddSession {
+                task: task(RECORD_ID),
+                is_leaf: true,
+            }
+        ),
+        ClientEffect::None,
+        "同時刻の2件目も遮断する"
+    );
+    reduce_component_action_at(
+        &mut state,
+        &storage,
+        2_004,
+        ComponentAction::DisableCarryLock,
+    );
+}
+
+#[test]
+fn armed期限判定はactionのmonotonic時刻を使い期限切れ操作を遮断する() {
+    let storage = MemoryStorage::default();
+    let (mut state, _) = initialize_client(&storage, 1_000);
+    reduce_component_action_at(
+        &mut state,
+        &storage,
+        1_000,
+        ComponentAction::EnableCarryLock,
+    );
+    reduce_component_action_at(&mut state, &storage, 2_000, ComponentAction::ArmCarryLock);
+
+    assert_eq!(
+        reduce_component_action_at(&mut state, &storage, 17_000, ComponentAction::AutoSession),
+        ClientEffect::None
+    );
+    assert!(state.carry_lock_locked());
+}
+
+#[test]
+fn armedはmonotonic時刻が期限へ到達した時点でlockedへ戻る() {
+    let storage = MemoryStorage::default();
+    let (mut state, _) = initialize_client(&storage, 1_000);
+    reduce_component_action_at(
+        &mut state,
+        &storage,
+        1_000,
+        ComponentAction::EnableCarryLock,
+    );
+    reduce_component_action_at(&mut state, &storage, 2_000, ComponentAction::ArmCarryLock);
+
+    reduce_component_action_at(
+        &mut state,
+        &storage,
+        16_999,
+        ComponentAction::Tick {
+            wall_now_epoch_ms: i64::MAX,
+        },
+    );
+    assert!(!state.carry_lock_locked());
+
+    reduce_component_action_at(
+        &mut state,
+        &storage,
+        17_000,
+        ComponentAction::Tick {
+            wall_now_epoch_ms: i64::MIN,
+        },
+    );
+    assert!(state.carry_lock_locked());
+}
+
+#[test]
+fn discard_completionのcancelはarmedを即時にlockedへ戻す() {
+    let storage = MemoryStorage::default();
+    let (mut state, _) = initialize_client(&storage, 1_000);
+    reduce_component_action_at(
+        &mut state,
+        &storage,
+        1_000,
+        ComponentAction::EnableCarryLock,
+    );
+    reduce_component_action_at(&mut state, &storage, 2_000, ComponentAction::ArmCarryLock);
+
+    assert!(!state.carry_lock_locked());
+    assert_eq!(
+        reduce_component_action_at(
+            &mut state,
+            &storage,
+            2_500,
+            ComponentAction::RelockCarryLock,
+        ),
+        ClientEffect::None
+    );
+    assert!(state.carry_lock_locked());
+}
+
+#[test]
+fn wall_clock変動にかかわらずarmedはmonotonic_15秒境界で失効する() {
+    let storage = MemoryStorage::default();
+    let (mut tick_state, _) = initialize_client(&storage, 1_000);
+    reduce_component_action_at(
+        &mut tick_state,
+        &storage,
+        1_000,
+        ComponentAction::EnableCarryLock,
+    );
+    reduce_component_action_at(
+        &mut tick_state,
+        &storage,
+        2_000,
+        ComponentAction::ArmCarryLock,
+    );
+    reduce_component_action_at(
+        &mut tick_state,
+        &storage,
+        2_500,
+        ComponentAction::Tick {
+            wall_now_epoch_ms: 50_000,
+        },
+    );
+    assert_eq!(
+        tick_state.carry_lock_mode(),
+        crate::client::carry_lock::CarryLockMode::ArmedUntil(17_000)
+    );
+    reduce_component_action_at(
+        &mut tick_state,
+        &storage,
+        3_000,
+        ComponentAction::Tick {
+            wall_now_epoch_ms: -50_000,
+        },
+    );
+    assert_eq!(tick_state.tick_now_epoch_ms(), -50_000);
+    assert!(!tick_state.carry_lock_locked());
+
+    reduce_component_action_at(
+        &mut tick_state,
+        &storage,
+        16_999,
+        ComponentAction::Tick {
+            wall_now_epoch_ms: i64::MAX,
+        },
+    );
+    assert!(!tick_state.carry_lock_locked());
+
+    reduce_component_action_at(
+        &mut tick_state,
+        &storage,
+        17_000,
+        ComponentAction::Tick {
+            wall_now_epoch_ms: i64::MIN,
+        },
+    );
+    assert!(tick_state.carry_lock_locked());
+}
+
+#[test]
+#[cfg(feature = "web")]
+fn carry_lock_warningはbrowser_page_modelのwarningsへ合流する() {
+    let storage = MemoryStorage::failing_carry_lock_reads();
+    let (state, _) = initialize_client(&storage, 1_000);
+
+    let model = BrowserPageModel::from_state(&state);
+
+    assert!(model
+        .warnings
+        .iter()
+        .any(|warning| warning.contains("持ち歩きロック")));
+    let BrowserPageModel {
+        active_tab,
+        buffer,
+        sessions,
+        rows,
+        active_task_ids,
+        dates,
+        history,
+        warnings,
+        safety_warning,
+        display_error,
+        global_blocked,
+        can_confirm,
+        auto_session_in_flight,
+        auto_session_empty,
+        carry_lock,
+    } = model;
+    let _ = (
+        active_tab,
+        buffer,
+        sessions,
+        rows,
+        active_task_ids,
+        dates,
+        history,
+        warnings,
+        safety_warning,
+        display_error,
+        global_blocked,
+        can_confirm,
+        auto_session_in_flight,
+        auto_session_empty,
+        carry_lock,
+    );
+}
+
+#[test]
 fn component_actionはrank非0の手動session追加を拒否する() {
     let storage = MemoryStorage::default();
     let (mut state, _) = initialize_client(&storage, 1_000);
 
     assert_eq!(
-        reduce_component_action(
+        reduce_component_action_at(
             &mut state,
             &storage,
+            1_000,
             ComponentAction::AddSession {
                 task: task(RECORD_ID),
                 is_leaf: false,
@@ -214,7 +527,13 @@ fn 製品orchestratorはmountを一度に制限しresponseとtickを同じstate�
         60
     );
     assert_eq!(
-        orchestrator.action(&storage, ComponentAction::Tick(3_000)),
+        orchestrator.action(
+            &storage,
+            3_000,
+            ComponentAction::Tick {
+                wall_now_epoch_ms: 3_000,
+            }
+        ),
         ClientEffect::None
     );
     assert_eq!(orchestrator.state().unwrap().tick_now_epoch_ms(), 3_000);
@@ -236,6 +555,7 @@ const COMPLETE_ID: &str = "123e4567-e89b-12d3-a456-426614174001";
 struct MemoryStorage {
     values: RefCell<HashMap<String, String>>,
     fail_reads: bool,
+    fail_carry_lock_reads: bool,
 }
 
 impl MemoryStorage {
@@ -243,6 +563,15 @@ impl MemoryStorage {
         Self {
             values: RefCell::new(HashMap::new()),
             fail_reads: true,
+            fail_carry_lock_reads: false,
+        }
+    }
+
+    fn failing_carry_lock_reads() -> Self {
+        Self {
+            values: RefCell::new(HashMap::new()),
+            fail_reads: false,
+            fail_carry_lock_reads: true,
         }
     }
 }
@@ -250,6 +579,9 @@ impl MemoryStorage {
 impl KeyValueStorage for MemoryStorage {
     fn get(&self, key: &str) -> Result<Option<String>, StorageError> {
         if self.fail_reads {
+            return Err(StorageError::ReadFailed);
+        }
+        if key == "schronu_web.carry_lock.v1" && self.fail_carry_lock_reads {
             return Err(StorageError::ReadFailed);
         }
         Ok(self.values.borrow().get(key).cloned())
