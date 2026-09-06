@@ -1,6 +1,6 @@
 #![cfg(feature = "server")]
 
-use super::component::{app, InteractiveShell, NavigationTabs};
+use super::component::{app, session_chrome_visible, InteractiveShell, NavigationTabs};
 #[cfg(feature = "web")]
 use super::component_models::BrowserPageModel;
 use super::component_runtime::{
@@ -608,6 +608,13 @@ fn native_ssrはbrowser_storageへ触れずloading_shellだけを描画する() 
     assert!(html.contains("aria-busy=\"true\""), "{html}");
     assert!(!html.contains("schronu 今"), "{html}");
     assert!(!html.contains(">更新<"), "{html}");
+}
+
+#[test]
+fn 共通chromeはsessionだけに表示する() {
+    assert!(session_chrome_visible(ActiveTab::Session));
+    assert!(!session_chrome_visible(ActiveTab::List));
+    assert!(!session_chrome_visible(ActiveTab::History));
 }
 
 fn interactive_shell_transition() -> Element {

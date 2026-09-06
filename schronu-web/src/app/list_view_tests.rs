@@ -241,7 +241,7 @@ fn list_rowはresponsive表示用の意味別cellとlabelを持つ() {
     let action_position = html.find("class=\"session-cell\"").unwrap();
     let schedule_position = html.find("class=\"schedule-time\"").unwrap();
     let deadline_position = html.find("class=\"deadline\"").unwrap();
-    let task_position = html.find("class=\"task-name").unwrap();
+    let task_position = html.find("class=\"task-name ").unwrap();
     assert!(
         action_position < schedule_position
             && schedule_position < deadline_position

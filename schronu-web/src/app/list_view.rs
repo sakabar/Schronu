@@ -72,8 +72,8 @@ pub fn ListView(
                     table { class: "task-table",
                         thead {
                             tr {
-                                th { class: "deadline-heading", "締切" }
                                 th { class: "schedule-heading", "予定" }
+                                th { class: "deadline-heading", "締切" }
                                 th { class: "task-heading", "タスク" }
                                 th { class: "session-heading", aria_label: "セッション操作", "" }
                             }
@@ -142,15 +142,6 @@ fn TaskRow(
 
     rsx! {
         tr { class: "task-row",
-            td { class: deadline_class, "data-label": "締切", "{deadline}" }
-            td { class: "schedule-time", "data-label": "予定", "{row.schedule_label}" }
-            td { class: task_class,
-                div {
-                    class: "task-name-scroll",
-                    tabindex: 0,
-                    "{row.task.task_name}"
-                }
-            }
             td { class: "session-cell",
                 if is_leaf {
                     button {
@@ -166,6 +157,15 @@ fn TaskRow(
                         span { class: "session-start-full-label", "セッション" }
                         span { class: "session-start-compact-label", aria_hidden: "true", "{button_text}" }
                     }
+                }
+            }
+            td { class: "schedule-time", "data-label": "予定", "{row.schedule_label}" }
+            td { class: deadline_class, "data-label": "締切", "{deadline}" }
+            td { class: task_class,
+                div {
+                    class: "task-name-scroll",
+                    tabindex: 0,
+                    "{row.task.task_name}"
                 }
             }
         }

@@ -68,20 +68,6 @@ button:disabled {
         calc(var(--bottom-navigation-height) + env(safe-area-inset-bottom) + 2rem);
 }
 
-.toolbar {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 1rem;
-    margin-bottom: 1.25rem;
-}
-
-.toolbar h1 {
-    margin: 0;
-    font-size: clamp(1.2rem, 2vw, 1.55rem);
-    letter-spacing: 0.03em;
-}
-
 .loading-overlay {
     position: fixed;
     z-index: 1000;
@@ -709,8 +695,8 @@ button:disabled {
     .task-row {
         display: grid;
         width: 100%;
-        grid-template-columns: 44px 5.5rem 5.75rem minmax(0, 1fr);
-        grid-template-areas: "action deadline schedule task";
+        grid-template-columns: 44px 5.75rem 5.5rem minmax(0, 1fr);
+        grid-template-areas: "action schedule deadline task";
     }
 
     .task-table thead tr {
@@ -840,11 +826,6 @@ button:disabled {
     .date-pill {
         min-height: max(2.75rem, 44px);
         padding: 0.5rem 0.9rem;
-    }
-
-    .toolbar {
-        align-items: stretch;
-        flex-direction: column;
     }
 
     .session-timing {
