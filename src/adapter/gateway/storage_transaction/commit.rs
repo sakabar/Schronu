@@ -3,7 +3,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use super::cleanup::cleanup_committed_transaction;
-use super::io::sync_directory;
+use super::io::{sync_directory, DirectoryPermissionError};
 use super::layout::TransactionLayout;
 use super::manifest::{content_matches, ValidatedEntry};
 use super::{
@@ -158,11 +158,15 @@ impl CommittedTransaction {
                 .io
                 .set_and_sync_directory_permissions(&directory_path, permissions_from_mode(*mode))
                 .map_err(|error| {
-                    StorageTransactionError::new(
-                        StorageTransactionOperation::SetLivePermissions,
-                        &directory_path,
-                        error,
-                    )
+                    let (operation, source) = match error {
+                        DirectoryPermissionError::Set(source) => {
+                            (StorageTransactionOperation::SetLivePermissions, source)
+                        }
+                        DirectoryPermissionError::Sync(source) => {
+                            (StorageTransactionOperation::SyncDirectory, source)
+                        }
+                    };
+                    StorageTransactionError::new(operation, &directory_path, source)
                 })?;
         }
         self.apply_revision(&layout.revision_path())?;

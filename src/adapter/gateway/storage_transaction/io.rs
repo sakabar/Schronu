@@ -52,9 +52,11 @@ pub(crate) trait StorageTransactionIo: Send + Sync {
         &self,
         path: &Path,
         permissions: fs::Permissions,
-    ) -> std::io::Result<()> {
-        self.set_permissions(path, permissions)?;
+    ) -> Result<(), DirectoryPermissionError> {
+        self.set_permissions(path, permissions)
+            .map_err(DirectoryPermissionError::Set)?;
         self.sync_directory(path)
+            .map_err(DirectoryPermissionError::Sync)
     }
 
     fn write_file(&self, path: &Path, bytes: &[u8]) -> std::io::Result<()> {
@@ -127,6 +129,11 @@ pub(crate) trait StorageTransactionIo: Send + Sync {
     }
 }
 
+pub(crate) enum DirectoryPermissionError {
+    Set(std::io::Error),
+    Sync(std::io::Error),
+}
+
 #[derive(Default)]
 pub(in crate::adapter::gateway) struct FileSystemStorageTransactionIo;
 impl StorageTransactionIo for FileSystemStorageTransactionIo {
@@ -134,10 +141,12 @@ impl StorageTransactionIo for FileSystemStorageTransactionIo {
         &self,
         path: &Path,
         permissions: fs::Permissions,
-    ) -> std::io::Result<()> {
-        let directory = File::open(path)?;
-        directory.set_permissions(permissions)?;
-        directory.sync_all()
+    ) -> Result<(), DirectoryPermissionError> {
+        let directory = File::open(path).map_err(DirectoryPermissionError::Set)?;
+        directory
+            .set_permissions(permissions)
+            .map_err(DirectoryPermissionError::Set)?;
+        directory.sync_all().map_err(DirectoryPermissionError::Sync)
     }
 
     fn remove_storage_entry(
