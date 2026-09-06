@@ -7229,6 +7229,9 @@ fn interactive_backupはsnapshot後のreloadでfocusを再調整する() {
     let next_id = next.get_id().unwrap();
     let mut repository =
         TestTaskRepository::new(root, now).with_storage_directory(&storage_dir.path);
+    let reload_observed_exclusive_lock = Rc::new(Cell::new(false));
+    repository = repository
+        .with_reload_lock_contended_signal(Rc::clone(&reload_observed_exclusive_lock));
     repository.highest_priority_leaf_task_id_opt = Some(next_id);
     let mut free_time_manager = TestFreeTimeManager::default();
     let mut stdout = TestWriter::new();
@@ -7258,6 +7261,7 @@ fn interactive_backupはsnapshot後のreloadでfocusを再調整する() {
             if actual_now == now
     ));
     assert_eq!(repository.reload_if_changed_attempt_count.get(), 1);
+    assert!(reload_observed_exclusive_lock.get());
     assert_eq!(focused_task_id_opt, Some(next_id));
     assert_eq!(last_focused_task_id_opt, None);
     assert_eq!(focus_started_datetime, now);
