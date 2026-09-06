@@ -19,7 +19,7 @@ fn render(entries: Vec<HistoryEntryViewModel>) -> String {
 }
 
 #[test]
-fn history_panel_is_closed_by_default_and_renders_all_display_fields() {
+fn history_panel_is_closed_by_default_and_omits_locality() {
     let html = render(vec![
         HistoryEntryViewModel {
             occurred_at_hh_mm_ss: "11:25:03".to_owned(),
@@ -48,17 +48,18 @@ fn history_panel_is_closed_by_default_and_renders_all_display_fields() {
         "11:25:03",
         "record_session",
         "123e4567-e89b-12d3-a456-426614174000",
-        "server",
         "success",
         "実績を記録しました。",
         "11:26:10",
         "discard_session",
-        "local",
         "failure",
         "セッションを保持しました。",
     ] {
         assert!(html.contains(text), "missing {text}: {html}");
     }
+    assert!(!html.contains("history-locality"), "{html}");
+    assert!(!html.contains(">server<"), "{html}");
+    assert!(!html.contains(">local<"), "{html}");
     assert!(html.contains("history-entry is-failure"));
 }
 
