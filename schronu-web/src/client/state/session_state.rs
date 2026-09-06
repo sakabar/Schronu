@@ -467,13 +467,22 @@ impl ClientState {
         invocation: ServerActionInvocation,
         actual_work_seconds: Option<i64>,
     ) {
+        self.record_server(invocation, Outcome::Success, "server操作が完了しました。");
+        if self
+            .sessions
+            .mutation_safety
+            .mark_committed(storage, task_id)
+            .is_err()
+        {
+            self.keep_committed_session(task_id, actual_work_seconds);
+            return;
+        }
         let candidate = self
             .sessions()
             .iter()
             .filter(|session| session.task_id != task_id)
             .cloned()
             .collect();
-        self.record_server(invocation, Outcome::Success, "server操作が完了しました。");
         match self
             .sessions
             .work_sessions
@@ -486,29 +495,26 @@ impl ClientState {
                 self.record_local_result(Some(task_id), true);
             }
             Err(_) => {
-                self.sessions
-                    .committed_blocked_task_ids
-                    .insert(task_id.to_owned());
-                if self
-                    .sessions
-                    .mutation_safety
-                    .mark_committed(storage, task_id)
-                    .is_err()
-                {
-                    self.sessions.mutation_globally_blocked = true;
-                }
-                if let Some(actual) = actual_work_seconds {
-                    self.sessions
-                        .committed_actual_work_seconds
-                        .insert(task_id.to_owned(), actual);
-                }
-                self.record_local_result(Some(task_id), false);
-                self.diagnostics.display_error = Some(DisplayError::LocalStorage {
-                    committed_on_server: true,
-                    task_id: Some(task_id.to_owned()),
-                });
+                self.keep_committed_session(task_id, actual_work_seconds);
             }
         }
+    }
+
+    fn keep_committed_session(&mut self, task_id: &str, actual_work_seconds: Option<i64>) {
+        self.sessions
+            .committed_blocked_task_ids
+            .insert(task_id.to_owned());
+        self.sessions.mutation_globally_blocked = true;
+        if let Some(actual) = actual_work_seconds {
+            self.sessions
+                .committed_actual_work_seconds
+                .insert(task_id.to_owned(), actual);
+        }
+        self.record_local_result(Some(task_id), false);
+        self.diagnostics.display_error = Some(DisplayError::LocalStorage {
+            committed_on_server: true,
+            task_id: Some(task_id.to_owned()),
+        });
     }
 }
 

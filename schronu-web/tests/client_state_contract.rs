@@ -329,6 +329,34 @@ fn server_commit済みsessionはreload後もbuffer補正と再送の対象外に
 }
 
 #[test]
+fn server_commit済みidを永続化できなければlocal_sessionを削除しない() {
+    let storage = FakeStorage::default();
+    let mut state = state_with_sessions(&storage, &[TASK_ID]);
+    state.tick(60_000);
+    let (request_id, _) = record_effect(state.begin_record_session(&storage, TASK_ID));
+
+    storage.fail_safety_writes.set(true);
+    state.apply_record_result(
+        &storage,
+        request_id,
+        Ok(WebSuccess {
+            snapshot: snapshot("2026-09-05", 60_000),
+            data: RecordSessionResult {
+                actual_work_seconds: 160,
+            },
+        }),
+    );
+
+    assert_eq!(state.sessions().len(), 1);
+    assert!(state.is_session_committed_blocked(TASK_ID));
+
+    storage.fail_safety_writes.set(false);
+    state.confirm_repository_checked(&storage);
+    assert!(state.sessions().is_empty());
+    assert!(!state.mutation_globally_blocked());
+}
+
+#[test]
 fn active_session中の新しいsnapshotを新たなbuffer基準にする() {
     let storage = FakeStorage::default();
     let mut state = load_client_state(&storage, 1_000_000).unwrap();
