@@ -66,6 +66,14 @@ pub(crate) fn browser_now_epoch_ms() -> i64 {
     js_sys::Date::now() as i64
 }
 
+#[cfg(all(feature = "web", target_arch = "wasm32"))]
+pub(crate) fn browser_monotonic_now_ms() -> u64 {
+    web_sys::window()
+        .and_then(|window| window.performance())
+        .map(|performance| performance.now() as u64)
+        .expect("browser Performance API must be available")
+}
+
 fn history_view_models(state: &ClientState) -> Vec<HistoryEntryViewModel> {
     state
         .history()

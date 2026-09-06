@@ -90,8 +90,8 @@ impl ClientState {
         ClientEffect::None
     }
 
-    pub fn arm_carry_lock(&mut self, now_epoch_ms: i64) -> ClientEffect {
-        self.carry_lock.arm(now_epoch_ms);
+    pub fn arm_carry_lock(&mut self, monotonic_now_ms: u64) -> ClientEffect {
+        self.carry_lock.arm(monotonic_now_ms);
         ClientEffect::None
     }
 
@@ -101,8 +101,13 @@ impl ClientState {
     }
 
     #[cfg(any(test, all(feature = "web", target_arch = "wasm32")))]
-    pub(crate) fn authorize_carry_lock_mutation(&mut self, now_epoch_ms: i64) -> bool {
-        self.carry_lock.authorize_mutation(now_epoch_ms)
+    pub(crate) fn observe_carry_lock_time(&mut self, monotonic_now_ms: u64) {
+        self.carry_lock.observe_monotonic_time(monotonic_now_ms);
+    }
+
+    #[cfg(any(test, all(feature = "web", target_arch = "wasm32")))]
+    pub(crate) fn authorize_carry_lock_mutation(&mut self) -> bool {
+        self.carry_lock.authorize_mutation()
     }
 
     pub fn storage_write_blocked(&self) -> bool {
@@ -212,7 +217,6 @@ impl ClientState {
 
     pub fn tick(&mut self, now_epoch_ms: i64) -> ClientEffect {
         self.tick_now_epoch_ms = now_epoch_ms;
-        self.carry_lock.expire(now_epoch_ms);
         ClientEffect::None
     }
 }

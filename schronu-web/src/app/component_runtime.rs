@@ -7,7 +7,7 @@ use super::session_view::{SessionAction, SessionActionKind};
 
 pub(crate) enum ComponentAction {
     SwitchTab(ActiveTab),
-    Tick,
+    Tick { wall_now_epoch_ms: i64 },
     SelectDate(String),
     AutoSession,
     AddSession(SessionTask),
@@ -34,9 +34,9 @@ pub(crate) fn component_action_from_session_action(action: SessionAction) -> Com
 
 pub(crate) fn initialize_client<S: KeyValueStorage>(
     storage: &S,
-    now_epoch_ms: i64,
+    wall_now_epoch_ms: i64,
 ) -> (ClientState, ClientEffect) {
-    let mut state = load_client_state_for_ui(storage, now_epoch_ms);
+    let mut state = load_client_state_for_ui(storage, wall_now_epoch_ms);
     let effect = state.request_bootstrap();
     (state, effect)
 }
@@ -58,12 +58,16 @@ impl ComponentOrchestrator {
         self.state.as_ref()
     }
 
-    pub fn mount<S: KeyValueStorage>(&mut self, storage: &S, now_epoch_ms: i64) -> ClientEffect {
+    pub fn mount<S: KeyValueStorage>(
+        &mut self,
+        storage: &S,
+        wall_now_epoch_ms: i64,
+    ) -> ClientEffect {
         if self.mounted {
             return ClientEffect::None;
         }
         self.mounted = true;
-        let (state, effect) = initialize_client(storage, now_epoch_ms);
+        let (state, effect) = initialize_client(storage, wall_now_epoch_ms);
         self.state = Some(state);
         effect
     }
@@ -71,11 +75,11 @@ impl ComponentOrchestrator {
     pub fn action<S: KeyValueStorage>(
         &mut self,
         storage: &S,
-        now_epoch_ms: i64,
+        monotonic_now_ms: u64,
         action: ComponentAction,
     ) -> ClientEffect {
         self.state.as_mut().map_or(ClientEffect::None, |state| {
-            reduce_component_action_at(state, storage, now_epoch_ms, action)
+            reduce_component_action_at(state, storage, monotonic_now_ms, action)
         })
     }
 
@@ -93,21 +97,22 @@ impl ComponentOrchestrator {
 pub(crate) fn reduce_component_action_at<S: KeyValueStorage>(
     state: &mut ClientState,
     storage: &S,
-    now_epoch_ms: i64,
+    monotonic_now_ms: u64,
     action: ComponentAction,
 ) -> ClientEffect {
+    state.observe_carry_lock_time(monotonic_now_ms);
     match action {
         ComponentAction::EnableCarryLock => return state.enable_carry_lock(storage),
-        ComponentAction::ArmCarryLock => return state.arm_carry_lock(now_epoch_ms),
+        ComponentAction::ArmCarryLock => return state.arm_carry_lock(monotonic_now_ms),
         ComponentAction::DisableCarryLock => return state.disable_carry_lock(storage),
         _ => {}
     }
-    if is_carry_lock_mutation(&action) && !state.authorize_carry_lock_mutation(now_epoch_ms) {
+    if is_carry_lock_mutation(&action) && !state.authorize_carry_lock_mutation() {
         return ClientEffect::None;
     }
     match action {
         ComponentAction::SwitchTab(tab) => state.switch_tab(tab),
-        ComponentAction::Tick => state.tick(now_epoch_ms),
+        ComponentAction::Tick { wall_now_epoch_ms } => state.tick(wall_now_epoch_ms),
         ComponentAction::SelectDate(logical_date) => state.request_list(&logical_date),
         ComponentAction::AutoSession => state.request_auto_session(),
         ComponentAction::AddSession(task) => state.add_session_from_task(storage, &task),

@@ -1,4 +1,4 @@
-use super::component_models::browser_now_epoch_ms;
+use super::component_models::browser_monotonic_now_ms;
 use super::component_runtime::{
     component_action_from_session_action, ComponentAction, ComponentOrchestrator,
 };
@@ -19,7 +19,7 @@ pub(crate) fn dispatch_session_action(
 pub(crate) fn dispatch_action(mut client: Signal<ComponentOrchestrator>, action: ComponentAction) {
     let effect = client
         .write()
-        .action(&BrowserLocalStorage, browser_now_epoch_ms(), action);
+        .action(&BrowserLocalStorage, browser_monotonic_now_ms(), action);
     dispatch_action_effect(client, effect);
 }
 

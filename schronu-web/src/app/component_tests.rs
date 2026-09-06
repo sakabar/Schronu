@@ -65,7 +65,9 @@ fn component_actionは仕様の五操作だけをserver_effectへ変換する() 
 
     for action in [
         ComponentAction::SwitchTab(ActiveTab::List),
-        ComponentAction::Tick,
+        ComponentAction::Tick {
+            wall_now_epoch_ms: 2_000,
+        },
         ComponentAction::AddSession(task(RECORD_ID)),
         ComponentAction::DiscardSession(RECORD_ID.to_owned()),
         ComponentAction::ConfirmRepositoryChecked,
@@ -214,7 +216,14 @@ fn 持ち歩きロックは変更操作だけを中央で遮断しarmedを一度
         ClientEffect::None
     );
     assert_eq!(
-        reduce_component_action_at(&mut state, &storage, 2_002, ComponentAction::Tick),
+        reduce_component_action_at(
+            &mut state,
+            &storage,
+            2_002,
+            ComponentAction::Tick {
+                wall_now_epoch_ms: 2_002,
+            }
+        ),
         ClientEffect::None
     );
     assert!(matches!(
@@ -249,7 +258,7 @@ fn 持ち歩きロックは変更操作だけを中央で遮断しarmedを一度
 }
 
 #[test]
-fn armed期限判定はaction時刻を使い期限切れ操作を遮断する() {
+fn armed期限判定はactionのmonotonic時刻を使い期限切れ操作を遮断する() {
     let storage = MemoryStorage::default();
     let (mut state, _) = initialize_client(&storage, 1_000);
     reduce_component_action_at(
@@ -268,7 +277,7 @@ fn armed期限判定はaction時刻を使い期限切れ操作を遮断する() 
 }
 
 #[test]
-fn armedはtickが期限へ到達した時点でlockedへ戻る() {
+fn armedはmonotonic時刻が期限へ到達した時点でlockedへ戻る() {
     let storage = MemoryStorage::default();
     let (mut state, _) = initialize_client(&storage, 1_000);
     reduce_component_action_at(
@@ -279,15 +288,29 @@ fn armedはtickが期限へ到達した時点でlockedへ戻る() {
     );
     reduce_component_action_at(&mut state, &storage, 2_000, ComponentAction::ArmCarryLock);
 
-    reduce_component_action_at(&mut state, &storage, 16_999, ComponentAction::Tick);
+    reduce_component_action_at(
+        &mut state,
+        &storage,
+        16_999,
+        ComponentAction::Tick {
+            wall_now_epoch_ms: i64::MAX,
+        },
+    );
     assert!(!state.carry_lock_locked());
 
-    reduce_component_action_at(&mut state, &storage, 17_000, ComponentAction::Tick);
+    reduce_component_action_at(
+        &mut state,
+        &storage,
+        17_000,
+        ComponentAction::Tick {
+            wall_now_epoch_ms: i64::MIN,
+        },
+    );
     assert!(state.carry_lock_locked());
 }
 
 #[test]
-fn armedはtickまたは変更認可で時計後退を検出すると即時失効する() {
+fn wall_clock変動にかかわらずarmedはmonotonic_15秒境界で失効する() {
     let storage = MemoryStorage::default();
     let (mut tick_state, _) = initialize_client(&storage, 1_000);
     reduce_component_action_at(
@@ -302,37 +325,48 @@ fn armedはtickまたは変更認可で時計後退を検出すると即時失�
         2_000,
         ComponentAction::ArmCarryLock,
     );
-    reduce_component_action_at(&mut tick_state, &storage, 2_500, ComponentAction::Tick);
+    reduce_component_action_at(
+        &mut tick_state,
+        &storage,
+        2_500,
+        ComponentAction::Tick {
+            wall_now_epoch_ms: 50_000,
+        },
+    );
     assert_eq!(
         tick_state.carry_lock_mode(),
         crate::client::carry_lock::CarryLockMode::ArmedUntil(17_000)
     );
-    reduce_component_action_at(&mut tick_state, &storage, 2_499, ComponentAction::Tick);
-    assert!(tick_state.carry_lock_locked());
+    reduce_component_action_at(
+        &mut tick_state,
+        &storage,
+        3_000,
+        ComponentAction::Tick {
+            wall_now_epoch_ms: -50_000,
+        },
+    );
+    assert_eq!(tick_state.tick_now_epoch_ms(), -50_000);
+    assert!(!tick_state.carry_lock_locked());
 
-    let (mut mutation_state, _) = initialize_client(&storage, 1_000);
     reduce_component_action_at(
-        &mut mutation_state,
+        &mut tick_state,
         &storage,
-        1_000,
-        ComponentAction::EnableCarryLock,
+        16_999,
+        ComponentAction::Tick {
+            wall_now_epoch_ms: i64::MAX,
+        },
     );
+    assert!(!tick_state.carry_lock_locked());
+
     reduce_component_action_at(
-        &mut mutation_state,
+        &mut tick_state,
         &storage,
-        2_000,
-        ComponentAction::ArmCarryLock,
+        17_000,
+        ComponentAction::Tick {
+            wall_now_epoch_ms: i64::MIN,
+        },
     );
-    assert_eq!(
-        reduce_component_action_at(
-            &mut mutation_state,
-            &storage,
-            1_999,
-            ComponentAction::AutoSession
-        ),
-        ClientEffect::None
-    );
-    assert!(mutation_state.carry_lock_locked());
+    assert!(tick_state.carry_lock_locked());
 }
 
 #[test]
@@ -425,7 +459,13 @@ fn 製品orchestratorはmountを一度に制限しresponseとtickを同じstate�
         60
     );
     assert_eq!(
-        orchestrator.action(&storage, 3_000, ComponentAction::Tick),
+        orchestrator.action(
+            &storage,
+            3_000,
+            ComponentAction::Tick {
+                wall_now_epoch_ms: 3_000,
+            }
+        ),
         ClientEffect::None
     );
     assert_eq!(orchestrator.state().unwrap().tick_now_epoch_ms(), 3_000);
