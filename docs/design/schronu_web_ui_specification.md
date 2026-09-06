@@ -151,13 +151,14 @@ keyは`schronu_web.work_sessions.v1`とする。valueはversion付きobjectと�
 ```json
 {
   "version": 1,
-  "mutation_blocked": true
+  "mutation_blocked": true,
+  "committed_task_ids": ["task UUID"]
 }
 ```
 
-このkeyが存在しない場合、またはversion 1の`mutation_blocked`が`false`の場合だけmutation可能な初期状態とする。未知version、JSON不正、schema不正は安全側へ倒し、mutation blockedとして復元する。
+このkeyが存在しない場合、またはversion 1の`mutation_blocked`が`false`の場合だけmutation可能な初期状態とする。`committed_task_ids`はserver commit成功後にlocal session削除だけが失敗したtask UUIDを保持し、省略された既存dataは空配列として読み込む。未知version、JSON不正、schema不正は安全側へ倒し、mutation blockedとして復元する。
 
-`record_session`または`complete_session`の送信前に、`mutation_blocked: true`をstorage-firstで保存する。保存失敗時はrequestを送信しない。成功、またはserverが未commitと確定できるerror responseの受信後、ほかに応答待ちのmutationがなく、repository状態も確定している場合だけ`false`へ戻す。browser crash、transport切断、`repository_state_uncertain`では`true`を残し、reload後も全mutationを停止する。解除はrepositoryを手動確認する明示操作だけが所有し、通常のread成功、session破棄、reloadでは解除しない。server commit後にlocal session削除だけが失敗している場合、明示解除は該当sessionを`work_sessions`からstorage-firstで削除してからmarkerを解除する。session削除に失敗した場合はmarkerを解除しない。session削除後のmarker解除に失敗した場合もblocked状態を維持するが、該当sessionは既に永続層から消えているため二重送信できない。transportまたは`repository_state_uncertain`由来の未確定sessionは、手動確認結果に基づく再操作のため残す。
+`record_session`または`complete_session`の送信前に、`mutation_blocked: true`をstorage-firstで保存する。保存失敗時はrequestを送信しない。成功、またはserverが未commitと確定できるerror responseの受信後、ほかに応答待ちのmutationがなく、repository状態も確定している場合だけ`false`へ戻す。browser crash、transport切断、`repository_state_uncertain`では`true`を残し、reload後も全mutationを停止する。解除はrepositoryを手動確認する明示操作だけが所有し、通常のread成功、session破棄、reloadでは解除しない。server commit後にlocal session削除だけが失敗している場合はtask UUIDを`committed_task_ids`へstorage-firstで追加し、reload後も再送とbuffer補正の対象外にする。明示解除は該当sessionを`work_sessions`からstorage-firstで削除してからmarkerと`committed_task_ids`を解除する。session削除に失敗した場合はmarkerを解除しない。session削除後のmarker解除に失敗した場合もblocked状態を維持するが、該当sessionは既に永続層から消えているため二重送信できない。transportまたは`repository_state_uncertain`由来の未確定sessionは、手動確認結果に基づく再操作のため残す。
 
 持ち歩きロックは`MutationSafetyState`とは目的と解除条件が異なるため、独立した`CarryLockState`とkey `schronu_web.carry_lock.v1`を使用する。
 
@@ -400,20 +401,26 @@ client側:
 snapshot_elapsed = max(0, floor((tick_now - observed_at) / 1000))
 active_sessions = work_sessions - 終了処理中sessions - server commit済みでlocal削除に失敗したsessions
 earliest_active_start = min(active_sessions.started_at)
+restored_active_sessions = active_sessionsのうち初期loadでlocalStorageから復元したsessions
+restored_intervals = restored_active_sessionsの[started_at, min(stopped_atまたはobserved_at, observed_at)]
 
 buffer_elapsed =
   active_sessionsが空: snapshot_elapsed
   active_sessionsが存在: max(0, floor((min(tick_now, earliest_active_start) - observed_at) / 1000))
 
-display_buffer = buffer_seconds - buffer_elapsed
+restored_session_elapsed =
+  restored_active_sessionsが空: 0
+  restored_active_sessionsが存在: restored_intervalsの和集合のmilliseconds / 1000
+
+display_buffer = buffer_seconds - buffer_elapsed - restored_session_elapsed
 ```
 
 - `snapshot_elapsed`は観測用に保持し、bufferから実際に引く値は`buffer_elapsed`とする。
-- 新しいserver responseを受信した場合は、その`buffer_seconds`と`observed_at`を新たな表示計算の基準とする。snapshot以前に開始した計測中セッションは、snapshot直後からbufferを停止する。snapshot以前の時間をclientで遡って補正しないため、serverが`busy_time_slot`を除いて算出したbufferへ壁時計時間を過剰加算しない。
+- 新しいserver responseを受信した場合は、その`buffer_seconds`と`observed_at`を新たな表示計算の基準とする。snapshot以前に開始した計測中セッションは、snapshot直後からbufferを停止する。初期loadでlocalStorageから復元したセッションについては、server bufferへ未反映の継続時間として、`observed_at`以前に存在する復元セッション計測区間の和集合を追加で差し引く。終了操作中の区間は終了click時刻で閉じる。現在pageで新規追加したセッションへこの復元補正は適用しない。
 - `record_session`または`complete_session`のmutation responseは、対象実績を反映した`buffer_seconds`をそのまま新たな基準とする。server commit済みでlocalStorage削除だけに失敗した対象sessionは、以後のbuffer計算上の計測中sessionから除外する。
 - 終了操作をdispatchしたsessionはclick時刻を終端とする稼働区間として扱う。ほかにactive sessionがなければclick後からbufferを直ちに再開し、未commitが確定するerrorでは対象をactiveへ戻す。transport切断または`repository_state_uncertain`ではrepository確認完了までclick時刻の終端を保持する。成功時はresponseのsnapshotを新たな基準とするため、通信待ち時間をclientで二重減算しない。
-- 複数の計測中セッションは、いずれか1件が存在する区間の和集合として扱う。すべて現在まで継続するため、最古の開始時刻から現在までbufferを停止し、重複時間を二重に補正しない。
-- 「破棄して解除」成功後は残存セッションから式全体を再計算する。最古セッションだけを破棄した場合は後発セッション開始前を未作業として追加減算し、全件破棄した場合はsnapshot後の全経過秒を減算する。localStorage保存失敗時はmemory stateを確定しないため、buffer表示も変化させない。
+- 複数の計測中セッションは、いずれか1件が存在する区間の和集合として扱い、重複時間を二重に補正しない。復元セッションの`observed_at`以前の区間も同じ和集合計算を用い、終了操作中ならclick時刻で区間を閉じる。
+- 「破棄して解除」成功後は残存セッションから式全体を再計算する。最古セッションだけを破棄した場合は後発セッション開始前を未作業として追加減算し、最古の復元セッションを破棄した場合は残存する復元区間の和集合から補正を再計算する。全件破棄した場合はsnapshot後の全経過秒を減算し、復元補正は0とする。localStorage保存失敗時はmemory stateを確定しないため、buffer表示も変化させない。
 - browser時計が後退した区間は0秒へclampする。時刻差と加減算は`i64`境界でもoverflowしない計算を用いる。
 - `display_buffer >= 0`: 通常色の`HH:MM:SS`
 - `display_buffer < 0`: 赤色の`-HH:MM:SS`
@@ -439,9 +446,9 @@ display_buffer = buffer_seconds - buffer_elapsed
 
 ### 7.1 初期化とtab
 
-1. localStorageを読み、`work_sessions`を復元する。
+1. localStorageを読み、`work_sessions`を復元し、復元したtask UUIDをpage内で識別する。
 2. `bootstrap`を1回送る。
-3. responseからbufferと8日buttonを表示する。
+3. responseからbufferと8日buttonを表示する。bufferはserver観測時刻以前に存在する復元セッション計測区間の和集合を差し引き、終了操作中の区間は終了click時刻で閉じる。
 4. 初期tabは「セッション」とする。
 5. viewport下端へ「セッション」「一覧」「発火履歴」の3tabを固定し、選択中だけ上端の緑indicatorと`aria-pressed: true`を付ける。各buttonは均等幅かつ操作高44px以上とする。
 6. tab barはsafe areaをpaddingへ含め、全幅かつ最大82remで中央配置する。本文末尾にはbar高、safe area、余白の合計を確保し、通信中overlayより低い`z-index`にする。
@@ -625,9 +632,9 @@ OperationHistoryEntry {
 - reload、timer遅延、browser時計後退で開始時刻基準の経過秒になることを検証する。
 - session追加・破棄がserver callを生成しないことを検証する。
 - 一覧の手動session追加は`is_leaf == false`でlocalStorage、memory state、発火履歴を変更しないことを検証する。
-- bufferはsession 0件、snapshot以前からのsession、snapshot後の途中開始、複数sessionの重複、最古sessionだけの破棄、全session破棄で、session不在時間だけを減算することを検証する。
+- bufferはsession 0件、snapshot以前からの復元session、snapshot後の途中開始、複数sessionの重複、最古sessionだけの破棄、全session破棄で、session不在時間と復元sessionの継続時間を契約どおり減算することを検証する。
 - 破棄のlocalStorage保存失敗ではsessionとbuffer表示を維持し、server commit済みでlocal削除に失敗したsessionはbuffer計算上の計測中sessionから除外することを検証する。
-- 同じlogical dateのread snapshot、実績反映済みmutation snapshot、06:00を跨ぐlogical date更新を新たなbuffer基準とし、snapshot以前の壁時計時間を過剰補正しないことを検証する。
+- 同じlogical dateのread snapshot、実績反映済みmutation snapshot、06:00を跨ぐlogical date更新を新たなbuffer基準とし、初期loadで復元したsessionだけは各snapshot観測時刻以前の計測区間の和集合を差し引くことを検証する。
 - 記録と2種類の完了についてserver mutation成功、競合、保存失敗、worker停止、多重送信防止、global・manual safety block時のsession遷移を検証する。
 - 3終了操作でclick時刻をrequestへ保持し、pending中のcard停止、単一・複数sessionのbuffer遷移、未commit確定error後の自動再開、transport切断・repository状態不確実時の確認完了までの停止を注入epochだけで検証する。実時間のsleepやtimer待機は使用しない。
 - 2種類の完了成功で同一task UUIDの全rowだけが即時に除去され、別taskのrowと選択logical dateが維持されることを検証する。完了error、記録して解除、破棄して解除では一覧が変化せず、server commit成功後のlocalStorage削除失敗でも完了taskのrowが除去されることを検証する。

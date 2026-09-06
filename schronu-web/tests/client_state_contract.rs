@@ -2,6 +2,7 @@ use chrono::{Local, TimeZone};
 use schronu_web::client::state::{
     load_client_state, ActiveTab, ClientEffect, Operation, Outcome, ServerFailure,
 };
+use schronu_web::client::work_sessions::{load_work_sessions, WorkSession};
 use schronu_web::{web_error_codes, RecordSessionResult, RetryAdvice, SessionTask, WebSuccess};
 
 mod client_state_support;
@@ -117,6 +118,92 @@ fn bufferは成功したsession破棄で未作業時間を再計算する() {
 }
 
 #[test]
+fn restored_sessionの継続時間をserver_bufferから1回だけ差し引く() {
+    let storage = FakeStorage::default();
+    let mut sessions = load_work_sessions(&storage).unwrap();
+    sessions
+        .replace_sessions(
+            &storage,
+            vec![
+                WorkSession {
+                    task_id: TASK_ID.to_owned(),
+                    task_name: "first".to_owned(),
+                    started_at_epoch_ms: 1_000_000,
+                    estimated_work_seconds_at_start: 900,
+                    actual_work_seconds_at_start: 0,
+                },
+                WorkSession {
+                    task_id: OTHER_TASK_ID.to_owned(),
+                    task_name: "second".to_owned(),
+                    started_at_epoch_ms: 1_010_000,
+                    estimated_work_seconds_at_start: 900,
+                    actual_work_seconds_at_start: 0,
+                },
+            ],
+        )
+        .unwrap();
+
+    let mut state = load_client_state(&storage, 1_040_000).unwrap();
+    let bootstrap_id = bootstrap_effect(state.request_bootstrap());
+    state.apply_bootstrap_result(bootstrap_id, Ok(snapshot("2026-09-05", 1_030_000)));
+
+    assert_eq!(state.display_buffer_seconds(), Some(30));
+    state.discard_session(&storage, TASK_ID);
+    assert_eq!(state.display_buffer_seconds(), Some(40));
+    state.discard_session(&storage, OTHER_TASK_ID);
+    assert_eq!(state.display_buffer_seconds(), Some(50));
+
+    state.add_session_from_row(&storage, &row(TASK_ID, 0));
+    state.tick(1_060_000);
+    let (request_id, request) = list_effect(state.request_list("2026-09-05"));
+    state.apply_list_result(
+        request_id,
+        &request.logical_date,
+        Ok(WebSuccess {
+            snapshot: snapshot("2026-09-05", 1_050_000),
+            data: Vec::new(),
+        }),
+    );
+    assert_eq!(state.display_buffer_seconds(), Some(60));
+}
+
+#[test]
+fn restored_sessionの復元補正は終了click時刻で打ち切る() {
+    let storage = FakeStorage::default();
+    let mut sessions = load_work_sessions(&storage).unwrap();
+    sessions
+        .replace_sessions(
+            &storage,
+            vec![WorkSession {
+                task_id: TASK_ID.to_owned(),
+                task_name: "task".to_owned(),
+                started_at_epoch_ms: 1_000_000,
+                estimated_work_seconds_at_start: 900,
+                actual_work_seconds_at_start: 0,
+            }],
+        )
+        .unwrap();
+    let mut state = load_client_state(&storage, 1_020_000).unwrap();
+    let bootstrap_id = bootstrap_effect(state.request_bootstrap());
+    state.apply_bootstrap_result(bootstrap_id, Ok(snapshot("2026-09-05", 1_020_000)));
+
+    state.tick(1_030_000);
+    record_effect(state.begin_record_session(&storage, TASK_ID));
+    state.tick(1_060_000);
+    let (request_id, request) = list_effect(state.request_list("2026-09-05"));
+    state.apply_list_result(
+        request_id,
+        &request.logical_date,
+        Ok(WebSuccess {
+            snapshot: snapshot("2026-09-05", 1_050_000),
+            data: Vec::new(),
+        }),
+    );
+
+    assert_eq!(state.display_buffer_seconds(), Some(20));
+}
+
+#[test]
 fn 終了処理中はclick時刻を保持してbufferを再開し失敗時に計測へ戻す() {
     let storage = FakeStorage::default();
     let mut state = state_with_sessions(&storage, &[TASK_ID]);
@@ -204,6 +291,72 @@ fn server_commit済みでlocal削除失敗したsessionはbufferを停止しな�
 
     assert!(state.is_session_committed_blocked(TASK_ID));
     assert_eq!(state.display_buffer_seconds(), Some(30));
+}
+
+#[test]
+fn server_commit済みsessionはreload後もbuffer補正と再送の対象外にする() {
+    let storage = FakeStorage::default();
+    let mut state = state_with_sessions(&storage, &[TASK_ID]);
+    let bootstrap_id = bootstrap_effect(state.request_bootstrap());
+    state.apply_bootstrap_result(bootstrap_id, Ok(snapshot("2026-09-05", 0)));
+
+    state.tick(60_000);
+    let (request_id, _) = record_effect(state.begin_record_session(&storage, TASK_ID));
+    storage.fail_work_session_writes.set(true);
+    state.apply_record_result(
+        &storage,
+        request_id,
+        Ok(WebSuccess {
+            snapshot: snapshot("2026-09-05", 60_000),
+            data: RecordSessionResult {
+                actual_work_seconds: 160,
+            },
+        }),
+    );
+
+    let mut restored = load_client_state(&storage, 90_000).unwrap();
+    let bootstrap_id = bootstrap_effect(restored.request_bootstrap());
+    restored.apply_bootstrap_result(bootstrap_id, Ok(snapshot("2026-09-05", 60_000)));
+
+    assert!(restored.is_session_committed_blocked(TASK_ID));
+    assert_eq!(restored.display_buffer_seconds(), Some(30));
+    assert_eq!(
+        restored.begin_record_session(&storage, TASK_ID),
+        ClientEffect::None
+    );
+
+    storage.fail_work_session_writes.set(false);
+    restored.confirm_repository_checked(&storage);
+    assert!(restored.sessions().is_empty());
+    assert!(!restored.mutation_globally_blocked());
+}
+
+#[test]
+fn server_commit済みidを永続化できなければlocal_sessionを削除しない() {
+    let storage = FakeStorage::default();
+    let mut state = state_with_sessions(&storage, &[TASK_ID]);
+    state.tick(60_000);
+    let (request_id, _) = record_effect(state.begin_record_session(&storage, TASK_ID));
+
+    storage.fail_safety_writes.set(true);
+    state.apply_record_result(
+        &storage,
+        request_id,
+        Ok(WebSuccess {
+            snapshot: snapshot("2026-09-05", 60_000),
+            data: RecordSessionResult {
+                actual_work_seconds: 160,
+            },
+        }),
+    );
+
+    assert_eq!(state.sessions().len(), 1);
+    assert!(state.is_session_committed_blocked(TASK_ID));
+
+    storage.fail_safety_writes.set(false);
+    state.confirm_repository_checked(&storage);
+    assert!(state.sessions().is_empty());
+    assert!(!state.mutation_globally_blocked());
 }
 
 #[test]

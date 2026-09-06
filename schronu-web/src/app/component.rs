@@ -13,6 +13,19 @@ pub fn app() -> Element {
     }
 }
 
+#[cfg(any(test, all(feature = "web", target_arch = "wasm32")))]
+#[component]
+pub(super) fn InteractiveShell(blocked: bool, children: Element) -> Element {
+    rsx! {
+        main {
+            class: "shell",
+            inert: blocked.then_some("true"),
+            aria_busy: blocked,
+            {children}
+        }
+    }
+}
+
 #[component]
 fn AppBody() -> Element {
     #[cfg(all(feature = "web", target_arch = "wasm32"))]

@@ -9,7 +9,7 @@ use super::super::list_view::ListView;
 use super::super::long_press_browser::BrowserLongPressScheduler;
 use super::super::long_press_controller::LongPressSchedulerHandle;
 use super::super::session_view::SessionView;
-use super::{LoadingOverlay, NavigationTabs};
+use super::{InteractiveShell, LoadingOverlay, NavigationTabs};
 use crate::client::state::ActiveTab;
 use crate::client::time_model::format_hh_mm_ss;
 use crate::client::work_sessions::BrowserLocalStorage;
@@ -70,10 +70,8 @@ pub(super) fn BrowserApp() -> Element {
     let server_effect_in_flight = client.read().server_effect_in_flight();
 
     rsx! {
-        main {
-            class: "shell",
-            inert: server_effect_in_flight,
-            aria_busy: server_effect_in_flight,
+        InteractiveShell {
+            blocked: server_effect_in_flight,
             header { class: "toolbar", h1 { "Schronu" } }
             CarryLockBar {
                 model: carry_lock,
