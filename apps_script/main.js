@@ -3,6 +3,8 @@ const SCHRONU_CONFIG = {
   indCol: 1,
   taskIdCol: 2,
   syncCols: [12, 14, 16, 18],
+  segmentSyncCols: [12, 16],
+  taskSyncCols: [14, 18],
   dataStartRow: 3,
   timeFormatRanges: ['L3:M500', 'O3:P500'],
 };
@@ -105,9 +107,35 @@ function syncEditedManualCols_(spreadsheet, sourceSheet, editedRange) {
       }
 
       const value = sourceSheet.getRange(row, col).getValue();
-      otherSheet.getRange(targetRow, col).setValue(value);
+      if (SCHRONU_CONFIG.taskSyncCols.includes(col)) {
+        for (const sheet of [sourceSheet, otherSheet]) {
+          for (const taskRow of findRowsByTaskId_(sheet, taskId)) {
+            if (sheet === sourceSheet && taskRow === row) {
+              continue;
+            }
+            sheet.getRange(taskRow, col).setValue(value);
+          }
+        }
+      } else {
+        otherSheet.getRange(targetRow, col).setValue(value);
+      }
     }
   }
+}
+
+function findRowsByTaskId_(sheet, taskId) {
+  const lastRow = sheet.getLastRow();
+
+  if (lastRow < SCHRONU_CONFIG.dataStartRow) {
+    return [];
+  }
+
+  return sheet
+    .getRange(SCHRONU_CONFIG.dataStartRow, SCHRONU_CONFIG.taskIdCol, lastRow - SCHRONU_CONFIG.dataStartRow + 1, 1)
+    .getValues()
+    .flatMap((values, index) => normalizeTaskId_(values[0]) === taskId
+      ? [SCHRONU_CONFIG.dataStartRow + index]
+      : []);
 }
 
 function findRowBySegmentIdentity_(sheet, ind, taskId) {
