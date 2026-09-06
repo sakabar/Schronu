@@ -55,6 +55,27 @@ backlogの1項目を、そのまま1つの実装commit単位として扱わな�
 
 backlog項目が複数の責務、module、境界を含む場合は、実装前に独立して検証・reviewできる単位へ分割する。ここでいう「機能」はbacklog項目全体ではなく、parser、handler、renderer、gateway、use caseなど、1つの契約または変更理由を持つ単位を指す。
 
+#### 小規模変更のfast path
+
+次をすべて満たす変更は、小規模変更としてfast pathを使用してよい。判断に迷う場合は標準経路を使用する。
+
+- 製品コードの変更理由と固定する契約をそれぞれ1文で説明できる
+- 製品コードの変更が3file以下、かつ機械的変更を除く追加・削除の合計が100行以下である
+- storage schema、wire format、公開API、security境界、transaction、並行制御、外部I/O protocolを変更しない
+- file移動、module分割、dependency追加、migrationを含まない
+- 既存のtest構造の延長で回帰を固定できる
+
+fast pathでは、以下の手順が後続のRed/Green、review、品質ゲート、commit分割の規定に優先する。
+
+1. 回帰testを追加し、対象testが期待した1つの理由でRedになることを確認する。Red test単独のcommitは必須としない。
+2. 最小実装で対象testをGreenにする。同じ利用者向け契約を保つ小さなvertical sliceなら、UIとstateなど複数層を自動的に別cycleへ分けない。
+3. `cargo fmt --check`、対象test、変更したpackageのtestとclippyを実行する。root全体の品質ゲートは、PR作成または実装完了報告の直前に1回だけ実行する。
+4. 関連するtest、最小実装、その契約に直結するdocumentationは、1つのGreen commitにまとめてよい。
+5. サブエージェントreviewは契約全体がGreenになった後に1回実行する。各層、各commitごとに重複してreviewしない。
+6. review指摘は、同じ原因と契約に属し、個別にrevertする意味がないものに限りまとめて修正できる。修正後は対象testを再実行する。
+
+fast pathの途中で判定条件を外れた場合は、その時点で標準経路へ切り替え、commit計画と検証範囲を見直す。
+
 #### 実装前のcommit計画
 
 コードへ着手する前に、計画へ想定commit一覧を記載する。
@@ -105,7 +126,7 @@ backlog項目が複数の責務、module、境界を含む場合は、実装前�
 
 #### Red/Green cycle
 
-各契約は次の単位で進める。
+fast pathを適用しない各契約は次の単位で進める。
 
 1. 期待する挙動を示すRed testを追加する
 2. 対象testを実行し、期待した1つの理由でRedになることを確認する
@@ -140,7 +161,7 @@ Red test commitもbacklog項目全体で1つにまとめない。parser、handle
 
 #### Review前後のcommit
 
-review前に、review対象となる基礎Green実装をcommitする。複数の独立した機能を未commitのまま溜めてからreviewへ渡さない。
+fast pathを適用しない場合、review前にreview対象となる基礎Green実装をcommitする。複数の独立した機能を未commitのまま溜めてからreviewへ渡さない。
 
 ただし、reviewで基礎設計そのものが完了条件を満たさないと判明した場合は、その機能をGreen完了扱いにしない。必要な修正も責務単位で分け、1つの巨大な差分へ吸収しない。
 
@@ -170,7 +191,7 @@ commit前に次を確認する。
 - このcommitだけをrevertできる
 - `git diff --check`が成功する
 
-Green commitでは原則として次を実行する。
+標準経路のGreen commitでは原則として次を実行する。
 
 ```bash
 cargo fmt --check
@@ -178,7 +199,7 @@ cargo clippy --locked --all-targets -- -D warnings
 cargo test --locked
 ```
 
-対象testを先に実行してよいが、基礎Green実装commit前には全品質ゲートを通す。
+対象testを先に実行してよいが、標準経路の基礎Green実装commit前には全品質ゲートを通す。fast pathでは変更したpackageの品質ゲートを先に通し、root全体は最終確認の1回にまとめる。
 
 commit後に次を確認する。
 
@@ -238,13 +259,13 @@ backlog項目を完了にする前に、コードだけでなくcommit履歴もr
 
 確認項目:
 
-- Red testとGreen実装が契約単位で対応している
+- Red testとGreen実装が契約単位で対応している(fast pathでは実行記録でRedとGreenを確認できる)
 - backlog項目全体が1つの巨大実装commitになっていない
 - 機械的移動が独立している
 - review修正が指摘単位で分かれている
-- documentation変更が製品実装と分かれている
+- documentation変更が製品実装と分かれている、またはfast pathで同じ契約のGreen commitに限定されている
 - 各commitの目的がmessageと差分から判断できる
-- 各Green commitで品質ゲートを通した記録がある
+- 標準経路の各Green commit、またはfast pathの最終確認で必要な品質ゲートを通した記録がある
 - 小さいcommitの累積による巨大module、巨大fixture、責務集中が発生していないことを検証済みである
 - branch全体の保守性reviewと、必要な明示承認が完了している
 
