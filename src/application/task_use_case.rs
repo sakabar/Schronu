@@ -1,7 +1,8 @@
 use crate::application::daily_capacity::{try_local_date_and_time, try_next_logical_date_start};
 use crate::application::interface::{ProjectRegistrationError, TaskRepositoryTrait};
 pub use crate::application::task_list::{
-    list_tasks, ListTasksFilter, TaskPeriodField, TaskPeriodFilter,
+    list_tasks, list_tasks_page, ListTasksFilter, ListTasksPage, ListTasksPageRequest,
+    TaskPeriodField, TaskPeriodFilter, LIST_TASKS_MAX_PAGE_SIZE,
 };
 use crate::application::task_name;
 pub use crate::application::task_view::TaskView;

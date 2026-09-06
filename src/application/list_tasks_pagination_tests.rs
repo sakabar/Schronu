@@ -279,7 +279,7 @@ fn typicalとstressはpage境界で走査を止め全taskを保持しない() {
 
 #[cfg(feature = "benchmarking")]
 fn synthetic_repository(project_count: usize, task_count: usize) -> TestTaskRepository {
-    let mut projects = (0..project_count)
+    let projects = (0..project_count)
         .map(|index| new_task_handle(&format!("fixture-project-{index:05}")).unwrap())
         .collect::<Vec<_>>();
     for index in 0..task_count - project_count {
