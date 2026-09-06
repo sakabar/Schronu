@@ -396,6 +396,104 @@ fn restore_cliはparent_symlink経由のcurrent_storage_aliasを拒否する() {
     );
 }
 
+#[test]
+fn restore_current_cliはpre_backup後にcurrent_storageをfresh_revisionで置換する() {
+    let current = CliFixture::seeded();
+    let source = CliFixture::seeded();
+    let snapshot = source.child("snapshot");
+    let pre_backup = current.child("pre-backup");
+    assert_eq!(
+        source
+            .run(&["backup", snapshot.to_str().unwrap()])
+            .status
+            .code(),
+        Some(0)
+    );
+    let snapshot_revision = fs::read_to_string(snapshot.join("storage/.revision")).unwrap();
+    let old_revision = fs::read_to_string(current.storage.join(".revision")).unwrap();
+    let old_project = fs::read(find_project_yaml(&current.storage)).unwrap();
+
+    let output = current.run(&[
+        "restore",
+        "current",
+        snapshot.to_str().unwrap(),
+        pre_backup.to_str().unwrap(),
+        "REPLACE_CURRENT_STORAGE",
+    ]);
+
+    assert_eq!(output.status.code(), Some(0));
+    assert!(output.stderr.is_empty());
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert!(
+        stdout.starts_with(&format!(
+            "restore current: OK {} revision=",
+            current.storage.display()
+        )),
+        "{stdout}"
+    );
+    let fresh_revision = fs::read_to_string(current.storage.join(".revision")).unwrap();
+    assert_ne!(fresh_revision, snapshot_revision);
+    assert_ne!(fresh_revision, old_revision);
+    assert_ne!(
+        fs::read(find_project_yaml(&current.storage)).unwrap(),
+        old_project
+    );
+    assert_eq!(
+        current
+            .run(&["backup", "verify", pre_backup.to_str().unwrap()])
+            .status
+            .code(),
+        Some(0)
+    );
+}
+
+#[test]
+fn restore_current_cliは確認tokenと厳密な引数数をusage付きで要求する() {
+    let fixture = CliFixture::seeded();
+    let snapshot = fixture.child("snapshot");
+    let pre_backup = fixture.child("pre-backup");
+    let original_revision = fs::read(fixture.storage.join(".revision")).unwrap();
+
+    for args in [
+        vec!["restore", "current"],
+        vec!["restore", "current", "snapshot", "pre-backup"],
+        vec![
+            "restore",
+            "current",
+            "snapshot",
+            "pre-backup",
+            "replace_current_storage",
+        ],
+        vec![
+            "restore",
+            "current",
+            "snapshot",
+            "pre-backup",
+            "REPLACE_CURRENT_STORAGE",
+            "extra",
+        ],
+    ] {
+        let output = fixture.run(&args);
+
+        assert_eq!(output.status.code(), Some(1));
+        assert!(output.stdout.is_empty());
+        let stderr = String::from_utf8(output.stderr).unwrap();
+        assert!(stderr.contains("コマンド: restore current"), "{stderr}");
+        assert!(
+            stderr.contains(
+                "使い方: restore current <snapshot_dir> <pre_backup_dir> REPLACE_CURRENT_STORAGE"
+            ),
+            "{stderr}"
+        );
+        assert_eq!(
+            fs::read(fixture.storage.join(".revision")).unwrap(),
+            original_revision
+        );
+        assert!(!snapshot.exists());
+        assert!(!pre_backup.exists());
+    }
+}
+
 fn find_project_yaml(storage: &Path) -> PathBuf {
     fs::read_dir(storage)
         .unwrap()
