@@ -6,8 +6,7 @@ use std::rc::Rc;
 #[cfg(all(feature = "web", target_arch = "wasm32"))]
 use wasm_bindgen::{closure::Closure, JsCast};
 
-#[cfg_attr(not(all(feature = "web", target_arch = "wasm32")), allow(dead_code))]
-pub(crate) const LONG_PRESS_MILLIS: u32 = 1_200;
+use super::long_press_controller::{LongPressController, LongPressSchedulerHandle};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) struct CarryLockViewModel {
@@ -38,62 +37,14 @@ impl CarryLockViewModel {
     }
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) enum LongPressSource {
-    Pointer,
-    Keyboard,
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-struct ActiveLongPress {
-    token: u64,
-    source: LongPressSource,
-}
-
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-pub(crate) struct LongPressTracker {
-    next_token: u64,
-    active: Option<ActiveLongPress>,
-}
-
-impl LongPressTracker {
-    pub fn begin(&mut self, source: LongPressSource) -> u64 {
-        self.next_token = self.next_token.wrapping_add(1);
-        let token = self.next_token;
-        self.active = Some(ActiveLongPress { token, source });
-        token
-    }
-
-    pub fn begin_keyboard(&mut self, key: &str, auto_repeating: bool) -> Option<u64> {
-        if auto_repeating || !matches!(key, " " | "Enter") || self.active.is_some() {
-            return None;
-        }
-        Some(self.begin(LongPressSource::Keyboard))
-    }
-
-    pub fn cancel(&mut self, source: LongPressSource) {
-        if self.active.is_some_and(|active| active.source == source) {
-            self.active = None;
-        }
-    }
-
-    pub fn cancel_all(&mut self) -> bool {
-        self.active.take().is_some()
-    }
-
-    pub fn complete(&mut self, token: u64) -> bool {
-        if self.active.is_some_and(|active| active.token == token) {
-            self.active = None;
-            true
-        } else {
-            false
-        }
-    }
-}
+pub(crate) use super::long_press_controller::LongPressSource;
+#[cfg(test)]
+pub(crate) use super::long_press_controller::LongPressTracker;
 
 #[component]
 pub(crate) fn CarryLockBar(
     model: CarryLockViewModel,
+    scheduler: LongPressSchedulerHandle,
     on_enable: EventHandler<()>,
     on_arm: EventHandler<()>,
     on_disable: EventHandler<()>,
@@ -108,20 +59,35 @@ pub(crate) fn CarryLockBar(
         CarryLockMode::Locked => "操作ロック中",
         CarryLockMode::ArmedUntil(_) => "1操作可能",
     };
-    let mut tracker = use_signal(LongPressTracker::default);
-    let mut pressing = use_signal(|| false);
+    let pressing = use_signal(|| false);
+    let controller = use_hook(move || {
+        LongPressController::new(
+            scheduler,
+            move |active| {
+                let mut pressing = pressing;
+                pressing.set(active);
+            },
+            move || on_arm.call(()),
+        )
+    });
     #[cfg(all(feature = "web", target_arch = "wasm32"))]
     let _window_scroll_listener = use_hook(|| {
+        let controller = controller.clone();
         Rc::new(ScrollCancellationGuard::attach(
             BrowserWindowScrollSource,
             move || {
-                let cancelled = tracker.write().cancel_all();
-                if cancelled {
-                    pressing.set(false);
-                }
+                controller.cancel_for_scroll();
             },
         ))
     });
+
+    let pointer_down_controller = controller.clone();
+    let pointer_up_controller = controller.clone();
+    let pointer_leave_controller = controller.clone();
+    let pointer_cancel_controller = controller.clone();
+    let key_down_controller = controller.clone();
+    let key_up_controller = controller.clone();
+    let blur_controller = controller;
 
     rsx! {
         aside { class, aria_label: "持ち歩きロック状態",
@@ -157,34 +123,22 @@ pub(crate) fn CarryLockBar(
                                 event.is_primary(),
                                 event.trigger_button(),
                             ) {
-                                begin_long_press(
-                                    tracker,
-                                    pressing,
-                                    LongPressSource::Pointer,
-                                    on_arm,
-                                );
+                                pointer_down_controller.start(LongPressSource::Pointer);
                             }
                         },
-                        onpointerup: move |_| cancel_long_press(tracker, pressing, LongPressSource::Pointer),
-                        onpointerleave: move |_| cancel_long_press(tracker, pressing, LongPressSource::Pointer),
-                        onpointercancel: move |_| cancel_long_press(tracker, pressing, LongPressSource::Pointer),
+                        onpointerup: move |_| pointer_up_controller.cancel_pointer(),
+                        onpointerleave: move |_| pointer_leave_controller.cancel_pointer(),
+                        onpointercancel: move |_| pointer_cancel_controller.cancel_pointer(),
                         onkeydown: move |event: KeyboardEvent| {
                             let key = event.key().to_string();
-                            let token = {
-                                tracker
-                                    .write()
-                                    .begin_keyboard(&key, event.is_auto_repeating())
-                            };
-                            if let Some(token) = token {
+                            if key_down_controller.start_keyboard(&key, event.is_auto_repeating()) {
                                 event.prevent_default();
-                                pressing.set(true);
-                                complete_long_press_after_delay(tracker, pressing, token, on_arm);
                             }
                         },
-                        onkeyup: move |_| cancel_long_press(tracker, pressing, LongPressSource::Keyboard),
+                        onkeyup: move |_| key_up_controller.cancel_keyboard(),
                         onblur: move |_| {
-                            cancel_long_press(tracker, pressing, LongPressSource::Pointer);
-                            cancel_long_press(tracker, pressing, LongPressSource::Keyboard);
+                            blur_controller.cancel_pointer();
+                            blur_controller.cancel_keyboard();
                         },
                         "長押しして操作を許可"
                     }
@@ -232,26 +186,6 @@ pub(super) fn accepts_long_press_pointer(
         "touch" | "pen" => true,
         _ => false,
     }
-}
-
-fn begin_long_press(
-    mut tracker: Signal<LongPressTracker>,
-    mut pressing: Signal<bool>,
-    source: LongPressSource,
-    on_arm: EventHandler<()>,
-) {
-    let token = tracker.write().begin(source);
-    pressing.set(true);
-    complete_long_press_after_delay(tracker, pressing, token, on_arm);
-}
-
-fn cancel_long_press(
-    mut tracker: Signal<LongPressTracker>,
-    mut pressing: Signal<bool>,
-    source: LongPressSource,
-) {
-    tracker.write().cancel(source);
-    pressing.set(false);
 }
 
 trait ScrollEventSource {
@@ -316,31 +250,6 @@ impl Drop for BrowserWindowScrollSubscription {
             CAPTURE_SCROLL_EVENTS,
         );
     }
-}
-
-#[cfg(all(feature = "web", target_arch = "wasm32"))]
-fn complete_long_press_after_delay(
-    mut tracker: Signal<LongPressTracker>,
-    mut pressing: Signal<bool>,
-    token: u64,
-    on_arm: EventHandler<()>,
-) {
-    spawn(async move {
-        gloo_timers::future::TimeoutFuture::new(LONG_PRESS_MILLIS).await;
-        if tracker.write().complete(token) {
-            pressing.set(false);
-            on_arm.call(());
-        }
-    });
-}
-
-#[cfg(not(all(feature = "web", target_arch = "wasm32")))]
-fn complete_long_press_after_delay(
-    _tracker: Signal<LongPressTracker>,
-    _pressing: Signal<bool>,
-    _token: u64,
-    _on_arm: EventHandler<()>,
-) {
 }
 
 #[cfg(test)]

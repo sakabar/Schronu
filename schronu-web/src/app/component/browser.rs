@@ -6,6 +6,8 @@ use super::super::component_models::{
 use super::super::component_runtime::{ComponentAction, ComponentOrchestrator};
 use super::super::history_view::HistoryView;
 use super::super::list_view::ListView;
+use super::super::long_press_browser::BrowserLongPressScheduler;
+use super::super::long_press_controller::LongPressSchedulerHandle;
 use super::super::session_view::SessionView;
 use crate::client::state::ActiveTab;
 use crate::client::time_model::format_hh_mm_ss;
@@ -17,6 +19,8 @@ const TICK_MILLIS: u32 = 1_000;
 #[component]
 pub(super) fn BrowserApp() -> Element {
     let mut client = use_signal(ComponentOrchestrator::new);
+    let long_press_scheduler =
+        use_hook(|| LongPressSchedulerHandle::new(BrowserLongPressScheduler));
 
     use_effect(move || {
         let effect = client
@@ -69,6 +73,7 @@ pub(super) fn BrowserApp() -> Element {
             header { class: "toolbar", h1 { "Schronu" } }
             CarryLockBar {
                 model: carry_lock,
+                scheduler: long_press_scheduler,
                 on_enable: move |_| dispatch_action(client, ComponentAction::EnableCarryLock),
                 on_arm: move |_| dispatch_action(client, ComponentAction::ArmCarryLock),
                 on_disable: move |_| dispatch_action(client, ComponentAction::DisableCarryLock),

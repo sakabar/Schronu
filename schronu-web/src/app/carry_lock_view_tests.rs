@@ -5,6 +5,7 @@ use std::sync::{Arc, Mutex};
 use super::carry_lock_view::{
     accepts_long_press_pointer, CarryLockBar, CarryLockViewModel, LongPressSource, LongPressTracker,
 };
+use super::long_press_controller::{LongPressScheduler, LongPressSchedulerHandle};
 use super::view_test_support::{dispatch_click, rebuild_with_click_listeners};
 use crate::client::carry_lock::CarryLockMode;
 use dioxus::html::input_data::MouseButton;
@@ -14,6 +15,18 @@ use dioxus::prelude::*;
 struct RootProps {
     model: CarryLockViewModel,
     events: Arc<Mutex<Vec<&'static str>>>,
+    scheduler: LongPressSchedulerHandle,
+}
+
+#[derive(Clone, Copy)]
+struct DeferredScheduler;
+
+impl LongPressScheduler for DeferredScheduler {
+    fn schedule(&self, _delay_millis: u32, _callback: Box<dyn FnOnce()>) {}
+}
+
+fn deferred_scheduler() -> LongPressSchedulerHandle {
+    LongPressSchedulerHandle::new(DeferredScheduler)
 }
 
 fn root(props: RootProps) -> Element {
@@ -23,6 +36,7 @@ fn root(props: RootProps) -> Element {
     rsx! {
         CarryLockBar {
             model: props.model,
+            scheduler: props.scheduler,
             on_enable: move |_| enable_events.lock().unwrap().push("enable"),
             on_arm: move |_| arm_events.lock().unwrap().push("arm"),
             on_disable: move |_| disable_events.lock().unwrap().push("disable"),
@@ -36,6 +50,7 @@ fn render(model: CarryLockViewModel) -> String {
         RootProps {
             model,
             events: Arc::new(Mutex::new(Vec::new())),
+            scheduler: deferred_scheduler(),
         },
     );
     dom.rebuild_in_place();
@@ -120,6 +135,7 @@ fn normalの1tapと解除確認の確定だけがcallbackを送る() {
         RootProps {
             model: CarryLockViewModel::new(CarryLockMode::Normal, 0),
             events: Arc::clone(&events),
+            scheduler: deferred_scheduler(),
         },
     );
     let ids = rebuild_with_click_listeners(&mut normal);
@@ -133,6 +149,7 @@ fn normalの1tapと解除確認の確定だけがcallbackを送る() {
         RootProps {
             model: CarryLockViewModel::new(CarryLockMode::Locked, 0),
             events: Arc::clone(&events),
+            scheduler: deferred_scheduler(),
         },
     );
     let ids = rebuild_with_click_listeners(&mut locked);
