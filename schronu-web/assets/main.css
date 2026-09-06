@@ -520,6 +520,50 @@ button:disabled {
     gap: 1rem;
 }
 
+.task-name-filter {
+    display: flex;
+    width: 100%;
+    min-width: 0;
+    align-items: center;
+    gap: 0.5rem;
+}
+
+.task-name-filter-input {
+    width: 100%;
+    min-width: 0;
+    min-height: max(2.75rem, 44px);
+    border: 1px solid var(--line);
+    border-radius: 0.65rem;
+    background: var(--surface);
+    color: var(--ink);
+    font: inherit;
+    padding: 0.65rem 0.85rem;
+}
+
+.task-name-filter-input:focus-visible {
+    outline: 3px solid rgb(54 119 189 / 35%);
+    outline-offset: 3px;
+}
+
+.task-name-filter-clear {
+    flex: 0 0 auto;
+    min-width: max(2.75rem, 44px);
+    min-height: max(2.75rem, 44px);
+    padding: 0.5rem;
+    font-size: 1.25rem;
+    line-height: 1;
+}
+
+.task-filter-empty {
+    margin: 0;
+    border: 1px dashed var(--line);
+    border-radius: 1rem;
+    background: var(--surface);
+    color: var(--muted);
+    padding: 2rem 1rem;
+    text-align: center;
+}
+
 .task-table-scroll {
     overflow-x: auto;
     border: 1px solid var(--line);

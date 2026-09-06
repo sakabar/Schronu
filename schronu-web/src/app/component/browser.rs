@@ -20,6 +20,7 @@ const TICK_MILLIS: u32 = 1_000;
 #[component]
 pub(super) fn BrowserApp() -> Element {
     let mut client = use_signal(ComponentOrchestrator::new);
+    let mut task_name_filter = use_signal(String::new);
     let long_press_scheduler =
         use_hook(|| LongPressSchedulerHandle::new(BrowserLongPressScheduler));
 
@@ -68,6 +69,7 @@ pub(super) fn BrowserApp() -> Element {
     } = model;
     let mutations_locked = carry_lock.mutations_locked();
     let server_effect_in_flight = client.read().server_effect_in_flight();
+    let filter_text = task_name_filter.read().clone();
 
     rsx! {
         InteractiveShell {
@@ -120,12 +122,14 @@ pub(super) fn BrowserApp() -> Element {
                     dates,
                     rows,
                     active_task_ids,
+                    filter_text,
                     mutations_locked,
                     on_select_date: move |date| dispatch_action(client, ComponentAction::SelectDate(date)),
                     on_start_session: move |(task, is_leaf)| dispatch_action(
                         client,
                         ComponentAction::AddSession { task, is_leaf },
                     ),
+                    on_filter_change: move |filter| task_name_filter.set(filter),
                 }
             } else {
                 HistoryView { entries: history }

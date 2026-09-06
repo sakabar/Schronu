@@ -15,10 +15,22 @@ pub fn ListView(
     dates: Vec<DateButtonViewModel>,
     rows: Vec<ListRowViewModel>,
     active_task_ids: Vec<String>,
+    filter_text: String,
     #[props(default)] mutations_locked: bool,
     on_select_date: EventHandler<String>,
     on_start_session: EventHandler<(SessionTask, bool)>,
+    on_filter_change: EventHandler<String>,
 ) -> Element {
+    let normalized_filter = filter_text.trim().to_lowercase();
+    let task_name_matches = |task_name: &str| {
+        normalized_filter.is_empty() || task_name.to_lowercase().contains(&normalized_filter)
+    };
+    let filtered_rows = rows
+        .into_iter()
+        .filter(|row| task_name_matches(&row.task.task_name))
+        .collect::<Vec<_>>();
+    let no_matches = !normalized_filter.is_empty() && filtered_rows.is_empty();
+
     rsx! {
         section { class: "task-list-view",
             nav { class: "date-pills", aria_label: "logical date",
@@ -26,23 +38,46 @@ pub fn ListView(
                     DateButton { date, on_select_date }
                 }
             }
-            div { class: "task-table-scroll",
-                table { class: "task-table",
-                    thead {
-                        tr {
-                            th { "締切" }
-                            th { "予定" }
-                            th { "タスク" }
-                            th { "" }
-                        }
+            div { class: "task-name-filter", role: "search",
+                input {
+                    class: "task-name-filter-input",
+                    r#type: "text",
+                    value: filter_text.clone(),
+                    aria_label: "タスク名を検索",
+                    placeholder: "タスク名を検索",
+                    oninput: move |event| on_filter_change.call(event.value()),
+                }
+                if !filter_text.is_empty() {
+                    button {
+                        class: "task-name-filter-clear",
+                        r#type: "button",
+                        aria_label: "検索文字列をクリア",
+                        onclick: move |_| on_filter_change.call(String::new()),
+                        "×"
                     }
-                    tbody {
-                        for row in rows {
-                            TaskRow {
-                                active: active_task_ids.iter().any(|task_id| task_id == &row.task.task_id),
-                                row,
-                                mutations_locked,
-                                on_start_session,
+                }
+            }
+            if no_matches {
+                p { class: "task-filter-empty", role: "status", "一致するタスクがありません。" }
+            } else {
+                div { class: "task-table-scroll",
+                    table { class: "task-table",
+                        thead {
+                            tr {
+                                th { "締切" }
+                                th { "予定" }
+                                th { "タスク" }
+                                th { "" }
+                            }
+                        }
+                        tbody {
+                            for row in filtered_rows {
+                                TaskRow {
+                                    active: active_task_ids.iter().any(|task_id| task_id == &row.task.task_id),
+                                    row,
+                                    mutations_locked,
+                                    on_start_session,
+                                }
                             }
                         }
                     }

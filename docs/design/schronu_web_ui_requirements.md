@@ -117,11 +117,12 @@ Schronu-webを、1日の余力と複数taskの作業状況を同時に把握で�
 - **REQ-LIST-011**: schedule rankが0でないtaskは「セッション」buttonを表示せず、client stateが手動追加要求を受けても`work_sessions`へ追加しないこと。
 - **REQ-LIST-012**: 「計測を破棄して完了」または「記録して完了」のserver処理成功後は、追加の`list_tasks`を送らず、表示中の一覧から対象task UUIDを持つ全schedule segmentを即時に除去すること。別taskのrowと選択logical dateを維持し、responseがlogical date境界を跨いだ場合もsnapshotと日付buttonは更新すること。完了成功response受理時点でin-flightの`list_tasks` requestを無効化し、その後に到着したresponseは適用しないこと。完了成功response受理後に開始した`list_tasks` responseは通常どおり適用すること。完了失敗、「記録して解除」、「破棄して解除」では一覧を変更しないこと。server commit成功後に対象sessionのlocalStorage削除だけが失敗した場合も、一覧からは除去すること。反復完了で生成された次回taskは自動追加せず、次の明示的な一覧取得で表示すること。
 - **REQ-LIST-013**: 46rem以下では一覧の横スクロールをなくし、各rowをtask名、label付きの締切・予定、横幅100%の「セッション」buttonの順にcard表示すること。締切と予定は2列とし、tableの列header semanticsを維持すること。
+- **REQ-LIST-014**: 日付buttonの直下にtask名検索欄を表示し、前後空白を除外した英字大小無視の部分一致で取得済みrowを即時に絞り込むこと。空または空白だけなら全rowを表示し、一致しない場合は空結果を案内すること。検索文字列は日付・tab切替で保持し、reloadで破棄すること。入力中だけ44px以上のclear buttonを表示し、検索入力とclearではserver通信、task更新、localStorage更新、発火履歴追加を行わないこと。
 
 ### 4.8 通信制限と発火履歴
 
 - **REQ-NET-001**: server通信を初回`bootstrap`、日付選択、`自動セッション`、`記録して解除`、`計測を破棄して完了`の確定、`記録して完了`に限定すること。
-- **REQ-NET-002**: tab切替、毎秒tick、一覧の「セッション」、`破棄して解除`、`計測を破棄して完了`の確認表示とキャンセルではserver通信を行わないこと。
+- **REQ-NET-002**: tab切替、毎秒tick、一覧検索の入力・clear、一覧の「セッション」、`破棄して解除`、`計測を破棄して完了`の確認表示とキャンセルではserver通信を行わないこと。
 - **REQ-NET-003**: 「発火履歴」tabを選択した場合だけ、発火履歴を独立したsectionとして表示できること。
 - **REQ-NET-004**: 発火履歴はserver通信結果の直近100件をmemory内だけに保持し、reload時に消去すること。localStorage操作は記録しないこと。
 - **REQ-NET-005**: 各履歴に操作時刻、実際に呼び出したserver action名と全送信引数、成功・失敗を表示すること。引数は関数呼出し形式で表示し、client内部の`request_id`は含めないこと。
@@ -194,3 +195,4 @@ Schronu-webを、1日の余力と複数taskの作業状況を同時に把握で�
 | AC-020 | 持ち歩きロックの正常な保存値を復元し、ロック状態では圧縮したbarを表示する。不正値・未知version・読込失敗では元valueを維持してwarning付きで同じロック表示にする。ロック開始の保存失敗ではmemory上のロックを維持し、通常モード復帰の保存失敗では解除しない。一時許可はreload後に復元しない。 |
 | AC-021 | タッチ主体の端末ではbuttonをタップした後にhover配色が残らず、hover可能なfine pointerでは既存hover表現が適用される。選択済み日付buttonはdesktop hover中も緑背景と白文字を維持し、`:active`と`:focus-visible`は両環境で機能する。 |
 | AC-022 | 初回取得、一覧取得、自動選定、記録、2種類の完了の各server通信中は全画面の「通信中…」とスピナーが表示され、背面を操作できない。複数通信は最後のresponseまで表示を維持し、成功と各error応答の完了後に解除される。待機状態がassistive technologyへ通知され、reduced motionでは回転しない。 |
+| AC-023 | 曜日button直下の検索欄へtask名の一部を入力すると、前後空白を除外した英字大小無視の部分一致で取得済みrowだけが即時表示され、同一taskの複数segmentはすべて残る。日付・tab切替では検索文字列を保持し、clearで全rowへ戻る。入力とclearはserver通信、localStorage更新、発火履歴追加を行わず、320px幅でも入力欄と44px以上のclear buttonがviewportを超えない。 |
