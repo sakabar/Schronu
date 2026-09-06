@@ -197,7 +197,11 @@ fn list_renders_eight_dates_selected_row_fields_and_visual_states() {
         html.contains("aria-label=\"task leaf: セッションに追加\""),
         "{html}"
     );
-    assert!(html.contains(">＋</button>"), "{html}");
+    assert!(
+        html.contains("class=\"session-start-compact-label\" aria-hidden=\"true\">＋</span>"),
+        "{html}"
+    );
+    assert!(html.contains(">セッション</span>"), "{html}");
     assert!(
         !html.contains("aria-label=\"task late: セッションに追加\""),
         "{html}"
@@ -231,7 +235,7 @@ fn list_rowはresponsive表示用の意味別cellとlabelを持つ() {
     assert!(html.contains("class=\"task-heading\""), "{html}");
     assert!(html.contains("class=\"session-heading\""), "{html}");
     assert!(html.contains("class=\"task-name-scroll\""), "{html}");
-    assert!(html.contains("tabindex=\"0\""), "{html}");
+    assert!(html.contains("tabindex=0"), "{html}");
     assert!(html.contains("class=\"session-cell\""), "{html}");
 }
 
@@ -310,8 +314,8 @@ fn active_uuid_disables_every_matching_row_but_not_other_tasks() {
     let html = dioxus::ssr::render(&dom);
 
     assert_eq!(html.matches("disabled").count(), 2, "{html}");
-    assert_eq!(html.matches(">✓</button>").count(), 2, "{html}");
-    assert_eq!(html.matches(">＋</button>").count(), 1, "{html}");
+    assert_eq!(html.matches(">✓</span>").count(), 2, "{html}");
+    assert_eq!(html.matches(">＋</span>").count(), 1, "{html}");
     assert_eq!(html.matches("セッション追加済み").count(), 2, "{html}");
 }
 

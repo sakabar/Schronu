@@ -329,6 +329,10 @@ button:disabled {
     color: white;
 }
 
+.session-start-compact-label {
+    display: none;
+}
+
 @media (hover: hover) and (pointer: fine) {
     button:hover:not(:disabled) {
         border-color: var(--green);
@@ -688,9 +692,7 @@ button:disabled {
 @media (max-width: 46rem) {
     .task-table-scroll {
         overflow-x: visible;
-        border: 0;
         border-radius: 0;
-        background: transparent;
         box-shadow: none;
     }
 
@@ -700,81 +702,119 @@ button:disabled {
     }
 
     .task-table thead {
-        position: absolute;
-        width: 1px;
-        height: 1px;
-        padding: 0;
-        margin: -1px;
-        overflow: hidden;
-        clip: rect(0, 0, 0, 0);
-        clip-path: inset(50%);
-        white-space: nowrap;
-        border: 0;
+        display: block;
+    }
+
+    .task-table thead tr,
+    .task-row {
+        display: grid;
+        width: 100%;
+        grid-template-columns: 44px 5.5rem 5.75rem minmax(0, 1fr);
+        grid-template-areas: "action deadline schedule task";
+    }
+
+    .task-table thead tr {
+        min-height: 1.75rem;
+        align-items: center;
+        background: var(--surface-muted);
+    }
+
+    .task-table th {
+        min-width: 0;
+        padding: 0.3rem 0.35rem;
+        border-radius: 0;
+        border-bottom: 1px solid var(--line);
+        font-size: 0.68rem;
+        letter-spacing: 0.04em;
     }
 
     .task-table tbody {
-        display: grid;
-        gap: 0.75rem;
+        display: block;
     }
 
     .task-row {
-        display: grid;
-        grid-template-areas:
-            "task task"
-            "deadline schedule"
-            "action action";
-        grid-template-columns: minmax(0, 0.9fr) minmax(0, 1.4fr);
-        gap: 0.65rem 1rem;
-        padding: 1rem;
-        border: 1px solid var(--line);
-        border-radius: 1rem;
-        background: var(--surface);
-        box-shadow: var(--shadow);
+        min-height: 44px;
+        align-items: stretch;
     }
 
-    .task-table td {
-        padding: 0;
-        border-bottom: 0;
+    .task-row:not(:last-child) {
+        border-bottom: 1px solid var(--line);
     }
 
-    .task-table td[data-label] {
-        display: flex;
-        min-width: 0;
-        flex-direction: column;
-        gap: 0.15rem;
-    }
-
-    .task-table td[data-label]::before {
-        content: attr(data-label);
-        color: var(--muted);
-        font-size: 0.75rem;
-        font-weight: 700;
-        letter-spacing: 0.06em;
-    }
-
+    .deadline-heading,
     .deadline {
         grid-area: deadline;
     }
 
+    .schedule-heading,
     .schedule-time {
         grid-area: schedule;
     }
 
+    .task-heading,
     .task-name {
         grid-area: task;
-        overflow-wrap: anywhere;
-        font-size: 1.05rem;
-        line-height: 1.5;
+    }
+
+    .session-heading,
+    .session-cell {
+        grid-area: action;
+    }
+
+    .task-table td {
+        display: flex;
+        min-width: 0;
+        align-items: center;
+        padding: 0.25rem 0.35rem;
+        border-bottom: 0;
+    }
+
+    .deadline,
+    .schedule-time {
+        font-size: 0.72rem;
+        line-height: 1;
+    }
+
+    .task-name {
+        overflow: hidden;
+        font-size: 0.88rem;
+        line-height: 1.25;
+    }
+
+    .task-name-scroll {
+        min-width: 0;
+        overflow-x: auto;
+        overscroll-behavior-inline: contain;
+        white-space: nowrap;
+        width: 100%;
+        scrollbar-width: thin;
+        touch-action: pan-x pan-y;
+    }
+
+    .task-name-scroll:focus-visible {
+        outline: 3px solid rgb(54 119 189 / 35%);
+        outline-offset: -3px;
     }
 
     .session-cell {
-        grid-area: action;
-        margin-top: 0.15rem;
+        padding: 0;
     }
 
     .session-cell .session-start {
-        width: 100%;
-        min-height: 3rem;
+        width: 44px;
+        min-height: 44px;
+        border-width: 0 1px 0 0;
+        border-radius: 0;
+        padding: 0;
+        font-size: 1.1rem;
+    }
+
+    .session-start-full-label {
+        display: none;
+    }
+
+    .session-start-compact-label {
+        display: inline;
     }
 }
 
