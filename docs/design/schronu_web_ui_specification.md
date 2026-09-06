@@ -12,9 +12,9 @@ WebセッションはSchronu本体のcurrent taskと独立させる。Schronuの
 
 | 層 | 責務 |
 | --- | --- |
-| Dioxus component | tab、button、card、一覧、error、履歴の描画と利用者操作の受付。 |
-| client state | `work_sessions`、snapshot、選択日、一覧、処理中操作、履歴、1秒tickを管理する。 |
-| localStorage adapter | `work_sessions`のversion付きserialize、読込、検証、保存を行う。 |
+| Dioxus component | tab、button、card、一覧、error、履歴、持ち歩きロックbarの描画と利用者操作の受付。 |
+| client state | `work_sessions`、snapshot、選択日、一覧、処理中操作、履歴、1秒tick、持ち歩きロックを管理する。 |
+| localStorage adapter | `work_sessions`、mutation safety、持ち歩きロックの独立したversion付きstateを読込・検証・保存する。 |
 | server function | wire DTOを検証し、専用workerへ型付きcommandを送る。 |
 | Web operation worker | 1 thread上でWeb操作を直列実行し、environment、repository、free-time資源を所有する。 |
 | Web controller service | application use caseを組み合わせ、snapshot、一覧、自動選定、記録、計測を記録する完了、計測を破棄する完了を提供する。 |
@@ -158,6 +158,20 @@ keyは`schronu_web.work_sessions.v1`とする。valueはversion付きobjectと�
 このkeyが存在しない場合、またはversion 1の`mutation_blocked`が`false`の場合だけmutation可能な初期状態とする。未知version、JSON不正、schema不正は安全側へ倒し、mutation blockedとして復元する。
 
 `record_session`または`complete_session`の送信前に、`mutation_blocked: true`をstorage-firstで保存する。保存失敗時はrequestを送信しない。成功、またはserverが未commitと確定できるerror responseの受信後、ほかに応答待ちのmutationがなく、repository状態も確定している場合だけ`false`へ戻す。browser crash、transport切断、`repository_state_uncertain`では`true`を残し、reload後も全mutationを停止する。解除はrepositoryを手動確認する明示操作だけが所有し、通常のread成功、session破棄、reloadでは解除しない。server commit後にlocal session削除だけが失敗している場合、明示解除は該当sessionを`work_sessions`からstorage-firstで削除してからmarkerを解除する。session削除に失敗した場合はmarkerを解除しない。session削除後のmarker解除に失敗した場合もblocked状態を維持するが、該当sessionは既に永続層から消えているため二重送信できない。transportまたは`repository_state_uncertain`由来の未確定sessionは、手動確認結果に基づく再操作のため残す。
+
+持ち歩きロックは`MutationSafetyState`とは目的と解除条件が異なるため、独立した`CarryLockState`とkey `schronu_web.carry_lock.v1`を使用する。
+
+```json
+{
+  "version": 1,
+  "enabled": true
+}
+```
+
+- keyがなければ通常モードとする。version 1の正常値は`enabled`を復元するが、一時許可の期限は保存せず、`enabled: true`のreload後はロック状態とする。
+- JSON・schema不正、未知version、読込失敗はwarning付きのロック状態とし、元のvalueを削除・上書きしない。
+- 有効化はmemory-firstとし、保存に失敗しても現在のpageではロックを維持し、reload後に維持できない可能性をwarning表示する。
+- 通常モードへの復帰はstorage-firstとし、`enabled: false`の保存成功後だけmemory stateを通常モードへ変える。保存失敗時はロックを維持する。
 
 ## 4. Server operations
 
@@ -407,6 +421,12 @@ display_buffer = buffer_seconds - buffer_elapsed
 
 各buttonは表示labelとは別に具体的な`YYYY-MM-DD`を保持する。新しいserver responseでlogical dateが変わった場合はbuttonを再生成する。2種類の完了成功では選択logical dateを維持し、対象task UUIDのrowだけを除去する。それ以外のresponseでは既存一覧と選択logical dateをclearする。追加の`list_tasks`は自動実行しない。
 
+### 6.6 持ち歩きロックstate
+
+`CarryLockState`は`Normal`、`Locked`、`ArmedUntil(monotonic_deadline_ms)`を持つ。`ArmedUntil`は`Performance.now()`相当の単調時計を基準に15秒後を期限とし、セッション経過時間などに使う壁時計とは分離する。一時許可の残り秒数も単調時計から算出する。単調時計が後退した場合も安全側へ倒して`Locked`へ戻す。
+
+すべてのcomponent actionは同じreducerを通し、reducerはaction処理前に期限を観測する。`AutoSession`、`AddSession`、`DiscardSession`、`RecordSession`、`CompleteSession`、`CompleteSessionWithoutRecording`、`ConfirmRepositoryChecked`を変更操作とする。`Locked`ではこれらをeffectなしで拒否し、`ArmedUntil`では最初のdispatchを処理する前に権利を消費して`Locked`へ戻す。成功、失敗、local stateが実際に変化したかには依存しない。tab切替、tick、日付選択とresponse適用は権利を消費しない。
+
 ## 7. UI behavior
 
 ### 7.1 初期化とtab
@@ -456,6 +476,15 @@ display_buffer = buffer_seconds - buffer_elapsed
 - 完了responseの`ServerSnapshot`は通常どおり適用する。responseのlogical dateが変わった場合は日付buttonを再生成する一方、選択logical dateと対象task以外のrowを維持する。追加の`list_tasks`は送らない。
 - in-flight中は対象sessionの4buttonを無効化する。他sessionの計測は継続する。globalまたはmanual safety block中はserver mutationの3buttonを無効化し、「破棄して解除」は利用可能とする。
 
+### 7.5 持ち歩きロックbar
+
+- page上部へstickyなbarを常時表示する。画面を覆うoverlayや内容の非表示は行わず、ロック中もbuffer・セッション・一覧の表示と更新、scroll、tab切替、日付選択、一覧取得を維持する。
+- `Normal`では「持ち歩きロック」を1 clickすると即時に有効化する。`Locked`では「操作ロック中」と「1.2秒長押しで1操作許可」、`ArmedUntil`では「1操作可能」と残り秒数を表示する。
+- `Locked`の長押しbuttonはprimary pointer、Space、Enterを受け付ける。pointerup、pointerleave、pointercancel、buttonのblur、window scroll、または1.2秒未満のkeyupでtimerを破棄し、stale timerが発火しても許可しない。keyboard auto-repeatは新しい長押しを開始しない。
+- 状態名だけを`aria-live=polite`で通知する。`ArmedUntil`の残り秒数はlive regionの外へ置き、毎秒読み上げない。
+- 「計測を破棄して完了」の確認表示は変更操作に含めず、確定dispatchだけが権利を消費する。キャンセルは`ArmedUntil`を即時に`Locked`へ戻し、期限切れでも確認表示を閉じる。
+- 通常モードへの復帰はbar内の`details`に置き、「確認して解除」の操作だけが永続解除を要求する。
+
 ## 8. Communication and persistence matrix
 
 | 操作 | server通信 | task保存 | localStorage変更 | 表示中一覧 | current task変更 |
@@ -472,6 +501,9 @@ display_buffer = buffer_seconds - buffer_elapsed
 | 計測を破棄して完了の確定 | safety marker保存後に`complete_session(record_elapsed_seconds: false)`。成功後の追加一覧取得なし | 追加実績0の完了transaction 1回 | 送信前marker設定。確定応答後marker解除。成功後session削除 | 成功時に同一task UUIDの全rowを除去 | なし |
 | 記録して完了 | safety marker保存後に`complete_session(record_elapsed_seconds: true)`。成功後の追加一覧取得なし | 経過秒を加算する完了transaction 1回 | 送信前marker設定。確定応答後marker解除。成功後session削除 | 成功時に同一task UUIDの全rowを除去 | なし |
 | repository手動確認済み | なし | なし | commit済みで削除失敗したsessionを先に削除し、safety marker解除 | なし | なし |
+| 持ち歩きロック有効化 | なし | なし | `enabled: true`を保存。失敗時もmemory上はロック | なし | なし |
+| 持ち歩きロック一時許可 | なし | なし | なし。15秒の期限はmemoryだけ | なし | なし |
+| 持ち歩きロック解除 | なし | なし | `enabled: false`の保存成功後だけ解除 | なし | なし |
 | 06:00境界 | なし | なし | なし | なし | なし |
 
 ## 9. Error contracts
@@ -528,7 +560,8 @@ OperationHistoryEntry {
 - CLIのtask未選択時no-opと成功時だけfocus解除する規則
 - MCPのtool名、tool数、JSON schema、required field、default、response、error
 - MCP `complete_task`の`task_id`、`finished_at`、`additional_actual_work_seconds`というwire入力
-- Schronu-webのserver API、`ServerSnapshot`を含むclient/server wire形式、localStorage schema
+- Schronu-webのserver operationと`ServerSnapshot`を含むclient/server wire形式
+- 既存の`work_sessions`とmutation safetyのlocalStorage schema。持ち歩きロックは独立keyとして追加する
 - YAMLを含むtask storage schema
 - repository lock、transaction、rollback、state uncertainの区別
 
@@ -582,6 +615,8 @@ OperationHistoryEntry {
 - 各endpointの成功型がsnapshotを持ち、error型がsnapshotを持たず、clientがerror時に直前snapshotを維持することを検証する。
 - error codeごとの`retry_advice`がerror表と一致し、`manual_check`では同一requestを再送しないことを検証する。
 - 履歴がserver通信結果だけを対象とすること、100件上限、成否、reload非永続化を検証する。
+- 持ち歩きロックのkeyなし・正常値・不正JSON・未知version・読込失敗、元value維持、memory-first有効化、storage-first解除、一時許可非永続化を検証する。
+- 単調時計による15秒境界と時計後退、閲覧操作では権利を維持し、7変更操作の最初のdispatchだけが権利を消費することを検証する。
 
 ### 12.5 UI and integration
 
@@ -593,6 +628,9 @@ OperationHistoryEntry {
 - 「計測を破棄して完了」の最初のclickでは通信せず、card単位の確認表示、キャンセル、確定時の1回だけのtyped callbackを確認する。
 - 33%、100%、133%、見積0、buffer正負の表示を確認する。
 - 通信matrixの各操作についてrequest件数を確認する。
+- 持ち歩きロックbarのsticky表示、3状態、残り秒表示、`aria-live`対象、通常モードへの確認付き復帰を確認する。
+- pointer・Space・Enterの1.2秒長押し成立と、pointerup・leave・cancel・blur・window scroll・短いkeyupでの中断を確認する。
+- ロック中も画面表示・更新、scroll、tab切替、日付選択、一覧取得が機能し、7変更操作が無効になることを確認する。破棄完了の確認は一時許可を消費せず、確定時に消費し、キャンセルと期限切れで閉じることを確認する。
 - 2件以上の同時計測とreload復元を確認する。
 - serverと同じlocal timezoneでepoch表示と曜日labelを確認し、logical dateがserver返却値を起点に生成されることを確認する。
 - UI表示文字列を検索し、「フォーカス」が存在しないことを確認する。
@@ -623,4 +661,5 @@ OperationHistoryEntry {
 | 6.4 | REQ-BUFFER-001..010 |
 | 6.5、7.3、7.4、8 | REQ-LIST-001..013 |
 | 7.1、8、10 | REQ-COMMON-001..007、REQ-NET-001..006 |
+| 3.4、6.6、7.5、8、12.4、12.5 | REQ-LOCK-001..010 |
 | 11、12 | REQ-COMPAT-001..005、全受入条件 |
