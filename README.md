@@ -248,7 +248,7 @@ clientごとの設定形式に合わせて、commandと環境変数を次のよ�
 | --- | --- | --- |
 | `get_focus` | なし | 現在着手すべきtaskを返す。候補がなければ`task: null` |
 | `get_task` | `task_id` | UUIDで指定した既存taskの詳細を返す |
-| `list_tasks` | optional: `period`、`statuses`、`categories` | project treeのpre-orderでtaskを返し、指定したfilterで絞り込む |
+| `list_tasks` | optional: `period`、`statuses`、`categories`、`query`、`root_task_id`、`limit`、`cursor`、`unbounded` | project treeのpre-orderでtaskをpage取得し、指定したfilterで絞り込む |
 | `get_schedule` | optional: `from`、`until` | 06:00開始のローカル論理日範囲と重なるschedule segmentを返す |
 | `create_task` | `name`、optional: `estimated_work_minutes`、`pending_until` | root project taskを作成する。見積もり省略時は15分 |
 | `breakdown_task` | `parent_id`、`names`、optional: `pending_until` | 入力順に子taskを追加し、親のdeadlineがあれば継承する |
@@ -257,7 +257,9 @@ clientごとの設定形式に合わせて、commandと環境変数を次のよ�
 | `complete_task` | `task_id`、optional: `finished_at`、`additional_actual_work_seconds` | 未完了の直接の子を持たないtaskを完了し、既存の実作業秒数へ指定値を加算する |
 | `update_task` | `task_id`と、`estimated_work_minutes`、`deadline_time`、`category`のうち1つ以上 | 見積もり・deadline・root projectのcategoryを更新する |
 
-`list_tasks.period`は必須の`field`、`from`、`until`からなり、RFC 3339日時の`from`以上`until`未満の半開区間です。`field`は`scheduled_start`、`created_at`、`deadline`、`completed_at`のいずれかです。`scheduled_start`では、計算されたschedule segmentの開始時刻が1つ以上この範囲に入るtaskを選びます。`statuses`は`todo`、`pending`、`done`、`categories`は上記categoryまたは未分類を表す`null`を配列で指定します。statusは現在時刻を反映した実効statusで判定します。同じ配列内の値はOR、period・status・categoryの各filter間はANDです。`period`の省略、または`statuses`、`categories`の省略・空配列は、その項目では絞り込みません。
+`list_tasks.period`は必須の`field`、`from`、`until`からなり、RFC 3339日時の`from`以上`until`未満の半開区間です。`field`は`scheduled_start`、`created_at`、`deadline`、`completed_at`のいずれかです。`scheduled_start`では、計算されたschedule segmentの開始時刻が1つ以上この範囲に入るtaskを選びます。`statuses`は`todo`、`pending`、`done`、`categories`は上記categoryまたは未分類を表す`null`を配列で指定します。statusは現在時刻を反映した実効statusで判定します。`query`はtask名をUnicode lowercaseへ変換した部分一致で検索し、Unicode正規化は行いません。空文字列は検索filterなしとして扱います。`root_task_id`は指定task自身とそのsubtreeだけを対象にし、存在しないUUIDは`task_not_found`です。同じ配列内の値はOR、各filter間はANDです。`period`の省略、または`statuses`、`categories`の省略・空配列は、その項目では絞り込みません。
+
+`list_tasks`はproject treeのpre-orderを維持し、既定で最大100件、`limit`指定時は1件から500件までを返します。応答は既存の`tasks`に加えて、続きがある場合はopaqueな`next_cursor`、終端では`next_cursor: null`を含みます。次pageでは同じfilterと`cursor`を渡し、`limit`だけは変更できます。全件取得は明示的な`unbounded: true`だけで有効になり、`unbounded`と`limit`または`cursor`の併用は`invalid_input`です。cursorの形式・version・filter・再開位置が一致しない場合や、前page取得後にrepository revisionが変わった場合も`field: cursor`の`invalid_input`になります。その場合はcursorを省略して先頭pageから取得し直してください。
 
 `get_schedule.from`と`get_schedule.until`は、ローカル時刻06:00を境界とする論理日の日付です。両方指定すると`from`の06:00以上`until`の06:00未満、`from`だけならその1論理日、`until`だけなら現在以上`until`の06:00未満、両方省略なら現在以上次の06:00未満を対象にします。schedule segmentは開始時刻だけでなく、その区間が対象範囲と重なるかどうかで選ばれます。
 
