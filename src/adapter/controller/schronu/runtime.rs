@@ -1405,6 +1405,30 @@ enum InteractiveRepositoryEventOutcome {
     Fatal(RunError),
 }
 
+fn render_interactive_command_echo(
+    stdout: &mut dyn SchronuWriter,
+    command: &str,
+    operation_now: DateTime<Local>,
+) -> Result<(), RunError> {
+    writeln_newline(stdout, "")
+        .and_then(|()| {
+            writeln_newline(
+                stdout,
+                &format!(
+                    "{}{}> {}{}",
+                    style::Bold,
+                    operation_now.format("%Y/%m/%d %H:%M:%S.%f"),
+                    command,
+                    style::Reset
+                ),
+            )
+        })
+        .and_then(|()| writeln_newline(stdout, ""))
+        .and_then(|()| stdout.flush())
+        .map_err(CommandError::Output)
+        .map_err(RunError::Command)
+}
+
 fn handle_interactive_submit_at(
     stdout: &mut dyn SchronuWriter,
     task_repository: &mut dyn TaskRepositoryTrait,
@@ -1414,26 +1438,21 @@ fn handle_interactive_submit_at(
     operation_now: DateTime<Local>,
 ) -> InteractiveRepositoryEventOutcome {
     let command = line.trim().to_string();
+    if let Ok(Command::BackupVerify { snapshot_directory }) = parse_interactive_command(&command) {
+        if let Err(error) = render_interactive_command_echo(stdout, &command, operation_now) {
+            return InteractiveRepositoryEventOutcome::Fatal(error);
+        }
+        return match execute_backup_verify_command(stdout, &snapshot_directory) {
+            Ok(()) => InteractiveRepositoryEventOutcome::CommandExecuted(
+                CommandKind::BackupVerify,
+                operation_now,
+            ),
+            Err(error) => InteractiveRepositoryEventOutcome::Fatal(error),
+        };
+    }
     if let Ok(Command::Backup { snapshot_directory }) = parse_interactive_command(&command) {
-        if let Err(error) = writeln_newline(stdout, "")
-            .and_then(|()| {
-                writeln_newline(
-                    stdout,
-                    &format!(
-                        "{}{}> {}{}",
-                        style::Bold,
-                        operation_now.format("%Y/%m/%d %H:%M:%S.%f"),
-                        command,
-                        style::Reset
-                    ),
-                )
-            })
-            .and_then(|()| writeln_newline(stdout, ""))
-            .and_then(|()| stdout.flush())
-        {
-            return InteractiveRepositoryEventOutcome::Fatal(RunError::Command(
-                CommandError::Output(error),
-            ));
+        if let Err(error) = render_interactive_command_echo(stdout, &command, operation_now) {
+            return InteractiveRepositoryEventOutcome::Fatal(error);
         }
         let storage_directory =
             std::path::PathBuf::from(task_repository.get_project_storage_dir_name());

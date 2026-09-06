@@ -7271,6 +7271,79 @@ fn interactive_backupはsnapshot後のreloadでfocusを再調整する() {
 }
 
 #[test]
+fn interactive_backup_verifyはcurrent_storage非依存で成功とsnapshot_errorを返す() {
+    let storage_dir = TestStorageDir::new();
+    std::fs::create_dir_all(&storage_dir.path).unwrap();
+    let snapshot = storage_dir.path.parent().unwrap().join(format!(
+        "schronu-controller-verify-{}",
+        Uuid::new_v4().hyphenated()
+    ));
+    crate::adapter::gateway::storage_snapshot::create_snapshot(&storage_dir.path, &snapshot)
+        .unwrap();
+    std::fs::remove_dir_all(&storage_dir.path).unwrap();
+    let now = Local.with_ymd_and_hms(2026, 9, 6, 13, 0, 0).unwrap();
+    let task = new_test_task_handle("verify focus").unwrap();
+    let task_id = task.get_id().unwrap();
+    let mut repository =
+        TestTaskRepository::new(task, now).with_storage_directory(&storage_dir.path);
+    let mut free_time_manager = TestFreeTimeManager::default();
+    let mut stdout = TestWriter::new();
+    let mut focused_task_id_opt = Some(task_id);
+    let mut last_focused_task_id_opt = Some(task_id);
+    let mut focus_started_datetime = now;
+    let mut focus_selection_mode = FocusSelectionMode::highest_priority();
+    let command = format!("backup verify {}", snapshot.display());
+
+    let outcome = handle_interactive_submit_at(
+        &mut stdout,
+        &mut repository,
+        &mut free_time_manager,
+        InteractiveRepositoryState {
+            focused_task_id_opt: &mut focused_task_id_opt,
+            last_focused_task_id_opt: &mut last_focused_task_id_opt,
+            focus_started_datetime: &mut focus_started_datetime,
+            focus_selection_mode: &mut focus_selection_mode,
+        },
+        &command,
+        now,
+    );
+
+    assert!(matches!(
+        outcome,
+        InteractiveRepositoryEventOutcome::CommandExecuted(CommandKind::BackupVerify, actual_now)
+            if actual_now == now
+    ));
+    assert_eq!(repository.reload_if_changed_attempt_count.get(), 0);
+    assert!(String::from_utf8_lossy(&stdout.buffer).contains(&format!(
+        "backup verify: OK {} revision=",
+        snapshot.display()
+    )));
+
+    let manifest = snapshot.join("manifest.json");
+    std::fs::write(&manifest, "{").unwrap();
+    let outcome = handle_interactive_submit_at(
+        &mut stdout,
+        &mut repository,
+        &mut free_time_manager,
+        InteractiveRepositoryState {
+            focused_task_id_opt: &mut focused_task_id_opt,
+            last_focused_task_id_opt: &mut last_focused_task_id_opt,
+            focus_started_datetime: &mut focus_started_datetime,
+            focus_selection_mode: &mut focus_selection_mode,
+        },
+        &command,
+        now,
+    );
+
+    assert!(matches!(
+        outcome,
+        InteractiveRepositoryEventOutcome::Fatal(RunError::Snapshot(error))
+            if error.path() == manifest && error.to_string().contains("Decode failed")
+    ));
+    std::fs::remove_dir_all(snapshot).unwrap();
+}
+
+#[test]
 fn test_interactive_verifyは出力errorを分類してtransactionを継続する() {
     let operation_now = Local.with_ymd_and_hms(2026, 8, 23, 12, 0, 0).unwrap();
 
