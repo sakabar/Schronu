@@ -741,3 +741,7 @@ impl TaskRepositoryTrait for TaskRepository {
 #[cfg(test)]
 #[path = "task_repository_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "task_repository_revision_tests.rs"]
+mod revision_contract_tests;
