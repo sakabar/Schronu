@@ -12,7 +12,6 @@ struct RootProps {
     dates: Vec<DateButtonViewModel>,
     rows: Vec<ListRowViewModel>,
     active_task_ids: Vec<String>,
-    tick_now_epoch_ms: i64,
     events: Arc<Mutex<Vec<String>>>,
 }
 
@@ -24,7 +23,6 @@ fn root(props: RootProps) -> Element {
             dates: props.dates,
             rows: props.rows,
             active_task_ids: props.active_task_ids,
-            tick_now_epoch_ms: props.tick_now_epoch_ms,
             mutations_locked: false,
             on_select_date: move |date: String| date_events.lock().unwrap().push(format!("date:{date}")),
             on_start_session: move |(task, is_leaf): (SessionTask, bool)| task_events
@@ -46,9 +44,8 @@ fn carry_lockはsession追加だけを無効化し日付選択は維持する() 
                 label: "土".to_owned(),
                 selected: false,
             }],
-            rows: vec![row("task-id", None, true)],
+            rows: vec![row("task-id", false, true)],
             active_task_ids: Vec::new(),
-            tick_now_epoch_ms: 0,
             events: Arc::clone(&events),
         },
     );
@@ -64,7 +61,6 @@ fn carry_lockはsession追加だけを無効化し日付選択は維持する() 
                 dates: props.dates,
                 rows: props.rows,
                 active_task_ids: props.active_task_ids,
-                tick_now_epoch_ms: props.tick_now_epoch_ms,
                 mutations_locked: true,
                 on_select_date: move |date: String| date_events.lock().unwrap().push(format!("date:{date}")),
                 on_start_session: move |(task, is_leaf): (SessionTask, bool)| task_events
@@ -83,9 +79,8 @@ fn carry_lockはsession追加だけを無効化し日付選択は維持する() 
                 label: "土".to_owned(),
                 selected: false,
             }],
-            rows: vec![row("task-id", None, true)],
+            rows: vec![row("task-id", false, true)],
             active_task_ids: Vec::new(),
-            tick_now_epoch_ms: 0,
             events: Arc::clone(&events),
         },
     );
@@ -116,12 +111,12 @@ fn task(task_id: &str, task_name: &str) -> SessionTask {
     }
 }
 
-fn row(task_id: &str, deadline: Option<i64>, is_leaf: bool) -> ListRowViewModel {
+fn row(task_id: &str, misses_deadline: bool, is_leaf: bool) -> ListRowViewModel {
     ListRowViewModel {
         task: task(task_id, &format!("task {task_id}")),
-        deadline_label: Some("09/06 09:00".to_owned()),
+        deadline_label: "____-01:00".to_owned(),
         schedule_label: "11:25-11:28".to_owned(),
-        deadline_epoch_ms: deadline,
+        misses_deadline,
         is_leaf,
     }
 }
@@ -143,12 +138,8 @@ fn list_renders_eight_dates_selected_row_fields_and_visual_states() {
     let events = Arc::new(Mutex::new(Vec::new()));
     let (dom, _) = build(RootProps {
         dates: eight_dates(),
-        rows: vec![
-            row("leaf", Some(999), true),
-            row("late", Some(1_001), false),
-        ],
+        rows: vec![row("leaf", true, true), row("late", false, false)],
         active_task_ids: Vec::new(),
-        tick_now_epoch_ms: 1_000,
         events: Arc::clone(&events),
     });
     let html = dioxus::ssr::render(&dom);
@@ -161,7 +152,7 @@ fn list_renders_eight_dates_selected_row_fields_and_visual_states() {
     assert!(html.contains("土 今日"));
     assert!(html.contains("日 明日"));
     assert!(html.contains("date-pill is-selected"));
-    assert!(html.contains("09/06 09:00"));
+    assert!(html.contains("____-01:00"));
     assert!(html.contains("11:25-11:28"));
     assert!(html.contains("task-name is-leaf"));
     assert_eq!(html.matches("deadline is-overdue").count(), 1);
@@ -183,9 +174,8 @@ fn list_rowはresponsive表示用の意味別cellとlabelを持つ() {
     let events = Arc::new(Mutex::new(Vec::new()));
     let (dom, _) = build(RootProps {
         dates: Vec::new(),
-        rows: vec![row("labeled", None, true)],
+        rows: vec![row("labeled", false, true)],
         active_task_ids: Vec::new(),
-        tick_now_epoch_ms: 0,
         events,
     });
     let html = dioxus::ssr::render(&dom);
@@ -248,12 +238,11 @@ fn active_uuid_disables_every_matching_row_but_not_other_tasks() {
     let (dom, _) = build(RootProps {
         dates: Vec::new(),
         rows: vec![
-            row("same", None, true),
-            row("same", None, true),
-            row("other", None, true),
+            row("same", false, true),
+            row("same", false, true),
+            row("other", false, true),
         ],
         active_task_ids: vec!["same".to_owned()],
-        tick_now_epoch_ms: 0,
         events,
     });
     let html = dioxus::ssr::render(&dom);
@@ -262,13 +251,12 @@ fn active_uuid_disables_every_matching_row_but_not_other_tasks() {
 }
 
 #[test]
-fn deadline_equal_to_now_is_not_overdue() {
+fn misses_deadlineがfalseなら赤色にしない() {
     let events = Arc::new(Mutex::new(Vec::new()));
     let (dom, _) = build(RootProps {
         dates: Vec::new(),
-        rows: vec![row("equal", Some(1_000), false)],
+        rows: vec![row("equal", false, false)],
         active_task_ids: Vec::new(),
-        tick_now_epoch_ms: 1_000,
         events,
     });
     assert!(!dioxus::ssr::render(&dom).contains("deadline is-overdue"));
@@ -285,7 +273,6 @@ fn date_and_leaf_task_clicks_dispatch_exact_payload_once() {
         }],
         rows: Vec::new(),
         active_task_ids: Vec::new(),
-        tick_now_epoch_ms: 0,
         events: Arc::clone(&events),
     });
     dispatch_click(&date_dom, date_listeners[0]);
@@ -294,9 +281,8 @@ fn date_and_leaf_task_clicks_dispatch_exact_payload_once() {
     events.lock().unwrap().clear();
     let (task_dom, task_listeners) = build(RootProps {
         dates: Vec::new(),
-        rows: vec![row("task-id", None, true)],
+        rows: vec![row("task-id", false, true)],
         active_task_ids: Vec::new(),
-        tick_now_epoch_ms: 0,
         events: Arc::clone(&events),
     });
     dispatch_click(&task_dom, task_listeners[0]);
@@ -308,9 +294,8 @@ fn rank非0のtaskは開始buttonとclick_listenerを持たない() {
     let events = Arc::new(Mutex::new(Vec::new()));
     let (dom, listeners) = build(RootProps {
         dates: Vec::new(),
-        rows: vec![row("non-leaf", None, false)],
+        rows: vec![row("non-leaf", false, false)],
         active_task_ids: Vec::new(),
-        tick_now_epoch_ms: 0,
         events: Arc::clone(&events),
     });
 
@@ -324,9 +309,8 @@ fn disabled_active_task_does_not_dispatch() {
     let events = Arc::new(Mutex::new(Vec::new()));
     let (dom, listeners) = build(RootProps {
         dates: Vec::new(),
-        rows: vec![row("active", None, true)],
+        rows: vec![row("active", false, true)],
         active_task_ids: vec!["active".to_owned()],
-        tick_now_epoch_ms: 0,
         events: Arc::clone(&events),
     });
     for listener in listeners {

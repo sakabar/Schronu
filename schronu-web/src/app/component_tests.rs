@@ -429,7 +429,6 @@ fn carry_lock_warningはbrowser_page_modelのwarningsへ合流する() {
         .any(|warning| warning.contains("持ち歩きロック")));
     let BrowserPageModel {
         active_tab,
-        tick_now_epoch_ms,
         buffer,
         sessions,
         rows,
@@ -447,7 +446,6 @@ fn carry_lock_warningはbrowser_page_modelのwarningsへ合流する() {
     } = model;
     let _ = (
         active_tab,
-        tick_now_epoch_ms,
         buffer,
         sessions,
         rows,

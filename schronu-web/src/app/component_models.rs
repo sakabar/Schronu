@@ -9,7 +9,6 @@ use crate::client::view_projection::{
 
 pub(crate) struct BrowserPageModel {
     pub active_tab: ActiveTab,
-    pub tick_now_epoch_ms: i64,
     pub buffer: Option<i128>,
     pub sessions: Vec<SessionCardViewModel>,
     pub rows: Vec<ListRowViewModel>,
@@ -33,10 +32,8 @@ impl BrowserPageModel {
     }
 
     pub fn from_state_at(state: &ClientState, monotonic_now_ms: u64) -> Self {
-        let tick_now_epoch_ms = state.tick_now_epoch_ms();
         Self {
             active_tab: state.active_tab(),
-            tick_now_epoch_ms,
             buffer: state.display_buffer_seconds(),
             sessions: project_session_cards_for_browser(state),
             rows: project_list_rows_for_browser(state),

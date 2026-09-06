@@ -7,6 +7,9 @@ mod cli_syntax;
 #[path = "schronu/command_context.rs"]
 mod command_context;
 
+#[path = "schronu/deadline_display.rs"]
+mod deadline_display;
+
 #[path = "schronu/handler.rs"]
 mod handler;
 

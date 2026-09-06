@@ -50,7 +50,6 @@ pub(super) fn BrowserApp() -> Element {
     };
     let BrowserPageModel {
         active_tab,
-        tick_now_epoch_ms,
         buffer,
         sessions,
         rows,
@@ -126,7 +125,6 @@ pub(super) fn BrowserApp() -> Element {
                     dates,
                     rows,
                     active_task_ids,
-                    tick_now_epoch_ms,
                     mutations_locked,
                     on_select_date: move |date| dispatch_action(client, ComponentAction::SelectDate(date)),
                     on_start_session: move |(task, is_leaf)| dispatch_action(

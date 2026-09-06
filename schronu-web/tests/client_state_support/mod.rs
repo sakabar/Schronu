@@ -108,6 +108,8 @@ pub fn row(task_id: &str, actual_work_seconds: i64) -> ScheduledTaskRow {
         schedule_start_epoch_ms: 0,
         schedule_end_epoch_ms: 1,
         deadline_epoch_ms: None,
+        deadline_label: "____/__/__".to_owned(),
+        misses_deadline: false,
         is_leaf: true,
     }
 }
