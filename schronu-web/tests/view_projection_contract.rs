@@ -65,6 +65,7 @@ fn 終了処理中のsession表示はclick時刻で停止し失敗時に再開�
                 code: schronu_web::web_error_codes::REPOSITORY_SAVE_FAILED.to_owned(),
                 message: "safe".to_owned(),
                 retry_advice: schronu_web::RetryAdvice::Retry,
+                current_actual_work_seconds: None,
             },
         )),
     );

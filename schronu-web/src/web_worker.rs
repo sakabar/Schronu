@@ -144,5 +144,6 @@ fn unavailable_error() -> WebError {
         code: web_error_codes::WORKER_UNAVAILABLE.to_owned(),
         message: "Web操作を処理できません。時間をおいて再試行してください。".to_owned(),
         retry_advice: RetryAdvice::Retry,
+        current_actual_work_seconds: None,
     }
 }

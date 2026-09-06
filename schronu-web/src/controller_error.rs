@@ -44,10 +44,16 @@ fn map_application_error(error: ApplicationError) -> WebError {
             web_error_codes::TASK_ALREADY_COMPLETED,
             "対象のタスクはすでに完了しています。",
         ),
-        ApplicationError::ActualWorkConflict { .. } => manual(
-            web_error_codes::ACTUAL_WORK_CONFLICT,
-            "タスクの実績時間が更新されています。再読み込みして確認してください。",
-        ),
+        ApplicationError::ActualWorkConflict {
+            actual_work_seconds,
+            ..
+        } => WebError {
+            code: web_error_codes::ACTUAL_WORK_CONFLICT.to_owned(),
+            message: "タスクの実績時間が更新されています。セッションカードで確認してください。"
+                .to_owned(),
+            retry_advice: RetryAdvice::ManualCheck,
+            current_actual_work_seconds: Some(actual_work_seconds),
+        },
         ApplicationError::InvalidInput { .. }
         | ApplicationError::AmbiguousLocalDateTime { .. }
         | ApplicationError::NonexistentLocalDateTime { .. }
@@ -78,6 +84,7 @@ fn retry(code: &str, message: &str) -> WebError {
         code: code.to_owned(),
         message: message.to_owned(),
         retry_advice: RetryAdvice::Retry,
+        current_actual_work_seconds: None,
     }
 }
 
@@ -86,6 +93,7 @@ fn manual(code: &str, message: &str) -> WebError {
         code: code.to_owned(),
         message: message.to_owned(),
         retry_advice: RetryAdvice::ManualCheck,
+        current_actual_work_seconds: None,
     }
 }
 
@@ -143,6 +151,40 @@ mod tests {
         for (error, expected_code) in cases {
             assert_mapping(error, expected_code, RetryAdvice::ManualCheck);
         }
+    }
+
+    #[test]
+    fn 実績時間の競合は現在値だけを公開する() {
+        let task_id = "00000000-0000-4000-8000-000000000001"
+            .parse()
+            .expect("fixture UUID must be valid");
+        let mapped = crate::WebError::from(WebReadError::Application(
+            ApplicationError::ActualWorkConflict {
+                task_id,
+                expected_actual_work_seconds: 123_456_789,
+                actual_work_seconds: 420,
+            },
+        ));
+
+        assert_eq!(mapped.code, web_error_codes::ACTUAL_WORK_CONFLICT);
+        assert_eq!(mapped.retry_advice, RetryAdvice::ManualCheck);
+        assert_eq!(mapped.current_actual_work_seconds, Some(420));
+        assert!(mapped.message.contains("セッションカード"));
+        assert!(!mapped.message.contains("再読み込み"));
+        assert!(!mapped.message.contains("123456789"));
+        assert!(!mapped.message.contains(&task_id.to_string()));
+    }
+
+    #[test]
+    fn 実績時間の競合以外は現在値を公開しない() {
+        let mapped = crate::WebError::from(WebReadError::InvalidInput(
+            WebSessionInputError::InvalidTaskId {
+                task_id: "private-detail".to_owned(),
+                reason: "private-detail".to_owned(),
+            },
+        ));
+
+        assert_eq!(mapped.current_actual_work_seconds, None);
     }
 
     #[test]

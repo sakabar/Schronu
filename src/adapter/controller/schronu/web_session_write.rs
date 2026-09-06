@@ -101,7 +101,7 @@ pub(super) fn prepare_add_actual_work_input(
         &request.task_id,
         request.expected_actual_work_seconds,
     )?;
-    let ended_at = resolve_ended_at(request.ended_at_epoch_ms, operation_now)?;
+    let (ended_at, _) = resolve_ended_at(request.ended_at_epoch_ms, operation_now)?;
     let additional_actual_work_seconds =
         calculate_elapsed_seconds(request.started_at_epoch_ms, ended_at)?;
 
@@ -120,7 +120,7 @@ pub(super) fn prepare_complete_task_input(
         &request.task_id,
         request.expected_actual_work_seconds,
     )?;
-    let ended_at = resolve_ended_at(request.ended_at_epoch_ms, operation_now)?;
+    let (ended_at, finished_at) = resolve_ended_at(request.ended_at_epoch_ms, operation_now)?;
     let additional_actual_work_seconds = if request.record_elapsed_seconds {
         calculate_elapsed_seconds(request.started_at_epoch_ms, ended_at)?
     } else {
@@ -129,7 +129,7 @@ pub(super) fn prepare_complete_task_input(
 
     Ok(CompleteTaskInput {
         task_id,
-        finished_at: ended_at,
+        finished_at,
         additional_actual_work_seconds,
         expected_actual_work_seconds: Some(request.expected_actual_work_seconds),
     })
@@ -181,18 +181,13 @@ fn calculate_elapsed_seconds(
 fn resolve_ended_at(
     ended_at_epoch_ms: Option<i64>,
     operation_now: DateTime<Local>,
-) -> Result<DateTime<Local>, WebSessionInputError> {
+) -> Result<(DateTime<Local>, DateTime<Local>), WebSessionInputError> {
     let Some(ended_at_epoch_ms) = ended_at_epoch_ms else {
-        return Ok(operation_now);
+        return Ok((operation_now, operation_now));
     };
     let ended_at = DateTime::<Utc>::from_timestamp_millis(ended_at_epoch_ms)
         .ok_or(WebSessionInputError::EndedAtOutOfRange(ended_at_epoch_ms))?
         .with_timezone(&Local);
-    if ended_at > operation_now {
-        return Err(WebSessionInputError::FutureEndedAt {
-            ended_at_epoch_ms,
-            observed_at_epoch_ms: operation_now.timestamp_millis(),
-        });
-    }
-    Ok(ended_at)
+    let finished_at = ended_at.min(operation_now);
+    Ok((ended_at, finished_at))
 }
