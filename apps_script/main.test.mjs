@@ -26,6 +26,20 @@ for (const [name, column] of [
   });
 }
 
+test('数値0として読み取られたA列indも先頭segmentとして同期する', () => {
+  const appsScript = loadAppsScript({
+    '実ログ': [taskRow(0, TASK_ID)],
+    '優先度低い順': [taskRow(0, TASK_ID)],
+  });
+
+  appsScript.edit('実ログ', 3, COL.startTime, '12:34');
+
+  assert.deepEqual(appsScript.writes, [
+    { sheet: '優先度低い順', row: 3, column: COL.startTime, value: '12:34' },
+  ]);
+  assert.deepEqual(appsScript.toasts, []);
+});
+
 for (const [name, column, value] of [
   ['N列', COL.finishFlag, 'F'],
   ['R列', COL.deferCommand, 'W'],

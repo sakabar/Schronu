@@ -236,7 +236,7 @@ function getOtherSheet_(spreadsheet, sheetName) {
 }
 
 function normalizeInd_(value) {
-  return String(value || '').trim();
+  return value === null || value === undefined ? '' : String(value).trim();
 }
 
 function normalizeTaskId_(value) {
