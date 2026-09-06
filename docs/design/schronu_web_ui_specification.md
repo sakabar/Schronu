@@ -144,7 +144,7 @@ keyは`schronu_web.work_sessions.v1`とする。valueはversion付きobjectと�
 4. version 1の個別entryでUUID不正、空のtask名、負の見積・実績、不正なepochがある場合、そのentryだけを除外し、valid entryは採用する。同一UUIDの2件目以降も不正entryとして除外する。
 5. 個別entryを除外した初期化時点ではkeyを書き換えない。利用者が次にセッション追加・破棄などのlocal state変更を成功させた時、memory上のvalid entryだけをversion 1として1回で保存する。
 6. いずれの復旧経路でもwarningを表示し、task更新を行わず、`bootstrap`を中止しない。
-7. storageがwrite blockedでない通常のstate変更では、採用済みの全`work_sessions`を1回で書き戻す。write blockedまたは保存失敗の場合はmemory上の直前stateを維持し、手動でkeyを確認してreloadするようwarningと履歴へ残す。
+7. storageがwrite blockedでない通常のstate変更では、採用済みの全`work_sessions`を1回で書き戻す。write blockedまたは保存失敗の場合はmemory上の直前stateを維持し、手動でkeyを確認してreloadするようwarningを表示する。
 
 `repository_state_uncertain`の再送防止状態は、`work_sessions` schemaを拡張せず、別keyの`schronu_web.mutation_safety.v1`へ保存する。
 
@@ -405,7 +405,7 @@ display_buffer = buffer_seconds - buffer_elapsed
 - index 1: `曜 明日`
 - index 2..7: `曜`
 
-各buttonは表示labelとは別に具体的な`YYYY-MM-DD`を保持する。新しいserver responseでlogical dateが変わった場合はbuttonを再生成し、既存一覧をclearする。追加の`list_tasks`は自動実行しない。
+各buttonは表示labelとは別に具体的な`YYYY-MM-DD`を保持する。新しいserver responseでlogical dateが変わった場合はbuttonを再生成する。2種類の完了成功では選択logical dateを維持し、対象task UUIDのrowだけを除去する。それ以外のresponseでは既存一覧と選択logical dateをclearする。追加の`list_tasks`は自動実行しない。
 
 ## 7. UI behavior
 
@@ -416,6 +416,8 @@ display_buffer = buffer_seconds - buffer_elapsed
 3. responseからbufferと8日buttonを表示する。
 4. 初期tabは「セッション」とする。
 5. tab切替だけでは一覧取得を含むserver操作を行わない。
+
+34rem以下ではbuffer領域と日付buttonの余白を圧縮する。日付buttonは操作高44px以上と8日分の横スクロールを維持する。
 
 ### 7.2 セッション画面
 
@@ -437,6 +439,12 @@ display_buffer = buffer_seconds - buffer_elapsed
 - `is_leaf == true`のrowだけに「セッション」buttonを表示する。`is_leaf == false`のrowではbuttonとclick listenerを生成せず、client stateへ手動追加要求が直接渡されても拒否する。
 - 「セッション」click時はrowのtask snapshotと`is_leaf`、client現在時刻からsessionを作り、localStorageへ保存する。active tabは変更しない。
 - `work_sessions`に同一UUIDがあれば、そのUUIDの全rowでbuttonをdisabledにする。
+- 「計測を破棄して完了」または「記録して完了」のserver処理成功後は、追加の`list_tasks`を送らず、表示中のrowから対象task UUIDを持つ全schedule segmentを除去する。別taskのrowと選択logical dateは、responseでlogical dateが変わった場合も維持する。
+- 完了成功response受理時点でin-flightの`list_tasks` requestを無効化する。その後に到着した無効化済みrequestのresponseは適用せず、完了taskのrowが復活することを防ぐ。完了成功response受理後に利用者が日付buttonをclickして開始した新しい`list_tasks` requestは通常どおり適用する。
+- 完了によって生成された反復taskは成功responseから一覧へ追加せず、次の明示的な`list_tasks`で取得する。
+- 46rem以下では横スクロールを解除し、rowをcard表示にする。46remはtableの最小幅44remと通常のshell左右余白2remの合計とする。
+- cardはtask名を先頭、label付きの締切と予定を2列で中段、横幅100%の「セッション」buttonを下段に置く。task名は幅に合わせて折り返すが、締切と予定は折り返さない。
+- table headerは視覚的に隠すだけとし、DOMと列header semanticsは維持する。46remを超える画面では従来のtable表示を維持する。
 
 ### 7.4 操作結果
 
@@ -444,25 +452,27 @@ display_buffer = buffer_seconds - buffer_elapsed
 - 「破棄して解除」はlocalStorage削除成功後だけmemory stateを確定し、残存する計測中セッションからbufferを再計算する。server requestとtask実績更新は行わない。
 - server mutationは、response成功後にlocalStorageからsessionを削除する。
 - server errorまたはlocalStorage削除失敗ではsessionを残す。server保存成功後にlocalStorage削除だけが失敗した場合、responseの更新後実績を反映した競合案内を表示し、再送による二重加算を防ぐため対象buttonを無効化し、対象sessionをbuffer計算上の計測中sessionから除外する。
+- 2種類の完了では、server処理成功を受理した時点で対象task UUIDの全schedule segmentを一覧から除去する。この除去は後続のlocalStorage削除成否に依存しない。完了error、「記録して解除」、「破棄して解除」では一覧を変更しない。
+- 完了responseの`ServerSnapshot`は通常どおり適用する。responseのlogical dateが変わった場合は日付buttonを再生成する一方、選択logical dateと対象task以外のrowを維持する。追加の`list_tasks`は送らない。
 - in-flight中は対象sessionの4buttonを無効化する。他sessionの計測は継続する。globalまたはmanual safety block中はserver mutationの3buttonを無効化し、「破棄して解除」は利用可能とする。
 
 ## 8. Communication and persistence matrix
 
-| 操作 | server通信 | task保存 | localStorage変更 | current task変更 |
-| --- | --- | --- | --- | --- |
-| 初回表示 | `bootstrap` | なし | なし。復元時に元keyを書き換えない | なし |
-| tab切替 | なし | なし | なし | なし |
-| 毎秒tick | なし | なし | なし。client stateからbufferを再計算 | なし |
-| 日付button | `list_tasks` | なし | なし | なし |
-| 自動セッション | `auto_session` | なし | session追加 | なし |
-| 一覧の「セッション」 | なし | なし | session追加 | なし |
-| 破棄して解除 | なし | なし | session削除。成功後にbuffer再計算 | なし |
-| 記録して解除 | safety marker保存後に`record_session` | 実績保存1回 | 送信前marker設定。確定応答後marker解除。成功後session削除 | なし |
-| 計測を破棄して完了の確認・キャンセル | なし | なし | card内の一時的な確認状態だけを変更 | なし |
-| 計測を破棄して完了の確定 | safety marker保存後に`complete_session(record_elapsed_seconds: false)` | 追加実績0の完了transaction 1回 | 送信前marker設定。確定応答後marker解除。成功後session削除 | なし |
-| 記録して完了 | safety marker保存後に`complete_session(record_elapsed_seconds: true)` | 経過秒を加算する完了transaction 1回 | 送信前marker設定。確定応答後marker解除。成功後session削除 | なし |
-| repository手動確認済み | なし | なし | commit済みで削除失敗したsessionを先に削除し、safety marker解除 | なし |
-| 06:00境界 | なし | なし | なし | なし |
+| 操作 | server通信 | task保存 | localStorage変更 | 表示中一覧 | current task変更 |
+| --- | --- | --- | --- | --- | --- |
+| 初回表示 | `bootstrap` | なし | なし。復元時に元keyを書き換えない | なし | なし |
+| tab切替 | なし | なし | なし | なし | なし |
+| 毎秒tick | なし | なし | なし。client stateからbufferを再計算 | なし | なし |
+| 日付button | `list_tasks` | なし | なし | responseのrowへ置換 | なし |
+| 自動セッション | `auto_session` | なし | session追加 | なし | なし |
+| 一覧の「セッション」 | なし | なし | session追加 | なし | なし |
+| 破棄して解除 | なし | なし | session削除。成功後にbuffer再計算 | なし | なし |
+| 記録して解除 | safety marker保存後に`record_session` | 実績保存1回 | 送信前marker設定。確定応答後marker解除。成功後session削除 | なし | なし |
+| 計測を破棄して完了の確認・キャンセル | なし | なし | card内の一時的な確認状態だけを変更 | なし | なし |
+| 計測を破棄して完了の確定 | safety marker保存後に`complete_session(record_elapsed_seconds: false)`。成功後の追加一覧取得なし | 追加実績0の完了transaction 1回 | 送信前marker設定。確定応答後marker解除。成功後session削除 | 成功時に同一task UUIDの全rowを除去 | なし |
+| 記録して完了 | safety marker保存後に`complete_session(record_elapsed_seconds: true)`。成功後の追加一覧取得なし | 経過秒を加算する完了transaction 1回 | 送信前marker設定。確定応答後marker解除。成功後session削除 | 成功時に同一task UUIDの全rowを除去 | なし |
+| repository手動確認済み | なし | なし | commit済みで削除失敗したsessionを先に削除し、safety marker解除 | なし | なし |
+| 06:00境界 | なし | なし | なし | なし | なし |
 
 ## 9. Error contracts
 
@@ -498,7 +508,6 @@ OperationHistoryEntry {
              | RecordSession | CompleteSession | CompleteSessionWithoutRecording
              | ConfirmRepositoryCheck,
     task_id: Option<UUID>,
-    locality: Local | Server,
     outcome: Success | Failure,
     summary: String,
 }
@@ -507,8 +516,7 @@ OperationHistoryEntry {
 - panelは初期状態で閉じ、利用者が開閉できる。
 - requestを送るserver操作はresponse受信時に成否を1件記録する。
 - `record_elapsed_seconds: true`の完了は`CompleteSession`、`false`の完了は`CompleteSessionWithoutRecording`として、成功・失敗のどちらも区別して記録する。
-- local操作はlocalStorage結果を含む最終成否を1件記録する。
-- repository手動確認済み操作はcommit済みsession除去とsafety marker解除を順に行い、その最終成否を`ConfirmRepositoryCheck`として1件記録する。
+- localStorage操作とrepository手動確認済み操作は履歴へ記録しない。
 - summaryへ秘密情報、repository path、stack traceを出さない。
 - 実行していない`見`、`働`、`終`、`外`などのCLI commandを履歴へ記録しない。
 
@@ -569,14 +577,18 @@ OperationHistoryEntry {
 - 破棄のlocalStorage保存失敗ではsessionとbuffer表示を維持し、server commit済みでlocal削除に失敗したsessionはbuffer計算上の計測中sessionから除外することを検証する。
 - 同じlogical dateのread snapshot、実績反映済みmutation snapshot、06:00を跨ぐlogical date更新を新たなbuffer基準とし、snapshot以前の壁時計時間を過剰補正しないことを検証する。
 - 記録と2種類の完了についてserver mutation成功、競合、保存失敗、worker停止、多重送信防止、global・manual safety block時のsession遷移を検証する。
+- 2種類の完了成功で同一task UUIDの全rowだけが即時に除去され、別taskのrowと選択logical dateが維持されることを検証する。完了error、記録して解除、破棄して解除では一覧が変化せず、server commit成功後のlocalStorage削除失敗でも完了taskのrowが除去されることを検証する。
+- 完了成功response受理時点でin-flightだった`list_tasks` requestを無効化し、その後にresponseが到着しても完了taskが復活しないことを検証する。完了成功response受理後に開始した`list_tasks` responseは適用されることを検証する。logical date境界を跨ぐ完了responseではsnapshotと日付buttonが更新され、反復taskは次の明示的一覧取得まで自動追加されないことを検証する。
 - 各endpointの成功型がsnapshotを持ち、error型がsnapshotを持たず、clientがerror時に直前snapshotを維持することを検証する。
 - error codeごとの`retry_advice`がerror表と一致し、`manual_check`では同一requestを再送しないことを検証する。
-- 履歴の100件上限、local/server、成否、reload非永続化を検証する。
+- 履歴がserver通信結果だけを対象とすること、100件上限、成否、reload非永続化を検証する。
 
 ### 12.5 UI and integration
 
 - 「セッション」「一覧」、8日button、card、一覧row、色、時刻形式をcomponent testとbrowser目視で確認する。
 - rank 0の一覧rowだけにセッションbuttonとclick listenerがあり、rank非0にはどちらもないことを確認する。
+- 一覧は320px、360px、46rem、1024pxで確認し、長いtask名、日付付き締切、複数segmentでviewport全体の横スクロールが発生しないことを確認する。
+- 34rem以下でbufferと日付buttonが圧縮され、日付buttonの操作高44px以上と横スクロールが維持されることを確認する。
 - 4操作buttonのlabel、ARIA名、意味別class、通常幅の2列配置、狭幅の1列配置を確認する。
 - 「計測を破棄して完了」の最初のclickでは通信せず、card単位の確認表示、キャンセル、確定時の1回だけのtyped callbackを確認する。
 - 33%、100%、133%、見積0、buffer正負の表示を確認する。
@@ -609,6 +621,6 @@ OperationHistoryEntry {
 | 6.2、6.3、7.2 | REQ-CARD-001..012 |
 | 4.4、4.5、7.4、9 | REQ-ACTION-001..009 |
 | 6.4 | REQ-BUFFER-001..010 |
-| 6.5、7.3 | REQ-LIST-001..011 |
-| 7.1、8、10 | REQ-COMMON-001..006、REQ-NET-001..006 |
+| 6.5、7.3、7.4、8 | REQ-LIST-001..013 |
+| 7.1、8、10 | REQ-COMMON-001..007、REQ-NET-001..006 |
 | 11、12 | REQ-COMPAT-001..005、全受入条件 |

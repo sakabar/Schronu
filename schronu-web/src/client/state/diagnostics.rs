@@ -123,13 +123,8 @@ impl DiagnosticsState {
 }
 
 impl ClientState {
-    pub(super) fn record_local_result(
-        &mut self,
-        operation: Operation,
-        task_id: Option<&str>,
-        succeeded: bool,
-    ) {
-        let (outcome, summary) = if succeeded {
+    pub(super) fn record_local_result(&mut self, task_id: Option<&str>, succeeded: bool) {
+        if succeeded {
             if self
                 .diagnostics
                 .display_error
@@ -138,15 +133,12 @@ impl ClientState {
             {
                 self.diagnostics.display_error = None;
             }
-            (Outcome::Success, "localStorageを更新しました。")
         } else {
             self.diagnostics.display_error = Some(DisplayError::LocalStorage {
                 committed_on_server: false,
                 task_id: task_id.map(ToOwned::to_owned),
             });
-            (Outcome::Failure, "localStorage更新に失敗しました。")
-        };
-        self.record_history(operation, task_id, Locality::Local, outcome, summary);
+        }
     }
 
     pub(super) fn record_server_failure(
@@ -190,14 +182,13 @@ impl ClientState {
         {
             self.diagnostics.display_error = None;
         }
-        self.record_history(operation, task_id, Locality::Server, outcome, summary);
+        self.record_history(operation, task_id, outcome, summary);
     }
 
     pub(super) fn record_stale_response(&mut self, operation: Operation, succeeded: bool) {
         self.record_history(
             operation,
             None,
-            Locality::Server,
             if succeeded {
                 Outcome::Success
             } else {
@@ -211,7 +202,6 @@ impl ClientState {
         &mut self,
         operation: Operation,
         task_id: Option<&str>,
-        locality: Locality,
         outcome: Outcome,
         summary: &str,
     ) {
@@ -221,7 +211,6 @@ impl ClientState {
                 occurred_at_epoch_ms: self.tick_now_epoch_ms,
                 operation,
                 task_id: task_id.map(ToOwned::to_owned),
-                locality,
                 outcome,
                 summary: summary.to_owned(),
             },

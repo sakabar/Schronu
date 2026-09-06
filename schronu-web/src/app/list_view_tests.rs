@@ -112,6 +112,70 @@ fn list_renders_eight_dates_selected_row_fields_and_visual_states() {
 }
 
 #[test]
+fn list_rowはresponsive表示用の意味別cellとlabelを持つ() {
+    let events = Arc::new(Mutex::new(Vec::new()));
+    let (dom, _) = build(RootProps {
+        dates: Vec::new(),
+        rows: vec![row("labeled", None, true)],
+        active_task_ids: Vec::new(),
+        tick_now_epoch_ms: 0,
+        events,
+    });
+    let html = dioxus::ssr::render(&dom);
+
+    assert!(
+        html.contains("class=\"deadline\" data-label=\"締切\""),
+        "{html}"
+    );
+    assert!(
+        html.contains("class=\"schedule-time\" data-label=\"予定\""),
+        "{html}"
+    );
+    assert!(html.contains("class=\"session-cell\""), "{html}");
+}
+
+#[test]
+fn listは46rem以下でtask_firstの2列metadata_cardになる() {
+    let css = include_str!("../../assets/main.css");
+    let narrow_list_layout = css
+        .split_once("@media (max-width: 46rem)")
+        .expect("list card breakpoint must match the 44rem table plus 2rem shell gutters")
+        .1;
+
+    for required in [
+        ".task-table-scroll {\n        overflow-x: visible;",
+        ".task-table {\n        display: block;\n        min-width: 0;",
+        ".task-table thead {\n        position: absolute;",
+        ".task-table tbody {\n        display: grid;",
+        "grid-template-areas:\n            \"task task\"\n            \"deadline schedule\"\n            \"action action\";",
+        ".task-table td[data-label]::before {\n        content: attr(data-label);",
+        ".task-name {\n        grid-area: task;\n        overflow-wrap: anywhere;",
+        ".session-cell {\n        grid-area: action;",
+        ".session-cell .session-start {\n        width: 100%;\n        min-height: 3rem;",
+    ] {
+        assert!(narrow_list_layout.contains(required), "missing: {required}");
+    }
+}
+
+#[test]
+fn 幅34rem以下はbufferと日付buttonをtouch_targetを保って圧縮する() {
+    let css = include_str!("../../assets/main.css");
+    let narrow_layout = css
+        .split_once("@media (max-width: 34rem)")
+        .expect("narrow viewport rule must exist")
+        .1;
+
+    for required in [
+        ".buffer-panel {\n        margin-block: 0.75rem 1rem;\n        padding: 1.25rem 1rem;",
+        ".buffer-value {\n        font-size: 3rem;",
+        ".date-pills {\n        gap: 0.35rem;",
+        ".date-pill {\n        min-height: max(2.75rem, 44px);\n        padding: 0.5rem 0.9rem;",
+    ] {
+        assert!(narrow_layout.contains(required), "missing: {required}");
+    }
+}
+
+#[test]
 fn active_uuid_disables_every_matching_row_but_not_other_tasks() {
     let events = Arc::new(Mutex::new(Vec::new()));
     let (dom, _) = build(RootProps {

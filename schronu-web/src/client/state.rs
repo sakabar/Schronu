@@ -4,7 +4,7 @@ mod session_state;
 
 use super::date_buttons::LogicalDateButton;
 pub use super::effect::ClientEffect;
-pub use super::history::{Locality, Operation, OperationHistoryEntry, Outcome};
+pub use super::history::{Operation, OperationHistoryEntry, Outcome};
 use super::safety_state::{load_mutation_safety, MutationSafetyState};
 use super::time_model::buffer_timing;
 use super::work_sessions::{

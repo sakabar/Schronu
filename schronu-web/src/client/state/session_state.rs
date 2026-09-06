@@ -106,7 +106,7 @@ impl ClientState {
                 self.diagnostics.display_error = None;
             }
         }
-        self.record_local_result(Operation::DiscardSession, Some(task_id), result.is_ok());
+        self.record_local_result(Some(task_id), result.is_ok());
         ClientEffect::None
     }
 
@@ -162,11 +162,7 @@ impl ClientState {
                     .iter()
                     .next()
                     .cloned();
-                self.record_local_result(
-                    Operation::ConfirmRepositoryCheck,
-                    task_id.as_deref(),
-                    false,
-                );
+                self.record_local_result(task_id.as_deref(), false);
                 self.diagnostics.display_error = Some(DisplayError::LocalStorage {
                     committed_on_server: true,
                     task_id,
@@ -199,7 +195,7 @@ impl ClientState {
                 self.diagnostics.display_error = None;
             }
         }
-        self.record_local_result(Operation::ConfirmRepositoryCheck, None, result.is_ok());
+        self.record_local_result(None, result.is_ok());
         ClientEffect::None
     }
 
@@ -223,7 +219,7 @@ impl ClientState {
             .sessions
             .work_sessions
             .replace_sessions(storage, candidate);
-        self.record_local_result(Operation::AddSession, Some(&task.task_id), result.is_ok());
+        self.record_local_result(Some(&task.task_id), result.is_ok());
     }
 
     fn begin_mutation<S: KeyValueStorage>(
@@ -259,7 +255,7 @@ impl ClientState {
         if self.sessions.pending_mutations.is_empty()
             && self.sessions.mutation_safety.arm(storage).is_err()
         {
-            self.record_local_result(mutation_operation(kind), Some(task_id), false);
+            self.record_local_result(Some(task_id), false);
             return ClientEffect::None;
         }
         self.sessions.next_mutation_request_id = next_request_id;
@@ -337,12 +333,12 @@ impl ClientState {
                     Operation::RecordSession,
                     Some(success.data.actual_work_seconds),
                 );
-                self.finish_mutation_safety(storage, Operation::RecordSession, false);
+                self.finish_mutation_safety(storage, false);
             }
             Err(error) => {
                 let keep_safety = keeps_safety_marker(&error);
                 self.finish_failed_mutation(&task_id, Operation::RecordSession, error);
-                self.finish_mutation_safety(storage, Operation::RecordSession, keep_safety);
+                self.finish_mutation_safety(storage, keep_safety);
             }
         }
         ClientEffect::None
@@ -360,14 +356,14 @@ impl ClientState {
         self.sessions.in_flight_task_ids.remove(&task_id);
         match result {
             Ok(snapshot) => {
-                let _ = self.apply_snapshot(snapshot);
+                self.apply_successful_completion_to_read_state(snapshot, &task_id);
                 self.finish_committed_mutation(storage, &task_id, operation, None);
-                self.finish_mutation_safety(storage, operation, false);
+                self.finish_mutation_safety(storage, false);
             }
             Err(error) => {
                 let keep_safety = keeps_safety_marker(&error);
                 self.finish_failed_mutation(&task_id, operation, error);
-                self.finish_mutation_safety(storage, operation, keep_safety);
+                self.finish_mutation_safety(storage, keep_safety);
             }
         }
         ClientEffect::None
@@ -403,12 +399,7 @@ impl ClientState {
         self.record_server_failure(operation, Some(task_id), error);
     }
 
-    fn finish_mutation_safety<S: KeyValueStorage>(
-        &mut self,
-        storage: &S,
-        operation: Operation,
-        keep_armed: bool,
-    ) {
+    fn finish_mutation_safety<S: KeyValueStorage>(&mut self, storage: &S, keep_armed: bool) {
         if keep_armed
             || !self.sessions.pending_mutations.is_empty()
             || self.sessions.mutation_globally_blocked
@@ -422,7 +413,7 @@ impl ClientState {
         if self.sessions.mutation_safety.disarm(storage).is_err()
             && self.sessions.committed_blocked_task_ids.is_empty()
         {
-            self.record_local_result(operation, None, false);
+            self.record_local_result(None, false);
         }
     }
 
@@ -452,7 +443,7 @@ impl ClientState {
         {
             Ok(()) => {
                 self.sessions.manual_check_blocked_task_ids.remove(task_id);
-                self.record_local_result(Operation::DiscardSession, Some(task_id), true);
+                self.record_local_result(Some(task_id), true);
             }
             Err(_) => {
                 self.sessions
@@ -463,7 +454,7 @@ impl ClientState {
                         .committed_actual_work_seconds
                         .insert(task_id.to_owned(), actual);
                 }
-                self.record_local_result(Operation::DiscardSession, Some(task_id), false);
+                self.record_local_result(Some(task_id), false);
                 self.diagnostics.display_error = Some(DisplayError::LocalStorage {
                     committed_on_server: true,
                     task_id: Some(task_id.to_owned()),
