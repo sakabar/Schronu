@@ -1,4 +1,3 @@
-use super::cli_syntax::tokenize;
 #[cfg(test)]
 use super::command::ParseMode;
 use super::command::{
@@ -1439,28 +1438,25 @@ fn handle_interactive_submit_at(
     operation_now: DateTime<Local>,
 ) -> InteractiveRepositoryEventOutcome {
     let command = line.trim().to_string();
-    let parsed_command = parse_interactive_command(&command);
-    let is_backup_input = match tokenize(&command) {
-        Ok(tokens) => tokens.first().is_some_and(|token| token == "backup"),
-        Err(_) => command == "backup" || command.starts_with("backup "),
-    };
-    let parsed_backup_command = is_backup_input.then_some(parsed_command);
-    if let Some(Err(error)) = &parsed_backup_command {
-        if let Err(output_error) = render_interactive_command_echo(stdout, &command, operation_now)
-            .and_then(|()| {
-                render_display_model(
-                    stdout,
-                    &error_display_model(&map_command_parse_error(error.clone())),
-                )
-                .map_err(CommandError::Output)
-                .map_err(RunError::Command)
-            })
-        {
-            return InteractiveRepositoryEventOutcome::Fatal(output_error);
+    let parsed_command = match parse_interactive_command(&command) {
+        Ok(parsed_command) => parsed_command,
+        Err(error) => {
+            if let Err(output_error) =
+                render_interactive_command_echo(stdout, &command, operation_now).and_then(|()| {
+                    render_display_model(
+                        stdout,
+                        &error_display_model(&map_command_parse_error(error)),
+                    )
+                    .map_err(CommandError::Output)
+                    .map_err(RunError::Command)
+                })
+            {
+                return InteractiveRepositoryEventOutcome::Fatal(output_error);
+            }
+            return InteractiveRepositoryEventOutcome::Continue;
         }
-        return InteractiveRepositoryEventOutcome::Continue;
-    }
-    if let Some(Ok(Command::BackupVerify { snapshot_directory })) = &parsed_backup_command {
+    };
+    if let Command::BackupVerify { snapshot_directory } = &parsed_command {
         if let Err(error) = render_interactive_command_echo(stdout, &command, operation_now) {
             return InteractiveRepositoryEventOutcome::Fatal(error);
         }
@@ -1472,7 +1468,7 @@ fn handle_interactive_submit_at(
             Err(error) => InteractiveRepositoryEventOutcome::Fatal(error),
         };
     }
-    if let Some(Ok(Command::Backup { snapshot_directory })) = &parsed_backup_command {
+    if let Command::Backup { snapshot_directory } = &parsed_command {
         if let Err(error) = render_interactive_command_echo(stdout, &command, operation_now) {
             return InteractiveRepositoryEventOutcome::Fatal(error);
         }

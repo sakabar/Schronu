@@ -7386,6 +7386,7 @@ fn interactive_backup系の引数errorはcurrent_storageより先に返す() {
         ("backup verify snapshot extra", "backup verify <snapshot_dir>"),
         ("backup", "backup <snapshot_dir>"),
         ("backup snapshot extra", "backup <snapshot_dir>"),
+        ("backup\t\"unterminated", "double quoteが閉じられていません"),
     ] {
         let outcome = handle_interactive_submit_at(
             &mut stdout,
