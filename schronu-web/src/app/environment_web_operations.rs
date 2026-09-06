@@ -153,6 +153,8 @@ impl From<ScheduledTaskRowDto> for ScheduledTaskRow {
             schedule_start_epoch_ms: row.schedule_start_epoch_ms,
             schedule_end_epoch_ms: row.schedule_end_epoch_ms,
             deadline_epoch_ms: row.deadline_epoch_ms,
+            deadline_label: row.deadline_label,
+            misses_deadline: row.misses_deadline,
             is_leaf: row.is_leaf,
         }
     }

@@ -1,9 +1,8 @@
 use super::state::ClientState;
 use super::time_model::{session_timing, SessionTiming};
 use crate::SessionTask;
-use chrono::{DateTime, FixedOffset, NaiveTime, Utc};
+use chrono::{DateTime, FixedOffset, Utc};
 
-const LOGICAL_DATE_BOUNDARY_HOUR: u32 = 6;
 const INVALID_TIME: &str = "--:--";
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -24,9 +23,9 @@ pub struct SessionCardViewModel {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ListRowViewModel {
     pub task: SessionTask,
-    pub deadline_label: Option<String>,
+    pub deadline_label: String,
     pub schedule_label: String,
-    pub deadline_epoch_ms: Option<i64>,
+    pub misses_deadline: bool,
     pub is_leaf: bool,
 }
 
@@ -45,18 +44,6 @@ pub fn format_local_hh_mm(epoch_ms: i64, utc_offset_minutes: i32) -> String {
     local_datetime(epoch_ms, utc_offset_minutes)
         .map(|date_time| date_time.format("%H:%M").to_string())
         .unwrap_or_else(|| INVALID_TIME.to_owned())
-}
-
-pub fn format_deadline_label(
-    epoch_ms: i64,
-    selected_logical_date: &str,
-    utc_offset_minutes: i32,
-) -> Option<String> {
-    Some(format_deadline_label_inner(
-        epoch_ms,
-        selected_logical_date,
-        utc_offset_minutes,
-    ))
 }
 
 #[cfg(feature = "web")]
@@ -129,24 +116,18 @@ fn project_list_rows_with(
     state: &ClientState,
     offset_at: impl Fn(i64) -> Option<i32>,
 ) -> Vec<ListRowViewModel> {
-    let selected_logical_date = state.selected_logical_date().unwrap_or_default();
     state
         .scheduled_rows()
         .iter()
         .map(|row| ListRowViewModel {
             task: row.task.clone(),
-            deadline_label: row.deadline_epoch_ms.map(|epoch_ms| {
-                offset_at(epoch_ms).map_or_else(
-                    || INVALID_TIME.to_owned(),
-                    |offset| format_deadline_label_inner(epoch_ms, selected_logical_date, offset),
-                )
-            }),
+            deadline_label: row.deadline_label.clone(),
             schedule_label: format!(
                 "{}-{}",
                 format_with_offset_provider(row.schedule_start_epoch_ms, &offset_at),
                 format_with_offset_provider(row.schedule_end_epoch_ms, &offset_at)
             ),
-            deadline_epoch_ms: row.deadline_epoch_ms,
+            misses_deadline: row.misses_deadline,
             is_leaf: row.is_leaf,
         })
         .collect()
@@ -158,34 +139,10 @@ fn format_with_offset_provider(epoch_ms: i64, offset_at: &impl Fn(i64) -> Option
         .unwrap_or_else(|| INVALID_TIME.to_owned())
 }
 
-fn format_deadline_label_inner(
-    epoch_ms: i64,
-    selected_logical_date: &str,
-    utc_offset_minutes: i32,
-) -> String {
-    let Some(date_time) = local_datetime(epoch_ms, utc_offset_minutes) else {
-        return INVALID_TIME.to_owned();
-    };
-    if logical_date(&date_time).as_deref() == Some(selected_logical_date) {
-        date_time.format("%H:%M").to_string()
-    } else {
-        date_time.format("%m/%d %H:%M").to_string()
-    }
-}
-
 fn local_datetime(epoch_ms: i64, utc_offset_minutes: i32) -> Option<DateTime<FixedOffset>> {
     let offset_seconds = utc_offset_minutes.checked_mul(60)?;
     let offset = FixedOffset::east_opt(offset_seconds)?;
     Some(DateTime::<Utc>::from_timestamp_millis(epoch_ms)?.with_timezone(&offset))
-}
-
-fn logical_date(date_time: &DateTime<FixedOffset>) -> Option<String> {
-    let boundary = NaiveTime::from_hms_opt(LOGICAL_DATE_BOUNDARY_HOUR, 0, 0)?;
-    let mut date = date_time.date_naive();
-    if date_time.time() < boundary {
-        date = date.pred_opt()?;
-    }
-    Some(date.format("%Y-%m-%d").to_string())
 }
 
 #[cfg(feature = "web")]

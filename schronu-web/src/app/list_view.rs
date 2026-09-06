@@ -15,7 +15,6 @@ pub fn ListView(
     dates: Vec<DateButtonViewModel>,
     rows: Vec<ListRowViewModel>,
     active_task_ids: Vec<String>,
-    tick_now_epoch_ms: i64,
     on_select_date: EventHandler<String>,
     on_start_session: EventHandler<(SessionTask, bool)>,
 ) -> Element {
@@ -41,7 +40,6 @@ pub fn ListView(
                             TaskRow {
                                 active: active_task_ids.iter().any(|task_id| task_id == &row.task.task_id),
                                 row,
-                                tick_now_epoch_ms,
                                 on_start_session,
                             }
                         }
@@ -74,13 +72,9 @@ fn DateButton(date: DateButtonViewModel, on_select_date: EventHandler<String>) -
 fn TaskRow(
     row: ListRowViewModel,
     active: bool,
-    tick_now_epoch_ms: i64,
     on_start_session: EventHandler<(SessionTask, bool)>,
 ) -> Element {
-    let deadline_class = if row
-        .deadline_epoch_ms
-        .is_some_and(|deadline| tick_now_epoch_ms > deadline)
-    {
+    let deadline_class = if row.misses_deadline {
         "deadline is-overdue"
     } else {
         "deadline"
@@ -90,7 +84,7 @@ fn TaskRow(
     } else {
         "task-name"
     };
-    let deadline = row.deadline_label.as_deref().unwrap_or("—");
+    let deadline = &row.deadline_label;
     let button_label = format!("{}: セッション", row.task.task_name);
     let task = row.task.clone();
     let is_leaf = row.is_leaf;

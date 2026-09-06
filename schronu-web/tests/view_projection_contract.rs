@@ -45,7 +45,7 @@ fn fixed_offsetでsession時刻と進捗を生成しcommit済みtimerは停止�
 }
 
 #[test]
-fn list時刻とdeadlineは06時境界のlogical_dateで表示形式を選ぶ() {
+fn listはserverが生成したdeadline表示と予定超過を無変換で保持する() {
     let storage = FakeStorage::default();
     let mut state = load_client_state(&storage, START_EPOCH_MS).unwrap();
     let bootstrap_id = bootstrap_effect(state.request_bootstrap());

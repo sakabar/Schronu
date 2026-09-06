@@ -1,4 +1,4 @@
-use super::deadline_display::format_deadline_remaining_time;
+use super::deadline_display::{format_deadline_remaining_time, misses_deadline};
 #[cfg(test)]
 use super::renderer::format_task_category_summary;
 #[cfg(test)]
@@ -870,9 +870,7 @@ pub(super) fn build_show_all_tasks_display_with_config(
             // / : 今日着手する予定の葉タスク。/という記号自体に強い意味合いはない。
             let today_leaf_icon: String = "/".to_string();
 
-            let icon = if task_deadline_time_opt.is_some()
-                && task_deadline_time_opt.unwrap() < end_datetime
-            {
+            let icon = if misses_deadline(task_deadline_time_opt.as_ref(), end_datetime) {
                 &breaking_deadline_icon
             } else if task_deadline_time_opt.is_some()
                 && task_deadline_time_opt.unwrap() < next_logical_date_start

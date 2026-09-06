@@ -2,6 +2,13 @@ use crate::application::daily_capacity::try_logical_date;
 use crate::application::task_use_case::ApplicationError;
 use chrono::{DateTime, Local};
 
+pub(super) fn misses_deadline(
+    deadline_time_opt: Option<&DateTime<Local>>,
+    scheduled_end: DateTime<Local>,
+) -> bool {
+    deadline_time_opt.is_some_and(|deadline| *deadline < scheduled_end)
+}
+
 pub(super) fn format_deadline_remaining_time(
     deadline_time_opt: Option<&DateTime<Local>>,
     end_datetime: DateTime<Local>,
@@ -44,9 +51,25 @@ pub(super) fn format_deadline_remaining_time(
 
 #[cfg(test)]
 mod tests {
-    use super::format_deadline_remaining_time;
+    use super::{format_deadline_remaining_time, misses_deadline};
     use crate::application::task_use_case::ApplicationError;
     use chrono::{DateTime, Duration, FixedOffset, Local, NaiveDate, TimeZone};
+
+    #[test]
+    fn 予定終了が締切を過ぎる場合だけ締切超過とする() {
+        let scheduled_end = Local.with_ymd_and_hms(2026, 9, 6, 18, 0, 0).unwrap();
+
+        assert!(!misses_deadline(None, scheduled_end));
+        assert!(!misses_deadline(
+            Some(&(scheduled_end + Duration::minutes(1))),
+            scheduled_end,
+        ));
+        assert!(!misses_deadline(Some(&scheduled_end), scheduled_end));
+        assert!(misses_deadline(
+            Some(&(scheduled_end - Duration::minutes(1))),
+            scheduled_end,
+        ));
+    }
 
     #[test]
     fn 現行の締切なしと同一logical_dateとasapの表示を維持する() {

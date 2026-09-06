@@ -1,5 +1,8 @@
 use super::error::{WebReadCoreError, WebReadOverflowError};
 use super::model::{ScheduledTaskRowDto, ServerSnapshot, SessionTaskDto};
+use crate::adapter::controller::deadline_display::{
+    format_deadline_remaining_time, misses_deadline,
+};
 use crate::application::daily_capacity::try_logical_date;
 use crate::application::interface::{FreeTimeManagerTrait, TaskRepositoryTrait};
 use crate::application::schedule_use_case::{get_schedule, ScheduledTaskView};
@@ -104,6 +107,7 @@ where
 pub(in crate::adapter::controller) fn build_scheduled_task_rows(
     schedule: &[ScheduledTaskView],
     logical_date: NaiveDate,
+    last_synced_time: DateTime<Local>,
 ) -> Result<Vec<ScheduledTaskRowDto>, WebReadCoreError> {
     let mut dated_segments = schedule
         .iter()
@@ -116,24 +120,32 @@ pub(in crate::adapter::controller) fn build_scheduled_task_rows(
     dated_segments.retain(|(date, _)| *date == logical_date);
     dated_segments.sort_by_key(|(_, segment)| segment.scheduled_start);
 
-    Ok(dated_segments
+    dated_segments
         .into_iter()
-        .map(|(_, segment)| ScheduledTaskRowDto {
-            task: session_task_dto(
-                segment.task.id.hyphenated().to_string(),
-                segment.task.name.clone(),
-                segment.task.estimated_work_seconds,
-                segment.task.actual_work_seconds,
-            ),
-            schedule_start_epoch_ms: segment.scheduled_start.timestamp_millis(),
-            schedule_end_epoch_ms: segment.scheduled_end.timestamp_millis(),
-            deadline_epoch_ms: segment
-                .task
-                .deadline_time
-                .map(|deadline| deadline.timestamp_millis()),
-            is_leaf: segment.rank == 0,
+        .map(|(_, segment)| {
+            let deadline = segment.task.deadline_time;
+            let deadline_label = format_deadline_remaining_time(
+                deadline.as_ref(),
+                segment.scheduled_end,
+                last_synced_time,
+            )
+            .map_err(WebReadCoreError::Application)?;
+            Ok(ScheduledTaskRowDto {
+                task: session_task_dto(
+                    segment.task.id.hyphenated().to_string(),
+                    segment.task.name.clone(),
+                    segment.task.estimated_work_seconds,
+                    segment.task.actual_work_seconds,
+                ),
+                schedule_start_epoch_ms: segment.scheduled_start.timestamp_millis(),
+                schedule_end_epoch_ms: segment.scheduled_end.timestamp_millis(),
+                deadline_epoch_ms: deadline.map(|deadline| deadline.timestamp_millis()),
+                deadline_label,
+                misses_deadline: misses_deadline(deadline.as_ref(), segment.scheduled_end),
+                is_leaf: segment.rank == 0,
+            })
         })
-        .collect())
+        .collect()
 }
 
 pub(in crate::adapter::controller) fn build_auto_session_dto(
