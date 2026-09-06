@@ -494,7 +494,7 @@ client componentは非`None`の`ClientEffect`をserverへdispatchする直前に
 ### 7.5 持ち歩きロックbar
 
 - page上部へstickyなbarを常時表示する。持ち歩きロックだけを理由に画面を覆うoverlayや内容の非表示は行わず、ロック中もbuffer・セッション・一覧の表示と更新、scroll、tab切替、日付選択、一覧取得を維持する。一覧取得を含むserver通信のdispatch後は、response受理まで通信中overlayによる全面操作遮断を優先する。
-- `Normal`では「持ち歩きロック」を1 clickすると即時に有効化する。`Locked`では「操作ロック中」と「1.2秒長押しで1操作許可」、`ArmedUntil`では「1操作可能」と残り秒数を表示する。
+- `Normal`では「持ち歩きロック」を1 clickすると即時に有効化する。`Locked`では独立した状態blockを生成せず、44px以上の長押しbutton内へ主文言「操作ロック中」と補足「1.2秒長押しで1操作許可」を横並びで集約し、通常モードへ戻す`details`だけを次の行へ置く。barのpaddingとgapを抑え、34rem以下でもbar全体を汎用的な縦積みに切り替えない。`ArmedUntil`では「1操作可能」と残り秒数を表示する。
 - `Locked`の長押しbuttonはprimary pointer、Space、Enterを受け付ける。pointerup、pointerleave、pointercancel、buttonのblur、window scroll、または1.2秒未満のkeyupでtimerを破棄し、stale timerが発火しても許可しない。keyboard auto-repeatは新しい長押しを開始しない。
 - 状態名だけを`aria-live=polite`で通知する。`ArmedUntil`の残り秒数はlive regionの外へ置き、毎秒読み上げない。
 - 「計測を破棄して完了」の確認表示は変更操作に含めず、確定dispatchだけが権利を消費する。キャンセルは`ArmedUntil`を即時に`Locked`へ戻し、期限切れでも確認表示を閉じる。
@@ -651,7 +651,7 @@ OperationHistoryEntry {
 - 33%、100%、133%、見積0、buffer正負の表示を確認する。
 - 通信matrixの各操作についてrequest件数を確認する。
 - 全5server通信のdispatchで全画面待機表示と背面の`inert`が即時に有効になり、最後のresponseまで維持されることを確認する。成功、operation error、transport errorの各応答で解除され、`ClientEffect::None`では表示されないことを確認する。SSR初期表示のstatusとARIA属性、viewport全面のCSS、reduced motionを確認する。
-- 持ち歩きロックbarのsticky表示、3状態、残り秒表示、`aria-live`対象、通常モードへの確認付き復帰を確認する。
+- 持ち歩きロックbarのsticky表示、3状態、残り秒表示、`aria-live`対象、通常モードへの確認付き復帰を確認する。`Locked`では状態文言が44px以上の長押しbutton内にあり、独立した状態blockがなく、解除`details`だけが次の行にあることと、34rem以下でも汎用縦積み規則を適用しないことをcomponent testとCSS contract testで固定する。
 - pointer・Space・Enterの1.2秒長押し成立と、pointerup・leave・cancel・blur・window scroll・短いkeyupでの中断を確認する。
 - ロック中も画面表示・更新、scroll、tab切替、日付選択、一覧取得が機能し、7変更操作が無効になることを確認する。破棄完了の確認は一時許可を消費せず、確定時に消費し、キャンセルと期限切れで閉じることを確認する。
 - 2件以上の同時計測とreload復元を確認する。

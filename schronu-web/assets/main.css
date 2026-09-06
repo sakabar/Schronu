@@ -127,11 +127,11 @@ button:disabled {
     display: flex;
     align-items: center;
     justify-content: space-between;
-    gap: 0.75rem;
-    margin-bottom: 1rem;
+    gap: 0.4rem 0.6rem;
+    margin-bottom: 0.75rem;
     border: 1px solid var(--line);
     border-radius: 0.85rem;
-    padding: 0.65rem;
+    padding: 0.45rem 0.6rem;
     box-shadow: var(--shadow);
 }
 
@@ -140,8 +140,13 @@ button:disabled {
 }
 
 .carry-lock-bar.is-locked {
+    flex-wrap: wrap;
     border-color: var(--red);
     background: var(--red-soft);
+}
+
+.carry-lock-bar.is-locked .carry-lock-details {
+    flex-basis: 100%;
 }
 
 .carry-lock-bar.is-armed {
@@ -173,8 +178,26 @@ button:disabled {
 }
 
 .carry-lock-hold {
+    display: flex;
+    flex: 1 1 100%;
+    align-items: center;
+    justify-content: center;
+    gap: 0.5rem;
+    min-height: max(2.75rem, 44px);
+    padding: 0.35rem 0.5rem;
     touch-action: pan-y;
     user-select: none;
+}
+
+.carry-lock-hold strong {
+    font-size: 0.9rem;
+    white-space: nowrap;
+}
+
+.carry-lock-hold span {
+    font-size: 0.75rem;
+    font-weight: 400;
+    white-space: nowrap;
 }
 
 .carry-lock-hold.is-pressing {
@@ -729,14 +752,9 @@ button:disabled {
     }
 
     .toolbar,
-    .carry-lock-bar,
     .session-time-row {
         align-items: stretch;
         flex-direction: column;
-    }
-
-    .carry-lock-bar {
-        top: env(safe-area-inset-top);
     }
 
     .session-actions {

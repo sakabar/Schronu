@@ -106,10 +106,6 @@ pub(crate) fn CarryLockBar(
                     }
                 },
                 CarryLockMode::Locked => rsx! {
-                    div { class: "carry-lock-status",
-                        strong { "操作ロック中" }
-                        span { "1.2秒長押しで1操作許可" }
-                    }
                     button {
                         class: if pressing() { "carry-lock-hold is-pressing" } else { "carry-lock-hold" },
                         style: "touch-action: pan-y;",
@@ -138,7 +134,8 @@ pub(crate) fn CarryLockBar(
                             blur_controller.cancel_pointer();
                             blur_controller.cancel_keyboard();
                         },
-                        "長押しして操作を許可"
+                        strong { "操作ロック中" }
+                        span { "1.2秒長押しで1操作許可" }
                     }
                     DisableCarryLockDetails { on_disable }
                 },
