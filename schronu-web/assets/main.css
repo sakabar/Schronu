@@ -462,10 +462,121 @@ button:disabled {
     }
 }
 
+@media (max-width: 46rem) {
+    .task-table-scroll {
+        overflow-x: visible;
+        border: 0;
+        border-radius: 0;
+        background: transparent;
+        box-shadow: none;
+    }
+
+    .task-table {
+        display: block;
+        min-width: 0;
+    }
+
+    .task-table thead {
+        position: absolute;
+        width: 1px;
+        height: 1px;
+        padding: 0;
+        margin: -1px;
+        overflow: hidden;
+        clip: rect(0, 0, 0, 0);
+        clip-path: inset(50%);
+        white-space: nowrap;
+        border: 0;
+    }
+
+    .task-table tbody {
+        display: grid;
+        gap: 0.75rem;
+    }
+
+    .task-row {
+        display: grid;
+        grid-template-areas:
+            "task task"
+            "deadline schedule"
+            "action action";
+        grid-template-columns: minmax(0, 0.9fr) minmax(0, 1.4fr);
+        gap: 0.65rem 1rem;
+        padding: 1rem;
+        border: 1px solid var(--line);
+        border-radius: 1rem;
+        background: var(--surface);
+        box-shadow: var(--shadow);
+    }
+
+    .task-table td {
+        padding: 0;
+        border-bottom: 0;
+    }
+
+    .task-table td[data-label] {
+        display: flex;
+        min-width: 0;
+        flex-direction: column;
+        gap: 0.15rem;
+    }
+
+    .task-table td[data-label]::before {
+        content: attr(data-label);
+        color: var(--muted);
+        font-size: 0.75rem;
+        font-weight: 700;
+        letter-spacing: 0.06em;
+    }
+
+    .deadline {
+        grid-area: deadline;
+    }
+
+    .schedule-time {
+        grid-area: schedule;
+    }
+
+    .task-name {
+        grid-area: task;
+        overflow-wrap: anywhere;
+        font-size: 1.05rem;
+        line-height: 1.5;
+    }
+
+    .session-cell {
+        grid-area: action;
+        margin-top: 0.15rem;
+    }
+
+    .session-cell .session-start {
+        width: 100%;
+        min-height: 3rem;
+    }
+}
+
 @media (max-width: 34rem) {
     .shell {
         width: min(100% - 1rem, 82rem);
         padding-top: 0.75rem;
+    }
+
+    .buffer-panel {
+        margin-block: 0.75rem 1rem;
+        padding: 1.25rem 1rem;
+    }
+
+    .buffer-value {
+        font-size: 3rem;
+    }
+
+    .date-pills {
+        gap: 0.35rem;
+    }
+
+    .date-pill {
+        min-height: max(2.75rem, 44px);
+        padding: 0.5rem 0.9rem;
     }
 
     .toolbar,
