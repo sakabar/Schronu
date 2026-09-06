@@ -1,6 +1,6 @@
 #![cfg(feature = "server")]
 
-use super::component::app;
+use super::component::{app, InteractiveShell};
 #[cfg(feature = "web")]
 use super::component_models::BrowserPageModel;
 use super::component_runtime::{
@@ -9,11 +9,14 @@ use super::component_runtime::{
 };
 use super::effect_dispatcher::ClientResponse;
 use super::session_view::{SessionAction, SessionActionKind};
+use super::view_test_support::{dispatch_click, rebuild_with_click_listeners};
 use crate::client::state::{ActiveTab, ClientEffect};
 use crate::client::work_sessions::{KeyValueStorage, StorageError};
 use crate::ServerSnapshot;
 use crate::SessionTask;
+use dioxus::dioxus_core::{AttributeValue, Mutation};
 use dioxus::prelude::VirtualDom;
+use dioxus::prelude::*;
 use std::cell::RefCell;
 use std::collections::HashMap;
 
@@ -537,6 +540,39 @@ fn native_ssrはbrowser_storageへ触れずloading_shellだけを描画する() 
     assert!(html.contains("aria-busy=\"true\""), "{html}");
     assert!(!html.contains("schronu 今"), "{html}");
     assert!(!html.contains(">更新<"), "{html}");
+}
+
+fn interactive_shell_transition() -> Element {
+    let mut blocked = use_signal(|| true);
+    rsx! {
+        InteractiveShell { blocked: blocked(),
+            button { onclick: move |_| blocked.set(false), "response受理" }
+        }
+    }
+}
+
+#[test]
+fn 通信完了時は製品mainからinert属性自体を除去する() {
+    let mut dom = VirtualDom::new(interactive_shell_transition);
+    let click_ids = rebuild_with_click_listeners(&mut dom);
+    assert_eq!(click_ids.len(), 1);
+    assert!(dioxus::ssr::render(&dom).contains(" inert"));
+
+    dispatch_click(&dom, click_ids[0]);
+    let mutations = dom.render_immediate_to_vec().edits;
+
+    assert!(
+        mutations.iter().any(|mutation| matches!(
+            mutation,
+            Mutation::SetAttribute {
+                name: "inert",
+                value: AttributeValue::None,
+                ..
+            }
+        )),
+        "{mutations:?}"
+    );
+    assert!(!dioxus::ssr::render(&dom).contains(" inert"));
 }
 
 #[test]
