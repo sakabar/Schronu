@@ -157,7 +157,10 @@ fn backup_verify_cliはcurrent_storageへ依存せずsnapshotを検証する() {
     assert!(output.stderr.is_empty());
     assert!(String::from_utf8(output.stdout)
         .unwrap()
-        .starts_with(&format!("backup verify: OK {} revision=", snapshot.display())));
+        .starts_with(&format!(
+            "backup verify: OK {} revision=",
+            snapshot.display()
+        )));
 }
 
 #[test]
@@ -197,7 +200,7 @@ fn backup_verify_cliはsnapshot_errorのpathと段階と原因をstderrへ保持
     assert!(output.stdout.is_empty());
     let stderr = String::from_utf8(output.stderr).unwrap();
     assert!(
-        stderr.contains("storage snapshot DecodeManifest failed"),
+        stderr.contains("storage snapshot Decode failed"),
         "{stderr}"
     );
     assert!(stderr.contains(manifest.to_str().unwrap()), "{stderr}");

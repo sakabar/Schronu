@@ -2516,6 +2516,7 @@ fn interactive再描画分類は全command_kindを網羅する() {
             | CommandKind::FocusHighest
             | CommandKind::FocusLowest
             | CommandKind::Backup
+            | CommandKind::BackupVerify
             | CommandKind::Verify => false,
         };
 

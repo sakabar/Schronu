@@ -29,7 +29,9 @@ use super::view::*;
 use crate::adapter::gateway::free_time_manager::FreeTimeManager;
 use crate::adapter::gateway::schronu_config::{load_schronu_config, SchronuConfig};
 use crate::adapter::gateway::storage_lock::{LockMode, StorageLock, StorageLockError};
-use crate::adapter::gateway::storage_snapshot::{create_snapshot_with_lock, SnapshotError};
+use crate::adapter::gateway::storage_snapshot::{
+    create_snapshot_with_lock, verify_snapshot, SnapshotError,
+};
 use crate::adapter::gateway::task_repository::TaskRepository;
 #[cfg(test)]
 use crate::application::daily_capacity::try_logical_date_start;
@@ -855,6 +857,20 @@ fn execute_backup_command(
     )
 }
 
+fn execute_backup_verify_command(
+    stdout: &mut dyn SchronuWriter,
+    snapshot_directory: &std::path::Path,
+) -> Result<(), RunError> {
+    let summary = verify_snapshot(snapshot_directory).map_err(RunError::Snapshot)?;
+    render_display_model_with_mode(
+        stdout,
+        &backup_verify_display(snapshot_directory, &summary),
+        RenderMode::Flushed,
+    )
+    .map_err(CommandError::Output)
+    .map_err(RunError::Command)
+}
+
 fn execute_backup_command_with_lock(
     stdout: &mut dyn SchronuWriter,
     snapshot_directory: &std::path::Path,
@@ -1045,6 +1061,10 @@ fn execute_non_interactive_command_at(
             snapshot_directory,
             operation_now,
         );
+    }
+    if let Command::BackupVerify { snapshot_directory } = &parsed_command {
+        let mut stdout = stdout();
+        return execute_backup_verify_command(&mut stdout, snapshot_directory);
     }
     free_time_manager.load_busy_time_slots_from_file(
         active_config()

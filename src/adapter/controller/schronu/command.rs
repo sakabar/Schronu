@@ -65,6 +65,7 @@ pub(super) enum CommandKind {
     FocusHighest,
     FocusLowest,
     Backup,
+    BackupVerify,
     Verify,
 }
 
@@ -134,6 +135,9 @@ pub(super) enum Command {
         pattern: Option<String>,
     },
     Backup {
+        snapshot_directory: PathBuf,
+    },
+    BackupVerify {
         snapshot_directory: PathBuf,
     },
     InteractiveShortcut(InteractiveShortcut),
@@ -247,6 +251,7 @@ impl Command {
             Self::Defer { .. } => CommandKind::Defer,
             Self::ShowAll { .. } => CommandKind::ShowAll,
             Self::Backup { .. } => CommandKind::Backup,
+            Self::BackupVerify { .. } => CommandKind::BackupVerify,
             Self::InteractiveShortcut(InteractiveShortcut::DeferRoutine) => {
                 CommandKind::DeferRoutines
             }
@@ -465,6 +470,20 @@ pub(super) fn parse_command_tokens(
     }
 
     let arguments = &tokens[1..];
+
+    if name == "backup" && arguments.first().is_some_and(|value| value == "verify") {
+        let definition = CommandDefinition::new(
+            CommandKind::BackupVerify,
+            "backup verify",
+            "backup verify <snapshot_dir>",
+            2,
+            Some(2),
+        );
+        definition.validate_argument_count(arguments)?;
+        return Ok(Command::BackupVerify {
+            snapshot_directory: PathBuf::from(&arguments[1]),
+        });
+    }
 
     let Some(definition) = command_definition(name) else {
         return Ok(Command::ShowAll {
@@ -806,7 +825,8 @@ fn parse_action(
         | CommandKind::Estimate
         | CommandKind::Arrange
         | CommandKind::TuckAway
-        | CommandKind::Backup => unreachable!("handled before action parsing"),
+        | CommandKind::Backup
+        | CommandKind::BackupVerify => unreachable!("handled before action parsing"),
     };
     Ok(Command::Action(action))
 }

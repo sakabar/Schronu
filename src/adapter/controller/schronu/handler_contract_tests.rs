@@ -2559,7 +2559,10 @@ fn storage_maintenance以外の全command_shapeは統一handler入口でoutcome�
         let mut context = CompositeTraceContext::new(now);
         let outcome = handle_command(&command, &mut context)
             .unwrap_or_else(|error| panic!("{kind:?} must be handled without error: {error}"));
-        if matches!(kind, CommandKind::Backup | CommandKind::Verify) {
+        if matches!(
+            kind,
+            CommandKind::Backup | CommandKind::BackupVerify | CommandKind::Verify
+        ) {
             assert!(
                 outcome.is_none(),
                 "storage maintenance remains owned by runtime"
