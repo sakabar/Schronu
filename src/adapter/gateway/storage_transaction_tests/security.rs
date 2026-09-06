@@ -168,6 +168,46 @@ fn test_delete_entry_symlink_parentを拒否し参照先を変更しない() {
     assert_eq!(fs::read(external_path).unwrap(), b"external");
 }
 
+#[cfg(unix)]
+#[test]
+fn test_prepare_deleteはsymlink祖先とreserved_storage_fileを拒否する() {
+    use std::os::unix::fs::symlink;
+
+    let storage_dir = TestStorageDir::new();
+    let external_dir = TestStorageDir::new();
+    let external_path = external_dir.path.join("external.yaml");
+    fs::write(&external_path, b"external").unwrap();
+    symlink(&external_dir.path, storage_dir.path.join("linked")).unwrap();
+    let unsafe_targets = [
+        storage_dir.path.join("linked/external.yaml"),
+        storage_dir.path.join(".lock"),
+    ];
+
+    for target in &unsafe_targets {
+        let actual = prepare_with_directories_and_deletes(
+            file_system_io(),
+            &storage_dir.path,
+            Uuid::from_u128(0x2258),
+            &[],
+            &[],
+            &[target.as_path()],
+        );
+        let error = match actual {
+            Err(error) => error,
+            Ok(prepared) => {
+                prepared.discard().unwrap();
+                panic!("unsafe delete target must fail: {}", target.display());
+            }
+        };
+        assert_eq!(
+            error.operation,
+            StorageTransactionOperation::ValidateTargetPath
+        );
+        assert_eq!(error.path, *target);
+    }
+    assert_eq!(fs::read(external_path).unwrap(), b"external");
+}
+
 #[test]
 fn test_delete_entryはstorage外へのpath_escapeを拒否する() {
     let storage_dir = TestStorageDir::new();
