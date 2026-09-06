@@ -37,6 +37,7 @@ cargo test -q entity::task
 - 標準libraryや利用中crateの型で意味を表せる場合はwrapper型を増やさない。chronoのlocal時刻変換では`LocalResult`を使い、呼び出し側で`Single`だけを採用する。
 - 意図的に未使用の仮引数やprivate fieldは`_`始まりにする。保持や将来利用の意図がある値をwarning対応だけで削除しない。
 - `全`commandのtask行またはSpreadsheet列を変える場合は、controller出力、`shell/copy_for_spreadsheet.sh`、`shell/generate_command_from_spreadsheet.sh`、`apps_script/main.js`、`README.md`を連動確認する。列定義の正本は[spreadsheet_columns.tsv](spreadsheet_columns.tsv)、詳細は[apps_script/README.md](apps_script/README.md)とする。
+- `schronu-web`改修時は[UI要件](docs/design/schronu_web_ui_requirements.md)と[UI実装仕様](docs/design/schronu_web_ui_specification.md)を事前参照し、同じ変更内でコード、test、両文書を一致させる。
 
 ## Worktree build cache
 
