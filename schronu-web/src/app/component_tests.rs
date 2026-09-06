@@ -674,6 +674,7 @@ impl MemoryStorage {
         }
     }
 
+    #[cfg(feature = "web")]
     fn failing_carry_lock_reads() -> Self {
         Self {
             values: RefCell::new(HashMap::new()),
