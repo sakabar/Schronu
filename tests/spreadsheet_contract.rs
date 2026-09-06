@@ -12,6 +12,7 @@ struct SpreadsheetColumn {
     name: String,
     sync: bool,
     time_format: Option<String>,
+    purpose: String,
 }
 
 fn repository_path(path: &str) -> std::path::PathBuf {
@@ -32,6 +33,7 @@ fn parse_columns() -> Vec<SpreadsheetColumn> {
                 name: fields[2].to_owned(),
                 sync: fields[4].parse().expect("sync flag is boolean"),
                 time_format: (!fields[5].is_empty()).then(|| fields[5].to_owned()),
+                purpose: fields[6].to_owned(),
             }
         })
         .collect()
@@ -120,6 +122,16 @@ fn spreadsheet_column_manifestはaからs列の既存契約を定義する() {
         [12, 14, 16, 18]
     );
     assert_eq!(time_format_ranges(&columns), ["'L3:M500'", "'O3:P500'"]);
+    assert!(column(&columns, "ind").purpose.contains("B列task_id"));
+    assert!(column(&columns, "task_id").purpose.contains("A列ind"));
+    for name in ["start_time", "finish_time"] {
+        assert!(column(&columns, name).purpose.contains("対応segment"));
+    }
+    for name in ["finish_flag", "defer_command"] {
+        assert!(column(&columns, name)
+            .purpose
+            .contains("同一task_idの全segment"));
+    }
 }
 
 #[test]
@@ -172,6 +184,29 @@ fn cli出力からspreadsheetを経由してコマンド生成まで列契約を
     ))
     .expect("generated commands fixture exists");
     assert_eq!(commands, format!("{expected_commands}\n"));
+}
+
+#[test]
+fn copy_for_spreadsheetは同一taskの異なるsegment_identityを保持する() {
+    let task_id = "22222222-2222-2222-2222-222222222222";
+    let cli_output = format!(
+        "0001 {task_id} - ____-00:40 06/21(土)-18:40~19:20 0 40 01 維 分割task\n\
+         0000 {task_id} - ____-00:00 06/21(土)-18:00~18:40 0 40 01 維 分割task\n"
+    );
+
+    let copied = run_script("shell/copy_for_spreadsheet.sh", &[], &cli_output);
+    let identities = copied
+        .lines()
+        .filter(|line| !line.is_empty())
+        .take(2)
+        .map(|line| line.split('\t').take(2).collect::<Vec<_>>())
+        .collect::<Vec<_>>();
+
+    assert_eq!(
+        identities,
+        [vec!["0000", task_id], vec!["0001", task_id]],
+        "A列indとB列task_idをcopy後も組として保持する"
+    );
 }
 
 #[test]
