@@ -73,7 +73,7 @@
 | TD-032 | P1 | 完了 | S | macOS標準環境でSpreadsheet変換の`tac`依存が空出力の成功になる |
 | TD-033 | P1 | 未着手 | M | 同一taskの複数segmentをApps Scriptが別行へ同期する |
 | TD-034 | P1 | 一部完了(W1-J) | M | Spreadsheet入力が存在しない日付と不正な時分秒をcommandへ変換する |
-| TD-035 | P2 | 未着手 | M | 反復延期がDST境界で開始時刻とdeadlineの壁時計時刻をずらす |
+| TD-035 | P2 | 完了 | M | 反復延期が夏時間の切り替え境界で開始時刻とdeadlineの壁時計時刻をずらす |
 | TD-036 | P2 | 未着手 | L | source textを独自parseするarchitecture testがRust構文と実装名へ強く結合している |
 | TD-037 | P2 | 完了 | M | 未使用のlenient YAML変換APIがstrict loaderと並存している |
 | TD-038 | P2 | 未着手 | L | MCPのtask一覧に検索・paginationがなく、大規模storageで応答が無制限に増える |
@@ -1443,23 +1443,27 @@
 2. `Spreadsheet: P列とS列を厳密検証する`: shellをGreenにする。
 3. `Test: Spreadsheet生成commandをCLI parserへ接続する`: cross-boundary contractを追加する。
 
-### TD-035: 反復延期がDST境界で開始時刻とdeadlineの壁時計時刻をずらす
+### TD-035: 反復延期が夏時間の切り替え境界で開始時刻とdeadlineの壁時計時刻をずらす
 
 - 分類: `バグ / timezone`
 - 優先度: `P2`
 - 概算規模: `M`
+- 完了日: 2026-09-06
+- 対応: `repetition_interval_days`をOS local timezone上の暦日として扱い、通常の次回反復生成とroutine延期を、local dateのchecked加算後に元の壁時計時刻をfallibleに解決する共通helperへ統一した。startとdeadlineは互いのelapsed差分から導出せず、それぞれ独立して移動し、全日時の解決後にmutationする。
+- 検証: `America/New_York`を設定したfresh subprocessで冬・夏のUTC offsetをcanary検証し、夏時間の開始・終了を跨ぐ1日/7日周期、親deadlineあり/なし、`days_in_advance`、曖昧・不存在時刻の構造化errorと失敗時のsnapshot・親aggregate revision・保存回数・focus・子一覧不変を固定した。`cargo fmt --check`、`cargo clippy --locked --all-targets -- -D warnings`、`cargo test --locked`、`git diff --check`に成功し、subagent reviewと親branch reviewで未解消指摘なし。
+- 残存: なし。公開API、error enum、gateway、storage schemaは変更していない。
 - 関連既存項目: TD-010はlocal datetime変換errorを統一したが、反復間隔をelapsed durationとして扱う経路が残る。
 
 #### 現状と根拠
 
 - `src/application/task_use_case.rs:425`付近の親deadlineなし経路は`orig_deadline + Duration::days(interval)`とし、暦日でなく24時間単位を加算する。
 - 親deadlineあり経路は新deadlineを暦日で構築した後、`new_deadline - orig_deadline`の`num_days()`を開始時刻へ適用する。
-- DST開始週の7暦日は6日23時間なので、前者は壁時計時刻が1時間ずれ、後者は`num_days()`切り捨てで開始日が1日不足し得る。DST終了時は逆方向にずれる。
-- 既存testとCI timezoneはAsia/Tokyo中心で、DST境界を覆わない。
+- 夏時間の開始週における7暦日は6日23時間なので、前者は壁時計時刻が1時間ずれ、後者は`num_days()`切り捨てで開始日が1日不足し得る。夏時間の終了時は逆方向にずれる。
+- 既存testとCI timezoneはAsia/Tokyo中心で、夏時間の切り替え境界を覆わない。
 
 #### 影響
 
-- DST地域で週次routineの開始・deadlineが1時間または1日ずれる。
+- 夏時間を採用する地域で週次routineの開始・deadlineが1時間または1日ずれる。
 - `defer_routine_task`と通常の次回反復生成が異なる周期意味を持つ。
 
 #### 推奨する改善方針
@@ -1470,14 +1474,14 @@
 
 #### 完了条件
 
-- DST開始・終了を跨ぐ1日/7日周期でstart/deadlineの壁時計時刻を維持する。
+- 夏時間の開始・終了を跨ぐ1日/7日周期でstart/deadlineの壁時計時刻を維持する。
 - 親deadlineあり/なしの結果が同じ暦日規則に従う。
 - 曖昧・不存在時刻は構造化errorになり、snapshotとrevisionが不変である。
 - timezone別testをsubprocessまたはtimezoneを明示できる型で決定論的に実行する。
 
 #### 推奨commit分割
 
-1. `Test: 反復延期のDST契約を固定する`: timezone別Red testを追加する。
+1. `Test: 反復延期の夏時間契約を固定する`: timezone別Red testを追加する。
 2. `Task: 反復日数を暦日加算する`: 共通helperを実装する。
 3. `Application: routine延期を暦日helperへ移す`: use caseをGreenにする。
 
@@ -1912,7 +1916,7 @@ TD-036はparser、handler、runtime、renderer/viewの各契約を別commitに�
 - CLIの`終`error修正、command arity修正、interactive I/O修正は失敗理由と対象moduleが異なるため、別々のRed/Green cycleにする。
 - task名lexer導入とSpreadsheet列追加を同じcommitへ混ぜない。lexerのCLI契約を先にGreenにし、その後generatorとfixtureを移行する。
 - pack/flattenの日別容量修正とscheduling algorithmの選択順変更を同時に行わない。
-- 反復完了の失敗原子性とDST暦日計算を同時に変更しない。
+- 反復完了の失敗原子性と夏時間を跨ぐ暦日計算を同時に変更しない。
 - source scanner削除時に、対応するarchitecture契約を検証なしで失わない。compiler-backedな置換testを先に追加する。
 
 各項目は、既存テストを削除・緩和せず、期待する契約を示すRedテスト、最小のGreen実装、全検証、レビューの順で進める。
