@@ -26,10 +26,10 @@ fn root(props: RootProps) -> Element {
             active_task_ids: props.active_task_ids,
             tick_now_epoch_ms: props.tick_now_epoch_ms,
             on_select_date: move |date: String| date_events.lock().unwrap().push(format!("date:{date}")),
-            on_start_session: move |task: SessionTask| task_events
+            on_start_session: move |(task, is_leaf): (SessionTask, bool)| task_events
                 .lock()
                 .unwrap()
-                .push(format!("task:{}:{}", task.task_id, task.task_name)),
+                .push(format!("task:{}:{}:{is_leaf}", task.task_id, task.task_name)),
         }
     }
 }
@@ -98,13 +98,15 @@ fn list_renders_eight_dates_selected_row_fields_and_visual_states() {
     assert!(html.contains("11:25-11:28"));
     assert!(html.contains("task-name is-leaf"));
     assert_eq!(html.matches("deadline is-overdue").count(), 1);
-    assert_eq!(html.matches("<button class=\"session-start\"").count(), 2);
-    for task_name in ["task leaf", "task late"] {
-        assert!(
-            html.contains(&format!("aria-label=\"{task_name}: セッション\"")),
-            "{html}"
-        );
-    }
+    assert_eq!(html.matches("<button class=\"session-start\"").count(), 1);
+    assert!(
+        html.contains("aria-label=\"task leaf: セッション\""),
+        "{html}"
+    );
+    assert!(
+        !html.contains("aria-label=\"task late: セッション\""),
+        "{html}"
+    );
     assert!(!html.contains("<a"));
     assert!(events.lock().unwrap().is_empty());
 }
@@ -179,9 +181,9 @@ fn active_uuid_disables_every_matching_row_but_not_other_tasks() {
     let (dom, _) = build(RootProps {
         dates: Vec::new(),
         rows: vec![
-            row("same", None, false),
-            row("same", None, false),
-            row("other", None, false),
+            row("same", None, true),
+            row("same", None, true),
+            row("other", None, true),
         ],
         active_task_ids: vec!["same".to_owned()],
         tick_now_epoch_ms: 0,
@@ -206,7 +208,7 @@ fn deadline_equal_to_now_is_not_overdue() {
 }
 
 #[test]
-fn date_and_task_clicks_dispatch_exact_payload_once() {
+fn date_and_leaf_task_clicks_dispatch_exact_payload_once() {
     let events = Arc::new(Mutex::new(Vec::new()));
     let (date_dom, date_listeners) = build(RootProps {
         dates: vec![DateButtonViewModel {
@@ -225,13 +227,29 @@ fn date_and_task_clicks_dispatch_exact_payload_once() {
     events.lock().unwrap().clear();
     let (task_dom, task_listeners) = build(RootProps {
         dates: Vec::new(),
-        rows: vec![row("task-id", None, false)],
+        rows: vec![row("task-id", None, true)],
         active_task_ids: Vec::new(),
         tick_now_epoch_ms: 0,
         events: Arc::clone(&events),
     });
     dispatch_click(&task_dom, task_listeners[0]);
-    assert_eq!(*events.lock().unwrap(), ["task:task-id:task task-id"]);
+    assert_eq!(*events.lock().unwrap(), ["task:task-id:task task-id:true"]);
+}
+
+#[test]
+fn rank非0のtaskは開始buttonとclick_listenerを持たない() {
+    let events = Arc::new(Mutex::new(Vec::new()));
+    let (dom, listeners) = build(RootProps {
+        dates: Vec::new(),
+        rows: vec![row("non-leaf", None, false)],
+        active_task_ids: Vec::new(),
+        tick_now_epoch_ms: 0,
+        events: Arc::clone(&events),
+    });
+
+    assert!(listeners.is_empty());
+    assert!(!dioxus::ssr::render(&dom).contains("session-start"));
+    assert!(events.lock().unwrap().is_empty());
 }
 
 #[test]
@@ -239,7 +257,7 @@ fn disabled_active_task_does_not_dispatch() {
     let events = Arc::new(Mutex::new(Vec::new()));
     let (dom, listeners) = build(RootProps {
         dates: Vec::new(),
-        rows: vec![row("active", None, false)],
+        rows: vec![row("active", None, true)],
         active_task_ids: vec!["active".to_owned()],
         tick_now_epoch_ms: 0,
         events: Arc::clone(&events),

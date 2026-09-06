@@ -433,10 +433,11 @@ display_buffer = buffer_seconds - buffer_elapsed
 ### 7.3 一覧画面
 
 - 日付button click時だけ`list_tasks(date)`を送る。
-- rowは締切、予定`HH:MM-HH:MM`、task名、「セッション」buttonを表示する。
+- rowは締切、予定`HH:MM-HH:MM`、task名を表示し、開始可能なrowには「セッション」buttonも表示する。
 - 締切は選択logical date内なら`HH:MM`、それ以外は`MM/DD HH:MM`とする。現在epochが締切epochを超えた場合に赤くする。
 - schedule rankが0のとき`is_leaf`をtrueとし、そのtask名を緑にする。
-- 「セッション」click時はrowのtask snapshotとclient現在時刻からsessionを作り、localStorageへ保存する。active tabは変更しない。
+- `is_leaf == true`のrowだけに「セッション」buttonを表示する。`is_leaf == false`のrowではbuttonとclick listenerを生成せず、client stateへ手動追加要求が直接渡されても拒否する。
+- 「セッション」click時はrowのtask snapshotと`is_leaf`、client現在時刻からsessionを作り、localStorageへ保存する。active tabは変更しない。
 - `work_sessions`に同一UUIDがあれば、そのUUIDの全rowでbuttonをdisabledにする。
 - 「計測を破棄して完了」または「記録して完了」のserver処理成功後は、追加の`list_tasks`を送らず、表示中のrowから対象task UUIDを持つ全schedule segmentを除去する。別taskのrowと選択logical dateは、responseでlogical dateが変わった場合も維持する。
 - 完了成功response受理時点でin-flightの`list_tasks` requestを無効化する。その後に到着した無効化済みrequestのresponseは適用せず、完了taskのrowが復活することを防ぐ。完了成功response受理後に利用者が日付buttonをclickして開始した新しい`list_tasks` requestは通常どおり適用する。
@@ -571,6 +572,7 @@ OperationHistoryEntry {
 - entry不正と同一UUID重複では不正entryだけを除外し、初期化時はkeyを維持し、次のlocal state変更時にvalid entryだけでversion 1を書き戻すことを検証する。
 - reload、timer遅延、browser時計後退で開始時刻基準の経過秒になることを検証する。
 - session追加・破棄がserver callを生成しないことを検証する。
+- 一覧の手動session追加は`is_leaf == false`でlocalStorage、memory state、発火履歴を変更しないことを検証する。
 - bufferはsession 0件、snapshot以前からのsession、snapshot後の途中開始、複数sessionの重複、最古sessionだけの破棄、全session破棄で、session不在時間だけを減算することを検証する。
 - 破棄のlocalStorage保存失敗ではsessionとbuffer表示を維持し、server commit済みでlocal削除に失敗したsessionはbuffer計算上の計測中sessionから除外することを検証する。
 - 同じlogical dateのread snapshot、実績反映済みmutation snapshot、06:00を跨ぐlogical date更新を新たなbuffer基準とし、snapshot以前の壁時計時間を過剰補正しないことを検証する。
@@ -584,6 +586,7 @@ OperationHistoryEntry {
 ### 12.5 UI and integration
 
 - 「セッション」「一覧」、8日button、card、一覧row、色、時刻形式をcomponent testとbrowser目視で確認する。
+- rank 0の一覧rowだけにセッションbuttonとclick listenerがあり、rank非0にはどちらもないことを確認する。
 - 一覧は320px、360px、46rem、1024pxで確認し、長いtask名、日付付き締切、複数segmentでviewport全体の横スクロールが発生しないことを確認する。
 - 34rem以下でbufferと日付buttonが圧縮され、日付buttonの操作高44px以上と横スクロールが維持されることを確認する。
 - 4操作buttonのlabel、ARIA名、意味別class、通常幅の2列配置、狭幅の1列配置を確認する。
@@ -618,6 +621,6 @@ OperationHistoryEntry {
 | 6.2、6.3、7.2 | REQ-CARD-001..012 |
 | 4.4、4.5、7.4、9 | REQ-ACTION-001..009 |
 | 6.4 | REQ-BUFFER-001..010 |
-| 6.5、7.3、7.4、8 | REQ-LIST-001..012 |
+| 6.5、7.3、7.4、8 | REQ-LIST-001..013 |
 | 7.1、8、10 | REQ-COMMON-001..007、REQ-NET-001..006 |
 | 11、12 | REQ-COMPAT-001..005、全受入条件 |

@@ -61,6 +61,23 @@ fn 通信matrixとstorage_firstのlocal状態遷移を固定する() {
 }
 
 #[test]
+fn rank非0の一覧taskは手動sessionへ追加しない() {
+    let storage = FakeStorage::default();
+    let mut state = load_client_state(&storage, 2_000).unwrap();
+    let mut task_row = row(TASK_ID, 300);
+    task_row.is_leaf = false;
+
+    assert_eq!(
+        state.add_session_from_row(&storage, &task_row),
+        ClientEffect::None
+    );
+
+    assert!(state.sessions().is_empty());
+    assert!(storage.value.borrow().is_none());
+    assert!(state.history().is_empty());
+}
+
+#[test]
 fn bufferは成功したsession破棄で未作業時間を再計算する() {
     let storage = FakeStorage::default();
     let mut state = load_client_state(&storage, 1_000_000).unwrap();

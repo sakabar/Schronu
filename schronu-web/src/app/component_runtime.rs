@@ -10,7 +10,7 @@ pub(crate) enum ComponentAction {
     Tick(i64),
     SelectDate(String),
     AutoSession,
-    AddSession(SessionTask),
+    AddSession { task: SessionTask, is_leaf: bool },
     DiscardSession(String),
     RecordSession(String),
     CompleteSession(String),
@@ -96,7 +96,9 @@ pub(crate) fn reduce_component_action<S: KeyValueStorage>(
         ComponentAction::Tick(now_epoch_ms) => state.tick(now_epoch_ms),
         ComponentAction::SelectDate(logical_date) => state.request_list(&logical_date),
         ComponentAction::AutoSession => state.request_auto_session(),
-        ComponentAction::AddSession(task) => state.add_session_from_task(storage, &task),
+        ComponentAction::AddSession { task, is_leaf } => {
+            state.add_session_from_list_task(storage, &task, is_leaf)
+        }
         ComponentAction::DiscardSession(task_id) => state.discard_session(storage, &task_id),
         ComponentAction::RecordSession(task_id) => state.begin_record_session(storage, &task_id),
         ComponentAction::CompleteSession(task_id) => {
