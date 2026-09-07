@@ -163,6 +163,8 @@ fn session_progressは見積も100_percent位置に常時表示の境界線を�
     assert!(marker.contains("position: absolute;"));
     assert!(marker.contains("left: calc(100% / 1.5);"));
     assert!(marker.contains("width: 2px;"));
+    assert!(marker.contains("background: var(--ink);"));
+    assert!(marker.contains("box-shadow: 0 0 0 1px var(--surface);"));
     assert!(marker.contains("pointer-events: none;"));
 }
 

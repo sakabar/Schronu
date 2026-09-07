@@ -458,7 +458,8 @@ button:disabled {
     left: calc(100% / 1.5);
     width: 2px;
     transform: translateX(-1px);
-    background: var(--surface);
+    background: var(--ink);
+    box-shadow: 0 0 0 1px var(--surface);
     pointer-events: none;
 }
 
