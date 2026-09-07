@@ -279,7 +279,7 @@ fn 再取得snapshot後も残存sessionに応じてbufferを計算する() {
         }),
     );
     state.tick(12_000);
-    assert_eq!(state.display_buffer_seconds(), Some(60));
+    assert_eq!(state.display_buffer_seconds(), Some(61));
 
     let (second_refresh_id, second_request) =
         list_effect(state.discard_session(&storage, OTHER_TASK_ID));

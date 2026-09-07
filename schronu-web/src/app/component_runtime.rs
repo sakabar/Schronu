@@ -7,15 +7,10 @@ use super::session_view::{SessionAction, SessionActionKind};
 
 pub(crate) enum ComponentAction {
     SwitchTab(ActiveTab),
-    Tick {
-        wall_now_epoch_ms: i64,
-    },
+    Tick { wall_now_epoch_ms: i64 },
     SelectDate(String),
     AutoSession,
-    AddSession {
-        task: SessionTask,
-        is_leaf: bool,
-    },
+    AddSession { task: SessionTask, is_leaf: bool },
     DiscardSession(String),
     RecordSession(String),
     CompleteSession(String),
@@ -26,8 +21,6 @@ pub(crate) enum ComponentAction {
     EnableCarryLock,
     ArmCarryLock,
     DisableCarryLock,
-    #[cfg_attr(not(all(feature = "web", target_arch = "wasm32")), allow(dead_code))]
-    RelockCarryLock,
 }
 
 pub(crate) fn component_action_from_session_action(action: SessionAction) -> ComponentAction {
@@ -148,7 +141,10 @@ impl ComponentOrchestrator {
         response: ClientResponse,
     ) -> ClientEffect {
         self.state.as_mut().map_or(ClientEffect::None, |state| {
-            apply_response(state, storage, response)
+            let previous_session_count = state.sessions().len();
+            let effect = apply_response(state, storage, response);
+            switch_to_list_after_last_session_removed(state, previous_session_count);
+            effect
         })
     }
 }
@@ -164,19 +160,24 @@ pub(crate) fn reduce_component_action_at<S: KeyValueStorage>(
         ComponentAction::EnableCarryLock => return state.enable_carry_lock(storage),
         ComponentAction::ArmCarryLock => return state.arm_carry_lock(monotonic_now_ms),
         ComponentAction::DisableCarryLock => return state.disable_carry_lock(storage),
-        ComponentAction::RelockCarryLock => return state.relock_carry_lock(),
         _ => {}
     }
-    if is_carry_lock_mutation(&action) && !state.authorize_carry_lock_mutation() {
+    if is_carry_lock_mutation(&action) && !state.authorize_carry_lock_mutation(monotonic_now_ms) {
         return ClientEffect::None;
     }
-    match action {
+    let previous_session_count = state.sessions().len();
+    let effect = match action {
         ComponentAction::SwitchTab(tab) => state.switch_tab(tab),
         ComponentAction::Tick { wall_now_epoch_ms } => state.tick(wall_now_epoch_ms),
         ComponentAction::SelectDate(logical_date) => state.request_list(&logical_date),
         ComponentAction::AutoSession => state.request_auto_session(),
         ComponentAction::AddSession { task, is_leaf } => {
-            state.add_session_from_list_task(storage, &task, is_leaf)
+            let session_count = state.sessions().len();
+            let effect = state.add_session_from_list_task(storage, &task, is_leaf);
+            if state.sessions().len() > session_count {
+                state.switch_tab(ActiveTab::Session);
+            }
+            effect
         }
         ComponentAction::DiscardSession(task_id) => state.discard_session(storage, &task_id),
         ComponentAction::RecordSession(task_id) => state.begin_record_session(storage, &task_id),
@@ -196,7 +197,20 @@ pub(crate) fn reduce_component_action_at<S: KeyValueStorage>(
         ComponentAction::EnableCarryLock
         | ComponentAction::ArmCarryLock
         | ComponentAction::DisableCarryLock => ClientEffect::None,
-        ComponentAction::RelockCarryLock => ClientEffect::None,
+    };
+    switch_to_list_after_last_session_removed(state, previous_session_count);
+    effect
+}
+
+fn switch_to_list_after_last_session_removed(
+    state: &mut ClientState,
+    previous_session_count: usize,
+) {
+    if state.active_tab() == ActiveTab::Session
+        && previous_session_count > state.sessions().len()
+        && state.sessions().is_empty()
+    {
+        state.switch_tab(ActiveTab::List);
     }
 }
 

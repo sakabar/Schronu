@@ -65,14 +65,14 @@ fn lock_barはmodeごとの状態とaccessibility契約を表示する() {
     let locked = render(CarryLockViewModel::new(CarryLockMode::Locked, 0));
     assert!(locked.contains("carry-lock-bar is-locked"), "{locked}");
     assert!(locked.contains("操作ロック中"), "{locked}");
-    assert!(locked.contains("1.2秒長押しで1操作許可"), "{locked}");
+    assert!(locked.contains("1.2秒長押しで15秒間操作可能"), "{locked}");
 
     let armed = render(CarryLockViewModel::new(
         CarryLockMode::ArmedUntil(17_000),
         2_001,
     ));
     assert!(armed.contains("carry-lock-bar is-armed"), "{armed}");
-    assert!(armed.contains("1操作可能"), "{armed}");
+    assert!(armed.contains("操作可能"), "{armed}");
     assert!(armed.contains("残り15秒"), "{armed}");
 }
 
@@ -86,7 +86,7 @@ fn 長押し操作はtoggleではない通常buttonのaria意味を持つ() {
 
     assert!(!opening_tag.contains("aria-pressed"), "{opening_tag}");
     assert!(
-        opening_tag.contains("aria-label=\"1.2秒長押しで1操作許可\""),
+        opening_tag.contains("aria-label=\"1.2秒長押しで15秒間操作可能\""),
         "{opening_tag}"
     );
 }
@@ -96,7 +96,7 @@ fn live_regionはmode遷移だけを通知しarmed残秒を含まない() {
     for (mode, expected) in [
         (CarryLockMode::Normal, "通常モード"),
         (CarryLockMode::Locked, "操作ロック中"),
-        (CarryLockMode::ArmedUntil(15_000), "1操作可能"),
+        (CarryLockMode::ArmedUntil(15_000), "操作可能"),
     ] {
         let html = render(CarryLockViewModel::new(mode, 0));
         assert_eq!(html.matches("aria-live=\"polite\"").count(), 1, "{html}");
@@ -134,7 +134,7 @@ fn lockedの状態文言は長押しbutton内に集約する() {
     let button = &html[button_start..button_end];
 
     assert!(button.contains("操作ロック中"), "{button}");
-    assert!(button.contains("1.2秒長押しで1操作許可"), "{button}");
+    assert!(button.contains("1.2秒長押しで15秒間操作可能"), "{button}");
     assert!(!html.contains("class=\"carry-lock-status\""), "{html}");
 
     let details_position = html.find("class=\"carry-lock-details\"").unwrap();

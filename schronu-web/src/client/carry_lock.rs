@@ -102,13 +102,6 @@ impl CarryLockState {
         }
     }
 
-    pub fn relock(&mut self) {
-        if matches!(self.mode, CarryLockMode::ArmedUntil(_)) {
-            self.mode = CarryLockMode::Locked;
-            self.last_observed_monotonic_ms = None;
-        }
-    }
-
     #[cfg(any(test, all(feature = "web", target_arch = "wasm32")))]
     pub(crate) fn observe_monotonic_time(&mut self, monotonic_now_ms: u64) {
         let CarryLockMode::ArmedUntil(deadline_monotonic_ms) = self.mode else {
@@ -126,13 +119,15 @@ impl CarryLockState {
     }
 
     #[cfg(any(test, all(feature = "web", target_arch = "wasm32")))]
-    pub(crate) fn authorize_mutation(&mut self) -> bool {
+    pub(crate) fn authorize_mutation(&mut self, monotonic_now_ms: u64) -> bool {
         match self.mode {
             CarryLockMode::Normal => true,
             CarryLockMode::Locked => false,
             CarryLockMode::ArmedUntil(_) => {
-                self.mode = CarryLockMode::Locked;
-                self.last_observed_monotonic_ms = None;
+                self.mode = CarryLockMode::ArmedUntil(
+                    monotonic_now_ms.saturating_add(CARRY_LOCK_WINDOW_MS),
+                );
+                self.last_observed_monotonic_ms = Some(monotonic_now_ms);
                 true
             }
         }

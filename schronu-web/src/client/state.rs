@@ -101,19 +101,14 @@ impl ClientState {
         ClientEffect::None
     }
 
-    pub fn relock_carry_lock(&mut self) -> ClientEffect {
-        self.carry_lock.relock();
-        ClientEffect::None
-    }
-
     #[cfg(any(test, all(feature = "web", target_arch = "wasm32")))]
     pub(crate) fn observe_carry_lock_time(&mut self, monotonic_now_ms: u64) {
         self.carry_lock.observe_monotonic_time(monotonic_now_ms);
     }
 
     #[cfg(any(test, all(feature = "web", target_arch = "wasm32")))]
-    pub(crate) fn authorize_carry_lock_mutation(&mut self) -> bool {
-        self.carry_lock.authorize_mutation()
+    pub(crate) fn authorize_carry_lock_mutation(&mut self, monotonic_now_ms: u64) -> bool {
+        self.carry_lock.authorize_mutation(monotonic_now_ms)
     }
 
     pub fn storage_write_blocked(&self) -> bool {
