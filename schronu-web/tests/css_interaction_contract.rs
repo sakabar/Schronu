@@ -95,7 +95,7 @@ fn navigation_is_fixed_safe_and_never_covers_page_content() {
 }
 
 #[test]
-fn session_timing_stays_on_one_line_at_mobile_widths() {
+fn session_countdown_is_prominent_and_metadata_wraps_at_mobile_widths() {
     let desktop_card = block_body(MAIN_CSS, ".session-card");
     assert!(desktop_card
         .contains("grid-template-columns: minmax(11rem, 1.1fr) minmax(18rem, 2fr) auto;"));
@@ -110,8 +110,14 @@ fn session_timing_stays_on_one_line_at_mobile_widths() {
     }
 
     let timing = block_body(MAIN_CSS, ".session-timing");
-    assert!(timing.contains("display: flex;"));
-    assert!(timing.contains("white-space: nowrap;"));
+    assert!(timing.contains("display: grid;"));
+
+    let remaining = block_body(MAIN_CSS, ".session-remaining");
+    assert!(remaining.contains("font-size: clamp(1.75rem, 4vw, 2.5rem);"));
+
+    let metadata = block_body(MAIN_CSS, ".session-timing-meta");
+    assert!(metadata.contains("display: flex;"));
+    assert!(metadata.contains("flex-wrap: wrap;"));
 
     let mobile = block_body(MAIN_CSS, "@media (max-width: 52rem)");
     let card = block_body(mobile, ".session-card");
@@ -122,10 +128,7 @@ fn session_timing_stays_on_one_line_at_mobile_widths() {
     assert!(!card.contains("\"remaining\""), "{card}");
 
     let narrow = block_body(MAIN_CSS, "@media (max-width: 34rem)");
-    assert!(
-        !narrow.contains(".session-timing {\n        flex-direction: column;"),
-        "320px layout must keep session timing on one line"
-    );
+    assert!(narrow.contains(".session-remaining"));
 }
 
 #[test]

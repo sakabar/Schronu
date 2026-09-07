@@ -178,6 +178,7 @@ fn card(task_id: &str) -> SessionCardViewModel {
         task_name: "コピーをせん".to_owned(),
         started_at_hh_mm: "11:25".to_owned(),
         completion_hh_mm: Some("11:28".to_owned()),
+        actual_work_seconds_at_start: 8 * 60,
         progress_percent: Some(133),
         normal_bar_percent: 100,
         overrun_bar_percent: 33,
@@ -207,7 +208,9 @@ fn session_card_renders_time_progress_overrun_and_four_typed_actions() {
         "11:25",
         "11:28",
         "133%",
+        "超過",
         "00:03",
+        "開始時実績 08:00",
         "計測を破棄して解除",
         "記録して解除",
         "計測を破棄して完了",
@@ -273,7 +276,7 @@ fn session_progress_barは150_percentで全幅になり超過後も右へ伸び�
 }
 
 #[test]
-fn session_cardは開始と完了予定と残り超過を同じ時刻行に表示する() {
+fn session_cardは残り超過を主表示にして時刻と開始時実績を補助表示する() {
     let mut active = card("active");
     active.started_at_hh_mm = "12:43".to_owned();
     active.completion_hh_mm = Some("13:43".to_owned());
@@ -348,6 +351,23 @@ fn assert_session_timing(
     );
     assert!(timing.contains("→"), "missing arrow in {timing}");
     assert_eq!(timing.matches("<time").count(), 2, "{timing}");
+    assert!(timing.contains("開始時実績 08:00"), "{timing}");
+    assert!(timing.contains("session-countdown-label"), "{timing}");
+    assert!(timing.contains("session-timing-meta"), "{timing}");
+}
+
+#[test]
+fn session_cardは100分以上の開始時実績を総分数で表示する() {
+    let mut session = card("long-actual");
+    session.actual_work_seconds_at_start = 6_001;
+
+    let (html, _) = render(vec![session], false);
+
+    assert!(html.contains("開始時実績 100:01"), "{html}");
+    assert!(
+        html.contains("aria-label=\"セッション開始時点の実績 100:01\""),
+        "{html}"
+    );
 }
 
 fn assert_direct_text_node(
