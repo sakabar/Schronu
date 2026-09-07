@@ -128,6 +128,23 @@ fn session_timing_stays_on_one_line_at_mobile_widths() {
     );
 }
 
+#[test]
+fn session_progressは150_percent超過を赤色の横scroll領域として保持する() {
+    let scroll = block_body(MAIN_CSS, ".session-progress-scroll");
+    assert!(scroll.contains("overflow-x: auto;"));
+
+    let track = block_body(MAIN_CSS, ".session-progress-track");
+    assert!(track.contains("overflow: visible;"));
+
+    let segments = block_body(
+        MAIN_CSS,
+        ".session-progress-normal,\n.session-progress-overrun",
+    );
+    assert!(segments.contains("flex: 0 0 auto;"));
+
+    assert!(MAIN_CSS.contains(".session-progress-overrun {\n    background: var(--red);\n}"));
+}
+
 fn block_body<'a>(source: &'a str, header: &str) -> &'a str {
     let header_start = source
         .find(header)
