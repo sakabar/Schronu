@@ -32,9 +32,19 @@ fn root(props: RootProps) -> Element {
             dates: props.dates,
             rows: props.rows,
             active_task_ids: props.active_task_ids,
+            date_input_text: String::new(),
+            date_input_error: None,
             filter_text: props.filter_text,
             mutations_locked: false,
             on_select_date: move |date: String| date_events.lock().unwrap().push(format!("date:{date}")),
+            on_date_input_change: move |date: String| props.events
+                .lock()
+                .unwrap()
+                .push(format!("date-input:{date}")),
+            on_submit_date_input: move |_| props.events
+                .lock()
+                .unwrap()
+                .push("date-submit".to_owned()),
             on_start_session: move |(task, is_leaf): (SessionTask, bool)| task_events
                 .lock()
                 .unwrap()
@@ -76,9 +86,13 @@ fn carry_lockはsession追加だけを無効化し日付選択は維持する() 
                 dates: props.dates,
                 rows: props.rows,
                 active_task_ids: props.active_task_ids,
+                date_input_text: String::new(),
+                date_input_error: None,
                 filter_text: props.filter_text,
                 mutations_locked: true,
                 on_select_date: move |date: String| date_events.lock().unwrap().push(format!("date:{date}")),
+                on_date_input_change: move |_| {},
+                on_submit_date_input: move |_| {},
                 on_start_session: move |(task, is_leaf): (SessionTask, bool)| task_events
                     .lock()
                     .unwrap()
@@ -536,21 +550,97 @@ fn 検索欄は日付buttonの下かつtableの上にあり入力を通知する
     let input_listeners = rebuild_with_event_listeners(&mut dom, "input");
     let html = dioxus::ssr::render(&dom);
     let dates_position = html.find("class=\"date-pills\"").unwrap();
+    let controls_position = html.find("class=\"list-controls\"").unwrap();
+    let date_input_position = html.find("class=\"date-jump-form\"").unwrap();
     let filter_position = html.find("class=\"task-name-filter\"").unwrap();
     let table_position = html.find("class=\"task-table-scroll\"").unwrap();
 
-    assert!(dates_position < filter_position && filter_position < table_position);
+    assert!(
+        dates_position < controls_position
+            && controls_position < date_input_position
+            && date_input_position < filter_position
+            && filter_position < table_position
+    );
+    assert!(html.contains("aria-label=\"表示する日付\""), "{html}");
+    assert!(html.contains("placeholder=\"9/16\""), "{html}");
+    assert!(html.contains(">表示</button>"), "{html}");
     assert!(html.contains("aria-label=\"タスク名を検索\""), "{html}");
     assert!(html.contains("placeholder=\"タスク名を検索\""), "{html}");
-    assert_eq!(input_listeners.len(), 1);
+    assert_eq!(input_listeners.len(), 2);
 
     dispatch_platform_event(
         &dom,
         "input",
-        input_listeners[0],
+        input_listeners[1],
         Box::new(SerializedFormData::new("設計".to_owned(), Vec::new())),
     );
     assert_eq!(*events.lock().unwrap(), ["filter:設計"]);
+}
+
+#[test]
+fn 日付入力とform_submitは別々のeventを通知する() {
+    let events = Arc::new(Mutex::new(Vec::new()));
+    let mut dom = VirtualDom::new_with_props(
+        root,
+        RootProps {
+            dates: Vec::new(),
+            rows: Vec::new(),
+            active_task_ids: Vec::new(),
+            filter_text: String::new(),
+            events: Arc::clone(&events),
+        },
+    );
+    let listeners = rebuild_with_named_event_listeners(&mut dom);
+    let date_input_id = listeners
+        .iter()
+        .find_map(|(name, id)| (name == "input").then_some(*id))
+        .unwrap();
+    let submit_id = listeners
+        .iter()
+        .find_map(|(name, id)| (name == "submit").then_some(*id))
+        .unwrap();
+
+    dispatch_platform_event(
+        &dom,
+        "input",
+        date_input_id,
+        Box::new(SerializedFormData::new("9/16".to_owned(), Vec::new())),
+    );
+    dispatch_platform_event(
+        &dom,
+        "submit",
+        submit_id,
+        Box::new(SerializedFormData::new(String::new(), Vec::new())),
+    );
+
+    assert_eq!(*events.lock().unwrap(), ["date-input:9/16", "date-submit"]);
+}
+
+#[test]
+fn 日付入力errorはfieldと関連付けて表示する() {
+    let mut dom = VirtualDom::new(|| {
+        rsx! {
+            ListView {
+                dates: Vec::new(),
+                rows: Vec::new(),
+                active_task_ids: Vec::new(),
+                date_input_text: "bad".to_owned(),
+                date_input_error: Some("M/DまたはYYYY/M/D形式で入力してください。".to_owned()),
+                filter_text: String::new(),
+                on_select_date: move |_| {},
+                on_date_input_change: move |_| {},
+                on_submit_date_input: move |_| {},
+                on_start_session: move |_| {},
+                on_filter_change: move |_| {},
+            }
+        }
+    });
+    dom.rebuild_in_place();
+    let html = dioxus::ssr::render(&dom);
+
+    assert!(html.contains("aria-invalid=true"), "{html}");
+    assert!(html.contains("aria-describedby=\"date-input-error\""), "{html}");
+    assert!(html.contains("id=\"date-input-error\" role=\"alert\""), "{html}");
 }
 
 #[test]
@@ -643,8 +733,12 @@ fn StatefulFilterHarness(events: Rc<RefCell<Vec<String>>>) -> Element {
                     named_row("implementation", "実装", false, false),
                 ],
                 active_task_ids: Vec::new(),
+                date_input_text: String::new(),
+                date_input_error: None,
                 filter_text: filter_text.read().clone(),
                 on_select_date: move |_| date_events.borrow_mut().push("server:date".to_owned()),
+                on_date_input_change: move |_| {},
+                on_submit_date_input: move |_| {},
                 on_start_session: move |_| session_events.borrow_mut().push("storage:session".to_owned()),
                 on_filter_change: move |filter| filter_text.set(filter),
             }
