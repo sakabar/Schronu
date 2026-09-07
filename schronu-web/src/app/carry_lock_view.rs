@@ -55,7 +55,7 @@ pub(crate) fn CarryLockBar(
     let announcement = match model.mode {
         CarryLockMode::Normal => "通常モード",
         CarryLockMode::Locked => "操作ロック中",
-        CarryLockMode::ArmedUntil(_) => "1操作可能",
+        CarryLockMode::ArmedUntil(_) => "操作可能",
     };
     let pressing = use_signal(|| false);
     let controller = use_hook(move || {
@@ -110,7 +110,7 @@ pub(crate) fn CarryLockBar(
                         class: if pressing() { "carry-lock-hold is-pressing" } else { "carry-lock-hold" },
                         style: "touch-action: pan-y;",
                         r#type: "button",
-                        aria_label: "1.2秒長押しで1操作許可",
+                        aria_label: "1.2秒長押しで15秒間操作可能",
                         onpointerdown: move |event: PointerEvent| {
                             if accepts_long_press_pointer(
                                 &event.pointer_type(),
@@ -135,13 +135,13 @@ pub(crate) fn CarryLockBar(
                             blur_controller.cancel_keyboard();
                         },
                         strong { "操作ロック中" }
-                        span { "1.2秒長押しで1操作許可" }
+                        span { "1.2秒長押しで15秒間操作可能" }
                     }
                     DisableCarryLockDetails { on_disable }
                 },
                 CarryLockMode::ArmedUntil(_) => rsx! {
                     div { class: "carry-lock-status",
-                        strong { "1操作可能" }
+                        strong { "操作可能" }
                         span { "残り{model.remaining_seconds}秒" }
                     }
                     DisableCarryLockDetails { on_disable }
