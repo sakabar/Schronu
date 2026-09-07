@@ -151,7 +151,10 @@ fn session_progressは150_percent超過を赤色の横scroll領域として保�
     );
     assert!(segments.contains("flex: 0 0 auto;"));
 
-    assert!(MAIN_CSS.contains(".session-progress-overrun {\n    background: var(--red);\n}"));
+    assert!(MAIN_CSS.contains(
+        ".session-progress-overrun {\n    background: var(--red);\n    border-radius: 0 999px 999px 0;\n}"
+    ));
+    assert!(!MAIN_CSS.contains(".session-progress-overrun:last-child"));
 }
 
 #[test]

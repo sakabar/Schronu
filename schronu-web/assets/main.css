@@ -476,9 +476,6 @@ button:disabled {
 
 .session-progress-overrun {
     background: var(--red);
-}
-
-.session-progress-overrun:last-child {
     border-radius: 0 999px 999px 0;
 }
 
