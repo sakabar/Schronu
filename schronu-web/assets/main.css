@@ -676,6 +676,33 @@ button:disabled {
 }
 
 @media (max-width: 46rem) {
+    .task-list-view {
+        gap: 0.5rem;
+    }
+
+    .date-pills {
+        padding: 0.125rem 0.1rem 0.25rem;
+    }
+
+    .date-pill {
+        height: 36px;
+        padding: 0.35rem 0.9rem;
+    }
+
+    .task-name-filter-input {
+        height: 36px;
+        min-height: 36px;
+        padding: 0.4rem 0.7rem;
+    }
+
+    .task-name-filter-clear {
+        width: 36px;
+        height: 36px;
+        min-width: 36px;
+        min-height: 36px;
+        padding: 0.25rem;
+    }
+
     .task-table-scroll {
         overflow-x: visible;
         border-radius: 0;
@@ -821,11 +848,6 @@ button:disabled {
 
     .date-pills {
         gap: 0.35rem;
-    }
-
-    .date-pill {
-        min-height: max(2.75rem, 44px);
-        padding: 0.5rem 0.9rem;
     }
 
     .session-timing {
