@@ -273,7 +273,7 @@ fn session_progress_barは150_percentで全幅になり超過後も右へ伸び�
             "{html}"
         );
         assert!(
-            html.contains("class=\"session-progress-estimate-marker\" aria-hidden=true"),
+            html.contains("class=\"session-progress-estimate-marker\" aria-hidden=\"true\""),
             "{html}"
         );
     }

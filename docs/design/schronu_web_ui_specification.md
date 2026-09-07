@@ -364,6 +364,7 @@ remaining_seconds = remaining_at_start - elapsed_seconds
 - `worked_seconds * 100`はoverflowしない計算方法を用いる。
 - 通常bar幅は`min(progress, 100) / 150 * 100%`とし、100%進捗をtrack全幅の3分の2に置く。
 - 超過bar幅は`max(progress - 100, 0) / 150 * 100%`で、100%位置の右側へ赤色で連結する。150%でtrack全幅へ到達し、それを超えた分はcard内で切り捨てず、横scroll可能な表示領域を確保する。
+- 100%位置には、通常bar、未塗り領域、超過barのいずれの上でも常時視認できる2pxの縦線を装飾要素として置き、assistive technologyからは隠す。
 
 ### 6.4 buffer
 
