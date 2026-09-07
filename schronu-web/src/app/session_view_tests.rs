@@ -223,9 +223,9 @@ fn session_card_renders_time_progress_overrun_and_four_typed_actions() {
     assert!(html.contains("aria-valuemax=\"100\""), "{html}");
     assert!(html.contains("aria-valuenow=\"100\""), "{html}");
     assert!(html.contains("aria-valuetext=\"133%\""), "{html}");
-    assert!(html.contains("width:100%"));
+    assert!(html.contains("width:calc(100% / 1.5)"));
     assert!(html.contains("session-progress-overrun"));
-    assert!(html.contains("width:33%"));
+    assert!(html.contains("width:calc(33% / 1.5)"));
     assert!(html.contains("session-remaining is-overrun"));
     for label in [
         "破棄して解除",
@@ -239,6 +239,37 @@ fn session_card_renders_time_progress_overrun_and_four_typed_actions() {
         );
     }
     assert!(events.is_empty());
+}
+
+#[test]
+fn session_progress_barは150_percentで全幅になり超過後も右へ伸びる() {
+    for (progress, normal, overrun) in [
+        (33, 33, 0),
+        (100, 100, 0),
+        (133, 100, 33),
+        (150, 100, 50),
+        (180, 100, 80),
+    ] {
+        let mut session = card("task-1");
+        session.progress_percent = Some(progress);
+        session.normal_bar_percent = normal;
+        session.overrun_bar_percent = overrun;
+        let (html, _) = render(vec![session], false);
+
+        assert!(
+            html.contains(&format!("width:calc({normal}% / 1.5)")),
+            "{progress}%の通常bar幅が150%基準ではありません: {html}"
+        );
+        assert!(
+            html.contains(&format!("width:calc({overrun}% / 1.5)")),
+            "{progress}%の超過bar幅が150%基準ではありません: {html}"
+        );
+        assert!(html.contains("aria-valuemax=\"100\""), "{html}");
+        assert!(
+            html.contains(&format!("aria-valuetext=\"{progress}%\"")),
+            "{html}"
+        );
+    }
 }
 
 #[test]
