@@ -38,6 +38,28 @@ fn month_day_crosses_the_year_boundary() {
 }
 
 #[test]
+fn leap_day_resolves_to_the_nearest_valid_year() {
+    assert_eq!(
+        resolve_date_input("2/29", "2027-03-01")
+            .unwrap()
+            .logical_date,
+        "2028-02-29"
+    );
+    assert_eq!(
+        resolve_date_input("2/29", "2028-02-29")
+            .unwrap()
+            .logical_date,
+        "2028-02-29"
+    );
+    assert_eq!(
+        resolve_date_input("2/29", "2028-03-01")
+            .unwrap()
+            .logical_date,
+        "2032-02-29"
+    );
+}
+
+#[test]
 fn explicit_year_is_preserved_and_slash_components_are_normalized() {
     assert_eq!(
         resolve_date_input(" 2025/09/06 ", "2026-09-16"),

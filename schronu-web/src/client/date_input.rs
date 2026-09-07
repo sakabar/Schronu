@@ -78,42 +78,57 @@ pub fn resolve_date_input(
 ) -> Result<ResolvedDateInput, DateInputError> {
     let current = parse_current_logical_date(current_logical_date)?;
     let components = input.trim().split('/').collect::<Vec<_>>();
-    let (year, month, day) = match components.as_slice() {
+    let date = match components.as_slice() {
         [month, day] if valid_component(month, 1, 2) && valid_component(day, 1, 2) => {
             let month = parse_component(month)?;
             let day = parse_component(day)?;
-            let candidate = NaiveDate::from_ymd_opt(current.year(), month, day)
-                .ok_or(DateInputError::InvalidDate)?;
-            if candidate >= current {
-                (current.year(), month, day)
-            } else {
-                let year = current
-                    .year()
-                    .checked_add(1)
-                    .filter(|year| *year <= 9999)
-                    .ok_or(DateInputError::DateOverflow)?;
-                (year, month, day)
-            }
+            resolve_upcoming_month_day(current, month, day)?
         }
         [year, month, day]
             if valid_component(year, 4, 4)
                 && valid_component(month, 1, 2)
                 && valid_component(day, 1, 2) =>
         {
-            (
+            NaiveDate::from_ymd_opt(
                 parse_component(year)? as i32,
                 parse_component(month)?,
                 parse_component(day)?,
             )
+            .ok_or(DateInputError::InvalidDate)?
         }
         _ => return Err(DateInputError::InvalidFormat),
     };
-    let date = NaiveDate::from_ymd_opt(year, month, day).ok_or(DateInputError::InvalidDate)?;
 
     Ok(ResolvedDateInput {
         logical_date: date.format("%Y-%m-%d").to_string(),
         display_value: format!("{}/{}/{}", date.year(), date.month(), date.day()),
     })
+}
+
+fn resolve_upcoming_month_day(
+    current: NaiveDate,
+    month: u32,
+    day: u32,
+) -> Result<NaiveDate, DateInputError> {
+    if NaiveDate::from_ymd_opt(2000, month, day).is_none() {
+        return Err(DateInputError::InvalidDate);
+    }
+
+    // Gregorian calendarでは有効な同一月日の間隔は最大8年(世紀の閏年境界)となる。
+    for year_offset in 0..=8 {
+        let year = current
+            .year()
+            .checked_add(year_offset)
+            .filter(|year| *year <= 9999)
+            .ok_or(DateInputError::DateOverflow)?;
+        if let Some(candidate) = NaiveDate::from_ymd_opt(year, month, day) {
+            if candidate >= current {
+                return Ok(candidate);
+            }
+        }
+    }
+
+    Err(DateInputError::DateOverflow)
 }
 
 fn parse_current_logical_date(input: &str) -> Result<NaiveDate, DateInputError> {

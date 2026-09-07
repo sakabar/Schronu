@@ -452,7 +452,7 @@ display_buffer = buffer_seconds - snapshot_elapsed + session_credit
 
 各buttonは表示labelとは別に具体的な`YYYY-MM-DD`を保持する。新しいserver responseでlogical dateが変わった場合はbuttonを再生成する。4種類のセッション終了成功後は選択中のlogical dateを維持し、未選択なら最新snapshotのlogical dateを選んで`list_tasks`を自動実行する。
 
-日付文字列入力はpage内だけの`DateInputState`に保持し、`M/D`または`YYYY/M/D`のASCII数字とslashだけを受け付ける。前後空白は除去する。年省略時は`ServerSnapshot.logical_date`の年で候補日を作り、候補が現在logical date以上なら当年、未満なら翌年とする。同じ月日は当日として扱う。妥当な入力は表示用`YYYY/M/D`とwire用`YYYY-MM-DD`へ正規化し、不正な形式・calendar日付・範囲overflowは型付きerrorとする。
+日付文字列入力はpage内だけの`DateInputState`に保持し、`M/D`または`YYYY/M/D`のASCII数字とslashだけを受け付ける。前後空白は除去する。年省略時は`ServerSnapshot.logical_date`の年から候補日を探し、現在logical date以上となる最初の有効なcalendar日付を採用する。同じ月日は当日として扱い、`2/29`は必要なら次の閏年まで進める。妥当な入力は表示用`YYYY/M/D`とwire用`YYYY-MM-DD`へ正規化し、不正な形式・calendar日付・範囲overflowは型付きerrorとする。
 
 ### 6.6 持ち歩きロックstate
 
