@@ -292,7 +292,7 @@ fn listは46rem以下で可視header付きの高密度な一行tableになる() 
         ".task-table .session-cell {\n        padding: 0;",
         ".deadline,\n    .schedule-time {\n        font-size: 0.68rem;",
         ".task-name {\n        overflow: hidden;\n        font-size: 0.75rem;",
-        ".task-name-scroll {\n        min-width: 0;\n        overflow-x: auto;\n        overscroll-behavior-inline: contain;\n        white-space: nowrap;",
+        ".task-name-scroll {\n        min-width: 0;\n        overflow-x: auto;\n        overflow-y: hidden;\n        overscroll-behavior-inline: contain;\n        white-space: nowrap;",
         "touch-action: pan-x pan-y pinch-zoom;",
         ".session-cell .session-start {\n        width: 44px;\n        min-height: 32px;",
     ] {
