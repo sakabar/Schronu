@@ -1,4 +1,7 @@
-use super::component::{app, InteractiveShell, NavigationTabs, SessionChrome};
+use super::component::{
+    app, initial_load_phase, BufferPanel, InitialLoadPhase, InitialLoadView, InteractiveShell,
+    LoadingOverlay, NavigationTabs, SessionChrome,
+};
 #[cfg(feature = "web")]
 use super::component_models::BrowserPageModel;
 use super::component_runtime::{

@@ -12,10 +12,12 @@ use super::super::list_view::ListView;
 use super::super::long_press_browser::BrowserLongPressScheduler;
 use super::super::long_press_controller::LongPressSchedulerHandle;
 use super::super::session_view::SessionView;
-use super::{InteractiveShell, LoadingOverlay, NavigationTabs, SessionChrome};
+use super::{
+    initial_load_phase, BufferPanel, InitialLoadPhase, InitialLoadView, InteractiveShell,
+    LoadingOverlay, NavigationTabs, SessionChrome,
+};
 use crate::client::date_input::DateInputState;
 use crate::client::state::ActiveTab;
-use crate::client::time_model::format_hh_mm_ss;
 use crate::client::work_sessions::BrowserLocalStorage;
 use dioxus::prelude::*;
 
@@ -48,12 +50,42 @@ pub(super) fn BrowserApp() -> Element {
         }
     });
 
+    let (snapshot_loaded, initial_error, server_effect_in_flight) = {
+        let client = client.read();
+        let snapshot_loaded = client
+            .state()
+            .is_some_and(|state| state.snapshot().is_some());
+        let initial_error = client
+            .state()
+            .and_then(|state| state.display_error())
+            .map(|error| error.message().to_owned());
+        (
+            snapshot_loaded,
+            initial_error,
+            client.server_effect_in_flight(),
+        )
+    };
+    match initial_load_phase(
+        snapshot_loaded,
+        server_effect_in_flight,
+        initial_error.as_deref(),
+    ) {
+        InitialLoadPhase::Loading => {
+            return rsx! { InitialLoadView { in_flight: true, error: None } };
+        }
+        InitialLoadPhase::Error => {
+            return rsx! { InitialLoadView { in_flight: false, error: initial_error } };
+        }
+        InitialLoadPhase::Ready => {}
+    }
     let model = {
         let client = client.read();
-        let Some(state) = client.state() else {
-            return loading_shell();
-        };
-        BrowserPageModel::from_state_at(state, browser_monotonic_now_ms())
+        BrowserPageModel::from_state_at(
+            client
+                .state()
+                .expect("ready phase requires initialized client state"),
+            browser_monotonic_now_ms(),
+        )
     };
     let BrowserPageModel {
         active_tab,
@@ -78,6 +110,7 @@ pub(super) fn BrowserApp() -> Element {
     let date_input_text = date_input.read().text().to_owned();
     let date_input_error = date_input.read().error().map(|error| error.to_string());
     let filter_text = task_name_filter.read().clone();
+    let buffer = buffer.expect("ready phase requires a server snapshot");
 
     rsx! {
         InteractiveShell {
@@ -162,29 +195,6 @@ pub(super) fn BrowserApp() -> Element {
         }
         if server_effect_in_flight {
             LoadingOverlay {}
-        }
-    }
-}
-
-fn loading_shell() -> Element {
-    rsx! {
-        main { class: "shell", aria_busy: "true" }
-        LoadingOverlay {}
-    }
-}
-
-#[component]
-fn BufferPanel(value: Option<i128>) -> Element {
-    let class = if value.is_some_and(|seconds| seconds < 0) {
-        "buffer-value is-negative"
-    } else {
-        "buffer-value"
-    };
-    let label = value.map_or_else(|| "--:--:--".to_owned(), format_hh_mm_ss);
-    rsx! {
-        section { class: "buffer-panel", aria_label: "本日の余白",
-            span { class: "buffer-label", "BUFFER" }
-            strong { class, "{label}" }
         }
     }
 }

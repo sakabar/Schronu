@@ -95,7 +95,7 @@ fn navigation_is_fixed_safe_and_never_covers_page_content() {
 }
 
 #[test]
-fn session_timing_stays_on_one_line_at_mobile_widths() {
+fn session_countdown_is_prominent_and_metadata_wraps_at_mobile_widths() {
     let desktop_card = block_body(MAIN_CSS, ".session-card");
     assert!(desktop_card
         .contains("grid-template-columns: minmax(11rem, 1.1fr) minmax(18rem, 2fr) auto;"));
@@ -110,8 +110,19 @@ fn session_timing_stays_on_one_line_at_mobile_widths() {
     }
 
     let timing = block_body(MAIN_CSS, ".session-timing");
-    assert!(timing.contains("display: flex;"));
-    assert!(timing.contains("white-space: nowrap;"));
+    assert!(timing.contains("display: grid;"));
+
+    let remaining = block_body(MAIN_CSS, ".session-remaining {");
+    assert!(remaining.contains("font-size: clamp(1.75rem, 4vw, 2.5rem);"));
+
+    let metadata = block_body(MAIN_CSS, ".session-timing-meta");
+    assert!(metadata.contains("display: flex;"));
+    assert!(metadata.contains("min-width: 0;"));
+    assert!(metadata.contains("flex-wrap: wrap;"));
+
+    let actual_at_start = block_body(MAIN_CSS, ".session-start-actual");
+    assert!(actual_at_start.contains("flex: 0 0 auto;"));
+    assert!(actual_at_start.contains("white-space: nowrap;"));
 
     let mobile = block_body(MAIN_CSS, "@media (max-width: 52rem)");
     let card = block_body(mobile, ".session-card");
@@ -122,10 +133,25 @@ fn session_timing_stays_on_one_line_at_mobile_widths() {
     assert!(!card.contains("\"remaining\""), "{card}");
 
     let narrow = block_body(MAIN_CSS, "@media (max-width: 34rem)");
-    assert!(
-        !narrow.contains(".session-timing {\n        flex-direction: column;"),
-        "320px layout must keep session timing on one line"
+    let narrow_remaining = block_body(narrow, ".session-remaining");
+    assert!(narrow_remaining.contains("font-size: clamp(1.75rem, 9vw, 2.25rem);"));
+}
+
+#[test]
+fn session_progressは150_percent超過を赤色の横scroll領域として保持する() {
+    let scroll = block_body(MAIN_CSS, ".session-progress-scroll");
+    assert!(scroll.contains("overflow-x: auto;"));
+
+    let track = block_body(MAIN_CSS, ".session-progress-track");
+    assert!(track.contains("overflow: visible;"));
+
+    let segments = block_body(
+        MAIN_CSS,
+        ".session-progress-normal,\n.session-progress-overrun",
     );
+    assert!(segments.contains("flex: 0 0 auto;"));
+
+    assert!(MAIN_CSS.contains(".session-progress-overrun {\n    background: var(--red);\n}"));
 }
 
 fn block_body<'a>(source: &'a str, header: &str) -> &'a str {
