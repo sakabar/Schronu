@@ -4,8 +4,8 @@ use super::super::component_models::{
     browser_monotonic_now_ms, browser_now_epoch_ms, BrowserPageModel,
 };
 use super::super::component_runtime::{
-    component_action_from_date_button, component_action_from_date_input, ComponentAction,
-    ComponentOrchestrator,
+    component_action_from_date_button, component_action_from_date_input,
+    reset_task_name_filter_after_session_add, ComponentAction, ComponentOrchestrator,
 };
 use super::super::history_view::HistoryView;
 use super::super::list_view::ListView;
@@ -183,10 +183,22 @@ pub(super) fn BrowserApp() -> Element {
                             dispatch_action(client, action);
                         }
                     },
-                    on_start_session: move |(task, is_leaf)| dispatch_action(
-                        client,
-                        ComponentAction::AddSession { task, is_leaf },
-                    ),
+                    on_start_session: move |(task, is_leaf)| {
+                        let previous_session_count = client
+                            .read()
+                            .state()
+                            .map_or(0, |state| state.sessions().len());
+                        dispatch_action(client, ComponentAction::AddSession { task, is_leaf });
+                        let current_session_count = client
+                            .read()
+                            .state()
+                            .map_or(0, |state| state.sessions().len());
+                        reset_task_name_filter_after_session_add(
+                            &mut task_name_filter.write(),
+                            previous_session_count,
+                            current_session_count,
+                        );
+                    },
                     on_filter_change: move |filter| task_name_filter.set(filter),
                 }
             } else {

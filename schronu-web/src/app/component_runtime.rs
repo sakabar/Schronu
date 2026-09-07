@@ -41,6 +41,16 @@ pub(crate) fn component_action_from_date_button(
     ComponentAction::SelectDate(logical_date)
 }
 
+pub(crate) fn reset_task_name_filter_after_session_add(
+    task_name_filter: &mut String,
+    previous_session_count: usize,
+    current_session_count: usize,
+) {
+    if current_session_count > previous_session_count {
+        task_name_filter.clear();
+    }
+}
+
 pub(crate) fn component_action_from_session_action(action: SessionAction) -> ComponentAction {
     match action.kind {
         SessionActionKind::Discard => ComponentAction::DiscardSession(action.task_id),
