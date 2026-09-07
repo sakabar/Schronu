@@ -154,6 +154,18 @@ fn session_progressは150_percent超過を赤色の横scroll領域として保�
     assert!(MAIN_CSS.contains(".session-progress-overrun {\n    background: var(--red);\n}"));
 }
 
+#[test]
+fn session_progressは見積も100_percent位置に常時表示の境界線を置く() {
+    let track = block_body(MAIN_CSS, ".session-progress-track");
+    assert!(track.contains("position: relative;"));
+
+    let marker = block_body(MAIN_CSS, ".session-progress-estimate-marker");
+    assert!(marker.contains("position: absolute;"));
+    assert!(marker.contains("left: calc(100% / 1.5);"));
+    assert!(marker.contains("width: 2px;"));
+    assert!(marker.contains("pointer-events: none;"));
+}
+
 fn block_body<'a>(source: &'a str, header: &str) -> &'a str {
     let header_start = source
         .find(header)
