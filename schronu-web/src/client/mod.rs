@@ -1,5 +1,6 @@
 pub mod carry_lock;
 pub mod date_buttons;
+pub mod date_input;
 mod effect;
 mod history;
 mod safety_state;

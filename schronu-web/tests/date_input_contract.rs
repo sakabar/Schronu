@@ -50,14 +50,7 @@ fn explicit_year_is_preserved_and_slash_components_are_normalized() {
 
 #[test]
 fn invalid_formats_and_calendar_dates_are_rejected() {
-    for input in [
-        "",
-        "9-16",
-        "2026-9-16",
-        "26/9/16",
-        "2026/9/16/1",
-        "９/１６",
-    ] {
+    for input in ["", "9-16", "2026-9-16", "26/9/16", "2026/9/16/1", "９/１６"] {
         assert_eq!(
             resolve_date_input(input, "2026-09-16"),
             Err(DateInputError::InvalidFormat),
@@ -95,10 +88,7 @@ fn input_state_keeps_normalized_success_and_clears_stale_errors_on_edit_or_clear
 
     state.edit("9/16".to_owned());
     assert_eq!(state.error(), None);
-    assert_eq!(
-        state.submit("2026-09-16"),
-        Some("2026-09-16".to_owned())
-    );
+    assert_eq!(state.submit("2026-09-16"), Some("2026-09-16".to_owned()));
     assert_eq!(state.text(), "2026/9/16");
 
     state.clear();
