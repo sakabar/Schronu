@@ -112,7 +112,7 @@ fn session_countdown_is_prominent_and_metadata_wraps_at_mobile_widths() {
     let timing = block_body(MAIN_CSS, ".session-timing");
     assert!(timing.contains("display: grid;"));
 
-    let remaining = block_body(MAIN_CSS, ".session-remaining");
+    let remaining = block_body(MAIN_CSS, ".session-remaining {");
     assert!(remaining.contains("font-size: clamp(1.75rem, 4vw, 2.5rem);"));
 
     let metadata = block_body(MAIN_CSS, ".session-timing-meta");

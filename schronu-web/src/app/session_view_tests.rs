@@ -344,7 +344,7 @@ fn assert_session_timing(
     );
     assert_direct_text_node(
         timing,
-        "span",
+        "strong",
         remaining,
         Some(remaining_class),
         &format!("{remaining_kind} {remaining}"),

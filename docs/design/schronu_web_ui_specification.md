@@ -359,7 +359,7 @@ remaining_seconds = remaining_at_start - elapsed_seconds
 - 見積秒が0なら除算せず`--%`とする。
 - `remaining_seconds >= 0`は通常色の`MM:SS`、負なら絶対値を赤い`MM:SS`で表示する。
 - `MM`は総分数とし、2桁へ制限しない。`SS`は常に2桁とする。
-- 開始`HH:MM`、矢印、完了予定`HH:MM`、残り・超過`MM:SS`は1つのtiming領域へ横並びにし、320px幅でも折り返さない。開始と完了予定は`time`要素とし、3値には意味を識別できるARIA labelを付ける。完了予定を算出できない場合も同じ位置へ`--:--`を表示する。
+- 残り・超過`MM:SS`は「残り」または「超過」と組み合わせた大きな主表示とする。開始`HH:MM`、矢印、完了予定`HH:MM`、開始時実績`MM:SS`はその下の補助情報領域へ置き、必要なら項目単位で折り返して320px幅でもcardを横へ超過させない。開始と完了予定は`time`要素とし、残り・超過および開始時実績を含む各値へ意味を識別できるARIA labelを付ける。完了予定を算出できない場合も同じ位置へ`--:--`を表示する。
 - `worked_seconds * 100`はoverflowしない計算方法を用いる。
 - 通常bar幅は`min(progress, 100) / 150 * 100%`とし、100%進捗をtrack全幅の3分の2に置く。
 - 超過bar幅は`max(progress - 100, 0) / 150 * 100%`で、100%位置の右側へ赤色で連結する。150%でtrack全幅へ到達し、それを超えた分はcard内で切り捨てず、横scroll可能な表示領域を確保する。
@@ -480,7 +480,7 @@ client componentは非`None`の`ClientEffect`をserverへdispatchする直前に
 
 - 初期化時など、削除を伴わずセッション0件でセッションtabを表示している場合は「自動セッション」buttonを表示する。
 - 1件以上ではbuttonを隠し、各`work_session`をcard表示する。
-- cardはtask名、開始`HH:MM`、完了予定`HH:MM`、進捗率、bar、残り・超過`MM:SS`、「計測を破棄して解除」「記録して解除」「計測を破棄して完了」「記録して完了」の4操作buttonを持つ。開始、矢印、完了予定、残り・超過は1つのtiming領域へ1行で表示し、mobileのgridをtask名、timing、progress、操作の順にする。
+- cardはtask名、開始`HH:MM`、完了予定`HH:MM`、開始時実績`MM:SS`、進捗率、bar、残り・超過`MM:SS`、「計測を破棄して解除」「記録して解除」「計測を破棄して完了」「記録して完了」の4操作buttonを持つ。timing領域は残り・超過を大きな主表示、開始、矢印、完了予定、開始時実績を折り返し可能な補助表示とし、mobileのgridをtask名、timing、progress、操作の順にする。
 - 操作buttonは意味別classを持ち、通常幅では解除系2つと完了系2つをそれぞれ同じ段に配置し、狭い画面では1列にする。
 - 「計測を破棄して完了」をclickすると当該cardだけを確認表示へ切り替え、「このセッションの計測時間は記録されません。タスクを完了しますか?」と「キャンセル」「計測を破棄して完了」を表示する。最初のclickとキャンセルではserver requestを送らず、確定時だけ`record_elapsed_seconds: false`の`complete_session`を1回送る。
 - 「記録して完了」は確認を挟まず、`record_elapsed_seconds: true`の`complete_session`を送る。

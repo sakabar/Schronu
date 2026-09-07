@@ -101,11 +101,13 @@ fn SessionCard(
         "session-remaining"
     };
     let remaining = format_mm_ss(session.remaining_seconds);
-    let remaining_label = if session.remaining_seconds < 0 {
-        format!("超過時間 {remaining}")
+    let (remaining_kind, remaining_label) = if session.remaining_seconds < 0 {
+        ("超過", format!("超過時間 {remaining}"))
     } else {
-        format!("残り時間 {remaining}")
+        ("残り", format!("残り時間 {remaining}"))
     };
+    let actual_at_start = format_mm_ss(i128::from(session.actual_work_seconds_at_start));
+    let actual_at_start_label = format!("セッション開始時点の実績 {actual_at_start}");
     let started_at_label = format!("開始時刻 {}", session.started_at_hh_mm);
     let completion_label = format!("完了予定時刻 {completion}");
     let normal_style = format!("width:calc({}% / 1.5)", session.normal_bar_percent.max(0));
@@ -138,12 +140,22 @@ fn SessionCard(
                 span { class: "session-progress-label", "{progress}" }
             }
             div { class: "session-timing",
-                span { class: "session-time-range",
-                    time { aria_label: started_at_label, "{session.started_at_hh_mm}" }
-                    span { aria_hidden: "true", "→" }
-                    time { aria_label: completion_label, "{completion}" }
+                span { class: "session-countdown",
+                    span { class: "session-countdown-label", "{remaining_kind}" }
+                    strong { class: remaining_class, aria_label: remaining_label, "{remaining}" }
                 }
-                span { class: remaining_class, aria_label: remaining_label, "{remaining}" }
+                span { class: "session-timing-meta",
+                    span { class: "session-time-range",
+                        time { aria_label: started_at_label, "{session.started_at_hh_mm}" }
+                        span { aria_hidden: "true", "→" }
+                        time { aria_label: completion_label, "{completion}" }
+                    }
+                    span {
+                        class: "session-start-actual",
+                        aria_label: actual_at_start_label,
+                        "開始時実績 {actual_at_start}"
+                    }
+                }
             }
             div {
                 class: "session-progress-scroll",
