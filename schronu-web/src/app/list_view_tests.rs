@@ -599,8 +599,12 @@ fn filter一致なしはstatusを表示してtask操作を生成しない() {
 }
 
 #[test]
-fn task_name_filterはmobile幅とclearのtouch_targetを維持する() {
+fn task_name_filterはdesktop幅とclearの既定touch_targetを維持する() {
     let css = include_str!("../../assets/main.css");
+    let desktop_layout = css
+        .split_once("@media (max-width: 46rem)")
+        .expect("mobile list breakpoint must exist")
+        .0;
 
     for required in [
         ".task-name-filter {",
@@ -610,7 +614,7 @@ fn task_name_filterはmobile幅とclearのtouch_targetを維持する() {
         "min-width: max(2.75rem, 44px);",
         "min-height: max(2.75rem, 44px);",
     ] {
-        assert!(css.contains(required), "missing: {required}");
+        assert!(desktop_layout.contains(required), "missing: {required}");
     }
 }
 
