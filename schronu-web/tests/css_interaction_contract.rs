@@ -63,14 +63,27 @@ fn loading_overlay_blocks_the_viewport_and_respects_reduced_motion() {
 
 #[test]
 fn navigation_is_fixed_safe_and_never_covers_page_content() {
+    let root = block_body(MAIN_CSS, ":root");
+    assert!(root.contains("--bottom-navigation-height: 3.5rem;"));
+
     let tabs = block_body(MAIN_CSS, ".tabs");
     assert!(tabs.contains("position: fixed;"));
     assert!(tabs.contains("bottom: 0;"));
     assert!(tabs.contains("env(safe-area-inset-bottom)"));
+    assert!(tabs.contains(
+        "min-height: calc(var(--bottom-navigation-height) + env(safe-area-inset-bottom));"
+    ));
     assert!(tabs.contains("grid-template-columns: repeat(3, minmax(0, 1fr));"));
 
     let tab_button = block_body(MAIN_CSS, ".tab-button");
     assert!(tab_button.contains("min-height: max(2.75rem, 44px);"));
+
+    let mobile = block_body(MAIN_CSS, "@media (max-width: 46rem)");
+    let mobile_root = block_body(mobile, ":root");
+    assert!(mobile_root.contains("--bottom-navigation-height: 40px;"));
+    let mobile_tab_button = block_body(mobile, ".tab-button");
+    assert!(mobile_tab_button.contains("min-height: 40px;"));
+    assert!(mobile_tab_button.contains("padding: 0.4rem 0.35rem;"));
 
     let shell = block_body(MAIN_CSS, ".shell");
     assert!(shell.contains("var(--bottom-navigation-height)"));

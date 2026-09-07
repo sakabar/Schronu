@@ -676,6 +676,42 @@ button:disabled {
 }
 
 @media (max-width: 46rem) {
+    :root {
+        --bottom-navigation-height: 40px;
+    }
+
+    .tab-button {
+        min-height: 40px;
+        padding: 0.4rem 0.35rem;
+    }
+
+    .task-list-view {
+        gap: 0.5rem;
+    }
+
+    .date-pills {
+        padding: 0.125rem 0.1rem 0.25rem;
+    }
+
+    .date-pill {
+        height: 36px;
+        padding: 0.35rem 0.9rem;
+    }
+
+    .task-name-filter-input {
+        height: 36px;
+        min-height: 36px;
+        padding: 0.4rem 0.7rem;
+    }
+
+    .task-name-filter-clear {
+        width: 36px;
+        height: 36px;
+        min-width: 36px;
+        min-height: 36px;
+        padding: 0.25rem;
+    }
+
     .task-table-scroll {
         overflow-x: visible;
         border-radius: 0;
@@ -719,7 +755,7 @@ button:disabled {
     }
 
     .task-row {
-        min-height: 44px;
+        min-height: 32px;
         align-items: stretch;
     }
 
@@ -751,20 +787,20 @@ button:disabled {
         display: flex;
         min-width: 0;
         align-items: center;
-        padding: 0.25rem 0.35rem;
+        padding: 0.125rem 0.35rem;
         border-bottom: 0;
     }
 
     .deadline,
     .schedule-time {
-        font-size: 0.72rem;
+        font-size: 0.68rem;
         line-height: 1;
     }
 
     .task-name {
         overflow: hidden;
-        font-size: 0.88rem;
-        line-height: 1.25;
+        font-size: 0.75rem;
+        line-height: 1.15;
     }
 
     .task-name-scroll {
@@ -782,13 +818,13 @@ button:disabled {
         outline-offset: -3px;
     }
 
-    .session-cell {
+    .task-table .session-cell {
         padding: 0;
     }
 
     .session-cell .session-start {
         width: 44px;
-        min-height: 44px;
+        min-height: 32px;
         border-width: 0 1px 0 0;
         border-radius: 0;
         padding: 0;
@@ -821,11 +857,6 @@ button:disabled {
 
     .date-pills {
         gap: 0.35rem;
-    }
-
-    .date-pill {
-        min-height: max(2.75rem, 44px);
-        padding: 0.5rem 0.9rem;
     }
 
     .session-timing {
