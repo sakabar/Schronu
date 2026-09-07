@@ -361,8 +361,8 @@ remaining_seconds = remaining_at_start - elapsed_seconds
 - `MM`は総分数とし、2桁へ制限しない。`SS`は常に2桁とする。
 - 開始`HH:MM`、矢印、完了予定`HH:MM`、残り・超過`MM:SS`は1つのtiming領域へ横並びにし、320px幅でも折り返さない。開始と完了予定は`time`要素とし、3値には意味を識別できるARIA labelを付ける。完了予定を算出できない場合も同じ位置へ`--:--`を表示する。
 - `worked_seconds * 100`はoverflowしない計算方法を用いる。
-- 通常bar幅は`min(progress, 100)%`。
-- 超過bar幅は`max(progress - 100, 0)%`で、100%位置の右側へ赤色で連結する。card内で切り捨てず、必要な横方向の表示領域を確保する。
+- 通常bar幅は`min(progress, 100) / 150 * 100%`とし、100%進捗をtrack全幅の3分の2に置く。
+- 超過bar幅は`max(progress - 100, 0) / 150 * 100%`で、100%位置の右側へ赤色で連結する。150%でtrack全幅へ到達し、それを超えた分はcard内で切り捨てず、横scroll可能な表示領域を確保する。
 
 ### 6.4 buffer
 

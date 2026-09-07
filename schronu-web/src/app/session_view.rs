@@ -108,8 +108,8 @@ fn SessionCard(
     };
     let started_at_label = format!("開始時刻 {}", session.started_at_hh_mm);
     let completion_label = format!("完了予定時刻 {completion}");
-    let normal_style = format!("width:{}%", session.normal_bar_percent.max(0));
-    let overrun_style = format!("width:{}%", session.overrun_bar_percent.max(0));
+    let normal_style = format!("width:calc({}% / 1.5)", session.normal_bar_percent.max(0));
+    let overrun_style = format!("width:calc({}% / 1.5)", session.overrun_bar_percent.max(0));
     let conflict_message = session.completion_conflict.map(|conflict| {
         let current = format_hh_mm_ss(i128::from(conflict.current_actual_work_seconds));
         if conflict.record_elapsed_seconds {
