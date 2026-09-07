@@ -220,7 +220,7 @@ fn SessionCard(
                 div { class: "session-actions",
                     SessionActionButton {
                         class: "session-action-discard",
-                        label: "破棄して解除",
+                        label: "計測を破棄して解除",
                         task_name: session.task_name.clone(),
                         task_id: session.task_id.clone(),
                         kind: SessionActionKind::Discard,

@@ -435,7 +435,7 @@ display_buffer = buffer_seconds - snapshot_elapsed + session_credit
 - `record_session`または`complete_session`のmutation responseは、対象実績を反映した`buffer_seconds`をそのまま新たな基準とする。server commit済みでlocalStorage削除だけに失敗した対象sessionは、以後のbuffer計算上の計測中sessionから除外する。
 - 終了操作をdispatchしたsessionはclick時刻と見積到達時刻の早い方で未送信進捗の加算を打ち切る。未commitが確定するerrorでは対象を計測中へ戻し、transport切断または`repository_state_uncertain`ではrepository確認完了までclick時刻の終端を保持する。完了実績競合では初回click後の壁時計減算を相殺し、確認中と再送中の表示を固定する。成功時はresponseのsnapshotを新たな基準とするため、通信待ち時間を未送信進捗へ加算しない。
 - 複数の計測中セッションは重複区間を除かず、各セッションの完了済み整数秒を個別に合算する。2件が10分ずつ同時計測された場合は20分を加算する。
-- 「破棄して解除」成功後は残存セッションから式全体を再計算し、破棄したセッション分の未送信進捗を加算しない。全件破棄した場合はsnapshot後の全経過秒を減算する。localStorage保存失敗時はmemory stateを確定しないため、buffer表示も変化させない。
+- 「計測を破棄して解除」成功後は残存セッションから式全体を再計算し、破棄したセッション分の未送信進捗を加算しない。全件破棄した場合はsnapshot後の全経過秒を減算する。localStorage保存失敗時はmemory stateを確定しないため、buffer表示も変化させない。
 - browser時計が後退した区間は0秒へclampする。時刻差と加減算は`i64`境界でもoverflowしない計算を用いる。
 - `display_buffer >= 0`: 通常色の`HH:MM:SS`
 - `display_buffer < 0`: 赤色の`-HH:MM:SS`
@@ -480,7 +480,7 @@ client componentは非`None`の`ClientEffect`をserverへdispatchする直前に
 
 - 初期化時など、削除を伴わずセッション0件でセッションtabを表示している場合は「自動セッション」buttonを表示する。
 - 1件以上ではbuttonを隠し、各`work_session`をcard表示する。
-- cardはtask名、開始`HH:MM`、完了予定`HH:MM`、進捗率、bar、残り・超過`MM:SS`、「破棄して解除」「記録して解除」「計測を破棄して完了」「記録して完了」の4操作buttonを持つ。開始、矢印、完了予定、残り・超過は1つのtiming領域へ1行で表示し、mobileのgridをtask名、timing、progress、操作の順にする。
+- cardはtask名、開始`HH:MM`、完了予定`HH:MM`、進捗率、bar、残り・超過`MM:SS`、「計測を破棄して解除」「記録して解除」「計測を破棄して完了」「記録して完了」の4操作buttonを持つ。開始、矢印、完了予定、残り・超過は1つのtiming領域へ1行で表示し、mobileのgridをtask名、timing、progress、操作の順にする。
 - 操作buttonは意味別classを持ち、通常幅では解除系2つと完了系2つをそれぞれ同じ段に配置し、狭い画面では1列にする。
 - 「計測を破棄して完了」をclickすると当該cardだけを確認表示へ切り替え、「このセッションの計測時間は記録されません。タスクを完了しますか?」と「キャンセル」「計測を破棄して完了」を表示する。最初のclickとキャンセルではserver requestを送らず、確定時だけ`record_elapsed_seconds: false`の`complete_session`を1回送る。
 - 「記録して完了」は確認を挟まず、`record_elapsed_seconds: true`の`complete_session`を送る。
@@ -511,14 +511,14 @@ client componentは非`None`の`ClientEffect`をserverへdispatchする直前に
 ### 7.4 操作結果
 
 - localStorage更新は、memory state確定前に保存成功を確認する。
-- 「破棄して解除」はlocalStorage削除成功後だけmemory stateを確定し、残存する計測中セッションからbufferを再計算する。task実績を更新するserver mutationは行わず、成功後の一覧再取得だけを行う。
+- 「計測を破棄して解除」はlocalStorage削除成功後だけmemory stateを確定し、残存する計測中セッションからbufferを再計算する。task実績を更新するserver mutationは行わず、成功後の一覧再取得だけを行う。
 - server mutationは、response成功後にlocalStorageからsessionを削除する。
 - server errorまたはlocalStorage削除失敗ではsessionを残す。server保存成功後にlocalStorage削除だけが失敗した場合、responseの更新後実績を反映した競合案内を表示し、再送による二重加算を防ぐため対象buttonを無効化し、対象sessionをbuffer計算上の計測中sessionから除外する。
 - component orchestratorはactionまたはresponse適用前後のsession件数を共通判定へ渡す。active tabがセッションで、件数が実際に減少して0件になった場合だけ一覧tabへ切り替える。即時削除、server成功後の削除、repository確認済みの削除を同じ判定へ通し、tab切替自体はeffectを生成しない。
 - serverが未commitと確定できるerrorではpending終了時刻を破棄し、対象sessionの表示と未送信進捗の加算を現在時刻基準で自動再開する。transport切断または`repository_state_uncertain`では終了時刻を保持し、repository確認完了時に破棄して再開する。
 - 4種類の終了成功では一覧再取得effectを生成し、response全体で一覧を置換する。server errorでは再取得せず、server commit成功後のlocalStorage削除失敗では安全状態を維持しつつ再取得する。
 - 完了responseの`ServerSnapshot`は通常どおり適用し、logical dateが変わった場合は日付buttonを再生成する。一覧再取得には選択中のlogical dateを維持して用い、未選択なら最新snapshotのlogical dateを用いる。
-- in-flight中は対象sessionの4buttonを無効化する。他sessionの計測は継続する。globalまたはmanual safety block中はserver mutationの3buttonを無効化し、「破棄して解除」は利用可能とする。
+- in-flight中は対象sessionの4buttonを無効化する。他sessionの計測は継続する。globalまたはmanual safety block中はserver mutationの3buttonを無効化し、「計測を破棄して解除」は利用可能とする。
 
 ### 7.5 持ち歩きロックbar
 
@@ -541,7 +541,7 @@ client componentは非`None`の`ClientEffect`をserverへdispatchする直前に
 | 日付button | `list_tasks` | なし | なし | responseのrowへ置換 | なし |
 | 自動セッション | `auto_session` | なし | session追加 | なし | なし |
 | 一覧の「セッション」 | なし | なし | session追加 | 追加成功後にセッションtabへ切替 | なし |
-| 破棄して解除 | session削除成功後に`list_tasks` | なし | session削除。成功後にbuffer再計算 | 一覧再取得responseで置換 | なし |
+| 計測を破棄して解除 | session削除成功後に`list_tasks` | なし | session削除。成功後にbuffer再計算 | 一覧再取得responseで置換 | なし |
 | 記録して解除 | click時刻付きでsafety marker保存後に`record_session`。成功後に`list_tasks` | clickまでの実績保存1回 | 送信前marker設定とtimer停止。確定応答後marker解除。成功後session削除 | 一覧再取得responseで置換 | なし |
 | 計測を破棄して完了の確認・キャンセル | なし | なし | card内の一時的な確認状態だけを変更 | なし | なし |
 | 計測を破棄して完了の確定 | click時刻付きでsafety marker保存後に`complete_session(record_elapsed_seconds: false)`。成功後に`list_tasks` | 追加実績0、click時刻で完了するtransaction 1回 | 送信前marker設定とtimer停止。確定応答後marker解除。成功後session削除 | 一覧再取得responseで置換 | なし |
