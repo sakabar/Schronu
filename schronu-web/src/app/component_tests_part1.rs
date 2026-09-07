@@ -335,6 +335,105 @@ fn 一覧のセッション追加後はセッションtabへ切り替えられse
 }
 
 #[test]
+fn 製品orchestratorの一覧追加は成功時だけ検索を解除し日付状態を保つ() {
+    let storage = MemoryStorage::default();
+    let mut orchestrator = ComponentOrchestrator::new();
+    let bootstrap = orchestrator.mount(&storage, 1_000);
+    let bootstrap_request_id = match bootstrap {
+        ClientEffect::Bootstrap { request_id } => request_id,
+        _ => panic!("mount must request bootstrap"),
+    };
+    orchestrator.apply_response(
+        &storage,
+        ClientResponse::Bootstrap {
+            request_id: bootstrap_request_id,
+            result: Ok(ServerSnapshot {
+                observed_at_epoch_ms: 1_000,
+                logical_date: "2026-09-05".to_owned(),
+                buffer_seconds: 60,
+            }),
+        },
+    );
+    orchestrator.action(
+        &storage,
+        1_000,
+        ComponentAction::SwitchTab(ActiveTab::List),
+    );
+    let list_effect = orchestrator.action(
+        &storage,
+        1_000,
+        ComponentAction::SelectDate("2026-09-16".to_owned()),
+    );
+    let request_id = match list_effect {
+        ClientEffect::ListTasks { request_id, .. } => request_id,
+        _ => panic!("date selection must request the list"),
+    };
+    orchestrator.apply_response(
+        &storage,
+        ClientResponse::ListTasks {
+            request_id,
+            requested_date: "2026-09-16".to_owned(),
+            result: Ok(WebSuccess {
+                snapshot: ServerSnapshot {
+                    observed_at_epoch_ms: 1_000,
+                    logical_date: "2026-09-05".to_owned(),
+                    buffer_seconds: 60,
+                },
+                data: Vec::new(),
+            }),
+        },
+    );
+    let mut date_input = DateInputState::default();
+    date_input.edit("不正".to_owned());
+    assert_eq!(date_input.submit("2026-09-05"), None);
+    assert!(date_input.error().is_some());
+    let mut task_name_filter = "実装".to_owned();
+    let previous_history_len = orchestrator.state().unwrap().history().len();
+
+    let effect = orchestrator.start_session_from_list(
+        &storage,
+        1_000,
+        task(RECORD_ID),
+        true,
+        &mut task_name_filter,
+    );
+
+    let state = orchestrator.state().unwrap();
+    assert_eq!(effect, ClientEffect::None);
+    assert_eq!(state.active_tab(), ActiveTab::Session);
+    assert_eq!(state.selected_logical_date(), Some("2026-09-16"));
+    assert_eq!(state.history().len(), previous_history_len);
+    assert!(task_name_filter.is_empty());
+    assert_eq!(date_input.text(), "不正");
+    assert!(date_input.error().is_some());
+}
+
+#[test]
+fn 製品orchestratorの一覧追加は保存失敗時に検索を保つ() {
+    let storage = MemoryStorage::failing_writes();
+    let mut orchestrator = ComponentOrchestrator::new();
+    orchestrator.mount(&storage, 1_000);
+    orchestrator.action(
+        &storage,
+        1_000,
+        ComponentAction::SwitchTab(ActiveTab::List),
+    );
+    let mut task_name_filter = "保存失敗".to_owned();
+
+    let effect = orchestrator.start_session_from_list(
+        &storage,
+        1_000,
+        task(RECORD_ID),
+        true,
+        &mut task_name_filter,
+    );
+
+    assert_eq!(effect, ClientEffect::None);
+    assert!(orchestrator.state().unwrap().sessions().is_empty());
+    assert_eq!(task_name_filter, "保存失敗");
+}
+
+#[test]
 fn 一覧のセッション追加が拒否された場合は一覧tabに留まる() {
     let storage = MemoryStorage::default();
     let (mut state, _) = initialize_client(&storage, 1_000);

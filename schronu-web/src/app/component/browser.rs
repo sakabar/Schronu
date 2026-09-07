@@ -1,11 +1,13 @@
 use super::super::carry_lock_view::CarryLockBar;
-use super::super::component_dispatch::{dispatch_action, dispatch_session_action};
+use super::super::component_dispatch::{
+    dispatch_action, dispatch_action_effect, dispatch_session_action,
+};
 use super::super::component_models::{
     browser_monotonic_now_ms, browser_now_epoch_ms, BrowserPageModel,
 };
 use super::super::component_runtime::{
-    component_action_from_date_button, component_action_from_date_input,
-    reset_task_name_filter_after_session_add, ComponentAction, ComponentOrchestrator,
+    component_action_from_date_button, component_action_from_date_input, ComponentAction,
+    ComponentOrchestrator,
 };
 use super::super::history_view::HistoryView;
 use super::super::list_view::ListView;
@@ -184,20 +186,14 @@ pub(super) fn BrowserApp() -> Element {
                         }
                     },
                     on_start_session: move |(task, is_leaf)| {
-                        let previous_session_count = client
-                            .read()
-                            .state()
-                            .map_or(0, |state| state.sessions().len());
-                        dispatch_action(client, ComponentAction::AddSession { task, is_leaf });
-                        let current_session_count = client
-                            .read()
-                            .state()
-                            .map_or(0, |state| state.sessions().len());
-                        reset_task_name_filter_after_session_add(
+                        let effect = client.write().start_session_from_list(
+                            &BrowserLocalStorage,
+                            browser_monotonic_now_ms(),
+                            task,
+                            is_leaf,
                             &mut task_name_filter.write(),
-                            previous_session_count,
-                            current_session_count,
                         );
+                        dispatch_action_effect(client, effect);
                     },
                     on_filter_change: move |filter| task_name_filter.set(filter),
                 }

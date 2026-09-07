@@ -163,6 +163,29 @@ impl ComponentOrchestrator {
         })
     }
 
+    pub(crate) fn start_session_from_list<S: KeyValueStorage>(
+        &mut self,
+        storage: &S,
+        monotonic_now_ms: u64,
+        task: SessionTask,
+        is_leaf: bool,
+        task_name_filter: &mut String,
+    ) -> ClientEffect {
+        let previous_session_count = self.state().map_or(0, |state| state.sessions().len());
+        let effect = self.action(
+            storage,
+            monotonic_now_ms,
+            ComponentAction::AddSession { task, is_leaf },
+        );
+        let current_session_count = self.state().map_or(0, |state| state.sessions().len());
+        reset_task_name_filter_after_session_add(
+            task_name_filter,
+            previous_session_count,
+            current_session_count,
+        );
+        effect
+    }
+
     pub fn apply_response<S: KeyValueStorage>(
         &mut self,
         storage: &S,
