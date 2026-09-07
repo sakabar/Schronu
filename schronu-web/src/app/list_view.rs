@@ -62,7 +62,7 @@ pub fn ListView(
                             aria_describedby: date_input_error
                                 .as_ref()
                                 .map(|_| "date-input-error"),
-                            placeholder: "9/16",
+                            placeholder: "例: 6/18",
                             autocomplete: "off",
                             oninput: move |event| on_date_input_change.call(event.value()),
                         }

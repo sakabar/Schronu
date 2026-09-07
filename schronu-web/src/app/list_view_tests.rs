@@ -572,7 +572,7 @@ fn 検索欄は日付buttonの下かつtableの上にあり入力を通知する
             && filter_position < table_position
     );
     assert!(html.contains("aria-label=\"表示する日付\""), "{html}");
-    assert!(html.contains("placeholder=\"9/16\""), "{html}");
+    assert!(html.contains("placeholder=\"例: 6/18\""), "{html}");
     assert!(html.contains(">表示</button>"), "{html}");
     assert!(html.contains("aria-label=\"タスク名を検索\""), "{html}");
     assert!(html.contains("placeholder=\"タスク名を検索\""), "{html}");
