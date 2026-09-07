@@ -141,7 +141,7 @@ fn SessionCard(
             }
             div { class: "session-timing",
                 span { class: "session-countdown",
-                    span { class: "session-countdown-label", "{remaining_kind}" }
+                    span { class: "session-countdown-label", aria_hidden: "true", "{remaining_kind}" }
                     strong { class: remaining_class, aria_label: remaining_label, "{remaining}" }
                 }
                 span { class: "session-timing-meta",

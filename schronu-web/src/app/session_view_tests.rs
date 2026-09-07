@@ -353,6 +353,10 @@ fn assert_session_timing(
     assert_eq!(timing.matches("<time").count(), 2, "{timing}");
     assert!(timing.contains("開始時実績 08:00"), "{timing}");
     assert!(timing.contains("session-countdown-label"), "{timing}");
+    assert!(
+        timing.contains("class=\"session-countdown-label\" aria-hidden=\"true\""),
+        "{timing}"
+    );
     assert!(timing.contains("session-timing-meta"), "{timing}");
 }
 
